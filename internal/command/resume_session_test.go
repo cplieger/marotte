@@ -39,8 +39,8 @@ func (d *storeDeps) Revert(ctx context.Context, id marotte.ChatID, turn, kasMess
 	return d.store.Revert(ctx, id, turn, kasMessageID)
 }
 
-func (d *storeDeps) RewindTarget(ctx context.Context, id marotte.ChatID, promptID string) (marotte.RewindTarget, bool, error) {
-	return d.store.RewindTarget(ctx, id, promptID)
+func (d *storeDeps) PromptTarget(ctx context.Context, id marotte.ChatID, promptID string) (marotte.PromptTarget, bool, error) {
+	return d.store.PromptTarget(ctx, id, promptID)
 }
 
 func (d *storeDeps) PromptAttachmentPaths(ctx context.Context, id marotte.ChatID, watermark string) ([]string, error) {
@@ -57,6 +57,13 @@ func (d *storeDeps) SetDraft(ctx context.Context, id marotte.ChatID, text string
 
 func (d *storeDeps) SetAttachments(ctx context.Context, id marotte.ChatID, paths []string) (*marotte.ComposerState, error) {
 	return d.store.SetAttachments(ctx, id, paths)
+}
+
+func (d *storeDeps) List(ctx context.Context) []marotte.ChatHeader {
+	if l, ok := d.store.(headerLister); ok {
+		return l.List(ctx)
+	}
+	return nil
 }
 
 func (d *storeDeps) Delete(ctx context.Context, id marotte.ChatID) ([]string, error) {

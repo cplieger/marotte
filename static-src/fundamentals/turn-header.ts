@@ -5,16 +5,22 @@
 // and a labelled request's full text shows only while open; attachment chips stay outside the clamp.
 
 import { join } from "@cplieger/keyenc";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { chevronEl } from "../chevron.js";
+import { iconEl } from "../icon-el.js";
+import { workflowIcon } from "../icons.js";
 import { watchCut } from "../clamp-text.js";
 import { linkifyPaths } from "../linkify.js";
 import { buildAttachmentPill, type AttachmentRef } from "../attachment-pill.js";
+import { splitLeadingQuote } from "../message-quote.js";
 // The dot's words, shared with the turn map — see turn-severity.ts.
 // Colour is never the sole channel (WCAG 1.4.1), and these are that channel.
 import { OUTCOME_LABEL, OUTCOME_TOOLTIP, severityOf } from "../turn-severity.js";
 import type { TurnOutcome } from "../turns.js";
 import { WAKE_FALLBACK_LINE, type WakeLine, type WakeRow, type WakeRun } from "../turn-wake.js";
+import { sentBy } from "../sent-by.js";
+import type { Caller } from "../types.js";
+import { formatClock } from "../locale-time.js";
 
 export interface TurnHeaderData {
   /** 1-based turn ordinal as rendered. */
@@ -27,6 +33,9 @@ export interface TurnHeaderData {
   /** The label of a request marotte wrote on the user's behalf, drawn in its place with the
    *  request one click away. Undefined for a typed request. */
   label?: string | undefined;
+  /** The program that sent the request through the API: a "Sent by" line over it, and the header reads as that
+   *  program's request, not the user's. Undefined for the user's own. */
+  caller?: Caller | undefined;
   /** Files the user attached to this request. Drawn as the composer's own pill,
    *  read-only (a sent attachment cannot be un-sent), and OUTSIDE the clamp. */
   attachments: readonly AttachmentRef[];
@@ -68,8 +77,6 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
   const req = el("div", { className: "turn-req" });
   const text = el("div", { className: "turn-req-text" });
   req.appendChild(text);
-  // Decorative: the toggle's name says the message is cut.
-  req.appendChild(el("span", { className: "turn-req-cut", "aria-hidden": "true" }, "\u2026"));
   // Sibling of `.turn-req-text`, so the clamp cannot hide the attachments.
   req.appendChild(el("ul", { className: "turn-req-attachments attachment-row hidden" }));
   header.appendChild(req);
@@ -89,16 +96,18 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
 
 const FOLD_LABEL = "Expand or collapse this turn";
 
-/** The request band alone, for a turn drawn without card chrome: a run step's turn that the user's
- *  message resumed. */
-export function buildRequestHeader(request: string): HTMLElement {
+/** The request band alone, for a turn drawn without card chrome: a run step's turn that a message resumed,
+ *  headed by its Sent-by line when `caller` sent it through the API. */
+export function buildRequestHeader(request: string, caller?: Caller): HTMLElement {
   const text = el("div", { className: "turn-req-text" }, request);
   linkifyPaths(text);
-  return el(
+  const header = el(
     "div",
-    { className: "turn-header", "data-trigger": "user" },
+    { className: "turn-header", "data-trigger": caller === undefined ? "user" : "caller" },
     el("div", { className: "turn-req" }, text),
   );
+  syncSentBy(header, caller);
+  return header;
 }
 
 /** Recompute the header from turn data. Idempotent. */
@@ -123,10 +132,7 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   if (time !== null && d.ts > 0) {
     const when = new Date(d.ts);
     time.dateTime = when.toISOString();
-    time.textContent = when.toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    time.textContent = formatClock(d.ts);
   }
 
   // Ahead of the early return below, so a repaint cannot leave a pill row
@@ -140,6 +146,8 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
 
   if (d.request === undefined && d.wake !== undefined && !d.wake.fallback) {
     header.dataset["trigger"] = "wake";
+    syncQuote(header, undefined);
+    syncSentBy(header, undefined);
     syncWakeLabel(header, d.wake, d.onOpenRun);
     if (d.wake.rows === undefined) {
       setRequestText(text, d.wake.body);
@@ -154,18 +162,34 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   syncWakeLabel(header, undefined, undefined);
   text.hidden = false;
 
-  if (d.request === undefined) {
-    // No user message: naming the trigger is honest, fabricating one is not.
-    header.dataset["trigger"] = "system";
-    setRequestText(text, WAKE_FALLBACK_LINE);
+  if (d.request === undefined && d.caller !== undefined) {
+    // A caller's prompt with no words (attachments only): its Sent-by line and attachment row are the header.
+    header.dataset["trigger"] = "caller";
+    syncSentBy(header, d.caller);
+    setRequestText(text, "");
+    text.hidden = true;
+    syncQuote(header, undefined);
     syncFullText(header, undefined);
     return;
   }
 
-  header.dataset["trigger"] = "user";
+  if (d.request === undefined) {
+    // No user message: naming the trigger is honest, fabricating one is not.
+    header.dataset["trigger"] = "system";
+    syncSentBy(header, undefined);
+    setRequestText(text, WAKE_FALLBACK_LINE);
+    syncQuote(header, undefined);
+    syncFullText(header, undefined);
+    return;
+  }
+
+  header.dataset["trigger"] = d.caller === undefined ? "user" : "caller";
   const body = d.request.trim();
   const label = d.label?.trim() ?? "";
-  setRequestText(text, label === "" ? body : label);
+  const quoted = label === "" ? splitLeadingQuote(body) : null;
+  syncQuote(header, quoted?.quote);
+  syncSentBy(header, d.caller);
+  setRequestText(text, label !== "" ? label : (quoted?.rest ?? body));
   syncFullText(header, label === "" ? undefined : body);
 }
 
@@ -201,6 +225,29 @@ function setWakeRows(
   text.replaceChildren(...parts);
 }
 
+/** Who sent a request an API caller posted, one line above the request text and outside its clamp, so a folded turn
+ *  still says the user did not write it; `caller` undefined removes it. */
+function syncSentBy(header: HTMLElement, caller: Caller | undefined): void {
+  const req = header.querySelector<HTMLElement>(":scope > .turn-req");
+  if (req === null) {
+    return;
+  }
+  let line = req.querySelector<HTMLElement>(":scope > .turn-sent-by");
+  if (caller === undefined) {
+    line?.remove();
+    return;
+  }
+  const words = sentBy(caller);
+  line ??= el("div", { className: "turn-sent-by" });
+  // First in the band, above a quote band drawn after it.
+  if (req.firstElementChild !== line) {
+    req.prepend(line);
+  }
+  if (line.textContent !== words) {
+    line.textContent = words;
+  }
+}
+
 /** The wake's label, one line above the request text and outside its clamp, rebuilt only when its
  *  words or run change so a focused run button survives a repaint; `wake` undefined removes it. */
 function syncWakeLabel(
@@ -218,7 +265,13 @@ function syncWakeLabel(
     return;
   }
   const run = wake.run?.id ?? "";
-  if (line !== null && line.dataset["label"] === wake.label && line.dataset["run"] === run) {
+  const message = String(wake.message);
+  if (
+    line !== null &&
+    line.dataset["label"] === wake.label &&
+    line.dataset["run"] === run &&
+    line.dataset["message"] === message
+  ) {
     return;
   }
   if (line === null) {
@@ -227,12 +280,23 @@ function syncWakeLabel(
   }
   line.dataset["label"] = wake.label;
   line.dataset["run"] = run;
+  line.dataset["message"] = message;
+  // The glyph a step-message note carries, so the turn it started reads as the same message.
+  const glyph = wake.message
+    ? [
+        el(
+          "span",
+          { className: "turn-wake-icon", "aria-hidden": "true" },
+          iconEl(workflowIcon("message")),
+        ),
+      ]
+    : [];
   const rest = el("span", { className: "turn-wake-rest" }, wake.rest);
   if (wake.run === undefined) {
-    line.replaceChildren(rest);
+    line.replaceChildren(...glyph, rest);
     return;
   }
-  line.replaceChildren(wakeRunEl(wake.run, "turn-wake-run", open), rest);
+  line.replaceChildren(...glyph, wakeRunEl(wake.run, "turn-wake-run", open), rest);
 }
 
 function wakeRunEl(
@@ -282,6 +346,28 @@ export function syncWakeRowRuns(header: HTMLElement): void {
 /** Sub-pixel slack (px) for a button whose box rounds onto the clip edge. */
 const CLIP_EPSILON = 0.5;
 
+/** The reply passage a prompt opened with (`message-quote.ts`), drawn as one band before the text; `quote`
+ *  undefined removes it. */
+function syncQuote(header: HTMLElement, quote: string | undefined): void {
+  const req = header.querySelector<HTMLElement>(":scope > .turn-req");
+  if (req === null) {
+    return;
+  }
+  let band = req.querySelector<HTMLElement>(":scope > .turn-req-quote");
+  if (quote === undefined) {
+    band?.remove();
+    return;
+  }
+  if (band === null) {
+    band = el("blockquote", { className: "turn-req-quote" });
+    req.prepend(band);
+  }
+  if (band.textContent !== quote) {
+    band.textContent = quote;
+    linkifyPaths(band);
+  }
+}
+
 /** A labelled request's full text, a sibling of the text so the folded clamp cannot hide it, shown
  *  while the turn is open (29-turns.css); `body` undefined removes it. */
 function syncFullText(header: HTMLElement, body: string | undefined): void {
@@ -296,8 +382,8 @@ function syncFullText(header: HTMLElement, body: string | undefined): void {
   }
   if (full === null) {
     full = el("div", { className: "turn-req-full" });
-    // After the text and its cue and before the attachments, in reading order.
-    req.querySelector(":scope > .turn-req-cut")?.after(full);
+    // After the text and before the attachments, in reading order.
+    req.querySelector(":scope > .turn-req-text")?.after(full);
   }
   if (full.textContent !== body) {
     full.textContent = body;

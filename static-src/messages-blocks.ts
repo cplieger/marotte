@@ -13,7 +13,7 @@ import type {
   FileChange,
 } from "./types.js";
 import type { Turn, TurnOutcome } from "./turns.js";
-import { closeOfBody, entryUnion, isSubagentFallback, payloadOf } from "./turns.js";
+import { closeOfBody, entryUnion, payloadOf } from "./turns.js";
 import type { EventEntry } from "./messages-events.js";
 import {
   effectiveRunID,
@@ -32,7 +32,7 @@ import {
 } from "./block-window.js";
 import { steerAckID, toolResultID } from "./entry-ids.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
-import { effect, el } from "@cplieger/reactive";
+import { effect, el } from "@cplieger/ui";
 import { KEY_ATTR as RECONCILE_KEY } from "./reconcile.js";
 import { releaseScrollableTablesIn } from "./table-scroll.js";
 import {
@@ -90,6 +90,7 @@ import { delegateDetail, iconForSubagent, subagentLabel, subagentName } from "./
 import { buildRunCard, type RunCardView, type RunDisclosure } from "./fundamentals/run-card.js";
 import {
   invalidateRun,
+  runGone,
   runPlan,
   runState,
   runStepEnds,
@@ -1851,6 +1852,7 @@ function armRunCard(st: TurnRender, workflowID: string, card: RunCardView): void
     card.render(state, runPendingAsks(workflowID), {
       plan: runPlan(workflowID),
       ends: runStepEnds(workflowID),
+      gone: runGone(workflowID),
     });
   });
   st.runEffects.set(workflowID, stop);
@@ -1928,10 +1930,8 @@ function placeEntry(st: TurnRender, e: Entry, live: boolean, idx: GroupIndex): v
     case "model_routed":
     case "model_fallback":
     case "mode_switched":
-    case "turn_revert": {
-      if (isSubagentFallback(e)) {
-        return;
-      }
+    case "turn_revert":
+    case "context_reset": {
       const row = cbs.makeEvent(u);
       stampEntry(st, row, seq);
       appendEntry(st, container, row);
@@ -2361,6 +2361,9 @@ function steerNoteData(st: TurnRender, e: Entry, steer: EntrySteer): SteerNoteDa
   };
   if (steer.reason !== undefined) {
     data.reason = steer.reason;
+  }
+  if (steer.caller !== undefined) {
+    data.caller = steer.caller;
   }
   if (steer.step !== undefined) {
     data.step = steer.step;

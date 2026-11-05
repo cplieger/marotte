@@ -564,6 +564,7 @@ func TestKillTerminalGroup_LiveHeadTakesTheTree(t *testing.T) {
 
 // A finished command's backgrounded child is left running, as KAS's own terminal does (characterization pin).
 func TestTerminalRelease_LeavesAFinishedCommandsBackgroundedChild(t *testing.T) {
+	withTerminalGroupGrace(t, 100*time.Millisecond)
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
 	h, termID, childPID := startBaitTerminal(t,
 		"sleep 30 >/dev/null 2>&1 </dev/null & echo $! > "+pidFile, pidFile)

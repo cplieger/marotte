@@ -1,8 +1,9 @@
 package agent
 
 // The unattended floor: a scheduled run's permission request has nobody to answer, so it is refused on a
-// short budget rather than parking the run (and, through the single-run rule, its whole schedule).
-// Scheduled runs only. Deny by default; `scheduled_auto_approve` opts in.
+// short budget rather than parking the run (and, through the single-run rule, its whole schedule), and a
+// pause nobody resumes ends the run on the same budget. Scheduled runs only. Deny by default;
+// `scheduled_auto_approve` opts in.
 
 import (
 	"cmp"
@@ -10,15 +11,16 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // unattendedApprovalBudget is how long a scheduled run's request waits before refusal: 180s, as KiroCrew's
@@ -61,6 +63,46 @@ const logMsgRunOverran = "scheduled run still going when its next slot came due;
 const reasonOverran = "still running when its next slot came due, so it was cancelled. " +
 	"Give the schedule a longer interval, or make the workflow finish inside it"
 
+// reasonStalled and reasonBackstop are the row's text for the other two bounds (cancelExpired).
+var (
+	reasonStalled = "made no progress and had no live shell for " +
+		strconv.Itoa(int(runIdleWindow.Minutes())) + " minutes, so it was cancelled. " +
+		"Open the run to see the step it stopped in"
+	reasonBackstop = "ran for " + strconv.Itoa(int(runBackstop.Hours())) +
+		" hours in total, the most one run may, so it was cancelled. Make the workflow finish sooner"
+)
+
+// reasonCancelRefused is the row's text once retryTermination gives up on a stop marotte decided.
+var reasonCancelRefused = "reached a limit that stops it, but kiro-cli refused the cancel " +
+	strconv.Itoa(1+maxCancelRetries) + " times, so it may still be running. Cancel it from its run page"
+
+// unattendedPauseBudget is how long a scheduled run may sit paused with no resume before it is ended
+// (endUnattended): an unattended ask's budget, which also outlasts the three heals' backoff. A var for tests.
+var unattendedPauseBudget = unattendedApprovalBudget
+
+// logMsgRunPausedUnattended is a constant an alert rule matches. Change both together.
+const logMsgRunPausedUnattended = "scheduled run paused with nobody to resume it; cancelling"
+
+// The row's text for endUnattended, by the pause it found and what it waited out.
+var (
+	pauseBudgetText   = strconv.Itoa(int(unattendedApprovalBudget.Minutes())) + " minutes"
+	reasonPausedFault = "paused on a fault that marotte's automatic resumes did not clear within " + pauseBudgetText +
+		", so it was cancelled. Open the run to see the step it paused in"
+	reasonHealsSpent = "paused on a fault again after each of marotte's " + strconv.Itoa(maxAutoHeals) +
+		" automatic resumes, so it was cancelled. Open the run to see the step it paused in"
+)
+
+// reasonPausedOther is the row's text for any other pause (seenOtherPause), quoting KAS's pause reason: only it says
+// which pause this was, a step's question, a repeat's limit or a fault KAS does not class as transient.
+func reasonPausedOther(pauseReason string) string {
+	quoted := ""
+	if r := schedule.ReasonText(pauseReason); r != "" {
+		quoted = " (" + r + ")"
+	}
+	return "paused with nobody watching" + quoted + ", so it was cancelled after " + pauseBudgetText +
+		". Open the run to see the step it paused in"
+}
+
 // permissionWithUnattendedFloor wraps the permission handler: the request reaches the client unchanged, plus
 // a deadline after which marotte answers.
 func (rs *Runs) permissionWithUnattendedFloor(inner askHandler) askHandler {
@@ -72,19 +114,19 @@ func (rs *Runs) permissionWithUnattendedFloor(inner askHandler) askHandler {
 		if !held || !l.Unattended || msg.ID == nil {
 			return
 		}
-		scheduleID := l.ScheduleID
+		run := scheduleRun(&l)
 		acpID := *msg.ID
 		name := permissionAskName(msg.Params)
 		// A timer parks no goroutine and is a no-op once answered: both paths claim from the tracker.
 		params := msg.Params
 		rs.lifecycle.afterUnlessDraining(unattendedApprovalBudget, func() {
-			rs.answerUnattended(chatID, origin, acpID, scheduleID, name, params)
+			rs.answerUnattended(chatID, origin, acpID, run, name, params)
 		})
 	}
 }
 
 // answerUnattended settles a still-pending request for an absent user: refuse, or approve when opted in.
-func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acpID int64, scheduleID string, name askName, msgParams json.RawMessage) {
+func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acpID int64, run schedule.Run, name askName, msgParams json.RawMessage) {
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
 
@@ -96,10 +138,22 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acp
 			"chat_id", chatID, "tool", name.tool, "subject", name.subject)
 		approve = false
 	}
-	// Refuse with the advertised reject option; Cancelled only when none is offered.
+	// Kiro's safety check did not clear the call and handed it to a person; approving it blind defeats the check.
+	classifierAsk := classifierHandedAsk(msgParams)
+	if approve && classifierAsk {
+		slog.Warn("unattended auto-approve: refusing, Kiro's safety check handed the request to a person",
+			"chat_id", chatID, "tool", name.tool, "subject", name.subject)
+		approve = false
+	}
+	// Refuse with the advertised reject option; Cancelled only when none is offered. A plan approval's note is
+	// kept by KAS and handed to the steps of the creator's next approved plan as the user's correction, so the
+	// floor's machine text goes on no plan.
 	outcome := marotte.PermissionOutcomeCancelled()
 	if opt := optionIDByKind(msgParams, optionKindRejectOnce); opt != "" {
 		outcome = marotte.PermissionOutcomeWithRejectionReason(opt, unattendedRejectionReason)
+		if planApprovalAsk(msgParams) {
+			outcome = marotte.PermissionOutcomeSelected(opt)
+		}
 	}
 	verb := outcomeRefused
 	if approve {
@@ -131,26 +185,97 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acp
 	// A fixed message with the outcome as a field, so alert rules can match it.
 	slog.Warn(logMsgUnattendedPermission,
 		"outcome", verb, "chat_id", chatID, "tool", name.tool, "subject", name.subject,
-		"budget", unattendedApprovalBudget, "schedule_id", scheduleID)
+		"budget", unattendedApprovalBudget, "schedule_id", run.ScheduleID)
 	if verb == outcomeApproved {
 		// An approval is not a failure.
 		return
 	}
 
 	// Surface it on the schedule row, or the run fails silently every night.
-	label := name.label()
-	reason := "needed approval for " + label + " with nobody watching. Add a permission rule to allow it"
-	if label == "" {
-		reason = "needed an approval with nobody watching. Add a permission rule to allow it"
+	reason := unattendedRefusalReason(name.label(), adminAsk, classifierAsk)
+	rs.recordScheduleOutcome(ctx, run, schedule.Outcome{Status: schedule.StatusFailed, Reason: reason})
+}
+
+// unattendedRefusalReason is the schedule row's reason for a refused ask on label (empty when the ask names
+// nothing).
+// An administrator ask gets no rule remedy: no workspace or user rule outranks an administrator one.
+func unattendedRefusalReason(label string, adminAsk, classifierAsk bool) string {
+	switch {
+	case adminAsk && label == "":
+		return "your organization requires a person to approve this, and nobody was watching"
+	case adminAsk:
+		return "your organization requires a person to approve " + label + ", and nobody was watching"
+	case classifierAsk && label == "":
+		return "Kiro's safety check asked a person to approve a request with nobody watching. Approve it in a chat, or add a permission rule to allow it"
+	case classifierAsk:
+		return "Kiro's safety check asked a person to approve " + label + " with nobody watching. Approve it in a chat, or add a permission rule to allow it"
+	case label == "":
+		return "needed an approval with nobody watching. Add a permission rule to allow it"
+	default:
+		return "needed approval for " + label + " with nobody watching. Add a permission rule to allow it"
 	}
-	if adminAsk {
-		// No workspace or user rule outranks an administrator one, so the usual remedy would be false.
-		reason = "your organization requires a person to approve " + label + ", and nobody was watching"
-		if label == "" {
-			reason = "your organization requires a person to approve this, and nobody was watching"
+}
+
+// watchUnattendedPause ends a scheduled run unattendedPauseBudget after this pause, unless an arm since resumed it.
+func (rs *Runs) watchUnattendedPause(workflowID string) {
+	l, held := rs.lease(workflowID)
+	if !held || !l.Unattended {
+		return
+	}
+	seq := rs.lastArmSeq(workflowID)
+	rs.lifecycle.afterUnlessDraining(unattendedPauseBudget, func() {
+		if rs.lastArmSeq(workflowID) != seq {
+			return
 		}
+		ctx, cancel := rs.lifecycle.derivedContext()
+		defer cancel()
+		if _, err := rs.transition(ctx, workflowID, &runRequest{want: pauseExpiry}); err != nil {
+			slog.Error("could not end a scheduled run paused with nobody to resume it; retrying, and its next slot ends it if every retry fails",
+				"workflow_id", workflowID, "error", err)
+		}
+	})
+}
+
+// endUnattended ends a scheduled run whose pause r found nobody resuming, under the run's resume lock. req is what
+// found it, the pause budget's expiry or a heal past its budget, and a refused cancel's retry sends it again unless
+// the run was armed since. A fault's pause is left while the gate is closed, since the gate's release resumes the
+// heal it held.
+func (rs *Runs) endUnattended(ctx context.Context, workflowID string, req *runRequest, r *pauseRead) error {
+	seq := rs.lastArmSeq(workflowID)
+	l, held := rs.lease(workflowID)
+	if !held || !l.Unattended {
+		return nil
 	}
-	rs.recordScheduleOutcome(ctx, scheduleID, schedule.Outcome{Status: schedule.StatusFailed, Reason: reason})
+	fault := r.seen != seenOtherPause
+	if fault && !rs.gateOpen() {
+		return nil
+	}
+	if !rs.claimTermination(workflowID) {
+		return nil
+	}
+	reason, waitedKey, waited := reasonPausedFault, "budget", any(unattendedPauseBudget)
+	switch {
+	case req.want == healResume:
+		reason, waitedKey, waited = reasonHealsSpent, "heals", maxAutoHeals
+	case !fault:
+		reason = reasonPausedOther(r.res.State.PauseReason)
+	}
+	slog.Error(logMsgRunPausedUnattended, "workflow_id", workflowID, "schedule_id", l.ScheduleID,
+		"recipe", l.Recipe, "fault", fault, "pause_reason", scrubLog(r.res.State.PauseReason), waitedKey, waited)
+	// The retry is this pause's alone: a pause after an arm (a resume) has its own watch or heal.
+	again := func(ctx context.Context) error {
+		if rs.lastArmSeq(workflowID) != seq {
+			return nil
+		}
+		_, err := rs.transition(ctx, workflowID, &runRequest{want: req.want, chatID: req.chatID})
+		return err
+	}
+	if err := rs.finishTermination(ctx, workflowID, runEndUnattended, runStop{}, again); err != nil {
+		return err
+	}
+	// Overwrites the cancel's own ending, which may land first and names no pause.
+	rs.recordScheduleOutcome(ctx, scheduleRun(&l), schedule.Outcome{Status: schedule.StatusFailed, Reason: reason})
+	return nil
 }
 
 // consentCapabilityShell is the consent capability whose resource is the command line.
@@ -245,7 +370,7 @@ func credentialFreeSubject(s string) string {
 // safeToolName defuses a wire name for a one-line surface: the model composes titles. Replacing rather than
 // deleting keeps legitimate names byte-identical and makes bidi reversal visible.
 func safeToolName(s string) string {
-	return runesafe.SanitizeSingleLineBounded(s, maxToolNameBytes)
+	return textsafe.SanitizeSingleLineBounded(s, maxToolNameBytes)
 }
 
 // consentScopeAdministration is the `_meta.kiro.consent.scope` KAS stamps on an administrator ask.
@@ -262,6 +387,30 @@ func adminConsentAsk(params json.RawMessage) bool {
 		} `json:"_meta"`
 	}
 	return json.Unmarshal(params, &p) == nil && p.Meta.Kiro.Consent.Scope == consentScopeAdministration
+}
+
+// classifierHandedAsk keys on _meta.kiro.trustClassifier's presence, not its reason's prose: a tripped
+// breaker and a too-large action both mean the safety check did not clear the call.
+func classifierHandedAsk(params json.RawMessage) bool {
+	var p struct {
+		Meta struct {
+			Kiro struct {
+				TrustClassifier json.RawMessage `json:"trustClassifier"`
+			} `json:"kiro"`
+		} `json:"_meta"`
+	}
+	return json.Unmarshal(params, &p) == nil && len(p.Meta.Kiro.TrustClassifier) > 0 && string(p.Meta.Kiro.TrustClassifier) != "null"
+}
+
+func planApprovalAsk(params json.RawMessage) bool {
+	var p struct {
+		Meta struct {
+			Kiro struct {
+				ToolID string `json:"toolId"`
+			} `json:"kiro"`
+		} `json:"_meta"`
+	}
+	return json.Unmarshal(params, &p) == nil && p.Meta.Kiro.ToolID == translate.ToolIDUpdateWorkflow
 }
 
 // Absent or unreadable is off.

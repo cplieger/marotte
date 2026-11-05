@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -61,6 +62,23 @@ func sendSteer(ctx context.Context, sb SessionCaller, steerID, text string) (ste
 	return decodeSteerReply(resp), err
 }
 
+// SteerWarningNotice files marotte's own text in sb's steering buffer as a warning notification, the buffer KAS
+// delivers a step's send_message into: a running turn reads it at its next boundary, else the session's next turn
+// does. KAS serves a client no send_message delivery or parent wake, so this is the one way into an agent's
+// context (KAS 3.0.0 handleSessionSteer files a "[notification/<sev>]" steer as kind notification; a new execution
+// reads past the last-read id, readerIndexPastLastRead). KAS wakes no idle session for it, and a session/load does
+// not re-queue it. A user's words never take this shape (ValidSteerText refuses it).
+func SteerWarningNotice(ctx context.Context, sb SessionCaller, text string) error {
+	reply, err := sendSteer(ctx, sb, ids.NewMessageID(), "[notification/warning] "+text)
+	switch {
+	case err != nil:
+		return err
+	case !reply.Queued:
+		return fmt.Errorf("the engine dropped the notice: %s", reply.Dropped)
+	}
+	return nil
+}
+
 // SteerTarget is one steering buffer and what reaches it: a chat's own session, or one of a
 // run's step sessions. Key names the buffer's record in Queue and Ledger. Caller is nil when the
 // session is not resident.
@@ -110,7 +128,7 @@ func cmdSteer(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComman
 		return nil, StatusError(http.StatusServiceUnavailable, err)
 	}
 	defer unlock()
-	switch refuse, sendErr := steerOne(ctx, roles, cmd.ChatID, steerID, text, ""); {
+	switch refuse, sendErr := steerOne(ctx, roles, cmd.ChatID, steerID, text, "", cmd.From); {
 	case refuse == SteerRefuseFull:
 		return nil, StatusErrorReason(http.StatusConflict, reasonFull, errSteerFull)
 	case refuse != "":
@@ -126,8 +144,10 @@ func cmdSteer(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComman
 
 // The error is the send carrying key. turn is the prompt turn a delivery is aimed at, empty for a
 // new steer.
-func steerOne(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, key, text, turn string) (refuse string, err error) {
-	return SteerInto(ctx, roles.steerTarget(chatID), steerHolder(roles, chatID, turn), key, text)
+func steerOne(
+	ctx context.Context, roles *promptRoles, chatID marotte.ChatID, key, text, turn string, from *marotte.Caller,
+) (refuse string, err error) {
+	return SteerInto(ctx, roles.steerTarget(chatID), steerHolder(roles, chatID, turn), key, text, from)
 }
 
 func steerHolder(roles *promptRoles, chatID marotte.ChatID, turn string) SteerHolder {
@@ -142,10 +162,10 @@ func steerHolder(roles *promptRoles, chatID marotte.ChatID, turn string) SteerHo
 }
 
 // SteerInto routes one steer row into t's buffer under the holder h and sends what the record
-// answers. The caller holds t's steer lock. refuse is the record's refusal class; err is the
-// failed send carrying key.
-func SteerInto(ctx context.Context, t SteerTarget, h SteerHolder, key, text string) (refuse string, err error) {
-	sends, refuse := t.Queue.RouteSteer(t.Key, key, text, h)
+// answers; from is who sent it (SteerQueue.RouteSteer). The caller holds t's steer lock. refuse is
+// the record's refusal class; err is the failed send carrying key.
+func SteerInto(ctx context.Context, t SteerTarget, h SteerHolder, key, text string, from *marotte.Caller) (refuse string, err error) {
+	sends, refuse := t.Queue.RouteSteer(t.Key, key, text, from, h)
 	if refuse != "" {
 		return refuse, nil
 	}
@@ -243,7 +263,10 @@ func cmdSteerClear(ctx context.Context, roles *promptRoles, cmd *marotte.ClientC
 // holds; it runs only when a clear was issued.
 func ClearSteersIn(ctx context.Context, t SteerTarget, endOp func(opID string)) ([]string, error) {
 	opID := ids.NewMessageID()
-	needsClear := t.Queue.BeginDiscard(t.Key, opID)
+	needsClear, refuse := t.Queue.BeginDiscard(t.Key, opID)
+	if refuse != "" {
+		return nil, steerRefusal(refuse)
+	}
 	cleared := []string{}
 	if needsClear {
 		rpcCtx, cancel := context.WithTimeout(durable.Context(ctx), steerRemoveBudget)

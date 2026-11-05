@@ -62,7 +62,7 @@ vi.mock("./search-popup.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   ...(await import("./__test-helpers__/git-prs-tab-harness.js")).mocks.searchPopup(),
 }));
-vi.mock("@cplieger/ui-primitives/dialog", async (importOriginal) => ({
+vi.mock("@cplieger/ui/dialog", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   ...(await import("./__test-helpers__/git-prs-tab-harness.js")).mocks.dialog(),
 }));
@@ -404,6 +404,33 @@ describe("the pull-request row's action state", () => {
     // No row fails its checks, so no Re-run waits on the capability.
     const { readCapabilities } = await actions();
     expect(vi.mocked(readCapabilities.dispatch)).not.toHaveBeenCalled();
+  });
+
+  it("offers Merge on a GitHub row once a read fills the merge state its list leaves out", async () => {
+    const fill = (reason: string): Record<string, unknown> => ({
+      fill: [
+        { field: "mergeable", reason },
+        { field: "merge_blocked", reason },
+      ],
+    });
+    await shown([
+      pr(7, 0, fill("not_on_list"), { merge_blocked: "unknown", mergeable: "unknown" }),
+    ]);
+
+    expect(buttonOf(row(7), "Merge")?.disabled).toBe(true);
+    expect(noteOf(row(7), "merge")).toBe(
+      "Cannot merge yet: this forge's list does not say whether it can merge. It is read while this list is shown.",
+    );
+
+    frame(
+      entry(githubForge, "2", [
+        pr(7, 0, fill("filled"), { merge_blocked: "none", mergeable: "yes" }),
+      ]),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(buttonOf(row(7), "Merge")?.disabled).toBe(false);
+    expect(row(7)?.querySelector(".git-pr-row-note")).toBeNull();
   });
 
   it("renders a neutral verdict and a queued row's position", async () => {

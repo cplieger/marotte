@@ -18,7 +18,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
 )
@@ -237,10 +237,10 @@ func TestInventoryRoute_StampsEachEntryWithItsVersion(t *testing.T) {
 		t.Fatalf("GET %s = %d %s (decode: %v), want 200", inventoryPath, rec.Code, rec.Body, err)
 	}
 
-	stamp := func(id, version string) *marotte.SubjectStamp {
-		return &marotte.SubjectStamp{Kind: string(subject.KindForgeInventory), Ref: id, Version: version, Epoch: "epoch-1"}
+	stamp := func(id, version string) marotte.SubjectStamp {
+		return marotte.SubjectStamp{Kind: string(subject.KindForgeInventory), Ref: id, Version: version, Epoch: "epoch-1"}
 	}
-	want := []*marotte.SubjectStamp{stamp(gh.ID, "1"), stamp(gl.ID, subject.Unminted)}
+	want := []marotte.SubjectStamp{stamp(gh.ID, "1"), stamp(gl.ID, subject.Unminted)}
 	if !reflect.DeepEqual(body.Subject, want) || len(body.Entries) != 2 || body.Entries[1].State != inventoryLoading {
 		t.Errorf("GET %s stamps %s over %d entries, want one per entry in their order, %s, "+
 			"the loading one at the version the cycle that fills it moves", inventoryPath, stampsOf(body.Subject), len(body.Entries),
@@ -248,14 +248,10 @@ func TestInventoryRoute_StampsEachEntryWithItsVersion(t *testing.T) {
 	}
 }
 
-func stampsOf(stamps []*marotte.SubjectStamp) string {
+func stampsOf(stamps []marotte.SubjectStamp) string {
 	out := make([]string, 0, len(stamps))
 	for _, s := range stamps {
-		if s == nil {
-			out = append(out, "nil")
-			continue
-		}
-		out = append(out, fmt.Sprintf("%+v", *s))
+		out = append(out, fmt.Sprintf("%+v", s))
 	}
 	return "[" + strings.Join(out, " ") + "]"
 }

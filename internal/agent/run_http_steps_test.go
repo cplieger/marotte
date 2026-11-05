@@ -45,7 +45,7 @@ func stepRouteHub(t *testing.T, tc stepRouteCase) (*Runtime, *fakeBridge, *http.
 	rootID, stepID := tc.NodePath[0], tc.NodePath[1]
 	h, _, br := newTestHub()
 	h.runs.log = newRunLog(t.TempDir())
-	h.bridge.mgr.insert(runChatID(tc.WorkflowID), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(tc.WorkflowID), testBridge(br, bridgeIdle))
 	br.setCallResult(methodKiroWorkflowInspect,
 		stepTreeInspect(t, tc.WorkflowID, marotte.RunStatusRunning, marotte.RunNodeStatusRunning, rootID, stepID, "sess_step"))
 	br.setCallResult(marotte.MethodSessionSteer, json.RawMessage(`{"queued":true}`))
@@ -55,6 +55,7 @@ func stepRouteHub(t *testing.T, tc stepRouteCase) (*Runtime, *fakeBridge, *http.
 	return h, br, mux
 }
 
+// postStep posts body as marotte's page does, so the words it sends are the user's.
 func postStep(t *testing.T, mux *http.ServeMux, target string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	var reader *bytes.Reader
@@ -67,8 +68,10 @@ func postStep(t *testing.T, mux *http.ServeMux, target string, body any) *httpte
 		}
 		reader = bytes.NewReader(raw)
 	}
+	req := httptest.NewRequest(http.MethodPost, target, reader)
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, target, reader))
+	mux.ServeHTTP(rec, req)
 	return rec
 }
 
@@ -81,7 +84,7 @@ func releaseSteerClear(t *testing.T, h *Runtime, br *fakeBridge, workflowID stri
 		t.Fatalf("Setup: marshalling the clear reply: %v", err)
 	}
 	br.setCallResult(marotte.MethodSessionSteerClear, raw)
-	gen := h.coord.turns.attachForward(runChatID(workflowID)).gen
+	gen := h.coord.turns.attachForwardNow(runChatID(workflowID)).gen
 	br.mu.Lock()
 	br.deliveredSeq = seq
 	br.mu.Unlock()

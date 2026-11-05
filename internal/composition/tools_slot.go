@@ -6,9 +6,11 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/steering"
 	"github.com/cplieger/toolbelt/v3"
 )
 
@@ -50,7 +52,8 @@ func (s *toolsSlot) startLocked() error {
 		return nil
 	}
 	engine, err := s.build()
-	if err != nil && !errors.Is(err, toolbelt.ErrRootIntegrity) && manifestProblem(s.manifest) == nil {
+	if err != nil && !errors.Is(err, toolbelt.ErrRootIntegrity) && !errors.Is(err, errToolsDirUnusable) &&
+		manifestProblem(s.manifest) == nil {
 		// survivableToolsFailure attributes a failure by reading the file again, so a repair landing
 		// between the two reads would turn a manifest refusal fatal: the now-valid file gets one more try.
 		engine, err = s.build()
@@ -83,6 +86,35 @@ func (s *toolsSlot) Engine() (*toolbelt.Engine, error) {
 	default:
 		return nil, errToolsNotStarted
 	}
+}
+
+// installedTools is the steering generator's tools snapshot: ok false while the engine is down or
+// its inventory fails.
+func (s *toolsSlot) installedTools() ([]steering.InstalledTool, bool) {
+	engine, err := s.Engine()
+	if err != nil {
+		return nil, false
+	}
+	inv, err := engine.Inventory()
+	if err != nil {
+		return nil, false
+	}
+	return installedRows(inv), true
+}
+
+// installedRows keeps the rows the live probe reports installed. A disabled row is left out: its
+// Installed means only that the engine still owns files the next reconcile removes.
+func installedRows(inv *toolbelt.Inventory) []steering.InstalledTool {
+	var out []steering.InstalledTool
+	for i := range inv.Tools {
+		t := &inv.Tools[i]
+		if !t.Installed || t.Disabled {
+			continue
+		}
+		kind, _, _ := strings.Cut(t.Source, ":")
+		out = append(out, steering.InstalledTool{Name: t.Name, Kind: kind, Version: t.InstalledVersion})
+	}
+	return out
 }
 
 // manifestChanged converges on the tools.json now on disk: a file toolbelt would refuse takes the
@@ -131,8 +163,14 @@ func (s *toolsSlot) Close() {
 
 // survivableToolsFailure returns the reader-facing reason for a toolbelt.New failure marotte
 // runs on without tools, having logged it, or nil when the boot must stop. An unfit root and an
-// unusable tools.json are both volume state the operator repairs from inside the container.
+// unusable tools.json are both volume state the operator repairs from inside the container; an
+// unusable tools dir is a setting the operator changes.
 func survivableToolsFailure(err error, manifest string) error {
+	if errors.Is(err, errToolsDirUnusable) {
+		slog.Error("tools engine disabled: marotte is running without the tools subsystem",
+			"error", logsafe.Field(err.Error()))
+		return err
+	}
 	if errors.Is(err, toolbelt.ErrRootIntegrity) {
 		logRootIntegrityRefusal(err)
 		return errToolsRootUnfit

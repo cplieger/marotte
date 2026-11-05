@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,6 +34,8 @@ type surfaceDeps struct {
 	// closedReason, when set, is the reason AwaitTurn reports the turn closed with:
 	// the engine's turn_end winning the close.
 	closedReason string
+	// closedEngineErrorType, when set, is the class of the display_error AwaitTurn reports latched on the turn.
+	closedEngineErrorType string
 	// startRefused makes StartTurn answer false, the cancelled-during-open path.
 	startRefused bool
 	// callErr, when set, fails the prompt Call itself.
@@ -70,8 +73,12 @@ func (d *surfaceDeps) AbandonInFlightTurn(_ context.Context, _ marotte.ChatID, t
 }
 
 func (d *surfaceDeps) AwaitTurn(ctx context.Context, chatID marotte.ChatID, turnID string) (marotte.TurnResult, error) {
-	if d.closedReason != "" {
-		return marotte.TurnResult{Turn: turnID, Reason: d.closedReason}, nil
+	if d.closedReason != "" || d.closedEngineErrorType != "" {
+		return marotte.TurnResult{Turn: turnID, Reason: d.closedReason, EngineErrorType: d.closedEngineErrorType}, nil
+	}
+	if d.startRefused {
+		// A live turn StartTurn refuses was taken by another closer, which the registry retains.
+		return marotte.TurnResult{Turn: turnID, Stop: marotte.StopReasonInterrupted}, nil
 	}
 	return d.benchDeps.AwaitTurn(ctx, chatID, turnID)
 }
@@ -89,11 +96,9 @@ func (d *surfaceDeps) StartTurn(context.Context, TurnRef, context.CancelCauseFun
 	return !d.startRefused
 }
 
-func (*surfaceDeps) ReserveTurnForPrompt(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
+func (*surfaceDeps) reservePromptOld(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
 	return AdmissionAcquired
 }
-
-func (*surfaceDeps) TryReserveTurn(marotte.ChatID, marotte.TurnOpenSource) bool { return true }
 
 // onlyError fails when the run produced other than one error frame: a second frame
 // would mean two surfaces claiming one failure, which is what this file is about.
@@ -157,6 +162,164 @@ func TestReportPromptFailure_BroadcastsTheClosedReason(t *testing.T) {
 	}
 }
 
+// With a model pinned on the session, KAS asks for the token inside the execution: the
+// turn's display_error names the auth class and the prompt reply is a bare -32000 with
+// no data. The replies below are the probe's, on kiro-cli 2.37.0 and 2.32.0.
+func TestReportPromptFailure_AnEngineNamedAuthClassRoutesToSignIn(t *testing.T) {
+	const refusal = "Auth refresh callback failed: Not signed in to Kiro in marotte. Sign in from the account menu.: unauthenticated"
+	reply237 := &marotte.RPCError{Code: -32000, Message: "Authentication token is invalid: " + refusal}
+	reply232 := &marotte.RPCError{Code: -32000, Message: refusal}
+	cases := map[string]struct {
+		callErr     error
+		engineClass string
+		wantCode    marotte.ErrorCode
+		wantLatched bool
+	}{
+		"kiro-cli 2.37.0 credential absent": {
+			callErr: reply237, engineClass: "CredentialAbsentError",
+			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantLatched: true,
+		},
+		"kiro-cli 2.32.0 token expired": {
+			callErr: reply232, engineClass: "TokenExpiredError",
+			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantLatched: true,
+		},
+		"a throttle the turn named": {
+			callErr: reply237, engineClass: "ModelThrottleError",
+			wantCode: marotte.ErrCodePromptFailed, wantLatched: false,
+		},
+		"no class on the turn": {
+			callErr:  reply237,
+			wantCode: marotte.ErrCodePromptFailed, wantLatched: false,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			deps := newSurfaceDeps()
+			deps.closedEngineErrorType = tc.engineClass
+			readiness := new(AuthReadiness)
+			roles := promptRolesOf(deps)
+			roles.auth = readiness
+
+			reportPromptFailure(t.Context(), roles, "c1", "t-7", tc.callErr, 3, time.Second, false)
+
+			if got := deps.onlyError(t).Code; got != tc.wantCode {
+				t.Errorf("error code = %q, want %q", got, tc.wantCode)
+			}
+			if got := readiness.Unavailable(); got != tc.wantLatched {
+				t.Errorf("AuthReadiness.Unavailable() = %v, want %v", got, tc.wantLatched)
+			}
+		})
+	}
+}
+
+// providerReach answers ProviderUnreachable with its reason, down when it is non-empty.
+type providerReach string
+
+func (p providerReach) ProviderUnreachable() (string, bool) { return string(p), p != "" }
+
+// The unreachable refusal internal/signin/kiro words for KAS, which KAS still grades unauthenticated.
+const vaultUnreachable = "marotte could not reach the identity provider to renew the Kiro sign-in; it will try again."
+
+// unreachableCase is one failure graded while the vault does or does not hold the provider unreachable.
+type unreachableCase struct {
+	callErr     error
+	engineClass string
+	reach       providerReach
+	wantCode    marotte.ErrorCode
+	// wantVault: the frame carries the vault's reason off the card, else the card's own reason.
+	wantVault   bool
+	wantLatched bool
+}
+
+// unreachableCases are both auth shapes KAS reports, on the execution path and the catalog path, with the
+// controls that keep the vault's reason to them. failed is the path's non-auth code.
+func unreachableCases(failed marotte.ErrorCode) map[string]unreachableCase {
+	execReply := &marotte.RPCError{Code: -32000, Message: "Authentication token is invalid: Auth refresh callback failed: " + vaultUnreachable + ": transport"}
+	mapped := &marotte.RPCError{Code: -32603, Message: "Internal error", Data: []byte(`{"errorType":"ModelRegistryUnauthenticatedError"}`)}
+	return map[string]unreachableCase{
+		"the turn names a credential class while the provider is down": {
+			callErr: execReply, engineClass: "CredentialAbsentError", reach: vaultUnreachable,
+			wantCode: failed, wantVault: true,
+		},
+		"a mapped auth envelope while the provider is down": {
+			callErr: mapped, reach: vaultUnreachable,
+			wantCode: failed, wantVault: true,
+		},
+		"the turn names a credential class while the provider answers": {
+			callErr: execReply, engineClass: "CredentialAbsentError",
+			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantLatched: true,
+		},
+		"a throttle while the provider is down": {
+			callErr: execReply, engineClass: "ModelThrottleError", reach: vaultUnreachable,
+			wantCode: failed,
+		},
+	}
+}
+
+func checkUnreachableFrame(t *testing.T, got marotte.ErrorPayload, tc unreachableCase, cardReason string, latched bool) {
+	t.Helper()
+	if got.Code != tc.wantCode {
+		t.Errorf("error code = %q, want %q", got.Code, tc.wantCode)
+	}
+	wantMsg := cardReason
+	if tc.wantVault {
+		wantMsg = vaultUnreachable
+	}
+	if !strings.HasSuffix(got.Message, wantMsg) {
+		t.Errorf("Message = %q, want it to end with %q", got.Message, wantMsg)
+	}
+	if got.TurnScoped == tc.wantVault {
+		t.Errorf("TurnScoped = %v, want %v: the card carries KAS's sentence, not the vault's reason", got.TurnScoped, !tc.wantVault)
+	}
+	if latched != tc.wantLatched {
+		t.Errorf("AuthReadiness.Unavailable() = %v, want %v", latched, tc.wantLatched)
+	}
+}
+
+// KAS grades a credential ask the vault refused as unreachable as unauthenticated, but no sign-in fixes an outage
+// of the identity provider, so the vault's reason replaces the Sign in route and health stays signed in.
+func TestReportPromptFailure_AnUnreachableProviderIsNotASignInFailure(t *testing.T) {
+	const card = "Authentication failed. Please sign in again."
+	for name, tc := range unreachableCases(marotte.ErrCodePromptFailed) {
+		t.Run(name, func(t *testing.T) {
+			deps := newSurfaceDeps()
+			deps.closedReason = card
+			deps.closedEngineErrorType = tc.engineClass
+			readiness := new(AuthReadiness)
+			roles := promptRolesOf(deps)
+			roles.auth, roles.signIn = readiness, tc.reach
+
+			reportPromptFailure(t.Context(), roles, "c1", "t-7", tc.callErr, 3, time.Second, false)
+
+			checkUnreachableFrame(t, deps.onlyError(t), tc, card, readiness.Unavailable())
+		})
+	}
+}
+
+// The empty-turn retry grades an unreachable provider as its first attempt does.
+func TestRetryEmptyTurnPrompt_AnUnreachableProviderIsNotASignInFailure(t *testing.T) {
+	const card = "Authentication failed. Please sign in again."
+	for name, tc := range unreachableCases(marotte.ErrCodeRecoveryFailed) {
+		t.Run(name, func(t *testing.T) {
+			deps := newSurfaceDeps()
+			deps.callErr = tc.callErr
+			deps.closedReason = card
+			deps.closedEngineErrorType = tc.engineClass
+			readiness := new(AuthReadiness)
+			roles := promptRolesOf(deps)
+			roles.auth, roles.signIn = readiness, tc.reach
+
+			retryEmptyTurnPrompt(t.Context(), roles, testReservation("c1", true), "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
+
+			got := deps.onlyError(t)
+			if !strings.HasPrefix(got.Message, "Retry prompt failed: ") {
+				t.Errorf("Message = %q, want the retry's prefix", got.Message)
+			}
+			checkUnreachableFrame(t, got, tc, card, readiness.Unavailable())
+		})
+	}
+}
+
 // TurnScoped follows the turn, not the code: a pre-call exit that closes the
 // prompt's turn through closeBeforeStart stamps its reason on that turn_close and
 // reads TurnScoped, and the one exit that closes no turn leaves it false, because
@@ -177,7 +340,7 @@ func TestPromptFailure_PreCallEmittersReadTurnScopedWhenTheyCloseATurn(t *testin
 			want:    marotte.ErrCodeBridgeStartFailed,
 			arrange: func(d *surfaceDeps) { d.spawnErr = errors.New("no such binary") },
 			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
-				runPromptTurn(ctx, func() {}, roles, "c1", benchTurnID, p)
+				runPromptTurn(ctx, func() {}, roles, testReservation("c1", true), benchTurnID, p)
 			},
 			turnScoped: true,
 		},
@@ -186,7 +349,7 @@ func TestPromptFailure_PreCallEmittersReadTurnScopedWhenTheyCloseATurn(t *testin
 			want:    marotte.ErrCodePromptFailed,
 			arrange: func(d *surfaceDeps) { d.slotHeld = true },
 			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
-				runPromptTurn(ctx, func() {}, roles, "c1", benchTurnID, p)
+				runPromptTurn(ctx, func() {}, roles, testReservation("c1", true), benchTurnID, p)
 			},
 			turnScoped: true,
 		},
@@ -195,7 +358,7 @@ func TestPromptFailure_PreCallEmittersReadTurnScopedWhenTheyCloseATurn(t *testin
 			want:    marotte.ErrCodePromptFailed,
 			arrange: func(d *surfaceDeps) { d.startRefused = true },
 			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
-				runPromptTurn(ctx, func() {}, roles, "c1", benchTurnID, p)
+				runPromptTurn(ctx, func() {}, roles, testReservation("c1", true), benchTurnID, p)
 			},
 			turnScoped: true,
 		},
@@ -204,7 +367,7 @@ func TestPromptFailure_PreCallEmittersReadTurnScopedWhenTheyCloseATurn(t *testin
 			want:    marotte.ErrCodeRecoveryFailed,
 			arrange: func(d *surfaceDeps) { d.spawnErr = errors.New("no such binary") },
 			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
-				retryEmptyTurnPrompt(ctx, roles, "c1", "t-empty", p, map[string]any{})
+				retryEmptyTurnPrompt(ctx, roles, testReservation("c1", true), "t-empty", p, map[string]any{})
 			},
 		},
 	}
@@ -238,7 +401,7 @@ func TestRetryEmptyTurnPrompt_MarksTheRetryFailureTurnScoped(t *testing.T) {
 	deps.callErr = errors.New("connection reset")
 	roles := promptRolesOf(deps)
 
-	retryEmptyTurnPrompt(t.Context(), roles, "c1", "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
+	retryEmptyTurnPrompt(t.Context(), roles, testReservation("c1", true), "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
 
 	got := deps.onlyError(t)
 	if got.Code != marotte.ErrCodeRecoveryFailed {
@@ -247,6 +410,54 @@ func TestRetryEmptyTurnPrompt_MarksTheRetryFailureTurnScoped(t *testing.T) {
 	if !got.TurnScoped {
 		t.Error("TurnScoped = false, want true: the retry was a turn of its own and the " +
 			"abandon stamped this reason on it")
+	}
+}
+
+// A retry refused for sign-in has the first attempt's remedy: the Sign in route and
+// health's sign-in required. The reply is the probe's kiro-cli 2.37.0 execution-path one.
+func TestRetryEmptyTurnPrompt_AnAuthFailureRoutesToSignIn(t *testing.T) {
+	reply := &marotte.RPCError{Code: -32000, Message: "Authentication token is invalid: Auth refresh callback failed: Not signed in to Kiro in marotte. Sign in from the account menu.: unauthenticated"}
+	cases := map[string]struct {
+		callErr     error
+		engineClass string
+		wantCode    marotte.ErrorCode
+		wantLatched bool
+	}{
+		"the turn names a credential class": {
+			callErr: reply, engineClass: "CredentialAbsentError",
+			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantLatched: true,
+		},
+		"the reply is a mapped auth envelope": {
+			callErr:  &marotte.RPCError{Code: -32603, Message: "Internal error", Data: []byte(`{"errorType":"ModelRegistryUnauthenticatedError"}`)},
+			wantCode: marotte.ErrCodeAuthTokenUnavailable, wantLatched: true,
+		},
+		"the turn names a throttle": {
+			callErr: reply, engineClass: "ModelThrottleError",
+			wantCode: marotte.ErrCodeRecoveryFailed, wantLatched: false,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			deps := newSurfaceDeps()
+			deps.callErr = tc.callErr
+			deps.closedEngineErrorType = tc.engineClass
+			readiness := new(AuthReadiness)
+			roles := promptRolesOf(deps)
+			roles.auth = readiness
+
+			retryEmptyTurnPrompt(t.Context(), roles, testReservation("c1", true), "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
+
+			got := deps.onlyError(t)
+			if got.Code != tc.wantCode {
+				t.Errorf("error code = %q, want %q", got.Code, tc.wantCode)
+			}
+			if !got.TurnScoped {
+				t.Error("TurnScoped = false, want true: the retry's turn carries the reason")
+			}
+			if latched := readiness.Unavailable(); latched != tc.wantLatched {
+				t.Errorf("AuthReadiness.Unavailable() = %v, want %v", latched, tc.wantLatched)
+			}
+		})
 	}
 }
 
@@ -261,7 +472,7 @@ func TestRetryEmptyTurnPrompt_WithholdsTheFrameOnAnUnackedCancel(t *testing.T) {
 	defer cancel(nil)
 	cancel(ErrCancelGraceExpired)
 
-	retryEmptyTurnPrompt(ctx, roles, "c1", "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
+	retryEmptyTurnPrompt(ctx, roles, testReservation("c1", true), "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
 
 	deps.mu.Lock()
 	frames := deps.errors
@@ -279,7 +490,7 @@ func TestRetryEmptyTurnPrompt_ReopenFailureNamesTheCause(t *testing.T) {
 	deps := newSurfaceDeps()
 	deps.spawnErr = errors.New("no such binary")
 
-	retryEmptyTurnPrompt(t.Context(), promptRolesOf(deps), "c1", "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
+	retryEmptyTurnPrompt(t.Context(), promptRolesOf(deps), testReservation("c1", true), "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
 
 	frame := deps.onlyError(t)
 	if !strings.Contains(frame.Message, "Session refresh failed") || !strings.Contains(frame.Message, "no such binary") {
@@ -314,7 +525,7 @@ func TestPromptExits_CloseTheTurnThroughTheTurnEndRule(t *testing.T) {
 			name:    "the bridge could not be opened",
 			arrange: func(d *surfaceDeps) { d.spawnErr = errors.New("no such binary") },
 			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
-				runPromptTurn(ctx, func() {}, roles, "c1", benchTurnID, p)
+				runPromptTurn(ctx, func() {}, roles, testReservation("c1", true), benchTurnID, p)
 			},
 			want:  "no such binary",
 			stop:  marotte.StopReasonInterrupted,
@@ -324,7 +535,7 @@ func TestPromptExits_CloseTheTurnThroughTheTurnEndRule(t *testing.T) {
 			name:    "the bridge slot was held despite the reservation",
 			arrange: func(d *surfaceDeps) { d.slotHeld = true },
 			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
-				runPromptTurn(ctx, func() {}, roles, "c1", benchTurnID, p)
+				runPromptTurn(ctx, func() {}, roles, testReservation("c1", true), benchTurnID, p)
 			},
 			want:  "The prompt could not start",
 			stop:  marotte.StopReasonInterrupted,
@@ -334,7 +545,7 @@ func TestPromptExits_CloseTheTurnThroughTheTurnEndRule(t *testing.T) {
 			name:    "the turn was cancelled before it started",
 			arrange: func(d *surfaceDeps) { d.startRefused = true },
 			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
-				runPromptTurn(ctx, func() {}, roles, "c1", benchTurnID, p)
+				runPromptTurn(ctx, func() {}, roles, testReservation("c1", true), benchTurnID, p)
 			},
 			want:  "cancelled before the agent answered",
 			stop:  marotte.StopReasonInterrupted,
@@ -344,7 +555,7 @@ func TestPromptExits_CloseTheTurnThroughTheTurnEndRule(t *testing.T) {
 			name:    "the empty-turn retry's own turn never started",
 			arrange: func(d *surfaceDeps) { d.startRefused = true },
 			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
-				retryEmptyTurnPrompt(ctx, roles, "c1", "t-empty", p, map[string]any{})
+				retryEmptyTurnPrompt(ctx, roles, testReservation("c1", true), "t-empty", p, map[string]any{})
 			},
 			want: "cancelled before the agent answered",
 			stop: marotte.StopReasonInterrupted,
@@ -356,7 +567,7 @@ func TestPromptExits_CloseTheTurnThroughTheTurnEndRule(t *testing.T) {
 				ctx, cancel := context.WithCancelCause(ctx)
 				defer cancel(nil)
 				cancel(ErrCancelGraceExpired)
-				runPromptTurn(ctx, func() {}, roles, "c1", benchTurnID, p)
+				runPromptTurn(ctx, func() {}, roles, testReservation("c1", true), benchTurnID, p)
 			},
 			stop: marotte.StopReasonCancelled,
 		},
@@ -433,7 +644,7 @@ func TestReportPromptFailure_EngineExitIsNotAPromptFailure(t *testing.T) {
 			name: "the empty-turn retry's failure",
 			run: func(ctx context.Context, roles *promptRoles, d *surfaceDeps) {
 				d.callErr = exited
-				retryEmptyTurnPrompt(ctx, roles, "c1", "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
+				retryEmptyTurnPrompt(ctx, roles, testReservation("c1", true), "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
 			},
 			wantCode: marotte.ErrCodeRecoveryFailed,
 		},
@@ -483,5 +694,79 @@ func TestReportPromptFailure_OtherFailuresStillCountAsPromptFailed(t *testing.T)
 				t.Errorf("logged %q, want no engine-exit line for a failure the engine's exit did not cause", warns)
 			}
 		})
+	}
+}
+
+func (r *surfaceDeps) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration, _ uint64, _ string) (AdmissionOutcome, Reservation) {
+	out := r.reservePromptOld(ctx, chatID, wait)
+	return out, testReservation(chatID, out == AdmissionAcquired)
+}
+
+func (r *surfaceDeps) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+	return r.OpenBridge(ctx, chatID, model)
+}
+
+// A prompt the chat's close ended (its door refused, its lease cut, or its turn already forgotten) is the close's
+// casualty, not a failure: it sends no bridge_start_failed, recovery_failed or prompt_failed frame, logs no failure,
+// and a turn it closes is cancelled with no reason.
+func TestPromptFailure_AClosedChatsPromptSendsNoFailureFrame(t *testing.T) {
+	ends := map[string]error{
+		"the close during the call": fmt.Errorf("prompt: %w", marotte.ErrChatClosedDuringCall),
+		"a forgotten turn":          marotte.ErrNoSuchTurn,
+	}
+	paths := map[string]struct {
+		arrange func(d *surfaceDeps, end error)
+		run     func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand)
+	}{
+		"the prompt's session open": {
+			arrange: func(d *surfaceDeps, end error) { d.spawnErr = end },
+			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
+				runPromptTurn(ctx, func() {}, roles, testReservation("c1", true), benchTurnID, p)
+			},
+		},
+		"the prompt's call": {
+			arrange: func(d *surfaceDeps, end error) { d.callErr = end },
+			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
+				runPromptTurn(ctx, func() {}, roles, testReservation("c1", true), benchTurnID, p)
+			},
+		},
+		"the empty-turn retry's reload": {
+			arrange: func(d *surfaceDeps, end error) { d.spawnErr = end },
+			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
+				retryEmptyTurnPrompt(ctx, roles, testReservation("c1", true), "t-empty", p, map[string]any{})
+			},
+		},
+		"the empty-turn retry's call": {
+			arrange: func(d *surfaceDeps, end error) { d.callErr = end },
+			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
+				retryEmptyTurnPrompt(ctx, roles, testReservation("c1", true), "t-empty", p, map[string]any{})
+			},
+		},
+	}
+	for endName, end := range ends {
+		for pathName, path := range paths {
+			t.Run(endName+" at "+pathName, func(t *testing.T) {
+				logs := captureLogs(t)
+				deps := newSurfaceDeps()
+				path.arrange(deps, end)
+				path.run(t.Context(), promptRolesOf(deps), &marotte.PromptCommand{Text: "hi", MessageID: "m1"})
+
+				deps.mu.Lock()
+				defer deps.mu.Unlock()
+				if len(deps.errors) != 0 {
+					t.Errorf("broadcast %+v, want no error frame for a prompt the chat's close ended", deps.errors)
+				}
+				for _, failed := range [][]string{logLines(logs, "prompt failed"), logLines(logs, "prompt failure"), logLines(logs, "level=ERROR")} {
+					if len(failed) != 0 {
+						t.Errorf("logged %q, want no failure line for the close's casualty", failed)
+					}
+				}
+				for _, a := range deps.abandoned {
+					if a.stop != marotte.StopReasonCancelled || a.reason != "" {
+						t.Errorf("turn %s closed %q with reason %q, want cancelled with no reason", a.turn, a.stop, a.reason)
+					}
+				}
+			})
+		}
 	}
 }

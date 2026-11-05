@@ -1,4 +1,5 @@
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
+import { formatClock, formatShortDate } from "./locale-time.js";
 
 export const FB_ROW = "fb-row";
 /** A row mounted past the `FB_ENTER_ROWS`th row a render pass mounts carries this and skips the entry animation (19-files.css). */
@@ -76,12 +77,7 @@ export function formatSize(bytes: number): string {
 }
 
 export function formatDate(ms: number): string {
-  const d = new Date(ms);
-  return (
-    d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) +
-    " " +
-    d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
-  );
+  return `${formatShortDate(ms, { year: true })} ${formatClock(ms)}`;
 }
 
 /** The root listing: the synthetic list of granted mounts `/api/files` answers for "/". Every child path composes from it. */
@@ -100,7 +96,7 @@ export function parentPath(p: string): string {
 }
 
 /**
- * The one door into the path space for an outside path (persisted `fb_path`, a `/files/<path>` deep link, typed
+ * The one door into the path space for an outside path (a persisted tab ref, a `/files/<path>` deep link, typed
  * text), so `currentPath` is absolute by construction.
  */
 export function normalizeDirPath(raw: string): string {

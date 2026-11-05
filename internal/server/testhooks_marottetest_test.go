@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/sse"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/push"
-	"github.com/cplieger/sse"
 )
 
 // probeEngine is a fakeEngine that also answers the SSE probe, so the hooks mount.

@@ -96,6 +96,7 @@ func mergeReply(s mergeStatus) map[string]any {
 // admitMerge hands key's claim to the background half once the summary turn is admitted.
 func admitMerge(ctx context.Context, tangents TangentAccess, merges *tangentMerges, key mergeKey) (marotte.ChatID, string, error) {
 	roles := merges.roles
+	stamp := roles.admission.LifeStamp()
 	tangent, ok := roles.chats.Get(ctx, key.tangent)
 	if !ok {
 		return "", "", StatusError(http.StatusNotFound, ErrChatNotFound)
@@ -112,12 +113,13 @@ func admitMerge(ctx context.Context, tangents TangentAccess, merges *tangentMerg
 	}
 	// Like the TUI, a busy tangent is refused rather than queued: the summary must be the
 	// next answer.
-	if !roles.admission.TryReserveTurn(key.tangent, marotte.TurnSourcePrompt) {
+	out, res := roles.admission.ReserveTurn(ctx, key.tangent, marotte.TurnSourcePrompt, stamp, AdmissionWait)
+	if out != IdleAcquired {
 		return "", "", StatusErrorReason(http.StatusConflict, reasonBusy, errMergeTangentBusy)
 	}
 	deliveryID := ids.NewMessageID()
 	if admitErr := merges.admit(ctx, key, parent, deliveryID); admitErr != nil {
-		roles.admission.ReleaseTurnReservation(key.tangent)
+		roles.admission.ReleaseTurnReservation(res)
 		slog.Error("tangent merge: the merge could not be recorded", "chat_id", key.tangent, keyError, admitErr)
 		return "", "", StatusError(http.StatusInternalServerError, admitErr)
 	}
@@ -125,7 +127,7 @@ func admitMerge(ctx context.Context, tangents TangentAccess, merges *tangentMerg
 	// would find nothing in flight while the merge is still owed.
 	roles.lifecycle.InflightAdd(1)
 	p := &marotte.PromptCommand{Text: tangentSummaryPrompt, MessageID: ids.NewMessageID(), DisplayText: tangentSummaryLabel, ForAgent: true}
-	turnID, err := startPrompt(ctx, roles, key.tangent, p, launch{awaited: true})
+	turnID, err := startPrompt(ctx, roles, key.tangent, p, &launch{res: res, awaited: true})
 	if err != nil {
 		roles.lifecycle.InflightDone()
 		if aErr := merges.abandon(ctx, key); aErr != nil {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -49,8 +49,8 @@ func TestStoreCap_OverCapRefusalLeavesTheLogIntact(t *testing.T) {
 	before := beforePage.Entries
 
 	err = appendText(t, s, turn, "say-2", strings.Repeat("y", 4<<10))
-	if !errors.Is(err, atomicfile.ErrFileTooLarge) {
-		t.Fatalf("Append over the cap = %v, want atomicfile.ErrFileTooLarge", err)
+	if !errors.Is(err, filesafe.ErrFileTooLarge) {
+		t.Fatalf("Append over the cap = %v, want filesafe.ErrFileTooLarge", err)
 	}
 	afterPage, err := s.TurnPage(t.Context(), "c1", turn, 0)
 	if err != nil {
@@ -69,7 +69,7 @@ func logSize(t *testing.T, s *Store) int64 {
 	if err != nil {
 		t.Fatalf("pathFor: %v", err)
 	}
-	info, err := os.Stat(filepath.Join(dir, entriesFileName))
+	info, err := os.Stat(filepath.Join(dir, EntriesFileName))
 	if err != nil {
 		t.Fatalf("stat the log: %v", err)
 	}

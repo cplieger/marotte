@@ -141,11 +141,11 @@ func TestImport_MultiServerBlockInstallsEveryEntry(t *testing.T) {
 	if byName["github"].Transport != TransportStdio {
 		t.Errorf("github transport = %q", byName["github"].Transport)
 	}
-	if byName["linear"].Transport != TransportHTTP {
+	if byName["linear"].Transport != transportHTTP {
 		t.Errorf("linear transport = %q, want http (streamable-http normalised)",
 			byName["linear"].Transport)
 	}
-	if byName["legacyish"].Transport != TransportSSE {
+	if byName["legacyish"].Transport != transportSSE {
 		t.Errorf("legacyish transport = %q, want sse", byName["legacyish"].Transport)
 	}
 	if h := byName["linear"].Headers; len(h) != 1 || h[0].Name != "Authorization" {
@@ -617,7 +617,7 @@ func TestImport_UnchangedEntryDoesNotRewriteTheAgentsFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-stat kas file: %v", err)
 	}
-	// atomicfile renames a fresh inode into place, so a skipped write is visible
+	// filesafe renames a fresh inode into place, so a skipped write is visible
 	// as an unchanged mtime AND unchanged bytes.
 	if !after.ModTime().Equal(before.ModTime()) {
 		t.Errorf("kas file was rewritten for a no-op (mtime %v -> %v)",
@@ -651,15 +651,15 @@ func TestTranslate_TransportInference(t *testing.T) {
 		wantErr string
 	}{
 		{name: "command implies stdio", body: `{"command":"srv"}`, want: TransportStdio},
-		{name: "url implies http", body: `{"url":"https://x/mcp"}`, want: TransportHTTP},
+		{name: "url implies http", body: `{"url":"https://x/mcp"}`, want: transportHTTP},
 		{
 			name: "streamable-http normalises to http",
-			body: `{"type":"streamable-http","url":"https://x/mcp"}`, want: TransportHTTP,
+			body: `{"type":"streamable-http","url":"https://x/mcp"}`, want: transportHTTP,
 		},
-		{name: "sse stays sse", body: `{"type":"sse","url":"https://x/mcp"}`, want: TransportSSE},
+		{name: "sse stays sse", body: `{"type":"sse","url":"https://x/mcp"}`, want: transportSSE},
 		{
 			name: "unrecognised type falls through to http, as KAS negotiates",
-			body: `{"type":"streamableHttp","url":"https://x/mcp"}`, want: TransportHTTP,
+			body: `{"type":"streamableHttp","url":"https://x/mcp"}`, want: transportHTTP,
 		},
 		{
 			name:    "both is ambiguous",
@@ -1067,5 +1067,39 @@ func TestEditDistance(t *testing.T) {
 				t.Errorf("editDistance(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestImport_ConsumesVersionNegotiation(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	got := decodeImport(t, postImport(t, mux, `{
+	  "mcpServers": {"github": {"command":"npx","versionNegotiation":"legacy"}}
+	}`))
+
+	if len(got.Results) != 1 || got.Results[0].Outcome != importCreated {
+		t.Fatalf("results = %#v, want the server created", got.Results)
+	}
+	if joined := strings.Join(got.Notes, "\n"); strings.Contains(joined, "versionNegotiation") {
+		t.Errorf("notes = %q, want no ignored-key note for a field the record carries", joined)
+	}
+	stored := s.list(t.Context())
+	if len(stored) != 1 || stored[0].VersionNegotiation != versionNegotiationLegacy {
+		t.Errorf("stored = %+v, want version_negotiation legacy", stored)
+	}
+	if v := readKASServers(t, s.kasPath)["github"]["versionNegotiation"]; v != "legacy" {
+		t.Errorf("KAS file versionNegotiation = %v, want legacy", v)
+	}
+}
+
+func TestImport_UnknownVersionNegotiationIsRefusedNamingTheField(t *testing.T) {
+	s, mux := newRoutedStore(t)
+
+	rec := postImport(t, mux, `{"mcpServers": {"github": {"command":"npx","versionNegotiation":"pin"}}}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "version_negotiation") {
+		t.Errorf("import = %d %s, want 400 naming version_negotiation", rec.Code, rec.Body.String())
+	}
+	if n := len(s.list(t.Context())); n != 0 {
+		t.Errorf("stored = %d, want nothing installed", n)
 	}
 }

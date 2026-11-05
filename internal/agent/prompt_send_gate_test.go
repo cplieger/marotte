@@ -12,8 +12,9 @@ import (
 	"testing"
 	"testing/synctest"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // admitPromptBehindSteerLock opens c1's bridge and posts a prompt that is admitted and acknowledged while the steer
@@ -70,14 +71,14 @@ func turnSource(t *testing.T, entries []marotte.Entry, turn string) marotte.Turn
 type sendGateStep int
 
 const (
-	gateRelease   sendGateStep = iota // the prompt reaches its send
-	kasActive                         // focus_update activity.turnActive true
-	kasIdleReport                     // focus_update activity.turnActive false
-	kasTurnStart                      // turn_start
-	kasRevision                       // a content frame carrying agentInitiated
-	kasReply                          // a content frame's text, folded where the chat's frames go
-	kasTurnEnd                        // turn_end
-	promptClosed                      // a failure closer ends the waiting prompt's turn
+	gateRelease        sendGateStep = iota // the prompt reaches its send
+	kasActive                              // focus_update activity.turnActive true
+	kasIdleReport                          // focus_update activity.turnActive false
+	kasTurnStart                           // an untagged turn_start: a turn KAS started itself
+	kasPromptTurnStart                     // the turn_start echoing the waiting prompt's tag
+	kasReply                               // a content frame's text, folded where the chat's frames go
+	kasTurnEnd                             // turn_end
+	promptClosed                           // a failure closer ends the waiting prompt's turn
 )
 
 // apply delivers s; for kasReply it sets *folded to the turn the re-wake's text folded into.
@@ -91,11 +92,15 @@ func (s sendGateStep) apply(t *testing.T, h *Runtime, release func(), folded *st
 	case kasIdleReport:
 		h.coord.WireTurnActivity("c1", false)
 	case kasTurnStart:
-		h.coord.WireTurnStart(t.Context(), "c1")
-	case kasRevision:
-		h.coord.ReviseTurnBinding(t.Context(), "c1")
+		h.coord.WireTurnStart(t.Context(), "c1", translate.TurnStartFrame{})
+	case kasPromptTurnStart:
+		var frame translate.TurnStartFrame
+		if log, ok := h.coord.PromptTurn("c1"); ok {
+			frame.Tag = log.ID()
+		}
+		h.coord.WireTurnStart(t.Context(), "c1", frame)
 	case kasReply:
-		log := h.coord.TurnFoldTarget(t.Context(), "c1")
+		log := h.coord.foldTargetNow(t.Context(), "c1")
 		if log == nil {
 			t.Fatal("TurnFoldTarget refused KAS's re-wake text")
 		}
@@ -123,10 +128,6 @@ func TestCmdPrompt_ARewakeBeforeTheSendIsWaitedOutInEveryOrder(t *testing.T) {
 		steps []sendGateStep
 	}{
 		{"an active report before the send", []sendGateStep{kasActive, gateRelease, kasReply, kasIdleReport}},
-		{
-			"turn_start while the send waits, then a revising frame",
-			[]sendGateStep{kasActive, gateRelease, kasTurnStart, kasRevision, kasReply, kasIdleReport, kasTurnEnd},
-		},
 		{
 			"turn_start while the send waits, never revised",
 			[]sendGateStep{kasActive, gateRelease, kasTurnStart, kasReply, kasIdleReport, kasTurnEnd},
@@ -181,7 +182,7 @@ func TestCmdPrompt_ARewakeBeforeTheSendIsWaitedOutInEveryOrder(t *testing.T) {
 
 				// The prompt's own run, bracketed after its send, folds into the prompt's turn.
 				rewake := folded
-				for _, s := range []sendGateStep{kasTurnStart, kasReply} {
+				for _, s := range []sendGateStep{kasPromptTurnStart, kasReply} {
 					s.apply(t, h, release, &folded)
 				}
 				if folded == rewake || turnSource(t, logOf(t, cs, "c1"), folded) != marotte.TurnOpenNamePrompt {
@@ -224,14 +225,14 @@ func closeOfTurn(t *testing.T, entries []marotte.Entry, turn string) (marotte.En
 // sent, and returns the turns they folded into.
 func earlyRunFrames(t *testing.T, h *Runtime, cs *testChatStore) (textTurn, toolTurn string) {
 	t.Helper()
-	text := h.coord.TurnFoldTarget(t.Context(), "c1")
+	text := h.coord.foldTargetNow(t.Context(), "c1")
 	if text == nil {
 		t.Fatal("TurnFoldTarget refused the run's text")
 	}
 	if _, err := text.TextDelta(t.Context(), "", "say-p", "prompt reply"); err != nil {
 		t.Fatalf("TextDelta: %v", err)
 	}
-	tool := h.coord.TurnFoldTarget(t.Context(), "c1")
+	tool := h.coord.foldTargetNow(t.Context(), "c1")
 	if tool == nil {
 		t.Fatal("TurnFoldTarget refused the run's tool call")
 	}
@@ -340,7 +341,7 @@ func TestCmdPrompt_TheSendGateHandsThePromptTheChatFromEveryOwnState(t *testing.
 				}
 
 				textTurn, toolTurn := earlyRunFrames(t, h, cs)
-				kasTurnStart.apply(t, h, release, &folded)
+				kasPromptTurnStart.apply(t, h, release, &folded)
 				closeAnswer()
 				synctest.Wait()
 

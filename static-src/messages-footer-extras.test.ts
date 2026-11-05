@@ -217,6 +217,19 @@ describe("a footer earned by an extra mounts that extra's control", () => {
       "every one of them visible",
     ).toBe(true);
   });
+
+  it("mounts a visible Branch for a turn earned by `branchable` alone", async () => {
+    // The last turn, no prose and no ledger: only its own prompt gives it a footer.
+    const [only] = await paint([promptTurn(1, "")]);
+    expect(only).toBeDefined();
+    const footer = footerOf(only as HTMLElement);
+    expect(footer, "the turn earned a footer").not.toBeNull();
+    expect(footerPaintsText(footer as HTMLElement), "and it earned it by nothing else").toBe(false);
+    const branch = (footer as HTMLElement).querySelector<HTMLElement>(
+      '.turn-actions-buttons .turn-action-btn[aria-label="Branch from here"]',
+    );
+    expect(controlShows(branch), "so Branch is what paints").toBe(true);
+  });
 });
 
 describe("Rewind beside a turn the agent started", () => {

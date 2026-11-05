@@ -70,11 +70,11 @@ func TestBaseDeps_FullContract(t *testing.T) {
 		if r == nil {
 			t.Fatal("MCPRecorder() returned nil")
 		}
-		r.RecordConnected(ctx, "test-server", marotte.MCPSource{}, nil, nil, nil, nil)
+		r.RecordSessionStatus(ctx, "s1", MCPSessionStatus{Servers: []MCPServerReport{{Name: "test-server", State: MCPReportConnected}}})
 	})
 
 	t.Run("PendingPermsAdd_does_not_panic", func(t *testing.T) {
-		d.PendingPermsAdd(42, marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"}, nopOrigin{})
+		d.PendingPermsAdd(ctx, 42, marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"}, nopOrigin{})
 	})
 
 	t.Run("Notify_does_not_panic", func(t *testing.T) {
@@ -89,8 +89,10 @@ func TestBaseDeps_FullContract(t *testing.T) {
 		d.RecordFromDiffs("c1", nil, 0, "")
 	})
 
-	t.Run("IsHookStatusEnabled_returns_bool", func(t *testing.T) {
-		_ = d.IsHookStatusEnabled()
+	t.Run("HookTrigger_misses", func(t *testing.T) {
+		if trigger, ok := d.HookTrigger("h1"); ok {
+			t.Errorf("HookTrigger = %q, want a miss", trigger)
+		}
 	})
 
 	t.Run("IsScheduledRun_false_for_an_unmarked_run", func(t *testing.T) {

@@ -39,9 +39,10 @@ func cmdResumeSession(ctx context.Context, mem *Membership, steps stepSessions, 
 	}
 
 	// Minting per attempt would leave two chats bound to one KAS session.
-	opened, err := mem.CreateChatAndOpen(ctx, ChatCreate{
-		OpID:   p.OpID,
-		ChatID: cmd.ChatID,
+	opened, err := mem.CreateChatAndOpen(ctx, &ChatCreate{
+		OpID:         p.OpID,
+		ChatID:       cmd.ChatID,
+		ClaimSession: p.SessionID,
 		Init: func(c *marotte.Chat) {
 			// Init runs only when the record does not exist, which is what refuses to rebind a live
 			// chat and strand its session.

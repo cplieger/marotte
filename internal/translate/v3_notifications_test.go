@@ -15,7 +15,7 @@ func statusFailures(t *testing.T, server map[string]any) []mcpFailure {
 	tr := New(rolesOf(&mcpCaptureDeps{baseDeps: deps, failures: &failures}))
 
 	tr.HandleMCPStatus(t.Context(), "", &marotte.RPCResponse{
-		Params: mustJSON(t, map[string]any{"servers": []map[string]any{server}}),
+		Params: mustJSON(t, map[string]any{"sessionId": "s1", "servers": []map[string]any{server}}),
 	})
 	return failures
 }
@@ -39,7 +39,7 @@ func TestHandleMCPStatus_SubstitutesAnUnstatedFailureReason(t *testing.T) {
 
 			got := statusFailures(t, server)
 			if len(got) != 1 {
-				t.Fatalf("RecordInitFailure calls = %+v, want one", got)
+				t.Fatalf("failures = %+v, want one", got)
 			}
 			if got[0].name != "broken" || got[0].reason != unstatedFailureReason {
 				t.Errorf("failure = %+v, want {broken %q}", got[0], unstatedFailureReason)
@@ -58,15 +58,15 @@ func TestHandleMCPStatus_CarriesAStatedFailureReasonVerbatim(t *testing.T) {
 	})
 
 	if len(got) != 1 {
-		t.Fatalf("RecordInitFailure calls = %+v, want one", got)
+		t.Fatalf("failures = %+v, want one", got)
 	}
 	if got[0].reason != "connection refused" {
 		t.Errorf("reason = %q, want %q", got[0].reason, "connection refused")
 	}
 }
 
-// An OAuth failure is not an init failure: the authorizationUrl arm records the
-// prompt and returns, so the reason substitution must not reach it.
+// An OAuth failure is not an init failure: the authorizationUrl arm reports a sign-in
+// prompt, so the reason substitution must not reach it.
 func TestHandleMCPStatus_OAuthFailureRecordsNoInitFailure(t *testing.T) {
 	got := statusFailures(t, map[string]any{
 		"name":             "needs-auth",
@@ -75,7 +75,7 @@ func TestHandleMCPStatus_OAuthFailureRecordsNoInitFailure(t *testing.T) {
 	})
 
 	if len(got) != 0 {
-		t.Errorf("RecordInitFailure calls = %+v, want none for an OAuth prompt", got)
+		t.Errorf("failures = %+v, want none for an OAuth prompt", got)
 	}
 }
 
@@ -89,7 +89,7 @@ func statusRecorder(t *testing.T, servers ...map[string]any) (map[string]marotte
 	var failures []mcpFailure
 	tr := New(rolesOf(&mcpCaptureDeps{baseDeps: deps, sources: sources, oauth: &oauth, failures: &failures}))
 	tr.HandleMCPStatus(t.Context(), "", &marotte.RPCResponse{
-		Params: mustJSON(t, map[string]any{"servers": servers}),
+		Params: mustJSON(t, map[string]any{"sessionId": "s1", "servers": servers}),
 	})
 	return sources, oauth, failures
 }
@@ -140,7 +140,7 @@ func TestHandleMCPStatus_FailedAuthorizationWithoutURL(t *testing.T) {
 				"name": "api", "status": "failed", "failedAuthorization": true, "errorMessage": tc.msg,
 			})
 			if len(oauth) != 0 {
-				t.Errorf("RecordOAuth calls = %v, want none without a URL", oauth)
+				t.Errorf("OAuth prompts = %v, want none without a URL", oauth)
 			}
 			if len(failures) != 1 || failures[0].reason != tc.want {
 				t.Errorf("failures = %+v, want one with reason %q", failures, tc.want)
@@ -157,7 +157,7 @@ func TestHandleMCPStatus_FailedAuthorizationWithURLIsAnOAuthPrompt(t *testing.T)
 		"authorizationUrl": "https://example.test/oauth",
 	})
 	if len(oauth) != 1 || oauth[0] != "api" {
-		t.Errorf("RecordOAuth calls = %v, want [api]", oauth)
+		t.Errorf("OAuth prompts = %v, want [api]", oauth)
 	}
 	if len(failures) != 0 {
 		t.Errorf("failures = %+v, want none", failures)
@@ -172,7 +172,7 @@ func TestHandleMCPStatus_ConfigInvalidArrivesAsFailed(t *testing.T) {
 		"errorMessage": "Invalid MCP server configuration: missing command",
 	})
 	if len(oauth) != 0 {
-		t.Errorf("RecordOAuth calls = %v, want none", oauth)
+		t.Errorf("OAuth prompts = %v, want none", oauth)
 	}
 	if len(failures) != 1 || failures[0].reason != "Invalid MCP server configuration: missing command" {
 		t.Errorf("failures = %+v, want the configuration reason verbatim", failures)
@@ -183,6 +183,7 @@ func TestHandleMCPStatus_ConfigInvalidArrivesAsFailed(t *testing.T) {
 // access mode clears it, whatever registry fields the frame still carries.
 func TestHandleMCPStatus_CarriesTheRegistryOnlyInRegistryMode(t *testing.T) {
 	frame := map[string]any{
+		"sessionId":                 "s1",
 		"servers":                   []map[string]any{},
 		"accessModeFilteredServers": []string{"local-tool", ""},
 		"unresolvedRegistryServers": []string{"gone"},
@@ -207,21 +208,56 @@ func TestHandleMCPStatus_CarriesTheRegistryOnlyInRegistryMode(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			deps, _ := newEventCaptureDeps()
-			var got []*marotte.GovernanceMCPRegistry
-			deps.onSetRegistry = func(r *marotte.GovernanceMCPRegistry) { got = append(got, r) }
+			var got []capturedMCPFrame
 			params := maps.Clone(frame)
 			if tc.mode != "" {
 				params["accessMode"] = tc.mode
 			}
 
-			New(rolesOf(deps)).HandleMCPStatus(t.Context(), "", &marotte.RPCResponse{Params: mustJSON(t, params)})
+			New(rolesOf(&mcpCaptureDeps{baseDeps: deps, frames: &got})).HandleMCPStatus(t.Context(), "", &marotte.RPCResponse{Params: mustJSON(t, params)})
 
 			if len(got) != 1 {
-				t.Fatalf("SetMCPRegistry calls = %d, want one", len(got))
+				t.Fatalf("RecordSessionStatus calls = %d, want one", len(got))
 			}
-			if !reflect.DeepEqual(got[0], tc.want) {
-				t.Errorf("registry = %+v, want %+v", got[0], tc.want)
+			if !reflect.DeepEqual(got[0].status.Registry, tc.want) {
+				t.Errorf("registry = %+v, want %+v", got[0].status.Registry, tc.want)
 			}
 		})
+	}
+}
+
+// Under sessionScopedMcpStatus a frame is one session's whole view: it reaches the recorder in one call under its
+// own sessionId, every named server in it, connecting ones included; a frame naming no session reaches nothing.
+func TestHandleMCPStatus_RecordsTheWholeFrameUnderItsSession(t *testing.T) {
+	deps, _ := newEventCaptureDeps()
+	var frames []capturedMCPFrame
+	tr := New(rolesOf(&mcpCaptureDeps{baseDeps: deps, frames: &frames}))
+
+	tr.HandleMCPStatus(t.Context(), "c-1", &marotte.RPCResponse{Params: mustJSON(t, map[string]any{
+		"sessionId": "sess_a",
+		"servers": []map[string]any{
+			{"name": "github", "status": "connected", "tools": []map[string]any{{"name": "list_issues"}}},
+			{"name": "linear", "status": "failed", "errorMessage": "spawn ENOENT"},
+			{"name": "slow", "status": "connecting"},
+			{"name": "", "status": "connected"},
+		},
+	})})
+	tr.HandleMCPStatus(t.Context(), "c-1", &marotte.RPCResponse{Params: mustJSON(t, map[string]any{
+		"servers": []map[string]any{{"name": "github", "status": "connected"}},
+	})})
+
+	if len(frames) != 1 {
+		t.Fatalf("RecordSessionStatus calls = %d, want one (the frame with no sessionId dropped)", len(frames))
+	}
+	if frames[0].session != "sess_a" {
+		t.Errorf("session = %q, want sess_a", frames[0].session)
+	}
+	want := []MCPServerReport{
+		{Name: "github", State: MCPReportConnected, Tools: []string{"list_issues"}},
+		{Name: "linear", State: MCPReportFailed, Error: "spawn ENOENT"},
+		{Name: "slow", State: MCPReportConnecting},
+	}
+	if !reflect.DeepEqual(frames[0].status.Servers, want) {
+		t.Errorf("servers = %+v, want %+v", frames[0].status.Servers, want)
 	}
 }

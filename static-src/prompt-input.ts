@@ -1,4 +1,5 @@
-// Prompt input: form submit, keydown (Enter, ↑/↓ history), send button, iOS viewport fix.
+// Prompt input: form submit, keydown (Enter, ↑/↓ history, Ctrl/Cmd+↑ rewind, Escape cancels a turn),
+// send button, iOS viewport fix.
 // send-state.ts drives three button faces: idle sends, streaming cancels, error retries; the error
 // face means there is nothing to send TO, so every other failure reports through a toast and the
 // turn's own divider. While a turn streams and the composer holds a send (text or a staged file), a
@@ -16,7 +17,7 @@ import { composerText, isSendable, setComposerValue, syncComposerText } from "./
 import { touchComposer, wireTouchComposer } from "./composer-touch.js";
 import { continueList } from "./list-continue.js";
 import { applyEdit } from "./text-edit.js";
-import { computed, effect, el, signal, touch, type ReadonlySignal } from "@cplieger/reactive";
+import { computed, effect, el, signal, touch, type ReadonlySignal } from "@cplieger/ui";
 import type { InterruptMode } from "./types.js";
 
 /** The active chat's interrupt mode, value-deduped so an unrelated store write does not repaint
@@ -53,6 +54,7 @@ const RETRY_HINT = "Send again to retry.";
 
 type Submit = (text: string) => void;
 type Cancel = () => void;
+type EditLast = () => void;
 type Staged = ReadonlySignal<boolean>;
 
 export type SendState =
@@ -105,6 +107,7 @@ class PromptInputController {
   private state: SendState = { kind: "idle" };
   private onCancel: Cancel = () => undefined;
   private onSubmit: Submit = () => undefined;
+  private onEditLast: EditLast = () => undefined;
   private staged: Staged = signal(false);
   private midTurn: HTMLButtonElement | null = null;
   private midTurnName = "";
@@ -244,7 +247,7 @@ class PromptInputController {
       iconEl(STATE_ICON[k]),
     );
     const tooltip = reason !== "" ? `${reason} ${RETRY_HINT}` : DEFAULT_TOOLTIP[k];
-    $.sendBtn.setAttribute("data-tooltip", tooltip);
+    $.sendBtn.setAttribute("data-tooltip", k === "streaming" ? `${tooltip} (Esc)` : tooltip);
     $.sendBtn.setAttribute("aria-label", tooltip);
     $.sendBtn.classList.toggle("streaming", k === "streaming");
     $.sendBtn.classList.toggle("failed", k === "error");
@@ -268,7 +271,7 @@ class PromptInputController {
     this.applyButtonState();
   }
 
-  init(onSubmit: Submit, onCancel: Cancel, staged: Staged): void {
+  init(onSubmit: Submit, onCancel: Cancel, staged: Staged, onEditLast: EditLast): void {
     if (initialized) {
       return;
     }
@@ -279,6 +282,7 @@ class PromptInputController {
 
     this.onCancel = onCancel;
     this.onSubmit = onSubmit;
+    this.onEditLast = onEditLast;
     this.staged = staged;
     $.sendBtn.addEventListener("click", (e: MouseEvent) => {
       if (this.state.kind === "streaming") {
@@ -336,8 +340,8 @@ class PromptInputController {
 
       // Read before Escape's reset: a key the IME owns writes nothing, so no history, list or Send.
       const composing = this.isComposing(e);
-      // Ahead of the cycling branch, which is guarded on `idx !== -1`. No stopPropagation: a plain
-      // Escape still has to reach the global handler that collapses pills and closes the dock.
+      // Ahead of the cycling branch, which is guarded on `idx !== -1`. The reset claims nothing, so
+      // an Escape the arms below leave alone still reaches an open card.
       if (e.key === "Escape") {
         this.resetIME();
       }
@@ -372,9 +376,23 @@ class PromptInputController {
         return;
       }
 
-      const bareArrow = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
+      // Only from an empty box: with text, the chord is the browser's caret move.
+      if (
+        e.key === "ArrowUp" &&
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        !menuOpen(input) &&
+        input.value.trim() === ""
+      ) {
+        e.preventDefault();
+        this.onEditLast();
+        return;
+      }
 
-      if (e.key === "ArrowUp" && bareArrow && this.cursorOnFirstLine(input)) {
+      const bare = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
+
+      if (e.key === "ArrowUp" && bare && this.cursorOnFirstLine(input)) {
         const prompts = this.userPrompts();
         if (prompts.length === 0) {
           return;
@@ -393,7 +411,7 @@ class PromptInputController {
         return;
       }
 
-      if (e.key === "ArrowDown" && bareArrow && this.cursorOnLastLine(input) && this.idx !== -1) {
+      if (e.key === "ArrowDown" && bare && this.cursorOnLastLine(input) && this.idx !== -1) {
         e.preventDefault();
         if (this.idx === 0) {
           this.restoreDraft(input);
@@ -409,6 +427,18 @@ class PromptInputController {
         e.preventDefault();
         e.stopPropagation();
         this.restoreDraft(input);
+        return;
+      }
+
+      // The Cancel face's own action, and the last claimant of Escape here. Spent whole, so a
+      // toast survives the press; a repeat does nothing, so a held Escape that closed a card or
+      // left recall never cancels.
+      if (e.key === "Escape" && bare && this.state.kind === "streaming" && !escapeOwnerOpen()) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!e.repeat) {
+          this.onCancel();
+        }
         return;
       }
     });
@@ -443,6 +473,16 @@ function menuOpen(el: HTMLTextAreaElement): boolean {
   return menu !== null && !menu.hidden;
 }
 
+/** Whether a surface that closes on Escape is open. Each closes from its own document listener
+ *  without stopping the key, so it runs after the composer and must be asked. `is-open` is
+ *  ui-primitives' open-state class (docs/popup.md, docs/popover.md). */
+function escapeOwnerOpen(): boolean {
+  return (
+    document.querySelector(".uip-popup.is-open, .uip-popover.is-open, .turn-actions-more[open]") !==
+    null
+  );
+}
+
 /** The touch keyboard's Return label follows what Return does. */
 function syncEnterHint(el: HTMLTextAreaElement): void {
   el.enterKeyHint = touchComposer() ? "enter" : "send";
@@ -456,13 +496,15 @@ export function setSendState(next: SendState): void {
 }
 
 /** `staged` tracks the pill row for `isSendable`. It is injected because importing
- *  attachments.ts here would close an import cycle. */
+ *  attachments.ts here would close an import cycle. `onEditLast` answers Ctrl/Cmd+Up in an empty
+ *  composer. */
 export function initPromptInput(
   onSubmit: Submit,
   onCancel: Cancel,
   staged: Staged = signal(false),
+  onEditLast: EditLast = () => undefined,
 ): void {
-  instance.init(onSubmit, onCancel, staged);
+  instance.init(onSubmit, onCancel, staged, onEditLast);
 }
 
 /** Send the composer's contents: the keyboard shortcut's entry point, and the same path Enter

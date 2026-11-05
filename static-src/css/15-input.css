@@ -64,38 +64,15 @@
      read the same one declaration. */
   --pill-inset: var(--sp-1);
 
-  /* THE ROW'S INLINE PADDING, one declaration per tier, read by BOTH icon-only
-     controls so their boxes cannot drift apart rather than agreeing by coincidence.
-     Wider on the coarse tier (the block after the phone rules). */
+  /* THE ROW'S INLINE PADDING, read by BOTH icon-only controls so their boxes cannot
+     drift apart rather than agreeing by coincidence. */
   --pill-pad-inline: var(--sp-2);
 
   /* ONE CONTROL HEIGHT FOR THIS BOX: the pill row's controls and the textarea's
-     resting band below both read it, so the box's two rows cannot disagree. They
-     did — two literals (2rem here, 2.5rem there) that agree only on the fine
-     tier, so a coarse pointer rendered a 40px textarea over a 52px pill row.
-     Same reasoning as `.list-row-btn` (14-tools.css).
-
-     THE BOX IS SMALLER THAN THE TARGET ON BOTH TIERS, which is the standing
-     decision: --hit-floor grows the TARGET through the expanders below, never the
-     painted box. It was `max(var(--ctl-h-dense), var(--hit-floor))`, which put the
-     floor in the box — 44px of painted button around a 20px glyph, 19.8% ink — and
-     that is the "grown buttons look empty" report. R1a explicitly permits a target
-     larger than its control, which four other sites already rely on
-     (`.fb-git-letter`, `.tool-file-link`, the native checkboxes).
-
-     IT IS NO LONGER TIER-INDEPENDENT, and 32-on-a-finger is what that cost. The
-     flat 2rem left a 20px glyph 5px of clear inside its border on a phone against
-     7px on every labelled sibling, reported as the controls not looking great and
-     the send arrow reading large. So the box takes ONE rung up on the coarse tier
-     and stops well short of the floor: `--ctl-h-sm` is 1.5rem on a fine pointer
-     and 2.25rem on a coarse one, so the `max()` yields 32 under a mouse
-     (unchanged) and 36 under a finger.
-     Measured at 390 coarse: painted 32 -> 36, glyph clear 5 -> 7px matching the
-     labelled controls, ink 39.1 -> 30.9% on Send and 27.2 -> 24.2% on the chat-options button (then a `+`). The ROW
-     does not move, because --composer-pill-pad gives back exactly what the box
-     takes (6 -> 4px), so the composer's height and the textarea's band are
-     unchanged on every tier. */
-  --composer-ctl-h: max(2rem, var(--ctl-h-sm));
+     resting band below both read it, so the box's two rows cannot disagree. One
+     value on every tier: --hit-floor grows the TARGET through the shared expander
+     (61-mcp-tools.css), never the painted box. */
+  --composer-ctl-h: 2rem;
 
   /* HOW MUCH OF THE HOME-INDICATOR INSET THIS BAR HONOURS, and it is a cap rather
      than the whole figure. Apple reserves 34pt at the bottom and asks that no
@@ -107,12 +84,20 @@
 
   /* THE ROW'S OWN PADDING PAYS FOR THE EXPANDER'S BLOCK REACH, so a pill's target
      never overhangs into `#prompt-input`'s box (a target reaching into its
-     neighbour's). The reach is (--hit-floor - box) / 2 above the painted box, 4px
+     neighbour's). The reach is (--hit-floor - box) / 2 above the painted box, 6px
      on a coarse pointer, and the floor at --pill-inset keeps the 4px chrome inset
      wherever the box already clears the target. It is the ROW's padding and NOT
      --pill-inset, because raising the inset raises the gap between the controls
      with it, which costs the pills' label width. */
   --composer-pill-pad: max(var(--pill-inset), calc((var(--hit-floor) - var(--composer-ctl-h)) / 2));
+
+  /* The lead an icon-only control (`--icon-ui` plus its padding and border, under the
+     hit floor) takes on top of the row's gap, so its inline reach meets the reach of
+     an icon-only neighbour before it rather than crossing it. 0 on a mouse. */
+  --pill-icon-lead: max(
+    0px,
+    calc(var(--hit-floor) - var(--icon-ui) - 2 * var(--pill-pad-inline) - 2px - var(--pill-inset))
+  );
 }
 
 .prompt-box {
@@ -282,24 +267,13 @@
   --close-box: 1.5rem;
 
   /* THE BOX'S ONE CONTROL HEIGHT, so the chip row cannot disagree with the pill row
-     under it or the textarea over it — the derivation `--composer-ctl-h` on
-     `#prompt-form` states, applied to the one control in this box that was left
-     out of it. The chip took its height from its CHILDREN, and both children are
-     `<button>`s, so the zero-specificity hit floor (61-mcp-tools.css) put the 44px
-     TARGET in the painted box: 50.78px of chip around a 15px label on a coarse
-     pointer, against 32px for every control beside it and 30.78px for the same
-     chip on a mouse. That is the "grown buttons look empty" shape, and the fix is
-     the same one — the floor grows the TARGET (the expanders below), never the box.
-     The fallback is not a spare: this component has a SECOND home outside
-     `#prompt-form` (a sent turn's header, 29-turns.css), where that property does
-     not resolve, and a `var()` with nothing behind it invalidates the whole
-     declaration. It therefore has to be the SAME EXPRESSION the box declares, not
-     just the same number — `--composer-ctl-h` gained a coarse-tier arm on
-     2026-09-12, and a `2rem` fallback would have left the chip agreeing with the
-     pill row inside the composer and disagreeing with it in a turn header, which is
-     exactly what this component's "one component, two homes" contract forbids.
+     under it or the textarea over it; its two `<button>` children would otherwise
+     size it from their own boxes. The fallback is not a spare: this component has a
+     SECOND home outside `#prompt-form` (a sent turn's header, 29-turns.css), where
+     that property does not resolve, and a `var()` with nothing behind it invalidates
+     the declaration. It must stay the value `#prompt-form` declares;
      `composer-row-height-css.test.ts` pins the two equal. */
-  block-size: var(--composer-ctl-h, max(2rem, var(--ctl-h-sm)));
+  block-size: var(--composer-ctl-h, 2rem);
 
   /* Block padding would be dead weight under a declared height, and the 0.15rem it
      replaces is what made the chip 4.8px taller than its own content asked for. */
@@ -337,9 +311,7 @@
      `composer-row-height-css.test.ts` ("the same EXPRESSION the box declares"); the 2px
      is this chip's two borders. */
   &:has(> .attachment-close) {
-    padding-inline-end: calc(
-      (var(--composer-ctl-h, max(2rem, var(--ctl-h-sm))) - 2px - var(--close-box)) / 2
-    );
+    padding-inline-end: calc((var(--composer-ctl-h, 2rem) - 2px - var(--close-box)) / 2);
   }
 }
 
@@ -377,22 +349,14 @@
   outline-offset: var(--focus-offset);
 }
 
-/* THE TARGET, for both of the chip's buttons: `.pill`'s expander verbatim on the
-   BLOCK axis, and deliberately not on the inline one.
-   `.tool-file-link` (14-tools.css) states the same carve-out for the same reason —
-   a target may not reach into the one beside it — and here the neighbour is the ×,
-   whose action is DESTRUCTIVE: an inline expander would put its target over the last
-   characters of the filename, so a tap meant to open the file would remove it. The
-   label is already far wider than the floor and the × clears 24px on its own
-   (WCAG 2.5.8), so neither needs the inline reach; both take the full 44px on the
-   axis a finger actually misses in a row of chips. Verified by `elementFromPoint`:
-   the 4px gap between the two belongs to the row, so the targets touch and never
-   overlap. */
+/* THE TARGET, for both of the chip's buttons: the shared expander on the BLOCK axis
+   only. The neighbour is the ×, whose action is DESTRUCTIVE: an inline reach would put
+   its target over the filename's last characters, so a tap meant to open the file
+   would remove it. The label is far wider than the floor and the × clears 24px on its
+   own (WCAG 2.5.8), so neither needs the inline reach. */
 .attachment-open::after,
 .attachment-close::after {
-  content: "";
-  position: absolute;
-  inset-block: min(0px, calc((100% - var(--hit-floor)) / 2));
+  inset-block: var(--hit-inset);
   inset-inline: 0;
 }
 
@@ -428,14 +392,8 @@
 .attachment-close {
   padding: 0;
 
-  /* A DECLARED 24px SQUARE, at both tiers, because the floor may no longer size it:
-     `padding: 0` around a 12px glyph leaves a 12px box, and the 24px this used to
-     inherit from the fine-tier floor is the size the rung below and WCAG 2.5.8's own
-     minimum both assume. It is also why this button takes no inline expander — 24
-     already clears the floor's AA figure on the axis that cannot grow without
-     reaching into the label's target. */
-  min-width: 0;
-  min-height: 0;
+  /* A DECLARED 24px SQUARE at both tiers: `padding: 0` around a 12px glyph leaves a
+     12px box, and 24px is the rung below's size and WCAG 2.5.8's minimum. */
   inline-size: var(--close-box);
   block-size: var(--close-box);
   position: relative;
@@ -506,17 +464,6 @@
   height: var(--composer-ctl-h);
   border: 1px solid var(--c-border);
 
-  /* THE PAINTED BOX IS 32; THE TARGET IS --hit-floor, and these three declarations
-   * plus the `::after` below are how. The app-wide floor (61-mcp-tools.css) sets
-   * PHYSICAL `min-width`/`min-height`, and a logical property is a different one
-   * resolved by source order — that file sorts later — so the opt-out has to be
-   * physical too. `position: relative` is the expander's containing block.
-   * Copied from `.tool-file-link` (14-tools.css), which is the idiom rather than a
-   * new mechanism. */
-  min-width: 0;
-  min-height: 0;
-  position: relative;
-
   /* The CONCENTRIC radius, not height/2 and not the ladder's --r-md. A stadium
      reads as a tag — something labelled — where this is something pressed, and
      a control sitting in the corner of the .prompt-box nests only at the
@@ -562,22 +509,6 @@
 
   & svg {
     flex-shrink: 0;
-  }
-
-  /* THE TARGET. Sized by `inset` off --hit-floor so it follows the tier with no
-   * second declaration, and `min(0px, …)` per axis so it only ever grows: three of
-   * this row's five controls are already WIDER than the floor, where the term goes
-   * positive and would inset the pseudo INSIDE the box. That costs nothing (the
-   * control's own box is still its target) but a bare `inset` would read as a rule
-   * that shrinks a target, which is the opposite of what it does.
-   * The block reach is paid for by `.prompt-pills`' own padding, so no target
-   * overhangs into `#prompt-input`'s box — measured 0px by `elementFromPoint`,
-   * against 1.75px without that padding. */
-  &::after {
-    content: "";
-    position: absolute;
-    inset-block: min(0px, calc((100% - var(--hit-floor)) / 2));
-    inset-inline: min(0px, calc((100% - var(--hit-floor)) / 2));
   }
 }
 
@@ -1065,13 +996,9 @@
 }
 
 .pill-model-item {
-  /* Row height comes from the TIER, not from the font. Without it this row
-     resolved to its line box plus padding — the trap `--ctl-h-sm` exists to
-     close — so it measured the same on a finger as on a mouse while `.tab`
-     beside it correctly went 36px to 44px. A floor, so a taller row keeps its
-     own height: measured, this moves desktop by at most 1px and gives every
-     list row a real 36px target on touch. */
-  min-block-size: var(--ctl-h-sm);
+  /* The row is the target, so it takes the hit floor: a floor, so a taller row keeps
+     its own height. */
+  min-block-size: var(--row-tap-sm);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1135,13 +1062,8 @@
 }
 
 .pill-role-item {
-  /* Row height comes from the TIER, not from the font. Without it this row
-     resolved to its line box plus padding — the trap `--ctl-h-sm` exists to
-     close — so it measured the same on a finger as on a mouse while `.tab`
-     beside it correctly went 36px to 44px. A floor, so a taller row keeps its
-     own height: measured, this moves desktop by at most 1px and gives every
-     list row a real 36px target on touch. */
-  min-block-size: var(--ctl-h-sm);
+  /* The row is the target; see `.pill-model-item`. */
+  min-block-size: var(--row-tap-sm);
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -1227,16 +1149,12 @@
  * so the knob carries no text and the bar can contain it. */
 .effort-row {
   /* The bar's height, and the one number the geometry below is arithmetic over.
-     `--ctl-h-sm` follows the pointer tier, so nothing here declares a second one. */
+     The track below, not the bar, carries the touch target. */
   --effort-bar-h: var(--ctl-h-sm);
 
-  /* THE HANDLE IS THE BAR'S HEIGHT, on both axes — 24px fine, 36px coarse — so it
-     reads as the thing filling the groove rather than a dot floating in one. It used
-     to clear the bar by 2px on all four edges (`--effort-knob-inset`, deleted with
-     the clearance); cutting that inset from 4px to 2px was the previous answer to the
-     same report, and this is the end of that line. Two consequences the arithmetic
-     below is written against: the travel is the bar's whole width minus the handle,
-     and the handle covers the bar's own border wherever it sits. */
+  /* THE HANDLE IS THE BAR'S HEIGHT, on both axes, 24px on every tier, so it reads as
+     the thing filling the groove. The arithmetic below rests on it: the travel is the
+     bar's width minus the handle, and the handle covers the bar's border where it sits. */
   --effort-knob-w: var(--effort-bar-h);
 
   /* The bar's accent strength at the two ends of the knob's travel: the whole bar
@@ -1291,9 +1209,9 @@
    `100cqi` the width every position below is arithmetic over, so a card that grows
    after this row was appended needs no ResizeObserver. FLOORED at the hit target,
    because this element carries the one pointerdown handler and the bar it holds is not
-   sized for a finger: `--ctl-h-sm` equals `--hit-floor` on the fine tier and is 8px
-   short of it on the coarse one, where the handle a finger lands on is 36px inside a
-   44px line. `max()` so retuning either token cannot leave it short. No border and no
+   sized for a finger: `--ctl-h-sm` equals `--hit-floor` on the fine tier and is 20px
+   short of it on the coarse one, where the 24px knob a finger drags rides a 44px line.
+   `max()` so retuning either token cannot leave it short. No border and no
    padding, or `100cqi` and the border box `fracAt` reads diverge. */
 .effort-track {
   position: relative;
@@ -1414,8 +1332,7 @@
    is declared, not `auto`: an absolute box with both inline offsets auto sits at its
    static position, and `effort-slider.ts` reads it back as `offsetLeft` to keep
    `fracAt`'s travel term in step. `100%` in `translate()` is the knob's border box
-   against `100cqi`'s content box, so it stays inside the bar. `min-*` are PHYSICAL
-   because 61-mcp-tools.css's `[tabindex]` floor is. The handle is the TEXT ink, the
+   against `100cqi`'s content box, so it stays inside the bar. The handle is the TEXT ink, the
    one ink the bar's ramp does not sweep past (`--effort-fill-max`). */
 .effort-knob {
   position: absolute;
@@ -1423,8 +1340,6 @@
   inset-inline-start: 0;
   inline-size: var(--effort-knob-w);
   block-size: var(--effort-knob-w);
-  min-width: 0;
-  min-height: 0;
   border-radius: var(--r-pill);
   background: var(--c-text-primary);
   cursor: grab;
@@ -1534,10 +1449,9 @@
     margin-block-end: calc(-1 * var(--account-reach));
   }
 
-  /* A TARGET, so it keeps the app-wide floor (61-mcp-tools.css): a popup card is in none
-     of the floor's prose exemptions. Restated PHYSICALLY, as `.code-refs-link` does, so
-     the pair reads as one property; it survives a later move inside an `<li>`, which
-     would otherwise zero the floor. */
+  /* A row, so its box is the target: `--hit-floor`, PHYSICAL as `.code-refs-link`
+     declares it, so it survives a later move inside an `<li>`, whose prose exemption
+     (61-mcp-tools.css) zeroes the floor. */
   min-height: var(--hit-floor);
   justify-content: space-between;
 
@@ -1772,6 +1686,7 @@
   color: inherit;
   font: inherit;
   width: 100%;
+  min-block-size: var(--hit-floor);
 
   /* Unavailable rather than offering an error: the tangent row is disabled until
    * its chat holds a conversation to branch. Kept visible (not hidden) so the
@@ -1794,6 +1709,12 @@
   inline-size: 1rem;
   margin-block-start: 0.125rem;
   color: var(--c-text-tertiary);
+
+  /* A registry `.ic-ui` glyph (Compact's) draws at the 14px of the local glyphs beside it. */
+  & > .ic-ui {
+    inline-size: 0.875rem;
+    block-size: 0.875rem;
+  }
 }
 
 .chat-opt-row {
@@ -1813,10 +1734,8 @@
   content: none;
 }
 
-/* Declared here because the universal floor cannot reach a <label>: it matches the
-   native controls plus `[role]`/`[tabindex]`, so the button rows take it and the
-   switch rows would be content-driven, short of their neighbours on a coarse
-   pointer. */
+/* The switch rows take the button rows' `--hit-floor` box, which `.chat-opt-btn`
+   declares; a <label> row is content-driven without it. */
 .chat-opt-row {
   min-block-size: var(--hit-floor);
 }
@@ -1844,7 +1763,7 @@
 
 .chat-opt-input {
   width: 100%;
-  min-block-size: var(--ctl-h-dense);
+  min-block-size: var(--field-h-dense);
   padding: 0.25rem var(--sp-2);
   border: 1px solid var(--c-border);
 
@@ -1951,9 +1870,7 @@
   /* THE SAME BLOCK SIZE AND INLINE PADDING AS `#chat-options-btn`, so on a phone-shaped
      viewport, where the word is hidden, Send is that button's box and differs by
      COLOUR alone. Wider than tall on purpose: a square read as a different size
-     class, and the width comes from the shared padding rather than a second literal.
-     `min-width: 0`, PHYSICAL, opts out of the hit floor's `min-width` (61-mcp-tools.css
-     sorts later); the `::after` expander below holds the target at --hit-floor. */
+     class, and the width comes from the shared padding rather than a second literal. */
   block-size: var(--composer-ctl-h);
 
   /* The row's padding, or whatever keeps this button wider than tall (the ratified
@@ -1966,8 +1883,6 @@
     var(--pill-pad-inline),
     calc((var(--composer-ctl-h) - 2px - var(--icon-ui)) / 2 + 1px)
   );
-  min-width: 0;
-  min-height: 0;
   flex-shrink: 0;
 
   /* `background` and `border-color` are both named: the face is a fill AND an
@@ -1978,7 +1893,7 @@
     color var(--dur-micro) var(--ease-standard);
 
   /* The TOKEN, not a literal: a hard `1rem` at (0,1,0) beats `.ic-ui`'s
-     zero-specificity rule (03-base.css), so the coarse tier would leave Send behind.
+     zero-specificity rule (03-base.css), so a retuned `--icon-ui` would leave Send behind.
      Every face takes it — a per-path size cannot live on a control that swaps paths.
      Do NOT express a per-face size as `transform: scale()`: `icon-crisp.ts` re-arms
      its settle whenever an element's rect disagrees with its computed `inlineSize`,
@@ -1988,19 +1903,6 @@
     height: var(--icon-ui);
     flex-shrink: 0;
     transition: transform var(--dur-micro) var(--ease-standard);
-  }
-
-  /* THE TARGET, the same expander `.pill` carries and for the same reason: the
-     painted box is 32 at every tier and this is what holds the hit region at
-     --hit-floor on a coarse pointer. Send's box is wider than the floor, so the inline
-     term is positive, `min()` clamps it to 0 and only the BLOCK axis grows — the width
-     is real box and counts as touch area. The inline half stays so the idiom is one,
-     sized off the token, and a later narrow control needs no second declaration. */
-  &::after {
-    content: "";
-    position: absolute;
-    inset-block: min(0px, calc((100% - var(--hit-floor)) / 2));
-    inset-inline: min(0px, calc((100% - var(--hit-floor)) / 2));
   }
 
   /* The `display` above beats the UA's `[hidden]`; `#midturn-send-btn` sits hidden. */
@@ -2120,30 +2022,11 @@
   }
 
   /* NO tier rule beside this one, and no block-size: the rail line reads
-     `--hit-floor`, which is the same 44px the hit floor already gave every tier
-     button on a finger, so the KNOB's height does not move on either tier.
-
-     HISTORY, because the width budget it records is the one this shape inherited
-     and then left. The row used to be one button per tier sharing the leftover
-     width, and `flex: 1 1 0` was the defect behind "medium is larger than its box":
-     the hit floor's `min-width` replaces a flex item's automatic minimum size,
-     which licenses the shrink a 0 basis asks for, and a 0 basis contributes NOTHING
-     to the row's intrinsic width, so the card — whose `min-inline-size` is a floor
-     rather than a width — never learned the row needed more room. Measured at
-     390px: a 224px card holding five 38.1px buttons, "Medium" 42.9px of text in a
-     28.1px content box, 14.7px of it painted outside the border. With `flex: auto`
-     the row reported its real width and the card grew to 264px of the 366px
-     available, leaving 102px of headroom at 390px and 32px at the 320px floor.
-
-     A tier's label is KAS's text and not ours: `effortLabel` (effort.ts) returns
-     the catalog's own name first and only falls back to the house table, so a row
-     that renders one has to fit words nothing here chose — measured live, KAS
-     2.21.2 sends "Low Medium High xHigh Max" where the house table spells the
-     fourth "x-high". Hence NOT abbreviating: a marotte-side "Med" is a rewrite of
-     foreign text that goes stale on the next tier upstream renames or adds. The
-     slider now spends that budget on ONE label on its own LINE, so the widest
-     foreign tier name no longer contests the rail's width at all and the card's own
-     14rem floor is what binds. The gap is the caption-to-rail one on this tier. */
+     `--hit-floor`, and the KNOB's height does not move on either tier. A tier's
+     label is KAS's text (`effortLabel`, effort.ts), so it is never abbreviated
+     here; the slider puts ONE label on its own LINE, so the widest tier name never
+     contests the rail's width and the card's 14rem floor binds. The gap is the
+     caption-to-rail one on this tier. */
   .effort-row {
     gap: var(--sp-2);
   }
@@ -2153,24 +2036,6 @@
    width query cannot reach an iPad. `:where()` keeps each selector at its base
    specificity, so these win by coming later. */
 :where([data-pointer="coarse"]) {
-  /* The token, not one control's padding: `.pill` and `.send-btn` both derive from
-     `--pill-pad-inline`, so the two icon-only controls move together. */
-  [id="prompt-form"],
-  [id="run-composer"] {
-    --pill-pad-inline: var(--sp-3);
-  }
-
-  .pill {
-    font-size: var(--fs-sm);
-  }
-
-  /* Rows a finger picks take the pill row's own floor. */
-  .pill-model-item,
-  .pill-role-item,
-  .chat-opt-btn {
-    min-block-size: var(--btn-h);
-  }
-
   .pill-ctx-row {
     padding-block: var(--sp-1);
   }
@@ -2187,6 +2052,16 @@
   .send-btn-label {
     display: none;
   }
+
+  .prompt-pills > .send-btn {
+    margin-inline-start: var(--pill-icon-lead);
+  }
+}
+
+/* The row's icon-only controls; see `--pill-icon-lead`. On the slot, not the button: a
+   positioned slot's box over the lead would stack above the previous control's target. */
+.pill-slot:has(> :is([id="chat-options-btn"], [id="task-list-pill"])) {
+  margin-inline-start: var(--pill-icon-lead);
 }
 
 /* The one consumer that still ROTATES its box, because its mark is a stroked arc
@@ -2284,7 +2159,7 @@
   display: flex;
   align-items: baseline;
   gap: var(--sp-2);
-  min-height: var(--ctl-h-dense);
+  min-height: var(--row-tap-dense);
   padding: var(--sp-1) var(--sp-2);
   border-radius: var(--stack-in-r);
   cursor: pointer;

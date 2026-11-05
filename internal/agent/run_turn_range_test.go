@@ -212,9 +212,9 @@ func TestRunTurnRangeRoute_ServesTheTailAnd404sAnUnknownTurn(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
 	}
 	var got struct {
-		Entries     []marotte.Entry         `json:"entries"`
-		OpenEntries []marotte.OpenEntry     `json:"open_entries"`
-		Subject     []*marotte.SubjectStamp `json:"subject"`
+		Entries     []marotte.Entry        `json:"entries"`
+		OpenEntries []marotte.OpenEntry    `json:"open_entries"`
+		Subject     []marotte.SubjectStamp `json:"subject"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode the reply: %v", err)
@@ -241,7 +241,7 @@ func TestRunTurnRangeRoute_ServesTheTailAnd404sAnUnknownTurn(t *testing.T) {
 	}
 }
 
-func stampRefs(s []*marotte.SubjectStamp) []string {
+func stampRefs(s []marotte.SubjectStamp) []string {
 	out := make([]string, len(s))
 	for i := range s {
 		out[i] = s[i].Ref
@@ -249,7 +249,7 @@ func stampRefs(s []*marotte.SubjectStamp) []string {
 	return out
 }
 
-func stampVersions(s []*marotte.SubjectStamp) []string {
+func stampVersions(s []marotte.SubjectStamp) []string {
 	out := make([]string, len(s))
 	for i := range s {
 		out[i] = s[i].Version

@@ -16,6 +16,7 @@ export function tabsMock(): Record<string, unknown> {
     // `openTab` answers its success outcome, so callers stay off their failure branches.
     openTab: vi.fn(async () => "opened"),
     closeTab: vi.fn(async () => {}),
+    descendantChatsOf: vi.fn(() => []),
     setTabPinned: vi.fn(async () => {}),
     setTabParent: vi.fn(async () => false),
     openEditorView: vi.fn(async () => {}),
@@ -32,6 +33,9 @@ export function tabsMock(): Record<string, unknown> {
 
     adoptSubject: vi.fn(),
     activateTab: vi.fn(),
+    claimNavigation: vi.fn(() => 0),
+    // Held: no user move since the claim, so a late open takes the view.
+    navigationHeld: vi.fn(() => true),
     activateRestoredTab: vi.fn(),
     refreshActiveView: vi.fn(),
     paintProvisionalTabs: vi.fn(),
@@ -70,6 +74,7 @@ export function tabsMock(): Record<string, unknown> {
     setOnEmpty: vi.fn(),
     EMPTY_RESPAWN_MS: 0,
     registerTabNotice: vi.fn(),
+    registerCloseGate: vi.fn(),
     // Unregistered is the never-suppress answer, so no test has a cue silently blanked.
     setChatSettledProbe: vi.fn(),
 

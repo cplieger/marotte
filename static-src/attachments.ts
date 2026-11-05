@@ -4,13 +4,7 @@
 // The list is the draft's twin: persisted per chat through `set_attachments` on the
 // draft's debounce, silent, no retry, with the LOCAL collection authoritative for the UI.
 
-import {
-  createCollection,
-  bindList,
-  computed,
-  effect,
-  type ReadonlySignal,
-} from "@cplieger/reactive";
+import { createCollection, bindList, computed, effect, type ReadonlySignal } from "@cplieger/ui";
 import { $ } from "./dom.js";
 import { buildAttachmentPill } from "./attachment-pill.js";
 import { setAttachments } from "./actions/chat.js";
@@ -105,7 +99,8 @@ function ensureBound(): void {
   });
 }
 
-function toAttached(path: string): AttachedFile {
+/** The pill for a workspace-relative path, for a send that names its files instead of taking the row. */
+export function toAttached(path: string): AttachedFile {
   const parts = path.split("/");
   return { path, name: parts[parts.length - 1] ?? path };
 }

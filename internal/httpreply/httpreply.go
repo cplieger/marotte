@@ -2,9 +2,9 @@
 // named status responses, the error envelope they carry, and the request
 // guards whose failure IS one of those responses.
 //
-// webhttp owns the headers, the status and the encode; this package owns
+// httpserver owns the headers, the status and the encode; this package owns
 // marotte's error taxonomy. Every helper writes the bare {"error": "msg"}
-// envelope marotte's clients decode, leaving webhttp.ErrorResponse's Code and
+// envelope marotte's clients decode, leaving httpserver.ErrorResponse's Code and
 // RequestID empty, so a handler must use these helpers rather than hand-roll
 // the envelope.
 package httpreply
@@ -16,14 +16,14 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/webhttp/v4"
+	"github.com/cplieger/go/httpserver"
 )
 
 // jsonKeyError is the standard JSON error response key.
 const jsonKeyError = "error"
 
 // ErrorJSON returns the canonical error response map for JSON encoding.
-// Use with webhttp.WriteJSONStatus to write error responses consistently.
+// Use with httpserver.WriteJSONStatus to write error responses consistently.
 func ErrorJSON(msg string) map[string]string {
 	return map[string]string{jsonKeyError: msg}
 }
@@ -50,7 +50,7 @@ const msgInternalError = "internal error"
 // slash-command results) where json.Marshal would be a redundant
 // round-trip. Write errors are best-effort (client may have hung up).
 func WriteRawJSON(w http.ResponseWriter, data []byte) {
-	webhttp.JSONHeaders(w)
+	httpserver.JSONHeaders(w)
 	if _, err := w.Write(data); err != nil {
 		slog.Debug("httpreply: raw json write failed", "error", err)
 	}
@@ -61,22 +61,22 @@ func WriteRawJSON(w http.ResponseWriter, data []byte) {
 
 // BadRequest writes a 400 with {"error": msg}.
 func BadRequest(w http.ResponseWriter, msg string) {
-	webhttp.WriteJSONStatus(w, http.StatusBadRequest, webhttp.ErrorResponse{Error: msg})
+	httpserver.WriteJSONStatus(w, http.StatusBadRequest, httpserver.ErrorResponse{Error: msg})
 }
 
 // Forbidden writes a 403 with {"error": msg}.
 func Forbidden(w http.ResponseWriter, msg string) {
-	webhttp.WriteJSONStatus(w, http.StatusForbidden, webhttp.ErrorResponse{Error: msg})
+	httpserver.WriteJSONStatus(w, http.StatusForbidden, httpserver.ErrorResponse{Error: msg})
 }
 
 // NotFound writes a 404 with {"error": msg}.
 func NotFound(w http.ResponseWriter, msg string) {
-	webhttp.WriteJSONStatus(w, http.StatusNotFound, webhttp.ErrorResponse{Error: msg})
+	httpserver.WriteJSONStatus(w, http.StatusNotFound, httpserver.ErrorResponse{Error: msg})
 }
 
 // Conflict writes a 409 with {"error": msg}.
 func Conflict(w http.ResponseWriter, msg string) {
-	webhttp.WriteJSONStatus(w, http.StatusConflict, webhttp.ErrorResponse{Error: msg})
+	httpserver.WriteJSONStatus(w, http.StatusConflict, httpserver.ErrorResponse{Error: msg})
 }
 
 // headerAllow is the response-header name RFC 9110 §10.2.1 reserves for the
@@ -107,7 +107,7 @@ func setAllow(w http.ResponseWriter, method string, more ...string) {
 // and HEAD also lands here.
 func MethodNotAllowed(w http.ResponseWriter, method string, more ...string) {
 	setAllow(w, method, more...)
-	webhttp.WriteJSONStatus(w, http.StatusMethodNotAllowed, webhttp.ErrorResponse{Error: "method not allowed"})
+	httpserver.WriteJSONStatus(w, http.StatusMethodNotAllowed, httpserver.ErrorResponse{Error: "method not allowed"})
 }
 
 // InternalError writes a 500 with {"error": "internal error"} and logs
@@ -117,7 +117,7 @@ func InternalError(w http.ResponseWriter, err error) {
 	if err != nil {
 		slog.Error("httpreply: internal error", "error", err)
 	}
-	webhttp.WriteJSONStatus(w, http.StatusInternalServerError, webhttp.ErrorResponse{Error: msgInternalError})
+	httpserver.WriteJSONStatus(w, http.StatusInternalServerError, httpserver.ErrorResponse{Error: msgInternalError})
 }
 
 // ServerError writes a 500 with a caller-specified client-visible message
@@ -128,7 +128,7 @@ func ServerError(w http.ResponseWriter, clientMsg string, err error) {
 	if err != nil {
 		slog.Error("httpreply: server error", "client_msg", clientMsg, "error", err)
 	}
-	webhttp.WriteJSONStatus(w, http.StatusInternalServerError, webhttp.ErrorResponse{Error: clientMsg})
+	httpserver.WriteJSONStatus(w, http.StatusInternalServerError, httpserver.ErrorResponse{Error: clientMsg})
 }
 
 // RequireMethod returns true if r.Method matches method; otherwise it
@@ -143,11 +143,11 @@ func RequireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
 }
 
 // DecodeBody caps + decodes exactly one JSON value into v via
-// webhttp.DecodeJSONInto (rejecting trailing data), returning true on success.
+// httpserver.DecodeJSONInto (rejecting trailing data), returning true on success.
 // On any decode failure it writes marotte's bare {"error":errMsg} 400 and
 // returns false.
 func DecodeBody(w http.ResponseWriter, r *http.Request, v any, errMsg string) bool {
-	if err := webhttp.DecodeJSONInto(w, r, v, webhttp.MaxJSONBody); err != nil {
+	if err := httpserver.DecodeJSONInto(w, r, v, httpserver.MaxJSONBody); err != nil {
 		BadRequest(w, errMsg)
 		return false
 	}
@@ -158,7 +158,7 @@ func DecodeBody(w http.ResponseWriter, r *http.Request, v any, errMsg string) bo
 // proceed. An absent or malformed body is ignored (v keeps its zero value) because these callers
 // treat the body as advisory; an oversize body writes a 413 and returns false.
 func DecodeBodyOptional(w http.ResponseWriter, r *http.Request, v any) bool {
-	err := webhttp.DecodeJSONInto(w, r, v, webhttp.MaxJSONBody)
+	err := httpserver.DecodeJSONInto(w, r, v, httpserver.MaxJSONBody)
 	if err == nil || errors.Is(err, io.EOF) {
 		return true
 	}

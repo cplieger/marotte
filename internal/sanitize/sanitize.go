@@ -3,7 +3,7 @@
 // (TAG characters, zero-width joiners, bidi overrides) that carry prompt injections.
 //
 // Output is for MULTI-LINE transcript content (tool output, a command's captured output, an export):
-// hidden runes are deleted. A single-line surface takes runesafe's
+// hidden runes are deleted. A single-line surface takes textsafe's
 // SanitizeSingleLineBounded instead, which replaces them with a visible space.
 // internal/ansitext parses the same sequences to KEEP them as style spans.
 package sanitize
@@ -12,7 +12,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/cplieger/runesafe/v3"
+	"github.com/cplieger/go/textsafe"
 )
 
 // ansiRe matches the ANSI sequences kiro-cli and its subprocesses produce: CSI, OSC,
@@ -47,12 +47,12 @@ func Unicode(s string) string {
 	}, s)
 }
 
-// The bidi set is runesafe.IsBidiControl (the exact unicode.Bidi_Control set).
+// The bidi set is textsafe.IsBidiControl (the exact unicode.Bidi_Control set).
 func isHidden(r rune) bool {
 	if r >= 0xE0000 && r <= 0xE007F {
 		return true // TAG characters
 	}
-	if runesafe.IsBidiControl(r) {
+	if textsafe.IsBidiControl(r) {
 		return true // bidi marks/embeddings/overrides/isolates (Trojan Source)
 	}
 	switch r {

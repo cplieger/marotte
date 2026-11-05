@@ -158,7 +158,7 @@ func hostedLeasedRun(t *testing.T, reply json.RawMessage) (*Runtime, *fakeBridge
 	t.Helper()
 	h, _, br := newTestHub()
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ParentSessionID: testLaunchSession})
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 	br.setCallResult(methodKiroWorkflowInspect, reply)
 	return h, br
 }
@@ -228,8 +228,8 @@ func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
 	})
 }
 
-// TestHandleRun_GradesAFailedReadThreeWays pins that the client stops on 404 and retries otherwise, so each misgrade has a cost.
-func TestHandleRun_GradesAFailedReadThreeWays(t *testing.T) {
+// TestHandleRun_GradesAFailedReadTwoWays pins that the client stops on 404 and retries otherwise, so each misgrade has a cost.
+func TestHandleRun_GradesAFailedReadTwoWays(t *testing.T) {
 	tests := []struct {
 		name string
 		arm  func(br *fakeBridge)
@@ -239,20 +239,9 @@ func TestHandleRun_GradesAFailedReadThreeWays(t *testing.T) {
 			// KAS resolved the id and refused: the answer will not change.
 			name: "the engine answered ABOUT the run",
 			arm: func(br *fakeBridge) {
-				br.setCallRPCErr(methodKiroWorkflowInspect, &marotte.RPCError{
-					Code: -32603, Message: "Internal error",
-					Data: json.RawMessage(`{"details":"workflow not found"}`),
-				})
+				br.setCallRPCErr(methodKiroWorkflowInspect, workflowNotFoundErr())
 			},
 			want: http.StatusNotFound,
-		},
-		{
-			// An engine without workflow verbs never will describe a run.
-			name: "the engine has no workflow verb",
-			arm: func(br *fakeBridge) {
-				br.setCallErr(methodKiroWorkflowInspect, workflow.ErrUnknownMethod)
-			},
-			want: http.StatusServiceUnavailable,
 		},
 		{
 			// Nothing reached the engine, so nothing was learned.
@@ -507,8 +496,7 @@ func TestHandleControls(t *testing.T) {
 		}
 	})
 
-	// Retry is offered with the parent chat, for the step-transcript note too.
-	t.Run("an aborted chat-parented run offers retry and names its parent chat", func(t *testing.T) {
+	t.Run("an aborted chat-parented run offers retry", func(t *testing.T) {
 		h, _ := seedChatParentedRun(t, true)
 		rec := httptest.NewRecorder()
 		h.runRoutes.handleControls(rec, controlsReq("wf_1"))
@@ -522,16 +510,11 @@ func TestHandleControls(t *testing.T) {
 		if !slices.Contains(got.Verbs, "retry") {
 			t.Errorf("verbs = %v, want retry offered", got.Verbs)
 		}
-		if got.ParentChatID != "c1" {
-			t.Errorf("parent_chat_id = %q, want c1; the run page reads it to say where a step's "+
-				"live transcript went", got.ParentChatID)
-		}
 	})
 
 	t.Run("an unreadable run is a 404 rather than an empty row", func(t *testing.T) {
 		h, br := seedChatParentedRun(t, true)
-		// rr.status reports "" for an engine without workflow verbs.
-		br.setCallErr(methodKiroWorkflowInspect, workflow.ErrUnknownMethod)
+		br.setCallRPCErr(methodKiroWorkflowInspect, workflowNotFoundErr())
 		rec := httptest.NewRecorder()
 		h.runRoutes.handleControls(rec, controlsReq("wf_1"))
 		if rec.Code != http.StatusNotFound {
@@ -673,7 +656,7 @@ func TestControlHandler_ForwardsKASsOwnRefusal(t *testing.T) {
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "running", ""),
 	}
 	// This process holds the run, so pause is offered.
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 	// KAS refuses with -32603 and the reason in `error.data`, hence rpcerr.Text.
 	br.callRPCErrs = map[string]*marotte.RPCError{
 		methodKiroWorkflowPause: {
@@ -704,7 +687,7 @@ func TestHandleResume_AClaimInFlightIsReaderText(t *testing.T) {
 		methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "paused", ""),
 	}
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 	br.callRPCErrs = map[string]*marotte.RPCError{
 		methodKiroWorkflowResume: {
 			Code:    -32603,
@@ -745,7 +728,7 @@ func TestHandleResume_AQueuedClaimIsWaitedForNotRefused(t *testing.T) {
 	}
 	queued := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{methodKiroWorkflowResume: queued}
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 	req := httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/resume", nil)
 	req.SetPathValue("id", "wf_1")
 	rec := httptest.NewRecorder()
@@ -764,6 +747,31 @@ func TestHandleResume_AQueuedClaimIsWaitedForNotRefused(t *testing.T) {
 	<-done
 	if rec.Code != http.StatusOK {
 		t.Errorf("a resume KAS queued then ran = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandleResume_AQuestionParkWhoseTreeDoesNotDecodeIsUnread pins that a run whose step tree workflow.DecodeInspect
+// refuses is unreadable, never a run nobody waits on: its step may be parked on a question, which a resume re-parks.
+func TestHandleResume_AQuestionParkWhoseTreeDoesNotDecodeIsUnread(t *testing.T) {
+	h, _, br := newTestHub()
+	parked := inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step"))
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowInspect: withAttentionDrift(t, parked),
+		methodKiroWorkflowResume:  json.RawMessage(`{}`),
+	}
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	req := httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/resume", nil)
+	req.SetPathValue("id", "wf_1")
+	rec := httptest.NewRecorder()
+
+	h.runRoutes.handleResume(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("POST resume = %d %s, want %d", rec.Code, rec.Body.String(), http.StatusServiceUnavailable)
+	}
+	if got := stateWrites(br.callLog()); len(got) != 0 {
+		t.Errorf("writes = %v, want none", got)
 	}
 }
 

@@ -36,7 +36,9 @@ func PermissionOutcomeWithFileDecisions(optionID string, decisions map[string]bo
 // user's note as `_meta.kiro.rejectionReason`, which KAS hands the model as
 // "The user rejected this tool call: <reason>". An empty reason sends no `_meta`:
 // KAS forwards "" verbatim as a dangling sentence. KAS reads the note only on a
-// reject_once answer, so the caller need not gate on the option's kind.
+// reject_once answer, so the caller need not gate on the option's kind. On a plan
+// approval KAS also keeps the note and gives it to the steps of the next approved
+// plan as the user's correction.
 func PermissionOutcomeWithRejectionReason(optionID, reason string) *PermissionOutcome {
 	out := PermissionOutcomeSelected(optionID)
 	if reason != "" {
@@ -61,8 +63,14 @@ type PermissionConsentAnswer struct {
 	Resource   string `json:"resource"`
 }
 
-// ConsentScopeUser saves a rule to the user permissions file, which every session reads.
-const ConsentScopeUser = "user"
+// Consent scopes an always answer saves its rule at.
+const (
+	// ConsentScopeUser saves a rule to the user permissions file, which every session reads.
+	ConsentScopeUser = "user"
+	// ConsentScopeSession has KAS keep the rule in the live session's memory only: nothing is
+	// written, and the rule ends when that session closes.
+	ConsentScopeSession = "session"
+)
 
 // permissionOutcomeMeta is the `_meta` envelope on a permission reply.
 type permissionOutcomeMeta struct {

@@ -3,8 +3,6 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -357,67 +355,50 @@ func TestMergeEntries_AnEmptyRecordLaneTakesTheProjectedOne(t *testing.T) {
 	}
 }
 
-// TestMergeEntries_AnInvocationPairsOnTheDelegateUUID pins that the replayed id carries KAS's
-// sub_agent_start suffix, so an id rule would duplicate every delegate card on resume.
-func TestMergeEntries_AnInvocationPairsOnTheDelegateUUID(t *testing.T) {
-	fx := loadInvocationFixture(t)
-	projected := projectInvocationFixture(t, fx)
+// TestMergeEntries_AReplayedInvocationPairsWithItsLiveCard pins that KAS's replayed invocation,
+// recorded under the live id plus a suffix, merges into the live card and its result.
+func TestMergeEntries_AReplayedInvocationPairsWithItsLiveCard(t *testing.T) {
+	c := loadKASCorpusFile(t, "delegate")
+	d := newKASDrive(t, c.Live)
+	d.run()
+	projected := projectReplay(t, c.Replay, d.workDir)
+	log := logOf(t, d.cs, kasChat)
+	var actionID, delegateID string
+	for _, e := range entriesOfKind(t, log, marotte.EntryKindToolCall) {
+		var p marotte.EntryToolCall
+		decodePayload(t, e, &p)
+		if e.Lane == "" && p.AgentSubtaskID != "" {
+			actionID, delegateID = e.ID, p.AgentSubtaskID
+		}
+	}
+	if actionID == "" {
+		t.Fatalf("the live record holds no invocation card:\n%s", dumpEntries(log))
+	}
 
-	record := []recordTurn{recTurn(t, "T1",
-		openRow("T1", 1, nil),
-		textRow("7c3d-say", "", "delegating the sweep"),
-		callRow(fx.ActionID, "", fx.DelegateID),
-		textRow("d9-1-say", fx.DelegateID, "swept 3 files"),
-		resultRow(fx.ActionID, "", marotte.ToolCompleted),
-		liveClose("T1:e1", marotte.TurnOutcomeCompleted, "end_turn"),
-	)}
-
-	merged, _ := mergeEntries(record, projected, "sid-1")
+	merged, _ := mergeEntries(recordTurnsOf(log, nil), projected, d.sid)
 	if len(merged) != 1 {
 		t.Fatalf("merged %d turns, want 1:\n%s", len(merged), dumpMerged(merged))
 	}
-	if got := countKind(merged[0], marotte.EntryKindToolCall); got != 1 {
-		t.Errorf("merged turn holds %d tool_call entries, want 1:\n%s", got, dumpMerged(merged))
+	var cards, results []string
+	for _, e := range merged[0].Entries {
+		switch e.Kind {
+		case marotte.EntryKindToolCall:
+			var p marotte.EntryToolCall
+			decodePayload(t, e, &p)
+			if e.Lane == "" && p.AgentSubtaskID == delegateID {
+				cards = append(cards, e.ID)
+			}
+		case marotte.EntryKindToolResult:
+			if e.Lane == "" && strings.HasPrefix(e.ID, actionID) {
+				results = append(results, e.ID)
+			}
+		}
 	}
-	if got := countKind(merged[0], marotte.EntryKindToolResult); got != 1 {
-		t.Errorf("merged turn holds %d tool_result entries, want 1:\n%s", got, dumpMerged(merged))
+	if !slices.Equal(cards, []string{actionID}) {
+		t.Errorf("invocation cards = %v, want the record's one %q:\n%s", cards, actionID, dumpMerged(merged))
 	}
-	if call := entryIn(t, merged[0], marotte.EntryKindToolCall); call.ID != fx.ActionID {
-		t.Errorf("card id = %q, want the record's %q", call.ID, fx.ActionID)
-	}
-	if res := entryIn(t, merged[0], marotte.EntryKindToolResult); res.ID != marotte.ToolResultID(fx.ActionID) {
-		t.Errorf("result id = %q, want the record's %q", res.ID, marotte.ToolResultID(fx.ActionID))
-	}
-}
-
-// TestMergeEntries_ADelegationThatLeadsItsTurnPairsTheTURN pins the same suffix at turn level:
-// a turn led by an invocation keys on the delegate uuid.
-func TestMergeEntries_ADelegationThatLeadsItsTurnPairsTheTURN(t *testing.T) {
-	record := []recordTurn{recTurn(t, "T1",
-		openRow("T1", 1, nil),
-		callRow("act-1", "", "d-9"),
-		textRow("d9-1-say", "d-9", "swept 3 files"),
-		resultRow("act-1", "", marotte.ToolCompleted),
-		liveClose("T1:e1", marotte.TurnOutcomeCompleted, "end_turn"),
-	)}
-	projected := []translate.ProjectedTurn{projTurn(t, "P1",
-		openRow("P1", 0, nil),
-		callRow("act-1-sub-agent-start", "", "d-9"),
-		textRow("d9-1-say", "d-9", "swept 3 files"),
-		resultRow("act-1-sub-agent-start", "", marotte.ToolCompleted),
-		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: "end_turn"}),
-	)}
-
-	merged, _ := mergeEntries(record, projected, "sid-1")
-	if len(merged) != 1 {
-		t.Fatalf("merged %d turns, want 1 — the two are one delegating turn:\n%s",
-			len(merged), dumpMerged(merged))
-	}
-	if got := countKind(merged[0], marotte.EntryKindToolCall); got != 1 {
-		t.Errorf("merged turn holds %d tool_call entries, want 1:\n%s", got, dumpMerged(merged))
-	}
-	if call := entryIn(t, merged[0], marotte.EntryKindToolCall); call.ID != "act-1" {
-		t.Errorf("card id = %q, want the record's %q", call.ID, "act-1")
+	if !slices.Equal(results, []string{marotte.ToolResultID(actionID)}) {
+		t.Errorf("invocation results = %v, want the record's one %q:\n%s", results, marotte.ToolResultID(actionID), dumpMerged(merged))
 	}
 }
 
@@ -1064,44 +1045,6 @@ func TestRecordTurnsOf_ATurnWithNoOpenIsSkippedAndSaidOutLoud(t *testing.T) {
 	}
 }
 
-// invocationFixture is internal/translate's replay_invocation.json, read from there so the
-// projection and merge halves cannot drift.
-type invocationFixture struct {
-	ActionID   string `json:"action_id"`
-	DelegateID string `json:"delegate_id"`
-	Frames     []struct {
-		Kind   marotte.ACPUpdateKind `json:"kind"`
-		Update json.RawMessage       `json:"update"`
-	} `json:"frames"`
-}
-
-func loadInvocationFixture(t *testing.T) invocationFixture {
-	t.Helper()
-	path := filepath.Join("..", "translate", "testdata", "replay_invocation.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	var fx invocationFixture
-	if err := json.Unmarshal(data, &fx); err != nil {
-		t.Fatalf("parse %s: %v", path, err)
-	}
-	return fx
-}
-
-func projectInvocationFixture(t *testing.T, fx invocationFixture) []translate.ProjectedTurn {
-	t.Helper()
-	n := 0
-	p := translate.NewEntryProjection(func() string {
-		n++
-		return fmt.Sprintf("P%d", n)
-	}, "")
-	for _, f := range fx.Frames {
-		p.Ingest(f.Kind, f.Update)
-	}
-	return p.Turns()
-}
-
 func turnCloseEntry(c marotte.EntryTurnClose) *marotte.Entry {
 	e := &marotte.Entry{Kind: marotte.EntryKindTurnClose}
 	setPayload(e, c)
@@ -1248,12 +1191,12 @@ func TestUnionTurnClose_PlaceholderTakesTheCompletionFacts(t *testing.T) {
 	proj := turnCloseEntry(marotte.EntryTurnClose{
 		Outcome:          marotte.TurnOutcomeFailed,
 		StopReasonRaw:    "error",
-		Throughput:       &marotte.TurnThroughput{EstimatedTokens: 9, ActiveStreamingMs: 90},
 		RequestIDs:       []string{"req-1"},
 		Recoveries:       []string{"empty"},
 		Steering:         []string{"file:///w/a.md"},
 		EngineErrorClass: "ModelThrottleError",
 		ContextBreakdown: &marotte.ContextBreakdown{TotalChars: 77},
+		FirstOutput:      &marotte.TurnFirstOutput{TotalMs: 4200, SetupMs: 900},
 	})
 	placeholder := turnCloseEntry(marotte.EntryTurnClose{
 		Outcome:       marotte.TurnOutcomeInterrupted,
@@ -1262,9 +1205,10 @@ func TestUnionTurnClose_PlaceholderTakesTheCompletionFacts(t *testing.T) {
 	unionTurnClose(placeholder, proj)
 	var got marotte.EntryTurnClose
 	decodePayload(t, *placeholder, &got)
-	if got.Throughput == nil || got.Throughput.EstimatedTokens != 9 || !slices.Equal(got.RequestIDs, []string{"req-1"}) ||
+	if !slices.Equal(got.RequestIDs, []string{"req-1"}) ||
 		!slices.Equal(got.Recoveries, []string{"empty"}) || !slices.Equal(got.Steering, []string{"file:///w/a.md"}) ||
-		got.EngineErrorClass != "ModelThrottleError" || got.ContextBreakdown == nil || got.ContextBreakdown.TotalChars != 77 {
+		got.EngineErrorClass != "ModelThrottleError" || got.ContextBreakdown == nil || got.ContextBreakdown.TotalChars != 77 ||
+		got.FirstOutput == nil || got.FirstOutput.TotalMs != 4200 {
 		t.Errorf("placeholder after union = %+v, want the replay's completion facts", got)
 	}
 
@@ -1276,7 +1220,7 @@ func TestUnionTurnClose_PlaceholderTakesTheCompletionFacts(t *testing.T) {
 	unionTurnClose(real, proj)
 	var kept marotte.EntryTurnClose
 	decodePayload(t, *real, &kept)
-	if !slices.Equal(kept.RequestIDs, []string{"req-own"}) || kept.Throughput != nil {
+	if !slices.Equal(kept.RequestIDs, []string{"req-own"}) || kept.ContextBreakdown != nil || kept.FirstOutput != nil {
 		t.Errorf("a real closer after union = %+v, want its own facts kept", kept)
 	}
 }
@@ -1435,5 +1379,84 @@ func TestMergeEntries_AnInsertedTurnWithNoTimestampTakesItsPredecessors(t *testi
 				t.Errorf("merged %s %s has ts 0", e.Kind, e.ID)
 			}
 		}
+	}
+}
+
+func wireOpenRow(id, kasTurn string) entryRow {
+	return entryRow{
+		kind:    marotte.EntryKindTurnOpen,
+		id:      id,
+		payload: marotte.EntryTurnOpen{Source: marotte.TurnOpenNameWireTurnStart, KASTurnID: kasTurn},
+	}
+}
+
+// A turn with no prompt id and no content has neither rule-one nor rule-two key: without KAS's turn id each resume
+// inserted its replayed twin again.
+func TestMergeEntries_AContentlessWireTurnPairsOnItsKASTurnID(t *testing.T) {
+	record := []recordTurn{recTurn(t, "T1",
+		wireOpenRow("T1", "kas-turn-1"),
+		liveClose("T1:e1", marotte.TurnOutcomeCancelled, "cancelled"),
+	)}
+	projected := []translate.ProjectedTurn{projTurn(t, "P1",
+		wireOpenRow("P1", "kas-turn-1"),
+		closeRow("P1:e1", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCancelled, StopReasonRaw: "cancelled"}),
+	)}
+
+	first, _ := mergeEntries(record, projected, "sid-1")
+	second, _ := mergeEntries(mergedAsRecord(first), projected, "sid-1")
+
+	if len(first) != 1 || len(second) != 1 {
+		t.Errorf("merged %d turns, then %d on a second merge, want 1 both times:\n%s", len(first), len(second), dumpMerged(second))
+	}
+}
+
+// A prompt turn KAS never bound by message id (no turn_bind) and that emitted nothing pairs on the tag its replayed
+// turn_start echoes, the record turn's own id.
+func TestMergeEntries_APromptTurnPairsOnTheEchoedTag(t *testing.T) {
+	record := []recordTurn{recTurn(t, "t-0123456789abcdef",
+		openRow("t-0123456789abcdef", 1, &marotte.EntryPrompt{ID: "m-1", Text: "go"}),
+		placeholderClose("t-0123456789abcdef:e1"),
+	)}
+	proj := projTurn(t, "P1", openRow("P1", 0, &marotte.EntryPrompt{ID: "kas-1", Text: "go"}))
+	proj.Tag = "t-0123456789abcdef"
+
+	merged, _ := mergeEntries(record, []translate.ProjectedTurn{proj}, "sid-1")
+
+	if len(merged) != 1 {
+		t.Errorf("merged %d turns, want the record turn and its twin as one:\n%s", len(merged), dumpMerged(merged))
+	}
+}
+
+// KAS answers a turn its record never saw end with a synthesized cancelled turn_end marked recovered. That is not
+// the reader's stop, so after resume the turn keeps the store's own placeholder, never a cancelled closer.
+func TestMergeEntries_ARecoveredEndLeavesThePlaceholder(t *testing.T) {
+	const turn = "t-0123456789abcdef"
+	record := []recordTurn{recTurn(t, turn,
+		openRow(turn, 1, &marotte.EntryPrompt{ID: "m-1", Text: "go"}),
+		placeholderClose(turn+":e1"),
+	)}
+	p := translate.NewEntryProjection(func() string { return "p-id" }, "")
+	for _, kiro := range []map[string]any{
+		{"kind": "turn_start", "turnStart": true, "executionId": "exec-1", "userMessageTag": turn, "boundarySource": "observed"},
+		{
+			"kind": "turn_end", "turnEnd": map[string]any{"stopReason": "cancelled"}, "stopReason": "cancelled",
+			"executionId": "exec-1", "boundarySource": "recovered",
+		},
+	} {
+		kiro["replay"] = true
+		p.Ingest(marotte.ACPUpdateSessionInfo, mustJSON(t, map[string]any{
+			"sessionUpdate": string(marotte.ACPUpdateSessionInfo), "_meta": map[string]any{"kiro": kiro},
+		}))
+	}
+
+	merged, _ := mergeEntries(record, p.Turns(), "sid-1")
+
+	if len(merged) != 1 {
+		t.Fatalf("merged %d turns, want 1:\n%s", len(merged), dumpMerged(merged))
+	}
+	var closer marotte.EntryTurnClose
+	decodePayload(t, entryIn(t, merged[0], marotte.EntryKindTurnClose), &closer)
+	if closer.Outcome != marotte.TurnOutcomeInterrupted || closer.StopReasonRaw != string(marotte.StopReasonUnterminated) {
+		t.Errorf("closer = %+v, want the interrupted/unterminated placeholder", closer)
 	}
 }

@@ -2,7 +2,7 @@
 // into, the read must not — it is a boot-path file read for a panel nobody has opened. settings.ts
 // wires them from `initUI` and the tab loader.
 
-import { apiGetWithHeaders } from "./api-client.js";
+import { apiGet } from "./api-client.js";
 import { $ } from "./dom.js";
 import { showToast } from "./toast.js";
 import { showSaving, showSaved, showError, STEERING_SAVE_KEY } from "./save-indicator.js";
@@ -60,7 +60,7 @@ export function loadSteeringDoc(): void {
   }
   reading = true;
   const textarea = $.steeringInput;
-  void apiGetWithHeaders<{ content?: string }>("/api/steering").then(({ data, headers }) => {
+  void apiGet<{ content?: unknown; etag?: unknown }>("/api/steering").then((data) => {
     reading = false;
     if (typeof data?.content !== "string") {
       // The box stays locked, because an empty box is not an empty document and the save cannot
@@ -68,7 +68,9 @@ export function loadSteeringDoc(): void {
       showError(STEERING_SAVE_KEY);
       return;
     }
-    const fresh = headers?.get("ETag") ?? "";
+    // The body's token, never the ETag header: a gzip-coded answer weakens the header's copy, and
+    // the save's strong If-Match refuses a weak tag.
+    const fresh = typeof data.etag === "string" ? data.etag : "";
     const dirty = textarea.value !== seeded || debouncedSave?.isPending() === true;
     if (dirty && data.content !== seeded) {
       // Local edits AND the file moved: adopting either half would decide the conflict silently, so
@@ -127,7 +129,7 @@ export function initSteeringEditor(): void {
       return;
     }
     if (inst.error?.status === 428) {
-      console.error("steering: the save carried no If-Match; the read answered no ETag");
+      console.error("steering: the save carried no If-Match; the read answered no token");
     }
   });
 

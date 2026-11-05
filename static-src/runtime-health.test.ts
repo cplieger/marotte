@@ -79,7 +79,7 @@ describe("runtime-health: degraded banner reconciliation", () => {
 
     const link = mockedShow.mock.calls[0]?.[5];
     expect(link?.label).toBe("Run diagnostics");
-    // An href would be dropped by isSafeURL (relative URLs throw in new URL), so an in-app jump
+    // An href would be dropped by isHttpURL (relative URLs throw in new URL), so an in-app jump
     // must be a callback, not a link.
     expect(link?.href).toBeUndefined();
     link?.onClick?.();

@@ -12,9 +12,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/creds"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/creds"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 // countingCores builds a closable fake per loaded sign-in and keeps them.
@@ -99,10 +99,10 @@ func TestLoad_EachFailureHasItsScope(t *testing.T) {
 	m.newCore = cores.newCore
 	m.Load(t.Context())
 
-	if got := viewFor(t, m, gh.ID); got.Status != ForgeConnected {
+	if got := viewFor(t, m, gh.ID); got.Status != forgeConnected {
 		t.Errorf("the valid record = %+v, want connected", got)
 	}
-	if got := viewFor(t, m, owned.ID); got.Status != ForgeConnected || len(got.OwnerScopes) != 20 ||
+	if got := viewFor(t, m, owned.ID); got.Status != forgeConnected || len(got.OwnerScopes) != 20 ||
 		slices.Contains(got.OwnerScopes, "ORG-00") || slices.Contains(got.OwnerScopes, "bob") {
 		t.Errorf("the owners record = %+v, want connected with its 20 owners, the repeat and the account's own dropped", got)
 	}
@@ -131,7 +131,7 @@ func TestLoad_EachFailureHasItsScope(t *testing.T) {
 	if !slices.Equal(keys, want) {
 		t.Errorf("store keys after Load = %q, want the admitted records' active slots %q", keys, want)
 	}
-	if got := viewFor(t, m, proxied.ID); got.Status != ForgeReconnect || got.Error == nil || !strings.Contains(got.Error.Message, "proxy") {
+	if got := viewFor(t, m, proxied.ID); got.Status != forgeReconnect || got.Error == nil || !strings.Contains(got.Error.Message, "proxy") {
 		t.Errorf("the record with a refused proxy = %+v, want reconnect naming the setting", got)
 	}
 	if _, err := m.reader(proxied.ID); err == nil {
@@ -175,7 +175,7 @@ func TestLoad_EachFailureHasItsScope(t *testing.T) {
 			m.Load(t.Context())
 
 			for _, f := range m.List() {
-				if f.Status != ForgeUnusable || f.Error == nil || !strings.Contains(f.Error.Message, "the forge credential store could not be read") {
+				if f.Status != forgeUnusable || f.Error == nil || !strings.Contains(f.Error.Message, "the forge credential store could not be read") {
 					t.Errorf("row %s = %+v, want unusable naming the store read", f.ID, f)
 				}
 			}
@@ -190,7 +190,7 @@ func TestLoad_EachFailureHasItsScope(t *testing.T) {
 				t.Errorf("store keys = %q, want nothing swept by a failed Load", k)
 			}
 			NewKeeper(m).pass(t.Context())
-			if got := viewFor(t, m, gh.ID); got.Status != ForgeConnected {
+			if got := viewFor(t, m, gh.ID); got.Status != forgeConnected {
 				t.Errorf("row after the next pass = %+v, want connected", got)
 			}
 			if got := changes.all(); len(got) == 0 || got[0] != (Change{}) {

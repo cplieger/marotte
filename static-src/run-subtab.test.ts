@@ -67,7 +67,6 @@ vi.mock("./run-store.js", async (importOriginal) => ({
   // The affordance fetch, which showRun triggers alongside the state one. Inert here: this suite
   // pins the sub-tab's open/close rules, and `runControls` answering undefined renders no control
   // row at all.
-  invalidateRunControls: vi.fn(),
   runControls: vi.fn(() => undefined),
   runState: vi.fn(() => undefined),
   runChatID: vi.fn((id: string) => m.launchedBy.get(id) ?? ""),
@@ -106,6 +105,7 @@ vi.mock("./actions/runs.js", () => {
     retryRun: stub,
     extendRunRepeat: stub,
     finishRunRepeat: stub,
+    endRunStep: stub,
     messageRunStep: stub,
     removeRunStepSteer: stub,
     clearRunStepSteers: stub,

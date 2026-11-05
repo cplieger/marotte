@@ -140,7 +140,7 @@ describe("hand-authored glyphs in static/index.html", () => {
   // The browser and the read family share one book on purpose (`PATH_BOOK_OPEN`). Resolved through `toolIcon`, since a
   // title override would defeat the share without the constant moving.
   it("draws one open book for the browser and the read family", () => {
-    expect(inner(toolIcon("read", "readFile"))).toBe(inner(ICON_TAB_DOCS));
+    expect(inner(toolIcon({ kind: "read", toolName: "" }))).toBe(inner(ICON_TAB_DOCS));
   });
 
   // Introspect's old book was indistinguishable from the read glyph at 16px in one transcript.

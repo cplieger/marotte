@@ -12,8 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"golang.org/x/sync/semaphore"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // accountCore answers every read with rows named after the token it was built
@@ -245,7 +244,7 @@ func TestListCache_AFillInFlightAcrossADropStoresNothing(t *testing.T) {
 
 	t.Run("two accounts' cold fills of one key", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			c := newListCache[[]string](time.Hour, semaphore.NewWeighted(maxListFills))
+			c := newListCache[[]string](time.Hour, newFillPool(maxListFills))
 			a, b := listKey(testForge, "sign-in-a", "", "repos", ""), listKey(testForge, "sign-in-b", "", "repos", "")
 			release := make(chan struct{})
 			fill := func(who string) func(context.Context) ([]string, error) {

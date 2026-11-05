@@ -60,8 +60,8 @@ func newTestStore(t *testing.T) (*Store, *fakeBroadcaster) {
 	return s, b
 }
 
-// ageChat backdates a chat so it is eligible for purge, writing BOTH UpdatedAt (what purge ages
-// from) and the mtime (the fallback for an unreadable chat).
+// ageChat backdates a chat's last use (UpdatedAt and a later KeepFilledAt, both of which the purge
+// ages from) and its mtime.
 func ageChat(t *testing.T, s *Store, id string, ago time.Duration) {
 	t.Helper()
 	path := filepath.Join(s.dir, id, headerFileName)
@@ -75,6 +75,7 @@ func ageChat(t *testing.T, s *Store, id string, ago time.Duration) {
 	}
 	old := time.Now().Add(-ago)
 	c.UpdatedAt = old.UnixMilli()
+	c.KeepFilledAt = min(c.KeepFilledAt, old.UnixMilli())
 	out, err := json.MarshalIndent(&c, "", "  ")
 	if err != nil {
 		t.Fatalf("marshal chat %s: %v", id, err)

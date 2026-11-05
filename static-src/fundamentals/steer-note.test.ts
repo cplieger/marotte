@@ -6,6 +6,8 @@ import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest
 import { buildSteerNote, setSteerNoteRunLabel, type SteerNoteData } from "./steer-note.js";
 import type { SteerReason } from "../types.js";
 import { mountAppCSS } from "../__test-helpers__/css-rules.js";
+import { glyphMarkup, registryMarkup } from "../__test-helpers__/glyph.js";
+import { ICON_TAB_RUN, workflowIcon } from "../icons.js";
 
 function note(over: Partial<SteerNoteData> = {}): HTMLElement {
   return buildSteerNote({ text: "actually target main", origin: "user", dropped: false, ...over });
@@ -22,6 +24,21 @@ function controls(root: HTMLElement): HTMLButtonElement[] {
     (b) => !b.classList.contains("steer-note-more"),
   );
 }
+
+describe("a steer an API caller sent", () => {
+  it("names the program in place of the reader's own label", () => {
+    const n = note({ text: "Agent Mail: 1 new message", caller: { label: "Agent Mail" } });
+    expect(textOf(n, ".steer-note-label")).toBe("Sent by Agent Mail");
+    expect(n.getAttribute("aria-label")).toBe("Sent by Agent Mail: Agent Mail: 1 new message");
+  });
+
+  it("names an unlabelled program as an API caller, and keeps the unread clause", () => {
+    const n = note({ caller: {}, dropped: true, reason: "boundary" });
+    expect(textOf(n, ".steer-note-label")).toBe(
+      "Sent by an API caller \u00b7 Not read \u00b7 the turn ended first",
+    );
+  });
+});
 
 describe("the read state", () => {
   it("names the reader's own mid-turn message and carries the whole of it", () => {
@@ -162,14 +179,29 @@ describe("whose words the note holds", () => {
     expect(textOf(n, ".steer-note-label")).toBe("Message from the main agent not delivered");
   });
 
-  it("gives the main agent's message a glyph of its own", () => {
-    const glyph = (n: HTMLElement): string | undefined =>
-      n.querySelector(".tool-icon svg path")?.getAttribute("d") ?? undefined;
+  it("marks a workflow message the same way in both directions, apart from a result and the reader's own", () => {
+    const glyph = (n: HTMLElement): string =>
+      [...n.querySelectorAll(".tool-icon svg path")]
+        .map((p) => p.getAttribute("d") ?? "")
+        .join(" ");
     const parent = glyph(note({ origin: "parent" }));
 
-    expect(parent).toBeDefined();
+    expect(parent).not.toBe("");
+    expect(glyph(note({ origin: "step" }))).toBe(parent);
     expect(parent).not.toBe(glyph(note()));
     expect(parent).not.toBe(glyph(note({ origin: "agent" })));
+  });
+
+  it("draws the tree with the message badge for a workflow message, and the bare tree for a run's result", () => {
+    const drawn = (n: HTMLElement): string | null => {
+      const icon = n.querySelector(".tool-icon");
+      expect(icon?.getAttribute("aria-hidden")).toBe("true");
+      return glyphMarkup(icon?.firstElementChild);
+    };
+
+    expect(drawn(note({ origin: "parent" }))).toBe(registryMarkup(workflowIcon("message")));
+    expect(drawn(note({ origin: "step" }))).toBe(registryMarkup(workflowIcon("message")));
+    expect(drawn(note({ origin: "agent" }))).toBe(registryMarkup(ICON_TAB_RUN));
   });
 });
 

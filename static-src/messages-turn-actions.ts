@@ -4,15 +4,18 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition */
 
 import type { Turn } from "./turns.js";
-import { payloadOf } from "./turns.js";
+import { payloadOf, projectTurn } from "./turns.js";
 import { wakeText } from "./turn-wake.js";
+import { sentBy } from "./sent-by.js";
 import { entryRenders, turnFolds } from "./block-window.js";
 import { MessageRun } from "./entry-ids.js";
-import { ICON_COPY, ICON_COPY_MD, ICON_LINK } from "./icons.js";
-import { getActiveId } from "./store.js";
+import { ICON_COPY, ICON_COPY_MD, ICON_LINK, ICON_TANGENT } from "./icons.js";
+import { blockquote } from "./message-quote.js";
+import { get, getActiveId } from "./store.js";
+import { chatNotice } from "./notice-subject.js";
 import { copyClipboard } from "./actions/messages.js";
 import { buildPath } from "./route-path.js";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -117,7 +120,8 @@ function copyAndAnimate(btn: HTMLButtonElement, text: string, announce = false):
 
 /**
  * Mount the action buttons into the footer once and refresh the turn the handlers read. Buttons appear only once
- * the turn settles with something to copy; every action, Copy included, sits inside the collapsible group.
+ * the turn settles: the copy actions when it wrote prose, Branch when it can be branched from. Every action sits
+ * inside the collapsible group.
  */
 export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t: Turn): void {
   // Before every early return, and idempotent.
@@ -126,7 +130,8 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
   if (footer.querySelector(":scope > .turn-actions-buttons") !== null) {
     return;
   }
-  if (t.outcome === "running" || turnMarkdown(t).trim() === "") {
+  const hasProse = turnMarkdown(t).trim() !== "";
+  if (t.outcome === "running" || (!hasProse && t.branchFrom === undefined)) {
     return;
   }
 
@@ -162,24 +167,33 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
 
   // Inline on desktop, behind one native <details> on phone; one set of buttons serves both.
   const group = el("span", { className: "turn-actions-group" });
-  group.appendChild(
-    makeBtn(ICON_COPY, "Copy as text", (btn, fromMenu) => {
-      copyAndAnimate(btn, turnCopyText(card, current()), fromMenu);
-    }),
-  );
-  group.appendChild(
-    makeBtn(ICON_COPY_MD, "Copy as markdown", (btn, fromMenu) => {
-      copyAndAnimate(btn, turnCopyMarkdown(current()), fromMenu);
-    }),
-  );
-  group.appendChild(
-    makeBtn(ICON_LINK, "Copy link to this turn", (btn, fromMenu) => {
-      const chatID = getActiveId();
-      if (chatID !== "") {
-        copyAndAnimate(btn, turnLink(chatID, current().n), fromMenu);
-      }
-    }),
-  );
+  if (hasProse) {
+    group.appendChild(
+      makeBtn(ICON_COPY, "Copy as text", (btn, fromMenu) => {
+        copyAndAnimate(btn, turnCopyText(card, current()), fromMenu);
+      }),
+    );
+    group.appendChild(
+      makeBtn(ICON_COPY_MD, "Copy as markdown", (btn, fromMenu) => {
+        copyAndAnimate(btn, turnCopyMarkdown(current()), fromMenu);
+      }),
+    );
+    group.appendChild(
+      makeBtn(ICON_LINK, "Copy link to this turn", (btn, fromMenu) => {
+        const chatID = getActiveId();
+        if (chatID !== "") {
+          copyAndAnimate(btn, turnLink(chatID, current().n), fromMenu);
+        }
+      }),
+    );
+  }
+  if (t.branchFrom !== undefined) {
+    group.appendChild(
+      makeBtn(ICON_TANGENT, "Branch from here", () => {
+        branchFrom(current().id);
+      }),
+    );
+  }
 
   const more = el("details", {
     className: "turn-actions-more",
@@ -208,31 +222,63 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
   }
 }
 
+/**
+ * Open a tangent holding the conversation through `turnID`. The turn is re-projected from the live session, because
+ * a compaction since the card's last paint leaves it nothing KAS can fork from. Files on disk stay as they are.
+ */
+function branchFrom(turnID: string): void {
+  const chatID = getActiveId();
+  const session = get(chatID);
+  if (session === undefined) {
+    return;
+  }
+  const at = projectTurn(session, turnID)?.branchFrom;
+  if (at === undefined) {
+    chatNotice(
+      chatID,
+      "This turn was summarized or rewound since it was shown, so there is nothing to branch from.",
+    );
+    return;
+  }
+  // Lazy: chat.ts imports messages.ts, which imports this module.
+  void import("./chat.js").then(({ openTangentChat }) => openTangentChat(chatID, at.id));
+}
+
 /** The full URL of one turn: the chat's route plus `#turn-<n>`. */
 export function turnLink(chatID: string, n: number): string {
   return location.origin + buildPath({ kind: "chat", id: chatID, turn: n });
+}
+
+/** The turn's trigger as its header words it: the prompt under the "Sent by" line of a program that posted it, or
+ *  what woke the turn. */
+function triggerText(t: Turn): string {
+  const text = t.trigger?.text.trim();
+  if (text === undefined) {
+    return wakeText(t).trim();
+  }
+  const caller = t.trigger?.caller;
+  if (caller === undefined) {
+    return text;
+  }
+  return text === "" ? sentBy(caller) : `${sentBy(caller)}\n${text}`;
 }
 
 /** "Copy as text": the reader's prompt or what woke the turn, then the reply (the reply alone when the
  *  turn names neither). */
 function turnCopyText(card: HTMLElement, t: Turn): string {
   const reply = turnPlainText(card, t);
-  const prompt = (t.trigger?.text ?? wakeText(t)).trim();
+  const prompt = triggerText(t);
   return prompt === "" ? reply : `${prompt}\n\n${reply}`;
 }
 
 /** "Copy as markdown": the prompt or what woke the turn as a blockquote, then the reply's markdown. */
 function turnCopyMarkdown(t: Turn): string {
   const reply = turnMarkdown(t);
-  const prompt = (t.trigger?.text ?? wakeText(t)).trim();
+  const prompt = triggerText(t);
   if (prompt === "") {
     return reply;
   }
-  const quoted = prompt
-    .split("\n")
-    .map((line) => (line === "" ? ">" : `> ${line}`))
-    .join("\n");
-  return `${quoted}\n\n${reply}`;
+  return `${blockquote(prompt)}\n\n${reply}`;
 }
 
 /**

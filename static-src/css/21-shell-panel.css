@@ -87,19 +87,10 @@
   touch-action: none;
   transition: background var(--dur-micro) var(--ease-standard);
 
-  /* OPT OUT OF THE BOX FLOOR. This is a `role="separator"` with a tabindex, so it
-     matches the universal hit floor's third rule (61-mcp-tools.css) and its BOX
-     was being grown to --hit-floor — 24px on a fine pointer, 44px on a coarse
-     one. That is the one shape the floor must never grow: the bar is
-     `position: absolute; top: 0` across the panel's full width at `z-index: 1`,
-     so a 44px box lies directly over the whole 45px header and takes every one of
-     its four buttons' clicks. Measured before this line: box 44px against a
-     visual bar of 3px.
-
-     The floor's own comment already names this control as one that grows its
-     TARGET instead, so the expander below is the intended mechanism and this is the
-     missing half of it. A class rule
-     scores (0,1,0) against the floor's zero, so this wins by specificity. */
+  /* The floor (61-mcp-tools.css) gives this focusable separator a --paint-floor
+     box; the bar is absolute across the header at `z-index: 1`, so a 24px box
+     would cover the header's buttons. Its shared expander is already off; the
+     downward `::before` below is the target. */
   min-width: 0;
   min-height: 0;
 }
@@ -146,7 +137,7 @@
 .shell-header {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: max(var(--sp-2), var(--tap-gap-sm));
   padding-inline: var(--sp-3);
   height: 2rem;
   border-block-end: 1px solid var(--c-border);
@@ -188,10 +179,7 @@
   cursor: pointer;
   padding: 0;
 
-  /* The tier's own square, which equals --hit-floor at both tiers, so the box is
-     the target. The class owns its box rather than the floor's `min-*`. */
-  min-width: 0;
-  min-height: 0;
+  /* 24px on every tier; the shared expander (61-mcp-tools.css) holds the target. */
   width: 1.5rem;
   height: 1.5rem;
   /* --r-sm is the ladder's rung for a 16-24px box; this is 24px. */
@@ -210,6 +198,12 @@
 .shell-terminal {
   flex: 1;
   min-height: 0;
+
+  /* Inert for `.term` (see below), but it shrinks the content box web-terminal-ui's
+     ResizeObserver watches, so the columns recount when only the reach changes
+     (the pointer toggle). */
+  padding-inline-start: var(--sidebar-reach);
+  background: var(--c-term-bg);
   /* createTerminal(root, { layout: "container" }) makes this element the
      terminal's own styling + positioning boundary: the ui package's
      .wt-root.wt-container carries position: relative + overflow: clip, and
@@ -217,6 +211,17 @@
      key toolbar) positions absolute against it. No containment workarounds
      needed here. The engine's `.term` is the scroll container, not this
      element. */
+}
+
+/* `.term` is absolute against this root, so its inset, not the root's padding,
+   moves the grid; the engine counts columns from `.term`'s width. */
+.shell-terminal > .term {
+  inset-inline-start: var(--sidebar-reach);
+}
+
+/* Full screen covers the sidebar, handle included. */
+.shell-panel.shell-fullscreen {
+  --sidebar-reach: 0px;
 }
 
 /* "earlier output trimmed" marker (vterm renderer inserts .term-trim-marker
@@ -305,20 +310,9 @@
    every selector below at the specificity it has outside the block. */
 :where([data-pointer="coarse"]) {
   .shell-header {
-    /* One 44px row plus the border it declares, because `box-sizing: border-box` is
-       global (02-reset.css) and a 2.75rem height would leave a 43px content box for
-       44px buttons. */
+    /* One 44px band plus the border it declares (`box-sizing: border-box` is global,
+       02-reset.css), so each 24px button's 44px target stays inside the header. */
     height: calc(2.75rem + 1px);
-  }
-
-  .shell-header-btn {
-    width: 2.75rem;
-    height: 2.75rem;
-  }
-
-  .shell-header-btn svg {
-    width: 1rem;
-    height: 1rem;
   }
 }
 

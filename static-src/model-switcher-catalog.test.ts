@@ -25,7 +25,7 @@ interface TestSession {
 }
 
 vi.mock("./store.js", async () => {
-  const { signal } = (await vi.importActual("@cplieger/reactive")) as { signal: SignalFactory };
+  const { signal } = (await vi.importActual("@cplieger/ui")) as { signal: SignalFactory };
   const activeSession = signal<TestSession | undefined>(undefined);
   return {
     activeSession,
@@ -61,7 +61,6 @@ vi.mock("./actions/chat.js", () => ({ switchModel: { dispatch: vi.fn() } }));
 // Real reconcile: the unkeyed notice must coexist with keyed option rows.
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
 vi.mock("./session-context.js", () => ({
-  setCurrentModel: vi.fn(),
   setLastModel: vi.fn(),
   getLastEffortFor: () => "",
 }));
@@ -72,7 +71,7 @@ vi.mock("./strings.js", async (importOriginal) => ({
 }));
 vi.mock("./icon-el.js", () => ({ iconEl: () => document.createElement("span") }));
 vi.mock("./icons.js", () => ({ ICON_MODEL: "" }));
-vi.mock("@cplieger/ui-primitives/roving-focus", () => ({
+vi.mock("@cplieger/ui/roving-focus", () => ({
   rovingFocus: () => ({ refresh: vi.fn(), focusFirst: vi.fn(), dispose: vi.fn() }),
 }));
 

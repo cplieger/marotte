@@ -21,6 +21,7 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -70,7 +71,7 @@ func TestRunComplete_ATerminalRunReleasesItsHostSessionAndAPauseKeepsIt(t *testi
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()
 			t.Cleanup(func() { shutdownHub(t, h) })
-			h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+			h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 			h.runs.grantLease(t.Context(), "wf_1", "nightly", manualLaunch(), hostSec())
 
 			h.dispatch(t.Context(), runChatID("wf_1"), h.originOf(runChatID("wf_1")), runCompleteFrame(t, "wf_1", tc.status))
@@ -93,10 +94,10 @@ func TestRunComplete_ATerminalRunReleasesItsHostSessionAndAPauseKeepsIt(t *testi
 func TestRunStopped_APausedRunKeepsTheFieldsItsLeaseIsFor(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 	// A scheduled launch carries the unattended mark.
 	h.runs.grantLease(t.Context(), "wf_1", "nightly",
-		scheduledLaunch("sched_1", time.Now().Add(time.Hour)), hostSec())
+		scheduledLaunch(schedule.Row{ID: "sched_1"}, time.Now().Add(time.Hour)), hostSec())
 
 	h.dispatch(t.Context(), runChatID("wf_1"), h.originOf(runChatID("wf_1")), runCompleteFrame(t, "wf_1", string(marotte.RunStatusPaused)))
 
@@ -122,7 +123,7 @@ func TestEnsureResident_AResidentRunIsHandedBackWithNoLoad(t *testing.T) {
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	incumbent := newFakeBridge()
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: incumbent, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(incumbent, bridgeIdle))
 	leaseParentless(t, h, "wf_1")
 	second := newFakeBridge()
 	fakeSourceOf(t, h).setFactory(func() engineSession { return second })
@@ -131,7 +132,7 @@ func TestEnsureResident_AResidentRunIsHandedBackWithNoLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensureResident on a resident run = %v, want the incumbent", err)
 	}
-	if host.sb.current() != incumbent {
+	if host.sb.session() != incumbent {
 		t.Error("the caller was handed a session other than the resident one")
 	}
 	if second.startCount() != 0 {
@@ -210,7 +211,7 @@ func TestRetry_ACancelledRetryKeepsTheLeaseItMinted(t *testing.T) {
 				t.Fatal("the fixture holds a lease, so Retry mints none and this proves nothing")
 			}
 
-			aff := h.runs.affordance(t.Context(), "wf_1", "aborted")
+			aff := h.runs.affordance("wf_1", &runHead{Status: "aborted"})
 			if _, err := h.runs.retry(t.Context(), "wf_1", aff); err == nil {
 				t.Fatal("a failed retry reported success")
 			}
@@ -249,7 +250,7 @@ func TestAnswerInput_AMovedOnStepIsGone(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, br := leasedNonResident(t, reply)
 
-			err := h.runs.answerInput(t.Context(), "wf_1", markerlessAskID(h, "wf_1", reviewPath, "sess_step"), "the main branch")
+			err := h.runs.answerInput(t.Context(), "wf_1", markerlessAskID(h, "wf_1", reviewPath, "sess_step"), "the main branch", nil)
 			if !errors.Is(err, errAskGone) {
 				t.Fatalf("AnswerInput for a moved-on step = %v, want errAskGone", err)
 			}
@@ -267,7 +268,7 @@ func TestAnswerInput_ARunningSiblingRefusesTheAnswer(t *testing.T) {
 		parkedStep("review", "sess_step"), askStepNode{id: "build", status: "running", session: "sess_build"}))
 	askID := markerlessAskID(h, "wf_1", reviewPath, "sess_step")
 
-	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "the main branch"); !errors.Is(err, errAskBranchRunning) {
+	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "the main branch", nil); !errors.Is(err, errAskBranchRunning) {
 		t.Fatalf("AnswerInput beside a running branch = %v, want errAskBranchRunning", err)
 	}
 	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
@@ -284,7 +285,7 @@ func TestAnswerInput_AParkedBranchIsAnsweredAtItsOwnSession(t *testing.T) {
 		parkedStep("branch_a", "sess_a"), parkedStep("branch_b", "sess_b")))
 	askID := markerlessAskID(h, "wf_1", workflow.PathKey([]string{"root", "branch_b"}), "sess_b")
 
-	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "the main branch"); err != nil {
+	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "the main branch", nil); err != nil {
 		t.Fatalf("AnswerInput for the second parked branch = %v, want nil", err)
 	}
 	if got := br.paramsFor(marotte.MethodPrompt)["sessionId"]; got != "sess_b" {
@@ -298,7 +299,7 @@ func TestAnswerInput_AnUnreadableRunRefusesRetryably(t *testing.T) {
 	h, br := leasedNonResident(t, nil)
 	br.setCallErr(methodKiroWorkflowInspect, errors.New("engine ended"))
 
-	err := h.runs.answerInput(t.Context(), "wf_1", markerlessAskID(h, "wf_1", reviewPath, "sess_step"), "the main branch")
+	err := h.runs.answerInput(t.Context(), "wf_1", markerlessAskID(h, "wf_1", reviewPath, "sess_step"), "the main branch", nil)
 	if !errors.Is(err, errAskUnreadable) {
 		t.Fatalf("AnswerInput with an unreadable run = %v, want errAskUnreadable", err)
 	}
@@ -323,7 +324,7 @@ func TestAnswerInput_AnUnleasedRunMakesNoSessionResident(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
 
 	before := br.startCount()
-	if err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch"); !errors.Is(err, errAskGone) {
+	if err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch", nil); !errors.Is(err, errAskGone) {
 		t.Fatalf("AnswerInput for an unleased run = %v, want errAskGone", err)
 	}
 	if got := br.startCount() - before; got != 0 {
@@ -456,7 +457,7 @@ func TestEnsureResident_AChatParentedRunIsMadeResidentThroughItsChat(t *testing.
 	if opts := br.lastSessionOpts(); opts == nil || opts.SessionID != "sess_owned" || opts.Role != marotte.SessionRoleChat {
 		t.Errorf("the door was %+v, want the chat's own session loaded through its chat", opts)
 	}
-	if sb := h.bridge.mgr.get("c1"); sb == nil || !sb.current().Open() {
+	if sb := h.bridge.mgr.get("c1"); sb == nil || !sb.session().Open() {
 		t.Fatal("a refused verb closed the chat's session, which belongs to the conversation")
 	}
 	if h.bridge.mgr.get(runChatID("wf_1")) != nil {
@@ -518,7 +519,7 @@ func TestEnsureResident_ALaunchingSessionNoLoadCanHoldRefusesTheVerb(t *testing.
 			}
 			leaseRun(t, h, tc.lease)
 
-			err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch")
+			err := h.runs.answerInput(t.Context(), "wf_1", "a1", "the main branch", nil)
 			if !errors.Is(err, errLaunchSessionUnavailable) {
 				t.Fatalf("AnswerInput = %v, want errLaunchSessionUnavailable", err)
 			}
@@ -564,7 +565,7 @@ func TestRetry_RefusesARunWhoseLaunchingSegmentTheChatRetired(t *testing.T) {
 		t.Fatalf("Setup: seeding the chat: %s", err)
 	}
 
-	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "aborted"))
+	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "aborted"}))
 	if !errors.Is(err, errLaunchSessionUnavailable) {
 		t.Fatalf("Retry = %v, want errLaunchSessionUnavailable", err)
 	}
@@ -691,7 +692,7 @@ func TestRetry_RefusesARetiredSegmentRunWhileItsChatIsOpen(t *testing.T) {
 		t.Fatalf("Setup: opening the chat = (%v, %v), want it live on sess_now", open, err)
 	}
 
-	_, err = h.runs.retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "aborted"))
+	_, err = h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "aborted"}))
 	if !errors.Is(err, errLaunchSessionUnavailable) {
 		t.Fatalf("Retry = %v, want errLaunchSessionUnavailable", err)
 	}

@@ -6,7 +6,6 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 /** Repeated rows in a list. Each is floored. */
 const LIST_ROWS = [
-  ["list-row", ["list-row-title", "list-row-name"]],
   ["popup-item", []],
   ["mcp-row", ["mcp-row-name"]],
   ["git-file-row", ["git-file-path"]],
@@ -18,6 +17,8 @@ const LIST_ROWS = [
   ["pill-role-item", []],
   ["forge-account-repo-row", []],
   ["turn-file-row", []],
+  ["tab-context-item", []],
+  ["spec-node-row", []],
   // Settings > Permissions. Its two variants disagreed by ~10px on a mouse and ~30px under a
   // finger: a writable rule row carries a select AND a remove button, both floored at
   // `--hit-floor`, while a read-only one is 12px mono spans that answer no tier at all.
@@ -26,8 +27,8 @@ const LIST_ROWS = [
 
 /** Form WRAPPERS, deliberately NOT floored: each holds a control that carries its own tokenised
  *  height, so a floor here would be a second answer to one question. `.section-option` wraps a
- *  checkbox whose own hit floor is already 44px on touch; `.sched-row` wraps a select at the
- *  dense tier. Both are listed so the distinction is testable rather than remembered. */
+ *  switch whose hit expander is already 44px on touch; `.sched-row` wraps a select at the dense
+ *  field height. Both are listed so the distinction is testable rather than remembered. */
 const FORM_WRAPPERS = ["section-option", "sched-row"] as const;
 
 const host = document.createElement("div");
@@ -76,9 +77,9 @@ describe("every repeated list row answers the pointer tier", () => {
       document.documentElement.dataset["pointer"] = "coarse";
       const coarse = row.getBoundingClientRect().height;
 
-      // 36px is --ctl-h-sm on coarse. The floor is what makes this true; without it every one of
-      // these measured its font's line box on both tiers.
-      expect(coarse, `${cls} must reach the coarse rung`).toBeGreaterThanOrEqual(36);
+      // A row is its own target, so on coarse it reaches the 44px hit floor (Apple HIG's hit
+      // region); without the floor every one of these measured its font's line box on both tiers.
+      expect(coarse, `${cls} must reach the coarse hit floor`).toBeGreaterThanOrEqual(44);
       expect(coarse, `${cls} must actually RESPOND to the tier`).toBeGreaterThan(fine - 0.5);
       // And the fine tier keeps its own compact height: the rung is 24px, so a row that already
       // renders taller is untouched.
@@ -95,7 +96,27 @@ describe("every repeated list row answers the pointer tier", () => {
     // control around it grew.
     const row = mountRow("turn-file-row", []);
     document.documentElement.dataset["pointer"] = "coarse";
-    expect(row.getBoundingClientRect().height).toBeGreaterThanOrEqual(36);
+    expect(row.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+  });
+});
+
+describe("a list row is floored only when it holds a control", () => {
+  it("reaches 44px on coarse with an action in it, and keeps its content height without one", () => {
+    const plain = mountRow("list-row", ["list-row-name"]);
+    const action = mountRow("list-row", ["list-row-name"]);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "list-row-btn";
+    btn.setAttribute("aria-label", "Remove");
+    action.appendChild(btn);
+
+    document.documentElement.dataset["pointer"] = "coarse";
+    expect(action.getBoundingClientRect().height, "a row holding a control").toBeGreaterThanOrEqual(
+      44,
+    );
+    // A row with nothing to press needs no target, so it keeps the mouse tier's 24px floor.
+    expect(getComputedStyle(plain).minBlockSize).toBe("24px");
+    expect(plain.getBoundingClientRect().height, "a row with no control").toBeLessThan(44);
   });
 });
 

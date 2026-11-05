@@ -144,9 +144,9 @@ function lookup_named(body: string): string | null {
 
 /** Every reference in a COMPLETE string, decoded. For a link destination and a title, where the
  *  whole run has arrived by the time it is read, so there is no streaming hold on this path. A
- *  destination must be decoded BEFORE it reaches `isSafeUrl` (smd-renderer.ts) and never after:
- *  `javascript&#58;alert(1)` does not START with `javascript:`, so a gate handed the undecoded
- *  string passes it and the browser then decodes a live scheme. */
+ *  destination must be decoded BEFORE it reaches `isHttpMailtoOrRelativeURL` (smd-renderer.ts)
+ *  and never after: `javascript&#58;alert(1)` does not START with `javascript:`, so a gate handed
+ *  the undecoded string passes it and the browser then decodes a live scheme. */
 function decode_entities(s: string): string {
   if (!s.includes("&")) {
     return s;
@@ -1095,8 +1095,9 @@ export function handleLinkOrImage(p: Parser, char: string, pending_with_char: st
       return true;
     }
     const type = p.token === LINK ? HREF : SRC;
-    // Decoded HERE and not in the renderer: this string is what reaches `isSafeUrl`, and a
-    // reference decoded after that gate walks straight past it. See `decode_entities`.
+    // Decoded HERE and not in the renderer: this string is what reaches
+    // `isHttpMailtoOrRelativeURL`, and a reference decoded after that gate walks straight past it.
+    // See `decode_entities`.
     p.renderer.set_attr(p.renderer.data, type, decode_entities(dest.url));
     if (dest.title !== null) {
       p.renderer.set_attr(p.renderer.data, TITLE, decode_entities(dest.title));

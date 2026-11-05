@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -16,7 +17,7 @@ type bridgeRole struct{ coord *bridgeCoordinator }
 // in its door has no session to address, so a command sees no bridge there.
 func (b bridgeRole) Bridge(chatID marotte.ChatID) command.Bridge {
 	sb := b.coord.bridgeFor(chatID)
-	if sb == nil || sb.current() == nil {
+	if sb == nil || !sb.hasSession() {
 		return nil
 	}
 	return sb
@@ -31,12 +32,31 @@ func (b bridgeRole) OpenBridge(ctx context.Context, chatID marotte.ChatID, model
 	return sb, nil
 }
 
-func (b bridgeRole) CloseBridge(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome) {
-	b.coord.closeBridge(ctx, chatID, outcome)
+// OpenBridgeAt is OpenBridge for a caller whose intent began at stamp.
+func (b bridgeRole) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, stamp uint64) (command.Bridge, error) {
+	sb, err := b.coord.openBridgeAt(ctx, chatID, model, stamp)
+	if err != nil || sb == nil {
+		return nil, err
+	}
+	return sb, nil
+}
+
+// RefreshForRetry abandons the empty turn's session as one lease on its entry (bridgeCoordinator.refreshForRetry).
+func (b bridgeRole) RefreshForRetry(ctx context.Context, chatID marotte.ChatID, sb command.Bridge) error {
+	entry, ok := sb.(*sharedBridge)
+	if !ok {
+		return marotte.ErrSessionClosed
+	}
+	return b.coord.refreshForRetry(ctx, chatID, entry)
 }
 
 // BridgeLive reports a bridge for the chat that is past its session open.
 func (b bridgeRole) BridgeLive(chatID marotte.ChatID) bool { return b.coord.bridgeLive(chatID) }
+
+// CallBudget is the engine owner's stall-aware budget (engineOwner.stallAware).
+func (b bridgeRole) CallBudget(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return b.coord.engine.stallAware(ctx, d)
+}
 
 // DeleteChatStateByChain deletes a chat's runs and KAS sessions from a captured chain. Order is
 // the contract: runs before sessions (KAS refuses a session owning a live run), sessions
@@ -50,16 +70,20 @@ func (rt *Runtime) DeleteChatStateByChain(ctx context.Context, chatID marotte.Ch
 		stop = userStop(stopWhyChatDeleted)
 	}
 	rt.beginSteerTeardown(ctx, chatID, false)
+	rt.AwaitSessionLeases(ctx, chatID)
 	rt.runs.deleteForSessions(ctx, chatID, sessionChain, stop)
 	rt.deleteSessions(ctx, chatID, sessionChain)
 	rt.cleanupChatState(ctx, chatID)
 	rt.reapSessions(sessionChain)
 }
 
-// CloseChatState tears down in-memory state without touching the KAS session, so a reopen session/loads it.
-func (rt *Runtime) CloseChatState(ctx context.Context, chatID marotte.ChatID) {
+// CloseChatState tears down in-memory state without touching the KAS session, so a reopen session/loads it, and
+// stops the chat's runs under stop, a person's close's stop hold, when it is set (Runs.stopChatRuns).
+func (rt *Runtime) CloseChatState(ctx context.Context, chatID marotte.ChatID, stop *chat.Claim) {
 	rt.beginSteerTeardown(ctx, chatID, true)
-	rt.runs.cancelForChat(ctx, chatID, userStop(stopWhyTabClosed))
+	if stop != nil {
+		rt.runs.stopChatRuns(ctx, chatID, stop)
+	}
 	rt.cleanupChatState(ctx, chatID)
 }
 
@@ -75,7 +99,7 @@ func (rt *Runtime) DischargeWaiting(ctx context.Context, chatID marotte.ChatID) 
 // discharges the waiting claim.
 func (rt *Runtime) OpenTurn(ctx context.Context, chatID marotte.ChatID, open command.TurnOpen) (string, error) {
 	id, err := rt.coord.OpenTurn(ctx, chatID, open)
-	if err == nil && open.Source.UserAnswered() {
+	if err == nil && open.UserAnswered() {
 		rt.DischargeWaiting(ctx, chatID)
 	}
 	return id, err
@@ -91,24 +115,43 @@ func (rt *Runtime) EndPromptCall(turn command.TurnRef) {
 	rt.coord.EndPromptCall(turn)
 }
 
-// ReserveTurnForPrompt takes the chat's admission slot for a prompt, waiting up to wait; a refusal keys on the holder's source.
-func (rt *Runtime) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration) command.AdmissionOutcome {
-	return rt.coord.ReserveTurnForPrompt(ctx, chatID, wait)
+// LifeStamp is the life gate's position now.
+func (rt *Runtime) LifeStamp() uint64 { return rt.coord.LifeStamp() }
+
+// AwaitNoClose waits until no close of chatID is held.
+func (rt *Runtime) AwaitNoClose(ctx context.Context, chatID marotte.ChatID) (bool, error) {
+	return rt.coord.AwaitNoClose(ctx, chatID)
 }
 
-// TryReserveTurn takes the chat's admission slot iff it is free.
-func (rt *Runtime) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
-	return rt.coord.TryReserveTurn(chatID, source)
+// ReserveTurnForPrompt takes the chat's admission slot for a prompt, waiting up to wait; a refusal keys on the holder's source.
+func (rt *Runtime) ReserveTurnForPrompt(
+	ctx context.Context, chatID marotte.ChatID, wait time.Duration, stamp uint64, messageID string,
+) (command.AdmissionOutcome, command.Reservation) {
+	return rt.coord.ReserveTurnForPrompt(ctx, chatID, wait, stamp, messageID)
 }
 
 // TryReserveIdleTurn takes the chat's admission slot iff no turn is open and nothing holds it.
-func (rt *Runtime) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
-	return rt.coord.TryReserveIdleTurn(chatID, source)
+func (rt *Runtime) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (command.Reservation, bool) {
+	return rt.coord.TryReserveIdleTurn(chatID, source, stamp)
+}
+
+// ReserveIdleTurn takes the chat's admission slot once no turn holds it, waiting up to wait for a transient holder.
+func (rt *Runtime) ReserveIdleTurn(
+	ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration,
+) (command.IdleAdmission, command.Reservation) {
+	return rt.coord.ReserveIdleTurn(ctx, chatID, source, stamp, wait)
+}
+
+// ReserveTurn takes the chat's admission slot, waiting up to wait for a holder that is not a running turn.
+func (rt *Runtime) ReserveTurn(
+	ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration,
+) (command.IdleAdmission, command.Reservation) {
+	return rt.coord.ReserveTurn(ctx, chatID, source, stamp, wait)
 }
 
 // TryReserveTurnFenced takes the chat's admission slot iff it is free and no turn
 // opened after the fenced one.
-func (rt *Runtime) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) bool {
+func (rt *Runtime) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) (command.Reservation, bool) {
 	return rt.coord.TryReserveTurnFenced(chatID, source, fence)
 }
 
@@ -118,8 +161,8 @@ func (rt *Runtime) PromptHolder(chatID marotte.ChatID) (string, bool) {
 }
 
 // ReleaseTurnReservation frees the chat's admission slot and wakes waiters.
-func (rt *Runtime) ReleaseTurnReservation(chatID marotte.ChatID) {
-	rt.coord.ReleaseTurnReservation(chatID)
+func (rt *Runtime) ReleaseTurnReservation(res command.Reservation) {
+	rt.coord.ReleaseTurnReservation(res)
 }
 
 // AwaitTurn blocks until the named turn has finalized and reports what it did.
@@ -147,6 +190,11 @@ func (rt *Runtime) TurnOpenedAfter(chatID marotte.ChatID, turnID string) bool {
 	return rt.coord.TurnOpenedAfter(chatID, turnID)
 }
 
+// TurnIsOpen reports whether turnID is an open, non-finalizing turn of the chat's live lifecycle.
+func (rt *Runtime) TurnIsOpen(chatID marotte.ChatID, turnID string) bool {
+	return rt.coord.turns.isOpen(chatID, turnID)
+}
+
 // StopRequestedAfter reports whether a stop was requested after turnID opened.
 func (rt *Runtime) StopRequestedAfter(chatID marotte.ChatID, turnID string) bool {
 	return rt.coord.StopRequestedAfter(chatID, turnID)
@@ -172,15 +220,14 @@ func (rt *Runtime) AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpe
 	return rt.coord.AdmissionHolderSource(chatID)
 }
 
-// PreSendCompact runs the compaction policy's before-a-send trigger.
-func (rt *Runtime) PreSendCompact(ctx context.Context, chatID marotte.ChatID) {
-	rt.coord.autoCompact.preSend(ctx, chatID)
-}
-
 // AbandonInFlightTurn finalizes a turn that failed before it could end.
 func (rt *Runtime) AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatID, turnID string, stop marotte.StopReason, reason string, kind marotte.FailureKind, seq uint64) {
 	rt.coord.AbandonInFlightTurn(ctx, chatID, turnID, stop, reason, kind, seq)
 }
+
+// ProviderUnreachable returns the vault's reason while the identity provider gives the engine's account no usable
+// renewal.
+func (rt *Runtime) ProviderUnreachable() (string, bool) { return rt.signin.providerDown() }
 
 var _ command.SessionRenamer = (*Runtime)(nil)
 

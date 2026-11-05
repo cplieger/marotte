@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/runesafe/v3"
+	"github.com/cplieger/go/pathinside"
+	"github.com/cplieger/go/textsafe"
 )
 
 // --- path validation ---
@@ -15,7 +15,7 @@ import (
 // isValidGitRef reports whether s is safe to pass as a git ref to a subprocess:
 // git-check-ref-format(1)'s refname rules (per component: not empty, no leading '.', no trailing
 // '.' or '.lock'; whole string: no "..", "@{", space, '~', '^', ':', '?', '*', '[', '\'), git
-// checkout -b's leading-dash refusal, and runesafe.IsUnsafeSingleLine, since git accepts C1 and
+// checkout -b's leading-dash refusal, and textsafe.IsUnsafeSingleLine, since git accepts C1 and
 // bidi controls the panel and logs must not carry.
 // A DENYLIST on purpose: an allowlist would refuse branch names git accepts. One function serves
 // every call site; "HEAD" and Windows device stems are accepted because git accepts them.
@@ -27,7 +27,7 @@ func isValidGitRef(s string) bool {
 		return false
 	}
 	if strings.ContainsFunc(s, func(r rune) bool {
-		return runesafe.IsUnsafeSingleLine(r) || strings.ContainsRune(" ~^:?*[\\", r)
+		return textsafe.IsUnsafeSingleLine(r) || strings.ContainsRune(" ~^:?*[\\", r)
 	}) {
 		return false
 	}

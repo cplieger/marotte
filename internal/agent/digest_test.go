@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/sse"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/sse"
 )
 
 func held(kind subject.Kind, ref string) sse.Held {

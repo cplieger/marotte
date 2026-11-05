@@ -21,6 +21,10 @@ func enabled() map[string]any { return map[string]any{enabledMember: true} }
 // key where a key must veto something or answer a resolver comparing a real boolean.
 func enabledIf(on bool) map[string]any { return map[string]any{enabledMember: on} }
 
+// chatTurnBreakdown is the contextBreakdown mode of every chat turn, the ones the user prompts (the contextBreakdown
+// row) and the ones KAS starts on its own (automaticTurnProfiling), so both fill the same info panel.
+const chatTurnBreakdown = "detailed"
+
 // Not a bare true: KAS requires an object carrying a v2 member and then checks that member
 // (resolverObject).
 func hooksValue() map[string]any { return map[string]any{"enabled": true, "v2": true} }
@@ -92,6 +96,13 @@ var table = []decl{
 		send:     false,
 	},
 	{
+		key:      "sessionScopedMcpStatus",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		value:    true,
+		send:     true,
+	},
+	{
 		key:      "openExternalUrl",
 		door:     doorConnection,
 		resolver: resolverCapability,
@@ -114,6 +125,20 @@ var table = []decl{
 	},
 	{
 		key:      "backgroundProcesses",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		value:    true,
+		send:     true,
+	},
+	{
+		key:      "textSearch",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		value:    true,
+		send:     true,
+	},
+	{
+		key:      "findFiles",
 		door:     doorConnection,
 		resolver: resolverCapability,
 		value:    true,
@@ -354,9 +379,17 @@ var table = []decl{
 	},
 	{
 		key:      "compaction",
-		door:     doorConnection,
-		resolver: resolverSetting,
-		send:     false,
+		door:     doorSession,
+		resolver: resolverSettingObject,
+		// KAS reads the threshold from the load request only, so both doors carry it; a value outside 0..80 fails
+		// the door with -32602, and one without enabled: true reads as KAS's default.
+		sessionGate: func(s *SessionSpawn) (any, bool) {
+			if s.AutoCompactionThreshold <= 0 {
+				return nil, false
+			}
+			return map[string]any{enabledMember: true, "autoCompactionThreshold": s.AutoCompactionThreshold}, true
+		},
+		send: true,
 	},
 	{
 		key:      "memory",
@@ -554,6 +587,13 @@ var table = []decl{
 		send:     false,
 	},
 	{
+		key:      "KIRO_TRUST_CLASSIFIER_MODE",
+		door:     doorEnvironment,
+		resolver: resolverEnvMode,
+		value:    "enforce",
+		send:     true,
+	},
+	{
 		key:      "KIRO_FEATURE_CASCADE_CONFIG",
 		door:     doorEnvironment,
 		resolver: resolverEnvJSON,
@@ -589,8 +629,26 @@ var table = []decl{
 		resolver: resolverEnum,
 		send:     true,
 		promptGate: func(p *Prompt) (any, bool) {
-			return "detailed", p.StepMessage == ""
+			return chatTurnBreakdown, p.StepMessage == ""
 		},
+	},
+	{
+		key:      "ttft",
+		door:     doorPrompt,
+		resolver: resolverCapability,
+		send:     true,
+		promptGate: func(p *Prompt) (any, bool) {
+			return true, p.StepMessage == ""
+		},
+	},
+	{
+		key:      "automaticTurnProfiling",
+		door:     doorSession,
+		resolver: resolverObject,
+		sessionGate: func(s *SessionSpawn) (any, bool) {
+			return map[string]any{"ttft": true, "contextBreakdown": chatTurnBreakdown}, s.ProfileAgentTurns
+		},
+		send: true,
 	},
 	{
 		key:      "displayText",
@@ -600,6 +658,15 @@ var table = []decl{
 		promptGate: func(p *Prompt) (any, bool) {
 			label := cmp.Or(p.Label, p.StepMessage)
 			return label, label != ""
+		},
+	},
+	{
+		key:      "userMessageTag",
+		door:     doorPrompt,
+		resolver: resolverText,
+		send:     true,
+		promptGate: func(p *Prompt) (any, bool) {
+			return p.Tag, p.Tag != ""
 		},
 	},
 	{

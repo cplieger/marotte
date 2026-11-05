@@ -1128,10 +1128,10 @@ describe("settings sync ordering", () => {
       }),
     );
     const range = byId<HTMLInputElement>("auto-compact-pct");
-    range.value = "90";
+    range.value = "60";
     range.dispatchEvent(new Event("input"));
     range.dispatchEvent(new Event("change"));
-    expect(compactionPolicy.value).toEqual({ enabled: true, pct: 90 });
+    expect(compactionPolicy.value).toEqual({ enabled: true, pct: 60 });
     await debounced();
     patches[0]?.fail();
     await settled();

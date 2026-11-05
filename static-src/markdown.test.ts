@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import * as fc from "fast-check";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { createMarkdownStream } from "./markdown.js";
 import { parser, parser_end, parser_write } from "./smd-parser.js";
 import { domRenderer } from "./smd-renderer.js";
@@ -53,7 +53,8 @@ describe("renderMarkdown XSS invariants (property-based)", () => {
 
   /**
    * As the browser's URL parser reads it (strip leading/trailing C0 controls and spaces, then tabs and newlines).
-   * Normalizing as `isSafeUrl` does would hide any gap between the gate and the browser.
+   * Normalizing as `isHttpMailtoOrRelativeURL` does would hide any gap between the gate and the
+   * browser.
    */
   const asBrowserReads = (attrValue: string): string =>
     attrValue
@@ -1254,7 +1255,8 @@ describe("renderMarkdown angle autolinks", () => {
   });
 
   it("blocks a scheme split by a tab", () => {
-    // isSafeUrl strips internal whitespace and a tab disqualifies the autolink, so this is text either way.
+    // isHttpMailtoOrRelativeURL strips internal whitespace and a tab disqualifies the autolink,
+    // so this is text either way.
     expect(renderMarkdown("<java\tscript:alert(1)>")).toBe("<p>&lt;java\tscript:alert(1)&gt;</p>");
   });
 });

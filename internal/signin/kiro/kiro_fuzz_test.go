@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/runesafe/v3"
+	"github.com/cplieger/go/textsafe"
 )
 
 // FuzzDecodeTokenResponse covers every decoder of a remote answer: an accepted token carries an
@@ -35,7 +35,7 @@ func FuzzDecodeTokenResponse(f *testing.F) {
 			}
 		}
 		if d, err := decodeDeviceAuthorization(body); err == nil {
-			if validStartURL(d.verificationURL()) != nil || runesafe.SanitizeSingleLineBounded(d.UserCode, 64) != d.UserCode {
+			if validStartURL(d.verificationURL()) != nil || textsafe.SanitizeSingleLineBounded(d.UserCode, 64) != d.UserCode {
 				t.Fatalf("accepted an unusable device authorization %+v", d)
 			}
 		}
@@ -47,7 +47,7 @@ func FuzzDecodeTokenResponse(f *testing.F) {
 			}
 		}
 		if e, ok := decodeEmail(body); ok {
-			if e == "" || len(e) > maxEmailBytes || runesafe.SanitizeSingleLineBounded(e, maxEmailBytes) != e {
+			if e == "" || len(e) > maxEmailBytes || textsafe.SanitizeSingleLineBounded(e, maxEmailBytes) != e {
 				t.Fatalf("accepted email %q", e)
 			}
 			r := testRecord(providerBuilderID, "")

@@ -45,7 +45,7 @@ func pauseVerdictArms(t *testing.T, src string) []pauseArm {
 	}
 	at := strings.Index(src, anchor)
 	open := strings.IndexByte(src[at:], '{')
-	body := jsFuncBody(src, at+open)
+	body := jsBracketed(src, at+open)
 	if body == "" {
 		t.Fatal("pauseVerdict: unbalanced braces from its declaration")
 	}

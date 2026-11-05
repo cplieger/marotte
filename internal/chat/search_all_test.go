@@ -40,7 +40,7 @@ func seedChatDir(t *testing.T, s *Store, c *marotte.Chat, entries []marotte.Entr
 		log.Write(line)
 		log.WriteByte('\n')
 	}
-	for name, data := range map[string][]byte{headerFileName: header, entriesFileName: []byte(log.String())} {
+	for name, data := range map[string][]byte{headerFileName: header, EntriesFileName: []byte(log.String())} {
 		path := filepath.Join(dir, name)
 		if err := os.WriteFile(path, data, 0o600); err != nil {
 			t.Fatalf("write %s: %v", path, err)
@@ -237,7 +237,7 @@ func TestSearchAll_AnUnreadChatIsNotScanned(t *testing.T) {
 					t.Fatalf("write header: %v", err)
 				}
 				// A directory at the log's name refuses the append-mode open with EISDIR.
-				if err := os.Mkdir(filepath.Join(dir, entriesFileName), 0o700); err != nil {
+				if err := os.Mkdir(filepath.Join(dir, EntriesFileName), 0o700); err != nil {
 					t.Fatalf("plant dir: %v", err)
 				}
 			},

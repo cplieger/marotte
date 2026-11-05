@@ -10,9 +10,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/runesafe/v3"
 )
 
 const jsonRPCVersion = "2.0"
@@ -30,7 +30,7 @@ var frameTooLargeResp = &marotte.RPCResponse{
 }
 
 // errWriteFenced refuses a frame once the read loop exited: nothing is left to read it, so it is never written.
-var errWriteFenced = errors.New("ACP bridge exited before the frame was written")
+var errWriteFenced = fmt.Errorf("ACP bridge exited before the frame was written: %w", marotte.ErrNotWritten)
 
 // pendingReply is the answer to one of marotte's requests plus the position of its lane when it arrived: the
 // response skips the frames queued before it, so the position is captured with it.
@@ -41,11 +41,11 @@ type pendingReply struct {
 
 // pendingEntry is one request awaiting its response. lane is the lane whose positions the reply is stamped with. A
 // caller whose ctx ended marks an entry with a late hook abandoned instead of deleting it, and the reply goes to the
-// hook on its own goroutine.
+// hook on its own goroutine with its lane position.
 type pendingEntry struct {
 	ch        chan pendingReply
 	lane      *lane
-	late      func(resp *marotte.RPCResponse)
+	late      func(resp *marotte.RPCResponse, seq uint64)
 	sessionID marotte.SessionID
 	abandoned bool
 }
@@ -55,6 +55,7 @@ func (e *Engine) readLoop() {
 	var reason exitReason
 	for {
 		line, dropped, head, err := e.stdout.readFrame()
+		e.noteFrame(len(line) + dropped)
 		if dropped > 0 {
 			e.reportDroppedFrame(dropped, head)
 		}
@@ -143,19 +144,31 @@ func (e *Engine) closePending() int {
 // entry is dropped: its caller is gone and nothing is left to close on an ended engine.
 func (e *Engine) failPending(resp *marotte.RPCResponse, match func(id int64, entry *pendingEntry) bool) int {
 	e.pendingMu.Lock()
-	defer e.pendingMu.Unlock()
 	n := 0
+	type lateCall struct {
+		late func(*marotte.RPCResponse, uint64)
+		seq  uint64
+	}
+	var lates []lateCall
 	for id, entry := range e.pending {
 		if !match(id, entry) {
 			continue
 		}
 		delete(e.pending, id)
 		if entry.abandoned {
+			// The real answer can no longer reach the hook, so an unread one stands in for it.
+			if entry.late != nil && unreadResp(resp) {
+				lates = append(lates, lateCall{late: entry.late, seq: entry.lane.position()})
+			}
 			continue
 		}
 		n++
 		// A failure carries the lane's position too, so a settle does not wait for a position the dropped frame took.
 		entry.ch <- pendingReply{resp: resp, seq: entry.lane.position()}
+	}
+	e.pendingMu.Unlock()
+	for _, c := range lates {
+		e.goBackground(func() { c.late(resp, c.seq) })
 	}
 	return n
 }
@@ -165,6 +178,12 @@ func matchAll(int64, *pendingEntry) bool { return true }
 // undecodedResp is what a pending request gets when its response arrived but could not be decoded.
 var undecodedResp = &marotte.RPCResponse{
 	Error: &marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "marotte could not decode kiro-cli's answer"},
+}
+
+// unreadResp reports a sentinel for an answer that arrived but could not be read, so kiro-cli may have acted on the
+// request; a late hook must not read its Error as a refusal.
+func unreadResp(resp *marotte.RPCResponse) bool {
+	return resp == undecodedResp || resp == frameTooLargeResp
 }
 
 // reportUndecodedFrame settles what a frame that fits but fails to decode concerned, judged from its head: a request is
@@ -268,7 +287,7 @@ func (e *Engine) deliverResponse(msg *marotte.RPCResponse) {
 	e.pendingMu.Unlock()
 	if entry.late != nil {
 		late := entry.late
-		e.goBackground(func() { late(msg) })
+		e.goBackground(func() { late(msg, reply.seq) })
 	}
 }
 
@@ -363,7 +382,7 @@ func logReadError(err error) {
 }
 
 // register adds a pending entry for id on l, owned by sessionID ("" for the engine).
-func (e *Engine) register(id int64, l *lane, sessionID marotte.SessionID, late func(*marotte.RPCResponse)) *pendingEntry {
+func (e *Engine) register(id int64, l *lane, sessionID marotte.SessionID, late func(*marotte.RPCResponse, uint64)) *pendingEntry {
 	entry := &pendingEntry{ch: make(chan pendingReply, 1), lane: l, sessionID: sessionID, late: late}
 	e.pendingMu.Lock()
 	e.pending[id] = entry
@@ -400,37 +419,44 @@ func (e *Engine) callAt(
 	if method == marotte.MethodPrompt {
 		return nil, 0, errPromptNotACall
 	}
-	return e.request(ctx, l, sessionID, method, params, late, nil)
+	var lateAt func(*marotte.RPCResponse, uint64)
+	if late != nil {
+		lateAt = func(resp *marotte.RPCResponse, _ uint64) { late(resp) }
+	}
+	resp, seq, _, err := e.request(ctx, l, sessionID, method, params, lateAt, nil)
+	return resp, seq, err
 }
 
 // request writes one request positioned on l and waits for its outcome. Once written, every engine-side outcome (the
 // response, an oversize failure, the exit path) arrives through the entry and carries l's position. A commit that
-// refuses the write is answered as is, with nothing written.
+// refuses the write is answered as is, with nothing written. abandoned reports that ctx ended after the write with a
+// late hook set, so the answer, if KAS sends one, goes to late.
 func (e *Engine) request(
-	ctx context.Context, l *lane, sessionID marotte.SessionID, method string, params any, late func(*marotte.RPCResponse),
-	commit func() error,
-) (*marotte.RPCResponse, uint64, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, 0, err
+	ctx context.Context, l *lane, sessionID marotte.SessionID, method string, params any,
+	late func(*marotte.RPCResponse, uint64), commit func() error,
+) (resp *marotte.RPCResponse, seq uint64, abandoned bool, err error) {
+	if cErr := ctx.Err(); cErr != nil {
+		return nil, 0, false, cErr
 	}
 	id := e.nextID.Add(1)
 	data, err := json.Marshal(marotte.RPCRequest{JSONRPC: jsonRPCVersion, ID: id, Method: method, Params: params})
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	entry := e.register(id, l, sessionID, late)
 	refused, writeErr := e.writeFrameIf(append(data, '\n'), commit)
 	if refused != nil {
 		e.deregisterPending(id)
-		return nil, 0, refused
+		return nil, 0, false, refused
 	}
 	if writeErr != nil {
 		e.deregisterPending(id)
-		return nil, 0, &marotte.TransportError{Err: fmt.Errorf("write to ACP: %w", writeErr), Retryable: true}
+		return nil, 0, false, &marotte.TransportError{Err: fmt.Errorf("write to ACP: %w", writeErr), Retryable: true}
 	}
 	select {
 	case reply := <-entry.ch:
-		return replyOutcome(reply)
+		resp, seq, err = replyOutcome(reply)
+		return resp, seq, false, err
 	case <-ctx.Done():
 		e.pendingMu.Lock()
 		if _, ok := e.pending[id]; ok {
@@ -440,11 +466,12 @@ func (e *Engine) request(
 				delete(e.pending, id)
 			}
 			e.pendingMu.Unlock()
-			return nil, 0, ctx.Err()
+			return nil, 0, late != nil, ctx.Err()
 		}
 		e.pendingMu.Unlock()
 		// deliverResponse took the entry before the abandon, and sends under pendingMu, so the reply is waiting.
-		return replyOutcome(<-entry.ch)
+		resp, seq, err = replyOutcome(<-entry.ch)
+		return resp, seq, false, err
 	}
 }
 
@@ -456,6 +483,8 @@ func replyOutcome(reply pendingReply) (*marotte.RPCResponse, uint64, error) {
 	case resp == frameTooLargeResp:
 		// Not retryable: the same prompt would likely produce the same oversize payload (marotte.ErrFrameTooLarge).
 		return nil, reply.seq, &marotte.TransportError{Err: marotte.ErrFrameTooLarge, Retryable: false}
+	case resp == undecodedResp:
+		return resp, reply.seq, fmt.Errorf("%w: %w", marotte.ErrReplyUndecoded, resp.Error)
 	case resp.Error != nil:
 		if resp.Error.Code == marotte.RPCCodeSessionBusy {
 			return resp, reply.seq, fmt.Errorf("ACP error %d: %w: %w", resp.Error.Code, marotte.ErrSessionBusy, resp.Error)
@@ -491,7 +520,7 @@ func (e *Engine) Respond(ctx context.Context, id int64, result any, err error) e
 	resp := marotte.RPCResponseOut{JSONRPC: jsonRPCVersion, ID: id}
 	if err != nil {
 		code := marotte.RPCCodeInternal
-		msg := runesafe.SanitizeSingleLineBounded(err.Error(), maxRespondErrorBytes)
+		msg := textsafe.SanitizeSingleLineBounded(err.Error(), maxRespondErrorBytes)
 		if re, ok := errors.AsType[*marotte.RPCError](err); ok {
 			code = re.Code
 			msg = re.Message
@@ -514,13 +543,24 @@ func (e *Engine) Respond(ctx context.Context, id int64, result any, err error) e
 // writeChunk is the unit each no-progress bound covers.
 const writeChunk = 64 << 10
 
-// writeStall bounds one chunk's write to kiro-cli's stdin; a backstop, so not a setting, and a var for tests. writeMu
-// serialises every outbound frame, so one wedged write silently blocks every later Respond, Call and Notify,
-// session/cancel included. A reader that keeps draining is never reaped, however long the frame takes.
+// writeStall is the window in which one chunk's write to kiro-cli's stdin must move bytes or see the node engine's CPU
+// advance with no frame read; a backstop, so not a setting, and a var for tests. writeMu serialises every outbound
+// frame, so one wedged write silently blocks every later Respond, Call and Notify, session/cancel included. A node
+// engine that stops reading is ended first by the kiro-cli relay, which buffers one frame plus about 64 KiB and then
+// gives up after 15 s with no progress (kiro-cli 2.37).
 var writeStall = 30 * time.Second
 
+// stallProbeAfter is when a chunk's write first samples the engine's CPU: a write that finishes sooner never reads
+// /proc. A var for tests.
+var stallProbeAfter = time.Second
+
+// writeStallCeiling caps how long one chunk may wait on an engine that burns CPU but never drains, above the 81.6 s
+// event-loop stall measured on kiro-cli 2.37 (kirodotdev/Kiro#12261): every frame waits on writeMu meanwhile. A var
+// for tests.
+var writeStallCeiling = 120 * time.Second
+
 // writeFrame serialises stdin writes, refuses each once the read loop exited (readerExited, loaded under writeMu so
-// closePending's wait orders it), and writes in chunks, each bounded by writeStall. Any write failure ends the engine:
+// closePending's wait orders it), and writes in chunks, each watched by a stallWatch. Any write failure ends the engine:
 // a truncated frame desyncs kiro-cli's stdin scanner for good, and an error means it can read nothing after.
 func (e *Engine) writeFrame(data []byte) error {
 	_, err := e.writeFrameIf(data, nil)
@@ -551,32 +591,44 @@ func (e *Engine) writeFrameIf(data []byte, commit func() error) (refused, err er
 		defer func() { _ = dw.SetWriteDeadline(time.Time{}) }()
 	}
 	for off := 0; off < len(data); {
-		chunk := data[off:min(off+writeChunk, len(data))]
+		chunkLen := min(writeChunk, len(data)-off)
+		var n int
+		var err error
 		if hasDeadline {
-			_ = dw.SetWriteDeadline(time.Now().Add(writeStall))
+			n, err = e.writeWatched(pipe.w, dw, data, off)
+		} else {
+			n, err = pipe.w.Write(data[off : off+chunkLen])
 		}
-		n, err := pipe.w.Write(chunk)
 		off += n
-		if err == nil && n == len(chunk) {
+		if err == nil && n == chunkLen {
 			continue
 		}
-		reason := exitWriteFailed
-		switch {
-		case errors.Is(err, os.ErrDeadlineExceeded):
-			reason = ExitStdinStalled
-			slog.Error("ACP write: kiro-cli stopped draining stdin within the stall window; reaping the agent engine",
-				"stall_s", int(writeStall/time.Second), "wrote_bytes", off, "frame_bytes", len(data))
-		case err == nil:
-			err = fmt.Errorf("short write to ACP stdin: %d of %d bytes", off, len(data))
-			slog.Error("ACP write: short write left a partial frame in kiro-cli's stdin; reaping the agent engine",
-				"wrote_bytes", off, "frame_bytes", len(data))
-		default:
-			slog.Error("ACP write failed; reaping the agent engine", "wrote_bytes", off, "frame_bytes", len(data), "error", err)
-		}
-		e.fail(reason)
-		return nil, fmt.Errorf("%w: %w", errBridgeExited, err)
+		return nil, e.failWrite(err, off, len(data))
 	}
 	return nil, nil
+}
+
+// failWrite reaps the engine after a failed or short stdin write that left off of total bytes written, and returns
+// the write's error.
+func (e *Engine) failWrite(err error, off, total int) error {
+	reason := exitWriteFailed
+	switch {
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		// writeWatched logged which bound reaped it.
+		reason = ExitStdinStalled
+	case err == nil:
+		err = fmt.Errorf("short write to ACP stdin: %d of %d bytes", off, total)
+		slog.Error("ACP write: short write left a partial frame in kiro-cli's stdin; reaping the agent engine",
+			"wrote_bytes", off, "frame_bytes", total)
+	default:
+		slog.Error("ACP write failed; reaping the agent engine", "wrote_bytes", off, "frame_bytes", total, "error", err)
+	}
+	e.fail(reason)
+	if off < total {
+		// The frame's closing newline never went out, so kiro-cli read no request.
+		return fmt.Errorf("%w: %w: %w", errBridgeExited, marotte.ErrNotWritten, err)
+	}
+	return fmt.Errorf("%w: %w", errBridgeExited, err)
 }
 
 // deadlineWriter is the part of a stdin handle a write deadline needs: cmd.StdinPipe's *os.File has it, the test

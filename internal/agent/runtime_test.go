@@ -92,7 +92,7 @@ func TestInterfaceSatisfaction(_ *testing.T) {
 }
 
 // TestShutdown_BoundsAWedgedHandler pins that a handler that never decrements inflight must not hold Shutdown, which
-// runs synchronously inside webhttp.Run's pre-drain hook.
+// runs synchronously inside httpserver.Run's pre-drain hook.
 func TestShutdown_BoundsAWedgedHandler(t *testing.T) {
 	h, _, _ := newTestHub()
 
@@ -287,7 +287,7 @@ func TestShutdown_WaitsForARunningMCPNotifier(t *testing.T) {
 		<-release
 	})
 	// Any mutation signals the notifier, which debounces 100ms.
-	h.mcpRegistry.RecordConnected(t.Context(), "a", marotte.MCPSource{}, nil, nil, nil, nil)
+	reportMCP(t, h, "s1", connectedMCP("a", marotte.MCPSource{}))
 
 	select {
 	case <-entered:
@@ -337,7 +337,7 @@ func TestShutdown_CancelsTheLifetimeAfterStoppingTheEngine(t *testing.T) {
 	if !awaitEngine(h) {
 		t.Fatal("the engine never became ready")
 	}
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: newFakeBridge(), state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(newFakeBridge(), bridgeIdle))
 
 	shutdownHub(t, h)
 

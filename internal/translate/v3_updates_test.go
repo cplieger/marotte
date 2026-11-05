@@ -212,6 +212,7 @@ func TestSessionInfoUpdate_UnknownKindWarns(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			resetCensus(t)
 			var buf bytes.Buffer
 			captureSlog(t, &buf)
 

@@ -109,9 +109,6 @@ func (rt *Runtime) callSessionExport(ctx context.Context, chatID marotte.ChatID,
 		if resp == nil {
 			return nil, errors.New("session export: nil response")
 		}
-		if resp.Error != nil {
-			return nil, fmt.Errorf("session export: %w", resp.Error)
-		}
 		return resp.Result, nil
 	}
 	return rt.engine.exportSessionRaw(ctx, sid)

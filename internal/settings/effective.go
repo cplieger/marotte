@@ -28,17 +28,17 @@ const DefaultContentCollectionEnabled = false
 // the user makes, never the reading of an absent key.
 const defaultGuardPayloadLinks = true
 
-// DefaultAutoCompactPct is the point at which marotte adds nothing to KAS's own 80/95, which
-// is why an invalid stored value reads as it.
+// DefaultAutoCompactPct is KAS's own default threshold, which is why an invalid stored value
+// reads as it.
 const (
 	DefaultAutoCompactionEnabled = true
 	DefaultAutoCompactPct        = 80
 )
 
 // ValidAutoCompactPct reports whether pct is a value the slider can produce:
-// 50..90 in steps of 5.
+// 50..80 in steps of 5. KAS fails a session door whose threshold is above 80.
 func ValidAutoCompactPct(pct int) bool {
-	return pct >= 50 && pct <= 90 && pct%5 == 0
+	return pct >= 50 && pct <= 80 && pct%5 == 0
 }
 
 // DefaultNotifyPRStatus is OFF while its siblings are ON: a PR's CI verdict is already on the
@@ -48,6 +48,9 @@ const (
 	DefaultNotifyPRStatus      = false
 	DefaultNotifyRunOutcome    = true
 )
+
+// defaultHighThroughput is ON because the flags carry 3 to 4 times the prompt load on one engine.
+const defaultHighThroughput = true
 
 // EffectiveDefaults is the ONE statement of every client-rendered preference's value when
 // config.json is SILENT. It is not a consumer's answer for an UNREADABLE file, which differs
@@ -60,15 +63,19 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		AutoCompactPct:        DefaultAutoCompactPct,
 		ChatRetentionDays:     DefaultChatRetentionDays,
 		GuardPayloadLinks:     defaultGuardPayloadLinks,
-		KnowledgeEnabled:      defaultKnowledgeEnabled,
-		ContentCollection:     DefaultContentCollectionEnabled,
-		MemoryMode:            DefaultMemoryMode,
+		HighThroughput:        defaultHighThroughput,
+		// kiro-cli's own default for hooks.showStatus, until a reader says otherwise.
+		HookStatusShown:   true,
+		KnowledgeEnabled:  defaultKnowledgeEnabled,
+		ContentCollection: DefaultContentCollectionEnabled,
+		MemoryMode:        DefaultMemoryMode,
 		// The agent-capability defaults are kiro-cli's own; "" on a follow-kiro
 		// choice sends nothing, so kiro-cli's experiment decides.
 		SpecPlanning:              defaultSpecPlanning,
 		SpecPlanningAskFirst:      defaultSpecPlanningAskFirst,
 		SteeringReminders:         defaultSteeringReminders,
 		WorkflowsEnabled:          DefaultWorkflowsEnabled,
+		WorkflowLaunch:            DefaultWorkflowLaunch,
 		ModelFallback:             defaultModelFallback,
 		WorkValidation:            defaultWorkValidation,
 		CloudFormationSafetyCheck: defaultCloudFormationSafety,
@@ -95,8 +102,10 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 func RetentionEnabled(ctx context.Context, configDir string) bool {
 	days, ok, err := FieldStrict[int](ctx, configDir, KeyChatRetentionDays)
 	if err != nil {
-		slog.Error("chat retention: config.json is present but unreadable; treating retention as ON so this close deletes nothing",
-			"key", KeyChatRetentionDays, "error", err)
+		if !readStopped(err) {
+			slog.Error("chat retention: config.json is present but unreadable; treating retention as ON so this close deletes nothing",
+				"key", KeyChatRetentionDays, "error", err)
+		}
 		return true
 	}
 	if !ok {
@@ -108,7 +117,7 @@ func RetentionEnabled(ctx context.Context, configDir string) bool {
 // MCPWaitForReady reports whether KAS's rendered MCP file carries waitForReady; anything but a
 // stored true is off. readable is false over an unreadable config.json, where off is no answer.
 func MCPWaitForReady(ctx context.Context, configDir string) (on, readable bool) {
-	return FieldOr(ctx, configDir, KeyMCPWaitForReady, false)
+	return fieldOr(ctx, configDir, KeyMCPWaitForReady, false)
 }
 
 // DebugLogs reports whether the process logs at debug level; anything but a readable true is
@@ -145,7 +154,6 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		KeyAutoCompactPct:        func(r json.RawMessage) error { return decodeAutoCompactPct(&out.AutoCompactPct, r) },
 		KeyChatRetentionDays:     func(r json.RawMessage) error { return decodeInto(&out.ChatRetentionDays, r) },
 		KeyTheme:                 func(r json.RawMessage) error { return decodeInto(&out.Theme, r) },
-		KeyFBPath:                func(r json.RawMessage) error { return decodeInto(&out.FBPath, r) },
 		KeyLastModel:             func(r json.RawMessage) error { return decodeInto(&out.LastModel, r) },
 		KeyLastEffortByModel:     func(r json.RawMessage) error { return decodeInto(&out.LastEffortByModel, r) },
 		KeyLastMergeMethod:       func(r json.RawMessage) error { return decodeInto(&out.LastMergeMethod, r) },
@@ -182,6 +190,9 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		KeyAutoDelegation: func(r json.RawMessage) error {
 			return decodeChecked(&out.AutoDelegation, r, KeyAutoDelegation, ValidFeatureChoice)
 		},
+		KeyWorkflowLaunch: func(r json.RawMessage) error {
+			return decodeChecked(&out.WorkflowLaunch, r, KeyWorkflowLaunch, ValidWorkflowLaunch)
+		},
 		KeyOutputStyle: func(r json.RawMessage) error {
 			return decodeChecked(&out.OutputStyle, r, KeyOutputStyle, ValidOutputStyle)
 		},
@@ -189,6 +200,7 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 			return decodeChecked(&out.TerminalCommandTimeoutMs, r, KeyTerminalCommandTimeoutMs, ValidTerminalCommandTimeoutMs)
 		},
 		KeyEngineHeapMiB:    func(r json.RawMessage) error { return decodeInto(&out.EngineHeapMiB, r) },
+		KeyHighThroughput:   func(r json.RawMessage) error { return decodeInto(&out.HighThroughput, r) },
 		KeySettingsEpoch:    func(r json.RawMessage) error { return decodeStampField(&out.SettingsEpoch, r) },
 		KeySettingsRevision: func(r json.RawMessage) error { return decodeStampField(&out.SettingsRevision, r) },
 	}
@@ -203,7 +215,7 @@ func decodeAutoCompactPct(dst *int, raw json.RawMessage) error {
 		return err
 	}
 	if !ValidAutoCompactPct(pct) {
-		return fmt.Errorf("settings: %s %d is not 50..90 in steps of 5", KeyAutoCompactPct, pct)
+		return fmt.Errorf("settings: %s %d is not 50..80 in steps of 5", KeyAutoCompactPct, pct)
 	}
 	*dst = pct
 	return nil

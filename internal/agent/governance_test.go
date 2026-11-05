@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 func sampleGovernance() marotte.GovernanceStatePayload {
@@ -34,6 +35,7 @@ func TestGovernanceCache_SetGetWarm(t *testing.T) {
 	}
 
 	c.setProfile(sampleGovernance())
+	c.markWarm()
 	got, ok := c.get()
 	if !ok || !got.Known || !got.Features.MCPEnabled {
 		t.Fatalf("after set: got=%+v ok=%v", got, ok)
@@ -46,6 +48,7 @@ func TestGovernanceCache_SetGetWarm(t *testing.T) {
 
 	// A second set must not panic (close-once) and must overwrite.
 	c.setProfile(marotte.GovernanceStatePayload{Known: true})
+	c.markWarm()
 	if got, _ := c.get(); got.Features.MCPEnabled {
 		t.Error("second set did not overwrite the cached state")
 	}
@@ -75,7 +78,7 @@ func TestGovernanceCache_AdminRulesResolveOnce(t *testing.T) {
 func TestHandleGovernance_ServesWarmCache(t *testing.T) {
 	h, _, _ := newTestHub()
 	// Pre-seeded, so no bridge warm-up.
-	h.config.SetGovernance(t.Context(), sampleGovernance())
+	reportAccount(t, h, sampleGovernance())
 
 	rec := httptest.NewRecorder()
 	h.config.handleGovernance(rec, httptest.NewRequest(http.MethodGet, "/api/governance", nil))
@@ -103,6 +106,9 @@ func TestApplyGovernance_CachesTheProfileFromAnySession(t *testing.T) {
 		`"contentCollection":true,"promptLogging":false,"codeReferenceTracker":false,` +
 		`"autonomousAgents":true}}`)
 
+	if p, ok := translate.DecodeGovernanceState(raw); ok {
+		fakeSourceOf(t, h).account.set(p)
+	}
 	h.config.applyGovernance(raw)
 
 	got, ok := h.config.governance.get()

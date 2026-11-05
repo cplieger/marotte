@@ -25,9 +25,9 @@ func TestEngineExit_ClosesEveryHostedSessionsTurnAndAsks(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Setup: OpenBridge(%s): %v", chatID, err)
 		}
-		session := sb.current()
+		session := sb.session()
 		h.stagePromptTurn(t, chatID)
-		h.bus.PendingPermsAdd(int64(10+i), marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+		h.bus.pendingPerms.add(int64(10+i), marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 			marotte.PermissionNeededPayload{}), session)
 		term := newAgentTerminal(&exec.Cmd{}, chatID, 64)
 		term.origin = session

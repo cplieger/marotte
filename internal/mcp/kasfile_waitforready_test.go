@@ -14,7 +14,7 @@ import (
 func waitServers() []*Server {
 	return []*Server{
 		{Name: "local", Transport: TransportStdio, Command: "npx", Enabled: true},
-		{Name: "remote", Transport: TransportHTTP, URL: "https://mcp.example.com", Enabled: true},
+		{Name: "remote", Transport: transportHTTP, URL: "https://mcp.example.com", Enabled: true},
 		{Name: "off", Transport: TransportStdio, Command: "npx", Enabled: false},
 	}
 }
@@ -50,7 +50,7 @@ func TestWriteKASConfig_DefaultRecordEmitsNoWaitKeys(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	entry := readKASServers(t, kasPath)["local"]
-	for _, key := range []string{"waitForReady", "timeout"} {
+	for _, key := range []string{"waitForReady", "timeout", "versionNegotiation"} {
 		if v, ok := entry[key]; ok {
 			t.Errorf("default record rendered %s = %v, want the key absent", key, v)
 		}

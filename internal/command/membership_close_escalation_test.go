@@ -9,8 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
@@ -56,14 +59,15 @@ func newEscalationHostOver(store chatStore, tabSet TabSet, retention retentionRe
 		h.st = realStore
 	}
 	h.mem = newMembership(&membershipDeps{
-		Chats:    store,
+		Chats:    withKeep(store),
 		Tabs:     tabSet,
 		Bus:      bus,
+		Runs:     &fakeRunOwner{},
 		Teardown: h.teardown,
-		CloseChat: func(ctx context.Context, chatID marotte.ChatID) {
-			h.teardown.CloseChatState(ctx, chatID)
+		CloseChat: func(ctx context.Context, chatID marotte.ChatID, stop *chat.Claim) {
+			h.teardown.CloseChatState(ctx, chatID, stop)
 		},
-		DeleteChat: func(ctx context.Context, chatID marotte.ChatID, chain []string) {
+		DeleteChat: func(ctx context.Context, chatID marotte.ChatID, chain []string, _ RunStopCause) {
 			_, exists := store.Get(ctx, chatID)
 			h.recordSeen[chatID] = exists
 			h.teardownCtx = append(h.teardownCtx, ctx.Err())
@@ -121,7 +125,7 @@ func TestCloseTab_RetentionOffDeletesTheChatsTheCloseLeftTabless(t *testing.T) {
 		t.Fatalf("open tangent: %v", err)
 	}
 
-	closed, _, err := h.mem.closeTab(t.Context(), root.Subject.ID, "op-close")
+	closed, _, err := h.mem.closeTab(t.Context(), root.Subject.ID, "op-close", true, nil)
 	if err != nil {
 		t.Fatalf("CloseTab = %v", err)
 	}
@@ -197,9 +201,17 @@ func (*fixedTabs) Open(context.Context, marotte.OpenTab) (marotte.TabSubject, bo
 	return marotte.TabSubject{}, false, 0, errors.New("not staged")
 }
 
-func (f *fixedTabs) Close(context.Context, string) ([]marotte.TabSubject, uint64, error) {
-	return f.closed, 3, nil
+func (f *fixedTabs) Close(context.Context, string) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error) {
+	return f.closed, nil, 3, nil
 }
+
+func (*fixedTabs) Owed() []tabs.OwedRelease { return nil }
+
+func (*fixedTabs) Settle(context.Context, []string) error { return nil }
+
+func (*fixedTabs) Unread() string { return "" }
+
+func (*fixedTabs) SetLaunchChats(context.Context, string, []string, bool) error { return nil }
 
 func (*fixedTabs) Reorder(context.Context, []string) (uint64, error) { return 0, nil }
 
@@ -229,7 +241,7 @@ func TestCloseTab_LeavesAChatWithARemainingTabAlone(t *testing.T) {
 	store.Bus = h.bus
 	seedSessionedRecord(t, store, "c-x", "sess-x")
 
-	closed, _, err := h.mem.closeTab(t.Context(), "tb_one", "op-close")
+	closed, _, err := h.mem.closeTab(t.Context(), "tb_one", "op-close", true, nil)
 	if err != nil {
 		t.Fatalf("CloseTab = %v", err)
 	}
@@ -265,7 +277,7 @@ func TestCloseTab_SubtreeWithoutTheChatsTabDeletesNothing(t *testing.T) {
 		t.Fatalf("open run child: %v", err)
 	}
 
-	if _, _, err = h.mem.closeTab(t.Context(), child.Subject.ID, "op-close"); err != nil {
+	if _, _, err = h.mem.closeTab(t.Context(), child.Subject.ID, "op-close", true, nil); err != nil {
 		t.Fatalf("CloseTab = %v", err)
 	}
 	if _, ok := store.Get(t.Context(), "c-a"); !ok {
@@ -308,7 +320,7 @@ func TestCloseTab_RetentionDecidesWhetherTheRecordSurvives(t *testing.T) {
 				t.Fatalf("open: %v", err)
 			}
 
-			closed, _, err := h.mem.closeTab(t.Context(), opened.Subject.ID, "op-close")
+			closed, _, err := h.mem.closeTab(t.Context(), opened.Subject.ID, "op-close", true, nil)
 			if err != nil {
 				t.Fatalf("CloseTab = %v", err)
 			}
@@ -356,7 +368,7 @@ func TestCloseTab_RecordDeleteFailureStillAnswersSuccess(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 
-	closed, _, err := h.mem.closeTab(t.Context(), opened.Subject.ID, "op-close")
+	closed, _, err := h.mem.closeTab(t.Context(), opened.Subject.ID, "op-close", true, nil)
 	if err != nil {
 		t.Fatalf("CloseTab = %v, want success — post-commit failures roll forward", err)
 	}
@@ -400,10 +412,10 @@ type cancelOnCommitTabs struct {
 	cancel context.CancelFunc
 }
 
-func (c *cancelOnCommitTabs) Close(ctx context.Context, id string) ([]marotte.TabSubject, uint64, error) {
-	closed, v, err := c.Store.Close(ctx, id)
+func (c *cancelOnCommitTabs) Close(ctx context.Context, id string) ([]marotte.TabSubject, []tabs.OwedRelease, uint64, error) {
+	closed, owed, v, err := c.Store.Close(ctx, id)
 	c.cancel()
-	return closed, v, err
+	return closed, owed, v, err
 }
 
 // TestCloseTab_ClientAbandonedRequestStillRollsForward: a request context
@@ -424,7 +436,7 @@ func TestCloseTab_ClientAbandonedRequestStillRollsForward(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 
-	closed, _, err := h.mem.closeTab(reqCtx, opened.Subject.ID, "op-close")
+	closed, _, err := h.mem.closeTab(reqCtx, opened.Subject.ID, "op-close", true, nil)
 	if err != nil {
 		t.Fatalf("CloseTab = %v, want success", err)
 	}
@@ -471,7 +483,7 @@ func TestCloseTab_RecordlessChatSkipped(t *testing.T) {
 		}
 	}
 
-	closed, _, err := h.mem.closeTab(t.Context(), opened.Subject.ID, "op-close")
+	closed, _, err := h.mem.closeTab(t.Context(), opened.Subject.ID, "op-close", true, nil)
 	if err != nil {
 		t.Fatalf("CloseTab = %v", err)
 	}
@@ -492,5 +504,58 @@ func TestCloseTab_RecordlessChatSkipped(t *testing.T) {
 	}
 	if deletesAfter != deletesBefore {
 		t.Errorf("a chat_deleted frame went out for a recordless chat (%d -> %d)", deletesBefore, deletesAfter)
+	}
+}
+
+// TestCloseTab_TheDeleteGradeRunsPastTheAnswer pins that a retention-off close answers once the record is gone, as
+// an explicit delete does: the delete grade's engine calls can outlast the browser's request budget.
+func TestCloseTab_TheDeleteGradeRunsPastTheAnswer(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	st, err := tabs.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("open tab store: %v", err)
+	}
+	seedSessionedRecord(t, store, "c-root", "sess-root")
+	life := &fakeLife{}
+	t.Cleanup(life.wg.Wait)
+	gate := make(chan struct{})
+	release := sync.OnceFunc(func() { close(gate) })
+	t.Cleanup(release)
+	tornDown := make(chan []string, 1)
+	mem := newMembership(&membershipDeps{
+		Chats: withKeep(store), Tabs: st, Bus: &tabBus{}, Teardown: &recordingTeardown{},
+		DeleteChat: func(_ context.Context, _ marotte.ChatID, chain []string, _ RunStopCause) {
+			<-gate
+			tornDown <- chain
+		},
+		Retention: retentionOff,
+		Lifecycle: life,
+	})
+	root, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-root"}, "op-r")
+	if err != nil {
+		t.Fatalf("open root: %v", err)
+	}
+
+	answered := make(chan error, 1)
+	go func() {
+		_, _, cErr := mem.closeTab(t.Context(), root.Subject.ID, "op-close", true, nil)
+		answered <- cErr
+	}()
+	select {
+	case err := <-answered:
+		if err != nil {
+			t.Fatalf("CloseTab = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("CloseTab is still waiting on the delete grade, want it to answer once the record is gone")
+	}
+	release()
+	select {
+	case chain := <-tornDown:
+		if !slices.Equal(chain, []string{"sess-root"}) {
+			t.Errorf("delete grade chain = %v, want [sess-root]", chain)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the delete grade never finished after the close answered")
 	}
 }

@@ -1,5 +1,5 @@
-// The permission card's optional deny note: when it renders, what a deny sends, and that an allow
-// never carries it.
+// The permission card's optional deny note: when it renders, what a deny sends, that an allow
+// never carries it, and its plan-approval form, which asks for edits.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import type * as SettingsHighlight from "./settings-highlight.js";
@@ -22,7 +22,7 @@ function ask(over: Partial<PermissionNeededPayload> = {}): PermissionNeededPaylo
     request_id: 1,
     title: "Write src/main.go",
     kind: "edit",
-    accepts_rejection_reason: true,
+    rejection_note: "reason",
     consent: { capability: "fs_write", subject: "src/main.go" },
     options: [
       { option_id: "a", name: "Allow", kind: "allow_once" },
@@ -64,7 +64,8 @@ describe("the permission card's deny note", () => {
   });
 
   it("does not render when the ask does not accept one", () => {
-    const card = buildPermissionCard("c1", ask({ accepts_rejection_reason: false }), onSelect);
+    const { rejection_note: _note, ...withoutNote } = ask();
+    const card = buildPermissionCard("c1", withoutNote, onSelect);
     expect(note(card)).toBeNull();
   });
 
@@ -104,5 +105,73 @@ describe("the permission card's deny note", () => {
       [{ optionID: "a" }],
       [{ optionID: "ra", alwaysResource: "src/main.go" }],
     ]);
+  });
+});
+
+describe("the deny note on a plan approval", () => {
+  function planAsk(): PermissionNeededPayload {
+    return ask({
+      title: "Add 2 workflow steps to wf_1",
+      kind: "other",
+      rejection_note: "plan_edits",
+      options: [
+        { option_id: "a", name: "Allow", kind: "allow_once" },
+        { option_id: "r", name: "Deny", kind: "reject_once" },
+      ],
+    });
+  }
+
+  function type(box: HTMLTextAreaElement, value: string): void {
+    box.value = value;
+    box.dispatchEvent(new Event("input"));
+  }
+
+  function rejectButton(card: HTMLElement): HTMLButtonElement | undefined {
+    return card.querySelectorAll<HTMLButtonElement>(".approval-actions button")[1];
+  }
+
+  it("asks for the edits the user wants", () => {
+    const box = note(buildPermissionCard("c1", planAsk(), onSelect));
+    expect(box?.placeholder).toBe("Optional: type the edits you want");
+    expect(box?.getAttribute("aria-label")).toBe("Edits you want (optional)");
+  });
+
+  it("labels the deny 'Request edits' while the note has text, and sends the edits", () => {
+    const card = buildPermissionCard("c1", planAsk(), onSelect);
+    const box = note(card);
+    if (box === null) {
+      throw new Error("no note");
+    }
+    type(box, "drop the review step");
+    expect(rejectButton(card)?.textContent).toBe("Request edits");
+    click(card, "Request edits");
+    expect(onSelect).toHaveBeenCalledWith({
+      optionID: "r",
+      rejectionReason: "drop the review step",
+    });
+  });
+
+  it("restores the option's own name when the note is cleared, and sends a plain deny", () => {
+    const card = buildPermissionCard("c1", planAsk(), onSelect);
+    const box = note(card);
+    if (box === null) {
+      throw new Error("no note");
+    }
+    type(box, "drop the review step");
+    type(box, "  ");
+    expect(rejectButton(card)?.textContent).toBe("Deny");
+    click(card, "Deny");
+    expect(onSelect).toHaveBeenCalledWith({ optionID: "r" });
+  });
+
+  it("keeps the deny's label on an ordinary tool approval while its note has text", () => {
+    const card = buildPermissionCard("c1", ask(), onSelect);
+    const box = note(card);
+    if (box === null) {
+      throw new Error("no note");
+    }
+    type(box, "wrong directory");
+    click(card, "Reject");
+    expect(onSelect).toHaveBeenCalledWith({ optionID: "r", rejectionReason: "wrong directory" });
   });
 });

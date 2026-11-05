@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/cplieger/webhttp/v4"
+	"github.com/cplieger/go/httpserver"
 )
 
 // TestTagOf_MatchesTheCrossLanguageGolden pins the derivation both halves compute:
@@ -34,7 +34,7 @@ func TestTagOf_MatchesTheCrossLanguageGolden(t *testing.T) {
 		if len(got) != tagLen {
 			t.Errorf("TagOf(%q) has length %d, want %d", tc.Endpoint, len(got), tagLen)
 		}
-		if !webhttp.ValidRequestID(got) {
+		if !httpserver.ValidRequestID(got) {
 			t.Errorf("TagOf(%q) = %q is outside the SSE-Client grammar", tc.Endpoint, got)
 		}
 	}

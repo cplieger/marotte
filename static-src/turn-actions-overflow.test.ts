@@ -23,6 +23,8 @@ vi.mock("./actions/messages.js", () => ({
   copyClipboard: { dispatch: vi.fn(() => Promise.resolve()) },
 }));
 vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
+vi.mock("./notice-subject.js", () => ({ chatNotice: vi.fn() }));
+vi.mock("./chat.js", () => ({ openTangentChat: vi.fn() }));
 
 const { mountTurnFooterActions, initTurnActionCallbacks } =
   await import("./messages-turn-actions.js");
@@ -65,6 +67,7 @@ function mountCard(id: string): HTMLDetailsElement {
     ts: 1,
     outcome: "completed",
     rewindTo: undefined,
+    branchFrom: undefined,
   };
   mountTurnFooterActions(footer, card, turn);
   const menu = footer.querySelector<HTMLDetailsElement>("details.turn-actions-more");

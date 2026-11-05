@@ -1,10 +1,12 @@
 package agent
 
-// What may be done to one run: one server-side table over KAS's status and the run's pause. Retry is offered on
+// What may be done to one run: one server-side table over KAS's status and the run's pause, decided from one
+// inspect read so the verbs and the state a client shows come from the same answer. Retry is offered on
 // agent-parented runs too: kiro-cli's restore pass skips an aborted run, so nothing else recovers it.
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -27,9 +29,32 @@ const pauseKindMaxIterations = "maxIterations"
 // maxIterationsVerbs is the paused row for a repeat at its cap, where resume re-parks.
 var maxIterationsVerbs = []string{verbExtend, verbFinishLoop, verbCancel}
 
-// askingVerbs is the paused row while every paused step asks: KAS's resume leaves each step's
-// need_input signal and re-parks it at once, so only an answer moves the run on.
+// askingVerbs is the paused row while every paused step asks, or while that is unknown: a known ask
+// re-parks on resume, and an unreadable tree cannot prove that resume will not re-park.
 var askingVerbs = []string{verbCancel}
+
+// askState is whether a run's read has every paused step waiting on a person (workflow.PausedOnAsks).
+type askState int
+
+const (
+	// asksNone is a read where some paused leaf waits on nobody, or where none is paused.
+	asksNone askState = iota
+	asksAll
+	// asksUnread is a read whose tree did not decode, so whether anyone asks is unknown.
+	asksUnread
+)
+
+// asksOf is the ask state of one decoded reply; a not-OK reply is one whose tree did not decode.
+func asksOf(tree workflow.Inspect) askState {
+	switch {
+	case !tree.OK:
+		return asksUnread
+	case workflow.PausedOnAsks(tree):
+		return asksAll
+	default:
+		return asksNone
+	}
+}
 
 // runStatusVerbs maps KAS's WorkflowStatusSchema to accepted verbs, mirroring KAS. An unknown
 // status is absent, so a future status degrades to read-only.
@@ -48,11 +73,11 @@ var runStatusVerbs = map[marotte.RunStatus][]string{
 type runAffordance struct {
 	// Refused maps an unoffered verb to one sentence, only where its absence needs explaining.
 	Refused map[string]string
-	// origin is the gate's read of the run's origin, which Retry reuses: two reads can disagree.
-	origin runOrigin
 	// PauseNodeID is the repeat a maxIterations pause stopped at, "" otherwise; the
 	// extend and finish_loop verbs address it.
 	PauseNodeID string
+	// status is the gate's read of the run's status, the ending Retry records for a run whose end marotte missed.
+	status marotte.RunStatus
 	// Verbs are the offered controls, in the order a row presents them.
 	Verbs []string
 }
@@ -75,8 +100,8 @@ type runFacts struct {
 	pauseNodeID string
 	// pausePending is a pause already asked for, which a second Pause cannot add to.
 	pausePending bool
-	// asking is workflow.PausedOnAsks of the run's newest read.
-	asking bool
+	// asks is the ask state of the run's newest read.
+	asks askState
 }
 
 // Pure, so the table tests over the status and the pause.
@@ -91,7 +116,7 @@ func affordanceOf(f *runFacts) runAffordance {
 	case paused && f.pauseKind == pauseKindMaxIterations && f.pauseNodeID != "":
 		out.PauseNodeID = f.pauseNodeID
 		byStatus = maxIterationsVerbs
-	case paused && f.asking:
+	case paused && f.asks != asksNone:
 		byStatus = askingVerbs
 	}
 	for _, verb := range byStatus {
@@ -118,28 +143,83 @@ func (f *runFacts) refusal(verb string) string {
 
 const pausePendingRefusal = "A pause is already requested; the run stops at the end of its current step."
 
-// affordance resolves the facts and answers what may be done. status is passed in so one decision
-// rests on one `inspect` read; it costs one `workflow/list` (originOf).
-func (rs *Runs) affordance(ctx context.Context, workflowID, status string) *runAffordance {
-	o := rs.originOf(ctx, workflowID)
-	f := runFacts{
-		status: status, pauseKind: o.pauseKind, pauseNodeID: o.pauseNodeID, pausePending: o.pausePending,
+// runHead is the part of an inspect state the verbs are decided from. KAS's `workflow/list` row derives
+// its pausePending, pauseKind and pauseNodeId from these same fields, and costs a read of every run.
+type runHead struct {
+	Status       string
+	PauseKind    string
+	PauseNodeID  string
+	PausePending bool
+}
+
+// headOf decodes the state's head from a raw inspect reply. Only the status can fail it: a pause field of
+// another shape leaves its fact unset, so a kiro-cli drift there still offers the status's verbs (Cancel).
+func headOf(raw json.RawMessage) (runHead, error) {
+	var res struct {
+		State struct {
+			Status       string          `json:"status"`
+			PausePending json.RawMessage `json:"pausePending"`
+			Pause        json.RawMessage `json:"pause"`
+		} `json:"state"`
 	}
-	f.asking = rs.pausedOnAsks(workflowID)
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return runHead{}, err
+	}
+	st := &res.State
+	head := runHead{Status: st.Status}
+	switch string(st.PausePending) {
+	case "", "null", "false":
+	default:
+		head.PausePending = true
+	}
+	var pause struct {
+		Kind   string `json:"kind"`
+		NodeID string `json:"nodeId"`
+	}
+	if len(st.Pause) > 0 && json.Unmarshal(st.Pause, &pause) == nil {
+		head.PauseKind, head.PauseNodeID = pause.Kind, pause.NodeID
+	}
+	return head, nil
+}
+
+// affordance answers what may be done from one inspect read's head and the run's ask cell as its newest
+// run read left it (handleRun refreshes it through openRun just before).
+func (rs *Runs) affordance(workflowID string, head *runHead) *runAffordance {
+	f := runFacts{
+		status: head.Status, pausePending: head.PausePending, asks: rs.cellAsks(workflowID),
+		pauseKind: head.PauseKind, pauseNodeID: head.PauseNodeID,
+	}
 	aff := affordanceOf(&f)
-	aff.origin = o
+	aff.status = marotte.RunStatus(head.Status)
 	return &aff
 }
 
-// pausedOnAsks reads the run's ask cell: false with no cell, or before its first read.
-func (rs *Runs) pausedOnAsks(workflowID string) bool {
+// controls is the affordance as the wire answers it, on the run read and on GET /api/runs/{id}/controls.
+// Verbs is never null, so an unknown status reads as nothing offered.
+func (rs *Runs) controls(workflowID string, head *runHead) marotte.RunControlsResponse {
+	aff := rs.affordance(workflowID, head)
+	return marotte.RunControlsResponse{
+		Verbs: append([]string{}, aff.Verbs...), Refused: aff.Refused, PauseNodeID: aff.PauseNodeID,
+	}
+}
+
+// cellAsks is the ask state of the run's ask cell: asksNone with no cell or before its first read, and
+// asksUnread while its newest read failed.
+func (rs *Runs) cellAsks(workflowID string) askState {
 	c := rs.asks.get(workflowID)
 	if c == nil {
-		return false
+		return asksNone
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return workflow.PausedOnAsks(c.reply)
+	switch {
+	case c.readFailed:
+		return asksUnread
+	case workflow.PausedOnAsks(c.reply):
+		return asksAll
+	default:
+		return asksNone
+	}
 }
 
 // chatForSession resolves a run's parent session to its chat from the store alone, reporting
@@ -151,12 +231,9 @@ func (rs *Runs) chatForSession(
 	if sessionID == "" {
 		return "", true
 	}
-	// Indexed: marotte.ChatHeader is 304 bytes (gocritic rangeValCopy).
-	headers, complete := rs.chats.ListComplete(ctx)
-	for i := range headers {
-		if slices.Contains(headers[i].SessionChain(), sessionID) {
-			return marotte.ChatID(headers[i].ID), complete
-		}
+	scan := rs.chats.SessionOwners(ctx)
+	if owners := scan.Owners.Of(sessionID); len(owners) > 0 {
+		return owners[0], scan.Complete
 	}
-	return "", complete
+	return "", scan.Complete
 }

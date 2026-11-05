@@ -44,7 +44,7 @@ func TestValidate_AccumulatesIndependentFields(t *testing.T) {
 			// none of which the user typed.
 			name: "PastedRemoteBlockWithThreeBadFields",
 			srv: &Server{
-				Transport: TransportHTTP,
+				Transport: transportHTTP,
 				Name:      "1bad name",
 				URL:       "ftp://example.test/mcp",
 				Headers:   []keyPair{{Name: "bad header", Value: "x"}},
@@ -79,7 +79,7 @@ func TestValidate_AccumulatesIndependentFields(t *testing.T) {
 			// block hits when its transport is switched to remote.
 			name: "RemoteCarryingCommandArgsAndEnv",
 			srv: &Server{
-				Transport: TransportHTTP,
+				Transport: transportHTTP,
 				Name:      "ok",
 				URL:       "https://x.example/mcp",
 				Command:   "npx",
@@ -114,7 +114,7 @@ func TestValidate_AccumulatesIndependentFields(t *testing.T) {
 			// being a duplicate must not hide entry 2's control character.
 			name: "EveryBadHeaderEntryIsNamed",
 			srv: &Server{
-				Transport: TransportHTTP,
+				Transport: transportHTTP,
 				Name:      "ok",
 				URL:       "https://example.test/mcp",
 				Headers: []keyPair{
@@ -230,7 +230,7 @@ func TestValidate_DependentChecksWithinAFieldStayOrdered(t *testing.T) {
 		}
 	})
 	t.Run("UnparseableURLIsTheOnlyURLError", func(t *testing.T) {
-		err := validate(&Server{Name: "ok", Transport: TransportHTTP, URL: "not a url"})
+		err := validate(&Server{Name: "ok", Transport: transportHTTP, URL: "not a url"})
 		if err == nil {
 			t.Fatal("Validate accepted an unparseable url")
 		}
@@ -239,7 +239,7 @@ func TestValidate_DependentChecksWithinAFieldStayOrdered(t *testing.T) {
 		}
 	})
 	t.Run("ControlCharInURLIsNotReportedAsSyntax", func(t *testing.T) {
-		err := validate(&Server{Name: "ok", Transport: TransportHTTP, URL: "https://ex\x01.test/"})
+		err := validate(&Server{Name: "ok", Transport: transportHTTP, URL: "https://ex\x01.test/"})
 		if err == nil {
 			t.Fatal("Validate accepted a control character in a url")
 		}
@@ -274,7 +274,7 @@ func TestValidate_SentinelsSurviveTheJoin(t *testing.T) {
 // through the join.
 func TestFieldErrors_WalksAWrappedJoin(t *testing.T) {
 	inner := validate(&Server{
-		Transport: TransportHTTP, Name: "1bad", URL: "ftp://x.test/",
+		Transport: transportHTTP, Name: "1bad", URL: "ftp://x.test/",
 	})
 	if inner == nil {
 		t.Fatal("fixture record validated clean")
@@ -349,12 +349,12 @@ func TestValidate_CleanRecordsStayClean(t *testing.T) {
 			Env: []keyPair{{Name: "FOO", Value: "bar"}},
 		},
 		{
-			Name: "ok", Transport: TransportHTTP, URL: "https://x.test/mcp",
+			Name: "ok", Transport: transportHTTP, URL: "https://x.test/mcp",
 			Headers: []keyPair{{Name: "Authorization", Value: "Bearer x"}},
 		},
-		{Name: "ok", Transport: TransportSSE, URL: "http://x.test/sse"},
+		{Name: "ok", Transport: transportSSE, URL: "http://x.test/sse"},
 		{
-			Name: "ok", Transport: TransportHTTP, URL: "https://x.test/mcp",
+			Name: "ok", Transport: transportHTTP, URL: "https://x.test/mcp",
 			OAuthClientID: "cid",
 		},
 	}

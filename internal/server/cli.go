@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/procgroup"
 	"github.com/cplieger/marotte/internal/procout"
 )
@@ -46,15 +47,12 @@ type cliRunner interface {
 // construction.
 type execCLIRunner struct {
 	cliPath func() string
-	// env is the spawn's environment overlay (pinstall's Manager.PathEnv). Load-bearing:
-	// `settings` re-execs kiro-cli-chat by a PATH search, which fails unless the version
-	// directory leads PATH. nil inherits the parent environment.
+	// env returns assignments that override the inherited environment; nil inherits it unchanged.
 	env func() []string
 }
 
 func (r *execCLIRunner) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, r.cliPath(), args...) //nolint:gosec // G204: binary path from the install manager, never user input
-	// `settings` forks kiro-cli-chat, which would otherwise hold the pipes past a deadline.
 	procgroup.OwnGroup(cmd, cliWaitDelay)
 	if r.env != nil {
 		// The overlay lands LAST: os/exec keeps the last value for a repeated key.
@@ -122,11 +120,11 @@ type settingMeta struct {
 // kiro-cli-SIDE role belong: KAS's ACP path reads no kiro-cli setting, so a chat change
 // goes through internal/kascap's table instead.
 var allowedKiroSettings = map[string]settingMeta{
-	"chat.enableKnowledge":   {Kind: settingBool, Seed: kiroTrue},
-	"chat.enableSubagent":    {Kind: settingBool, Seed: kiroTrue},
-	"chat.enablePromptHints": {Kind: settingBool, Seed: kiroTrue},
-	"hooks.showStatus":       {Kind: settingBool, Seed: kiroTrue},
-	"telemetry.enabled":      {Kind: settingBool},
+	"chat.enableKnowledge":    {Kind: settingBool, Seed: kiroTrue},
+	"chat.enableSubagent":     {Kind: settingBool, Seed: kiroTrue},
+	"chat.enablePromptHints":  {Kind: settingBool, Seed: kiroTrue},
+	marotte.KiroHookStatusKey: {Kind: settingBool, Seed: kiroTrue},
+	"telemetry.enabled":       {Kind: settingBool},
 	// cleanup.periodDays is NOT here: marotte owns chat retention and pins kiro-cli's purge off.
 	"chat.disableInheritingDefaultResources": {Kind: settingBool, Seed: kiroFalse},
 }

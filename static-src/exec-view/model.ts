@@ -61,6 +61,9 @@ export interface ExecNode {
   /** The id of the question words sent here answer, beside an `answer` verb, so a newer question
    *  refuses them as stale. */
   ask?: string;
+  /** Set where a person can end this paused step now, as the server's end route decides it from
+   *  the same raw state; absent where it would refuse. */
+  endable?: true;
   /** Whether this node can host a live transcript, so the pane can say "none here" rather than
    *  "none yet". */
   transcript?: boolean;

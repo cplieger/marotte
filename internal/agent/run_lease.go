@@ -5,7 +5,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -14,7 +13,10 @@ import (
 	"unicode/utf16"
 
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/notice"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 )
@@ -22,8 +24,9 @@ import (
 // A struct because the scheduled fields only make sense together.
 type launchOrigin struct {
 	// slotAt is this run's next slot, an input to the deadline; launch fills it for a manual run (manualSlot).
-	slotAt     time.Time
-	scheduleID string
+	slotAt time.Time
+	// row is the schedule row a scheduled run reports to, nil for any other.
+	row *schedule.Row
 	// chatID is the launching chat for an agent's run (runStartLaunch), empty for a parentless launch.
 	chatID string
 	origin runlease.Origin
@@ -43,21 +46,37 @@ func retryLaunch(o *runOrigin) launchOrigin {
 	return launchOrigin{origin: runlease.OriginAgent, chatID: string(o.parent.chat)}
 }
 
-// grantRetryLease leases a retried run from its gate's origin, parent session included: the retry's run_start finds
+// grantRetryLease leases a retried run from Retry's read of its origin, parent session included: the retry's run_start finds
 // the lease held and adds no chat to it. A parentless retry is a new launch decision, so its host session reloads
 // with the profile's presets as they are now, recorded here.
-func (rs *Runs) grantRetryLease(ctx context.Context, workflowID string, o *runOrigin) {
+func (rs *Runs) grantRetryLease(ctx context.Context, workflowID string, o *runOrigin, holders []marotte.ChatID) {
 	var host *runlease.HostSecurity
 	if o.parent.chat == "" {
-		host = hostSecurityOf(securityPresets(ctx, rs.lifecycle.configDir))
+		host = hostSecurityOf(rs.doorSettings(ctx).Presets)
 	}
-	rs.grantLease(ctx, workflowID, o.recipe, retryLaunch(o), host)
+	lo := retryLaunch(o)
+	rs.grantKeeping(ctx, workflowID, o.recipe, &lo, host, &leaseKeep{chats: chatIDs(holders)})
 	rs.recordParentSession(ctx, workflowID, o.parent.session)
 }
 
+// settleMissedEnd ends a scheduled run whose terminal frame marotte missed, as observeComplete would have, before a
+// person retries it: a scheduled lease is that one run's, and the retry is the person's (manual, attended, no row).
+func (rs *Runs) settleMissedEnd(ctx context.Context, l *runlease.Lease, status marotte.RunStatus) {
+	rs.recordScheduleEnding(ctx, scheduleRun(l), status, "")
+	rs.forgetBounds(ctx, l.WorkflowID)
+}
+
 // scheduledLaunch carries the schedule row for outcomes and the slot the run may not outlive.
-func scheduledLaunch(scheduleID string, slotAt time.Time) launchOrigin {
-	return launchOrigin{origin: runlease.OriginScheduled, scheduleID: scheduleID, slotAt: slotAt}
+func scheduledLaunch(row schedule.Row, slotAt time.Time) launchOrigin {
+	return launchOrigin{origin: runlease.OriginScheduled, row: &row, slotAt: slotAt}
+}
+
+// scheduleRow is the row the run reports to, zero for an unscheduled run.
+func (o *launchOrigin) scheduleRow() schedule.Row {
+	if o.row == nil {
+		return schedule.Row{}
+	}
+	return *o.row
 }
 
 // runLabel is the label sent for a run, set only for a scheduled one so History shows which runs nobody started.
@@ -113,7 +132,7 @@ func (rs *Runs) manualSlot(source string) time.Time {
 		if err != nil {
 			// No slot, not a failure: the window and backstop still bound it.
 			slog.Warn("schedule cannot name its next slot, so a manual run of its recipe "+
-				"is bounded by its idle window alone", "schedule_id", e.ID, "error", err)
+				"is bounded by its idle window alone", "schedule_id", e.ID(), "error", err)
 			continue
 		}
 		if earliest.IsZero() || next.Before(earliest) {
@@ -134,29 +153,51 @@ func (rs *Runs) leaseStore() *runlease.Store {
 	return rs.leases
 }
 
-// grantLease records a run's envelope between `new` and `invoke`, before anything executes. Unattended
-// only for a scheduled run. A persist failure is logged: the in-memory lease still bounds the run.
-// grantLease records a run marotte put on the wire; host is a parentless launch's host-session security input, nil
-// for a chat-parented run.
+// grantLease records a run marotte put on the wire, between `new` and `invoke`, before anything executes; host is a
+// parentless launch's host-session security input, nil for a chat-parented run. Unattended only for a scheduled run.
+// A persist failure is logged: the in-memory lease still bounds the run.
 func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o launchOrigin, host *runlease.HostSecurity) {
-	if workflowID == "" {
+	rs.grantKeeping(ctx, workflowID, recipe, &o, host, nil)
+}
+
+// leaseKeep is what a grant records of the run's keep facts.
+type leaseKeep struct {
+	// chats hold the run's keep fact, recorded as the lease's KeepChats.
+	chats []string
+	// unattributed records a run whose launching chat could not be named (observeStart).
+	unattributed bool
+}
+
+// grantKeeping is grantLease recording keep, the run's keep holders, on the lease; nil records none.
+func (rs *Runs) grantKeeping(
+	ctx context.Context, workflowID, recipe string, o *launchOrigin, host *runlease.HostSecurity, keep *leaseKeep,
+) {
+	if !ids.ValidChatID(workflowID) {
+		slog.Warn("run lease not granted: the workflow id is not a plain name", "workflow_id", logsafe.Field(workflowID))
 		return
 	}
 	l := runlease.Lease{
-		StartedAt:  time.Now(),
-		SlotAt:     o.slotAt,
-		WorkflowID: workflowID,
-		ChatID:     o.chatID,
-		Recipe:     recipe,
-		Origin:     o.origin,
-		ScheduleID: o.scheduleID,
-		Unattended: o.origin == runlease.OriginScheduled,
-		Host:       host,
+		StartedAt:    time.Now(),
+		SlotAt:       o.slotAt,
+		WorkflowID:   workflowID,
+		ChatID:       o.chatID,
+		Recipe:       recipe,
+		Origin:       o.origin,
+		ScheduleID:   o.scheduleRow().ID,
+		ScheduleLife: o.scheduleRow().Life,
+		Unattended:   o.origin == runlease.OriginScheduled,
+		Host:         host,
+	}
+	if keep != nil {
+		l.KeepChats, l.Unattributed = keep.chats, keep.unattributed
 	}
 	if err := rs.leaseStore().Put(ctx, &l); err != nil {
 		slog.Error("run lease not persisted; this run's envelope will not survive a restart",
 			"workflow_id", workflowID, "recipe", recipe, "origin", o.origin, "error", err)
 	}
+	rs.beginLife(workflowID)
+	run := scheduleRun(&l)
+	rs.writeSchedule(run, func() error { return rs.schedules.RecordStart(ctx, run) })
 	// Named from the grant on, so every pending_snapshot names every run marotte answers for.
 	rs.cellFor(workflowID)
 }
@@ -171,6 +212,11 @@ func (rs *Runs) releaseLease(ctx context.Context, workflowID string) {
 	if err := rs.leaseStore().Release(ctx, workflowID); err != nil {
 		slog.Warn("run lease not released on disk", "workflow_id", workflowID, "error", err)
 	}
+	if held && l.Unattributed {
+		rs.marks.handOff(workflowID, l.ParentSessionID)
+	}
+	rs.marks.forget(workflowID)
+	rs.endLife(workflowID)
 	rs.endAsks(ctx, workflowID)
 	rs.quietEdge()
 	if held && rs.coord != nil {
@@ -212,6 +258,112 @@ func (rs *Runs) lease(workflowID string) (runlease.Lease, bool) {
 	return rs.leaseStore().Get(workflowID)
 }
 
+// autoResumeStopped reports whether marotte stopped resuming the run on its own (stopAutoResume).
+func (rs *Runs) autoResumeStopped(workflowID string) bool {
+	l, held := rs.lease(workflowID)
+	return held && !l.AutoResumeStoppedAt.IsZero()
+}
+
+// stopAutoResume records that marotte no longer resumes the paused run on its own, until a resume or pause it did
+// not write moves the run (endAutoResumeStop). The record lands after KAS's pause frame, so it is announced, also
+// on a failed write: the store keeps the stamp in memory, where the run read finds it. KAS tells neither the user
+// nor the launching agent of the pause, so both are told here.
+func (rs *Runs) stopAutoResume(ctx context.Context, workflowID string, throttled bool) error {
+	err := rs.leaseStore().SetAutoResumeStoppedAt(ctx, workflowID, time.Now())
+	rs.announcePaused(ctx, workflowID)
+	rs.notifyAutoResumeStop(ctx, workflowID, throttled)
+	return err
+}
+
+// throttledPause reports whether a pause's detail is a model throttle; the run view's autoResumeStopSentence draws
+// the same line.
+func throttledPause(d *pauseDetail) bool {
+	return d != nil && strings.Contains(strings.ToLower(d.Code), "throttl")
+}
+
+// notifyAutoResumeStop pushes the stop under the run and tells the launching agent, off the caller's resume lock:
+// the steer can wait behind KAS's write backpressure.
+func (rs *Runs) notifyAutoResumeStop(ctx context.Context, workflowID string, throttled bool) {
+	l, held := rs.lease(workflowID)
+	if !held || rs.coord == nil {
+		return
+	}
+	name := rs.leasedRunName(&l)
+	n := notice.AutoResumeStopped(notice.RunTarget(workflowID, name), throttled)
+	rs.coord.Notify(ctx, marotte.ChatID(l.ChatID), &n)
+	chat := marotte.ChatID(l.ChatID)
+	if chat == "" || isRunChat(chat) || rs.lifecycle == nil {
+		return
+	}
+	text := autoResumeStopNoteText(workflowID, name, throttled)
+	rs.lifecycle.goUnlessDraining(func() {
+		nctx, cancel := rs.lifecycle.derivedContext()
+		defer cancel()
+		rs.tellLaunchingAgent(nctx, workflowID, chat, text)
+	})
+}
+
+// autoResumeStopNoteText is the launching agent's copy of the stop, naming the run by id for its workflow tools.
+func autoResumeStopNoteText(workflowID, name string, throttled bool) string {
+	cause := "for a cause nobody chose"
+	if throttled {
+		cause = "for model throttling"
+	}
+	run := workflowID
+	if name != "" {
+		run = name + " (" + workflowID + ")"
+	}
+	return "marotte stopped resuming workflow run " + run + " on its own: it kept pausing " + cause +
+		" with no progress between resumes. It stays paused until it is resumed (update_workflow resume) or ended."
+}
+
+// tellLaunchingAgent files text in the run's launching session; command.SteerWarningNotice owns how it is read.
+func (rs *Runs) tellLaunchingAgent(ctx context.Context, workflowID string, chat marotte.ChatID, text string) {
+	host, err := rs.ensureResident(ctx, workflowID)
+	if err == nil {
+		err = command.SteerWarningNotice(ctx, host.sb, text)
+	}
+	if err != nil {
+		slog.Warn("marotte stopped resuming a run, but its launching agent could not be told",
+			"workflow_id", workflowID, "chat_id", chat, "error", err)
+		return
+	}
+	slog.Info("told a run's launching agent that marotte stopped resuming it", "workflow_id", workflowID, "chat_id", chat)
+}
+
+// endAutoResumeStop drops a run's stop and the spent heal budget behind it, reporting whether it had one: the run
+// moved by someone else's hand, so its next involuntary pause is resumed again.
+func (rs *Runs) endAutoResumeStop(ctx context.Context, workflowID string) bool {
+	if !rs.autoResumeStopped(workflowID) {
+		return false
+	}
+	rs.clearHeals(workflowID)
+	if err := rs.leaseStore().SetAutoResumeStoppedAt(ctx, workflowID, time.Time{}); err != nil {
+		slog.Warn("a run marotte stopped resuming was moved, but the cleared stop was not recorded on disk",
+			"workflow_id", workflowID, "error", err)
+	}
+	return true
+}
+
+// announcePaused sends the paused run's chat a run-level `paused` frame, on which the run view reads the run again:
+// a change to marotte's own record of the run comes with no frame from KAS.
+func (rs *Runs) announcePaused(ctx context.Context, workflowID string) {
+	l, held := rs.lease(workflowID)
+	if !held {
+		return
+	}
+	rs.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunProgress, marotte.ChatID(l.ChatID),
+		marotte.RunProgressPayload{WorkflowID: workflowID, Kind: marotte.RunProgressPaused}))
+}
+
+// endAutoResumeStopAfter is endAutoResumeStop once a person's write succeeded, returning its error.
+func (rs *Runs) endAutoResumeStopAfter(ctx context.Context, workflowID string, err error) error {
+	if err == nil {
+		rs.endAutoResumeStop(ctx, workflowID)
+	}
+	return err
+}
+
 // rewindCancelWait bounds a rewind's wait for a cancelled run's lease; KAS stops at the next node
 // boundary, so it covers a tool call finishing. A var for tests.
 var rewindCancelWait = 20 * time.Second
@@ -251,20 +403,4 @@ func (rs *Runs) CancelRun(ctx context.Context, workflowID string) error {
 		case <-tick.C:
 		}
 	}
-}
-
-// RunChat answers which chat launched a run (command.runOwner). A live run answers from its lease; an
-// ended one, whose lease is released, from KAS's run inventory through the chats' session chains, an
-// engine read. "" with a nil error is verified: the inventory lists no such run, it names no
-// launching session, or no chat holds that session. An unreadable inventory or an incomplete chat
-// scan (originOf's errRunHostStart) is the error, so the caller can refuse rather than guess.
-func (rs *Runs) RunChat(ctx context.Context, workflowID string) (marotte.ChatID, error) {
-	if l, held := rs.lease(workflowID); held {
-		return marotte.ChatID(l.ChatID), nil
-	}
-	o := rs.originOf(ctx, workflowID)
-	if errors.Is(o.err, errRunHostStart) {
-		return "", o.err
-	}
-	return o.parent.chat, nil
 }

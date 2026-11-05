@@ -16,10 +16,11 @@ import {
   sessionBusy,
 } from "./store.js";
 import { clearTurnSigs } from "./store-signals.js";
+import { onHookVisibility } from "./hook-fold.js";
 import { buildEvent } from "./messages-events.js";
 import { releaseClampsIn } from "./clamp-text.js";
 import { releaseScrollableTablesIn } from "./table-scroll.js";
-import { effect, el, touch } from "@cplieger/reactive";
+import { effect, el, touch } from "@cplieger/ui";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { CHAT_SKELETON_ID } from "./skeleton.js";
 import { $ } from "./dom.js";
@@ -63,6 +64,7 @@ import {
   turnCloseOf,
   turnLedger,
   turnAnchorID,
+  turnBoundText,
   turnFailureText,
   type Turn,
 } from "./turns.js";
@@ -124,6 +126,7 @@ import { rewindChat } from "./actions/rewind.js";
 import { compactChat } from "./actions/chat.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { confirm as confirmDialog } from "./confirm.js";
+import { setComposerValue } from "./composer-value.js";
 import { registerCleanup } from "./actions/index.js";
 import {
   disposeAllToolEffects,
@@ -408,6 +411,32 @@ function rebuildTurnBody(session: Session, t: Turn, body: HTMLElement): void {
 }
 
 /**
+ * Show hook status moved which hook entries draw a card (`entryRenders`), so the active view rebuilds every mounted
+ * body and a parked view is dropped, to be built afresh at its next activation.
+ */
+function redrawForHookVisibility(): void {
+  for (const view of [...views.values()]) {
+    if (view !== activeView) {
+      disposeChatView(view.chatID);
+      continue;
+    }
+    const session = get(view.chatID);
+    if (session === undefined) {
+      continue;
+    }
+    const byID = new Map(projectTurns(session).map((t) => [t.id, t]));
+    for (const [turnID, body] of mountedBodies(view)) {
+      const t = byID.get(turnID);
+      if (t !== undefined) {
+        rebuildTurnBody(session, t, body);
+      }
+    }
+    // The rail, the faces and the window read the same predicate.
+    bumpMessages(view.chatID, "shape");
+  }
+}
+
+/**
  * Resume every paused body of the unparked view, then drain buffered terminal output once. One projection for the
  * pass, rather than one per body.
  */
@@ -493,6 +522,7 @@ function svgTemplate(markup: string): () => Node {
 let mounted = false;
 
 initToolCallbacks({ refreshGroupHeader });
+onHookVisibility(redrawForHookVisibility);
 initTurnActionCallbacks({ svgTemplate });
 initBlockRenderer({
   pushEntryEffect,
@@ -1156,15 +1186,16 @@ function rewindConfirmText(target: EntryPrompt, discarded: readonly Turn[]): str
 
   lines.push("");
   lines.push(
-    "Files are rolled back on disk to their state before this turn. " +
-      "The prompt itself is discarded too, so you will need to retype it. " +
-      "This cannot be undone.",
+    "Files are rolled back on disk to their state before this turn. This cannot be undone. " +
+      "If the message box is empty, the prompt's text comes back to it to edit and send again. " +
+      "Attachments are not restored.",
   );
   return lines.join("\n");
 }
 
 /** Refused mid-turn: KAS throws on a session with a live abortController. `mountRewind` disables the
- *  button; this is the second gate. */
+ *  button; this is the second gate. A revert that lands while its chat is still active puts the prompt's
+ *  text (never its attachments) in the composer, unless the composer already holds text. */
 async function handleRewindClick(target: EntryPrompt): Promise<void> {
   const session = getActive();
   if (session === undefined) {
@@ -1187,7 +1218,16 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
   if (!proceed) {
     return;
   }
-  await rewindChat.dispatch({ chatID: session.id, messageID: target.id });
+  const outcome = await rewindChat.dispatch({ chatID: session.id, messageID: target.id }).outcome;
+  if (outcome.status !== "success" || getActiveId() !== session.id) {
+    return;
+  }
+  const input = $.promptInput;
+  if (input.value.trim() !== "") {
+    return;
+  }
+  setComposerValue(target.text);
+  input.focus();
 }
 
 /**
@@ -1652,8 +1692,9 @@ function syncTurnFace(card: HTMLElement, t: Turn): void {
 }
 
 /**
- * Mount or refresh the failure notice: one card-level row saying why the turn ended badly, tinted by severity.
- * Card-level so it survives a stub with no body; `syncTurnFace`'s anchor keeps it last before the ledger.
+ * Mount or refresh the outcome notice: one card-level row saying why the turn ended badly, or which bound cut a
+ * completed turn short, tinted by severity. Card-level so it survives a stub with no body; `syncTurnFace`'s anchor
+ * keeps it last before the ledger.
  */
 function syncTurnNotice(card: HTMLElement, t: Turn): void {
   syncNoticeText(card, t);
@@ -1700,13 +1741,15 @@ function syncCompactAction(card: HTMLElement, t: Turn): void {
 }
 
 function syncNoticeText(card: HTMLElement, t: Turn): void {
-  const text = turnFailureText(t);
+  const failure = turnFailureText(t);
+  const text = failure !== "" ? failure : turnBoundText(t);
   const existing = card.querySelector<HTMLElement>(":scope > .turn-notice");
   if (text === "") {
     existing?.remove();
     return;
   }
-  const severity = severityOf(t.outcome);
+  // A bound's line rides a `clean` grade, so it takes the stop ink: the base ink is the failure red.
+  const severity = failure === "" ? "stopped" : severityOf(t.outcome);
   if (existing !== null) {
     if (existing.textContent !== text) {
       existing.textContent = text;
@@ -2107,9 +2150,10 @@ function headerData(t: Turn): TurnHeaderData {
     n: t.n,
     outcome: t.outcome,
     ts: t.ts,
-    // An empty prompt is not a request; fall through to the system-trigger rendering.
+    // An empty prompt is not a request; updateTurnHeader heads a request-less turn.
     request: request !== undefined && request.trim() !== "" ? request : undefined,
     label: t.trigger?.label,
+    caller: t.trigger?.caller,
     // From the trigger entry: attachments never appear in the prompt text.
     attachments: t.trigger?.attachments ?? [],
     wake: t.wake === undefined ? undefined : wakeLine(t.wake),
@@ -2186,17 +2230,18 @@ function mountTurnFooter(card: HTMLElement, t: Turn): void {
     truncated: led.truncated,
     asks: led.asks,
     requestIds: led.requestIds,
-    throughput: led.throughput,
+    firstOutput: led.firstOutput,
     recoveries: led.recoveries,
     steering: led.steering,
     engineErrorClass: led.engineErrorClass,
     contextBreakdown: led.contextBreakdown,
   };
   const existing = card.querySelector<HTMLDivElement>(":scope > .turn-footer");
-  // One predicate, `earnsTurnFooter`; the markdown join is ordered last, so it runs only for a ledger-less turn.
+  const settled = t.outcome !== "running";
   const keep = earnsTurnFooter(data, {
     rewindable: t.rewindTo !== undefined,
-    settledProse: t.outcome !== "running" && turnMarkdown(t).trim() !== "",
+    branchable: settled && t.branchFrom !== undefined,
+    settledProse: settled && turnMarkdown(t).trim() !== "",
   });
   if (!keep) {
     existing?.remove();

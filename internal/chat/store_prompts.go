@@ -7,14 +7,14 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// RewindTarget resolves the prompt id a rewind addresses to the earliest turn that
+// PromptTarget resolves the prompt id a rewind or a branch addresses to the earliest turn that
 // prompt opened and the id KAS holds the prompt under. False when no turn's prompt
 // carries that id. One prompt id can open several turns (a re-send, the empty-turn
 // retry); the revert drops the first and everything after it, and the KAS id is the
 // bind on any of those turns whose session is the chat's current one, because a
 // bind is valid only on the session that minted it. Absent, the target has no KAS id.
-func (s *Store) RewindTarget(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.RewindTarget, bool, error) {
-	var target marotte.RewindTarget
+func (s *Store) PromptTarget(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.PromptTarget, bool, error) {
+	var target marotte.PromptTarget
 	found := false
 	err := s.readLog(ctx, chatID, func(l *EntryLog) error {
 		c, err := s.load(ctx, chatID)
@@ -25,20 +25,20 @@ func (s *Store) RewindTarget(ctx context.Context, chatID marotte.ChatID, promptI
 		if err != nil {
 			return err
 		}
-		target, found = rewindTargetIn(entries, promptID, c.ACPSessionID)
+		target, found = promptTargetIn(entries, promptID, c.ACPSessionID)
 		return nil
 	})
 	return target, found, err
 }
 
-// rewindTargetIn is RewindTarget's scan over a whole log: the earliest turn_open
+// promptTargetIn is PromptTarget's scan over a whole log: the earliest turn_open
 // carrying promptID leads, the bind on any of those turns whose session is the
 // current one supplies the KAS id, and a run is inside the revert's window when its
 // LAUNCHING call is at or after that turn_open. The window reaches from that turn to
 // the newest one, and readers skip it, so a run launched before the window stays
 // untouched however often a later entry mentions it.
-func rewindTargetIn(entries []marotte.Entry, promptID, session string) (marotte.RewindTarget, bool) {
-	sc := rewindScan{
+func promptTargetIn(entries []marotte.Entry, promptID, session string) (marotte.PromptTarget, bool) {
+	sc := promptScan{
 		promptID: promptID, session: session,
 		opened: map[string]bool{}, mentioned: map[string]bool{}, preCutTools: map[string]bool{},
 	}
@@ -48,17 +48,17 @@ func rewindTargetIn(entries []marotte.Entry, promptID, session string) (marotte.
 	return sc.target, sc.found
 }
 
-type rewindScan struct {
+type promptScan struct {
 	opened      map[string]bool
 	mentioned   map[string]bool
 	preCutTools map[string]bool
 	promptID    string
 	session     string
-	target      marotte.RewindTarget
+	target      marotte.PromptTarget
 	found       bool
 }
 
-func (sc *rewindScan) visit(e *marotte.Entry) {
+func (sc *promptScan) visit(e *marotte.Entry) {
 	switch e.Kind {
 	case marotte.EntryKindTurnOpen:
 		sc.visitOpen(e)
@@ -69,18 +69,18 @@ func (sc *rewindScan) visit(e *marotte.Entry) {
 	}
 }
 
-func (sc *rewindScan) visitOpen(e *marotte.Entry) {
+func (sc *promptScan) visitOpen(e *marotte.Entry) {
 	open, ok := promptOf(e)
 	if !ok || open.Prompt.ID != sc.promptID {
 		return
 	}
 	sc.opened[e.Turn] = true
 	if !sc.found {
-		sc.target, sc.found = marotte.RewindTarget{Turn: e.Turn}, true
+		sc.target, sc.found = marotte.PromptTarget{Turn: e.Turn}, true
 	}
 }
 
-func (sc *rewindScan) visitBind(e *marotte.Entry) {
+func (sc *promptScan) visitBind(e *marotte.Entry) {
 	var bind marotte.EntryTurnBind
 	if sc.opened[e.Turn] && json.Unmarshal(e.Payload, &bind) == nil && bind.SessionID == sc.session {
 		sc.target.KASMessageID = bind.KASMessageID
@@ -92,7 +92,7 @@ func (sc *rewindScan) visitBind(e *marotte.Entry) {
 // inspect_workflow answer identically on the wire, so a later mention is a run the
 // revert did not start. The launch is where its tool_call was issued, which is what a
 // tool_result inside the window inherits from a call before it.
-func (sc *rewindScan) visitTool(e *marotte.Entry) {
+func (sc *promptScan) visitTool(e *marotte.Entry) {
 	if !sc.found {
 		sc.preCutTools[e.ID] = true
 	}

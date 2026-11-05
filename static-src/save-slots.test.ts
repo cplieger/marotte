@@ -31,6 +31,7 @@ const EXPECTED_KEYS = [
   "spec_planning_ask_first",
   "steering_reminders_enabled",
   "workflows_enabled",
+  "workflow_launch",
   "work_validation",
   "auto_routing",
   "auto_delegation",
@@ -40,10 +41,11 @@ const EXPECTED_KEYS = [
   // Data sharing: marotte's content-collection switch and kiro-cli's telemetry
   "content_collection_enabled",
   "telemetry.enabled",
-  // Experimental features: two kiro-cli keys plus marotte's own debug_logs
+  // Experimental features: two kiro-cli keys plus marotte's own debug_logs and high_throughput_optimizations
   "hooks.showStatus",
   "chat.disableInheritingDefaultResources",
   "debug_logs",
+  "high_throughput_optimizations",
   // Agent engine (settings.ts): the memory limit
   "engine_heap_mib",
   // Permissions
@@ -57,7 +59,7 @@ const EXPECTED_KEYS = [
 
 /** Written by `patchSettings` but deliberately slotless: each is set from outside Settings,
  *  where the control the user moved is the confirmation. */
-const NO_SLOT_KEYS = ["theme", "fb_path", "last_model", "last_effort_by_model"] as const;
+const NO_SLOT_KEYS = ["theme", "last_model", "last_effort_by_model"] as const;
 
 function slots(): HTMLElement[] {
   const host = document.createElement("div");

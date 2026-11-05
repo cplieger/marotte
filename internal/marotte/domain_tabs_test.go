@@ -8,6 +8,7 @@ package marotte_test
 
 import (
 	"encoding/json"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -170,7 +171,7 @@ func TestOpenTab_WireKeys(t *testing.T) {
 			if err := json.Unmarshal(data, &back); err != nil {
 				t.Fatalf("Unmarshal(%s): %v", data, err)
 			}
-			if back != tc.spec {
+			if !reflect.DeepEqual(back, tc.spec) {
 				t.Errorf("round trip of %s = %+v, want %+v", tc.desc, back, tc.spec)
 			}
 		})

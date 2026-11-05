@@ -19,6 +19,9 @@ export type {
   ToolKind,
   ToolStatus,
   TurnRevertCause,
+  // A message an API caller sent
+  Caller,
+  ContextResetCause,
   // The entry log: one envelope type plus one payload type per kind
   Entry,
   OpenEntry,
@@ -42,7 +45,6 @@ export type {
   ToolDenial,
   ToolOffload,
   ToolInteraction,
-  TurnThroughput,
   MeteringItem,
   PermissionOption,
   PlanEntry,
@@ -78,6 +80,7 @@ export type {
   ElicitationNeededPayload,
   UserInputNeededPayload,
   UserInputOption,
+  ElicitationEnumOption,
   ElicitationPropertySchema,
   ErrorPayload,
   GovernanceFeatures,
@@ -92,7 +95,6 @@ export type {
   OpenExternalURLPayload,
   PermissionConsent,
   PermissionNeededPayload,
-  PermissionsChangedPayload,
   PolicyErrorPayload,
   SafetyStatusPayload,
   SafetyPropertiesPayload,
@@ -136,9 +138,11 @@ export type {
 export type { PermissionNeededPayload as PermissionNeeded } from "./wire/types.gen.js";
 
 import type {
+  Caller,
   Entry,
   EntryCompaction,
   EntryCompactionFailed,
+  EntryContextReset,
   EntryKind,
   EntryModeSwitched,
   EntryModelFallback,
@@ -198,6 +202,7 @@ export interface EntryPayload {
   model_fallback: EntryModelFallback;
   mode_switched: EntryModeSwitched;
   turn_revert: EntryTurnRevert;
+  context_reset: EntryContextReset;
   reconciled: EntryReconciled;
   turn_close: EntryTurnClose;
 }
@@ -300,9 +305,14 @@ export interface PendingSteer {
   /** The server holds the row and could not deliver it to any turn (`steer_queued`
    *  state `unsent`); it goes with the chat's next prompt unless deleted first. */
   unsent?: true;
+  /** KAS holds the row while its turn end is unsettled (`steer_queued` state `delivering`): the
+   *  continuation reads it or the boundary drops it, and the server refuses a delete, so it has no controls. */
+  delivering?: true;
   /** An `unsent` row that no clean turn close sends as a prompt of its own
    *  (`SteerQueuedPayload.awaits_prompt`): a prompt's start carries it, so it costs the follow-ups no turn. */
   awaitsPrompt?: true;
+  /** The program that sent the row through the API; absent on the user's own. */
+  caller?: Caller;
 }
 
 // --- Local session state (client-only projection of server chat) ---

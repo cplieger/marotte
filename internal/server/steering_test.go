@@ -107,8 +107,8 @@ func TestHandleSteeringGet_AbsentDocumentIsTheNormalCase(t *testing.T) {
 	if got["content"] != "" {
 		t.Errorf("content = %q, want empty", got["content"])
 	}
-	if etag := rec.Header().Get(headerETag); etag != steeringAbsentETag {
-		t.Errorf("ETag = %q, want %q — the first save of a fresh volume needs a token to offer",
+	if etag := got["etag"]; etag != steeringAbsentETag {
+		t.Errorf("body etag = %q, want %q — the first save of a fresh volume needs a token to offer",
 			etag, steeringAbsentETag)
 	}
 }
@@ -156,26 +156,34 @@ func TestHandleSteeringPut_StoresTheDocument0600(t *testing.T) {
 }
 
 // TestHandleSteeringPut_RequiresAValidatorToken is the 428 arm: a save offering no
-// If-Match cannot be told from one that would overwrite a newer document, so it is
-// refused before anything is written.
+// If-Match tag cannot be told from one that would overwrite a newer document, so it is
+// refused before anything is written. An If-Match whose list is empty (RFC 9110 section
+// 5.6.1 drops empty elements) offers no tag either.
 func TestHandleSteeringPut_RequiresAValidatorToken(t *testing.T) {
-	s, path := steeringServer(t)
-	const stored = "# mine\n"
-	if err := os.WriteFile(path, []byte(stored), 0o600); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
+	for _, c := range []struct{ name, ifMatch string }{
+		{"no field", ""},
+		{"an empty list", " , "},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, path := steeringServer(t)
+			const stored = "# mine\n"
+			if err := os.WriteFile(path, []byte(stored), 0o600); err != nil {
+				t.Fatalf("write %s: %v", path, err)
+			}
 
-	rec := putSteering(t, s, "", "# theirs\n")
+			rec := putSteering(t, s, c.ifMatch, "# theirs\n")
 
-	if rec.Code != http.StatusPreconditionRequired {
-		t.Fatalf("PUT with no If-Match = %d, want 428", rec.Code)
-	}
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read back %s: %v", path, err)
-	}
-	if string(after) != stored {
-		t.Errorf("custom.md after a refused save = %q, want it untouched (%q)", after, stored)
+			if rec.Code != http.StatusPreconditionRequired {
+				t.Errorf("PUT with If-Match %q = %d, want 428", c.ifMatch, rec.Code)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read back %s: %v", path, err)
+			}
+			if string(after) != stored {
+				t.Errorf("custom.md after a refused save = %q, want it untouched (%q)", after, stored)
+			}
+		})
 	}
 }
 
@@ -186,10 +194,7 @@ func TestHandleSteeringPut_RefusesAStaleToken(t *testing.T) {
 	if err := os.WriteFile(path, []byte("# loaded\n"), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
-	stale := getSteering(t, s).Header().Get(headerETag)
-	if stale == "" {
-		t.Fatal("GET published no ETag, so there is no stale token to offer")
-	}
+	stale := steeringReadToken(t, getSteering(t, s))
 
 	// Somebody else writes, moving both token inputs.
 	const theirs = "# somebody else's, and longer\n"
@@ -236,8 +241,9 @@ func savedETag(t *testing.T, rec *httptest.ResponseRecorder) string {
 	return got.ETag
 }
 
-// TestHandleSteeringPut_PublishesTheNextToken pins the fresh token in body and header, or a
-// debounced second save would 409 against the first.
+// TestHandleSteeringPut_PublishesTheNextToken pins the fresh token in the body, or a debounced
+// second save would 409 against the first, and no ETag header: RFC 9110 section 9.3.4 forbids
+// a validator on a PUT whose stored document is not the request content.
 func TestHandleSteeringPut_PublishesTheNextToken(t *testing.T) {
 	s, path := steeringServer(t)
 
@@ -245,12 +251,12 @@ func TestHandleSteeringPut_PublishesTheNextToken(t *testing.T) {
 	if first.Code != http.StatusOK {
 		t.Fatalf("first PUT = %d, want 200; body %s", first.Code, first.Body)
 	}
-	next := first.Header().Get(headerETag)
+	next := savedETag(t, first)
 	if next == "" || next == steeringAbsentETag {
-		t.Fatalf("PUT published ETag %q, want the token for the document it just wrote", next)
+		t.Fatalf("save body etag = %q, want the token for the document it just wrote", next)
 	}
-	if body := savedETag(t, first); body != next {
-		t.Errorf("save body etag = %q, want the header's %q — the client reads the body", body, next)
+	if got := first.Header().Get(headerETag); got != "" {
+		t.Errorf("PUT ETag header = %q, want none", got)
 	}
 
 	second := putSteering(t, s, next, "# two, which is longer\n")
@@ -273,7 +279,7 @@ func TestHandleSteeringPut_EmptyContentRemovesTheFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("# mine\n"), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
-	token := getSteering(t, s).Header().Get(headerETag)
+	token := steeringReadToken(t, getSteering(t, s))
 
 	rec := putSteering(t, s, token, "   \n\t ")
 
@@ -282,9 +288,6 @@ func TestHandleSteeringPut_EmptyContentRemovesTheFile(t *testing.T) {
 	}
 	if _, err := os.Lstat(path); !os.IsNotExist(err) {
 		t.Errorf("custom.md still stands after an empty save: err = %v, want not-exist", err)
-	}
-	if got := rec.Header().Get(headerETag); got != steeringAbsentETag {
-		t.Errorf("ETag = %q, want %q", got, steeringAbsentETag)
 	}
 	if got := savedETag(t, rec); got != steeringAbsentETag {
 		t.Errorf("save body etag = %q, want %q", got, steeringAbsentETag)
@@ -298,18 +301,123 @@ func TestSteeringETag_MovesWithTheDocument(t *testing.T) {
 	if err := os.WriteFile(path, []byte("# one\n"), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
-	before := getSteering(t, s).Header().Get(headerETag)
+	before := steeringReadToken(t, getSteering(t, s))
 
 	if err := os.WriteFile(path, []byte("# one, extended\n"), 0o600); err != nil {
 		t.Fatalf("rewrite %s: %v", path, err)
 	}
-	after := getSteering(t, s).Header().Get(headerETag)
+	after := steeringReadToken(t, getSteering(t, s))
 
-	if before == "" || after == "" {
-		t.Fatalf("GET published no ETag: before %q, after %q", before, after)
-	}
 	if before == after {
 		t.Errorf("ETag unchanged across a rewrite (%q); a constant token refuses nothing", before)
+	}
+}
+
+// largeSteeringDoc is over httpserver's 1 KiB gzip floor once wrapped in the GET's JSON.
+var largeSteeringDoc = strings.Repeat("Always answer in French, and keep it short.\n", 40)
+
+// steeringThroughGzip serves /api/steering on the production stack and answers each request as
+// a browser sends it, offering gzip.
+func steeringThroughGzip(t *testing.T) (serve func(method, ifMatch, body string) *httptest.ResponseRecorder, path string) {
+	t.Helper()
+	s, path := steeringServer(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/steering", s.handleSteering)
+	h := apiStack(t, s, mux)
+	return func(method, ifMatch, body string) *httptest.ResponseRecorder {
+		hdr := []string{"Accept-Encoding", "gzip, deflate, br", "Content-Type", "application/json"}
+		if ifMatch != "" {
+			hdr = append(hdr, headerIfMatch, ifMatch)
+		}
+		return serveStack(h, method, "/api/steering", body, hdr...)
+	}, path
+}
+
+// steeringReadToken is the save token the client takes from a GET it received: the body's.
+func steeringReadToken(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	body := rec.Body.Bytes()
+	if rec.Header().Get("Content-Encoding") == "gzip" {
+		body = gunzipped(t, rec)
+	}
+	var doc steeringDocBody
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("GET body not JSON: %v", err)
+	}
+	if doc.ETag == "" {
+		t.Fatal("GET body carries no etag, so the client has no token to save with")
+	}
+	return doc.ETag
+}
+
+func steeringPutBody(t *testing.T, content string) string {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"content": content})
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	return string(body)
+}
+
+// TestHandleSteeringPut_ALargeDocumentSavesThroughGzip is the save a browser makes: its GET of a
+// document over 1 KiB comes back gzip-coded, and the token that GET handed out still opens the
+// save (RFC 9110 section 13.1.1 compares If-Match strongly).
+func TestHandleSteeringPut_ALargeDocumentSavesThroughGzip(t *testing.T) {
+	serve, path := steeringThroughGzip(t)
+	if err := os.WriteFile(path, []byte(largeSteeringDoc), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	get := serve(http.MethodGet, "", "")
+	if get.Code != http.StatusOK {
+		t.Fatalf("GET = %d, want 200", get.Code)
+	}
+	var doc steeringDocBody
+	if err := json.Unmarshal(gunzipped(t, get), &doc); err != nil {
+		t.Fatalf("GET body not JSON: %v", err)
+	}
+	if doc.Content != largeSteeringDoc {
+		t.Fatalf("GET content = %d bytes, want the %d on disk", len(doc.Content), len(largeSteeringDoc))
+	}
+
+	const mine = "# mine\n"
+	put := serve(http.MethodPut, steeringReadToken(t, get), steeringPutBody(t, mine))
+
+	if put.Code != http.StatusOK {
+		t.Fatalf("PUT with the GET's token = %d, want 200; body %s", put.Code, put.Body)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back %s: %v", path, err)
+	}
+	if string(got) != mine {
+		t.Errorf("custom.md = %q, want the save's content", got)
+	}
+}
+
+// TestHandleSteeringPut_AStaleTokenStillConflictsThroughGzip: compression must not turn the
+// precondition into one that passes for a document somebody else rewrote.
+func TestHandleSteeringPut_AStaleTokenStillConflictsThroughGzip(t *testing.T) {
+	serve, path := steeringThroughGzip(t)
+	if err := os.WriteFile(path, []byte(largeSteeringDoc), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	stale := steeringReadToken(t, serve(http.MethodGet, "", ""))
+	theirs := largeSteeringDoc + "And somebody else's line.\n"
+	if err := os.WriteFile(path, []byte(theirs), 0o600); err != nil {
+		t.Fatalf("rewrite %s: %v", path, err)
+	}
+
+	put := serve(http.MethodPut, stale, steeringPutBody(t, "# mine\n"))
+
+	if put.Code != http.StatusConflict {
+		t.Fatalf("PUT with a stale token = %d, want 409; body %s", put.Code, put.Body)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back %s: %v", path, err)
+	}
+	if string(got) != theirs {
+		t.Errorf("custom.md = %d bytes, want the other writer's %d untouched", len(got), len(theirs))
 	}
 }
 

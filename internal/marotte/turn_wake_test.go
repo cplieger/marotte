@@ -45,7 +45,7 @@ func (l *wakeLog) clear(cause SteerClearCause, ids ...string) {
 // here is the offset the next line would take: where a turn opens.
 func (l *wakeLog) here() int64 { return int64(len(l.facts)) }
 
-func ids(ms []WorkflowMessage) []string {
+func messageIDs(ms []WorkflowMessage) []string {
 	out := make([]string, len(ms))
 	for i := range ms {
 		out[i] = ms[i].ID
@@ -54,7 +54,7 @@ func ids(ms []WorkflowMessage) []string {
 }
 
 func sameIDs(got []WorkflowMessage, want ...string) bool {
-	g := ids(got)
+	g := messageIDs(got)
 	if len(g) != len(want) {
 		return false
 	}
@@ -79,10 +79,10 @@ func TestWakeCausesOf_WaitingIsWhatReachedTheSessionUnreadBeforeTheTurnOpened(t 
 
 	got := WakeCausesOf(l.facts, wakeChat, opened, prev)
 	if !sameIDs(got.Waiting, "wfmsg-a", "wfmsg-b") {
-		t.Errorf("Waiting = %v, want the two unread rows sent to the chat before the turn opened, oldest first", ids(got.Waiting))
+		t.Errorf("Waiting = %v, want the two unread rows sent to the chat before the turn opened, oldest first", messageIDs(got.Waiting))
 	}
 	if len(got.Cleared) != 0 {
-		t.Errorf("Cleared = %v, want none: no reader's cancel", ids(got.Cleared))
+		t.Errorf("Cleared = %v, want none: no reader's cancel", messageIDs(got.Cleared))
 	}
 	if none := WakeCausesOf(l.facts, "", opened, prev); len(none.Waiting)+len(none.Cleared) != 0 {
 		t.Errorf("an empty session answered %+v, want nothing", none)
@@ -101,10 +101,10 @@ func TestWakeCausesOf_ClearedIsWhatTheNewestCancelOfTheLastTurnEmptied(t *testin
 
 	got := WakeCausesOf(l.facts, wakeChat, opened, prev)
 	if !sameIDs(got.Cleared, "wfmsg-q", "wfmsg-r") {
-		t.Errorf("Cleared = %v, want the rows the previous turn's cancel emptied", ids(got.Cleared))
+		t.Errorf("Cleared = %v, want the rows the previous turn's cancel emptied", messageIDs(got.Cleared))
 	}
 	if len(got.Waiting) != 0 {
-		t.Errorf("Waiting = %v, want none: the clear settled every row", ids(got.Waiting))
+		t.Errorf("Waiting = %v, want none: the clear settled every row", messageIDs(got.Waiting))
 	}
 }
 
@@ -117,10 +117,10 @@ func TestWakeCausesOf_ACancelBeforeThePreviousTurnIsNoRewake(t *testing.T) {
 
 	got := WakeCausesOf(l.facts, wakeChat, l.here(), prev)
 	if len(got.Cleared) != 0 {
-		t.Errorf("Cleared = %v, want none: that cancel's re-delivery was an earlier turn", ids(got.Cleared))
+		t.Errorf("Cleared = %v, want none: that cancel's re-delivery was an earlier turn", messageIDs(got.Cleared))
 	}
 	if !sameIDs(got.Waiting, "wfmsg-a") {
-		t.Errorf("Waiting = %v, want the waker", ids(got.Waiting))
+		t.Errorf("Waiting = %v, want the waker", messageIDs(got.Waiting))
 	}
 }
 
@@ -142,7 +142,7 @@ func TestWakeCausesOf_OnlyACancelNamingAWorkflowMessageIsARewake(t *testing.T) {
 			l.clear(c.cause, c.ids...)
 			got := WakeCausesOf(l.facts, wakeChat, l.here(), prev)
 			if len(got.Cleared) != 0 {
-				t.Errorf("Cleared = %v, want none: KAS re-delivers nothing after it", ids(got.Cleared))
+				t.Errorf("Cleared = %v, want none: KAS re-delivers nothing after it", messageIDs(got.Cleared))
 			}
 		})
 	}
@@ -156,7 +156,7 @@ func TestWakeCausesOf_ARowLeftUnreadBeforeThePreviousTurnIsNotWaiting(t *testing
 
 	got := WakeCausesOf(l.facts, wakeChat, l.here(), prev)
 	if !sameIDs(got.Waiting, "wfmsg-a") {
-		t.Errorf("Waiting = %v, want only the row filed since the previous turn opened", ids(got.Waiting))
+		t.Errorf("Waiting = %v, want only the row filed since the previous turn opened", messageIDs(got.Waiting))
 	}
 }
 
@@ -169,13 +169,13 @@ func TestWakeCausesOf_RacingIsWhatWaitsFiledAfterTheRewakingCancel(t *testing.T)
 
 	got := WakeCausesOf(l.facts, wakeChat, l.here(), prev)
 	if !sameIDs(got.Cleared, "wfmsg-before") {
-		t.Errorf("Cleared = %v, want the row the cancel cleared", ids(got.Cleared))
+		t.Errorf("Cleared = %v, want the row the cancel cleared", messageIDs(got.Cleared))
 	}
 	if !sameIDs(got.Racing, "wfmsg-after") {
-		t.Errorf("Racing = %v, want the question filed after the cancel", ids(got.Racing))
+		t.Errorf("Racing = %v, want the question filed after the cancel", messageIDs(got.Racing))
 	}
 	if none := WakeCausesOf(l.facts[:2], wakeChat, 2, prev); len(none.Racing) != 0 {
-		t.Errorf("with nothing filed after the cancel Racing = %v, want none", ids(none.Racing))
+		t.Errorf("with nothing filed after the cancel Racing = %v, want none", messageIDs(none.Racing))
 	}
 }
 

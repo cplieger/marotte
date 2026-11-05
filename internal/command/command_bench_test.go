@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -61,8 +62,8 @@ func (*benchDeps) Revert(context.Context, marotte.ChatID, string, string) (*maro
 	return &marotte.Entry{Kind: marotte.EntryKindTurnRevert}, nil, nil
 }
 
-func (*benchDeps) RewindTarget(context.Context, marotte.ChatID, string) (marotte.RewindTarget, bool, error) {
-	return marotte.RewindTarget{}, false, nil
+func (*benchDeps) PromptTarget(context.Context, marotte.ChatID, string) (marotte.PromptTarget, bool, error) {
+	return marotte.PromptTarget{}, false, nil
 }
 
 func (*benchDeps) PromptReceipt(context.Context, marotte.ChatID, string) (marotte.PromptReceipt, error) {
@@ -96,11 +97,13 @@ func (*benchDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, e
 // follow the bridge it holds.
 func (*benchDeps) BridgeLive(marotte.ChatID) bool { return true }
 
-func (*benchDeps) CloseBridge(context.Context, marotte.ChatID, marotte.TurnOutcome) {}
+func (*benchDeps) CallBudget(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, d)
+}
 
-func (*benchDeps) ClearPendingInputAsks(marotte.ChatID, CancelScope) {}
+func (*benchDeps) closeBridgeOld(context.Context, marotte.ChatID, marotte.TurnOutcome) {}
 
-func (*benchDeps) CancelPendingPermissions(context.Context, marotte.ChatID, CancelScope) error {
+func (*benchDeps) CancelPendingAsks(context.Context, marotte.ChatID, CancelScope) error {
 	return nil
 }
 
@@ -121,18 +124,26 @@ func (*benchDeps) PendingPermission(marotte.ChatID, int64) (marotte.PermissionNe
 	return marotte.PermissionNeededPayload{}, false
 }
 
+func (*benchDeps) PendingElicitation(marotte.ChatID, int64) (marotte.ElicitationNeededPayload, bool) {
+	return marotte.ElicitationNeededPayload{}, false
+}
+
 func (*benchDeps) EnsureCustomProfile(context.Context) error { return nil }
 
 func (*benchDeps) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.WithoutCancel(reqCtx))
 }
-func (*benchDeps) InflightAdd(int) {}
-func (*benchDeps) InflightDone()   {}
-func (*benchDeps) Draining() bool  { return false }
+func (*benchDeps) InflightAdd(int)                 {}
+func (*benchDeps) InflightDone()                   {}
+func (*benchDeps) Draining() bool                  { return false }
+func (*benchDeps) GoUnlessDraining(fn func()) bool { go fn(); return true }
 func (*benchDeps) DeleteChatStateByChain(context.Context, marotte.ChatID, []string, RunStopCause) {
 }
-func (*benchDeps) CloseChatState(context.Context, marotte.ChatID) {}
-func (*benchDeps) BeginChatTeardown(marotte.ChatID, bool)         {}
+func (*benchDeps) CloseChatState(context.Context, marotte.ChatID, *chat.Claim) {}
+func (*benchDeps) BeginChatTeardown(marotte.ChatID, bool)                      {}
+func (*benchDeps) HoldChat(marotte.ChatID) ChatHold                            { return nopHold{} }
+func (*benchDeps) AwaitSessionLeases(context.Context, marotte.ChatID)          {}
+func (*benchDeps) TeardownCancel(context.Context, marotte.ChatID) error        { return nil }
 func (d *benchDeps) KillForTurn(turn TurnRef) {
 	d.stopSteps = append(d.stopSteps, "kill "+turn.Turn)
 }
@@ -155,21 +166,35 @@ func (*benchDeps) EndPromptCall(TurnRef) {}
 
 // ReserveTurnForPrompt admits every prompt: contention is a per-test double's
 // business, not the bench stub's.
-func (*benchDeps) ReserveTurnForPrompt(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
+func (*benchDeps) reservePromptOld(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
 	return AdmissionAcquired
 }
 
-func (*benchDeps) TryReserveTurn(marotte.ChatID, marotte.TurnOpenSource) bool { return true }
+func (*benchDeps) tryReserveOld(marotte.ChatID, marotte.TurnOpenSource) bool { return true }
 
-func (d *benchDeps) TryReserveIdleTurn(marotte.ChatID, marotte.TurnOpenSource) bool {
+func (d *benchDeps) ReserveTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if d.tryReserveOld(chatID, source) {
+		return IdleAcquired, testReservation(chatID, true)
+	}
+	return IdleHeld, Reservation{}
+}
+
+func (d *benchDeps) tryReserveIdleOld(marotte.ChatID, marotte.TurnOpenSource) bool {
 	return !d.holderOpen
 }
 
-func (*benchDeps) TryReserveTurnFenced(marotte.ChatID, marotte.TurnOpenSource, TurnFence) bool {
+func (d *benchDeps) ReserveIdleTurn(_ context.Context, chatID marotte.ChatID, _ marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if d.holderOpen {
+		return IdleTurnOpen, Reservation{}
+	}
+	return IdleAcquired, testReservation(chatID, true)
+}
+
+func (*benchDeps) tryReserveFencedOld(marotte.ChatID, marotte.TurnOpenSource, TurnFence) bool {
 	return true
 }
 func (*benchDeps) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
-func (*benchDeps) ReleaseTurnReservation(marotte.ChatID)      {}
+func (*benchDeps) releaseOld(marotte.ChatID)                  {}
 
 func (*benchDeps) AwaitTurn(context.Context, marotte.ChatID, string) (marotte.TurnResult, error) {
 	return marotte.TurnResult{}, marotte.ErrNoSuchTurn
@@ -184,6 +209,8 @@ func (*benchDeps) SettleTurnOnResponse(context.Context, marotte.ChatID, string, 
 }
 
 func (*benchDeps) TurnOpenedAfter(marotte.ChatID, string) bool { return false }
+
+func (*benchDeps) TurnIsOpen(marotte.ChatID, string) bool { return true }
 
 func (*benchDeps) StopRequestedAfter(marotte.ChatID, string) bool { return false }
 
@@ -242,8 +269,7 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	}
 
 	d.Broadcast(t.Context(), marotte.ServerEvent{})
-	d.CloseBridge(t.Context(), "x", marotte.TurnOutcomeCancelled)
-	d.ClearPendingInputAsks("x", ScopeChatSession)
+	d.closeBridgeOld(t.Context(), "x", marotte.TurnOutcomeCancelled)
 	d.TakePendingPerm("x", 0, marotte.DecisionKindPermission, marotte.SettledByUser)
 	d.InflightAdd(1)
 	d.InflightDone()
@@ -274,8 +300,7 @@ func TestBenchDeps_Contract(t *testing.T) {
 
 	t.Run("no_panic_zero_value_calls", func(t *testing.T) {
 		d.Broadcast(t.Context(), marotte.ServerEvent{})
-		d.CloseBridge(t.Context(), "x", marotte.TurnOutcomeCancelled)
-		d.ClearPendingInputAsks("x", ScopeChatSession)
+		d.closeBridgeOld(t.Context(), "x", marotte.TurnOutcomeCancelled)
 		d.TakePendingPerm("x", 0, marotte.DecisionKindPermission, marotte.SettledByUser)
 		d.InflightAdd(1)
 		d.InflightDone()
@@ -298,7 +323,7 @@ func TestBenchDeps_Contract(t *testing.T) {
 // Replay cost belongs to the header middleware.
 func BenchmarkDispatcherServeHTTP(b *testing.B) {
 	d := New()
-	d.Register("create_chat", func(context.Context, *marotte.ClientCommand) (any, error) {
+	d.register("create_chat", func(context.Context, *marotte.ClientCommand) (any, error) {
 		return responseOK, nil
 	})
 
@@ -364,4 +389,42 @@ func promptRolesOf(d hostDouble) *promptRoles {
 		queue:       stub,
 		jobs:        stub,
 	}
+}
+
+func (r *benchDeps) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration, _ uint64, _ string) (AdmissionOutcome, Reservation) {
+	out := r.reservePromptOld(ctx, chatID, wait)
+	return out, testReservation(chatID, out == AdmissionAcquired)
+}
+
+func (r *benchDeps) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
+	ok := r.tryReserveIdleOld(chatID, source)
+	return testReservation(chatID, ok), ok
+}
+
+func (r *benchDeps) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence TurnFence) (Reservation, bool) {
+	ok := r.tryReserveFencedOld(chatID, source, fence)
+	return testReservation(chatID, ok), ok
+}
+
+func (r *benchDeps) ReleaseTurnReservation(res Reservation) { r.releaseOld(res.Chat) }
+
+func (*benchDeps) LifeStamp() uint64 { return 0 }
+
+func (*benchDeps) AwaitNoClose(context.Context, marotte.ChatID) (bool, error) { return false, nil }
+
+func (r *benchDeps) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+	return r.OpenBridge(ctx, chatID, model)
+}
+
+func (r *benchDeps) RefreshForRetry(ctx context.Context, chatID marotte.ChatID, _ Bridge) error {
+	r.closeBridgeOld(ctx, chatID, marotte.TurnOutcomeInterrupted)
+	return nil
+}
+
+// testReservation is the reservation a test fake hands out: token 1 when taken, the zero reservation otherwise.
+func testReservation(chatID marotte.ChatID, taken bool) Reservation {
+	if !taken {
+		return Reservation{}
+	}
+	return Reservation{Chat: chatID, Token: 1}
 }

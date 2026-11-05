@@ -9,9 +9,10 @@ import (
 )
 
 // state is the ordered set and the version it describes, travelling together because they
-// are ONE fact.
+// are ONE fact, plus the releases closes still owe. An owed entry is never mutated in place.
 type state struct {
 	tabs    []marotte.TabSubject
+	owed    []OwedRelease
 	version uint64
 }
 
@@ -39,19 +40,27 @@ func (s *Store) mutate(ctx context.Context, apply func(st *state) (bool, error))
 	return next.version, nil
 }
 
-// snapshot clones the state under stateMu, shallowly: marotte.TabSubject holds no reference
-// type (a slice or map field would require a deep clone; see List).
+// snapshot clones the state under stateMu. Owed entries are never mutated in place, so their clone is shallow.
 func (s *Store) snapshot() state {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	return state{tabs: slices.Clone(s.tabs), version: s.version}
+	return state{tabs: cloneTabs(s.tabs), owed: slices.Clone(s.owed), version: s.version}
+}
+
+// cloneTabs copies tabs deeply: a caller's edit of a returned LaunchChats must not reach the published state.
+func cloneTabs(tabs []marotte.TabSubject) []marotte.TabSubject {
+	out := slices.Clone(tabs)
+	for i := range out {
+		out[i].LaunchChats = slices.Clone(out[i].LaunchChats)
+	}
+	return out
 }
 
 // Called only after the clone is durable, so what a reader sees is always what is on disk.
 func (s *Store) publish(st *state) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	s.tabs, s.version = st.tabs, st.version
+	s.tabs, s.owed, s.version = st.tabs, st.owed, st.version
 }
 
 // Open adds a tab for spec, or returns the one already open for its (Kind, Ref). created is
@@ -79,6 +88,10 @@ func (s *Store) Open(ctx context.Context, spec marotte.OpenTab) (subject marotte
 			Parent: spec.Parent,
 			Owns:   spec.Owns,
 		}
+		if spec.Kind == marotte.TabKindRun && spec.Launch != nil {
+			subject.LaunchChats = slices.Clone(spec.Launch.Chats)
+			subject.LaunchResolved = true
+		}
 		st.tabs = insert(st.tabs, &subject)
 		created = true
 		return true, nil
@@ -89,12 +102,11 @@ func (s *Store) Open(ctx context.Context, spec marotte.OpenTab) (subject marotte
 	return subject, created, version, nil
 }
 
-// Close removes the tab and its descendants as ONE mutation and returns everything removed.
-// An id not open yields an empty slice and no error (two devices can close one tab), and
-// bumps nothing. Its only error is a failed write.
-func (s *Store) Close(ctx context.Context, id string) ([]marotte.TabSubject, uint64, error) {
-	var closed []marotte.TabSubject
-	version, err := s.mutate(ctx, func(st *state) (bool, error) {
+// Close removes the tab and its descendants as ONE mutation and returns everything removed, with the keep-fact
+// releases the close owes, recorded in the same write (Owed lists them until Settle). An id not open yields an empty
+// slice and no error (two devices can close one tab), and bumps nothing. Its only error is a failed write.
+func (s *Store) Close(ctx context.Context, id string) (closed []marotte.TabSubject, owed []OwedRelease, version uint64, err error) {
+	version, err = s.mutate(ctx, func(st *state) (bool, error) {
 		doomed := closure(st.tabs, id)
 		if len(doomed) == 0 {
 			return false, nil
@@ -109,12 +121,14 @@ func (s *Store) Close(ctx context.Context, id string) ([]marotte.TabSubject, uin
 			_, gone := doomed[t.ID]
 			return gone
 		})
+		owed = owedFor(closed, st.tabs)
+		st.owed = appendOwed(st.owed, owed)
 		return true, nil
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
-	return closed, version, nil
+	return closed, owed, version, nil
 }
 
 // Reorder replaces the order. ids must name every open tab EXACTLY ONCE, or ErrOrderMismatch
@@ -143,7 +157,7 @@ func (s *Store) Reorder(ctx context.Context, ids []string) (uint64, error) {
 			seen[id] = struct{}{}
 			next = append(next, t)
 		}
-		if slices.Equal(st.tabs, next) {
+		if slices.EqualFunc(st.tabs, next, func(a, b marotte.TabSubject) bool { return a.ID == b.ID }) {
 			return false, nil
 		}
 		st.tabs = next
@@ -205,12 +219,11 @@ func (s *Store) Reparent(ctx context.Context, id, parent string) (uint64, error)
 	})
 }
 
-// List returns the set in order plus the version it reflects, from ONE critical section. The
-// result is a shallow copy, sufficient because TabSubject holds no reference type.
+// List returns a copy of the set in order plus the version it reflects, from ONE critical section.
 func (s *Store) List() (tabs []marotte.TabSubject, version uint64) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	return slices.Clone(s.tabs), s.version
+	return cloneTabs(s.tabs), s.version
 }
 
 // Subtree returns the tab with this id plus every descendant, in order, or nil when id is not
@@ -228,7 +241,7 @@ func (s *Store) Subtree(id string) []marotte.TabSubject {
 			out = append(out, t)
 		}
 	}
-	return out
+	return cloneTabs(out)
 }
 
 // Prune is LOAD-TIME crash recovery, not the live integrity mechanism (the membership

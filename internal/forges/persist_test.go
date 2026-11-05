@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/go/filesafe"
 )
 
 // loginCore signs in as the token it was built for.
@@ -338,7 +338,7 @@ func TestLoad_SweepsCredentialsNoRecordOwns(t *testing.T) {
 		"an unverified file": func(t *testing.T, _ string) {
 			orig := enforceFileMode
 			t.Cleanup(func() { enforceFileMode = orig })
-			enforceFileMode = func(string, os.FileMode) (os.FileMode, error) { return 0o660, atomicfile.ErrModeNotStored }
+			enforceFileMode = func(string, os.FileMode) (os.FileMode, error) { return 0o660, filesafe.ErrModeNotStored }
 		},
 		"a missing file": func(t *testing.T, cfg string) {
 			if err := os.Remove(filepath.Join(cfg, connectionsFileName)); err != nil {

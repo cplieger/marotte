@@ -26,6 +26,7 @@ type drawnCase struct {
 		Kind           string `json:"kind"`
 		Lane           string `json:"lane"`
 		AgentSubtaskID string `json:"agent_subtask_id"`
+		Subagent       bool   `json:"subagent"`
 	} `json:"body"`
 }
 
@@ -66,7 +67,7 @@ func TestTurnDrawnContract_ServerHalf(t *testing.T) {
 			for i, e := range c.Body {
 				kind := marotte.EntryKind(e.Kind)
 				id := string(kind) + "-" + string(rune('a'+i))
-				f.append(turn, e.Lane, id, kind, drawnPayload(t, turn, kind, e.AgentSubtaskID))
+				f.append(turn, e.Lane, id, kind, drawnPayload(t, turn, kind, e.AgentSubtaskID, e.Subagent))
 			}
 			rows := f.log.RailRows()
 			got := len(rows) == 1
@@ -93,12 +94,15 @@ func drawnWord(drawn bool) string {
 }
 
 // drawnPayload is the smallest payload each kind's case needs: the predicate reads the
-// envelope, and the invocation case reads agent_subtask_id off the call. The revert names
-// its OWN carrier, which is the one shape the scan's skip rule leaves surviving, so the
-// case measures the drawn predicate rather than the surviving view.
-func drawnPayload(t *testing.T, turn string, kind marotte.EntryKind, subtask string) any {
+// envelope, the invocation case reads agent_subtask_id off the call and the fallback case
+// its subagent flag. The revert names its OWN carrier, which is the one shape the scan's
+// skip rule leaves surviving, so the case measures the drawn predicate rather than the
+// surviving view.
+func drawnPayload(t *testing.T, turn string, kind marotte.EntryKind, subtask string, subagent bool) any {
 	t.Helper()
 	switch kind {
+	case marotte.EntryKindModelFallback:
+		return marotte.EntryModelFallback{From: "model-a", To: "model-b", Trigger: "unavailable", Subagent: subagent}
 	case marotte.EntryKindTurnRevert:
 		return marotte.EntryTurnRevert{From: turn, FromN: 1, Through: turn}
 	case marotte.EntryKindReconciled:

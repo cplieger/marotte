@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -17,6 +19,8 @@ import (
 
 // launchableRecipe is the reply set a launch needs: one recipe, an empty run list, ids for new and invoke.
 func launchableRecipe(br *fakeBridge, workflowID string) {
+	br.mu.Lock()
+	defer br.mu.Unlock()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(
 			`{"recipes":[{"name":"publish","source":"bundled://publish"}]}`,
@@ -67,7 +71,7 @@ func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_sched")
 
-		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", "sched-1", marotte.RunDefaults{}, slot); err != nil {
+		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"}, nil, marotte.RunDefaults{}, slot); err != nil {
 			t.Fatalf("LaunchScheduled: %v", err)
 		}
 		l, ok := h.runs.lease("wf_sched")
@@ -103,7 +107,7 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 	spec := schedule.Spec{Freq: schedule.FreqMinutely, Interval: 5}
 	anchor := time.Now().Add(-time.Hour)
 	entry := schedule.Entry{
-		ID: "sched-1", Source: "bundled://publish", Enabled: true, Spec: spec, Anchor: anchor,
+		Source: "bundled://publish", Enabled: true, Spec: spec, Anchor: anchor,
 	}
 	if pErr := st.Put(t.Context(), &entry); pErr != nil {
 		t.Fatalf("Put schedule: %v", pErr)
@@ -162,11 +166,11 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 	for name, entry := range map[string]schedule.Entry{
 		"a DISABLED schedule for this very recipe": {
-			ID: "s1", Source: "bundled://publish", Enabled: false,
+			Source: "bundled://publish", Enabled: false,
 			Spec: schedule.Spec{Freq: schedule.FreqMinutely, Interval: 5},
 		},
 		"an enabled schedule for another recipe": {
-			ID: "s2", Source: "bundled://other", Enabled: true,
+			Source: "bundled://other", Enabled: true,
 			Spec: schedule.Spec{Freq: schedule.FreqMinutely, Interval: 5},
 		},
 	} {
@@ -211,13 +215,140 @@ func TestLaunchRun_ReleasesTheLeaseWhenInvokeFails(t *testing.T) {
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_1")
 	delete(br.callResults, methodKiroWorkflowInvoke)
-	br.callErrs = map[string]error{methodKiroWorkflowInvoke: errRecipeBusy}
+	br.callErrs = map[string]error{methodKiroWorkflowInvoke: errHoldFault}
 
 	if _, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); err == nil {
 		t.Fatal("a failed invoke reported success")
 	}
 	if _, ok := h.runs.lease("wf_1"); ok {
 		t.Error("the lease of a run that never started survived its failed launch")
+	}
+}
+
+// nightlyLaunch is a scheduled hub whose launch of bundled://nightly creates wf_1.
+func nightlyLaunch(t *testing.T) (*Runtime, *fakeBridge, *schedule.Store, schedule.Entry) {
+	t.Helper()
+	h, br, st, entry := scheduledHub(t)
+	launchableRecipe(br, "wf_1")
+	br.callResults[methodKiroWorkflowListRecipes] = json.RawMessage(
+		`{"recipes":[{"name":"nightly","source":"bundled://nightly"}]}`,
+	)
+	return h, br, st, entry
+}
+
+// A scheduled launch whose caller stops waiting once workflow/new has answered still starts the run and names it: the
+// row already reads that run, and a launch reported as nothing would let the next start fire the slot again.
+func TestLaunchScheduled_ACallerCancelOnceTheRunExistsStillLaunchesIt(t *testing.T) {
+	h, br, st, entry := nightlyLaunch(t)
+	br.refuseCancelled = true
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method == methodKiroWorkflowNew {
+			cancel()
+		}
+		return nil, nil, false
+	}
+	before := time.Now()
+
+	id, _, err := h.runs.LaunchScheduled(ctx, entry.Source, entry.Row(), nil, marotte.RunDefaults{}, before.Add(time.Hour))
+	if id != "wf_1" || err != nil {
+		t.Errorf("LaunchScheduled = %q, %v; want wf_1 started", id, err)
+	}
+	if !slices.Contains(br.wireLog(), methodKiroWorkflowInvoke) {
+		t.Error("the created run was never invoked")
+	}
+	if _, held := h.runs.lease("wf_1"); !held {
+		t.Error("the created run's lease was released")
+	}
+	row := st.List()[0]
+	if row.LastRunID != "wf_1" || row.LastStatus != "started" || row.LastRunAt.Before(before) {
+		t.Errorf("row = %+v, want wf_1 started at or after %v", row, before)
+	}
+}
+
+// Dropping the caller's cancel keeps the launch's deadline: an invoke the engine never answers ends at it, so the
+// schedule runner's sweep is not held until shutdown. KAS may have started the run, so it keeps its lease and bound.
+func TestLaunchScheduled_ACallerCancelOnceTheRunExistsKeepsTheLaunchDeadline(t *testing.T) {
+	saved := launchTimeout
+	launchTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { launchTimeout = saved })
+	h, br, _, entry := nightlyLaunch(t)
+	dir := t.TempDir()
+	st, err := schedule.NewStore(dir)
+	if err != nil {
+		t.Fatalf("schedule.NewStore: %v", err)
+	}
+	if pErr := st.Put(t.Context(), &entry); pErr != nil {
+		t.Fatalf("Put schedule: %v", pErr)
+	}
+	h.runs.schedules = st
+	br.refuseCancelled = true
+	unanswered := make(chan struct{})
+	t.Cleanup(func() { close(unanswered) })
+	br.blockOn = map[string]chan struct{}{methodKiroWorkflowInvoke: unanswered}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method == methodKiroWorkflowNew {
+			cancel()
+		}
+		return nil, nil, false
+	}
+	type answer struct {
+		err error
+		id  string
+	}
+	done := make(chan answer, 1)
+	go func() {
+		id, _, lErr := h.runs.LaunchScheduled(ctx, entry.Source, entry.Row(), nil, marotte.RunDefaults{},
+			time.Now().Add(time.Hour))
+		done <- answer{id: id, err: lErr}
+	}()
+
+	var got answer
+	select {
+	case got = <-done:
+	case <-time.After(10 * launchTimeout):
+		t.Fatal("LaunchScheduled outlived its launch deadline")
+	}
+	if got.id != "wf_1" || got.err != nil {
+		t.Errorf("LaunchScheduled = %q, %v; want wf_1 reported launched, its start unconfirmed", got.id, got.err)
+	}
+	if _, held := h.runs.lease("wf_1"); !held {
+		t.Error("the lease was released, so a run KAS may have started runs with no envelope")
+	}
+	if !h.runs.bounded("wf_1") {
+		t.Error("the run's deadline was not armed, so nothing bounds a run KAS may have started")
+	}
+	reopened, err := schedule.NewStore(dir)
+	if err != nil {
+		t.Fatalf("reopen schedule.NewStore: %v", err)
+	}
+	if row := reopened.List()[0]; row.LastRunID != "wf_1" || row.LastStatus != "started" {
+		t.Errorf("row on disk = %+v, want wf_1 started, its ending left to the run", row)
+	}
+}
+
+// A run created but never invoked is named with its failure, so the runner records the slot it tried as failed with
+// that run rather than as a launch that created nothing.
+func TestLaunchScheduled_AFailedInvokeNamesTheRunWithItsFailure(t *testing.T) {
+	h, br, st, entry := nightlyLaunch(t)
+	delete(br.callResults, methodKiroWorkflowInvoke)
+	br.callErrs = map[string]error{methodKiroWorkflowInvoke: errHoldFault}
+
+	id, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(), nil, marotte.RunDefaults{},
+		time.Now().Add(time.Hour))
+	if id != "wf_1" || !errors.Is(err, errHoldFault) {
+		t.Errorf("LaunchScheduled = %q, %v; want wf_1 with the invoke failure", id, err)
+	}
+	if _, held := h.runs.lease("wf_1"); held {
+		t.Error("the lease of a run that never started survived its failed launch")
+	}
+	row := st.List()[0]
+	if row.LastRunID != "wf_1" || row.LastStatus != schedule.StatusFailed ||
+		!strings.Contains(row.LastReason, errHoldFault.Error()) {
+		t.Errorf("row = %+v, want wf_1 failed with %q", row, errHoldFault)
 	}
 }
 
@@ -256,7 +387,7 @@ func heldRun(t *testing.T, id, recipe string) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 	st, err := runlease.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
@@ -351,7 +482,7 @@ func TestLiveRuns_NamesTheHeldLeasesAndNoOthers(t *testing.T) {
 // TestLeaseStore_FallsBackToMemory pins that a lease carries the run's clock, so there is no leases-off mode.
 func TestLeaseStore_FallsBackToMemory(t *testing.T) {
 	t.Parallel()
-	h := &Runs{}
+	h := &Runs{chats: newTestChatStore()}
 	h.grantLease(t.Context(), "wf_1", "publish", manualLaunch(), hostSec())
 	if _, ok := h.lease("wf_1"); !ok {
 		t.Fatal("a runtime with no durable store lost the lease, so the run would be unbounded")
@@ -365,7 +496,7 @@ func TestGrantLease_ReportsAnEnvelopeItCouldNotPersist(t *testing.T) {
 
 	t.Run("a lease that could not be written is reported", func(t *testing.T) {
 		logs := captureLogs(t)
-		h := &Runs{leases: undurableLeaseStore(t)}
+		h := &Runs{chats: newTestChatStore(), leases: undurableLeaseStore(t)}
 
 		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch(), hostSec())
 
@@ -385,7 +516,7 @@ func TestGrantLease_ReportsAnEnvelopeItCouldNotPersist(t *testing.T) {
 
 	t.Run("an ordinary launch is quiet about it", func(t *testing.T) {
 		logs := captureLogs(t)
-		h := &Runs{}
+		h := &Runs{chats: newTestChatStore()}
 
 		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch(), hostSec())
 
@@ -401,7 +532,7 @@ func TestReleaseLease_ReportsAReleaseItCouldNotWrite(t *testing.T) {
 
 	t.Run("a release that could not be written is reported", func(t *testing.T) {
 		logs := captureLogs(t)
-		h := &Runs{leases: undurableLeaseStore(t)}
+		h := &Runs{chats: newTestChatStore(), leases: undurableLeaseStore(t)}
 		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch(), hostSec())
 
 		h.releaseLease(t.Context(), "wf_1")
@@ -414,7 +545,7 @@ func TestReleaseLease_ReportsAReleaseItCouldNotWrite(t *testing.T) {
 
 	t.Run("an ordinary release is quiet about it", func(t *testing.T) {
 		logs := captureLogs(t)
-		h := &Runs{}
+		h := &Runs{chats: newTestChatStore()}
 		h.grantLease(t.Context(), "wf_1", "publish", manualLaunch(), hostSec())
 
 		h.releaseLease(t.Context(), "wf_1")
@@ -423,4 +554,59 @@ func TestReleaseLease_ReportsAReleaseItCouldNotWrite(t *testing.T) {
 			t.Errorf("a release that worked was reported as failed: %s", out)
 		}
 	})
+}
+
+// A schedule whose next slot cannot be computed bounds a manual run of its recipe by the idle window alone, and the
+// warning names that schedule's id so the row can be found.
+func TestManualSlot_NamesAScheduleWithNoNextSlot(t *testing.T) {
+	dir := t.TempDir()
+	stored := `[{"source":"bundled://publish","enabled":true,"spec":{"freq":"yearly"}}]`
+	if err := os.WriteFile(filepath.Join(dir, "schedules.json"), []byte(stored), 0o600); err != nil {
+		t.Fatalf("write schedules.json: %v", err)
+	}
+	st, err := schedule.NewStore(dir)
+	if err != nil {
+		t.Fatalf("schedule.NewStore: %v", err)
+	}
+	h, _, _ := newTestHub()
+	h.runs.schedules = st
+	logs := captureLogs(t)
+
+	if slot := h.runs.manualSlot("bundled://publish"); !slot.IsZero() {
+		t.Errorf("manualSlot = %v, want no slot", slot)
+	}
+	want := `"schedule_id":"` + st.List()[0].ID() + `"`
+	if got := logs.String(); !strings.Contains(got, want) {
+		t.Errorf("logs = %s, want the warning to carry %s", got, want)
+	}
+}
+
+// A schedule deleted and added again while its launch waits on the engine gets nothing from that launch: the run's
+// lease names the old row's life, so neither its start nor its ending lands on the new row.
+func TestLaunchScheduled_ARunOfARecreatedScheduleLeavesTheNewRowAlone(t *testing.T) {
+	h, br, st, entry := nightlyLaunch(t)
+	reborn := schedule.Entry{Source: entry.Source, Enabled: true, Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 5}}
+	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method == methodKiroWorkflowNew {
+			if err := st.Delete(t.Context(), entry.ID()); err != nil {
+				t.Errorf("Delete: %v", err)
+			}
+			if err := st.Put(t.Context(), &reborn); err != nil {
+				t.Errorf("Put: %v", err)
+			}
+		}
+		return nil, nil, false
+	}
+
+	id, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(), nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
+	if id != "wf_1" || err != nil {
+		t.Fatalf("LaunchScheduled = %q, %v; want wf_1 started", id, err)
+	}
+	h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
+		"workflowId": id, "status": "failed", "finalState": map[string]any{"stopReason": "step build failed"},
+	}))
+
+	if row := st.List()[0]; row.LastRunID != "" || row.LastStatus != "" || row.LastReason != "" || !row.LastRunAt.IsZero() {
+		t.Errorf("recreated row = %+v, want no run recorded on it", row)
+	}
 }

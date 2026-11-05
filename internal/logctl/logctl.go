@@ -8,8 +8,8 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/cplieger/go/slogx"
 	"github.com/cplieger/marotte/internal/settings"
-	"github.com/cplieger/slogx"
 )
 
 // Pre-initialized so no exported call can nil-deref before Install (FuzzSetDebug trips that

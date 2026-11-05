@@ -33,7 +33,7 @@ type liveRecorder struct {
 
 func newLiveRecorder(t *testing.T) *liveRecorder {
 	t.Helper()
-	return &liveRecorder{recordingPush: &recordingPush{}, applied: push.ResolvePreferences(t.Context(), t.TempDir())}
+	return &liveRecorder{recordingPush: &recordingPush{}, applied: push.ResolvePreferences(settings.Document{})}
 }
 
 func (r *liveRecorder) options() []Option {
@@ -164,7 +164,6 @@ func TestOpenBridge_AHandEditPushesExactlyTheLiveSurfacesItMoved(t *testing.T) {
 			want: livePushesSeen{contentCollection: []string{marotte.ConfigValueContentCollectionEnabled}},
 		},
 		{name: "mcp_wait", body: `{"mcp_wait_for_ready":true}`, want: livePushesSeen{mcpWaits: []bool{true}}},
-		{name: "debug_logs", body: `{"debug_logs":true}`, want: livePushesSeen{debug: []bool{true}}},
 		{
 			name: "notification_toggle", body: `{"notify_pr_status":true}`,
 			want: livePushesSeen{prefs: []map[marotte.PushKind]bool{{
@@ -172,7 +171,7 @@ func TestOpenBridge_AHandEditPushesExactlyTheLiveSurfacesItMoved(t *testing.T) {
 				marotte.PushKindPRStatus: true, marotte.PushKindRunOutcome: true,
 			}}},
 		},
-		{name: "an_unrelated_key", body: `{"fb_path":"/workspace/src"}`},
+		{name: "an_unrelated_key", body: `{"last_merge_method":"squash"}`},
 		{
 			name: "values_resolving_as_before",
 			body: `{"agent_ignore_files":[],"terminal_command_timeout_ms":500,"content_collection_enabled":false,` +
@@ -201,6 +200,28 @@ func TestOpenBridge_AHandEditPushesExactlyTheLiveSurfacesItMoved(t *testing.T) {
 				t.Errorf("after a hand edit to %s the next open pushed %+v, want %+v", tc.body, got, tc.want)
 			}
 		})
+	}
+}
+
+// A hand edit of debug_logs switches marotte's log level at the next open. It is also an engine restart reason
+// (KAS reads its level at spawn), so whether that open finds the same chat depends on the restart's timing and is not
+// asserted here.
+func TestOpenBridge_AHandEditOfDebugLogsSwitchesTheLogLevel(t *testing.T) {
+	rec := newLiveRecorder(t)
+	h, configDir := reopenFixture(t, rec.options()...)
+	rec.openWithStore(t, configDir)
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	rewriteConfigByHand(t, configDir, `{"debug_logs":true}`)
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		t.Fatalf("OpenBridge after the hand edit: %v", err)
+	}
+	rec.mu.Lock()
+	debug := slices.Clone(rec.debug)
+	rec.mu.Unlock()
+	if !slices.Equal(debug, []bool{true}) {
+		t.Errorf("after a hand edit of debug_logs the log level was set %v, want [true]", debug)
 	}
 }
 
@@ -367,40 +388,37 @@ func openChat(t *testing.T, h *Runtime, chatID marotte.ChatID) {
 	}
 }
 
-func TestReadLiveSettings_AWriteBetweenTwoFieldReadsIsReadAsOneDocument(t *testing.T) {
+// A write landing while the readers decode is the next read's document: the readers decode the snapshot they were
+// handed, whatever the file holds by then.
+func TestReadLiveSettings_AWriteDuringTheReadersIsTheNextReadsDocument(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		next      string
-		readable  bool
-		every     bool
-		terminal  int
-		debugLogs bool
+		name         string
+		next         string
+		nextReadable bool
 	}{
-		{name: "replaced_by_another_document", next: `{"terminal_command_timeout_ms":600000,"debug_logs":true}`, readable: true, terminal: 600000, debugLogs: true},
+		{name: "replaced_by_another_document", next: `{"terminal_command_timeout_ms":600000,"debug_logs":true}`, nextReadable: true},
 		{name: "truncated_mid_write", next: `{"debug_logs":`},
-		{name: "replaced_at_every_read", next: `{"terminal_command_timeout_ms":600000,"debug_logs":true}`, every: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			rewriteConfigByHand(t, dir, `{"terminal_command_timeout_ms":300000,"debug_logs":false}`)
-			var once sync.Once
-			fields := func(ctx context.Context, dir string) liveSettings {
-				read := readLiveFields(ctx, dir)
-				if tc.every {
-					rewriteConfigByHand(t, dir, tc.next)
-				}
-				once.Do(func() { rewriteConfigByHand(t, dir, tc.next) })
-				return read
+			fields := func(d settings.Document) liveSettings {
+				rewriteConfigByHand(t, dir, tc.next)
+				return readLiveFields(d)
 			}
 
 			got := readLiveSettings(t.Context(), dir, fields)
 
-			if got.readable != tc.readable {
-				t.Fatalf("readLiveSettings over a write to %s between its field reads: readable = %t, want %t", tc.next, got.readable, tc.readable)
+			if !got.readable || got.terminalTimeoutMs != 300000 || got.debugLogs {
+				t.Errorf("the read during the write = readable %t, timeout %d, debug %t, want the first document's: readable, 300000, false",
+					got.readable, got.terminalTimeoutMs, got.debugLogs)
 			}
-			if tc.readable && (got.terminalTimeoutMs != tc.terminal || got.debugLogs != tc.debugLogs) {
-				t.Errorf("readLiveSettings read timeout %d and debug %t, want %d and %t, both from %s",
-					got.terminalTimeoutMs, got.debugLogs, tc.terminal, tc.debugLogs, tc.next)
+			next := readLiveSettings(t.Context(), dir, readLiveFields)
+			if next.readable != tc.nextReadable {
+				t.Fatalf("the next read over %s: readable = %t, want %t", tc.next, next.readable, tc.nextReadable)
+			}
+			if tc.nextReadable && (next.terminalTimeoutMs != 600000 || !next.debugLogs) {
+				t.Errorf("the next read = timeout %d, debug %t, want %s's 600000 and true", next.terminalTimeoutMs, next.debugLogs, tc.next)
 			}
 		})
 	}
@@ -410,7 +428,10 @@ func TestOpenBridge_AnUnparseableDocumentPushesNothingAndTheFixedOnePushesItsVal
 	rec := newLiveRecorder(t)
 	h, configDir := reopenFixture(t, rec.options()...)
 	rec.openWithStore(t, configDir)
-	rewriteConfigByHand(t, configDir, nonDefaultLiveValues)
+	// No debug_logs in any document: moving it restarts the engine, which then reads the timeout at its spawn rather
+	// than taking a frame on br.
+	rewriteConfigByHand(t, configDir, `{"agent_ignore_files":[".gitignore"],"terminal_command_timeout_ms":300000,`+
+		`"content_collection_enabled":true,"mcp_wait_for_ready":true,"notify_pr_status":true}`)
 	openChat(t, h, "c1")
 	br := fakeSourceOf(t, h).lane
 	before := pushesSeen(br, rec)
@@ -426,9 +447,6 @@ func TestOpenBridge_AnUnparseableDocumentPushesNothingAndTheFixedOnePushesItsVal
 	got := pushesSeen(br, rec)
 	if want := append(before.terminal, jsonOf(t, marotte.TerminalSettingsParams(45000))); !slices.Equal(got.terminal, want) {
 		t.Errorf("the open once config.json parsed sent timeout frames %v, want %v", got.terminal, want)
-	}
-	if want := append(before.debug, false); !slices.Equal(got.debug, want) {
-		t.Errorf("the open once config.json parsed set debug logs %v, want %v", got.debug, want)
 	}
 }
 

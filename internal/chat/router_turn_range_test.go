@@ -41,7 +41,7 @@ func TestTurnRangeRoute_404sAnUnknownTurnAnd500sAnUnreadableLog(t *testing.T) {
 	}
 
 	// Same-length overwrite, so the offset index stays valid and the decode fails, as for a corrupt log.
-	path := filepath.Join(dir, "c1", entriesFileName)
+	path := filepath.Join(dir, "c1", EntriesFileName)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("Setup: read the log: %v", err)

@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/keylock"
+	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
@@ -32,9 +32,6 @@ var (
 const (
 	signInHoldReason   = "sign in to Kiro to continue; marotte resumes the run when you do"
 	providerHoldReason = "the Kiro sign-in service is unreachable; marotte resumes the run when it answers"
-	// manualResumeReason replaces a pause's promise of an automatic resume once marotte declines one
-	// (parkForUser); it licenses none.
-	manualResumeReason = "resume it to continue"
 )
 
 func isHoldReason(reason string) bool {
@@ -65,13 +62,13 @@ const (
 // heal, which heldHeals holds; a gate pause's heal is held there too when the gate closes again before its release
 // admits it. Cells: where the hold lands; what happens while it is held; a restart at its checkpoint, which keeps KAS's
 // state and loses heldHeals and the heal budget, or the engine's replacement there, which keeps them; the gate crossing
-// the hold or its release; a fault in the reads that form the hold or release it; a fault in the release's writes, a
-// resume or, once the heal budget is spent, the park for the user; for a chat-parented run, the orders production
-// leaves open between a sign-in's reload mark and the gate's opening, and between a reload's rehydrate and a closing
-// sweep; whether the runtime boots signed in, so no reload mark is pending as a chat's gate pause forms. Each item is
-// the outcome of the cell that differs from the plain one in one value, or in the late mark and a signed-in boot: the
-// hold at the checkpoint, before which nothing resumes the run, what a fresh runtime finds there, and the end.
-// holdCellText gives every cell's steps. A person's pause or resume of a held run is runTransitions'.
+// the hold or its release; a fault in the reads that form the hold or release it; a fault in the release's resume
+// writes, of which a heal past its budget writes none; for a chat-parented run, the orders production leaves open
+// between a sign-in's reload mark and the gate's opening, and between a reload's rehydrate and a closing sweep; whether
+// the runtime boots signed in, so no reload mark is pending as a chat's gate pause forms. Each item is the outcome of
+// the cell that differs from the plain one in one value, or in the late mark and a signed-in boot: the hold at the
+// checkpoint, before which nothing resumes the run, what a fresh runtime finds there, and the end. holdCellText gives
+// every cell's steps. A person's pause or resume of a held run is runTransitions'.
 //
 //   - The plain cell (lands before the edge; held untouched; no restart; no crossing; reads answer; writes answer; the
 //     chat's reload mark and rehydrate come first). A chat-parented run's gate pause, a manual run's gate pause, a
@@ -82,11 +79,13 @@ const (
 //     held running with the gate's pause pending, persisted running with the gate's pause pending, ends running after 1
 //     resume. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for the restart,
 //     persisted paused for the restart, ends running after 1 resume.
-//   - Budget spent while held. A chat-parented run's gate pause, a manual run's gate pause, a scheduled run's gate
-//     pause: held paused with the gate's reason, persisted paused with the gate's reason, ends paused for a person to
-//     resume after 0 resumes. A chat-parented run's heal, a manual run's heal, a scheduled run's heal: held paused for
-//     the restart and its heal held, persisted paused for the restart, ends paused for a person to resume after 0
-//     resumes.
+//   - Budget spent while held. A chat-parented run's gate pause, a manual run's gate pause: held paused with the gate's
+//     reason, persisted paused with the gate's reason, ends paused with the gate's reason, marotte no longer resuming
+//     it after 0 resumes. A scheduled run's gate pause: held paused with the gate's reason, persisted paused with the
+//     gate's reason, ends cancelled after 0 resumes. A chat-parented run's heal, a manual run's heal: held paused for
+//     the restart and its heal held, persisted paused for the restart, ends paused for the restart, marotte no longer
+//     resuming it after 0 resumes. A scheduled run's heal: held paused for the restart and its heal held, persisted
+//     paused for the restart, ends cancelled after 0 resumes.
 //   - Cancelled while held. A chat-parented run's gate pause, a manual run's gate pause, a scheduled run's gate pause:
 //     held cancelled, persisted cancelled, ends cancelled after 0 resumes. A chat-parented run's heal, a manual run's
 //     heal, a scheduled run's heal: held cancelled and its heal held, persisted cancelled, ends cancelled after 0
@@ -168,12 +167,13 @@ const (
 //   - The release's write is lost once. A chat-parented run's gate pause, a manual run's gate pause, a scheduled run's
 //     gate pause, a chat-parented run's heal, a manual run's heal, a scheduled run's heal: as in the plain cell.
 //   - Every release write is lost. A chat-parented run's gate pause: held paused with the gate's reason, persisted
-//     paused with the gate's reason, ends paused for a person to resume after 0 resumes, with an ERROR. A manual run's
-//     gate pause, a scheduled run's gate pause: held paused with the gate's reason, persisted paused with the gate's
-//     reason, ends running after 1 resume, with an ERROR. A chat-parented run's heal: held paused for the restart and
-//     its heal held, persisted paused for the restart, ends paused for a person to resume after 0 resumes, with an
-//     ERROR. A manual run's heal, a scheduled run's heal: held paused for the restart and its heal held, persisted
-//     paused for the restart, ends running after 1 resume, with an ERROR.
+//     paused with the gate's reason, ends paused with the gate's reason, marotte no longer resuming it after 0 resumes,
+//     with an ERROR. A manual run's gate pause, a scheduled run's gate pause: held paused with the gate's reason,
+//     persisted paused with the gate's reason, ends running after 1 resume, with an ERROR. A chat-parented run's heal:
+//     held paused for the restart and its heal held, persisted paused for the restart, ends paused for the restart,
+//     marotte no longer resuming it after 0 resumes, with an ERROR. A manual run's heal, a scheduled run's heal: held
+//     paused for the restart and its heal held, persisted paused for the restart, ends running after 1 resume, with an
+//     ERROR.
 //   - The release write's reply is lost. A chat-parented run's gate pause, a manual run's gate pause, a scheduled run's
 //     gate pause, a chat-parented run's heal, a manual run's heal, a scheduled run's heal: as in the plain cell.
 //   - The gate opens and the release writes before the sign-in marks the chat for its reload. A chat-parented run's

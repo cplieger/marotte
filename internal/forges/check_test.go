@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/creds"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/creds"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 const ghID = "github:github.com"
@@ -30,14 +30,14 @@ func TestKeeper_ATemporaryFailureStaysUsableAndHeals(t *testing.T) {
 	k := NewKeeper(m)
 
 	k.pass(t.Context())
-	if got := viewFor(t, m, ghID); got.Status != ForgeRetrying {
+	if got := viewFor(t, m, ghID); got.Status != forgeRetrying {
 		t.Fatalf("row after a transient failure = %+v, want retrying", got)
 	}
 	if _, err := m.reader(ghID); err != nil {
 		t.Errorf("reader() of a retrying row = %v, want its handle: an outage leaves the row usable", err)
 	}
 	k.pass(t.Context())
-	if got := viewFor(t, m, ghID); got.Status != ForgeConnected || got.Error != nil {
+	if got := viewFor(t, m, ghID); got.Status != forgeConnected || got.Error != nil {
 		t.Errorf("row after the forge answered again = %+v, want connected with no error", got)
 	}
 	if got := changes.all(); len(got) != 2 {
@@ -58,7 +58,7 @@ func TestKeeper_APolicyOrTLSFailureStaysUsableAndHeals(t *testing.T) {
 	m, _ := checkManager(t, core)
 	k := NewKeeper(m)
 
-	for _, want := range []ForgeStatus{ForgeRetrying, ForgeRetrying, ForgeConnected} {
+	for _, want := range []ForgeStatus{forgeRetrying, forgeRetrying, forgeConnected} {
 		k.pass(t.Context())
 		if got := viewFor(t, m, ghID); got.Status != want {
 			t.Errorf("row after a pass = %+v, want %s", got, want)
@@ -74,7 +74,7 @@ func TestKeeper_ADeadlineNamesTheHost(t *testing.T) {
 		t.Fatalf("check() = %v, want a verdict", err)
 	}
 	got := viewFor(t, m, ghID)
-	if got.Status != ForgeRetrying || got.Error == nil || !strings.Contains(got.Error.Message, "no answer from github.com") {
+	if got.Status != forgeRetrying || got.Error == nil || !strings.Contains(got.Error.Message, "no answer from github.com") {
 		t.Errorf("row after a check the forge never answered = %+v, want retrying naming the host", got)
 	}
 }
@@ -94,7 +94,7 @@ func TestCheck_ACallerCancelWritesNoVerdict(t *testing.T) {
 		if err := <-done; !errors.Is(err, context.Canceled) {
 			t.Errorf("check() after its caller left = %v, want the caller's own error", err)
 		}
-		if got := viewFor(t, m, ghID); got.Status != ForgeConnected || got.CheckedAt != 0 || len(changes.all()) != 0 {
+		if got := viewFor(t, m, ghID); got.Status != forgeConnected || got.CheckedAt != 0 || len(changes.all()) != 0 {
 			t.Errorf("row after a cancelled check = %+v with changes %+v, want it untouched", got, changes.all())
 		}
 	})
@@ -119,14 +119,14 @@ func TestCheck_ACallerCancelWritesNoVerdict(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Fatal("check() behind a held lock did not give up at its budget")
 		}
-		if got := viewFor(t, m, ghID); got.Status != ForgeConnected || got.CheckedAt != 0 || core.calls() != 0 {
+		if got := viewFor(t, m, ghID); got.Status != forgeConnected || got.CheckedAt != 0 || core.calls() != 0 {
 			t.Errorf("row %+v after %d forge requests, want it untouched and nothing sent", got, core.calls())
 		}
 	})
 }
 
 // heldWrites holds each of m's records writes until release closes or the
-// write's context ends, as atomicfile's last check before its rename does, and
+// write's context ends, as filesafe's last check before its rename does, and
 // signals each write it holds on entered.
 func heldWrites(t *testing.T, m *Manager) (entered <-chan struct{}, release chan struct{}) {
 	t.Helper()
@@ -180,7 +180,7 @@ func TestCheck_TheRecordsWriteEndsWithTheCheck(t *testing.T) {
 			t.Fatal("check() with its records write held did not end at its budget")
 		}
 		got := viewFor(t, m, ghID)
-		if got.Status != ForgeRetrying || got.Error == nil || !strings.Contains(got.Error.Message, errSaveTimedOut.Error()) {
+		if got.Status != forgeRetrying || got.Error == nil || !strings.Contains(got.Error.Message, errSaveTimedOut.Error()) {
 			t.Errorf("row after a save that ran out of time = %+v, want retrying naming the late save", got)
 		}
 		if fileBytes(t, m.records.path) != before {
@@ -211,7 +211,7 @@ func TestCheck_TheRecordsWriteEndsWithTheCheck(t *testing.T) {
 			t.Fatal("check() did not end when its caller left during the write")
 		}
 		close(release)
-		if got := viewFor(t, m, ghID); got.Status != ForgeConnected || got.CheckedAt != 0 || len(changes.all()) != 0 {
+		if got := viewFor(t, m, ghID); got.Status != forgeConnected || got.CheckedAt != 0 || len(changes.all()) != 0 {
 			t.Errorf("row after a check whose caller left = %+v with changes %+v, want it untouched", got, changes.all())
 		}
 		if fileBytes(t, m.records.path) != before {
@@ -229,7 +229,7 @@ func TestCheck_TheRecordsWriteEndsWithTheCheck(t *testing.T) {
 		if _, err := m.check(t.Context(), ghID, 2*time.Second); err != nil {
 			t.Fatalf("check() = %v", err)
 		}
-		if got := viewFor(t, m, ghID); got.Status != ForgeRetrying || got.Error == nil ||
+		if got := viewFor(t, m, ghID); got.Status != forgeRetrying || got.Error == nil ||
 			!strings.Contains(got.Error.Message, "no answer from github.com") {
 			t.Errorf("row after a check the forge never answered = %+v, want retrying naming the host", got)
 		}
@@ -246,7 +246,7 @@ func TestCheck_ARefusalStopsTheKeeperUntilCheck(t *testing.T) {
 	k := NewKeeper(m)
 
 	k.pass(t.Context())
-	if got := viewFor(t, m, ghID); got.Status != ForgeRefused {
+	if got := viewFor(t, m, ghID); got.Status != forgeRefused {
 		t.Fatalf("row after a 403 = %+v, want refused", got)
 	}
 	k.pass(t.Context())
@@ -257,7 +257,7 @@ func TestCheck_ARefusalStopsTheKeeperUntilCheck(t *testing.T) {
 	if _, err := m.check(t.Context(), ghID, checkBudget); err != nil {
 		t.Fatalf("Check() = %v", err)
 	}
-	if got := viewFor(t, m, ghID); got.Status != ForgeConnected {
+	if got := viewFor(t, m, ghID); got.Status != forgeConnected {
 		t.Errorf("row after a Check with the forge fixed = %+v, want connected", got)
 	}
 }
@@ -270,9 +270,9 @@ func TestStatus_EachTransitionClearsThePrior(t *testing.T) {
 		status ForgeStatus
 		kind   string
 	}{
-		{errTransient, ForgeRetrying, "transient"},
-		{errForbidden, ForgeRefused, "forbidden"},
-		{nil, ForgeConnected, ""},
+		{errTransient, forgeRetrying, "transient"},
+		{errForbidden, forgeRefused, "forbidden"},
+		{nil, forgeConnected, ""},
 	}
 	for _, s := range steps {
 		core.answer(s.answer)
@@ -337,7 +337,7 @@ func TestCheck_AStatusChangeEvictsCapabilities(t *testing.T) {
 			t.Fatalf("check() = %v", err)
 		}
 	}
-	if got := viewFor(t, m, ghID); got.Status != ForgeConnected {
+	if got := viewFor(t, m, ghID); got.Status != forgeConnected {
 		t.Fatalf("Setup: row after refused then fixed = %+v, want connected", got)
 	}
 
@@ -423,7 +423,7 @@ func TestCheck_AReconnectRowIsNeverSent(t *testing.T) {
 
 	for _, id := range []string{marked.ID, standing.ID, absent.ID} {
 		before := viewFor(t, m, id)
-		if before.Status != ForgeReconnect {
+		if before.Status != forgeReconnect {
 			t.Fatalf("Setup: %s = %+v, want reconnect", id, before)
 		}
 		rec := httptest.NewRecorder()

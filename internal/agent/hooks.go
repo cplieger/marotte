@@ -17,13 +17,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/pathinside"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/webhttp/v4"
 )
 
-// hookCallTimeout bounds a list or setEnabled round-trip, the wait for the engine included.
+// hookCallTimeout bounds a list or setEnabled round-trip, the wait for the engine included, extended through an
+// engine stall (engineOwner.stallAware).
 const hookCallTimeout = 45 * time.Second
 
 // actionRunCommand / actionAskAgent are the two KAS hook action types.
@@ -125,7 +126,7 @@ func (st *Settings) hookScopeAndPath(abs string) (scope, path string) {
 }
 
 func (st *Settings) hooksListRaw(ctx context.Context) ([]kasHook, error) {
-	cctx, cancel := context.WithTimeout(ctx, hookCallTimeout)
+	cctx, cancel := st.engine.stallAware(ctx, hookCallTimeout)
 	defer cancel()
 	raw, err := st.engine.hooksRaw(cctx, methodKiroHooksList, map[string]any{
 		keyWorkspacePaths: []string{st.lifecycle.workDir},
@@ -182,7 +183,7 @@ func (st *Settings) handleHooksList(w http.ResponseWriter, r *http.Request) {
 	slices.SortStableFunc(out, func(a, b hookInfo) int {
 		return hookScopeRank(a.Scope) - hookScopeRank(b.Scope)
 	})
-	webhttp.WriteJSON(w, hooksListResponse{Hooks: out})
+	httpserver.WriteJSON(w, hooksListResponse{Hooks: out})
 }
 
 // hookScopeRank orders hook scopes for the dashboard: workspace first.
@@ -207,23 +208,26 @@ func (st *Settings) handleHookSetEnabled(w http.ResponseWriter, r *http.Request)
 	if !httpreply.DecodeJSON(w, r, &body) {
 		return
 	}
-	cctx, cancel := context.WithTimeout(r.Context(), hookCallTimeout)
-	defer cancel()
-	raw, err := st.engine.hooksRaw(cctx, methodKiroHooksSetEnabled, map[string]any{
-		"hookId":  hookID,
-		"enabled": body.Enabled,
+	st.lifecycle.answerEngineMutation(w, r, engineMutation{
+		verb:    "hook set enabled",
+		changed: st.broadcastHooksChanged,
+		call: func(ctx context.Context) engineReply {
+			cctx, cancel := st.engine.stallAware(ctx, hookCallTimeout)
+			defer cancel()
+			raw, err := st.engine.hooksRaw(cctx, methodKiroHooksSetEnabled, map[string]any{
+				"hookId":  hookID,
+				"enabled": body.Enabled,
+			})
+			if err != nil {
+				return engineReply{err: err, write: func(w http.ResponseWriter) { writeHookErr(w, err) }}
+			}
+			res := parseHookResult(raw)
+			if !res.Success {
+				return engineReply{write: func(w http.ResponseWriter) { writeHookResultErr(w, res) }}
+			}
+			return engineReply{write: httpserver.Ok, applied: true}
+		},
 	})
-	if err != nil {
-		writeHookErr(w, err)
-		return
-	}
-	res := parseHookResult(raw)
-	if !res.Success {
-		writeHookResultErr(w, res)
-		return
-	}
-	st.broadcastHooksChanged()
-	webhttp.Ok(w)
 }
 
 // broadcastHooksChanged fans out hooks_changed after a create or toggle and on
@@ -269,7 +273,7 @@ func writeHookResultErr(w http.ResponseWriter, res kasHookResult) {
 // The engine runs with no chat open, so there is no "open a chat first" case.
 func writeHookErr(w http.ResponseWriter, err error) {
 	slog.Warn("hooks op failed", "error", err)
-	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("hooks request failed"))
+	httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("hooks request failed"))
 }
 
 // There is deliberately no trigger route: it would restore the executeHook shell path.

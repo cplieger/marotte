@@ -11,10 +11,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/toolbelt/v3"
-	"github.com/cplieger/webhttp/v4"
 )
 
 func TestConfigFromEnv_Defaults(t *testing.T) {
@@ -71,11 +72,26 @@ func TestConfigFromEnv_RelativeDirsBecomeAbsolute(t *testing.T) {
 	if cfg.WorkDir != wantWork {
 		t.Errorf("ConfigFromEnv() WorkDir = %q, want %q", cfg.WorkDir, wantWork)
 	}
-	if want := filepath.Join(wantConfig, "tools"); cfg.ToolsDir != want {
-		t.Errorf("ConfigFromEnv() ToolsDir = %q, want %q", cfg.ToolsDir, want)
+	if want := filepath.Join(wantConfig, "tools"); cfg.Tools.dir != want {
+		t.Errorf("ConfigFromEnv() Tools.dir = %q, want %q", cfg.Tools.dir, want)
 	}
 	if !slices.Contains(cfg.BrowseRoots, wantConfig) || !slices.Contains(cfg.BrowseRoots, wantWork) {
 		t.Errorf("ConfigFromEnv() BrowseRoots = %q, want both %q and %q", cfg.BrowseRoots, wantConfig, wantWork)
+	}
+}
+
+func TestConfigFromEnv_RelativeToolsDirBecomesAbsolute(t *testing.T) {
+	t.Chdir(t.TempDir())
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Setup: Getwd: %v", err)
+	}
+	t.Setenv("MAROTTE_TOOLS_DIR", "./tools-elsewhere/")
+
+	cfg := ConfigFromEnv()
+
+	if want := filepath.Join(cwd, "tools-elsewhere"); cfg.Tools.dir != want {
+		t.Errorf("ConfigFromEnv() Tools.dir = %q, want %q", cfg.Tools.dir, want)
 	}
 }
 
@@ -104,7 +120,7 @@ func containsIP(prefixes []netip.Prefix, ipStr string) bool {
 // TestParseAllowedHosts pins the ALLOWED_HOSTS parser: unset or blank is an INACTIVE policy, valid
 // entries engage the gate.
 func TestParseAllowedHosts(t *testing.T) {
-	allows := func(t *testing.T, policy *webhttp.HostPolicy, host, remoteAddr string) bool {
+	allows := func(t *testing.T, policy *httpserver.HostPolicy, host, remoteAddr string) bool {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "http://"+host+"/x", nil)
 		if remoteAddr != "" {
@@ -295,7 +311,7 @@ func TestConfigFromEnv_TrustedProxies(t *testing.T) {
 	})
 }
 
-// TestTrustedProxies_ClientIPResolution asserts that the parsed set, fed to webhttp.ClientIP as server.go does,
+// TestTrustedProxies_ClientIPResolution asserts that the parsed set, fed to httpserver.ClientIP as server.go does,
 // resolves the real client only from a trusted peer.
 func TestTrustedProxies_ClientIPResolution(t *testing.T) {
 	const (
@@ -311,19 +327,19 @@ func TestTrustedProxies_ClientIPResolution(t *testing.T) {
 
 	t.Run("unconfigured: XFF ignored, socket peer wins", func(t *testing.T) {
 		trusted := parseTrustedProxies("")
-		if got := webhttp.ClientIP(newReq(), trusted...); got != peer {
+		if got := httpserver.ClientIP(newReq(), trusted...); got != peer {
 			t.Errorf("ClientIP unconfigured = %q, want socket peer %q", got, peer)
 		}
 	})
 	t.Run("configured, peer trusted: XFF client wins", func(t *testing.T) {
 		trusted := parseTrustedProxies("198.51.100.0/24")
-		if got := webhttp.ClientIP(newReq(), trusted...); got != xffClient {
+		if got := httpserver.ClientIP(newReq(), trusted...); got != xffClient {
 			t.Errorf("ClientIP trusted peer = %q, want XFF client %q", got, xffClient)
 		}
 	})
 	t.Run("configured, peer NOT trusted: XFF ignored", func(t *testing.T) {
 		trusted := parseTrustedProxies("10.0.0.0/8")
-		if got := webhttp.ClientIP(newReq(), trusted...); got != peer {
+		if got := httpserver.ClientIP(newReq(), trusted...); got != peer {
 			t.Errorf("ClientIP untrusted peer = %q, want socket peer %q", got, peer)
 		}
 	})
@@ -583,23 +599,18 @@ func TestLogBridgeEnvPosture(t *testing.T) {
 	}
 }
 
-func TestConfigFromEnv_KASNodePathResolvesAsKiroCLIDoes(t *testing.T) {
-	cases := []struct {
-		name, override, dataHome, home, want string
-	}{
-		{"override_wins", "/opt/node", "/data", "/home/u", "/opt/node"},
-		{"xdg_data_home", "", "/data", "/home/u", "/data/kiro-cli/node"},
-		{"home_fallback", "", "", "/home/u", "/home/u/.local/share/kiro-cli/node"},
-		{"neither", "", "", "", ""},
+func TestConfigFromEnv_KASLookupReadsKiroCLIsVariables(t *testing.T) {
+	t.Setenv("KIRO_KAS_NODE_PATH", "/opt/node")
+	t.Setenv("KIRO_RUNTIME_DIR", "/config/home/.cache/kiro-cli-runtime")
+	t.Setenv("XDG_DATA_HOME", "/data")
+	t.Setenv("HOME", "/home/u")
+	want := workspace.KASLookup{
+		NodeOverride: "/opt/node",
+		RuntimeDir:   "/config/home/.cache/kiro-cli-runtime",
+		DataHome:     "/data",
+		Home:         "/home/u",
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("KIRO_KAS_NODE_PATH", tc.override)
-			t.Setenv("XDG_DATA_HOME", tc.dataHome)
-			t.Setenv("HOME", tc.home)
-			if got := ConfigFromEnv().KASNodePath; got != tc.want {
-				t.Errorf("KASNodePath = %q, want %q", got, tc.want)
-			}
-		})
+	if got := ConfigFromEnv().KASLookup; got != want {
+		t.Errorf("KASLookup = %+v, want %+v", got, want)
 	}
 }

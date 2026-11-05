@@ -1,14 +1,17 @@
-// Package secretstore persists the opaque credential blobs KAS asks marotte to hold via the
-// v3 `_kiro/secret/*` requests. KAS runs MCP OAuth but persists none of it, so without this
+// Package secretstore holds the MCP OAuth state KAS asks marotte to keep via the v3
+// `_kiro/secret/*` requests. KAS runs MCP OAuth but keeps it only in memory, so without this
 // store every engine start re-runs Dynamic Client Registration.
 //
-// One file, <configDir>/mcp-secrets.json, mode 0600, written atomically: a flat
-// `{"secrets": {"<key>": "<base64 value>"}}` map. Values are base64 so they round-trip
-// byte-exactly (encoding/json would replace invalid UTF-8); this is an encoding, not
-// encryption, and the 0600 is the protection. Keys and values are OPAQUE (KAS owns their
-// derivation and shape). One keyed map rather than a file per key, so an attacker-adjacent
-// key can never traverse a path. Values are secrets and are never logged; log lines carry
-// the KEY only.
+// KAS keys its state `kiro.mcp.<sha256 of the server config>.<kind>`. The grant (kinds
+// client and tokens) persists; every other key (the PKCE verifier, the discovery state, any
+// kind KAS adds later) is held in memory until ForgetSignInState, the lifetime KAS gives it
+// with no client storage, so a spent verifier or a stale authorization server never outlives
+// its engine.
+//
+// The grant lives in one file, <configDir>/mcp-secrets.json, mode 0600, written atomically:
+// `{"secrets": {"<key>": "<base64 value>"}}`. Base64 round-trips values byte-exactly; it is an
+// encoding, the 0600 is the protection. One keyed map rather than a file per key, so a key
+// can never traverse a path. Values are never logged; log lines carry the key.
 package secretstore
 
 import (
@@ -20,24 +23,26 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 	"unicode/utf8"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/filemode"
 )
 
-// Bounds far above anything KAS produces (blobs are 90-211 bytes), so a buggy or hostile
-// flow cannot grow the file without limit.
+// Bounds far above anything KAS produces, so a buggy or hostile flow cannot grow the file
+// or the memory half without limit.
 const (
 	// maxValueBytes caps one credential blob.
 	maxValueBytes = 64 << 10
 	// maxKeyBytes caps a key. KAS's own keys are ~80 bytes.
 	maxKeyBytes = 512
-	// maxEntries caps how many distinct keys the store holds. Three keys per
-	// MCP server, so this is a ceiling of ~340 servers.
+	// maxEntries caps the persisted keys: two per server configuration, a ceiling of 512.
 	maxEntries = 1024
+	// maxSignInEntries caps the memory half: two per server configuration in one engine.
+	maxSignInEntries = 512
 	// maxFileBytes bounds the whole file on both read and write.
 	maxFileBytes = 8 << 20
 
@@ -50,6 +55,9 @@ const (
 // store is full.
 var errTooLarge = errors.New("secretstore: value rejected (over limit)")
 
+// durableKey matches the keys that persist: KAS's client registration and token set.
+var durableKey = regexp.MustCompile(`^kiro\.mcp\.[0-9a-f]{64}\.(client|tokens)$`)
+
 // file is the on-disk shape: key → base64(value). A named field so an addition needs no
 // format migration.
 type file struct {
@@ -60,9 +68,12 @@ type file struct {
 // key namespace is global, so a restarted engine reuses the first one's registration.
 type Store struct {
 	// Field order is govet fieldalignment's.
+	// secrets is the persisted grant, mirrored in the file.
 	secrets map[string]string
-	path    string
-	mu      sync.RWMutex
+	// signIn holds every other key, never written.
+	signIn map[string]string
+	path   string
+	mu     sync.RWMutex
 }
 
 // New opens (or creates) the store under configDir. A missing file is the first-run state;
@@ -71,6 +82,7 @@ func New(configDir string) (*Store, error) {
 	s := &Store{
 		path:    filepath.Join(configDir, fileName),
 		secrets: map[string]string{},
+		signIn:  map[string]string{},
 	}
 	if err := s.load(); err != nil {
 		return nil, err
@@ -93,7 +105,7 @@ func (s *Store) load() error {
 	}
 	// EnforceFile reads a FIFO's bits as compliant; OpenRegular refuses non-regular files and
 	// returns the descriptor the bytes are read from, so the object judged is the object read.
-	fh, _, err := atomicfile.OpenRegular(s.path)
+	fh, _, err := filesafe.OpenRegular(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -103,7 +115,7 @@ func (s *Store) load() error {
 	defer func() { _ = fh.Close() }()
 	// ReadBoundedFile checks the size BEFORE allocating, so the bound holds against a file the
 	// agent's shell can grow.
-	data, err := atomicfile.ReadBoundedFile(context.Background(), fh, maxFileBytes)
+	data, err := filesafe.ReadBoundedFile(context.Background(), fh, maxFileBytes)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", fileName, err)
 	}
@@ -113,6 +125,11 @@ func (s *Store) load() error {
 		return nil
 	}
 	for k, encoded := range stored.Secrets {
+		if !durableKey.MatchString(k) {
+			// The file holds only what Set persists; the next persist rewrites it without k.
+			slog.Debug("secretstore: non-durable entry dropped", "key", k)
+			continue
+		}
 		raw, dErr := base64.StdEncoding.DecodeString(encoded)
 		if dErr != nil {
 			// Drop the one unreadable entry, not the whole store: KAS re-derives what is missing.
@@ -146,12 +163,17 @@ func (s *Store) moveCorruptAside(cause error) {
 func (s *Store) Get(key string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	v, ok := s.secrets[key]
+	if durableKey.MatchString(key) {
+		v, ok := s.secrets[key]
+		return v, ok
+	}
+	v, ok := s.signIn[key]
 	return v, ok
 }
 
-// Set stores value under key and persists the whole store. A persist error is RETURNED:
-// KAS rethrows it, where a swallowed one would read back empty on the next spawn.
+// Set stores value under key. A grant key persists the whole store, and a persist error is
+// RETURNED: KAS rethrows it, where a swallowed one would read back empty on the next spawn.
+// Any other key is held in memory only.
 func (s *Store) Set(ctx context.Context, key, value string) error {
 	if err := validateKey(key); err != nil {
 		return err
@@ -161,6 +183,13 @@ func (s *Store) Set(ctx context.Context, key, value string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !durableKey.MatchString(key) {
+		if _, exists := s.signIn[key]; !exists && len(s.signIn) >= maxSignInEntries {
+			return fmt.Errorf("%w: sign-in state holds %d entries, limit %d", errTooLarge, len(s.signIn), maxSignInEntries)
+		}
+		s.signIn[key] = value
+		return nil
+	}
 	if _, exists := s.secrets[key]; !exists && len(s.secrets) >= maxEntries {
 		return fmt.Errorf("%w: store holds %d entries, limit %d", errTooLarge, len(s.secrets), maxEntries)
 	}
@@ -183,6 +212,10 @@ func (s *Store) Set(ctx context.Context, key, value string) error {
 func (s *Store) Delete(ctx context.Context, key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !durableKey.MatchString(key) {
+		delete(s.signIn, key)
+		return nil
+	}
 	prev, had := s.secrets[key]
 	if !had {
 		return nil
@@ -195,6 +228,17 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+// ForgetSignInState drops every key held in memory and keeps the persisted grant. The caller
+// runs it once per engine generation, before the engine can ask. Safe on a nil Store.
+func (s *Store) ForgetSignInState() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	clear(s.signIn)
+}
+
 // Caller holds s.mu.
 func (s *Store) persistLocked(ctx context.Context) error {
 	encoded := make(map[string]string, len(s.secrets))
@@ -205,9 +249,9 @@ func (s *Store) persistLocked(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("marshal %s: %w", fileName, err)
 	}
-	if _, err := atomicfile.WriteFile(ctx, s.path, data,
-		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode),
-		atomicfile.WithMaxBytes(maxFileBytes)); err != nil {
+	if _, err := filesafe.WriteFile(ctx, s.path, data,
+		filesafe.WithMode(fileMode), filesafe.WithMkdirMode(dirMode),
+		filesafe.WithMaxBytes(maxFileBytes)); err != nil {
 		return fmt.Errorf("write %s: %w", fileName, err)
 	}
 	return nil

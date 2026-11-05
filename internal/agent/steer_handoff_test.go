@@ -58,10 +58,10 @@ func handoffHub(t *testing.T) (*Runtime, *testChatStore) {
 	h, cs, br := newTestHub()
 	seedChat(t, cs, "c1")
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 	for _, k := range []string{"steer-a", "steer-b"} {
-		h.steerQueue.RouteSteer("c1", k, k, command.SteerHolder{Held: true, PromptClass: true})
-		if _, refuse := h.steerQueue.RouteSteer("c1", k, k, command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
+		h.steerQueue.RouteSteer("c1", k, k, nil, command.SteerHolder{Held: true, PromptClass: true})
+		if _, refuse := h.steerQueue.RouteSteer("c1", k, k, nil, command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
 			t.Fatalf("unsending %s = %q, want no_turn", k, refuse)
 		}
 	}
@@ -106,7 +106,7 @@ func epochOf(h *Runtime, chatID marotte.ChatID) uint64 {
 }
 
 func fenceNow(h *Runtime, chatID marotte.ChatID) command.TurnFence {
-	lc := h.coord.turns.lifecycleFor(chatID)
+	lc := h.coord.turns.testLifecycle(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	return command.TurnFence{Epoch: lc.epoch, Seq: lc.nextSeq}
@@ -217,7 +217,7 @@ func pickHub(t *testing.T) (*Runtime, *testChatStore, *pausingStore) {
 	h, cs, br := newTestHub()
 	seedChat(t, cs, "c1")
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 	seedQueue(t, cs, "c1", marotte.QueuedPrompt{ID: "m-q1", Text: "next"})
 	ps := newPausingStore(h.coord.chatStore)
 	ps.onPick = true
@@ -328,10 +328,10 @@ func TestTryReserveTurnFenced_ANewerTurnRefusesTheOldClose(t *testing.T) {
 	h.coord.ReleaseTurn("c1", id)
 	waitFor(t, func() bool { return !h.coord.turns.live("c1") })
 
-	if h.coord.TryReserveTurnFenced("c1", marotte.TurnSourcePrompt, fence) {
+	if h.coord.tryReserveFencedNow("c1", marotte.TurnSourcePrompt, fence) {
 		t.Error("an older close's drain reserved a chat a newer turn opened on")
 	}
-	if !h.coord.TryReserveTurnFenced("c1", marotte.TurnSourcePrompt, fenceNow(h, "c1")) {
+	if !h.coord.tryReserveFencedNow("c1", marotte.TurnSourcePrompt, fenceNow(h, "c1")) {
 		t.Error("the newest close's drain was refused an idle chat")
 	}
 }

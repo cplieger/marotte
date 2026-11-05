@@ -10,7 +10,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cplieger/keylock"
+	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -326,7 +326,8 @@ func (rs *Runs) RunUnsettledWorkflowMessages(ctx context.Context, runID string) 
 
 // RunNodePaused ends the paused step's steering turn: the execution that read its buffer has stopped.
 func (rs *Runs) RunNodePaused(ctx context.Context, runID string, path []string) {
-	rs.steers.end(ctx, runID, workflow.PathKey(path), false)
+	nodePath := workflow.PathKey(path)
+	rs.steers.end(ctx, runID, nodePath, false)
 }
 
 func (s *stepSteers) runsHostedBy(host marotte.ChatID) []string {

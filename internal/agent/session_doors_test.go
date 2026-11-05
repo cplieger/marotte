@@ -269,3 +269,68 @@ func TestEnsureResident_ACallerWaitsOnlyItsOwnContextAndALaterCallerJoinsTheLoad
 		t.Error("the load the first caller abandoned did not leave the host session resident")
 	}
 }
+
+func TestUnreadableConfig_AResidentSessionIsNotMarkedUntilTheRepairMovesAValue(t *testing.T) {
+	dir := writeSettings(t, `{"security_profile":"unrestricted"}`)
+	h := reopenFixtureIn(t, dir, nil)
+	settleBoot(t, h)
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+
+	rewriteConfigByHand(t, dir, `{"security_profile":`)
+	h.ReconcileSessionSettings(t.Context())
+	if reloadMarked(h, "c1") {
+		t.Error("an unreadable config.json marked the open chat to reload onto the defaults")
+	}
+	rewriteConfigByHand(t, dir, `{"security_profile":"unrestricted"}`)
+	h.ReconcileSessionSettings(t.Context())
+	if reloadMarked(h, "c1") {
+		t.Error("a repair to the same document marked the open chat to reload")
+	}
+	rewriteConfigByHand(t, dir, `{"security_profile":"guarded"}`)
+	h.ReconcileSessionSettings(t.Context())
+	if !reloadMarked(h, "c1") {
+		t.Error("a repair that moved the profile left the open chat unmarked")
+	}
+}
+
+// A chat marked before config.json broke keeps its session until the file reads again, then reloads once.
+func TestUnreadableConfig_AMarkedSessionWaitsForConfigToReadBeforeItReloads(t *testing.T) {
+	h, dir, _ := restartFixture(t)
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+	sb1 := h.bridge.mgr.get("c1")
+	writeSetting(t, dir, settings.KeyMemoryMode, "learn")
+	h.ReconcileSessionSettings(t.Context())
+	if !reloadMarked(h, "c1") {
+		t.Fatal("Setup: a memory mode move left the open chat unmarked")
+	}
+
+	rewriteConfigByHand(t, dir, `{"memory_mode":`)
+	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		t.Fatalf("OpenBridge over an unreadable config.json: %v", err)
+	}
+	if h.bridge.mgr.get("c1") != sb1 {
+		t.Error("the marked chat reloaded while config.json cannot be read")
+	}
+	if !reloadMarked(h, "c1") {
+		t.Error("the marked chat lost its mark while config.json cannot be read")
+	}
+
+	rewriteConfigByHand(t, dir, `{"memory_mode":"learn"}`)
+	sb2, err := h.coord.openBridge(t.Context(), "c1", "")
+	if err != nil {
+		t.Fatalf("OpenBridge after the repair: %v", err)
+	}
+	if sb2 == sb1 {
+		t.Fatal("the marked chat did not reload once config.json reads again")
+	}
+	if reloadMarked(h, "c1") {
+		t.Error("the reloaded chat is still marked")
+	}
+	if so := fakeOf(sb2).lastSessionOpts(); so == nil || so.Memory != settings.MemoryPreferenceFor("learn") {
+		t.Errorf("the reload's door = %+v, want memory %v", so, settings.MemoryPreferenceFor("learn"))
+	}
+}

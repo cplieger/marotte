@@ -60,11 +60,17 @@ type acpKiroBlock struct {
 	// OutputTransformation rides the terminal tool_call_update, live and replayed, when KAS
 	// offloaded an output of 30,000+ characters to a file.
 	OutputTransformation *acpOutputTransformation `json:"outputTransformation,omitempty"`
-	Kind                 string                   `json:"kind"`
-	AgentSubtaskID       string                   `json:"agentSubtaskId"`
-	// ToolID is KAS's machine name for a tool call (`execute_bash`, `user_input`). Not model-
-	// or locale-composed, so the internal-tool suppression keys on it.
+	// TrustClassifier is KAS's safety check handing a pending call to a person (decision "prompt").
+	TrustClassifier *acpTrustClassifier `json:"trustClassifier,omitempty"`
+	Kind            string              `json:"kind"`
+	AgentSubtaskID  string              `json:"agentSubtaskId"`
+	// ToolID is KAS's machine name for the few tool calls it stamps one on (`disclose_context`,
+	// `user_input`). Not model- or locale-composed, so the internal-tool suppression keys on it.
 	ToolID string `json:"toolId"`
+	// ServerName is stamped from engine config by KAS's MCP wrapper and Power routes, but
+	// kiro_powers' own serverName argument reaches it too, so it names an MCP call only beside
+	// KAS's `@…<server>/<tool>` title (mcpCallIdentity).
+	ServerName string `json:"serverName"`
 	// WorkflowID names the run a `run_workflow` invocation started. On a REPLAY it is the only
 	// channel carrying it: replayed `rawOutput` is prose (kiro-cli 2.21.4).
 	WorkflowID string `json:"workflowId"`
@@ -96,11 +102,25 @@ type acpKiroBlock struct {
 	// Workflow is on every frame of a workflow STEP's session and is the only mark of one.
 	// Nested at `params.update._meta.kiro.workflow`, not `params._meta`.
 	Workflow *ACPWorkflowMeta `json:"workflow"`
-	HookAsk  json.RawMessage  `json:"hookAsk,omitempty"`
+	// TTFT rides the turn's first displayed chunk when the prompt asked for it.
+	TTFT    *acpTurnTiming  `json:"ttft"`
+	HookAsk json.RawMessage `json:"hookAsk,omitempty"`
 	// AgentInitiated marks a turn the ENGINE started. It rides CONTENT frames, never the
 	// bracket, and a zero-content auto-wake sends none.
 	AgentInitiated bool `json:"agentInitiated"`
+	// TrustClassifierApproved marks a call KAS's safety check let run with no ask, live and replayed.
+	TrustClassifierApproved bool `json:"trustClassifierApproved"`
 }
+
+// acpTrustClassifier is _meta.kiro.trustClassifier: a decision ("prompt" when the call goes to a
+// person) and KAS's reason, prose such as "Kiro's safety check flagged this".
+type acpTrustClassifier struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason"`
+}
+
+// classifierAsksPerson is the acpTrustClassifier decision that hands the call to a person.
+const classifierAsksPerson = "prompt"
 
 // agentInitiatedReason is KAS's closed set of engine-turn causes (kiro-cli 2.32.0:
 // send-message-wake, workflow-complete-wake, notification-rewake). An unknown value is kept as
@@ -146,7 +166,14 @@ func (b *acpKiroBlock) UnmarshalJSON(data []byte) error {
 	}
 	// `preview` repeats the checkpoint URIs plus both file bodies: noise on every write.
 	// `replay` is already read on ACPSessionUpdateBase's own kiro block, its single owner.
-	censusMeta("_meta.kiro", data, reflect.TypeFor[acpKiroBlockShadow](), "preview", "replay")
+	// `executionId` and `turnId` name the frame's turn, which the turn_start bracket already decided.
+	// `toolOrigin` names who provides the called tool; a deferred MCP call reads "default".
+	// `agentMode` rides only replayed frames; the chat's mode comes from its configuration state.
+	// `steeringClearedIds` lists read steers too, so it cannot mark a steer unread.
+	// `elicitation` repeats the _kiro/mcp/elicitation request that follows its tool_call_update.
+	censusMeta("_meta.kiro", data, reflect.TypeFor[acpKiroBlockShadow](),
+		"preview", "replay", "executionId", "turnId", "toolOrigin", "agentMode", "steeringClearedIds",
+		"elicitation")
 	return nil
 }
 
@@ -253,11 +280,13 @@ type acpPermissionMeta struct {
 }
 
 // acpPermissionKiroBlock is the `kiro` object inside a permission request's `_meta`.
-// Field order is fieldalignment's: Consent leads as the only pointer.
+// Field order is fieldalignment's.
 type acpPermissionKiroBlock struct {
 	// WorkflowWatch names the run and node a watch command polls for; the ask arrives on the
 	// LAUNCHING session, so the step registry cannot name them.
 	WorkflowWatch *acpWorkflowWatch `json:"workflowWatch"`
+	// TrustClassifier is set when KAS's safety check did not clear the call and handed it to a person.
+	TrustClassifier *acpTrustClassifier `json:"trustClassifier"`
 	// Consent names what the ask is about and whether an always answer can persist.
 	Consent acpConsentMeta `json:"consent"`
 	// MCPTool carries the identity KAS verified for an MCP-backed tool.
@@ -267,6 +296,8 @@ type acpPermissionKiroBlock struct {
 	Type string `json:"type"`
 	// ToolID is set on the ordinary tool approval alone, whose reject reads a rejectionReason.
 	ToolID string `json:"toolId"`
+	// Command is the command a shell, hook or watch ask would run, whole and raw.
+	Command string `json:"command"`
 	// Files is the turn approval's staged file list: ABSOLUTE paths and a `toolCallId` action
 	// id, both renamed on the way out.
 	Files []acpApprovalFile `json:"files"`
@@ -290,7 +321,7 @@ func (b *acpPermissionKiroBlock) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	censusMeta("session/request_permission._meta.kiro", data, reflect.TypeFor[acpPermissionKiroBlockShadow](),
-		"command", "agentManagesTrust", "disclosedContext", "hookName", "executionId", "kind",
+		"agentManagesTrust", "disclosedContext", "hookName", "executionId", "kind",
 		"requirementText", "question", "requirementRange", "requirementsFilePath", "workflowPlan")
 	return nil
 }
@@ -499,6 +530,27 @@ type ACPSessionUpdateBase struct {
 			Replay    bool      `json:"replay"`
 		} `json:"kiro"`
 	} `json:"_meta"`
+}
+
+// DecodeSessionUpdate decodes a session/update frame's params into its envelope and base,
+// reporting an undecodable frame or an unnamed kind to the wire census. Every session/update
+// door decodes through it, so a kind KAS adds is reported whichever door it reaches.
+func DecodeSessionUpdate(params json.RawMessage) (ACPSessionUpdateEnvelope, ACPSessionUpdateBase, bool) {
+	var env ACPSessionUpdateEnvelope
+	var base ACPSessionUpdateBase
+	switch {
+	case json.Unmarshal(params, &env) != nil || env.Update == nil:
+		censusUndecodableUpdate(undecodableEnvelope)
+		return env, base, false
+	case json.Unmarshal(env.Update, &base) != nil:
+		censusUndecodableUpdate(undecodableUpdate)
+		return env, base, false
+	case base.Kind == "":
+		censusUndecodableUpdate(undecodableKind)
+		return env, base, false
+	}
+	censusUpdateKind(base.Kind)
+	return env, base, true
 }
 
 // TurnEdge is the turn bracket a session/update frame carries, if any.

@@ -1,7 +1,7 @@
 // The one client owner of the governance snapshot (GET /api/governance plus the governance_state SSE), the
 // org-policy disclosure and the setting locks.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { onSSE } from "./bus.js";
 import { apiGetTyped } from "./api-client.js";
 import { decodeGovernanceStatePayload } from "./wire/decoders.gen.js";

@@ -26,19 +26,29 @@ func hookUpdateFrame(t *testing.T, name, status string) map[string]any {
 	}
 }
 
-func hookCardCase(t *testing.T, enabled bool, frame map[string]any, attr FrameAttribution) (*[]marotte.ServerEvent, []marotte.EntryToolCall) {
+func hookCardCase(t *testing.T, frame map[string]any, attr FrameAttribution) (*[]marotte.ServerEvent, []marotte.EntryToolCall) {
+	t.Helper()
+	events, entries := hookEntriesCase(t, nil, frame, attr)
+	return events, toolCallsOf(t, entries)
+}
+
+func hookEntriesCase(t *testing.T, triggers map[string]string, frame map[string]any, attr FrameAttribution) (*[]marotte.ServerEvent, []marotte.Entry) {
 	t.Helper()
 	base, events := newEventCaptureDeps()
-	deps := &hookStatusDeps{baseDeps: base, enabled: enabled}
-	tr := New(rolesOf(deps))
+	tr := New(rolesOf(&hookTriggerDeps{baseDeps: base, triggers: triggers}))
 	chatID := marotte.ChatID("c1")
 	tr.HandleSessionInfoUpdate(t.Context(), chatID, mustJSON(t, frame), attr)
-	return events, toolCallsOf(t, base.chatEntries(chatID))
+	return events, base.chatEntries(chatID)
+}
+
+// hookBlock is the frame's `_meta.kiro.hook` object, for a case to add fields to.
+func hookBlock(frame map[string]any) map[string]any {
+	return frame["_meta"].(map[string]any)["kiro"].(map[string]any)["hook"].(map[string]any)
 }
 
 func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
-	t.Run("ShownWhenEnabled", func(t *testing.T) {
-		events, calls := hookCardCase(t, true, hookUpdateFrame(t, "probe-save", hookStatusCompleted), FrameAttribution{})
+	t.Run("Recorded", func(t *testing.T) {
+		events, calls := hookCardCase(t, hookUpdateFrame(t, "probe-save", hookStatusCompleted), FrameAttribution{})
 		if !hasEntryAppended(events, marotte.EntryKindToolCall) {
 			t.Fatal("hook_update broadcast no entry_appended{tool_call}; want one Hook fired card")
 		}
@@ -71,7 +81,7 @@ func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 	t.Run("FailsOnAnyOtherStatus", func(t *testing.T) {
 		for _, status := range []string{"", "running", "failed", "canceled", "awaiting_approval", "Success"} {
 			t.Run("status_"+status, func(t *testing.T) {
-				_, calls := hookCardCase(t, true, hookUpdateFrame(t, "probe", status), FrameAttribution{})
+				_, calls := hookCardCase(t, hookUpdateFrame(t, "probe", status), FrameAttribution{})
 				if len(calls) != 1 {
 					t.Fatalf("buffered tool calls = %d, want 1", len(calls))
 				}
@@ -79,16 +89,6 @@ func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 					t.Errorf("hookToolStatus(%q) = %q, want %q", status, calls[0].Status, marotte.ToolFailed)
 				}
 			})
-		}
-	})
-
-	t.Run("NothingWhenDisabled", func(t *testing.T) {
-		events, calls := hookCardCase(t, false, hookUpdateFrame(t, "probe-save", hookStatusCompleted), FrameAttribution{})
-		if hasEntryAppended(events, marotte.EntryKindToolCall) {
-			t.Error("hook_update broadcast a tool_call event with hooks.showStatus off; want nothing")
-		}
-		if len(calls) != 0 {
-			t.Errorf("buffered tool calls = %d, want 0", len(calls))
 		}
 	})
 
@@ -113,7 +113,7 @@ func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 		}
 		for name, frame := range frames {
 			t.Run(name, func(t *testing.T) {
-				events, calls := hookCardCase(t, true, frame, FrameAttribution{})
+				events, calls := hookCardCase(t, frame, FrameAttribution{})
 				if hasEntryAppended(events, marotte.EntryKindToolCall) || len(calls) != 0 {
 					t.Errorf("a hook block outside update._meta.kiro produced events=%v calls=%d; want nothing",
 						hasEntryAppended(events, marotte.EntryKindToolCall), len(calls))
@@ -124,7 +124,7 @@ func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 
 	t.Run("TitleIsSingleLineAndBounded", func(t *testing.T) {
 		name := "a\nb\x1b[31mc" + strings.Repeat("x", 2000)
-		_, calls := hookCardCase(t, true, hookUpdateFrame(t, name, hookStatusCompleted), FrameAttribution{})
+		_, calls := hookCardCase(t, hookUpdateFrame(t, name, hookStatusCompleted), FrameAttribution{})
 		if len(calls) != 1 {
 			t.Fatalf("buffered tool calls = %d, want 1", len(calls))
 		}
@@ -135,7 +135,7 @@ func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 		if strings.ContainsAny(title, "\n\x1b") {
 			t.Errorf("Title = %q carries a newline or ESC; want single-line", title)
 		}
-		// The bound plus runesafe's three-byte truncation marker.
+		// The bound plus textsafe's three-byte truncation marker.
 		if maxLen := len("Hook fired: ") + maxDisplayTextBytes + len("..."); len(title) > maxLen {
 			t.Errorf("len(Title) = %d, want <= %d", len(title), maxLen)
 		}
@@ -143,7 +143,7 @@ func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 
 	t.Run("DroppedForAStep", func(t *testing.T) {
 		for _, attr := range []FrameAttribution{{Step: true}} {
-			events, calls := hookCardCase(t, true, hookUpdateFrame(t, "probe", hookStatusCompleted), attr)
+			events, calls := hookCardCase(t, hookUpdateFrame(t, "probe", hookStatusCompleted), attr)
 			if hasEntryAppended(events, marotte.EntryKindToolCall) || len(calls) != 0 {
 				t.Errorf("attribution %+v produced events=%v calls=%d; want nothing", attr, hasEntryAppended(events, marotte.EntryKindToolCall), len(calls))
 			}
@@ -169,9 +169,9 @@ func TestHandleSessionInfoUpdate_HookCardSourcePath(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			frame := hookUpdateFrame(t, "probe", hookStatusCompleted)
-			frame["_meta"].(map[string]any)["kiro"].(map[string]any)["hook"].(map[string]any)["hookId"] = tc.hookID
+			hookBlock(frame)["hookId"] = tc.hookID
 			base, _ := newEventCaptureDeps()
-			roles := rolesOf(&hookStatusDeps{baseDeps: base, enabled: true})
+			roles := rolesOf(&hookTriggerDeps{baseDeps: base})
 			roles.WorkDir = tc.workDir
 			New(roles).HandleSessionInfoUpdate(t.Context(), "c1", mustJSON(t, frame), FrameAttribution{})
 			calls := toolCallsOf(t, base.chatEntries("c1"))
@@ -189,5 +189,68 @@ func TestHandleSessionInfoUpdate_HookCardSourcePath(t *testing.T) {
 func TestKnownSessionInfoKinds_HookUpdateIsConsumed(t *testing.T) {
 	if _, ok := knownSessionInfoKinds["hook_update"]; ok {
 		t.Fatal("knownSessionInfoKinds lists hook_update, which is consumed by handleHookUpdate")
+	}
+}
+
+func TestHandleSessionInfoUpdate_HookTriggerStamped(t *testing.T) {
+	triggers := map[string]string{"h1": "PreToolUse"}
+	t.Run("Resolved", func(t *testing.T) {
+		_, entries := hookEntriesCase(t, triggers, hookUpdateFrame(t, "guard", hookStatusCompleted), FrameAttribution{})
+		calls := toolCallsOf(t, entries)
+		if len(calls) != 1 || calls[0].HookTrigger != "PreToolUse" {
+			t.Fatalf("calls = %+v, want one card stamped PreToolUse", calls)
+		}
+	})
+	t.Run("MissStampsNothing", func(t *testing.T) {
+		frame := hookUpdateFrame(t, "guard", hookStatusCompleted)
+		hookBlock(frame)["hookId"] = "unknown#hook-0"
+		_, entries := hookEntriesCase(t, triggers, frame, FrameAttribution{})
+		calls := toolCallsOf(t, entries)
+		if len(calls) != 1 || calls[0].HookTrigger != "" {
+			t.Fatalf("calls = %+v, want one card with no trigger", calls)
+		}
+	})
+}
+
+func TestHandleSessionInfoUpdate_HookOutcome(t *testing.T) {
+	cases := map[string]struct {
+		output     any
+		wantStatus marotte.ToolStatus
+		wantOutput string
+	}{
+		"exit_code_fails":     {map[string]any{"command": "guard.sh", "result": map[string]any{"exitCode": 3}}, marotte.ToolFailed, ""},
+		"exit_zero_completes": {map[string]any{"command": "guard.sh", "result": map[string]any{"exitCode": 0}}, marotte.ToolCompleted, ""},
+		"output_recorded":     {map[string]any{"result": map[string]any{"output": "lint: \x1b[31m2 warnings\x1b[0m\n", "exitCode": 0}}, marotte.ToolCompleted, "lint: 2 warnings\n"},
+		"no_result":           {map[string]any{"command": "guard.sh"}, marotte.ToolCompleted, ""},
+		"malformed_output":    {"not an object", marotte.ToolCompleted, ""},
+		"malformed_exit_code": {map[string]any{"result": map[string]any{"exitCode": "3"}}, marotte.ToolCompleted, ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			frame := hookUpdateFrame(t, "guard", hookStatusCompleted)
+			hookBlock(frame)["output"] = tc.output
+			_, calls := hookCardCase(t, frame, FrameAttribution{})
+			if len(calls) != 1 {
+				t.Fatalf("buffered tool calls = %d, want 1: a hook card is never dropped for its output", len(calls))
+			}
+			if calls[0].Status != tc.wantStatus || calls[0].Output != tc.wantOutput {
+				t.Errorf("status %q output %q, want %q %q", calls[0].Status, calls[0].Output, tc.wantStatus, tc.wantOutput)
+			}
+		})
+	}
+}
+
+func TestHandleSessionInfoUpdate_SubagentHookInDelegateLane(t *testing.T) {
+	frame := hookUpdateFrame(t, "guard", hookStatusCompleted)
+	frame["_meta"].(map[string]any)["kiro"].(map[string]any)["agentSubtaskId"] = "sub-1"
+	_, entries := hookEntriesCase(t, nil, frame, FrameAttribution{})
+	var lanes []string
+	for i := range entries {
+		if entries[i].Kind == marotte.EntryKindToolCall {
+			lanes = append(lanes, entries[i].Lane)
+		}
+	}
+	if len(lanes) != 1 || lanes[0] != "sub-1" {
+		t.Fatalf("hook tool_call lanes = %q, want [sub-1]", lanes)
 	}
 }

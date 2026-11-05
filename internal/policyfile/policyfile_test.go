@@ -1,8 +1,6 @@
 package policyfile
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,62 +8,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/workspace"
+	"go.yaml.in/yaml/v4"
 )
-
-func TestWorkspaceHash(t *testing.T) {
-	// Mirrors KAS computeWorkspaceHash(normalizePath(abs)) on Linux:
-	// hex(sha256(abs))[:16].
-	dir := "/tmp/vk-ws"
-	want := hex.EncodeToString(func() []byte { s := sha256.Sum256([]byte(dir)); return s[:] }())[:16]
-	if got := workspaceHash(dir); got != want {
-		t.Errorf("WorkspaceHash(%q) = %q, want %q", dir, got, want)
-	}
-	if len(workspaceHash("/x")) != 16 {
-		t.Errorf("hash length != 16")
-	}
-	// A relative KIRO_WORK_DIR is resolved against the process cwd BEFORE it is
-	// hashed, so it lands on the same directory KAS computes for the absolute
-	// form. Asserting only that the hash is non-empty would pass for a hash of
-	// the relative text itself, which is the divergence that writes
-	// workspace-scope rules where KAS never reads them.
-	t.Run("a relative work dir hashes as its absolute form", func(t *testing.T) {
-		base := t.TempDir()
-		t.Chdir(base)
-		want := workspaceHash(filepath.Join(base, "rel"))
-		if got := workspaceHash("rel"); got != want {
-			t.Errorf("WorkspaceHash(%q) = %q, want %q (the hash of %q)",
-				"rel", got, want, filepath.Join(base, "rel"))
-		}
-	})
-}
-
-// TestWorkspaceHashGolden pins workspaceHash to a hardcoded value for the real
-// default workspace root (/workspace, KIRO_WORK_DIR's default). This is the
-// KAS-agreement contract: marotte must write workspace-scope permissions.yaml
-// under workspace-roots/<this hash>/ or KAS silently never reads the rules
-// (they persist but are never enforced). The literal is hex(sha256("/workspace"))[:16];
-// any change to the canonicalization or the hash breaks this test loudly
-// rather than diverging from KAS in silence.
-func TestWorkspaceHashGolden(t *testing.T) {
-	const golden = "c52ddf65534b7b46" // hex(sha256("/workspace"))[:16]
-	if got := workspaceHash("/workspace"); got != golden {
-		t.Errorf("WorkspaceHash(%q) = %q, want golden %q", "/workspace", got, golden)
-	}
-	// Non-canonical spellings of the SAME root must canonicalize (absolute,
-	// cleaned, no trailing slash) to the identical hash — otherwise a stray
-	// trailing slash or "/a/../b" form in KIRO_WORK_DIR would strand
-	// workspace-scope rules in a directory KAS never reads.
-	for _, variant := range []string{
-		"/workspace/",       // trailing slash
-		"/workspace/.",      // "." segment
-		"/workspace//",      // duplicate + trailing slash
-		"/tmp/../workspace", // ".." segment
-	} {
-		if got := workspaceHash(variant); got != golden {
-			t.Errorf("WorkspaceHash(%q) = %q, want %q (must canonicalize to /workspace)", variant, got, golden)
-		}
-	}
-}
 
 func TestPathFor(t *testing.T) {
 	home := "/home/u/.kiro"
@@ -75,7 +21,7 @@ func TestPathFor(t *testing.T) {
 		t.Errorf("user path = %q, err = %v", up, err)
 	}
 	wp, err := PathFor(ScopeWorkspace, Roots{KiroHome: home, WorkDir: wd})
-	wantWP := filepath.Join(home, "workspace-roots", workspaceHash(wd), "permissions.yaml")
+	wantWP := filepath.Join(home, "workspace-roots", workspace.SessionsBucket(wd), "permissions.yaml")
 	if err != nil || wp != wantWP {
 		t.Errorf("workspace path = %q, want %q, err = %v", wp, wantWP, err)
 	}
@@ -190,6 +136,29 @@ func TestSanitizeRule(t *testing.T) {
 	}
 	if len(got.Match) != 2 || got.Match[0] != "a" || got.Match[1] != "b" {
 		t.Errorf("sanitized match = %v, want [a b]", got.Match)
+	}
+}
+
+// TestSanitizeRule_AcceptsEvaluate admits the effect KAS accepts at user and workspace scope, so a
+// Custom user keeps an evaluate rule Customize copied and can edit or remove it.
+func TestSanitizeRule_AcceptsEvaluate(t *testing.T) {
+	got, err := SanitizeRule(&Rule{Capability: "all", Effect: EffectEvaluate})
+	if err != nil || got.Effect != EffectEvaluate {
+		t.Fatalf("SanitizeRule(all evaluate) = %+v, %v; want the rule kept", got, err)
+	}
+	var f File
+	if added, err := f.Upsert(&got); !added || err != nil {
+		t.Fatalf("Upsert(all evaluate) = %v, %v on an empty file", added, err)
+	}
+	ask := Rule{Capability: "all", Effect: EffectAsk}
+	if !f.ReplaceEffect(&got, EffectAsk) || len(f.Rules) != 1 || f.Rules[0].Effect != EffectAsk {
+		t.Fatalf("ReplaceEffect(evaluate -> ask) left %+v", f.Rules)
+	}
+	if !f.ReplaceEffect(&ask, EffectEvaluate) || f.Rules[0].Effect != EffectEvaluate {
+		t.Fatalf("ReplaceEffect(ask -> evaluate) left %+v", f.Rules)
+	}
+	if !f.Remove(&got) || len(f.Rules) != 0 {
+		t.Errorf("Remove(all evaluate) left %+v", f.Rules)
 	}
 }
 
@@ -407,6 +376,31 @@ func TestSignatureOrderIndependent(t *testing.T) {
 	}
 }
 
+// KAS keys a rule by a JSON string of its fields, so a pattern holding a comma is its own rule.
+func TestSignatureTellsACommaPatternFromTwoPatterns(t *testing.T) {
+	pairs := map[string][2]Rule{
+		"match": {
+			{Capability: "shell", Effect: "deny", Match: []string{"a,b"}},
+			{Capability: "shell", Effect: "deny", Match: []string{"a", "b"}},
+		},
+		"exclude": {
+			{Capability: "shell", Effect: "deny", Exclude: []string{"a,b"}},
+			{Capability: "shell", Effect: "deny", Exclude: []string{"a", "b"}},
+		},
+		"match into exclude": {
+			{Capability: "shell", Effect: "deny", Match: []string{"a|x:b"}},
+			{Capability: "shell", Effect: "deny", Match: []string{"a"}, Exclude: []string{"b"}},
+		},
+	}
+	for name, p := range pairs {
+		t.Run(name, func(t *testing.T) {
+			if signature(&p[0]) == signature(&p[1]) {
+				t.Errorf("%+v and %+v share a signature", p[0], p[1])
+			}
+		})
+	}
+}
+
 // --- ReplaceEffect (in-place effect editing) ---
 
 func TestReplaceEffect(t *testing.T) {
@@ -461,4 +455,162 @@ func TestReplaceEffect(t *testing.T) {
 			t.Errorf("rules = %+v, want single deny rule (no duplicate)", f.Rules)
 		}
 	})
+}
+
+func writeFixture(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// readRaw decodes the saved bytes generically, the way KAS's parser sees them.
+func readRaw(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("saved file does not parse: %v\n%s", err, data)
+	}
+	return doc
+}
+
+func rulesIn(t *testing.T, doc map[string]any) int {
+	t.Helper()
+	rules, ok := doc["rules"].([]any)
+	if !ok {
+		t.Fatalf("rules = %#v, want a list", doc["rules"])
+	}
+	return len(rules)
+}
+
+func TestLoadSave_KeepsTheKeysFileDoesNotEdit(t *testing.T) {
+	// policies is KAS's preset list; workspaceTrusted and workspaceTrustCase are the TUI's
+	// trust record in the workspace file.
+	path := filepath.Join(t.TempDir(), "permissions.yaml")
+	writeFixture(t, path, "policies:\n  - dev-shell\n"+
+		"rules:\n  - capability: shell\n    effect: ask\n"+
+		"workspaceTrusted: true\nworkspaceTrustCase: \"/Work/Space\"\n")
+	f, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, err := f.Upsert(&Rule{Capability: "web_fetch", Effect: "allow"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(t.Context(), path, f); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	doc := readRaw(t, path)
+	if got, ok := doc["policies"].([]any); !ok || !slices.Equal(got, []any{"dev-shell"}) {
+		t.Errorf("policies = %#v, want [dev-shell]", doc["policies"])
+	}
+	if doc["workspaceTrusted"] != true {
+		t.Errorf("workspaceTrusted = %#v, want true", doc["workspaceTrusted"])
+	}
+	if doc["workspaceTrustCase"] != "/Work/Space" {
+		t.Errorf("workspaceTrustCase = %#v, want /Work/Space", doc["workspaceTrustCase"])
+	}
+	if n := rulesIn(t, doc); n != 2 {
+		t.Errorf("rules = %d, want 2", n)
+	}
+}
+
+func TestLoad_RefusesADocumentItCannotRoundTrip(t *testing.T) {
+	for name, body := range map[string]string{
+		"a list at the top":   "- capability: shell\n  effect: ask\n",
+		"a duplicated key":    "policies: [a]\nrules: []\npolicies: [b]\n",
+		"a duplicated rules":  "rules: []\nrules:\n  - capability: shell\n    effect: ask\n",
+		"a scalar at the top": "allow everything\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "permissions.yaml")
+			writeFixture(t, path, body)
+			if _, err := Load(path); err == nil {
+				t.Error("Load succeeded, want an error so Save never rewrites the file")
+			}
+		})
+	}
+}
+
+func TestLoad_ReadsTheJSONSiblingKASWouldRead(t *testing.T) {
+	const jsonBody = `{"policies":["read-all"],"rules":[{"capability":"shell","effect":"deny","match":["rm *"]}]}`
+	t.Run("yaml absent", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFixture(t, filepath.Join(dir, jsonFilename), jsonBody)
+		yamlPath := filepath.Join(dir, filename)
+		f, err := Load(yamlPath)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if len(f.Rules) != 1 || f.Rules[0].Effect != "deny" {
+			t.Fatalf("rules = %+v, want the .json's deny rule", f.Rules)
+		}
+		if _, err := f.Upsert(&Rule{Capability: "web_fetch", Effect: "allow"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := Save(t.Context(), yamlPath, f); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		doc := readRaw(t, yamlPath)
+		if n := rulesIn(t, doc); n != 2 {
+			t.Errorf("saved .yaml rules = %d, want the .json's rule plus the new one", n)
+		}
+		if got, ok := doc["policies"].([]any); !ok || !slices.Equal(got, []any{"read-all"}) {
+			t.Errorf("saved .yaml policies = %#v, want the .json's [read-all]", doc["policies"])
+		}
+	})
+	t.Run("yaml blank", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFixture(t, filepath.Join(dir, filename), "  \n")
+		writeFixture(t, filepath.Join(dir, jsonFilename), jsonBody)
+		f, err := Load(filepath.Join(dir, filename))
+		if err != nil || len(f.Rules) != 1 {
+			t.Errorf("Load = %+v, %v, want the .json's one rule", f, err)
+		}
+	})
+	t.Run("yaml present", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFixture(t, filepath.Join(dir, filename), "rules: []\n")
+		writeFixture(t, filepath.Join(dir, jsonFilename), jsonBody)
+		f, err := Load(filepath.Join(dir, filename))
+		if err != nil || len(f.Rules) != 0 {
+			t.Errorf("Load = %+v, %v, want the .yaml's zero rules (it wins over the .json)", f, err)
+		}
+	})
+	t.Run("unparseable json", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFixture(t, filepath.Join(dir, jsonFilename), `{"rules": [`)
+		if _, err := Load(filepath.Join(dir, filename)); err == nil {
+			t.Error("Load succeeded, want an error so Save never shadows the .json with an empty .yaml")
+		}
+	})
+}
+
+func TestEditable(t *testing.T) {
+	const userFile = "/home/u/.kiro/settings/permissions.yaml"
+	for _, tc := range []struct {
+		name, scope, source, effect string
+		want                        bool
+	}{
+		{name: "a user file rule", scope: "user", source: userFile, effect: "allow", want: true},
+		{name: "a workspace file deny", scope: "workspace", source: "/k/workspace-roots/h/permissions.yaml", effect: "deny", want: true},
+		{name: "a user ask", scope: "user", source: userFile, effect: "ask", want: true},
+		{name: "a preset the user file references", scope: "user", source: "preset:dev-shell in " + userFile, effect: "allow"},
+		{name: "an evaluate rule in the user file", scope: "user", source: userFile, effect: "evaluate", want: true},
+		{name: "an effect the writer does not know", scope: "user", source: userFile, effect: "prompt"},
+		{name: "a session preset", scope: "session", source: "preset:allow-all", effect: "allow"},
+		{name: "an agent profile rule", scope: "agent", source: "agent-profile", effect: "allow"},
+		{name: "the kiro baseline", scope: "kiro", source: "kiro-scope", effect: "deny"},
+		{name: "an organization rule", scope: "organization", source: "org", effect: "deny"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Editable(tc.scope, tc.source, tc.effect); got != tc.want {
+				t.Errorf("Editable(%q, %q, %q) = %v, want %v", tc.scope, tc.source, tc.effect, got, tc.want)
+			}
+		})
+	}
 }

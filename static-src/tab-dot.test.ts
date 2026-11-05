@@ -304,6 +304,8 @@ vi.mock("./api-client.js", () =>
       apiGetTypedOrError: vi.fn(),
       // Reached through tabs.ts -> files-shared.ts; no case here lists a directory.
       apiGet: vi.fn(),
+      // Reached through notice-subject.ts's run read; no case here opens a run-end toast.
+      apiGetOrError: vi.fn(),
     };
   }),
 );
@@ -2065,7 +2067,7 @@ describe("the dock's own signal repaints the launching chat's row", () => {
 
   /** The dot half of chat.ts's row effect: the dock read IS the subscription. */
   async function installRowEffect(chatID: string, tabID: string): Promise<() => void> {
-    const { effect } = await import("@cplieger/reactive");
+    const { effect } = await import("@cplieger/ui");
     const { hasPendingDecision } = await import("./decision-dock.js");
     const { setTabStatus } = await import("./tabs.js");
     return effect(() => {

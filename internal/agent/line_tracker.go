@@ -3,10 +3,10 @@ package agent
 import (
 	"net/http"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/buffer"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/webhttp/v4"
 )
 
 func (rt *Runtime) handleFileChanges(w http.ResponseWriter, r *http.Request) {
@@ -28,5 +28,5 @@ func (rt *Runtime) handleFileChanges(w http.ResponseWriter, r *http.Request) {
 	if ranges == nil {
 		ranges = []buffer.LineRange{}
 	}
-	webhttp.WriteJSON(w, map[string]any{"changes": ranges})
+	httpserver.WriteJSON(w, map[string]any{"changes": ranges})
 }

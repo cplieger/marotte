@@ -166,6 +166,7 @@ func TestSequence_MCPStatus_RecordsConnection(t *testing.T) {
 	// v3 consolidated MCP status: a "connected" server records a connection.
 	tr.HandleMCPStatus(t.Context(), "", &marotte.RPCResponse{
 		Params: mustJSON(t, map[string]any{
+			"sessionId": "s1",
 			"servers": []map[string]any{
 				{"name": "github", "status": "connected"},
 			},
@@ -173,7 +174,7 @@ func TestSequence_MCPStatus_RecordsConnection(t *testing.T) {
 	})
 
 	if recorded != "github" {
-		t.Errorf("RecordConnected called with %q, want %q", recorded, "github")
+		t.Errorf("connected server = %q, want %q", recorded, "github")
 	}
 }
 
@@ -186,9 +187,10 @@ func TestSequence_MCPStatus_RoutesDisabledToTheRecorder(t *testing.T) {
 
 	tr.HandleMCPStatus(t.Context(), "", &marotte.RPCResponse{
 		Params: mustJSON(t, map[string]any{
+			"sessionId": "s1",
 			"servers": []map[string]any{
 				{"name": "off-server", "status": "disabled"},
-				// "connecting" is transient: discarded, or a row would be painted the next frame replaces.
+				// "connecting" is transient: the recorder keeps the session's previous entry for it.
 				{"name": "starting-server", "status": "connecting"},
 				// A nameless entry is unaddressable and skipped before the switch.
 				{"name": "", "status": "disabled"},
@@ -197,7 +199,7 @@ func TestSequence_MCPStatus_RoutesDisabledToTheRecorder(t *testing.T) {
 	})
 
 	if len(disabled) != 1 || disabled[0] != "off-server" {
-		t.Errorf("RecordDisabled calls = %v, want just [off-server]", disabled)
+		t.Errorf("disabled servers = %v, want just [off-server]", disabled)
 	}
 }
 
@@ -212,6 +214,7 @@ func TestSequence_MCPStatus_CapturesToolsPromptsAndResources(t *testing.T) {
 
 	tr.HandleMCPStatus(t.Context(), "", &marotte.RPCResponse{
 		Params: mustJSON(t, map[string]any{
+			"sessionId": "s1",
 			"servers": []map[string]any{
 				{
 					"name":   "everything",
@@ -263,6 +266,7 @@ func TestSequence_MCPStatus_CapturesResourceTemplates(t *testing.T) {
 
 	tr.HandleMCPStatus(t.Context(), "", &marotte.RPCResponse{
 		Params: mustJSON(t, map[string]any{
+			"sessionId": "s1",
 			"servers": []map[string]any{{
 				"name":   "everything",
 				"status": "connected",
@@ -282,6 +286,7 @@ func TestSequence_MCPStatus_CapturesResourceTemplates(t *testing.T) {
 
 type mcpCaptureDeps struct {
 	*baseDeps
+	frames    *[]capturedMCPFrame
 	connected *string
 	tools     *[]string
 	prompts   *[]marotte.MCPPromptInfo
@@ -295,50 +300,27 @@ type mcpCaptureDeps struct {
 
 func (d *mcpCaptureDeps) MCPRecorder() mcpRecorder {
 	return &captureMCPRecorder{
-		connected: d.connected, tools: d.tools, prompts: d.prompts,
+		frames: d.frames, connected: d.connected, tools: d.tools, prompts: d.prompts,
 		resources: d.resources, templates: d.templates, disabled: d.disabled, failures: d.failures,
 		oauth: d.oauth, sources: d.sources,
 	}
 }
 
-// A status frame lists every server, so the pool it yields is the whole set: a
-// server that is not connected, or offers nothing to read, is not in it.
-func TestReadMCPPool_IsTheConnectedServersWithSomethingToRead(t *testing.T) {
-	msg := &marotte.RPCResponse{Params: mustJSON(t, map[string]any{"servers": []map[string]any{
-		{"name": "docs", "status": "connected", "resources": []map[string]any{{"name": "a", "uri": "a://x"}}},
-		{"name": "tmpl", "status": "connected", "resourceTemplates": []map[string]any{{"name": "t", "uriTemplate": "t://{id}"}}},
-		{"name": "bare", "status": "connected"},
-		{"name": "down", "status": "failed", "resources": []map[string]any{{"name": "d", "uri": "d://x"}}},
-	}})}
-	got, ok := ReadMCPPool(msg)
-	if !ok {
-		t.Fatal("ReadMCPPool(valid frame) ok = false, want true")
-	}
-	var names []string
-	for _, s := range got {
-		names = append(names, s.Name)
-	}
-	if want := []string{"docs", "tmpl"}; !slices.Equal(names, want) {
-		t.Errorf("ReadMCPPool servers = %v, want %v", names, want)
-	}
-
-	empty, ok := ReadMCPPool(&marotte.RPCResponse{Params: mustJSON(t, map[string]any{"servers": []any{}})})
-	if !ok || len(empty) != 0 {
-		t.Errorf("ReadMCPPool(no servers) = %v, %t; want empty, true", empty, ok)
-	}
-	if _, ok := ReadMCPPool(&marotte.RPCResponse{Params: []byte("not json")}); ok {
-		t.Error("ReadMCPPool(undecodable frame) ok = true, want false")
-	}
-}
-
-// mcpFailure is one RecordInitFailure call, so a test can read the reason the
-// handler chose rather than only that a failure was recorded.
+// mcpFailure is one failed server in a recorded frame, so a test can read the reason
+// the handler chose rather than only that a failure was recorded.
 type mcpFailure struct {
 	name   string
 	reason string
 }
 
+// capturedMCPFrame is one RecordSessionStatus call.
+type capturedMCPFrame struct {
+	session marotte.SessionID
+	status  MCPSessionStatus
+}
+
 type captureMCPRecorder struct {
+	frames    *[]capturedMCPFrame
 	connected *string
 	tools     *[]string
 	prompts   *[]marotte.MCPPromptInfo
@@ -350,49 +332,50 @@ type captureMCPRecorder struct {
 	sources   map[string]marotte.MCPSource
 }
 
-func (r *captureMCPRecorder) source(name string, src marotte.MCPSource) {
-	if r.sources != nil {
-		r.sources[name] = src
+// RecordSessionStatus fans the frame out by state, so each test reads only what it pins.
+func (r *captureMCPRecorder) RecordSessionStatus(_ context.Context, sessionID marotte.SessionID, status MCPSessionStatus) {
+	if r.frames != nil {
+		*r.frames = append(*r.frames, capturedMCPFrame{session: sessionID, status: status})
+	}
+	for _, s := range status.Servers {
+		if r.sources != nil {
+			r.sources[s.Name] = s.Source
+		}
+		switch s.State {
+		case MCPReportConnected:
+			r.connectedReport(s)
+		case MCPReportNeedsAuth:
+			if r.oauth != nil {
+				*r.oauth = append(*r.oauth, s.Name)
+			}
+		case MCPReportFailed:
+			if r.failures != nil {
+				*r.failures = append(*r.failures, mcpFailure{name: s.Name, reason: s.Error})
+			}
+		case MCPReportDisabled:
+			if r.disabled != nil {
+				*r.disabled = append(*r.disabled, s.Name)
+			}
+		case MCPReportConnecting:
+		}
 	}
 }
 
-func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string, src marotte.MCPSource, tools []string, prompts []marotte.MCPPromptInfo, resources []marotte.MCPResourceInfo, templates []marotte.MCPResourceTemplateInfo) {
-	r.source(name, src)
+func (r *captureMCPRecorder) connectedReport(s MCPServerReport) {
 	if r.connected != nil {
-		*r.connected = name
+		*r.connected = s.Name
 	}
 	if r.tools != nil {
-		*r.tools = tools
+		*r.tools = s.Tools
 	}
 	if r.prompts != nil {
-		*r.prompts = prompts
+		*r.prompts = s.Prompts
 	}
 	if r.resources != nil {
-		*r.resources = resources
+		*r.resources = s.Resources
 	}
 	if r.templates != nil {
-		*r.templates = templates
-	}
-}
-
-func (r *captureMCPRecorder) RecordOAuth(_ context.Context, name string, src marotte.MCPSource, _ string) {
-	r.source(name, src)
-	if r.oauth != nil {
-		*r.oauth = append(*r.oauth, name)
-	}
-}
-
-func (r *captureMCPRecorder) RecordInitFailure(_ context.Context, name string, src marotte.MCPSource, reason string) {
-	r.source(name, src)
-	if r.failures != nil {
-		*r.failures = append(*r.failures, mcpFailure{name: name, reason: reason})
-	}
-}
-
-func (r *captureMCPRecorder) RecordDisabled(_ context.Context, name string, src marotte.MCPSource) {
-	r.source(name, src)
-	if r.disabled != nil {
-		*r.disabled = append(*r.disabled, name)
+		*r.templates = s.ResourceTemplates
 	}
 }
 

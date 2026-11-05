@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   describeSpec,
   describeOutcome,
@@ -13,6 +13,16 @@ import {
 import { buildRunDefaultsPicker } from "./run-defaults-picker.js";
 import { LAST_DAY, INTERVAL_BOUNDS } from "./schedule-types.js";
 import type { ScheduleFreq, ScheduleSpec, ScheduleView } from "./schedule-types.js";
+import {
+  restoreBrowserLanguages,
+  setBrowserLanguages,
+} from "./__test-helpers__/browser-languages.js";
+
+// Clock expectations below are 24-hour, so every case reads under fr-FR; locale-times.test.ts pins en-US.
+beforeEach(() => {
+  setBrowserLanguages(["fr-FR"]);
+});
+afterEach(restoreBrowserLanguages);
 
 // The summary sentence is the only way a user can confirm the rule they built means what they
 // intended, so it is pinned independently of the DOM.
@@ -283,6 +293,14 @@ describe("the unattended note", () => {
     expect(text).not.toContain("refused");
   });
 
+  it("states that a pause nobody resumes ends the run, whatever the setting", () => {
+    for (const on of [true, false]) {
+      expect(buildUnattendedNote(on, vi.fn()).textContent).toContain(
+        "If the run pauses and nobody resumes it within 3 minutes, it is cancelled.",
+      );
+    }
+  });
+
   it("says the setting is global in both states", () => {
     for (const on of [true, false]) {
       expect(buildUnattendedNote(on, vi.fn()).textContent).toContain(
@@ -356,6 +374,13 @@ describe("describeOutcome", () => {
     expect(out).toBe(`last started ${formatStamp("2026-08-10T02:00:00+02:00")}`);
   });
 
+  it("reports a run that finished on its own terms as completed, with when", () => {
+    const out = describeOutcome(
+      view({ last_status: "completed", last_run_at: "2026-08-10T02:00:00+02:00" }),
+    );
+    expect(out).toBe(`last completed ${formatStamp("2026-08-10T02:00:00+02:00")}`);
+  });
+
   // The reason is the actionable half, because it names the fix, so it is kept whole rather than
   // reduced to the word "failed".
   it("leads with the word failed and keeps the reason", () => {
@@ -400,6 +425,19 @@ describe("describeOutcome", () => {
     ).toBe("last: by hand");
   });
 
+  // A slot the engine never answered was not a failure, so it does not read as one.
+  it("names a slot skipped for a busy engine as skipped, with its reason", () => {
+    expect(
+      describeOutcome(
+        view({
+          last_status: "skipped",
+          last_reason: "engine busy",
+          last_run_at: "2026-08-10T02:00:00+02:00",
+        }),
+      ),
+    ).toBe(`last skipped ${formatStamp("2026-08-10T02:00:00+02:00")}: engine busy`);
+  });
+
   it("drops the stamp when the server sent no last-run time", () => {
     expect(describeOutcome(view({ last_status: "started" }))).toBe("last started");
   });
@@ -441,6 +479,23 @@ describe("summaryLine", () => {
     expect(line.indexOf("Every day at 02:00")).toBeLessThan(line.indexOf("next "));
     expect(line.indexOf("next ")).toBeLessThan(line.indexOf("last failed"));
     expect(line).toContain("needed approval for fs_write");
+  });
+
+  // While a slot waits on the engine, the row says so between the next run and the last outcome,
+  // which stays the previous slot's until this one ends.
+  it("says a slot is waiting on the agent engine", () => {
+    const line = summaryLine(
+      view({
+        next_run_at: "2026-08-11T02:00:00+02:00",
+        waiting_for: "2026-08-10T02:00:00+02:00",
+        last_status: "completed",
+        last_run_at: "2026-08-09T02:00:00+02:00",
+      }),
+    );
+    const waiting = `the ${formatStamp("2026-08-10T02:00:00+02:00")} run is waiting on the agent engine`;
+    expect(line).toContain(waiting);
+    expect(line.indexOf("next ")).toBeLessThan(line.indexOf(waiting));
+    expect(line.indexOf(waiting)).toBeLessThan(line.indexOf("last completed"));
   });
 
   it("shows the outcome even when no next run resolved", () => {

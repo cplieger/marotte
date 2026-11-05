@@ -4,12 +4,17 @@
 
 import type { ToolStatus, ToolDiff, TextSpan, ToolCall } from "./types.js";
 import type { ToolDenial, ToolDisclosed, ToolInteraction, ToolOffload } from "./types.js";
+import type { MCPToolIdentity } from "./wire/types.gen.js";
 
 export interface BuildToolCardOpts {
   id: string;
   title: string;
   kind: string;
   status: ToolStatus;
+  /** The built-in tool's id the server named; absent when it named none. */
+  toolName?: string;
+  /** The MCP server and tool the server named. */
+  mcp?: MCPToolIdentity;
   input?: Record<string, unknown>;
   output?: string;
   /** Style spans for `output`, parsed server-side. */
@@ -30,6 +35,10 @@ export interface BuildToolCardOpts {
   /** The tool RAN CORRECTLY AND REFUSED; `status` stays `completed` and the reason is
    *  the tool's own `output`. */
   declined?: boolean;
+  /** Kiro's safety check let the call run with no ask. */
+  classifierApproved?: boolean;
+  /** Why Kiro's safety check handed the call to a person. */
+  classifierNote?: string;
   /** The workspace-relative file a hook card's hook is defined in. */
   sourcePath?: string;
   /** `input`, `output` and `diffs` are a PREVIEW of `GET /api/chats/{id}/tools/{id}`;
@@ -58,6 +67,12 @@ export function toolCardOptsFor(tc: ToolCall, live: boolean, chatID = ""): Build
   };
   if (chatID !== "") {
     opts.chatID = chatID;
+  }
+  if (tc.tool_name !== undefined && tc.tool_name !== "") {
+    opts.toolName = tc.tool_name;
+  }
+  if (tc.mcp !== undefined) {
+    opts.mcp = tc.mcp;
   }
   if (tc.has_full === true) {
     opts.hasFull = true;
@@ -92,6 +107,12 @@ export function toolCardOptsFor(tc: ToolCall, live: boolean, chatID = ""): Build
   }
   if (tc.declined === true) {
     opts.declined = true;
+  }
+  if (tc.classifier_approved === true) {
+    opts.classifierApproved = true;
+  }
+  if (tc.classifier_note !== undefined && tc.classifier_note !== "") {
+    opts.classifierNote = tc.classifier_note;
   }
   if (tc.source_path !== undefined && tc.source_path !== "") {
     opts.sourcePath = tc.source_path;

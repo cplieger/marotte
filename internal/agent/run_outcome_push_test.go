@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,11 +14,14 @@ import (
 type runOutcomePush struct {
 	sent    chan runPushSent
 	subject marotte.PushSubject
+	mu      sync.Mutex
+	ctxs    []context.Context // each Send's ctx, read after the sender returned
 }
 
 type runPushSent struct {
 	title   string
 	body    string
+	ask     string
 	kind    marotte.PushKind
 	subject marotte.PushSubject
 }
@@ -30,13 +34,29 @@ func (*runOutcomePush) HasSubscribers() bool                     { return true }
 func (*runOutcomePush) SetPreferences(map[marotte.PushKind]bool) {}
 func (*runOutcomePush) Preferences() map[marotte.PushKind]bool   { return nil }
 func (*runOutcomePush) Close()                                   {}
-func (*runOutcomePush) Retract(marotte.PushSubject)              {}
-func (p *runOutcomePush) Send(_ context.Context, n *marotte.NotificationPayload) {
+func (*runOutcomePush) Retract(marotte.PushSubject, string)      {}
+func (p *runOutcomePush) Send(ctx context.Context, n *marotte.NotificationPayload) {
+	p.mu.Lock()
+	p.ctxs = append(p.ctxs, ctx)
+	p.mu.Unlock()
 	p.subject = n.PushSubject
 	select {
-	case p.sent <- runPushSent{title: n.Title, body: n.Body, kind: n.Kind, subject: n.PushSubject}:
+	case p.sent <- runPushSent{title: n.Title, body: n.Body, ask: n.Ask, kind: n.Kind, subject: n.PushSubject}:
 	default:
 	}
+}
+
+// canceledSends counts the sends whose ctx is canceled now: a push whose POST would fail with context canceled.
+func (p *runOutcomePush) canceledSends() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, ctx := range p.ctxs {
+		if ctx.Err() != nil {
+			n++
+		}
+	}
+	return n
 }
 
 func newRunPushHub(t *testing.T) (*Runtime, *runOutcomePush) {
@@ -207,7 +227,8 @@ func TestRunAsks_NotifiesTheStepsQuestion(t *testing.T) {
 	got := awaitRunPush(t, fp)
 	want := runPushSent{
 		title: "code-review", body: "Input required · reviewer: Merge it?",
-		kind: marotte.PushKindPermission, subject: marotte.RunAskSubject(askPosition("wf_1", &ask)),
+		ask: askPosition("wf_1", &ask), kind: marotte.PushKindPermission,
+		subject: marotte.RunAskSubject(askPosition("wf_1", &ask)),
 	}
 	if got != want {
 		t.Errorf("step question pushed %+v, want %+v", got, want)

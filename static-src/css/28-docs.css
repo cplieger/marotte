@@ -167,9 +167,10 @@
 
 /* --- Workflows tab -------------------------------------------------------- */
 
-/* Cancel is a stop: it reads as destructive, same as every other danger
-   control. */
-.recipe-run-btn.danger {
+/* Cancel is a stop and an orphaned schedule's Delete removes it: both read as
+   destructive, same as every other danger control. */
+.recipe-run-btn.danger,
+.recipe-sched-delete-btn {
   color: var(--c-red);
   border-color: color-mix(in oklch, var(--c-red) 40%, transparent);
 
@@ -180,7 +181,8 @@
 }
 
 /* The inline input form: the `.entry-detail` region under its row, deliberately
-   not a modal. One labelled field per declared input, then Launch. The region is
+   not a modal. One labelled field per declared input, the run's picks, its
+   plan, then Launch. The region is
    the box, so the form carries only its inset, on the row's own inline inset so
    the fields align with the title above them. */
 .recipe-input-form {
@@ -189,6 +191,27 @@
   gap: var(--sp-2);
   align-items: end;
   padding: var(--sp-3) var(--sp-4);
+}
+
+/* The read-only plan, on a line of its own in front of Launch. Capped at about
+   eight tree rows and scrolled past that, so a long recipe cannot push Launch
+   off-screen. */
+.recipe-plan {
+  flex: 1 0 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-inline-size: 0;
+}
+
+.recipe-plan-head {
+  font-size: var(--fs-form-label);
+  color: var(--c-text-secondary);
+}
+
+.recipe-plan-steps {
+  max-block-size: calc(8 * var(--row-tap));
+  overflow-y: auto;
 }
 
 .recipe-input-label {
@@ -204,7 +227,7 @@
    button, and every control in one row takes one height. */
 .recipe-input {
   min-width: 14rem;
-  min-block-size: var(--btn-h);
+  min-block-size: var(--field-h);
   padding: var(--sp-1) var(--sp-2);
   background: var(--c-bg-primary);
   color: var(--c-text-primary);
@@ -242,7 +265,7 @@
 }
 
 .run-pick-select {
-  min-block-size: var(--btn-h);
+  min-block-size: var(--field-h);
   padding: var(--sp-1) var(--sp-2);
   background: var(--c-bg-primary);
   color: var(--c-text-primary);
@@ -257,7 +280,7 @@
 
 /* The schedule form's controls are dense. */
 .sched-row .run-pick-select {
-  min-block-size: var(--ctl-h-dense);
+  min-block-size: var(--field-h-dense);
   background: var(--c-bg-secondary);
   border-radius: var(--r-sm);
 }
@@ -305,7 +328,7 @@
 .sched-monthday,
 .sched-time,
 .sched-num {
-  min-block-size: var(--ctl-h-dense);
+  min-block-size: var(--field-h-dense);
   font: inherit;
   color: var(--c-text-primary);
   background: var(--c-bg-secondary);
@@ -323,9 +346,10 @@
   color: var(--c-text-secondary);
 }
 
+/* 1.75rem chips: on touch, the gap is what their targets meet across. */
 .sched-days {
   display: flex;
-  gap: var(--sp-1);
+  gap: max(var(--sp-1), calc(var(--hit-floor) - 1.75rem));
 }
 
 /* Weekday chips are a multi-select, so each carries aria-pressed and the
@@ -442,7 +466,10 @@
 .memories-lead {
   display: flex;
   align-items: center;
-  padding-inline-start: var(--sp-3);
+
+  /* The end padding, with the row's --sp-3 gap, is where the 1rem box's target meets the
+     open target beside it. */
+  padding-inline: var(--sp-3) max(0px, calc(var(--hit-floor) / 2 - 0.5rem - var(--sp-3)));
 }
 
 .memories-detail {

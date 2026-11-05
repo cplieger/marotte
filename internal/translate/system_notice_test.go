@@ -2,8 +2,10 @@ package translate
 
 import (
 	"encoding/json"
+	"log/slog"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -72,6 +74,34 @@ func TestHandleSystemNotify_CarriesTheChatsNameWhenRaised(t *testing.T) {
 	}
 	if got := (*events)[1].Payload.(marotte.SystemNoticePayload).ChatName; got != "" {
 		t.Errorf("run notice ChatName = %q, want empty", got)
+	}
+}
+
+// TestHandleSystemNotify_OffAChatLaneReadsNoChatRecord pins the engine lane's and an observer pass's "" and a run
+// host lane's run key as no chat: the notice goes out unnamed and the store logs no failed read. Serial: slog's
+// default is process-global.
+func TestHandleSystemNotify_OffAChatLaneReadsNoChatRecord(t *testing.T) {
+	store, err := chat.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	deps, events := newEventCaptureDeps()
+	deps.store = store
+	tr := New(rolesOf(deps))
+	rec := capture.Default(t)
+	for _, lane := range []marotte.ChatID{"", "run:wf_1"} {
+		tr.HandleSystemNotify(t.Context(), lane, systemNotifyFrame(t, "warning", "High load"))
+	}
+	if n := rec.CountLevel(slog.LevelError, "chat get"); n != 0 {
+		t.Errorf("HandleSystemNotify off a chat lane logged %d %q errors, want 0", n, "chat get")
+	}
+	if len(*events) != 2 {
+		t.Fatalf("broadcast %d events, want 2", len(*events))
+	}
+	for i, e := range *events {
+		if p := e.Payload.(marotte.SystemNoticePayload); p.ChatName != "" || p.Message != "High load" {
+			t.Errorf("notice %d = %+v, want the message with no chat name", i, p)
+		}
 	}
 }
 

@@ -11,7 +11,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/keyenc"
+	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
@@ -29,6 +29,8 @@ type stepVerbCase struct {
 	Refusal marotte.RunStepMessageRefusal `json:"refusal"`
 	Session bool                          `json:"session"`
 	Asked   bool                          `json:"asked"`
+	// Siblings is whether another step of the run is running.
+	Siblings bool `json:"siblings"`
 }
 
 func TestStepMessageVerb_PicksTheVerbFromTheLiveState(t *testing.T) {
@@ -42,7 +44,7 @@ func TestStepMessageVerb_PicksTheVerbFromTheLiveState(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.ID, func(t *testing.T) {
-			now := stepNow{status: tc.Node, run: tc.Run}
+			now := stepNow{status: tc.Node, run: tc.Run, siblingsRunning: tc.Siblings}
 			if tc.Session {
 				now.at.session = "s"
 			}
@@ -84,7 +86,7 @@ func messageHub(t *testing.T, run marotte.RunStatus, step marotte.RunNodeStatus)
 	t.Helper()
 	h, _, br := newTestHub()
 	h.runs.log = newRunLog(t.TempDir())
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 	br.setCallResult(methodKiroWorkflowInspect, oneStepInspect(t, run, step, "sess_step"))
 	br.setCallResult(marotte.MethodSessionSteer, json.RawMessage(`{"queued":true}`))
 	h.runs.RunNodeStart(t.Context(), reviewStep("sess_step"), "")
@@ -123,7 +125,7 @@ func stepSteersAt(t *testing.T, h *Runtime, workflowID string) []marotte.EntrySt
 func TestMessageStep_SteersARunningStepOnItsOwnSession(t *testing.T) {
 	h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
 
-	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "  use the fixture  ", "m-abc", "")
+	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "  use the fixture  ", "m-abc", "", nil)
 	if err != nil {
 		t.Fatalf("MessageStep = %v, want nil", err)
 	}
@@ -142,7 +144,7 @@ func TestMessageStep_SteersARunningStepOnItsOwnSession(t *testing.T) {
 func TestMessageStep_ResumesAPausedStepWithALabelledPromptAndRecordsIt(t *testing.T) {
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 
-	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-1", "")
+	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-1", "", nil)
 	if err != nil {
 		t.Fatalf("MessageStep = %v, want nil", err)
 	}
@@ -158,8 +160,10 @@ func TestMessageStep_ResumesAPausedStepWithALabelledPromptAndRecordsIt(t *testin
 	if kiro["displayText"] != "carry on" {
 		t.Errorf("_meta.kiro = %v, want displayText carrying the words", kiro)
 	}
-	if _, ok := kiro["contextBreakdown"]; ok {
-		t.Errorf("_meta.kiro = %v, want no contextBreakdown on a step's prompt", kiro)
+	for _, key := range []string{"contextBreakdown", "ttft"} {
+		if _, ok := kiro[key]; ok {
+			t.Errorf("_meta.kiro = %v, want no %s on a step's prompt", kiro, key)
+		}
 	}
 	got := stepSteersIn(t, h)
 	want := []marotte.EntrySteer{{Text: "carry on", Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead}}
@@ -180,7 +184,7 @@ func askHub(t *testing.T) (*Runtime, *fakeBridge) {
 func TestMessageStep_AnswersAnOpenAskThroughTheAnswerPath(t *testing.T) {
 	h, br := askHub(t)
 
-	out, err := h.runs.messageStep(t.Context(), "wf_1", workflow.PathKey([]string{"root", "review"}), "the main branch", "m-2", "")
+	out, err := h.runs.messageStep(t.Context(), "wf_1", workflow.PathKey([]string{"root", "review"}), "the main branch", "m-2", "", nil)
 	if err != nil {
 		t.Fatalf("MessageStep = %v, want nil", err)
 	}
@@ -207,7 +211,7 @@ func TestMessageStep_AnAnswerToAnOlderAskIsStale(t *testing.T) {
 
 	older := keyenc.Join(keyenc.Join("wf_1", path, "sess_step"), "older")
 
-	_, err := h.runs.messageStep(t.Context(), "wf_1", path, "the main branch", "m-2", older)
+	_, err := h.runs.messageStep(t.Context(), "wf_1", path, "the main branch", "m-2", older, nil)
 	if !errors.Is(err, errAskStale) {
 		t.Fatalf("MessageStep against an older ask = %v, want errAskStale", err)
 	}
@@ -271,7 +275,7 @@ func TestMessageStep_AFanOutPathRoutesByTheAskNamed(t *testing.T) {
 			br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused, tc.steps...))
 			askID := tc.pick(readNow(t, h, "wf_1").asks)
 
-			out, err := h.runs.messageStep(t.Context(), "wf_1", path, "the main branch", "m-fan", askID)
+			out, err := h.runs.messageStep(t.Context(), "wf_1", path, "the main branch", "m-fan", askID, nil)
 
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
@@ -322,7 +326,7 @@ func TestMessageStep_WordsForAnAskItsStepNoLongerHoldsAreGone(t *testing.T) {
 			}
 			br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", tc.run, tc.now))
 
-			_, err := h.runs.messageStep(t.Context(), "wf_1", path, "the main branch", "m-late", tc.pick(asks[0]))
+			_, err := h.runs.messageStep(t.Context(), "wf_1", path, "the main branch", "m-late", tc.pick(asks[0]), nil)
 
 			if !errors.Is(err, errAskGone) {
 				t.Errorf("MessageStep = %v, want errAskGone", err)
@@ -345,7 +349,7 @@ func TestMessageStep_AFinishedSiblingLeavesTheLiveExecutionAddressable(t *testin
 		askStepNode{id: "review", status: "completed", session: "sess_done"},
 		askStepNode{id: "review", status: "running", session: "sess_step"}))
 
-	out, err := h.runs.messageStep(t.Context(), "wf_1", workflow.PathKey([]string{"root", "review"}), "use the fixture", "m-live", "")
+	out, err := h.runs.messageStep(t.Context(), "wf_1", workflow.PathKey([]string{"root", "review"}), "use the fixture", "m-live", "", nil)
 
 	if err != nil || out.Verb != marotte.RunStepMessageSteer {
 		t.Fatalf("MessageStep = %q, %v; want a steer", out.Verb, err)
@@ -355,10 +359,55 @@ func TestMessageStep_AFinishedSiblingLeavesTheLiveExecutionAddressable(t *testin
 	}
 }
 
+func TestStepsAt_SiblingsRunningCountsOnlyOtherExecutions(t *testing.T) {
+	steps := []workflow.StepSession{
+		{NodeID: "review", SessionID: "sess_a", Status: "running", Path: reviewSegments},
+		{NodeID: "review", SessionID: "sess_b", Status: "paused", Path: reviewSegments},
+		{NodeID: "build", SessionID: "sess_c", Status: "completed", Path: []string{"root", "build"}},
+	}
+	n := runNow{workflowID: "wf_1", run: marotte.RunStatusRunning, steps: steps}
+	got := map[string]bool{}
+	for _, s := range n.stepsAt(reviewPath) {
+		got[s.at.session] = s.siblingsRunning
+	}
+	if want := map[string]bool{"sess_a": false, "sess_b": true}; !reflect.DeepEqual(got, want) {
+		t.Errorf("siblingsRunning by session = %v, want %v: a step's own status never counts", got, want)
+	}
+}
+
+// The refusal is read from the run's tree, not handed in: the paused step's sibling is what makes it
+// waits_on_run, and the same step with that sibling finished is busy.
+func TestMessageStep_APausedStepBesideARunningSiblingWaitsOnTheRun(t *testing.T) {
+	for _, tc := range []struct {
+		sibling, want string
+	}{
+		{sibling: "running", want: string(marotte.RunStepWaitsOnRun)},
+		{sibling: "completed", want: string(marotte.RunStepBusy)},
+	} {
+		t.Run(tc.sibling, func(t *testing.T) {
+			h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusPaused)
+			br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusRunning,
+				askStepNode{id: "review", status: "paused", session: "sess_step", signal: "success"},
+				askStepNode{id: "build", status: tc.sibling, session: "sess_build"}))
+
+			_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "are you done?", "m-wait-"+tc.sibling, "", nil)
+
+			rec := httptest.NewRecorder()
+			h.runRoutes.writeStepErr(rec, "message", "wf_1", reviewPath, err)
+			if rec.Code != http.StatusConflict || reasonOf(t, rec.Body.Bytes()) != tc.want {
+				t.Errorf("reply = %d %s, want 409 with reason %s", rec.Code, rec.Body.String(), tc.want)
+			}
+			if calls := br.callLog(); slices.Contains(calls, marotte.MethodPrompt) || slices.Contains(calls, marotte.MethodSessionSteer) {
+				t.Errorf("calls = %v, want nothing sent to a step KAS would not admit", calls)
+			}
+		})
+	}
+}
+
 func TestMessageStep_RefusesAFinishedStepWithItsReason(t *testing.T) {
 	h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusCompleted)
 
-	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "too late", "m-3", "")
+	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "too late", "m-3", "", nil)
 
 	rec := httptest.NewRecorder()
 	h.runRoutes.writeStepErr(rec, "message", "wf_1", reviewPath, err)
@@ -372,7 +421,7 @@ func TestMessageStep_RefusesAFinishedStepWithItsReason(t *testing.T) {
 
 func TestMessageStep_RefusesANotificationShapedMessage(t *testing.T) {
 	h, _ := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
-	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "[notification/info] hi", "m-4", "")
+	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "[notification/info] hi", "m-4", "", nil)
 	rec := httptest.NewRecorder()
 	h.runRoutes.writeStepErr(rec, "message", "wf_1", reviewPath, err)
 	if rec.Code != http.StatusBadRequest {
@@ -383,7 +432,7 @@ func TestMessageStep_RefusesANotificationShapedMessage(t *testing.T) {
 func TestStepSteer_ATurnEndLeavesUnreadRowsNotReadInTheStepsTurn(t *testing.T) {
 	h, _ := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
 	// KAS holds the steer and never reads it.
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-5", ""); err != nil {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-5", "", nil); err != nil {
 		t.Fatalf("Setup: MessageStep = %v", err)
 	}
 	h.runs.RunNodeComplete(t.Context(), "wf_1", reviewSegments, "completed", "")
@@ -401,9 +450,44 @@ func TestStepSteer_ATurnEndLeavesUnreadRowsNotReadInTheStepsTurn(t *testing.T) {
 	}
 }
 
+// KAS continues a step whose execution ended with unread steering, so a step's turn_end is not the
+// end of its steering; only the node's own end is.
+func TestStepSteer_AStepsTurnEndKeepsItsSteeringOpenForTheContinuation(t *testing.T) {
+	h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
+	update, _ := json.Marshal(map[string]any{
+		"sessionUpdate": "session_info_update",
+		"_meta": map[string]any{"kiro": map[string]any{
+			"kind":    "turn_end",
+			"turnEnd": map[string]any{"stopReason": "end_turn"},
+			"workflow": map[string]any{
+				"workflowId": "wf_1", "nodeId": "review", "nodePath": []any{"root", "review"}, "type": "step",
+			},
+		}},
+	})
+	params, _ := json.Marshal(map[string]any{"sessionId": "sess_step", "update": json.RawMessage(update)})
+	h.handleRunStepFrame(t.Context(), runChatID("wf_1"), &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params})
+
+	out, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-tail", "", nil)
+
+	if err != nil || out.Verb != marotte.RunStepMessageSteer {
+		t.Fatalf("MessageStep after the step's turn_end = %q, %v; want a steer", out.Verb, err)
+	}
+	if got := br.paramsFor(marotte.MethodSessionSteer)["sessionId"]; got != marotte.SessionID("sess_step") {
+		t.Errorf("_session/steer went to %v, want the step's session", got)
+	}
+	if !h.runs.steers.recs.stepOpen(marotte.StepSteerKey("sess_step")) {
+		t.Error("step open after its turn_end = false, want it still reading its buffer")
+	}
+	for _, s := range stepSteersIn(t, h) {
+		if s.Reason == marotte.SteerReasonBoundary {
+			t.Errorf("run log steer %+v marked not read before KAS's continuation could read it", s)
+		}
+	}
+}
+
 func TestStepSteer_RowFramesAddressTheRunTab(t *testing.T) {
 	h, _ := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-6", ""); err != nil {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-6", "", nil); err != nil {
 		t.Fatalf("Setup: MessageStep = %v", err)
 	}
 
@@ -431,13 +515,13 @@ func TestStepSteer_RowFramesAddressTheRunTab(t *testing.T) {
 
 func TestRemoveStepSteer_DeletesARowKASHolds(t *testing.T) {
 	h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-7", ""); err != nil {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-7", "", nil); err != nil {
 		t.Fatalf("Setup: MessageStep = %v", err)
 	}
 	br.setCallResult(marotte.MethodSessionSteerClear, json.RawMessage(`{"messageIds":["steer-m-7"]}`))
 	// The clear's reply lands at seq 3, and the host session's lane has folded that far: only the
 	// host session's position can release the barrier.
-	gen := h.coord.turns.attachForward(runChatID("wf_1")).gen
+	gen := h.coord.turns.attachForwardNow(runChatID("wf_1")).gen
 	br.mu.Lock()
 	br.deliveredSeq = 3
 	br.mu.Unlock()
@@ -479,7 +563,7 @@ func reasonOf(t *testing.T, body []byte) string {
 // the step's run turn stays open for the resume.
 func TestStepSteer_APauseLeavesUnreadRowsNotRead(t *testing.T) {
 	h, _ := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-10", ""); err != nil {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-10", "", nil); err != nil {
 		t.Fatalf("Setup: MessageStep = %v", err)
 	}
 
@@ -497,7 +581,7 @@ func TestStepSteer_APauseLeavesUnreadRowsNotRead(t *testing.T) {
 // KAS ends a retry wait by re-sending node_start for the same session and path.
 func TestStepSteer_ARetryRestartKeepsTheQueuedSteer(t *testing.T) {
 	h, _ := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-11", ""); err != nil {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-11", "", nil); err != nil {
 		t.Fatalf("Setup: MessageStep = %v", err)
 	}
 
@@ -579,9 +663,9 @@ func TestStepMessage_AResumeAfterTheTurnClosedHeadsTheNextTurnAsItsPrompt(t *tes
 
 				var err error
 				if via == "answer_route" {
-					err = h.runs.answerInput(t.Context(), "wf_1", markerlessAskID(h, "wf_1", reviewPath, "sess_step"), "teal")
+					err = h.runs.answerInput(t.Context(), "wf_1", markerlessAskID(h, "wf_1", reviewPath, "sess_step"), "teal", nil)
 				} else {
-					_, err = h.runs.messageStep(t.Context(), "wf_1", reviewPath, "teal", "m-12", "")
+					_, err = h.runs.messageStep(t.Context(), "wf_1", reviewPath, "teal", "m-12", "", nil)
 				}
 				if err != nil {
 					t.Fatalf("%s = %v, want nil", via, err)
@@ -624,7 +708,7 @@ func TestStepMessage_ARefusedResumeLeavesTheNextTurnWithoutAPrompt(t *testing.T)
 	h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), marotte.StopReasonInterrupted)
 	br.setCallErr(marotte.MethodPrompt, errors.New("bridge died"))
 
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-13", ""); err == nil {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-13", "", nil); err == nil {
 		t.Fatal("MessageStep with a failing send = nil, want the send's error")
 	}
 	h.runs.RunNodeStart(t.Context(), reviewStep("sess_step"), "")
@@ -639,7 +723,7 @@ func TestStepMessage_ARunEndingBeforeTheResumedTurnOpensKeepsTheWords(t *testing
 	h, _ := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	h.coord.runs = h.runs.log
 	h.coord.closeHostedRuns(t.Context(), runChatID("wf_1"), marotte.StopReasonInterrupted)
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-14", ""); err != nil {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-14", "", nil); err != nil {
 		t.Fatalf("MessageStep = %v, want nil", err)
 	}
 
@@ -656,7 +740,7 @@ func twoBranchHub(t *testing.T) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, _, br := newTestHub()
 	h.runs.log = newRunLog(t.TempDir())
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1"})
 	br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused,
 		askStepNode{id: "branch_a", status: "paused", session: "sess_a"}, parkedStep("branch_b", "sess_b")))
@@ -679,7 +763,7 @@ func TestMessageStep_AnAskAnswersOnlyAtTheExecutionItBelongsTo(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h, br := twoBranchHub(t)
 
-			out, err := h.runs.messageStep(t.Context(), "wf_1", tc.path, "the main branch", "m-15", "")
+			out, err := h.runs.messageStep(t.Context(), "wf_1", tc.path, "the main branch", "m-15", "", nil)
 			if err != nil {
 				t.Fatalf("MessageStep(%s) = %v, want nil", tc.path, err)
 			}
@@ -697,7 +781,7 @@ func TestMessageStep_AnAskAnswersOnlyAtTheExecutionItBelongsTo(t *testing.T) {
 func TestAnswerInput_AnAskIDNoWaitCarriesIsGone(t *testing.T) {
 	h, br := twoBranchHub(t)
 
-	if err := h.runs.answerInput(t.Context(), "wf_1", "no-such-ask", "the main branch"); !errors.Is(err, errAskGone) {
+	if err := h.runs.answerInput(t.Context(), "wf_1", "no-such-ask", "the main branch", nil); !errors.Is(err, errAskGone) {
 		t.Errorf("AnswerInput for an unknown ask = %v, want errAskGone", err)
 	}
 	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
@@ -719,7 +803,7 @@ func TestMessageStep_AMessageTheRecordCannotHoldIsNotSent(t *testing.T) {
 	h, br := messageHub(t, marotte.RunStatusPaused, marotte.RunNodeStatusPaused)
 	h.runs.log = unrecordableLog(t)
 
-	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-22", "")
+	_, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "carry on", "m-22", "", nil)
 
 	rec := httptest.NewRecorder()
 	h.runRoutes.writeStepErr(rec, "message", "wf_1", reviewPath, err)
@@ -736,7 +820,7 @@ func TestAnswerInput_AnAnswerTheRecordCannotHoldIsNotSentAndTheAskStays(t *testi
 	h.runs.log = unrecordableLog(t)
 	askID := readNow(t, h, "wf_1").asks[0].ID
 
-	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "the main branch"); !errors.Is(err, errStepUnrecorded) {
+	if err := h.runs.answerInput(t.Context(), "wf_1", askID, "the main branch", nil); !errors.Is(err, errStepUnrecorded) {
 		t.Errorf("AnswerInput = %v, want errStepUnrecorded", err)
 	}
 	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
@@ -751,7 +835,7 @@ func TestAnswerInput_AnAnswerTheRecordCannotHoldIsNotSentAndTheAskStays(t *testi
 // A host session's end closes the steering turns of the steps it hosted.
 func TestStepSteer_AnEngineExitLeavesUnreadRowsNotRead(t *testing.T) {
 	h, _ := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
-	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-11", ""); err != nil {
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-11", "", nil); err != nil {
 		t.Fatalf("Setup: MessageStep = %v", err)
 	}
 

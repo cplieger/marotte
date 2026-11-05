@@ -10,7 +10,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -49,9 +49,10 @@ func (in *inbound) handleFSRequest(_ context.Context, chatID marotte.ChatID, ori
 // answering { content }. line/limit are 1-indexed and inclusive per ACP.
 func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
 	var p struct {
-		Line  *int   `json:"line,omitempty"`
-		Limit *int   `json:"limit,omitempty"`
-		Path  string `json:"path"`
+		Line      *int              `json:"line,omitempty"`
+		Limit     *int              `json:"limit,omitempty"`
+		Path      string            `json:"path"`
+		SessionID marotte.SessionID `json:"sessionId"`
 	}
 	if err := json.Unmarshal(msg.Params, &p); err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, fmt.Errorf("parse params: %w", err))
@@ -61,7 +62,7 @@ func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, ori
 		in.respondFSError(ctx, chatID, origin, msg, errors.New("path is required"))
 		return
 	}
-	target, err := in.lifetime.confine(ctx, p.Path, fsRead)
+	target, err := in.confineRead(ctx, p.SessionID, p.Path)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
@@ -69,9 +70,9 @@ func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, ori
 	defer target.release()
 	// No ignore filter here: KAS enforces the list. The bound comes from the open descriptor,
 	// a FIFO is refused, and every component resolves inside the root.
-	data, err := atomicfile.ReadBoundedInRoot(ctx, target.root, target.rel, fsReadCap)
+	data, err := filesafe.ReadBoundedInRoot(ctx, target.root, target.rel, fsReadCap)
 	if err != nil {
-		if errors.Is(err, atomicfile.ErrFileTooLarge) {
+		if errors.Is(err, filesafe.ErrFileTooLarge) {
 			err = fmt.Errorf("%w: %d", errCapExceeded, fsReadCap)
 		}
 		in.respondFSError(ctx, chatID, origin, msg, err)

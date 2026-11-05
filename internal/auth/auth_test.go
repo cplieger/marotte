@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // fakeBackend is a device-flow backend whose Poll blocks until the test approves or fails it.
@@ -156,7 +156,7 @@ func (hs *harness) signIn(account string) {
 	hs.t.Helper()
 	lr := hs.login()
 	hs.backend.outcomes <- pollOutcome{account: account}
-	if w := hs.awaitAttempt(lr.Attempt); w.State != WhoamiSignedIn || w.Email != account {
+	if w := hs.awaitAttempt(lr.Attempt); w.State != whoamiSignedIn || w.Email != account {
 		hs.t.Fatalf("after signing in %s: whoami = %+v", account, w)
 	}
 }
@@ -185,14 +185,14 @@ func TestLogin_ClientDisconnectAfterTheResponseStillCompletes(t *testing.T) {
 	}
 	cancel()
 	hs.backend.outcomes <- pollOutcome{account: "a@example.com"}
-	if w := hs.awaitAttempt(lr.Attempt); w.State != WhoamiSignedIn {
+	if w := hs.awaitAttempt(lr.Attempt); w.State != whoamiSignedIn {
 		t.Errorf("after the request ended, the approval = %+v, want signed in", w)
 	}
 }
 
 func TestWhoami_FromTheVault(t *testing.T) {
 	hs := newHarness(t)
-	if w := hs.whoami(); w.State != WhoamiSignedOut {
+	if w := hs.whoami(); w.State != whoamiSignedOut {
 		t.Errorf("an empty vault = %+v, want signed_out", w)
 	}
 	hs.signIn("a@example.com")
@@ -208,7 +208,7 @@ func TestLogout_ClearsTheVault(t *testing.T) {
 	if rec := hs.do(http.MethodPost, "/api/logout", ""); rec.Code != http.StatusOK {
 		t.Fatalf("logout = %d %s", rec.Code, rec.Body.String())
 	}
-	if w := hs.whoami(); w.State != WhoamiSignedOut {
+	if w := hs.whoami(); w.State != whoamiSignedOut {
 		t.Errorf("after logout whoami = %+v, want signed_out", w)
 	}
 }
@@ -228,7 +228,7 @@ func TestLogout_RemoveFailureIs500AndKeepsTheAccount(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "still signed in") {
 		t.Errorf("logout over an unremovable file = %d %s, want 500 naming the kept sign-in", rec.Code, rec.Body.String())
 	}
-	if w := hs.whoami(); w.State != WhoamiSignedIn {
+	if w := hs.whoami(); w.State != whoamiSignedIn {
 		t.Errorf("after a failed logout whoami = %+v, want still signed in", w)
 	}
 }
@@ -252,7 +252,7 @@ func TestWhoami_CarriesLoginErrorAfterAFailedSignIn(t *testing.T) {
 		lr := hs.login()
 		hs.backend.outcomes <- pollOutcome{err: failure}
 		w := hs.awaitAttempt(lr.Attempt)
-		if w.State != WhoamiSignedOut || w.LoginState != string(signin.AttemptFailed) || w.LoginError != failure.Text {
+		if w.State != whoamiSignedOut || w.LoginState != string(signin.AttemptFailed) || w.LoginError != failure.Text {
 			t.Errorf("a failed first sign-in = %+v, want signed_out with the failure", w)
 		}
 	})
@@ -261,12 +261,12 @@ func TestWhoami_CarriesLoginErrorAfterAFailedSignIn(t *testing.T) {
 		hs.signIn("a@example.com")
 		lr := hs.login()
 		// The old account stays signed in while the switch polls: a poll must not read that as the switch's success.
-		if w := hs.whoami(); w.State != WhoamiSignedIn || w.LoginAttempt != lr.Attempt || w.LoginState != string(signin.AttemptPending) {
+		if w := hs.whoami(); w.State != whoamiSignedIn || w.LoginAttempt != lr.Attempt || w.LoginState != string(signin.AttemptPending) {
 			t.Fatalf("during the switch whoami = %+v, want the old account and this attempt pending", w)
 		}
 		hs.backend.outcomes <- pollOutcome{err: failure}
 		w := hs.awaitAttempt(lr.Attempt)
-		if w.State != WhoamiSignedIn || w.Email != "a@example.com" || w.LoginError != failure.Text {
+		if w.State != whoamiSignedIn || w.Email != "a@example.com" || w.LoginError != failure.Text {
 			t.Errorf("a failed switch = %+v, want the old account kept and the failure named", w)
 		}
 	})
@@ -299,7 +299,7 @@ func TestAPIKey_RefusesLoginAndLogoutAndKeepsTheStoredAccount(t *testing.T) {
 	keyed := NewHandler(hs.vault, "fake", WithAPIKey(true))
 	keyed.managedSettingsPath = hs.h.managedSettingsPath
 	hk := &harness{t: t, backend: hs.backend, vault: hs.vault, h: keyed, dir: hs.dir}
-	if w := hk.whoami(); w.State != WhoamiSignedIn || w.Auth != textAPIKeyAuth || !w.APIKey {
+	if w := hk.whoami(); w.State != whoamiSignedIn || w.Auth != textAPIKeyAuth || !w.APIKey {
 		t.Errorf("with the key whoami = %+v, want the API key named and flagged", w)
 	}
 	for _, path := range []string{"/api/login", "/api/logout"} {
@@ -308,7 +308,7 @@ func TestAPIKey_RefusesLoginAndLogoutAndKeepsTheStoredAccount(t *testing.T) {
 		}
 	}
 	// Removing the key (a handler without it) reveals the account the vault kept.
-	if w := hs.whoami(); w.State != WhoamiSignedIn || w.Email != "a@example.com" || w.APIKey {
+	if w := hs.whoami(); w.State != whoamiSignedIn || w.Email != "a@example.com" || w.APIKey {
 		t.Errorf("without the key whoami = %+v, want the stored account, not flagged", w)
 	}
 }
@@ -437,7 +437,7 @@ func TestWhoamiFrom_SanitizesAndBoundsEveryIdentityString(t *testing.T) {
 			t.Errorf("%s = %d bytes, want <= %d", name, len(v), maxIdentityFieldBytes+3)
 		}
 		for _, r := range v {
-			if runesafe.IsBidiControl(r) {
+			if textsafe.IsBidiControl(r) {
 				t.Errorf("%s = %q still carries U+%04X", name, v, r)
 			}
 		}

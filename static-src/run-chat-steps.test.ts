@@ -1,7 +1,7 @@
 // The run pane's step-transcript render lifecycle.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
-import type { Entry } from "./types.js";
+import type { Caller, Entry } from "./types.js";
 // TYPE-only, so it is erased and cannot defeat the `vi.mock` hoisting the value import below is
 // deferred for.
 import type { RunStepPaint } from "./run-chat-steps.js";
@@ -77,18 +77,23 @@ function paint(
   kinds: readonly Entry["kind"][],
   live = true,
   prompt?: string,
+  caller?: Caller,
 ): RunStepPaint {
   const body = kinds.map((kind, i) => entry(turnID, i + 1, kind));
   return {
     turn: {
       id: turnID,
       n: 1,
-      trigger: prompt === undefined ? undefined : { id: `p-${turnID}`, text: prompt },
+      trigger:
+        prompt === undefined
+          ? undefined
+          : { id: `p-${turnID}`, text: prompt, ...(caller === undefined ? {} : { caller }) },
       body,
       openEntries: new Map(),
       ts: 0,
       outcome: live ? "running" : "completed",
       rewindTo: undefined,
+      branchFrom: undefined,
     },
     live,
   };
@@ -190,6 +195,18 @@ describe("run step stream", () => {
 
     h.apply({ "a/ask": [paint("t-asked", ["text"], false)] });
     expect(host.childElementCount).toBe(1);
+  });
+
+  // A message an API caller sent heads the turn it resumed as that caller's, never in the user's voice.
+  it("heads a turn an API caller's message opened with who sent it", () => {
+    const h = harness();
+    h.apply({
+      "a/ask": [paint("t-resumed", ["text"], true, "teal", { label: "Agent Mail" })],
+    });
+    const heading = h.host("a/ask").firstElementChild;
+    expect(heading?.getAttribute("data-trigger")).toBe("caller");
+    expect(heading?.querySelector(".turn-sent-by")?.textContent).toBe("Sent by Agent Mail");
+    expect(heading?.querySelector(".turn-req-text")?.textContent).toBe("teal");
   });
 
   // The dispatcher's incremental update appends past a watermark, so it is correct only while the

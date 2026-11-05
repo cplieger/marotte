@@ -330,3 +330,49 @@ func writeFakeNpm(t *testing.T, body string) string {
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
+
+// Stop ends an install in flight and returns only once it has handed its
+// reservation back; a pass after Stop queues nothing.
+func TestStop_WaitsForAnInstallInFlight(t *testing.T) {
+	bin := t.TempDir()
+	started := filepath.Join(t.TempDir(), "started")
+	script := "#!/bin/sh\n: > " + started + "\nexec sleep 60\n"
+	if err := os.WriteFile(filepath.Join(bin, "npm"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	p := NewRunner(t.Context(), fakeLister{servers: []ServerInfo{npxServer()}})
+	var failures atomic.Int32
+	p.OnStatus = func(_ string, s State) {
+		if s == failed {
+			failures.Add(1)
+		}
+	}
+
+	p.Run(t.Context())
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the fake npm never started")
+		}
+	}
+	p.Stop()
+
+	p.mu.Lock()
+	inFlight := len(p.running)
+	p.mu.Unlock()
+	if inFlight != 0 {
+		t.Errorf("reservations held when Stop returned = %d, want 0 (the install was still running)", inFlight)
+	}
+	if got := failures.Load(); got != 1 {
+		t.Errorf("failed reports when Stop returned = %d, want 1", got)
+	}
+	p.Run(t.Context())
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.running) != 0 {
+		t.Errorf("a pass after Stop reserved %v", p.running)
+	}
+}

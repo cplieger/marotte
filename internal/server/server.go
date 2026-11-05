@@ -12,13 +12,13 @@ import (
 	"sync/atomic"
 	"syscall"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/preview"
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/tabs"
-	"github.com/cplieger/pinstall/v3"
-	"github.com/cplieger/webhttp/v4"
+	"github.com/cplieger/toolbelt/v3/pin"
 )
 
 const port = "9847"
@@ -59,20 +59,20 @@ type Server struct {
 	kiroDocs *docsCache
 	tools    toolsSource
 	// kiroReady is the install manager's readiness verdict, re-read per /api/health.
-	kiroReady func() (bool, pinstall.Reason)
+	kiroReady func() (bool, pin.Reason)
 	// kiroRescan re-derives the active version from disk; nil leaves the repair route unmounted.
 	kiroRescan func(context.Context) (bool, error)
 	// authUnavailable reads a latch, never a probe (see WithAuthUnavailable).
 	authUnavailable func() bool
 	// hostPolicy is the ALLOWED_HOSTS allowlist; nil or inactive accepts any Host.
-	hostPolicy *webhttp.HostPolicy
+	hostPolicy *httpserver.HostPolicy
 	// onListen fires once per successful bind, before serving: the evidence that this process
 	// serves its config dir.
 	onListen  func()
 	configDir string
 	workDir   string
-	// kasNode is the node binary KAS runs on; "" means it cannot be located.
-	kasNode string
+	// kasNode resolves the node binary KAS runs on; nil or "" means it cannot be located.
+	kasNode func() string
 	// sensitive is the file browser's deny list; the zero value is the one rooted at /config.
 	sensitive filebrowse.Sensitive
 	// heldKiroPrefs keeps the user's value of each kiro-cli setting a lock pins.
@@ -172,7 +172,7 @@ func WithKiroCLI(resolvePath func() string, resolveEnv func() []string) Option {
 
 // WithKiroReady sets the kiro-cli readiness verdict /api/health reports. Unset
 // leaves the probe reflecting only that the listener is up.
-func WithKiroReady(ready func() (bool, pinstall.Reason)) Option {
+func WithKiroReady(ready func() (bool, pin.Reason)) Option {
 	return func(s *Server) { s.kiroReady = ready }
 }
 
@@ -219,9 +219,10 @@ func WithSpecApprovals(st *specapproval.Store) Option {
 	}
 }
 
-// WithKASNode sets the node binary KAS runs on, which compiles hook matchers exactly as KAS
-// will. Unset, a hook with a matcher cannot be created.
-func WithKASNode(path string) Option { return func(s *Server) { s.kasNode = path } }
+// WithKASNode sets how the node binary KAS runs on is found, which compiles hook matchers exactly
+// as KAS will. It is called per request, because kiro-cli names its runtime entry only at its first
+// start. Unset, a hook with a matcher cannot be created.
+func WithKASNode(node func() string) Option { return func(s *Server) { s.kasNode = node } }
 
 // WithWorkDir sets the workspace directory served by the file handler and git endpoints.
 func WithWorkDir(d string) Option { return func(s *Server) { s.workDir = d } }
@@ -235,7 +236,7 @@ func WithTrustedProxies(trusted []netip.Prefix) Option {
 // WithHostPolicy sets the exact-match Host allowlist the security middleware
 // applies before the CSRF check — the anti-DNS-rebinding gate. A nil or inactive
 // policy accepts any Host.
-func WithHostPolicy(p *webhttp.HostPolicy) Option {
+func WithHostPolicy(p *httpserver.HostPolicy) Option {
 	return func(s *Server) { s.hostPolicy = p }
 }
 
@@ -328,8 +329,8 @@ func (s *Server) ListenAndServe() error {
 
 	// MaxHeaderValueCount is left at its default: a 431 is answered BELOW the middleware chain,
 	// with no access-log line, request id or client_ip.
-	handler := webhttp.Chain(mux, s.middlewareStack(cspPolicy, idem)...)
-	srv := webhttp.NewServer(handler)
+	handler := httpserver.Chain(mux, s.middlewareStack(cspPolicy, idem)...)
+	srv := httpserver.New(handler)
 	srv.Addr = ":" + listenPort
 
 	// Bound up front so port-in-use surfaces synchronously.
@@ -358,7 +359,7 @@ func (s *Server) ListenAndServe() error {
 
 	// The pre-drain hook keeps the agent-before-server order: readiness flips, the runtime stops
 	// bridges and streams, and only then does the HTTP drain run.
-	runErr := webhttp.Run(ctx, srv, ln, nil, webhttp.WithPreDrain(func(drainCtx context.Context) {
+	runErr := httpserver.Run(ctx, srv, ln, nil, httpserver.WithPreDrain(func(drainCtx context.Context) {
 		slog.Info("received signal, shutting down", "cause", context.Cause(ctx))
 		s.ready.Store(false)
 		// Run calls this hook SYNCHRONOUSLY before srv.Shutdown: drainCtx is passed on, never discarded.
@@ -374,7 +375,7 @@ func (s *Server) ListenAndServe() error {
 // public address warns once, because a reverse proxy missing from TRUSTED_PROXIES otherwise makes
 // every line log the proxy's address silently.
 func (s *Server) clientIP(r *http.Request) string {
-	res := webhttp.ResolveClient(r, s.trustedProxies...)
+	res := httpserver.ResolveClient(r, s.trustedProxies...)
 	if res.IgnoredPublic && s.ignoredPublicWarned.CompareAndSwap(false, true) {
 		slog.Warn("a peer outside TRUSTED_PROXIES forwarded a public client address; client_ip logs the peer instead",
 			"peer", res.Peer.String(),
@@ -396,31 +397,32 @@ func registerAPIFallback(mux *http.ServeMux) {
 }
 
 // middlewareStack returns the middleware wrapping the route mux, OUTERMOST FIRST: access log,
-// recovery, security (CSP + ALLOWED_HOSTS + CSRF), Fetch Metadata, canonical path, dedup,
-// compression. A method so the ORDER, a security property, is assertable without a port.
-func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []webhttp.Middleware {
-	return []webhttp.Middleware{
-		webhttp.Logging(
+// recovery, security (CSP + ALLOWED_HOSTS + CSRF), Fetch Metadata, canonical path, compression,
+// dedup. A method so the ORDER, a security property, is assertable without a port.
+func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []httpserver.Middleware {
+	return []httpserver.Middleware{
+		httpserver.Logging(
 			// Skipped by path, or the long-lived stream logs one open-forever line.
-			webhttp.WithSkipPaths("/api/events"),
+			httpserver.WithSkipPaths("/api/events"),
 			// The shell PTY is silenced by RESPONSE, not path, so every handshake refusal keeps its line.
-			webhttp.WithSkipUpgrades(true),
+			httpserver.WithSkipUpgrades(true),
 			// /api/health is probed every 30s, so a healthy probe logs at Debug and only
 			// a failing one is surfaced.
-			webhttp.ProbeLogLevel("/api/health"),
-			webhttp.WithClientIPFunc(s.clientIP),
+			httpserver.ProbeLogLevel("/api/health"),
+			httpserver.WithClientIPFunc(s.clientIP),
 			// A preview path carries a 12h bearer token, so it logs as the route template.
-			webhttp.WithTemplatePathsUnder(preview.PathPrefix),
+			httpserver.WithTemplatePathsUnder(preview.PathPrefix),
 		),
-		webhttp.Recoverer(),
+		httpserver.Recoverer(),
 		func(next http.Handler) http.Handler { return securityMiddleware(cspPolicy, s.hostPolicy, next) },
 		fetchMetadataGate,
 		// INSIDE the host and CSRF gates (their 403 is not shadowed), OUTSIDE the mux (ServeMux
 		// canonicalizes before routing) and the dedup cache (a refusal mints no replay entry).
 		canonicalAPIPath,
+		// OUTSIDE the dedup cache: the cache stores identity bytes, and a replay is coded for the
+		// retry's own Accept-Encoding.
+		compressJSON(),
 		idem.middleware,
-		// INNERMOST: the cache stores identity bytes and a replay re-negotiates encoding.
-		compressJSON,
 	}
 }
 
@@ -434,7 +436,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	return httpreply.DecodeBody(w, r, v, "bad request")
 }
 
-// A struct, not a map, so the key order matches webhttp.ReadinessHandler's byte for byte.
+// A struct, not a map, so the key order matches httpserver.ReadinessHandler's byte for byte.
 type healthBody struct {
 	Status string `json:"status"`
 	Reason string `json:"reason,omitempty"`
@@ -448,7 +450,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	// "ok" would outlive a drain.
 	w.Header().Set("Cache-Control", "no-store")
 	unready := func(reason string) {
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
 			Status: "unready",
 			Reason: reason,
 		})
@@ -468,5 +470,5 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		unready(reasonSignIn)
 		return
 	}
-	webhttp.WriteJSON(w, healthBody{Status: "ok"})
+	httpserver.WriteJSON(w, healthBody{Status: "ok"})
 }

@@ -26,7 +26,7 @@ func TestFilterACPArgs(t *testing.T) {
 			want: []string{"-v"},
 		},
 		{
-			// marotte removed the v2 handlers, so an operator v1/v2 stalls session/new.
+			// A v1 or v2 engine refuses the sign-in's --auth-method and exits before initialize.
 			name: "refuses agent-engine and its value",
 			in:   []string{"--agent-engine", "v2", "-v"},
 			want: []string{"-v"},
@@ -71,6 +71,12 @@ func TestFilterACPArgs(t *testing.T) {
 		{
 			name: "refuses effort inline without eating the next token",
 			in:   []string{"--effort=max", "-v"},
+			want: []string{"-v"},
+		},
+		{
+			// Each prints or logs in, then exits instead of serving ACP.
+			name: "refuses login, help and short help",
+			in:   []string{"--login", "--help", "-h", "-v"},
 			want: []string{"-v"},
 		},
 		{
@@ -143,7 +149,10 @@ func TestRefuseReasonNamesTheRealSurface(t *testing.T) {
 		flag        string
 		wantSubstrs []string
 	}{
-		{flagAgentEngine, []string{"v3-only"}},
+		{flagAgentEngine, []string{"v3-only", "exits before initialize"}},
+		{flagLogin, []string{"exits", "sign in on the page"}},
+		{flagHelp, []string{"exits"}},
+		{flagHelpShort, []string{"exits"}},
 		{flagAuthMethod, []string{"marotte owns the sign-in", "declaration"}},
 		{flagAuthMethodAlias, []string{"marotte owns the sign-in", "declaration"}},
 		{flagTrustAll, []string{"exits before initialize", "permissions.yaml"}},

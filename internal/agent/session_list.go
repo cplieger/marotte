@@ -12,10 +12,10 @@ import (
 	"slices"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // sessionListTimeout bounds the round-trip, which may wait for the engine to be ready (configTemplateTimeout's value).
@@ -73,7 +73,7 @@ func (rt *Runtime) handleSessionList(w http.ResponseWriter, r *http.Request) {
 	withParentNames(runs, rt.chatStore.List(r.Context()))
 	out.Sessions = rows
 	out.Runs = runs
-	webhttp.WriteJSON(w, out)
+	httpserver.WriteJSON(w, out)
 }
 
 func (rt *Runtime) resumableSessions(ctx context.Context, claimed map[string]marotte.ChatID) ([]marotte.ResumableSession, error) {
@@ -172,7 +172,7 @@ func toResumable(claimed map[string]marotte.ChatID, rows []kasSessionRow) []maro
 			CreatedAt:   parseKASTime(row.Meta.Kiro.CreatedAt),
 			AgentMode:   row.Meta.Kiro.AgentMode,
 			Status:      row.Meta.Kiro.Status,
-			Description: runesafe.SanitizeSingleLineBounded(row.Meta.Kiro.Description, maxSessionDescBytes),
+			Description: textsafe.SanitizeSingleLineBounded(row.Meta.Kiro.Description, maxSessionDescBytes),
 			ChatID:      string(chatID),
 		})
 	}
@@ -239,8 +239,9 @@ func parseKASTime(s string) int64 {
 
 // Runs come from _kiro/workflow/list, not session/list, whose workflow rows are step sessions always reading idle.
 
+// kasWorkflowRuns is a workflow/list reply; a nil Runs is a reply with no runs array, which lists nothing.
 type kasWorkflowRuns struct {
-	Runs []kasWorkflowRun `json:"runs"`
+	Runs *[]kasWorkflowRun `json:"runs"`
 }
 
 type kasWorkflowRun struct {
@@ -257,10 +258,15 @@ type kasWorkflowRun struct {
 	// ParentSessionID is the launching session, how the run is attributed.
 	ParentSessionID string `json:"parentSessionId"`
 	// PauseKind is "maxIterations" for a repeat at its cap, and PauseNodeID names it; only paused runs carry them.
+	// standingOf reads them; the run verbs read the same facts off an inspect (headOf).
 	PauseKind   string `json:"pauseKind"`
 	PauseNodeID string `json:"pauseNodeId"`
+	// CurrentNodeID and WaitingOnWatch ride only a running or paused row. The stepsCompleted and
+	// stepsTotal beside them count every pass and leave skipped steps out, so they are not read.
+	CurrentNodeID string `json:"currentNodeId"`
 	// PausePending is a pause asked for and not yet landed.
-	PausePending bool `json:"pausePending"`
+	PausePending   bool `json:"pausePending"`
+	WaitingOnWatch bool `json:"waitingOnWatch"`
 }
 
 // displayName is the run's marotte.RunDisplayName. KAS's Name is the workflowName when the run
@@ -274,20 +280,11 @@ func (r *kasWorkflowRun) displayName() string {
 }
 
 func (rs *Runs) list(ctx context.Context, claimed map[string]marotte.ChatID) ([]marotte.WorkflowRun, error) {
-	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
-	defer cancel()
-
-	// workspacePaths is a required array (methodKiroWorkflowList).
-	raw, err := rs.engine.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
-		map[string]any{keyWorkspacePaths: []string{rs.lifecycle.workDir}})
+	runs, err := rs.listRaw(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var list kasWorkflowRuns
-	if uErr := json.Unmarshal(raw, &list); uErr != nil {
-		return nil, uErr
-	}
-	return rs.toWire(claimed, list.Runs), nil
+	return rs.toWire(claimed, runs), nil
 }
 
 // toWire maps the run inventory to wire rows, dropping what does not belong in history.
@@ -312,6 +309,7 @@ func (rs *Runs) toWire(claimed map[string]marotte.ChatID, runs []kasWorkflowRun)
 			ParentChatID: parentChatID,
 			// KAS has no end-reason field, and bounds cancel like a person, so the deciding host supplies it.
 			EndReason: rs.endReason(r.WorkflowID),
+			Standing:  standingOf(r),
 		})
 	}
 	// Stable, or the list reshuffles between polls.
@@ -319,4 +317,22 @@ func (rs *Runs) toWire(claimed map[string]marotte.ChatID, runs []kasWorkflowRun)
 		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)
 	})
 	return out
+}
+
+// standingOf is where a live run stands, nil for a finished run or a row naming no node. The cap
+// arm comes first: KAS's currentNodeId skips a capped repeat and names the first pending leaf
+// after the loop.
+func standingOf(r *kasWorkflowRun) *marotte.RunStanding {
+	switch {
+	case marotte.RunStatus(r.Status).Terminal():
+		return nil
+	case r.PauseKind == pauseKindMaxIterations && r.PauseNodeID != "":
+		return &marotte.RunStanding{Node: r.PauseNodeID, Kind: marotte.RunStandingPassLimit}
+	case r.CurrentNodeID == "":
+		return nil
+	case r.WaitingOnWatch:
+		return &marotte.RunStanding{Node: r.CurrentNodeID, Kind: marotte.RunStandingWatch}
+	default:
+		return &marotte.RunStanding{Node: r.CurrentNodeID, Kind: marotte.RunStandingStep}
+	}
 }

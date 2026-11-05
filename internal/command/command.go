@@ -14,19 +14,22 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"strings"
 	"sync"
 
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/textsafe"
+	"github.com/cplieger/marotte/internal/apicaller"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // maxCommandBody caps the whole POST /api/command envelope: the largest
 // payload is a prompt's text at MaxPromptBytes (512 KiB) plus path-only
 // attachment metadata, so 1 MiB is ~2x headroom.
-const maxCommandBody = webhttp.MaxJSONBody
+const maxCommandBody = httpserver.MaxJSONBody
 
 // Handler is the signature for a command handler function. It returns its
 // outcome rather than writing to an http.ResponseWriter: the dispatcher
@@ -41,7 +44,9 @@ type Handler func(ctx context.Context, cmd *marotte.ClientCommand) (any, error)
 // statuses in different places (e.g. ErrChatNotFound is 409 from a prompt
 // but 404 from set_mode).
 type statusError struct {
-	err    error
+	err error
+	// impact is what a refused close stops, which its confirmation did not cover; nil elsewhere.
+	impact *marotte.CloseImpact
 	reason string
 	// currentHash is the hash a refused compare-and-swap found instead of the
 	// one that was claimed; empty elsewhere.
@@ -73,6 +78,12 @@ func StatusErrorReason(code int, reason string, err error) error {
 // so the client's confirmation can say which work the cut stops.
 func statusErrorRuns(code int, reason string, runs []LiveRunRef, err error) error {
 	return &statusError{code: code, reason: reason, runs: runs, err: err}
+}
+
+// statusErrorImpact is StatusErrorReason plus the server's impact a refused close answers, so the page can confirm
+// again on what the close would stop.
+func statusErrorImpact(code int, reason string, impact *marotte.CloseImpact, err error) error {
+	return &statusError{code: code, reason: reason, impact: impact, err: err}
 }
 
 // statusErrorCurrentHash is StatusErrorReason plus the hash a refused
@@ -121,7 +132,9 @@ type Dispatcher struct {
 	prompts *promptRoles
 	// merges is bound at registration, like prompts.
 	merges *tangentMerges
-	mu     sync.RWMutex
+	// changes is bound at registration, like prompts.
+	changes detachedChange
+	mu      sync.RWMutex
 }
 
 // New constructs a Dispatcher. A handler's own collaborators arrive at
@@ -130,11 +143,17 @@ func New() *Dispatcher {
 	return &Dispatcher{handlers: make(map[marotte.CommandType]Handler)}
 }
 
-// Register adds a handler for the given command type.
-func (d *Dispatcher) Register(t marotte.CommandType, h Handler) {
+// register adds a handler for the given command type.
+func (d *Dispatcher) register(t marotte.CommandType, h Handler) {
 	d.mu.Lock()
 	d.handlers[t] = h
 	d.mu.Unlock()
+}
+
+// RegisterChange adds a handler whose engine call can outlast its request: its request answers 504
+// still_applying once the answer budget RegisterDefaults bound passes, and the change lands when kiro-cli answers.
+func (d *Dispatcher) RegisterChange(t marotte.CommandType, h Handler) {
+	d.register(t, d.changes.wrap(t, h))
 }
 
 func (d *Dispatcher) handler(t marotte.CommandType) (Handler, bool) {
@@ -146,13 +165,13 @@ func (d *Dispatcher) handler(t marotte.CommandType) (Handler, bool) {
 
 // Run applies cmd through its registered handler in process, for a command that applies another's
 // effect as part of its own: no envelope, no idempotency replay, no answer discharge, and the
-// handler's response is dropped.
+// handler's response is dropped. A change runs inline: its outcome is the caller's.
 func (d *Dispatcher) Run(ctx context.Context, cmd *marotte.ClientCommand) error {
 	fn, ok := d.handler(cmd.Type)
 	if !ok {
 		return StatusError(http.StatusInternalServerError, errors.New("unknown command: "+string(cmd.Type)))
 	}
-	_, err := fn(ctx, cmd)
+	_, err := fn(inProcess(ctx), cmd)
 	return err
 }
 
@@ -176,7 +195,9 @@ func (d *Dispatcher) DrainAfterClose(ctx context.Context, chatID marotte.ChatID,
 }
 
 type errorResponse struct {
-	Error string `json:"error"`
+	// Impact is what a close refused with close_impact_changed would stop. See statusErrorImpact.
+	Impact *marotte.CloseImpact `json:"impact,omitempty"`
+	Error  string               `json:"error"`
 	// Reason is the machine-readable refusal class, additive; existing
 	// clients ignore it. See StatusErrorReason.
 	Reason string `json:"reason,omitempty"`
@@ -199,9 +220,24 @@ func writeError(w http.ResponseWriter, err error) {
 	if se, ok := errors.AsType[*statusError](err); ok {
 		resp.Reason = se.reason
 		resp.Runs = se.runs
+		resp.Impact = se.impact
 		resp.CurrentHash = se.currentHash
 	}
-	webhttp.WriteJSONStatus(w, statusOf(err), resp)
+	httpserver.WriteJSONStatus(w, statusOf(err), resp)
+}
+
+// maxCallerLabelRunes caps an API caller's label, which the turn header draws on one line beside "Sent by".
+const maxCallerLabelRunes = 64
+
+// commandCaller is who sent a command: nil for marotte's own page, whose label, if any, is ignored, else the API
+// caller with label as one line of at most maxCallerLabelRunes: unsafe runes blanked (textsafe.SanitizeSingleLine),
+// runs of spaces collapsed to one and the ends trimmed before the cut, so leading blanks never spend the cap.
+func commandCaller(r *http.Request, label string) *marotte.Caller {
+	if !apicaller.Is(r) {
+		return nil
+	}
+	one := strings.Join(strings.Fields(textsafe.SanitizeSingleLine(label)), " ")
+	return &marotte.Caller{Label: strings.TrimSpace(truncateRunes(one, maxCallerLabelRunes))}
 }
 
 func requireChatID(cmd *marotte.ClientCommand) error {
@@ -217,13 +253,13 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	webhttp.LimitBody(w, r, maxCommandBody)
+	httpserver.LimitBody(w, r, maxCommandBody)
 	var cmd marotte.ClientCommand
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("command body too large",
 				"limit", maxCommandBody, keyError, maxErr)
-			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+			httpserver.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				errorResponse{Error: "request body too large"})
 			return
 		}
@@ -235,6 +271,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
+	cmd.From = commandCaller(r, cmd.Caller)
 
 	fn, ok := d.handler(cmd.Type)
 	if !ok {
@@ -250,7 +287,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if body == nil {
 		body = responseOK
 	}
-	webhttp.WriteJSON(w, body)
+	httpserver.WriteJSON(w, body)
 	// After the write, so a fan-out cannot sit between the handler and the ack.
 	d.noteAnswer(r.Context(), &cmd)
 }

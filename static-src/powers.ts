@@ -1,9 +1,17 @@
 // The installed set is kiro-cli's own, so the list is refetched after a change rather than patched.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { join as joinKey } from "@cplieger/keyenc";
 import { apiGetTyped, apiGetTypedOrError } from "./api-client.js";
-import { asObject, decodeArray, optBool, optNum, optStr, reqBool, reqStr } from "./validators.js";
+import {
+  asObject,
+  decodeArray,
+  optBool,
+  optNum,
+  optStr,
+  reqBool,
+  reqStr,
+} from "./wire/validators.gen.js";
 import { KEY_ATTR, reconcile } from "./reconcile.js";
 import { entryList, entryRow } from "./entry-row.js";
 import type { EntrySub } from "./entry-row.js";

@@ -4,7 +4,7 @@
 // its lanes with a row of its own. A readout: no axes, ticks or zoom; selectable with the tree's
 // `onSelect` and selected path.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { formatElapsed } from "../strings.js";
 import { reconcile } from "../reconcile.js";
 import {

@@ -86,7 +86,7 @@ func wireForges(t *testing.T) *wiredForges {
 	hub := &recordingHub{}
 	notifier := &forgeNotifier{hub: hub}
 	dir := t.TempDir()
-	m := forges.NewManager(dir, notifier.notify)
+	m := testForges(t, dir, notifier.notify)
 	m.Load(t.Context())
 	poller := forges.NewPRStatusPoller(forges.NewManagerPRSource(m, func(context.Context) []forges.RepoOrigin { return nil }),
 		quietNotifier{}, func() forges.Gate { return forges.Gate{} })
@@ -96,10 +96,34 @@ func wireForges(t *testing.T) *wiredForges {
 	return &wiredForges{m: m, mux: mux, notifier: notifier, hub: hub, dir: dir}
 }
 
+// testForges is a forge manager over dir whose background reads end with the
+// test. Its own context: t's is already cancelled in a cleanup.
+func testForges(t *testing.T, dir string, notify func(context.Context, forges.Change)) *forges.Manager {
+	t.Helper()
+	m := forges.NewManager(dir, notify)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := m.Shutdown(ctx); err != nil {
+			t.Errorf("forges Shutdown() = %v, want nil", err)
+		}
+	})
+	return m
+}
+
+// testSteering is a steering sync over m regenerating through generate, whose
+// syncs end with the test.
+func testSteering(t *testing.T, m *forges.Manager, generate func(context.Context) error) *forgeSteering {
+	t.Helper()
+	s := newForgeSteering(context.WithoutCancel(t.Context()), m, generate)
+	t.Cleanup(s.close)
+	return s
+}
+
 // quietSteering is a steering sync over m whose regeneration does nothing.
 func quietSteering(t *testing.T, m *forges.Manager) *forgeSteering {
 	t.Helper()
-	return &forgeSteering{appCtx: context.WithoutCancel(t.Context()), m: m, generate: func(context.Context) {}}
+	return testSteering(t, m, func(context.Context) error { return nil })
 }
 
 func (w *wiredForges) send(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
@@ -181,7 +205,7 @@ func TestForgeNotify_ASignInDropsTheInventoryBeforeTheBroadcast(t *testing.T) {
 	hub := &recordingHub{versions: versions}
 	poller := forges.NewPRStatusPoller(nil, quietNotifier{}, func() forges.Gate { return forges.Gate{} },
 		forges.WithInventoryPush(versions, hub))
-	m := forges.NewManager(t.TempDir(), func(context.Context, forges.Change) {})
+	m := testForges(t, t.TempDir(), func(context.Context, forges.Change) {})
 	n := &forgeNotifier{hub: hub, poller: poller, steer: quietSteering(t, m)}
 	before, _ := versions.Current(subject.KindForgeInventory, "github:github.com")
 

@@ -4,6 +4,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { buildEvent, type EventEntry } from "./messages-events.js";
 import type { EntryKind, KindedEntry } from "./types.js";
+import { glyphMarkup, registryMarkup } from "./__test-helpers__/glyph.js";
+import { ICON_ALERT, ICON_COMPACT, ICON_REWIND, ICON_SHIELD, ICON_TOOL_SWITCH } from "./icons.js";
 
 function event<K extends EntryKind & EventEntry["kind"]>(
   kind: K,
@@ -39,9 +41,52 @@ describe("the row a kind draws", () => {
       [event("compaction", { summary: "" }), "boundary-compacted"],
       [event("compaction_failed", { reason: "" }), "boundary-failed"],
       [event("safety_blocked", { properties: [] }), "boundary-blocked"],
+      [event("context_reset", { cause: "load_failed" }), "boundary-reset"],
     ];
     for (const [entry, face] of faces) {
       expect(buildEvent(entry).className, entry.kind).toContain(face);
+    }
+  });
+
+  it("draws each kind's registry glyph, hidden from assistive tech", () => {
+    const glyphs: readonly (readonly [string, EventEntry, string])[] = [
+      ["a model switch", event("model_switched", { from: "a", to: "b" }), ICON_TOOL_SWITCH],
+      [
+        "a mode switch",
+        event("mode_switched", { from: "spec", to: "vibe", source: "user" }),
+        ICON_TOOL_SWITCH,
+      ],
+      ["a routed model", event("model_routed", { message: "" }), ICON_TOOL_SWITCH],
+      [
+        "a fallback",
+        event("model_fallback", { from: "a", to: "b", trigger: "refusal" }),
+        ICON_TOOL_SWITCH,
+      ],
+      [
+        "a rewind",
+        event("turn_revert", {
+          from: "t-2",
+          from_n: 2,
+          through: "t-2",
+          kas_message_id: "kas-2",
+          cause: "rewind",
+        }),
+        ICON_REWIND,
+      ],
+      ["a compaction", event("compaction", { summary: "" }), ICON_COMPACT],
+      [
+        "a compaction with a summary",
+        event("compaction", { summary: "Kept the plan." }),
+        ICON_COMPACT,
+      ],
+      ["a failed compaction", event("compaction_failed", { reason: "" }), ICON_ALERT],
+      ["a safety block", event("safety_blocked", { properties: [] }), ICON_SHIELD],
+    ];
+    for (const [name, entry, glyph] of glyphs) {
+      const icon = buildEvent(entry).querySelector(".boundary-icon, .compaction-icon");
+      expect(icon?.getAttribute("aria-hidden"), name).toBe("true");
+      expect(icon?.childElementCount, name).toBe(1);
+      expect(glyphMarkup(icon?.firstElementChild), name).toBe(registryMarkup(glyph));
     }
   });
 });
@@ -85,6 +130,12 @@ describe("model_fallback", () => {
     expect(node.className).toContain("boundary-switched");
     expect(labelOf(node)).toBe(
       "opus-5 refused this request, retried on sonnet-5, which now serves this session",
+    );
+  });
+
+  it("words KAS's same-model retry as a retry, naming the model once", () => {
+    expect(label({ from: "auto", to: "auto", scope: "turn", trigger: "refusal" })).toBe(
+      "auto refused this request, retried",
     );
   });
 
@@ -198,10 +249,10 @@ describe("model_switched", () => {
     expect(labelOf(node)).toBe("Switched to opus-5 (x-high)");
   });
 
-  // KAS reports a context reset through the same entry with an empty `to`.
-  it("reads an empty target as a context reset rather than a switch, with no tier", () => {
-    const node = buildEvent(event("model_switched", { from: "sonnet-5", to: "", effort: "high" }));
-    expect(labelOf(node)).toBe("Context reset");
+  // A reset has its own kind, so an empty target is never read as one.
+  it("never words an empty target as a context reset", () => {
+    const node = buildEvent(event("model_switched", { from: "sonnet-5", to: "" }));
+    expect(labelOf(node)).not.toContain("Context reset");
   });
 });
 
@@ -247,6 +298,25 @@ describe("turn_revert", () => {
     expect(node.className).toContain("boundary-rewound");
     expect(labelOf(node)).toBe("Rewound to here");
     expect(node.querySelector("details")).toBeNull();
+  });
+});
+
+describe("context_reset", () => {
+  it("draws one reset boundary per cause, each in its own words", () => {
+    const causes = ["session_missing", "load_failed", "empty_retry"] as const;
+    const labels = causes.map((cause) => {
+      const node = buildEvent(event("context_reset", { cause }));
+      expect(node.className, cause).toContain("boundary-reset");
+      expect(labelOf(node), cause).toMatch(/^Context reset · /);
+      return labelOf(node);
+    });
+    expect(new Set(labels).size).toBe(causes.length);
+  });
+
+  it("says the agent had lost the chat when its session record was gone", () => {
+    expect(labelOf(buildEvent(event("context_reset", { cause: "session_missing" })))).toBe(
+      "Context reset · the agent had lost this chat's earlier turns, so a new session started",
+    );
   });
 });
 

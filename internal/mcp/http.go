@@ -7,12 +7,13 @@ import (
 	"net/http"
 	"path"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v4"
 )
 
-// RegisterRoutes wires the MCP config endpoints: GET/POST /api/mcp (list masked, create), POST
+// RegisterRoutes wires the MCP config endpoints: GET/POST /api/mcp (list masked with the count of
+// record entries that could not be read as `unreadable`, create), POST
 // /api/mcp/import (every server of a pasted README block), and GET (masked), PUT (keeps "***"
 // values), PATCH ({"enabled": bool}) and DELETE on /api/mcp/{id}.
 func (s *Store) RegisterRoutes(mux *http.ServeMux) {
@@ -48,13 +49,13 @@ func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
-	webhttp.WriteJSON(w, map[string]any{"results": results, "notes": req.notes})
+	httpserver.WriteJSON(w, map[string]any{"results": results, "notes": req.notes})
 }
 
 func (s *Store) handleCollection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		webhttp.WriteJSON(w, map[string]any{"servers": s.list(r.Context())})
+		httpserver.WriteJSON(w, map[string]any{"servers": s.list(r.Context()), "unreadable": len(s.unreadable)})
 	case http.MethodPost:
 		var in Server
 		if !httpreply.DecodeJSON(w, r, &in) {
@@ -65,7 +66,7 @@ func (s *Store) handleCollection(w http.ResponseWriter, r *http.Request) {
 			s.writeErr(w, err)
 			return
 		}
-		webhttp.WriteJSON(w, created)
+		httpserver.WriteJSON(w, created)
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
@@ -107,7 +108,7 @@ func (s *Store) writeOne(w http.ResponseWriter, r *http.Request, id serverID) {
 		httpreply.NotFound(w, "server not found")
 		return
 	}
-	webhttp.WriteJSON(w, got)
+	httpserver.WriteJSON(w, got)
 }
 
 // putOne handles PUT /api/mcp/{id}: replace the record (preserving "***"
@@ -122,7 +123,7 @@ func (s *Store) putOne(w http.ResponseWriter, r *http.Request, id serverID) {
 		s.writeErr(w, err)
 		return
 	}
-	webhttp.WriteJSON(w, updated)
+	httpserver.WriteJSON(w, updated)
 }
 
 // patchOne handles PATCH /api/mcp/{id} with body {"enabled": bool}: a
@@ -145,7 +146,7 @@ func (s *Store) patchOne(w http.ResponseWriter, r *http.Request, id serverID) {
 		s.writeErr(w, err)
 		return
 	}
-	webhttp.WriteJSON(w, updated)
+	httpserver.WriteJSON(w, updated)
 }
 
 // deleteOne handles DELETE /api/mcp/{id}: 200 ok, or map the store error
@@ -155,7 +156,7 @@ func (s *Store) deleteOne(w http.ResponseWriter, r *http.Request, id serverID) {
 		s.writeErr(w, err)
 		return
 	}
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 }
 
 // writeErr maps package-level sentinel errors to the right HTTP status.
@@ -179,7 +180,7 @@ func (*Store) writeErr(w http.ResponseWriter, err error) {
 		} else {
 			slog.Warn("mcp: http persist write failure (infra)", "error", err)
 		}
-		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
+		httpserver.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON("persist failed"))
 	default:
 		slog.Debug("mcp: http bad request", "error", err)
@@ -208,6 +209,6 @@ func writeValidationErr(w http.ResponseWriter, err error) {
 		httpreply.BadRequest(w, err.Error())
 		return
 	}
-	webhttp.WriteJSONStatus(w, http.StatusBadRequest,
+	httpserver.WriteJSONStatus(w, http.StatusBadRequest,
 		validationErrorBody{Error: err.Error(), Fields: fields})
 }

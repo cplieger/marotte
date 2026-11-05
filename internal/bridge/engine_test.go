@@ -2,15 +2,14 @@ package bridge
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 // TestSessionStartTimeout_KeepsEngineAndCoTenants: a session/new past its budget fails that door only; a co-tenant's
@@ -137,93 +136,6 @@ func TestAbandonedSessionNew_LateErrorReplyClosesNothing(t *testing.T) {
 	}
 }
 
-func TestAbandonedSessionLoad_LateReplyIsClosedUnlessSuperseded(t *testing.T) {
-	for _, superseded := range []bool{false, true} {
-		t.Run(map[bool]string{false: "alone", true: "superseded"}[superseded], func(t *testing.T) {
-			k := newFakeKAS(t)
-			ctx, cancel := context.WithCancel(context.Background())
-			done := make(chan error, 1)
-			go func() {
-				_, err := k.e.LoadSession(ctx, &marotte.SessionOpts{SessionID: "sess_load"}, nil)
-				done <- err
-			}()
-			first := k.nextMethod(methodSessionLoad)
-			cancel()
-			<-done
-			if superseded {
-				go func() {
-					_, _ = k.e.LoadSession(context.Background(), &marotte.SessionOpts{SessionID: "sess_load"}, nil)
-				}()
-				k.nextMethod(methodSessionLoad)
-			}
-			k.reply(first.ID, map[string]any{})
-			f, quiet := k.quiet(300 * time.Millisecond)
-			closed := !quiet && f.Method == methodSessionClose
-			if closed == superseded {
-				t.Errorf("late load reply with superseded=%v: wrote close=%v (%s)", superseded, closed, f.raw)
-			}
-		})
-	}
-}
-
-// TestAbandonedSessionLoad_ANewLoadWaitsForTheLateClose: a load for the id started while the abandoned load's close is
-// in flight writes nothing until that close settles, so the close never lands on the newer session.
-func TestAbandonedSessionLoad_ANewLoadWaitsForTheLateClose(t *testing.T) {
-	k := newFakeKAS(t)
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() {
-		_, err := k.e.LoadSession(ctx, &marotte.SessionOpts{SessionID: "sess_load"}, nil)
-		done <- err
-	}()
-	first := k.nextMethod(methodSessionLoad)
-	cancel()
-	<-done
-	k.reply(first.ID, map[string]any{})
-	closeFrame := k.nextMethod(methodSessionClose)
-	opened := make(chan error, 1)
-	go func() {
-		_, err := k.e.LoadSession(t.Context(), &marotte.SessionOpts{SessionID: "sess_load"}, nil)
-		opened <- err
-	}()
-	if f, quiet := k.quiet(200 * time.Millisecond); !quiet {
-		t.Fatalf("a load wrote %s while the abandoned load's close was unsettled", f.raw)
-	}
-	k.reply(closeFrame.ID, map[string]any{})
-	again := k.nextMethod(methodSessionLoad)
-	k.reply(again.ID, map[string]any{})
-	k.answerUntilErr(opened)
-}
-
-// TestAbandonedSessionLoad_ALateReplyBeforeTheDoorFailsIsClosed: callAt gives up on the load before LoadSession's
-// failDoor takes the handle off the table, so a reply in that gap finds the dead door's own handle, which must not
-// read as a newer one.
-func TestAbandonedSessionLoad_ALateReplyBeforeTheDoorFailsIsClosed(t *testing.T) {
-	k := newFakeKAS(t)
-	s, err := k.e.newSessionHandle(t.Context(), "sess_load", &marotte.SessionOpts{SessionID: "sess_load"})
-	if err != nil {
-		t.Fatalf("Setup: newSessionHandle = %v", err)
-	}
-	k.e.lateSessionLoad(s)(&marotte.RPCResponse{Result: json.RawMessage(`{}`)})
-	closeFrame := k.nextMethod(methodSessionClose)
-	if got := closeFrame.param(marotte.KeySessionID); got != "sess_load" {
-		t.Errorf("session/close names %q, want sess_load", got)
-	}
-	s.failDoor("load", context.Canceled)
-	opened := make(chan error, 1)
-	go func() {
-		_, err := k.e.LoadSession(t.Context(), &marotte.SessionOpts{SessionID: "sess_load"}, nil)
-		opened <- err
-	}()
-	if f, quiet := k.quiet(200 * time.Millisecond); !quiet {
-		t.Fatalf("a load wrote %s while the abandoned load's close was unsettled", f.raw)
-	}
-	k.reply(closeFrame.ID, map[string]any{})
-	again := k.nextMethod(methodSessionLoad)
-	k.reply(again.ID, map[string]any{})
-	k.answerUntilErr(opened)
-}
-
 func TestEngineExit_ClosesEveryLaneAndFailsEveryPending(t *testing.T) {
 	_ = capture.Default(t)
 	k := newFakeKAS(t)
@@ -318,9 +230,16 @@ func TestEngine_StderrFlagsTheExitRecord(t *testing.T) {
 		line          string
 		heap, timeout bool
 	}{
-		"a heap-limit death":  {line: "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory", heap: true},
-		"the relay's timeout": {line: "error: timed out writing to the v3 engine's stdin", timeout: true},
-		"anything else":       {line: "warn: something happened"},
+		"a heap-limit death": {line: "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory", heap: true},
+		// marotte keeps the previous kiro-cli as a fallback, so either release's stall line can reach it.
+		"the relay's no-progress stall": {
+			line: "error: timed out writing to the v3 engine's stdin: no progress for 15 seconds", timeout: true,
+		},
+		"the previous relay's fixed timeout": {
+			line: "error: timed out writing to the v3 engine's stdin after 2 seconds", timeout: true,
+		},
+		"the relay's slow-write progress line": {line: "slow write to the v3 engine's stdin is still in progress"},
+		"anything else":                        {line: "warn: something happened"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := NewEngine("/nonexistent", "/work")

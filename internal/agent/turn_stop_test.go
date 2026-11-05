@@ -13,9 +13,9 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 // A short grace for the call-grace rows; each runs in a bubble, so it is exact.
@@ -108,7 +108,7 @@ func TestArmStopGrace_ALaterPromptsCallIsNeverReached(t *testing.T) {
 // when no stop did.
 func TestOpenTurn_ReplacingAStoppedTurnIsRefused(t *testing.T) {
 	retry := func(h *Runtime, replaces string) error {
-		id, err := h.coord.OpenTurn(t.Context(), "c1", command.TurnOpen{
+		id, err := h.coord.openTurnNow(t.Context(), "c1", command.TurnOpen{
 			Source: marotte.TurnSourceEmptyRetry, Prompt: &marotte.EntryPrompt{ID: "m-r", Text: "prompt"}, Replaces: replaces,
 		})
 		if err == nil {
@@ -182,7 +182,7 @@ func TestCmdCancel_AStopOutlivingItsTurnLeavesTheNextPromptAlone(t *testing.T) {
 func TestCmdCancel_ASupersededPromptsUnansweredCallIsReleased(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h, cs, br, first, _, prompted := interruptHub(t)
-		br.deliver(newTurnStartMsg())
+		br.deliver(br.promptTurnStartMsg())
 		br.deliver(newTurnStartMsg())
 		synctest.Wait()
 		if c, closed := closeOfTurn(t, logOf(t, cs, "c1"), first); !closed || c.Outcome == "" {
@@ -387,7 +387,7 @@ func sendGate(t *testing.T, h *Runtime, id string) error {
 // startAdmitted opens and starts the admitted prompt's turn.
 func startAdmitted(t *testing.T, h *Runtime) string {
 	t.Helper()
-	id, err := h.coord.OpenTurn(t.Context(), "c1", command.TurnOpen{
+	id, err := h.coord.openTurnNow(t.Context(), "c1", command.TurnOpen{
 		Source: marotte.TurnSourcePrompt, Prompt: &marotte.EntryPrompt{ID: "m-1", Text: "prompt"},
 	})
 	if err != nil {
@@ -403,7 +403,7 @@ func startAdmitted(t *testing.T, h *Runtime) string {
 // reservePrompt takes c1's admission for a prompt.
 func reservePrompt(t *testing.T, h *Runtime) {
 	t.Helper()
-	if got := h.coord.ReserveTurnForPrompt(t.Context(), "c1", time.Second); got != command.AdmissionAcquired {
+	if got := h.coord.reserveForPromptNow(t.Context(), "c1", time.Second); got != command.AdmissionAcquired {
 		t.Fatalf("ReserveTurnForPrompt = %v, want acquired", got)
 	}
 }
@@ -438,7 +438,7 @@ func TestArmStopGrace_KeepsAnAdmittedPromptUnsentWhereverItsOpenLands(t *testing
 		{name: "a later admission is not the stop's", act: func(t *testing.T, h *Runtime) error {
 			reservePrompt(t, h)
 			stop := h.coord.RequestStop("c1", marotte.TurnStopReader)
-			h.coord.ReleaseTurnReservation("c1")
+			h.coord.releaseHeld("c1")
 			reservePrompt(t, h)
 			if h.coord.ArmStopGrace(stop, stopGrace) {
 				t.Error("ArmStopGrace = true for an admission taken after the stop")
@@ -473,7 +473,7 @@ func TestRequestStop_AnAdmissionIsItsTargetOnlyWhenNothingElseRuns(t *testing.T)
 	}{
 		{name: "a prompt with nothing else running", want: true, admit: reservePrompt},
 		{name: "a rewind's admission", admit: func(t *testing.T, h *Runtime) {
-			if !h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceRevert) {
+			if !h.coord.tryReserveIdleNow("c1", marotte.TurnSourceRevert) {
 				t.Fatal("Setup: the rewind's admission was refused")
 			}
 		}},
@@ -483,7 +483,7 @@ func TestRequestStop_AnAdmissionIsItsTargetOnlyWhenNothingElseRuns(t *testing.T)
 		}},
 		{name: "beside an open turn KAS started", admit: func(t *testing.T, h *Runtime) {
 			reservePrompt(t, h)
-			if h.coord.openWireTurn(t.Context(), "c1", false) == nil {
+			if h.coord.openWireTurn(t.Context(), "c1", "", false) == nil {
 				t.Fatal("Setup: the agent's turn did not open")
 			}
 		}},
@@ -605,7 +605,7 @@ func emptyRetryHub(t *testing.T, arm func(*fakeBridge)) (h *Runtime, cs *testCha
 	}
 	first := minted[0]
 	mu.Unlock()
-	first.deliver(newTurnStartMsg())
+	first.deliver(first.promptTurnStartMsg())
 	first.deliver(newTurnEndMsg("end_turn"))
 	close(answerFirst)
 	synctest.Wait()

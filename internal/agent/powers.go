@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/powers"
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/webhttp/v4"
 )
 
 const (
@@ -139,7 +139,7 @@ func (ps *powersSurface) unavailable(w http.ResponseWriter) bool {
 	if ps.backend != nil {
 		return false
 	}
-	webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("Powers are not available"))
+	httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("Powers are not available"))
 	return true
 }
 
@@ -183,7 +183,7 @@ func (ps *powersSurface) handleList(w http.ResponseWriter, r *http.Request) {
 		resp.LoadErrors = loadErrors
 	}
 	resp.Powers = mergePowers(catalog, installed)
-	webhttp.WriteJSON(w, resp)
+	httpserver.WriteJSON(w, resp)
 }
 
 func (ps *powersSurface) installed(ctx context.Context) ([]kasPower, []powerLoadError, error) {
@@ -282,7 +282,7 @@ func applyInstalled(row *powerRow, k *kasPower) {
 	row.Steering = k.HasSteeringFiles
 }
 
-func powerText(s string) string { return runesafe.SanitizeSingleLineBounded(s, 512) }
+func powerText(s string) string { return textsafe.SanitizeSingleLineBounded(s, 512) }
 
 func powerTexts(in []string) []string {
 	if len(in) == 0 {
@@ -318,7 +318,7 @@ func (ps *powersSurface) handleServers(w http.ResponseWriter, r *http.Request) {
 	if servers == nil {
 		servers = []string{}
 	}
-	webhttp.WriteJSON(w, powerServersResponse{Servers: servers, Known: known})
+	httpserver.WriteJSON(w, powerServersResponse{Servers: servers, Known: known})
 }
 
 // handleInstall refuses under an administrator powers lock; removal stays open.
@@ -386,10 +386,10 @@ func (ps *powersSurface) runVerb(w http.ResponseWriter, r *http.Request, done st
 	if rendered {
 		slog.Warn("powers: change made but its MCP servers were not configured", "power", name, "error", renderErr)
 		msg := fmt.Sprintf("%s was %s, but its MCP servers could not be configured", name, done)
-		webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSONWithCode(msg, powerRenderFailedCode))
+		httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSONWithCode(msg, powerRenderFailedCode))
 		return
 	}
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 }
 
 // refresh tells the engine to rescan installed Powers, once for every session; a down engine rescans at its spawn.
@@ -476,13 +476,13 @@ func writePowerErr(w http.ResponseWriter, err error) {
 		return
 	}
 	if errors.Is(err, powers.ErrPolicyUnknown) {
-		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSON(powerPolicyPendingText))
+		httpserver.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSON(powerPolicyPendingText))
 		return
 	}
 	if cliErr, ok := errors.AsType[*powers.CLIError](err); ok {
-		webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON(cliErr.Message))
+		httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON(cliErr.Message))
 		return
 	}
 	slog.Warn("powers op failed", "error", err)
-	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("powers request failed"))
+	httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("powers request failed"))
 }

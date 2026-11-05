@@ -1,5 +1,6 @@
 // The read-only native Cedar policy view (_kiro/permissions/list + explain) at GET /api/permissions,
-// each on an observer pass. Editing is a file write KAS hot-reloads (internal/policyfile).
+// each on an observer pass whose door also reports the rules KAS skipped. Editing is a file write KAS
+// hot-reloads (internal/policyfile).
 
 package agent
 
@@ -17,42 +18,52 @@ import (
 const policyCallTimeout = 45 * time.Second
 
 // policyRaw issues a read-only, session-scoped _kiro/permissions/* request on an observer pass: KAS answers only for
-// a resident session, and the pass carries the profile's current presets.
-func (st *Settings) policyRaw(ctx context.Context, method string, extra map[string]any) (json.RawMessage, error) {
+// a resident session, and the pass carries the profile's current presets. It also returns the pass door's
+// policy errors, so a reader gets both from one pass.
+func (st *Settings) policyRaw(ctx context.Context, method string, extra map[string]any) (json.RawMessage, []marotte.PolicyErrorItem, error) {
 	var raw json.RawMessage
+	var loadErrs []marotte.PolicyErrorItem
 	err := st.observe(ctx, func(ctx context.Context, s engineSession) error {
 		var err error
 		raw, err = observerCall(ctx, s, fmt.Sprintf("policy call %s", method), method, extra)
+		loadErrs = s.PolicyErrors()
 		return err
 	})
-	return raw, err
+	return raw, loadErrs, err
 }
 
 // PolicyList returns the native policy rules, optionally for one scope, via _kiro/permissions/list.
 func (st *Settings) PolicyList(ctx context.Context, scope string) ([]marotte.PolicyRule, error) {
+	rules, _, err := st.PolicyListing(ctx, scope)
+	return rules, err
+}
+
+// PolicyListing is PolicyList plus the rules KAS reported skipping at the same pass's door; the
+// rules are never nil.
+func (st *Settings) PolicyListing(ctx context.Context, scope string) ([]marotte.PolicyRule, []marotte.PolicyErrorItem, error) {
 	extra := map[string]any{}
 	if scope != "" {
 		extra["scope"] = scope
 	}
 	cctx, cancel := context.WithTimeout(ctx, policyCallTimeout)
 	defer cancel()
-	raw, err := st.policyRaw(cctx, methodV3PermissionsList, extra)
+	raw, loadErrs, err := st.policyRaw(cctx, methodV3PermissionsList, extra)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var out struct {
 		Rules []marotte.PolicyRule `json:"rules"`
 	}
 	if len(raw) == 0 {
-		return []marotte.PolicyRule{}, nil
+		return []marotte.PolicyRule{}, loadErrs, nil
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("parse permissions/list: %w", err)
+		return nil, nil, fmt.Errorf("parse permissions/list: %w", err)
 	}
 	if out.Rules == nil {
 		out.Rules = []marotte.PolicyRule{}
 	}
-	return out.Rules, nil
+	return out.Rules, loadErrs, nil
 }
 
 // explainWire mirrors KAS's _kiro/permissions/explain reply.
@@ -88,7 +99,7 @@ func (st *Settings) PolicyExplain(ctx context.Context, req marotte.PolicyExplain
 	}
 	cctx, cancel := context.WithTimeout(ctx, policyCallTimeout)
 	defer cancel()
-	raw, err := st.policyRaw(cctx, methodV3PermissionsExplain, extra)
+	raw, _, err := st.policyRaw(cctx, methodV3PermissionsExplain, extra)
 	if err != nil {
 		return nil, err
 	}

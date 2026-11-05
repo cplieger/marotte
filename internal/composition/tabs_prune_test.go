@@ -14,7 +14,8 @@ import (
 // TestPruneTabs_DropsAChatTabWhoseChatIsGoneAndKeepsTheRest is the whole resolver as one table,
 // every arm a decision: only a chat tab resolves against the chat store.
 func TestPruneTabs_DropsAChatTabWhoseChatIsGoneAndKeepsTheRest(t *testing.T) {
-	chatStore, err := chat.NewStore(filepath.Join(t.TempDir(), "chats"))
+	chatsDir := filepath.Join(t.TempDir(), "chats")
+	chatStore, err := chat.NewStore(chatsDir)
 	if err != nil {
 		t.Fatalf("chat store: %v", err)
 	}
@@ -24,6 +25,12 @@ func TestPruneTabs_DropsAChatTabWhoseChatIsGoneAndKeepsTheRest(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Join(chatsDir, "c-unread"), 0o700); err != nil {
+		t.Fatalf("seed unread chat: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(chatsDir, "c-unread", "chat.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("seed unread chat: %v", err)
+	}
 	tabStore, err := tabs.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("tab store: %v", err)
@@ -32,6 +39,7 @@ func TestPruneTabs_DropsAChatTabWhoseChatIsGoneAndKeepsTheRest(t *testing.T) {
 	for _, spec := range []marotte.OpenTab{
 		{Kind: marotte.TabKindChat, Ref: "c-live"},
 		{Kind: marotte.TabKindChat, Ref: "c-gone"},
+		{Kind: marotte.TabKindChat, Ref: "c-unread"},
 		{Kind: marotte.TabKindEditor, Ref: "/workspace/deleted-by-a-branch-switch.go"},
 		{Kind: marotte.TabKindRun, Ref: "wf-finished"},
 		{Kind: marotte.TabKindSettings},
@@ -57,6 +65,7 @@ func TestPruneTabs_DropsAChatTabWhoseChatIsGoneAndKeepsTheRest(t *testing.T) {
 	}{
 		{desc: "a chat tab whose chat is still there survives", key: "chat:c-live", want: true},
 		{desc: "a chat tab whose chat is gone is dropped", key: "chat:c-gone", want: false},
+		{desc: "a chat tab whose record could not be read survives", key: "chat:c-unread", want: true},
 		{desc: "an editor tab for a missing file is left alone", key: "editor:/workspace/deleted-by-a-branch-switch.go", want: true},
 		{desc: "a run tab is left alone", key: "run:wf-finished", want: true},
 		{desc: "a singleton always resolves", key: "settings:", want: true},

@@ -1,7 +1,7 @@
 // The list is kiro-cli's own store, so this module refetches and never holds an authoritative copy. Progress is polled:
 // knowledge_indexing frames name a per-agent store this endpoint cannot read (handlers/knowledge-indexing.ts shows them).
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { byId } from "./dom.js";
 import { reconcile } from "./reconcile.js";
@@ -10,6 +10,8 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { apiGetTyped, CancellableSlot, type Decoder } from "./api-client.js";
 import { loadSettings } from "./persist.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
+import { mayStillApply } from "./actions/still-applying.js";
+import { onSSE } from "./bus.js";
 import { paintIfChanged, sigChanged } from "./paint-sig.js";
 import {
   addKnowledge,
@@ -19,7 +21,7 @@ import {
   removeKnowledge,
 } from "./actions/knowledge.js";
 import { ICON_CLOSE_UI, ICON_PLUS_UI, ICON_REFRESH, ICON_TRASH_UI } from "./icons.js";
-import { asObject, decodeArray, optBool, optStr, reqNum, reqStr } from "./validators.js";
+import { asObject, decodeArray, optBool, optStr, reqNum, reqStr } from "./wire/validators.gen.js";
 
 // Wire type and decoder, matching internal/hub/knowledge.go knowledgeContext.
 
@@ -436,13 +438,18 @@ async function onAdd(
   // `error: false` keeps this off the toasts, so the field is the only surface for the server's message, carried only by
   // the typed outcome.
   const out = await addKnowledge.dispatch({ path, name }).outcome;
+  const label = name !== "" ? name : path;
   if (out.status !== "success") {
     error.textContent =
-      out.status === "error" ? out.error.message : "The add was cancelled before it ran.";
+      out.status !== "error"
+        ? "The add was cancelled before it ran."
+        : mayStillApply(out.error)
+          ? `Still adding "${label}"; the list updates when it lands`
+          : out.error.message;
     pathInput.focus();
     return;
   }
-  showToast(`Indexing "${name !== "" ? name : path}" in the background…`, "success");
+  showToast(`Indexing "${label}" in the background…`, "success");
   pathInput.value = "";
   nameInput.value = "";
   hideAddForm();
@@ -478,6 +485,13 @@ export function initKnowledge(): void {
   clearBtn.addEventListener("click", () => {
     void onClearAll();
   });
+
+  // A change kiro-cli applied after its request stopped waiting, or one from another device.
+  registerCleanup(
+    onSSE("knowledge_changed", () => {
+      loadKnowledge();
+    }),
+  );
 }
 
 /** The list is kiro-cli's own, so clearing it clears it for the TUI on this machine too; the confirm says so. */

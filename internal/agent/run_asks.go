@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/keyenc"
+	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/notice"
@@ -86,10 +86,9 @@ type pendingPrompt struct {
 
 // stepMarks is one step session's turn record this boot.
 type stepMarks struct {
-	marker  string
-	asked   string
-	warned  string
-	endedAt string
+	marker string
+	asked  string
+	warned string
 	// said is the step's last words from the run's record, read once per marker.
 	said       string
 	saidMarker string
@@ -121,6 +120,8 @@ type askCell struct {
 	// transient is the cell of a run with no lease: it serializes step messages and publishes nothing.
 	transient   bool
 	decodeWarns bool
+	// readFailed is set while the newest read failed, so reply is older than the run.
+	readFailed bool
 }
 
 func newAskCell(workflowID string, chatID marotte.ChatID) *askCell {
@@ -301,7 +302,7 @@ func (rs *Runs) retractAsks(positions []string) {
 		return
 	}
 	for _, p := range positions {
-		rs.coord.retractPush(marotte.RunAskSubject(p))
+		rs.coord.retractPush(marotte.RunAskSubject(p), p)
 	}
 }
 
@@ -317,7 +318,7 @@ type askBasis struct {
 func (c *askCell) basisLocked() askBasis {
 	out := make(map[string]workflow.StepLog, len(c.steps))
 	for id, m := range c.steps {
-		out[id] = workflow.StepLog{Marker: m.marker, Asked: m.asked, Said: m.said, EndedAt: m.endedAt, Open: m.open}
+		out[id] = workflow.StepLog{Marker: m.marker, Asked: m.asked, Said: m.said, Open: m.open}
 	}
 	return askBasis{steps: out, motion: c.lastMotion}
 }
@@ -401,7 +402,7 @@ func (c *askCell) noticesLocked(asks []marotte.RunAsk) askNotice {
 }
 
 func askPosition(workflowID string, a *marotte.RunAsk) string {
-	return workflow.AskPosition(workflowID, workflow.StepSession{Path: a.NodePath, SessionID: a.StepSessionID})
+	return workflow.AskPosition(workflowID, &workflow.StepSession{Path: a.NodePath, SessionID: a.StepSessionID})
 }
 
 // unseenAskText is a notification's body when marotte did not see what the step said.
@@ -417,7 +418,8 @@ func (rs *Runs) sendNotices(ctx context.Context, c *askCell, n askNotice) {
 		p := notice.Question(rs.coord.NoticeTarget(ctx, c.chatID, c.workflowID),
 			cmp.Or(a.AgentName, a.NodeID), cmp.Or(a.Text, unseenAskText))
 		// One tag per wait: a re-park replaces its own banner, a sibling's is its own.
-		p.PushSubject = marotte.RunAskSubject(askPosition(c.workflowID, a))
+		pos := askPosition(c.workflowID, a)
+		p.PushSubject, p.Ask = marotte.RunAskSubject(pos), pos
 		slog.Info("a workflow step is waiting for an answer", "workflow_id", scrubLog(c.workflowID),
 			"node_id", scrubLog(a.NodeID), "text_source", string(a.TextSource), "chat_id", c.chatID)
 		rs.coord.Notify(ctx, c.chatID, &p)
@@ -540,7 +542,7 @@ func (rs *Runs) refreshCell(ctx context.Context, c *askCell) (askRead, error) {
 	}
 	rs.readSaid(ctx, c, in, basis)
 	c.mu.Lock()
-	c.reply, c.basis = in, basis
+	c.reply, c.basis, c.readFailed = in, basis, false
 	asks := workflow.OpenAsks(in, c.runLogLocked(basis, rs.asks.epochNow()))
 	c.settleOnReadLocked(in, asks)
 	// Settling can clear marotte's own holds, which are part of this snapshot.
@@ -578,7 +580,7 @@ func (rs *Runs) markGone(ctx context.Context, c *askCell) {
 	c.clearPendingLocked()
 	stopTimer(c.requery)
 	stopTimer(c.quiet)
-	c.reply = workflow.Inspect{}
+	c.reply, c.readFailed = workflow.Inspect{}, false
 	n := rs.publishLocked(ctx, c, nil, true)
 	c.mu.Unlock()
 	rs.sendNotices(ctx, c, n)
@@ -586,6 +588,7 @@ func (rs *Runs) markGone(ctx context.Context, c *askCell) {
 
 func (rs *Runs) markUnreadable(ctx context.Context, c *askCell) {
 	c.mu.Lock()
+	c.readFailed = true
 	n := rs.publishLocked(ctx, c, c.last.Asks, false)
 	rs.armRequeryLocked(c)
 	c.mu.Unlock()
@@ -668,7 +671,6 @@ func (rs *Runs) askTurnEdge(workflowID, session string, edge translate.TurnEdge)
 	case translate.TurnEdgeEnd:
 		m.open = false
 		m.asked, m.warned = m.warned, ""
-		m.endedAt = time.Now().UTC().Format(time.RFC3339)
 	case translate.TurnEdgeNone:
 	}
 	c.lastMotion = time.Now()

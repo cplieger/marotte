@@ -10,7 +10,6 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     additional_directories_refused: {},
     chat_retention_days: 7,
     theme: "",
-    fb_path: "",
     last_model: "",
     last_effort_by_model: {},
     kiro_defaults: {},
@@ -31,6 +30,7 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     auto_routing: "",
     auto_delegation: "",
     output_style: "default",
+    workflow_launch: "when-asked",
     terminal_command_timeout_ms: 0,
     engine_heap_mib: 0,
     mcp_wait_for_ready: false,
@@ -41,8 +41,10 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     supervised_default: false,
     scheduled_auto_approve: false,
     debug_logs: false,
+    high_throughput_optimizations: true,
     settings_epoch: 0,
     settings_revision: 0,
+    hook_status_shown: true,
     ...overrides,
   };
 }

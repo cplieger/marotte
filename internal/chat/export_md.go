@@ -136,14 +136,15 @@ func newTurnRender(turn []marotte.Entry, woken *wakeFacts) turnRender {
 
 // writeSteer renders a steer unless another entry speaks for it: a wake that names it, or its read twin.
 func (r *turnRender) writeSteer(b *strings.Builder, e *marotte.Entry) {
-	if _, waker := r.woken.drawn[e.ID]; !waker && !r.readDropped(e) {
+	if _, waker := r.woken.drawn[e.ID]; !waker && !readDropped(r.readDrop, e) {
 		writeSteerMarkdown(b, e)
 	}
 }
 
-// readDropped reports a dropped agent note the turn also read; its read twin shares the id and still renders.
-func (r *turnRender) readDropped(e *marotte.Entry) bool {
-	if _, named := r.readDrop[e.ID]; !named {
+// readDropped reports a dropped agent note its turn also read (readDrop, from readDrops); its read twin shares the id
+// and still renders.
+func readDropped(readDrop map[string]struct{}, e *marotte.Entry) bool {
+	if _, named := readDrop[e.ID]; !named {
 		return false
 	}
 	var p marotte.EntrySteer
@@ -228,7 +229,7 @@ func (r *turnRender) writeEntry(b *strings.Builder, e *marotte.Entry) {
 		}
 	case marotte.EntryKindCompaction, marotte.EntryKindCompactionFailed,
 		marotte.EntryKindSafetyBlocked, marotte.EntryKindModelSwitched, marotte.EntryKindModelRouted,
-		marotte.EntryKindModelFallback, marotte.EntryKindModeSwitched:
+		marotte.EntryKindModelFallback, marotte.EntryKindModeSwitched, marotte.EntryKindContextReset:
 		writeEventMarkdown(b, e)
 	case marotte.EntryKindTurnClose:
 		writeTurnCloseEntry(b, e)
@@ -255,6 +256,8 @@ func writeEventMarkdown(b *strings.Builder, e *marotte.Entry) {
 		writeModelFallbackMarkdown(b, e)
 	case marotte.EntryKindModeSwitched:
 		writeModeSwitchedMarkdown(b, e)
+	case marotte.EntryKindContextReset:
+		writeContextResetMarkdown(b, e)
 	}
 }
 
@@ -404,6 +407,15 @@ func writeModelFallbackMarkdown(b *strings.Builder, e *marotte.Entry) {
 	fmt.Fprintf(b, "%s\n\n", line)
 }
 
+// writeContextResetMarkdown names the cause in its wire code, as the log stores it: the transcript's wording is the
+// client's.
+func writeContextResetMarkdown(b *strings.Builder, e *marotte.Entry) {
+	var p marotte.EntryContextReset
+	if decodePayload(e, &p) {
+		fmt.Fprintf(b, "**Event: context_reset** %s\n\n", oneLine(string(p.Cause)))
+	}
+}
+
 func writeModeSwitchedMarkdown(b *strings.Builder, e *marotte.Entry) {
 	var p marotte.EntryModeSwitched
 	if !decodePayload(e, &p) {
@@ -418,11 +430,8 @@ func writeModeSwitchedMarkdown(b *strings.Builder, e *marotte.Entry) {
 }
 
 // modelSwitchedDetail mirrors the transcript row: one kind, two triggers told apart by From == To
-// (marotte.EntryModelSwitched). An empty To is the context reset. The tier is the wire value, not a label.
+// (marotte.EntryModelSwitched). The tier is the wire value, not a label.
 func modelSwitchedDetail(p *marotte.EntryModelSwitched) string {
-	if p.To == "" {
-		return "context reset"
-	}
 	tier := oneLine(p.Effort)
 	if p.Unoffered != "" {
 		tier = strings.TrimPrefix(tier+"; ", "; ") + oneLine(p.Unoffered) + " is not offered"
@@ -496,7 +505,11 @@ func writeTurnOpenMarkdown(b *strings.Builder, e *marotte.Entry) {
 		}
 		return
 	}
-	b.WriteString("**User**\n\n")
+	who := "User"
+	if c := open.Prompt.Caller; c != nil {
+		who = oneLine(c.SentBy())
+	}
+	fmt.Fprintf(b, "**%s**\n\n", who)
 	writeParagraph(b, open.Prompt.Text)
 	if len(open.Prompt.Attachments) > 0 {
 		b.WriteString("Attachments:\n\n")
@@ -540,6 +553,9 @@ func steerHeading(p *marotte.EntrySteer) string {
 		}
 		return "**Message to the main agent**\n\n"
 	case marotte.SteerOriginUser:
+		if p.Caller != nil {
+			who = oneLine(p.Caller.SentBy())
+		}
 	}
 	if p.State == marotte.SteerStateDropped {
 		return "**" + who + " (mid-turn, not delivered)**\n\n"

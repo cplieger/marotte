@@ -4,7 +4,7 @@
 // collapses. ONE FOLD PER BOX: only a top-level container discloses, and `applyCollapse` is the one
 // writer that honours it.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { chevronEl } from "../chevron.js";
 import { iconEl } from "../icon-el.js";
 import {

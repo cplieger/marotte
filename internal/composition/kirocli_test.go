@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/signin"
-	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/toolbelt/v3/pin"
 )
 
 // TestStartKiroCLIShapes pins the runtimes startKiroCLI returns for a configuration it cannot
@@ -25,11 +25,11 @@ func TestStartKiroCLIShapes(t *testing.T) {
 		wantPath  string
 		wantGate  bool
 		wantReady bool
-		reason    pinstall.Reason
+		reason    pin.Reason
 		rescan    bool
 	}{
 		"no pins resolves the bare name and installs nothing": {
-			cfg:      Config{ToolsDir: t.TempDir()},
+			cfg:      Config{Tools: toolsRoot{dir: t.TempDir()}},
 			wantPath: "kiro-cli",
 		},
 		"pins present but no tools dir falls back to the bare name": {
@@ -37,10 +37,25 @@ func TestStartKiroCLIShapes(t *testing.T) {
 			wantPath: "kiro-cli",
 		},
 		"unusable pins report unready rather than pretending": {
-			cfg:      Config{KiroCLIVersion: "2.14.2", KiroCLISHA256: "not-a-digest", ToolsDir: t.TempDir()},
+			cfg:      Config{KiroCLIVersion: "2.14.2", KiroCLISHA256: "not-a-digest", Tools: toolsRoot{dir: t.TempDir()}},
 			wantPath: "",
 			wantGate: true,
-			reason:   pinstall.ReasonUnavailable,
+			reason:   pin.ReasonUnavailable,
+		},
+		"a rejected tools dir reports unready": {
+			cfg: Config{
+				KiroCLIVersion: "2.14.2", KiroCLISHA256: goodDigest, KiroCLISHA256ARM64: goodDigest,
+				Tools: checkToolsRoot("MAROTTE_TOOLS_DIR", filepath.Join(t.TempDir(), "a:b")),
+			},
+			wantPath: "",
+			wantGate: true,
+			reason:   pin.ReasonUnavailable,
+		},
+		"no pins and a rejected tools dir report unready": {
+			cfg:      Config{Tools: checkToolsRoot("MAROTTE_TOOLS_DIR", filepath.Join(t.TempDir(), "a:b"))},
+			wantPath: "",
+			wantGate: true,
+			reason:   pin.ReasonUnavailable,
 		},
 	}
 	for name, tc := range tests {
@@ -86,10 +101,8 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 		t.Fatalf("create version dir: %v", err)
 	}
 	script := "#!/bin/sh\ncase \"$1\" in --version) printf 'kiro-cli " + version + "\\n' ;; esac\nexit 0\n"
-	for _, name := range []string{"kiro-cli", "kiro-cli-chat"} {
-		if err := os.WriteFile(filepath.Join(versionDir, name), []byte(script), 0o700); err != nil { // #nosec G306 -- a dispatcher fake must be executable
-			t.Fatalf("write fake %s: %v", name, err)
-		}
+	if err := os.WriteFile(filepath.Join(versionDir, "kiro-cli"), []byte(script), 0o700); err != nil { // #nosec G306 -- a dispatcher fake must be executable
+		t.Fatalf("write fake kiro-cli: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(versionDir, ".complete"), []byte(version+"\n"), 0o600); err != nil {
 		t.Fatalf("write sentinel: %v", err)
@@ -99,7 +112,7 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 		KiroCLIVersion:     version,
 		KiroCLISHA256:      strings.Repeat("a", 64),
 		KiroCLISHA256ARM64: strings.Repeat("b", 64),
-		ToolsDir:           toolsDir,
+		Tools:              toolsRoot{dir: toolsDir},
 	}
 	// Not t.Context(): the manager must outlive the t.Cleanup(kiro.stop) teardown, and t.Context()
 	// is cancelled before cleanups run.
@@ -111,7 +124,7 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 			kiro.ready != nil, kiro.rescan != nil)
 	}
 	deadline := time.Now().Add(20 * time.Second)
-	var reason pinstall.Reason
+	var reason pin.Reason
 	for {
 		ok, why := kiro.ready()
 		if ok {
@@ -133,70 +146,34 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 	}
 }
 
-// TestStartKiroCLIRejectsASidecarLessVersionDirectory asserts that `--version` is answered by the main binary,
-// so a directory with no chat sidecar must not be adopted.
-func TestStartKiroCLIRejectsASidecarLessVersionDirectory(t *testing.T) {
-	const version = "9.9.9"
-	toolsDir := t.TempDir()
-	versionDir := filepath.Join(toolsDir, "kiro-cli-versions", version)
-	if err := os.MkdirAll(versionDir, 0o750); err != nil {
-		t.Fatalf("create version dir: %v", err)
-	}
-	script := "#!/bin/sh\ncase \"$1\" in --version) printf 'kiro-cli " + version + "\\n' ;; esac\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(versionDir, "kiro-cli"), []byte(script), 0o700); err != nil { // #nosec G306 -- a dispatcher fake must be executable
-		t.Fatalf("write fake dispatcher: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(versionDir, ".complete"), []byte(version+"\n"), 0o600); err != nil {
-		t.Fatalf("write sentinel: %v", err)
-	}
-
-	cfg := Config{
-		KiroCLIVersion:     version,
-		KiroCLISHA256:      strings.Repeat("a", 64),
-		KiroCLISHA256ARM64: strings.Repeat("b", 64),
-		ToolsDir:           toolsDir,
-	}
-	// Not t.Context(): the manager must outlive the t.Cleanup(kiro.stop) teardown, and t.Context()
-	// is cancelled before cleanups run.
-	kiro := startKiroCLI(context.Background(), &cfg)
-	t.Cleanup(kiro.stop)
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if ok, why := kiro.ready(); ok {
-			t.Fatalf("a sidecar-less version directory was adopted (readiness %v, reason %s); "+
-				"kiro-cli acp would fail at every chat spawn", ok, why)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if got := kiro.cliPath(); got != "" {
-		t.Errorf("cliPath() = %q, want empty: no version may be active", got)
-	}
-}
-
-// TestKiroSettingsLeavesTheIntegrityGateToTheManager asserts that app.disableAutoupdates is not in the list,
-// because kirocli.Release() declares it Mandatory.
-func TestKiroSettingsLeavesTheIntegrityGateToTheManager(t *testing.T) {
+// TestKiroSettingsRequiresOnlyTheAutoUpdateGate asserts that app.disableAutoupdates is listed once,
+// set to true, as the only Required assertion: kiro-cli updating itself would replace the binary
+// whose digest was verified, and a best-effort setting must never gate readiness.
+func TestKiroSettingsRequiresOnlyTheAutoUpdateGate(t *testing.T) {
 	settings := kiroSettings()
-	if len(settings) == 0 {
-		t.Fatal("no kiro-cli settings configured; kiro-cli's own chat purge would stay on")
+	if len(settings) < 2 {
+		t.Fatal("kiro-cli settings hold no best-effort entry; kiro-cli's own chat purge would stay on")
 	}
 	seen := map[string]bool{}
 	for _, a := range settings {
-		if a.Name == "app.disableAutoupdates" {
-			t.Error("app.disableAutoupdates is listed as a best-effort assertion; the release profile owns it as Mandatory")
-		}
 		if seen[a.Name] {
 			t.Errorf("setting %q is listed twice", a.Name)
 		}
 		seen[a.Name] = true
-		if a.Required {
-			t.Errorf("setting %q is marked Required; only the profile's own mandatory assertion may gate readiness", a.Name)
+		gate := a.Name == "app.disableAutoupdates"
+		if a.Required != gate {
+			t.Errorf("setting %q has Required = %v, want %v: only the auto-update gate withholds readiness", a.Name, a.Required, gate)
+		}
+		if gate && !slices.Equal(a.Args, []string{"settings", "app.disableAutoupdates", "true"}) {
+			t.Errorf("the auto-update gate has argv %v, want settings app.disableAutoupdates true", a.Args)
 		}
 		want := []string{"settings", a.Name}
 		if len(a.Args) != 3 || !slices.Equal(a.Args[:2], want) || a.Args[2] == "" {
 			t.Errorf("setting %q has argv %v, want %v plus a non-empty value", a.Name, a.Args, want)
 		}
+	}
+	if !seen["app.disableAutoupdates"] {
+		t.Error("app.disableAutoupdates is missing; a kiro-cli that can update itself would stay ready")
 	}
 }
 
@@ -286,12 +263,12 @@ func TestManagedKiroRuntime_ActivationReachesTheSeed(t *testing.T) {
 		cfg := pinnedKiroConfig(toolsDir, version)
 		mirror := httptest.NewServer(http.NotFoundHandler())
 		t.Cleanup(mirror.Close)
-		installCfg := kiroInstallConfig(&cfg)
+		installCfg := kiroInstallConfig(&cfg, toolsDir)
 		installCfg.URLTemplate = mirror.URL + "/{version}/kiro-cli.zip"
 		installCfg.MaxAttempts = 1
-		mgr, err := pinstall.New(installCfg)
+		mgr, err := pin.New(installCfg)
 		if err != nil {
-			t.Fatalf("Setup: pinstall.New: %v", err)
+			t.Fatalf("Setup: pin.New: %v", err)
 		}
 		// Not t.Context(): the manager and the seed must outlive the t.Cleanup teardown.
 		kiro := managedKiroRuntime(context.Background(), mgr)
@@ -300,7 +277,7 @@ func TestManagedKiroRuntime_ActivationReachesTheSeed(t *testing.T) {
 		stopSeed := startKiroSettingsSeed(context.Background(), kiro.installed, func(context.Context) { close(seeded) })
 		t.Cleanup(stopSeed)
 
-		waitKiroReason(t, &kiro, pinstall.ReasonUnavailable)
+		waitKiroReason(t, &kiro, pin.ReasonUnavailable)
 		select {
 		case <-kiro.installed:
 			t.Fatal("Setup: installed was closed although the only install attempt failed")
@@ -335,6 +312,57 @@ func TestManagedKiroRuntime_ActivationReachesTheSeed(t *testing.T) {
 	})
 }
 
+func TestEngineSource_ShareContent(t *testing.T) {
+	t.Run("writes_kiro_clis_switch_through_the_active_version", func(t *testing.T) {
+		const version = "9.9.9"
+		toolsDir := t.TempDir()
+		store := filepath.Join(t.TempDir(), "settings.log")
+		stageKiroVersion(t, toolsDir, version, "settings) [ $# -eq 3 ] && printf '%s=%s\\n' \"$2\" \"$3\" >>'"+store+"' ;;\n")
+		cfg := pinnedKiroConfig(toolsDir, version)
+		// Not t.Context(): the manager must outlive the t.Cleanup(kiro.stop) teardown.
+		kiro := startKiroCLI(context.Background(), &cfg)
+		t.Cleanup(kiro.stop)
+		select {
+		case <-kiro.installed:
+		case <-time.After(20 * time.Second):
+			t.Fatal("Setup: the staged version never became active")
+		}
+		src := engineSource{kiro: kiro}
+		for _, enabled := range []bool{false, true} {
+			if err := src.ShareContent(t.Context(), enabled); err != nil {
+				t.Fatalf("ShareContent(%v) = %v, want nil", enabled, err)
+			}
+		}
+		data, err := os.ReadFile(store)
+		if err != nil {
+			t.Fatalf("read store: %v", err)
+		}
+		var shared []string
+		for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
+			if k, v, _ := strings.Cut(line, "="); k == shareContentSetting {
+				shared = append(shared, v)
+			}
+		}
+		if !slices.Equal(shared, []string{"false", "true"}) {
+			t.Errorf("kiro-cli %s writes = %q, want [false true]", shareContentSetting, shared)
+		}
+	})
+	t.Run("leaves_a_developers_own_kiro_cli_alone", func(t *testing.T) {
+		bin := t.TempDir()
+		marker := filepath.Join(t.TempDir(), "ran")
+		if err := os.WriteFile(filepath.Join(bin, "kiro-cli"), []byte("#!/bin/sh\n: >'"+marker+"'\n"), 0o700); err != nil { // #nosec G306 -- a dispatcher fake must be executable
+			t.Fatalf("Setup: write fake kiro-cli: %v", err)
+		}
+		t.Setenv("PATH", bin)
+		if err := (engineSource{kiro: unmanagedKiroRuntime()}).ShareContent(t.Context(), false); err != nil {
+			t.Errorf("ShareContent on an unmanaged runtime = %v, want nil", err)
+		}
+		if _, err := os.Stat(marker); err == nil {
+			t.Error("ShareContent ran the developer's own kiro-cli; an unmanaged runtime must write nothing")
+		}
+	})
+}
+
 func stageKiroVersion(t *testing.T, toolsDir, version, extraShellCaseArms string) {
 	t.Helper()
 	versionDir := filepath.Join(toolsDir, "kiro-cli-versions", version)
@@ -342,10 +370,8 @@ func stageKiroVersion(t *testing.T, toolsDir, version, extraShellCaseArms string
 		t.Fatalf("Setup: create version dir: %v", err)
 	}
 	script := "#!/bin/sh\ncase \"$1\" in\n--version) printf 'kiro-cli " + version + "\\n' ;;\n" + extraShellCaseArms + "esac\nexit 0\n"
-	for _, name := range []string{"kiro-cli", "kiro-cli-chat"} {
-		if err := os.WriteFile(filepath.Join(versionDir, name), []byte(script), 0o700); err != nil { // #nosec G306 -- a dispatcher fake must be executable
-			t.Fatalf("Setup: write fake %s: %v", name, err)
-		}
+	if err := os.WriteFile(filepath.Join(versionDir, "kiro-cli"), []byte(script), 0o700); err != nil { // #nosec G306 -- a dispatcher fake must be executable
+		t.Fatalf("Setup: write fake kiro-cli: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(versionDir, ".complete"), []byte(version+"\n"), 0o600); err != nil {
 		t.Fatalf("Setup: write sentinel: %v", err)
@@ -357,11 +383,11 @@ func pinnedKiroConfig(toolsDir, version string) Config {
 		KiroCLIVersion:     version,
 		KiroCLISHA256:      strings.Repeat("a", 64),
 		KiroCLISHA256ARM64: strings.Repeat("b", 64),
-		ToolsDir:           toolsDir,
+		Tools:              toolsRoot{dir: toolsDir},
 	}
 }
 
-func waitKiroReason(t *testing.T, kiro *kiroRuntime, want pinstall.Reason) {
+func waitKiroReason(t *testing.T, kiro *kiroRuntime, want pin.Reason) {
 	t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
 	for {

@@ -49,9 +49,11 @@
         </div>
         <div class="sidebar-header-actions">
           <button type="button" id="theme-btn" class="icon-btn" data-tooltip="Toggle theme" aria-label="Toggle theme">
-            <svg class="theme-icon-dark ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
-            <svg class="theme-icon-light hidden ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-            <svg class="theme-icon-system hidden ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 000 18z" fill="currentColor" stroke="none"/></svg>
+            <span class="icon-swap">
+              <svg class="theme-icon-dark ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+              <svg class="theme-icon-light hidden ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+              <svg class="theme-icon-system hidden ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 000 18z" fill="currentColor" stroke="none"/></svg>
+            </span>
           </button>
           <!-- The touch/mouse toggle, in the slot Settings vacated. Authored here
                rather than built by pointer-mode.ts so it exists on the first frame:
@@ -68,8 +70,10 @@
                Whatever redraws this keeps folded fingers on BOTH sides of the
                extended one. -->
           <button type="button" id="pointer-mode-btn" class="icon-btn hidden" data-tooltip="Mouse mode. Switch to touch mode" aria-label="Touch mode" aria-pressed="false">
-            <svg class="pointer-icon-fine ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="7"/><path d="M12 7v4"/></svg>
-            <svg class="pointer-icon-coarse hidden ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 14V4.75a1.75 1.75 0 0 1 3.5 0V10"/><path d="M13.5 11V9.5a1.75 1.75 0 0 0-3.5 0V11"/><path d="M17 12V10.5a1.75 1.75 0 0 0-3.5 0V12"/><path d="M17 12.5a1.75 1.75 0 1 1 3.5 0v2A6.5 6.5 0 0 1 14 21h-2c-2.2 0-3.4-.7-4.5-1.8l-3.6-3.6a1.6 1.6 0 0 1 2.3-2.3l.3.3"/></svg>
+            <span class="icon-swap">
+              <svg class="pointer-icon-fine ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="7"/><path d="M12 7v4"/></svg>
+              <svg class="pointer-icon-coarse hidden ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 14V4.75a1.75 1.75 0 0 1 3.5 0V10"/><path d="M13.5 11V9.5a1.75 1.75 0 0 0-3.5 0V11"/><path d="M17 12V10.5a1.75 1.75 0 0 0-3.5 0V12"/><path d="M17 12.5a1.75 1.75 0 1 1 3.5 0v2A6.5 6.5 0 0 1 14 21h-2c-2.2 0-3.4-.7-4.5-1.8l-3.6-3.6a1.6 1.6 0 0 1 2.3-2.3l.3.3"/></svg>
+            </span>
           </button>
           <button type="button" id="sidebar-close" class="icon-btn sidebar-close-only" data-tooltip="Close menu" aria-label="Close menu">
             <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
@@ -557,7 +561,7 @@
                 <h2 class="section-title">Chat retention</h2>
                 <span class="settings-save-status hidden" data-save-status="chat_retention_days" aria-live="polite"></span>
               </div>
-              <p class="section-hint">Closed chats stay in <strong>History</strong> for the <strong>Days kept</strong>, or for good with <strong>Keep forever</strong>. Set <strong>0</strong> to delete a chat as soon as you close it and hide History.</p>
+              <p class="section-hint">Closed chats stay in <strong>History</strong> for the <strong>Days kept</strong>, or for good with <strong>Keep forever</strong>. With <strong>Days kept</strong> above 0, finished workflow runs are deleted that many days after they last ran, even while their chat stays open. Set <strong>0</strong> to delete a chat as soon as you close it and hide History.</p>
               <div class="section-option">
                 <label class="toggle">
                   <input type="checkbox" id="chat-retention-forever" aria-label="Keep archived chats forever">
@@ -656,8 +660,7 @@
                     <output id="auto-compact-pct-value" for="auto-compact-pct">80%</output>
                     <span class="settings-save-status hidden" data-save-status="auto_compact_pct" aria-live="polite"></span>
                   </div>
-                  <input type="range" id="auto-compact-pct" min="50" max="90" step="5" value="80" aria-describedby="auto-compact-warning">
-                  <p class="section-hint hidden" id="auto-compact-warning">Above 80%, compaction can fail on models with a smaller context window, because too little room is left to run it.</p>
+                  <input type="range" id="auto-compact-pct" min="50" max="80" step="5" value="80">
                 </div>
               </div>
               <div class="section-option section-option-fixed">
@@ -766,7 +769,21 @@
                     <span class="section-option-label">Workflows</span>
                     <span class="settings-save-status hidden" data-save-status="workflows_enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint" id="flag-workflows-hint">On: the agent hands work to workflows that run in the background while you keep chatting. Off: it uses subagents instead and waits for each to finish before it continues. Runs you start from Docs &gt; Workflows work either way. On by default.</p>
+                  <p class="section-hint" id="flag-workflows-hint">On: the agent can start workflows that run in the background while you keep chatting, and Workflow use says when. Off: it uses subagents instead and waits for each to finish before it continues. Runs you start from Docs &gt; Workflows work either way. On by default.</p>
+                </div>
+              </div>
+              <div class="section-option section-option-fixed" id="workflow-launch-row">
+                <div class="section-field">
+                  <div class="section-title-status-row">
+                    <label class="section-option-label" for="workflow-launch">Workflow use</label>
+                    <span class="settings-save-status hidden" data-save-status="workflow_launch" aria-live="polite"></span>
+                  </div>
+                  <select id="workflow-launch" class="rf-select" aria-describedby="workflow-launch-hint">
+                    <option value="when-asked" selected>Only when asked</option>
+                    <option value="large-tasks">Only for large tasks</option>
+                    <option value="delegate-all">As much as possible</option>
+                  </select>
+                  <p class="section-hint" id="workflow-launch-hint">When the agent starts a workflow on its own. Only when asked: it does the work in the chat unless you ask for a workflow. Only for large tasks: it starts one for multi-step work or work that would fill the chat's context. As much as possible: it hands reading code, writing it, testing and review to workflows. Chats started on an older kiro-cli keep handing all work to workflows. Only when asked by default.</p>
                 </div>
               </div>
               <div class="section-option section-option-fixed">
@@ -777,9 +794,8 @@
                   </div>
                   <select id="output-style" class="rf-select" aria-describedby="output-style-hint">
                     <option value="default" selected>Default</option>
-                    <option value="concise">Concise</option>
                   </select>
-                  <p class="section-hint" id="output-style-hint">Concise asks the agent for shorter replies, from your next message on. Default keeps its usual length.</p>
+                  <p class="section-hint" id="output-style-hint">Default uses Kiro's standard response style.</p>
                 </div>
               </div>
               <div class="section-option section-option-fixed">
@@ -886,7 +902,20 @@
                     <span class="section-option-label">Debug logs</span>
                     <span class="settings-save-status hidden" data-save-status="debug_logs" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Writes more detailed server logs for troubleshooting. Read them with <code>docker logs marotte</code>.</p>
+                  <p class="section-hint">Writes more detailed logs for troubleshooting. marotte's own log, read with <code>docker logs marotte</code>, switches at once. The agent engine's log under <code>/config/home/.kiro/logs</code> switches when the engine restarts.</p>
+                </div>
+              </div>
+              <div class="section-option">
+                <label class="toggle">
+                  <input type="checkbox" id="flag-high-throughput" aria-label="High throughput optimizations" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+                <div>
+                  <div class="section-title-status-row">
+                    <span class="section-option-label">High throughput optimizations</span>
+                    <span class="settings-save-status hidden" data-save-status="high_throughput_optimizations" aria-live="polite"></span>
+                  </div>
+                  <p class="section-hint">Starts the agent engine with Node.js memory and async-context settings that let it carry many chats and workflow steps at once. Turn it off for kiro-cli's stock engine.</p>
                 </div>
               </div>
             </div>
@@ -951,7 +980,7 @@
                     <span class="section-option-label">Wait for MCP servers before a prompt</span>
                     <span class="settings-save-status hidden" data-save-status="mcp_wait_for_ready" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">When on, a message waits until your MCP servers have connected, so their tools work from the first message. Off by default, and a server still connecting after 60 seconds makes that message fail and names the server.</p>
+                  <p class="section-hint">When on, a message waits until your MCP servers have connected, so their tools work from the first message. Off by default. Each server gets its connect timeout, 60 seconds unless its config sets another, up to 10 minutes. A server still connecting after that makes the message fail and names the server. A Power's server is the exception, and the message goes on without its tools and shows a warning.</p>
                 </div>
               </div>
             </div>
@@ -997,6 +1026,7 @@
                   <select id="native-rule-effect" class="rf-select">
                     <option value="ask" selected>Ask</option>
                     <option value="allow">Allow</option>
+                    <option value="evaluate">Kiro's safety check decides</option>
                     <option value="deny">Deny</option>
                   </select>
                 </label>
@@ -1053,7 +1083,7 @@
                 <h2 class="section-title">Scheduled runs</h2>
                 <span class="settings-save-status hidden" data-save-status="scheduled_auto_approve" aria-live="polite"></span>
               </div>
-              <p class="section-hint">Scheduled workflows run with nobody watching, so by default a request that needs approval is refused after 3 minutes and the run stops instead of waiting forever. Turn this on to approve those requests automatically, one at a time and never saved as rules.</p>
+              <p class="section-hint">Scheduled workflows run with nobody watching, so by default a request that needs approval is refused after 3 minutes and the run stops instead of waiting forever. Turn this on to approve those requests automatically, one at a time and never saved as rules. A request your organization requires a person to approve, or that Kiro's safety check handed to a person, is still refused.</p>
               <div class="section-option">
                 <label class="toggle">
                   <input type="checkbox" id="scheduled-auto-approve-checkbox" aria-label="Approve tool requests in scheduled runs instead of refusing them">
@@ -1731,7 +1761,37 @@
       </button>
     </div>
 
-    <!-- Disabled tools: shared across all modes, only visible on edit -->
+    <!-- Registry panel: edit-only, the env and header overrides of an organization-catalog server.
+         A FORM for the same password-field reason as the remote panel. -->
+    <form class="mcp-mode-panel hidden" data-mcp-mode="registry" autocomplete="off" novalidate>
+      <p class="mcp-mode-hint">Fill in what your organization's catalog asks this server for, such as an API key. A variable fills a value the catalog leaves empty; a header replaces the catalog's header of the same name.</p>
+      <div class="mcp-form-section">
+        <div class="mcp-form-section-head">
+          <span class="tool-form-label-text">Environment variables</span>
+          <button type="button" id="mcp-registry-add-env" class="action-pill" data-tooltip="Add variable" aria-label="Add variable">
+            <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+        <div id="mcp-registry-env" class="mcp-pair-list"></div>
+      </div>
+      <div class="mcp-form-section">
+        <div class="mcp-form-section-head">
+          <span class="tool-form-label-text">Headers</span>
+          <button type="button" id="mcp-registry-add-header" class="action-pill" data-tooltip="Add header" aria-label="Add header">
+            <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+        <div id="mcp-registry-headers" class="mcp-pair-list"></div>
+        <p class="tool-form-hint">Values are stored locally with 0600 permissions and are never sent back to the browser after they are saved.</p>
+      </div>
+      <p id="mcp-registry-error" class="section-hint mcp-form-error hidden"></p>
+      <button type="submit" id="mcp-registry-save" class="btn-save">
+        <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        Save
+      </button>
+    </form>
+
+    <!-- Disabled tools: shared across every mode but registry, only visible on edit -->
     <div id="mcp-disabled-tools" class="mcp-form-section hidden">
       <div class="mcp-form-section-head">
         <span class="tool-form-label-text">Disabled tools</span>

@@ -12,18 +12,24 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/turnlog"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // ProjectedTurn is one turn as the replay describes it, entries in KAS order with Seq
 // unassigned (the merge assigns positions). The merge's rule-one key is the turn_open prompt
 // id: KAS's record id for the opening user row.
 type ProjectedTurn struct {
+	// Tag is the userMessageTag its turn_start echoed: the marotte turn id a chat prompt sent. Never persisted.
+	Tag     string
 	Entries []marotte.Entry
 }
+
+// boundaryRecovered is a replayed bracket's boundarySource when KAS synthesized it because its
+// record holds none: a recovered turn_end is KAS's guess (cancelled), never a seen end.
+const boundaryRecovered = "recovered"
 
 // replaySteerSource is `_meta.kiro.source` on all four steering shapes: it marks the CHANNEL,
 // so the workflow-progress and empty-boundary drops must run before it decides anything.
@@ -32,6 +38,11 @@ const replaySteerSource = "steer"
 // subagentInvocationKind is `_meta.kiro.kind` on the tool_call that starts a delegate, filed
 // in the issuer's lane; the stamp alone cannot say so.
 const subagentInvocationKind = "agent-subtask"
+
+// replayInvocationSuffix is what KAS's session record appends to an invocation's live tool call
+// id, and its completion is renamed to the same id on replay; trimmed, the replayed card pairs
+// with the live one by id.
+const replayInvocationSuffix = "-sub-agent-start"
 
 // laneSay is the say one lane is still accumulating: its entry id and its kind, so a
 // thinking delta arriving over an open text say is treated as the barrier it is.
@@ -50,11 +61,13 @@ type projectedFacts struct {
 	refusal *marotte.RefusalInfo
 	// engine is the replayed display_error, last write winning like the live latch.
 	engine *displayErrorBlock
-	// footer is the asks, request ids, throughput, recoveries and steering, the
+	// footer is the asks, request ids, breakdown, first output, recoveries and steering, the
 	// live turn's own accumulator applied to the replayed frames.
 	footer    turnlog.Facts
 	credits   float64
 	elapsedMs float64
+	// endTs is the turn_end's own timestamp, zero when it carried none.
+	endTs int64
 }
 
 // EntryProjection accumulates a replayed transcript as entries. Not safe for
@@ -91,6 +104,8 @@ type EntryProjection struct {
 	workDir string
 	// curID is the newest turn's id, carried by every entry of it.
 	curID string
+	// curTag is the newest turn's ProjectedTurn.Tag.
+	curTag string
 	// lane is the lane the newest text or thinking delta arrived in, which is the
 	// ISSUER's lane for a subagent invocation: the lane whose text was open when the
 	// frame arrived.
@@ -367,8 +382,15 @@ func (p *EntryProjection) ingestToolCall(raw json.RawMessage) {
 		return
 	}
 	tc.gate()
+	tc.ToolCallID = strings.TrimSuffix(tc.ToolCallID, replayInvocationSuffix)
 	// The live path's suppression: KAS's log stores the cloud-config fetch it announced.
 	if isInternalTool(tc.Meta.Kiro.ToolID) {
+		return
+	}
+	// KAS announces a call live only once it runs or awaits approval, and records its state at that
+	// moment: one replayed already settled (subagent_response) reached the live chat as a bare
+	// update, which the live fold drops, so its update finds no call here either.
+	if tc.Status.Terminal() {
 		return
 	}
 	p.flushUser()
@@ -398,12 +420,13 @@ func (p *EntryProjection) ingestToolUpdate(raw json.RawMessage) {
 		return
 	}
 	tu.gate()
+	tu.ToolCallID = strings.TrimSuffix(tu.ToolCallID, replayInvocationSuffix)
 	if !tu.Status.Terminal() {
 		return
 	}
 	lane, known := p.calls[tu.ToolCallID]
 	if !known {
-		// No create in this turn (dropped as internal, or malformed): nothing to settle.
+		// No create in this turn (dropped as internal or settled, or malformed): nothing to settle.
 		return
 	}
 	if stamp := tu.Meta.Kiro.AgentSubtaskID; stamp != "" && stamp != lane {
@@ -416,17 +439,19 @@ func (p *EntryProjection) ingestToolUpdate(raw json.RawMessage) {
 		Title:      displayText(tu.Title),
 		Kind:       tu.Kind,
 		Status:     tu.Status,
-		Output:     content.output,
+		Output:     toolUpdateOutput("", tu.Status, &tu, content),
 		TerminalID: content.terminalID,
 		Diffs:      content.diffs,
 		Locations:  tu.Locations,
 		Checkpoint: checkpointFrom(tu.Meta.Kiro.Checkpoint),
 		Disclosed:  disclosedFrom(tu.Meta.Kiro.DisclosedContext),
-		Denial:     denialFrom(tu.Meta.Kiro.PolicyDenial),
 		Offload:    offloadFrom(tu.Meta.Kiro.OutputTransformation),
 		// The meta read carries the id on a replay; rawOutput is the live path's spelling.
 		WorkflowID: cmp.Or(tu.Meta.Kiro.WorkflowID, rawOutputWorkflowID(tu.RawOutput)),
 	}
+	res.Denial = cmp.Or(denialFrom(tu.Meta.Kiro.PolicyDenial), engineRefusal(tu.Status, res.TerminalID, res.Output))
+	res.ClassifierApproved = tu.Meta.Kiro.TrustClassifierApproved
+	res.ClassifierNote = classifierNote(tu.Meta.Kiro.TrustClassifier)
 	p.sealLane(lane)
 	p.settleCall(tu.ToolCallID)
 	p.appendEntry(marotte.EntryKindToolResult, marotte.ToolResultID(tu.ToolCallID), lane,
@@ -469,25 +494,30 @@ func (p *EntryProjection) ingestInfo(raw json.RawMessage) {
 		// Close, THEN flush, THEN open: flushing first would attribute an old-bracket steer to the new turn.
 		p.closeTurn()
 		p.flushUser()
-		p.openTurn()
+		k := &u.Meta.Kiro
+		p.openTurnAt(cmp.Or(k.TurnID, k.ExecutionID), replayTS(k.Timestamp))
+		p.curTag = k.UserMessageTag
 	case infoKindTurnCompletion:
 		p.noteTurnMetering(u.Meta.Kiro.PromptTurnSummaries, u.Meta.Kiro.ElapsedTime)
 		k := &u.Meta.Kiro
 		p.facts.footer.NoteTurnCompletion(&turnlog.Completion{
 			RequestIDs:       boundedIDs(k.RequestIDs),
 			Recoveries:       boundedIDs(k.Recoveries),
-			Throughput:       k.Throughput.summary(),
 			ContextBreakdown: contextBreakdownFrom(k.ContextBreakdown),
 		})
 	case infoKindPendingInteraction, infoKindInteractionResolved, infoKindSteeringInclusion:
 		p.noteAskFact(&u.Meta.Kiro)
+	case infoKindTurnTiming:
+		p.facts.footer.NoteFirstOutput(firstOutputFrom(u.Meta.Kiro.TTFT))
 	case infoKindDisplayError:
-		if d := u.Meta.Kiro.DisplayError; d != nil && p.cur != nil && d.ErrorType != displayErrorMCPConnection && d.Message != "" {
-			p.facts.engine = d
-		}
+		p.noteDisplayError(u.Meta.Kiro.DisplayError)
 	case infoKindTurnEnd:
-		// The payload BEFORE the close, so closeTurn can stamp it; the close keys on the KIND.
-		p.noteTurnEnd(u.Meta.Kiro.TurnEnd)
+		// The payload BEFORE the close, so closeTurn can stamp it; the close keys on the KIND. A recovered
+		// end concludes nothing, so the turn keeps the record's own unterminated closer (merge rule 4).
+		if u.Meta.Kiro.BoundarySource != boundaryRecovered {
+			p.noteTurnEnd(u.Meta.Kiro.TurnEnd)
+			p.facts.endTs = replayTS(u.Meta.Kiro.Timestamp)
+		}
 		p.closeTurn()
 	case infoKindSeparator:
 		// No close: a separator inside a bracket lands the compaction inside the open turn. The seal
@@ -506,6 +536,14 @@ func (p *EntryProjection) ingestInfo(raw json.RawMessage) {
 			modelRoutedPayload(u.Meta.Kiro.Message))
 	case infoKindModelFallback, infoKindModelFallbackPromoted:
 		p.ingestModelFallback(&u.Meta.Kiro)
+	}
+}
+
+// noteDisplayError keeps d as the open turn's engine error, unless it is an MCP connection error or carries no
+// message.
+func (p *EntryProjection) noteDisplayError(d *displayErrorBlock) {
+	if d != nil && p.cur != nil && d.ErrorType != displayErrorMCPConnection && d.Message != "" {
+		p.facts.engine = d
 	}
 }
 
@@ -584,24 +622,29 @@ func (p *EntryProjection) ensureTurn(source marotte.TurnOpenSourceName) {
 	if p.cur != nil {
 		return
 	}
-	p.startTurn(source, nil, 0)
+	p.startTurn(source, nil, 0, "")
 }
 
-func (p *EntryProjection) openTurn() {
+func (p *EntryProjection) openTurn() { p.openTurnAt("", 0) }
+
+// openTurnAt opens the pending prompt's turn, or a headerless wire turn, under KAS's turn id and dated by the
+// prompt, else by bracketTs.
+func (p *EntryProjection) openTurnAt(kasTurn string, bracketTs int64) {
 	p.closeTurn()
 	p.sealCur()
-	prompt, ts := p.prompt, p.promptTs
+	prompt, ts := p.prompt, cmp.Or(p.promptTs, bracketTs)
 	p.prompt, p.promptTs = nil, 0
 	source := marotte.TurnOpenNameWireTurnStart
 	if prompt != nil {
 		source = marotte.TurnOpenNamePrompt
 	}
-	p.startTurn(source, prompt, ts)
+	p.startTurn(source, prompt, ts, kasTurn)
 }
 
 // `n` stays zero: the merged log numbers turns.
-func (p *EntryProjection) startTurn(source marotte.TurnOpenSourceName, prompt *marotte.EntryPrompt, ts int64) {
+func (p *EntryProjection) startTurn(source marotte.TurnOpenSourceName, prompt *marotte.EntryPrompt, ts int64, kasTurn string) {
 	p.curID = p.newID()
+	p.curTag = ""
 	p.cur = nil
 	p.sayAt = map[string]int{}
 	p.sayText = map[string]string{}
@@ -616,8 +659,9 @@ func (p *EntryProjection) startTurn(source marotte.TurnOpenSourceName, prompt *m
 	p.compactAt = -1
 	p.facts = projectedFacts{}
 	p.appendEntry(marotte.EntryKindTurnOpen, p.curID, "", ts, marotte.EntryTurnOpen{
-		Prompt: prompt,
-		Source: source,
+		Prompt:    prompt,
+		Source:    source,
+		KASTurnID: kasTurn,
 	})
 }
 
@@ -636,7 +680,7 @@ func (p *EntryProjection) closeTurn() {
 	reason, kind := c.Reason, c.FailureKind
 	if e := p.facts.engine; e != nil && reason == "" && marotte.SeverityOf(c.Outcome) == marotte.TurnSeverityBroken {
 		m := rpcerr.Mapped{ErrorType: e.ErrorType, RetryErrorType: e.RetryErrorType}
-		reason, _ = runesafe.SanitizeSingleLineCapped(rpcerr.Account(m, e.Message), maxDisplayErrorBytes, "...")
+		reason, _ = textsafe.SanitizeSingleLineCapped(rpcerr.Account(m, e.Message), maxDisplayErrorBytes, "...")
 		if m.ErrorType == rpcerr.ContextWindowExceededError {
 			kind = marotte.FailureKindContextLimit
 		}
@@ -655,7 +699,7 @@ func (p *EntryProjection) closeTurn() {
 	if e := p.facts.engine; e != nil {
 		footer.EngineErrorClass = turnlog.EngineClass(e.ErrorType, c.Outcome)
 	}
-	p.appendEntry(marotte.EntryKindTurnClose, p.newID(), "", 0, footer)
+	p.appendEntry(marotte.EntryKindTurnClose, p.newID(), "", p.facts.endTs, footer)
 }
 
 // settle seals every lane's carry and aborts every tool call the replay never settled,
@@ -675,9 +719,10 @@ func (p *EntryProjection) sealCur() {
 	if p.cur == nil {
 		return
 	}
-	p.turns = append(p.turns, ProjectedTurn{Entries: p.cur})
+	p.turns = append(p.turns, ProjectedTurn{Entries: p.cur, Tag: p.curTag})
 	p.cur = nil
 	p.curID = ""
+	p.curTag = ""
 }
 
 // trackCall records a call as unsettled, in the order a close aborts them in.

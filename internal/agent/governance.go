@@ -15,13 +15,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // governanceWarmTimeout bounds the cold GET /api/governance: an observer pass's door plus the first push. A var so
-// the package's tests, whose fake engine pushes no profile, do not hold the boot pass for it.
+// the package's cold-governance tests, whose fake engine pushes no profile, do not hold the boot pass for it.
 var governanceWarmTimeout = 12 * time.Second
 
 // warm closes once, on the first profile.
@@ -85,11 +85,14 @@ func (c *governanceCache) composeLocked() marotte.GovernanceStatePayload {
 	return out
 }
 
+// setProfile leaves warm open: the caller closes it with markWarm once the work the profile starts is in flight.
 func (c *governanceCache) setProfile(p marotte.GovernanceStatePayload) governanceChange {
 	p.Locks, p.MCPRegistry, p.AdminRestricted = nil, nil, false
-	ch := c.update(func() { c.profile = &p })
+	return c.update(func() { c.profile = &p })
+}
+
+func (c *governanceCache) markWarm() {
 	c.once.Do(func() { close(c.warm) })
-	return ch
 }
 
 func (c *governanceCache) setRegistry(r *marotte.GovernanceMCPRegistry) governanceChange {
@@ -146,10 +149,11 @@ func (c *governanceCache) locks() map[string]marotte.GovernanceLock {
 // SetGovernance caches the account profile. Satisfies translate.governanceAccess.
 func (st *Settings) SetGovernance(ctx context.Context, p marotte.GovernanceStatePayload) {
 	st.publishGovernance(ctx, st.governance.setProfile(p))
+	st.governance.markWarm()
 }
 
-// SetMCPRegistry caches the organization's MCP registry. Satisfies translate.governanceAccess.
-func (st *Settings) SetMCPRegistry(ctx context.Context, r *marotte.GovernanceMCPRegistry) {
+// setMCPRegistry caches the organization's MCP registry.
+func (st *Settings) setMCPRegistry(ctx context.Context, r *marotte.GovernanceMCPRegistry) {
 	st.publishGovernance(ctx, st.governance.setRegistry(r))
 }
 
@@ -204,6 +208,8 @@ func (st *Settings) applyGovernance(raw json.RawMessage) {
 	if ch.changed {
 		st.refreshAdminPolicy()
 	}
+	// Last: whoever waits on warm then finds the lock hook and the rule read started above already on inflight.
+	st.governance.markWarm()
 }
 
 // adminRefresh coalesces administrator-rule reads: one in flight, at most one queued.
@@ -284,7 +290,7 @@ func (st *Settings) warmGovernance(ctx context.Context) error {
 }
 
 func (st *Settings) handleGovernance(w http.ResponseWriter, r *http.Request) {
-	webhttp.WriteJSON(w, st.governanceState(r.Context()))
+	httpserver.WriteJSON(w, st.governanceState(r.Context()))
 }
 
 func (st *Settings) registerGovernanceRoutes(mux *http.ServeMux) {

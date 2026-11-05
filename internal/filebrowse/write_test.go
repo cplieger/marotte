@@ -40,7 +40,7 @@ func TestWrite_RefusesDecodedContentOverTheCap(t *testing.T) {
 	body, _ := json.Marshal(map[string]string{"content": strings.Repeat("a", WholeFileMax+1)})
 	rec := putReq(t, h, "/api/file?path="+prefix+"/big.txt", string(body))
 	got := decodeJSON[FileRefusal](t, rec.Body.Bytes())
-	if rec.Code != http.StatusRequestEntityTooLarge || got.Code != RefusalTooLarge {
+	if rec.Code != http.StatusRequestEntityTooLarge || got.Code != refusalTooLarge {
 		t.Errorf("PUT = %d %+v, want 413 too_large", rec.Code, got)
 	}
 }
@@ -58,7 +58,7 @@ func TestWrite_StaleGuardOnAFileGrownPastTheCap(t *testing.T) {
 	}
 	rec := putReq(t, h, "/api/file?path="+prefix+"/log.txt", `{"content":"mine","file_id":"`+id+`"}`)
 	got := decodeJSON[FileRefusal](t, rec.Body.Bytes())
-	if rec.Code != http.StatusConflict || got.ContentKind != ContentTooLarge || got.Content != nil ||
+	if rec.Code != http.StatusConflict || got.ContentKind != contentTooLarge || got.Content != nil ||
 		got.Size == nil || *got.Size != 3<<20 {
 		t.Errorf("PUT = %d %s, want 409 content_kind too_large, size %d, no content", rec.Code, rec.Body.String(), 3<<20)
 	}
@@ -83,7 +83,7 @@ func TestWrite_StaleGuardOnAFileGrowingPastTheCapMidRead(t *testing.T) {
 	rec := putReq(t, h, "/api/file?path="+prefix+"/log.txt", `{"content":"mine","file_id":"`+id+`"}`)
 	got := decodeJSON[FileRefusal](t, rec.Body.Bytes())
 	want := int64(len("small\n") + 3<<20)
-	if rec.Code != http.StatusConflict || got.Code != RefusalChanged || got.ContentKind != ContentTooLarge ||
+	if rec.Code != http.StatusConflict || got.Code != refusalChanged || got.ContentKind != contentTooLarge ||
 		got.Content != nil || got.Size == nil || *got.Size != want {
 		t.Errorf("PUT = %d %s, want 409 changed, content_kind too_large, size %d, no content", rec.Code, rec.Body.String(), want)
 	}
@@ -96,8 +96,8 @@ func TestWrite_StaleGuardOnAFileGrowingPastTheCapMidRead(t *testing.T) {
 // rewrite into U+FFFD the client could save over the real bytes.
 func TestWrite_StaleGuardWithholdsUnrepresentableContent(t *testing.T) {
 	for kind, disk := range map[ContentKind]string{
-		ContentBinary:  "a\x00b",
-		ContentNotUTF8: "caf\xe9",
+		contentBinary:  "a\x00b",
+		contentNotUTF8: "caf\xe9",
 	} {
 		t.Run(string(kind), func(t *testing.T) {
 			h, dir, prefix := testDir(t)
@@ -126,7 +126,7 @@ func TestWrite_MalformedFileIDIsRefusedBeforeTheDestinationOpens(t *testing.T) {
 			body, _ := json.Marshal(map[string]string{"content": "x", "file_id": id})
 			rec := putReq(t, h, "/api/file?path="+prefix+"/new.txt", string(body))
 			got := decodeJSON[FileRefusal](t, rec.Body.Bytes())
-			if rec.Code != http.StatusBadRequest || got.Code != RefusalInvalidFileID {
+			if rec.Code != http.StatusBadRequest || got.Code != refusalInvalidFileID {
 				t.Errorf("PUT with file_id %q = %d %+v, want 400 invalid_file_id", id, rec.Code, got)
 			}
 			if _, err := os.Stat(filepath.Join(dir, "new.txt")); !os.IsNotExist(err) {

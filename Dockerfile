@@ -1,12 +1,12 @@
 # check=error=true
 
-FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS builder
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl && rm -rf /var/lib/apt/lists/*
+    ca-certificates curl ripgrep && rm -rf /var/lib/apt/lists/*
 
 # renovate: datasource=golang-version depName=golang
 ARG GO_VERSION=1.27.3
@@ -31,6 +31,11 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . ./
 
+# The real-ripgrep search tests run here against Debian's rg, the one the final
+# stage installs: the CI test runner has no rg and skips them.
+RUN CGO_ENABLED=0 KIROSEARCH_REQUIRE_RG=1 GOPROXY=off \
+    go test -count=1 -run RealRG ./internal/kirosearch/
+
 # The baked tool catalog is the first-boot/offline fallback; the engine
 # refreshes it at boot and daily. The verify pass fails the build unless every
 # required-tools.txt name resolves for linux amd64 and arm64.
@@ -45,23 +50,13 @@ RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 
 
 # The @cplieger libraries publish TS source only; each is extracted into
 # static-src/node_modules/@cplieger/<lib>/ for tsc and cmd/bundle to resolve.
-# renovate: datasource=npm depName=@cplieger/actions
-ARG CPLIEGER_ACTIONS_VERSION=4.0.0
-RUN mkdir -p static-src/node_modules/@cplieger/actions && \
-    curl -fsSL "https://registry.npmjs.org/@cplieger/actions/-/actions-${CPLIEGER_ACTIONS_VERSION}.tgz" \
-      | tar -xz -C static-src/node_modules/@cplieger/actions --strip-components=1
-
-# renovate: datasource=npm depName=@cplieger/fetch
-ARG CPLIEGER_FETCH_VERSION=2.3.0
-RUN mkdir -p static-src/node_modules/@cplieger/fetch && \
-    curl -fsSL "https://registry.npmjs.org/@cplieger/fetch/-/fetch-${CPLIEGER_FETCH_VERSION}.tgz" \
-      | tar -xz -C static-src/node_modules/@cplieger/fetch --strip-components=1
-
-# renovate: datasource=npm depName=@cplieger/reactive
-ARG CPLIEGER_REACTIVE_VERSION=2.3.0
-RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
-    curl -fsSL "https://registry.npmjs.org/@cplieger/reactive/-/reactive-${CPLIEGER_REACTIVE_VERSION}.tgz" \
-      | tar -xz -C static-src/node_modules/@cplieger/reactive --strip-components=1
+# css/ui-primitives.css is concatenated into static/style.css by cmd/bundle.
+# This pin and static-src/package.json's track the same exact version.
+# renovate: datasource=npm depName=@cplieger/ui
+ARG CPLIEGER_UI_VERSION=1.1.0-dev.7
+RUN mkdir -p static-src/node_modules/@cplieger/ui && \
+    curl -fsSL "https://registry.npmjs.org/@cplieger/ui/-/ui-${CPLIEGER_UI_VERSION}.tgz" \
+      | tar -xz -C static-src/node_modules/@cplieger/ui --strip-components=1
 
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.4.0
@@ -75,14 +70,6 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1
 
-# css/ui-primitives.css is concatenated into static/style.css by cmd/bundle.
-# This pin and static-src/package.json's track the same exact version.
-# renovate: datasource=npm depName=@cplieger/ui-primitives
-ARG CPLIEGER_UI_PRIMITIVES_VERSION=4.0.0
-RUN mkdir -p static-src/node_modules/@cplieger/ui-primitives && \
-    curl -fsSL "https://registry.npmjs.org/@cplieger/ui-primitives/-/ui-primitives-${CPLIEGER_UI_PRIMITIVES_VERSION}.tgz" \
-      | tar -xz -C static-src/node_modules/@cplieger/ui-primitives --strip-components=1
-
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/keyenc
 ARG CPLIEGER_KEYENC_VERSION=1.1.0
@@ -92,7 +79,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/keyenc && \
 
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=@cplieger/sse
-ARG CPLIEGER_SSE_VERSION=1.3.0-dev.4
+ARG CPLIEGER_SSE_VERSION=1.2.1
 RUN mkdir -p static-src/node_modules/@cplieger/sse && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/sse/-/sse-${CPLIEGER_SSE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/sse --strip-components=1
@@ -102,7 +89,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/sse && \
 # travels with the served copy and the image's licence tree.
 # This pin and static-src/package.json's track the same exact version.
 # renovate: datasource=npm depName=pele
-ARG PELE_VERSION=1.12.0
+ARG PELE_VERSION=1.13.0
 RUN mkdir -p static-src/node_modules/pele static/vendor/pele && \
     curl -fsSL "https://registry.npmjs.org/pele/-/pele-${PELE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/pele --strip-components=1 && \
@@ -205,14 +192,15 @@ RUN sh scripts/collect-licenses.sh --name marotte . && \
     mkdir -p /out/usr/share/licenses/pele && \
     cp static-src/node_modules/pele/LICENSE /out/usr/share/licenses/pele/LICENSE
 
-FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Only the minimal runtime surface is baked; everything else (Node, Python, Go,
-# Java, Rust, LSPs) is installed on demand by the tools engine into /config/tools/.
-# git serves gitexec, file history and forges; unzip the kiro-cli installer;
+# Java, Rust, LSPs) is installed on demand by the tools engine into its tools
+# folder (/config/tools unless MAROTTE_TOOLS_DIR moves it).
+# git serves gitexec, file history and forges; unzip is for agents;
 # xz-utils .tar.xz tool archives; jq entrypoint.sh. kiro-cli is downloaded at first
 # boot because its licence forbids baking it. PKG_REFRESH busts this layer's cache, or `apt-get upgrade` never reruns and the
 # image ships stale packages. The `echo` is required: BuildKit keys a RUN only on
@@ -232,6 +220,7 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
     jq \
     libatomic1 \
     openssh-client \
+    ripgrep \
     tini \
     unzip \
     xz-utils \
@@ -248,6 +237,12 @@ ENV GOPATH="/config/tools/go"
 ENV GOBIN="/config/tools/bin"
 ENV HOME="/config/home"
 ENV KIRO_HOME="/config/home/.kiro"
+# pin never rewrites a version directory, so kiro-cli's per-session binary copy protects nothing.
+ENV KIRO_SKIP_BINARY_PINNING=1
+# kiro-cli unpacks node, the agent server and the terminal UI here and deletes every
+# other version's copy at each start, so a child running another kiro-cli version
+# unsets it.
+ENV KIRO_RUNTIME_DIR="/config/home/.cache/kiro-cli-runtime"
 # Unset, glibc's C locale makes git octal-escape non-ASCII paths. C.UTF-8 is a
 # glibc built-in, so no locales package is needed.
 ENV LANG="C.UTF-8"

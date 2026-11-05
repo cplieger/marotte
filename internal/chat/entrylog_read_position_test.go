@@ -50,6 +50,34 @@ func TestReadPosition_SkipsCarriers(t *testing.T) {
 	})
 }
 
+func TestReadPosition_SkipsATurnTheTranscriptDoesNotDraw(t *testing.T) {
+	t.Run("a wake that drew nothing", func(t *testing.T) {
+		f := newLogFixture(t)
+		a := f.prompt("a")
+		f.closeTurn(a, marotte.TurnOutcomeCompleted)
+		f.closeTurn(f.wakeTurn(), marotte.TurnOutcomeCompleted)
+		if got := f.log.readPosition(); got != 1 {
+			t.Errorf("readPosition() after an empty wake closed = %d, want 1 (a's index): the wake has no rail row", got)
+		}
+	})
+	t.Run("a turn whose only row a later wake draws", func(t *testing.T) {
+		f := newLogFixture(t)
+		empty := f.wakeTurn()
+		f.closeTurn(empty, marotte.TurnOutcomeCompleted)
+		f.append(empty, "", "wfmsg-q", marotte.EntryKindSteer, wakeRow("Should I rewrite the links?", "warning"))
+		wake := f.wakeTurn()
+		f.append(wake, "", "wake-1", marotte.EntryKindTurnWake, marotte.EntryTurnWake{
+			Reason: marotte.WakeReasonStepMessage,
+			Steers: []marotte.WakeSteer{{ID: "wfmsg-q", Run: wakeRunID, Step: "draft", Severity: "warning", Text: "Should I rewrite the links?"}},
+		})
+		f.phases(func(phase string) {
+			if got := f.log.readPosition(); got != 0 {
+				t.Errorf("%s: readPosition() = %d, want 0: the first turn's only row is the wake's, and the wake draws nothing yet", phase, got)
+			}
+		})
+	})
+}
+
 func TestReadPosition_RewindLowersThenTheNextTurnPassesIt(t *testing.T) {
 	f := newLogFixture(t)
 	a, b := f.prompt("a"), f.prompt("b")

@@ -10,7 +10,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/cplieger/runesafe/v3"
+	"github.com/cplieger/go/textsafe"
 )
 
 // maxTextBytes bounds one error string on its way to a user surface: Details' last
@@ -109,6 +109,14 @@ const (
 	mappedFallbackProse            = "the model backend refused the request"
 )
 
+// The classes of a session-addressed _kiro/mcp/* refusal.
+const (
+	// McpServerNotDeclaredError: the addressed session's agent does not bind the named MCP server.
+	McpServerNotDeclaredError = "McpServerNotDeclaredError"
+	// McpServerNotConnectedError: the session binds the server but holds no connected instance of it.
+	McpServerNotConnectedError = "McpServerNotConnectedError"
+)
+
 // knownClasses are KAS error class names worth showing a reader: the classes
 // marotte keys a remedy on, plus the ones measured on real session logs. Any
 // other errorType is an unmapped error whose class name the bundle minified.
@@ -131,6 +139,7 @@ var knownClasses = map[string]struct{}{
 	"InvalidModelError":                 {},
 	"TokenInvalidError":                 {},
 	"TokenExpiredError":                 {},
+	"CredentialAbsentError":             {},
 	"AuthRefreshFailedError":            {},
 	"AccessDeniedError":                 {},
 	"AbortedError":                      {},
@@ -202,6 +211,6 @@ func sanitize(s string, maxBytes int) string {
 		return ""
 	}
 	// Capped, not Bounded: Bounded puts the marker OUTSIDE the cap (n+3 bytes).
-	capped, _ := runesafe.SanitizeSingleLineCapped(s, maxBytes, "...")
+	capped, _ := textsafe.SanitizeSingleLineCapped(s, maxBytes, "...")
 	return capped
 }

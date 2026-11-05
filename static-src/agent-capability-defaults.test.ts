@@ -44,8 +44,8 @@ describe("Agent capabilities switches before settings load", () => {
   it("#flag-workflows hint names what each position does to delegation", () => {
     const doc = new DOMParser().parseFromString(indexHtml, "text/html");
     expect(doc.getElementById("flag-workflows-hint")?.textContent).toContain(
-      "On: the agent hands work to workflows that run in the background while you keep chatting. " +
-        "Off: it uses subagents instead and waits for each to finish before it continues.",
+      "On: the agent can start workflows that run in the background while you keep chatting, and " +
+        "Workflow use says when. Off: it uses subagents instead and waits for each to finish before it continues.",
     );
   });
 });

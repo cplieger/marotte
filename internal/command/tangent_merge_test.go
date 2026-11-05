@@ -51,7 +51,14 @@ type mergeHost struct {
 	evMu     sync.Mutex
 }
 
-func (h *mergeHost) TryReserveTurn(chatID marotte.ChatID, _ marotte.TurnOpenSource) bool {
+func (h *mergeHost) ReserveTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if h.tryReserveOld(chatID, source) {
+		return IdleAcquired, testReservation(chatID, true)
+	}
+	return IdleHeld, Reservation{}
+}
+
+func (h *mergeHost) tryReserveOld(chatID marotte.ChatID, _ marotte.TurnOpenSource) bool {
 	return !h.busy[chatID]
 }
 
@@ -863,5 +870,29 @@ func TestTangentMerges_PublishesOnlyTheOutcomeItCommitted(t *testing.T) {
 	frames := f.host.mergeFrames()
 	if len(frames) != 1 || frames[0].Type != marotte.EventTangentMerged {
 		t.Errorf("merge frames = %+v, want the committed tangent_merged alone", frames)
+	}
+}
+
+func (r *promptParamsBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+	return r.OpenBridge(ctx, chatID, model)
+}
+
+// A parent whose close ended the reconcile's session load is not broken: the merge stays running for the parent's
+// next life, and nothing is logged as a failure.
+func TestTangentMergeReconcile_AClosedParentStaysRunningWithoutAWarn(t *testing.T) {
+	logs := captureLogs(t)
+	f := orphanedMerge(t, orphanCase{seed: seedReceipt(marotte.PromptReceipt{Text: "findings", Label: orphanLabel, Opened: true, Bound: true})})
+	f.host.loadErr = fmt.Errorf("load: %w", marotte.ErrChatClosedDuringCall)
+
+	f.merges.status(t.Context(), tangentOp1)
+	f.host.waitInflight(t)
+	if rec, _ := f.merges.record(t.Context(), tangentOp1); rec.State != marotte.TangentMergeRunning {
+		t.Errorf("record after the parent's close ended its load = %+v, want running", rec)
+	}
+	if frames := f.host.mergeFrames(); len(frames) != 0 {
+		t.Errorf("merge frames after the parent's close ended its load = %+v, want none", frames)
+	}
+	if warns := logLines(logs, "level=WARN"); len(warns) != 0 {
+		t.Errorf("logged %q, want no warning for a parent's close", warns)
 	}
 }

@@ -67,6 +67,11 @@ type EngineOpts struct {
 	// DisableTelemetry turns KAS's agent telemetry off at initialize and the Rust binary's toolkit
 	// client off in the environment; the zero value leaves both at kiro-cli's default, on.
 	DisableTelemetry bool
+	// DebugLogs spawns KAS at its debug log level; the zero value leaves kiro-cli's default, info.
+	DebugLogs bool
+	// HighThroughput runs the agent server through marotte's node launcher (internal/kasnode) when its checks pass;
+	// the zero value is kiro-cli's stock launch.
+	HighThroughput bool
 }
 
 // EngineFeatures are the Agent-capabilities settings KAS reads per engine. InfraSafetyMonitor,
@@ -126,9 +131,11 @@ type SessionOpts struct {
 	// Supervised sets `autopilot` FALSE after the door, requesting KAS's turn-approval gate.
 	Supervised bool
 	// DisableAutoCompaction turns KAS's own compaction off for this session (the chat policy's
-	// switch off, or a point above 80%). KAS freezes it per session, so it takes effect at the
-	// next door.
+	// switch off). KAS freezes it per session, so it takes effect at the next door.
 	DisableAutoCompaction bool
+	// AutoCompactionThreshold is the usage percentage KAS compacts the session at, sent on both
+	// doors; 0 leaves KAS's default.
+	AutoCompactionThreshold int
 }
 
 // SessionFeatures are the Agent-capabilities settings KAS reads per session. WorkValidation is
@@ -137,6 +144,9 @@ type SessionFeatures struct {
 	// SpecPlan is "" (off), "quick" or "full"; it only changes Autonomous mode.
 	SpecPlan       string
 	WorkValidation string
+	// WorkflowLaunch is the workflowLaunch value the session doors assert where KAS offers the
+	// option; empty asserts nothing.
+	WorkflowLaunch string
 	// Workflows gives the agent its workflow tools; the zero value withholds them.
 	Workflows            bool
 	SpecAskClarification bool

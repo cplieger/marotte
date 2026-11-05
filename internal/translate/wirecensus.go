@@ -1,11 +1,12 @@
 package translate
 
-// A runtime census of the `_meta.kiro` fields KAS sends and marotte drops: encoding/json
-// discards an unknown field silently (a misread `modeId` once lost every agent mode
-// change). internal/kascap covers the client-to-agent direction statically. The probe
-// never materializes a value, is bounded per frame and per process (latching off at the
-// cap), and cannot fail a turn. Always on: it is ~1% of the hottest path, and the fields
-// worth finding ride rare frames a sample budget would miss.
+// A runtime census of the `_meta.kiro` fields and the session/update and session_info_update
+// kinds KAS sends and marotte drops: encoding/json discards an unknown field silently (a
+// misread `modeId` once lost every agent mode change). internal/kascap covers the
+// client-to-agent direction statically. The probe never materializes a value, is bounded
+// per frame and per process (latching off at the cap), and cannot fail a turn. Always on:
+// it is ~1% of the hottest path, and the fields worth finding ride rare frames a sample
+// budget would miss.
 
 import (
 	"encoding/json"
@@ -14,7 +15,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cplieger/runesafe/v3"
+	"github.com/cplieger/go/textsafe"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // maxCensusObjectBytes skips the probe for an oversized `_meta.kiro` object, so a block
@@ -65,6 +67,17 @@ func (l *censusLedger) disabled() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.off
+}
+
+// claimValue is claim for a one-key value report, logging the latch the claim that fills
+// the ledger trips.
+func (l *censusLedger) claimValue(key string) bool {
+	novel, full := l.claim(key)
+	if full {
+		slog.Warn("wire census: field budget spent, probe disabled for this process",
+			"limit", maxCensusKeys)
+	}
+	return novel
 }
 
 // cached because censusMeta runs on every frame. The map is shared: read-only.
@@ -178,9 +191,9 @@ func censusMeta(label string, raw json.RawMessage, target reflect.Type, declined
 		if !novel {
 			continue
 		}
-		slog.Warn("wire census: UNKNOWN _meta.kiro field, dropped — KAS may have added one",
+		slog.Warn("wire census: UNKNOWN _meta.kiro field dropped, KAS may have added one",
 			"frame", label,
-			"field", runesafe.SanitizeSingleLineBounded(name, maxCensusNameBytes),
+			"field", textsafe.SanitizeSingleLineBounded(name, maxCensusNameBytes),
 			"type", kind)
 	}
 }
@@ -203,17 +216,11 @@ func censusMeteringUnit(unit string) {
 	if unit == "" || unit == meteringUnitCredit || census.disabled() {
 		return
 	}
-	safe := runesafe.SanitizeSingleLineBounded(unit, maxCensusNameBytes)
-	novel, full := census.claim("meteringUsage.unit=" + safe)
-	if full {
-		slog.Warn("wire census: field budget spent, probe disabled for this process",
-			"limit", maxCensusKeys)
+	safe := textsafe.SanitizeSingleLineBounded(unit, maxCensusNameBytes)
+	if !census.claimValue("meteringUsage.unit=" + safe) {
 		return
 	}
-	if !novel {
-		return
-	}
-	slog.Warn("wire census: UNKNOWN metering unit, not counted as spend — "+
+	slog.Warn("wire census: UNKNOWN metering unit not counted as spend, "+
 		"KAS may have added a billing dimension", "unit", safe)
 }
 
@@ -223,16 +230,67 @@ func censusWakeReason(reason string) {
 	if reason == "" || census.disabled() {
 		return
 	}
-	safe := runesafe.SanitizeSingleLineBounded(reason, maxCensusNameBytes)
-	novel, full := census.claim("agentInitiatedReason=" + safe)
-	if full {
-		slog.Warn("wire census: field budget spent, probe disabled for this process",
-			"limit", maxCensusKeys)
+	safe := textsafe.SanitizeSingleLineBounded(reason, maxCensusNameBytes)
+	if !census.claimValue("agentInitiatedReason=" + safe) {
 		return
 	}
-	if !novel {
-		return
-	}
-	slog.Warn("wire census: UNKNOWN agentInitiatedReason, the turn is shown as agent-initiated — "+
+	slog.Warn("wire census: UNKNOWN agentInitiatedReason, the turn is shown as agent-initiated, "+
 		"KAS may have added a wake", "reason", safe)
+}
+
+// knownUpdateKinds is every sessionUpdate discriminant marotte names. Membership implies
+// nothing about consumption: each door drops the named kinds it does not read, quietly.
+var knownUpdateKinds = map[marotte.ACPUpdateKind]struct{}{
+	marotte.ACPUpdateAgentChunk:        {},
+	marotte.ACPUpdateThoughtChunk:      {},
+	marotte.ACPUpdateToolCall:          {},
+	marotte.ACPUpdateToolUpdate:        {},
+	marotte.ACPUpdatePlan:              {},
+	marotte.ACPUpdateModeChange:        {},
+	marotte.ACPUpdateSessionInfo:       {},
+	marotte.ACPUpdateAvailableCommands: {},
+	marotte.ACPUpdateConfigOption:      {},
+	marotte.ACPUpdateUsage:             {},
+	replayUserChunkKind:                {},
+}
+
+// censusUpdateKind reports, once per process, a sessionUpdate kind marotte does not name. A
+// value, like a metering unit: the discriminant is a protocol word and the whole finding.
+func censusUpdateKind(kind marotte.ACPUpdateKind) {
+	if _, named := knownUpdateKinds[kind]; named || census.disabled() {
+		return
+	}
+	safe := textsafe.SanitizeSingleLineBounded(string(kind), maxCensusNameBytes)
+	if !census.claimValue("session/update.sessionUpdate=" + safe) {
+		return
+	}
+	slog.Warn("wire census: UNKNOWN session/update kind dropped, KAS may have added one", "kind", safe)
+}
+
+// The ways a session/update frame fails to decode, each reported once.
+const (
+	undecodableEnvelope = "envelope"
+	undecodableUpdate   = "update"
+	undecodableKind     = "kind"
+)
+
+// censusUndecodableUpdate reports, once per process per class, a session/update frame no door
+// can read: params that are not an envelope with an update, an update that is not an object,
+// or an update with no sessionUpdate.
+func censusUndecodableUpdate(class string) {
+	if !census.claimValue("session/update.undecodable=" + class) {
+		return
+	}
+	slog.Warn("wire census: UNDECODABLE session/update frame dropped, KAS may have changed its shape",
+		"part", class)
+}
+
+// censusInfoKind reports, once per process, a session_info_update kind outside
+// knownSessionInfoKinds: a sub-kind emitted per turn must not write one Warn per frame.
+func censusInfoKind(chatID marotte.ChatID, safe string) {
+	if !census.claimValue("session_info_update.kind=" + safe) {
+		return
+	}
+	slog.Warn("session_info_update: UNKNOWN kind dropped, KAS may have added a sub-kind",
+		"chat_id", chatID, "kind", safe)
 }

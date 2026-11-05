@@ -1,13 +1,16 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
-	"github.com/cplieger/keylock"
+	"github.com/cplieger/go/keylock"
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
@@ -32,6 +35,8 @@ type Runs struct {
 	notices map[marotte.ChatID][]runNotice
 	// plans holds each run's newest plan revision (run_plan.go), under mu.
 	plans runPlans
+	// recipes shares one listRecipes call among its readers and holds the last answer for GET /api/recipes alone.
+	recipes recipeCatalog
 	// engine is the one agent engine every read and stop is an engine call on; router routes the run's frames.
 	engine *engineOwner
 	router *engineRouter
@@ -39,8 +44,14 @@ type Runs struct {
 	mutations *runMutations
 	// answerEarly answers a request a new host session's door sent before its run's lane was known.
 	answerEarly func(s engineSession, msg *marotte.RPCResponse)
+	// doorSettings is a host door's inputs (Runtime.readSessionSettings).
+	doorSettings func(context.Context) sessionSettings
 	// servedModels is GET /api/config-template's model list (Runtime.servedModels), for checkRunDefaults.
 	servedModels func(context.Context) ([]marotte.SessionModel, bool)
+	// dropMCPSessions ends the MCP views of a deleted run's step sessions (mcpRegistry.dropSessions).
+	dropMCPSessions func(context.Context, []marotte.SessionID)
+	// resetFailedMCP re-attempts the failed MCP servers before a scheduled run (mcpRegistry.resetFailedForLaunch).
+	resetFailedMCP func(context.Context)
 	// runEnded asks the retention purge for a pass when a run ends.
 	runEnded  func() `wiring:"optional"`
 	lifecycle *lifetime
@@ -55,6 +66,18 @@ type Runs struct {
 	unconfirmed unconfirmedSends
 	// life admits every step-session mutation against a Delete (run_lifecycle.go).
 	life runLifecycle
+	// purgeFailed holds the runs whose finished-run purge delete failed recently (run_purge.go).
+	purgeFailed purgeFailures
+	// purgePace is when the finished-run purge last reached a delete (run_purge.go).
+	purgePace deletePacer
+	// logSweep is the orphaned run-log sweep's poison set and pace (run_log_sweep.go).
+	logSweep logSweepState
+	// recorded is the keep-state reconcile's runs/ attribution, which RunsParentedBy reads (run_owner.go).
+	recorded recordedRuns
+	// marks throttles the run keep marks' progress refresh and keeps ended unattributed runs (run_keepstate.go).
+	marks runMarks
+	// retries marks each run whose retry KAS has not shown taking effect, the purge's retry in flight (run_purge.go).
+	retries retryMarks
 	// sweep pauses the running runs while the gate is closed (run_gate.go).
 	sweep gateSweep
 	// hosts serializes, per run, making its launching session resident (ensureResident). hosts, resumes and
@@ -71,11 +94,19 @@ type Runs struct {
 	mu              sync.Mutex
 }
 
-// runChatReader is the chat store as the run surface uses it: session chains and the chat owning a run's parent session.
+// runChatReader is the chat store as the run surface uses it: session chains, the chat owning a run's parent session,
+// and the run keep facts.
 type runChatReader interface {
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
-	// ListComplete also reports whether every chat was read, needed to prove a launch session parentless.
-	ListComplete(ctx context.Context) ([]marotte.ChatHeader, bool)
+	Lookup(ctx context.Context, id marotte.ChatID) (c *marotte.Chat, found bool, err error)
+	// SessionOwners is one fresh owner scan, the attribution every run keep fact and the purge teardown share.
+	SessionOwners(ctx context.Context) chat.OwnerScan
+	HoldOrPend(ctx context.Context, id marotte.ChatID, key string, scope chat.KeepScope) (chat.Claim, error)
+	Release(ctx context.Context, id marotte.ChatID, key string, ev chat.Evidence) error
+	EndStop(ctx context.Context, claim *chat.Claim)
+	HoldUnattributed(workflowID string)
+	ClearUnattributed(workflowID string)
+	SessionInTeardown(sessionID string) bool
 }
 
 // useLog installs the run record.
@@ -83,14 +114,52 @@ func (rs *Runs) useLog(l *runLog) {
 	rs.log = l
 }
 
-// No schedule or no store is a no-op.
-func (rs *Runs) recordScheduleOutcome(ctx context.Context, scheduleID string, outcome schedule.Outcome) {
-	if rs.schedules == nil || scheduleID == "" {
+// scheduleRun names the schedule row a lease's run reports to; ScheduleID is "" for an unscheduled run.
+func scheduleRun(l *runlease.Lease) schedule.Run {
+	return schedule.Run{
+		StartedAt: l.StartedAt, ScheduleID: l.ScheduleID, ScheduleLife: l.ScheduleLife, WorkflowID: l.WorkflowID,
+	}
+}
+
+// recordScheduleOutcome overwrites run's outcome on its row (schedule.Store.RecordOutcome). No schedule or
+// no store is a no-op.
+func (rs *Runs) recordScheduleOutcome(ctx context.Context, run schedule.Run, outcome schedule.Outcome) {
+	rs.writeSchedule(run, func() error { return rs.schedules.RecordOutcome(ctx, run, outcome) })
+}
+
+// recordScheduleEnding fills run's ending on a row still reading started (schedule.Store.RecordEnding).
+func (rs *Runs) recordScheduleEnding(ctx context.Context, run schedule.Run, status marotte.RunStatus, stopReason string) {
+	outcome := runEnding(status, stopReason)
+	rs.writeSchedule(run, func() error { return rs.schedules.RecordEnding(ctx, run, outcome) })
+}
+
+func (rs *Runs) writeSchedule(run schedule.Run, write func() error) {
+	if rs.schedules == nil || run.ScheduleID == "" {
 		return
 	}
-	if err := rs.schedules.RecordOutcome(ctx, scheduleID, outcome); err != nil {
+	switch err := write(); {
+	case errors.Is(err, schedule.ErrNotFound):
+		slog.Info("schedule outcome not recorded: the schedule was deleted or recreated during its run",
+			"schedule_id", run.ScheduleID, "workflow_id", run.WorkflowID)
+	case err != nil:
 		slog.Warn("could not record the schedule's outcome",
-			"schedule_id", scheduleID, "error", err)
+			"schedule_id", run.ScheduleID, "workflow_id", run.WorkflowID, "error", err)
+	}
+}
+
+// runEnding is the row's outcome for a terminal status: completed, or failed with KAS's stopReason, else a
+// sentence naming the status.
+func runEnding(status marotte.RunStatus, stopReason string) schedule.Outcome {
+	stopReason = schedule.ReasonText(stopReason)
+	switch status {
+	case marotte.RunStatusCompleted:
+		return schedule.Outcome{Status: schedule.StatusCompleted}
+	case marotte.RunStatusAborted:
+		return schedule.Outcome{Status: schedule.StatusFailed, Reason: cmp.Or(stopReason, "the run was aborted")}
+	case marotte.RunStatusCancelled:
+		return schedule.Outcome{Status: schedule.StatusFailed, Reason: cmp.Or(stopReason, "the run was cancelled")}
+	default:
+		return schedule.Outcome{Status: schedule.StatusFailed, Reason: cmp.Or(stopReason, "the run failed")}
 	}
 }
 
@@ -117,7 +186,7 @@ type runBroadcaster interface {
 // Run-scoped because a step's ask is keyed to the launching chat.
 type runPermClaimer interface {
 	TakePendingPermOn(origin acpResponder, acpID int64, settledBy marotte.SettledBy) (command.AskReply, bool)
-	ClearPendingPermsForRun(workflowID string)
+	ClearPendingPermsForRun(ctx context.Context, workflowID string)
 }
 
 // Runs exposes the run surface to the composition root (orphan sweep, schedule.Launcher).

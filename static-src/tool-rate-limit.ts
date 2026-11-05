@@ -3,6 +3,7 @@
 // fix depends on whether the refused request carried the connected account's token.
 
 import type { GitHubRateLimit, Job } from "./wire/types.gen.js";
+import { formatClock } from "./locale-time.js";
 
 /** The error code a job or a 503 carries when GitHub's rate limit refused it. */
 export const RATE_LIMITED = "github_rate_limited";
@@ -40,7 +41,7 @@ export function bodyRateLimit(code: string | undefined, body: unknown): GitHubRa
 
 /** A reset instant as the reader's own clock shows it. */
 function localClock(when: Date): string {
-  return when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return formatClock(when.getTime());
 }
 
 /** Whether connecting a GitHub account is the fix: only for the hourly quota of

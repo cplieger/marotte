@@ -2,7 +2,10 @@
 // delegate's card is minted only by its invocation `tool_call`, since its own entries carry its uuid as `lane`.
 // Position is `seq`: an entry that renders nothing does not break a prose run, one that renders ends it.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from "vitest";
+import { http, HttpResponse } from "msw";
+import { setupWorker } from "msw/browser";
+import { until } from "./__test-helpers__/until.js";
 import type { Turn } from "./turns.js";
 import type { Entry, EntryToolCall, EntryToolResult, OpenEntry } from "./wire/types.gen.js";
 
@@ -171,6 +174,7 @@ function turnOf(
     ts: 1,
     outcome: "completed",
     rewindTo: undefined,
+    branchFrom: undefined,
   };
 }
 
@@ -389,6 +393,32 @@ describe("a workflow run's card is its launch", () => {
     disposeAssistantBody(r.turnID);
     expect(mountedWindow(r.turnID)).toBeUndefined();
     expect(blockElement(r.turnID, 1)).toBeUndefined();
+  });
+});
+
+describe("a transcript card whose run the server no longer holds", () => {
+  const worker = setupWorker(
+    http.get("/api/runs/wf-deleted", () =>
+      HttpResponse.json({ error: "run not found" }, { status: 404 }),
+    ),
+  );
+
+  beforeAll(async () => {
+    await worker.start({ quiet: true });
+  });
+
+  afterAll(() => {
+    worker.stop();
+  });
+
+  it("shows deleted, not starting, and offers no link to the run", async () => {
+    const r = render(launch("t", 1, "wf-deleted"));
+    const runCard = blockElement(r.turnID, 1);
+    await until(() => runCard?.dataset["status"] === "deleted", "the card to read deleted", {
+      detail: () => String(runCard?.dataset["status"]),
+    });
+    expect(runCard?.querySelector(".run-ledger")?.textContent).toBe("This run was deleted");
+    expect(runCard?.querySelector(".run-open")?.classList.contains("hidden")).toBe(true);
   });
 });
 
@@ -1217,7 +1247,7 @@ describe("the auto-collapse registry: which arrivals close a tool group", () => 
       text("t", 3, "and so"),
     ]);
     const group = r.body.querySelector(".tool-group") as HTMLElement;
-    expect(group.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(group.classList.contains("tool-group-collapsed")).toBe(true);
     expect(group.querySelector(".tool-group-header")?.getAttribute("aria-expanded")).toBe("false");
   });
 
@@ -1227,14 +1257,15 @@ describe("the auto-collapse registry: which arrivals close a tool group", () => 
       callEntry("t", 2, toolCall("tool-b")),
     ]);
     const group = r.body.querySelector(".tool-group") as HTMLElement;
-    expect(group.classList.contains("tool-group-auto-collapsed")).toBe(false);
+    expect(group.classList.contains("tool-group-collapsed")).toBe(false);
+    expect(group.querySelector(".tool-group-header")?.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("leaves a BARE group open, because its body region IS the lone card", () => {
     const r = render([callEntry("t", 1, toolCall("tool-a")), text("t", 2, "and so")]);
     const group = r.body.querySelector(".tool-group") as HTMLElement;
     expect(group.classList.contains("tool-group-bare")).toBe(true);
-    expect(group.classList.contains("tool-group-auto-collapsed")).toBe(false);
+    expect(group.classList.contains("tool-group-collapsed")).toBe(false);
   });
 });
 

@@ -14,8 +14,8 @@ import {
 import { $, setBusy } from "./dom.js";
 import { humanName, rateLabel } from "./strings.js";
 import { switchModel } from "./actions/chat.js";
-import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
-import { setCurrentModel, setLastModel, getLastEffortFor } from "./session-context.js";
+import { rovingFocus, type RovingFocusController } from "@cplieger/ui/roving-focus";
+import { setLastModel, getLastEffortFor } from "./session-context.js";
 import {
   refreshPickerIfVisible,
   getCachedModels,
@@ -24,16 +24,12 @@ import {
   RETRY_LABEL,
 } from "./picker.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
-import {
-  bindLoadingState,
-  transportAction,
-  retryNetwork,
-  RETRY_STANDARD,
-} from "./actions/index.js";
+import { bindLoadingState, transportAction, RETRY_STANDARD } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
-import { el, effect } from "@cplieger/reactive";
+import { el, effect } from "@cplieger/ui";
 import { iconEl } from "./icon-el.js";
 import { errorAbout } from "./actions/subject.js";
+import { retryUnlessStill, stillOr } from "./actions/still-applying.js";
 import { ICON_MODEL } from "./icons.js";
 import {
   THINKING_OFF,
@@ -56,7 +52,7 @@ import type { ModelInfo, Session, SessionEffortLevel } from "./types.js";
 // effort.ts owns the effort vocabulary: the pill names the live tier too.
 
 /** Effort is per-chat on the chat record, so the optimistic write goes to the store. */
-const setEffortAction = transportAction<
+export const setEffortAction = transportAction<
   { chatID: string; level: string },
   { prev: string; thinking: string; thinkingActive: string }
 >({
@@ -89,14 +85,17 @@ const setEffortAction = transportAction<
       setThinkingChoice(chatID, op.thinking, op.thinkingActive);
     }
   },
-  retryable: retryNetwork,
+  retryable: retryUnlessStill,
   retry: RETRY_STANDARD,
-  error: errorAbout(({ chatID }: { chatID: string }) => chatID, "Could not set reasoning effort"),
+  error: errorAbout(
+    ({ chatID }: { chatID: string }) => chatID,
+    stillOr("setting reasoning effort", "Could not set reasoning effort", "chat"),
+  ),
 });
 
 /** The slider's Off stop: `set_thinking {enabled:false}`. Turning thinking back on is
  *  never this command, because every way back is a tier pick and `set_effort` does it. */
-const setThinkingOffAction = transportAction<
+export const setThinkingOffAction = transportAction<
   { chatID: string },
   { thinking: string; thinkingActive: string }
 >({
@@ -122,9 +121,12 @@ const setThinkingOffAction = transportAction<
       setThinkingChoice(chatID, op.thinking, op.thinkingActive);
     }
   },
-  retryable: retryNetwork,
+  retryable: retryUnlessStill,
   retry: RETRY_STANDARD,
-  error: errorAbout(({ chatID }: { chatID: string }) => chatID, "Couldn't turn thinking off"),
+  error: errorAbout(
+    ({ chatID }: { chatID: string }) => chatID,
+    stillOr("turning thinking off", "Couldn't turn thinking off", "chat"),
+  ),
 });
 
 /** The tiers the slider renders and the stop it sits on: the effort vocabulary, led by
@@ -484,7 +486,6 @@ export function initModelSwitcher(): void {
 }
 
 function applyLocalModel(modelID: string): void {
-  setCurrentModel(modelID);
   setLastModel(modelID);
   const session = getActive();
   if (session !== undefined) {

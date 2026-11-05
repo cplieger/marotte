@@ -97,7 +97,7 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   apiGet: vi.fn(),
   apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0, data: null, error: "" })),
 }));
-vi.mock("@cplieger/ui-primitives/skeleton", () => ({
+vi.mock("@cplieger/ui/skeleton", () => ({
   skeletonTiming: () => ({ cancel: vi.fn(), commit: (r: () => void) => r() }),
 }));
 vi.mock("./transport.js", async (importOriginal) => ({

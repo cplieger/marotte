@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/go/sse"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/turnlog"
-	"github.com/cplieger/slogx/capture"
-	"github.com/cplieger/sse"
 )
 
 // Call Shutdown to tear it down.
@@ -38,9 +38,23 @@ func settleBoot(t *testing.T, h *Runtime) {
 // Reassigning workDir afterwards misses the wiring's one read. Order-sensitive: cs.Bus can only be
 // set once New returned.
 func newTestHubIn(workDir string, opts ...Option) (*Runtime, *testChatStore, *fakeBridge) {
+	return newTestHubOn(workDir, false, opts...)
+}
+
+// newColdTestHub is newTestHub whose engine sends no governance profile, so the administrator rules stay unread
+// until a test resolves them.
+func newColdTestHub(opts ...Option) (*Runtime, *fakeBridge) {
+	h, _, br := newTestHubOn("/tmp/work", true, opts...)
+	return h, br
+}
+
+func newTestHubOn(workDir string, coldGovernance bool, opts ...Option) (*Runtime, *testChatStore, *fakeBridge) {
 	cs := newTestChatStore()
 	br := newFakeBridge()
-	h := newRuntimeOn(context.Background(), workDir, fakeEngineOf(func() engineSession { return br }, br), cs, opts...)
+	br.noGovernance = coldGovernance
+	src := fakeEngineOf(func() engineSession { return br }, br)
+	src.noGovernance = coldGovernance
+	h := newRuntimeOn(context.Background(), workDir, src, cs, opts...)
 	cs.wire(h)
 	// The engine's boot work reads br's scripts; a test edits them unlocked, so only after this.
 	if err := awaitBoot(h); err != nil {
@@ -56,6 +70,15 @@ func awaitBoot(h *Runtime) error {
 	if !awaitEngine(h) {
 		return errors.New("setup: the fake engine was not ready within 5s")
 	}
+	// The profile's handler adds its follow-ups to inflight from the observer's forward loop, which is off inflight:
+	// draining before it ran could Wait while it Adds from zero.
+	if src, ok := h.engine.source.(*fakeEngineSource); ok && !src.noGovernance {
+		select {
+		case <-h.config.governance.warm:
+		case <-time.After(5 * time.Second):
+			return errors.New("setup: the boot's governance profile did not arrive within 5s")
+		}
+	}
 	drained := make(chan struct{})
 	go func() {
 		h.lifecycle.inflight.Wait()
@@ -63,17 +86,40 @@ func awaitBoot(h *Runtime) error {
 	}()
 	select {
 	case <-drained:
-		return nil
 	case <-time.After(5 * time.Second):
 		return errors.New("setup: the engine's boot work did not drain within 5s")
+	}
+	return awaitBootPowersSync(h)
+}
+
+// awaitBootPowersSync waits for the powers re-render the boot's administrator rules asked for: syncLoop runs off
+// inflight, so its powers_changed would otherwise land inside the test.
+func awaitBootPowersSync(h *Runtime) error {
+	if !h.config.adminPolicyKnown() {
+		return nil
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		for _, e := range h.bus.fanout.Snapshot() {
+			var msg marotte.ServerEvent
+			if json.Unmarshal(e.Event.Data, &msg) == nil && msg.Type == marotte.EventPowersChanged {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return errors.New("setup: the boot's powers re-render did not broadcast within 5s")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
 // originOf is the bridge a frame for chatID arrives on in a test, which is what forwardAt passes:
 // the one registered under chatID now, or nil when none is.
 func (rt *Runtime) originOf(chatID marotte.ChatID) acpResponder {
+	// The test drives the frames its forward would, so the chat has the life a forward's attach creates.
+	rt.coord.turns.ensureTestLife(chatID)
 	if sb := rt.bridge.mgr.get(chatID); sb != nil {
-		return sb.current()
+		return sb.session()
 	}
 	return nil
 }
@@ -280,7 +326,7 @@ func quietLogs(b *testing.B) {
 
 func (rt *Runtime) stageWireTurn(tb testing.TB, chatID marotte.ChatID) *turnlog.Turn {
 	tb.Helper()
-	return rt.coord.TurnFoldTarget(tb.Context(), chatID)
+	return rt.coord.foldTargetNow(tb.Context(), chatID)
 }
 
 // stagePromptTurn opens a prompt turn and returns its id with its accumulator: an id-scoped closer given another id closes nothing.
@@ -292,7 +338,7 @@ func (rt *Runtime) stagePromptTurn(tb testing.TB, chatID marotte.ChatID) (string
 // stagePromptTurnCalling is stagePromptTurn for a turn whose prompt call cancel trips.
 func (rt *Runtime) stagePromptTurnCalling(tb testing.TB, chatID marotte.ChatID, cancel context.CancelCauseFunc) (string, *turnlog.Turn) {
 	tb.Helper()
-	id, err := rt.coord.OpenTurn(tb.Context(), chatID, command.TurnOpen{
+	id, err := rt.coord.openTurnNow(tb.Context(), chatID, command.TurnOpen{
 		Source: marotte.TurnSourcePrompt,
 		Prompt: &marotte.EntryPrompt{ID: "m-" + string(chatID), Text: "prompt"},
 		Init:   func(c *marotte.Chat) { c.Name = "test chat" },
@@ -338,9 +384,29 @@ func newSessionInfoMsg(kiro map[string]any) *marotte.RPCResponse {
 	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
 }
 
-// newTurnStartMsg pins that KAS brackets every turn, unprompted ones included.
+// newTurnStartMsg is the untagged bracket of a turn KAS started itself.
 func newTurnStartMsg() *marotte.RPCResponse {
 	return newSessionInfoMsg(map[string]any{"kind": "turn_start", "turnStart": true})
+}
+
+// promptTurnStartMsg is the turn_start KAS sends for the newest session/prompt, echoing its tag.
+func (b *fakeBridge) promptTurnStartMsg() *marotte.RPCResponse {
+	return newPromptTurnStartMsg(promptTagOf(b.paramsFor(marotte.MethodPrompt)))
+}
+
+// promptTagOf is a session/prompt's _meta.kiro.userMessageTag, "" when absent.
+func promptTagOf(params map[string]any) string {
+	meta, _ := params["_meta"].(map[string]any)
+	kiro, _ := meta["kiro"].(map[string]any)
+	tag, _ := kiro["userMessageTag"].(string)
+	return tag
+}
+
+// newPromptTurnStartMsg is the turn_start KAS sends for the prompt marotte tagged with turnID.
+func newPromptTurnStartMsg(turnID string) *marotte.RPCResponse {
+	return newSessionInfoMsg(map[string]any{
+		"kind": "turn_start", "turnStart": true, "userMessageTag": turnID, "turnId": "kas-" + turnID,
+	})
 }
 
 // newTurnEndMsg carries the outcome no local closer can know.
@@ -374,21 +440,10 @@ func newReplayedTurnEndMsg(stop string) *marotte.RPCResponse {
 	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
 }
 
-// newAgentInitiatedChunkMsg carries the one flag separating a prompted turn from an agent-initiated one, on content only.
-func newAgentInitiatedChunkMsg(text string) *marotte.RPCResponse {
-	update, _ := json.Marshal(map[string]any{
-		"sessionUpdate": "agent_message_chunk",
-		"content":       map[string]any{"type": "text", "text": text},
-		"_meta":         map[string]any{"kiro": map[string]any{"agentInitiated": true}},
-	})
-	params, _ := json.Marshal(map[string]any{"update": json.RawMessage(update)})
-	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
-}
-
 // waitForParkedSettle polls the registry until the settle is parked with no frame consumed, before the folder moves.
 func waitForParkedSettle(tb testing.TB, reg *turnRegistry, chatID marotte.ChatID, turnID string, want uint64) {
 	tb.Helper()
-	lc := reg.lifecycleFor(chatID)
+	lc := reg.testLifecycle(chatID)
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		lc.mu.Lock()

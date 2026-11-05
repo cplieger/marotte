@@ -17,7 +17,7 @@ import { materializeTab, subagentRef, subjectForRoute } from "./tab-materialize.
 import { viewStale } from "./view-freshness.js";
 // A PATH-SPACE normaliser rather than a feature behaviour. router.ts refuses the same
 // import because a route table sits UNDER the feature line and this file does not.
-// Acyclic: files-shared.ts imports only @cplieger/reactive.
+// Acyclic: files-shared.ts imports only @cplieger/ui.
 import { normalizeDirPath } from "./files-shared.js";
 import {
   registerTabsTarget,
@@ -39,12 +39,16 @@ import {
 } from "./tabs-sync.js";
 import {
   openTabCommand,
+  openTabQuietCommand,
+  openTabRefusal,
   closeTabCommand,
   pinTabCommand,
   reparentTabCommand,
   reorderTabsCommand,
   REORDER_STALE,
 } from "./actions/tabs.js";
+import { retryNetwork } from "./actions/index.js";
+import { CLOSE_IMPACT_CHANGED, serverImpactOf } from "./actions/close-impact.js";
 import { newOpID } from "./transport.js";
 import { join as joinKey } from "@cplieger/keyenc";
 import { ICON_CLOSE, ICON_PIN_FILLED, ICON_TAB_SUBTAB } from "./icons.js";
@@ -52,7 +56,7 @@ import { iconEl } from "./icon-el.js";
 import { activeView, setActiveView } from "./device-view.js";
 import { $ } from "./dom.js";
 import { swapViews } from "./view-swap.js";
-import { signal, effect, el } from "@cplieger/reactive";
+import { signal, effect, el } from "@cplieger/ui";
 import {
   attachDrag,
   dragOwnsStrip,
@@ -61,9 +65,8 @@ import {
   pointerDragActivation,
   setReorderCallback,
   setReprojectCallback,
-  setTapCallback,
 } from "./tabs-drag.js";
-import { announce } from "@cplieger/ui-primitives/announce";
+import { announce } from "@cplieger/ui/announce";
 import type { ViewportBox } from "./viewport-frame.js";
 import { viewportBox, viewportMoved } from "./viewport-frame.js";
 import { showContextMenu } from "./context-menu.js";
@@ -76,6 +79,8 @@ import { restoreFailedSend, retargetComposer } from "./composer-state.js";
 import { info, error as toastError } from "./toast.js";
 import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
 import { setPageTitle, clearPageTitle } from "./page-title.js";
+import type { ClosingChat } from "./close-busy.js";
+import type { CloseImpact } from "./wire/types.gen.js";
 
 // --- Types ---
 
@@ -141,6 +146,8 @@ export interface OpenTabArgs {
   /** Whether to activate once the tab exists. Default true; a bulk restore passes
    *  false, because the strip is the reader's. */
   activate?: boolean;
+  /** Raise no toast for a 404, for a caller that falls back on `not-found`. Default false. */
+  quietNotFound?: boolean;
 }
 
 // --- Store ---
@@ -566,10 +573,28 @@ export function refreshActiveView(): void {
   }
 }
 
+/** Advanced by every navigation request and by every user move to a different tab, never by a
+ *  move the app made on its own (`activateTabQuietly`'s callers). */
+let navigationSeq = 0;
+
+/** Claim the view for a request that resolves later (a create, a fork, an open). The ticket stays
+ *  held until the user moves to another tab or a later request claims; `navigationHeld` says
+ *  whether the reply may still take the view. */
+export function claimNavigation(): number {
+  return ++navigationSeq;
+}
+
+export function navigationHeld(ticket: number): boolean {
+  return ticket === navigationSeq;
+}
+
 /** Activate an existing tab, and reveal it: this is the reader picking a
  *  destination. Every gesture door lands here — a row tap, Enter on a focused
  *  row, and `openTab`, which is what the five singleton buttons dispatch. */
 export function activateTab(id: string): void {
+  if (state.active !== id && rowOfID(id) !== undefined) {
+    navigationSeq++;
+  }
   revealActiveView();
   activateTabQuietly(id);
 }
@@ -648,11 +673,12 @@ export function adoptSubject(subject: TabSubject, name?: string): void {
  *  the chat), a different fact from a network that failed to answer. */
 export type OpenTabOutcome = "opened" | "not-found" | "failed";
 
-/** Open a tab for something that already exists, and activate it. Resolves with the row in the
- *  projection, adopted from the RESPONSE, so no frame round trip sits in the gesture's path.
+/** Open a tab for something that already exists, and activate it unless the user moved to another
+ *  tab or asked for another navigation meanwhile. Resolves with the row in the projection, adopted
+ *  from the RESPONSE, so no frame round trip sits in the gesture's path.
  *
- *  Never rejects: a refused open leaves the strip as it was and the action framework has raised its
- *  toast. A 404 answers `not-found`, any other failure `failed`. */
+ *  Never rejects: a refused open leaves the strip as it was and has raised its toast, except a 404
+ *  under `quietNotFound`. A 404 answers `not-found`, any other failure `failed`. */
 export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
   const ref = args.ref ?? "";
   if (args.name !== undefined && args.name !== "") {
@@ -661,10 +687,12 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
     // beat and then snapping.
     nameOverrides.set(subjectKey(args.kind, ref), args.name);
   }
+  const ticket = args.activate === false ? 0 : claimNavigation();
   const opID = newOpID();
   markLocalOp(opID);
   beginAdopt(opID);
-  const outcome = await openTabCommand.dispatch({
+  const quiet = args.quietNotFound === true;
+  const outcome = await (quiet ? openTabQuietCommand : openTabCommand).dispatch({
     kind: args.kind,
     ref,
     parent: args.parent ?? "",
@@ -675,12 +703,33 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
     // The server answered an error (nothing committed) or the dispatch gave up.
     // Nothing was painted, so the failure transition just retires the op.
     opFailed(opID);
-    return outcome.status === "error" && outcome.error.status === 404 ? "not-found" : "failed";
+    if (outcome.status !== "error") {
+      return "failed";
+    }
+    if (outcome.error.status === 404) {
+      return "not-found";
+    }
+    if (quiet) {
+      const err = outcome.error;
+      // `openTabQuietCommand` raises nothing, so this toast is the refusal's only report. Retry is
+      // a plain open: a 404 then toasts, since the caller that wanted it quiet is not waiting.
+      toastError(
+        openTabRefusal(err),
+        retryNetwork(err)
+          ? {
+              onClick: () => {
+                void openTab({ ...args, quietNotFound: false });
+              },
+            }
+          : undefined,
+      );
+    }
+    return "failed";
   }
   const reply = outcome.value;
   adoptSubject(reply.subject);
   adoptCommitted(opID, reply.subject, reply.version, reply.created);
-  if (args.activate !== false) {
+  if (args.activate !== false && navigationHeld(ticket)) {
     activateTab(reply.subject.id);
   }
   return "opened";
@@ -763,6 +812,42 @@ function subtreeRows(row: TabRow): TabRow[] {
   };
   take(row);
   return out;
+}
+
+/** The chats a History delete of `ref` also closes: every chat row under a tab showing `ref`,
+ *  each once, with the name its row shows; `ref` itself is excluded. */
+export function descendantChatsOf(ref: string): ClosingChat[] {
+  const out = new Map<string, ClosingChat>();
+  for (const row of state.tabs) {
+    if (row.subject.kind !== "chat" || row.subject.ref !== ref) {
+      continue;
+    }
+    for (const r of subtreeRows(row)) {
+      if (r.subject.kind === "chat" && r.subject.ref !== ref && !out.has(r.subject.ref)) {
+        out.set(r.subject.ref, { ref: r.subject.ref, name: r.name });
+      }
+    }
+  }
+  return [...out.values()];
+}
+
+/** Asks whether a person's close may go ahead; `name` and `ref` are the closed tab's, `chats`
+ *  every chat row in its subtree, `stale` a refused close's sent and server impacts to ask again
+ *  on. A plain `true` verdict lets the close run in the same task; `impact` is what the close
+ *  sends (none: unchecked). INJECTED: the answer's sources import this module. */
+type CloseGate = (
+  name: string,
+  ref: string,
+  chats: readonly ClosingChat[],
+  stale?: { readonly sent: CloseImpact; readonly server: CloseImpact },
+) => { readonly verdict: true | Promise<boolean>; readonly impact?: CloseImpact };
+
+const openGate: CloseGate = () => ({ verdict: true });
+
+let closeGate = openGate;
+
+export function registerCloseGate(fn: CloseGate): void {
+  closeGate = fn;
 }
 
 function captureClose(row: TabRow): CapturedClose {
@@ -899,15 +984,19 @@ function rollbackClose(c: CapturedClose): void {
  *  effects at the gesture, teardown on confirmation. A committed response feeds the pending-op
  *  machine, a DEFINITIVE error rolls back, a TIMEOUT moves to `verifying` with the removal applied.
  *  Closing an id that is not open is not an error: two devices can close one tab. */
-export async function closeTab(id: string): Promise<void> {
+export async function closeTab(id: string, impact?: CloseImpact): Promise<void> {
   const row = rowOfID(id);
   const opID = newOpID();
   markLocalOp(opID);
   if (row === undefined) {
     // Not in this projection: no pending op, just the dispatch. An unknown id is SUCCESS server-side,
-    // so a definitive error here is a real refusal.
-    const lone = await closeTabCommand.dispatch({ id, opID }).outcome;
-    if (lone.status === "error" && lone.error.code !== "timeout") {
+    // so a refusal here is a real one.
+    const lone = await closeTabCommand.dispatch({
+      id,
+      opID,
+      ...(impact === undefined ? {} : { impact }),
+    }).outcome;
+    if (lone.status === "error" && serverRefused(lone.error)) {
       notifyAboutRow(undefined, "Could not close that tab", "error");
     }
     return;
@@ -924,24 +1013,87 @@ export async function closeTab(id: string): Promise<void> {
     },
   });
   applyGestureRemoval(captured);
-  const outcome = await closeTabCommand.dispatch({ id, opID }).outcome;
+  const outcome = await closeTabCommand.dispatch({
+    id,
+    opID,
+    ...(impact === undefined ? {} : { impact }),
+  }).outcome;
   if (outcome.status === "success" && outcome.value !== null) {
     removeCommitted(opID, outcome.value.closed, outcome.value.version);
     return;
   }
-  if (outcome.status === "error" && outcome.error.code !== "timeout") {
-    // The server ANSWERED an error: nothing committed, so the restore is
-    // honest — and the toast is this branch's, because the action itself stays
-    // quiet (its other failure shape is inconclusive and must not claim one).
+  if (outcome.status === "error" && outcome.error.code === CLOSE_IMPACT_CHANGED) {
+    // Another device changed what the close stops while the dialog was open: nothing committed,
+    // so the tab comes back with no toast and the person answers again.
     captured.refused = true;
-    notifyAboutRow(captured.rows[0], "Could not close that tab", "error");
-    opFailed(opID);
+    const server = serverImpactOf(outcome.error);
+    if (opFailed(opID)) {
+      if (impact === undefined || server === undefined) {
+        notifyAboutRow(captured.rows[0], "Could not close that tab", "error");
+      } else {
+        requestCloseTab(id, () => undefined, { sent: impact, server });
+      }
+    }
     return;
   }
-  // No answer — the definition-level CLOSE_CONFIRM_MS elapsed (or the dispatch
-  // was aborted): the machine verifies rather than guessing in either
-  // direction.
+  if (outcome.status === "error" && serverRefused(outcome.error)) {
+    // The server refused: the restore is honest only while the op is pending, because a frame naming it
+    // proves the close committed. The toast is this branch's: the action itself stays quiet.
+    captured.refused = true;
+    if (opFailed(opID)) {
+      notifyAboutRow(captured.rows[0], "Could not close that tab", "error");
+    }
+    return;
+  }
+  // No verdict: CLOSE_CONFIRM_MS elapsed, the request was lost, the dispatch was aborted or a retry found the
+  // first attempt still running. The machine verifies rather than guessing in either direction.
   opTimedOut(opID);
+}
+
+/** Whether an error is the server refusing the close. The transport's timeout, network and cancelled outcomes carry
+ *  status 0, and a close they cut off may have committed. Read after the `close_impact_changed` arm, the one 409 close_tab
+ *  answers itself; any other 409 is the idempotency layer's "request already in progress" for a retry whose first
+ *  attempt is still running, so the close verifies. */
+function serverRefused(error: { readonly status?: number }): boolean {
+  const status = error.status ?? 0;
+  return status > 0 && status !== 409;
+}
+
+/** A person's close (the ×, middle-click, Delete): the gate, then `beforeClose` and `closeTab`
+ *  only if it lets the close go ahead. Remote closes and the singleton toggles call `closeTab`. */
+function requestCloseTab(
+  id: string,
+  beforeClose: () => void = () => undefined,
+  stale?: { readonly sent: CloseImpact; readonly server: CloseImpact },
+): void {
+  const row = rowOfID(id);
+  if (row === undefined) {
+    if (stale === undefined) {
+      beforeClose();
+      void closeTab(id);
+    }
+    return;
+  }
+  const chats = subtreeRows(row)
+    .filter((r) => r.subject.kind === "chat")
+    .map((r) => ({ ref: r.subject.ref, name: r.name }));
+  const asked =
+    chats.length === 0 && stale === undefined
+      ? { verdict: true as const, impact: { chats: [] } }
+      : closeGate(row.name, row.subject.kind === "chat" ? row.subject.ref : "", chats, stale);
+  const proceed = (): void => {
+    beforeClose();
+    void closeTab(id, asked.impact);
+  };
+  if (asked.verdict === true) {
+    proceed();
+    return;
+  }
+  void asked.verdict.then((ok) => {
+    if (ok) {
+      proceed();
+    }
+  });
 }
 
 /** Pin or unpin a top-level tab.
@@ -1024,9 +1176,6 @@ function publishReorder(order: readonly string[]): readonly string[] | null {
 
 setReorderCallback(publishReorder);
 setReprojectCallback(renderDOM);
-// A lifted hold's release goes to the list, which holds the pointer capture, so it
-// never reaches the row's own activation listener.
-setTapCallback(activateTab);
 
 /** Where the menu's Move up / Move down would take a tab: its group swapped with the
  *  adjacent group in the SAME pin partition. Null for a sub-tab (its position is its
@@ -1773,7 +1922,9 @@ function createTabEl(row: TabRow): HTMLElement {
   // A SPAN, not a button: `role="tab"` is Children Presentational in WAI-ARIA, so a button here is an
   // unnamed dead tab stop (axe `nested-interactive`). Keyboard close is the APG's Delete on the row.
   const close = el("span", { className: "tab-close", "aria-hidden": "true" }, iconEl(ICON_CLOSE));
-  close.addEventListener("pointerup", (e) => {
+  // On `click`, never `pointerup`: a tap's click is hit-tested after the release, so closing on the
+  // release handed the click to the row that slid under the finger.
+  close.addEventListener("click", (e) => {
     e.stopPropagation();
     // The row's own tap guard, read here for the same reason: a drag that happened
     // to start on the × is a scroll, and the × is the strip's one destructive
@@ -1781,7 +1932,7 @@ function createTabEl(row: TabRow): HTMLElement {
     if (gestureDragged()) {
       return;
     }
-    void closeTab(id);
+    requestCloseTab(id);
   });
 
   // The dot is decoration; `statusSR` is what a screen reader hears. Both ride
@@ -1999,8 +2150,8 @@ function beginTabRename(node: HTMLElement, id: string): void {
 
 // --- Tap vs drag ---
 //
-// `#tab-list` scrolls, and activation is a `pointerup`; a drag along an axis with nothing to scroll
-// starts no pan and so no cancel, and the release lands on the row. So the verdict is travelled
+// `#tab-list` scrolls, and activation is a `click`; a drag along an axis with nothing to scroll
+// starts no pan and so no cancel, and the click lands on the row. So the verdict is travelled
 // DISTANCE. ONE module-scope gesture (`isPrimary`), read by both activation and the ×; no
 // `pointercancel` reset, the next `pointerdown` clears it. The origin is RE-BASELINED when the
 // visual viewport moves (`viewport-frame.ts`): declaring a drag would refuse a real click.
@@ -2057,8 +2208,11 @@ function attachTapGuard(node: HTMLElement): void {
 function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean): void {
   attachTapGuard(node);
 
-  // Click to activate (any target outside .tab-close).
-  node.addEventListener("pointerup", (e) => {
+  // Click to activate (any target outside .tab-close). On `click`, never `pointerup`: activating
+  // closes the phone drawer, and a tap's click is hit-tested after the release, at the same point,
+  // so it would land on whatever the drawer uncovered. A lifted hold released in place still
+  // clicks its row.
+  node.addEventListener("click", (e) => {
     if (isDragHandled()) {
       return;
     }
@@ -2070,9 +2224,6 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
     if ((e.target as HTMLElement).closest(".tab-close") !== null) {
       return;
     }
-    if (!e.isPrimary) {
-      return;
-    }
     activateTab(id);
   });
 
@@ -2080,7 +2231,7 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
   node.addEventListener("auxclick", (e) => {
     if (e.button === 1) {
       e.preventDefault();
-      void closeTab(id);
+      requestCloseTab(id);
     }
   });
 
@@ -2103,20 +2254,21 @@ function attachTabInteraction(node: HTMLElement, id: string, draggable: boolean)
         e.preventDefault();
         // Focus is moved by hand, or Delete drops the keyboard user onto <body>. The APG puts focus on the
         // tab that took the closed one's place: everything after me, then everything before in reverse.
-        // Moved BEFORE the dispatch, because a close is a round trip.
-        const siblings = [...(node.parentElement?.children ?? [])] as HTMLElement[];
-        const self = siblings.indexOf(node);
-        const successors = [...siblings.slice(self + 1), ...siblings.slice(0, self).reverse()];
-        const successor = successors.find((n) => n.dataset["tabId"] !== id);
-        if (successor !== undefined) {
-          successor.focus();
-        } else {
-          // The LAST tab: no row survives for focus to land on, and losing it
-          // to <body> strands the keyboard user. The empty-state surface's one
-          // control is the composer, so focus goes there.
-          $.promptInput.focus();
-        }
-        void closeTab(id);
+        // Moved BEFORE the dispatch, because a close is a round trip, and only once the gate lets it go.
+        requestCloseTab(id, () => {
+          const siblings = [...(node.parentElement?.children ?? [])] as HTMLElement[];
+          const self = siblings.indexOf(node);
+          const successors = [...siblings.slice(self + 1), ...siblings.slice(0, self).reverse()];
+          const successor = successors.find((n) => n.dataset["tabId"] !== id);
+          if (successor !== undefined) {
+            successor.focus();
+          } else {
+            // The LAST tab: no row survives for focus to land on, and losing it
+            // to <body> strands the keyboard user. The empty-state surface's one
+            // control is the composer, so focus goes there.
+            $.promptInput.focus();
+          }
+        });
         break;
       }
       case "ArrowDown":
@@ -2373,6 +2525,7 @@ export function _resetForTest(): void {
   callbacks.onActivate = null;
   callbacks.onEmpty = null;
   chatSettledProbe = null;
+  closeGate = openGate;
   if (internal.emptyTimer !== null) {
     clearTimeout(internal.emptyTimer);
   }
@@ -2382,6 +2535,7 @@ export function _resetForTest(): void {
   internal.everOpened = false;
   nameOverrides.clear();
   activationHistory.length = 0;
+  navigationSeq = 0;
   lastAnnouncedTab = "";
   // Re-register the target: a test that reset tabs-sync dropped it.
   registerTabsTarget(target);

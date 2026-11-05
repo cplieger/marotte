@@ -11,7 +11,7 @@ import {
   type ReadonlySignal,
   type Signal,
   type Collection,
-} from "@cplieger/reactive";
+} from "@cplieger/ui";
 import {
   asObject,
   decodeArray,
@@ -22,7 +22,7 @@ import {
   reqNum,
   reqStr,
   type Decoder,
-} from "./validators.js";
+} from "./wire/validators.gen.js";
 
 const decodePromptInfo: Decoder<MCPPromptInfo> = (v) => {
   const o = asObject(v, "$.mcp.prompt");
@@ -175,6 +175,10 @@ const decodeServer: Decoder<Server> = (v) => {
   if (timeoutMS !== undefined) {
     out.timeout_ms = timeoutMS;
   }
+  const versionNegotiation = optStr(o, "version_negotiation", p);
+  if (versionNegotiation !== undefined) {
+    out.version_negotiation = versionNegotiation as VersionNegotiation;
+  }
   if (Array.isArray(o["args"])) {
     out.args = (o["args"] as unknown[]).map((x) => String(x));
   }
@@ -193,14 +197,20 @@ const decodeServer: Decoder<Server> = (v) => {
   return out;
 };
 
-const decodeMCPServersResponseLocal: Decoder<{ servers: Server[] }> = (v) => {
+const decodeMCPServersResponseLocal: Decoder<{ servers: Server[]; unreadable: number }> = (v) => {
   const o = asObject(v, "$.mcp_servers");
-  return { servers: decodeArray(o["servers"], decodeServer, "$.mcp_servers.servers") };
+  return {
+    servers: decodeArray(o["servers"], decodeServer, "$.mcp_servers.servers"),
+    unreadable: optNum(o, "unreadable", "$.mcp_servers") ?? 0,
+  };
 };
 
 // SSE is the legacy HTTP+SSE remote transport, a first-class stored value sharing the url/headers form with http.
 export type { Transport } from "./wire/types.gen.js";
 import type { MCPOrigin, Transport } from "./wire/types.gen.js";
+
+/** KAS's per-server `versionNegotiation` enum. */
+type VersionNegotiation = "auto" | "legacy";
 
 export interface KeyPair {
   name: string;
@@ -221,6 +231,8 @@ export interface Server {
   /** KAS's per-server connect timeout in milliseconds; absent means KAS's
    *  own default. Imported from a pasted config; no form control edits it. */
   timeout_ms?: number;
+  /** KAS's per-server `versionNegotiation`, from a paste or the raw edit; absent means kiro-cli's `auto`. No form control edits it. */
+  version_negotiation?: VersionNegotiation;
   command?: string;
   args?: string[];
   env?: KeyPair[];
@@ -273,7 +285,8 @@ export interface ServerDiscovery {
   resource_templates: MCPResourceTemplateInfo[];
 }
 
-export type RuntimeState = "connected" | "needs_auth" | "idle" | "failed" | "disabled";
+export type RuntimeState =
+  "connected" | "needs_auth" | "signing_in" | "idle" | "failed" | "disabled";
 
 /**
  * `origin` picks the row a live status belongs to, never editability. `shadows`: marotte's config holds the name, so
@@ -289,8 +302,11 @@ interface Provenance {
 export type RuntimeStatus = Provenance &
   (
     | { name: string; state: "connected" }
-    /** `relayed` rides the status wire, so a reload or second device does not offer the paste box for a spent code. */
-    | { name: string; state: "needs_auth"; oauth_url: string; relayed: boolean }
+    /** `error` is why kiro-cli refused the last Sign in, absent when none was refused. */
+    | { name: string; state: "needs_auth"; error?: string }
+    /** `oauth_url` is the consent page of the sign-in the user started. `relayed` rides the status wire, so a reload
+     *  or second device does not offer the paste box for a spent code. */
+    | { name: string; state: "signing_in"; oauth_url: string; relayed: boolean }
     | { name: string; state: "idle" }
     | { name: string; state: "failed"; error: string }
     | { name: string; state: "disabled" }
@@ -348,10 +364,14 @@ export function adaptStatus(w: WireRuntimeStatus): RuntimeStatus {
   const prov = adaptProvenance(w);
   switch (w.state) {
     case "needs_auth":
+      return w.error === undefined || w.error === ""
+        ? { name: w.name, ...prov, state: "needs_auth" }
+        : { name: w.name, ...prov, state: "needs_auth", error: w.error };
+    case "signing_in":
       return {
         name: w.name,
         ...prov,
-        state: "needs_auth",
+        state: "signing_in",
         oauth_url: w.oauth_url ?? "",
         relayed: w.relayed ?? false,
       };
@@ -418,6 +438,9 @@ export const servers: Collection<Server> = createCollection<Server>((s) => s.id)
  * sorted. Such a server has no persisted id, so its rows are read-only.
  */
 export const unconfiguredNames: Signal<string[]> = signal<string[]>([]);
+
+/** How many entries of marotte's record could not be read at boot, from GET /api/mcp. */
+export const unreadableEntries: Signal<number> = signal(0);
 
 /** Snapshot of the configured servers (non-reactive). */
 export function configuredServers(): Server[] {
@@ -488,6 +511,7 @@ class MCPStateController {
       return;
     }
     servers.setAll(d?.servers ?? []);
+    unreadableEntries.value = d?.unreadable ?? 0;
   }
 
   refetchStatus(): void {

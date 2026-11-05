@@ -1,11 +1,11 @@
 package archive
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -13,54 +13,79 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
+// fakeChat is what the fake store's PurgeIdle answers for one chat directory.
+type fakeChat struct {
+	lastUse time.Time
+	err     error
+	keptBy  string
+	chain   []string
+}
+
+// fakeStore follows chat.Store.PurgeIdle's contract over directories under dir: a chat with no directory is
+// absent, an error stays, a keep reason keeps with no deadline, and otherwise the age decides.
 type fakeStore struct {
+	chats map[marotte.ChatID]fakeChat
 	dir   string
+	calls int
 	mu    sync.Mutex
-	locks map[marotte.ChatID]*sync.Mutex
-	// removals counts successful Removes; its value is the `chats` version the
-	// fake mints, so a purge's chat_deleted stamp is checkable.
-	removals int
-	// header, when non-nil, makes LoadRetentionHeader succeed with this
-	// projection (default: it fails, the unreadable-chat path).
-	header *RetentionHeader
 }
 
 func newFakeStore(dir string) *fakeStore {
-	return &fakeStore{dir: dir, locks: make(map[marotte.ChatID]*sync.Mutex)}
+	return &fakeStore{dir: dir, chats: make(map[marotte.ChatID]fakeChat)}
 }
 
 func (f *fakeStore) Dir() string { return f.dir }
 
-func (f *fakeStore) Lock(chatID marotte.ChatID) *sync.Mutex {
+func (f *fakeStore) PurgeIdle(_ context.Context, chatID marotte.ChatID, cutoff time.Time) (PurgeVerdict, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	m, ok := f.locks[chatID]
-	if !ok {
-		m = &sync.Mutex{}
-		f.locks[chatID] = m
+	f.calls++
+	c, ok := f.chats[chatID]
+	if _, err := os.Stat(filepath.Join(f.dir, string(chatID))); err != nil || !ok {
+		return PurgeVerdict{Outcome: PurgeAbsent}, nil
 	}
-	return m
+	if c.err != nil {
+		return PurgeVerdict{Outcome: PurgeKept}, c.err
+	}
+	if c.keptBy != "" {
+		v := PurgeVerdict{Outcome: PurgeKept}
+		if c.lastUse.Before(cutoff) {
+			v.KeptBy = c.keptBy
+		}
+		return v, nil
+	}
+	if !c.lastUse.Before(cutoff) {
+		return PurgeVerdict{Outcome: PurgeKept, Deadline: c.lastUse.Add(time.Since(cutoff))}, nil
+	}
+	if err := os.RemoveAll(filepath.Join(f.dir, string(chatID))); err != nil {
+		return PurgeVerdict{Outcome: PurgeKept}, err
+	}
+	delete(f.chats, chatID)
+	return PurgeVerdict{Outcome: PurgePurged, SessionChain: c.chain}, nil
 }
 
-func (f *fakeStore) LoadRetentionHeader(marotte.ChatID) (RetentionHeader, error) {
-	if f.header != nil {
-		return *f.header, nil
-	}
-	return RetentionHeader{}, errors.New("fakeStore: chat is unreadable")
+func (f *fakeStore) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
 }
 
-func (f *fakeStore) Remove(chatID marotte.ChatID) (string, error) {
-	dir := filepath.Join(f.dir, string(chatID))
-	if _, err := os.Stat(dir); err != nil {
-		return "", err
-	}
-	if err := os.RemoveAll(dir); err != nil {
-		return "", err
+func (f *fakeStore) set(t *testing.T, id string, c fakeChat) string {
+	t.Helper()
+	p := filepath.Join(f.dir, id)
+	if err := os.MkdirAll(p, 0o700); err != nil {
+		t.Fatalf("mkdir chat %s: %v", id, err)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.removals++
-	return strconv.Itoa(f.removals), nil
+	f.chats[marotte.ChatID(id)] = c
+	return p
+}
+
+// aged adds a chat last used age ago.
+func (f *fakeStore) aged(t *testing.T, id string, age time.Duration) string {
+	t.Helper()
+	return f.set(t, id, fakeChat{lastUse: time.Now().Add(-age)})
 }
 
 // Safe for concurrent use because Purge calls it from worker goroutines.
@@ -70,8 +95,6 @@ type purgeRecorder struct {
 	chains map[marotte.ChatID][]string
 }
 
-// recordPurge satisfies WithOnPurge, keeping the session chain the purge
-// handed over so tests can assert the chat's sessions were offered for reaping.
 func (r *purgeRecorder) recordPurge(id marotte.ChatID, sessionChain []string) {
 	r.mu.Lock()
 	r.ids = append(r.ids, id)
@@ -91,43 +114,21 @@ func (r *purgeRecorder) chainFor(id marotte.ChatID) []string {
 func (r *purgeRecorder) sorted() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return idsToSortedStrings(r.ids)
-}
-
-func idsToSortedStrings(ids []marotte.ChatID) []string {
-	out := make([]string, len(ids))
-	for i, id := range ids {
+	out := make([]string, len(r.ids))
+	for i, id := range r.ids {
 		out[i] = string(id)
 	}
 	slices.Sort(out)
 	return out
 }
 
-func newPurgeTestService(t *testing.T, opts ...Option) (*Service, *fakeStore, string) {
+func newPurgeTestService(t *testing.T, onPurge func(marotte.ChatID, []string)) (*Service, *fakeStore) {
 	t.Helper()
-	dir := t.TempDir()
-	store := newFakeStore(dir)
-	return New(store, opts...), store, dir
-}
-
-// With no projection set on the fake, purgeReferenceTime falls through to the header MTIME this
-// sets.
-func writeAgedChat(t *testing.T, dir, id string, age time.Duration) string {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Join(dir, id), 0o700); err != nil {
-		t.Fatalf("mkdir aged chat %s: %v", id, err)
+	if onPurge == nil {
+		onPurge = func(marotte.ChatID, []string) {}
 	}
-	p := filepath.Join(dir, id, headerFileName)
-	if err := os.WriteFile(p, []byte(`{"id":"`+id+`"}`), 0o600); err != nil {
-		t.Fatalf("write aged chat %s: %v", id, err)
-	}
-	if age != 0 {
-		mt := time.Now().Add(-age)
-		if err := os.Chtimes(p, mt, mt); err != nil {
-			t.Fatalf("chtimes %s: %v", id, err)
-		}
-	}
-	return p
+	store := newFakeStore(t.TempDir())
+	return New(store, onPurge), store
 }
 
 func exists(t *testing.T, path string) bool {

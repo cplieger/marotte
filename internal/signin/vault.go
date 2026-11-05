@@ -328,6 +328,22 @@ func (v *Vault) Answerability(id BackendID) Answerability {
 	return s.answerabilityLocked()
 }
 
+// UnreachableReason returns the backend's own refusal text for RefusedUnreachable while its Answerability is
+// ProviderUnreachable, and false in every other state.
+func (v *Vault) UnreachableReason(id BackendID) (string, bool) {
+	s := v.slots[id]
+	if s == nil {
+		return "", false
+	}
+	s.mu.Lock()
+	down := s.answerabilityLocked() == ProviderUnreachable
+	s.mu.Unlock()
+	if !down {
+		return "", false
+	}
+	return s.b.Refusal(RefusedUnreachable).Message, true
+}
+
 // OnAnswerability registers fn for every move of a backend's Answerability. Calls arrive one at a time with no
 // vault lock held, in one commit order with OnChange's, except the move EngineSpawned makes: that one is read with
 // Answerability once the engine is up.

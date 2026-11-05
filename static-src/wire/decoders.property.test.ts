@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 import * as decoders from "./decoders.gen.js";
 import { ARBITRARY_BY_TYPE } from "./arbitraries.gen.js";
-import type { Decoder } from "../validators.js";
+import type { Decoder } from "./validators.gen.js";
 
 const DECODER_PREFIX = "decode";
 

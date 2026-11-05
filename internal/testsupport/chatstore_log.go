@@ -70,9 +70,9 @@ func (*InMemoryChatStore) Revert(_ context.Context, id marotte.ChatID, turn, _ s
 	return nil, nil, fmt.Errorf("testsupport: chat %s holds no turn %q", id, turn)
 }
 
-// RewindTarget answers no prompt.
-func (*InMemoryChatStore) RewindTarget(context.Context, marotte.ChatID, string) (marotte.RewindTarget, bool, error) {
-	return marotte.RewindTarget{}, false, nil
+// PromptTarget answers no prompt.
+func (*InMemoryChatStore) PromptTarget(context.Context, marotte.ChatID, string) (marotte.PromptTarget, bool, error) {
+	return marotte.PromptTarget{}, false, nil
 }
 
 // PromptReceipt answers a prompt the log never held.

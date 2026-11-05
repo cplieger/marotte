@@ -15,6 +15,7 @@ let listReply: ListReply;
 let oneReply: ListReply;
 let confirmAnswer = true;
 const deleted: string[] = [];
+const refusedDeletes = new Set<string>();
 const updated: { id: string; edit: unknown }[] = [];
 
 vi.mock("./api-client.js", async (importOriginal) => ({
@@ -33,7 +34,7 @@ vi.mock("./actions/memory.js", async (importOriginal) => ({
   deleteMemory: {
     dispatch: vi.fn(async (args: { id: string }) => {
       deleted.push(args.id);
-      return undefined;
+      return refusedDeletes.has(args.id) ? null : undefined;
     }),
   },
   updateMemory: {
@@ -46,6 +47,8 @@ vi.mock("./actions/memory.js", async (importOriginal) => ({
 
 import { renderMemoriesPanel, setMemoryCountsListener, _resetMemoriesForTest } from "./memories.js";
 import { confirm } from "./confirm.js";
+import { apiGetTypedOrError } from "./api-client.js";
+import { dispatch } from "./bus.js";
 
 function record(id: string, scope: string | null, title: string, updated = 1_700_000_000) {
   return {
@@ -104,6 +107,7 @@ beforeEach(() => {
   panel = document.createElement("div");
   document.body.appendChild(panel);
   deleted.length = 0;
+  refusedDeletes.clear();
   updated.length = 0;
   confirmAnswer = true;
   vi.mocked(confirm).mockClear();
@@ -246,5 +250,89 @@ describe("bulk delete", () => {
     await settle();
     expect(vi.mocked(confirm).mock.calls[0]?.[0]).toContain("Delete all 5 memories");
     expect(deleted.sort()).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  it("stops at a refused record and shows what is left, still selected", async () => {
+    await mount();
+    for (const id of ["a", "c", "e"]) {
+      panel.querySelector<HTMLInputElement>(`[data-memory-id="${id}"] .memories-select`)?.click();
+    }
+    refusedDeletes.add("c");
+    listReply = ok({
+      memories: [record("c", null, "Loose"), record("e", "workspace", "Local")],
+      cap: 1000,
+    });
+    button("Delete selected").click();
+    await settle();
+    expect(deleted).toEqual(["a", "c"]);
+    expect(titlesIn("Unscoped")).toEqual(["Loose"]);
+    expect(titlesIn("workspace")).toEqual(["Local"]);
+    expect(button("Delete selected").textContent).toBe("Delete selected (2)");
+  });
+});
+
+// memories_changed follows a write kiro-cli applied, late or from another device.
+describe("a memory change kiro-cli reports", () => {
+  it("refetches the list while the panel shows", async () => {
+    await mount();
+    listReply = ok({ memories: [record("f", "global", "Fresh")], cap: 1000 });
+    dispatch({ type: "memories_changed", chat_id: "" });
+    await settle();
+    expect(titlesIn("global")).toEqual(["Fresh"]);
+  });
+
+  it("re-reads the open memory's body", async () => {
+    await mount();
+    panel.querySelector<HTMLButtonElement>('[data-memory-id="b"] .entry-open')?.click();
+    await settle();
+    oneReply = ok({ memory: { ...record("b", "repo:org/one", "Newer"), content: "landed late" } });
+    dispatch({ type: "memories_changed", chat_id: "" });
+    await settle();
+    expect(panel.querySelector(".memories-content")?.textContent).toBe("landed late");
+  });
+
+  it("keeps what is being typed in an open editor", async () => {
+    await mount();
+    panel
+      .querySelector<HTMLButtonElement>('[data-memory-id="b"] [aria-label="Edit Newer"]')
+      ?.click();
+    await settle();
+    const body = panel.querySelector<HTMLTextAreaElement>(".memories-form textarea");
+    if (body === null) {
+      throw new Error("no body field");
+    }
+    body.value = "half typed";
+    // Even a body read that would fail leaves the editor alone.
+    oneReply = { ok: false, status: 502, data: null, error: "memory request failed" };
+    dispatch({ type: "memories_changed", chat_id: "" });
+    await settle();
+    expect(panel.querySelector(".memories-form textarea")).toBe(body);
+    expect(body.value).toBe("half typed");
+  });
+
+  it("shows the landed body when an editor open across the change is cancelled", async () => {
+    await mount();
+    panel
+      .querySelector<HTMLButtonElement>('[data-memory-id="b"] [aria-label="Edit Newer"]')
+      ?.click();
+    await settle();
+    oneReply = ok({ memory: { ...record("b", "repo:org/one", "Newer"), content: "landed late" } });
+    dispatch({ type: "memories_changed", chat_id: "" });
+    await settle();
+    const cancel = [...panel.querySelectorAll<HTMLButtonElement>(".memories-form button")].find(
+      (b) => b.textContent === "Cancel",
+    );
+    cancel?.click();
+    await settle();
+    expect(panel.querySelector(".memories-content")?.textContent).toBe("landed late");
+  });
+
+  it("fetches nothing while the panel is hidden", async () => {
+    await mount();
+    panel.classList.add("hidden");
+    const before = vi.mocked(apiGetTypedOrError).mock.calls.length;
+    dispatch({ type: "memories_changed", chat_id: "" });
+    await settle();
+    expect(vi.mocked(apiGetTypedOrError).mock.calls.length).toBe(before);
   });
 });

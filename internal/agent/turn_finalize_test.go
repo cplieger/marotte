@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
@@ -75,7 +76,7 @@ func deadContext(t *testing.T) context.Context {
 func streamingPromptTurn(t *testing.T, h *Runtime, chatID marotte.ChatID, text string) (string, *turnlog.Turn) {
 	t.Helper()
 	id, log := h.stagePromptTurn(t, chatID)
-	h.coord.WireTurnStart(t.Context(), chatID)
+	h.coord.WireTurnStart(t.Context(), chatID, translate.TurnStartFrame{Tag: id})
 	if _, err := log.TextDelta(t.Context(), "", "say-1", text); err != nil {
 		t.Fatalf("TextDelta: %v", err)
 	}
@@ -107,9 +108,8 @@ func TestCloseTurnOnBridgeDeath_ClosesAnOpenTurn(t *testing.T) {
 	if got := closedBroadcasts(t, h); len(got) != 1 || got[0].Outcome != marotte.TurnOutcomeInterrupted {
 		t.Errorf("turn_closed broadcasts = %+v, want exactly one interrupted", got)
 	}
-	if h.coord.turns.live("c1") {
-		t.Error("the chat still reads live after its only turn closed")
-	}
+	// The close's drain runs on its own goroutine and may hold the admission slot while it finds nothing to send.
+	waitFor(t, func() bool { return !h.coord.turns.live("c1") })
 }
 
 // TestCloseTurnOnBridgeDeath_IgnoresAChatWithNoOpenTurn pins that opening a turn to close it would invent an interruption on every exit.

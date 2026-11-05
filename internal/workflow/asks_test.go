@@ -1,12 +1,13 @@
 package workflow
 
-// The fixtures under testdata/inspect are real kiro-cli 2.29.1 replies (workspacePath scrubbed),
+// The fixtures under testdata/inspect are real kiro-cli 2.37.0 replies (workspacePath scrubbed),
 // recorded around one park of a one-step recipe whose step calls send_message warning: the park,
 // the first read after an admitted answer (run running, step still paused), the answered step
-// running, the parent session's send_message resuming it, its re-park, and a cancel. The parallel,
-// repeat and non-step cases are those replies' node shapes recombined. unsaved-signal-park is a
-// kiro-cli 2.31.0 park reply with finalizeStepAfterTurn's lost-signal arm applied (signal cleared,
-// its pauseReason), since that arm has not been triggered live.
+// running, the parent session's send_message resuming it, its re-park, and a cancel. gated-park is
+// a step with a `completion` gate that ended its turn with no signal. The parallel, repeat and
+// non-step cases are those replies' node shapes recombined. unsaved-signal-park is a kiro-cli 2.31.0
+// park reply with finalizeStepAfterTurn's lost-signal arm applied (signal cleared, its pauseReason)
+// and the park record parkAwaitingUser writes added by hand, since that arm has not been triggered live.
 
 import (
 	"encoding/json"
@@ -16,14 +17,17 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/keyenc"
+	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
 const (
-	fixtureRun     = "wf_66658d5c69b1f284"
-	fixtureSession = "sess_c8ebb89e-a1ac-41da-aeaa-1aaa24762563"
+	fixtureRun     = "wf_a9239a70a27fce6e"
+	fixtureSession = "sess_4cd99833-1963-491f-a2b0-a3b26b5b6e85"
 )
+
+// parked is the attention KAS's park writes on a step (markWaitingForUser).
+var parked = []any{map[string]any{"kind": "question", "since": "2026-11-01T09:58:33.463Z"}}
 
 func fixture(t *testing.T, name string) json.RawMessage {
 	t.Helper()
@@ -66,7 +70,7 @@ func recombined(t *testing.T, runStatus string, children ...map[string]any) Insp
 	return decoded(t, raw)
 }
 
-func stepNode(id, status, session, signal string, awaiting any) map[string]any {
+func stepNode(id, status, session, signal string, attention []any) map[string]any {
 	n := map[string]any{"nodeId": id, "type": "step", "status": status, "agentName": "asker"}
 	if session != "" {
 		n["sessionId"] = session
@@ -75,8 +79,8 @@ func stepNode(id, status, session, signal string, awaiting any) map[string]any {
 		n["completionSignal"] = signal
 		n["completionSignalSource"] = "send_message"
 	}
-	if awaiting != nil {
-		n["awaitingUserInput"] = awaiting
+	if attention != nil {
+		n["attention"] = attention
 	}
 	return n
 }
@@ -114,7 +118,6 @@ func TestOpenAsks_RecordedReplies(t *testing.T) {
 			name: "a stop outranks a pending answer", fixture: "parked",
 			log: RunLog{Pending: true, Stopping: true}, wantN: 1, wantHold: marotte.RunAskStopping,
 		},
-		// awaitingUserInput stays true on a running step, so W1's second arm needs `paused`.
 		{name: "an answered step running asks nothing", fixture: "running-after-answer"},
 		// The user's chat: the parent agent answered by send_message, and pauseReason still says waiting.
 		{name: "a step the parent resumed asks nothing", fixture: "running-after-parent-send"},
@@ -225,14 +228,18 @@ func TestOpenAsks_TheWaitPredicate(t *testing.T) {
 		node  map[string]any
 		wantN int
 	}{
-		{"paused with the signal", "paused", stepNode("ask", "paused", fixtureSession, "need_input", nil), 1},
-		{"paused with no signal and awaiting input", "paused", stepNode("ask", "paused", fixtureSession, "", true), 1},
-		{"paused with no signal and not awaiting", "paused", stepNode("ask", "paused", fixtureSession, "", false), 0},
-		{"paused with no signal and no awaiting field", "paused", stepNode("ask", "paused", fixtureSession, "", nil), 0},
-		{"paused with another signal", "paused", stepNode("ask", "paused", fixtureSession, "done", true), 0},
-		{"paused with no session to address", "paused", stepNode("ask", "paused", "", "need_input", true), 0},
-		{"running with the signal is a turn in progress", "running", stepNode("ask", "running", fixtureSession, "need_input", true), 0},
-		{"a terminal run asks nothing", "failed", stepNode("ask", "paused", fixtureSession, "need_input", true), 0},
+		{"paused with the signal and the park record", "paused", stepNode("ask", "paused", fixtureSession, "need_input", parked), 1},
+		{"a gated park: no signal, the park record", "paused", stepNode("ask", "paused", fixtureSession, "", parked), 1},
+		{"paused with the signal and no park record", "paused", stepNode("ask", "paused", fixtureSession, "need_input", nil), 0},
+		{"paused with only the step session's permission request", "paused", stepNode("ask", "paused", fixtureSession, "", []any{
+			map[string]any{"kind": "permission", "since": "2026-11-01T09:58:33.463Z", "toolCallId": "tooluse_1"},
+		}), 0},
+		{"paused with only the step session's input request", "paused", stepNode("ask", "paused", fixtureSession, "need_input", []any{
+			map[string]any{"kind": "question", "since": "2026-11-01T09:58:33.463Z", "toolCallId": "tooluse_1"},
+		}), 0},
+		{"paused with no session to address", "paused", stepNode("ask", "paused", "", "need_input", parked), 0},
+		{"running with the park record is a turn in progress", "running", stepNode("ask", "running", fixtureSession, "need_input", parked), 0},
+		{"a terminal run asks nothing", "failed", stepNode("ask", "paused", fixtureSession, "need_input", parked), 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -257,7 +264,7 @@ func TestOpenAsks_Branches(t *testing.T) {
 	t.Run("a sibling step running blocks the answer", func(t *testing.T) {
 		t.Parallel()
 		in := recombined(t, "running", parallel(
-			stepNode("a", "paused", fixtureSession, "need_input", true),
+			stepNode("a", "paused", fixtureSession, "need_input", parked),
 			stepNode("b", "running", other, "", nil),
 		))
 		got := OpenAsks(in, RunLog{Quiet: true})
@@ -268,7 +275,7 @@ func TestOpenAsks_Branches(t *testing.T) {
 	t.Run("a running command leaf blocks too", func(t *testing.T) {
 		t.Parallel()
 		in := recombined(t, "running", parallel(
-			stepNode("a", "paused", fixtureSession, "need_input", true),
+			stepNode("a", "paused", fixtureSession, "need_input", parked),
 			map[string]any{"nodeId": "w", "type": "command", "status": "running"},
 		))
 		if got := OpenAsks(in, RunLog{}); got[0].Wait != marotte.RunAskBranchRunning {
@@ -278,8 +285,8 @@ func TestOpenAsks_Branches(t *testing.T) {
 	t.Run("two parked branches are two asks", func(t *testing.T) {
 		t.Parallel()
 		in := recombined(t, "paused", parallel(
-			stepNode("a", "paused", fixtureSession, "need_input", true),
-			stepNode("b", "paused", other, "need_input", true),
+			stepNode("a", "paused", fixtureSession, "need_input", parked),
+			stepNode("b", "paused", other, "need_input", parked),
 		))
 		got := OpenAsks(in, RunLog{Pending: true})
 		if len(got) != 2 {
@@ -295,8 +302,8 @@ func TestOpenAsks_Branches(t *testing.T) {
 	t.Run("a fan-out sharing one path is two asks", func(t *testing.T) {
 		t.Parallel()
 		in := recombined(t, "paused", parallel(
-			stepNode("a", "paused", fixtureSession, "need_input", true),
-			stepNode("a", "paused", other, "need_input", true),
+			stepNode("a", "paused", fixtureSession, "need_input", parked),
+			stepNode("a", "paused", other, "need_input", parked),
 		))
 		got := OpenAsks(in, RunLog{})
 		if len(got) != 2 || PathKey(got[0].NodePath) != PathKey(got[1].NodePath) {
@@ -308,7 +315,7 @@ func TestOpenAsks_Branches(t *testing.T) {
 		iter := func(n int, session string) map[string]any {
 			return map[string]any{
 				"nodeId": "loop#" + string(rune('0'+n)), "type": "sequence", "status": "paused",
-				"iteration": n, "children": []any{stepNode("review", "paused", session, "need_input", true)},
+				"iteration": n, "children": []any{stepNode("review", "paused", session, "need_input", parked)},
 			}
 		}
 		in := recombined(t, "paused", map[string]any{
@@ -337,7 +344,7 @@ func TestDecodeInspect_Refuses(t *testing.T) {
 		"no run named":   `{"state":{"status":"paused"}}`,
 		"a reply naming another run than its state": `{"workflowId":"wf_other","state":{"workflowId":"` + fixtureRun + `","status":"paused"}}`,
 		"a state naming another run than its reply": `{"workflowId":"` + fixtureRun + `","state":{"workflowId":"wf_other","status":"paused"}}`,
-		"a type drift":     `{"state":{"workflowId":"` + fixtureRun + `","status":"paused","root":{"nodeId":"r","awaitingUserInput":"yes"}}}`,
+		"a type drift":     `{"state":{"workflowId":"` + fixtureRun + `","status":"paused","root":{"nodeId":"r","attention":"yes"}}}`,
 		"a drifted signal": `{"state":{"workflowId":"` + fixtureRun + `","status":"paused","root":{"nodeId":"r","completionSignal":7}}}`,
 	}
 	for name, raw := range cases {
@@ -360,7 +367,8 @@ func TestDecodeInspect_Refuses(t *testing.T) {
 func TestDecodeInspect_ARunNamedOnlyOnTheReplyKeysItsAsks(t *testing.T) {
 	t.Parallel()
 	raw := `{"workflowId":"` + fixtureRun + `","state":{"status":"paused","root":{"nodeId":"s","type":"step",` +
-		`"status":"paused","sessionId":"` + fixtureSession + `","completionSignal":"need_input"}}}`
+		`"status":"paused","sessionId":"` + fixtureSession + `","completionSignal":"need_input",` +
+		`"attention":[{"kind":"question","since":"2026-11-01T09:58:33.463Z"}]}}}`
 	in, err := DecodeInspect(fixtureRun, json.RawMessage(raw))
 	if err != nil || !in.OK {
 		t.Fatalf("DecodeInspect = %+v, %v; want OK", in, err)
@@ -390,7 +398,7 @@ func TestParkedSteps_MatchesOpenAsks(t *testing.T) {
 		t.Error("ParkedSteps of a cancelled run named a step")
 	}
 	mixed := recombined(t, "running",
-		stepNode("a", "running", "sess_a", "", nil), stepNode("b", "paused", fixtureSession, "need_input", true))
+		stepNode("a", "running", "sess_a", "", nil), stepNode("b", "paused", fixtureSession, "need_input", parked))
 	if got := ParkedSteps(mixed); len(got) != 1 || got[0].NodeID != "b" {
 		t.Errorf("ParkedSteps = %+v, want only the waiting step, not the running one beside it", got)
 	}
@@ -434,8 +442,8 @@ func TestOpenAsks_ReasonOnlyWhereItNamesThisPark(t *testing.T) {
 		t.Errorf("need_input park: asks %+v, want one with no reason", got)
 	}
 	two := recombined(t, statusPaused,
-		stepNode("a", statusPaused, fixtureSession, "", true),
-		stepNode("b", statusPaused, "sess_other", "", true))
+		stepNode("a", statusPaused, fixtureSession, "", parked),
+		stepNode("b", statusPaused, "sess_other", "", parked))
 	two.State.PauseReason = "Step 'b' is awaiting user input."
 	got := OpenAsks(two, RunLog{})
 	if len(got) != 2 {
@@ -457,25 +465,29 @@ func TestPausedOnAsks(t *testing.T) {
 		want bool
 	}{
 		"one step asks": {
-			in:   recombined(t, statusPaused, stepNode("ask", statusPaused, fixtureSession, needInput, true)),
+			in:   recombined(t, statusPaused, stepNode("ask", statusPaused, fixtureSession, "need_input", parked)),
 			want: true,
 		},
 		"two steps ask": {
 			in: recombined(t, statusPaused,
-				stepNode("a", statusPaused, fixtureSession, needInput, true),
-				stepNode("b", statusPaused, "sess_other", needInput, true)),
+				stepNode("a", statusPaused, fixtureSession, "need_input", parked),
+				stepNode("b", statusPaused, "sess_other", "need_input", parked)),
 			want: true,
 		},
 		"an ask beside an ordinary paused step": {
 			in: recombined(t, statusPaused,
-				stepNode("a", statusPaused, fixtureSession, needInput, true),
-				stepNode("b", statusPaused, "sess_other", "", false)),
+				stepNode("a", statusPaused, fixtureSession, "need_input", parked),
+				stepNode("b", statusPaused, "sess_other", "", nil)),
 		},
 		"a paused step that asks nothing": {
-			in: recombined(t, statusPaused, stepNode("a", statusPaused, fixtureSession, "", false)),
+			in: recombined(t, statusPaused, stepNode("a", statusPaused, fixtureSession, "", nil)),
+		},
+		"a gated park alone": {
+			in:   recombined(t, statusPaused, stepNode("gated", statusPaused, fixtureSession, "", parked)),
+			want: true,
 		},
 		"a running run holding a parked step": {
-			in: recombined(t, statusRunning, stepNode("a", statusPaused, fixtureSession, needInput, true)),
+			in: recombined(t, statusRunning, stepNode("a", statusPaused, fixtureSession, "need_input", parked)),
 		},
 		"an unreadable reply": {in: Inspect{}},
 	}
@@ -486,5 +498,38 @@ func TestPausedOnAsks(t *testing.T) {
 				t.Errorf("PausedOnAsks = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// A step with a `completion` gate that ended its turn with no signal is parked by KAS waiting for the
+// next user message: it is an ask carrying KAS's reason, and a run paused on it alone is paused on asks.
+func TestOpenAsks_AGatedParkIsAnAsk(t *testing.T) {
+	t.Parallel()
+	const (
+		run     = "wf_af70a38d2a7862f0"
+		session = "sess_746a39f5-fb36-487e-a2a3-5335af805af4"
+	)
+	in, err := DecodeInspect(run, fixture(t, "gated-park"))
+	if err != nil {
+		t.Fatalf("DecodeInspect: %v", err)
+	}
+	got := OpenAsks(in, RunLog{})
+	if len(got) != 1 {
+		t.Fatalf("OpenAsks = %d asks %+v, want 1", len(got), got)
+	}
+	if a := got[0]; a.NodeID != "gated" || a.StepSessionID != session || a.Reason != "Step 'gated' is waiting for the next user message." {
+		t.Errorf("ask = node %q session %q reason %q, want the gated step with KAS's reason", a.NodeID, a.StepSessionID, a.Reason)
+	}
+	if !PausedOnAsks(in) {
+		t.Error("PausedOnAsks = false, want true: false offers a Resume that KAS answers by re-parking the step")
+	}
+}
+
+// AskedAt is the park record's own start, which a restart keeps, not anything marotte observed.
+func TestOpenAsks_AskedAtIsTheWaitStart(t *testing.T) {
+	t.Parallel()
+	got := OpenAsks(decoded(t, fixture(t, "parked")), RunLog{})
+	if len(got) != 1 || got[0].AskedAt != "2026-11-01T09:58:33.463Z" {
+		t.Errorf("asks = %+v, want one asked at the park record's since", got)
 	}
 }

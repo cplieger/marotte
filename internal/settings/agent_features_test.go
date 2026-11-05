@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -28,7 +29,16 @@ func TestValidateAgentPatch_RefusesValuesTheUICannotProduce(t *testing.T) {
 		{name: "smart helpers unknown", key: KeyAutoDelegation, raw: `"auto"`, wantErr: true},
 		{name: "cfn enforce", key: KeyCloudFormationSafety, raw: `"enforce"`, wantErr: true},
 		{name: "style concise", key: KeyOutputStyle, raw: `"concise"`},
-		{name: "style verbose", key: KeyOutputStyle, raw: `"verbose"`, wantErr: true},
+		{name: "style proactive", key: KeyOutputStyle, raw: `"proactive"`},
+		{name: "style learning", key: KeyOutputStyle, raw: `"learning"`},
+		{name: "style a later id", key: KeyOutputStyle, raw: `"verbose"`},
+		{name: "style with digits dash and underscore", key: KeyOutputStyle, raw: `"terse_v2-beta"`},
+		{name: "style 64 bytes", key: KeyOutputStyle, raw: `"` + strings.Repeat("a", 64) + `"`},
+		{name: "style empty", key: KeyOutputStyle, raw: `""`, wantErr: true},
+		{name: "style upper case", key: KeyOutputStyle, raw: `"Concise"`, wantErr: true},
+		{name: "style spaced", key: KeyOutputStyle, raw: `"not a style"`, wantErr: true},
+		{name: "style 65 bytes", key: KeyOutputStyle, raw: `"` + strings.Repeat("a", 65) + `"`, wantErr: true},
+		{name: "style number", key: KeyOutputStyle, raw: `3`, wantErr: true},
 		{name: "timeout unset", key: KeyTerminalCommandTimeoutMs, raw: `0`},
 		{name: "timeout floor", key: KeyTerminalCommandTimeoutMs, raw: `1000`},
 		{name: "timeout ceiling", key: KeyTerminalCommandTimeoutMs, raw: `1800000`},
@@ -41,6 +51,12 @@ func TestValidateAgentPatch_RefusesValuesTheUICannotProduce(t *testing.T) {
 		{name: "workflows string", key: KeyWorkflowsEnabled, raw: `"off"`, wantErr: true},
 		{name: "model fallback on", key: KeyModelFallback, raw: `true`},
 		{name: "model fallback string", key: KeyModelFallback, raw: `"on"`, wantErr: true},
+		{name: "workflow use when asked", key: KeyWorkflowLaunch, raw: `"when-asked"`},
+		{name: "workflow use large tasks", key: KeyWorkflowLaunch, raw: `"large-tasks"`},
+		{name: "workflow use delegate all", key: KeyWorkflowLaunch, raw: `"delegate-all"`},
+		{name: "workflow use unknown", key: KeyWorkflowLaunch, raw: `"sometimes"`, wantErr: true},
+		{name: "workflow use empty", key: KeyWorkflowLaunch, raw: `""`, wantErr: true},
+		{name: "workflow use bool", key: KeyWorkflowLaunch, raw: `true`, wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -75,6 +91,7 @@ func TestEffective_AgentCapabilityDefaults(t *testing.T) {
 		{"OutputStyle", d.OutputStyle, defaultOutputStyle},
 		{"TerminalCommandTimeoutMs", d.TerminalCommandTimeoutMs, defaultTerminalCommandTimeoutMs},
 		{"ModelFallback", d.ModelFallback, defaultModelFallback},
+		{"WorkflowLaunch", d.WorkflowLaunch, DefaultWorkflowLaunch},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -99,6 +116,10 @@ func TestEffective_AgentCapabilityDefaultsAreKiroCLIs(t *testing.T) {
 	if defaultModelFallback {
 		t.Error("defaultModelFallback = true, want false")
 	}
+	// KAS's own workflowLaunch default for a new session.
+	if DefaultWorkflowLaunch != "when-asked" {
+		t.Errorf("DefaultWorkflowLaunch = %q, want when-asked", DefaultWorkflowLaunch)
+	}
 	if defaultOutputStyle != OutputStyleDefault || defaultTerminalCommandTimeoutMs != 0 {
 		t.Errorf("style/timeout defaults = (%q, %d), want (default, 0)", defaultOutputStyle, defaultTerminalCommandTimeoutMs)
 	}
@@ -121,6 +142,17 @@ func TestEffective_IgnoresAStoredInlineAgentsKey(t *testing.T) {
 	}
 }
 
+func TestEffective_ReadsAStoredLaterStyle(t *testing.T) {
+	got, rejected := EffectiveFrom(map[string]json.RawMessage{KeyOutputStyle: json.RawMessage(`"learning"`)})
+	if len(rejected) != 0 || got.OutputStyle != "learning" {
+		t.Errorf("EffectiveFrom(output_style: learning) = %q, rejected %v; want learning, none", got.OutputStyle, rejected)
+	}
+	got, rejected = EffectiveFrom(map[string]json.RawMessage{KeyOutputStyle: json.RawMessage(`"Not A Style"`)})
+	if !slices.Contains(rejected, KeyOutputStyle) || got.OutputStyle != OutputStyleDefault {
+		t.Errorf("EffectiveFrom(output_style: Not A Style) = %q, rejected %v; want default, output_style rejected", got.OutputStyle, rejected)
+	}
+}
+
 func TestEffective_ReadsAStoredModelFallback(t *testing.T) {
 	got, rejected := EffectiveFrom(map[string]json.RawMessage{KeyModelFallback: json.RawMessage(`true`)})
 	if len(rejected) != 0 || !got.ModelFallback {
@@ -136,7 +168,11 @@ func TestEffective_AStoredValueOutsideTheVocabularyReadsAsTheDefault(t *testing.
 		KeyAutoDelegation:           json.RawMessage(`"on"`),
 		KeyOutputStyle:              json.RawMessage(`"concise"`),
 		KeyTerminalCommandTimeoutMs: json.RawMessage(`500`),
+		KeyWorkflowLaunch:           json.RawMessage(`"sometimes"`),
 	})
+	if got.WorkflowLaunch != DefaultWorkflowLaunch {
+		t.Errorf("WorkflowLaunch = %q, want the default %q", got.WorkflowLaunch, DefaultWorkflowLaunch)
+	}
 	if got.SpecPlanning != SpecPlanningOff {
 		t.Errorf("SpecPlanning = %q, want the default off", got.SpecPlanning)
 	}
@@ -149,13 +185,13 @@ func TestEffective_AStoredValueOutsideTheVocabularyReadsAsTheDefault(t *testing.
 	if got.AutoDelegation != FeatureOn {
 		t.Errorf("AutoDelegation = %q, want the stored on", got.AutoDelegation)
 	}
-	if got.OutputStyle != OutputStyleConcise {
+	if got.OutputStyle != "concise" {
 		t.Errorf("OutputStyle = %q, want the stored concise", got.OutputStyle)
 	}
 	if got.TerminalCommandTimeoutMs != 0 {
 		t.Errorf("TerminalCommandTimeoutMs = %d, want 0 for a value under KAS's floor", got.TerminalCommandTimeoutMs)
 	}
-	for _, k := range []string{KeySpecPlanning, KeyWorkValidation, KeyAutoRouting, KeyTerminalCommandTimeoutMs} {
+	for _, k := range []string{KeySpecPlanning, KeyWorkValidation, KeyAutoRouting, KeyTerminalCommandTimeoutMs, KeyWorkflowLaunch} {
 		if !slices.Contains(rejected, k) {
 			t.Errorf("rejected = %v, want it to name %s", rejected, k)
 		}

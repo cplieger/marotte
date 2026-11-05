@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
@@ -127,14 +128,14 @@ func rewindReqConfirmed(t *testing.T, chatID marotte.ChatID, messageID string, c
 	}
 }
 
-// rewindStore is the in-memory store with a scripted log: RewindTarget answers from
+// rewindStore is the in-memory store with a scripted log: PromptTarget answers from
 // targets (a prompt id the log holds, and the turn it opened), Revert records the
 // turns it was asked to revert to and answers the record plus the carrier it minted.
 // The real store's resolution over turn_open and turn_bind entries is internal/chat's
 // to pin; what this file pins is what the command does with the answer.
 type rewindStore struct {
 	*testsupport.InMemoryChatStore
-	targets  map[string]marotte.RewindTarget
+	targets  map[string]marotte.PromptTarget
 	reverted []string
 	// minted, when set, is the carrier's turn_open and turn_close the store reports
 	// as freshly written, which the command must announce ahead of the record.
@@ -144,7 +145,7 @@ type rewindStore struct {
 	order *[]string
 }
 
-func (s *rewindStore) RewindTarget(_ context.Context, _ marotte.ChatID, promptID string) (marotte.RewindTarget, bool, error) {
+func (s *rewindStore) PromptTarget(_ context.Context, _ marotte.ChatID, promptID string) (marotte.PromptTarget, bool, error) {
 	target, ok := s.targets[promptID]
 	return target, ok, nil
 }
@@ -204,7 +205,7 @@ func runsOf(err error) []LiveRunRef {
 // reader decides: unconfirmed, the command names the run and reverts nothing.
 func TestCmdRewindChat_A409NamesTheLiveRunsTheCutLaunchedAndRecordsNothing(t *testing.T) {
 	store := seedRewindChat(t, false)
-	store.targets["u2"] = marotte.RewindTarget{Turn: "t2", LaunchedRuns: []string{"wf-1"}}
+	store.targets["u2"] = marotte.PromptTarget{Turn: "t2", LaunchedRuns: []string{"wf-1"}}
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 	host := idleHost(store, b, b)
 	runs := &rewindRuns{live: map[string]string{"wf-1": "code-review"}}
@@ -232,7 +233,7 @@ func TestCmdRewindChat_ConfirmedStopsTheRunsBeforeTheRevertAndCutsOnce(t *testin
 	var order []string
 	store := seedRewindChat(t, false)
 	store.order = &order
-	store.targets["u2"] = marotte.RewindTarget{Turn: "t2", LaunchedRuns: []string{"wf-1", "wf-2"}}
+	store.targets["u2"] = marotte.PromptTarget{Turn: "t2", LaunchedRuns: []string{"wf-1", "wf-2"}}
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1", order: &order}
 	host := idleHost(store, b, b)
 	runs := &rewindRuns{live: map[string]string{"wf-1": "code-review", "wf-2": "docs-sweep"}, order: &order}
@@ -262,7 +263,7 @@ func TestCmdRewindChat_ARunOutsideTheCutIsNeitherCancelledNorNamed(t *testing.T)
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := seedRewindChat(t, false)
-			store.targets["u2"] = marotte.RewindTarget{Turn: "t2", LaunchedRuns: tc.launched}
+			store.targets["u2"] = marotte.PromptTarget{Turn: "t2", LaunchedRuns: tc.launched}
 			b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
 			host := idleHost(store, b, b)
 			runs := &rewindRuns{live: map[string]string{"wf-0": "code-review"}}
@@ -291,13 +292,13 @@ func seedRewindChat(t *testing.T, bound bool) *rewindStore {
 	t.Helper()
 	store := &rewindStore{
 		InMemoryChatStore: testsupport.NewInMemoryChatStore(),
-		targets: map[string]marotte.RewindTarget{
+		targets: map[string]marotte.PromptTarget{
 			"u1": {Turn: "t1"},
 			"u2": {Turn: "t2"},
 		},
 	}
 	if bound {
-		store.targets["u2"] = marotte.RewindTarget{Turn: "t2", KASMessageID: "kas-2"}
+		store.targets["u2"] = marotte.PromptTarget{Turn: "t2", KASMessageID: "kas-2"}
 	}
 	if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.RecordSession("sess-1")
@@ -699,7 +700,7 @@ type slotAdmission struct {
 
 func newSlotAdmission() *slotAdmission { return &slotAdmission{benchDeps: &benchDeps{}} }
 
-func (a *slotAdmission) TryReserveTurn(_ marotte.ChatID, source marotte.TurnOpenSource) bool {
+func (a *slotAdmission) tryReserveOld(_ marotte.ChatID, source marotte.TurnOpenSource) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.reserved {
@@ -709,11 +710,25 @@ func (a *slotAdmission) TryReserveTurn(_ marotte.ChatID, source marotte.TurnOpen
 	return true
 }
 
-func (a *slotAdmission) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
-	return a.TryReserveTurn(chatID, source)
+func (a *slotAdmission) tryReserveIdleOld(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
+	return a.tryReserveOld(chatID, source)
 }
 
-func (a *slotAdmission) ReleaseTurnReservation(marotte.ChatID) {
+func (a *slotAdmission) ReserveTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if a.tryReserveOld(chatID, source) {
+		return IdleAcquired, testReservation(chatID, true)
+	}
+	return IdleHeld, Reservation{}
+}
+
+func (a *slotAdmission) ReserveIdleTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
+	if a.tryReserveOld(chatID, source) {
+		return IdleAcquired, testReservation(chatID, true)
+	}
+	return IdleHeld, Reservation{}
+}
+
+func (a *slotAdmission) releaseOld(marotte.ChatID) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.reserved = false
@@ -746,7 +761,7 @@ func TestCmdRewindChat_AdmitsNoPromptWhileTheRevertRuns(t *testing.T) {
 
 	<-inRevert
 	holder, held := admission.AdmissionHolderSource("c1")
-	admittedDuringRevert := admission.TryReserveTurn("c1", marotte.TurnSourcePrompt)
+	admittedDuringRevert := admission.tryReserveOld("c1", marotte.TurnSourcePrompt)
 	close(release)
 
 	if err := <-done; err != nil {
@@ -759,7 +774,7 @@ func TestCmdRewindChat_AdmitsNoPromptWhileTheRevertRuns(t *testing.T) {
 	if !held || holder.PromptClass() {
 		t.Errorf("during the revert the slot holder was %v (held %t), want a non-prompt source a prompt parks behind", holder, held)
 	}
-	if !admission.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+	if !admission.tryReserveOld("c1", marotte.TurnSourcePrompt) {
 		t.Error("after the rewind returned the admission slot was still held, so every later prompt is refused")
 	}
 }
@@ -776,14 +791,18 @@ func TestCmdRewindChat_ReleasesTheAdmissionSlotWhenKASRefuses(t *testing.T) {
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (body %s)", statusOf(err), errText(err))
 	}
-	if !admission.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+	if !admission.tryReserveOld("c1", marotte.TurnSourcePrompt) {
 		t.Error("after a refused rewind the admission slot was still held")
 	}
 }
 
 type lostSlot struct{ *benchDeps }
 
-func (lostSlot) TryReserveIdleTurn(marotte.ChatID, marotte.TurnOpenSource) bool { return false }
+func (lostSlot) tryReserveIdleOld(marotte.ChatID, marotte.TurnOpenSource) bool { return false }
+
+func (lostSlot) ReserveIdleTurn(context.Context, marotte.ChatID, marotte.TurnOpenSource, uint64, time.Duration) (IdleAdmission, Reservation) {
+	return IdleTurnOpen, Reservation{}
+}
 
 func TestCmdRewindChat_RefusedWhenAPromptTakesTheSlotFirst(t *testing.T) {
 	store := seedRewindChat(t, false)
@@ -798,4 +817,26 @@ func TestCmdRewindChat_RefusedWhenAPromptTakesTheSlotFirst(t *testing.T) {
 	if b.callCount != 0 || len(store.reverted) != 0 {
 		t.Errorf("called KAS %d times and recorded %v without the slot, want nothing", b.callCount, store.reverted)
 	}
+}
+
+func (r *slotAdmission) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
+	ok := r.tryReserveIdleOld(chatID, source)
+	return testReservation(chatID, ok), ok
+}
+
+func (r lostSlot) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64) (Reservation, bool) {
+	ok := r.tryReserveIdleOld(chatID, source)
+	return testReservation(chatID, ok), ok
+}
+
+func (r *slotAdmission) ReleaseTurnReservation(res Reservation) { r.releaseOld(res.Chat) }
+
+func (*slotAdmission) LifeStamp() uint64 { return 0 }
+
+func (*slotAdmission) AwaitNoClose(context.Context, marotte.ChatID) (bool, error) {
+	return false, nil
+}
+
+func (r *bridgeDeps) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+	return r.OpenBridge(ctx, chatID, model)
 }

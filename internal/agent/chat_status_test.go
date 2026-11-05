@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/cplieger/go/sse"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/sse"
 )
 
 // Merge is MergeStamped without the stamp.
@@ -394,7 +394,7 @@ func TestOpenTurn_DischargesTheWaitingRetention(t *testing.T) {
 		rt.bus.chatStatus.Merge("c1", waiting)
 		head := rt.bus.fanout.Position().Head
 
-		if _, err := rt.OpenTurn(t.Context(), "c1", command.TurnOpen{Source: marotte.TurnSourcePrompt, Prompt: prompt, Init: name}); err != nil {
+		if err := rt.openTurnNow(t.Context(), "c1", command.TurnOpen{Source: marotte.TurnSourcePrompt, Prompt: prompt, Init: name}); err != nil {
 			t.Fatalf("the fixture could not open a prompt turn: %v", err)
 		}
 		if got := rt.bus.chatStatus.Get("c1"); got.Status != "" {
@@ -403,6 +403,24 @@ func TestOpenTurn_DischargesTheWaitingRetention(t *testing.T) {
 		// A second device converges on the frame.
 		if got := chatStatusFrames(t, bufferedSince(rt, head)); len(got) != 1 {
 			t.Errorf("the prompt published %d chat_status frames, want 1: %+v", len(got), got)
+		}
+	})
+
+	t.Run("an API caller's prompt leaves the question waiting for the user", func(t *testing.T) {
+		rt, cs, _ := newTestHub()
+		seedChat(t, cs, "c1")
+		rt.bus.chatStatus.Merge("c1", waiting)
+		head := rt.bus.fanout.Position().Head
+		sent := &marotte.EntryPrompt{ID: "m-c1", Text: "Agent Mail: 1 new message", Caller: &marotte.Caller{Label: "Agent Mail"}}
+
+		if err := rt.openTurnNow(t.Context(), "c1", command.TurnOpen{Source: marotte.TurnSourcePrompt, Prompt: sent, Init: name}); err != nil {
+			t.Fatalf("the fixture could not open a prompt turn: %v", err)
+		}
+		if got := rt.bus.chatStatus.Get("c1"); got != waiting {
+			t.Errorf("status after an API prompt = %+v, want %+v kept", got, waiting)
+		}
+		if got := chatStatusFrames(t, bufferedSince(rt, head)); len(got) != 0 {
+			t.Errorf("the API prompt published %d chat_status frames, want 0: %+v", len(got), got)
 		}
 	})
 }

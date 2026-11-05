@@ -6,12 +6,12 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // DecodeJSON is the shared three-step JSON decode prelude: check
-// Content-Type, cap body at webhttp.MaxJSONBody via MaxBytesReader, and
+// Content-Type, cap body at httpserver.MaxJSONBody via MaxBytesReader, and
 // distinguish an oversize request (413) from a malformed body (400).
 // Returns true when v was populated successfully; false when an error
 // response has already been written to w.
@@ -23,9 +23,9 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 		BadRequest(w, "expected "+MIMETypeJSON)
 		return false
 	}
-	// webhttp.DecodeJSONInto caps, decodes and rejects trailing data but writes
+	// httpserver.DecodeJSONInto caps, decodes and rejects trailing data but writes
 	// nothing, so the 413/400 split and the envelope are written here.
-	if err := webhttp.DecodeJSONInto(w, r, v, webhttp.MaxJSONBody); err != nil {
+	if err := httpserver.DecodeJSONInto(w, r, v, httpserver.MaxJSONBody); err != nil {
 		if refuseTooLarge(w, r, err) {
 			return false
 		}
@@ -49,8 +49,8 @@ func refuseTooLarge(w http.ResponseWriter, r *http.Request, err error) bool {
 	}
 	slog.Warn("httpreply: decode body too large",
 		"method", r.Method, "path", logsafe.Field(r.URL.Path),
-		"limit", webhttp.MaxJSONBody, "error", maxErr)
-	webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+		"limit", httpserver.MaxJSONBody, "error", maxErr)
+	httpserver.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 		map[string]string{jsonKeyError: "request body too large"})
 	return true
 }

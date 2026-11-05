@@ -6,12 +6,12 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/securityprofile"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // Seed is valid only when switching TO custom, and refused otherwise rather than ignored.
@@ -49,7 +49,7 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("security profile selected", "profile", profile.ID,
 		"presets", profile.Presets, "seeded", body.Seed)
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 	if s.policyReload != nil {
 		s.policyReload.SecurityProfileChanged(durable.Context(r.Context()))
 	}
@@ -58,10 +58,10 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 func (s *Server) writeCustomizeError(ctx context.Context, w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, securityprofile.ErrNoLivePolicy):
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable,
 			httpreply.ErrorJSON("the current profile's rules could not be read to copy them, so nothing was changed"))
 	case errors.Is(err, securityprofile.ErrUserFileUnreadable):
-		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSON(
+		httpserver.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSON(
 			"the user permissions file could not be read, so nothing was changed. Fix the file by hand and try again",
 		))
 	case errors.Is(err, securityprofile.ErrUserFileFull):
@@ -69,8 +69,8 @@ func (s *Server) writeCustomizeError(ctx context.Context, w http.ResponseWriter,
 			"the user permissions file is at its rule limit. Remove a rule from the table and try again")
 	case errors.Is(err, securityprofile.ErrRestoreFailed):
 		s.agent.Broadcast(durable.Context(ctx), marotte.NewEvent(marotte.EventPermissionsChanged, "",
-			marotte.PermissionsChangedPayload{Status: "failed"}))
-		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(
+			marotte.PermissionsChangedPayload{}))
+		httpserver.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(
 			"the profile could not be applied and the copied rules could not be taken back out. "+
 				"Check permissions.yaml under ~/.kiro/settings",
 		))

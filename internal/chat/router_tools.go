@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // handleToolCall serves GET /api/chats/{id}/tools/{toolCallID}: one tool call's whole persisted input, output and
@@ -43,7 +43,7 @@ func (rt *router) handleToolCall(w http.ResponseWriter, r *http.Request, chatID 
 		httpreply.NotFound(w, "unknown tool call")
 		return
 	}
-	webhttp.WriteJSON(w, bulk)
+	httpserver.WriteJSON(w, bulk)
 }
 
 // findToolCall finds a tool call's create and settle by id, newest first, folding them into the bulk: input from the

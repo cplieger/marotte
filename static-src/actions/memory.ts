@@ -2,6 +2,7 @@
 // optimistic state. Addressed by id: a title can repeat across scopes.
 
 import { apiAction } from "./index.js";
+import { stillOr } from "./still-applying.js";
 
 const MEMORY_API = "/api/memory";
 
@@ -26,7 +27,7 @@ export const updateMemory = apiAction<UpdateArgs>({
     path: `${MEMORY_API}/${encodeURIComponent(id)}`,
     body: edit,
   }),
-  error: "Couldn't save the memory",
+  error: stillOr("saving the memory", "Couldn't save the memory"),
 });
 
 interface DeleteArgs {
@@ -40,5 +41,5 @@ export const deleteMemory = apiAction<DeleteArgs>({
     method: "DELETE",
     path: `${MEMORY_API}/${encodeURIComponent(id)}`,
   }),
-  error: "Couldn't delete the memory",
+  error: stillOr("deleting the memory", "Couldn't delete the memory"),
 });

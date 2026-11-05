@@ -2,10 +2,16 @@
 // picker over `GET /api/sessions`. A chat row opens its chat or adopts it via `resume_session`; a run row opens the
 // read-only run view.
 
-import { el, signal, subscribe, effect } from "@cplieger/reactive";
-import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
+import { el, signal, subscribe, effect } from "@cplieger/ui";
+import { skeletonTiming } from "@cplieger/ui/skeleton";
 import { $ } from "./dom.js";
-import { hasTab, setHistoryTab as setHistoryTabRoute, tabSetVersion } from "./tabs.js";
+import {
+  activeChatRef,
+  descendantChatsOf,
+  hasTab,
+  setHistoryTab as setHistoryTabRoute,
+  tabSetVersion,
+} from "./tabs.js";
 import type { TabRunDotStatus } from "./tabs.js";
 import { pushRoute } from "./router.js";
 import type { HistoryTab } from "./route-path.js";
@@ -18,13 +24,16 @@ import { setPageSubtitle } from "./page-title.js";
 import { entryRow, entrySkeleton } from "./entry-row.js";
 import { sigChanged, wireSignature } from "./paint-sig.js";
 import { loadSessions } from "./actions/chat.js";
-import { registerCleanup } from "./actions/index.js";
+import { registerCleanup, retryNetwork } from "./actions/index.js";
+import { serverImpactOf } from "./actions/close-impact.js";
+import { deleteStopsWork } from "./close-busy.js";
+import { actionNotice } from "./notice-subject.js";
 import { openPreviousSession, openChatTab } from "./chat.js";
 import { searchChats } from "./actions/chat-search.js";
 import { openChatFindAt } from "./find-in-chat.js";
 import { classify, emptyNote, scanNote } from "./textsearch/copy.js";
 import type { Nouns } from "./textsearch/copy.js";
-import type { Match } from "./wire/types.gen.js";
+import type { CloseImpact, Match, RunStandingKind } from "./wire/types.gen.js";
 import { openRunView } from "./run-view.js";
 import { runChatID } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
@@ -36,12 +45,13 @@ import { applyOutcome } from "./tool-card.js";
 import type { ToolRenderInfo } from "./tool-schema.js";
 import { ICON_TAB_RUN, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { sentBy } from "./sent-by.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
 import { registerFind } from "./find-registry.js";
 import type { PageFind } from "./find-registry.js";
 import type { ResumableSession, SessionListResponse, WorkflowRun } from "./types.js";
-import { classifyRunStatus, type ClassifiedRunStatus } from "./run-status.js";
+import { classifyRunStatus, runStatusTerminal, type ClassifiedRunStatus } from "./run-status.js";
 
 const HISTORY_TABS: readonly HistoryTab[] = ["chats", "runs"] as const;
 
@@ -93,7 +103,15 @@ function chatFacts(s: ResumableSession): string[] {
   return facts;
 }
 
-/** What marotte did when a bound stopped it, the recipe when the label differs, the duration, and the launching chat. */
+/** A live run's position, in the run tab's words; the node id is shown as the run tab labels it. */
+const STANDING_TEXT: Readonly<Record<RunStandingKind, (node: string) => string>> = {
+  step: (node) => `at ${node}`,
+  watch: (node) => `waiting on ${node}`,
+  pass_limit: (node) => `${node} reached its pass limit`,
+};
+
+/** What marotte did when a bound stopped it, the recipe when the label differs, where a live run stands, a
+ *  finished run's duration, and the launching chat. */
 function runSub(r: WorkflowRun, endReason: string): string {
   const parts: string[] = [];
   const reason = END_REASON_TEXT[endReason];
@@ -104,10 +122,15 @@ function runSub(r: WorkflowRun, endReason: string): string {
   if (recipe !== "" && recipe !== r.name) {
     parts.push(recipe);
   }
+  if (r.standing !== undefined) {
+    parts.push(STANDING_TEXT[r.standing.kind](r.standing.node));
+  }
   // From creation, not `started_at`: KAS restamps that each time it resumes a run, which would drop every
-  // stretch before the last resume.
+  // stretch before the last resume. Finished runs only: a live row's `updated_at` is its last (re)start.
+  const status = classifyRunStatus(r.status);
+  const ended = status !== undefined && runStatusTerminal(status);
   const started = r.started_at === undefined ? 0 : (r.created_at ?? r.started_at);
-  if (started > 0 && r.updated_at > started) {
+  if (ended && started > 0 && r.updated_at > started) {
     parts.push(formatDuration(r.updated_at - started));
   }
   const parent = r.parent_chat_name ?? "";
@@ -145,6 +168,7 @@ const END_REASON_TEXT: Readonly<Record<string, string>> = {
   overran: "stopped: it ran past its time limit",
   stalled: "stopped: no activity and no live shell within its idle window",
   orphaned: "stopped: the server restarted while it was running",
+  unattended: "stopped: it paused with nobody to resume it",
 };
 
 /**
@@ -208,6 +232,7 @@ function runMark(
  */
 const ROW_RENDER_INFO: ToolRenderInfo = {
   kind: "other",
+  toolName: "",
   writesFile: false,
   filePath: "",
   fileBasename: "",
@@ -637,8 +662,9 @@ function openRow(row: HistoryRow, onGone: () => void): void {
 }
 
 /**
- * Neither kind is recoverable. A chat runs `delete_chat` (chat file, its runs, its KAS session chain); a run runs
- * `_kiro/workflow/delete` (cancels if moving, then the run directory, lease, timer, end reason). True when gone.
+ * Neither kind is recoverable. A chat runs `delete_chat` (chat file, its runs, its KAS session chain, and the chat tabs
+ * under its tabs, whose work the confirm names); a run runs `_kiro/workflow/delete` (cancels if moving, then the run
+ * directory, lease, timer, end reason). True when gone.
  */
 async function deleteRow(row: HistoryRow): Promise<boolean> {
   const label = row.kind === "run" ? "run" : "conversation";
@@ -647,8 +673,12 @@ async function deleteRow(row: HistoryRow): Promise<boolean> {
     n === 0
       ? ""
       : ` It also deletes the ${n === 1 ? "workflow run" : `${String(n)} workflow runs`} it started.`;
+  const chatID = row.kind === "run" ? "" : (row.session?.chat_id ?? "");
+  const stops = deleteStopsWork(chatID === "" ? [] : descendantChatsOf(chatID));
   const ok = await confirm(
-    `Delete this ${label}? "${row.title}" and its stored history are removed for good.${runs}`,
+    `Delete this ${label}? "${row.title}" and its stored history are removed for good.${runs}${
+      stops.text === "" ? "" : ` ${stops.text}`
+    }`,
     "Delete",
     "destructive",
   );
@@ -658,12 +688,52 @@ async function deleteRow(row: HistoryRow): Promise<boolean> {
   if (row.kind === "run" && row.run !== undefined) {
     return (await deleteRun.dispatch(row.run.workflow_id)) !== null;
   }
-  const chatID = row.session?.chat_id ?? "";
   if (chatID === "") {
     return false;
   }
-  // The tab is not closed here: the membership coordinator closes tabs for a deleted chat under the same lock.
-  return (await deleteChatAction.dispatch(chatID)) !== null;
+  return deleteChatAsked(chatID, row.title, stops.impact);
+}
+
+/** Send the delete with what the confirm named; a stale confirm (another device changed what the delete stops in
+ *  the chats under its tabs) asks again on the merge, and each answer is a person's, so the loop needs no cap.
+ *  The tab is not closed here: the membership coordinator closes tabs for a deleted chat under the same lock. */
+async function deleteChatAsked(
+  chatID: string,
+  title: string,
+  named: CloseImpact,
+): Promise<boolean> {
+  let impact = named;
+  for (;;) {
+    const args = { id: chatID, impact };
+    const outcome = await deleteChatAction.dispatch(args).outcome;
+    if (outcome.status !== "error") {
+      return outcome.status === "success";
+    }
+    const server = serverImpactOf(outcome.error);
+    if (server === undefined) {
+      if (outcome.error.code !== "cancelled") {
+        const retry = retryNetwork(outcome.error)
+          ? {
+              onClick: () => {
+                void deleteChatAction.dispatch(args);
+              },
+            }
+          : undefined;
+        actionNotice(chatID, `Could not delete chat: ${outcome.error.message}`, "error", retry);
+      }
+      return false;
+    }
+    const again = deleteStopsWork(descendantChatsOf(chatID), { sent: impact, server });
+    const yes = await confirm(
+      `What deleting "${title}" also stops changed. Delete it?${again.text === "" ? "" : ` ${again.text}`}`,
+      "Delete",
+      "destructive",
+    );
+    if (!yes) {
+      return false;
+    }
+    impact = again.impact;
+  }
 }
 
 function buildRow(row: HistoryRow, refresh: () => void): HTMLElement {
@@ -745,19 +815,25 @@ function buildDeleteButton(row: HistoryRow, refresh: () => void): HTMLElement | 
 
 // Search is a second mode, not a filter: the list is the newest N sessions while search reads every chat file.
 
-/** The tab opens first, awaited: the switch clears the transcript's box. A chat that did not open
- *  gets no find. */
+/** The tab opens first, awaited: the switch clears the transcript's box. A chat that did not open,
+ *  or that the reader left for another tab meanwhile, gets no find. */
 async function openMatch(match: Match, query: string): Promise<void> {
   const outcome = await openChatTab(match.id, match.name);
-  if (outcome === "opened" && match.best !== undefined) {
+  if (outcome === "opened" && match.best !== undefined && activeChatRef() === match.id) {
     openChatFindAt(query, match.best);
   }
 }
 
 /** The hit count borrows the time slot as text: a count has no absolute form. */
 function buildMatchRow(m: Match, query: string): HTMLElement {
-  // A title-only match has no hit: say why it matched.
-  const detail = m.best?.excerpt ?? "matches the conversation name";
+  // A title-only match has no hit: say why it matched. Words another program sent say so before the excerpt.
+  const best = m.best;
+  const detail =
+    best === undefined
+      ? "matches the conversation name"
+      : best.caller === undefined
+        ? best.excerpt
+        : `${sentBy(best.caller)}: ${best.excerpt}`;
   const more = m.hits > 1 ? `${String(m.hits)} matches` : m.hits === 1 ? "1 match" : "";
   return entryRow({
     key: `m:${m.id}`,

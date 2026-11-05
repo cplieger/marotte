@@ -24,11 +24,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"syscall"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/marotte/internal/asidefile"
 	"github.com/cplieger/marotte/internal/filemode"
+	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -86,6 +89,7 @@ var (
 // unreadable document already warns and starts empty.
 type file struct {
 	Tabs    []marotte.TabSubject `json:"tabs"`
+	Owed    []OwedRelease        `json:"owed,omitempty"`
 	Version uint64               `json:"version"`
 }
 
@@ -94,43 +98,59 @@ type file struct {
 // The caller must hand version N's event to its hub before starting the mutation that makes
 // N+1 (the membership coordinator's lock does); a slip costs a client re-list, not a tab.
 type Store struct {
-	// path is immutable after construction, so it is read without a lock.
+	// path, unread and refuseWrites are immutable after construction, so they are read without a lock.
 	path    string
+	unread  string
 	tabs    []marotte.TabSubject // guarded by stateMu
+	owed    []OwedRelease        // guarded by stateMu
 	version uint64               // guarded by stateMu
 	stateMu sync.Mutex           // guards tabs and version; held briefly, NEVER across I/O
 	writeMu sync.Mutex           // serialises mutate-and-persist; the I/O lock
+	// refuseWrites makes persist fail with errWriteRefused (see keepAside and findAside).
+	refuseWrites bool
 }
 
-// NewStore opens (or starts) the store at <dir>/tabs.json. It ALWAYS returns a usable store;
-// the error is diagnostic (warn and continue, invariant 6). The mode verdict comes BEFORE any
-// read: filemode.EnforceFile refuses a planted symlink and a FIFO that would block boot.
+// NewStore opens (or starts) the store at <dir>/tabs.json. It ALWAYS returns a store; the error is
+// diagnostic (warn and continue, invariant 6). An arrangement it cannot read is moved aside and the
+// store starts empty with Unread set; see Unread for when writes are then refused.
 func NewStore(dir string) (*Store, error) {
 	s := &Store{path: filepath.Join(dir, fileName)}
+	if err := s.load(); err != nil {
+		err = s.keepAside(err)
+		return s, err
+	}
+	err := s.markEarlierAside(dir)
+	return s, err
+}
+
+// load reads tabs.json; a missing file is a first run, not an error. The mode verdict comes BEFORE
+// any read: filemode.EnforceFile refuses a planted symlink and a FIFO that would block boot.
+func (s *Store) load() error {
 	if _, err := filemode.EnforceFile(s.path, fileMode); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return s, nil // first run
+		if asidefile.Absent(err) {
+			return nil
 		}
 		// No read on this branch: the name is exactly what could not be verified.
-		return s, fmt.Errorf("verify mode of %s (starting empty): %w", s.path, err)
+		return fmt.Errorf("verify mode of %s: %w", s.path, err)
 	}
 	data, err := readBounded(s.path)
 	if err != nil {
-		return s, fmt.Errorf("read %s (starting empty): %w", s.path, err)
+		return fmt.Errorf("read %s: %w", s.path, err)
 	}
 	var doc file
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return s, fmt.Errorf("parse %s (starting empty): %w", s.path, err)
+		return fmt.Errorf("parse %s: %w", s.path, err)
 	}
 	s.tabs = sanitize(doc.Tabs)
+	s.owed = sanitizeOwed(doc.Owed)
 	// The version is adopted as read even when sanitize dropped an entry: no event is emitted at
 	// load, and the list endpoint returns the sanitized set with its version.
 	s.version = doc.Version
-	return s, nil
+	return nil
 }
 
 // readBounded reads with EnforceFile's refusals and the size bound applied to the READ.
-// Hand-rolled because atomicfile.ReadBounded uses os.Open, which follows symlinks.
+// Hand-rolled because filesafe.ReadBounded uses os.Open, which follows symlinks.
 func readBounded(path string) ([]byte, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
@@ -161,7 +181,7 @@ func sanitize(in []marotte.TabSubject) []marotte.TabSubject {
 		return nil
 	}
 	out := make([]marotte.TabSubject, 0, min(len(in), MaxTabs))
-	ids := make(map[string]struct{}, min(len(in), MaxTabs))
+	seenIDs := make(map[string]struct{}, min(len(in), MaxTabs))
 	subjects := make(map[subjectKey]struct{}, min(len(in), MaxTabs))
 	for _, t := range in {
 		if t.ID == "" || len(t.ID) > maxIDBytes {
@@ -170,7 +190,7 @@ func sanitize(in []marotte.TabSubject) []marotte.TabSubject {
 		if checkSubject(t.Kind, t.Ref) != nil {
 			continue
 		}
-		if _, dup := ids[t.ID]; dup {
+		if _, dup := seenIDs[t.ID]; dup {
 			continue
 		}
 		// A duplicate (Kind, Ref) is possible only in a hand-edited file; Open's idempotence needs one.
@@ -178,8 +198,9 @@ func sanitize(in []marotte.TabSubject) []marotte.TabSubject {
 		if _, dup := subjects[key]; dup {
 			continue
 		}
-		ids[t.ID] = struct{}{}
+		seenIDs[t.ID] = struct{}{}
 		subjects[key] = struct{}{}
+		sanitizeLaunch(&t)
 		out = append(out, t)
 		if len(out) == MaxTabs {
 			break
@@ -191,16 +212,32 @@ func sanitize(in []marotte.TabSubject) []marotte.TabSubject {
 	return out
 }
 
-// persist writes the whole document atomically. atomicfile verifies the 0600 on the temp
+// sanitizeLaunch keeps a run tab's valid holder ids and clears the launch fields on every other kind. A dropped holder
+// keeps its run-tab fact, since no close can name it.
+func sanitizeLaunch(t *marotte.TabSubject) {
+	if t.Kind != marotte.TabKindRun {
+		t.LaunchChats, t.LaunchResolved = nil, false
+		return
+	}
+	t.LaunchChats = slices.DeleteFunc(slices.Clone(t.LaunchChats), func(h string) bool { return !ids.ValidChatID(h) })
+	if len(t.LaunchChats) == 0 {
+		t.LaunchChats = nil
+	}
+}
+
+// persist writes the whole document atomically. filesafe verifies the 0600 on the temp
 // descriptor; do not add an EnforceFile by NAME after it.
 func (s *Store) persist(ctx context.Context, st *state) error {
-	data, err := json.MarshalIndent(file{Tabs: st.tabs, Version: st.version}, "", "  ")
+	if s.refuseWrites {
+		return fmt.Errorf("%w: %s", errWriteRefused, s.unread)
+	}
+	data, err := json.MarshalIndent(file{Tabs: st.tabs, Owed: st.owed, Version: st.version}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode tabs: %w", err)
 	}
-	if _, err := atomicfile.WriteFile(ctx, s.path, data,
-		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode),
-		atomicfile.WithMaxBytes(maxBytes)); err != nil {
+	if _, err := filesafe.WriteFile(ctx, s.path, data,
+		filesafe.WithMode(fileMode), filesafe.WithMkdirMode(dirMode),
+		filesafe.WithMaxBytes(maxBytes)); err != nil {
 		return fmt.Errorf("write %s: %w", s.path, err)
 	}
 	return nil

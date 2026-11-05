@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -69,12 +70,30 @@ func TestRunMutations_UnwrittenAndRefusedSettleAtOnce(t *testing.T) {
 	if !f.m.empty() {
 		t.Error("an unwritten verb left an entry")
 	}
-	f.m.enter("wf_1", mutationDrive, 1).replied(&marotte.RPCResponse{Error: &marotte.RPCError{Code: -32603}}, nil, ownerLane, 4)
+	refusal, refusalErr := refusedCall(&marotte.RPCError{Code: -32603})
+	f.m.enter("wf_1", mutationDrive, 1).replied(refusal, refusalErr, ownerLane, 4)
 	if !f.m.empty() {
 		t.Error("an in-band refusal left an entry: it changed nothing")
 	}
 	if got := f.settles.Load(); got != 2 {
 		t.Errorf("settle edges = %d, want 2", got)
+	}
+}
+
+// An answer that arrived but could not be read is no refusal: the write may have taken effect.
+func TestRunMutations_AnUnreadReplyKeepsTheEntry(t *testing.T) {
+	parseErr := &marotte.RPCError{Code: marotte.RPCCodeParseError}
+	for name, err := range map[string]error{
+		"an undecoded answer": fmt.Errorf("%w: %w", marotte.ErrReplyUndecoded, parseErr),
+		"an oversize answer":  &marotte.TransportError{Err: marotte.ErrFrameTooLarge},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newMutationFixture(time.Hour)
+			f.m.enter("wf_1", mutationDrive, 1).replied(&marotte.RPCResponse{Error: parseErr}, err, ownerLane, 0)
+			if f.m.empty() {
+				t.Error("an unread reply settled the entry as a refusal")
+			}
+		})
 	}
 }
 

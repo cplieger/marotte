@@ -89,7 +89,7 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, sc steerScope, u 
 }
 
 // A severity (set only when KAS sniffed a `[notification/<sev>]` prefix, which command/steer.go
-// refuses) marks an agent's notice, which goes to the ephemeral stack instead of the chip row. A run
+// refuses in a user's text) marks an agent's notice, which goes to the ephemeral stack instead of the chip row. A run
 // tab has no such stack, so a step's notice waits for its read entry.
 func (t *Translator) steeringQueued(ctx context.Context, sc steerScope, k *sessionInfoKiroBlock) {
 	if k.NotificationSeverity != "" {
@@ -132,7 +132,8 @@ func (t *Translator) steeringInjected(ctx context.Context, sc steerScope, k *ses
 		Severity: k.NotificationSeverity,
 	}
 	t.stampRunNotice(sc, k.MessageID, text, steer)
-	steer.Resends = t.steerBufferRead(sc.key, k.MessageID)
+	read := t.steerBufferRead(sc.key, k.MessageID)
+	steer.Resends, steer.Caller = read.Replaces, read.Caller
 	t.appendSteer(ctx, sc, k.MessageID, steer)
 }
 
@@ -196,6 +197,7 @@ func (t *Translator) classifyCleared(
 			if boundary {
 				c.drops = append(c.drops, clearedDrop{id: id, steer: &marotte.EntrySteer{
 					Text: p.Text, Origin: p.Origin, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonBoundary,
+					Caller: p.Caller,
 				}})
 			}
 		case t.steerOrigin(sc.key, id) == marotte.SteerOriginUser:
@@ -268,7 +270,7 @@ func (t *Translator) steerReadByAck(ctx context.Context, chatID marotte.ChatID, 
 	p := held[0]
 	t.read.add(chatID, steerID)
 	steer := &marotte.EntrySteer{
-		Text: p.Text, Origin: p.Origin, State: marotte.SteerStateRead, Resends: p.Replaces,
+		Text: p.Text, Origin: p.Origin, State: marotte.SteerStateRead, Resends: p.Replaces, Caller: p.Caller,
 	}
 	t.stampRunNotice(chatSteerScope(chatID), steerID, p.Text, steer)
 	t.appendSteerInLane(ctx, chatID, lane, steerID, steer)
@@ -304,9 +306,9 @@ func (t *Translator) steerBufferWaiting(chatID marotte.ChatID, p *marotte.SteerQ
 	return t.steerBuffer.SteerWaiting(chatID, p)
 }
 
-func (t *Translator) steerBufferRead(chatID marotte.ChatID, steerID string) []string {
+func (t *Translator) steerBufferRead(chatID marotte.ChatID, steerID string) marotte.SteerQueuedPayload {
 	if t.steerBuffer == nil {
-		return nil
+		return marotte.SteerQueuedPayload{}
 	}
 	return t.steerBuffer.SteerRead(chatID, steerID)
 }

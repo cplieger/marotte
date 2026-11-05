@@ -33,6 +33,8 @@ func TestGenerate_DefusesEveryUntrustedChannel(t *testing.T) {
 		// plant seeds the fixture and returns the snapshot callbacks (nil for
 		// the filesystem-only channels).
 		plant func(t *testing.T, workDir, configDir string) (mcp func() MCPSnapshot, forge func() ForgeSnapshot)
+		// tools is the tools snapshot, nil for every channel but the tools engine's.
+		tools func() ([]InstalledTool, bool)
 		// refused marks a channel whose contract is REFUSAL rather than defusal: only the host,
 		// which has a knowable alphabet (see isHostShaped).
 		refused bool
@@ -115,12 +117,19 @@ func TestGenerate_DefusesEveryUntrustedChannel(t *testing.T) {
 			return nil, nil
 		},
 	}, {
-		name: "tool name and version from tools-state.json",
+		name:  "tool name, kind and version from the inventory",
+		plant: func(_ *testing.T, _, _ string) (func() MCPSnapshot, func() ForgeSnapshot) { return nil, nil },
+		tools: func() ([]InstalledTool, bool) {
+			return []InstalledTool{{Name: injPayload, Kind: injPayload, Version: injPayload}}, true
+		},
+	}, {
+		name: "tool bin from tools-state.json",
 		plant: func(t *testing.T, _, configDir string) (func() MCPSnapshot, func() ForgeSnapshot) {
 			mustWriteFile(t, filepath.Join(configDir, "tools-state.json"),
-				`{"tools":{"`+injMarker+"\\u0060"+`":{"installed_version":"`+injMarker+"\\n## Capabilities"+`"}}}`)
+				`{"tools":{"t":{"bins":["`+injMarker+"\\u0060\\n## Capabilities"+`"]}}}`)
 			return nil, nil
 		},
+		tools: func() ([]InstalledTool, bool) { return []InstalledTool{{Name: "t", Kind: "aqua"}}, true },
 	}, {
 		name: "MCP server name",
 		plant: func(_ *testing.T, _, _ string) (func() MCPSnapshot, func() ForgeSnapshot) {
@@ -149,12 +158,15 @@ func TestGenerate_DefusesEveryUntrustedChannel(t *testing.T) {
 			workDir, configDir := t.TempDir(), t.TempDir()
 			mcp, forge := tc.plant(t, workDir, configDir)
 
-			g := New(workDir, configDir)
+			g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 			if mcp != nil {
 				g.SetMCPSnapshot(mcp)
 			}
 			if forge != nil {
 				g.SetForgeSnapshot(forge)
+			}
+			if tc.tools != nil {
+				g.SetToolsSnapshot(tc.tools)
 			}
 			g.Generate(t.Context())
 
@@ -175,6 +187,46 @@ func TestGenerate_DefusesEveryUntrustedChannel(t *testing.T) {
 				return
 			}
 			assertDefused(t, out)
+		})
+	}
+}
+
+// Every directory New takes passes CheckPath, so both docs carry it byte for byte: a path with
+// spaces, quotes, shell and Markdown punctuation and non-ASCII letters is the one the agent reads,
+// at every mention.
+func TestGenerate_WritesTheConfiguredDirectoriesVerbatim(t *testing.T) {
+	const odd = `odd dir 'q' "d" $(x) \ é #*<[_]>`
+	if err := CheckPath(odd); err != nil {
+		t.Fatalf("Setup: CheckPath(%q) = %v, want it accepted", odd, err)
+	}
+	for _, which := range []string{"work", "config", "tools"} {
+		t.Run(which, func(t *testing.T) {
+			steeringFile := setupKiroHome(t)
+			workDir, configDir, toolsDir := t.TempDir(), t.TempDir(), t.TempDir()
+			dir := map[string]*string{"work": &workDir, "config": &configDir, "tools": &toolsDir}[which]
+			parent := *dir
+			*dir = filepath.Join(parent, odd)
+			repo := seedRepo(t, workDir, "repo", "main")
+			mustWriteFile(t, filepath.Join(repo, ".kiro", "steering", "s.md"), "# S\n")
+			mustWriteFile(t, filepath.Join(configDir, "config.json"), `{"memory_mode":"read_only"}`)
+
+			g := New(workDir, configDir, toolsDir)
+			g.Generate(t.Context())
+			data, err := os.ReadFile(steeringFile)
+			if err != nil {
+				t.Fatalf("read %s: %v", steeringFile, err)
+			}
+			docs := map[string]string{"environment.md": string(data)}
+			if which != "tools" {
+				docs["the chat doc"] = g.ChatDocs(t.Context())[0].Content
+			}
+			for name, doc := range docs {
+				mentions, verbatim := strings.Count(doc, parent), strings.Count(doc, *dir)
+				if mentions == 0 || verbatim != mentions {
+					t.Errorf("%s names the %s dir's folder %d times, %d of them as %q verbatim:\n%s",
+						name, which, mentions, verbatim, *dir, doc)
+				}
+			}
 		})
 	}
 }

@@ -34,8 +34,6 @@ type EffectiveSettings struct {
 	// client's one-time paint-cache carry-across is reachable only while the
 	// server says nothing.
 	Theme string `json:"theme"`
-	// FBPath is the file-browser path to restore, "" to list the granted mounts.
-	FBPath string `json:"fb_path"`
 	// LastModel and LastEffortByModel are what a NEW chat opens on. Both are pure
 	// memory: the value in force for an existing chat lives on that chat's record.
 	LastModel string `json:"last_model"`
@@ -55,8 +53,12 @@ type EffectiveSettings struct {
 	CloudFormationSafetyCheck string `json:"cloudformation_safety_check"`
 	AutoRouting               string `json:"auto_routing"`
 	AutoDelegation            string `json:"auto_delegation"`
-	// OutputStyle is "default" or "concise".
+	// OutputStyle is a KAS output style id (GET /api/config-template output_styles);
+	// "default" is never sent.
 	OutputStyle string `json:"output_style"`
+	// WorkflowLaunch is "when-asked", "large-tasks" or "delegate-all", KAS's workflowLaunch
+	// values; it applies only while WorkflowsEnabled is on.
+	WorkflowLaunch string `json:"workflow_launch"`
 	// AgentIgnoreFiles is the ignore-FILE basename list marotte sends kiro-cli,
 	// which is what enforces it; marotte runs no matcher of its own. The default is
 	// EMPTY (settings.DefaultAgentIgnoreFiles), and an absent key must still not
@@ -71,7 +73,7 @@ type EffectiveSettings struct {
 	// Zero is the most destructive value in the document, so absent must never
 	// resolve to it.
 	ChatRetentionDays int `json:"chat_retention_days"`
-	// AutoCompactPct is 50..90 in steps of 5; any other stored value reads as
+	// AutoCompactPct is 50..80 in steps of 5; any other stored value reads as
 	// settings.DefaultAutoCompactPct (80).
 	AutoCompactPct int `json:"auto_compact_pct"`
 	// TerminalCommandTimeoutMs is the shell tool's default timeout in ms; 0 is
@@ -122,9 +124,18 @@ type EffectiveSettings struct {
 	SupervisedDefault    bool `json:"supervised_default"`
 	ScheduledAutoApprove bool `json:"scheduled_auto_approve"`
 	DebugLogs            bool `json:"debug_logs"`
+	// HighThroughput starts the agent engine with the high throughput Node.js flags, default on.
+	HighThroughput bool `json:"high_throughput_optimizations"`
 	// ModelFallback defaults off, matching kiro-cli: on, KAS may retry a turn its model refused or
 	// could not serve on the next model of its fallback chain, or record why it declined to, except a
 	// refusal on Auto, which the withheld KIRO_FEATURE_MODEL_FALLBACK_AUTO_REFUSAL_ENABLED row leaves
 	// to kiro-cli's experiment default.
 	ModelFallback bool `json:"model_fallback_enabled"`
+	// HookStatusShown is kiro-cli's hooks.showStatus as its settings file holds it, default on,
+	// which the transcript applies when it draws hook cards. Read-only here: the Experimental
+	// switch writes it through PUT /api/kiro-settings.
+	HookStatusShown bool `json:"hook_status_shown"`
 }
+
+// KiroHookStatusKey is kiro-cli's Show hook status setting, the key EffectiveSettings.HookStatusShown mirrors.
+const KiroHookStatusKey = "hooks.showStatus"

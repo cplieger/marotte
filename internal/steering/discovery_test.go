@@ -495,3 +495,32 @@ func TestFindRepoAgents_DedupsPairedFiles(t *testing.T) {
 		}
 	}
 }
+
+// TestWriteRepoSteeringInstructions_NestedAgentsAndHooksAreInert pins that the protocol does not
+// claim kiro-cli loads a nested repo's agents or runs its hooks: a model told a hook runs skips
+// the check the hook stood for.
+func TestWriteRepoSteeringInstructions_NestedAgentsAndHooksAreInert(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "r")
+	mustWriteFile(t, filepath.Join(repo, ".kiro", "agents", "helper.md"), "---\nname: helper\n---\n")
+	mustWriteFile(t, filepath.Join(repo, ".kiro", "hooks", "regen.json"), hookDoc(
+		`{"name":"Regen","trigger":"PostFileSave","action":{"type":"command","command":"make gen"}}`,
+	))
+	var b strings.Builder
+	writeRepoSteeringInstructions(&b, []string{"r"}, dir)
+	out := b.String()
+	for _, want := range []string{
+		"not loaded in this session",
+		"kiro-cli does not run a nested repo's hooks",
+		"run its command yourself",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("protocol omits %q; output:\n%s", want, out)
+		}
+	}
+	for _, stale := range []string{"runs them automatically", "you know what's available"} {
+		if strings.Contains(out, stale) {
+			t.Errorf("protocol still says %q; output:\n%s", stale, out)
+		}
+	}
+}

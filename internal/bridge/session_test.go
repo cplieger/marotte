@@ -28,12 +28,10 @@ func TestSessionHasNoStop(t *testing.T) {
 	}
 }
 
-// shortenCloseBudget makes a close with no reply give up quickly. Not parallel.
+// shortenCloseBudget makes a close with no reply give up quickly, re-sent after retries (none: never). Not parallel.
 func shortenCloseBudget(t *testing.T, budget time.Duration, retries ...time.Duration) {
 	t.Helper()
-	origBudget, origRetries := closeBudget, closeRetries
-	closeBudget, closeRetries = budget, retries
-	t.Cleanup(func() { closeBudget, closeRetries = origBudget, origRetries })
+	shortenRelease(t, budget, retries, time.Hour)
 }
 
 func TestSessionState_ClosingRefusesCallsButStillResponds(t *testing.T) {
@@ -98,6 +96,8 @@ func TestSessionClose_CallerCancelBeforeTheWriteStillCloses(t *testing.T) {
 	}
 }
 
+// A caller that leaves after the close is written lets go of the session: later frames reach the engine lane, and the
+// late reply still finalizes it closed.
 func TestSessionClose_CallerCancelAfterTheWrite_LateReplyFinalizesClosed(t *testing.T) {
 	k := newFakeKAS(t)
 	s := k.openedSession(nil)
@@ -109,12 +109,12 @@ func TestSessionClose_CallerCancelAfterTheWrite_LateReplyFinalizesClosed(t *test
 	<-closed
 	k.notify(marotte.MethodSessionUpdate, map[string]any{"sessionId": s.SessionID(), "during": "close"})
 	select {
-	case n := <-s.NotifCh():
+	case n := <-k.e.EngineNotifCh():
 		if n.Msg.Method != marotte.MethodSessionUpdate {
-			t.Errorf("the closing session's lane got %q", n.Msg.Method)
+			t.Errorf("the engine lane got %q", n.Msg.Method)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("a frame for a closing session did not reach its lane; the lane must stay registered until the reply")
+		t.Fatal("a frame for a session its caller let go of did not reach the engine lane")
 	}
 	k.reply(closeFrame.ID, map[string]any{})
 	select {
@@ -124,7 +124,7 @@ func TestSessionClose_CallerCancelAfterTheWrite_LateReplyFinalizesClosed(t *test
 	}
 }
 
-func TestSessionClose_RefusedCloseReturnsToOpen(t *testing.T) {
+func TestSessionClose_AnInBudgetRefusalReopensForItsHolder(t *testing.T) {
 	for _, code := range []int{-32603, -32000, -32001, -32602} {
 		t.Run(strconv.Itoa(-code), func(t *testing.T) {
 			k := newFakeKAS(t)

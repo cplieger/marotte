@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -19,7 +20,7 @@ import (
 // persisted and applied at session/new (SessionOpts.Mode).
 func cmdSetMode(
 	ctx context.Context, bridges bridgeAccess, chats chatStore, bus broadcaster,
-	recorder modeRecorder, cmd *marotte.ClientCommand,
+	recorder modeRecorder, modeLocks *keylock.Set[marotte.ChatID], cmd *marotte.ClientCommand,
 ) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
@@ -28,6 +29,11 @@ func cmdSetMode(
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil || p.ModeID == "" {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
+	unlock, lockErr := lockSessionChange(ctx, modeLocks, cmd.ChatID)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	defer unlock()
 
 	if err := applySessionConfig(ctx, bridges, cmd.ChatID, "set_mode",
 		marotte.MethodSetMode, map[string]any{"modeId": p.ModeID}); err != nil {
@@ -75,6 +81,17 @@ func cmdSetMode(
 	return responseWith(map[string]any{"mode_id": p.ModeID}), nil
 }
 
+// lockSessionChange holds a chat's lock for one change verb across its engine call and its persist. A change
+// detached past its answer budget lets the client send the next one, and kiro-cli applies the two in write order;
+// without the lock their persists can land in the other order and leave the record on a value the session left.
+func lockSessionChange(ctx context.Context, locks *keylock.Set[marotte.ChatID], chatID marotte.ChatID) (func(), error) {
+	unlock, err := locks.Lock(ctx, chatID)
+	if err != nil {
+		return nil, StatusError(http.StatusServiceUnavailable, err)
+	}
+	return unlock, nil
+}
+
 func configOptionParams(id, value string) map[string]any {
 	return map[string]any{"configId": id, "value": value}
 }
@@ -98,7 +115,9 @@ func applySessionConfig(
 	if bridge == nil {
 		return nil
 	}
-	_, err := bridge.Call(ctx, method, sessionParams(bridge, params))
+	cctx, cancel := bridges.CallBudget(ctx, engineChangeBudget)
+	defer cancel()
+	_, err := bridge.Call(cctx, method, sessionParams(bridge, params))
 	switch {
 	case err == nil:
 		return nil

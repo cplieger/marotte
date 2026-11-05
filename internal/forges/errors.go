@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v4"
 )
 
 var kindStatus = map[forgeapi.ErrorKind]int{
@@ -120,7 +120,7 @@ func writeForgeAPIError(w http.ResponseWriter, e *forgeapi.Error) {
 	if env.RetryAfterS > 0 {
 		w.Header().Set("Retry-After", strconv.FormatInt(env.RetryAfterS, 10))
 	}
-	webhttp.WriteJSONStatus(w, statusFor(e), env)
+	httpserver.WriteJSONStatus(w, statusFor(e), env)
 }
 
 // writeContextError answers a context sentinel the library returned on a live
@@ -129,10 +129,10 @@ func writeForgeAPIError(w http.ResponseWriter, e *forgeapi.Error) {
 func writeContextError(w http.ResponseWriter, err error) bool {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
-		webhttp.WriteJSONStatus(w, http.StatusGatewayTimeout,
+		httpserver.WriteJSONStatus(w, http.StatusGatewayTimeout,
 			httpreply.ErrorJSON("the forge did not answer in time"))
 	case errors.Is(err, context.Canceled):
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable,
 			httpreply.ErrorJSON("the forge request was cancelled"))
 	default:
 		return false

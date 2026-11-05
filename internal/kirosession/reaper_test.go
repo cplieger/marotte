@@ -3,6 +3,7 @@ package kirosession
 import (
 	"bytes"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 // testWorkspace is the workspace root every fixture session claims unless a case
@@ -685,5 +686,86 @@ func TestSweep_KeepsASidecarWhoseSessionDirCannotBeStatted(t *testing.T) {
 
 	if !exists(t, hist) {
 		t.Error("Sweep() removed a sidecar whose session dir exists but could not be stat'ed")
+	}
+}
+
+func TestRunStates_ListsEveryBucketsRunDirectories(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{
+		filepath.Join("h1", workflowsDirName, "wf_a"),
+		filepath.Join("h2", workflowsDirName, "wf_b"),
+		filepath.Join("h2", workflowsDirName, ".index"),
+		filepath.Join("h3"),
+		filepath.Join("cli", workflowsDirName, "wf_cli"),
+	} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatalf("Setup: mkdir %s: %v", d, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "h1", workflowsDirName, "wf_file"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("Setup: write a stray file: %v", err)
+	}
+
+	got, err := New(root, testWorkspace).RunStates()
+	if err != nil {
+		t.Fatalf("RunStates() error = %v", err)
+	}
+	if want := []string{"wf_a", "wf_b"}; !slices.Equal(slices.Sorted(maps.Keys(got)), want) {
+		t.Errorf("RunStates() = %v, want %v", slices.Sorted(maps.Keys(got)), want)
+	}
+}
+
+func TestRunStates_AMissingSessionsDirHoldsNone(t *testing.T) {
+	got, err := New(filepath.Join(t.TempDir(), "absent"), testWorkspace).RunStates()
+	if err != nil || len(got) != 0 {
+		t.Errorf("RunStates() = %v, %v, want none and no error", got, err)
+	}
+}
+
+// A runs directory that exists but cannot be listed may hold a live run, so the answer is an error, not "none".
+func TestRunStates_AnUnlistableRunsDirIsAnError(t *testing.T) {
+	root := t.TempDir()
+	selfLoop(t, filepath.Join(root, "h", workflowsDirName))
+
+	if got, err := New(root, testWorkspace).RunStates(); err == nil {
+		t.Errorf("RunStates() = %v, nil; want an error for a runs directory whose listing fails with ELOOP", got)
+	}
+}
+
+func TestWorkspacePaths(t *testing.T) {
+	sessions := t.TempDir()
+	record := func(t *testing.T, id, body string) {
+		t.Helper()
+		dir := filepath.Join(sessions, "0123456789abcdef", id)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, sessionRecordName), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record(t, "sess_two", `{"workspacePaths":["/workspace","/data"]}`)
+	record(t, "sess_relative", `{"workspacePaths":["/workspace","data"]}`)
+	record(t, "sess_empty", `{"workspacePaths":[]}`)
+	record(t, "sess_garbled", `{`)
+	tests := map[string]struct {
+		id     string
+		want   []string
+		wantOK bool
+	}{
+		"the recorded roots, in order": {"sess_two", []string{"/workspace", "/data"}, true},
+		"a relative root":              {"sess_relative", nil, false},
+		"no roots":                     {"sess_empty", nil, false},
+		"an undecodable record":        {"sess_garbled", nil, false},
+		"no record":                    {"sess_absent", nil, false},
+		"a glob-shaped id":             {"*", nil, false},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, ok := WorkspacePaths(sessions, tc.id)
+			if ok != tc.wantOK || !slices.Equal(got, tc.want) {
+				t.Errorf("WorkspacePaths(%q) = (%q, %v), want (%q, %v)", tc.id, got, ok, tc.want, tc.wantOK)
+			}
+		})
 	}
 }

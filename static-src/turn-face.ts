@@ -9,16 +9,16 @@ import {
   type EntryRange,
 } from "./block-window.js";
 import { namedSay } from "./entry-ids.js";
-import { isSubagentFallback, payloadOf, type Turn } from "./turns.js";
+import { appliedFallback, isSubagentFallback, payloadOf, type Turn } from "./turns.js";
 import type { Entry } from "./types.js";
 
 /**
  * The turn's LAST MESSAGE, which a collapsed turn's face renders whole: one trimmed string per bubble the body draws
  * for it, in order. It ends at the turn's last non-empty top-level prose (`text`, or a `steer_ack`, its own bubble) and
- * reaches back over all the prose before it, other says too (a reply, then the one a notification woke the agent for).
- * It reaches over an entry the body draws that is not prose (a tool call, a reasoning trace, a steer note) only when
- * the nearest earlier top-level text is the same named say: one message written around it. An entry that draws
- * nothing (`tool_result`, `steer_delivered`) never ends it. Delegate prose is never in it.
+ * reaches back over all the prose before it, other says included. It reaches over a drawn non-prose entry (a tool
+ * call, a reasoning trace, a steer note) only when the nearest earlier top-level text is the same named say. An entry
+ * that draws nothing (`tool_result`, `steer_delivered`) never ends it, nor does an applied `model_fallback`: KAS
+ * continues the refused text on the fallback model. Delegate prose is never in it.
  */
 export function turnLastMessage(t: Turn): string[] {
   return lastMessageItems(t)
@@ -35,7 +35,7 @@ function lastMessageItems(t: Turn): EntryRange[] {
   let seq = lastProseSeq(t);
   while (seq > 0) {
     const e = entryAt(t, seq);
-    if (e === undefined || !entryRenders(e, "", folds)) {
+    if (e === undefined || !entryRenders(e, "", folds) || appliedFallback(e)) {
       seq--;
       continue;
     }
@@ -122,6 +122,7 @@ export function turnFoldHides(t: Turn): boolean {
       case "model_switched":
       case "model_routed":
       case "mode_switched":
+      case "context_reset":
         return true;
       case "model_fallback":
         if (!isSubagentFallback(e)) {

@@ -12,11 +12,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // RegisterRoutes wires GET /api/chats (list) and GET /api/chats/{id} (one chat with a paged window of turns).
@@ -31,7 +31,7 @@ func (rt *router) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	headers, stamp := rt.store.listStamped(r.Context())
-	webhttp.WriteJSON(w, map[string]any{"chats": headers, keySubject: stamp})
+	httpserver.WriteJSON(w, map[string]any{"chats": headers, keySubject: stamp})
 }
 
 // handleOne serves GET /api/chats/{id}?limit=<turns>&before=<turn_id> and routes /api/chats/{id}/<sub> requests.
@@ -102,7 +102,7 @@ func (rt *router) serveChatPage(w http.ResponseWriter, r *http.Request, id marot
 		httpreply.NotFound(w, errMsgChatNotFound)
 		return
 	}
-	webhttp.WriteJSON(w, map[string]any{
+	httpserver.WriteJSON(w, map[string]any{
 		"chat":         page.Chat,
 		keyEntries:     previewEntries(nonNilEntries(page.Entries)),
 		"open_entries": page.OpenEntries,
@@ -156,7 +156,7 @@ func (rt *router) handleTurnRange(w http.ResponseWriter, r *http.Request, chatID
 			fmt.Errorf("chat turn range %s/%s: %w", logsafe.Field(string(chatID)), logsafe.Field(turn), err))
 		return
 	}
-	webhttp.WriteJSON(w, map[string]any{
+	httpserver.WriteJSON(w, map[string]any{
 		keyEntries:     previewEntries(nonNilEntries(page.Entries)),
 		"open_entries": page.OpenEntries,
 		keySubject:     page.Subject,
@@ -201,7 +201,7 @@ func (rt *router) handleTurns(w http.ResponseWriter, r *http.Request, chatID mar
 	if rows == nil {
 		rows = []marotte.TurnSummary{}
 	}
-	webhttp.WriteJSON(w, map[string]any{"turns": rows})
+	httpserver.WriteJSON(w, map[string]any{"turns": rows})
 }
 
 // handleSearch serves GET /api/chats/{id}/search?q=: a lexical scan of the log's sealed entries, server-side for
@@ -226,7 +226,7 @@ func (rt *router) handleSearch(w http.ResponseWriter, r *http.Request, chatID ma
 	}
 	// Both halves of in-chat search share the match-case toggle.
 	caseSensitive := r.URL.Query().Get("case") == "1"
-	webhttp.WriteJSON(w, search(entries, drawn, r.URL.Query().Get("q"), caseSensitive))
+	httpserver.WriteJSON(w, search(entries, drawn, r.URL.Query().Get("q"), caseSensitive))
 }
 
 // defaultPageTurns is a page's turns when no limit is named: a few screens, one read for the common chat.
@@ -292,7 +292,7 @@ func (rt *router) handleExport(w http.ResponseWriter, r *http.Request, chatID ma
 	if format == exportFormatJSON {
 		w.Header().Set("Content-Disposition",
 			dispositionAttachment(exportFilename(c.Name, string(chatID), ".json")))
-		webhttp.WriteJSON(w, map[string]any{"chat": c, keyEntries: nonNilEntries(entries)})
+		httpserver.WriteJSON(w, map[string]any{"chat": c, keyEntries: nonNilEntries(entries)})
 		return
 	}
 	w.Header().Set("Content-Disposition",

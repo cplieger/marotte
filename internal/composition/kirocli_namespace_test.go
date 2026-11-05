@@ -1,8 +1,8 @@
 package composition
 
 // Two engines write into the same tools tree, and only the namespace split keeps them from deleting
-// each other's installs: toolbelt owns bin/, opt/, npm/ and python/; pinstall owns
-// kiro-cli-versions/.
+// each other's installs: the toolbelt engine owns bin/, opt/, npm/ and python/; its pin package
+// owns kiro-cli-versions/.
 
 import (
 	"os"
@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/toolbelt/v3/pin"
 )
 
 // The pin these tests install, and the toolbelt tool name that collides with it.
@@ -40,20 +40,19 @@ func newNSEnv(t *testing.T) *nsEnv {
 	return &nsEnv{t: t, tools: tools, witness: filepath.Join(tools, "foreign-was-run")}
 }
 
-func (e *nsEnv) config() *pinstall.Config {
+func (e *nsEnv) config() *pin.Config {
 	return kiroInstallConfig(&Config{
 		KiroCLIVersion:     nsVersion,
 		KiroCLISHA256:      strings.Repeat("a", 64),
 		KiroCLISHA256ARM64: strings.Repeat("b", 64),
-		ToolsDir:           e.tools,
-	})
+	}, e.tools)
 }
 
-func (e *nsEnv) manager() *pinstall.Manager {
+func (e *nsEnv) manager() *pin.Manager {
 	e.t.Helper()
-	mgr, err := pinstall.New(e.config())
+	mgr, err := pin.New(e.config())
 	if err != nil {
-		e.t.Fatalf("pinstall.New from the app's own config: %v", err)
+		e.t.Fatalf("pin.New from the app's own config: %v", err)
 	}
 	return mgr
 }
@@ -95,11 +94,9 @@ func (e *nsEnv) plantOwnVersion() string {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		e.t.Fatalf("MkdirAll(%s): %v", dir, err)
 	}
-	// Answers --version with its directory's name and exits 0 for every settings assertion; both
-	// dispatchers are planted because kiro-cli-chat is Required.
+	// Answers --version with its directory's name and exits 0 for every settings assertion.
 	script := "case \"$1\" in --version) printf 'kiro-cli " + nsVersion + "\\n' ;; esac\n"
 	e.writeScript(filepath.Join(dir, nsTool), script)
-	e.writeScript(filepath.Join(dir, nsTool+"-chat"), script)
 	if err := os.WriteFile(filepath.Join(dir, ".complete"), []byte(nsVersion+"\n"), 0o600); err != nil {
 		e.t.Fatalf("write sentinel: %v", err)
 	}
@@ -309,11 +306,4 @@ func TestLegacySweepRunsOncePerVolume(t *testing.T) {
 	if _, err := os.Lstat(marker); err != nil {
 		t.Errorf("the completion marker was removed by a later boot: %v", err)
 	}
-}
-
-// The only inputs are t.TempDir paths, so escaping an embedded quote would be dead code; a path
-// that somehow held one would break the script loudly rather than silently misdirect the witness
-// write.
-func shellQuote(s string) string {
-	return "'" + s + "'"
 }

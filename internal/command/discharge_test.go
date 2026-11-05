@@ -82,6 +82,7 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 		marotte.CmdSteerClear:          "CmdSteerClear",
 		marotte.CmdQueuePrompt:         "CmdQueuePrompt",
 		marotte.CmdUnqueuePrompt:       "CmdUnqueuePrompt",
+		marotte.CmdSendQueuedNow:       "CmdSendQueuedNow",
 		marotte.CmdSetInterruptMode:    "CmdSetInterruptMode",
 		marotte.CmdRenameChat:          "CmdRenameChat",
 		marotte.CmdSteerRemove:         "CmdSteerRemove",
@@ -126,11 +127,28 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 		payload string
 		handler Handler
 		want    bool
+		// api sends the command as another program does, with no fetch metadata and no Origin.
+		api bool
 	}{
 		{
 			name:    "a steer is the user's own words to this agent",
 			cmdType: marotte.CmdSteer,
 			want:    true,
+		},
+		{
+			name:    "a steer another program sent leaves the question waiting for the user",
+			cmdType: marotte.CmdSteer,
+			api:     true,
+		},
+		{
+			name:    "a queued prompt is the user's own words as well",
+			cmdType: marotte.CmdQueuePrompt,
+			want:    true,
+		},
+		{
+			name:    "a queued prompt another program sent does not",
+			cmdType: marotte.CmdQueuePrompt,
+			api:     true,
 		},
 		{
 			// The prompt path discharges when its turn opens, from the turn's source; a second
@@ -226,7 +244,7 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 			if handler == nil {
 				handler = func(context.Context, *marotte.ClientCommand) (any, error) { return nil, nil }
 			}
-			d.Register(tc.cmdType, handler)
+			d.register(tc.cmdType, handler)
 
 			body := `{"type":"` + string(tc.cmdType) + `","chat_id":"c-abc123"`
 			if tc.payload != "" {
@@ -234,6 +252,9 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 			}
 			body += `}`
 			req := httptest.NewRequest(http.MethodPost, "/api/command", strings.NewReader(body))
+			if !tc.api {
+				req.Header.Set("Sec-Fetch-Site", "same-origin")
+			}
 			w := httptest.NewRecorder()
 			d.ServeHTTP(w, req)
 
@@ -256,7 +277,7 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 // the nil guard is load-bearing rather than defensive.
 func TestDispatch_NoStatusRoleIsSilent(t *testing.T) {
 	d := New()
-	d.Register(marotte.CmdSteer, func(context.Context, *marotte.ClientCommand) (any, error) { return nil, nil })
+	d.register(marotte.CmdSteer, func(context.Context, *marotte.ClientCommand) (any, error) { return nil, nil })
 	req := httptest.NewRequest(http.MethodPost, "/api/command",
 		strings.NewReader(`{"type":"steer","chat_id":"c-abc123"}`))
 	w := httptest.NewRecorder()

@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mountLiveRegions } from "@cplieger/ui-primitives/announce";
+import { mountLiveRegions } from "@cplieger/ui/announce";
 
-import { info, success, error, notice, showToast, _resetForTest } from "./toast.js";
+import { info, success, error, jumpToast, notice, showToast, _resetForTest } from "./toast.js";
 
-// The marotte wrapper against ui-primitives' toast DOM contract (.uip-toast--<level>, announce())
+// The marotte wrapper against @cplieger/ui/toast's DOM contract (.uip-toast--<level>, announce())
 // and behaviour. State is reset with _resetForTest(), not resetModules(), which would strand the
 // module-level Escape listener.
 beforeEach(() => {
@@ -466,5 +466,55 @@ describe("toast — a server notice carries its own level", () => {
     expect(btn.textContent).toBe("Open");
     btn.click();
     expect(onClick).toHaveBeenCalledOnce();
+  });
+});
+
+describe("toast — a jump onto what the toast reports", () => {
+  it("names its one-word button for its target", () => {
+    jumpToast("publish finished", "success", {
+      label: "Open",
+      name: "Open Fix the parser",
+      onClick: vi.fn(),
+    });
+    const btn = document.querySelector(".uip-toast-retry");
+    expect(btn?.textContent).toBe("Open");
+    expect(btn?.getAttribute("aria-label")).toBe("Open Fix the parser");
+  });
+
+  it("names the button of a toast that mounts from the queue", async () => {
+    const dismissFirst = info("one");
+    info("two");
+    info("three");
+    jumpToast("publish failed", "error", { label: "Open", name: "Open publish", onClick: vi.fn() });
+    expect(document.querySelector(".uip-toast-retry")).toBeNull();
+    dismissFirst();
+    vi.advanceTimersByTime(1_000);
+    await Promise.resolve();
+    expect(document.querySelector(".uip-toast-retry")?.getAttribute("aria-label")).toBe(
+      "Open publish",
+    );
+  });
+
+  it("keeps a success that offers a jump up as long as an error", () => {
+    jumpToast("publish finished", "success", {
+      label: "Open",
+      name: "Open publish",
+      onClick: vi.fn(),
+    });
+    flushRaf();
+    vi.advanceTimersByTime(11_000);
+    expect(toasts().length).toBe(1);
+    vi.advanceTimersByTime(2000);
+    expect(toasts().length).toBe(0);
+  });
+
+  it("is a plain toast at its level without a jump", () => {
+    jumpToast("publish finished", "success");
+    const t = toasts()[0];
+    expect(t?.classList.contains("uip-toast--success")).toBe(true);
+    expect(t?.querySelector("button")).toBeNull();
+    flushRaf();
+    vi.advanceTimersByTime(4500);
+    expect(toasts().length).toBe(0);
   });
 });

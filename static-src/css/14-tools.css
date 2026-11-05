@@ -20,7 +20,7 @@
   overflow: hidden;
   flex-shrink: 0;
   content-visibility: auto;
-  contain-intrinsic-size: auto var(--btn-h);
+  contain-intrinsic-size: auto var(--row-tap);
 }
 
 .tool-subtitle {
@@ -96,6 +96,11 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   overflow: hidden;
+
+  /* The `display` above beats the UA's `[hidden]`; a group whose every member is hidden is. */
+  &[hidden] {
+    display: none;
+  }
 }
 
 /* Cards live in the body region (a uip-disclosure-region: the primitive
@@ -135,7 +140,7 @@
   -webkit-user-select: none;
   user-select: none;
   padding: var(--sp-2) 0.75rem;
-  min-height: var(--btn-h);
+  min-height: var(--row-tap);
   display: flex;
 
   /* THIS ROW'S LABEL WRAPS (`.tool-group-count` is a plain flex item), so its leading
@@ -145,7 +150,7 @@
 
   /* The row's ONE-LINE content box (`min-height` less `padding-block` twice). The
      chevron, the mark and the label each centre their first line in it below. */
-  --row-first-line: calc(var(--btn-h) - 2 * var(--sp-2));
+  --row-first-line: calc(var(--row-tap) - 2 * var(--sp-2));
 
   /* The SAME gap a member card's `.tool-header` uses, so header and rows are one density.
      The container spaces its children: an SVG mark fills its box and carries no spacing. */
@@ -162,10 +167,11 @@
   display: none;
 }
 
-/* No header, so the first row's hairline would be a stray line. This and the
+/* No header, so the one row's hairline would be a stray line. This and the
  * `padding-block` scoping above together make a bare group identical to a standalone
- * `.tool-call`; the chrome stays on the group, or a two-member group would have none. */
-.tool-group-bare > .tool-group-body > .tool-call:first-child {
+ * `.tool-call`; the chrome stays on the group, or a two-member group would have none.
+ * Every member, not `:first-child`: a hidden hook card may sit before the one row. */
+.tool-group-bare > .tool-group-body > .tool-call {
   border-top: 0;
 }
 
@@ -207,6 +213,67 @@
   padding-block: calc((var(--row-first-line) - 1lh) / 2);
 }
 
+/* The hooks folded out of the rows: the fish-hook glyph and their count, after the summary.
+   Text, not a control: the header row is the target. */
+.tool-group-header > .tool-group-hooks {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-inline-start: auto;
+  padding-block: calc((var(--row-first-line) - 1lh) / 2);
+  color: var(--c-text-tertiary);
+
+  & > .tool-group-hooks-icon {
+    display: inline-flex;
+  }
+
+  & svg {
+    display: block;
+    inline-size: var(--icon-ui);
+    block-size: var(--icon-ui);
+  }
+}
+
+/* The folded hooks, listed when the group is open: one row each, its name and its hook
+   file's chip, in the member rows' column. */
+.tool-hook-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid color-mix(in srgb, var(--c-border) 55%, transparent);
+}
+
+.tool-hook-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: var(--row-tap-sm);
+  padding-block: var(--sp-1);
+  padding-inline: calc(0.75rem + var(--tool-chev-box) + var(--sp-2)) 0.75rem;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+
+  /* Read by `.tool-file-link`, which `.tool-header` otherwise declares it for. */
+  --tool-chev-box: 1.5rem;
+  --tool-badge-h: calc(var(--btn-h) - 2 * var(--sp-2));
+
+  & > .tool-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+/* A hook's name and its file chip shrink in proportion: at `.tool-title`'s zero basis a
+   phone row clips the name to "Hook fire…" while the chip keeps its whole width. */
+.tool-call[data-kind="hook"] .tool-header > .tool-title {
+  flex: 1 1 auto;
+}
+
 .tool-summary {
   min-width: 0;
   transition: background var(--dur-micro) var(--ease-standard);
@@ -228,7 +295,7 @@
   gap: var(--sp-2);
   padding-block: var(--sp-2);
   padding-inline: 0.75rem;
-  min-height: var(--btn-h);
+  min-height: var(--row-tap);
   min-width: 0; /* allow ellipsis on flex children */
 
   /* THE FILE BADGE'S HEIGHT: the content box a STANDALONE card's header leaves, the
@@ -271,6 +338,18 @@
 .tool-fact,
 .tool-move-row {
   padding-inline-start: calc(0.75rem + var(--tool-chev-box) + var(--sp-2));
+}
+
+.tool-classifier-badge {
+  flex-shrink: 0;
+  padding: 0.0625rem var(--sp-2);
+  border: 1px solid color-mix(in srgb, var(--c-green) 35%, transparent);
+  border-radius: var(--r-pill);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--c-green);
+  background: color-mix(in srgb, var(--c-green) 14%, transparent);
+  white-space: nowrap;
 }
 
 /* A claim-only card has no output region, so its offload link joins the claim row. */
@@ -424,12 +503,6 @@
   inset-block-start: 50%;
   inset-inline-start: 0.75rem;
   translate: 0 -50%;
-
-  /* OPTS OUT OF THE COARSE HIT FLOOR: `wireRowToggle` makes the whole summary its
-     target, well past WCAG 2.5.8, and a pinned box keeps the gutter's reserve true at
-     both tiers. */
-  min-width: 0;
-  min-height: 0;
   display: grid;
   place-items: center;
   width: var(--tool-chev-box);
@@ -518,24 +591,15 @@
 
   /* THE BADGE FILLS THE HEIGHT ITS ROW ALREADY HAS (`--tool-badge-h`), so no row can grow
      from it; `tool-group-height.test.ts` pins the lone-card case at both tiers. The
-     TARGET keeps the floor through 61-mcp-tools.css's expander idiom, vertical only, so
-     there is no `overflow: hidden` here: the TEXT owns the clip. PHYSICAL `min-height`,
-     because the floor sets `min-height` and a logical property would not override it. */
-  position: relative;
+     TARGET is the shared expander (61-mcp-tools.css), so there is no `overflow: hidden`
+     here: the TEXT owns the clip. PHYSICAL `min-height`, because the floor sets
+     `min-height` and a logical property would not override it. */
   block-size: var(--tool-badge-h);
-  min-width: var(--hit-floor);
   min-height: 0;
   transition:
     background var(--dur-micro),
     border-color var(--dur-micro),
     color var(--dur-micro) var(--ease-standard);
-
-  &::after {
-    content: "";
-    position: absolute;
-    inset-block: calc((var(--hit-floor) - 100%) / -2);
-    inset-inline: 0;
-  }
 
   &:hover {
     background: var(--c-hover);
@@ -579,14 +643,18 @@
   vertical-align: baseline;
 
   /* WCAG 2.5.8's INLINE exception, as 61-mcp-tools.css grants a prose `a[href]`; that
-     rule cannot reach this `<button>` (`linkify.ts`), and the floor would paint a 44px
-     line. */
+     rule cannot reach this `<button>` (`linkify.ts`), and the floor would paint a 24px
+     line and hang a 44px target over the lines around it. */
   min-width: 0;
   min-height: 0;
   transition:
     background var(--dur-micro),
     border-color var(--dur-micro),
     color var(--dur-micro) var(--ease-standard);
+
+  &::after {
+    content: none;
+  }
 }
 
 .inline-file-icon {
@@ -630,7 +698,7 @@
      1px is `.subagent-foot`'s border. It is the LARGER of the settled and running heights
      (`subagent-card-metrics.test.ts`): only settled cards persist into the history this
      fallback serves, and a running card renders on arrival at the live edge. */
-  --subagent-content: calc(var(--btn-h) + max(var(--hit-floor), var(--ctl-h-dense)) + 1px);
+  --subagent-content: calc(var(--row-tap) + max(var(--hit-floor), var(--ctl-h-dense)) + 1px);
 
   content-visibility: auto;
   contain-intrinsic-size: auto var(--subagent-content);
@@ -644,7 +712,7 @@
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
-  min-height: var(--btn-h);
+  min-height: var(--row-tap);
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
@@ -941,7 +1009,7 @@ a.subagent-header {
 }
 
 /* THE NEUTRAL GHOST BUTTON, and the ONE place its box is declared. `.uip-ask-ok` and
- * `.uip-ask-cancel` are listed because ui-primitives builds them without our classes;
+ * `.uip-ask-cancel` are listed because @cplieger/ui builds them without our classes;
  * this wins over 04-uip-skin.css by MANIFEST order. `.uip-toast-retry` is NOT listed: it
  * sits on a saturated fill and derives its ink from `currentcolor`. */
 .action-pill,
@@ -1019,12 +1087,10 @@ a.subagent-header {
 }
 
 /* An action INSIDE a dense list row takes the dense tier, or `--btn-h` makes it the
-   row's height; `padding-block: 0` lets the floor bind. `max()` because the universal
-   hit floor scores zero (61-mcp-tools.css) and loses to this rule, so a bare
-   `--ctl-h-dense` would sit at 40px beside the 44px `.list-row-btn` on a finger.
-   Scoped: a lone `.btn-small` in an action bar is full size. */
+   row's height; `padding-block: 0` lets the `min-block-size` bind. Scoped: a lone
+   `.btn-small` in an action bar is full size. */
 .list-row .btn-small {
-  min-block-size: max(var(--ctl-h-dense), var(--hit-floor));
+  min-block-size: var(--ctl-h-dense);
   padding-block: 0;
 }
 
@@ -1117,7 +1183,7 @@ a.subagent-header {
 .git-file-row {
   /* Row height comes from the TIER (`--ctl-h-sm`), not the font's line box. A floor,
      so a taller row keeps its own height. */
-  min-block-size: var(--ctl-h-sm);
+  min-block-size: var(--row-tap-sm);
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -1357,8 +1423,16 @@ a.subagent-header {
   overflow-wrap: anywhere;
 }
 
+.approval-omitted {
+  display: block;
+  color: var(--c-text-tertiary);
+  font-style: italic;
+  margin-block: var(--sp-1);
+}
+
 .approval-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--sp-2);
   margin-block-start: var(--sp-3);
 }
@@ -1419,7 +1493,7 @@ a.subagent-header {
   align-items: center;
   gap: var(--sp-2);
   width: 100%;
-  min-block-size: var(--btn-h);
+  min-block-size: var(--row-tap);
   text-align: start;
   padding: var(--sp-1) var(--sp-2);
   border-radius: var(--r-sm);
@@ -1509,8 +1583,36 @@ a.subagent-header {
   font-size: var(--fs-md);
 }
 
+.elicitation-origin {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+.elicitation-origin-server {
+  color: var(--c-text-secondary);
+  font-weight: var(--fw-medium);
+}
+
+.elicitation-link {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.elicitation-link-host {
+  font-weight: 600;
+  color: var(--c-text-primary);
+}
+
+.elicitation-link-href {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  overflow-wrap: anywhere;
+}
+
 .elicitation-url {
   align-self: flex-start;
+  margin-block-start: var(--sp-1);
   text-decoration: none;
 }
 
@@ -1538,7 +1640,7 @@ a.subagent-header {
 }
 
 .elicitation-input {
-  min-block-size: var(--btn-h);
+  min-block-size: var(--field-h);
   padding: var(--sp-2);
   background: var(--c-bg-primary);
   color: var(--c-text-primary);
@@ -1554,6 +1656,26 @@ a.subagent-header {
 
 .elicitation-input.elicitation-invalid {
   border-color: var(--c-red);
+}
+
+/* A multi-select's fieldset reads as one field; its red edge mirrors the input's. */
+.elicitation-choices {
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  min-inline-size: 0;
+}
+
+.elicitation-choices.elicitation-invalid {
+  border-color: var(--c-red);
+}
+
+.elicitation-choice {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--c-text-primary);
 }
 
 .elicitation-checkbox {
@@ -1593,12 +1715,10 @@ a.subagent-header {
   flex: 1;
 }
 
-/* Under a finger the chip takes its own line, within the slack this row's 44px
-   buttons already force. Keyed on the POINTER: a touch laptop is wide. */
-:root[data-pointer="coarse"] .tool-name-wrap {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--sp-1);
+/* A row whose name wraps its chips onto a second line keeps the air a one-line row
+   has on touch, where the 44px floor centres a 24px action 10px from each edge. */
+.list-row:has(> .tool-name-wrap) {
+  padding-block: max(var(--sp-1), calc(var(--tap-gap-sm) / 2));
 }
 
 /* The wrap owns the flex slot, so the name inside it needs no share of the
@@ -1640,6 +1760,8 @@ a.subagent-header {
   flex-direction: column;
   align-items: flex-start;
   gap: var(--sp-1);
+  /* The option is its own target, so it takes the hit floor. */
+  min-block-size: var(--row-tap-sm);
   padding: var(--sp-2) var(--sp-3);
   text-align: start;
   background: var(--c-bg-primary);
@@ -1700,9 +1822,13 @@ a.subagent-header {
   color: var(--c-text-secondary);
 }
 
+/* The row is the sub-option's target, so its checkbox drops the expander (61-mcp-tools.css),
+   which reached the next row's box. */
 .user-input-sub-option {
   display: grid;
   grid-template-columns: auto 1fr;
+  align-content: center;
+  min-block-size: var(--row-tap-sm);
   column-gap: var(--sp-2);
   align-items: baseline;
   padding: var(--sp-1) var(--sp-2);
@@ -1712,6 +1838,10 @@ a.subagent-header {
 
 .user-input-sub-option:hover {
   background: color-mix(in srgb, var(--c-accent) 6%, transparent);
+}
+
+.user-input-sub-option > input[type="checkbox"]::after {
+  content: none;
 }
 
 .user-input-sub-option .user-input-option-desc {

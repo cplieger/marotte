@@ -15,6 +15,7 @@ const {
   mockAddAttachmentTo,
   mockAttachmentGeneration,
   mockTypedCommand,
+  mockTerminalRefusal,
   mockInvokesCatalog,
   mockClearAgentDown,
   mockReportSendRefused,
@@ -29,6 +30,7 @@ const {
   mockAddAttachmentTo: vi.fn(),
   mockAttachmentGeneration: vi.fn(() => 0),
   mockTypedCommand: vi.fn(() => false),
+  mockTerminalRefusal: vi.fn((): { notice: string; keepText: boolean } | null => null),
   mockInvokesCatalog: vi.fn(() => false),
   mockClearAgentDown: vi.fn(),
   mockReportSendRefused: vi.fn(),
@@ -42,7 +44,10 @@ vi.mock("./actions/chat.js", () => ({
   steerChat: { dispatch: mockSteer },
   queuePrompt: { dispatch: mockQueue },
 }));
-vi.mock("./typed-commands.js", () => ({ handleTypedCommand: mockTypedCommand }));
+vi.mock("./typed-commands.js", () => ({
+  handleTypedCommand: mockTypedCommand,
+  terminalCommandRefusal: mockTerminalRefusal,
+}));
 vi.mock("./slash-menu.js", () => ({ invokesCatalogCommand: mockInvokesCatalog }));
 vi.mock("./attachments.js", () => ({
   takeAttachments: mockTakeAttachments,
@@ -171,6 +176,7 @@ beforeEach(() => {
   mockHasAttachments.mockReturnValue(false);
   mockAttachmentGeneration.mockReturnValue(0);
   mockTypedCommand.mockReturnValue(false);
+  mockTerminalRefusal.mockReturnValue(null);
   mockSteer.mockReturnValue(steerOk());
   mockQueue.mockReturnValue(steerOk());
 });
@@ -199,6 +205,29 @@ describe("submitPrompt on an idle chat", () => {
     // while the request was in flight can refuse it.
     expect(mockAddAttachmentTo).toHaveBeenCalledWith("c1", "a.ts", 7);
     expect(mockAddAttachmentTo).toHaveBeenCalledWith("c1", "b.ts", 7);
+  });
+
+  // A send for a chat that is not on screen names its files: the live row is another chat's.
+  it("sends a named attachment list instead of the live row's, and restores it to the named chat", async () => {
+    resetStore("c1");
+    mockHasAttachments.mockReturnValue(true);
+    mockTakeAttachments.mockReturnValue([{ path: "other.ts" }]);
+    mockAttachmentGeneration.mockReturnValue(4);
+    mockSendPromptTo.mockResolvedValue("failed");
+    const file = { path: "shot.png", name: "shot.png" };
+
+    expect(await submitPrompt("c1", "", { attachments: [file] })).toBe("failed");
+    expect(mockSendPromptTo.mock.calls[0]?.[2]).toMatchObject({ attachments: [file] });
+    expect(mockTakeAttachments).not.toHaveBeenCalled();
+    expect(mockAddAttachmentTo).toHaveBeenCalledWith("c1", "shot.png", 4);
+  });
+
+  it("refuses an empty send whose named attachment list is empty, whatever the live row holds", async () => {
+    resetStore("c1");
+    mockHasAttachments.mockReturnValue(true);
+
+    expect(await submitPrompt("c1", "", { attachments: [] })).toBe("failed");
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
   });
 
   // An ACCEPTED prompt that then lost its turn must not return to the composer: `CmdPrompt` persists
@@ -286,9 +315,65 @@ describe("submitPrompt on an idle chat", () => {
     // A command is not a prompt, so it must not consume the attachment row.
     expect(mockTakeAttachments).not.toHaveBeenCalled();
   });
+
+  it("answers a kiro-cli terminal command with its notice and sends nothing", async () => {
+    resetStore("c1");
+    mockInvokesCatalog.mockReturnValue(false);
+    mockTerminalRefusal.mockReturnValue({ notice: "marotte has no /model.", keepText: false });
+
+    expect(await submitPrompt("c1", "/model")).toBe("sent");
+    expect(mockTerminalRefusal).toHaveBeenCalledWith("/model");
+    expect(mockChatNotice).toHaveBeenCalledWith("c1", "marotte has no /model.");
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
+    expect(mockTakeAttachments).not.toHaveBeenCalled();
+  });
+
+  it("hands a terminal command with arguments back to the composer", async () => {
+    resetStore("c1");
+    mockInvokesCatalog.mockReturnValue(false);
+    mockTerminalRefusal.mockReturnValue({ notice: "marotte has no /model.", keepText: true });
+
+    expect(await submitPrompt("c1", "/model claude-sonnet-4")).toBe("held");
+    expect(mockChatNotice).toHaveBeenCalledWith("c1", "marotte has no /model.");
+    expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "/model claude-sonnet-4");
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
+    expect(mockTakeAttachments).not.toHaveBeenCalled();
+  });
+
+  it("clears a bare terminal command from the composer", async () => {
+    resetStore("c1");
+    mockInvokesCatalog.mockReturnValue(false);
+    mockTerminalRefusal.mockReturnValue({ notice: "marotte has no /model.", keepText: false });
+
+    await submitPrompt("c1", "/model");
+    expect(mockRestoreFailedSend).not.toHaveBeenCalled();
+  });
+
+  it("sends a catalog entry that shares a terminal command's name", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("sent");
+    mockInvokesCatalog.mockReturnValue(true);
+    mockTerminalRefusal.mockReturnValue({ notice: "marotte has no /help.", keepText: false });
+
+    expect(await submitPrompt("c1", "/help")).toBe("sent");
+    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
+    expect(mockChatNotice).not.toHaveBeenCalled();
+  });
 });
 
 describe("submitPrompt during a turn", () => {
+  it("answers a kiro-cli terminal command instead of steering it into the turn", async () => {
+    resetStore("c1");
+    setThinking("c1", true);
+    mockInvokesCatalog.mockReturnValue(false);
+    mockTerminalRefusal.mockReturnValue({ notice: "marotte has no /usage.", keepText: false });
+
+    expect(await submitPrompt("c1", "/usage")).toBe("sent");
+    expect(mockChatNotice).toHaveBeenCalledWith("c1", "marotte has no /usage.");
+    expect(mockSteer).not.toHaveBeenCalled();
+    expect(mockQueue).not.toHaveBeenCalled();
+  });
+
   it("holds a saved-prompt command instead of steering it, and hands the text back", async () => {
     resetStore("c1");
     setThinking("c1", true);

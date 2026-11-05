@@ -28,8 +28,11 @@ func TestBuildPromptParams_CarriesAChosenOutputStyleOnly(t *testing.T) {
 		want   string
 	}{
 		{name: "concise rides the prompt", config: `{"output_style":"concise"}`, want: "concise"},
+		{name: "proactive rides the prompt", config: `{"output_style":"proactive"}`, want: "proactive"},
+		{name: "learning rides the prompt", config: `{"output_style":"learning"}`, want: "learning"},
 		{name: "default is never sent", config: `{"output_style":"default"}`},
-		{name: "an unknown style is never sent", config: `{"output_style":"verbose"}`},
+		{name: "a malformed id is never sent", config: `{"output_style":"Not A Style"}`},
+		{name: "a non-string is never sent", config: `{"output_style":3}`},
 		{name: "no setting is never sent", config: `{}`},
 	}
 	for _, tc := range tests {
@@ -38,7 +41,7 @@ func TestBuildPromptParams_CarriesAChosenOutputStyleOnly(t *testing.T) {
 			writeConfig(t, dir, tc.config)
 			p := &marotte.PromptCommand{Text: "hi", MessageID: "m-1"}
 
-			params, _ := buildPromptParams(t.Context(), Workspace{ConfigDir: dir}, fixedSession("s"), p, 0)
+			params, _ := buildPromptParams(t.Context(), Workspace{ConfigDir: dir}, fixedSession("s"), p, "t-1", 0)
 
 			meta, _ := params["_meta"].(map[string]any)
 			kiro, _ := meta["kiro"].(map[string]any)
@@ -63,7 +66,7 @@ func TestBuildPromptParams_WithholdsTheStyleFromAPromptAnAgentReads(t *testing.T
 	writeConfig(t, dir, `{"output_style":"concise"}`)
 	p := &marotte.PromptCommand{Text: "summarize", MessageID: "m-1", DisplayText: "Summarizing", ForAgent: true}
 
-	params, _ := buildPromptParams(t.Context(), Workspace{ConfigDir: dir}, fixedSession("s"), p, 0)
+	params, _ := buildPromptParams(t.Context(), Workspace{ConfigDir: dir}, fixedSession("s"), p, "t-1", 0)
 
 	meta, _ := params["_meta"].(map[string]any)
 	kiro, _ := meta["kiro"].(map[string]any)
@@ -89,18 +92,21 @@ func TestValidatePromptPayload_AClientCannotMarkAPromptForAnAgent(t *testing.T) 
 	}
 }
 
-func TestBuildPromptParams_RequestsTheContextBreakdownOnEveryPrompt(t *testing.T) {
+func TestBuildPromptParams_RequestsTheTurnProfilingOnEveryPrompt(t *testing.T) {
 	for _, config := range []string{`{}`, `{"output_style":"concise"}`} {
 		dir := t.TempDir()
 		writeConfig(t, dir, config)
 		p := &marotte.PromptCommand{Text: "hi", MessageID: "m-1"}
 
-		params, _ := buildPromptParams(t.Context(), Workspace{ConfigDir: dir}, fixedSession("s"), p, 0)
+		params, _ := buildPromptParams(t.Context(), Workspace{ConfigDir: dir}, fixedSession("s"), p, "t-1", 0)
 
 		meta, _ := params["_meta"].(map[string]any)
 		kiro, _ := meta["kiro"].(map[string]any)
 		if got := kiro["contextBreakdown"]; got != "detailed" {
 			t.Errorf("config %s: params[_meta].kiro.contextBreakdown = %v, want \"detailed\"", config, got)
+		}
+		if got := kiro["ttft"]; got != true {
+			t.Errorf("config %s: params[_meta].kiro.ttft = %v, want true", config, got)
 		}
 	}
 }
@@ -115,7 +121,7 @@ func TestBuildPromptParams_CarriesTheDisplayLabelOfALabelledPromptOnly(t *testin
 			writeConfig(t, dir, `{}`)
 			p := &marotte.PromptCommand{Text: "the full instruction", MessageID: "m-1", DisplayText: tc.label}
 
-			params, _ := buildPromptParams(t.Context(), Workspace{ConfigDir: dir}, fixedSession("s"), p, 0)
+			params, _ := buildPromptParams(t.Context(), Workspace{ConfigDir: dir}, fixedSession("s"), p, "t-1", 0)
 
 			meta, _ := params["_meta"].(map[string]any)
 			kiro, _ := meta["kiro"].(map[string]any)

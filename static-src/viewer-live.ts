@@ -4,7 +4,7 @@
 // so an adoption can never replace text under an IME composition or a keystroke. A file whose
 // rules deny live refresh (over the cap) is never polled.
 
-import { subscribe } from "@cplieger/reactive";
+import { subscribe } from "@cplieger/ui";
 import { $ } from "./dom.js";
 import { pollAction } from "./actions/index.js";
 import { statFile, type StatAnswer } from "./actions/editor.js";

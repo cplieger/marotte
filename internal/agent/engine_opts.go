@@ -20,6 +20,8 @@ const (
 	reasonAutoRouting       = marotte.EngineReason(settings.KeyAutoRouting)
 	reasonAutoDelegation    = marotte.EngineReason(settings.KeyAutoDelegation)
 	reasonHeap              = marotte.EngineReason(settings.KeyEngineHeapMiB)
+	reasonDebugLogs         = marotte.EngineReason(settings.KeyDebugLogs)
+	reasonHighThroughput    = marotte.EngineReason(settings.KeyHighThroughput)
 	reasonTelemetry         = marotte.EngineReason(kiroTelemetryKey)
 )
 
@@ -40,6 +42,10 @@ func engineReasonLabel(r marotte.EngineReason) string {
 		return "Auto delegation"
 	case reasonHeap:
 		return "Agent engine memory limit"
+	case reasonDebugLogs:
+		return "Debug logs"
+	case reasonHighThroughput:
+		return "High throughput optimizations"
 	case reasonTelemetry:
 		return "Usage telemetry"
 	case marotte.EngineReasonKiroCLIVersion:
@@ -50,74 +56,121 @@ func engineReasonLabel(r marotte.EngineReason) string {
 	return string(r)
 }
 
+// engineDocument is the config.json part of an engine spawn.
+type engineDocument struct {
+	// ignoreFiles is floor-led; the floor alone when the key does not decode, which sets ignoreInvalid.
+	ignoreFiles       []string
+	features          marotte.EngineFeatures
+	heapMiB           int
+	knowledge         bool
+	debugLogs         bool
+	throughput        bool
+	ignoreInvalid     bool
+	contentCollection bool // the stored switch, before the organization lock
+}
+
+// sessionDocument is the config.json part of a session door. profile and dirEntries are kept as stored and mapped at
+// the door, whose mapping logs.
+type sessionDocument struct {
+	profile    string
+	dirEntries []string
+	features   marotte.SessionFeatures // before any administrator lock
+	memory     marotte.MemoryPreference
+	// autoCompactPct and autoCompactEnabled are autoCompactionPolicy's answer, read by the door.
+	autoCompactPct     int
+	dirsInvalid        bool // additional_directories is present and does not decode: the door grants nothing
+	autoCompactEnabled bool
+}
+
 // engineHeapMiB reads the heap limit; an absent or invalid value is 0, kiro-cli's default.
-func engineHeapMiB(ctx context.Context, configDir string) int {
+func engineHeapMiB(d settings.Document) int {
 	var n int
-	if settings.FieldInto(ctx, configDir, settings.KeyEngineHeapMiB, &n) && n >= 0 {
+	if d.Into(settings.KeyEngineHeapMiB, &n) && n >= 0 {
 		return n
 	}
 	return 0
 }
 
 // resolveEngine reads the engine options a spawn at path starts with, and the fingerprint of their restart-only part.
-// The readers are stat-checked cache reads, so the caller's cancellation is dropped: a cancelled read would answer
-// defaults no engine spawned under.
+// Its config.json values come from the configDoc owner, so over an unreadable document they are the last readable
+// ones and source says so.
 func (rt *Runtime) resolveEngine(ctx context.Context, path string) engineSpec {
-	ctx = context.WithoutCancel(ctx)
-	dir := rt.lifecycle.configDir
-	features := engineFeatures(ctx, dir)
-	knowledge := knowledgeEnabled(ctx, dir)
+	doc, src := rt.configDocument(ctx)
+	e := doc.engine
 	telemetryOff := rt.lifecycle.telemetryDisabled(rt.config.GovernanceLocks)
-	heap := engineHeapMiB(ctx, dir)
 	opts := &marotte.EngineOpts{
 		Lifetime:          rt.lifecycle.shutdownCtx,
 		Background:        rt.lifecycle.goUnlessDraining,
 		ReapSession:       func(id marotte.SessionID) { rt.reapSessions([]string{string(id)}) },
-		IgnoreFiles:       func(c context.Context) []string { return spawnIgnoreFiles(c, dir) },
-		TerminalTimeout:   func(c context.Context) int { return terminalCommandTimeoutMs(c, dir) },
-		ContentCollection: contentCollectionResolver(dir, rt.config.GovernanceLocks),
+		IgnoreFiles:       rt.spawnIgnoreFiles,
+		TerminalTimeout:   rt.terminalTimeout,
+		ContentCollection: rt.contentCollection,
 		ExtraArgs:         rt.acpArgs,
 		AuthArgs:          rt.signin.spawnArgs(),
-		Features:          features,
-		HeapMiB:           heap,
-		SecretStorage:     rt.secrets != nil,
-		Knowledge:         knowledge,
+		Features:          e.features,
+		HeapMiB:           e.heapMiB,
+		SecretStorage:     rt.inbound.secrets != nil,
+		Knowledge:         e.knowledge,
 		DisableTelemetry:  telemetryOff,
+		DebugLogs:         e.debugLogs,
+		HighThroughput:    e.throughput,
 	}
 	fp := map[marotte.EngineReason]string{
-		reasonKnowledge:                    strconv.FormatBool(knowledge),
-		reasonSteeringReminders:            strconv.FormatBool(features.SteeringReminders),
-		reasonCloudFormation:               features.InfraSafetyMonitor,
-		reasonModelFallback:                strconv.FormatBool(features.ModelFallback),
-		reasonAutoRouting:                  features.AutoRouting,
-		reasonAutoDelegation:               features.AutoDelegation,
-		reasonHeap:                         strconv.Itoa(heap),
+		reasonKnowledge:                    strconv.FormatBool(e.knowledge),
+		reasonSteeringReminders:            strconv.FormatBool(e.features.SteeringReminders),
+		reasonCloudFormation:               e.features.InfraSafetyMonitor,
+		reasonModelFallback:                strconv.FormatBool(e.features.ModelFallback),
+		reasonAutoRouting:                  e.features.AutoRouting,
+		reasonAutoDelegation:               e.features.AutoDelegation,
+		reasonHeap:                         strconv.Itoa(e.heapMiB),
+		reasonDebugLogs:                    strconv.FormatBool(e.debugLogs),
+		reasonHighThroughput:               strconv.FormatBool(e.throughput),
 		reasonTelemetry:                    strconv.FormatBool(telemetryOff),
 		marotte.EngineReasonKiroCLIVersion: path,
 		marotte.EngineReasonAccountSwitch:  strconv.FormatBool(rt.signin.accountPending()),
 	}
-	return engineSpec{opts: opts, fingerprint: fp}
+	return engineSpec{opts: opts, fingerprint: fp, source: src}
+}
+
+// terminalTimeout is EngineOpts.TerminalTimeout: the configDoc owner's shell timeout.
+func (rt *Runtime) terminalTimeout(ctx context.Context) int {
+	doc, _ := rt.configDocument(ctx)
+	return doc.engine.features.TerminalCommandTimeoutMs
 }
 
 // sessionSettings are a chat session door's inputs; a move reloads resident chat sessions at their next idle open.
 // Live settings (ignore files, the shell timeout, content collection) are pushed instead.
 type sessionSettings struct {
-	Presets               []string                 `json:"presets"`
-	AdditionalDirectories []string                 `json:"additional_directories"`
-	Memory                marotte.MemoryPreference `json:"memory"`
-	Features              marotte.SessionFeatures  `json:"features"`
-	DisableAutoCompaction bool                     `json:"disable_auto_compaction"`
+	Presets                 []string                 `json:"presets"`
+	AdditionalDirectories   []string                 `json:"additional_directories"`
+	Memory                  marotte.MemoryPreference `json:"memory"`
+	Features                marotte.SessionFeatures  `json:"features"`
+	AutoCompactionThreshold int                      `json:"auto_compaction_threshold"`
+	DisableAutoCompaction   bool                     `json:"disable_auto_compaction"`
 }
 
+// readSessionSettings is every session door's inputs, from the configDoc owner with the administrator locks applied
+// live.
 func (rt *Runtime) readSessionSettings(ctx context.Context) sessionSettings {
-	ctx = context.WithoutCancel(ctx)
-	dir := rt.lifecycle.configDir
+	doc, src := rt.configDocument(ctx)
+	s := doc.session
+	features := s.features
+	features.Workflows = lockedBool(currentLocks(rt.config.GovernanceLocks), marotte.LockWorkflows, features.Workflows)
+	// A lock that turns workflows off leaves no launch mode, so a change with them off reloads no chat.
+	if !features.Workflows {
+		features.WorkflowLaunch = ""
+	}
+	threshold := 0
+	if s.autoCompactEnabled {
+		threshold = s.autoCompactPct
+	}
 	return sessionSettings{
-		Presets:               securityPresets(ctx, dir),
-		AdditionalDirectories: rt.lifecycle.sessionDirs(ctx),
-		Memory:                memoryPreference(ctx, dir),
-		Features:              sessionFeatures(ctx, dir, currentLocks(rt.config.GovernanceLocks)),
-		DisableAutoCompaction: sessionDisablesAutoCompaction(autoCompactionPolicy(ctx, dir)),
+		Presets:                 securityPresets(s.profile),
+		AdditionalDirectories:   rt.lifecycle.sessionDirs(s.dirEntries, src == fromDefaults || s.dirsInvalid),
+		Memory:                  s.memory,
+		Features:                features,
+		AutoCompactionThreshold: threshold,
+		DisableAutoCompaction:   !s.autoCompactEnabled,
 	}
 }
 
@@ -135,17 +188,18 @@ func (rt *Runtime) sessionFingerprint(ctx context.Context) (string, bool) {
 func (rt *Runtime) chatSessionOpts(ctx context.Context, rec *marotte.Chat, ask *sessionAsk, steering []marotte.ClientSteeringDoc) *marotte.SessionOpts {
 	s := rt.readSessionSettings(ctx)
 	return &marotte.SessionOpts{
-		Role:                  marotte.SessionRoleChat,
-		Model:                 ask.model,
-		Effort:                ask.effort,
-		Mode:                  rec.CurrentModeID,
-		Thinking:              ask.thinking,
-		Presets:               s.Presets,
-		AdditionalDirectories: s.AdditionalDirectories,
-		Steering:              steering,
-		Memory:                s.Memory,
-		Features:              s.Features,
-		Supervised:            rec.SupervisedMode,
-		DisableAutoCompaction: s.DisableAutoCompaction,
+		Role:                    marotte.SessionRoleChat,
+		Model:                   ask.model,
+		Effort:                  ask.effort,
+		Mode:                    rec.CurrentModeID,
+		Thinking:                ask.thinking,
+		Presets:                 s.Presets,
+		AdditionalDirectories:   s.AdditionalDirectories,
+		Steering:                steering,
+		Memory:                  s.Memory,
+		Features:                s.Features,
+		Supervised:              rec.SupervisedMode,
+		DisableAutoCompaction:   s.DisableAutoCompaction,
+		AutoCompactionThreshold: s.AutoCompactionThreshold,
 	}
 }

@@ -23,13 +23,14 @@ func (lt *lifetime) grantedDirs(ctx context.Context) []string {
 	return granted
 }
 
-// sessionDirs is grantedDirs for a session door, logging each stored entry it does not grant.
-func (lt *lifetime) sessionDirs(ctx context.Context) []string {
-	granted, refused, err := lt.agentDirs().Granted(ctx)
-	if err != nil {
-		slog.Warn("additional directories not granted to agents: config unreadable",
-			"key", settings.KeyAdditionalDirectories, "error", logsafe.Field(err.Error()))
+// sessionDirs is the directories a session door grants from entries, the stored list, logging each it does not grant.
+// unreadable grants nothing: no readable config.json since boot, or a stored list that does not decode.
+func (lt *lifetime) sessionDirs(entries []string, unreadable bool) []string {
+	if unreadable {
+		slog.Warn("additional directories not granted to agents: config unreadable", "key", settings.KeyAdditionalDirectories)
+		return nil
 	}
+	granted, refused := lt.agentDirs().Assess(entries)
 	for _, entry := range slices.Sorted(maps.Keys(refused)) {
 		slog.Warn("additional directory not granted to agents", "key", settings.KeyAdditionalDirectories,
 			"error", logsafe.Field(refused[entry]))

@@ -13,12 +13,12 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 )
 
 // EnforceFile makes the regular file at path carry want and returns the mode the FILESYSTEM stored.
-// atomicfile.EnforceMode fchmods and fstats ONE descriptor and refuses a mismatch with
-// atomicfile.ErrModeNotStored.
+// filesafe.EnforceMode fchmods and fstats ONE descriptor and refuses a mismatch with
+// filesafe.ErrModeNotStored.
 // O_NOFOLLOW makes the kernel refuse a symlink planted at the name, and one descriptor cannot be
 // redirected by a later rename. O_NONBLOCK must stay: these opens run on the boot path, where a
 // FIFO at the name would block open(2) forever. A file already carrying want is left alone, so a
@@ -50,11 +50,11 @@ func enforceMode(path string, want os.FileMode, extraFlags int) (os.FileMode, er
 	if stored := chmodBits(fi.Mode()); stored == chmodBits(want) {
 		return stored, nil
 	}
-	return atomicfile.EnforceMode(f, want)
+	return filesafe.EnforceMode(f, want)
 }
 
 // chmodBits reduces a mode to the bits chmod(2) can set, mirroring the
-// comparison atomicfile.EnforceMode makes internally so the skip above and the
+// comparison filesafe.EnforceMode makes internally so the skip above and the
 // library's verdict cannot disagree about what "already correct" means.
 func chmodBits(m os.FileMode) os.FileMode {
 	return m.Perm() | m&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky)
@@ -155,15 +155,15 @@ func (osDisk) SyncDir(dir string) error {
 	return err
 }
 
-// Stage asks atomicfile for a 0600 birth, so even a filesystem that widens new files grants the
-// empty file nothing before WritePrivate judges it. A temp atomicfile refuses is still empty, and
-// atomicfile removes it only best effort.
+// Stage asks filesafe for a 0600 birth, so even a filesystem that widens new files grants the
+// empty file nothing before WritePrivate judges it. A temp filesafe refuses is still empty, and
+// filesafe removes it only best effort.
 func (osDisk) Stage(ctx context.Context, path string) (Staged, error) {
 	root, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
 		return nil, err
 	}
-	p, err := atomicfile.NewPendingFileInRoot(ctx, root, filepath.Base(path), atomicfile.WithMode(0o600))
+	p, err := filesafe.NewPendingFileInRoot(ctx, root, filepath.Base(path), filesafe.WithMode(0o600))
 	if err != nil {
 		_ = root.Close()
 		return nil, modeRefusal(path, err)
@@ -171,20 +171,20 @@ func (osDisk) Stage(ctx context.Context, path string) (Staged, error) {
 	return &pendingFile{PendingFile: p, root: root, path: path, tmp: filepath.Base(p.Name())}, nil
 }
 
-// modeRefusal classes atomicfile's refusal to store 0600 as the *NotPrivateError a caller matches.
+// modeRefusal classes filesafe's refusal to store 0600 as the *NotPrivateError a caller matches.
 func modeRefusal(path string, err error) error {
-	if errors.Is(err, atomicfile.ErrModeNotStored) {
+	if errors.Is(err, filesafe.ErrModeNotStored) {
 		return fmt.Errorf("%w: %w", &NotPrivateError{Path: path}, err)
 	}
 	return err
 }
 
-// pendingFile adapts atomicfile's PendingFile, whose Commit error always means the rename did not
-// happen (atomicfile.WriteError); a failed directory fsync after it is Result.Durable false. After
+// pendingFile adapts filesafe's PendingFile, whose Commit error always means the rename did not
+// happen (filesafe.WriteError); a failed directory fsync after it is Result.Durable false. After
 // any Commit call its Cleanup does nothing and its removal of a failed temp is best effort, so
 // Discard then removes tmp by name in root, which this pendingFile keeps open until it is gone.
 type pendingFile struct {
-	*atomicfile.PendingFile
+	*filesafe.PendingFile
 	root      *os.Root
 	path      string
 	tmp       string
@@ -388,9 +388,9 @@ func verifyHandle(h ModeHandle, path string) error {
 // it keeps its permission bits. An owner-only mode is enforced on the write. Any
 // other mode comes back as restore, for the caller to chmod after the write, so
 // a directory whose inherited ACL widens new files cannot refuse the save.
-func RewriteOptions(perm os.FileMode) (opts []atomicfile.Option, restore os.FileMode) {
+func RewriteOptions(perm os.FileMode) (opts []filesafe.Option, restore os.FileMode) {
 	if perm&0o077 == 0 {
-		return []atomicfile.Option{atomicfile.WithMode(perm)}, 0
+		return []filesafe.Option{filesafe.WithMode(perm)}, 0
 	}
 	return nil, perm
 }

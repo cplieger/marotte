@@ -33,33 +33,35 @@ type SegmentKind string
 // Segment kinds in rendered order: a tool call has several segments across its tool_call and tool_result, so the kind
 // disambiguates offsets and a walk through one card follows the card.
 const (
-	SegmentContent       SegmentKind = "content"
-	SegmentReasoning     SegmentKind = "reasoning"
-	SegmentToolTitle     SegmentKind = "tool_title"
-	SegmentToolDisclosed SegmentKind = "tool_disclosed"
-	SegmentToolDiff      SegmentKind = "tool_diff"
-	SegmentToolDenial    SegmentKind = "tool_denial"
-	SegmentToolInput     SegmentKind = "tool_input"
-	SegmentToolOutput    SegmentKind = "tool_output"
-	// SegmentSteer is a steer entry's text, the note the transcript renders for it.
-	SegmentSteer SegmentKind = "steer"
+	segmentContent       SegmentKind = "content"
+	segmentReasoning     SegmentKind = "reasoning"
+	segmentToolTitle     SegmentKind = "tool_title"
+	segmentToolDisclosed SegmentKind = "tool_disclosed"
+	segmentToolDiff      SegmentKind = "tool_diff"
+	segmentToolDenial    SegmentKind = "tool_denial"
+	segmentToolInput     SegmentKind = "tool_input"
+	segmentToolOutput    SegmentKind = "tool_output"
+	// segmentSteer is a steer entry's text, the note the transcript renders for it.
+	segmentSteer SegmentKind = "steer"
 	// The turn-level kinds: the prompt's text and attachment names, the plan card, and the turn_close failure reason in
 	// the footer.
-	SegmentPrompt      SegmentKind = "prompt"
-	SegmentPlan        SegmentKind = "plan"
-	SegmentAttachment  SegmentKind = "attachment"
-	SegmentTurnFailure SegmentKind = "turn_failure"
-	// SegmentWake is a turn_wake's header text (marotte.WakeSearchTexts): its label and the messages it draws, which
+	segmentPrompt      SegmentKind = "prompt"
+	segmentPlan        SegmentKind = "plan"
+	segmentAttachment  SegmentKind = "attachment"
+	segmentTurnFailure SegmentKind = "turn_failure"
+	// segmentWake is a turn_wake's header text (marotte.WakeSearchTexts): its label and the messages it draws, which
 	// their own rows then leave out.
-	SegmentWake SegmentKind = "wake"
-	// SegmentEntry is the filter-only kind: a filter query with no text yields one hit per matching entry (offset 0,
+	segmentWake SegmentKind = "wake"
+	// segmentEntry is the filter-only kind: a filter query with no text yields one hit per matching entry (offset 0,
 	// zero length).
-	SegmentEntry SegmentKind = "entry"
+	segmentEntry SegmentKind = "entry"
 )
 
 // Hit locates one match; the client fetches the turns it needs and highlights locally. Offset indexes runes inside
 // the one segment SegmentKind names on EntryID, never a whole turn.
 type Hit struct {
+	// Caller is set on a hit in a prompt or steer an API caller sent, so a result names who sent the words.
+	Caller *marotte.Caller `json:"caller,omitempty"`
 	// TurnID is the matched entry's turn.
 	TurnID string `json:"turn_id"`
 	// EntryID is the matched entry.
@@ -346,7 +348,7 @@ func appendEntryHits(sc *hitScan, e *marotte.Entry, ordinal int, q *searchQuery,
 				EntryID:     e.ID,
 				Lane:        e.Lane,
 				Turn:        ordinal,
-				SegmentKind: SegmentEntry,
+				SegmentKind: segmentEntry,
 				Excerpt:     excerptAround([]rune(first), 0, 0),
 			}
 		})
@@ -374,14 +376,25 @@ func appendSegmentHits(sc *hitScan, e *marotte.Entry, ordinal int, q *searchQuer
 				Offset:      hit.Rune,
 				SegmentLen:  len(runes),
 				Excerpt:     excerptAround(runes, hit.Rune, q.needleRunes),
+				Caller:      seg.caller,
 			}
 		})
 	}
 }
 
 type segment struct {
-	kind SegmentKind
-	text string
+	// caller is the API caller that sent a prompt's or steer's words, nil for the user's and every other span.
+	caller *marotte.Caller
+	kind   SegmentKind
+	text   string
+}
+
+// sentBy stamps c on every span of a message an API caller sent.
+func sentBy(segs []segment, c *marotte.Caller) []segment {
+	for i := range segs {
+		segs[i].caller = c
+	}
+	return segs
 }
 
 // entrySegments lists an entry's searchable spans in rendered order: text; tool_call title and input; tool_result
@@ -392,44 +405,44 @@ func entrySegments(e *marotte.Entry, t *searchTurn, names map[string]string) []s
 	switch e.Kind {
 	case marotte.EntryKindText:
 		var p marotte.EntryText
-		return oneSegment(SegmentContent, decodeText(e.Payload, &p, func() string { return p.Text }))
+		return oneSegment(segmentContent, decodeText(e.Payload, &p, func() string { return p.Text }))
 	case marotte.EntryKindThinking:
 		var p marotte.EntryThinking
-		return oneSegment(SegmentReasoning, decodeText(e.Payload, &p, func() string { return p.Text }))
+		return oneSegment(segmentReasoning, decodeText(e.Payload, &p, func() string { return p.Text }))
 	case marotte.EntryKindToolCall:
 		return toolCallSegments(t.calls[e.ID])
 	case marotte.EntryKindToolResult:
 		return toolResultPayloadSegments(e.Payload)
 	case marotte.EntryKindSteer:
 		var p marotte.EntrySteer
-		return oneSegment(SegmentSteer, decodeText(e.Payload, &p, func() string { return p.Text }))
+		return sentBy(oneSegment(segmentSteer, decodeText(e.Payload, &p, func() string { return p.Text })), p.Caller)
 	case marotte.EntryKindPlan:
 		return planSegments(e.Payload)
 	case marotte.EntryKindCompactionFailed:
 		var p marotte.EntryCompactionFailed
-		return oneSegment(SegmentContent, decodeText(e.Payload, &p, func() string { return p.Reason }))
+		return oneSegment(segmentContent, decodeText(e.Payload, &p, func() string { return p.Reason }))
 	case marotte.EntryKindSafetyBlocked:
 		var p marotte.EntrySafetyBlocked
-		return oneSegment(SegmentContent, decodeText(e.Payload, &p, func() string { return strings.Join(p.Properties, "\n") }))
+		return oneSegment(segmentContent, decodeText(e.Payload, &p, func() string { return strings.Join(p.Properties, "\n") }))
 	case marotte.EntryKindModelRouted:
 		var p marotte.EntryModelRouted
-		return oneSegment(SegmentContent, decodeText(e.Payload, &p, func() string { return p.Message }))
+		return oneSegment(segmentContent, decodeText(e.Payload, &p, func() string { return p.Message }))
 	case marotte.EntryKindModelFallback:
 		var p marotte.EntryModelFallback
-		return oneSegment(SegmentContent, decodeText(e.Payload, &p, func() string {
+		return oneSegment(segmentContent, decodeText(e.Payload, &p, func() string {
 			return strings.Join(slices.DeleteFunc([]string{p.From, p.To, p.Trigger, p.Reason}, func(s string) bool { return s == "" }), " ")
 		}))
 	case marotte.EntryKindTurnClose:
 		var p marotte.EntryTurnClose
-		return oneSegment(SegmentTurnFailure, decodeText(e.Payload, &p, func() string { return p.FailureReason }))
+		return oneSegment(segmentTurnFailure, decodeText(e.Payload, &p, func() string { return p.FailureReason }))
 	case marotte.EntryKindTurnOpen:
 		return turnOpenSegments(e.Payload)
 	case marotte.EntryKindTurnWake:
 		return turnWakeSegments(e.Payload, names)
 	case marotte.EntryKindTurnBind, marotte.EntryKindSteerAck, marotte.EntryKindCompaction,
 		marotte.EntryKindModelSwitched, marotte.EntryKindModeSwitched, marotte.EntryKindSteerDelivered,
-		marotte.EntryKindSteerCleared, marotte.EntryKindRunNamed:
-		// A compaction summary restates history searchable at its source; bind and switch render no text. An ack's words
+		marotte.EntryKindSteerCleared, marotte.EntryKindRunNamed, marotte.EntryKindContextReset:
+		// A compaction summary restates history searchable at its source; bind, switch and reset render no text. An ack's words
 		// are the one rendered prose left out of the index.
 		return nil
 	}
@@ -459,7 +472,7 @@ func planSegments(payload json.RawMessage) []segment {
 	}
 	segs := make([]segment, 0, len(p.Entries))
 	for i := range p.Entries {
-		segs = append(segs, oneSegment(SegmentPlan, p.Entries[i].Content)...)
+		segs = append(segs, oneSegment(segmentPlan, p.Entries[i].Content)...)
 	}
 	return segs
 }
@@ -480,7 +493,7 @@ func turnWakeSegments(payload json.RawMessage, names map[string]string) []segmen
 	named := marotte.NamedWake(&w, names)
 	var segs []segment
 	for _, text := range marotte.WakeSearchTexts(&named) {
-		segs = append(segs, oneSegment(SegmentWake, text)...)
+		segs = append(segs, oneSegment(segmentWake, text)...)
 	}
 	return segs
 }
@@ -492,11 +505,11 @@ func turnOpenSegments(payload json.RawMessage) []segment {
 	if json.Unmarshal(payload, &p) != nil || p.Prompt == nil {
 		return nil
 	}
-	segs := oneSegment(SegmentPrompt, p.Prompt.Text)
+	segs := oneSegment(segmentPrompt, p.Prompt.Text)
 	for i := range p.Prompt.Attachments {
-		segs = append(segs, oneSegment(SegmentAttachment, p.Prompt.Attachments[i].Name)...)
+		segs = append(segs, oneSegment(segmentAttachment, p.Prompt.Attachments[i].Name)...)
 	}
-	return segs
+	return sentBy(segs, p.Prompt.Caller)
 }
 
 // toolCallSegments is a call's create half: title and input, as the card renders them. Claim, diff, denial and
@@ -505,9 +518,9 @@ func toolCallSegments(c *searchCall) []segment {
 	if c == nil || c.call == nil {
 		return nil
 	}
-	segs := oneSegment(SegmentToolTitle, c.call.Title)
+	segs := oneSegment(segmentToolTitle, c.call.Title)
 	if input := inputLeafText(c.call.Input, c.diff); input != "" {
-		segs = append(segs, segment{kind: SegmentToolInput, text: input})
+		segs = append(segs, segment{kind: segmentToolInput, text: input})
 	}
 	return segs
 }
@@ -518,15 +531,15 @@ func toolCallSegments(c *searchCall) []segment {
 func toolResultSegments(res *marotte.EntryToolResult) []segment {
 	var segs []segment
 	if res.Disclosed != nil {
-		segs = append(segs, oneSegment(SegmentToolDisclosed, res.Disclosed.DisplayName)...)
+		segs = append(segs, oneSegment(segmentToolDisclosed, res.Disclosed.DisplayName)...)
 	}
 	if len(res.Diffs) > 0 {
-		segs = append(segs, oneSegment(SegmentToolDiff, res.Diffs[0].NewText)...)
+		segs = append(segs, oneSegment(segmentToolDiff, res.Diffs[0].NewText)...)
 	}
 	if res.Denial != nil {
-		segs = append(segs, oneSegment(SegmentToolDenial, res.Denial.Resource)...)
+		segs = append(segs, oneSegment(segmentToolDenial, res.Denial.Resource)...)
 	}
-	return append(segs, oneSegment(SegmentToolOutput, res.Output)...)
+	return append(segs, oneSegment(segmentToolOutput, res.Output)...)
 }
 
 // inputLeafDedupeMin is the leaf length at which a leaf found verbatim in the diff text stops being

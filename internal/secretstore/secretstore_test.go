@@ -5,17 +5,26 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 // realKey has the exact shape KAS derives (sha256("http://127.0.0.1:46877/mcp" + "|")).
 const realKey = "kiro.mcp.2a0a3d1d4672ffaff77fcbe95f21be210e2e444f1b152fb537773dd72a3ddf3a.client"
+
+// keyOf is realKey's server configuration's key for kind.
+func keyOf(kind string) string { return strings.TrimSuffix(realKey, "client") + kind }
+
+// grantKey is the client key of the i-th distinct server configuration.
+func grantKey(i int) string { return fmt.Sprintf("kiro.mcp.%064x.client", i) }
 
 func newStore(t *testing.T) *Store {
 	t.Helper()
@@ -80,7 +89,7 @@ func TestFileIs0600(t *testing.T) {
 func TestLoadTightensLoosePerms(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, fileName)
-	seeded := `{"secrets":{"k":"` + base64.StdEncoding.EncodeToString([]byte("v")) + `"}}`
+	seeded := `{"secrets":{"` + realKey + `":"` + base64.StdEncoding.EncodeToString([]byte("v")) + `"}}`
 	if err := os.WriteFile(path, []byte(seeded), 0o644); err != nil {
 		t.Fatalf("seed store: %v", err)
 	}
@@ -95,7 +104,7 @@ func TestLoadTightensLoosePerms(t *testing.T) {
 	if perm := info.Mode().Perm(); perm != 0o600 {
 		t.Errorf("store perms = %#o after load, want 0600 (load must tighten)", perm)
 	}
-	if v, ok := s.Get("k"); !ok || v != "v" {
+	if v, ok := s.Get(realKey); !ok || v != "v" {
 		t.Errorf("Get() = (%q, %v), want (\"v\", true): tightening must not lose the contents", v, ok)
 	}
 }
@@ -130,7 +139,7 @@ func TestDelete(t *testing.T) {
 // TestDeleteAbsentDoesNotWrite pins that a no-op delete leaves the file alone.
 func TestDeleteAbsentDoesNotWrite(t *testing.T) {
 	s := newStore(t)
-	if err := s.Delete(t.Context(), "never-stored"); err != nil {
+	if err := s.Delete(t.Context(), realKey); err != nil {
 		t.Fatalf("Delete(absent) error = %v", err)
 	}
 	if _, err := os.Stat(s.path); !errors.Is(err, os.ErrNotExist) {
@@ -196,14 +205,14 @@ func TestBounds(t *testing.T) {
 	t.Run("entry count", func(t *testing.T) {
 		s := newStore(t)
 		for i := range maxEntries {
-			if err := s.Set(ctx, "k"+string(rune('a'+i%26))+strings.Repeat("z", i/26+1), "v"); err != nil {
+			if err := s.Set(ctx, grantKey(i), "v"); err != nil {
 				t.Fatalf("Set(#%d) error = %v", i, err)
 			}
 		}
 		if got := s.count(); got != maxEntries {
 			t.Fatalf("count = %d, want %d", got, maxEntries)
 		}
-		if err := s.Set(ctx, "one-too-many", "v"); !errors.Is(err, errTooLarge) {
+		if err := s.Set(ctx, grantKey(maxEntries), "v"); !errors.Is(err, errTooLarge) {
 			t.Errorf("Set() past the entry cap error = %v, want ErrTooLarge", err)
 		}
 		// An OVERWRITE at the cap is still allowed: KAS refreshes a token set in place.
@@ -421,7 +430,7 @@ func TestOnDiskShape(t *testing.T) {
 func TestUndecodableEntryDropped(t *testing.T) {
 	dir := t.TempDir()
 	good := base64.StdEncoding.EncodeToString([]byte("keepme"))
-	seeded := `{"secrets":{"good":"` + good + `","bad":"!!!not base64!!!"}}`
+	seeded := `{"secrets":{"` + keyOf("client") + `":"` + good + `","` + keyOf("tokens") + `":"!!!not base64!!!"}}`
 	if err := os.WriteFile(filepath.Join(dir, fileName), []byte(seeded), 0o600); err != nil {
 		t.Fatalf("seed store: %v", err)
 	}
@@ -429,10 +438,10 @@ func TestUndecodableEntryDropped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v, want nil", err)
 	}
-	if v, ok := s.Get("good"); !ok || v != "keepme" {
+	if v, ok := s.Get(keyOf("client")); !ok || v != "keepme" {
 		t.Errorf("Get(good) = (%q, %v), want (\"keepme\", true)", v, ok)
 	}
-	if _, ok := s.Get("bad"); ok {
+	if _, ok := s.Get(keyOf("tokens")); ok {
 		t.Error("Get(bad) ok = true, want false: an undecodable entry must be dropped")
 	}
 }
@@ -441,6 +450,8 @@ func TestUndecodableEntryDropped(t *testing.T) {
 // round-trips byte-for-byte, a rejected one leaves no trace, nothing escapes the directory.
 func FuzzKeysAndValues(f *testing.F) {
 	f.Add(realKey, `{"client_id":"x"}`)
+	f.Add(keyOf("verifier"), "pkce")
+	f.Add(strings.ToUpper(realKey), "not the grant's case")
 	f.Add("", "")
 	f.Add("../../etc/passwd", "pwned")
 	f.Add("kiro.mcp.../../../x.client", "traversal")
@@ -472,13 +483,18 @@ func FuzzKeysAndValues(f *testing.F) {
 			if got != value {
 				t.Errorf("round-trip changed the value: got %q, want %q", got, value)
 			}
-			// Durability: a fresh Store over the same dir sees the same bytes.
+			// Durability: a fresh Store over the same dir sees the same bytes for a grant key and
+			// nothing for any other.
 			reopened, rErr := New(dir)
 			if rErr != nil {
 				t.Fatalf("New() (reopen) error = %v", rErr)
 			}
-			if v, ok2 := reopened.Get(key); !ok2 || v != value {
+			v, ok2 := reopened.Get(key)
+			if durableKey.MatchString(key) && (!ok2 || v != value) {
 				t.Errorf("reopen lost the pair: got (%q, %v), want (%q, true)", v, ok2, value)
+			}
+			if !durableKey.MatchString(key) && ok2 {
+				t.Errorf("reopen served the non-durable key %q from disk", key)
 			}
 		}
 
@@ -491,6 +507,164 @@ func FuzzKeysAndValues(f *testing.F) {
 			if e.Name() != fileName {
 				t.Errorf("store created an unexpected entry %q from key %q", e.Name(), key)
 			}
+		}
+	})
+}
+
+// storedKeys returns the keys the file at dir holds.
+func storedKeys(t *testing.T, dir string) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, fileName))
+	if err != nil {
+		t.Fatalf("read store: %v", err)
+	}
+	var f file
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatalf("unmarshal store: %v", err)
+	}
+	return slices.Sorted(maps.Keys(f.Secrets))
+}
+
+// TestOnlyClientAndTokensPersist pins that the file holds the grant and nothing else: KAS reads the verifier and the
+// discovery state from storage only on a new connection object, so persisting them carries a spent verifier and a
+// stale authorization server across restarts.
+func TestOnlyClientAndTokensPersist(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	ctx := t.Context()
+	keys := []string{keyOf("client"), keyOf("tokens"), keyOf("verifier"), keyOf("discovery"), "kiro.mcp.deadbeef.tokens"}
+	for _, k := range keys {
+		if err := s.Set(ctx, k, "v-"+k); err != nil {
+			t.Fatalf("Set(%q) error = %v", k, err)
+		}
+	}
+
+	if got, want := storedKeys(t, dir), []string{keyOf("client"), keyOf("tokens")}; !slices.Equal(got, want) {
+		t.Errorf("file keys = %v, want only %v", got, want)
+	}
+	reopened, err := New(dir)
+	if err != nil {
+		t.Fatalf("New() (reopen) error = %v", err)
+	}
+	for _, k := range keys {
+		_, ok := reopened.Get(k)
+		if want := k == keyOf("client") || k == keyOf("tokens"); ok != want {
+			t.Errorf("after a reopen Get(%q) ok = %v, want %v", k, ok, want)
+		}
+	}
+}
+
+// TestSignInStateServesWithinTheStore pins that a memory-only key reads back: KAS's redirect callback can land on
+// another connection object, whose verifier falls back to storage.
+func TestSignInStateServesWithinTheStore(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+	for _, k := range []string{keyOf("verifier"), keyOf("discovery")} {
+		if err := s.Set(ctx, k, "state"); err != nil {
+			t.Fatalf("Set(%q) error = %v", k, err)
+		}
+		if v, ok := s.Get(k); !ok || v != "state" {
+			t.Errorf("Get(%q) = (%q, %v), want (\"state\", true)", k, v, ok)
+		}
+	}
+	if err := s.Delete(ctx, keyOf("verifier")); err != nil {
+		t.Fatalf("Delete(verifier) error = %v", err)
+	}
+	if _, ok := s.Get(keyOf("verifier")); ok {
+		t.Error("Get(verifier) ok = true after its Delete, want false")
+	}
+}
+
+// TestForgetSignInStateKeepsTheGrant pins the per-generation reset: the memory half goes, the grant stays.
+func TestForgetSignInStateKeepsTheGrant(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+	for _, k := range []string{keyOf("client"), keyOf("tokens"), keyOf("verifier"), keyOf("discovery")} {
+		if err := s.Set(ctx, k, "v"); err != nil {
+			t.Fatalf("Set(%q) error = %v", k, err)
+		}
+	}
+
+	s.ForgetSignInState()
+
+	for _, k := range []string{keyOf("verifier"), keyOf("discovery")} {
+		if _, ok := s.Get(k); ok {
+			t.Errorf("Get(%q) ok = true after ForgetSignInState, want false", k)
+		}
+	}
+	for _, k := range []string{keyOf("client"), keyOf("tokens")} {
+		if _, ok := s.Get(k); !ok {
+			t.Errorf("Get(%q) ok = false after ForgetSignInState, want the grant kept", k)
+		}
+	}
+	var none *Store
+	none.ForgetSignInState()
+}
+
+// TestLoadDropsNonDurableEntries pins the file boundary: an entry Set would not have written is not served, and the
+// next persist rewrites the file without it.
+func TestLoadDropsNonDurableEntries(t *testing.T) {
+	dir := t.TempDir()
+	enc := func(v string) string { return base64.StdEncoding.EncodeToString([]byte(v)) }
+	seeded := `{"secrets":{"` + keyOf("client") + `":"` + enc("grant") + `","` + keyOf("discovery") + `":"` + enc("stale") +
+		`","` + keyOf("verifier") + `":"` + enc("spent") + `"}}`
+	if err := os.WriteFile(filepath.Join(dir, fileName), []byte(seeded), 0o600); err != nil {
+		t.Fatalf("seed store: %v", err)
+	}
+	s, err := New(dir)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if v, ok := s.Get(keyOf("client")); !ok || v != "grant" {
+		t.Errorf("Get(client) = (%q, %v), want (\"grant\", true)", v, ok)
+	}
+	for _, k := range []string{keyOf("discovery"), keyOf("verifier")} {
+		if v, ok := s.Get(k); ok {
+			t.Errorf("Get(%q) = %q from the file, want a miss", k, v)
+		}
+	}
+
+	if err := s.Set(t.Context(), keyOf("tokens"), "t"); err != nil {
+		t.Fatalf("Set(tokens) error = %v", err)
+	}
+	if got, want := storedKeys(t, dir), []string{keyOf("client"), keyOf("tokens")}; !slices.Equal(got, want) {
+		t.Errorf("file keys after the next persist = %v, want %v", got, want)
+	}
+}
+
+// TestMemoryHalfIsBounded pins that the memory half has its own entry cap and the same value cap.
+func TestMemoryHalfIsBounded(t *testing.T) {
+	ctx := t.Context()
+
+	t.Run("entry count", func(t *testing.T) {
+		s := newStore(t)
+		for i := range maxSignInEntries {
+			if err := s.Set(ctx, fmt.Sprintf("kiro.mcp.%064x.verifier", i), "v"); err != nil {
+				t.Fatalf("Set(#%d) error = %v", i, err)
+			}
+		}
+		over := fmt.Sprintf("kiro.mcp.%064x.verifier", maxSignInEntries)
+		if err := s.Set(ctx, over, "v"); !errors.Is(err, errTooLarge) {
+			t.Errorf("Set() past the memory cap error = %v, want errTooLarge", err)
+		}
+		if err := s.Set(ctx, fmt.Sprintf("kiro.mcp.%064x.verifier", 0), "replaced"); err != nil {
+			t.Errorf("Set(existing key) at the memory cap error = %v, want nil", err)
+		}
+		if err := s.Set(ctx, realKey, "grant"); err != nil {
+			t.Errorf("Set(grant) with the memory half full error = %v, want nil: the halves cap apart", err)
+		}
+	})
+
+	t.Run("value over limit", func(t *testing.T) {
+		s := newStore(t)
+		if err := s.Set(ctx, keyOf("discovery"), strings.Repeat("x", maxValueBytes+1)); !errors.Is(err, errTooLarge) {
+			t.Errorf("Set(oversize discovery) error = %v, want errTooLarge", err)
+		}
+		if _, ok := s.Get(keyOf("discovery")); ok {
+			t.Error("a rejected Set left the key present")
 		}
 	})
 }

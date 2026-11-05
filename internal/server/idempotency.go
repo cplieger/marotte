@@ -12,12 +12,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // idempotencyHeader is the request header carrying the client's
-// idempotency key, set by @cplieger/actions apiAction.
+// idempotency key, set by @cplieger/ui/actions apiAction.
 const idempotencyHeader = "Idempotency-Key"
 
 // idempotencyTTL: 5 minutes is long enough to cover a client's network-retry
@@ -228,7 +228,7 @@ func (c *idempotencyCache) middleware(next http.Handler) http.Handler {
 		}
 
 		// The deferred resolve clears the in-flight marker even if the handler panics.
-		cw := &idempotencyWriter{rec: webhttp.NewStatusRecorder(w), limit: c.maxBody}
+		cw := &idempotencyWriter{rec: httpserver.NewStatusRecorder(w), limit: c.maxBody}
 		settled := false
 		defer func() {
 			if !settled {
@@ -261,7 +261,7 @@ func writeIdempotentReplay(w http.ResponseWriter, e *idempotencyEntry) {
 // implements only http.ResponseWriter, deliberately not Flusher/Hijacker/ReaderFrom, so every
 // byte flows through Write into the buffer. Past limit it sets overflow and stops buffering.
 type idempotencyWriter struct {
-	rec      *webhttp.StatusRecorder
+	rec      *httpserver.StatusRecorder
 	buf      bytes.Buffer
 	limit    int
 	overflow bool

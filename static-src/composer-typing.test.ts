@@ -42,6 +42,7 @@ const CHAT = "c1";
 /** Every write to the box's value or selection that the test itself did not make. */
 const writes: string[] = [];
 let driving = false;
+const cancelled = vi.fn();
 
 function box(): HTMLTextAreaElement {
   return document.getElementById("prompt-input") as HTMLTextAreaElement;
@@ -135,10 +136,7 @@ beforeAll(() => {
     </form>`;
   document.documentElement.setAttribute("data-pointer", "coarse");
   watch(box());
-  initPromptInput(
-    () => undefined,
-    () => undefined,
-  );
+  initPromptInput(() => undefined, cancelled);
   initComposerState();
   initSlashMenu(() => undefined);
 });
@@ -148,6 +146,7 @@ afterEach(() => {
     box().value = "";
   });
   writes.length = 0;
+  cancelled.mockClear();
 });
 
 /** What else is happening in the app while the user types. */
@@ -309,5 +308,17 @@ describe("typing on an iPhone keyboard", () => {
     expect(composing).toBeGreaterThan(0);
     expect(shown(el)).toBe(`${lead}what\u2019s up|`);
     expect(writes).toEqual([]);
+  });
+});
+
+describe("Escape in the composer", () => {
+  it("closes the / menu mid-turn and leaves the turn running", async () => {
+    await begin("slash menu open", "/what");
+    drive(() => {
+      setSendState({ kind: "streaming" });
+    });
+    await userEvent.keyboard("{Escape}");
+    expect(document.getElementById("slash-menu")?.hidden).toBe(true);
+    expect(cancelled).not.toHaveBeenCalled();
   });
 });

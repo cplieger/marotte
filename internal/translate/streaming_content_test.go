@@ -8,9 +8,9 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
-	"github.com/cplieger/slogx/capture"
 )
 
 var errBoom = errors.New("persist boom")

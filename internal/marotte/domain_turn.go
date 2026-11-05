@@ -30,13 +30,16 @@ const (
 // TurnResult is what a finalized turn reports. Immutable once the turn's
 // completion handle fires.
 type TurnResult struct {
-	Interrupt InterruptCause
-	Stop      StopReason
+	Stop StopReason
 	// Turn is the id of the turn this result belongs to: the turn_open entry's id,
 	// which is every handle on a turn under the log.
 	Turn string
 	// Reason is the failure reason the turn_close carries, empty on a clean close.
 	Reason string
+	// EngineErrorType is the errorType of the turn's last display_error as KAS sent
+	// it (possibly a minified name), empty when none arrived. A prompt failing inside
+	// the execution gets a reply carrying prose only, so this is where KAS names the class.
+	EngineErrorType string
 	// EmittedNothing is whether the turn produced content, measured AFTER the
 	// steering filter's withheld text settled back in: a turn whose only text sits
 	// in that carry reads as empty to any earlier measurement.

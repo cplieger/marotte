@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,9 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/workspace"
-	"github.com/cplieger/webhttp/v4"
 )
 
 func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +121,9 @@ func (h *Handler) clone(ctx context.Context, remote string, onProgress func(stri
 			h.discardCloneDebris(dir, name, true)
 		}
 		return out, err
+	case destForeign:
+		// Whatever sits there predates the clone, so git reports it and a failure removes nothing.
+		return runTransfer(ctx, h.workDir, onProgress, "clone", "--progress", "--", remote)
 	}
 	// destAbsent: git created the directory, so a failure removes it whole; also the safe default
 	// for a destState added later.
@@ -182,28 +186,34 @@ func (h *Handler) discardCloneDebris(dir, name string, sweepAll bool) {
 type destState int
 
 const (
-	// destAbsent is nothing at the name, or something that is not a
-	// directory. Both are git's to report.
+	// destAbsent is nothing at the name: git creates the directory, so a failed clone removes it whole.
 	destAbsent destState = iota
+	// destForeign is a name that holds something other than a directory, or that could not be read. Git reports it,
+	// and a failed clone removes nothing there.
+	destForeign
 	destEmpty
 	destRepo
 	destOccupied
 )
 
-// A symlink reads as destAbsent deliberately: adopting one would write through it to a target the
+// A symlink reads as destForeign deliberately: adopting one would write through it to a target the
 // caller never named, so it stays git's error to report.
 func inspectCloneDest(ctx context.Context, dir string) destState {
 	fi, err := os.Lstat(dir)
-	if err != nil || !fi.IsDir() {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
 		return destAbsent
+	case err != nil || !fi.IsDir():
+		return destForeign
 	}
 	if IsRepo(ctx, dir) {
 		return destRepo
 	}
 	ents, err := os.ReadDir(dir)
-	if err != nil || len(ents) == 0 {
-		// An unreadable directory falls through to plain clone, whose
-		// failure names the real reason.
+	switch {
+	case err != nil:
+		return destForeign
+	case len(ents) == 0:
 		return destEmpty
 	}
 	return destOccupied
@@ -292,13 +302,13 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	remote, err := gitCmd(r.Context(), dir, subRemote, "get-url", remoteOrigin)
 	if err != nil || remote == "" {
 		slog.Warn("git reclone: origin lookup failed", "repo", body.Repo, "error", err)
-		webhttp.WriteJSON(w, httpreply.ErrorJSON("no origin remote"))
+		httpserver.WriteJSON(w, httpreply.ErrorJSON("no origin remote"))
 		return
 	}
 	// The origin URL came from git config and may name another transport, so handleClone's scheme
 	// allowlist is re-applied BEFORE the delete.
 	if !isAllowedRemoteScheme(remote) {
-		webhttp.WriteJSON(w, httpreply.ErrorJSON("origin has unsupported scheme for re-clone"))
+		httpserver.WriteJSON(w, httpreply.ErrorJSON("origin has unsupported scheme for re-clone"))
 		return
 	}
 	slog.Info("git reclone starting", "repo", body.Repo)
@@ -310,7 +320,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Error("git reclone: remove failed", "repo", body.Repo, "error", rmErr)
-		webhttp.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
+		httpserver.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
 		return
 	}
 	// `--`: a prior malicious clone could have stored a `-flag` origin.

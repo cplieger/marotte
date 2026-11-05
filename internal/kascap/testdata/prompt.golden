@@ -1,4 +1,4 @@
-{"contextBreakdown":"detailed"}
-{"contextBreakdown":"detailed","outputStyle":"concise"}
+{"contextBreakdown":"detailed","ttft":true,"userMessageTag":"t-0000000000000001"}
+{"contextBreakdown":"detailed","outputStyle":"concise","ttft":true,"userMessageTag":"t-0000000000000002"}
 {"displayText":"continue with the plan"}
-{"contextBreakdown":"detailed","displayText":"Merging findings from a tangent"}
+{"contextBreakdown":"detailed","displayText":"Merging findings from a tangent","ttft":true,"userMessageTag":"t-0000000000000003"}

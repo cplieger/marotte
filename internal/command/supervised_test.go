@@ -4,10 +4,12 @@ package command
 // tests pin the string.
 
 import (
+	"cmp"
 	"encoding/json"
 	"net/http"
 	"testing"
 
+	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -41,7 +43,7 @@ func TestCmdSetSupervisedMode_SendsAutopilotAsAString(t *testing.T) {
 			b := &recordingBridge{result: map[string]any{}, sessionID: "sess-1"}
 			host := newBridgeHost(store, b)
 
-			_, err := cmdSetSupervisedMode(t.Context(), host, host, supervisedReq(t, "c1", tc.enabled))
+			_, err := cmdSetSupervisedMode(t.Context(), host, host, keylock.New(cmp.Compare[marotte.ChatID]), supervisedReq(t, "c1", tc.enabled))
 
 			if statusOf(err) != http.StatusOK {
 				t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -73,7 +75,7 @@ func TestCmdSetSupervisedMode_PersistsTheChoiceOnTheChat(t *testing.T) {
 	seedEmptyChat(t, store, "c1")
 	host := newBridgeHost(store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 
-	if _, err := cmdSetSupervisedMode(t.Context(), host, host, supervisedReq(t, "c1", true)); err != nil {
+	if _, err := cmdSetSupervisedMode(t.Context(), host, host, keylock.New(cmp.Compare[marotte.ChatID]), supervisedReq(t, "c1", true)); err != nil {
 		t.Fatalf("CmdSetSupervisedMode: %v", err)
 	}
 

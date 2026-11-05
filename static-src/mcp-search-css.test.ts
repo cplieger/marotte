@@ -328,7 +328,7 @@ describe("the search button reports a query in flight", () => {
     searchBtn.setAttribute("aria-busy", "true");
 
     expect(getComputedStyle(glyph).display).toBe("none");
-    const ring = getComputedStyle(searchBtn, "::after");
+    const ring = getComputedStyle(searchBtn, "::before");
     expect(ring.animationName).toBe("vk-spin");
     expect(ring.animationDuration).toBe("0.6s");
     expect(ring.animationIterationCount).toBe("infinite");

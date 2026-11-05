@@ -1,0 +1,126 @@
+// Property test verifying the generated event table's completeness: every listed event
+// name resolves to its generated decoder, and decoding keeps output valid JSON.
+
+import { describe, it, expect } from "vitest";
+import fc from "fast-check";
+import { lookupSSEDecoder } from "../bus.js";
+import * as decoders from "./decoders.gen.js";
+
+// An event removed from both the Go registry and events.gen.ts passes the drift gate, so
+// this list is what notices it.
+const registeredEvents = [
+  "agent_notice",
+  "chat_created",
+  "chat_deleted",
+  "chat_updated",
+  "code_references",
+  "connected",
+  "decision_settled",
+  "draft_changed",
+  "elicitation_needed",
+  "engine_status",
+  "entry_appended",
+  "entry_delta",
+  "entry_opened",
+  "entry_sealed",
+  "error",
+  "forge_inventory",
+  "governance_state",
+  "knowledge_indexing",
+  "mcp_connected",
+  "mcp_disconnected",
+  "mcp_failed",
+  "mcp_oauth_needed",
+  "mcp_sign_in_open",
+  "notification",
+  "open_external_url",
+  "pending_snapshot",
+  "permission_needed",
+  "policy_error",
+  "run_asks",
+  "run_finished",
+  "run_progress",
+  "run_started",
+  "safety_properties",
+  "safety_status",
+  "settings_updated",
+  "spec_approved",
+  "spec_changed",
+  "status_snapshot",
+  "steer_queued",
+  "system_notice",
+  "tabs_changed",
+  "tangent_merged",
+  "terminal_created",
+  "terminal_exited",
+  "terminal_output",
+  "tool_job_changed",
+  "tool_job_output",
+  "tool_progress",
+  "turn_closed",
+  "turn_opened",
+  "user_input_needed",
+] as const;
+
+describe("wire event table completeness", () => {
+  it("every registered event has a decoder via lookupSSEDecoder", () => {
+    for (const eventName of registeredEvents) {
+      const decoder = lookupSSEDecoder(eventName);
+      expect(decoder, `missing decoder for ${eventName}`).toBeDefined();
+    }
+  });
+
+  it("every registered event maps to a real exported generated decoder", () => {
+    // Each registered event must resolve (lookupSSEDecoder) to a function decoders.gen.ts exports, not
+    // a stub, a stale name or nothing.
+    const exportedDecoders = new Set<unknown>(
+      Object.values(decoders).filter((v) => typeof v === "function"),
+    );
+    for (const eventName of registeredEvents) {
+      const decoder = lookupSSEDecoder(eventName);
+      expect(
+        exportedDecoders.has(decoder),
+        `${eventName} does not resolve to a decoder exported by decoders.gen.ts`,
+      ).toBe(true);
+    }
+  });
+
+  it("registered decoders reject the empty object with a TypeError (never another error class)", () => {
+    // Exhaustive over registered events. An empty object must be rejected through validators.gen.ts's
+    // TypeError, not another crash; a payload with no required fields (whoami) may decode {}.
+    for (const eventName of registeredEvents) {
+      const decoder = lookupSSEDecoder(eventName);
+      expect(decoder, `missing decoder for ${eventName}`).toBeDefined();
+      try {
+        decoder?.({});
+      } catch (e) {
+        expect(e, `${eventName} threw a non-TypeError on {}`).toBeInstanceOf(TypeError);
+      }
+    }
+  });
+
+  it("JSON round-trip stability: stringify(decode(x)) is valid JSON", () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(...registeredEvents),
+        fc.dictionary(fc.string(), fc.jsonValue()),
+        (eventName, payload) => {
+          const decoder = lookupSSEDecoder(eventName);
+          expect(decoder).toBeDefined();
+          if (!decoder) {
+            return;
+          }
+          try {
+            const decoded = decoder(payload);
+            const serialized = JSON.stringify(decoded);
+            // Must be valid JSON (no undefined values leaked).
+            expect(JSON.parse(serialized)).toBeDefined();
+          } catch {
+            // Decoder rejecting invalid input is fine.
+          }
+        },
+      ),
+      { numRuns: 50 },
+    );
+  });
+});

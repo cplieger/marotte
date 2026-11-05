@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/slogx/capture"
-	"github.com/cplieger/webhttp/v4"
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/go/textsafe"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -127,7 +127,7 @@ func TestRepoFromQuery(t *testing.T) {
 }
 
 func TestNewHandler_Fields(t *testing.T) {
-	h := NewHandler("/work")
+	h := newTestHandler(t, "/work")
 	if h.workDir != "/work" {
 		t.Errorf("workDir = %q, want %q", h.workDir, "/work")
 	}
@@ -160,7 +160,7 @@ func TestHandleShow_Rejections(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := NewHandler(t.TempDir())
+			h := newTestHandler(t, t.TempDir())
 			req := httptest.NewRequest(http.MethodGet, "/api/git/show", nil)
 			q := req.URL.Query()
 			if tc.path != "" {
@@ -188,7 +188,7 @@ func TestHandleShow_Rejections(t *testing.T) {
 // what keeps a real failure legible: folded together, a broken object database renders
 // as "this file is brand new" and silently claims every line was added.
 func TestHandleShow_PathOutsideEveryRepoIsNotAFailure(t *testing.T) {
-	h := NewHandler(t.TempDir())
+	h := newTestHandler(t, t.TempDir())
 	req := httptest.NewRequest(http.MethodGet, "/api/git/show?path=nonexistent", nil)
 	rec := httptest.NewRecorder()
 	h.handleShow(rec, req)
@@ -219,7 +219,7 @@ func TestHandleShow_ResolvesTheOwningRepoWhenNoneIsNamed(t *testing.T) {
 	initFixtureRepo(t, sub)
 	writeCommit(t, sub, "tracked.txt", "from the subrepo\n", "add tracked")
 
-	h := NewHandler(work)
+	h := newTestHandler(t, work)
 	req := httptest.NewRequest(http.MethodGet, "/api/git/show?path=sub/tracked.txt", nil)
 	rec := httptest.NewRecorder()
 	h.handleShow(rec, req)
@@ -249,7 +249,7 @@ func TestHandleShow_ResolvesTheOwningRepoWhenNoneIsNamed(t *testing.T) {
 func TestHandleShow_MissingFileInARepoReturnsEmptyContent(t *testing.T) {
 	work := t.TempDir()
 	initFixtureRepo(t, work)
-	h := NewHandler(work)
+	h := newTestHandler(t, work)
 	req := httptest.NewRequest(http.MethodGet, "/api/git/show?path=never-committed.txt", nil)
 	rec := httptest.NewRecorder()
 	h.handleShow(rec, req)
@@ -266,7 +266,7 @@ func TestHandleShow_MissingFileInARepoReturnsEmptyContent(t *testing.T) {
 func TestHandleShow_AbsentAtRefCarriesTheMarker(t *testing.T) {
 	work := t.TempDir()
 	initFixtureRepo(t, work)
-	h := NewHandler(work)
+	h := newTestHandler(t, work)
 
 	tests := []struct {
 		name        string
@@ -311,7 +311,7 @@ func TestHandleShow_ExplicitRepoIsNotReResolved(t *testing.T) {
 	initFixtureRepo(t, sub)
 	writeCommit(t, sub, "tracked.txt", "named\n", "add tracked")
 
-	h := NewHandler(work)
+	h := newTestHandler(t, work)
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/git/show?repo=sub&path=tracked.txt", nil)
 	rec := httptest.NewRecorder()
@@ -333,7 +333,7 @@ func TestOwnerOf(t *testing.T) {
 		}
 		initFixtureRepo(t, dir)
 	}
-	h := NewHandler(work)
+	h := newTestHandler(t, work)
 
 	tests := []struct {
 		name      string
@@ -379,7 +379,7 @@ func TestOwnerOf(t *testing.T) {
 // With no repository anywhere there is no owner, which is what makes the
 // handler's not-in-repo answer reachable.
 func TestOwnerOf_NoRepositoryMeansNoOwner(t *testing.T) {
-	h := NewHandler(t.TempDir())
+	h := newTestHandler(t, t.TempDir())
 	if repo, inner, ok := h.ownerOf(t.Context(), "anything.go"); ok {
 		t.Errorf("ownerOf = (%q, %q, true), want no owner in a workspace with no repos", repo, inner)
 	}
@@ -508,7 +508,7 @@ func TestDecodePostBodyOptional_EmptyBodyIgnored(t *testing.T) {
 // push/pull/stash against the wrong tree and answers 200. The status is what proves git
 // was never reached — writeCmdResult answers 200 either way, so only the decode refuses.
 func TestSyncHandlers_OversizeBodyRefusedBeforeGit(t *testing.T) {
-	body := `{"repo":"` + strings.Repeat("A", int(webhttp.MaxJSONBody)) + `"}`
+	body := `{"repo":"` + strings.Repeat("A", int(httpserver.MaxJSONBody)) + `"}`
 
 	tests := []struct {
 		handler func(h *Handler) http.HandlerFunc
@@ -521,7 +521,7 @@ func TestSyncHandlers_OversizeBodyRefusedBeforeGit(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewHandler(t.TempDir())
+			h := newTestHandler(t, t.TempDir())
 			req := httptest.NewRequest(http.MethodPost, "/api/git/"+tt.name, strings.NewReader(body))
 			rec := httptest.NewRecorder()
 
@@ -529,7 +529,7 @@ func TestSyncHandlers_OversizeBodyRefusedBeforeGit(t *testing.T) {
 
 			if rec.Code != http.StatusRequestEntityTooLarge {
 				t.Errorf("%s with a %d-byte body (cap %d): code = %d, want %d",
-					tt.name, len(body), webhttp.MaxJSONBody, rec.Code, http.StatusRequestEntityTooLarge)
+					tt.name, len(body), httpserver.MaxJSONBody, rec.Code, http.StatusRequestEntityTooLarge)
 			}
 			if !strings.Contains(rec.Body.String(), "request body too large") {
 				t.Errorf("%s with an oversize body: body = %q, want it to name the refusal",
@@ -744,7 +744,7 @@ func TestSanitizeRepoPaths_TooManyPathsRejected(t *testing.T) {
 }
 
 func TestHandleClone_MalformedBodyRejected(t *testing.T) {
-	h := NewHandler(t.TempDir())
+	h := newTestHandler(t, t.TempDir())
 	req := httptest.NewRequest(http.MethodPost, "/api/git/clone", strings.NewReader("not json"))
 	rec := httptest.NewRecorder()
 	h.handleClone(rec, req)
@@ -754,7 +754,7 @@ func TestHandleClone_MalformedBodyRejected(t *testing.T) {
 }
 
 func TestHandleClone_EmptyURLRejected(t *testing.T) {
-	h := NewHandler(t.TempDir())
+	h := newTestHandler(t, t.TempDir())
 	req := httptest.NewRequest(http.MethodPost, "/api/git/clone", strings.NewReader(`{"url":""}`))
 	rec := httptest.NewRecorder()
 	h.handleClone(rec, req)
@@ -777,7 +777,7 @@ func TestHandleClone_RejectsInvalidSchemes(t *testing.T) {
 	}
 	for _, url := range cases {
 		t.Run(url, func(t *testing.T) {
-			h := NewHandler(t.TempDir())
+			h := newTestHandler(t, t.TempDir())
 			body := `{"url":` + strconv.Quote(url) + `}`
 			req := httptest.NewRequest(http.MethodPost, "/api/git/clone", strings.NewReader(body))
 			rec := httptest.NewRecorder()
@@ -826,6 +826,8 @@ func TestInspectCloneDest(t *testing.T) {
 		switch s {
 		case destAbsent:
 			return "destAbsent"
+		case destForeign:
+			return "destForeign"
 		case destEmpty:
 			return "destEmpty"
 		case destRepo:
@@ -867,8 +869,8 @@ func TestInspectCloneDest(t *testing.T) {
 		want destState
 	}{
 		{"absent", filepath.Join(base, "nope"), destAbsent},
-		{"plain file", plainFile, destAbsent},
-		{"symlink to a directory", link, destAbsent},
+		{"plain file", plainFile, destForeign},
+		{"symlink to a directory", link, destForeign},
 		{"empty directory", empty, destEmpty},
 		{"git repository", filepath.Join(base, "repo"), destRepo},
 		{"directory with content", filepath.Join(base, "occupied"), destOccupied},
@@ -892,7 +894,7 @@ func TestClone_ExistingRepoIsReportedByName(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(workDir, "marotte", ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	out, err := h.clone(t.Context(), "https://github.com/cplieger/marotte.git", nil)
 	if err == nil {
 		t.Fatalf("clone into an existing repo: err = nil, want a refusal (out %q)", out)
@@ -938,7 +940,7 @@ func stageFakeGitExiting(t *testing.T, script string, exit int) {
 func TestClone_FailedCloneRemovesTheDestinationItCreated(t *testing.T) {
 	work := t.TempDir()
 	stageFakeGit(t, `mkdir -p loki/.git`)
-	h := NewHandler(work)
+	h := newTestHandler(t, work)
 
 	_, err := h.clone(t.Context(), "https://github.com/cplieger/loki.git", nil)
 	if err == nil {
@@ -946,6 +948,39 @@ func TestClone_FailedCloneRemovesTheDestinationItCreated(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(work, "loki")); !errors.Is(statErr, fs.ErrNotExist) {
 		t.Errorf("destination survives the failed clone: stat err = %v, want ErrNotExist", statErr)
+	}
+}
+
+// A failed clone onto a name that already holds a file or a symlink removes nothing: what sits there is the user's,
+// and git's own refusal is the answer.
+func TestClone_FailedCloneLeavesANonDirectoryDestination(t *testing.T) {
+	cases := map[string]func(t *testing.T, dest string){
+		"a file": func(t *testing.T, dest string) {
+			if err := os.WriteFile(dest, []byte("notes"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"a symlink": func(t *testing.T, dest string) {
+			if err := os.Symlink(t.TempDir(), dest); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, plant := range cases {
+		t.Run(name, func(t *testing.T) {
+			work := t.TempDir()
+			dest := filepath.Join(work, "loki")
+			plant(t, dest)
+			stageFakeGit(t, `echo "fatal: destination path 'loki' already exists" >&2`)
+			h := NewHandler(work)
+
+			if _, err := h.clone(t.Context(), "https://github.com/cplieger/loki.git", nil); err == nil {
+				t.Fatal("clone with a failing git: err = nil, want failure")
+			}
+			if _, statErr := os.Lstat(dest); statErr != nil {
+				t.Errorf("%s at the destination was removed by the failed clone: %v", name, statErr)
+			}
+		})
 	}
 }
 
@@ -958,7 +993,7 @@ func TestClone_FailedCloneEmptiesAPreexistingEmptyDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 	stageFakeGit(t, `mkdir -p loki/.git`)
-	h := NewHandler(work)
+	h := newTestHandler(t, work)
 
 	_, err := h.clone(t.Context(), "https://github.com/cplieger/loki.git", nil)
 	if err == nil {
@@ -989,7 +1024,7 @@ func TestClone_FailedAdoptionRemovesOnlyTheGitDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	stageFakeGit(t, `mkdir -p .git`)
-	h := NewHandler(work)
+	h := newTestHandler(t, work)
 
 	_, err := h.clone(t.Context(), "https://github.com/cplieger/loki.git", nil)
 	if err == nil {
@@ -1035,13 +1070,14 @@ sleep 30`)
 // wall clock. The fake reports past several stall windows and succeeds.
 func TestRunTransfer_ProgressKeepsASlowTransferAlive(t *testing.T) {
 	prev := cloneStallTimeout
-	cloneStallTimeout = 150 * time.Millisecond
+	cloneStallTimeout = 400 * time.Millisecond
 	t.Cleanup(func() { cloneStallTimeout = prev })
 	work := t.TempDir()
+	// 16 lines 50ms apart outlast the stall budget twice over, with each gap far inside it under load.
 	stageFakeGitExiting(t, `i=0
-while [ $i -lt 8 ]; do
-  echo "Receiving objects: ${i}0%" >&2
-  sleep 0.1
+while [ $i -lt 16 ]; do
+  echo "Receiving objects: ${i}%" >&2
+  sleep 0.05
   i=$((i+1))
 done`, 0)
 
@@ -1051,8 +1087,8 @@ done`, 0)
 	if err != nil {
 		t.Fatalf("slow-but-alive transfer: err = %v (out %q), want success", err, out)
 	}
-	if len(lines) < 8 {
-		t.Errorf("onProgress saw %d lines, want all 8", len(lines))
+	if len(lines) < 16 {
+		t.Errorf("onProgress saw %d lines, want all 16", len(lines))
 	}
 }
 
@@ -1080,7 +1116,7 @@ func TestHandleClone_StreamsProgressAndAFinalEnvelope(t *testing.T) {
 	work := t.TempDir()
 	stageFakeGitExiting(t, `echo 'Receiving objects: 42%' >&2
 mkdir -p loki/.git`, 0)
-	h := NewHandler(work)
+	h := newTestHandler(t, work)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/git/clone",
 		strings.NewReader(`{"url":"https://github.com/cplieger/loki.git"}`))
@@ -1108,7 +1144,7 @@ mkdir -p loki/.git`, 0)
 func TestHandleClone_StreamEndsWithTheErrorEnvelope(t *testing.T) {
 	work := t.TempDir()
 	stageFakeGit(t, `echo 'fatal: repository not found' >&2`)
-	h := NewHandler(work)
+	h := newTestHandler(t, work)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/git/clone",
 		strings.NewReader(`{"url":"https://github.com/cplieger/loki.git"}`))
@@ -1156,7 +1192,7 @@ func TestClone_AdoptsAnOccupiedDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	out, err := h.clone(t.Context(), remote, nil)
 	if err != nil {
 		t.Fatalf("clone into an occupied destination = %v, want nil\n%s", err, out)
@@ -1245,7 +1281,7 @@ func TestAdoptDestination_RefusesToOverwriteUntrackedContent(t *testing.T) {
 
 // --- handleCheckout ---
 func TestHandleCheckout_MalformedBodyRejected(t *testing.T) {
-	h := NewHandler(t.TempDir())
+	h := newTestHandler(t, t.TempDir())
 	req := httptest.NewRequest(http.MethodPost, "/api/git/checkout", strings.NewReader("{"))
 	rec := httptest.NewRecorder()
 	h.handleCheckout(rec, req)
@@ -1268,7 +1304,7 @@ func TestHandleCheckout_InvalidBranchNames(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewHandler(t.TempDir())
+			h := newTestHandler(t, t.TempDir())
 			body := `{"branch":` + strconv.Quote(tt.branch) + `}`
 			req := httptest.NewRequest(http.MethodPost, "/api/git/checkout", strings.NewReader(body))
 			rec := httptest.NewRecorder()
@@ -1286,7 +1322,7 @@ func TestHandleCheckout_InvalidBranchNames(t *testing.T) {
 func TestHandleRemove_WorkspaceRootRejected(t *testing.T) {
 	for _, repo := range []string{"", "."} {
 		t.Run("repo="+repo, func(t *testing.T) {
-			h := NewHandler(t.TempDir())
+			h := newTestHandler(t, t.TempDir())
 			body := `{"repo":` + strconv.Quote(repo) + `}`
 			req := httptest.NewRequest(http.MethodPost, "/api/git/remove", strings.NewReader(body))
 			rec := httptest.NewRecorder()
@@ -1300,7 +1336,7 @@ func TestHandleRemove_WorkspaceRootRejected(t *testing.T) {
 
 func TestHandleRemove_TraversalResolvesToWorkDirAndRejected(t *testing.T) {
 	workDir := t.TempDir()
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	body := `{"repo":"../other"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/git/remove", strings.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -1322,7 +1358,7 @@ func TestHandleRemove_RealSubdirRemoved(t *testing.T) {
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	body := `{"repo":"to-delete"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/git/remove", strings.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -1341,7 +1377,7 @@ func TestHandleRemove_RealSubdirRemoved(t *testing.T) {
 func TestHandleReclone_WorkspaceRootRejected(t *testing.T) {
 	for _, repo := range []string{"", "."} {
 		t.Run("repo="+repo, func(t *testing.T) {
-			h := NewHandler(t.TempDir())
+			h := newTestHandler(t, t.TempDir())
 			body := `{"repo":` + strconv.Quote(repo) + `}`
 			req := httptest.NewRequest(http.MethodPost, "/api/git/reclone", strings.NewReader(body))
 			rec := httptest.NewRecorder()
@@ -1359,7 +1395,7 @@ func TestHandleReclone_NonGitRepoRejected(t *testing.T) {
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	body := `{"repo":"not-a-repo"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/git/reclone", strings.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -1376,7 +1412,7 @@ func TestHandleReclone_NonGitRepoRejected(t *testing.T) {
 }
 
 func TestHandleCommit_EmptyMessageRejected(t *testing.T) {
-	h := NewHandler(t.TempDir())
+	h := newTestHandler(t, t.TempDir())
 	req := httptest.NewRequest(http.MethodPost, "/api/git/commit", strings.NewReader(`{"message":""}`))
 	rec := httptest.NewRecorder()
 	h.handleCommit(rec, req)
@@ -1391,7 +1427,7 @@ func TestHandleCommit_EmptyMessageRejected(t *testing.T) {
 func TestHandlePRFetch_InvalidNumberRejected(t *testing.T) {
 	for _, n := range []int{0, -1, -42, 1_000_000_000} {
 		t.Run(strconv.Itoa(n), func(t *testing.T) {
-			h := NewHandler(t.TempDir())
+			h := newTestHandler(t, t.TempDir())
 			body := `{"number":` + strconv.Itoa(n) + `}`
 			req := httptest.NewRequest(http.MethodPost, "/api/git/pr-fetch", strings.NewReader(body))
 			rec := httptest.NewRecorder()
@@ -1407,7 +1443,7 @@ func TestHandlePRFetch_InvalidHeadRejected(t *testing.T) {
 	cases := []string{"-rf", "--force", "feat branch", "has\ttab", "has\nnewline"}
 	for _, head := range cases {
 		t.Run(head, func(t *testing.T) {
-			h := NewHandler(t.TempDir())
+			h := newTestHandler(t, t.TempDir())
 			body := `{"number":42,"head":` + strconv.Quote(head) + `}`
 			req := httptest.NewRequest(http.MethodPost, "/api/git/pr-fetch", strings.NewReader(body))
 			rec := httptest.NewRecorder()
@@ -1439,7 +1475,7 @@ func TestHandleRepos_ListsReposSkippingDotAndNonRepos(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(workDir, "repoA", ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	req := httptest.NewRequest(http.MethodGet, "/api/git/repos", nil)
 	rec := httptest.NewRecorder()
 	h.handleRepos(rec, req)
@@ -1468,7 +1504,7 @@ func TestHandleRepos_IncludesDotWhenWorkDirIsRepo(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(workDir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	req := httptest.NewRequest(http.MethodGet, "/api/git/repos", nil)
 	rec := httptest.NewRecorder()
 	h.handleRepos(rec, req)
@@ -1556,7 +1592,7 @@ func behindRepo(t *testing.T) string {
 
 func TestHandleStatus_NonRepoReturnsIsRepoFalse(t *testing.T) {
 	workDir := t.TempDir()
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	req := httptest.NewRequest(http.MethodGet, "/api/git/status", nil)
 	rec := httptest.NewRecorder()
 	h.handleStatus(rec, req)
@@ -1574,7 +1610,7 @@ func TestHandleStatus_NonRepoReturnsIsRepoFalse(t *testing.T) {
 
 func TestHandleStatusAll_EmptyWorkspaceReturnsEmptyArray(t *testing.T) {
 	workDir := t.TempDir()
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	req := httptest.NewRequest(http.MethodGet, "/api/git/status-all", nil)
 	rec := httptest.NewRecorder()
 	h.handleStatusAll(rec, req)
@@ -1599,7 +1635,7 @@ func TestHandleStatusAll_CleanRepoListedOnce(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	initFixtureRepo(t, repoDir)
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	req := httptest.NewRequest(http.MethodGet, "/api/git/status-all", nil)
 	rec := httptest.NewRecorder()
 	h.handleStatusAll(rec, req)
@@ -1630,7 +1666,7 @@ func TestHandleStatusAll_CleanRepoListedOnce(t *testing.T) {
 func TestHandleStatus_CleanRepoReportsBranchAndNoFiles(t *testing.T) {
 	workDir := t.TempDir()
 	initFixtureRepo(t, workDir)
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	req := httptest.NewRequest(http.MethodGet, "/api/git/status?quick=1", nil)
 	rec := httptest.NewRecorder()
 	h.handleStatus(rec, req)
@@ -1661,7 +1697,7 @@ func TestHandleStatus_DirtyRepoReportsFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workDir, "new.txt"), []byte("new\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	req := httptest.NewRequest(http.MethodGet, "/api/git/status?quick=1", nil)
 	rec := httptest.NewRecorder()
 	h.handleStatus(rec, req)
@@ -1694,7 +1730,7 @@ func TestHandleDiscard_ClearsTrackedAndUntracked(t *testing.T) {
 	}
 	runGit(t, dir, "add", "staged-new.txt")
 
-	h := NewHandler(dir)
+	h := newTestHandler(t, dir)
 	body := `{"files":["README.md","untracked.txt","staged-new.txt"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/git/discard", strings.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -1725,7 +1761,7 @@ func TestHandleDiscard_FailureNamesACause(t *testing.T) {
 	dir := t.TempDir()
 	initFixtureRepo(t, dir)
 
-	h := NewHandler(dir)
+	h := newTestHandler(t, dir)
 	body := `{"files":["no-such-file.txt"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/git/discard", strings.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -1742,7 +1778,7 @@ func TestHandleDiscard_FailureNamesACause(t *testing.T) {
 func TestHandleLog_RepoReturnsCommitLines(t *testing.T) {
 	workDir := t.TempDir()
 	initFixtureRepo(t, workDir)
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	req := httptest.NewRequest(http.MethodGet, "/api/git/log", nil)
 	rec := httptest.NewRecorder()
 	h.handleLog(rec, req)
@@ -1763,7 +1799,7 @@ func TestHandleLog_RepoReturnsCommitLines(t *testing.T) {
 func TestHandleBranches_RepoReturnsCurrentBranch(t *testing.T) {
 	workDir := t.TempDir()
 	initFixtureRepo(t, workDir)
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	req := httptest.NewRequest(http.MethodGet, "/api/git/branches", nil)
 	rec := httptest.NewRecorder()
 	h.handleBranches(rec, req)
@@ -1786,7 +1822,7 @@ func TestHandleBranches_RepoReturnsCurrentBranch(t *testing.T) {
 func TestHandleShow_ExistingFileAtHEADReturnsContent(t *testing.T) {
 	workDir := t.TempDir()
 	initFixtureRepo(t, workDir)
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	req := httptest.NewRequest(http.MethodGet, "/api/git/show?path=README.md", nil)
 	rec := httptest.NewRecorder()
 	h.handleShow(rec, req)
@@ -1932,7 +1968,7 @@ func TestHandleReclone_RejectsNonStandardScheme(t *testing.T) {
 	run("init", "-q")
 	run("remote", "add", "origin", "file:///tmp/attacker")
 
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	body := strings.NewReader(`{"repo":"evil"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/git/reclone", body)
 	req.Header.Set("Content-Type", "application/json")
@@ -1984,7 +2020,7 @@ func TestHandleReclone_RefusesAnIntermediateSymlinkEscape(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	req := httptest.NewRequest(http.MethodPost, "/api/git/reclone",
 		strings.NewReader(`{"repo":"link/victim"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -2027,7 +2063,7 @@ func TestStagingHandlers_InputValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := NewHandler(t.TempDir())
+			h := newTestHandler(t, t.TempDir())
 			req := httptest.NewRequest(tc.method, tc.endpoint, strings.NewReader(tc.body))
 			rec := httptest.NewRecorder()
 			switch tc.handler {
@@ -2074,7 +2110,7 @@ func TestSimpleHandlers_NonPostRejected(t *testing.T) {
 	for _, tt := range tests {
 		for _, m := range methods {
 			t.Run(tt.name+"_"+m, func(t *testing.T) {
-				h := NewHandler(t.TempDir())
+				h := newTestHandler(t, t.TempDir())
 				req := httptest.NewRequest(m, "/api/git/"+tt.name, nil)
 				rec := httptest.NewRecorder()
 				tt.handler(h)(rec, req)
@@ -2276,7 +2312,7 @@ func FuzzIsValidGitRef(f *testing.F) {
 		if strings.Contains(data, "@{") {
 			t.Errorf("isValidGitRef(%q) = true, but contains %q", data, "@{")
 		}
-		if i := strings.IndexFunc(data, runesafe.IsUnsafeSingleLine); i != -1 {
+		if i := strings.IndexFunc(data, textsafe.IsUnsafeSingleLine); i != -1 {
 			t.Errorf("isValidGitRef(%q) = true, but holds an unsafe rune %q at %d", data, data[i], i)
 		}
 		for component := range strings.SplitSeq(data, "/") {
@@ -2398,7 +2434,7 @@ func TestHandlePush_ValidationMatrix(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			workDir := t.TempDir()
 			initFixtureRepo(t, workDir)
-			h := NewHandler(workDir)
+			h := newTestHandler(t, workDir)
 			var req *http.Request
 			if tt.body == "" {
 				req = httptest.NewRequest(http.MethodPost, "/api/git/push", nil)
@@ -2460,7 +2496,7 @@ func TestHandlePull_ValidationMatrix(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			workDir := t.TempDir()
 			initFixtureRepo(t, workDir)
-			h := NewHandler(workDir)
+			h := newTestHandler(t, workDir)
 			var req *http.Request
 			if tt.body == "" {
 				req = httptest.NewRequest(http.MethodPost, "/api/git/pull", nil)
@@ -2526,7 +2562,7 @@ func TestGitShowCmd_MissingPathInRealRepo(t *testing.T) {
 // validation guard (failing only later at the remote lookup), so it must
 // not be rejected as an invalid number.
 func TestHandlePRFetch_NumberBoundary(t *testing.T) {
-	h := NewHandler(t.TempDir())
+	h := newTestHandler(t, t.TempDir())
 	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-fetch", strings.NewReader(`{"number":10000000}`))
 	rec := httptest.NewRecorder()
 	h.handlePRFetch(rec, req)
@@ -2543,7 +2579,7 @@ func TestHandlePRFetch_NumberBoundary(t *testing.T) {
 // commits.
 func TestHandleLog_RefResolution(t *testing.T) {
 	work := behindRepo(t)
-	h := NewHandler(work)
+	h := newTestHandler(t, work)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/git/log", nil)
 	h.handleLog(rec, req)
@@ -2569,7 +2605,7 @@ func TestHandleLog_RemoteErrorLog(t *testing.T) {
 		dir := t.TempDir()
 		initFixtureRepo(t, dir)
 		buf := captureLogs(t)
-		h := NewHandler(dir)
+		h := newTestHandler(t, dir)
 		h.handleLog(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/git/log", nil))
 		if !strings.Contains(buf.String(), "git remote get-url failed during log") {
 			t.Errorf("expected debug log for a failed remote get-url")
@@ -2581,7 +2617,7 @@ func TestHandleLog_RemoteErrorLog(t *testing.T) {
 		initFixtureRepo(t, dir)
 		runGit(t, dir, "remote", "add", "origin", "https://example.com/x.git")
 		buf := captureLogs(t)
-		h := NewHandler(dir)
+		h := newTestHandler(t, dir)
 		h.handleLog(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/git/log", nil))
 		if strings.Contains(buf.String(), "git remote get-url failed during log") {
 			t.Errorf("unexpected failure log when remote get-url succeeds")
@@ -2597,7 +2633,7 @@ func TestHandleRemove_SuccessBody(t *testing.T) {
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/git/remove", strings.NewReader(`{"repo":"to-remove"}`))
 	h.handleRemove(rec, req)
@@ -2629,7 +2665,7 @@ func TestHandleStatus_QuickControlsFetch(t *testing.T) {
 	t.Run("no_quick_fetches", func(t *testing.T) {
 		dir := mk(t)
 		buf := captureLogs(t)
-		h := NewHandler(dir)
+		h := newTestHandler(t, dir)
 		h.handleStatus(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/git/status", nil))
 		if !strings.Contains(buf.String(), "git fetch during status failed") {
 			t.Errorf("expected a fetch attempt without the quick param")
@@ -2639,7 +2675,7 @@ func TestHandleStatus_QuickControlsFetch(t *testing.T) {
 	t.Run("quick_skips_fetch", func(t *testing.T) {
 		dir := mk(t)
 		buf := captureLogs(t)
-		h := NewHandler(dir)
+		h := newTestHandler(t, dir)
 		h.handleStatus(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/git/status?quick=1", nil))
 		if strings.Contains(buf.String(), "git fetch during status failed") {
 			t.Errorf("unexpected fetch with the quick param")
@@ -2788,7 +2824,7 @@ func TestHandlePRFetch_UnreachableOriginReportsError(t *testing.T) {
 	initFixtureRepo(t, dir)
 	runGit(t, dir, "remote", "add", "origin", "/nonexistent-origin-path")
 
-	h := NewHandler(dir)
+	h := newTestHandler(t, dir)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/git/pr-fetch", strings.NewReader(`{"number":42}`))
 	h.handlePRFetch(rec, req)
@@ -2854,7 +2890,7 @@ func TestRemoveRepoDir_RefusesASwappedAncestor(t *testing.T) {
 func TestHandleRemove_RefusesASwappedAncestor(t *testing.T) {
 	workDir := t.TempDir()
 	repo, victim := swappedAncestor(t, workDir)
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/git/remove",
 		strings.NewReader(`{"repo":`+strconv.Quote(repo)+`}`))
@@ -2887,7 +2923,7 @@ func TestHandleRemove_RefusesAnEscapingAncestor(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(workDir, "link")); err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler(workDir)
+	h := newTestHandler(t, workDir)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/git/remove",
 		strings.NewReader(`{"repo":"link/victim"}`))
@@ -2908,7 +2944,7 @@ func TestHandleRemove_RefusesAnEscapingAncestor(t *testing.T) {
 
 // TestRemoveRepoDir_UnlinksASymlinkedRepo is the feature the lexical resolver
 // exists for, and the reason the parent's own RemoveAll is used rather than
-// atomicfile.RemoveFileInRoot: a repo the user symlinked into the workspace must
+// filesafe.RemoveFileInRoot: a repo the user symlinked into the workspace must
 // stay removable, as a LINK, without touching the tree it points at.
 func TestRemoveRepoDir_UnlinksASymlinkedRepo(t *testing.T) {
 	outside := t.TempDir()
@@ -2970,7 +3006,7 @@ func TestHandleLog_CommitURLPrefix(t *testing.T) {
 				runGit(t, dir, "remote", "add", "origin", tt.origin)
 			}
 			rec := httptest.NewRecorder()
-			NewHandler(dir).handleLog(rec, httptest.NewRequest(http.MethodGet, "/api/git/log", nil))
+			newTestHandler(t, dir).handleLog(rec, httptest.NewRequest(http.MethodGet, "/api/git/log", nil))
 			var resp struct {
 				CommitURLPrefix string `json:"commit_url_prefix"`
 			}

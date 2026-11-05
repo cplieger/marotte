@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cplieger/pathinside/v2"
+	"github.com/cplieger/go/pathinside"
 	"golang.org/x/sync/errgroup"
 )
 

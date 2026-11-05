@@ -6,9 +6,11 @@ import { retryOutcomeNotice } from "../run-controls.js";
 import { invalidateRun } from "../run-store.js";
 import { errorAbout, noticeAbout } from "./subject.js";
 import { serverSentence } from "./server-sentence.js";
+import { mayStillApply } from "./still-applying.js";
 import { decodeRunRetriedResponse, decodeRunStepMessageResponse } from "../wire/decoders.gen.js";
 import type {
   RunRetriedResponse,
+  RunStepEndRequest,
   RunStepMessageRequest,
   RunStepMessageResponse,
   RunStepSteerRequest,
@@ -55,15 +57,19 @@ export const loadRuns = apiAction<
   error: false,
 });
 
-/** Launch one PARENTLESS run. A 409 (the recipe already has a live run) is surfaced verbatim. */
+/** Launch one PARENTLESS run. A 409 (the recipe already has a live run) is surfaced verbatim; a launch kiro-cli
+ *  has not answered may still start, and run_started shows it if it does. */
 export const launchRun = apiAction<RunLaunchRequest, RunLaunchedResponse>({
   name: "runs.launch",
   request: (body) => ({ method: "POST", path: "/api/runs", body }),
-  error: (_args, err) => serverSentence(err) ?? "Could not launch",
+  error: (_args, err) =>
+    mayStillApply(err)
+      ? "Still starting the run; it appears if kiro-cli starts it"
+      : (serverSentence(err) ?? "Could not launch"),
 });
 
 /** A verb's success can move what the run offers with no frame to say so (a landed Pause only
- *  sets `pausePending`), so the run is re-read and its verbs behind it (`invalidateRunControls`). */
+ *  sets `pausePending`), so the run is re-read, which carries its verbs. */
 function rereadAfterVerb(workflowID: string): void {
   invalidateRun(workflowID);
 }
@@ -113,7 +119,11 @@ export const retryRun = apiAction<string, RunRetriedResponse>({
     path: `/api/runs/${encodeURIComponent(workflowID)}/retry`,
   }),
   decode: (data) => decodeRunRetriedResponse(data),
-  error: errorAbout(onRun, (_args, err) => serverSentence(err) ?? "Could not retry the run"),
+  error: errorAbout(onRun, (_args, err) =>
+    mayStillApply(err)
+      ? "Still retrying the run; it updates if kiro-cli takes the retry"
+      : (serverSentence(err) ?? "Could not retry the run"),
+  ),
   onSuccess: (res, workflowID) => {
     const notice = retryOutcomeNotice(res.retried_node_ids.length);
     noticeAbout(onRun(workflowID), notice.text, notice.level);
@@ -183,6 +193,24 @@ export const clearRunStepSteers = apiAction<StepAddress, { ok: boolean }>({
     ({ workflowID }: { workflowID: string }) => onRun(workflowID),
     "Could not discard",
   ),
+});
+
+/** End one paused step as done or failed, whatever its siblings are doing. A refusal (the step moved
+ *  on, a twin execution shares its id, KAS's own decline) shows the server's sentence. */
+export const endRunStep = apiAction<StepAddress & RunStepEndRequest, { ok: boolean }>({
+  name: "runs.end_step",
+  request: ({ workflowID, nodePath, status }) => ({
+    method: "POST",
+    path: `${runStepURL(workflowID, nodePath)}/end`,
+    body: { status },
+  }),
+  error: errorAbout(
+    ({ workflowID }) => onRun(workflowID),
+    (_args, err) => serverSentence(err) ?? "Couldn't end the step",
+  ),
+  onSuccess: (_res, { workflowID }) => {
+    rereadAfterVerb(workflowID);
+  },
 });
 
 export const extendRunRepeat = apiAction<

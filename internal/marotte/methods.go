@@ -66,13 +66,13 @@ const (
 	MethodFSWrite = "fs/write_text_file"
 )
 
-// MCP elicitation method name. On v3 (KAS) an MCP server's structured-input
-// request is forwarded to us as the extension request _kiro/mcp/elicitation
-// (a JSON-RPC request with an id, delivered like fs/*). The params nest the
-// elicitation body under an "elicitation" object with sessionId/toolCallId
-// at the top level; we surface a form and reply with {action, content} on
-// the request id. Gated by the clientCapabilities.elicitation capability
-// advertised in bridge.initialize(). v3 has no elicitation-complete method.
+// MCP elicitation method name. KAS forwards an MCP server's structured-input
+// request to us as the extension request _kiro/mcp/elicitation, a JSON-RPC
+// request with an id delivered like fs/*, its body nested under "elicitation"
+// beside sessionId/toolCallId; we show a form or a link and reply
+// {action, content} on the request id. No client capability gates it: KAS
+// sends form and URL mode to every client and turns an error answer into
+// cancel. KAS sends the client no completion notice.
 const (
 	MethodElicitationCreate = "_kiro/mcp/elicitation"
 )
@@ -157,6 +157,9 @@ const AgentEngineV3 = "v3"
 const (
 	ConfigOptionModel  = "model"
 	ConfigOptionEffort = "effortLevel"
+	// ConfigOptionOutputStyle is read from _kiro/config/template only; a prompt sends the
+	// chosen id as _meta.kiro.outputStyle, never through set_config_option.
+	ConfigOptionOutputStyle = "outputStyle"
 	// ConfigOptionAutopilot is supervised mode on v3: `false` makes KAS request a TURN APPROVAL
 	// before applying a file-touching turn's writes; `true` (the default) applies them as they
 	// happen. KAS persists it across session/load, so marotte sets it once at session/new.
@@ -173,6 +176,17 @@ const (
 	// PROCESS, not the session, and KAS persists none of it. The value is the STRING
 	// ConfigValueContentCollectionEnabled or ...Disabled; a JSON boolean is ignored.
 	ConfigOptionContentCollection = "contentCollection"
+	// ConfigOptionWorkflowLaunch says when a workflows-on chat starts a workflow on its own. KAS
+	// offers it only in a delegation-suppressing mode, and never on a session recorded before the
+	// option existed, which it runs as WorkflowLaunchDelegateAll.
+	ConfigOptionWorkflowLaunch = "workflowLaunch"
+)
+
+// The three values KAS's workflowLaunch option accepts.
+const (
+	WorkflowLaunchWhenAsked   = "when-asked"
+	WorkflowLaunchLargeTasks  = "large-tasks"
+	WorkflowLaunchDelegateAll = "delegate-all"
 )
 
 // The two values KAS's contentCollection option accepts.

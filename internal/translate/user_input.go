@@ -45,10 +45,15 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID marotte.ChatID,
 		RunID:      step.WorkflowID,
 		NodeID:     step.NodeID,
 	})
-	t.bus.Broadcast(ctx, t.pendingPerms.PendingPermsAdd(reqID, evt, origin))
+	evt, filed := t.pendingPerms.PendingPermsAdd(ctx, reqID, evt, origin)
+	if !filed {
+		return
+	}
+	t.bus.Broadcast(ctx, evt)
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID, marotte.WorkingLabelPayload{Label: marotte.WorkingLabelInput}))
 	n := notice.Question(t.push.NoticeTarget(ctx, chatID, step.WorkflowID),
 		step.NodeID, question)
+	n.Ask = notice.AskKey(marotte.DecisionRequestID(evt.Payload))
 	t.push.Notify(ctx, chatID, &n)
 }
 

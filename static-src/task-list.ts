@@ -3,11 +3,17 @@
 import type { PlanEntry, Session } from "./types.js";
 import { getActive, watchActiveId, messagesVersionOf } from "./store.js";
 import { payloadOf } from "./turns.js";
-import { effect, el } from "@cplieger/reactive";
+import { effect, el } from "@cplieger/ui";
 import { reconcile } from "./reconcile.js";
 import { paintStatus } from "./fundamentals/work-status.js";
+import { makeExpandable } from "./pill-expand.js";
 
 export function initTaskListPill(): void {
+  const pill = document.getElementById("task-list-pill");
+  const popover = document.getElementById("task-list-popover");
+  if (pill !== null && popover !== null) {
+    makeExpandable(pill, popover);
+  }
   effect(() => {
     // Two inputs: `getActive()` is a `peek`, so the active id must be tracked or the pill shows the
     // previous chat's plan; versions are per chat.

@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 // Respond is the only method these handlers use; the rest satisfies the interface.
@@ -34,7 +37,16 @@ type takeDeps struct {
 	takeChats []marotte.ChatID
 	// takeKinds is the decision kind each claim named.
 	takeKinds []marotte.DecisionKind
-	takeOK    bool
+	// elicitation is the pending elicitation ask PendingElicitation reads, nil for none.
+	elicitation *marotte.ElicitationNeededPayload
+	takeOK      bool
+}
+
+func (d *takeDeps) PendingElicitation(marotte.ChatID, int64) (marotte.ElicitationNeededPayload, bool) {
+	if d.elicitation == nil {
+		return marotte.ElicitationNeededPayload{}, false
+	}
+	return *d.elicitation, true
 }
 
 // bridgeReply answers a claimed ask on the bridge the claim handed back, as the tracker's reply
@@ -245,24 +257,27 @@ func (b *resultBridge) Respond(_ context.Context, _ int64, result any, _ error) 
 // cancelled form has no filled fields, so forwarding the ones the client sent
 // anyway would hand kiro-cli values the user withdrew.
 func TestCmdElicitationResponse_ContentTravelsOnlyOnAccept(t *testing.T) {
-	const filled = `{"branch":"main"}`
+	filled := map[string]any{"branch": "main"}
 	cases := []struct {
+		wantContent map[string]any
 		name        string
 		action      string
-		wantContent string
 	}{
 		{name: "accept forwards the filled form", action: marotte.ElicitationActionAccept, wantContent: filled},
-		{name: "decline forwards no content", action: marotte.ElicitationActionDecline, wantContent: ""},
-		{name: "cancel forwards no content", action: marotte.ElicitationActionCancel, wantContent: ""},
+		{name: "decline forwards no content", action: marotte.ElicitationActionDecline},
+		{name: "cancel forwards no content", action: marotte.ElicitationActionCancel},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			bridge := &resultBridge{}
-			deps := &takeDeps{benchDeps: newBenchDeps(), bridge: bridge, takeOK: true}
+			deps := &takeDeps{
+				benchDeps: newBenchDeps(), bridge: bridge, takeOK: true,
+				elicitation: formAsk(map[string]marotte.ElicitationPropertySchema{"branch": {Type: "string"}}),
+			}
 			cmd := decisionCommand(t, marotte.CmdElicitationResponse, marotte.ElicitationResponseCommand{
 				RequestID: decisionRequestID,
 				Action:    tc.action,
-				Content:   json.RawMessage(filled),
+				Content:   filled,
 			})
 
 			if _, err := cmdElicitationResponse(t.Context(), deps, cmd); err != nil {
@@ -279,10 +294,149 @@ func TestCmdElicitationResponse_ContentTravelsOnlyOnAccept(t *testing.T) {
 			if result.Action != tc.action {
 				t.Errorf("action = %q, want %q", result.Action, tc.action)
 			}
-			if string(result.Content) != tc.wantContent {
-				t.Errorf("content for %q = %q, want %q", tc.action, result.Content, tc.wantContent)
+			if !reflect.DeepEqual(result.Content, tc.wantContent) {
+				t.Errorf("content for %q = %v, want %v", tc.action, result.Content, tc.wantContent)
 			}
 		})
+	}
+}
+
+// kiro-cli answers nothing to a stdin line holding a lone surrogate escape or an
+// invalid UTF-8 byte, so an answer relayed byte for byte would leave the turn
+// waiting on an ask marotte already settled.
+func TestCmdElicitationResponse_ContentReachesTheEngineAsValidUTF8(t *testing.T) {
+	cases := map[string][]byte{
+		"lone surrogate escape": []byte(`{"request_id":7,"action":"accept","content":{"name":"a\ud800b"}}`),
+		"invalid byte":          []byte("{\"request_id\":7,\"action\":\"accept\",\"content\":{\"name\":\"a\xffb\"}}"),
+	}
+	for name, payload := range cases {
+		t.Run(name, func(t *testing.T) {
+			bridge := &resultBridge{}
+			deps := &takeDeps{
+				benchDeps: newBenchDeps(), bridge: bridge, takeOK: true,
+				elicitation: formAsk(map[string]marotte.ElicitationPropertySchema{"name": {Type: "string"}}),
+			}
+			cmd := &marotte.ClientCommand{Type: marotte.CmdElicitationResponse, ChatID: "c1", Payload: payload}
+
+			if _, err := cmdElicitationResponse(t.Context(), deps, cmd); err != nil {
+				t.Fatalf("cmdElicitationResponse = %v", err)
+			}
+			if len(bridge.results) != 1 {
+				t.Fatalf("got %d answers, want 1", len(bridge.results))
+			}
+			frame, err := json.Marshal(bridge.results[0])
+			if err != nil {
+				t.Fatalf("marshal answer: %v", err)
+			}
+			if !utf8.Valid(frame) {
+				t.Errorf("answer %q is not valid UTF-8", frame)
+			}
+			if lower := strings.ToLower(string(frame)); strings.Contains(lower, `\ud8`) || strings.Contains(lower, `\udc`) {
+				t.Errorf("answer %s carries a surrogate escape", frame)
+			}
+			var back struct {
+				Content map[string]string `json:"content"`
+			}
+			if err := json.Unmarshal(frame, &back); err != nil || back.Content["name"] != "a\uFFFDb" {
+				t.Errorf("answer content = %v (%v), want name a\\uFFFDb", back.Content, err)
+			}
+		})
+	}
+}
+
+// The MCP ElicitResult content is an object; anything else is refused at the
+// door rather than relayed for the engine to reject.
+func TestCmdElicitationResponse_NonObjectContentIsRefused(t *testing.T) {
+	for _, content := range []string{`[1,2]`, `"x"`} {
+		t.Run(content, func(t *testing.T) {
+			bridge := &resultBridge{}
+			deps := &takeDeps{benchDeps: newBenchDeps(), bridge: bridge, takeOK: true}
+			payload := []byte(`{"request_id":7,"action":"accept","content":` + content + `}`)
+			cmd := &marotte.ClientCommand{Type: marotte.CmdElicitationResponse, ChatID: "c1", Payload: payload}
+
+			_, err := cmdElicitationResponse(t.Context(), deps, cmd)
+
+			if got := statusOf(err); got != http.StatusBadRequest || !errors.Is(err, ErrInvalidPayload) {
+				t.Errorf("status = %d, err = %v, want 400 ErrInvalidPayload", got, err)
+			}
+			if len(deps.takes) != 0 || len(bridge.results) != 0 {
+				t.Errorf("takes = %v, answers = %d, want none", deps.takes, len(bridge.results))
+			}
+		})
+	}
+}
+
+func formAsk(props map[string]marotte.ElicitationPropertySchema, required ...string) *marotte.ElicitationNeededPayload {
+	return &marotte.ElicitationNeededPayload{
+		Mode:            "form",
+		RequestID:       decisionRequestID,
+		RequestedSchema: &marotte.ElicitationRequestSchema{Type: "object", Properties: props, Required: required},
+	}
+}
+
+// A refused form answer must not claim the ask: the card stays live for a corrected resubmit.
+func TestCmdElicitationResponse_AnInvalidAnswerLeavesTheAskPending(t *testing.T) {
+	bridge := &resultBridge{}
+	deps := &takeDeps{
+		benchDeps: newBenchDeps(), bridge: bridge, takeOK: true,
+		elicitation: formAsk(map[string]marotte.ElicitationPropertySchema{"branch": {Type: "string"}}, "branch"),
+	}
+	cmd := &marotte.ClientCommand{
+		Type: marotte.CmdElicitationResponse, ChatID: "c1",
+		Payload: []byte(`{"request_id":7,"action":"accept","content":{}}`),
+	}
+
+	_, err := cmdElicitationResponse(t.Context(), deps, cmd)
+
+	if got := statusOf(err); got != http.StatusBadRequest || !errors.Is(err, errElicitationContentInvalid) {
+		t.Errorf("status = %d, err = %v, want 400 elicitation_content_invalid", got, err)
+	}
+	if len(deps.takes) != 0 || len(bridge.results) != 0 {
+		t.Errorf("takes = %v, answers = %d, want none", deps.takes, len(bridge.results))
+	}
+}
+
+// With no pending elicitation to validate against, an accept must not claim anything.
+func TestCmdElicitationResponse_AnAcceptOnAnAskNotPendingIsAlreadyAnswered(t *testing.T) {
+	bridge := &resultBridge{}
+	deps := &takeDeps{benchDeps: newBenchDeps(), bridge: bridge, takeOK: true}
+	cmd := decisionCommand(t, marotte.CmdElicitationResponse, marotte.ElicitationResponseCommand{
+		RequestID: decisionRequestID, Action: marotte.ElicitationActionAccept,
+	})
+
+	_, err := cmdElicitationResponse(t.Context(), deps, cmd)
+
+	if got := statusOf(err); got != http.StatusConflict || !errors.Is(err, errAlreadyAnswered) {
+		t.Errorf("status = %d, err = %v, want 409 already_answered", got, err)
+	}
+	if len(deps.takes) != 0 || len(bridge.results) != 0 {
+		t.Errorf("takes = %v, answers = %d, want none", deps.takes, len(bridge.results))
+	}
+}
+
+// MCP's URL-mode ElicitResult carries no content, whatever the client sent.
+func TestCmdElicitationResponse_URLAcceptCarriesNoContent(t *testing.T) {
+	bridge := &resultBridge{}
+	deps := &takeDeps{
+		benchDeps: newBenchDeps(), bridge: bridge, takeOK: true,
+		elicitation: &marotte.ElicitationNeededPayload{Mode: marotte.ElicitationModeURL, URL: "https://example.com/connect", RequestID: decisionRequestID},
+	}
+	cmd := decisionCommand(t, marotte.CmdElicitationResponse, marotte.ElicitationResponseCommand{
+		RequestID: decisionRequestID, Action: marotte.ElicitationActionAccept, Content: map[string]any{"x": 1.0},
+	})
+
+	if _, err := cmdElicitationResponse(t.Context(), deps, cmd); err != nil {
+		t.Fatalf("cmdElicitationResponse = %v", err)
+	}
+	if len(bridge.results) != 1 {
+		t.Fatalf("got %d answers, want 1", len(bridge.results))
+	}
+	result, ok := bridge.results[0].(marotte.ElicitationResult)
+	if !ok {
+		t.Fatalf("answer = %T, want marotte.ElicitationResult", bridge.results[0])
+	}
+	if result.Action != marotte.ElicitationActionAccept || result.Content != nil {
+		t.Errorf("answer = %+v, want accept with no content", result)
 	}
 }
 

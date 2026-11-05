@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { effect } from "@cplieger/reactive";
+import { effect } from "@cplieger/ui";
 import {
   adaptStatus,
   servers,
@@ -7,6 +7,7 @@ import {
   removeConfiguredEntry,
   mcpState,
   standingFor,
+  unreadableEntries,
   updateConfiguredEntry,
 } from "./mcp-state.js";
 import type { Server } from "./mcp-state.js";
@@ -46,6 +47,28 @@ describe("the server list decoder", () => {
     });
     expect(servers.get("srv-w")?.wait_for_ready).toBe(true);
     expect(servers.get("srv-w")?.timeout_ms).toBe(120000);
+  });
+
+  it("keeps a record's version_negotiation", async () => {
+    wire.body = {
+      servers: [
+        {
+          id: "srv-vn",
+          name: "older",
+          transport: "stdio",
+          enabled: true,
+          created_at: 1,
+          updated_at: 2,
+          command: "npx",
+          version_negotiation: "legacy",
+        },
+      ],
+    };
+    mcpState.refetchServers();
+    await vi.waitFor(() => {
+      expect(servers.get("srv-vn")).toBeDefined();
+    });
+    expect(servers.get("srv-vn")?.version_negotiation).toBe("legacy");
   });
 
   it("keeps a record's oauth metadata URL and redirect", async () => {
@@ -95,6 +118,19 @@ describe("the server list decoder", () => {
     });
     expect(servers.get("srv-s")?.oauth_scopes).toEqual(["read", "write"]);
   });
+
+  it("carries the count of unreadable record entries, and none when the body omits it", async () => {
+    wire.body = { servers: [], unreadable: 2 };
+    mcpState.refetchServers();
+    await vi.waitFor(() => {
+      expect(unreadableEntries.value).toBe(2);
+    });
+    wire.body = { servers: [] };
+    mcpState.refetchServers();
+    await vi.waitFor(() => {
+      expect(unreadableEntries.value).toBe(0);
+    });
+  });
 });
 
 describe("adaptStatus", () => {
@@ -105,46 +141,40 @@ describe("adaptStatus", () => {
       expected: { name: "github", origin: "user", state: "connected" },
     },
     {
-      name: "needs_auth with oauth_url preserves url",
+      // A waiting server carries no link: no consent page a passive status names can complete.
+      name: "needs_auth drops any oauth_url",
       input: { name: "linear", state: "needs_auth", oauth_url: "https://auth.example.com" },
+      expected: { name: "linear", origin: "user", state: "needs_auth" },
+    },
+    {
+      name: "signing_in with oauth_url preserves url",
+      input: { name: "linear", state: "signing_in", oauth_url: "https://auth.example.com" },
       expected: {
         name: "linear",
         origin: "user",
-        state: "needs_auth",
+        state: "signing_in",
         oauth_url: "https://auth.example.com",
         relayed: false,
       },
     },
     {
-      name: "needs_auth without oauth_url defaults to empty string",
-      input: { name: "sentry", state: "needs_auth" },
+      name: "signing_in without oauth_url defaults to empty string",
+      input: { name: "sentry", state: "signing_in" },
       expected: {
         name: "sentry",
         origin: "user",
-        state: "needs_auth",
+        state: "signing_in",
         oauth_url: "",
         relayed: false,
       },
     },
     {
-      // An absent `relayed` reads false: true would hide the only recovery path for an undelivered callback.
-      name: "needs_auth without relayed defaults to not-yet-relayed",
-      input: { name: "sentry", state: "needs_auth", oauth_url: "https://a.example" },
+      name: "signing_in carries a delivered relay through",
+      input: { name: "sentry", state: "signing_in", oauth_url: "https://a.example", relayed: true },
       expected: {
         name: "sentry",
         origin: "user",
-        state: "needs_auth",
-        oauth_url: "https://a.example",
-        relayed: false,
-      },
-    },
-    {
-      name: "needs_auth carries a delivered relay through",
-      input: { name: "sentry", state: "needs_auth", oauth_url: "https://a.example", relayed: true },
-      expected: {
-        name: "sentry",
-        origin: "user",
-        state: "needs_auth",
+        state: "signing_in",
         oauth_url: "https://a.example",
         relayed: true,
       },

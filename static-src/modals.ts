@@ -1,9 +1,9 @@
-// Shared modal system on @cplieger/ui-primitives' createModal (native <dialog>).
+// Shared modal system on @cplieger/ui/modal's createModal (native <dialog>).
 // Each `[data-modal]` content element is pre-authored in index.html; createModal
 // wraps it in a <dialog> and owns focus, Escape, backdrop dismiss and scroll-lock.
 
-import { createModal, type ModalController } from "@cplieger/ui-primitives/modal";
-import { el } from "@cplieger/reactive";
+import { createModal, type ModalController } from "@cplieger/ui/modal";
+import { el } from "@cplieger/ui";
 import { pollUntil, registerCleanup } from "./actions/index.js";
 import { $, byId } from "./dom.js";
 import { apiGetTyped, apiPostTypedOrError } from "./api-client.js";
@@ -13,7 +13,7 @@ import {
   decodeWhoamiResponse,
 } from "./wire/decoders.gen.js";
 import type { LoginOptions, LoginResponse, WhoamiResponse } from "./wire/types.gen.js";
-import { isSafeUrl } from "./utils-url.js";
+import { isHttpMailtoOrRelativeURL } from "./utils-url.js";
 
 const controllers = new Map<HTMLElement, ModalController>();
 /** Open order; closeTopModal closes the last. */
@@ -350,7 +350,7 @@ function loginStartError(httpStatus: number, error: string): string {
 
 function showDeviceCode(status: HTMLDivElement, d: LoginResponse): void {
   status.replaceChildren(`Code: ${d.code}`, el("br"));
-  if (isSafeUrl(d.url)) {
+  if (isHttpMailtoOrRelativeURL(d.url)) {
     const link = el(
       "a",
       { href: d.url, target: "_blank", rel: "noopener" },

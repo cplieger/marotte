@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -579,6 +581,65 @@ func TestHandleKnowledgeAdd_RefusesAnUnaddressableName(t *testing.T) {
 					t.Fatal("a refused name must not reach _kiro/knowledge")
 				}
 			}
+		})
+	}
+}
+
+// TestKnowledgeMutations_AStalledEngineAnswersStillApplying pins that a knowledge change the engine has not answered
+// within the browser's budget is reported as still applying, never as failed, and that the late answer refreshes the
+// list. Only the change's own subcommand is held: the show a reindex or cancel resolves its target with answers.
+func TestKnowledgeMutations_AStalledEngineAnswersStillApplying(t *testing.T) {
+	for _, tc := range []struct {
+		name, subcommand string
+		serve            func(h *Runtime, w http.ResponseWriter)
+	}{
+		{"add", "add", func(h *Runtime, w http.ResponseWriter) {
+			h.config.handleKnowledgeAdd(w, httptest.NewRequest(http.MethodPost, "/api/knowledge", strings.NewReader(`{"path":"docs"}`)))
+		}},
+		{"remove", "remove", func(h *Runtime, w http.ResponseWriter) {
+			req := httptest.NewRequest(http.MethodDelete, "/api/knowledge/docs", nil)
+			req.SetPathValue("name", "docs")
+			h.config.handleKnowledgeRemove(w, req)
+		}},
+		{"reindex", "update", func(h *Runtime, w http.ResponseWriter) {
+			req := httptest.NewRequest(http.MethodPost, "/api/knowledge/docs/reindex", nil)
+			req.SetPathValue("name", "docs")
+			h.config.handleKnowledgeReindex(w, req)
+		}},
+		{"cancel", "cancel", func(h *Runtime, w http.ResponseWriter) {
+			req := httptest.NewRequest(http.MethodPost, "/api/knowledge/docs/cancel", nil)
+			req.SetPathValue("name", "docs")
+			h.config.handleKnowledgeCancel(w, req)
+		}},
+		{"clear", "clear", func(h *Runtime, w http.ResponseWriter) {
+			h.config.handleKnowledgeClear(w, httptest.NewRequest(http.MethodDelete, "/api/knowledge", nil))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			answerBudgetOf(t, 50*time.Millisecond)
+			h, _, br := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
+			seedKnowledge(br, `{"success":true,"message":"done","entries":[`+
+				`{"name":"docs","id":"a1","item_count":7,"path":"/w/docs"},`+
+				`{"name":"docs","id":"op1","items_display":"42%","indexing":true}]}`)
+			gate := make(chan struct{})
+			release := sync.OnceFunc(func() { close(gate) })
+			t.Cleanup(release)
+			br.mu.Lock()
+			br.onCall = func(_ string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+				if params[keySubcommand] == tc.subcommand {
+					<-gate
+				}
+				return nil, nil, false
+			}
+			br.mu.Unlock()
+			before := len(eventsOfType(h, marotte.EventKnowledgeChanged))
+
+			rec := answeredWithin(t, func(w http.ResponseWriter) { tc.serve(h, w) })
+
+			assertStillApplying(t, rec)
+			release()
+			awaitEventCount(t, h, marotte.EventKnowledgeChanged, before+1)
 		})
 	}
 }

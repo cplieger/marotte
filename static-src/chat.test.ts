@@ -64,7 +64,7 @@ function bumpMessageVersion(id: string): void {
 }
 
 vi.mock("./store.js", async () => {
-  const { signal } = await import("@cplieger/reactive");
+  const { signal } = await import("@cplieger/ui");
   return {
     // The pager effect's tracked read; a case bumps it through `bumpMessageVersion`.
     messagesVersionOf: (id: string) => {
@@ -128,6 +128,9 @@ vi.mock("./tabs.js", () => ({
   // The adoption path: creating commands paint their tab from the reply.
   adoptSubject: vi.fn(),
   activateTab: vi.fn(),
+  // Held by default: the user made no move during a round trip unless a test says so.
+  claimNavigation: vi.fn(() => 1),
+  navigationHeld: vi.fn(() => true),
   // A chat id is not a tab id; "" means no tab is open for that chat.
   tabIdFor: vi.fn(() => ""),
   // The registry seam: which chat refs hold an open tab. Empty means the strip
@@ -149,7 +152,7 @@ vi.mock("./skeleton.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Skeleton>()),
   chatSkeleton: vi.fn(() => document.createElement("div")),
 }));
-vi.mock("@cplieger/ui-primitives/skeleton", () => ({
+vi.mock("@cplieger/ui/skeleton", () => ({
   skeletonTiming: vi.fn(() => ({ commit: vi.fn(), cancel: vi.fn() })),
 }));
 vi.mock("./picker.js", () => ({ showModelPicker: vi.fn(), hideModelPicker: vi.fn() }));
@@ -167,6 +170,8 @@ vi.mock("./messages.js", () => ({
 }));
 vi.mock("./attachments.js", () => ({
   addAttachment: vi.fn(),
+  addAttachmentTo: vi.fn(),
+  toAttached: (path: string) => ({ path, name: path.split("/").at(-1) ?? path }),
   unownedAttachmentPaths: vi.fn(() => []),
 }));
 // chat.ts only orders the save/restore pair, which the mock records.
@@ -178,7 +183,7 @@ vi.mock("./composer-state.js", () => ({
   flushComposerDraft: vi.fn(),
   dropComposerState: vi.fn(),
 }));
-vi.mock("./session-context.js", () => ({ setCurrentModel: vi.fn(), getLastModel: () => "auto" }));
+vi.mock("./session-context.js", () => ({ getLastModel: () => "auto" }));
 vi.mock("./model-switcher.js", () => ({ applyLocalModel: vi.fn() }));
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
 vi.mock("./submit.js", () => ({
@@ -235,22 +240,23 @@ import {
   openTab,
   adoptSubject,
   activateTab,
+  navigationHeld,
   tabIdFor,
   getActiveTabId,
   renameTab,
   setTabStatus,
   openChatRefs,
 } from "./tabs.js";
-import { addAttachment, unownedAttachmentPaths } from "./attachments.js";
+import { addAttachment, addAttachmentTo, unownedAttachmentPaths } from "./attachments.js";
 import { dropDecisions } from "./decision-dock.js";
 import { get, watchSession, removeChat, setActive, upsertHeader } from "./store.js";
 import { transcriptStale } from "./store.js";
 import { loadList, loadMessages, loadOlderTurns, confirmChatExists } from "./store-load.js";
 import { loadTurnRail, pointTurnRail, setLoadMore, disposeChatView } from "./messages.js";
-import { seedComposerState } from "./composer-state.js";
-import { info } from "./toast.js";
+import { retargetComposer, seedComposerState } from "./composer-state.js";
+import { info, notice } from "./toast.js";
 import { isRetentionEnabled } from "./retention.js";
-import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
+import { skeletonTiming } from "@cplieger/ui/skeleton";
 // No `closeChat`: a chat-tab close's process teardown is the server's `close_tab`.
 import { deleteChat } from "./actions/chat.js";
 
@@ -412,6 +418,51 @@ describe("createSession is async, and what that means for its callers", () => {
     expect(submitPromptMock).not.toHaveBeenCalled();
   });
 
+  // A click elsewhere during the round trip is the user's choice of view, which a late reply
+  // must not undo: the tab is listed and left alone.
+  it("leaves the reader where they moved during the round trip", async () => {
+    activeId = "c-elsewhere";
+    vi.mocked(navigationHeld).mockReturnValueOnce(false);
+    await expect(chatModule.createSession()).resolves.toBe("c-created");
+    expect(vi.mocked(adoptSubject)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(activateTab)).not.toHaveBeenCalled();
+    expect(vi.mocked(retargetComposer)).not.toHaveBeenCalled();
+    expect(vi.mocked(setActive)).not.toHaveBeenCalled();
+    expect(activeId).toBe("c-elsewhere");
+  });
+
+  // The live composer belongs to the chat the user moved to, so the send names its files.
+  it("keeps the carried files and the initial prompt on the new chat when it opens unseen", async () => {
+    vi.mocked(navigationHeld).mockReturnValueOnce(false);
+    vi.mocked(unownedAttachmentPaths).mockReturnValueOnce(["/workspace/shot.png"]);
+    await chatModule.createSession("look at this");
+    expect(submitPromptMock).toHaveBeenCalledWith("c-created", "look at this", {
+      attachments: [{ path: "/workspace/shot.png", name: "shot.png" }],
+    });
+    expect(vi.mocked(addAttachment)).not.toHaveBeenCalled();
+  });
+
+  it("stashes the carried files on the new chat when it opens unseen with nothing to send", async () => {
+    vi.mocked(navigationHeld).mockReturnValueOnce(false);
+    vi.mocked(unownedAttachmentPaths).mockReturnValueOnce(["/workspace/shot.png"]);
+    await chatModule.createSession();
+    expect(vi.mocked(addAttachmentTo)).toHaveBeenCalledWith("c-created", "/workspace/shot.png");
+    expect(vi.mocked(addAttachment)).not.toHaveBeenCalled();
+    expect(submitPromptMock).not.toHaveBeenCalled();
+  });
+
+  // With no subject nothing activates, so the store pointer and composer are this path's own.
+  it("points the store and the composer at a chat whose reply carried no tab", async () => {
+    createDispatch.mockResolvedValueOnce({
+      chat: { id: "c-tabless", name: "", usage: {}, created_at: 0, updated_at: 0, turn_count: 0 },
+      version: 1,
+    } as never);
+    await chatModule.createSession();
+    expect(vi.mocked(activateTab)).not.toHaveBeenCalled();
+    expect(activeId).toBe("c-tabless");
+    expect(vi.mocked(retargetComposer)).toHaveBeenCalledWith("c-tabless");
+  });
+
   it("seeds the row from the SERVER's header rather than a local guess", async () => {
     await chatModule.createSession();
     expect(vi.mocked(upsertHeader).mock.calls.at(-1)?.[0]).toMatchObject({ id: "c-created" });
@@ -457,6 +508,18 @@ describe("attaching several paths at once", () => {
     await chatModule.attachPathsToActiveChat(["/w/a.ts"]);
 
     expect(vi.mocked(addAttachment)).not.toHaveBeenCalled();
+  });
+
+  it("stashes the batch on a chat created while the user moved elsewhere", async () => {
+    vi.mocked(navigationHeld).mockReturnValueOnce(false);
+    await chatModule.attachPathsToActiveChat(["/w/a.ts", "/w/b.ts"]);
+
+    expect(vi.mocked(addAttachmentTo).mock.calls).toEqual([
+      ["c-created", "/w/a.ts"],
+      ["c-created", "/w/b.ts"],
+    ]);
+    expect(vi.mocked(addAttachment)).not.toHaveBeenCalled();
+    expect(vi.mocked(activateTab)).not.toHaveBeenCalled();
   });
 
   it("does not ask for a chat for an empty batch", async () => {
@@ -755,6 +818,16 @@ describe("openTangentChat", () => {
     expect(arg.chatID).toBeUndefined();
   });
 
+  it("openTangentChat forwards a fork point and omits it for a head tangent", async () => {
+    await openTangentChat("c-parent", "u3");
+    await openTangentChat("c-parent");
+    expect(forkDispatch.mock.calls[0]?.[0]).toMatchObject({
+      parentChatID: "c-parent",
+      messageID: "u3",
+    });
+    expect(forkDispatch.mock.calls[1]?.[0]).not.toHaveProperty("messageID");
+  });
+
   // No seeded prompt: the fork carries the whole context.
   it("seeds no prompt: the fork carries the context, not a quoted phrase", async () => {
     await openTangentChat("c-parent");
@@ -771,11 +844,34 @@ describe("openTangentChat", () => {
 
   // A refused fork opens nothing: there is no chat to open a tab for, and opening
   // one under a guessed id is the window this whole stage removes.
+  it("says so on the tangent when it started without the parent conversation", async () => {
+    const forked = (await forkDispatch()) as Record<string, unknown>;
+    forkDispatch.mockResolvedValueOnce({ ...forked, fresh: true });
+    await openTangentChat("c-parent");
+    expect(vi.mocked(notice)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(notice).mock.calls[0]?.[0]).toContain("without the parent conversation");
+    expect(vi.mocked(notice).mock.calls[0]?.[1]).toBe("warning");
+    vi.mocked(notice).mockClear();
+    forkDispatch.mockResolvedValueOnce({ ...forked, fresh: false });
+    await openTangentChat("c-parent");
+    expect(vi.mocked(notice)).not.toHaveBeenCalled();
+  });
+
   it("opens no tab when the fork is refused", async () => {
     forkDispatch.mockResolvedValueOnce(null);
     await openTangentChat("c-parent");
     expect(vi.mocked(adoptSubject)).not.toHaveBeenCalled();
     expect(vi.mocked(activateTab)).not.toHaveBeenCalled();
+  });
+
+  it("lists a fork that resolves after a move without opening it", async () => {
+    activeId = "c-elsewhere";
+    vi.mocked(navigationHeld).mockReturnValueOnce(false);
+    await openTangentChat("c-parent");
+    expect(vi.mocked(adoptSubject).mock.calls[0]?.[0]).toMatchObject({ parent: "tb_parent" });
+    expect(vi.mocked(activateTab)).not.toHaveBeenCalled();
+    expect(vi.mocked(retargetComposer)).not.toHaveBeenCalled();
+    expect(activeId).toBe("c-elsewhere");
   });
 
   it("does nothing when the parent is unknown", async () => {
@@ -1395,6 +1491,19 @@ describe("every direct caller of activateChatView still fetches", () => {
       expect(loadMessages).toHaveBeenCalledWith("c-healed");
     });
     expect(loadMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it("openPreviousSession leaves the view alone when the user moved during the open", async () => {
+    vi.mocked(get).mockReturnValue(staleChat("c-resume"));
+    vi.mocked(tabIdFor).mockReturnValue("tb_resume");
+    vi.mocked(getActiveTabId).mockReturnValue("tb_other");
+
+    await expect(
+      openPreviousSession({ chat_id: "c-resume", session_id: "s1", title: "t", updated_at: 1 }),
+    ).resolves.toBe("opened");
+
+    expect(vi.mocked(setActive)).not.toHaveBeenCalled();
+    expect(loadMessages).not.toHaveBeenCalled();
   });
 
   it("openPreviousSession's belt refetches an already-open-and-active chat", async () => {

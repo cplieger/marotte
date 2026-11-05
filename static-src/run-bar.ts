@@ -2,9 +2,9 @@
 // bar between the interaction dock and the steer stack. From `FOLD_AT` runs a fold row heads the
 // list, outside the list's clip so its touch target can reach past the row.
 
-import { el, computed, effect, touch, untracked } from "@cplieger/reactive";
+import { el, computed, effect, touch, untracked } from "@cplieger/ui";
 import { reconcile } from "./reconcile.js";
-import { announce } from "@cplieger/ui-primitives/announce";
+import { announce } from "@cplieger/ui/announce";
 import { $ } from "./dom.js";
 import { watchActiveId } from "./store.js";
 import {

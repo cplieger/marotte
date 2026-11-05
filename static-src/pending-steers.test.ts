@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => {
   return {
     clearDispatch: vi.fn(() => Promise.resolve(true)),
     cancelDispatch: vi.fn((_args: { chatID: string; lead?: string }) => ({
-      outcome: Promise.resolve<{ status: string }>({ status: "success" }),
+      outcome: Promise.resolve<{ status: string; value?: boolean }>({ status: "success" }),
     })),
     removeDispatch: vi.fn((_args: { chatID: string; steerID: string }) => ({
       outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
@@ -29,17 +29,24 @@ const mocks = vi.hoisted(() => {
     })),
     addAttachmentMock: vi.fn((_chatID: string, _path: string) => true),
     removeAttachmentMock: vi.fn(),
+    sendQueuedNowDispatch: vi.fn((_args: { chatID: string; messageID: string }) => ({
+      outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
+    })),
+    announceMock: vi.fn((_message: string) => undefined),
   };
 });
 
 type RemoveOutcome =
-  { status: "success" } | { status: "error"; error: { status?: number; message: string } };
+  | { status: "success"; value?: boolean }
+  | { status: "error"; error: { status?: number; message: string } };
 
+vi.mock("@cplieger/ui/announce", () => ({ announce: mocks.announceMock }));
 vi.mock("./actions/chat.js", () => ({
   clearSteers: { dispatch: mocks.clearDispatch },
   cancelTurn: { dispatch: mocks.cancelDispatch },
   removeSteer: { dispatch: mocks.removeDispatch },
   unqueuePrompt: { dispatch: mocks.unqueueDispatch },
+  sendQueuedNow: { dispatch: mocks.sendQueuedNowDispatch },
 }));
 // Every export is present so real-ESM linking succeeds; only the restore is observed.
 vi.mock("./attachments.js", () => ({
@@ -86,6 +93,7 @@ const {
   unqueueDispatch,
   addAttachmentMock,
   removeAttachmentMock,
+  sendQueuedNowDispatch,
 } = mocks;
 
 import {
@@ -99,7 +107,7 @@ import {
   get,
 } from "./store.js";
 import { initPendingSteers, mountSteerStack, type SteerStackSource } from "./pending-steers.js";
-import { signal } from "@cplieger/reactive";
+import { signal } from "@cplieger/ui";
 import type { Entry, PendingSteer, QueuedPrompt, Session } from "./types.js";
 import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
@@ -263,6 +271,8 @@ describe("the steer stack", () => {
     unqueueDispatch.mockReturnValue({ outcome: Promise.resolve({ status: "success" }) });
     addAttachmentMock.mockClear();
     removeAttachmentMock.mockClear();
+    sendQueuedNowDispatch.mockReset();
+    sendQueuedNowDispatch.mockReturnValue({ outcome: Promise.resolve({ status: "success" }) });
   });
 
   it("renders into the bottom-bar stack rather than inside the composer", () => {
@@ -293,6 +303,29 @@ describe("the steer stack", () => {
     expect(labelOf(row)).toBe("Sent");
     expect(row.querySelector(".steer-ack")).toBeNull();
     expect(row.getAttribute("aria-label")).toBe("Sent, waiting for the agent: use tabs instead");
+  });
+
+  // A row another program posted through the API is not the user's message, so it says who sent it.
+  it("says who sent a row an API caller posted", () => {
+    recordSteerQueued("chat-1", {
+      id: "steer-1",
+      text: "Agent Mail: 1 new message",
+      origin: "user",
+      caller: { label: "Agent Mail" },
+    });
+    recordSteerQueued("chat-1", {
+      id: "steer-2",
+      text: "nightly report",
+      origin: "user",
+      caller: {},
+      state: "unsent",
+    });
+
+    expect(labelOf(rowAt(0))).toBe("Sent by Agent Mail");
+    expect(rowAt(0).getAttribute("aria-label")).toBe(
+      "Sent by Agent Mail, waiting for the agent: Agent Mail: 1 new message",
+    );
+    expect(labelOf(rowAt(1))).toBe("Sent by an API caller \u00b7 unread \u00b7 sends next");
   });
 
   it("says a message is still sending before the server confirms it", () => {
@@ -464,6 +497,69 @@ describe("the steer stack", () => {
     );
   });
 
+  // The turn ended while KAS held the row: KAS's continuation reads it or its boundary drops it,
+  // and a delete would empty the buffer under that read, so the row is drawn like a sending one,
+  // with no controls.
+  it("offers no controls on a message the agent is reading at a turn's end", () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    recordSteerQueued("chat-1", {
+      id: "steer-1",
+      text: "one",
+      origin: "user",
+      state: "delivering",
+    });
+
+    const row = firstRow();
+    expect(row.dataset["state"]).toBe("delivering");
+    expect(labelOf(row)).toBe("Delivering");
+    expect(row.getAttribute("aria-label")).toBe(
+      "Delivering, the agent is reading or dropping it: one",
+    );
+    expect(actions(row)).toEqual([]);
+  });
+
+  // Discard all and Edit beside a workflow result are one clear of the whole buffer, which the
+  // server refuses while the agent reads a row: offering either would only produce a refusal.
+  it("offers no whole-buffer clear beside a message the agent is reading", () => {
+    recordSteerQueued("chat-1", {
+      id: "steer-1",
+      text: "mine",
+      origin: "user",
+      state: "delivering",
+    });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "later", origin: "user" });
+    recordSteerQueued("chat-1", { id: "notify-1", text: "workflow done", origin: "agent" });
+    expect(actions(rowAt(0))).toEqual([]);
+    expect(actions(rowAt(1))).toEqual(["Send this message now"]);
+    expect(actions(rowAt(2))).toEqual([]);
+
+    recordSteerQueued("chat-1", { id: "steer-1", text: "mine", origin: "user" });
+    expect(actions(rowAt(2))).toEqual(["Discard all 3 unread messages"]);
+  });
+
+  // While the agent reads one row, any delete of a row in its buffer would clear that read, so the
+  // server refuses it. Only a row the server holds itself (unsent) can still be edited or deleted.
+  it("offers no Edit or Delete beside a message the agent is reading, except on an unsent one", () => {
+    recordSteerQueued("chat-1", {
+      id: "steer-1",
+      text: "mine",
+      origin: "user",
+      state: "delivering",
+    });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "later", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-3", text: "held", origin: "user", state: "unsent" });
+    expect(actions(rowAt(0))).toEqual([]);
+    expect(actions(rowAt(1))).toEqual(["Send this message now"]);
+    expect(actions(rowAt(2))).toEqual(["Edit this message", 'Delete "held"']);
+
+    recordSteerQueued("chat-1", { id: "steer-1", text: "mine", origin: "user" });
+    expect(actions(rowAt(1))).toEqual([
+      "Send this message now",
+      "Edit this message",
+      'Delete "later"',
+    ]);
+  });
+
   it("offers no controls on a message that is still sending", () => {
     recordSteerSent("chat-1", "m-1", "one");
     expect(actions(firstRow())).toEqual([]);
@@ -511,6 +607,21 @@ describe("the steer stack", () => {
     expect(clearDispatch).not.toHaveBeenCalled();
     expect(removeDispatch).not.toHaveBeenCalled();
     expect(setComposerValueMock).not.toHaveBeenCalled();
+  });
+
+  // The server stopped nothing (the resend already carries the row), so "Stopping the turn" is false.
+  it("takes back the stop announcement when the server skipped the stop", async () => {
+    cancelDispatch.mockReturnValueOnce({
+      outcome: Promise.resolve({ status: "success", value: true }),
+    });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "actually target main", origin: "user" });
+    clickAction(firstRow(), "Send this message now");
+
+    await vi.waitFor(() => {
+      expect(mocks.announceMock).toHaveBeenLastCalledWith(
+        "The turn keeps running: the message already left the queue",
+      );
+    });
   });
 
   it("names the pressed row when several are waiting", async () => {
@@ -707,6 +818,24 @@ describe("the steer stack", () => {
 
     expect(rows().map(labelOf)).toEqual(["After this turn", "After 2 turns", "After 3 turns"]);
     expect(rowAt(2).getAttribute("aria-label")).toBe("After 3 turns: third");
+  });
+
+  // A follow-up another program queued through the API is not the user's, so it says who sent it.
+  it("says who sent a follow-up an API caller queued", () => {
+    withQueued([
+      { id: "m-q1", text: "Agent Mail: 1 new message", caller: { label: "Agent Mail" } },
+      { id: "m-q2", text: "nightly report", caller: {} },
+      { id: "m-q3", text: "mine" },
+    ]);
+
+    expect(rows().map(labelOf)).toEqual([
+      "Sent by Agent Mail \u00b7 after this turn",
+      "Sent by an API caller \u00b7 after 2 turns",
+      "After 3 turns",
+    ]);
+    expect(rowAt(0).getAttribute("aria-label")).toBe(
+      "Sent by Agent Mail \u00b7 after this turn: Agent Mail: 1 new message",
+    );
   });
 
   it("moves every remaining follow-up up a turn when the first one posts", () => {
@@ -906,6 +1035,131 @@ describe("the steer stack", () => {
     });
     expect(clearDispatch).not.toHaveBeenCalled();
     expect(confirmMock).not.toHaveBeenCalled();
+  });
+
+  // SEND NOW. A follow-up gets the held steer's arrow: the server moves the row to the head of
+  // the queue, stops the turn, and the stopped close sends that row next.
+  it("offers a waiting follow-up the steer's send-now arrow, first", () => {
+    withQueued(three);
+    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs", origin: "user" });
+
+    expect(actions(rowAt(1))).toEqual([
+      "Send this follow-up now",
+      "Edit this follow-up",
+      "Discard this follow-up",
+    ]);
+    const svg = (row: HTMLElement, label: string): string =>
+      actionButton(row, label).querySelector("svg")?.outerHTML ?? "";
+    expect(svg(rowAt(1), "Send this follow-up now")).not.toBe("");
+    expect(svg(rowAt(1), "Send this follow-up now")).toBe(svg(rowAt(0), "Send this message now"));
+  });
+
+  it("stops the turn and sends the pressed follow-up first", async () => {
+    withQueued(three);
+
+    expect(actionButton(rowAt(2), "Send this follow-up now").dataset["tooltip"]).toBe(
+      "Stops the turn and sends this follow-up next",
+    );
+    clickAction(rowAt(2), "Send this follow-up now");
+
+    await vi.waitFor(() => {
+      expect(sendQueuedNowDispatch).toHaveBeenCalledWith({ chatID: "chat-1", messageID: "m-q3" });
+    });
+    expect(cancelDispatch).not.toHaveBeenCalled();
+    expect(unqueueDispatch).not.toHaveBeenCalled();
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(setComposerValueMock).not.toHaveBeenCalled();
+  });
+
+  it("takes back the stop announcement when the follow-up's turn had already opened", async () => {
+    sendQueuedNowDispatch.mockReturnValueOnce({
+      outcome: Promise.resolve<RemoveOutcome>({ status: "success", value: true }),
+    });
+    withQueued(three);
+    clickAction(rowAt(2), "Send this follow-up now");
+
+    await vi.waitFor(() => {
+      expect(mocks.announceMock).toHaveBeenLastCalledWith(
+        "The turn keeps running: the message already left the queue",
+      );
+    });
+  });
+
+  it("sends a follow-up at once while no turn runs", async () => {
+    withQueued(three, false);
+
+    expect(actionButton(rowAt(1), "Send this follow-up now").dataset["tooltip"]).toBe(
+      "Sends this follow-up now",
+    );
+    clickAction(rowAt(1), "Send this follow-up now");
+
+    await vi.waitFor(() => {
+      expect(sendQueuedNowDispatch).toHaveBeenCalledWith({ chatID: "chat-1", messageID: "m-q2" });
+    });
+    expect(cancelDispatch).not.toHaveBeenCalled();
+  });
+
+  it("offers no arrow on a held or sent follow-up", () => {
+    withQueued(
+      [
+        { id: "m-q1", text: "first" },
+        { id: "m-h", text: "from before", held: true },
+        { id: "m-c", text: "carried", resends: ["steer-1"], held: true },
+        { id: "m-q2", text: "second" },
+      ],
+      false,
+    );
+    openTurn("chat-1", {
+      id: "tq-open",
+      turn: "tq",
+      kind: "turn_open",
+      seq: 0,
+      ts: 1,
+      payload: { source: "prompt", n: 1, prompt: { id: "m-q1", text: "first" } },
+    });
+
+    expect(rows().map(labelOf)).toEqual([
+      "Sent",
+      "Not sent \u00b7 the server restarted",
+      "Not sent \u00b7 the server restarted",
+      "After this turn",
+    ]);
+    expect(actions(rowAt(0))).toEqual(["Edit this follow-up", "Discard this follow-up"]);
+    expect(actions(rowAt(1))).toEqual(["Edit this follow-up", "Discard this follow-up"]);
+    expect(actions(rowAt(2))).toEqual(["Edit this follow-up", "Discard this follow-up"]);
+    expect(actions(rowAt(3))[0]).toBe("Send this follow-up now");
+  });
+
+  // The server sends the marked row before unread steers, which then ride into its turn.
+  it("counts a follow-up marked next as the next turn beside unread steers", () => {
+    withQueued([
+      { id: "m-q2", text: "second", next: true },
+      { id: "m-q1", text: "first" },
+    ]);
+    recordSteerQueued("chat-1", { id: "steer-1", text: "a", origin: "user", state: "unsent" });
+
+    expect(rows().map(labelOf)).toEqual([
+      "Unread \u00b7 sends next",
+      "After this turn",
+      "After 2 turns",
+    ]);
+  });
+
+  it("reports a refused send-now in the server's words", async () => {
+    withQueued([{ id: "m-q1", text: "first" }]);
+    sendQueuedNowDispatch.mockReturnValue({
+      outcome: Promise.resolve({
+        status: "error",
+        error: { status: 409, message: "this follow-up was queued before the server restarted" },
+      }),
+    });
+    clickAction(firstRow(), "Send this follow-up now");
+
+    await vi.waitFor(() => {
+      expect(errorToastMock).toHaveBeenCalledWith(
+        "this follow-up was queued before the server restarted",
+      );
+    });
   });
 
   it("fills the composer with the follow-up and its attachments before the removal is sent", () => {

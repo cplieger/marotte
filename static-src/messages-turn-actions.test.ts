@@ -1,7 +1,13 @@
 // The turn footer's actions, and `turnMarkdown`'s per-prose-run paragraphs over the turn's entries.
 import { describe, it, expect, vi, afterEach } from "vitest";
-import type { Entry, EntryKind } from "./types.js";
+import type { Entry, EntryKind, Session } from "./types.js";
 import type { Turn } from "./turns.js";
+
+const { getSession, chatNotice, openTangentChat } = vi.hoisted(() => ({
+  getSession: vi.fn((): Session | undefined => undefined),
+  chatNotice: vi.fn(),
+  openTangentChat: vi.fn(() => Promise.resolve()),
+}));
 
 const dispatch = vi.fn(
   (_text: string, opts?: { silent?: boolean; onSuccess?: () => void }): Promise<void> => {
@@ -17,7 +23,10 @@ vi.mock("./store.js", async () => ({
   ...(await import("./__test-helpers__/store-mock.js")).storeMock,
   getActive: () => active,
   getActiveId: () => active.id,
+  get: getSession,
 }));
+vi.mock("./notice-subject.js", () => ({ chatNotice }));
+vi.mock("./chat.js", () => ({ openTangentChat }));
 vi.mock("./actions/messages.js", () => ({
   copyClipboard: {
     dispatch: (text: string, opts?: { silent?: boolean; onSuccess?: () => void }) =>
@@ -100,6 +109,7 @@ function fixture(body: Entry[], rendered = "rendered reply", outcome = "complete
     ts: 1,
     outcome: outcome as Turn["outcome"],
     rewindTo: undefined,
+    branchFrom: undefined,
   };
   return { card, footer, body: bodyEl, row, bubble, tool, turn };
 }
@@ -195,8 +205,8 @@ describe("mountTurnFooterActions", () => {
     expect(buttons(f.footer)).toHaveLength(3);
   });
 
-  it("mounts nothing for a turn that wrote no prose at all", () => {
-    // No markdown to copy and no source to show, so the row carries no actions.
+  it("mounts nothing for a turn with no prose and nothing to branch from", () => {
+    // No markdown to copy and no prompt to branch after, so the row carries no actions.
     const f = fixture([entry(1, "tool_call")], "");
     mountTurnFooterActions(f.footer, f.card, f.turn);
     expect(f.footer.querySelector(".turn-actions-buttons")).toBeNull();
@@ -336,6 +346,86 @@ describe("mountTurnFooterActions", () => {
   });
 });
 
+describe("Branch from here", () => {
+  afterEach(() => {
+    getSession.mockReset();
+    chatNotice.mockReset();
+    openTangentChat.mockClear();
+  });
+
+  /** The live session behind the card: t1 opened by u1, t2 by u2, and an optional watermark. */
+  function session(watermark?: string): Session {
+    const open = (turn: string, n: number, prompt: string): Entry => ({
+      id: `${turn}-open`,
+      turn,
+      kind: "turn_open",
+      seq: 0,
+      ts: 1,
+      payload: { source: "prompt", n, prompt: { id: prompt, text: "do a thing" } },
+    });
+    const s = {
+      id: "c1",
+      turn_order: ["t1", "t2"],
+      turns: new Map([
+        ["t1", { entries: [open("t1", 1, "u1"), text(1, "reply")], openEntries: new Map() }],
+        ["t2", { entries: [open("t2", 2, "u2")], openEntries: new Map() }],
+      ]),
+    };
+    return (watermark === undefined ? s : { ...s, compaction_watermark: watermark }) as never;
+  }
+
+  function branchable(f: Fixture): Turn {
+    const own = { id: "u1", text: "do a thing" };
+    return { ...f.turn, trigger: own, branchFrom: own, rewindTo: { id: "u2", text: "next" } };
+  }
+
+  function labels(footer: HTMLElement): string[] {
+    return buttons(footer).map((b) => b.getAttribute("aria-label") ?? "");
+  }
+
+  it("offers Branch from here on a settled prompt turn and forks after it", async () => {
+    const f = fixture(prose());
+    getSession.mockReturnValue(session());
+    mountTurnFooterActions(f.footer, f.card, branchable(f));
+    expect(labels(f.footer)).toEqual([
+      "Copy as text",
+      "Copy as markdown",
+      "Copy link to this turn",
+      "Branch from here",
+    ]);
+    buttons(f.footer)[3]?.click();
+    // The turn's own prompt: rewindTo (u2) would fork one turn too far.
+    await vi.waitFor(() => {
+      expect(openTangentChat).toHaveBeenCalledWith("c1", "u1");
+    });
+  });
+
+  it("offers Branch alone on a settled prompt turn that wrote no prose", () => {
+    const f = fixture([entry(1, "tool_call")], "");
+    mountTurnFooterActions(f.footer, f.card, branchable(f));
+    expect(labels(f.footer)).toEqual(["Branch from here"]);
+  });
+
+  it("offers no Branch on an agent-initiated turn", () => {
+    const f = fixture(prose());
+    mountTurnFooterActions(f.footer, f.card, f.turn);
+    expect(labels(f.footer)).not.toContain("Branch from here");
+  });
+
+  it("a click on a turn summarized since its paint notices instead of forking", async () => {
+    const f = fixture(prose());
+    getSession.mockReturnValue(session("e1"));
+    mountTurnFooterActions(f.footer, f.card, branchable(f));
+    buttons(f.footer)[3]?.click();
+    expect(chatNotice).toHaveBeenCalledWith(
+      "c1",
+      expect.stringContaining("nothing to branch from"),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(openTangentChat).not.toHaveBeenCalled();
+  });
+});
+
 describe("the prompt in the copies", () => {
   function withPrompt(f: Fixture, prompt: string): Turn {
     return { ...f.turn, trigger: { id: "m1", text: prompt } as Turn["trigger"] };
@@ -356,6 +446,16 @@ describe("the prompt in the copies", () => {
       "> first\n>\n> second\n\n**bold**",
       expect.anything(),
     );
+  });
+
+  it("offers no quote action, which belongs to a selection inside the reply", () => {
+    const f = fixture(prose("**bold**"), "bold");
+    mountTurnFooterActions(f.footer, f.card, withPrompt(f, "why?"));
+    expect(buttons(f.footer).map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Copy as text",
+      "Copy as markdown",
+      "Copy link to this turn",
+    ]);
   });
 
   it("copies the reply alone on an agent-initiated turn", () => {

@@ -48,14 +48,12 @@ vi.mock("./actions/settings.js", () => ({
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(() => Promise.resolve(undefined)),
   apiGetTyped: vi.fn(),
-  // settings-steering.ts is in this graph and reads the ETag off the response headers, so the name
-  // has to exist for Browser Mode's real linking.
-  apiGetWithHeaders: vi.fn(() => Promise.resolve({ data: null, headers: null })),
 }));
 vi.mock("./wire/decoders.gen.js", () => ({ decodeWhoamiResponse: vi.fn() }));
 // governance.ts reaches the SSE bus and its decoders, which the partial decoder mock above does not
 // carry; the lock painter has its own suite.
 vi.mock("./governance.js", () => ({
+  onGovernanceChange: vi.fn(),
   paintSettingLocks: vi.fn(),
   writeSwitch: (input: HTMLInputElement, value: boolean) => {
     input.checked = value;
@@ -97,9 +95,6 @@ vi.mock("./versions.js", () => ({
 vi.mock("./editor-openers.js", () => ({ openConfigFile: H.mockOpenConfigFile }));
 vi.mock("./git-tabs.js", () => ({
   getGitTab: undefined,
-}));
-vi.mock("./files.js", () => ({
-  noteDefaultBrowsePath: undefined,
 }));
 vi.mock("./editor-core.js", () => ({
   restoreEditorTabs: undefined,
@@ -147,6 +142,7 @@ const {
   themeStorage,
   _resetThemeForTest,
 } = await import("./settings.js");
+const { setCatalogOutputStyles } = await import("./output-style.js");
 
 /** Wire the General panel's listeners once, then seed it — the two halves the `settings_updated`
  *  arm keeps apart, in the order boot runs them. */
@@ -890,16 +886,23 @@ describe("the automatic-compaction switch and slider", () => {
   const range = (): HTMLInputElement =>
     document.getElementById("auto-compact-pct") as HTMLInputElement;
   const row = (): HTMLElement => document.getElementById("auto-compact-row") as HTMLElement;
-  const warning = (): HTMLElement => document.getElementById("auto-compact-warning") as HTMLElement;
 
   beforeEach(() => {
     document.body.innerHTML = `
       <input type="checkbox" id="flag-auto-compaction">
       <div id="auto-compact-row">
         <output id="auto-compact-pct-value"></output>
-        <input type="range" id="auto-compact-pct" min="50" max="90" step="5">
-        <p id="auto-compact-warning"></p>
+        <input type="range" id="auto-compact-pct" min="50" max="80" step="5">
       </div>`;
+  });
+
+  it("ships a slider that stops at KAS's maximum threshold, 80", async () => {
+    const { default: page } = await import("../static/index.html?raw");
+    const doc = new DOMParser().parseFromString(page, "text/html");
+    const shipped = doc.getElementById("auto-compact-pct");
+    expect(shipped?.getAttribute("max")).toBe("80");
+    expect(shipped?.hasAttribute("aria-describedby")).toBe(false);
+    expect(doc.getElementById("auto-compact-warning")).toBeNull();
   });
 
   it("hides the slider while the switch is off and publishes the policy", async () => {
@@ -910,14 +913,10 @@ describe("the automatic-compaction switch and slider", () => {
     expect(compactionPolicy.value).toEqual({ enabled: false, pct: 70 });
   });
 
-  it.each([
-    [80, true],
-    [85, false],
-  ])("at %i the warning hidden is %s", (pct, hidden) => {
-    applyGeneralPanel(settingsPayload({ auto_compaction_enabled: true, auto_compact_pct: pct }));
+  it("shows the slider at the stored value while the switch is on", () => {
+    applyGeneralPanel(settingsPayload({ auto_compaction_enabled: true, auto_compact_pct: 75 }));
     expect(row().classList.contains("hidden")).toBe(false);
-    expect(range().value).toBe(String(pct));
-    expect(warning().classList.contains("hidden")).toBe(hidden);
+    expect(range().value).toBe("75");
   });
 
   it("writes the value on change and not while dragging", async () => {
@@ -978,20 +977,66 @@ describe("the agent-capability selects and the shell timeout", () => {
       <select id="auto-routing"><option value="">Default</option><option value="on">On</option><option value="off">Off</option></select>
       <select id="auto-delegation"><option value="">Default</option><option value="on">On</option><option value="off">Off</option></select>
       <input type="checkbox" id="flag-cloudformation-safety">
-      <select id="output-style"><option value="default">Default</option><option value="concise">Concise</option></select>
+      <input type="checkbox" id="flag-workflows">
+      <div id="workflow-launch-row">
+        <select id="workflow-launch"><option value="when-asked">Only when asked</option><option value="large-tasks">Only for large tasks</option><option value="delegate-all">As much as possible</option></select>
+      </div>
       <input type="number" id="shell-command-timeout">`;
+  });
+
+  const workflowLaunchRow = (): HTMLElement =>
+    document.getElementById("workflow-launch-row") as HTMLElement;
+
+  it("paints the stored Workflow use and shows its row only while Workflows is on", () => {
+    applyGeneralPanel(
+      settingsPayload({ workflows_enabled: true, workflow_launch: "delegate-all" }),
+    );
+    expect(sel("workflow-launch").value).toBe("delegate-all");
+    expect(workflowLaunchRow().classList.contains("hidden")).toBe(false);
+    applyGeneralPanel(
+      settingsPayload({ workflows_enabled: false, workflow_launch: "large-tasks" }),
+    );
+    expect(sel("workflow-launch").value).toBe("large-tasks");
+    expect(workflowLaunchRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("hides the Workflow use row while a lock pins Workflows off", async () => {
+    const { paintSettingLocks } = await import("./governance.js");
+    vi.mocked(paintSettingLocks).mockImplementationOnce(() => {
+      box("flag-workflows").checked = false;
+    });
+    applyGeneralPanel(settingsPayload({ workflows_enabled: true }));
+    expect(workflowLaunchRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("stores a Workflow use choice and follows the Workflows switch as it flips", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload({ workflows_enabled: true }));
+    vi.mocked(patchSettings).mockClear();
+    sel("workflow-launch").value = "large-tasks";
+    sel("workflow-launch").dispatchEvent(new Event("change"));
+    expect(patchSettings).toHaveBeenLastCalledWith({ workflow_launch: "large-tasks" });
+    box("flag-workflows").checked = false;
+    box("flag-workflows").dispatchEvent(new Event("change"));
+    expect(workflowLaunchRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("repaints the Workflow use row when governance moves the Workflows switch", async () => {
+    const { onGovernanceChange } = await import("./governance.js");
+    vi.mocked(onGovernanceChange).mockClear();
+    initRetention(settingsPayload({ workflows_enabled: false }));
+    const repaint = vi.mocked(onGovernanceChange).mock.lastCall?.[0];
+    expect(repaint, "a governance listener").toBeDefined();
+    box("flag-workflows").checked = true;
+    repaint?.({} as Parameters<NonNullable<typeof repaint>>[0]);
+    expect(workflowLaunchRow().classList.contains("hidden")).toBe(false);
   });
 
   it("seeds every select and shows the ask-first row only while spec planning is on", () => {
     applyGeneralPanel(
-      settingsPayload({
-        spec_planning: "quick",
-        output_style: "concise",
-        terminal_command_timeout_ms: 300_000,
-      }),
+      settingsPayload({ spec_planning: "quick", terminal_command_timeout_ms: 300_000 }),
     );
     expect(sel("spec-planning").value).toBe("quick");
-    expect(sel("output-style").value).toBe("concise");
     expect(timeout().value).toBe("300");
     expect(askRow().classList.contains("hidden")).toBe(false);
   });
@@ -1106,6 +1151,113 @@ describe("the agent-capability selects and the shell timeout", () => {
     ["5000", 1_800_000],
   ])("shellTimeoutMs(%j) is %i", (raw, want) => {
     expect(shellTimeoutMs(raw)).toBe(want);
+  });
+});
+
+describe("the output style select", () => {
+  // kiro-cli 2.37.0's outputStyle select, as GET /api/config-template serves it.
+  const STYLES = [
+    { id: "default", name: "Default", description: "Use Kiro's standard response style." },
+    {
+      id: "proactive",
+      name: "Proactive",
+      description:
+        "Start work immediately and make reasonable assumptions about routine decisions.",
+    },
+    {
+      id: "concise",
+      name: "Concise",
+      description: "Keep responses brief and conversational unless the task needs more structure.",
+    },
+    {
+      id: "explanatory",
+      name: "Explanatory",
+      description:
+        "Add brief Insight blocks that explain non-obvious code and implementation choices.",
+    },
+    {
+      id: "learning",
+      name: "Learning",
+      description: "Explain choices and leave small, meaningful pieces of code for you to write.",
+    },
+  ];
+  const LEARNING_HINT =
+    "Explain choices and leave small, meaningful pieces of code for you to write. From your next message on.";
+  const select = (): HTMLSelectElement =>
+    document.getElementById("output-style") as HTMLSelectElement;
+  const hint = (): string => document.getElementById("output-style-hint")?.textContent ?? "";
+
+  beforeEach(() => {
+    // Static/index.html's markup before any catalog lands.
+    document.body.innerHTML = `
+      <select id="output-style"><option value="default" selected>Default</option></select>
+      <p id="output-style-hint">Default uses Kiro's standard response style.</p>`;
+  });
+
+  it("paints the output styles the catalog serves and keeps the stored one, catalog first", () => {
+    setCatalogOutputStyles(STYLES);
+    applyGeneralPanel(settingsPayload({ output_style: "learning" }));
+
+    expect(Array.from(select().options, (o) => o.value)).toEqual([
+      "default",
+      "proactive",
+      "concise",
+      "explanatory",
+      "learning",
+    ]);
+    expect(Array.from(select().options, (o) => o.textContent)).toEqual(STYLES.map((s) => s.name));
+    expect(select().value).toBe("learning");
+    expect(hint()).toBe(LEARNING_HINT);
+  });
+
+  it("paints the output styles the catalog serves and keeps the stored one, settings first", async () => {
+    const { settingsAsShown } = await import("./persist.js");
+    const stored = settingsPayload({ output_style: "learning" });
+    applyGeneralPanel(stored);
+    expect(select().value).toBe("default");
+
+    vi.mocked(settingsAsShown).mockReturnValueOnce(stored);
+    setCatalogOutputStyles(STYLES);
+
+    expect(select().options).toHaveLength(5);
+    expect(select().value).toBe("learning");
+    expect(hint()).toBe(LEARNING_HINT);
+  });
+
+  it("shows Default for a stored style the catalog does not serve, and writes nothing", async () => {
+    const { patchSettings } = await import("./persist.js");
+    setCatalogOutputStyles(STYLES);
+    applyGeneralPanel(settingsPayload({ output_style: "verbose" }));
+
+    expect(select().value).toBe("default");
+    expect(hint()).toBe("Use Kiro's standard response style. From your next message on.");
+    expect(patchSettings).not.toHaveBeenCalled();
+  });
+
+  it("keeps Default selectable when the catalog leaves it out", () => {
+    setCatalogOutputStyles(STYLES.filter((s) => s.id !== "default"));
+    applyGeneralPanel(settingsPayload({ output_style: "learning" }));
+    expect(hint()).toBe(LEARNING_HINT);
+    applyGeneralPanel(settingsPayload({ output_style: "verbose" }));
+
+    expect(select().options[0]?.value).toBe("default");
+    expect(select().value).toBe("default");
+    expect(hint()).toBe("Default uses Kiro's standard response style.");
+  });
+
+  it("a style change writes output_style and shows that style's description", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload());
+    setCatalogOutputStyles(STYLES);
+    vi.mocked(patchSettings).mockClear();
+
+    select().value = "explanatory";
+    select().dispatchEvent(new Event("change"));
+
+    expect(patchSettings).toHaveBeenLastCalledWith({ output_style: "explanatory" });
+    expect(hint()).toBe(
+      "Add brief Insight blocks that explain non-obvious code and implementation choices. From your next message on.",
+    );
   });
 });
 

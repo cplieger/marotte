@@ -27,8 +27,7 @@ type baseDeps struct {
 	// onSetGovernance, when set, is invoked by SetGovernance so a test can
 	// assert the runtime-side cache write (mirrors onBroadcast).
 	onSetGovernance func(marotte.GovernanceStatePayload)
-	// onSetRegistry and onPolicyChanged observe the other two governance writes.
-	onSetRegistry   func(*marotte.GovernanceMCPRegistry)
+	// onPolicyChanged observes the other governance write.
 	onPolicyChanged func(errs []marotte.PolicyErrorItem, reloaded bool)
 	// withdrawn records each PendingPermsWithdraw call as "<chat>/<toolCallID>".
 	withdrawn []string
@@ -62,10 +61,6 @@ type baseDeps struct {
 	prompts map[marotte.ChatID]*turnlog.Turn
 	// compactionFailures records failed-compaction facts sent to the host.
 	compactionFailures []compactionFailure
-	// turnInterrupts records every InterruptTurn call, so a test can assert the
-	// sentinel ended the turn exactly once and named its cause, with no bridge
-	// behind it.
-	turnInterrupts []turnInterrupt
 	// catalogModels is the last model list SetModels was handed.
 	catalogModels []marotte.SessionModel
 	// parent is returned by ParentACPSession; "" means parent unknown.
@@ -138,11 +133,11 @@ func (d *baseDeps) SteerCleared(chatID marotte.ChatID, steerIDs []string) []maro
 	})
 }
 
-func (d *baseDeps) SteerRead(chatID marotte.ChatID, steerID string) []string {
+func (d *baseDeps) SteerRead(chatID marotte.ChatID, steerID string) marotte.SteerQueuedPayload {
 	if held := d.forget(chatID, []string{steerID}); len(held) > 0 {
-		return held[0].Replaces
+		return held[0]
 	}
-	return nil
+	return marotte.SteerQueuedPayload{}
 }
 
 func (d *baseDeps) SteerForgotten(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
@@ -424,6 +419,14 @@ func (d *baseDeps) RunFoldTarget(_ context.Context, step *RunStep, chatID marott
 	return d.turns.runTurn(step.RunID, step.NodePath), true
 }
 
+func (d *baseDeps) RunOpenTurn(runID, nodePath string) (*turnlog.Turn, bool) {
+	t, ok := d.turns.runs[runPathKey(runID, nodePath)]
+	if !ok || d.turns.closed(t) {
+		return nil, false
+	}
+	return t, true
+}
+
 func (d *baseDeps) RunAppendAfterClosed(_ context.Context, runID, nodePath string, e *marotte.Entry) error {
 	d.runCalls = append(d.runCalls, runCall{kind: "after_closed", runID: runID, nodePath: nodePath})
 	k := runPathKey(runID, nodePath)
@@ -513,8 +516,8 @@ type runCall struct {
 // The turn-bracket operations, recorded rather than performed: the host
 // owns the turn lifecycle, and what this package is responsible for is calling
 // the right one on the right frame.
-func (d *baseDeps) WireTurnStart(_ context.Context, chatID marotte.ChatID) {
-	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "start"})
+func (d *baseDeps) WireTurnStart(_ context.Context, chatID marotte.ChatID, frame TurnStartFrame) {
+	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "start", frame: frame})
 }
 
 func (d *baseDeps) WireTurnEnd(_ context.Context, chatID marotte.ChatID, stop marotte.StopReason) {
@@ -529,14 +532,11 @@ func (d *baseDeps) WireTurnActivity(chatID marotte.ChatID, active bool) {
 	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: kind})
 }
 
-func (d *baseDeps) ReviseTurnBinding(_ context.Context, chatID marotte.ChatID) {
-	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "revise"})
-}
-
 type turnBracket struct {
-	chat marotte.ChatID
-	kind string
-	stop marotte.StopReason
+	chat  marotte.ChatID
+	kind  string
+	stop  marotte.StopReason
+	frame TurnStartFrame
 }
 
 // Unlike production, a fold with no turn opens one here directly.
@@ -709,16 +709,6 @@ func (d *baseDeps) CompactionFailed(chatID marotte.ChatID, turnID, detail string
 	d.compactionFailures = append(d.compactionFailures, compactionFailure{chatID: chatID, turnID: turnID, detail: detail})
 }
 
-type turnInterrupt struct {
-	chatID marotte.ChatID
-	turnID string
-	reason string
-}
-
-func (d *baseDeps) InterruptTurn(chatID marotte.ChatID, turnID, reason string) {
-	d.turnInterrupts = append(d.turnInterrupts, turnInterrupt{chatID, turnID, reason})
-}
-
 // AccumulateSpend and StageConversationTurnSummary stand in for the host's per-turn
 // accounting by writing the chat's usage directly (the host's no-open-turn path).
 func (d *baseDeps) AccumulateSpend(ctx context.Context, chatID marotte.ChatID, credits float64) {
@@ -778,20 +768,14 @@ func (d *baseDeps) SetGovernance(_ context.Context, g marotte.GovernanceStatePay
 	}
 }
 
-func (d *baseDeps) SetMCPRegistry(_ context.Context, r *marotte.GovernanceMCPRegistry) {
-	if d.onSetRegistry != nil {
-		d.onSetRegistry(r)
-	}
-}
-
 func (d *baseDeps) PolicyChanged(_ context.Context, errs []marotte.PolicyErrorItem, reloaded bool) {
 	if d.onPolicyChanged != nil {
 		d.onPolicyChanged(errs, reloaded)
 	}
 }
 
-func (*baseDeps) PendingPermsAdd(_ int64, evt marotte.ServerEvent, _ AskOrigin) marotte.ServerEvent {
-	return evt
+func (*baseDeps) PendingPermsAdd(_ context.Context, _ int64, evt marotte.ServerEvent, _ AskOrigin) (marotte.ServerEvent, bool) {
+	return evt, true
 }
 
 func (d *baseDeps) PendingPermsWithdraw(chatID marotte.ChatID, toolCallID string) bool {
@@ -809,7 +793,7 @@ func (d *baseDeps) NoticeTarget(_ context.Context, chatID marotte.ChatID, runID 
 func (d *baseDeps) Notify(_ context.Context, _ marotte.ChatID, n *marotte.NotificationPayload) {
 	d.notices = append(d.notices, *n)
 }
-func (*baseDeps) IsHookStatusEnabled() bool { return false }
+func (*baseDeps) HookTrigger(string) (string, bool) { return "", false }
 
 // SetModels stands in for the workspace catalog holder, recording what the
 // translator published so a test can assert on the list without an agent

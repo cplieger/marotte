@@ -1,7 +1,7 @@
 // A leaf: the action modules sit below the tab strip that names a subject, so the
 // notice door is injected (configureSubjectNotice).
 
-import type { ActionErrorLike, NotifierRetry } from "@cplieger/actions";
+import type { ActionErrorLike, NotifierRetry } from "@cplieger/ui/actions";
 
 type SubjectNotice = (
   subject: string,

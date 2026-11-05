@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -195,15 +195,15 @@ func TestHandleUpload_SuccessBodyListsEveryName(t *testing.T) {
 // respondUploadError is the upload path's whole mapping, and a full volume must
 // reach 507 rather than the generic 500 while still reporting which files did
 // land. ENOSPC cannot be induced without mounting a filesystem, so the errno is
-// handed over in the shape atomicfile produces (see
+// handed over in the shape filesafe produces (see
 // TestIsOutOfSpace_MatchesThroughAtomicfileWrapping for that chain).
 func TestRespondUploadError_Statuses(t *testing.T) {
-	enospc := &atomicfile.WriteError{
-		Phase: atomicfile.PhaseTempWrite,
+	enospc := &filesafe.WriteError{
+		Phase: filesafe.PhaseTempWrite,
 		Err:   &os.PathError{Op: "write", Path: "/uploads/.atomicfile-1.tmp", Err: syscall.ENOSPC},
 	}
-	edquot := &atomicfile.WriteError{
-		Phase: atomicfile.PhaseTempWrite,
+	edquot := &filesafe.WriteError{
+		Phase: filesafe.PhaseTempWrite,
 		Err:   &os.PathError{Op: "write", Path: "/uploads/.atomicfile-1.tmp", Err: syscall.EDQUOT},
 	}
 	cases := []struct {
@@ -213,7 +213,7 @@ func TestRespondUploadError_Statuses(t *testing.T) {
 		wantError string
 	}{
 		{"invalid filename", errInvalidFilename, http.StatusBadRequest, "invalid filename"},
-		{"per-file cap", atomicfile.ErrFileTooLarge, http.StatusRequestEntityTooLarge, "upload too large"},
+		{"per-file cap", filesafe.ErrFileTooLarge, http.StatusRequestEntityTooLarge, "upload too large"},
 		{"volume full", enospc, http.StatusInsufficientStorage, errNoSpaceLeft},
 		{"quota exhausted", edquot, http.StatusInsufficientStorage, errNoSpaceLeft},
 		{"anything else", errors.New("disk on fire"), http.StatusInternalServerError, "upload failed"},

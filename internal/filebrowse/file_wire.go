@@ -40,34 +40,34 @@ type FileWriteResult struct {
 type RefusalCode string
 
 const (
-	// RefusalChanged is a file that moved under the read, or whose identity differs from
+	// refusalChanged is a file that moved under the read, or whose identity differs from
 	// the one the request carried.
-	RefusalChanged RefusalCode = "changed"
-	// RefusalTooLarge is a file or a body over WholeFileMax.
-	RefusalTooLarge RefusalCode = "too_large"
-	// RefusalBinary is a file with a NUL in its first 8 KiB.
-	RefusalBinary RefusalCode = "binary"
-	// RefusalInvalidFileID is a malformed file_id parameter or body field.
-	RefusalInvalidFileID RefusalCode = "invalid_file_id"
+	refusalChanged RefusalCode = "changed"
+	// refusalTooLarge is a file or a body over WholeFileMax.
+	refusalTooLarge RefusalCode = "too_large"
+	// refusalBinary is a file with a NUL in its first 8 KiB.
+	refusalBinary RefusalCode = "binary"
+	// refusalInvalidFileID is a malformed file_id parameter or body field.
+	refusalInvalidFileID RefusalCode = "invalid_file_id"
 )
 
 // ContentKind classifies the bytes on disk behind a refused stale save.
 type ContentKind string
 
 const (
-	// ContentText is valid UTF-8 with no NUL; the refusal carries the content.
-	ContentText ContentKind = "text"
-	// ContentBinary has a NUL in its first 8 KiB; no content is sent.
-	ContentBinary ContentKind = "binary"
-	// ContentNotUTF8 is invalid UTF-8, which JSON would rewrite; no content is sent.
-	ContentNotUTF8 ContentKind = "not_utf8"
-	// ContentTooLarge is a file now over WholeFileMax; no content is sent.
-	ContentTooLarge ContentKind = "too_large"
+	// contentText is valid UTF-8 with no NUL; the refusal carries the content.
+	contentText ContentKind = "text"
+	// contentBinary has a NUL in its first 8 KiB; no content is sent.
+	contentBinary ContentKind = "binary"
+	// contentNotUTF8 is invalid UTF-8, which JSON would rewrite; no content is sent.
+	contentNotUTF8 ContentKind = "not_utf8"
+	// contentTooLarge is a file now over WholeFileMax; no content is sent.
+	contentTooLarge ContentKind = "too_large"
 )
 
 // FileRefusal is the error body of the viewer routes that a client branches on.
 type FileRefusal struct {
-	// Content is the disk text behind a refused save, present only for ContentText.
+	// Content is the disk text behind a refused save, present only for contentText.
 	Content     *string     `json:"content,omitempty"`
 	Size        *int64      `json:"size,omitempty"`
 	Error       string      `json:"error"`

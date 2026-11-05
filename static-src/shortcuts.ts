@@ -1,6 +1,6 @@
 // The keyboard shortcut reference sheet.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { byId } from "./dom.js";
 import { openModal } from "./modals.js";
 import { registeredShortcuts, type ShortcutBinding } from "./keys.js";
@@ -28,6 +28,14 @@ const GROUPED_ROWS: readonly { readonly group: string; readonly row: SheetRow }[
   {
     group: "Composer",
     row: { description: "New line, continuing a list item", chords: [["Shift", "Enter"]] },
+  },
+  { group: "Composer", row: { description: "Cancel the running turn", chords: [["Esc"]] } },
+  {
+    group: "Composer",
+    row: {
+      description: "Rewind to your last prompt and edit it, from an empty message box",
+      chords: [["Ctrl", "↑"]],
+    },
   },
 ];
 

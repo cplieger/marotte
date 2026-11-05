@@ -3,7 +3,7 @@
 // on `Chat.QueuedPrompts`, so every device draws the same rows.
 
 import { sendPromptTo } from "./chat-commands.js";
-import { handleTypedCommand } from "./typed-commands.js";
+import { handleTypedCommand, terminalCommandRefusal } from "./typed-commands.js";
 import { newMessageID } from "./transport.js";
 import {
   takeAttachments,
@@ -30,6 +30,9 @@ const STARTING_FACE = "The chat is busy right now. Send again to retry";
 
 /** The 409 reason:"chat_not_found" face: the chat was deleted underneath the send. */
 const GONE_FACE = "This chat no longer exists, so the message was not sent";
+
+/** The 409 reason:"chat_closed" face: the chat was closed after the send began. */
+const CLOSED_FACE = "This chat was closed, so the message was not sent";
 
 /** Each chat's last failed TYPED attempt, so a retry of the same text reuses its message id:
  *  `hasMessage` reads the id (`turn_open`'s `prompt.id`) to tell a taken send from a refused one,
@@ -58,6 +61,12 @@ export function forgetDeletedChat(chatID: string): void {
   typedRetries.delete(chatID);
 }
 
+/** The message ids of this chat's typed sends still in flight: a close names them, since the
+ *  server may have admitted one whose turn has not opened here yet. */
+export function inFlightMessageIDs(chatID: string): string[] {
+  return [...(inFlightTyped.get(chatID) ?? [])].map((s) => s.messageID);
+}
+
 /** Runs `send` registered as in flight, so a deletion meanwhile reaches it. */
 async function whileInFlight(
   send: TypedSend,
@@ -84,9 +93,18 @@ function settled(send: Send): void {
 
 /** Sends a prompt on an idle chat, or the interrupt mode's busy verb on a busy one. Conversion runs
  *  both ways (409-busy → busy verb, `no_turn` → prompt) on a shared budget; a hard failure
- *  restores text and attachments under the same message id. */
-export async function submitPrompt(chatID: string, text: string): Promise<SubmitResult> {
-  if (chatID === "" || !isSendable(text, hasAttachments())) {
+ *  restores text and attachments under the same message id. `opts.attachments` is for a send not
+ *  drawn from the live composer: it is sent in place of the pill row, which is left untouched. */
+export async function submitPrompt(
+  chatID: string,
+  text: string,
+  opts: { attachments?: readonly AttachedFile[] } = {},
+): Promise<SubmitResult> {
+  const named = opts.attachments;
+  if (
+    chatID === "" ||
+    !isSendable(text, named === undefined ? hasAttachments() : named.length > 0)
+  ) {
     return "failed";
   }
   // A new attempt IS the retry, so a stale "no agent" verdict goes now (nothing on the failure path
@@ -98,21 +116,23 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
   if (handleTypedCommand(chatID, text)) {
     return "sent";
   }
-  // Held before the attachments are taken, so a busy chat keeps its pill row. The
-  // text goes back once the composer's own clear (after this synchronous prefix) has run.
+  const refusal = invokesCatalogCommand(text) ? null : terminalCommandRefusal(text);
+  if (refusal !== null) {
+    chatNotice(chatID, refusal.notice);
+    return refusal.keepText ? holdText(chatID, text) : "sent";
+  }
+  // Held before the attachments are taken, so a busy chat keeps its pill row.
   const reason = isBusy(chatID) ? promptOnlyReason(text) : null;
   if (reason !== null) {
     chatNotice(chatID, reason);
-    await Promise.resolve();
-    restoreFailedSend(chatID, text);
-    return "held";
+    return holdText(chatID, text);
   }
   const send: TypedSend = {
     kind: "typed",
     chatID,
     text,
     messageID: messageIDFor(chatID, text),
-    attachments: takeAttachments(),
+    attachments: named ?? takeAttachments(),
     // Read BEFORE the await: this is the attachment state the send is taking with
     // it, and recordFailure hands the token back so a restore into a state that was
     // dropped meanwhile (the chat was closed) is refused rather than recreating it.
@@ -122,6 +142,14 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
   return whileInFlight(send, (s) =>
     isBusy(chatID) ? busy(s, CONVERT_BUDGET) : prompt(s, CONVERT_BUDGET),
   );
+}
+
+/** Hands `text` back to the composer once its own clear, after submitPrompt's synchronous
+ *  prefix, has run. */
+async function holdText(chatID: string, text: string): Promise<"held"> {
+  await Promise.resolve();
+  restoreFailedSend(chatID, text);
+  return "held";
 }
 
 /** Sends a message marotte writes on the user's behalf, labelled `displayText` in the transcript:
@@ -198,14 +226,12 @@ function busy(send: Send, convertBudget: number): Promise<SubmitResult> {
  *  and stops there. */
 const CONVERT_BUDGET = 2;
 
-/** Post one prompt, converting a plain 409 into the busy verb while budget remains. */
+/** Post one prompt, converting a turn_live 409 into the busy verb while budget remains. */
 async function prompt(send: Send, convertBudget: number): Promise<SubmitResult> {
   const { chatID, text, messageID } = send;
   const result = await sendPromptTo(chatID, text, { messageID, ...extras(send) });
   if (result === "queued") {
-    // Plain 409: a steerable turn started underneath us. The conversion is gated on
-    // the ABSENCE of the "starting" reason — that refusal's holder cannot receive a
-    // steer and takes the branch below.
+    // 409 turn_live: a steerable turn started underneath us.
     if (convertBudget > 0) {
       return busy(send, convertBudget - 1);
     }
@@ -225,6 +251,13 @@ async function prompt(send: Send, convertBudget: number): Promise<SubmitResult> 
     // "sent": the text goes back to the composer and the face says what happened.
     recordFailure(send);
     reportSendRefused(GONE_FACE);
+    return "failed";
+  }
+  if (result === "closed") {
+    // 409 reason:"chat_closed": a close of the chat committed after this send began, so the
+    // reopened chat never runs it. The text goes back, as for a gone chat.
+    recordFailure(send);
+    reportSendRefused(CLOSED_FACE);
     return "failed";
   }
   if (result === "failed") {

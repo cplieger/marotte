@@ -87,10 +87,10 @@ func TestTurnLive_RecordsNothingAboutTheChatItWasAskedAbout(t *testing.T) {
 // An admitted prompt is persisted, broadcast and thinking-latched, so it is live before any turn is minted.
 func TestTurnLive_TrueForAnAdmittedPromptWithNoTurnMinted(t *testing.T) {
 	h, _, _ := newTestHub()
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+	if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 		t.Fatal("a fresh chat refused a prompt reservation")
 	}
-	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+	t.Cleanup(func() { h.coord.releaseHeld("c1") })
 
 	if !h.TurnLive("c1") {
 		t.Error("a chat whose prompt is admitted but whose Turn is not minted reports no " +
@@ -101,10 +101,10 @@ func TestTurnLive_TrueForAnAdmittedPromptWithNoTurnMinted(t *testing.T) {
 // A rewind's reservation emits no deltas, so the client's one-chunk recovery cannot reach it.
 func TestTurnLive_TrueForARewindHoldingTheSlot(t *testing.T) {
 	h, _, _ := newTestHub()
-	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceRevert) {
+	if !h.coord.tryReserveNow("c1", marotte.TurnSourceRevert) {
 		t.Fatal("a fresh chat refused a revert reservation")
 	}
-	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+	t.Cleanup(func() { h.coord.releaseHeld("c1") })
 
 	if !h.TurnLive("c1") {
 		t.Error("a chat holding a revert reservation reports no live turn")
@@ -145,16 +145,16 @@ func TestTurnLive_AgreesWithTheConnectBusySet(t *testing.T) {
 			t.Cleanup(func() { h.coord.ReleaseTurn("c1", id) })
 		}},
 		{"admitted prompt", func(t *testing.T, h *Runtime) {
-			if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
+			if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 				t.Fatal("a fresh chat refused a prompt reservation")
 			}
-			t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+			t.Cleanup(func() { h.coord.releaseHeld("c1") })
 		}},
 		{"admitted rewind", func(t *testing.T, h *Runtime) {
-			if !h.coord.TryReserveTurn("c1", marotte.TurnSourceRevert) {
+			if !h.coord.tryReserveNow("c1", marotte.TurnSourceRevert) {
 				t.Fatal("a fresh chat refused a revert reservation")
 			}
-			t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
+			t.Cleanup(func() { h.coord.releaseHeld("c1") })
 		}},
 	}
 	for _, tc := range cases {

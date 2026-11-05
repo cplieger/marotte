@@ -3,6 +3,7 @@
 
 import type { ToolKind } from "./types.js";
 import { extToIconKey } from "./file-extensions.js";
+import { ICON_MASK_ID } from "./icon-mask.js";
 
 type IconTier = "inline" | "ui" | "lg" | "hero";
 
@@ -81,6 +82,11 @@ export const ICON_DOWNLOAD =
 // Repo (book-style) icon, as the empty-state glyph.
 export const ICON_REPO =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>';
+const PATH_TANGENT =
+  '<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/>';
+export const ICON_TANGENT = svg("ui", PATH_TANGENT);
+/** The same mark at the 14px a Chat options row's leading column is sized for. */
+export const ICON_TANGENT_ROW = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${PATH_TANGENT}</svg>`;
 export const ICON_EXPORT =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 export const ICON_DIFF =
@@ -114,7 +120,7 @@ export const ICON_CANCEL = svg(
   "ui",
   '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
 );
-// Transport, beside `ICON_CANCEL` and `ICON_PLAY`. Line art: an open chevron has no interior to become a sliver.
+// Transport, beside `ICON_CANCEL` and `ICON_RESUME`. Line art: an open chevron has no interior to become a sliver.
 // Left-pointing and doubled, clear of `.disclosure-chevron`.
 export const ICON_REWIND = svg("ui", '<path d="M11 18l-6-6 6-6M19 18l-6-6 6-6"/>');
 // Transport too: two filled bars as tall as `ICON_CANCEL`'s square, at its weight. Stroked hairlines read lighter
@@ -123,6 +129,13 @@ export const ICON_PAUSE = svg(
   "ui",
   '<rect x="6.5" y="6" width="4" height="12" rx="1" fill="currentColor" stroke="none"/>' +
     '<rect x="13.5" y="6" width="4" height="12" rx="1" fill="currentColor" stroke="none"/>',
+);
+// The run dock's Resume: a filled triangle as tall as `ICON_CANCEL`'s square, so the three run verbs share one weight.
+// `ICON_PLAY` is the stroked outline the code block and the docs agent use. The `translate` centres the triangle on
+// its mass rather than its box, so the shift is a group transform.
+export const ICON_RESUME = svg(
+  "ui",
+  '<g transform="translate(0.8 0)"><path d="M7 7.5Q7 6 8.33 6.69L17.17 11.31Q18.5 12 17.17 12.69L8.33 17.31Q7 18 7 16.5Z" fill="currentColor" stroke="none"/></g>',
 );
 
 /*
@@ -220,6 +233,57 @@ export const ICON_SAVE_FAIL = svg(
   ' class="icon-save-fail"',
 );
 
+/** The workflow tree: three nodes top to bottom, distinct from the chat and subagent glyphs. */
+const PATH_TREE =
+  '<rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/>';
+/** A workflow run: the bare tree. */
+export const ICON_TAB_RUN = svg("ui", PATH_TREE);
+
+/** The workflow family's actions. A badge names the action, never a status: tints and outcome marks carry that. */
+export type WorkflowBadge = "run" | "inspect" | "update" | "validate" | "save" | "message";
+
+/**
+ * Badge drawings on the 24-grid, scaled into the tree's bottom-right node. Each is the full-size mark cut to what
+ * survives 8 CSS px: a filled play, the floppy's notched body and shutter without its label window (which merged
+ * with the shutter at 1x), and the chat bubble whose tail tells it from a plain box.
+ */
+const WORKFLOW_BADGES: Readonly<Record<WorkflowBadge, string>> = {
+  run: '<path d="M7 4.5v15l12.5-7.5z" fill="currentColor"/>',
+  inspect: '<circle cx="10" cy="10" r="6"/><path d="M14.5 14.5l6 6"/>',
+  update: '<path d="M16 3.5a2.9 2.9 0 0 1 4.5 4.5L8 20.5 3 21.5l1-5z"/>',
+  validate: '<path d="M3.5 12.5l5.5 5.5L20.5 6"/>',
+  save: '<path d="M4 3h12l4 4v14H4z"/><path d="M8 3v5h7V3"/>',
+  message: '<path d="M21 16a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+};
+
+/**
+ * A base glyph with a badge in its bottom-right corner: the badge is its 24-grid drawing at half size, centred on
+ * (18,18), and a mask removes the base within 7.5 units of that centre, so the ring around the badge is the surface
+ * itself on any background, hover and tint included.
+ */
+function badged(base: string, badge: string): string {
+  return svg(
+    "ui",
+    `<mask id="${ICON_MASK_ID}" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">` +
+      '<rect width="24" height="24" fill="#fff" stroke="none"/><circle cx="18" cy="18" r="7.5" fill="#000" stroke="none"/></mask>' +
+      `<g mask="url(#${ICON_MASK_ID})">${base}</g><g transform="translate(12 12) scale(0.5)">${badge}</g>`,
+  );
+}
+
+const WORKFLOW_ICONS: Readonly<Record<WorkflowBadge, string>> = {
+  run: badged(PATH_TREE, WORKFLOW_BADGES.run),
+  inspect: badged(PATH_TREE, WORKFLOW_BADGES.inspect),
+  update: badged(PATH_TREE, WORKFLOW_BADGES.update),
+  validate: badged(PATH_TREE, WORKFLOW_BADGES.validate),
+  save: badged(PATH_TREE, WORKFLOW_BADGES.save),
+  message: badged(PATH_TREE, WORKFLOW_BADGES.message),
+};
+
+/** The workflow tree with the badge for one action. Insert it through `iconEl`, which keeps each mask id unique. */
+export function workflowIcon(badge: WorkflowBadge): string {
+  return WORKFLOW_ICONS[badge];
+}
+
 /**
  * The read family draws the configuration browser's open book on purpose: one silhouette across sidebar chrome and
  * transcript content, which keeps it clear of every transcript glyph.
@@ -232,7 +296,6 @@ const ICON_TOOL_MOVE = svg(
   '<path d="M5 9l-3 3 3 3"/><path d="M19 15l3-3-3-3"/><path d="M2 12h20"/>',
 );
 const ICON_TOOL_SEARCH = svg("ui", '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>');
-const ICON_TOOL_EXECUTE = svg("ui", '<path d="M4 17l6-6-6-6"/><path d="M12 19h8"/>');
 const ICON_TOOL_THINK = svg(
   "ui",
   '<path d="M9 22c0-1 0-2 1-3"/><path d="M15 22c0-1 0-2-1-3"/><path d="M7 16h10"/><path d="M12 2a7 7 0 017 7c0 4-3 6-4 8H9c-1-2-4-4-4-8a7 7 0 017-7z"/>',
@@ -241,7 +304,8 @@ const ICON_TOOL_FETCH = svg(
   "ui",
   '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 010 20"/><path d="M12 2a15 15 0 000 20"/>',
 );
-const ICON_TOOL_SWITCH = svg(
+/** A model, mode or routing switch. */
+export const ICON_TOOL_SWITCH = svg(
   "ui",
   '<path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 014-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 01-4 4H3"/>',
 );
@@ -249,11 +313,8 @@ const ICON_TOOL_FALLBACK = svg(
   "ui",
   '<path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>',
 );
-const ICON_TOOL_FOLDER = svg(
-  "ui",
-  '<path d="M21 19a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h4l2 4h8a2 2 0 012 2z"/>',
-);
-/** The bare prompt. Exported because the chat toolbar's shell toggle draws it too (pinned in `menu-icons.test.ts`). */
+/** The bare prompt, for every command-running tool. Exported because the chat toolbar's shell toggle draws it too
+ *  (pinned in `menu-icons.test.ts`). */
 export const ICON_TOOL_TERMINAL = svg(
   "ui",
   '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
@@ -264,6 +325,12 @@ const ICON_TOOL_MCP = svg(
   '<path d="M9 2v6"/><path d="M15 2v6"/><path d="M6 8h12v3a6 6 0 11-12 0z"/><path d="M12 17v5"/>',
 );
 
+/** A fish-hook: the eye, the shank, the bend and the barbed point. */
+const ICON_TOOL_HOOK = svg(
+  "ui",
+  '<g transform="translate(0.25 1)"><circle cx="15" cy="4" r="2.5"/><path d="M15 6.5V14a4.5 4.5 0 0 1-9 0V8.5l3 3"/></g>',
+);
+
 const ICON_BY_KIND: Record<ToolKind, string> = {
   read: ICON_TOOL_READ,
   edit: ICON_TOOL_EDIT,
@@ -271,10 +338,10 @@ const ICON_BY_KIND: Record<ToolKind, string> = {
   delete: ICON_TOOL_DELETE,
   move: ICON_TOOL_MOVE,
   search: ICON_TOOL_SEARCH,
-  execute: ICON_TOOL_EXECUTE,
-  shell: ICON_TOOL_EXECUTE,
-  hook: ICON_TOOL_FALLBACK,
-  command: ICON_TOOL_EXECUTE,
+  execute: ICON_TOOL_TERMINAL,
+  shell: ICON_TOOL_TERMINAL,
+  hook: ICON_TOOL_HOOK,
+  command: ICON_TOOL_TERMINAL,
   think: ICON_TOOL_THINK,
   fetch: ICON_TOOL_FETCH,
   browser: ICON_TOOL_FETCH,
@@ -283,24 +350,21 @@ const ICON_BY_KIND: Record<ToolKind, string> = {
   other: ICON_TOOL_FALLBACK,
 };
 
-// Title overrides for the kind default. Case-sensitive kiro-cli tool names, "Running: " stripped at the call site.
-const ICON_BY_TITLE: Record<string, string> = {
-  listDirectory: ICON_TOOL_FOLDER,
-  fileSearch: ICON_TOOL_FOLDER,
-  executePwsh: ICON_TOOL_TERMINAL,
-  webFetch: ICON_TOOL_FETCH,
-  remote_web_search: ICON_TOOL_FETCH,
-};
+/** The glyph a server-named built-in draws in place of its kind's. */
+const ICON_BY_TOOL_NAME: ReadonlyMap<string, string> = new Map([
+  ["run_workflow", workflowIcon("run")],
+  ["inspect_workflow", workflowIcon("inspect")],
+  ["update_workflow", workflowIcon("update")],
+  ["save_workflow_definition", workflowIcon("save")],
+  ["send_message", workflowIcon("message")],
+  ["web_search", ICON_TOOL_FETCH],
+  ["disclose_context", ICON_TOOL_READ],
+]);
 
-/** Pick the SVG icon for a tool call. Title overrides kind; kind falls
- *  back to the generic wrench. */
-export function toolIcon(kind: ToolKind, title: string): string {
-  const cleanTitle = title.startsWith("Running: ") ? title.slice(9) : title;
-  const byTitle = ICON_BY_TITLE[cleanTitle];
-  if (byTitle !== undefined) {
-    return byTitle;
-  }
-  return ICON_BY_KIND[kind] ?? ICON_TOOL_FALLBACK; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+/** Pick the glyph for a tool call from the identity the server named: the built-in's own glyph, else its kind's,
+ *  else the wrench for a tool marotte does not know. */
+export function toolIcon(info: { readonly kind: ToolKind; readonly toolName: string }): string {
+  return ICON_BY_TOOL_NAME.get(info.toolName) ?? ICON_BY_KIND[info.kind] ?? ICON_TOOL_FALLBACK; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 }
 
 // One set for every outcome surface. A non-success state replaces the row's identity glyph, so shape carries it and
@@ -403,10 +467,14 @@ export const ICON_SUBAGENT_INTROSPECT = svg(
   "ui",
   '<path d="M21.42 10.922a1 1 0 00-.019-1.838L12.83 5.18a2 2 0 00-1.66 0L2.6 9.08a1 1 0 000 1.832l8.57 3.908a2 2 0 001.66 0z"/><path d="M22 10v6"/><path d="M6 12.5V16a6 3 0 0012 0v-3.5"/>',
 );
-// Context gatherer (Lucide "search"): explores the codebase read-only.
+// Context gatherer (Lucide "telescope"): explores the codebase read-only. Not the magnifier, which the search tools
+// draw inside this subagent's block.
 export const ICON_SUBAGENT_GATHERER = svg(
   "ui",
-  '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  '<path d="m10.065 12.493-6.18 1.318a.934.934 0 0 1-1.108-.702l-.537-2.15a1.07 1.07 0 0 1 .691-1.265l13.504-4.44"/>' +
+    '<path d="m13.56 11.747 4.332-.924"/><path d="m16 21-3.105-6.21"/>' +
+    '<path d="M16.485 5.94a2 2 0 0 1 1.455-2.425l1.09-.272a1 1 0 0 1 1.212.727l1.515 6.06a1 1 0 0 1-.727 1.213l-1.09.272a2 2 0 0 1-2.425-1.455z"/>' +
+    '<path d="m6.158 8.633 1.114 4.456"/><path d="m8 21 3.105-6.21"/><circle cx="12" cy="13" r="2"/>',
 );
 // Task execution (Lucide "hammer"), not the wrench: `ICON_TOOL_FALLBACK` draws that, and an unknown tool card
 // renders inside this subagent's block.
@@ -419,10 +487,21 @@ export const ICON_SUBAGENT_CREATOR = svg(
   "ui",
   '<path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><path d="M12 9v6M9 12h6"/>',
 );
-// Semantic Reviewer, a bundled agent (Lucide "scan-eye"): the plain eye is `ICON_EXEC_WATCH`, a magnifier the gatherer.
+// Semantic Reviewer, a bundled agent (Lucide "scan-eye"): the plain eye is `ICON_EXEC_WATCH`.
 export const ICON_TAB_REVIEW = svg(
   "ui",
   '<path d="M3 7V5a2 2 0 012-2h2"/><path d="M17 3h2a2 2 0 012 2v2"/><path d="M21 17v2a2 2 0 01-2 2h-2"/><path d="M7 21H5a2 2 0 01-2-2v-2"/><circle cx="12" cy="12" r="1"/><path d="M18.944 12.33a1 1 0 000-.66 7.5 7.5 0 00-13.888 0 1 1 0 000 .66 7.5 7.5 0 0013.888 0"/>',
+);
+// Conversation compacted (Lucide "fold-vertical"): arrows folding in on the fold line.
+export const ICON_COMPACT = svg(
+  "ui",
+  '<path d="M12 22v-6"/><path d="M12 8V2"/><path d="M4 12H2"/><path d="M10 12H8"/><path d="M16 12h-2"/>' +
+    '<path d="M22 12h-2"/><path d="m15 19-3-3-3 3"/><path d="m15 5-3 3-3-3"/>',
+);
+// A safety check blocked the turn (Lucide "shield").
+export const ICON_SHIELD = svg(
+  "ui",
+  '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
 );
 // Model-refusal callout (Lucide "octagon-alert").
 export const ICON_REFUSAL = svg(
@@ -487,11 +566,6 @@ export const ICON_TAB_HISTORY = svg("ui", '<circle cx="12" cy="12" r="9"/><path 
  * pinned to the sidebar button by `menu-icons.test.ts`.
  */
 export const ICON_TAB_DOCS = svg("ui", PATH_BOOK_OPEN);
-/** Workflow run: three nodes top to bottom, distinct from the chat and subagent glyphs. */
-export const ICON_TAB_RUN = svg(
-  "ui",
-  '<rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/>',
-);
 /** The run dock's Steps segment: Lucide `list-tree`. */
 export const ICON_SEG_STEPS = svg(
   "ui",

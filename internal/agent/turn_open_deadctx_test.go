@@ -30,7 +30,7 @@ func TestOpenTurn_RefusesAnAlreadyDeadContext(t *testing.T) {
 
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
-			id, err := h.coord.OpenTurn(ctx, "c1", command.TurnOpen{Source: tc.source, Prompt: &marotte.EntryPrompt{ID: "m-1", Text: "hi"}})
+			id, err := h.coord.openTurnNow(ctx, "c1", command.TurnOpen{Source: tc.source, Prompt: &marotte.EntryPrompt{ID: "m-1", Text: "hi"}})
 			if err == nil || id != "" {
 				t.Errorf("OpenTurn(cancelled ctx, %v) = (%q, %v), want (\"\", ctx error): a dead context opens nothing", tc.source, id, err)
 			}
@@ -51,7 +51,7 @@ func TestStartTurn_RefusesADeadContextAfterTheOpen(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
 
-	id, err := h.coord.OpenTurn(t.Context(), "c1", command.TurnOpen{Source: marotte.TurnSourcePrompt, Prompt: &marotte.EntryPrompt{ID: "m-1", Text: "hi"}})
+	id, err := h.coord.openTurnNow(t.Context(), "c1", command.TurnOpen{Source: marotte.TurnSourcePrompt, Prompt: &marotte.EntryPrompt{ID: "m-1", Text: "hi"}})
 	if err != nil {
 		t.Fatalf("OpenTurn: %v", err)
 	}
@@ -106,10 +106,10 @@ func TestOpenTurn_MarksUnsentRowsAwaitingAPromptBeforeTheAnnounce(t *testing.T) 
 	h, cs, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
-	if _, refuse := h.steerQueue.RouteSteer("c1", "steer-a", "words", promptHolder); refuse != "" {
+	if _, refuse := h.steerQueue.RouteSteer("c1", "steer-a", "words", nil, promptHolder); refuse != "" {
 		t.Fatalf("RouteSteer refused %q", refuse)
 	}
-	if _, refuse := h.steerQueue.RouteSteer("c1", "steer-a", "words", command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
+	if _, refuse := h.steerQueue.RouteSteer("c1", "steer-a", "words", nil, command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
 		t.Fatalf("RouteSteer with no holder refused %q, want no_turn", refuse)
 	}
 	since := uint64(0)
@@ -117,7 +117,7 @@ func TestOpenTurn_MarksUnsentRowsAwaitingAPromptBeforeTheAnnounce(t *testing.T) 
 		since = b[len(b)-1].Offset
 	}
 
-	if _, err := h.coord.OpenTurn(t.Context(), "c1", command.TurnOpen{Source: marotte.TurnSourcePrompt, Prompt: &marotte.EntryPrompt{ID: "m-1", Text: "hi"}}); err != nil {
+	if _, err := h.coord.openTurnNow(t.Context(), "c1", command.TurnOpen{Source: marotte.TurnSourcePrompt, Prompt: &marotte.EntryPrompt{ID: "m-1", Text: "hi"}}); err != nil {
 		t.Fatalf("OpenTurn: %v", err)
 	}
 

@@ -13,13 +13,13 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/go/sse"
 	"github.com/cplieger/marotte/internal/forges"
 	"github.com/cplieger/marotte/internal/liveness"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/push"
 	"github.com/cplieger/marotte/internal/settings"
-	"github.com/cplieger/sse"
 )
 
 // countingSource answers no pull requests and counts how often it was asked, which

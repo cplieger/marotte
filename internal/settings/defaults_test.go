@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 func TestEffectiveKeys_AreAllKnown(t *testing.T) {
@@ -32,7 +32,9 @@ func TestEffectiveSettings_EveryFieldIsSettable(t *testing.T) {
 	}
 	// Resolved per GET, never stored: from kiro-cli's own view (the server's fillKiroDefaults)
 	// and from the filesystem (AgentDirs.Assess).
-	resolved := map[string]struct{}{"kiro_defaults": {}, "additional_directories_refused": {}}
+	resolved := map[string]struct{}{
+		"kiro_defaults": {}, "additional_directories_refused": {}, "hook_status_shown": {},
+	}
 	rt := reflect.TypeFor[marotte.EffectiveSettings]()
 	for f := range rt.Fields() {
 		tag, _, _ := strings.Cut(f.Tag.Get("json"), ",")
@@ -102,7 +104,9 @@ func TestEffective_AutoCompactionDefaultsAndInvalidPctReadsAsDefault(t *testing.
 	}{
 		{stored: `50`, want: 50},
 		{stored: `65`, want: 65},
-		{stored: `90`, want: 90},
+		{stored: `80`, want: 80},
+		{stored: `85`, want: 80, reject: true},
+		{stored: `90`, want: 80, reject: true},
 		{stored: `47`, want: 80, reject: true},
 		{stored: `92`, want: 80, reject: true},
 		{stored: `83`, want: 80, reject: true},
@@ -135,7 +139,9 @@ func TestValidateCompactionPatch(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "neither key", patch: map[string]json.RawMessage{KeyTheme: json.RawMessage(`"dark"`)}},
-		{name: "valid pct", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`85`)}},
+		{name: "valid pct", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`75`)}},
+		{name: "pct 85", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`85`)}, wantErr: true},
+		{name: "pct 90", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`90`)}, wantErr: true},
 		{name: "valid switch", patch: map[string]json.RawMessage{KeyAutoCompactionEnabled: json.RawMessage(`false`)}},
 		{name: "pct 95", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`95`)}, wantErr: true},
 		{name: "pct 83", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`83`)}, wantErr: true},
@@ -274,4 +280,26 @@ func TestWarnUnknownKeys_LogsOnlyWhenUnknownPresent(t *testing.T) {
 func effectiveKeys() []string {
 	var out marotte.EffectiveSettings
 	return slices.Sorted(maps.Keys(effectiveSetters(&out)))
+}
+
+// The file browser keeps no workspace-wide folder: a closed browser's folder is forgotten on every device, so a
+// config.json an older build wrote with `fb_path` loads with the key inert and unknown.
+func TestEffective_IgnoresAStoredBrowserPath(t *testing.T) {
+	got, rejected := EffectiveFrom(map[string]json.RawMessage{"fb_path": json.RawMessage(`"/workspace/marotte/x"`)})
+	if len(rejected) != 0 {
+		t.Errorf("rejected = %v, want none", rejected)
+	}
+	if !reflect.DeepEqual(got, EffectiveDefaults()) {
+		t.Error("a stored fb_path changed the effective settings")
+	}
+	if _, known := KnownKeys["fb_path"]; known {
+		t.Error("fb_path is still a known key")
+	}
+	body, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if bytes.Contains(body, []byte(`"fb_path"`)) {
+		t.Errorf("the settings document still carries fb_path: %s", body)
+	}
 }

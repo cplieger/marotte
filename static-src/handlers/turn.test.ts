@@ -934,7 +934,7 @@ describe("decision_settled handler", () => {
     expect(mockCloseNotificationsFor).toHaveBeenCalledWith({ kind: "chat", chatID: "chat-1" });
     // The Cedar policy reload names no ask, so it retracts nothing.
     mockCloseNotificationsFor.mockClear();
-    fireSSE("permissions_changed", "", { status: "ok", errors: [] });
+    fireSSE("permissions_changed", "", undefined);
     expect(mockCloseNotificationsFor).not.toHaveBeenCalled();
   });
 

@@ -24,9 +24,9 @@
 .web-path {
   flex: 1 1 0;
   min-width: 0;
-  min-block-size: var(--btn-h);
+  min-block-size: var(--field-h);
   padding: 0 var(--sp-3);
-  line-height: calc(var(--btn-h) - 2px);
+  line-height: calc(var(--field-h) - 2px);
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
@@ -43,6 +43,7 @@
 
 .editor-error {
   padding: var(--sp-3) var(--sp-4);
+  padding-inline-start: max(var(--sp-4), var(--sidebar-reach));
   color: var(--c-red);
   font-size: var(--fs-sm);
 }
@@ -179,6 +180,7 @@
   grid-column: 1 / -1;
   grid-row: 1;
   padding: var(--sp-4);
+  padding-inline-start: max(var(--sp-4), var(--sidebar-reach));
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   line-height: 1.6;
@@ -219,7 +221,7 @@
   flex-direction: column;
   flex-shrink: 0;
   padding-block: var(--sp-1);
-  padding-inline: var(--sp-3) var(--sp-1);
+  padding-inline: max(var(--sp-3), var(--sidebar-reach)) var(--sp-1);
   background: var(--c-bg-secondary);
   border-block-end: 1px solid var(--c-border);
 
@@ -263,7 +265,7 @@
   grid-column: 2;
   grid-row: 1;
   min-width: 0;
-  padding: var(--sp-4) var(--sp-4) var(--sp-5);
+  padding: var(--sp-4) var(--sp-4) var(--sp-5) max(var(--sp-4), var(--sidebar-reach));
   background: var(--c-bg-primary);
   color: var(--c-text-primary);
 
@@ -516,12 +518,12 @@
      padding or the × reads as pushed off the right edge (measured: 23px from the
      border against 15px above and below).
 
-     The START inset stays `--sp-3` because this bar is FULL WIDTH and that value
-     is the editor gutter's, so the input's left edge lines up with the code
-     under it. That is a stronger claim on this bar than the input's own symmetry,
-     which is what wins on the transcript's floating box. */
+     The START inset is `--sp-3`, the editor gutter's, so the input's left edge
+     lines up with the code under it, and grows to clear the sidebar's reach
+     where that is wider. That is a stronger claim on this bar than the input's
+     own symmetry, which is what wins on the transcript's floating box. */
   padding-block: var(--sp-1);
-  padding-inline: var(--sp-3) var(--sp-1);
+  padding-inline: max(var(--sp-3), var(--sidebar-reach)) var(--sp-1);
   background: var(--c-bg-secondary);
   border-block-end: 1px solid var(--c-border);
 }

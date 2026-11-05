@@ -468,21 +468,58 @@ func TestHandlePermissionRequest_MarksAnAdministratorAsk(t *testing.T) {
 	}
 }
 
-// KAS reads a deny note only on the ordinary tool approval (the ask carrying
-// `_meta.kiro.toolId`) and only through its reject_once option, so the card
-// offers the note box exactly there.
-func TestHandlePermissionRequest_AcceptsRejectionReason(t *testing.T) {
+func TestPermissionRequest_ClassifierNote(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		classifier map[string]any
+		want       string
+	}{
+		{
+			name: "handed_to_a_person", classifier: map[string]any{"decision": "prompt", "reason": "Kiro's safety check flagged\u202ethis"},
+			want: "Kiro's safety check flagged this",
+		},
+		{name: "no_classifier"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deps, events := newEventCaptureDeps()
+			tr := New(rolesOf(deps))
+			id := int64(7)
+			params := map[string]any{
+				"sessionId": "sess_x",
+				"toolCall":  map[string]any{"toolCallId": "tc-1", "title": "rm x", "kind": "execute"},
+				"options":   []map[string]any{{"optionId": "allow", "name": "Allow", "kind": "allow_once"}},
+			}
+			if tc.classifier != nil {
+				params["_meta"] = map[string]any{"kiro": map[string]any{"trustClassifier": tc.classifier}}
+			}
+			tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{ID: &id, Params: mustJSON(t, params)})
+			got, ok := findPermissionNeeded(t, events)
+			if !ok {
+				t.Fatal("no permission_needed event broadcast")
+			}
+			if got.ClassifierNote != tc.want {
+				t.Errorf("ClassifierNote = %q, want %q", got.ClassifierNote, tc.want)
+			}
+		})
+	}
+}
+
+// KAS reads a deny note only on a tool approval (the ask carrying `_meta.kiro.toolId`) and only
+// through its reject_once option, so the card offers the note box exactly there; on a plan
+// approval the note asks for edits.
+func TestHandlePermissionRequest_RejectionNote(t *testing.T) {
 	ordinary := []map[string]any{
 		{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
 		{"optionId": "deny", "name": "Deny", "kind": "reject_once"},
 	}
+	plan := map[string]any{"kind": "edit", "steps": []map[string]any{{"id": "build", "status": "kept"}}}
 	for name, tc := range map[string]struct {
 		kiro    map[string]any
 		options []map[string]any
-		want    bool
+		want    marotte.RejectionNote
 	}{
 		"a tool approval with a reject option": {
-			kiro: map[string]any{"toolId": "execute_bash"}, options: ordinary, want: true,
+			kiro: map[string]any{"toolId": "execute_bash"}, options: ordinary, want: marotte.RejectionNoteReason,
 		},
 		"a turn approval": {
 			kiro: map[string]any{"toolId": "x", "type": "turn_approval"}, options: ordinary,
@@ -496,6 +533,27 @@ func TestHandlePermissionRequest_AcceptsRejectionReason(t *testing.T) {
 				{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
 				{"optionId": "never", "name": "Always deny", "kind": "reject_always"},
 			},
+		},
+		"a live plan approval": {
+			kiro: map[string]any{
+				"toolId": "update_workflow", "workflowPlan": plan,
+				"consent": map[string]any{"capability": "workflow", "resource": "replace_remaining"},
+			},
+			options: []map[string]any{
+				{"optionId": "accept", "name": "Allow", "kind": "allow_once"},
+				{"optionId": "always-accept", "name": "Always allow", "kind": "allow_always"},
+				{"optionId": "reject", "name": "Deny", "kind": "reject_once"},
+				{"optionId": "always-reject", "name": "Always deny", "kind": "reject_always"},
+			},
+			want: marotte.RejectionNotePlanEdits,
+		},
+		"a restored plan approval": {
+			kiro: map[string]any{"toolId": "update_workflow", "workflowPlan": plan, "consentRound": 1},
+			options: []map[string]any{
+				{"optionId": "accept", "name": "Allow", "kind": "allow_once"},
+				{"optionId": "reject", "name": "Deny", "kind": "reject_once"},
+			},
+			want: marotte.RejectionNotePlanEdits,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -515,9 +573,100 @@ func TestHandlePermissionRequest_AcceptsRejectionReason(t *testing.T) {
 			if !ok {
 				t.Fatal("no permission_needed event broadcast")
 			}
-			if got.AcceptsRejectionReason != tc.want {
-				t.Errorf("AcceptsRejectionReason = %v, want %v", got.AcceptsRejectionReason, tc.want)
+			if got.RejectionNote != tc.want {
+				t.Errorf("RejectionNote = %q, want %q", got.RejectionNote, tc.want)
 			}
 		})
+	}
+}
+
+// askWithCommand delivers a shell ask whose `_meta.kiro.command` is command and returns
+// the payload broadcast for it.
+func askWithCommand(t *testing.T, command string) marotte.PermissionNeededPayload {
+	t.Helper()
+	deps, events := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+	id := int64(9)
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{
+		ID: &id,
+		Params: mustJSON(t, map[string]any{
+			"sessionId": "sess_x",
+			"toolCall":  map[string]any{"toolCallId": "tc-sh", "title": command, "kind": "execute"},
+			"options":   []map[string]any{{"optionId": "allow", "name": "Allow", "kind": "allow_once"}},
+			"_meta":     map[string]any{"kiro": map[string]any{"toolId": "execute_bash", "command": command}},
+		}),
+	})
+	got, ok := findPermissionNeeded(t, events)
+	if !ok {
+		t.Fatal("no permission_needed event broadcast")
+	}
+	return got
+}
+
+// A command over the title's 512-byte cut arrives whole, so its destructive suffix is on the card.
+func TestHandlePermissionRequest_CommandArrivesWhole(t *testing.T) {
+	command := "echo " + strings.Repeat("x", 626) + "; rm -rf ~"
+	got := askWithCommand(t, command).Command
+	if got == nil {
+		t.Fatal("Command = nil, want the ask's command")
+	}
+	if got.Text != command || got.Tail != "" || got.OmittedBytes != 0 {
+		t.Errorf("Command = {Text: %d bytes, Tail: %q, OmittedBytes: %d}, want the %d-byte command whole",
+			len(got.Text), got.Tail, got.OmittedBytes, len(command))
+	}
+}
+
+// Past the cap the head and the tail both stay and the gap between them is counted.
+func TestHandlePermissionRequest_LongCommandKeepsItsTail(t *testing.T) {
+	command := "cat <<'EOF'\n" + strings.Repeat("y", 20<<10) + "\nEOF\n; rm -rf ~"
+	got := askWithCommand(t, command).Command
+	if got == nil {
+		t.Fatal("Command = nil, want the ask's command")
+	}
+	if len(got.Text) > maxApprovalCommandBytes/2 || len(got.Text)+len(got.Tail) > maxApprovalCommandBytes {
+		t.Errorf("len(Text) = %d, len(Tail) = %d, want at most %d each", len(got.Text), len(got.Tail), maxApprovalCommandBytes/2)
+	}
+	if !strings.HasPrefix(command, got.Text) || !strings.HasSuffix(got.Tail, "; rm -rf ~") {
+		t.Errorf("Text does not open the command or Tail %q does not end it", got.Tail[max(0, len(got.Tail)-20):])
+	}
+	if want := len(command) - len(got.Text) - len(got.Tail); got.OmittedBytes != want {
+		t.Errorf("OmittedBytes = %d, want %d", got.OmittedBytes, want)
+	}
+}
+
+// The command keeps its line breaks (a shell separator) while a reversing override, a TAB and
+// a CR each become a space.
+func TestHandlePermissionRequest_CommandIsDefusedKeepingItsLines(t *testing.T) {
+	got := askWithCommand(t, "ls\r\n\u202etxt.a mr\necho\tok").Command
+	if got == nil {
+		t.Fatal("Command = nil, want the ask's command")
+	}
+	if want := "ls\n txt.a mr\necho ok"; got.Text != want {
+		t.Errorf("Command.Text = %q, want %q", got.Text, want)
+	}
+}
+
+// An ask that names no command carries no Command.
+func TestHandlePermissionRequest_NoCommandNoField(t *testing.T) {
+	deps, events := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+	id := int64(10)
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{
+		ID: &id,
+		Params: mustJSON(t, map[string]any{
+			"sessionId": "sess_x",
+			"toolCall":  map[string]any{"toolCallId": "tc-mcp", "title": "create_issue", "kind": "other"},
+			"options":   []map[string]any{{"optionId": "allow", "name": "Allow", "kind": "allow_once"}},
+			"_meta": map[string]any{"kiro": map[string]any{
+				"mcpTool": map[string]any{"identity": map[string]any{"serverName": "issues", "toolName": "create_issue"}},
+			}},
+		}),
+	})
+	got, ok := findPermissionNeeded(t, events)
+	if !ok {
+		t.Fatal("no permission_needed event broadcast")
+	}
+	if got.Command != nil {
+		t.Errorf("Command = %+v, want nil on an ask with no command", got.Command)
 	}
 }

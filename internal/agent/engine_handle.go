@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"time"
 
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -9,8 +10,8 @@ import (
 
 // EngineSource is where the agent engine's binary and environment come from, as the composition root resolves them.
 type EngineSource interface {
-	// ChatPath is the kiro-cli-chat sidecar to spawn, "" while none is available.
-	ChatPath() string
+	// CLIPath is the kiro-cli binary the engine runs `acp` on, "" while none is available.
+	CLIPath() string
 	// Installed closes once a managed install is active; nil means an unmanaged runtime that starts at once.
 	Installed() <-chan struct{}
 	// Env is appended to the engine's environment, so the active install directory leads PATH.
@@ -22,7 +23,7 @@ type EngineSource interface {
 // noEngine is the source of a runtime with no kiro-cli: no path and no install to wait for, so the owner never starts.
 type noEngine struct{}
 
-func (noEngine) ChatPath() string              { return "" }
+func (noEngine) CLIPath() string               { return "" }
 func (noEngine) Installed() <-chan struct{}    { return nil }
 func (noEngine) Env() []string                 { return nil }
 func (noEngine) EnvAllow() map[string]struct{} { return nil }
@@ -46,11 +47,14 @@ type engineHandle interface {
 	Respond(ctx context.Context, id int64, result any, err error) error
 	// NewSession and LoadSession run attach once the session's lane exists and before the door writes, so a
 	// consumer reads every frame KAS sends for it.
-	NewSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession)) (engineSession, error)
-	LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession)) (engineSession, error)
+	NewSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession) error) (engineSession, error)
+	LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession) error) (engineSession, error)
 	StartLive() (ignoreFiles []string, terminalTimeoutMs int)
 	RefreshContentCollection(ctx context.Context) (bool, error)
 	KASLogDir() string
+	// StallAware and Stalled are bridge.Engine's: a deadline that waits out an engine stall, and whether one is on.
+	StallAware(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc)
+	Stalled() bool
 }
 
 // bridgeEngine adapts *bridge.Engine, whose doors hand back the concrete *bridge.Session.
@@ -61,7 +65,7 @@ var (
 	_ engineSession = (*bridge.Session)(nil)
 )
 
-func (b bridgeEngine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession)) (engineSession, error) {
+func (b bridgeEngine) NewSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession) error) (engineSession, error) {
 	s, err := b.Engine.NewSession(ctx, o, sessionAttach(attach))
 	if err != nil {
 		return nil, err
@@ -69,7 +73,7 @@ func (b bridgeEngine) NewSession(ctx context.Context, o *marotte.SessionOpts, at
 	return s, nil
 }
 
-func (b bridgeEngine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession)) (engineSession, error) {
+func (b bridgeEngine) LoadSession(ctx context.Context, o *marotte.SessionOpts, attach func(engineSession) error) (engineSession, error) {
 	s, err := b.Engine.LoadSession(ctx, o, sessionAttach(attach))
 	if err != nil {
 		return nil, err
@@ -77,9 +81,9 @@ func (b bridgeEngine) LoadSession(ctx context.Context, o *marotte.SessionOpts, a
 	return s, nil
 }
 
-func sessionAttach(attach func(engineSession)) func(*bridge.Session) {
+func sessionAttach(attach func(engineSession) error) func(*bridge.Session) error {
 	if attach == nil {
 		return nil
 	}
-	return func(s *bridge.Session) { attach(s) }
+	return func(s *bridge.Session) error { return attach(s) }
 }

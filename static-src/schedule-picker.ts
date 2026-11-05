@@ -1,9 +1,10 @@
 // The recurrence picker behind the Schedule button on /docs/workflows.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { LAST_DAY, INTERVAL_BOUNDS } from "./schedule-types.js";
 import type { ScheduleFreq, ScheduleSpec, ScheduleView } from "./schedule-types.js";
 import type { RunDefaults, RunDefaultsPicker } from "./run-defaults-picker.js";
+import { formatClock, formatWeekdayStamp } from "./locale-time.js";
 
 const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 const WEEKDAY_NAMES = [
@@ -41,8 +42,8 @@ export function clampInterval(spec: ScheduleSpec): void {
   spec.interval = Math.min(Math.max(spec.interval ?? b.min, b.min), b.max);
 }
 
-/** The unattended approval budget, in minutes, mirroring internal/hub's
- *  `unattendedApprovalBudget` (180 seconds). Stated to the user because the question a schedule
+/** The unattended approval budget, in minutes, mirroring internal/agent's
+ *  `unattendedApprovalBudget` (180 seconds), which `unattendedPauseBudget` takes too. Stated to the user because the question a schedule
  *  form has to answer is what happens when the job asks for something and nobody is there. Go's
  *  TestUnattendedBudget_MatchesTheDisclaimer fails if the two drift; change both together. */
 const UNATTENDED_BUDGET_MINUTES = 3;
@@ -71,7 +72,7 @@ function ordinal(n: number): string {
  *  the user reads to decide whether the rule is right, so it is worth pinning independently of
  *  the DOM. */
 export function describeSpec(spec: ScheduleSpec): string {
-  const clock = `${two(spec.hour)}:${two(spec.minute)}`;
+  const clock = formatClock(new Date(2000, 0, 1, spec.hour, spec.minute).getTime());
   switch (spec.freq) {
     case "minutely": {
       const n = spec.interval ?? INTERVAL_BOUNDS.minutely.min;
@@ -117,13 +118,7 @@ export function formatStamp(iso: string | undefined): string {
   if (Number.isNaN(d.getTime())) {
     return "";
   }
-  return d.toLocaleString(undefined, {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatWeekdayStamp(d.getTime());
 }
 
 /** describeOutcome renders the row's last-run segment from `last_status`, `last_reason` and
@@ -142,10 +137,14 @@ export function describeOutcome(view: ScheduleView): string {
   switch (status) {
     case "started":
       return `last started${stamp}`;
+    case "completed":
+      return `last completed${stamp}`;
     case "failed":
       return `last failed${stamp}${because}`;
     case "unknown":
       return `last outcome unknown${stamp}${because}`;
+    case "skipped":
+      return `last skipped${stamp}${because}`;
     default:
       return `last${stamp}${because}`;
   }
@@ -162,8 +161,12 @@ export function summaryLine(view: ScheduleView | undefined): string {
     line += `, next ${next}`;
   }
   // The outcome trails the rule and the next run, separated by the app's own middot: what will
-  // happen reads first, what happened last reads second, and a schedule that has never fired shows
-  // nothing rather than an empty segment.
+  // happen reads first, a slot still waiting on the engine next, what happened last after it, and
+  // a schedule that has never fired shows nothing rather than an empty segment.
+  const waiting = formatStamp(view.waiting_for);
+  if (waiting !== "") {
+    line += ` · the ${waiting} run is waiting on the agent engine`;
+  }
   const last = describeOutcome(view);
   return last === "" ? line : `${line} · ${last}`;
 }
@@ -195,7 +198,7 @@ export function buildUnattendedNote(
     el(
       "div",
       { className: "sched-note-body" },
-      `Nobody is watching a scheduled run. If the workflow asks for a permission the active policy does not already allow, ${outcome}.`,
+      `Nobody is watching a scheduled run. If the workflow asks for a permission the active policy does not already allow, ${outcome}. If the run pauses and nobody resumes it within ${UNATTENDED_BUDGET_MINUTES} minutes, it is cancelled.`,
     ),
     el(
       "div",

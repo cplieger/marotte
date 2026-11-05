@@ -462,3 +462,42 @@ func TestWithParentNames_NamesTheLaunchingChat(t *testing.T) {
 		t.Errorf("a run with no launching header gained a name: %+v", runs[1:])
 	}
 }
+
+// The reply is KAS's own row shape, step counts included, so a wrong json tag fails here.
+func TestToWorkflowRuns_StatesWhereALiveRunStands(t *testing.T) {
+	raw := `{"runs":[
+		{"workflowId":"wf_step","status":"running","updatedAt":"2026-08-02T12:00:00.000Z",
+		 "stepsCompleted":1,"stepsTotal":4,"currentNodeId":"build","waitingOnWatch":false},
+		{"workflowId":"wf_watch","status":"running","updatedAt":"2026-08-02T11:00:00.000Z",
+		 "stepsCompleted":2,"stepsTotal":4,"currentNodeId":"ci","waitingOnWatch":true},
+		{"workflowId":"wf_cap","status":"paused","updatedAt":"2026-08-02T10:00:00.000Z",
+		 "pauseKind":"maxIterations","pauseNodeId":"review",
+		 "stepsCompleted":6,"stepsTotal":9,"currentNodeId":"publish","waitingOnWatch":false},
+		{"workflowId":"wf_done","status":"completed","updatedAt":"2026-08-02T09:00:00.000Z",
+		 "currentNodeId":"publish"},
+		{"workflowId":"wf_nowhere","status":"running","updatedAt":"2026-08-02T08:00:00.000Z"}
+	]}`
+	var list kasWorkflowRuns
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		t.Fatalf("decode list reply: %v", err)
+	}
+	h := ownedBy(t, map[string][]string{})
+	got := h.runs.toWire(h.claimedSessions(t.Context()), *list.Runs)
+	want := map[string]*marotte.RunStanding{
+		"wf_step":    {Node: "build", Kind: marotte.RunStandingStep},
+		"wf_watch":   {Node: "ci", Kind: marotte.RunStandingWatch},
+		"wf_cap":     {Node: "review", Kind: marotte.RunStandingPassLimit},
+		"wf_done":    nil,
+		"wf_nowhere": nil,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("toWire returned %d runs, want %d", len(got), len(want))
+	}
+	for i := range got {
+		id := got[i].WorkflowID
+		w, s := want[id], got[i].Standing
+		if (w == nil) != (s == nil) || (w != nil && *w != *s) {
+			t.Errorf("%s standing = %+v, want %+v", id, s, w)
+		}
+	}
+}

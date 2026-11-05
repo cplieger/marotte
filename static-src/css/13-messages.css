@@ -727,9 +727,8 @@
          thing stopping it claiming the full column. */
       max-width: 100%;
       height: auto;
-      /* A diagram authored for a light page on a dark surface is unreadable
-         otherwise, and the source is not ours to restyle. */
-      background: var(--c-bg-secondary);
+      /* The source is not ours to restyle, and its ink assumes a white page. */
+      background: var(--c-foreign-canvas);
       border: 1px solid var(--c-border);
       border-radius: var(--r);
       padding: var(--sp-2);
@@ -786,6 +785,7 @@
   user-select: none;
   font-style: italic;
   padding: var(--sp-1) 0;
+  min-block-size: var(--row-tap-sm);
   transition: color var(--dur-micro) var(--ease-standard);
 }
 
@@ -856,6 +856,8 @@
   color: var(--c-text-tertiary);
 }
 
+/* Paints at its fine size; the shared summary expander (61-mcp-tools.css) is its target,
+   and .code-refs-list's margin keeps that target off the first link. */
 .code-refs-summary {
   display: inline-flex;
   align-items: center;
@@ -904,7 +906,9 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
-  margin: var(--sp-1) 0 0;
+
+  /* Half a tap gap, so the head's expander meets the first link's box instead of covering it. */
+  margin: max(var(--sp-1), calc(var(--tap-gap-sm) / 2)) 0 0;
   padding-inline-start: var(--sp-4);
 }
 
@@ -980,8 +984,9 @@
   }
 
   & .boundary-icon {
+    display: inline-flex;
+    flex: none;
     color: var(--c-accent);
-    font-size: 1.1em;
   }
 
   & .boundary-label {
@@ -1069,9 +1074,9 @@
 }
 
 .compaction-icon {
-  flex-shrink: 0;
+  display: inline-flex;
+  flex: none;
   color: var(--c-accent);
-  font-size: 1.1em;
 }
 
 .compaction-label {
@@ -1230,46 +1235,27 @@
   text-overflow: ellipsis;
 }
 
-/* LAYOUT ONLY. THE SKIN IS `btn-small` (14-tools.css), THE APP'S SHARED BUTTON,
- * carried by both flavours from banner-stack.ts — which is what every other banner
- * in this app already does: the `.inline-install-banner` producer is `btn-small`, and
- * `.elicitation-url` is the ANCHOR precedent, `btn-small` plus `align-self` and
- * `text-decoration: none`. So this rule is those two declarations and nothing else;
- * a local skin here was the drift, not a missing feature.
- *
- * WHAT IT REPLACED, and the shape was the defect rather than the values: an
- * underlined-text skin authored when `buildBannerLink` only ever emitted an `<a>`.
- * The `onClick` branch came later and emits a `<button>` under the same class, and
- * this rule reset none of a button's UA chrome — so all three of its live producers
- * (boot.ts "Start in full mode", runtime-health.ts "Sign in" and "Run diagnostics")
- * rendered a native grey box with a 2px white `outset` border and `padding: 0`,
- * which is 02-reset.css's universal `*` rule winning against the UA sheet's own
- * `padding-block: 1px; padding-inline: 6px`. Measured in Chromium 153: background
- * `#6b6b6b`, all four paddings 0, so the label sat against the border.
- *
- * THREE THINGS THE SHARED CLASS ANSWERS THAT A LOCAL SKIN HAD TO RE-DERIVE. Its
- * `--btn-h` is pointer-tiered (01-tokens.css), so the hit target follows the tier
- * for the ANCHOR too, and the `width <= 40rem` block this rule used to carry was
- * answering a POINTER question with a WIDTH. 61-mcp-tools.css's floor now matches
- * `a[href]` as well, so the two agree rather than one of them carrying the anchor
- * alone: `--btn-h` is the taller of the pair on a fine pointer (36 against 24) and
- * they are equal on a coarse one, so this button's height is still this class's. Its hover steps `--c-bg-secondary` to `--c-bg-tertiary` with the ink
- * to `--c-text-primary`, so contrast INCREASES by construction (label 8.06:1 dark /
- * 7.29:1 light at rest, 11.2 / 11.8 on hover) — where a severity-tinted skin cannot,
- * because ink and wash share a hue and every alpha closes the gap. And its 36px
- * takes the row from 52px to 54px, past the `--chat-toolbar-h` floor by the
- * banner's own two border edges, which is what a `min-` floor is for.
- *
- * IT GIVES UP THE SEVERITY INK, deliberately: the banner states its level three ways
- * already (glyph, ink, wash) and the sibling banners all put neutral chrome in this
- * slot. The chip's boundary against the wash is then the app's ordinary border
- * contrast rather than a louder one — fill step 1.06-1.20:1, border 1.23-1.39:1,
- * against `--c-border` on the canvas at 1.53:1 dark / 1.40:1 light — so it is in
- * family with every other button, which a `currentcolor 80%` edge at 3.49-5.26:1
- * was not. */
+/* LAYOUT ONLY. THE SKIN IS `btn-small` (14-tools.css), carried by both flavours from
+ * banner-stack.ts (an `<a>` and a `<button>`), as every other banner's action is; a
+ * local skin here reset none of a button's UA chrome. The shared class's target
+ * follows the pointer tier through the shared expander (61-mcp-tools.css), its hover
+ * raises contrast by construction, and its 36px takes the row past the
+ * `--chat-toolbar-h` floor. It gives up the severity ink deliberately: the banner
+ * states its level by glyph, ink and wash already, and the sibling banners all put
+ * neutral chrome in this slot. */
 .banner-link {
   flex-shrink: 0;
   text-decoration: none;
+}
+
+/* A detail control (banner-stack.ts appends it last) takes its own line under the row, so
+ * the row itself keeps its one-line shape. */
+.banner:has(> .banner-detail) {
+  flex-wrap: wrap;
+}
+
+.banner-detail {
+  flex-basis: 100%;
 }
 
 /* ONE box, and the WRAPPER draws it: the border, the radius and the clip. The
@@ -1304,7 +1290,8 @@
      `--hit-floor` expanders must fit inside `.code-wrap`'s clip, which cuts hit
      testing as well as paint. */
   min-height: max(var(--hit-floor), var(--ctl-h-dense));
-  padding: 0 var(--sp-2);
+  padding-block: 0;
+  padding-inline: var(--sp-2) max(var(--sp-2), calc(var(--tap-gap-sm) / 2));
   background: var(--c-bg-secondary);
 }
 
@@ -1377,19 +1364,14 @@
    view placing it. NO DROP SHADOW: the opaque fill separates it from the text under it.
 
    The painted box is the glyph plus `--sp-2` plus its border, square by construction
-   (the svg is `--icon-ui` on both axes, 03-base.css; the label hidden), so it follows
-   the pointer tier. The TARGET is `--hit-floor`, grown by the `::after` rather than
-   the box; `min(0px, …)` never shrinks a box already past the floor. The app-wide
-   floor (61-mcp-tools.css) sets PHYSICAL `min-width`/`min-height`, so the opt-out is
-   physical too. */
+   (the svg is `--icon-ui` on both axes, 03-base.css; the label hidden). The TARGET is
+   the shared expander (61-mcp-tools.css), here sized off `--rail-hit` below. */
 .scroll-resume {
   z-index: 10;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: var(--sp-1);
-  min-width: 0;
-  min-height: 0;
   padding: var(--sp-2);
   border-radius: var(--r);
   border: 1px solid var(--c-border);
@@ -1403,13 +1385,6 @@
     opacity var(--dur-standard);
   font-size: var(--fs-sm);
   white-space: nowrap;
-
-  &::after {
-    content: "";
-    position: absolute;
-    inset-block: min(0px, calc((100% - var(--hit-floor)) / 2));
-    inset-inline: min(0px, calc((100% - var(--hit-floor)) / 2));
-  }
 
   & > span {
     display: none;
@@ -1433,7 +1408,7 @@
 }
 
 /* THE TARGET IS `--rail-hit`, the turn map's navigator target, rather than the shared
- * `--hit-floor`, so a finger gets 48px in every form (`.scroll-resume::after` above). */
+ * `--hit-floor`, so a finger gets 48px in every form. */
 [id="scroll-bottom"]::after {
   inset-block: min(0px, calc((100% - var(--rail-hit)) / 2));
   inset-inline: min(0px, calc((100% - var(--rail-hit)) / 2));
@@ -1667,7 +1642,7 @@
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
-  min-height: var(--btn-h);
+  min-height: var(--row-tap);
   min-width: 0;
 }
 
@@ -1719,7 +1694,8 @@
 .steer-note-run {
   flex: 0 1 auto;
   min-width: 0;
-  overflow: hidden;
+  /* Inline only: a block clip would cut the button's hit expander. */
+  overflow: clip visible;
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
   text-overflow: ellipsis;
@@ -1777,6 +1753,9 @@ button.steer-note-run:focus-visible {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     gap: 0 var(--sp-2);
+
+    /* The run's name tops the card, whose `overflow: hidden` would cut its expander. */
+    padding-block-start: max(var(--sp-2), var(--hit-grow) / 2);
   }
 
   .steer-note-head:has(> .steer-note-run) > .tool-icon {

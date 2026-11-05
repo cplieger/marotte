@@ -67,6 +67,7 @@ func TestHandlePlan_ARepeatedFrameSealsNothingAndAChangedOneAppends(t *testing.T
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
+	h.coord.turns.ensureTestLife("c1")
 	pending := json.RawMessage(`{"entries":[{"content":"step 1","priority":"high","status":"pending"},{"content":"step 2","priority":"medium","status":"pending"}]}`)
 	h.translator.HandlePlan(t.Context(), "c1", pending, translate.FrameAttribution{})
 	h.translator.HandlePlan(t.Context(), "c1", pending, translate.FrameAttribution{})

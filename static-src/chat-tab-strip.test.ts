@@ -19,7 +19,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("./tabs.js", async () => {
-  const { signal } = await import("@cplieger/reactive");
+  const { signal } = await import("@cplieger/ui");
   const { tabsMock } = await import("./__test-helpers__/tabs-mock.js");
   h.openRefs = signal<string[]>([]);
   return {
@@ -35,7 +35,7 @@ vi.mock("./tabs.js", async () => {
 // The dock, shaped like the real module: one version signal, per-chat queues,
 // so a row effect's read subscribes it to decisions arriving anywhere.
 vi.mock("./decision-dock.js", async () => {
-  const { signal } = await import("@cplieger/reactive");
+  const { signal } = await import("@cplieger/ui");
   h.dockVersion = signal(0);
   return {
     hasPendingDecision: (chatID: string): boolean => {
@@ -62,7 +62,7 @@ vi.mock("./skeleton.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Skeleton>()),
   chatSkeleton: vi.fn(() => document.createElement("div")),
 }));
-vi.mock("@cplieger/ui-primitives/skeleton", () => ({
+vi.mock("@cplieger/ui/skeleton", () => ({
   skeletonTiming: vi.fn(() => ({ commit: vi.fn(), cancel: vi.fn() })),
 }));
 vi.mock("./messages.js", () => ({
@@ -78,6 +78,8 @@ vi.mock("./messages.js", () => ({
 }));
 vi.mock("./attachments.js", () => ({
   addAttachment: vi.fn(),
+  addAttachmentTo: vi.fn(),
+  toAttached: vi.fn(),
   unownedAttachmentPaths: vi.fn(() => []),
 }));
 vi.mock("./composer-state.js", () => ({
@@ -88,7 +90,7 @@ vi.mock("./composer-state.js", () => ({
   flushComposerDraft: vi.fn(),
   dropComposerState: vi.fn(),
 }));
-vi.mock("./session-context.js", () => ({ setCurrentModel: vi.fn(), getLastModel: () => "auto" }));
+vi.mock("./session-context.js", () => ({ getLastModel: () => "auto" }));
 vi.mock("./dom.js", () => ({
   $: { messages: document.createElement("div"), promptInput: { focus: () => undefined } },
   // `paintPlaceholder` marks its host busy through this module; an absent export fails

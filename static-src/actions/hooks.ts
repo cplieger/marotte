@@ -2,6 +2,7 @@
 // internal/hub/hooks.go) and refetched after every mutation, so no optimistic state.
 
 import { apiAction } from "./index.js";
+import { stillOr } from "./still-applying.js";
 
 const HOOKS_API = "/api/hooks";
 
@@ -20,5 +21,5 @@ export const setHookEnabled = apiAction<SetEnabledArgs, void>({
     path: `${HOOKS_API}/${encodeURIComponent(id)}/enabled`,
     body: { enabled },
   }),
-  error: "Could not update hook",
+  error: stillOr("updating the hook", "Could not update hook"),
 });

@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/creds"
-	"github.com/cplieger/keyenc"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/creds"
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
-	"github.com/cplieger/webhttp/v4"
 )
 
 const codeNotSupported = "not_supported"
@@ -48,9 +48,9 @@ const (
 
 // RegisterRoutes installs the /api/forges/* mux entries.
 func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) {
-	outbound := webhttp.RateLimiter(outboundBurst, outboundInterval,
-		webhttp.WithRateLimitWhen(sendsOutbound),
-		webhttp.WithRateLimitError("rate_limited", "Too many sign-ins or detections were started. Wait a moment and try again"))
+	outbound := httpserver.RateLimiter(outboundBurst, outboundInterval,
+		httpserver.WithRateLimitWhen(sendsOutbound),
+		httpserver.WithRateLimitError("rate_limited", "Too many sign-ins or detections were started. Wait a moment and try again"))
 	mux.HandleFunc("/api/forges", h.handleForgesList)
 	mux.HandleFunc("/api/forges/", h.handleForgeItem)
 	mux.Handle("/api/forges/login", outbound(http.HandlerFunc(h.handleLogin)))
@@ -86,20 +86,20 @@ func (h *HTTPHandler) handleInventoryWatch(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if h.poller == nil {
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(errNoInventory))
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(errNoInventory))
 		return
 	}
 	tag := r.Header.Get(clientTagHeader)
-	if !webhttp.ValidRequestID(tag) {
-		webhttp.WriteJSONStatus(w, http.StatusBadRequest,
+	if !httpserver.ValidRequestID(tag) {
+		httpserver.WriteJSONStatus(w, http.StatusBadRequest,
 			httpreply.ErrorJSONWithCode("SSE-Client header absent or outside [A-Za-z0-9_-]{1,64}", codeWatchInvalid))
 		return
 	}
 	var body watchBody
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Watching == nil ||
-		(body.Page != "" && !webhttp.ValidRequestID(body.Page)) {
-		webhttp.WriteJSONStatus(w, http.StatusBadRequest,
+		(body.Page != "" && !httpserver.ValidRequestID(body.Page)) {
+		httpserver.WriteJSONStatus(w, http.StatusBadRequest,
 			httpreply.ErrorJSONWithCode("the body must be {watching: true|false, page?: [A-Za-z0-9_-]{1,64}}", codeWatchInvalid))
 		return
 	}
@@ -115,10 +115,10 @@ func (h *HTTPHandler) handleInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.poller == nil {
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(errNoInventory))
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(errNoInventory))
 		return
 	}
-	webhttp.WriteJSON(w, h.poller.inventoryFor(h.manager.readers()))
+	httpserver.WriteJSON(w, h.poller.inventoryFor(h.manager.readers()))
 }
 
 func (h *HTTPHandler) handleInventoryRefresh(w http.ResponseWriter, r *http.Request) {
@@ -127,10 +127,10 @@ func (h *HTTPHandler) handleInventoryRefresh(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if h.poller == nil {
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(errNoInventory))
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(errNoInventory))
 		return
 	}
-	webhttp.WriteJSONStatus(w, http.StatusAccepted, InventoryRefresh{CycleID: h.poller.refresh()})
+	httpserver.WriteJSONStatus(w, http.StatusAccepted, InventoryRefresh{CycleID: h.poller.refresh()})
 }
 
 func (h *HTTPHandler) handleForgesList(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +141,7 @@ func (h *HTTPHandler) handleForgesList(w http.ResponseWriter, r *http.Request) {
 	forges := h.manager.List()
 	_, github := marotteApp(forgeapi.FamilyGitHub)
 	_, gitlab := marotteApp(forgeapi.FamilyGitLab)
-	webhttp.WriteJSON(w, map[string]any{
+	httpserver.WriteJSON(w, map[string]any{
 		"forges": forges,
 		"kinds":  allKinds(),
 		// Device sign-in with Marotte's own application, per public instance.
@@ -170,7 +170,7 @@ func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 			httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodDelete)
 			return
 		}
-		webhttp.WriteJSON(w, row)
+		httpserver.WriteJSON(w, row)
 		return
 	}
 	op, rest, _ := splitFirst(sub)
@@ -199,10 +199,10 @@ func (h *HTTPHandler) handleDisconnect(w http.ResponseWriter, r *http.Request, i
 	err := h.manager.signOut(r.Context(), deadline, id)
 	switch {
 	case err == nil:
-		webhttp.Ok(w)
+		httpserver.Ok(w)
 	case r.Context().Err() != nil, writeMutationError(w, err):
 	case errors.Is(err, errCleanupPending):
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable,
 			httpreply.ErrorJSONWithCode(logsafe.Field(err.Error()), codeCleanupPending))
 	default:
 		httpreply.ServerError(w, "the sign-out could not be saved", err)
@@ -214,9 +214,9 @@ func (h *HTTPHandler) handleDisconnect(w http.ResponseWriter, r *http.Request, i
 func writeMutationError(w http.ResponseWriter, err error) bool {
 	switch {
 	case errors.Is(err, errConnectionBusy):
-		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(err.Error(), codeConnectionBusy))
+		httpserver.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(err.Error(), codeConnectionBusy))
 	case errors.Is(err, errConnectionUnusable):
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
 	default:
 		return false
 	}
@@ -243,9 +243,9 @@ func (h *HTTPHandler) handleOwners(w http.ResponseWriter, r *http.Request, id st
 	}
 	deadline := h.manager.deadlines.from(time.Now())
 	var body ownersBody
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Owners == nil {
-		webhttp.WriteJSONStatus(w, http.StatusBadRequest,
+		httpserver.WriteJSONStatus(w, http.StatusBadRequest,
 			httpreply.ErrorJSONWithCode("the body must be {owners: [string, ...]}", codeOwnersInvalid))
 		return
 	}
@@ -257,7 +257,7 @@ func (h *HTTPHandler) handleOwners(w http.ResponseWriter, r *http.Request, id st
 	// The inventory's added scopes are the stored owners, so the change shows at
 	// the next cycle rather than a poll interval later.
 	h.askCycle()
-	webhttp.WriteJSON(w, OwnerScopes{Owners: stored})
+	httpserver.WriteJSON(w, OwnerScopes{Owners: stored})
 }
 
 // writeOwnersError answers a refused owners write. An owner the library refuses
@@ -269,12 +269,12 @@ func writeOwnersError(w http.ResponseWriter, r *http.Request, err error) {
 	if ferr, ok := errors.AsType[*forgeapi.Error](err); ok {
 		env := envelopeFor(ferr)
 		env.Error = logsafe.Field(err.Error())
-		webhttp.WriteJSONStatus(w, statusFor(ferr), env)
+		httpserver.WriteJSONStatus(w, statusFor(ferr), env)
 		return
 	}
 	switch {
 	case errors.Is(err, errTooManyOwners):
-		webhttp.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeOwnersTooMany))
+		httpserver.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeOwnersTooMany))
 	case errors.Is(err, errNotLoggedIn):
 		httpreply.NotFound(w, err.Error())
 	default:
@@ -287,7 +287,7 @@ func writeOwnersError(w http.ResponseWriter, r *http.Request, err error) {
 func (h *HTTPHandler) handle(w http.ResponseWriter, id string) (readHandle, bool) {
 	rh, err := h.manager.reader(id)
 	if errors.Is(err, errConnectionUnusable) {
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
 		return readHandle{}, false
 	}
 	if err != nil {
@@ -312,7 +312,7 @@ func (h *HTTPHandler) handleCapabilities(w http.ResponseWriter, r *http.Request,
 		writeOpsError(w, r, err)
 		return
 	}
-	webhttp.WriteJSON(w, caps)
+	httpserver.WriteJSON(w, caps)
 }
 
 const (
@@ -332,10 +332,10 @@ func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id str
 	case r.Context().Err() != nil, writeMutationError(w, err):
 		return
 	case errors.Is(err, errCheckBusy):
-		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(err.Error(), codeCheckBusy))
+		httpserver.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(err.Error(), codeCheckBusy))
 		return
 	case errors.Is(err, errReconnectRequired):
-		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(err.Error(), codeReconnectRequired))
+		httpserver.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(err.Error(), codeReconnectRequired))
 		return
 	case err != nil:
 		httpreply.NotFound(w, err.Error())
@@ -346,7 +346,7 @@ func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id str
 		httpreply.NotFound(w, "unknown forge id")
 		return
 	}
-	webhttp.WriteJSON(w, ProbeResult{Forge: &row})
+	httpserver.WriteJSON(w, ProbeResult{Forge: &row})
 }
 
 const (
@@ -372,12 +372,12 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	deadline := h.manager.deadlines.from(time.Now())
 	var body patLoginBody
-	if err := webhttp.DecodeJSONInto(w, r, &body, webhttp.MaxJSONBody); err != nil {
+	if err := httpserver.DecodeJSONInto(w, r, &body, httpserver.MaxJSONBody); err != nil {
 		httpreply.BadRequest(w, "invalid json")
 		return
 	}
 	if !body.Kind.valid() {
-		webhttp.WriteJSONStatus(w, http.StatusBadRequest,
+		httpserver.WriteJSONStatus(w, http.StatusBadRequest,
 			httpreply.ErrorJSONWithCode("forges: kind must be one of the supported forge kinds", codeKindInvalid))
 		return
 	}
@@ -395,7 +395,7 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeLoginError(w, r, err)
 		return
 	}
-	webhttp.WriteJSON(w, LoginResult{ForgeID: id})
+	httpserver.WriteJSON(w, LoginResult{ForgeID: id})
 }
 
 // errTokenRequired refuses a token sign-in with no token.
@@ -406,9 +406,9 @@ var errTokenRequired = errors.New("forges: a token is required")
 func writeFieldError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, errWebBaseInvalid):
-		webhttp.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeWebBaseInvalid))
+		httpserver.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeWebBaseInvalid))
 	case errors.Is(err, errTokenRequired):
-		webhttp.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeTokenRequired))
+		httpserver.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeTokenRequired))
 	default:
 		httpreply.BadRequest(w, err.Error())
 	}
@@ -509,9 +509,9 @@ func writeLoginError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	switch {
 	case errors.Is(err, errSignInTimedOut):
-		webhttp.WriteJSONStatus(w, http.StatusGatewayTimeout, httpreply.ErrorJSONWithCode(err.Error(), codeSignInTimedOut))
+		httpserver.WriteJSONStatus(w, http.StatusGatewayTimeout, httpreply.ErrorJSONWithCode(err.Error(), codeSignInTimedOut))
 	default:
-		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(logsafe.Field(err.Error())))
+		httpserver.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(logsafe.Field(err.Error())))
 	}
 }
 
@@ -528,12 +528,12 @@ func writeOpsError(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	if errors.Is(err, errNotSupported) {
-		webhttp.WriteJSONStatus(w, http.StatusNotImplemented,
+		httpserver.WriteJSONStatus(w, http.StatusNotImplemented,
 			httpreply.ErrorJSONWithCode(err.Error(), codeNotSupported))
 		return
 	}
 	slog.Debug("forges: ops error", "error", logsafe.Field(err.Error()))
-	webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
+	httpserver.WriteJSONStatus(w, http.StatusInternalServerError,
 		httpreply.ErrorJSON(err.Error()))
 }
 

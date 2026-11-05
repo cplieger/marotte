@@ -1,7 +1,7 @@
 // The exec view's detail pane: one node's facts, failure, interruption, and the transcript host it
 // hands OUT (`bodyFor`). No capture: the page's per-step results region renders that.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { formatElapsed } from "../strings.js";
 import { elapsed, type ExecNode } from "./model.js";
 import { STATE_WORD } from "./status.js";
@@ -25,15 +25,25 @@ export type EmptyNote = (node: ExecNode) => string;
  *  to open it; a delegate's page has nowhere new to send anyone. */
 export type EmptyAction = (node: ExecNode) => HTMLElement | null;
 
-export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction): ExecDetailView {
+/** The consumer's verbs on the shown node, drawn in its header, or null; returning the SAME element
+ *  as last time leaves it seated, since re-seating blurs it. */
+export type HeadAction = (node: ExecNode) => HTMLElement | null;
+
+export function buildExecDetail(
+  emptyNote: EmptyNote,
+  emptyAction?: EmptyAction,
+  headAction?: HeadAction,
+): ExecDetailView {
   const title = el("span", { className: "ev-d-title" });
   const state = el("span", { className: "ev-d-state" });
   const dur = el("span", { className: "ev-d-dur" });
+  const headAct = el("span", { className: "ev-d-head-action", hidden: true });
   const head = el(
     "div",
     { className: "ev-d-head" },
     title,
     el("span", { className: "ev-d-meta" }, state, dur),
+    headAct,
   );
   const facts = el("dl", { className: "ev-d-facts" });
   const failure = el("div", { className: "ev-d-fail", role: "status" });
@@ -72,6 +82,8 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
       empty.textContent = "Pick a step to see what it did.";
       emptyAct.replaceChildren();
       emptyAct.hidden = true;
+      headAct.replaceChildren();
+      headAct.hidden = true;
       return;
     }
     root.dataset["state"] = node.state;
@@ -79,6 +91,11 @@ export function buildExecDetail(emptyNote: EmptyNote, emptyAction?: EmptyAction)
     state.textContent = STATE_WORD[node.state];
     const ms = elapsed(node.start, node.end);
     dur.textContent = ms > 0 ? formatElapsed(ms) : "";
+    const verbs = headAction?.(node) ?? null;
+    if (verbs !== headAct.firstElementChild) {
+      headAct.replaceChildren(...(verbs === null ? [] : [verbs]));
+    }
+    headAct.hidden = verbs === null;
 
     const list = node.facts ?? [];
     facts.hidden = list.length === 0;

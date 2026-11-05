@@ -157,7 +157,7 @@ describe("a group whose members ran LIVE and then settled", () => {
 
     autoCollapseGroup(group);
 
-    expect(group.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(group.classList.contains("tool-group-collapsed")).toBe(true);
     expect(group.querySelector(".tool-group-header")?.getAttribute("aria-expanded")).toBe("false");
     group.remove();
   });
@@ -178,7 +178,7 @@ describe("a group whose members ran LIVE and then settled", () => {
     );
     autoCollapseGroup(group);
 
-    expect(group.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(group.classList.contains("tool-group-collapsed")).toBe(true);
     expect(group.querySelector(".tool-group-header")?.getAttribute("aria-expanded")).toBe("false");
     expect(group.querySelector(".tool-group-count")?.textContent).toContain("1 failed");
     group.remove();
@@ -233,5 +233,119 @@ describe("a frame carrying a refusal", () => {
     expect(card.dataset["declined"]).toBe("1");
     expect(card.dataset["outcome"]).toBe("declined");
     card.remove();
+  });
+});
+
+describe("a call the user rejected at its prompt", () => {
+  const rejected = { type: "tool_approval", outcome: "selected", choice: "reject_once" } as const;
+
+  it("settles declined, not failed", () => {
+    const card = liveCard("st-rej-paint");
+    applyToolCallUpdate(card, frame("st-rej-paint", { interaction: rejected }), "c1");
+    expect(card.dataset["outcome"]).toBe("running");
+    applyToolCallUpdate(
+      card,
+      frame("st-rej-paint", { status: "failed", interaction: rejected, output: "rejected\n" }),
+      "c1",
+    );
+    expect(card.dataset["outcome"]).toBe("declined");
+    expect(card.querySelector(".tool-icon.is-declined")).not.toBeNull();
+    expect(card.getAttribute("aria-label")).toMatch(/declined$/);
+    card.remove();
+  });
+
+  it("is not counted failed in its group's header", () => {
+    const group = buildToolGroupShell();
+    const a = liveCard("st-rej-group-a");
+    const b = liveCard("st-rej-group-b");
+    groupBody(group).append(a, b);
+    document.body.appendChild(group);
+    refreshGroupHeader(group);
+
+    applyToolCallUpdate(a, frame("st-rej-group-a", { status: "completed" }), "c1");
+    applyToolCallUpdate(
+      b,
+      frame("st-rej-group-b", { status: "failed", interaction: rejected }),
+      "c1",
+    );
+    autoCollapseGroup(group);
+
+    const count = group.querySelector(".tool-group-count")?.textContent ?? "";
+    expect(count).not.toContain("failed");
+    expect(count).toContain("1 declined");
+    group.remove();
+  });
+});
+
+// A shell rule's block rides the terminal frame, never the create, so the mounted card adopts it there.
+describe("a denial on the terminal frame", () => {
+  const ruleDenial = {
+    capability: "shell",
+    resource: "rm -rf x",
+    scope: "user",
+    source: "permissions.yaml",
+    rule: { capability: "shell", effect: "deny", match: ["rm *"] },
+  };
+
+  it("paints the card denied", () => {
+    const card = liveCard("st-deny-paint");
+    applyToolCallUpdate(
+      card,
+      frame("st-deny-paint", { status: "failed", denial: ruleDenial, output: "Blocked\n" }),
+      "c1",
+    );
+    expect(card.dataset["outcome"]).toBe("denied");
+    expect(card.querySelector(".tool-icon.is-denied")).not.toBeNull();
+    expect(card.getAttribute("aria-label")).toMatch(/blocked by security policy$/);
+    expect(card.dataset["disclosable"]).toBe("1");
+    card.querySelector<HTMLElement>(".tool-disclosure")?.click();
+    expect(card.querySelectorAll(".tool-denial")).toHaveLength(1);
+    card.remove();
+  });
+
+  it("prepends the denial to a region the reader already opened", () => {
+    const card = liveCard("st-deny-open");
+    applyToolCallUpdate(card, frame("st-deny-open", { output: "working\n" }), "c1");
+    card.querySelector<HTMLElement>(".tool-disclosure")?.click();
+    applyToolCallUpdate(
+      card,
+      frame("st-deny-open", { status: "failed", denial: ruleDenial }),
+      "c1",
+    );
+    const details = card.querySelector(".tool-details");
+    expect(details?.querySelectorAll(".tool-denial")).toHaveLength(1);
+    expect(details?.firstElementChild?.classList.contains("tool-denial")).toBe(true);
+    card.remove();
+  });
+
+  it("adds the denial block once when the same settled value arrives twice", () => {
+    const card = liveCard("st-deny-twice");
+    applyToolCallUpdate(card, frame("st-deny-twice", { output: "working\n" }), "c1");
+    card.querySelector<HTMLElement>(".tool-disclosure")?.click();
+    const settled = frame("st-deny-twice", { status: "failed", denial: ruleDenial, output: "x\n" });
+    applyToolCallUpdate(card, settled, "c1");
+    applyToolCallUpdate(card, settled, "c1");
+    expect(card.querySelectorAll(".tool-denial")).toHaveLength(1);
+    card.remove();
+  });
+
+  it("is not counted failed in its group's header", () => {
+    const group = buildToolGroupShell();
+    const a = liveCard("st-deny-group-a");
+    const b = liveCard("st-deny-group-b");
+    groupBody(group).append(a, b);
+    document.body.appendChild(group);
+    refreshGroupHeader(group);
+
+    applyToolCallUpdate(a, frame("st-deny-group-a", { status: "completed" }), "c1");
+    applyToolCallUpdate(
+      b,
+      frame("st-deny-group-b", { status: "failed", denial: ruleDenial }),
+      "c1",
+    );
+    autoCollapseGroup(group);
+
+    expect(group.querySelector(".tool-group-count")?.textContent).not.toContain("failed");
+    group.remove();
   });
 });

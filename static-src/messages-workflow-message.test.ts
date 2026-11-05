@@ -27,6 +27,7 @@ for (const id of [
 }
 
 import { loadCSS } from "./__test-helpers__/css-rules.js";
+import { formatClock } from "./locale-time.js";
 
 const style = document.createElement("style");
 style.textContent =
@@ -72,11 +73,7 @@ const SENT = Date.UTC(2026, 9, 9, 12, 0, 5);
 const READ = SENT + 3 * 60_000;
 
 function clock(ms: number): string {
-  return new Date(ms).toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  return formatClock(ms, { seconds: true });
 }
 
 function update(turnID: string, at: number, n: number, readTs?: number): Entry {

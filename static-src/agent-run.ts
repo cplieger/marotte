@@ -1,8 +1,8 @@
 // KAS treats `agent://<name>` as a one-step recipe, so an agent launched here gets
 // its own run tab like any other workflow run.
 
-import { el } from "@cplieger/reactive";
-import { createPopup } from "@cplieger/ui-primitives/popup";
+import { el } from "@cplieger/ui";
+import { createPopup } from "@cplieger/ui/popup";
 import { launchRun } from "./actions/runs.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_PLAY } from "./icons.js";

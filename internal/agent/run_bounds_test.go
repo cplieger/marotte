@@ -31,7 +31,7 @@ func leased(t *testing.T, h *Runs, workflowID string) {
 // firing after its test (the floor is minutes) would cancel through a nil one and crash the package.
 func boundsRuns(t *testing.T) *Runs {
 	t.Helper()
-	h := &Runs{}
+	h := &Runs{chats: newTestChatStore()}
 	t.Cleanup(func() {
 		h.mu.Lock()
 		defer h.mu.Unlock()
@@ -76,7 +76,7 @@ func TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline(t *testing.T) {
 			const id = "wf_1"
 			o := manualLaunch()
 			if tc.slotIn != 0 {
-				o = scheduledLaunch("sched-1", time.Now().Add(tc.slotIn))
+				o = scheduledLaunch(schedule.Row{ID: "sched-1"}, time.Now().Add(tc.slotIn))
 			}
 			h.grantLease(t.Context(), id, "publish", o, hostSec())
 			if tc.spent != 0 {
@@ -122,7 +122,7 @@ func TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline(t *tes
 		h, _, br := newTestHub()
 		id := "wf_" + strconv.Itoa(round)
 		br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-		h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+		h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 		st, err := runlease.NewStore(t.TempDir())
 		if err != nil {
 			t.Fatalf("round %d: NewStore: %v", round, err)
@@ -207,7 +207,7 @@ func TestArmRunDeadline_KeepsBoundingWhenOnlyDurabilityFails(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 
 	h.runs.leases = undurableLeaseStore(t)
 
@@ -274,14 +274,14 @@ func TestDisarmRunDeadline_ParksInMemoryWhenTheParkCannotBePersisted(t *testing.
 	}
 }
 
-// TestCancelExpiredRun_ReportsAScheduleRowItCouldNotWrite pins that a failed row write is logged (a schedule
-// deleted while its run executes).
-func TestCancelExpiredRun_ReportsAScheduleRowItCouldNotWrite(t *testing.T) {
+// TestCancelExpiredRun_LogsAScheduleDeletedDuringItsRunAtInfo pins that the store's refusal for a schedule
+// deleted while its run executes is an expected outcome, logged at INFO rather than WARN.
+func TestCancelExpiredRun_LogsAScheduleDeletedDuringItsRunAtInfo(t *testing.T) {
 	logs := captureLogs(t)
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 
 	// An EMPTY schedule store: the lease names a schedule that is no longer there.
 	st, err := schedule.NewStore(t.TempDir())
@@ -290,7 +290,7 @@ func TestCancelExpiredRun_ReportsAScheduleRowItCouldNotWrite(t *testing.T) {
 	}
 	h.runs.schedules = st
 
-	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch("sched-gone", time.Now().Add(30*time.Second)), hostSec())
+	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch(schedule.Row{ID: "sched-gone"}, time.Now().Add(30*time.Second)), hostSec())
 	h.runs.armDeadline(t.Context(), id)
 	l, _ := h.runs.lease(id)
 
@@ -299,13 +299,14 @@ func TestCancelExpiredRun_ReportsAScheduleRowItCouldNotWrite(t *testing.T) {
 	if got := h.runs.endReason(id); got != runEndOverran {
 		t.Errorf("endReason = %q, want %q; the run is cancelled whatever the row does", got, runEndOverran)
 	}
-	const wantLine = "could not record the schedule's outcome"
-	if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
-		t.Errorf("the schedule row could not be written and nothing said so; want a line reading "+
-			"%q. Got: %s", wantLine, out)
+	out := logs.String()
+	const wantLine = `"level":"INFO","msg":"schedule outcome not recorded: the schedule was deleted or recreated during its run","schedule_id":"sched-gone"`
+	if !strings.Contains(out, wantLine) {
+		t.Errorf("the deleted schedule's row was not written and no INFO line named it; want %s. Got: %s",
+			wantLine, out)
 	}
-	if out := logs.String(); !strings.Contains(out, `"schedule_id":"sched-gone"`) {
-		t.Errorf("the failed-outcome line does not name the schedule it is about: %s", out)
+	if strings.Contains(out, `"msg":"could not record the schedule's outcome"`) {
+		t.Errorf("a schedule deleted during its run was logged as a WARN write failure: %s", out)
 	}
 }
 
@@ -466,7 +467,7 @@ func TestRunDeadline_FiresAndCancelsAtTheDeadline(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 	leased(t, h.runs, id)
 
 	deadline := time.Now().Add(20 * time.Millisecond)
@@ -501,14 +502,14 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 
 	st, err := schedule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("schedule.NewStore: %v", err)
 	}
 	entry := schedule.Entry{
-		ID: "sched-1", Source: "bundled://nightly", Enabled: true,
+		Source: "bundled://nightly", Enabled: true,
 		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
 	}
 	if pErr := st.Put(t.Context(), &entry); pErr != nil {
@@ -517,7 +518,7 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 	h.runs.schedules = st
 
 	// A slot INSIDE the floor, so the armed deadline lands later than SlotAt.
-	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch("sched-1", time.Now().Add(30*time.Second)), hostSec())
+	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch(entry.Row(), time.Now().Add(30*time.Second)), hostSec())
 	h.runs.armDeadline(t.Context(), id)
 	l, _ := h.runs.lease(id)
 	if !l.Deadline.After(l.SlotAt) {
@@ -550,6 +551,54 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 	}
 }
 
+// TestCancelExpiredRun_ARefusedSlotCancelLeavesTheScheduleRowUntouched pins that the row is written only once
+// the cancel lands: a refused one leaves the run executing, so a failed row would contradict it.
+func TestCancelExpiredRun_ARefusedSlotCancelLeavesTheScheduleRowUntouched(t *testing.T) {
+	h, _, br := newTestHub()
+	const id = "wf_1"
+	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner pid 979344 is live")}
+	h.bridge.mgr.insert(runChatID(id), testBridge(br, bridgeIdle))
+
+	st, err := schedule.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("schedule.NewStore: %v", err)
+	}
+	entry := schedule.Entry{
+		Source: "bundled://nightly", Enabled: true,
+		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
+	}
+	if pErr := st.Put(t.Context(), &entry); pErr != nil {
+		t.Fatalf("Put schedule: %v", pErr)
+	}
+	h.runs.schedules = st
+
+	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch(entry.Row(), time.Now().Add(30*time.Second)), hostSec())
+	h.runs.armDeadline(t.Context(), id)
+	l, _ := h.runs.lease(id)
+	before := st.List()
+	if len(before) != 1 || before[0].LastRunID != id {
+		t.Fatalf("the lease grant did not record the run's start on its row: %+v", before)
+	}
+
+	h.runs.cancelExpired(id, l.Deadline)
+
+	if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
+		t.Fatal("the slot's cancel was never attempted, so the fixture cannot show a refusal")
+	}
+	if got := h.runs.endReason(id); got != "" {
+		t.Errorf("endReason = %q after a REFUSED cancel, want \"\"", got)
+	}
+	rows := st.List()
+	if len(rows) != 1 {
+		t.Fatalf("the schedule store holds %d rows", len(rows))
+	}
+	if rows[0].LastStatus != before[0].LastStatus || rows[0].LastReason != before[0].LastReason {
+		t.Errorf("the schedule row reads (%q, %q) after a REFUSED cancel, want it untouched at (%q, %q): "+
+			"it reports the run cancelled while KAS still runs it", rows[0].LastStatus, rows[0].LastReason,
+			before[0].LastStatus, before[0].LastReason)
+	}
+}
+
 // TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure pins that an alert rule reads logMsgRunOverran
 // as a schedule failing, so a manual run yielding must not log it.
 func TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure(t *testing.T) {
@@ -557,7 +606,7 @@ func TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure(t *test
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 
 	// A manual lease carrying a slot, and no schedule id: no row asked for this run.
 	h.runs.grantLease(t.Context(), id, "publish",
@@ -792,7 +841,7 @@ func TestRearmRetriedRun_GivesAFreshClock(t *testing.T) {
 	h.armDeadline(t.Context(), id)
 	before, _ := h.lease(id)
 
-	h.rearmRetried(t.Context(), id, &runOrigin{recipe: "publish"})
+	h.rearmRetried(t.Context(), id, &runOrigin{recipe: "publish"}, nil)
 
 	after, held := h.lease(id)
 	if !held || !after.Bounded() {
@@ -811,7 +860,7 @@ func TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt(t *testi
 	h := hub.runs
 	const id = "wf_1"
 
-	h.rearmRetried(t.Context(), id, &runOrigin{recipe: "nightly"})
+	h.rearmRetried(t.Context(), id, &runOrigin{recipe: "nightly"}, nil)
 
 	l, held := h.lease(id)
 	if !held {
@@ -835,7 +884,7 @@ func TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt(t *testi
 	if l.Unattended {
 		t.Error("a retried run was marked unattended; the user clicked Retry and can answer")
 	}
-	if presets, err := l.HostPresets(); err != nil || !slices.Equal(presets, securityPresets(t.Context(), hub.lifecycle.configDir)) {
+	if presets, err := l.HostPresets(); err != nil || !slices.Equal(presets, hub.readSessionSettings(t.Context()).Presets) {
 		t.Errorf("host presets = %v, %v; want the profile's presets now, recorded so its host session can reload", presets, err)
 	}
 }
@@ -1019,7 +1068,7 @@ func TestObserveComplete_ForgetsStepSessionsOnlyOnATerminalStatus(t *testing.T) 
 		t.Run(tc.status, func(t *testing.T) {
 			t.Parallel()
 			rec := &recordingRunTranslator{}
-			rs := &Runs{translate: rec}
+			rs := &Runs{chats: newTestChatStore(), translate: rec}
 
 			rs.observeComplete(t.Context(), "c-1", runNotif(methodWFRunComplete, map[string]any{
 				"workflowId": "wf_1", "status": tc.status,

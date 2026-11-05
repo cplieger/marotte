@@ -9,13 +9,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/envx/v2"
+	"github.com/cplieger/go/envx"
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/toolbelt/v3"
-	"github.com/cplieger/webhttp/v4"
+	"github.com/cplieger/toolbelt/v3/pin"
 )
 
 // Config holds all environment/flag values needed to build the app.
@@ -30,12 +31,12 @@ type Config struct {
 	KiroCLIVersion     string
 	KiroCLISHA256      string
 	KiroCLISHA256ARM64 string
-	// KASNodePath is the node binary kiro-cli runs KAS on, resolved as kiro-cli resolves it:
-	// KIRO_KAS_NODE_PATH, else the embedded copy in kiro-cli's data dir. It may not exist yet.
-	KASNodePath string
-	// ToolsDir is the tools engine's install tree root (bin/, opt/,
-	// npm/, python/) on the persistent volume.
-	ToolsDir string
+	// KASLookup is the environment kiro-cli finds its KAS runtime from; a reader resolves it per
+	// use (KASLookup.Find), because the runtime is unpacked at the engine's first start.
+	KASLookup workspace.KASLookup
+	// Tools is the tools engine's and the kiro-cli install's root (bin/, opt/, npm/, python/,
+	// kiro-cli-versions/) on the persistent volume, with the server's verdict on it.
+	Tools toolsRoot
 	// ToolCatalogPath is the compiled tool catalog baked into the
 	// image (missing = degraded catalog search). With the runtime
 	// refresh below it is only the first-boot/offline fallback.
@@ -51,18 +52,19 @@ type Config struct {
 	// resolve before it replaces the current one — the embedded
 	// required-tools.txt, injected by main.
 	ToolCatalogRequire []string
-	// TrustedProxies are the reverse-proxy prefixes whose X-Forwarded-For webhttp may trust, from
+	// TrustedProxies are the reverse-proxy prefixes whose X-Forwarded-For httpserver may trust, from
 	// TRUSTED_PROXIES. Empty trusts nothing and logs the unspoofable socket peer.
 	TrustedProxies []netip.Prefix
-	// TrustedInstallUIDs names identities whose write access to the kiro-cli install tree does not
-	// invalidate pinstall's custody, from TRUSTED_INSTALL_UIDS. Empty (the default) refuses any
-	// tree another identity can write. Never compiled in: only the deployment knows which account
-	// is already as privileged as this process.
+	// TrustedInstallUIDs names identities whose write access to the tools tree does not fail the
+	// kiro-cli install's custody check or the tools engine's integrity check, from
+	// TRUSTED_INSTALL_UIDS. Empty (the default) refuses any tree another identity can write.
+	// Never compiled in: only the deployment knows which account is already as privileged as
+	// this process.
 	TrustedInstallUIDs []int
 	// HostPolicy is the exact-match Host allowlist from ALLOWED_HOSTS, the anti-DNS-rebinding gate
 	// applied before the CSRF check. Unset = inactive, any Host accepted (the server warns at
 	// listen time).
-	HostPolicy *webhttp.HostPolicy
+	HostPolicy *httpserver.HostPolicy
 	// BridgeEnvAllow re-permits names the bridge's credential screen would drop, from
 	// bridge.EnvAllowVar. Nil is the shipped and right configuration.
 	BridgeEnvAllow map[string]struct{}
@@ -83,7 +85,8 @@ type Config struct {
 // ConfigFromEnv reads configuration from environment variables with
 // sensible defaults.
 func ConfigFromEnv() Config {
-	configDir := absDir("KIRO_CONFIG_DIR", cmp.Or(envx.String("KIRO_CONFIG_DIR"), "/config"))
+	paths := resolveBootPaths(envx.Source{})
+	configDir := paths.configDir
 	workDir := absDir("KIRO_WORK_DIR", cmp.Or(envx.String("KIRO_WORK_DIR"), "/workspace"))
 	return Config{
 		WorkDir:             workDir,
@@ -92,8 +95,8 @@ func ConfigFromEnv() Config {
 		KiroCLISHA256:       envx.String("KIRO_CLI_SHA256"),
 		KiroCLISHA256ARM64:  envx.String("KIRO_CLI_SHA256_ARM64"),
 		VapidSub:            cmp.Or(envx.String("VAPID_SUBJECT"), "mailto:marotte@noreply.invalid"),
-		ToolsDir:            cmp.Or(envx.String("MAROTTE_TOOLS_DIR"), filepath.Join(configDir, "tools")),
-		KASNodePath:         cmp.Or(envx.String("KIRO_KAS_NODE_PATH"), embeddedKASNode(os.Getenv("XDG_DATA_HOME"), os.Getenv("HOME"))),
+		Tools:               paths.tools,
+		KASLookup:           workspace.KASLookupFromEnv(),
 		ToolCatalogPath:     cmp.Or(envx.String("MAROTTE_TOOL_CATALOG"), "/opt/marotte/tool-catalog.json"),
 		ToolCatalogURL:      cmp.Or(envx.String("MAROTTE_TOOL_CATALOG_URL"), toolbelt.DefaultCatalogURL),
 		ToolCatalogRefresh:  toolbelt.DefaultCatalogRefresh,
@@ -108,22 +111,10 @@ func ConfigFromEnv() Config {
 	}
 }
 
-// embeddedKASNode is where kiro-cli extracts the node it runs KAS on: its data dir is
-// $XDG_DATA_HOME/kiro-cli, else $HOME/.local/share/kiro-cli. "" when neither is set.
-func embeddedKASNode(dataHome, home string) string {
-	if dataHome == "" {
-		if home == "" {
-			return ""
-		}
-		dataHome = filepath.Join(home, ".local", "share")
-	}
-	return filepath.Join(dataHome, "kiro-cli", "node")
-}
-
-// absDir makes a configured directory absolute against the startup cwd. The browse roots, the file
-// API's root namespace and the client's config-file doors all treat it as an absolute identity, so a
-// relative value would name one directory to the os calls and another to them. A failed Getwd
-// leaves the value cleaned and relative, and validateConfig reports it.
+// absDir makes a configured directory absolute against the startup cwd: the browse roots, the file
+// API and the config-file doors treat the config dir as an absolute identity, and a relative tools
+// dir would give toolbelt's bin/ symlinks targets resolved against bin/ itself. A failed Getwd
+// leaves the value cleaned and relative, with a warning.
 func absDir(envVar, dir string) string {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -192,7 +183,7 @@ func browseRoots(workDir, configDir, raw string) []string {
 // Unset yields nil. LENIENT and fail-SAFE: a malformed entry is logged and skipped, falling back to
 // the socket peer, never trusting a forwarded header.
 func parseTrustedProxies(raw string) []netip.Prefix {
-	prefixes, invalid := webhttp.ParseCIDRs(strings.Split(raw, ","))
+	prefixes, invalid := httpserver.ParseCIDRs(strings.Split(raw, ","))
 	if len(invalid) > 0 {
 		slog.Warn("config: ignoring malformed TRUSTED_PROXIES entries (want CIDR or IP)",
 			"entries", invalid)
@@ -203,7 +194,7 @@ func parseTrustedProxies(raw string) []netip.Prefix {
 // Unset yields nil, fully enforcing. Each entry ASSERTS the uid is already as privileged as this
 // process. Malformed entries drop with one warning that reports a count, never the values.
 func parseTrustedInstallUIDs(raw string) []int {
-	uids, rejected := pinstall.ParseIdentities(raw)
+	uids, rejected := pin.ParseIdentities(raw)
 	if rejected > 0 {
 		slog.Warn("config: ignoring unusable TRUSTED_INSTALL_UIDS entries (want whole numbers above 0)",
 			"invalid_count", rejected,
@@ -212,14 +203,14 @@ func parseTrustedInstallUIDs(raw string) []int {
 	return uids
 }
 
-// parseAllowedHosts parses ALLOWED_HOSTS into a webhttp.HostPolicy, the exact-Host gate that closes
+// parseAllowedHosts parses ALLOWED_HOSTS into a httpserver.HostPolicy, the exact-Host gate that closes
 // the DNS-rebinding hole CSRF alone leaves open (CWE-346). The loopback carve-out is enabled and
 // the 403 names ALLOWED_HOSTS; malformed entries are dropped. Unset or blank is an INACTIVE policy;
 // an all-invalid list is an active EMPTY one that fails closed, warned by name.
-func parseAllowedHosts(raw string) *webhttp.HostPolicy {
-	policy, invalid := webhttp.ParseHostList(strings.Split(raw, ","),
-		webhttp.WithLoopbackExempt(true),
-		webhttp.WithHostAllowlistError("",
+func parseAllowedHosts(raw string) *httpserver.HostPolicy {
+	policy, invalid := httpserver.ParseHostList(strings.Split(raw, ","),
+		httpserver.WithLoopbackExempt(true),
+		httpserver.WithHostAllowlistError("",
 			"host not allowed. Add it to ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {
 		slog.Warn("config: dropping malformed ALLOWED_HOSTS entries; they cannot match any browser-sent Host",

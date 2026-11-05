@@ -11,7 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/webhttp/v4"
+	"github.com/cplieger/go/httpserver"
 )
 
 func idemHandler(status int, ct, body string) (http.Handler, *atomic.Int32) {
@@ -433,7 +433,7 @@ func TestIdempotency_middlewareDoesNotCache500(t *testing.T) {
 // buffer does not overflow, so the full body is buffered (and thus cacheable).
 func TestIdempotency_writerBuffersExactlyAtLimit(t *testing.T) {
 	rec := httptest.NewRecorder()
-	cw := &idempotencyWriter{rec: webhttp.NewStatusRecorder(rec), limit: 4}
+	cw := &idempotencyWriter{rec: httpserver.NewStatusRecorder(rec), limit: 4}
 
 	n, err := cw.Write([]byte("abcd")) // exactly limit bytes
 	if err != nil || n != 4 {
@@ -457,7 +457,7 @@ func TestIdempotency_commandRouteParticipates(t *testing.T) {
 	idem := newIdempotencyCache(idempotencyTTL)
 	t.Cleanup(idem.stop)
 	s := New()
-	h := webhttp.Chain(mux, s.middlewareStack(baseCSPPolicy, idem)...)
+	h := httpserver.Chain(mux, s.middlewareStack(baseCSPPolicy, idem)...)
 
 	post := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "http://example.com/api/command",

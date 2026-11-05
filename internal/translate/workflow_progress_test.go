@@ -63,7 +63,7 @@ func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 			kind: marotte.RunProgressNodeComplete,
 			frame: kasRunNode{
 				WorkflowID: "wf1", NodeID: "coder", NodePath: []string{"coder"},
-				Status: "failed", Reason: "the build did not link",
+				Status: "failed", FailureReason: "the build did not link",
 			},
 			want: marotte.RunProgressPayload{
 				WorkflowID: "wf1", NodeID: "coder", NodePath: []string{"coder"},

@@ -3,7 +3,7 @@
 // a row's click answers "let me look". Tint and glyph come from the shared
 // severity table (turn-severity.ts), never from a per-outcome rule here.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { iconEl } from "../icon-el.js";
 import { breakdownItems, requestLine } from "../context-breakdown.js";
@@ -15,8 +15,8 @@ import { sigChanged } from "../paint-sig.js";
 import { formatElapsed } from "../strings.js";
 import { kindNoun } from "../tool-kind-noun.js";
 import { severityOf } from "../turn-severity.js";
-import type { FileChange, ToolKind, TurnThroughput } from "../types.js";
-import type { ContextBreakdown } from "../wire/types.gen.js";
+import type { FileChange, ToolKind } from "../types.js";
+import type { ContextBreakdown, TurnFirstOutput } from "../wire/types.gen.js";
 import { COMMAND_KINDS, type TurnOutcome } from "../turns.js";
 import {
   occurrenceKeys,
@@ -72,7 +72,8 @@ export interface TurnSummaryData {
   /** `turn_close`'s KAS facts, verbatim. Recoveries are KAS's mechanism names, an
    *  open vocabulary; steering is document ids, file URIs for documents on disk. */
   requestIds?: string[];
-  throughput?: TurnThroughput | undefined;
+  /** The wait before the turn's first output (`turn_close.first_output`). */
+  firstOutput?: TurnFirstOutput | undefined;
   recoveries?: string[];
   steering?: string[];
   engineErrorClass?: string;
@@ -112,6 +113,8 @@ export interface FooterExtras {
   /** This turn has settled prose, so the footer carries the turn ACTIONS
    *  (copy / source / export) that act on it. */
   settledProse?: boolean;
+  /** This settled turn can be branched from, so the footer carries Branch from here. */
+  branchable?: boolean;
 }
 
 /** Whether the footer is earned, READING `turnFacts`: a fact for the row, the outcome WORD, or a
@@ -121,7 +124,8 @@ export function earnsTurnFooter(d: TurnSummaryData, extra: FooterExtras = {}): b
     turnFacts(d).length > 0 ||
     OUTCOME_LEAD[d.outcome ?? "completed"] !== "" ||
     extra.rewindable === true ||
-    extra.settledProse === true
+    extra.settledProse === true ||
+    extra.branchable === true
   );
 }
 
@@ -356,6 +360,18 @@ function timingRows(d: TurnSummaryData): PanelRow[] {
   if (tool > 0 && wall > tool) {
     pairs.push(["Model time", formatElapsed(wall - tool)]);
   }
+  const fo = d.firstOutput;
+  if (fo !== undefined && fo.total_ms > 0) {
+    pairs.push(["First output", formatElapsed(fo.total_ms)]);
+    const setup = fo.setup_ms ?? 0;
+    const model = fo.model_ms ?? 0;
+    if (setup > 0) {
+      pairs.push(["Setup", formatElapsed(setup)]);
+    }
+    if (model > 0) {
+      pairs.push(["Model latency", formatElapsed(model)]);
+    }
+  }
   if ((d.startedAt ?? 0) > 0) {
     pairs.push(["Started", { stamp: d.startedAt ?? 0 }]);
   }
@@ -377,10 +393,6 @@ function modelRows(d: TurnSummaryData): PanelRow[] {
   }
   if ((d.credits ?? 0) > 0) {
     pairs.push(["Credits", creditFigure(d.credits ?? 0)]);
-  }
-  const output = outputEstimate(d.throughput);
-  if (output !== "") {
-    pairs.push(["Output (estimated)", output]);
   }
   return facts(pairs);
 }
@@ -415,18 +427,20 @@ function plural(n: number, one: string, many: string): string {
   return `${String(n)} ${n === 1 ? one : many}`;
 }
 
-/** Only on a turn that did not end clean (`running` has not ended) for the stop reason and the
- *  truncation; the raw reason is VERBATIM and never branched on, since the wire declares that enum
- *  OPEN. Every other row is stated on ANY turn: a clean turn can have needed a recovery, and a
- *  request id is what a support case asks for whatever the outcome. */
+/** The stop reason and the truncation only on a turn that did not end clean (`running` has not
+ *  ended) or that stopped at a bound, which keeps its `completed` grade; the raw reason is VERBATIM
+ *  and never branched on, since the wire declares that enum OPEN. Every other row is stated on ANY
+ *  turn: a clean turn can have needed a recovery, and a request id is what a support case asks for
+ *  whatever the outcome. */
 function diagnosticRows(d: TurnSummaryData): PanelRow[] {
   const outcomeNow = d.outcome ?? "completed";
-  const unclean = outcomeNow !== "completed" && outcomeNow !== "running";
+  const truncated = d.truncated === true;
+  const stopShown = truncated || (outcomeNow !== "completed" && outcomeNow !== "running");
   const pairs: [string, string][] = [];
-  if (unclean && (d.stopReasonRaw ?? "") !== "") {
+  if (stopShown && (d.stopReasonRaw ?? "") !== "") {
     pairs.push(["Stop reason", d.stopReasonRaw ?? ""]);
   }
-  if (unclean && d.truncated === true) {
+  if (truncated) {
     pairs.push(["Truncated", "yes"]);
   }
   for (const m of d.recoveries ?? []) {
@@ -474,10 +488,14 @@ function panelSignature(d: TurnSummaryData): string[] {
     truncated: d.truncated === true ? "1" : "",
     asks: join(...ASK_ORDER.map((b) => num(d.asks?.[b]))),
     requestIds: join(...(d.requestIds ?? [])),
-    throughput:
-      d.throughput === undefined
+    firstOutput:
+      d.firstOutput === undefined
         ? ""
-        : join(String(d.throughput.estimated_tokens), String(d.throughput.active_streaming_ms)),
+        : join(
+            num(d.firstOutput.total_ms),
+            num(d.firstOutput.setup_ms),
+            num(d.firstOutput.model_ms),
+          ),
     recoveries: join(...(d.recoveries ?? [])),
     steering: join(...(d.steering ?? [])),
     engineErrorClass: d.engineErrorClass ?? "",
@@ -485,20 +503,6 @@ function panelSignature(d: TurnSummaryData): string[] {
     contextBreakdown: d.contextBreakdown === undefined ? "" : JSON.stringify(d.contextBreakdown),
   };
   return [...Object.values(parts), workspaceRoot()];
-}
-
-/** `≈N tokens · ≈N tokens/s`, or "" when KAS estimated nothing. The rate needs time
- *  chunks were actually arriving, so it is withheld without one. */
-function outputEstimate(t: TurnThroughput | undefined): string {
-  if (t === undefined || t.estimated_tokens <= 0) {
-    return "";
-  }
-  const tokens = `\u2248${Math.round(t.estimated_tokens).toLocaleString()} tokens`;
-  if (t.active_streaming_ms <= 0) {
-    return tokens;
-  }
-  const rate = Math.round(t.estimated_tokens / (t.active_streaming_ms / 1000));
-  return `${tokens} \u00b7 \u2248${rate.toLocaleString()} tokens/s`;
 }
 
 /** The steering KAS added this turn: a workspace document links into the editor, which cannot open

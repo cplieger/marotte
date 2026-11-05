@@ -106,11 +106,11 @@ func (m *runMutations) enter(workflowID string, kind mutationKind, gen uint64) *
 func (e *runMutation) unwritten() { e.m.settle(e) }
 
 // replied records the write's outcome; seq is the reply's position on lane, the lane the run's frames reach. An
-// in-band refusal changed nothing and settles at once; a write with no reply (its ctx ended, or the engine ended)
-// keeps the entry, under the ceiling from now.
+// in-band refusal changed nothing and settles at once; a write with no readable reply (its ctx ended, the engine
+// ended, or the answer could not be read) keeps the entry, under the ceiling from now.
 func (e *runMutation) replied(resp *marotte.RPCResponse, err error, lane laneRef, seq uint64) {
 	m := e.m
-	if resp != nil && resp.Error != nil {
+	if resp != nil && resp.Error != nil && !marotte.ReplyUnread(err) {
 		m.settle(e)
 		return
 	}
@@ -324,12 +324,8 @@ func frameWorkflow(msg *marotte.RPCResponse, steps func(marotte.SessionID) (stri
 	if msg.Method != marotte.MethodSessionUpdate || steps == nil {
 		return ""
 	}
-	var env translate.ACPSessionUpdateEnvelope
-	if json.Unmarshal(msg.Params, &env) != nil || env.Update == nil {
-		return ""
-	}
-	var base translate.ACPSessionUpdateBase
-	if json.Unmarshal(env.Update, &base) != nil || base.Edge() != translate.TurnEdgeStart {
+	env, base, ok := translate.DecodeSessionUpdate(msg.Params)
+	if !ok || base.Edge() != translate.TurnEdgeStart {
 		return ""
 	}
 	wf, _ := steps(marotte.SessionID(env.SessionID))

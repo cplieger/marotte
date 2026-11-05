@@ -2,7 +2,7 @@
 // Editor UI: the pane's surfaces, the read surface of each view, and the toolbar.
 // ---------------------------------------------------------------------------
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { $ } from "./dom.js";
 import { highlightRuns } from "./highlight.js";
 import { getActiveId } from "./store.js";
@@ -15,6 +15,7 @@ import { getActiveFilePath, fileStates, isShown, issuedNow } from "./editor-type
 import { rulesFor, type Requested, type Rules } from "./viewer-rules.js";
 import { WholeRows, countLines } from "./viewer-rows.js";
 import { editSurface, paneBody, viewer } from "./editor-pane.js";
+import { formatFullStamp } from "./locale-time.js";
 
 // --- Agent line tracking ---
 
@@ -258,7 +259,9 @@ function paintNotice(state: FileState, kind: "binary" | "large" | "undiffable"):
           el(
             "dd",
             {},
-            Number.isNaN(modified.getTime()) ? state.notice.modified : modified.toLocaleString(),
+            Number.isNaN(modified.getTime())
+              ? state.notice.modified
+              : formatFullStamp(modified.getTime()),
           ),
         ),
       );

@@ -1,10 +1,16 @@
-import { el, computed, effect, touch, untracked } from "@cplieger/reactive";
+import { el, computed, effect, touch, untracked } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
-import { announce } from "@cplieger/ui-primitives/announce";
+import { announce } from "@cplieger/ui/announce";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
-import { activeSession, getActiveId } from "./store.js";
-import { cancelTurn, clearSteers, removeSteer, unqueuePrompt } from "./actions/chat.js";
+import { activeSession, getActiveId, isBusy } from "./store.js";
+import {
+  cancelTurn,
+  clearSteers,
+  removeSteer,
+  sendQueuedNow,
+  unqueuePrompt,
+} from "./actions/chat.js";
 import { setComposerValue } from "./composer-value.js";
 import { composerDraft, restoreRefusedEdit } from "./composer-state.js";
 import { addAttachmentTo, removeAttachmentFrom } from "./attachments.js";
@@ -12,6 +18,7 @@ import { confirm } from "./confirm.js";
 import { chatNotice, subjectName } from "./notice-subject.js";
 import { ICON_ARROW_UP, ICON_HOURGLASS, ICON_EDIT, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { sentBy } from "./sent-by.js";
 import { wireSignature } from "./paint-sig.js";
 import { sessionDrain, turnsPhrase, type QueuedSlot } from "./queue-slots.js";
 import type { PendingSteer, QueuedPrompt } from "./types.js";
@@ -40,6 +47,8 @@ interface StackState {
   /** No workflow result is in the dock, so each row can go on its own: the server refuses a
    *  one-row delete beside an agent row (`agent_rows_waiting`). */
   perRow: boolean;
+  /** No row is delivering: the server refuses every whole-buffer clear while one is. */
+  clearable: boolean;
   src: SteerStackSource;
 }
 
@@ -76,7 +85,9 @@ function steerSig(e: PendingSteer): string {
     pending: e.pending === true ? "1" : "",
     compacted: e.compacted === true ? "1" : "",
     unsent: e.unsent === true ? "1" : "",
+    delivering: e.delivering === true ? "1" : "",
     awaitsPrompt: e.awaitsPrompt === true ? "1" : "",
+    caller: e.caller === undefined ? "" : sentBy(e.caller),
     kas: "",
   };
   return join(...Object.values(parts));
@@ -91,6 +102,7 @@ function render(
   const state: StackState = {
     waiting: steers.filter((e) => e.pending !== true).length,
     perRow: steers.every((e) => e.origin === "user"),
+    clearable: !steers.some((e) => e.delivering === true),
     src,
   };
   const waiting = state.waiting;
@@ -154,6 +166,9 @@ function rowState(steer: PendingSteer): string {
   if (steer.pending === true) {
     return "sending";
   }
+  if (steer.delivering === true) {
+    return "delivering";
+  }
   return steer.unsent === true ? "unsent" : "sent";
 }
 
@@ -195,9 +210,13 @@ const actionSig = new WeakMap<HTMLElement, string>();
  *  button takes focus off one a keyboard reader is on. The signature enumerates EVERY input
  *  `fillActions` branches on. */
 function syncActions(row: HTMLElement, steer: PendingSteer, state: StackState): void {
-  const sig = [rowState(steer), steer.origin, String(state.waiting), state.perRow ? "1" : "0"].join(
-    "\u0001",
-  );
+  const sig = [
+    rowState(steer),
+    steer.origin,
+    String(state.waiting),
+    state.perRow ? "1" : "0",
+    state.clearable ? "1" : "0",
+  ].join("\u0001");
   if (actionSig.get(row) === sig) {
     return;
   }
@@ -253,13 +272,14 @@ function buildRow(steer: PendingSteer, state: StackState): HTMLElement {
 }
 
 /** Put the right-hand controls into the column, or empty it. A row still SENDING gets NONE:
- *  nothing on the wire can address it yet. */
+ *  nothing on the wire can address it yet. Nor does one the agent is DELIVERING: the server
+ *  refuses a delete while KAS holds it. */
 function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState): void {
-  if (steer.pending === true) {
+  if (steer.pending === true || steer.delivering === true) {
     column.replaceChildren();
     return;
   }
-  const { waiting, perRow, src } = state;
+  const { waiting, perRow, clearable, src } = state;
   const user = steer.origin === "user";
   const controls: HTMLElement[] = [];
   // Send now LEADS, and the destructive control stays last. Not on an unsent row: it has no turn to
@@ -280,7 +300,9 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
       ),
     );
   }
-  if (perRow) {
+  // While a row is delivering the server refuses any delete that would clear KAS's buffer; only a row
+  // the server holds itself (unsent) still goes on its own.
+  if (perRow && (clearable || steer.unsent === true)) {
     controls.push(
       actionButton(
         ICON_EDIT,
@@ -300,6 +322,10 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
         "steer-act-danger",
       ),
     );
+    column.replaceChildren(...controls);
+    return;
+  }
+  if (!clearable) {
     column.replaceChildren(...controls);
     return;
   }
@@ -372,8 +398,14 @@ async function sendSteerNow(steerID: string): Promise<void> {
       ? "Stopping the turn and sending this message"
       : `Stopping the turn and sending ${String(waiting)} messages`,
   );
-  await cancelTurn.dispatch({ chatID, lead: steerID }).outcome;
+  const outcome = await cancelTurn.dispatch({ chatID, lead: steerID }).outcome;
+  if (outcome.status === "success" && outcome.value) {
+    announce(NOTHING_STOPPED);
+  }
 }
+
+/** Replaces a stop announcement the server's skip made false: the turn runs on. */
+const NOTHING_STOPPED = "The turn keeps running: the message already left the queue";
 
 /** The statuses that say the delete did not happen and will not: the row still stands, or the
  *  agent already has the words. Anything else (no reply, a 500) may have deleted it, so the
@@ -481,9 +513,22 @@ const chatSource: SteerStackSource = {
   waitingFor: "the agent",
 };
 
-/** A queued row's state in words, and the ONE spelling of it. A held row, carried or not, is one
- *  no turn end sends: after a restart nothing is sent automatically. */
+/** A queued row's state in words, and the ONE spelling of it, led by who sent the row when an API
+ *  caller did, as stateWord leads a steer's. */
 function queuedWord(slot: QueuedSlot): string {
+  const word = queuedState(slot);
+  const { caller } = slot.row;
+  if (caller === undefined) {
+    return word;
+  }
+  return slot.wait.kind === "sent"
+    ? sentBy(caller)
+    : `${sentBy(caller)} \u00b7 ${word.charAt(0).toLowerCase()}${word.slice(1)}`;
+}
+
+/** A held row, carried or not, is one no turn end sends: after a restart nothing is sent
+ *  automatically. */
+function queuedState(slot: QueuedSlot): string {
   const { wait } = slot;
   switch (wait.kind) {
     case "sent":
@@ -513,7 +558,8 @@ function discardHint(row: QueuedPrompt): string {
  *  controls read it from here. */
 const queuedRowOf = new WeakMap<HTMLElement, QueuedPrompt>();
 
-/** Edit and Discard on every row: each is one `unqueue_prompt` addressing this row alone. */
+/** Edit and Discard on every row: each is one `unqueue_prompt` addressing this row alone. The
+ *  send-now arrow leads them on a row a turn end sends (syncQueuedArrow). */
 function buildQueuedRow(slot: QueuedSlot): HTMLElement {
   const { row } = slot;
   const li = el(
@@ -572,6 +618,33 @@ function updateQueuedRow(li: HTMLElement, slot: QueuedSlot): void {
   if (text !== null) {
     text.textContent = queuedShown(row);
   }
+  syncQueuedArrow(li, slot);
+}
+
+const queuedArrowOf = new WeakMap<HTMLElement, HTMLElement>();
+
+/** Only the arrow comes and goes, so a wait change never rebuilds Edit or Discard under the
+ *  reader's focus. A held or sent row gets none: no turn end sends it, or its turn already opened. */
+function syncQueuedArrow(li: HTMLElement, slot: QueuedSlot): void {
+  const { wait } = slot;
+  const arrow = queuedArrowOf.get(li);
+  if (wait.kind !== "turns") {
+    arrow?.remove();
+    queuedArrowOf.delete(li);
+    return;
+  }
+  const tooltip = wait.running
+    ? "Stops the turn and sends this follow-up next"
+    : "Sends this follow-up now";
+  if (arrow !== undefined) {
+    arrow.dataset["tooltip"] = tooltip;
+    return;
+  }
+  const btn = actionButton(ICON_ARROW_UP, "Send this follow-up now", tooltip, () => {
+    void sendQueuedRowNow((queuedRowOf.get(li) ?? slot.row).id);
+  });
+  li.querySelector(".steer-actions")?.prepend(btn);
+  queuedArrowOf.set(li, btn);
 }
 
 /** `editSteer`'s discipline: the box is filled BEFORE the unqueue is dispatched, so a lost reply
@@ -614,6 +687,33 @@ async function discardQueued(messageID: string): Promise<void> {
   await unqueuePrompt.dispatch({ chatID, messageID }).outcome;
 }
 
+/** The server owns the order (`send_queued_now`): it moves the row to the head, then stops a
+ *  running turn, whose close sends it, or sends it at once. */
+async function sendQueuedRowNow(messageID: string): Promise<void> {
+  const chatID = getActiveId();
+  if (chatID === "") {
+    return;
+  }
+  const name = subjectName(chatID);
+  announce(
+    isBusy(chatID) ? "Stopping the turn and sending this follow-up" : "Sending this follow-up",
+  );
+  const outcome = await sendQueuedNow.dispatch({ chatID, messageID }).outcome;
+  if (outcome.status === "success" && outcome.value) {
+    announce(NOTHING_STOPPED);
+  }
+  if (outcome.status === "error") {
+    const status = outcome.error.status ?? 0;
+    reportRefusal(
+      chatID,
+      name,
+      DEFINITE_REFUSALS.has(status)
+        ? outcome.error.message
+        : "Couldn't confirm the follow-up was sent",
+    );
+  }
+}
+
 // The row's state in words, because the glyph and the label's styling are both visual, and the
 // WHOLE message collapsed to one line: the visible row clamps to fit and a reader who cannot see it
 // is not subject to that.
@@ -625,6 +725,9 @@ function accessibleName(steer: PendingSteer): string {
   if (steer.unsent === true) {
     return `${stateWord(steer)}: ${steerText}`;
   }
+  if (steer.delivering === true) {
+    return `${stateWord(steer)}, the agent is reading or dropping it: ${steerText}`;
+  }
   return `${stateWord(steer)}, waiting for the agent: ${steerText}`;
 }
 
@@ -634,10 +737,16 @@ function stateWord(steer: PendingSteer): string {
   if (steer.pending === true) {
     return "Sending";
   }
-  if (steer.unsent === true) {
-    return "Unread \u00b7 sends next";
+  if (steer.delivering === true) {
+    return "Delivering";
   }
-  return steer.compacted === true ? "Sent, context compacted since" : "Sent";
+  const sent = steer.caller === undefined ? "Sent" : sentBy(steer.caller);
+  if (steer.unsent === true) {
+    return steer.caller === undefined
+      ? "Unread \u00b7 sends next"
+      : `${sent} \u00b7 unread \u00b7 sends next`;
+  }
+  return steer.compacted === true ? `${sent}, context compacted since` : sent;
 }
 
 // oneLine collapses whitespace without shortening. A steer is one message however the user typed

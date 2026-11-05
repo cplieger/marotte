@@ -2,8 +2,8 @@
 // connection on kind and host, so a second account on the same host replaces the first.
 
 import { apiGetTyped, CancellableSlot } from "./api-client.js";
-import type { Decoder } from "./validators.js";
-import { asObject, decodeArray } from "./validators.js";
+import type { Decoder } from "./wire/validators.gen.js";
+import { asObject, decodeArray } from "./wire/validators.gen.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import {
   FORGE_ICONS,
@@ -27,7 +27,7 @@ import {
 import { rowStatus, usableStatus } from "./forge-auth-status.js";
 import { registerCleanup } from "./actions/index.js";
 import { withAsyncFeedback } from "./async-button.js";
-import { signal, effect, el, touch } from "@cplieger/reactive";
+import { signal, effect, el, touch } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { sigChanged, wireSignature } from "./paint-sig.js";

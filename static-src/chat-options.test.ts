@@ -89,6 +89,7 @@ vi.mock("./store.js", () => ({
     s === undefined || s.message_count === 0,
   // Present-but-inert so real-ESM linking succeeds; no case calls them.
   get: vi.fn(() => undefined),
+  dropTurnLocally: vi.fn(),
   getActive: vi.fn(() => undefined),
   getSessions: vi.fn(() => []),
   tabStatusFor: vi.fn(() => ""),
@@ -635,8 +636,7 @@ describe("compact the context", () => {
     expect(collapseAll).toHaveBeenCalled();
   });
 
-  // The two states CmdCompact refuses (errNoBridge, errCompactRefused); disabled like the
-  // tangent row.
+  // The two refusals the client sees before sending; disabled like the tangent row.
   it.each([
     ["a brand-new chat with no messages", "c-active", 0, false],
     ["no active chat at all", "", 3, false],

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // TestManagerList_SortsByKindThenHost pins List's ordering contract:
@@ -63,7 +63,7 @@ func TestManagerList_AnUnopenableStoreMakesEveryRowUnusable(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("List() = %+v, want the one record row", list)
 	}
-	if list[0].Status != ForgeUnusable || list[0].Error == nil {
+	if list[0].Status != forgeUnusable || list[0].Error == nil {
 		t.Fatalf("row over an unopenable store = %+v, want unusable with its reason", list[0])
 	}
 	if msg := list[0].Error.Message; !strings.Contains(msg, store) || !strings.Contains(msg, "0700") {
@@ -83,10 +83,10 @@ func TestManagerList_ARecordWithNoCredentialIsReconnect(t *testing.T) {
 	writeRecords(t, cfg, connectionRecord{connectionSpec: githubRecord()}, connectionRecord{connectionSpec: gitlabRecord()})
 	m, _ := loadedManager(t, cfg, &fakeCore{})
 
-	if got := viewFor(t, m, "github:github.com"); got.Status != ForgeConnected || got.Username != "bob" || got.Error != nil {
+	if got := viewFor(t, m, "github:github.com"); got.Status != forgeConnected || got.Username != "bob" || got.Error != nil {
 		t.Errorf("github row = %+v, want connected as bob", got)
 	}
-	if got := viewFor(t, m, "gitlab:gitlab.com"); got.Status != ForgeReconnect || got.Error == nil ||
+	if got := viewFor(t, m, "gitlab:gitlab.com"); got.Status != forgeReconnect || got.Error == nil ||
 		got.Error.Message != emptySlotReason {
 		t.Errorf("a record with no stored credential = %+v, want reconnect naming the missing credential", got)
 	}
@@ -148,7 +148,7 @@ func TestPATSignIn_SurvivesARestartAndIsVisibleToThePoller(t *testing.T) {
 			restarted, _ := newManager(t, h.cfgDir, &fakeCore{prs: minePRs(tc.family, forgeapi.CheckFailing)})
 			restarted.Load(t.Context())
 			got := viewFor(t, restarted, id)
-			if got.Status != ForgeConnected || got.Username != "alice" || got.Account != viewFor(t, h.m, id).Account {
+			if got.Status != forgeConnected || got.Username != "alice" || got.Account != viewFor(t, h.m, id).Account {
 				t.Errorf("row after a restart = %+v, want connected as alice under the same sign-in", got)
 			}
 			reads, src := pollerView(t.Context(), restarted, tc.origin)

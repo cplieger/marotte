@@ -33,6 +33,7 @@ const VALUE_CONTROLS = [
   "auto-compact-pct",
   "spec-planning",
   "output-style",
+  "workflow-launch",
   "shell-command-timeout",
 ] as const;
 

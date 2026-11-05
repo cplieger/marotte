@@ -1,12 +1,15 @@
 // The turn card's header band. The CLAMP is CSS and fold-conditional, so
-// `disclosure-row-css.test.ts` owns it against real layout; the cut cue is measured here.
+// `disclosure-row-css.test.ts` owns it against real layout; the cut fade is measured here.
 import { describe, it, expect, afterEach } from "vitest";
 import { mountAppCSS } from "../__test-helpers__/css-rules.js";
+import { glyphMarkup, registryMarkup } from "../__test-helpers__/glyph.js";
+import { workflowIcon } from "../icons.js";
 import { buildTurnHeader, updateTurnHeader, type TurnHeaderData } from "./turn-header.js";
 import { initAttachmentPillCallbacks } from "../attachment-pill.js";
 import { wakeLine } from "../turn-wake.js";
 import { namedWake } from "../turns.js";
 import type { EntryTurnWake } from "../wire/types.gen.js";
+import { appendQuote, quoteSelection } from "../message-quote.js";
 
 function data(over: Partial<TurnHeaderData> = {}): TurnHeaderData {
   return {
@@ -239,6 +242,7 @@ describe("a labelled request", () => {
     const h = buildTurnHeader(data({ request: "the whole instruction", label: "Run task 2" }));
     expect(text(h).textContent).toBe("Run task 2");
     expect(full(h).textContent).toBe("the whole instruction");
+    expect(full(h).previousElementSibling).toBe(text(h));
     expect(h.querySelector(".turn-req-more")).toBeNull();
   });
 
@@ -290,34 +294,31 @@ describe("a folded turn whose prompt is cut", () => {
     await settle();
     return h;
   }
-  const cue = (h: HTMLElement): HTMLElement => h.querySelector<HTMLElement>(".turn-req-cut")!;
   const toggleName = (h: HTMLElement): string | null =>
     h.querySelector(".turn-fold-toggle")?.getAttribute("aria-label") ?? null;
 
-  it("fades its last line, ends on a muted ellipsis, and says so in the chevron's name", async () => {
+  it("fades its last line and says so in the chevron's name", async () => {
     const h = await folded("a long line of words ".repeat(60));
     expect(text(h).hasAttribute("data-cut")).toBe(true);
     expect(getComputedStyle(text(h)).maskImage).toContain("linear-gradient");
-    expect(getComputedStyle(cue(h)).display).toBe("block");
-    expect(cue(h).getAttribute("aria-hidden")).toBe("true");
-    expect(cue(h).textContent).toBe("\u2026");
     expect(toggleName(h)).toBe("Expand or collapse this turn, message truncated");
   });
 
-  it("shows neither cue for a prompt that fits", async () => {
+  it("neither fades nor flags a prompt that fits", async () => {
     const h = await folded("short");
     expect(text(h).hasAttribute("data-cut")).toBe(false);
-    expect(getComputedStyle(cue(h)).display).toBe("none");
+    expect(getComputedStyle(text(h)).maskImage).toBe("none");
     expect(toggleName(h)).toBe("Expand or collapse this turn");
   });
 
-  it("drops the cue once the turn opens", async () => {
+  it("drops the fade once the turn opens", async () => {
     const h = await folded("a long line of words ".repeat(60));
     card?.toggleAttribute("data-folded", false);
     await settle();
     await settle();
     expect(text(h).hasAttribute("data-cut")).toBe(false);
-    expect(getComputedStyle(cue(h)).display).toBe("none");
+    expect(getComputedStyle(text(h)).maskImage).toBe("none");
+    expect(toggleName(h)).toBe("Expand or collapse this turn");
   });
 });
 
@@ -352,6 +353,25 @@ describe("a woken turn's header", () => {
     expect(text(h).textContent).toBe(ERROR);
     expect(text(h).hidden).toBe(false);
     expect(text(h).contains(label(h))).toBe(false);
+  });
+
+  it("leads a step message's line with the workflow message glyph, and a finished run's with none", () => {
+    const icon = label(buildTurnHeader(wakeData(stepWake("error"))))?.querySelector(
+      ".turn-wake-icon",
+    );
+    expect(icon?.getAttribute("aria-hidden")).toBe("true");
+    expect(glyphMarkup(icon?.firstElementChild)).toBe(registryMarkup(workflowIcon("message")));
+
+    const finished = buildTurnHeader(
+      wakeData({
+        reason: "run_finished",
+        run: RUN,
+        run_name: "publish-docs",
+        run_status: "completed",
+      }),
+    );
+    expect(label(finished)).not.toBeNull();
+    expect(label(finished)?.querySelector(".turn-wake-icon")).toBeNull();
   });
 
   it("opens the run from its name, and the name is plain text with no opener", () => {
@@ -516,7 +536,7 @@ describe("a woken turn's header", () => {
       expect(text(h).scrollHeight).toBe(text(h).clientHeight);
     });
 
-    it("cut to a folded prompt's box with its fade and cue on a folded turn, the label left whole", async () => {
+    it("cut to a folded prompt's box with its fade on a folded turn, the label left whole", async () => {
       const woken = mount(wakeData(stepWake("warning", LONG_WAKE)), true);
       const prompted = mount(data({ request: LONG_WAKE }), true);
       await settle();
@@ -525,13 +545,126 @@ describe("a woken turn's header", () => {
       expect(getComputedStyle(text(woken)).maskImage).toBe(
         getComputedStyle(text(prompted)).maskImage,
       );
-      expect(getComputedStyle(woken.querySelector<HTMLElement>(".turn-req-cut")!).display).toBe(
-        "block",
-      );
       expect(woken.querySelector(".turn-fold-toggle")?.getAttribute("aria-label")).toBe(
         "Expand or collapse this turn, message truncated",
       );
       expect(label(woken)?.getBoundingClientRect().height).toBeGreaterThan(0);
     });
+  });
+});
+
+describe("a request that opens with a quoted reply passage", () => {
+  const quoted = `${appendQuote("", quoteSelection("the passage\nover two lines"))}why that?`;
+  const band = (h: HTMLElement): HTMLElement | null =>
+    h.querySelector(".turn-req > .turn-req-quote");
+
+  it("draws the passage as a band before the question, without the attribution", () => {
+    const h = buildTurnHeader(data({ request: quoted }));
+    expect(band(h)?.textContent).toBe("the passage\nover two lines");
+    expect(band(h)?.nextElementSibling).toBe(text(h));
+    expect(text(h).textContent).toBe("why that?");
+  });
+
+  it("leaves a hand-typed blockquote as the prompt's own text", () => {
+    const h = buildTurnHeader(data({ request: "> something I typed\n\nmy question" }));
+    expect(band(h)).toBeNull();
+    expect(text(h).textContent).toBe("> something I typed\n\nmy question");
+  });
+
+  it("never restyles a labelled request", () => {
+    const h = buildTurnHeader(data({ request: quoted, label: "Run task 2" }));
+    expect(band(h)).toBeNull();
+    expect(text(h).textContent).toBe("Run task 2");
+  });
+
+  it("keeps the band across a repaint and removes it when the request no longer quotes", () => {
+    const h = buildTurnHeader(data({ request: quoted }));
+    const first = band(h);
+    updateTurnHeader(h, data({ request: quoted }));
+    expect(band(h)).toBe(first);
+    updateTurnHeader(h, data({ request: "plain" }));
+    expect(band(h)).toBeNull();
+    expect(text(h).textContent).toBe("plain");
+    updateTurnHeader(h, data({ request: quoted }));
+    updateTurnHeader(h, data({ request: undefined }));
+    expect(band(h)).toBeNull();
+  });
+
+  it("holds the band to one line, open or folded", () => {
+    const style = mountAppCSS();
+    const card = document.createElement("div");
+    card.className = "turn";
+    card.style.inlineSize = "160px";
+    try {
+      const passage = `${"word ".repeat(40)}\n  second line`;
+      const h = buildTurnHeader(
+        data({ request: `${appendQuote("", quoteSelection(passage))}why?` }),
+      );
+      card.append(h);
+      document.body.append(card);
+      const b = band(h)!;
+      const line = parseFloat(getComputedStyle(b).lineHeight);
+      for (const folded of [false, true]) {
+        card.toggleAttribute("data-folded", folded);
+        expect(b.getBoundingClientRect().height).toBeCloseTo(line, 0);
+        expect(b.scrollWidth).toBeGreaterThan(b.clientWidth);
+        expect(card.scrollWidth).toBeLessThanOrEqual(card.clientWidth);
+        expect(getComputedStyle(b).textOverflow).toBe("ellipsis");
+      }
+    } finally {
+      card.remove();
+      style.remove();
+    }
+  });
+});
+
+describe("a request an API caller sent", () => {
+  const sentByLine = (h: HTMLElement): HTMLElement | null => h.querySelector(".turn-sent-by");
+
+  it("says who sent it over the words, and reads as that program's request", () => {
+    const h = buildTurnHeader(
+      data({ request: "Agent Mail: 1 new message", caller: { label: "Agent Mail" } }),
+    );
+    expect(h.dataset["trigger"]).toBe("caller");
+    expect(sentByLine(h)?.textContent).toBe("Sent by Agent Mail");
+    expect(text(h).textContent).toBe("Agent Mail: 1 new message");
+    // Outside the clamped text, so a folded turn still names the sender.
+    expect(text(h).contains(sentByLine(h))).toBe(false);
+  });
+
+  it("names a program that gave no label as an API caller", () => {
+    const h = buildTurnHeader(data({ caller: {} }));
+    expect(sentByLine(h)?.textContent).toBe("Sent by an API caller");
+  });
+
+  it("drops the line when the request turns out to be the user's", () => {
+    const h = buildTurnHeader(data({ caller: { label: "Agent Mail" } }));
+    updateTurnHeader(h, data());
+    expect(h.dataset["trigger"]).toBe("user");
+    expect(sentByLine(h)).toBeNull();
+  });
+
+  it("draws the words in another ink than the user's own prompt", () => {
+    const style = mountAppCSS();
+    try {
+      const mine = buildTurnHeader(data());
+      const theirs = buildTurnHeader(data({ caller: { label: "Agent Mail" } }));
+      document.body.append(mine, theirs);
+      expect(getComputedStyle(text(theirs)).color).not.toBe(getComputedStyle(text(mine)).color);
+      expect(getComputedStyle(sentByLine(theirs)!).whiteSpace).toBe("nowrap");
+      mine.remove();
+      theirs.remove();
+    } finally {
+      style.remove();
+    }
+  });
+
+  it("puts the Sent-by line above a quoted reply passage", () => {
+    const quoted = `${appendQuote("", quoteSelection("the passage"))}why that?`;
+    const h = buildTurnHeader(data({ request: quoted, caller: { label: "Agent Mail" } }));
+    const req = h.querySelector(".turn-req")!;
+    expect(req.firstElementChild).toBe(sentByLine(h));
+    expect(sentByLine(h)?.nextElementSibling?.className).toBe("turn-req-quote");
+    expect(text(h).textContent).toBe("why that?");
   });
 });

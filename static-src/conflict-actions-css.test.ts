@@ -79,14 +79,27 @@ describe("the shared skin reaches a conflict action", () => {
 });
 
 describe("the dense tier, per pointer tier", () => {
-  // `--ctl-h-dense` 2rem/2.5rem and `--hit-floor` 1.5rem/2.75rem, so the max() is 32px fine and 44px coarse.
-  it.each([
-    ["fine", 32],
-    ["coarse", 44],
-  ] as const)("holds a %s-pointer action at %ipx", (pointer, expected) => {
+  // A control paints at the dense 32px under a mouse and a finger; the 44px of a finger is its
+  // target (`--hit-floor`), which the row reserves.
+  it.each(["fine", "coarse"] as const)("paints a %s-pointer action at 32px", (pointer) => {
     const { buttons } = mountRow(pointer);
     for (const b of buttons) {
-      expect(Math.round(b.getBoundingClientRect().height), b.textContent ?? "").toBe(expected);
+      expect(Math.round(b.getBoundingClientRect().height), b.textContent ?? "").toBe(32);
+    }
+  });
+
+  it("gives a coarse action a 44px target inside its row", () => {
+    const { buttons } = mountRow("coarse");
+    for (const b of buttons) {
+      const r = b.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      for (const y of [cy - 21, cy + 21]) {
+        expect(
+          document.elementFromPoint(cx, y),
+          `${b.textContent ?? ""} at ${String(y - cy)}`,
+        ).toBe(b);
+      }
     }
   });
 

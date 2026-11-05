@@ -166,10 +166,10 @@ func TestSettingsGovernance_PublishesComposedStateOnChangeOnly(t *testing.T) {
 	}
 
 	reg := &marotte.GovernanceMCPRegistry{Servers: []marotte.GovernanceRegistryServer{{Name: "github"}}}
-	r.st.SetMCPRegistry(t.Context(), reg)
+	r.st.setMCPRegistry(t.Context(), reg)
 	events, hooks = r.settle()
 	if len(events) != 3 || events[2].MCPRegistry == nil || events[2].MCPRegistry.Servers[0].Name != "github" {
-		t.Fatalf("SetMCPRegistry: events = %+v, want a third event carrying the registry", events)
+		t.Fatalf("setMCPRegistry: events = %+v, want a third event carrying the registry", events)
 	}
 	if hooks != 2 {
 		t.Errorf("a registry change ran the lock hook (%d runs); it moves no lock", hooks)
@@ -265,7 +265,9 @@ func TestContentCollectionEnabled(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, readable := contentCollectionEnabled(t.Context(), writeSettings(t, tc.body), tc.locks)
+			var l lastReadable
+			doc, src := l.read(t.Context(), writeSettings(t, tc.body), readConfigDocument)
+			got, readable := contentCollectionEnabled(doc.engine.contentCollection, src == fromDocument, tc.locks)
 			if got != tc.want || readable != tc.wantReadable {
 				t.Errorf("contentCollectionEnabled(%s, %v) = (%v, readable %v), want (%v, readable %v)",
 					tc.body, tc.locks, got, readable, tc.want, tc.wantReadable)
@@ -276,11 +278,13 @@ func TestContentCollectionEnabled(t *testing.T) {
 
 func TestAgentFeatures_SubagentLockWins(t *testing.T) {
 	dir := writeSettings(t, `{"workflows_enabled":true}`)
-	locks := composeLocks(nil, reduceAdminRules([]marotte.PolicyRule{adminRule("subagent", "deny")}))
-	if got := sessionFeatures(t.Context(), dir, locks); got.Workflows {
-		t.Error("sessionFeatures(stored on, subagent denied) = workflows on, want off")
+	h := reopenFixtureIn(t, dir, nil)
+	if got := h.readSessionSettings(t.Context()).Features; !got.Workflows {
+		t.Error("a door's features (stored on, no lock) = workflows off, want on")
 	}
-	if got := sessionFeatures(t.Context(), dir, nil); !got.Workflows {
-		t.Error("sessionFeatures(stored on, no lock) = workflows off, want on")
+	h.config.publishGovernance(t.Context(), h.config.governance.setAdmin(reduceAdminRules([]marotte.PolicyRule{adminRule("subagent", "deny")})))
+	if got := h.readSessionSettings(t.Context()).Features; got.Workflows || got.WorkflowLaunch != "" {
+		t.Errorf("a door's features (stored on, subagent denied) = workflows %v, workflow use %q; want off and none",
+			got.Workflows, got.WorkflowLaunch)
 	}
 }

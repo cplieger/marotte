@@ -39,10 +39,10 @@ func (rs *Runs) RunNodeStart(ctx context.Context, step *translate.RunStep, chatI
 // RunNodeComplete closes the step path's turn with KAS's status and announces what
 // the close sealed.
 func (rs *Runs) RunNodeComplete(ctx context.Context, runID string, path []string, status, reason string) {
+	nodePath := workflow.PathKey(path)
 	if rs.log == nil {
 		return
 	}
-	nodePath := workflow.PathKey(path)
 	// One gated step with the close, so no message binds the turn between them. Before the close: the
 	// unread steers' notes belong inside the step's turn.
 	unlock := rs.steers.lockEnd(ctx, runID)
@@ -189,6 +189,15 @@ func (rs *Runs) RunFoldTarget(ctx context.Context, step *translate.RunStep, chat
 	return t, true
 }
 
+// RunOpenTurn answers the step path's open turn, never opening one.
+func (rs *Runs) RunOpenTurn(runID, nodePath string) (*turnlog.Turn, bool) {
+	if rs.log == nil {
+		return nil, false
+	}
+	t := rs.log.turn(runID, nodePath)
+	return t, t != nil
+}
+
 // RunAppendAfterClosed files an entry after the path's newest closed turn and announces it; no closed turn is an error.
 func (rs *Runs) RunAppendAfterClosed(ctx context.Context, runID, nodePath string, e *marotte.Entry) error {
 	if rs.log == nil {
@@ -234,7 +243,7 @@ func (rs *Runs) closeRun(ctx context.Context, runID, status string) {
 	for _, path := range slices.Sorted(maps.Keys(staged)) {
 		p := staged[path]
 		rs.RunSteer(ctx, runID, path, p.ID, &marotte.EntrySteer{
-			Text: p.Text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead,
+			Text: p.Text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead, Caller: p.Caller,
 		})
 	}
 }

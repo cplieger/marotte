@@ -6,8 +6,8 @@ import (
 	"testing"
 	"unicode"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // A DECISION SURFACE is a payload a human reads to make an approval choice (permission card,
@@ -32,7 +32,7 @@ func assertNeutralizedOnTheWire(t *testing.T, what string, payload any) {
 		t.Fatalf("%s: unmarshal payload: %v", what, err)
 	}
 	for _, r := range flatten(decoded) {
-		if runesafe.IsBidiControl(r) {
+		if textsafe.IsBidiControl(r) {
 			t.Errorf("%s: U+%04X survived to the wire; payload=%s", what, r, wire)
 		}
 		if unicode.IsControl(r) {
@@ -74,6 +74,7 @@ func TestPermissionCard_NeutralizesADeceptiveTitleOnTheWire(t *testing.T) {
 				"toolCallId": "tc-1",
 				"title":      deceptiveTitle,
 				"kind":       "execute",
+				"locations":  []map[string]any{{"path": "notes" + rlo + "hs.txt" + pdf}},
 			},
 			"options": []map[string]any{
 				{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
@@ -87,6 +88,9 @@ func TestPermissionCard_NeutralizesADeceptiveTitleOnTheWire(t *testing.T) {
 		t.Fatal("no permission_needed event broadcast")
 	}
 	assertNeutralizedOnTheWire(t, "permission_needed", got)
+	if len(got.Locations) != 1 || !strings.Contains(got.Locations[0], "hs.txt") {
+		t.Errorf("Locations = %q, want the one path with its reversed span exposed", got.Locations)
+	}
 
 	// The reversed text is still there, now readable as the nonsense it is.
 	if !strings.Contains(got.Title, "mr") || !strings.Contains(got.Title, "ecapskrow/") {
@@ -108,8 +112,28 @@ func TestPermissionCard_NeutralizesADeceptiveTitleOnTheWire(t *testing.T) {
 	}
 }
 
+// The command box is a decision surface that keeps LF, the one control a shell reads as a
+// command separator, so it is checked on its own; the rest of the payload stays fully neutral.
+func TestPermissionCard_NeutralizesADeceptiveCommandOnTheWire(t *testing.T) {
+	command := "git status\r\n" + rlo + "dnuof-emaN- ecapskrow/ fr- mr" + pdf + "\n\x1b[2Kecho\x07 done\u0085"
+	got := askWithCommand(t, command)
+	if got.Command == nil {
+		t.Fatal("Command = nil, want the ask's command")
+	}
+	for _, r := range got.Command.Text + got.Command.Tail {
+		if textsafe.IsBidiControl(r) || (unicode.IsControl(r) && r != '\n') {
+			t.Errorf("Command carries U+%04X; Text = %q", r, got.Command.Text)
+		}
+	}
+	if !strings.Contains(got.Command.Text, "ecapskrow/ fr- mr") || strings.Count(got.Command.Text, "\n") != 2 {
+		t.Errorf("Command.Text = %q, want the reversed span exposed and both line breaks kept", got.Command.Text)
+	}
+	got.Command = nil
+	assertNeutralizedOnTheWire(t, "permission_needed", got)
+}
+
 // TestPermissionCard_LeavesLegitimateTitlesByteIdentical pins that pure RTL and unmarked
-// mixed text pass untouched (runesafe v1.4.2).
+// mixed text pass untouched (textsafe v1.4.2).
 func TestPermissionCard_LeavesLegitimateTitlesByteIdentical(t *testing.T) {
 	for _, title := range []string{
 		"Write config.tf",

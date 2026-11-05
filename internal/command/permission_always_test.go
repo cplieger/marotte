@@ -79,10 +79,14 @@ func answerJSON(t *testing.T, v any) string {
 
 func TestCmdPermission_AlwaysSavesAUserRuleAfterSwitchingToCustom(t *testing.T) {
 	for _, tc := range []struct {
-		name, option, want string
+		name, option, scope, want string
 	}{
 		{
 			name: "always allow", option: "always-accept",
+			want: `{"_meta":{"kiro":{"consent":{"scope":"user","capability":"shell","resource":"head *"}}},"outcome":{"outcome":"selected","optionId":"always-accept"}}`,
+		},
+		{
+			name: "always allow naming the user scope", option: "always-accept", scope: "user",
 			want: `{"_meta":{"kiro":{"consent":{"scope":"user","capability":"shell","resource":"head *"}}},"outcome":{"outcome":"selected","optionId":"always-accept"}}`,
 		},
 		{
@@ -93,7 +97,7 @@ func TestCmdPermission_AlwaysSavesAUserRuleAfterSwitchingToCustom(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			d, br := newAlwaysDeps()
 			cmd := decisionCommand(t, marotte.CmdPermissionResponse, marotte.PermissionResponseCommand{
-				RequestID: 7, OptionID: tc.option, AlwaysResource: "  head *  ",
+				RequestID: 7, OptionID: tc.option, AlwaysResource: "  head *  ", AlwaysScope: tc.scope,
 			})
 
 			if _, err := cmdPermission(t.Context(), d, d, cmd); err != nil {
@@ -108,6 +112,59 @@ func TestCmdPermission_AlwaysSavesAUserRuleAfterSwitchingToCustom(t *testing.T) 
 			}
 			if got := answerJSON(t, br.answers[0]); got != tc.want {
 				t.Errorf("answer = %s\nwant      %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// A session rule lives only in KAS's memory, so switching to Custom would flip the profile for
+// a rule no file holds.
+func TestCmdPermission_AlwaysSessionScopeSavesNoFileAndKeepsTheProfile(t *testing.T) {
+	d, br := newAlwaysDeps()
+	cmd := decisionCommand(t, marotte.CmdPermissionResponse, marotte.PermissionResponseCommand{
+		RequestID: 7, OptionID: "always-accept", AlwaysResource: "head *", AlwaysScope: "session",
+	})
+
+	if _, err := cmdPermission(t.Context(), d, d, cmd); err != nil {
+		t.Fatalf("CmdPermission = %v", err)
+	}
+
+	if got := d.events; len(got) != 2 || got[0] != "claim" || got[1] != "answer" {
+		t.Errorf("events = %v, want [claim answer] with no switch to Custom", got)
+	}
+	if len(br.answers) != 1 {
+		t.Fatalf("answers = %d, want 1", len(br.answers))
+	}
+	want := `{"_meta":{"kiro":{"consent":{"scope":"session","capability":"shell","resource":"head *"}}},"outcome":{"outcome":"selected","optionId":"always-accept"}}`
+	if got := answerJSON(t, br.answers[0]); got != want {
+		t.Errorf("answer = %s\nwant      %s", got, want)
+	}
+}
+
+func TestCmdPermission_AlwaysScopeIsChecked(t *testing.T) {
+	for _, tc := range []struct {
+		name, option, resource, scope string
+	}{
+		{name: "a workspace scope", option: "always-accept", resource: "head *", scope: "workspace"},
+		{name: "an invocation scope", option: "always-accept", resource: "head *", scope: "invocation"},
+		{name: "an unknown scope", option: "always-accept", resource: "head *", scope: "x"},
+		{name: "a session scope on an always deny", option: "always-reject", resource: "head *", scope: "session"},
+		{name: "a scope on a one-time allow", option: "accept", scope: "session"},
+		{name: "a user scope on a one-time deny", option: "reject", scope: "user"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, br := newAlwaysDeps()
+			cmd := decisionCommand(t, marotte.CmdPermissionResponse, marotte.PermissionResponseCommand{
+				RequestID: 7, OptionID: tc.option, AlwaysResource: tc.resource, AlwaysScope: tc.scope,
+			})
+
+			_, err := cmdPermission(t.Context(), d, d, cmd)
+
+			if got := statusOf(err); got != http.StatusBadRequest || !errors.Is(err, errAlwaysScopeInvalid) {
+				t.Fatalf("CmdPermission(%q, scope %q) = %v (status %d), want 400 always_scope_invalid", tc.option, tc.scope, err, got)
+			}
+			if len(d.events) != 0 || len(br.answers) != 0 {
+				t.Errorf("events = %v after a refused scope, want none: the ask must stay pending", d.events)
 			}
 		})
 	}

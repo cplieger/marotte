@@ -4,54 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
-
-// The extra fields are the fixture's own statement of what the assertions must derive from the same
-// bytes, so a fixture edit cannot silently invalidate a test.
-type replayFixture struct {
-	Summary        string               `json:"summary"`
-	SteerID        string               `json:"steer_id"`
-	ReplayedCallID string               `json:"replayed_call_id"`
-	DelegateID     string               `json:"delegate_id"`
-	Frames         []replayFixtureFrame `json:"frames"`
-}
-
-type replayFixtureFrame struct {
-	Kind   marotte.ACPUpdateKind `json:"kind"`
-	Update json.RawMessage       `json:"update"`
-}
-
-func loadReplayFixture(t *testing.T, name string) replayFixture {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join("testdata", name))
-	if err != nil {
-		t.Fatalf("read replay fixture %s: %v", name, err)
-	}
-	var fx replayFixture
-	if err := json.Unmarshal(data, &fx); err != nil {
-		t.Fatalf("parse replay fixture %s: %v", name, err)
-	}
-	if len(fx.Frames) == 0 {
-		t.Fatalf("replay fixture %s carries no frames", name)
-	}
-	return fx
-}
-
-func projectFixture(t *testing.T, fx replayFixture) []ProjectedTurn {
-	t.Helper()
-	p := NewEntryProjection(seqIDs(), "")
-	for _, f := range fx.Frames {
-		p.Ingest(f.Kind, f.Update)
-	}
-	return p.Turns()
-}
 
 func entryProject(frames [][2]any) []ProjectedTurn {
 	p := NewEntryProjection(seqIDs(), "")
@@ -114,12 +72,33 @@ func payloadOf(t *testing.T, e marotte.Entry, v any) {
 	}
 }
 
+// capturedSummary is the compact capture's replayed separator and summary_message, and the summary text.
+func capturedSummary(t *testing.T, replay []kasUpdate) (sep, msg int, summary string) {
+	t.Helper()
+	sep = findUpdate(t, replay, 0, "summarization_separator", infoUpdateOf("summarization_separator"))
+	msg = findUpdate(t, replay, sep, "summary_message after the separator", infoUpdateOf("summary_message"))
+	sm, _ := kasMeta(t, replay[msg])["summaryMessage"].(map[string]any)
+	summary, _ = sm["content"].(string)
+	if summary == "" {
+		t.Fatal("the captured summary_message carries no summaryMessage.content")
+	}
+	return sep, msg, summary
+}
+
+func isAgentChunk(u kasUpdate, _ map[string]any) bool { return u.Kind == marotte.ACPUpdateAgentChunk }
+
 // TestEntryProjection_ACompactionMidBracketKeepsOneTurnAndPairsByItsSummary pins the projected
 // compaction id equal to marotte.CompactionEntryID over the same summary (one entry to the
-// merge), and that the separator closes NO turn.
+// merge), and that the separator closes NO turn. The manual verb cannot compact mid-turn, so the
+// captured separator and summary are moved inside the captured first turn's bracket.
 func TestEntryProjection_ACompactionMidBracketKeepsOneTurnAndPairsByItsSummary(t *testing.T) {
-	fx := loadReplayFixture(t, "replay_compaction.json")
-	turns := projectFixture(t, fx)
+	r := loadKASCapture(t, "compact").Replay
+	sep, msg, summary := capturedSummary(t, r)
+	start := findUpdate(t, r, 0, "turn_start", infoUpdateOf("turn_start"))
+	before := findUpdate(t, r, start, "a say in the first turn", isAgentChunk)
+	end := findUpdate(t, r, start, "turn_end", infoUpdateOf("turn_end"))
+	after := findUpdate(t, r, msg, "a say after the summary", isAgentChunk)
+	turns := projectUpdates([]kasUpdate{r[start], r[before], r[sep], r[msg], r[after], r[end]})
 
 	if len(turns) != 1 {
 		t.Fatalf("projected %d turns, want 1 — the separator must not close the bracket:\n%s",
@@ -129,27 +108,60 @@ func TestEntryProjection_ACompactionMidBracketKeepsOneTurnAndPairsByItsSummary(t
 		marotte.EntryKindTurnOpen,
 		marotte.EntryKindText,
 		marotte.EntryKindCompaction,
+		marotte.EntryKindText,
 		marotte.EntryKindTurnClose,
 	}
 	if got := kindsOf(turns[0]); !slices.Equal(got, want) {
 		t.Fatalf("entry kinds = %v, want %v:\n%s", got, want, dumpTurns(turns))
 	}
 	compaction := entryOfKind(t, turns[0], marotte.EntryKindCompaction)
-	wantID := marotte.CompactionEntryID([]byte(fx.Summary), 1)
-	if compaction.ID != wantID {
+	if wantID := marotte.CompactionEntryID([]byte(summary), 1); compaction.ID != wantID {
 		t.Errorf("compaction id = %q, want CompactionEntryID over the same summary bytes (%q)",
 			compaction.ID, wantID)
 	}
 	var payload marotte.EntryCompaction
 	payloadOf(t, compaction, &payload)
-	if payload.Summary != fx.Summary {
-		t.Errorf("compaction summary = %q, want the fixture's summary verbatim", payload.Summary)
+	if payload.Summary != summary {
+		t.Errorf("compaction summary = %q, want the captured summary verbatim", payload.Summary)
 	}
-	// The post-summary frames continue the SAME say: the compaction sits at the separator.
-	var say marotte.EntryText
-	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindText), &say)
-	if !strings.Contains(say.Text, "reading the design") || !strings.Contains(say.Text, "continuing after the summary") {
-		t.Errorf("text = %q, want both halves of the one say", say.Text)
+	var texts []string
+	for _, e := range turns[0].Entries {
+		if e.Kind == marotte.EntryKindText {
+			var say marotte.EntryText
+			payloadOf(t, e, &say)
+			texts = append(texts, say.Text)
+		}
+	}
+	if wantTexts := []string{chunkText(t, r[before]), chunkText(t, r[after])}; !slices.Equal(texts, wantTexts) {
+		t.Errorf("texts = %q, want the say before and the say after the summary, in that order %q", texts, wantTexts)
+	}
+}
+
+// TestEntryProjection_ACompactionBetweenTurnsClosesNoTurn projects the captured restart replay
+// whole: every bracket KAS replayed stays one turn, and the one compaction pairs by its summary.
+func TestEntryProjection_ACompactionBetweenTurnsClosesNoTurn(t *testing.T) {
+	r := loadKASCapture(t, "compact").Replay
+	_, _, summary := capturedSummary(t, r)
+	brackets := 0
+	for _, u := range r {
+		if infoUpdateOf("turn_start")(u, kasMeta(t, u)) {
+			brackets++
+		}
+	}
+	turns := projectUpdates(r)
+	if len(turns) != brackets {
+		t.Fatalf("projected %d turns, want one per replayed turn_start (%d):\n%s", len(turns), brackets, dumpTurns(turns))
+	}
+	var ids []string
+	for _, turn := range turns {
+		for _, e := range turn.Entries {
+			if e.Kind == marotte.EntryKindCompaction {
+				ids = append(ids, e.ID)
+			}
+		}
+	}
+	if want := []string{marotte.CompactionEntryID([]byte(summary), 1)}; !slices.Equal(ids, want) {
+		t.Errorf("compaction ids = %v, want %v:\n%s", ids, want, dumpTurns(turns))
 	}
 }
 
@@ -182,27 +194,44 @@ func TestEntryProjection_AnEmptySummaryTakesTheOrdinalID(t *testing.T) {
 	}
 }
 
-// TestEntryProjection_AReplayedSayHoldsNoSteeringMarker pins that a replayed ack split across
-// chunks leaves no marker in the projected text.
+// TestEntryProjection_AReplayedSayHoldsNoSteeringMarker pins that the captured replayed ack leaves
+// no marker in the projected text wherever a chunk boundary cuts it.
 func TestEntryProjection_AReplayedSayHoldsNoSteeringMarker(t *testing.T) {
-	fx := loadReplayFixture(t, "replay_steer_marker.json")
-	turns := projectFixture(t, fx)
+	c := loadKASCapture(t, "steer")
+	queued := findUpdate(t, c.Live, 0, "steering_queued", infoUpdateOf(kindSteeringQueued))
+	steerID, _ := kasMeta(t, c.Live[queued])["messageId"].(string)
+	r := c.Replay
+	at := findUpdate(t, r, 0, "a replayed say holding the marker", func(u kasUpdate, _ map[string]any) bool {
+		return u.Kind == marotte.ACPUpdateAgentChunk && strings.Contains(chunkText(t, u), "[STEERING "+steerID)
+	})
+	sayID, _ := kasMeta(t, r[at])["messageId"].(string)
+	text := chunkText(t, r[at])
+	open := strings.Index(text, "[STEERING ")
+	end := strings.Index(text[open:], "]")
+	if end < 0 {
+		t.Fatalf("the captured marker never closes: %q", text)
+	}
+	end += open + 1
+	want := text[:open] + text[end:]
 
-	if len(turns) != 1 {
-		t.Fatalf("projected %d turns, want 1:\n%s", len(turns), dumpTurns(turns))
+	for cut := open; cut <= end; cut++ {
+		frames := slices.Concat(r[:at], []kasUpdate{withChunkText(t, r[at], text[:cut]), withChunkText(t, r[at], text[cut:])}, r[at+1:])
+		turns := projectUpdates(frames)
+		say, ok := entryWithID(turns, sayID)
+		if !ok {
+			t.Fatalf("cut %d: no text entry %q:\n%s", cut, sayID, dumpTurns(turns))
+		}
+		var payload marotte.EntryText
+		payloadOf(t, say, &payload)
+		if payload.Text != want {
+			t.Errorf("cut %d: text = %q, want the prose either side of the marker and nothing else %q", cut, payload.Text, want)
+		}
 	}
-	var say marotte.EntryText
-	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindText), &say)
-	if strings.Contains(say.Text, "[STEERING") {
-		t.Errorf("text = %q, want no acknowledgement marker", say.Text)
-	}
-	if say.Text != "Reindented the file. " {
-		t.Errorf("text = %q, want the prose either side of the marker and nothing else", say.Text)
-	}
-	// The steer is a lane-less entry at its queue-time position with NO state.
-	steer := entryOfKind(t, turns[0], marotte.EntryKindSteer)
-	if steer.ID != fx.SteerID {
-		t.Errorf("steer id = %q, want KAS's own %q", steer.ID, fx.SteerID)
+
+	turns := projectUpdates(r)
+	steer, ok := entryWithID(turns, steerID)
+	if !ok || steer.Kind != marotte.EntryKindSteer {
+		t.Fatalf("no steer entry %q:\n%s", steerID, dumpTurns(turns))
 	}
 	var payload marotte.EntrySteer
 	payloadOf(t, steer, &payload)
@@ -213,11 +242,24 @@ func TestEntryProjection_AReplayedSayHoldsNoSteeringMarker(t *testing.T) {
 		t.Errorf("steer origin = %q, want %q for a `steer-` id", payload.Origin, marotte.SteerOriginUser)
 	}
 	// No steer_ack entry: the record has them.
-	for _, e := range turns[0].Entries {
-		if e.Kind == marotte.EntryKindSteerAck {
-			t.Errorf("projected a steer_ack entry, want none:\n%s", dumpTurns(turns))
+	for _, turn := range turns {
+		for _, e := range turn.Entries {
+			if e.Kind == marotte.EntryKindSteerAck {
+				t.Errorf("projected a steer_ack entry, want none:\n%s", dumpTurns(turns))
+			}
 		}
 	}
+}
+
+func entryWithID(turns []ProjectedTurn, id string) (marotte.Entry, bool) {
+	for _, turn := range turns {
+		for _, e := range turn.Entries {
+			if e.ID == id {
+				return e, true
+			}
+		}
+	}
+	return marotte.Entry{}, false
 }
 
 // TestEntryProjection_AnUnclosedMarkerIsDroppedAtTheClose pins that a never-closed marker
@@ -249,44 +291,105 @@ func TestEntryProjection_AHeldBracketThatIsNotAMarkerGoesBackIntoTheSay(t *testi
 	}
 }
 
-// TestEntryProjection_AnInvocationIsFiledInTheIssuersLane pins the invocation's lane and the
-// delegate uuid in its payload (the pairing is asserted in internal/agent).
+// capturedInvocation is the delegate capture's replayed sub-agent invocation id and its delegate uuid.
+func capturedInvocation(t *testing.T, replay []kasUpdate) (callID, delegateID string) {
+	t.Helper()
+	at := findUpdate(t, replay, 0, "replayed agent-subtask tool_call", func(u kasUpdate, k map[string]any) bool {
+		return u.Kind == marotte.ACPUpdateToolCall && k["kind"] == "agent-subtask"
+	})
+	var call struct {
+		ToolCallID string `json:"toolCallId"`
+	}
+	if err := json.Unmarshal(replay[at].Update, &call); err != nil {
+		t.Fatal(err)
+	}
+	delegateID, _ = kasMeta(t, replay[at])["agentSubtaskId"].(string)
+	if call.ToolCallID == "" || delegateID == "" {
+		t.Fatalf("the replayed invocation carries no id or agentSubtaskId: %s", replay[at].Update)
+	}
+	return call.ToolCallID, delegateID
+}
+
+// TestEntryProjection_AnInvocationIsFiledInTheIssuersLane pins the invocation's lane, its live
+// id, and the delegate uuid in its payload (the pairing is asserted in internal/agent).
 func TestEntryProjection_AnInvocationIsFiledInTheIssuersLane(t *testing.T) {
-	fx := loadReplayFixture(t, "replay_invocation.json")
-	turns := projectFixture(t, fx)
+	c := loadKASCapture(t, "delegate")
+	r := c.Replay
+	replayedID, delegateID := capturedInvocation(t, r)
+	callID, _ := capturedInvocation(t, c.Live)
+	if replayedID == callID {
+		t.Errorf("replayed invocation id = %q, want KAS's sub_agent_start record id, not the live one", replayedID)
+	}
+	turns := projectUpdates(r)
 
 	if len(turns) != 1 {
 		t.Fatalf("projected %d turns, want 1:\n%s", len(turns), dumpTurns(turns))
 	}
-	call := entryOfKind(t, turns[0], marotte.EntryKindToolCall)
-	if call.ID != fx.ReplayedCallID {
-		t.Errorf("invocation id = %q, want the replay's own %q", call.ID, fx.ReplayedCallID)
+	call, ok := entryWithID(turns, callID)
+	if !ok || call.Kind != marotte.EntryKindToolCall {
+		t.Fatalf("no tool_call entry %q:\n%s", callID, dumpTurns(turns))
 	}
 	if call.Lane != "" {
 		t.Errorf("invocation lane = %q, want the ISSUER's lane (empty here)", call.Lane)
 	}
 	var payload marotte.EntryToolCall
 	payloadOf(t, call, &payload)
-	if payload.AgentSubtaskID != fx.DelegateID {
-		t.Errorf("invocation agent_subtask_id = %q, want the delegate uuid %q",
-			payload.AgentSubtaskID, fx.DelegateID)
+	if payload.AgentSubtaskID != delegateID {
+		t.Errorf("invocation agent_subtask_id = %q, want the delegate uuid %q", payload.AgentSubtaskID, delegateID)
 	}
-	result := entryOfKind(t, turns[0], marotte.EntryKindToolResult)
-	if result.ID != marotte.ToolResultID(fx.ReplayedCallID) {
-		t.Errorf("result id = %q, want %q", result.ID, marotte.ToolResultID(fx.ReplayedCallID))
+	result, ok := entryWithID(turns, marotte.ToolResultID(callID))
+	if !ok {
+		t.Fatalf("no result %q:\n%s", marotte.ToolResultID(callID), dumpTurns(turns))
 	}
 	if result.Lane != "" {
 		t.Errorf("result lane = %q, want the CALL's lane whatever the update carried", result.Lane)
 	}
-	// The delegate's prose is in its own lane, so the card sits between the issuer's two runs.
-	var laned []string
+	// The delegate's own work is in its lane, so the card sits between the issuer's two runs.
+	laneText := false
 	for _, e := range turns[0].Entries {
-		if e.Lane != "" {
-			laned = append(laned, string(e.Kind))
+		if e.Lane != "" && e.Lane != delegateID {
+			t.Errorf("entry %s %q is in lane %q, want the delegate's %q or the issuer's", e.Kind, e.ID, e.Lane, delegateID)
 		}
+		laneText = laneText || (e.Lane == delegateID && e.Kind == marotte.EntryKindText)
 	}
-	if len(laned) != 1 || laned[0] != string(marotte.EntryKindText) {
-		t.Errorf("laned entries = %v, want exactly the delegate's text:\n%s", laned, dumpTurns(turns))
+	if !laneText {
+		t.Errorf("no text entry in the delegate's lane:\n%s", dumpTurns(turns))
+	}
+}
+
+// TestEntryProjection_ADelegatesResultTakesItsBareRawOutput: KAS replays a sub-agent's result
+// as a bare rawOutput string with no content block, so the restored card shows the delegate's
+// answer only when the projection reads it as the live fold does.
+func TestEntryProjection_ADelegatesResultTakesItsBareRawOutput(t *testing.T) {
+	c := loadKASCapture(t, "delegate")
+	r := c.Replay
+	callID, _ := capturedInvocation(t, r)
+	liveID, _ := capturedInvocation(t, c.Live)
+	var want string
+	findUpdate(t, r, 0, "the invocation's replayed result", func(u kasUpdate, _ map[string]any) bool {
+		var tu struct {
+			ToolCallID string          `json:"toolCallId"`
+			RawOutput  json.RawMessage `json:"rawOutput"`
+			Content    json.RawMessage `json:"content"`
+		}
+		_ = json.Unmarshal(u.Update, &tu)
+		if u.Kind != marotte.ACPUpdateToolUpdate || tu.ToolCallID != callID {
+			return false
+		}
+		if len(tu.Content) > 0 && string(tu.Content) != "null" && string(tu.Content) != "[]" {
+			t.Errorf("the replayed result carries content %s; this test pins the rawOutput-only shape", tu.Content)
+		}
+		return json.Unmarshal(tu.RawOutput, &want) == nil
+	})
+	turns := projectUpdates(r)
+	result, ok := entryWithID(turns, marotte.ToolResultID(liveID))
+	if !ok {
+		t.Fatalf("no result %q:\n%s", marotte.ToolResultID(liveID), dumpTurns(turns))
+	}
+	var res marotte.EntryToolResult
+	payloadOf(t, result, &res)
+	if want == "" || res.Output != want {
+		t.Errorf("result output = %q, want the replayed rawOutput %q", res.Output, want)
 	}
 }
 
@@ -354,6 +457,32 @@ func TestEntryProjection_ASettledCallIsNotAborted(t *testing.T) {
 	}
 	if results != 1 {
 		t.Errorf("projected %d tool_result entries, want 1:\n%s", results, dumpTurns(turns))
+	}
+}
+
+// TestEntryProjection_AReplayedUnparseableRefusalIsADenial: the replayed result carries KAS's
+// refusal only as its text, so the restored card reads as refused only when the projection
+// recognises it as the live fold does.
+func TestEntryProjection_AReplayedUnparseableRefusalIsADenial(t *testing.T) {
+	reason := runCommandOutput(unparseableRefusal)
+	turns := entryProject([][2]any{
+		turnStartFrame(t),
+		toolCallFrame(t, "call-1", nil),
+		pair(marotte.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
+			"sessionUpdate": string(marotte.ACPUpdateToolUpdate),
+			"toolCallId":    "call-1",
+			"status":        "failed",
+			"content": []map[string]any{
+				{"type": "content", "content": map[string]any{"type": "text", "text": reason}},
+			},
+			"_meta": map[string]any{"kiro": map[string]any{"replay": true}},
+		})),
+		turnEndFrame(t, "end_turn"),
+	})
+	var res marotte.EntryToolResult
+	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindToolResult), &res)
+	if res.Denial == nil || res.Denial.Basis != marotte.DenialUnparseable || res.Denial.Capability != "shell" {
+		t.Errorf("replayed result denial = %+v, want basis %q capability %q", res.Denial, marotte.DenialUnparseable, "shell")
 	}
 }
 
@@ -588,9 +717,11 @@ func TestEntryProjection_TurnsIsIdempotent(t *testing.T) {
 // TestEntryProjection_TwoLoadsOfOneReplayAgree: the projection is deterministic given
 // its id generator, which is what makes the merge's idempotence reachable at all.
 func TestEntryProjection_TwoLoadsOfOneReplayAgree(t *testing.T) {
-	fx := loadReplayFixture(t, "replay_invocation.json")
-	if a, b := dumpTurns(projectFixture(t, fx)), dumpTurns(projectFixture(t, fx)); a != b {
-		t.Errorf("two loads of one replay differ:\nfirst:\n%s\nsecond:\n%s", a, b)
+	for _, name := range []string{"steer", "compact", "delegate"} {
+		r := loadKASCapture(t, name).Replay
+		if a, b := dumpTurns(projectUpdates(r)), dumpTurns(projectUpdates(r)); a != b {
+			t.Errorf("%s: two loads of one replay differ:\nfirst:\n%s\nsecond:\n%s", name, a, b)
+		}
 	}
 }
 
@@ -1000,5 +1131,86 @@ func TestEntryProjection_AReplayedOffloadReachesTheResult(t *testing.T) {
 	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindToolResult), &payload)
 	if payload.Offload == nil || payload.Offload.Path != path || payload.Offload.TotalChars != 31000 {
 		t.Errorf("tool_result offload = %+v, want path %q and 31000 chars", payload.Offload, path)
+	}
+}
+
+// A reloaded chat keeps the safety check's badge: KAS maps its stored row back onto the replayed update.
+func TestEntryProjection_AReplayedClassifierApprovalReachesTheResult(t *testing.T) {
+	turns := entryProject([][2]any{
+		turnStartFrame(t),
+		toolCallFrame(t, "call-1", nil),
+		toolUpdateFrame(t, "call-1", "completed", map[string]any{"trustClassifierApproved": true}),
+	})
+	if len(turns) != 1 {
+		t.Fatalf("projected %d turns, want 1:\n%s", len(turns), dumpTurns(turns))
+	}
+	var payload marotte.EntryToolResult
+	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindToolResult), &payload)
+	if !payload.ClassifierApproved {
+		t.Errorf("tool_result classifier_approved = false, want the replayed trustClassifierApproved kept")
+	}
+}
+
+// The replay builds its tool_call from the same frame decoder as the live path.
+func TestEntryProjection_ToolCallCarriesMCPIdentity(t *testing.T) {
+	turns := entryProject([][2]any{
+		turnStartFrame(t),
+		pair(marotte.ACPUpdateToolCall, mustJSON(t, map[string]any{
+			"sessionUpdate": string(marotte.ACPUpdateToolCall),
+			"toolCallId":    "call-1",
+			"title":         "@probe/echo_text",
+			"kind":          "other",
+			"status":        "pending",
+			"_meta": map[string]any{"kiro": map[string]any{
+				"replay": true, "messageId": "call-1-call", "timestamp": "2026-09-15T12:00:02.000Z",
+				"serverName": "probe", "toolOrigin": "default",
+			}},
+		})),
+		toolUpdateFrame(t, "call-1", "completed", nil),
+		turnEndFrame(t, "end_turn"),
+	})
+	if len(turns) != 1 {
+		t.Fatalf("projected %d turns, want 1:\n%s", len(turns), dumpTurns(turns))
+	}
+	var call marotte.EntryToolCall
+	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindToolCall), &call)
+	want := marotte.MCPToolIdentity{ServerName: "probe", ToolName: "echo_text"}
+	if call.MCP == nil || *call.MCP != want {
+		t.Errorf("replayed tool_call mcp = %+v, want %+v", call.MCP, want)
+	}
+}
+
+// TestEntryProjection_ACallTheLiveWireNeverOpenedIsDropped pins that a call KAS sent live only as
+// a bare update, which the live fold drops, is not restored from its replay either.
+func TestEntryProjection_ACallTheLiveWireNeverOpenedIsDropped(t *testing.T) {
+	c := loadKASCapture(t, "delegate")
+	opened := map[string]bool{}
+	var bare []string
+	for _, u := range c.Live {
+		var call struct {
+			ToolCallID string `json:"toolCallId"`
+		}
+		if err := json.Unmarshal(u.Update, &call); err != nil {
+			t.Fatal(err)
+		}
+		switch u.Kind {
+		case marotte.ACPUpdateToolCall:
+			opened[call.ToolCallID] = true
+		case marotte.ACPUpdateToolUpdate:
+			if !opened[call.ToolCallID] && !slices.Contains(bare, call.ToolCallID) {
+				bare = append(bare, call.ToolCallID)
+			}
+		}
+	}
+	if len(bare) == 0 {
+		t.Fatal("the live capture holds no bare tool_call_update")
+	}
+	turns := projectUpdates(c.Replay)
+	for _, id := range bare {
+		for _, e := range turns[0].Entries {
+			if e.ID == id || e.ID == marotte.ToolResultID(id) {
+				t.Errorf("the projection holds %s %q, which the live chat never showed:\n%s", e.Kind, e.ID, dumpTurns(turns))
+			}
+		}
 	}
 }

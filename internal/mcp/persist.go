@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 )
 
 // UnmarshalJSON validates the transport field at the JSON parse boundary, rejecting an unknown value early
@@ -29,13 +29,32 @@ func (s *Server) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// file is the on-disk schema: versioned envelope + ordered list.
+// file is the on-disk schema: versioned envelope + ordered list. Each entry is a Server, decoded
+// one at a time so one bad entry costs only itself (load).
 type file struct {
-	Servers []*Server `json:"servers"`
-	Version int       `json:"version"`
+	Servers []json.RawMessage `json:"servers"`
+	Version int               `json:"version"`
 }
 
 const fileVersion = 1
+
+// marshalRecord is the record's bytes: the servers, then the entries load could not read, with the same value.
+func (s *Store) marshalRecord() ([]byte, error) {
+	entries := make([]json.RawMessage, 0, len(s.servers)+len(s.unreadable))
+	for _, sv := range s.servers {
+		entry, err := json.Marshal(sv)
+		if err != nil {
+			return nil, fmt.Errorf("%w mcp.json: %w", errPersistMarshal, err)
+		}
+		entries = append(entries, entry)
+	}
+	entries = append(entries, s.unreadable...)
+	data, err := json.MarshalIndent(file{Version: fileVersion, Servers: entries}, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("%w mcp.json: %w", errPersistMarshal, err)
+	}
+	return data, nil
+}
 
 // persist writes marotte's own record and then RENDERS KAS's config file from it. KAS's file is read first, so one
 // it would refuse to rewrite fails the save before the record changes; a later KAS write failure puts the record's
@@ -46,21 +65,20 @@ func (s *Store) persist(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	kasDoc, err := s.readKASConfig()
+	kasDoc, _, err := s.readKASDoc()
 	if err != nil {
 		return err
 	}
-	f := file{Version: fileVersion, Servers: s.servers}
-	data, err := json.MarshalIndent(f, "", "  ")
+	data, err := s.marshalRecord()
 	if err != nil {
-		return fmt.Errorf("%w mcp.json: %w", errPersistMarshal, err)
+		return err
 	}
 	prev, prevErr := os.ReadFile(s.path)
 	if prevErr != nil && !errors.Is(prevErr, os.ErrNotExist) {
 		return fmt.Errorf("%w: read the previous record: %w", errPersistWrite, prevErr)
 	}
-	if _, err := atomicfile.WriteFile(ctx, s.path, data,
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
+	if _, err := filesafe.WriteFile(ctx, s.path, data,
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700)); err != nil {
 		return fmt.Errorf("%w: %w", errPersistWrite, err)
 	}
 	policy, _ := s.renderPolicy(ctx)
@@ -83,8 +101,8 @@ func (s *Store) restoreRecord(ctx context.Context, prev []byte, existed bool) er
 		}
 		return nil
 	}
-	if _, err := atomicfile.WriteFile(context.WithoutCancel(ctx), s.path, prev,
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
+	if _, err := filesafe.WriteFile(context.WithoutCancel(ctx), s.path, prev,
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700)); err != nil {
 		return fmt.Errorf("%w: restore the record a failed save replaced: %w", errPersistWrite, err)
 	}
 	return nil

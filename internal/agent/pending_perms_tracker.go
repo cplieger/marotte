@@ -1,17 +1,20 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"sync"
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/notice"
 	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // pendingPermsTracker tracks unresolved asks, replayed on every SSE connection, each under an ask id
@@ -44,7 +47,7 @@ type askEnd uint8
 
 const (
 	endNone askEnd = iota
-	// endCleared settles silently: the chat's turn was cancelled or the run finished.
+	// endCleared settles silently: the run finished.
 	endCleared
 	endEnded
 	endMoot
@@ -219,15 +222,16 @@ func (t *pendingPermsTracker) endOrigin(origin acpResponder) []settledAsk {
 	return ended
 }
 
-// peek returns one chat's unanswered permission ask without claiming it.
-func (t *pendingPermsTracker) peek(chatID marotte.ChatID, id int64) (marotte.PermissionNeededPayload, bool) {
+// peekPayload returns one chat's unanswered ask without claiming it, false unless its payload is a P.
+func peekPayload[P any](t *pendingPermsTracker, chatID marotte.ChatID, id int64) (P, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	var zero P
 	e := t.pendingLocked(id)
 	if e == nil || e.ask.evt.ChatID != chatID {
-		return marotte.PermissionNeededPayload{}, false
+		return zero, false
 	}
-	payload, ok := e.ask.evt.Payload.(marotte.PermissionNeededPayload)
+	payload, ok := e.ask.evt.Payload.(P)
 	return payload, ok
 }
 
@@ -270,18 +274,6 @@ func decisionToolCallID(payload any) string {
 	return ""
 }
 
-func (t *pendingPermsTracker) clearLocked(match func(marotte.ServerEvent) bool) {
-	removed := false
-	for id, e := range t.asks {
-		if match(e.ask.evt) && t.settleLocked(id, e, endCleared) {
-			removed = true
-		}
-	}
-	if removed {
-		mintPending(&t.versions)
-	}
-}
-
 // inScope reports whether evt is one of chatID's asks in scope; ScopeChatSession leaves a run's step asks out.
 func inScope(evt *marotte.ServerEvent, chatID marotte.ChatID, scope command.CancelScope) bool {
 	if chatID == "" || evt.ChatID != chatID {
@@ -290,38 +282,81 @@ func inScope(evt *marotte.ServerEvent, chatID marotte.ChatID, scope command.Canc
 	return scope == command.ScopeChatAndRuns || marotte.DecisionRunID(evt.Payload) == ""
 }
 
-// clearInputs drops chatID's elicitation and user-input asks in scope.
-func (t *pendingPermsTracker) clearInputs(chatID marotte.ChatID, scope command.CancelScope) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.clearLocked(func(evt marotte.ServerEvent) bool {
-		return evt.Type != marotte.EventPermissionNeeded && inScope(&evt, chatID, scope)
-	})
+type askRef struct {
+	kind marotte.DecisionKind
+	id   int64
 }
 
-// permissionIDs lists chatID's pending permission asks in scope, in ask order.
-func (t *pendingPermsTracker) permissionIDs(chatID marotte.ChatID, scope command.CancelScope) []int64 {
+// askRefs lists chatID's unclaimed asks in scope, every kind, in ask order.
+func (t *pendingPermsTracker) askRefs(chatID marotte.ChatID, scope command.CancelScope) []askRef {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var refs []askRef
+	for id, e := range t.asks {
+		kind, known := marotte.DecisionKindForEvent(e.ask.evt.Type)
+		if known && !e.claimed && inScope(&e.ask.evt, chatID, scope) {
+			refs = append(refs, askRef{kind: kind, id: id})
+		}
+	}
+	slices.SortFunc(refs, func(a, b askRef) int { return cmp.Compare(a.id, b.id) })
+	return refs
+}
+
+// cancelAnswer is kind's answer for an ask nobody will answer: the result KAS reads as a refusal.
+func cancelAnswer(kind marotte.DecisionKind) any {
+	switch kind {
+	case marotte.DecisionKindElicitation:
+		return marotte.ElicitationResult{Action: marotte.ElicitationActionCancel}
+	case marotte.DecisionKindUserInput:
+		return marotte.UserInputResult{Action: marotte.UserInputActionDismissed}
+	}
+	return marotte.PermissionOutcomeCancelled()
+}
+
+// clearForRun drops every unresolved decision a run raised, wherever filed, so the connect replay
+// stops offering a dead step's card, and returns the pending ones in ask order for their cancel answers; a
+// claimed one is left to its own answer. The run comes off the payload; an empty id is refused.
+func (t *pendingPermsTracker) clearForRun(workflowID string) []pendingAsk {
+	if workflowID == "" {
+		return nil
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	var ids []int64
 	for id, e := range t.asks {
-		if !e.claimed && e.ask.evt.Type == marotte.EventPermissionNeeded && inScope(&e.ask.evt, chatID, scope) {
+		if marotte.DecisionRunID(e.ask.evt.Payload) == workflowID {
 			ids = append(ids, id)
 		}
 	}
 	slices.Sort(ids)
-	return ids
+	var cleared []pendingAsk
+	for _, id := range ids {
+		if e := t.asks[id]; t.settleLocked(id, e, endCleared) {
+			cleared = append(cleared, e.ask)
+		}
+	}
+	if len(cleared) > 0 {
+		mintPending(&t.versions)
+	}
+	return cleared
 }
 
-// clearForRun drops every unresolved decision a run raised, wherever filed, so the connect replay
-// stops offering a dead step's card. The run comes off the payload; an empty id is refused. No announcement.
-func (t *pendingPermsTracker) clearForRun(workflowID string) {
-	if workflowID == "" {
-		return
-	}
+// idsForChat is the ask ids of chatID's unresolved asks, in ask order: the ids its cards carry.
+func (t *pendingPermsTracker) idsForChat(chatID marotte.ChatID) []string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.clearLocked(func(evt marotte.ServerEvent) bool { return marotte.DecisionRunID(evt.Payload) == workflowID })
+	ids := make([]int64, 0, len(t.asks))
+	for id, e := range t.asks {
+		if !e.claimed && e.ask.evt.ChatID == chatID {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = strconv.FormatInt(id, 10)
+	}
+	return out
 }
 
 // list snapshots the unresolved decisions, optionally for one chat: exactly what TakeIfPresent
@@ -344,55 +379,78 @@ func (t *pendingPermsTracker) list(chatFilter marotte.ChatID) []marotte.ServerEv
 	return result
 }
 
-// ClearPendingInputAsks drops chatID's elicitation and user-input asks in scope, silently.
-func (b *bus) ClearPendingInputAsks(chatID marotte.ChatID, scope command.CancelScope) {
-	b.pendingPerms.clearInputs(chatID, scope)
-}
-
 // cancelAttempts bounds the answers one ask gets when its write fails on a session that stays live.
 const cancelAttempts = 3
 
-// CancelPendingPermissions answers chatID's pending permission asks in scope `cancelled`, in ask order; the take
-// decides each race with a card answer.
-func (b *bus) CancelPendingPermissions(ctx context.Context, chatID marotte.ChatID, scope command.CancelScope) error {
-	for _, id := range b.pendingPerms.permissionIDs(chatID, scope) {
-		if err := b.cancelPermission(ctx, chatID, id); err != nil {
+// CancelPendingAsks answers every pending ask of chatID in scope with its kind's cancel answer, in ask order, and
+// settles each moot; the take decides each race with a card answer.
+func (b *bus) CancelPendingAsks(ctx context.Context, chatID marotte.ChatID, scope command.CancelScope) error {
+	// Every turn cancel and teardown passes here before its session/cancel.
+	b.searches.cancelChat(chatID, scope)
+	for _, ref := range b.pendingPerms.askRefs(chatID, scope) {
+		if err := b.cancelAsk(ctx, chatID, ref); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (b *bus) cancelPermission(ctx context.Context, chatID marotte.ChatID, id int64) error {
+func (b *bus) cancelAsk(ctx context.Context, chatID marotte.ChatID, ref askRef) error {
 	var wErr error
 	for range cancelAttempts {
-		ask, ok := b.pendingPerms.takeIfPresent(chatID, id, marotte.DecisionKindPermission)
+		ask, ok := b.pendingPerms.takeIfPresent(chatID, ref.id, ref.kind)
 		if !ok {
 			// A card answer claimed it first, or it settled; that answer stands.
 			return nil
 		}
-		r := &askReply{bus: b, ask: ask, id: id, settledBy: marotte.SettledByUser}
-		outcome, err := r.respondClaimed(ctx, marotte.PermissionOutcomeCancelled())
+		r := &askReply{bus: b, ask: ask, id: ref.id, settledBy: marotte.SettledByMoot}
+		outcome, err := r.respondClaimed(ctx, cancelAnswer(ref.kind))
 		switch outcome {
 		case claimEnded:
-			return fmt.Errorf("%w: the session ended while its permission card was answered", marotte.ErrBridgeExited)
+			return fmt.Errorf("%w: the session ended while its card was answered", marotte.ErrBridgeExited)
 		case claimReopened:
 			wErr = err
 		default:
 			return nil
 		}
-		if ctx.Err() != nil {
-			break
-		}
 	}
-	slog.Error("cancel: a permission card could not be answered, so the reply was not stopped",
-		"chat_id", chatID, "request_id", id, "error", wErr)
+	slog.Error("cancel: a card's cancel answer could not be written",
+		"chat_id", chatID, "request_id", ref.id, "kind", ref.kind, "error", wErr)
 	return fmt.Errorf("%w: %w", command.ErrCancelNotDelivered, wErr)
 }
 
-// ClearPendingPermsForRun drops a run's unresolved decisions at its terminal transition, silently (ClearForRun).
-func (b *bus) ClearPendingPermsForRun(workflowID string) {
-	b.pendingPerms.clearForRun(workflowID)
+// PendingPermsAdd files an unanswered decision with the bridge its answer goes back on, for the connect replay. It
+// answers an ask of a chat whose turn a stop is ending with its kind's cancel instead, and reports false: KAS sent
+// it before reading the session/cancel, and the Stop's own answers have gone (kiro-cli's TUI does the same).
+func (b *bus) PendingPermsAdd(ctx context.Context, acpID int64, evt marotte.ServerEvent, origin translate.AskOrigin) (marotte.ServerEvent, bool) {
+	evt = b.pendingPerms.add(acpID, evt, origin)
+	// Filed before the stop check, so a racing Stop either answers it among its own asks or is seen here.
+	if !inScope(&evt, evt.ChatID, command.ScopeChatSession) || !b.ownStopped(evt.ChatID) {
+		return evt, true
+	}
+	kind, _ := marotte.DecisionKindForEvent(evt.Type)
+	err := b.cancelAsk(ctx, evt.ChatID, askRef{kind: kind, id: marotte.DecisionRequestID(evt.Payload)})
+	if errors.Is(err, command.ErrCancelNotDelivered) {
+		// Reopened: the card stays, for the person to answer.
+		return evt, true
+	}
+	return evt, false
+}
+
+// ClearPendingPermsForRun drops a run's unresolved decisions at its terminal transition with no announcement, and
+// answers each pending one its kind's cancel: KAS withdraws none of them, and JSON-RPC 2.0 owes each a response.
+func (b *bus) ClearPendingPermsForRun(ctx context.Context, workflowID string) {
+	b.searches.cancelRun(workflowID)
+	for _, ask := range b.pendingPerms.clearForRun(workflowID) {
+		if ask.origin == nil {
+			continue
+		}
+		kind, _ := marotte.DecisionKindForEvent(ask.evt.Type)
+		if err := ask.origin.Respond(ctx, ask.acpID, cancelAnswer(kind), nil); err != nil && !errors.Is(err, marotte.ErrBridgeExited) {
+			slog.Warn("run end: a card's cancel answer could not be written",
+				"workflow_id", workflowID, "kind", kind, "error", err)
+		}
+	}
 }
 
 // TakePendingPerm claims an unanswered decision for exactly one surface, false when beaten. Take
@@ -417,7 +475,12 @@ func (b *bus) TakePendingPermOn(origin acpResponder, acpID int64, settledBy maro
 
 // PendingPermission reads an unanswered permission ask without claiming it.
 func (b *bus) PendingPermission(chatID marotte.ChatID, requestID int64) (marotte.PermissionNeededPayload, bool) {
-	return b.pendingPerms.peek(chatID, requestID)
+	return peekPayload[marotte.PermissionNeededPayload](b.pendingPerms, chatID, requestID)
+}
+
+// PendingElicitation reads an unanswered elicitation ask without claiming it.
+func (b *bus) PendingElicitation(chatID marotte.ChatID, requestID int64) (marotte.ElicitationNeededPayload, bool) {
+	return peekPayload[marotte.ElicitationNeededPayload](b.pendingPerms, chatID, requestID)
 }
 
 // TakePendingPermissionOption validates and claims a permission response.
@@ -427,6 +490,12 @@ func (b *bus) TakePendingPermissionOption(chatID marotte.ChatID, askID int64, op
 		return nil, pending, false
 	}
 	return &askReply{bus: b, ask: ask, id: askID, settledBy: settledBy}, true, true
+}
+
+// endSessionOf ends what an ended session carried: its running searches and its unanswered asks.
+func (b *bus) endSessionOf(origin acpResponder) {
+	b.searches.cancelOrigin(origin)
+	b.endAsksOf(origin)
 }
 
 // endAsksOf retires every ask that arrived on origin once that session ended, announcing each as
@@ -507,5 +576,5 @@ func (b *bus) announceDecisionSettled(evt marotte.ServerEvent, askID int64, sett
 		Kind:      kind,
 		SettledBy: settledBy,
 	}))
-	b.retractPush(notice.AskSubject(evt.ChatID, marotte.DecisionRunID(evt.Payload)))
+	b.retractPush(notice.AskSubject(evt.ChatID, marotte.DecisionRunID(evt.Payload)), notice.AskKey(askID))
 }

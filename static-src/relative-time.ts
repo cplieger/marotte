@@ -1,6 +1,8 @@
 // The app's one relative-time vocabulary: relative under a day, a DATE beyond it. A coarse count
 // (`2d ago`) loses the day it names; the full timestamp is the tooltip's (`absoluteTime`).
 
+import { formatFullStamp, formatShortDate } from "./locale-time.js";
+
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
@@ -26,14 +28,8 @@ export function relativeTime(ms: number, now: number = Date.now()): string {
   if (delta < DAY_MS) {
     return plural(Math.floor(delta / HOUR_MS), "hour");
   }
-  const then = new Date(ms);
-  const sameYear = then.getFullYear() === new Date(now).getFullYear();
-  return then.toLocaleDateString(
-    undefined,
-    sameYear
-      ? { month: "short", day: "numeric" }
-      : { month: "short", day: "numeric", year: "numeric" },
-  );
+  const sameYear = new Date(ms).getFullYear() === new Date(now).getFullYear();
+  return formatShortDate(ms, { year: !sameYear });
 }
 
 /** The same timestamp in full, for the row's tooltip. The pair lives in one module so a row
@@ -42,5 +38,5 @@ export function absoluteTime(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) {
     return "";
   }
-  return new Date(ms).toLocaleString();
+  return formatFullStamp(ms);
 }

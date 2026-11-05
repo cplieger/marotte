@@ -24,7 +24,7 @@ func TestResumeIfInterrupted_LosingTheClaimToAnotherResumeIsNotAFailure(t *testi
 		Data: json.RawMessage(`{"details":"Workflow 'wf_1' was just claimed by another process; ` +
 			`refusing to load it here. Retry if that process does not end up driving it."}`),
 	}}
-	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: host, state: bridgeIdle})
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(host, bridgeIdle))
 
 	h.runs.resumeIfInterrupted(t.Context(), runChatID("wf_1"), "wf_1")
 

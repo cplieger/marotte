@@ -265,6 +265,10 @@ func valueShapeFault(r resolver, v any) string {
 		if !ok || json.Unmarshal([]byte(s), &obj) != nil {
 			return fmt.Sprintf("is %#v; KAS JSON-parses a _CONFIG arm, so it must be a JSON object string", v)
 		}
+	case resolverEnvMode:
+		if s, ok := v.(string); !ok || s != "enforce" {
+			return fmt.Sprintf("is %#v; KAS compares the trimmed, lower-cased value with \"enforce\" and reads anything else as off", v)
+		}
 	case resolverEnum:
 		if s, ok := v.(string); !ok || s == "" {
 			return fmt.Sprintf("is %#v; an enum key is a non-empty option id", v)
@@ -314,6 +318,9 @@ func TestRowValuesMatchTheirResolver(t *testing.T) {
 			{resolverEnv, "1"},
 			{resolverEnvJSON, "true"},
 			{resolverEnvJSON, map[string]any{"cascadeEnabled": true}},
+			{resolverEnvMode, true},
+			{resolverEnvMode, "on"},
+			{resolverEnvMode, ""},
 			{resolverEnum, true},
 			{resolverEnum, ""},
 			{resolverText, true},
@@ -363,7 +370,7 @@ var (
 			Presets:           []string{"read-workspace"},
 			SpecPlan:          "full", SpecAskClarification: true, WorkValidation: "on",
 			MemoryMode: "read_write", MemoryReflection: true,
-			Workflows: true, DisableAutoCompaction: true,
+			Workflows: true, DisableAutoCompaction: true, AutoCompactionThreshold: 60, ProfileAgentTurns: true,
 		}},
 		{"with every choice off", SessionSpawn{WorkValidation: "off"}},
 	}

@@ -577,6 +577,32 @@ describe("the box", () => {
     ]);
   });
 
+  it("says a step paused beside running siblings waits on them, and how to end it now", async () => {
+    m.outcome = {
+      status: "error",
+      error: { message: "step waits", code: "waits_on_run", status: 409 },
+    };
+    setRunComposerTarget({
+      workflowID: "wf_2w",
+      runLive: true,
+      runPaused: false,
+      step: step("running", "steer"),
+    });
+    ui.input.value = "are you done?";
+    ui.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(m.notices).toHaveLength(1);
+    });
+    expect(ui.input.value).toBe("are you done?");
+    expect(m.notices).toEqual([
+      [
+        "run:wf_2w",
+        "This step waits until the run's other steps finish. Use Mark step done to end it now.",
+        "error",
+      ],
+    ]);
+  });
+
   it("holds the step's box until its send settles, so a late refusal gives every word back", async () => {
     setRunComposerTarget({
       workflowID: "wf_13",

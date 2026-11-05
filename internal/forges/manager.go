@@ -15,10 +15,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/creds"
-	"github.com/cplieger/keyenc"
-	"github.com/cplieger/keylock"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/creds"
+	"github.com/cplieger/go/keyenc"
+	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/logsafe"
 )
 
@@ -136,6 +136,14 @@ func NewManager(configDir string, notify func(context.Context, Change)) *Manager
 	return m
 }
 
+// Shutdown cancels every forge read m started behind a caller (a cache fill or
+// revalidation), and blocks until each has returned or ctx ends, answering
+// ctx's error then. After it a listing the cache cannot answer fails with no
+// forge read; the rest of m stays usable.
+func (m *Manager) Shutdown(ctx context.Context) error {
+	return m.lists.fills.close(ctx)
+}
+
 // MakeID returns the canonical ID for a kind+host pair, the kind's default
 // host standing in for an empty one.
 func MakeID(kind Kind, host string) string {
@@ -188,24 +196,24 @@ func (m *Manager) usable(c *connection) bool {
 func viewOf(c *connection, health string) ConfiguredForge {
 	v := ConfiguredForge{
 		ID: c.spec.ID, Kind: c.spec.Kind, Host: c.spec.Host, Username: c.login, Email: c.email,
-		Account: c.spec.SignIn, OwnerScopes: c.spec.OwnerScopes, Status: ForgeConnected,
+		Account: c.spec.SignIn, OwnerScopes: c.spec.OwnerScopes, Status: forgeConnected,
 	}
 	if !c.status.checkedAt.IsZero() {
 		v.CheckedAt = c.status.checkedAt.UnixMilli()
 	}
 	if health != "" {
-		v.Status, v.Error = ForgeUnusable, &ForgeError{Message: health, Code: codeConnectionUnusable}
+		v.Status, v.Error = forgeUnusable, &ForgeError{Message: health, Code: codeConnectionUnusable}
 		return v
 	}
 	switch c.status.kind {
 	case statusOK:
 		return v
 	case statusRetrying:
-		v.Status = ForgeRetrying
+		v.Status = forgeRetrying
 	case statusRefused:
-		v.Status = ForgeRefused
+		v.Status = forgeRefused
 	case statusReconnect:
-		v.Status = ForgeReconnect
+		v.Status = forgeReconnect
 	}
 	f := c.status.fault
 	v.Error = &ForgeError{Message: logsafe.Field(f.message), Code: f.code, Kind: f.kind}

@@ -8,7 +8,6 @@ import (
 
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // errDefaultsRefused is a pick the served catalog does not offer: KAS accepts any id at launch
@@ -53,7 +52,7 @@ func writeDefaultsErr(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, errDefaultsRefused):
 		httpreply.BadRequest(w, err.Error())
 	case errors.Is(err, errDefaultsUncheckable):
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
+		writeTryLater(w, err.Error(), modelListUnreadableCode)
 	default:
 		return false
 	}

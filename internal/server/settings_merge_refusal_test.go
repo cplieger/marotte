@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/settings"
 )
 
@@ -103,7 +103,7 @@ func TestSettingsWrite_RefusesWhenTheStoredSettingsCannotBeRead(t *testing.T) {
 			before := tc.seed(t, path)
 			s := &Server{agent: &fakeEngine{}, push: &testPush{}, configDir: dir}
 
-			req := httptest.NewRequest(tc.method, "/api/settings", bytes.NewReader([]byte(`{"fb_path":"/workspace/src"}`)))
+			req := httptest.NewRequest(tc.method, "/api/settings", bytes.NewReader([]byte(`{"last_merge_method":"squash"}`)))
 			rec := httptest.NewRecorder()
 			s.handleSettingsWrite(rec, req)
 
@@ -227,8 +227,8 @@ func TestExistingSettingsForMerge_DoesNotBlockOnAFIFO(t *testing.T) {
 			t.Fatal("readStoredSettings over a FIFO returned a nil error, want a refusal")
 		}
 		// Named: the refusal must come from the file's KIND.
-		if !errors.Is(got.err, atomicfile.ErrNotRegular) {
-			t.Errorf("readStoredSettings over a FIFO = %v, want atomicfile.ErrNotRegular", got.err)
+		if !errors.Is(got.err, filesafe.ErrNotRegular) {
+			t.Errorf("readStoredSettings over a FIFO = %v, want filesafe.ErrNotRegular", got.err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("readStoredSettings blocked on a FIFO at config.json; every settings GET would strand a goroutine there")

@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 func TestReconcileGit_HealsALostEntryAtLoadAndEachPass(t *testing.T) {
@@ -277,7 +277,7 @@ func TestLoad_AnUnusablePersistenceHealsWithoutARestart(t *testing.T) {
 		m, changes := loadedManager(t, cfg, core)
 		k := NewKeeper(m)
 
-		if got := viewFor(t, m, ghID); got.Status != ForgeUnusable {
+		if got := viewFor(t, m, ghID); got.Status != forgeUnusable {
 			t.Fatalf("row over an unverified records file = %+v, want unusable", got)
 		}
 		k.pass(t.Context())
@@ -291,7 +291,7 @@ func TestLoad_AnUnusablePersistenceHealsWithoutARestart(t *testing.T) {
 
 		enforceFileMode = orig
 		k.pass(t.Context())
-		if got := viewFor(t, m, ghID); got.Status != ForgeConnected {
+		if got := viewFor(t, m, ghID); got.Status != forgeConnected {
 			t.Errorf("row after the file was repaired and a pass = %+v, want connected", got)
 		}
 		if _, err := m.reader(ghID); err != nil {
@@ -308,12 +308,12 @@ func TestLoad_AnUnusablePersistenceHealsWithoutARestart(t *testing.T) {
 		seedConnections(t, cfg, "bob", githubRecord())
 		narrow := unopenableStore(t, cfg)
 		m, _ := loadedManager(t, cfg, &whoCore{})
-		if got := viewFor(t, m, ghID); got.Status != ForgeUnusable {
+		if got := viewFor(t, m, ghID); got.Status != forgeUnusable {
 			t.Fatalf("row over an unopenable store = %+v, want unusable", got)
 		}
 		narrow()
 		NewKeeper(m).pass(t.Context())
-		if got := viewFor(t, m, ghID); got.Status != ForgeConnected {
+		if got := viewFor(t, m, ghID); got.Status != forgeConnected {
 			t.Errorf("row after the store was repaired and a pass = %+v, want connected", got)
 		}
 	})

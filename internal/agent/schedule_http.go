@@ -4,21 +4,24 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/schedule"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // scheduleView is a stored entry plus its resolved next run, computed server-side so the summary matches what will happen.
 type scheduleView struct {
 	NextRunAt  *time.Time    `json:"next_run_at,omitempty"`
 	LastRunAt  *time.Time    `json:"last_run_at,omitempty"`
+	WaitingFor *time.Time    `json:"waiting_for,omitempty"`
 	ID         string        `json:"id"`
 	Source     string        `json:"source"`
 	Name       string        `json:"name,omitempty"`
@@ -46,19 +49,23 @@ func (rr *runRoutes) handleScheduleList(w http.ResponseWriter, _ *http.Request) 
 	for i := range entries {
 		out = append(out, scheduleViewOf(&entries[i]))
 	}
-	webhttp.WriteJSON(w, map[string]any{"schedules": out})
+	httpserver.WriteJSON(w, map[string]any{"schedules": out})
 }
 
 // An uncomputable spec yields none, so the row still renders.
 func scheduleViewOf(e *schedule.Entry) scheduleView {
 	v := scheduleView{
-		Spec: e.Spec, ID: e.ID, Source: e.Source, Name: e.Name,
+		Spec: e.Spec, ID: e.ID(), Source: e.Source, Name: e.Name,
 		LastStatus: string(e.LastStatus), LastReason: e.LastReason, Enabled: e.Enabled,
 		Model: e.Model, Effort: e.Effort,
 	}
 	if !e.LastRunAt.IsZero() {
 		t := e.LastRunAt
 		v.LastRunAt = &t
+	}
+	if !e.WaitingFor.IsZero() {
+		t := e.WaitingFor
+		v.WaitingFor = &t
 	}
 	if e.Enabled {
 		// schedule.NextRunFrom as the runner uses it, floored at now.
@@ -69,37 +76,40 @@ func scheduleViewOf(e *schedule.Entry) scheduleView {
 	return v
 }
 
-// handleSchedulePut serves POST /api/schedules: insert or replace. The source is validated against the live
-// recipe list, as in handleLaunch, so no arbitrary file can be scheduled, and the model pick as at launch.
+// handleSchedulePut serves POST /api/schedules: insert or replace. The source is validated against a live recipe
+// listing, as in handleLaunch, so no arbitrary file can be scheduled, and the model pick as at launch.
 func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID      string        `json:"id"`
 		Source  string        `json:"source"`
 		Model   string        `json:"model"`
 		Effort  string        `json:"effort"`
 		Spec    schedule.Spec `json:"spec"`
 		Enabled bool          `json:"enabled"`
 	}
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpreply.BadRequest(w, "invalid schedule payload")
 		return
 	}
 	recipe, err := rr.runs.recipeBySource(r.Context(), req.Source)
-	if err != nil {
+	switch {
+	case err == nil:
+	case writeEngineSlow(w, err):
+		return
+	case errors.Is(err, errUnknownRecipe) || errors.Is(err, errMissingRecipeSource):
 		httpreply.BadRequest(w, "unknown recipe: "+req.Source)
+		return
+	default:
+		slog.Warn("schedule save: recipe list failed", "error", logsafe.Field(err.Error()), "detail", rpcerr.Details(err))
+		httpreply.InternalError(w, errors.New("recipe list unavailable"))
 		return
 	}
 	defaults := marotte.RunDefaults{Model: req.Model, Effort: req.Effort}
 	if err := rr.runs.checkRunDefaults(r.Context(), defaults); writeDefaultsErr(w, err) {
 		return
 	}
-	id := req.ID
-	if id == "" {
-		id = recipe.Source // one schedule per recipe, addressable by its source
-	}
 	entry := schedule.Entry{
-		ID: id, Source: recipe.Source, Name: recipe.Name,
+		Source: recipe.Source, Name: recipe.Name,
 		Model: defaults.Model, Effort: defaults.Effort,
 		Spec: req.Spec, Enabled: req.Enabled,
 	}
@@ -107,9 +117,9 @@ func (rr *runRoutes) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, err.Error())
 		return
 	}
-	slog.Info("schedule saved", "id", logsafe.Field(entry.ID), "recipe", logsafe.Field(recipe.Name),
+	slog.Info("schedule saved", "id", entry.ID(), "recipe", logsafe.Field(recipe.Name),
 		"freq", logsafe.Field(string(entry.Spec.Freq)), "enabled", entry.Enabled)
-	webhttp.WriteJSON(w, scheduleViewOf(&entry))
+	httpserver.WriteJSON(w, scheduleViewOf(&entry))
 }
 
 // handleScheduleDelete: DELETE /api/schedules/{id}.
@@ -124,5 +134,5 @@ func (rr *runRoutes) handleScheduleDelete(w http.ResponseWriter, r *http.Request
 		return
 	}
 	slog.Info("schedule deleted", "id", logsafe.Field(id))
-	webhttp.WriteJSON(w, map[string]any{"ok": true})
+	httpserver.WriteJSON(w, map[string]any{"ok": true})
 }

@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workflow"
-	"github.com/cplieger/slogx/capture"
 )
 
 const (
@@ -866,6 +866,59 @@ func TestNodePaused_ARetryWaitIsNotForwardedAsAPause(t *testing.T) {
 		if c.kind == "node_paused" {
 			t.Errorf("run calls = %+v, want no node_paused for a retry wait", deps.runCalls)
 		}
+	}
+}
+
+// KAS names node_complete's text `failureReason` and node_paused's `reason`.
+func TestNodeFrames_ReadEachFramesReasonFromItsWireKey(t *testing.T) {
+	cases := []struct {
+		kind   marotte.RunProgressKind
+		params map[string]any
+		want   func(marotte.RunProgressPayload) string
+	}{
+		{
+			kind: marotte.RunProgressNodeComplete,
+			params: map[string]any{
+				"workflowId": "wf_1", "nodeId": "build", "nodePath": []string{"wf_1", "build"},
+				"status": "failed", "failureReason": "the build did not link",
+			},
+			want: func(p marotte.RunProgressPayload) string { return p.FailureReason },
+		},
+		{
+			kind: marotte.RunProgressNodePaused,
+			params: map[string]any{
+				"workflowId": "wf_1", "nodeId": "build", "nodePath": []string{"wf_1", "build"},
+				"reason": "the build did not link",
+			},
+			want: func(p marotte.RunProgressPayload) string { return p.PauseReason },
+		},
+	}
+	for _, c := range cases {
+		t.Run(string(c.kind), func(t *testing.T) {
+			deps, events, _ := depsWithStore(t, testChat)
+			New(rolesOf(deps)).RunProgressHandler(c.kind)(t.Context(), testChat,
+				notif("_kiro/workflow/"+string(c.kind), c.params))
+
+			var got []string
+			for _, e := range *events {
+				if p, ok := e.Payload.(marotte.RunProgressPayload); ok {
+					got = append(got, c.want(p))
+				}
+			}
+			if !slices.Equal(got, []string{"the build did not link"}) {
+				t.Errorf("run_progress reasons = %q, want [the build did not link]", got)
+			}
+			if c.kind != marotte.RunProgressNodeComplete {
+				return
+			}
+			want := runCall{
+				kind: "node_complete", runID: "wf_1", nodePath: workflow.PathKey([]string{"wf_1", "build"}),
+				status: "failed", reason: "the build did not link",
+			}
+			if !slices.Contains(deps.runCalls, want) {
+				t.Errorf("run calls = %+v, want %+v", deps.runCalls, want)
+			}
+		})
 	}
 }
 

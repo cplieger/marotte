@@ -16,6 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // transitionState is one state a transition's read of the run can find, as KAS answers inspect.
@@ -23,6 +24,66 @@ type transitionState struct {
 	set  func(t *testing.T, br *fakeBridge)
 	name string
 	seen runSeen
+	// stopped is marotte's record that it stopped resuming the run (Runs.stopAutoResume).
+	stopped bool
+}
+
+// askPausedInspect is a paused run whose one step KAS parked waiting on a person, for reason.
+func askPausedInspect(t *testing.T, reason string) json.RawMessage {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal(inspectAsk(t, gateRunID, marotte.RunStatusPaused, parkedStep("ask", "sess_step")), &doc); err != nil {
+		t.Fatalf("Setup: decoding the inspect reply: %v", err)
+	}
+	doc["state"].(map[string]any)["pauseReason"] = reason
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("Setup: marshalling the inspect reply: %v", err)
+	}
+	return raw
+}
+
+// withAttentionDrift is raw with every step's attention a string, a type workflow.DecodeInspect refuses.
+func withAttentionDrift(t *testing.T, raw json.RawMessage) json.RawMessage {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("Setup: decoding the inspect reply: %v", err)
+	}
+	root := doc["state"].(map[string]any)["root"].(map[string]any)
+	for _, kid := range root["children"].([]any) {
+		kid.(map[string]any)["attention"] = "yes"
+	}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("Setup: marshalling the inspect reply: %v", err)
+	}
+	return out
+}
+
+// askPath is the path of the step askPausedInspect and withPausedStep put under the root.
+var askPath = workflow.PathKey([]string{"root", "ask"})
+
+// withPausedStep is raw with a paused step at askPath that waits on nobody, unchanged when it is no reply or has a
+// tree, so the run's classification stays the reply's own.
+func withPausedStep(t *testing.T, raw json.RawMessage) json.RawMessage {
+	t.Helper()
+	var doc map[string]any
+	if json.Unmarshal(raw, &doc) != nil {
+		return raw
+	}
+	st, ok := doc["state"].(map[string]any)
+	if !ok || st["root"] != nil {
+		return raw
+	}
+	st["root"] = map[string]any{"nodeId": "root", "type": "sequence", "status": st["status"], "children": []any{
+		map[string]any{"nodeId": "ask", "type": stepNodeType, "status": "paused", "sessionId": "sess_step"},
+	}}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("Setup: marshalling the inspect reply: %v", err)
+	}
+	return out
 }
 
 func inspectAs(raw func(t *testing.T) json.RawMessage) func(*testing.T, *fakeBridge) {
@@ -40,9 +101,7 @@ var transitionStates = []transitionState{
 		return inspectReply(t, "wf_other", marotte.RunStatusPaused, stalePauseReason)
 	})},
 	{name: "a run KAS no longer knows", seen: seenGone, set: func(_ *testing.T, br *fakeBridge) {
-		br.setCallRPCErr(methodKiroWorkflowInspect, &marotte.RPCError{
-			Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"details":"workflow not found"}`),
-		})
+		br.setCallRPCErr(methodKiroWorkflowInspect, workflowNotFoundErr())
 	}},
 	{name: "running", seen: seenRunning, set: inspectAs(func(t *testing.T) json.RawMessage {
 		return inspectReply(t, gateRunID, marotte.RunStatusRunning, "")
@@ -54,14 +113,26 @@ var transitionStates = []transitionState{
 	{name: "a person's pause", seen: seenPersonPaused, set: inspectAs(func(t *testing.T) json.RawMessage {
 		return heldInspect(t, "")
 	})},
-	{name: "marotte's park for the user", seen: seenPersonPaused, set: inspectAs(func(t *testing.T) json.RawMessage {
-		return heldInspect(t, manualResumeReason)
-	})},
 	{name: "a restart's pause", seen: seenRestartPaused, set: inspectAs(func(t *testing.T) json.RawMessage {
 		return inspectPaused(t, gateRunID, stalePauseReason)
 	})},
 	{name: "an interruption's pause", seen: seenInvoluntary, set: inspectAs(func(t *testing.T) json.RawMessage {
 		return inspectPaused(t, gateRunID, interruptedReason)
+	})},
+	{
+		name: "an interruption's pause marotte stopped resuming", seen: seenAutoStopped, stopped: true,
+		set: inspectAs(func(t *testing.T) json.RawMessage {
+			return inspectPaused(t, gateRunID, interruptedReason)
+		}),
+	},
+	{name: "a step's ask", seen: seenAskPaused, set: inspectAs(func(t *testing.T) json.RawMessage {
+		return askPausedInspect(t, "Step requested user input via send_message.")
+	})},
+	{name: "a step's ask with an interruption's reason", seen: seenAskPaused, set: inspectAs(func(t *testing.T) json.RawMessage {
+		return askPausedInspect(t, interruptedReason)
+	})},
+	{name: "a step's ask whose tree does not decode", seen: seenUnreadable, set: inspectAs(func(t *testing.T) json.RawMessage {
+		return withAttentionDrift(t, askPausedInspect(t, "Step requested user input via send_message."))
 	})},
 	{name: "another pause", seen: seenOtherPause, set: inspectAs(func(t *testing.T) json.RawMessage {
 		return inspectPaused(t, gateRunID, branchWaitReason)
@@ -73,7 +144,9 @@ var transitionStates = []transitionState{
 
 // transitionAsk is one request, through the entry point its actor calls, with what it writes and answers by state.
 type transitionAsk struct {
-	do         func(t *testing.T, h *Runtime) string
+	do func(t *testing.T, h *Runtime) string
+	// prep, when set, edits the state's scripted replies before the request.
+	prep       func(t *testing.T, br *fakeBridge)
 	want       map[runSeen]transitionWant
 	name       string
 	gateClosed bool
@@ -115,7 +188,8 @@ var (
 	personResumes = withRows(personRefusals, map[runSeen]transitionWant{
 		seenRunning: {answer: "already_running"}, seenPausing: {answer: "already_running"},
 		seenGatePaused: resumeWrote, seenPersonPaused: resumeWrote, seenRestartPaused: resumeWrote,
-		seenInvoluntary: resumeWrote, seenOtherPause: resumeWrote,
+		seenInvoluntary: resumeWrote, seenAutoStopped: resumeWrote, seenOtherPause: resumeWrote,
+		seenAskPaused: {answer: "awaiting_answer"},
 	})
 	finishWrote = transitionWant{wrote: methodKiroWorkflowUpdate, answer: "done"}
 )
@@ -144,8 +218,9 @@ var transitionAsks = []transitionAsk{
 		},
 		want: withRows(personRefusals, map[runSeen]transitionWant{
 			seenRunning: pauseWrote, seenPausing: pauseWrote, seenGatePaused: pauseWrote,
-			seenRestartPaused: pauseWrote, seenInvoluntary: pauseWrote,
+			seenRestartPaused: pauseWrote, seenInvoluntary: pauseWrote, seenAutoStopped: pauseWrote,
 			seenPersonPaused: {answer: "already_paused"}, seenOtherPause: {answer: "already_paused"},
+			seenAskPaused: {answer: "already_paused"},
 		}),
 	},
 	{
@@ -170,8 +245,21 @@ var transitionAsks = []transitionAsk{
 		want: withRows(personRefusals, map[runSeen]transitionWant{
 			seenRunning: {answer: "already_running"}, seenPausing: {answer: "already_running"},
 			seenGatePaused: finishWrote, seenPersonPaused: finishWrote, seenRestartPaused: finishWrote,
-			seenInvoluntary: finishWrote, seenOtherPause: finishWrote,
+			seenInvoluntary: finishWrote, seenAutoStopped: finishWrote, seenOtherPause: finishWrote,
+			seenAskPaused: finishWrote,
 		}),
+	},
+	{
+		name: "a person's end of a paused step",
+		prep: func(t *testing.T, br *fakeBridge) {
+			br.mu.Lock()
+			defer br.mu.Unlock()
+			br.callResults[methodKiroWorkflowInspect] = withPausedStep(t, br.callResults[methodKiroWorkflowInspect])
+		},
+		do: func(t *testing.T, h *Runtime) string {
+			return personAnswer(h.runs.endStep(t.Context(), gateRunID, askPath, runStepCompleted))
+		},
+		want: everyState(finishWrote, personRefusals),
 	},
 	{
 		name: "the gate's pause", gateClosed: true,
@@ -286,6 +374,14 @@ func TestRunTransitions_EveryRequestInEveryState(t *testing.T) {
 				br.setCallResult(methodKiroWorkflowResume, json.RawMessage(`{}`))
 				br.setCallResult(methodKiroWorkflowUpdate, json.RawMessage(`{"updated":true}`))
 				st.set(t, br)
+				if st.stopped {
+					if err := h.runs.stopAutoResume(t.Context(), gateRunID, true); err != nil {
+						t.Fatalf("Setup: recording the stop: %v", err)
+					}
+				}
+				if ask.prep != nil {
+					ask.prep(t, br)
+				}
 				var read []runSeen
 				var mu sync.Mutex
 				onTransitionRead(t, h, func(_ runWant, seen runSeen) {
@@ -472,15 +568,16 @@ var (
 	transitionVerbWriters = map[string]string{
 		"methodKiroWorkflowPause": "Runs.writePause", strconv.Quote(methodKiroWorkflowPause): "Runs.writePause",
 		"methodKiroWorkflowResume": "Runs.sendResume", strconv.Quote(methodKiroWorkflowResume): "Runs.sendResume",
-		"methodKiroWorkflowUpdate": "Runs.finishAsked", strconv.Quote(methodKiroWorkflowUpdate): "Runs.finishAsked",
+		"methodKiroWorkflowUpdate": "Runs.updateNodeStatus", strconv.Quote(methodKiroWorkflowUpdate): "Runs.updateNodeStatus",
 	}
 	transitionActions = []string{
-		"writePause", "sendResume", "resumeAsked", "holdPause", "heal", "parkForUser", "writeHealResume", "finishAsked",
-		"keepHold",
+		"writePause", "sendResume", "resumeAsked", "holdPause", "heal", "writeHealResume", "finishAsked",
+		"keepHold", "endStepAsked", "updateNodeStatus",
 	}
 	transitionOwned = []string{
 		"Runs.transition", "Runs.carryOut", "Runs.writePause", "Runs.sendResume", "Runs.resumeAsked", "Runs.holdPause",
-		"Runs.heal", "Runs.parkForUser", "Runs.writeHealResume", "Runs.finishAsked", "Runs.keepHold",
+		"Runs.heal", "Runs.healSpent", "Runs.writeHealResume", "Runs.finishAsked", "Runs.keepHold",
+		"Runs.endStepAsked",
 	}
 	holdWriters = map[string][]string{
 		"heldHeals":   {"runGate.admitOrHold", "runGate.dropHold", "runGate.refreshLocked"},

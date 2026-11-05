@@ -7,8 +7,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // The fixture mirrors ListenAndServe's mount shape: the real spaHandler at "/", a plain API
@@ -37,7 +37,7 @@ func requestPathMux() (*http.ServeMux, *string) {
 			if v := r.PathValue("name"); v != "" {
 				reached = name + ":" + v
 			}
-			webhttp.WriteJSON(w, healthBody{Status: "ok"})
+			httpserver.WriteJSON(w, healthBody{Status: "ok"})
 		}
 	}
 	mux := http.NewServeMux()
@@ -225,9 +225,9 @@ func TestCanonicalAPIPath_RefusalIsMarottesEnvelope(t *testing.T) {
 // TestMiddlewareStack_GuardOrder pins the placement on the production stack: inside the
 // ALLOWED_HOSTS and CSRF checks (neither 403 is shadowed by a 400), outside the routes.
 func TestMiddlewareStack_GuardOrder(t *testing.T) {
-	policy, invalid := webhttp.ParseHostList([]string{"marotte.example.com"},
-		webhttp.WithLoopbackExempt(true),
-		webhttp.WithHostAllowlistError("", "host not allowed. Add it to ALLOWED_HOSTS to serve this hostname"))
+	policy, invalid := httpserver.ParseHostList([]string{"marotte.example.com"},
+		httpserver.WithLoopbackExempt(true),
+		httpserver.WithHostAllowlistError("", "host not allowed. Add it to ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {
 		t.Fatalf("test allowlist has invalid entries: %v", invalid)
 	}
@@ -235,7 +235,7 @@ func TestMiddlewareStack_GuardOrder(t *testing.T) {
 	idem := newIdempotencyCache(idempotencyTTL)
 	t.Cleanup(idem.stop)
 	s := New(WithHostPolicy(policy))
-	h := webhttp.Chain(mux, s.middlewareStack(baseCSPPolicy, idem)...)
+	h := httpserver.Chain(mux, s.middlewareStack(baseCSPPolicy, idem)...)
 
 	post := func(host, origin string) *httptest.ResponseRecorder {
 		// A non-canonical spelling of the repair route: the first gate to answer decides the status.
@@ -325,7 +325,7 @@ func FuzzCanonicalAPIPath(f *testing.F) {
 		bareRec := httptest.NewRecorder()
 		bareMux.ServeHTTP(bareRec, req.Clone(req.Context()))
 
-		clean, canonical := webhttp.CanonicalRequestPath(req.URL.Path)
+		clean, canonical := httpserver.CanonicalRequestPath(req.URL.Path)
 		refused := guardedRec.Code == http.StatusBadRequest &&
 			strings.TrimSpace(guardedRec.Body.String()) == wantRefusal
 

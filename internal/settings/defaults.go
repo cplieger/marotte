@@ -50,9 +50,10 @@ const (
 	KeyGuardPayloadLinks = "guard_payload_links"
 
 	// KeyContentCollectionEnabled lets model requests be used by AWS for service
-	// improvement. Default off. internal/agent asserts it on the engine at each spawn
-	// and pushes a change live, because KAS holds it per process and persists none
-	// of it; an organization's lock overrides it.
+	// improvement. Default off; an organization's lock overrides it. internal/agent
+	// writes it to kiro-cli's own switch before each engine spawn and on change (the
+	// relay starts KAS from that switch), and asserts it on every session door and
+	// pushes a change live (KAS holds it per process and persists none of it).
 	KeyContentCollectionEnabled = "content_collection_enabled"
 
 	// KeyMemoryMode is the Memory dropdown (memory.go's Memory* values), resolved per session door by
@@ -66,9 +67,8 @@ const (
 	KeyMCPWaitForReady = "mcp_wait_for_ready" //nolint:gosec // G101: a settings key ("MCPWait" reads as "pw"), not a credential
 
 	// KeyAutoCompactionEnabled and KeyAutoCompactPct are the chat compaction
-	// policy internal/agent's autoCompactionPolicy reads. The door value they
-	// imply is frozen by KAS per session, so a flip reaches a chat at its next
-	// session/load; the pct itself acts at once because marotte drives it.
+	// policy internal/agent's autoCompactionPolicy reads. Both ride the session
+	// door, so a change reaches a chat at its next session/load.
 	KeyAutoCompactionEnabled = "auto_compaction_enabled"
 	KeyAutoCompactPct        = "auto_compact_pct"
 
@@ -87,8 +87,11 @@ const (
 	KeyAutoRouting          = "auto_routing"
 	KeyAutoDelegation       = "auto_delegation"
 	KeyModelFallback        = "model_fallback_enabled"
+	// KeyWorkflowLaunch is asserted at the session doors as KAS's workflowLaunch option, and
+	// read only while KeyWorkflowsEnabled is on.
+	KeyWorkflowLaunch = "workflow_launch"
 
-	// KeyOutputStyle rides each chat prompt as _meta.kiro.outputStyle.
+	// KeyOutputStyle, a KAS output style id, rides each chat prompt as _meta.kiro.outputStyle.
 	// KeyTerminalCommandTimeoutMs is the shell tool's default timeout (0 = KAS's
 	// 120 s), sent at initialize and pushed live to the engine.
 	KeyOutputStyle              = "output_style"
@@ -98,11 +101,14 @@ const (
 	// kiro-cli's own, otherwise ValidEngineHeapMiB's range. It applies when the engine restarts.
 	KeyEngineHeapMiB = "engine_heap_mib"
 
+	// KeyHighThroughput starts the agent server on kiro-cli's bundled Node.js with internal/kasnode's flags, default
+	// ON (defaultHighThroughput); off is kiro-cli's stock engine. It applies when the engine restarts.
+	KeyHighThroughput = "high_throughput_optimizations"
+
 	// KeyTheme is "dark" | "light" | "system" ("system" is a stored choice; absent resolves to
 	// system at the client). The browser's localStorage copy is a pre-paint hint this value
-	// overwrites. KeyFBPath is the file browser's last directory, per workspace.
-	KeyTheme  = "theme"
-	KeyFBPath = "fb_path"
+	// overwrites.
+	KeyTheme = "theme"
 
 	// KeySettingsEpoch and KeySettingsRevision stamp the document's version: Update owns both, and
 	// a PATCH may set neither.
@@ -144,6 +150,7 @@ var KnownKeys = map[string]struct{}{
 	KeyCloudFormationSafety:     {},
 	KeyDebugLogs:                {},
 	KeyEngineHeapMiB:            {},
+	KeyHighThroughput:           {},
 	KeyOutputStyle:              {},
 	KeySpecPlanning:             {},
 	KeySpecPlanningAskFirst:     {},
@@ -151,7 +158,7 @@ var KnownKeys = map[string]struct{}{
 	KeyTerminalCommandTimeoutMs: {},
 	KeyWorkValidation:           {},
 	KeyWorkflowsEnabled:         {},
-	KeyFBPath:                   {},
+	KeyWorkflowLaunch:           {},
 	KeyGuardPayloadLinks:        {},
 	KeyKnowledgeEnabled:         {},
 	KeyModelFallback:            {},

@@ -1,0 +1,17 @@
+[
+  { "id": "paused_on_a_paused_run_ends", "run": "paused", "node": "paused", "type": "step", "endable": true },
+  { "id": "paused_beside_a_running_sibling_ends", "run": "running", "node": "paused", "type": "step", "sibling": "running", "endable": true },
+  { "id": "asking_ends", "run": "paused", "node": "paused", "type": "step", "asked": true, "endable": true },
+  { "id": "a_twin_that_runs_leaves_it_endable", "run": "running", "node": "paused", "type": "step", "twin": "running", "endable": true },
+  { "id": "a_twin_that_finished_leaves_it_endable", "run": "paused", "node": "paused", "type": "step", "twin": "completed", "endable": true },
+  { "id": "a_paused_twin_makes_it_ambiguous", "run": "paused", "node": "paused", "type": "step", "twin": "paused", "endable": false },
+  { "id": "running_does_not_end", "run": "running", "node": "running", "type": "step", "endable": false },
+  { "id": "pending_does_not_end", "run": "paused", "node": "pending", "type": "step", "endable": false },
+  { "id": "completed_does_not_end", "run": "running", "node": "completed", "type": "step", "endable": false },
+  { "id": "failed_does_not_end", "run": "running", "node": "failed", "type": "step", "endable": false },
+  { "id": "a_paused_watch_does_not_end", "run": "paused", "node": "paused", "type": "watch", "endable": false },
+  { "id": "a_paused_watch_sharing_a_paused_steps_id_does_not_end", "run": "paused", "node": "paused", "type": "watch", "twin": "paused", "endable": false },
+  { "id": "an_ended_run_does_not_end", "run": "cancelled", "node": "paused", "type": "step", "endable": false },
+  { "id": "a_failed_run_does_not_end", "run": "failed", "node": "paused", "type": "step", "endable": false },
+  { "id": "an_unrecognized_run_status_does_not_end", "run": "waking", "node": "paused", "type": "step", "endable": false }
+]

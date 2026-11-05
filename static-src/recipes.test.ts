@@ -56,14 +56,14 @@ vi.mock("./persist.js", () => ({
 // The Schedule button's actions: unmocked they reach the network, and a row's summary line is
 // decoration this suite does not assert on.
 vi.mock("./actions/schedules.js", () => ({
-  loadSchedules: { dispatch: vi.fn(async () => ({ schedules: [] })) },
+  loadSchedules: { dispatch: vi.fn(async () => schedulesReply) },
   saveSchedule: { dispatch: vi.fn(async () => null) },
   deleteSchedule: { dispatch: vi.fn(async () => null) },
 }));
 
 const standing = vi.hoisted(() => ({ files: new Map<string, ConfigStanding>() }));
 vi.mock("./config-standing.js", async (importOriginal) => {
-  const { signal } = await import("@cplieger/reactive");
+  const { signal } = await import("@cplieger/ui");
   const view = signal({ files: standing.files, servers: new Map(), loadErrors: new Map() });
   return {
     ...(await importOriginal<typeof ConfigStandingModule>()),
@@ -73,14 +73,16 @@ vi.mock("./config-standing.js", async (importOriginal) => {
 
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
 import { BUS_CATALOG_MODELS, dispatch, emitBus } from "./bus.js";
-import { saveSchedule } from "./actions/schedules.js";
+import { deleteSchedule, loadSchedules, saveSchedule } from "./actions/schedules.js";
 import { openRunView } from "./run-view.js";
-import { launchRun, cancelRun } from "./actions/runs.js";
+import { launchRun, cancelRun, loadRecipes } from "./actions/runs.js";
 import type { ModelInfo, RecipesResponse, WorkflowRun, ResumableSession } from "./types.js";
 import type { ConfigStanding, RunStatus } from "./wire/types.gen.js";
+import type { SchedulesResponse, ScheduleView } from "./schedule-types.js";
 import type * as ConfigStandingModule from "./config-standing.js";
 
 let recipesReply: RecipesResponse = { recipes: [] };
+let schedulesReply: SchedulesResponse = { schedules: [] };
 let runsReply: { sessions: ResumableSession[]; runs: WorkflowRun[] } = {
   sessions: [],
   runs: [],
@@ -130,6 +132,7 @@ beforeEach(() => {
   vi.mocked(launchRun.dispatch).mockClear();
   vi.mocked(cancelRun.dispatch).mockClear();
   recipesReply = { recipes: [] };
+  schedulesReply = { schedules: [] };
   runsReply = { sessions: [], runs: [] };
 });
 
@@ -794,5 +797,206 @@ describe("the Schedule form", () => {
     await vi.waitFor(() => {
       expect(btn.getAttribute("aria-expanded")).toBe("false");
     });
+  });
+});
+
+describe("a schedule whose recipe is gone", () => {
+  const GONE = "/workspace/.kiro/workflows/weekly-smoke.workflow.json";
+
+  function scheduleOf(source: string, id: string, name: string): ScheduleView {
+    return { id, source, name, enabled: true, spec: { freq: "daily", hour: 3, minute: 0 } };
+  }
+
+  function orphans(panel: HTMLElement): HTMLElement[] {
+    return [...panel.querySelectorAll<HTMLElement>("[data-orphan-schedule]")];
+  }
+
+  async function settled(): Promise<void> {
+    await vi.waitFor(() => {
+      expect(vi.mocked(loadSchedules.dispatch)).toHaveBeenCalled();
+    });
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
+  beforeEach(() => {
+    vi.mocked(loadSchedules.dispatch).mockClear();
+    vi.mocked(deleteSchedule.dispatch).mockClear();
+  });
+
+  it("is listed under the recipes with a Delete that removes it", async () => {
+    recipesReply = { recipes: [recipe("nightly")] };
+    schedulesReply = {
+      schedules: [
+        scheduleOf("bundled://nightly", "kept", "nightly"),
+        scheduleOf(GONE, "gone", "weekly-smoke"),
+      ],
+    };
+    const panel = await render();
+    await settled();
+
+    const rows = orphans(panel);
+    expect(rows.map((r) => r.dataset["orphanSchedule"])).toEqual(["gone"]);
+    const row = rows[0];
+    if (row === undefined) {
+      throw new Error("no orphaned schedule row");
+    }
+    expect(names(panel)).toEqual(["nightly", "weekly-smoke"]);
+    expect(row.textContent).toContain(GONE);
+    const del = row.querySelector<HTMLButtonElement>(".recipe-sched-delete-btn");
+    expect(del?.textContent).toBe("Delete schedule");
+
+    schedulesReply = { schedules: [scheduleOf("bundled://nightly", "kept", "nightly")] };
+    del?.click();
+    await vi.waitFor(() => {
+      expect(orphans(panel)).toHaveLength(0);
+    });
+    expect(vi.mocked(deleteSchedule.dispatch).mock.calls.map((c) => c[0])).toEqual(["gone"]);
+  });
+
+  it("is listed when no recipe is left at all", async () => {
+    schedulesReply = { schedules: [scheduleOf(GONE, "gone", "weekly-smoke")] };
+    const panel = await render();
+    await settled();
+
+    expect(orphans(panel)).toHaveLength(1);
+    expect(panel.textContent).not.toContain("No workflows available");
+  });
+
+  it("is not claimed while the recipe list could not be read", async () => {
+    vi.mocked(loadRecipes.dispatch).mockImplementationOnce(
+      (async () => null) as unknown as typeof loadRecipes.dispatch,
+    );
+    schedulesReply = { schedules: [scheduleOf(GONE, "gone", "weekly-smoke")] };
+    const panel = document.createElement("div");
+    document.body.appendChild(panel);
+    renderRecipesPanel(panel);
+    await settled();
+
+    expect(orphans(panel)).toHaveLength(0);
+  });
+
+  it("answers the filter like a recipe row", async () => {
+    recipesReply = { recipes: [recipe("nightly")] };
+    schedulesReply = { schedules: [scheduleOf(GONE, "gone", "weekly-smoke")] };
+    expect(orphans(await render("nightly"))).toHaveLength(0);
+    await settled();
+    const panel = await render("smoke");
+    await settled();
+    expect(orphans(panel)).toHaveLength(1);
+  });
+});
+
+describe("the Run form's plan", () => {
+  const PLAN = [
+    { nodeId: "a", type: "step", agentName: "x", modelId: "m" },
+    { nodeId: "r", type: "repeat", maxIterations: 3, steps: [{ nodeId: "b", type: "step" }] },
+    {
+      nodeId: "fan",
+      type: "parallel",
+      branches: [
+        { nodeId: "c", type: "step" },
+        { nodeId: "d", type: "step" },
+      ],
+    },
+  ];
+  const LABELS = ["a", "r", "pass 1", "b", "fan", "c", "d"];
+
+  function planned(name: string, plan: unknown): RecipesResponse["recipes"][0] {
+    return { ...recipe(name), plan };
+  }
+
+  async function openForm(r: RecipesResponse["recipes"][0]): Promise<{
+    panel: HTMLElement;
+    form: HTMLFormElement;
+  }> {
+    recipesReply = { recipes: [r] };
+    const panel = await render();
+    buttonFor(panel, r.source)?.click();
+    const form = panel.querySelector<HTMLFormElement>(".recipe-input-form");
+    if (form === null) {
+      throw new Error("the input form did not open");
+    }
+    return { panel, form };
+  }
+
+  function rowLabels(form: HTMLElement): string[] {
+    return [...form.querySelectorAll(".recipe-plan .ev-row > .ev-row-main .ev-label")].map(
+      (l) => l.textContent ?? "",
+    );
+  }
+
+  async function catalogChanges(next: RecipesResponse): Promise<void> {
+    recipesReply = next;
+    dispatch({ type: "recipes_changed", chat_id: "" });
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
+  it("shows the recipe's steps, all pending, in front of Launch", async () => {
+    const { form } = await openForm(planned("planned", PLAN));
+    const region = form.querySelector<HTMLElement>(".recipe-plan");
+
+    expect(region?.nextElementSibling).toBe(form.querySelector(".recipe-launch-btn"));
+    expect(region?.querySelector(".recipe-plan-head")?.textContent).toBe("Plan \u00b7 4 steps");
+    expect(rowLabels(form)).toEqual(LABELS);
+    const states = [...form.querySelectorAll<HTMLElement>(".recipe-plan .ev-row")].map(
+      (r) => r.dataset["state"],
+    );
+    expect(new Set(states)).toEqual(new Set(["pending"]));
+    expect(form.querySelector('.recipe-plan [role="tree"]')?.getAttribute("aria-label")).toBe(
+      "Planned steps",
+    );
+  });
+
+  it("shows no plan region for a recipe whose plan names no node", async () => {
+    for (const [name, plan] of [
+      ["unplanned", undefined],
+      ["nameless", [{ type: "step" }]],
+    ] as const) {
+      const { form } = await openForm(planned(name, plan));
+      expect(form.querySelector(".recipe-plan"), name).toBeNull();
+      expect(form.textContent, name).not.toContain("Plan");
+    }
+  });
+
+  it("follows a recipes_changed refetch under the kept form", async () => {
+    const { panel, form } = await openForm(planned("replanned", PLAN));
+
+    await catalogChanges({ recipes: [planned("replanned", [{ nodeId: "z", type: "step" }])] });
+    expect(panel.querySelector(".recipe-input-form")).toBe(form);
+    expect(rowLabels(form)).toEqual(["z"]);
+    expect(form.querySelector(".recipe-plan-head")?.textContent).toBe("Plan \u00b7 1 step");
+
+    await catalogChanges({ recipes: [planned("replanned", undefined)] });
+    expect(form.querySelector(".recipe-plan")).toBeNull();
+
+    await catalogChanges({ recipes: [planned("replanned", PLAN)] });
+    expect(form.querySelector(".recipe-plan")?.nextElementSibling).toBe(
+      form.querySelector(".recipe-launch-btn"),
+    );
+    expect(rowLabels(form)).toEqual(LABELS);
+  });
+
+  it("scrolls a long plan in a box about eight rows tall, keyboard-reachable", async () => {
+    const style = document.createElement("style");
+    style.textContent = `:root { --btn-h: 36px; --row-tap: 36px; }\n${loadCSS("28-docs.css")}\n${loadCSS("31-exec-view.css")}`;
+    document.head.appendChild(style);
+    try {
+      const steps = Array.from({ length: 50 }, (_, i) => ({
+        nodeId: `s${String(i)}`,
+        type: "step",
+      }));
+      const { form } = await openForm(planned("long", steps));
+      const box = form.querySelector<HTMLElement>(".recipe-plan-steps");
+      if (box === null) {
+        throw new Error("no plan scroll box");
+      }
+      expect(box.clientHeight).toBeLessThanOrEqual(8 * 36);
+      expect(box.clientHeight).toBeGreaterThan(4 * 36);
+      expect(box.scrollHeight).toBeGreaterThan(box.clientHeight);
+      expect(box.tabIndex).toBe(0);
+    } finally {
+      style.remove();
+    }
   });
 });

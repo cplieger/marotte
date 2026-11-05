@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -39,6 +39,7 @@ type myPRsCore struct {
 	forgeapi.Core
 	pages  map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest]
 	afters []forgeapi.Cursor
+	sets   []forgeapi.ListSettings
 	others int
 }
 
@@ -50,6 +51,7 @@ func (c *myPRsCore) ListMyPRs(_ context.Context, opts ...forgeapi.ListOption) (f
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
 	c.afters = append(c.afters, set.After)
+	c.sets = append(c.sets, set)
 	return c.pages[set.After], nil
 }
 
@@ -250,6 +252,27 @@ func TestSource_OneListMyPRsPerConnectionPerSweep(t *testing.T) {
 	}
 	if n := github.others + gitlab.others + gitea.others; n != 0 {
 		t.Errorf("the sweeps made %d identity or per-repository reads, want none", n)
+	}
+}
+
+// GitHub's list computes mergeability per row, close to its 10 s GraphQL limit;
+// the fill reads merge state per row instead.
+func TestSource_ListsWithoutMergeState(t *testing.T) {
+	github := &myPRsCore{pages: map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest]{"": {}}}
+	m := sourceManager(t, map[string]forgeapi.Core{"github:github.com": github}, githubRecord())
+	src := NewManagerPRSource(m, fixedOrigins(RepoOrigin{Dir: "one", WebBase: "https://github.com", Slug: "bob/one"}))
+
+	src.Read(t.Context(), false, firstPage)
+	src.Read(t.Context(), true, firstPage)
+
+	if len(github.sets) < 2 {
+		t.Fatalf("ListMyPRs calls over a push-only and a present read = %d, want at least 2", len(github.sets))
+	}
+	for i, set := range github.sets {
+		if !set.MergeStateSet || set.MergeState {
+			t.Errorf("ListMyPRs call %d: merge state set %v, read %v; want WithMergeState(false)",
+				i, set.MergeStateSet, set.MergeState)
+		}
 	}
 }
 

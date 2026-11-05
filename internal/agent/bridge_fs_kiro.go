@@ -1,9 +1,10 @@
 // KAS's own filesystem verbs `_kiro/fs/{stat,read_directory,delete}`, gated on
 // `clientCapabilities.fs._meta.kiro.<name>`. Undeclared, KAS serves them itself, so
 // declaring one confines an existing capability through lifetime.confine: stat and
-// read_directory as reads, delete as a write. No second gate:
-// KAS restores a rejected delete through `fs/write_text_file`. Read and write stay
-// undeclared so `fs/{read,write}_text_file` keeps every write guardrail.
+// read_directory as reads, delete as a write. No staging gate: KAS restores a rejected
+// delete through `fs/write_text_file`. Delete removes only what fs/read_text_file could have
+// served KAS's undo snapshot (undoCopyRefusal). Read and write stay undeclared so
+// `fs/{read,write}_text_file` keeps every write guardrail.
 
 package agent
 
@@ -15,7 +16,7 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/spec"
 )
@@ -29,10 +30,11 @@ const (
 
 var errRefusedRootDelete = errors.New("refusing to delete the workspace or an additional directory itself")
 
-// kiroFSParams is the `path` of `{sessionId, path}`, shared by all three verbs. KAS sends the
-// path already absolute, so the confinement re-checks a claim.
+// kiroFSParams is `{sessionId, path}`, shared by all three verbs. KAS sends the path already
+// absolute, so the confinement re-checks a claim.
 type kiroFSParams struct {
-	Path string `json:"path"`
+	Path      string            `json:"path"`
+	SessionID marotte.SessionID `json:"sessionId"`
 }
 
 // kiroStatBody answers `_kiro/fs/stat`. `size` is required by KAS's
@@ -82,14 +84,14 @@ func (in *inbound) handleKiroFSRequest(_ context.Context, chatID marotte.ChatID,
 	return true
 }
 
-// kiroFSPath decodes the request's path. Each verb confines it to a root and a root-relative
-// name, never an absolute path, so the verdict and the operation share a handle.
-func kiroFSPath(msg *marotte.RPCResponse) (string, error) {
+// Each verb confines the path to a root and a root-relative name, never an absolute path, so
+// the verdict and the operation share a handle.
+func kiroFSPath(msg *marotte.RPCResponse) (kiroFSParams, error) {
 	var p kiroFSParams
 	if err := parseRequest(msg, &p); err != nil {
-		return "", fmt.Errorf("decode %s params: %w", msg.Method, err)
+		return kiroFSParams{}, fmt.Errorf("decode %s params: %w", msg.Method, err)
 	}
-	return p.Path, nil
+	return p, nil
 }
 
 func (in *inbound) kiroFSReadablePath(ctx context.Context, msg *marotte.RPCResponse) (fsTarget, error) {
@@ -97,11 +99,16 @@ func (in *inbound) kiroFSReadablePath(ctx context.Context, msg *marotte.RPCRespo
 	if err != nil {
 		return fsTarget{}, err
 	}
-	return in.lifetime.confine(ctx, p, fsRead)
+	return in.lifetime.confine(ctx, p.Path, fsRead)
 }
 
 func (in *inbound) respondKiroFSStat(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
-	target, err := in.kiroFSReadablePath(ctx, msg)
+	p, err := kiroFSPath(msg)
+	if err != nil {
+		in.respondFSError(ctx, chatID, origin, msg, err)
+		return
+	}
+	target, err := in.confineRead(ctx, p.SessionID, p.Path)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
@@ -170,15 +177,16 @@ func dirEntriesToWire(dirEntries []os.DirEntry) []kiroDirEntry {
 	return out
 }
 
-// respondKiroFSDelete answers `_kiro/fs/delete` with `{}`, recursive for a directory like
-// KAS's NodeFileSystem; it refuses only a root itself. Not gated: KAS checkpoints and reviews.
+// respondKiroFSDelete answers `_kiro/fs/delete` with `{}`. It refuses a root itself and what
+// undoCopyRefusal refuses, because KAS's delete_file goes on to delete after its undo snapshot
+// read failed, with no undo copy.
 func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID marotte.ChatID, origin acpResponder, msg *marotte.RPCResponse) {
 	p, err := kiroFSPath(msg)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
-	target, err := in.lifetime.confine(ctx, p, fsWrite)
+	target, err := in.lifetime.confine(ctx, p.Path, fsUnlink)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
@@ -191,9 +199,9 @@ func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID marotte.ChatI
 		return
 	}
 	// A lost delete race is unrecoverable, so the parent is pinned with
-	// atomicfile.OpenParentInRoot (Lstat each component, refuse symlinks, os.SameFile), and only
+	// filesafe.OpenParentInRoot (Lstat each component, refuse symlinks, os.SameFile), and only
 	// the final element is unlinked; root.Remove would follow an in-root link.
-	parent, base, err := atomicfile.OpenParentInRoot(root, rel)
+	parent, base, err := filesafe.OpenParentInRoot(root, rel)
 	if err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
@@ -205,21 +213,41 @@ func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID marotte.ChatI
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
-	// Remove unlinks a symlink rather than following it, matching KAS's fs.rm; RemoveFileInRoot
-	// would refuse it (ErrNotRegular), a behaviour change.
-	if info.IsDir() {
-		err = parent.RemoveAll(base)
-	} else {
-		err = parent.Remove(base)
-	}
-	if err != nil {
+	if err = undoCopyRefusal(parent, base, info); err != nil {
 		in.respondFSError(ctx, chatID, origin, msg, err)
 		return
 	}
-	slog.Info("agent deleted a path", "chat_id", chatID, "dir", info.IsDir())
+	// Remove unlinks a symlink rather than following it, matching KAS's fs.rm; RemoveFileInRoot
+	// would refuse it (ErrNotRegular).
+	if err = parent.Remove(base); err != nil {
+		in.respondFSError(ctx, chatID, origin, msg, err)
+		return
+	}
+	slog.Info("agent deleted a path", "chat_id", chatID)
 	if specDir, ok := spec.DirOf(rel); ok && target.inWorkspace {
 		in.specs.Mark(specDir)
 	}
 	// KAS's isFSDeleteCapabilityResponse throws on a non-empty `message`, so success is an empty object.
 	in.respondBridge(ctx, chatID, origin, msg, struct{}{}, nil)
+}
+
+// undoCopyRefusal refuses what KAS's undo snapshot, read through fs/read_text_file, cannot hold:
+// a directory, an unreadable file, or one over fsReadCap. A FIFO, socket, device or symlink holds
+// no content to lose and passes unopened.
+func undoCopyRefusal(parent *os.Root, base string, info os.FileInfo) error {
+	if info.IsDir() {
+		return errNoUndoDirectory
+	}
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+	f, fi, err := filesafe.OpenRegularInRootNoFollow(parent, base)
+	if err != nil {
+		return fmt.Errorf("not deleted: delete_file cannot read it for its undo copy: %w", err)
+	}
+	_ = f.Close()
+	if fi.Size() > fsReadCap {
+		return errNoUndoTooLarge
+	}
+	return nil
 }

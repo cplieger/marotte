@@ -100,7 +100,7 @@ vi.mock("./device-view.js", () => {
 // One signal per run, so a reply moving only `readPosition` re-runs the fold as the real cell does.
 const runCells = vi.hoisted(() => new Map<string, { value: unknown }>());
 vi.mock("./run-store.js", async () => {
-  const { signal } = await import("@cplieger/reactive");
+  const { signal } = await import("@cplieger/ui");
   return {
     // Inert here; a Browser-Mode mock is linked as real ESM, so a name any module in the graph
     // reaches has to exist on it.
@@ -171,7 +171,7 @@ vi.mock("./dom.js", () => ({
   },
 }));
 
-import { signal, touch } from "@cplieger/reactive";
+import { signal, touch } from "@cplieger/ui";
 import {
   browserAttentionEnv,
   createAttention,

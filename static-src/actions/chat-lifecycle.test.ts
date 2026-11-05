@@ -235,6 +235,46 @@ describe("chat.cancel_turn", () => {
     const [cmd] = mockSend.mock.calls[0] ?? [];
     expect((cmd as { payload?: unknown }).payload).toEqual({ lead: "steer-m2" });
   });
+
+  // A skip stopped nothing: the resend the lead rode is running, so the chat shows it running.
+  it("puts the thinking state back when the server skipped the stop", async () => {
+    setSessions([makeSession("c1", { thinking: true })]);
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, skipped: true } });
+    const { cancelTurn } = await import("./chat.js");
+
+    const outcome = await cancelTurn.dispatch({ chatID: "c1", lead: "steer-m2" }).outcome;
+
+    expect(outcome).toMatchObject({ status: "success", value: true });
+    expect(get("c1")!.thinking).toBe(true);
+  });
+
+  it("leaves the chat idle when the stop was sent", async () => {
+    setSessions([makeSession("c1", { thinking: true })]);
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true } });
+    const { cancelTurn } = await import("./chat.js");
+
+    const outcome = await cancelTurn.dispatch({ chatID: "c1", lead: "steer-m2" }).outcome;
+
+    expect(outcome).toMatchObject({ status: "success", value: false });
+    expect(get("c1")!.thinking).toBe(false);
+  });
+});
+
+describe("chat.send_queued_now", () => {
+  it("answers whether the server skipped the stop", async () => {
+    const { sendQueuedNow } = await import("./chat.js");
+    for (const [body, skipped] of [
+      [{ ok: true, skipped: true }, true],
+      [{ ok: true }, false],
+    ] as const) {
+      mockSend.mockResolvedValueOnce({ ok: true, status: 200, body });
+      const outcome = await sendQueuedNow.dispatch({
+        chatID: "c1",
+        messageID: `m-${String(skipped)}`,
+      }).outcome;
+      expect(outcome).toMatchObject({ status: "success", value: skipped });
+    }
+  });
 });
 
 describe("chat.load_sessions", () => {
@@ -373,6 +413,20 @@ describe("chat.create", () => {
 
     const sent = mockSend.mock.calls.at(-1)?.[0] as { payload: Record<string, unknown> };
     expect(sent.payload).toEqual({ op_id: "op-1" });
+  });
+
+  it("reads a fork's fresh outcome as a tangent that holds no conversation", async () => {
+    const { forkChat } = await import("./chat.js");
+    const fork = async (outcome: string): Promise<boolean | undefined> => {
+      mockSend.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        body: { ok: true, chat: header, outcome },
+      });
+      return (await forkChat.dispatch({ opID: `op-${outcome}`, parentChatID: "c-parent" }))?.fresh;
+    };
+    expect(await fork("fresh")).toBe(true);
+    expect(await fork("forked")).toBe(false);
   });
 });
 

@@ -23,7 +23,7 @@ func TestRunControls_AttributeACallerOutsideThePage(t *testing.T) {
 			methodKiroWorkflowInspect: inspectReply(t, "wf_1", status, ""),
 			result:                    json.RawMessage(`{}`),
 		}
-		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+		h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 		return h, br
 	}
 	verbs := []struct {

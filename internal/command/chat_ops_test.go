@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -19,7 +20,16 @@ type closeDeps struct {
 
 func (d *closeDeps) Bridge(marotte.ChatID) Bridge { return d.bridge }
 
-func (d *closeDeps) CloseChatState(_ context.Context, id marotte.ChatID) {
+// TeardownCancel is the teardown closer's session/cancel, on the fake's bridge.
+func (d *closeDeps) TeardownCancel(ctx context.Context, chatID marotte.ChatID) error {
+	b := d.Bridge(chatID)
+	if b == nil {
+		return nil
+	}
+	return b.Notify(ctx, marotte.MethodCancel, sessionParams(b))
+}
+
+func (d *closeDeps) CloseChatState(_ context.Context, id marotte.ChatID, _ *chat.Claim) {
 	d.closed = append(d.closed, id)
 }
 
@@ -41,7 +51,7 @@ func (b *cancelBridge) Notify(_ context.Context, method string, _ any) error {
 func TestCloseChatTeardown_TearsDownAChatWithNoBridge(t *testing.T) {
 	deps := &closeDeps{benchDeps: newBenchDeps()}
 
-	closeChatTeardown(t.Context(), deps, deps, deps, deps, "c1")
+	closeChatTeardown(t.Context(), deps, deps, deps, "c1", &chat.Claim{})
 
 	if len(deps.closed) != 1 || deps.closed[0] != "c1" {
 		t.Errorf("closed state for %v, want exactly [c1]", deps.closed)
@@ -55,7 +65,7 @@ func TestCloseChatTeardown_CancelsTheTurnAndLogsNoFailure(t *testing.T) {
 	bridge := &cancelBridge{}
 	deps := &closeDeps{benchDeps: newBenchDeps(), bridge: bridge}
 
-	closeChatTeardown(t.Context(), deps, deps, deps, deps, "c1")
+	closeChatTeardown(t.Context(), deps, deps, deps, "c1", &chat.Claim{})
 
 	if len(bridge.notified) != 1 || bridge.notified[0] != marotte.MethodCancel {
 		t.Errorf("bridge saw notifications %v, want exactly [%s]", bridge.notified, marotte.MethodCancel)
@@ -120,7 +130,7 @@ func TestCloseChatTeardown_RecordsTheStopBeforeSignalling(t *testing.T) {
 	bridge := &stopOrderBridge{deps: deps}
 	deps.bridge = bridge
 
-	closeChatTeardown(t.Context(), deps, deps, deps, deps, "c1")
+	closeChatTeardown(t.Context(), deps, deps, deps, "c1", &chat.Claim{})
 
 	if len(bridge.notified) != 1 || bridge.unrecorded != 0 {
 		t.Errorf("notifications = %v with %d before the stop was recorded, want one after it", bridge.notified, bridge.unrecorded)

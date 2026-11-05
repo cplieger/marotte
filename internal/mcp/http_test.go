@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/webhttp/v4"
+	"github.com/cplieger/go/httpserver"
 )
 
 func newRoutedStore(t *testing.T) (*Store, *http.ServeMux) {
@@ -177,9 +177,9 @@ func TestHandleCollection_POST_oversize_is413(t *testing.T) {
 	_, mux := newRoutedStore(t)
 
 	// Build a JSON object whose Name field is big enough that the full
-	// body exceeds webhttp.MaxJSONBody (1 MiB). Using a field that validate
+	// body exceeds httpserver.MaxJSONBody (1 MiB). Using a field that validate
 	// will also reject is fine; we're not expecting the body to parse.
-	big := strings.Repeat("a", int(webhttp.MaxJSONBody)+1)
+	big := strings.Repeat("a", int(httpserver.MaxJSONBody)+1)
 	body := `{"transport":"stdio","name":"` + big + `","command":"bash"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/mcp",
 		strings.NewReader(body))

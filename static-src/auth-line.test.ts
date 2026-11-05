@@ -16,7 +16,6 @@ vi.mock("./tabs.js", async () => ({
 }));
 vi.mock("./git-badge.js", () => ({ initGitBadge: vi.fn() }));
 vi.mock("./git-tabs.js", () => ({ getGitTab: vi.fn(() => "changes") }));
-vi.mock("./files.js", () => ({ noteDefaultBrowsePath: vi.fn() }));
 vi.mock("./shell.js", () => ({ restoreShell: vi.fn() }));
 vi.mock("./tools.js", () => ({ initTools: vi.fn(), loadToolsList: vi.fn() }));
 // The General panel's config.json door; the real opener links the editor graph, past this file's mocks.
@@ -41,6 +40,7 @@ vi.mock("./api-client.js", () => ({
   apiGetTyped: vi.fn(),
 }));
 vi.mock("./governance.js", () => ({
+  onGovernanceChange: vi.fn(),
   paintSettingLocks: vi.fn(),
   writeSwitch: (input: HTMLInputElement, value: boolean) => {
     input.checked = value;

@@ -5,6 +5,7 @@ package translate
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -17,6 +18,7 @@ const unstatedFailureReason = "the server did not report a reason"
 // v3MCPStatus is the _kiro/mcp/status payload: one list keyed by a status enum, replacing
 // v2's per-server notifications.
 type v3MCPStatus struct {
+	SessionID marotte.SessionID `json:"sessionId"`
 	// Present only while the organization sets an MCP registry; "registry" mode drops every
 	// server that is not a registry entry.
 	AccessMode      string             `json:"accessMode"`
@@ -149,68 +151,87 @@ type v3MCPResourceTemplate struct {
 	MimeType    string `json:"mimeType"`
 }
 
-// HandleMCPStatus maps _kiro/mcp/status onto the MCP-registry state: connected servers
-// record their tools, failed ones an init failure, or an OAuth prompt when a URL is present.
+// MCPReportState is how one server stands in its session's _kiro/mcp/status frame.
+type MCPReportState uint8
+
+const (
+	// MCPReportConnecting is transient: the session's previous entry for the server stands.
+	MCPReportConnecting MCPReportState = iota
+	// MCPReportConnected is a running server, reported with the four lists it offers.
+	MCPReportConnected
+	// MCPReportNeedsAuth is a failed server carrying an authorization URL.
+	MCPReportNeedsAuth
+	// MCPReportFailed is a server that failed for any other reason, carried in Error.
+	MCPReportFailed
+	// MCPReportDisabled is a server KAS reports switched off.
+	MCPReportDisabled
+)
+
+// MCPServerReport is one server as its session's frame reports it. Error is set for
+// MCPReportFailed, AuthorizationURL for MCPReportNeedsAuth, the four lists for MCPReportConnected.
+type MCPServerReport struct {
+	Name              string
+	Source            marotte.MCPSource
+	Error             string
+	AuthorizationURL  string
+	Tools             []string
+	Prompts           []marotte.MCPPromptInfo
+	Resources         []marotte.MCPResourceInfo
+	ResourceTemplates []marotte.MCPResourceTemplateInfo
+	State             MCPReportState
+}
+
+// MCPSessionStatus is one session's whole _kiro/mcp/status frame: every server the session
+// binds, so a server it omits is no longer the session's.
+type MCPSessionStatus struct {
+	// Registry is nil outside registry mode.
+	Registry *marotte.GovernanceMCPRegistry
+	Servers  []MCPServerReport
+}
+
+// HandleMCPStatus hands a session's _kiro/mcp/status frame to the recorder whole. Under
+// sessionScopedMcpStatus every frame names its session; one that does not is dropped.
 func (t *Translator) HandleMCPStatus(ctx context.Context, _ marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[v3MCPStatus](msg, "mcp/status")
 	if !ok {
 		return
 	}
-	t.governance.SetMCPRegistry(ctx, p.registry())
+	if p.SessionID == "" {
+		slog.Debug("mcp/status with no sessionId, dropped")
+		return
+	}
+	status := MCPSessionStatus{Registry: p.registry(), Servers: make([]MCPServerReport, 0, len(p.Servers))}
 	for i := range p.Servers {
-		s := &p.Servers[i]
-		if s.Name == "" {
-			continue
-		}
-		src := s.source()
-		switch s.Status {
-		case "connected":
-			t.mcp.RecordConnected(ctx, s.Name, src, mcpToolNames(s.Tools), mcpPrompts(s.Prompts),
-				mcpResources(s.Resources), mcpResourceTemplates(s.ResourceTemplates))
-		case "failed":
-			// The URL outranks failedAuthorization: an OAuth server needing sign-in carries both.
-			if s.AuthorizationURL != "" {
-				t.mcp.RecordOAuth(ctx, s.Name, src, s.AuthorizationURL)
-				continue
-			}
-			t.mcp.RecordInitFailure(ctx, s.Name, src, s.failureReason())
-		case "disabled":
-			// The recorder drops this for marotte's own server (its config row renders the off
-			// state); for every other origin this frame is the only evidence the server exists.
-			t.mcp.RecordDisabled(ctx, s.Name, src)
-		default:
-			// connecting is transient: the next frame for this server replaces it.
+		if r, ok := p.Servers[i].report(); ok {
+			status.Servers = append(status.Servers, r)
 		}
 	}
+	t.mcp.RecordSessionStatus(ctx, p.SessionID, status)
 }
 
-// MCPPoolServer is what one connected server offers the `#` menu.
-type MCPPoolServer struct {
-	Name              string
-	Resources         []marotte.MCPResourceInfo
-	ResourceTemplates []marotte.MCPResourceTemplateInfo
-}
-
-// ReadMCPPool decodes a _kiro/mcp/status frame into the connected servers offering
-// resources or templates. Each frame lists every server, so the result replaces the pool
-// whole; ok is false only for a frame that does not decode.
-func ReadMCPPool(msg *marotte.RPCResponse) (servers []MCPPoolServer, ok bool) {
-	p, err := decodeParams[v3MCPStatus](msg)
-	if err != nil {
-		return nil, false
+func (s *v3MCPServer) report() (MCPServerReport, bool) {
+	if s.Name == "" {
+		return MCPServerReport{}, false
 	}
-	for i := range p.Servers {
-		s := &p.Servers[i]
-		if s.Name == "" || s.Status != "connected" {
-			continue
+	r := MCPServerReport{Name: s.Name, Source: s.source()}
+	switch s.Status {
+	case "connected":
+		r.State = MCPReportConnected
+		r.Tools, r.Prompts = mcpToolNames(s.Tools), mcpPrompts(s.Prompts)
+		r.Resources, r.ResourceTemplates = mcpResources(s.Resources), mcpResourceTemplates(s.ResourceTemplates)
+	case "failed":
+		// The URL outranks failedAuthorization: an OAuth server needing sign-in carries both.
+		if s.AuthorizationURL != "" {
+			r.State, r.AuthorizationURL = MCPReportNeedsAuth, s.AuthorizationURL
+		} else {
+			r.State, r.Error = MCPReportFailed, s.failureReason()
 		}
-		resources, templates := mcpResources(s.Resources), mcpResourceTemplates(s.ResourceTemplates)
-		if len(resources) == 0 && len(templates) == 0 {
-			continue
-		}
-		servers = append(servers, MCPPoolServer{Name: s.Name, Resources: resources, ResourceTemplates: templates})
+	case "disabled":
+		r.State = MCPReportDisabled
+	default:
+		r.State = MCPReportConnecting
 	}
-	return servers, true
+	return r, true
 }
 
 func mcpToolNames(tools []struct {

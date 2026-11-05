@@ -5,10 +5,10 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/signin"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // textSignOutNotSaved is the logout answer when the saved sign-in could not be removed: nothing is signed out.
@@ -25,7 +25,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("logout: request received",
-		"client_ip", webhttp.ClientIP(r, h.trusted...),
+		"client_ip", httpserver.ClientIP(r, h.trusted...),
 		"user_agent", logsafe.Field(r.Header.Get("User-Agent")))
 	if h.apiKey {
 		httpreply.Conflict(w, textAPIKeyActive)
@@ -34,12 +34,12 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	err := h.vault.SignOut(h.backend)
 	switch {
 	case err == nil:
-		webhttp.WriteJSON(w, map[string]string{"output": "Signed out"})
+		httpserver.WriteJSON(w, map[string]string{"output": "Signed out"})
 	case errors.Is(err, signin.ErrInDoubt):
 		slog.Error("logout: the sign-out was not confirmed in time", "error", err)
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(textSignOutInDoubt))
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(textSignOutInDoubt))
 	default:
 		slog.Error("logout: the saved sign-in could not be removed", "error", err)
-		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(textSignOutNotSaved))
+		httpserver.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(textSignOutNotSaved))
 	}
 }

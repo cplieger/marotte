@@ -31,9 +31,6 @@ func (o *engineOwner) callRawAt(ctx context.Context, label, method string, param
 	if resp == nil {
 		return nil, at, errors.New(label + ": nil response")
 	}
-	if resp.Error != nil {
-		return nil, at, fmt.Errorf("%s: %w", label, resp.Error)
-	}
 	return resp.Result, at, nil
 }
 
@@ -90,7 +87,7 @@ const observeBudget = 60 * time.Second
 // answers for the profile as it is now. attach consumes the pass's own frames (its workspace notifications and
 // command list) from before the door writes; nil drains them.
 func (o *engineOwner) observe(
-	ctx context.Context, door *marotte.SessionOpts, attach func(engineSession), fn func(ctx context.Context, s engineSession) error,
+	ctx context.Context, door *marotte.SessionOpts, attach func(engineSession) error, fn func(ctx context.Context, s engineSession) error,
 ) error {
 	ctx, cancel := context.WithTimeout(ctx, observeBudget)
 	defer cancel()
@@ -99,12 +96,12 @@ func (o *engineOwner) observe(
 		opts.Presets, opts.AdditionalDirectories = door.Presets, door.AdditionalDirectories
 	}
 	s, err := o.openSession(ctx, opts,
-		func(s engineSession) {
+		func(s engineSession) error {
 			if attach != nil {
-				attach(s)
-				return
+				return attach(s)
 			}
 			go drainSession(s)
+			return nil
 		})
 	if err != nil {
 		return fmt.Errorf("observer pass: %w", err)
@@ -120,7 +117,7 @@ func (o *engineOwner) observe(
 func (o *engineOwner) closePass(ctx context.Context, s engineSession) {
 	err := s.Close(ctx)
 	if _, refused := errors.AsType[*marotte.RPCError](err); refused {
-		dctx, cancel := context.WithTimeout(ctx, sessionDeleteTimeout)
+		dctx, cancel := o.stallAware(ctx, sessionDeleteTimeout)
 		_, err = o.rawCall(dctx, "observer pass delete", marotte.MethodSessionDelete,
 			map[string]any{marotte.KeySessionID: s.SessionID()})
 		cancel()
@@ -154,9 +151,6 @@ func observerCall(ctx context.Context, s engineSession, label, method string, ex
 	}
 	if resp == nil {
 		return nil, errors.New(label + ": nil response")
-	}
-	if resp.Error != nil {
-		return nil, fmt.Errorf("%s: %w", label, resp.Error)
 	}
 	return resp.Result, nil
 }

@@ -1,12 +1,12 @@
-// Ephemeral toasts: a thin wrapper over ui-primitives' default `toast` singleton keeping marotte's
+// Ephemeral toasts: a thin wrapper over @cplieger/ui/toast's default `toast` singleton keeping marotte's
 // surface (`info` / `success` / `error` / `showToast`). Announcement goes through the shared
 // announce() live region, not a role on the stack. Visuals: the .uip-toast skin (04-uip-skin.css).
 
-import { toast, _resetForTest as uipResetToast } from "@cplieger/ui-primitives/toast";
-import type { ToastLevel, ToastRetry } from "@cplieger/ui-primitives/toast";
+import { toast, _resetForTest as uipResetToast } from "@cplieger/ui/toast";
+import type { ToastLevel, ToastRetry } from "@cplieger/ui/toast";
 import type { NoticeLevel } from "./wire/types.gen.js";
 
-export type { ToastRetry };
+export type { ToastLevel, ToastRetry };
 
 /** Show an info-level toast. Auto-dismisses after 4s (paused on hover/focus). */
 export function info(message: string): () => void {
@@ -23,7 +23,7 @@ export function success(message: string): () => void {
  *  only way to take the action. MAX_STICKY bounds those. */
 const ERROR_DURATION_MS = 12_000;
 
-/** How many sticky toasts may be live at once. The stack shows 3 (ui-primitives'
+/** How many sticky toasts may be live at once. The stack shows 3 (@cplieger/ui's
  *  DEFAULT_MAX_VISIBLE, unexported, restated) and promotes only on dismiss or expiry, so a third
  *  sticky holds the last slot and queues everything else unseen. One fault is reported per chat, so
  *  three chats raise three copies. */
@@ -46,6 +46,8 @@ const MAX_QUEUE = 20;
 
 interface Owed {
   readonly cls: string | null;
+  /** The action button's accessible name, when its one-word label alone does not name its target. */
+  readonly actionName: string | null;
   mounted: boolean;
 }
 
@@ -71,12 +73,19 @@ function tagMounted(): void {
       if (entry.cls !== null) {
         node.classList.add(entry.cls);
       }
+      if (entry.actionName !== null) {
+        node.querySelector(".uip-toast-retry")?.setAttribute("aria-label", entry.actionName);
+      }
     }
   }
 }
 
-function track(cls: string | null, show: () => () => void): () => void {
-  const entry: Owed = { cls, mounted: false };
+function track(
+  cls: string | null,
+  show: () => () => void,
+  actionName: string | null = null,
+): () => void {
+  const entry: Owed = { cls, actionName, mounted: false };
   owed.push(entry);
   const dismiss = show();
   tagMounted();
@@ -143,6 +152,25 @@ export function notice(
       ...(long ? { duration: ERROR_DURATION_MS } : {}),
       ...(action !== undefined ? { retry: action } : {}),
     }),
+  );
+}
+
+/** An action that takes the reader to what a toast reports. `name` is the button's accessible
+ *  name, which must contain the visible `label` (WCAG 2.5.3). */
+export interface ToastJump extends ToastRetry {
+  readonly name: string;
+}
+
+/** Show a toast at `level` offering `jump`, kept up as long as an error like `notice`'s action;
+ *  with no jump it is `showToast` at that level. */
+export function jumpToast(message: string, level: ToastLevel, jump?: ToastJump): () => void {
+  if (jump === undefined) {
+    return showToast(message, level);
+  }
+  return track(
+    null,
+    () => toast.show(message, { level, duration: ERROR_DURATION_MS, retry: jump }),
+    jump.name,
   );
 }
 

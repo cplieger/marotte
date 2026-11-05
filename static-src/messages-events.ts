@@ -1,14 +1,17 @@
-// The boundary rows eight entry kinds draw inside a turn's body. `messages.ts` hands this to the dispatcher as
+// The boundary rows nine entry kinds draw inside a turn's body. `messages.ts` hands this to the dispatcher as
 // `makeEvent`, so the block renderer declares no event vocabulary.
 
 import type {
+  ContextResetCause,
   EntryModelFallback,
   KindedEntry,
   ModelSwitchReason,
   TurnRevertCause,
 } from "./types.js";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { chevronEl } from "./chevron.js";
+import { iconEl } from "./icon-el.js";
+import { ICON_ALERT, ICON_COMPACT, ICON_REWIND, ICON_SHIELD, ICON_TOOL_SWITCH } from "./icons.js";
 import { wireDetailsSlide } from "./disclosure-row.js";
 import { effortLabel } from "./effort.js";
 import { renderMarkdownInto } from "./markdown.js";
@@ -22,59 +25,71 @@ type EventEntryKind =
   | "model_routed"
   | "model_fallback"
   | "mode_switched"
-  | "turn_revert";
+  | "turn_revert"
+  | "context_reset";
 
 /**
- * The eight entry kinds that render as a boundary row; `placeEntry` routes every other kind. Distributed over the
- * eight: `KindedEntry` of a union kind is one object with a union payload, which no switch can narrow.
+ * The nine entry kinds that render as a boundary row; `placeEntry` routes every other kind. Distributed over the
+ * nine: `KindedEntry` of a union kind is one object with a union payload, which no switch can narrow.
  */
 export type EventEntry = { [K in EventEntryKind]: KindedEntry<K> }[EventEntryKind];
 
-type BoundaryKind = "switched" | "compacted" | "failed" | "blocked" | "rewound";
+type BoundaryKind = "switched" | "compacted" | "failed" | "blocked" | "rewound" | "reset";
 
 /** Total over the cause by type, so a second `TurnRevertCause` cannot render another cause's sentence. */
 const REVERT_LABELS: Record<TurnRevertCause, string> = { rewind: "Rewound to here" };
+
+/** Total over the cause by type: each says why the agent no longer remembers the turns above the row. */
+const CONTEXT_RESET_LABELS: Record<ContextResetCause, string> = {
+  session_missing:
+    "Context reset · the agent had lost this chat's earlier turns, so a new session started",
+  load_failed: "Context reset · the agent could not reopen this chat, so a new session started",
+  empty_retry: "Context reset · an empty reply was retried in a new session",
+};
 
 /** The row one event entry draws, total over `EventEntry` by type: a new kind fails the type check. */
 export function buildEvent(e: EventEntry): HTMLElement {
   switch (e.kind) {
     case "model_switched": {
-      return boundary("switched", "\u21bb", switchedLabel(e.payload));
+      return boundary("switched", ICON_TOOL_SWITCH, switchedLabel(e.payload));
     }
     case "model_routed": {
       // KAS's own notice (the decode door words it in the past tense); the model pill keeps saying Auto.
       const message = e.payload.message;
       return boundary(
         "switched",
-        "\u21bb",
+        ICON_TOOL_SWITCH,
         message === "" ? "Auto moved to a stronger model" : message,
       );
     }
     case "model_fallback": {
-      return boundary("switched", "\u21bb", fallbackLabel(e.payload));
+      return boundary("switched", ICON_TOOL_SWITCH, fallbackLabel(e.payload));
     }
     case "mode_switched": {
       // One boundary row for both switches, so a reader learns one shape whichever thing moved.
-      return boundary("switched", "\u21bb", modeSwitchedLabel(e.payload));
+      return boundary("switched", ICON_TOOL_SWITCH, modeSwitchedLabel(e.payload));
     }
     case "turn_revert": {
       // The simple form, never `compactionBreak`: a revert has no summary to disclose.
-      return boundary("rewound", "\u21ba", REVERT_LABELS[e.payload.cause]);
+      return boundary("rewound", ICON_REWIND, REVERT_LABELS[e.payload.cause]);
+    }
+    case "context_reset": {
+      return boundary("reset", "\u21bb", CONTEXT_RESET_LABELS[e.payload.cause]);
     }
     case "compaction": {
       const summary = e.payload.summary;
       const label = "Conversation compacted";
       // The one kind whose payload is a body rather than a reason.
       return summary === ""
-        ? boundary("compacted", "\u273b", label)
-        : compactionBreak("\u273b", label, summary);
+        ? boundary("compacted", ICON_COMPACT, label)
+        : compactionBreak(ICON_COMPACT, label, summary);
     }
     case "compaction_failed": {
       // The compaction's own reason, never the turn's: `turnFailureText` owns that account and this row never repeats it.
       const reason = e.payload.reason;
       return boundary(
         "failed",
-        "\u26a0",
+        ICON_ALERT,
         reason === "" ? "Compaction failed" : `Compaction failed: ${reason}`,
       );
     }
@@ -84,7 +99,7 @@ export function buildEvent(e: EventEntry): HTMLElement {
       const props = e.payload.properties.join(", ");
       return boundary(
         "blocked",
-        "\u{1F6E1}",
+        ICON_SHIELD,
         props === ""
           ? "Infrastructure Safety blocked a change"
           : `Infrastructure Safety blocked: ${props}`,
@@ -99,7 +114,7 @@ export function buildEvent(e: EventEntry): HTMLElement {
 
 /**
  * `model_switched` has three triggers: a user's model switch (`from !== to`), an effort-only change (`from === to`)
- * and a switch KAS made (`reason` set). An empty `to` is a context reset and takes no tier.
+ * and a switch KAS made (`reason` set).
  */
 function switchedLabel(p: {
   readonly to: string;
@@ -107,9 +122,6 @@ function switchedLabel(p: {
   readonly effort?: string;
   readonly reason?: ModelSwitchReason;
 }): string {
-  if (p.to === "") {
-    return "Context reset";
-  }
   return p.reason === undefined ? switchedBase(p) : SWITCH_REASONS[p.reason](p);
 }
 
@@ -123,8 +135,8 @@ const SWITCH_REASONS: Record<
 
 /**
  * KAS's fallback notice: the cause from `trigger`, then a decline's reason (a non-empty `reason`, whatever `to`
- * holds) or the model the turn moved to, which a `session` scope keeps for the rest of the session. Model ids stay
- * raw, as `switchedLabel` shows them.
+ * holds) or the model the turn moved to, which a `session` scope keeps for the rest of the session; a retry on the
+ * same model (KAS re-asking Auto) names no target. Model ids stay raw, as `switchedLabel` shows them.
  */
 function fallbackLabel(p: EntryModelFallback): string {
   const cause = `${p.from} ${fallbackCause(p.trigger)}`;
@@ -137,9 +149,8 @@ function fallbackLabel(p: EntryModelFallback): string {
   if (to === "") {
     return cause;
   }
-  return p.scope === "session"
-    ? `${cause}, retried on ${to}, which now serves this session`
-    : `${cause}, retried on ${to}`;
+  const retried = to === p.from ? `${cause}, retried` : `${cause}, retried on ${to}`;
+  return p.scope === "session" ? `${retried}, which now serves this session` : retried;
 }
 
 /** KAS's `trigger` is open: a value it adds later reads as an unknown cause. */
@@ -198,9 +209,10 @@ function modeSwitchedLabel(p: {
   return p.source === "agent" ? `${row}, switched by the agent` : row;
 }
 
+/** `icon` is a registry glyph, hidden from assistive tech: the label carries the row's meaning. */
 function boundary(kind: BoundaryKind, icon: string, label: string): HTMLElement {
   const node = el("div", { className: `boundary boundary-${kind}` });
-  node.appendChild(el("span", { className: "boundary-icon" }, icon));
+  node.appendChild(el("span", { className: "boundary-icon", "aria-hidden": "true" }, iconEl(icon)));
   node.appendChild(el("span", { className: "boundary-label" }, label));
   return node;
 }
@@ -216,7 +228,7 @@ function compactionBreak(icon: string, label: string, summary: string): HTMLElem
     { className: "compaction-head" },
     // Leads the row because it discloses: a disclosing chevron comes first and rotates, a navigating one trails.
     chevronEl(),
-    el("span", { className: "compaction-icon" }, icon),
+    el("span", { className: "compaction-icon", "aria-hidden": "true" }, iconEl(icon)),
     el("span", { className: "compaction-label" }, label),
   );
   root.append(head, body);

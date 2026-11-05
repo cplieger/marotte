@@ -1,10 +1,11 @@
 // The workflow adapter: KAS's `inspect` reply folded into the exec view's model.
 
 import { describe, it, expect } from "vitest";
-import { runToExec, indexPlan } from "./run-exec-source.js";
+import { runToExec, indexPlan, planToExec } from "./run-exec-source.js";
 import { nodePathKey } from "./run-node-key.js";
 import { flatten, workNodes, counters, type ExecNode } from "./exec-view/model.js";
 import extendedLoopRaw from "./testdata/run-extended-loop.json?raw";
+import stepEndCasesRaw from "../internal/agent/testdata/step_end_cases.json?raw";
 import { makeRunState } from "./__test-helpers__/model.js";
 import type { RunNode, RunState } from "./run-store.js";
 import type { RunAsks } from "./run-asks.js";
@@ -571,7 +572,59 @@ describe("runToExec reads what nothing read before", () => {
     expect(watch?.output).toBe("```text\nok\nFAIL x\n```");
   });
 
-  it("keeps a watch capture that is not KAS's record verbatim", () => {
+  it("reads a settled github-pr watch's activity payload", () => {
+    const payload = JSON.stringify(
+      {
+        url: "https://github.com/o/r/pull/7",
+        state: "OPEN",
+        newComments: [],
+        newReviews: [{ id: 1, author: { login: "rev" }, body: "fix it", state: "COMMENTED" }],
+        excludedComments: [],
+        excludedReviews: [],
+        inlineComments: [],
+        excludedInlineComments: [],
+        inlineCommentsFetch: "ok",
+        backlog: { remaining: 0 },
+        headSha: "abc123",
+        mergeable: "CONFLICTING",
+        mergeStateStatus: "DIRTY",
+        newFailedChecks: [],
+        passingCheckCount: 4,
+        pendingCheckCount: 1,
+      },
+      null,
+      2,
+    );
+    const run = runToExec(
+      stateWith({
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        children: [
+          {
+            nodeId: "wait",
+            type: "watch",
+            status: "completed",
+            children: [],
+            capturedOutput: payload,
+          },
+        ],
+      }),
+      [{ nodeId: "wait", type: "watch", agentName: "github-pr" }],
+      NO_ASKS,
+    );
+    const watch = run.nodes[0];
+    expect(watch?.subtitle).toBe("merge conflict \u00b7 1 review");
+    const facts = Object.fromEntries((watch?.facts ?? []).map((f) => [f.label, f.value]));
+    expect(facts["Pull request"]).toBe("https://github.com/o/r/pull/7");
+    expect(facts["Merge state"]).toBe("dirty");
+    expect(facts["Checks"]).toBe("4 passing, 1 pending");
+    expect(facts["Head"]).toBe("abc123");
+    expect(watch?.output).toBe("```json\n" + payload + "\n```");
+    expect(watch?.capture).toBe("");
+  });
+
+  it("keeps a settled watch's undecoded capture verbatim and words its poll as past", () => {
     const run = runToExec(
       stateWith({
         nodeId: "wf_1",
@@ -591,7 +644,7 @@ describe("runToExec reads what nothing read before", () => {
       NO_ASKS,
     );
     expect(run.nodes[0]?.output).toBe("merged");
-    expect(run.nodes[0]?.subtitle).toBe("polls");
+    expect(run.nodes[0]?.subtitle).toBe("polled");
   });
 
   // Four more fields with zero render sites before the exec view.
@@ -745,6 +798,73 @@ describe("runToExec alert precedence", () => {
     expect(failed.alert?.kind).toBe("failed");
     // It names the step, because "the run failed" sends a reader looking for which.
     expect(failed.alert?.text).toContain("Failed at a: exit 1");
+  });
+
+  // KAS reads every pause marotte writes as the user's, so a run marotte stopped resuming carries
+  // marotte's own record of it and never names a person.
+  it("says marotte stopped resuming a run after repeated throttling", () => {
+    const run = runToExec(
+      stateWith(step("a", "paused"), {
+        status: "paused",
+        pauseReason:
+          "Model service error (service 5xx or throttling); resuming the run retries the step.",
+        pauseDetail: { class: "transient-error", code: "ClientThrottleError" },
+        autoResumeStoppedAt: "2026-11-04T09:00:00Z",
+      }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.alert?.kind).toBe("paused");
+    expect(run.alert?.text).toContain(
+      "marotte stopped resuming this run after repeated model throttling",
+    );
+    expect(run.alert?.text).not.toContain("by you");
+    expect(run.alert?.text).not.toContain("paused by user");
+  });
+
+  // A gate pause's reason promises an automatic resume, which a stopped run no longer gets.
+  it("words the stop over marotte's own pause reason", () => {
+    const run = runToExec(
+      stateWith(step("a", "paused"), {
+        status: "paused",
+        stopInitiator: "user",
+        stopReason: "sign in to Kiro to continue; marotte resumes the run when you do",
+        autoResumeStoppedAt: "2026-11-04T09:00:00Z",
+      }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.alert?.text).toContain("marotte stopped resuming this run after repeated pauses");
+    expect(run.alert?.text).not.toContain("marotte resumes the run");
+  });
+
+  it("does not name throttling behind another cause", () => {
+    const run = runToExec(
+      stateWith(step("a", "paused"), {
+        status: "paused",
+        pauseReason:
+          "Step interrupted (agent shutdown or connection reset); resuming the run retries the step.",
+        pauseDetail: { class: "transient-error", code: "EAI_AGAIN" },
+        autoResumeStoppedAt: "2026-11-04T09:00:00Z",
+      }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.alert?.text).toContain("marotte stopped resuming this run after repeated pauses");
+    expect(run.alert?.text).not.toContain("throttling");
+  });
+
+  // The stop speaks only for the pause it was recorded on: a run running again shows no stop.
+  it("drops the stop once the run runs again", () => {
+    const run = runToExec(
+      stateWith(step("a", "running"), {
+        status: "running",
+        autoResumeStoppedAt: "2026-11-04T09:00:00Z",
+      }),
+      undefined,
+      NO_ASKS,
+    );
+    expect(run.alert).toBeUndefined();
   });
 
   it("names the transient-error code behind a pause", () => {
@@ -1523,5 +1643,136 @@ describe("the alert of a run paused at a loop's cap", () => {
         plan,
       ),
     ).toBe("outer reached its pass limit (2/2)");
+  });
+});
+
+/** One row of `internal/agent/testdata/step_end_cases.json`, the table the server's end route is
+ *  held to. */
+interface StepEndCase {
+  id: string;
+  run: string;
+  node: string;
+  type: string;
+  sibling?: string;
+  twin?: string;
+  asked?: boolean;
+  endable: boolean;
+}
+
+describe("endable against the server's end table", () => {
+  const cases = JSON.parse(stepEndCasesRaw) as StepEndCase[];
+
+  // The tree the Go side builds for the same row: the target under a parallel root, a sibling
+  // beside it, and its twin in a branch of its own.
+  it.each(cases)("$id", (c) => {
+    const target = {
+      nodeId: "target",
+      type: c.type,
+      status: c.node,
+      ...(c.node === "pending" ? {} : { sessionId: "sess_target" }),
+      ...(c.asked === true ? { completionSignal: "need_input" } : {}),
+    };
+    const kids: unknown[] = [target];
+    if (c.sibling !== undefined) {
+      kids.push({ nodeId: "sibling", type: "step", status: c.sibling, sessionId: "sess_sibling" });
+    }
+    if (c.twin !== undefined) {
+      kids.push({
+        nodeId: "branch",
+        type: "sequence",
+        status: c.twin,
+        children: [{ nodeId: "target", type: "step", status: c.twin, sessionId: "sess_twin" }],
+      });
+    }
+    const state: RunState = {
+      ...makeRunState({ status: c.run as NonNullable<RunState["status"]> }),
+      root: {
+        nodeId: "root",
+        type: "parallel",
+        status: c.run,
+        children: kids,
+      } as unknown as RunNode,
+    };
+    const asks: RunAsks =
+      c.asked === true
+        ? {
+            count: 1,
+            asked: [{ nodeID: "target", sessionID: "sess_target", answer: true }],
+            label: "",
+          }
+        : NO_ASKS;
+    const path = nodePathKey(["root", "target"]);
+    const node = flatten(runToExec(state, undefined, asks).nodes).find((n) => n.path === path);
+    expect(node).toBeDefined();
+    expect(node?.endable === true).toBe(c.endable);
+  });
+});
+
+describe("planToExec, the Run form's preview", () => {
+  const PLAN = [
+    { nodeId: "a", type: "step", agentName: "x", modelId: "m", effortLevel: "high" },
+    {
+      nodeId: "r",
+      type: "repeat",
+      maxIterations: 3,
+      stopCondition: "done",
+      steps: [{ nodeId: "b", type: "step" }],
+    },
+    {
+      nodeId: "fan",
+      type: "parallel",
+      branches: [
+        { nodeId: "c", type: "step" },
+        { nodeId: "d", type: "step" },
+      ],
+    },
+  ];
+
+  const shape = (nodes: readonly ExecNode[]): string[] =>
+    flatten(nodes).map((n) => `${n.kind}:${n.label}:${n.state}`);
+
+  it("folds a repeat's first pass and a parallel's branches, every node pending", () => {
+    const nodes = planToExec(PLAN);
+    expect(shape(nodes)).toEqual([
+      "step:a:pending",
+      "repeat:r:pending",
+      "sequence:pass 1:pending",
+      "step:b:pending",
+      "parallel:fan:pending",
+      "step:c:pending",
+      "step:d:pending",
+    ]);
+    expect(nodes[1]?.subtitle).toBe("up to 3 passes \u00b7 until done");
+    const facts = new Map((nodes[0]?.facts ?? []).map((f) => [f.label, f.value]));
+    expect([facts.get("Agent"), facts.get("Model"), facts.get("Effort")]).toEqual([
+      "x",
+      "m",
+      "high",
+    ]);
+  });
+
+  it("draws what the run tab draws for the same plan before the run starts", () => {
+    const unstarted = { nodeId: "wf_1", type: "sequence", status: "pending" };
+    const live = runToExec(stateWith(unstarted), PLAN, NO_ASKS).nodes;
+    expect(shape(planToExec(PLAN))).toEqual(shape(live));
+  });
+
+  it("offers no verb, ask or end on a node nothing has started", () => {
+    for (const n of flatten(planToExec(PLAN))) {
+      expect([n.verb, n.ask, n.endable], n.label).toEqual([undefined, undefined, undefined]);
+    }
+  });
+
+  it("folds an absent plan, or one naming no node, to nothing", () => {
+    for (const plan of [
+      undefined,
+      null,
+      [],
+      [{ type: "step" }],
+      [{ nodeId: "" }],
+      { nodeId: "a" },
+    ]) {
+      expect(planToExec(plan), JSON.stringify(plan)).toEqual([]);
+    }
   });
 });

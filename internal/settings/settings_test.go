@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 )
 
 func TestReadBytes_MissingFile(t *testing.T) {
@@ -239,7 +239,7 @@ func TestReadBytes_EqualLengthRenamePublishIsAMiss(t *testing.T) {
 
 	publish := func(content string) {
 		t.Helper()
-		if _, err := atomicfile.WriteFile(ctx, path, []byte(content), atomicfile.WithMode(0o600)); err != nil {
+		if _, err := filesafe.WriteFile(ctx, path, []byte(content), filesafe.WithMode(0o600)); err != nil {
 			t.Fatalf("publish %s: %v", content, err)
 		}
 		if err := os.Chtimes(path, fixed, fixed); err != nil {
@@ -279,9 +279,9 @@ func TestReadBytes_EqualLengthRenamePublishIsAMiss(t *testing.T) {
 	}
 }
 
-// TestParsedMap_CacheReuse verifies a second call returns the cached map (a mutation of the
-// first is visible on the second).
-func TestParsedMap_CacheReuse(t *testing.T) {
+// TestRead_CacheReuse verifies a second Read of unchanged bytes returns the cached map (a mutation
+// of the first is visible on the second).
+func TestRead_CacheReuse(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
 	path := filepath.Join(dir, Filename)
@@ -289,18 +289,18 @@ func TestParsedMap_CacheReuse(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	m1, err := parsedMap(ctx, dir)
-	if err != nil || m1 == nil {
-		t.Fatalf("first parsedMap = (%v,%v)", m1, err)
+	d1, _, err := Read(ctx, dir)
+	if err != nil || d1.raw == nil {
+		t.Fatalf("first Read = (%v,%v)", d1.raw, err)
 	}
-	m1["sentinel"] = json.RawMessage(`true`)
+	d1.raw["sentinel"] = json.RawMessage(`true`)
 
-	m2, err := parsedMap(ctx, dir)
+	d2, _, err := Read(ctx, dir)
 	if err != nil {
-		t.Fatalf("second parsedMap err = %v", err)
+		t.Fatalf("second Read err = %v", err)
 	}
-	if _, ok := m2["sentinel"]; !ok {
-		t.Error("parsedMap re-parsed instead of returning the cached map (cache-hit gate broken)")
+	if _, ok := d2.raw["sentinel"]; !ok {
+		t.Error("Read re-parsed instead of returning the cached map (cache-hit gate broken)")
 	}
 }
 

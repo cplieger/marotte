@@ -35,6 +35,7 @@ const (
 	CmdSteerClear          CommandType = "steer_clear"
 	CmdQueuePrompt         CommandType = "queue_prompt"
 	CmdUnqueuePrompt       CommandType = "unqueue_prompt"
+	CmdSendQueuedNow       CommandType = "send_queued_now"
 	CmdSetInterruptMode    CommandType = "set_interrupt_mode"
 	CmdRenameChat          CommandType = "rename_chat"
 	// CmdSteerRemove drops ONE waiting steer: KAS has no per-steer verb, so the
@@ -65,8 +66,12 @@ const (
 // (internal/server/idempotency.go), never a body field. A payload's own
 // request_id means something else: the id of the ask being answered.
 type ClientCommand struct {
-	Type    CommandType     `json:"type"`
-	ChatID  ChatID          `json:"chat_id,omitempty"`
+	// From is set by the dispatcher on a command another program sent; nil on a page's. Server-only.
+	From   *Caller     `json:"-"`
+	Type   CommandType `json:"type"`
+	ChatID ChatID      `json:"chat_id,omitempty"`
+	// Caller is the optional name a program sending a prompt, steer or queued prompt gives itself (From.Label).
+	Caller  string          `json:"caller,omitempty"`
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
@@ -78,6 +83,8 @@ type ClientCommand struct {
 // tangent merge): the transcript shows it with the text one click away, and KAS records it as the
 // message's label. A typed message never carries one.
 type PromptCommand struct {
+	// Caller is the dispatcher's ClientCommand.From: an API caller's prompt. Server-only.
+	Caller      *Caller      `json:"-"`
 	Text        string       `json:"text"`
 	MessageID   string       `json:"message_id"`
 	Model       string       `json:"model,omitempty"`
@@ -129,11 +136,14 @@ type ResumeSessionCommand struct {
 }
 
 // ForkChatCommand is the payload for type="fork_chat": a TANGENT that starts with the parent's
-// conversation behind it and diverges, nothing syncing the two afterwards. The new chat's id is
-// minted server-side and returned.
+// conversation up to its head or up to a named turn, and diverges, nothing syncing the two
+// afterwards. The new chat's id is minted server-side and returned.
 type ForkChatCommand struct {
 	ParentChatID ChatID `json:"parent_chat_id"`
 	Title        string `json:"title,omitempty"`
+	// MessageID, when set, is the user prompt whose turn the tangent ends after (Branch from
+	// here); empty forks at the head.
+	MessageID string `json:"message_id,omitempty"`
 	// OpID correlates every attempt of one fork; without it a retry would fork
 	// again, producing a second session and chat. See CreateChatCommand.OpID.
 	OpID string `json:"op_id,omitempty"`
@@ -141,8 +151,8 @@ type ForkChatCommand struct {
 
 // ForkOutcomeFresh and ForkOutcomeForked are the two paths fork_chat can take.
 // `forked` means KAS returned a session id carrying the parent's context;
-// `fresh` means no usable forked session was returned. The tangent opens either
-// way, but only a forked session inherits context.
+// `fresh` means the tangent holds none of the parent's conversation: a head
+// fork KAS refused, or a forked session retired before its history loaded.
 const (
 	ForkOutcomeForked = "forked"
 	ForkOutcomeFresh  = "fresh"
@@ -177,9 +187,12 @@ type PermissionResponseCommand struct {
 	// MaxRejectionReasonRunes once trimmed. Never paired with FileDecisions.
 	RejectionReason string `json:"rejection_reason,omitempty"`
 	// AlwaysResource is the pattern an allow_always or reject_always answer saves as a
-	// user rule, required with those options and refused with any other.
+	// rule, required with those options and refused with any other.
 	AlwaysResource string `json:"always_resource,omitempty"`
-	RequestID      int64  `json:"request_id"`
+	// AlwaysScope is where that rule is kept: ConsentScopeUser when empty, or
+	// ConsentScopeSession on an allow_always answer only. Refused with any other answer.
+	AlwaysScope string `json:"always_scope,omitempty"`
+	RequestID   int64  `json:"request_id"`
 }
 
 // MaxRejectionReasonRunes caps a deny note, matching the TUI's own cap.
@@ -187,12 +200,14 @@ const MaxRejectionReasonRunes = 1000
 
 // ElicitationResponseCommand is the payload for type="elicitation_response".
 // RequestID echoes the elicitation_needed event. Action is "accept" | "decline"
-// | "cancel"; Content carries the filled form values on accept only, forwarded
-// verbatim to kiro-cli.
+// | "cancel"; Content carries the filled form values on accept only. Content is
+// decoded and re-encoded, never relayed as bytes: kiro-cli answers nothing to a
+// line holding a lone surrogate escape or an invalid UTF-8 byte, and decoding
+// turns both into U+FFFD.
 type ElicitationResponseCommand struct {
-	Action    string          `json:"action"`
-	Content   json.RawMessage `json:"content,omitempty"`
-	RequestID int64           `json:"request_id"`
+	Content   map[string]any `json:"content,omitempty"`
+	Action    string         `json:"action"`
+	RequestID int64          `json:"request_id"`
 }
 
 // UserInputActionAnswered and UserInputActionDismissed are the accepted actions
@@ -359,6 +374,14 @@ type UnqueuePromptCommand struct {
 	MessageID string `json:"message_id"`
 }
 
+// SendQueuedNowCommand is the payload for type="send_queued_now": the row goes next,
+// ahead of the other queued rows, which keep their order. A running turn is stopped
+// and its close sends the row; with none running it is sent at once. An id no row
+// carries, or a row already sending, stops nothing; a held row is a 409 held.
+type SendQueuedNowCommand struct {
+	MessageID string `json:"message_id"`
+}
+
 // SetInterruptModeCommand is the payload for type="set_interrupt_mode".
 type SetInterruptModeCommand struct {
 	Mode InterruptMode `json:"mode"`
@@ -388,8 +411,29 @@ type OpenTabCommand struct {
 // CloseTabCommand is the payload for type="close_tab". Closing an id that is not open is not an
 // error. For a CHAT tab it also runs the chat teardown and keeps the record under retention.
 type CloseTabCommand struct {
-	ID   string `json:"id"`
-	OpID string `json:"op_id,omitempty"`
+	// Impact is what the page's confirmation named; when present the close commits only if it covers what the
+	// close stops, else it answers 409 close_impact_changed with the server's impact. Absent is unchecked.
+	Impact *CloseImpact `json:"impact,omitempty"`
+	ID     string       `json:"id"`
+	OpID   string       `json:"op_id,omitempty"`
+}
+
+// CloseImpact is the work a close stops, one entry per chat tab it takes. delete_chat carries it too, for the
+// chats under the deleted chat's tabs.
+type CloseImpact struct {
+	Chats []ChatWork `json:"chats"`
+}
+
+// ChatWork names what closing one chat stops, every item by its id: a count could not tell the reply a dialog
+// named from another device's new reply in the same chat.
+type ChatWork struct {
+	Ref string `json:"ref"`
+	// Turns are open turn ids, prompt message ids, and "res:<n>" ids naming a prompt admitted with no turn yet.
+	Turns  []string `json:"turns"`
+	Asks   []string `json:"asks"`
+	Runs   []string `json:"runs"`
+	Steers []string `json:"steers"`
+	Queued []string `json:"queued"`
 }
 
 // ReorderTabsCommand is the payload for type="reorder_tabs": the whole expanded order, every open

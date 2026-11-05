@@ -1,12 +1,14 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestEnsureCodeIntelligence_Guards pins the three no-op paths; reaching an observer pass
@@ -17,7 +19,7 @@ func TestEnsureCodeIntelligence_Guards(t *testing.T) {
 
 	t.Run("not wired is a no-op", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		h.EnsureCodeIntelligence(t.Context())
+		h.ensureCodeIntelligence(t.Context())
 	})
 
 	t.Run("existing config is a no-op", func(t *testing.T) {
@@ -27,7 +29,7 @@ func TestEnsureCodeIntelligence_Guards(t *testing.T) {
 		}
 		gateCalled := false
 		h.SetCodeIntelligence(cfgPath, func() bool { gateCalled = true; return true })
-		h.EnsureCodeIntelligence(t.Context())
+		h.ensureCodeIntelligence(t.Context())
 		if gateCalled {
 			t.Error("gate consulted although lsp.json already exists")
 		}
@@ -39,9 +41,21 @@ func TestEnsureCodeIntelligence_Guards(t *testing.T) {
 	t.Run("closed gate is a no-op", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		h.SetCodeIntelligence(cfgPath, func() bool { return false })
-		h.EnsureCodeIntelligence(t.Context())
+		h.ensureCodeIntelligence(t.Context())
 		if h.ciBusy.Load() {
 			t.Error("in-flight guard left set on the closed-gate path")
+		}
+	})
+
+	t.Run("cancelled ctx is a no-op", func(t *testing.T) {
+		h, _, _ := newTestHub()
+		gateCalled := false
+		h.SetCodeIntelligence(cfgPath, func() bool { gateCalled = true; return true })
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		h.ensureCodeIntelligence(ctx)
+		if gateCalled {
+			t.Error("gate consulted, running every tool's probe, for an init a cancelled ctx can only fail")
 		}
 	})
 }
@@ -59,7 +73,7 @@ func TestEnsureCodeIntelligence_WiredAndUnconfiguredRunsTheInit(t *testing.T) {
 	// A path that does not exist yet is the trigger.
 	h.SetCodeIntelligence(filepath.Join(t.TempDir(), "lsp.json"), func() bool { return true })
 
-	h.EnsureCodeIntelligence(t.Context())
+	h.ensureCodeIntelligence(t.Context())
 
 	if !slices.Contains(br.callLog(), methodKiroCodeIntel) {
 		t.Fatalf("no code-intelligence init was issued; calls were %v", br.callLog())
@@ -73,5 +87,40 @@ func TestEnsureCodeIntelligence_WiredAndUnconfiguredRunsTheInit(t *testing.T) {
 	}
 	if !strings.Contains(out, `"detail":"started go, typescript"`) {
 		t.Errorf("the init line drops KAS's own report of what it started: %s", out)
+	}
+}
+
+// A kicked activation is the runtime's: Shutdown waits for one in flight, and a
+// kick once Shutdown has run starts nothing.
+func TestKickCodeIntelligence_ShutdownWaitsAndRefusesLaterKicks(t *testing.T) {
+	h, _, _ := newTestHub()
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	h.SetCodeIntelligence(filepath.Join(t.TempDir(), "lsp.json"), func() bool {
+		entered <- struct{}{}
+		<-release
+		return false
+	})
+
+	h.KickCodeIntelligence()
+	<-entered
+	stopped := make(chan struct{})
+	go func() {
+		shutdownHub(t, h)
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+		t.Fatal("Shutdown returned while a kicked activation was still in its gate")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	<-stopped
+
+	h.KickCodeIntelligence()
+	select {
+	case <-entered:
+		t.Error("a kick after Shutdown started an activation")
+	case <-time.After(200 * time.Millisecond):
 	}
 }

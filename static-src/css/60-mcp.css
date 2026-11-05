@@ -347,6 +347,7 @@
    filename in the header, or these stats — so a generic button beside them was a
    second affordance for one intent. The stats themselves are the button now. */
 .tool-diff-stats {
+  min-block-size: var(--row-tap-sm);
   border: none;
   background: none;
   padding: 0;
@@ -410,6 +411,7 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   margin: var(--sp-1);
+  margin-inline-start: max(var(--sp-1), var(--sidebar-reach));
   overflow: hidden;
 }
 
@@ -429,6 +431,7 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   margin: var(--sp-1);
+  margin-inline-start: max(var(--sp-1), var(--sidebar-reach));
   padding: var(--sp-1) var(--sp-2);
   background: color-mix(in oklch, var(--c-red) 10%, var(--c-bg-secondary));
   display: flex;
@@ -449,8 +452,11 @@
 .conflict-hunk-row {
   display: flex;
   align-items: center;
-  gap: var(--sp-1);
+  /* The row and a wrapped line keep the actions' targets apart: each reaches
+     `--tap-gap-dense / 2` past its box. */
+  gap: max(var(--sp-1), var(--tap-gap-dense)) var(--sp-1);
   flex-wrap: wrap;
+  min-block-size: var(--row-tap-dense);
 }
 
 .conflict-hunk-title {
@@ -461,30 +467,15 @@
   font-size: var(--fs-sm);
 }
 
-/* NO BOX HERE: every `.conflict-btn` carries `btn-small` from editor-conflict.ts,
- * so the border, fill, radius, cursor and hover are the app's one neutral ghost
- * button (14-tools.css). What this rule held was a near-copy of it — the same
- * `--c-bg-secondary` fill and the same `--c-bg-tertiary` hover, differing only in
- * padding, `--r-sm` for `--r`, primary ink for secondary, and `inline-flex` for
- * `flex` — which is drift rather than a variant. The class stays on all three buttons
- * with nothing selecting it: it is the family's grep handle, and `40-a11y.css` names
- * it in the busy face's history, so deleting it would leave that comment unresolvable.
- *
- * THE DENSE TIER IS THE ONE THING THAT STAYS LOCAL, and it is the pattern copied
- * whole from `.list-row .btn-small` (14-tools.css), `padding-block: 0` included:
- * a hunk row is three actions beside a mono title in a strip padded `--sp-1`, so
- * `--btn-h` would make the buttons the tallest thing in it and therefore the row's
- * own height. `max()` and not a bare token, because the universal hit-target floor
- * scores zero (61-mcp-tools.css) and so loses to this rule, and `--ctl-h-dense` is
- * 2.5rem on a coarse pointer — 40px beside a 44px neighbour. Measured: 32px on a
- * fine pointer against `--btn-h`'s 36, and 44px on a coarse one either way, which
- * is what the floor was already giving these buttons before the conversion.
- *
- * `> .btn-small` and not `.conflict-btn`, because the tier is a property of the ROW
- * rather than of these buttons: a `.btn-small` added to a hunk row later wants it too,
- * and the row holds no other button (its one sibling is the title span). */
+/* NO BOX HERE: every `.conflict-btn` carries `btn-small` from editor-conflict.ts, so
+ * the skin is the app's neutral ghost button (14-tools.css); the class stays as the
+ * family's grep handle. THE DENSE TIER STAYS LOCAL, the pattern of `.list-row
+ * .btn-small`: a hunk row is three actions beside a mono title, so `--btn-h` would
+ * make the buttons the row's height. 32px on every tier; the shared expander
+ * (61-mcp-tools.css) supplies the 44px touch target. `> .btn-small` because the tier
+ * is the ROW's: a `.btn-small` added to a hunk row later wants it too. */
 .conflict-hunk-row > .btn-small {
-  min-block-size: max(var(--ctl-h-dense), var(--hit-floor));
+  min-block-size: var(--ctl-h-dense);
   padding-block: 0;
 }
 
@@ -518,8 +509,10 @@
 /* Shell is the canonical empty state in 18-pages.css. */
 
 /* Governance notice: the mcp_enabled=false notice, with the add affordance
-   disabled alongside it, and the registry panel's lead. */
-.mcp-gov-disabled {
+   disabled alongside it, and the registry panel's lead. The unreadable-record
+   notice shares it. */
+.mcp-gov-disabled,
+.mcp-store-unreadable {
   margin: 0 0 var(--sp-3);
   color: var(--c-yellow);
   font-size: var(--fs-sm);
@@ -579,13 +572,9 @@
 }
 
 .mcp-row {
-  /* Row height comes from the TIER, not from the font. Without it this row
-     resolved to its line box plus padding — the trap `--ctl-h-sm` exists to
-     close — so it measured the same on a finger as on a mouse while `.tab`
-     beside it correctly went 36px to 44px. A floor, so a taller row keeps its
-     own height: measured, this moves desktop by at most 1px and gives every
-     list row a real 36px target on touch. */
-  min-block-size: var(--ctl-h-sm);
+  /* The row is its own target: 24px on a mouse, the 44px floor on touch. A floor,
+     so a taller row keeps its own height. */
+  min-block-size: var(--row-tap-sm);
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -686,7 +675,7 @@
 .mcp-row-actions {
   display: flex;
   align-items: center;
-  gap: 0.125rem;
+  gap: max(0.125rem, var(--tap-gap-dense));
   flex-shrink: 0;
 }
 
@@ -767,8 +756,20 @@
   }
 }
 
+.mcp-sign-in-btn {
+  justify-self: start;
+  margin-block-start: 0.125rem;
+}
+
+.mcp-sign-in-hint {
+  margin-block-start: var(--sp-1);
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+}
+
 /* The OAuth loopback relay: the rescue box for a sign-in whose redirect landed
-   on the wrong machine. Sits under the sign-in pill on a needs_auth row, and is
+   on the wrong machine. Sits under the sign-in pill on a signing_in row, and is
    collapsed by default so a local-browser sign-in sees one line, not a form. */
 .mcp-relay {
   margin-block-start: var(--sp-1);
@@ -803,7 +804,7 @@
 .mcp-relay-input {
   flex: 1 1 16rem;
   min-width: 0;
-  min-block-size: var(--btn-h);
+  min-block-size: var(--field-h);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
 }
@@ -871,6 +872,9 @@
   gap: var(--sp-2);
   overflow-y: auto;
   padding-inline: var(--sp-1);
+
+  /* The first and last control's targets stay inside the clip. */
+  padding-block: max(0px, calc(var(--tap-gap) / 2));
   scrollbar-gutter: stable;
 }
 
@@ -884,7 +888,7 @@
  * background's cover by the panel's own gap and leave the resting layout alone. */
 .mcp-search-row {
   display: flex;
-  align-items: stretch;
+  align-items: center;
   gap: var(--sp-2);
   position: sticky;
   inset-block-start: 0;
@@ -904,7 +908,8 @@
   display: none;
 }
 
-[id="mcp-search-btn"].is-searching::after {
+/* `::before`, because `::after` is the button's hit expander (61-mcp-tools.css). */
+[id="mcp-search-btn"].is-searching::before {
   content: "";
   inline-size: var(--icon-ui);
   block-size: var(--icon-ui);
@@ -1027,7 +1032,7 @@
 .mcp-pair-name,
 .mcp-pair-value {
   width: 100%;
-  min-block-size: var(--ctl-h-dense);
+  min-block-size: var(--field-h-dense);
   padding: var(--sp-1) var(--sp-2);
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
@@ -1036,6 +1041,9 @@
 .mcp-pair-del {
   min-block-size: var(--ctl-h-dense);
   padding: var(--sp-1);
+
+  /* The field beside it has no expander, so the ×'s own reach needs the whole gap. */
+  margin-inline-start: max(0px, calc(var(--tap-gap-sm) / 2 - 0.25rem));
   color: var(--c-text-tertiary);
 
   &:hover {
@@ -1088,7 +1096,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-2);
-  min-block-size: var(--ctl-h-dense);
+  min-block-size: var(--row-tap-dense);
   list-style: none;
   cursor: pointer;
 }
@@ -1225,8 +1233,8 @@
 
 /* The dense control tier, because this is an action inside a dense row rather
    than one standing alone; `.btn-small`'s own `--btn-h` would set the row's floor
-   at 36px and undo most of the compaction. The hit-target floor in 61-mcp-tools
-   still lifts it to 44px on a coarse pointer. */
+   at 36px and undo most of the compaction. The shared expander (61-mcp-tools.css)
+   gives it the 44px target on a coarse pointer. */
 .mcp-install-btn {
   min-block-size: var(--ctl-h-dense);
   padding-block: 0;

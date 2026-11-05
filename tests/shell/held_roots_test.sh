@@ -67,7 +67,7 @@ rc=$?
   && ok "a missing flock binary (127) is not read as contention" \
   || no "flock missing" "rc=$rc: $(cat "$WORK/err.log")"
 
-call=$(grep -n '^refuse_held_roots "$CONFIG_DIR" "$KIRO_HOME" "$TOOLS" || exit 1$' "$ENTRYPOINT" | cut -d: -f1)
+call=$(grep -n '^refuse_held_roots "$CONFIG_DIR" "$KIRO_HOME" ${TOOLS:+"$TOOLS"} || exit 1$' "$ENTRYPOINT" | cut -d: -f1)
 migrate=$(grep -n '^if \[ -d /config/kiro \]' "$ENTRYPOINT" | cut -d: -f1)
 [ -n "$call" ] && [ -n "$migrate" ] && [ "$call" -lt "$migrate" ] \
   && ok "the boot refuses on all three roots before the legacy migration's deletions" \

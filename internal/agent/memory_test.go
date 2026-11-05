@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -88,6 +89,42 @@ func TestHandleMemoryOne_DeleteByID(t *testing.T) {
 	}
 }
 
+func TestHandleMemoryOne_DeleteOfAGoneIDIsDone(t *testing.T) {
+	cases := []struct {
+		name     string
+		refusal  *marotte.RPCError
+		wantCode int
+	}{
+		{
+			// The wire shape KAS's ACP layer gives a thrown InvalidMemoryCommandError.
+			"an id KAS no longer holds", &marotte.RPCError{
+				Code: -32603, Message: "Internal error",
+				Data: json.RawMessage(`{"details":"no memory with id \"m9\" to delete."}`),
+			}, http.StatusOK,
+		},
+		{
+			"any other refusal still fails", &marotte.RPCError{
+				Code: -32603, Message: "Internal error",
+				Data: json.RawMessage(`{"details":"'id' or 'title' is required for delete."}`),
+			}, http.StatusBadRequest,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, br := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
+			br.callRPCErrs = map[string]*marotte.RPCError{methodKiroMemoryDelete: tc.refusal}
+			req := httptest.NewRequest(http.MethodDelete, "/api/memory/m9", nil)
+			req.SetPathValue("id", "m9")
+			rec := httptest.NewRecorder()
+			h.config.handleMemoryOne(rec, req)
+			if rec.Code != tc.wantCode {
+				t.Errorf("DELETE = %d, want %d (%s)", rec.Code, tc.wantCode, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestWriteMemoryErr_ClassifiesTheFailure(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -104,7 +141,19 @@ func TestWriteMemoryErr_ClassifiesTheFailure(t *testing.T) {
 			http.StatusBadRequest, "no memory with id",
 		},
 		{
+			"a parse error KAS itself sends keeps KAS's words", &marotte.RPCError{Code: marotte.RPCCodeParseError, Message: "Parse error"},
+			http.StatusBadRequest, "Parse error",
+		},
+		{
 			"a transport fault is generic", errors.New("bridge exited: /config/home/secret path"),
+			http.StatusBadGateway, "memory request failed",
+		},
+		{
+			"an undecoded answer is not a refusal", undecodedReply(),
+			http.StatusBadGateway, "memory request failed",
+		},
+		{
+			"an oversize answer is not a refusal", &marotte.TransportError{Err: marotte.ErrFrameTooLarge},
 			http.StatusBadGateway, "memory request failed",
 		},
 	}
@@ -116,6 +165,34 @@ func TestWriteMemoryErr_ClassifiesTheFailure(t *testing.T) {
 				t.Errorf("writeMemoryErr(%v) = %d %s, want %d containing %q",
 					tc.err, rec.Code, rec.Body.String(), tc.wantCode, tc.wantText)
 			}
+		})
+	}
+}
+
+// TestHandleMemoryOne_AStalledEngineAnswersStillApplying pins that an edit or delete the engine has not answered within
+// the browser's budget is reported as still applying, never as failed, and that the late answer refreshes the list.
+func TestHandleMemoryOne_AStalledEngineAnswersStillApplying(t *testing.T) {
+	for _, tc := range []struct {
+		method, kasMethod, body, reply string
+	}{
+		{http.MethodPatch, methodKiroMemoryUpdate, `{"title":"New"}`, `{"memory":{"id":"m1","memoryType":"SEMANTIC","title":"New","summary":"s"}}`},
+		{http.MethodDelete, methodKiroMemoryDelete, ``, `{"id":"m1","title":"x"}`},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			answerBudgetOf(t, 50*time.Millisecond)
+			h, _, br := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
+			br.setCallResult(tc.kasMethod, json.RawMessage(tc.reply))
+			release := holdCall(t, br, tc.kasMethod)
+			before := len(eventsOfType(h, marotte.EventMemoriesChanged))
+
+			req := httptest.NewRequest(tc.method, "/api/memory/m1", strings.NewReader(tc.body))
+			req.SetPathValue("id", "m1")
+			rec := answeredWithin(t, func(w http.ResponseWriter) { h.config.handleMemoryOne(w, req) })
+
+			assertStillApplying(t, rec)
+			release()
+			awaitEventCount(t, h, marotte.EventMemoriesChanged, before+1)
 		})
 	}
 }

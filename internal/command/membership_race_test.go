@@ -28,13 +28,13 @@ func TestMembership_ConcurrentCreateAndDeleteOfOneChat(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			_, _ = mem.CreateChatAndOpen(t.Context(), ChatCreate{
+			_, _ = mem.CreateChatAndOpen(t.Context(), &ChatCreate{
 				OpID: "op-race", Init: func(c *marotte.Chat) { c.Name = "racer" },
 			})
 		}()
 		go func() {
 			defer wg.Done()
-			_ = mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del")
+			_ = mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del", nil)
 		}()
 		wg.Wait()
 
@@ -101,7 +101,7 @@ func TestMembership_ADeleteWhoseTabCloseFailsRetriesUnderRace(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			_ = mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del")
+			_ = mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del", nil)
 		}()
 		go func() {
 			defer wg.Done()
@@ -130,7 +130,7 @@ func newRacedMembership(t *testing.T, chats chatStore) (*Membership, *tabs.Store
 	}
 	bus := &tabBus{}
 	return newMembership(&membershipDeps{
-		Chats: chats, Tabs: st, Bus: bus, Teardown: &recordingTeardown{},
+		Chats: withKeep(chats), Tabs: st, Bus: bus, Teardown: &recordingTeardown{},
 	}), st
 }
 
@@ -161,7 +161,7 @@ func TestMembership_ADeleteCannotInterleaveWithACreate(t *testing.T) {
 	}
 	chats := &hookedChats{InMemoryChatStore: inner}
 	mem := newMembership(&membershipDeps{
-		Chats: chats, Tabs: st, Bus: &tabBus{}, Teardown: &recordingTeardown{},
+		Chats: withKeep(chats), Tabs: st, Bus: &tabBus{}, Teardown: &recordingTeardown{},
 	})
 	first := createChat(t, mem, "op-race")
 	chatID := marotte.ChatID(first.Chat.ID)
@@ -171,7 +171,7 @@ func TestMembership_ADeleteCannotInterleaveWithACreate(t *testing.T) {
 	chats.hook = func() {
 		go func() {
 			defer close(deleted)
-			_ = mem.DeleteChatAndCloseTabs(context.Background(), chatID, "op-del")
+			_ = mem.DeleteChatAndCloseTabs(context.Background(), chatID, "op-del", nil)
 		}()
 		select {
 		case <-deleted:
@@ -179,7 +179,7 @@ func TestMembership_ADeleteCannotInterleaveWithACreate(t *testing.T) {
 		}
 	}
 
-	opened, err := mem.CreateChatAndOpen(t.Context(), ChatCreate{
+	opened, err := mem.CreateChatAndOpen(t.Context(), &ChatCreate{
 		OpID: "op-race", Init: func(c *marotte.Chat) { c.Name = "racer" },
 	})
 	if err != nil {

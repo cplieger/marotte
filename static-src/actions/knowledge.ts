@@ -1,7 +1,8 @@
 // Knowledge-base actions. The list is server-canonical (kiro-cli's global store) and refetched
 // after every mutation, so no optimistic state.
 
-import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import { apiAction, RETRY_STANDARD } from "./index.js";
+import { retryUnlessStill, stillOr } from "./still-applying.js";
 
 const KNOWLEDGE_API = "/api/knowledge";
 
@@ -15,7 +16,7 @@ interface AddArgs {
 export const addKnowledge = apiAction<AddArgs, { message?: string }>({
   name: "knowledge.add",
   idempotencyKey: true,
-  retryable: retryNetwork,
+  retryable: retryUnlessStill,
   retry: RETRY_STANDARD,
   request: ({ path, name }) => ({
     method: "POST",
@@ -39,7 +40,7 @@ export const removeKnowledge = apiAction<RemoveArgs, void>({
     method: "DELETE",
     path: `${KNOWLEDGE_API}/${encodeURIComponent(name)}`,
   }),
-  error: "Could not remove knowledge base",
+  error: stillOr("removing the knowledge base", "Could not remove knowledge base"),
 });
 
 interface ReindexArgs {
@@ -55,7 +56,7 @@ export const reindexKnowledge = apiAction<ReindexArgs, { message?: string }>({
     method: "POST",
     path: `${KNOWLEDGE_API}/${encodeURIComponent(name)}/reindex`,
   }),
-  error: "Could not re-index knowledge base",
+  error: stillOr("starting the re-index", "Could not re-index knowledge base"),
 });
 
 interface CancelArgs {
@@ -70,7 +71,7 @@ export const cancelKnowledgeIndexing = apiAction<CancelArgs, { message?: string 
     method: "POST",
     path: `${KNOWLEDGE_API}/${encodeURIComponent(name)}/cancel`,
   }),
-  error: "Couldn't stop indexing",
+  error: stillOr("stopping the index", "Couldn't stop indexing"),
 });
 
 // No auto-retry, for removeKnowledge's reason.
@@ -78,5 +79,5 @@ export const cancelKnowledgeIndexing = apiAction<CancelArgs, { message?: string 
 export const clearKnowledge = apiAction<void, void>({
   name: "knowledge.clear",
   request: () => ({ method: "DELETE", path: KNOWLEDGE_API }),
-  error: "Couldn't clear knowledge bases",
+  error: stillOr("clearing the knowledge bases", "Couldn't clear knowledge bases"),
 });

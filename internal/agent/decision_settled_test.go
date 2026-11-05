@@ -7,9 +7,10 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/cplieger/go/sse"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/sse"
+	"github.com/cplieger/marotte/internal/notice"
 )
 
 func settledEvents(t *testing.T, events []sse.ReplayEvent) []marotte.DecisionSettledPayload {
@@ -174,8 +175,8 @@ func TestTakePendingPerm_RetractsTheAsksOwnSubject(t *testing.T) {
 			fp.mu.Lock()
 			got := slices.Clone(fp.retracted)
 			fp.mu.Unlock()
-			if len(got) != 1 || got[0] != tc.want {
-				t.Errorf("retracted %+v, want [%+v]", got, tc.want)
+			if want := (retraction{subject: tc.want, ask: notice.AskKey(askID)}); len(got) != 1 || got[0] != want {
+				t.Errorf("retracted %+v, want [%+v]", got, want)
 			}
 		})
 	}

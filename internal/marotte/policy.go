@@ -4,8 +4,9 @@ package marotte
 // _kiro/permissions/list (→ {rules:[{capability, match?, exclude?, effect, scope, source}]}) and
 // explain (a pure simulation) on an observer session, and edited through the permissions.yaml files KAS
 // hot-reloads (internal/policyfile). policy/check is NOT used: it raises a real permission request.
-// effect is allow | deny | ask (deny > ask > allow); scope is kiro | administration | user |
-// workspace | agent | session, of which only user and workspace are file-editable.
+// effect is allow | ask | deny | evaluate (deny > ask > evaluate > allow); scope is kiro |
+// administration | organization | user | workspace | agent | session, of which only user and
+// workspace are file-editable.
 
 // PolicyRule is one native policy rule as reported by _kiro/permissions/list.
 // Capability + effect are always present; match/exclude are optional glob
@@ -18,6 +19,9 @@ type PolicyRule struct {
 	Source     string   `json:"source"`
 	Match      []string `json:"match,omitempty"`
 	Exclude    []string `json:"exclude,omitempty"`
+	// Editable is stamped by GET /api/permissions from policyfile.Editable: the rule table's
+	// controls can write this row. KAS never sends it.
+	Editable bool `json:"editable"`
 }
 
 // PolicyRuleCore is the rule shape without provenance, used inside an
@@ -51,8 +55,12 @@ type PolicyView struct {
 	// Order is part of the payload. A client that sorted these would put the
 	// loosest option somewhere in the middle of a list a reader scans from
 	// cautious to permissive.
-	Profiles  []SecurityProfile `json:"profiles"`
-	Available bool              `json:"available"`
+	Profiles []SecurityProfile `json:"profiles"`
+	// LoadErrors are the rules KAS skipped or failed to load at the reading pass's door
+	// (session/new _meta.policyErrors); empty, never null, when it reported none or the view
+	// fell back to the files.
+	LoadErrors []PolicyErrorItem `json:"load_errors"`
+	Available  bool              `json:"available"`
 }
 
 // SecurityProfile is one entry in the picker: the persisted id and the KAS policy
@@ -94,14 +102,10 @@ type PolicyErrorItem struct {
 	Fatal   bool   `json:"fatal,omitempty"`
 }
 
-// PermissionsChangedPayload is the SSE payload for type="permissions_changed"
-// (translated from _kiro/policy/changed). Clients refetch GET /api/permissions
-// on receipt. Status is "success" or "failed"; Errors carries any non-fatal
-// warnings or the fatal parse error.
-type PermissionsChangedPayload struct {
-	Status string            `json:"status,omitempty"`
-	Errors []PolicyErrorItem `json:"errors,omitempty"`
-}
+// PermissionsChangedPayload is the SSE payload for type="permissions_changed": a nudge with no
+// fields. A client showing the policy refetches GET /api/permissions, which carries the rules
+// and the load errors.
+type PermissionsChangedPayload struct{}
 
 // PolicyErrorPayload is the SSE payload for type="policy_error" (translated
 // from _kiro/policy/error). Surfaced as a banner so a bad hand-edit or a

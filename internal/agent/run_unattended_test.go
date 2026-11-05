@@ -31,7 +31,7 @@ func TestUnattendedBudget_MatchesTheDisclaimer(t *testing.T) {
 // TestIsScheduledRun_ReadsTheLeasesOrigin pins the `scheduled` flag's source: only the launch path can tell a
 // scheduled parentless run from a manual one, and the lease records it.
 func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
-	h := &Runs{}
+	h := &Runs{chats: newTestChatStore()}
 
 	if h.IsScheduled("wf_1") {
 		t.Error("an unknown run reported scheduled; a manual launch must never be marked")
@@ -40,7 +40,7 @@ func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
 	if h.IsScheduled("wf_manual") {
 		t.Error("a manual run reported scheduled")
 	}
-	h.grantLease(t.Context(), "wf_1", "publish", scheduledLaunch("sched-1", time.Time{}), hostSec())
+	h.grantLease(t.Context(), "wf_1", "publish", scheduledLaunch(schedule.Row{ID: "sched-1"}, time.Time{}), hostSec())
 	if !h.IsScheduled("wf_1") {
 		t.Error("a scheduled run did not report scheduled")
 	}
@@ -59,9 +59,9 @@ func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
 }
 
 func TestRunLabel_RebuildsTheLaunchLabelFromTheLease(t *testing.T) {
-	h := &Runs{}
+	h := &Runs{chats: newTestChatStore()}
 	h.grantLease(t.Context(), "wf_manual", "publish", manualLaunch(), hostSec())
-	h.grantLease(t.Context(), "wf_sched", "publish", scheduledLaunch("sched-1", time.Time{}), hostSec())
+	h.grantLease(t.Context(), "wf_sched", "publish", scheduledLaunch(schedule.Row{ID: "sched-1"}, time.Time{}), hostSec())
 	if got := h.RunLabel("wf_sched"); got != "publish · scheduled" {
 		t.Errorf("RunLabel(scheduled) = %q, want %q", got, "publish · scheduled")
 	}
@@ -81,15 +81,15 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	h := &Runs{leases: store}
-	h.grantLease(t.Context(), "wf_1", "nightly", scheduledLaunch("sched-1", time.Time{}), hostSec())
+	h := &Runs{chats: newTestChatStore(), leases: store}
+	h.grantLease(t.Context(), "wf_1", "nightly", scheduledLaunch(schedule.Row{ID: "sched-1"}, time.Time{}), hostSec())
 
 	// The restart: a new store over the same directory, a runtime that launched nothing.
 	reopened, err := runlease.NewStore(dir)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	after := &Runs{leases: reopened}
+	after := &Runs{chats: newTestChatStore(), leases: reopened}
 
 	l, held := after.lease("wf_1")
 	if !held {
@@ -109,9 +109,9 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 // TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk pins that the floor answers by request id, so an id-less ask must
 // not arm (it would dereference nothing); the ordinary handler still runs.
 func TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk(t *testing.T) {
-	rs := &Runs{}
+	rs := &Runs{chats: newTestChatStore()}
 	rs.grantLease(t.Context(), "wf_1", "nightly",
-		scheduledLaunch("sched-1", time.Now().Add(30*time.Second)), hostSec())
+		scheduledLaunch(schedule.Row{ID: "sched-1"}, time.Now().Add(30*time.Second)), hostSec())
 	if l, held := rs.lease("wf_1"); !held || !l.Unattended {
 		t.Fatal("the fixture did not produce the unattended lease the floor reaches through")
 	}
@@ -351,6 +351,7 @@ func TestOptionIDByKind_MatchesTheKindExactly(t *testing.T) {
 func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 	for name, tc := range map[string]struct {
 		options     string
+		meta        string
 		wantOpt     string
 		wantOutcome string
 		wantReason  string
@@ -367,18 +368,26 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 			options:     `[{"optionId":"accept","kind":"allow_once"}]`,
 			wantOutcome: string(marotte.StopReasonCancelled),
 		},
+		// KAS hands a plan's deny note to the next approved plan's steps as the user's correction.
+		"a plan approval is refused with no note": {
+			options: `[{"optionId":"accept","kind":"allow_once"},
+				{"optionId":"reject","kind":"reject_once"}]`,
+			meta:        `,"_meta":{"kiro":{"toolId":"update_workflow","workflowPlan":{}}}`,
+			wantOpt:     "reject",
+			wantOutcome: "selected",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, br := hubForFSTest(t, t.TempDir())
 			chatID := runChatID("wf_deny")
-			h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
+			h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
 			id := int64(90210)
 			h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 				marotte.PermissionNeededPayload{RequestID: id}), br)
 
-			h.runs.answerUnattended(chatID, br, id, "sched-1", askName{tool: "execute_bash"},
-				[]byte(`{"options":`+tc.options+`}`))
+			h.runs.answerUnattended(chatID, br, id, schedule.Run{ScheduleID: "sched-1", WorkflowID: "wf_1"}, askName{tool: "execute_bash"},
+				[]byte(`{"options":`+tc.options+tc.meta+`}`))
 
 			select {
 			case <-br.done:
@@ -427,13 +436,13 @@ func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing
 	}
 	h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
 	chatID := runChatID("wf_admin")
-	h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
 	id := int64(4242)
 	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 
-	h.runs.answerUnattended(chatID, br, id, "sched-1", askName{tool: "execute_bash"}, []byte(`{
+	h.runs.answerUnattended(chatID, br, id, schedule.Run{ScheduleID: "sched-1", WorkflowID: "wf_1"}, askName{tool: "execute_bash"}, []byte(`{
 		"options":[{"optionId":"accept","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}],
 		"_meta":{"kiro":{"consent":{"scope":"administration"}}}}`))
 
@@ -455,31 +464,106 @@ func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing
 	}
 }
 
+// With the switch on, an ask Kiro's safety check handed to a person is still refused, and the row says who
+// asked; the same ask without the stamp is approved.
+func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
+	for _, tc := range []struct {
+		name, meta, wantOption string
+	}{
+		{name: "handed_over", meta: `,"_meta":{"kiro":{"trustClassifier":{"decision":"prompt","reason":"Kiro's safety check flagged this"}}}`, wantOption: "reject"},
+		{name: "unstamped", wantOption: "accept"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			body, err := json.Marshal(map[string]any{settings.KeyScheduledAutoApprove: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), body, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
+			chatID := runChatID("wf_classifier")
+			h.bridge.mgr.insert(chatID, testBridge(br, bridgeIdle))
+			st, err := schedule.NewStore(t.TempDir())
+			if err != nil {
+				t.Fatalf("schedule.NewStore: %v", err)
+			}
+			entry := schedule.Entry{Source: "bundled://nightly", Enabled: true, Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2}}
+			if pErr := st.Put(t.Context(), &entry); pErr != nil {
+				t.Fatalf("Put schedule: %v", pErr)
+			}
+			h.runs.schedules = st
+			run := schedule.Run{ScheduleID: entry.ID(), ScheduleLife: entry.Life, WorkflowID: "wf_classifier"}
+			if rErr := st.RecordStart(t.Context(), run); rErr != nil {
+				t.Fatalf("RecordStart: %v", rErr)
+			}
+			id := int64(4243)
+			h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+				marotte.PermissionNeededPayload{RequestID: id}), br)
+
+			h.runs.answerUnattended(chatID, br, id, run, askName{tool: "fs_write"}, []byte(
+				`{"options":[{"optionId":"accept","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}]`+tc.meta+`}`,
+			))
+
+			select {
+			case <-br.done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the floor answered nothing")
+			}
+			br.respMu.Lock()
+			got := br.response
+			br.respMu.Unlock()
+			outcome, ok := got.result.(*marotte.PermissionOutcome)
+			if !ok {
+				t.Fatalf("answered with %T (%v), want a permission outcome", got.result, got.result)
+			}
+			if outcome.Outcome.OptionID != tc.wantOption {
+				t.Errorf("optionId = %q, want %q", outcome.Outcome.OptionID, tc.wantOption)
+			}
+			if tc.wantOption != "reject" {
+				return
+			}
+			rows := st.List()
+			const wantReason = "Kiro's safety check asked a person to approve fs_write with nobody watching. " +
+				"Approve it in a chat, or add a permission rule to allow it"
+			if len(rows) != 1 || rows[0].LastStatus != schedule.StatusFailed || rows[0].LastReason != wantReason {
+				t.Errorf("schedule rows = %+v, want one failed row reading %q", rows, wantReason)
+			}
+		})
+	}
+}
+
 // TestAnswerUnattended_ADenialFailsTheScheduleRow pins that the row reads as a failure naming the tool.
 func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
 	chatID := runChatID("wf_deny")
-	h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
 	st, err := schedule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("schedule.NewStore: %v", err)
 	}
 	entry := schedule.Entry{
-		ID: "sched-1", Source: "bundled://nightly", Enabled: true,
+		Source: "bundled://nightly", Enabled: true,
 		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
 	}
 	if pErr := st.Put(t.Context(), &entry); pErr != nil {
 		t.Fatalf("Put schedule: %v", pErr)
 	}
 	h.runs.schedules = st
+	// The row tracks the run its fire launched; only that run's outcome lands on it.
+	run := schedule.Run{ScheduleID: entry.ID(), ScheduleLife: entry.Life, WorkflowID: "wf_deny"}
+	if rErr := st.RecordStart(t.Context(), run); rErr != nil {
+		t.Fatalf("RecordStart: %v", rErr)
+	}
 
 	id := int64(90211)
 	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 	logs := captureLogs(t)
 
-	h.runs.answerUnattended(chatID, br, id, "sched-1", askName{tool: "execute_bash"},
+	h.runs.answerUnattended(chatID, br, id, run, askName{tool: "execute_bash"},
 		[]byte(`{"options":[{"optionId":"reject","kind":"reject_once"}]}`))
 
 	rows := st.List()
@@ -503,20 +587,25 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 func TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
 	chatID := runChatID("wf_deny")
-	h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
 	st, err := schedule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("schedule.NewStore: %v", err)
 	}
 	entry := schedule.Entry{
-		ID: "sched-1", Source: "bundled://nightly", Enabled: true,
+		Source: "bundled://nightly", Enabled: true,
 		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
 	}
 	if pErr := st.Put(t.Context(), &entry); pErr != nil {
 		t.Fatalf("Put schedule: %v", pErr)
 	}
 	h.runs.schedules = st
+	// The row tracks the run its fire launched; only that run's outcome lands on it.
+	run := schedule.Run{ScheduleID: entry.ID(), ScheduleLife: entry.Life, WorkflowID: "wf_deny"}
+	if rErr := st.RecordStart(t.Context(), run); rErr != nil {
+		t.Fatalf("RecordStart: %v", rErr)
+	}
 
 	id := int64(90213)
 	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
@@ -525,7 +614,7 @@ func TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow(t *testing
 
 	params := []byte(`{"options":[{"optionId":"reject","kind":"reject_once"}],"_meta":{"kiro":{"toolId":"kiro_powers",
 		"consent":{"capability":"power","resource":"github/github/create_pr"}}}}`)
-	h.runs.answerUnattended(chatID, br, id, "sched-1", permissionAskName(params), params)
+	h.runs.answerUnattended(chatID, br, id, run, permissionAskName(params), params)
 
 	rows := st.List()
 	if len(rows) != 1 {
@@ -549,35 +638,40 @@ func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *
 	chatID := runChatID("wf_deny")
 	br := &duringWriteBridge{fakeBridge: newFakeBridge()}
 	br.during = func() { h.bus.endAsksOf(br) }
-	h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
 	st, err := schedule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("schedule.NewStore: %v", err)
 	}
 	entry := schedule.Entry{
-		ID: "sched-1", Source: "bundled://nightly", Enabled: true,
+		Source: "bundled://nightly", Enabled: true,
 		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
 	}
 	if pErr := st.Put(t.Context(), &entry); pErr != nil {
 		t.Fatalf("Put schedule: %v", pErr)
 	}
 	h.runs.schedules = st
+	// The row tracks the run its fire launched; only that run's outcome lands on it.
+	run := schedule.Run{ScheduleID: entry.ID(), ScheduleLife: entry.Life, WorkflowID: "wf_deny"}
+	if rErr := st.RecordStart(t.Context(), run); rErr != nil {
+		t.Fatalf("RecordStart: %v", rErr)
+	}
 
 	id := int64(90212)
 	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 	logs := captureLogs(t)
 
-	h.runs.answerUnattended(chatID, br, id, "sched-1", askName{tool: "execute_bash"},
+	h.runs.answerUnattended(chatID, br, id, run, askName{tool: "execute_bash"},
 		[]byte(`{"options":[{"optionId":"reject","kind":"reject_once"}]}`))
 
 	rows := st.List()
 	if len(rows) != 1 {
 		t.Fatalf("the schedule store holds %d rows, want 1", len(rows))
 	}
-	if rows[0].LastStatus != "" || rows[0].LastReason != "" {
-		t.Errorf("answerUnattended(deny, withdrawn) row = (%q, %q), want it untouched", rows[0].LastStatus, rows[0].LastReason)
+	if rows[0].LastStatus != "started" || rows[0].LastReason != "" {
+		t.Errorf("answerUnattended(deny, withdrawn) row = (%q, %q), want it untouched (started)", rows[0].LastStatus, rows[0].LastReason)
 	}
 	// An alert rule keys on this message: a refusal that reached nobody must not page as one.
 	if got := logs.String(); strings.Contains(got, logMsgUnattendedPermission) {

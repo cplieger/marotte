@@ -34,20 +34,20 @@ func TestValidate_AcceptReject(t *testing.T) {
 		{
 			name: "RemoteHTTP",
 			srv: &Server{
-				Transport: TransportHTTP, Name: "ok", URL: "https://x.example/mcp",
+				Transport: transportHTTP, Name: "ok", URL: "https://x.example/mcp",
 				Headers: []keyPair{{Name: "Authorization", Value: "Bearer x"}},
 			},
 			wantErr: false,
 		},
 		{
 			name:    "RemoteRejectsNonHTTP",
-			srv:     &Server{Transport: TransportHTTP, Name: "x", URL: "file:///tmp/x"},
+			srv:     &Server{Transport: transportHTTP, Name: "x", URL: "file:///tmp/x"},
 			wantErr: true,
 		},
 		{
 			name: "RemoteRejectsCommand",
 			srv: &Server{
-				Transport: TransportHTTP, Name: "x",
+				Transport: transportHTTP, Name: "x",
 				URL: "https://x.example", Command: "leaked",
 			},
 			wantErr: true,
@@ -71,7 +71,7 @@ func TestValidate_AcceptReject(t *testing.T) {
 		{
 			name: "HeaderRejectControlChars",
 			srv: &Server{
-				Transport: TransportHTTP, Name: "x", URL: "https://x.example",
+				Transport: transportHTTP, Name: "x", URL: "https://x.example",
 				Headers: []keyPair{{Name: "X-Foo", Value: "line1\rline2"}},
 			},
 			wantErr: true,
@@ -84,20 +84,20 @@ func TestValidate_AcceptReject(t *testing.T) {
 		{
 			name: "SSEAccepted",
 			srv: &Server{
-				Transport: TransportSSE, Name: "ok", URL: "https://x.example/sse",
+				Transport: transportSSE, Name: "ok", URL: "https://x.example/sse",
 				Headers: []keyPair{{Name: "Authorization", Value: "Bearer x"}},
 			},
 			wantErr: false,
 		},
 		{
 			name:    "SSERejectsNonHTTPScheme",
-			srv:     &Server{Transport: TransportSSE, Name: "x", URL: "file:///tmp/x"},
+			srv:     &Server{Transport: transportSSE, Name: "x", URL: "file:///tmp/x"},
 			wantErr: true,
 		},
 		{
 			name: "SSERejectsCommand",
 			srv: &Server{
-				Transport: TransportSSE, Name: "x",
+				Transport: transportSSE, Name: "x",
 				URL: "https://x.example", Command: "leaked",
 			},
 			wantErr: true,
@@ -209,7 +209,7 @@ func TestValidate_RemoteURLShapes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := validate(&Server{
-				Transport: TransportHTTP, Name: "ok", URL: tc.url,
+				Transport: transportHTTP, Name: "ok", URL: tc.url,
 			})
 			gotErr := err != nil
 			if gotErr != tc.wantErr {
@@ -227,7 +227,7 @@ func TestValidate_RejectsURLUserinfo(t *testing.T) {
 		"https://user:pass@mcp.example.com/v1",
 	}
 	for _, u := range cases {
-		err := validate(&Server{Transport: TransportHTTP, Name: "x", URL: u})
+		err := validate(&Server{Transport: transportHTTP, Name: "x", URL: u})
 		if err == nil {
 			t.Errorf("Validate(URL=%q) = nil, want userinfo error", u)
 		}
@@ -274,7 +274,7 @@ func TestValidate_RejectsDuplicateEnvNames(t *testing.T) {
 // Duplicate header names (case-insensitive) must be rejected.
 func TestValidate_RejectsDuplicateHeaderNames(t *testing.T) {
 	err := validate(&Server{
-		Transport: TransportHTTP, Name: "x", URL: "https://x.example",
+		Transport: transportHTTP, Name: "x", URL: "https://x.example",
 		Headers: []keyPair{
 			{Name: "Authorization", Value: "Bearer a"},
 			{Name: "authorization", Value: "Bearer b"},
@@ -365,7 +365,7 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 		{
 			name: "remote_with_args_rejected",
 			srv: &Server{
-				Transport: TransportHTTP, Name: "ok", URL: "https://x.example",
+				Transport: transportHTTP, Name: "ok", URL: "https://x.example",
 				Args: []string{"leaked"},
 			},
 			wantSubstr: "remote transport cannot have args",
@@ -373,7 +373,7 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 		{
 			name: "remote_with_env_rejected",
 			srv: &Server{
-				Transport: TransportHTTP, Name: "ok", URL: "https://x.example",
+				Transport: transportHTTP, Name: "ok", URL: "https://x.example",
 				Env: []keyPair{{Name: "LEAK", Value: "v"}},
 			},
 			wantSubstr: "remote transport cannot have env",
@@ -381,7 +381,7 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 		{
 			name: "remote_url_too_long",
 			srv: &Server{
-				Transport: TransportHTTP, Name: "ok",
+				Transport: transportHTTP, Name: "ok",
 				URL: "https://x.example/" + strings.Repeat("a", urlMax),
 			},
 			wantSubstr: "url too long",
@@ -389,7 +389,7 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 		{
 			name: "remote_url_control_char",
 			srv: &Server{
-				Transport: TransportHTTP, Name: "ok",
+				Transport: transportHTTP, Name: "ok",
 				URL: "https://x.example/\npath",
 			},
 			wantSubstr: "url contains a control character",
@@ -397,7 +397,7 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 		{
 			name: "remote_header_value_too_long",
 			srv: &Server{
-				Transport: TransportHTTP, Name: "ok", URL: "https://x.example",
+				Transport: transportHTTP, Name: "ok", URL: "https://x.example",
 				Headers: []keyPair{{
 					Name:  "Authorization",
 					Value: strings.Repeat("x", headerValueMax+1),
@@ -464,7 +464,7 @@ func TestValidate_MoreErrorBranches(t *testing.T) {
 		{
 			name: "remote_wrong_scheme",
 			srv: &Server{
-				Transport: TransportHTTP, Name: "ok",
+				Transport: transportHTTP, Name: "ok",
 				URL: "ftp://host.example/path",
 			},
 			wantSubstr: "url scheme must be http or https",
@@ -472,7 +472,7 @@ func TestValidate_MoreErrorBranches(t *testing.T) {
 		{
 			name: "remote_headers_too_many_entries",
 			srv: &Server{
-				Transport: TransportHTTP, Name: "ok",
+				Transport: transportHTTP, Name: "ok",
 				URL:     "https://x.example",
 				Headers: headerN(maxHeaderEntries + 1),
 			},
@@ -481,7 +481,7 @@ func TestValidate_MoreErrorBranches(t *testing.T) {
 		{
 			name: "remote_header_bad_name",
 			srv: &Server{
-				Transport: TransportHTTP, Name: "ok",
+				Transport: transportHTTP, Name: "ok",
 				URL:     "https://x.example",
 				Headers: []keyPair{{Name: "bad header!", Value: "v"}},
 			},
@@ -555,7 +555,7 @@ func FuzzValidate(f *testing.F) {
 				if s.URL != "" || len(s.Headers) > 0 {
 					t.Fatal("Validate returned nil for stdio but url/headers set")
 				}
-			case TransportHTTP, TransportSSE:
+			case transportHTTP, transportSSE:
 				if s.Command != "" || len(s.Args) > 0 || len(s.Env) > 0 {
 					t.Fatal("Validate returned nil for remote but command/args/env set")
 				}
@@ -605,7 +605,7 @@ func TestValidate_AcceptsValuesAtCap(t *testing.T) {
 		},
 		{
 			name: "url_at_max_len",
-			srv:  &Server{Transport: TransportHTTP, Name: "ok", URL: urlAtMax},
+			srv:  &Server{Transport: transportHTTP, Name: "ok", URL: urlAtMax},
 		},
 	}
 	for _, tc := range cases {
@@ -622,7 +622,7 @@ func TestValidate_AcceptsValuesAtCap(t *testing.T) {
 // accepted and one byte over is rejected with "oauth_client_id too long".
 func TestValidate_OAuthClientIDLengthBoundary(t *testing.T) {
 	atMax := &Server{
-		Transport:     TransportHTTP,
+		Transport:     transportHTTP,
 		Name:          "ok",
 		URL:           "https://x.example/mcp",
 		OAuthClientID: strings.Repeat("a", oauthClientIDMax),
@@ -632,7 +632,7 @@ func TestValidate_OAuthClientIDLengthBoundary(t *testing.T) {
 	}
 
 	over := &Server{
-		Transport:     TransportHTTP,
+		Transport:     transportHTTP,
 		Name:          "ok",
 		URL:           "https://x.example/mcp",
 		OAuthClientID: strings.Repeat("a", oauthClientIDMax+1),
@@ -694,5 +694,32 @@ func TestValidateKeyPairs_valueLengthBoundary(t *testing.T) {
 	if !strings.Contains(err.Error(), "value too long") {
 		t.Errorf("validateKeyPairs(value len=%d) = %q, want substring %q",
 			maxValue+1, err.Error(), "value too long")
+	}
+}
+
+func TestValidate_VersionNegotiation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		value   versionNegotiation
+		wantErr bool
+	}{
+		{name: "absent", value: ""},
+		{name: "auto", value: "auto"},
+		{name: "legacy", value: "legacy"},
+		{name: "capitalised", value: "Legacy", wantErr: true},
+		{name: "leadingSpace", value: " legacy", wantErr: true},
+		{name: "unknown", value: "pin", wantErr: true},
+		{name: "protocolVersion", value: "2026-07-28", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &Server{Transport: TransportStdio, Name: "ok", Command: "npx", VersionNegotiation: tc.value}
+			err := validate(srv)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("Validate(version_negotiation %q) = %v, want error %t", tc.value, err, tc.wantErr)
+			}
+			if err != nil && (len(fieldErrors(err)) != 1 || fieldErrors(err)[0].Field != fieldVersionNegotiation) {
+				t.Errorf("Validate(version_negotiation %q) fields = %+v, want one %q error", tc.value, fieldErrors(err), fieldVersionNegotiation)
+			}
+		})
 	}
 }

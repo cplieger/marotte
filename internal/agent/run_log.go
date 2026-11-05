@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/translate"
@@ -85,14 +87,17 @@ type runRecord struct {
 // One mutex, held across the store call; nothing here runs under the log's own lock.
 type runLog struct {
 	runs map[string]*runRecord
-	root string
-	mu   sync.Mutex
+	// removeAll is removeDir's os.RemoveAll, a field so a test can fail one removal as root cannot be refused.
+	removeAll func(path string) error
+	root      string
+	mu        sync.Mutex
 }
 
 func newRunLog(configDir string) *runLog {
 	return &runLog{
-		runs: make(map[string]*runRecord),
-		root: filepath.Join(configDir, runLogDir),
+		runs:      make(map[string]*runRecord),
+		removeAll: os.RemoveAll,
+		root:      filepath.Join(configDir, runLogDir),
 	}
 }
 
@@ -102,6 +107,27 @@ func (r *runLog) dir(workflowID string) (string, error) {
 		return "", errRunIDInvalid
 	}
 	return filepath.Join(r.root, workflowID), nil
+}
+
+// recorded lists the workflow ids with a directory under the root; a missing root is none. A name runLog.dir would
+// refuse is skipped.
+func (r *runLog) recorded() ([]string, error) {
+	entries, err := os.ReadDir(r.root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list run records: %w", err)
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() || !ids.ValidChatID(e.Name()) {
+			slog.Debug("run records: skipped an entry that names no run", "name", logsafe.Field(e.Name()))
+			continue
+		}
+		out = append(out, e.Name())
+	}
+	return out, nil
 }
 
 // A deleted run answers errRunLogRemoved until restart.
@@ -173,7 +199,7 @@ func (r *runLog) turnHighWater(ctx context.Context, workflowID string) (uint64, 
 // stepTurns is one step path's transcript: its turns in file order, open tails, and one run_turn stamp per
 // open turn. The stamp's seq comes from the served entries, never the record's counter, which advances
 // outside the lock. found is false with no such turn.
-func (r *runLog) stepTurns(ctx context.Context, workflowID, nodePath string) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []*marotte.SubjectStamp, found bool, err error) {
+func (r *runLog) stepTurns(ctx context.Context, workflowID, nodePath string) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []marotte.SubjectStamp, found bool, err error) {
 	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
 		return nil, nil, nil, false, err
@@ -192,7 +218,7 @@ func (r *runLog) stepTurns(ctx context.Context, workflowID, nodePath string) (en
 		if t := rec.open[nodePath]; t != nil {
 			open = t.turn.OpenEntries()
 			id := t.turn.ID()
-			stamps = append(stamps, marotte.NewSubjectStamp(string(subject.KindRunTurn), workflowID+"/"+id, turnVersion(id, newest[id])))
+			stamps = append(stamps, marotte.SubjectStamp{Kind: string(subject.KindRunTurn), Ref: workflowID + "/" + id, Version: turnVersion(id, newest[id])})
 		}
 	}
 	return entries, open, stamps, true, nil
@@ -200,7 +226,7 @@ func (r *runLog) stepTurns(ctx context.Context, workflowID, nodePath string) (en
 
 // turnRange is one step turn's tail from seq `from` inclusive (0 the whole turn), its open tails and its
 // stamp, over EntryLog.TurnPage like the chat's. found is false for no log or no such turn; err is an unreadable log (500).
-func (r *runLog) turnRange(ctx context.Context, workflowID, turn string, from uint64) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []*marotte.SubjectStamp, found bool, err error) {
+func (r *runLog) turnRange(ctx context.Context, workflowID, turn string, from uint64) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []marotte.SubjectStamp, found bool, err error) {
 	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
 		return nil, nil, nil, false, err
@@ -224,14 +250,15 @@ func (r *runLog) turnRange(ctx context.Context, workflowID, turn string, from ui
 			continue
 		}
 		open = t.turn.OpenEntries()
-		stamps = append(stamps, marotte.NewSubjectStamp(string(subject.KindRunTurn),
-			workflowID+"/"+turn, turnVersion(turn, newestSeq)))
+		stamps = append(stamps, marotte.SubjectStamp{
+			Kind: string(subject.KindRunTurn), Ref: workflowID + "/" + turn, Version: turnVersion(turn, newestSeq),
+		})
 	}
 	return entries, open, stamps, true, nil
 }
 
-// lastStepMessage is a step path's last words in its newest turn of the run's own record: the newest
-// send_message call's message, else the newest text. "" when the record holds neither or cannot be read.
+// lastStepMessage is a step path's last words (lastWords) in its newest turn of the run's own record, "" when the
+// record holds none or cannot be read.
 func (r *runLog) lastStepMessage(ctx context.Context, workflowID, nodePath string) string {
 	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
@@ -258,29 +285,60 @@ func newestTurn(entries []marotte.Entry) []marotte.Entry {
 	return nil
 }
 
+// lastWords is a step turn's newest send_message message, else its trailing prose run: the step's own text
+// entries back to the nearest other entry, one paragraph each. An applied model_fallback stays inside the run,
+// because KAS continues the refused text on the fallback model; a sub-agent's fallback belongs to no step prose.
 func lastWords(turn []marotte.Entry) string {
-	var text string
+	var run []string
+	ended := false
 	for i := len(turn) - 1; i >= 0; i-- {
 		e := &turn[i]
-		switch e.Kind {
-		case marotte.EntryKindToolCall:
-			if m := sentMessage(e.Payload); m != "" {
-				return m
+		if m := sentMessage(e); m != "" {
+			return m
+		}
+		if ended {
+			continue
+		}
+		switch {
+		case e.Kind == marotte.EntryKindText && e.Lane == "":
+			if s := entryProse(e.Payload); s != "" {
+				run = append(run, s)
 			}
-		case marotte.EntryKindText:
-			var t marotte.EntryText
-			if text == "" && json.Unmarshal(e.Payload, &t) == nil {
-				text = strings.TrimSpace(t.Text)
-			}
+		case e.Kind == marotte.EntryKindModelFallback && fallbackInsideProse(e.Payload):
+		default:
+			ended = len(run) > 0
 		}
 	}
-	return text
+	slices.Reverse(run)
+	return strings.Join(run, "\n\n")
 }
 
-// sentMessage is a send_message call's message: an input holding both `message` and `severity`.
-func sentMessage(payload json.RawMessage) string {
+// fallbackInsideProse reports a model_fallback that leaves the step's prose run open: an applied one (a target and
+// no decline reason) or a sub-agent's.
+func fallbackInsideProse(payload json.RawMessage) bool {
+	var f marotte.EntryModelFallback
+	if json.Unmarshal(payload, &f) != nil {
+		return false
+	}
+	return f.Subagent || (f.To != "" && f.Reason == "")
+}
+
+// entryProse is a text entry's text, trimmed; "" when it does not decode.
+func entryProse(payload json.RawMessage) string {
+	var t marotte.EntryText
+	if json.Unmarshal(payload, &t) != nil {
+		return ""
+	}
+	return strings.TrimSpace(t.Text)
+}
+
+// sentMessage is a send_message call's message: a tool call whose input holds both `message` and `severity`.
+func sentMessage(e *marotte.Entry) string {
+	if e.Kind != marotte.EntryKindToolCall {
+		return ""
+	}
 	var call marotte.EntryToolCall
-	if json.Unmarshal(payload, &call) != nil || len(call.Input) == 0 {
+	if json.Unmarshal(e.Payload, &call) != nil || len(call.Input) == 0 {
 		return ""
 	}
 	var in struct {
@@ -627,7 +685,7 @@ func (r *runLog) removeDir(workflowID string) error {
 	if err != nil {
 		return err
 	}
-	err = os.RemoveAll(dir)
+	err = r.removeAll(dir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}

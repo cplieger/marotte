@@ -1,11 +1,14 @@
-// The FOURTH 409 class, "chat_not_found": a tombstoned chat answers "gone", a refusal with the text
-// handed back; never "sent", never a steer. Real store; send primitive and steer action mocked.
+// The terminal 409 classes: "chat_not_found" (a tombstoned chat answers "gone") and "chat_closed" (a
+// close of the chat committed after the send began answers "closed"). Each is a refusal with the text
+// handed back; never "sent", never a steer or a queued row. Real store; send primitive, steer and
+// queue actions mocked.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const {
   mockSendPromptTo,
   mockSteer,
+  mockQueue,
   mockTakeAttachments,
   mockAddAttachmentTo,
   mockAttachmentGeneration,
@@ -18,6 +21,7 @@ const {
 } = vi.hoisted(() => ({
   mockSendPromptTo: vi.fn(),
   mockSteer: vi.fn(),
+  mockQueue: vi.fn(),
   mockTakeAttachments: vi.fn(() => [] as unknown[]),
   mockAddAttachmentTo: vi.fn(),
   mockAttachmentGeneration: vi.fn(() => 0),
@@ -33,10 +37,12 @@ vi.mock("./chat-commands.js", () => ({ sendPromptTo: mockSendPromptTo }));
 vi.mock("./notice-subject.js", () => ({ chatNotice: mockChatNotice }));
 vi.mock("./actions/chat.js", () => ({
   steerChat: { dispatch: mockSteer },
-  // Present-but-undefined so real-ESM linking succeeds; no case here is in Queue mode.
-  queuePrompt: undefined,
+  queuePrompt: { dispatch: mockQueue },
 }));
-vi.mock("./typed-commands.js", () => ({ handleTypedCommand: mockTypedCommand }));
+vi.mock("./typed-commands.js", () => ({
+  handleTypedCommand: mockTypedCommand,
+  terminalCommandRefusal: () => null,
+}));
 vi.mock("./slash-menu.js", () => ({ invokesCatalogCommand: mockInvokesCatalog }));
 vi.mock("./attachments.js", () => ({
   takeAttachments: mockTakeAttachments,
@@ -131,5 +137,39 @@ describe("submitPrompt on a 409 chat_not_found refusal", () => {
     await submitPrompt("c1", "hello");
     expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "hello");
     expect(mockAddAttachmentTo).toHaveBeenCalledWith("c1", "a.ts", 0);
+  });
+});
+
+describe("submitPrompt on a 409 chat_closed refusal", () => {
+  beforeEach(() => {
+    mockSendPromptTo.mockResolvedValue("closed");
+  });
+
+  it("reports failure rather than falling through to sent", async () => {
+    resetStore("c1");
+    expect(await submitPrompt("c1", "hello")).toBe("failed");
+  });
+
+  it("never steers or queues the text, because the closed chat's turn is gone", async () => {
+    resetStore("c1");
+    await submitPrompt("c1", "hello");
+    expect(mockSteer).not.toHaveBeenCalled();
+    expect(mockQueue).not.toHaveBeenCalled();
+    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the chat-closed face through send-state's error surface", async () => {
+    resetStore("c1");
+    await submitPrompt("c1", "hello");
+    expect(mockReportSendRefused).toHaveBeenCalledTimes(1);
+    expect(mockReportSendRefused).toHaveBeenCalledWith(
+      "This chat was closed, so the message was not sent",
+    );
+  });
+
+  it("hands the text back as that chat's draft", async () => {
+    resetStore("c1");
+    await submitPrompt("c1", "hello");
+    expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "hello");
   });
 });

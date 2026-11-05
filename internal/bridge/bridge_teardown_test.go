@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/procgroup"
-	"github.com/cplieger/slogx/capture"
 )
 
 // startTeardownFixture runs script as the engine's process, in its own group as startProcess spawns kiro-cli.

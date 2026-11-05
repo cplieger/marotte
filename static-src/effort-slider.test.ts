@@ -3,7 +3,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { userEvent } from "vitest/browser";
-import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
+import { rovingFocus } from "@cplieger/ui/roving-focus";
 
 import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 import { buildEffortSlider, type EffortSliderHandle } from "./effort-slider.js";
@@ -27,7 +27,8 @@ const FIVE: SessionEffortLevel[] = [
  */
 const TIER = {
   fine: { line: 24, bar: 24, knob: 24 },
-  coarse: { line: 44, bar: 36, knob: 36 },
+  // Under a finger only the LINE, the slider's target, grows; the knob and bar paint as on a mouse.
+  coarse: { line: 44, bar: 24, knob: 24 },
 } as const;
 
 let style: HTMLStyleElement;
@@ -233,12 +234,12 @@ describe("the knob's size", () => {
   });
 
   it("takes the BAR's height rather than the hit floor's, and the track carries the target", () => {
-    // The floor is physical and 15-input.css precedes it in MANIFEST order, so a logical override would lose; inherited,
-    // the coarse 44px floor would outgrow the 36px bar.
+    // The track is the target, so a coarse pointer grows no part of the knob's painted box.
+    document.documentElement.dataset["pointer"] = "coarse";
     mount(FIVE, "high");
-    const k = getComputedStyle(knob());
-    expect(parseFloat(k.minWidth), "the floor is overridden, not inherited").toBe(0);
-    expect(parseFloat(k.minHeight)).toBe(0);
+    expect(knob().offsetWidth, "the bar's height on a coarse pointer too").toBe(TIER.coarse.knob);
+    delete document.documentElement.dataset["pointer"];
+    mount(FIVE, "high");
     expect(knob().offsetHeight, "the bar's height, not the line's").toBe(TIER.fine.bar);
     expect(knob().offsetHeight).toBeLessThanOrEqual(TIER.fine.line);
     // The whole track carries the pointerdown handler and meets the floor.
@@ -441,7 +442,7 @@ describe("the knob's size", () => {
     expect(t.clientWidth).toBeGreaterThan(k.offsetWidth);
   });
 
-  it("grows every part of itself on the coarse tier", () => {
+  it("grows only its line, the target, on the coarse tier", () => {
     document.documentElement.dataset["pointer"] = "coarse";
     mount(FIVE, "high");
     expect(track().offsetHeight).toBe(TIER.coarse.line);

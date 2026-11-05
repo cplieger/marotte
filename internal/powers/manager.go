@@ -7,14 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/procgroup"
-	"github.com/cplieger/runesafe/v3"
 )
 
 const (
@@ -111,8 +112,9 @@ type Manager struct {
 }
 
 // NewManager wires the catalogue, the legacy-block writer and the kiro-cli
-// resolvers (read per run, so a version switch reaches the next one).
-// installedDir is `<KiroHome>/powers/installed`.
+// resolvers (read per run, so a version switch reaches the next one). env is
+// an overlay appended to the inherited environment. installedDir is
+// `<KiroHome>/powers/installed`.
 func NewManager(catalog *Catalog, writer ServersWriter, cliPath func() string, env func() []string, installedDir string) *Manager {
 	return &Manager{catalog: catalog, writer: writer, cliPath: cliPath, env: env, installedDir: installedDir}
 }
@@ -230,7 +232,8 @@ func (m *Manager) run(ctx context.Context, verb, name string) error {
 	cctx, cancel := context.WithTimeout(ctx, cliTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, m.cliPath(), "powers", verb, name) //nolint:gosec // G204: binary path from the install manager; name passed ValidName
-	cmd.Env = m.env()
+	// The overlay lands LAST: os/exec keeps the last value for a repeated key.
+	cmd.Env = append(os.Environ(), m.env()...)
 	// kiro-cli runs a tree (tar among it), so a cancel kills the whole group.
 	procgroup.OwnGroup(cmd, 5*time.Second)
 	var out cappedBuffer
@@ -268,5 +271,5 @@ func lastLine(s string) string {
 	if line == "" {
 		return "the command failed with no output"
 	}
-	return runesafe.SanitizeSingleLineBounded(line, maxFieldBytes)
+	return textsafe.SanitizeSingleLineBounded(line, maxFieldBytes)
 }

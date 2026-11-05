@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -72,9 +72,9 @@ const maxHistoryInlineImages = 16
 // BuildPromptBlocks constructs the ACP prompt content array: a leading text block (omitted for an
 // attachment-only prompt, since KAS refuses an empty text part), then one block per attachment: a
 // supported document as an embedded `resource`, an image as an `image` fitted by fitImage, anything
-// else a path reference. mcp is the prompt's session, so an MCP reference reads the engine's pool through it;
+// else a path reference. mcp is the prompt's session, so an MCP reference reads that session's server;
 // nil leaves them unresolved.
-func BuildPromptBlocks(ctx context.Context, text string, attachments []marotte.Attachment, historyImages int, ws Workspace, mcp bridgeCaller) []map[string]any {
+func BuildPromptBlocks(ctx context.Context, text string, attachments []marotte.Attachment, historyImages int, ws Workspace, mcp SessionCaller) []map[string]any {
 	blocks := make([]map[string]any, 0, 1+len(attachments))
 	if strings.TrimSpace(text) != "" || len(attachments) == 0 {
 		blocks = append(blocks, marotte.TextBlock(text))
@@ -215,8 +215,8 @@ func readForInline(
 			"path", displayName, "size", info.Size(), "remaining_encoded", budget)
 		return inlinePayload{}, budgetSpentBlock(att.Path, isBinaryDoc)
 	}
-	data, err := atomicfile.ReadBoundedFile(ctx, f, MaxDocumentBytes)
-	if errors.Is(err, atomicfile.ErrFileTooLarge) {
+	data, err := filesafe.ReadBoundedFile(ctx, f, MaxDocumentBytes)
+	if errors.Is(err, filesafe.ErrFileTooLarge) {
 		slog.Warn("attachment: grew past the cap during the read",
 			"path", displayName, "cap", MaxDocumentBytes)
 		return inlinePayload{}, tooLargeFileBlock(att.Path, isImage)

@@ -41,9 +41,11 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 		}
 	})
 
-	t.Run("IsHookStatusEnabled_returns_bool", func(t *testing.T) {
+	t.Run("HookTrigger_unknown_hook_is_a_miss", func(t *testing.T) {
 		r := newRoles(t)
-		_ = r.HookStatus.IsHookStatusEnabled()
+		if trigger, ok := r.HookTriggers.HookTrigger("never-listed#hook-0"); ok {
+			t.Errorf("HookTrigger(unlisted) = %q, want a miss", trigger)
+		}
 	})
 
 	t.Run("TerminalOutput_unknown_terminal_is_not_ok", func(t *testing.T) {
@@ -59,12 +61,14 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 		if r.MCP == nil {
 			t.Fatal("MCP role is nil")
 		}
-		r.MCP.RecordConnected(t.Context(), "test-server", marotte.MCPSource{}, nil, nil, nil, nil)
+		r.MCP.RecordSessionStatus(t.Context(), "s1", translate.MCPSessionStatus{
+			Servers: []translate.MCPServerReport{{Name: "test-server", State: translate.MCPReportConnected}},
+		})
 	})
 
 	t.Run("PendingPermsAdd_does_not_panic", func(t *testing.T) {
 		r := newRoles(t)
-		r.PendingPerms.PendingPermsAdd(42, marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"}, nil)
+		r.PendingPerms.PendingPermsAdd(t.Context(), 42, marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"}, nil)
 	})
 
 	t.Run("Notify_does_not_panic", func(t *testing.T) {
@@ -110,8 +114,9 @@ func TestHub_TranslateRolesContract(t *testing.T) {
 	TranslateRolesContractTest(t, func(t *testing.T) *translate.Roles {
 		t.Helper()
 		h, cs, _ := newTestHub()
-		// A wire turn opens against the chat's record.
+		// A wire turn opens against the chat's record, on the life its forward would have.
 		cs.seed(t, "c1", nil)
+		h.coord.turns.ensureTestLife("c1")
 		// The production wiring itself, not a copy.
 		return h.translateRoles()
 	})

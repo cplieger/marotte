@@ -2,20 +2,7 @@
 
 import { describe, it, expect } from "vitest";
 
-import {
-  KAS_SUMMARIZATION_PCT,
-  compactionPoint,
-  contextStroke,
-  tokensUsed,
-  wedgeDash,
-} from "./context-ring.js";
-
-describe("the KAS fallback", () => {
-  // One number, one place: a second copy lets client and server disagree about where compaction happens.
-  it("mirrors KAS's own summarization threshold", () => {
-    expect(KAS_SUMMARIZATION_PCT).toBe(80);
-  });
-});
+import { compactionPoint, contextStroke, tokensUsed, wedgeDash } from "./context-ring.js";
 
 describe("wedgeDash", () => {
   // With pathLength="100" every dash is a percent: a `100-T` dash after a `T` gap, offset by the band's width.
@@ -60,18 +47,13 @@ describe("tokensUsed", () => {
 });
 
 describe("compactionPoint", () => {
-  it("defers to KAS's reported threshold at the default value", () => {
-    expect(compactionPoint({ enabled: true, pct: 80 }, 75)).toEqual({ band: 75, t: 75 });
-    expect(compactionPoint({ enabled: true, pct: 80 }, undefined)).toEqual({ band: 80, t: 80 });
-  });
-
-  it("is the slider's value anywhere else, whatever KAS reports", () => {
-    expect(compactionPoint({ enabled: true, pct: 60 }, 80)).toEqual({ band: 60, t: 60 });
-    expect(compactionPoint({ enabled: true, pct: 90 }, 80)).toEqual({ band: 90, t: 90 });
+  it("is the slider's value, which the session door sends as KAS's threshold", () => {
+    expect(compactionPoint({ enabled: true, pct: 60 })).toEqual({ band: 60, t: 60 });
+    expect(compactionPoint({ enabled: true, pct: 80 })).toEqual({ band: 80, t: 80 });
   });
 
   it("has no band and keys the ramp on 100 when switched off", () => {
-    expect(compactionPoint({ enabled: false, pct: 60 }, 75)).toEqual({ band: null, t: 100 });
+    expect(compactionPoint({ enabled: false, pct: 60 })).toEqual({ band: null, t: 100 });
   });
 });
 

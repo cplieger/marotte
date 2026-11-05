@@ -1,7 +1,7 @@
 // The spec tab's page: one Kiro spec's documents, tasks.md as a live checklist.
 
-import { effect, el, signal, touch } from "@cplieger/reactive";
-import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
+import { effect, el, signal, touch } from "@cplieger/ui";
+import { createDisclosure } from "@cplieger/ui/disclosure";
 import { apiGetConditional } from "./api-client.js";
 import { BUS_USER_INPUT_ANSWERED, onBus, onSSE } from "./bus.js";
 import { sendPromptTo, type SendPromptResult } from "./chat-commands.js";
@@ -23,6 +23,7 @@ import { swapViews } from "./view-swap.js";
 import { decodeSpec } from "./wire/decoders.gen.js";
 import type { Spec, SpecDoc, SpecDocRole, SpecTaskNode } from "./wire/types.gen.js";
 import { absPath } from "./workspace.js";
+import { formatFullStamp } from "./locale-time.js";
 
 /** Tree depth, read by css/32-spec.css to indent a row, its note and its detail. */
 const DEPTH_PROP = "--depth";
@@ -750,6 +751,9 @@ export function applyResult(ref: string, id: string, result: SendPromptResult): 
       st.gone = true;
       st.spec = null;
       break;
+    case "closed":
+      st.failure = "The chat was closed, so the prompt was not sent";
+      break;
     case "failed":
       st.failure = "The prompt could not be sent";
       break;
@@ -825,7 +829,7 @@ function approvalParts(seg: Segment, spec: Spec, approving: ReadonlySet<string>)
  *  the person who approved it. */
 function approvedAt(at: string): string {
   const ms = Date.parse(at);
-  return Number.isNaN(ms) ? "" : `Approved ${new Date(ms).toLocaleString()}`;
+  return Number.isNaN(ms) ? "" : `Approved ${formatFullStamp(ms)}`;
 }
 
 /** Record a sign-off on one phase, then RE-READ rather than patch the badge: the record's own

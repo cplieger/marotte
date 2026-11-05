@@ -5,7 +5,7 @@
 // mocks.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
-import { signal } from "@cplieger/reactive";
+import { signal } from "@cplieger/ui";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type { RunState } from "./run-store.js";
 import type { TabKind } from "./types.js";

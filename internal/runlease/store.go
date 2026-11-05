@@ -13,7 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/marotte/internal/asidefile"
 )
 
 // FileName is the store's file, beside schedules.json: a sibling so a malformed file
@@ -33,49 +34,65 @@ type file struct {
 }
 
 // Store persists run leases in one 0600 JSON file, rewritten atomically per mutation.
-// The zero value is usable and persists nothing. atomicfile verifies the 0600 on the
+// The zero value is usable and persists nothing. filesafe verifies the 0600 on the
 // written descriptor, so no EnforceFile pass by NAME is needed.
 type Store struct {
 	leases map[string]Lease
 	path   string
+	// unread and refuseWrites are immutable after construction (see Unread).
+	unread string
 	// version is the collection's version, bumped under mu by every mutation that
 	// changed the set; ListStamped pairs it with the set it describes.
-	version uint64
-	mu      sync.Mutex
+	version      uint64
+	mu           sync.Mutex
+	refuseWrites bool
 }
 
 // NewMemory returns an in-memory store that persists nothing.
 func NewMemory() *Store { return &Store{leases: map[string]Lease{}} }
 
-// NewStore opens (or starts) the store at <dir>/runs.json. It ALWAYS returns a usable
-// store; the error is diagnostic. A lease is derived state, so refusing to open would leave
-// no run bounded; a malformed or unknown-version file is discarded and rewritten.
+// NewStore opens (or starts) the store at <dir>/runs.json. It ALWAYS returns a usable store;
+// the error is diagnostic. A lease is derived state, so refusing to open would leave no run
+// bounded. A file it cannot fully read is moved aside and the store starts empty with Unread set.
 func NewStore(dir string) (*Store, error) {
 	s := &Store{path: filepath.Join(dir, FileName), leases: map[string]Lease{}}
+	if err := s.load(); err != nil {
+		s.leases = map[string]Lease{}
+		err = s.keepAside(err)
+		return s, err
+	}
+	err := s.markEarlierAside(dir)
+	return s, err
+}
+
+// load reads runs.json; a missing file is a first run. One lease it cannot act on fails the whole
+// file: the next write would drop that lease, and its keep holders with it.
+func (s *Store) load() error {
 	data, err := os.ReadFile(s.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return s, nil
+	if asidefile.Absent(err) {
+		return nil
 	}
 	if err != nil {
-		return s, fmt.Errorf("read %s: %w", s.path, err)
+		return fmt.Errorf("read %s: %w", s.path, err)
 	}
 	var f file
 	if err := json.Unmarshal(data, &f); err != nil {
-		return s, fmt.Errorf("parse %s: %w", s.path, err)
+		return fmt.Errorf("parse %s: %w", s.path, err)
 	}
 	if f.Version != version {
-		return s, fmt.Errorf("%s: unsupported version %d (this build writes %d)", s.path, f.Version, version)
+		return fmt.Errorf("%s: unsupported version %d (this build writes %d)", s.path, f.Version, version)
 	}
 	for i := range f.Leases {
 		l := f.Leases[i]
-		if l.WorkflowID == "" || !l.Origin.valid() {
-			continue
+		if err := l.check(); err != nil {
+			return fmt.Errorf("%s: lease %d: %w", s.path, i, err)
 		}
 		// A deadline read from disk describes a dead process: park it; the next start re-arms.
 		l.Deadline = time.Time{}
+		l.KeepChats = validKeepChats(l.WorkflowID, l.KeepChats)
 		s.leases[l.WorkflowID] = l
 	}
-	return s, nil
+	return nil
 }
 
 // List returns every lease, ordered by workflow id so the file is stable.
@@ -117,11 +134,8 @@ func (s *Store) Get(workflowID string) (Lease, bool) {
 // Put grants a lease, replacing any held for the run. On a persist failure the lease is
 // KEPT in memory: the run is on the wire either way.
 func (s *Store) Put(ctx context.Context, l *Lease) error {
-	if l.WorkflowID == "" {
-		return errors.New("lease workflow id is required")
-	}
-	if !l.Origin.valid() {
-		return fmt.Errorf("lease origin %q is not one of scheduled/manual/agent", l.Origin)
+	if err := l.check(); err != nil {
+		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -145,16 +159,56 @@ func (s *Store) Release(ctx context.Context, workflowID string) error {
 
 // SetFirstAbsentAt starts or clears a lease's continuous-absence clock.
 func (s *Store) SetFirstAbsentAt(ctx context.Context, workflowID string, at time.Time) error {
+	return s.update(ctx, workflowID, func(l *Lease) bool {
+		if l.FirstAbsentAt.Equal(at) {
+			return false
+		}
+		l.FirstAbsentAt = at
+		return true
+	})
+}
+
+// SetAutoResumeStoppedAt records when marotte stopped resuming a run on its own, or clears it with the zero time;
+// ErrNotFound when no lease holds the run.
+func (s *Store) SetAutoResumeStoppedAt(ctx context.Context, workflowID string, at time.Time) error {
+	return s.update(ctx, workflowID, func(l *Lease) bool {
+		if l.AutoResumeStoppedAt.Equal(at) {
+			return false
+		}
+		l.AutoResumeStoppedAt = at
+		return true
+	})
+}
+
+// SetKeepChats adds chats to a lease's KeepChats, sorted; it never removes one. ErrNotFound when no lease holds the
+// run.
+func (s *Store) SetKeepChats(ctx context.Context, workflowID string, add []string) error {
+	return s.update(ctx, workflowID, func(l *Lease) bool { return l.addKeepChats(add) })
+}
+
+// SetUnattributed sets or clears a lease's Unattributed mark; ErrNotFound when no lease holds the run.
+func (s *Store) SetUnattributed(ctx context.Context, workflowID string, unattributed bool) error {
+	return s.update(ctx, workflowID, func(l *Lease) bool {
+		if l.Unattributed == unattributed {
+			return false
+		}
+		l.Unattributed = unattributed
+		return true
+	})
+}
+
+// update applies change to a held lease and persists it when change reports a difference.
+func (s *Store) update(ctx context.Context, workflowID string, change func(l *Lease) bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	l, ok := s.leases[workflowID]
 	if !ok {
 		return ErrNotFound
 	}
-	if l.FirstAbsentAt.Equal(at) {
+	l = l.clone()
+	if !change(&l) {
 		return nil
 	}
-	l.FirstAbsentAt = at
 	s.leases[workflowID] = l
 	s.version++
 	return s.persistLocked(ctx)
@@ -200,12 +254,15 @@ func (s *Store) persistLocked(ctx context.Context) error {
 	if s.path == "" {
 		return nil
 	}
+	if s.refuseWrites {
+		return fmt.Errorf("%w: %s", errWriteRefused, s.unread)
+	}
 	data, err := json.MarshalIndent(file{Version: version, Leases: s.sortedLocked()}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode run leases: %w", err)
 	}
-	if _, err := atomicfile.WriteFile(ctx, s.path, data,
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
+	if _, err := filesafe.WriteFile(ctx, s.path, data,
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700)); err != nil {
 		return fmt.Errorf("write %s: %w", s.path, err)
 	}
 	return nil

@@ -27,7 +27,7 @@ func agentRunOnChat(t *testing.T, id string, opts ...Option) (*Runtime, *fakeBri
 	h, cs, br := newTestHub(opts...)
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	br.sessionID = parkSession
-	h.bridge.mgr.insert(parkChat, &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(parkChat, testBridge(br, bridgeIdle))
 	h.runs.useLog(newRunLog(t.TempDir()))
 	h.coord.runs = h.runs.log
 	if _, err := cs.Mutate(t.Context(), parkChat, func(c *marotte.Chat, _ bool) bool {
@@ -153,7 +153,7 @@ func TestCancelExpired_AResumedRunWithNoOpenStepIsAStall(t *testing.T) {
 	br.callResults[methodKiroWorkflowInspect] = inspectPaused(t, id, stalePauseReason)
 	br.callResults[methodKiroWorkflowResume] = json.RawMessage(`{}`)
 	br.mu.Unlock()
-	h.runs.resumeInterruptedRuns(t.Context(), parkChat)
+	h.runs.resumeInterruptedRuns(t.Context(), h.coord.turns.testLifecycle(parkChat), parkChat)
 	if l, _ := h.runs.lease(id); !l.Bounded() {
 		t.Fatal("Setup: the resume did not re-arm the run")
 	}
@@ -213,7 +213,7 @@ func TestResumeInterruptedRuns_ReReadsAnOrphanKASStillListsRunning(t *testing.T)
 		return "paused"
 	})
 
-	h.runs.resumeInterruptedRuns(t.Context(), parkChat)
+	h.runs.resumeInterruptedRuns(t.Context(), h.coord.turns.testLifecycle(parkChat), parkChat)
 
 	stop := time.Now().Add(5 * time.Second)
 	for !slices.Contains(br.callLog(), methodKiroWorkflowResume) {

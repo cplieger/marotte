@@ -65,7 +65,7 @@ func hubForFSTest(t *testing.T, workDir string, opts ...Option) (*Runtime, *resp
 	if err != nil {
 		t.Fatalf("Setup: OpenBridge(c1): %v", err)
 	}
-	sb.bridge = br // ensure the map entry uses our respondingBridge
+	sb.attach(br) // ensure the map entry uses our respondingBridge
 	h.bridge.mgr.mu.Lock()
 	h.bridge.mgr.bridges["c1"] = sb
 	h.bridge.mgr.mu.Unlock()
@@ -419,8 +419,8 @@ func TestHandleFSRequest_DispatchesFSRead(t *testing.T) {
 	}
 }
 
-// A missing file gets a graceful not-found error.
-func TestRespondFSRead_MissingFileRespondsGracefully(t *testing.T) {
+// A missing file answers in KAS's not-found dialect, so a create's undo snapshot reads as empty.
+func TestRespondFSRead_MissingFileSaysPathDoesNotExist(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
 	id := int64(901)
 	msg := &marotte.RPCResponse{
@@ -430,8 +430,8 @@ func TestRespondFSRead_MissingFileRespondsGracefully(t *testing.T) {
 	}
 	h.inbound.respondFSRead(t.Context(), "c1", h.originOf("c1"), msg)
 	<-br.done
-	if br.response.err == nil {
-		t.Errorf("respondFSRead(missing file) err = nil, want a not-found error")
+	if err := br.response.err; err == nil || !strings.HasPrefix(err.Error(), kasNotFoundPrefix) {
+		t.Errorf("respondFSRead(missing file) err = %v, want a message starting %q", err, kasNotFoundPrefix)
 	}
 }
 
@@ -620,7 +620,7 @@ func TestRespondFSError_BoundsAndNormalizesTheLogAttribute(t *testing.T) {
 	if strings.ContainsRune(got, '\u202e') {
 		t.Errorf("fs failure log error attribute contains a bidi override: %q", got)
 	}
-	// logsafe.Field adds runesafe's "..." outside the cap, so a truncated attribute is MaxFieldBytes+3 bytes.
+	// logsafe.Field adds textsafe's "..." outside the cap, so a truncated attribute is MaxFieldBytes+3 bytes.
 	if maxLen := logsafe.MaxFieldBytes + len("..."); len(got) > maxLen {
 		t.Errorf("fs failure log error attribute length = %d, want at most %d bytes", len(got), maxLen)
 	}

@@ -17,7 +17,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/workspace"
@@ -57,22 +57,33 @@ type ForgeProvider struct {
 	Repos []string // top repo names (capped for brevity)
 }
 
+// InstalledTool is one tools-engine row the engine's live probe reports installed.
+type InstalledTool struct {
+	Name    string // the row's name, which tools-state.json records its commands under
+	Kind    string // the source kind: "aqua", "apt", "npm" and so on
+	Version string // the installed version, "" when none is recorded
+}
+
 // Generator produces steering files for kiro-cli.
 type Generator struct {
 	mcpSnapshot   func() MCPSnapshot
 	forgeSnapshot func() ForgeSnapshot
+	toolsSnapshot func() ([]InstalledTool, bool)
 	workDir       string
 	configDir     string
-	mu            sync.Mutex
+	toolsDir      string
+	mu            sync.Mutex // guards the snapshot callbacks only
+	// genMu is held from the snapshots to the write, so an older generation never overwrites a newer one.
+	genMu sync.Mutex
 }
 
-// New returns a Generator that writes steering files for the given workDir and configDir.
-func New(workDir, configDir string) *Generator {
-	return &Generator{workDir: workDir, configDir: configDir}
+// New returns a Generator. Each directory must pass CheckPath; toolsDir is the tools engine's root,
+// which need not sit under configDir, or "" when the engine has no usable one.
+func New(workDir, configDir, toolsDir string) *Generator {
+	return &Generator{workDir: workDir, configDir: configDir, toolsDir: toolsDir}
 }
 
-// SetMCPSnapshot wires a snapshot callback (unset omits the MCP section). The callback runs
-// OUTSIDE the generator's mutex, so it may take agent locks.
+// SetMCPSnapshot wires a snapshot callback (unset omits the MCP section).
 func (g *Generator) SetMCPSnapshot(fn func() MCPSnapshot) {
 	g.mu.Lock()
 	g.mcpSnapshot = fn
@@ -87,61 +98,96 @@ func (g *Generator) SetForgeSnapshot(fn func() ForgeSnapshot) {
 	g.mu.Unlock()
 }
 
-// Generate renders environment.md and writes it atomically, holding g.mu across the write so
-// calls serialise, and skips a byte-identical write (MCP event storms regenerate often).
-func (g *Generator) Generate(ctx context.Context) {
+// SetToolsSnapshot wires a callback that returns the installed tools, with ok false when the
+// tools engine is down or its inventory failed. Unset or not ok omits the Installed tools
+// section.
+func (g *Generator) SetToolsSnapshot(fn func() (tools []InstalledTool, ok bool)) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
+	g.toolsSnapshot = fn
+	g.mu.Unlock()
+}
 
-	// Read the callback under g.mu, call it outside (see SetMCPSnapshot).
-	snapshotFn := g.mcpSnapshot
-	forgeFn := g.forgeSnapshot
-	var mcp MCPSnapshot
-	var forges ForgeSnapshot
-	if snapshotFn != nil || forgeFn != nil {
-		g.mu.Unlock()
-		if snapshotFn != nil {
-			mcp = snapshotFn()
-		}
-		if forgeFn != nil {
-			forges = forgeFn()
-		}
-		g.mu.Lock()
+// Generate renders environment.md and writes it atomically, and skips a byte-identical write (MCP
+// event storms regenerate often). Calls serialise: each one's snapshots, render and write finish
+// before the next call takes its snapshots. The snapshot callbacks run under that serialisation
+// alone, so one must never wait on a goroutine that is calling Generate. A cancelled ctx stops a
+// call before its snapshots, its render and its write, returning the wrapped ctx.Err(). Generate
+// logs no failure: it returns each one, and the caller judges it.
+func (g *Generator) Generate(ctx context.Context) error {
+	g.genMu.Lock()
+	defer g.genMu.Unlock()
+	if err := stopped(ctx); err != nil {
+		return err
 	}
 
-	content := g.render(ctx, mcp, snapshotFn != nil, forges, forgeFn != nil)
+	g.mu.Lock()
+	snapshotFn := g.mcpSnapshot
+	forgeFn := g.forgeSnapshot
+	toolsFn := g.toolsSnapshot
+	g.mu.Unlock()
+	var mcp MCPSnapshot
+	var forges ForgeSnapshot
+	var tools []InstalledTool
+	var toolsOK bool
+	if snapshotFn != nil {
+		mcp = snapshotFn()
+	}
+	if forgeFn != nil {
+		forges = forgeFn()
+	}
+	if toolsFn != nil {
+		tools, toolsOK = toolsFn()
+	}
+	if err := stopped(ctx); err != nil {
+		return err
+	}
+
+	content := g.render(ctx, mcp, snapshotFn != nil, forges, forgeFn != nil, tools, toolsOK)
+	if err := stopped(ctx); err != nil {
+		return err
+	}
 	steeringFile := workspace.KiroSteeringPath("environment.md")
 
 	// readCappedFile, not os.ReadFile: a FIFO or symlink may stand here (invariant 6). Any error
 	// falls through to the write, which replaces a bogus file.
 	if existing, readErr := readCappedFile(steeringFile, steeringCompareCap); readErr == nil && bytes.Equal(existing, content) {
 		slog.Debug("steering: content unchanged, skipping write", "path", steeringFile)
-		return
+		return nil
 	}
 
 	// 0600 for a file listing the workspace layout and MCP server names; WithMkdirMode creates the
 	// parent narrowly (MkdirAll would widen it to 0755).
-	if _, wErr := atomicfile.WriteFile(ctx, steeringFile, content,
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); wErr != nil {
-		slog.Error("steering: write", "path", steeringFile, "error", wErr)
-		return
+	if _, err := filesafe.WriteFile(ctx, steeringFile, content,
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700)); err != nil {
+		return fmt.Errorf("steering: write %s: %w", steeringFile, err)
 	}
 	slog.Info("steering: wrote", "path", steeringFile, "bytes", len(content))
+	return nil
+}
+
+func stopped(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("steering: generate stopped: %w", err)
+	}
+	return nil
 }
 
 // hasMCP and hasForges say whether a snapshot callback was wired at all, which decides whether the
-// MCP and forge sections appear.
-func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, forges ForgeSnapshot, hasForges bool) []byte {
+// MCP and forge sections appear; toolsOK says the tools snapshot answered.
+func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, forges ForgeSnapshot, hasForges bool,
+	tools []InstalledTool, toolsOK bool,
+) []byte {
 	var b strings.Builder
 	writeIntro(&b, g.workDir)
 
-	// tools-state.json is what is INSTALLED (tools.json is intent).
-	state := filepath.Join(g.configDir, "tools-state.json")
-	if data, err := readCappedFile(state, toolsManifestCap); err == nil {
-		writeTools(&b, data)
+	if toolsOK {
+		// The inventory carries no bins: tools-state.json records them. An unreadable file
+		// leaves every tool without a recorded command.
+		data, _ := readCappedFile(filepath.Join(g.configDir, "tools-state.json"), toolsManifestCap)
+		writeTools(&b, tools, data)
 	}
-	writeRuntime(&b, g.configDir)
-	writeToolsEngine(&b, g.configDir, g.workDir)
+	writeRuntime(&b, g.configDir, g.toolsDir)
+	writeToolsEngine(&b, g.configDir, g.toolsDir, g.workDir)
 	if hasMCP {
 		writeMCP(&b, mcp)
 	}
@@ -183,18 +229,18 @@ func (g *Generator) renderChat(forges ForgeSnapshot) string {
 	b.WriteString("These sections describe what the user sees; the environment steering doc ")
 	b.WriteString("covers the container.\n\n")
 	writeGitPanel(&b, g.workDir, len(forges.Providers) > 0)
-	writeUIGuide(&b)
-	writeAttachments(&b, marotte.DefaultUploadDir, g.workDir)
+	writeUIGuide(&b, g.workDir, g.configDir)
+	writeAttachments(&b, marotte.DefaultUploadDir, g.workDir, g.configDir)
 	writeChatCapabilities(&b)
 	return b.String()
 }
 
-// Errors are log-and-omit. It opens with atomicfile.OpenRegular: a FIFO would hang Generate, which
+// Errors are log-and-omit. It opens with filesafe.OpenRegular: a FIFO would hang Generate, which
 // runs synchronously before every session door, and a symlinked README would copy whatever it names
 // (an MCP credential, measured) into authoritative agent context. Truncation is kept: only the head
 // matters.
 func readCappedFile(path string, limit int64) ([]byte, error) {
-	f, _, err := atomicfile.OpenRegular(path)
+	f, _, err := filesafe.OpenRegular(path)
 	if err != nil {
 		return nil, err
 	}
@@ -207,45 +253,67 @@ func (*Generator) CustomPath() string {
 	return workspace.KiroSteeringPath("custom.md")
 }
 
-// toolState mirrors the tools engine's per-tool machine state subset
-// this generator consumes (the toolbelt engine's ToolStatus).
+// toolState is the subset of a tools-state.json row (the toolbelt engine's ToolStatus) this
+// generator reads: the commands a tool owns.
 type toolState struct {
-	InstalledVersion string   `json:"installed_version"`
-	Bins             []string `json:"bins,omitempty"`
-	PMBins           []string `json:"pm_bins,omitempty"`
+	Bins   []string `json:"bins,omitempty"`
+	PMBins []string `json:"pm_bins,omitempty"`
 }
 
-func writeTools(b *strings.Builder, data []byte) {
-	var state struct {
+// writeTools lists installed's commands from the bins state records. A tool with none is listed
+// as a package, never under its name as a command: an apt package's commands need not match its
+// name (ripgrep ships rg), and an npm package may ship none.
+func writeTools(b *strings.Builder, installed []InstalledTool, state []byte) {
+	var recorded struct {
 		Tools map[string]toolState `json:"tools"`
 	}
-	if err := json.Unmarshal(data, &state); err != nil {
-		slog.Error("steering: parse tools-state.json", "error", err)
-		return
-	}
-	type tool struct{ name, version string }
-	var all []tool
-	for name, st := range state.Tools {
-		if st.InstalledVersion == "" {
-			continue
+	if len(state) > 0 {
+		if err := json.Unmarshal(state, &recorded); err != nil {
+			slog.Error("steering: parse tools-state.json", "error", err)
 		}
+	}
+	var commands, packages []toolEntry
+	for _, t := range installed {
+		// Defused: names and versions come from the catalog, hand edits and --version output.
+		version := defuse(t.Version)
+		st := recorded.Tools[t.Name]
 		bins := slices.Concat(st.Bins, st.PMBins)
 		if len(bins) == 0 {
-			bins = []string{name}
+			packages = append(packages, toolEntry{defuse(t.Name), version, defuse(t.Kind)})
+			continue
 		}
-		// Defused: names and versions come from the catalog, hand edits and --version output.
 		for _, bin := range bins {
-			all = append(all, tool{defuse(bin), defuse(st.InstalledVersion)})
+			commands = append(commands, toolEntry{defuse(bin), version, ""})
 		}
 	}
-	if len(all) == 0 {
+	if len(commands)+len(packages) == 0 {
 		return
 	}
-	slices.SortFunc(all, func(a, b tool) int { return strings.Compare(a.name, b.name) })
-	all = slices.CompactFunc(all, func(a, b tool) bool { return a.name == b.name })
 	b.WriteString("## Installed tools\n\n")
-	for _, t := range all {
-		fmt.Fprintf(b, "- %s %s\n", t.name, t.version)
+	if len(commands) > 0 {
+		writeToolEntries(b, commands)
+	}
+	if len(packages) > 0 {
+		b.WriteString("Installed packages with no recorded command (`dpkg -L <package>` lists an apt package's files):\n\n")
+		writeToolEntries(b, packages)
+	}
+}
+
+type toolEntry struct{ name, version, kind string }
+
+// writeToolEntries writes one line per name, sorted; a name listed twice is one PATH entry.
+func writeToolEntries(b *strings.Builder, list []toolEntry) {
+	slices.SortFunc(list, func(x, y toolEntry) int { return strings.Compare(x.name, y.name) })
+	list = slices.CompactFunc(list, func(x, y toolEntry) bool { return x.name == y.name })
+	for _, e := range list {
+		b.WriteString("- " + e.name)
+		if e.version != "" {
+			b.WriteString(" " + e.version)
+		}
+		if e.kind != "" {
+			b.WriteString(" (" + e.kind + ")")
+		}
+		b.WriteString("\n")
 	}
 	b.WriteString("\n")
 }
@@ -261,10 +329,13 @@ func writeMCP(b *strings.Builder, snap MCPSnapshot) {
 
 	b.WriteString("## Connected integrations\n\n")
 	b.WriteString("External systems the user has connected via MCP. ")
-	b.WriteString("Their tools are deferred: none is in your toolset until you ")
-	b.WriteString("load it by id with tool_load, then call it with tool_call. ")
-	b.WriteString("A workflow step whose agent profile does not set includeMcpJson ")
-	b.WriteString("sees none of them, and reaches a Power's servers only through kiro_powers.\n\n")
+	// The loader depends on the session's disclosure arm, which no frame carries and this
+	// HOME-wide file cannot know, so both are named.
+	b.WriteString("Their tools are deferred: none is in your toolset until you load it by id, ")
+	b.WriteString("then call it with tool_call. The loader is load_resource (ids tool::<server>::<tool>) ")
+	b.WriteString("or, in a session without it, tool_load. ")
+	b.WriteString("A workflow step whose agent profile does not set includeMcpJson sees none of them, ")
+	b.WriteString("and reaches a Power's servers only through the Power: its power:: ids in load_resource, or kiro_powers.\n\n")
 	for _, s := range servers {
 		fmt.Fprintf(b, "- **%s**\n", defuse(s.Name))
 	}

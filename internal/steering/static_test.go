@@ -16,29 +16,41 @@ func fakeEnv(t *testing.T, env map[string]string) {
 	t.Cleanup(func() { lookupEnv = prev })
 }
 
+func fakeUID(t *testing.T, uid int) {
+	t.Helper()
+	prev := geteuid
+	geteuid = func() int { return uid }
+	t.Cleanup(func() { geteuid = prev })
+}
+
 func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 	fakeEnv(t, map[string]string{
 		"HOME":      "/h",
 		"KIRO_HOME": "/h/.kiro",
-		"PATH":      "/a:/b",
+		"PATH":      "/t/bin:/t/go/bin:/a",
 		"GOPATH":    "/g",
 		"GOBIN":     "/g/bin",
 		"LANG":      "C.UTF-8",
+
+		"MAROTTE_PATH_DROPIN": "1",
 	})
+	fakeUID(t, 0)
 	var b strings.Builder
-	writeRuntime(&b, "/cfg")
+	writeRuntime(&b, "/cfg", "/t")
 	out := b.String()
 
 	for _, want := range []string{
 		"## Container runtime",
 		"`HOME=/h`",
 		"`KIRO_HOME=/h/.kiro`",
-		"`PATH=/a:/b`",
+		"`PATH=/t/bin:/t/go/bin:/a`: `/t/bin` is the tools engine's single bin dir",
 		"`GOPATH=/g`, `GOBIN=/g/bin`, `LANG=C.UTF-8`",
 		"`/cfg` is the persistent volume",
-		"`/cfg/tools/bin/<tool>`",
-		"`HOME=/cfg/home`",
-		"/etc/profile.d/10-marotte-path.sh",
+		"`/t` is the tools engine's tree",
+		"`/t/bin` is the tools engine's single bin dir",
+		"`/t/bin/<tool>`",
+		"Pin `HOME=/h` on any command",
+		"sources `/etc/profile.d/10-marotte-path.sh`, which holds this start's PATH, so an installed tool resolves by bare name there too",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("writeRuntime output missing %q:\n%s", want, out)
@@ -47,10 +59,175 @@ func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 	if strings.Contains(out, "TZ=") {
 		t.Errorf("writeRuntime printed TZ, which was unset:\n%s", out)
 	}
+	if strings.Contains(out, "/cfg/tools") || strings.Contains(out, "/cfg/home") {
+		t.Errorf("writeRuntime derived a path from the config dir instead of the tools dir or HOME:\n%s", out)
+	}
+	if strings.Contains(out, "(= HOME)") {
+		t.Errorf("writeRuntime lists HOME on the config volume, but HOME=/h lies outside /cfg:\n%s", out)
+	}
+}
+
+func TestWriteRuntime_GoBinIsGopathBinOnlyWhenGopathIsTheToolsGo(t *testing.T) {
+	for _, tc := range []struct {
+		name, gopath string
+		want         bool
+	}{{"the tools go", "/t/go", true}, {"elsewhere", "/g", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeEnv(t, map[string]string{"PATH": "/t/bin:/t/go/bin:/a", "GOPATH": tc.gopath})
+			var b strings.Builder
+			writeRuntime(&b, "/cfg", "/t")
+			if got := strings.Contains(b.String(), "`/t/go/bin` is `$GOPATH/bin`"); got != tc.want {
+				t.Errorf("GOPATH=%s: claims /t/go/bin is $GOPATH/bin = %v, want %v:\n%s", tc.gopath, got, tc.want, b.String())
+			}
+		})
+	}
+}
+
+// A server started without the image's entrypoint can run with the tools bin off PATH, so the doc
+// must not promise bare names.
+func TestWriteRuntime_ToolsBinOffPathSendsUsersToTheAbsolutePath(t *testing.T) {
+	fakeEnv(t, map[string]string{"HOME": "/h", "PATH": "/usr/bin:/bin"})
+	fakeUID(t, 1000)
+	var b strings.Builder
+	writeRuntime(&b, "/cfg", "/srv/t")
+	out := b.String()
+	for _, want := range []string{
+		"the tools engine's single bin dir `/srv/t/bin` is not on it",
+		"runs an installed tool by its absolute path (`/srv/t/bin/<tool>`). Pin `HOME=/h`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeRuntime output missing %q:\n%s", want, out)
+		}
+	}
+	for _, bad := range []string{"resolves by bare name", "is the tools engine's single bin dir", "as the image exports it", "/etc/profile"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("writeRuntime says %q with the tools bin off PATH:\n%s", bad, out)
+		}
+	}
+}
+
+// Only root may write /etc/profile.d, so under another uid a login shell's PATH comes from
+// /etc/profile alone and the doc must not promise bare names there.
+func TestWriteRuntime_NonRootLoginShellsGetTheAbsolutePath(t *testing.T) {
+	fakeEnv(t, map[string]string{"HOME": "/h", "PATH": "/t/bin:/usr/bin:/bin", "MAROTTE_PATH_DROPIN": "1"})
+	fakeUID(t, 1000)
+	var b strings.Builder
+	writeRuntime(&b, "/cfg", "/t")
+	out := b.String()
+	for _, want := range []string{
+		"`/t/bin` is the tools engine's single bin dir",
+		"takes its PATH from `/etc/profile`, which leaves out `/t/bin`: marotte runs as uid 1000, not root",
+		"runs an installed tool by its absolute path (`/t/bin/<tool>`). Pin `HOME=/h`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeRuntime output missing %q:\n%s", want, out)
+		}
+	}
+	for _, bad := range []string{"resolves by bare name", "10-marotte-path.sh"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("writeRuntime says %q for a non-root server:\n%s", bad, out)
+		}
+	}
+}
+
+// A root server whose entrypoint did not report a written drop-in (the write failed, or the binary
+// started without the entrypoint) must not promise bare names in a login shell.
+func TestWriteRuntime_RootWithoutAWrittenDropInGetsTheAbsolutePath(t *testing.T) {
+	for name, dropin := range map[string]*string{"unset": nil, "empty": new(""), "not 1": new("yes")} {
+		t.Run(name, func(t *testing.T) {
+			env := map[string]string{"HOME": "/h", "PATH": "/t/bin:/usr/bin:/bin"}
+			if dropin != nil {
+				env["MAROTTE_PATH_DROPIN"] = *dropin
+			}
+			fakeEnv(t, env)
+			fakeUID(t, 0)
+			var b strings.Builder
+			writeRuntime(&b, "/cfg", "/t")
+			out := b.String()
+			want := "may not search `/t/bin`: the entrypoint could not give `/etc/profile.d/10-marotte-path.sh` this " +
+				"start's PATH (the boot log's WARNING says why, or the server started without the entrypoint). There a " +
+				"user runs an installed tool by its absolute path (`/t/bin/<tool>`). Pin `HOME=/h`"
+			if !strings.Contains(out, want) {
+				t.Errorf("writeRuntime output missing %q:\n%s", want, out)
+			}
+			if strings.Contains(out, "resolves by bare name") {
+				t.Errorf("writeRuntime promises bare names with no written drop-in:\n%s", out)
+			}
+		})
+	}
+}
+
+// With no usable tools dir the tools engine is off, so the doc names no tools folder.
+func TestWriteRuntime_NoToolsDirNamesNoToolsFolder(t *testing.T) {
+	fakeEnv(t, map[string]string{"HOME": "/h", "PATH": "/usr/bin:/bin", "GOPATH": "/go"})
+	var b strings.Builder
+	writeRuntime(&b, "/cfg", "")
+	out := b.String()
+	for _, want := range []string{
+		"- `PATH=/usr/bin:/bin`: `$HOME/.local/bin` is the per-user bin dir",
+		"- The tools engine is off, so it installs nothing. Pin `HOME=/h`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeRuntime output missing %q:\n%s", want, out)
+		}
+	}
+	for _, bad := range []string{"/bin/<tool>", "single bin dir", "tools engine's tree", "`/bin", "`/go/bin"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("writeRuntime says %q with no tools dir:\n%s", bad, out)
+		}
+	}
+}
+
+func TestWriteRuntime_HomeInsideTheConfigDirIsListedOnTheVolume(t *testing.T) {
+	fakeEnv(t, map[string]string{"HOME": "/cfg/home"})
+	var b strings.Builder
+	writeRuntime(&b, "/cfg", "/cfg/tools")
+	out := b.String()
+	if !strings.Contains(out, "`home/` (= HOME)") {
+		t.Errorf("writeRuntime does not list HOME=/cfg/home on the /cfg volume:\n%s", out)
+	}
+	if !strings.Contains(out, "Pin `HOME=/cfg/home` on any command") {
+		t.Errorf("writeRuntime does not pin the live HOME:\n%s", out)
+	}
+}
+
+func TestWriteRuntime_UnsetHomeIsNeitherListedNorPinned(t *testing.T) {
+	fakeEnv(t, map[string]string{})
+	var b strings.Builder
+	writeRuntime(&b, "/cfg", "/cfg/tools")
+	out := b.String()
+	if strings.Contains(out, "HOME") {
+		t.Errorf("writeRuntime names HOME, which was unset:\n%s", out)
+	}
+	if !strings.Contains(out, "path (`/cfg/tools/bin/<tool>`)\n") {
+		t.Errorf("writeRuntime does not end the drop-in hint at the absolute path:\n%s", out)
+	}
 }
 
 // A value carrying a backtick would close the code span it is quoted in, so
 // the variable is dropped rather than rendered.
+func TestWriteRuntime_NamesTheRuntimeDirAndItsRule(t *testing.T) {
+	t.Run("set", func(t *testing.T) {
+		fakeEnv(t, map[string]string{"HOME": "/h", "KIRO_RUNTIME_DIR": "/h/.cache/kiro-cli-runtime"})
+		var b strings.Builder
+		writeRuntime(&b, "/cfg", "/cfg/tools")
+		out := b.String()
+		for _, want := range []string{"`KIRO_RUNTIME_DIR=/h/.cache/kiro-cli-runtime`", "with `KIRO_RUNTIME_DIR` unset"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("writeRuntime output missing %q:\n%s", want, out)
+			}
+		}
+	})
+	t.Run("unset", func(t *testing.T) {
+		fakeEnv(t, map[string]string{"HOME": "/h"})
+		var b strings.Builder
+		writeRuntime(&b, "/cfg", "/cfg/tools")
+		if out := b.String(); strings.Contains(out, "KIRO_RUNTIME_DIR") {
+			t.Errorf("writeRuntime named KIRO_RUNTIME_DIR, which was unset:\n%s", out)
+		}
+	})
+}
+
 func TestWriteRuntime_BacktickInValueDropsTheVariable(t *testing.T) {
 	fakeEnv(t, map[string]string{
 		"HOME":   "/h",
@@ -59,7 +236,7 @@ func TestWriteRuntime_BacktickInValueDropsTheVariable(t *testing.T) {
 		"LANG":   "C.UTF-8",
 	})
 	var b strings.Builder
-	writeRuntime(&b, "/cfg")
+	writeRuntime(&b, "/cfg", "/cfg/tools")
 	out := b.String()
 	if strings.Contains(out, "GOPATH=") {
 		t.Errorf("a GOPATH value with a backtick reached the doc:\n%s", out)
@@ -74,7 +251,7 @@ func TestWriteRuntime_BacktickInValueDropsTheVariable(t *testing.T) {
 
 func TestWriteToolsEngine(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/cfg", "/w")
+	writeToolsEngine(&b, "/cfg", "/t", "/w")
 	out := b.String()
 	for _, want := range []string{
 		"localhost:9847/api/tools/search?q=<name>",
@@ -83,7 +260,8 @@ func TestWriteToolsEngine(t *testing.T) {
 		"&unavailable=1",
 		"Settings → Tools",
 		"`/cfg/tools.json`",
-		"`/cfg/tools/opt/<name>/<version>/`",
+		"`/t/opt/<name>/<version>/`",
+		"`/t/bin/`",
 		`"Refresh catalog"`,
 	} {
 		if !strings.Contains(out, want) {
@@ -100,9 +278,24 @@ func TestWriteToolsEngine(t *testing.T) {
 	}
 }
 
+func TestWriteToolsEngine_NoToolsDirSaysTheEngineIsOff(t *testing.T) {
+	var b strings.Builder
+	writeToolsEngine(&b, "/cfg", "", "/w")
+	out := b.String()
+	if !strings.Contains(out, "The tools engine is off because the server cannot use the folder configured for it") ||
+		!strings.Contains(out, "`MAROTTE_TOOLS_DIR`") {
+		t.Errorf("writeToolsEngine does not say the engine is off and which setting moves it:\n%s", out)
+	}
+	for _, bad := range []string{"/api/tools", "/opt/", "tools.json"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("writeToolsEngine offers %q with the engine off:\n%s", bad, out)
+		}
+	}
+}
+
 func TestWriteToolsEngine_SaysABadManifestLeavesToolsOffRatherThanStoppingMarotte(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/cfg", "/w")
+	writeToolsEngine(&b, "/cfg", "/cfg/tools", "/w")
 	out := b.String()
 	if !strings.Contains(out, "leaves the tools engine off, with the reason in Settings → Tools") {
 		t.Errorf("writeToolsEngine does not say a refused tools.json leaves the tools engine off:\n%s", out)
@@ -114,7 +307,7 @@ func TestWriteToolsEngine_SaysABadManifestLeavesToolsOffRatherThanStoppingMarott
 
 func TestWriteToolsEngine_ConfigOutsideTheWorkspaceIsNotReachableByFileTools(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/cfg", "/w")
+	writeToolsEngine(&b, "/cfg", "/cfg/tools", "/w")
 	out := b.String()
 	if !strings.Contains(out, "Your file tools cannot write it, because `/cfg` is outside the workspace") {
 		t.Errorf("writeToolsEngine(/cfg, /w) does not say file tools cannot reach tools.json:\n%s", out)
@@ -126,7 +319,7 @@ func TestWriteToolsEngine_ConfigOutsideTheWorkspaceIsNotReachableByFileTools(t *
 
 func TestWriteToolsEngine_ConfigInsideTheWorkspaceGetsTheEditorCheck(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/w/.cfg", "/w")
+	writeToolsEngine(&b, "/w/.cfg", "/w/.cfg/tools", "/w")
 	out := b.String()
 	if !strings.Contains(out, "A write from your own file tools gets the same check and install") {
 		t.Errorf("writeToolsEngine(/w/.cfg, /w) does not say file-tool writes are checked:\n%s", out)
@@ -209,7 +402,7 @@ func TestStaticGuide_NamesMarottesHelperNotACLILogin(t *testing.T) {
 
 	fakeEnv(t, map[string]string{"HOME": "/h", "PATH": "/a:/b"})
 	b.Reset()
-	writeRuntime(&b, "/cfg")
+	writeRuntime(&b, "/cfg", "/cfg/tools")
 	if cli := forgeCLIName.FindString(b.String()); cli != "" {
 		t.Errorf("writeRuntime names the forge CLI %q:\n%s", cli, b.String())
 	}
@@ -219,7 +412,7 @@ func TestStaticGuide_NamesMarottesHelperNotACLILogin(t *testing.T) {
 // the exact on-screen text.
 func TestWriteUIGuide_NotificationsPath(t *testing.T) {
 	var b strings.Builder
-	writeUIGuide(&b)
+	writeUIGuide(&b, "/w", "/cfg")
 	out := b.String()
 	for _, want := range []string{
 		"Settings → General",
@@ -239,7 +432,7 @@ func TestWriteUIGuide_NotificationsPath(t *testing.T) {
 
 func TestWriteUIGuide_NamesTheMemorySetting(t *testing.T) {
 	var b strings.Builder
-	writeUIGuide(&b)
+	writeUIGuide(&b, "/w", "/cfg")
 	out := b.String()
 	if !strings.Contains(out, `"Knowledge base search", "Model fallback", "Memory", "Spec planning", "Steering reminders", "Work validation", "AWS CloudFormation safety check", "Workflows", "Output style", "Shell command timeout")`) {
 		t.Errorf("writeUIGuide output does not list the Memory setting under Agent capabilities:\n%s", out)
@@ -251,7 +444,7 @@ func TestWriteUIGuide_NamesTheMemorySetting(t *testing.T) {
 
 func TestWriteUIGuide_NamesEveryTab(t *testing.T) {
 	var b strings.Builder
-	writeUIGuide(&b)
+	writeUIGuide(&b, "/w", "/cfg")
 	out := b.String()
 	for _, want := range []string{
 		`"General", "Tools", "Permissions", "Custom instructions"`,
@@ -280,9 +473,18 @@ func TestWriteUIGuide_NamesEveryTab(t *testing.T) {
 	}
 }
 
+func TestWriteUIGuide_RunTabNamesTheStepEndButtons(t *testing.T) {
+	var b strings.Builder
+	writeUIGuide(&b, "/w", "/cfg")
+	out := b.String()
+	if !strings.Contains(out, `"Mark step done" / "Mark step failed" on a paused step`) {
+		t.Errorf("writeUIGuide run-tab paragraph does not name the step end buttons:\n%s", out)
+	}
+}
+
 func TestWriteAttachments_UsesTheUploadDirConstant(t *testing.T) {
 	var b strings.Builder
-	writeAttachments(&b, "/u", "/w")
+	writeAttachments(&b, "/u", "/w", "/cfg")
 	out := b.String()
 	for _, want := range []string{
 		"`/u/pasted-YYYY-MM-DDTHH-MM-SS.png`",
@@ -304,7 +506,7 @@ func TestWriteAttachments_UsesTheUploadDirConstant(t *testing.T) {
 
 func TestWriteAttachments_TellsHowToLinkAFile(t *testing.T) {
 	var b strings.Builder
-	writeAttachments(&b, "/u", "/w")
+	writeAttachments(&b, "/u", "/w", "/cfg")
 	out := b.String()
 	for _, want := range []string{
 		"`[label](/w/path/file.ext#L<line>)`",
@@ -319,7 +521,7 @@ func TestWriteAttachments_TellsHowToLinkAFile(t *testing.T) {
 
 func TestWriteAttachments_StatesTheCaps(t *testing.T) {
 	var b strings.Builder
-	writeAttachments(&b, "/u", "/w")
+	writeAttachments(&b, "/u", "/w", "/cfg")
 	out := b.String()
 	for _, want := range []string{
 		"10 MiB",
@@ -411,7 +613,7 @@ func TestWriteChatCapabilities(t *testing.T) {
 
 func TestWriteAttachments_TeachesMermaidDiagrams(t *testing.T) {
 	var b strings.Builder
-	writeAttachments(&b, "/u", "/w")
+	writeAttachments(&b, "/u", "/w", "/cfg")
 	out := b.String()
 	for _, want := range []string{
 		"a fenced block whose language is `mermaid`",
@@ -432,7 +634,7 @@ func TestWriteAttachments_TeachesMermaidDiagrams(t *testing.T) {
 
 func TestWriteAttachments_TeachesTheHTMLPreview(t *testing.T) {
 	var b strings.Builder
-	writeAttachments(&b, "/workspace/.uploads", "/workspace")
+	writeAttachments(&b, "/workspace/.uploads", "/workspace", "/config")
 	out := b.String()
 	for _, want := range []string{
 		"`[Demo](/workspace/demo/index.html)`",

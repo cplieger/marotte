@@ -38,10 +38,6 @@ var (
 	ErrRestoreFailed = errors.New("the copied rules could not be taken back out of the user permissions file")
 )
 
-// presetRuleSource is the prefix KAS stamps on a rule resolved from a preset (`preset:<id>`).
-// No RPC enumerates a preset's rules, so the live view of a session opened with them is the source.
-const presetRuleSource = "preset:"
-
 // Store resolves and changes the profile for one workspace. List reads the live policy of a
 // session opened with the active profile; nil means no live policy. Publish gets the
 // settings_updated event of each profile write (settings.Update's publish); nil sends none.
@@ -143,7 +139,7 @@ func (s *Store) customize(ctx context.Context) error {
 		return err
 	}
 	if err := s.Select(ctx, policyfile.ProfileCustom); err != nil {
-		if rErr := restoreUserFile(ctx, path, existed, before); rErr != nil {
+		if rErr := restoreUserFile(ctx, path, existed, f, before); rErr != nil {
 			slog.Error("could not restore the user permissions file after a failed Customize",
 				"path", path, "error", logsafe.Field(rErr.Error()))
 			return fmt.Errorf("%w: %w", ErrRestoreFailed, err)
@@ -154,8 +150,9 @@ func (s *Store) customize(ctx context.Context) error {
 }
 
 // presetRulesInForce reads the rules the ACTIVE profile's presets contributed to the live
-// policy. Session scope AND a source naming one of those presets: scope alone would also catch
-// a one-session consent, and a session still on another profile would hand over its grants.
+// policy; no RPC enumerates a preset's rules, so a session opened with them is the source.
+// Session scope AND a source naming one of those presets: scope alone would also catch a
+// one-session consent, and a session still on another profile would hand over its grants.
 // Rules are sanitized on the way through.
 func (s *Store) presetRulesInForce(ctx context.Context) ([]policyfile.Rule, error) {
 	if s.List == nil {
@@ -169,7 +166,7 @@ func (s *Store) presetRulesInForce(ctx context.Context) ([]policyfile.Rule, erro
 	out := make([]policyfile.Rule, 0, len(live))
 	for i := range live {
 		r := &live[i]
-		preset, fromPreset := strings.CutPrefix(r.Source, presetRuleSource)
+		preset, fromPreset := strings.CutPrefix(r.Source, policyfile.PresetSourcePrefix)
 		if r.Scope != "session" || !fromPreset || !slices.Contains(profile.Presets, preset) {
 			continue
 		}
@@ -190,12 +187,14 @@ func (s *Store) presetRulesInForce(ctx context.Context) ([]policyfile.Rule, erro
 	return out, nil
 }
 
-func restoreUserFile(ctx context.Context, path string, existed bool, before []policyfile.Rule) error {
+// restoreUserFile puts back the rules Load read; Save keeps the file's other keys and comments.
+func restoreUserFile(ctx context.Context, path string, existed bool, f *policyfile.File, before []policyfile.Rule) error {
 	if !existed {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 		return nil
 	}
-	return policyfile.Save(ctx, path, &policyfile.File{Rules: before})
+	f.Rules = before
+	return policyfile.Save(ctx, path, f)
 }

@@ -1,6 +1,9 @@
 package marotte
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Per-event payload structs for SSE events; the envelope types live in events.go.
 
@@ -62,7 +65,20 @@ type AlwaysAllowBlock string
 // match this command, so a saved rule would be a permanent no-op in permissions.yaml.
 const AlwaysAllowBlockUnparseable AlwaysAllowBlock = "unparseable"
 
-// MCPToolIdentity names the verified MCP server and tool behind a permission request.
+// RejectionNote names which note a permission card offers with its reject_once option.
+// KAS hands either note to the model as the user's reason; on a plan approval it also
+// keeps the note and gives it to the steps of the next approved plan as a correction.
+type RejectionNote string
+
+const (
+	// RejectionNoteReason is an ordinary tool approval's note: why the user denies the call.
+	RejectionNoteReason RejectionNote = "reason"
+	// RejectionNotePlanEdits is a workflow plan approval's note: the edits the user wants.
+	RejectionNotePlanEdits RejectionNote = "plan_edits"
+)
+
+// MCPToolIdentity names the MCP server and tool KAS reports behind a permission request or a
+// tool call; both halves are set or the value is nil.
 type MCPToolIdentity struct {
 	ServerName string `json:"server_name"`
 	ToolName   string `json:"tool_name"`
@@ -87,10 +103,17 @@ type PermissionNeededPayload struct {
 	// Consent names what this ask is about, present when KAS sent it; an always answer
 	// saves a rule for this capability.
 	Consent *PermissionConsent `json:"consent,omitempty"`
+	// Command is the command a shell, hook or watch ask would run, absent on any other ask.
+	Command *PermissionCommand `json:"command,omitempty"`
 	// AlwaysAllowBlocked names why the card must not offer to persist a rule for this
 	// command. Empty means the offer stands.
-	AlwaysAllowBlocked AlwaysAllowBlock   `json:"always_allow_blocked,omitempty"`
-	Options            []PermissionOption `json:"options"`
+	AlwaysAllowBlocked AlwaysAllowBlock `json:"always_allow_blocked,omitempty"`
+	// RejectionNote names the note the card offers with reject_once; empty means none.
+	RejectionNote RejectionNote `json:"rejection_note,omitempty"`
+	// ClassifierNote is _meta.kiro.trustClassifier's reason: Kiro's safety check did not clear the
+	// call and handed it to a person. Unattended runs refuse such an ask.
+	ClassifierNote string             `json:"classifier_note,omitempty"`
+	Options        []PermissionOption `json:"options"`
 	// Locations are the workspace-relative paths the tool call touches.
 	Locations []string `json:"locations,omitempty"`
 	// Files is the turn's staged file list, present ONLY on a turn approval. Such an
@@ -106,9 +129,6 @@ type PermissionNeededPayload struct {
 	// AdminRequired marks an ask raised by the administrator's rules, which a
 	// person must answer: the card says so, and unattended runs refuse it.
 	AdminRequired bool `json:"admin_required,omitempty"`
-	// AcceptsRejectionReason marks an ask whose deny can carry a note for the
-	// agent: the ordinary tool approval offering a reject_once option.
-	AcceptsRejectionReason bool `json:"accepts_rejection_reason,omitempty"`
 }
 
 // PermissionConsent is what one permission ask is about. A compound command asks once per
@@ -123,6 +143,15 @@ type PermissionConsent struct {
 	// Subject and Folder can differ from them (controls replaced, cut at 512 bytes).
 	Resource       string `json:"-"`
 	FolderResource string `json:"-"`
+}
+
+// PermissionCommand is the command an ask would run, display-treated with its line breaks
+// kept: whole in Text, or past the cap its head in Text and its tail in Tail, with
+// OmittedBytes left out between them.
+type PermissionCommand struct {
+	Text         string `json:"text"`
+	Tail         string `json:"tail,omitempty"`
+	OmittedBytes int    `json:"omitted_bytes,omitempty"`
 }
 
 // PermissionWatch names the workflow run and node a watch command belongs to.
@@ -176,7 +205,8 @@ const (
 	// SettledByMoot means NOBODY answered and nobody had to: the question stopped being
 	// answerable. User and unattended both ASSERT an answer, so retiring a discarded ask under
 	// one of them would tell the reader their question was decided. A request KAS withdrew
-	// itself (interaction_resolved, outcome cancelled) carries it.
+	// itself (interaction_resolved, outcome cancelled) carries it, and so does an ask a Stop
+	// or a tab close answered with its kind's cancel.
 	SettledByMoot SettledBy = "moot"
 	// SettledByEnded means nobody answered and nobody now can: the session the ask arrived on
 	// ended, and an answer may only go back on that session. Separate from moot because the
@@ -227,6 +257,20 @@ func DecisionRunID(payload any) string {
 	}
 }
 
+// DecisionRequestID is the ask id a *_needed payload carries, 0 for any other payload.
+func DecisionRequestID(payload any) int64 {
+	switch p := payload.(type) {
+	case PermissionNeededPayload:
+		return p.RequestID
+	case ElicitationNeededPayload:
+		return p.RequestID
+	case UserInputNeededPayload:
+		return p.RequestID
+	default:
+		return 0
+	}
+}
+
 // ErrorCode identifies an SSE error event class.
 type ErrorCode string
 
@@ -265,8 +309,8 @@ type ErrorPayload struct {
 	Message string    `json:"message"`
 	// OpID is the client-minted op_id of the command this failure ends, when it carried one.
 	OpID string `json:"op_id,omitempty"`
-	// TurnScoped reports that this failure finalized a turn whose entry log now carries
-	// the same text durably, so the reason is already in that turn's card. A property of the EMISSION,
+	// TurnScoped reports that a turn's entry log now carries this failure's text durably, so the
+	// reason is already in that turn's card; the turn need not have ended. A property of the EMISSION,
 	// not of the Code: the recovery's reopen failure shares ErrCodeRecoveryFailed with
 	// the retry turn's abandon and closes no turn, so no per-code answer fits. Absent
 	// means NO, the safe direction — report the failure rather than trust an inline row
@@ -471,9 +515,11 @@ type GovernanceRegistryServer struct {
 
 // OpenExternalURLPayload is the payload for type="open_external_url". Browsers popup-block a
 // window.open() not driven by a user gesture, so the client surfaces a banner link rather
-// than auto-opening. Only http/https URLs are broadcast.
+// than auto-opening. Only http/https URLs are broadcast. ExpiresAt is when KAS stops waiting for
+// the callback; a replayed event carries the original time, so the client shows only what is left.
 type OpenExternalURLPayload struct {
-	URL string `json:"url"`
+	ExpiresAt time.Time `json:"expires_at"`
+	URL       string    `json:"url"`
 }
 
 // RPC error code constants for typed dispatch in retry logic.
@@ -610,6 +656,14 @@ type HooksChangedPayload struct{}
 // and empty: the installed Powers moved, so the Powers tab refetches.
 type PowersChangedPayload struct{}
 
+// MemoriesChangedPayload is the payload for type="memories_changed", workspace-global and empty: a memory write
+// answered, so the Memories list refetches.
+type MemoriesChangedPayload struct{}
+
+// KnowledgeChangedPayload is the payload for type="knowledge_changed", workspace-global and empty: a knowledge
+// base change answered, so the Knowledge list refetches.
+type KnowledgeChangedPayload struct{}
+
 // RecipesChangedPayload is the payload for type="recipes_changed", workspace-global and
 // empty. The client refetches GET /api/recipes on receipt.
 type RecipesChangedPayload struct{}
@@ -654,8 +708,10 @@ type TangentMergedPayload struct {
 // reconstructible from the events alone — for every other device and for the sender after a
 // reconnect.
 type SteerQueuedPayload struct {
-	SteerID string `json:"steer_id"`
-	Text    string `json:"text"`
+	// Caller is set on a row an API caller sent (on a batch, only when no row is the user's: SharedCaller).
+	Caller  *Caller `json:"caller,omitempty"`
+	SteerID string  `json:"steer_id"`
+	Text    string  `json:"text"`
 	// Origin is whose words these are, resolved server-side. NO omitempty: an absent field
 	// lets the client invent a fallback, and the one it would pick is wrong for a
 	// workflow's report.
@@ -676,13 +732,18 @@ type SteerQueuedPayload struct {
 }
 
 // SteerRowState is a dock row's state as the dock draws it. Every row that is or may
-// be in KAS, or whose fate a turn end has not decided, reads queued, so a row moving
+// be in KAS reads queued, or delivering while a turn end's continuation may read it, so a row moving
 // between the server's finer states repaints nothing.
 type SteerRowState string
 
 const (
 	// SteerRowQueued is a row waiting to be read.
 	SteerRowQueued SteerRowState = "queued"
+	// SteerRowDelivering is a row KAS holds while a turn end is unsettled: KAS's
+	// continuation of that turn reads it, or its boundary drops it and the chat's next
+	// prompt carries it. A delete now would clear the buffer under that read, so the
+	// server refuses one.
+	SteerRowDelivering SteerRowState = "delivering"
 	// SteerRowUnsent is an unread row the server holds with no turn to deliver it to:
 	// its session ended, its buffer was cleared with no turn running, or a turn-end resend
 	// failed. The chat's next prompt carries it; a server restart discards it.
@@ -694,7 +755,7 @@ const (
 // AgentNoticePayload is the payload for type="agent_notice": a progress notice a workflow step
 // or subagent reported into the session that launched it. KAS decides this by sniffing the text
 // for a `[notification/<severity>]` prefix and delivers it through the steering buffer, and
-// marotte refuses to SEND that shape, so a notice here is never the user's words. Severity
+// marotte refuses a user's text in that shape, so a notice here is never the user's words. Severity
 // (info/success/warning/error) is why this is its own event rather than a field on a steer: a
 // consumer never has to decide whose voice a message is in. There is no id — a notice has no
 // later state to address.

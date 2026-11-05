@@ -65,7 +65,7 @@ func writeSteeringEntry(b *strings.Builder, repo string, d docEntry) {
 }
 
 // writeRepoSteeringInstructions tells the agent to read per-repo steering: the agent boots
-// at /workspace, so kiro-cli auto-loads steering only at that level.
+// in workDir, so kiro-cli auto-loads steering only at that level.
 func writeRepoSteeringInstructions(b *strings.Builder, repos []string, workDir string) {
 	// Only when some repo carries .kiro/ content.
 	hasAny := false
@@ -83,7 +83,7 @@ func writeRepoSteeringInstructions(b *strings.Builder, repos []string, workDir s
 	b.WriteString("### Per-repo .kiro protocol\n\n")
 	b.WriteString("The per-repo `.kiro/` directories above are NOT auto-loaded ")
 	b.WriteString("by kiro-cli (its auto-include only fires for the cwd it booted in, ")
-	b.WriteString("which is `/workspace`). Treat the inventory above as a routing table:\n\n")
+	b.WriteString("which is `" + workDir + "`). Treat the inventory above as a routing table:\n\n")
 	b.WriteString("- **When you start working in a repo** (any prompt that mentions it, ")
 	b.WriteString("or as soon as you cd / read / edit a file inside it): immediately ")
 	b.WriteString("read every \"Always-loaded steering\" and \"Always-loaded skills\" file listed for that repo.\n")
@@ -92,12 +92,13 @@ func writeRepoSteeringInstructions(b *strings.Builder, repos []string, workDir s
 	b.WriteString("proceed with the change.\n")
 	b.WriteString("- **\"Manual\" steering/skills** are reference material — read on demand if a ")
 	b.WriteString("relevant question arises or the user references them by name.\n")
-	b.WriteString("- **Custom agents**: don't read; just be aware they exist. If the user ")
-	b.WriteString("asks to switch agents, you know what's available.\n")
-	b.WriteString("- **Hooks**: don't read; kiro-cli runs them automatically on their ")
-	b.WriteString("trigger events. If you're about to perform an action where a hook ")
-	b.WriteString("triggers, proactively mention it. When the user describes a workflow ")
-	b.WriteString("pattern that would benefit from a hook, suggest creating one.\n")
+	// KAS loads agents and hooks only from a session root's .kiro/, and no nested repo is one.
+	b.WriteString("- **Custom agents**: don't read. They are not loaded in this session ")
+	b.WriteString("and cannot be switched to; they are listed so you know they exist.\n")
+	b.WriteString("- **Hooks**: don't read. kiro-cli does not run a nested repo's hooks, ")
+	b.WriteString("so when you perform a listed hook's trigger action, run its command ")
+	b.WriteString("yourself (for an agent hook, act on its prompt). When the user describes ")
+	b.WriteString("a workflow pattern that would benefit from a hook, suggest creating one.\n")
 	b.WriteString("- One read per session is enough; subsequent prompts within the same ")
 	b.WriteString("turn don't need to re-read what you already loaded.\n")
 	b.WriteString("- **If a doc is added or edited during this session**: the ")

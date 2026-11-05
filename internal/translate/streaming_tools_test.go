@@ -9,8 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // lineRec is a recording lineRecorder so the diff gates are observable.
@@ -46,20 +47,22 @@ type workDirDeps struct {
 
 func (d *workDirDeps) WorkDir() string { return d.workDir }
 
-// hookStatusDeps overrides IsHookStatusEnabled so the hooks.showStatus gate is
-// exercisable in both states (baseDeps hard-codes false).
-type hookStatusDeps struct {
+// hookTriggerDeps answers HookTrigger from a fixed table, as the agent's hook list cache would.
+type hookTriggerDeps struct {
 	*baseDeps
-	enabled bool
+	triggers map[string]string
 }
 
-func (d *hookStatusDeps) IsHookStatusEnabled() bool { return d.enabled }
+func (d *hookTriggerDeps) HookTrigger(hookID string) (string, bool) {
+	trigger, ok := d.triggers[hookID]
+	return trigger, ok
+}
 
 var (
 	_ lineRecorder = (*lineRec)(nil)
 	_ hostDouble   = (*lineDeps)(nil)
 	_ hostDouble   = (*workDirDeps)(nil)
-	_ hostDouble   = (*hookStatusDeps)(nil)
+	_ hostDouble   = (*hookTriggerDeps)(nil)
 )
 
 func newLineCaptureDeps() (*lineDeps, *lineRec, *[]marotte.ServerEvent) {
@@ -183,6 +186,8 @@ func applyToolResult(tc *marotte.ToolCall, r marotte.EntryToolResult) {
 	tc.OutputBytes = r.OutputBytes
 	tc.HasFull = r.HasFull
 	tc.Declined = r.Declined
+	tc.ClassifierApproved = r.ClassifierApproved
+	tc.ClassifierNote = r.ClassifierNote
 }
 
 // applyToolCallDelta is the client's fold, in Go: the inverse of toolProgress.
@@ -240,6 +245,12 @@ func applyToolCallDelta(tc *marotte.ToolCall, d marotte.ToolProgressPayload) {
 	if d.Declined {
 		tc.Declined = true
 	}
+	if d.ClassifierApproved {
+		tc.ClassifierApproved = true
+	}
+	if d.ClassifierNote != "" {
+		tc.ClassifierNote = d.ClassifierNote
+	}
 }
 
 func hasWorkingLabel(events *[]marotte.ServerEvent) bool {
@@ -253,7 +264,7 @@ func hasWorkingLabel(events *[]marotte.ServerEvent) bool {
 
 // closedChangedFiles closes the chat's turn and returns the changed-files aggregate
 // its turn_close carries, the only read of what the tool calls tracked.
-func closedChangedFiles(t *testing.T, deps *baseDeps, chatID marotte.ChatID) map[string]*marotte.FileChange {
+func closedChangedFiles(t *testing.T, deps *baseDeps, chatID marotte.ChatID) map[string]marotte.FileChange {
 	t.Helper()
 	turn := deps.turns.chats[chatID]
 	if turn == nil {
@@ -263,60 +274,6 @@ func closedChangedFiles(t *testing.T, deps *baseDeps, chatID marotte.ChatID) map
 		t.Fatalf("Close: %v", err)
 	}
 	return turnCloseOf(t, deps.chatEntries(chatID)).ChangedFiles
-}
-
-// TestHandleToolCall_HookAskRenderedRegardlessOfStatusSetting pins that a hook's
-// ask-permission card (kind "other", _meta.kiro.hookAsk) is NOT gated on hooks.showStatus:
-// suppressing it also drops the follow-up carrying the user's answer.
-func TestHandleToolCall_HookAskRenderedRegardlessOfStatusSetting(t *testing.T) {
-	hookAsk := map[string]any{
-		"toolCallId": "hook-ask-1",
-		"title":      "Run hook",
-		"kind":       "other",
-		"status":     "pending",
-		"_meta": map[string]any{"kiro": map[string]any{
-			"hookAsk": map[string]any{"kind": "pre-tool-use", "toolName": "fs_write", "reason": "guard"},
-		}},
-	}
-
-	t.Run("ShownWhenStatusDisabled", func(t *testing.T) {
-		base, events := newEventCaptureDeps()
-		deps := &hookStatusDeps{baseDeps: base, enabled: false}
-		tr := New(rolesOf(deps))
-		chatID := marotte.ChatID("c1")
-		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, hookAsk), FrameAttribution{})
-		if !hasEntryAppended(events, marotte.EntryKindToolCall) {
-			t.Error("hook-ask tool call appended no tool_call entry with hooks.showStatus off; want shown (the ask is ungated)")
-		}
-		if n := len(toolCallsOf(t, base.chatEntries(chatID))); n != 1 {
-			t.Errorf("sealed tool_call entries = %d, want 1 (the ask must be sealed so its answer update lands)", n)
-		}
-	})
-
-	t.Run("ShownWhenStatusEnabled", func(t *testing.T) {
-		base, events := newEventCaptureDeps()
-		deps := &hookStatusDeps{baseDeps: base, enabled: true}
-		tr := New(rolesOf(deps))
-		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, hookAsk), FrameAttribution{})
-		if !hasEntryAppended(events, marotte.EntryKindToolCall) {
-			t.Error("hook-ask tool call suppressed while hooks.showStatus on; want shown")
-		}
-	})
-
-	t.Run("NonHookAskShownWhenStatusDisabled", func(t *testing.T) {
-		base, events := newEventCaptureDeps()
-		deps := &hookStatusDeps{baseDeps: base, enabled: false}
-		tr := New(rolesOf(deps))
-		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, map[string]any{
-			"toolCallId": "tc-1",
-			"title":      "readFile",
-			"kind":       "read",
-			"status":     "pending",
-		}), FrameAttribution{})
-		if !hasEntryAppended(events, marotte.EntryKindToolCall) {
-			t.Error("normal tool call suppressed with hooks.showStatus off; want shown (only hook-ask cards are gated)")
-		}
-	})
 }
 
 // TestHandleToolCall_DiffGate pins that HandleToolCall records line changes only when the
@@ -1406,6 +1363,67 @@ func TestRawOutputFailureText(t *testing.T) {
 
 // A disclosure and a policy denial can arrive on an update. Each fills an empty slot only,
 // so a later frame cannot replace the refusal a user is reading.
+// KAS tags a call its safety check let run on the settling update, and a call it handed to a person on
+// the pending update; both survive the frames that follow, and neither reaches the census as unknown.
+// Serial: it swaps the slog default and resets the census ledger.
+func TestToolCall_TrustClassifierApproved(t *testing.T) {
+	update := func(status string, kiro map[string]any) json.RawMessage {
+		return mustJSON(t, map[string]any{"toolCallId": "tc-1", "status": status, "_meta": map[string]any{"kiro": kiro}})
+	}
+	t.Run("approved_on_the_settling_update", func(t *testing.T) {
+		resetCensus(t)
+		var logbuf bytes.Buffer
+		captureSlog(t, &logbuf)
+		tr, _, deps, events, chatID := primeToolCall(t)
+		tr.HandleToolCallUpdate(t.Context(), chatID, update("in_progress", map[string]any{"trustClassifierApproved": true}), FrameAttribution{})
+		tr.HandleToolCallUpdate(t.Context(), chatID, update("completed", map[string]any{}), FrameAttribution{})
+		got, ok := lastToolCallUpdate(t, deps, events)
+		if !ok {
+			t.Fatal("no tool_progress or tool_result frame emitted")
+		}
+		if !got.ClassifierApproved {
+			t.Errorf("ClassifierApproved = false after an update KAS tagged trustClassifierApproved")
+		}
+		if strings.Contains(logbuf.String(), "UNKNOWN _meta.kiro field") {
+			t.Errorf("trustClassifierApproved reached the census:\n%s", logbuf.String())
+		}
+	})
+	t.Run("a_handed_over_call_keeps_its_note", func(t *testing.T) {
+		resetCensus(t)
+		var logbuf bytes.Buffer
+		captureSlog(t, &logbuf)
+		tr, _, deps, events, chatID := primeToolCall(t)
+		tr.HandleToolCallUpdate(t.Context(), chatID, update("pending", map[string]any{
+			"trustClassifier": map[string]any{"decision": "prompt", "reason": "Kiro's safety check flagged\u202ethis"},
+		}), FrameAttribution{})
+		tr.HandleToolCallUpdate(t.Context(), chatID, update("completed", map[string]any{
+			"trustClassifier": map[string]any{"decision": "prompt", "reason": "a later reason"},
+		}), FrameAttribution{})
+		got, ok := lastToolCallUpdate(t, deps, events)
+		if !ok {
+			t.Fatal("no tool_progress or tool_result frame emitted")
+		}
+		if got.ClassifierNote != "Kiro's safety check flagged this" {
+			t.Errorf("ClassifierNote = %q, want the first reason with its bidi override made a space", got.ClassifierNote)
+		}
+		if got.ClassifierApproved {
+			t.Error("ClassifierApproved = true on a call the safety check handed to a person")
+		}
+		if strings.Contains(logbuf.String(), "UNKNOWN _meta.kiro field") {
+			t.Errorf("trustClassifier reached the census:\n%s", logbuf.String())
+		}
+	})
+	t.Run("another_decision_writes_no_note", func(t *testing.T) {
+		tr, _, deps, events, chatID := primeToolCall(t)
+		tr.HandleToolCallUpdate(t.Context(), chatID, update("completed", map[string]any{
+			"trustClassifier": map[string]any{"decision": "allow", "reason": "fine"},
+		}), FrameAttribution{})
+		if got, ok := lastToolCallUpdate(t, deps, events); !ok || got.ClassifierNote != "" {
+			t.Errorf("ClassifierNote = %q (frame %v), want none for a decision other than prompt", got.ClassifierNote, ok)
+		}
+	})
+}
+
 func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 	t.Run("a_disclosure_on_the_update_is_adopted", func(t *testing.T) {
 		tr, _, deps, events, chatID := primeToolCall(t)
@@ -1454,6 +1472,70 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 		}
 		if got.Denial.Capability != "fs.write" || got.Denial.Resource != "/etc/passwd" {
 			t.Errorf("ToolCall.Denial = %+v, want capability %q resource %q", *got.Denial, "fs.write", "/etc/passwd")
+		}
+	})
+
+	refusalFrame := func(extraMeta map[string]any) map[string]any {
+		reason := runCommandOutput(unparseableRefusal)
+		return map[string]any{
+			"toolCallId": "tc-1",
+			"status":     "failed",
+			"rawOutput":  map[string]any{"message": reason},
+			"content": []map[string]any{
+				{"type": "content", "content": map[string]any{"type": "text", "text": reason}},
+			},
+			"_meta": map[string]any{"kiro": extraMeta},
+		}
+	}
+
+	t.Run("an_unparseable_shell_refusal_reads_as_a_denial", func(t *testing.T) {
+		tr, _, deps, events, chatID := primeToolCall(t)
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, refusalFrame(nil)), FrameAttribution{})
+
+		got, ok := lastToolCallUpdate(t, deps, events)
+		if !ok {
+			t.Fatal("no tool_progress or tool_result frame emitted")
+		}
+		if got.Denial == nil {
+			t.Fatal("ToolCall.Denial after KAS's unparseable refusal = nil, want a denial")
+		}
+		if got.Denial.Basis != marotte.DenialUnparseable || got.Denial.Capability != "shell" {
+			t.Errorf("ToolCall.Denial = %+v, want basis %q capability %q", *got.Denial, marotte.DenialUnparseable, "shell")
+		}
+	})
+
+	t.Run("a_policyDenial_wins_over_a_refusal_text", func(t *testing.T) {
+		tr, _, deps, events, chatID := primeToolCall(t)
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, refusalFrame(map[string]any{
+			"policyDenial": map[string]any{"capability": "shell", "resource": "rm -rf x", "scope": "user", "source": "permissions.yaml"},
+		})), FrameAttribution{})
+
+		got, ok := lastToolCallUpdate(t, deps, events)
+		if !ok {
+			t.Fatal("no tool_progress or tool_result frame emitted")
+		}
+		if got.Denial == nil {
+			t.Fatal("ToolCall.Denial = nil, want the policyDenial")
+		}
+		if got.Denial.Resource != "rm -rf x" || got.Denial.Basis != "" {
+			t.Errorf("ToolCall.Denial = %+v, want the policyDenial's resource %q with no basis", *got.Denial, "rm -rf x")
+		}
+	})
+
+	t.Run("a_refusal_after_a_stop_stays_a_denial", func(t *testing.T) {
+		tr, _, deps, events, chatID := primeToolCall(t)
+		deps.stopped = map[string]marotte.TurnStopCause{deps.turns.chats[chatID].ID(): marotte.TurnStopReader}
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, refusalFrame(nil)), FrameAttribution{})
+
+		got, ok := lastToolCallUpdate(t, deps, events)
+		if !ok {
+			t.Fatal("no tool_progress or tool_result frame emitted")
+		}
+		if got.Status != marotte.ToolAborted {
+			t.Errorf("ToolCall.Status = %q, want %q (the stop still grades the call)", got.Status, marotte.ToolAborted)
+		}
+		if got.Denial == nil || got.Denial.Basis != marotte.DenialUnparseable {
+			t.Errorf("ToolCall.Denial = %+v, want basis %q", got.Denial, marotte.DenialUnparseable)
 		}
 	})
 
@@ -1674,5 +1756,103 @@ func TestOffloadFrom_RefusesWhatIsNotAnOffloadedFile(t *testing.T) {
 		if got := offloadFrom(in); got != nil {
 			t.Errorf("offloadFrom(%s) = %+v, want nil", name, got)
 		}
+	}
+}
+
+// TestHandleToolCallUpdate_ALateFailedStepResultKeepsItsError: a terminal update for a step whose
+// turn already closed is filed with KAS's failure text, which a failed call can carry only as
+// rawOutput's error member.
+func TestHandleToolCallUpdate_ALateFailedStepResultKeepsItsError(t *testing.T) {
+	deps, _ := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+	path := []string{"wf_1", "build"}
+	attr := FrameAttribution{Step: true, RunID: "wf_1", NodePath: workflow.PathKey(path)}
+	deps.RunNodeStart(t.Context(), &RunStep{RunID: attr.RunID, NodePath: attr.NodePath}, "c1")
+	deps.RunNodeComplete(t.Context(), attr.RunID, path, "completed", "")
+
+	tr.HandleToolCallUpdate(t.Context(), "c1", mustJSON(t, map[string]any{
+		"toolCallId": "tc-late",
+		"status":     "failed",
+		"rawOutput":  map[string]any{"error": "permission denied"},
+	}), attr)
+
+	late := deps.runBetween[runPathKey(attr.RunID, attr.NodePath)]
+	if len(late) != 1 || late[0].Kind != marotte.EntryKindToolResult {
+		t.Fatalf("filed after the close: %+v, want one tool_result", late)
+	}
+	if res := decodePayload[marotte.EntryToolResult](t, &late[0]); res.Output != "permission denied" {
+		t.Errorf("late tool_result output = %q, want the failure text %q", res.Output, "permission denied")
+	}
+}
+
+// TestLateStepResult_AFailedEditKeepsItsRawOutputText: a late failed step result whose text is
+// only rawOutput.message keeps that text, and a refusal in it reads as a denial.
+func TestLateStepResult_AFailedEditKeepsItsRawOutputText(t *testing.T) {
+	deps, _ := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+	path := []string{"wf_1", "build"}
+	attr := FrameAttribution{Step: true, RunID: "wf_1", NodePath: workflow.PathKey(path)}
+	deps.RunNodeStart(t.Context(), &RunStep{RunID: attr.RunID, NodePath: attr.NodePath}, "c1")
+	deps.RunNodeComplete(t.Context(), attr.RunID, path, "completed", "")
+
+	tr.HandleToolCallUpdate(t.Context(), "c1", mustJSON(t, map[string]any{
+		"toolCallId": "tc-late",
+		"kind":       "edit",
+		"status":     "failed",
+		"rawOutput":  map[string]any{"message": notLoadedRefusal},
+	}), attr)
+
+	late := deps.runBetween[runPathKey(attr.RunID, attr.NodePath)]
+	if len(late) != 1 || late[0].Kind != marotte.EntryKindToolResult {
+		t.Fatalf("filed after the close: %+v, want one tool_result", late)
+	}
+	res := decodePayload[marotte.EntryToolResult](t, &late[0])
+	if res.Output != notLoadedRefusal {
+		t.Errorf("late tool_result output = %q, want the refusal text %q", res.Output, notLoadedRefusal)
+	}
+	if res.Denial == nil || res.Denial.Basis != marotte.DenialNotLoaded {
+		t.Errorf("late tool_result denial = %+v, want basis %q", res.Denial, marotte.DenialNotLoaded)
+	}
+}
+
+// createdCall is the tool_call entry one create frame sealed, as the client reads it.
+func createdCall(t *testing.T, frame map[string]any) marotte.ToolCall {
+	t.Helper()
+	deps, _, events := newLineCaptureDeps()
+	tr := New(rolesOf(deps))
+	tr.HandleToolCall(t.Context(), "c1", mustJSON(t, frame), FrameAttribution{})
+	got, _ := foldToolCallUpdates(t, marotte.ToolCall{}, events)
+	if got.ID == "" {
+		t.Fatal("the create frame sealed no tool_call entry")
+	}
+	return got
+}
+
+func TestHandleToolCall_MCPIdentityFromServerName(t *testing.T) {
+	got := createdCall(t, map[string]any{
+		"toolCallId": "tc-1",
+		"title":      "@probe/echo_text",
+		"kind":       "other",
+		"status":     "pending",
+		"rawInput":   map[string]any{"tool_id": "probe::echo_text", "arguments": map[string]any{}},
+		"_meta":      map[string]any{"kiro": map[string]any{"serverName": "probe", "toolOrigin": "default"}},
+	})
+	want := &marotte.MCPToolIdentity{ServerName: "probe", ToolName: "echo_text"}
+	if !reflect.DeepEqual(got.MCP, want) {
+		t.Errorf("tool_call entry mcp = %+v, want %+v", got.MCP, want)
+	}
+}
+
+// The model writes tool_id, so it names no server: only KAS's stamp does.
+func TestHandleToolCall_ToolIDAloneNamesNoServer(t *testing.T) {
+	got := createdCall(t, map[string]any{
+		"toolCallId": "tc-1",
+		"title":      "Tool Call",
+		"kind":       "other",
+		"status":     "pending",
+		"rawInput":   map[string]any{"tool_id": "github::create_issue", "arguments": map[string]any{}},
+	})
+	if got.MCP != nil {
+		t.Errorf("tool_call entry mcp = %+v, want none for a tool_id with no serverName", got.MCP)
 	}
 }

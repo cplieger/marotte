@@ -12,10 +12,10 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/modeltext"
 	"github.com/cplieger/marotte/internal/settings"
-	"github.com/cplieger/pinstall/v3"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/toolbelt/v3/pin"
 )
 
 type testPush struct{}
@@ -292,7 +292,7 @@ func findSubstring(s, sub string) bool {
 }
 
 // TestHandleHealth_envelopeMatchesTheLibrary pins the two wire properties shared with
-// webhttp.ReadinessHandler: key order (a struct, since encoding/json sorts map keys) and
+// httpserver.ReadinessHandler: key order (a struct, since encoding/json sorts map keys) and
 // no-store (RFC 9111 would heuristically cache a 200).
 func TestHandleHealth_envelopeMatchesTheLibrary(t *testing.T) {
 	for _, tc := range []struct {
@@ -345,14 +345,14 @@ func TestHandleHealth_returns_ok(t *testing.T) {
 // TestHandleHealth_DegradedWhenKiroUnready pins the degraded-not-dead start (invariant 6):
 // listener up, no usable kiro-cli, 503 with each distinct reason.
 func TestHandleHealth_DegradedWhenKiroUnready(t *testing.T) {
-	for why, want := range map[pinstall.Reason]string{
-		pinstall.ReasonInstalling:  reasonInstalling,
-		pinstall.ReasonRetrying:    reasonRetrying,
-		pinstall.ReasonUnavailable: reasonUnavailable,
-		pinstall.ReasonAssertion:   reasonSettings,
+	for why, want := range map[pin.Reason]string{
+		pin.ReasonInstalling:  reasonInstalling,
+		pin.ReasonRetrying:    reasonRetrying,
+		pin.ReasonUnavailable: reasonUnavailable,
+		pin.ReasonAssertion:   reasonSettings,
 	} {
 		t.Run(want, func(t *testing.T) {
-			s := &Server{kiroReady: func() (bool, pinstall.Reason) { return false, why }}
+			s := &Server{kiroReady: func() (bool, pin.Reason) { return false, why }}
 			s.ready.Store(true)
 
 			rec := httptest.NewRecorder()
@@ -376,7 +376,7 @@ func TestHandleHealth_DegradedWhenKiroUnready(t *testing.T) {
 // the verdict is re-read per probe.
 func TestHandleHealth_OKWhenKiroReady(t *testing.T) {
 	t.Run("manager reports ready", func(t *testing.T) {
-		s := &Server{kiroReady: func() (bool, pinstall.Reason) { return true, pinstall.ReasonReady }}
+		s := &Server{kiroReady: func() (bool, pin.Reason) { return true, pin.ReasonReady }}
 		s.ready.Store(true)
 		rec := httptest.NewRecorder()
 		s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
@@ -397,7 +397,7 @@ func TestHandleHealth_OKWhenKiroReady(t *testing.T) {
 
 	t.Run("recovery is visible on the next probe", func(t *testing.T) {
 		ready := false
-		s := &Server{kiroReady: func() (bool, pinstall.Reason) { return ready, pinstall.ReasonInstalling }}
+		s := &Server{kiroReady: func() (bool, pin.Reason) { return ready, pin.ReasonInstalling }}
 		s.ready.Store(true)
 		rec := httptest.NewRecorder()
 		s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))

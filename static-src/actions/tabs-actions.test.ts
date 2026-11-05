@@ -37,6 +37,7 @@ import {
   reorderTabsCommand,
   REORDER_STALE,
 } from "./tabs.js";
+import { serverImpactOf } from "./close-impact.js";
 
 const mockSend = vi.mocked(transportSend);
 const mockToastError = vi.mocked(toastError);
@@ -223,7 +224,12 @@ describe("open_tab", () => {
   });
 
   it("names the remedy when the workspace is at its tab limit", async () => {
-    mockSend.mockResolvedValue({ ok: false, status: 409, error: "too many tabs" } as never);
+    mockSend.mockResolvedValue({
+      ok: false,
+      status: 409,
+      error: "too many tabs",
+      reason: "tabs_full",
+    } as never);
     await openTabCommand.dispatch({
       kind: "chat",
       ref: "c-1",
@@ -233,6 +239,21 @@ describe("open_tab", () => {
     });
     // The refusal has a remedy; "failed" alone reads as broken.
     expect(mockToastError.mock.calls[0]?.[0]).toContain("Close a tab first");
+  });
+
+  it.each([
+    ["a run being purged", "that workflow run is being deleted"],
+    ["a retry whose first attempt is still running", "request already in progress"],
+  ])("does not blame the tab limit for %s", async (_case, error) => {
+    mockSend.mockResolvedValue({ ok: false, status: 409, error } as never);
+    await openTabCommand.dispatch({
+      kind: "run",
+      ref: "wf_1",
+      parent: "",
+      owns: true,
+      opID: "op-5",
+    });
+    expect(mockToastError.mock.calls[0]?.[0]).toBe("Could not open that tab");
   });
 
   it("surfaces a failure and returns nothing to paint from", async () => {
@@ -269,6 +290,66 @@ describe("close_tab", () => {
     release();
     await Promise.all([a, b]);
     expect(mockSend).toHaveBeenCalledTimes(1);
+  });
+
+  // The transport's own failure class reaches the caller: a close that timed out is not a refusal.
+  it("reports a transport timeout as a timeout", async () => {
+    mockSend.mockResolvedValue({
+      ok: false,
+      status: 0,
+      error: "Request timed out",
+      code: "timeout",
+    } as never);
+    const outcome = await closeTabCommand.dispatch({ id: "t1", opID: "op-1" }).outcome;
+    expect(outcome).toMatchObject({ status: "error", error: { code: "timeout", status: 0 } });
+  });
+
+  it("sends the impact the confirm named, and none when the caller gives none", async () => {
+    mockSend.mockResolvedValue(okWith({ closed: [], version: 1 }) as never);
+    const impact = {
+      chats: [{ ref: "a", turns: ["t1"], asks: [], runs: [], steers: [], queued: [] }],
+    };
+    await closeTabCommand.dispatch({ id: "t1", opID: "op-1", impact });
+    await closeTabCommand.dispatch({ id: "t2", opID: "op-2" });
+    expect(sent().map((c) => c.payload["impact"])).toEqual([impact, undefined]);
+  });
+
+  function refused(impact: unknown): unknown {
+    return {
+      ok: false,
+      status: 409,
+      error: "what closing this tab stops changed; confirm again",
+      reason: "close_impact_changed",
+      body: {
+        error: "what closing this tab stops changed; confirm again",
+        reason: "close_impact_changed",
+        impact,
+      },
+    };
+  }
+
+  it("a close_impact_changed refusal carries the server's impact", async () => {
+    const impact = {
+      chats: [{ ref: "x", turns: ["res:7"], asks: ["4"], runs: [], steers: [], queued: [] }],
+    };
+    mockSend.mockResolvedValue(refused(impact) as never);
+    const outcome = await closeTabCommand.dispatch({ id: "t1", opID: "op-1" }).outcome;
+    expect(outcome).toMatchObject({
+      status: "error",
+      error: { code: "close_impact_changed", status: 409 },
+    });
+    expect(outcome.status === "error" ? serverImpactOf(outcome.error) : undefined).toEqual(impact);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  it("a malformed impact is the plain refusal, with no impact read from it", async () => {
+    mockSend.mockResolvedValue(refused({ chats: [{ turns: ["t1"] }] }) as never);
+    const outcome = await closeTabCommand.dispatch({ id: "t1", opID: "op-1" }).outcome;
+    expect(outcome).toMatchObject({
+      status: "error",
+      error: { code: "close_impact_changed", status: 409 },
+    });
+    expect(outcome.status === "error" ? serverImpactOf(outcome.error) : "unread").toBeUndefined();
   });
 });
 

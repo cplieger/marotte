@@ -9,7 +9,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// TestPendingPermsTracker_ConcurrentAddTakeList races Add, TakeIfPresent, clearInputs and List under -race.
+// TestPendingPermsTracker_ConcurrentAddTakeList races Add, TakeIfPresent, askRefs, clearForRun and List under -race.
 func TestPendingPermsTracker_ConcurrentAddTakeList(t *testing.T) {
 	tracker := newPendingPermsTracker()
 	const N = 100
@@ -25,7 +25,7 @@ func TestPendingPermsTracker_ConcurrentAddTakeList(t *testing.T) {
 
 	wg.Go(func() {
 		for i := range N {
-			evt := marotte.ServerEvent{ChatID: marotte.ChatID("chat-2"), Type: marotte.EventElicitationNeeded}
+			evt := marotte.NewEvent(marotte.EventElicitationNeeded, "chat-2", marotte.ElicitationNeededPayload{RunID: "wf-1"})
 			tracker.add(int64(N+i), evt, nil)
 		}
 	})
@@ -38,7 +38,8 @@ func TestPendingPermsTracker_ConcurrentAddTakeList(t *testing.T) {
 
 	wg.Go(func() {
 		for range 10 {
-			tracker.clearInputs("chat-2", command.ScopeChatAndRuns)
+			_ = tracker.askRefs("chat-2", command.ScopeChatAndRuns)
+			tracker.clearForRun("wf-1")
 		}
 	})
 

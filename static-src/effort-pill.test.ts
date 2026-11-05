@@ -21,8 +21,6 @@ vi.mock("./picker.js", () => ({
 // Every export, because Browser Mode links ESM for real.
 vi.mock("./session-context.js", () => ({
   getLastEffortFor: (model: string) => (model === "" ? "" : staged.seed),
-  getCurrentModel: () => "",
-  setCurrentModel: vi.fn(),
   getLastModel: () => "",
   setLastModel: vi.fn(),
   restoreLastModel: vi.fn(),
@@ -71,10 +69,10 @@ document.body.innerHTML = `
   <span id="ctx-tools"></span>
   <span id="ctx-metering"></span>`;
 
-const { effect } = await import("@cplieger/reactive");
+const { effect } = await import("@cplieger/ui");
 const store = await import("./store.js");
 const { refreshContextUI } = await import("./context-ui.js");
-const { configure, configureTransport } = await import("@cplieger/actions");
+const { configure, configureTransport } = await import("@cplieger/ui/actions");
 const { initModelSwitcher } = await import("./model-switcher.js");
 
 // `configure({})` is the framework's silent mode; the transport must answer or the rollback undoes the optimistic write.

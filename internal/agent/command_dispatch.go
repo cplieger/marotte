@@ -20,6 +20,7 @@ func (rt *Runtime) registerCommandHandlers() {
 		Effort:    rt.coord,
 		Modes:     rt.coord,
 		Teardown:  rt,
+		Impact:    rt,
 		Perms:     rt.bus,
 		Profiles:  rt,
 		Terminals: rt.agentTerms,
@@ -32,6 +33,7 @@ func (rt *Runtime) registerCommandHandlers() {
 			UploadsDir: marotte.DefaultUploadDir,
 		},
 		Lifecycle:     rt.lifecycle,
+		AnswerBudget:  clientAnswerBudget,
 		Admission:     rt,
 		TurnOutcome:   rt,
 		Steers:        rt.steerLedger,
@@ -40,7 +42,7 @@ func (rt *Runtime) registerCommandHandlers() {
 		SteerJobs:     rt.steerQueue,
 		Status:        rt,
 		AuthReadiness: rt.authReadiness,
-		Compactor:     rt,
+		SignIn:        rt,
 		SendGate:      rt.coord,
 		Renamer:       rt,
 		SpecApprovals: specApprovalsOrNil(rt.specApprovals),
@@ -48,7 +50,7 @@ func (rt *Runtime) registerCommandHandlers() {
 		StepSessions:  rt,
 	})
 
-	rt.dispatcher.Register(marotte.CmdSwitchModel, rt.cmdSwitchModel)
+	rt.dispatcher.RegisterChange(marotte.CmdSwitchModel, rt.cmdSwitchModel)
 }
 
 func tabSetOrNil(st *tabs.Store) command.TabSet {

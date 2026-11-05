@@ -8,8 +8,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // kiro-cli's own notification phrases (its OSC 9 text and its workflow transcript rows), so
@@ -96,6 +96,11 @@ func AskSubject(chatID marotte.ChatID, runID string) marotte.PushSubject {
 	return marotte.ChatSubject(chatID)
 }
 
+// AskKey is the NotificationPayload.Ask of a chat ask's notification, from its ask id: the one its retraction names.
+func AskKey(requestID int64) string {
+	return strconv.FormatInt(requestID, 10)
+}
+
 // TurnFinished is a chat turn that ended cleanly; focus is the agent's own description of
 // what it was doing.
 func TurnFinished(t Target, focus string) marotte.NotificationPayload {
@@ -156,6 +161,16 @@ func RunEnded(t Target, status marotte.RunStatus, parent, stopReason, pauseKind 
 	return build(marotte.PushKindRunOutcome, t, phrase, detail), true
 }
 
+// AutoResumeStopped is marotte giving up resuming a paused run on its own after repeated pauses with no progress
+// between them; throttled names a model throttle, the cause a person can wait out, as the run view does.
+func AutoResumeStopped(t Target, throttled bool) marotte.NotificationPayload {
+	cause := "pauses"
+	if throttled {
+		cause = "model throttling"
+	}
+	return build(marotte.PushKindRunOutcome, t, "Workflow paused", "marotte stopped resuming it after repeated "+cause)
+}
+
 // PRStatus is a pull request's CI verdict settling green or red.
 func PRStatus(subject marotte.PushSubject, repo string, number int, prTitle string, passed bool) marotte.NotificationPayload {
 	phrase := phraseChecksFailed
@@ -194,7 +209,7 @@ func build(kind marotte.PushKind, t Target, phrase, detail string) marotte.Notif
 // clip makes s one sanitized line of at most n runes, whitespace runs collapsed, a cut
 // ending in the ellipsis.
 func clip(s string, n int) string {
-	s = strings.Join(strings.Fields(runesafe.SanitizeSingleLine(s)), " ")
+	s = strings.Join(strings.Fields(textsafe.SanitizeSingleLine(s)), " ")
 	if utf8.RuneCountInString(s) <= n {
 		return s
 	}

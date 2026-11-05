@@ -434,6 +434,8 @@ if [ "$2" = uninstall ]; then rm -rf "` + installed + `/$3"; fi
 
 func fixedMode(mode ServersMode) ModeFunc { return func() ServersMode { return mode } }
 
+func noOverlay() []string { return nil }
+
 func newTestManager(t *testing.T, exit int) (*Manager, *recordingWriter, string, string) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -444,7 +446,7 @@ func newTestManager(t *testing.T, exit int) (*Manager, *recordingWriter, string,
 	cli, args := fakeCLI(t, installed, exit)
 	w := &recordingWriter{}
 	m := NewManager(NewCatalog(srv.Client(), srv.URL), w,
-		func() string { return cli }, os.Environ, installed)
+		func() string { return cli }, noOverlay, installed)
 	return m, w, args, installed
 }
 
@@ -505,7 +507,7 @@ while [ ! -e "`+gate+`" ]; do sleep 0.01; done
 `, 0o755)
 	w := &recordingWriter{}
 	m := NewManager(NewCatalog(srv.Client(), srv.URL), w,
-		func() string { return cli }, os.Environ, installed)
+		func() string { return cli }, noOverlay, installed)
 
 	var mode atomic.Int32
 	mode.Store(int32(ServersActive))

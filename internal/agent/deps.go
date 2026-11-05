@@ -57,12 +57,25 @@ type bridgeChatRecords interface {
 
 type chatRecords interface {
 	bridgeChatRecords
+	turnRecords
 
 	List(ctx context.Context) []marotte.ChatHeader
-	// SessionClaimed is the membership coordinator's fresh chain read, passed on
+	// SessionOwners is the membership coordinator's fresh chain read, passed on
 	// as command.sessionClaims.
-	SessionClaimed(ctx context.Context, sessionID string) (claimed, complete bool)
-	ListComplete(ctx context.Context) ([]marotte.ChatHeader, bool)
+	SessionOwners(ctx context.Context) chat.OwnerScan
+	// Hold, Rollback, Release, SwapTabForStop and ReconcileKeep are the keep-fact writes command.membershipChats
+	// passes on.
+	Hold(ctx context.Context, id marotte.ChatID, key string, scope chat.KeepScope) (chat.Claim, error)
+	Rollback(ctx context.Context, claim *chat.Claim) error
+	Release(ctx context.Context, id marotte.ChatID, key string, ev chat.Evidence) error
+	SwapTabForStop(ctx context.Context, id marotte.ChatID) (chat.Claim, bool)
+	SessionInTeardown(sessionID string) bool
+	ReconcileKeep(ctx context.Context, id marotte.ChatID, fn func(r *chat.KeepRecord)) error
+	// HoldOrPend, EndStop and the unattributed marks are the run keep-fact writes (runChatReader).
+	HoldOrPend(ctx context.Context, id marotte.ChatID, key string, scope chat.KeepScope) (chat.Claim, error)
+	EndStop(ctx context.Context, claim *chat.Claim)
+	HoldUnattributed(workflowID string)
+	ClearUnattributed(workflowID string)
 	// SetDraft and SetAttachments are passed on to the command dispatcher.
 	SetDraft(ctx context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error)
 	SetAttachments(ctx context.Context, id marotte.ChatID, paths []string) (*marotte.ComposerState, error)
@@ -71,7 +84,7 @@ type chatRecords interface {
 	// Lookup, Revert and the other log reads are command.chatStore's and translate.chatRecords'.
 	Lookup(ctx context.Context, id marotte.ChatID) (c *marotte.Chat, found bool, err error)
 	Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMessageID string) (record *marotte.Entry, minted []*marotte.Entry, err error)
-	RewindTarget(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.RewindTarget, bool, error)
+	PromptTarget(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.PromptTarget, bool, error)
 	PromptReceipt(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.PromptReceipt, error)
 	PromptAttachmentPaths(ctx context.Context, chatID marotte.ChatID, watermark string) ([]string, error)
 	PromptTexts(ctx context.Context, id marotte.ChatID) ([]string, error)
@@ -94,8 +107,8 @@ type chatRecords interface {
 type pushNotifier interface {
 	HasSubscribers() bool
 	Send(ctx context.Context, n *marotte.NotificationPayload)
-	// Retract drops any ask push about subject still held for delivery.
-	Retract(subject marotte.PushSubject)
+	// Retract drops the push about subject announcing ask (NotificationPayload.Ask) still held for delivery.
+	Retract(subject marotte.PushSubject, ask string)
 }
 
 // pushService is the runtime's view of push: send plus the preference and lifecycle calls it owns.
@@ -148,14 +161,14 @@ type acpSessionFacts interface {
 	SessionTitle() string
 	// SessionTitleSetByUser reports KAS's titleSetByUser latch on the session.
 	SessionTitleSetByUser() bool
-	// SummarizationThreshold returns the session's summarization percentage, 0 when omitted.
-	SummarizationThreshold() float64
 	// Modes returns the session modes the agent supports; empty if it has none.
 	Modes() []marotte.SessionMode
 	// Catalog returns every advertised model unfiltered, for ApplyServedModels.
 	Catalog() []marotte.SessionModel
 	// Models returns the swappable models, deprecated/internal entries filtered.
 	Models() []marotte.SessionModel
+	// PolicyErrors returns the rules KAS reported skipping when the session opened.
+	PolicyErrors() []marotte.PolicyErrorItem
 }
 
 // engineSession is one session on the agent engine (*bridge.Session). It has no way to stop the engine. Safe for
@@ -181,16 +194,25 @@ type engineSession interface {
 	EnsureThinking(ctx context.Context, choice string) error
 	// ObserveThinking records a thinking value the session reported.
 	ObserveThinking(value string)
+	// HealWorkflowLaunch records the workflowLaunch value a config_option_update offered and asserts the session
+	// door's own value when it differs, sending nothing once the session refused one assert.
+	HealWorkflowLaunch(ctx context.Context, reported string) error
 	// SessionLoadSeq returns the lane position of the `session/load` response; zero on session/new, and also legal,
 	// so pair it with the load returning.
 	SessionLoadSeq() uint64
 	// SupervisedApplied reports whether the session accepted `autopilot: off`; the request itself is on the chat record.
 	SupervisedApplied() bool
-	// AutoCompactionDisabled reports the disableAutoCompaction value KAS froze for the session.
-	AutoCompactionDisabled() bool
 	// Close sends session/close: KAS quiesces and disposes the session in memory and keeps its persisted state. ctx
 	// bounds only the caller's wait. A refused close returns its error with the session still open.
 	Close(ctx context.Context) error
+	// Release lets go of the session at once: its lane closes, so its forward drains and exits, and the bridge owns
+	// its close from then (bridge.Session.Release).
+	Release()
+	// Released reports whether the session was released, by Release or by a Close its holder stopped waiting for.
+	Released() bool
 	// Open reports whether calls may use the session: its door succeeded, no close is under way, its engine lives.
 	Open() bool
+	// AwaitAbandonedPrompt waits for the answer to the last session/prompt abandoned after its write and returns its
+	// lane position; false at once when none is outstanding, or when ctx ends or the session closes first.
+	AwaitAbandonedPrompt(ctx context.Context) (uint64, bool)
 }

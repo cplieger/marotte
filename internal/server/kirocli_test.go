@@ -9,30 +9,30 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/toolbelt/v3/pin"
 )
 
 // TestKiroReasonTextIsTheClientContract pins the four reason literals runtime-health.ts keys
 // on (change STATES there in the same commit), and that an unknown reason reads as blocking.
 func TestKiroReasonTextIsTheClientContract(t *testing.T) {
-	tests := map[pinstall.Reason]string{
-		pinstall.ReasonReady:       "",
-		pinstall.ReasonInstalling:  "kiro-cli installing",
-		pinstall.ReasonRetrying:    "kiro-cli install retrying",
-		pinstall.ReasonUnavailable: "kiro-cli unavailable",
-		pinstall.ReasonAssertion:   "kiro-cli required settings not enforced",
+	tests := map[pin.Reason]string{
+		pin.ReasonReady:       "",
+		pin.ReasonInstalling:  "kiro-cli installing",
+		pin.ReasonRetrying:    "kiro-cli install retrying",
+		pin.ReasonUnavailable: "kiro-cli unavailable",
+		pin.ReasonAssertion:   "kiro-cli required settings not enforced",
 	}
 	for why, want := range tests {
 		if got := kiroReasonText(why); got != want {
 			t.Errorf("kiroReasonText(%s) = %q, want %q (runtime-health.ts keys its banner copy on this literal)", why, got, want)
 		}
 	}
-	unknown := pinstall.Reason(200)
+	unknown := pin.Reason(200)
 	if got := kiroReasonText(unknown); got != reasonUnavailable {
 		t.Errorf("kiroReasonText(unknown) = %q, want %q: an unnameable state still blocks chats", got, reasonUnavailable)
 	}
 	for why, want := range tests {
-		if why == pinstall.ReasonReady {
+		if why == pin.ReasonReady {
 			continue
 		}
 		if !strings.HasPrefix(want, "kiro-cli") {
@@ -46,19 +46,19 @@ func TestHandleKiroRescanReportsTheResultingReadiness(t *testing.T) {
 	tests := map[string]struct {
 		ok         bool
 		rescanErr  error
-		ready      func() (bool, pinstall.Reason)
+		ready      func() (bool, pin.Reason)
 		wantStatus int
 		wantBody   string
 	}{
 		"a successful rescan reports ok": {
 			ok:         true,
-			ready:      func() (bool, pinstall.Reason) { return true, pinstall.ReasonReady },
+			ready:      func() (bool, pin.Reason) { return true, pin.ReasonReady },
 			wantStatus: http.StatusOK,
 			wantBody:   `{"status":"ok"}`,
 		},
 		"a failed rescan carries the manager's reason": {
-			rescanErr:  pinstall.ErrNoVersion,
-			ready:      func() (bool, pinstall.Reason) { return false, pinstall.ReasonAssertion },
+			rescanErr:  pin.ErrNoVersion,
+			ready:      func() (bool, pin.Reason) { return false, pin.ReasonAssertion },
 			wantStatus: http.StatusServiceUnavailable,
 			wantBody:   `{"status":"unready","reason":"` + reasonSettings + `"}`,
 		},
@@ -94,7 +94,7 @@ func TestHandleKiroRescanReportsTheResultingReadiness(t *testing.T) {
 func TestHandleKiroRescanNeverLeaksTheErrorText(t *testing.T) {
 	const secretish = "/config/home/.aws/sso/cache/token.json"
 	s := &Server{
-		kiroReady:  func() (bool, pinstall.Reason) { return false, pinstall.ReasonUnavailable },
+		kiroReady:  func() (bool, pin.Reason) { return false, pin.ReasonUnavailable },
 		kiroRescan: func(context.Context) (bool, error) { return false, errors.New("cannot read " + secretish) },
 	}
 	rec := httptest.NewRecorder()

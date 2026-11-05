@@ -208,6 +208,57 @@ func TestGroupsBelow_ReportsAnOutsideGroupAndSkipsOwnAndInit(t *testing.T) {
 	}
 }
 
+func TestGroup_LedByOnlyTheLeadersOwnParentAndStamp(t *testing.T) {
+	head, outside := startHeadWithOutsideChild(t, t.TempDir()+"/never")
+	got := GroupsBelow(head.Process.Pid)
+	if len(got) != 1 {
+		t.Fatalf("Setup: GroupsBelow(head) = %v, want the setsid child's group alone", got)
+	}
+	g := got[0]
+	later := g
+	later.leader++
+
+	if !g.LedBy(head.Process.Pid) {
+		t.Errorf("LedBy(head) = false for the setsid child %d the head forked, want true", outside)
+	}
+	if g.LedBy(os.Getpid()) {
+		t.Error("LedBy(test process) = true, want false: the test is the leader's grandparent")
+	}
+	if later.LedBy(head.Process.Pid) {
+		t.Error("LedBy(head) = true for another start time at the pid, want false")
+	}
+}
+
+// A leader that exited but is not yet reaped leads nothing: its pid is free for reuse once reaped.
+func TestGroup_LedByIsFalseForAZombieLeader(t *testing.T) {
+	leader := exec.Command("sleep", "60")
+	leader.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := leader.Start(); err != nil {
+		t.Fatalf("Setup: start: %v", err)
+	}
+	t.Cleanup(func() { _ = leader.Process.Kill(); _ = leader.Wait() })
+	g := stampGroup(leader.Process.Pid)
+	if !g.LedBy(os.Getpid()) {
+		t.Fatal("LedBy(test process) = false for its running child, want true")
+	}
+	if err := leader.Process.Kill(); err != nil {
+		t.Fatalf("Setup: kill: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if st, ok := readStat(leader.Process.Pid); ok && st.state == 'Z' {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatal("Setup: the killed leader never reached the zombie state")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if g.LedBy(os.Getpid()) {
+		t.Error("LedBy(test process) = true for a zombie leader, want false")
+	}
+}
+
 // Signal 0 only: a guard that fails here would otherwise signal init's group, which is every
 // process the test may signal.
 func TestKillGroup_RefusesOwnInitAndEmptyGroups(t *testing.T) {

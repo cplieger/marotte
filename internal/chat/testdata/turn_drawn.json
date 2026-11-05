@@ -190,6 +190,26 @@
       ]
     },
     {
+      "name": "a model fallback draws the turn carrying it",
+      "owner": "both",
+      "drawn": true,
+      "open": { "source": "wire_turn_start" },
+      "body": [
+        { "kind": "model_fallback", "lane": "" },
+        { "kind": "turn_close", "lane": "" }
+      ]
+    },
+    {
+      "name": "a sub-agent's fallback an earlier build recorded draws nothing",
+      "owner": "both",
+      "drawn": false,
+      "open": { "source": "wire_turn_start" },
+      "body": [
+        { "kind": "model_fallback", "lane": "", "subagent": true },
+        { "kind": "turn_close", "lane": "" }
+      ]
+    },
+    {
       "name": "an open entry in lane \"\" draws the turn it is streaming into",
       "owner": "client",
       "drawn": true,

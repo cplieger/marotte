@@ -3,7 +3,7 @@
 // contract): an option's title, the TUI's "Title [Sub1, Sub2]", or typed text; Skip advances the
 // agent. A non-modal region, not a <dialog>: it must not cover the transcript or trap focus.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { askActions, askEditor, askHead } from "./dock-ask.js";
 import type { UserInputNeededPayload, UserInputOption } from "./types.js";
 

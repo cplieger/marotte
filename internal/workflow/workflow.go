@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/keyenc"
+	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
@@ -21,16 +21,25 @@ import (
 // session. Other fields stay on the wire, passed through by the read endpoint.
 type node struct {
 	// Iteration is the pass of an enclosing `repeat`; a pointer because pass 0 is the first.
-	Iteration *int `json:"iteration"`
-	// AwaitingUserInput is a pointer because absent and false are different answers to W1.
-	AwaitingUserInput *bool  `json:"awaitingUserInput"`
-	NodeID            string `json:"nodeId"`
-	Type              string `json:"type"`
-	SessionID         string `json:"sessionId"`
-	Status            string `json:"status"`
-	AgentName         string `json:"agentName"`
-	CompletionSignal  string `json:"completionSignal"`
-	Children          []node `json:"children"`
+	Iteration        *int             `json:"iteration"`
+	NodeID           string           `json:"nodeId"`
+	Type             string           `json:"type"`
+	SessionID        string           `json:"sessionId"`
+	Status           string           `json:"status"`
+	AgentName        string           `json:"agentName"`
+	CompletionSignal string           `json:"completionSignal"`
+	StartedAt        string           `json:"startedAt"`
+	EndedAt          string           `json:"endedAt"`
+	Children         []node           `json:"children"`
+	Attention        []attentionEntry `json:"attention"`
+}
+
+// attentionEntry is one of KAS's open waits on a node: a step's park (markWaitingForUser) carries no
+// toolCallId, and a permission or input request its session holds carries the request's.
+type attentionEntry struct {
+	Kind       string `json:"kind"`
+	Since      string `json:"since"`
+	ToolCallID string `json:"toolCallId"`
 }
 
 // State is the run state `inspect` returns, decoded only as far as step identification
@@ -44,6 +53,19 @@ type State struct {
 	WorkflowName    string `json:"workflowName"`
 	// PauseReason is KAS's sentence for the run's latest park, whichever step parked.
 	PauseReason string `json:"pauseReason"`
+	CreatedAt   string `json:"createdAt"`
+}
+
+// UpdatedAt is the run's last activity as `_kiro/workflow/list` derives its row's updatedAt from this same state: the
+// root's end, else its start, else the state's creation; "" when none is recorded.
+func (s *State) UpdatedAt() string {
+	if s.Root != nil && s.Root.EndedAt != "" {
+		return s.Root.EndedAt
+	}
+	if s.Root != nil && s.Root.StartedAt != "" {
+		return s.Root.StartedAt
+	}
+	return s.CreatedAt
 }
 
 // InspectResult is `_kiro/workflow/inspect`'s reply, decoded to the parts
@@ -112,14 +134,6 @@ func pathSegment(n, parent *node) string {
 	return n.NodeID
 }
 
-// unknownMethodMarker is how KAS reports an unregistered `_kiro/workflow/*` name: a -32603
-// whose `error.data.details` holds this text, which no registered method produces.
-const unknownMethodMarker = "has no persistence classification"
-
-// ErrUnknownMethod means the verb does not exist on this KAS build: a permanent capability
-// answer, unlike a transient failure. Callers ask errors.Is.
-var ErrUnknownMethod = errors.New("workflow verb not registered on this kiro-cli build")
-
 // The refusal KAS's run-claim gate throws as a plain Error: a -32603 whose `error.data.details` is the sentence
 // (acp-server.js acquireRunOwnership and ensureRunOwnership, kiro-cli 2.27.0), shared by the load and mutate variants.
 const justClaimedMarker = "was just claimed by another process"
@@ -134,17 +148,8 @@ func Classify(err error) error {
 	if err == nil {
 		return nil
 	}
-	details := rpcerr.Details(err)
-	for _, c := range []struct {
-		sentinel error
-		marker   string
-	}{
-		{ErrUnknownMethod, unknownMethodMarker},
-		{ErrJustClaimed, justClaimedMarker},
-	} {
-		if strings.Contains(details, c.marker) {
-			return fmt.Errorf("%w: %w", c.sentinel, err)
-		}
+	if strings.Contains(rpcerr.Details(err), justClaimedMarker) {
+		return fmt.Errorf("%w: %w", ErrJustClaimed, err)
 	}
 	return err
 }

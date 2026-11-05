@@ -2,21 +2,31 @@ package steering
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/slogx/capture"
 )
 
 func TestWriteTools(t *testing.T) {
-	data := []byte(`{
+	installed := []InstalledTool{
+		{Name: "goimports", Kind: "go", Version: "v0.30.0"},
+		{Name: "go", Kind: "aqua", Version: "1.26.2"},
+		{Name: "pyright", Kind: "npm", Version: "1.1.411"},
+	}
+	state := []byte(`{
 		"tools": {
 			"goimports": {"installed_version": "v0.30.0", "bins": ["goimports"]},
 			"go": {"installed_version": "1.26.2", "bins": ["go", "gofmt"]},
@@ -24,101 +34,135 @@ func TestWriteTools(t *testing.T) {
 		}
 	}`)
 	var b strings.Builder
-	writeTools(&b, data)
-	out := b.String()
+	writeTools(&b, installed, state)
 
-	if !strings.Contains(out, "## Installed tools") {
-		t.Error("missing header")
-	}
-	if !strings.Contains(out, "- goimports v0.30.0") {
-		t.Error("missing goimports")
-	}
-	// Bins expand to individual entries sharing the tool's version.
-	if !strings.Contains(out, "- go 1.26.2") {
-		t.Error("missing go binary")
-	}
-	if !strings.Contains(out, "- gofmt 1.26.2") {
-		t.Error("missing gofmt binary")
-	}
-	// pm_bins expand the same way.
-	if !strings.Contains(out, "- pyright-langserver 1.1.411") {
-		t.Error("missing pyright-langserver pm bin")
+	want := "## Installed tools\n\n" +
+		"- go 1.26.2\n" +
+		"- gofmt 1.26.2\n" +
+		"- goimports v0.30.0\n" +
+		"- pyright 1.1.411\n" +
+		"- pyright-langserver 1.1.411\n\n"
+	if got := b.String(); got != want {
+		t.Errorf("writeTools =\n%s\nwant\n%s", got, want)
 	}
 }
 
-func TestWriteTools_EmptyEmitsNothing(t *testing.T) {
-	// No installed tools means no section at all.
+func TestWriteTools_NothingInstalledEmitsNothing(t *testing.T) {
 	var b strings.Builder
-	writeTools(&b, []byte(`{}`))
+	writeTools(&b, nil, []byte(`{"tools":{"go":{"installed_version":"1.26.2","bins":["go"]}}}`))
 	if b.Len() != 0 {
-		t.Errorf("expected no output for empty state, got:\n%s", b.String())
+		t.Errorf("writeTools with nothing installed wrote:\n%s", b.String())
 	}
 }
 
-func TestWriteTools_InvalidJSON(t *testing.T) {
-	var b strings.Builder
-	writeTools(&b, []byte(`not json`))
-	if b.Len() != 0 {
-		t.Error("expected no output for invalid JSON")
-	}
-}
-
-func TestWriteTools_Sorted(t *testing.T) {
-	data := []byte(`{"tools": {
-		"zebra": {"installed_version": "1"},
-		"alpha": {"installed_version": "2"}
+// A row tools-state.json still records, but whose probe failed (a pip tool whose interpreter is
+// gone), is not offered as a command.
+func TestWriteTools_ListsOnlyWhatTheProbeReportsInstalled(t *testing.T) {
+	state := []byte(`{"tools": {
+		"ruff": {"installed_version": "0.9.0", "pm_bins": ["ruff"]},
+		"black": {"installed_version": "24.1.0", "pm_bins": ["black", "blackd"]}
 	}}`)
 	var b strings.Builder
-	writeTools(&b, data)
+	writeTools(&b, []InstalledTool{{Name: "ruff", Kind: "pip", Version: "0.9.0"}}, state)
 	out := b.String()
-	alphaIdx := strings.Index(out, "alpha")
-	zebraIdx := strings.Index(out, "zebra")
-	if alphaIdx < 0 || zebraIdx < 0 {
-		t.Fatal("missing entries")
+	if !strings.Contains(out, "- ruff 0.9.0\n") {
+		t.Errorf("installed ruff missing:\n%s", out)
 	}
-	if alphaIdx > zebraIdx {
-		t.Error("tools should be sorted alphabetically")
+	if strings.Contains(out, "black") {
+		t.Errorf("a tool the probe does not report installed is listed:\n%s", out)
 	}
 }
 
-func TestWriteTools_NotInstalledSkipped(t *testing.T) {
-	// A failed install (no installed_version) is not listed.
-	data := []byte(`{"tools": {
-		"ok": {"installed_version": "1.0.0"},
-		"broken": {"last_error": "download failed"}
+// A tool with no recorded bins has no known command: an npm package that ships no bin, or an apt
+// package, whose commands need not share its name.
+func TestWriteTools_AToolWithNoRecordedCommandIsListedAsAPackage(t *testing.T) {
+	installed := []InstalledTool{
+		{Name: "jq", Kind: "aqua", Version: "1.8.1"},
+		{Name: "ripgrep", Kind: "apt", Version: "14.1.1-1"},
+		{Name: "lodash", Kind: "npm", Version: "4.17.21"},
+	}
+	state := []byte(`{"tools": {
+		"jq": {"installed_version": "1.8.1", "bins": ["jq"]},
+		"ripgrep": {"installed_version": "14.1.1-1"},
+		"lodash": {"installed_version": "4.17.21"}
 	}}`)
 	var b strings.Builder
-	writeTools(&b, data)
-	out := b.String()
-	if !strings.Contains(out, "- ok 1.0.0") {
-		t.Error("missing installed tool")
-	}
-	if strings.Contains(out, "broken") {
-		t.Errorf("uninstalled tool listed; output:\n%s", out)
+	writeTools(&b, installed, state)
+
+	want := "## Installed tools\n\n" +
+		"- jq 1.8.1\n\n" +
+		"Installed packages with no recorded command (`dpkg -L <package>` lists an apt package's files):\n\n" +
+		"- lodash 4.17.21 (npm)\n" +
+		"- ripgrep 14.1.1-1 (apt)\n\n"
+	if got := b.String(); got != want {
+		t.Errorf("writeTools =\n%s\nwant\n%s", got, want)
 	}
 }
 
-func TestWriteTools_NoBinsUsesToolName(t *testing.T) {
-	// No bins falls back to the tool name.
-	data := []byte(`{"tools": {"jq": {"installed_version": "1.8.1"}}}`)
+// Without the state file's bins every installed tool is still listed, none as a command.
+func TestWriteTools_UnreadableStateListsEveryToolAsAPackage(t *testing.T) {
+	for state, logged := range map[string]bool{"": false, "not json": true} {
+		t.Run(fmt.Sprintf("state %q", state), func(t *testing.T) {
+			var logs bytes.Buffer
+			capture.SwapDefault(t, slog.New(slog.NewTextHandler(&logs, nil)))
+			var b strings.Builder
+			writeTools(&b, []InstalledTool{{Name: "go", Kind: "aqua", Version: "1.26.2"}}, []byte(state))
+			want := "## Installed tools\n\n" +
+				"Installed packages with no recorded command (`dpkg -L <package>` lists an apt package's files):\n\n" +
+				"- go 1.26.2 (aqua)\n\n"
+			if got := b.String(); got != want {
+				t.Errorf("writeTools =\n%s\nwant\n%s", got, want)
+			}
+			if got := strings.Contains(logs.String(), "parse tools-state.json"); got != logged {
+				t.Errorf("parse error logged = %t, want %t; logs:\n%s", got, logged, logs.String())
+			}
+		})
+	}
+}
+
+func TestWriteTools_AnUnrecordedVersionOrKindIsLeftOut(t *testing.T) {
+	installed := []InstalledTool{{Name: "fd"}, {Name: "rg", Kind: "aqua"}}
+	state := []byte(`{"tools": {"rg": {"bins": ["rg"]}}}`)
 	var b strings.Builder
-	writeTools(&b, data)
-	if !strings.Contains(b.String(), "- jq 1.8.1") {
-		t.Errorf("missing name fallback; output:\n%s", b.String())
+	writeTools(&b, installed, state)
+	out := b.String()
+	if !strings.Contains(out, "\n- rg\n") || !strings.Contains(out, "\n- fd\n") {
+		t.Errorf("writeTools wrote a placeholder for an empty version or kind:\n%q", out)
 	}
 }
 
 func TestWriteTools_DuplicateBinsDeduped(t *testing.T) {
 	// A bin two tools ship is listed once: PATH, not ownership.
-	data := []byte(`{"tools": {
+	installed := []InstalledTool{
+		{Name: "typescript", Kind: "npm", Version: "5.9.0"},
+		{Name: "tsc-wrapper", Kind: "aqua", Version: "1.0.0"},
+	}
+	state := []byte(`{"tools": {
 		"typescript": {"installed_version": "5.9.0", "pm_bins": ["tsc", "tsserver"]},
 		"tsc-wrapper": {"installed_version": "1.0.0", "bins": ["tsc"]}
 	}}`)
 	var b strings.Builder
-	writeTools(&b, data)
+	writeTools(&b, installed, state)
 	out := b.String()
 	if strings.Count(out, "- tsc ") != 1 {
 		t.Errorf("duplicate bin not deduped; output:\n%s", out)
+	}
+}
+
+// The section comes from the live inventory, so a down engine (no snapshot) lists nothing,
+// whatever tools-state.json still records.
+func TestRender_ListsNoToolsWithoutAnInventory(t *testing.T) {
+	workDir, configDir := t.TempDir(), t.TempDir()
+	mustWriteFile(t, filepath.Join(configDir, "tools-state.json"),
+		`{"tools":{"goimports":{"installed_version":"v0.30.0","bins":["goimports"]}}}`)
+	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
+
+	installed := []InstalledTool{{Name: "goimports", Kind: "go", Version: "v0.30.0"}}
+	if out := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, installed, false)); strings.Contains(out, "## Installed tools") {
+		t.Errorf("render without an inventory listed tools:\n%s", out)
+	}
+	if out := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, installed, true)); !strings.Contains(out, "## Installed tools\n\n- goimports v0.30.0\n") {
+		t.Errorf("render with an inventory lacks the tool:\n%s", out)
 	}
 }
 
@@ -157,12 +201,16 @@ func TestWriteMCP_SortsServersAlphabetically(t *testing.T) {
 }
 
 // TestWriteMCP_SaysTheToolsAreDeferred pins that the agent is told to load an MCP tool by id: telling it the
-// tools are already on its belt makes it report a connected integration as missing.
+// tools are already on its belt makes it report a connected integration as missing. Both loaders are named
+// because the disclosure arm is per session.
 func TestWriteMCP_SaysTheToolsAreDeferred(t *testing.T) {
 	var b strings.Builder
 	writeMCP(&b, MCPSnapshot{Servers: []marotte.MCPSnapshotServer{{Name: "github"}}})
 	out := b.String()
-	for _, want := range []string{"deferred", "tool_load", "tool_call", "includeMcpJson", "kiro_powers"} {
+	for _, want := range []string{
+		"deferred", "load_resource", "tool::<server>::<tool>", "tool_load", "tool_call",
+		"includeMcpJson", "power::", "kiro_powers",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("writeMCP() omits %q; output:\n%s", want, out)
 		}
@@ -242,9 +290,12 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	g := New(workDir, configDir)
+	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 	g.SetMCPSnapshot(func() MCPSnapshot {
 		return MCPSnapshot{Servers: []marotte.MCPSnapshotServer{{Name: "github"}}}
+	})
+	g.SetToolsSnapshot(func() ([]InstalledTool, bool) {
+		return []InstalledTool{{Name: "goimports", Kind: "go", Version: "v0.30.0"}}, true
 	})
 
 	g.Generate(t.Context())
@@ -320,7 +371,7 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 // a fileMatch or manual doc would never load, and a section dropped in the move
 // would reach no session at all.
 func TestChatDocs_CarriesTheChatSections(t *testing.T) {
-	g := New("/ws", "/cfg")
+	g := New("/ws", "/cfg", "/cfg/tools")
 	g.SetForgeSnapshot(func() ForgeSnapshot {
 		return ForgeSnapshot{Providers: []ForgeProvider{{Kind: "github", Host: "github.com", User: "alice"}}}
 	})
@@ -353,7 +404,7 @@ func TestChatDocs_CarriesTheChatSections(t *testing.T) {
 func TestChatDocs_WritesNothing(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	New(t.TempDir(), t.TempDir()).ChatDocs(t.Context())
+	New(t.TempDir(), t.TempDir(), t.TempDir()).ChatDocs(t.Context())
 	entries, err := os.ReadDir(filepath.Join(home, ".kiro", "steering"))
 	if err == nil && len(entries) > 0 {
 		t.Errorf("ChatDocs wrote %d steering file(s); want none", len(entries))
@@ -369,7 +420,7 @@ func TestGenerate_NoMCPSnapshotOmitsSection(t *testing.T) {
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
-	g := New(workDir, configDir)
+	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 	// Deliberately do NOT call SetMCPSnapshot.
 	g.Generate(t.Context())
 
@@ -388,7 +439,7 @@ func TestGenerate_EmptyMCPSnapshotOmitsSection(t *testing.T) {
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
-	g := New(workDir, configDir)
+	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 	g.SetMCPSnapshot(func() MCPSnapshot { return MCPSnapshot{} })
 	g.Generate(t.Context())
 
@@ -405,7 +456,7 @@ func TestGenerate_RendersForgeSection(t *testing.T) {
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
-	g := New(workDir, configDir)
+	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 	g.SetForgeSnapshot(func() ForgeSnapshot {
 		return ForgeSnapshot{Providers: []ForgeProvider{
 			{Kind: "github", Host: "github.com", User: "alice"},
@@ -438,7 +489,7 @@ func TestChatDocs_GitPanelFollowsTheForgeSnapshot(t *testing.T) {
 		{"no provider", nil, none, connected},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			g := New(t.TempDir(), t.TempDir())
+			g := New(t.TempDir(), t.TempDir(), t.TempDir())
 			g.SetForgeSnapshot(func() ForgeSnapshot { return ForgeSnapshot{Providers: tc.providers} })
 			docs := g.ChatDocs(t.Context())
 			if len(docs) != 1 {
@@ -459,7 +510,7 @@ func TestGenerate_IdempotentSkipsRewrite(t *testing.T) {
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
-	g := New(workDir, configDir)
+	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 	g.Generate(t.Context())
 
 	steeringPath := filepath.Join(home, ".kiro", "steering", "environment.md")
@@ -490,7 +541,7 @@ func TestGenerate_LogsWroteOnSuccess(t *testing.T) {
 	var buf bytes.Buffer
 	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
-	g := New(workDir, configDir)
+	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 	g.Generate(t.Context())
 
 	if _, err := os.Stat(steeringPath); err != nil {
@@ -510,9 +561,12 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
-	g := New(workDir, configDir)
+	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 	g.SetMCPSnapshot(func() MCPSnapshot {
 		return MCPSnapshot{Servers: []marotte.MCPSnapshotServer{{Name: "github"}}}
+	})
+	g.SetToolsSnapshot(func() ([]InstalledTool, bool) {
+		return []InstalledTool{{Name: "goimports", Kind: "go", Version: "v0.30.0"}}, true
 	})
 
 	const n = 16
@@ -540,10 +594,206 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 	}
 }
 
+func TestGenerate_AnOlderGenerationNeverOverwritesANewerOne(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	g := New(t.TempDir(), t.TempDir(), "")
+	entered, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	g.SetToolsSnapshot(func() ([]InstalledTool, bool) {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-release
+			return []InstalledTool{{Name: "old", Version: "1"}}, true
+		}
+		return []InstalledTool{{Name: "new", Version: "2"}}, true
+	})
+
+	firstDone, secondDone := make(chan struct{}), make(chan struct{})
+	go func() {
+		g.Generate(t.Context())
+		close(firstDone)
+	}()
+	<-entered
+	go func() {
+		g.Generate(t.Context())
+		close(secondDone)
+	}()
+	// The second generation either waits for the first (correct) or finishes while the first is
+	// held in its snapshot; either way the first is released only after this window.
+	select {
+	case <-secondDone:
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	<-firstDone
+	<-secondDone
+
+	got, err := os.ReadFile(filepath.Join(home, ".kiro", "steering", "environment.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "- new 2\n") || strings.Contains(string(got), "- old 1") {
+		t.Errorf("environment.md holds the older generation's tools, not the newer one's:\n%s", got)
+	}
+}
+
+func TestGenerate_ACancelledContextRunsNoSnapshot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	g := New(t.TempDir(), t.TempDir(), "")
+	var calls atomic.Int32
+	g.SetMCPSnapshot(func() MCPSnapshot { calls.Add(1); return MCPSnapshot{} })
+	g.SetForgeSnapshot(func() ForgeSnapshot { calls.Add(1); return ForgeSnapshot{} })
+	g.SetToolsSnapshot(func() ([]InstalledTool, bool) { calls.Add(1); return nil, true })
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err := g.Generate(ctx)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("a cancelled Generate returned %v, want its ctx's error", err)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Errorf("a cancelled Generate ran %d snapshot callbacks, want 0", n)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".kiro", "steering", "environment.md")); !os.IsNotExist(err) {
+		t.Errorf("a cancelled Generate wrote environment.md (stat error %v)", err)
+	}
+}
+
+func TestGenerate_CancelledDuringItsSnapshotsRendersNothing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	var buf bytes.Buffer
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	configDir := t.TempDir()
+	// A render would log this file's parse error, so the ERROR check sees a render that ran.
+	mustWriteFile(t, filepath.Join(configDir, "tools-state.json"), "{")
+	g := New(t.TempDir(), configDir, "")
+	ctx, cancel := context.WithCancel(t.Context())
+	g.SetToolsSnapshot(func() ([]InstalledTool, bool) { cancel(); return nil, true })
+
+	err := g.Generate(ctx)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Generate cancelled during its snapshots returned %v, want its ctx's error", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".kiro", "steering", "environment.md")); !os.IsNotExist(err) {
+		t.Errorf("Generate wrote environment.md after its ctx was cancelled (stat error %v)", err)
+	}
+	if strings.Contains(buf.String(), "level=ERROR") {
+		t.Errorf("Generate rendered after its ctx was cancelled:\n%s", buf.String())
+	}
+}
+
+// cancelAfterChecks is a context whose first checks pass, then reads as cancelled.
+type cancelAfterChecks struct {
+	context.Context
+	passing atomic.Int32
+	done    chan struct{}
+	once    sync.Once
+}
+
+func newCancelAfterChecks(parent context.Context, passing int32) *cancelAfterChecks {
+	c := &cancelAfterChecks{Context: parent, done: make(chan struct{})}
+	c.passing.Store(passing)
+	return c
+}
+
+func (c *cancelAfterChecks) Err() error {
+	if c.passing.Add(-1) >= 0 {
+		return nil
+	}
+	c.once.Do(func() { close(c.done) })
+	return context.Canceled
+}
+
+func (c *cancelAfterChecks) Done() <-chan struct{} { return c.done }
+
+// An unchanged file skips the write, so only the check after the render returns the ctx's error.
+func TestGenerate_CancelledDuringItsRenderReturnsTheCtxError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	g := New(t.TempDir(), t.TempDir(), "")
+	if err := g.Generate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, ".kiro", "steering", "environment.md")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Generate checks its ctx twice before render, so the cancellation lands during render.
+	err = g.Generate(newCancelAfterChecks(t.Context(), 2))
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Generate cancelled during its render returned %v, want its ctx's error", err)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(after, before) {
+		t.Errorf("Generate cancelled during its render rewrote environment.md:\n%s", after)
+	}
+}
+
+func TestGenerate_ReturnsAFailedWriteWhileItsCtxIsLive(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	var buf bytes.Buffer
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	mustWriteFile(t, filepath.Join(home, ".kiro"), "not a folder")
+	g := New(t.TempDir(), t.TempDir(), "")
+
+	err := g.Generate(t.Context())
+
+	if !errors.Is(err, syscall.ENOTDIR) {
+		t.Errorf("Generate returned %v for a write under a file, want ENOTDIR", err)
+	}
+	if strings.Contains(buf.String(), "level=ERROR") {
+		t.Errorf("Generate logged the failure it returns:\n%s", buf.String())
+	}
+}
+
+// cancelAfterTheWritesCheck reads as live through filesafe's first ctx check, then as cancelled:
+// a shutdown landing between that check and a failing write.
+type cancelAfterTheWritesCheck struct {
+	context.Context
+	checked atomic.Bool
+}
+
+func (c *cancelAfterTheWritesCheck) Err() error {
+	if c.checked.Load() {
+		return context.Canceled
+	}
+	pc := make([]uintptr, 1)
+	if runtime.Callers(2, pc) == 1 {
+		frame, _ := runtime.CallersFrames(pc).Next()
+		c.checked.Store(strings.HasPrefix(frame.Function, "github.com/cplieger/go/filesafe."))
+	}
+	return nil
+}
+
+func TestGenerate_ReturnsAFailedWriteThatRacesACancel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	mustWriteFile(t, filepath.Join(home, ".kiro"), "not a folder")
+	g := New(t.TempDir(), t.TempDir(), "")
+	ctx := &cancelAfterTheWritesCheck{Context: t.Context()}
+
+	err := g.Generate(ctx)
+
+	if !ctx.checked.Load() {
+		t.Fatal("filesafe never checked the ctx, so no cancellation raced the write")
+	}
+	if !errors.Is(err, syscall.ENOTDIR) || errors.Is(err, context.Canceled) {
+		t.Errorf("Generate whose write failed as its ctx was cancelled returned %v, want the write's ENOTDIR", err)
+	}
+}
+
 func TestCustomPath_UsesHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	g := New("/some/work", "/some/config")
+	g := New("/some/work", "/some/config", "/some/config/tools")
 	got := g.CustomPath()
 	want := filepath.Join(home, ".kiro", "steering", "custom.md")
 	if got != want {
@@ -556,7 +806,7 @@ func TestCustomPath_HomeUnsetFallback(t *testing.T) {
 	t.Setenv("KIRO_HOME", "")
 	os.Unsetenv("HOME")
 	os.Unsetenv("KIRO_HOME")
-	g := New("/some/work", "/some/config")
+	g := New("/some/work", "/some/config", "/some/config/tools")
 	// With KIRO_HOME and HOME unset, KiroHome() falls back to ".kiro", as kiro-cli does.
 	if got := g.CustomPath(); got != ".kiro/steering/custom.md" {
 		t.Errorf("CustomPath() with no HOME = %q, want \".kiro/steering/custom.md\"", got)

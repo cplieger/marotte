@@ -31,6 +31,25 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
+// newCallbackStore is a store firing onChange, with Shutdown registered as cleanup so no callback
+// outlives the test.
+func newCallbackStore(t *testing.T, onChange func(context.Context)) *Store {
+	t.Helper()
+	dir := t.TempDir()
+	s, err := New(t.Context(), dir, onChange, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := s.Shutdown(ctx); err != nil {
+			t.Errorf("Shutdown: %v", err)
+		}
+	})
+	return s
+}
+
 func TestCreate_ValidStdio(t *testing.T) {
 	s := newTestStore(t)
 	got, err := s.Create(t.Context(), &Server{
@@ -269,12 +288,8 @@ func TestPersist_FileIs0600(t *testing.T) {
 }
 
 func TestOnChangeFires(t *testing.T) {
-	dir := t.TempDir()
 	var calls atomic.Int32
-	s, err := New(t.Context(), dir, func(context.Context) { calls.Add(1) }, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	s := newCallbackStore(t, func(context.Context) { calls.Add(1) })
 	_, _ = s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"})
 	waitForCounter(t, &calls, 1)
 }
@@ -337,8 +352,8 @@ func TestParseTransport(t *testing.T) {
 		want Transport
 	}{
 		{"stdio", TransportStdio},
-		{"http", TransportHTTP},
-		{"sse", TransportSSE},
+		{"http", transportHTTP},
+		{"sse", transportSSE},
 	}
 	for _, tc := range ok {
 		got, err := parseTransport(tc.in)
@@ -357,7 +372,7 @@ func TestParseTransport(t *testing.T) {
 }
 
 // TestCreate_SSERoundTripsFromDisk verifies an SSE server survives a save +
-// reload as TransportSSE (no migration to http) and still validates — the
+// reload as transportSSE (no migration to http) and still validates — the
 // backward-compat guarantee that adding sse doesn't rewrite stored entries.
 func TestCreate_SSERoundTripsFromDisk(t *testing.T) {
 	dir := t.TempDir()
@@ -366,7 +381,7 @@ func TestCreate_SSERoundTripsFromDisk(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	if _, err := s.Create(t.Context(), &Server{
-		Transport: TransportSSE, Name: "legacy", URL: "https://mcp.example/sse",
+		Transport: transportSSE, Name: "legacy", URL: "https://mcp.example/sse",
 		Enabled: true,
 	}); err != nil {
 		t.Fatalf("Create sse: %v", err)
@@ -380,9 +395,9 @@ func TestCreate_SSERoundTripsFromDisk(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("reloaded list len = %d, want 1", len(list))
 	}
-	if list[0].Transport != TransportSSE {
+	if list[0].Transport != transportSSE {
 		t.Errorf("reloaded transport = %q, want %q (sse must not migrate to http)",
-			list[0].Transport, TransportSSE)
+			list[0].Transport, transportSSE)
 	}
 }
 
@@ -393,7 +408,7 @@ func TestCreate_SSERoundTripsFromDisk(t *testing.T) {
 func TestSSE_SecretRoundTrip(t *testing.T) {
 	s := newTestStore(t)
 	orig, err := s.Create(t.Context(), &Server{
-		Transport: TransportSSE,
+		Transport: transportSSE,
 		Name:      "sse-secret",
 		URL:       "https://mcp.example/sse",
 		Headers:   []keyPair{{Name: "Authorization", Value: "Bearer real-token"}},
@@ -414,7 +429,7 @@ func TestSSE_SecretRoundTrip(t *testing.T) {
 
 	// Update resubmitting the mask preserves the stored secret.
 	if _, err := s.update(t.Context(), orig.ID, &Server{
-		Transport: TransportSSE,
+		Transport: transportSSE,
 		Name:      "sse-secret",
 		URL:       "https://mcp.example/sse",
 		Headers:   []keyPair{{Name: "Authorization", Value: secretMask}},
@@ -479,12 +494,8 @@ func waitForCounter(t *testing.T, c *atomic.Int32, want int32) {
 // SetOnChange replaces the callback so the later-wired consumer actually sees
 // mutations, which the circular-init ordering with PrewarmRunner depends on.
 func TestSetOnChange_ReplacesCallback(t *testing.T) {
-	dir := t.TempDir()
 	var firstCalls, secondCalls atomic.Int32
-	s, err := New(t.Context(), dir, func(context.Context) { firstCalls.Add(1) }, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	s := newCallbackStore(t, func(context.Context) { firstCalls.Add(1) })
 
 	// First mutation fires the original callback.
 	if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"}); err != nil {
@@ -528,6 +539,54 @@ func TestSetOnChange_NilIsNoop(t *testing.T) {
 		synctest.Wait()
 		if got := calls.Load(); got != 0 {
 			t.Errorf("SetOnChange(nil) did not detach callback: calls = %d, want 0", got)
+		}
+	})
+}
+
+// Shutdown ends the callback in flight through its context and returns only once it has, and a
+// mutation after Shutdown fires no callback.
+func TestShutdown_WaitsForACallbackInFlightAndFiresNoneAfter(t *testing.T) {
+	dir := t.TempDir()
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Int32
+		var cancelled atomic.Bool
+		release := make(chan struct{})
+		s, err := New(t.Context(), dir, func(ctx context.Context) {
+			calls.Add(1)
+			<-ctx.Done()
+			cancelled.Store(true)
+			<-release
+		}, withKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"}); err != nil {
+			t.Fatalf("Create a: %v", err)
+		}
+		synctest.Wait()
+
+		shutdown := make(chan error, 1)
+		go func() { shutdown <- s.Shutdown(t.Context()) }()
+		synctest.Wait()
+		if !cancelled.Load() {
+			t.Error("the callback's context was not cancelled by Shutdown")
+		}
+		select {
+		case err := <-shutdown:
+			t.Fatalf("Shutdown returned (%v) while the callback was still running", err)
+		default:
+		}
+		close(release)
+		if err := <-shutdown; err != nil {
+			t.Fatalf("Shutdown: %v", err)
+		}
+
+		if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "b", Command: "bash"}); err != nil {
+			t.Fatalf("Create b: %v", err)
+		}
+		synctest.Wait()
+		if got := calls.Load(); got != 1 {
+			t.Errorf("calls = %d, want 1: a mutation after Shutdown fired its callback", got)
 		}
 	})
 }
@@ -620,7 +679,7 @@ func TestUpdate_RejectsInvalidShape(t *testing.T) {
 	}
 	// Change to HTTP without URL — must fail validate.
 	if _, err := s.update(t.Context(), orig.ID, &Server{
-		Transport: TransportHTTP, Name: "ok", URL: "",
+		Transport: transportHTTP, Name: "ok", URL: "",
 	}); err == nil {
 		t.Errorf("Update(invalid) = nil, want validation error")
 	}
@@ -1005,7 +1064,7 @@ func TestLoad_CorruptFileRenameFailureDoesNotError(t *testing.T) {
 func TestUpdate_PreservesOAuthClientID(t *testing.T) {
 	s := newTestStore(t)
 	created, err := s.Create(t.Context(), &Server{
-		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
+		Transport: transportHTTP, Name: "slack", URL: "https://slack.example/mcp",
 		OAuthClientID: "abc123", Enabled: true,
 	})
 	if err != nil {
@@ -1014,7 +1073,7 @@ func TestUpdate_PreservesOAuthClientID(t *testing.T) {
 	// Update keeps the OAuthClientID — it's a non-secret config value
 	// that round-trips verbatim (no secretMask treatment).
 	updated, err := s.update(t.Context(), created.ID, &Server{
-		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
+		Transport: transportHTTP, Name: "slack", URL: "https://slack.example/mcp",
 		OAuthClientID: "abc123", Enabled: true,
 	})
 	if err != nil {
@@ -1028,11 +1087,11 @@ func TestUpdate_PreservesOAuthClientID(t *testing.T) {
 func TestUpdate_ChangesOAuthClientID(t *testing.T) {
 	s := newTestStore(t)
 	created, _ := s.Create(t.Context(), &Server{
-		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
+		Transport: transportHTTP, Name: "slack", URL: "https://slack.example/mcp",
 		OAuthClientID: "old-id", Enabled: true,
 	})
 	updated, err := s.update(t.Context(), created.ID, &Server{
-		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
+		Transport: transportHTTP, Name: "slack", URL: "https://slack.example/mcp",
 		OAuthClientID: "new-id", Enabled: true,
 	})
 	if err != nil {
@@ -1061,7 +1120,7 @@ func TestCreate_RejectsOAuthClientIDOnStdio(t *testing.T) {
 func TestCreate_RejectsOversizedOAuthClientID(t *testing.T) {
 	s := newTestStore(t)
 	_, err := s.Create(t.Context(), &Server{
-		Transport:     TransportHTTP,
+		Transport:     transportHTTP,
 		Name:          "x",
 		URL:           "https://example.com/mcp",
 		OAuthClientID: strings.Repeat("a", 1024),
@@ -1078,7 +1137,7 @@ func TestCreate_RejectsOversizedOAuthClientID(t *testing.T) {
 func TestCreate_RejectsControlCharsInOAuthClientID(t *testing.T) {
 	s := newTestStore(t)
 	_, err := s.Create(t.Context(), &Server{
-		Transport:     TransportHTTP,
+		Transport:     transportHTTP,
 		Name:          "x",
 		URL:           "https://example.com/mcp",
 		OAuthClientID: "abc\x00def",
@@ -1310,5 +1369,62 @@ func TestImport_UnchangedBlockReRendersADriftedFile(t *testing.T) {
 	}
 	if _, ok := readKASServers(t, s.kasPath)["agent-mail"]; !ok {
 		t.Error("re-importing the unchanged block left agent-mail missing from KAS's file")
+	}
+}
+
+func stdioWithNegotiation(v versionNegotiation) *Server {
+	return &Server{Transport: TransportStdio, Name: "local", Command: "npx", Enabled: true, VersionNegotiation: v}
+}
+
+func TestCreate_KeepsVersionNegotiation(t *testing.T) {
+	s := newTestStore(t)
+	got, err := s.Create(t.Context(), stdioWithNegotiation(versionNegotiationLegacy))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got.VersionNegotiation != versionNegotiationLegacy {
+		t.Errorf("Create returned version_negotiation %q, want legacy", got.VersionNegotiation)
+	}
+	if stored := s.get(t.Context(), got.ID); stored == nil || stored.VersionNegotiation != versionNegotiationLegacy {
+		t.Errorf("stored = %+v, want version_negotiation legacy", stored)
+	}
+}
+
+func TestUpdate_VersionNegotiationReplacesAndClears(t *testing.T) {
+	s := newTestStore(t)
+	orig, err := s.Create(t.Context(), stdioWithNegotiation(versionNegotiationAuto))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := s.update(t.Context(), orig.ID, stdioWithNegotiation(versionNegotiationLegacy)); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got := s.get(t.Context(), orig.ID); got == nil || got.VersionNegotiation != versionNegotiationLegacy {
+		t.Fatalf("after Update, record = %+v, want version_negotiation legacy", got)
+	}
+	if _, err := s.update(t.Context(), orig.ID, stdioWithNegotiation("")); err != nil {
+		t.Fatalf("clearing Update: %v", err)
+	}
+	if got := s.get(t.Context(), orig.ID); got == nil || got.VersionNegotiation != "" {
+		t.Errorf("after a clearing Update, record = %+v, want no version_negotiation", got)
+	}
+}
+
+func TestPersist_VersionNegotiationRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	kas := filepath.Join(dir, "kas-mcp.json")
+	s, err := New(t.Context(), dir, nil, withKASConfigPath(kas))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := s.Create(t.Context(), stdioWithNegotiation(versionNegotiationLegacy)); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	reloaded, err := New(t.Context(), dir, nil, withKASConfigPath(kas))
+	if err != nil {
+		t.Fatalf("reload New: %v", err)
+	}
+	if list := reloaded.list(t.Context()); len(list) != 1 || list[0].VersionNegotiation != versionNegotiationLegacy {
+		t.Errorf("reloaded = %+v, want version_negotiation legacy", list)
 	}
 }

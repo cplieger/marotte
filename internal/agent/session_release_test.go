@@ -2,6 +2,11 @@ package agent
 
 import (
 	"context"
+	"net/http"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,7 +63,7 @@ func TestReleaseIfUnheld_ClosesOnlyChatsWithNoTabTurnOrLiveRun(t *testing.T) {
 			}
 		}},
 		{name: "an admitted turn", hold: func(t *testing.T, h *Runtime, _ *tabs.Store) {
-			if !h.coord.turns.tryReserveIdle("c1", marotte.TurnSourcePrompt) {
+			if !h.coord.turns.tryReserveIdleNow("c1", marotte.TurnSourcePrompt) {
 				t.Fatal("Setup: the admission slot was not free")
 			}
 		}},
@@ -88,7 +93,7 @@ func TestReleaseIfUnheld_ClosesOnlyChatsWithNoTabTurnOrLiveRun(t *testing.T) {
 func TestReleaseIfUnheld_RunsWhenTheTurnEndsAndWhenTheRunEnds(t *testing.T) {
 	t.Run("the admission is released", func(t *testing.T) {
 		h, _, sb := releaseFixture(t)
-		if !h.coord.turns.tryReserveIdle("c1", marotte.TurnSourcePrompt) {
+		if !h.coord.turns.tryReserveIdleNow("c1", marotte.TurnSourcePrompt) {
 			t.Fatal("Setup: the admission slot was not free")
 		}
 		h.coord.releaseIfUnheld("c1")
@@ -96,7 +101,7 @@ func TestReleaseIfUnheld_RunsWhenTheTurnEndsAndWhenTheRunEnds(t *testing.T) {
 			t.Fatal("Setup: the session closed under an admitted turn")
 		}
 
-		h.coord.turns.releaseReservation("c1")
+		h.coord.turns.releaseHeld("c1")
 
 		if !released(t, h, sb) {
 			t.Error("the chat's last admission ended and its unheld session stayed resident")
@@ -175,5 +180,60 @@ func TestReleaseIfUnheld_NeverClosesAStepSession(t *testing.T) {
 	}
 	if fakeOf(sb).SessionID() == "sess_step" {
 		t.Error("the chat's handle names the step session")
+	}
+}
+
+// A chat deleted while the release check's session/close waits for its answer cuts that close: the delete's job
+// waits for it to return before it releases the session, and the release check logs neither a refusal nor a close
+// it did not make.
+func TestReleaseCheck_ACutCloseBecomesARelease(t *testing.T) {
+	logs := captureLogs(t)
+	h, _, sb := releaseFixture(t)
+	br := fakeOf(sb)
+	gate := make(chan struct{})
+	t.Cleanup(func() { close(gate) })
+	var closeReturned atomic.Bool
+	closeAt := make(chan struct{})
+	var closeOrder []string
+	var orderMu sync.Mutex
+	note := func(s string) {
+		orderMu.Lock()
+		closeOrder = append(closeOrder, s)
+		orderMu.Unlock()
+	}
+	br.mu.Lock()
+	br.stopGate = gate
+	var entered sync.Once
+	br.onCloseStart = func() { entered.Do(func() { close(closeAt) }) }
+	br.onCloseReturn = func(error) { closeReturned.Store(true); note("close returned") }
+	br.beforeRelease = func() { note("release") }
+	br.mu.Unlock()
+	h.coord.releaseIfUnheld("c1")
+	select {
+	case <-closeAt:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the release check's session/close never started")
+	}
+
+	if code := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdDeleteChat, ChatID: "c1"}).Code; code != http.StatusOK {
+		t.Fatalf("delete_chat = %d, want 200", code)
+	}
+	awaitTeardown(t, h, "c1")
+	joinInflight(t, h)
+
+	if !closeReturned.Load() || !br.Released() {
+		t.Fatalf("close returned = %v, released = %v; want the cut close returned and the session released",
+			closeReturned.Load(), br.Released())
+	}
+	orderMu.Lock()
+	order := slices.Clone(closeOrder)
+	orderMu.Unlock()
+	if !slices.Equal(order, []string{"close returned", "release"}) {
+		t.Errorf("order = %v, want the cut close to return before the delete's release", order)
+	}
+	for _, line := range []string{"refused its close", "closed a chat session nothing holds"} {
+		if strings.Contains(logs.String(), line) {
+			t.Errorf("the release check logged %q for a close the delete cut", line)
+		}
 	}
 }

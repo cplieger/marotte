@@ -1,9 +1,9 @@
-// Right-click menu over `@cplieger/ui-primitives`' `createPopover` at `pointAnchor(x, y)`. The controller owns dismissal
+// Right-click menu over `@cplieger/ui/popover`'s `createPopover` at `pointAnchor(x, y)`. The controller owns dismissal
 // and Escape (isolated, so a menu inside a modal does not close the modal) and on-screen placement.
 
-import { el } from "@cplieger/reactive";
-import { createPopover, pointAnchor } from "@cplieger/ui-primitives/popover";
-import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
+import { el } from "@cplieger/ui";
+import { createPopover, pointAnchor } from "@cplieger/ui/popover";
+import { rovingFocus } from "@cplieger/ui/roving-focus";
 
 export interface ContextMenuItem {
   label: string;

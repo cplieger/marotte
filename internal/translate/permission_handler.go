@@ -6,12 +6,17 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/notice"
 )
 
 // approvalTypeTurn is the `_meta.kiro.type` marking a turn approval.
 const approvalTypeTurn = "turn_approval"
+
+// ToolIDUpdateWorkflow is the `_meta.kiro.toolId` of a workflow plan approval, on the live ask
+// and on the re-ask KAS restores after a restart.
+const ToolIDUpdateWorkflow = "update_workflow"
 
 type permOptionWire struct {
 	OptionID string `json:"optionId"`
@@ -74,7 +79,7 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 	var locations []string
 	for _, l := range req.ToolCall.Locations {
 		if l.Path != "" {
-			locations = append(locations, t.relPath(l.Path))
+			locations = append(locations, displayText(t.relPath(l.Path)))
 		}
 	}
 	mcpTool := mcpToolIdentity(&req.Meta.Kiro)
@@ -84,9 +89,10 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 	evt := marotte.NewEvent(marotte.EventPermissionNeeded, chatID, marotte.PermissionNeededPayload{
 		MCPTool:    mcpTool,
 		Consent:    consent,
+		Command:    permissionCommand(req.Meta.Kiro.Command),
 		ToolCallID: req.ToolCall.ToolCallID,
-		// THE TITLE IS A DECISION SURFACE, the one string here that is defused: a Bidi override in it
-		// could render `rm -rf /workspace` as a harmless command (see displayText).
+		// Every shown string here is a decision surface, defused: a Bidi override in the title could
+		// render `rm -rf /workspace` as a harmless command (see displayText).
 		Title:              title,
 		Kind:               toolKindFromWire(req.ToolCall.Kind),
 		RunID:              step.WorkflowID,
@@ -98,15 +104,33 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 		Files:              files,
 		AlwaysAllowBlocked: alwaysAllowBlocked,
 		AdminRequired:      req.Meta.Kiro.Consent.Scope == consentScopeAdministration,
-		// KAS reads a reason only at the ordinary tool approval, the one ask carrying toolId.
-		AcceptsRejectionReason: req.Meta.Kiro.ToolID != "" && req.Meta.Kiro.Type != approvalTypeTurn &&
-			slices.ContainsFunc(options, func(o marotte.PermissionOption) bool { return o.Kind == "reject_once" }),
+		ClassifierNote:     classifierNote(req.Meta.Kiro.TrustClassifier),
+		RejectionNote:      rejectionNote(&req.Meta.Kiro, options),
 	})
-	t.bus.Broadcast(ctx, t.pendingPerms.PendingPermsAdd(reqID, evt, origin))
+	evt, filed := t.pendingPerms.PendingPermsAdd(ctx, reqID, evt, origin)
+	if !filed {
+		return
+	}
+	t.bus.Broadcast(ctx, evt)
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID, marotte.WorkingLabelPayload{Label: marotte.WorkingLabelApproval}))
 	n := notice.Permission(t.push.NoticeTarget(ctx, chatID, step.WorkflowID),
 		step.NodeID, title, len(files))
+	n.Ask = notice.AskKey(marotte.DecisionRequestID(evt.Payload))
 	t.push.Notify(ctx, chatID, &n)
+}
+
+// rejectionNote names the note a card offers with reject_once. KAS reads a note only on a tool
+// approval (an ask carrying toolId, never a turn approval); keying the plan kind on toolId holds
+// where KAS could not attach workflowPlan, and on the restored re-ask, which carries no consent.
+func rejectionNote(k *acpPermissionKiroBlock, options []marotte.PermissionOption) marotte.RejectionNote {
+	if k.ToolID == "" || k.Type == approvalTypeTurn ||
+		!slices.ContainsFunc(options, func(o marotte.PermissionOption) bool { return o.Kind == "reject_once" }) {
+		return ""
+	}
+	if k.ToolID == ToolIDUpdateWorkflow {
+		return marotte.RejectionNotePlanEdits
+	}
+	return marotte.RejectionNoteReason
 }
 
 // nil on any other ask.
@@ -166,6 +190,26 @@ func permissionConsent(c *acpConsentMeta) *marotte.PermissionConsent {
 		}
 	}
 	return out
+}
+
+// maxApprovalCommandBytes is above any command a person vets in the card's box and matches
+// what the record keeps of one input member; every pending ask rides the SSE connect's one
+// pending_snapshot frame, under the hub's 1 MiB frame cap.
+const maxApprovalCommandBytes = 8 << 10
+
+// permissionCommand is the command an ask shows, nil when it names none. Past the cap the head
+// and the tail both stay, so a suffix such as `; rm -rf ~` is never what the cut hides.
+func permissionCommand(raw string) *marotte.PermissionCommand {
+	if raw == "" {
+		return nil
+	}
+	clean := displayLines(raw)
+	if len(clean) <= maxApprovalCommandBytes {
+		return &marotte.PermissionCommand{Text: clean}
+	}
+	head := textsafe.CapBytes(clean, maxApprovalCommandBytes/2)
+	tail := textsafe.CapBytesTail(clean, maxApprovalCommandBytes/2)
+	return &marotte.PermissionCommand{Text: head, Tail: tail, OmittedBytes: len(clean) - len(head) - len(tail)}
 }
 
 const consentScopeAdministration = "administration"

@@ -79,7 +79,7 @@ const OUTCOMES: Record<TurnOutcome, { word: string; fact: string }> = {
 /** Every dimension the closed row's markup varies on: the outcome (`data-outcome`,
  *  `data-severity`), Rewind (`mountRewind`: enabled, disabled while the chat is busy, or absent
  *  with no next prompt to address), the card's place in its chat, and the copy actions, which
- *  settled prose earns. */
+ *  settled prose earns ahead of the Branch every settled prompt turn carries. */
 const DIMENSIONS = {
   outcome: Object.keys(OUTCOMES) as TurnOutcome[],
   rewind: ["enabled", "disabled", "absent"],
@@ -386,27 +386,33 @@ const FINE = {
     ["Copy as text", { y: 4, w: 24, h: 24 }],
     ["Copy as markdown", { y: 4, w: 24, h: 24 }],
     ["Copy link to this turn", { y: 4, w: 24, h: 24 }],
+    ["Branch from here", { y: 4, w: 24, h: 24 }],
   ],
-  actionGaps: [2, 2],
+  branch: [["Branch from here", { y: 4, w: 24, h: 24 }]],
+  actionGaps: [2, 2, 2],
   rewind: ["Rewind to this point", { y: 4, h: 24 }],
   rewindGap: 8,
   end: 8,
   rewindChrome: 36,
-  glyphs: { actions: 3, size: 16 },
+  glyphs: { actions: 4, branch: 1, size: 16 },
 } as const;
+// On a phone the controls paint at the mouse's 24px, centred in the 44px band their targets fill
+// ((44 - 24) / 2 = 10px above and below), the glyphs at the mouse's 16px, and Rewind sits 20px from
+// the `…` so their two 44px targets meet.
 const COARSE = {
   band: 44,
-  ledger: { x: 8, y: 4, h: 36 },
-  info: { x: 12, y: 12, w: 20, h: 20 },
-  mark: { x: 40, y: 18, w: 8, h: 8 },
+  ledger: { x: 8, y: 10, h: 24 },
+  info: { x: 12, y: 14, w: 16, h: 16 },
+  mark: { x: 36, y: 18, w: 8, h: 8 },
   ledgerGap: 8,
-  actions: [["More turn actions", { y: 4, w: 36, h: 36 }]],
+  actions: [["More turn actions", { y: 10, w: 24, h: 24 }]],
+  branch: [["More turn actions", { y: 10, w: 24, h: 24 }]],
   actionGaps: [],
-  rewind: ["Rewind to this point", { y: 4, w: 36, h: 36 }],
-  rewindGap: 8,
+  rewind: ["Rewind to this point", { y: 10, w: 24, h: 24 }],
+  rewindGap: 20,
   end: 8,
-  rewindChrome: 36,
-  glyphs: { actions: 0, size: 20 },
+  rewindChrome: 24,
+  glyphs: { actions: 0, branch: 0, size: 16 },
 } as const;
 const PIN = { 1280: FINE, 390: COARSE, 320: COARSE } as const;
 /** The footer's width in each frame, which no glyph decides. */
@@ -726,7 +732,13 @@ describe("the closed footer row", () => {
           const footer = footerOf(theme, row, width);
           const pin = PIN[width];
           const { word, fact } = OUTCOMES[row.outcome];
-          const actions = row.actions === "actions";
+          // Every seated turn has a prompt, so a settled one carries Branch, and prose adds the copies.
+          const slot =
+            row.outcome === "running"
+              ? undefined
+              : row.actions === "actions"
+                ? "actions"
+                : "branch";
           const rewinds = row.rewind !== "absent";
           expect(footer.dataset["outcome"], "the outcome").toBe(row.outcome);
           expect(footer.dataset["info"], "closed").not.toBe("open");
@@ -736,7 +748,7 @@ describe("the closed footer row", () => {
           ).toEqual([
             "turn-ledger-summary",
             "turn-info-panel",
-            ...(actions ? ["turn-actions-buttons"] : []),
+            ...(slot === undefined ? [] : ["turn-actions-buttons"]),
             ...(rewinds ? ["turn-rewind"] : []),
           ]);
           const rewind = footer.querySelector<HTMLButtonElement>(":scope > .turn-rewind");
@@ -801,7 +813,7 @@ describe("the closed footer row", () => {
               ":scope > .turn-actions-buttons :is(button, summary), :scope > .turn-rewind",
             ),
           ].filter((c) => c.checkVisibility());
-          const want = [...(actions ? pin.actions : []), ...(rewinds ? [pin.rewind] : [])];
+          const want = [...(slot === undefined ? [] : pin[slot]), ...(rewinds ? [pin.rewind] : [])];
           expect(
             controls.map((c) => c.getAttribute("aria-label")),
             "the trailing controls",
@@ -818,8 +830,8 @@ describe("the closed footer row", () => {
           ).toBe(want.length === 0 ? null : pin.end);
           // Within a layout unit: a box after a word starts on a 1/64 px grid, not a whole pixel.
           const pinned = [
-            ...(actions ? pin.actionGaps : []),
-            ...(actions && rewinds ? [pin.rewindGap] : []),
+            ...(slot === "actions" ? pin.actionGaps : []),
+            ...(slot !== undefined && rewinds ? [pin.rewindGap] : []),
           ];
           const between = gaps(controls);
           expect(between, "the space between the trailing controls").toHaveLength(pinned.length);
@@ -832,7 +844,7 @@ describe("the closed footer row", () => {
           ).toBe(rewinds ? pin.rewindChrome : null);
           const glyphs = [...footer.querySelectorAll("svg")].filter((g) => g.checkVisibility());
           expect(glyphs.length, "the row's shown glyphs: the `i`, the actions', Rewind's").toBe(
-            1 + (actions ? pin.glyphs.actions : 0) + (rewinds ? 1 : 0),
+            1 + (slot === undefined ? 0 : pin.glyphs[slot]) + (rewinds ? 1 : 0),
           );
           glyphs.forEach((g, i) => {
             const b = g.getBoundingClientRect();

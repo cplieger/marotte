@@ -58,7 +58,7 @@ func TestSessionInfo_AQueuedPromptNamesTheChatHoldingTheSlot(t *testing.T) {
 	}
 	n := notices[0].Payload.(marotte.SystemNoticePayload)
 	if n.Level != marotte.NoticeInfo || n.ChatName != "A" ||
-		n.Message != `Waiting for "Overnight autonomous build" to finish: kiro-cli runs one agent turn at a time, so this turn starts when that one ends.` {
+		n.Message != `Waiting for "Overnight autonomous build" to finish: outside Default and Default v2, kiro-cli runs one turn at a time, so this turn starts when that one ends.` {
 		t.Errorf("notice = %+v, want an info notice on c1 naming the blocking chat", n)
 	}
 
@@ -102,38 +102,42 @@ func TestSessionInfo_AStepsQueuedFrameReachesNoChat(t *testing.T) {
 	}
 }
 
-// KAS 2.32.0 never queues a vibe chat's execution (it runs as chat-agent), so a queued frame on one is logged as the
-// sign KAS routes vibe as default-v2; a default-v2 chat queuing is the expected case and logs nothing.
-func TestSessionInfo_AQueuedVibeChatIsLogged(t *testing.T) {
-	for _, tc := range []struct {
-		name, mode string
-		warn       bool
-	}{
-		{name: "vibe", mode: "vibe", warn: true},
-		{name: "default-v2", mode: "default-v2", warn: false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+// KAS alone decides which executions wait for the slot, so the wait shows whatever the chat's mode and nothing is
+// inferred from the mode.
+func TestSessionInfo_AQueuedFrameShowsTheWaitInEveryMode(t *testing.T) {
+	for _, mode := range []string{"vibe", "default-v2", "plan"} {
+		t.Run(mode, func(t *testing.T) {
 			var buf bytes.Buffer
 			captureSlog(t, &buf)
-			deps, _, store := depsWithStore(t, "c1")
-			if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-				c.CurrentModeID = tc.mode
-				return true
-			}); err != nil {
-				t.Fatalf("seed c1: %v", err)
+			deps, events, store := depsWithStore(t, "c1")
+			for id, seed := range map[marotte.ChatID]func(*marotte.Chat){
+				"c1": func(c *marotte.Chat) { c.CurrentModeID = mode },
+				"c2": func(c *marotte.Chat) { c.Name = "Overnight autonomous build" },
+			} {
+				if _, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
+					seed(c)
+					return true
+				}); err != nil {
+					t.Fatalf("seed %s: %v", id, err)
+				}
 			}
+			deps.sessionChats = map[string]marotte.ChatID{blockingSession: "c2"}
 			tr := New(rolesOf(deps))
 
 			tr.HandleSessionInfoUpdate(t.Context(), "c1", queuedFrame(t, blockingSession), FrameAttribution{})
 
-			got := buf.String()
-			logged := strings.Contains(got, "level=WARN") && strings.Contains(got, "chat in mode vibe was queued for the autonomous slot")
-			if logged != tc.warn {
-				t.Errorf("WARN logged = %v, want %v:\n%s", logged, tc.warn, got)
+			labels := eventsOf(*events, marotte.EventWorkingLabel)
+			if len(labels) != 1 || labels[0].ChatID != "c1" ||
+				labels[0].Payload.(marotte.WorkingLabelPayload).Label != `Waiting for "Overnight autonomous build"` {
+				t.Errorf("working_label events = %+v, want one on c1 naming the blocking chat", labels)
 			}
-			if tc.warn && (!strings.Contains(got, "chat_id=c1") || !strings.Contains(got, "mode=vibe") ||
-				!strings.Contains(got, "active_session_id="+blockingSession)) {
-				t.Errorf("WARN = %s, want the chat id, its mode and the blocking session", got)
+			notices := eventsOf(*events, marotte.EventSystemNotice)
+			if len(notices) != 1 || notices[0].ChatID != "c1" ||
+				notices[0].Payload.(marotte.SystemNoticePayload).Level != marotte.NoticeInfo {
+				t.Errorf("system_notice events = %+v, want one info notice on c1", notices)
+			}
+			if got := buf.String(); strings.Contains(got, "level=WARN") {
+				t.Errorf("log = %s, want no WARN for a queued %s chat", got, mode)
 			}
 		})
 	}

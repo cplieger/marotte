@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 const (
@@ -149,7 +149,7 @@ func TestDeviceGrant_CompleteSavesTheRecordWithItsAccount(t *testing.T) {
 	if got, want := helperValuesFor(t, e.srv.URL), []string{"", h.helperValue(t)}; !slices.Equal(got, want) {
 		t.Errorf("credential.%s.helper = %q, want %q", e.srv.URL, got, want)
 	}
-	if row := viewFor(t, h.m, e.id()); row.Status != ForgeConnected || row.Username != "alice" {
+	if row := viewFor(t, h.m, e.id()); row.Status != forgeConnected || row.Username != "alice" {
 		t.Errorf("row after the grant = %+v, want alice connected", row)
 	}
 	if again := decodeBody(t, h.pollGrant(t, t.Context(), grant)); again["code"] != codeGrantNotFound {

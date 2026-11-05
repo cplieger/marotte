@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/signin"
 )
 
@@ -108,8 +109,8 @@ type blockingPush struct {
 	once    sync.Once
 }
 
-func (*blockingPush) HasSubscribers() bool        { return true }
-func (*blockingPush) Retract(marotte.PushSubject) {}
+func (*blockingPush) HasSubscribers() bool                { return true }
+func (*blockingPush) Retract(marotte.PushSubject, string) {}
 func (p *blockingPush) Send(context.Context, *marotte.NotificationPayload) {
 	p.once.Do(func() { close(p.entered) })
 	<-p.release
@@ -340,7 +341,7 @@ func TestLaunchScheduled_LaunchesNothingOnceShutdownBegan(t *testing.T) {
 	launchableRecipe(br, "wf_sched")
 	beginDraining(h)
 
-	_, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", "sched-1", marotte.RunDefaults{}, time.Now().Add(time.Hour))
+	_, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"}, nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
 
 	if !errors.Is(err, errRuntimeDraining) {
 		t.Errorf("LaunchScheduled = %v once Shutdown began, want errRuntimeDraining", err)

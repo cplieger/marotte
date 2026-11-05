@@ -96,7 +96,7 @@ func checkName(name string) error {
 var keyRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,127}$`)
 
 // Length caps on user-supplied fields. These are defense-in-depth
-// bounds: webhttp.MaxJSONBody caps the whole PUT payload, but a single
+// bounds: httpserver.MaxJSONBody caps the whole PUT payload, but a single
 // 500 KB env value still slows every masked read and bloats mcp.json.
 // Values are generous enough to accept any realistic MCP config.
 const (
@@ -125,18 +125,18 @@ var oauthRedirectHosts = []string{"localhost", "127.0.0.1"}
 
 // Adding a new transport requires only a map entry, not a control-flow change. The init() below
 // validates that every known transport has a registered validator, preventing nil-call panics.
-// TransportSSE shares validateRemote with TransportHTTP: both are remote transports whose wire
+// transportSSE shares validateRemote with transportHTTP: both are remote transports whose wire
 // shape is url + headers (+ optional oauth), differing only in the ACP `type` discriminator emitted
 // at export time.
 var transportValidators = map[Transport]func(*Server) error{
 	TransportStdio:    validateStdio,
-	TransportHTTP:     validateRemote,
-	TransportSSE:      validateRemote,
-	TransportRegistry: validateRegistry,
+	transportHTTP:     validateRemote,
+	transportSSE:      validateRemote,
+	transportRegistry: validateRegistry,
 }
 
 func init() {
-	for _, t := range []Transport{TransportStdio, TransportHTTP, TransportSSE, TransportRegistry} {
+	for _, t := range []Transport{TransportStdio, transportHTTP, transportSSE, transportRegistry} {
 		if _, ok := transportValidators[t]; !ok {
 			panic("mcp: no validator registered for transport " + string(t))
 		}
@@ -163,6 +163,7 @@ const (
 	fieldOAuthClientMetadataURL = "oauth_client_metadata_url"
 	fieldOAuthRedirectURI       = "oauth_redirect_uri"
 	fieldOAuthScopes            = "oauth_scopes"
+	fieldVersionNegotiation     = "version_negotiation"
 )
 
 // fieldError is one validation failure, attributed to the wire field it
@@ -265,6 +266,10 @@ func validate(s *Server) error {
 	errs.merge(validateToolNames(fieldDisabledTools, s.DisabledTools))
 	if s.TimeoutMS < 0 || s.TimeoutMS > maxTimeoutMS {
 		errs.addf(fieldTimeoutMS, "timeout_ms must be between 0 and %d, got %d", maxTimeoutMS, s.TimeoutMS)
+	}
+	if !s.VersionNegotiation.valid() {
+		errs.addf(fieldVersionNegotiation, "version_negotiation must be %q or %q, got %q",
+			versionNegotiationAuto, versionNegotiationLegacy, s.VersionNegotiation)
 	}
 	return errs.join()
 }
@@ -398,8 +403,9 @@ func validateArgs(args []string) error {
 	return errs.join()
 }
 
-// validateRegistry refuses every field the catalog supplies: a registry entry
-// names a catalog server and KAS resolves the rest.
+// validateRegistry refuses the command and url the catalog supplies and the
+// oauth overrides this store does not offer; env and headers are the user's
+// overrides, held to the stdio env and remote header rules.
 func validateRegistry(s *Server) error {
 	var errs fieldErrs
 	for _, f := range []struct {
@@ -408,18 +414,27 @@ func validateRegistry(s *Server) error {
 	}{
 		{fieldCommand, s.Command != ""},
 		{fieldArgs, len(s.Args) > 0},
-		{fieldEnvPairs, len(s.Env) > 0},
 		{fieldURL, s.URL != ""},
-		{fieldHeaderPairs, len(s.Headers) > 0},
+	} {
+		if f.set {
+			errs.addf(f.field, "a registry server cannot have %s: the organization's catalog supplies it", f.field)
+		}
+	}
+	for _, f := range []struct {
+		field string
+		set   bool
+	}{
 		{fieldOAuthClientID, s.OAuthClientID != ""},
 		{fieldOAuthClientMetadataURL, s.OAuthClientMetadataURL != ""},
 		{fieldOAuthRedirectURI, s.OAuthRedirectURI != ""},
 		{fieldOAuthScopes, len(s.OAuthScopes) > 0},
 	} {
 		if f.set {
-			errs.addf(f.field, "a registry server cannot have %s: the organization's catalog supplies it", f.field)
+			errs.addf(f.field, "a registry server cannot have %s: sign-in overrides are not offered for registry servers", f.field)
 		}
 	}
+	errs.merge(validateKeyPairs(fieldEnvPairs, s.Env, maxEnvEntries, envValueMax, false))
+	errs.merge(validateKeyPairs(fieldHeaderPairs, s.Headers, maxHeaderEntries, headerValueMax, true))
 	return errs.join()
 }
 
@@ -507,7 +522,7 @@ func validateOAuthMetadataURL(raw string) error {
 }
 
 // schemeHTTP is the plain-HTTP URL scheme, which shares its spelling with
-// TransportHTTP but is a different vocabulary.
+// transportHTTP but is a different vocabulary.
 const schemeHTTP = "http"
 
 // validateOAuthRedirectURI mirrors KAS's three accepted redirectUri forms

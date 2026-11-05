@@ -1,9 +1,9 @@
 // Licensed-code attribution footnote (v3 `_kiro/code_references`). The wire carries {license_name, repository, url}
 // per reference with no content span, so an attribution annotates the whole turn.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import type { CodeReference } from "./types.js";
-import { isSafeURL } from "./url-safety.js";
+import { isHttpURL } from "./url-safety.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_SCALE, ICON_EXTERNAL } from "./icons.js";
 import { featureDisabled } from "./governance.js";
@@ -66,13 +66,13 @@ function buildCodeRefs(refs: readonly CodeReference[], open: boolean): HTMLDetai
   return details;
 }
 
-/** A link only when the URL passes `isSafeURL`; otherwise the plain source label. */
+/** A link only when the URL passes `isHttpURL`; otherwise the plain source label. */
 function buildItem(ref: CodeReference): HTMLLIElement {
   const item = el("li", { className: "code-refs-item" }) as HTMLLIElement;
   item.appendChild(el("span", { className: "code-refs-license" }, ref.license_name));
 
   const url = ref.url ?? "";
-  const safe = url !== "" && isSafeURL(url);
+  const safe = url !== "" && isHttpURL(url);
   const label = sourceLabel(ref, safe ? url : "");
   if (safe) {
     item.appendChild(
@@ -94,7 +94,8 @@ function buildItem(ref: CodeReference): HTMLLIElement {
   return item;
 }
 
-/** Never the raw URL. `safeURL` is empty unless `isSafeURL` confirmed it, so the parse cannot throw. */
+/** Never the raw URL. `safeURL` is empty unless `isHttpURL` confirmed it, so the parse cannot
+ *  throw. */
 function sourceLabel(ref: CodeReference, safeURL: string): string {
   const repo = (ref.repository ?? "").trim();
   if (repo !== "") {

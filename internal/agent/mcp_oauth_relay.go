@@ -3,10 +3,10 @@ package agent
 // The MCP OAuth loopback relay. KAS runs the flow and binds its redirect listener on
 // `http://localhost:<ephemeral>/oauth/callback` in the container, which a remote browser cannot reach. The user
 // pastes the dead page's address and marotte replays the GET from inside, which completes only while that listener
-// waits: KAS closes a passive attempt's listener (the authorizationUrl a failed connect's status entry carries)
-// before the entry arrives. The pasted address is untrusted; the stored authorization URL KAS wrote is the anchor:
-// the dial target comes from its `redirect_uri` and `state` must match, or this unauthenticated route injects
-// authorization codes. Rewriting redirect_uri fails RFC 6749 §4.1.3.
+// waits: a Sign in (resetServer startOAuth) keeps one waiting, and so does a mid-session re-auth for 300 s; KAS sends
+// either consent URL over _kiro/openExternalUrl. The pasted address is untrusted; that URL is the anchor: the dial
+// target comes from its `redirect_uri` and `state` must match, or this unauthenticated route injects authorization
+// codes. Rewriting redirect_uri fails RFC 6749 §4.1.3.
 
 import (
 	"context"
@@ -22,9 +22,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/ssrf"
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/ssrf/v4"
-	"github.com/cplieger/webhttp/v4"
 )
 
 const (
@@ -51,7 +51,7 @@ var relayQueryKeys = map[string]struct{}{
 
 // Refusal reasons, one value each so the handler maps a status and tests assert the reason.
 var (
-	errRelayNoFlow      = errors.New("no sign-in is waiting for this server")
+	errRelayNoFlow      = errors.New("no sign-in is in progress for this server; press Sign in first")
 	errRelayAlreadyDone = errors.New("this sign-in's callback was already delivered")
 	errRelayTooLong     = errors.New("that address is too long to be a sign-in callback")
 	errRelayBadBytes    = errors.New("that address contains characters a URL cannot carry")
@@ -102,8 +102,8 @@ type mcpOAuthRelayResp struct {
 }
 
 // handleOAuthRelay serves POST /api/mcp/oauth-relay {server, redirect_url}, replaying a stranded
-// callback into KAS's listener. Not LoopbackOnly: a remote browser must reach it; the loopback
-// constraint is on the outbound dial.
+// callback into KAS's listener. A server with no Sign in pending, or none named, resolves through the pasted
+// callback's state. Not LoopbackOnly: a remote browser must reach it; the loopback constraint is on the outbound dial.
 func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
@@ -114,9 +114,15 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	// Reserve first and derive everything from the reservation: recordOAuth can replace the record
-	// meanwhile, and a code validated against attempt A must never replay under B. An unknown server is refused here too.
-	attempt, err := reg.beginOAuthRelay(body.Server)
+	// The paste's own shape first, since its state picks a lazy anchor; it is matched against an anchor only below.
+	state, err := pastedCallbackState(body.RedirectURL)
+	if err != nil {
+		httpreply.BadRequest(w, err.Error())
+		return
+	}
+	// Reserve, then derive everything from the reservation: a new status or sign-in can replace the record
+	// meanwhile, and a code validated against attempt A must never replay under B.
+	attempt, err := reg.beginOAuthRelay(req.Context(), body.Server, state)
 	if err != nil {
 		httpreply.Conflict(w, err.Error())
 		return
@@ -134,7 +140,7 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 		reg.releaseOAuthRelay(attempt)
 		slog.Warn("mcp oauth relay: could not reach the loopback callback listener",
 			"server", body.Server, "port", target.Port(), "error", dialErrWithoutURL(err))
-		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
+		httpserver.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON("the local sign-in listener did not answer, so the code was not delivered. The sign-in may have timed out"))
 		return
 	}
@@ -143,7 +149,7 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 		reg.releaseOAuthRelay(attempt)
 		slog.Warn("mcp oauth relay: the loopback listener refused the callback",
 			"server", body.Server, "port", target.Port(), "status", status)
-		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
+		httpserver.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON("the local sign-in listener rejected that callback with HTTP "+strconv.Itoa(status)+". Start the sign-in again"))
 		return
 	}
@@ -151,7 +157,7 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 	slog.Info("mcp oauth relay: delivered a stranded callback to the loopback listener",
 		"server", body.Server, "port", target.Port(), "status", status)
 	// KAS reports the connected state over _kiro/mcp/status; the client waits for that frame.
-	webhttp.WriteJSON(w, mcpOAuthRelayResp{Status: status})
+	httpserver.WriteJSON(w, mcpOAuthRelayResp{Status: status})
 }
 
 func replayCallback(ctx context.Context, target *url.URL) (int, error) {
@@ -202,6 +208,19 @@ func validateRelayAddress(pasted, authURL string) (*url.URL, error) {
 	}
 	advertised.RawQuery = u.RawQuery
 	return advertised, nil
+}
+
+// pastedCallbackState returns the state of a paste that is shaped like a callback, refusing one that is not.
+func pastedCallbackState(pasted string) (string, error) {
+	u, err := parseLoopbackCallback(strings.TrimSpace(pasted))
+	if err != nil {
+		return "", err
+	}
+	q, err := validateCallbackQuery(u.RawQuery)
+	if err != nil {
+		return "", err
+	}
+	return q.Get("state"), nil
 }
 
 // The paste and the advertised redirect_uri share it.

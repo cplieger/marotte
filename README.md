@@ -23,9 +23,9 @@ marotte lets you write and ship code with the Kiro agent from any device, while 
 
 ## Who it is for
 
-marotte is built for a developer who wants a full Kiro workspace on a server they run, in any browser. Start a task at your desk, then follow it and answer the agent from your phone. One container is one person's workspace.
+marotte is built for a developer who wants a full Kiro workspace on a server they run, in their browser. Start a task at your desk, then follow it and answer the agent from your phone. One container is one person's workspace.
 
-You need a Kiro account and an `amd64` or `arm64` Docker host. marotte has no login of its own, so keep it on your private network or behind a reverse proxy with a login.
+You need a Kiro account, an `amd64` or `arm64` Docker host, and a browser no older than Chrome or Edge 132, Firefox 133 or Safari 26 (iOS or iPadOS 26 on an iPhone or iPad). marotte has no login of its own, so keep it on your private network or behind a reverse proxy with a login.
 
 Consider [Web Terminal for Kiro](https://github.com/cplieger/web-terminal-kiro), by the same author, if you want kiro-cli's own terminal screen with no chat layer.
 
@@ -61,7 +61,7 @@ services:
 4. Open `http://<server>:9847`, where `<server>` is the address of the server on your network, for example `http://192.0.2.10:9847`.
 5. Sign in with your Kiro account when the page asks. Chats use that account's plan and credits, which the sidebar shows. The sign-in is marotte's own, so a `kiro-cli` you start in the terminal keeps a separate one.
 
-The first start downloads kiro-cli, about 530 MB, which can take a few minutes. The page, files, git and the terminal work in the meantime, and chats say kiro-cli is still installing. Amazon publishes kiro-cli under the AWS Customer Agreement. marotte downloads it instead of shipping it in the image, so starting the container means you accept that agreement.
+The first start downloads kiro-cli, about 140 MB, which can take a few minutes. The page, files, git and the terminal work in the meantime, and chats say kiro-cli is still installing. Amazon publishes kiro-cli under the AWS Customer Agreement. marotte downloads it instead of shipping it in the image, so starting the container means you accept that agreement.
 
 Run `docker logs marotte`. After the download you should see `msg=installed package=kiro-cli`. If you see `failed to create required directories`, step 2 was skipped.
 
@@ -77,9 +77,8 @@ Settings in the compose `environment:` block are read at start, so recreate the 
 | --- | --- | --- |
 | `ALLOWED_HOSTS` | Hostnames and IPs you open marotte at, comma-separated. Any other address gets `403`. | _(unset)_ |
 | `TRUSTED_PROXIES` | Address ranges of your reverse proxy, so the logs record the real client address. | _(unset)_ |
-| `TRUSTED_INSTALL_UIDS` | User IDs that may write to `/config/tools` without marotte refusing to install kiro-cli. Only for shared or network volumes. | _(unset)_ |
+| `TRUSTED_INSTALL_UIDS` | User IDs that may write to the tools folder (`MAROTTE_TOOLS_DIR`, by default `/config/tools`) without marotte refusing to install kiro-cli or start the tools engine. Only for shared or network volumes. | _(unset)_ |
 | `MAROTTE_BROWSE_ROOTS` | Extra folders the file browser shows, colon-separated absolute paths. | _(unset)_ |
-| `MAROTTE_ALLOW_AGENT_ENV` | Program-changing variables, such as `LD_PRELOAD`, the agent may set for its commands. | _(unset)_ |
 | `MAROTTE_ALLOW_BRIDGE_ENV` | Variable names that look like credentials but should still reach kiro-cli, comma-separated. | _(unset)_ |
 | `MAROTTE_KIRO_ACP_ARGS` | Extra `kiro-cli acp` flags for the agent engine. | _(unset)_ |
 
@@ -97,7 +96,7 @@ Every setting, with what each one checks, is in [Configuration](docs/configurati
 
 ## Security
 
-marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and edits files under `/workspace`, and the Kiro sign-in in `/config`. Keep the port on your private network, or put marotte behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login, such as Caddy forward-auth, oauth2-proxy or Authentik. Signing in on the page gives the agent your Kiro account. It does not protect marotte itself.
+marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and reads and writes files under `/workspace` and any [additional directory](docs/configuration.md#folders-the-agent-can-use-beyond-workspace) you add. They can also use the Kiro sign-in in `/config`. Keep the port on your private network, or put marotte behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login, such as Caddy forward-auth, oauth2-proxy or Authentik. Signing in on the page gives the agent your Kiro account. It does not protect marotte itself.
 
 Set `ALLOWED_HOSTS` on any server that stays up. marotte then answers only at the addresses you list, so another website cannot use your browser to reach it.
 
@@ -111,10 +110,11 @@ Docker checks `/api/health` every 30 seconds. The container shows healthy once m
 
 - The container restarts in a loop with `failed to create required directories`. The host folders are missing or belong to another user. Repeat steps 1 and 2 of the quick start.
 - Health stays at `kiro-cli install retrying` or `kiro-cli unavailable`. The download failed. marotte tries four times, then waits for a container restart.
-- The logs say a folder under `/config` "can be modified by" another account. This happens on shared or network volumes. See `TRUSTED_INSTALL_UIDS` in [Configuration](docs/configuration.md#trusted-install-accounts-trusted_install_uids).
+- The logs say a folder under `/config` or the tools folder "can be modified by" or "is owned by" another account. This happens on shared or network volumes. Fix an owner from inside the container with `chown`. Remove an access-control-list grant on the host, because the image has no ACL tools: `setfacl -b` for a POSIX list, or the host's NFSv4 ACL tool on ZFS or NFS. Then restart, or see `TRUSTED_INSTALL_UIDS` in [Configuration](docs/configuration.md#trusted-install-accounts-trusted_install_uids).
 - Health shows `sign-in required`. A chat's last turn failed because marotte is not signed in to Kiro, or Kiro refused the sign-in. Sign in from the account menu. The next turn that succeeds clears it.
 - The page answers `403`. The address you typed is not in `ALLOWED_HOSTS`.
 - The container restarts in a loop with `another marotte instance holds this folder`. Two marotte containers share a volume, a `KIRO_HOME` or a tools folder. The log line names the folder. Give each container its own, or stop the other one.
+- A tool installed from **Settings** answers `command not found` in the **Shell** panel. Either the container runs as a user other than root, as the quick start does, or the log warns that marotte could not write `/etc/profile.d/10-marotte-path.sh`. Then the Shell panel's login shell may not search the tools folder. Run the tool by its full path, `/config/tools/bin/<tool>` (`bin/` under `MAROTTE_TOOLS_DIR` if you moved it), or see [How kiro-cli is installed](docs/how-it-works.md#how-kiro-cli-is-installed).
 
 ## Documentation
 

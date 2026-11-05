@@ -25,14 +25,16 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/marotte/internal/asidefile"
 	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// entriesFileName is the log; headerFileName the record beside it, on chat roots only.
+// EntriesFileName is the log; headerFileName the record beside it, on chat roots only.
 const (
-	entriesFileName = "entries.jsonl"
+	EntriesFileName = "entries.jsonl"
 	headerFileName  = "chat.json"
 )
 
@@ -54,10 +56,12 @@ var errEntryLineTooLong = errors.New("chat: entry line exceeds the per-entry cap
 // errEntryLogFailed is the latch a write error leaves: every later append to this log is refused until restart.
 var errEntryLogFailed = errors.New("chat: entry log refused further appends after a write error")
 
-// entryCall is one open tool_call in the index: its entry id and its result's lane, fixed at create.
+// entryCall is one tool_call in the index: its entry id, its result's lane and whether it was appended settled
+// (a hook's card), all fixed at create.
 type entryCall struct {
-	id   string
-	lane string
+	id      string
+	lane    string
+	settled bool
 }
 
 type byteRange struct {
@@ -122,10 +126,14 @@ type turnState struct {
 	emptySteer bool
 }
 
-// unsettled are the turn's tool_calls with no tool_result, in open order, which a close aborts them in.
+// unsettled are the turn's tool_calls neither appended settled nor answered by a tool_result, in open order, which a
+// close aborts them in.
 func (st *turnState) unsettled() []entryCall {
 	var out []entryCall
 	for _, c := range st.calls {
+		if c.settled {
+			continue
+		}
 		if _, done := st.results[marotte.ToolResultID(c.id)]; !done {
 			out = append(out, c)
 		}
@@ -228,7 +236,7 @@ func OpenEntryLog(ctx context.Context, root string, h LogHeader, opts ...EntryLo
 	return l, nil
 }
 
-func (l *EntryLog) path() string { return filepath.Join(l.root, entriesFileName) }
+func (l *EntryLog) path() string { return filepath.Join(l.root, EntriesFileName) }
 
 // Close releases the write descriptor; the log stays readable and a later append reopens it.
 func (l *EntryLog) Close() error {
@@ -263,6 +271,7 @@ type TurnSpec struct {
 	Run       string
 	NodePath  string
 	SessionID string
+	KASTurnID string
 }
 
 // OpenTurn appends a turn_open and returns it; its ID is the turn id every later entry and closer carries. n is the
@@ -286,6 +295,7 @@ func (l *EntryLog) openTurnWithOrdinalLocked(ctx context.Context, spec *TurnSpec
 		Run:       spec.Run,
 		NodePath:  spec.NodePath,
 		SessionID: spec.SessionID,
+		KASTurnID: spec.KASTurnID,
 		N:         ordinal,
 	})
 	if err != nil {
@@ -615,7 +625,7 @@ func (l *EntryLog) observeLocked(e *marotte.Entry, start, end int64) error {
 func (l *EntryLog) foldKindLocked(st *turnState, e *marotte.Entry, start int64) error {
 	switch e.Kind {
 	case marotte.EntryKindToolCall:
-		st.calls = append(st.calls, entryCall{id: e.ID, lane: e.Lane})
+		return foldToolCall(st, e)
 	case marotte.EntryKindToolResult:
 		st.results[e.ID] = struct{}{}
 	case marotte.EntryKindPlan:
@@ -750,6 +760,17 @@ func railLineOf(st *turnState, names map[string]string) string {
 		label += ": " + body
 	}
 	return firstLineOf(label)
+}
+
+func foldToolCall(st *turnState, e *marotte.Entry) error {
+	payload, err := decodeEntry[struct {
+		Status marotte.ToolStatus `json:"status"`
+	}](e)
+	if err != nil {
+		return err
+	}
+	st.calls = append(st.calls, entryCall{id: e.ID, lane: e.Lane, settled: payload.Status.Terminal()})
+	return nil
 }
 
 func foldSteer(st *turnState, e *marotte.Entry) error {
@@ -892,8 +913,16 @@ func drawnBy(e *marotte.Entry, plans int) bool {
 		return false
 	case marotte.EntryKindPlan:
 		return plans == 0
+	case marotte.EntryKindModelFallback:
+		return !subagentFallback(e)
 	}
 	return true
+}
+
+// subagentFallback is a sub-agent's model_fallback an earlier build recorded, which no reader draws.
+func subagentFallback(e *marotte.Entry) bool {
+	var p marotte.EntryModelFallback
+	return e.Kind == marotte.EntryKindModelFallback && json.Unmarshal(e.Payload, &p) == nil && p.Subagent
 }
 
 // firstLineMax caps first_line so the session index stays small on a long chat.
@@ -910,7 +939,7 @@ func firstLineOf(text string) string {
 	return string([]rune(line)[:firstLineMax]) + "\u2026"
 }
 
-// rescanLocked rebuilds the index in one pass, truncating an unreadable tail, then applies what the pass cannot
+// rescanLocked rebuilds the index in one pass, truncating a torn tail, then applies what the pass cannot
 // decide line by line: every turn_revert window, and reverting incomplete carriers.
 func (l *EntryLog) rescanLocked() error {
 	l.turns = make(map[string]*turnState)
@@ -960,8 +989,7 @@ func (l *EntryLog) scanFileLocked() error {
 			return nil
 		}
 		if err := l.observeLineLocked(line, off, rerr); err != nil {
-			// The first unreadable line ends the log: an O_APPEND line is whole or a torn tail.
-			return l.dropTailLocked(off, err)
+			return l.unreadableLineLocked(off, err, rerr)
 		}
 		off += int64(len(line))
 	}
@@ -976,6 +1004,26 @@ func (l *EntryLog) observeLineLocked(line []byte, off int64, rerr error) error {
 		return err
 	}
 	return l.observeLocked(&e, off, off+int64(len(line)))
+}
+
+// unreadableLineLocked decides what an unreadable line at off costs. A write appends a whole line or tears its final
+// bytes, so only a final line with no newline is a torn tail and is dropped as it is. A read error refuses the open
+// and leaves the file, since nothing past off was read. A complete line that does not decode is corruption: the log
+// is copied aside before the truncation, so the entries after it survive outside the live log.
+func (l *EntryLog) unreadableLineLocked(off int64, err, rerr error) error {
+	switch {
+	case errors.Is(rerr, io.EOF):
+		return l.dropTailLocked(off, err)
+	case rerr != nil && !errors.Is(rerr, errEntryLineTooLong):
+		return fmt.Errorf("entry log: %s: unreadable at offset %d, left as it is: %w", l.path(), off, err)
+	}
+	aside, cerr := asidefile.Copy(l.path(), fileMode)
+	if cerr != nil {
+		return fmt.Errorf("entry log: %s: corrupt line at offset %d, copy aside: %w", l.path(), off, cerr)
+	}
+	slog.Warn("entry log: copied a log with a corrupt line aside before dropping from it",
+		"root", logsafe.Field(l.root), "offset", off, "aside", logsafe.Field(aside), "cause", logsafe.Field(err.Error()))
+	return l.dropTailLocked(off, err)
 }
 
 // Nothing past off was observed.
@@ -1066,7 +1114,7 @@ func (l *EntryLog) synthesizeCloseLocked(ctx context.Context, turn, model string
 }
 
 // Rewrite replaces the log with entries, the merge swap's store half: turns contiguous, seq renumbered from 0 per
-// turn, renamed into place through atomicfile. Turns not each led by their own turn_open are refused with the log
+// turn, renamed into place through filesafe. Turns not each led by their own turn_open are refused with the log
 // untouched (groupByTurn). Nothing on the header is stamped.
 func (l *EntryLog) Rewrite(ctx context.Context, entries []marotte.Entry) error {
 	l.mu.Lock()
@@ -1091,8 +1139,8 @@ func (l *EntryLog) Rewrite(ctx context.Context, entries []marotte.Entry) error {
 }
 
 func (l *EntryLog) writeRewriteLocked(ctx context.Context, groups [][]marotte.Entry) error {
-	pending, err := atomicfile.NewPendingFile(ctx, l.path(),
-		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode))
+	pending, err := filesafe.NewPendingFile(ctx, l.path(),
+		filesafe.WithMode(fileMode), filesafe.WithMkdirMode(dirMode))
 	if err != nil {
 		return fmt.Errorf("entry log: stage rewrite of %s: %w", l.path(), err)
 	}
@@ -1238,12 +1286,7 @@ func (l *EntryLog) RailRows() []marotte.TurnSummary {
 	defer l.mu.Unlock()
 	order := l.survivingOrderLocked()
 	names := l.runNamesOf(order)
-	claimed := map[string]struct{}{}
-	for _, id := range order {
-		for _, c := range l.turns[id].claims {
-			claimed[c] = struct{}{}
-		}
-	}
+	claimed := l.claimedSteersLocked(order)
 	rows := make([]marotte.TurnSummary, 0, len(order))
 	for _, id := range order {
 		st := l.turns[id]
@@ -1336,14 +1379,27 @@ func (l *EntryLog) NewestRevert() (string, bool) {
 	return l.newestRevert, l.newestRevert != ""
 }
 
+// claimedSteersLocked is the set of steer ids the wakes among order draw, which their own turns then do not.
+func (l *EntryLog) claimedSteersLocked(order []string) map[string]struct{} {
+	claimed := map[string]struct{}{}
+	for _, id := range order {
+		for _, c := range l.turns[id].claims {
+			claimed[c] = struct{}{}
+		}
+	}
+	return claimed
+}
+
 // readPosition is the chat's read position: the 1-based file-order index, among every turn the log holds, of its
-// newest closed, surviving, non-carrier turn; 0 for none. A later turn has a larger index, and a rewind or a merge
-// never lowers a turn's index, because neither removes a turn from the order.
+// newest closed, surviving, non-carrier turn that has a rail row; 0 for none. A turn the transcript does not draw
+// never counts, so it lights no unread cue. A later turn has a larger index, and a rewind or a merge never lowers a
+// turn's index, because neither removes a turn from the order.
 func (l *EntryLog) readPosition() uint64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	claimed := l.claimedSteersLocked(l.survivingOrderLocked())
 	for n := uint64(len(l.order)); n > 0; n-- {
-		if st := l.turns[l.order[n-1]]; st.closed && !st.carrier && !st.reverted {
+		if st := l.turns[l.order[n-1]]; st.closed && !st.carrier && !st.reverted && st.drawn(claimed) {
 			return n
 		}
 	}

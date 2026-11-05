@@ -6,13 +6,10 @@
 // (`attention-no-dom.node.test.ts` asserts its premise). `*.fuzz.test.ts` is ts-ci's fuzz axis. `channel: "chromium"` is the real
 // browser, not headless-shell: `npx playwright install --with-deps chromium`.
 import { configDefaults, defineConfig, type TestProjectInlineConfiguration } from "vitest/config";
-import { resolve } from "node:path";
 import { playwright } from "@vitest/browser-playwright";
 import { msw } from "msw/vite";
 
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
-
-const actionsInternals = resolve(__dirname, "node_modules/@cplieger/actions/dist/src");
 
 // Exclude compiled output and node_modules. `**/.stryker-tmp/**` keeps Stryker's `inPlace` backup
 // copy from being collected twice (its fixtures are missing, so it fails). Every unit project needs
@@ -113,17 +110,6 @@ export default defineConfig({
       "@cplieger/web-terminal-ui",
       "@cplieger/web-terminal-ui/features/mobile-toolbar",
       "@cplieger/web-terminal-ui/presets/single",
-    ],
-  },
-  resolve: {
-    alias: [
-      // Allow deep imports into @cplieger/actions internals for test reset
-      // utilities (_resetForTest). The package "exports" field restricts
-      // access to "." only; this alias bypasses that for tests.
-      {
-        find: /^@cplieger\/actions\/dist\/src\/(.+)$/,
-        replacement: `${actionsInternals}/$1`,
-      },
     ],
   },
   server: {
@@ -262,8 +248,7 @@ export default defineConfig({
         "**/.stryker-tmp/**",
         "**/*.test.ts",
         "**/*.d.ts",
-        // Test-only helpers, imported by tests and shipped to nobody. Same
-        // classification @cplieger/actions makes with "src/test-helpers/**".
+        // Test-only helpers, imported by tests and shipped to nobody.
         "**/__test-helpers__/**",
         // sw.ts: service worker — runs in ServiceWorkerGlobalScope, not
         // Window, so a page-context runner cannot host PushEvent /

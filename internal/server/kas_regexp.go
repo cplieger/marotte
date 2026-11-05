@@ -44,7 +44,7 @@ func (k kasRegExp) compiles(ctx context.Context, pattern string) (bool, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, kasRegExpTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, k.node, "-e", kasRegExpScript) //nolint:gosec // G204: the runtime path is resolved at startup, never request input; the pattern goes in on stdin
+	cmd := exec.CommandContext(ctx, k.node, "-e", kasRegExpScript) //nolint:gosec // G204: the runtime path is kiro-cli's, never request input; the pattern goes in on stdin
 	// An empty environment keeps NODE_OPTIONS and friends from loading code into the check.
 	cmd.Env = []string{}
 	cmd.Stdin = strings.NewReader(pattern)

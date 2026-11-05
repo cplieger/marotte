@@ -15,8 +15,9 @@ import (
 // engineHooks binds the engine owner to the runtime.
 func (rt *Runtime) engineHooks() engineHooks {
 	return engineHooks{
-		resolve: rt.resolveEngine,
-		spawned: rt.signin.engineSpawned,
+		resolve:           rt.resolveEngine,
+		spawned:           rt.signin.engineSpawned,
+		contentCollection: rt.contentCollection,
 		options: func(gen uint64) []bridge.Option {
 			return []bridge.Option{
 				bridge.WithGeneration(gen),
@@ -37,6 +38,11 @@ func (rt *Runtime) engineHooks() engineHooks {
 		publish:   rt.publishEngineStatus,
 		ready:     rt.onEngineReady,
 		ended:     rt.onEngineEnded,
+		configReadable: func(ctx context.Context) bool {
+			_, src := rt.configDocument(ctx)
+			return src == fromDocument
+		},
+		configHeld: rt.configDoc.held,
 	}
 }
 
@@ -139,7 +145,7 @@ func (rt *Runtime) resumeParentless(ctx context.Context, workflowID string) {
 			return
 		}
 	}
-	rt.runs.retryResumeLater(resume, func(tries int) {
+	rt.runs.retryResumeLater(rt.runs.runtimeSweep, resume, func(tries int) {
 		slog.Error("an interrupted run could not be resumed by any try; it stays paused until it is resumed",
 			"workflow_id", workflowID, "tries", tries)
 	})
@@ -203,30 +209,24 @@ func (rt *Runtime) onEngineReady(uint64) {
 		})
 	})
 	rt.standing.refetchSoon()
+	rt.hookTriggers.stale()
 	// A spawn moves the vault's Answerability silently (signin.Vault.EngineSpawned).
 	rt.runs.gateMoved()
 	// Off the supervisor: it must be back on the engine's end while the init's observer pass runs.
-	rt.lifecycle.goUnlessDraining(func() { rt.EnsureCodeIntelligence(rt.lifecycle.shutdownCtx) })
+	rt.KickCodeIntelligence()
 }
 
 // onEngineEnded runs once generation gen ended and was reaped: its unsettled mutations go (their writes meet a dead
-// engine), and every MCP server it ran is reported gone.
+// engine), and every MCP server it ran is reported gone. The recipe catalog goes too: KAS sends no recipes_changed
+// for the next engine's first listing, so an edit made while no engine ran would otherwise never drop it.
 func (rt *Runtime) onEngineEnded(gen uint64) {
 	rt.runs.mutations.dropGeneration(gen)
+	rt.runs.recipes.invalidate()
 	rt.mcpRegistry.clearAll(rt.lifecycle.shutdownCtx)
 }
 
-// closeSession ends a session the registry let go of, off the caller's path and bounded by the session's own close
-// budget; Shutdown waits for it.
-func (rt *Runtime) closeSession(s engineSession) {
-	if !rt.lifecycle.goUnlessDraining(func() {
-		if err := s.Close(rt.lifecycle.shutdownCtx); err != nil {
-			slog.Warn("a session did not close", "session_id", s.SessionID(), "error", err)
-		}
-	}) {
-		slog.Debug("a session close was skipped: the runtime is draining and the engine stops", "session_id", s.SessionID())
-	}
-}
+// closeSession releases a session the registry let go of; bridge.Session.Release owns every outcome after it.
+func (*Runtime) closeSession(s engineSession) { s.Release() }
 
 // onSignInChange applies a committed sign-in edge: the engine fingerprint holds the pending account, and the first
 // sign-in reloads resident sessions at their next idle open, so their model lists follow the account.

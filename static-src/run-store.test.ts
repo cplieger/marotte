@@ -1,6 +1,7 @@
 // The run store: the fetch discipline, and the derived reads over one state.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { effect, untracked } from "@cplieger/ui";
 import { nodePathKey } from "./run-node-key.js";
 import type { RunNode, RunState } from "./run-store.js";
 import type { RunControlsResponse } from "./wire/types.gen.js";
@@ -36,7 +37,6 @@ let failStatuses: number[] = [];
 let liveRunsReply: {
   runs: { workflow_id: string; chat_id: string; executing: boolean }[];
 } | null = null;
-let controlsReplies: RunControlsResponse[] = [];
 
 vi.mock("./api-client.js", () => ({
   // The OrError variant, because the store reads a failed read's STATUS: the collapsing `apiGet`
@@ -67,19 +67,11 @@ vi.mock("./api-client.js", () => ({
       error: "",
     };
   }),
-  // The live-runs rebuild and the affordance both go through the typed GET; the decoder is the
-  // generated one and is not under test here, so the mock answers typed values directly (null is
-  // the degrade arm: non-2xx / network / decode failure).
+  // The live-runs rebuild goes through the typed GET; the decoder is the generated one and is not
+  // under test here, so the mock answers typed values directly (null is the degrade arm).
   apiGetTyped: vi.fn(async (path: string) => {
     fetches.push(path);
-    if (!path.endsWith("/controls")) {
-      return liveRunsReply;
-    }
-    // Deferred like the state fetch above, so a test can invalidate the affordance again WHILE one
-    // read is open — the run that ends inside the tab-open read's window, which is the one moment
-    // its answer changes.
-    await new Promise<void>((r) => resolvers.push(r));
-    return controlsReplies.shift() ?? null;
+    return liveRunsReply;
   }),
 }));
 
@@ -104,7 +96,6 @@ beforeEach(() => {
   resolvers = [];
   failStatuses = [];
   liveRunsReply = null;
-  controlsReplies = [];
   for (const id of ["r1", "r2", "r3", "r4"]) {
     store.forgetRun(id);
   }
@@ -236,6 +227,22 @@ describe("the reply's read position travels beside the state", () => {
     ).toBe(true);
     expect(store.peekRunState("rp")?.readPosition).toBe(3);
     store.forgetRun("rp");
+  });
+});
+
+describe("the reply's auto_resume_stopped_at travels beside the state", () => {
+  it.each([
+    ["a timestamp", "2026-11-04T09:00:00Z", "2026-11-04T09:00:00Z"],
+    ["an empty string", "", undefined],
+    ["a number", 4, undefined],
+    ["nothing", undefined, undefined],
+  ])("reads %s as %s", async (_label, raw, want) => {
+    responses = [{ workflowId: "ars", status: "paused" }];
+    replyExtra = raw === undefined ? {} : { auto_resume_stopped_at: raw };
+    store.invalidateRun("ars");
+    await settle();
+    expect(store.peekRunState("ars")?.autoResumeStoppedAt).toBe(want);
+    store.forgetRun("ars");
   });
 });
 
@@ -1249,175 +1256,95 @@ describe("applyRunProgress refuses what it cannot express, so the caller refetch
   });
 });
 
-// The affordance is a SECOND cell, re-read behind every state read but the tab open's own: the
-// verbs rest on facts the state does not carry (hosting, a pending pause).
-describe("the affordance cell coalesces like the state cell, trailing fetch included", () => {
-  const live: RunControlsResponse = {
-    verbs: ["pause", "cancel"],
-    refused: {},
-    parent_chat_id: "",
+// The verbs ride the run read, so they can never disagree with the state the dock shows beside them:
+// a separate request on its own clock left a paused run on its pending-pause row (Stop alone) until a reload.
+describe("the run read carries the run's verbs", () => {
+  const live: RunControlsResponse = { verbs: ["pause", "cancel"], refused: {} };
+  const pending: RunControlsResponse = {
+    verbs: ["cancel"],
+    refused: { pause: "A pause is already requested." },
   };
-  const ended: RunControlsResponse = { verbs: ["retry"], refused: {}, parent_chat_id: "" };
+  const paused: RunControlsResponse = { verbs: ["resume", "cancel"], refused: {} };
 
-  /** The controls requests issued so far. `fetches` also holds state reads. */
-  function controlsFetches(): string[] {
-    return fetches.filter((p) => p.endsWith("/controls"));
+  /** One run read answering `state` with `controls` beside it. */
+  async function readWith(id: string, state: RunState, controls: unknown): Promise<void> {
+    responses = [state];
+    replyExtra = { controls };
+    store.invalidateRun(id);
+    await settle();
+    await settle();
   }
 
-  // An in-flight guard that drops a coincident call leaves a run that ENDED inside the tab-open
-  // read's window on its pre-terminal row (Pause and Cancel on an aborted run) for the tab's life.
-  it("re-asks for a run that ended while the tab-open read was still open", async () => {
-    controlsReplies = [live, ended];
-    store.invalidateRunControls("r1"); // the tab opening
-    store.invalidateRunControls("r1"); // a status move, inside that read's window
-    expect(controlsFetches()).toHaveLength(1);
-
-    await settle();
-    expect(controlsFetches()).toHaveLength(2);
-    await settle();
-    expect(store.runControls("r1")?.verbs).toEqual(["retry"]);
-  });
-
-  it("asks once when nothing coincided, rather than answering the same question twice", async () => {
-    controlsReplies = [live];
-    store.invalidateRunControls("r1");
-    await settle();
-    await settle();
-
-    expect(controlsFetches()).toHaveLength(1);
-    expect(store.runControls("r1")?.verbs).toEqual(["pause", "cancel"]);
-  });
-
-  it("does not conflate two runs", async () => {
-    controlsReplies = [live, ended];
-    store.invalidateRunControls("r1");
-    store.invalidateRunControls("r2");
-    expect(controlsFetches()).toHaveLength(2);
-    await settle();
-
-    expect(store.runControls("r1")?.verbs).toEqual(["pause", "cancel"]);
-    expect(store.runControls("r2")?.verbs).toEqual(["retry"]);
-  });
-
-  // A failed read leaves the previous answer standing: degrading to the last known row beats
-  // blanking the controls under a reader about to use them.
-  it("keeps the last good answer when a read comes back empty", async () => {
-    controlsReplies = [live];
-    store.invalidateRunControls("r1");
-    await settle();
-    await settle();
-
-    store.invalidateRunControls("r1"); // nothing left in the queue, so null
-    await settle();
-    expect(store.runControls("r1")?.verbs).toEqual(["pause", "cancel"]);
-  });
-
-  it("ignores an empty id rather than fetching /api/runs//controls", () => {
-    store.invalidateRunControls("");
-    expect(controlsFetches()).toEqual([]);
-  });
-
-  // A resume's `run_start` re-reads the state only; the row a reader is watching has to turn
-  // Resume into Pause off that read, on every surface drawing the run's controls.
-  it("re-reads the verbs when a fetched state moves the run's status", async () => {
-    const paused: RunControlsResponse = {
-      verbs: ["resume", "cancel"],
-      refused: {},
-      parent_chat_id: "",
-    };
-    await seedRun("r1", { workflowId: "r1", status: "paused" });
-    controlsReplies = [paused, live];
-    store.invalidateRunControls("r1");
-    await settle();
-    await settle();
+  it("offers Resume from the read that found the run paused, with no second request", async () => {
+    await readWith("r1", { workflowId: "r1", status: "paused" }, paused);
     expect(store.runControls("r1")?.verbs).toEqual(["resume", "cancel"]);
-
-    responses = [{ workflowId: "r1", status: "running" }];
-    store.invalidateRun("r1");
-    await settle();
-    await settle();
-    await settle();
-    expect(controlsFetches()).toHaveLength(2);
-    expect(store.runControls("r1")?.verbs).toEqual(["pause", "cancel"]);
+    expect(fetches).toEqual(["/api/runs/r1"]);
   });
 
-  // A landed Pause leaves the run `running` with only `pausePending` set, and the Pause it
-  // withholds must not stay pressable on any surface.
-  it("re-reads the verbs after a state read whose status did not move", async () => {
-    const pending: RunControlsResponse = {
-      verbs: ["cancel"],
-      refused: { pause: "A pause is already requested." },
-      parent_chat_id: "",
-    };
-    await seedRun("r1", { workflowId: "r1", status: "running" });
-    controlsReplies = [live, pending];
-    store.invalidateRunControls("r1");
-    await settle();
-    await settle();
-
-    responses = [{ workflowId: "r1", status: "running", pausePending: { initiator: "user" } }];
-    store.invalidateRun("r1");
-    await settle();
-    await settle();
-    await settle();
-    expect(controlsFetches()).toHaveLength(2);
+  it("moves the verbs on every read: pending pause, then the pause settling", async () => {
+    await readWith("r1", { workflowId: "r1", status: "running" }, live);
+    await readWith(
+      "r1",
+      { workflowId: "r1", status: "running", pausePending: { initiator: "user" } },
+      pending,
+    );
     expect(store.runControls("r1")?.verbs).toEqual(["cancel"]);
+    await readWith("r1", { workflowId: "r1", status: "paused" }, paused);
+    expect(store.runControls("r1")?.verbs).toEqual(["resume", "cancel"]);
   });
 
-  // A finished run whose state read failed must not keep Pause and Cancel.
-  it("re-reads the verbs after a failed state read", async () => {
-    await seedRun("r1", { workflowId: "r1", status: "running" });
-    controlsReplies = [live, ended];
-    store.invalidateRunControls("r1");
-    await settle();
-    await settle();
-
-    store.invalidateRun("r1"); // no response queued, so the read fails
-    await settle();
-    await settle();
-    await settle();
-    expect(controlsFetches()).toHaveLength(2);
-    expect(store.runControls("r1")?.verbs).toEqual(["retry"]);
+  it("writes the verbs before the state, so a reader woken by the state sees its verbs", async () => {
+    await readWith("r1", { workflowId: "r1", status: "running" }, live);
+    const seen: (readonly string[] | undefined)[] = [];
+    const stop = effect(() => {
+      store.runState("r1");
+      seen.push(untracked(() => store.runControls("r1")?.verbs));
+    });
+    await readWith("r1", { workflowId: "r1", status: "paused" }, paused);
+    stop();
+    expect(seen).toEqual([
+      ["pause", "cancel"],
+      ["resume", "cancel"],
+    ]);
   });
 
-  it("leaves the tab open's first state read to the controls read the open issued", async () => {
-    responses = [{ workflowId: "r1", status: "running" }];
-    controlsReplies = [live];
-    store.invalidateRunControls("r1");
-    store.invalidateRun("r1");
-    await settle();
-    await settle();
-    await settle();
-    expect(controlsFetches()).toHaveLength(1);
+  it("draws no verb for a read without controls or with an answer this build cannot read", async () => {
+    await readWith("r1", { workflowId: "r1", status: "running" }, live);
+    await readWith("r1", { workflowId: "r1", status: "running" }, undefined);
+    expect(store.runControls("r1")).toBeUndefined();
+    await readWith("r1", { workflowId: "r1", status: "running" }, live);
+    await readWith("r1", { workflowId: "r1", status: "running" }, { verbs: "pause" });
+    expect(store.runControls("r1")).toBeUndefined();
   });
 
-  it("re-reads the verbs once for a burst of state reads", async () => {
-    await seedRun("r1", { workflowId: "r1", status: "running" });
-    controlsReplies = [live, live];
-    store.invalidateRunControls("r1");
-    await settle();
-    await settle();
-
-    responses = [
-      { workflowId: "r1", status: "running" },
-      { workflowId: "r1", status: "running" },
-    ];
-    store.invalidateRun("r1");
-    store.invalidateRun("r1"); // inside the first read's window: one trailing read
-    for (let i = 0; i < 5; i++) {
+  // A failed read writes neither half, so the verbs stay paired with the state still on screen,
+  // and the read's retry ladder brings both back together.
+  it("keeps the verbs with the state across a failed read and takes both from its retry", async () => {
+    vi.useFakeTimers();
+    try {
+      await readWith("r1", { workflowId: "r1", status: "running" }, pending);
+      store.invalidateRun("r1"); // nothing queued, so the read fails
       await settle();
+      await settle();
+      expect(store.runControls("r1")?.verbs).toEqual(["cancel"]);
+      expect(store.peekRunState("r1")?.status).toBe("running");
+
+      responses = [{ workflowId: "r1", status: "paused" }];
+      replyExtra = { controls: paused };
+      await vi.advanceTimersByTimeAsync(1000);
+      await settle();
+      await settle();
+      expect(store.runControls("r1")?.verbs).toEqual(["resume", "cancel"]);
+      expect(store.peekRunState("r1")?.status).toBe("paused");
+    } finally {
+      vi.useRealTimers();
     }
-    expect(fetches.filter((p) => !p.endsWith("/controls"))).toHaveLength(2);
-    expect(controlsFetches()).toHaveLength(2);
   });
 
-  it("asks nothing for a run whose controls nobody has read", async () => {
-    await seedRun("r1", { workflowId: "r1", status: "paused" });
-    responses = [{ workflowId: "r1", status: "running" }];
-    store.invalidateRun("r1");
-    await settle();
-    await settle();
-    expect(controlsFetches()).toEqual([]);
+  it("forgets the verbs with the run", async () => {
+    await readWith("r1", { workflowId: "r1", status: "paused" }, paused);
+    store.forgetRun("r1");
+    expect(store.runControls("r1")).toBeUndefined();
   });
 });
 
@@ -1504,9 +1431,9 @@ describe("the retry ladder behind a run read that produced nothing", () => {
   });
 
   it("still climbs for a 503, and the line it gives up on names that status", async () => {
-    // The skip is narrow to ONE status rather than to any failure carrying one: a 503 is an engine
-    // with no workflow verbs, which says nothing about whether this run exists, so it keeps the
-    // bounded ladder it is the reason for.
+    // The skip is narrow to ONE status rather than to any failure carrying one: a 503 is the server
+    // starting up or shutting down, which says nothing about whether this run exists, so it keeps
+    // the bounded ladder.
     vi.useFakeTimers();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     responses = [undefined, undefined, undefined, undefined];
@@ -1598,6 +1525,42 @@ describe("the retry ladder behind a run read that produced nothing", () => {
     // The replacement's, at the second rung's delay because the count carried over.
     await vi.advanceTimersByTimeAsync(1000);
     expect(fetches).toHaveLength(3);
+  });
+
+  it("marks a run the server answers 404 for as gone, until a read answers or the run is forgotten", async () => {
+    responses = [undefined, { workflowId: "r1", status: "completed" }, undefined];
+    failStatuses = [404, 404];
+    const seen: boolean[] = [];
+    const stop = effect(() => {
+      seen.push(store.runGone("r1"));
+    });
+
+    store.invalidateRun("r1");
+    await settle();
+    expect(store.runGone("r1")).toBe(true);
+    // Subscribed: a card's effect re-runs when the run turns out to be gone.
+    expect(seen).toEqual([false, true]);
+
+    store.invalidateRun("r1");
+    await settle();
+    expect(store.runGone("r1")).toBe(false);
+
+    store.invalidateRun("r1");
+    await settle();
+    expect(store.runGone("r1")).toBe(true);
+    stop();
+    store.forgetRun("r1");
+    expect(store.runGone("r1")).toBe(false);
+  });
+
+  it("does not call a run gone for a failure that is not a 404", async () => {
+    vi.useFakeTimers();
+    responses = [undefined];
+    failStatuses = [502];
+
+    store.invalidateRun("r1");
+    await settle();
+    expect(store.runGone("r1")).toBe(false);
   });
 
   it("is dropped with the run, so a rung cannot fetch for a card nothing renders", async () => {

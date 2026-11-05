@@ -1,20 +1,23 @@
 package command
 
 // A tangent keeps the conversation and opens another beside it (a rewind edits the one you are in).
-// The parent's bridge resumes on demand and `session/fork` carries KAS's own context; the parent
-// record must survive until the tangent is minted.
+// It forks at the head, or after a named turn (a branch), and `session/fork` carries KAS's own
+// context; the parent record must survive until the tangent is minted. Only a head fork opens fresh
+// when KAS refuses: a branch answers the refusal and creates nothing.
 
 import (
 	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/translate"
 )
 
@@ -35,7 +38,7 @@ func forkPayload(cmd *marotte.ClientCommand) (marotte.ForkChatCommand, error) {
 	if !ids.ValidChatID(string(p.ParentChatID)) || userNameTooLong(p.Title) {
 		return p, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	if !validIdent(p.OpID) {
+	if !validIdent(p.OpID) || (p.MessageID != "" && !validMessageID(p.MessageID)) {
 		return p, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	return p, nil
@@ -62,27 +65,8 @@ func cmdForkChat(ctx context.Context, bridges bridgeAccess, chats chatStore, ws 
 		return nil, StatusError(http.StatusBadRequest, errForkParentIsSelf)
 	}
 	if replay {
-		if c, exists := chats.Get(ctx, chatID); exists {
-			// Through the coordinator even on the replay: the first attempt
-			// can have created the chat and then failed its tab write, and
-			// this finishes that. Open is idempotent, so the ordinary
-			// replay costs one scan and emits nothing.
-			var opened ChatOpened
-			opened, err = mem.CreateChatAndOpen(ctx, forkCreate(p, "", c, c.ACPSessionID))
-			if err != nil {
-				return nil, err
-			}
-			// The repeat finishes a load the first attempt never STARTED, and
-			// skips one whose session that attempt already lost.
-			var inherited bool
-			opened.Chat, inherited = loadForkedHistory(ctx, bridges, chats, opened.Chat)
-			outcome := forkOutcomeOf(opened.Chat.ACPSessionID, inherited)
-			slog.Info("tangent: repeat op resolved to the chat it already opened",
-				"chat", chatID, "parent", p.ParentChatID, "outcome", outcome)
-			return openedResponse(&opened, map[string]any{
-				"outcome":    outcome,
-				"session_id": opened.Chat.ACPSessionID,
-			}), nil
+		if resp, done, replayErr := replayedFork(ctx, bridges, chats, mem, p, chatID); done {
+			return resp, replayErr
 		}
 		// The op was recorded but its chat is not there: the first attempt
 		// reserved the id and then failed. Fall through and fork for real.
@@ -93,9 +77,16 @@ func cmdForkChat(ctx context.Context, bridges bridgeAccess, chats chatStore, ws 
 		return nil, StatusError(http.StatusNotFound, errForkParentUnknown)
 	}
 
+	atMessage, err := branchPoint(ctx, chats, p)
+	if err != nil {
+		return nil, err
+	}
 	// The parent's model and mode ride along so the tangent's answers come
 	// from the same agent that produced the conversation it inherited.
-	sessionID := forkSession(ctx, bridges, ws, p)
+	sessionID, err := forkSession(ctx, bridges, ws, p, parent, atMessage)
+	if err != nil {
+		return nil, err
+	}
 
 	opened, err := mem.CreateChatAndOpen(ctx, forkCreate(p, chatID, parent, sessionID))
 	if err != nil {
@@ -111,12 +102,41 @@ func cmdForkChat(ctx context.Context, bridges bridgeAccess, chats chatStore, ws 
 	outcome := forkOutcomeOf(opened.Chat.ACPSessionID, inherited)
 
 	slog.Info("tangent opened",
-		"chat", opened.Chat.ID, "parent", p.ParentChatID,
+		"chat", opened.Chat.ID, "parent", p.ParentChatID, "at_message", p.MessageID,
 		"outcome", outcome, "acp_session", opened.Chat.ACPSessionID, "tab", opened.Subject.ID)
 	return openedResponse(&opened, map[string]any{
 		"outcome":    outcome,
 		"session_id": opened.Chat.ACPSessionID,
 	}), nil
+}
+
+// replayedFork answers a repeated op from the chat it already created; done is false when that chat is not there.
+func replayedFork(ctx context.Context, bridges bridgeAccess, chats chatStore, mem *Membership,
+	p marotte.ForkChatCommand, chatID marotte.ChatID,
+) (resp any, done bool, err error) {
+	c, exists := chats.Get(ctx, chatID)
+	if !exists {
+		return nil, false, nil
+	}
+	// Through the coordinator even on the replay: the first attempt
+	// can have created the chat and then failed its tab write, and
+	// this finishes that. Open is idempotent, so the ordinary
+	// replay costs one scan and emits nothing.
+	opened, err := mem.CreateChatAndOpen(ctx, forkCreate(p, "", c, c.ACPSessionID))
+	if err != nil {
+		return nil, true, err
+	}
+	// The repeat finishes a load the first attempt never STARTED, and
+	// skips one whose session that attempt already lost.
+	var inherited bool
+	opened.Chat, inherited = loadForkedHistory(ctx, bridges, chats, opened.Chat)
+	outcome := forkOutcomeOf(opened.Chat.ACPSessionID, inherited)
+	slog.Info("tangent: repeat op resolved to the chat it already opened",
+		"chat", chatID, "parent", p.ParentChatID, "outcome", outcome)
+	return openedResponse(&opened, map[string]any{
+		"outcome":    outcome,
+		"session_id": opened.Chat.ACPSessionID,
+	}), true, nil
 }
 
 // loadForkedHistory gives the tangent the transcript KAS already holds for it and answers the
@@ -174,8 +194,8 @@ func forkOutcomeOf(sessionID string, inherited bool) string {
 // sites (replay and fresh fork) so the record's shape cannot drift between
 // them. The tab hangs under the parent's tab, which is what makes a tangent
 // read as a tangent; a parent with no open tab promotes it to top level.
-func forkCreate(p marotte.ForkChatCommand, chatID marotte.ChatID, parent *marotte.Chat, sessionID string) ChatCreate {
-	return ChatCreate{
+func forkCreate(p marotte.ForkChatCommand, chatID marotte.ChatID, parent *marotte.Chat, sessionID string) *ChatCreate {
+	return &ChatCreate{
 		OpID:        p.OpID,
 		ChatID:      chatID,
 		RequireChat: p.ParentChatID,
@@ -206,36 +226,65 @@ func forkCreate(p marotte.ForkChatCommand, chatID marotte.ChatID, parent *marott
 	}
 }
 
-// forkSession asks KAS to branch the parent's session and returns the new
-// session id, or "" when the tangent has to start fresh. Every refusal is a
-// warning and an empty string, since the caller's answer is always to open the
-// tangent without a bound session.
-func forkSession(ctx context.Context, bridges bridgeAccess, ws Workspace, p marotte.ForkChatCommand) string {
-	bridge := bridges.Bridge(p.ParentChatID)
-	if bridge == nil || bridge.SessionID() == "" {
-		// Branching needs the parent's context, so its bridge resumes on demand, the trade
-		// cmdRewindChat also takes. Empty model: the parent keeps its own.
-		var err error
-		bridge, err = bridges.OpenBridge(ctx, p.ParentChatID, "")
-		if err != nil || bridge == nil || bridge.SessionID() == "" {
-			slog.Warn("tangent: parent bridge unavailable, starting fresh",
-				"parent", p.ParentChatID, keyError, err)
-			return ""
+// branchPoint is the KAS id a branch forks after, "" for a head fork. A target with no bind on the
+// current session falls back to the prompt id, as a rewind does.
+func branchPoint(ctx context.Context, chats chatStore, p marotte.ForkChatCommand) (string, error) {
+	if p.MessageID == "" {
+		return "", nil
+	}
+	target, found, err := chats.PromptTarget(ctx, p.ParentChatID, p.MessageID)
+	if err != nil {
+		slog.Error("tangent: resolve the branch point", "parent", p.ParentChatID, keyError, err)
+		return "", StatusError(http.StatusInternalServerError, err)
+	}
+	if !found {
+		return "", StatusError(http.StatusBadRequest, errBranchTargetNotFound)
+	}
+	return cmp.Or(target.KASMessageID, p.MessageID), nil
+}
+
+// forkSession asks KAS to fork the parent's session, after atMessage when it is set, and returns
+// the new session id. A head fork answers "" and no error on every refusal, so the tangent opens
+// fresh; a branch answers the refusal instead, because a fresh chat is not the conversation the
+// user asked for.
+func forkSession(ctx context.Context, bridges bridgeAccess, ws Workspace, p marotte.ForkChatCommand, parent *marotte.Chat, atMessage string) (string, error) {
+	branch := atMessage != ""
+	// Read before the resume, which can fall through to session/new and retire this id.
+	want := parent.ACPSessionID
+	if branch && want == "" {
+		return "", StatusError(http.StatusConflict, errBranchNoSession)
+	}
+	bridge := parentBridge(ctx, bridges, p.ParentChatID)
+	if bridge == nil {
+		if branch {
+			return "", StatusError(http.StatusBadGateway, errBranchNoBridge)
 		}
+		return "", nil
+	}
+	if branch && string(bridge.SessionID()) != want {
+		// A resume that fell through to a fresh session holds none of the turns to branch from.
+		slog.Warn("tangent: the parent's original session was not resumed, so the branch was not attempted",
+			"parent", p.ParentChatID, "want", want, "got", bridge.SessionID())
+		return "", StatusError(http.StatusConflict, errBranchSessionNotResumed)
 	}
 
 	meta := map[string]any{"createdReason": marotte.CreatedReasonTangent}
 	if p.Title != "" {
 		meta["title"] = p.Title
 	}
-	resp, err := bridge.Call(ctx, marotte.MethodSessionFork, sessionParams(bridge, map[string]any{
+	if branch {
+		meta["messageId"] = atMessage
+	}
+	cctx, cancel := bridges.CallBudget(ctx, engineChangeBudget)
+	defer cancel()
+	resp, err := bridge.Call(cctx, marotte.MethodSessionFork, sessionParams(bridge, map[string]any{
 		"cwd":   ws.Dir,
 		"_meta": map[string]any{"kiro": meta},
 	}))
 	if err != nil {
-		slog.Warn("tangent: session/fork failed, starting fresh",
-			"parent", p.ParentChatID, keyError, err)
-		return ""
+		slog.Warn("tangent: session/fork failed",
+			"parent", p.ParentChatID, "at_message", atMessage, keyError, err)
+		return "", branchRefusal(branch, err)
 	}
 	var out struct {
 		SessionID string `json:"sessionId"`
@@ -247,9 +296,39 @@ func forkSession(ctx context.Context, bridges bridgeAccess, ws Workspace, p maro
 		// A reply with no usable session id is a refusal however it is
 		// spelled. Validated because the value reaches a filesystem path
 		// inside KAS and marotte's own reaper keep-list.
-		slog.Warn("tangent: session/fork returned no usable session id, starting fresh",
-			"parent", p.ParentChatID)
-		return ""
+		slog.Warn("tangent: session/fork returned no usable session id",
+			"parent", p.ParentChatID, "at_message", atMessage)
+		if branch {
+			return "", StatusError(http.StatusBadGateway, errBranchNotReturned)
+		}
+		return "", nil
 	}
-	return out.SessionID
+	return out.SessionID, nil
+}
+
+// parentBridge is the parent chat's bridge with a session, opened when it is cold, or nil. A
+// session/fork is addressed through the parent chat's own bridge, so a cold parent's opens first;
+// the empty model keeps the parent's own.
+func parentBridge(ctx context.Context, bridges bridgeAccess, parentID marotte.ChatID) Bridge {
+	if bridge := bridges.Bridge(parentID); bridge != nil && bridge.SessionID() != "" {
+		return bridge
+	}
+	bridge, err := bridges.OpenBridge(ctx, parentID, "")
+	if err != nil || bridge == nil || bridge.SessionID() == "" {
+		slog.Warn("tangent: parent bridge unavailable", "parent", parentID, keyError, err)
+		return nil
+	}
+	return bridge
+}
+
+// branchRefusal is a failed session/fork's answer: none for a head fork, KAS's own reason for a
+// refused branch point, and a plain refusal for a transport failure, whose text names internals.
+func branchRefusal(branch bool, err error) error {
+	if !branch {
+		return nil
+	}
+	if _, ok := errors.AsType[*marotte.RPCError](err); ok {
+		return StatusError(http.StatusConflict, fmt.Errorf("%s: %w", rpcerr.Text(err), errBranchTurnUnknown))
+	}
+	return StatusError(http.StatusBadGateway, errBranchNotReturned)
 }

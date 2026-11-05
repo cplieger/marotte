@@ -88,6 +88,7 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 		Enabled:                in.Enabled,
 		WaitForReady:           in.WaitForReady,
 		TimeoutMS:              in.TimeoutMS,
+		VersionNegotiation:     in.VersionNegotiation,
 		CreatedAt:              now,
 		UpdatedAt:              now,
 	}
@@ -118,6 +119,10 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 			return nil, err
 		}
 		return out, nil
+	}
+	if err := s.heldNameErr(rec.Name); err != nil {
+		s.mu.Unlock()
+		return nil, err
 	}
 	s.servers = append(s.servers, rec)
 	if err := s.persist(ctx); err != nil {
@@ -248,6 +253,9 @@ func (s *Store) importOneLocked(sv *Server, now int64) (importResult, error) {
 		}
 		return importResult{Name: existing.Name, Outcome: importUnchanged}, nil
 	}
+	if err := s.heldNameErr(sv.Name); err != nil {
+		return importResult{}, err
+	}
 	rec := *sv
 	rec.ID = newID()
 	rec.Name = strings.TrimSpace(sv.Name)
@@ -305,6 +313,7 @@ func (s *Store) update(ctx context.Context, id serverID, in *Server) (*Server, e
 		Enabled:                in.Enabled,
 		WaitForReady:           in.WaitForReady,
 		TimeoutMS:              in.TimeoutMS,
+		VersionNegotiation:     in.VersionNegotiation,
 		CreatedAt:              existing.CreatedAt,
 		UpdatedAt:              time.Now().UnixMilli(),
 	}
@@ -318,6 +327,10 @@ func (s *Store) update(ctx context.Context, id serverID, in *Server) (*Server, e
 	if s.hasNameLocked(rec.Name, id) {
 		s.mu.Unlock()
 		return nil, errNameConflict
+	}
+	if err := s.heldNameErr(rec.Name); err != nil {
+		s.mu.Unlock()
+		return nil, err
 	}
 	s.servers[idx] = rec
 	if err := s.persist(ctx); err != nil {

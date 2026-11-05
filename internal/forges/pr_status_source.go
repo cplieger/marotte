@@ -15,7 +15,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // RepoOrigin is one workspace clone's origin as the caller resolved it: the git
@@ -154,10 +154,12 @@ func cycleScopes(h *readHandle, present bool) []Scope {
 	return scopes
 }
 
-// listScope is one ListMyPRs call for sc from after.
+// listScope is one ListMyPRs call for sc from after. It leaves merge state
+// unread: on GitHub that per-row cost nears the 10 s GraphQL limit, and
+// familyFills reads it per row instead.
 func listScope(ctx context.Context, core forgeapi.Core, sc Scope, after forgeapi.Cursor) scopePage {
 	page := scopePage{Scope: sc}
-	opts := []forgeapi.ListOption{forgeapi.WithAfter(after)}
+	opts := []forgeapi.ListOption{forgeapi.WithAfter(after), forgeapi.WithMergeState(false)}
 	if sc.Owner != "" {
 		opts = append(opts, forgeapi.WithOwner(sc.Owner))
 	}

@@ -48,9 +48,24 @@ func sidecarExitOf(state *os.ProcessState) string {
 	return fmt.Sprintf("exit_code=%d", state.ExitCode())
 }
 
-// reapProcess reaps the sidecar's group, then the node engine's: on 2.18.0 a head-only kill left kiro-cli-chat and
-// its node child alive at about 250 MB (procgroup.Kill), and the node engine leads its own group (sweepEngineGroups).
-// stdin is already closed. endedItself is endedOnItsOwn's answer from before that close.
+// deathSignalOf is the signal state's process died of, or caught and exited 128+N for, the shell convention kiro-cli
+// follows; 0 for any other end.
+func deathSignalOf(state *os.ProcessState) syscall.Signal {
+	if state == nil {
+		return 0
+	}
+	if ws, ok := state.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return ws.Signal()
+	}
+	if code := state.ExitCode(); code > 128 && code <= 128+64 {
+		return syscall.Signal(code - 128)
+	}
+	return 0
+}
+
+// reapProcess reaps the kiro-cli process's group, then the node engine's: on 2.18.0 a head-only kill left the kiro-cli
+// process and its node child alive at about 250 MB (procgroup.Kill), and the node engine leads its own group
+// (sweepEngineGroups). stdin is already closed. endedItself is endedOnItsOwn's answer from before that close.
 func (e *Engine) reapProcess(endedItself bool) {
 	// Before the signal empties it (procgroup.GroupOf).
 	pgid, owns := procgroup.GroupOf(e.cmd.Process)
@@ -74,6 +89,9 @@ func (e *Engine) reapProcess(endedItself bool) {
 	waitErr := e.cmd.Wait()
 	e.mu.Lock()
 	e.sidecarExit = sidecarExitOf(e.cmd.ProcessState)
+	if endedItself {
+		e.sidecarSignal = deathSignalOf(e.cmd.ProcessState)
+	}
 	e.mu.Unlock()
 	if endedItself {
 		// The wait status is the only record of why.
@@ -89,12 +107,12 @@ func (e *Engine) reapProcess(endedItself bool) {
 	e.sweepEngineGroups()
 }
 
-// exitSettle bounds the wait for a sidecar whose stdout reached EOF to become waitable: the kernel closes an exiting
-// process's files before it marks the exit, so a probe right after the EOF can fall in between.
+// exitSettle bounds the wait for a kiro-cli process whose stdout reached EOF to become waitable: the kernel closes an
+// exiting process's files before it marks the exit, so a probe right after the EOF can fall in between.
 const exitSettle = 100 * time.Millisecond
 
-// endedOnItsOwn reports whether the sidecar exited before marotte closed its stdin or signalled it. It must run
-// before the stdin close, on which kiro-cli exits. A nil lifecycleCtx means no cmd.Cancel was installed to signal it.
+// endedOnItsOwn reports whether the kiro-cli process exited before marotte closed its stdin or signalled it. It must
+// run before the stdin close, on which kiro-cli exits. A nil lifecycleCtx means no cmd.Cancel was installed.
 func (e *Engine) endedOnItsOwn() bool {
 	if e.lifecycleCtx != nil && e.lifecycleCtx.Err() != nil {
 		return false
@@ -127,9 +145,9 @@ func exitedUnreaped(pid int) bool {
 	return err == nil && info.Signo == int32(unix.SIGCHLD)
 }
 
-// noteEngineGroups adds the groups below the sidecar to engineGroups. kiro-cli's node engine leads its own group,
-// which its stdio MCP servers join, so the sidecar's group kill misses them. It runs after initialize and again at
-// reap: once the relay dies they are init's, and no walk finds them.
+// noteEngineGroups adds the groups below the kiro-cli process to engineGroups. kiro-cli's node engine leads its own
+// group, which its stdio MCP servers join, so the kiro-cli process's group kill misses them. It runs after initialize
+// and again at reap: once the kiro-cli process dies they are init's, and no walk finds them.
 func (e *Engine) noteEngineGroups() {
 	if e.cmd == nil || e.cmd.Process == nil {
 		return
@@ -138,7 +156,7 @@ func (e *Engine) noteEngineGroups() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for _, g := range found {
-		// The newer stamp wins: an id found again may now name a later group below the sidecar.
+		// The newer stamp wins: an id found again may now name a later group below the kiro-cli process.
 		if i := slices.IndexFunc(e.engineGroups, func(n procgroup.Group) bool { return n.ID == g.ID }); i >= 0 {
 			e.engineGroups[i] = g
 		} else {
@@ -147,9 +165,9 @@ func (e *Engine) noteEngineGroups() {
 	}
 }
 
-// sweepEngineGroups gives each noted group bridgeGroupGrace to empty after the sidecar's, then kills what is left: an
-// MCP server that ignores stdin EOF outlives an abrupt engine death, and tini reaps zombies but signals no live
-// orphan.
+// sweepEngineGroups gives each noted group bridgeGroupGrace to empty after the kiro-cli process's, then kills what is
+// left: an MCP server that ignores stdin EOF outlives an abrupt engine death, and tini reaps zombies but signals no
+// live orphan.
 func (e *Engine) sweepEngineGroups() {
 	e.mu.Lock()
 	groups := slices.Clone(e.engineGroups)
@@ -245,6 +263,20 @@ func toolkitTelemetryEnv(disable bool) []string {
 	return []string{toolkitTelemetryEnvVar + "=1"}
 }
 
+// kasLogLevelEnvVar is read by KAS at each log call (unknown values mean info) and by kiro-cli's Rust binary. Bridge
+// spawn state, not a kascap row: the environment census admits only KIRO_FEATURE_* and KIRO_DISABLE_* names.
+const kasLogLevelEnvVar = "KIRO_LOG_LEVEL"
+
+func isKASLogLevelEnv(kv string) bool { return strings.HasPrefix(kv, kasLogLevelEnvVar+"=") }
+
+// kasLogLevelEnv follows the Debug logs setting: on spawns KAS at debug, off leaves kiro-cli's default, info.
+func kasLogLevelEnv(debug bool) []string {
+	if !debug {
+		return nil
+	}
+	return []string{kasLogLevelEnvVar + "=debug"}
+}
+
 const nodeOptionsVar = "NODE_OPTIONS"
 
 // withHeapLimit rewrites env's NODE_OPTIONS to carry mib (nodeopts.WithHeapLimit). A malformed inherited value is
@@ -254,13 +286,7 @@ func withHeapLimit(env []string, mib int, generation uint64) []string {
 	if mib == 0 {
 		return env
 	}
-	inherited := ""
-	for _, kv := range env {
-		if v, ok := strings.CutPrefix(kv, nodeOptionsVar+"="); ok {
-			inherited = v
-		}
-	}
-	composed, err := nodeopts.WithHeapLimit(inherited, mib)
+	composed, err := nodeopts.WithHeapLimit(nodeOptionsOf(env), mib)
 	if err != nil {
 		slog.Error("engine: the memory limit was not applied because NODE_OPTIONS is malformed",
 			"generation", generation, "reason", err)
@@ -291,7 +317,7 @@ func (e *Engine) startProcess() error {
 	// Own process group, so teardown reclaims the whole tree; closing stdin alone does not reclaim it (procgroup.Kill).
 	e.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	e.cmd.Env = e.processEnv()
-	// Backstop when lifecycleCtx ends before Stop: close stdin and SIGTERM the sidecar's group, SIGKILL after
+	// Backstop when lifecycleCtx ends before Stop: close stdin and SIGTERM the kiro-cli process's group, SIGKILL after
 	// bridgeTeardownGrace. A second Close is expected after Stop, so its error is dropped.
 	e.cmd.Cancel = func() error {
 		if p := e.stdin.Load(); p != nil {
@@ -339,12 +365,16 @@ func (e *Engine) startProcess() error {
 func (e *Engine) processEnv() []string {
 	env, dropped := screenBridgeEnv(os.Environ(), e.extraEnv, e.envAllow)
 	// A setting decides these even when it withholds them (kascap.OwnsEnv), so no inherited value survives.
-	env = slices.DeleteFunc(env, func(kv string) bool { return kascap.OwnsEnv(kv) || isToolkitTelemetryEnv(kv) })
+	env = slices.DeleteFunc(env, func(kv string) bool {
+		return kascap.OwnsEnv(kv) || isToolkitTelemetryEnv(kv) || isKASLogLevelEnv(kv)
+	})
 	env = append(env, kascap.ChildEnv(&e.spawn)...)
 	env = append(env, toolkitTelemetryEnv(e.spawn.DisableTelemetry)...)
+	env = append(env, kasLogLevelEnv(e.debugLogs)...)
 	// After the screen and the door: os/exec keeps a key's last value.
 	env = append(env, localeEnv()...)
 	env = withHeapLimit(env, e.heapMiB, e.generation)
+	env, e.nodeArgs = e.withKASNodeLauncher(env)
 	if len(dropped) > 0 {
 		// Names only: the values are the credentials.
 		slog.Warn("dropped credential-shaped variables from the kiro-cli process; agent shell commands still inherit them",
@@ -354,7 +384,7 @@ func (e *Engine) processEnv() []string {
 	return env
 }
 
-// The stderr lines that name an engine end's cause; the node child writes to the sidecar's stderr pipe.
+// The stderr lines that name an engine end's cause; the node child writes to the kiro-cli process's stderr pipe.
 const (
 	jsHeapOOMLine         = "JavaScript heap out of memory"
 	relayWriteTimeoutLine = "timed out writing to the v3 engine's stdin"
@@ -449,6 +479,9 @@ func classifyStderrLevel(line string) slog.Level {
 			return slog.LevelInfo
 		}
 	}
+	if isNodeProcessWarning(line) {
+		return slog.LevelWarn
+	}
 	// Word-boundary matching for unstructured lines.
 	low := strings.ToLower(line)
 	for _, rule := range stderrKeywordRules {
@@ -457,6 +490,34 @@ func classifyStderrLevel(line string) slog.Level {
 		}
 	}
 	return slog.LevelInfo
+}
+
+// isNodeProcessWarning reports a Node.js process warning, "(node:PID) [CODE] NameWarning: message" with the code
+// optional, which KAS relays under its own bracket tag, [ERROR] included, because Node writes it to stderr.
+func isNodeProcessWarning(line string) bool {
+	rest := line
+	if strings.HasPrefix(rest, "[") {
+		_, afterTag, ok := strings.Cut(rest, "] ")
+		if !ok {
+			return false
+		}
+		rest = afterTag
+	}
+	rest, ok := strings.CutPrefix(rest, "(node:")
+	if !ok {
+		return false
+	}
+	pid, rest, ok := strings.Cut(rest, ") ")
+	if !ok || pid == "" || strings.Trim(pid, "0123456789") != "" {
+		return false
+	}
+	if strings.HasPrefix(rest, "[") {
+		if _, rest, ok = strings.Cut(rest, "] "); !ok {
+			return false
+		}
+	}
+	name, _, ok := strings.Cut(rest, ": ")
+	return ok && strings.HasSuffix(name, "Warning") && !strings.Contains(name, " ")
 }
 
 // matchesKeyword reports whether keyword appears at a word boundary followed by a colon, bracket or separator, so

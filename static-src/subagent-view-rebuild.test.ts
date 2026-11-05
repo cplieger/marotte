@@ -3,7 +3,7 @@
 // own host fixture.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { signal, touch } from "@cplieger/reactive";
+import { signal, touch } from "@cplieger/ui";
 import type { Session } from "./types.js";
 import type * as BlocksModule from "./messages-blocks.js";
 import type * as ScrollModule from "./scroll.js";

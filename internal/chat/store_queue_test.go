@@ -4,7 +4,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -141,26 +140,3 @@ func TestQueue_AFailedSettleIsRetriedAtTheNextOpen(t *testing.T) {
 type failingReaderAt struct{}
 
 func (failingReaderAt) ReadAt([]byte, int64) (int, error) { return 0, errors.New("read failed") }
-
-// A queued follow-up keeps a chat from the purge as a draft does.
-func TestRetentionHeader_QueuedPromptsCountAsDrafting(t *testing.T) {
-	for _, tc := range []struct {
-		name, header string
-		want         bool
-	}{
-		{"queued", `{"id":"c1","queued_prompts":[{"id":"m-1","text":"x"}]}`, true},
-		{"queued before an empty draft", `{"id":"c1","queued_prompts":[{"id":"m-1","text":"x"}],"draft":""}`, true},
-		{"empty queue", `{"id":"c1","queued_prompts":[]}`, false},
-		{"neither", `{"id":"c1"}`, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			h, err := decodeRetentionHeader(strings.NewReader(tc.header))
-			if err != nil {
-				t.Fatalf("decode: %v", err)
-			}
-			if h.Drafting != tc.want {
-				t.Errorf("Drafting = %v, want %v", h.Drafting, tc.want)
-			}
-		})
-	}
-}

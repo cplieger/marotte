@@ -15,7 +15,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/keylock"
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/keylock"
+	"github.com/cplieger/go/sse"
 	"github.com/cplieger/marotte/internal/buffer"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
@@ -25,14 +27,11 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
-	"github.com/cplieger/marotte/internal/secretstore"
 	"github.com/cplieger/marotte/internal/spec"
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/sse"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // The client watchdog is three of them and liveness.AliveWindow two. A var only for tests.
@@ -63,9 +62,10 @@ type lifetime struct {
 	shutdownCancel context.CancelFunc
 	// workRoot is the kernel-confined handle on workDir (lifetime.confine), never closed. nil when workDir could
 	// not be opened; the fs handlers then refuse.
-	workRoot      *os.Root
-	kiroTelemetry *cachedBoolField
-	workDir       string
+	workRoot       *os.Root
+	kiroTelemetry  *cachedBoolField
+	kiroHookStatus *cachedBoolField
+	workDir        string
 	// uploadsDir is a root only the read verbs accept (lifetime.confine); "" grants nothing.
 	uploadsDir string
 	configDir  string
@@ -198,11 +198,14 @@ func (lt *lifetime) Draining() bool {
 	return lt.draining.Load()
 }
 
+// GoUnlessDraining is goUnlessDraining for the command layer's background work.
+func (lt *lifetime) GoUnlessDraining(fn func()) bool { return lt.goUnlessDraining(fn) }
+
 type bridges struct {
 	mgr *bridgeManager
 }
 
-// bus groups SSE transport, replay and pending permissions: cplieger/sse plus chat-topic filtering and pending replay.
+// bus groups SSE transport, replay and pending permissions: cplieger/go/sse plus chat-topic filtering and pending replay.
 type bus struct {
 	fanout       *sse.Hub
 	pendingPerms *pendingPermsTracker
@@ -215,7 +218,11 @@ type bus struct {
 	// stageStatusDesc records a declared description on the open turn, for the agent_finished push.
 	stageStatusDesc func(marotte.ChatID, string)
 	// retractPush drops a held push whose ask was settled (bridgeCoordinator.RetractPush).
-	retractPush func(marotte.PushSubject)
+	retractPush func(subj marotte.PushSubject, ask string)
+	// ownStopped reports a stop requested during the chat's current turn (turnRegistry.ownStopped).
+	ownStopped func(marotte.ChatID) bool
+	// searches is the running grep_search and file_search calls, ended by a turn cancel, a run's end or their session's.
+	searches searchCancels
 	// legacyConnects and v3Connects count connects by wire generation; a legacy one (no SSE-Wire header) is an
 	// old bundle still running. Observability only.
 	legacyConnects atomic.Uint64
@@ -227,6 +234,8 @@ type bus struct {
 // Runtime is the central coordinator.
 type Runtime struct {
 	steerQueue steerQueue
+	// teardownHook runs between cleanupChatState's steps, so a test can park a teardown; nil in production.
+	teardownHook atomic.Pointer[func(step string)]
 
 	push      pushService
 	chatStore chatRecords
@@ -281,14 +290,10 @@ type Runtime struct {
 	sessionReaper *kirosession.Reaper
 	sessionRefs   func(context.Context) (map[string]struct{}, bool)
 	// sweepGate closes once this process serves its config dir, which the session sweep waits for. Nil: no gate.
-	sweepGate  <-chan struct{}
-	lines      *buffer.LineTracker
-	agentTerms *agentTerminals
-	hookStatus *hookStatusCache
-
-	// secrets holds the credentials KAS asks marotte to persist (bridge_v3_secret.go), one store since KAS's key
-	// namespace is global. Nil reports "absent".
-	secrets *secretstore.Store
+	sweepGate    <-chan struct{}
+	lines        *buffer.LineTracker
+	agentTerms   *agentTerminals
+	hookTriggers *hookTriggers
 
 	// tabs is the open-tab set and the membership coordinator; nil without a store (unavailable). Held only for retention.
 	tabs       *tabs.Store
@@ -312,6 +317,8 @@ type Runtime struct {
 	acpArgs     []string
 	sessionSeen sessionBaseline
 	processLive processLive
+	// configDoc owns whether config.json reads and the values every spawn, restart decision and session door read.
+	configDoc lastReadable
 	// bootPass guards the boot observer pass (onEngineReady).
 	bootPass sync.Once
 	// sessionExportMu serializes session exports: KAS writes each to a fixed file name per process.
@@ -436,10 +443,11 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		sse.WithPresence(func(ev sse.PresenceEvent) { sseP.forwardPresence(&ev) }),
 	)
 	lc := &lifetime{
-		workDir:       workDir,
-		uploadsDir:    marotte.DefaultUploadDir,
-		done:          make(chan struct{}),
-		kiroTelemetry: newCachedBoolField(kiroSettingsPath(), kiroTelemetryKey, kiroTelemetryDefault),
+		workDir:        workDir,
+		uploadsDir:     marotte.DefaultUploadDir,
+		done:           make(chan struct{}),
+		kiroTelemetry:  newCachedBoolField(kiroSettingsPath(), kiroTelemetryKey, kiroTelemetryDefault),
+		kiroHookStatus: newCachedBoolField(kiroSettingsPath(), marotte.KiroHookStatusKey, true),
 	}
 	lc.shutdownCtx, lc.shutdownCancel = context.WithCancel(ctx)
 	// Best-effort: an unopenable workDir fails closed at the handlers, not at construction.
@@ -480,7 +488,6 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		steeringIssues: &steeringIssues{},
 		versions:       &subject.Versions{},
 		digestSlots:    newDigestSemaphore(digestConcurrency),
-		hookStatus:     newHookStatusCache(kiroSettingsPath()),
 		chatHandlers:   make(map[string]chatHandler),
 		noopMethods:    make(map[string]struct{}),
 	}
@@ -508,6 +515,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	h.engine = newEngineOwner(source, lc, &hooks)
 	runs.engine, runs.router = h.engine, h.router
 	runs.answerEarly = h.answerEarly
+	runs.doorSettings = h.readSessionSettings
 	bridgeP.mgr.closeSession = h.closeSession
 	runs.mutations.covered = func(wf string) bool { return runs.bounded(wf) || (runs.log != nil && runs.log.hasOpen(wf)) }
 	runs.mutations.executing = runs.bounded
@@ -521,7 +529,14 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		sseP.Broadcast(c, marotte.NewEvent(marotte.EventConfigStandingChanged, "", marotte.ConfigStandingChangedPayload{}))
 	})
 	h.runRoutes = &runRoutes{runs: runs, epoch: h.Epoch}
-	h.mcpRegistry = newMCPRegistry(h.engine, sseP, lc, h.mcpConfig)
+	h.mcpRegistry = newMCPRegistry(h.engine, sseP, lc, h.mcpConfig, func(c marotte.ChatID) (marotte.SessionID, bool) {
+		if b := bridgeP.mgr.get(c); b != nil {
+			return b.SessionID(), true
+		}
+		return "", false
+	}, configP.setMCPRegistry)
+	runs.dropMCPSessions = h.mcpRegistry.dropSessions
+	runs.resetFailedMCP = h.mcpRegistry.resetFailedForLaunch
 	h.powers = &powersSurface{
 		backend: h.powersBackend, engine: h.engine,
 		broadcast: sseP.Broadcast,
@@ -543,13 +558,12 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		h.engine.poke()
 		h.coord.releaseIfUnheld(chatID)
 	}
-	bridgeP.mgr.revertStarting = h.coord.turns.expectRevertRestores
 	h.coord.reconcileSessions = func(ctx context.Context, deadline time.Time) {
 		h.reconcileSessionSettings(ctx, "session settings", deadline)
 	}
-	h.coord.autoCompact = newAutoCompactor(h.coord)
 	sseP.stageStatusDesc = h.coord.turns.stageStatusDescription
 	sseP.retractPush = h.coord.retractPush
+	sseP.ownStopped = h.coord.turns.ownStopped
 	// Built here because coord and the ignore matcher do not exist at the literal. Workspace-global: the
 	// orchestrator and its subagents write one spec from several sessions.
 	h.specs = spec.NewNotifier(specChangedWindow, func(dir string) {
@@ -558,6 +572,8 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	h.inbound = &inbound{
 		lifetime: lc, coord: h.coord,
 		bus: sseP, specs: h.specs,
+		signIns: h.mcpRegistry, stepRun: h.router.StepRun,
+		secrets: openSecretStore(lc.configDir),
 	}
 	h.shellMgr = newShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
@@ -583,21 +599,13 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	// After the literal: steerQueue is a value, so the copy the step side holds must carry steps.
 	runs.steers.queue = h.steerQueue
 	h.wireSteerRecords()
+	h.hookTriggers = newHookTriggers(lc.shutdownCtx, configP.hooksListRaw, lc.goUnlessDraining)
 	h.translator = translate.New(h.translateRoles())
 	runs.translate = h.translator
 	h.dispatcher = command.New()
 	h.registerCommandHandlers()
 	runs.runEnded = h.membership.WakeRetention
 	h.initDispatch()
-	if lc.configDir != "" {
-		// Best-effort: without a store, bridges do not declare `_meta.kiro.secretStorage` and MCP OAuth re-registers.
-		secrets, err := secretstore.New(lc.configDir)
-		if err != nil {
-			slog.Error("secretstore: open failed; MCP credentials will not persist", "error", err)
-		} else {
-			h.secrets = secrets
-		}
-	}
 	h.signin.onChange(h.onSignInChange)
 	runs.gate.wire(h.signin.answerability())
 	h.signin.onAnswerability(runs.gateMoved)
@@ -615,15 +623,12 @@ func (rt *Runtime) MCPRegistry() RouteRegistrar { return rt.mcpRegistry }
 // EngineReady is closed once the first agent engine is ready; it never closes when none can start.
 func (rt *Runtime) EngineReady() <-chan struct{} { return rt.engine.firstReady }
 
-// MCPSnapshot returns a stable-ordered snapshot of connected MCP servers only.
+// MCPSnapshot returns, sorted by name, every MCP server some session has connected, whatever its row shows.
 func (rt *Runtime) MCPSnapshot() []marotte.MCPSnapshotServer {
-	snap := rt.mcpRegistry.snapshot()
-	out := make([]marotte.MCPSnapshotServer, 0, len(snap))
-	for i := range snap {
-		if snap[i].State != mcpStateConnected {
-			continue
-		}
-		out = append(out, marotte.MCPSnapshotServer{Name: snap[i].Name})
+	names := rt.mcpRegistry.connectedNames()
+	out := make([]marotte.MCPSnapshotServer, 0, len(names))
+	for _, n := range names {
+		out = append(out, marotte.MCPSnapshotServer{Name: n})
 	}
 	return out
 }
@@ -647,7 +652,7 @@ func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/command", rt.lifecycle.admitUnlessDraining(rt.dispatcher))
 	// Behind the same drain gate, under a RouteTimeout so a resolution parked on a lock frees its slot.
 	mux.Handle("POST /api/sync", rt.lifecycle.admitUnlessDraining(
-		webhttp.RouteTimeout(rt.bus.fanout.DigestHandler(rt.resolveDigest), digestTimeout, "digest timed out"),
+		httpserver.RouteTimeout(rt.bus.fanout.DigestHandler(rt.resolveDigest), digestTimeout, "digest timed out"),
 	))
 	// Not drain-gated: a late receipt changes nothing.
 	mux.HandleFunc("POST /api/events/alive", rt.handleAlive)
@@ -673,7 +678,7 @@ func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
 
 // Shutdown drains in-flight prompts and stops the agent engine, bounded by ctx. The engine stops before the
 // inflight wait, since a stuck Call returns only through the engine's teardown. ctx is the only bound:
-// webhttp.Run's pre-drain hook is synchronous. The error names the first wait to exceed it.
+// httpserver.Run's pre-drain hook is synchronous. The error names the first wait to exceed it.
 func (rt *Runtime) Shutdown(ctx context.Context) error {
 	slog.Info("agent runtime draining")
 	rt.lifecycle.drainGate.Lock()
@@ -777,6 +782,7 @@ func (rt *Runtime) holdUnreadSteers(ctx context.Context, chatID marotte.ChatID) 
 		}
 		steer := &marotte.EntrySteer{
 			Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonRestart,
+			Caller: r.Caller,
 		}
 		switch {
 		case r.Agent:
@@ -822,7 +828,7 @@ func awaitBounded(ctx context.Context, what string, wait func()) error {
 		wait()
 	}()
 	// AwaitDone: a bare select would sometimes report a just-finished wait as hung.
-	if webhttp.AwaitDone(ctx, done) {
+	if httpserver.AwaitDone(ctx, done) {
 		return nil
 	}
 	return fmt.Errorf("%s still running: %w", what, ctx.Err())
@@ -851,7 +857,7 @@ func (rt *Runtime) HoldUnlessDraining() (release func(), ok bool) {
 
 // refuseWhenDraining answers 503 once Shutdown flips draining, holding nothing: for the event stream, which Shutdown
 // ends after its inflight wait, so it must not be admitted (admitUnlessDraining). A route wrapper, so health,
-// version and static stay up; webhttp's own gate flips later, at srv.Shutdown.
+// version and static stay up; httpserver's own gate flips later, at srv.Shutdown.
 func (rt *Runtime) refuseWhenDraining(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if rt.lifecycle.draining.Load() {
@@ -863,7 +869,7 @@ func (rt *Runtime) refuseWhenDraining(next http.Handler) http.Handler {
 }
 
 func writeShuttingDown(w http.ResponseWriter) {
-	webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("shutting down"))
+	httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("shutting down"))
 }
 
 // sweepSessionsInterval is how often the orphan-session sweep runs after
@@ -928,11 +934,15 @@ func (rt *Runtime) sweepSessionsOnce() {
 func (rt *Runtime) liveSessionIDs() []string {
 	var ids []string
 	for _, sb := range rt.bridge.mgr.all() {
-		if cur := sb.current(); cur != nil {
-			if id := string(cur.SessionID()); id != "" {
-				ids = append(ids, id)
-			}
+		if id := string(sb.SessionID()); id != "" {
+			ids = append(ids, id)
 		}
 	}
 	return ids
+}
+
+// configDocument is every config.json value a spawn, a restart decision or a session door reads, through the configDoc
+// owner. While config.json cannot be read it answers the last readable generation, or the defaults when none was.
+func (rt *Runtime) configDocument(ctx context.Context) (configDocument, docSource) {
+	return rt.configDoc.read(ctx, rt.lifecycle.configDir, readConfigDocument)
 }

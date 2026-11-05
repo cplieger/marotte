@@ -8,4 +8,5 @@ export const toastMock = () => ({
   errorWithAction: vi.fn(),
   showToast: vi.fn(),
   notice: vi.fn(),
+  jumpToast: vi.fn(),
 });

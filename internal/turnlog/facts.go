@@ -33,44 +33,43 @@ type ask struct {
 	options  []AskOption
 }
 
-// Facts are a turn's footer facts beyond its metering: ask answers, model requests and
-// throughput, recoveries, and the steering KAS added. The zero value is ready to use and
-// NOT safe for concurrent use: a Turn guards its own.
+// Facts are a turn's footer facts beyond its metering: ask answers, model requests, the
+// context breakdown, the wait before the first output, recoveries, and the steering KAS added.
+// The zero value is ready to use and NOT safe for concurrent use: a Turn guards its own.
 type Facts struct {
-	throughput *marotte.TurnThroughput
-	breakdown  *marotte.ContextBreakdown
-	asks       map[string]*ask
-	requestIDs []string
-	recoveries []string
-	steering   []string
+	breakdown   *marotte.ContextBreakdown
+	firstOutput *marotte.TurnFirstOutput
+	asks        map[string]*ask
+	requestIDs  []string
+	recoveries  []string
+	steering    []string
 }
 
 // Completion is what one turn_completion frame says about the turn.
 type Completion struct {
-	Throughput *marotte.TurnThroughput
 	// ContextBreakdown measures the frame's last model request.
 	ContextBreakdown *marotte.ContextBreakdown
 	RequestIDs       []string
 	Recoveries       []string
 }
 
-// NoteTurnCompletion folds one turn_completion in. Ids and recoveries accumulate, tokens and
-// streaming time sum across frames, and the newest context breakdown wins (an absent one keeps
-// the last).
+// NoteTurnCompletion folds one turn_completion in. Ids and recoveries accumulate, and the newest
+// context breakdown wins (an absent one keeps the last).
 func (f *Facts) NoteTurnCompletion(c *Completion) {
 	f.requestIDs = appendDistinct(f.requestIDs, c.RequestIDs, maxRequestIDs)
 	f.recoveries = appendDistinct(f.recoveries, c.Recoveries, maxRecoveries)
 	if c.ContextBreakdown != nil {
 		f.breakdown = c.ContextBreakdown
 	}
-	if c.Throughput == nil {
-		return
+}
+
+// NoteFirstOutput records the wait before the turn's first output. The first one wins: a turn
+// that spans several KAS executions (a steer's continuation) gets a stamp from each, and the
+// reader asks about the wait before the turn's first words. A nil one records nothing.
+func (f *Facts) NoteFirstOutput(fo *marotte.TurnFirstOutput) {
+	if f.firstOutput == nil {
+		f.firstOutput = fo
 	}
-	if f.throughput == nil {
-		f.throughput = &marotte.TurnThroughput{}
-	}
-	f.throughput.EstimatedTokens += c.Throughput.EstimatedTokens
-	f.throughput.ActiveStreamingMs += c.Throughput.ActiveStreamingMs
 }
 
 // NoteSteering records steering documents KAS added to the turn's context.
@@ -131,11 +130,11 @@ func (f *Facts) WithInteraction(callID string, res *marotte.EntryToolResult) *ma
 
 // Stamp writes the facts into a turn_close footer.
 func (f *Facts) Stamp(footer *marotte.EntryTurnClose) {
-	footer.Throughput = f.throughput
 	footer.RequestIDs = f.requestIDs
 	footer.Recoveries = f.recoveries
 	footer.Steering = f.steering
 	footer.ContextBreakdown = f.breakdown
+	footer.FirstOutput = f.firstOutput
 }
 
 // EngineClass is an engine error's class for a broken turn, when it is a class a
@@ -152,6 +151,13 @@ func (t *Turn) NoteTurnCompletion(c *Completion) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.agg.facts.NoteTurnCompletion(c)
+}
+
+// NoteFirstOutput records the wait before the turn's first output; the first one wins.
+func (t *Turn) NoteFirstOutput(fo *marotte.TurnFirstOutput) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.agg.facts.NoteFirstOutput(fo)
 }
 
 // NoteSteering records steering documents KAS added to the turn's context.

@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/slogx/capture"
 )
 
 // captureLogs swaps the slog default to a buffer-backed debug handler for the test and restores it; not for parallel
@@ -23,6 +23,8 @@ func newTestSession() *Session {
 		engine:    NewEngine("/nonexistent", "/work"),
 		lane:      newLane(),
 		closeDone: make(chan struct{}),
+		held:      make(chan struct{}),
+		gaveUp:    make(chan struct{}),
 		id:        "sess-test",
 		state:     stateOpen,
 	}

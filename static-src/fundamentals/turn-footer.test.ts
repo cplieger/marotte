@@ -474,6 +474,58 @@ describe("the info panel", () => {
     ]);
   });
 
+  it("states the wait before the first output, split into setup and model latency", () => {
+    const el = buildTurnFooter({
+      elapsedMs: 92000,
+      toolMs: 30000,
+      firstOutput: { total_ms: 4200, setup_ms: 900, model_ms: 2800 },
+    });
+    expect(sectionRows(el, "Time")).toEqual([
+      ["Wall clock", "1m 32s"],
+      ["Tool time", "30.0s"],
+      ["Model time", "1m 2s"],
+      ["First output", "4.2s"],
+      ["Setup", "0.9s"],
+      ["Model latency", "2.8s"],
+    ]);
+  });
+
+  it("withholds the split KAS did not stamp, and the whole wait when it stamped nothing", () => {
+    expect(
+      sectionRows(buildTurnFooter({ elapsedMs: 30000, firstOutput: { total_ms: 4200 } }), "Time"),
+    ).toEqual([
+      ["Wall clock", "30.0s"],
+      ["First output", "4.2s"],
+    ]);
+    expect(
+      sectionRows(
+        buildTurnFooter({
+          elapsedMs: 30000,
+          firstOutput: { total_ms: 0, setup_ms: 0, model_ms: 0 },
+        }),
+        "Time",
+      ),
+    ).toEqual([["Wall clock", "30.0s"]]);
+    expect(sectionRows(buildTurnFooter({ elapsedMs: 30000 }), "Time")).toEqual([
+      ["Wall clock", "30.0s"],
+    ]);
+  });
+
+  it("repaints when the first output arrives", () => {
+    const el = buildTurnFooter({ outcome: "completed", elapsedMs: 30000 });
+    expect(sectionRows(el, "Time")).toEqual([["Wall clock", "30.0s"]]);
+    updateTurnFooter(el, {
+      outcome: "completed",
+      elapsedMs: 30000,
+      firstOutput: { total_ms: 4200, setup_ms: 900 },
+    });
+    expect(sectionRows(el, "Time")).toEqual([
+      ["Wall clock", "30.0s"],
+      ["First output", "4.2s"],
+      ["Setup", "0.9s"],
+    ]);
+  });
+
   it("renders the start and the end as machine-readable stamps", () => {
     const started = Date.UTC(2026, 0, 2, 9, 5, 0);
     const ended = started + 92000;
@@ -597,6 +649,23 @@ describe("the info panel", () => {
     ]);
   });
 
+  it("states them on a completed turn the model stopped at a bound", () => {
+    // The server grades a bounded turn completed and truncated, so the grade alone would hide
+    // that the answer was cut off.
+    for (const bound of ["max_tokens", "max_turn_requests"]) {
+      const el = buildTurnFooter({
+        outcome: "completed",
+        elapsedMs: 1000,
+        stopReasonRaw: bound,
+        truncated: true,
+      });
+      expect(sectionRows(el, "Diagnostics"), bound).toEqual([
+        ["Stop reason", bound],
+        ["Truncated", "yes"],
+      ]);
+    }
+  });
+
   it("withholds Diagnostics on a clean turn and on one still running", () => {
     // On a clean turn the stop reason is the ordinary one, so the section would be a
     // heading over the absence of news; a running turn has not ended at all, so it
@@ -605,8 +674,8 @@ describe("the info panel", () => {
       const el = buildTurnFooter({
         outcome,
         elapsedMs: 1000,
-        stopReasonRaw: "max_tokens",
-        truncated: true,
+        stopReasonRaw: "end_turn",
+        truncated: false,
       });
       expect(sections(el), `${outcome} has no diagnostics`).toEqual(["Time"]);
     }
@@ -919,10 +988,7 @@ describe("every reason a footer is earned paints something", () => {
     models: { d: { models: ["sonnet-4"] }, earns: false },
     asks: { d: { asks: { allowed: 1 } }, earns: false },
     requestIds: { d: { requestIds: ["req-1"] }, earns: false },
-    throughput: {
-      d: { throughput: { estimated_tokens: 400, active_streaming_ms: 2000 } },
-      earns: false,
-    },
+    firstOutput: { d: { firstOutput: { total_ms: 4200 } }, earns: false },
     recoveries: { d: { recoveries: ["empty"] }, earns: false },
     steering: { d: { steering: ["file:///workspace/.kiro/steering/a.md"] }, earns: false },
     engineErrorClass: { d: { engineErrorClass: "ModelOverloaded" }, earns: false },
@@ -966,6 +1032,7 @@ describe("every reason a footer is earned paints something", () => {
     const extras: Record<keyof FooterExtras, FooterExtras> = {
       rewindable: { rewindable: true },
       settledProse: { settledProse: true },
+      branchable: { branchable: true },
     };
     for (const [name, extra] of Object.entries(extras)) {
       expect(earnsTurnFooter({}, extra), `${name} earns a footer`).toBe(true);
@@ -1119,11 +1186,11 @@ const FIELD_PROBES = {
   endedAt: { endedAt: 1_700_000_009_000 },
   outcome: { outcome: "failed" as const },
   stopReasonRaw: { outcome: "failed" as const, stopReasonRaw: "max_tokens" },
-  truncated: { outcome: "failed" as const, truncated: true },
+  truncated: { truncated: true },
   changedFiles: { changedFiles: { "z.go": { lines_added: 1, lines_removed: 0 } } },
   asks: { asks: { rejected: 2 } },
   requestIds: { requestIds: ["req-1", "req-2"] },
-  throughput: { throughput: { estimated_tokens: 900, active_streaming_ms: 3000 } },
+  firstOutput: { firstOutput: { total_ms: 4200, setup_ms: 900, model_ms: 2800 } },
   recoveries: { recoveries: ["streamError"] },
   steering: { steering: ["file:///workspace/.kiro/steering/b.md"] },
   engineErrorClass: { engineErrorClass: "ModelOverloaded" },
@@ -1153,7 +1220,7 @@ const RENDERED_FIELDS = [
   "changedFiles",
   "asks",
   "requestIds",
-  "throughput",
+  "firstOutput",
   "recoveries",
   "steering",
   "engineErrorClass",
@@ -1274,24 +1341,17 @@ describe("the panel states the turn's KAS facts", () => {
     ]);
   });
 
-  it("orders Model and cost as model, credits, output, and counts requests only under Diagnostics", () => {
+  it("orders Model and cost as model then credits, and counts requests only under Diagnostics", () => {
     const el = buildTurnFooter({
       models: ["sonnet-4"],
       credits: 0.5,
       requestIds: ["a", "b", "c"],
-      throughput: { estimated_tokens: 400, active_streaming_ms: 2000 },
     });
     expect(sectionRows(el, "Model and cost")).toEqual([
       ["Answered by", "sonnet-4"],
       ["Credits", "0.50"],
-      ["Output (estimated)", "\u2248400 tokens \u00b7 \u2248200 tokens/s"],
     ]);
     expect(sectionRows(el, "Diagnostics")).toEqual([["Request IDs", "3"]]);
-  });
-
-  it("withholds the rate when no streaming time was measured", () => {
-    const el = buildTurnFooter({ throughput: { estimated_tokens: 50, active_streaming_ms: 0 } });
-    expect(sectionRows(el, "Model and cost")).toEqual([["Output (estimated)", "\u224850 tokens"]]);
   });
 
   it("states recoveries, the engine class and the request ids on a CLEAN turn", () => {

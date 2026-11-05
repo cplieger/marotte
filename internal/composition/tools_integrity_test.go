@@ -6,6 +6,7 @@ package composition
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -16,11 +17,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/mcp/prewarm"
-	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/toolbelt/v3"
+	"golang.org/x/sys/unix"
 )
 
 // unfitRootMsg must match logRootIntegrityRefusal's per-finding message. The
@@ -163,12 +166,14 @@ func TestWireToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 				return []string{toolsDir}
 			},
 		},
+		// The engine judges every directory above a managed root, so the tools dir below the
+		// config dir is unfit too.
 		"a group-writable config dir": {
-			plant: func(t *testing.T, configDir, _ string) []string {
+			plant: func(t *testing.T, configDir, toolsDir string) []string {
 				if err := os.Chmod(configDir, 0o775); err != nil {
 					t.Fatal(err)
 				}
-				return []string{configDir}
+				return []string{configDir, toolsDir}
 			},
 		},
 	}
@@ -179,7 +184,7 @@ func TestWireToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 			slices.Sort(want)
 
 			logs := captureDefaultLogger(t)
-			tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
+			tools, err := wireToolsEngine(&Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}}, testRuntime(t), nil)
 			if err != nil {
 				t.Fatalf("an unfit root stopped the boot; a dev box whose volume drifted cannot be repaired from inside a container that will not start: %v", err)
 			}
@@ -197,6 +202,154 @@ func TestWireToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 	}
 }
 
+// TestBootTightensEveryRootTheEngineJudges plants every directory toolbelt documents its
+// root-integrity check judging (docs/configuration.md "Root integrity check", v3.12.0)
+// group-writable: the engine refuses exactly those, and comes up once healBootModes has run.
+func TestBootTightensEveryRootTheEngineJudges(t *testing.T) {
+	configDir, toolsDir := fitTree(t)
+	documented := []string{configDir, toolsDir}
+	for _, rel := range []string{
+		"bin", "opt", "npm", "npm/bin", "npm/lib", "npm/lib/node_modules",
+		"python", "python/bin", "python/tools", "python/interpreters",
+	} {
+		documented = append(documented, filepath.Join(toolsDir, filepath.FromSlash(rel)))
+	}
+	slices.Sort(documented)
+	for _, dir := range documented {
+		mkdirMode(t, dir, 0o775)
+	}
+	cfg := &Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}, ToolCatalogPath: filepath.Join(t.TempDir(), "absent.json")}
+
+	logs := captureDefaultLogger(t)
+	tools, err := wireToolsEngine(cfg, testRuntime(t), nil)
+	if err != nil {
+		t.Fatalf("wireToolsEngine over group-writable roots = %v, want the degraded slot", err)
+	}
+	if engine, _ := tools.Engine(); engine != nil {
+		t.Fatal("an engine came up over group-writable roots; the integrity check is off")
+	}
+	if got := loggedUnfitPaths(t, logs); !slices.Equal(got, documented) {
+		t.Errorf("the engine refused %v; toolbelt documents %v", got, documented)
+	}
+
+	healBootModes(configDir, toolsDir, "", "")
+	healed, err := wireToolsEngine(cfg, testRuntime(t), nil)
+	if err != nil {
+		t.Fatalf("wireToolsEngine after the heal = %v", err)
+	}
+	t.Cleanup(healed.Close)
+	if engine, reason := healed.Engine(); engine == nil {
+		t.Errorf("no engine after healBootModes: %v", reason)
+	}
+}
+
+// TestBootLeavesAnotherOwnersRootToTheOperator pins what healBootModes does not repair: a managed
+// directory another account owns stays unfit after the heal, so the engine slot stays degraded and
+// the refusal names that directory for the operator to chown.
+func TestBootLeavesAnotherOwnersRootToTheOperator(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("handing a directory to another uid needs root")
+	}
+	configDir, toolsDir := fitTree(t)
+	bin := filepath.Join(toolsDir, "bin")
+	mkdirMode(t, bin, 0o755)
+	if err := os.Chown(bin, 65501, -1); err != nil {
+		t.Fatal(err)
+	}
+	healBootModes(configDir, toolsDir, "", "")
+
+	logs := captureDefaultLogger(t)
+	cfg := &Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}, ToolCatalogPath: filepath.Join(t.TempDir(), "absent.json")}
+	tools, err := wireToolsEngine(cfg, testRuntime(t), nil)
+	if err != nil {
+		t.Fatalf("wireToolsEngine over another owner's bin = %v, want the degraded slot", err)
+	}
+	if engine, _ := tools.Engine(); engine != nil {
+		t.Fatal("an engine came up over a bin another account owns")
+	}
+	if got := loggedUnfitPaths(t, logs); !slices.Contains(got, bin) {
+		t.Errorf("the refusal named %v, want %s among them", got, bin)
+	}
+}
+
+// TestBootTrustsAnOwnerTheOperatorListed is the other half: the same plant with that uid in
+// TRUSTED_INSTALL_UIDS brings the engine up, so the list reaches the engine and not only kiro-cli.
+func TestBootTrustsAnOwnerTheOperatorListed(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("handing a directory to another uid needs root")
+	}
+	configDir, toolsDir := fitTree(t)
+	bin := filepath.Join(toolsDir, "bin")
+	mkdirMode(t, bin, 0o755)
+	if err := os.Chown(bin, 65501, -1); err != nil {
+		t.Fatal(err)
+	}
+	healBootModes(configDir, toolsDir, "", "")
+
+	captureDefaultLogger(t)
+	cfg := &Config{
+		ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}, ToolCatalogPath: filepath.Join(t.TempDir(), "absent.json"),
+		TrustedInstallUIDs: []int{65501},
+	}
+	tools, err := wireToolsEngine(cfg, testRuntime(t), nil)
+	if err != nil {
+		t.Fatalf("wireToolsEngine with the owner listed = %v, want an engine", err)
+	}
+	t.Cleanup(tools.Close)
+	if engine, _ := tools.Engine(); engine == nil {
+		t.Fatal("TRUSTED_INSTALL_UIDS did not reach the engine: it refused a bin the operator trusted")
+	}
+}
+
+// posixACLGrant is a POSIX access ACL (user::rwx user:<uid>:rwx group::r-x mask::rwx other::r-x)
+// in the kernel's system.posix_acl_access encoding.
+func posixACLGrant(uid uint32) []byte {
+	b := binary.LittleEndian.AppendUint32(nil, 2)
+	for _, e := range []struct {
+		tag, perm uint16
+		id        uint32
+	}{{1, 7, ^uint32(0)}, {2, 7, uid}, {4, 5, ^uint32(0)}, {0x10, 7, ^uint32(0)}, {0x20, 5, ^uint32(0)}} {
+		b = binary.LittleEndian.AppendUint16(b, e.tag)
+		b = binary.LittleEndian.AppendUint16(b, e.perm)
+		b = binary.LittleEndian.AppendUint32(b, e.id)
+	}
+	return b
+}
+
+// TestBootFollowsTheTrustListOverAnACLGrant pins the TRUSTED_INSTALL_UIDS wiring without root, so
+// CI runs it: an ACL grant to uid 65501 on bin refuses the engine, and listing that uid lets it
+// up. No healBootModes: its g-w would clear the ACL mask.
+func TestBootFollowsTheTrustListOverAnACLGrant(t *testing.T) {
+	for name, tc := range map[string]struct {
+		trusted []int
+		up      bool
+	}{"unlisted": {nil, false}, "listed": {[]int{65501}, true}} {
+		t.Run(name, func(t *testing.T) {
+			configDir, toolsDir := fitTree(t)
+			bin := filepath.Join(toolsDir, "bin")
+			mkdirMode(t, bin, 0o755)
+			if err := unix.Setxattr(bin, "system.posix_acl_access", posixACLGrant(65501), 0); errors.Is(err, unix.ENOTSUP) {
+				t.Skipf("this filesystem takes no POSIX ACL: %v", err)
+			} else if err != nil {
+				t.Fatalf("writing the ACL fixture: %v", err)
+			}
+			captureDefaultLogger(t)
+			cfg := &Config{
+				ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}, ToolCatalogPath: filepath.Join(t.TempDir(), "absent.json"),
+				TrustedInstallUIDs: tc.trusted,
+			}
+			tools, err := wireToolsEngine(cfg, testRuntime(t), nil)
+			if err != nil {
+				t.Fatalf("wireToolsEngine = %v, want an engine or the degraded slot", err)
+			}
+			t.Cleanup(tools.Close)
+			if engine, _ := tools.Engine(); (engine != nil) != tc.up {
+				t.Fatalf("engine up = %v with TrustedInstallUIDs %v over a grant to 65501, want %v", engine != nil, tc.trusted, tc.up)
+			}
+		})
+	}
+}
+
 // TestAppShutdownToleratesTheDegradedEngine asserts that no toolbelt method is nil-receiver safe, so Shutdown
 // must skip the nil engine.
 func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {
@@ -206,7 +359,7 @@ func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {
 	}
 	captureDefaultLogger(t)
 
-	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
+	tools, err := wireToolsEngine(&Config{ConfigDir: configDir, Tools: toolsRoot{dir: toolsDir}}, testRuntime(t), nil)
 	if err != nil {
 		t.Fatalf("wireToolsEngine over an unfit root = %v, want the degraded slot", err)
 	}
@@ -218,9 +371,16 @@ func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	purgeScheduler, err := chat.NewPurgeScheduler(chatStore, chat.PurgeConfig{
+		Retention: func() time.Duration { return 0 },
+		OnPurge:   func(marotte.ChatID, []string) {},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	app := &App{
 		Runtime:        agent.New(t.Context(), t.TempDir(), nil, chatStore),
-		purgeScheduler: chat.NewPurgeScheduler(chatStore, func() time.Duration { return 0 }),
+		purgeScheduler: purgeScheduler,
 		mcpPrewarm:     prewarm.NewRunner(t.Context(), nil),
 		tools:          tools,
 		stopKiro:       func() {},
@@ -234,7 +394,7 @@ func TestWireToolsEngineKeepsOtherFailuresFatal(t *testing.T) {
 	configDir, _ := fitTree(t)
 	logs := captureDefaultLogger(t)
 
-	tools, err := wireToolsEngine(t.Context(), &Config{ConfigDir: configDir}, testRuntime(t), nil)
+	tools, err := wireToolsEngine(&Config{ConfigDir: configDir}, testRuntime(t), nil)
 
 	if err == nil {
 		t.Fatal("a missing tools dir was absorbed into a tool-less boot; only an unfit root or an unusable tools.json may degrade")

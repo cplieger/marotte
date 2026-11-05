@@ -3,7 +3,7 @@ package workflow
 import (
 	"cmp"
 
-	"github.com/cplieger/keyenc"
+	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -25,7 +25,7 @@ type Ask struct {
 	// Wait is what KAS's state blocks, computed without reading Hold, so a verb that registered its
 	// own pending before its check still sees KAS's refusal conditions.
 	Wait marotte.RunAskBlocker
-	// AskedAt is display only.
+	// AskedAt is KAS's park start, display only.
 	AskedAt  string
 	NodePath []string
 }
@@ -55,8 +55,7 @@ type StepLog struct {
 	// Asked is the warning text of the newest turn that ended, "" when that turn sent none.
 	Asked string
 	// Said is the parking turn's last agent words from the run's own record.
-	Said    string
-	EndedAt string
+	Said string
 	// Open is true while the newest edge is a turn_start with no turn_end after it.
 	Open bool
 }
@@ -77,7 +76,7 @@ func ParkedSteps(reply Inspect) []StepSession {
 }
 
 // PausedOnAsks reports whether reply is a paused run whose every paused leaf waits on a person, the
-// state where KAS's resume leaves each step's need_input signal and re-parks it at once.
+// state where KAS's resume re-parks each step at once.
 func PausedOnAsks(reply Inspect) bool {
 	if !reply.OK || reply.State == nil || reply.State.Status != statusPaused {
 		return false
@@ -97,7 +96,7 @@ func PausedOnAsks(reply Inspect) bool {
 
 // AskPosition is one step execution's ask identity across its turns: an Ask's Position, and the
 // first component of every Ask.ID asked there.
-func AskPosition(workflowID string, st StepSession) string {
+func AskPosition(workflowID string, st *StepSession) string {
 	return keyenc.Join(workflowID, PathKey(st.Path), st.SessionID)
 }
 
@@ -116,7 +115,7 @@ func OpenAsks(reply Inspect, log RunLog) []Ask {
 			continue
 		}
 		step := log.Steps[v.n.SessionID]
-		position := AskPosition(s.WorkflowID, StepSession{Path: v.path, SessionID: v.n.SessionID})
+		position := AskPosition(s.WorkflowID, &StepSession{Path: v.path, SessionID: v.n.SessionID})
 		marker := cmp.Or(step.Marker, keyenc.Join(log.Epoch, "0"))
 		text, source := askText(step)
 		out = append(out, Ask{
@@ -131,7 +130,7 @@ func OpenAsks(reply Inspect, log RunLog) []Ask {
 			Reason:        unsignalledReason(s, v.n, sole),
 			Hold:          hold(log),
 			Wait:          wait(s, all, i, log),
-			AskedAt:       step.EndedAt,
+			AskedAt:       v.n.parkWait().Since,
 		})
 	}
 	return out

@@ -43,7 +43,7 @@ func TestSearch_AWakesHeaderTextIsFoundOnTheWake(t *testing.T) {
 			if len(hits) != 1 {
 				t.Fatalf("hits = %+v, want one, on the wake: its row is drawn there", hits)
 			}
-			if h := hits[0]; h.TurnID != c.turn || h.EntryID != c.turn+":wake" || h.SegmentKind != SegmentWake {
+			if h := hits[0]; h.TurnID != c.turn || h.EntryID != c.turn+":wake" || h.SegmentKind != segmentWake {
 				t.Errorf("hit = %+v, want the %s wake's header", h, c.turn)
 			}
 		})
@@ -56,7 +56,7 @@ func TestSearch_AnUnclaimedWorkflowMessageIsFoundOnItsRow(t *testing.T) {
 		add("", "wfmsg-r", marotte.EntryKindSteer, wakeRow(note, "success")))
 
 	hits := searchHits(entries, drawn, "link report")
-	if len(hits) != 1 || hits[0].EntryID != "wfmsg-r" || hits[0].SegmentKind != SegmentSteer {
+	if len(hits) != 1 || hits[0].EntryID != "wfmsg-r" || hits[0].SegmentKind != segmentSteer {
 		t.Errorf("hits = %+v, want the row's own steer segment", hits)
 	}
 }

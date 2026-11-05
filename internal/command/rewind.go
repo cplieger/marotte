@@ -13,7 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/keylock"
+	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/translate"
@@ -26,11 +26,32 @@ const reasonRunsInCut = "runs_in_cut"
 // errRewindRunsInCut is the refusal's prose; the runs ride beside it.
 var errRewindRunsInCut = errors.New("rewinding here stops workflow runs this conversation launched. Confirm to stop them and rewind")
 
+// reasonTurnOpen is the 409 refusal class for a rewind while a turn runs in the chat.
+const reasonTurnOpen = "turn_open"
+
+// reserveRevert takes the chat's slot for a revert whose intent began at stamp. A close's drain holds it briefly
+// while it looks for a queued prompt, so a rewind waits as a prompt does rather than reading that as a running turn.
+func reserveRevert(ctx context.Context, admission turnAdmission, chatID marotte.ChatID, stamp uint64) (Reservation, error) {
+	out, res := admission.ReserveIdleTurn(ctx, chatID, marotte.TurnSourceRevert, stamp, AdmissionWait)
+	switch out {
+	case IdleAcquired:
+		return res, nil
+	case IdleTurnOpen:
+		return Reservation{}, StatusErrorReason(http.StatusConflict, reasonTurnOpen, errRewindTurnOpen)
+	case IdleClosed:
+		return Reservation{}, StatusErrorReason(http.StatusConflict, reasonChatClosed, errRewindChatClosed)
+	case IdleChatGone:
+		return Reservation{}, StatusErrorReason(http.StatusConflict, reasonChatGone, ErrChatNotFound)
+	default:
+		return Reservation{}, StatusErrorReason(http.StatusConflict, reasonBusy, errRewindBusy)
+	}
+}
+
 // cmdRewindChat reverts the chat to a past turn via KAS's checkpoint machinery, then appends the
 // turn_revert that records it. The record is required: the merge keeps a record turn the replay
-// lacks, and the appended revert refuses a projection built from the pre-revert replay. Refused
-// while the registry holds a turn or reservation; a live run the cut launched is stopRunsInCut's
-// question, asked first.
+// lacks, and the appended revert refuses a projection built from the pre-revert replay. A running
+// turn refuses at once; a transient holder of the chat's slot is waited out up to AdmissionWait,
+// then the rewind answers busy. A live run the cut launched is stopRunsInCut's question.
 func cmdRewindChat(
 	ctx context.Context,
 	bridges bridgeAccess,
@@ -43,6 +64,7 @@ func cmdRewindChat(
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
+	stamp := admission.LifeStamp()
 	var p marotte.RewindChatCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil || p.MessageID == "" {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
@@ -55,11 +77,12 @@ func cmdRewindChat(
 	// Held until the record lands: a prompt admitted meanwhile opens a turn, which ends the restore
 	// window before KAS writes the files back. A non-prompt holder parks that prompt rather than
 	// turning it into a steer.
-	if !admission.TryReserveIdleTurn(cmd.ChatID, marotte.TurnSourceRevert) {
-		return nil, StatusError(http.StatusConflict, errRewindTurnOpen)
+	res, refused := reserveRevert(ctx, admission, cmd.ChatID, stamp)
+	if refused != nil {
+		return nil, refused
 	}
-	defer admission.ReleaseTurnReservation(cmd.ChatID)
-	target, found, err := chats.RewindTarget(ctx, cmd.ChatID, p.MessageID)
+	defer admission.ReleaseTurnReservation(res)
+	target, found, err := chats.PromptTarget(ctx, cmd.ChatID, p.MessageID)
 	if err != nil {
 		slog.Error("rewind: resolve target", "chat", cmd.ChatID, keyError, err)
 		return nil, StatusError(http.StatusInternalServerError, err)
@@ -76,7 +99,9 @@ func cmdRewindChat(
 		return nil, err
 	}
 
-	result, status, err := revertToMessage(ctx, bridge, cmp.Or(target.KASMessageID, p.MessageID))
+	rctx, cancel := bridges.CallBudget(ctx, engineChangeBudget)
+	result, status, err := revertToMessage(rctx, bridge, cmp.Or(target.KASMessageID, p.MessageID))
+	cancel()
 	if err != nil {
 		slog.Warn("rewind: revert failed", "chat", cmd.ChatID, "status", status,
 			"kas_id_known", target.KASMessageID != "", keyError, err)

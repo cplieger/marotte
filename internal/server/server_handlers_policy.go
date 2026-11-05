@@ -9,12 +9,12 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/workspace"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // Native Cedar policy endpoints: GET /api/permissions (the enforced view), POST
@@ -23,7 +23,8 @@ import (
 // `ask`, only user and workspace scopes are writable, and widening needs an explicit confirm.
 
 // handlePolicyView serves GET /api/permissions via _kiro/permissions/list on an observer
-// session, degrading to the editable files (Available=false) when the engine does not answer.
+// session, with the load errors of that session's door, degrading to the editable files
+// (Available=false, no load errors) when the engine does not answer.
 func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 	// Gated here, not on the pattern (see ListenAndServe).
 	if !httpreply.RequireMethod(w, r, http.MethodGet) {
@@ -34,14 +35,16 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 		WritableScopes: []string{policyfile.ScopeUser, policyfile.ScopeWorkspace},
 		Profiles:       securityProfileCatalog(),
 		Profile:        s.activeProfile(r.Context()),
+		LoadErrors:     []marotte.PolicyErrorItem{},
 		Available:      true,
 	}
 	if s.policy != nil {
-		rules, err := s.policy.PolicyList(r.Context(), scope)
+		rules, loadErrs, err := s.policy.PolicyListing(r.Context(), scope)
 		if err == nil {
-			view.Rules = dedupePolicyRules(rules)
-			view.Capabilities = pickerCapabilities(view.Rules)
-			webhttp.WriteJSON(w, view)
+			if loadErrs != nil {
+				view.LoadErrors = loadErrs
+			}
+			writePolicyView(w, &view, rules)
 			return
 		}
 		slog.Warn("policy view: live list failed, falling back to file read", "error", logsafe.Field(err.Error()))
@@ -49,9 +52,17 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 	// Fallback: read the editable files directly so the editor works even
 	// when the engine cannot answer (e.g. not signed in).
 	view.Available = false
-	view.Rules = dedupePolicyRules(s.policyRulesFromFiles(scope))
+	writePolicyView(w, &view, s.policyRulesFromFiles(scope))
+}
+
+func writePolicyView(w http.ResponseWriter, view *marotte.PolicyView, rules []marotte.PolicyRule) {
+	view.Rules = dedupePolicyRules(rules)
+	for i := range view.Rules {
+		r := &view.Rules[i]
+		r.Editable = policyfile.Editable(r.Scope, r.Source, r.Effect)
+	}
 	view.Capabilities = pickerCapabilities(view.Rules)
-	webhttp.WriteJSON(w, view)
+	httpserver.WriteJSON(w, view)
 }
 
 // dedupePolicyRules drops rules identical in EVERY field, keeping first-arrival order:
@@ -149,7 +160,7 @@ func (s *Server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.policy == nil {
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("policy explain unavailable"))
+		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("policy explain unavailable"))
 		return
 	}
 	var req marotte.PolicyExplainRequest
@@ -168,10 +179,10 @@ func (s *Server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 	res, err := s.policy.PolicyExplain(r.Context(), req)
 	if err != nil {
 		slog.Warn("policy explain failed", "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("policy explain failed"))
+		httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("policy explain failed"))
 		return
 	}
-	webhttp.WriteJSON(w, res)
+	httpserver.WriteJSON(w, res)
 }
 
 // op is "add", "remove" or "update". An add's empty effect defaults to "ask". For remove and update
@@ -193,9 +204,10 @@ const capShell = "shell"
 // effectRank orders effects by strictness for the widening gate: moving a
 // rule to a lower rank grants the agent more than it had.
 var effectRank = map[string]int{
-	policyfile.EffectDeny:  2,
-	policyfile.EffectAsk:   1,
-	policyfile.EffectAllow: 0,
+	policyfile.EffectDeny:     3,
+	policyfile.EffectAsk:      2,
+	policyfile.EffectEvaluate: 1,
+	policyfile.EffectAllow:    0,
 }
 
 // Writes the scope's permissions.yaml; KAS hot-reloads and emits _kiro/policy/changed → the
@@ -254,7 +266,7 @@ func (*Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *polic
 	}
 	f, err := policyfile.Load(path)
 	if err != nil {
-		webhttp.WriteJSONStatus(w, http.StatusConflict,
+		httpserver.WriteJSONStatus(w, http.StatusConflict,
 			httpreply.ErrorJSON("existing policy file could not be parsed. Edit it manually"))
 		return
 	}
@@ -264,7 +276,7 @@ func (*Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *polic
 		return
 	}
 	if !changed {
-		webhttp.Ok(w) // idempotent: identical rule already present
+		httpserver.Ok(w) // idempotent: identical rule already present
 		return
 	}
 	if err := policyfile.Save(r.Context(), path, f); err != nil {
@@ -272,7 +284,7 @@ func (*Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *polic
 		return
 	}
 	slog.Info("policy rule added", "scope", body.Scope, "capability", logsafe.Field(rule.Capability), "effect", rule.Effect)
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 }
 
 func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {
@@ -282,7 +294,7 @@ func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 	}
 	// Removing a deny widens access: require an explicit confirm.
 	if body.Effect == policyfile.EffectDeny && !body.Confirm {
-		webhttp.WriteJSONStatus(w, http.StatusConflict,
+		httpserver.WriteJSONStatus(w, http.StatusConflict,
 			httpreply.ErrorJSON("removing a deny rule widens access. Resend with confirm=true"))
 		return
 	}
@@ -296,12 +308,12 @@ func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 	}
 	f, err := policyfile.Load(path)
 	if err != nil {
-		webhttp.WriteJSONStatus(w, http.StatusConflict,
+		httpserver.WriteJSONStatus(w, http.StatusConflict,
 			httpreply.ErrorJSON("existing policy file could not be parsed. Edit it manually"))
 		return
 	}
 	if !f.Remove(&rule) {
-		webhttp.Ok(w) // idempotent: rule already absent
+		httpserver.Ok(w) // idempotent: rule already absent
 		return
 	}
 	if err := policyfile.Save(r.Context(), path, f); err != nil {
@@ -309,7 +321,7 @@ func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 		return
 	}
 	slog.Info("policy rule removed", "scope", body.Scope, "capability", logsafe.Field(rule.Capability), "effect", rule.Effect)
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 }
 
 // A widening change requires confirm=true.
@@ -319,11 +331,11 @@ func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 		return
 	}
 	if !policyfile.ValidEffect(body.NewEffect) {
-		httpreply.BadRequest(w, "new_effect must be allow, deny, or ask")
+		httpreply.BadRequest(w, "new_effect must be allow, deny, ask, or evaluate")
 		return
 	}
 	if effectRank[body.NewEffect] < effectRank[body.Effect] && !body.Confirm {
-		webhttp.WriteJSONStatus(w, http.StatusConflict,
+		httpserver.WriteJSONStatus(w, http.StatusConflict,
 			httpreply.ErrorJSON("changing "+body.Effect+" to "+body.NewEffect+" widens access. Resend with confirm=true"))
 		return
 	}
@@ -337,7 +349,7 @@ func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 	}
 	f, err := policyfile.Load(path)
 	if err != nil {
-		webhttp.WriteJSONStatus(w, http.StatusConflict,
+		httpserver.WriteJSONStatus(w, http.StatusConflict,
 			httpreply.ErrorJSON("existing policy file could not be parsed. Edit it manually"))
 		return
 	}
@@ -346,7 +358,7 @@ func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 		target := rule
 		target.Effect = body.NewEffect
 		if f.Has(&target) {
-			webhttp.Ok(w)
+			httpserver.Ok(w)
 			return
 		}
 		httpreply.NotFound(w, "rule not found. Refresh the policy view")
@@ -358,5 +370,5 @@ func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 	}
 	slog.Info("policy rule updated", "scope", body.Scope,
 		"capability", logsafe.Field(rule.Capability), "effect", body.Effect, "new_effect", body.NewEffect)
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 }

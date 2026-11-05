@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 )
 
 func staleTemp(t *testing.T, dir, name string) string {
@@ -117,7 +117,7 @@ func TestSweepStaleTemps_missing_dirs_are_not_fatal(t *testing.T) {
 func TestSweepStaleTemps_reclaims_a_leaked_writability_probe(t *testing.T) {
 	t.Parallel()
 	configDir, workDir := t.TempDir(), t.TempDir()
-	leaked := staleTemp(t, configDir, atomicfile.TempName())
+	leaked := staleTemp(t, configDir, filesafe.TempName())
 	strayShape := staleTemp(t, configDir, ".marotte-probe-4242")
 
 	sweepStaleTemps(t.Context(), configDir, workDir)

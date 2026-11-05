@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/notice"
@@ -416,7 +416,7 @@ func (p *PRStatusPoller) fold(ctx context.Context, r *ConnectionRead, present, v
 	}
 	toRead := slices.Concat(watched, unsorted)
 	if !present {
-		p.readRows(ctx, r, toRead, watched)
+		p.readRows(ctx, r, toRead, false)
 		p.notify(ctx, r, watched)
 		return
 	}
@@ -431,7 +431,7 @@ func (p *PRStatusPoller) fold(ctx context.Context, r *ConnectionRead, present, v
 	if viewing {
 		toRead = distinctRows(&e)
 	}
-	p.readRows(ctx, r, toRead, watched)
+	p.readRows(ctx, r, toRead, viewing)
 	p.notify(ctx, r, watched)
 	p.layFills(r, &e)
 	p.publish(ctx, &e)

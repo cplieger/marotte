@@ -7,10 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/cplieger/go/sse"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/sse"
 )
 
 // Without it the connect is a v2 bundle, which still needs numeric floor/head on `connected` and
@@ -22,12 +21,6 @@ const clientTagHeader = "SSE-Client"
 // Broadcast publishes evt to every connected client.
 func (b *bus) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	b.emit(evt)
-}
-
-// PendingPermsAdd registers an unanswered decision so a reconnecting client gets
-// it replayed, with the bridge its answer goes back on.
-func (b *bus) PendingPermsAdd(acpID int64, evt marotte.ServerEvent, origin translate.AskOrigin) marotte.ServerEvent {
-	return b.pendingPerms.add(acpID, evt, origin)
 }
 
 // It touches evt.Subject only for chat_status, taking the stamp MergeStamped minted with the
@@ -159,7 +152,14 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, h *sse.Hello, legacy bool)
 			slog.Error("connect: marshal frame", "type", evt.Type, "error", err)
 			return nil //nolint:nilerr // skip the unmarshalable frame, keep the stream
 		}
-		return sw.Event("", data)
+		err = sw.Event("", data)
+		if errors.Is(err, sse.ErrFrameTooLarge) {
+			// Refused before any byte is written, so the stream is intact; failing the hook would fail every connect.
+			slog.Error("connect: frame exceeds the hub's cap; skipped", "type", evt.Type, "bytes", len(data),
+				"cap", sse.MaxFrameBytes)
+			return nil
+		}
+		return err
 	}
 	if err := writeEvent(marotte.NewEvent(marotte.EventConnected, "", connected)); err != nil {
 		return err

@@ -34,7 +34,7 @@ interface TestSession {
 }
 
 vi.mock("./store.js", async (importOriginal) => {
-  const { signal } = (await vi.importActual("@cplieger/reactive")) as { signal: SignalFactory };
+  const { signal } = (await vi.importActual("@cplieger/ui")) as { signal: SignalFactory };
   const activeSession = signal<TestSession | undefined>(undefined);
   return {
     ...(await importOriginal<typeof Store>()),
@@ -66,7 +66,6 @@ vi.mock("./actions/chat.js", async (importOriginal) => ({
 }));
 vi.mock("./session-context.js", async (importOriginal) => ({
   ...(await importOriginal<typeof SessionContext>()),
-  setCurrentModel: vi.fn(),
   setLastModel: vi.fn(),
   getLastEffortFor: () => "",
 }));

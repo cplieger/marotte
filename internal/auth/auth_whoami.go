@@ -3,10 +3,10 @@ package auth
 import (
 	"net/http"
 
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/signin"
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/webhttp/v4"
 )
 
 // WhoamiState discriminates /api/whoami's three answers; "could not ask" is its own state so the UI offers a retry,
@@ -15,12 +15,12 @@ type WhoamiState string
 
 // Every response carries exactly one arm.
 const (
-	// WhoamiSignedIn carries the account's labels, and Email when the backend learned it.
-	WhoamiSignedIn WhoamiState = "signed_in"
-	// WhoamiSignedOut carries nothing but the sign-in attempt.
-	WhoamiSignedOut WhoamiState = "signed_out"
-	// WhoamiUnavailable is marotte not knowing, and carries Reason.
-	WhoamiUnavailable WhoamiState = "unavailable"
+	// whoamiSignedIn carries the account's labels, and Email when the backend learned it.
+	whoamiSignedIn WhoamiState = "signed_in"
+	// whoamiSignedOut carries nothing but the sign-in attempt.
+	whoamiSignedOut WhoamiState = "signed_out"
+	// whoamiUnavailable is marotte not knowing, and carries Reason.
+	whoamiUnavailable WhoamiState = "unavailable"
 )
 
 // WhoamiResponse is /api/whoami's typed wire shape. State is the discriminator and each other field belongs to one
@@ -54,11 +54,11 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.apiKey {
-		webhttp.WriteJSON(w, WhoamiResponse{State: WhoamiSignedIn, Auth: textAPIKeyAuth, APIKey: true})
+		httpserver.WriteJSON(w, WhoamiResponse{State: whoamiSignedIn, Auth: textAPIKeyAuth, APIKey: true})
 		return
 	}
 	st := h.vault.Status(h.backend)
-	webhttp.WriteJSON(w, whoamiFrom(&st))
+	httpserver.WriteJSON(w, whoamiFrom(&st))
 }
 
 // whoamiFrom is a Status as the account menu reads it, every upstream string bounded to one line.
@@ -69,16 +69,16 @@ func whoamiFrom(st *signin.Status) WhoamiResponse {
 	}
 	switch st.Kind {
 	case signin.StatusSignedIn:
-		out.State = WhoamiSignedIn
+		out.State = whoamiSignedIn
 		out.Email = identityText(st.Label.Email)
 		out.Auth = identityText(st.Label.Method)
 		out.AccountType = identityText(st.Label.AccountType)
 		out.StartURL = identityText(st.Label.StartURL)
 		out.Region = identityText(st.Label.Region)
 	case signin.StatusSignedOut:
-		out.State = WhoamiSignedOut
+		out.State = whoamiSignedOut
 	default:
-		out.State = WhoamiUnavailable
+		out.State = whoamiUnavailable
 		out.Reason = identityText(st.Reason)
 	}
 	return out
@@ -89,5 +89,5 @@ const maxIdentityFieldBytes = 256
 // identityText prepares one upstream identity string for a single-line UI row, mapping C0/C1, DEL and Bidi controls
 // to spaces since these are labels.
 func identityText(s string) string {
-	return runesafe.SanitizeSingleLineBounded(s, maxIdentityFieldBytes)
+	return textsafe.SanitizeSingleLineBounded(s, maxIdentityFieldBytes)
 }

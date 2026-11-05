@@ -3,7 +3,7 @@
 
 import { payloadOf } from "./turns.js";
 import type { Entry, PendingSteer } from "./types.js";
-import type { SteerOrigin, SteerRowState } from "./wire/types.gen.js";
+import type { Caller, SteerOrigin, SteerRowState } from "./wire/types.gen.js";
 
 export interface SteerFrame {
   id: string;
@@ -13,6 +13,7 @@ export interface SteerFrame {
   /** Absent reads as `queued`, the plain row a direct POST reply describes. */
   state?: SteerRowState | undefined;
   awaitsPrompt?: boolean | undefined;
+  caller?: Caller | undefined;
 }
 
 /** A fold's outcome: the new rows, and whether the change moves what the dock draws (a batch only
@@ -84,7 +85,9 @@ export function foldSteerFrame(
     ...(prev?.kas !== undefined && { kas: prev.kas }),
     ...(prev?.compacted === true && { compacted: true as const }),
     ...(frame.state === "unsent" && { unsent: true as const }),
+    ...(frame.state === "delivering" && { delivering: true as const }),
     ...(frame.state === "unsent" && frame.awaitsPrompt === true && { awaitsPrompt: true as const }),
+    ...(frame.caller !== undefined && { caller: frame.caller }),
   };
   const next = adoptAt >= 0 ? rows.map((e, i) => (i === adoptAt ? row : e)) : [...rows, row];
   return { rows: next, repaint: true };

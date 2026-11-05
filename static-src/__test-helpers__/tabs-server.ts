@@ -50,7 +50,11 @@ interface State {
   pending: TabsChangedPayload[];
   sent: Sent[];
   /** Command types the next dispatch of which fails, with the status to use. */
-  failures: { type: string; status: number; error: string }[];
+  failures: { type: string; status: number; error: string; reason?: string; body?: unknown }[];
+  /** Command types the next dispatch of which COMMITS, then answers with this result instead. */
+  lateAnswers: { type: string; result: SendResultLike }[];
+  /** Command types the next dispatch of which COMMITS, then answers this result after `afterMs`. */
+  delayedAnswers: { type: string; afterMs: number; result: SendResultLike }[];
   /** Answers `GET /api/tabs` gives, queued. Falls through to the live set. */
   listAnswers: (TabList | null)[];
   listCalls: number;
@@ -70,6 +74,8 @@ const state: State = {
   pending: [],
   sent: [],
   failures: [],
+  lateAnswers: [],
+  delayedAnswers: [],
   listAnswers: [],
   listCalls: 0,
   held: null,
@@ -87,6 +93,8 @@ export const tabServer = {
     state.pending = [];
     state.sent = [];
     state.failures = [];
+    state.lateAnswers = [];
+    state.delayedAnswers = [];
     state.listAnswers = [];
     state.listCalls = 0;
     state.held = null;
@@ -176,9 +184,28 @@ export const tabServer = {
     return state.sent.filter((c) => c.type === type);
   },
 
-  /** Make the next dispatch of `type` fail. Consumed by that dispatch. */
-  failNext(type: string, status = 500, error = "nope"): void {
-    state.failures.push({ type, status, error });
+  /** Make the next dispatch of `type` fail, with the error envelope's machine `reason` and its parsed `body` when
+   *  given. Consumed by that dispatch. */
+  failNext(type: string, status = 500, error = "nope", reason?: string, body?: unknown): void {
+    state.failures.push({
+      type,
+      status,
+      error,
+      ...(reason === undefined ? {} : { reason }),
+      ...(body === undefined ? {} : { body }),
+    });
+  },
+
+  /** Make the next dispatch of `type` commit (its frame goes out per the mode) and answer `result`: a server that
+   *  committed but whose answer the client gave up on, or one that answered an error after its frame. */
+  commitThenAnswerNext(type: string, result: SendResultLike): void {
+    state.lateAnswers.push({ type, result });
+  },
+
+  /** Make the next dispatch of `type` commit now and answer `result` after `afterMs` of timer time. The send's
+   *  signal ending first answers `transport.send`'s timeout answer, and drops the late answer. */
+  answerAfterNext(type: string, afterMs: number, result: SendResultLike): void {
+    state.delayedAnswers.push({ type, afterMs, result });
   },
 
   /** Queue an answer for the next `GET /api/tabs`. `null` is the unreachable
@@ -331,6 +358,8 @@ interface SendResultLike {
   ok: boolean;
   status: number;
   error?: string;
+  code?: string;
+  reason?: string;
   body?: unknown;
 }
 
@@ -340,7 +369,13 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by the index check
     const failure = state.failures[failAt]!;
     state.failures.splice(failAt, 1);
-    return { ok: false, status: failure.status, error: failure.error };
+    return {
+      ok: false,
+      status: failure.status,
+      error: failure.error,
+      ...(failure.reason === undefined ? {} : { reason: failure.reason }),
+      ...(failure.body === undefined ? {} : { body: failure.body }),
+    };
   }
   switch (type) {
     case "open_tab": {
@@ -486,7 +521,10 @@ function stamp(payload: Record<string, unknown>): void {
 /** The `transport.js` mock: `send` answers tab commands off the collection, `newOpID` mints the
  *  correlation id. Other commands answer a bare success, since none is the subject. */
 export function tabTransportMock(): {
-  send: (cmd: { type: string; payload?: unknown }) => Promise<SendResultLike>;
+  send: (
+    cmd: { type: string; payload?: unknown },
+    opts?: { signal?: AbortSignal },
+  ) => Promise<SendResultLike>;
   newOpID: () => string;
   newMessageID: () => string;
   newRequestID: () => string;
@@ -495,11 +533,16 @@ export function tabTransportMock(): {
 } {
   let ops = 0;
   return {
-    send: vi.fn((cmd: { type: string; payload?: unknown }) => {
+    send: vi.fn((cmd: { type: string; payload?: unknown }, opts?: { signal?: AbortSignal }) => {
       const payload = (cmd.payload ?? {}) as Record<string, unknown>;
       state.sent.push({ type: cmd.type, payload });
       const before = state.pending.length;
-      const result = handle(cmd.type, payload);
+      const committedResult = handle(cmd.type, payload);
+      const lateAt = state.lateAnswers.findIndex((a) => a.type === cmd.type);
+      const result =
+        lateAt < 0
+          ? committedResult
+          : (state.lateAnswers.splice(lateAt, 1)[0]?.result ?? committedResult);
       const committed = state.pending.slice(before);
       const deliver = (): void => {
         state.pending = state.pending.filter((f) => !committed.includes(f));
@@ -511,6 +554,11 @@ export function tabTransportMock(): {
         deliver();
       } else if (committed.length > 0 && state.mode === "response-first") {
         setTimeout(deliver, 0);
+      }
+      const delayedAt = state.delayedAnswers.findIndex((a) => a.type === cmd.type);
+      const delayed = delayedAt < 0 ? undefined : state.delayedAnswers.splice(delayedAt, 1)[0];
+      if (delayed !== undefined) {
+        return answerAfter(delayed.afterMs, delayed.result, opts?.signal);
       }
       const answer = answerWith(result);
       return answer;
@@ -555,6 +603,34 @@ function answerWith(result: SendResultLike): Promise<SendResultLike> {
       resolve(result);
     });
   });
+}
+
+/** Answer after `afterMs`, unless `signal` ends first: then answer `timeoutAnswer()`. */
+function answerAfter(
+  afterMs: number,
+  result: SendResultLike,
+  signal: AbortSignal | undefined,
+): Promise<SendResultLike> {
+  return new Promise<SendResultLike>((resolve) => {
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve(timeoutAnswer());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(result);
+    }, afterMs);
+    if (signal?.aborted === true) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** `transport.send`'s answer for a fetch its deadline ended. */
+function timeoutAnswer(): SendResultLike {
+  return { ok: false, status: 0, error: "Request timed out", code: "timeout" };
 }
 
 export function fakeSubject(id: string, over: Partial<TabSubject> = {}): TabSubject {

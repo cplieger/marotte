@@ -1,12 +1,12 @@
 // One bindList over `servers` (keyed by id), so a row element persists across changes and keeps toggle focus. Each
 // row's one effect reads its server, status and prewarm signals and patches the row surgically.
 
-import { el, bindList, effect, signal } from "@cplieger/reactive";
+import { el, bindList, effect, signal } from "@cplieger/ui";
 
 import { $, setControlBusy } from "./dom.js";
 import { reconcile } from "./reconcile.js";
 import { sigChanged, wireSignature } from "./paint-sig.js";
-import { isSafeURL } from "./url-safety.js";
+import { isHttpURL } from "./url-safety.js";
 import { onSSE } from "./bus.js";
 import { GOVERNANCE_UNAVAILABLE, governanceReasonKind, onGovernanceChange } from "./governance.js";
 import type { GovernanceMCPRegistry, GovernanceStatePayload } from "./types.js";
@@ -24,6 +24,7 @@ import {
   type ServerDiscovery,
   servers,
   unconfiguredNames,
+  unreadableEntries,
   mcpState,
   standingFor,
   statusSignalFor,
@@ -42,6 +43,7 @@ import {
   saveServer,
   reconnectServer,
   relayOAuthCallback,
+  signInServer,
 } from "./actions/mcp.js";
 import { bindLoadingState, isPending, registerCleanup } from "./actions/index.js";
 
@@ -97,6 +99,12 @@ function buildSectionScaffold(): void {
     className: "mcp-gov-disabled",
     hidden: true,
   }) as HTMLParagraphElement;
+  const unreadableMsg = el("p", {
+    className: "mcp-store-unreadable",
+    role: "status",
+    hidden: true,
+  });
+  registerCleanup(bindUnreadableNotice(unreadableMsg));
   const registryPanel = el("div", { className: "mcp-registry-panel hidden" }) as HTMLDivElement;
   bindRegistryPanel(registryPanel);
 
@@ -111,6 +119,7 @@ function buildSectionScaffold(): void {
     hint,
     actionRow,
     govDisabledMsg,
+    unreadableMsg,
     registryPanel,
     emptyMsg,
     sectionBody,
@@ -118,6 +127,22 @@ function buildSectionScaffold(): void {
   );
   bindServerList();
   bindForeignList();
+}
+
+/** Show how many saved servers the store could not read, hidden at none. Exported for testing. */
+export function bindUnreadableNotice(host: HTMLElement): () => void {
+  return effect(() => {
+    const n = unreadableEntries.value;
+    host.hidden = n === 0;
+    host.textContent = n === 0 ? "" : unreadableText(n);
+  });
+}
+
+/** The notice for n unreadable entries of marotte's mcp.json. */
+function unreadableText(n: number): string {
+  return n === 1
+    ? "1 saved integration could not be read from marotte's mcp.json in its config folder, so it is not listed here. Its entry stays in the file, and the agent keeps its last settings if it had them. Fix or delete the entry, and restart marotte right after editing the file, before changing anything in this section: a change here writes the entry back as it was first read, at the end of the list. The startup log gives its position in the list, and its name when that reads."
+    : `${String(n)} saved integrations could not be read from marotte's mcp.json in its config folder, so they are not listed here. Their entries stay in the file, and the agent keeps their last settings if it had them. Fix or delete the entries, and restart marotte right after editing the file, before changing anything in this section: a change here writes the entries back as they were first read, at the end of the list. The startup log gives each one's position in the list, and its name when that reads.`;
 }
 
 // Holds the section's elements, keeping applyMcpGovernance pure and testable.
@@ -458,7 +483,9 @@ export function renderForeignMeta(st: RuntimeStatus): string {
     case "connected":
       return "Connected. Its tools are available to the agent";
     case "needs_auth":
-      return "Waiting for sign-in";
+      return signInWaitPhrase(st);
+    case "signing_in":
+      return "Signing in";
     case "disabled":
       return "Disabled. The agent is not using it";
     default:
@@ -566,7 +593,7 @@ export function mountRow(s: Server, id: string): HTMLElement {
       } else {
         toggle.dataset["tooltip"] = lockReason;
       }
-      editBtn.classList.toggle("hidden", cur.transport === "registry" || lockReason !== undefined);
+      editBtn.classList.toggle("hidden", lockReason !== undefined);
       deleteBtn.classList.toggle("hidden", lockReason !== undefined);
       row.classList.toggle("mcp-row-readonly", lockReason !== undefined);
       nameEl.textContent = cur.name;
@@ -608,19 +635,32 @@ export function carriesLiveReport(st: RuntimeStatus, ownRow: boolean): boolean {
   return st.state !== "idle" && st.state !== "disabled";
 }
 
-/** Shared by both row kinds: a server awaiting sign-in may be on either. */
+/**
+ * Shared by both row kinds: a server awaiting sign-in may be on either. Waiting for sign-in offers Sign in; a sign-in
+ * in progress offers its consent page and the paste box.
+ */
 function oauthControls(
   body: HTMLElement,
   nameOf: () => string,
 ): (st: RuntimeStatus, live: boolean) => void {
+  let signIn: HTMLButtonElement | null = null;
   let pill: HTMLAnchorElement | null = null;
   let pillUrl: string | null = null;
+  let hint: HTMLParagraphElement | null = null;
   let relay: HTMLDetailsElement | null = null;
   return (st, live) => {
-    if (!live || st.state !== "needs_auth") {
+    if (live && st.state === "needs_auth") {
+      signIn ??= body.appendChild(renderSignInBtn(nameOf));
+    } else {
+      signIn?.remove();
+      signIn = null;
+    }
+    if (!live || st.state !== "signing_in") {
       pill?.remove();
       pill = null;
       pillUrl = null;
+      hint?.remove();
+      hint = null;
       relay?.remove();
       relay = null;
       return;
@@ -631,6 +671,9 @@ function oauthControls(
       pillUrl = st.oauth_url;
       body.appendChild(pill);
     }
+    hint ??= body.appendChild(
+      el("p", { className: "mcp-sign-in-hint" }, SIGN_IN_TIME_LIMIT) as HTMLParagraphElement,
+    );
     // A relayed code is spent, so a second paste can only fail.
     if (st.relayed) {
       relay?.remove();
@@ -642,9 +685,14 @@ function oauthControls(
   };
 }
 
+/** KAS waits for the consent at most the server's connect timeout: 60 s by default, 600 s at most. */
+const SIGN_IN_TIME_LIMIT =
+  "Finish signing in within the server's connection timeout: 60 seconds unless its timeout is set higher, up to 10 minutes.";
+
 const STATUS_META: Readonly<Record<RuntimeState, { css: string; title: string }>> = {
   connected: { css: "connected", title: "Connected" },
   needs_auth: { css: "oauth", title: "Needs authentication" },
+  signing_in: { css: "oauth", title: "Signing in" },
   idle: { css: "idle", title: "Not connected because no chat is running" },
   failed: { css: "failed", title: "Failed to initialise" },
   disabled: { css: "disabled", title: "Disabled" },
@@ -780,13 +828,20 @@ export function credentialSummary(s: Server): string {
   return parts.length === 0 ? "no credentials" : parts.join(", ");
 }
 
+function signInWaitPhrase(st: RuntimeStatus & { state: "needs_auth" }): string {
+  return st.error === undefined ? "Waiting for sign-in" : `Sign-in failed. ${st.error}`;
+}
+
 /** `connected` and `idle` get none: the dot says so, and a phrase would push the rest out of the track. */
 function statePhrase(st: RuntimeStatus): string {
   if (st.state === "failed") {
     return st.error === "" ? "Failed to start" : `Failed to start. ${st.error}`;
   }
   if (st.state === "needs_auth") {
-    return "Waiting for sign-in";
+    return signInWaitPhrase(st);
+  }
+  if (st.state === "signing_in") {
+    return "Signing in";
   }
   return "";
 }
@@ -829,8 +884,9 @@ function applyPrewarm(
   return b;
 }
 
+/** A link, never window.open: the consent URL arrives over SSE, which is no user gesture. */
 function renderOAuthPill(url: string): HTMLAnchorElement {
-  const safe = isSafeURL(url);
+  const safe = isHttpURL(url);
   return el(
     "a",
     {
@@ -842,8 +898,30 @@ function renderOAuthPill(url: string): HTMLAnchorElement {
         ? "Open the server's authorisation page in a new tab."
         : "The server sent an unsafe URL that is not http or https.",
     },
-    safe ? "Finish sign-in" : "Invalid OAuth URL",
+    safe ? "Open sign-in page" : "Invalid OAuth URL",
   ) as HTMLAnchorElement;
+}
+
+function renderSignInBtn(serverName: () => string): HTMLButtonElement {
+  const btn = el(
+    "button",
+    {
+      type: "button",
+      className: "btn-small mcp-sign-in-btn",
+      "data-tooltip": "Start a new sign-in. It replaces the credentials this server has stored.",
+    },
+    "Sign in",
+  ) as HTMLButtonElement;
+  btn.addEventListener("click", () => {
+    if (btn.disabled) {
+      return;
+    }
+    setControlBusy(btn, true);
+    void signInServer.dispatch({ server: serverName() }).finally(() => {
+      setControlBusy(btn, false);
+    });
+  });
+  return btn;
 }
 
 /**
@@ -926,7 +1004,7 @@ function renderEditBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement {
     "aria-label": `Edit ${s.name}`,
   }) as HTMLButtonElement;
   btn.innerHTML = ICON_EDIT_UI;
-  // Visibility is the row effect's: a registry entry has no form, and a locked row has no edit.
+  // Visibility is the row effect's: a locked row has no edit.
   btn.addEventListener("click", () => {
     void openEditModal(s.id);
   });
@@ -1102,9 +1180,17 @@ export function initMCP(): void {
     mcpState.refetchStatus();
   });
   onSSE("mcp_oauth_needed", (_chat, p) => {
+    if (p.error === undefined || p.error === "") {
+      mcpState.setStatusFromEvent(p.server, { name: p.server, state: "needs_auth" });
+      return;
+    }
+    showToast(signInFailureText(p.server, p.error), "error");
+    mcpState.setStatusFromEvent(p.server, { name: p.server, state: "needs_auth", error: p.error });
+  });
+  onSSE("mcp_sign_in_open", (_chat, p) => {
     mcpState.setStatusFromEvent(p.server, {
       name: p.server,
-      state: "needs_auth",
+      state: "signing_in",
       oauth_url: p.url,
       // A fresh attempt clears the relay latch: a stale `true` hides the paste box for an undelivered code.
       relayed: false,
@@ -1152,6 +1238,11 @@ export function announceMCPFailure(server: string, reason: string, prevState: Ru
     return;
   }
   showToast(mcpFailureText(server, reason), "error");
+}
+
+/** The toast for a Sign in kiro-cli refused; the server still waits, so its row offers Sign in again. */
+function signInFailureText(server: string, reason: string): string {
+  return `Signing in to "${server}" failed: ${reason.trim()}`;
 }
 
 /** kiro-cli's own text separates "command not found" from a timeout. It can be empty, so the fallback names the server. */

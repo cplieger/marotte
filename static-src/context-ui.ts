@@ -63,7 +63,7 @@ export function refreshContextUI(s: Session): void {
   }
   const summarized = summarizedCount(s);
   // A tracked read, so the caller's effect repaints the ring on a setting change with no new usage frame.
-  const compaction = compactionPoint(compactionPolicy.value, u.summarization_threshold_pct);
+  const compaction = compactionPoint(compactionPolicy.value);
   updateContextBar({
     pct: u.context_pct,
     contextSize: u.context_size,

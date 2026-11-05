@@ -137,6 +137,31 @@ describe("the head against the foot", () => {
   });
 });
 
+describe("a run the server no longer holds", () => {
+  function openLink(root: HTMLElement): HTMLElement | null {
+    return root.querySelector<HTMLElement>(".run-open");
+  }
+
+  it("reads deleted, with no Open run link", () => {
+    const c = card();
+    c.render(undefined, NO_ASKS, { gone: true });
+    expect(c.root.dataset["status"]).toBe("deleted");
+    expect(ledger(c.root)).toBe("This run was deleted");
+    expect(statusWord(c.root)).toBe("deleted");
+    expect(openLink(c.root)?.classList.contains("hidden")).toBe(true);
+  });
+
+  it("gets its link and its status back when a later read describes the run", () => {
+    const c = card();
+    c.render(undefined, NO_ASKS, { gone: true });
+    c.render(runOf("completed", step("a", "completed")), NO_ASKS, {});
+    expect(c.root.dataset["status"]).toBe("completed");
+    expect(ledger(c.root)).toContain("completed");
+    expect(statusWord(c.root)).toBe("completed");
+    expect(openLink(c.root)?.classList.contains("hidden")).toBe(false);
+  });
+});
+
 describe("a background-process watch's result", () => {
   const record = JSON.stringify({
     terminalId: "t1",
@@ -173,6 +198,50 @@ describe("a background-process watch's result", () => {
     });
     const vals = [...c.root.querySelectorAll(".run-output-val")].map((e) => e.textContent);
     expect(vals).toEqual(["exited 1", '{"done":true}']);
+  });
+});
+
+describe("a github-pr watch's result", () => {
+  const payload = JSON.stringify(
+    {
+      url: "https://github.com/o/r/pull/7",
+      state: "OPEN",
+      newComments: [{ id: 1, author: { login: "rev" }, body: "nit", createdAt: "x" }],
+      newReviews: [],
+      excludedComments: [],
+      excludedReviews: [],
+      inlineComments: [],
+      excludedInlineComments: [],
+      inlineCommentsFetch: "ok",
+      backlog: { remaining: 0 },
+      headSha: "abc123",
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "BLOCKED",
+      newFailedChecks: [{ name: "lint", workflowName: "ci", conclusion: "FAILURE" }],
+      passingCheckCount: 3,
+      pendingCheckCount: 0,
+    },
+    null,
+    2,
+  );
+
+  it("reads its wake on the row, with no capture line", () => {
+    const c = card();
+    c.render({
+      ...runOf("running", {
+        nodeId: "wait",
+        type: "watch",
+        status: "completed",
+        capturedOutput: payload,
+      }),
+      capturedOutputs: { wait: payload },
+    });
+    expect(c.root.querySelector(".run-step-meta")?.textContent).toBe(
+      "1 comment \u00b7 1 failed check",
+    );
+    expect(c.root.querySelector(".run-step-capture")).toBeNull();
+    const vals = [...c.root.querySelectorAll(".run-output-val")].map((e) => e.textContent);
+    expect(vals).toEqual(["1 comment \u00b7 1 failed check"]);
   });
 });
 

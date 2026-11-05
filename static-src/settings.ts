@@ -6,7 +6,6 @@ import { initAllModals } from "./modals.js";
 import { toggleSettingsView, toggleGitView } from "./tabs.js";
 import { initGitBadge } from "./git-badge.js";
 import { getGitTab } from "./git-tabs.js";
-import { noteDefaultBrowsePath } from "./files.js";
 import { initTools, loadToolsList } from "./tools.js";
 import { restoreNotifications } from "./notify.js";
 import { adoptWriteAnswer, patchSettings, refreshSettings, settingsAsShown } from "./persist.js";
@@ -16,7 +15,7 @@ import type { KiroDefault } from "./wire/types.gen.js";
 import { cacheTheme, cachedTheme } from "./device-view.js";
 import type { ThemeChoice } from "./device-view.js";
 import { applyThemeChoice, initThemeToggle } from "./theme.js";
-import type { ThemeStorage } from "@cplieger/ui-primitives/theme";
+import type { ThemeStorage } from "@cplieger/ui/theme";
 import { initSettingsTabs } from "./settings-tabs.js";
 import type { IdentityVerdict } from "./identity.js";
 import { initPermissionsUI, initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
@@ -27,7 +26,7 @@ import { apiGet } from "./api-client.js";
 import { loadVersions, getVersions } from "./versions.js";
 import { openConfigFile } from "./editor-openers.js";
 import { $ } from "./dom.js";
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { initNotificationToggles } from "./settings-notifications.js";
 
 import { showSaving, showSaved, showError } from "./save-indicator.js";
@@ -35,8 +34,9 @@ import { logout, setEngineHeap, setKiroSetting } from "./actions/settings.js";
 import { runDiagnostics } from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { initSteeringEditor, loadSteeringDoc } from "./settings-steering.js";
-import { DEFAULT_AUTO_COMPACT_PCT, compactionPolicy } from "./context-ring.js";
-import { paintSettingLocks, writeSwitch } from "./governance.js";
+import { compactionPolicy } from "./context-ring.js";
+import { onGovernanceChange, paintSettingLocks, writeSwitch } from "./governance.js";
+import { paintOutputStyle, paintOutputStyleHint } from "./output-style.js";
 
 // The kiro-cli settings endpoint does not go through persist.ts's settings state, so it keeps its own
 // per-key write generation: only a key's newest write reports its outcome.
@@ -150,7 +150,7 @@ function setTheme(choice: ThemeChoice): void {
   });
 }
 
-/** The adapter @cplieger/ui-primitives' createTheme persists through. Built here and INJECTED
+/** The adapter @cplieger/ui/theme's createTheme persists through. Built here and INJECTED
  *  into initThemeToggle rather than reached from theme.ts, because this module already imports
  *  that one — a reverse import would be a cycle, and the direction is the reason this is a
  *  parameter. */
@@ -189,9 +189,6 @@ export async function syncSettings(): Promise<EffectiveSettings | null> {
  *  only when the read answered, so per-device state does not belong here: a failed read never
  *  calls this. (Theme is applied separately by initThemeToggle() during initUI.) */
 export function restoreAll(s: EffectiveSettings): void {
-  // UNCONDITIONAL: "" is a real value meaning "nothing recorded", and the recorder maps it to the
-  // mounts listing, so a guard would leave the recorder uncalled on a fresh volume for no gain.
-  noteDefaultBrowsePath(s.fb_path);
   // `ui-state.editor_files` existed only to recover a path from a synthetic `editor:<path>` id.
 
   restoreNotifications(s);
@@ -726,12 +723,16 @@ const agentCapabilities: readonly {
  *  (settings.ValidSpecPlanning and its siblings). A value outside the list, from a newer build,
  *  leaves the control as it is. */
 const agentChoices: readonly {
-  key: "spec_planning" | "output_style";
+  key: "spec_planning" | "workflow_launch";
   selectID: string;
   values: readonly string[];
 }[] = [
   { key: "spec_planning", selectID: "spec-planning", values: ["off", "quick", "full"] },
-  { key: "output_style", selectID: "output-style", values: ["default", "concise"] },
+  {
+    key: "workflow_launch",
+    selectID: "workflow-launch",
+    values: ["when-asked", "large-tasks", "delegate-all"],
+  },
 ];
 
 /** Unset ("") sends nothing, so kiro-cli's own rollout decides; it renders as off, kiro-cli's
@@ -804,6 +805,14 @@ function paintSpecPlanning(mode: string): void {
   document.getElementById("spec-planning-ask-row")?.classList.toggle("hidden", mode === "off");
 }
 
+/** Workflow use only means something while the Workflows switch shows on, a lock's value included. */
+function paintWorkflowLaunchRow(): void {
+  const workflows = document.getElementById("flag-workflows") as HTMLInputElement | null;
+  document
+    .getElementById("workflow-launch-row")
+    ?.classList.toggle("hidden", workflows?.checked !== true);
+}
+
 /** The Memory dropdown's values, mirroring settings.MemoryOff and its siblings. */
 const MEMORY_MODES = ["off", "read_only", "read_write", "learn"] as const;
 
@@ -831,6 +840,7 @@ function applyAgentCapabilities(s: EffectiveSettings): void {
   for (const choice of agentChoices) {
     paintAgentChoice(choice, s);
   }
+  paintOutputStyle(s.output_style);
   paintSpecPlanning(s.spec_planning);
   const timeout = shellTimeoutInput();
   // Not while the reader is in the box, for retention's reason.
@@ -839,6 +849,7 @@ function applyAgentCapabilities(s: EffectiveSettings): void {
   }
   applyAutoCompaction(s);
   paintSettingLocks();
+  paintWorkflowLaunchRow();
 }
 
 function paintMemory(s: EffectiveSettings): void {
@@ -890,9 +901,14 @@ function initAgentCapabilityControls(): void {
       continue;
     }
     input.addEventListener("change", () => {
-      void patchSettings({ [cap.key]: input.checked }, { el: input, key: cap.key, on: true });
+      paintWorkflowLaunchRow();
+      // The settled write may have repainted the switch.
+      void patchSettings({ [cap.key]: input.checked }, { el: input, key: cap.key, on: true }).then(
+        paintWorkflowLaunchRow,
+      );
     });
   }
+  onGovernanceChange(paintWorkflowLaunchRow);
   for (const sw of agentFeatureSwitches) {
     const input = document.getElementById(sw.inputID) as HTMLInputElement | null;
     input?.addEventListener("change", () => {
@@ -917,15 +933,20 @@ function initAgentCapabilityControls(): void {
   for (const choice of agentChoices) {
     const select = document.getElementById(choice.selectID) as HTMLSelectElement | null;
     select?.addEventListener("change", () => {
-      if (choice.key === "spec_planning") {
-        paintSpecPlanning(select.value);
-      }
+      paintSpecPlanning(select.value);
       saveControl(select, { [choice.key]: select.value }, (shown) => {
         paintAgentChoice(choice, shown);
         paintSpecPlanning(shown.spec_planning);
       });
     });
   }
+  const style = document.getElementById("output-style") as HTMLSelectElement | null;
+  style?.addEventListener("change", () => {
+    paintOutputStyleHint(style.value);
+    saveControl(style, { output_style: style.value }, (shown) => {
+      paintOutputStyle(shown.output_style);
+    });
+  });
   const timeout = shellTimeoutInput();
   timeout?.addEventListener("change", () => {
     const ms = shellTimeoutMs(timeout.value);
@@ -946,28 +967,24 @@ function autoCompactionEls(): {
   row: HTMLElement;
   range: HTMLInputElement;
   value: HTMLOutputElement;
-  warning: HTMLElement;
 } | null {
   const toggle = document.getElementById("flag-auto-compaction") as HTMLInputElement | null;
   const row = document.getElementById("auto-compact-row");
   const range = document.getElementById("auto-compact-pct") as HTMLInputElement | null;
   const value = document.getElementById("auto-compact-pct-value") as HTMLOutputElement | null;
-  const warning = document.getElementById("auto-compact-warning");
-  if (toggle === null || row === null || range === null || value === null || warning === null) {
+  if (toggle === null || row === null || range === null || value === null) {
     return null;
   }
-  return { toggle, row, range, value, warning };
+  return { toggle, row, range, value };
 }
 
-/** Show the slider row only while the switch is on, the value beside the range, and the warning
- *  only above the default. `.hidden` rather than `hidden`: `.section-option` declares `display:
- *  flex`. */
+/** Show the slider row only while the switch is on, and the value beside the range. `.hidden`
+ *  rather than `hidden`: `.section-option` declares `display: flex`. */
 function paintAutoCompaction(enabled: boolean, pct: number): void {
   const els = autoCompactionEls();
   if (els !== null) {
     els.row.classList.toggle("hidden", !enabled);
     els.value.textContent = `${String(pct)}%`;
-    els.warning.classList.toggle("hidden", pct <= DEFAULT_AUTO_COMPACT_PCT);
   }
   compactionPolicy.value = { enabled, pct };
 }
@@ -1013,13 +1030,15 @@ function initAutoCompactionControls(): void {
 }
 
 // Each writes one /api/settings boolean, never the kiro-cli settings endpoint. The MCP wait switch
-// lives on Settings > Tools; the other two on General.
+// lives on Settings > Tools; the others on General.
 const panelSwitches: readonly {
-  key: "debug_logs" | "guard_payload_links" | "mcp_wait_for_ready";
+  key:
+    "debug_logs" | "guard_payload_links" | "high_throughput_optimizations" | "mcp_wait_for_ready";
   inputID: string;
 }[] = [
   { key: "guard_payload_links", inputID: "flag-guard-payload-links" },
   { key: "debug_logs", inputID: "flag-debug-logs" },
+  { key: "high_throughput_optimizations", inputID: "flag-high-throughput" },
   { key: "mcp_wait_for_ready", inputID: "mcp-wait-for-ready" },
 ];
 

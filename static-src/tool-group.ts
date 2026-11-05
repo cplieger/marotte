@@ -1,5 +1,5 @@
 // Tool group: a collapsible container over consecutive tool calls, with a per-kind or mixed summary.
-// The box exists only FROM THE SECOND CALL: a one-member shell carries CLS_BARE and renders
+// The box exists only FROM THE SECOND ROW: a shell showing one row and no folded hook carries CLS_BARE and renders
 // pixel-identical to a standalone `.tool-call`. The shell is mounted on the FIRST card and gains
 // chrome by class, since re-seating a card replays its entry slide and drops focus; so the
 // `.tool-group` selector alone does not mean "two or more" (consult `groupIsBare`). Collapse is
@@ -7,21 +7,23 @@
 // superseded (the only silent route) and by `autoCollapseGroup` live. A user click takes over.
 // A failed member folds like any other; the header's mark and count carry the failure.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { chevronEl } from "./chevron.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { iconEl } from "./icon-el.js";
 import { outcomeIcon } from "./icons.js";
+import { foldGroupHooks, onHookVisibility, syncHookBadge, syncHookList } from "./hook-fold.js";
 import { setUserScrolledUp } from "./scroll.js";
 import { kindNoun } from "./tool-kind-noun.js";
 import type { ToolKind } from "./tool-schema.js";
-import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
+import { createDisclosure, type DisclosureController } from "@cplieger/ui/disclosure";
 
+/** The body is closed, whoever closed it: the header click toggles it, and find-in-chat's reveal reads
+ *  it, so a close that leaves it off makes the next header click close the group again. */
 const CLS_COLLAPSED = "tool-group-collapsed";
-const CLS_AUTO_COLLAPSED = "tool-group-auto-collapsed";
 const CLS_USER_TOGGLED = "tool-group-user-toggled";
-/** A shell holding fewer than two members: no header, no group chrome. A pure
- *  function of the member count with ONE writer (refreshGroupHeader), so there is
+/** A shell showing fewer than two rows and no folded hook: no header, no group chrome. A pure
+ *  function of what `foldGroupHooks` leaves, with ONE writer (refreshGroupHeader), so there is
  *  no second flag or counter to keep in step. */
 const CLS_BARE = "tool-group-bare";
 
@@ -46,7 +48,7 @@ export function groupBody(group: HTMLElement): HTMLElement {
   return group.querySelector<HTMLElement>(":scope > .tool-group-body") ?? group;
 }
 
-/** Whether this shell is holding fewer than two members, so it renders as a plain
+/** Whether this shell shows fewer than two rows and no folded hook, so it renders as a plain
  *  card with no header. Read it rather than the `.tool-group` selector, which does
  *  not mean "a group of two or more". */
 export function groupIsBare(group: HTMLElement): boolean {
@@ -97,30 +99,44 @@ export function buildToolGroupShell(): HTMLDivElement {
  *  only here, via `ensureGroupDisclosure`), the summary and the verdict. Called after each append,
  *  on every status flip and on collapse toggle. */
 export function refreshGroupHeader(group: HTMLElement): void {
-  const calls = [
+  const members = [
     ...group.querySelectorAll(":scope > .tool-group-body > .tool-call"),
   ] as HTMLElement[];
-  // The ONE writer of the bare class, a pure function of the member count. Above the summary-span
-  // guard, which would otherwise exempt a shell without a count span.
-  group.classList.toggle(CLS_BARE, calls.length < 2);
-  // Deliberately ABOVE the summary-span guard too, and for the same reason: it needs
-  // only `calls`, and a shell carrying no count span would otherwise never get its
-  // region. This is the ONE creation site.
-  ensureGroupDisclosure(group, calls);
+  // Every count below reads the rows alone: a folded hook is counted on the badge.
+  const { rows, folded } = foldGroupHooks(members);
+  // The ONE writer of the bare class. Above the summary-span guard, which would otherwise exempt a
+  // shell without a count span.
+  group.classList.toggle(CLS_BARE, rows.length < 2 && folded.length === 0);
+  group.hidden = rows.length === 0 && folded.length === 0;
+  // Deliberately ABOVE the summary-span guard too, and for the same reason: a shell carrying no
+  // count span would otherwise never get its region. This is the ONE creation site.
+  ensureGroupDisclosure(group, members);
+  syncHookList(groupBody(group), folded);
+  const headerRow = group.querySelector<HTMLElement>(":scope > .tool-group-header");
+  if (headerRow !== null) {
+    syncHookBadge(headerRow, folded.length);
+  }
   const header = group.querySelector(".tool-group-header .tool-group-count");
   if (header === null) {
     return;
   }
-  const counts = countOutcomes(calls);
+  const counts = countOutcomes(rows);
   // The summary states the aggregate FACT and names every non-clean population in
   // it, so a COLLAPSED group still says what happened. It never counts cards:
   // "Read 5 files" is right, "5 tool calls" is a bug.
-  const summary = summarize(calls) + namedCounts(counts);
+  const summary = summarize(rows) + namedCounts(counts);
   // No "(collapsed)" suffix: the group is one box whose chevron and
   // aria-expanded already carry the state, so the word restated the chrome.
   header.textContent = summary;
-  paintGroupOutcome(group, calls, counts);
+  paintGroupOutcome(group, rows, counts);
 }
+
+// A switch flip moves which members are rows on every mounted group at once.
+onHookVisibility(() => {
+  for (const group of document.querySelectorAll<HTMLElement>(".tool-group")) {
+    refreshGroupHeader(group);
+  }
+});
 
 /** Give a non-bare group its body region ONCE, in its FINAL open/closed state, so the state machine
  *  alone moves a fold afterwards. A non-bare → bare drop (`pruneEmptyContainers`) leaves the
@@ -151,10 +167,10 @@ function bornCollapsed(group: HTMLElement, calls: HTMLElement[]): boolean {
   return true;
 }
 
-/** The AUTO-collapsed marking: one writer for the class and the header state. The caller refreshes
- *  the summary: this runs inside `refreshGroupHeader`, which would re-enter. */
+/** The auto-collapse marking, shared by the born-folded and live paths. The caller refreshes the
+ *  summary: this runs inside `refreshGroupHeader`, which would re-enter. */
 function markAutoCollapsed(group: HTMLElement): void {
-  group.classList.add(CLS_AUTO_COLLAPSED);
+  group.classList.add(CLS_COLLAPSED);
   group.querySelector<HTMLElement>(".tool-group-header")?.setAttribute("aria-expanded", "false");
 }
 
@@ -357,29 +373,19 @@ function dedup(arr: string[]): string[] {
 
 // --- Collapse / expand ---
 
-function onHeaderClick(group: HTMLDivElement, _header: HTMLDivElement): void {
-  // No bare guard here, unlike both collapse paths below, and the asymmetry is
-  // not an oversight: a bare header is `display: none`, so it is out of the
-  // accessibility tree and out of tab order and this handler is unreachable.
+function onHeaderClick(group: HTMLDivElement, header: HTMLDivElement): void {
+  // No bare guard, unlike `autoCollapseGroup`: a bare header is `display: none`, so this is unreachable on one.
   group.classList.add(CLS_USER_TOGGLED);
-  const wasAuto = group.classList.contains(CLS_AUTO_COLLAPSED);
-  if (wasAuto) {
-    group.classList.remove(CLS_AUTO_COLLAPSED);
-  }
-  group.classList.toggle(CLS_COLLAPSED);
-  const collapsedNow = group.classList.contains(CLS_COLLAPSED);
-  // Drive the body region's disclosure to match the class-derived state
-  // (preserving the existing model, where a click on an AUTO-collapsed group
-  // converts it to a USER collapse and it stays closed).
+  const collapsedNow = group.classList.toggle(CLS_COLLAPSED);
   const ctl = groupCtls.get(group);
   if (collapsedNow) {
     ctl?.close();
   } else {
     ctl?.open();
   }
-  _header.setAttribute("aria-expanded", collapsedNow ? "false" : "true");
+  header.setAttribute("aria-expanded", collapsedNow ? "false" : "true");
   refreshGroupHeader(group);
-  if (!collapsedNow || wasAuto) {
+  if (!collapsedNow) {
     setUserScrolledUp(true);
   }
 }
@@ -396,15 +402,11 @@ export function autoCollapseGroup(group: HTMLElement): void {
   }
   const ctl = groupCtls.get(group);
   if (ctl === undefined) {
-    // No region, so no class: a CLS_AUTO_COLLAPSED group with an open body is unactionable. Unreachable
+    // No region, so nothing to close: a collapsed class over an open body would be unactionable. Unreachable
     // through `refreshGroupHeader`; agreement with `ensureGroupDisclosure`.
     return;
   }
-  if (
-    group.classList.contains(CLS_AUTO_COLLAPSED) ||
-    group.classList.contains(CLS_USER_TOGGLED) ||
-    group.classList.contains(CLS_COLLAPSED)
-  ) {
+  if (group.classList.contains(CLS_USER_TOGGLED) || group.classList.contains(CLS_COLLAPSED)) {
     return;
   }
   const calls = [

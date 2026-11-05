@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/go/filesafe"
 )
 
 func TestConnectionRecords_RoundTripAtMode0600(t *testing.T) {
@@ -77,7 +77,7 @@ func TestConnectionRecords_WidenedModeFailsTheLoadWithAReason(t *testing.T) {
 	orig := enforceFileMode
 	t.Cleanup(func() { enforceFileMode = orig })
 	enforceFileMode = func(string, os.FileMode) (os.FileMode, error) {
-		return 0o660, atomicfile.ErrModeNotStored
+		return 0o660, filesafe.ErrModeNotStored
 	}
 
 	got, err := newRecordsFile(dir).load()

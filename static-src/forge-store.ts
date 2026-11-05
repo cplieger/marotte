@@ -2,7 +2,7 @@
 // surface renders from it. It starts on the first call of any accessor below, so a subscriber that reads one through
 // an effect starts it too; it never polls: the server's forges_changed, a page resume and a stream reconnect re-read.
 
-import { batch, computed, signal, touch } from "@cplieger/reactive";
+import { batch, computed, signal, touch } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { listForges, type ForgesListResponse } from "./actions/forge-list.js";
 import { listRepoPage } from "./actions/forge.js";

@@ -170,6 +170,7 @@ describe("an edit round trip", () => {
         args: ["-y", "@modelcontextprotocol/server-github"],
         wait_for_ready: true,
         timeout_ms: 120000,
+        version_negotiation: "legacy",
       }),
     },
     {
@@ -179,10 +180,11 @@ describe("an edit round trip", () => {
         url: "https://example.com/mcp",
         wait_for_ready: true,
         timeout_ms: 120000,
+        version_negotiation: "legacy",
       }),
     },
   ] as const)(
-    "keeps a $mode server's pasted wait_for_ready and timeout_ms across a form save",
+    "keeps a $mode server's pasted wait_for_ready, timeout_ms and version_negotiation across a form save",
     async ({ mode, server }) => {
       const { setEditing, initModal, editModeFor } = await import("./mcp-panels.js");
       expect(editModeFor(server)).toBe(mode);
@@ -197,6 +199,7 @@ describe("an edit round trip", () => {
       // Update replaces the whole record, so a body without them clears them.
       expect(saved.calls[0]?.body.wait_for_ready).toBe(true);
       expect(saved.calls[0]?.body.timeout_ms).toBe(120000);
+      expect(saved.calls[0]?.body.version_negotiation).toBe("legacy");
     },
   );
 
@@ -223,13 +226,14 @@ describe("an edit round trip", () => {
     expect(saved.calls[0]?.body.oauth_scopes).toEqual(["read", "write"]);
   });
 
-  it("shows a stored wait_for_ready and timeout_ms in the raw box", async () => {
+  it("shows a stored wait_for_ready, timeout_ms and version_negotiation in the raw box", async () => {
     const { setEditing, initModal, editModeFor } = await import("./mcp-panels.js");
     const server = record({
       command: "uvx",
       args: ["mcp-server-git"],
       wait_for_ready: true,
       timeout_ms: 90000,
+      version_negotiation: "legacy",
     });
     setEditing({ id: server.id });
     initModal({ mode: editModeFor(server), server });
@@ -238,6 +242,7 @@ describe("an edit round trip", () => {
     const parsed = JSON.parse(box?.value ?? "{}") as Record<string, unknown>;
     expect(parsed["wait_for_ready"]).toBe(true);
     expect(parsed["timeout_ms"]).toBe(90000);
+    expect(parsed["version_negotiation"]).toBe("legacy");
   });
 
   it("leaves the paste template in the box when adding", async () => {
@@ -248,6 +253,89 @@ describe("an edit round trip", () => {
     const box = document.getElementById("mcp-raw-input") as HTMLTextAreaElement | null;
     expect(box?.value).toContain("mcpServers");
     expect(document.querySelector(".mcp-raw-edit-note")).toBeNull();
+  });
+});
+
+describe("an organization-registry row", () => {
+  const catalog = (): Server =>
+    record({
+      id: "srv-reg",
+      name: "catalog",
+      transport: "registry",
+      env: [{ name: "API_KEY", value: "***" }],
+      headers: [{ name: "X-Api-Key", value: "***" }],
+      disabled_tools: ["dangerous"],
+      timeout_ms: 90000,
+    });
+
+  it("shows its edit button", async () => {
+    const { mountRow } = await import("./mcp-ui.js");
+    const s = catalog();
+    const row = mountRow(s, s.id);
+    const edit = row.querySelector('[aria-label="Edit catalog"]');
+    expect(edit, "the row's edit button").not.toBeNull();
+    expect(edit?.classList.contains("hidden")).toBe(false);
+  });
+
+  it("opens an env and header editor and nothing else", async () => {
+    const { setEditing, initModal, editModeFor } = await import("./mcp-panels.js");
+    const s = catalog();
+    expect(editModeFor(s)).toBe("registry");
+    setEditing({ id: s.id });
+    initModal({ mode: editModeFor(s), server: s });
+
+    const visible = Array.from(
+      document.querySelectorAll<HTMLElement>(".mcp-mode-panel[data-mcp-mode]"),
+    ).filter((p) => !p.classList.contains("hidden"));
+    expect(visible.map((p) => p.dataset["mcpMode"])).toEqual(["registry"]);
+    expect(document.getElementById("mcp-modal-tabs")?.classList.contains("hidden")).toBe(true);
+    expect(document.getElementById("mcp-disabled-tools")?.classList.contains("hidden")).toBe(true);
+    expect(visible[0]?.querySelector(".mcp-mode-hint")?.textContent).toBe(
+      "Fill in what your organization's catalog asks this server for, such as an API key. A variable fills a value the catalog leaves empty; a header replaces the catalog's header of the same name.",
+    );
+    const names = (id: string): string[] =>
+      Array.from(document.querySelectorAll<HTMLInputElement>(`#${id} .mcp-pair-name`)).map(
+        (i) => i.value,
+      );
+    expect(names("mcp-registry-env")).toEqual(["API_KEY"]);
+    expect(names("mcp-registry-headers")).toEqual(["X-Api-Key"]);
+  });
+
+  it("saves both pair lists, keeping the masked values and the fields it does not show", async () => {
+    const { setEditing, initModal } = await import("./mcp-panels.js");
+    const s = catalog();
+    setEditing({ id: s.id });
+    initModal({ mode: "registry", server: s });
+
+    document.getElementById("mcp-registry-add-env")?.click();
+    const rows = document.querySelectorAll<HTMLDivElement>("#mcp-registry-env .mcp-pair-row");
+    const added = rows[rows.length - 1];
+    const name = added?.querySelector<HTMLInputElement>(".mcp-pair-name");
+    const value = added?.querySelector<HTMLInputElement>(".mcp-pair-value");
+    expect(name, "the added env row's name").toBeTruthy();
+    expect(value, "the added env row's value").toBeTruthy();
+    name!.value = "REGION";
+    value!.value = "eu";
+    document.getElementById("mcp-registry-save")?.click();
+
+    await vi.waitFor(() => {
+      expect(saved.calls).toHaveLength(1);
+    });
+    const body = saved.calls[0]?.body;
+    expect(saved.calls[0]?.id).toBe("srv-reg");
+    expect(body?.transport).toBe("registry");
+    expect(body?.name).toBe("catalog");
+    expect(body?.env).toEqual([
+      { name: "API_KEY", value: "***" },
+      { name: "REGION", value: "eu" },
+    ]);
+    expect(body?.headers).toEqual([{ name: "X-Api-Key", value: "***" }]);
+    expect(body?.enabled).toBe(true);
+    // Update replaces the whole record, so the hidden fields must ride along unchanged.
+    expect(body?.disabled_tools).toEqual(["dangerous"]);
+    expect(body?.timeout_ms).toBe(90000);
+    expect(body?.command).toBeUndefined();
+    expect(body?.url).toBeUndefined();
   });
 });
 

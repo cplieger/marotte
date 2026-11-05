@@ -9,12 +9,12 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/spec"
 	"github.com/cplieger/marotte/internal/specapproval"
-	"github.com/cplieger/webhttp/v4"
 )
 
 const headerIfNoneMatch = "If-None-Match"
@@ -52,19 +52,23 @@ func (s *Server) handleSpec(w http.ResponseWriter, r *http.Request) {
 		sp.Approvals = specapproval.Derive(s.specApprovals.For(sp.Dir), sp.Docs)
 	}
 	etag := specETag(sp.Docs, sp.Approvals)
-	if r.Header.Get(headerIfNoneMatch) == etag {
-		w.Header().Set(headerETag, etag)
+	w.Header().Set(headerETag, etag)
+	if ifNoneMatchHolds(r, etag) {
+		// The 200's Content-Type, so the compressor names Accept-Encoding in the 304's Vary as it
+		// would in the 200's (RFC 9110 section 15.4.5); net/http drops the type itself on a 304.
+		httpserver.JSONHeaders(w)
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	w.Header().Set(headerETag, etag)
-	webhttp.WriteJSON(w, sp)
+	httpserver.WriteJSON(w, sp)
 }
 
-// specETag is the quoted hex sha256 over each doc's NAME and hash, then the approvals. The name is
-// needed because an over-size doc's hash is empty. Approvals contribute phase, hash, derived Stale
-// (a doc disappearing would otherwise cancel), At and User (the badge renders them), iterated over
-// specapproval.Phases() for a stable order. NUL separates fields.
+// specETag is the weak tag (RFC 9110 section 8.8.1) of the hex sha256 over each doc's NAME and
+// hash, then the approvals: it names the spec's content, not one coding's bytes, so the gzip and
+// identity answers and their 304 carry one tag. The name is needed because an over-size doc's
+// hash is empty. Approvals contribute phase, hash, derived Stale (a doc disappearing would
+// otherwise cancel), At and User (the badge renders them), iterated over specapproval.Phases()
+// for a stable order. NUL separates fields.
 func specETag(docs []marotte.SpecDoc, approvals map[string]marotte.SpecApproval) string {
 	h := sha256.New()
 	for _, d := range docs {
@@ -91,5 +95,5 @@ func specETag(docs []marotte.SpecDoc, approvals map[string]marotte.SpecApproval)
 		}
 		h.Write([]byte{0})
 	}
-	return `"` + hex.EncodeToString(h.Sum(nil)) + `"`
+	return `W/"` + hex.EncodeToString(h.Sum(nil)) + `"`
 }

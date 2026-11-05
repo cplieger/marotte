@@ -3,11 +3,11 @@
 // INVARIANT: SVG source never reaches an HTML parser sink. It must be an ELEMENT given a `src`;
 // conversion runs BEFORE code decoration (markdown.ts `decorate`), so a fence never reaches
 // `finalizeBlock`'s innerHTML. A `data:` URL because the CSP is `img-src 'self' data:`
-// (internal/server/security.go), and `src` is set OUTSIDE `set_attr_dom`, whose `isSafeUrl`
-// rejects `data:`. The carrier is a closed ```svg fence; a ```mermaid one is `mermaid-block.ts`'s, which draws
+// (internal/server/security.go), and `src` is set OUTSIDE `set_attr_dom`, whose
+// `isHttpMailtoOrRelativeURL` rejects `data:`. The carrier is a closed ```svg fence; a ```mermaid one is `mermaid-block.ts`'s, which draws
 // markup and so cannot share this inert path.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { extractLang } from "./code-blocks.js";
 
 /** Deliberately one member. */

@@ -3,11 +3,12 @@
 // provisionally and upgrades it on close. The provisional sweep is the only thing that decorates a fence the model
 // never closed: the renderer's per-block callback fires only on close, and `parser_end` closes no open token.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { highlightByLang, normalizeLang } from "./highlight.js";
 import { ICON_COPY, ICON_PLAY } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
+import { confirm } from "./confirm.js";
 
 const SHELL_LANGS = new Set(["", "sh", "bash", "zsh", "shell", "console", "terminal"]);
 
@@ -110,7 +111,7 @@ function finalizeBlock(wrap: HTMLElement, pre: HTMLElement): void {
 
   const actions = wrap.querySelector(":scope > .code-head > .code-actions");
   if (actions !== null && isRunnableShell(lang, text)) {
-    actions.appendChild(makeRunButton(text));
+    actions.appendChild(makeRunButton(pre, text));
   }
 }
 
@@ -176,18 +177,46 @@ export function makeCopyButton(
   return btn;
 }
 
-function makeRunButton(text: string): HTMLButtonElement {
+/**
+ * Code points that do not show as themselves in a code block: controls (a tab renders as spaces), format
+ * characters (bidi overrides and isolates, zero-width), private-use, lone surrogates, line and paragraph
+ * separators, every space but U+0020, and the default-ignorables (variation selectors, tags, fillers).
+ */
+const HIDDEN_RUNE =
+  /[\p{Cc}\p{Cf}\p{Co}\p{Cs}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]|[^\P{Zs} ]/u;
+
+function makeRunButton(pre: HTMLElement, text: string): HTMLButtonElement {
   const btn = el("button", { className: "code-act-btn" }, iconEl(ICON_PLAY)) as HTMLButtonElement;
-  if (shellRunCb === null) {
-    btn.setAttribute("data-tooltip", "Shell not available");
-    btn.setAttribute("aria-label", "Shell not available");
+  const cmd = text.trim();
+  const refusal = runRefusal(cmd);
+  if (refusal !== null) {
+    btn.setAttribute("data-tooltip", refusal);
+    btn.setAttribute("aria-label", refusal);
     btn.disabled = true;
   } else {
     btn.setAttribute("data-tooltip", "Run in shell");
     btn.setAttribute("aria-label", "Run in shell");
     btn.addEventListener("click", () => {
-      shellRunCb?.(text.trim());
+      void runSeen(pre, cmd);
     });
   }
   return btn;
+}
+
+function runRefusal(cmd: string): string | null {
+  if (HIDDEN_RUNE.test(cmd)) {
+    return "Contains hidden characters. Copy it to inspect.";
+  }
+  return shellRunCb === null ? "Shell not available" : null;
+}
+
+/** A line wider than `pre`'s box is partly out of view, so it runs only after the dialog shows all of it. */
+async function runSeen(pre: HTMLElement, cmd: string): Promise<void> {
+  if (
+    pre.scrollWidth > pre.clientWidth &&
+    !(await confirm(`Part of this command was out of view. Run it?\n\n${cmd}`, "Run"))
+  ) {
+    return;
+  }
+  shellRunCb?.(cmd);
 }

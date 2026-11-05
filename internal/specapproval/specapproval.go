@@ -22,7 +22,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -144,7 +144,7 @@ func NewStore(dir string) (*Store, error) {
 }
 
 // readBounded reads with EnforceFile's refusals and the size bound applied to the READ.
-// Hand-rolled because atomicfile.ReadBounded uses os.Open, which follows symlinks.
+// Hand-rolled because filesafe.ReadBounded uses os.Open, which follows symlinks.
 func readBounded(path string) ([]byte, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
@@ -284,16 +284,16 @@ func (s *Store) publish(next map[string]map[string]record) {
 	s.specs = next
 }
 
-// persist writes the whole document atomically. atomicfile verifies the 0600 on the temp
+// persist writes the whole document atomically. filesafe verifies the 0600 on the temp
 // descriptor; do not add an EnforceFile by NAME after it.
 func (s *Store) persist(ctx context.Context, next map[string]map[string]record) error {
 	data, err := json.MarshalIndent(file{Specs: next}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode spec approvals: %w", err)
 	}
-	if _, err := atomicfile.WriteFile(ctx, s.path, data,
-		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode),
-		atomicfile.WithMaxBytes(maxBytes)); err != nil {
+	if _, err := filesafe.WriteFile(ctx, s.path, data,
+		filesafe.WithMode(fileMode), filesafe.WithMkdirMode(dirMode),
+		filesafe.WithMaxBytes(maxBytes)); err != nil {
 		return fmt.Errorf("write %s: %w", s.path, err)
 	}
 	return nil

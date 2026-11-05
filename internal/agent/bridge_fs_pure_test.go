@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"fmt"
+	"io/fs"
 	"math"
 	"strings"
 	"testing"
@@ -74,17 +76,43 @@ func FuzzSliceByLines(f *testing.F) {
 	})
 }
 
-// TestFsErrorIsRoutine pins that only a cap-exceeded rejection is routine.
+// TestFsErrorIsRoutine pins which rejections log at Debug rather than Warn.
 func TestFsErrorIsRoutine(t *testing.T) {
 	t.Parallel()
-	if got := fsErrorIsRoutine(errCapExceeded); !got {
-		t.Errorf("fsErrorIsRoutine(errCapExceeded) = %v, want true", got)
+	for name, err := range map[string]error{
+		"errCapExceeded":     errCapExceeded,
+		"errRejectedByUser":  errRejectedByUser,
+		"errNoUndoDirectory": errNoUndoDirectory,
+		"errNoUndoTooLarge":  errNoUndoTooLarge,
+		"a missing path":     notFoundError{fs.ErrNotExist},
+	} {
+		if got := fsErrorIsRoutine(fmt.Errorf("wrapped: %w", err)); !got {
+			t.Errorf("fsErrorIsRoutine(%s) = %v, want true", name, got)
+		}
 	}
 	if got := fsErrorIsRoutine(nil); got {
 		t.Errorf("fsErrorIsRoutine(nil) = %v, want false", got)
 	}
 	if got := fsErrorIsRoutine(context.Canceled); got {
 		t.Errorf("fsErrorIsRoutine(context.Canceled) = %v, want false", got)
+	}
+}
+
+// TestNoUndoRefusalsFitTheWire pins that the shell advice survives the trip: bridge.Engine.Respond
+// truncates an error message past 256 bytes (maxRespondErrorBytes) and folds it to one line.
+func TestNoUndoRefusalsFitTheWire(t *testing.T) {
+	t.Parallel()
+	for _, err := range []error{errNoUndoDirectory, errNoUndoTooLarge} {
+		msg := err.Error()
+		if len(msg) > 256 || strings.ContainsAny(msg, "\r\n") {
+			t.Errorf("%q is %d bytes or multi-line; want one line of at most 256", msg, len(msg))
+		}
+		if !strings.HasSuffix(msg, noUndoAdvice) {
+			t.Errorf("%q does not end with the shell advice", msg)
+		}
+	}
+	if !strings.Contains(errNoUndoTooLarge.Error(), "over the 8 MiB limit") {
+		t.Errorf("errNoUndoTooLarge = %q, want the limit derived from fsReadCap", errNoUndoTooLarge)
 	}
 }
 

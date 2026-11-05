@@ -1,87 +1,7 @@
 #!/bin/bash
 
-CONFIG_DIR="/config"
-TOOLS="$CONFIG_DIR/tools"
-
-# kiro-cli pins, tracked by Renovate against
-# https://desktop-release.q.us-east-1.amazonaws.com/index.json. The server installs
-# from them (internal/composition/kirocli.go) and enforces both per-arch sha256s.
-# Keep them bare double-quoted literals under their `# renovate:` anchors: the
-# shared custom datasource matches exactly this shape (tests/shell/pins_export_test.sh).
-# renovate: datasource=custom.kiro-cli depName=kiro-cli
-KIRO_CLI_VERSION="2.37.1"
-KIRO_CLI_SHA256="b4049000d5a7b684947306eb9f9a480cab3a3ab2ff42584c293d05bde4d314a1"
-# The `# kiro-cli <version>` trailer is Renovate's anchor for this digest.
-# renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
-KIRO_CLI_SHA256_ARM64="e589bd8d8b845bb193b9f36f2ee263fe8aef7dbb19aff03ce44c5076ce6ab0c1" # kiro-cli 2.37.1
-
-# Without the export the server sees no pins and turns its readiness gate off,
-# reporting healthy while installing nothing.
-export KIRO_CLI_VERSION KIRO_CLI_SHA256 KIRO_CLI_SHA256_ARM64
-
-# Prints the KIRO_HOME kiro-cli honours (2.31.0 acp-server.js P8o/O9u): the trimmed
-# value when absolute, not a filesystem root, and neither equal to HOME nor holding
-# HOME inside it, else $HOME/.kiro. Symlinks are resolved, and "inside" is tested as
-# kiro-cli tests it: a HOME whose relative path from the value starts with ".." (such
-# as "..home" directly below it) is not inside. Exported back, so this script, the
-# server and every child act on one tree; workspace.ResolveKiroHome is the Go twin.
-effective_kiro_home() {
-  local v why="" resolved home_resolved shown
-  v=${KIRO_HOME:-}
-  v=${v#"${v%%[![:space:]]*}"}
-  v=${v%"${v##*[![:space:]]}"}
-  case "$v" in
-    "")
-      printf '%s\n' "$HOME/.kiro"
-      return 0
-      ;;
-    /*)
-      # -s first: KAS cleans the path lexically, then resolves the longest existing prefix.
-      resolved=$(realpath -m -- "$(realpath -sm -- "$v")")
-      home_resolved=$(realpath -m -- "$(realpath -sm -- "$HOME")")
-      if [ "$resolved" = / ]; then
-        why="a filesystem root"
-      else
-        # O9u's startsWith("..") is a byte-prefix test, so a HOME whose relative path from
-        # the candidate starts with ".." (such as "..home" directly below it) is outside it,
-        # and kiro-cli honours the candidate.
-        case "$home_resolved/" in
-          "$resolved/"..*) ;;
-          "$resolved/"*) why="it equals or contains HOME" ;;
-        esac
-      fi
-      if [ -z "$why" ]; then
-        realpath -sm -- "$v"
-        return 0
-      fi
-      ;;
-    *) why="relative" ;;
-  esac
-  # The value is untrusted: a control character would forge a boot-log line.
-  shown=${v//[[:cntrl:]]/?}
-  [ "${#shown}" -le 256 ] || shown="${shown:0:256}..."
-  printf 'WARNING: ignoring KIRO_HOME=%s (%s), as kiro-cli does; using %s\n' "$shown" "$why" "$HOME/.kiro" >&2
-  printf '%s\n' "$HOME/.kiro"
-}
-
-KIRO_HOME=$(effective_kiro_home)
-export KIRO_HOME
-
-# The tools engine creates its own subtrees; bin/ is created here so PATH never
-# races it. kiro-cli-versions is the server's kiro-cli install root, created here so
-# this script's /config failure branch covers it. It must stay a sibling of opt/:
-# the engine prunes every non-current directory under opt/<tool>.
-mkdir -p "$TOOLS/bin" "$TOOLS/kiro-cli-versions" \
-  "$HOME/.local/share/kiro-cli" "$HOME/.ssh" \
-  "$KIRO_HOME" "$HOME/.cache/go-build" "$HOME/.docker/cli-plugins" \
-  || {
-    printf "ERROR: failed to create required directories (is /config mounted and writable?)\n"
-    sleep 10
-    exit 1
-  }
-
-# Make an untrusted value (a name off the /config volume, dpkg output) safe inside
-# a quoted logfmt field, so a crafted name cannot close the field and append keys.
+# Make an untrusted value (a name off the /config volume, a folder from the environment, dpkg
+# output) safe in a log line: it cannot split the line, nor close a quoted logfmt field and append keys.
 # Truncate the raw value first, or the doubling could split a `\\` pair; then
 # double backslashes, replace non-printables, and neutralize the quote. $2 is the
 # input bound (default 200).
@@ -93,6 +13,52 @@ logfmt_value() {
   safe=${safe//\"/\'}
   printf '%s' "$safe"
 }
+
+# Sets CONFIG_DIR, TOOLS, KIRO_HOME, PATH, GOPATH and GOBIN from `$1 paths`, the server's own
+# derivation (internal/composition/paths.go), so this script acts on the folders the server uses.
+# TOOLS is empty when the server rejects the tools folder, which this script then leaves alone.
+load_boot_paths() {
+  local out
+  out=$("$1" paths) || return 1
+  eval "$out"
+}
+
+# `paths` refuses only a config folder the server would refuse too, and has printed why.
+if ! load_boot_paths /app/marotte; then
+  sleep 10
+  exit 1
+fi
+
+# kiro-cli pins, tracked by Renovate against
+# https://desktop-release.q.us-east-1.amazonaws.com/index.json. The server installs
+# from them (internal/composition/kirocli.go) and enforces both per-arch sha256s.
+# Keep them bare double-quoted literals under their `# renovate:` anchors: the
+# shared custom datasource matches exactly this shape (tests/shell/pins_export_test.sh).
+# renovate: datasource=custom.kiro-cli depName=kiro-cli
+KIRO_CLI_VERSION="3.0.0"
+KIRO_CLI_SHA256="83dd96e00a75937958096da0436703562bc8c841bef66bde00a4caa5494d8be8"
+# The `# kiro-cli <version>` trailer is Renovate's anchor for this digest.
+# renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
+KIRO_CLI_SHA256_ARM64="e7965abd104a432ebdf2acdb24659c96d70397695699156186915eb333142df6" # kiro-cli 3.0.0
+
+# Without the export the server sees no pins and turns its readiness gate off,
+# reporting healthy while installing nothing.
+export KIRO_CLI_VERSION KIRO_CLI_SHA256 KIRO_CLI_SHA256_ARM64
+
+# bin/ is made here so PATH never races the engine, which makes its other subtrees, and
+# kiro-cli-versions (the server's install root) so this failure branch covers it. That root
+# must stay a sibling of opt/: the engine prunes every non-current directory under opt/<tool>.
+# The config dir is made even when the tools dir lies elsewhere, or flock would create a file.
+# ~/.ssh is born 700, the mode the server holds it at, so a fresh volume logs no change.
+# shellcheck disable=SC2153 # load_boot_paths sets TOOLS and KIRO_HOME through eval
+if ! mkdir -p "$CONFIG_DIR" ${TOOLS:+"$TOOLS/bin" "$TOOLS/kiro-cli-versions"} \
+  "$HOME/.local/share/kiro-cli" \
+  "$KIRO_HOME" "$HOME/.cache/go-build" "$HOME/.docker/cli-plugins" \
+  || ! { [ -d "$HOME/.ssh" ] || mkdir -m 700 "$HOME/.ssh"; }; then
+  printf "ERROR: failed to create required directories (is %s mounted and writable?)\n" "$CONFIG_DIR"
+  sleep 10
+  exit 1
+fi
 
 # Returns 1, with marotte's own refusal line, when a running marotte holds one of the
 # folders: this script's deletions below would otherwise run against its live tree
@@ -117,28 +83,19 @@ refuse_held_roots() {
   return 0
 }
 
-refuse_held_roots "$CONFIG_DIR" "$KIRO_HOME" "$TOOLS" || exit 1
-
-# Normalize modes on every boot: an inheritable ACL or umask on the host volume
-# can stamp any mode, the tools engine refuses a group- or other-writable root, and
-# ssh refuses a lax ~/.ssh.
-chmod 755 "$HOME" || true
-chmod go-w "$TOOLS" "$TOOLS/bin" "$TOOLS/kiro-cli-versions" \
-  "$HOME/.local" "$HOME/.local/share" "$HOME/.local/share/kiro-cli" \
-  "$KIRO_HOME" "$HOME/.cache" "$HOME/.cache/go-build" \
-  "$HOME/.docker" "$HOME/.docker/cli-plugins" || true
-chmod 700 "$HOME/.ssh" || true
+refuse_held_roots "$CONFIG_DIR" "$KIRO_HOME" ${TOOLS:+"$TOOLS"} || exit 1
 
 # Give login shells (the browser shell runs `bash --login`) the inherited PATH:
 # Debian's /etc/profile assigns uid 0 only the system directories, dropping the
-# /config entries. profile.d is sourced after that assignment. The Dockerfile's ENV
-# stays the source of the value.
+# /config entries. profile.d is sourced after that assignment. The value is the image's
+# ENV as load_boot_paths set it.
 emit_path_dropin() {
   printf '%s\n' \
     '# Generated by marotte entrypoint.sh on every boot -- edits are overwritten.' \
     '#' \
     '# WHY THIS IS NOT REDUNDANT WITH THE IMAGE ENV PATH: Debian /etc/profile' \
-    '# ASSIGNS PATH rather than appending, and its uid-0 branch (this container)' \
+    '# ASSIGNS PATH rather than appending, and its uid-0 branch (this file is' \
+    '# written only when the container runs as root)' \
     '# assigns only the six system directories -- so every login shell discards the' \
     '# /config entries the image exported and an engine-installed tool such as gh' \
     '# stops resolving by name. /etc/profile sources this directory through' \
@@ -147,32 +104,57 @@ emit_path_dropin() {
     '# The assignment below is lossless rather than additive on purpose: the' \
     '# exported PATH already ends with exactly the six directories /etc/profile'\''s' \
     '# uid-0 branch sets, so it is a superset and nothing is dropped.'
-  printf 'PATH=%s\nexport PATH\n' "$PATH"
+  # Single-quoted, so a tools dir with a space or a quote stays one word.
+  local quoted=${PATH//\'/\'\\\'\'}
+  printf "PATH='%s'\nexport PATH\n" "$quoted"
 }
 
-# Through a temp file so a login shell never sources a half-written assignment;
-# the mktemp suffix keeps run-parts from matching it.
+# $1 is the profile.d folder. Through a temp file so a login shell never sources a half-written
+# assignment; the mktemp suffix keeps run-parts from matching it. A failed write still succeeds
+# when the file already holds this boot's text; a different file is removed, or named in a warning
+# when it cannot be, since a login shell would source a previous boot's PATH from it.
 install_path_dropin() {
-  local dir=/etc/profile.d target tmp
+  local dir=$1 target tmp
   target="$dir/10-marotte-path.sh"
   [ -d "$dir" ] || return 1
-  tmp=$(mktemp "$target.XXXXXX") || return 1
-  if emit_path_dropin >"$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$target"; then
-    return 0
+  if tmp=$(mktemp "$target.XXXXXX"); then
+    if emit_path_dropin >"$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$target"; then
+      return 0
+    fi
+    rm -f "$tmp"
   fi
-  rm -f "$tmp"
+  [ -e "$target" ] || return 1
+  [ -f "$target" ] && [ "$(<"$target")" = "$(emit_path_dropin)" ] && return 0
+  rm -f "$target" 2>/dev/null
+  [ -e "$target" ] \
+    && printf 'WARNING: could not remove %s, written by an earlier boot; a login shell sources its PATH, which may not be this boot'\''s\n' "$target" >&2
   return 1
 }
 
-# Warn only: the mkdir above is the one place this script fails the boot.
-if ! install_path_dropin; then
-  printf "WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) will not see %s, so an engine-installed tool will not resolve by name there\n" "$TOOLS/bin" >&2
-fi
+# $1 is the effective uid. Only root may write /etc/profile.d, and Debian's /etc/profile resets
+# PATH for every other uid too, so elsewhere a login shell searches no tools folder. Warn only: a
+# login shell without the tools PATH is no reason to stop the boot, and with no tools folder only a
+# failed drop-in is worth a warning. MAROTTE_PATH_DROPIN=1 tells the server (internal/steering's
+# dropInEnv) the drop-in holds this start's PATH.
+offer_login_path() {
+  unset MAROTTE_PATH_DROPIN
+  if [ "$1" -ne 0 ]; then
+    [ -z "$TOOLS" ] || printf "WARNING: running as uid %s, not root, so /etc/profile.d/10-marotte-path.sh is not written; a login shell (the browser shell runs bash --login) does not search %s, so run an engine-installed tool there by its full path (%s/<tool>)\n" "$1" "$(logfmt_value "$TOOLS/bin" 4096)" "$(logfmt_value "$TOOLS/bin" 4096)" >&2
+  elif install_path_dropin /etc/profile.d; then
+    export MAROTTE_PATH_DROPIN=1
+  elif [ -n "$TOOLS" ]; then
+    printf "WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) may not see %s, so an engine-installed tool may not resolve by name there\n" "$(logfmt_value "$TOOLS/bin" 4096)" >&2
+  else
+    printf "WARNING: could not write /etc/profile.d/10-marotte-path.sh; a login shell (the browser shell runs bash --login) may not get the boot's PATH\n" >&2
+  fi
+}
+
+offer_login_path "$EUID"
 
 # One-time migration from the legacy KIRO_HOME (/config/kiro) to the current one;
 # only the settings and custom steering doc carry over.
 if [ -d /config/kiro ] && [ "$KIRO_HOME" != /config/kiro ]; then
-  printf "Migrating legacy kiro state /config/kiro -> %s\n" "$KIRO_HOME"
+  printf "Migrating legacy kiro state /config/kiro -> %s\n" "$(logfmt_value "$KIRO_HOME")"
   mkdir -p "$KIRO_HOME/settings" "$KIRO_HOME/steering" "$KIRO_HOME/agents"
   # Legacy copies are newer than anything at the destination.
   [ -f /config/kiro/settings/cli.json ] \
@@ -187,70 +169,12 @@ if [ -d /config/kiro ] && [ "$KIRO_HOME" != /config/kiro ]; then
   rm -rf /config/kiro
 fi
 
-# Reclaim superseded kiro-cli agent-server runtimes: each version unpacks a
-# ~240 MB tree under <data-dir>/kas/<version>-<hash>/ at the engine's first launch,
-# and nothing removes the old ones. Unrelated to KAS session state. Data-dir
-# resolution mirrors kiro-cli's (XDG_DATA_HOME, else $HOME/.local/share). Warn,
-# never fail the boot. It stays here because it must run before the server can
-# unpack a new tree.
-prune_superseded_kas_runtimes() {
-  local data_home kas_dir kas_real entry name
-  data_home="${XDG_DATA_HOME:-}"
-  if [ -z "$data_home" ]; then
-    [ -n "${HOME:-}" ] || return 0
-    data_home="$HOME/.local/share"
-  fi
-  kas_dir="$data_home/kiro-cli/kas"
-  [ -d "$kas_dir" ] || return 0
-  # `-d` follows symlinks and the rm runs as root, so a planted symlink could
-  # redirect the sweep at an arbitrary tree. Refuse unless the store is a real
-  # directory resolving where it is named.
-  if [ -L "$data_home/kiro-cli" ] || [ -L "$kas_dir" ]; then
-    printf "WARNING: kiro-cli data dir or its kas store is a symlink; refusing to prune through it (%s)\n" "$kas_dir" >&2
-    return 0
-  fi
-  kas_real=$(realpath "$kas_dir" 2>/dev/null) || kas_real=""
-  case "$kas_real" in
-    "$data_home"/kiro-cli/kas) ;;
-    *)
-      printf "WARNING: kiro-cli kas store does not resolve inside the data dir; refusing to prune (%s -> %s)\n" \
-        "$kas_dir" "${kas_real:-unknown}" >&2
-      return 0
-      ;;
-  esac
-  for entry in "$kas_dir"/*; do
-    # An empty store leaves the glob unexpanded.
-    [ -e "$entry" ] || continue
-    name="${entry##*/}"
-    # Covers the tree and its sibling .lock; quoting keeps the version literal.
-    case "$name" in
-      "$KIRO_CLI_VERSION"-*) continue ;;
-    esac
-    # Only version-keyed entries are superseded runtimes: kas/ is kiro-cli's
-    # directory, so anything else is left in place and logged.
-    if [[ ! "$name" =~ ^[0-9]+\.[0-9]+\.[0-9]+- ]]; then
-      printf "Leaving unrecognized (non version-keyed) entry in the kiro-cli agent runtime store: %s\n" "$name"
-      continue
-    fi
-    if rm -rf "$entry"; then
-      printf "Pruned superseded kiro-cli agent runtime: %s (pin %s)\n" "$name" "$KIRO_CLI_VERSION"
-    else
-      printf "WARNING: failed to prune superseded kiro-cli agent runtime %s\n" "$name" >&2
-    fi
-  done
-  return 0
-}
-
-# Before the server starts, so a bump boot drops the old tree before the new one
-# unpacks and peak usage stays at one tree.
-prune_superseded_kas_runtimes
-
 # Older images left kiro-cli dispatchers in $HOME/.local/bin, which is on PATH and
 # on the volume, so a bare `kiro-cli` could resolve to an unpinned copy. It lives
 # here because it is outside $TOOLS, the server's tree. An unmatched glob returns 0,
 # so a failure is real.
 if ! rm -rf "$HOME/.local/bin"/kiro-cli*; then
-  printf "WARNING: failed to remove legacy kiro-cli residue from %s/.local/bin; an unpinned copy may stay resolvable by bare name\n" "$HOME" >&2
+  printf "WARNING: failed to remove legacy kiro-cli residue from %s/.local/bin; an unpinned copy may stay resolvable by bare name\n" "$(logfmt_value "$HOME")" >&2
 fi
 
 # Repair an interrupted dpkg transaction before the listener binds: apt installs

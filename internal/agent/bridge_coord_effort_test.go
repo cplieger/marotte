@@ -48,7 +48,7 @@ func healEffortFixture(t *testing.T, chose string, opts ...Option) (*Runtime, *f
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
 	return h, br
 }
 
@@ -294,19 +294,13 @@ func TestEffortDrift_ARestartLoadsTheChatsLevel(t *testing.T) {
 	}
 }
 
-// The empty-turn retry detaches the session (refreshRetrySession); the new session keeps the level.
+// The empty-turn retry retires the session (refreshRetrySession); the new session keeps the level.
 func TestEffortDrift_ARefreshedSessionKeepsTheChatsLevel(t *testing.T) {
 	d := newEffortDrift(t)
 	h := d.boot(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
 	d.firstSessionThenDrift(t, h)
-	bridgeRole{coord: h.coord}.CloseBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
-	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.RecordSession("")
-		return true
-	}); err != nil {
-		t.Fatalf("detach the session: %v", err)
-	}
+	detach(t, h)
 
 	opts := reopenSessionOpts(t, h)
 
@@ -631,16 +625,11 @@ func parkPick(t *testing.T, d *effortDrift, model string) {
 	}
 }
 
-// detach ends the bridge and the record's session, as refreshRetrySession does.
-func detach(t *testing.T, d *effortDrift, h *Runtime) {
+// detach closes the bridge and retires the session, so the next open runs session/new.
+func detach(t *testing.T, h *Runtime) {
 	t.Helper()
-	bridgeRole{coord: h.coord}.CloseBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
-	if _, err := d.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.RecordSession("")
-		return true
-	}); err != nil {
-		t.Fatalf("detach the session: %v", err)
-	}
+	h.coord.closeBridge(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
+	h.coord.retireSession(t.Context(), "c1", marotte.ContextResetEmptyRetry)
 }
 
 // The tier fake-model's session reported is fake-model's: after a move onto m-flat (listed with no
@@ -667,7 +656,7 @@ func TestModelMove_TheOldModelsTierReachesNoLaterSession(t *testing.T) {
 				t.Fatalf("open: %v", err)
 			}
 			h.handleSessionUpdate(t.Context(), "c1", modelOnlyFrame(t, marotte.ModelAuto))
-			detach(t, d, h)
+			detach(t, h)
 		},
 	}
 	for name, moveThenDoor := range tests {

@@ -3,7 +3,7 @@
 // (`dock.ts`), which the consumer seats in its bottom bar. The page owns the selection between
 // them and one clock for all of them. It must name no source: a consumer hands it an `ExecRun`.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { attachClamp, releaseClampsIn } from "../clamp-text.js";
 import { ICON_TAB_RUN } from "../icons.js";
 import { buildAssistantBubble } from "../fundamentals/text-bubble.js";
@@ -18,6 +18,7 @@ import {
   type ExecDetailView,
   type EmptyAction,
   type EmptyNote,
+  type HeadAction,
 } from "./detail.js";
 
 interface ExecPageOpts {
@@ -27,6 +28,8 @@ interface ExecPageOpts {
   /** An affordance to render beside that note. Optional: a consumer with nowhere
    *  to send anyone passes none and the slot stays empty. */
   emptyAction?: EmptyAction;
+  /** The consumer's verbs on the shown node, in the detail pane's header. */
+  headAction?: HeadAction;
   /** Where the run dock goes: the consumer's bottom-bar host, emptied on `dispose`. */
   dock: HTMLElement;
   /** The dock head's identity glyph. Defaults to the workflow one. */
@@ -90,7 +93,7 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
 
   const tree: ExecTreeView = buildExecTree(select);
   const timeline: ExecTimelineView = buildExecTimeline(select);
-  const detail: ExecDetailView = buildExecDetail(opts.emptyNote, opts.emptyAction);
+  const detail: ExecDetailView = buildExecDetail(opts.emptyNote, opts.emptyAction, opts.headAction);
   const dock: ExecDockView = buildExecDock({
     host: opts.dock,
     icon: opts.icon ?? ICON_TAB_RUN,

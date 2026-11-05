@@ -5,10 +5,12 @@
 
 import type { ToolCall, ToolStatus, ToolDiff, TextSpan } from "./types.js";
 import { ensureToolCallSig, toolCallSigs, toolCallSigKey } from "./store-signals.js";
-import { effect, el } from "@cplieger/reactive";
+import { effect, el } from "@cplieger/ui";
 
 import { isToolDone, commandTitle, toolTitleText, type ToolKind } from "./tool-schema.js";
 import {
+  adoptDenial,
+  syncClassifierMarks,
   buildToolCard,
   insertDiffPreview,
   expandToolDetails,
@@ -20,6 +22,7 @@ import {
 } from "./tool-card.js";
 import { clearToolSilence, forgetToolSilence } from "./tool-silence.js";
 import { toolCardOptsFor } from "./tool-card-opts.js";
+import { stampHookCard } from "./hook-fold.js";
 import { windowOutput, windowSpans } from "./strings.js";
 import { renderOutput, appendOutput as appendOutputChunk } from "./output-render.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
@@ -551,6 +554,7 @@ export function mountToolCallCard(
     opts.detailsOpen = true;
   }
   const card = buildToolCard(opts);
+  stampHookCard(card, tc);
   const key = toolCallSigKey(chatID, tc.id);
   const slots = toolSlots.get(key) ?? [];
   toolSlots.set(key, slots);
@@ -594,16 +598,22 @@ export function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: st
   if (tc.declined === true) {
     el.dataset["declined"] = "1";
   }
+  if (tc.denial !== undefined) {
+    adoptDenial(el, tc.denial);
+  }
   // Status is applied last: the bare-disclosure predicate reads `.tool-output` back from the DOM, and a terminal
   // frame often carries both. The output check below trims, like the predicate.
   if (tc.output !== undefined && tc.output.trim() !== "") {
     applyOutputUpdate(el, tc.output, tc.output_spans ?? []);
   }
+  // Before the status, whose settle refreshes the group that reads these facts.
+  stampHookCard(el, tc);
   if (tc.diffs !== undefined && tc.diffs.length > 0) {
     applyDiffUpdate(el, tc.diffs);
   }
   syncOffloadLink(el, tc.offload);
   syncInteractionFact(el, tc.interaction);
+  syncClassifierMarks(el, tc.classifier_approved === true, tc.classifier_note ?? "");
   if (tc.status !== undefined) {
     applyStatusUpdate(el, tc.status);
     if (isToolDone(tc.status)) {
@@ -617,6 +627,7 @@ function applyStatusUpdate(card: HTMLDivElement, status: ToolStatus): void {
   // The outcome glyph, through the one writer that owns that vocabulary.
   applyOutcome(card, status, card.dataset["title"] ?? "", {
     kind: (card.dataset["kind"] ?? "other") as ToolKind,
+    toolName: card.dataset["toolName"] ?? "",
     writesFile: false,
     filePath: card.dataset["filePath"] ?? "",
     fileBasename: card.dataset["filename"] ?? "",

@@ -103,7 +103,7 @@ describe("renderRecentCommits commit hash", () => {
 
   // The prefix comes from a repository's own origin remote, so the client re-checks the scheme. The `//host/`
   // spellings exercise the scheme guard: a non-special scheme with an authority has a non-empty host, so dropping
-  // isSafeURL would put that href on the page.
+  // isHttpURL would put that href on the page.
   it.each([
     "javascript://evil.com/x",
     "data://evil.com/x",

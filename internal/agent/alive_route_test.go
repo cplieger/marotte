@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/sse"
-	"github.com/cplieger/webhttp/v4"
+	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/sse"
 )
 
 type recordingPresence struct {
@@ -90,7 +90,7 @@ func TestHandleAlive_RefusesAnAbsentOrMalformedTag(t *testing.T) {
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400", rec.Code)
 			}
-			var body webhttp.ErrorResponse
+			var body httpserver.ErrorResponse
 			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 				t.Fatalf("body is not the error envelope: %v: %q", err, rec.Body.String())
 			}

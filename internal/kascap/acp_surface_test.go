@@ -23,8 +23,9 @@ var acpMethodRe = regexp.MustCompile(
 // shrunk (82 when set).
 const acpMethodFloor = 60
 
-// TestACPMethodsPresent is the kiro-cli upgrade gate: does the pinned agent server still handle
-// every ACP method marotte's sources name.
+// TestACPMethodsPresent is the kiro-cli upgrade gate: the pinned agent server's bundle carries, as
+// a string literal, every ACP method name marotte's sources name. A carried name can still lack a
+// handler, so the gate proves presence, not dispatch.
 func TestACPMethodsPresent(t *testing.T) {
 	active := activeKASVersion(t)
 	methods := marotteACPMethods(t)

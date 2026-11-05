@@ -42,7 +42,7 @@ import {
   touch,
   SignalMap,
   type Signal,
-} from "@cplieger/reactive";
+} from "@cplieger/ui";
 import { forgetView, viewStale } from "./view-freshness.js";
 import {
   bumpLane,
@@ -1479,6 +1479,8 @@ export function foldToolCallDelta(prev: ToolCall, d: ToolProgressPayload): ToolC
     // ONE-WAY: the wire only ever sends `true`, so an absent field means unchanged rather than
     // false and the mark is never cleared by a later frame.
     ...(d.declined === true && { declined: true }),
+    ...(d.classifier_approved === true && { classifier_approved: true }),
+    ...(d.classifier_note !== undefined && { classifier_note: d.classifier_note }),
   };
 }
 
@@ -1549,13 +1551,15 @@ export function settledToolCall(
     ...(result.offload !== undefined && { offload: result.offload }),
     ...(result.interaction !== undefined && { interaction: result.interaction }),
     ...(result.declined === true && { declined: true }),
+    ...(result.classifier_approved === true && { classifier_approved: true }),
+    ...(result.classifier_note !== undefined && { classifier_note: result.classifier_note }),
   };
 }
 
 /** Whether a mounted card built from `shown` would paint `next` identically: the fields
  *  `applyToolCallUpdate` READS, which is a narrower set than a `ToolCall`'s own — the title, the
  *  output and the spans that style it, the diffs, the status with its duration, the terminal id
- *  `linkTerminal` claims, the offload link and the answered fact. */
+ *  `linkTerminal` claims, the offload link, the answered fact and the safety check's marks. */
 export function paintsTheSame(shown: ToolCall, next: ToolCall): boolean {
   return (
     shown.title === next.title &&
@@ -1565,6 +1569,8 @@ export function paintsTheSame(shown: ToolCall, next: ToolCall): boolean {
     shown.terminal_id === next.terminal_id &&
     shown.offload?.path === next.offload?.path &&
     factOf(shown) === factOf(next) &&
+    (shown.classifier_approved === true) === (next.classifier_approved === true) &&
+    (shown.classifier_note ?? "") === (next.classifier_note ?? "") &&
     sameSpans(shown.output_spans, next.output_spans) &&
     sameDiffs(shown.diffs, next.diffs)
   );

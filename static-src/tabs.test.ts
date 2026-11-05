@@ -4,9 +4,10 @@
 // `tabs-projection.test.ts`'s subject.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type { CloseImpact } from "./wire/types.gen.js";
 import type { Mock } from "vitest";
-import { effect } from "@cplieger/reactive";
-import { mountLiveRegions } from "@cplieger/ui-primitives/announce";
+import { effect } from "@cplieger/ui";
+import { mountLiveRegions } from "@cplieger/ui/announce";
 
 // Mock dependencies that tabs.ts imports at module level.
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
@@ -114,7 +115,6 @@ vi.mock("./tabs-drag.js", async (importOriginal) => ({
   attachDrag: vi.fn(),
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
-  setTapCallback: vi.fn(),
 }));
 // The COMPLETE store helper (the factory's name stores, the close's active-pointer writers, and
 // what actions/chat.js links): a partial factory fails the file when store.ts grows an export.
@@ -183,6 +183,9 @@ import {
   refreshActiveView,
   subscribeTabCues,
   registerTabNotice,
+  registerCloseGate,
+  claimNavigation,
+  navigationHeld,
   _resetForTest,
 } from "./tabs.js";
 // The REAL freshness leaf: `viewStale` is what the dispatcher spends, so a case
@@ -192,12 +195,7 @@ import { observeStamp, _resetForTest as _resetFreshnessForTest } from "./subject
 import { closeTabCommand } from "./actions/tabs.js";
 import { restoreFailedSend, retargetComposer } from "./composer-state.js";
 import { info as toastInfo, error as toastErrorFn } from "./toast.js";
-import {
-  attachDrag,
-  pointerDragActivation,
-  setReorderCallback,
-  setTapCallback,
-} from "./tabs-drag.js";
+import { attachDrag, pointerDragActivation, setReorderCallback } from "./tabs-drag.js";
 import { $ } from "./dom.js";
 import { showContextMenu } from "./context-menu.js";
 import type { ContextMenuItem } from "./context-menu.js";
@@ -226,8 +224,6 @@ bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 // at module load and every suite below clears mocks in its beforeEach. Driving it
 // is exactly what a completed drag does.
 const commitDrop = vi.mocked(setReorderCallback).mock.calls[0]?.[0];
-// What a lifted hold released without travel asks the strip to do.
-const tapRow = vi.mocked(setTapCallback).mock.calls[0]?.[0];
 
 // `materializeTab` needs openers registered; a spec's `onClose` is the FACTORY's, so a teardown is
 // watched through the opener it delegates to.
@@ -356,14 +352,6 @@ describe("openTab", () => {
     expect.assertions(2);
     await openChat("a");
     expect(hasTab("chat", "a")).toBe(true);
-    expect(getActiveTabId()).toBe(chatID("a"));
-  });
-
-  it("activates the tab a lifted tap names", async () => {
-    expect.assertions(2);
-    await openChats("a", "b");
-    expect(tapRow).toBeTypeOf("function");
-    tapRow?.(chatID("a"));
     expect(getActiveTabId()).toBe(chatID("a"));
   });
 
@@ -761,6 +749,48 @@ describe("activateTab", () => {
   });
 });
 
+// A late reply may take the view only while its claim holds: the user's own moves and later
+// requests supersede it, the app's hand-overs do not.
+describe("navigation claims", () => {
+  it("a user activation of another tab supersedes a claim", async () => {
+    await openChats("a", "b");
+    const ticket = claimNavigation();
+    activateTab(chatID("a"));
+    expect(navigationHeld(ticket)).toBe(false);
+  });
+
+  it("a same-tab activation leaves a claim held", async () => {
+    await openChats("a", "b");
+    const ticket = claimNavigation();
+    activateTab(chatID("b"));
+    expect(navigationHeld(ticket)).toBe(true);
+  });
+
+  it("a close handing the view to its successor leaves a claim held", async () => {
+    await openChats("a", "b");
+    const ticket = claimNavigation();
+    await closeTab(chatID("b"));
+    expect(getActiveTabId()).toBe(chatID("a"));
+    expect(navigationHeld(ticket)).toBe(true);
+  });
+
+  it("a later claim supersedes an earlier one", () => {
+    const first = claimNavigation();
+    const second = claimNavigation();
+    expect(navigationHeld(first)).toBe(false);
+    expect(navigationHeld(second)).toBe(true);
+  });
+
+  it("an open whose reply lands after the user moved lists the tab without activating it", async () => {
+    await openChats("a", "b");
+    const pending = openChat("c");
+    activateTab(chatID("a"));
+    await expect(pending).resolves.toBe("opened");
+    expect(hasTab("chat", "c")).toBe(true);
+    expect(getActiveTabId()).toBe(chatID("a"));
+  });
+});
+
 // The in-memory history is read through the one decision it drives: which tab a close hands over to.
 describe("MRU activation history", () => {
   // A subtree close skips every removed id; the most recent entry is the removed child, and the
@@ -879,8 +909,8 @@ describe("MRU activation history", () => {
     await openChats("first", "y", "x", "act"); // history [act, x, y, first]
     const doomedTab = chatID("x");
 
-    // No answer at all: the response is held and the dispatch canceled, which is
-    // the branch a real 5s timeout takes. Manual mode keeps the echo frame back,
+    // No answer at all: the response is held and the dispatch canceled, which reaches
+    // opTimedOut as a real 5s timeout does. Manual mode keeps the echo frame back,
     // or a matching op_id would confirm the op instead.
     tabServer.setMode("manual");
     tabServer.holdResponses();
@@ -1378,12 +1408,330 @@ describe("keyboard navigation (real tabs.ts handler via rendered tab nodes)", ()
   });
 });
 
+// A person's close asks the registered gate with the tab's chat subtree; only its yes closes.
+describe("a person's close goes through the close gate", () => {
+  type Gate = Parameters<typeof registerCloseGate>[0];
+
+  function deferred(): { promise: Promise<boolean>; resolve: (ok: boolean) => void } {
+    let resolve: (ok: boolean) => void = () => undefined;
+    const promise = new Promise<boolean>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  function tapClose(id: string): void {
+    const x = document.querySelector<HTMLElement>(`[data-tab-id="${id}"] .tab-close`);
+    if (x === null) {
+      throw new Error("no close control");
+    }
+    for (const type of ["pointerdown", "pointerup"] as const) {
+      x.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          bubbles: true,
+        }),
+      );
+    }
+    x.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
+
+  function rowEl(id: string): HTMLElement {
+    const node = document.querySelector<HTMLElement>(`[data-tab-id="${id}"]`);
+    if (node === null) {
+      throw new Error("row missing");
+    }
+    return node;
+  }
+
+  it("asks with the closed tab and every chat under it; a no keeps the row and sends nothing", async () => {
+    expect.assertions(5);
+    await openChat("a");
+    await openChat("t", { parent: chatID("a") });
+    await openRunTab("wf_1", "A run", { parent: chatID("a"), owns: false });
+    await paint();
+    const gate = vi.fn<Gate>(() => ({ verdict: Promise.resolve(false) }));
+    registerCloseGate(gate);
+
+    tapClose(chatID("a"));
+    await settleTabs();
+
+    expect(gate).toHaveBeenCalledTimes(1);
+    const [, ref, chats] = gate.mock.calls[0] ?? [];
+    expect(ref).toBe("a");
+    expect(chats?.map((c) => c.ref)).toEqual(["a", "t"]);
+    expect(hasTab("chat", "a")).toBe(true);
+    expect(tabServer.sentOfType("close_tab")).toHaveLength(0);
+  });
+
+  it("closes once the gate says yes", async () => {
+    expect.assertions(2);
+    await openChats("a", "b");
+    await paint();
+    registerCloseGate(() => ({ verdict: Promise.resolve(true) }));
+
+    tapClose(chatID("a"));
+    await until(() => tabServer.sentOfType("close_tab").length === 1, "the close dispatched");
+    await settleTabs();
+
+    expect(hasTab("chat", "a")).toBe(false);
+    expect(hasTab("chat", "b")).toBe(true);
+  });
+
+  it("gates a middle-click too", async () => {
+    expect.assertions(2);
+    await openChats("a", "b");
+    await paint();
+    const gate = vi.fn<Gate>(() => ({ verdict: Promise.resolve(false) }));
+    registerCloseGate(gate);
+
+    rowEl(chatID("a")).dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true }));
+    await settleTabs();
+
+    expect(gate).toHaveBeenCalledTimes(1);
+    expect(hasTab("chat", "a")).toBe(true);
+  });
+
+  it("Delete leaves focus on the tab while the gate is open and after a no", async () => {
+    expect.assertions(3);
+    await openChats("a", "b", "c");
+    await paint();
+    const answer = deferred();
+    registerCloseGate(() => ({ verdict: answer.promise }));
+    const node = rowEl(chatID("b"));
+    node.focus();
+
+    node.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+    expect(document.activeElement).toBe(node);
+    answer.resolve(false);
+    await settleTabs();
+
+    expect(document.activeElement).toBe(node);
+    expect(tabServer.sentOfType("close_tab")).toHaveLength(0);
+  });
+
+  it("Delete moves focus to the successor once the gate says yes", async () => {
+    expect.assertions(2);
+    await openChats("a", "b", "c");
+    await paint();
+    const answer = deferred();
+    registerCloseGate(() => ({ verdict: answer.promise }));
+    const node = rowEl(chatID("b"));
+    const successor = rowEl(chatID("c"));
+    node.focus();
+
+    node.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+    answer.resolve(true);
+    await until(() => tabServer.sentOfType("close_tab").length === 1, "the close dispatched");
+
+    expect(document.activeElement).toBe(successor);
+    await settleTabs();
+    expect(hasTab("chat", "b")).toBe(false);
+  });
+
+  it("a plain yes closes in the same task", async () => {
+    expect.assertions(2);
+    await openChats("a", "b");
+    await paint();
+    registerCloseGate(() => ({ verdict: true }));
+
+    tapClose(chatID("a"));
+
+    expect(tabServer.sentOfType("close_tab")).toHaveLength(1);
+    await settleTabs();
+    expect(hasTab("chat", "a")).toBe(false);
+  });
+
+  it("never asks for a tab with no chat under it", async () => {
+    expect.assertions(2);
+    await openEditorView("/a.ts");
+    await paint();
+    const gate = vi.fn<Gate>(() => ({ verdict: Promise.resolve(false) }));
+    registerCloseGate(gate);
+
+    tapClose(tabIdFor("editor", "/a.ts"));
+    await settleTabs();
+
+    expect(gate).not.toHaveBeenCalled();
+    expect(hasTab("editor", "/a.ts")).toBe(false);
+  });
+});
+
+// The server checks the impact a person's close sends against what the close would stop, and refuses one
+// another device made stale (409 close_impact_changed with its own impact): nothing closes, and the person
+// answers again on the merge.
+describe("a close another device made stale", () => {
+  type Gate = Parameters<typeof registerCloseGate>[0];
+  type Impact = CloseImpact;
+
+  const work = (ref: string, turns: string[] = []) => ({
+    ref,
+    turns,
+    asks: [],
+    runs: [],
+    steers: [],
+    queued: [],
+  });
+  const merged = (a: Impact, b: Impact): Impact => {
+    const out = new Map<string, Impact["chats"][number]>();
+    for (const w of [...a.chats, ...b.chats]) {
+      const had = out.get(w.ref);
+      out.set(
+        w.ref,
+        had === undefined ? w : { ...had, turns: [...new Set([...had.turns, ...w.turns])] },
+      );
+    }
+    return { chats: [...out.values()] };
+  };
+
+  function tapClose(id: string): void {
+    const x = document.querySelector<HTMLElement>(`[data-tab-id="${id}"] .tab-close`);
+    if (x === null) {
+      throw new Error("no close control");
+    }
+    for (const type of ["pointerdown", "pointerup"] as const) {
+      x.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          bubbles: true,
+        }),
+      );
+    }
+    x.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
+
+  /** A gate that sends `first` and, asked again, answers `again` on the merge it was handed. */
+  function staleGate(first: Impact, again: boolean): ReturnType<typeof vi.fn<Gate>> {
+    return vi.fn<Gate>((_name, _ref, _chats, stale) =>
+      stale === undefined
+        ? { verdict: true, impact: first }
+        : { verdict: Promise.resolve(again), impact: merged(stale.sent, stale.server) },
+    );
+  }
+
+  function refuseWith(server: Impact): void {
+    tabServer.failNext(
+      "close_tab",
+      409,
+      "what closing this tab stops changed; confirm again",
+      "close_impact_changed",
+      {
+        error: "what closing this tab stops changed; confirm again",
+        reason: "close_impact_changed",
+        impact: server,
+      },
+    );
+  }
+
+  it("closes nothing, toasts nothing, asks again with the server's impact and accept sends the merged one", async () => {
+    await openChat("a");
+    await paint();
+    const sent = { chats: [work("a")] };
+    const server = { chats: [work("a"), work("x", ["t9"])] };
+    const gate = staleGate(sent, true);
+    registerCloseGate(gate);
+    refuseWith(server);
+
+    tapClose(chatID("a"));
+    await until(
+      () => tabServer.sentOfType("close_tab").length === 2,
+      "the second close dispatched",
+    );
+    await settleTabs();
+
+    expect(gate).toHaveBeenCalledTimes(2);
+    expect(gate.mock.calls[1]?.[3]).toEqual({ sent, server });
+    const payloads = tabServer.sentOfType("close_tab").map((c) => c.payload["impact"]);
+    expect(payloads).toEqual([sent, { chats: [work("a"), work("x", ["t9"])] }]);
+    expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+    expect(hasTab("chat", "a")).toBe(false);
+  });
+
+  it("a reply that ended and another device's new reply asks again, and the merge carries both ids", async () => {
+    await openChat("a");
+    await paint();
+    const sent = { chats: [work("a", ["t1"])] };
+    const server = { chats: [work("a", ["t2"])] };
+    registerCloseGate(staleGate(sent, true));
+    refuseWith(server);
+
+    tapClose(chatID("a"));
+    await until(
+      () => tabServer.sentOfType("close_tab").length === 2,
+      "the second close dispatched",
+    );
+
+    expect(tabServer.sentOfType("close_tab")[1]?.payload["impact"]).toEqual({
+      chats: [work("a", ["t1", "t2"])],
+    });
+  });
+
+  it("a close the page thought idle but the server finds busy asks first", async () => {
+    await openChat("a");
+    await paint();
+    const sent = { chats: [work("a")] };
+    const gate = staleGate(sent, false);
+    registerCloseGate(gate);
+    refuseWith({ chats: [work("a", ["res:7"])] });
+
+    tapClose(chatID("a"));
+    await until(() => gate.mock.calls.length === 2, "the second dialog");
+    await settleTabs();
+
+    expect(tabServer.sentOfType("close_tab")).toHaveLength(1);
+    expect(hasTab("chat", "a")).toBe(true);
+  });
+
+  it("declining the second dialog leaves the tab open and sends nothing more", async () => {
+    await openChats("a", "b");
+    await paint();
+    const gate = staleGate({ chats: [work("a")] }, false);
+    registerCloseGate(gate);
+    refuseWith({ chats: [work("a", ["t3"])] });
+
+    tapClose(chatID("a"));
+    await until(() => gate.mock.calls.length === 2, "the second dialog");
+    await settleTabs();
+
+    expect(hasTab("chat", "a")).toBe(true);
+    expect(tabServer.sentOfType("close_tab")).toHaveLength(1);
+    expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+  });
+
+  it("a person's close of a tab with no chat sends an empty impact", async () => {
+    await openEditorView("/a.ts");
+    await paint();
+
+    tapClose(tabIdFor("editor", "/a.ts"));
+    await settleTabs();
+
+    expect(tabServer.sentOfType("close_tab")[0]?.payload["impact"]).toEqual({ chats: [] });
+  });
+
+  it("a remote close sends no impact", async () => {
+    await openChat("a");
+    await settleTabs();
+
+    await closeTab(chatID("a"));
+
+    expect(tabServer.sentOfType("close_tab")[0]?.payload).not.toHaveProperty("impact");
+  });
+});
+
 // `#tab-list` scrolls, so a drag must never activate the row under its first contact; a pan along an
 // exhausted axis produces no cancel, so the guard is travelled distance. POINTER events, with
 // `isPrimary` stated (it defaults false).
 describe("a drag on the strip scrolls it and never activates a row", () => {
   const ORIGIN_X = 40;
   const ORIGIN_Y = 100;
+
+  function click(x: number, y: number): MouseEvent {
+    return new MouseEvent("click", { clientX: x, clientY: y, bubbles: true, cancelable: true });
+  }
 
   // `buttons` is stated: a held contact is what a reflow cannot fake (touch reports 1, then 0).
   function ptr(
@@ -1405,14 +1753,15 @@ describe("a drag on the strip scrolls it and never activates a row", () => {
   }
 
   /** One whole gesture on `target`: press at the origin, travel by `(dx, dy)`,
-   *  release there. A zero travel sends no move at all, which is what a stationary
-   *  tap looks like on the wire. */
+   *  release there, and the click a browser sends after it. A zero travel sends no
+   *  move at all, which is what a stationary tap looks like on the wire. */
   function gesture(target: HTMLElement, dx: number, dy: number, pointerType = "touch"): void {
     target.dispatchEvent(ptr("pointerdown", ORIGIN_X, ORIGIN_Y, pointerType));
     if (dx !== 0 || dy !== 0) {
       target.dispatchEvent(ptr("pointermove", ORIGIN_X + dx, ORIGIN_Y + dy, pointerType));
     }
     target.dispatchEvent(ptr("pointerup", ORIGIN_X + dx, ORIGIN_Y + dy, pointerType));
+    target.dispatchEvent(click(ORIGIN_X + dx, ORIGIN_Y + dy));
   }
 
   /** Two chats, painted. `b` is the active one, so an activation of `a` is visible
@@ -1493,6 +1842,7 @@ describe("a drag on the strip scrolls it and never activates a row", () => {
     vv.offsetTop = 0;
     row.dispatchEvent(ptr("pointermove", ORIGIN_X, 20, "mouse"));
     row.dispatchEvent(ptr("pointerup", ORIGIN_X, 20, "mouse"));
+    row.dispatchEvent(click(ORIGIN_X, 20));
 
     expect(getActiveTabId()).toBe(chatID("a"));
   });
@@ -2760,8 +3110,8 @@ describe("optimistic close: the reversible gesture", () => {
 });
 
 describe("optimistic close: timeout, verifying, and authoritative settlement", () => {
-  // The 5s deadline (CLOSE_CONFIRM_MS) uses AbortSignal.timeout, which fake timers cannot advance, so
-  // a cancellation takes the identical opTimedOut branch.
+  // The 5s deadline (CLOSE_CONFIRM_MS) is an AbortSignal.timeout, which fake timers do not advance, so a
+  // cancellation stands in for it and lands on opTimedOut too; the next block covers the timeout itself.
 
   /** A close whose dispatch ends with NO answer: response held, then the
    *  in-flight dispatch canceled. The op lands in `verifying`. */
@@ -2807,6 +3157,158 @@ describe("optimistic close: timeout, verifying, and authoritative settlement", (
     // Restored with a notice — this arm is the machine's, not a server error's,
     // so the ordinary failure toast stays silent.
     expect(vi.mocked(toastInfo)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+  });
+});
+
+describe("optimistic close: a committed close whose answer is late or an error", () => {
+  it("a close the transport timed out on shows no error and stays closed", async () => {
+    await openChats("a", "keep");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      tabServer.commitThenAnswerNext("close_tab", {
+        ok: false,
+        status: 0,
+        error: "Request timed out",
+        code: "timeout",
+      });
+    }
+
+    await closeTab(chatID("a"));
+
+    expect(hasTab("chat", "a")).toBe(false);
+    expect(openers.chatClose).toHaveBeenCalledWith("a");
+    expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+  });
+
+  it("a close the server answers only after 30 s shows no error and stays closed", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    // The action's deadline is an AbortSignal.timeout: put it on the faked clock.
+    const deadline = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const ac = new AbortController();
+      setTimeout(() => {
+        ac.abort(new DOMException("signal timed out", "TimeoutError"));
+      }, ms);
+      return ac.signal;
+    });
+    try {
+      await openChats("a", "keep");
+      tabServer.answerAfterNext("close_tab", 30_000, {
+        ok: true,
+        status: 200,
+        body: { closed: [chatID("a")], version: tabServer.version() + 1 },
+      });
+
+      let settled = false;
+      const closing = closeTab(chatID("a")).then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(settled).toBe(true);
+      await closing;
+      await vi.advanceTimersByTimeAsync(25_000);
+
+      expect(tabServer.sentOfType("close_tab")).toHaveLength(1);
+      expect(hasTab("chat", "a")).toBe(false);
+      expect(openers.chatClose).toHaveBeenCalledWith("a");
+      expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+    } finally {
+      deadline.mockRestore();
+    }
+  });
+
+  it("a close cut off by the network before its frame verifies instead of refusing", async () => {
+    await openChats("a", "keep");
+    tabServer.setMode("manual");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      tabServer.commitThenAnswerNext("close_tab", {
+        ok: false,
+        status: 0,
+        error: "Network error",
+        code: "network",
+      });
+    }
+
+    await closeTab(chatID("a"));
+    expect(hasTab("chat", "a")).toBe(false);
+    tabServer.flushFrames();
+
+    expect(hasTab("chat", "a")).toBe(false);
+    expect(openers.chatClose).toHaveBeenCalledWith("a");
+    expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+  });
+
+  it("a retry the server answers 'already in progress' before the frame verifies instead of refusing", async () => {
+    await openChats("a", "keep");
+    tabServer.setMode("manual");
+    tabServer.commitThenAnswerNext("close_tab", {
+      ok: false,
+      status: 0,
+      error: "Network error",
+      code: "network",
+    });
+    tabServer.commitThenAnswerNext("close_tab", {
+      ok: false,
+      status: 409,
+      error: "request already in progress",
+    });
+
+    await closeTab(chatID("a"));
+    expect({
+      sent: tabServer.sentOfType("close_tab").length,
+      restored: hasTab("chat", "a"),
+      toasts: vi.mocked(toastErrorFn).mock.calls.length,
+    }).toEqual({ sent: 2, restored: false, toasts: 0 });
+    tabServer.flushFrames();
+
+    expect(hasTab("chat", "a")).toBe(false);
+    expect(openers.chatClose).toHaveBeenCalledWith("a");
+    expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+  });
+
+  it("an 'already in progress' retry for a tab this projection lacks shows nothing", async () => {
+    await openChats("keep");
+    tabServer.commitThenAnswerNext("close_tab", {
+      ok: false,
+      status: 0,
+      error: "Network error",
+      code: "network",
+    });
+    tabServer.commitThenAnswerNext("close_tab", {
+      ok: false,
+      status: 409,
+      error: "request already in progress",
+    });
+
+    await closeTab("t-elsewhere");
+
+    expect(tabServer.sentOfType("close_tab")).toHaveLength(2);
+    expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+  });
+
+  it("a network non-answer for a tab this projection lacks shows nothing", async () => {
+    await openChats("keep");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      tabServer.commitThenAnswerNext("close_tab", {
+        ok: false,
+        status: 0,
+        error: "Network error",
+        code: "network",
+      });
+    }
+
+    await closeTab("t-elsewhere");
+
+    expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+  });
+
+  it("an error answered after the close's frame confirmed it shows nothing", async () => {
+    await openChats("a", "keep");
+    tabServer.commitThenAnswerNext("close_tab", { ok: false, status: 500, error: "nope" });
+
+    await closeTab(chatID("a"));
+
+    expect(hasTab("chat", "a")).toBe(false);
+    expect(openers.chatClose).toHaveBeenCalledWith("a");
     expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
   });
 });

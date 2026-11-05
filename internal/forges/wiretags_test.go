@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/go/wiregen"
 	"github.com/cplieger/marotte/internal/forges"
 	"github.com/cplieger/marotte/internal/wirespec"
-	"github.com/cplieger/wiregen/v3"
 )
 
 // Both paths are read off a type rather than written as literals, so a moved

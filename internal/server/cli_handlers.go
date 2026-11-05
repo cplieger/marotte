@@ -9,13 +9,14 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/sanitize"
+	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/version"
-	"github.com/cplieger/webhttp/v4"
 )
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +33,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	if out, err := s.cliRunner.Run(ctx, "--version"); err == nil {
 		payload["kiro_cli"] = strings.TrimSpace(string(out))
 	}
-	webhttp.WriteJSON(w, payload)
+	httpserver.WriteJSON(w, payload)
 }
 
 func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +47,7 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// 502, not 200-with-an-error-body: the client's action framework classifies by STATUS.
 		slog.Warn("diagnostics: kiro-cli exec failed", "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
+		httpserver.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON("diagnostic command failed"))
 		return
 	}
@@ -54,7 +55,7 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	if truncated {
 		report += "\n\n[truncated]"
 	}
-	webhttp.WriteJSON(w, map[string]string{"report": report})
+	httpserver.WriteJSON(w, map[string]string{"report": report})
 }
 
 func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
@@ -95,7 +96,7 @@ func (s *Server) readKiroSettings(w http.ResponseWriter, r *http.Request) {
 		out[key] = value
 	}
 	s.overlayHeldKiroPrefs(out)
-	webhttp.WriteJSON(w, map[string]any{"settings": out})
+	httpserver.WriteJSON(w, map[string]any{"settings": out})
 }
 
 // overlayHeldKiroPrefs reports the user's own value for each setting a lock
@@ -152,7 +153,7 @@ func (s *Server) readOneKiroSetting(ctx context.Context, key string) string {
 // writeKiroSetting serves PUT /api/kiro-settings: one allowlisted key, one
 // validated value.
 func (s *Server) writeKiroSetting(w http.ResponseWriter, r *http.Request) {
-	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	var body struct {
 		Key   string `json:"key"`
 		Value string `json:"value"`
@@ -182,7 +183,7 @@ func (s *Server) writeKiroSetting(w http.ResponseWriter, r *http.Request) {
 		}
 		if _, held := s.heldKiroPrefs.held[key]; held {
 			s.heldKiroPrefs.held[key] = value
-			webhttp.Ok(w)
+			httpserver.Ok(w)
 			return
 		}
 	}
@@ -192,16 +193,20 @@ func (s *Server) writeKiroSetting(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// 502, not 200: the client classifies by STATUS, so a 200 read every refusal as success.
 		slog.Warn("kiro-cli settings write refused", "key", logsafe.Field(key), "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
+		httpserver.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON(strings.TrimSpace(string(out))))
 		return
 	}
 	// The user's write is kiro-cli's value now, so a restore still pending from
 	// a lifted lock must not write the older choice over it.
 	delete(s.heldKiroPrefs.held, key)
-	webhttp.Ok(w)
+	httpserver.Ok(w)
 	if s.agent != nil {
 		s.agent.ReconcileSessionSettings(durable.Context(r.Context()))
+		// The effective settings mirror this key, so every tab rereads them.
+		if key == marotte.KiroHookStatusKey {
+			settings.Announce(durable.Context(r.Context()), s.configDir, s.agent.Broadcast)
+		}
 	}
 }
 

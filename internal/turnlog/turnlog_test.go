@@ -575,6 +575,31 @@ func TestCloseSealsAbortsThenWritesTheAggregate(t *testing.T) {
 	}
 }
 
+// A call appended already settled (a hook's card) has nothing for a close to abort.
+func TestClose_TerminalCallGetsNoAbortedResult(t *testing.T) {
+	for _, status := range []marotte.ToolStatus{marotte.ToolCompleted, marotte.ToolFailed, marotte.ToolAborted} {
+		t.Run(string(status), func(t *testing.T) {
+			turn, rec := open(t)
+			rec.seal(turn.ToolCall(t.Context(), "", &marotte.EntryToolCall{ID: "hook-op", Status: status}))
+			rec.seal(turn.Close(t.Context(), marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}))
+			equalShape(t, rec.shape(), []string{"/tool_call", "/turn_close"}, "a close after a settled append")
+		})
+	}
+}
+
+// Only a call still in flight extends the compaction reap.
+func TestHasCallSince_CountsOnlyCallsInFlight(t *testing.T) {
+	turn, rec := open(t)
+	rec.seal(turn.ToolCall(t.Context(), "", &marotte.EntryToolCall{ID: "hook-op", Status: marotte.ToolCompleted}))
+	if turn.HasCallSince(0) {
+		t.Error("a call appended settled extended the reap")
+	}
+	rec.seal(turn.ToolCall(t.Context(), "", &marotte.EntryToolCall{ID: "cmd", Status: marotte.ToolInProgress}))
+	if !turn.HasCallSince(0) {
+		t.Error("a call in flight did not extend the reap")
+	}
+}
+
 // The changed-files aggregate is keyed by path: an empty path is skipped, a repeated path
 // sums, and the create flag is the FIRST edit's.
 func TestChangedFileAggregatesByPath(t *testing.T) {
@@ -622,8 +647,8 @@ func TestChangedFileAggregatesByPath(t *testing.T) {
 				t.Fatalf("ChangedFiles has %d paths, want %d: %v", len(footer.ChangedFiles), len(tc.want), footer.ChangedFiles)
 			}
 			for path, want := range tc.want {
-				got := footer.ChangedFiles[path]
-				if got == nil || *got != want {
+				got, ok := footer.ChangedFiles[path]
+				if !ok || got != want {
 					t.Errorf("ChangedFiles[%q] = %+v, want %+v", path, got, want)
 				}
 			}

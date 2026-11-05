@@ -57,9 +57,7 @@ func unguarded(s engineSession) engineSession {
 }
 
 func fakeOf(sb *sharedBridge) *fakeBridge {
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	br, _ := unguarded(sb.bridge).(*fakeBridge)
+	br, _ := unguarded(sb.session()).(*fakeBridge)
 	return br
 }
 
@@ -115,14 +113,14 @@ func TestMarkSessionsForReload_AnIdleChatReloadsAtItsNextOpen(t *testing.T) {
 // A host session keeps the presets its run launched with, so a mark never reaches it.
 func TestMarkSessionsForReload_LeavesHostSessionsUnmarked(t *testing.T) {
 	h, _ := reopenFixture(t)
-	sb := &sharedBridge{bridge: newFakeBridge(), state: bridgeIdle}
-	if !h.bridge.mgr.insert(runChatID("wf-1"), sb) {
+	sb := testBridge(newFakeBridge(), bridgeIdle)
+	if !h.insertBridgeNow(runChatID("wf-1"), sb) {
 		t.Fatal("Setup: insert host session = false")
 	}
 
 	h.markSessionsForReload("test")
 
-	if h.bridge.mgr.claimReload(runChatID("wf-1"), sb).due {
+	if h.bridge.mgr.claimReload(runChatID("wf-1"), sb, false).due {
 		t.Error("the mark reached a run's host session, whose presets only its lease decides")
 	}
 }
@@ -197,6 +195,50 @@ func TestSpecPlanningAskFirst_ReopensOnlyWhilePlanningIsOn(t *testing.T) {
 	}
 }
 
+func TestWorkflowLaunch_ReopensOnlyWhileWorkflowsAreOn(t *testing.T) {
+	for _, tc := range []struct {
+		workflows bool
+		want      bool
+	}{
+		{workflows: false, want: false},
+		{workflows: true, want: true},
+	} {
+		t.Run(fmt.Sprintf("workflows_enabled=%v", tc.workflows), func(t *testing.T) {
+			h, configDir := reopenFixture(t)
+			writeSetting(t, configDir, settings.KeyWorkflowsEnabled, tc.workflows)
+
+			reopened := reloadsAfter(t, h, func() {
+				writeSetting(t, configDir, settings.KeyWorkflowLaunch, marotte.WorkflowLaunchLargeTasks)
+			})
+
+			if reopened != tc.want {
+				t.Errorf("workflows_enabled=%v: writing workflow_launch reopened = %v, want %v", tc.workflows, reopened, tc.want)
+			}
+		})
+	}
+}
+
+func TestAutoCompactPct_ReopensOnlyWhileTheSwitchIsOn(t *testing.T) {
+	for _, tc := range []struct {
+		enabled bool
+		want    bool
+	}{
+		{enabled: false, want: false},
+		{enabled: true, want: true},
+	} {
+		t.Run(fmt.Sprintf("auto_compaction_enabled=%v", tc.enabled), func(t *testing.T) {
+			h, configDir := reopenFixture(t)
+			writeSetting(t, configDir, settings.KeyAutoCompactionEnabled, tc.enabled)
+
+			reopened := reloadsAfter(t, h, func() { writeSetting(t, configDir, settings.KeyAutoCompactPct, 60) })
+
+			if reopened != tc.want {
+				t.Errorf("auto_compaction_enabled=%v: writing auto_compact_pct reopened = %v, want %v", tc.enabled, reopened, tc.want)
+			}
+		})
+	}
+}
+
 type settingReach string
 
 const (
@@ -217,6 +259,8 @@ var configWrites = []struct {
 	{key: settings.KeyMemoryMode, value: "learn", reach: reachReopen},
 	{key: settings.KeySecurityProfile, value: policyfile.ProfileTrusted, reach: reachReopen},
 	{key: settings.KeyWorkflowsEnabled, value: false, reach: reachReopen},
+	// Read only while workflows are on: TestWorkflowLaunch_ReopensOnlyWhileWorkflowsAreOn.
+	{key: settings.KeyWorkflowLaunch, value: marotte.WorkflowLaunchDelegateAll, reach: reachReopen},
 	{key: settings.KeySpecPlanning, value: settings.SpecPlanningQuick, reach: reachReopen},
 	// Read only while planning is on: TestSpecPlanningAskFirst_ReopensOnlyWhilePlanningIsOn.
 	{key: settings.KeySpecPlanningAskFirst, value: true, reach: reachNoChat},
@@ -228,16 +272,14 @@ var configWrites = []struct {
 	{key: settings.KeyModelFallback, value: true, reach: reachEngine},
 	{key: settings.KeyKnowledgeEnabled, value: false, reach: reachEngine},
 	{key: settings.KeyAutoCompactionEnabled, value: false, reach: reachReopen},
-	// sessionDisablesAutoCompaction draws the session door at 80, so only a move across it reopens.
-	{key: settings.KeyAutoCompactPct, value: 60, reach: reachLive},
-	{key: settings.KeyAutoCompactPct, value: 85, reach: reachReopen},
-	{key: settings.KeyAutoCompactPct, from: 85, value: 90, reach: reachLive},
-	{key: settings.KeyAutoCompactPct, from: 85, value: 60, reach: reachReopen},
+	// The threshold rides the session door while the switch is on: TestAutoCompactPct_ReopensOnlyWhileTheSwitchIsOn.
+	{key: settings.KeyAutoCompactPct, value: 60, reach: reachReopen},
+	{key: settings.KeyAutoCompactPct, from: 60, value: 75, reach: reachReopen},
 	{key: settings.KeyTerminalCommandTimeoutMs, value: 300000, reach: reachLive},
 	{key: settings.KeyContentCollectionEnabled, value: true, reach: reachLive},
 	{key: settings.KeyAgentIgnoreFiles, value: []string{".gitignore"}, reach: reachLive},
 	{key: settings.KeyMCPWaitForReady, value: true, reach: reachLive},
-	{key: settings.KeyOutputStyle, value: settings.OutputStyleConcise, reach: reachLive},
+	{key: settings.KeyOutputStyle, value: "proactive", reach: reachLive},
 	{key: settings.KeySupervisedDefault, value: true, reach: reachNewChat},
 	{key: settings.KeyLastModel, value: "claude-sonnet-4", reach: reachNewChat},
 	{key: settings.KeyLastEffortByModel, value: map[string]string{"claude-sonnet-4": "high"}, reach: reachNewChat},
@@ -247,15 +289,15 @@ var configWrites = []struct {
 	{key: settings.KeyNotifyAgentFinished, value: false, reach: reachNoChat},
 	{key: settings.KeyNotifyPRStatus, value: false, reach: reachNoChat},
 	{key: settings.KeyNotifyRunOutcome, value: false, reach: reachNoChat},
-	{key: settings.KeyDebugLogs, value: true, reach: reachNoChat},
+	{key: settings.KeyDebugLogs, value: true, reach: reachEngine},
 	{key: settings.KeyChatRetentionDays, value: 30, reach: reachNoChat},
 	{key: settings.KeyTheme, value: "light", reach: reachNoChat},
-	{key: settings.KeyFBPath, value: "/workspace", reach: reachNoChat},
 	{key: settings.KeyLastMergeMethod, value: "squash", reach: reachNoChat},
 	// Update writes both on every write, so a session door reading them would reopen every chat on any change.
 	{key: settings.KeySettingsEpoch, value: "e", reach: reachNoChat},
 	{key: settings.KeySettingsRevision, value: 42, reach: reachNoChat},
 	{key: settings.KeyEngineHeapMiB, value: 1024, reach: reachEngine},
+	{key: settings.KeyHighThroughput, value: false, reach: reachEngine},
 	{key: settings.KeyAdditionalDirectories, value: grantableDirList, reach: reachReopen},
 }
 
@@ -364,15 +406,9 @@ func broadcastTypes(h *Runtime, since uint64) []marotte.EventType {
 			continue
 		}
 		var frame struct {
-			Type    marotte.EventType `json:"type"`
-			Payload struct {
-				Status string `json:"status"`
-			} `json:"payload"`
+			Type marotte.EventType `json:"type"`
 		}
 		if err := json.Unmarshal(e.Event.Data, &frame); err != nil {
-			continue
-		}
-		if frame.Type == marotte.EventPermissionsChanged && frame.Payload.Status != "success" {
 			continue
 		}
 		out = append(out, frame.Type)
@@ -478,7 +514,12 @@ func TestReconcileSessionSettings_ATelemetrySwitchMarksTheEngineRestartPending(t
 
 func TestGovernanceLockChange_ReopensOpenChatsOnlyWhenAFingerprintMoves(t *testing.T) {
 	orgAnalytics := func(on bool) func(context.Context, *Runtime) {
-		return func(ctx context.Context, h *Runtime) { h.config.SetGovernance(ctx, orgTelemetry(on)) }
+		return func(ctx context.Context, h *Runtime) {
+			if src, ok := h.engine.source.(*fakeEngineSource); ok {
+				src.account.set(orgTelemetry(on))
+			}
+			h.config.SetGovernance(ctx, orgTelemetry(on))
+		}
 	}
 	denySubagents := func(ctx context.Context, h *Runtime) {
 		h.config.publishGovernance(ctx, h.config.governance.setAdmin(reduceAdminRules([]marotte.PolicyRule{adminRule("subagent", "deny")})))
@@ -594,7 +635,7 @@ func TestOpenBridge_AHandEditOfConfigReopensTheChatAtItsNextOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	session := first.bridge.SessionID()
+	session := first.session().SessionID()
 
 	rewriteConfigByHand(t, configDir, `{"`+settings.KeySecurityProfile+`":"unrestricted"}`)
 
@@ -636,7 +677,7 @@ func TestReconcileSessionSettings_ABusyChatSwitchesAfterItsTurn(t *testing.T) {
 		t.Fatal("the first open after the turn kept the session opened under the old profile")
 	}
 	opts := fakeOf(after).lastSessionOpts()
-	if !slices.Equal(opts.Presets, []string{"allow-all"}) || opts.SessionID != string(first.bridge.SessionID()) {
+	if !slices.Equal(opts.Presets, []string{"allow-all"}) || opts.SessionID != string(first.session().SessionID()) {
 		t.Errorf("the reopened bridge started with presets %v loading %q, want [allow-all] loading the chat's session", opts.Presets, opts.SessionID)
 	}
 }

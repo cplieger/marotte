@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/creds"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/creds"
 )
 
 // testSignIn is the sign-in id every seeded connection carries.
@@ -108,11 +108,23 @@ func newManager(t *testing.T, configDir string, core forgeapi.Core) (*Manager, *
 	t.Helper()
 	log := &changeLog{}
 	m := NewManager(configDir, log.notify)
+	t.Cleanup(func() { shutdownManager(t, m) })
 	m.executable = func() (string, error) { return testHelperBin, nil }
 	if core != nil {
 		m.newCore = func(*connectionSpec, []forgeapi.Option) (forgeapi.Core, error) { return core, nil }
 	}
 	return m, log
+}
+
+// shutdownManager ends m's background reads, so none outlives the test that
+// started it. Its own context: t's is already cancelled in a cleanup.
+func shutdownManager(t *testing.T, m *Manager) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := m.Shutdown(ctx); err != nil {
+		t.Errorf("Shutdown() = %v, want nil", err)
+	}
 }
 
 // loadedManager is newManager after its boot Load.

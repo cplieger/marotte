@@ -1,7 +1,7 @@
 // No import-time state: a second follower imports this module, never scroll.ts, which binds the chat's
 // controller at load.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { loadMoreSkeleton } from "./skeleton.js";
 
 /** Distance from the bottom still counted as "at the bottom". */

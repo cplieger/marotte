@@ -111,9 +111,9 @@ func TestCmdCancel_AWireTurnWithNoTurnEndClosesAtTheGrace(t *testing.T) {
 	if len(closes) != 1 || closes[0].Outcome != marotte.TurnOutcomeCancelled {
 		t.Errorf("turn_close = %+v, want one cancelled close", closes)
 	}
-	got := h.coord.ReserveTurnForPrompt(t.Context(), "c1", 60*time.Millisecond)
+	got := h.coord.reserveForPromptNow(t.Context(), "c1", 60*time.Millisecond)
 	if got == command.AdmissionAcquired {
-		h.coord.ReleaseTurnReservation("c1")
+		h.coord.releaseHeld("c1")
 	}
 	if got != command.AdmissionAcquired {
 		t.Errorf("ReserveTurnForPrompt after the grace = %v, want acquired", got)
@@ -186,9 +186,9 @@ func TestKASIdle_ClosesAWireTurnWhoseEndNeverCame(t *testing.T) {
 	if len(closes) != 1 || closes[0].Outcome != marotte.TurnOutcomeUnknown || closes[0].FailureReason != kasIdleReason {
 		t.Errorf("turn_close = %+v, want one unknown close giving the idle reason", closes)
 	}
-	got := h.coord.ReserveTurnForPrompt(t.Context(), "c1", 60*time.Millisecond)
+	got := h.coord.reserveForPromptNow(t.Context(), "c1", 60*time.Millisecond)
 	if got == command.AdmissionAcquired {
-		h.coord.ReleaseTurnReservation("c1")
+		h.coord.releaseHeld("c1")
 	}
 	if got != command.AdmissionAcquired {
 		t.Errorf("ReserveTurnForPrompt after the close = %v, want acquired", got)
@@ -404,7 +404,7 @@ func TestKASIdle_ALateEndLeavesTheDrainedPromptToReachKAS(t *testing.T) {
 					return steer(method, p)
 				}
 				return json.RawMessage(`{"stopReason":"end_turn"}`), []*marotte.RPCResponse{
-					newTurnStartMsg(), newSessionChunkMsg("", "on it"), newTurnEndMsg("end_turn"),
+					newPromptTurnStartMsg(promptTagOf(p)), newSessionChunkMsg("", "on it"), newTurnEndMsg("end_turn"),
 				}, true
 			}
 			send(t, h, newSessionChunkMsg("", "reading the notification"))

@@ -18,12 +18,16 @@ package kirosession
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/cplieger/marotte/internal/ids"
 )
 
 // sessionPrefix is the v3 KAS session-id prefix. Anything without it is empty,
@@ -39,6 +43,9 @@ const defaultGuard = 10 * time.Minute
 // sessionRecordName is the per-session file KAS writes its own metadata into. Its
 // workspacePaths list is the subject record every removal here is checked against.
 const sessionRecordName = "session.json"
+
+// cliDirName is the directory under sessions/ that holds sidecars, not a workspace bucket.
+const cliDirName = "cli"
 
 // workflowsDirName is the per-bucket directory KAS keeps a workflow RUN's state in:
 // sessions/<workspace-hash>/workflows/<workflowId>/.
@@ -108,6 +115,23 @@ func readSessionRecord(sessionDir string) (workspacePaths []string, workflowID s
 		return nil, "", false
 	}
 	return rec.WorkspacePaths, rec.Meta.Kiro.Workflow.WorkflowID, true
+}
+
+// WorkspacePaths is the workspace roots KAS recorded for sessionID under sessionsDir, in its
+// order: the session's cwd, then its additional directories. ok is false for a malformed id and
+// when no record names an absolute root list.
+func WorkspacePaths(sessionsDir, sessionID string) (paths []string, ok bool) {
+	if !validSessionID(sessionID) {
+		return nil, false
+	}
+	dirs, _ := filepath.Glob(filepath.Join(sessionsDir, "*", sessionID))
+	for _, dir := range dirs {
+		paths, _, ok := readSessionRecord(dir)
+		if ok && len(paths) > 0 && !slices.ContainsFunc(paths, func(p string) bool { return !filepath.IsAbs(p) }) {
+			return paths, true
+		}
+	}
+	return nil, false
 }
 
 // Reap removes all on-disk state for a single session id, immediately and
@@ -180,7 +204,7 @@ func (r *Reaper) countSessions() int {
 	for _, h := range hashes {
 		// Skip "cli": it holds per-session SIDECARS, so counting it as a workspace
 		// hash double-counts every session and overstates what is at stake.
-		if !h.IsDir() || h.Name() == "cli" {
+		if !h.IsDir() || h.Name() == cliDirName {
 			continue
 		}
 		entries, dErr := os.ReadDir(filepath.Join(r.sessionsDir, h.Name()))
@@ -203,7 +227,7 @@ func (r *Reaper) sweepSessionDirs(referenced map[string]struct{}, cutoff time.Ti
 	}
 	reaped := 0
 	for _, hd := range hashDirs {
-		if !hd.IsDir() || hd.Name() == "cli" {
+		if !hd.IsDir() || hd.Name() == cliDirName {
 			continue // "cli" is handled by sweepCLI; skip non-dirs
 		}
 		reaped += r.sweepHashDir(filepath.Join(r.sessionsDir, hd.Name()), referenced, cutoff)
@@ -284,7 +308,7 @@ func (r *Reaper) spareReason(sub, path string) sweepSpare {
 	if workflowID == "" {
 		return spareNone
 	}
-	runDir := filepath.Join(sub, workflowsDirName, workflowID)
+	runDir := runStateIn(sub, workflowID)
 	info, sErr := os.Stat(runDir)
 	switch {
 	case sErr == nil && info.IsDir():
@@ -299,10 +323,59 @@ func (r *Reaper) spareReason(sub, path string) sweepSpare {
 	}
 }
 
+// runStateIn is where KAS keeps run workflowID's state in bucket; an empty workflowID names the bucket's runs
+// directory. RunStates and spareReason both read through it, so the two readers of KAS's run state cannot drift.
+func runStateIn(bucket, workflowID string) string {
+	return filepath.Join(bucket, workflowsDirName, workflowID)
+}
+
+// RunStates answers the workflow ids KAS keeps run state for, in any bucket under sessionsDir. A missing sessions or
+// runs directory holds none; any other listing failure is an error, because an id it could not list may be live.
+// A nil reaper answers none.
+func (r *Reaper) RunStates() (map[string]struct{}, error) {
+	out := map[string]struct{}{}
+	if r == nil {
+		return out, nil
+	}
+	buckets, err := os.ReadDir(r.sessionsDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return out, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("listing %s: %w", r.sessionsDir, err)
+	}
+	for _, b := range buckets {
+		if !b.IsDir() || b.Name() == cliDirName {
+			continue
+		}
+		if err := addRunStates(runStateIn(filepath.Join(r.sessionsDir, b.Name()), ""), out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// addRunStates adds each run directory under dir to out; a missing dir holds none.
+func addRunStates(dir string, out map[string]struct{}) error {
+	runs, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("listing %s: %w", dir, err)
+	}
+	for _, e := range runs {
+		if e.IsDir() && ids.ValidChatID(e.Name()) {
+			out[e.Name()] = struct{}{}
+		}
+	}
+	return nil
+}
+
 // sweepCLI reaps orphaned files under sessions/cli/: v3 sess_<id>.* sidecars whose
 // id is unreferenced, and dead v2-engine files, both gated on the guard window.
 func (r *Reaper) sweepCLI(referenced map[string]struct{}, cutoff time.Time) int {
-	cliDir := filepath.Join(r.sessionsDir, "cli")
+	cliDir := filepath.Join(r.sessionsDir, cliDirName)
 	entries, err := os.ReadDir(cliDir)
 	if err != nil {
 		return 0
@@ -369,7 +442,7 @@ func (r *Reaper) sidecarReapable(sessionID string) bool {
 }
 
 func (r *Reaper) removeCLISidecars(sessionID string) {
-	sidecars, _ := filepath.Glob(filepath.Join(r.sessionsDir, "cli", sessionID+".*"))
+	sidecars, _ := filepath.Glob(filepath.Join(r.sessionsDir, cliDirName, sessionID+".*"))
 	for _, s := range sidecars {
 		if err := os.Remove(s); err != nil && !errors.Is(err, os.ErrNotExist) {
 			slog.Warn("kirosession: remove cli sidecar", "session", sessionID, "path", s, "error", err)

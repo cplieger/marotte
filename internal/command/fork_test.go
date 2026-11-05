@@ -7,10 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -168,12 +170,24 @@ func TestCmdForkChat_SendsTangentMeta(t *testing.T) {
 
 	_, _ = cmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", "Reaper detour"))
 
-	if _, ok := br.gotParams["messageId"]; ok {
-		t.Error("session/fork carried a messageId; a tangent fork names no message")
-	}
 	if br.gotParams["cwd"] == nil {
 		t.Error("session/fork carried no cwd")
 	}
+	kiro := forkKiroMeta(t, br)
+	if _, ok := kiro["messageId"]; ok {
+		t.Errorf("_meta.kiro.messageId = %v; a head tangent names no message", kiro["messageId"])
+	}
+	if kiro["createdReason"] != marotte.CreatedReasonTangent {
+		t.Errorf("createdReason = %v, want %q", kiro["createdReason"], marotte.CreatedReasonTangent)
+	}
+	if kiro["title"] != "Reaper detour" {
+		t.Errorf("title = %v, want the supplied one", kiro["title"])
+	}
+}
+
+// forkKiroMeta is the _meta.kiro block of the session/fork call br recorded.
+func forkKiroMeta(t *testing.T, br *recordingBridge) map[string]any {
+	t.Helper()
 	meta, ok := br.gotParams["_meta"].(map[string]any)
 	if !ok {
 		t.Fatalf("_meta = %T, want a map", br.gotParams["_meta"])
@@ -182,11 +196,180 @@ func TestCmdForkChat_SendsTangentMeta(t *testing.T) {
 	if !ok {
 		t.Fatalf("_meta.kiro = %T, want a map", meta["kiro"])
 	}
+	return kiro
+}
+
+func forkReqAt(t *testing.T, parent marotte.ChatID, messageID string) *marotte.ClientCommand {
+	t.Helper()
+	payload, err := json.Marshal(marotte.ForkChatCommand{ParentChatID: parent, MessageID: messageID})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return &marotte.ClientCommand{Type: marotte.CmdForkChat, ChatID: "c-tangent", Payload: payload}
+}
+
+// branchStore is a parent chat whose log holds u3, opening t3, plus whatever targets a test adds.
+func branchStore(t *testing.T, targets map[string]marotte.PromptTarget) *rewindStore {
+	t.Helper()
+	store := &rewindStore{InMemoryChatStore: testsupport.NewInMemoryChatStore(), targets: targets}
+	seedParent(t, store, "c-parent")
+	return store
+}
+
+func TestCmdForkChat_AtATurnSendsItsKASMessageID(t *testing.T) {
+	store := branchStore(t, map[string]marotte.PromptTarget{"u3": {Turn: "t3", KASMessageID: "kas-3"}})
+	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_tangent"}}
+	host := newForkHost(store, br, "c-parent")
+
+	_, err := cmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReqAt(t, "c-parent", "u3"))
+
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
+	}
+	kiro := forkKiroMeta(t, br)
+	if kiro["messageId"] != "kas-3" {
+		t.Errorf("_meta.kiro.messageId = %v, want kas-3, the turn_bind id on the current session", kiro["messageId"])
+	}
 	if kiro["createdReason"] != marotte.CreatedReasonTangent {
 		t.Errorf("createdReason = %v, want %q", kiro["createdReason"], marotte.CreatedReasonTangent)
 	}
-	if kiro["title"] != "Reaper detour" {
-		t.Errorf("title = %v, want the supplied one", kiro["title"])
+	c, ok := store.Get(t.Context(), "c-tangent")
+	if !ok || c.ACPSessionID != "sess_tangent" || !c.Tangent {
+		t.Errorf("branch chat = %+v (found %v), want a tangent bound to sess_tangent", c, ok)
+	}
+}
+
+func TestCmdForkChat_AtATurnWithNoBindSendsThePromptID(t *testing.T) {
+	store := branchStore(t, map[string]marotte.PromptTarget{"u3": {Turn: "t3"}})
+	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_tangent"}}
+	host := newForkHost(store, br, "c-parent")
+
+	_, err := cmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReqAt(t, "c-parent", "u3"))
+
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
+	}
+	if got := forkKiroMeta(t, br)["messageId"]; got != "u3" {
+		t.Errorf("_meta.kiro.messageId = %v, want the prompt id u3 when no bind names the turn", got)
+	}
+}
+
+func TestCmdForkChat_AtAnUnknownTurnIsRefusedAndCreatesNothing(t *testing.T) {
+	store := branchStore(t, map[string]marotte.PromptTarget{})
+	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_tangent"}}
+	host := newForkHost(store, br, "c-parent")
+
+	_, err := cmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReqAt(t, "c-parent", "u9"))
+
+	if statusOf(err) != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 (body %s)", statusOf(err), errText(err))
+	}
+	if br.callCount != 0 {
+		t.Errorf("session/fork calls = %d, want 0", br.callCount)
+	}
+	if _, ok := store.Get(t.Context(), "c-tangent"); ok {
+		t.Error("a branch at an unknown turn created a chat")
+	}
+}
+
+func TestCmdForkChat_AtATurnKASRefusedCreatesNoChat(t *testing.T) {
+	store := branchStore(t, map[string]marotte.PromptTarget{"u3": {Turn: "t3", KASMessageID: "kas-3"}})
+	refusal := fmt.Errorf("ACP error -32603: %w", &marotte.RPCError{Code: -32603, Message: "Message not found"})
+	br := &recordingBridge{sessionID: "sess_parent", callErr: refusal}
+	host := newForkHost(store, br, "c-parent")
+
+	_, err := cmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReqAt(t, "c-parent", "u3"))
+
+	if statusOf(err) != http.StatusConflict {
+		t.Errorf("status = %d, want 409 (body %s)", statusOf(err), errText(err))
+	}
+	if got := errText(err); !strings.Contains(got, "Message not found") || !strings.Contains(got, errBranchTurnUnknown.Error()) {
+		t.Errorf("refusal = %q, want KAS's text and the account of an unknown turn", got)
+	}
+	if _, ok := store.Get(t.Context(), "c-tangent"); ok {
+		t.Error("a refused branch opened a fresh chat")
+	}
+}
+
+func TestCmdForkChat_AtATurnRefusesAResumeOnAnotherSession(t *testing.T) {
+	store := branchStore(t, map[string]marotte.PromptTarget{"u3": {Turn: "t3", KASMessageID: "kas-3"}})
+	resumed := &recordingBridge{sessionID: "sess_new", result: map[string]any{"sessionId": "sess_tangent"}}
+	host := newForkHost(store, nil, "c-parent")
+	host.opened = resumed
+
+	_, err := cmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReqAt(t, "c-parent", "u3"))
+
+	if statusOf(err) != http.StatusConflict {
+		t.Errorf("status = %d, want 409 (body %s)", statusOf(err), errText(err))
+	}
+	if resumed.callCount != 0 {
+		t.Errorf("session/fork calls on the fresh session = %d, want 0", resumed.callCount)
+	}
+	if _, ok := store.Get(t.Context(), "c-tangent"); ok {
+		t.Error("a branch off a session that was not resumed created a chat")
+	}
+}
+
+// Every other way a branch can fail answers an error and opens nothing, where the head tangent
+// would open fresh.
+func TestCmdForkChat_AtATurnFailuresCreateNoChat(t *testing.T) {
+	cases := map[string]struct {
+		live       Bridge
+		opened     Bridge
+		noSession  bool
+		wantStatus int
+	}{
+		"parent has no session": {live: &recordingBridge{sessionID: "sess_parent"}, noSession: true, wantStatus: http.StatusConflict},
+		"no parent bridge":      {opened: nil, wantStatus: http.StatusBadGateway},
+		"transport error": {
+			live:       &recordingBridge{sessionID: "sess_parent", callErr: errors.New("bridge closed")},
+			wantStatus: http.StatusBadGateway,
+		},
+		"no usable session id": {
+			live:       &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "../x"}},
+			wantStatus: http.StatusBadGateway,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			store := branchStore(t, map[string]marotte.PromptTarget{"u3": {Turn: "t3", KASMessageID: "kas-3"}})
+			if tc.noSession {
+				_, _ = store.Mutate(t.Context(), "c-parent", func(c *marotte.Chat, _ bool) bool {
+					c.ACPSessionID = ""
+					return true
+				})
+			}
+			host := newForkHost(store, tc.live, "c-parent")
+			host.opened = tc.opened
+
+			_, err := cmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReqAt(t, "c-parent", "u3"))
+
+			if statusOf(err) != tc.wantStatus {
+				t.Errorf("status = %d, want %d (body %s)", statusOf(err), tc.wantStatus, errText(err))
+			}
+			if _, ok := store.Get(t.Context(), "c-tangent"); ok {
+				t.Error("a failed branch created a chat")
+			}
+		})
+	}
+}
+
+func TestCmdForkChat_RejectsAMalformedMessageID(t *testing.T) {
+	for name, id := range map[string]string{"path": "../x", "too long": strings.Repeat("a", 200)} {
+		t.Run(name, func(t *testing.T) {
+			store := branchStore(t, map[string]marotte.PromptTarget{id: {Turn: "t3"}})
+			br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_tangent"}}
+			host := newForkHost(store, br, "c-parent")
+
+			_, err := cmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReqAt(t, "c-parent", id))
+
+			if statusOf(err) != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", statusOf(err))
+			}
+			if br.callCount != 0 {
+				t.Errorf("session/fork calls = %d, want 0", br.callCount)
+			}
+		})
 	}
 }
 
@@ -750,7 +933,7 @@ func TestCmdForkChat_TheRecordSurvivesAClose(t *testing.T) {
 	host := newForkHost(store, br, "c-parent")
 
 	_, _ = cmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
-	closeChatTeardown(t.Context(), host, host, host, host, "c-tangent")
+	closeChatTeardown(t.Context(), host, host, host, "c-tangent", &chat.Claim{})
 
 	c, ok := store.Get(t.Context(), "c-tangent")
 	if !ok {
@@ -830,4 +1013,8 @@ func TestCmdForkChat_AnUntitledForkIsNotUserNamed(t *testing.T) {
 	if c.NameSetByUser {
 		t.Errorf("an untitled fork is marked user-named (name %q)", c.Name)
 	}
+}
+
+func (r *forkHost) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+	return r.OpenBridge(ctx, chatID, model)
 }

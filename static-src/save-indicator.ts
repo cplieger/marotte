@@ -1,7 +1,7 @@
 // Per-setting save indicators: a spinner while a write is in flight, then a tick or a cross, in a
 // slot next to the setting's own label.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { ICON_SAVE_OK, ICON_SAVE_FAIL } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 

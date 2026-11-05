@@ -3,7 +3,8 @@
 // list goes over the BUS, because importing history.ts here would drag chat.ts in.
 
 import { onSSE, emitBus, BUS_RUNS_CHANGED } from "../bus.js";
-import { info, success, error } from "../toast.js";
+import { info, jumpToast, type ToastLevel } from "../toast.js";
+import { runEndJump } from "../notice-subject.js";
 import {
   applyRunDelta,
   applyRunProgress,
@@ -16,6 +17,7 @@ import {
   noteRunSettled,
   hasLiveRunForChat,
   openRunEntry,
+  runChatID,
   openRunTurn,
   runLabelOf,
   runStepEnds,
@@ -45,27 +47,39 @@ function runLabel(workflowID: string, name: string | undefined): string {
   return name !== undefined && name !== "" ? name : "Workflow run";
 }
 
-/** The completion toast; level follows the outcome (failed/aborted fail, cancelled was asked for).
- *  `paused` gets none: an onMaxIterations stop reports here and stays resumable. */
-function toastCompletion(status: string, workflowID: string, name: string | undefined): void {
+/** Raise a run's end toast, with the jump `runEndJump` picks. */
+function toastCompletion(
+  status: string,
+  workflowID: string,
+  name: string | undefined,
+  parentChatID: string,
+): void {
   const label = runLabel(workflowID, name);
+  const end = completionText(status, label);
+  if (end !== undefined) {
+    jumpToast(end.message, end.level, runEndJump(workflowID, parentChatID, label));
+  }
+}
+
+/** The completion toast's text and level; level follows the outcome (failed/aborted fail, cancelled
+ *  was asked for). `paused` gets none: an onMaxIterations stop reports here and stays resumable. */
+function completionText(
+  status: string,
+  label: string,
+): { message: string; level: ToastLevel } | undefined {
   switch (status) {
     case "completed":
-      success(`${label} finished`);
-      return;
+      return { message: `${label} finished`, level: "success" };
     case "failed":
-      error(`${label} failed`);
-      return;
+      return { message: `${label} failed`, level: "error" };
     case "aborted":
-      error(`${label} was aborted`);
-      return;
+      return { message: `${label} was aborted`, level: "error" };
     case "cancelled":
-      info(`${label} was cancelled`);
-      return;
+      return { message: `${label} was cancelled`, level: "info" };
     case "paused":
-      return;
+      return undefined;
     default:
-      info(`${label} finished: ${status}`);
+      return { message: `${label} finished: ${status}`, level: "info" };
   }
 }
 
@@ -114,11 +128,10 @@ onSSE("run_finished", (chatID, p) => {
   }
   // Deliberately NOT opened: a run that finished before anyone looked has
   // nothing live to watch. History is the door to a finished run.
-  // The verbs are re-read behind this (`run-store.ts` `invalidateRunControls`).
   invalidateRun(p.workflow_id);
   emitBus(BUS_RUNS_CHANGED);
   announcedStarts.delete(p.workflow_id);
-  toastCompletion(p.status, p.workflow_id, p.name);
+  toastCompletion(p.status, p.workflow_id, p.name, runChatID(p.workflow_id));
 });
 
 // The run's LOG: each event into a run-store operation behind the workflow-id guard, mirroring

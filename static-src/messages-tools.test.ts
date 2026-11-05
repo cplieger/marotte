@@ -21,6 +21,8 @@ vi.mock("./tool-card.js", () => ({
   syncSilenceMarker: vi.fn(),
   syncOffloadLink: vi.fn(),
   syncInteractionFact: vi.fn(),
+  adoptDenial: vi.fn(),
+  syncClassifierMarks: vi.fn(),
 }));
 
 import { applyOutputUpdate, applyToolCallUpdate } from "./messages-tools.js";

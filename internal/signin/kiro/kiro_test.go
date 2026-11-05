@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/signin"
-	"github.com/cplieger/slogx/capture"
 )
 
 func resultAt(t *testing.T, r record, now time.Time) answer {

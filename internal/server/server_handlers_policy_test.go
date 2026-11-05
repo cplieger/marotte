@@ -16,6 +16,7 @@ import (
 
 type fakePolicy struct {
 	rules       []marotte.PolicyRule
+	loadErrs    []marotte.PolicyErrorItem
 	listErr     error
 	explain     *marotte.PolicyExplainResult
 	explainErr  error
@@ -24,6 +25,99 @@ type fakePolicy struct {
 
 func (f *fakePolicy) PolicyList(_ context.Context, _ string) ([]marotte.PolicyRule, error) {
 	return f.rules, f.listErr
+}
+
+func (f *fakePolicy) PolicyListing(_ context.Context, _ string) ([]marotte.PolicyRule, []marotte.PolicyErrorItem, error) {
+	if f.listErr != nil {
+		return nil, nil, f.listErr
+	}
+	return f.rules, f.loadErrs, nil
+}
+
+func getPolicyView(t *testing.T, s *Server) (marotte.PolicyView, map[string]json.RawMessage) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	s.handlePolicyView(rec, httptest.NewRequest(http.MethodGet, "/api/permissions", http.NoBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var view marotte.PolicyView
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	return view, raw
+}
+
+// A row is editable only where the rule writer can change it: a preset a file references and a rule
+// with an effect the writer does not know sit in a writable scope but are not the writer's.
+func TestPolicyViewStampsEditable(t *testing.T) {
+	const userFile = "/k/settings/permissions.yaml"
+	f := &fakePolicy{rules: []marotte.PolicyRule{
+		{Capability: "fs_write", Effect: "allow", Scope: "user", Source: userFile},
+		{Capability: "shell", Effect: "allow", Scope: "user", Source: "preset:dev-shell in " + userFile},
+		{Capability: "all", Effect: "evaluate", Scope: "user", Source: userFile},
+		{Capability: "all", Effect: "prompt", Scope: "user", Source: userFile},
+		{Capability: "all", Effect: "allow", Scope: "session", Source: "preset:allow-all"},
+	}}
+	view, _ := getPolicyView(t, &Server{policy: f, workDir: t.TempDir()})
+	want := []bool{true, false, true, false, false}
+	if len(view.Rules) != len(want) {
+		t.Fatalf("rules = %+v, want %d", view.Rules, len(want))
+	}
+	for i, w := range want {
+		if view.Rules[i].Editable != w {
+			t.Errorf("rule %d (%s %s from %q) editable = %v, want %v",
+				i, view.Rules[i].Scope, view.Rules[i].Effect, view.Rules[i].Source, view.Rules[i].Editable, w)
+		}
+	}
+}
+
+func TestPolicyViewStampsEditableOnTheFileFallback(t *testing.T) {
+	home := t.TempDir()
+	work := t.TempDir()
+	t.Setenv("HOME", home)
+	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
+	if err := policyfile.Save(t.Context(), up, &policyfile.File{
+		Rules: []policyfile.Rule{{Capability: "shell", Effect: "deny"}, {Capability: "all", Effect: "prompt"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	view, _ := getPolicyView(t, &Server{policy: &fakePolicy{listErr: context.DeadlineExceeded}, workDir: work})
+	if view.Available || len(view.Rules) != 2 {
+		t.Fatalf("view = %+v, want the fallback's two rules", view)
+	}
+	if !view.Rules[0].Editable || view.Rules[1].Editable {
+		t.Errorf("editable = %v, %v, want the deny rule editable and the unknown effect not",
+			view.Rules[0].Editable, view.Rules[1].Editable)
+	}
+}
+
+func TestPolicyViewCarriesLoadErrors(t *testing.T) {
+	t.Run("live", func(t *testing.T) {
+		f := &fakePolicy{rules: []marotte.PolicyRule{}, loadErrs: []marotte.PolicyErrorItem{
+			{Scope: "user", Message: "unknown capability 'teleport'"},
+		}}
+		view, _ := getPolicyView(t, &Server{policy: f, workDir: t.TempDir()})
+		if len(view.LoadErrors) != 1 || view.LoadErrors[0].Message != "unknown capability 'teleport'" {
+			t.Errorf("load_errors = %+v, want the pass's one error", view.LoadErrors)
+		}
+	})
+	for name, f := range map[string]*fakePolicy{
+		"live with none": {rules: []marotte.PolicyRule{}},
+		"fallback":       {listErr: context.DeadlineExceeded},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			_, raw := getPolicyView(t, &Server{policy: f, workDir: t.TempDir()})
+			if got := string(raw["load_errors"]); got != "[]" {
+				t.Errorf("load_errors = %s, want []", got)
+			}
+		})
+	}
 }
 
 func (f *fakePolicy) PolicyExplain(_ context.Context, req marotte.PolicyExplainRequest) (*marotte.PolicyExplainResult, error) {
@@ -259,6 +353,61 @@ func TestPolicyRuleRemoveDenyRequiresConfirm(t *testing.T) {
 	if f, _ := policyfile.Load(wp); len(f.Rules) != 0 {
 		t.Errorf("deny rule not removed with confirm; rules=%d", len(f.Rules))
 	}
+}
+
+// TestPolicyRuleUpdate_EvaluateRanks places evaluate between ask and allow: handing an asked call to
+// the classifier, or allowing a classified one, widens and needs confirm; the reverse does not.
+func TestPolicyRuleUpdate_EvaluateRanks(t *testing.T) {
+	seed := func(t *testing.T, effect string) (s *Server, wp string) {
+		t.Helper()
+		home := t.TempDir()
+		work := t.TempDir()
+		t.Setenv("HOME", home)
+		wp, _ = policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
+		if err := policyfile.Save(t.Context(), wp, &policyfile.File{
+			Rules: []policyfile.Rule{{Capability: "shell", Effect: effect, Match: []string{"make *"}}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return &Server{workDir: work}, wp
+	}
+	for _, tc := range []struct {
+		from, to string
+		want     int
+	}{
+		{from: "ask", to: "evaluate", want: http.StatusConflict},
+		{from: "evaluate", to: "allow", want: http.StatusConflict},
+		{from: "evaluate", to: "ask", want: http.StatusOK},
+		{from: "allow", to: "evaluate", want: http.StatusOK},
+	} {
+		t.Run(tc.from+"_to_"+tc.to, func(t *testing.T) {
+			s, wp := seed(t, tc.from)
+			rec := postRules(t, s, policyRuleBody{
+				Op: "update", Scope: "workspace", Capability: "shell",
+				Effect: tc.from, NewEffect: tc.to, Match: []string{"make *"},
+			})
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tc.want, rec.Body.String())
+			}
+			wantEffect := tc.from
+			if tc.want == http.StatusOK {
+				wantEffect = tc.to
+			}
+			if f, _ := policyfile.Load(wp); len(f.Rules) != 1 || f.Rules[0].Effect != wantEffect {
+				t.Errorf("rules = %+v, want the rule at %s", f.Rules, wantEffect)
+			}
+		})
+	}
+	t.Run("removing_an_evaluate_rule", func(t *testing.T) {
+		s, wp := seed(t, "evaluate")
+		rec := postRules(t, s, policyRuleBody{Op: "remove", Scope: "workspace", Capability: "shell", Effect: "evaluate", Match: []string{"make *"}})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+		if f, _ := policyfile.Load(wp); len(f.Rules) != 0 {
+			t.Errorf("rules = %+v, want none", f.Rules)
+		}
+	})
 }
 
 func TestPolicyRuleUnknownOp(t *testing.T) {

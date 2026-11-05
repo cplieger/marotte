@@ -44,7 +44,7 @@ import { byId } from "./dom.js";
 const SOURCE = "/home/u/.kiro/settings/permissions.yaml";
 
 function userRule(capability: string, over: Partial<PolicyRule> = {}): PolicyRule {
-  return { capability, effect: "allow", scope: "user", source: SOURCE, ...over };
+  return { capability, effect: "allow", scope: "user", source: SOURCE, editable: true, ...over };
 }
 
 function view(rules: PolicyRule[], caps = ["fs_read", "fs_write", "shell"]): PolicyView {
@@ -60,6 +60,7 @@ function view(rules: PolicyRule[], caps = ["fs_read", "fs_write", "shell"]): Pol
     ],
     profile: "custom",
     rules,
+    load_errors: [],
   };
 }
 
@@ -180,6 +181,36 @@ describe("a rule row's hints", () => {
     expect(rm?.hasAttribute("title")).toBe(false);
     expect(sel?.getAttribute("data-tooltip")).toBe("Change this rule's effect");
     expect(sel?.hasAttribute("title")).toBe(false);
+  });
+});
+
+// KAS ranks evaluate between ask and allow, so the table shows it as itself and a move toward allow
+// through it widens.
+describe("an evaluate rule", () => {
+  it("renders with evaluate selected, not allow", async () => {
+    await mount(view([userRule("all", { effect: "evaluate" })]));
+    const sel = rowFor("all").querySelector<HTMLSelectElement>("select");
+    expect(sel?.value).toBe("evaluate");
+    expect([...(sel?.options ?? [])].map((o) => o.value)).toContain("evaluate");
+  });
+
+  it.each([
+    ["ask", "evaluate", true],
+    ["evaluate", "allow", true],
+    ["evaluate", "ask", false],
+  ])("asks before %s -> %s widens: %s", async (from, to, widens) => {
+    await mount(view([userRule("shell", { effect: from })]));
+    const sel = rowFor("shell").querySelector<HTMLSelectElement>("select");
+    if (sel === null) {
+      throw new Error("no effect select on a writable row");
+    }
+    sel.value = to;
+    sel.dispatchEvent(new Event("change"));
+    await flush();
+    expect(mocks.confirm).toHaveBeenCalledTimes(widens ? 1 : 0);
+    expect(mocks.editDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ op: "update", effect: from, new_effect: to, confirm: widens }),
+    );
   });
 });
 

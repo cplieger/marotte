@@ -1,11 +1,6 @@
 package agent
 
-import (
-	"context"
-	"sync"
-
-	"github.com/cplieger/marotte/internal/marotte"
-)
+import "sync"
 
 type bridgeState int
 
@@ -17,9 +12,10 @@ const (
 
 // mu guards the fields and state encodes the lifecycle phase.
 type sharedBridge struct {
-	bridge engineSession
-	// revertStarting runs before a checkpoint revert with the session it reverts; nil on a run host.
-	revertStarting func(session string)
+	// leased is the entry's session; only session_lease.go reads or writes it.
+	leased engineSession
+	// life is the life the entry's leases are counted on (newSharedBridge).
+	life leaseLife
 	// settled is the generation's readiness from the session open's first instant: openBridge hands sb to
 	// no caller before it settles.
 	settled *sessionSettle
@@ -32,27 +28,6 @@ type sharedBridge struct {
 	effortHealed bool
 	// reload marks a session whose door settings moved: its next idle open closes it and loads it again.
 	reload bool
-}
-
-// current is the session sb holds now, read under the lock: each door attaches its own, and nil means none yet.
-func (sb *sharedBridge) current() engineSession {
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	return sb.bridge
-}
-
-// attach makes s the session sb holds, before its door writes.
-func (sb *sharedBridge) attach(s engineSession) {
-	sb.mu.Lock()
-	sb.bridge = s
-	sb.mu.Unlock()
-}
-
-// endedOnItsOwn reports whether session, ending now, is sb's and nobody owns its end.
-func (sb *sharedBridge) endedOnItsOwn(session engineSession) bool {
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	return sb.bridge == session && sb.state != bridgeStarting && sb.closeClaim == nil
 }
 
 // tryAcquireForPrompt moves idle to prompting, reporting whether the caller owns the slot.
@@ -86,69 +61,9 @@ func (sb *sharedBridge) setIdle() {
 	sb.mu.Unlock()
 }
 
-// Explicit forwards rather than an embedded engineSession, so a command.Bridge holder can never
-// close the session or SetModel behind the state machine.
-
-// Before its door attaches a session, sb holds none: every forward refuses with
-// marotte.ErrSessionClosed and SessionID answers "", never a nil dereference.
-
-func (sb *sharedBridge) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
-	s := sb.current()
-	if s == nil {
-		return nil, marotte.ErrSessionClosed
-	}
-	sb.beforeCall(method, s)
-	return s.Call(ctx, method, params)
-}
-
-func (sb *sharedBridge) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
-	s := sb.current()
-	if s == nil {
-		return nil, 0, marotte.ErrSessionClosed
-	}
-	sb.beforeCall(method, s)
-	return s.CallAt(ctx, method, params)
-}
-
-func (sb *sharedBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
-	s := sb.current()
-	if s == nil {
-		return nil, 0, marotte.ErrSessionClosed
-	}
-	return s.PromptAt(ctx, params, commit)
-}
-
-// beforeCall announces a checkpoint revert before it is sent, since KAS writes the files back
-// before it answers.
-func (sb *sharedBridge) beforeCall(method string, s engineSession) {
-	if method == marotte.MethodCheckpointRevertMultiple && sb.revertStarting != nil {
-		sb.revertStarting(string(s.SessionID()))
-	}
-}
-
-func (sb *sharedBridge) Notify(ctx context.Context, method string, params any) error {
-	s := sb.current()
-	if s == nil {
-		return marotte.ErrSessionClosed
-	}
-	return s.Notify(ctx, method, params)
-}
-
-func (sb *sharedBridge) Respond(ctx context.Context, requestID int64, result any, err error) error {
-	s := sb.current()
-	if s == nil {
-		return marotte.ErrSessionClosed
-	}
-	return s.Respond(ctx, requestID, result, err)
-}
-
-func (sb *sharedBridge) SessionID() marotte.SessionID {
-	s := sb.current()
-	if s == nil {
-		return ""
-	}
-	return s.SessionID()
-}
+// The command layer's calls on an entry are leases (session_lease.go), so a command.Bridge holder can never close
+// the session or SetModel behind the state machine. Before its door attaches a session, every call refuses with
+// marotte.ErrSessionClosed and SessionID answers "".
 
 func (sb *sharedBridge) TryAcquireForPrompt() bool {
 	return sb.tryAcquireForPrompt()

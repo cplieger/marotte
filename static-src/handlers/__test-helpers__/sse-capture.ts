@@ -15,7 +15,6 @@ export function createBusMock(extras: Record<string, unknown> = {}): Record<stri
     // bus.ts's full named surface: Browser Mode links ESM for real, so every imported name must
     // EXIST. `undefined` is what a namespace read yields, so no exercised path changes.
     dispatch: undefined,
-    registerSSEDecoder: undefined,
     lookupSSEDecoder: undefined,
     onBus: undefined,
     emitBus: undefined,

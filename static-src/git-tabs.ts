@@ -1,6 +1,6 @@
 // Git view tab bar: Changes / Pull requests / Sources. Mirrors settings-tabs.ts.
 
-import { signal, subscribe } from "@cplieger/reactive";
+import { signal, subscribe } from "@cplieger/ui";
 import { pushRoute } from "./router.js";
 import type { GitTab } from "./route-path.js";
 import { setGitTab as setGitTabRoute } from "./tabs.js";

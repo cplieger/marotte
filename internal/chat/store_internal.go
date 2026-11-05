@@ -23,17 +23,14 @@ func (s *Store) lock(chatID marotte.ChatID) *sync.Mutex {
 	return v.(*sync.Mutex)
 }
 
-// Lock returns the per-chat mutex for the archive package.
-func (s *Store) Lock(chatID marotte.ChatID) *sync.Mutex { return s.lock(chatID) }
-
 // Dir returns the store's base directory.
 func (s *Store) Dir() string { return s.dir }
 
-// Remove deletes a chat's directory and tombstones the id (only a chat that existed). The log is
+// remove deletes a chat's directory and tombstones the id (only a chat that existed). The log is
 // closed and tombstoned first, so a folding turn cannot re-create entries.jsonl under the directory
 // being unlinked. The caller must hold Lock for chatID. Returns the `chats` version minted, or ""
 // when nothing was removed.
-func (s *Store) Remove(chatID marotte.ChatID) (string, error) {
+func (s *Store) remove(chatID marotte.ChatID) (string, error) {
 	dir, err := s.pathFor(chatID)
 	if err != nil {
 		return "", err
@@ -47,10 +44,11 @@ func (s *Store) Remove(chatID marotte.ChatID) (string, error) {
 	// has no business staying findable.
 	s.index.drop(chatID)
 	s.dequeued.forget(chatID)
+	//nolint:gosec,nolintlint // G703: dir is pathFor's join over a validated chat id
 	if _, err := os.Stat(filepath.Join(dir, headerFileName)); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			// A directory with no header is not a chat; sweep whatever is there.
-			_ = os.RemoveAll(dir)
+			_ = os.RemoveAll(dir) //nolint:gosec,nolintlint // G703: as above
 			return "", os.ErrNotExist
 		}
 		return "", err
@@ -59,10 +57,12 @@ func (s *Store) Remove(chatID marotte.ChatID) (string, error) {
 	if c, err := s.header(chatID).Read(context.Background()); err == nil {
 		name = c.Name
 	}
+	//nolint:gosec,nolintlint // G703: dir is pathFor's join over a validated chat id
 	if err := os.RemoveAll(dir); err != nil {
 		return "", err
 	}
 	s.markDeleted(chatID, name)
+	s.forgetReconciled(chatID)
 	return s.versions.BumpCounter(subject.KindChats, ""), nil
 }
 
@@ -222,5 +222,11 @@ func (s *Store) writeHeader(ctx context.Context, chatID marotte.ChatID, chat *ma
 	if chat.ID != string(chatID) {
 		return errChatIDMismatch(chatID, chat.ID)
 	}
+	if err := headerWriteFault(chatID); err != nil {
+		return err
+	}
 	return s.header(chatID).write(ctx, chat)
 }
+
+// headerWriteFault is a test seam: a root-run test cannot make a header unwritable with file modes.
+var headerWriteFault = func(marotte.ChatID) error { return nil }

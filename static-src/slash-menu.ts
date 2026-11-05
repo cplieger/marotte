@@ -2,8 +2,8 @@
 // keeps from KAS's `available_commands_update` (already narrowed to what KAS resolves before the
 // model: saved prompts, steering docs, /goal) beside marotte's own verbs.
 
-import { el, signal } from "@cplieger/reactive";
-import { ask } from "@cplieger/ui-primitives/ask";
+import { el, signal } from "@cplieger/ui";
+import { ask } from "@cplieger/ui/ask";
 import { apiGetTyped } from "./api-client.js";
 import { onBus, onSSE, BUS_RECONCILE } from "./bus.js";
 import { $ } from "./dom.js";
@@ -182,12 +182,14 @@ let searchTimer: ReturnType<typeof setTimeout> | undefined;
 // Bumped by every close, so a read started for an earlier menu neither fills this menu's cache nor
 // reopens a menu the reader closed.
 let menuSession = 0;
-// An MCP list is the engine pool at one moment, so its key carries the pool's generation and a moved
-// pool misses the cache.
+// An MCP list is one chat's pool at one moment, so its key carries the chat and the pool's generation,
+// and a tab switch or a moved pool misses the cache.
 let mcpGen = 0;
 
 function itemsKey(provider: ItemProvider, query: string): string {
-  return provider === "mcp" ? joinKey(provider, String(mcpGen), query) : joinKey(provider, query);
+  return provider === "mcp"
+    ? joinKey(provider, getActiveId(), String(mcpGen), query)
+    : joinKey(provider, query);
 }
 
 /** Re-render an open `#mcp:` list, which re-reads it under its new key. */

@@ -2,8 +2,8 @@ package marotte
 
 import "strings"
 
-// The hook trigger vocabulary (which trigger names KAS loads and what each matcher tests), read by
-// internal/agent's Hooks-tab diagnostic.
+// The hook trigger vocabulary: which trigger names KAS loads, their canonical spelling, and what
+// each matcher tests.
 
 // HookMatcherSubject is what a trigger's matcher is tested against, and it is
 // the fact that decides whether a matcher means anything for that trigger.
@@ -105,9 +105,9 @@ var hookTriggerNames = map[string]string{
 	"afterfileedit": triggerPostFileSave,
 }
 
-// canonicalHookTrigger maps a trigger spelling to its canonical name and reports whether KAS
+// CanonicalHookTrigger maps a trigger spelling to its canonical name and reports whether KAS
 // loads it.
-func canonicalHookTrigger(eventType string) (string, bool) {
+func CanonicalHookTrigger(eventType string) (string, bool) {
 	name, ok := hookTriggerNames[strings.ToLower(strings.TrimSpace(eventType))]
 	return name, ok
 }
@@ -116,7 +116,7 @@ func canonicalHookTrigger(eventType string) (string, bool) {
 // loads the trigger at all; KAS's parseHookDocument drops a hook whose trigger it does not
 // recognise.
 func HookTriggerSubject(eventType string) (HookMatcherSubject, bool) {
-	name, ok := canonicalHookTrigger(eventType)
+	name, ok := CanonicalHookTrigger(eventType)
 	if !ok {
 		return "", false
 	}

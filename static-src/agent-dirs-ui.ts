@@ -2,7 +2,7 @@
 // may read and write. The server decides which entries it accepts and says why it refuses one, on a
 // write and for every stored entry at each settings read.
 
-import { el } from "@cplieger/reactive";
+import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { maybeEl } from "./dom.js";
 import { buildChip } from "./chip.js";

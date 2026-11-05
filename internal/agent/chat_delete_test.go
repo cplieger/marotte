@@ -6,9 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -19,9 +22,19 @@ type deleteRig struct {
 	rpcErrs map[string]*marotte.RPCError
 	// onCall runs inside the fake bridge's Call, before it answers, outside mu.
 	onCall func(method string, params map[string]any)
-	calls  []rigCall
-	opened []*fakeBridge
-	mu     sync.Mutex
+	// answer, set before the rig's runtime is built, answers a call in place of results, delivering its frames first,
+	// when it reports true.
+	answer func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool)
+	// blockOn, set before the rig's runtime is built, holds every bridge's call of a method open (fakeBridge.blockOn).
+	blockOn map[string]chan struct{}
+	// refuseAfterCall, set before the rig's runtime is built, refuses every bridge's call of a method in band after
+	// onCall ran (fakeBridge.refuseAfterCall).
+	refuseAfterCall map[string]*marotte.RPCError
+	// override, set through setAnswer at any time, answers or fails a call in place of answer and results when ok.
+	override func(method string, params map[string]any) (res json.RawMessage, ok bool, err error)
+	calls    []rigCall
+	opened   []*fakeBridge
+	mu       sync.Mutex
 }
 
 type rigCall struct {
@@ -35,6 +48,8 @@ func (r *deleteRig) factory() engineSession {
 	br := newFakeBridge()
 	br.callResults = r.results
 	br.callRPCErrs = r.rpcErrs
+	br.blockOn = r.blockOn
+	br.refuseAfterCall = r.refuseAfterCall
 	br.onCall = func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		stopped := br.isClosed()
 		r.mu.Lock()
@@ -43,7 +58,22 @@ func (r *deleteRig) factory() engineSession {
 		if r.onCall != nil {
 			r.onCall(method, params)
 		}
+		if r.answer != nil {
+			if res, frames, ok := r.answer(method, params); ok {
+				return res, frames, true
+			}
+		}
 		return nil, nil, false
+	}
+	br.onCallFails = func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool, error) {
+		r.mu.Lock()
+		override := r.override
+		r.mu.Unlock()
+		if override == nil {
+			return nil, nil, false, nil
+		}
+		res, ok, err := override(method, params)
+		return res, nil, ok, err
 	}
 	r.mu.Lock()
 	r.opened = append(r.opened, br)
@@ -61,6 +91,12 @@ func (r *deleteRig) of(method string) []rigCall {
 		}
 	}
 	return out
+}
+
+func (r *deleteRig) setAnswer(answer func(method string, params map[string]any) (json.RawMessage, bool, error)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.override = answer
 }
 
 func (r *deleteRig) methods() []string {
@@ -105,7 +141,7 @@ func insertChatSession(t *testing.T, h *Runtime, rig *deleteRig, chatID marotte.
 		t.Fatal("Setup: the rig handed back something other than a fake")
 	}
 	br.sessionID = sessionID
-	h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
+	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 	return br
 }
 
@@ -244,7 +280,7 @@ func TestCloseChatState_DeletesNothing(t *testing.T) {
 	insertChatSession(t, h, rig, "c1", "sess_cur")
 	leased(t, h.runs, "wf_1")
 
-	h.CloseChatState(t.Context(), "c1")
+	h.CloseChatState(t.Context(), "c1", &chat.Claim{})
 
 	if n := len(rig.of(marotte.MethodSessionDelete)); n != 0 {
 		t.Errorf("CloseChatState sent %d session/delete, want 0: a close keeps the chat reopenable", n)
@@ -254,5 +290,31 @@ func TestCloseChatState_DeletesNothing(t *testing.T) {
 	}
 	if n := len(rig.of(methodKiroWorkflowCancel)); n != 1 {
 		t.Errorf("CloseChatState sent %d workflow/cancel, want 1 for the live run", n)
+	}
+}
+
+// TestDeleteSessions_WaitsOutAnEngineStall pins that a session/delete the engine answers late while it is stalled at
+// work is waited for and used, not abandoned and logged as failed.
+func TestDeleteSessions_WaitsOutAnEngineStall(t *testing.T) {
+	logs := captureLogs(t)
+	prev := sessionDeleteTimeout
+	sessionDeleteTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { sessionDeleteTimeout = prev })
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	src := h.engine.source.(*fakeEngineSource)
+	src.mu.Lock()
+	src.stalled = func() bool { return true }
+	src.mu.Unlock()
+	br.setCallResult(marotte.MethodSessionDelete, json.RawMessage(`{}`))
+	release := holdCall(t, br, marotte.MethodSessionDelete)
+	time.AfterFunc(300*time.Millisecond, release)
+
+	h.deleteSessions(t.Context(), "c1", []string{"sess-stalled"})
+
+	for line := range strings.Lines(logs.String()) {
+		if strings.Contains(line, `"level":"WARN"`) && strings.Contains(line, "sess-stalled") {
+			t.Errorf("the delete was given up on while the engine was stalled at work: %s", line)
+		}
 	}
 }

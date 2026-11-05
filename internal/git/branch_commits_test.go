@@ -13,7 +13,7 @@ func branchCommits(t *testing.T, workDir string, q url.Values) (int, []string) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/git/branch-commits?"+q.Encode(), nil)
 	rec := httptest.NewRecorder()
-	NewHandler(workDir).handleBranchCommits(rec, req)
+	newTestHandler(t, workDir).handleBranchCommits(rec, req)
 	if rec.Code != http.StatusOK {
 		return rec.Code, nil
 	}

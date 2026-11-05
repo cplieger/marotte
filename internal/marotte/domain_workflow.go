@@ -179,7 +179,7 @@ type RunStepTranscript struct {
 	// Subject is one run_turn stamp per open turn of the requested path, read under
 	// the run store's lock with the entries it certifies; empty on a settled path and
 	// on the replay source, which no subject versions.
-	Subject []*SubjectStamp `json:"subject"`
+	Subject []SubjectStamp `json:"subject"`
 }
 
 // RunAsksPayload is the payload for type="run_asks": every step of one run waiting on a person, as
@@ -341,8 +341,12 @@ const (
 	RunStepFinished RunStepMessageRefusal = "finished"
 	// RunStepRunPaused means the run is paused while this step is not, so Resume is the way on.
 	RunStepRunPaused RunStepMessageRefusal = "run_paused"
-	// RunStepBusy means the step is between states (a resume in flight); retry.
+	// RunStepBusy means the step is briefly between states (a resume, a park or a steer racing the
+	// read, or a run being deleted); a retry decides again.
 	RunStepBusy RunStepMessageRefusal = "busy"
+	// RunStepWaitsOnRun means the step is paused while another step of its run runs: KAS takes no
+	// message for it until every running step stops, which can take minutes.
+	RunStepWaitsOnRun RunStepMessageRefusal = "waits_on_run"
 	// RunStepFull means too many unread messages are waiting for the step.
 	RunStepFull RunStepMessageRefusal = "full"
 )
@@ -414,13 +418,10 @@ type RecipesResponse struct {
 type LiveRun struct {
 	WorkflowID string `json:"workflow_id"`
 	ChatID     string `json:"chat_id"`
-	// Executing reports whether THIS PROCESS holds a deadline for the run. NOT
-	// `status` and none of KAS's five, because serving one would mean an `inspect` per
-	// lease on the client's boot path (runlease.Lease.Deadline owns the answer).
-	//
-	// It can read false while KAS says running — a lease read back from disk is
-	// parked, and `set_step_status` advances a step without re-arming — and both are
-	// accepted: the client corrects itself on the run's next progress frame.
+	// Executing reports whether THIS PROCESS holds a deadline for the run (runlease.Lease.Deadline),
+	// not KAS's status, which would cost a `_kiro/workflow/list` call on every client connect. It can
+	// read false while KAS says running (a lease read back from disk is parked; `set_step_status`
+	// advances a step without re-arming); the client corrects itself on the run's next progress frame.
 	Executing bool `json:"executing"`
 }
 
@@ -432,20 +433,13 @@ type LiveRunsResponse struct {
 	Runs    []LiveRun     `json:"runs"`
 }
 
-// RunControlsResponse is GET /api/runs/{id}/controls's reply: what may be done to
-// one run, and why not for the rest.
-//
-// Its own route rather than a field on GET /api/runs/{id}, a verbatim KAS
-// passthrough. Only the server sees all three inputs: a client's SSE-fed cache of
-// which chat launched the run is empty after a reload.
+// RunControlsResponse is what may be done to one run, and why not for the rest:
+// GET /api/runs/{id}/controls's reply and the `controls` key of GET /api/runs/{id},
+// decided from the same inspect read as the state beside it.
 type RunControlsResponse struct {
 	// Refused maps a verb this run does not offer to the one sentence a reader
 	// needs, and carries only a verb whose absence would otherwise be unexplained.
 	Refused map[string]string `json:"refused,omitempty"`
-	// ParentChatID names the chat whose agent launched the run, empty for a
-	// parentless one. Read from the chat store here rather than from an event-fed
-	// client cache, which is empty after a reload.
-	ParentChatID string `json:"parent_chat_id"`
 	// PauseNodeID is the repeat a maxIterations pause stopped at; the extend and
 	// finish_loop verbs send it back. Empty for every other run.
 	PauseNodeID string `json:"pause_node_id,omitempty"`
@@ -467,6 +461,30 @@ type RunExtendRequest struct {
 type RunFinishLoopRequest struct {
 	NodeID string `json:"node_id"`
 }
+
+// RunStepEndStatus is the status a person's end of a paused step writes, the two KAS accepts for one.
+type RunStepEndStatus string
+
+// The step end statuses.
+const (
+	RunStepEndCompleted RunStepEndStatus = "completed"
+	RunStepEndFailed    RunStepEndStatus = "failed"
+)
+
+// RunStepEndRequest is POST /api/runs/{id}/steps/{path}/end's body: end the paused step at that node path.
+type RunStepEndRequest struct {
+	Status RunStepEndStatus `json:"status"`
+}
+
+// RunStepEndRefusal is the machine `code` of a 409 from the end route about the step itself.
+type RunStepEndRefusal string
+
+const (
+	// RunStepEndNotPaused means no execution at the path is paused.
+	RunStepEndNotPaused RunStepEndRefusal = "step_not_paused"
+	// RunStepEndUnnamed means another paused execution shares the step's node id, and KAS ends the first one by id.
+	RunStepEndUnnamed RunStepEndRefusal = "step_unnamed"
+)
 
 // RunRetriedResponse is POST /api/runs/{id}/retry's reply: KAS's own outcome
 // report, forwarded rather than collapsed to `{"ok":true}`. RetriedNodeIDs is why

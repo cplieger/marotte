@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/pathinside"
 	"github.com/cplieger/marotte/internal/buffer"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/sanitize"
 	"github.com/cplieger/marotte/internal/turnlog"
-	"github.com/cplieger/pathinside/v2"
 )
 
 // HandleToolCall appends a tool_call entry in the lane fixed for the call's whole life:
@@ -30,9 +30,6 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID marotte.ChatID, 
 	// (the cloud-config fetch runs during session creation).
 	if isInternalTool(tc.Meta.Kiro.ToolID) {
 		return
-	}
-	if tc.Meta.Kiro.AgentInitiated && !attr.Step {
-		t.bracket.ReviseTurnBinding(ctx, chatID)
 	}
 	turn, sc, ok := t.foldTarget(ctx, chatID, attr)
 	if !ok {
@@ -79,9 +76,12 @@ func (*Translator) trackFileChanges(turn *turnlog.Turn, diffs []marotte.ToolDiff
 func toolCallFromWire(
 	tc *acpToolCallWire, subtask string, content toolUpdateContent, ts int64,
 ) marotte.ToolCall {
+	toolName, mcp := callIdentity(tc)
 	return marotte.ToolCall{
 		ID:             tc.ToolCallID,
 		Title:          displayText(tc.Title),
+		ToolName:       toolName,
+		MCP:            mcp,
 		Kind:           tc.Kind,
 		Status:         tc.Status,
 		Input:          tc.RawInput,
@@ -92,7 +92,19 @@ func toolCallFromWire(
 		Disclosed:      disclosedFrom(tc.Meta.Kiro.DisclosedContext),
 		Denial:         denialFrom(tc.Meta.Kiro.PolicyDenial),
 		Ts:             ts,
+
+		ClassifierApproved: tc.Meta.Kiro.TrustClassifierApproved,
+		ClassifierNote:     classifierNote(tc.Meta.Kiro.TrustClassifier),
 	}
+}
+
+// classifierNote is the reason Kiro's safety check gave for handing a call to a person, made safe to
+// display; empty for any other decision.
+func classifierNote(in *acpTrustClassifier) string {
+	if in == nil || in.Decision != classifierAsksPerson {
+		return ""
+	}
+	return displayText(in.Reason)
 }
 
 // HandleToolCallUpdate folds an update into the call's in-flight value. A non-terminal
@@ -153,7 +165,7 @@ func (t *Translator) lateStepResult(ctx context.Context, chatID marotte.ChatID, 
 		return
 	}
 	tc := marotte.ToolCall{ID: tu.ToolCallID, Title: displayText(tu.Title), Kind: tu.Kind}
-	applyToolCallOutput(&tc, tu, content)
+	tc.Output = toolUpdateOutput("", tu.Status, tu, content)
 	tc.Status = tu.Status
 	tc.Diffs = content.diffs
 	tc.Locations = tu.Locations
@@ -189,6 +201,7 @@ func toolProgress(turn string, before, after *marotte.ToolCall) marotte.ToolProg
 	d.OutputDelta, d.OutputReplace = outputDelta(before.Output, after.Output)
 	deltaContent(&d, before, after)
 	deltaAttachments(&d, before, after)
+	deltaMarks(&d, before, after)
 	return d
 }
 
@@ -229,9 +242,18 @@ func deltaAttachments(d *marotte.ToolProgressPayload, before, after *marotte.Too
 	if before.Offload == nil && after.Offload != nil {
 		d.Offload = after.Offload
 	}
-	// One-way: the fold never clears the mark, so only the frame that SETS it carries it.
+}
+
+// One-way: the fold never clears a mark, so only the frame that SETS it carries it.
+func deltaMarks(d *marotte.ToolProgressPayload, before, after *marotte.ToolCall) {
 	if after.Declined && !before.Declined {
 		d.Declined = true
+	}
+	if after.ClassifierApproved && !before.ClassifierApproved {
+		d.ClassifierApproved = true
+	}
+	if before.ClassifierNote == "" && after.ClassifierNote != "" {
+		d.ClassifierNote = after.ClassifierNote
 	}
 }
 
@@ -337,7 +359,7 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID marotte.Cha
 		tc.TerminalID = content.terminalID
 	}
 	t.applyToolCallStatus(ctx, chatID, open.StartedTs, tc, tu)
-	applyToolCallOutput(tc, tu, content)
+	tc.Output = toolUpdateOutput(tc.Output, tc.Status, tu, content)
 	t.gradeStoppedCall(chatID, turn, tc)
 	if len(tu.Locations) > 0 {
 		tc.Locations = tu.Locations
@@ -402,20 +424,19 @@ func appendOutputSegment(output, segment string) string {
 	return output + segment
 }
 
-// Content wins unless it is the stringified copy (stringifiedRawOutputMessage); a bare rawOutput
-// string is the fallback when KAS suppresses an edit's diff block.
-func applyToolCallOutput(tc *marotte.ToolCall, tu *acpToolCallUpdateWire, content toolUpdateContent) {
-	tc.Output = appendOutputSegment(tc.Output, toolCallContentOutput(tu, content))
-	if tc.Output != "" {
-		return
+// toolUpdateOutput is prior with one update's output appended, shared by the live fold and the
+// replay projection. Content wins unless it is the stringified copy (stringifiedRawOutputMessage).
+// With nothing accumulated, a bare rawOutput string is the fallback: KAS's only channel for a
+// sub-agent's result, live and replayed, and for an edit whose diff block it suppressed.
+func toolUpdateOutput(prior string, status marotte.ToolStatus, tu *acpToolCallUpdateWire, content toolUpdateContent) string {
+	if out := appendOutputSegment(prior, toolCallContentOutput(tu, content)); out != "" {
+		return out
 	}
 	text := rawOutputString(tu.RawOutput)
-	if text == "" && tc.Status == marotte.ToolFailed {
+	if text == "" && status == marotte.ToolFailed {
 		text = rawOutputFailureText(tu.RawOutput)
 	}
-	if text != "" {
-		tc.Output = sanitize.Output(text)
-	}
+	return sanitize.Output(text)
 }
 
 func (t *Translator) applyToolCallStatus(
@@ -482,8 +503,9 @@ func (t *Translator) adoptTerminalOutput(chatID marotte.ChatID, tc *marotte.Tool
 	tc.OutputSpans = spans
 }
 
-// mergeToolMeta folds a tool_call_update's disclosure, denial and offload metadata into
-// the buffered call, never overwriting a held value. A denial can arrive on the update.
+// mergeToolMeta folds a tool_call_update's disclosure, denial, offload and safety-check metadata
+// into the buffered call, never overwriting a held value. A denial can arrive on the update, or
+// be recognised from KAS's refusal text, which a policyDenial outranks.
 func mergeToolMeta(tc *marotte.ToolCall, tu *acpToolCallUpdateWire) {
 	if tc.Disclosed == nil {
 		tc.Disclosed = disclosedFrom(tu.Meta.Kiro.DisclosedContext)
@@ -491,8 +513,15 @@ func mergeToolMeta(tc *marotte.ToolCall, tu *acpToolCallUpdateWire) {
 	if tc.Denial == nil {
 		tc.Denial = denialFrom(tu.Meta.Kiro.PolicyDenial)
 	}
+	if tc.Denial == nil {
+		tc.Denial = engineRefusal(tu.Status, tc.TerminalID, tc.Output)
+	}
 	if tc.Offload == nil {
 		tc.Offload = offloadFrom(tu.Meta.Kiro.OutputTransformation)
+	}
+	tc.ClassifierApproved = tc.ClassifierApproved || tu.Meta.Kiro.TrustClassifierApproved
+	if tc.ClassifierNote == "" {
+		tc.ClassifierNote = classifierNote(tu.Meta.Kiro.TrustClassifier)
 	}
 }
 
