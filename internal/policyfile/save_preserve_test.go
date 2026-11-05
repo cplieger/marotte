@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // kiroCLIFile is the shape kiro-cli keeps in a workspace-root permissions.yaml: its "Trust this
@@ -119,7 +119,7 @@ func TestSave_KeepsKeysAndCommentsItDoesNotOwn(t *testing.T) {
 	})
 }
 
-// todaysShape is yaml.v3's Marshal of a File holding one rule, the format a rules-only file keeps.
+// todaysShape is go-yaml's Marshal of a File holding one rule, the format a rules-only file keeps.
 const todaysShape = `rules:
     - capability: fs_write
       effect: allow
@@ -427,8 +427,8 @@ func TestSave_DocumentShapes(t *testing.T) {
 		})
 	}
 	for name, c := range map[string]struct{ before, want string }{
-		"a comment on the document end":                 {"rules: []\n... # end\n", "rules: []\n\n# end\n"},
-		"comments on and after the document end":        {"rules: []\n... # e\n# f\n", "rules: []\n\n# e\n# f\n"},
+		"a comment on the document end":                 {"rules: []\n... # end\n", "rules: []\n# end\n"},
+		"comments on and after the document end":        {"rules: []\n... # e\n# f\n", "rules: []\n# e\n# f\n"},
 		"a foot comment above a commented document end": {"next: 1\nrules: []\n# foot\n... # end\n", "next: 1\nrules: []\n# foot\n# end\n"},
 	} {
 		t.Run(name+" after a mapping keeps its comments", func(t *testing.T) {
@@ -437,6 +437,16 @@ func TestSave_DocumentShapes(t *testing.T) {
 			}
 		})
 	}
+	t.Run("a folded value another key holds keeps its value with no blank line after it", func(t *testing.T) {
+		got := saveOne(t, "note: >\n  a b\nrules: []\n", func(*File) {})
+		if want := "note: >\n    a b\nrules: []\n"; got != want {
+			t.Errorf("saved file = %q, want %q", got, want)
+		}
+		var doc map[string]any
+		if err := yaml.Unmarshal([]byte(got), &doc); err != nil || doc["note"] != "a b\n" {
+			t.Errorf("note reads back as %q (%v), want %q", doc["note"], err, "a b\n")
+		}
+	})
 	t.Run("a file with no rules key gains one after its other keys", func(t *testing.T) {
 		got := saveOne(t, "workspaceTrusted: true\n", addShell)
 		if got != "workspaceTrusted: true\nrules:\n    - capability: shell\n      effect: ask\n" {
@@ -574,6 +584,201 @@ note: "true"
 			}
 			if raw, err := os.ReadFile(jsonPath); err != nil || string(raw) != jsonSibling {
 				t.Errorf("the .json changed to %q (err %v), want it left as KAS's fallback", raw, err)
+			}
+		})
+	}
+}
+
+// TestSave_KeepsTheRulesOfATaggedNullJSONSibling pins a permissions.json whose root is an
+// explicitly tagged empty null: blockStyle keeps the tag, so the root takes the mapping path, and
+// the rule Save adds is the rule the new permissions.yaml reads back.
+func TestSave_KeepsTheRulesOfATaggedNullJSONSibling(t *testing.T) {
+	for _, root := range []string{
+		"!!null ''", `!!null ""`, "--- !!null ''", "&a !!null ''",
+		"!!null |", "!!null >-", "!<tag:yaml.org,2002:null> ''",
+	} {
+		t.Run(root, func(t *testing.T) {
+			dir := t.TempDir()
+			yamlPath := filepath.Join(dir, filename)
+			if err := os.WriteFile(filepath.Join(dir, jsonFilename), []byte(root+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			f, err := Load(yamlPath)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			want := Rule{Capability: "shell", Effect: EffectDeny}
+			if _, err := f.Upsert(&want); err != nil {
+				t.Fatal(err)
+			}
+			if err := Save(t.Context(), yamlPath, f); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			back, err := Load(yamlPath)
+			if err != nil {
+				t.Fatalf("Load after Save: %v", err)
+			}
+			if len(back.Rules) != 1 || back.Rules[0].Capability != want.Capability || back.Rules[0].Effect != want.Effect {
+				t.Errorf("rules read back = %+v, want [%+v]", back.Rules, want)
+			}
+		})
+	}
+}
+
+// TestSave_RefusesAnEditThatWouldRetargetAnAlias pins that Save runs its read-back guard: dropping
+// the rule that defines an anchor leaves a later alias to an earlier anchor of the same name, and
+// the file Save would write reads that rule back with another capability. Save refuses and leaves
+// the file as it was.
+func TestSave_RefusesAnEditThatWouldRetargetAnAlias(t *testing.T) {
+	const before = "pre: &a fs_read\nrules:\n  - {capability: &a shell, effect: deny}\n  - {capability: *a, effect: allow}\n"
+	path := filepath.Join(t.TempDir(), filename)
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	f.Rules = f.Rules[1:]
+	if err := Save(t.Context(), path, f); err == nil || !strings.Contains(err.Error(), "would read back with other rules") {
+		t.Fatalf("Save = %v, want the other-rules refusal", err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != before {
+		t.Errorf("file after the refused Save = %q (%v), want it unchanged", got, err)
+	}
+}
+
+// TestReadsBack_RefusesTheSameRulesInAnotherOrder pins that the guard compares the rules in
+// order: the first rule that matches decides, so two swapped rules are other rules.
+func TestReadsBack_RefusesTheSameRulesInAnotherOrder(t *testing.T) {
+	rules := []Rule{{Capability: "shell", Effect: EffectDeny}, {Capability: "write", Effect: EffectAllow}}
+	text := "rules: [{capability: write, effect: allow}, {capability: shell, effect: deny}]\n"
+	if err := readsBack([]byte(text), filename, rules); err == nil || !strings.Contains(err.Error(), "would read back with other rules") {
+		t.Errorf("readsBack(%q) = %v, want the other-rules refusal", text, err)
+	}
+}
+
+// TestSave_RefusesAnEditThatWouldRetargetAnotherKeysAlias pins the alias check on the keys Save
+// keeps: dropping the rule that defines an anchor would make workspaceTrusted, or a policies
+// entry, read the earlier anchor of the same name. Save refuses and leaves the file as it was.
+func TestSave_RefusesAnEditThatWouldRetargetAnotherKeysAlias(t *testing.T) {
+	for name, before := range map[string]string{
+		"workspaceTrusted":  "pre: &t false\nrules:\n  - {capability: shell, effect: deny, match: [&t true]}\n  - {capability: write, effect: allow}\nworkspaceTrusted: *t\n",
+		"a policies entry":  "pre: &a fs_read\nrules:\n  - {capability: &a shell, effect: deny}\n  - {capability: write, effect: allow}\npolicies:\n  allow: *a\n",
+		"a sequence anchor": "pre: &a [fs_read]\nrules:\n  - {capability: shell, effect: deny, match: &a [shell]}\n  - {capability: write, effect: allow}\npolicies: *a\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), filename)
+			if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			f, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			f.Rules = f.Rules[1:]
+			if err := Save(t.Context(), path, f); err == nil || !strings.Contains(err.Error(), "would point at another value") {
+				t.Fatalf("Save = %v, want the alias refusal", err)
+			}
+			if got, err := os.ReadFile(path); err != nil || string(got) != before {
+				t.Errorf("file after the refused Save = %q (%v), want it unchanged", got, err)
+			}
+		})
+	}
+}
+
+// TestSave_KeepsAnAliasToARedefinedAnchor pins the other half of the alias check: an alias binds
+// the latest anchor of its name before it, so a file that redefines an anchor on purpose saves.
+func TestSave_KeepsAnAliasToARedefinedAnchor(t *testing.T) {
+	t.Run("an edit", func(t *testing.T) {
+		const before = "a: &x 1\nb: *x\nc: &x 2\nd: *x\nrules:\n  - {capability: shell, effect: deny}\n  - {capability: write, effect: allow}\n"
+		path := filepath.Join(t.TempDir(), filename)
+		if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		f.Rules = f.Rules[1:]
+		if err := Save(t.Context(), path, f); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			B, D  int
+			Rules []Rule
+		}
+		if err := yaml.Unmarshal(got, &doc); err != nil || doc.B != 1 || doc.D != 2 || len(doc.Rules) != 1 || doc.Rules[0].Capability != "write" {
+			t.Errorf("saved file %q reads back as %+v (%v), want b 1, d 2 and the write rule", got, doc, err)
+		}
+	})
+	t.Run("no edit", func(t *testing.T) {
+		const before = "pre: &t false\nrules:\n    - {capability: shell, effect: deny, match: [&t true]}\n    - {capability: write, effect: allow}\nworkspaceTrusted: *t\n"
+		path := filepath.Join(t.TempDir(), filename)
+		if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if err := Save(t.Context(), path, f); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		if got, err := os.ReadFile(path); err != nil || string(got) != before {
+			t.Errorf("file after a Save that changed nothing = %q (%v), want it unchanged", got, err)
+		}
+	})
+}
+
+// TestSave_CarriesAnExplicitTagFromTheJSONSibling pins that a tag written in permissions.json
+// stays in the permissions.yaml Save writes, and that the value reads back the same.
+func TestSave_CarriesAnExplicitTagFromTheJSONSibling(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, filename)
+	if err := os.WriteFile(filepath.Join(dir, jsonFilename), []byte(`{"x": !!str "true", "rules": []}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(yamlPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := Save(t.Context(), yamlPath, f); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := os.ReadFile(yamlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "x: !!str true\nrules: []\n"; string(got) != want {
+		t.Errorf("saved file = %q, want %q", got, want)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(got, &doc); err != nil || doc["x"] != "true" {
+		t.Errorf("x reads back as %#v (%v), want the string \"true\"", doc["x"], err)
+	}
+}
+
+// TestReadsBack_RefusesTextWithOtherRules pins Save's last guard: text that parses but holds
+// other rules than the ones Save was given is never written.
+func TestReadsBack_RefusesTextWithOtherRules(t *testing.T) {
+	rules := []Rule{{Capability: "shell", Effect: EffectDeny}}
+	if err := readsBack([]byte("rules:\n    - capability: shell\n      effect: deny\n"), filename, rules); err != nil {
+		t.Fatalf("readsBack refused the text holding exactly the rules: %v", err)
+	}
+	for name, text := range map[string]string{
+		"no rules":       "rules: []\n",
+		"another effect": "rules: [{capability: shell, effect: ask}]\n",
+		"an extra rule":  "rules: [{capability: shell, effect: deny}, {capability: shell, effect: ask}]\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := readsBack([]byte(text), filename, rules)
+			if err == nil || !strings.Contains(err.Error(), "would read back with other rules") {
+				t.Errorf("readsBack(%q) = %v, want the other-rules refusal", text, err)
 			}
 		})
 	}

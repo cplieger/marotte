@@ -21,7 +21,7 @@ import (
 	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/go/yamlenv"
 	"github.com/cplieger/marotte/internal/workspace"
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // KAS reads the .yaml unless it is missing or blank, then the .json sibling. marotte writes the
@@ -225,7 +225,7 @@ func readPolicy(ctx context.Context, abs string) ([]byte, error) {
 
 // parse decodes data, read from the file called name, into its document node and its rules. doc
 // is nil for a blank file, and has Kind 0 for one holding only comments. The root must be a
-// mapping or null; yaml.v3 refuses a duplicated key.
+// mapping or null; go-yaml refuses a duplicated key.
 func parse(data []byte, name string) (doc *yaml.Node, f *File, err error) {
 	if strings.TrimSpace(string(data)) == "" {
 		return nil, &File{Rules: []Rule{}}, nil
@@ -276,7 +276,7 @@ func Save(ctx context.Context, path string, f *File) error {
 	if err != nil {
 		return err
 	}
-	// yaml.v3 drops the comment on a `...` line and every comment after one; the same document
+	// go-yaml drops the comment on a `...` line and every comment after one; the same document
 	// without its end markers parses with them.
 	if text := dropDocumentEnds(string(old)); text != string(old) {
 		old = []byte(text)
@@ -293,10 +293,16 @@ func Save(ctx context.Context, path string, f *File) error {
 	if err != nil {
 		return err
 	}
-	// An edit that broke the document (an alias into a replaced rule) fails here, not at KAS's
+	// An edit that breaks the document (an alias into a dropped rule), would read back with other
+	// rules, or retargets any alias to an earlier anchor of the same name fails here, not at KAS's
 	// next reload.
-	if _, _, err = parse(data, filepath.Base(path)); err != nil {
-		return fmt.Errorf("refusing to write %s: %w", filepath.Base(path), err)
+	if backErr := readsBack(data, filepath.Base(path), f.Rules); backErr != nil {
+		return backErr
+	}
+	if doc != nil {
+		if aliasErr := aliasesHold(doc); aliasErr != nil {
+			return fmt.Errorf("refusing to write %s: %w", filepath.Base(path), aliasErr)
+		}
 	}
 	// WithMaxBytes mirrors Load's size guard: Save can never persist a
 	// policy file its own Load would reject as oversize.
@@ -308,9 +314,9 @@ func Save(ctx context.Context, path string, f *File) error {
 
 // render writes rules into the parsed document doc of old, which holds no `...` line. A blank file
 // gets a fresh `rules:` document; one holding only comments, `---` or a directive keeps its text
-// above it, since yaml.v3 drops those from an empty document.
-// Stays on yaml.Marshal (unlimited width); on v4 an Encoder or Dump must pin WithV3Defaults and
-// WithLineWidth(-1), or it refolds kiro-cli's long values.
+// above it, since go-yaml drops those from an empty document.
+// Stays on yaml.Marshal, which is Dump with WithV3Defaults and WithLineWidth(-1): an Encoder or a
+// bare Dump wraps at 80 columns and would refold kiro-cli's long values.
 func render(old []byte, doc *yaml.Node, rules []Rule) ([]byte, error) {
 	fresh := &File{Rules: rules}
 	if doc == nil {
@@ -326,7 +332,7 @@ func render(old []byte, doc *yaml.Node, rules []Rule) ([]byte, error) {
 	}
 	root := doc.Content[0]
 	if root.Kind != yaml.MappingNode {
-		// A null root (`~`): parse refuses every other non-mapping root. yaml.v3 writes no line
+		// A null root (`~`): parse refuses every other non-mapping root. go-yaml writes no line
 		// comment on a root block mapping, so `~ # side` keeps its comment as a head line.
 		root = &yaml.Node{
 			Kind: yaml.MappingNode, Tag: "!!map",
@@ -346,7 +352,7 @@ func render(old []byte, doc *yaml.Node, rules []Rule) ([]byte, error) {
 			return nil, err
 		}
 		value.HeadComment, value.FootComment = prev.HeadComment, prev.FootComment
-		// yaml.v3 reads `rules: [] # x` onto the value and `rules: # x` over a block onto the key,
+		// go-yaml reads `rules: [] # x` onto the value and `rules: # x` over a block onto the key,
 		// and writes a key's line comment over `[]` onto the next key.
 		line := joinComments(" ", key.LineComment, prev.LineComment)
 		if len(rules) == 0 {
@@ -403,10 +409,54 @@ func rulesNode(prev *yaml.Node, rules []Rule) (*yaml.Node, error) {
 	return value, nil
 }
 
-// blockStyle clears every node's style, so a document read from JSON writes as block YAML; the
-// encoder still quotes a string that would otherwise read as another type.
+// aliasesHold reports an alias in doc that would read back as another value: in document order,
+// each alias must name the anchored node it was parsed with, which a dropped rule holding that
+// anchor, or a reordered one, would change.
+func aliasesHold(doc *yaml.Node) error {
+	latest := map[string]*yaml.Node{}
+	var walk func(n *yaml.Node) error
+	walk = func(n *yaml.Node) error {
+		if n.Kind == yaml.AliasNode {
+			if latest[n.Value] != n.Alias {
+				return fmt.Errorf("the alias *%s would point at another value", n.Value)
+			}
+			return nil
+		}
+		if n.Anchor != "" {
+			latest[n.Anchor] = n
+		}
+		for _, c := range n.Content {
+			if err := walk(c); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return walk(doc)
+}
+
+// readsBack refuses data, the text Save is about to write to the file called name, unless it
+// parses and holds exactly rules: a file KAS would read with other rules is never written.
+func readsBack(data []byte, name string, rules []Rule) error {
+	_, back, err := parse(data, name)
+	if err != nil {
+		return fmt.Errorf("refusing to write %s: %w", name, err)
+	}
+	same := func(a, b Rule) bool {
+		return ruleKey(a.Capability, a.Effect, a.Match, a.Exclude) == ruleKey(b.Capability, b.Effect, b.Match, b.Exclude)
+	}
+	if !slices.EqualFunc(back.Rules, rules, same) {
+		return fmt.Errorf("refusing to write %s: it would read back with other rules", name)
+	}
+	return nil
+}
+
+// blockStyle clears every node's style but its explicit tag, so a document read from JSON writes
+// as block YAML: an untagged string that would read as another type is quoted, a tagged one keeps
+// its tag, and emptyRoot tells a root tagged `!!null` with an empty value from an empty document
+// by it.
 func blockStyle(n *yaml.Node) {
-	n.Style = 0
+	n.Style &= yaml.TaggedStyle
 	for _, c := range n.Content {
 		blockStyle(c)
 	}
