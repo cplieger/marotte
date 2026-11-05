@@ -270,19 +270,28 @@ func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []str
 
 func (s Searcher) filesRoot(ctx context.Context, root string, args []string, limit int) []string {
 	var found []string
-	logRefusal(root, s.run(ctx, root, args, func(line []byte) bool {
+	refusal := s.run(ctx, root, args, func(line []byte) bool {
 		if len(line) > 0 {
 			found = append(found, filepath.Join(root, string(line)))
 		}
 		return len(found) < limit
-	}))
+	})
+	switch {
+	case strings.Contains(refusal, "error parsing glob"):
+		logRefusal(root, refusal)
+	case refusal != "":
+		// A --files walk that finds no file writes nothing, so this exit 2 can be a walk that met
+		// unreadable paths; --json always ends with a summary line, so Text never gets here.
+		slog.Debug("search: ripgrep found no file and skipped unreadable paths", "root", root,
+			"errors", strings.Count(refusal, "\n"))
+	}
 	return found
 }
 
 // run streams rg's stdout lines, under root, to line until it returns false, ctx ends, or the
 // output passes maxOutputBytes, then kills rg's process group. It returns rg's stderr when rg
-// exited 2 having written no line, so searched nothing; every other failure is logged here. The
-// lines already read stay with the caller.
+// exited 2 having written no line; every other failure is logged here. The lines already read
+// stay with the caller.
 func (s Searcher) run(ctx context.Context, root string, args []string, line func([]byte) bool) (refusal string) {
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
@@ -322,7 +331,7 @@ func (s Searcher) run(ctx context.Context, root string, args []string, line func
 }
 
 // exitRefusal logs how rg's run ended, and returns its stderr when rg exited 2 having written no
-// line, so searched nothing.
+// line.
 func exitRefusal(ctx context.Context, root string, err error, read readResult, stderr string) string {
 	code := -1
 	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {

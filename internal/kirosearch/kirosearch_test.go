@@ -313,6 +313,34 @@ exit 2`)
 	}
 }
 
+// A --files walk that finds no file writes nothing, so its exit 2 with no output is a refusal only
+// when rg names a bad glob; otherwise it met unreadable paths. The stderr lines are rg 14.1.1's.
+func TestFiles_ExitTwoWithNoOutputWarnsOnlyForARefusal(t *testing.T) {
+	tests := map[string]struct {
+		stderr string
+		want   int
+	}{
+		"unreadable path": {"rg: gone: IO error for operation on gone: No such file or directory (os error 2)", 0},
+		"bad glob":        {"rg: error parsing glob '{a': unclosed alternate group; missing '}'", 1},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			logs := capture.Default(t)
+			bin := fakeRG(t, `echo "`+tc.stderr+`" >&2
+exit 2`)
+
+			got := Searcher{Bin: bin}.Files(t.Context(), []string{t.TempDir()}, FilesQuery{Pattern: "**/*.go", MaxResults: 11})
+
+			if got == nil || len(got) != 0 {
+				t.Errorf("Files = %#v, want an empty non-nil slice", got)
+			}
+			if w := warnings(logs); len(w) != tc.want {
+				t.Errorf("warnings = %q, want %d", w, tc.want)
+			}
+		})
+	}
+}
+
 // rg closing its output and then exiting 0 is a clean search, not a failure.
 func TestFiles_CleanExitAfterTheOutputClosesLogsNoWarning(t *testing.T) {
 	logs := capture.Default(t)
