@@ -20,8 +20,6 @@ import { createDisclosure, type DisclosureController } from "@cplieger/ui/disclo
 /** The body is closed, whoever closed it: the header click toggles it, and find-in-chat's reveal reads
  *  it, so a close that leaves it off makes the next header click close the group again. */
 const CLS_COLLAPSED = "tool-group-collapsed";
-/** Closed by the newest-element rule rather than the reader; always beside CLS_COLLAPSED. */
-const CLS_AUTO_COLLAPSED = "tool-group-auto-collapsed";
 const CLS_USER_TOGGLED = "tool-group-user-toggled";
 /** A shell holding fewer than two members: no header, no group chrome. A pure
  *  function of the member count with ONE writer (refreshGroupHeader), so there is
@@ -154,10 +152,10 @@ function bornCollapsed(group: HTMLElement, calls: HTMLElement[]): boolean {
   return true;
 }
 
-/** The AUTO-collapsed marking: one writer for the classes and the header state. The caller refreshes
- *  the summary: this runs inside `refreshGroupHeader`, which would re-enter. */
+/** The auto-collapse marking, shared by the born-folded and live paths. The caller refreshes the
+ *  summary: this runs inside `refreshGroupHeader`, which would re-enter. */
 function markAutoCollapsed(group: HTMLElement): void {
-  group.classList.add(CLS_AUTO_COLLAPSED, CLS_COLLAPSED);
+  group.classList.add(CLS_COLLAPSED);
   group.querySelector<HTMLElement>(".tool-group-header")?.setAttribute("aria-expanded", "false");
 }
 
@@ -363,7 +361,6 @@ function dedup(arr: string[]): string[] {
 function onHeaderClick(group: HTMLDivElement, header: HTMLDivElement): void {
   // No bare guard, unlike `autoCollapseGroup`: a bare header is `display: none`, so this is unreachable on one.
   group.classList.add(CLS_USER_TOGGLED);
-  group.classList.remove(CLS_AUTO_COLLAPSED);
   const collapsedNow = group.classList.toggle(CLS_COLLAPSED);
   const ctl = groupCtls.get(group);
   if (collapsedNow) {
@@ -390,7 +387,7 @@ export function autoCollapseGroup(group: HTMLElement): void {
   }
   const ctl = groupCtls.get(group);
   if (ctl === undefined) {
-    // No region, so no class: a CLS_AUTO_COLLAPSED group with an open body is unactionable. Unreachable
+    // No region, so nothing to close: a collapsed class over an open body would be unactionable. Unreachable
     // through `refreshGroupHeader`; agreement with `ensureGroupDisclosure`.
     return;
   }
