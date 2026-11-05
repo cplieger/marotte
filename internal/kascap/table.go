@@ -131,6 +131,20 @@ var table = []decl{
 		send:     true,
 	},
 	{
+		key:      "textSearch",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		value:    true,
+		send:     true,
+	},
+	{
+		key:      "findFiles",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		value:    true,
+		send:     true,
+	},
+	{
 		key:      "knowledge",
 		door:     doorConnection,
 		resolver: resolverCapability,

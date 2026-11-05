@@ -39,6 +39,15 @@ into permission prompts — and free-form questions are SURFACED
 instead of silently skipped (without the capability KAS advances
 past them). Handled by translate/user_input.go; answered via the
 user_input_response command.`,
+	"capability.textSearch": `_meta.kiro.textSearch makes KAS send every grep_search to
+_kiro/search/text_search (agent/bridge_kiro_search.go, internal/kirosearch).
+Without it KAS runs its bundled rg, rejects rg's exit 2 (an unreadable path
+anywhere) and its 30 s budget, and falls back to a Node walker with no time
+limit and no cancel, which held workflow steps for 20 to 142 minutes.`,
+	"capability.findFiles": `_meta.kiro.findFiles makes KAS send every file_search to
+_kiro/search/find_files, answered by marotte's bounded rg listing. Without it
+KAS's rg --files follows symlinks, fails on a dangling one or a loop, and falls
+back to the same unbounded Node walker as grep_search.`,
 	"capability.backgroundProcesses": `_meta.kiro.backgroundProcesses opts into KAS's background-process tools
 (list_processes, get_process_output and a start/stop tool) over marotte's
 terminal handlers (agent/agent_terminal.go). From 2.28 each start holds
