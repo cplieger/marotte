@@ -33,10 +33,15 @@ func fakeRG(t *testing.T, body string) string {
 func realRG(t *testing.T) string {
 	t.Helper()
 	p, err := exec.LookPath("rg")
-	if err != nil {
+	switch {
+	case err == nil:
+		return p
+	case os.Getenv("KIROSEARCH_REQUIRE_RG") != "":
+		t.Fatal("rg is not installed, and KIROSEARCH_REQUIRE_RG makes these tests mandatory")
+	default:
 		t.Skip("rg is not installed")
 	}
-	return p
+	return ""
 }
 
 func writeTree(t *testing.T, root string, files map[string]string) {
@@ -80,6 +85,23 @@ func TestText_RootedIncludeSearchesOnlyThatSubtree(t *testing.T) {
 	}
 	if slices.Contains(args, "--follow") || slices.Contains(args, "-L") {
 		t.Errorf("args %q follow symlinks", args)
+	}
+}
+
+func TestText_RealRGRootedIncludeFindsOnlyThatSubtree(t *testing.T) {
+	bin := realRG(t)
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"repo/internal/deeper/a.go": "func Run() {}\n",
+		"repo/other/b.go":           "func Run() {}\n",
+		"other/internal/c.go":       "func Run() {}\n",
+	})
+
+	got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "func Run", IncludePattern: "repo/internal/**/*.go"})
+
+	want := []Match{{FilePath: "repo/internal/deeper/a.go", LineNumber: 1, LineText: "func Run() {}"}}
+	if !slices.Equal(got, want) {
+		t.Errorf("Text = %+v, want %+v", got, want)
 	}
 }
 
@@ -178,9 +200,12 @@ func TestText_DeadlineReturnsThePartialResultAndKillsTheGroup(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	bin := slowRG(t, matchLine("./a.go", "hit", 1), pidFile)
 	const deadline = 300 * time.Millisecond
+	prev := searchDeadline
+	searchDeadline = deadline
+	t.Cleanup(func() { searchDeadline = prev })
 
 	start := time.Now()
-	got := Searcher{Bin: bin, Deadline: deadline}.Text(t.Context(), []string{root}, TextQuery{Pattern: "hit"})
+	got := Searcher{Bin: bin}.Text(t.Context(), []string{root}, TextQuery{Pattern: "hit"})
 	took := time.Since(start)
 
 	if took > deadline+killWait {

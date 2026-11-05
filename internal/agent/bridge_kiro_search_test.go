@@ -107,26 +107,37 @@ func TestKiroSearch_NoRipgrepAnswersEmpty(t *testing.T) {
 }
 
 // A turn cancel ends the chat's running search, which still answers with what it found.
-func TestKiroSearch_TurnCancelEndsTheSearch(t *testing.T) {
+// stageBlockingRipgrep stages an rg that prints textMatchEvent, then creates the returned file
+// and blocks: a search seen at that file is tracked and has its match in the pipe.
+func stageBlockingRipgrep(t *testing.T) string {
+	t.Helper()
+	ready := filepath.Join(t.TempDir(), "ready")
 	stageRipgrep(t, `printf '%s\n' '`+textMatchEvent+`'
+/bin/touch `+ready+`
 /bin/sleep 60`)
-	h, br := hubForFSTest(t, t.TempDir())
-	msg := kiroSearchMsg(t, 1, methodKiroTextSearch, map[string]any{"sessionId": "s", "pattern": "func Run", "caseSensitive": false})
-	go h.inbound.respondKiroSearch(t.Context(), "c1", h.originOf("c1"), msg)
+	return ready
+}
+
+func awaitFile(t *testing.T, path string) {
+	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		h.inbound.bus.searches.mu.Lock()
-		running := len(h.inbound.bus.searches.byChat["c1"])
-		h.inbound.bus.searches.mu.Unlock()
-		if running == 1 {
-			break
+		if _, err := os.Stat(path); err == nil {
+			return
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("the search never started")
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	time.Sleep(200 * time.Millisecond) // lets the fake rg print its match before the cancel
+}
+
+func TestKiroSearch_TurnCancelEndsTheSearch(t *testing.T) {
+	ready := stageBlockingRipgrep(t)
+	h, br := hubForFSTest(t, t.TempDir())
+	msg := kiroSearchMsg(t, 1, methodKiroTextSearch, map[string]any{"sessionId": "s", "pattern": "func Run", "caseSensitive": false})
+	go h.inbound.respondKiroSearch(t.Context(), "c1", h.originOf("c1"), msg)
+	awaitFile(t, ready)
 
 	start := time.Now()
 	if err := h.inbound.bus.CancelPendingAsks(t.Context(), "c1", command.ScopeChatSession); err != nil {

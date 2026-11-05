@@ -27,10 +27,11 @@ import (
 	"github.com/cplieger/marotte/internal/procout"
 )
 
-// defaultDeadline bounds one search across every root. Measured on a 1.18-million-file workspace (warm
-// cache): a full file listing took 1.2 s and an unscoped text search 24.5 s, against KAS's own 30 s
-// rg budget. 15 s returns every scoped search whole and an unscoped one partial.
-const defaultDeadline = 15 * time.Second
+// searchDeadline bounds one search across every root; a var so tests can shorten it. Measured on a
+// 1.18-million-file workspace (warm cache): a full file listing took 1.2 s and an unscoped text
+// search 24.5 s, against KAS's own 30 s rg budget. 15 s returns every scoped search whole and an
+// unscoped one partial.
+var searchDeadline = 15 * time.Second
 
 // KAS 3.0.0's own caps (kGo, DGo, OGo and UZu in acp-server.js), so an answer holds what KAS's
 // own rg would have returned.
@@ -78,17 +79,9 @@ type FilesQuery struct {
 	MaxResults int
 }
 
-// Searcher runs the rg binary at Bin. An empty Bin finds nothing. A zero Deadline means 15 s.
+// Searcher runs the rg binary at Bin, each search within 15 s. An empty Bin finds nothing.
 type Searcher struct {
-	Bin      string
-	Deadline time.Duration
-}
-
-func (s Searcher) deadline() time.Duration {
-	if s.Deadline > 0 {
-		return s.Deadline
-	}
-	return defaultDeadline
+	Bin string
 }
 
 // Text searches roots for q.Pattern and returns the entries of the 100 files with the most matching
@@ -98,7 +91,7 @@ func (s Searcher) Text(ctx context.Context, roots []string, q TextQuery) []Match
 	if s.Bin == "" || q.Pattern == "" || len(roots) == 0 {
 		return []Match{}
 	}
-	ctx, cancel := context.WithTimeout(ctx, s.deadline())
+	ctx, cancel := context.WithTimeout(ctx, searchDeadline)
 	defer cancel()
 	args := []string{"--json", "--engine", "auto", "-C", "2", "--max-count", maxCountArg, "--max-filesize", "1M", "--hidden", "--no-require-git", "--glob", "!.git"}
 	if !q.CaseSensitive {
@@ -231,7 +224,7 @@ func (s Searcher) Files(ctx context.Context, roots []string, q FilesQuery) []str
 	if s.Bin == "" || len(roots) == 0 {
 		return []string{}
 	}
-	ctx, cancel := context.WithTimeout(ctx, s.deadline())
+	ctx, cancel := context.WithTimeout(ctx, searchDeadline)
 	defer cancel()
 	args := []string{"--files", "--max-depth", maxDepthArg, "--hidden", "--no-require-git", "--glob", "!.git"}
 	if q.Pattern != "" && q.Pattern != "**/*" {
