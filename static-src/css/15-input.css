@@ -52,8 +52,8 @@
 
   /* ONE INSET FOR THE WHOLE BOX'S CHROME. The distance from .prompt-box's inner
      edge to a control is the same on the left, on the right and at the bottom,
-     and the same as the gap BETWEEN controls, so the pill row reads as one
-     block rather than as three unrelated measurements. It was
+     and on a mouse the same as the gap BETWEEN controls (`--pill-gap`), so the
+     pill row reads as one block rather than as three unrelated measurements. It was
      `var(--sp-1) var(--sp-2)` — sides 8px, bottom 4px, gaps 4px — which is
      three values where the eye expects one. Consumed by .prompt-pills and
      .attachment-row; the textarea keeps its own roomier
@@ -91,12 +91,13 @@
      with it, which costs the pills' label width. */
   --composer-pill-pad: max(var(--pill-inset), calc((var(--hit-floor) - var(--composer-ctl-h)) / 2));
 
-  /* The lead an icon-only control (`--icon-ui` plus its padding and border, under the
-     hit floor) takes on top of the row's gap, so its inline reach meets the reach of
-     an icon-only neighbour before it rather than crossing it. 0 on a mouse. */
-  --pill-icon-lead: max(
-    0px,
-    calc(var(--hit-floor) - var(--icon-ui) - 2 * var(--pill-pad-inline) - 2px - var(--pill-inset))
+  /* THE PILL ROW'S ONE GAP, between every pair of controls, so touch spaces the whole
+     row or none of it: the hit floor minus the icon-only pill's width (`--icon-ui`
+     plus its padding and border), where two icon-only neighbours' inline reaches meet
+     instead of crossing. --pill-inset (4px) on a mouse, 10px on touch. */
+  --pill-gap: max(
+    var(--pill-inset),
+    calc(var(--hit-floor) - var(--icon-ui) - 2 * var(--pill-pad-inline) - 2px)
   );
 }
 
@@ -426,7 +427,7 @@
 .prompt-pills {
   display: flex;
   align-items: center;
-  gap: var(--pill-inset);
+  gap: var(--pill-gap);
 
   /* The inset is the EXPANDER's term, not the chrome's: see --composer-pill-pad on
      `#prompt-form`. Equal on all four edges, which the concentric corner requires. */
@@ -706,6 +707,10 @@
 
 .pill-spacer {
   flex: 1;
+
+  /* The spacer is a flex item, so the row puts a gap on each side of it; a full row
+     (a phone) shrinks it to 0 and Send would sit two gaps from its neighbour. */
+  margin-inline-start: calc(-1 * var(--pill-gap));
 }
 
 /* No Supervised pill, no tool-card approval row, no awaiting_approval
@@ -2034,16 +2039,6 @@
   .send-btn-label {
     display: none;
   }
-
-  .prompt-pills > .send-btn {
-    margin-inline-start: var(--pill-icon-lead);
-  }
-}
-
-/* The row's icon-only controls; see `--pill-icon-lead`. On the slot, not the button: a
-   positioned slot's box over the lead would stack above the previous control's target. */
-.pill-slot:has(> :is([id="chat-options-btn"], [id="task-list-pill"])) {
-  margin-inline-start: var(--pill-icon-lead);
 }
 
 /* The one consumer that still ROTATES its box, because its mark is a stroked arc

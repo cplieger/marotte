@@ -382,6 +382,21 @@ describe("the toolbar row at phone width", () => {
     expect(barBox.right - gutter - last.right, "slack left of the actions").toBeCloseTo(0, 0);
   });
 
+  it.each(["coarse", "fine"])("spaces every pair of %s toolbar buttons by one gap", (tier) => {
+    // A row of controls gets one gap on each tier, so no button sits apart from its neighbours.
+    const buttons = mountBarAt("720px");
+    document.documentElement.setAttribute("data-pointer", tier);
+    const gaps = buttons
+      .slice(1)
+      .map((b, i) => b.getBoundingClientRect().left - buttons[i]!.getBoundingClientRect().right);
+    expect(gaps, "six persistent buttons").toHaveLength(5);
+    const first = gaps[0]!;
+    expect(first).toBeGreaterThan(0);
+    for (const [i, g] of gaps.entries()) {
+      expect(g, `the gap before ${buttons[i + 1]!.id}`).toBeCloseTo(first, 1);
+    }
+  });
+
   it("wraps at 323px", async () => {
     // Seven 36px buttons and six 8px tap gaps are 300px, plus the bar's two `--sp-3`: 324px.
     try {

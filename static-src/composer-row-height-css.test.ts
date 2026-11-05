@@ -206,6 +206,58 @@ describe("the composer, measured at real viewport sizes", () => {
     };
   }
 
+  it("spaces every pair of neighbouring controls by one gap, whatever the tier", async () => {
+    // Touch spaces the whole row or none of it: an icon-only pill with its own lead sat apart from the pill before it.
+    // A long model name fills the phone row, so the spacer is 0 there and Send's gap is measurable too.
+    for (const [w, h, tier] of [
+      [1024, 768, "coarse"],
+      [820, 1180, "coarse"],
+      [390, 844, "coarse"],
+      [1440, 900, "fine"],
+      [390, 844, "fine"],
+    ] as const) {
+      await bandsAt(w, h, tier);
+      document.getElementById("task-list-pill")?.classList.remove("hidden");
+      const model = document.getElementById("ctx-model-pill");
+      if (model !== null) {
+        model.textContent = "claude-opus-4.5-thinking";
+      }
+      const at = `${String(w)}x${String(h)} ${tier}`;
+      const pills = [
+        ...document.querySelectorAll<HTMLElement>(".prompt-pills > .pill-slot > .pill"),
+      ];
+      expect(
+        pills.map((p) => p.id),
+        at,
+      ).toEqual([
+        "context-indicator",
+        "switch-model-btn",
+        "role-pill",
+        "chat-options-btn",
+        "task-list-pill",
+      ]);
+      const gaps = pills
+        .slice(1)
+        .map((p, i) => p.getBoundingClientRect().left - pills[i]!.getBoundingClientRect().right);
+      const first = gaps[0]!;
+      expect(first, `${at}: the row has a gap`).toBeGreaterThan(0);
+      for (const [i, g] of gaps.entries()) {
+        expect(g, `${at}: the gap before ${pills[i + 1]!.id}`).toBeCloseTo(first, 1);
+      }
+      if (w === 390) {
+        const send = document.getElementById("send-btn");
+        if (send === null) {
+          throw new Error("the composer subtree did not mount");
+        }
+        const last = pills.at(-1)!.getBoundingClientRect().right;
+        expect(send.getBoundingClientRect().left - last, `${at}: the gap before Send`).toBeCloseTo(
+          first,
+          1,
+        );
+      }
+    }
+  });
+
   it("matches the two rows on a touch DESKTOP, which is the case a width query cannot reach", async () => {
     // Wide coarse: a width query cannot see the tier, so the textarea could sit over a taller pill row.
     const { textarea, band, control } = await bandsAt(1440, 900, "coarse");
