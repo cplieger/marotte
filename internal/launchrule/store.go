@@ -20,42 +20,56 @@ import (
 // rulesFileName is the definitions file, beside mcp.json in the config dir.
 const rulesFileName = "launch-rules.json"
 
+// idBytes is a rule id's random width before base64url.
+const idBytes = 16
+
 // ErrNotFound means no rule has the given id.
 var ErrNotFound = errors.New("launch rule not found")
 
-// Store persists the operator's rules in one 0600 JSON file, rewritten atomically per change, in creation order.
+// Store persists the operator's rules in one 0600 JSON file, rewritten atomically per change, in creation order,
+// and each rule's state in a file of its own under launch-state (0700), written under that rule's own mutex.
 type Store struct {
-	path  string
-	rules []Rule
-	mu    sync.Mutex
+	states map[string]*ruleState
+	dir    string
+	path   string
+	rules  []Rule
+	mu     sync.Mutex
 }
 
 // NewStore opens (or starts) the store at <dir>/launch-rules.json. A file that does not parse, or holds a rule
 // the store would refuse, is an error rather than a silent reset of the operator's rules.
 func NewStore(dir string) (*Store, error) {
-	s := &Store{path: filepath.Join(dir, rulesFileName)}
+	s := &Store{dir: dir, path: filepath.Join(dir, rulesFileName)}
+	if err := s.loadRules(); err != nil {
+		return nil, err
+	}
+	s.loadStates()
+	return s, nil
+}
+
+func (s *Store) loadRules() error {
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return s, nil
+		return nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", s.path, err)
+		return fmt.Errorf("read %s: %w", s.path, err)
 	}
 	if err := json.Unmarshal(data, &s.rules); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", s.path, err)
+		return fmt.Errorf("parse %s: %w", s.path, err)
 	}
 	seen := make(map[string]bool, len(s.rules))
 	for i := range s.rules {
 		r := &s.rules[i]
-		if r.ID == "" || seen[r.ID] {
-			return nil, fmt.Errorf("%s: rule %d has a missing or repeated id", s.path, i)
+		if !validID(r.ID) || seen[r.ID] {
+			return fmt.Errorf("%s: rule %d has a malformed or repeated id", s.path, i)
 		}
 		seen[r.ID] = true
 		if err := r.normalize(); err != nil {
-			return nil, fmt.Errorf("%s: rule %s: %w", s.path, r.ID, err)
+			return fmt.Errorf("%s: rule %s: %w", s.path, r.ID, err)
 		}
 	}
-	return s, nil
+	return nil
 }
 
 // List returns a copy of every rule, in creation order.
@@ -94,6 +108,7 @@ func (s *Store) Create(ctx context.Context, in *Rule) (Rule, error) {
 		return Rule{}, err
 	}
 	s.rules = next
+	s.states[r.ID] = &ruleState{state: State{Population: population(&r)}}
 	return r.clone(), nil
 }
 
@@ -120,8 +135,17 @@ func (s *Store) Replace(ctx context.Context, id string, in *Rule) (Rule, error) 
 	return r.clone(), nil
 }
 
-// Delete removes the rule id names; ErrNotFound when no rule has it.
+// Delete removes the rule id names, then its state file; ErrNotFound when no rule has it. A state file that will
+// not go is logged and removed at the next load, so the rule's deletion still stands.
 func (s *Store) Delete(ctx context.Context, id string) error {
+	if err := s.deleteRule(ctx, id); err != nil {
+		return err
+	}
+	s.removeState(id)
+	return nil
+}
+
+func (s *Store) deleteRule(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	i := s.indexLocked(id)
@@ -133,6 +157,7 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	s.rules = next
+	delete(s.states, id)
 	return nil
 }
 
@@ -140,10 +165,16 @@ func (s *Store) indexLocked(id string) int {
 	return slices.IndexFunc(s.rules, func(r Rule) bool { return r.ID == id })
 }
 
+// validID reports whether id is one mintIDLocked could return, which also keeps it one plain file name.
+func validID(id string) bool {
+	b, err := base64.RawURLEncoding.DecodeString(id)
+	return err == nil && len(b) == idBytes && base64.RawURLEncoding.EncodeToString(b) == id
+}
+
 // mintIDLocked returns 16 random bytes in base64url, unused by any rule.
 func (s *Store) mintIDLocked() string {
 	for {
-		var b [16]byte
+		var b [idBytes]byte
 		_, _ = rand.Read(b[:])
 		if id := base64.RawURLEncoding.EncodeToString(b[:]); s.indexLocked(id) < 0 {
 			return id

@@ -378,3 +378,246 @@ func TestReplaceAndDelete(t *testing.T) {
 		t.Errorf("Delete(gone) error = %v, want ErrNotFound", err)
 	}
 }
+
+func statePath(dir, id string) string {
+	return filepath.Join(dir, stateDirName, id+".json")
+}
+
+func readFile(t *testing.T, path string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return raw
+}
+
+func TestClientCannotWriteCursor(t *testing.T) {
+	for _, field := range []string{"status", "population", "cursor", "queue", "launched", "superseded", "attempts"} {
+		t.Run(field, func(t *testing.T) {
+			body := `{"source":"bundled://x","enabled":true,"when":{"clock":{"freq":"daily","hour":2}},"` + field + `":{}}`
+			_, err := DecodeRule([]byte(body))
+			var ve *ValidationError
+			if !errors.As(err, &ve) || !strings.Contains(err.Error(), field+" is written by the server") {
+				t.Errorf("DecodeRule error = %v, want a ValidationError naming %s", err, field)
+			}
+		})
+	}
+	t.Run("inside the event spec", func(t *testing.T) {
+		body := `{"source":"bundled://x","when":{"event":{"connection":"github:github.com","repo":"o/r",` +
+			`"kind":"pr_opened","filter":{"authors":["a"]},"cursor":{}}}}`
+		if _, err := DecodeRule([]byte(body)); err == nil || !strings.Contains(err.Error(), "cursor") {
+			t.Errorf("DecodeRule error = %v, want the event spec's cursor refused", err)
+		}
+	})
+	t.Run("an unknown field", func(t *testing.T) {
+		_, err := DecodeRule([]byte(`{"source":"bundled://x","colour":"red"}`))
+		if err == nil || !strings.Contains(err.Error(), `unknown field "colour"`) {
+			t.Errorf("DecodeRule error = %v, want the unknown field named", err)
+		}
+	})
+	t.Run("an edit leaves the state file alone", func(t *testing.T) {
+		dir := t.TempDir()
+		st := openStore(t, dir)
+		r, err := st.Create(t.Context(), clockRule("bundled://x"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.WriteState(t.Context(), r.ID, &State{Status: Status{LastRunID: "wf-1"}}); err != nil {
+			t.Fatalf("WriteState: %v", err)
+		}
+		before := readFile(t, statePath(dir, r.ID))
+		edit, err := DecodeRule([]byte(`{"source":"bundled://x","enabled":false,"when":{"clock":{"freq":"daily","hour":4}}}`))
+		if err != nil {
+			t.Fatalf("DecodeRule: %v", err)
+		}
+		if _, err := st.Replace(t.Context(), r.ID, &edit); err != nil {
+			t.Fatalf("Replace: %v", err)
+		}
+		if !bytes.Equal(before, readFile(t, statePath(dir, r.ID))) {
+			t.Errorf("Replace changed the rule's state file")
+		}
+	})
+}
+
+func TestStateWriteTouchesOnlyItsRuleFile(t *testing.T) {
+	dir := t.TempDir()
+	st := openStore(t, dir)
+	a, err := st.Create(t.Context(), clockRule("bundled://a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := st.Create(t.Context(), eventRule("bundled://b", runSpec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WriteState(t.Context(), b.ID, &State{Status: Status{LastRunID: "wf-b"}}); err != nil {
+		t.Fatalf("WriteState(b): %v", err)
+	}
+	rulesBefore, bBefore := readRules(t, dir), readFile(t, statePath(dir, b.ID))
+	held := []json.RawMessage{json.RawMessage(`{"key":"k1"}`), json.RawMessage(`{"key":"k2","observed_at":"x"}`)}
+	if err := st.WriteState(t.Context(), a.ID, &State{Status: Status{LastRunID: "wf-a"}, Queue: held}); err != nil {
+		t.Fatalf("WriteState(a): %v", err)
+	}
+	t.Run("the definitions are byte-identical", func(t *testing.T) {
+		if !bytes.Equal(rulesBefore, readRules(t, dir)) {
+			t.Errorf("WriteState changed %s", rulesFileName)
+		}
+	})
+	t.Run("the other rule's file is byte-identical", func(t *testing.T) {
+		if !bytes.Equal(bBefore, readFile(t, statePath(dir, b.ID))) {
+			t.Errorf("WriteState(a) changed b's state file")
+		}
+	})
+	t.Run("the state reloads", func(t *testing.T) {
+		got, err := openStore(t, dir).State(a.ID)
+		if err != nil {
+			t.Fatalf("State: %v", err)
+		}
+		if got.Status.LastRunID != "wf-a" || got.Held() != 2 {
+			t.Errorf("reloaded state = %+v, want last_run_id wf-a and 2 held", got)
+		}
+	})
+	t.Run("modes", func(t *testing.T) {
+		fi, err := os.Stat(statePath(dir, a.ID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		di, err := os.Stat(filepath.Join(dir, stateDirName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm() != 0o600 || di.Mode().Perm() != 0o700 {
+			t.Errorf("modes = file %o, dir %o, want 600 and 700", fi.Mode().Perm(), di.Mode().Perm())
+		}
+	})
+	t.Run("a new rule's state carries its population", func(t *testing.T) {
+		fresh, err := st.Create(t.Context(), eventRule("bundled://c", runSpec()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := st.State(fresh.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// keyenc.Join of the connection, the repository's RepoRef.Encode and the kind; the connection's ':' is escaped.
+		want := `github\:github.com:v1.63706c69656765722f616e696d61702d736f75726365:run_concluded`
+		if got.Population != want {
+			t.Errorf("population = %q, want %q", got.Population, want)
+		}
+		clock, err := st.State(a.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if clock.Population != "" {
+			t.Errorf("clock rule population = %q, want none", clock.Population)
+		}
+	})
+}
+
+func TestOrphanStateFileRemoved(t *testing.T) {
+	dir := t.TempDir()
+	st := openStore(t, dir)
+	r, err := st.Create(t.Context(), clockRule("bundled://a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WriteState(t.Context(), r.ID, &State{Status: Status{LastRunID: "wf"}}); err != nil {
+		t.Fatal(err)
+	}
+	orphan := statePath(dir, "AAAAAAAAAAAAAAAAAAAAAA")
+	if err := os.WriteFile(orphan, []byte(`{"status":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	openStore(t, dir)
+	if _, err := os.Stat(orphan); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the orphan state file survived a load: %v", err)
+	}
+	if _, err := os.Stat(statePath(dir, r.ID)); err != nil {
+		t.Errorf("the live rule's state file is gone: %v", err)
+	}
+}
+
+func TestUnreadableStateFileBlocksRule(t *testing.T) {
+	dir := t.TempDir()
+	st := openStore(t, dir)
+	r, err := st.Create(t.Context(), eventRule("bundled://a", runSpec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, stateDirName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"not json":                  `{"status":`,
+		"a queue entry with no key": `{"queue":[{"observed_at":"x"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := statePath(dir, r.ID)
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			reloaded := openStore(t, dir)
+			_, err := reloaded.State(r.ID)
+			want := "could not read launch-state/" + r.ID + ".json: "
+			if err == nil || !strings.HasPrefix(err.Error(), want) {
+				t.Errorf("State error = %v, want it to start %q", err, want)
+			}
+			if err := reloaded.WriteState(t.Context(), r.ID, &State{}); err == nil {
+				t.Errorf("WriteState overwrote an unreadable state file")
+			}
+			if _, err := reloaded.Replace(t.Context(), r.ID, eventRule("bundled://a", runSpec())); err != nil {
+				t.Errorf("Replace of a blocked rule: %v", err)
+			}
+			if got := readFile(t, path); string(got) != body {
+				t.Errorf("the unreadable file changed to %s", got)
+			}
+		})
+	}
+}
+
+func TestDeleteRuleRemovesStateFile(t *testing.T) {
+	dir := t.TempDir()
+	st := openStore(t, dir)
+	r, err := st.Create(t.Context(), clockRule("bundled://a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WriteState(t.Context(), r.ID, &State{Status: Status{LastRunID: "wf"}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("delete removes it", func(t *testing.T) {
+		if err := st.Delete(t.Context(), r.ID); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		if _, err := os.Stat(statePath(dir, r.ID)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("state file after Delete: %v", err)
+		}
+	})
+	t.Run("a failed removal is retried at the next load", func(t *testing.T) {
+		r2, err := st.Create(t.Context(), clockRule("bundled://b"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.WriteState(t.Context(), r2.ID, &State{Status: Status{LastRunID: "wf"}}); err != nil {
+			t.Fatal(err)
+		}
+		prev := removeFile
+		removeFile = func(string) error { return errors.New("injected") }
+		t.Cleanup(func() { removeFile = prev })
+		if err := st.Delete(t.Context(), r2.ID); err != nil {
+			t.Fatalf("Delete with a failing removal: %v", err)
+		}
+		if _, ok := st.Get(r2.ID); ok {
+			t.Errorf("the rule survived Delete")
+		}
+		if _, err := os.Stat(statePath(dir, r2.ID)); err != nil {
+			t.Fatalf("the injected failure left no file to retry: %v", err)
+		}
+		removeFile = prev
+		openStore(t, dir)
+		if _, err := os.Stat(statePath(dir, r2.ID)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("the next load left the deleted rule's state file: %v", err)
+		}
+	})
+}

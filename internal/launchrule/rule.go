@@ -1,6 +1,8 @@
 package launchrule
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -40,6 +42,38 @@ func (e *ValidationError) Error() string { return e.msg }
 
 func invalid(format string, args ...any) error {
 	return &ValidationError{msg: fmt.Sprintf(format, args...)}
+}
+
+// serverFields are the state file's fields, which a client body never carries.
+var serverFields = []string{"status", "population", "cursor", "queue", "launched", "superseded", "attempts"}
+
+// DecodeRule reads a client's rule body. A field the server writes is refused by name, and so is any other
+// field a rule does not have, as a *ValidationError.
+func DecodeRule(data []byte) (Rule, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var r Rule
+	err := dec.Decode(&r)
+	if err == nil {
+		return r, nil
+	}
+	if name, ok := unknownField(err); ok {
+		if slices.Contains(serverFields, name) {
+			return Rule{}, invalid("%s is written by the server, never sent", name)
+		}
+		return Rule{}, invalid("unknown field %q", name)
+	}
+	return Rule{}, invalid("invalid launch rule: %v", err)
+}
+
+// unknownField is the name in encoding/json's DisallowUnknownFields error, which carries it only in its text.
+func unknownField(err error) (string, bool) {
+	rest, ok := strings.CutPrefix(err.Error(), `json: unknown field "`)
+	if !ok {
+		return "", false
+	}
+	name, ok := strings.CutSuffix(rest, `"`)
+	return name, ok
 }
 
 const (
