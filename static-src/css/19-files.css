@@ -16,6 +16,7 @@
    push the toolbar out of the clipped #chat-area). Later file at equal
    specificity → these longhands win. */
 .fb-list-wrap {
+  container: fb-list / inline-size;
   flex: 1 1 0;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -334,6 +335,65 @@
        (`content-visibility: auto`). */
     padding: var(--sp-3);
     padding-inline-start: max(var(--sp-3), calc((var(--hit-floor) - 1rem) / 2));
+  }
+}
+
+/* Touch, or a list too narrow for one line: a file's size, date and mode go on a second line
+   under its name, so the name gets the row's width (the run bar's rule, 26-dock.css). An engine
+   without style queries keeps the one-line row on touch, still usable. */
+:where(:root[data-pointer="coarse"]) .fb-list-wrap {
+  --fb-stack: 1;
+}
+
+@container fb-list (width < 30rem) or style(--fb-stack: 1) {
+  /* A rename replaces `.fb-name` with a field-height input, so that row stays one line. */
+  .fb-row:has(> .fb-name ~ .fb-meta:not(:empty)) {
+    --fb-name-lh: 1rem;
+    --fb-meta-lh: 0.875rem;
+
+    /* The two line boxes are the content height, exact for `contain-intrinsic-size`. The
+       padding box is the one-line row's (its icon and padding, at least the hit floor), so
+       stacking never changes a row's height or the skeleton's match, and the check's centred
+       expander stays inside the paint clip. */
+    --fb-row-content: calc(var(--fb-name-lh) + var(--fb-meta-lh));
+    --fb-row-box: max(var(--hit-floor), calc(1.25rem + 2 * var(--sp-2)));
+
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    grid-template-rows: var(--fb-name-lh) var(--fb-meta-lh);
+    gap: 0 var(--sp-2);
+    padding-block: calc((var(--fb-row-box) - var(--fb-row-content)) / 2);
+
+    :where(&) > .fb-check {
+      grid-area: 1 / 1 / 3 / 2;
+      align-self: center;
+    }
+
+    :where(&) > .fb-icon {
+      grid-area: 1 / 2 / 3 / 3;
+      align-self: center;
+    }
+
+    :where(&) > .fb-name {
+      grid-area: 1 / 3;
+      line-height: var(--fb-name-lh);
+    }
+
+    :where(&) > .fb-meta {
+      grid-area: 2 / 3;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: var(--fb-meta-lh);
+    }
+
+    /* Its expander reaches `--hit-floor - 1rem - --sp-2` past its end (below), which the
+       margin and the row's end padding hold inside the row's paint clip. */
+    :where(&) > .fb-git-letter {
+      grid-area: 1 / 4 / 3 / 5;
+      align-self: center;
+      margin-inline-end: max(0px, calc(var(--hit-floor) - 1rem - var(--sp-2) - var(--sp-3)));
+    }
   }
 }
 
