@@ -304,9 +304,10 @@ describe("install and uninstall", () => {
     await mount();
     panel.querySelector<HTMLButtonElement>('[aria-label="Install ZETA"]')?.click();
     await settle();
-    expect(vi.mocked(confirm).mock.calls[0]?.[0]).toBe(
-      "Install the ZETA Power? It starts the MCP server postman, which runs unsandboxed, with your access.",
-    );
+    expect(vi.mocked(confirm).mock.calls[0]?.[0]).toMatchObject({
+      title: "Install the ZETA Power?",
+      body: "It starts the MCP server postman, which runs unsandboxed, with your access.",
+    });
     expect(installed).toEqual(["zeta"]);
   });
 
@@ -322,7 +323,7 @@ describe("install and uninstall", () => {
     await mount();
     panel.querySelector<HTMLButtonElement>('[aria-label="Uninstall GAMMA"]')?.click();
     await settle();
-    expect(vi.mocked(confirm).mock.calls[0]?.[2]).toBe("destructive");
+    expect(vi.mocked(confirm).mock.calls[0]?.[0].variant).toBe("destructive");
     expect(removed).toEqual(["gamma"]);
   });
 });

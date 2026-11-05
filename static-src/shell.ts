@@ -154,11 +154,11 @@ function reattachShell(): void {
 /** Kill the PTY and get a fresh one. Confirmed, because unlike the clear it destroys whatever is
  *  running. */
 async function hostRestart(): Promise<void> {
-  const ok = await confirmDialog(
-    "Restart the shell? Anything running in it is killed.",
-    "Restart",
-    "normal",
-  );
+  const ok = await confirmDialog({
+    title: "Restart the shell?",
+    body: "Anything running in it is killed.",
+    confirmLabel: "Restart",
+  });
   if (!ok) {
     return;
   }

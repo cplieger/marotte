@@ -183,7 +183,7 @@ function renderEditor(
 function dismissButton(submit: SubmitFn): HTMLButtonElement {
   const btn = el(
     "button",
-    { type: "button", className: "btn-small confirm-danger" },
+    { type: "button", className: "btn-small btn-danger" },
     "Skip",
   ) as HTMLButtonElement;
   btn.addEventListener("click", () => {

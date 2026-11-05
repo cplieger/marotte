@@ -1023,11 +1023,12 @@ function renderDeleteBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement
   cleanups.push(bindLoadingState("mcp.delete_server", btn));
   btn.addEventListener("click", () => {
     void (async () => {
-      const ok = await confirmDialog(
-        `Remove "${s.name}"? The agent loses access to this integration immediately.`,
-        "Remove",
-        "destructive",
-      );
+      const ok = await confirmDialog({
+        title: `Remove "${s.name}"?`,
+        body: "The agent loses access to this integration immediately.",
+        confirmLabel: "Remove",
+        variant: "destructive",
+      });
       if (!ok) {
         return;
       }

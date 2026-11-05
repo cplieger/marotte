@@ -827,11 +827,12 @@ async function onSignOut(id: string, account: string, btn: HTMLButtonElement): P
     [pressed?.email, pressed?.username].find((s) => s !== undefined && s !== "") ??
     pressed?.host ??
     id;
-  const ok = await confirmDialog(
-    `Sign out of ${label}? Its stored token will be removed.`,
-    "Sign out",
-    "destructive",
-  );
+  const ok = await confirmDialog({
+    title: `Sign out of ${label}?`,
+    body: "Its stored token will be removed.",
+    confirmLabel: "Sign out",
+    variant: "destructive",
+  });
   if (!ok) {
     return;
   }

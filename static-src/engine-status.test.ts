@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as ApiClient from "./api-client.js";
 import type * as BannerStack from "./banner-stack.js";
 import type * as Confirm from "./confirm.js";
+import type { Confirmation } from "./confirm.js";
 import type * as SettingsActions from "./actions/settings.js";
 import type { EngineBusy, EngineStatus } from "./wire/types.gen.js";
 
@@ -12,7 +13,7 @@ vi.mock("./banner-stack.js", async (importOriginal) => ({
 }));
 
 const { mockConfirm, mockRestart, mockGet } = vi.hoisted(() => ({
-  mockConfirm: vi.fn<(message: string, label?: string, variant?: string) => Promise<boolean>>(),
+  mockConfirm: vi.fn<(q: Confirmation) => Promise<boolean>>(),
   mockRestart: vi.fn<(args: undefined) => Promise<unknown>>(),
   mockGet: vi.fn<(path: string) => Promise<unknown>>(),
 }));
@@ -402,7 +403,7 @@ describe("restart confirmation", () => {
       "Restarting stops the reply in 1 chat: Untitled chat.",
     );
     expect(restartConfirmText({ turns: [], runs: [] })).toBe(
-      "Restart the agent engine? Nothing is running, so nothing is interrupted.",
+      "Nothing is running, so nothing is interrupted.",
     );
   });
 
@@ -438,11 +439,12 @@ describe("restart confirmation", () => {
     mockConfirm.mockResolvedValueOnce(true);
     await requestRestart();
     expect(mockGet.mock.calls[0]?.[0]).toBe("/api/engine");
-    expect(mockConfirm).toHaveBeenCalledWith(
-      "Restarting stops the reply in 1 chat: A.",
-      "Restart now",
-      "destructive",
-    );
+    expect(mockConfirm).toHaveBeenCalledWith({
+      title: "Restart the agent engine?",
+      body: "Restarting stops the reply in 1 chat: A.",
+      confirmLabel: "Restart now",
+      variant: "destructive",
+    });
     expect(mockRestart).toHaveBeenCalledTimes(1);
   });
 
@@ -450,7 +452,9 @@ describe("restart confirmation", () => {
     mockGet.mockResolvedValueOnce(status());
     mockConfirm.mockResolvedValueOnce(false);
     await requestRestart();
-    expect(mockConfirm.mock.calls[0]?.[2], "nothing running is not destructive").toBe("normal");
+    expect(mockConfirm.mock.calls[0]?.[0].variant, "nothing running is not destructive").toBe(
+      "normal",
+    );
     expect(mockRestart).not.toHaveBeenCalled();
   });
 
@@ -471,7 +475,7 @@ describe("restart confirmation", () => {
     await reconcileEngineStatus(new AbortController().signal);
     oldAnswer(status({ version: { boot_ms: oldBoot, seq: seq + 1 }, busy: runningIn("A") }));
     await done;
-    expect(mockConfirm.mock.calls[0]?.[0]).toBe("Restarting stops the reply in 1 chat: B.");
+    expect(mockConfirm.mock.calls[0]?.[0].body).toBe("Restarting stops the reply in 1 chat: B.");
   });
 
   it("says it could not read what is running when a reconcile overtakes the read before the replacement answers", async () => {
@@ -482,7 +486,7 @@ describe("restart confirmation", () => {
     const reconciled = reconcileEngineStatus(new AbortController().signal);
     oldAnswer(status({ busy: runningIn("A") }));
     await done;
-    expect(mockConfirm.mock.calls[0]?.[0]).toContain("could not read what is running");
+    expect(mockConfirm.mock.calls[0]?.[0].body).toContain("could not read what is running");
     replacementAnswer(null);
     await reconciled;
   });
@@ -495,15 +499,15 @@ describe("restart confirmation", () => {
     adoptEngineStatus(status({ busy: runningIn("B") }));
     answer(olderAnswer);
     await done;
-    expect(mockConfirm.mock.calls[0]?.[0]).toBe("Restarting stops the reply in 1 chat: B.");
+    expect(mockConfirm.mock.calls[0]?.[0].body).toBe("Restarting stops the reply in 1 chat: B.");
   });
 
   it("says it could not read what is running when the read fails", async () => {
     mockGet.mockResolvedValueOnce(null);
     mockConfirm.mockResolvedValueOnce(true);
     await requestRestart();
-    expect(mockConfirm.mock.calls[0]?.[0]).toContain("could not read what is running");
-    expect(mockConfirm.mock.calls[0]?.[2]).toBe("destructive");
+    expect(mockConfirm.mock.calls[0]?.[0].body).toContain("could not read what is running");
+    expect(mockConfirm.mock.calls[0]?.[0].variant).toBe("destructive");
     expect(mockRestart).toHaveBeenCalledTimes(1);
   });
 });

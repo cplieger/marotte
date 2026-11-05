@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   explainDispatch: vi.fn<(args: Record<string, unknown>) => Promise<unknown>>(),
   profileDispatch:
     vi.fn<(args: Record<string, unknown>) => Promise<{ ok?: boolean; error?: string } | null>>(),
-  confirm: vi.fn<(msg: string, label?: string, variant?: string) => Promise<boolean>>(),
+  confirm: vi.fn<(q: Confirmation) => Promise<boolean>>(),
   sseHandlers: new Map<string, SSEFn>(),
 }));
 
@@ -41,6 +41,8 @@ vi.mock("./actions/permissions.js", () => ({
 import { initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
 import { byId } from "./dom.js";
 import { shippedAddForm } from "./__test-helpers__/add-forms.js";
+import { confirmText } from "./__test-helpers__/confirm-text.js";
+import type { Confirmation } from "./confirm.js";
 
 /** The ladder as the server reports it. A short stand-in for policyfile.Profiles(): what matters
  *  is that the client renders the server's list in the server's ORDER, not what that list
@@ -232,7 +234,8 @@ describe("selecting a profile", () => {
     await pick("trusted");
 
     expect(mocks.confirm).toHaveBeenCalledTimes(1);
-    const [message, label, variant] = mocks.confirm.mock.calls[0] ?? [];
+    const q = mocks.confirm.mock.calls[0]?.[0];
+    const [message, label, variant] = [confirmText(q), q?.confirmLabel, q?.variant];
     expect(message).toContain("2 custom rules STAY");
     expect(message).toContain("keep applying");
     expect(message).toContain("Trusted");
@@ -292,7 +295,8 @@ describe("selecting a profile", () => {
     await pick("unrestricted");
 
     expect(mocks.confirm).toHaveBeenCalledTimes(1);
-    const [message, label] = mocks.confirm.mock.calls[0] ?? [];
+    const q = mocks.confirm.mock.calls[0]?.[0];
+    const [message, label] = [confirmText(q), q?.confirmLabel];
     expect(message).toContain("power");
     expect(message).toContain("does NOT");
     expect(message).toContain(".git");

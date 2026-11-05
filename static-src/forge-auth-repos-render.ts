@@ -336,11 +336,12 @@ function makeDeleteAllButton(
   btn.addEventListener("click", () => {
     void (async () => {
       const n = clonedRepos.length;
-      const ok = await confirmDialog(
-        `Delete the local copy of ${String(n)} repo${n === 1 ? "" : "s"}? The remotes stay intact. You can re-clone any of them later.`,
-        "Delete all",
-        "destructive",
-      );
+      const ok = await confirmDialog({
+        title: `Delete the local copy of ${String(n)} repo${n === 1 ? "" : "s"}?`,
+        body: "The remotes stay intact. You can re-clone any of them later.",
+        confirmLabel: "Delete all",
+        variant: "destructive",
+      });
       if (ok) {
         await runBatch(a, btn, deps, () => deleteAllForAccount(clonedRepos, btn, deps.repoDeps));
       }

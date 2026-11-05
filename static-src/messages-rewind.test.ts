@@ -5,11 +5,12 @@ import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import type { TurnState } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 import type * as Confirm from "./confirm.js";
+import { confirmText } from "./__test-helpers__/confirm-text.js";
 import type * as Toast from "./toast.js";
 import type * as StoreLoad from "./store-load.js";
 
 const mocks = vi.hoisted(() => ({
-  confirm: vi.fn((_message: string) => Promise.resolve(true)),
+  confirm: vi.fn((_q: Confirm.Confirmation) => Promise.resolve(true)),
 }));
 
 vi.mock("./confirm.js", async (importOriginal) => ({
@@ -251,7 +252,7 @@ describe("the rewind confirm", () => {
     mocks.confirm.mockResolvedValue(false);
     await rewindFirstTurn();
 
-    const text = mocks.confirm.mock.calls[0]?.[0] ?? "";
+    const text = confirmText(mocks.confirm.mock.calls[0]?.[0]);
     expect(text).toMatch(/prompt's text comes back/);
     expect(text).toMatch(/Attachments are not restored/);
     expect(text).not.toMatch(/retype/);

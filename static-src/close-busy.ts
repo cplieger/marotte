@@ -194,11 +194,13 @@ function askToStop(
   if (isIdle(work)) {
     return true;
   }
-  return confirm(
-    `Closing ${name} ${listOf(stopsClauses(ref, work))}.`,
-    "Close and stop",
-    "destructive",
-  );
+  const effects = listOf(stopsClauses(ref, work));
+  return confirm({
+    title: `Close ${name}?`,
+    body: `It ${effects}.`,
+    confirmLabel: "Close and stop",
+    variant: "destructive",
+  });
 }
 
 /** The gate tabs.ts runs before a person's close of the tab named `name` (chat `ref`, or "")

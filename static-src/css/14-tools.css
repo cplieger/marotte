@@ -1170,7 +1170,8 @@ a.subagent-header {
 }
 
 .btn-small.primary,
-.btn-small.btn-primary {
+.btn-small.btn-primary,
+.uip-ask-ok:not(.is-destructive) {
   background: var(--c-accent);
   color: var(--c-on-accent);
   border-color: var(--c-accent);
@@ -1179,7 +1180,8 @@ a.subagent-header {
 /* The accent fill one rung deeper, through `--c-accent-hover`: a `brightness()` filter
    would step toward white in dark mode while every other hover steps toward ink. */
 .btn-small.primary:hover,
-.btn-small.btn-primary:hover {
+.btn-small.btn-primary:hover,
+.uip-ask-ok:not(.is-destructive):hover {
   background: var(--c-accent-hover);
   border-color: var(--c-accent-hover);
 }

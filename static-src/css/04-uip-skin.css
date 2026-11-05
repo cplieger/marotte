@@ -297,11 +297,10 @@
 }
 
 /* ==========================================================================
-   Ask (boolean confirm shape) — ports the old .vk-confirm-dialog look. The
-   base owns the native <dialog> leave fade + backdrop; buttons reproduce
-   .btn-small + .confirm-allow / .confirm-danger. (marotte has no input-ask
-   consumer yet; add .uip-ask--input / .uip-ask-form / .uip-ask-input rules
-   when one appears.)
+   Ask (boolean confirm shape): a title, a quieter body, then Cancel and a filled
+   OK. The base owns the native <dialog> leave fade + backdrop. (marotte has no
+   input-ask consumer yet; add .uip-ask--input / .uip-ask-form / .uip-ask-input
+   rules when one appears.)
    ========================================================================== */
 
 .uip-ask {
@@ -324,44 +323,38 @@
 
 /* A message can quote a command: keep its spacing and wrap a long token, so all of it is on screen. */
 .uip-ask-msg {
-  margin-block-end: var(--sp-3);
+  margin-block: 0;
   font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--c-text-secondary);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
+/* A question whose title says everything has no body. */
+.uip-ask-msg:empty {
+  display: none;
+}
+
 .uip-ask-actions {
+  margin-block-start: var(--sp-4);
   display: flex;
   gap: var(--sp-2);
   justify-content: flex-end;
 }
 
-/* NO SKIN HERE: these two JOIN `.btn-small`'s own rule lists in 14-tools.css instead.
-   They used to carry a hand-written copy of it whose comment admitted as much
-   ("Confirm buttons reproduce .btn-small"), which is drift written down rather than
-   fixed — a declaration added to `.btn-small` reached every other neutral ghost button
-   in the app and not these. The library builds them, so they cannot be given the class
-   in markup; 14-tools.css names them in the selector list, which is the same merge from
-   the other side. The colour arms below stay: those are what makes an OK green and a
-   destructive one red, and `.btn-small` has no opinion about either. */
-
-/* Non-destructive OK = .confirm-allow (green outline). */
-.uip-ask-ok:not(.is-destructive) {
-  border-color: var(--c-green);
-  color: var(--c-green);
-
-  &:hover {
-    background: color-mix(in srgb, var(--c-green) 15%, transparent);
-  }
-}
-
-/* Destructive OK = .confirm-danger (red outline). */
+/* NO SKIN HERE: OK and Cancel JOIN `.btn-small`'s rule lists in 14-tools.css, and a
+   non-destructive OK joins `.btn-primary`'s: the library builds them, so they cannot carry
+   the classes in markup. Only the destructive fill, which no other button has, lives here.
+   Darker on hover in both themes, as `--c-accent-hover` is. */
 .uip-ask-ok.is-destructive {
+  background: var(--c-red);
   border-color: var(--c-red);
-  color: var(--c-red);
+  color: var(--c-on-accent);
 
   &:hover {
-    background: color-mix(in srgb, var(--c-red) 15%, transparent);
+    background: color-mix(in oklch, var(--c-red), oklch(0% 0 none) 10%);
+    border-color: color-mix(in oklch, var(--c-red), oklch(0% 0 none) 10%);
   }
 }
 

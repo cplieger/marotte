@@ -809,11 +809,12 @@ class ToolsManager {
     const sent = await this.cascade(
       t.dependents ?? [],
       (deps) =>
-        confirmDialog(
-          `${t.name} is required by: ${deps.join(", ")}. Disable it anyway?`,
-          "Disable",
-          "destructive",
-        ),
+        confirmDialog({
+          title: `Disable ${t.name} anyway?`,
+          body: `It is required by: ${deps.join(", ")}.`,
+          confirmLabel: "Disable",
+          variant: "destructive",
+        }),
       (force) =>
         patchTool.dispatch({
           name: t.name,
@@ -832,7 +833,11 @@ class ToolsManager {
   private async runDelete(t: ToolInfo): Promise<void> {
     const known = t.dependents ?? [];
     if (known.length === 0) {
-      const ok = await confirmDialog(`Remove ${t.name}?`, "Remove", "destructive");
+      const ok = await confirmDialog({
+        title: `Remove ${t.name}?`,
+        confirmLabel: "Remove",
+        variant: "destructive",
+      });
       if (!ok) {
         return;
       }
@@ -840,11 +845,12 @@ class ToolsManager {
     const sent = await this.cascade(
       known,
       (deps) =>
-        confirmDialog(
-          `Remove ${t.name}? It is required by: ${deps.join(", ")}. Removing it removes them too.`,
-          "Remove all",
-          "destructive",
-        ),
+        confirmDialog({
+          title: `Remove ${t.name}?`,
+          body: `It is required by: ${deps.join(", ")}. Removing it removes them too.`,
+          confirmLabel: "Remove all",
+          variant: "destructive",
+        }),
       async (force) => {
         const d = await deleteTool.dispatch({
           name: t.name,

@@ -482,11 +482,12 @@ async function discardSteers(waiting: number): Promise<void> {
     return;
   }
   if (waiting > 1) {
-    const ok = await confirm(
-      `Discard all ${String(waiting)} messages the agent has not read yet? A workflow result is waiting beside them, so they clear together.`,
-      "Discard all",
-      "destructive",
-    );
+    const ok = await confirm({
+      title: `Discard all ${String(waiting)} messages the agent has not read yet?`,
+      body: "A workflow result is waiting beside them, so they clear together.",
+      confirmLabel: "Discard all",
+      variant: "destructive",
+    });
     if (!ok) {
       return;
     }

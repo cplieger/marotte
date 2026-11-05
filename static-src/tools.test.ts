@@ -92,6 +92,7 @@ import { byId } from "./dom.js";
 import { KEY_ATTR } from "./reconcile.js";
 import { join, split } from "@cplieger/keyenc";
 import { formatClock } from "./locale-time.js";
+import { confirmText } from "./__test-helpers__/confirm-text.js";
 
 // --- DOM fixture -------------------------------------------------------------
 
@@ -311,7 +312,7 @@ describe("row actions", () => {
     await flush();
 
     expect(mocks.confirm).toHaveBeenCalledTimes(2);
-    expect(String(mocks.confirm.mock.calls[1]?.[0])).toContain("jdtls");
+    expect(confirmText(mocks.confirm.mock.calls[1]?.[0])).toContain("jdtls");
     expect(mocks.deleteDispatch).toHaveBeenNthCalledWith(1, { name: "java" });
     expect(mocks.deleteDispatch).toHaveBeenNthCalledWith(2, { name: "java", force: true });
   });
@@ -335,7 +336,7 @@ describe("row actions", () => {
     rowFor("java")?.querySelector<HTMLButtonElement>('button[aria-label="Remove java"]')?.click();
     await flush();
     await flush();
-    const derived = String(mocks.confirm.mock.calls[1]?.[0]);
+    const derived = confirmText(mocks.confirm.mock.calls[1]?.[0]);
 
     // Same tool, same set, this time named by the row rather than by the engine.
     vi.clearAllMocks();
@@ -347,7 +348,7 @@ describe("row actions", () => {
     await flush();
     await flush();
 
-    expect(String(mocks.confirm.mock.calls[0]?.[0])).toBe(derived);
+    expect(confirmText(mocks.confirm.mock.calls[0]?.[0])).toBe(derived);
   });
 
   // The bin is withheld on a row the inventory reports essential, so a refused
@@ -411,7 +412,7 @@ describe("row actions", () => {
 
     // No unforced probe: the row already names the refusal, so no 409 round trip.
     expect(mocks.confirm).toHaveBeenCalledTimes(1);
-    expect(String(mocks.confirm.mock.calls[0]?.[0])).toContain("jdtls");
+    expect(confirmText(mocks.confirm.mock.calls[0]?.[0])).toContain("jdtls");
     expect(mocks.deleteDispatch).toHaveBeenCalledTimes(1);
     expect(mocks.deleteDispatch).toHaveBeenCalledWith({ name: "java", force: true });
   });
@@ -426,7 +427,7 @@ describe("row actions", () => {
     await flush();
 
     expect(mocks.confirm).toHaveBeenCalledTimes(1);
-    expect(String(mocks.confirm.mock.calls[0]?.[0])).toContain("typescript-language-server");
+    expect(confirmText(mocks.confirm.mock.calls[0]?.[0])).toContain("typescript-language-server");
     expect(mocks.patchDispatch).toHaveBeenCalledTimes(1);
     expect(mocks.patchDispatch).toHaveBeenCalledWith({
       name: "typescript",

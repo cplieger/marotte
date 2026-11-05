@@ -9,6 +9,7 @@ import { forgetRun, noteRunChat } from "./run-store.js";
 import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import { formatShortDate } from "./locale-time.js";
+import { confirmText } from "./__test-helpers__/confirm-text.js";
 
 /**
  * Cache-buster: `vi.resetModules()` does not re-evaluate a module in Browser Mode (URL-keyed module map). The `.ts`
@@ -627,11 +628,12 @@ describe("history: runs covered by an open tab", () => {
     expect(keysIn(runsPane())).toEqual(["r:wf_1"]);
     rowOf("s:sess_owned").querySelector<HTMLElement>("[data-history-delete]")!.click();
     await vi.waitFor(() => {
-      expect(confirmMock).toHaveBeenCalledWith(
-        'Delete this conversation? "Already open" and its stored history are removed for good. It also deletes the 2 workflow runs it started.',
-        "Delete",
-        "destructive",
-      );
+      expect(confirmMock).toHaveBeenCalledWith({
+        title: "Delete this conversation?",
+        body: '"Already open" and its stored history are removed for good. It also deletes the 2 workflow runs it started.',
+        confirmLabel: "Delete",
+        variant: "destructive",
+      });
     });
   });
 
@@ -1562,11 +1564,12 @@ describe("history: the per-row delete", () => {
     await vi.waitFor(() => {
       expect(confirmMock).toHaveBeenCalled();
     });
-    expect(confirmMock).toHaveBeenCalledWith(
-      'Delete this conversation? "Already open" and its stored history are removed for good. It also deletes the 2 workflow runs it started.',
-      "Delete",
-      "destructive",
-    );
+    expect(confirmMock).toHaveBeenCalledWith({
+      title: "Delete this conversation?",
+      body: '"Already open" and its stored history are removed for good. It also deletes the 2 workflow runs it started.',
+      confirmLabel: "Delete",
+      variant: "destructive",
+    });
   });
 
   it("says nothing about runs when the conversation launched none", async () => {
@@ -1575,11 +1578,12 @@ describe("history: the per-row delete", () => {
     await vi.waitFor(() => {
       expect(confirmMock).toHaveBeenCalled();
     });
-    expect(confirmMock).toHaveBeenCalledWith(
-      'Delete this conversation? "Already open" and its stored history are removed for good.',
-      "Delete",
-      "destructive",
-    );
+    expect(confirmMock).toHaveBeenCalledWith({
+      title: "Delete this conversation?",
+      body: '"Already open" and its stored history are removed for good.',
+      confirmLabel: "Delete",
+      variant: "destructive",
+    });
   });
 
   it("deletes a run through the run-delete endpoint", async () => {
@@ -1669,11 +1673,12 @@ describe("history: the per-row delete", () => {
     });
     expect(descendantChatsOf).toHaveBeenCalledWith("c-existing");
     expect(deleteStopsWork.mock.calls[0]?.[0]).toEqual([{ ref: "d", name: "Deploy notes" }]);
-    expect(confirmMock).toHaveBeenCalledWith(
-      'Delete this conversation? "Already open" and its stored history are removed for good. Closing its tabs also stops the reply in Deploy notes.',
-      "Delete",
-      "destructive",
-    );
+    expect(confirmMock).toHaveBeenCalledWith({
+      title: "Delete this conversation?",
+      body: '"Already open" and its stored history are removed for good. Closing its tabs also stops the reply in Deploy notes.',
+      confirmLabel: "Delete",
+      variant: "destructive",
+    });
   });
 
   it("an idle subtree keeps today's text and still sends the impact", async () => {
@@ -1683,11 +1688,12 @@ describe("history: the per-row delete", () => {
     await vi.waitFor(() => {
       expect(deleteChatDispatch).toHaveBeenCalledWith({ id: "c-existing", impact: idle });
     });
-    expect(confirmMock).toHaveBeenCalledWith(
-      'Delete this conversation? "Already open" and its stored history are removed for good.',
-      "Delete",
-      "destructive",
-    );
+    expect(confirmMock).toHaveBeenCalledWith({
+      title: "Delete this conversation?",
+      body: '"Already open" and its stored history are removed for good.',
+      confirmLabel: "Delete",
+      variant: "destructive",
+    });
   });
 
   it("a stale confirm stages no toast, asks again naming the delete, and accept sends the merged impact", async () => {
@@ -1709,8 +1715,8 @@ describe("history: the per-row delete", () => {
       expect(deleteChatDispatch).toHaveBeenCalledTimes(2);
     });
     expect(deleteStopsWork.mock.calls[1]?.[1]).toEqual({ sent: busy, server });
-    expect(confirmMock.mock.calls[1]?.[0]).toBe(
-      'What deleting "Already open" also stops changed. Delete it? Closing its tabs also cancels the question waiting for your answer in e.',
+    expect(confirmText(confirmMock.mock.calls[1]?.[0])).toBe(
+      'Delete "Already open" anyway? What deleting it also stops changed. Closing its tabs also cancels the question waiting for your answer in e.',
     );
     expect(deleteChatDispatch.mock.calls[1]?.[0]).toEqual({ id: "c-existing", impact: merged });
     expect(actionNotice).not.toHaveBeenCalled();

@@ -275,7 +275,11 @@ function confirmStopEditing(): void {
   }
   if (state.current.value !== state.original.value) {
     void (async () => {
-      const ok = await confirmDialog("Discard unsaved changes?", "Discard", "destructive");
+      const ok = await confirmDialog({
+        title: "Discard unsaved changes?",
+        confirmLabel: "Discard",
+        variant: "destructive",
+      });
       if (ok) {
         stopEditing(state);
       }

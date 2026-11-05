@@ -1838,11 +1838,10 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     }
     rerun.addEventListener("click", () => {
       void (async () => {
-        const ok = await confirmDialog(
-          `Re-run failed checks on PR #${pr.number}?`,
-          "Re-run",
-          "normal",
-        );
+        const ok = await confirmDialog({
+          title: `Re-run failed checks on PR #${pr.number}?`,
+          confirmLabel: "Re-run",
+        });
         if (!ok) {
           return;
         }
@@ -1873,7 +1872,10 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     reopen.setAttribute("data-tooltip", "Reopen this pull request");
     reopen.addEventListener("click", () => {
       void (async () => {
-        const ok = await confirmDialog(`Reopen PR #${pr.number}?`, "Reopen", "normal");
+        const ok = await confirmDialog({
+          title: `Reopen PR #${pr.number}?`,
+          confirmLabel: "Reopen",
+        });
         if (!ok) {
           return;
         }

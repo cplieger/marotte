@@ -929,11 +929,12 @@ function deleteSelected(): void {
   const label = names.length === 1 ? names[0]! : `${String(names.length)} items`; // eslint-disable-line @typescript-eslint/no-non-null-assertion
   const capturedDir = cur().currentPath;
   void (async () => {
-    const ok = await confirmDialog(
-      `Delete ${label}? This cannot be undone.`,
-      "Delete",
-      "destructive",
-    );
+    const ok = await confirmDialog({
+      title: `Delete ${label}?`,
+      body: "This cannot be undone.",
+      confirmLabel: "Delete",
+      variant: "destructive",
+    });
     if (!ok) {
       return;
     }
