@@ -15,6 +15,7 @@ import {
   runControls,
   runLabelOf,
   runPausedByPerson,
+  runPausedByRateLimit,
   runPlan,
   runState,
   runStepEnds,
@@ -117,10 +118,10 @@ function key(): string {
   return parts.join("\u0001");
 }
 
-/** What the batch button does now: pause every listed run that runs, else resume every one a person or the parent
- *  chat parked. `targets` are the runs the server offers that verb on, so it is empty while every running run's pause
- *  is already landing, and it never holds a run waiting for an answer or at a loop's pass limit, which the server
- *  offers no resume on (a resume re-parks them). */
+/** What the batch button does now: pause every listed run that runs, else resume every one a person, the parent
+ *  chat or a rate limit parked. `targets` are the runs the server offers that verb on, so it is empty while every
+ *  running run's pause is already landing, and it never holds a run waiting for an answer or at a loop's pass limit,
+ *  which the server offers no resume on (a resume re-parks them). */
 interface Batch {
   readonly verb: "pause" | "resume";
   readonly targets: readonly string[];
@@ -135,7 +136,11 @@ function batchOf(ids: readonly string[]): Batch | null {
   }
   const parked = ids.filter((id) => {
     const st = runState(id);
-    return st !== undefined && runPausedByPerson(st) && offers(id, "resume");
+    return (
+      st !== undefined &&
+      (runPausedByPerson(st) || runPausedByRateLimit(st)) &&
+      offers(id, "resume")
+    );
   });
   return parked.length === 0 ? null : { verb: "resume", targets: parked };
 }
@@ -149,7 +154,7 @@ const BATCH_VIEW: Record<Batch["verb"], { label: string; icon: string; tip: stri
   resume: {
     label: "Resume all",
     icon: ICON_RESUME,
-    tip: "Resume every run here that was paused by hand or by this chat. A run waiting for an answer or at a loop's pass limit stays paused",
+    tip: "Resume every run here that was paused by hand, by this chat or by a rate limit. A run waiting for an answer or at a loop's pass limit stays paused",
   },
 };
 

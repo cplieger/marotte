@@ -1287,6 +1287,58 @@ describe("Pause all and Resume all", () => {
     expect(posts.toSorted()).toEqual([`${mine} resume`, `${parents} resume`].toSorted());
   });
 
+  // A rate limit is why the button exists: KAS pauses a run itself once its retries run out, names
+  // no initiator, and marotte may have stopped resuming it. That is a plain pause.
+  const throttled = (name: string): Record<string, unknown> =>
+    state({
+      display_name: name,
+      status: "paused",
+      pauseDetail: { class: "transient-error", code: "ThrottlingException" },
+      autoResumeStoppedAt: "2026-11-06T20:00:00Z",
+      root: pausedRoot,
+      controls: RESUMABLE,
+    });
+
+  it("resumes the runs KAS paused itself after rate-limit retries", async () => {
+    const c = chatID();
+    chats.push(c);
+    const [limited, mine, exhausted, asking] = [
+      runID("limited"),
+      runID("mine"),
+      runID("exhausted"),
+      runID("asking"),
+    ];
+    await mount(c, {
+      [limited]: throttled("limited"),
+      [mine]: pausedBy("mine"),
+      // KAS's other self-pause class is no rate limit, so it stays out.
+      [exhausted]: {
+        ...throttled("exhausted"),
+        pauseDetail: { class: "continuation-exhausted", code: "ContinuationExhausted" },
+      },
+      // A rate-limited run whose step waits for an answer: the server offers no resume.
+      [asking]: { ...throttled("asking"), controls: { verbs: ["cancel"] } },
+    });
+    pushRunAsk(c, asking);
+    after.set(limited, running("limited"));
+    after.set(mine, running("mine"));
+    const btn = batchButton();
+    expect(btn?.getAttribute("aria-label")).toBe("Resume all");
+
+    btn?.click();
+    await vi.waitFor(() => {
+      expect(batchButton()?.getAttribute("aria-label")).toBe("Pause all");
+    });
+    expect(posts.toSorted()).toEqual([`${limited} resume`, `${mine} resume`].toSorted());
+  });
+
+  it("offers Resume all when only a rate-limited run is paused", async () => {
+    const c = chatID();
+    chats.push(c);
+    await mount(c, { [runID("limited")]: throttled("limited") });
+    expect(batchButton()?.getAttribute("aria-label")).toBe("Resume all");
+  });
+
   it("raises one toast naming the runs that failed, and keeps to the real states", async () => {
     const c = chatID();
     chats.push(c);
