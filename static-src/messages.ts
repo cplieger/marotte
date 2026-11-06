@@ -3,6 +3,7 @@
 
 import type { EntryPrompt, Session } from "./types.js";
 import { stampFindUnit } from "./find-unit.js";
+import { turnRevision } from "./turn-revision.js";
 import {
   get,
   getActive,
@@ -93,7 +94,7 @@ import {
   type EntryRange,
   type ResidencyAnchor,
 } from "./block-window.js";
-import { forgetHeights, spacerHeight, spacerOrdinalAt } from "./block-heights.js";
+import { forgetHeights, heightsRevision, spacerHeight, spacerOrdinalAt } from "./block-heights.js";
 import { slideTurnFolds, wireRowToggle, type TurnFold } from "./disclosure-row.js";
 import { initSearchRevealBuilder, searchHitCount } from "./chat-search.js";
 import {
@@ -125,6 +126,7 @@ import {
   dropTail,
   geometrySkipped,
   setRunCardOwners,
+  runCardOwnersVersion,
   openNoteRun,
 } from "./messages-blocks.js";
 import { wakeLine } from "./turn-wake.js";
@@ -1168,6 +1170,7 @@ function paint(): void {
       skel.remove();
     }
   }
+  beginCardPass(session);
   heldMutation(() => {
     reconcile(root, turns, turnSpec);
     // One walk builds the card list the rail and the fold pass share.
@@ -1460,6 +1463,58 @@ export function teardownAll(): void {
 // Two keyed levels: turns by id, then each card's `.turn-body` over its entries. Safe because reconcile considers
 // only keyed children, so a card's header and footer are invisible to the inner pass.
 
+/** What the current full pass reads for every card alike; `beginCardPass` sets it before the reconcile. */
+let passSession: Session | undefined;
+let passBusy = false;
+let passKey = "";
+
+function beginCardPass(session: Session): void {
+  passSession = session;
+  // Once per pass: `sessionBusy` walks every held turn.
+  passBusy = sessionBusy(session);
+  const tier = document.documentElement.getAttribute("data-pointer") ?? "";
+  passKey = `${session.id}|${String(passBusy)}|${newestTurnID(session) ?? ""}|${String(runCardOwnersVersion())}|${tier}`;
+}
+
+/**
+ * Every input `updateTurn` reads for one card, compared element by element: a card whose inputs all match its last
+ * update is left alone. An input missing here leaves that card stale until something listed moves.
+ */
+const cardInputs = new WeakMap<HTMLElement, readonly unknown[]>();
+
+function cardInputsOf(card: HTMLElement, t: Turn): readonly unknown[] {
+  const state = passSession?.turns.get(t.id);
+  const plan = wantedWindow.get(t.id);
+  const have = mountedWindow(t.id);
+  let lanes = "";
+  for (const o of t.openEntries.values()) {
+    lanes += `${o.lane ?? ""}:${o.id}:${String(o.n)};`;
+  }
+  const chatID = passSession?.id ?? "";
+  return [
+    passKey,
+    state,
+    state === undefined ? 0 : turnRevision(state),
+    t.body.length,
+    lanes,
+    t.outcome,
+    t.trigger,
+    t.rewindTo,
+    t.branchFrom,
+    t.wake === undefined ? "" : JSON.stringify(t.wake),
+    plan?.from,
+    plan?.to,
+    have?.from,
+    have?.to,
+    hasPendingBuild(t.id),
+    heightsRevision(t.id),
+    card.hasAttribute("data-folded"),
+    card.querySelector(":scope > .turn-body") !== null,
+    liveRefusalFor(chatID, t.id),
+    codeReferencesFor(chatID, t.id),
+  ];
+}
+
 const turnSpec: ReconcileSpec<Turn> = {
   key: (t) => t.id,
   mount: (t) => {
@@ -1468,9 +1523,18 @@ const turnSpec: ReconcileSpec<Turn> = {
     if (appendNewIds.has(t.id)) {
       card.setAttribute("data-chat-entry", "");
     }
+    cardInputs.set(card, cardInputsOf(card, t));
     return card;
   },
-  update: updateTurn,
+  update: (card, t) => {
+    const inputs = cardInputsOf(card, t);
+    const prev = cardInputs.get(card);
+    if (prev?.every((v, i) => Object.is(v, inputs[i])) === true) {
+      return;
+    }
+    updateTurn(card, t);
+    cardInputs.set(card, cardInputsOf(card, t));
+  },
   onRemove: (card, key) => {
     // The face holds only prose and leaves with the card. The body is never asked for again, so dispose it here.
     disposeTurnBody(key);
@@ -1500,7 +1564,9 @@ type SpacerSide = "head" | "tail";
  * edge, a scroll-anchor candidate, holds still while the head moves; the tail is the body's next sibling, since the
  * renderer appends streamed entries to the body.
  */
-function syncSpacers(body: HTMLElement, t: Turn, range: EntryRange): void {
+function syncSpacers(body: HTMLElement, t: Turn, want: EntryRange): void {
+  // What is mounted, never what a caller asked for: a slice inside a wider mounted window would price phantom rows.
+  const range = mountedWindow(t.id) ?? want;
   // `seq` space: a rendered count reads short and withdraws a tail spacer the window still owes.
   const span = turnSpan(t);
   placeSpacer(body, "head", range.from > 0 ? spacerPx(t, range, "head") : 0);
@@ -2407,8 +2473,7 @@ function mountRewind(card: HTMLElement, t: Turn): void {
     });
   };
   // Disabled mid-turn: KAS refuses a revert on a session with a live abortController.
-  const session = getActive();
-  const busy = session !== undefined && sessionBusy(session);
+  const busy = passBusy;
   btn.disabled = busy;
   // `data-tooltip`, not `title`: only it reaches a disabled button.
   btn.setAttribute(

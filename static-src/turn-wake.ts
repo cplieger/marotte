@@ -5,7 +5,8 @@
 import { payloadOf } from "./turns.js";
 import type { Turn } from "./turns.js";
 import type { TurnState } from "./types.js";
-import { setWakingRow } from "./waking-rows.js";
+import { touchTurn } from "./turn-revision.js";
+import { isWakingRow, setWakingRow } from "./waking-rows.js";
 import type { EntryTurnWake, WakeSteer } from "./wire/types.gen.js";
 
 /** The line of a wake that names nothing marotte can show (`marotte.WakeFallbackLine`). */
@@ -195,8 +196,9 @@ export function markWakingRows(turns: Iterable<TurnState>): ReadonlySet<string> 
   }
   for (const t of held) {
     for (const e of t.entries) {
-      if (e.kind === "steer") {
+      if (e.kind === "steer" && isWakingRow(e) !== ids.has(e.id)) {
         setWakingRow(e, ids.has(e.id));
+        touchTurn(t);
       }
     }
   }

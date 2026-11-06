@@ -30,7 +30,6 @@ for (const id of [
   }
 }
 
-vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 vi.mock("./fundamentals/turn-header.js", { spy: true });
 
 const store = await import("./store.js");

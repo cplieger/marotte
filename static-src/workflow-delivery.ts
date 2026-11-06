@@ -4,6 +4,7 @@ import { chevronEl } from "./chevron.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_TAB_RUN } from "./icons.js";
+import { touchTurn } from "./turn-revision.js";
 import { markWakingRows } from "./turn-wake.js";
 import { payloadOf } from "./turns.js";
 import type { EntrySteer, EntrySteerDelivered, TurnState } from "./types.js";
@@ -124,6 +125,7 @@ export function releaseWorkflowTakeUps(
         (named.has(e.id) || (byClear && sessions.has(steer.to_session ?? "")))
       ) {
         e.payload = waitingSteer(steer);
+        touchTurn(t);
       }
     }
   }
@@ -193,6 +195,7 @@ export function settleWorkflowMessages(turns: Iterable<TurnState>): void {
         next.cleared !== steer.cleared
       ) {
         e.payload = next;
+        touchTurn(t);
       }
     }
   }

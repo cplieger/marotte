@@ -112,6 +112,15 @@ const rowHeights = new Map<string, Map<number, { range: EntryRange; px: number }
  */
 const groupHeights = new Map<string, Map<number, { range: EntryRange; px: number }>>();
 
+/** turn id → a stamp that moves with every height recorded or forgotten for it. */
+const heightStamps = new Map<string, number>();
+let heightStamp = 0;
+
+/** Moves whenever a height is recorded or forgotten for `turnID`, so a spacer priced from them is stale. */
+export function heightsRevision(turnID: string): number {
+  return heightStamps.get(turnID) ?? 0;
+}
+
 /** What one `tool_call` entry mounts as, in pixels. `results` is the turn's own index, so
  *  the run test costs one lookup rather than a walk over the body per call. */
 function callEstimate(
@@ -174,6 +183,7 @@ export function recordEntryHeight(turnID: string, seq: number, px: number): void
     entryHeights.set(turnID, per);
   }
   per.set(seq, px);
+  heightStamps.set(turnID, ++heightStamp);
 }
 
 /**
@@ -187,6 +197,7 @@ export function recordRowHeight(turnID: string, range: EntryRange, px: number): 
     rowHeights.set(turnID, per);
   }
   per.set(range.from, { range, px });
+  heightStamps.set(turnID, ++heightStamp);
 }
 
 /** Record what one tool run's group measured when dropped, against the run's member range. */
@@ -197,6 +208,7 @@ export function recordGroupHeight(turnID: string, range: EntryRange, px: number)
     groupHeights.set(turnID, per);
   }
   per.set(range.from, { range, px });
+  heightStamps.set(turnID, ++heightStamp);
 }
 
 /**
@@ -404,5 +416,6 @@ export function forgetHeights(turnIDs: Iterable<string>): void {
     entryHeights.delete(id);
     rowHeights.delete(id);
     groupHeights.delete(id);
+    heightStamps.delete(id);
   }
 }

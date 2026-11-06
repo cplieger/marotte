@@ -187,9 +187,19 @@ function clearLiveAnchor(el: HTMLElement): void {
 // registry, which would let two mentions in one turn both claim it. An absent run lets every mention build the card.
 
 let runCardOwnerEntries: ReadonlyMap<string, string> = new Map();
+let runCardOwnersMoved = 0;
 
 export function setRunCardOwners(owners: ReadonlyMap<string, string>): void {
+  const prev = runCardOwnerEntries;
+  if (prev.size !== owners.size || [...owners].some(([run, entry]) => prev.get(run) !== entry)) {
+    runCardOwnersMoved++;
+  }
   runCardOwnerEntries = owners;
+}
+
+/** Moves whenever `setRunCardOwners` changes which entry hosts some run's card. */
+export function runCardOwnersVersion(): number {
+  return runCardOwnersMoved;
 }
 
 /** Whether this `tool_call` entry hosts `runID`'s card. A detached render is exempt, being its own surface. */
