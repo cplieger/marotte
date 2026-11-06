@@ -8,6 +8,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -27,7 +28,9 @@ type stepClose struct {
 
 // stepGrade is one step_graded gradeLocked appended, and what the launching chat's note reads from it.
 type stepGrade struct {
-	entry     *marotte.Entry
+	entry *marotte.Entry
+	// note is the lease node_complete read for the close (runRecord.noteLeases), nil when it held none.
+	note      *runlease.Lease
 	nodePath  string
 	sessionID string    // KAS's record's step session, named by the empty-answer note
 	grade     stepClose // the close under the grade (withGrade)
@@ -107,7 +110,7 @@ func (c *stepClose) answeredNothing() bool {
 	return c.unanswered && (c.outcome == marotte.TurnOutcomeCompleted || c.outcome == marotte.TurnOutcomeEmpty)
 }
 
-// mayBeBroken is whether KAS's record could change or confirm this close's grade, so it is due one.
+// mayBeBroken is whether KAS's record could change or confirm this close's grade.
 func (c *stepClose) mayBeBroken() bool {
 	return marotte.SeverityOf(c.outcome) == marotte.TurnSeverityBroken || c.stoppedAtCallLimit() || c.answeredNothing()
 }
@@ -119,16 +122,22 @@ func (c *stepClose) mayNote() bool {
 		c.stoppedAtCallLimit() || c.answeredNothing()
 }
 
-// graded is the step's end under KAS's record of the node, the authority (known is false when KAS's record was not
-// read). A step KAS completed on a success signal ended completed whatever its turn's stop. A step KAS completed with
-// no signal is the model-call limit when its turn stopped on tool_use or max_turn_requests, and an empty answer when
-// its own turn ended it saying nothing: KAS retries an empty answer only when the model sent no stop reason, so one
-// ending end_turn completes the step.
-func (c *stepClose) graded(kas workflow.StepRecord, known bool) stepClose {
+// recordedGrade is c's step_graded entry under kas, KAS's record of a node it completed, and c under that entry.
+// The run log's grade and a replay's both fold through it, so a grade reads one way wherever it is served.
+func (c *stepClose) recordedGrade(kas workflow.StepRecord) (marotte.EntryStepGraded, stepClose) {
+	g := c.graded(kas)
+	p := marotte.EntryStepGraded{Outcome: g.outcome, FailureReason: g.reason, FailureKind: g.kind}
+	under := c.withGrade(&p)
+	return p, under
+}
+
+// graded is the step's end under KAS's record of the node, the authority. A step KAS completed on a success signal
+// ended completed whatever its turn's stop. A step KAS completed with no signal is the model-call limit when its turn
+// stopped on tool_use or max_turn_requests, and an empty answer when its own turn ended it saying nothing: KAS
+// retries an empty answer only when the model sent no stop reason, so one ending end_turn completes the step.
+func (c *stepClose) graded(kas workflow.StepRecord) stepClose {
 	g := *c
 	switch {
-	case !known:
-		return g
 	case kas.Succeeded():
 		if marotte.SeverityOf(g.outcome) == marotte.TurnSeverityBroken {
 			return stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: g.rawStop}
@@ -196,8 +205,12 @@ func gradeNewestClose(entries []marotte.Entry, read func() (workflow.StepRecord,
 		if !c.mayBeBroken() {
 			return
 		}
-		g := c.graded(read())
-		if g.outcome == c.outcome && g.kind == c.kind && g.reason == c.reason {
+		kas, known := read()
+		if !known || !kas.Completed() {
+			return
+		}
+		_, g := c.recordedGrade(kas)
+		if g.outcome == c.outcome && g.kind == c.kind && g.reason == c.reason && g.refusal == c.refusal {
 			return
 		}
 		tc.Outcome, tc.FailureKind, tc.FailureReason, tc.Refusal = g.outcome, g.kind, g.reason, g.refusal

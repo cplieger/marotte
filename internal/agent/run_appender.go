@@ -79,7 +79,8 @@ func stepNoteID(workflowID, cause, nodePath string) string {
 
 // gradeStepEnd leaves what a step's node_complete calls for. Under a status other than completed the sealed close is
 // the step's end (stepClose.graded is the identity there), so its note needs no read of KAS's record. Under completed
-// the close is graded off the frame's goroutine, an engine read, and noted only from the grade recorded.
+// the close is graded off the frame's goroutine, an engine read, and noted only from the grade recorded, under the
+// lease read here whichever trigger records it (runLog.gradeStep).
 // A note reaches the human reading the chat, not the agent (recordSteer never calls _session/steer).
 func (rs *Runs) gradeStepEnd(workflowID, nodePath string, sealed []turnlog.Sealed, status string) {
 	if rs.lifecycle == nil {
@@ -103,18 +104,22 @@ func (rs *Runs) gradeStepEnd(workflowID, nodePath string, sealed []turnlog.Seale
 		})
 		return
 	}
+	var note *runlease.Lease
+	if held && l.ChatID != "" {
+		note = &l
+	}
 	rs.lifecycle.goUnlessDraining(func() {
 		ctx, cancel := rs.lifecycle.derivedContext()
 		defer cancel()
-		if g := rs.gradeStep(ctx, workflowID, nodePath); g != nil {
-			rs.recordGrade(ctx, workflowID, g, &l, held)
+		if g := rs.gradeStep(ctx, workflowID, nodePath, note); g != nil {
+			rs.recordGrade(ctx, workflowID, g)
 		}
 	})
 }
 
 // gradeStep records the path's due grade (runLog.gradeStep), reading KAS's record only for a close due one.
-func (rs *Runs) gradeStep(ctx context.Context, workflowID, nodePath string) *stepGrade {
-	g, err := rs.log.gradeStep(ctx, workflowID, nodePath, func() (workflow.StepRecord, bool) {
+func (rs *Runs) gradeStep(ctx context.Context, workflowID, nodePath string, note *runlease.Lease) *stepGrade {
+	g, err := rs.log.gradeStep(ctx, workflowID, nodePath, note, func() (workflow.StepRecord, bool) {
 		return rs.kasStep(ctx, workflowID, nodePath)
 	})
 	if err != nil {
@@ -124,10 +129,22 @@ func (rs *Runs) gradeStep(ctx context.Context, workflowID, nodePath string) *ste
 }
 
 // recordGrade announces a step's grade and leaves the launching chat the note it calls for. Every trigger of a grade
-// calls it, so a close is noted once, by the trigger that recorded its grade. l and held are the caller's lease read.
-func (rs *Runs) recordGrade(ctx context.Context, workflowID string, g *stepGrade, l *runlease.Lease, held bool) {
+// calls it, so a close is noted once, by the trigger that recorded its grade, under the lease node_complete read for
+// the close (stepGrade.note), else the run's lease now.
+func (rs *Runs) recordGrade(ctx context.Context, workflowID string, g *stepGrade) {
 	translate.PublishAppended(ctx, rs.bus, "", workflowID, g.entry)
-	if !g.mayNote || rs.coord == nil || rs.lifecycle == nil || !held || l.ChatID == "" {
+	if !g.mayNote || rs.coord == nil || rs.lifecycle == nil {
+		return
+	}
+	l := g.note
+	if l == nil {
+		now, held := rs.lease(workflowID)
+		if !held {
+			return
+		}
+		l = &now
+	}
+	if l.ChatID == "" {
 		return
 	}
 	// Off the caller's context: a run read's request ending must not cut the note's write.
@@ -141,11 +158,8 @@ func (rs *Runs) recordGrade(ctx context.Context, workflowID string, g *stepGrade
 // stepEnds is runLog.stepEnds, announcing and noting each grade it recorded.
 func (rs *Runs) stepEnds(ctx context.Context, workflowID string, kas map[string]workflow.StepRecord) (map[string]marotte.RunStepEnd, error) {
 	ends, graded, err := rs.log.stepEnds(ctx, workflowID, kas)
-	if len(graded) > 0 {
-		l, held := rs.lease(workflowID)
-		for _, g := range graded {
-			rs.recordGrade(ctx, workflowID, g, &l, held)
-		}
+	for _, g := range graded {
+		rs.recordGrade(ctx, workflowID, g)
 	}
 	return ends, err
 }

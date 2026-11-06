@@ -23,6 +23,7 @@ import (
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/turnlog"
@@ -84,7 +85,11 @@ type runRecord struct {
 	closes map[string]stepClose
 	// starts is each path's current attempt, nil until a read scans the log; every open and close then keeps it current.
 	starts map[string]stepAttempt
-	host   marotte.ChatID
+	// noteLeases is, per path, the lease node_complete read for its close, until a trigger records that close's
+	// grade: run_complete releases the lease right after a run's last node_complete, so a run read recording the
+	// grade afterwards still notes the chat it named.
+	noteLeases map[string]noteLease
+	host       marotte.ChatID
 	// removed is the tombstone: a frame arriving after Delete opens nothing.
 	removed bool
 }
@@ -840,8 +845,7 @@ func (*runLog) gradeLocked(ctx context.Context, rec *runRecord, path string, kas
 	if !ok || !dueGradeLocked(rec, path, &c) || !kas.Completed() {
 		return nil, nil
 	}
-	g := c.graded(kas, true)
-	p := marotte.EntryStepGraded{Outcome: g.outcome, FailureReason: g.reason, FailureKind: g.kind}
+	p, graded := c.recordedGrade(kas)
 	payload, err := json.Marshal(&p)
 	if err != nil {
 		return nil, err
@@ -850,18 +854,28 @@ func (*runLog) gradeLocked(ctx context.Context, rec *runRecord, path string, kas
 	if err := rec.log.Append(ctx, e); err != nil {
 		return nil, err
 	}
-	rec.closes[path] = c.withGrade(&p)
-	return &stepGrade{entry: e, nodePath: path, grade: rec.closes[path], sessionID: kas.SessionID, mayNote: c.mayNote()}, nil
+	rec.closes[path] = graded
+	g := &stepGrade{entry: e, nodePath: path, grade: graded, sessionID: kas.SessionID, mayNote: c.mayNote()}
+	if n, held := rec.noteLeases[path]; held {
+		delete(rec.noteLeases, path)
+		if n.turn == c.turn {
+			g.note = &n.lease
+		}
+	}
+	return g, nil
 }
 
 // gradeStep records the grade of the path's newest close when it is due one, reading KAS's record through read only
-// then, and answers it; nil when it recorded none. No lock is held across read.
-func (r *runLog) gradeStep(ctx context.Context, workflowID, nodePath string, read func() (workflow.StepRecord, bool)) (*stepGrade, error) {
+// then, and answers it; nil when it recorded none. No lock is held across read. note, node_complete's lease read
+// (nil from any other trigger), is the close's note lease whichever trigger records its grade (stepGrade.note).
+func (r *runLog) gradeStep(
+	ctx context.Context, workflowID, nodePath string, note *runlease.Lease, read func() (workflow.StepRecord, bool),
+) (*stepGrade, error) {
 	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
 		return nil, err
 	}
-	turn, err := r.dueTurn(workflowID, nodePath, l)
+	turn, err := r.dueTurn(workflowID, nodePath, l, note)
 	if err != nil || turn == "" {
 		return nil, err
 	}
@@ -879,8 +893,9 @@ func (r *runLog) gradeStep(ctx context.Context, workflowID, nodePath string, rea
 	return r.gradeLocked(ctx, rec, nodePath, kas)
 }
 
-// dueTurn is the turn of the path's newest close when it is due a grade, "" otherwise.
-func (r *runLog) dueTurn(workflowID, nodePath string, l *chat.EntryLog) (string, error) {
+// dueTurn is the turn of the path's newest close when it is due a grade, "" otherwise, holding note, when not nil,
+// as that close's note lease.
+func (r *runLog) dueTurn(workflowID, nodePath string, l *chat.EntryLog, note *runlease.Lease) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
@@ -894,7 +909,19 @@ func (r *runLog) dueTurn(workflowID, nodePath string, l *chat.EntryLog) (string,
 	if !ok || !dueGradeLocked(rec, nodePath, &c) {
 		return "", nil
 	}
+	if note != nil {
+		if rec.noteLeases == nil {
+			rec.noteLeases = make(map[string]noteLease)
+		}
+		rec.noteLeases[nodePath] = noteLease{lease: *note, turn: c.turn}
+	}
 	return c.turn, nil
+}
+
+// noteLease is the lease node_complete read for the close of turn.
+type noteLease struct {
+	turn  string
+	lease runlease.Lease
 }
 
 // scanStepFactsLocked fills the record's step closes and attempt starts from its log once per process, both in one

@@ -57,23 +57,22 @@ func TestStepClose_GradedUnderKASsRecord(t *testing.T) {
 		desc  string
 		close stepClose
 		kas   workflow.StepRecord
-		known bool
 		want  stepClose
 	}{
-		{desc: "a success signal outranks a tool_use stop", close: toolUse, kas: succeeded, known: true, want: toolUse},
+		{desc: "a success signal outranks a tool_use stop", close: toolUse, kas: succeeded, want: toolUse},
 		{
-			desc: "a success signal clears a stored model-call-limit failure", close: limit, kas: succeeded, known: true,
+			desc: "a success signal clears a stored model-call-limit failure", close: limit, kas: succeeded,
 			want: stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: marotte.StopReasonToolUse},
 		},
 		{
-			desc: "a success signal clears a refusal", close: refused, kas: succeeded, known: true,
+			desc: "a success signal clears a refusal", close: refused, kas: succeeded,
 			want: stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: marotte.StopReasonRefusal},
 		},
-		{desc: "no signal on a completed step names the limit", close: toolUse, kas: unsignalled, known: true, want: limit},
+		{desc: "no signal on a completed step names the limit", close: toolUse, kas: unsignalled, want: limit},
 		{
 			desc:  "a max_turn_requests stop on a completed step names the limit",
 			close: stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: marotte.StopReasonMaxTurnRequests},
-			kas:   unsignalled, known: true,
+			kas:   unsignalled,
 			want: stepClose{
 				outcome: marotte.TurnOutcomeFailed, kind: marotte.FailureKindModelCallLimit,
 				reason: marotte.ModelCallLimitStepReason, rawStop: marotte.StopReasonMaxTurnRequests,
@@ -82,31 +81,28 @@ func TestStepClose_GradedUnderKASsRecord(t *testing.T) {
 		{
 			desc:  "KAS's own failure keeps the close",
 			close: stepClose{outcome: marotte.TurnOutcomeFailed, rawStop: marotte.StopReasonToolUse},
-			kas:   workflow.StepRecord{Status: "failed"}, known: true,
-			want: stepClose{outcome: marotte.TurnOutcomeFailed, rawStop: marotte.StopReasonToolUse},
+			kas:   workflow.StepRecord{Status: "failed"},
+			want:  stepClose{outcome: marotte.TurnOutcomeFailed, rawStop: marotte.StopReasonToolUse},
 		},
 		{
 			desc:  "an end_turn stop is never the limit",
 			close: stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: marotte.StopReasonEndTurn},
-			kas:   unsignalled, known: true,
-			want: stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: marotte.StopReasonEndTurn},
+			kas:   unsignalled,
+			want:  stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: marotte.StopReasonEndTurn},
 		},
 		{
 			desc: "no signal on a completed step after an empty answer names the empty answer", close: silent,
-			kas: unsignalled, known: true,
+			kas: unsignalled,
 			want: stepClose{
 				outcome: marotte.TurnOutcomeFailed, kind: marotte.FailureKindEmptyAnswer,
 				reason: marotte.EmptyAnswerStepReason, rawStop: marotte.StopReasonEndTurn,
 			},
 		},
-		{desc: "a success signal outranks an empty answer", close: silent, kas: succeeded, known: true, want: silent},
-		{desc: "KAS's own failure keeps an empty answer's close", close: silent, kas: workflow.StepRecord{Status: "failed"}, known: true, want: silent},
-		{desc: "an unread record keeps an empty answer's close", close: silent, want: silent},
-		{desc: "an unread record keeps the close", close: toolUse, want: toolUse},
-		{desc: "an unread record keeps a refusal", close: refused, want: refused},
+		{desc: "a success signal outranks an empty answer", close: silent, kas: succeeded, want: silent},
+		{desc: "KAS's own failure keeps an empty answer's close", close: silent, kas: workflow.StepRecord{Status: "failed"}, want: silent},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
-			got := tc.close.graded(tc.kas, tc.known)
+			got := tc.close.graded(tc.kas)
 			if got.outcome != tc.want.outcome || got.kind != tc.want.kind || got.reason != tc.want.reason ||
 				got.rawStop != tc.want.rawStop || got.refusal != tc.want.refusal {
 				t.Errorf("graded = %+v, want %+v", got, tc.want)
@@ -751,6 +747,52 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 					t.Errorf("the launching chat got %d empty-answer notes, want %d", notes, want)
 				}
 			})
+		})
+	}
+}
+
+// A replayed close folds its grade as a recorded one does (stepClose.withGrade): its refusal survives only a refused
+// grade.
+func TestGradeNewestClose_KeepsARefusalOnlyUnderARefusedGrade(t *testing.T) {
+	refusal := &marotte.RefusalInfo{Category: "policy"}
+	unsignalled := workflow.StepRecord{Status: "completed"}
+	for _, tc := range []struct {
+		desc  string
+		close marotte.EntryTurnClose
+		want  marotte.EntryTurnClose
+	}{
+		{
+			desc:  "a tool_use stop graded the model-call limit",
+			close: marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted, StopReasonRaw: string(marotte.StopReasonToolUse), Refusal: refusal},
+			want: marotte.EntryTurnClose{
+				Outcome: marotte.TurnOutcomeFailed, FailureKind: marotte.FailureKindModelCallLimit,
+				FailureReason: marotte.ModelCallLimitStepReason, StopReasonRaw: string(marotte.StopReasonToolUse),
+			},
+		},
+		{
+			desc:  "a failure the grade keeps",
+			close: marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeFailed, StopReasonRaw: string(marotte.StopReasonEndTurn), Refusal: refusal},
+			want:  marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeFailed, StopReasonRaw: string(marotte.StopReasonEndTurn)},
+		},
+		{
+			desc:  "a refusal the grade keeps",
+			close: marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeRefused, StopReasonRaw: string(marotte.StopReasonRefusal), Refusal: refusal},
+			want:  marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeRefused, StopReasonRaw: string(marotte.StopReasonRefusal), Refusal: refusal},
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			payload, err := json.Marshal(&tc.close)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entries := []marotte.Entry{{Turn: "t1", Kind: marotte.EntryKindTurnClose, Payload: payload}}
+			gradeNewestClose(entries, func() (workflow.StepRecord, bool) { return unsignalled, true })
+			got := newestClose(t, entries)
+			if got.Outcome != tc.want.Outcome || got.FailureKind != tc.want.FailureKind ||
+				got.FailureReason != tc.want.FailureReason || got.StopReasonRaw != tc.want.StopReasonRaw ||
+				(got.Refusal == nil) != (tc.want.Refusal == nil) {
+				t.Errorf("turn_close = %+v, want %+v", got, tc.want)
+			}
 		})
 	}
 }

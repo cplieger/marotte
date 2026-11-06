@@ -113,9 +113,9 @@ vi.mock("../engine-status.js", () => ({
   reconcileEngineStatus: mockReconcileEngineStatus,
 }));
 
-// PARTIAL: the gap door's run readers are spies (both fetch), while
-// `adoptConnectRuns` is REAL, since the state it seeds is what the connect door owns. `vi.hoisted`
-// for the api-client pair's reason below.
+// PARTIAL: rebuildLiveRuns and rereadHeldRuns are spies, so a read the reconcile issues (or must not)
+// is observable, while `adoptConnectRuns` is REAL, since the state it seeds is what the connect door
+// owns. `vi.hoisted` for the api-client pair's reason below.
 const { mockRebuildLiveRuns, mockRereadHeldRuns } = vi.hoisted(() => ({
   mockRebuildLiveRuns: vi.fn(),
   mockRereadHeldRuns: vi.fn(),
