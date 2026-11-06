@@ -1177,11 +1177,12 @@ function rewindConfirmation(target: EntryPrompt, discarded: readonly Turn[]): Co
         : `Removes this prompt, its reply and the ${String(later)} later turns.`;
   const facts = [prompt === "" ? "" : `Prompt: "${prompt}"`, removes];
   if (calls.length > 0) {
-    const shown = files.slice(0, 4).join(", ") + (files.length > 4 ? ", \u2026" : "");
+    const shown =
+      files.length > 4 ? files.slice(0, 4).join(", ") + ", \u2026" : files.join(", ") + ".";
     facts.push(
       `Undoes ${String(calls.length)} tool call${calls.length === 1 ? "" : "s"}` +
         (files.length > 0
-          ? `, touching ${String(files.length)} file${files.length === 1 ? "" : "s"}: ${shown}.`
+          ? `, touching ${String(files.length)} file${files.length === 1 ? "" : "s"}: ${shown}`
           : "."),
     );
   }
