@@ -56,8 +56,8 @@ export function isToolTriggerHook(call: HookFacts): boolean {
   return call.hook_trigger === "PreToolUse" || call.hook_trigger === "PostToolUse";
 }
 
-/** Whether a hook's entry draws a card. Only a quiet hook with no tool call to fold into goes, and only with the
- *  switch off; a tool-trigger hook always mounts, and its group decides what the reader sees. */
+/** Whether a hook's entry draws a card. Only a quiet hook that gates no tool call goes, and only with the switch off;
+ *  a tool-trigger hook always mounts, since a refused group keeps it as a row. */
 export function hookRenders(call: HookFacts, showStatus: boolean): boolean {
   return showStatus || !hookQuiet(call) || isToolTriggerHook(call);
 }
@@ -106,18 +106,14 @@ export function foldGroupHooks(members: readonly HTMLElement[]): HookFold {
   return { rows, folded };
 }
 
+/** A quiet hook folds whatever its trigger; only a tool-trigger hook is a suspect for a refusal, so only it unfolds in
+ *  a refused group. */
 function hookFate(c: HTMLElement, refused: boolean, hasWork: boolean): "row" | "folded" | "hidden" {
   const quiet =
     c.dataset["kind"] === "hook" &&
     c.dataset["outcome"] === "ok" &&
     c.dataset["hookPrinted"] === undefined;
-  if (!quiet) {
-    return "row";
-  }
-  if (!c.hasAttribute("data-hook-gates")) {
-    return statusShown ? "row" : "hidden";
-  }
-  if (refused) {
+  if (!quiet || (refused && c.hasAttribute("data-hook-gates"))) {
     return "row";
   }
   if (!statusShown) {

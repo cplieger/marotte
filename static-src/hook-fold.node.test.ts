@@ -1,5 +1,5 @@
-// The hook outcome rules: a quiet hook completed with no output; only a quiet hook with no tool to fold into
-// is dropped at the entry when Show hook status is off.
+// The hook outcome rules: a quiet hook completed with no output; only a quiet hook that gates no tool call is
+// dropped at the entry when Show hook status is off.
 
 import { describe, it, expect } from "vitest";
 import { hookCounted, hookQuiet, hookRenders, isToolTriggerHook } from "./hook-fold.js";
