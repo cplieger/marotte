@@ -115,7 +115,22 @@ describe("summarizeSameKind", () => {
       ["Steering loaded: go.md, testing.md", "Steering loaded: git-commits.md"],
     );
     expect(summarizeSameKind("steering", infos)).toBe(
-      "Loaded 2 steering sets: go.md, testing.md, git-commits.md",
+      "Loaded 2 steering sets: go.md, testing.md, +1 more",
+    );
+  });
+
+  it("steering counts the tail in documents, across three boxes and a capped one", () => {
+    const infos = makeInfos(
+      "steering",
+      ["", "", ""],
+      [
+        "Steering loaded: go.md",
+        "Steering loaded: testing.md, +40 more",
+        "Steering loaded: git-commits.md",
+      ],
+    );
+    expect(summarizeSameKind("steering", infos)).toBe(
+      "Loaded 3 steering sets: go.md, testing.md, +1 more",
     );
   });
 

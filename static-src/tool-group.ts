@@ -320,20 +320,25 @@ export function summarizeSameKind(kind: ToolKind, infos: CallInfo[]): string {
     const plural = n === 1 ? label.noun : kindNoun(kind, n);
     return `${String(n)} ${plural}`;
   }
-  const samples = infos.map((i) => sampleOf(i, label.samplesFrom)).filter((s) => s !== "");
+  const samples = infos.flatMap((i) => sampleOf(i, label.samplesFrom)).filter((s) => s !== "");
   return labelWithSamples(n, label.noun, label.verb, samples, label.many);
 }
 
-function sampleOf(info: CallInfo, from: "files" | "titles" | "docNames"): string {
+// A capped box's own " +N more" tail is a count, not a document, so it is not a sample.
+const MORE_TAIL = /^\+\d+ more$/;
+
+function sampleOf(info: CallInfo, from: "files" | "titles" | "docNames"): string[] {
   switch (from) {
     case "files":
-      return info.filename;
+      return [info.filename];
     case "titles":
-      return info.title;
-    case "docNames":
-      return info.title.startsWith(STEERING_TITLE_PREFIX)
+      return [info.title];
+    case "docNames": {
+      const names = info.title.startsWith(STEERING_TITLE_PREFIX)
         ? info.title.slice(STEERING_TITLE_PREFIX.length)
         : info.title;
+      return names.split(", ").filter((n) => !MORE_TAIL.test(n));
+    }
   }
 }
 
