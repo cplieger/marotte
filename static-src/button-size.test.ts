@@ -303,47 +303,6 @@ function reference(): { painted: { w: number; h: number }; hit: { w: number; h: 
 const STATES: readonly State[] = ["idle", "steer", "queue"];
 
 describe("the composer's controls and the resume button, against the toolbar's buttons", () => {
-  it("paints every one at the toolbar button's size at the phone preset in touch mode", async () => {
-    for (const state of STATES) {
-      await mount(PHONE, "coarse", state);
-      const ref = reference();
-      expect(ref.painted, "the toolbar paints 36px on touch").toEqual({ w: 36, h: 36 });
-      const off: string[] = [];
-      for (const el of controls()) {
-        const r = painted(el);
-        if (r.height !== ref.painted.h) {
-          off.push(`${nameOf(el)} is ${String(r.height)}px tall`);
-        }
-        const square = [...SQUARE, "send-btn", "switch-model-btn", "role-pill"];
-        if (square.includes(el.id) && r.width !== ref.painted.w) {
-          off.push(`${nameOf(el)} is ${String(r.width)}px wide`);
-        }
-      }
-      expect(off, `${state}: every control paints the toolbar's box`).toEqual([]);
-    }
-  });
-
-  it("paints every one at the toolbar button's height at the iPad preset and with a mouse", async () => {
-    // One height per tier is the consistency rule; a mouse keeps the toolbar's 36px, so the composer meets it there.
-    for (const [viewport, pointer] of [
-      [IPAD, "coarse"],
-      [IPAD, "fine"],
-      [PHONE, "fine"],
-      [DESKTOP, "fine"],
-    ] as const) {
-      for (const state of STATES) {
-        await mount(viewport, pointer, state);
-        const ref = reference();
-        const at = `${String(viewport[0])} ${pointer} ${state}`;
-        const off = controls()
-          .filter((el) => el.id !== "scroll-bottom" || viewport !== DESKTOP)
-          .filter((el) => painted(el).height !== ref.painted.h)
-          .map((el) => `${nameOf(el)} ${String(painted(el).height)}px`);
-        expect(off, `${at}: every control is the toolbar's height`).toEqual([]);
-      }
-    }
-  });
-
   it("gives every one the toolbar button's hit area at the phone preset in touch mode", async () => {
     for (const state of STATES) {
       await mount(PHONE, "coarse", state);
@@ -370,28 +329,6 @@ describe("the composer's controls and the resume button, against the toolbar's b
     }
   });
 
-  it("holds every hit area at the floor on both axes at the iPad preset in touch mode", async () => {
-    for (const state of STATES) {
-      await mount(IPAD, "coarse", state);
-      const floor = floorPx();
-      const off = controls()
-        .map((el) => ({ el, hit: hitRect(el) }))
-        .filter(({ hit }) => width(hit) < floor - 2 * STEP || height(hit) < floor - 2 * STEP)
-        .map(({ el, hit }) => `${nameOf(el)} ${String(width(hit))}x${String(height(hit))}`);
-      expect(off, `${state}: every target clears the floor`).toEqual([]);
-    }
-  });
-
-  it("gives the chip's remove button the floor's height, and only its height", async () => {
-    // Its inline reach would put a destructive target over the filename (15-input.css, the chip's block-only expander).
-    await mount(PHONE, "coarse", "idle");
-    const close = document.querySelector<HTMLElement>("#attachment-row .attachment-close");
-    if (close === null) {
-      throw new Error("the chip did not mount");
-    }
-    expect(height(hitRect(close))).toBeGreaterThanOrEqual(floorPx() - 2 * STEP);
-  });
-
   it("gives Send and Cancel a square hit area at the floor at the phone preset in touch mode", async () => {
     for (const state of STATES) {
       await mount(PHONE, "coarse", state);
@@ -405,71 +342,10 @@ describe("the composer's controls and the resume button, against the toolbar's b
       expect(width(hit), `${state}: at the floor`).toBeGreaterThanOrEqual(floorPx() - 2 * STEP);
     }
   });
-
-  it("lets no two neighbouring hit areas overlap, at either touch preset", async () => {
-    for (const viewport of [PHONE, IPAD]) {
-      for (const state of STATES) {
-        await mount(viewport, "coarse", state);
-        const at = `${String(viewport[0])} ${state}`;
-        const row = [
-          ...document.querySelectorAll<HTMLElement>(".prompt-pills .pill, .prompt-pills .send-btn"),
-        ].filter(shown);
-        const chip = [
-          ...document.querySelectorAll<HTMLElement>(
-            "#attachment-row .attachment-open, #attachment-row .attachment-close",
-          ),
-        ];
-        const all = [...row, ...chip, byId("scroll-bottom")];
-        const crossed: string[] = [];
-        for (const [i, a] of all.entries()) {
-          const ta = targetRect(a);
-          for (const b of all.slice(i + 1)) {
-            const tb = targetRect(b);
-            const dx = Math.min(ta.right, tb.right) - Math.max(ta.left, tb.left);
-            const dy = Math.min(ta.bottom, tb.bottom) - Math.max(ta.top, tb.top);
-            if (dx > 0.5 && dy > 0.5) {
-              crossed.push(`${nameOf(a)} and ${nameOf(b)} share ${String(dx)}x${String(dy)}px`);
-            }
-          }
-        }
-        expect(crossed, `${at}: no two targets overlap`).toEqual([]);
-        // The facing edges each answer to their own control, so neither target is covered by the other.
-        const covered: string[] = [];
-        for (const [i, a] of row.slice(0, -1).entries()) {
-          const b = row[i + 1]!;
-          const ta = targetRect(a);
-          const tb = targetRect(b);
-          const ya = (ta.top + ta.bottom) / 2;
-          if (!owns(a, ta.right - 1, ya)) {
-            covered.push(`${nameOf(a)}'s end edge`);
-          }
-          if (!owns(b, tb.left + 1, (tb.top + tb.bottom) / 2)) {
-            covered.push(`${nameOf(b)}'s start edge`);
-          }
-        }
-        expect(covered, `${at}: each facing edge reaches its own control`).toEqual([]);
-      }
-    }
-  });
 });
 
 describe("the model and mode pills, by the room the row has", () => {
   const labels = (): HTMLElement[] => [byId("ctx-model-pill"), byId("role-pill-label")];
-
-  it("shows them as icons only at the phone preset in touch mode", async () => {
-    for (const state of STATES) {
-      await mount(PHONE, "coarse", state);
-      for (const el of labels()) {
-        expect(shown(el), `${state}: #${el.id} draws no text`).toBe(false);
-      }
-      for (const id of ["switch-model-btn", "role-pill"]) {
-        expect(
-          byId(id).querySelector("svg") !== null && shown(byId(id).querySelector("svg")!),
-          `${state}: #${id} keeps its icon`,
-        ).toBe(true);
-      }
-    }
-  });
 
   it("fits the row on one line at the phone preset, with no control cut", async () => {
     for (const pointer of ["coarse", "fine"] as const) {
@@ -583,6 +459,12 @@ type Family =
       readonly kind: "toolbar" | "tab-row";
       /** The surface not yet held to it, by the order the surfaces are being moved. */
       readonly pending?: "sidebar" | "rest";
+      /** A form of the family that keeps another size at one preset and tier, and where that is decided. */
+      readonly except?: {
+        readonly selector: string;
+        readonly at: `${Preset} ${Pointer}`;
+        readonly documented: string;
+      };
     }
   | {
       readonly name: string;
@@ -598,7 +480,17 @@ const CENSUS: readonly Family[] = [
   { name: "composer pill", selector: ".prompt-pills .pill", kind: "toolbar" },
   { name: "composer send", selector: ".prompt-pills .send-btn", kind: "toolbar" },
   { name: "run composer send", selector: ".run-composer .send-btn", kind: "toolbar" },
-  { name: "resume", selector: ".scroll-resume", kind: "toolbar" },
+  {
+    name: "resume",
+    selector: ".scroll-resume",
+    kind: "toolbar",
+    except: {
+      selector: "[id='scroll-bottom']",
+      at: "desktop fine",
+      documented:
+        "13-messages.css, `[id=\"scroll-bottom\"]` docked at the turn map's foot for a mouse: the map's step size",
+    },
+  },
   { name: "attachment chip", selector: ".attachment-pill .attachment-open", kind: "toolbar" },
   {
     name: "attachment chip remove",
@@ -716,8 +608,7 @@ const CENSUS: readonly Family[] = [
     name: "turn map steps",
     selector: ".turn-map-step",
     kind: "turn-map",
-    documented:
-      "29-turns.css `.turn-map-step` and 13-messages.css, the docked resume: the map's step size",
+    documented: "29-turns.css `.turn-map-step`: the map's step size",
     pending: "rest",
   },
 ];
@@ -746,29 +637,39 @@ function iconOnly(el: HTMLElement): boolean {
   return true;
 }
 
-/** The docked resume button follows the turn map's step size, not the toolbar's (the "turn map steps" family). */
-function docked(el: HTMLElement, viewport: readonly [number, number], pointer: Pointer): boolean {
-  return el.id === "scroll-bottom" && viewport === DESKTOP && pointer === "fine";
+/** Whether `el` is its family's documented exception at this preset and tier. */
+function excepted(el: HTMLElement, family: Family, at: string): boolean {
+  const except = "except" in family ? family.except : undefined;
+  return except !== undefined && except.at === at && el.matches(except.selector);
+}
+
+function onScreen(el: Element): boolean {
+  const r = el.getBoundingClientRect();
+  return r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight;
 }
 
 function familiesOf(el: Element): Family[] {
   return CENSUS.filter((f) => el.matches(f.selector));
 }
 
-/** The controls on the mounted surface that a held family covers. */
+/** The kinds the cases measure; a family of another kind is listed, not yet held. */
+const MEASURED: ReadonlySet<Family["kind"]> = new Set(["toolbar", "tab-row", "own-size"]);
+
+/** The on-screen controls of the mounted surface that a held family covers. */
 function held(): { el: HTMLElement; family: Family }[] {
   return [...document.querySelectorAll<HTMLElement>(CONTROL)]
-    .filter(shown)
+    .filter((el) => shown(el) && onScreen(el))
     .map((el) => ({ el, family: familiesOf(el)[0] }))
     .filter((c): c is { el: HTMLElement; family: Family } => c.family?.pending === undefined)
-    .filter(({ family }) => family.kind === "toolbar" || family.kind === "own-size");
+    .filter(({ family }) => MEASURED.has(family.kind));
 }
 
-const PRESETS = [
+type Preset = "phone" | "iPad" | "desktop";
+const PRESETS: readonly (readonly [Preset, readonly [number, number]])[] = [
   ["phone", PHONE],
   ["iPad", IPAD],
   ["desktop", DESKTOP],
-] as const;
+];
 const TIERS: readonly Pointer[] = ["coarse", "fine"];
 type Surface = "chat idle" | "chat steer" | "chat queue" | "run";
 const SURFACES: readonly Surface[] = ["chat idle", "chat steer", "chat queue", "run"];
@@ -811,6 +712,36 @@ async function mountSurface(
   expect(missing, `${surface}: the held controls are on screen`).toEqual([]);
 }
 
+/** The sidebar with its drawer open (a phone's closed drawer is off screen) and one chat tab in the
+ *  child order `tabs.ts` builds, the row New chat and History are held to. */
+async function mountSidebar(
+  viewport: readonly [number, number],
+  pointer: Pointer,
+): Promise<HTMLElement> {
+  await mount(viewport, pointer, "idle");
+  const sidebar = byId("sidebar");
+  sidebar.classList.add("open");
+  // The drawer slides in on a transition; the row is measured where it lands.
+  for (const slide of sidebar.getAnimations()) {
+    slide.finish();
+  }
+  const tab = document.createElement("div");
+  tab.className = "tab";
+  tab.setAttribute("role", "tab");
+  tab.dataset["kind"] = "chat";
+  const name = document.createElement("span");
+  name.className = "tab-name";
+  name.textContent = "Rebuild the timeline rail";
+  const close = document.createElement("span");
+  close.className = "tab-close";
+  close.setAttribute("aria-hidden", "true");
+  close.appendChild(iconEl(ICON_CANCEL));
+  tab.append(name, close);
+  byId("tab-list").replaceChildren(tab);
+  expect(shown(tab) && onScreen(tab), "the tab row is on screen").toBe(true);
+  return tab;
+}
+
 describe("the button census", () => {
   it("puts every control on the shipped page in exactly one family", async () => {
     await mount(PHONE, "coarse", "queue");
@@ -839,7 +770,7 @@ describe("the button census", () => {
           ]);
           const off: string[] = [];
           for (const { el, family } of held()) {
-            if (family.kind !== "toolbar" || docked(el, viewport, pointer)) {
+            if (family.kind !== "toolbar" || excepted(el, family, at)) {
               continue;
             }
             const r = painted(el);
@@ -908,6 +839,26 @@ describe("the button census", () => {
           }
           expect(crossed, `${surface}: no two targets overlap`).toEqual([]);
         }
+      });
+
+      it(`paints every held tab-row control at the sidebar tab's height, ${at}`, async () => {
+        const row = (await mountSidebar(viewport, pointer)).getBoundingClientRect().height;
+        const controls = held().filter(({ family }) => family.kind === "tab-row");
+        const absent = CENSUS.filter((f) => f.kind === "tab-row" && f.pending === undefined)
+          .filter((f) => !controls.some(({ family }) => family === f))
+          .map((f) => f.name);
+        expect(absent, "every held tab-row family is on screen").toEqual([]);
+        const off: string[] = [];
+        for (const { el } of controls) {
+          const r = el.getBoundingClientRect();
+          if (r.height !== row) {
+            off.push(`${nameOf(el)} is ${String(r.height)}px tall`);
+          }
+          if (iconOnly(el) && r.width !== row) {
+            off.push(`${nameOf(el)} is icon-only and ${String(r.width)}px wide`);
+          }
+        }
+        expect(off, `the tab row's ${String(row)}px`).toEqual([]);
       });
     }
   }

@@ -70,7 +70,6 @@ describe("the height's declarations, read from source", () => {
   const css = loadCSS("15-input.css");
 
   it("declares no control height of its own, so the box cannot drift from the toolbar's buttons", () => {
-    // The toolbar's `--btn-h` is the one button size; a composer copy of it is how the row painted 32 beside 36.
     const writers = allRules(css)
       .filter((r) => /--composer-ctl-h:/.test(r.body))
       .map((r) => r.selector);
@@ -553,7 +552,7 @@ describe("the attachment chip, measured at real viewport sizes", () => {
   it("matches the chip to the pill row's controls on a phone, which is the reported defect", async () => {
     const { chip, control, floor } = await chipsAt(390, 844, "coarse");
     expect(floor, "the coarse floor, in px").toBe(44);
-    expect(chip, "a 50.78px chip before the fix").toBe(36);
+    expect(chip, "the chip paints the toolbar's --btn-h").toBe(36);
     expect(chip).toBe(control);
   });
 
