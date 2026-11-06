@@ -125,7 +125,6 @@ import {
 import { wakeLine } from "./turn-wake.js";
 import { rewindChat } from "./actions/rewind.js";
 import { compactChat } from "./actions/chat.js";
-import { compactionPolicy } from "./context-ring.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { confirm as confirmDialog, type Confirmation } from "./confirm.js";
 import { setComposerValue } from "./composer-value.js";
@@ -1711,21 +1710,13 @@ function syncTurnNotice(card: HTMLElement, t: Turn): void {
   syncCompactAction(card, t);
 }
 
-/** With the switch on, the server compacts a context-limit turn at its end, so the notice says so instead. */
-const CONTEXT_LIMIT_AUTO_TEXT =
-  "This chat reached the model's context limit. It is being compacted; send the prompt again when the summary appears.";
-
-/** Whether the server compacts this context-limit turn at its end. Untracked: a paint is no subscriber. */
-function compactsItself(t: Turn): boolean {
-  return closeOfBody(t.body)?.failure_kind === "context_limit" && compactionPolicy.peek().enabled;
-}
-
 /**
- * Whether the notice offers to compact: the turn overflowed the window, is still the newest, no compaction has
- * landed since, and the server does not compact it itself.
+ * Whether the notice offers to compact: the turn overflowed the window, is still the newest, and no compaction
+ * has landed since. Whatever the auto compaction switch says: the page cannot see whether the reader cancelled the
+ * turn's compaction, which stops its end's.
  */
 function offersCompact(t: Turn): boolean {
-  if (closeOfBody(t.body)?.failure_kind !== "context_limit" || compactsItself(t)) {
+  if (closeOfBody(t.body)?.failure_kind !== "context_limit") {
     return false;
   }
   const s = get(getActiveId());
@@ -1760,7 +1751,7 @@ function syncCompactAction(card: HTMLElement, t: Turn): void {
 }
 
 function syncNoticeText(card: HTMLElement, t: Turn): void {
-  const failure = compactsItself(t) ? CONTEXT_LIMIT_AUTO_TEXT : turnFailureText(t);
+  const failure = turnFailureText(t);
   const text = failure !== "" ? failure : turnBoundText(t);
   const existing = card.querySelector<HTMLElement>(":scope > .turn-notice");
   if (text === "") {

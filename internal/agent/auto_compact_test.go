@@ -496,17 +496,19 @@ func TestCompactRequest_AnIdleRunTakesTheQueuedRow(t *testing.T) {
 	}
 }
 
-// A press while the turn end's compaction runs (under the close's KAS hold) is satisfied by that compaction.
+// A press while the turn end's compaction runs (under the close's KAS hold) is satisfied by that compaction once KAS
+// accepts it.
 func TestAutoCompact_APressDuringTheTurnEndsRunIsSatisfiedByIt(t *testing.T) {
 	r := newCompactRig(90)
 	r.reading(93)
 	r.onCompact = func() { r.pressUnderHold(t) }
-	ran := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
+	accepted := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
 	r.onCompact = nil
-	if !ran || r.isQueued() {
-		t.Fatalf("a press during the turn end's run: ran %v, queued %v; want ran and the row taken by it", ran, r.isQueued())
+	if !accepted || r.isQueued() {
+		t.Fatalf("a press during the turn end's run: accepted %v, queued %v; want accepted and the row taken by it",
+			accepted, r.isQueued())
 	}
-	r.ac.afterRelease(t.Context(), "c1", ran)
+	r.ac.afterRelease(t.Context(), "c1", accepted)
 	if got := r.count(); got != 1 {
 		t.Errorf("the close made %d compact calls, want 1", got)
 	}
@@ -517,27 +519,79 @@ func TestAutoCompact_ARowWrittenUnderTheHoldRunsAtTheRelease(t *testing.T) {
 	r := newCompactRig(90)
 	r.turn(t, 50)
 	r.setLive(false)
-	ran := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
-	if ran {
+	accepted := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
+	if accepted {
 		t.Fatal("a turn end at 50 with pct 90 and nothing queued reported a compaction")
 	}
 	r.pressUnderHold(t)
-	r.ac.afterRelease(t.Context(), "c1", ran)
+	r.ac.afterRelease(t.Context(), "c1", accepted)
 	if r.count() != 1 || r.isQueued() {
 		t.Errorf("the row written under the hold: calls %d, queued %v; want 1 call and the row gone", r.count(), r.isQueued())
 	}
 }
 
+// The turn end's compaction is refused with no turn live and the reader presses under the close's hold: the refused
+// call satisfies nothing, so the press runs at the release; refused again there, it is dropped and reported.
+func TestAutoCompact_APressAfterARefusedTurnEndRunRunsAtTheRelease(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		refuseAgain  bool
+		wantFailures int
+	}{
+		{name: "accepted at the release"},
+		{name: "refused again at the release", refuseAgain: true, wantFailures: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newCompactRig(90)
+			r.reading(93)
+			r.setRefuse(true)
+			accepted := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
+			if accepted {
+				t.Errorf("a refused turn-end call reported accepted")
+			}
+			r.pressUnderHold(t)
+			r.setRefuse(tc.refuseAgain)
+			r.ac.afterRelease(t.Context(), "c1", accepted)
+			if r.count() != 2 || r.isQueued() || len(r.failures) != tc.wantFailures {
+				t.Errorf("the press at the release: calls %d, queued %v, failures %v; want 2 calls, the row gone, %d failures",
+					r.count(), r.isQueued(), r.failures, tc.wantFailures)
+			}
+		})
+	}
+}
+
+// KAS opens its own turn during the turn end's call and refuses it, so the run is queued again for that turn, and
+// that turn closes before this close's release: the refused call satisfies nothing, so the release runs the run.
+func TestAutoCompact_ARunQueuedAgainForAClosedKASTurnRunsAtTheRelease(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 92)
+	r.finishTurn()
+	r.setRefuse(true)
+	r.onCompact = r.kasOpensTheNextTurn
+	accepted := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
+	if !r.isQueued() {
+		t.Fatalf("not queued again after the refusal under KAS's turn")
+	}
+	r.setRefuse(false)
+	r.onCompact = nil
+	r.finishTurn()
+	r.ac.afterRelease(t.Context(), "c1", accepted)
+	if r.count() != 2 || r.isQueued() || len(r.failures) != 0 {
+		t.Errorf("the re-queued run at the release: calls %d, queued %v, failures %v; want 2 calls, the row gone, no failure",
+			r.count(), r.isQueued(), r.failures)
+	}
+}
+
 // After the release the row belongs to a turn that opened meanwhile, whose end runs it.
 func TestAutoCompact_ARowUnderANewTurnWaitsForThatTurnsEnd(t *testing.T) {
-	for _, ran := range []bool{false, true} {
+	for _, accepted := range []bool{false, true} {
 		r := newCompactRig(90)
 		r.pressUnderHold(t)
 		r.setLive(true)
-		r.ac.afterRelease(t.Context(), "c1", ran)
+		r.ac.afterRelease(t.Context(), "c1", accepted)
 		if r.count() != 0 || !r.isQueued() {
-			t.Errorf("close ran %v, a turn live at the release: calls %d, queued %v; want no call and the row kept",
-				ran, r.count(), r.isQueued())
+			t.Errorf("close accepted %v, a turn live at the release: calls %d, queued %v; want no call and the row kept",
+				accepted, r.count(), r.isQueued())
 		}
 	}
 }

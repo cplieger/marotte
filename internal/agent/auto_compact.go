@@ -23,7 +23,7 @@ var compactCallBudget = 310 * time.Second
 const queuedCompactFailed = "The queued compaction did not run: the agent was busy, or the summary failed or the chat changed before it finished"
 
 // compactPhase is where a compaction run is; a run ends in exactly one of the last three, or goes back to queued
-// once when KAS refused it under a turn it opened.
+// when KAS refused it under a turn it opened and the reader did not cancel it.
 type compactPhase uint8
 
 const (
@@ -244,8 +244,8 @@ func (a *autoCompactor) forget(chatID marotte.ChatID) {
 // afterTurn runs at most one compaction at a turn's end, on an idle chat (a compaction beside a running turn is
 // aborted upstream): the queued one, else the policy's when the reading is at the point or the model refused the turn
 // for the context's size, unless the reader cancelled that turn's (turn is the closed turn's id). It joins a call
-// already in flight instead of making a second. Reports whether a compaction ran or was joined, which afterRelease
-// takes.
+// already in flight instead of making a second. Reports whether the compaction it ran or joined was accepted, which
+// afterRelease takes.
 func (a *autoCompactor) afterTurn(ctx context.Context, chatID marotte.ChatID, turn string, contextLimit bool) bool {
 	if a == nil {
 		return false
@@ -282,9 +282,9 @@ func (a *autoCompactor) afterTurn(ctx context.Context, chatID marotte.ChatID, tu
 	return a.runOrJoin(ctx, chatID, b, c, mine, u.ContextPct, trigger)
 }
 
-// afterRelease takes a request written under the close's KAS hold after afterTurn ran: run now when the close ran
-// none, else satisfied by the one it ran. A turn open by then owns the request.
-func (a *autoCompactor) afterRelease(ctx context.Context, chatID marotte.ChatID, ran bool) {
+// afterRelease takes a request written under the close's KAS hold after afterTurn ran: satisfied when the close's
+// compaction was accepted, else run now. A turn open by then owns the request.
+func (a *autoCompactor) afterRelease(ctx context.Context, chatID marotte.ChatID, accepted bool) {
 	if a == nil {
 		return
 	}
@@ -296,7 +296,7 @@ func (a *autoCompactor) afterRelease(ctx context.Context, chatID marotte.ChatID,
 	err := a.within(ctx, chatID, func(t queueTurn, st *autoCompactState, row func(bool) error) error {
 		switch {
 		case t.live || st.queued == nil:
-		case ran:
+		case accepted:
 			st.queued.phase, st.queued = compactDone, nil
 			return row(st.showsLocked())
 		case st.running != nil:
@@ -313,18 +313,18 @@ func (a *autoCompactor) afterRelease(ctx context.Context, chatID marotte.ChatID,
 	a.runOrJoin(ctx, chatID, b, c, mine, a.usage(ctx, chatID).ContextPct, "queued")
 }
 
-// runOrJoin makes a claimed call (a turn end's: a refusal is reported) or waits for the one it joined; false with
-// no call.
+// runOrJoin makes a claimed call (a shown request's refusal is reported) or waits for the one it joined, reporting
+// whether that call was accepted: false with no call or when the wait ended first.
 func (a *autoCompactor) runOrJoin(ctx context.Context, chatID marotte.ChatID, b *sharedBridge, c *compactCall, mine bool, atPct float64, trigger string) bool {
 	switch {
 	case c == nil:
 		return false
 	case mine:
 		a.call(ctx, chatID, b, c, atPct, trigger, true)
-	default:
-		a.await(ctx, chatID, c)
+	case !a.await(ctx, chatID, c):
+		return false
 	}
-	return true
+	return c.accepted
 }
 
 // awaitRunning holds a prompt until a running compaction is settled, so the prompt does not abort it.

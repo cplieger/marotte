@@ -273,7 +273,7 @@ func (bc *bridgeCoordinator) resolveCloseEnds(ctx context.Context, lc *chatLifec
 // no drain and skips atIdle.
 func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, lc *chatLifecycle, cf closeFacts, atIdle func()) ([]string, bool) {
 	chatID := lc.chatID
-	compacted, turnEnded := false, false
+	accepted, turnEnded := false, false
 	for {
 		if !lc.awaitKASIdle(ctx, cf.fence) ||
 			cf.answerWait > 0 && !bc.awaitAbandonedAnswer(ctx, chatID, cf.fence, cf.answerWait) {
@@ -288,24 +288,24 @@ func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, lc *chatLifecycle
 			bc.applyPendingModel(ctx, chatID)
 		}
 		if !turnEnded {
-			compacted, turnEnded = bc.compactAtTurnEnd(ctx, lc, cf), true
+			accepted, turnEnded = bc.compactAtTurnEnd(ctx, lc, cf), true
 		}
-		if rows, drain := bc.releaseHold(ctx, lc, cf.fence.Seq, compacted); drain {
+		if rows, drain := bc.releaseHold(ctx, lc, cf.fence.Seq, accepted); drain {
 			return rows, true
 		}
 	}
 }
 
-// compactAtTurnEnd runs the closed turn's one compaction, reporting whether one ran.
+// compactAtTurnEnd runs the closed turn's one compaction, reporting whether KAS accepted it.
 func (bc *bridgeCoordinator) compactAtTurnEnd(ctx context.Context, lc *chatLifecycle, cf closeFacts) bool {
 	return !lc.endedNow() && bc.autoCompact.afterTurn(ctx, lc.chatID, cf.turnID, cf.contextLimit)
 }
 
 // releaseHold releases the close's KAS hold; on a drain it first takes a compaction requested under the hold.
-func (bc *bridgeCoordinator) releaseHold(ctx context.Context, lc *chatLifecycle, seq uint64, compacted bool) ([]string, bool) {
+func (bc *bridgeCoordinator) releaseHold(ctx context.Context, lc *chatLifecycle, seq uint64, accepted bool) ([]string, bool) {
 	drain, rows := lc.kasStep(kasReleaseOwn, seq)
 	if drain && !lc.endedNow() {
-		bc.autoCompact.afterRelease(ctx, lc.chatID, compacted)
+		bc.autoCompact.afterRelease(ctx, lc.chatID, accepted)
 	}
 	return rows, drain
 }

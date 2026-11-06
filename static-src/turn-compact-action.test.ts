@@ -1,7 +1,7 @@
 // A context-overflowed turn offers ONE way out: "Compact the context" under its notice, on the
-// newest turn only, until a compaction lands after it, while auto compaction is off. With it on the
-// server compacts at the turn's end, so the notice says so and offers no button. Through the real
-// paint: the conditions span the turn, its chat, the entries after its close and the policy.
+// newest turn only, until a compaction lands after it, whatever the auto compaction switch says: a
+// cancel of the turn's queued compaction stops its end's compaction, which the page cannot see.
+// Through the real paint: the conditions span the turn, its chat and the entries after its close.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import type { TurnState } from "./types.js";
@@ -159,11 +159,20 @@ describe("the overflow notice, auto compaction on", () => {
     compactionPolicy.value = { enabled: true, pct: 90 };
   });
 
-  it("says the chat is being compacted and offers no button", async () => {
+  it("keeps the manual text and the Compact button", async () => {
     const [card] = await mount("c-auto", [turnEntries("t1", 1, overflowed)]);
-    expect(notice(card)).toBe(
-      "This chat reached the model's context limit. It is being compacted; send the prompt again when the summary appears.",
-    );
+    expect(notice(card)).toBe(OVERFLOW);
+    const btn = button(card);
+    expect(btn?.textContent).toBe("Compact the context");
+    btn?.click();
+    expect(dispatch).toHaveBeenCalledWith({ chatID: "c-auto" });
+  });
+
+  it("withdraws the button once the turn end's compaction lands", async () => {
+    const [card] = await mount("c-auto-compacted", [
+      turnEntries("t1", 1, overflowed, ["compaction"]),
+    ]);
+    expect(notice(card)).toBe(OVERFLOW);
     expect(button(card)).toBeNull();
   });
 

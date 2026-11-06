@@ -252,6 +252,35 @@ func TestAutoCompact_APressDuringARefusedTurnEndRunAfterTheCancelWaitsForTheNewT
 	}
 }
 
+// The reader cancels the turn end's running compaction and presses again under the close's hold, and KAS refuses the
+// call with no turn live: the re-press is a new request the refused call did not satisfy, so it runs at the release.
+func TestAutoCompact_ARepressAfterACancelDuringARefusedTurnEndRunRunsAtTheRelease(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 92)
+	r.finishTurn()
+	r.setRefuse(true)
+	var once sync.Once
+	r.onCompact = func() {
+		once.Do(func() {
+			if err := r.ac.cancel(t.Context(), "c1"); err != nil {
+				t.Errorf("cancel: %v", err)
+			}
+			r.pressUnderHold(t)
+		})
+	}
+	accepted := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
+	if accepted || !r.isQueued() {
+		t.Fatalf("after the refused turn end: accepted %v, queued %v; want not accepted and the re-press kept", accepted, r.isQueued())
+	}
+	r.setRefuse(false)
+	r.onCompact = nil
+	r.ac.afterRelease(t.Context(), "c1", accepted)
+	if r.count() != 2 || r.isQueued() || len(r.failures) != 0 {
+		t.Errorf("the re-press at the release: calls %d, queued %v, failures %v; want 2 calls, the row gone, no failure",
+			r.count(), r.isQueued(), r.failures)
+	}
+}
+
 // The record queue's section names the open turn, then the finished one, with whether a turn is live; its row writer
 // sets and clears the record's row and is idempotent; a chat with no lifecycle gets no turn and a plain writer.
 func TestRecordCompactQueue_SectionNamesTheRequestsTurn(t *testing.T) {
