@@ -20,7 +20,7 @@ for (const id of [
   }
 }
 
-const { buildAssistantBody, resetBlockRenders, initBlockRenderer } =
+const { buildAssistantBody, resetBlockRenders, initBlockRenderer, dropHead, mountHeadRange } =
   await import("./messages-blocks.js");
 const { rendersNothing } = await import("./block-window.js");
 const { clearAllEntrySigs, ensureToolCallSig, toolCallSigs } = await import("./store-signals.js");
@@ -570,5 +570,55 @@ describe("Show hook status off", () => {
     expect(badge(r.body)).toBeNull();
     setHookStatusShown(true);
     expect(badge(r.body)?.textContent).toContain("4");
+  });
+});
+
+describe("a group the window drops", () => {
+  /** Two guarded runs split by prose: seqs 1-6 and 8-13, each command followed by its two guards. */
+  function twoRuns(t: string): Entry[] {
+    return [
+      ...guardedCommands(t, 2, 1),
+      entry(t, 7, "text", { text: "between" }, `${t}-say#7`),
+      ...guardedCommands(t, 2, 8),
+    ];
+  }
+
+  function mount(t: string): { body: HTMLElement; turn: Turn } {
+    const turn = turnOf(t, twoRuns(t));
+    const body = document.createElement("div");
+    body.className = "turn-body";
+    document.body.appendChild(body);
+    hosts.push(body);
+    buildAssistantBody(body, turn, CHAT_ID, false);
+    return { body, turn };
+  }
+
+  it("leaves no empty shell when every card of a group goes", () => {
+    const { body, turn } = mount("t-drop-whole");
+    dropHead(turn, { from: 7, to: 14 });
+    const groups = [...body.querySelectorAll<HTMLElement>(".tool-group")];
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.querySelectorAll(".tool-call")).toHaveLength(6);
+  });
+
+  it("mounts the dropped group again when the window grows back over it", () => {
+    const { body, turn } = mount("t-drop-regrow");
+    dropHead(turn, { from: 7, to: 14 });
+    mountHeadRange(turn, { from: 1, to: 14 }, false);
+    expect(body.querySelector(".entry-fallback")).toBeNull();
+    const seqs = [...body.querySelectorAll<HTMLElement>(".tool-call")].map((c) =>
+      Number(c.dataset["entrySeq"]),
+    );
+    expect(seqs).toEqual([1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13]);
+    expect(badge(body)?.textContent).toContain("4");
+  });
+
+  it("recounts a group that keeps some of its cards", () => {
+    const { body, turn } = mount("t-drop-part");
+    dropHead(turn, { from: 4, to: 14 });
+    const first = body.querySelector<HTMLElement>(".tool-group")!;
+    expect(first.querySelectorAll(".tool-call")).toHaveLength(3);
+    expect(badge(first)?.textContent).toContain("2");
+    expect(first.querySelectorAll(".tool-hook-item")).toHaveLength(2);
   });
 });

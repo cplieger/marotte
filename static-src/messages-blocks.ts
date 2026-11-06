@@ -821,10 +821,11 @@ function syncFolds(st: TurnRender, live: boolean, idx: GroupIndex): void {
       continue;
     }
     // Discarded: `placeEntry` re-seats that same card.
+    const lost = groupsHolding(st, [held.seq]);
     dropEntry(st, held.seq);
     cbs.disposeEntryEffects(st.turnID, [held.seq]);
     // The row was a group member; only the groups, since a held box is not this drop's to judge.
-    pruneEmptyToolGroups(st);
+    pruneEmptyToolGroups(st, lost);
     placeEntry(st, e, live, idx);
   }
 }
@@ -1096,6 +1097,7 @@ function failPlacement(st: TurnRender, p: Placement, err: unknown): void {
     }
     view.row.remove();
   }
+  const lost = groupsHolding(st, seqs);
   for (const seq of seqs) {
     dropEntry(st, seq);
   }
@@ -1103,7 +1105,7 @@ function failPlacement(st: TurnRender, p: Placement, err: unknown): void {
   if (p.run >= 0) {
     st.proseRuns.delete(p.run);
   }
-  pruneEmptyToolGroups(st);
+  pruneEmptyToolGroups(st, lost);
   const entries = seqs.map((seq) => entryAt(st.turn, seq));
   console.error(
     "[transcript] an entry failed to render",
@@ -1212,6 +1214,7 @@ function dropEntryRange(st: TurnRender, keep: EntryRange): void {
   for (const seq of removed) {
     recordOutgoingHeight(st, seq);
   }
+  const lost = groupsHolding(st, removed);
   const orphaned = new Map<string, RunCardView>();
   for (const seq of removed) {
     const hosted = dropEntry(st, seq);
@@ -1221,7 +1224,7 @@ function dropEntryRange(st: TurnRender, keep: EntryRange): void {
   }
   cbs.disposeEntryEffects(st.turnID, removed);
   pruneOrphanedCards(st, keep);
-  pruneEmptyContainers(st);
+  pruneEmptyContainers(st, lost);
   rebindSurvivingBoxes(st);
   st.window = keep;
   // After the loop: `st` may claim, and mid-loop its `entryEls` holds ordinals being dropped.
@@ -1510,13 +1513,31 @@ function rebindSurvivingBoxes(st: TurnRender): void {
   }
 }
 
-/** Remove every tool group shell left without a card. */
-function pruneEmptyToolGroups(st: TurnRender): void {
+/** The tool groups holding `seqs`' mounted cards, read before a drop takes the cards out. */
+function groupsHolding(st: TurnRender, seqs: Iterable<number>): Set<HTMLElement> {
+  const out = new Set<HTMLElement>();
+  for (const seq of seqs) {
+    const group = st.entryEls.get(seq)?.parentElement?.closest<HTMLElement>(".tool-group");
+    if (group !== null && group !== undefined) {
+      out.add(group);
+    }
+  }
+  return out;
+}
+
+/**
+ * Remove every tool group shell left without a card, and redraw the header of each group in `lost` that kept some.
+ * The body's hook list is the group's own chrome, never content: a shell holding only it would stay on screen as an
+ * empty bar, and its list would be taken as the insertion boundary of the next head extension.
+ */
+function pruneEmptyToolGroups(st: TurnRender, lost: ReadonlySet<HTMLElement>): void {
   for (const [key, bucket] of st.toolGroups) {
     for (const [runStart, group] of bucket) {
-      if (groupBody(group).firstElementChild === null) {
+      if (groupBody(group).querySelector(":scope > [data-entry-seq]") === null) {
         group.remove();
         bucket.delete(runStart);
+      } else if (lost.has(group)) {
+        refreshGroupHeader(group);
       }
     }
     if (bucket.size === 0) {
@@ -1526,8 +1547,8 @@ function pruneEmptyToolGroups(st: TurnRender): void {
 }
 
 /** Remove every container the drop left empty with its state; its `openContainers` key stays. */
-function pruneEmptyContainers(st: TurnRender): void {
-  pruneEmptyToolGroups(st);
+function pruneEmptyContainers(st: TurnRender, lost: ReadonlySet<HTMLElement>): void {
+  pruneEmptyToolGroups(st, lost);
 }
 
 /**
