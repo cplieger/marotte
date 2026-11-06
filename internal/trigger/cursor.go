@@ -26,6 +26,8 @@ type labelEntry struct {
 
 type labeledCursor struct {
 	Items map[int]*labelEntry `json:"items,omitempty"`
+	// TooMany marks a last complete walk that read more open items than the cap, which blocks the rule.
+	TooMany bool `json:"too_many,omitempty"`
 }
 
 // openedCursor accounts for every item at or below Floor, and for each number in Seen above it.

@@ -1,7 +1,9 @@
 package trigger
 
 import (
+	"cmp"
 	"log/slog"
+	"slices"
 	"time"
 )
 
@@ -21,11 +23,14 @@ func (pr *pollRule) applyLabeled(items []item, complete bool) {
 		rc.Labeled.Items = map[int]*labelEntry{}
 	}
 	part := itemPart(pr.ev.Kind)
+	slices.SortFunc(items, func(a, b item) int { return cmp.Compare(a.number, b.number) })
+	open := 0
 	for i := range items {
 		it := &items[i]
 		if !pr.admitsItem(it) {
 			continue
 		}
+		open++
 		e := rc.Labeled.Items[it.number]
 		present := pr.hasLabel(it)
 		if !present && it.cut {
@@ -37,27 +42,33 @@ func (pr *pollRule) applyLabeled(items []item, complete bool) {
 		}
 		if e == nil {
 			e = &labelEntry{HasLabel: labelNo}
-			rc.Labeled.Items[it.number] = e
 		}
 		e.LastSeen = pr.start
-		if !present {
+		switch {
+		case !present:
 			e.HasLabel = labelNo
+		case e.HasLabel != labelNo || pr.enqueueGain(part, it.number):
+			e.HasLabel = labelYes
+		case rc.Labeled.Items[it.number] == nil:
+			// Left at the forge with no entry, as an item the cursor has not seen.
 			continue
 		}
-		if e.HasLabel == labelNo {
-			pr.enqueueGain(part, it.number)
-		}
-		e.HasLabel = labelYes
+		rc.Labeled.Items[it.number] = e
+	}
+	if complete {
+		pr.pruneLabeled(rc.Labeled, open)
 	}
 }
 
-func (pr *pollRule) enqueueGain(part string, number int) {
+// enqueueGain queues the item's gain, false when the queue is full: the item then keeps has_label false and is
+// matched again once the queue has room.
+func (pr *pollRule) enqueueGain(part string, number int) bool {
 	gain := formatGain(pr.mint())
 	repo := foldRepo(pr.feed.Selector)
 	_, host := connectionParts(pr.feed.Connection)
 	key := labeledKey(pr.rule.ID, repo, part, number, gain)
 	in := pr.eventInputs(key, labeledEventID(host, repo, part, number, pr.rule.ID, gain))
-	pr.enqueue(&queueEntry{
+	return pr.hold(&queueEntry{
 		Key: key, CoalesceKey: itemCoalesceKey(pr.rule.ID, repo, part, number), ObservedAt: pr.start,
 		Inputs: pr.itemInputs(in, part, number, pr.ev.Filter.Label),
 	})

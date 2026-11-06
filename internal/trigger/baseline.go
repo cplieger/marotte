@@ -29,6 +29,7 @@ func (pr *pollRule) baselineLabeled(rc *repoCursor, items []item) {
 		lc.Items[items[i].number] = &labelEntry{HasLabel: state, LastSeen: pr.start}
 	}
 	rc.Labeled = lc
+	lc.TooMany = len(lc.Items) > maxLabeledEntries
 	pr.logBaseline(len(lc.Items))
 }
 

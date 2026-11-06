@@ -24,7 +24,7 @@ func (pr *pollRule) applyOpened(items []item, complete bool) {
 	oc := rc.Opened
 	floor, seen := oc.Floor, slices.Clone(oc.Seen)
 	slices.SortFunc(items, func(a, b item) int { return cmp.Compare(a.number, b.number) })
-	high := 0
+	high, unqueued := 0, 0
 	for i := range items {
 		it := &items[i]
 		high = max(high, it.number)
@@ -34,17 +34,26 @@ func (pr *pollRule) applyOpened(items []item, complete bool) {
 		if _, found := slices.BinarySearch(seen, it.number); found {
 			continue
 		}
+		if author, ok := pr.allowed(it); ok && !pr.enqueueOpened(it.number, author) {
+			if unqueued == 0 {
+				unqueued = it.number
+			}
+			continue
+		}
 		if at, found := slices.BinarySearch(oc.Seen, it.number); !found {
 			oc.Seen = slices.Insert(oc.Seen, at, it.number)
-		}
-		if author, ok := pr.allowed(it); ok {
-			pr.enqueueOpened(it.number, author)
 		}
 	}
 	if !complete {
 		return
 	}
-	oc.Floor = max(oc.Floor, oc.PendingFloor)
+	// A match left at the forge stays out of seen, and both floors stop below it, so it is new again at the
+	// first poll after the queue has room.
+	next := oc.PendingFloor
+	if unqueued != 0 {
+		next, high = min(next, unqueued-1), min(high, unqueued-1)
+	}
+	oc.Floor = max(oc.Floor, next)
 	oc.PendingFloor = high
 	oc.Seen = slices.DeleteFunc(oc.Seen, func(n int) bool { return n <= oc.Floor })
 }
@@ -62,13 +71,14 @@ func (pr *pollRule) allowed(it *item) (string, bool) {
 	return "", false
 }
 
-func (pr *pollRule) enqueueOpened(number int, author string) {
+// enqueueOpened queues the item's opening, false when the queue is full.
+func (pr *pollRule) enqueueOpened(number int, author string) bool {
 	part := itemPart(pr.ev.Kind)
 	repo := foldRepo(pr.feed.Selector)
 	_, host := connectionParts(pr.feed.Connection)
 	key := openedKey(pr.rule.ID, repo, part, number)
 	in := pr.eventInputs(key, openedEventID(host, repo, part, number))
-	pr.enqueue(&queueEntry{
+	return pr.hold(&queueEntry{
 		Key: key, CoalesceKey: itemCoalesceKey(pr.rule.ID, repo, part, number), ObservedAt: pr.start,
 		Inputs: pr.itemInputs(in, part, number, author),
 	})

@@ -9,6 +9,8 @@ type queueEntry struct {
 	Key        string            `json:"key"`
 	// CoalesceKey groups the entries a newest hold keeps one of; it can hold forge text and is never logged.
 	CoalesceKey string `json:"coalesce_key"`
+	// Live names the entry's live attempt record by its run, empty while it has none.
+	Live string `json:"live,omitempty"`
 }
 
 // launchedEntry is one confirmed event and the run that confirmed it.

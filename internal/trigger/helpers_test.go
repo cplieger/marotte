@@ -25,13 +25,14 @@ type harness struct {
 	t     *testing.T
 	store *launchrule.Store
 	src   *fakeSource
+	marks *launchMarks
 	now   time.Time
 	dir   string
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	h := &harness{t: t, dir: t.TempDir(), src: &fakeSource{}, now: pollStart}
+	h := &harness{t: t, dir: t.TempDir(), src: &fakeSource{}, marks: newLaunchMarks(), now: pollStart}
 	h.reopen()
 	return h
 }
@@ -60,7 +61,7 @@ func (h *harness) create(ev *launchrule.EventSpec) launchrule.Rule {
 // poll runs one poll of every feed at h.now, then moves h.now on by five minutes.
 func (h *harness) poll() {
 	h.t.Helper()
-	p := &Poller{src: h.src, store: h.store, now: func() time.Time { return h.now }}
+	p := &Poller{src: h.src, store: h.store, now: func() time.Time { return h.now }, marks: h.marks}
 	for _, fr := range Feeds(h.store.List()) {
 		p.Poll(h.t.Context(), fr)
 	}
@@ -161,14 +162,6 @@ func runSpec(results ...string) *launchrule.EventSpec {
 		Connection: testConn, Repo: testRepo, Kind: launchrule.KindRunConcluded,
 		Filter: launchrule.Filter{Workflow: testWorkflow, Branch: "main", Result: results},
 	}
-}
-
-func keysOf(q []queueEntry) []string {
-	out := make([]string, 0, len(q))
-	for i := range q {
-		out = append(out, q[i].Key)
-	}
-	return out
 }
 
 func inputOf(q []queueEntry, name string) []string {

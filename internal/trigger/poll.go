@@ -49,13 +49,14 @@ type Poller struct {
 	src   FeedSource
 	store StateStore
 	now   func() time.Time
+	marks *launchMarks
 }
 
 // NewPoller returns a Poller reading through src and keeping rule state in store.
 //
 //deadset:ignore DS1102 -- the trigger runner polls through it; until that lands only the tests do
 func NewPoller(src FeedSource, store StateStore) *Poller {
-	return &Poller{src: src, store: store, now: time.Now}
+	return &Poller{src: src, store: store, now: time.Now, marks: newLaunchMarks()}
 }
 
 // reads is what one poll read of a feed, each list walked at most once whatever its rules.
@@ -84,6 +85,7 @@ func (p *Poller) Poll(ctx context.Context, fr FeedRules) {
 	rd := p.read(ctx, fr.Feed, rules, start)
 	for _, pr := range rules {
 		pr.apply(&rd)
+		pr.logFull()
 		p.write(ctx, pr)
 	}
 	slog.Debug(logMsgPoll, "connection", fr.Feed.Connection, "repo", fr.Feed.Selector,
@@ -105,7 +107,7 @@ func (p *Poller) load(r *launchrule.Rule, f Feed, start time.Time) *pollRule {
 	if err != nil {
 		return nil
 	}
-	return &pollRule{rule: r, ev: r.When.Event, feed: f, start: start, st: es, before: before}
+	return &pollRule{rule: r, ev: r.When.Event, feed: f, start: start, st: es, before: before, marks: p.marks}
 }
 
 func (p *Poller) read(ctx context.Context, f Feed, rules []*pollRule, start time.Time) reads {
@@ -186,7 +188,10 @@ type pollRule struct {
 	// before is the state as loaded, so a poll that changed nothing writes nothing.
 	before []byte
 	// gain is this poll's minted label-gain instant, zero until its first gain.
-	gain time.Time
+	gain  time.Time
+	marks *launchMarks
+	// full is set once the poll left a match unqueued.
+	full bool
 }
 
 func (pr *pollRule) labeled() bool {
@@ -227,15 +232,6 @@ func (pr *pollRule) applyItems(items []item, complete bool) {
 		return
 	}
 	pr.applyOpened(items, complete)
-}
-
-// enqueue holds e unless its key is already accounted for.
-func (pr *pollRule) enqueue(e *queueEntry) {
-	if pr.st.knows(e.Key) {
-		return
-	}
-	pr.st.queue = append(pr.st.queue, *e)
-	slog.Info(logMsgEventMatched, append(pr.attrs(), "key", e.Key, "held", len(pr.st.queue))...)
 }
 
 // item is a labeled or opened kind's view of one issue or pull request row.

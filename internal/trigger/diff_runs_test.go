@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/marotte/internal/launchrule"
 )
 
 // baselined is a harness whose run rule took its baseline at pollStart.
@@ -18,7 +19,12 @@ func baselined(t *testing.T, results ...string) (*harness, string) {
 }
 
 func TestRunKeyedOnIDNotAttempt(t *testing.T) {
-	h, id := baselined(t, "success")
+	h := newHarness(t)
+	ev := runSpec("success")
+	ev.Hold = &launchrule.Hold{Policy: launchrule.HoldFIFO, Cap: 10}
+	id := h.create(ev).ID
+	h.runPage()
+	h.poll()
 	created := pollStart.Add(time.Minute)
 	a, b := run(41, forgeapi.CheckPassing, created), run(42, forgeapi.CheckPassing, created)
 	a.Ref.Number, b.Ref.Number = 7, 7

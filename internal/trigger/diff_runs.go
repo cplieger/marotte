@@ -1,6 +1,7 @@
 package trigger
 
 import (
+	"cmp"
 	"slices"
 	"strings"
 	"time"
@@ -22,8 +23,12 @@ func (pr *pollRule) applyRuns(w *Walk[forgeapi.Run], bound, h time.Time) {
 	}
 	c := rc.Runs
 	listed := map[int64]bool{}
-	for i := range w.Items {
-		r := &w.Items[i]
+	rows := slices.Clone(w.Items)
+	slices.SortFunc(rows, func(a, b forgeapi.Run) int {
+		return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), cmp.Compare(a.Ref.ID, b.Ref.ID))
+	})
+	for i := range rows {
+		r := &rows[i]
 		if r.CreatedAt.Before(h) || r.CreatedAt.Before(c.BaselineAt) || !pr.admitsRun(r) {
 			continue
 		}
@@ -40,8 +45,8 @@ func (pr *pollRule) applyRuns(w *Walk[forgeapi.Run], bound, h time.Time) {
 
 func (pr *pollRule) matchRun(c *runCursor, r *forgeapi.Run) {
 	result := resultOf(r.State)
-	if result != "" && slices.Contains(pr.ev.Filter.Result, result) {
-		pr.enqueueRun(r, result)
+	matched := result != "" && slices.Contains(pr.ev.Filter.Result, result)
+	if matched && pr.enqueueRun(r, result) {
 		delete(c.Runs, r.Ref.ID)
 		if c.Fired == nil {
 			c.Fired = map[int64]time.Time{}
@@ -53,7 +58,10 @@ func (pr *pollRule) matchRun(c *runCursor, r *forgeapi.Run) {
 		c.Runs = map[int64]*runEntry{}
 	}
 	e := &runEntry{CreatedAt: r.CreatedAt, State: r.State.String(), Hold: holdOutside}
-	if result == "" {
+	switch {
+	case matched:
+		e.Hold = holdAtForge
+	case result == "":
 		e.Hold = holdPending
 	}
 	if r.State == forgeapi.CheckUnknown {
@@ -108,12 +116,13 @@ func (pr *pollRule) runBranch(branch string) string {
 	return branch
 }
 
-func (pr *pollRule) enqueueRun(r *forgeapi.Run, result string) {
+// enqueueRun queues the run's conclusion, false when the queue is full.
+func (pr *pollRule) enqueueRun(r *forgeapi.Run, result string) bool {
 	repo := foldRepo(pr.feed.Selector)
 	_, host := connectionParts(pr.feed.Connection)
 	key := runKey(pr.rule.ID, repo, r.Ref.ID)
 	in := pr.eventInputs(key, runEventID(host, repo, r.Ref.ID, result))
-	pr.enqueue(&queueEntry{
+	return pr.hold(&queueEntry{
 		Key: key, CoalesceKey: runCoalesceKey(pr.feed.RepoID(), r.WorkflowPath, r.Branch), ObservedAt: pr.start,
 		Inputs: pr.runInputs(in, r, result),
 	})
