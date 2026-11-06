@@ -689,14 +689,15 @@ interface ActivationOpts {
   readonly quiet: boolean;
   /** Start a fresh activation of the tab already active (a Retry after a failed load). */
   readonly again?: boolean;
-  /** Run the activation half in this task: boot, where nothing has painted that could go first. */
+  /** Run the activation half in this task: boot, where nothing has painted that could go first,
+   *  and a refused switch's revert, whose toast is raised when the revert returns. */
   readonly now?: boolean;
 }
 
 /** The GESTURE half, run inside the click: only writes that read no layout. The strip, the device
  *  view, the active chat and the cover move now; `runActivation` shows the view after this frame
- *  paints, or in this task for an empty chat, which gets no cover. Answers the record installed,
- *  or undefined when nothing changed. */
+ *  paints, or in this task for `now` and an empty chat, which gets no cover. Answers the record
+ *  installed, or undefined when nothing changed. */
 function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | undefined {
   const row = rowOfID(id);
   if (row === undefined || (id === state.active && opts.again !== true)) {
@@ -1088,7 +1089,7 @@ function revertSwitch(args: SwitchArgs, op: SwitchOp, err: ActionErrorLike): boo
   const target = revertTarget(args.to, op.from);
   let stays = false;
   if (target !== "") {
-    activateTabQuietly(target);
+    beginActivation(target, { quiet: true, now: true });
     if (focusOnRow) {
       elementOf(target)?.focus();
     }
