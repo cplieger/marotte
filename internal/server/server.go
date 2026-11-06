@@ -69,6 +69,8 @@ type Server struct {
 	hostPolicy *httpserver.HostPolicy
 	// notifyGate is the notify route's credential; the zero Gate is the door off.
 	notifyGate notify.Gate
+	// notifyDeliverer is the chats the notify route delivers into; nil leaves the route unmounted.
+	notifyDeliverer notify.Deliverer
 	// onListen fires once per successful bind, before serving: the evidence that this process
 	// serves its config dir.
 	onListen  func()
@@ -248,6 +250,11 @@ func WithNotifyGate(g notify.Gate) Option {
 	return func(s *Server) { s.notifyGate = g }
 }
 
+// WithNotifyDeliverer mounts the notify route over d, the chats it delivers into.
+func WithNotifyDeliverer(d notify.Deliverer) Option {
+	return func(s *Server) { s.notifyDeliverer = d }
+}
+
 // WithOnListen registers a callback fired once the listener has SUCCESSFULLY bound (a bind
 // failure never fires it). It runs on the bind goroutine ahead of serving, so it must not block.
 func WithOnListen(fn func()) Option {
@@ -276,6 +283,9 @@ func (s *Server) routes() *http.ServeMux {
 	mux.Handle("/", spaHandler(s.staticFS))
 	registerAPIFallback(mux)
 	s.agent.RegisterRoutes(mux)
+	if s.notifyDeliverer != nil {
+		mux.Handle(notify.Pattern, notify.NewHandler(s.notifyGate, s.notifyDeliverer))
+	}
 	mux.HandleFunc("/api/version", s.handleVersion)
 	mux.HandleFunc("/api/diagnostics", s.handleDiagnostics)
 	mux.HandleFunc("/api/kiro-settings", s.handleKiroSettings)

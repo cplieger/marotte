@@ -330,6 +330,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithTrustedProxies(cfg.TrustedProxies),
 		server.WithHostPolicy(cfg.HostPolicy),
 		server.WithNotifyGate(cfg.NotifyGate),
+		server.WithNotifyDeliverer(h.Notifier()),
 		// ListenAndServe is callable twice and a second close panics.
 		server.WithOnListen(sync.OnceFunc(func() { close(listenerBound) })),
 	)

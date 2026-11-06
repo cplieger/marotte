@@ -984,6 +984,13 @@ func engineInterruptCause(cause *restartCause) string {
 	return "The agent engine restarted to apply: " + strings.Join(names, ", ")
 }
 
+// isReady reports whether the engine is in its ready state now.
+func (o *engineOwner) isReady() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.state == marotte.EngineReady
+}
+
 // status is the engine's state as GET /api/engine and engine_status carry it.
 func (o *engineOwner) status() marotte.EngineStatus {
 	o.statusMu.Lock()
