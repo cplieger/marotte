@@ -290,26 +290,26 @@ export function hasSelectionIn(row: HTMLElement): boolean {
 /**
  * A `role="button"` element, not a `<button>`, for a control whose words are content (a run's name): neither
  * Chromium nor WebKit selects text inside a `<button>`, and those words must stay selectable to quote. Click, Enter
- * and Space call `activate`; a click that ends a selection in it does not.
+ * and Space call `activate` with their event; a click that ends a selection in it does not.
  */
 export function selectableButton(
   tag: "div" | "span",
   className: string,
-  activate: () => void,
+  activate: (e: MouseEvent | KeyboardEvent) => void,
 ): HTMLElement {
   const btn: HTMLElement = document.createElement(tag);
   btn.className = className;
   btn.setAttribute("role", "button");
   btn.tabIndex = 0;
-  btn.addEventListener("click", () => {
+  btn.addEventListener("click", (e: MouseEvent) => {
     if (!hasSelectionIn(btn)) {
-      activate();
+      activate(e);
     }
   });
   btn.addEventListener("keydown", (e: KeyboardEvent) => {
     if (e.target === btn && (e.key === "Enter" || e.key === " ")) {
       e.preventDefault();
-      activate();
+      activate(e);
     }
   });
   return btn;

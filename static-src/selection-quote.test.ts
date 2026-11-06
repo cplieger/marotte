@@ -6,6 +6,7 @@ import type * as NoticeSubject from "./notice-subject.js";
 import type * as Toast from "./toast.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { QUOTE_ATTRIBUTION } from "./message-quote.js";
+import { buildRunCard } from "./fundamentals/run-card.js";
 import { buildSteerNote } from "./fundamentals/steer-note.js";
 import { buildTurnHeader } from "./fundamentals/turn-header.js";
 import { wakeLine } from "./turn-wake.js";
@@ -801,6 +802,24 @@ describe("a run's name the reader can open", () => {
     await userEvent.dblClick(header.querySelector(".turn-wake-row-run")!);
     expect(document.getSelection()?.toString()).toBe("nightly");
     expect(await sourceLine()).toBe("> From the turn header:");
+  });
+
+  it("quotes a run card's step name selected on its own", async () => {
+    const card = buildRunCard(RUN, "nightly", vi.fn());
+    card.render({
+      workflowId: RUN,
+      status: "running",
+      root: {
+        nodeId: RUN,
+        type: "sequence",
+        status: "running",
+        children: [{ nodeId: "lint", type: "step", status: "running" }],
+      },
+    });
+    turnWith([card.root]);
+    await userEvent.dblClick(card.root.querySelector(".run-step-name")!);
+    expect(document.getSelection()?.toString()).toBe("lint");
+    expect(await sourceLine()).toBe("> From run nightly:");
   });
 });
 

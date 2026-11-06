@@ -1,8 +1,10 @@
 // The run card's state vocabulary: the per-step GLYPH is the only signal for what a step is
 // doing, so every step state has to reach it.
 import { vi, describe, it, expect } from "vitest";
+import { userEvent } from "vitest/browser";
 
 import { buildRunCard } from "./run-card.js";
+import { mountAppCSS } from "../__test-helpers__/css-rules.js";
 import type { RunAsks } from "../run-asks.js";
 import { workNodes } from "../exec-view/model.js";
 import { runToExec } from "../run-exec-source.js";
@@ -615,10 +617,6 @@ describe("a step row's key is the exec view's own node path", () => {
     expect(new Set(keyed).size).toBe(keyed.length);
     expect(keyed).toEqual(["wf_1:a/b", "wf_1:a/b:c", "wf_1:a", "wf_1:a:b", "wf_1:a:b:c"]);
     expect(rowStates(c.root)).toEqual(["running", "pending"]);
-    const hrefs = [...c.root.querySelectorAll<HTMLAnchorElement>(".run-step-head")].map((a) =>
-      a.getAttribute("href"),
-    );
-    expect(new Set(hrefs).size).toBe(2);
   });
 });
 
@@ -636,16 +634,45 @@ describe("a step row is a door into the run tab", () => {
     return c;
   }
 
-  function head(c: ReturnType<typeof buildRunCard>): HTMLAnchorElement {
-    return c.root.querySelector<HTMLAnchorElement>(".run-step-head")!;
+  function head(c: ReturnType<typeof buildRunCard>): HTMLElement {
+    return c.root.querySelector<HTMLElement>(".run-step-head")!;
   }
 
-  it("makes the row head a real anchor at that STEP's route", () => {
-    // A real link (middle-click, copy-link); the node rides as a FRAGMENT because a node path contains
-    // `/` and the tab's identity stays `(run, workflowId)`.
+  /** The URLs `window.open` was asked for while `act` ran. */
+  function newTabs(act: () => void): string[] {
+    const spy = vi.spyOn(window, "open").mockReturnValue(null);
+    try {
+      act();
+      return spy.mock.calls.map((call) => String(call[0]));
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it("opens that STEP's route in a new tab on a modified or middle click", () => {
+    // The node rides as a FRAGMENT because a node path contains `/` and the tab's identity stays
+    // `(run, workflowId)`.
     const h = head(doorCard());
-    expect(h.tagName).toBe("A");
-    expect(h.getAttribute("href")).toBe("/run/wf_1#node=wf_1%3Abuild");
+    const route = "/run/wf_1#node=wf_1%3Abuild";
+    for (const mod of ["ctrlKey", "metaKey", "shiftKey"] as const) {
+      expect(
+        newTabs(() => h.dispatchEvent(new MouseEvent("click", { bubbles: true, [mod]: true }))),
+        mod,
+      ).toEqual([route]);
+    }
+    const middle = new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
+    expect(newTabs(() => h.dispatchEvent(middle))).toEqual([route]);
+    expect(middle.defaultPrevented).toBe(true);
+    // Neither opened the step in place.
+    expect(opened).toEqual([]);
+  });
+
+  it("opens nothing on a right button's auxclick", () => {
+    const h = head(doorCard());
+    expect(
+      newTabs(() => h.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, button: 2 }))),
+    ).toEqual([]);
+    expect(opened).toEqual([]);
   });
 
   it("keeps the FOOT link on the run itself, with no fragment", () => {
@@ -659,7 +686,10 @@ describe("a step row is a door into the run tab", () => {
 
   it("points a loop's row at its own pass, not at the shared node id", () => {
     // Two passes share a nodeId, so only the node path separates them.
-    const c = card();
+    const c = buildRunCard("wf_1", "Workflow run", (_id, _label, node) => {
+      opened.push(["wf_1", "", node]);
+    });
+    opened.length = 0;
     c.render({
       workflowId: "wf_1",
       status: "completed",
@@ -685,11 +715,10 @@ describe("a step row is a door into the run tab", () => {
         ],
       },
     });
-    expect(
-      [...c.root.querySelectorAll<HTMLAnchorElement>(".run-step-head")].map((a) =>
-        a.getAttribute("href"),
-      ),
-    ).toEqual(["/run/wf_1#node=wf_1%3Aiter-1%3Awork"]);
+    const heads = [...c.root.querySelectorAll<HTMLElement>(".run-step-head")];
+    expect(heads).toHaveLength(1);
+    heads[0]?.click();
+    expect(opened.map(([, , node]) => node)).toEqual(["wf_1:iter-1:work"]);
   });
 
   it("hosts no step body and carries no disclosure chevron", () => {
@@ -701,13 +730,13 @@ describe("a step row is a door into the run tab", () => {
     expect(c.root.querySelector(".run-step.collapsed")).toBeNull();
   });
 
-  it("leaves no interactive element nested inside another", () => {
-    // axe's `nested-interactive` (serious): an `<a>` inside a `role="button"` host
-    // fires it, and `aria-hidden` + `tabindex="-1"` does not clear it. So the row's
-    // anchor carries no role of its own and its children are spans.
+  it("is one control with no interactive element nested inside it", () => {
+    // axe's `nested-interactive` (serious): a link or button inside a `role="button"` host
+    // fires it, and `aria-hidden` + `tabindex="-1"` does not clear it. So the head's children are spans.
     const h = head(doorCard());
-    expect(h.getAttribute("role")).toBeNull();
-    expect(h.hasAttribute("tabindex")).toBe(false);
+    expect(h.tagName).toBe("DIV");
+    expect(h.getAttribute("role")).toBe("button");
+    expect(h.getAttribute("tabindex")).toBe("0");
     expect([...h.children].map((e) => e.tagName)).toEqual(["SPAN", "SPAN", "SPAN", "SPAN"]);
     expect(h.querySelector("a, button, [tabindex]")).toBeNull();
   });
@@ -717,21 +746,19 @@ describe("a step row is a door into the run tab", () => {
     const ev = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
     head(c).dispatchEvent(ev);
     expect(opened).toEqual([["wf_1", "Workflow run", "wf_1:build"]]);
-    // The app's own routing took the click, so the browser must not also navigate.
-    expect(ev.defaultPrevented).toBe(true);
   });
 
-  it("stands aside for a modified click", () => {
+  it("opens the run at that node on Enter and Space", () => {
     const c = doorCard();
-    const ev = new MouseEvent("click", {
-      bubbles: true,
-      cancelable: true,
-      button: 0,
-      ctrlKey: true,
-    });
-    head(c).dispatchEvent(ev);
-    expect(opened).toEqual([]);
-    expect(ev.defaultPrevented).toBe(false);
+    for (const key of ["Enter", " "]) {
+      const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      head(c).dispatchEvent(ev);
+      expect(ev.defaultPrevented, key).toBe(true);
+    }
+    expect(opened).toEqual([
+      ["wf_1", "Workflow run", "wf_1:build"],
+      ["wf_1", "Workflow run", "wf_1:build"],
+    ]);
   });
 
   it("still names the state in the row's accessible label", () => {
@@ -1267,7 +1294,7 @@ describe("a click that ends a selection in a run card", () => {
     const c = buildRunCard("wf_1", "Workflow run", (_id, _label, node) => {
       opened.push(node ?? "");
     });
-    c.render(runOf("running", step("a", "running")));
+    c.render(runOf("running", step("compile", "running")));
     document.body.append(c.root);
     return {
       c,
@@ -1298,15 +1325,33 @@ describe("a click that ends a selection in a run card", () => {
     done();
   });
 
-  it("opens no step when the click ends a selection of the step's name", () => {
+  // Real gestures, as a reader selects: neither Chromium nor WebKit selects a word inside a link. The app's CSS lays
+  // the row out, which decides where a word ends. A double-click's first click is a plain click, so only a drag
+  // selects without opening.
+  it("selects a step's name by double-click or drag, and a drag opens no step", async () => {
+    const style = mountAppCSS();
     const { c, opened, done } = mounted();
-    const row = c.root.querySelector<HTMLElement>(".run-step-head");
-    selectText(c.root.querySelector(".run-step-name") as Element);
-    row?.click();
-    expect(opened).toEqual([]);
-    document.getSelection()?.removeAllRanges();
-    row?.click();
-    expect(opened).toEqual([nodePathKey(["wf_1", "a"])]);
-    done();
+    const name = c.root.querySelector<HTMLElement>(".run-step-name")!;
+    try {
+      await userEvent.dblClick(name);
+      expect(document.getSelection()?.toString()).toBe("compile");
+      document.getSelection()?.removeAllRanges();
+      opened.length = 0;
+      const { width, height } = name.getBoundingClientRect();
+      await userEvent.dragAndDrop(name, name, {
+        sourcePosition: { x: 1, y: height / 2 },
+        targetPosition: { x: width - 1, y: height / 2 },
+      });
+      expect(document.getSelection()?.toString()).toMatch(/^c?ompil/);
+      expect(opened).toEqual([]);
+      document.getSelection()?.removeAllRanges();
+      c.root.querySelector<HTMLElement>(".run-step-head")?.click();
+      expect(opened).toEqual([nodePathKey(["wf_1", "compile"])]);
+    } finally {
+      // The pointer outlives the test: left on the row, it hovers whatever a later file draws there.
+      await userEvent.hover(document.body, { position: { x: 0, y: 0 }, force: true });
+      done();
+      style.remove();
+    }
   });
 });

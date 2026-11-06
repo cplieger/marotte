@@ -1455,7 +1455,6 @@
     box-shadow: inset 0 0 0 100vmax var(--c-press);
   }
 
-  /* `aria-disabled`, not `disabled`, so the tooltip naming the reason still gets hover and focus. */
   &[aria-disabled="true"] {
     color: var(--c-text-tertiary);
     cursor: default;

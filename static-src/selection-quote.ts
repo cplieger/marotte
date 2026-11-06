@@ -32,7 +32,7 @@ const CONTROL = [
 /** Controls whose text is content, a run's or a file's name, so they quote as the source around them does. Chrome
  *  inside one is still chrome. */
 const NAMING_CONTROL =
-  ".run-bar-open, .run-head, .turn-wake-run, .turn-wake-row-run, .tool-file-link, .steer-note-run";
+  ".run-bar-open, .run-head, .run-step-head, .turn-wake-run, .turn-wake-row-run, .tool-file-link, .steer-note-run";
 
 function isControl(e: Element): boolean {
   return e.matches(CONTROL) && (!e.matches(NAMING_CONTROL) || e.matches(`[${CHROME_ATTR}]`));

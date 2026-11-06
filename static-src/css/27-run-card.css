@@ -313,12 +313,6 @@
   opacity: 0.6;
 }
 
-/* THE ROW IS A DOOR, so its head is a real `<a href="/run/{id}">` — middle-click
-   and copy-link work, and a plain click is intercepted by the app's own routing.
-   It therefore has to opt OUT of link ink: the reset layer's `a { color:
-   var(--c-link) }` would reach it, and this app spends link ink on TEXT controls
-   (`.steer-note-more`, `.ev-r-more`, a PR row's title) while a NAVIGATOR row keeps
-   its own — `.tab` and `.ev-row-main` are the precedent. */
 .run-step-head {
   display: flex;
   align-items: center;
@@ -327,8 +321,6 @@
   min-height: var(--row-tap);
   cursor: pointer;
   min-width: 0;
-  color: inherit;
-  text-decoration: none;
   transition: background var(--dur-micro) var(--ease-standard);
 }
 

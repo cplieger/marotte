@@ -183,7 +183,7 @@ async function settled(): Promise<void> {
  *  is content. */
 const ACTS = `button, [role="button"], summary, input, textarea, select, [contenteditable="true"], [role^="menu"], [${CHROME_ATTR}]`;
 const NAMES =
-  ".run-bar-open, .run-head, .turn-wake-run, .turn-wake-row-run, .tool-file-link, .steer-note-run";
+  ".run-bar-open, .run-head, .run-step-head, .turn-wake-run, .turn-wake-row-run, .tool-file-link, .steer-note-run";
 
 function inControl(t: Text): boolean {
   for (let e = t.parentElement; e !== null; e = e.parentElement) {
