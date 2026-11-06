@@ -2,11 +2,13 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/schedule"
 )
@@ -38,7 +40,7 @@ func TestLaunchScheduled_TellsABusyEngineFromAFailure(t *testing.T) {
 			if tc.manual {
 				_, _, err = h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
 			} else {
-				_, _, err = h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "s1"},
+				_, _, err = h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "s1"},
 					nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
 			}
 			if err == nil {
@@ -56,22 +58,37 @@ func TestLaunchScheduled_TellsABusyEngineFromAFailure(t *testing.T) {
 		launchableRecipe(br, "wf_new")
 		ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
 		defer cancel()
-		_, _, err := h.runs.LaunchScheduled(ctx, "bundled://publish", schedule.Row{ID: "s1"}, nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
+		_, _, err := h.runs.LaunchScheduled(ctx, "bundled://publish", launchrule.Row{ID: "s1"}, nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
 		if err == nil || errors.Is(err, schedule.ErrEngineBusy) {
 			t.Errorf("LaunchScheduled = %v, want a failure that is not the engine's", err)
 		}
 	})
 }
 
-// The row's wait reaches the client as waiting_for, and only while there is one.
-func TestScheduleView_CarriesTheWaitOnTheEngine(t *testing.T) {
+// The row's wait reaches the client as status.waiting_for, and only while there is one.
+func TestLaunchRuleView_CarriesTheWaitOnTheEngine(t *testing.T) {
 	due := time.Date(2026, time.August, 4, 2, 0, 0, 0, time.UTC)
-	e := schedule.Entry{Source: "bundled://nightly", Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2}, Enabled: true}
-	if v := scheduleViewOf(&e); v.WaitingFor != nil {
-		t.Errorf("waiting_for = %v on a row with no wait", *v.WaitingFor)
+	r := launchrule.Rule{
+		Source: "bundled://nightly", Enabled: true,
+		When: launchrule.When{Clock: &launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}},
 	}
-	e.WaitingFor = due
-	if v := scheduleViewOf(&e); v.WaitingFor == nil || !v.WaitingFor.Equal(due) {
-		t.Errorf("waiting_for = %v, want %v", v.WaitingFor, due)
+	waitOf := func(st launchrule.State) any {
+		raw, err := json.Marshal(launchRuleViewOf(&r, &st, nil))
+		if err != nil {
+			t.Fatalf("encode the view: %v", err)
+		}
+		var v struct {
+			Status map[string]any `json:"status"`
+		}
+		if err := json.Unmarshal(raw, &v); err != nil {
+			t.Fatalf("decode %s: %v", raw, err)
+		}
+		return v.Status["waiting_for"]
+	}
+	if got := waitOf(launchrule.State{}); got != nil {
+		t.Errorf("waiting_for = %v on a row with no wait", got)
+	}
+	if got := waitOf(launchrule.State{Status: launchrule.Status{WaitingFor: due}}); got != due.Format(time.RFC3339) {
+		t.Errorf("waiting_for = %v, want %v", got, due.Format(time.RFC3339))
 	}
 }

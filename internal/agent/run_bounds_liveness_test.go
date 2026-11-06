@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -107,7 +107,7 @@ func TestCancelExpired_ASlotOutranksAnOpenStep(t *testing.T) {
 	const id = "wf_1"
 	h, br := stepFixture(t, id)
 	openStep(t, h, id, []string{"root", "a"}, "step-session-a")
-	deadline := stagedExpiry(t, h.runs, id, scheduledLaunch(schedule.Row{ID: "sched-1"}, time.Now().Add(-2*time.Second)))
+	deadline := stagedExpiry(t, h.runs, id, scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Now().Add(-2*time.Second)))
 
 	h.runs.cancelExpired(id, deadline)
 

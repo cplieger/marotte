@@ -16,10 +16,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/notice"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/schedule"
 )
 
 // runIdleWindow is the primary, stall bound: progress (a node completing, a step frame) rolls it
@@ -36,7 +36,7 @@ const runBackstop = 36 * time.Hour
 // makes the stall tolerance [runIdleWindow - refillGranularity, runIdleWindow]; Store.SetDeadline stays exact.
 const refillGranularity = time.Minute
 
-// minRunBudget is the smallest executing budget the slot may yield, internal/schedule's
+// minRunBudget is the smallest executing budget the slot may yield, internal/launchrule's
 // minMinuteInterval: change them together. It must not lift the backstop.
 const minRunBudget = 5 * time.Minute
 
@@ -553,7 +553,7 @@ func (rs *Runs) retryTermination(ctx context.Context, workflowID, reason string,
 		// Only a stop marotte decided reports on the row: a person's cancel (reason "") failed in front of them.
 		if l, held := rs.lease(workflowID); held && reason != "" {
 			rs.recordScheduleOutcome(ctx, scheduleRun(&l),
-				schedule.Outcome{Status: schedule.StatusFailed, Reason: reasonCancelRefused})
+				launchrule.Outcome{Status: launchrule.StatusFailed, Reason: reasonCancelRefused})
 		}
 		return
 	}
@@ -766,7 +766,7 @@ func (rs *Runs) cancelExpired(workflowID string, armedFor time.Time) {
 	// Overwrites the cancel's own terminal frame, which may land first and names no bound.
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
-	rs.recordScheduleOutcome(ctx, scheduleRun(&l), schedule.Outcome{Status: schedule.StatusFailed, Reason: rowReason})
+	rs.recordScheduleOutcome(ctx, scheduleRun(&l), launchrule.Outcome{Status: launchrule.StatusFailed, Reason: rowReason})
 }
 
 // backstopSpent reports whether the absolute budget is gone now, counting the open stretch: the

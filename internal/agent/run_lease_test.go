@@ -4,14 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
@@ -71,7 +70,7 @@ func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_sched")
 
-		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"}, nil, marotte.RunDefaults{}, slot); err != nil {
+		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"}, nil, marotte.RunDefaults{}, slot); err != nil {
 			t.Fatalf("LaunchScheduled: %v", err)
 		}
 		l, ok := h.runs.lease("wf_sched")
@@ -99,20 +98,16 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_manual")
 
-	st, err := schedule.NewStore(t.TempDir())
+	st, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("schedule.NewStore: %v", err)
+		t.Fatalf("launchrule.NewStore: %v", err)
 	}
 	// Every 5 minutes, the schedule floor.
-	spec := schedule.Spec{Freq: schedule.FreqMinutely, Interval: 5}
+	spec := launchrule.Spec{Freq: launchrule.FreqMinutely, Interval: 5}
 	anchor := time.Now().Add(-time.Hour)
-	entry := schedule.Entry{
-		Source: "bundled://publish", Enabled: true, Spec: spec, Anchor: anchor,
-	}
-	if pErr := st.Put(t.Context(), &entry); pErr != nil {
-		t.Fatalf("Put schedule: %v", pErr)
-	}
-	h.runs.schedules = st
+	entry := putClockRule(t, st, "bundled://publish", spec, true)
+	anchorClockRule(t, st, entry.Row(), anchor)
+	h.runs.launchRules = st
 
 	before := time.Now()
 	if _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); lErr != nil {
@@ -164,28 +159,22 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 
 // TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun pins that another recipe's schedule must not bound this run.
 func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
-	for name, entry := range map[string]schedule.Entry{
-		"a DISABLED schedule for this very recipe": {
-			Source: "bundled://publish", Enabled: false,
-			Spec: schedule.Spec{Freq: schedule.FreqMinutely, Interval: 5},
-		},
-		"an enabled schedule for another recipe": {
-			Source: "bundled://other", Enabled: true,
-			Spec: schedule.Spec{Freq: schedule.FreqMinutely, Interval: 5},
-		},
+	for name, rule := range map[string]struct {
+		source  string
+		enabled bool
+	}{
+		"a DISABLED schedule for this very recipe": {source: "bundled://publish"},
+		"an enabled schedule for another recipe":   {source: "bundled://other", enabled: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()
 			launchableRecipe(br, "wf_manual")
-			st, err := schedule.NewStore(t.TempDir())
+			st, err := launchrule.NewStore(t.TempDir())
 			if err != nil {
-				t.Fatalf("schedule.NewStore: %v", err)
+				t.Fatalf("launchrule.NewStore: %v", err)
 			}
-			e := entry
-			if pErr := st.Put(t.Context(), &e); pErr != nil {
-				t.Fatalf("Put schedule: %v", pErr)
-			}
-			h.runs.schedules = st
+			putClockRule(t, st, rule.source, launchrule.Spec{Freq: launchrule.FreqMinutely, Interval: 5}, rule.enabled)
+			h.runs.launchRules = st
 
 			if _, _, lErr := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}); lErr != nil {
 				t.Fatalf("Launch: %v", lErr)
@@ -226,7 +215,7 @@ func TestLaunchRun_ReleasesTheLeaseWhenInvokeFails(t *testing.T) {
 }
 
 // nightlyLaunch is a scheduled hub whose launch of bundled://nightly creates wf_1.
-func nightlyLaunch(t *testing.T) (*Runtime, *fakeBridge, *schedule.Store, schedule.Entry) {
+func nightlyLaunch(t *testing.T) (*Runtime, *fakeBridge, *launchrule.Store, launchrule.Rule) {
 	t.Helper()
 	h, br, st, entry := scheduledHub(t)
 	launchableRecipe(br, "wf_1")
@@ -261,7 +250,7 @@ func TestLaunchScheduled_ACallerCancelOnceTheRunExistsStillLaunchesIt(t *testing
 	if _, held := h.runs.lease("wf_1"); !held {
 		t.Error("the created run's lease was released")
 	}
-	row := st.List()[0]
+	row := st.Clocks()[0]
 	if row.LastRunID != "wf_1" || row.LastStatus != "started" || row.LastRunAt.Before(before) {
 		t.Errorf("row = %+v, want wf_1 started at or after %v", row, before)
 	}
@@ -273,16 +262,14 @@ func TestLaunchScheduled_ACallerCancelOnceTheRunExistsKeepsTheLaunchDeadline(t *
 	saved := launchTimeout
 	launchTimeout = 300 * time.Millisecond
 	t.Cleanup(func() { launchTimeout = saved })
-	h, br, _, entry := nightlyLaunch(t)
+	h, br, _, nightly := nightlyLaunch(t)
 	dir := t.TempDir()
-	st, err := schedule.NewStore(dir)
+	st, err := launchrule.NewStore(dir)
 	if err != nil {
-		t.Fatalf("schedule.NewStore: %v", err)
+		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	if pErr := st.Put(t.Context(), &entry); pErr != nil {
-		t.Fatalf("Put schedule: %v", pErr)
-	}
-	h.runs.schedules = st
+	entry := putClockRule(t, st, nightly.Source, *nightly.When.Clock, true)
+	h.runs.launchRules = st
 	br.refuseCancelled = true
 	unanswered := make(chan struct{})
 	t.Cleanup(func() { close(unanswered) })
@@ -321,11 +308,11 @@ func TestLaunchScheduled_ACallerCancelOnceTheRunExistsKeepsTheLaunchDeadline(t *
 	if !h.runs.bounded("wf_1") {
 		t.Error("the run's deadline was not armed, so nothing bounds a run KAS may have started")
 	}
-	reopened, err := schedule.NewStore(dir)
+	reopened, err := launchrule.NewStore(dir)
 	if err != nil {
-		t.Fatalf("reopen schedule.NewStore: %v", err)
+		t.Fatalf("reopen launchrule.NewStore: %v", err)
 	}
-	if row := reopened.List()[0]; row.LastRunID != "wf_1" || row.LastStatus != "started" {
+	if row := reopened.Clocks()[0]; row.LastRunID != "wf_1" || row.LastStatus != "started" {
 		t.Errorf("row on disk = %+v, want wf_1 started, its ending left to the run", row)
 	}
 }
@@ -345,8 +332,8 @@ func TestLaunchScheduled_AFailedInvokeNamesTheRunWithItsFailure(t *testing.T) {
 	if _, held := h.runs.lease("wf_1"); held {
 		t.Error("the lease of a run that never started survived its failed launch")
 	}
-	row := st.List()[0]
-	if row.LastRunID != "wf_1" || row.LastStatus != schedule.StatusFailed ||
+	row := st.Clocks()[0]
+	if row.LastRunID != "wf_1" || row.LastStatus != launchrule.StatusFailed ||
 		!strings.Contains(row.LastReason, errHoldFault.Error()) {
 		t.Errorf("row = %+v, want wf_1 failed with %q", row, errHoldFault)
 	}
@@ -556,44 +543,16 @@ func TestReleaseLease_ReportsAReleaseItCouldNotWrite(t *testing.T) {
 	})
 }
 
-// A schedule whose next slot cannot be computed bounds a manual run of its recipe by the idle window alone, and the
-// warning names that schedule's id so the row can be found.
-func TestManualSlot_NamesAScheduleWithNoNextSlot(t *testing.T) {
-	dir := t.TempDir()
-	stored := `[{"source":"bundled://publish","enabled":true,"spec":{"freq":"yearly"}}]`
-	if err := os.WriteFile(filepath.Join(dir, "schedules.json"), []byte(stored), 0o600); err != nil {
-		t.Fatalf("write schedules.json: %v", err)
-	}
-	st, err := schedule.NewStore(dir)
-	if err != nil {
-		t.Fatalf("schedule.NewStore: %v", err)
-	}
-	h, _, _ := newTestHub()
-	h.runs.schedules = st
-	logs := captureLogs(t)
-
-	if slot := h.runs.manualSlot("bundled://publish"); !slot.IsZero() {
-		t.Errorf("manualSlot = %v, want no slot", slot)
-	}
-	want := `"schedule_id":"` + st.List()[0].ID() + `"`
-	if got := logs.String(); !strings.Contains(got, want) {
-		t.Errorf("logs = %s, want the warning to carry %s", got, want)
-	}
-}
-
 // A schedule deleted and added again while its launch waits on the engine gets nothing from that launch: the run's
-// lease names the old row's life, so neither its start nor its ending lands on the new row.
+// lease names the deleted rule, so neither its start nor its ending lands on the new one.
 func TestLaunchScheduled_ARunOfARecreatedScheduleLeavesTheNewRowAlone(t *testing.T) {
 	h, br, st, entry := nightlyLaunch(t)
-	reborn := schedule.Entry{Source: entry.Source, Enabled: true, Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 5}}
 	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		if method == methodKiroWorkflowNew {
-			if err := st.Delete(t.Context(), entry.ID()); err != nil {
+			if err := st.Delete(t.Context(), entry.ID); err != nil {
 				t.Errorf("Delete: %v", err)
 			}
-			if err := st.Put(t.Context(), &reborn); err != nil {
-				t.Errorf("Put: %v", err)
-			}
+			putClockRule(t, st, entry.Source, launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 5}, true)
 		}
 		return nil, nil, false
 	}
@@ -606,7 +565,7 @@ func TestLaunchScheduled_ARunOfARecreatedScheduleLeavesTheNewRowAlone(t *testing
 		"workflowId": id, "status": "failed", "finalState": map[string]any{"stopReason": "step build failed"},
 	}))
 
-	if row := st.List()[0]; row.LastRunID != "" || row.LastStatus != "" || row.LastReason != "" || !row.LastRunAt.IsZero() {
+	if row := st.Clocks()[0]; row.LastRunID != "" || row.LastStatus != "" || row.LastReason != "" || !row.LastRunAt.IsZero() {
 		t.Errorf("recreated row = %+v, want no run recorded on it", row)
 	}
 }

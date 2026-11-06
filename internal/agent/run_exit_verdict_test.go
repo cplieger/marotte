@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/schedule"
 )
 
 // writtenExit is the engine ending with the request on the wire: KAS may have taken it, and a run it took survives
@@ -80,7 +80,7 @@ func TestLaunch_AnEngineEndUnderInvokeKeepsTheRunOnlyIfWritten(t *testing.T) {
 		if _, held := h.runs.lease("wf_1"); held {
 			t.Error("the lease of a run whose start never reached KAS survived")
 		}
-		if row := st.List()[0]; row.LastStatus != schedule.StatusFailed {
+		if row := st.Clocks()[0]; row.LastStatus != launchrule.StatusFailed {
 			t.Errorf("row = %+v, want failed", row)
 		}
 	})

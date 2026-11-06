@@ -1,4 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type * as Toast from "./toast.js";
+
+vi.mock("./toast.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Toast>()),
+  ...(await import("./__test-helpers__/toast-mock.js")).toastMock(),
+}));
+
 import {
   describeSpec,
   describeOutcome,
@@ -11,6 +18,8 @@ import {
   buildUnattendedNote,
 } from "./schedule-picker.js";
 import { buildRunDefaultsPicker } from "./run-defaults-picker.js";
+import { saveSchedule, deleteSchedule } from "./actions/schedules.js";
+import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { LAST_DAY, INTERVAL_BOUNDS } from "./schedule-types.js";
 import type { ScheduleFreq, ScheduleSpec, ScheduleView } from "./schedule-types.js";
 import {
@@ -646,5 +655,101 @@ describe("the run's model and effort pick", () => {
     const { body, saved } = build({});
     clickSave(body);
     expect(saved()).toEqual({});
+  });
+});
+
+describe("saving from the form", () => {
+  const mockFetch = vi.fn();
+  const SOURCE = "bundled://nightly";
+
+  beforeEach(() => {
+    resetActionFramework();
+    mockFetch.mockReset();
+    mockFetch.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id: "r1",
+            source: SOURCE,
+            enabled: true,
+            when: { clock: { freq: "daily", hour: 2, minute: 0 } },
+            held: 0,
+          }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", mockFetch);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function formFor(id: string | undefined): HTMLElement {
+    return buildSchedulePicker({
+      spec: { freq: "daily", hour: 2, minute: 0 },
+      enabled: true,
+      exists: id !== undefined,
+      autoApprove: false,
+      picks: buildRunDefaultsPicker({ models: [], initial: {} }),
+      onSave: (spec, enabled, defaults) => {
+        void saveSchedule.dispatch({
+          ...(id === undefined ? {} : { id }),
+          source: SOURCE,
+          spec,
+          enabled,
+          ...defaults,
+        });
+      },
+      onRemove: () => {
+        if (id !== undefined) {
+          void deleteSchedule.dispatch(id);
+        }
+      },
+      onClose: vi.fn(),
+      onOpenPermissions: vi.fn(),
+    });
+  }
+
+  function sent(i: number): { url: unknown; method: unknown; body: unknown } {
+    const [url, init] = mockFetch.mock.calls[i] as [string, RequestInit];
+    return {
+      url,
+      method: init.method,
+      body: typeof init.body === "string" ? (JSON.parse(init.body) as unknown) : undefined,
+    };
+  }
+
+  it("saves a clock rule to /api/launch-rules", async () => {
+    formFor(undefined).querySelector<HTMLButtonElement>(".btn-primary")?.click();
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+    expect(sent(0)).toEqual({
+      url: "/api/launch-rules",
+      method: "POST",
+      body: {
+        source: SOURCE,
+        enabled: true,
+        when: { clock: { freq: "daily", hour: 2, minute: 0 } },
+      },
+    });
+
+    const stored = formFor("r1");
+    stored.querySelector<HTMLButtonElement>(".btn-primary")?.click();
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+    expect(sent(1)).toMatchObject({
+      url: "/api/launch-rules/r1",
+      method: "PUT",
+      body: { when: { clock: { freq: "daily", hour: 2, minute: 0 } } },
+    });
+
+    stored.querySelector<HTMLButtonElement>(".btn-danger")?.click();
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
+    expect(sent(2)).toMatchObject({ url: "/api/launch-rules/r1", method: "DELETE" });
   });
 });

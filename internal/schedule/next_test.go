@@ -3,7 +3,14 @@ package schedule
 import (
 	"testing"
 	"time"
+
+	"github.com/cplieger/marotte/internal/launchrule"
 )
+
+// at builds a local time, the same location NextRunFrom works in.
+func at(y int, mo time.Month, d, h, mi int) time.Time {
+	return time.Date(y, mo, d, h, mi, 0, 0, time.Local)
+}
 
 // TestNextRunFromNeverResolvesIntoThePast pins that a floored answer is in the future for
 // every frequency, whatever the anchor: a week-old anchor would otherwise name a past slot.
@@ -11,13 +18,13 @@ func TestNextRunFromNeverResolvesIntoThePast(t *testing.T) {
 	now := at(2026, time.August, 12, 14, 37)
 	tests := []struct {
 		name string
-		spec Spec
+		spec launchrule.Spec
 	}{
-		{"hourly", Spec{Freq: freqHourly, Interval: 6, Minute: 15}},
-		{"daily", Spec{Freq: FreqDaily, Hour: 2, Minute: 30}},
-		{"weekly", Spec{Freq: freqWeekly, Weekdays: []int{int(time.Monday)}, Hour: 9}},
-		{"monthly", Spec{Freq: freqMonthly, MonthDay: 1, Hour: 3}},
-		{"monthly on the last day", Spec{Freq: freqMonthly, MonthDay: lastDay, Hour: 3}},
+		{"hourly", launchrule.Spec{Freq: launchrule.FreqHourly, Interval: 6, Minute: 15}},
+		{"daily", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2, Minute: 30}},
+		{"weekly", launchrule.Spec{Freq: launchrule.FreqWeekly, Weekdays: []int{int(time.Monday)}, Hour: 9}},
+		{"monthly", launchrule.Spec{Freq: launchrule.FreqMonthly, MonthDay: 1, Hour: 3}},
+		{"monthly on the last day", launchrule.Spec{Freq: launchrule.FreqMonthly, MonthDay: -1, Hour: 3}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -37,7 +44,7 @@ func TestNextRunFromNeverResolvesIntoThePast(t *testing.T) {
 					t.Errorf("stale by %s: got %s, which is not after now (%s)", staleBy, got, now)
 				}
 				// The floored answer is the first slot after now, not one further out.
-				want, err := nextRun(tt.spec, now)
+				want, err := launchrule.NextRun(tt.spec, now)
 				if err != nil {
 					t.Fatalf("NextRun: %v", err)
 				}
@@ -52,7 +59,7 @@ func TestNextRunFromNeverResolvesIntoThePast(t *testing.T) {
 // TestNextRunFromKeepsTheAnchorAsOrigin pins that a floor before the anchor cannot drag a
 // just-fired schedule back to an earlier slot.
 func TestNextRunFromKeepsTheAnchorAsOrigin(t *testing.T) {
-	spec := Spec{Freq: FreqDaily, Hour: 2, Minute: 0}
+	spec := launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2, Minute: 0}
 	anchor := at(2026, time.August, 12, 3, 0) // fired late, past today's slot
 	floor := at(2026, time.August, 12, 1, 0)  // before the anchor
 
@@ -68,7 +75,7 @@ func TestNextRunFromKeepsTheAnchorAsOrigin(t *testing.T) {
 // TestNextRunFromZeroFloorIsTheRawSlot pins that a zero floor returns a past slot: sweep's
 // fire and skip branches both read it.
 func TestNextRunFromZeroFloorIsTheRawSlot(t *testing.T) {
-	spec := Spec{Freq: FreqDaily, Hour: 2, Minute: 0}
+	spec := launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2, Minute: 0}
 	anchor := at(2026, time.August, 5, 2, 0)
 	wantDue := at(2026, time.August, 6, 2, 0) // long past by any real "now"
 
@@ -79,7 +86,7 @@ func TestNextRunFromZeroFloorIsTheRawSlot(t *testing.T) {
 	if !got.Equal(wantDue) {
 		t.Errorf("got %s, want the unfloored slot %s", got, wantDue)
 	}
-	raw, err := nextRun(spec, anchor)
+	raw, err := launchrule.NextRun(spec, anchor)
 	if err != nil {
 		t.Fatalf("NextRun: %v", err)
 	}
@@ -92,10 +99,10 @@ func TestNextRunFromZeroFloorIsTheRawSlot(t *testing.T) {
 // through rather than becoming a zero time rendered as a real date.
 func TestNextRunFromPassesValidationErrorsThrough(t *testing.T) {
 	now := at(2026, time.August, 12, 14, 0)
-	if _, err := NextRunFrom(Spec{Freq: "yearly"}, now, now); err == nil {
+	if _, err := NextRunFrom(launchrule.Spec{Freq: "yearly"}, now, now); err == nil {
 		t.Error("expected an error for an unknown frequency")
 	}
-	if _, err := NextRunFrom(Spec{Freq: freqWeekly, Hour: 9}, now, now); err == nil {
+	if _, err := NextRunFrom(launchrule.Spec{Freq: launchrule.FreqWeekly, Hour: 9}, now, now); err == nil {
 		t.Error("expected an error for a weekly spec with no weekdays")
 	}
 }

@@ -166,10 +166,10 @@ func TestNewStore_APreUpgradeRowDecodesWithAnEmptyChatID(t *testing.T) {
 func TestStore_RejectsAVersionItDoesNotKnow(t *testing.T) {
 	t.Parallel()
 	for name, body := range map[string]string{
-		"a future version":                    `{"version":99,"leases":[{"workflow_id":"wf_1","origin":"manual"}]}`,
-		"no version at all":                   `{"leases":[{"workflow_id":"wf_1","origin":"manual"}]}`,
-		"the array shape schedules.json uses": `[{"workflow_id":"wf_1","origin":"manual"}]`,
-		"malformed JSON":                      `{"version":1,"leases":`,
+		"a future version":                       `{"version":99,"leases":[{"workflow_id":"wf_1","origin":"manual"}]}`,
+		"no version at all":                      `{"leases":[{"workflow_id":"wf_1","origin":"manual"}]}`,
+		"the array shape launch-rules.json uses": `[{"workflow_id":"wf_1","origin":"manual"}]`,
+		"malformed JSON":                         `{"version":1,"leases":`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

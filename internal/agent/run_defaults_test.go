@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/schedule"
 )
 
 // runDefaultsHub is a hub whose live catalog offers opus (with tiers) and auto (none), with
-// one launchable recipe and a schedule store behind the run routes.
+// one launchable recipe and a launch-rule store behind the run routes.
 func runDefaultsHub(t *testing.T) (*Runtime, *fakeBridge, *http.ServeMux) {
 	t.Helper()
 	h, _, br := newTestHub()
@@ -24,11 +24,11 @@ func runDefaultsHub(t *testing.T) (*Runtime, *fakeBridge, *http.ServeMux) {
 		{ID: "opus", Name: "Opus", EffortTiers: []string{"low", "medium", "high"}},
 		{ID: "auto", Name: "Auto"},
 	})
-	st, err := schedule.NewStore(t.TempDir())
+	st, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("schedule.NewStore: %v", err)
+		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	h.runs.schedules = st
+	h.runs.launchRules = st
 	mux := http.NewServeMux()
 	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(mux)
 	return h, br, mux
@@ -169,16 +169,16 @@ func TestLaunchRoute_ChecksThePickAgainstTheTemplateWithNoLiveCatalog(t *testing
 	})
 }
 
-// A schedule stores its pick, shows it, keeps it across a restart, and refuses an unknown one
+// A clock rule stores its pick, shows it, keeps it across a restart, and refuses an unknown one
 // at save time without touching the stored row.
-func TestScheduleRoute_StoresThePickAndRefusesAnUnknownOne(t *testing.T) {
+func TestLaunchRuleRoute_StoresThePickAndRefusesAnUnknownOne(t *testing.T) {
 	h, _, mux := runDefaultsHub(t)
-	const spec = `"spec":{"freq":"daily","hour":2,"minute":0}`
-	rec := postRoute(t, mux, "/api/schedules", `{"source":"bundled://publish","model":"opus","effort":"high",`+spec+`,"enabled":true}`)
+	const spec = `"when":{"clock":{"freq":"daily","hour":2,"minute":0}}`
+	rec := postRoute(t, mux, "/api/launch-rules", `{"source":"bundled://publish","model":"opus","effort":"high",`+spec+`,"enabled":true}`)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("POST /api/schedules = %d %s, want 200", rec.Code, rec.Body.String())
+		t.Fatalf("POST /api/launch-rules = %d %s, want 200", rec.Code, rec.Body.String())
 	}
-	var view scheduleView
+	var view launchRuleView
 	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
 		t.Fatalf("decode %s: %v", rec.Body.String(), err)
 	}
@@ -186,12 +186,12 @@ func TestScheduleRoute_StoresThePickAndRefusesAnUnknownOne(t *testing.T) {
 		t.Errorf("saved view model/effort = %q/%q, want opus/high", view.Model, view.Effort)
 	}
 
-	rec = postRoute(t, mux, "/api/schedules", `{"source":"bundled://publish","model":"gpt-9",`+spec+`,"enabled":true}`)
+	rec = postRoute(t, mux, "/api/launch-rules", `{"source":"bundled://publish","model":"gpt-9",`+spec+`,"enabled":true}`)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(errorText(t, rec), `"gpt-9" is not offered`) {
-		t.Errorf("POST /api/schedules with an unknown model = %d %s, want 400 naming it", rec.Code, rec.Body.String())
+		t.Errorf("POST /api/launch-rules with an unknown model = %d %s, want 400 naming it", rec.Code, rec.Body.String())
 	}
 
-	list := h.runs.schedules.List()
+	list := h.runs.launchRules.Clocks()
 	if len(list) != 1 || list[0].Model != "opus" || list[0].Effort != "high" {
 		t.Errorf("stored schedules = %+v, want the one opus/high row the refusal left alone", list)
 	}
@@ -201,7 +201,7 @@ func TestScheduleRoute_StoresThePickAndRefusesAnUnknownOne(t *testing.T) {
 func TestLaunchScheduled_SendsTheSchedulesPick(t *testing.T) {
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_sched")
-	if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"},
+	if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"},
 		nil, marotte.RunDefaults{Model: "opus", Effort: "low"}, time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("LaunchScheduled: %v", err)
 	}

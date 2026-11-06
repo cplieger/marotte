@@ -234,6 +234,14 @@ interface PickerOptions {
   onOpenPermissions: () => void;
 }
 
+/** Each picker's way to add its Remove button once the caller learns its rule exists. */
+const removeOffers = new WeakMap<HTMLElement, () => void>();
+
+/** Add Remove to a picker built before its rule was known; a no-op when it already has one. */
+export function offerScheduleRemove(picker: HTMLElement): void {
+  removeOffers.get(picker)?.();
+}
+
 /** buildSchedulePicker returns the picker body. The caller anchors it (a popup on the Schedule
  *  button) and owns dismissal; this function owns only the form and its live summary. */
 export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
@@ -427,15 +435,23 @@ export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
   cancel.addEventListener("click", opts.onClose);
 
   const actions = el("div", { className: "sched-actions" }, save, cancel);
-  if (opts.exists) {
+  let removeOffered = false;
+  const offerRemove = (): void => {
+    if (removeOffered) {
+      return;
+    }
+    removeOffered = true;
     const remove = el("button", { type: "button", className: "btn-small btn-danger" }, "Remove");
     remove.addEventListener("click", opts.onRemove);
     actions.appendChild(remove);
+  };
+  if (opts.exists) {
+    offerRemove();
   }
 
   renderDetail();
   paint();
-  return el(
+  const picker = el(
     "div",
     { className: "sched-picker" },
     el("div", { className: "sched-row" }, freqSel),
@@ -448,4 +464,6 @@ export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
     buildUnattendedNote(opts.autoApprove, opts.onOpenPermissions),
     actions,
   );
+  removeOffers.set(picker, offerRemove);
+  return picker;
 }

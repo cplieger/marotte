@@ -25,6 +25,7 @@ import (
 	"github.com/cplieger/marotte/internal/forges"
 	"github.com/cplieger/marotte/internal/git"
 	"github.com/cplieger/marotte/internal/kirosession"
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/logctl"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -156,7 +157,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		filepath.Join(workspace.KiroHome(), "powers", "installed"),
 	)
 
-	scheduleStore := openScheduleStore(cfg.ConfigDir)
+	launchRules := openLaunchRuleStore(cfg.ConfigDir)
 	leaseStore := openRunLeaseStore(cfg.ConfigDir)
 
 	presence := push.NewPresence()
@@ -182,7 +183,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		agent.WithAuthReadiness(authReadiness),
 		agent.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs),
 		agent.WithSessionSweepGate(listenerBound),
-		agent.WithSchedules(scheduleStore),
+		agent.WithLaunchRules(launchRules),
 		agent.WithRunLeases(leaseStore),
 		agent.WithTabs(tabStore),
 		agent.WithSpecApprovals(approvalStore),
@@ -200,7 +201,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// or the sweep outlives App.Shutdown; backgrounded because a boot must not wait.
 	stopOrphanSweep := startOrphanSweep(appCtx, h.Runs().BootSweep, h.EngineReady())
 
-	stopScheduleRunner := startScheduleRunner(appCtx, scheduleStore, h.Runs())
+	stopScheduleRunner := startScheduleRunner(appCtx, launchRules, h.Runs())
 
 	mcpRegistry := mcp.NewRegistryProxy()
 	mcpPrewarm := prewarm.NewRunner(appCtx, mcpStore)
@@ -235,6 +236,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	forgeNotify := &forgeNotifier{hub: h}
 	forgesManager := forges.NewManager(cfg.ConfigDir, forgeNotify.notify)
 	forgesManager.Load(ctx)
+	h.SetEventRuleChecker(forgesManager)
 
 	tools, err := wireToolsEngine(cfg, h, githubTokenFor(forgesManager))
 	if err != nil {
@@ -848,13 +850,13 @@ func warnIfNoLSPEnabled(e *toolbelt.Engine) {
 		"hint", "enable gopls (Go), typescript-language-server (TypeScript), or pyright (Python) in Settings -> Tools")
 }
 
-// openScheduleStore opens the workflow-schedule store, or nil to leave scheduling off. A
-// malformed schedules.json warns rather than aborting boot (invariant 6: a bad file on the
+// openLaunchRuleStore opens the launch-rule store, or nil to leave scheduling off. A
+// malformed launch-rules.json warns rather than aborting boot (invariant 6: a bad file on the
 // volume must still leave a way IN to fix it).
-func openScheduleStore(dir string) *schedule.Store {
-	st, err := schedule.NewStore(dir)
+func openLaunchRuleStore(dir string) *launchrule.Store {
+	st, err := launchrule.NewStore(dir)
 	if err != nil {
-		slog.Warn("workflow scheduling disabled", "error", err)
+		slog.Warn("launch rules disabled", "error", err)
 		return nil
 	}
 	return st
@@ -981,7 +983,7 @@ func startOrphanSweep(ctx context.Context, sweep func(context.Context) bool,
 
 // The runner reuses Runtime.Launch, so a scheduled run needs no host chat. A nil store
 // starts nothing and returns a nil stop.
-func startScheduleRunner(ctx context.Context, st *schedule.Store, l schedule.Launcher) (stop func()) {
+func startScheduleRunner(ctx context.Context, st *launchrule.Store, l schedule.Launcher) (stop func()) {
 	if st == nil {
 		return nil
 	}

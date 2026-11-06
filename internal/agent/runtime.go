@@ -23,10 +23,10 @@ import (
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/kirosession"
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/liveness"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/spec"
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/subject"
@@ -346,9 +346,9 @@ func WithGovernanceLocksHook(fn func(context.Context)) Option {
 	return func(h *Runtime) { h.locksHook = fn }
 }
 
-// WithSchedules wires the schedule store; absent, the schedule routes are not registered.
-func WithSchedules(st *schedule.Store) Option {
-	return func(h *Runtime) { h.runs.schedules = st }
+// WithLaunchRules wires the launch-rule store; absent, the launch-rule routes are not registered.
+func WithLaunchRules(st *launchrule.Store) Option {
+	return func(h *Runtime) { h.runs.launchRules = st }
 }
 
 // WithRunLeases wires the durable run-lease store. Absent falls back to memory (a lease carries the run's clock);
@@ -640,6 +640,10 @@ func (rt *Runtime) SetMCPOnChange(fn func()) { rt.mcpRegistry.setOnChange(fn) }
 // which KAS reads as steering at the door), so it must be fast. It lives on the coordinator, which would otherwise
 // capture a nil at construction.
 func (rt *Runtime) SetPreSessionOpen(fn func(context.Context)) { rt.coord.preSessionOpen = fn }
+
+// SetEventRuleChecker installs the save-time forge reads of an event rule; unset, an event rule save is refused.
+// It is set after construction because the forge connections are built from the runtime, and before the routes serve.
+func (rt *Runtime) SetEventRuleChecker(c eventRuleChecker) { rt.runs.eventRules = c }
 
 // SetChatSteering installs the chat-only steering renderer, on the coordinator for SetPreSessionOpen's reason.
 func (rt *Runtime) SetChatSteering(fn func(context.Context) []marotte.ClientSteeringDoc) {
