@@ -219,6 +219,52 @@ func TestBoundExpiryLosesToConfirm(t *testing.T) {
 	})
 }
 
+func TestLateRunStartAfterAbandonDoesNotConfirm(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		tc.enqueue(r.ID, held("k1", "c1"))
+		tc.abandonAtBound(r.ID, "k1", "wf_1")
+		tc.ConfirmEvent(r.ID, "k1", "wf_1")
+		es, _ := tc.memory(r.ID)
+		if len(es.launched) != 0 || !tc.relaunchable(r.ID, "k1") {
+			t.Errorf("launched %+v, k1 launchable %v; want nothing confirmed and k1 still queued", es.launched, tc.relaunchable(r.ID, "k1"))
+		}
+		if got := tc.cancels(); !slices.Equal(got, []string{"wf_1"}) {
+			t.Errorf("cancels = %v, want wf_1 once", got)
+		}
+		if rec := tc.recordOf(r.ID, "wf_1"); rec == nil || rec.state != stateAbandonedCancelling {
+			t.Errorf("record = %+v, want wf_1 still abandoned-cancelling", rec)
+		}
+	})
+}
+
+func TestAbandonedRunStartDuringNextLaunchIgnored(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		tc.enqueue(r.ID, held("k1", "c1"))
+		tc.abandonAtBound(r.ID, "k1", "wf_1")
+		tc.name(r.ID, "k1", "wf_2")
+		tc.ConfirmEvent(r.ID, "k1", "wf_1")
+		es, _ := tc.memory(r.ID)
+		if rec := tc.recordOf(r.ID, "wf_2"); rec == nil || rec.state != stateInvoking || len(es.launched) != 0 ||
+			len(es.queue) != 1 || es.queue[0].Live != "wf_2" {
+			t.Fatalf("after the old run's run_start: wf_2 %+v, queue %+v, launched %+v; want wf_2 still the live attempt of k1",
+				rec, es.queue, es.launched)
+		}
+		tc.ConfirmEvent(r.ID, "k1", "wf_2")
+		es, _ = tc.memory(r.ID)
+		if len(es.queue) != 0 || len(es.launched) != 1 || es.launched[0].WorkflowID != "wf_2" {
+			t.Errorf("queue %v, launched %+v; want k1 confirmed under wf_2", keysOf(es.queue), es.launched)
+		}
+		if rec := tc.recordOf(r.ID, "wf_1"); rec == nil || rec.state != stateAbandonedCancelling {
+			t.Errorf("wf_1 = %+v, want its abandoned record kept until its cancel answers", rec)
+		}
+		if got := tc.cancels(); !slices.Equal(got, []string{"wf_1"}) {
+			t.Errorf("cancels = %v, want wf_1 once", got)
+		}
+	})
+}
+
 // abandonAtBound names key as wf, returns the call nil and lets the bound expire.
 func (tc *testConfirmer) abandonAtBound(ruleID, key, wf string) {
 	tc.t.Helper()

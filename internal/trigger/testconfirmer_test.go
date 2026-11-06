@@ -191,6 +191,33 @@ func (tc *testConfirmer) woken() bool {
 	}
 }
 
+// withRecord changes the rule's in-memory record of workflowID, as a row this test does not drive would have.
+func (tc *testConfirmer) withRecord(ruleID, workflowID string, change func(r *record)) {
+	tc.t.Helper()
+	rv := tc.rule(ruleID)
+	rv.mu.Lock()
+	defer rv.mu.Unlock()
+	r := rv.find(workflowID)
+	if r == nil {
+		tc.t.Fatalf("Setup: rule %s holds no record of %s", ruleID, workflowID)
+	}
+	change(r)
+}
+
+// answerCancels lets the effect goroutine run every queued cancel and release, answering each cancel with err,
+// and waits until every answer is back through step. It runs inside synctest.Test only, after tc.run.
+func (tc *testConfirmer) answerCancels(err error) {
+	tc.fx.mu.Lock()
+	tc.fx.cancelErr = err
+	tc.fx.mu.Unlock()
+	select {
+	case <-tc.ready:
+	default:
+		close(tc.ready)
+	}
+	synctest.Wait()
+}
+
 // name is NameAttempt for a queued key, failing the test on an error.
 func (tc *testConfirmer) name(ruleID, key, workflowID string) {
 	tc.t.Helper()

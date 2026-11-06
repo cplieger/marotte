@@ -36,6 +36,8 @@ type ruleValue struct {
 	records []*record
 	es      eventState
 	mu      sync.Mutex
+	// dropped is set when the Confirmer forgets the value; a step that waited for mu takes the rule's current one.
+	dropped bool
 }
 
 func (rv *ruleValue) find(workflowID string) *record {
@@ -62,6 +64,28 @@ func (c *Confirmer) rule(ruleID string) *ruleValue {
 	}
 	c.rules[ruleID] = rv
 	return rv
+}
+
+// lock is the rule's current value with its mutex held.
+func (c *Confirmer) lock(ruleID string) *ruleValue {
+	for {
+		rv := c.rule(ruleID)
+		rv.mu.Lock()
+		if !rv.dropped {
+			return rv
+		}
+		rv.mu.Unlock()
+	}
+}
+
+// forget drops a deleted rule's value once it holds no record (A32); rv.mu is held.
+func (c *Confirmer) forget(ruleID string, rv *ruleValue) {
+	rv.dropped = true
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.rules[ruleID] == rv {
+		delete(c.rules, ruleID)
+	}
 }
 
 // loaded is a snapshot of the rules with an in-memory value, for a lookup by workflow id.

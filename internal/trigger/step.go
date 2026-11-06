@@ -44,6 +44,10 @@ func (s attemptState) live() bool {
 	return s == stateInvoking || s == stateInvokedUnconfirmed || s == stateBootHeld
 }
 
+func (s attemptState) abandoned() bool {
+	return s == stateAbandonedCancelling || s == stateAbandonedCancelled
+}
+
 // The causes of an abandon, as the record and the log line carry them.
 const (
 	causeNameFailed      = "name_failed"
@@ -136,8 +140,7 @@ type stepper struct {
 // step applies the attempt table's row for ev to the rule and writes the rule's state file at most once. It is the
 // only writer of an event rule's state; no caller holds another rule's mutex while it calls step.
 func (c *Confirmer) step(ruleID string, ev *attemptEvent) stepResult {
-	rv := c.rule(ruleID)
-	rv.mu.Lock()
+	rv := c.lock(ruleID)
 	defer rv.mu.Unlock()
 	s := &stepper{c: c, rv: rv, ruleID: ruleID, now: time.Now()}
 	s.def, s.held = c.store.Get(ruleID)
@@ -152,6 +155,9 @@ func (c *Confirmer) step(ruleID string, ev *attemptEvent) stepResult {
 		if err := c.writeLocked(ruleID, rv); err != nil {
 			slog.Error(logMsgNotWritten, "rule_id", ruleID, "error", err)
 		}
+	}
+	if !s.held && len(rv.records) == 0 {
+		c.forget(ruleID, rv)
 	}
 	return s.res
 }

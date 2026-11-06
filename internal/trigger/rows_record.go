@@ -29,6 +29,30 @@ func (s *stepper) apply(rec *record, ev *attemptEvent) bool {
 		s.invokeRefused(rec, ev.err)
 	case (rec.state == stateInvoking || rec.state == stateInvokedUnconfirmed) && ev.kind == evBoundReached:
 		s.boundReached(rec)
+	case rec.state.abandoned():
+		return s.abandoned(rec, ev)
+	default:
+		return false
+	}
+	return true
+}
+
+// abandoned runs the rows of an abandoned record: it never confirms and is never abandoned again.
+func (s *stepper) abandoned(rec *record, ev *attemptEvent) bool {
+	switch ev.kind {
+	case evCancelOK:
+		if rec.state == stateAbandonedCancelling { // A13
+			rec.state, rec.cancelLandedAt = stateAbandonedCancelled, s.now
+			s.res.write = !rec.unpersisted
+		}
+		s.cancelAnswered(rec) // A13, or A22 for a second cancel's answer
+	case evCancelError:
+		s.cancelAnswered(rec) // A14, or A22 for a second cancel's answer
+	case evInvokeOK, evInvokeError, evInvokeReplyLost:
+		rec.inFlight = false // A15
+		s.settle(rec)
+	case evRunStart, evBoundReached:
+		// A22: a late run_start or a stale timer changes nothing.
 	default:
 		return false
 	}
