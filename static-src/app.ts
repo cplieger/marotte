@@ -15,6 +15,7 @@ import { guardDuplicateActivation, initSidebarSwipe } from "./platform.js";
 import { initShellViewport } from "./shell-viewport.js";
 import { initPointerTier } from "./pointer-tier.js";
 import { initPointerModeToggle, revealPointerModeToggle } from "./pointer-mode.js";
+import { initClockToggle } from "./clock-toggle.js";
 import { initPageTitleFit } from "./page-title.js";
 import { initRolePicker } from "./role-picker.js";
 import * as sse from "./sse-adapter.js";
@@ -141,6 +142,7 @@ function init(): void {
 
   // Before anything can announce: `announce()` drops a message when no region is mounted.
   mountLiveRegions(document.body);
+  initClockToggle();
 
   // AFTER the tier, which sizes the bar's action buttons this fit measures against.
   initPageTitleFit();

@@ -46,8 +46,12 @@ const BANNED_NAMES = new Set([
   "hourCycle",
 ]);
 
-/** What the shared module may use that no other file may. */
-const MODULE_ALLOWED = new Set(["DateTimeFormat", "timeStyle", "dateStyle"]);
+/** What the shared module may use that no other file may: `hourCycle` carries the Clock choice. */
+const MODULE_ALLOWED = new Set(["DateTimeFormat", "timeStyle", "dateStyle", "hourCycle"]);
+
+/** The first arguments the shared module may construct with: the reader's languages, or `[]` for
+ *  the browser default that Automatic consults. */
+const MODULE_LOCALES = new Set(["navigator.languages", "[]"]);
 
 function sourceOf(file: string, source: string): ts.SourceFile {
   return ts.createSourceFile(file, source, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS);
@@ -69,7 +73,7 @@ function nameOf(node: ts.Node): string | undefined {
   return undefined;
 }
 
-/** Whether a `DateTimeFormat` name is the one allowed shape: `new Intl.DateTimeFormat(navigator.languages, …)`.
+/** Whether a `DateTimeFormat` name is an allowed shape: `new Intl.DateTimeFormat(<MODULE_LOCALES>, …)`.
  *  A call without `new`, an alias or a destructured reference is none of it. */
 function isBrowserLanguagesConstruction(name: ts.Node): boolean {
   const access = name.parent;
@@ -79,7 +83,7 @@ function isBrowserLanguagesConstruction(name: ts.Node): boolean {
     access.expression.getText() === "Intl" &&
     ts.isNewExpression(access.parent) &&
     access.parent.expression === access &&
-    access.parent.arguments?.[0]?.getText() === "navigator.languages"
+    MODULE_LOCALES.has(access.parent.arguments?.[0]?.getText() ?? "")
   );
 }
 
@@ -96,9 +100,15 @@ function violations(file: string, source: string): string[] {
     if (name === "toLocaleString" && !NUMBER_FORMATTERS.has(file)) {
       found.push(`${file}: toLocaleString outside the number-formatting files`);
     }
-    if (isModule && name === "DateTimeFormat" && !isBrowserLanguagesConstruction(node)) {
+    // A type annotation (`: Intl.DateTimeFormat`) is a QualifiedName and constructs nothing.
+    if (
+      isModule &&
+      name === "DateTimeFormat" &&
+      !ts.isQualifiedName(node.parent) &&
+      !isBrowserLanguagesConstruction(node)
+    ) {
       found.push(
-        `${file}: DateTimeFormat is not \`new Intl.DateTimeFormat(navigator.languages, …)\``,
+        `${file}: DateTimeFormat is not \`new Intl.DateTimeFormat(navigator.languages | [], …)\``,
       );
     }
     node.forEachChild(walk);
@@ -159,6 +169,7 @@ describe("the scan", () => {
     ["a date string", "x.toLocaleDateString()"],
     ["Intl.DateTimeFormat", "new Intl.DateTimeFormat('fr-FR')"],
     ["a forced 12-hour clock", "const o = { hour12: true };"],
+    ["a forced hour cycle", "const o = { hourCycle: 'h23' };"],
     ["a hand-built clock", "`${d.getHours()}:${d.getMinutes()}`"],
     ["a date through toLocaleString", "when.toLocaleString()"],
     ["a date string in English", "d.toDateString()"],
@@ -186,6 +197,12 @@ describe("the scan", () => {
     expect(violations(MODULE, "const { DateTimeFormat } = Intl;")).not.toEqual([]);
     expect(violations(MODULE, "new Intl['DateTimeFormat']('en-US', o)")).not.toEqual([]);
     expect(violations(MODULE, "new Intl.DateTimeFormat(navigator.languages, o)")).toEqual([]);
+    expect(violations(MODULE, "new Intl.DateTimeFormat([], o)")).toEqual([]);
+    expect(violations(MODULE, "function f(): Intl.DateTimeFormat { return g; }")).toEqual([]);
+    expect(violations(MODULE, "new Intl.DateTimeFormat(['fr-FR'], o)")).not.toEqual([]);
+    expect(
+      violations(MODULE, "new Intl.DateTimeFormat(navigator.languages, { hourCycle: 'h23' })"),
+    ).toEqual([]);
   });
 
   it("ignores a mention in a comment", () => {

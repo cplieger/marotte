@@ -135,6 +135,19 @@ export function setPointerModeChoice(tier: PointerTier): void {
   writeBlob({ pointer_mode: tier });
 }
 
+/** How this screen draws the time of day; "auto" follows the browser (`locale-time.ts`). */
+export type ClockChoice = "auto" | "h23" | "h12";
+
+/** The clock choice; "auto" when nothing valid is recorded. Never synced: a clock reads per screen. */
+export function clockChoice(): ClockChoice {
+  const c = readBlob()["clock"];
+  return c === "h23" || c === "h12" ? c : "auto";
+}
+
+export function setClockChoice(choice: ClockChoice): void {
+  writeBlob({ clock: choice });
+}
+
 /** Whether a coarse pointer ever drove this screen; sticky (it reveals the toggle). A non-boolean reads false. */
 export function coarseEverSeen(): boolean {
   return readBlob()["pointer_coarse_seen"] === true;
