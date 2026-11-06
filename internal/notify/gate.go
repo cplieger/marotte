@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/marotte/internal/ids"
 )
 
 // TokenEnv names the bearer token the route admits; envx also reads it from TokenEnv+"_FILE".
@@ -77,14 +78,15 @@ func (g Gate) Carries(r *http.Request) bool {
 	return g.token.Verify(presented)
 }
 
-// IsRoute reports whether path is the notify route's shape, one non-empty session segment.
+// IsRoute reports whether path is the notify route's shape with a valid session segment. The
+// server lifts the Host allowlist on this shape, so a dot segment or separator never matches.
 func IsRoute(path string) bool {
 	rest, ok := strings.CutPrefix(path, routePrefix)
 	if !ok {
 		return false
 	}
 	session, ok := strings.CutSuffix(rest, routeSuffix)
-	return ok && session != "" && !strings.Contains(session, "/")
+	return ok && ids.ValidSessionID(session)
 }
 
 // isB64Token reports whether s matches RFC 6750 section 2.1's b64token.

@@ -141,6 +141,10 @@ func TestIsRoute(t *testing.T) {
 		"/api/sessions/abc/notifyx":      false,
 		"/api/settings":                  false,
 		"/api/sessions/abc/notify/extra": false,
+		"/api/sessions/../notify":        false,
+		"/api/sessions/./notify":         false,
+		"/api/sessions/a..b/notify":      false,
+		"/api/sessions/a\\b/notify":      false,
 	} {
 		if got := IsRoute(path); got != want {
 			t.Errorf("IsRoute(%q) = %v, want %v", path, got, want)

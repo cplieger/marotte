@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/marotte/internal/notify"
 )
 
 // baseCSPPolicy is the CSP applied to every response. script-src is 'self' alone: the page
@@ -46,10 +47,21 @@ func buildCSPPolicy(staticFS fs.FS) (string, error) {
 // a DNS-rebinding request makes Origin and Host agree (CWE-346), and sits inside
 // SecurityHeaders so its 403 carries the baseline headers. CSRF exempts GET, so the shell
 // WebSocket handshake's origin gate is the terminal engine's, not this.
+//
+// A POST to the notify route skips the host gate alone, so a service on the container network
+// can call it by its service name. Rebinding gains nothing there: the route answers only a
+// request carrying the notify token, which a rebound browser page does not hold.
 func securityMiddleware(cspPolicy string, hostPolicy *httpserver.HostPolicy, next http.Handler) http.Handler {
-	csrf := http.NewCrossOriginProtection()
+	guarded := http.NewCrossOriginProtection().Handler(next)
+	hostGated := hostPolicy.Middleware()(guarded)
 	return httpserver.SecurityHeaders(
 		httpserver.WithCSP(cspPolicy),
 		httpserver.WithReferrerPolicy("same-origin"),
-	)(hostPolicy.Middleware()(csrf.Handler(next)))
+	)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && notify.IsRoute(r.URL.Path) {
+			guarded.ServeHTTP(w, r)
+			return
+		}
+		hostGated.ServeHTTP(w, r)
+	}))
 }
