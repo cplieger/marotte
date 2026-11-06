@@ -255,12 +255,13 @@ function paint(): Promise<void> {
 }
 
 /** The strip as REFS, which is what makes an order assertion readable when the
- *  ids are opaque. A singleton's ref is empty, so it reads as its kind. */
+ *  ids are opaque. A singleton's ref is empty, so it reads as its kind. Departing rows are
+ *  excluded: no stylesheet runs their exit. */
 async function rowRefs(): Promise<string[]> {
   await paint();
   const byID = new Map(tabServer.subjects().map((s) => [s.id, s.ref === "" ? s.kind : s.ref]));
   const list = document.getElementById("tab-list");
-  return [...(list?.querySelectorAll<HTMLElement>("[data-tab-id]") ?? [])].map(
+  return [...(list?.querySelectorAll<HTMLElement>("[data-tab-id]:not(.exiting)") ?? [])].map(
     (n) => byID.get(n.dataset["tabId"] ?? "") ?? n.dataset["tabId"] ?? "",
   );
 }

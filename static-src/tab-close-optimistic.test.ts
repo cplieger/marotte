@@ -138,6 +138,23 @@ describe("a close shows at once", () => {
     expect(pointers.painted).toBe("a");
     await done;
   });
+
+  it("takes the closed row off the strip and marks the successor active inside the click", async () => {
+    const ids = await closing();
+    const c = ids["c"] ?? "";
+    const a = ids["a"] ?? "";
+
+    const done = closeTab(c);
+
+    expect(rowIDs(), "the closed row left the strip inside the click").not.toContain(c);
+    const successor = document.querySelector<HTMLElement>(
+      `#tab-list [data-tab-id="${CSS.escape(a)}"]`,
+    );
+    expect(successor?.classList.contains("active")).toBe(true);
+    expect(successor?.getAttribute("aria-selected")).toBe("true");
+    await activationRan();
+    await done;
+  });
 });
 
 /** A strip three 20 px rows tall in a 24 px box, so it scrolls; removed after each case. */

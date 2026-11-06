@@ -759,6 +759,7 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
   };
   currentActivation = record;
   emit();
+  paintStripNow();
   const gen = record.gen;
   if (now) {
     runActivation(gen);
@@ -1377,6 +1378,7 @@ function applyGestureRemoval(c: CapturedClose): void {
     reselectPaintedChat();
   }
   emit();
+  paintStripNow();
 }
 
 /** The deferred client-local teardown, run once per closed row when the close is CONFIRMED
@@ -2183,10 +2185,21 @@ function registerModuleSubscribers(): void {
     }
     internal.renderQueued = true;
     requestAnimationFrame(() => {
-      internal.renderQueued = false;
-      renderDOM();
+      if (internal.renderQueued) {
+        internal.renderQueued = false;
+        renderDOM();
+      }
     });
   });
+}
+
+/** Run the queued strip render in this task: a gesture's row changes paint in its own frame, not
+ *  one frame behind the cover. renderDOM reads no layout, so this forces none. */
+function paintStripNow(): void {
+  if (internal.renderQueued) {
+    internal.renderQueued = false;
+    renderDOM();
+  }
 }
 
 // --- View / route (subscriber) ---

@@ -97,10 +97,10 @@ describe("a switch paints the target tab at once", () => {
     expect(pointers.active).toBe("b");
     expect(pointers.painted).toBe("a");
     expect(getActiveTabId()).toBe(b);
+    expect(rowEl(b).classList.contains("active"), "the strip moved inside the click").toBe(true);
+    expect(rowEl(b).getAttribute("aria-selected")).toBe("true");
 
     await frame();
-    expect(rowEl(b).classList.contains("active")).toBe(true);
-    expect(rowEl(b).getAttribute("aria-selected")).toBe("true");
     expect(coverUp(), "the cover is up in the gesture's frame").toBe(true);
     expect(cover()?.querySelector(".skeleton-rows")).not.toBeNull();
     const wrap = document.getElementById("messages-wrap");
@@ -166,7 +166,10 @@ describe("a switch paints the target tab at once", () => {
 
     expect(coverUp(), "B's cover stayed over N's empty page").toBe(false);
     await activationRan();
-    expect(fx.chat.show.mock.calls.map((c) => c[0]), "B, superseded, was shown").toEqual(["n"]);
+    expect(
+      fx.chat.show.mock.calls.map((c) => c[0]),
+      "B, superseded, was shown",
+    ).toEqual(["n"]);
     expect(fx.chat.refresh.mock.calls.map((c) => c[0])).toEqual(["n"]);
   });
 

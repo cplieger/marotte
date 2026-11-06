@@ -337,9 +337,12 @@ function rows(): HTMLElement[] {
   return [...(list?.querySelectorAll<HTMLElement>("[data-tab-id]") ?? [])];
 }
 
+/** The rows on the strip, departing ones excluded: no stylesheet runs their exit. */
 async function rowIDs(): Promise<string[]> {
   await paint();
-  return rows().map((e) => e.dataset["tabId"] ?? "");
+  return rows()
+    .filter((e) => !e.classList.contains("exiting"))
+    .map((e) => e.dataset["tabId"] ?? "");
 }
 
 /** The rendered strip as REFS rather than opaque ids, which is what makes an
@@ -1414,9 +1417,8 @@ describe("keyboard navigation (real tabs.ts handler via rendered tab nodes)", ()
     expect(getActiveTabId()).toBe(chatID("a"));
   });
 
-  // A close is a ROUND TRIP now, so focus has to move before the dispatch: waiting
-  // for the removal to land would leave focus on <body> for the whole flight, and
-  // the row the keyboard user is standing on is the element being removed.
+  // The row the keyboard user stands on leaves the strip inside the keydown, so focus moves
+  // first or it falls to <body>.
   it("Delete moves focus to a surviving sibling before the close lands", async () => {
     expect.assertions(2);
     const nodes = await renderTabs("a", "b", "c");
@@ -1424,9 +1426,7 @@ describe("keyboard navigation (real tabs.ts handler via rendered tab nodes)", ()
     tabServer.setMode("manual");
     nodes[1]?.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
     expect(document.activeElement).toBe(nodes[2]);
-    // The strip is untouched until the frame arrives, which is the honest surface
-    // for a close that might be refused.
-    expect(await rowIDs()).toHaveLength(3);
+    expect(await rowIDs()).toEqual([chatID("a"), chatID("c")]);
     tabServer.setMode("event-first");
     tabServer.flushFrames();
     await settleTabs();
