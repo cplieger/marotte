@@ -16,6 +16,7 @@ import {
   sessionBusy,
 } from "./store.js";
 import { clearTurnSigs } from "./store-signals.js";
+import { BUS_FOLDS_CHANGED, onBus } from "./bus.js";
 import { onHookVisibility } from "./hook-fold.js";
 import { buildEvent } from "./messages-events.js";
 import { releaseClampsIn } from "./clamp-text.js";
@@ -565,6 +566,12 @@ export function mountChatView(): void {
   onReaderGesture(noteReaderMoved);
   onViewportChange(windowPass);
   onLiveEdgeRequest(mountLiveEdge);
+  onBus(BUS_FOLDS_CHANGED, () => {
+    const id = getActiveId();
+    if (id !== "") {
+      bumpMessages(id, "shape");
+    }
+  });
   // The tool layer sits below this module, so the multiplexer injects whether a view is parked and that a resident
   // view's chat must not have its messages evicted.
   initToolViewCallbacks({

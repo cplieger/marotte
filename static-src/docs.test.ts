@@ -79,6 +79,7 @@ vi.mock("./bus.js", () => ({
   BUS_CATALOG_MODELS: undefined,
   BUS_COMMAND_FAILED: undefined,
   BUS_EDITOR_VIEW_CHANGED: undefined,
+  BUS_FOLDS_CHANGED: undefined,
   BUS_KEYS_ESCAPE: undefined,
   BUS_PAGE_RESUMED: undefined,
   BUS_RECONCILE: "transport:reconcile",

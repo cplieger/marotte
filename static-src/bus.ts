@@ -277,6 +277,11 @@ export const BUS_USER_INPUT_ANSWERED = "user-input:answered" as const;
  * or Schedule pick) follows it without the catalog reader knowing the form.
  */
 export const BUS_CATALOG_MODELS = "catalog:models" as const;
+/**
+ * Another window changed the saved turn folds, so the open transcript's folds are stale. On the bus so the fold
+ * store does not know the transcript.
+ */
+export const BUS_FOLDS_CHANGED = "folds:changed" as const;
 
 /** Payload shape per bus event. Events with no payload use `undefined`. */
 interface BusPayloads {
@@ -294,6 +299,7 @@ interface BusPayloads {
   };
   readonly [BUS_USER_INPUT_ANSWERED]: { readonly chatID: string; readonly answer: string };
   readonly [BUS_CATALOG_MODELS]: undefined;
+  readonly [BUS_FOLDS_CHANGED]: undefined;
 }
 
 // The generic bus is @cplieger/ui's createBus; the SSE surface stays bespoke
