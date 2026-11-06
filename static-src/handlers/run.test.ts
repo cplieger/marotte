@@ -9,10 +9,6 @@ vi.mock("../run-store.js", () => ({
   // refetches. A case that pins the APPLY path sets it true.
   applyRunProgress: vi.fn(() => false),
   invalidateRun: vi.fn(),
-  // The affordance refetch a run's ENDING triggers: the verb set changes at exactly
-  // that moment (a live run's Pause/Cancel becomes a failed run's Retry) and nothing
-  // else in the frame stream says so.
-  invalidateCachedRuns: vi.fn(),
   noteRunChat: vi.fn(),
   noteRunLabel: vi.fn(),
   noteRunResumed: vi.fn(),
@@ -645,40 +641,8 @@ describe("a run's own log", () => {
     }
   });
 
-  // A completed close the server may regrade failed under KAS's record of the step (the model-call
-  // limit, an empty answer), which only the run read's `step_ends` carries.
-  it.each([
-    ["a tool_use stop", { outcome: "completed", stop_reason_raw: "tool_use" }],
-    ["a max_turn_requests stop", { outcome: "completed", stop_reason_raw: "max_turn_requests" }],
-    [
-      "an unanswered close",
-      { outcome: "completed", stop_reason_raw: "end_turn", unanswered: true },
-    ],
-  ] as const)(
-    "refetches the run when a step's turn closes on %s the server may regrade",
-    (_, close) => {
-      send("turn_closed", { workflow_id: RUN, entry: entry("turn_close", close, 2) }, "");
-
-      expect(invalidate).toHaveBeenCalledTimes(1);
-      expect(invalidate).toHaveBeenLastCalledWith(RUN);
-    },
-  );
-
-  it("does not refetch on a clean completed close", () => {
-    send(
-      "turn_closed",
-      {
-        workflow_id: RUN,
-        entry: entry("turn_close", { outcome: "completed", stop_reason_raw: "end_turn" }, 2),
-      },
-      "",
-    );
-
-    expect(invalidate).not.toHaveBeenCalled();
-  });
-
   it("refetches the run when a step's grade is recorded", () => {
-    const e = entry("step_graded" as string, { outcome: "completed" }, 3);
+    const e = entry("step_graded", { outcome: "completed" }, 3);
 
     send("entry_appended", { workflow_id: RUN, entry: e }, "");
 
@@ -687,15 +651,16 @@ describe("a run's own log", () => {
     expect(invalidate).toHaveBeenLastCalledWith(RUN);
   });
 
-  it("leaves a completed tool_use close to its recorded grade", () => {
-    send(
-      "turn_closed",
-      {
-        workflow_id: RUN,
-        entry: entry("turn_close", { outcome: "completed", stop_reason_raw: "tool_use" }, 2),
-      },
-      "",
-    );
+  it.each([
+    ["a tool_use stop", { outcome: "completed", stop_reason_raw: "tool_use" }],
+    ["a max_turn_requests stop", { outcome: "completed", stop_reason_raw: "max_turn_requests" }],
+    [
+      "an unanswered close",
+      { outcome: "completed", stop_reason_raw: "end_turn", unanswered: true },
+    ],
+    ["a clean stop", { outcome: "completed", stop_reason_raw: "end_turn" }],
+  ] as const)("leaves a completed close on %s to its recorded grade", (_, close) => {
+    send("turn_closed", { workflow_id: RUN, entry: entry("turn_close", close, 2) }, "");
 
     expect(invalidate).not.toHaveBeenCalled();
   });

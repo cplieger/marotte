@@ -1913,6 +1913,7 @@ function placeEntry(st: TurnRender, e: Entry, live: boolean, idx: GroupIndex): v
   switch (u.kind) {
     case "turn_open":
     case "turn_close":
+    case "step_graded":
     case "turn_bind":
     case "turn_wake":
     case "run_named":

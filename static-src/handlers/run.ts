@@ -23,7 +23,7 @@ import {
   runStepEnds,
   sealRunEntry,
 } from "../run-store.js";
-import { mayGradeBroken } from "../turn-severity.js";
+import { isBroken } from "../turn-severity.js";
 import { payloadOf } from "../turns.js";
 import { isBusy } from "../store.js";
 import { trackRun } from "../run-dots.js";
@@ -188,6 +188,10 @@ onSSE("entry_appended", (_chatID, p) => {
   const runID = forRun(p);
   if (runID !== "") {
     appendRunEntry(runID, p.entry);
+    if (p.entry.kind === "step_graded") {
+      // Both views read a step's grade from the run read's `step_ends`, which projects this entry.
+      invalidateRun(runID);
+    }
   }
 });
 
@@ -197,8 +201,10 @@ onSSE("turn_closed", (_chatID, p) => {
     // A step reads settled from its own `turn_close` rather than from a flag.
     appendRunEntry(runID, p.entry);
     // The tree grades a broken step from the run read's `step_ends`, and the applied
-    // `node_complete` still says KAS's `completed`, so only a refetch turns the row red live.
-    if (mayGradeBroken(payloadOf(p.entry, "turn_close"))) {
+    // `node_complete` still says KAS's `completed`, so only a refetch turns the row red live. A
+    // grade under KAS's record arrives as its own `step_graded` entry.
+    const close = payloadOf(p.entry, "turn_close");
+    if (isBroken(close?.outcome)) {
       invalidateRun(runID);
     }
   }

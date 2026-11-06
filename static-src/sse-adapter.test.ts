@@ -43,7 +43,6 @@ const {
   mockListTabs,
   mockRebuildLiveRuns,
   mockRereadHeldRuns,
-  mockInvalidate,
   mockRunTurnHeldSeq,
   mockRequestRunTurnRange,
   mockPeekRunState,
@@ -57,9 +56,8 @@ const {
   ),
   mockRequestTurnRange: vi.fn((_chatID: string, _turnID: string) => undefined),
   mockListTabs: vi.fn((_signal?: AbortSignal) => Promise.resolve(true)),
-  mockRebuildLiveRuns: vi.fn((_cause?: string, _signal?: AbortSignal) => Promise.resolve()),
+  mockRebuildLiveRuns: vi.fn((_signal?: AbortSignal) => Promise.resolve()),
   mockRereadHeldRuns: vi.fn(),
-  mockInvalidate: vi.fn(),
   mockRunTurnHeldSeq: vi.fn((_id: string, _turn: string): number | undefined => undefined),
   mockRequestRunTurnRange: vi.fn((_id: string, _turn: string, _after?: number) => undefined),
   mockPeekRunState: vi.fn((_id: string): unknown => undefined),
@@ -76,7 +74,6 @@ vi.mock("./tabs-sync.js", () => ({ listTabs: mockListTabs }));
 vi.mock("./run-store.js", () => ({
   rebuildLiveRuns: mockRebuildLiveRuns,
   rereadHeldRuns: mockRereadHeldRuns,
-  invalidateCachedRuns: mockInvalidate,
   peekRunState: mockPeekRunState,
   runTurnHeldSeq: mockRunTurnHeldSeq,
 }));
@@ -745,8 +742,7 @@ describe("revalidate", () => {
 
     expect(mockLoadList).toHaveBeenCalledWith(controller.signal);
     expect(mockListTabs).toHaveBeenCalledWith(controller.signal);
-    expect(mockRebuildLiveRuns).toHaveBeenCalledWith(expect.any(String), controller.signal);
-    expect(mockInvalidate).toHaveBeenCalledWith(mockRebuildLiveRuns.mock.calls[0]?.[0]);
+    expect(mockRebuildLiveRuns).toHaveBeenCalledWith(controller.signal);
     expect(mockFetchCatalog).toHaveBeenCalledWith({ signal: controller.signal });
   });
 

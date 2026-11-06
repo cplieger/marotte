@@ -26,7 +26,7 @@ import { dropAllRunAsks, runAskPosition } from "../run-asks.js";
 import { loadList, scheduleListRetry } from "../store-load.js";
 import { clearTurnState } from "../turn-teardown.js";
 import { adoptRetention } from "../retention.js";
-import { adoptConnectRuns, invalidateCachedRuns, rebuildLiveRuns } from "../run-store.js";
+import { adoptConnectRuns, rebuildLiveRuns } from "../run-store.js";
 import { forgetAllStepSteers } from "../run-step-steers.js";
 import { fetchCatalog } from "../session-catalog.js";
 import { adoptEngineStatus, reconcileEngineStatus } from "../engine-status.js";
@@ -139,18 +139,10 @@ onBus(BUS_RECONCILE, ({ cause, signal }) => {
       scheduleListRetry();
     }
   });
-  // ONE token for both run readers below: they act on the same event a network round
-  // trip apart, so without it every live run is fetched twice. run-store.ts
-  // `answeredCause` owns what the token means.
-  const token = `reconcile:${cause}`;
   // The live-runs inventory is event-fed, so a lost stream leaves it blind to any
   // run that started or settled meanwhile; re-read the server's presence-based
-  // projection.
-  void rebuildLiveRuns(token, signal);
-  // A run's node state is APPLIED from `run_progress` rather than refetched, so
-  // frames lost leave a stale tree with nothing to notice it. This is the one
-  // moment the client knows it may have missed some.
-  invalidateCachedRuns(token);
+  // projection. The held runs' own state was re-read by the revalidation (`rereadHeldRuns`).
+  void rebuildLiveRuns(signal);
   // The catalog rides no frame, so a gap must re-read it.
   void fetchCatalog({ signal });
   // A gap may have swallowed an engine_status, and the next one comes only on a change.

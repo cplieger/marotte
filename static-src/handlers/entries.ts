@@ -136,6 +136,7 @@ function afterAppend(chatID: string, entry: Entry): void {
     case "context_reset":
     case "reconciled":
     case "turn_close":
+    case "step_graded":
       // `steer`'s dock row leaves inside `appendEntry`, in the same store update that seats
       // the note; `turn_close` arrives as `turn_closed` and is the settle handler's.
       return;

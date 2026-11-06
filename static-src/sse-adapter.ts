@@ -21,12 +21,7 @@ import {
 import { registerCleanup } from "./actions/index.js";
 import { BUS_PAGE_RESUMED, BUS_RECONCILE, decodeEnvelope, emitBus } from "./bus.js";
 import { inventoryHeld } from "./git-prs-state.js";
-import {
-  invalidateCachedRuns,
-  peekRunState,
-  rebuildLiveRuns,
-  runTurnHeldSeq,
-} from "./run-store.js";
+import { peekRunState, rebuildLiveRuns, rereadHeldRuns, runTurnHeldSeq } from "./run-store.js";
 import { requestRunTurnRange } from "./run-turn-range.js";
 import { setSSEStatus } from "./send-state.js";
 import { fetchCatalog } from "./session-catalog.js";
@@ -77,10 +72,6 @@ let hydrated = false;
 let pending: ServerEvent[] = [];
 /** Watchdog that opens the gate if hydration never reports in. */
 let hydrateTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** Numbers the revalidations, so a run's two run-store readers share a token no other run can
- *  match; `run-store.ts` `answeredCause` owns what the token means. */
-let runSeq = 0;
 
 const digest = createDigestClient({ url: "/api/sync", timeoutMs: DIGEST_TIMEOUT_MS });
 
@@ -180,7 +171,12 @@ function deliver(evt: ServerEvent): void {
   if (evt.type === "subject_changed") {
     // The refused frame's projection moved and nothing carried it; the action is the refetch and
     // the stamp is deliberately NOT observed, so the digest still names it if the refetch fails.
-    void runStampAction(evt.subject, nextRunToken("subject_changed"));
+    if (evt.subject?.kind === "runs") {
+      // The `run_progress` frames a run's tree applies carry no subject, so a refused `runs` frame
+      // is the one signal that they may have been refused with it.
+      rereadHeldRuns();
+    }
+    void runStampAction(evt.subject);
     return;
   }
   onMsg(evt);
@@ -306,19 +302,11 @@ function salvageUndecodable(data: string, err: unknown): void {
   console.warn(`sse: ${type} did not decode (${why}), turn ${turnID} named no chat and no run`);
 }
 
-function nextRunToken(cause: string): string {
-  return `${cause}:${String(++runSeq)}`;
-}
-
 /** The refetch a moved subject earns (the design's action column), as a promise the revalidation
  *  awaits. `pending` and `status` reach the client only through the connect hook, so their
  *  action is a fresh hello — the caller runs that LAST, after every other refetch has settled,
  *  which is why this returns `false` for them instead of reconnecting itself. */
-function runStampAction(
-  stamp: SubjectStamp | undefined,
-  token: string,
-  signal?: AbortSignal,
-): Promise<boolean> {
+function runStampAction(stamp: SubjectStamp | undefined, signal?: AbortSignal): Promise<boolean> {
   if (stamp === undefined) {
     return Promise.resolve(false);
   }
@@ -351,10 +339,7 @@ function runStampAction(
       return Promise.resolve(false);
     }
     case "runs":
-      // The tree state a `run_progress` applies has no subject of its own, so the lease set moving
-      // is the one signal that the trees may have moved too.
-      invalidateCachedRuns(token);
-      return rebuildLiveRuns(token, signal).then(() => false);
+      return rebuildLiveRuns(signal).then(() => false);
     case "catalog":
       return fetchCatalog(signal === undefined ? {} : { signal }).then(() => false);
     case "forge_inventory":
@@ -384,11 +369,9 @@ function isWake(cause: RevalidateContext["cause"]): boolean {
 async function applyVerdict(
   changed: readonly State[],
   removed: readonly Removed[],
-  cause: string,
   signal: AbortSignal,
 ): Promise<boolean> {
   const versions = versionMap();
-  const token = nextRunToken(cause);
   const work: Promise<boolean>[] = [];
   const fetched = new Set<string>();
   const refetch = (kind: string, ref: string): void => {
@@ -399,7 +382,7 @@ async function applyVerdict(
       return;
     }
     fetched.add(key);
-    work.push(runStampAction({ kind, ref, version: "" }, token, signal));
+    work.push(runStampAction({ kind, ref, version: "" }, signal));
   };
   for (const entry of changed) {
     refetch(entry.kind, entry.ref);
@@ -434,6 +417,8 @@ function helloIfMoved(ctx: RevalidateContext, moved: boolean): void {
 
 /** The per-tab stream's `revalidate`: this tab owns the connection and the map it digests. */
 async function revalidate(ctx: RevalidateContext): Promise<void> {
+  // Before the wake, so the run tab's wake refresh finds this read out (`readRunUnlessOut`).
+  rereadHeldRuns();
   if (isWake(ctx.cause)) {
     // FIRST: the active view whose kind has no digest subject (a run tree, a file listing)
     // refreshes on wake as it always has, and it would otherwise stay stale until the reader
@@ -461,7 +446,7 @@ async function revalidate(ctx: RevalidateContext): Promise<void> {
     emitBus(BUS_RECONCILE, { cause: "must_refetch", signal: ctx.signal });
     return;
   }
-  helloIfMoved(ctx, await applyVerdict(result.changed, result.removed, ctx.cause, ctx.signal));
+  helloIfMoved(ctx, await applyVerdict(result.changed, result.removed, ctx.signal));
 }
 
 /** The body the worker host routes to this tab (`revalidate_run`). The host digested for the
@@ -469,6 +454,7 @@ async function revalidate(ctx: RevalidateContext): Promise<void> {
  *  epoch that dropped what this tab held makes the run full. The run's cause is the PROFILE's,
  *  so the wake refresh runs only in a visible tab. */
 async function tabRevalidate(ctx: TabRevalidateContext): Promise<void> {
+  rereadHeldRuns();
   const versions = versionMap();
   const dropped = ctx.epoch === null ? 0 : versions.bind(ctx.epoch);
   if (isWake(ctx.cause) && document.visibilityState === "visible") {
@@ -482,7 +468,7 @@ async function tabRevalidate(ctx: TabRevalidateContext): Promise<void> {
   const removed = (ctx.removed ?? []).filter(
     (entry) => entry.kind === "chat" || versions.has(entry),
   );
-  await applyVerdict(changed, removed, ctx.cause, ctx.signal);
+  await applyVerdict(changed, removed, ctx.signal);
 }
 
 /** Whether this page can take the worker path: the engine has SharedWorker and the build shipped
@@ -587,7 +573,6 @@ export function _resetForTest(): void {
   };
   hydrated = false;
   pending = [];
-  runSeq = 0;
   presented = "";
 }
 

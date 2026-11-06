@@ -179,6 +179,7 @@ describe("entryRenders", () => {
   it.each([
     "turn_open",
     "turn_close",
+    "step_graded",
     "turn_bind",
     "tool_result",
     "reconciled",
