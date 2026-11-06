@@ -27,6 +27,13 @@
      rather than by declaration. */
   --sidebar-band-h: var(--titlebar-h);
 
+  /* A tab's mouse height (its 1.5rem ×, its block padding, its reserved 1px border) and what touch
+     adds to it. The panel's row-like buttons grow by that same step, so a tier changes the
+     column's rows alike (`touch-targets.test.ts`, the sidebar). */
+  --tab-h: calc(1.5rem + 2 * var(--sp-2) + 2px);
+  --sidebar-row-grow: max(0px, calc(var(--row-tap) - var(--tab-h)));
+  --sidebar-btn-h: calc(var(--btn-h) + var(--sidebar-row-grow));
+
   /* BOTH INLINE EDGES, and the bare `env()` rather than the `max()` shape the bar
      above uses: this element declares no inline padding of its own, so there is no
      house value to take the larger of. On a phone it becomes a full-width
@@ -61,10 +68,12 @@
   min-width: 0;
   min-height: 0;
 
+  /* The reach starts below the header band: the title bar beside it is chrome nobody
+     scrolls, so its heading keeps the house inset instead of clearing the reach. */
   &::before {
     content: "";
     position: absolute;
-    inset-block: 0;
+    inset-block: calc(var(--sidebar-band-h) + env(safe-area-inset-top, 0px)) 0;
     inset-inline-start: 0;
     inline-size: var(--sidebar-reach);
   }
@@ -195,7 +204,7 @@ body.sidebar-resizing {
   font-size: var(--fs-sm);
   cursor: pointer;
   white-space: nowrap;
-  min-height: var(--btn-h);
+  min-height: var(--sidebar-btn-h);
   transition: background var(--dur-micro);
   position: relative;
 
@@ -224,8 +233,8 @@ body.sidebar-resizing {
 
 .sidebar-history-btn {
   flex: none;
-  inline-size: var(--btn-h);
-  min-block-size: var(--btn-h);
+  inline-size: var(--sidebar-btn-h);
+  min-block-size: var(--sidebar-btn-h);
   padding: 0;
 }
 
@@ -545,8 +554,7 @@ body.sidebar-resizing {
  * `user-select: none` so the caret and a selection work; paired, because WebKit
  * inherits the prefixed form. Its box is its own line plus a hair, never the hit
  * floor, so the row keeps its height while renaming at both tiers: the row is
- * already the target, and the coarse tier's 16px text-entry floor (61-mcp-tools.css)
- * still fits inside a coarse row's content box. */
+ * already the target. */
 .tab-name-input {
   flex: 1;
   min-width: 0;
@@ -657,12 +665,10 @@ body.sidebar-resizing {
   gap: var(--sp-3);
   min-height: var(--sidebar-band-h);
 
-  /* The row's one control height, so both controls cannot resolve it separately.
-     `.icon-btn` declares no height, so this is its glyph plus its padding — the
-     expression, not the 32 it resolves to, because every term is a rem token.
-     `account-btn-css.test.ts` measures the two boxes equal at every tier, which is
-     what catches an `.icon-btn` padding change splitting the pair. */
-  --footer-ctl-h: calc(var(--icon-ui) + 2 * var(--sp-2));
+  /* The row's one control height, read by both controls: an `.icon-btn`'s glyph plus its
+     padding, plus the panel's touch row step. `account-btn-css.test.ts` measures the two
+     boxes equal at every tier. */
+  --footer-ctl-h: calc(var(--icon-ui) + 2 * var(--sp-2) + var(--sidebar-row-grow));
 
   /* THE BOUNDARY BETWEEN THE TAB LIST AND THE FOOTER: with many tabs the strip runs
      into the footer and the two read as one column. Solid `--hairline` in
@@ -797,6 +803,11 @@ body.sidebar-resizing {
   gap: 0.125rem;
   margin-inline-start: auto;
   flex-shrink: 0;
+
+  & > .icon-btn {
+    min-inline-size: var(--footer-ctl-h);
+    min-block-size: var(--footer-ctl-h);
+  }
 }
 
 /* THE CONNECTION MARK, a decorative disc inside `.account-btn`, which owns the target, the

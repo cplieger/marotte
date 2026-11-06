@@ -41,6 +41,7 @@ afterEach(async () => {
   style?.remove();
   style = null;
   document.documentElement.removeAttribute("data-pointer");
+  document.documentElement.style.removeProperty("--dock-viewport-h");
   await browser.viewport(1280, 720);
 });
 
@@ -416,6 +417,76 @@ describe("the run bar box's cap", () => {
     expect(rows[rows.length - 1]!.getBoundingClientRect().bottom).toBeLessThanOrEqual(
       list.getBoundingClientRect().bottom + 0.5,
     );
+  });
+
+  it("rests a touch scroll on a row's start, so no row sits cut under the fold row", async () => {
+    await browser.viewport(1024, 768);
+    style = mountAppCSS();
+    document.documentElement.setAttribute("data-pointer", "coarse");
+    const { box, rows } = mount(14, true, 1000);
+    await settle();
+    const list = box.querySelector<HTMLElement>(".run-bar")!;
+    // `proximity` is the initial strictness, so the computed value drops it.
+    expect(getComputedStyle(list).scrollSnapType).toBe("y");
+    const pitch = rows[1]!.getBoundingClientRect().top - rows[0]!.getBoundingClientRect().top;
+    list.scrollTop = 2 * pitch + 6;
+    await settle();
+    const top = list.getBoundingClientRect().top;
+    const offsets = rows.map((r) => Math.abs(r.getBoundingClientRect().top - top));
+    expect(Math.min(...offsets), "a row starts on the list's top edge").toBeLessThanOrEqual(0.5);
+
+    document.documentElement.setAttribute("data-pointer", "fine");
+    expect(getComputedStyle(list).scrollSnapType, "a wheel scrolls freely").toBe("none");
+  });
+
+  for (const [w, h] of [
+    [1024, 768],
+    [1366, 1024],
+    [820, 1180],
+    [390, 844],
+  ] as const) {
+    it(`ends a long list on a whole run in touch mode at ${String(w)}x${String(h)}`, async () => {
+      await browser.viewport(w, h);
+      style = mountAppCSS();
+      document.documentElement.setAttribute("data-pointer", "coarse");
+      const { box, rows } = mount(14, true, Math.min(1000, w - 16));
+      await settle();
+      const list = box.querySelector<HTMLElement>(".run-bar")!;
+      expect(list.scrollHeight, "more runs than the cap shows").toBeGreaterThan(list.clientHeight);
+      const cap = (w <= 768 ? 0.5 : 0.25) * h;
+      expect(box.getBoundingClientRect().height - chromeOf(box)).toBeLessThanOrEqual(cap + 0.5);
+      const clip = list.getBoundingClientRect();
+      const shown = rows.filter((r) => r.getBoundingClientRect().top < clip.bottom - 0.5);
+      expect(shown.length, "a run shows").toBeGreaterThan(0);
+      for (const r of shown) {
+        const glyph = r.querySelector(".run-bar-glyph")!.getBoundingClientRect();
+        expect(r.getBoundingClientRect().bottom, "every run shown is whole").toBeLessThanOrEqual(
+          clip.bottom + 0.5,
+        );
+        expect(glyph.bottom, "its status square inside the clip").toBeLessThanOrEqual(
+          clip.bottom + 0.5,
+        );
+      }
+    });
+  }
+
+  it("keeps one whole run in view in touch mode when the keyboard leaves a 300px viewport", async () => {
+    await browser.viewport(1024, 768);
+    style = mountAppCSS();
+    document.documentElement.setAttribute("data-pointer", "coarse");
+    // The visual viewport `dock-ask.ts` publishes with the keyboard up: a cap of 75px leaves the
+    // list less than one row under the fold row.
+    document.documentElement.style.setProperty("--dock-viewport-h", "300px");
+    const { box, rows } = mount(14, true, 1000);
+    await settle();
+    const list = box.querySelector<HTMLElement>(".run-bar")!;
+    const clip = list.getBoundingClientRect();
+    const first = rows[0]!.getBoundingClientRect();
+    expect(first.top, "the first run starts inside the list").toBeGreaterThanOrEqual(
+      clip.top - 0.5,
+    );
+    expect(first.bottom, "and ends inside it").toBeLessThanOrEqual(clip.bottom + 0.5);
+    expect(list.scrollHeight, "the rest scroll").toBeGreaterThan(list.clientHeight);
   });
 
   it("keeps the fold row in view while a long list scrolls", async () => {

@@ -6,11 +6,12 @@ import type { EntryRowSpec } from "./entry-row.js";
 
 // One row height per list, over rows whose content disagrees, built by the real builder on the shipped stylesheet.
 
-/** Hardcoded design numbers (3.5/3.75rem, 4.5/4.75rem at a 16px root), so a retune moves this table deliberately. */
+/** Hardcoded design numbers (3.5rem and 4.5rem at a 16px root), so a retune moves this table deliberately. Touch keeps
+ * both: they already clear the 44px floor, and touch grows targets, never a row past one. */
 const FINE_2 = 56;
 const FINE_3 = 72;
-const COARSE_2 = 60;
-const COARSE_3 = 76;
+const COARSE_2 = 56;
+const COARSE_3 = 72;
 
 /** Runs past four lines, so the clamp is engaged. */
 const LONG =
@@ -210,7 +211,10 @@ describe("the row's own inset and control heights", () => {
   it("shows a long description as exactly two lines", () => {
     // The body is a flex column, so a clamp admitting four lines is shrunk and clipped while the row still measures right.
     mountList("--row-h-3", "coarse");
-    expect(host.querySelector('[data-key="c"] .entry-sub-clamp')?.clientHeight).toBe(34);
+    const clamp = host.querySelector<HTMLElement>('[data-key="c"] .entry-sub-clamp');
+    expect(clamp, "the fixture must render a clamped description").not.toBeNull();
+    const line = Number.parseFloat(getComputedStyle(clamp as HTMLElement).lineHeight);
+    expect(clamp?.clientHeight).toBe(Math.round(2 * line));
   });
 
   it("takes the title's size from the item tier", () => {

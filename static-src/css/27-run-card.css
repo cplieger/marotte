@@ -342,6 +342,32 @@
   }
 }
 
+/* Touch: the row is 44px under a finger, so the facts take a second line under the name
+   rather than its width, as a run bar row's do; the clock stays on the first. An empty
+   facts line is a zero-height track with no row gap, so that row's name stays centred. */
+:where(:root[data-pointer="coarse"]) .run-step-head {
+  display: grid;
+  grid-template-columns: [glyph] auto [name] minmax(0, 1fr) [dur] auto [end];
+  align-content: center;
+  row-gap: 0;
+
+  & > .run-step-glyph {
+    grid-area: 1 / glyph / span 2;
+  }
+
+  & > .run-step-name {
+    grid-area: 1 / name;
+  }
+
+  & > .run-step-meta {
+    grid-area: 2 / name / auto / end;
+  }
+
+  & > .run-step-dur {
+    grid-area: 1 / dur;
+  }
+}
+
 /* THE MARK SLOT RENDERS BOTH AN SVG AND A BARE CHARACTER, because this vocabulary
    holds both: `ok` / `fail` / `warn` are solid road-sign SVGs from the shared
    outcome set, `input` and `skipped` keep a character, and the three in-flight

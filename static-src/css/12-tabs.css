@@ -938,7 +938,7 @@
   border-radius: var(--r-lg);
   padding: var(--sp-1);
 
-  /* Same shape and same derivation as the shared popup (11-popups.css). */
+  /* The menu corner: inner = outer - 1px border - the list inset (12 - 1 - 4 = 7px). */
   --menu-inset: var(--sp-1);
   --menu-radius: calc(var(--r-lg) - 1px - var(--menu-inset));
 

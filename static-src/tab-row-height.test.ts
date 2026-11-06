@@ -104,12 +104,12 @@ describe("a chat tab against the New chat button", () => {
     );
   });
 
-  it("paints the tab at the floor and the button at the mouse's size", () => {
-    // The tab IS its target, so its fill grows to the finger's 44px; the button is a control in
-    // the row above, drawn at 36 with its 44px target invisible around it.
+  it("paints the tab at the floor and grows the button by the tab's own step", () => {
+    // The tab IS its target, so its fill grows from its 42px mouse box to the finger's 44px; the
+    // button above grows by those same 2px from its 36, its 44px target invisible around it.
     const { btn, tab } = mountSidebar();
     expect(tab.getBoundingClientRect().height).toBeCloseTo(44, 0);
-    expect(btn.getBoundingClientRect().height).toBeCloseTo(36, 0);
+    expect(btn.getBoundingClientRect().height).toBeCloseTo(38, 0);
   });
 
   it("measures the same WIDTH, on the same left and right edges", () => {

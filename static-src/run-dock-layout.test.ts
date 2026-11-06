@@ -590,6 +590,33 @@ describe("the run dock head beside its verbs", () => {
       );
     });
 
+    // One verb: between two, the row's tap gap is spacing the touch rule grows on purpose.
+    it(`keeps the clock and the end verb where a mouse puts them in touch mode at ${String(w)}px`, async () => {
+      await browser.viewport(w, h);
+      style = mountAppCSS();
+      const { byId } = mountRunView(h);
+      const row = verbs(false, ["Cancel"]);
+      mountPage(byId, row).render({
+        label: "subflux-build-lanes-relaunch",
+        state: "running",
+        nodes: lanes(false),
+        live: true,
+      });
+      const head = byId("run-exec-dock").querySelector<HTMLElement>(".ev-dock-head")!;
+      const xs = (): number[] => {
+        const clock = box(head.querySelector(".ev-sum-clock"));
+        const verb = box(row.firstElementChild);
+        return [clock.left, clock.right, verb.left, verb.right];
+      };
+      document.documentElement.setAttribute("data-pointer", "fine");
+      const fine = xs();
+      document.documentElement.setAttribute("data-pointer", "coarse");
+      const coarse = xs();
+      coarse.forEach((x, i) => {
+        expect(x, `edge ${String(i)} at ${String(w)}`).toBeCloseTo(fine[i]!, 1);
+      });
+    });
+
     it(`puts a pause in the progress and bar's place, on one line, at ${String(w)}px`, async () => {
       await browser.viewport(w, h);
       style = mountAppCSS();
@@ -668,4 +695,61 @@ describe("the run dock head beside its verbs", () => {
     expect(note?.textContent).toBe("s10 failed: exit status 2");
     expect(box(note).top).toBeGreaterThanOrEqual(head.getBoundingClientRect().bottom - 0.5);
   });
+});
+
+describe("the run dock's step rows", () => {
+  /** The first step row of the closed dock over `fan()`, whose steps each report an activity. */
+  async function firstRow(w: number, h: number, tier: "fine" | "coarse"): Promise<HTMLElement> {
+    await browser.viewport(w, h);
+    document.documentElement.setAttribute("data-pointer", tier);
+    style = mountAppCSS();
+    const { byId } = mountRunView(h);
+    mountPage(byId, verbs(false)).render({
+      label: "nightly",
+      state: "running",
+      nodes: fan(),
+      live: true,
+    });
+    // A phone shows only the lead row; the others are `display: none`.
+    const row = [...byId("run-exec-dock").querySelectorAll<HTMLElement>(".ev-dock-row")].find(
+      (r) => r.getBoundingClientRect().height > 0,
+    );
+    expect(row, "a shown step row").toBeDefined();
+    return row!;
+  }
+  const part = (row: HTMLElement, sel: string): DOMRect =>
+    row.querySelector(sel)!.getBoundingClientRect();
+
+  for (const [w, h] of [
+    [1024, 768],
+    [820, 1180],
+  ] as const) {
+    it(`puts a step's activity under its name in touch mode, the clock on the first line, at ${String(w)}px`, async () => {
+      const row = await firstRow(w, h, "coarse");
+      const name = part(row, ".ev-dock-name");
+      const tail = part(row, ".ev-dock-tail");
+      expect(row.querySelector(".ev-dock-tail")?.textContent).toBe("Reading the diff");
+      expect(tail.top).toBeGreaterThanOrEqual(name.bottom - 0.5);
+      expect(tail.left).toBeCloseTo(name.left, 0);
+      expect(part(row, ".ev-dock-dur").bottom).toBeLessThanOrEqual(tail.top + 0.5);
+      expect(row.getBoundingClientRect().height).toBe(44);
+    });
+  }
+
+  it("keeps a step's activity beside its name with a mouse", async () => {
+    const row = await firstRow(1024, 768, "fine");
+    const name = part(row, ".ev-dock-name");
+    const tail = part(row, ".ev-dock-tail");
+    expect(tail.left).toBeGreaterThanOrEqual(name.right);
+    expect(tail.top).toBeLessThan(name.bottom);
+  });
+
+  for (const tier of ["fine", "coarse"] as const) {
+    it(`ends a step's clock on the row's gutter on a phone, ${tier} pointer`, async () => {
+      const row = await firstRow(390, 844, tier);
+      const gutter =
+        row.getBoundingClientRect().right - parseFloat(getComputedStyle(row).paddingRight);
+      expect(part(row, ".ev-dock-dur").right).toBeCloseTo(gutter, 0);
+    });
+  }
 });

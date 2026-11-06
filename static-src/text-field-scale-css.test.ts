@@ -1,7 +1,7 @@
 // Every text control sits on the type scale. The reset's zero-specificity size keeps a control no
-// class sized OFF the UA default (Chromium: Arial 13.3333px). On the fine tier no control outsizes
-// the body rung; coarse pointers get the 16px text-entry floor (61-mcp-tools.css). Sizes are read
-// off `:root`, so a token retune moves the assertions with it.
+// class sized OFF the UA default (Chromium: Arial 13.3333px). No control outsizes the body rung, and
+// the pointer tier moves no text: touch grows targets, never type. Sizes are read off `:root`, so a
+// token retune moves the assertions with it.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 // The viewport control. `vitest/browser` is the Vitest 5 spelling;
@@ -26,27 +26,25 @@ const BODY_RUNG = "--fs-md";
 const TIGHT_ROWS = [".prompt-pills", ".bottom-bar", ".mcp-modal-tabs", ".rule-form", ".seg-bar"];
 
 describe("the declarations, read from source", () => {
-  it("declares the 16px text-entry floor, in both tier arms", () => {
-    // The floor is PRESENT: the viewport meta has no `maximum-scale` (WCAG 1.4.4), so iOS zooms any
-    // focused control under 16px, and `#prompt-input` has `autofocus`.
-    const floors = allRules(loadCSS("61-mcp-tools.css")).filter(
-      (r) => /:is\(input, textarea, select\)/.test(r.selector) && /font-size:/.test(r.body),
-    );
-    expect(floors.map((r) => r.selector)).toEqual([
-      ':root[data-pointer="coarse"] :is(input, textarea, select)',
-      ':root:not([data-pointer="fine"]) :is(input, textarea, select)',
-    ]);
-    // `max(…, 1em)` so a control inheriting something LARGER keeps it rather than
-    // being clamped down to the floor.
-    for (const rule of floors) {
-      expect(rule.body).toMatch(/font-size:\s*max\(1rem,\s*1em\)/);
+  it("declares no font size on a text control keyed on the pointer tier", () => {
+    const tiered: string[] = [];
+    for (const { name, css } of manifestSheets()) {
+      for (const rule of allRules(css)) {
+        if (
+          /data-pointer/.test(rule.selector) &&
+          /\b(input|textarea|select)\b/.test(rule.selector) &&
+          /font-size:/.test(rule.body)
+        ) {
+          tiered.push(`${name} ${rule.selector}`);
+        }
+      }
     }
+    expect(tiered).toEqual([]);
   });
 
   it("sizes an unstyled text control from the reset, at zero specificity", () => {
     // Zero specificity is the whole design: it beats the UA sheet and loses to
-    // every component class, so it reaches exactly the controls nothing else has
-    // sized. A floor with real specificity is what this replaced.
+    // every component class, so it reaches exactly the controls nothing else has sized.
     const rule = allRules(loadCSS("02-reset.css")).find(
       (r) => r.selector === ":where(input, textarea, select)",
     );
@@ -204,52 +202,46 @@ describe("the controls, measured over the shipped markup", () => {
     expect(offScale()).toEqual([]);
   });
 
-  // The coarse floor is deliberately ABOVE the body rung (iOS's threshold, not a rung), so this pins
-  // the fine tiers: nothing may outsize the transcript. The POINTER decides the floor, never the
-  // width; an unresolved tier is floored only below the 48rem no-JS fallback.
-  const FINE_TIERS = TIERS.filter(
-    ([, w, , pointer]) => pointer === "fine" || (pointer === null && w > 768),
-  );
-
-  it.each(FINE_TIERS)("outsizes the body rung with no control on %s", async (_l, w, h, pointer) => {
+  it.each(TIERS)("outsizes the body rung with no control on %s", async (_l, w, h, pointer) => {
     await mountPage(w, h, pointer);
     expect(document.querySelectorAll(CONTROLS).length).toBeGreaterThan(40);
     expect(aboveBody()).toEqual([]);
   });
 
+  /** Every element's computed font size and line height, in document order. */
+  function typeOf(): string[] {
+    return [...document.body.querySelectorAll<HTMLElement>("*")].map((el) => {
+      const cs = getComputedStyle(el);
+      const id = el.id === "" ? el.tagName.toLowerCase() : `#${el.id}`;
+      return `${id} ${cs.fontSize}/${cs.lineHeight}`;
+    });
+  }
+
   it.each([
-    ["a phone with a coarse pointer", 390, 844, "coarse" as const],
-    ["a WIDE coarse viewport", 1024, 768, "coarse" as const],
-    ["a phone with no pointer tier resolved yet", 390, 844, null],
-  ])("floors every text control at 16px on %s", async (_l, w, h, pointer) => {
-    // Every text-entry control on the shipped page, as a population; box controls are excluded (the
-    // floor reaches a checkbox's label, not its box; the last case measures that).
-    await mountPage(w, h, pointer);
-    const under: string[] = [];
-    for (const el of document.querySelectorAll<HTMLElement>(CONTROLS)) {
-      if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
-        continue;
-      }
-      const px = Number.parseFloat(getComputedStyle(el).fontSize);
-      if (px < 16) {
-        const type = el instanceof HTMLInputElement ? `[${el.type}]` : "";
-        under.push(`${el.tagName.toLowerCase()}${type}#${el.id || "?"} = ${String(px)}px`);
-      }
-    }
-    expect(under, "iOS zooms the page for a focused control under 16px").toEqual([]);
-    // Five named controls, asserted by id so a failure says which.
-    for (const id of ["prompt-input", "fb-path", "tool-search", "tool-sort"]) {
-      const el = document.getElementById(id);
-      expect(el, `#${id} is not in the shipped markup`).not.toBeNull();
-      if (el !== null) {
-        expect(Number.parseFloat(getComputedStyle(el).fontSize), `#${id}`).toBeGreaterThanOrEqual(
-          16,
-        );
-      }
+    ["an iPad", 1024, 768],
+    ["a phone", 390, 844],
+  ])("sizes every element's text the same on a finger as on a mouse, on %s", async (_l, w, h) => {
+    // The whole shipped page, fields included: iOS's focus zoom is stopped by focus-zoom.ts's
+    // viewport clause, so no text grows to 16px to avoid it.
+    await mountPage(w, h, "fine");
+    const fine = typeOf();
+    expect(fine.length).toBeGreaterThan(500);
+    await mountPage(w, h, "coarse");
+    const coarse = typeOf();
+    expect(coarse.filter((line, i) => line !== fine[i])).toEqual([]);
+  });
+
+  it("keeps the edit gutter's line numbers on their lines on a finger", async () => {
+    await mountPage(1024, 768, "coarse");
+    const field = document.getElementById("editor-content");
+    const gutter = document.getElementById("editor-edit-gutter");
+    expect(field, "#editor-content is not in the shipped markup").not.toBeNull();
+    expect(gutter, "#editor-edit-gutter is not in the shipped markup").not.toBeNull();
+    if (field !== null && gutter !== null) {
+      expect(getComputedStyle(field).lineHeight).toBe(getComputedStyle(gutter).lineHeight);
     }
   });
 
-  // What the type AROUND a floored field does: a label left at `--fs-xs` sat 5px under a 16px field.
   // Consumers are READ off the manifest, so a new reader joins and a dropped one fails the source case.
   const formTierSelectors = (token: "--fs-form-label" | "--fs-form-peer"): string[] => {
     const out: string[] = [];
@@ -266,25 +258,20 @@ describe("the controls, measured over the shipped markup", () => {
     return out;
   };
 
-  it("declares both form rungs in every tier arm", () => {
+  it("declares each form rung once, on every tier", () => {
     const tokens = loadCSS("01-tokens.css");
     for (const token of ["--fs-form-label", "--fs-form-peer"] as const) {
       const arms = allRules(tokens).filter((r) => new RegExp(`${token}:`).test(r.body));
-      // Base, the coarse pointer, and the no-JS width fallback — the same three
-      // arms `--fs-item` carries, or a phone that has not resolved a tier keeps
-      // 16px fields over 12px labels.
-      expect(arms.map((r) => r.selector).sort(), `${token} tier arms`).toEqual([
-        ":root",
-        ':root:not([data-pointer="fine"])',
-        ':root[data-pointer="coarse"]',
-      ]);
+      expect(
+        arms.map((r) => r.selector),
+        `${token} tier arms`,
+      ).toEqual([":root"]);
       expect(formTierSelectors(token).length, `${token} has consumers`).toBeGreaterThan(0);
     }
 
     // The PEER consumers are a closed set: two of the three rows are built by JS, so the measured case
     // cannot reach them and this source contract is the only guard.
     expect(formTierSelectors("--fs-form-peer").sort()).toEqual([
-      ".editor-goto .editor-goto-submit",
       ".filepicker-footer .btn-save",
       ".knowledge-add-form .btn-small",
       ".native-rule-effect",
@@ -348,27 +335,26 @@ describe("the controls, measured over the shipped markup", () => {
     ["a phone with a coarse pointer", 390, 844, "coarse" as const],
     ["a WIDE coarse viewport", 1024, 768, "coarse" as const],
     ["a phone with no pointer tier resolved yet", 390, 844, null],
+    ["a desktop with a fine pointer", 1280, 800, "fine" as const],
   ])("outsizes the strings beside it by at most one rung on %s", async (_l, w, h, pointer) => {
     await mountPage(w, h, pointer);
     const root = getComputedStyle(document.documentElement);
     const rem = Number.parseFloat(root.fontSize);
     const rung = (name: string): number => Number.parseFloat(root.getPropertyValue(name)) * rem;
 
-    // The gap is the RELATION, not a literal: a label stays one rung under its field, a peer matches it.
-    expect(rung("--fs-form-peer"), "the peer rung is the iOS floor").toBe(16);
-    expect(rung("--fs-form-label")).toBe(rung("--fs-md"));
-    const oneRung = rung("--fs-form-peer") - rung("--fs-form-label");
-    expect(oneRung).toBeGreaterThan(0);
+    // A form's label and its row-sharing peer read the field's own rung on every tier.
+    expect(rung("--fs-form-label")).toBe(rung("--fs-sm"));
+    expect(rung("--fs-form-peer")).toBe(rung("--fs-sm"));
 
     expect(document.querySelectorAll(CONTROLS).length).toBeGreaterThan(40);
-    // 28 controls were over this gap before 01-tokens.css "The FORM type scale",
-    // 17 of them by 5px.
-    expect(overNeighbours(oneRung)).toEqual([]);
+    // One rung of the body scale: the composer reads `--fs-md` over its `--fs-sm` pills.
+    expect(overNeighbours(rung("--fs-md") - rung("--fs-sm"))).toEqual([]);
   });
 
   it.each([
     ["a phone with a coarse pointer", 390, 844, "coarse" as const],
     ["a WIDE coarse viewport", 1024, 768, "coarse" as const],
+    ["a desktop with a fine pointer", 1280, 800, "fine" as const],
   ])("matches a row-sharing button to the field it sits beside, on %s", async (_l, w, h, p) => {
     // The PEER half, which the one-rung tolerance cannot see, asserted as equality on NAMED containers.
     // Only those the shipped markup renders; `.knowledge-add-form` is guarded by the closed set above.
@@ -422,8 +408,7 @@ describe("the controls, measured over the shipped markup", () => {
 
   it("moves no box control, because the box controls carry a rem size of their own", async () => {
     // The reset excludes no input type because checkbox and radio carry an explicit `rem` box: pushing
-    // the RUNG (not the root, which moves `rem` boxes) to 3rem moves neither. On the FINE tier, because
-    // the coarse floor pins the font-size outright and the override would reach nothing.
+    // the RUNG (not the root, which moves `rem` boxes) to 3rem moves neither.
     await mountPage(1280, 800, "fine");
     const boxes = [...document.querySelectorAll<HTMLElement>('[type="checkbox"], [type="radio"]')];
     expect(boxes.length).toBeGreaterThan(10);

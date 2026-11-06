@@ -41,8 +41,7 @@ const PATH_EYE =
   '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/>' +
   '<circle cx="12" cy="12" r="3"/>';
 
-// A tier pair is suffixed `_UI`, never a pixel count: `--icon-ui` varies by pointer (01-tokens.css), so a number would
-// be false.
+// A tier pair is suffixed `_UI`, never a pixel count: 01-tokens.css owns `--icon-ui`'s size, so a number would go stale.
 export const ICON_EDIT = svg("inline", PATH_PENCIL);
 export const ICON_EDIT_UI = svg("ui", PATH_PENCIL);
 export const ICON_CLOSE = svg("inline", PATH_X);

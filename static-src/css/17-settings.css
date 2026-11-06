@@ -1520,20 +1520,11 @@ dd.governance-off {
   border: var(--hairline) solid var(--c-border);
   border-radius: var(--r);
   background: var(--c-bg-secondary);
-
-  /* The row's TEXT follows the same tier as its height, for the same reason: a
-     writable row's select is floored to 16px, so a row left at --fs-sm put its
-     capability and globs 4px under the badge beside them. */
   font-size: var(--fs-form-label);
 }
 
-/* THE PEER RUNG IS WHAT MAKES THE TWO BADGE VARIANTS AGREE, and before it they
- * did not: the writable row renders this badge as a <select>, which the iOS
- * text-entry floor (61-mcp-tools.css) puts at 16px, while the read-only row
- * renders a <span> that kept --fs-xs — so on a coarse pointer one list showed
- * the same badge at 16px and 11px, in adjacent rows, against the "keep it
- * visually identical" note below. Both read the peer rung now, so they match at
- * both tiers (01-tokens.css "The FORM type scale"). */
+/* The writable row renders this badge as a <select> and the read-only row as a
+ * <span>; both read the peer rung so the two variants match. */
 .native-rule-effect {
   flex: none;
   min-inline-size: 3.2rem;
@@ -1655,8 +1646,6 @@ select.native-rule-effect:focus-visible {
   min-width: 0;
 }
 
-/* The form-label rung, which lifts on the coarse pointer because the fields it
-   names are floored to 16px there (01-tokens.css "The FORM type scale"). */
 .rf-label {
   font-size: var(--fs-form-label);
   font-weight: var(--fw-medium);

@@ -344,7 +344,7 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r-lg);
 
-  /* Same shape and same derivation as the shared popup (11-popups.css). */
+  /* The menu corner: inner = outer - 1px border - the list inset (12 - 1 - 4 = 7px). */
   --menu-inset: var(--sp-1);
   --menu-radius: calc(var(--r-lg) - 1px - var(--menu-inset));
 
@@ -581,8 +581,7 @@ label.toggle-inline:has(> .toggle) {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  /* The inline end leaves a 24px action's expander inside the scroller's clip. */
-  padding: var(--sp-1) max(var(--sp-2), calc(var(--tap-gap-sm) / 2));
+  padding: var(--sp-1) var(--sp-2);
   background: var(--c-bg-secondary);
   font-size: var(--fs-sm);
   transition: background var(--dur-micro) var(--ease-standard);
@@ -595,6 +594,9 @@ label.toggle-inline:has(> .toggle) {
      with nothing to press keeps its content height. */
   &:has(button, a[href], label.toggle, [role="button"]) {
     min-block-size: var(--row-tap-sm);
+
+    /* The inline end leaves a 24px action's expander inside the scroller's clip. */
+    padding-inline-end: max(var(--sp-2), calc(var(--tap-gap-sm) / 2));
   }
 }
 
@@ -636,8 +638,14 @@ label.toggle-inline:has(> .toggle) {
 .list-row-actions {
   margin-inline-start: auto;
   flex-shrink: 0;
-  gap: max(0.125rem, var(--tap-gap-sm));
+  gap: 0.125rem;
   padding-inline-start: var(--sp-2);
+
+  /* Tap spacing is for two targets side by side; a chip beside a version has nothing to reach.
+     The ghost bin (`.list-row-btn-ghost`) counts, so the switch column does not step. */
+  &:has(:is(button, label.toggle, .list-row-btn) ~ :is(button, label.toggle, .list-row-btn)) {
+    gap: max(0.125rem, var(--tap-gap-sm));
+  }
 }
 
 .fb-actions,
@@ -747,9 +755,7 @@ label.toggle-inline:has(> .toggle) {
   width: 30rem;
 }
 
-/* Both read the form-label rung, which lifts on the coarse pointer because the
-   fields they name are floored to 16px there (01-tokens.css "The FORM type
-   scale"). `.tool-form-label-aux` carries no rule of its own and inherits this. */
+/* `.tool-form-label-aux` carries no rule of its own and inherits this. */
 .tool-form-label {
   display: flex;
   flex-direction: column;

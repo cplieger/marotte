@@ -33,25 +33,17 @@ function radiusOf(el: Element): number {
   return parseFloat(getComputedStyle(el).borderRadius);
 }
 
-describe("the three menu surfaces derive one corner from one shape", () => {
-  // All three are a 1px border with a --sp-1 list inset, so one derivation serves them.
+describe("the two menu surfaces derive one corner from one shape", () => {
+  // Both are a 1px border with a --sp-1 list inset, so one derivation serves them.
   it.each([
-    ["popup", "popup-list", "popup-item"],
-    ["tab-context-menu", "", "tab-context-item"],
-    ["chip-menu", "", "chip-menu-item"],
-  ])("%s holds a concentric %s", (outerCls, midCls, innerCls) => {
+    ["tab-context-menu", "tab-context-item"],
+    ["chip-menu", "chip-menu-item"],
+  ])("%s holds a concentric %s", (outerCls, innerCls) => {
     const outer = document.createElement("div");
     outer.className = outerCls;
-    let mount: HTMLElement = outer;
-    if (midCls !== "") {
-      const mid = document.createElement("div");
-      mid.className = midCls;
-      outer.appendChild(mid);
-      mount = mid;
-    }
     const inner = document.createElement("button");
     inner.className = innerCls;
-    mount.appendChild(inner);
+    outer.appendChild(inner);
     host.appendChild(outer);
 
     const o = radiusOf(outer);

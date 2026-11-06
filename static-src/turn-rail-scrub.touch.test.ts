@@ -316,8 +316,8 @@ describe("a touch device in mouse mode", () => {
     document.documentElement.dataset["pointer"] = "fine";
     for (const b of document.querySelectorAll<HTMLElement>(".turn-map-step")) {
       const r = b.getBoundingClientRect();
-      expect(r.width).toBeGreaterThanOrEqual(48 - 0.5);
-      expect(r.height).toBeGreaterThanOrEqual(48 - 0.5);
+      expect(r.width).toBeGreaterThanOrEqual(44 - 0.5);
+      expect(r.height).toBeGreaterThanOrEqual(44 - 0.5);
       const glyph = b.querySelector("svg");
       expect(glyph === null ? "" : getComputedStyle(glyph).opacity).toBe("1");
     }

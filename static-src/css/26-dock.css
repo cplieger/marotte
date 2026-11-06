@@ -1100,12 +1100,56 @@
      leading above a cap and below a descender. */
   --run-air: 0.5rem;
 
-  /* The gap between runs, and under an open fold row. Under a finger each row is already the
-     44px floor, so the rows abut. */
-  --run-row-gap: max(0px, var(--sp-05) - var(--hit-grow));
+  /* The gap between runs, and under an open fold row. */
+  --run-row-gap: var(--sp-05);
+
+  /* The stacked fold row's painted height; its ::after reaches the rest of the floor. */
+  --run-fold-h: calc(var(--hit-floor) - var(--run-row-gap) - var(--stack-in) - var(--stack-gap));
 
   &:has(> .run-bar.hidden) {
     display: none;
+  }
+}
+
+/* Touch takes the two-line rows below at every width: a row is 44px under a finger, and one
+   padded line leaves that height empty. The list, not the box, carries the cap there (below),
+   so a fold row an engine draws a pixel taller never cuts the last run. */
+:where(:root[data-pointer="coarse"]) .run-bar-host {
+  --run-stack: 1;
+  --run-row-h: 2.875rem;
+
+  max-block-size: none;
+}
+
+/* The list ends on a whole run: the room the box's cap leaves under the fold row, rounded down to
+   a number of rows, and never under one row, so a short visual viewport (keyboard up) keeps one
+   run in view, scrollable. A fling that stops near a row's start settles on that start, so a
+   scrolled list shows whole runs too. Touch only: a wheel's small steps would snap back. */
+:where(:root[data-pointer="coarse"]) .run-bar {
+  --run-room: var(--run-cap);
+
+  max-block-size: max(
+    var(--run-row-h),
+    calc(
+      round(down, var(--run-room) + var(--run-row-gap), var(--run-row-h) + var(--run-row-gap)) -
+        var(--run-row-gap)
+    )
+  );
+  scroll-snap-type: y proximity;
+
+  .run-bar-fold:not([hidden]) + & {
+    --run-room: calc(var(--run-cap) - var(--run-fold-h) - var(--run-row-gap));
+  }
+
+  & > li {
+    scroll-snap-align: start;
+  }
+
+  /* A token height, never the sum of a `normal` line box, which differs by engine and font: the
+     cap counts rows by it. The title's line takes what the second line leaves. */
+  & > li > .run-bar-open {
+    block-size: calc(var(--run-row-h) + var(--row-top, var(--sp-1)) - var(--sp-1));
+    grid-template-rows: minmax(0, 1fr) calc(var(--fs-sm) * 1.35);
   }
 }
 
@@ -1299,16 +1343,10 @@
   color: var(--c-text-primary);
 }
 
-/* A phone: two lines in a row, never under the hit floor's 44px. Line one is
+/* A phone, or touch: two lines in a row, never under the hit floor's 44px. Line one is
    the title and the clock, line two the state and the progress, each in shared
    columns; the bar is a band along the row's bottom edge. */
-@container run-dock (width < 30rem) {
-  /* The fold row paints under the floor here, and its target needs the gap below it. */
-  .run-bar-fold,
-  .run-bar {
-    --run-row-gap: var(--sp-05);
-  }
-
+@container run-dock (width < 30rem) or style(--run-stack: 1) {
   .run-bar {
     grid-template-columns:
       [glyph] auto [title state] auto [progress] minmax(0, 1fr)
@@ -1375,9 +1413,7 @@
      the row gap; the first row stacks above it. The box keeps what the floor needs past those
      two reaches. */
   .run-bar-toggle {
-    min-block-size: calc(
-      var(--hit-floor) - var(--run-row-gap) - var(--stack-in) - var(--stack-gap)
-    );
+    min-block-size: var(--run-fold-h);
     padding-block: calc(var(--run-air) - 1.5px) calc(var(--run-air) - 0.5px);
 
     &::after {

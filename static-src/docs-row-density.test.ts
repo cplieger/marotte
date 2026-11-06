@@ -6,9 +6,9 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { entryList, entryRow } from "./entry-row.js";
 import type { EntryRowSpec } from "./entry-row.js";
 
-/** Hardcoded: a retune has to move this table deliberately. */
+/** Hardcoded: a retune has to move this table deliberately. Touch keeps the mouse rung, which clears the 44px floor. */
 const FINE_3 = 72;
-const COARSE_3 = 76;
+const COARSE_3 = 72;
 
 const LONG =
   "A description long enough to run past four lines at any width this list is given. ".repeat(6);

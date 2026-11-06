@@ -26,7 +26,7 @@
  * `--focus-ring` was adopted at 39 sites and MISSING from 27 interactive
  * families — the whole `.btn` group, `.pill` and all six pill triggers,
  * `.send-btn`, `.sidebar-action-btn`, `.list-row-btn`, `.git-action-btn`,
- * `.chip`, `.popup-item`, `.seg`, `.picker-btn`,
+ * `.chip`, `.seg`, `.picker-btn`,
  * `.effort-btn`, `.shell-header-btn`, `.turn-action-btn`, `.mcp-row`,
  * `.section-option`, `.sched-row` — so a keyboard user's focus simply vanished
  * on most of the app. `70-selection.css` records the gap in a comment beside
@@ -278,7 +278,6 @@ a.run-step-head:focus-visible,
 
 @media (forced-colors: active) {
   .uip-modal-dialog,
-  .popup,
   .tool-call,
   .subagent-block {
     border: 1px solid CanvasText;

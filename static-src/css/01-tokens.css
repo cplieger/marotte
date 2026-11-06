@@ -413,6 +413,10 @@
     --ctl-h-dense: 2rem;
     --ctl-h-sm: 1.5rem;
     --hit-floor: 1.5rem;
+    /* The coarse tier's --hit-floor, tier-independent so an inset sized to contain a
+     * touch expander can read it: 44px is Apple's HIG figure and WCAG 2.5.5 (AAA),
+     * against WCAG 2.5.8's 24px (AA) on the fine tier. */
+    --hit-floor-touch: 2.75rem;
     --btn-h: var(--ctl-h);
     /* The smallest painted box of an interactive element, WCAG 2.5.8's 24px. */
     --paint-floor: 1.5rem;
@@ -456,8 +460,7 @@
      * not fit truncates on its own line and the row never grows. Two rungs,
      * because a list carries either a title plus one line of metadata or a title
      * plus a description region, and a page picks one for every row it renders.
-     * POINTER-TIERED like --hit-floor: a coarse row is one rung taller because its
-     * inks are (--fs-item), not because a finger needs a bigger row. */
+     * One value on every tier: both rungs already clear the touch floor. */
     --row-h-2: 3.5rem;
     --row-h-3: 4.5rem;
 
@@ -470,14 +473,10 @@
     --row-h: var(--row-h-2);
   }
 
-  /* A finger or a pen: 44px is Apple's HIG figure and WCAG 2.5.5 (AAA), against
-   * WCAG 2.5.8's 24px (AA) on the fine tier. */
+  /* A finger or a pen. */
   :root[data-pointer="coarse"] {
-    --hit-floor: 2.75rem;
+    --hit-floor: var(--hit-floor-touch);
     --row-tap-line: var(--hit-floor);
-    --row-h-2: 3.75rem;
-    --row-h-3: 4.75rem;
-    --icon-toolbar: 1.25rem;
   }
 
   /* NO-JS FALLBACK. A capability query cannot decide this tier: Chromium reports
@@ -486,11 +485,8 @@
    * trackpad. */
   @media (width <= 48rem) {
     :root:not([data-pointer="fine"]) {
-      --hit-floor: 2.75rem;
+      --hit-floor: var(--hit-floor-touch);
       --row-tap-line: var(--hit-floor);
-      --row-h-2: 3.75rem;
-      --row-h-3: 4.75rem;
-      --icon-toolbar: 1.25rem;
     }
   }
 
@@ -507,9 +503,6 @@
     --titlebar-h: 3.25rem;
     --icon-inline: 0.75rem;
     --icon-ui: 1rem;
-    /* The chat header's glyph, one step up on touch, where the header icons keep a
-     * box at the floor (12-chat.css). */
-    --icon-toolbar: var(--icon-ui);
     --icon-lg: 1.5rem;
     --icon-hero: 3rem;
     /* ---- Status dots ------------------------------------------------------ *
@@ -558,23 +551,18 @@
      * An ITEM's own text and the metadata beside it: a list row's title and its
      * subtitle, a popup row and its caption, one tier for both because they are
      * the same object at two sizes of container. The --fs-popup-* names are
-     * ALIASES declared once, here: an alias re-resolves per tier by itself, so
-     * the tier blocks below move only the item pair. THE TIER IS THE POINTER, like
-     * --hit-floor above; two rungs rather than a coarse tier over the whole --fs-*
-     * scale, or a lifted caption would EQUAL --fs-md wherever they pair. */
+     * ALIASES of the pair. One value on every tier: touch grows targets, never
+     * text. A caption stays one rung under its row (popup-parity.test.ts). */
     --fs-item: var(--fs-base);
     --fs-item-meta: var(--fs-sm);
     --fs-popup: var(--fs-item);
     --fs-popup-meta: var(--fs-item-meta);
 
     /* ---- The FORM type scale --------------------------------------------- *
-     * A form field's LABEL or hint, and a control sharing a ROW with a field. On
-     * the coarse tier the iOS text-entry floor (61-mcp-tools.css) puts every field
-     * at 16px so focusing one cannot zoom the page; a label at --fs-xs would sit
-     * 5px under its own field. TWO RUNGS BECAUSE RANK DIFFERS: a label stays one
-     * rung under its field, a control in the field's row matches it. THE TIER IS
-     * THE POINTER, like --hit-floor and --fs-item above, because a width query
-     * cannot separate a tablet from a desktop. --fs-sm at the fine tier for both. */
+     * A form field's LABEL or hint, and a control sharing a ROW with a field. Two
+     * names because rank differs (a label names the field, a peer matches it);
+     * one value on every tier, the field's own. iOS's focus zoom is stopped by the
+     * viewport clause focus-zoom.ts writes, not by a larger field. */
     --fs-form-label: var(--fs-sm);
     --fs-form-peer: var(--fs-sm);
   }
@@ -588,25 +576,6 @@
      * clamps position, not width, so a flat 22rem box overflows a 320px phone. */
     --tooltip-max-w: min(22rem, calc(100vw - 2 * var(--sp-4)));
     --tooltip-lines: 2;
-  }
-
-  /* A caption stays one step under its row, so it cannot outsize the control it
-   * labels: `.pill-model-meta` beside a model row's own name is the tight case,
-   * and the one popup-parity.test.ts measures. */
-  :root[data-pointer="coarse"] {
-    --fs-item: var(--fs-md);
-    --fs-item-meta: var(--fs-base);
-    --fs-form-label: var(--fs-md);
-    --fs-form-peer: var(--fs-lg);
-  }
-
-  @media (width <= 48rem) {
-    :root:not([data-pointer="fine"]) {
-      --fs-item: var(--fs-md);
-      --fs-item-meta: var(--fs-base);
-      --fs-form-label: var(--fs-md);
-      --fs-form-peer: var(--fs-lg);
-    }
   }
 
   :root {

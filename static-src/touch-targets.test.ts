@@ -81,6 +81,7 @@ const { openMermaidOverlay } = await import("./mermaid-overlay.js");
 const { renderDiffPane } = await import("./diff-pane.js");
 const { renderConnectionTarget } = await import("./forge-auth-connection.js");
 const { setWorkspaceRoot, _resetForTest: resetWorkspaceRoot } = await import("./workspace.js");
+const { openBranchSwitcher } = await import("./git-branch-switcher.js");
 document.body.replaceChildren();
 
 let style: HTMLStyleElement;
@@ -588,6 +589,32 @@ function plantGitRepo(): void {
   q("#git-changes-mount").appendChild(section);
 }
 
+/** The branch switcher opened from the repo head, its branches answered by a stubbed fetch. */
+function plantBranchSwitcher(): void {
+  show("git-view");
+  plantGitRepo();
+  const real = globalThis.fetch;
+  globalThis.fetch = (): Promise<Response> =>
+    Promise.resolve(
+      Response.json({
+        branches: [
+          { name: "main", current: true },
+          { name: "dev", current: false },
+          { name: "origin/dev", current: false },
+        ],
+      }),
+    );
+  const anchor = q(".git-repo-section-header");
+  openBranchSwitcher("demo", anchor);
+  teardown.push(() => {
+    globalThis.fetch = real;
+    // A second open from the same anchor closes it.
+    if (document.querySelector(".git-branch-popover") !== null) {
+      openBranchSwitcher("demo", anchor);
+    }
+  });
+}
+
 /** Two pull requests with their row actions, in the shape `git-prs-tab.ts` renders. */
 function plantPRs(): void {
   const list = make("ul", "git-pr-list");
@@ -1090,13 +1117,15 @@ interface Surface {
   /** Controls inside a layout: painted at the mouse's size, the 44px target invisible around them.
    *  Each selector must match at least one rendered element, and every match is checked. */
   readonly controls: readonly string[];
-  /** Elements that are their own target: rows, fields and the header icons, whose box grows to
-   *  the floor. */
+  /** Elements that are their own target: rows and fields, whose box grows to the floor. */
   readonly rows?: readonly string[];
   /** Controls with no target of their own (a slider's thumb rides its track): painted size only. */
   readonly painted?: readonly string[];
   /** The mouse tier draws a different control here, so no fine height is there to match. */
   readonly ownFineForm?: true;
+  /** Listed controls that stand in a column of rows: each paints at its mouse height plus what
+   *  `row` grows on coarse, so the column's rows change alike. */
+  readonly rowStep?: { readonly row: string; readonly controls: readonly string[] };
 }
 
 const HEADER_ICONS = [
@@ -1129,6 +1158,10 @@ const SURFACES: readonly Surface[] = [
       "#tab-list .tab-close",
     ],
     rows: ["#tab-list .tab"],
+    rowStep: {
+      row: "#tab-list .tab",
+      controls: ["#new-chat", "#history-btn", "#account-btn", "#logout-btn"],
+    },
   },
   {
     name: "the phone drawer's close",
@@ -1142,15 +1175,13 @@ const SURFACES: readonly Surface[] = [
     name: "the chat header",
     sizes: ALL,
     setup: () => undefined,
-    controls: [],
-    rows: HEADER_ICONS,
+    controls: HEADER_ICONS,
   },
   {
     name: "the phone header's menu",
     sizes: [390],
     setup: () => undefined,
-    controls: [],
-    rows: ["#menu-toggle"],
+    controls: ["#menu-toggle"],
   },
   {
     name: "the find bar",
@@ -1484,6 +1515,17 @@ const SURFACES: readonly Surface[] = [
     rows: ["#git-changes-mount .git-repo-section-header", "#git-changes-mount .git-file-path"],
   },
   {
+    name: "the branch switcher",
+    sizes: TWO,
+    setup: plantBranchSwitcher,
+    controls: [".git-branch-popover-go"],
+    rows: [
+      ".git-branch-popover-row",
+      ".git-branch-popover-filter",
+      ".git-branch-popover-create-input",
+    ],
+  },
+  {
     name: "the git page's pull requests",
     sizes: TWO,
     setup: () => {
@@ -1798,11 +1840,12 @@ const NARROW: readonly { sel: string; sizes: readonly Size[]; axis: "inline" | "
   { sel: "#agent-dirs-chips .chip-remove", sizes: ALL, axis: "inline" },
 ];
 
-/** Shaped expanders, whose target is not centred on the box: the box grown by the `::after`'s
- *  used insets, which the press cases then hit-test like any other target. */
+/** Shaped expanders, whose target is not centred on the box: the padding box grown by the
+ *  `::after`'s used insets, which the press cases then hit-test like any other target. */
 const SHAPED = new Set([
   ".attachment-close",
   "#agent-dirs-chips .chip-remove",
+  "#fb-list .fb-check",
   "#fb-list .fb-git-clickable",
   "#run-bar-fold .run-bar-toggle",
   "a.git-pr-row-title",
@@ -1812,11 +1855,14 @@ const SHAPED = new Set([
 function shaped(el: HTMLElement, b: Box): Box {
   const cs = getComputedStyle(el, "::after");
   const out = (v: string): number => Math.max(0, -(parseFloat(v) || 0));
+  // An absolute `::after` is placed against its host's padding box, inside any border.
+  const left = b.left + el.clientLeft;
+  const top = b.top + el.clientTop;
   return {
-    left: Math.max(0, b.left - out(cs.left)),
-    right: Math.min(window.innerWidth, b.right + out(cs.right)),
-    top: Math.max(0, b.top - out(cs.top)),
-    bottom: Math.min(window.innerHeight, b.bottom + out(cs.bottom)),
+    left: Math.max(0, left - out(cs.left)),
+    right: Math.min(window.innerWidth, left + el.clientWidth + out(cs.right)),
+    top: Math.max(0, top - out(cs.top)),
+    bottom: Math.min(window.innerHeight, top + el.clientHeight + out(cs.bottom)),
   };
 }
 
@@ -2085,25 +2131,67 @@ describe.each(ALL)("the coarse tier at %ipx", (size) => {
     (s) => s.controls.length + (s.painted?.length ?? 0) > 0 && s.ownFineForm !== true,
   );
   it.each(painted.map((s) => [s.name, s] as const))(
-    "%s: each control paints at its mouse-tier height",
+    "%s: each control paints at its mouse-tier height, or grows with its column's rows",
     async (_name, s) => {
-      const heights = async (tier: "fine" | "coarse"): Promise<Map<string, number>> => {
+      const heights = async (
+        tier: "fine" | "coarse",
+      ): Promise<{ controls: Map<string, number>; row: number }> => {
         await mountSurface(s, size, tier);
-        return new Map(
-          probesFor(s, "controls").map((p) => [p.label, p.box.bottom - p.box.top] as const),
-        );
+        const row = s.rowStep === undefined ? 0 : q(s.rowStep.row).getBoundingClientRect().height;
+        return {
+          controls: new Map(
+            probesFor(s, "controls").map((p) => [p.label, p.box.bottom - p.box.top] as const),
+          ),
+          row,
+        };
       };
-      const fine = await heights("fine");
-      const coarse = await heights("coarse");
+      const { controls: fine, row: rowFine } = await heights("fine");
+      const { controls: coarse, row: rowCoarse } = await heights("coarse");
+      const stepped = new Set(s.rowStep?.controls);
+      const step = (label: string): number =>
+        stepped.has(label.replace(/\[\d+\]$/, "")) ? rowCoarse - rowFine : 0;
+      if (s.rowStep !== undefined) {
+        expect(rowCoarse - rowFine, `premise: ${s.rowStep.row} grows on coarse`).toBeGreaterThan(0);
+      }
       const drift = [...coarse]
         .filter(
-          ([label, h]) => Math.abs(h - (fine.get(label) ?? Number.NaN)) > 0.5 || !fine.has(label),
+          ([label, h]) =>
+            Math.abs(h - (fine.get(label) ?? Number.NaN) - step(label)) > 0.5 || !fine.has(label),
         )
         .map(
           ([label, h]) =>
             `${label}: ${h.toFixed(1)}px coarse, ${String(fine.get(label)?.toFixed(1))}px fine`,
         );
       expect(drift, `\n${drift.join("\n")}\n`).toEqual([]);
+    },
+  );
+
+  it.each(cases.filter((s) => s.ownFineForm !== true).map((s) => [s.name, s] as const))(
+    "%s: each glyph inside a control or row draws at its mouse-tier size",
+    async (_name, s) => {
+      const glyphs = async (tier: "fine" | "coarse"): Promise<Map<string, string>> => {
+        await mountSurface(s, size, tier);
+        return new Map(
+          probesFor(s).flatMap((p) =>
+            [...p.el.querySelectorAll("svg")]
+              .filter((g) => g.checkVisibility())
+              .map((g, i) => {
+                const r = g.getBoundingClientRect();
+                return [
+                  `${p.label} svg[${String(i)}]`,
+                  `${r.width.toFixed(1)}x${r.height.toFixed(1)}`,
+                ] as const;
+              }),
+          ),
+        );
+      };
+      const fine = await glyphs("fine");
+      const coarse = await glyphs("coarse");
+      expect(coarse.size, "glyphs drawn on coarse").toBe(fine.size);
+      const grown = [...coarse]
+        .filter(([label, wh]) => fine.get(label) !== wh)
+        .map(([label, wh]) => `${label}: ${wh} coarse, ${String(fine.get(label))} fine`);
+      expect(grown, `\n${grown.join("\n")}\n`).toEqual([]);
     },
   );
 });
@@ -2165,14 +2253,15 @@ describe("a transcript's task list on the coarse tier", () => {
 });
 
 describe("the chat header's icons", () => {
+  // `--btn-h` is 2.25rem on every tier: touch grows their targets, never their boxes.
   it.each(ALL)(
-    "keep a 44px box on the coarse tier at %ipx, their mouse box on a fine one",
+    "paint their 36px mouse box on the coarse and the fine tier at %ipx",
     async (size) => {
       await page.viewport(...VIEWPORTS[size]);
       const header = SURFACES.find((s) => s.name === "the chat header")!;
       for (const [tier, want] of [
         ["fine", 36],
-        ["coarse", FLOOR],
+        ["coarse", 36],
       ] as const) {
         await mountSurface(header, size, tier);
         const sizes = probesFor(header).map(

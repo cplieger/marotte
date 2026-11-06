@@ -547,56 +547,6 @@ input[type="radio"] {
   content: none;
 }
 
-/* THE TEXT-ENTRY FLOOR, and it is 16px because iOS says so rather than because
- * this app's type scale has a rung there. iOS Safari ZOOMS THE PAGE when a text
- * control whose computed size is under 16px takes focus, and `#prompt-input`
- * carries `autofocus` — so on a phone the app loads already zoomed, with every
- * fixed bar mispositioned and no gesture that reliably restores the layout.
- *
- * IT WAS DELETED AND IS RESTORED, and the premise is what moved. The deletion
- * argued the floor "defended against behaviour the document cannot exhibit",
- * because `static/index.html` shipped `maximum-scale=1.0`, which iOS honours for
- * the auto-zoom. That clause is GONE (WCAG 1.4.4 wants the page resizable, and
- * `02-reset.css` now allows `pinch-zoom` to match), so the suppression the
- * deletion rested on no longer exists and the zoom is live again. The deletion's
- * own closing sentence asked for exactly this: restore the floor in the same
- * change as the viewport meta.
- *
- * THE COST WAS REAL AND IS NOW PAID DOWN RATHER THAN ACCEPTED. This block used to
- * end "on a coarse pointer every field in the app reads 16px against 11-14px
- * around it, the composer included, which is how the floor was reported the first
- * time" — reported a SECOND time in 2026-09 against the upload picker's path box,
- * and measured across the app at the iPad preset: 28 controls read larger than the
- * nearest string beside them, 17 of them by 5px against an 11px label. The floor
- * is not what moved, because it cannot be: it is what stops the page zooming when
- * a control under 16px takes focus, and `readonly` does NOT exempt an input from
- * that zoom, so a readout needs it as much as a field being typed into. What moved
- * is the type AROUND the field — 01-tokens.css "The FORM type scale" declares the
- * two rungs a floored field needs beside it, a label one rung under and a
- * row-sharing control matching, and 14 label and peer sites read them. Lift
- * the neighbours, never lower the floor: the lift is verifiable in a browser and
- * lowering the floor is a per-control audit against a real device this container
- * cannot make. `max(…, 1em)` so a control that INHERITS something larger keeps it
- * rather than being clamped down to the floor.
- *
- * Real specificity, not `:where()`, and that is the whole mechanism: a component
- * class has to LOSE to this, or the one control that matters most
- * (`#prompt-input`, at (0,1,0)) keeps its 14px and the page still zooms. The
- * no-JS twin is the same rule at the width fallback the tier tokens use
- * (01-tokens.css), so a phone that has not resolved a pointer tier is floored
- * too. A reader who has PINNED `fine` loses the floor, deliberately: that is a
- * stated preference, and the pin is only reachable from a device that offered the
- * toggle. */
-:root[data-pointer="coarse"] :is(input, textarea, select) {
-  font-size: max(1rem, 1em);
-}
-
-@media (width <= 48rem) {
-  :root:not([data-pointer="fine"]) :is(input, textarea, select) {
-    font-size: max(1rem, 1em);
-  }
-}
-
 /* Shared summary style for history table rows. Lives under the name
  * row in the History view, same grey-smaller-text treatment. */
 .list-row-title {

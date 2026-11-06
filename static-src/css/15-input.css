@@ -52,8 +52,8 @@
 
   /* ONE INSET FOR THE WHOLE BOX'S CHROME. The distance from .prompt-box's inner
      edge to a control is the same on the left, on the right and at the bottom,
-     and the same as the gap BETWEEN controls, so the pill row reads as one
-     block rather than as three unrelated measurements. It was
+     and on a mouse the same as the gap BETWEEN controls (`--pill-gap`), so the
+     pill row reads as one block rather than as three unrelated measurements. It was
      `var(--sp-1) var(--sp-2)` — sides 8px, bottom 4px, gaps 4px — which is
      three values where the eye expects one. Consumed by .prompt-pills and
      .attachment-row; the textarea keeps its own roomier
@@ -91,12 +91,13 @@
      with it, which costs the pills' label width. */
   --composer-pill-pad: max(var(--pill-inset), calc((var(--hit-floor) - var(--composer-ctl-h)) / 2));
 
-  /* The lead an icon-only control (`--icon-ui` plus its padding and border, under the
-     hit floor) takes on top of the row's gap, so its inline reach meets the reach of
-     an icon-only neighbour before it rather than crossing it. 0 on a mouse. */
-  --pill-icon-lead: max(
-    0px,
-    calc(var(--hit-floor) - var(--icon-ui) - 2 * var(--pill-pad-inline) - 2px - var(--pill-inset))
+  /* THE PILL ROW'S ONE GAP, between every pair of controls, so touch spaces the whole
+     row or none of it: the hit floor minus the icon-only pill's width (`--icon-ui`
+     plus its padding and border), where two icon-only neighbours' inline reaches meet
+     instead of crossing. --pill-inset (4px) on a mouse, 10px on touch. */
+  --pill-gap: max(
+    var(--pill-inset),
+    calc(var(--hit-floor) - var(--icon-ui) - 2 * var(--pill-pad-inline) - 2px)
   );
 }
 
@@ -200,17 +201,9 @@
 
   padding: calc((var(--composer-rest-h) - 1lh) / 2) var(--sp-4);
 
-  /* THE TRANSCRIPT'S OWN RUNG on a fine pointer, and 16px on a coarse one — this
-     declaration is the first half and does not decide the second. A composer
-     reads at the size of the conversation it produces (`.message` is --fs-md
-     too), so the two agree rather than the box being the largest text on screen.
-     It was `var(--fs-field)`, a token raised to 1rem on the coarse tier as an iOS
-     floor; the token is gone and the floor is back at the app level instead
-     (61-mcp-tools.css), where it beats this rule's (0,1,0) on the coarse tier.
-     That is deliberate: this element carries `autofocus`, iOS zooms the page for
-     a focused control under 16px, and the viewport meta clause that used to
-     suppress that zoom was deleted for WCAG 1.4.4. So the two rungs disagree on a
-     finger BY DESIGN, and 61-mcp-tools.css carries the whole record. */
+  /* The transcript's own rung on every tier: a composer reads at the size of the
+     conversation it produces (`.message` is --fs-md too). iOS's zoom on focusing
+     a field under 16px is stopped by focus-zoom.ts, not by this size. */
   font-size: var(--fs-md);
   line-height: 1.4;
   font-family: var(--font-sans);
@@ -434,7 +427,7 @@
 .prompt-pills {
   display: flex;
   align-items: center;
-  gap: var(--pill-inset);
+  gap: var(--pill-gap);
 
   /* The inset is the EXPANDER's term, not the chrome's: see --composer-pill-pad on
      `#prompt-form`. Equal on all four edges, which the concentric corner requires. */
@@ -714,6 +707,10 @@
 
 .pill-spacer {
   flex: 1;
+
+  /* The spacer is a flex item, so the row puts a gap on each side of it; a full row
+     (a phone) shrinks it to 0 and Send would sit two gaps from its neighbour. */
+  margin-inline-start: calc(-1 * var(--pill-gap));
 }
 
 /* No Supervised pill, no tool-card approval row, no awaiting_approval
@@ -821,6 +818,10 @@
   position: absolute;
   bottom: calc(100% + var(--sp-1));
   left: var(--pill-inline-shift, 0);
+
+  /* One rung off the page, never --c-bg-elevated: the ramp steps away from the page, so in
+     light that is the deepest surface in the app and a menu on it reads darker than what it
+     floats over; in dark it costs ink (--c-text-secondary 4.561:1 there, 8.062:1 here). */
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: var(--r-lg);
@@ -835,9 +836,7 @@
   padding: var(--card-inset);
 
   /* A FLOOR, not a width: a card whose content is wider still grows past it, so
-     one value cannot cramp any of the six. 14rem is within 4px of `.popup`'s own
-     13.75rem (11-popups.css), so both popup families answer "how narrow may a
-     menu be" with one figure. */
+     one value cannot cramp any of the six. */
   min-inline-size: 14rem;
 
   /* The cap needs the scroll: a card is an overlay anchored to the composer, and
@@ -863,8 +862,8 @@
   white-space: nowrap;
 
   /* A row's own text. A caption beside a row takes --fs-popup-meta, and nothing
-     inside a card names an --fs-* rung directly — which is what keeps a caption
-     added later from sitting at 11px under a finger. */
+     inside a card names an --fs-* rung directly, so a caption added later stays
+     one rung under its row (popup-parity.test.ts). */
   font-size: var(--fs-popup);
   color: var(--c-text-secondary);
   opacity: 0;
@@ -1011,7 +1010,7 @@
 
   /* Named rather than inherited: a <button> takes the UA's own font-size (Arial
      13.3333px in Chromium) and the reset deliberately passes only the family,
-     so a row that dropped this declaration would answer no tier. */
+     so a row that dropped this declaration would render at the UA's size. */
   font-size: var(--fs-popup);
   cursor: pointer;
   text-align: left;
@@ -2006,9 +2005,8 @@
      flipped for a single card would put the six out of step at exactly the width
      where the screen is smallest.
 
-     NO FONT SIZE HERE. A popup's type lift is `--fs-popup` / `--fs-popup-meta`
-     (01-tokens.css), on the POINTER tier — a width query cannot reach an iPad,
-     and a rule here would have to name each caption to lift it. */
+     NO FONT SIZE HERE: a popup's type is `--fs-popup` / `--fs-popup-meta`
+     (01-tokens.css), one size on every width and tier. */
   .pill-expand-content {
     max-inline-size: calc(100dvw - 2 * var(--sp-3));
 
@@ -2032,15 +2030,6 @@
   }
 }
 
-/* The prompt row's touch sizes, on the observed tier (pointer-tier.ts) because a
-   width query cannot reach an iPad. `:where()` keeps each selector at its base
-   specificity, so these win by coming later. */
-:where([data-pointer="coarse"]) {
-  .pill-ctx-row {
-    padding-block: var(--sp-1);
-  }
-}
-
 /* PHONE-SHAPED means narrow OR short (a media-query list is CSS's OR): a phone on
    its long edge is mostly wider than 48rem, so the narrow arm alone leaves the tier
    on screen in landscape. No reasoning tier on a phone at any level: the row is
@@ -2052,16 +2041,6 @@
   .send-btn-label {
     display: none;
   }
-
-  .prompt-pills > .send-btn {
-    margin-inline-start: var(--pill-icon-lead);
-  }
-}
-
-/* The row's icon-only controls; see `--pill-icon-lead`. On the slot, not the button: a
-   positioned slot's box over the lead would stack above the previous control's target. */
-.pill-slot:has(> :is([id="chat-options-btn"], [id="task-list-pill"])) {
-  margin-inline-start: var(--pill-icon-lead);
 }
 
 /* The one consumer that still ROTATES its box, because its mark is a stroked arc

@@ -86,7 +86,6 @@ sets the press fill. Got body: ${press.body.trim().slice(0, 200)}`,
     for (const selector of [
       ".pill-model-item.active .pill-model-meta",
       ".pill-role-item.active .pill-role-scope",
-      ".popup-item.active .popup-meta",
       ".picker-btn.active .picker-meta",
       ".fb-row.fb-row-selected .fb-meta",
     ]) {

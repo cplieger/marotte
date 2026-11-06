@@ -207,3 +207,66 @@ describe("a step row under the same pressure", () => {
     expect(name.scrollWidth).toBeLessThanOrEqual(Math.ceil(name.clientWidth));
   });
 });
+
+/** Two steps: the first with its agent and model (the row's facts line), the second with none. */
+function factSteps(): RunState {
+  const ran = step("review", "completed", STARTED);
+  ran.agentName = "code-reviewer";
+  ran.modelId = "claude-opus-5.5";
+  return {
+    workflowId: "wf_1",
+    displayName: LONG_LABEL,
+    status: "running",
+    root: {
+      nodeId: "wf_1",
+      type: "sequence",
+      status: "running",
+      children: [ran, step("land", "running", STARTED)],
+    },
+  };
+}
+
+function rect(root: HTMLElement, sel: string): DOMRect {
+  return el(root, sel).getBoundingClientRect();
+}
+
+describe("a step row in touch mode", () => {
+  for (const [label, widthPx] of [
+    ["an iPad", 760],
+    ["a 390px phone", PHONE_PX],
+  ] as const) {
+    it(`puts the step's facts on a second line under its name, the clock on the first, on ${label}`, () => {
+      document.documentElement.setAttribute("data-pointer", "coarse");
+      const row = el(mount(widthPx, factSteps()), ".run-step");
+      expect(el(row, ".run-step-meta").textContent).toContain("code-reviewer");
+      const name = rect(row, ".run-step-name");
+      const meta = rect(row, ".run-step-meta");
+      expect(meta.top).toBeGreaterThanOrEqual(name.bottom - 0.5);
+      expect(meta.left).toBeCloseTo(name.left, 0);
+      expect(rect(row, ".run-step-dur").bottom).toBeLessThanOrEqual(meta.top + 0.5);
+      expect(rect(row, ".run-step-head").height).toBe(44);
+    });
+  }
+
+  it("keeps a step with no facts on one line in the middle of its 44px row", () => {
+    document.documentElement.setAttribute("data-pointer", "coarse");
+    const row = [...mount(760, factSteps()).querySelectorAll<HTMLElement>(".run-step")][1]!;
+    expect(el(row, ".run-step-meta").textContent).toBe("");
+    const head = rect(row, ".run-step-head");
+    const name = rect(row, ".run-step-name");
+    expect(head.height).toBe(44);
+    // Within a pixel: the 16px mark spanning both tracks rounds the 14px line's offset.
+    expect(Math.abs(name.top + name.height / 2 - (head.top + head.height / 2))).toBeLessThanOrEqual(
+      1,
+    );
+  });
+
+  it("keeps the facts beside the name with a mouse", () => {
+    document.documentElement.setAttribute("data-pointer", "fine");
+    const row = el(mount(760, factSteps()), ".run-step");
+    const name = rect(row, ".run-step-name");
+    const meta = rect(row, ".run-step-meta");
+    expect(meta.left).toBeGreaterThanOrEqual(name.right);
+    expect(meta.top).toBeLessThan(name.bottom);
+  });
+});

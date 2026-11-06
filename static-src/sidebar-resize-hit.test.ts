@@ -315,14 +315,29 @@ const SURFACES: readonly (readonly [string, () => { surface: Element; text: Elem
       return { surface: shell, text: q("#settings-view .section-hint") };
     },
   ],
-  [
-    "the title bar's heading",
-    () => {
-      const title = q("#titlebar-title");
-      return { surface: title, text: title };
-    },
-  ],
 ];
+
+// The title is chrome text: the tier never moves it, so the handle's reach yields its band.
+describe.each([false, true])("the title bar's heading, widened %s", (widened) => {
+  it("starts at the bar's house inset on both tiers, and a press there reaches it", () => {
+    const at: Partial<Record<Tier, number>> = {};
+    for (const tier of ["fine", "coarse"] as const) {
+      const s = mountApp(tier, widened);
+      const title = q("#titlebar-title");
+      const g = firstGlyph(title);
+      const bar = q(".chat-toolbar").getBoundingClientRect();
+      // `--sp-3`, the bar's own leading inset.
+      expect(g.left - bar.left, `${tier}: the house inset`).toBeCloseTo(12, 0);
+      expect(g.left, `${tier}: premise: the glyph sits inside the reach`).toBeLessThan(
+        edge(s) + FLOOR[tier],
+      );
+      const hit = document.elementFromPoint(g.left + 1, g.top + g.height / 2);
+      expect(title.contains(hit), `${tier}: a press on the first glyph`).toBe(true);
+      at[tier] = g.left;
+    }
+    expect(at.coarse).toBe(at.fine);
+  });
+});
 
 const CASES = [
   ["fine", false],

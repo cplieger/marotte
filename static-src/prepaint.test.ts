@@ -115,7 +115,7 @@ describe("runPrepaint", () => {
 
   it("runs the theme step first, so the stylesheet resolves the right tokens", () => {
     expect(PREPAINT_STEPS[0]).toBe(applyStoredTheme);
-    expect(PREPAINT_STEPS).toHaveLength(4);
+    expect(PREPAINT_STEPS).toHaveLength(5);
   });
 });
 

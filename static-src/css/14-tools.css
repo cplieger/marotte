@@ -244,11 +244,20 @@
   font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
 
+  /* The same first-line offsets as the header's own glyph and count: the glyph's box stays its
+     drawing size on every tier, and only the offset grows with the touch row. */
   & > .tool-group-hooks-icon,
   & > .tool-group-hooks-n {
     display: inline-flex;
     align-items: center;
-    block-size: var(--row-first-line);
+  }
+
+  & > .tool-group-hooks-icon {
+    margin-block-start: calc((var(--row-first-line) - var(--icon-ui)) / 2);
+  }
+
+  & > .tool-group-hooks-n {
+    padding-block: calc((var(--row-first-line) - 1lh) / 2);
   }
 
   & svg {
@@ -1400,9 +1409,6 @@ a.subagent-header {
  * is modified, as `.git-st-*` and VS Code's gitDecoration; the STATE ink, never --c-warning. */
 .git-badge {
   position: absolute;
-  /* These insets have to keep it INSIDE the button's box: the toolbar clips its
-     buttons (`.chat-toolbar > .icon-btn { overflow: hidden }`, 12-chat.css, for
-     the find-button collapse) and outscores any override on the button's id. */
   top: 0.25rem;
   right: 0.25rem;
   width: 0.4375rem;
