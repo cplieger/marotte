@@ -297,13 +297,22 @@ export function effectiveRunID(e: Entry, results: RunResults): string {
   return own !== "" ? own : (results.get(toolResultID(e.id)) ?? "");
 }
 
+/** The `tool_call` entry hosting a run's card, and the turn holding that entry. */
+interface RunCardOwner {
+  readonly turn: string;
+  readonly entry: string;
+}
+
+/** run id → its card's host, in turn and `seq` order. */
+export type RunCardOwners = ReadonlyMap<string, RunCardOwner>;
+
 /**
  * run id → the `tool_call` entry hosting that run's card: the first naming it in turn and
  * `seq` order. Derived per pass: the gates run in several passes, and a live registry
  * would let two calls each host. A fully paged-out run has no card.
  */
-export function runCardOwners(turns: readonly Turn[], lane = ""): ReadonlyMap<string, string> {
-  const out = new Map<string, string>();
+export function runCardOwners(turns: readonly Turn[], lane = ""): RunCardOwners {
+  const out = new Map<string, RunCardOwner>();
   for (const t of turns) {
     const results = runResults(t);
     for (const e of t.body) {
@@ -313,7 +322,7 @@ export function runCardOwners(turns: readonly Turn[], lane = ""): ReadonlyMap<st
       }
       const runID = effectiveRunID(e, results);
       if (runID !== "" && !out.has(runID)) {
-        out.set(runID, e.id);
+        out.set(runID, { turn: t.id, entry: e.id });
       }
     }
   }

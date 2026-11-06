@@ -27,6 +27,7 @@ import {
   runResults,
   turnSpan,
   type EntryRange,
+  type RunCardOwners,
   type RunResults,
   type TurnFolds,
 } from "./block-window.js";
@@ -186,20 +187,10 @@ function clearLiveAnchor(el: HTMLElement): void {
 // Run id to the `tool_call` entry hosting its card, derived per pass by `runCardOwners`. Derived, not a live
 // registry, which would let two mentions in one turn both claim it. An absent run lets every mention build the card.
 
-let runCardOwnerEntries: ReadonlyMap<string, string> = new Map();
-let runCardOwnersMoved = 0;
+let runCardOwnerEntries: RunCardOwners = new Map();
 
-export function setRunCardOwners(owners: ReadonlyMap<string, string>): void {
-  const prev = runCardOwnerEntries;
-  if (prev.size !== owners.size || [...owners].some(([run, entry]) => prev.get(run) !== entry)) {
-    runCardOwnersMoved++;
-  }
+export function setRunCardOwners(owners: RunCardOwners): void {
   runCardOwnerEntries = owners;
-}
-
-/** Moves whenever `setRunCardOwners` changes which entry hosts some run's card. */
-export function runCardOwnersVersion(): number {
-  return runCardOwnersMoved;
 }
 
 /** Whether this `tool_call` entry hosts `runID`'s card. A detached render is exempt, being its own surface. */
@@ -208,7 +199,7 @@ function ownsRunCard(st: TurnRender, runID: string, entryID: string): boolean {
     return true;
   }
   const owner = runCardOwnerEntries.get(runID);
-  return owner === undefined || owner === entryID;
+  return owner === undefined || owner.entry === entryID;
 }
 
 // Which collapsible containers are open, so a re-mount restores the reader's choice. Delegates have no key, and

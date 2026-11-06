@@ -6,6 +6,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { Session } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
+import { toolResultID } from "./entry-ids.js";
+import { KEY_ATTR } from "./reconcile.js";
 
 for (const id of [
   "chat-view",
@@ -35,6 +37,7 @@ vi.mock("./fundamentals/turn-header.js", { spy: true });
 const store = await import("./store.js");
 const header = await import("./fundamentals/turn-header.js");
 const messages = await import("./messages.js");
+const folds = await import("./fold-state.js");
 
 messages.mountChatView();
 
@@ -66,6 +69,43 @@ function longChat(id: string, count: number): Session {
     s.turn_order.push(t);
   }
   s.turn_count = count;
+  return s;
+}
+
+/** A `Run Workflow` call and its result naming `runID`, added to the turn at `at`; the first such call hosts the card. */
+function withRun(s: Session, runID: string, at = 0): Session {
+  const t = s.turn_order[at]!;
+  const held = s.turns.get(t)!;
+  const call = `${t}-launch`;
+  held.entries.splice(
+    2,
+    0,
+    {
+      id: call,
+      turn: t,
+      kind: "tool_call",
+      seq: 2,
+      ts: 3,
+      payload: {
+        id: `tool-${runID}`,
+        title: "Run Workflow",
+        status: "completed",
+        kind: "other",
+        ts: 3,
+      },
+    },
+    {
+      id: toolResultID(call),
+      turn: t,
+      kind: "tool_result",
+      seq: 3,
+      ts: 4,
+      payload: { status: "completed", workflow_id: runID },
+    },
+  );
+  const close = held.entries[4]!;
+  held.entries[4] = { ...close, seq: 4 };
+  held.closeAt = 4;
   return s;
 }
 
@@ -124,6 +164,48 @@ describe("a full pass updates only the cards whose inputs changed", () => {
     await flushed();
 
     expect(headerUpdates() - before, "header updates for one turn's new entry").toBe(1);
+  });
+
+  it("switching to another chat and back updates no card of the first", async () => {
+    const first = withRun(longChat(`c-switch-a-${String(++seq)}`, CARDS), "wf-a");
+    const second = withRun(longChat(`c-switch-b-${String(seq)}`, CARDS), "wf-b");
+    store.setSessions([first, second]);
+    store.setActive(first.id);
+    store.bumpMessages(first.id, "load");
+    await flushed();
+    store.setActive(second.id);
+    store.bumpMessages(second.id, "load");
+    await flushed();
+    const before = headerUpdates();
+
+    store.setActive(first.id);
+    await flushed();
+
+    expect(messages.transcriptViewFor(first.id)?.querySelectorAll(".turn")).toHaveLength(CARDS);
+    expect(headerUpdates() - before, "header updates on returning to an unchanged chat").toBe(0);
+  });
+
+  it("a run's card moves to the next mention when the launch's turn leaves", async () => {
+    const id = `c-owner-${String(++seq)}`;
+    const s = withRun(withRun(longChat(id, CARDS), "wf-moved"), "wf-moved", 1);
+    const [launch, mention] = [s.turn_order[0]!, s.turn_order[1]!];
+    // The reader opened both, so both bodies render: a folded card draws no run card at all.
+    folds.setTurnOpen(id, launch, true);
+    folds.setTurnOpen(id, mention, true);
+    seed(s);
+    await flushed();
+    const runCard = (turnID: string): Element | null | undefined =>
+      messages
+        .transcriptViewFor(id)
+        ?.querySelector(`.turn[${KEY_ATTR}="${turnID}"] .run-card[data-run="wf-moved"]`);
+    expect(runCard(mention), "a later mention draws no card while the launch is held").toBeNull();
+
+    s.turns.delete(launch);
+    s.turn_order.shift();
+    store.bumpMessages(id, "shape");
+    await flushed();
+
+    expect(runCard(mention), "the first mention left hosts the card").not.toBeNull();
   });
 
   it("a busy flip still reaches every card's Rewind", async () => {

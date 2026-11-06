@@ -126,7 +126,6 @@ import {
   dropTail,
   geometrySkipped,
   setRunCardOwners,
-  runCardOwnersVersion,
   openNoteRun,
 } from "./messages-blocks.js";
 import { wakeLine } from "./turn-wake.js";
@@ -850,7 +849,12 @@ function computeFoldPlan(
   turnByID.clear();
   wantedWindow.clear();
   // The dispatcher's one turn-scope input: a render holds one turn and cannot see its neighbours' runs.
-  setRunCardOwners(runCardOwners(turns));
+  const owners = runCardOwners(turns);
+  setRunCardOwners(owners);
+  ownedRuns.clear();
+  for (const [run, owner] of owners) {
+    ownedRuns.set(owner.turn, `${ownedRuns.get(owner.turn) ?? ""}${run}=${owner.entry};`);
+  }
   // The transcript's root lane; `planResidency` takes no default.
   const window = planResidency(openable, anchor, "");
   const band = anchor === undefined ? undefined : readerBand();
@@ -1473,7 +1477,31 @@ function beginCardPass(session: Session): void {
   // Once per pass: `sessionBusy` walks every held turn.
   passBusy = sessionBusy(session);
   const tier = document.documentElement.getAttribute("data-pointer") ?? "";
-  passKey = `${session.id}|${String(passBusy)}|${newestTurnID(session) ?? ""}|${String(runCardOwnersVersion())}|${tier}`;
+  passKey = `${session.id}|${String(passBusy)}|${newestTurnID(session) ?? ""}|${tier}`;
+}
+
+/** turn id → the runs whose card that turn hosts, as `run=entry;` pairs; `computeFoldPlan` rebuilds it. */
+const ownedRuns = new Map<string, string>();
+
+/** The names `namedWake` filled in: the rest of the wake is its held entry, which the turn's stamp covers. */
+function wakeNames(w: Turn["wake"]): string {
+  if (w === undefined) {
+    return "";
+  }
+  let out = w.run_name ?? "";
+  for (const s of w.steers ?? []) {
+    out += `|${s.run_name ?? ""}`;
+  }
+  return out;
+}
+
+function hasTurnBody(card: HTMLElement): boolean {
+  for (const child of card.children) {
+    if (child.classList.contains("turn-body")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -1501,7 +1529,8 @@ function cardInputsOf(card: HTMLElement, t: Turn): readonly unknown[] {
     t.trigger,
     t.rewindTo,
     t.branchFrom,
-    t.wake === undefined ? "" : JSON.stringify(t.wake),
+    wakeNames(t.wake),
+    ownedRuns.get(t.id) ?? "",
     plan?.from,
     plan?.to,
     have?.from,
@@ -1509,7 +1538,7 @@ function cardInputsOf(card: HTMLElement, t: Turn): readonly unknown[] {
     hasPendingBuild(t.id),
     heightsRevision(t.id),
     card.hasAttribute("data-folded"),
-    card.querySelector(":scope > .turn-body") !== null,
+    hasTurnBody(card),
     liveRefusalFor(chatID, t.id),
     codeReferencesFor(chatID, t.id),
   ];
