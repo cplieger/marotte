@@ -6,6 +6,7 @@ package agent
 const (
 	methodV3MCPStatus            = "_kiro/mcp/status"                        // consolidated MCP server state (connected/failed/oauth)
 	methodV3MCPResetServer       = "_kiro/mcp/resetServer"                   // C→A request: reconnect a server in one session; {sessionId, serverName, startOAuth?} → {success}
+	methodKiroMCPOAuthCompleted  = "_kiro/mcp/oauthCompleted"                // A→C notification: a mid-session re-auth ended; {serverName, success, oauthFlowId}
 	methodV3SessionsChanged      = "_kiro/sessions/changed"                  // session inventory diff (no client consumer on v3)
 	methodV3SpecPhaseCheckpoint  = "_kiro/spec/phaseCheckpoint"              // A→C notification: {sessionId, featureName, phase, artifactPath} per accepted in-process spec-document write (spec_checkpoint.go)
 	methodV3RateLimit            = "_kiro/error/rate_limit"                  // {sessionId, message}
@@ -20,6 +21,7 @@ const (
 	methodV3CodeReferences       = "_kiro/code_references"                   // licensed-code attributions → per-turn chip (HandleCodeReferences)
 	methodKiroConfigurationState = "_kiro/configuration/state"               // the engine declares configurationState; Settings' kiro_defaults
 	methodKiroConfigurationGet   = "_kiro/configuration/getState"            // C→A request: {observer, roots?} → the same composed view; the picker's custom agents
+	methodKiroConfigurationSet   = "_kiro/configuration/set"                 // C→A request: {krn, value, layer} → {setting}; a refusal carries data {reason: locked|notGranted|unavailable, layer}
 )
 
 // KAS native Cedar policy methods: list/explain are observer-pass requests for the read-only
@@ -65,14 +67,22 @@ const (
 
 // `_kiro/spec/*` is deliberately unwired: its invoke verbs drive fire-and-forget turns with no turn-end signal.
 
-// KAS memory verbs, session-less engine requests: list {limit 1..1000, cursor?,
-// scopes?} → {memories, nextCursor?}; get/update → {memory}; delete → {id, title}. Ineligible
-// accounts get -32602.
+// KAS memory verbs, session-less engine requests: list {limit 1..1000, cursor?, scopes?,
+// memoryTypes?, query?, sort?, sortDirection?} → {memories, nextCursor?, total, counts}, of which
+// marotte sends only limit and cursor, since it reads the whole capped store and filters it itself;
+// get/update → {memory}; delete → {id, title}. Ineligible accounts get -32602. changed is A→C and
+// sessionless, {total, counts{byType, byScope}}, sent after any change to the store, debounced 250 ms.
+// getSyncStatus {} → {state, reason?, lastSyncAt?, pending?}; syncStatus is A→C and sessionless, the
+// same status whenever it moves. _kiro/memory/sync is not wired: it can rewrite the local store, and
+// KAS pulls on its own.
 const (
-	methodKiroMemoryList   = "_kiro/memory/list"
-	methodKiroMemoryGet    = "_kiro/memory/get"
-	methodKiroMemoryUpdate = "_kiro/memory/update"
-	methodKiroMemoryDelete = "_kiro/memory/delete"
+	methodKiroMemoryList          = "_kiro/memory/list"
+	methodKiroMemoryGet           = "_kiro/memory/get"
+	methodKiroMemoryUpdate        = "_kiro/memory/update"
+	methodKiroMemoryDelete        = "_kiro/memory/delete"
+	methodKiroMemoryChanged       = "_kiro/memory/changed"
+	methodKiroMemoryGetSyncStatus = "_kiro/memory/getSyncStatus"
+	methodKiroMemorySyncStatus    = "_kiro/memory/syncStatus"
 )
 
 // KAS knowledge methods. _kiro/knowledge is dispatched by `subcommand` with no sessionId (the

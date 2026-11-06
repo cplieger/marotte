@@ -4,6 +4,7 @@ package translate
 // different answers for one.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"slices"
@@ -560,11 +561,13 @@ func TestSessionInfoUpdate_StepMeteringCountsCreditsOnly(t *testing.T) {
 	for _, c := range []struct {
 		name         string
 		attr         FrameAttribution
+		wantCredits  float64
 		wantLastMs   float64
 		wantRunMeter bool
 	}{
-		{"the chat's own turn moves both", FrameAttribution{}, 1234, false},
-		{"a step's turn meters the run turn and bills the chat's credits only", FrameAttribution{Step: true, RunID: runID, NodePath: nodePath}, 0, true},
+		// The chat's own spend arrives in its session_usage total, not per turn.
+		{"the chat's own turn moves its duration only", FrameAttribution{}, 0, 1234, false},
+		{"a step's turn meters the run turn and bills the chat's credits only", FrameAttribution{Step: true, RunID: runID, NodePath: nodePath}, 0.25, 0, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -575,11 +578,11 @@ func TestSessionInfoUpdate_StepMeteringCountsCreditsOnly(t *testing.T) {
 			tr := New(rolesOf(deps))
 			tr.HandleSessionInfoUpdate(t.Context(), testChat, infoFrame(), c.attr)
 
-			if store.chat.Usage.Credits != 0.25 {
-				t.Errorf("credits = %v, want 0.25 (real spend is the user's either way)", store.chat.Usage.Credits)
+			if store.chat.Usage.Credits != c.wantCredits {
+				t.Errorf("credits = %v, want %v", store.chat.Usage.Credits, c.wantCredits)
 			}
-			if !store.chat.Usage.HasRealData {
-				t.Error("HasRealData not set, so the popup would keep showing placeholder zeros")
+			if store.chat.Usage.HasRealData != (c.wantCredits > 0) {
+				t.Errorf("HasRealData = %v, want it set exactly when spend was billed", store.chat.Usage.HasRealData)
 			}
 			if store.chat.Usage.LastTurnMs != c.wantLastMs {
 				t.Errorf("LastTurnMs = %v, want %v", store.chat.Usage.LastTurnMs, c.wantLastMs)
@@ -970,6 +973,59 @@ func TestNodeFrames_ReadEachFramesReasonFromItsWireKey(t *testing.T) {
 				t.Errorf("run calls = %+v, want %+v", deps.runCalls, want)
 			}
 		})
+	}
+}
+
+// runProgressOf returns the one run_progress payload a handler broadcast.
+func runProgressOf(t *testing.T, events []marotte.ServerEvent) marotte.RunProgressPayload {
+	t.Helper()
+	for _, e := range events {
+		if p, ok := e.Payload.(marotte.RunProgressPayload); ok {
+			return p
+		}
+	}
+	t.Fatalf("no run_progress among %d events", len(events))
+	return marotte.RunProgressPayload{}
+}
+
+func TestRunProgress_NodeCompleteCarriesStepCredits(t *testing.T) {
+	resetCensus(t)
+	var logbuf bytes.Buffer
+	captureSlog(t, &logbuf)
+	deps, events, _ := depsWithStore(t, testChat)
+	New(rolesOf(deps)).RunProgressHandler(marotte.RunProgressNodeComplete)(t.Context(), testChat,
+		notif("_kiro/workflow/node_complete", map[string]any{
+			"workflowId": "wf_1", "nodeId": "build", "nodePath": []string{"wf_1", "build"}, "status": "completed",
+			"credits": []map[string]any{
+				{"usage": 1.25, "unit": "credit", "unitPlural": "credits"},
+				{"usage": 9, "unit": "token"},
+			},
+		}))
+
+	if got := runProgressOf(t, *events).Credits; got != 1.25 {
+		t.Errorf("credits = %v, want 1.25: only the credit unit is spend", got)
+	}
+	if !strings.Contains(logbuf.String(), "UNKNOWN metering unit") || !strings.Contains(logbuf.String(), "token") {
+		t.Errorf("the token unit was not reported to the census: %s", logbuf.String())
+	}
+}
+
+// KAS drops a malformed credits array itself; marotte must not lose the step's completion over it.
+func TestRunProgress_MalformedCreditsKeepsTheFrame(t *testing.T) {
+	deps, events, _ := depsWithStore(t, testChat)
+	New(rolesOf(deps)).RunProgressHandler(marotte.RunProgressNodeComplete)(t.Context(), testChat,
+		notif("_kiro/workflow/node_complete", map[string]any{
+			"workflowId": "wf_1", "nodeId": "build", "nodePath": []string{"wf_1", "build"},
+			"status": "completed", "credits": "oops",
+		}))
+
+	p := runProgressOf(t, *events)
+	if p.Status != "completed" || p.Credits != 0 {
+		t.Errorf("run_progress = (status %q, credits %v), want (completed, 0)", p.Status, p.Credits)
+	}
+	want := runCall{kind: "node_complete", runID: "wf_1", nodePath: workflow.PathKey([]string{"wf_1", "build"}), status: "completed"}
+	if !slices.Contains(deps.runCalls, want) {
+		t.Errorf("run calls = %+v, want the run turn closed by %+v", deps.runCalls, want)
 	}
 }
 

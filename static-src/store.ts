@@ -1468,6 +1468,7 @@ export function foldToolCallDelta(prev: ToolCall, d: ToolProgressPayload): ToolC
     ...(d.output_spans !== undefined && { output_spans: d.output_spans }),
     ...(diffs !== undefined && { diffs }),
     ...(d.locations !== undefined && { locations: d.locations }),
+    ...(d.input !== undefined && { input: d.input }),
     ...(d.duration_ms !== undefined && { duration_ms: d.duration_ms }),
     ...(d.terminal_id !== undefined && { terminal_id: d.terminal_id }),
     ...(d.agent_subtask_id !== undefined && { agent_subtask_id: d.agent_subtask_id }),
@@ -1542,6 +1543,7 @@ export function settledToolCall(
     ...(result.output_spans !== undefined && { output_spans: result.output_spans }),
     ...(result.diffs !== undefined && { diffs: result.diffs }),
     ...(result.locations !== undefined && { locations: result.locations }),
+    ...(result.input !== undefined && { input: result.input }),
     ...(result.duration_ms !== undefined && { duration_ms: result.duration_ms }),
     ...(result.terminal_id !== undefined && { terminal_id: result.terminal_id }),
     ...(result.workflow_id !== undefined && { workflow_id: result.workflow_id }),
@@ -1553,21 +1555,28 @@ export function settledToolCall(
     ...(result.declined === true && { declined: true }),
     ...(result.classifier_approved === true && { classifier_approved: true }),
     ...(result.classifier_note !== undefined && { classifier_note: result.classifier_note }),
+    ...(result.delegate_stop !== undefined && { delegate_stop: result.delegate_stop }),
   };
 }
 
 /** Whether a mounted card built from `shown` would paint `next` identically: the fields
  *  `applyToolCallUpdate` READS, which is a narrower set than a `ToolCall`'s own — the title, the
- *  output and the spans that style it, the diffs, the status with its duration, the terminal id
- *  `linkTerminal` claims, the offload link, the answered fact and the safety check's marks. */
+ *  output and the spans that style it, the diffs and the input a resting diff is drawn from, the
+ *  status with its duration, a delegate's stop, the terminal id `linkTerminal` claims, the offload link, the
+ *  refusal marks (declined, and whether a denial is held: the card adopts the first one only), the
+ *  answered fact and the safety check's marks. */
 export function paintsTheSame(shown: ToolCall, next: ToolCall): boolean {
   return (
     shown.title === next.title &&
     shown.status === next.status &&
     shown.duration_ms === next.duration_ms &&
     shown.output === next.output &&
+    shown.input === next.input &&
+    shown.delegate_stop === next.delegate_stop &&
     shown.terminal_id === next.terminal_id &&
     shown.offload?.path === next.offload?.path &&
+    (shown.declined === true) === (next.declined === true) &&
+    (shown.denial === undefined) === (next.denial === undefined) &&
     factOf(shown) === factOf(next) &&
     (shown.classifier_approved === true) === (next.classifier_approved === true) &&
     (shown.classifier_note ?? "") === (next.classifier_note ?? "") &&

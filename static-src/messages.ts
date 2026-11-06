@@ -145,6 +145,7 @@ import {
   initTurnActionsBodyProbe,
 } from "./messages-turn-actions.js";
 import { syncCodeReferences } from "./code-refs.js";
+import { truncate } from "./strings.js";
 import { syncRefusal, setRefusalRewindHandler } from "./refusal.js";
 
 // --- Public re-exports ---
@@ -1153,7 +1154,7 @@ function refreshToolTurn(session: Session, turnID: string | undefined): boolean 
  */
 function rewindConfirmText(target: EntryPrompt, discarded: readonly Turn[]): string {
   const promptRaw = target.text.trim().replace(/\s+/g, " ");
-  const prompt = promptRaw.length > 100 ? promptRaw.slice(0, 100) + "\u2026" : promptRaw;
+  const prompt = truncate(promptRaw, 101);
   const lines = ["Rewind to this turn?", ""];
   if (prompt.length > 0) {
     lines.push(`Prompt: "${prompt}"`);

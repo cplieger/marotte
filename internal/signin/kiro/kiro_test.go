@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -72,16 +73,20 @@ func TestAnswer_RefreshesInsideThreeHundredSeconds(t *testing.T) {
 	}
 }
 
-func TestAnswer_CarriesTheProfileArnExactlyWhenTheRecordHasOne(t *testing.T) {
+// kiroCLIBuilderIDArn is the profile kiro-cli answers for every Builder ID sign-in.
+const kiroCLIBuilderIDArn = "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX"
+
+func TestAnswer_ProfileArnIsTheClassConstantForBuilderIDAndTheRecordsOtherwise(t *testing.T) {
 	now := testRecord(providerBuilderID, "").ExpiresAt.Add(-time.Hour)
 	for _, tc := range []struct {
 		r    record
 		name string
+		want string
 	}{
-		{name: "builder_id_without_arn", r: testRecord(providerBuilderID, "")},
-		{name: "builder_id_with_arn", r: testRecord(providerBuilderID, "arn:b")},
-		{name: "internal", r: testRecord(providerInternal, "arn:i")},
-		{name: "enterprise", r: testRecord(providerEnterprise, "arn:e")},
+		{name: "builder_id_without_arn", r: testRecord(providerBuilderID, ""), want: kiroCLIBuilderIDArn},
+		{name: "builder_id_with_arn", r: testRecord(providerBuilderID, "arn:b"), want: kiroCLIBuilderIDArn},
+		{name: "internal", r: testRecord(providerInternal, "arn:i"), want: "arn:i"},
+		{name: "enterprise", r: testRecord(providerEnterprise, "arn:e"), want: "arn:e"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			res, err := New().Result(credOf(t, tc.r), now)
@@ -92,9 +97,8 @@ func TestAnswer_CarriesTheProfileArnExactlyWhenTheRecordHasOne(t *testing.T) {
 			if err := json.Unmarshal(res, &raw); err != nil {
 				t.Fatal(err)
 			}
-			_, has := raw["profileArn"]
-			if has != (tc.r.ProfileArn != "") || (has && raw["profileArn"] != tc.r.ProfileArn) {
-				t.Errorf("profileArn = %v (present %v), want present exactly when the record has %q", raw["profileArn"], has, tc.r.ProfileArn)
+			if raw["profileArn"] != tc.want {
+				t.Errorf("profileArn = %v, want %q", raw["profileArn"], tc.want)
 			}
 			if raw["provider"] != string(tc.r.Provider) {
 				t.Errorf("provider = %v, want %s", raw["provider"], tc.r.Provider)
@@ -248,11 +252,9 @@ func TestLiveSwitchable(t *testing.T) {
 		name     string
 		want     bool
 	}{
-		{name: "arn_to_arn_same_class", from: testRecord(providerInternal, "arn:a"), to: testRecord(providerInternal, "arn:b"), want: true},
-		{name: "no_arn_to_arn", from: testRecord(providerBuilderID, ""), to: testRecord(providerBuilderID, "arn:b"), want: true},
-		{name: "no_arn_to_no_arn", from: testRecord(providerBuilderID, ""), to: testRecord(providerBuilderID, ""), want: true},
-		{name: "arn_to_no_arn", from: testRecord(providerBuilderID, "arn:a"), to: testRecord(providerBuilderID, ""), want: false},
-		{name: "class_change", from: testRecord(providerBuilderID, "arn:a"), to: testRecord(providerEnterprise, "arn:b"), want: false},
+		{name: "same_idc_class", from: testRecord(providerInternal, "arn:a"), to: testRecord(providerInternal, "arn:b"), want: true},
+		{name: "builder_id_arn_to_no_arn", from: testRecord(providerBuilderID, "arn:a"), to: testRecord(providerBuilderID, ""), want: true},
+		{name: "class_change", from: testRecord(providerBuilderID, ""), to: testRecord(providerEnterprise, "arn:b"), want: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := New().LiveSwitchable(credOf(t, tc.from), credOf(t, tc.to)); got != tc.want {
@@ -281,24 +283,17 @@ func TestSignIn_IdCWithoutProfileStoresNothing(t *testing.T) {
 	}
 }
 
-func TestSignIn_BuilderIDWithoutProfileStoresWithoutArn(t *testing.T) {
-	for _, tc := range []struct {
-		profiles scripted
-		name     string
-	}{
-		{name: "no_profile", profiles: noProfiles},
-		{name: "control_plane_error", profiles: scripted{status: 500}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			h := newVaultHarness(t, "alice")
-			if st := h.signIn("alice", builderID(), tc.profiles); st.Kind != signin.StatusSignedIn {
-				t.Fatalf("Status = %+v, want signed_in", st)
-			}
-			a, ok := h.answer()
-			if !ok || a.ProfileArn != "" || a.Provider != string(providerBuilderID) {
-				t.Errorf("answer = %+v, %v; want a Builder ID answer with no profile ARN", a, ok)
-			}
-		})
+func TestSignIn_BuilderIDAnswersTheFixedProfileArnWithoutAProfileLookup(t *testing.T) {
+	h := newVaultHarness(t, "alice")
+	if st := h.signIn("alice", builderID(), profilesOf("alice")); st.Kind != signin.StatusSignedIn {
+		t.Fatalf("Status = %+v, want signed_in", st)
+	}
+	a, ok := h.answer()
+	if !ok || a.ProfileArn != kiroCLIBuilderIDArn || a.Provider != string(providerBuilderID) {
+		t.Errorf("answer = %+v, %v; want a Builder ID answer with kiro-cli's Builder ID profile", a, ok)
+	}
+	if n := len(h.aws.servedPath("/")); n != 0 {
+		t.Errorf("profile lookups = %d, want none for Builder ID", n)
 	}
 }
 
@@ -337,31 +332,13 @@ func switchCase(t *testing.T, aliceParams, bobParams signin.FlowParams, alicePro
 	return h, before
 }
 
-func TestSignIn_ProfilelessSwitchMakesRestartPending(t *testing.T) {
-	for _, signOut := range []bool{false, true} {
-		t.Run(map[bool]string{false: "direct", true: "sign_out_between"}[signOut], func(t *testing.T) {
-			h, alice := switchCase(t, builderID(), builderID(), profilesOf("alice"), noProfiles, signOut)
-			if !h.v.AccountPending(ID) {
-				t.Fatal("AccountPending = false")
-			}
-			for range 3 {
-				a, ok := h.answer()
-				switch {
-				case signOut && ok:
-					t.Errorf("after the sign-out the engine was answered %+v, want unauthenticated", a)
-				case !signOut && (a.AccessToken != alice.AccessToken || a.ProfileArn != alice.ProfileArn || a.Provider != alice.Provider):
-					t.Errorf("answer = %+v, want alice's whole: %+v", a, alice)
-				}
-				if strings.Contains(a.AccessToken, "bob") {
-					t.Error("bob's token reached the engine before the restart")
-				}
-			}
-			h.v.EngineSpawned(ID) // the fake engine owner's respawn
-			a, ok := h.answer()
-			if !ok || a.AccessToken != "bob-access" || a.ProfileArn != "" {
-				t.Errorf("after the restart answer = %+v, %v; want bob's, with no ARN", a, ok)
-			}
-		})
+func TestSignIn_BuilderIDSwitchNeverRestarts(t *testing.T) {
+	h, _ := switchCase(t, builderID(), builderID(), profilesOf("alice"), noProfiles, false)
+	if h.v.AccountPending(ID) {
+		t.Error("AccountPending after a Builder ID to Builder ID switch")
+	}
+	if a, ok := h.answer(); !ok || a.AccessToken != "bob-access" || a.ProfileArn != kiroCLIBuilderIDArn {
+		t.Errorf("answer = %+v, %v; want bob's at once, with kiro-cli's Builder ID profile", a, ok)
 	}
 }
 
@@ -422,20 +399,21 @@ func TestSignIn_EmailReadInsideTheSignIn(t *testing.T) {
 	for _, tc := range []struct {
 		email     scripted
 		name      string
-		profiles  scripted
+		params    signin.FlowParams
 		wantEmail string
+		wantArn   string
 	}{
-		{name: "present", email: scripted{status: 200, body: `{"userInfo":{"email":"alice@example.com"},"note":"body-canary"}`}, profiles: profilesOf("alice"), wantEmail: "alice@example.com"},
-		{name: "present_without_profile", email: scripted{status: 200, body: `{"userInfo":{"email":"alice@example.com"},"note":"body-canary"}`}, profiles: noProfiles, wantEmail: "alice@example.com"},
-		{name: "absent", email: scripted{status: 200, body: `{"userInfo":{},"note":"body-canary"}`}, profiles: profilesOf("alice")},
-		{name: "forbidden", email: scripted{status: 403, body: `{"message":"body-canary"}`}, profiles: profilesOf("alice")},
-		{name: "not_displayable", email: scripted{status: 200, body: `{"userInfo":{"email":"a@b\u001b[31m"},"note":"body-canary"}`}, profiles: profilesOf("alice")},
+		{name: "present", email: scripted{status: 200, body: `{"userInfo":{"email":"alice@example.com"},"note":"body-canary"}`}, params: builderID(), wantEmail: "alice@example.com", wantArn: kiroCLIBuilderIDArn},
+		{name: "present_idc", email: scripted{status: 200, body: `{"userInfo":{"email":"alice@example.com"},"note":"body-canary"}`}, params: idcParams, wantEmail: "alice@example.com", wantArn: "arn:aws:codewhisperer:us-east-1:111:profile/alice"},
+		{name: "absent", email: scripted{status: 200, body: `{"userInfo":{},"note":"body-canary"}`}, params: builderID(), wantArn: kiroCLIBuilderIDArn},
+		{name: "forbidden", email: scripted{status: 403, body: `{"message":"body-canary"}`}, params: builderID(), wantArn: kiroCLIBuilderIDArn},
+		{name: "not_displayable", email: scripted{status: 200, body: `{"userInfo":{"email":"a@b\u001b[31m"},"note":"body-canary"}`}, params: builderID(), wantArn: kiroCLIBuilderIDArn},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := capture.Default(t)
 			h := newVaultHarness(t, "alice")
 			h.aws.set(func(f *fakeAWS) { f.email = tc.email })
-			st := h.signIn("alice", builderID(), tc.profiles)
+			st := h.signIn("alice", tc.params, profilesOf("alice"))
 			if st.Kind != signin.StatusSignedIn || st.Label.Email != tc.wantEmail {
 				t.Errorf("Status = %+v, want signed in with email %q", st, tc.wantEmail)
 			}
@@ -451,12 +429,8 @@ func TestSignIn_EmailReadInsideTheSignIn(t *testing.T) {
 				t.Fatalf("email reads = %d, want 1", len(calls))
 			}
 			c := calls[0]
-			wantArn := ""
-			if tc.profiles != noProfiles {
-				wantArn = "arn:aws:codewhisperer:us-east-1:111:profile/alice"
-			}
-			if c.query.Get("isEmailRequired") != "true" || c.auth != "Bearer alice-access" || c.query.Get("profileArn") != wantArn || c.query.Has("profileArn") != (wantArn != "") {
-				t.Errorf("email request = %+v, want isEmailRequired, alice's bearer and profileArn %q", c, wantArn)
+			if c.query.Get("isEmailRequired") != "true" || c.auth != "Bearer alice-access" || c.query.Get("profileArn") != tc.wantArn {
+				t.Errorf("email request = %+v, want isEmailRequired, alice's bearer and profileArn %q", c, tc.wantArn)
 			}
 		})
 	}
@@ -610,17 +584,95 @@ func TestRefresh_AnExpiredClientRegistrationIsARejection(t *testing.T) {
 func TestBegin_RefusesBadParams(t *testing.T) {
 	aws := newFakeAWS(t, "alice")
 	b := backendFor(aws)
-	for _, p := range []signin.FlowParams{
-		{Flow: signin.FlowDevice, StartURL: "http://d-1.awsapps.com/start"},
-		{Flow: signin.FlowDevice, StartURL: "https://user:pw@d-1.awsapps.com/start"},
-		{Flow: signin.FlowDevice, StartURL: "https://d-1.awsapps.com/start", Region: "--region"},
+	for _, tc := range []struct {
+		text string
+		p    signin.FlowParams
+	}{
+		{p: signin.FlowParams{Flow: signin.FlowDevice, StartURL: "http://d-1.awsapps.com/start"}, text: textStartURLShape},
+		{p: signin.FlowParams{Flow: signin.FlowDevice, StartURL: "https://user:pw@d-1.awsapps.com/start"}, text: textStartURLShape},
+		{p: signin.FlowParams{Flow: signin.FlowDevice, StartURL: "https://d-1.awsapps.com/start", Region: "--region"}},
 	} {
-		if _, err := b.Begin(t.Context(), p); !errors.Is(err, signin.ErrInvalidParams) {
-			t.Errorf("Begin(%+v) = %v, want ErrInvalidParams", p, err)
+		_, err := b.Begin(t.Context(), tc.p)
+		if !errors.Is(err, signin.ErrInvalidParams) {
+			t.Errorf("Begin(%+v) = %v, want ErrInvalidParams", tc.p, err)
+		}
+		if fe, ok := errors.AsType[*signin.FailureError](err); tc.text != "" && (!ok || fe.Text != tc.text) {
+			t.Errorf("Begin(%+v) = %v, want the user text %q", tc.p, err, tc.text)
 		}
 	}
 	if n := len(aws.served()); n != 0 {
 		t.Errorf("calls = %d, want none for refused params", n)
+	}
+}
+
+func TestBegin_SendsTheCanonicalStartURL(t *testing.T) {
+	aws := newFakeAWS(t, "alice")
+	r, err := signInDirect(t, backendFor(aws), signin.FlowParams{Flow: signin.FlowDevice, StartURL: "acme.awsapps.com/#/", Region: "eu-west-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "https://acme.awsapps.com/start"
+	auth := aws.servedPath("/device_authorization")
+	if len(auth) != 1 || !strings.Contains(auth[0].body, `"startUrl":"`+want+`"`) {
+		t.Errorf("device authorization = %+v, want startUrl %q", auth, want)
+	}
+	if r.StartURL != want {
+		t.Errorf("record StartURL = %q, want %q", r.StartURL, want)
+	}
+}
+
+// TestBegin_RefusalAdvice: AWS SSO-OIDC answers a start URL it does not know with 400
+// invalid_request, "Invalid start url provided", and a portal asked of the wrong region with a bare
+// "Invalid request".
+func TestBegin_RefusalAdvice(t *testing.T) {
+	invalid := func(desc string) scripted {
+		return scripted{status: 400, body: `{"error":"invalid_request","error_description":"` + desc + `"}`}
+	}
+	for _, tc := range []struct {
+		answer      scripted
+		params      signin.FlowParams
+		name        string
+		want        string
+		wantRegion  bool
+		wantInvalid bool
+	}{
+		{name: "start_url_refused", answer: invalid("Invalid start url provided"), params: idcParams, want: textStartURLRefused, wantInvalid: true},
+		{name: "region_refused", answer: invalid("Invalid request"), params: idcParams, wantRegion: true, wantInvalid: true},
+		{name: "region_refused_by_header", answer: scripted{status: 400, header: http.Header{"X-Amzn-Errortype": {"InvalidRequestException:http://internal.amazon.com/coral/com.amazonaws.ssooidc/"}}}, params: idcParams, wantRegion: true, wantInvalid: true},
+		{name: "forbidden", answer: scripted{status: 403, body: `{"error":"access_denied"}`}, params: idcParams, want: textOIDCRefused},
+		{name: "server_error", answer: scripted{status: 500}, params: idcParams, want: textOIDCUnreachable},
+		{name: "builder_id", answer: invalid("Invalid request"), params: builderID(), want: textOIDCRefused},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			aws := newFakeAWS(t, "alice")
+			aws.set(func(f *fakeAWS) { f.authorization = tc.answer })
+			_, err := backendFor(aws).Begin(t.Context(), tc.params)
+			fe, ok := errors.AsType[*signin.FailureError](err)
+			if !ok {
+				t.Fatalf("Begin = %v, want a FailureError", err)
+			}
+			if tc.wantRegion && (!strings.Contains(fe.Text, tc.params.Region) || fe.Text == textOIDCRefused) {
+				t.Errorf("text = %q, want the region advice naming %s", fe.Text, tc.params.Region)
+			}
+			if !tc.wantRegion && fe.Text != tc.want {
+				t.Errorf("text = %q, want %q", fe.Text, tc.want)
+			}
+			if errors.Is(err, signin.ErrInvalidParams) != tc.wantInvalid {
+				t.Errorf("ErrInvalidParams = %v, want %v", !tc.wantInvalid, tc.wantInvalid)
+			}
+			if strings.Contains(fe.Error(), "Invalid start url") {
+				t.Errorf("the error carries AWS's description: %v", fe)
+			}
+		})
+	}
+}
+
+func TestBegin_RegistrationRefusalIsNotUnreachable(t *testing.T) {
+	aws := newFakeAWS(t, "alice")
+	aws.set(func(f *fakeAWS) { f.register = scripted{status: 400, body: `{"error":"invalid_client"}`} })
+	_, err := backendFor(aws).Begin(t.Context(), idcParams)
+	if fe, ok := errors.AsType[*signin.FailureError](err); !ok || fe.Text != textOIDCRefused {
+		t.Errorf("Begin = %v, want %q", err, textOIDCRefused)
 	}
 }
 

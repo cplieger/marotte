@@ -10,7 +10,7 @@ import { mountLiveRegions } from "@cplieger/ui/announce";
 import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_RECONCILE } from "./bus.js";
 import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { $, byId } from "./dom.js";
+import { $ } from "./dom.js";
 import { guardDuplicateActivation, initSidebarSwipe } from "./platform.js";
 import { initShellViewport } from "./shell-viewport.js";
 import { initPointerTier } from "./pointer-tier.js";
@@ -79,6 +79,7 @@ import {
 } from "./chat.js";
 import { initModelSwitcher, pickModel } from "./model-switcher.js";
 import { makeExpandable } from "./pill-expand.js";
+import { initContextCard } from "./context-card.js";
 import { loadAccountUsage } from "./account-usage.js";
 import { initPromptInput, sendComposer } from "./prompt-input.js";
 import { rewindLatest } from "./typed-commands.js";
@@ -501,9 +502,7 @@ function setupInput(): void {
   // can host one too.
   mountDecisionDock($.decisionDock);
 
-  // Each card is its trigger's SIBLING (see 15-input.css .pill-slot), so it is looked up
-  // by id rather than queried inside the button.
-  makeExpandable($.contextIndicator, byId("context-card"));
+  initContextCard();
   // Lazily on open (usage changes slowly and may be rate-limited); the agent-runtime line
   // re-probes /api/health too. `haspopup: "dialog"`: a status panel with one link, not a menu.
   makeExpandable($.accountBtn, $.statusCard, {

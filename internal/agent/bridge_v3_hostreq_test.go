@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,19 +16,20 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func openExternalURLMsg(t *testing.T, id int64, url string) *marotte.RPCResponse {
+// openExternalURLMsg is KAS's openExternalUrl for server's consent page; "" names no server.
+func openExternalURLMsg(t *testing.T, id int64, server, url string) *marotte.RPCResponse {
 	t.Helper()
-	return &marotte.RPCResponse{
-		Method: methodKiroOpenExternalURL,
-		ID:     &id,
-		Params: mustJSON(t, map[string]any{"url": url}),
+	params := map[string]any{"url": url}
+	if server != "" {
+		params["serverName"], params["oauthCompletion"] = server, "connection-status"
 	}
+	return &marotte.RPCResponse{Method: methodKiroOpenExternalURL, ID: &id, Params: mustJSON(t, params)}
 }
 
-// openURL is the engine opening url on its lane, answered once the answer's broadcasts are buffered.
+// openURL is the engine opening linear's url on its lane, answered once the answer's broadcasts are buffered.
 func openURL(t *testing.T, h *Runtime, lane *fakeBridge, id int64, url string) error {
 	t.Helper()
-	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, id, url))
+	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, id, "linear", url))
 	answer := awaitLaneAnswer(t, lane, id)
 	joinInflight(t, h)
 	return answer.err
@@ -227,7 +229,7 @@ func TestEngineLane_OpenExternalURLWithAPageConnectedIsShownEverywhere(t *testin
 	connectPage(t, h)
 	before := h.bus.fanout.Position().Head
 
-	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, 12, consent))
+	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, 12, "", consent))
 
 	answer := awaitLaneAnswer(t, lane, 12)
 	joinInflight(t, h)
@@ -270,7 +272,7 @@ func TestEngineLane_OpenExternalURLWithNoPageConnectedIsRefused(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	before := h.bus.fanout.Position().Head
 
-	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, 11, "https://auth.example.com/authorize?state=s1"))
+	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, 11, "", "https://auth.example.com/authorize?state=s1"))
 
 	answer := awaitLaneAnswer(t, lane, 11)
 	// The answer runs on inflight and may broadcast after it responds, so the buffer is read only once it returns.
@@ -298,7 +300,7 @@ func TestEngineLane_OpenExternalURLUnsafeSchemeIsRefusedWithInvalidParams(t *tes
 	connectPage(t, h)
 	before := h.bus.fanout.Position().Head
 
-	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, 9, "javascript:alert(1)"))
+	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, 9, "", "javascript:alert(1)"))
 
 	answer := awaitLaneAnswer(t, lane, 9)
 	joinInflight(t, h)
@@ -329,7 +331,7 @@ func TestHandleKiroClientRequest_DoesNotClaimGetAccessToken(t *testing.T) {
 			want: true,
 		},
 		"open_external_url_is_the_engine_lanes": {
-			msg:  openExternalURLMsg(t, id, "https://x.example"),
+			msg:  openExternalURLMsg(t, id, "", "https://x.example"),
 			want: false,
 		},
 	}
@@ -339,5 +341,152 @@ func TestHandleKiroClientRequest_DoesNotClaimGetAccessToken(t *testing.T) {
 				t.Errorf("handleKiroClientRequest(%q) = %v, want %v", tc.msg.Method, got, tc.want)
 			}
 		})
+	}
+}
+
+// bannerOf decodes the one open_external_url event since before.
+func bannerOf(t *testing.T, h *Runtime, before uint64) marotte.OpenExternalURLPayload {
+	t.Helper()
+	shown := eventsSince(h, before, marotte.EventOpenExternalURL)
+	if len(shown) != 1 {
+		t.Fatalf("open_external_url events = %d, want 1", len(shown))
+	}
+	var evt struct {
+		Payload marotte.OpenExternalURLPayload `json:"payload"`
+	}
+	if err := json.Unmarshal(shown[0].Event.Data, &evt); err != nil {
+		t.Fatalf("decoding the event: %v", err)
+	}
+	return evt.Payload
+}
+
+// A Google consent page is shown asking for offline access, and its state and redirect still match the listener.
+func TestEngineLane_OpenExternalURLGoogleConsentIsShownWithOfflineAccess(t *testing.T) {
+	const redirect = "redirect_uri=http%3A%2F%2F127.0.0.1%3A4000%2Foauth%2Fcallback"
+	const consent = "https://accounts.google.com/o/oauth2/v2/auth?client_id=c&" + redirect + "&state=s1&access_type=online"
+	h, _, lane := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	connectPage(t, h)
+	before := h.bus.fanout.Position().Head
+
+	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, 31, "gmail", consent))
+	if a := awaitLaneAnswer(t, lane, 31); a.err != nil {
+		t.Fatalf("answer error = %v, want success", a.err)
+	}
+	joinInflight(t, h)
+
+	const want = "https://accounts.google.com/o/oauth2/v2/auth?client_id=c&" + redirect + "&state=s1&access_type=offline&prompt=consent"
+	if p := bannerOf(t, h, before); p.URL != want || p.Server != "gmail" {
+		t.Errorf("banner = %+v, want %s's consent page %q", p, "gmail", want)
+	}
+	if _, err := h.mcpRegistry.beginOAuthRelay(t.Context(), "s1"); err != nil {
+		t.Errorf("a paste with the original state = %v, want it reserved", err)
+	}
+}
+
+// oauthCompletedMsg is KAS's end of the mid-session re-auth flowID names.
+func oauthCompletedMsg(t *testing.T, server, flowID string, success bool) *marotte.RPCResponse {
+	t.Helper()
+	return &marotte.RPCResponse{Method: methodKiroMCPOAuthCompleted, Params: mustJSON(t, map[string]any{
+		"serverName": server, "success": success, "oauthFlowId": flowID,
+	})}
+}
+
+// lazyConsent opens server's mid-session re-auth consent page under flowID, with state as its state.
+func lazyConsent(t *testing.T, h *Runtime, lane *fakeBridge, id int64, server, flowID, state string) {
+	t.Helper()
+	h.engineFrame(fakeSourceOf(t, h).current(), &marotte.RPCResponse{
+		Method: methodKiroOpenExternalURL, ID: &id, Params: mustJSON(t, map[string]any{
+			"url": "https://provider.example/authorize?state=" + state, "serverName": server,
+			"oauthCompletion": "notification", "oauthFlowId": flowID,
+		}),
+	})
+	awaitLaneAnswer(t, lane, id)
+	joinInflight(t, h)
+}
+
+// closedSince decodes the mcp_sign_in_closed events since before.
+func closedSince(t *testing.T, h *Runtime, before uint64) []marotte.MCPSignInClosedPayload {
+	t.Helper()
+	var out []marotte.MCPSignInClosedPayload
+	for _, e := range eventsSince(h, before, marotte.EventMCPSignInClosed) {
+		var evt struct {
+			Payload marotte.MCPSignInClosedPayload `json:"payload"`
+		}
+		if err := json.Unmarshal(e.Event.Data, &evt); err != nil {
+			t.Fatalf("decoding the event: %v", err)
+		}
+		out = append(out, evt.Payload)
+	}
+	return out
+}
+
+// A mid-session re-auth KAS ends without a token closes its banner as failed at once, and a late paste finds no flow.
+func TestEngineLane_OAuthCompletedFailureEndsTheLazySignIn(t *testing.T) {
+	h, _, lane := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	connectPage(t, h)
+	before := h.bus.fanout.Position().Head
+	lazyConsent(t, h, lane, 41, "linear", "f1", "st-f1")
+	if p := bannerOf(t, h, before); p.Server != "linear" || p.FlowID != "f1" {
+		t.Fatalf("banner = %+v, want linear's flow f1", p)
+	}
+
+	h.engineFrame(fakeSourceOf(t, h).current(), oauthCompletedMsg(t, "linear", "f1", false))
+	joinInflight(t, h)
+
+	if got := closedSince(t, h, before); len(got) != 1 || got[0] != (marotte.MCPSignInClosedPayload{Server: "linear", FlowID: "f1"}) {
+		t.Errorf("mcp_sign_in_closed = %+v, want linear's f1 closed unsuccessful", got)
+	}
+	if _, err := h.mcpRegistry.beginOAuthRelay(t.Context(), "st-f1"); !errors.Is(err, errRelayNoFlow) {
+		t.Errorf("a paste after the end = %v, want %v", err, errRelayNoFlow)
+	}
+}
+
+// A success closes its own flow's banner; a completion naming a flow no anchor carries publishes nothing and leaves
+// every anchor, a connect's included.
+func TestEngineLane_OAuthCompletedSuccessAndUnknownFlow(t *testing.T) {
+	h, _, lane := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	connectPage(t, h)
+	lazyConsent(t, h, lane, 51, "linear", "f1", "st-f1")
+	lazyConsent(t, h, lane, 52, "github", "f2", "st-f2")
+	if err := openURL(t, h, lane, 53, "https://provider.example/authorize?state=st-connect"); err != nil {
+		t.Fatalf("Setup: a connect's consent URL = %v", err)
+	}
+	before := h.bus.fanout.Position().Head
+
+	h.engineFrame(fakeSourceOf(t, h).current(), oauthCompletedMsg(t, "github", "f9", false))
+	h.engineFrame(fakeSourceOf(t, h).current(), oauthCompletedMsg(t, "linear", "f1", true))
+	joinInflight(t, h)
+
+	if got := closedSince(t, h, before); len(got) != 1 || got[0] != (marotte.MCPSignInClosedPayload{Server: "linear", FlowID: "f1", Success: true}) {
+		t.Errorf("mcp_sign_in_closed = %+v, want only linear's f1, succeeded", got)
+	}
+	h.mcpRegistry.mu.RLock()
+	var states []string
+	for _, a := range h.mcpRegistry.anchors {
+		states = append(states, a.state)
+	}
+	h.mcpRegistry.mu.RUnlock()
+	if !slices.Equal(states, []string{"st-f2", "st-connect"}) {
+		t.Errorf("anchors left = %v, want github's flow and the connect's", states)
+	}
+}
+
+// The cap counts only anchors no Sign in took: each standing Sign in's anchor survives any number of banners.
+func TestAddAnchor_CapCountsOnlyUnattributed(t *testing.T) {
+	reg := &mcpRegistry{}
+	reg.anchors = []*signInAnchor{{state: "row-1", attempt: 1}, {state: "old"}, {state: "row-2", attempt: 2}}
+	for i := range maxConsentAnchors {
+		reg.addAnchorLocked(&signInAnchor{state: "banner-" + strconv.Itoa(i)})
+	}
+
+	var states []string
+	for _, a := range reg.anchors {
+		states = append(states, a.state)
+	}
+	if len(states) != maxConsentAnchors+2 || states[0] != "row-1" || states[1] != "row-2" || slices.Contains(states, "old") {
+		t.Errorf("anchors = %v, want both rows kept, the oldest banner evicted and %d banners", states, maxConsentAnchors)
 	}
 }

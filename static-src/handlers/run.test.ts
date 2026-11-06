@@ -645,20 +645,36 @@ describe("a run's own log", () => {
     }
   });
 
-  it("refetches the run when a step's turn closes on a tool_use stop the server grades", () => {
-    // A completed close with a `tool_use` stop is the model-call limit only under KAS's record of
-    // the step, which the run read's `step_ends` carries.
+  // A completed close the server may regrade failed under KAS's record of the step (the model-call
+  // limit, an empty answer), which only the run read's `step_ends` carries.
+  it.each([
+    ["a tool_use stop", { outcome: "completed", stop_reason_raw: "tool_use" }],
+    ["a max_turn_requests stop", { outcome: "completed", stop_reason_raw: "max_turn_requests" }],
+    [
+      "an unanswered close",
+      { outcome: "completed", stop_reason_raw: "end_turn", unanswered: true },
+    ],
+  ] as const)(
+    "refetches the run when a step's turn closes on %s the server may regrade",
+    (_, close) => {
+      send("turn_closed", { workflow_id: RUN, entry: entry("turn_close", close, 2) }, "");
+
+      expect(invalidate).toHaveBeenCalledTimes(1);
+      expect(invalidate).toHaveBeenLastCalledWith(RUN);
+    },
+  );
+
+  it("does not refetch on a clean completed close", () => {
     send(
       "turn_closed",
       {
         workflow_id: RUN,
-        entry: entry("turn_close", { outcome: "completed", stop_reason_raw: "tool_use" }, 2),
+        entry: entry("turn_close", { outcome: "completed", stop_reason_raw: "end_turn" }, 2),
       },
       "",
     );
 
-    expect(invalidate).toHaveBeenCalledTimes(1);
-    expect(invalidate).toHaveBeenLastCalledWith(RUN);
+    expect(invalidate).not.toHaveBeenCalled();
   });
 
   it("leaves a frame carrying no workflow id to the chat's own handler", () => {

@@ -188,6 +188,10 @@ func applyToolResult(tc *marotte.ToolCall, r marotte.EntryToolResult) {
 	tc.Declined = r.Declined
 	tc.ClassifierApproved = r.ClassifierApproved
 	tc.ClassifierNote = r.ClassifierNote
+	if r.Input != nil {
+		tc.Input = r.Input
+	}
+	tc.DelegateStop = r.DelegateStop
 }
 
 // applyToolCallDelta is the client's fold, in Go: the inverse of toolProgress.
@@ -217,6 +221,9 @@ func applyToolCallDelta(tc *marotte.ToolCall, d marotte.ToolProgressPayload) {
 	}
 	if d.Locations != nil {
 		tc.Locations = d.Locations
+	}
+	if d.Input != nil {
+		tc.Input = d.Input
 	}
 	if d.DurationMs != 0 {
 		tc.DurationMs = d.DurationMs
@@ -439,8 +446,8 @@ func TestToolCallUpdate_NoDiffSkipsLineTracker(t *testing.T) {
 	}
 }
 
-// TestToolCallUpdate_DiffPresentRecordsAndAppends pins the ledger gate: a diff always lands
-// on the card, and only a `completed` tool feeds the changed-file aggregate and tracker.
+// TestToolCallUpdate_DiffPresentRecordsAndAppends pins the ledger gate: a diff lands on the
+// card unless the tool failed, and only a `completed` tool feeds the changed-file aggregate and tracker.
 func TestToolCallUpdate_DiffPresentRecordsAndAppends(t *testing.T) {
 	t.Run("InProgressAppendsWithoutRecording", func(t *testing.T) {
 		tr, rec, deps, _, chatID := primeToolCall(t)
@@ -500,7 +507,7 @@ func TestToolCallUpdate_DiffPresentRecordsAndAppends(t *testing.T) {
 	})
 	t.Run("FailedDoesNotEnterTheLedger", func(t *testing.T) {
 		// The write tool's catch emits a diff with a real path and the intended text, so a failed
-		// write must not claim a change.
+		// write must not claim a change; the card draws the attempt from the call's input.
 		tr, rec, deps, _, chatID := primeToolCall(t)
 		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
@@ -513,8 +520,8 @@ func TestToolCallUpdate_DiffPresentRecordsAndAppends(t *testing.T) {
 		if len(results) != 1 {
 			t.Fatalf("failed: tool_result entries = %d, want 1 (a terminal update settles the call)", len(results))
 		}
-		if got := len(results[0].Diffs); got != 1 {
-			t.Fatalf("failed: tool_result Diffs len = %d, want 1 (the card still shows what it tried)", got)
+		if got := len(results[0].Diffs); got != 0 {
+			t.Errorf("failed: tool_result Diffs len = %d, want 0", got)
 		}
 		if rec.calls != 0 {
 			t.Errorf("failed: RecordFromDiffs calls = %d, want 0", rec.calls)
@@ -1854,5 +1861,218 @@ func TestHandleToolCall_ToolIDAloneNamesNoServer(t *testing.T) {
 	})
 	if got.MCP != nil {
 		t.Errorf("tool_call entry mcp = %+v, want none for a tool_id with no serverName", got.MCP)
+	}
+}
+
+// openCall seals one create frame on an event-capturing translator and clears the stream, so the next update is
+// observed in isolation.
+func openCall(t *testing.T, frame map[string]any) (*Translator, *lineDeps, *[]marotte.ServerEvent) {
+	t.Helper()
+	deps, _, events := newLineCaptureDeps()
+	tr := New(rolesOf(deps))
+	tr.HandleToolCall(t.Context(), "c1", mustJSON(t, frame), FrameAttribution{})
+	stashCreatedThenClear(t, deps, events)
+	return tr, deps, events
+}
+
+// lastProgress is the newest tool_progress payload in the stream.
+func lastProgress(t *testing.T, events *[]marotte.ServerEvent) marotte.ToolProgressPayload {
+	t.Helper()
+	for i := len(*events) - 1; i >= 0; i-- {
+		if p, ok := (*events)[i].Payload.(marotte.ToolProgressPayload); ok {
+			return p
+		}
+	}
+	t.Fatal("no tool_progress frame emitted")
+	return marotte.ToolProgressPayload{}
+}
+
+// lastResult is the newest tool_result entry in the stream.
+func lastResult(t *testing.T, events *[]marotte.ServerEvent) marotte.EntryToolResult {
+	t.Helper()
+	for i := len(*events) - 1; i >= 0; i-- {
+		if p, ok := (*events)[i].Payload.(marotte.EntryAppendedPayload); ok && p.Entry.Kind == marotte.EntryKindToolResult {
+			return decodePayload[marotte.EntryToolResult](t, &p.Entry)
+		}
+	}
+	t.Fatal("no tool_result entry emitted")
+	return marotte.EntryToolResult{}
+}
+
+// KAS's fs_append streams {path} as the create, then sends the whole arguments on the kind-less pending update
+// before the approval, with a path-less placeholder diff.
+func TestHandleToolCallUpdate_AdoptsRevisedRawInput(t *testing.T) {
+	tr, deps, events := openCall(t, map[string]any{
+		"toolCallId": "tc-1", "title": "Append to notes.txt", "kind": "edit", "status": "in_progress",
+		"rawInput": map[string]any{"path": "/work/notes.txt"},
+	})
+	full := `{"path":"/work/notes.txt","text":"one more line\n"}`
+	tr.HandleToolCallUpdate(t.Context(), "c1", mustJSON(t, map[string]any{
+		"toolCallId": "tc-1", "status": "pending",
+		"rawInput": json.RawMessage(full),
+		"content":  []map[string]any{{"type": "diff", "path": "", "oldText": "", "newText": ""}},
+	}), FrameAttribution{})
+
+	if got := lastProgress(t, events).Input; string(got) != full {
+		t.Errorf("tool_progress input = %s, want %s", got, full)
+	}
+	got, _ := lastToolCallUpdate(t, deps, events)
+	if string(got.Input) != full {
+		t.Errorf("open call input = %s, want %s", got.Input, full)
+	}
+	if len(got.Diffs) != 0 {
+		t.Errorf("diffs = %+v, want none from the path-less placeholder", got.Diffs)
+	}
+	if changed := closedChangedFiles(t, deps.baseDeps, "c1"); len(changed) != 0 {
+		t.Errorf("ChangedFiles = %v, want empty", changed)
+	}
+}
+
+// str_replace's create carries {path, oldStr, newStr}; replace_all arrives only on the update.
+func TestHandleToolCallUpdate_ReplaceAllReachesInput(t *testing.T) {
+	tr, deps, events := openCall(t, map[string]any{
+		"toolCallId": "tc-1", "title": "Edit a.go", "kind": "edit", "status": "in_progress",
+		"rawInput": map[string]any{"path": "/work/a.go", "oldStr": "x", "newStr": "y"},
+	})
+	full := `{"path":"/work/a.go","oldStr":"x","newStr":"y","replace_all":true}`
+	tr.HandleToolCallUpdate(t.Context(), "c1", mustJSON(t, map[string]any{
+		"toolCallId": "tc-1", "status": "pending", "rawInput": json.RawMessage(full),
+	}), FrameAttribution{})
+
+	got, _ := lastToolCallUpdate(t, deps, events)
+	if string(got.Input) != full {
+		t.Errorf("open call input = %s, want %s", got.Input, full)
+	}
+}
+
+// An update with no arguments to offer keeps the held input: KAS's stream-error path sends {} for a call aborted
+// before its args landed.
+func TestHandleToolCallUpdate_EmptyRawInputKeepsInput(t *testing.T) {
+	const held = `{"path":"/work/notes.txt"}`
+	for name, raw := range map[string]any{
+		"absent": nil,
+		"null":   json.RawMessage("null"),
+		"empty":  json.RawMessage("{}"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			tr, deps, events := openCall(t, map[string]any{
+				"toolCallId": "tc-1", "kind": "edit", "status": "in_progress", "rawInput": json.RawMessage(held),
+			})
+			frame := map[string]any{"toolCallId": "tc-1", "status": "pending"}
+			if raw != nil {
+				frame["rawInput"] = raw
+			}
+			tr.HandleToolCallUpdate(t.Context(), "c1", mustJSON(t, frame), FrameAttribution{})
+
+			if got := lastProgress(t, events).Input; got != nil {
+				t.Errorf("tool_progress input = %s, want none", got)
+			}
+			got, _ := lastToolCallUpdate(t, deps, events)
+			if string(got.Input) != held {
+				t.Errorf("open call input = %s, want the held %s", got.Input, held)
+			}
+		})
+	}
+}
+
+// The tool_result carries input only when an update revised the create's, so "absent means unchanged" holds and
+// the common call stores its input once.
+func TestToolResult_CarriesInputOnlyWhenRevised(t *testing.T) {
+	const created = `{"path":"/work/notes.txt"}`
+	const revised = `{"path":"/work/notes.txt","text":"x"}`
+	for _, tt := range []struct {
+		name, update, want string
+	}{
+		{name: "revised", update: revised, want: revised},
+		{name: "unchanged", update: created},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tr, _, events := openCall(t, map[string]any{
+				"toolCallId": "tc-1", "kind": "edit", "status": "in_progress", "rawInput": json.RawMessage(created),
+			})
+			tr.HandleToolCallUpdate(t.Context(), "c1", mustJSON(t, map[string]any{
+				"toolCallId": "tc-1", "status": "completed", "rawInput": json.RawMessage(tt.update),
+			}), FrameAttribution{})
+			if got := lastResult(t, events).Input; string(got) != tt.want {
+				t.Errorf("tool_result input = %s, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// A str_replace that fails after reading the file settles with KAS's diff of the whole file against "", a write that
+// never happened; the card would draw the file as deleted once reloaded.
+func TestHandleToolCallUpdate_AFailedEditContributesNoDiff(t *testing.T) {
+	tr, deps, events := openCall(t, map[string]any{
+		"toolCallId": "tc-1", "title": "Edit a.go", "kind": "edit", "status": "in_progress",
+		"rawInput": map[string]any{"path": "/work/a.go", "oldStr": "missing", "newStr": "y"},
+	})
+	tr.HandleToolCallUpdate(t.Context(), "c1", mustJSON(t, map[string]any{
+		"toolCallId": "tc-1", "status": "failed",
+		"rawOutput": "oldStr was not found in /work/a.go",
+		"content":   []map[string]any{{"type": "diff", "path": "/work/a.go", "oldText": "package a\n\nfunc A() {}\n", "newText": ""}},
+	}), FrameAttribution{})
+
+	if got := lastResult(t, events); len(got.Diffs) != 0 {
+		t.Errorf("tool_result diffs = %+v, want none from a failed edit", got.Diffs)
+	}
+	if changed := closedChangedFiles(t, deps.baseDeps, "c1"); len(changed) != 0 {
+		t.Errorf("ChangedFiles = %v, want empty", changed)
+	}
+}
+
+// KAS reports a sub-agent stopped at its turn limit `completed`, with the stop in _meta.kiro.stopReason.
+func TestHandleToolCallUpdate_ADelegateStoppedAtItsTurnLimitSettlesFailed(t *testing.T) {
+	for _, tt := range []struct {
+		name, stop string
+		want       marotte.ToolStatus
+	}{
+		{name: "turn limit", stop: "max_turn_requests", want: marotte.ToolFailed},
+		{name: "report cut off", stop: "max_tokens", want: marotte.ToolCompleted},
+		{name: "a clean end", want: marotte.ToolCompleted},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tr, _, events := openCall(t, map[string]any{
+				"toolCallId": "tc-1", "title": "invokeSubAgent", "kind": "other", "status": "in_progress",
+				"_meta": map[string]any{"kiro": map[string]any{"kind": "agent-subtask", "agentSubtaskId": "sub-1"}},
+			})
+			kiro := map[string]any{"kind": "agent-subtask", "agentSubtaskId": "sub-1"}
+			if tt.stop != "" {
+				kiro["stopReason"] = tt.stop
+			}
+			tr.HandleToolCallUpdate(t.Context(), "c1", mustJSON(t, map[string]any{
+				"toolCallId": "tc-1", "status": "completed",
+				"rawOutput": "Sub-agent 'x' stopped at its turn limit. Its work is NOT done.",
+				"_meta":     map[string]any{"kiro": kiro},
+			}), FrameAttribution{})
+			res := lastResult(t, events)
+			if res.Status != tt.want || res.DelegateStop != tt.stop {
+				t.Errorf("tool_result status, delegate_stop = %q, %q; want %q, %q", res.Status, res.DelegateStop, tt.want, tt.stop)
+			}
+		})
+	}
+}
+
+// A step's late sub-agent result is graded like a live one.
+func TestLateStepResult_ADelegatesStopGradesTheLateResult(t *testing.T) {
+	deps, _ := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+	path := []string{"wf_1", "build"}
+	attr := FrameAttribution{Step: true, RunID: "wf_1", NodePath: workflow.PathKey(path)}
+	deps.RunNodeStart(t.Context(), &RunStep{RunID: attr.RunID, NodePath: attr.NodePath}, "c1")
+	deps.RunNodeComplete(t.Context(), attr.RunID, path, "completed", "")
+
+	tr.HandleToolCallUpdate(t.Context(), "c1", mustJSON(t, map[string]any{
+		"toolCallId": "tc-late", "status": "completed", "rawOutput": "The model refused.",
+		"_meta": map[string]any{"kiro": map[string]any{"stopReason": "refusal"}},
+	}), attr)
+
+	late := deps.runBetween[runPathKey(attr.RunID, attr.NodePath)]
+	if len(late) != 1 || late[0].Kind != marotte.EntryKindToolResult {
+		t.Fatalf("filed after the close: %+v, want one tool_result", late)
+	}
+	res := decodePayload[marotte.EntryToolResult](t, &late[0])
+	if res.Status != marotte.ToolFailed || res.DelegateStop != "refusal" {
+		t.Errorf("late tool_result status, delegate_stop = %q, %q; want failed, refusal", res.Status, res.DelegateStop)
 	}
 }

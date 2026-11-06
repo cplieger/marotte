@@ -23,7 +23,7 @@ import {
   retryCatalog,
   RETRY_LABEL,
 } from "./picker.js";
-import { makeExpandable, collapseAll } from "./pill-expand.js";
+import { makeExpandable, collapseAll, type Expandable } from "./pill-expand.js";
 import { bindLoadingState, transportAction, RETRY_STANDARD } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
 import { el, effect } from "@cplieger/ui";
@@ -167,7 +167,7 @@ class ModelSwitchController {
     // descendant selector, so it must not be wrapped.
     $.switchModelBtn.prepend(iconEl(ICON_MODEL));
     const expandContent = $.modelSwitchList;
-    makeExpandable($.switchModelBtn, expandContent, {
+    this.card = makeExpandable($.switchModelBtn, expandContent, {
       onExpand: () => {
         const session = getActive();
         this.draft =
@@ -274,6 +274,8 @@ class ModelSwitchController {
     });
     return btn;
   }
+
+  private card: Expandable | null = null;
 
   private modelNav: RovingFocusController | null = null;
 
@@ -446,6 +448,10 @@ class ModelSwitchController {
     opt.setAttribute("aria-selected", isCurrent ? "true" : "false");
   }
 
+  openCard(): void {
+    this.card?.open();
+  }
+
   /** `effort` is a switch's effort (PillCommand); `chatID` names the chat the pick was made on,
    *  defaulting to the active one. */
   requestModelSwitch(modelID: string, effort?: string, chatID?: string): void {
@@ -483,6 +489,11 @@ const controller = new ModelSwitchController();
 
 export function initModelSwitcher(): void {
   controller.init();
+}
+
+/** Open the model pill's card. */
+export function openModelCard(): void {
+  controller.openCard();
 }
 
 function applyLocalModel(modelID: string): void {

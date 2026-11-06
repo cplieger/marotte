@@ -61,10 +61,6 @@ func clearCausesOf(t *testing.T, cs *testChatStore) []marotte.SteerClearCause {
 	return out
 }
 
-// clearedOnce reports one settlement, cleared.
-func clearedOnce(d []marotte.EntrySteerDelivered) bool {
-	return len(d) == 1 && d[0].Cleared
-}
 
 // settlementsOf is every steer_delivered in c1's log.
 func settlementsOf(t *testing.T, cs *testChatStore) []marotte.EntrySteerDelivered {
@@ -81,20 +77,21 @@ func settlementsOf(t *testing.T, cs *testChatStore) []marotte.EntrySteerDelivere
 }
 
 // The clear inside a stop's session/cancel records who stopped: the reader's Stop is a cancel, after which KAS
-// re-prompts the message; a tab close's cancel is a boundary, since the session/close aborts that re-delivery. Neither
-// frame says which message KAS re-delivered, so the message reads cleared either way.
+// re-prompts the message it names, so the message waits for that re-wake; a tab close's cancel is a boundary, since
+// the session/close aborts that re-delivery, so the message it names reads dropped.
 func TestWorkflowMessage_AStopsClearRecordsWhoStopped(t *testing.T) {
 	for _, tc := range []struct {
-		stop      func(t *testing.T, h *Runtime, tab marotte.TabSubject)
-		name      string
-		wantCause marotte.SteerClearCause
+		stop        func(t *testing.T, h *Runtime, tab marotte.TabSubject)
+		name        string
+		wantCause   marotte.SteerClearCause
+		wantDropped bool
 	}{
 		{name: "the reader's stop", wantCause: marotte.SteerClearCauseCancel, stop: func(t *testing.T, h *Runtime, _ marotte.TabSubject) {
 			if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
 				t.Fatalf("cancel = %d %s, want 200", rec.Code, rec.Body.String())
 			}
 		}},
-		{name: "a tab close", wantCause: marotte.SteerClearCauseBoundary, stop: func(t *testing.T, h *Runtime, tab marotte.TabSubject) {
+		{name: "a tab close", wantCause: marotte.SteerClearCauseBoundary, wantDropped: true, stop: func(t *testing.T, h *Runtime, tab marotte.TabSubject) {
 			payload, _ := json.Marshal(marotte.CloseTabCommand{ID: tab.ID})
 			if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCloseTab, Payload: payload}); rec.Code != http.StatusOK {
 				t.Fatalf("close_tab = %d %s, want 200", rec.Code, rec.Body.String())
@@ -113,8 +110,12 @@ func TestWorkflowMessage_AStopsClearRecordsWhoStopped(t *testing.T) {
 			if c := clearCausesOf(t, cs); len(c) != 1 || c[0] != tc.wantCause {
 				t.Errorf("clear causes = %v, want [%s]", c, tc.wantCause)
 			}
-			if d := settlementsOf(t, cs); !clearedOnce(d) {
-				t.Errorf("settlements = %+v, want one cleared", d)
+			d := settlementsOf(t, cs)
+			if tc.wantDropped && (len(d) != 1 || !d[0].Dropped) {
+				t.Errorf("settlements = %+v, want one dropped", d)
+			}
+			if !tc.wantDropped && len(d) != 0 {
+				t.Errorf("settlements = %+v, want the message waiting for KAS's re-wake", d)
 			}
 		})
 	}
@@ -167,8 +168,9 @@ func TestWorkflowMessage_ATeardownsClearKeepsItsCauseWhenAReadersStopOverlaps(t 
 }
 
 // An error clear KAS emitted before the reader pressed Stop but folded after it records the reader's cancel, since
-// the frame carries no cause; the message still reads cleared, so the recorded cause decides nothing shown.
-func TestWorkflowMessage_AnErrorClearFoldedAfterTheReadersStopReadsCleared(t *testing.T) {
+// the frame carries no cause, so the message it names waits for a re-wake rather than reading dropped; with no
+// re-wake, the next turn settles it cleared (wakeLedger.turnStarted).
+func TestWorkflowMessage_AnErrorClearFoldedAfterTheReadersStopWaitsForTheRewake(t *testing.T) {
 	h, cs, _ := clearCauseHub(t, func(func()) {})
 
 	if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
@@ -180,7 +182,10 @@ func TestWorkflowMessage_AnErrorClearFoldedAfterTheReadersStopReadsCleared(t *te
 	h.translateACPEvent("c1", h.originOf("c1"), clearedMsg("notify-cap"))
 	joinInflight(t, h)
 
-	if d := settlementsOf(t, cs); !clearedOnce(d) {
-		t.Errorf("settlements = %+v, want one cleared", d)
+	if c := clearCausesOf(t, cs); len(c) != 1 || c[0] != marotte.SteerClearCauseCancel {
+		t.Errorf("clear causes = %v, want [cancel]", c)
+	}
+	if d := settlementsOf(t, cs); len(d) != 0 {
+		t.Errorf("settlements = %+v, want the message waiting for KAS's re-wake", d)
 	}
 }

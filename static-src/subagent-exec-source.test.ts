@@ -8,6 +8,7 @@ import type { TurnSource } from "./turns.js";
 import type { TurnState } from "./types.js";
 import type { Entry, EntryToolCall } from "./wire/types.gen.js";
 import { makeToolCall } from "./__test-helpers__/model.js";
+import { toolResultID } from "./entry-ids.js";
 
 function invocation(
   id: string,
@@ -251,5 +252,32 @@ describe("a stage-shaped delegate from an older engine", () => {
     expect(run.nodes[0]?.path).toBe(subagentPath("sub_a"));
     expect(run.nodes[0]?.children).toHaveLength(0);
     expect(run.label).toBe("context-gatherer");
+  });
+});
+
+describe("a delegate that stopped at its turn limit", () => {
+  function stopped(delegate_stop?: string) {
+    const entries = msg([invocation("tooluse_1", "sub_1", { status: "in_progress" })]);
+    entries.push({
+      id: toolResultID("tooluse_1"),
+      turn: "t1",
+      kind: "tool_result",
+      seq: entries.length,
+      ts: entries.length + 1,
+      payload: { status: "failed", ...(delegate_stop !== undefined && { delegate_stop }) },
+    });
+    return exec([entries], "sub_1").nodes[0];
+  }
+
+  it("reads fail and gets a Stopped fact", () => {
+    const leaf = stopped("max_turn_requests");
+    expect(leaf?.state).toBe("fail");
+    expect(leaf?.facts?.find((f) => f.label === "Stopped")?.value).toBe(
+      "It stopped at its turn limit before it finished, so its work is not done.",
+    );
+  });
+
+  it("gets no Stopped fact without a stop", () => {
+    expect(stopped()?.facts?.some((f) => f.label === "Stopped")).toBe(false);
   });
 });

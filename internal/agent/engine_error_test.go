@@ -60,6 +60,32 @@ func TestWireTurnEnd_ALatchedContextOverflowKeepsItsRemedy(t *testing.T) {
 	}
 }
 
+// The model service's byte-cap refusal, which KAS types GenericValidationError, gets the same Compact remedy
+// with its own sentence and the request id KAS wrote into the message.
+func TestCloseTurn_RequestSizeCapIsAContextLimit(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_, log := streamingPromptTurn(t, h, "c1", "half an answer")
+	log.SetEngineError(marotte.EngineError{
+		Message:        "Request exceeds the maximum allowed size (Request ID: req-413)",
+		ErrorType:      "GenericValidationError",
+		RetryErrorType: "CLIENT_ERROR",
+	})
+
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError)
+
+	closes := closesOf(t, logOf(t, cs, "c1"))
+	if len(closes) != 1 {
+		t.Fatalf("turn_close entries = %d, want exactly one", len(closes))
+	}
+	if closes[0].FailureKind != marotte.FailureKindContextLimit {
+		t.Errorf("failure_kind = %q, want %q", closes[0].FailureKind, marotte.FailureKindContextLimit)
+	}
+	want := "This chat is larger than the model service accepts in one request, usually because of earlier images. Compact the context, then send the prompt again. (request req-413)"
+	if closes[0].FailureReason != want {
+		t.Errorf("failure_reason = %q, want %q", closes[0].FailureReason, want)
+	}
+}
+
 // A model-call-limit stop names its own cause, so an earlier recovered display_error does not replace it.
 func TestWireTurnEnd_AModelCallLimitStopOutranksALatchedEngineError(t *testing.T) {
 	h, cs, _ := newTestHub()

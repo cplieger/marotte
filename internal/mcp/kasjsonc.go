@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/cplieger/marotte/internal/userjson"
 	"github.com/tailscale/hujson"
 )
 
@@ -33,9 +34,9 @@ type kasDoc struct {
 // parseKASDoc reads data as KAS does. fresh reports content with no document (whitespace or a
 // JSON null); a non-object document, or one deeper than kasMaxDepth, is an error.
 func parseKASDoc(data []byte) (doc *kasDoc, fresh bool, err error) {
-	body, empty := decodeUserJSON(data)
+	body := userjson.Body(data)
 	doc = &kasDoc{members: map[string]json.RawMessage{}}
-	if empty {
+	if userjson.Empty(body) {
 		return doc, true, nil
 	}
 	if dErr := checkKASDepth(body); dErr != nil {

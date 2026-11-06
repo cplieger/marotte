@@ -87,6 +87,7 @@ import {
 // Re-exported for messages.ts to inject into messages-tools' status-flip path.
 export { refreshGroupHeader };
 import { delegateDetail, iconForSubagent, subagentLabel, subagentName } from "./roles.js";
+import { delegateStopWord } from "./delegate-stop.js";
 import { buildRunCard, type RunCardView, type RunDisclosure } from "./fundamentals/run-card.js";
 import {
   invalidateRun,
@@ -1004,7 +1005,7 @@ function groupRange(st: TurnRender, from: number, to: number): Placement[] {
     }
     if (e?.kind === "turn_revert") {
       // The store returned the rows whose take-up the rewind took to waiting (`releaseWorkflowTakeUps`).
-      redrawSettledRows((_id, steer) => steer.origin === "parent" || steer.origin === "step");
+      redrawSettledRows((_id, steer) => isWorkflowMessage(steer));
     }
     if (e === undefined || !entryRenders(e, st.lane, st.folds)) {
       continue;
@@ -2396,8 +2397,10 @@ function steerNoteData(st: TurnRender, e: Entry, steer: EntrySteer): SteerNoteDa
       openNoteRun(st.chatID, steer.origin_run ?? "");
     };
   }
-  const workflowMessage = steer.origin === "parent" || steer.origin === "step";
-  if (workflowMessage && steer.produced_ts !== undefined) {
+  if (steer.origin === "peer") {
+    peerNoteData(data, steer);
+  }
+  if (isWorkflowMessage(steer) && steer.produced_ts !== undefined) {
     data.sentAt = steer.produced_ts;
     data.tracked = e.id.startsWith(WORKFLOW_MESSAGE_ID_PREFIX);
     if (steer.read_ts !== undefined) {
@@ -2408,6 +2411,30 @@ function steerNoteData(st: TurnRender, e: Entry, steer: EntrySteer): SteerNoteDa
     }
   }
   return data;
+}
+
+/** A send_message KAS recorded at the send (`marotte.SteerOrigin.WorkflowMessage`), which a take-up settles. */
+function isWorkflowMessage(steer: EntrySteer): boolean {
+  return steer.origin === "parent" || steer.origin === "step" || steer.origin === "peer";
+}
+
+/** Only the receiver's row carries `to_session`; the other chat is named and opened while the store holds it. */
+function peerNoteData(data: SteerNoteData, steer: EntrySteer): void {
+  data.sent = steer.to_session === undefined || steer.to_session === "";
+  const other = steer.chat ?? "";
+  if (other === "" || get(other) === undefined) {
+    return;
+  }
+  data.chatName = get(other)?.name ?? "";
+  data.onOpenChat = () => {
+    void import("./notice-subject.js")
+      .then(({ noticeSubject }) => {
+        void noticeSubject(other).open?.onClick();
+      })
+      .catch(() => {
+        /* noop: the label stays a button for the next click */
+      });
+  };
 }
 
 /** Unmount every mounted row a wake now draws as its turn's trigger (`isWakingRow`): the row was
@@ -2552,6 +2579,7 @@ function paintSubagent(
   sa.setDetail(delegateDetail(tc));
   sa.setIcon(iconForSubagent(subagentName(tc)));
   sa.setStatus(delegateStatusFor(tc.status, live));
+  sa.setStop(delegateStopWord(tc.delegate_stop));
   sa.setSummary(subagentSummary(st, subtask, tc));
 }
 
@@ -2622,6 +2650,9 @@ function bindSubagent(
     const detail = delegateDetail(next);
     if (detail !== delegateDetail(last)) {
       sa.setDetail(detail);
+    }
+    if (next.delegate_stop !== last.delegate_stop) {
+      sa.setStop(delegateStopWord(next.delegate_stop));
     }
     // The members settle before the invocation, so the settle tick sees their final diffs.
     sa.setSummary(subagentSummary(st, subtask, next));

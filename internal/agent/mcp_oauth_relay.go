@@ -154,7 +154,7 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 
 	slog.Info("mcp oauth relay: delivered a stranded callback to the loopback listener",
 		"pasted_under", body.Server, "port", target.Port(), "status", status)
-	// KAS reports the connected state over _kiro/mcp/status; the client waits for that frame.
+	// KAS ends a connect with the server's next _kiro/mcp/status and a mid-session re-auth with _kiro/mcp/oauthCompleted.
 	httpserver.WriteJSON(w, mcpOAuthRelayResp{Status: status})
 }
 

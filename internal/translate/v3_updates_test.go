@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // configModelUpdate mirrors KAS's shape: a choice gets `_meta: { kiro: { hasEffort } }`
@@ -206,7 +207,7 @@ func TestSessionInfoUpdate_UnknownKindWarns(t *testing.T) {
 		{name: "a kind KAS added since this was written", kind: "quantum_entanglement_update", wantWarn: true},
 		// recap, not turn_start: a bracket kind reaching here is a decode miss.
 		{name: "known and deliberately ignored", kind: "recap", wantWarn: false},
-		{name: "credits telemetry marotte does not render", kind: "session_usage", wantWarn: false},
+		{name: "consumed, but its credits did not decode", kind: "session_usage", wantWarn: true},
 		{name: "known compaction marker", kind: "summarization_separator", wantWarn: false},
 		{name: "consumed, but its sub-block did not decode", kind: "pending_interaction", wantWarn: true},
 		{name: "reaches the wire via SessionInfoEmitter, not a build call site", kind: "repositories_update", wantWarn: false},
@@ -414,30 +415,126 @@ func TestHandleSessionInfoUpdate_ContextPctArrivesOnEitherChannel(t *testing.T) 
 	}
 }
 
+// sessionUsageInfo is KAS's session_usage frame: the session's running total by unit, flat beside the kind.
+func sessionUsageInfo(t *testing.T, replay bool, credits ...map[string]any) json.RawMessage {
+	t.Helper()
+	kiro := map[string]any{"kind": "session_usage", "credits": credits}
+	if replay {
+		kiro["replay"] = true
+	}
+	return mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": kiro}})
+}
+
+// chatOnSession seeds chat c1 running on KAS session sess-1, with the hook to edit it first.
+func chatOnSession(t *testing.T, seed func(*marotte.Chat)) (*Translator, *testsupport.InMemoryChatStore) {
+	t.Helper()
+	deps, _, store := depsWithStore(t, "c1")
+	if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.RecordSession("sess-1")
+		if seed != nil {
+			seed(c)
+		}
+		return true
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	return New(rolesOf(deps)), store
+}
+
+func creditsOfChat(t *testing.T, store *testsupport.InMemoryChatStore) marotte.Usage {
+	t.Helper()
+	c, ok := store.Get(t.Context(), "c1")
+	if !ok {
+		t.Fatal("chat c1 missing")
+	}
+	return c.Usage
+}
+
+var onSession = FrameAttribution{SessionID: "sess-1"}
+
 // KAS reports credits as unit "credit" or with the unit key absent; both are spend.
-func TestPersistTurnSummary_AnEmptyUnitCountsAsCredits(t *testing.T) {
+func TestSessionUsage_AnEmptyUnitCountsAsCredits(t *testing.T) {
 	for _, unit := range []string{"", "credit"} {
 		t.Run("unit_"+unit, func(t *testing.T) {
-			deps, _, store := depsWithStore(t, "c1")
-			tr := New(rolesOf(deps))
-			summary := map[string]any{"usage": 0.5}
+			tr, store := chatOnSession(t, nil)
+			credit := map[string]any{"usage": 0.5}
 			if unit != "" {
-				summary["unit"] = unit
+				credit["unit"] = unit
 			}
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", sessionUsageInfo(t, false, credit), onSession)
 
-			tr.HandleSessionInfoUpdate(t.Context(), "c1", turnSummaryInfo(t, 1200, []map[string]any{summary}), FrameAttribution{})
-
-			c, ok := store.Get(t.Context(), "c1")
-			if !ok {
-				t.Fatal("chat c1 missing after session_info_update")
+			u := creditsOfChat(t, store)
+			if u.Credits != 0.5 {
+				t.Errorf("Usage.Credits after a total with unit %q = %v, want 0.5", unit, u.Credits)
 			}
-			if c.Usage.Credits != 0.5 {
-				t.Errorf("Usage.Credits after a summary with unit %q = %v, want 0.5", unit, c.Usage.Credits)
-			}
-			if !c.Usage.HasRealData {
-				t.Errorf("Usage.HasRealData after a summary with unit %q = false, want true", unit)
+			if !u.HasRealData {
+				t.Errorf("Usage.HasRealData after a total with unit %q = false, want true", unit)
 			}
 		})
+	}
+}
+
+// A total replaces the last one, so a duplicate or a missed frame cannot skew the figure.
+func TestSessionUsage_OverwritesTheSessionTotal(t *testing.T) {
+	tr, store := chatOnSession(t, nil)
+	for _, total := range []float64{0.5, 1.25} {
+		tr.HandleSessionInfoUpdate(t.Context(), "c1", sessionUsageInfo(t, false, map[string]any{"usage": total, "unit": "credit"}), onSession)
+	}
+	if got := creditsOfChat(t, store).Credits; got != 1.25 {
+		t.Errorf("Usage.Credits = %v, want the last total 1.25", got)
+	}
+}
+
+// The chat's own turn_completion feeds the turn footer only; its spend arrives in the session total.
+func TestTurnCompletion_DoesNotDoubleBillWithSessionUsage(t *testing.T) {
+	tr, store := chatOnSession(t, nil)
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", turnSummaryInfo(t, 1200, []map[string]any{{"unit": "credit", "usage": 0.5}}), onSession)
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", sessionUsageInfo(t, false, map[string]any{"usage": 0.5, "unit": "credit"}), onSession)
+	if got := creditsOfChat(t, store).Credits; got != 0.5 {
+		t.Errorf("Usage.Credits = %v, want 0.5", got)
+	}
+}
+
+// A retired session's straggler cannot overwrite the current session's figure.
+func TestSessionUsage_StaleSessionIsIgnored(t *testing.T) {
+	tr, store := chatOnSession(t, nil)
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", sessionUsageInfo(t, false, map[string]any{"usage": 0.75}), onSession)
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", sessionUsageInfo(t, false, map[string]any{"usage": 9}), FrameAttribution{SessionID: "sess-old"})
+	if got := creditsOfChat(t, store).Credits; got != 0.75 {
+		t.Errorf("Usage.Credits = %v, want 0.75 from the current session", got)
+	}
+}
+
+// A step's spend is added on top of the chat's session total, and survives the next total.
+func TestStepSpend_AddsOnTopOfTheSessionTotal(t *testing.T) {
+	tr, store := chatOnSession(t, nil)
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", sessionUsageInfo(t, false, map[string]any{"usage": 1.0}), onSession)
+	tr.metering.AccumulateSpend(t.Context(), "c1", 0.25)
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", sessionUsageInfo(t, false, map[string]any{"usage": 1.5}), onSession)
+	if got := creditsOfChat(t, store).Credits; got != 1.75 {
+		t.Errorf("Usage.Credits = %v, want the session's 1.5 plus the step's 0.25", got)
+	}
+}
+
+// A tangent's forked session reports the parent's spend first, replay-stamped at its load; that is not the tangent's.
+func TestTangent_InheritedSpendIsNotTheTangents(t *testing.T) {
+	tr, store := chatOnSession(t, func(c *marotte.Chat) { c.SpendInherited = true })
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", sessionUsageInfo(t, true, map[string]any{"usage": 2.0}), onSession)
+	if got := creditsOfChat(t, store).Credits; got != 0 {
+		t.Errorf("Usage.Credits after the load-time total = %v, want 0", got)
+	}
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", sessionUsageInfo(t, false, map[string]any{"usage": 2.4}), onSession)
+	if got := creditsOfChat(t, store).Credits; got != 0.4 {
+		t.Errorf("Usage.Credits after the tangent's first turn = %v, want 0.4", got)
+	}
+}
+
+// A parent with no spend sends no load-time total, so a live frame must not be taken for the baseline.
+func TestTangent_LiveFrameNeverSetsTheBaseline(t *testing.T) {
+	tr, store := chatOnSession(t, func(c *marotte.Chat) { c.SpendInherited = true })
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", sessionUsageInfo(t, false, map[string]any{"usage": 0.4}), onSession)
+	if got := creditsOfChat(t, store).Credits; got != 0.4 {
+		t.Errorf("Usage.Credits = %v, want the tangent's own 0.4", got)
 	}
 }
 
@@ -993,6 +1090,40 @@ func TestHandleConfigOptionUpdate_ReportedEffortIsTheNamedModels(t *testing.T) {
 			if c.EffortActive != tc.wantActive || len(c.EffortLevels) != tc.wantLevels {
 				t.Errorf("{EffortActive %q, EffortLevels %v}, want {%q, %d tiers}",
 					c.EffortActive, c.EffortLevels, tc.wantActive, tc.wantLevels)
+			}
+		})
+	}
+}
+
+// KAS 3.1.0's real session_usage frame, unitPlural included, reaches every door without a census Warn. The chat
+// door takes its total as the figure; the step and run-host doors bill nothing (a step bills per turn_completion).
+// Serial: slog's default is process-global.
+func TestSessionInfoUpdate_SessionUsageIsCensusQuiet(t *testing.T) {
+	frame := sessionUsageInfo(t, false, map[string]any{"usage": 1.25, "unit": "credit", "unitPlural": "credits"})
+	step := FrameAttribution{Step: true, RunID: "wf", NodePath: "wf/s"}
+	for _, tt := range []struct {
+		name        string
+		feed        func(*Translator)
+		wantCredits float64
+	}{
+		{name: "chat", wantCredits: 1.25, feed: func(tr *Translator) {
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", turnSummaryInfo(t, 900, []map[string]any{{"unit": "credit", "usage": 0.5}}), onSession)
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", frame, onSession)
+		}},
+		{name: "step", feed: func(tr *Translator) { tr.HandleSessionInfoUpdate(t.Context(), "c1", frame, step) }},
+		{name: "run host", feed: func(tr *Translator) { tr.HandleStepInfoUpdate(t.Context(), "c1", frame, step) }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resetCensus(t)
+			var buf bytes.Buffer
+			captureSlog(t, &buf)
+			tr, store := chatOnSession(t, nil)
+			tt.feed(tr)
+			if out := buf.String(); strings.Contains(out, "level=WARN") {
+				t.Errorf("a session_usage frame logged a Warn: %s", out)
+			}
+			if got := creditsOfChat(t, store).Credits; got != tt.wantCredits {
+				t.Errorf("credits = %v, want %v", got, tt.wantCredits)
 			}
 		})
 	}

@@ -42,6 +42,12 @@ type kasMemory struct {
 	CreatedAt  json.RawMessage `json:"createdAt"`
 	UpdatedAt  json.RawMessage `json:"updatedAt"`
 	Scopes     []string        `json:"scopes"`
+	// Meta carries cloudState on a synced store: pending until the cloud took the record.
+	Meta struct {
+		Kiro struct {
+			CloudState string `json:"cloudState"`
+		} `json:"kiro"`
+	} `json:"_meta"`
 }
 
 // memoryRow is one record on the wire; Content is set only by GET /api/memory/{id}.
@@ -53,6 +59,7 @@ type memoryRow struct {
 	Content    *string         `json:"content,omitempty"`
 	CreatedAt  json.RawMessage `json:"created_at,omitempty"`
 	UpdatedAt  json.RawMessage `json:"updated_at,omitempty"`
+	CloudState string          `json:"cloud_state,omitempty"`
 	Scopes     []string        `json:"scopes"`
 }
 
@@ -81,7 +88,7 @@ func rowFromKAS(m *kasMemory) memoryRow {
 	}
 	return memoryRow{
 		ID: m.ID, MemoryType: m.MemoryType, Title: m.Title, Summary: m.Summary,
-		Content: m.Content, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, Scopes: scopes,
+		Content: m.Content, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, CloudState: m.Meta.Kiro.CloudState, Scopes: scopes,
 	}
 }
 
@@ -243,5 +250,6 @@ func memoryFailure(err error) engineReply {
 // registerMemoryRoutes wires the Memories endpoints, method-less so a refused method answers 405 + Allow.
 func (st *Settings) registerMemoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/memory", st.handleMemoryCollection)
+	mux.HandleFunc("/api/memory/sync", st.handleMemorySync)
 	mux.HandleFunc("/api/memory/{id}", st.handleMemoryOne)
 }

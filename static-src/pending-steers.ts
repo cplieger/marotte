@@ -3,24 +3,27 @@ import { join } from "@cplieger/keyenc";
 import { announce } from "@cplieger/ui/announce";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
-import { activeSession, getActiveId, isBusy } from "./store.js";
+import { activeSession, getActiveId, hasMessage, hasQueued, isBusy } from "./store.js";
 import {
   cancelTurn,
   clearSteers,
+  queuePrompt,
   removeSteer,
   sendQueuedNow,
   unqueuePrompt,
 } from "./actions/chat.js";
 import { setComposerValue } from "./composer-value.js";
-import { composerDraft, restoreRefusedEdit } from "./composer-state.js";
+import { composerDraft, restoreFailedSend, restoreRefusedEdit } from "./composer-state.js";
 import { addAttachmentTo, removeAttachmentFrom } from "./attachments.js";
 import { confirm } from "./confirm.js";
 import { chatNotice, subjectName } from "./notice-subject.js";
-import { ICON_ARROW_UP, ICON_HOURGLASS, ICON_EDIT, ICON_TRASH } from "./icons.js";
+import { ICON_ARROW_UP, ICON_HOURGLASS, ICON_EDIT, ICON_QUEUE, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { sentBy } from "./sent-by.js";
 import { wireSignature } from "./paint-sig.js";
 import { sessionDrain, turnsPhrase, type QueuedSlot } from "./queue-slots.js";
+import { truncate } from "./strings.js";
+import { newMessageID } from "./transport.js";
 import type { PendingSteer, QueuedPrompt } from "./types.js";
 
 /** One dock row: a steer the agent has not read, or a follow-up the server holds. */
@@ -32,6 +35,9 @@ export interface SteerStackSource {
   read(): { id: string; steers: readonly PendingSteer[]; queued: readonly QueuedSlot[] };
   /** Stop the turn and send this row first; absent where no turn is the reader's to stop. */
   sendNow?: (steerID: string) => Promise<void>;
+  /** Take the row out of the turn and hold it as a follow-up; absent where there is no follow-up
+   *  queue (a run step). */
+  queueInstead?: (steer: PendingSteer) => Promise<void>;
   /** Edit: put the row's words in the box, then delete the row. */
   edit(steer: PendingSteer): Promise<void>;
   /** Edit beside a workflow's row, where the only removal is the whole buffer. */
@@ -303,6 +309,20 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
   // While a row is delivering the server refuses any delete that would clear KAS's buffer; only a row
   // the server holds itself (unsent) still goes on its own.
   if (perRow && (clearable || steer.unsent === true)) {
+    // An unsent row already goes as the next prompt, which is what queueing it would do.
+    const queueInstead = src.queueInstead;
+    if (steer.unsent !== true && queueInstead !== undefined) {
+      controls.push(
+        actionButton(
+          ICON_QUEUE,
+          "Queue this message instead",
+          "Take it out of this turn and send it after the turn ends",
+          () => {
+            void queueInstead(steer);
+          },
+        ),
+      );
+    }
     controls.push(
       actionButton(
         ICON_EDIT,
@@ -437,6 +457,45 @@ async function editSteer(steer: PendingSteer): Promise<void> {
   reportRefusal(chatID, name, "Could not confirm the message was taken back");
 }
 
+/** Delete the steer, then queue its words under a new id: the steer's own id is keyed on its steer
+ *  entries. Once the delete may have happened, every failure leaves the words in the chat's
+ *  composer, except a queued row that landed despite a lost reply. */
+async function queueSteerInstead(steer: PendingSteer): Promise<void> {
+  const chatID = getActiveId();
+  if (chatID === "") {
+    return;
+  }
+  const name = subjectName(chatID);
+  announce("Moving the message to the queue");
+  const removed = await removeSteer.dispatch({ chatID, steerID: steer.id }).outcome;
+  if (removed.status === "error") {
+    if (DEFINITE_REFUSALS.has(removed.error.status ?? 0)) {
+      reportRefusal(chatID, name, removed.error.message);
+      return;
+    }
+    restoreFailedSend(chatID, steer.text);
+    reportRefusal(chatID, name, "Could not confirm the message was moved");
+    return;
+  }
+  const messageID = newMessageID();
+  const queued = await queuePrompt.dispatch({ chatID, text: steer.text, messageID }).outcome;
+  if (queued.status !== "error") {
+    return;
+  }
+  if (queued.error.code === "no_turn") {
+    // The turn ended between the two calls, so the words go as the next prompt. Imported lazily so
+    // the run tab, which mounts this stack too, does not load the send pipeline.
+    const { submitPrompt } = await import("./submit.js");
+    await submitPrompt(chatID, steer.text, { attachments: [] });
+    return;
+  }
+  if (hasQueued(chatID, messageID) || hasMessage(chatID, messageID)) {
+    return;
+  }
+  restoreFailedSend(chatID, steer.text);
+  reportRefusal(chatID, name, queued.error.message);
+}
+
 async function deleteSteer(steerID: string): Promise<void> {
   const chatID = getActiveId();
   if (chatID === "") {
@@ -506,6 +565,7 @@ const chatSource: SteerStackSource = {
     return { id: s.id, steers: s.steers ?? [], queued: sessionDrain(s).rows };
   },
   sendNow: sendSteerNow,
+  queueInstead: queueSteerInstead,
   edit: editSteer,
   editByClear: editSteerByClear,
   remove: deleteSteer,
@@ -758,6 +818,5 @@ function oneLine(text: string): string {
 const PREVIEW_CHARS = 40;
 
 function preview(text: string): string {
-  const line = oneLine(text);
-  return line.length <= PREVIEW_CHARS ? line : `${line.slice(0, PREVIEW_CHARS - 1)}…`;
+  return truncate(oneLine(text), PREVIEW_CHARS);
 }

@@ -190,6 +190,10 @@ func boundToolResult(res *marotte.EntryToolResult, b toolBudget) (marotte.EntryT
 		cut.DiffCount = len(res.Diffs)
 		cut.DiffBytes = diffsBytes(res.Diffs)
 	}
+	if input, ok := boundInput(res.Input, b); ok {
+		out.Input = input
+		cut.InputBytes = len(res.Input)
+	}
 	return out, cut
 }
 

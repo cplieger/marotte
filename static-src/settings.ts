@@ -37,6 +37,7 @@ import { initSteeringEditor, loadSteeringDoc } from "./settings-steering.js";
 import { compactionPolicy } from "./context-ring.js";
 import { onGovernanceChange, paintSettingLocks, writeSwitch } from "./governance.js";
 import { paintOutputStyle, paintOutputStyleHint } from "./output-style.js";
+import { resetAccountUsage } from "./account-usage.js";
 
 // The kiro-cli settings endpoint does not go through persist.ts's settings state, so it keeps its own
 // per-key write generation: only a key's newest write reports its outcome.
@@ -564,6 +565,9 @@ const TEXT_SIGN_OUT_API_KEY =
 /** Paint the sidebar identity row, the status card's auth and sign-in lines, and Sign out. Takes the VERDICT rather
  *  than an email because three answers reach it and only one carries an address. */
 export function renderIdentity(v: IdentityVerdict): void {
+  if (accountOf(v) !== accountOf(lastVerdict)) {
+    resetAccountUsage();
+  }
   lastVerdict = v;
   const account = v.state === "signed_in" ? v : null;
   $.userEmail.textContent = account?.email ?? "";
@@ -573,6 +577,13 @@ export function renderIdentity(v: IdentityVerdict): void {
   const keyed = account?.apiKey === true;
   $.logoutBtn.disabled = keyed;
   $.logoutBtn.setAttribute("data-tooltip", keyed ? TEXT_SIGN_OUT_API_KEY : TEXT_SIGN_OUT);
+}
+
+/** The account a verdict names, as one comparable key; the usage rows belong to it. */
+function accountOf(v: IdentityVerdict): string {
+  return v.state === "signed_in"
+    ? JSON.stringify([v.state, v.email, v.startUrl, v.region])
+    : v.state;
 }
 
 /** ONE writer of the sign-in rows and their separator: method, start URL and region, each hidden when empty. */

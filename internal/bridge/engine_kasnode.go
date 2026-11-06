@@ -34,7 +34,9 @@ var cliNodeHashes = struct {
 // returns the node flags the launch adds (nil without the launcher). A failed check starts kiro-cli's stock engine
 // with one WARN naming why; the next start checks again.
 func (e *Engine) withKASNodeLauncher(env []string) (out, nodeArgs []string) {
-	env = slices.DeleteFunc(env, func(kv string) bool { return strings.HasPrefix(kv, kasnode.LaunchVar+"=") })
+	env = slices.DeleteFunc(env, func(kv string) bool {
+		return strings.HasPrefix(kv, kasnode.LaunchVar+"=") || strings.HasPrefix(kv, kasnode.HeapLimitVar+"=")
+	})
 	if !e.highThroughput {
 		return env, nil
 	}

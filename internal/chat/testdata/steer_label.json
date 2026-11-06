@@ -26,6 +26,7 @@
   "origins": [
     "agent",
     "parent",
+    "peer",
     "step",
     "user"
   ],
@@ -50,9 +51,9 @@
       "reason": "restart",
       "label": "Workflow result not delivered · the session restarted",
       "sites": [
-        "internal/agent/bridge_coord.go:1761",
+        "internal/agent/bridge_coord.go:1762",
         "internal/agent/entry_merge.go:605",
-        "internal/agent/runtime.go:794"
+        "internal/agent/runtime.go:796"
       ]
     },
     {
@@ -117,6 +118,44 @@
       ]
     },
     {
+      "origin": "peer",
+      "state": "dropped",
+      "reason": "boundary",
+      "label": "Message from another chat not delivered · the turn ended first",
+      "sites": [
+        "internal/translate/steering.go:198"
+      ]
+    },
+    {
+      "origin": "peer",
+      "state": "dropped",
+      "reason": "restart",
+      "label": "Message from another chat not delivered · the session restarted",
+      "sites": [
+        "internal/agent/entry_merge.go:605"
+      ]
+    },
+    {
+      "origin": "peer",
+      "state": "read",
+      "reason": "",
+      "label": "Message from another chat",
+      "sites": [
+        "internal/translate/steering.go:130",
+        "internal/translate/steering.go:272"
+      ]
+    },
+    {
+      "origin": "peer",
+      "state": "",
+      "reason": "",
+      "label": "Message from another chat",
+      "sites": [
+        "internal/translate/projection_entries.go:233",
+        "internal/translate/workflow_message.go:41"
+      ]
+    },
+    {
       "origin": "step",
       "state": "dropped",
       "reason": "boundary",
@@ -172,7 +211,7 @@
       "label": "Not read · the session restarted",
       "sites": [
         "internal/agent/entry_merge.go:605",
-        "internal/agent/runtime.go:788"
+        "internal/agent/runtime.go:790"
       ]
     },
     {
@@ -200,7 +239,7 @@
   ],
   "sites": [
     {
-      "site": "internal/agent/bridge_coord.go:1761",
+      "site": "internal/agent/bridge_coord.go:1762",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",
@@ -256,14 +295,14 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/runtime.go:788",
+      "site": "internal/agent/runtime.go:790",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/runtime.go:794",
+      "site": "internal/agent/runtime.go:796",
       "form": "mutation",
       "origin": "agent",
       "state": "dropped",

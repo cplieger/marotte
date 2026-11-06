@@ -1,6 +1,7 @@
 // DOM-free on purpose: git-prs-tab.ts renders these descriptors, so every rule is testable without a document.
 
 import type { ForgeKind } from "./forge-types.js";
+import { truncate } from "./strings.js";
 import type { GitPR } from "./git-types.js";
 import type { Affordance, RepoSuccessor } from "./wire/types.gen.js";
 
@@ -191,9 +192,7 @@ function headVerdict(pr: GitPR): MergeVerdict {
 
 /** One bounded line: a future server value could be long or carry newlines. */
 function oneLine(word: string): string {
-  const MAX = 40;
-  const line = word.replace(/\s+/g, " ").trim();
-  return line.length > MAX ? line.slice(0, MAX - 1) + "\u2026" : line;
+  return truncate(word.replace(/\s+/g, " ").trim(), 40);
 }
 
 /** What the merge queue says of a row, or "" for a row in none. */

@@ -9,6 +9,7 @@ import (
 
 func FuzzSettingsField(f *testing.F) {
 	f.Add([]byte(`{"foo":"bar"}`), "foo")
+	f.Add([]byte("\xEF\xBB\xBF{\"foo\":\"bar\"}"), "foo")
 	f.Add([]byte(`{"enabled":true}`), "enabled")
 	f.Add([]byte(`{"count":42}`), "count")
 	f.Add([]byte(`{"nested":{"a":1}}`), "nested")

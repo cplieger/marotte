@@ -41,6 +41,24 @@ const applyRoute = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 vi.mock("./route-apply.js", () => ({ applyRoute }));
 const createSession = vi.hoisted(() => vi.fn(() => Promise.resolve("c-new")));
 vi.mock("./chat.js", () => ({ createSession }));
+const owners = vi.hoisted(() => ({
+  openModelCard: vi.fn(),
+  pickModel: vi.fn(),
+  openModeCard: vi.fn(),
+  openContextCard: vi.fn(),
+  openSetting: vi.fn(),
+  setComposerValue: vi.fn(),
+  models: [] as { model_id: string; model_name: string }[],
+}));
+vi.mock("./model-switcher.js", () => ({
+  openModelCard: owners.openModelCard,
+  pickModel: owners.pickModel,
+}));
+vi.mock("./role-picker.js", () => ({ openModeCard: owners.openModeCard }));
+vi.mock("./context-card.js", () => ({ openContextCard: owners.openContextCard }));
+vi.mock("./settings-highlight.js", () => ({ openSetting: owners.openSetting }));
+vi.mock("./picker.js", () => ({ getCachedModels: () => owners.models }));
+vi.mock("./composer-value.js", () => ({ setComposerValue: owners.setComposerValue }));
 
 const { handleTypedCommand, terminalCommandRefusal, MAROTTE_COMMANDS } =
   await import("./typed-commands.js");
@@ -443,16 +461,152 @@ describe("handleTypedCommand /clear", () => {
   });
 });
 
+// kiro-cli's inspect commands open the control that already draws their state.
+describe("handleTypedCommand inspect verbs", () => {
+  function seed(thinking: boolean): void {
+    store.setSessions([
+      {
+        id: "c1",
+        name: "test",
+        model: "",
+        acp_session_id: "",
+        current_mode_id: "",
+        usage: {
+          context_pct: 0,
+          context_size: 0,
+          credits: 0,
+          last_turn_ms: 0,
+          has_real_data: false,
+        },
+        turns: new Map(),
+        turn_order: [],
+        turn_count: 1,
+        has_more: false,
+        thinking: false,
+        working_label: "Thinking",
+      },
+    ]);
+    store.setThinking("c1", thinking);
+  }
+
+  beforeEach(() => {
+    for (const fn of [
+      owners.openModelCard,
+      owners.pickModel,
+      owners.openModeCard,
+      owners.openContextCard,
+      owners.openSetting,
+      owners.setComposerValue,
+      applyRoute,
+    ]) {
+      fn.mockClear();
+    }
+    owners.models = [
+      { model_id: "claude-sonnet-4.5", model_name: "Claude Sonnet 4.5" },
+      { model_id: "auto", model_name: "Auto" },
+    ];
+    seed(false);
+  });
+
+  it("opens the model card on /model and sends nothing", async () => {
+    expect(handleTypedCommand("c1", "/model")).toBe(true);
+    await vi.waitFor(() => {
+      expect(owners.openModelCard).toHaveBeenCalledTimes(1);
+    });
+    expect(owners.pickModel).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(toasts).toEqual([]);
+  });
+
+  it("opens the mode card on /agent", async () => {
+    expect(handleTypedCommand("c1", "/Agent")).toBe(true);
+    await vi.waitFor(() => {
+      expect(owners.openModeCard).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it.each(["/context", "/usage", "/stats"])("opens the context card on %s", async (text) => {
+    expect(handleTypedCommand("c1", text)).toBe(true);
+    await vi.waitFor(() => {
+      expect(owners.openContextCard).toHaveBeenCalledTimes(1);
+    });
+    expect(toasts).toEqual([]);
+  });
+
+  // The composer clears its box right after a consumed send, so the `/` lands after that clear.
+  it("puts / in the composer on /help, after the send clears the box", async () => {
+    expect(handleTypedCommand("c1", "/help")).toBe(true);
+    owners.setComposerValue("");
+    await vi.waitFor(() => {
+      expect(owners.setComposerValue.mock.calls).toEqual([[""], ["/"]]);
+    });
+  });
+
+  it("opens Settings on Permissions for /tools", async () => {
+    expect(handleTypedCommand("c1", "/tools")).toBe(true);
+    await vi.waitFor(() => {
+      expect(applyRoute).toHaveBeenCalledWith({ kind: "settings", tab: "permissions" });
+    });
+  });
+
+  it("opens MCP integrations in Settings > Tools for /mcp", async () => {
+    expect(handleTypedCommand("c1", "/mcp")).toBe(true);
+    await vi.waitFor(() => {
+      expect(owners.openSetting).toHaveBeenCalledWith("tools", "mcp-section");
+    });
+  });
+
+  it("picks a listed model on /model <id>, matching the id in any case", async () => {
+    expect(handleTypedCommand("c1", "/model  Claude-Sonnet-4.5 ")).toBe(true);
+    await vi.waitFor(() => {
+      expect(owners.pickModel).toHaveBeenCalledWith("claude-sonnet-4.5");
+    });
+    expect(owners.openModelCard).not.toHaveBeenCalled();
+    expect(toasts).toEqual(["Model set to claude-sonnet-4.5."]);
+  });
+
+  it("says a mid-turn /model <id> applies when the turn ends", async () => {
+    seed(true);
+    expect(handleTypedCommand("c1", "/model auto")).toBe(true);
+    await vi.waitFor(() => {
+      expect(owners.pickModel).toHaveBeenCalledWith("auto");
+    });
+    expect(toasts).toEqual(["The model switches to auto when this turn ends."]);
+  });
+
+  it("leaves /model <unlisted> to its refusal, which names the id and keeps the text", () => {
+    expect(handleTypedCommand("c1", "/model gpt-9")).toBe(false);
+    expect(owners.pickModel).not.toHaveBeenCalled();
+    expect(terminalCommandRefusal("/model gpt-9")).toEqual({
+      notice: "No model named gpt-9 is in the model list, so this was not sent to the agent.",
+      keepText: true,
+    });
+  });
+
+  it("does not match a model name, only its id", () => {
+    expect(handleTypedCommand("c1", "/model Claude Sonnet 4.5")).toBe(false);
+    expect(owners.pickModel).not.toHaveBeenCalled();
+  });
+
+  it("leaves /agent create foo to its refusal, which keeps the text", () => {
+    expect(handleTypedCommand("c1", "/agent create foo")).toBe(false);
+    expect(owners.openModeCard).not.toHaveBeenCalled();
+    expect(terminalCommandRefusal("/agent create foo")).toEqual({
+      notice:
+        "marotte's /agent takes no arguments, so this was not sent to the agent. Switch modes and agents with the mode pill in the prompt bar.",
+      keepText: true,
+    });
+  });
+});
+
 describe("terminalCommandRefusal", () => {
   it("names marotte's control for a kiro-cli command it has one for", () => {
-    expect(terminalCommandRefusal("/model")).toEqual({
+    expect(terminalCommandRefusal("/effort")).toEqual({
       notice:
-        "marotte has no /model, so it was not sent to the agent. Switch the model and reasoning effort with the model pill in the prompt bar.",
+        "marotte has no /effort, so it was not sent to the agent. Switch the model and reasoning effort with the model pill in the prompt bar.",
       keepText: false,
     });
-    expect(terminalCommandRefusal("  /MCP ")?.notice).toContain(
-      "MCP integrations in Settings > Tools",
-    );
+    expect(terminalCommandRefusal("  /HOOKS ")?.notice).toContain("Hooks tab of Kiro docs");
   });
 
   it("says only that it was not sent when marotte has no counterpart", () => {
@@ -462,17 +616,33 @@ describe("terminalCommandRefusal", () => {
   });
 
   it.each([
-    ["/model claude-sonnet-4", "model"],
-    ["/agent swap x", "agent"],
-    ["/context add file", "context"],
-    ["/tools trust-all", "tools"],
-    ["/mcp list", "mcp"],
+    ["/effort high", "effort"],
     ["/chat resume", "chat"],
     ["/Knowledge  add docs", "knowledge"],
   ])("refuses %s by its first word and keeps the text", (text, name) => {
     const refusal = terminalCommandRefusal(text);
     expect(refusal?.notice).toMatch(new RegExp(`^marotte has no /${name}, so it was not sent`));
     expect(refusal?.keepText).toBe(true);
+  });
+
+  it.each([
+    ["/agent swap x", "agent"],
+    ["/context add file", "context"],
+    ["/usage --billing", "usage"],
+    ["/stats reset", "stats"],
+    ["/help me", "help"],
+    ["/tools trust-all", "tools"],
+    ["/MCP list", "mcp"],
+  ])("refuses %s, an argument form of a verb marotte serves bare", (text, name) => {
+    const refusal = terminalCommandRefusal(text);
+    expect(refusal?.notice).toMatch(
+      new RegExp(`^marotte's /${name} takes no arguments, so this was not sent`),
+    );
+    expect(refusal?.keepText).toBe(true);
+  });
+
+  it("leaves the argument form of a verb that takes sentences to the agent", () => {
+    expect(terminalCommandRefusal("/compact this file")).toBeNull();
   });
 
   it.each([

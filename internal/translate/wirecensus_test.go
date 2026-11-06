@@ -444,6 +444,23 @@ func TestToolCall_CensusIsQuietOnKASIdentityKeys(t *testing.T) {
 	}
 }
 
+// A sub-agent result's stopReason is read, so the census stays quiet on it.
+func TestToolCallUpdate_CensusIsQuietOnASubAgentStop(t *testing.T) {
+	resetCensus(t)
+	var logbuf bytes.Buffer
+	captureSlog(t, &logbuf)
+	var tu acpToolCallUpdateWire
+	if err := json.Unmarshal(mustJSON(t, map[string]any{
+		"toolCallId": "tc", "status": "completed",
+		"_meta": map[string]any{"kiro": map[string]any{"stopReason": "max_turn_requests"}},
+	}), &tu); err != nil {
+		t.Fatalf("decode tool_call_update: %v", err)
+	}
+	if out := logbuf.String(); strings.Contains(out, "UNKNOWN _meta.kiro field") {
+		t.Errorf("a sub-agent stop reported a member: %s", out)
+	}
+}
+
 func updateParams(t *testing.T, kind string) json.RawMessage {
 	t.Helper()
 	return mustJSON(t, map[string]any{"sessionId": "s", "update": map[string]any{"sessionUpdate": kind}})

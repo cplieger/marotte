@@ -574,6 +574,31 @@ describe("the record's byte budget", () => {
     expect(call.output_spans).toBeUndefined();
   });
 
+  it("cuts a tool output before an emoji astride the cap, never leaving half of it", () => {
+    oneOpenChat();
+    seedTurn("c1", "turn-1", 1, [
+      toolCallEntry("turn-1", 1, { output: "x".repeat(MAX_TOOL_OUTPUT - 1) + "\u{1F600}tail" }),
+    ]);
+
+    const call = toolPayload(capturedWindow().entries.at(-1));
+
+    expect(call.output).toBe("x".repeat(MAX_TOOL_OUTPUT - 1));
+  });
+
+  it("cuts a tool input value before an emoji astride the cap", () => {
+    oneOpenChat();
+    seedTurn("c1", "turn-1", 1, [
+      toolCallEntry("turn-1", 1, {
+        input: { command: "y".repeat(MAX_TOOL_OUTPUT - 1) + "\u{1F600}tail" },
+      }),
+    ]);
+
+    const input = toolPayload(capturedWindow().entries.at(-1)).input as
+      { command?: string } | undefined;
+
+    expect(input?.command).toBe("y".repeat(MAX_TOOL_OUTPUT - 1));
+  });
+
   it("trims a tool RESULT the same way it trims the call", () => {
     oneOpenChat();
     seedTurn("c1", "turn-1", 1, [

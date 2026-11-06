@@ -47,7 +47,8 @@ type record struct {
 
 // validRecord refuses a record KAS could not use or a UI could not show. An IAM Identity Center class
 // with no profile ARN is refused because KAS fails every model call without one; a Builder ID
-// record may hold none. No error names a secret.
+// record holds none, since its profile is the class constant (kasProfileArn). No error names a
+// secret.
 func validRecord(r *record) error {
 	switch r.Provider {
 	case providerBuilderID:
@@ -79,13 +80,23 @@ func validRecord(r *record) error {
 	return nil
 }
 
+// kasProfileArn is the profile KAS is answered with: builderIDProfileArn for Builder ID, whatever
+// the record holds, else the record's own.
+func (r *record) kasProfileArn() string {
+	if r.Provider == providerBuilderID {
+		return builderIDProfileArn
+	}
+	return r.ProfileArn
+}
+
 // displayable reports whether s survives single-line sanitizing unchanged within n bytes.
 func displayable(s string, n int) bool {
 	return len(s) <= n && textsafe.SanitizeSingleLineBounded(s, n) == s
 }
 
 // validStartURL accepts an https URL with a host and no userinfo, which some HTTP clients would
-// send before a redirect (CWE-601).
+// send before a redirect (CWE-601). It gates stored and server-given URLs; a typed start URL goes
+// through canonicalStartURL.
 func validStartURL(raw string) error {
 	if len(raw) > maxStartURLBytes {
 		return fmt.Errorf("%w: the start URL is too long", signin.ErrInvalidParams)

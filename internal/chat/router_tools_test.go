@@ -354,6 +354,27 @@ func TestToolBulk_ServesTheWholeCall(t *testing.T) {
 	}
 }
 
+// The bulk serves the input an update revised, not the create's partial one.
+func TestToolBulk_ResultInputWins(t *testing.T) {
+	revised := json.RawMessage(`{"path":"notes.txt","text":"one more line"}`)
+	s := storeWith(t, marotte.EntryToolCall{ID: "tc1", Title: "Append", Kind: marotte.ToolKindEdit, Input: json.RawMessage(`{"path":"notes.txt"}`)},
+		&marotte.EntryToolResult{Status: marotte.ToolCompleted, Input: revised})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/tools/tc1", nil)
+	rec := httptest.NewRecorder()
+	newRouter(s).handleOne(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got marotte.ToolCallBulk
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if string(got.Input) != string(revised) {
+		t.Errorf("input = %s, want the revised %s", got.Input, revised)
+	}
+}
+
 // TestToolBulk_Rejections pins that an unknown call is a miss, a malformed id a bad request.
 func TestToolBulk_Rejections(t *testing.T) {
 	s := storeWith(t, marotte.EntryToolCall{ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute}, settled("ok"))

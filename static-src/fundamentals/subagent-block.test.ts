@@ -460,3 +460,23 @@ describe("the leaf's navigation chevron never turns", () => {
     expect(turn()).toBe("-90deg");
   });
 });
+
+describe("a delegate that stopped early says why", () => {
+  it("appends the stop word to the announced state on an inert head", () => {
+    const sa = buildSubagentCard("Subagent", "in_progress");
+    sa.setStatus("failed");
+    sa.setStop("stopped at its turn limit");
+    expect(sa.root.querySelector(".sr-only")?.textContent).toBe(
+      "failed, stopped at its turn limit",
+    );
+  });
+
+  it("appends the stop word to the head's accessible name", () => {
+    const sa = buildSubagentCard("Subagent", "in_progress", { open: opener() });
+    sa.setStatus("failed");
+    sa.setStop("stopped at its turn limit");
+    expect(headerOf(sa.root).getAttribute("aria-label")).toBe(
+      "Subagent, failed, stopped at its turn limit",
+    );
+  });
+});

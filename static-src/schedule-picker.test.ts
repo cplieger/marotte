@@ -298,6 +298,7 @@ describe("the unattended note", () => {
   it("states the automatic approval when the setting is on", () => {
     const text = buildUnattendedNote(true, vi.fn()).textContent ?? "";
     expect(text).toContain("approved automatically after 3 minutes");
+    expect(text).toContain("except one your organization or Kiro's safety check sends to a person");
     expect(text).toContain("Auto-approve is on");
     expect(text).not.toContain("refused");
   });

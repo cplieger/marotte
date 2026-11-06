@@ -3,8 +3,11 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cplieger/marotte/internal/bridge"
@@ -34,7 +37,10 @@ func (rt *Runtime) attachEngineLane(h engineHandle, gen uint64) {
 // runs on a tracked goroutine, so none blocks the consumer, but for a sign-in ask once Shutdown has begun, answered
 // in place after a vault lookup drainAnswerBound bounds.
 func (rt *Runtime) engineFrame(h engineHandle, msg *marotte.RPCResponse) {
-	if msg == nil {
+	if msg == nil || rt.peerHeld(msg) {
+		return
+	}
+	if msg.Method == methodKiroSessionNotify && rt.hostPeerTarget(h, msg) {
 		return
 	}
 	if msg.ID != nil && msg.Method != "" {
@@ -43,6 +49,181 @@ func (rt *Runtime) engineFrame(h engineHandle, msg *marotte.RPCResponse) {
 	}
 	rt.engineNotification(msg)
 }
+
+// A peer message (KAS's send_message between two chats, `sender: "peer"`) to a chat marotte holds no session for
+// is delivered all the same: KAS loads the target on demand and runs the turn it wakes inside the engine, so the
+// notify and that turn's frames reach the engine lane. hostPeerTarget makes the target's chat resident and replays
+// on its lane what the hold kept meanwhile.
+type peerHolds struct {
+	mu sync.Mutex
+	by map[marotte.SessionID]*peerHold
+}
+
+// peerHold is one target session's frames, oldest first. chat and origin are set once the chat is resident, after
+// which a frame still queued on the engine lane goes straight to it.
+type peerHold struct {
+	frames []*marotte.RPCResponse
+	chat   marotte.ChatID
+	origin acpResponder
+}
+
+// peerHoldCap bounds one hold; a frame past it takes the engine lane's own answer, as with no hold.
+const peerHoldCap = 1024
+
+// begin opens session's hold with the notify, false when one is already open (the notify then joins it).
+func (p *peerHolds) begin(session marotte.SessionID, msg *marotte.RPCResponse) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if h, ok := p.by[session]; ok {
+		if h.chat == "" && len(h.frames) < peerHoldCap {
+			h.frames = append(h.frames, msg)
+		}
+		return false
+	}
+	if p.by == nil {
+		p.by = make(map[marotte.SessionID]*peerHold)
+	}
+	p.by[session] = &peerHold{frames: []*marotte.RPCResponse{msg}}
+	return true
+}
+
+// take holds msg when session's hold is still waiting, or answers where a settled hold forwards it.
+func (p *peerHolds) take(session marotte.SessionID, msg *marotte.RPCResponse) (h peerHold, held bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	cur, ok := p.by[session]
+	switch {
+	case !ok:
+		return peerHold{}, false
+	case cur.chat != "":
+		return peerHold{chat: cur.chat, origin: cur.origin}, true
+	case len(cur.frames) >= peerHoldCap:
+		return peerHold{}, false
+	}
+	cur.frames = append(cur.frames, msg)
+	return peerHold{}, true
+}
+
+// drain hands back the frames held so far; once none are left the hold forwards to chat.
+func (p *peerHolds) drain(session marotte.SessionID, chat marotte.ChatID, origin acpResponder) []*marotte.RPCResponse {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	h := p.by[session]
+	if h == nil {
+		return nil
+	}
+	frames := h.frames
+	h.frames = nil
+	if len(frames) == 0 {
+		h.chat, h.origin = chat, origin
+	}
+	return frames
+}
+
+// drop closes session's hold and hands back what it kept.
+func (p *peerHolds) drop(session marotte.SessionID) []*marotte.RPCResponse {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	h := p.by[session]
+	delete(p.by, session)
+	if h == nil {
+		return nil
+	}
+	return h.frames
+}
+
+func (p *peerHolds) empty() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.by) == 0
+}
+
+// peerHeld takes a frame for a session a peer hold covers: kept while its chat is made resident, then handed to the
+// chat's lane until the chat closes that session.
+func (rt *Runtime) peerHeld(msg *marotte.RPCResponse) bool {
+	if rt.peerHolds.empty() {
+		return false
+	}
+	session := sessionIDOfParams(msg.Params)
+	if session == "" {
+		return false
+	}
+	fwd, held := rt.peerHolds.take(session, msg)
+	if !held || fwd.chat == "" {
+		return held
+	}
+	if rt.coord.ParentACPSession(fwd.chat) != string(session) {
+		rt.peerHolds.drop(session)
+		return false
+	}
+	rt.translateACPEvent(fwd.chat, fwd.origin, msg)
+	return true
+}
+
+// hostPeerTarget opens a hold for a peer notify whose target no resident chat holds and makes that chat resident on
+// a tracked goroutine, reporting whether the frame was taken.
+func (rt *Runtime) hostPeerTarget(h engineHandle, msg *marotte.RPCResponse) bool {
+	var p struct {
+		SessionID marotte.SessionID `json:"sessionId"`
+		Sender    string            `json:"sender"`
+	}
+	if json.Unmarshal(msg.Params, &p) != nil || p.Sender != "peer" || p.SessionID == "" {
+		return false
+	}
+	if _, resident := rt.coord.ChatForACPSession(string(p.SessionID)); resident {
+		return false
+	}
+	if rt.peerHolds.begin(p.SessionID, msg) {
+		rt.lifecycle.inflight.Go(func() { rt.residePeerTarget(h, p.SessionID) })
+	}
+	return true
+}
+
+// residePeerTarget opens the chat that records session and replays the held frames on its lane, in order. A chat
+// that cannot be opened on that session drops them: each held request is answered as an unknown session's.
+func (rt *Runtime) residePeerTarget(h engineHandle, session marotte.SessionID) {
+	ctx, cancel := rt.lifecycle.derivedContext()
+	defer cancel()
+	chatID, sb, err := rt.peerTargetChat(ctx, session)
+	if err != nil {
+		slog.Warn("engine: a chat another chat messaged could not be opened, so the turn the message woke is not shown",
+			"session_id", logsafe.Field(string(session)), "error", err)
+		for _, f := range rt.peerHolds.drop(session) {
+			if f.ID != nil && f.Method != "" {
+				rt.answerUnknownSession(h, f)
+			}
+		}
+		return
+	}
+	origin := sb.responder()
+	for frames := rt.peerHolds.drain(session, chatID, origin); len(frames) > 0; frames = rt.peerHolds.drain(session, chatID, origin) {
+		for _, f := range frames {
+			rt.translateACPEvent(chatID, origin, f)
+		}
+	}
+}
+
+// peerTargetChat opens the chat whose record names session, which must come up on that session: openBridge can
+// fall back to a new one, and a chat that moved past it no longer owns the woken turn.
+func (rt *Runtime) peerTargetChat(ctx context.Context, session marotte.SessionID) (marotte.ChatID, *sharedBridge, error) {
+	chatID, _ := rt.runs.chatForSession(ctx, string(session))
+	if chatID == "" {
+		return "", nil, errPeerTargetUnknown
+	}
+	sb, err := rt.coord.openBridge(ctx, chatID, "")
+	if err != nil {
+		return "", nil, err
+	}
+	if got := sb.SessionID(); got != session {
+		return "", nil, fmt.Errorf("%w: chat %s opened on session %s", errPeerTargetMoved, chatID, got)
+	}
+	return chatID, sb, nil
+}
+
+var (
+	errPeerTargetUnknown = errors.New("no chat records the session")
+	errPeerTargetMoved   = errors.New("the chat is no longer on the session the message reached")
+)
 
 // engineRequest answers a request no session lane took: a connection-level one, or one naming a session marotte
 // does not hold.
@@ -187,6 +368,16 @@ func (rt *Runtime) engineNotification(msg *marotte.RPCResponse) {
 	switch msg.Method {
 	case methodV3CustomAgentConfigErr, methodV3CustomAgentNotFound:
 		rt.standing.noteAgentFrame(msg)
+		return
+	case methodKiroMCPOAuthCompleted:
+		var p struct {
+			Server  string `json:"serverName"`
+			FlowID  string `json:"oauthFlowId"`
+			Success bool   `json:"success"`
+		}
+		if json.Unmarshal(msg.Params, &p) == nil {
+			rt.mcpRegistry.endLazySignIn(ctx, p.FlowID, p.Server, p.Success)
+		}
 		return
 	case methodKiroKnowledgeIndexingStarted, methodKiroKnowledgeIndexingCompleted, methodKiroSessionNotify:
 		if fn, ok := rt.chatHandlers[msg.Method]; ok {

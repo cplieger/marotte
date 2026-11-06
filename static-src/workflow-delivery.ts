@@ -7,6 +7,7 @@ import { ICON_TAB_RUN } from "./icons.js";
 import { markWakingRows } from "./turn-wake.js";
 import { payloadOf } from "./turns.js";
 import type { EntrySteer, EntrySteerDelivered, TurnState } from "./types.js";
+import type { EntrySteerCleared } from "./wire/types.gen.js";
 
 /** The id prefix of a workflow message marotte logs at its send, which waits for its settlement (twin
  *  of `marotte.WorkflowMessageIDPrefix`). Any other step notice is logged when KAS reads it. */
@@ -15,9 +16,44 @@ export const WORKFLOW_MESSAGE_ID_PREFIX = "wfmsg-";
 /** The row as its settlement leaves it: the server's own rule (`WorkflowMessageFold.Settle`). */
 function settledSteer(steer: EntrySteer, d: EntrySteerDelivered): EntrySteer {
   const waiting = waitingSteer(steer);
-  return d.cleared === true
-    ? { ...waiting, cleared: true }
-    : { ...waiting, state: "read", read_ts: d.read_ts };
+  if (d.cleared === true) {
+    return { ...waiting, cleared: true };
+  }
+  if (d.dropped === true) {
+    return { ...waiting, state: "dropped", reason: "boundary" };
+  }
+  return { ...waiting, state: "read", read_ts: d.read_ts };
+}
+
+/** What clear `c` settles a row as, undefined for nothing: the server's own rule
+ *  (`EntrySteerCleared.Settlement`). */
+function clearSettlement(
+  c: EntrySteerCleared,
+  r: { id: string; steer: EntrySteer },
+  rewaking: boolean,
+  ts: number,
+): EntrySteerDelivered | undefined {
+  const to = r.steer.to_session ?? "";
+  if (to === "" || to !== c.session) {
+    return undefined;
+  }
+  const kasID = r.steer.kas_id ?? "";
+  if (kasID === "" || rewaking) {
+    return { steer_id: r.id, read_ts: ts, cleared: true };
+  }
+  if (c.cause !== "boundary" || !c.ids.includes(kasID)) {
+    return undefined;
+  }
+  return { steer_id: r.id, read_ts: ts, dropped: true };
+}
+
+/** Whether clear `c` leaves a row for KAS's re-wake (`EntrySteerCleared.Rewakes`). */
+function clearRewakes(c: EntrySteerCleared, steer: EntrySteer): boolean {
+  const to = steer.to_session ?? "";
+  const kasID = steer.kas_id ?? "";
+  return (
+    c.cause === "cancel" && to !== "" && to === c.session && kasID !== "" && c.ids.includes(kasID)
+  );
 }
 
 /** A row as it stood before any settlement: waiting, with no state. */
@@ -80,9 +116,12 @@ export function releaseWorkflowTakeUps(
   for (const t of kept) {
     for (const e of t.entries) {
       const steer = payloadOf(e, "steer");
+      const byClear =
+        steer?.cleared === true ||
+        (steer?.state === "dropped" && e.id.startsWith(WORKFLOW_MESSAGE_ID_PREFIX));
       if (
         steer !== undefined &&
-        (named.has(e.id) || (steer.cleared === true && sessions.has(steer.to_session ?? "")))
+        (named.has(e.id) || (byClear && sessions.has(steer.to_session ?? "")))
       ) {
         e.payload = waitingSteer(steer);
       }
@@ -92,12 +131,13 @@ export function releaseWorkflowTakeUps(
 }
 
 /** Every settlement `turns` hold, by the row it names, folded in file order by the server's rule
- *  (`marotte.FoldWorkflowMessages`): a clear settles cleared each row sent to its session before it
- *  that nothing settled, and a later take-up replaces that. A row the server already settled is
- *  left as it reads. */
+ *  (`marotte.FoldWorkflowMessages`): a clear settles each row sent to its session before it that
+ *  nothing settled (`clearSettlement`), and a later take-up replaces that. A row the server already
+ *  settled is left as it reads. */
 function settlementsOf(turns: Iterable<TurnState>): Map<string, EntrySteerDelivered> {
   const out = new Map<string, EntrySteerDelivered>();
   const rows: { id: string; steer: EntrySteer }[] = [];
+  const rewaking = new Set<string>();
   for (const t of turns) {
     for (const e of t.entries) {
       const steer = payloadOf(e, "steer");
@@ -113,10 +153,14 @@ function settlementsOf(turns: Iterable<TurnState>): Map<string, EntrySteerDelive
         continue;
       }
       for (const r of rows) {
-        const to = r.steer.to_session ?? "";
-        const settled = out.has(r.id) || r.steer.state !== undefined || r.steer.cleared === true;
-        if (to !== "" && to === c.session && !settled) {
-          out.set(r.id, { steer_id: r.id, read_ts: e.ts, cleared: true });
+        if (out.has(r.id) || r.steer.state !== undefined || r.steer.cleared === true) {
+          continue;
+        }
+        const d = clearSettlement(c, r, rewaking.has(r.id), e.ts);
+        if (d !== undefined) {
+          out.set(r.id, d);
+        } else if (clearRewakes(c, r.steer)) {
+          rewaking.add(r.id);
         }
       }
     }

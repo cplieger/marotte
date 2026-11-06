@@ -670,3 +670,54 @@ func TestHandlePermissionRequest_NoCommandNoField(t *testing.T) {
 		t.Errorf("Command = %+v, want nil on an ask with no command", got.Command)
 	}
 }
+
+func remoteServerAsk(t *testing.T, title, toolID string) marotte.PermissionNeededPayload {
+	t.Helper()
+	deps, events := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+	id := int64(4250)
+	tr.HandlePermissionRequest(t.Context(), "c1", nopOrigin{}, &marotte.RPCResponse{
+		ID: &id,
+		Params: mustJSON(t, map[string]any{
+			"sessionId": "sess_x",
+			"toolCall":  map[string]any{"toolCallId": "tc-remote", "title": title, "kind": "other"},
+			"options":   []map[string]any{{"optionId": "allow", "name": "Allow", "kind": "allow_once"}},
+			"_meta": map[string]any{"kiro": map[string]any{
+				"toolId": toolID,
+				"mcpTool": map[string]any{
+					"version":  1,
+					"identity": map[string]any{"serverName": "remote", "toolName": "web_search"},
+				},
+			}},
+		}),
+	})
+	got, ok := findPermissionNeeded(t, events)
+	if !ok {
+		t.Fatal("no permission_needed event broadcast")
+	}
+	return got
+}
+
+// KAS's remote wrapper (`static idPrefix="remote_";static serverName="remote"`) asks for a tool
+// Kiro serves itself with an MCP identity and its fallback title; the card shows the built-in.
+func TestHandlePermissionRequest_RemoteWrapperAskIsTheBuiltin(t *testing.T) {
+	got := remoteServerAsk(t, "remote/web_search", "remote_web_search")
+	if got.MCPTool != nil {
+		t.Errorf("mcp_tool = %+v, want none", got.MCPTool)
+	}
+	if got.Title != "web_search" {
+		t.Errorf("title = %q, want %q", got.Title, "web_search")
+	}
+}
+
+// KAS ids a user MCP server's tool mcp_<server>_<tool>, so a server named remote stays MCP.
+func TestHandlePermissionRequest_MCPServerNamedRemoteKeepsItsIdentity(t *testing.T) {
+	got := remoteServerAsk(t, "@remote/web_search", "mcp_remote_web_search")
+	want := marotte.MCPToolIdentity{ServerName: "remote", ToolName: "web_search"}
+	if got.MCPTool == nil || *got.MCPTool != want {
+		t.Errorf("mcp_tool = %+v, want %+v", got.MCPTool, want)
+	}
+	if got.Title != "@remote/web_search" {
+		t.Errorf("title = %q, want %q", got.Title, "@remote/web_search")
+	}
+}

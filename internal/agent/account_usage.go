@@ -14,7 +14,7 @@ import (
 const accountUsageCallTimeout = 45 * time.Second
 
 // AccountUsage fetches account usage with an engine call, so it works with no chat open. Uncached: the HTTP layer
-// caches.
+// caches, keyed on UsageAccount.
 func (rt *Runtime) AccountUsage(ctx context.Context) (*marotte.AccountUsage, error) {
 	cctx, cancel := context.WithTimeout(ctx, accountUsageCallTimeout)
 	defer cancel()
@@ -24,6 +24,10 @@ func (rt *Runtime) AccountUsage(ctx context.Context) (*marotte.AccountUsage, err
 	}
 	return parseAccountUsage(raw)
 }
+
+// UsageAccount names the account an AccountUsage reading taken now describes; ok is false when no reading describes
+// the signed-in account (signed out, or the engine still holds another account's credential).
+func (rt *Runtime) UsageAccount() (key uint64, ok bool) { return rt.signin.readingAccount() }
 
 // kasUsageResult mirrors the KAS _kiro/account/getUsage reply ({success, message, data}).
 type kasUsageResult struct {

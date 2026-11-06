@@ -18,6 +18,7 @@ import type { HistoryTab } from "./route-path.js";
 import { onBus, BUS_RUNS_CHANGED } from "./bus.js";
 import { reconcile } from "./reconcile.js";
 import { paintPlaceholder } from "./skeleton.js";
+import { creditFigure } from "./strings.js";
 import { swapViews } from "./view-swap.js";
 import { initSegmentedBar } from "./segmented-bar.js";
 import { setPageSubtitle } from "./page-title.js";
@@ -98,7 +99,7 @@ function chatFacts(s: ResumableSession): string[] {
   // Credits only when metered: 0.00 on every unmetered row is noise.
   const credits = s.credits ?? 0;
   if (credits > 0) {
-    facts.push(`${credits.toFixed(2)} cr`);
+    facts.push(`${creditFigure(credits)} cr`);
   }
   return facts;
 }

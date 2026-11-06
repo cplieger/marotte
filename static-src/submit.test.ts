@@ -319,11 +319,11 @@ describe("submitPrompt on an idle chat", () => {
   it("answers a kiro-cli terminal command with its notice and sends nothing", async () => {
     resetStore("c1");
     mockInvokesCatalog.mockReturnValue(false);
-    mockTerminalRefusal.mockReturnValue({ notice: "marotte has no /model.", keepText: false });
+    mockTerminalRefusal.mockReturnValue({ notice: "marotte has no /theme.", keepText: false });
 
-    expect(await submitPrompt("c1", "/model")).toBe("sent");
-    expect(mockTerminalRefusal).toHaveBeenCalledWith("/model");
-    expect(mockChatNotice).toHaveBeenCalledWith("c1", "marotte has no /model.");
+    expect(await submitPrompt("c1", "/theme")).toBe("sent");
+    expect(mockTerminalRefusal).toHaveBeenCalledWith("/theme");
+    expect(mockChatNotice).toHaveBeenCalledWith("c1", "marotte has no /theme.");
     expect(mockSendPromptTo).not.toHaveBeenCalled();
     expect(mockTakeAttachments).not.toHaveBeenCalled();
   });
@@ -331,11 +331,11 @@ describe("submitPrompt on an idle chat", () => {
   it("hands a terminal command with arguments back to the composer", async () => {
     resetStore("c1");
     mockInvokesCatalog.mockReturnValue(false);
-    mockTerminalRefusal.mockReturnValue({ notice: "marotte has no /model.", keepText: true });
+    mockTerminalRefusal.mockReturnValue({ notice: "marotte has no /theme.", keepText: true });
 
-    expect(await submitPrompt("c1", "/model claude-sonnet-4")).toBe("held");
-    expect(mockChatNotice).toHaveBeenCalledWith("c1", "marotte has no /model.");
-    expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "/model claude-sonnet-4");
+    expect(await submitPrompt("c1", "/theme dark")).toBe("held");
+    expect(mockChatNotice).toHaveBeenCalledWith("c1", "marotte has no /theme.");
+    expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "/theme dark");
     expect(mockSendPromptTo).not.toHaveBeenCalled();
     expect(mockTakeAttachments).not.toHaveBeenCalled();
   });
@@ -343,9 +343,9 @@ describe("submitPrompt on an idle chat", () => {
   it("clears a bare terminal command from the composer", async () => {
     resetStore("c1");
     mockInvokesCatalog.mockReturnValue(false);
-    mockTerminalRefusal.mockReturnValue({ notice: "marotte has no /model.", keepText: false });
+    mockTerminalRefusal.mockReturnValue({ notice: "marotte has no /theme.", keepText: false });
 
-    await submitPrompt("c1", "/model");
+    await submitPrompt("c1", "/theme");
     expect(mockRestoreFailedSend).not.toHaveBeenCalled();
   });
 
@@ -353,9 +353,9 @@ describe("submitPrompt on an idle chat", () => {
     resetStore("c1");
     mockSendPromptTo.mockResolvedValue("sent");
     mockInvokesCatalog.mockReturnValue(true);
-    mockTerminalRefusal.mockReturnValue({ notice: "marotte has no /help.", keepText: false });
+    mockTerminalRefusal.mockReturnValue({ notice: "marotte has no /feedback.", keepText: false });
 
-    expect(await submitPrompt("c1", "/help")).toBe("sent");
+    expect(await submitPrompt("c1", "/feedback")).toBe("sent");
     expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
     expect(mockChatNotice).not.toHaveBeenCalled();
   });
@@ -366,10 +366,10 @@ describe("submitPrompt during a turn", () => {
     resetStore("c1");
     setThinking("c1", true);
     mockInvokesCatalog.mockReturnValue(false);
-    mockTerminalRefusal.mockReturnValue({ notice: "marotte has no /usage.", keepText: false });
+    mockTerminalRefusal.mockReturnValue({ notice: "marotte has no /copy.", keepText: false });
 
-    expect(await submitPrompt("c1", "/usage")).toBe("sent");
-    expect(mockChatNotice).toHaveBeenCalledWith("c1", "marotte has no /usage.");
+    expect(await submitPrompt("c1", "/copy")).toBe("sent");
+    expect(mockChatNotice).toHaveBeenCalledWith("c1", "marotte has no /copy.");
     expect(mockSteer).not.toHaveBeenCalled();
     expect(mockQueue).not.toHaveBeenCalled();
   });

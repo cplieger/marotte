@@ -5,10 +5,10 @@
 import type {
   AlwaysAllowBlock,
   ApprovalFile,
-  EntryToolCall,
   PermissionConsent,
   PermissionNeededPayload,
   PermissionOption,
+  ToolCall,
 } from "./types.js";
 import type { PermissionCommand, RejectionNote } from "./wire/types.gen.js";
 import { decodeToolCallBulk } from "./wire/decoders.gen.js";
@@ -18,6 +18,7 @@ import { formatMCPToolName } from "./tool-schema.js";
 import { openChange } from "./navigate.js";
 import { openSetting } from "./settings-highlight.js";
 import { get } from "./store.js";
+import { ensureToolCallSig, peekToolCallSig } from "./store-signals.js";
 import { payloadOf } from "./turns.js";
 import { ICON_DIFF } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -61,11 +62,17 @@ export function refreshPermissionCard(card: HTMLElement): void {
   inputRefills.get(card)?.();
 }
 
-/** The store's tool call an ask is about, whose input is what the user is actually approving.
- *  Walks back from the newest turn because the ask is about the turn in flight. */
-function lookupToolCall(chatID: string, toolCallID: string): EntryToolCall | undefined {
+/** The store's tool call an ask is about, whose input is what the user is actually approving: the
+ *  folded call, since KAS sends the full arguments only on an update. Walks back from the newest
+ *  turn because the ask is about the turn in flight, and mints the call's signal so a later
+ *  update's fold is kept for a card that is not mounted. */
+function lookupToolCall(chatID: string, toolCallID: string): ToolCall | undefined {
   if (toolCallID === "") {
     return undefined;
+  }
+  const folded = peekToolCallSig(chatID, toolCallID);
+  if (folded !== undefined) {
+    return folded;
   }
   const s = get(chatID);
   if (s === undefined) {
@@ -81,7 +88,7 @@ function lookupToolCall(chatID: string, toolCallID: string): EntryToolCall | und
       const e = t.entries[j];
       const call = e === undefined ? undefined : payloadOf(e, "tool_call");
       if (call?.id === toolCallID) {
-        return call;
+        return ensureToolCallSig(chatID, toolCallID, call).peek();
       }
     }
   }

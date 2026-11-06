@@ -160,6 +160,11 @@ export const ICON_ALERT = svg(
 );
 // Lucide `arrow-up`, a direction primitive: the dock's send-now control.
 export const ICON_ARROW_UP = svg("ui", '<path d="M12 19V5M5 12l7-7 7 7"/>');
+// Lucide `list-end`: the dock's Queue instead, which moves a steer to the end of the line, after the turn.
+export const ICON_QUEUE = svg(
+  "inline",
+  '<path d="M16 12H3M16 6H3M10 18H3M21 6v10a2 2 0 0 1-2 2h-5"/><path d="m16 16-2 2 2 2"/>',
+);
 // Lucide `arrow-right`: the turn panel's "Review all changes", which leaves the panel for the git view.
 export const ICON_ARROW_RIGHT = svg("ui", '<path d="M5 12h14M13 6l6 6-6 6"/>');
 // Go to line (Lucide "hash").

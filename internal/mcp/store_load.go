@@ -13,6 +13,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/userjson"
 )
 
 type entryError struct {
@@ -39,8 +40,8 @@ func (s *Store) load() error {
 		slog.Warn("mcp: mcp.json is not 0600 and could not be made 0600; the API keys in it may be readable by other users on this host",
 			"path", s.path, "error", chErr)
 	}
-	data, empty := decodeUserJSON(raw)
-	if empty {
+	data := userjson.Body(raw)
+	if userjson.Empty(data) {
 		return nil
 	}
 	var f file

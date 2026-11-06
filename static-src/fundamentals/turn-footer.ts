@@ -12,7 +12,7 @@ import { ASK_LABEL, type AskBucket } from "../interaction.js";
 import { ICON_INFO } from "../icons.js";
 import { openAtLine, openChange, openChangeSet } from "../navigate.js";
 import { sigChanged } from "../paint-sig.js";
-import { formatElapsed } from "../strings.js";
+import { creditFigure, formatElapsed } from "../strings.js";
 import { kindNoun } from "../tool-kind-noun.js";
 import { severityOf } from "../turn-severity.js";
 import type { FileChange, ToolKind } from "../types.js";
@@ -255,12 +255,6 @@ export function turnFacts(d: TurnSummaryData): readonly string[] {
     facts.push(`${creditFigure(credits)} credits`);
   }
   return facts;
-}
-
-/** A metered turn's credits. `toFixed(2)` alone renders a sub-cent charge as `0.00`, contradicting
- *  the `> 0` gate. */
-function creditFigure(credits: number): string {
-  return credits < 0.005 ? "<0.01" : credits.toFixed(2);
 }
 
 /** The six sections in task order. Each withholds when it has no row (`renderPanel`), so a delegate

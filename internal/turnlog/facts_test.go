@@ -189,6 +189,9 @@ func TestCloseNamesAKnownEngineClassOnABrokenTurn(t *testing.T) {
 		outcome   marotte.TurnOutcome
 	}{
 		{name: "a known class on a failed turn", errorType: "ModelThrottleError", outcome: marotte.TurnOutcomeFailed, want: "ModelThrottleError"},
+		{name: "an unreachable network on a failed turn", errorType: "NetworkUnreachableError", outcome: marotte.TurnOutcomeFailed, want: "NetworkUnreachableError"},
+		{name: "an over-long stream line on a failed turn", errorType: "StreamLineTooLongError", outcome: marotte.TurnOutcomeFailed, want: "StreamLineTooLongError"},
+		{name: "a missing seat on a failed turn", errorType: "SeatUnavailableError", outcome: marotte.TurnOutcomeFailed, want: "SeatUnavailableError"},
 		{name: "a minified class on a failed turn", errorType: "ge", outcome: marotte.TurnOutcomeFailed},
 		{name: "a known class on a completed turn", errorType: "ModelThrottleError", outcome: marotte.TurnOutcomeCompleted},
 	}

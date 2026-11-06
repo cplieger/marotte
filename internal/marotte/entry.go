@@ -223,18 +223,22 @@ type EntryToolResult struct {
 	// Status is a closed enum because every value is marotte's own (aborted, or a
 	// normalised terminal status). The client validates it with reqOneOf, so a value
 	// copied verbatim off the wire would fail the whole window.
-	Status         ToolStatus     `json:"status"`
-	Output         string         `json:"output,omitempty"`
-	TerminalID     string         `json:"terminal_id,omitempty"`
-	WorkflowID     string         `json:"workflow_id,omitempty"`
-	ClassifierNote string         `json:"classifier_note,omitempty"`
-	OutputSpans    []TextSpan     `json:"output_spans,omitempty"`
-	Diffs          []ToolDiff     `json:"diffs,omitempty"`
-	Locations      []ToolLocation `json:"locations,omitempty"`
-	DurationMs     int            `json:"duration_ms,omitempty"`
-	OutputBytes    int            `json:"output_bytes,omitempty"`
-	HasFull        bool           `json:"has_full,omitempty"`
-	Declined       bool           `json:"declined,omitempty"`
+	Status         ToolStatus `json:"status"`
+	Output         string     `json:"output,omitempty"`
+	TerminalID     string     `json:"terminal_id,omitempty"`
+	WorkflowID     string     `json:"workflow_id,omitempty"`
+	ClassifierNote string     `json:"classifier_note,omitempty"`
+	// DelegateStop is ToolCall's.
+	DelegateStop string         `json:"delegate_stop,omitempty"`
+	OutputSpans  []TextSpan     `json:"output_spans,omitempty"`
+	Diffs        []ToolDiff     `json:"diffs,omitempty"`
+	Locations    []ToolLocation `json:"locations,omitempty"`
+	// Input is set only when an update revised the create's input; absent means the create's stands.
+	Input       json.RawMessage `json:"input,omitempty"`
+	DurationMs  int             `json:"duration_ms,omitempty"`
+	OutputBytes int             `json:"output_bytes,omitempty"`
+	HasFull     bool            `json:"has_full,omitempty"`
+	Declined    bool            `json:"declined,omitempty"`
 	// ClassifierApproved and ClassifierNote are ToolCall's.
 	ClassifierApproved bool `json:"classifier_approved,omitempty"`
 }
@@ -269,7 +273,8 @@ type EntrySteer struct {
 	State    SteerState  `json:"state,omitempty"`
 	Reason   SteerReason `json:"reason,omitempty"`
 	Severity string      `json:"severity,omitempty"`
-	// KASID is the id the notify frame gave a workflow message (`notifyId`), empty while it carries none.
+	// KASID is the id the notify frame gave a workflow message (`notifyId`), the id a steering clear
+	// names it by; empty when KAS failed to persist the message.
 	KASID string `json:"kas_id,omitempty"`
 	// ToSession is the KAS session a workflow message was sent to, on the receiver's row only.
 	ToSession  string   `json:"to_session,omitempty"`
@@ -280,8 +285,8 @@ type EntrySteer struct {
 	Resends    []string `json:"resends,omitempty"`
 	ProducedTs int64    `json:"produced_ts,omitempty"`
 	ReadTs     int64    `json:"read_ts,omitempty"`
-	// Cleared marks a workflow message its receiver's buffer was emptied of before any take-up or
-	// wake proved it read; State stays absent, since whether it was read is not known.
+	// Cleared marks a workflow message its receiver's buffer was emptied of with no proof it was read
+	// or dropped; State stays absent, since which is not known.
 	Cleared bool `json:"cleared,omitempty"`
 }
 
@@ -294,13 +299,15 @@ type EntrySteerAck struct {
 
 // EntrySteerDelivered is the steer_delivered payload: the receiver took up the workflow message
 // SteerID names, recorded at send, at ReadTs; Cleared instead says a steering clear emptied the
-// receiver's buffer at ReadTs with no proof it was read. It renders on that message's row, not
-// where it sits. KASID is the id KAS persisted the message under, which its replay row carries.
+// receiver's buffer at ReadTs with no proof it was read, and Dropped that a turn-boundary clear
+// named it unread. It renders on that message's row, not where it sits. KASID is the id KAS
+// persisted the message under, which its replay row carries.
 type EntrySteerDelivered struct {
 	SteerID string `json:"steer_id"`
 	KASID   string `json:"kas_id,omitempty"`
 	ReadTs  int64  `json:"read_ts"`
 	Cleared bool   `json:"cleared,omitempty"`
+	Dropped bool   `json:"dropped,omitempty"`
 }
 
 // SteerDeliveredID is the steer_delivered entry id for a steer: `<steer>:delivered`.
@@ -308,8 +315,8 @@ func SteerDeliveredID(steerID string) string {
 	return steerID + ":delivered"
 }
 
-// SteerClearCause is what emptied a receiver's steering buffer. It decides no workflow message's
-// outcome, since no frame says which cleared message was re-delivered or dropped.
+// SteerClearCause is what emptied a receiver's steering buffer, which decides what the clear means
+// for a workflow message it names (EntrySteerCleared.Settlement).
 type SteerClearCause string
 
 const (
@@ -322,8 +329,8 @@ const (
 )
 
 // EntrySteerCleared is the steer_cleared payload: KAS emptied Session's steering buffer, naming
-// IDs, for Cause. It ends the epoch of every workflow message filed before it whose ToSession is
-// Session, settling each one still unsettled cleared. It renders nothing.
+// IDs, for Cause. Settlement says what it means for each unsettled workflow message filed before
+// it. It renders nothing.
 type EntrySteerCleared struct {
 	Cause   SteerClearCause `json:"cause"`
 	Session string          `json:"session"`
@@ -722,5 +729,6 @@ func EntryToolResultOf(tc *ToolCall) EntryToolResult {
 
 		ClassifierApproved: tc.ClassifierApproved,
 		ClassifierNote:     tc.ClassifierNote,
+		DelegateStop:       tc.DelegateStop,
 	}
 }

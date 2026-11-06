@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -24,6 +23,9 @@ const (
 	hostCallback     = "_kiro/auth/getAccessToken"
 	builderIDRegion  = "us-east-1"
 	defaultDeviceTTL = 10 * time.Minute
+	// builderIDProfileArn is kiro-cli's fixed profile for every Builder ID account, which has none
+	// of its own; KAS refuses every model call whose answer carries no profileArn.
+	builderIDProfileArn = "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX"
 )
 
 // The host-callback lease. KAS takes an answer only when its advertised expiry is more than 180 s
@@ -84,19 +86,22 @@ type deviceState struct {
 }
 
 // Begin registers a client and starts a device authorization. An empty StartURL is Builder ID,
-// which always signs in through us-east-1; otherwise Region ("" for us-east-1) is the portal's. A
-// region endpointsFor refuses is refused before any request.
+// which always signs in through us-east-1; otherwise it is canonicalized (canonicalStartURL) and
+// Region ("" for us-east-1) is the portal's. A start URL or region it refuses is refused before
+// any request, and an AWS refusal of the start URL or region wraps ErrInvalidParams; every error a
+// user should read is a *signin.FailureError.
 func (b *Backend) Begin(ctx context.Context, p signin.FlowParams) (signin.DeviceStart, error) {
 	st := &deviceState{region: builderIDRegion, startURL: builderIDStartURL, provider: providerBuilderID}
 	if p.StartURL != "" {
-		if err := validStartURL(p.StartURL); err != nil {
+		canonical, err := canonicalStartURL(p.StartURL)
+		if err != nil {
 			return signin.DeviceStart{}, err
 		}
 		if p.Region != "" {
 			st.region = p.Region
 		}
-		st.startURL = p.StartURL
-		st.provider = classifyStartURL(p.StartURL)
+		st.startURL = canonical
+		st.provider = classifyStartURL(canonical)
 	}
 	ep, err := b.resolve(st.region)
 	if err != nil {
@@ -105,11 +110,15 @@ func (b *Backend) Begin(ctx context.Context, p signin.FlowParams) (signin.Device
 	st.ep = ep
 	reg, err := b.registerClient(ctx, ep.oidc)
 	if err != nil {
-		return signin.DeviceStart{}, &signin.FailureError{Text: textOIDCUnreachable, Err: err}
+		return signin.DeviceStart{}, beginFailure(err, "")
 	}
 	da, err := b.authorizeDevice(ctx, ep.oidc, reg, st.startURL)
 	if err != nil {
-		return signin.DeviceStart{}, &signin.FailureError{Text: textOIDCUnreachable, Err: err}
+		portalRegion := ""
+		if p.StartURL != "" {
+			portalRegion = st.region
+		}
+		return signin.DeviceStart{}, beginFailure(err, portalRegion)
 	}
 	ttl := defaultDeviceTTL
 	if da.ExpiresIn > 0 {
@@ -127,6 +136,23 @@ func (b *Backend) Begin(ctx context.Context, p signin.FlowParams) (signin.Device
 		UserCode:        da.UserCode,
 		ExpiresIn:       ttl,
 	}, nil
+}
+
+// beginFailure is the user text of a failed registration or device authorization. portalRegion is
+// the region an IAM Identity Center start URL was looked up in, "" when no start URL was sent: AWS
+// answers 400 invalid_request for an unknown start URL and for a portal asked of the wrong region.
+func beginFailure(err error, portalRegion string) error {
+	se, ok := errors.AsType[*statusError](err)
+	switch {
+	case !ok || se.status/100 != 4:
+		return &signin.FailureError{Text: textOIDCUnreachable, Err: err}
+	case portalRegion == "" || se.code != "invalid_request":
+		return &signin.FailureError{Text: textOIDCRefused, Err: err}
+	case se.startURLDetail:
+		return &signin.FailureError{Text: textStartURLRefused, Err: fmt.Errorf("%w: %w", signin.ErrInvalidParams, err)}
+	default:
+		return &signin.FailureError{Text: fmt.Sprintf(textRegionRefused, portalRegion), Err: fmt.Errorf("%w: %w", signin.ErrInvalidParams, err)}
+	}
 }
 
 const (
@@ -164,17 +190,19 @@ func (b *Backend) Poll(ctx context.Context, d signin.DeviceStart) (signin.Creden
 	if err := b.attachProfile(ctx, st.ep.management, &r); err != nil {
 		return signin.Credential{}, err
 	}
-	r.Email = b.readEmail(ctx, st.ep.management, r.AccessToken, r.ProfileArn)
+	r.Email = b.readEmail(ctx, st.ep.management, r.AccessToken, r.kasProfileArn())
 	if err := ctx.Err(); err != nil {
 		return signin.Credential{}, err
 	}
 	return r.credential()
 }
 
-// attachProfile stores the account's first Kiro profile. IAM Identity Center needs one, so its
-// absence fails the sign-in; for Builder ID the lookup is best effort and KAS is answered with no
-// profile ARN.
+// attachProfile stores the account's first Kiro profile, whose absence fails the sign-in. Builder ID
+// is not looked up: the service denies it the lookup, and its profile is builderIDProfileArn.
 func (b *Backend) attachProfile(ctx context.Context, management string, r *record) error {
+	if r.Provider == providerBuilderID {
+		return nil
+	}
 	p, err := b.firstProfile(ctx, management, r.AccessToken)
 	if err == nil {
 		r.ProfileArn, r.ProfileName = p.Arn, p.ProfileName
@@ -182,10 +210,6 @@ func (b *Backend) attachProfile(ctx context.Context, management string, r *recor
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
-	}
-	if r.Provider == providerBuilderID {
-		slog.Warn("sign-in: the Kiro profile lookup failed; signing in without a profile", "error", err)
-		return nil
 	}
 	if errors.Is(err, errNoProfile) {
 		return &signin.FailureError{Text: textNoProfile, Err: err}
@@ -230,10 +254,8 @@ func (*Backend) Label(c signin.Credential) signin.Identity {
 	return id
 }
 
-// LiveSwitchable is false when to has no profile ARN but from had one (KAS keeps a cached ARN when
-// an answer omits it, so it would pair the new token with the old profile) and when the provider
-// class changes (KAS reads governance from the class, and a running engine re-reading it is not
-// established).
+// LiveSwitchable is false when the provider class changes: KAS reads governance from the class, and
+// a running engine re-reading it is not established.
 func (*Backend) LiveSwitchable(from, to signin.Credential) bool {
 	f, err := decodeRecord(from)
 	if err != nil {
@@ -243,7 +265,7 @@ func (*Backend) LiveSwitchable(from, to signin.Credential) bool {
 	if err != nil {
 		return false
 	}
-	return (t.ProfileArn != "" || f.ProfileArn == "") && f.Provider == t.Provider
+	return f.Provider == t.Provider
 }
 
 // Fresh is true while more than renewWithin remains.
@@ -263,7 +285,7 @@ func (*Backend) Servable(c signin.Credential, now time.Time) bool {
 type answer struct {
 	AccessToken string `json:"accessToken"`
 	ExpiresAt   string `json:"expiresAt"`
-	ProfileArn  string `json:"profileArn,omitempty"`
+	ProfileArn  string `json:"profileArn"`
 	Provider    string `json:"provider"`
 }
 
@@ -281,7 +303,7 @@ func (*Backend) Result(c signin.Credential, now time.Time) (json.RawMessage, err
 
 		AccessToken: r.AccessToken,
 		ExpiresAt:   exp.UTC().Format("2006-01-02T15:04:05.000Z"),
-		ProfileArn:  r.ProfileArn,
+		ProfileArn:  r.kasProfileArn(),
 		Provider:    string(r.Provider),
 	})
 }

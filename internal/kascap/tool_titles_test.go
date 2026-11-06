@@ -13,17 +13,15 @@ import (
 
 const toolIdentitySource = "../translate/tool_identity.go"
 
-// declaredToolMap reads the string-to-string map literal named name from the translator's source, so
-// the translator exports nothing for these tests. A key or value may be a string const declared in
-// the same file.
-func declaredToolMap(t *testing.T, name string) map[string]string {
+// parseToolIdentity reads the translator's source, so the translator exports nothing for these
+// tests: its single-name string consts, and its single-name values by name.
+func parseToolIdentity(t *testing.T) (consts map[string]string, values map[string]ast.Expr) {
 	t.Helper()
 	file, err := parser.ParseFile(token.NewFileSet(), toolIdentitySource, nil, 0)
 	if err != nil {
 		t.Fatalf("parse %s: %v", toolIdentitySource, err)
 	}
-	consts := map[string]string{}
-	var literal *ast.CompositeLit
+	consts, values = map[string]string{}, map[string]ast.Expr{}
 	ast.Inspect(file, func(node ast.Node) bool {
 		spec, ok := node.(*ast.ValueSpec)
 		if !ok || len(spec.Names) != 1 || len(spec.Values) != 1 {
@@ -34,11 +32,29 @@ func declaredToolMap(t *testing.T, name string) map[string]string {
 				consts[spec.Names[0].Name] = s
 			}
 		}
-		if spec.Names[0].Name == name {
-			literal, _ = spec.Values[0].(*ast.CompositeLit)
-		}
+		values[spec.Names[0].Name] = spec.Values[0]
 		return true
 	})
+	return consts, values
+}
+
+// declaredStringConst is the value of the translator's string const named name.
+func declaredStringConst(t *testing.T, name string) string {
+	t.Helper()
+	consts, _ := parseToolIdentity(t)
+	s, ok := consts[name]
+	if !ok || s == "" {
+		t.Fatalf("%s: no string const named %s; the declaration moved", toolIdentitySource, name)
+	}
+	return s
+}
+
+// declaredToolMap reads the translator's string-to-string map literal named name. A key or value
+// may be a string const declared in the same file.
+func declaredToolMap(t *testing.T, name string) map[string]string {
+	t.Helper()
+	consts, values := parseToolIdentity(t)
+	literal, _ := values[name].(*ast.CompositeLit)
 	if literal == nil {
 		t.Fatalf("%s: no map literal named %s; the declaration moved", toolIdentitySource, name)
 	}
@@ -95,14 +111,17 @@ func TestBuiltinToolTitlesMatchTheBundle(t *testing.T) {
 	})
 }
 
-// The pinned agent server folds each aliased id into the tool it names in its own tool-family
-// tables (`remote_web_search:"web_search"`).
-func TestBuiltinToolAliasesMatchTheBundle(t *testing.T) {
+// The translator reads a remote_<name> id with server remote as a built-in. That holds while KAS's
+// remote wrapper declares exactly that prefix and server and builds user MCP ids as mcp_<...>.
+func TestRemoteWrapperIdentityMatchesTheBundle(t *testing.T) {
+	prefix := declaredStringConst(t, "remoteWrapperIDPrefix")
+	server := declaredStringConst(t, "remoteWrapperServer")
 	forEachBundle(t, func(t *testing.T, b bundle) {
-		for from, to := range declaredToolMap(t, "builtinToolAliases") {
-			if !strings.Contains(b.src, from+`:"`+to+`"`) {
-				t.Errorf("%s: no alias %s -> %s; fix builtinToolAliases in internal/translate/tool_identity.go", b.name, from, to)
-			}
+		if wrapper := `static idPrefix="` + prefix + `";static serverName="` + server + `"`; !strings.Contains(b.src, wrapper) {
+			t.Errorf("%s: no remote wrapper declaring %s; fix remoteWrapperIDPrefix and remoteWrapperServer in internal/translate/tool_identity.go", b.name, wrapper)
+		}
+		if !strings.Contains(b.src, "`mcp_${") {
+			t.Errorf("%s: no mcp_ tool id builder; a user MCP id may now collide with %s<name>", b.name, prefix)
 		}
 	})
 }

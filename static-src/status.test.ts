@@ -33,6 +33,8 @@ describe("formatMetering", () => {
     [0.5, "0.50"],
     [3.14, "3.14"],
     [99.9, "99.90"],
+    // A positive sub-cent amount is spend, so it never reads as 0.00.
+    [0.004, "<0.01"],
   ];
 
   it.each(cases)("formatMetering(%d) === %s", (input, expected) => {
@@ -189,6 +191,38 @@ async function paintRing(
     });
   });
 }
+
+describe("the credits line", () => {
+  async function paintCredits(credits: number): Promise<string> {
+    mountContextBar();
+    const { updateContextBar } = await import("./status.js");
+    updateContextBar({
+      pct: 0,
+      contextSize: 0,
+      compaction: { band: 80, t: 80 },
+      credits,
+      turnCount: 0,
+      lastTurnMs: 0,
+      model: "claude-opus-5",
+      effort: "",
+    });
+    await new Promise((r) => {
+      requestAnimationFrame(() => {
+        r(undefined);
+      });
+    });
+    return document.getElementById("ctx-credits")?.textContent ?? "";
+  }
+
+  it("states a sub-cent metered chat as under a cent, never as 0.00", async () => {
+    expect(await paintCredits(0.004)).toBe("<0.01 cr");
+  });
+
+  it("states a metered chat to the cent, and an unmetered one as 0.00", async () => {
+    expect(await paintCredits(1.234)).toBe("1.23 cr");
+    expect(await paintCredits(0)).toBe("0.00 cr");
+  });
+});
 
 describe("the context ring", () => {
   it("writes the fill's sweep and stroke and the band's dash from one update", async () => {

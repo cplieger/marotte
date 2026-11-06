@@ -180,7 +180,7 @@ export function buildUnattendedNote(
   onOpenPermissions: () => void,
 ): HTMLElement {
   const outcome = autoApprove
-    ? `the ask is approved automatically after ${UNATTENDED_BUDGET_MINUTES} minutes`
+    ? `the ask is approved automatically after ${UNATTENDED_BUDGET_MINUTES} minutes, except one your organization or Kiro's safety check sends to a person`
     : `the ask is refused after ${UNATTENDED_BUDGET_MINUTES} minutes and the run does not complete`;
   const link = el(
     "button",

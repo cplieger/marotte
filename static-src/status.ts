@@ -2,7 +2,7 @@
 
 import { $ } from "./dom.js";
 import { formatTokens, formatMetering } from "./status-format.js";
-import { humanName } from "./strings.js";
+import { creditFigure, humanName } from "./strings.js";
 import { checkRuntimeHealth, runtimeStatusLine } from "./runtime-health.js";
 import { contextStroke, tokensUsed, wedgeDash } from "./context-ring.js";
 import type { CompactionPoint } from "./context-ring.js";
@@ -102,7 +102,7 @@ class ContextBarController {
       contextSize > 0
         ? `${formatTokens(Math.round(tokensUsed(pct, contextSize)))} / ${formatTokens(contextSize)}`
         : `${pct.toFixed(1)}%`;
-    $.ctxCredits.textContent = credits > 0 ? `${credits.toFixed(2)} cr` : "0.00 cr";
+    $.ctxCredits.textContent = credits > 0 ? `${creditFigure(credits)} cr` : "0.00 cr";
     $.ctxTurns.textContent = String(turnCount);
     $.ctxLastTurn.textContent = lastTurnMs > 0 ? `${(lastTurnMs / 1000).toFixed(1)}s` : "-";
     $.ctxEntries.textContent =

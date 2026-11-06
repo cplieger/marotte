@@ -268,3 +268,51 @@ describe("a parent's buffered workflow updates", () => {
     );
   });
 });
+
+describe("a message between two chats", () => {
+  function peer(turnID: string, at: number, n: number, over: Record<string, unknown>): Entry {
+    return sealed(
+      turnID,
+      at,
+      "steer",
+      { text: `note ${String(n)}`, origin: "peer", severity: "info", produced_ts: SENT, ...over },
+      `wfmsg-p${String(n)}`,
+    );
+  }
+
+  it("names the other chat in both directions, tracks delivery, and opens it from the label", async () => {
+    const c = "c-peer-view";
+    const turns = new Map<string, TurnState>([
+      [
+        "t1",
+        {
+          entries: [
+            turnOpen("t1"),
+            turnClose("t1", 1),
+            peer("t1", 2, 1, { chat: "c-billing", to_session: "sess_view" }),
+            peer("t1", 3, 2, { chat: "c-billing" }),
+            peer("t1", 4, 3, { chat: "c-gone", to_session: "sess_view" }),
+          ],
+          openEntries: new Map(),
+        },
+      ],
+    ]);
+    store.setSessions([
+      session(c, { turns, turn_order: ["t1"], turn_count: 1 }),
+      session("c-billing", { name: "Billing" }),
+    ]);
+    store.setActive(c);
+    store.bumpMessages(c, "load");
+    await Promise.resolve();
+    const view = messages.transcriptViewFor(c);
+    const notes = Array.from(view?.querySelectorAll<HTMLElement>(".steer-note") ?? []);
+    const labels = notes.map((n) => n.querySelector(".steer-note-label")?.textContent);
+
+    expect(labels).toEqual(["From Billing", "To Billing", "Message from another chat"]);
+    expect(notes[0]?.querySelector("button.steer-note-chat")).not.toBeNull();
+    expect(notes[2]?.querySelector("button.steer-note-chat")).toBeNull();
+    expect(notes[0]?.querySelector(".steer-note-times")?.textContent).toBe(
+      `Sent ${clock(SENT)} \u00b7 not delivered yet`,
+    );
+  });
+});

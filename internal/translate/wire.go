@@ -87,6 +87,10 @@ type acpKiroBlock struct {
 	// Source marks the whole steering CHANNEL (progress rows, step notices, boundaries). The
 	// replay builder stamps it here, not on the update object.
 	Source string `json:"source"`
+	// StopReason is a sub-agent result's stop when it was not end_turn (max_turn_requests, refusal,
+	// max_tokens), on the terminal tool_call_update live (handleSubAgentAction) and replayed
+	// (sub_agent_complete). KAS still reports such a delegate `completed`.
+	StopReason string `json:"stopReason"`
 	// AgentInitiatedReason names what started an engine turn, on AgentInitiated's frames.
 	AgentInitiatedReason agentInitiatedReason `json:"agentInitiatedReason"`
 	// Notification tags a row KAS wrote onto a chat on something else's behalf;
@@ -361,6 +365,7 @@ type acpToolCallUpdateWire struct {
 	Title      string                    `json:"title"`
 	Kind       marotte.ToolKind          `json:"kind"`
 	Status     marotte.ToolStatus        `json:"status"`
+	RawInput   json.RawMessage           `json:"rawInput"`
 	RawOutput  json.RawMessage           `json:"rawOutput"`
 	Locations  []marotte.ToolLocation    `json:"locations"`
 	Content    []acpToolCallContentBlock `json:"content"`
@@ -527,7 +532,9 @@ type ACPSessionUpdateBase struct {
 			// TurnStart and TurnEnd are the session's turn bracket on session_info_update.
 			TurnStart *bool     `json:"turnStart"`
 			TurnEnd   *struct{} `json:"turnEnd"`
-			Replay    bool      `json:"replay"`
+			// Kind is session_info_update's sub-kind, read only to let session_usage past the replay gate.
+			Kind   string `json:"kind"`
+			Replay bool   `json:"replay"`
 		} `json:"kiro"`
 	} `json:"_meta"`
 }

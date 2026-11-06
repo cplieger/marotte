@@ -1,6 +1,7 @@
 // Account usage (plan, credits, quota from KAS _kiro/account/getUsage) in the sidebar
 // status popup, distinct from the per-chat context ring. Fetched lazily on popup open,
-// throttled on top of the server's cache; a failure reads "Usage unavailable".
+// throttled on top of the server's cache; a failure reads "Usage unavailable". An account
+// change resets it, so the rows never show the previous account's numbers.
 
 import { $ } from "./dom.js";
 import { apiGetTyped } from "./api-client.js";
@@ -10,6 +11,8 @@ import type { AccountUsage, AccountUsageBreakdown } from "./types.js";
 const CLIENT_TTL_MS = 30_000;
 let lastFetch = 0;
 let inflight = false;
+/** Bumped by resetAccountUsage; a response fetched under an older epoch describes another account. */
+let epoch = 0;
 
 /**
  * Fetch and render account usage, throttled to CLIENT_TTL_MS unless forced; safe on every
@@ -22,13 +25,29 @@ export function loadAccountUsage(force = false): void {
   }
   inflight = true;
   lastFetch = now;
+  const started = epoch;
   void apiGetTyped<AccountUsage>("/api/account/usage", decodeAccountUsage)
     .then((u) => {
-      renderAccountUsage(u);
+      if (started === epoch) {
+        renderAccountUsage(u);
+      }
     })
     .finally(() => {
-      inflight = false;
+      if (started === epoch) {
+        inflight = false;
+      }
     });
+}
+
+/** Blank the usage rows and drop the throttle and any in-flight fetch, for an account change. */
+export function resetAccountUsage(): void {
+  epoch++;
+  inflight = false;
+  lastFetch = 0;
+  $.acctPlan.textContent = "";
+  $.acctMeter.textContent = "";
+  $.acctMeter.removeAttribute("data-tooltip");
+  $.acctOverage.textContent = "";
 }
 
 function primaryBreakdown(u: AccountUsage): AccountUsageBreakdown | undefined {

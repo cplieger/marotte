@@ -39,6 +39,34 @@ func TestLaunch_PutsTheFlagsAheadOfKiroCLIsArguments(t *testing.T) {
 	}
 }
 
+// The heap limit rides node's argv after Flags, and its variable leaves the environment with the other two.
+func TestLaunch_PutsTheHeapLimitOnArgv(t *testing.T) {
+	environ := []string{"PATH=/bin", LaunchVar + "=/data/kiro-cli/node", HeapLimitVar + "=2048", "NODE_OPTIONS=--trace-warnings"}
+	_, argv, env, err := launch(environ, []string{"/app/marotte", "acp-server.js"})
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	want := []string{
+		"/data/kiro-cli/node", "--experimental-async-context-frame", "--max-semi-space-size=64",
+		"--max-old-space-size=2048", "acp-server.js",
+	}
+	if !slices.Equal(argv, want) {
+		t.Errorf("argv = %q, want %q", argv, want)
+	}
+	if wantEnv := []string{"PATH=/bin", "NODE_OPTIONS=--trace-warnings"}; !slices.Equal(env, wantEnv) {
+		t.Errorf("env = %q, want %q: NODE_OPTIONS reaches every program the agent runs, so the limit stays out of it", env, wantEnv)
+	}
+}
+
+func TestLaunch_RefusesAHeapLimitThatIsNotAWholeNumber(t *testing.T) {
+	for _, v := range []string{"", "big", "-1", "0", "1024 --inspect"} {
+		environ := []string{LaunchVar + "=/data/kiro-cli/node", HeapLimitVar + "=" + v}
+		if _, argv, _, err := launch(environ, []string{"/app/marotte"}); err == nil {
+			t.Errorf("launch(%s=%q) = %q, nil error; want a refusal", HeapLimitVar, v, argv)
+		}
+	}
+}
+
 func TestLaunch_RefusesAnEmptyNodePath(t *testing.T) {
 	if _, _, _, err := launch([]string{LaunchVar + "="}, []string{"/app/marotte"}); err == nil {
 		t.Error("launch(empty node) = nil error, want a refusal")

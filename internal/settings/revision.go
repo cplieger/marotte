@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -108,12 +107,9 @@ func Announce(ctx context.Context, configDir string, publish func(context.Contex
 }
 
 func readStamp(configDir string) stamp {
-	path, err := filepath.Abs(filepath.Join(configDir, filename))
+	doc, err := Stored(configDir)
 	if err == nil {
-		var doc map[string]json.RawMessage
-		if doc, err = readDocument(path); err == nil {
-			return stampOf(doc)
-		}
+		return stampOf(doc)
 	}
 	slog.Warn("settings: change announced without a version", "error", fmt.Errorf("%w: %w", ErrUnreadable, err))
 	return stamp{}

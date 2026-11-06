@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
@@ -14,22 +13,11 @@ import (
 	"github.com/cplieger/marotte/internal/signin"
 )
 
-// Empty passes for the default Builder ID flow. An attacker-controlled start URL would hand away
-// the user's SSO session.
+// validateProvider bounds the start URL at the HTTP boundary; the backend owns its shape. Empty is
+// the default Builder ID flow.
 func validateProvider(v string) error {
-	if v == "" {
-		return nil
-	}
 	if len(v) > maxProviderLen {
 		return errors.New("provider too long")
-	}
-	u, perr := url.Parse(v)
-	if perr != nil || u.Scheme != "https" || u.Host == "" {
-		return errors.New("provider must be an https URL")
-	}
-	// Some HTTP clients use embedded userinfo before a redirect (CWE-601).
-	if u.User != nil {
-		return errors.New("provider must not contain credentials")
 	}
 	return nil
 }

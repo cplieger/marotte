@@ -220,6 +220,8 @@ func TestEnvelopeIdentity(t *testing.T) {
 		"a built-in":                        {`{"tool_id":"tool::inspect_workflow","arguments":{}}`, "inspect_workflow", nil},
 		"the older built-in prefix":         {`{"tool_id":"builtin::update_workflow"}`, "update_workflow", nil},
 		"an aliased built-in":               {`{"tool_id":"tool::remote_web_search"}`, "web_search", nil},
+		"a remote tool not distinguished":   {`{"tool_id":"tool::remote_get_learnings"}`, "", nil},
+		"a bare remote prefix":              {`{"tool_id":"tool::remote_"}`, "", nil},
 		"a built-in named by toolId alone":  {`{"tool_id":"tool::disclose_context"}`, "disclose_context", nil},
 		"an undistinguished built-in":       {`{"tool_id":"tool::control_bash_process"}`, "", nil},
 		"an inherited name":                 {`{"tool_id":"tool::constructor"}`, "", nil},

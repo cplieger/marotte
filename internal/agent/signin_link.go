@@ -46,6 +46,15 @@ func (l signinLink) accountPending() bool {
 	return !l.apiKey && l.vault != nil && l.vault.AccountPending(l.backend)
 }
 
+// readingAccount names the account an engine reading taken now describes, ok only when it is the signed-in one. With no
+// vault or with the API key the engine's account changes only with a restart, so every reading is the current one.
+func (l signinLink) readingAccount() (uint64, bool) {
+	if l.vault == nil || l.apiKey {
+		return 0, true
+	}
+	return l.vault.ReadingAccount(l.backend)
+}
+
 // engineSpawned promotes the desired account before a spawn records its fingerprint.
 func (l signinLink) engineSpawned() {
 	if l.vault != nil {

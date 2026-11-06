@@ -399,6 +399,22 @@ func TestLegacyServers_RendersLegacyPowersAndSkipsPlugins(t *testing.T) {
 	}
 }
 
+// A Power's mcp.json is authored outside marotte, so a Windows editor's UTF-8 byte order mark
+// must not drop its servers.
+func TestLegacyServers_BOMPrefixedPowerManifest(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "postman", "mcp.json"),
+		"\uFEFF{\"mcpServers\":{\"postman\":{\"url\":\"https://mcp.postman.com/minimal\"}}}", 0o644)
+
+	servers, errs := legacyServers(dir)
+	if len(errs) != 0 {
+		t.Errorf("errs = %v, want none", errs)
+	}
+	if !slices.Equal(sortedNames(servers), []string{"power-postman-postman"}) {
+		t.Errorf("servers = %v, want power-postman-postman", sortedNames(servers))
+	}
+}
+
 func TestLegacyServers_AnAbsentDirectoryIsEmpty(t *testing.T) {
 	servers, errs := legacyServers(filepath.Join(t.TempDir(), "none"))
 	if len(servers) != 0 || errs != nil {

@@ -3,6 +3,7 @@ package marotte
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -20,10 +21,36 @@ func IsWorkflowMessageNotifyID(id string) bool {
 	return strings.HasPrefix(id, "notify-") && !strings.HasPrefix(id, RunNoticeIDPrefix)
 }
 
-// WorkflowMessage is a workflow message's row as its log holds it.
+// WorkflowMessage is a workflow message's row as its log holds it. Rewaking marks an unsettled row
+// a reader's cancel named, which KAS re-prompts in a turn of its own (rewakeClearedNotifications).
 type WorkflowMessage struct {
-	ID    string
-	Steer EntrySteer
+	ID       string
+	Steer    EntrySteer
+	Rewaking bool
+}
+
+// Settlement is what c settles m as, false when it settles nothing. A row KAS gave no id, or one
+// an earlier cancel named that no re-wake turn delivered, is settled cleared by any clear of its
+// session: nothing proves it read or dropped. A row with an id is settled only by a clear that
+// names it, dropped at a turn boundary, which clears steering KAS never injected. A cancel naming
+// it settles nothing (Rewakes).
+func (c *EntrySteerCleared) Settlement(m *WorkflowMessage, ts int64) (EntrySteerDelivered, bool) {
+	if m.Steer.ToSession == "" || m.Steer.ToSession != c.Session {
+		return EntrySteerDelivered{}, false
+	}
+	if m.Steer.KASID == "" || m.Rewaking {
+		return EntrySteerDelivered{SteerID: m.ID, ReadTs: ts, Cleared: true}, true
+	}
+	if c.Cause != SteerClearCauseBoundary || !slices.Contains(c.IDs, m.Steer.KASID) {
+		return EntrySteerDelivered{}, false
+	}
+	return EntrySteerDelivered{SteerID: m.ID, ReadTs: ts, Dropped: true}, true
+}
+
+// Rewakes reports a row c leaves for KAS's re-wake: a reader's cancel naming it by id.
+func (c *EntrySteerCleared) Rewakes(m *WorkflowMessage) bool {
+	return c.Cause == SteerClearCauseCancel && m.Steer.ToSession != "" && m.Steer.ToSession == c.Session &&
+		m.Steer.KASID != "" && slices.Contains(c.IDs, m.Steer.KASID)
 }
 
 // WorkflowMessageFact is one workflow-message line: a message's row, a settlement of one, or a
@@ -79,15 +106,16 @@ func (f *WorkflowMessageFact) clear() (EntrySteerCleared, bool) {
 // WorkflowMessageFold is a history's workflow-message rows joined with their settlements and clears.
 // It holds only what it was given: a caller with a rewind feeds it the surviving history alone.
 type WorkflowMessageFold struct {
-	settled map[string]EntrySteerDelivered
-	rows    []WorkflowMessage
+	settled  map[string]EntrySteerDelivered
+	rewaking map[string]struct{}
+	rows     []WorkflowMessage
 }
 
-// FoldWorkflowMessages folds facts given in file order. A clear settles every unsettled row of its
-// epoch cleared as it is read, so a log cut after the clear's fact still reads the epoch settled; a
+// FoldWorkflowMessages folds facts given in file order. A clear settles its rows as it is read
+// (EntrySteerCleared.Settlement), so a log cut after the clear's fact still reads them settled; a
 // later steer_delivered for the same row replaces that settlement.
 func FoldWorkflowMessages(facts []WorkflowMessageFact) WorkflowMessageFold {
-	w := WorkflowMessageFold{settled: map[string]EntrySteerDelivered{}}
+	w := WorkflowMessageFold{settled: map[string]EntrySteerDelivered{}, rewaking: map[string]struct{}{}}
 	for _, f := range facts {
 		switch {
 		case f.message != nil:
@@ -101,18 +129,24 @@ func FoldWorkflowMessages(facts []WorkflowMessageFact) WorkflowMessageFold {
 	return w
 }
 
-// clear settles cleared every unsettled row sent to the session whose buffer c emptied, which is
-// that session's whole epoch: a row an earlier clear ended is settled already.
 func (w *WorkflowMessageFold) clear(c *EntrySteerCleared, ts int64) {
 	for i := range w.rows {
-		m := &w.rows[i]
-		if m.Steer.ToSession == "" || m.Steer.ToSession != c.Session {
+		if _, settled := w.settled[w.rows[i].ID]; settled {
 			continue
 		}
-		if _, settled := w.settled[m.ID]; !settled {
-			w.settled[m.ID] = EntrySteerDelivered{SteerID: m.ID, ReadTs: ts, Cleared: true}
+		m := w.view(&w.rows[i])
+		if d, ok := c.Settlement(&m, ts); ok {
+			w.settled[m.ID] = d
+		} else if c.Rewakes(&m) {
+			w.rewaking[m.ID] = struct{}{}
 		}
 	}
+}
+
+func (w *WorkflowMessageFold) view(m *WorkflowMessage) WorkflowMessage {
+	out := *m
+	_, out.Rewaking = w.rewaking[m.ID]
+	return out
 }
 
 // Settle writes a folded settlement onto its row, so a reader of the row never needs the later entry.
@@ -128,9 +162,12 @@ func (w *WorkflowMessageFold) Settle(e *Entry) {
 	if json.Unmarshal(e.Payload, &steer) != nil {
 		return
 	}
-	if d.Cleared {
+	switch {
+	case d.Cleared:
 		steer.Cleared = true
-	} else {
+	case d.Dropped:
+		steer.State, steer.Reason = SteerStateDropped, SteerReasonBoundary
+	default:
 		steer.State, steer.ReadTs = SteerStateRead, d.ReadTs
 	}
 	if raw, err := json.Marshal(steer); err == nil {
@@ -144,7 +181,7 @@ func (w *WorkflowMessageFold) Unsettled() []WorkflowMessage {
 	for i := range w.rows {
 		m := &w.rows[i]
 		if _, settled := w.settled[m.ID]; !settled {
-			out = append(out, *m)
+			out = append(out, w.view(m))
 		}
 	}
 	return out

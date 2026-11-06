@@ -248,6 +248,8 @@ func projectedSteerOrigin(id, sender string) marotte.SteerOrigin {
 		return marotte.SteerOriginParent
 	case sender == senderStep:
 		return marotte.SteerOriginStep
+	case sender == senderPeer:
+		return marotte.SteerOriginPeer
 	default:
 		return marotte.SteerOriginAgent
 	}
@@ -434,7 +436,7 @@ func (p *EntryProjection) ingestToolUpdate(raw json.RawMessage) {
 		slog.Warn("entry projection: tool_call_update lane disagrees with its call's lane",
 			"turn", p.curID, "tool_call", tu.ToolCallID, "call_lane", lane, "update_lane", stamp)
 	}
-	content := parseToolContent(p.relPath, tu.ToolCallID, tu.Content)
+	content := updateContent(p.relPath, &tu)
 	res := marotte.EntryToolResult{
 		Title:      displayText(tu.Title),
 		Kind:       tu.Kind,
@@ -452,6 +454,10 @@ func (p *EntryProjection) ingestToolUpdate(raw json.RawMessage) {
 	res.Denial = cmp.Or(denialFrom(tu.Meta.Kiro.PolicyDenial), engineRefusal(tu.Status, res.TerminalID, res.Output))
 	res.ClassifierApproved = tu.Meta.Kiro.TrustClassifierApproved
 	res.ClassifierNote = classifierNote(tu.Meta.Kiro.TrustClassifier)
+	if inputRevision(tu.RawInput) {
+		res.Input = tu.RawInput
+	}
+	res.Status, res.DelegateStop = delegateGrade(res.Status, tu.Meta.Kiro.StopReason, "")
 	p.sealLane(lane)
 	p.settleCall(tu.ToolCallID)
 	p.appendEntry(marotte.EntryKindToolResult, marotte.ToolResultID(tu.ToolCallID), lane,
@@ -679,9 +685,9 @@ func (p *EntryProjection) closeTurn() {
 	p.closed = true
 	reason, kind := c.Reason, c.FailureKind
 	if e := p.facts.engine; e != nil && reason == "" && marotte.SeverityOf(c.Outcome) == marotte.TurnSeverityBroken {
-		m := rpcerr.Mapped{ErrorType: e.ErrorType, RetryErrorType: e.RetryErrorType}
-		reason, _ = textsafe.SanitizeSingleLineCapped(rpcerr.Account(m, e.Message), maxDisplayErrorBytes, "...")
-		if m.ErrorType == rpcerr.ContextWindowExceededError {
+		text, overflow := rpcerr.Account(rpcerr.Mapped{ErrorType: e.ErrorType, RetryErrorType: e.RetryErrorType}, e.Message)
+		reason, _ = textsafe.SanitizeSingleLineCapped(text, maxDisplayErrorBytes, "...")
+		if overflow {
 			kind = marotte.FailureKindContextLimit
 		}
 	}

@@ -14,6 +14,7 @@ import {
   setSessions,
   watchActiveId,
 } from "./store.js";
+import { cutAt } from "./strings.js";
 import { openTabSubjects, paintProvisionalTabs, tabSetVersion } from "./tabs.js";
 import { TURN_OUTCOME_VALUES } from "./turn-severity.js";
 import { markWakingRows } from "./turn-wake.js";
@@ -353,7 +354,7 @@ function lightenToolPayload(v: unknown): unknown {
   // Styles the output bytes this drops.
   delete out.output_spans;
   if (out.output !== undefined && out.output.length > SNAPSHOT_MAX_TOOL_OUTPUT) {
-    out.output = out.output.slice(0, SNAPSHOT_MAX_TOOL_OUTPUT);
+    out.output = cutAt(out.output, SNAPSHOT_MAX_TOOL_OUTPUT);
   }
   if (out.input !== undefined) {
     const input = lightenInput(out.input);
@@ -383,7 +384,7 @@ function lightenInput(v: unknown): unknown {
   for (const k of Object.keys(src)) {
     const val = src[k];
     if (typeof val === "string" && val.length > SNAPSHOT_MAX_TOOL_INPUT) {
-      out[k] = val.slice(0, SNAPSHOT_MAX_TOOL_INPUT);
+      out[k] = cutAt(val, SNAPSHOT_MAX_TOOL_INPUT);
       cut = true;
     } else {
       out[k] = val;

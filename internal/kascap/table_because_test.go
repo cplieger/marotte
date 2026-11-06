@@ -648,9 +648,10 @@ and a run step's asks reach the user through its parent, so true would be false 
 	"object.shellEnvironment": `WITHHELD. kiro-cli 3.1.0 reads _meta.kiro.shellEnvironment on session/new and
 session/load as {workspaceFolder: {VAR: value or null}} and overlays the folder whose
 path is the longest prefix of a command's cwd onto the environment of the shells KAS
-spawns itself (null unsets). marotte hosts every shell through terminal/* (see
-capability.agentHostsForegroundShell) with its own environment, and has no
-per-folder environment setting to carry.`,
+spawns itself (null unsets). Every agent command reaches marotte as terminal/create
+(see capability.agentHostsForegroundShell), which never carries the overlay; only
+workflow command watch spawns, which KAS runs itself, read it, and marotte has no
+per-folder environment to send.`,
 	"capability.agentHostsForegroundShell": `WITHHELD. kiro-cli 2.32.0 reads clientMeta.agentHostsForegroundShell when it
 picks a session's terminal host: true runs every FOREGROUND execute_bash on KAS's
 in-process terminal even though marotte declares terminal:true, while background
@@ -671,6 +672,16 @@ tool description and schema to every turn and let the model draw diagrams the us
 never sees, while the tool's result tells the model the user sees the drawing.
 Sending it needs that renderer, a session-confined read of the file and a card keyed
 on _meta.kiro.diagram first.`,
+	"setting.c2s": `WITHHELD: code-to-spec is declined until Go is analysable end-to-end, a shipped
+client exposes its toggle, or KAS defers the c2s tools behind load_resource. KAS reads c2s
+through its feature proxy to register the Explore subagent and the code_index tools,
+about 14.6 KB of tool description on every model request in every chat, since a key
+sent on one engine cannot be scoped to one chat. Its analysable languages exclude Go,
+so a Go-dominant workspace gets a refusal or a TypeScript-only graph.`,
+	"capability.c2sViews": `WITHHELD with setting.c2s, under the same code-to-spec decline.
+True registers the two c2s_show_* architecture views, about 7 KB more per request, and
+marotte has no renderer for them. The recorded design declares it only together with c2s and a renderer that
+draws a view from the view tool call's own input.`,
 	"setting.semanticReview": `WITHHELD, and withholding it is what turns it ON. semanticReview is the
 one settings key KAS does not read through isSettingEnabled: its resolver
 is parsed2.data.semanticReview?.enabled ?? persistedDefault ?? true, so an
@@ -763,10 +774,10 @@ experiment, so this variable is the one client lever: _meta.kiro.settings.unifie
 which the bundle's experiment-gate helper names as its settingKey, has no reader.`,
 	"env.KIRO_FEATURE_UNIVERSAL_BACKGROUND_TOOL_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
-The universal_background_tool experiment (default off). On, a tool call can keep
-running as a session job after its call returns, the job_list and job_cancel tools
-mount, and KAS sends _kiro/job/update and serves _kiro/job/cancel and
-_kiro/job/output, none of which marotte renders or calls. The session setting of the
+The universal_background_tool experiment (default off). On, the job_list and
+job_cancel tools mount and KAS serves _kiro/job/cancel and _kiro/job/output and can
+send _kiro/job/update, none of which marotte renders or calls, but no tool call
+becomes a job in this build: the job runtime's beginCall has no caller. The session setting of the
 same name is recorded unclaimed, so the ramp decides there too.`,
 	"env.KIRO_FEATURE_USER_AGENT_REFACTORING_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).

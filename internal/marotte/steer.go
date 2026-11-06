@@ -38,12 +38,15 @@ const (
 	// SteerOriginStep is a step's send_message to the session that launched its run
 	// (KAS's `sender: "step"`).
 	SteerOriginStep SteerOrigin = "step"
+	// SteerOriginPeer is one chat's send_message to another chat's session (KAS's
+	// `sender: "peer"`), which KAS sends only when its sessionToolsMessaging setting is on.
+	SteerOriginPeer SteerOrigin = "peer"
 )
 
-// WorkflowMessage reports a send_message between a chat and its run's step, whose read state a
-// replay does not record.
+// WorkflowMessage reports a send_message KAS recorded at the send (a chat and its run's step, or
+// two chats), whose read state a replay does not record.
 func (o SteerOrigin) WorkflowMessage() bool {
-	return o == SteerOriginParent || o == SteerOriginStep
+	return o == SteerOriginParent || o == SteerOriginStep || o == SteerOriginPeer
 }
 
 // SteerState says whether the model ever READ a mid-turn steer. Rendering an

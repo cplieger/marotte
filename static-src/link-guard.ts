@@ -1,4 +1,5 @@
 import { effect, el, signal, touch } from "@cplieger/ui";
+import { cutAt } from "./strings.js";
 import { exfilShaped, isHttpMailtoOrRelativeURL } from "./utils-url.js";
 import type { EffectiveSettings } from "./wire/types.gen.js";
 
@@ -34,7 +35,7 @@ function hostOf(url: string): string {
   try {
     return new URL(url, document.baseURI).host;
   } catch {
-    return url.slice(0, 40);
+    return cutAt(url, 40);
   }
 }
 

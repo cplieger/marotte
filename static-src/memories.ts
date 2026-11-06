@@ -9,7 +9,7 @@ import { entryDetail, entryList, entryRow } from "./entry-row.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_EDIT, ICON_TRASH } from "./icons.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { deleteMemory, updateMemory } from "./actions/memory.js";
+import { deleteMemory, setMemorySync, updateMemory } from "./actions/memory.js";
 import type { MemoryEdit } from "./actions/memory.js";
 import { forceReflow } from "./dom.js";
 import { onSSE } from "./bus.js";
@@ -22,6 +22,20 @@ interface MemoryRecord {
   readonly content: string | undefined;
   readonly updatedMs: number | undefined;
   readonly scope: string;
+  /** The cloud has not taken it yet (KAS's cloud_state `pending` on a synced store). */
+  readonly cloudPending: boolean;
+}
+
+/** GET /api/memory/sync: KAS's sync state and the memorySync choice. */
+interface MemorySync {
+  readonly state: string;
+  readonly reason: string;
+  readonly pending: number;
+  readonly enabled: boolean;
+  readonly account: boolean;
+  readonly device: boolean;
+  /** The layer's name when a lock fixes the choice, "" otherwise. */
+  readonly lockedBy: string;
 }
 
 interface MemoryList {
@@ -68,7 +82,48 @@ function decodeRecord(v: unknown): MemoryRecord {
     content: optStr(o, "content"),
     updatedMs: timeMs(o["updated_at"]) ?? timeMs(o["created_at"]),
     scope: scopes[0] ?? UNSCOPED,
+    cloudPending: o["cloud_state"] === "pending",
   };
+}
+
+function decodeMemorySync(v: unknown): MemorySync {
+  const o = asObject(v);
+  const status = asObject(o["status"]);
+  const choice = asObject(o["choice"]);
+  const lock = choice["lock"] === undefined ? undefined : asObject(choice["lock"]);
+  return {
+    state: reqStr(status, "state"),
+    reason: optStr(status, "reason") ?? "",
+    pending: typeof status["pending"] === "number" ? status["pending"] : 0,
+    enabled: choice["enabled"] === true,
+    account: choice["account"] === true,
+    device: choice["device"] === true,
+    lockedBy: lock === undefined ? "" : (optStr(lock, "name") ?? optStr(lock, "layer") ?? ""),
+  };
+}
+
+/** The status line's words per state and reason, total over what the server decodes. */
+const SYNC_WORDS: ReadonlyMap<string, string> = new Map([
+  ["notStarted", "starting"],
+  ["resolving", "starting"],
+  ["off", "off"],
+  ["unavailable/notSignedIn", "sign in to Kiro to sync"],
+  ["unavailable/teamKey", "not available when kiro-cli runs on an API key"],
+  ["unavailable/notEntitled", "not available for this account"],
+  ["unavailable/identityUnknown", "waiting to confirm the account"],
+  ["suspended/forbidden", "paused: the cloud refused this account"],
+  ["suspended/backendSignal", "paused by the service"],
+  ["syncing", "syncing"],
+  ["synced", "synced"],
+  ["failed/sync", "failed"],
+  ["failed/storage", "failed: the local store could not be read"],
+]);
+
+function syncWords(s: MemorySync): string {
+  const words =
+    SYNC_WORDS.get(s.reason === "" ? s.state : `${s.state}/${s.reason}`) ?? "state unknown";
+  const waiting = (s.state === "synced" || s.state === "failed") && s.pending > 0;
+  return waiting ? `${words}, ${String(s.pending)} not uploaded yet` : words;
 }
 
 function decodeMemoryList(v: unknown): MemoryList {
@@ -101,6 +156,8 @@ let onCounts: ((c: MemoryCounts) => void) | null = null;
 /** Bumped per fetch, so a stale answer cannot overwrite a newer one. */
 let generation = 0;
 let wired = false;
+let cloud: MemorySync | "loading" | "failed" = "loading";
+let cloudGeneration = 0;
 
 export function setMemoryCountsListener(fn: (c: MemoryCounts) => void): void {
   onCounts = fn;
@@ -120,6 +177,11 @@ export function renderMemoriesPanel(panel: HTMLElement, filter = ""): void {
   if (!wired) {
     wired = true;
     onSSE("memories_changed", onMemoriesChanged);
+    onSSE("memory_sync_changed", () => {
+      if (isShowing()) {
+        void refreshCloud();
+      }
+    });
   }
   const next = filter.trim().toLowerCase();
   const filterMoved = next !== filterText;
@@ -127,7 +189,18 @@ export function renderMemoriesPanel(panel: HTMLElement, filter = ""): void {
   paint();
   if (!filterMoved || state.kind === "loading") {
     void refresh();
+    void refreshCloud();
   }
+}
+
+async function refreshCloud(): Promise<void> {
+  const gen = ++cloudGeneration;
+  const res = await apiGetTypedOrError("/api/memory/sync", decodeMemorySync);
+  if (gen !== cloudGeneration) {
+    return;
+  }
+  cloud = res.ok && res.data !== null ? res.data : "failed";
+  syncHead();
 }
 
 function isShowing(): boolean {
@@ -302,6 +375,7 @@ function headStrip(): HTMLElement {
   return el(
     "div",
     { className: "memories-head" },
+    cloudStrip(),
     el(
       "div",
       { className: "memories-head-row" },
@@ -309,6 +383,64 @@ function headStrip(): HTMLElement {
       el("span", { className: "memories-head-actions" }, delSel, delAll),
     ),
   );
+}
+
+/** The Cloud sync line and its two switches, the pair kiro-cli's terminal UI offers. A device that syncs implies the
+ *  account does, so the device switch waits for the account's. */
+function cloudStrip(): HTMLElement {
+  if (cloud === "loading" || cloud === "failed") {
+    return el(
+      "div",
+      { className: "memories-cloud" },
+      el(
+        "span",
+        { className: "memories-cloud-status" },
+        cloud === "loading" ? "Cloud sync: loading…" : "Cloud sync: couldn't read its state",
+      ),
+    );
+  }
+  const s = cloud;
+  const locked = s.lockedBy !== "";
+  const account = cloudSwitch("Sync my memories across devices", s.account, locked, "account");
+  const device = cloudSwitch("Sync on this device", s.device, locked || !s.account, "device");
+  return el(
+    "div",
+    { className: "memories-cloud" },
+    el("span", { className: "memories-cloud-status" }, `Cloud sync: ${syncWords(s)}`),
+    account,
+    device,
+    locked
+      ? el("span", { className: "memories-cloud-hint" }, `Locked by ${s.lockedBy}`)
+      : s.account
+        ? el("span")
+        : el(
+            "span",
+            { className: "memories-cloud-hint" },
+            "Turn on account sync to sync this device",
+          ),
+  );
+}
+
+function cloudSwitch(
+  label: string,
+  on: boolean,
+  disabled: boolean,
+  scope: "account" | "device",
+): HTMLElement {
+  const box = el("input", {
+    type: "checkbox",
+    className: "memories-cloud-switch",
+    "data-scope": scope,
+    disabled,
+  }) as HTMLInputElement;
+  box.checked = on;
+  box.addEventListener("change", () => {
+    box.disabled = true;
+    void setMemorySync.dispatch({ scope, on: box.checked }).finally(() => {
+      void refreshCloud();
+    });
+  });
+  return el("label", { className: "memories-cloud-toggle" }, box, label);
 }
 
 interface Section {
@@ -367,7 +499,15 @@ function fillSection(node: HTMLElement, s: Section): void {
 function entryKey(e: ListEntry): string {
   const m = e.m;
   return e.kind === "row"
-    ? joinKey("row", m.id, m.title, m.summary, m.memoryType, String(m.updatedMs ?? ""))
+    ? joinKey(
+        "row",
+        m.id,
+        m.title,
+        m.summary,
+        m.memoryType,
+        String(m.updatedMs ?? ""),
+        String(m.cloudPending),
+      )
     : detailKey(m);
 }
 
@@ -435,8 +575,7 @@ function buildRow(m: MemoryRecord): HTMLElement {
     key: m.id,
     title: displayTitle(m),
     lead: el("span", { className: "memories-lead" }, box),
-    badges:
-      m.memoryType === "" ? undefined : [el("span", { className: "docs-badge" }, m.memoryType)],
+    badges: rowBadges(m),
     time: m.updatedMs === undefined ? undefined : { ms: m.updatedMs },
     sub: { kind: "clamp", text: m.summary },
     actions: [edit, del],
@@ -450,6 +589,17 @@ function buildRow(m: MemoryRecord): HTMLElement {
   });
   syncRow(row, m);
   return row;
+}
+
+function rowBadges(m: MemoryRecord): HTMLElement[] | undefined {
+  const out: HTMLElement[] = [];
+  if (m.memoryType !== "") {
+    out.push(el("span", { className: "docs-badge" }, m.memoryType));
+  }
+  if (m.cloudPending) {
+    out.push(el("span", { className: "docs-badge memories-pending" }, "Not synced"));
+  }
+  return out.length === 0 ? undefined : out;
 }
 
 /** Repaints the head alone, so ticking a box keeps focus on it. */
@@ -666,4 +816,6 @@ export function _resetMemoriesForTest(): void {
   details.clear();
   onCounts = null;
   generation++;
+  cloud = "loading";
+  cloudGeneration++;
 }

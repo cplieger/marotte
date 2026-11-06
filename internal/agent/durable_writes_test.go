@@ -123,9 +123,9 @@ var durableWriteSites = []durableSite{{
 // Writes ruled not durable, each with its reason, so the omission is a decision.
 var abandonableWriteSites = []durableSite{{
 	file:    "internal/agent/turn_metering.go",
-	fn:      "mutateUsage",
+	fn:      "mutateMetering",
 	calls:   []string{"Mutate"},
-	because: "spend, re-derived from the next usage_summary",
+	because: "a step's spend and a turn's duration, never a conversational record; the chat's own credits are rewritten by the next session_usage",
 }, {
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "tryLoadSession",
@@ -186,6 +186,11 @@ var abandonableWriteSites = []durableSite{{
 	fn:      "persistUsage",
 	calls:   []string{"Mutate"},
 	because: "context usage, re-derived from the next frame",
+}, {
+	file:    "internal/translate/v3_updates.go",
+	fn:      "persistSessionCredits",
+	calls:   []string{"Mutate"},
+	because: "the session's credit total, overwritten by the next session_usage frame",
 }, {
 	file:    "internal/translate/v3_updates.go",
 	fn:      "HandleConfigOptionUpdate",

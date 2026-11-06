@@ -55,6 +55,15 @@ func TestSettingsGet_AbsentFileServesEveryDefault(t *testing.T) {
 	}
 }
 
+// TestSettingsGet_BOMPrefixedConfigServesStoredValues pins the GET of a config.json a Windows
+// editor saved with a UTF-8 byte order mark: the stored values, not the defaults.
+func TestSettingsGet_BOMPrefixedConfigServesStoredValues(t *testing.T) {
+	dir := seedConfig(t, "\uFEFF{\"theme\":\"dark\"}")
+	if got := getEffective(t, dir); got.Theme != "dark" {
+		t.Errorf("theme = %q, want dark (the stored value)", got.Theme)
+	}
+}
+
 // TestSettingsGet_ResolvesDefaultsUnderStoredValues pins that a file naming two keys still
 // answers every other key at its default.
 func TestSettingsGet_ResolvesDefaultsUnderStoredValues(t *testing.T) {
@@ -248,7 +257,7 @@ func TestSettingsGet_FailsOpenOnAnUnreadableDocument(t *testing.T) {
 			desc: "over the size cap",
 			seed: func(t *testing.T, path string) {
 				t.Helper()
-				big := append(bytes.Repeat([]byte(" "), maxSettingsBytes+1), []byte("{}")...)
+				big := append(bytes.Repeat([]byte(" "), storedCap+1), []byte("{}")...)
 				if err := os.WriteFile(path, big, 0o600); err != nil {
 					t.Fatalf("seed: %v", err)
 				}

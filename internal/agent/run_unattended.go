@@ -19,6 +19,7 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/translate"
 )
@@ -26,6 +27,9 @@ import (
 // unattendedApprovalBudget is how long a scheduled run's request waits before refusal: 180s, as KiroCrew's
 // `_BACKGROUND_APPROVAL_TIMEOUT_SECS`. Nonzero: the user may be watching.
 const unattendedApprovalBudget = 180 * time.Second
+
+// unattendedAskBudget is the floor's wait on one ask: unattendedApprovalBudget, a var for tests.
+var unattendedAskBudget = unattendedApprovalBudget
 
 // maxToolNameBytes bounds the tool name in the log attribute and the schedule row, both one-line and persisted on every fire.
 const maxToolNameBytes = 128
@@ -115,18 +119,23 @@ func (rs *Runs) permissionWithUnattendedFloor(inner askHandler) askHandler {
 			return
 		}
 		run := ruleRun(&l)
+		// A lease with no recorded presets cannot show the safety check was off, so it counts as delegated.
+		delegated := l.Host == nil || policyfile.DelegatesToSafetyCheck(l.Host.Presets)
 		acpID := *msg.ID
 		name := permissionAskName(msg.Params)
 		// A timer parks no goroutine and is a no-op once answered: both paths claim from the tracker.
 		params := msg.Params
-		rs.lifecycle.afterUnlessDraining(unattendedApprovalBudget, func() {
-			rs.answerUnattended(chatID, origin, acpID, run, name, params)
+		rs.lifecycle.afterUnlessDraining(unattendedAskBudget, func() {
+			rs.answerUnattended(chatID, origin, acpID, run, delegated, name, params)
 		})
 	}
 }
 
 // answerUnattended settles a still-pending request for an absent user: refuse, or approve when opted in.
-func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acpID int64, run launchrule.Run, name askName, msgParams json.RawMessage) {
+// delegated says the run's session hands unsettled requests to Kiro's safety check.
+func (rs *Runs) answerUnattended(
+	chatID marotte.ChatID, origin acpResponder, acpID int64, run launchrule.Run, delegated bool, name askName, msgParams json.RawMessage,
+) {
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
 
@@ -139,7 +148,7 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acp
 		approve = false
 	}
 	// Kiro's safety check did not clear the call and handed it to a person; approving it blind defeats the check.
-	classifierAsk := classifierHandedAsk(msgParams)
+	classifierAsk := safetyCheckUncleared(msgParams, delegated)
 	if approve && classifierAsk {
 		slog.Warn("unattended auto-approve: refusing, Kiro's safety check handed the request to a person",
 			"chat_id", chatID, "tool", name.tool, "subject", name.subject)
@@ -389,17 +398,39 @@ func adminConsentAsk(params json.RawMessage) bool {
 	return json.Unmarshal(params, &p) == nil && p.Meta.Kiro.Consent.Scope == consentScopeAdministration
 }
 
-// classifierHandedAsk keys on _meta.kiro.trustClassifier's presence, not its reason's prose: a tripped
-// breaker and a too-large action both mean the safety check did not clear the call.
-func classifierHandedAsk(params json.RawMessage) bool {
+// The `_meta.kiro.consent` values that keep an ask out of Kiro's safety check: an ask rule's own ask, and a workflow
+// ask, which KAS answers before any classifier call.
+const (
+	consentAskTypeExplicit    = "explicit"
+	consentCapabilityWorkflow = "workflow"
+)
+
+// safetyCheckUncleared reports whether Kiro's safety check was responsible for an ask and did not clear it. A
+// trustClassifier stamp says so, but KAS stamps only a tripped breaker and an oversized action: under a delegated
+// session a failed, timed-out or excluded check reaches a person as a plain implicit tool ask. Undecodable params
+// count as uncleared there.
+func safetyCheckUncleared(params json.RawMessage, delegated bool) bool {
 	var p struct {
 		Meta struct {
 			Kiro struct {
 				TrustClassifier json.RawMessage `json:"trustClassifier"`
+				ToolID          string          `json:"toolId"`
+				Consent         struct {
+					AskType    string `json:"askType"`
+					Capability string `json:"capability"`
+				} `json:"consent"`
 			} `json:"kiro"`
 		} `json:"_meta"`
 	}
-	return json.Unmarshal(params, &p) == nil && len(p.Meta.Kiro.TrustClassifier) > 0 && string(p.Meta.Kiro.TrustClassifier) != "null"
+	if json.Unmarshal(params, &p) != nil {
+		return delegated
+	}
+	k := p.Meta.Kiro
+	if len(k.TrustClassifier) > 0 && string(k.TrustClassifier) != "null" {
+		return true
+	}
+	return delegated && k.ToolID != "" &&
+		k.Consent.AskType != consentAskTypeExplicit && k.Consent.Capability != consentCapabilityWorkflow
 }
 
 func planApprovalAsk(params json.RawMessage) bool {

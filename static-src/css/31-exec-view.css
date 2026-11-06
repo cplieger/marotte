@@ -1165,7 +1165,8 @@
 }
 
 .ev-sum-progress,
-.ev-sum-clock {
+.ev-sum-clock,
+.ev-sum-credits {
   flex-shrink: 0;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -1746,7 +1747,7 @@
       padding-inline-start: calc(1.5rem + var(--sp-1));
     }
 
-    & .ev-sum-clock {
+    & :is(.ev-sum-clock, .ev-sum-credits) {
       order: 2;
     }
   }

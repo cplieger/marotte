@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +20,7 @@ import (
 
 // fakeBackend is a device-flow backend whose Poll blocks until the test approves or fails it.
 type fakeBackend struct {
+	beginErr error
 	outcomes chan pollOutcome
 }
 
@@ -35,7 +37,10 @@ func (*fakeBackend) Declaration() signin.Declaration {
 	return signin.Declaration{Backend: "fake", HostCallback: "_test/auth/token", Flows: []signin.FlowKind{signin.FlowDevice}}
 }
 
-func (*fakeBackend) Begin(context.Context, signin.FlowParams) (signin.DeviceStart, error) {
+func (f *fakeBackend) Begin(context.Context, signin.FlowParams) (signin.DeviceStart, error) {
+	if f.beginErr != nil {
+		return signin.DeviceStart{}, f.beginErr
+	}
 	return signin.DeviceStart{
 		VerificationURL: "https://device.example/activate", UserCode: "ABCD-EFGH", ExpiresIn: 10 * time.Minute,
 	}, nil
@@ -323,9 +328,8 @@ func TestWhoami_RejectsNonGET(t *testing.T) {
 func TestHandleLogin_RejectsBadBodies(t *testing.T) {
 	hs := newHarness(t)
 	for name, body := range map[string]string{
-		"malformed":     "{",
-		"http provider": `{"provider":"http://evil.com"}`,
-		"flag region":   `{"region":"--help"}`,
+		"malformed":   "{",
+		"flag region": `{"region":"--help"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if rec := hs.do(http.MethodPost, "/api/login", body); rec.Code != http.StatusBadRequest {
@@ -336,6 +340,18 @@ func TestHandleLogin_RejectsBadBodies(t *testing.T) {
 	big := `{"provider":"` + strings.Repeat("a", 2<<20) + `"}`
 	if rec := hs.do(http.MethodPost, "/api/login", big); rec.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("an oversize body = %d, want 413", rec.Code)
+	}
+}
+
+func TestLogin_BackendParamRefusalIsA400WithItsText(t *testing.T) {
+	hs := newHarness(t)
+	hs.backend.beginErr = &signin.FailureError{Text: "Use your portal URL", Err: fmt.Errorf("%w: x", signin.ErrInvalidParams)}
+	rec := hs.do(http.MethodPost, "/api/login", `{"provider":"acme.awsapps.com"}`)
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusBadRequest || body.Error != "Use your portal URL" {
+		t.Errorf("login = %d %s, want 400 with the backend's text", rec.Code, rec.Body.String())
 	}
 }
 
@@ -356,12 +372,8 @@ func TestValidateProvider(t *testing.T) {
 	}{
 		{"empty is allowed", "", false},
 		{"valid https URL", "https://view.awsapps.com/start", false},
-		{"http rejected", "http://evil.com", true},
-		{"bare host rejected", "evil.com", true},
-		{"flag smuggling rejected", "--identity-provider", true},
+		{"bare host left to the backend", "acme.awsapps.com", false},
 		{"over length rejected", "https://example.com/" + strings.Repeat("a", maxProviderLen), true},
-		{"userinfo rejected", "https://u:[email protected]/", true},
-		{"empty-user userinfo rejected", "https://@evil.com/", true},
 		{"boundary length exactly max accepted", "https://example.com/" + strings.Repeat("a", maxProviderLen-len("https://example.com/")), false},
 	}
 	for _, tc := range tests {

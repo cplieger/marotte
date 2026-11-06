@@ -72,21 +72,25 @@ describe("menuEntries", () => {
   it("lists marotte's verbs, then the catalog with a verb-named entry hidden", () => {
     const names = menuEntries(CATALOG).map((e) => `${e.kind}:${e.name}`);
     expect(names).toEqual([
+      "marotte:agent",
       "marotte:clear",
       "marotte:compact",
+      "marotte:context",
       "marotte:drop",
+      "marotte:help",
+      "marotte:mcp",
       "marotte:memories",
+      "marotte:model",
       "marotte:rewind",
+      "marotte:stats",
       "marotte:tangent",
       "marotte:tangent merge",
+      "marotte:tools",
+      "marotte:usage",
       "prompt:review",
       "steering:api-style",
       "goal:goal",
     ]);
-  });
-
-  it("offers no /context", () => {
-    expect(menuEntries(CATALOG).some((e) => e.name === "context")).toBe(false);
   });
 });
 
@@ -107,13 +111,24 @@ describe("slashQuery", () => {
 describe("matchEntries", () => {
   it("puts prefix matches ahead of substring ones", () => {
     const got = matchEntries("t", menuEntries(CATALOG)).map((e) => e.name);
-    expect(got).toEqual(["tangent", "tangent merge", "compact", "api-style"]);
+    expect(got).toEqual([
+      "tangent",
+      "tangent merge",
+      "tools",
+      "agent",
+      "compact",
+      "context",
+      "stats",
+      "api-style",
+    ]);
   });
 });
 
 describe("entryEnabled", () => {
   it("greys only server-resolved rows while a turn runs", () => {
-    const [verb, , , , , , , prompt] = menuEntries(CATALOG);
+    const entries = menuEntries(CATALOG);
+    const verb = entries.find((e) => e.kind === "marotte");
+    const prompt = entries.find((e) => e.kind === "prompt");
     expect(verb && entryEnabled(verb, true)).toBe(true);
     expect(prompt && entryEnabled(prompt, true)).toBe(false);
     expect(prompt && entryEnabled(prompt, false)).toBe(true);

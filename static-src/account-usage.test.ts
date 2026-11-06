@@ -14,7 +14,7 @@ vi.mock("./wire/decoders.gen.js", () => ({ decodeAccountUsage: vi.fn() }));
 
 import { $ } from "./dom.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
-const { loadAccountUsage } = await import("./account-usage.js");
+const { loadAccountUsage, resetAccountUsage } = await import("./account-usage.js");
 
 async function flush(): Promise<void> {
   await Promise.resolve();
@@ -159,6 +159,49 @@ describe("loadAccountUsage", () => {
     loadAccountUsage(); // not forced, within TTL → skipped
     await flush();
     expect(mockApiGetTyped).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("resetAccountUsage", () => {
+  const usage: AccountUsage = {
+    plan_name: "KIRO POWER",
+    breakdowns: [
+      { resource_type: "CREDIT", used: 10, limit: 100, percentage: 10, has_limit: true },
+    ],
+    overages_enabled: true,
+  };
+
+  it("blanks the rows and lifts the throttle", async () => {
+    mockApiGetTyped.mockResolvedValue(usage);
+    loadAccountUsage(true);
+    await flush();
+    expect($.acctPlan.textContent).toBe("KIRO POWER");
+
+    resetAccountUsage();
+    expect($.acctPlan.textContent).toBe("");
+    expect($.acctMeter.textContent).toBe("");
+    expect($.acctMeter.hasAttribute("data-tooltip")).toBe(false);
+    expect($.acctOverage.textContent).toBe("");
+
+    loadAccountUsage(); // not forced, inside the client TTL
+    await flush();
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not paint a response from before the reset", async () => {
+    let resolve: (u: AccountUsage) => void = () => undefined;
+    mockApiGetTyped.mockReturnValue(
+      new Promise<AccountUsage>((r) => {
+        resolve = r;
+      }),
+    );
+    loadAccountUsage(true);
+    resetAccountUsage();
+    resolve(usage);
+    await flush();
+    expect($.acctPlan.textContent).toBe("");
+    expect($.acctMeter.textContent).toBe("");
+    expect($.acctOverage.textContent).toBe("");
   });
 });
 

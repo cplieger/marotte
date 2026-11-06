@@ -107,6 +107,22 @@ func TestField_InvalidJSON(t *testing.T) {
 	}
 }
 
+// TestField_ReadsABOMPrefixedDocument pins the cached reader on a file a Windows editor saved
+// with a UTF-8 byte order mark: every key reads as stored, not absent or unparseable.
+func TestField_ReadsABOMPrefixedDocument(t *testing.T) {
+	dir := t.TempDir()
+	resetCache(t, dir)
+	writeSettings(t, dir, []byte("\uFEFF{\"theme\":\"dark\"}"))
+
+	if val, ok := Field[string](t.Context(), dir, "theme"); !ok || val != "dark" {
+		t.Errorf("Field(theme) = (%q, %v), want (\"dark\", true)", val, ok)
+	}
+	val, found, err := FieldStrict[string](t.Context(), dir, "theme")
+	if err != nil || !found || val != "dark" {
+		t.Errorf("FieldStrict(theme) = (%q, %v, %v), want (\"dark\", true, nil)", val, found, err)
+	}
+}
+
 func TestField_TypeMismatch(t *testing.T) {
 	dir := t.TempDir()
 	resetCache(t, dir)

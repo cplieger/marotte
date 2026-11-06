@@ -5,7 +5,7 @@
 import { $, byId } from "./dom.js";
 import { el, effect, untracked } from "@cplieger/ui";
 import { iconEl } from "./icon-el.js";
-import { makeExpandable, collapseAll } from "./pill-expand.js";
+import { makeExpandable, collapseAll, type Expandable } from "./pill-expand.js";
 import { rovingFocus, type RovingFocusController } from "@cplieger/ui/roving-focus";
 import { activeSession, getActive } from "./store.js";
 import { createSession } from "./chat.js";
@@ -26,13 +26,20 @@ import type { SessionMode } from "./types.js";
 // refreshes it after each re-render.
 let roleNav: RovingFocusController | null = null;
 
+let modeCard: Expandable | null = null;
+
+/** Open the mode pill's card. */
+export function openModeCard(): void {
+  modeCard?.open();
+}
+
 /** Wire the prompt-bar mode pill. Call once at startup. `refreshCatalog` re-reads the workspace
  *  catalog; it runs on each open so a custom agent added on disk reaches the card. */
 export function initRolePicker(refreshCatalog: () => void): void {
   const pill = $.rolePill;
   const list = $.roleList;
   let open = false;
-  makeExpandable(pill, list, {
+  modeCard = makeExpandable(pill, list, {
     onExpand: () => {
       open = true;
       forgetSig(list);

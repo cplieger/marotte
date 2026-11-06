@@ -293,12 +293,7 @@ export function initLoginModal(onLoggedIn: () => void): void {
   });
 
   const submit = (): void => {
-    // The server's validateProvider requires https; users paste bare hosts.
-    let provider = providerInput.value.trim();
-    if (provider !== "" && !/^https?:\/\//i.test(provider)) {
-      provider = "https://" + provider;
-      providerInput.value = provider;
-    }
+    const provider = providerInput.value.trim();
     if (provider === "") {
       status.textContent = "Start URL is required";
       return;

@@ -17,6 +17,7 @@ vi.mock("./tool-card.js", () => ({
   refreshToolDisclosure: vi.fn(),
   buildToolCard: vi.fn(() => document.createElement("div")),
   insertDiffPreview: vi.fn(),
+  syncRestingDiff: vi.fn(),
   // Inert: these cards have no `.tool-header`, so the real writer would be a no-op anyway.
   syncSilenceMarker: vi.fn(),
   syncOffloadLink: vi.fn(),

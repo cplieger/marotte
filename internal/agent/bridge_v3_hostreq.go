@@ -25,9 +25,9 @@ func (in *inbound) handleKiroClientRequest(ctx context.Context, chatID marotte.C
 
 // consentAnchorer owns the consent URLs KAS opens: the frame names neither a server nor a session.
 type consentAnchorer interface {
-	// anchorConsentURL decides how to show url and keeps it as an anchor when it carries a state; pageConnected is
-	// whether any page could.
-	anchorConsentURL(ctx context.Context, url string, pageConnected bool) consentShown
+	// anchorConsentURL decides how to show req's URL and keeps it as an anchor when it carries a state;
+	// pageConnected is whether any page could.
+	anchorConsentURL(ctx context.Context, req consentRequest, pageConnected bool) consentShown
 }
 
 // openedReply is _kiro/openExternalUrl's success.
@@ -36,12 +36,11 @@ func openedReply() map[string]any { return map[string]any{"success": true} }
 // respondKiroOpenExternalURL is _kiro/openExternalUrl's one owner, on the engine lane (KAS's frame names no
 // session). anchorConsentURL owns the showing; consentRefused is the only error, which ends KAS's attempt at once.
 func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, origin acpResponder, msg *marotte.RPCResponse) {
-	var p struct {
-		URL string `json:"url"`
-	}
+	var p consentRequest
 	if msg.Params != nil {
 		_ = json.Unmarshal(msg.Params, &p)
 	}
+	p.URL = withGoogleOfflineAccess(p.URL)
 	if !translate.IsWebURL(p.URL) {
 		slog.Warn("v3 openExternalUrl: rejecting a link that is not a web address")
 		in.respondBridge(ctx, "", origin, msg, nil, &marotte.RPCError{
@@ -50,7 +49,7 @@ func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, origin acpRes
 		})
 		return
 	}
-	shown := in.signIns.anchorConsentURL(ctx, p.URL, in.bus.fanout.ClientCount() > 0)
+	shown := in.signIns.anchorConsentURL(ctx, p, in.bus.fanout.ClientCount() > 0)
 	switch shown.how {
 	case consentRefused:
 		slog.Warn("v3 openExternalUrl: refusing a sign-in URL, since no page is connected to show it")
@@ -65,7 +64,7 @@ func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, origin acpRes
 		slog.Debug("v3 openExternalUrl: answering a consent URL already anchored")
 		in.respondBridge(ctx, "", origin, msg, openedReply(), nil)
 	case consentBanner:
-		slog.Info("v3 openExternalUrl: showing a consent URL no standing Sign in took on every page")
+		slog.Info("v3 openExternalUrl: showing a consent URL no standing Sign in took on every page", "server", p.Server)
 		in.respondBridge(ctx, "", origin, msg, openedReply(), nil)
 	}
 }

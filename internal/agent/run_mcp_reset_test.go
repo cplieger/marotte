@@ -118,7 +118,7 @@ func TestLaunchScheduled_ResetsNoServerAwaitingSignInOrDisabled(t *testing.T) {
 	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "remote"); err != nil {
 		t.Fatalf("claimSignIn: %v", err)
 	}
-	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), "https://auth.example/consent?state=s", false); shown.how != consentOnRow {
+	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: "https://auth.example/consent?state=s", Server: "remote"}, false); shown.how != consentOnRow {
 		t.Fatalf("anchorConsentURL = %+v, want on the standing sign-in's row", shown)
 	}
 	if _, err := h.mcpRegistry.beginOAuthRelay(t.Context(), "s"); err != nil {

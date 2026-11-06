@@ -87,7 +87,7 @@ func stageFlow(t *testing.T, h *Runtime, server, listenerURL, state string) {
 	if _, err := h.mcpRegistry.claimSignIn(t.Context(), server); err != nil {
 		t.Fatalf("claimSignIn(%s) = %v", server, err)
 	}
-	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), authURLFor(t, listenerURL, state), false); shown.how != consentOnRow || shown.server != server {
+	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: authURLFor(t, listenerURL, state), Server: server}, false); shown.how != consentOnRow || shown.server != server {
 		t.Fatalf("anchorConsentURL = %+v, want on %s's row", shown, server)
 	}
 }
@@ -330,7 +330,7 @@ func TestOAuthRelay_ALazySignInIsRelayedByItsState(t *testing.T) {
 			l := newCallbackListener(t, http.StatusOK)
 			h := newHubWithMCPConfig(t, nil)
 			reportMCP(t, h, "s1", connectedMCP("linear", marotte.MCPSource{}))
-			h.mcpRegistry.anchorConsentURL(t.Context(), authURLFor(t, l.srv.URL, "st-lazy"), true)
+			h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: authURLFor(t, l.srv.URL, "st-lazy")}, true)
 			pasted := pastedFor(t, l.srv.URL, "the-code", "st-lazy")
 
 			if rec := postRelay(t, h, server, pasted); rec.Code != http.StatusOK {
@@ -353,7 +353,7 @@ func TestOAuthRelay_ALazySignInIsRelayedByItsState(t *testing.T) {
 func TestOAuthRelay_ALazySignInRefusesAnotherState(t *testing.T) {
 	l := newCallbackListener(t, http.StatusOK)
 	h := newHubWithMCPConfig(t, nil)
-	h.mcpRegistry.anchorConsentURL(t.Context(), authURLFor(t, l.srv.URL, "st-lazy"), true)
+	h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: authURLFor(t, l.srv.URL, "st-lazy")}, true)
 
 	rec := postRelay(t, h, "", pastedFor(t, l.srv.URL, "the-code", "st-other"))
 
@@ -369,7 +369,7 @@ func TestOAuthRelay_ALazySignInRefusesAnotherState(t *testing.T) {
 func TestOAuthRelay_ALazySignInRefusesAMalformedPaste(t *testing.T) {
 	l := newCallbackListener(t, http.StatusOK)
 	h := newHubWithMCPConfig(t, nil)
-	h.mcpRegistry.anchorConsentURL(t.Context(), authURLFor(t, l.srv.URL, "st-lazy"), true)
+	h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: authURLFor(t, l.srv.URL, "st-lazy")}, true)
 
 	rec := postRelay(t, h, "", "https://evil.example/oauth/callback?code=c&state=st-lazy")
 
@@ -393,7 +393,7 @@ func TestOAuthRelay_ALazySignInEnds(t *testing.T) {
 		},
 		"past the cap": func(t *testing.T, h *Runtime, _ *fakeClock, listenerURL string) {
 			for i := range maxConsentAnchors {
-				h.mcpRegistry.anchorConsentURL(t.Context(), authURLFor(t, listenerURL, "st-later-"+strconv.Itoa(i)), true)
+				h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: authURLFor(t, listenerURL, "st-later-"+strconv.Itoa(i))}, true)
 			}
 		},
 	}
@@ -405,7 +405,7 @@ func TestOAuthRelay_ALazySignInEnds(t *testing.T) {
 			h.mcpRegistry.mu.Lock()
 			h.mcpRegistry.now = clock.now
 			h.mcpRegistry.mu.Unlock()
-			h.mcpRegistry.anchorConsentURL(t.Context(), authURLFor(t, l.srv.URL, "st-lazy"), true)
+			h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: authURLFor(t, l.srv.URL, "st-lazy")}, true)
 			clock.advance(lazySignInTTL - time.Second)
 
 			end(t, h, clock, l.srv.URL)
@@ -425,7 +425,7 @@ func TestOAuthRelay_ALazySignInEnds(t *testing.T) {
 func TestOAuthRelay_ALazySignInStaysRetryableAfterARefusal(t *testing.T) {
 	l := newCallbackListener(t, http.StatusBadRequest)
 	h := newHubWithMCPConfig(t, nil)
-	h.mcpRegistry.anchorConsentURL(t.Context(), authURLFor(t, l.srv.URL, "st-lazy"), true)
+	h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: authURLFor(t, l.srv.URL, "st-lazy")}, true)
 	pasted := pastedFor(t, l.srv.URL, "c", "st-lazy")
 
 	if rec := postRelay(t, h, "", pasted); rec.Code != http.StatusBadGateway {
@@ -445,7 +445,7 @@ func TestAnchorConsentURL_KeepsNoURLWithoutAState(t *testing.T) {
 	h.mcpRegistry.now = clock.now
 	h.mcpRegistry.mu.Unlock()
 	before := h.bus.fanout.Position().Head
-	shown := h.mcpRegistry.anchorConsentURL(t.Context(), "https://provider.example/authorize?client_id=x", true)
+	shown := h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: "https://provider.example/authorize?client_id=x"}, true)
 	if shown.how != consentBanner {
 		t.Errorf("shown = %v, want consentBanner", shown.how)
 	}
@@ -827,7 +827,7 @@ func TestReserveRelay_BindsThePasteByItsState(t *testing.T) {
 	for name, pasted := range cases {
 		t.Run(name, func(t *testing.T) {
 			h := newHubWithMCPConfig(t, nil)
-			h.mcpRegistry.anchorConsentURL(t.Context(), authURLFor(t, "http://127.0.0.1:41234", "st-abc"), true)
+			h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: authURLFor(t, "http://127.0.0.1:41234", "st-abc")}, true)
 			if _, err := h.mcpRegistry.beginOAuthRelay(t.Context(), pasted); !errors.Is(err, errRelayStateDrift) {
 				t.Errorf("reserve %q = %v, want errRelayStateDrift", pasted, err)
 			}

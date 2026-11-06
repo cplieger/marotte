@@ -15,8 +15,9 @@ vi.mock("./navigate.js", async (importOriginal) => ({
   openChange: vi.fn(),
 }));
 
-import { buildPermissionCard } from "./permission.js";
-import { setSessions } from "./store.js";
+import { buildPermissionCard, refreshPermissionCard } from "./permission.js";
+import { applyToolProgress, setSessions } from "./store.js";
+import { toolCallSigKey, toolCallSigs } from "./store-signals.js";
 
 function ask(over: Partial<PermissionNeededPayload>): PermissionNeededPayload {
   return {
@@ -63,6 +64,7 @@ afterEach(() => {
   worker.resetHandlers();
   requested = [];
   setSessions([]);
+  toolCallSigs.clear(toolCallSigKey("c-1", "tc-1"));
 });
 
 /** Answer the bulk read of `tc-1` in chat `c-1` with `input`, held until `release` is called. */
@@ -259,5 +261,23 @@ describe("a tool input the store bounded", () => {
     expect(card.querySelector(".approval-input-gap")).toBeNull();
     expect(card.querySelector(".approval-tool-input")).toBe(slot);
     expect(requested).toEqual(["/api/chats/c-1/tools/tc-1"]);
+  });
+});
+
+describe("an append whose arguments land after the create", () => {
+  it("refills the box with the text an update brought", () => {
+    seedToolInput({ path: "notes.txt" }, { kind: "edit" });
+    const card = buildPermissionCard(
+      "c-1",
+      ask({ title: "Append to notes.txt", kind: "edit", tool_call_id: "tc-1" }),
+      vi.fn(),
+    );
+    expect(card.querySelector(".approval-input")?.textContent).toBe('{\n  "path": "notes.txt"\n}');
+
+    const full = { path: "notes.txt", text: "one more line" };
+    applyToolProgress("c-1", "t-1", { turn: "t-1", tool_call_id: "tc-1", input: full });
+    refreshPermissionCard(card);
+
+    expect(card.querySelector(".approval-input")?.textContent).toBe(JSON.stringify(full, null, 2));
   });
 });

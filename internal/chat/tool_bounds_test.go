@@ -134,6 +134,36 @@ func TestStoreBound_OversizeInputKeepsTheClaimLine(t *testing.T) {
 	}
 }
 
+// A result's revised input is bounded like the create's, so an append whose text lands only on the update still
+// stays within the record's budget.
+func TestStoreBound_OversizeRevisedInputIsBounded(t *testing.T) {
+	in, err := json.Marshal(map[string]any{
+		"path": "notes.txt",
+		"text": strings.Repeat("L", persistBudget.inputMember*3),
+	})
+	if err != nil {
+		t.Fatalf("Setup: marshal input: %v", err)
+	}
+	_, got := persistedTool(t,
+		marotte.EntryToolCall{ID: "tc1", Title: "Append", Kind: marotte.ToolKindEdit, Status: marotte.ToolInProgress,
+			Input: json.RawMessage(`{"path":"notes.txt"}`)},
+		marotte.EntryToolResult{Status: marotte.ToolCompleted, Input: in})
+
+	var kept map[string]any
+	if uerr := json.Unmarshal(got.Input, &kept); uerr != nil {
+		t.Fatalf("persisted result input is not an object: %s", got.Input)
+	}
+	if kept["path"] != "notes.txt" {
+		t.Errorf("path = %v, want it kept", kept["path"])
+	}
+	if _, present := kept["text"]; present {
+		t.Error("text survived, want the over-budget member dropped")
+	}
+	if got.Truncated == nil || got.Truncated.InputBytes != len(in) {
+		t.Errorf("truncated = %+v, want InputBytes = %d", got.Truncated, len(in))
+	}
+}
+
 func TestStoreBound_SmallCallIsPersistedWhole(t *testing.T) {
 	call := marotte.EntryToolCall{
 		ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute, Status: marotte.ToolInProgress,

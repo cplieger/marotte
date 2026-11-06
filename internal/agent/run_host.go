@@ -86,7 +86,8 @@ func (rs *Runs) launch(
 
 // LaunchScheduled launches an unattended run for a schedule. slotAt is its next slot; zero leaves the idle window and backstop.
 // Only the inputs the recipe declares are sent; the caller's map is not modified. The sign-in gate's refusal wraps
-// schedule.ErrNoRunCanStart; an engine that did not answer before the run was created wraps schedule.ErrEngineBusy.
+// schedule.ErrNoRunCanStart; an engine that did not answer before the run was created, or a model list too unreadable
+// to check the recipe's step picks against, wraps schedule.ErrEngineBusy.
 func (rs *Runs) LaunchScheduled(
 	ctx context.Context, source string, row launchrule.Row, inputs map[string]string, defaults marotte.RunDefaults,
 	slotAt time.Time,
@@ -101,7 +102,7 @@ func (rs *Runs) LaunchScheduled(
 	switch {
 	case errors.Is(err, errRunsNeedSignIn) || errors.Is(err, errRunsProviderDown):
 		err = fmt.Errorf("%w: %w", schedule.ErrNoRunCanStart, err)
-	case errors.Is(err, errEngineSlow):
+	case errors.Is(err, errEngineSlow) || errors.Is(err, errDefaultsUncheckable):
 		err = fmt.Errorf("%w: %w", schedule.ErrEngineBusy, err)
 	case errors.Is(err, errLaunchUnconfirmed):
 		// The runner records any error as a failed slot; the run may be running, and its ending settles the row.
@@ -126,6 +127,9 @@ func (rs *Runs) launchAs(
 	recipe, err := rs.launchRecipe(cctx, source, inputs)
 	if err != nil {
 		return "", "", unanswered(ctx, err)
+	}
+	if pErr := rs.checkRecipePins(cctx, recipe.Plan, defaults); pErr != nil {
+		return "", "", pErr
 	}
 	if o.origin == runlease.OriginManual && !isAgentSource(source) {
 		// A manual run yields to its recipe's next slot.

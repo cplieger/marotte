@@ -25,6 +25,8 @@ const TRIGGER_LABELS: ReadonlyMap<string, string> = new Map([
   ["PostToolUse", "after a tool runs"],
   ["PreTaskExec", "before a spec task"],
   ["PostTaskExec", "after a spec task"],
+  ["PreCompact", "before the context is compacted"],
+  ["PostCompact", "after the context is compacted"],
   ["PostFileCreate", "after a file is created"],
   ["PostFileSave", "after a file is saved"],
   ["PostFileDelete", "after a file is deleted"],

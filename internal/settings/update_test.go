@@ -92,6 +92,8 @@ func TestUpdate_RefusesAnUnreadableDocument(t *testing.T) {
 		{desc: "a trailing comma", body: `{"theme":"dark",}`},
 		{desc: "a top-level null", body: `null`},
 		{desc: "a top-level array", body: `[]`},
+		// Python's utf-8-sig decodes one mark; the second is content JSON rejects.
+		{desc: "two byte order marks", body: "\uFEFF\uFEFF{}"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.desc, func(t *testing.T) {
@@ -111,6 +113,56 @@ func TestUpdate_RefusesAnUnreadableDocument(t *testing.T) {
 				t.Errorf("config.json =\n%s\nwant it untouched:\n%s", data, tc.body)
 			}
 		})
+	}
+}
+
+// TestUpdate_ReadsABOMPrefixedDocument pins the hand-edit a Windows editor produces: a UTF-8
+// byte order mark before a valid document merges, and the rewrite carries no mark.
+func TestUpdate_ReadsABOMPrefixedDocument(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, "\uFEFF{\"theme\":\"dark\",\"x\":1}")
+
+	if _, err := Update(t.Context(), dir, setKey(KeyLastModel, "opus"), nil); err != nil {
+		t.Fatalf("Update over a BOM-prefixed document: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, Filename))
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if len(data) == 0 || data[0] != '{' {
+		t.Errorf("rewritten config.json starts %q, want '{' with no byte order mark", data[:min(len(data), 4)])
+	}
+	doc := readConfig(t, dir)
+	for key, want := range map[string]string{KeyTheme: `"dark"`, "x": `1`, KeyLastModel: `"opus"`} {
+		if got := string(doc[key]); got != want {
+			t.Errorf("%s = %s, want %s", key, got, want)
+		}
+	}
+}
+
+// TestStored_ReadsABOMPrefixedDocument pins the GET path's reader beside the write's.
+func TestStored_ReadsABOMPrefixedDocument(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, "\uFEFF{\"theme\":\"dark\"}")
+
+	doc, err := Stored(dir)
+	if err != nil {
+		t.Fatalf("Stored over a BOM-prefixed document: %v", err)
+	}
+	if got := string(doc[KeyTheme]); got != `"dark"` {
+		t.Errorf("theme = %s, want \"dark\"", got)
+	}
+}
+
+// TestStored_AbsentFileIsAnEmptyDocument pins the fresh-volume answer GET resolves defaults over.
+func TestStored_AbsentFileIsAnEmptyDocument(t *testing.T) {
+	doc, err := Stored(t.TempDir())
+	if err != nil {
+		t.Fatalf("Stored with no file: %v", err)
+	}
+	if doc == nil || len(doc) != 0 {
+		t.Errorf("Stored with no file = %v, want an empty non-nil map", doc)
 	}
 }
 

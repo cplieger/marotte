@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+
+	"github.com/cplieger/marotte/internal/userjson"
 )
 
 const maxPowerFileBytes = 1 << 20
@@ -96,7 +98,7 @@ func readServers(path string) (map[string]json.RawMessage, error) {
 	var doc struct {
 		MCPServers map[string]map[string]json.RawMessage `json:"mcpServers"`
 	}
-	if err := json.Unmarshal(data, &doc); err != nil {
+	if err := json.Unmarshal(userjson.Body(data), &doc); err != nil {
 		return nil, fmt.Errorf("mcp.json: %w", err)
 	}
 	out := make(map[string]json.RawMessage, len(doc.MCPServers))

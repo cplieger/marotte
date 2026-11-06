@@ -672,6 +672,47 @@ describe("runToExec reads what nothing read before", () => {
     expect(facts.get("Watch")).toBe("reached a terminal state");
   });
 
+  it("states each finished step's credits, and the run's total over every pass", () => {
+    const run = runToExec(
+      stateWith({
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "running",
+        children: [
+          step("plan", "completed", { credits: 1.2 }),
+          {
+            nodeId: "loop",
+            type: "repeat",
+            status: "running",
+            children: [
+              {
+                nodeId: "iter-0",
+                type: "sequence",
+                status: "completed",
+                children: [step("fix", "completed", { credits: 0.004 })],
+              },
+            ],
+          },
+          step("review", "running"),
+        ],
+      }),
+      undefined,
+      NO_ASKS,
+    );
+    const creditsOf = (n: ExecNode | undefined): string | undefined =>
+      n?.facts?.find((f) => f.label === "Credits")?.value;
+    const byLabel = new Map(flatten(run.nodes).map((n) => [n.label, n]));
+    expect(creditsOf(byLabel.get("plan"))).toBe("1.20");
+    expect(creditsOf(byLabel.get("fix"))).toBe("<0.01");
+    expect(creditsOf(byLabel.get("review"))).toBeUndefined();
+    expect(run.credits).toBeCloseTo(1.204, 10);
+  });
+
+  it("states no run credits when no step recorded any", () => {
+    const run = runToExec(stateWith(step("a", "running")), undefined, NO_ASKS);
+    expect(run.credits).toBeUndefined();
+  });
+
   // `auto` is the ABSENCE of a model choice, so naming it as one implies a pin that never happened.
   it("does not report auto as a model", () => {
     const run = runToExec(

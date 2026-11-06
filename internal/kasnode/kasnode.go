@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -23,6 +24,8 @@ const (
 	NodePathVar = "KIRO_KAS_NODE_PATH"
 	// LaunchVar carries the real node's path to the re-executed marotte binary; its presence selects Exec.
 	LaunchVar = "MAROTTE_KAS_NODE"
+	// HeapLimitVar carries the JavaScript heap limit in MiB to the launcher, which puts it on node's argv.
+	HeapLimitVar = "MAROTTE_KAS_NODE_HEAP_MIB"
 )
 
 // ValidatedNodeVersion is the Node.js Flags were measured on, the one kiro-cli 2.37.1 and 3.0.0 bundle. A kiro-cli bump that
@@ -43,21 +46,38 @@ func Exec(environ, args []string) error {
 	return syscall.Exec(node, argv, env)
 }
 
-// launch builds Exec's call. Both variables leave the environment, so nothing the agent server spawns (a nested
-// kiro-cli in a shell command) starts marotte as its node.
+// HeapLimitArg is the node flag that sets the JavaScript heap limit to mib MiB.
+func HeapLimitArg(mib int) string {
+	return "--max-old-space-size=" + strconv.Itoa(mib)
+}
+
+// launch builds Exec's call. Every variable leaves the environment, so nothing the agent server spawns (a nested
+// kiro-cli in a shell command) starts marotte as its node or inherits the engine's heap limit.
 func launch(environ, args []string) (node string, argv, env []string, err error) {
+	heap, heapSet := "", false
 	for _, kv := range environ {
 		if v, ok := strings.CutPrefix(kv, LaunchVar+"="); ok {
 			node = v
+		}
+		if v, ok := strings.CutPrefix(kv, HeapLimitVar+"="); ok {
+			heap, heapSet = v, true
 		}
 	}
 	if node == "" {
 		return "", nil, nil, fmt.Errorf("%s is empty: no node to run", LaunchVar)
 	}
-	env = slices.DeleteFunc(slices.Clone(environ), func(kv string) bool {
-		return strings.HasPrefix(kv, LaunchVar+"=") || strings.HasPrefix(kv, NodePathVar+"=")
-	})
 	argv = append([]string{node}, Flags...)
+	if heapSet {
+		mib, convErr := strconv.Atoi(heap)
+		if convErr != nil || mib <= 0 || strings.Trim(heap, "0123456789") != "" {
+			return "", nil, nil, fmt.Errorf("%s=%q is not a heap limit in MiB", HeapLimitVar, heap)
+		}
+		argv = append(argv, HeapLimitArg(mib))
+	}
+	env = slices.DeleteFunc(slices.Clone(environ), func(kv string) bool {
+		return strings.HasPrefix(kv, LaunchVar+"=") || strings.HasPrefix(kv, NodePathVar+"=") ||
+			strings.HasPrefix(kv, HeapLimitVar+"=")
+	})
 	if len(args) > 1 {
 		argv = append(argv, args[1:]...)
 	}

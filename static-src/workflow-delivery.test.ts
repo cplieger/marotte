@@ -247,6 +247,66 @@ describe("settling a resident row", () => {
     });
   });
 
+  const withID = (id: string, kasID: string): Entry =>
+    entry(id, "steer", {
+      text: id,
+      origin: "step",
+      produced_ts: SENT,
+      to_session: "sess-a",
+      kas_id: kasID,
+    });
+  const clearNaming = (id: string, cause: string, ...ids: string[]): Entry => ({
+    ...entry(id, "steer_cleared", { cause, session: "sess-a", ids }),
+    ts: LATER,
+  });
+
+  it("settles a row KAS gave an id only by a clear naming it: dropped at a boundary, waiting after a stop", () => {
+    const named = withID("wfmsg-named", "notify-a");
+    const unnamed = withID("wfmsg-unnamed", "notify-b");
+    const stopped = withID("wfmsg-stopped", "notify-c");
+    const noID = sentTo("wfmsg-noid", "sess-a");
+
+    settleWorkflowMessages([
+      turn(named, unnamed, stopped, noID),
+      turn(
+        clearNaming("cleared-1", "boundary", "notify-a"),
+        clearNaming("cleared-2", "cancel", "notify-c"),
+      ),
+    ]);
+
+    expect(named.payload).toMatchObject({ state: "dropped", reason: "boundary" });
+    expect(named.payload).not.toHaveProperty("cleared");
+    expect(unnamed.payload).not.toHaveProperty("state");
+    expect(unnamed.payload).not.toHaveProperty("cleared");
+    expect(stopped.payload).not.toHaveProperty("state");
+    expect(stopped.payload).not.toHaveProperty("cleared");
+    expect(noID.payload).toEqual(cleared("wfmsg-noid"));
+  });
+
+  it("clears a row a stop left once its session's next clear comes with no re-wake delivering it", () => {
+    const stopped = withID("wfmsg-stopped", "notify-c");
+
+    settleWorkflowMessages([
+      turn(stopped, clearNaming("cleared-1", "cancel", "notify-c")),
+      turn(clearNaming("cleared-2", "boundary", "notify-z")),
+    ]);
+
+    expect(stopped.payload).toMatchObject({ cleared: true });
+  });
+
+  it("returns a row a released clear dropped to waiting", () => {
+    const named = withID("wfmsg-named", "notify-a");
+    const held = turn(named);
+    const released = turn(clearNaming("cleared-1", "boundary", "notify-a"));
+    settleWorkflowMessages([held, released]);
+    expect(named.payload).toMatchObject({ state: "dropped" });
+
+    releaseWorkflowTakeUps([released], [held]);
+
+    expect(named.payload).not.toHaveProperty("state");
+    expect(named.payload).not.toHaveProperty("reason");
+  });
+
   it("reads turns in the order their ids name, then any held turn the order leaves out", () => {
     const a = turn();
     const b = turn();

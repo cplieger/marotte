@@ -11,11 +11,13 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/cplieger/marotte/internal/kascap"
+	"github.com/cplieger/marotte/internal/kasnode"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/nodeopts"
 	"github.com/cplieger/marotte/internal/procgroup"
@@ -296,6 +298,22 @@ func withHeapLimit(env []string, mib int, generation uint64) []string {
 	return append(out, nodeOptionsVar+"="+composed)
 }
 
+// heapLimitEnv applies mib to the engine's node. With the launcher (nodeArgs non-nil) the limit goes on node's argv
+// through kasnode.HeapLimitVar, so the programs the agent runs, which inherit NODE_OPTIONS, keep their own heap.
+// Without it kiro-cli starts node itself, and NODE_OPTIONS is the only way in; so too when NODE_OPTIONS carries a
+// heap percentage, which V8 ranks above any size flag, or cannot be read.
+func heapLimitEnv(env, nodeArgs []string, mib int, generation uint64) (outEnv, outArgs []string) {
+	if mib == 0 {
+		return env, nodeArgs
+	}
+	if nodeArgs != nil {
+		if pct, err := nodeopts.SetsHeapPercentage(nodeOptionsOf(env)); err == nil && !pct {
+			return append(env, kasnode.HeapLimitVar+"="+strconv.Itoa(mib)), append(nodeArgs, kasnode.HeapLimitArg(mib))
+		}
+	}
+	return withHeapLimit(env, mib, generation), nodeArgs
+}
+
 // buildACPArgs assembles the engine's argv: the v3 engine, then the sign-in backend's declared arguments, once. The
 // operator's flags follow (startProcess), and refuseReason keeps an auth flag out of them.
 func buildACPArgs(authArgs []string) []string {
@@ -373,8 +391,8 @@ func (e *Engine) processEnv() []string {
 	env = append(env, kasLogLevelEnv(e.debugLogs)...)
 	// After the screen and the door: os/exec keeps a key's last value.
 	env = append(env, localeEnv()...)
-	env = withHeapLimit(env, e.heapMiB, e.generation)
 	env, e.nodeArgs = e.withKASNodeLauncher(env)
+	env, e.nodeArgs = heapLimitEnv(env, e.nodeArgs, e.heapMiB, e.generation)
 	if len(dropped) > 0 {
 		// Names only: the values are the credentials.
 		slog.Warn("dropped credential-shaped variables from the kiro-cli process; agent shell commands still inherit them",

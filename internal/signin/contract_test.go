@@ -357,3 +357,104 @@ func TestVault_BasisIsClearedOnlyByEngineSpawned(t *testing.T) {
 		})
 	}
 }
+
+func mustReadingAccount(t *testing.T, h *harness, what string) uint64 {
+	t.Helper()
+	gen, ok := h.v.ReadingAccount("cb")
+	if !ok {
+		t.Fatalf("ReadingAccount %s = not ok, want the signed-in account", what)
+	}
+	return gen
+}
+
+func refuseReadingAccount(t *testing.T, h *harness, what string) {
+	t.Helper()
+	if gen, ok := h.v.ReadingAccount("cb"); ok {
+		t.Errorf("ReadingAccount %s = %d, ok; want not ok", what, gen)
+	}
+}
+
+// A live switch moves the signed-in account at once, but the engine still holds the old
+// account's credential until the vault answers it again.
+func TestVault_ReadingAccountFollowsTheHeldRecord(t *testing.T) {
+	cb, _, _ := contractFakes()
+	h := newHarness(t, cb)
+	h.signIn(cb, approval{cred: credOf(t, h.account("alice"))})
+	h.mustAnswer("cb")
+	alice := mustReadingAccount(t, h, "with alice answered")
+	h.signIn(cb, approval{cred: credOf(t, h.account("bob"))})
+	refuseReadingAccount(t, h, "after a live switch the engine has not been answered")
+	if got := h.mustAnswer("cb"); got.Account != "bob" {
+		t.Fatalf("answered %q, want bob", got.Account)
+	}
+	if bob := mustReadingAccount(t, h, "after bob was answered"); bob == alice {
+		t.Errorf("ReadingAccount kept alice's key %d after bob was answered", alice)
+	}
+}
+
+func TestVault_ReadingAccountWaitsForTheRestart(t *testing.T) {
+	cb, _, _ := contractFakes()
+	notLive(cb)
+	h := newHarness(t, cb)
+	h.signIn(cb, approval{cred: credOf(t, h.account("alice"))})
+	h.mustAnswer("cb")
+	alice := mustReadingAccount(t, h, "with alice answered")
+	h.signIn(cb, approval{cred: credOf(t, h.account("bob"))})
+	refuseReadingAccount(t, h, "while the switch waits for a restart")
+	h.mustAnswer("cb")
+	refuseReadingAccount(t, h, "after the old engine was answered alice again")
+	h.v.EngineSpawned("cb")
+	bob := mustReadingAccount(t, h, "after the restart, before the new engine's first answer")
+	if bob == alice {
+		t.Errorf("ReadingAccount kept alice's key %d after the restart", alice)
+	}
+	h.mustAnswer("cb")
+	if got := mustReadingAccount(t, h, "after the new engine was answered"); got != bob {
+		t.Errorf("ReadingAccount = %d after bob was answered, want %d", got, bob)
+	}
+}
+
+func TestVault_ReadingAccountFalseAfterSignOutAndLapse(t *testing.T) {
+	t.Run("never_signed_in", func(t *testing.T) {
+		cb, _, _ := contractFakes()
+		h := newHarness(t, cb)
+		refuseReadingAccount(t, h, "with no sign-in")
+	})
+	t.Run("sign_out", func(t *testing.T) {
+		cb, _, _ := contractFakes()
+		h := newHarness(t, cb)
+		h.signIn(cb, approval{cred: credOf(t, h.account("alice"))})
+		h.mustAnswer("cb")
+		if err := h.v.SignOut("cb"); err != nil {
+			t.Fatal(err)
+		}
+		refuseReadingAccount(t, h, "after sign-out")
+	})
+	t.Run("lapse", func(t *testing.T) {
+		cb, _, _ := contractFakes()
+		h := newHarness(t, cb)
+		h.signIn(cb, approval{cred: credOf(t, h.account("alice"))})
+		h.mustAnswer("cb")
+		cb.setRefresh(func(context.Context, fakeCred) (fakeCred, error) { return fakeCred{}, ErrRejected })
+		h.clk.advance(58 * time.Minute)
+		if _, rerr := h.answer("cb"); rerr == nil {
+			t.Fatal("a rejected refresh answered a token")
+		}
+		refuseReadingAccount(t, h, "after the sign-in lapsed")
+	})
+}
+
+func TestVault_ReadingAccountSurvivesRenewal(t *testing.T) {
+	cb, _, _ := contractFakes()
+	h := newHarness(t, cb)
+	h.signIn(cb, approval{cred: credOf(t, h.account("alice"))})
+	h.mustAnswer("cb")
+	before := mustReadingAccount(t, h, "before the renewal")
+	h.clk.advance(58 * time.Minute)
+	if got := h.mustAnswer("cb"); got.Token != "alice-token+r" {
+		t.Fatalf("answered %q, want the renewed token", got.Token)
+	}
+	if after := mustReadingAccount(t, h, "after the renewal"); after != before {
+		t.Errorf("ReadingAccount = %d after a renewal, want %d", after, before)
+	}
+}

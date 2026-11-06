@@ -2,6 +2,7 @@ package marotte
 
 import (
 	"encoding/json"
+	"math"
 	"slices"
 	"strings"
 )
@@ -100,6 +101,9 @@ type ToolCall struct {
 	// ClassifierNote is _meta.kiro.trustClassifier's reason when the safety check handed the call
 	// to a person; one-way.
 	ClassifierNote string `json:"classifier_note,omitempty"`
+	// DelegateStop is a sub-agent invocation's raw stop when its delegate did not end its turn
+	// cleanly; DelegateStatus has already graded Status from it. A plain string: KAS's set is open.
+	DelegateStop string `json:"delegate_stop,omitempty"`
 	// HookTrigger is a hook card's canonical trigger (CanonicalHookTrigger), empty when
 	// the hook list did not name it.
 	HookTrigger string `json:"hook_trigger,omitempty"`
@@ -534,6 +538,11 @@ type Chat struct {
 	// KeepFilledAt is the Unix ms at which a create or the first keep-state reconcile wrote this record's keep
 	// facts; zero on a record that predates them. The purge ages a chat from the later of this and UpdatedAt.
 	KeepFilledAt int64 `json:"keep_filled_at,omitempty"`
+	// SessionCredits is KAS's running credit total for ACPSessionID (session_usage), overwritten;
+	// CreditOffset is the rest of Usage.Credits: retired sessions' totals, step spend and a model
+	// switch's reset. Server-internal, like Keep; only the spend methods below write them.
+	SessionCredits float64 `json:"session_credits,omitempty"`
+	CreditOffset   float64 `json:"credit_offset,omitempty"`
 	// TurnCount is the newest turn_open's n, the counter windows are read against.
 	TurnCount      int  `json:"turn_count"`
 	SupervisedMode bool `json:"supervised_mode,omitempty"`
@@ -544,6 +553,56 @@ type Chat struct {
 	// merge back; a fork that fell back to a fresh session is not one. Which chat it merges into
 	// is KAS's parent session link, never this record.
 	Tangent bool `json:"tangent,omitempty"`
+	// SpendInherited marks a tangent whose forked session's totals include the parent's spend up to
+	// the fork, until its first session_usage settles the baseline (SetSessionCredits).
+	SpendInherited bool `json:"spend_inherited,omitempty"`
+}
+
+// SetSessionCredits records KAS's running credit total for session id and reports whether the record
+// changed. A total for any session but the current one is a straggler and is ignored. On a SpendInherited
+// chat the first total settles the baseline: a replayed (load-time) one is the parent's spend, which the
+// tangent does not own; a live one is already the tangent's own.
+func (c *Chat) SetSessionCredits(id string, total float64, replay bool) bool {
+	if id == "" || id != c.ACPSessionID || (total == c.SessionCredits && !c.SpendInherited) {
+		return false
+	}
+	if c.SpendInherited {
+		c.SpendInherited = false
+		if replay {
+			c.CreditOffset -= total
+		}
+	}
+	c.SessionCredits = total
+	c.recomputeCredits()
+	return true
+}
+
+// AddSpend adds spend no session total carries (a workflow step's) to the chat's figure.
+func (c *Chat) AddSpend(credits float64) {
+	if credits <= 0 {
+		return
+	}
+	c.CreditOffset += credits
+	c.recomputeCredits()
+}
+
+// ResetSpend zeroes the chat's figure, so the current session's later totals count only what follows.
+func (c *Chat) ResetSpend() {
+	c.CreditOffset = -c.SessionCredits
+	c.recomputeCredits()
+}
+
+// creditResolution rounds away the float residue a subtract-then-add leaves, which would otherwise read
+// as a positive sub-cent spend.
+const creditResolution = 1e9
+
+func (c *Chat) recomputeCredits() {
+	credits := max(0, math.Round((c.CreditOffset+c.SessionCredits)*creditResolution)/creditResolution)
+	c.Usage.Credits = credits
+	// A measured 0.00 is not real data: only spend marks the figure as measured.
+	if credits > 0 {
+		c.Usage.HasRealData = true
+	}
 }
 
 // InterruptMode is a chat's choice of what a message sent mid-turn does.
@@ -641,6 +700,11 @@ func (c *Chat) RecordSession(id string) {
 	if c.ACPSessionID == id {
 		return
 	}
+	// The outgoing session's total stays in the figure; the new session reports its own from zero.
+	c.CreditOffset += c.SessionCredits
+	c.SessionCredits = 0
+	c.SpendInherited = false
+	c.recomputeCredits()
 	if c.ACPSessionID != "" && !slices.Contains(c.PriorACPSessionIDs, c.ACPSessionID) {
 		c.PriorACPSessionIDs = append(c.PriorACPSessionIDs, c.ACPSessionID)
 	}

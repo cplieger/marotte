@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"reflect"
+	"time"
 
 	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/chat"
@@ -94,7 +95,11 @@ type sessionInfoKiroBlock struct {
 	// PromptTurnSummaries is KAS's per-turn metering record, emitted just before the
 	// session/prompt response returns.
 	PromptTurnSummaries []promptTurnSummary `json:"promptTurnSummaries"`
-	ElapsedTime         float64             `json:"elapsedTime"`
+	// Credits is session_usage's running total for the session, by unit, FLAT beside Kind: sent
+	// after each turn_completion and once, replay-stamped, after a session/load.
+	Credits     []promptTurnSummary `json:"credits"`
+	ElapsedTime float64             `json:"elapsedTime"`
+	Replay      bool                `json:"replay"`
 }
 
 // sessionInfoKiroShadow strips the UnmarshalJSON method so the real decode can
@@ -156,8 +161,14 @@ type promptTurnSummary struct {
 const meteringUnitCredit = "credit"
 
 // turnStarted marks a turn_start in both wake pairings: the workflow-message waker's and the chat's run completions.
+// A row a cancel left for a re-wake the previous turn did not deliver settles cleared: KAS only logs
+// a failed re-wake.
 func (t *Translator) turnStarted(ctx context.Context, sc steerScope) {
-	if t.wakes.turnStarted(t.bufferSession(sc)) {
+	resume, expired := t.wakes.turnStarted(t.bufferSession(sc))
+	if len(expired) > 0 {
+		t.settleRows(ctx, sc, expired, marotte.EntrySteerDelivered{ReadTs: time.Now().UnixMilli(), Cleared: true})
+	}
+	if resume {
 		t.settleWaker(ctx, sc, wakeOpen)
 	}
 	if sc.run == "" {
@@ -192,11 +203,11 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 		t.handleStepFrame(ctx, chatID, attr, &u.Meta.Kiro)
 		return
 	}
-	t.handleChatInfo(ctx, chatID, &u.Meta.Kiro)
+	t.handleChatInfo(ctx, chatID, attr.SessionID, &u.Meta.Kiro)
 }
 
 // handleChatInfo routes a chat's own frame to the first handler its _meta.kiro shape names, context usage last.
-func (t *Translator) handleChatInfo(ctx context.Context, chatID marotte.ChatID, k *sessionInfoKiroBlock) {
+func (t *Translator) handleChatInfo(ctx context.Context, chatID marotte.ChatID, sessionID string, k *sessionInfoKiroBlock) {
 	if k.Kind == infoKindTurnTiming {
 		if turn, ok := t.turns.OwnTurn(chatID); ok {
 			turn.NoteFirstOutput(firstOutputFrom(k.TTFT))
@@ -233,9 +244,12 @@ func (t *Translator) handleChatInfo(ctx context.Context, chatID marotte.ChatID, 
 		t.handleV3Summarization(ctx, chatID, s)
 		return
 	}
-	// The only v3 channel that reliably carries the turn's credit spend and duration;
-	// usage_update.cost never arrived on the live 2.12.1 wire. Present, not non-empty: a turn
-	// that metered nothing sends [] and still carries its request ids and recoveries.
+	if k.Credits != nil {
+		t.persistSessionCredits(ctx, chatID, sessionID, k)
+		return
+	}
+	// The turn's own spend and duration. Present, not non-empty: a turn that metered nothing
+	// sends [] and still carries its request ids and recoveries.
 	if k.PromptTurnSummaries != nil {
 		t.persistTurnSummary(ctx, chatID, k)
 		return
@@ -301,6 +315,9 @@ func (t *Translator) stepMetering(_ context.Context, attr FrameAttribution, k *s
 				"workflow_id", attr.RunID, "node_path", attr.NodePath)
 		}
 		return 0, false
+	case k.Credits != nil:
+		// A step's spend is billed per turn_completion; its session total adds nothing.
+		return 0, false
 	case k.PromptTurnSummaries != nil:
 		credits = creditsOf(k.PromptTurnSummaries)
 		if !t.runs.RunMeter(attr.RunID, attr.NodePath, credits, k.ElapsedTime) {
@@ -335,7 +352,7 @@ func (t *Translator) handleContextUsage(ctx context.Context, chatID marotte.Chat
 		logUnconsumedInfoKind(chatID, k.Kind)
 		return
 	}
-	t.persistUsage(ctx, chatID, *pct, 0, -1) // no size/credits on this channel
+	t.persistUsage(ctx, chatID, *pct, 0) // no size on this channel
 }
 
 // handleTurnEvent takes the wire's turn bracket and the routing notice inside it, reporting whether
@@ -383,6 +400,10 @@ func (t *Translator) handleWireTurnEnd(ctx context.Context, chatID marotte.ChatI
 
 // The `_meta.kiro.kind` values a REPLAY projection switches on, spelled once here: the
 // live cascade dispatches on the sub-block present, not on the kind.
+// InfoKindSessionUsage is the session's running credit total. KAS stamps its load-time frame replay,
+// yet it is current state, so the agent's replay gate lets it through to the live handler.
+const InfoKindSessionUsage = "session_usage"
+
 const (
 	infoKindTurnStart      = "turn_start"
 	infoKindTurnCompletion = "turn_completion"
@@ -408,7 +429,6 @@ var knownSessionInfoKinds = map[string]struct{}{
 	"focus_update":        {},
 	"recap":               {},
 	"repositories_update": {},
-	"session_usage":       {},
 }
 
 // logUnconsumedInfoKind reports a session_info_update nothing in the cascade consumed: a
@@ -446,9 +466,8 @@ func (t *Translator) handleV3Summarization(ctx context.Context, chatID marotte.C
 	}
 }
 
-// persistTurnSummary routes a chat turn's metering frame to its three readers: the open
-// turn's aggregate, the chat's credit bill, and the conversation's turn count and duration.
-// usage_update.cost keeps overwrite precedence if KAS ever ships both.
+// persistTurnSummary routes a chat turn's metering frame to the open turn's aggregate and the
+// conversation's duration. The chat's credit figure is session_usage's (persistSessionCredits).
 func (t *Translator) persistTurnSummary(ctx context.Context, chatID marotte.ChatID, k *sessionInfoKiroBlock) {
 	credits := creditsOf(k.PromptTurnSummaries)
 	elapsedMs := k.ElapsedTime
@@ -460,18 +479,28 @@ func (t *Translator) persistTurnSummary(ctx context.Context, chatID marotte.Chat
 			ContextBreakdown: contextBreakdownFrom(k.ContextBreakdown),
 		})
 	}
-	t.metering.AccumulateSpend(ctx, chatID, credits)
 	t.metering.StageConversationTurnSummary(ctx, chatID, elapsedMs)
 }
 
+// persistSessionCredits overwrites the chat's session total with session_usage's (Chat.SetSessionCredits).
+func (t *Translator) persistSessionCredits(ctx context.Context, chatID marotte.ChatID, sessionID string, k *sessionInfoKiroBlock) {
+	total := creditsOf(k.Credits)
+	_, err := t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
+		return exists && c.SetSessionCredits(sessionID, total, k.Replay)
+	})
+	if errors.Is(err, chat.ErrTombstoned) {
+		return
+	}
+	if err != nil {
+		slog.Error("persist session credits", "chat_id", chatID, "error", err)
+	}
+}
+
 // usageUpdate is the v3 usage_update payload: size is the context window, used the tokens
-// consumed, cost the credit spend (nullish upstream; absent leaves credits untouched). A
-// FALLBACK: no KAS build run against emits it (2.16.1 has no emitter), so the live channel
-// is the context_usage session_info_update sub-kind.
+// consumed. A FALLBACK: no KAS build run against emits it (3.1.0 has no emitter), so the live
+// channel is the context_usage session_info_update sub-kind. Its cost is not read: the chat's
+// credit figure has one writer (persistSessionCredits).
 type usageUpdate struct {
-	Cost *struct {
-		Amount float64 `json:"amount"`
-	} `json:"cost"`
 	Size int64 `json:"size"`
 	Used int64 `json:"used"`
 }
@@ -483,19 +512,13 @@ func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID marotte.ChatI
 	if json.Unmarshal(raw, &u) != nil || u.Size <= 0 {
 		return
 	}
-	pct := float64(u.Used) / float64(u.Size) * 100
-	credits := -1.0 // sentinel: leave credits unchanged when cost is absent
-	if u.Cost != nil {
-		credits = u.Cost.Amount
-	}
-	t.persistUsage(ctx, chatID, pct, int(u.Size), credits)
+	t.persistUsage(ctx, chatID, float64(u.Used)/float64(u.Size)*100, int(u.Size))
 }
 
-// persistUsage writes the context percentage, and optionally the window size (size <= 0 leaves it)
-// and credits (credits < 0 leaves them), into the chat's usage. The percentage gate is a MATERIAL
-// delta: each Mutate rewrites the whole chat file and KAS emits the percentage several times per
-// response.
-func (t *Translator) persistUsage(ctx context.Context, chatID marotte.ChatID, pct float64, size int, credits float64) {
+// persistUsage writes the context percentage, and optionally the window size (size <= 0 leaves it),
+// into the chat's usage. The percentage gate is a MATERIAL delta: each Mutate rewrites the whole chat
+// file and KAS emits the percentage several times per response.
+func (t *Translator) persistUsage(ctx context.Context, chatID marotte.ChatID, pct float64, size int) {
 	_, err := t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
@@ -510,11 +533,6 @@ func (t *Translator) persistUsage(ctx context.Context, chatID marotte.ChatID, pc
 			c.Usage.ContextSize = size
 			changed = true
 		}
-		if credits >= 0 && c.Usage.Credits != credits {
-			c.Usage.Credits = credits
-			changed = true
-		}
-		// Credits keep an exact gate: rounding a money change away would be wrong.
 		return changed
 	})
 	if errors.Is(err, chat.ErrTombstoned) {

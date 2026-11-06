@@ -134,17 +134,16 @@ func (reg *mcpRegistry) handleReconnect(w http.ResponseWriter, r *http.Request) 
 
 // Sign-in refusals: the server answers 409 with the text.
 var (
-	errSignInConnected     = errors.New("this server is already connected, so signing in again would only discard its credentials")
-	errSignInInProgress    = errors.New("a sign-in for this server is already in progress")
-	errSignInNotNeeded     = errors.New("this server is not waiting for a sign-in")
-	errAnotherSignInStands = errors.New("another server's sign-in is in progress; finish it or let it time out, then try again")
+	errSignInConnected  = errors.New("this server is already connected, so signing in again would only discard its credentials")
+	errSignInInProgress = errors.New("a sign-in for this server is already in progress")
+	errSignInNotNeeded  = errors.New("this server is not waiting for a sign-in")
 )
 
 // claimSignIn starts name's sign-in on the oldest view waiting for it. A server no view waits on is refused, connected
 // or not: KAS's startOAuth discards every credential the server holds. A session connected through another
 // declaration of the name keeps its live connection and needs a sign-in at its next reset. At most one unexpired
-// sign-in stands across the views, because the consent URL KAS opens names neither its session nor its server. A
-// timer ends the sign-in at its deadline if nothing else has. The attempt it returns is what the claimant's own
+// sign-in stands per server name across the views, because the consent URL KAS opens names its server but not its
+// session. A timer ends the sign-in at its deadline if nothing else has. The attempt it returns is what the claimant's own
 // release names (releaseAttempt, failSignIn).
 func (reg *mcpRegistry) claimSignIn(ctx context.Context, name string) (signInClaim, error) {
 	configured := reg.configuredNames(ctx)
@@ -168,11 +167,10 @@ type signInClaim struct {
 }
 
 func (reg *mcpRegistry) fileSignInLocked(name string) (signInClaim, error) {
-	if i := slices.IndexFunc(reg.views, func(v mcpView) bool { return v.signIn != nil }); i >= 0 {
-		if reg.views[i].signIn.server == name {
-			return signInClaim{}, errSignInInProgress
-		}
-		return signInClaim{}, errAnotherSignInStands
+	if slices.ContainsFunc(reg.views, func(v mcpView) bool {
+		return slices.ContainsFunc(v.signIns, func(s viewSignIn) bool { return s.server == name })
+	}) {
+		return signInClaim{}, errSignInInProgress
 	}
 	r, ok := reg.resolveLocked(name)
 	if rec := reg.servers[name]; !ok || rec == nil || rec.State != mcpStateOAuth || r.report.State != translate.MCPReportNeedsAuth {
@@ -185,7 +183,7 @@ func (reg *mcpRegistry) fileSignInLocked(name string) (signInClaim, error) {
 	cleared := v.failedSignIn.server != ""
 	v.failedSignIn = viewSignInFailure{}
 	reg.signIns++
-	v.signIn = &viewSignIn{server: name, deadline: reg.now().Add(signInTTL), attempt: reg.signIns}
+	v.signIns = append(v.signIns, viewSignIn{server: name, deadline: reg.now().Add(signInTTL), attempt: reg.signIns})
 	reg.lifetime.afterUnlessDraining(signInTTL, func() { reg.expireSignIns(reg.lifetime.shutdownCtx) })
 	return signInClaim{session: v.session, attempt: reg.signIns, clearedFailure: cleared}, nil
 }
@@ -205,10 +203,9 @@ func (reg *mcpRegistry) expireSignInsLocked(configured map[string]struct{}) mcpD
 	now := reg.now()
 	expired := false
 	for i := range reg.views {
-		if s := reg.views[i].signIn; s != nil && !now.Before(s.deadline) {
-			reg.views[i].signIn = nil
-			expired = true
-		}
+		n := len(reg.views[i].signIns)
+		reg.views[i].signIns = slices.DeleteFunc(reg.views[i].signIns, func(s viewSignIn) bool { return !now.Before(s.deadline) })
+		expired = expired || len(reg.views[i].signIns) < n
 	}
 	if !expired {
 		return mcpDerived{}
@@ -216,17 +213,22 @@ func (reg *mcpRegistry) expireSignInsLocked(configured map[string]struct{}) mcpD
 	return reg.deriveLocked(configured)
 }
 
-// attemptViewLocked is the index of the view whose standing sign-in attempt filed, -1 once it has ended.
-func (reg *mcpRegistry) attemptViewLocked(attempt uint64) int {
-	return slices.IndexFunc(reg.views, func(v mcpView) bool { return v.signIn != nil && v.signIn.attempt == attempt })
+// endAttemptLocked ends the sign-in attempt filed and answers the index of its view, -1 once it had ended.
+func (reg *mcpRegistry) endAttemptLocked(attempt uint64) int {
+	for i := range reg.views {
+		n := len(reg.views[i].signIns)
+		reg.views[i].signIns = slices.DeleteFunc(reg.views[i].signIns, func(s viewSignIn) bool { return s.attempt == attempt })
+		if len(reg.views[i].signIns) < n {
+			return i
+		}
+	}
+	return -1
 }
 
 // releaseAttempt ends the sign-in only while attempt still holds it.
 func (reg *mcpRegistry) releaseAttempt(attempt uint64) {
 	reg.mu.Lock()
-	if i := reg.attemptViewLocked(attempt); i >= 0 {
-		reg.views[i].signIn = nil
-	}
+	reg.endAttemptLocked(attempt)
 	reg.mu.Unlock()
 }
 
@@ -273,13 +275,12 @@ func (reg *mcpRegistry) sendSignIn(h engineHandle, c signInClaim, name string) {
 func (reg *mcpRegistry) failSignIn(ctx context.Context, attempt uint64, name, reason string) {
 	configured := reg.configuredNames(ctx)
 	reg.mu.Lock()
-	i := reg.attemptViewLocked(attempt)
+	i := reg.endAttemptLocked(attempt)
 	if i < 0 {
 		reg.mu.Unlock()
 		return
 	}
 	v := &reg.views[i]
-	v.signIn = nil
 	v.failedSignIn = viewSignInFailure{server: name, reason: reason}
 	d := reg.deriveLocked(configured)
 	reg.mu.Unlock()
@@ -287,8 +288,8 @@ func (reg *mcpRegistry) failSignIn(ctx context.Context, attempt uint64, name, re
 }
 
 // handleSignIn serves POST /api/mcp/sign-in {server}: 202 once the sign-in is queued, 404 for an unknown or disabled
-// server, 409 when no session is waiting for sign-in on this server or another sign-in stands, 503 while no engine
-// runs.
+// server, 409 when no session is waiting for sign-in on this server or its sign-in already stands, 503 while no
+// engine runs.
 func (reg *mcpRegistry) handleSignIn(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)

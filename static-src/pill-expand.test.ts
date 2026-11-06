@@ -419,3 +419,43 @@ describe(
     });
   },
 );
+
+describe("expandable pill handle", () => {
+  function handlePill(): {
+    pill: HTMLElement;
+    card: HTMLElement;
+    handle: ReturnType<typeof makeExpandable>;
+  } {
+    const slot = document.createElement("span");
+    const pill = document.createElement("button");
+    const card = document.createElement("div");
+    slot.append(pill, card);
+    document.body.appendChild(slot);
+    hosts.push(slot);
+    const ac = new AbortController();
+    controllers.push(ac);
+    return { pill, card, handle: makeExpandable(pill, card, { signal: ac.signal }) };
+  }
+
+  it("opens its card from open() and closes the other pill's", () => {
+    const first = handlePill();
+    const second = handlePill();
+
+    first.pill.click();
+    expect(first.pill.classList.contains("pill-expanded")).toBe(true);
+    second.handle.open();
+
+    expect(second.pill.classList.contains("pill-expanded")).toBe(true);
+    expect(second.pill.getAttribute("aria-expanded")).toBe("true");
+    expect(second.card.hidden).toBe(false);
+    expect(first.pill.classList.contains("pill-expanded")).toBe(false);
+  });
+
+  it("leaves an open card open on a second open()", () => {
+    const { pill, handle } = handlePill();
+
+    handle.open();
+    handle.open();
+    expect(pill.classList.contains("pill-expanded")).toBe(true);
+  });
+});

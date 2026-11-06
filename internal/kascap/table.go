@@ -445,6 +445,18 @@ var table = []decl{
 		send:     false,
 	},
 	{
+		key:      "c2s",
+		door:     doorConnection,
+		resolver: resolverSetting,
+		send:     false,
+	},
+	{
+		key:      "c2sViews",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		send:     false,
+	},
+	{
 		key:      "semanticReview",
 		door:     doorConnection,
 		resolver: resolverSetting,

@@ -249,6 +249,8 @@ type Runtime struct {
 	bridge       *bridges
 	bus          *bus
 	coord        *bridgeCoordinator
+	// peerHolds keeps the frames of a chat another chat's message woke until that chat is resident.
+	peerHolds peerHolds
 	// versions is the digest registry: workspace stores and the chat store mint into it, the resolver and REST envelopes read it.
 	versions *subject.Versions
 	// digestSlots bounds concurrent digest resolutions (digestConcurrency).
