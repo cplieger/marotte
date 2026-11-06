@@ -31,7 +31,7 @@ interface InputScheduling {
 }
 
 /** Input the browser has received and not yet dispatched, where it can tell (Chromium); elsewhere
- *  false, and a click queued behind the paint can show the superseded chat for one frame. */
+ *  false, and a click queued behind the paint shows the superseded chat until it is dispatched. */
 function inputPending(): boolean {
   const scheduling = (navigator as Navigator & { scheduling?: InputScheduling }).scheduling;
   return scheduling?.isInputPending?.() === true;
