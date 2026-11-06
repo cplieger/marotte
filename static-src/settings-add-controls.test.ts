@@ -95,7 +95,7 @@ const STATIC_SECTIONS = [
 /** Where Settings and the dialogs it opens are written in the shipped page. */
 const SHIPPED_ROOTS = ["#settings-view", "#mcp-modal"] as const;
 
-/** The forms and submits there that are not adders: the MCP dialog's main actions (inventory.md). */
+/** The forms and submits there that are not adders: the MCP dialog's main actions, which save a whole server rather than add a row. */
 const NOT_ADDERS = [
   "form.mcp-mode-panel[data-mcp-mode='remote']",
   "form.mcp-mode-panel[data-mcp-mode='registry']",
