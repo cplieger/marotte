@@ -1285,12 +1285,9 @@ func TestTriggeredInvokeErrorReturnsWorkflowID(t *testing.T) {
 // releaseOrderFixture is the probe's recording of a cancel landing before the run's host session closed.
 type releaseOrderFixture struct {
 	CancelResult      json.RawMessage `json:"cancel_result"`
-	ListedAfter       json.RawMessage `json:"listed_after"`
 	FramesBeforeClose []struct {
 		Params map[string]any `json:"params"`
 		Method string         `json:"method"`
-		Lane   string         `json:"lane"`
-		Status string         `json:"status"`
 	} `json:"frames_before_close"`
 }
 

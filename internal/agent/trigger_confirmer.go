@@ -33,7 +33,7 @@ type TriggerConfirmer interface {
 
 // WithTriggerConfirmer wires the event rules' confirmer; without it no launch is triggered.
 //
-//deadset:ignore DS1004 -- composition wires it with the trigger runner; until that lands only the tests do
+//deadset:ignore DS1102 -- composition wires it with the trigger runner; until that lands only the tests do
 func WithTriggerConfirmer(c TriggerConfirmer) Option {
 	return func(rt *Runtime) { rt.runs.confirmer = c }
 }

@@ -96,7 +96,7 @@ func scheduledLaunch(row launchrule.Row, slotAt time.Time) launchOrigin {
 
 // triggeredLaunch is an event rule's launch of one queued event.
 //
-//deadset:ignore DS1004 -- the trigger runner's launch builds it; until that lands only the tests launch a triggered run
+//deadset:ignore DS1102 -- the trigger runner's launch builds it; until that lands only the tests launch a triggered run
 func triggeredLaunch(ruleID, eventKey, coalesceKey, label string) launchOrigin {
 	return launchOrigin{origin: runlease.OriginTriggered, event: &triggerEvent{
 		ruleID: ruleID, eventKey: eventKey, coalesceKey: coalesceKey, label: label,
