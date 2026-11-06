@@ -166,8 +166,8 @@ func (t *Translator) turnStarted(ctx context.Context, sc steerScope) {
 }
 
 // HandleSessionInfoUpdate folds v3 context-usage into the chat's usage and routes v3
-// compaction status. Parent-only, except a workflow step's turn_completion, let through
-// for its metering (persistTurnSummary).
+// compaction status. Parent-only, except a workflow step's hooks, model fallback and
+// metering, which go to its run turn (handleStepFrame).
 func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var u sessionInfoUpdate
 	if json.Unmarshal(raw, &u) != nil {
