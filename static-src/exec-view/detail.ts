@@ -72,6 +72,7 @@ export function buildExecDetail(
       root.dataset["state"] = "pending";
       paintLabel(title, { label: "No step selected" });
       state.textContent = "";
+      state.removeAttribute("data-pending-end");
       dur.textContent = "";
       facts.replaceChildren();
       facts.hidden = true;
@@ -88,7 +89,8 @@ export function buildExecDetail(
     }
     root.dataset["state"] = node.state;
     paintLabel(title, node);
-    state.textContent = STATE_WORD[node.state];
+    state.textContent = node.pendingEnd?.text ?? STATE_WORD[node.state];
+    state.toggleAttribute("data-pending-end", node.pendingEnd !== undefined);
     const ms = elapsed(node.start, node.end);
     dur.textContent = ms > 0 ? formatElapsed(ms) : "";
     const verbs = headAction?.(node) ?? null;

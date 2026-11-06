@@ -1042,6 +1042,140 @@ describe("a step's detail line", () => {
   });
 });
 
+describe("a paused step whose end KAS recorded but has not applied", () => {
+  const pendingOf = (signal: string | undefined, run = "running", status = "paused") => {
+    const extra = signal === undefined ? {} : { completionSignal: signal };
+    const out = runToExec(
+      {
+        ...stateWith(step("gate", status, { pauseReason: "Waiting for input.", ...extra })),
+        status: run,
+      } as RunState,
+      undefined,
+      NO_ASKS,
+    );
+    return out.nodes[0];
+  };
+
+  it.each([
+    ["success", "completed", "Done, applies when the run's other steps finish"],
+    ["error", "failed", "Failed, applies when the run's other steps finish"],
+  ])("labels a recorded %s as an end pending on the run's other steps", (signal, status, text) => {
+    const n = pendingOf(signal);
+    expect(n?.pendingEnd).toEqual({ status, text });
+    expect(n?.subtitle).toBe(text);
+    expect(n?.state).toBe("waiting");
+  });
+
+  it("says a paused run applies it on resume", () => {
+    expect(pendingOf("success", "paused")?.pendingEnd?.text).toBe(
+      "Done, applies when the run resumes",
+    );
+  });
+
+  it.each([
+    ["no signal", undefined, "running", "paused"],
+    ["a question's signal", "need_input", "running", "paused"],
+    ["a finished run", "success", "cancelled", "paused"],
+    ["a run status marotte does not know", "success", "unknown", "paused"],
+    ["a running step", "success", "running", "running"],
+  ])("labels nothing for %s", (_name, signal, run, status) => {
+    const n = pendingOf(signal, run, status);
+    expect(n?.pendingEnd).toBeUndefined();
+    expect(n?.subtitle ?? "").not.toContain("applies when");
+  });
+});
+
+// KAS holds a parallel branch whose paused step a client marked done or failed until the run's other
+// steps stop (kirodotdev/Kiro#12281): the step reads completed or failed and its pass and repeat read
+// paused.
+describe("a paused lane whose steps have all stopped", () => {
+  const HELD = "Done, moves on when the run's other steps finish";
+  const HELD_FAILED = "Failed, applies when the run's other steps finish";
+  const heldRun = (
+    gate: string,
+    run = "running",
+    lane = "paused",
+    gateExtra = {},
+    { pass = lane, pause }: { pass?: string; pause?: unknown } = {},
+  ) =>
+    runToExec(
+      {
+        ...stateWith(
+          {
+            nodeId: "wf_1",
+            type: "sequence",
+            status: run === "running" ? "running" : "paused",
+            children: [
+              {
+                nodeId: "lanes",
+                type: "parallel",
+                status: run === "running" ? "running" : "paused",
+                children: [
+                  {
+                    nodeId: "lane",
+                    type: "repeat",
+                    status: lane,
+                    children: [
+                      {
+                        nodeId: "lane#6",
+                        type: "sequence",
+                        status: pass,
+                        iteration: 6,
+                        children: [step("gate", gate, gateExtra), step("after", "pending")],
+                      },
+                    ],
+                  },
+                  step("build", "running"),
+                ],
+              },
+            ],
+          },
+          pause === undefined ? {} : { pause },
+        ),
+        status: run,
+      } as RunState,
+      undefined,
+      NO_ASKS,
+    );
+
+  it("labels the pass and the repeat holding it, and not the parallel's running branch", () => {
+    const lanes = heldRun("completed").nodes[0];
+    const [lane, build] = lanes?.children ?? [];
+    expect(lanes?.subtitle).toBe("in parallel");
+    expect(lane?.subtitle).toContain(HELD);
+    expect(lane?.children[0]?.subtitle).toBe(HELD);
+    expect(lane?.children[0]?.children[0]?.subtitle ?? "").not.toContain(HELD);
+    expect(build?.subtitle ?? "").not.toContain(HELD);
+  });
+
+  it.each([
+    ["a paused run", "completed", "paused", "paused", {}],
+    ["a paused step in it", "paused", "running", "paused", { completionSignal: "success" }],
+    ["a running step in it", "running", "running", "paused", {}],
+    ["a running lane", "completed", "running", "running", {}],
+  ])("labels nothing for %s", (_name, gate, run, lane, gateExtra) => {
+    const nodes = flatten(heldRun(gate, run, lane, gateExtra).nodes);
+    expect(nodes.filter((n) => (n.subtitle ?? "").includes(HELD))).toEqual([]);
+  });
+
+  it("labels a lane whose step was marked failed as failing once the others finish", () => {
+    const lane = heldRun("failed").nodes[0]?.children[0];
+    expect(lane?.subtitle).toContain(HELD_FAILED);
+    expect(lane?.children[0]?.subtitle).toBe(HELD_FAILED);
+    expect(lane?.subtitle).not.toContain(HELD);
+  });
+
+  // At its cap KAS pauses the repeat with its last pass settled, and pauses the run once the loop
+  // settles rather than moving the lane on.
+  it("labels nothing for a repeat paused at its cap", () => {
+    const pause = { kind: "maxIterations", nodeId: "lane", maxIterations: 6, iterationsRun: 6 };
+    const run = heldRun("completed", "running", "paused", {}, { pass: "completed", pause });
+    expect(
+      flatten(run.nodes).filter((n) => /moves on|applies when/.test(n.subtitle ?? "")),
+    ).toEqual([]);
+  });
+});
+
 describe("the plan revision notice", () => {
   it.each([
     [

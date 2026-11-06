@@ -577,7 +577,7 @@ describe("the box", () => {
     ]);
   });
 
-  it("says a step paused beside running siblings waits on them, and how to end it now", async () => {
+  it("says what Mark step done does for a step paused beside running siblings", async () => {
     m.outcome = {
       status: "error",
       error: { message: "step waits", code: "waits_on_run", status: 409 },
@@ -597,7 +597,7 @@ describe("the box", () => {
     expect(m.notices).toEqual([
       [
         "run:wf_2w",
-        "This step waits until the run's other steps finish. Use Mark step done to end it now.",
+        "Mark step done ends this step now. Its lane moves on when the run's other steps finish, or at once if you pause and resume the run, which interrupts them.",
         "error",
       ],
     ]);

@@ -604,6 +604,28 @@ func TestSessionInfoUpdate_StepCompletionWithNoUsageStillMetersTheRunTurn(t *tes
 	}
 }
 
+// A step's turn_start reaches its run turn through the launching chat's door, as its turn_end does: the run's
+// empty-answer grade needs both edges.
+func TestSessionInfoUpdate_AStepsTurnStartMarksItsRunTurn(t *testing.T) {
+	t.Parallel()
+	raw, err := json.Marshal(map[string]any{"_meta": map[string]any{"kiro": map[string]any{
+		"kind": "turn_start", "turnStart": true,
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const runID, nodePath = "wf_1", "wf_1/build"
+	deps := newBaseDeps()
+	deps.turns.runTurn(runID, nodePath)
+	tr := New(rolesOf(deps))
+	tr.HandleSessionInfoUpdate(t.Context(), testChat, raw, FrameAttribution{Step: true, RunID: runID, NodePath: nodePath})
+
+	want := runCall{kind: "turn_start", runID: runID, nodePath: nodePath}
+	if !slices.Contains(deps.runCalls, want) {
+		t.Errorf("run calls = %+v, want %+v", deps.runCalls, want)
+	}
+}
+
 // TestSessionInfoUpdate_StepFramesWithoutMeteringStayDropped pins that a step's focus,
 // compaction and context-usage frames never reach the chat.
 func TestSessionInfoUpdate_StepFramesWithoutMeteringStayDropped(t *testing.T) {

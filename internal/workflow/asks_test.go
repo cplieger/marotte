@@ -182,6 +182,26 @@ func TestOpenAsks_TheParentsSendMessageEndsTheAskAndAReparkIsANewOne(t *testing.
 	}
 }
 
+// KAS can keep a step paused while its session runs a turn: an answer's wake turn beside a running
+// sibling, or the parking turn before it ends. The step is working, so it asks nothing until that
+// turn ends.
+func TestOpenAsks_AStepWhoseTurnRunsAsksNothing(t *testing.T) {
+	t.Parallel()
+	in := decoded(t, fixture(t, "parked"))
+	for _, step := range []StepLog{
+		{Marker: "m2", Open: true, Said: "words"},
+		{Marker: "m2", Open: true, Asked: "Which branch?", Said: "words"},
+	} {
+		if got := OpenAsks(in, RunLog{Epoch: "e1", Steps: map[string]StepLog{fixtureSession: step}}); len(got) != 0 {
+			t.Errorf("with the turn open (%+v) the asks = %+v, want none", step, got)
+		}
+	}
+	ended := OpenAsks(in, RunLog{Epoch: "e1", Steps: map[string]StepLog{fixtureSession: {Marker: "m2", Said: "words"}}})
+	if len(ended) != 1 || ended[0].ID != keyenc.Join(ended[0].Position, "m2") {
+		t.Errorf("once the turn ended the asks = %+v, want one keyed on its turn's marker", ended)
+	}
+}
+
 func TestOpenAsks_AMarkerlessAskKeysOnTheEpoch(t *testing.T) {
 	t.Parallel()
 	in := decoded(t, fixture(t, "parked"))
@@ -206,7 +226,6 @@ func TestOpenAsks_Text(t *testing.T) {
 	}{
 		{"the parking turn's warning", StepLog{Asked: "Q?", Said: "words"}, "Q?", marotte.RunAskTextAsked},
 		{"no warning falls back to the step's last words", StepLog{Said: "words"}, "words", marotte.RunAskTextLastMessage},
-		{"an open turn is never the question", StepLog{Asked: "Q?", Said: "words", Open: true}, "words", marotte.RunAskTextLastMessage},
 		{"nothing seen", StepLog{}, "", marotte.RunAskTextUnseen},
 	}
 	for _, c := range cases {

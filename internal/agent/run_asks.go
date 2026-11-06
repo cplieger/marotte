@@ -617,7 +617,8 @@ func (rs *Runs) armRequeryLocked(c *askCell) {
 
 // readSaid fills b with, from the run's own record, the last words of each parked step whose
 // question marotte did not see this boot: the cold path, after a restart or a park with no warning.
-// Once per turn marker, since the record can be large.
+// Once per turn marker, since the record can be large, and never while the turn is open: the read
+// would cache words the turn has not finished.
 func (rs *Runs) readSaid(ctx context.Context, c *askCell, in workflow.Inspect, b askBasis) {
 	if rs.log == nil {
 		return
@@ -633,7 +634,7 @@ func (rs *Runs) readSaid(ctx context.Context, c *askCell, in workflow.Inspect, b
 		cached := m.saidRead && m.saidMarker == sl.Marker
 		said := m.said
 		c.mu.Unlock()
-		if sl.Asked != "" && !sl.Open {
+		if sl.Asked != "" || sl.Open {
 			continue
 		}
 		if !cached {
@@ -679,6 +680,22 @@ func (rs *Runs) askTurnEdge(workflowID, session string, edge translate.TurnEdge)
 	}
 	c.mu.Unlock()
 	rs.kickCell(c)
+}
+
+// askEngineEnded ends every step turn the ended engine left open, as its turn_end would have: no turn_end follows
+// a dead engine, and a turn left open hides its step's question (workflow.OpenAsks) from a park after the respawn.
+func (rs *Runs) askEngineEnded() {
+	for _, c := range rs.asks.snapshotCells() {
+		c.mu.Lock()
+		for _, m := range c.steps {
+			if m.open {
+				m.open = false
+				m.asked, m.warned = m.warned, ""
+			}
+		}
+		c.mu.Unlock()
+		rs.kickCell(c)
+	}
 }
 
 // settleMovedLocked clears a replied send once its session started a turn after the write: for an

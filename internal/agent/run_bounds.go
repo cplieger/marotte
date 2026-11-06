@@ -912,6 +912,9 @@ func (rs *Runs) observeStart(ctx context.Context, chatID marotte.ChatID, msg *ma
 // translates. A non-terminal run_complete (an onMaxIterations pause) keeps the arm.
 func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	f := decodeLifecycleFrame(msg)
+	if f.WorkflowID != "" && (f.Status.Terminal() || f.Status == marotte.RunStatusPaused) {
+		rs.signals.runStopped(f.WorkflowID)
+	}
 	if f.WorkflowID != "" && f.Status.Terminal() {
 		// Before HandleRunComplete: the client repaints on its `run_finished` invalidation.
 		rs.closeRun(ctx, f.WorkflowID, string(f.Status))

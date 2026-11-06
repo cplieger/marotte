@@ -50,13 +50,13 @@ type RunLog struct {
 // StepLog is one step session's turn record as marotte saw it this boot.
 type StepLog struct {
 	// Marker is the newest turn_start's marker, "" when none was seen. A turn_end never moves it,
-	// so an ask's id is fixed for the life of its parking turn.
+	// so an ask's id holds until the step's next turn starts.
 	Marker string
 	// Asked is the warning text of the newest turn that ended, "" when that turn sent none.
 	Asked string
 	// Said is the parking turn's last agent words from the run's own record.
 	Said string
-	// Open is true while the newest edge is a turn_start with no turn_end after it.
+	// Open is true while the newest edge is a turn_start with no turn_end, or engine end, after it.
 	Open bool
 }
 
@@ -100,8 +100,10 @@ func AskPosition(workflowID string, st *StepSession) string {
 	return keyenc.Join(workflowID, PathKey(st.Path), st.SessionID)
 }
 
-// OpenAsks is every step of reply waiting on a person, in pre-order. Pure: it reads no clock and
-// does no I/O. An unreadable reply answers none, which the caller must not publish as "answered".
+// OpenAsks is every step of reply waiting on a person, in pre-order. A parked step whose turn is
+// open is not: KAS keeps an answered step paused while its wake turn runs beside a running sibling
+// (kirodotdev/Kiro#11863). Pure: it reads no clock and does no I/O. An unreadable reply answers
+// none, which the caller must not publish as "answered".
 func OpenAsks(reply Inspect, log RunLog) []Ask {
 	if !reply.OK || marotte.RunStatus(reply.State.Status).Terminal() {
 		return nil
@@ -111,10 +113,10 @@ func OpenAsks(reply Inspect, log RunLog) []Ask {
 	sole := len(ParkedSteps(reply)) == 1
 	var out []Ask
 	for i, v := range all {
-		if !v.n.waits() {
+		step := log.Steps[v.n.SessionID]
+		if !v.n.waits() || step.Open {
 			continue
 		}
-		step := log.Steps[v.n.SessionID]
 		position := AskPosition(s.WorkflowID, &StepSession{Path: v.path, SessionID: v.n.SessionID})
 		marker := cmp.Or(step.Marker, keyenc.Join(log.Epoch, "0"))
 		text, source := askText(step)
@@ -144,7 +146,7 @@ func unsignalledReason(s *State, n *node, sole bool) string {
 }
 
 func askText(step StepLog) (string, marotte.RunAskText) {
-	if step.Asked != "" && !step.Open {
+	if step.Asked != "" {
 		return step.Asked, marotte.RunAskTextAsked
 	}
 	if step.Said != "" {

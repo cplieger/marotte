@@ -202,7 +202,9 @@ func TestRunNodeComplete_AStepThatRanLeavesNoNote(t *testing.T) {
 			seedChat(t, cs, chatID)
 			h.runs.grantLease(t.Context(), id, "nightly",
 				launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
-			h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: id, NodePath: "build", SessionID: "step-session-1"}, "")
+			step := &translate.RunStep{RunID: id, NodePath: "build", SessionID: "step-session-1"}
+			h.runs.RunNodeStart(t.Context(), step, "")
+			answerStep(t, h.runs.log, step)
 			if !h.runs.log.stopReason(id, "build", tc.raw) {
 				t.Fatalf("StopReason(%q) refused on the open turn", tc.raw)
 			}

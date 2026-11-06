@@ -271,9 +271,11 @@ func TestRunLog_ACloseKeepsKASsStatusOverAToolUseStop(t *testing.T) {
 // closeStep runs one step turn through its turn_end and node_complete.
 func closeStep(t *testing.T, r *runLog, path string, raw marotte.StopReason, status string) {
 	t.Helper()
-	if _, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: path}, "c-1"); err != nil {
+	step := &translate.RunStep{RunID: "wf1", NodePath: path}
+	if _, _, err := r.open(t.Context(), step, "c-1"); err != nil {
 		t.Fatal(err)
 	}
+	answerStep(t, r, step)
 	if !r.stopReason("wf1", path, raw) {
 		t.Fatalf("StopReason(%q) refused on the open turn %s", raw, path)
 	}
@@ -411,6 +413,18 @@ func TestRunLog_StepEndsReadsAnEngineEndAsInterruptedAndItsResume(t *testing.T) 
 			t.Errorf("StepEnds after the resumed turn completed = %+v, want none", got)
 		}
 	})
+}
+
+// answerStep writes an answer into the step's open turn, so its close is not an empty answer.
+func answerStep(t *testing.T, r *runLog, step *translate.RunStep) {
+	t.Helper()
+	turn := r.turn(step.RunID, step.NodePath)
+	if turn == nil {
+		t.Fatalf("Setup: %s has no open turn", step.NodePath)
+	}
+	if _, err := turn.TextDelta(t.Context(), "", "say-answer", "Done."); err != nil {
+		t.Fatalf("Setup: answer: %v", err)
+	}
 }
 
 // openStepTurn opens the step's turn and answers its turn_open, which must be a new one.

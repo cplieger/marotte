@@ -276,11 +276,17 @@ func (t *Translator) billStepMetering(ctx context.Context, chatID marotte.ChatID
 	}
 }
 
-// stepMetering folds a step's turn_end and turn_completion into its run turn's aggregate
-// (a run turn's bracket is node_start/node_complete, so turn_start is a no-op). It
+// stepMetering folds a step's turn_start, turn_end and turn_completion into its run turn (a
+// run turn's bracket is node_start/node_complete, so the turn edges only mark it). It
 // reports the credits taken, for a chat-parented caller to bill.
 func (t *Translator) stepMetering(_ context.Context, attr FrameAttribution, k *sessionInfoKiroBlock) (credits float64, ok bool) {
 	switch {
+	case k.TurnStart != nil:
+		if !t.runs.RunTurnStart(attr.RunID, attr.NodePath) {
+			slog.Debug("run log: turn_start for a step path with no open turn, dropped",
+				"workflow_id", attr.RunID, "node_path", attr.NodePath)
+		}
+		return 0, false
 	case k.TurnEnd != nil:
 		if !t.runs.RunStopReason(attr.RunID, attr.NodePath, marotte.StopReason(k.TurnEnd.StopReason)) {
 			slog.Debug("run log: turn_end for a step path with no open turn, dropped",
