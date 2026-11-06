@@ -1,9 +1,4 @@
-// Package schedule computes when a recurring workflow run is next due.
-//
-// The shape is a subset of RFC 5545's recurrence rule rather than a cron expression: it
-// maps one-to-one onto the UI's choices and needs no parser. Everything is LOCAL time, by
-// decision: there is no per-schedule timezone.
-package schedule
+package launchrule
 
 import (
 	"errors"
@@ -12,23 +7,23 @@ import (
 	"time"
 )
 
-// freq is how often a schedule recurs.
-type freq string
+// Freq is how often a clock rule recurs.
+type Freq string
 
 // The five recurrence frequencies the UI offers.
 const (
-	FreqMinutely freq = "minutely" // every Interval minutes, phased by Minute
-	freqHourly   freq = "hourly"   // every Interval hours, at Minute past
-	FreqDaily    freq = "daily"    // every day at Hour:Minute
-	freqWeekly   freq = "weekly"   // on each Weekday at Hour:Minute
-	freqMonthly  freq = "monthly"  // on MonthDay at Hour:Minute
+	FreqMinutely Freq = "minutely" // every Interval minutes, phased by Minute
+	FreqHourly   Freq = "hourly"   // every Interval hours, at Minute past
+	FreqDaily    Freq = "daily"    // every day at Hour:Minute
+	FreqWeekly   Freq = "weekly"   // on each Weekday at Hour:Minute
+	FreqMonthly  Freq = "monthly"  // on MonthDay at Hour:Minute
 )
 
 // lastDay in MonthDay means "the last day of the month", the explicit answer to
 // months that have no 29th/30th/31st.
 const lastDay = -1
 
-// The bounds on FreqMinutely's Interval (an hour or more is freqHourly's). The floor is
+// The bounds on FreqMinutely's Interval (an hour or more is FreqHourly's). The floor is
 // derived from the runner: below it the 1-minute ticker makes every sweep due and missGrace
 // cannot tell a fireable slot from the next. minRunBudget moves with this constant.
 // Mirrored in static-src/schedule-types.ts (INTERVAL_BOUNDS); change both together.
@@ -46,51 +41,53 @@ const maxScanDays = 400
 // validated spec cannot produce this.
 var errNoOccurrence = errors.New("schedule has no next occurrence")
 
-// Spec is one recurrence rule. Only the fields its freq uses are read, so a
-// stored spec keeps the others at zero.
+// Spec is one clock rule's recurrence, a subset of RFC 5545's recurrence rule rather than a
+// cron expression: it maps one-to-one onto the UI's choices and needs no parser. Everything is
+// LOCAL time, by decision: there is no per-rule timezone. Only the fields its freq uses are
+// read, so a stored spec keeps the others at zero.
 type Spec struct {
-	Freq freq `json:"freq"`
-	// Weekdays are the days freqWeekly fires on, as time.Weekday (0=Sunday).
+	Freq Freq `json:"freq"`
+	// Weekdays are the days FreqWeekly fires on, as time.Weekday (0=Sunday).
 	Weekdays []int `json:"weekdays,omitempty"`
 	// Interval is the step in its freq's unit: hours for FreqHourly (1-24), minutes for
 	// FreqMinutely (minMinuteInterval..maxMinuteInterval). Anchored to local midnight, so a step
 	// that does not divide the day has a short final gap (every 5 hours: 00,05,10,15,20, midnight).
 	Interval int `json:"interval,omitempty"`
-	// MonthDay is the day freqMonthly fires on: 1-31, or LastDay. A value past
+	// MonthDay is the day FreqMonthly fires on: 1-31, or LastDay. A value past
 	// the end of a short month is CLAMPED to that month's last day rather than
 	// skipping the month, so "day 31" still fires in February.
 	MonthDay int `json:"month_day,omitempty"`
-	// Hour and Minute are the local time of day. freqHourly ignores Hour and uses Minute as
+	// Hour and Minute are the local time of day. FreqHourly ignores Hour and uses Minute as
 	// the offset past each stepped hour; FreqMinutely uses Minute % Interval as the PHASE, so the
 	// chosen minute is always a fire time.
 	Hour   int `json:"hour"`
 	Minute int `json:"minute"`
 }
 
-// validate reports whether the spec is well-formed. Called on every write so a
-// stored schedule can be trusted by the runner.
-func (s Spec) validate() error {
+// Validate reports whether the spec is well-formed. The store calls it on every write so the
+// clock runner can trust a stored spec.
+func (s Spec) Validate() error {
 	if s.Minute < 0 || s.Minute > 59 {
 		return fmt.Errorf("minute %d out of range 0-59", s.Minute)
 	}
 	switch s.Freq {
 	case FreqMinutely:
-		// The one gate the runner trusts: Put validates every write. The form mirrors it.
+		// The one gate the runner trusts: the store validates every write. The form mirrors it.
 		if s.Interval < minMinuteInterval || s.Interval > maxMinuteInterval {
 			return fmt.Errorf("minute interval %d out of range %d-%d",
 				s.Interval, minMinuteInterval, maxMinuteInterval)
 		}
 		return nil
-	case freqHourly:
+	case FreqHourly:
 		if s.Interval < 1 || s.Interval > 24 {
 			return fmt.Errorf("hourly interval %d out of range 1-24", s.Interval)
 		}
 		return nil
 	case FreqDaily:
 		return s.validateHour()
-	case freqWeekly:
+	case FreqWeekly:
 		return s.validateWeekly()
-	case freqMonthly:
+	case FreqMonthly:
 		return s.validateMonthly()
 	default:
 		return fmt.Errorf("unknown frequency %q", s.Freq)
@@ -123,11 +120,11 @@ func (s Spec) validateHour() error {
 	return nil
 }
 
-// nextRun returns the first occurrence strictly after `after`, in after's location. It
+// NextRun returns the first occurrence strictly after `after`, in after's location. It
 // scans forward a day at a time, so all calendar arithmetic (month lengths, leap years,
 // DST) is delegated to time.Date.
-func nextRun(s Spec, after time.Time) (time.Time, error) {
-	if err := s.validate(); err != nil {
+func NextRun(s Spec, after time.Time) (time.Time, error) {
+	if err := s.Validate(); err != nil {
 		return time.Time{}, err
 	}
 	day := startOfDay(after)
@@ -151,11 +148,11 @@ func startOfDay(t time.Time) time.Time {
 
 func (s Spec) matchesDay(day time.Time) bool {
 	switch s.Freq {
-	case FreqMinutely, freqHourly, FreqDaily:
+	case FreqMinutely, FreqHourly, FreqDaily:
 		return true
-	case freqWeekly:
+	case FreqWeekly:
 		return slices.Contains(s.Weekdays, int(day.Weekday()))
-	case freqMonthly:
+	case FreqMonthly:
 		return day.Day() == s.monthDayIn(day)
 	default:
 		return false
@@ -181,28 +178,28 @@ func daysInMonth(t time.Time) int {
 
 // The switch is EXHAUSTIVE: a fallback would silently degrade an unhandled frequency to daily. DST
 // is delegated to time.Date; on spring-forward the list is not monotonic, which is safe because the
-// out-of-order slots are already past when nextRun reaches them.
+// out-of-order slots are already past when NextRun reaches them.
 func (s Spec) timesOn(day time.Time) []time.Time {
 	at := func(h, m int) time.Time {
 		return time.Date(day.Year(), day.Month(), day.Day(), h, m, 0, 0, day.Location())
 	}
 	switch s.Freq {
 	case FreqMinutely:
-		out := make([]time.Time, 0, minutesPerDay/s.Interval+1)
+		out := make([]time.Time, 0, minutesPerDay/minMinuteInterval)
 		for md := s.Minute % s.Interval; md < minutesPerDay; md += s.Interval {
 			out = append(out, at(md/60, md%60))
 		}
 		return out
-	case freqHourly:
-		out := make([]time.Time, 0, 24/s.Interval+1)
+	case FreqHourly:
+		out := make([]time.Time, 0, 24)
 		for h := 0; h < 24; h += s.Interval {
 			out = append(out, at(h, s.Minute))
 		}
 		return out
-	case FreqDaily, freqWeekly, freqMonthly:
+	case FreqDaily, FreqWeekly, FreqMonthly:
 		return []time.Time{at(s.Hour, s.Minute)}
 	default:
-		// Unreachable through the store (Put validates). Empty, not a daily fallback: nextRun then
+		// Unreachable through the store, which validates. Empty, not a daily fallback: NextRun then
 		// reports errNoOccurrence and the runner says so.
 		return nil
 	}

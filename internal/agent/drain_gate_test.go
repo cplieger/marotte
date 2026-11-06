@@ -15,8 +15,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/signin"
 )
 
@@ -341,7 +341,7 @@ func TestLaunchScheduled_LaunchesNothingOnceShutdownBegan(t *testing.T) {
 	launchableRecipe(br, "wf_sched")
 	beginDraining(h)
 
-	_, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"}, nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
+	_, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"}, nil, marotte.RunDefaults{}, time.Now().Add(time.Hour))
 
 	if !errors.Is(err, errRuntimeDraining) {
 		t.Errorf("LaunchScheduled = %v once Shutdown began, want errRuntimeDraining", err)

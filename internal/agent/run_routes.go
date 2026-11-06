@@ -2,7 +2,7 @@ package agent
 
 import "net/http"
 
-// runRoutes is the HTTP adapter over the run lifecycle: /api/runs, /api/recipes and schedule CRUD, holding
+// runRoutes is the HTTP adapter over the run lifecycle: /api/runs, /api/recipes and /api/launch-rules, holding
 // its subject and the hub epoch for the live-runs envelope.
 type runRoutes struct {
 	runs  *Runs
@@ -32,5 +32,5 @@ func (rr *runRoutes) register(mux *http.ServeMux) {
 	write("POST /api/runs/{id}/answer", rr.handleAnswer)
 	write("POST /api/runs/{id}/steps/{path}/{verb}", rr.handleStepPost)
 	mux.HandleFunc("GET /api/recipes", rr.handleRecipes)
-	rr.registerSchedule(mux, write)
+	rr.registerLaunchRules(mux, write)
 }

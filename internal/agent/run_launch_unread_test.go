@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/schedule"
 )
@@ -66,7 +67,7 @@ func TestLaunch_AnInvokeWhoseAnswerWasUnreadKeepsItsLease(t *testing.T) {
 			if _, held := h.runs.lease("wf_1"); !held {
 				t.Error("the scheduled run's lease was released")
 			}
-			if row := st.List()[0]; row.LastRunID != "wf_1" || row.LastStatus == schedule.StatusFailed {
+			if row := st.Clocks()[0]; row.LastRunID != "wf_1" || row.LastStatus == launchrule.StatusFailed {
 				t.Errorf("row = %+v, want wf_1 not recorded failed", row)
 			}
 		})
@@ -85,7 +86,7 @@ func TestLaunch_AnInvokeWhoseAnswerWasUnreadKeepsItsLease(t *testing.T) {
 		if _, held := h.runs.lease("wf_1"); held {
 			t.Error("the lease of a run KAS refused to start survived")
 		}
-		if row := st.List()[0]; row.LastStatus != schedule.StatusFailed {
+		if row := st.Clocks()[0]; row.LastStatus != launchrule.StatusFailed {
 			t.Errorf("row = %+v, want failed", row)
 		}
 	})

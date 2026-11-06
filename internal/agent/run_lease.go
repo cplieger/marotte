@@ -14,6 +14,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/notice"
@@ -26,7 +27,7 @@ type launchOrigin struct {
 	// slotAt is this run's next slot, an input to the deadline; launch fills it for a manual run (manualSlot).
 	slotAt time.Time
 	// row is the schedule row a scheduled run reports to, nil for any other.
-	row *schedule.Row
+	row *launchrule.Row
 	// chatID is the launching chat for an agent's run (runStartLaunch), empty for a parentless launch.
 	chatID string
 	origin runlease.Origin
@@ -67,14 +68,14 @@ func (rs *Runs) settleMissedEnd(ctx context.Context, l *runlease.Lease, status m
 }
 
 // scheduledLaunch carries the schedule row for outcomes and the slot the run may not outlive.
-func scheduledLaunch(row schedule.Row, slotAt time.Time) launchOrigin {
+func scheduledLaunch(row launchrule.Row, slotAt time.Time) launchOrigin {
 	return launchOrigin{origin: runlease.OriginScheduled, row: &row, slotAt: slotAt}
 }
 
 // scheduleRow is the row the run reports to, zero for an unscheduled run.
-func (o *launchOrigin) scheduleRow() schedule.Row {
+func (o *launchOrigin) scheduleRow() launchrule.Row {
 	if o.row == nil {
-		return schedule.Row{}
+		return launchrule.Row{}
 	}
 	return *o.row
 }
@@ -117,22 +118,22 @@ func runLabelFor(s string) string {
 // manualSlot is the next slot a manual run of this recipe must yield to, matched on the launch source and
 // floored at now via schedule.NextRunFrom (as the REST view). Zero when nothing schedules it.
 func (rs *Runs) manualSlot(source string) time.Time {
-	if rs.schedules == nil || source == "" {
+	if rs.launchRules == nil || source == "" {
 		return time.Time{}
 	}
 	now := time.Now()
 	var earliest time.Time
-	list := rs.schedules.List()
+	list := rs.launchRules.Clocks()
 	for i := range list {
 		e := &list[i]
-		if !e.Enabled || e.Source != source {
+		if !e.Enabled || e.Source != source || e.Err != nil {
 			continue
 		}
-		next, err := schedule.NextRunFrom(e.Spec, e.Anchor, now)
+		next, err := schedule.NextRunFrom(*e.When.Clock, e.Anchor, now)
 		if err != nil {
 			// No slot, not a failure: the window and backstop still bound it.
 			slog.Warn("schedule cannot name its next slot, so a manual run of its recipe "+
-				"is bounded by its idle window alone", "schedule_id", e.ID(), "error", err)
+				"is bounded by its idle window alone", "schedule_id", e.ID, "error", err)
 			continue
 		}
 		if earliest.IsZero() || next.Before(earliest) {
@@ -177,16 +178,15 @@ func (rs *Runs) grantKeeping(
 		return
 	}
 	l := runlease.Lease{
-		StartedAt:    time.Now(),
-		SlotAt:       o.slotAt,
-		WorkflowID:   workflowID,
-		ChatID:       o.chatID,
-		Recipe:       recipe,
-		Origin:       o.origin,
-		ScheduleID:   o.scheduleRow().ID,
-		ScheduleLife: o.scheduleRow().Life,
-		Unattended:   o.origin == runlease.OriginScheduled,
-		Host:         host,
+		StartedAt:  time.Now(),
+		SlotAt:     o.slotAt,
+		WorkflowID: workflowID,
+		ChatID:     o.chatID,
+		Recipe:     recipe,
+		Origin:     o.origin,
+		ScheduleID: o.scheduleRow().ID,
+		Unattended: o.origin == runlease.OriginScheduled,
+		Host:       host,
 	}
 	if keep != nil {
 		l.KeepChats, l.Unattributed = keep.chats, keep.unattributed
@@ -197,7 +197,7 @@ func (rs *Runs) grantKeeping(
 	}
 	rs.beginLife(workflowID)
 	run := scheduleRun(&l)
-	rs.writeSchedule(run, func() error { return rs.schedules.RecordStart(ctx, run) })
+	rs.writeSchedule(run, func() error { return rs.launchRules.RecordStart(ctx, run) })
 	// Named from the grant on, so every pending_snapshot names every run marotte answers for.
 	rs.cellFor(workflowID)
 }

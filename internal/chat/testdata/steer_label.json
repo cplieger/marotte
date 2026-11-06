@@ -52,7 +52,7 @@
       "sites": [
         "internal/agent/bridge_coord.go:1761",
         "internal/agent/entry_merge.go:605",
-        "internal/agent/runtime.go:789"
+        "internal/agent/runtime.go:793"
       ]
     },
     {
@@ -172,7 +172,7 @@
       "label": "Not read · the session restarted",
       "sites": [
         "internal/agent/entry_merge.go:605",
-        "internal/agent/runtime.go:783"
+        "internal/agent/runtime.go:787"
       ]
     },
     {
@@ -256,14 +256,14 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/runtime.go:783",
+      "site": "internal/agent/runtime.go:787",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/runtime.go:789",
+      "site": "internal/agent/runtime.go:793",
       "form": "mutation",
       "origin": "agent",
       "state": "dropped",

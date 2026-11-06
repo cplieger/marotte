@@ -17,8 +17,8 @@ import (
 
 	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/translate"
 )
@@ -96,7 +96,7 @@ var (
 // which pause this was, a step's question, a repeat's limit or a fault KAS does not class as transient.
 func reasonPausedOther(pauseReason string) string {
 	quoted := ""
-	if r := schedule.ReasonText(pauseReason); r != "" {
+	if r := launchrule.ReasonText(pauseReason); r != "" {
 		quoted = " (" + r + ")"
 	}
 	return "paused with nobody watching" + quoted + ", so it was cancelled after " + pauseBudgetText +
@@ -126,7 +126,7 @@ func (rs *Runs) permissionWithUnattendedFloor(inner askHandler) askHandler {
 }
 
 // answerUnattended settles a still-pending request for an absent user: refuse, or approve when opted in.
-func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acpID int64, run schedule.Run, name askName, msgParams json.RawMessage) {
+func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acpID int64, run launchrule.Run, name askName, msgParams json.RawMessage) {
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
 
@@ -193,7 +193,7 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acp
 
 	// Surface it on the schedule row, or the run fails silently every night.
 	reason := unattendedRefusalReason(name.label(), adminAsk, classifierAsk)
-	rs.recordScheduleOutcome(ctx, run, schedule.Outcome{Status: schedule.StatusFailed, Reason: reason})
+	rs.recordScheduleOutcome(ctx, run, launchrule.Outcome{Status: launchrule.StatusFailed, Reason: reason})
 }
 
 // unattendedRefusalReason is the schedule row's reason for a refused ask on label (empty when the ask names
@@ -274,7 +274,7 @@ func (rs *Runs) endUnattended(ctx context.Context, workflowID string, req *runRe
 		return err
 	}
 	// Overwrites the cancel's own ending, which may land first and names no pause.
-	rs.recordScheduleOutcome(ctx, scheduleRun(&l), schedule.Outcome{Status: schedule.StatusFailed, Reason: reason})
+	rs.recordScheduleOutcome(ctx, scheduleRun(&l), launchrule.Outcome{Status: launchrule.StatusFailed, Reason: reason})
 	return nil
 }
 

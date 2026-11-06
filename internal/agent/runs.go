@@ -12,21 +12,22 @@ import (
 	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/translate"
 )
 
 // Runs owns the workflow-run surface: launch, cancel, retry, the durable lease, the deadline and turn-cap
-// arms, and the schedule store. It holds collaborators, not a *Runtime; `mu` guards bounds.
+// arms, and the launch-rule store. It holds collaborators, not a *Runtime; `mu` guards bounds.
 type Runs struct {
-	chats     runChatReader
-	translate runTranslator
-	perms     runPermClaimer
-	bus       runBroadcaster
-	schedules *schedule.Store `wiring:"optional"`
-	leases    *runlease.Store `wiring:"optional"`
+	chats       runChatReader
+	translate   runTranslator
+	perms       runPermClaimer
+	bus         runBroadcaster
+	launchRules *launchrule.Store `wiring:"optional"`
+	leases      *runlease.Store   `wiring:"optional"`
+	eventRules  eventRuleChecker  `wiring:"optional"`
 	// log is the run record: one entry log per run under <configDir>/runs, its open step turns and hosts.
 	log     *runLog `wiring:"optional"`
 	bridges *bridgeManager
@@ -115,31 +116,29 @@ func (rs *Runs) useLog(l *runLog) {
 }
 
 // scheduleRun names the schedule row a lease's run reports to; ScheduleID is "" for an unscheduled run.
-func scheduleRun(l *runlease.Lease) schedule.Run {
-	return schedule.Run{
-		StartedAt: l.StartedAt, ScheduleID: l.ScheduleID, ScheduleLife: l.ScheduleLife, WorkflowID: l.WorkflowID,
-	}
+func scheduleRun(l *runlease.Lease) launchrule.Run {
+	return launchrule.Run{StartedAt: l.StartedAt, ScheduleID: l.ScheduleID, WorkflowID: l.WorkflowID}
 }
 
-// recordScheduleOutcome overwrites run's outcome on its row (schedule.Store.RecordOutcome). No schedule or
+// recordScheduleOutcome overwrites run's outcome on its row (launchrule.Store.RecordOutcome). No schedule or
 // no store is a no-op.
-func (rs *Runs) recordScheduleOutcome(ctx context.Context, run schedule.Run, outcome schedule.Outcome) {
-	rs.writeSchedule(run, func() error { return rs.schedules.RecordOutcome(ctx, run, outcome) })
+func (rs *Runs) recordScheduleOutcome(ctx context.Context, run launchrule.Run, outcome launchrule.Outcome) {
+	rs.writeSchedule(run, func() error { return rs.launchRules.RecordOutcome(ctx, run, outcome) })
 }
 
-// recordScheduleEnding fills run's ending on a row still reading started (schedule.Store.RecordEnding).
-func (rs *Runs) recordScheduleEnding(ctx context.Context, run schedule.Run, status marotte.RunStatus, stopReason string) {
+// recordScheduleEnding fills run's ending on a row still reading started (launchrule.Store.RecordEnding).
+func (rs *Runs) recordScheduleEnding(ctx context.Context, run launchrule.Run, status marotte.RunStatus, stopReason string) {
 	outcome := runEnding(status, stopReason)
-	rs.writeSchedule(run, func() error { return rs.schedules.RecordEnding(ctx, run, outcome) })
+	rs.writeSchedule(run, func() error { return rs.launchRules.RecordEnding(ctx, run, outcome) })
 }
 
-func (rs *Runs) writeSchedule(run schedule.Run, write func() error) {
-	if rs.schedules == nil || run.ScheduleID == "" {
+func (rs *Runs) writeSchedule(run launchrule.Run, write func() error) {
+	if rs.launchRules == nil || run.ScheduleID == "" {
 		return
 	}
 	switch err := write(); {
-	case errors.Is(err, schedule.ErrNotFound):
-		slog.Info("schedule outcome not recorded: the schedule was deleted or recreated during its run",
+	case errors.Is(err, launchrule.ErrNotFound):
+		slog.Info("schedule outcome not recorded: the schedule was deleted during its run",
 			"schedule_id", run.ScheduleID, "workflow_id", run.WorkflowID)
 	case err != nil:
 		slog.Warn("could not record the schedule's outcome",
@@ -149,17 +148,17 @@ func (rs *Runs) writeSchedule(run schedule.Run, write func() error) {
 
 // runEnding is the row's outcome for a terminal status: completed, or failed with KAS's stopReason, else a
 // sentence naming the status.
-func runEnding(status marotte.RunStatus, stopReason string) schedule.Outcome {
-	stopReason = schedule.ReasonText(stopReason)
+func runEnding(status marotte.RunStatus, stopReason string) launchrule.Outcome {
+	stopReason = launchrule.ReasonText(stopReason)
 	switch status {
 	case marotte.RunStatusCompleted:
-		return schedule.Outcome{Status: schedule.StatusCompleted}
+		return launchrule.Outcome{Status: launchrule.StatusCompleted}
 	case marotte.RunStatusAborted:
-		return schedule.Outcome{Status: schedule.StatusFailed, Reason: cmp.Or(stopReason, "the run was aborted")}
+		return launchrule.Outcome{Status: launchrule.StatusFailed, Reason: cmp.Or(stopReason, "the run was aborted")}
 	case marotte.RunStatusCancelled:
-		return schedule.Outcome{Status: schedule.StatusFailed, Reason: cmp.Or(stopReason, "the run was cancelled")}
+		return launchrule.Outcome{Status: launchrule.StatusFailed, Reason: cmp.Or(stopReason, "the run was cancelled")}
 	default:
-		return schedule.Outcome{Status: schedule.StatusFailed, Reason: cmp.Or(stopReason, "the run failed")}
+		return launchrule.Outcome{Status: launchrule.StatusFailed, Reason: cmp.Or(stopReason, "the run failed")}
 	}
 }
 

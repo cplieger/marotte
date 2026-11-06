@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/schedule"
 )
 
 // leaseScheduledWithSlot leases workflowID as entry's fire whose next slot comes due slotIn from now.
-func leaseScheduledWithSlot(t *testing.T, h *Runtime, br *fakeBridge, entry *schedule.Entry, workflowID string, slotIn time.Duration) {
+func leaseScheduledWithSlot(t *testing.T, h *Runtime, br *fakeBridge, entry *launchrule.Rule, workflowID string, slotIn time.Duration) {
 	t.Helper()
 	h.insertBridgeNow(runChatID(workflowID), testBridge(br, bridgeIdle))
 	h.runs.grantLease(t.Context(), workflowID, "nightly",
@@ -66,7 +66,7 @@ func TestScheduledRun_APausedRunIsCancelledAtItsNextSlot(t *testing.T) {
 	if out := logs.String(); !strings.Contains(out, logMsgRunOverran) {
 		t.Errorf("the slot's cancel did not log %q, which the overran alert keys on: %s", logMsgRunOverran, out)
 	}
-	if row := awaitEndedRow(t, st); row.LastStatus != schedule.StatusFailed || row.LastReason != reasonOverran {
+	if row := awaitEndedRow(t, st); row.LastStatus != launchrule.StatusFailed || row.LastReason != reasonOverran {
 		t.Errorf("the row reads (%q, %q), want the overran failure", row.LastStatus, row.LastReason)
 	}
 }
@@ -124,7 +124,7 @@ func TestBootSweep_WatchesTheSlotOfAScheduledRunLeftPaused(t *testing.T) {
 		t.Fatalf("a scheduled run left paused past its slot across a restart recorded %q, want %q; calls were %v",
 			got, runEndOverran, br.callLog())
 	}
-	if row := awaitEndedRow(t, st); row.LastStatus != schedule.StatusFailed || row.LastReason != reasonOverran {
+	if row := awaitEndedRow(t, st); row.LastStatus != launchrule.StatusFailed || row.LastReason != reasonOverran {
 		t.Errorf("the row reads (%q, %q), want the overran failure", row.LastStatus, row.LastReason)
 	}
 }
@@ -160,7 +160,7 @@ func TestScheduledRun_ASlotCancelRefusedOnceIsRetried(t *testing.T) {
 	if got := callsOf(br, methodKiroWorkflowCancel); got != 2 {
 		t.Errorf("the cancel was sent %d times, want 2: the refused one and its retry", got)
 	}
-	if row := awaitEndedRow(t, st); row.LastStatus != schedule.StatusFailed || row.LastReason != reasonOverran {
+	if row := awaitEndedRow(t, st); row.LastStatus != launchrule.StatusFailed || row.LastReason != reasonOverran {
 		t.Errorf("the row reads (%q, %q), want the overran failure", row.LastStatus, row.LastReason)
 	}
 }
