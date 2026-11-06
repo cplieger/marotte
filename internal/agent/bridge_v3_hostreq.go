@@ -25,8 +25,8 @@ func (in *inbound) handleKiroClientRequest(ctx context.Context, chatID marotte.C
 
 // consentAnchorer owns the consent URLs KAS opens: the frame names neither a server nor a session.
 type consentAnchorer interface {
-	// anchorConsentURL keeps url as the anchor a pasted callback with its state is relayed on, and says how to show
-	// it; pageConnected is whether any page could.
+	// anchorConsentURL decides how to show url and keeps it as an anchor when it carries a state; pageConnected is
+	// whether any page could.
 	anchorConsentURL(ctx context.Context, url string, pageConnected bool) consentShown
 }
 
@@ -34,9 +34,7 @@ type consentAnchorer interface {
 func openedReply() map[string]any { return map[string]any{"success": true} }
 
 // respondKiroOpenExternalURL is _kiro/openExternalUrl's one owner, on the engine lane (KAS's frame names no
-// session). The registry anchors every URL: the first after a Sign in goes to its row, a state already anchored is
-// answered as seen, and any other is shown on every page, refused when none is connected: a success makes KAS wait
-// on a callback for up to 300 s, an error ends the attempt at once.
+// session). anchorConsentURL owns the showing; consentRefused is the only error, which ends KAS's attempt at once.
 func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, origin acpResponder, msg *marotte.RPCResponse) {
 	var p struct {
 		URL string `json:"url"`
@@ -69,7 +67,6 @@ func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, origin acpRes
 	case consentBanner:
 		slog.Info("v3 openExternalUrl: showing a consent URL no standing Sign in took on every page")
 		in.respondBridge(ctx, "", origin, msg, openedReply(), nil)
-		in.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventOpenExternalURL, "", marotte.OpenExternalURLPayload{URL: p.URL, ExpiresAt: shown.expires}))
 	}
 }
 

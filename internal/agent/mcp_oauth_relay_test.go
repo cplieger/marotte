@@ -4,6 +4,7 @@ package agent
 // so relayClientFor's loopback policy is exercised for real.
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -443,6 +444,7 @@ func TestAnchorConsentURL_KeepsNoURLWithoutAState(t *testing.T) {
 	h.mcpRegistry.mu.Lock()
 	h.mcpRegistry.now = clock.now
 	h.mcpRegistry.mu.Unlock()
+	before := h.bus.fanout.Position().Head
 	shown := h.mcpRegistry.anchorConsentURL(t.Context(), "https://provider.example/authorize?client_id=x", true)
 	if shown.how != consentBanner {
 		t.Errorf("shown = %v, want consentBanner", shown.how)
@@ -453,8 +455,18 @@ func TestAnchorConsentURL_KeepsNoURLWithoutAState(t *testing.T) {
 	if n != 0 {
 		t.Errorf("anchors = %d, want 0", n)
 	}
-	if want := clock.now().Add(lazySignInTTL); !shown.expires.Equal(want) {
-		t.Errorf("expires = %v, want %v", shown.expires, want)
+	banners := eventsSince(h, before, marotte.EventOpenExternalURL)
+	if len(banners) != 1 {
+		t.Fatalf("open_external_url events = %d, want 1", len(banners))
+	}
+	var evt struct {
+		Payload marotte.OpenExternalURLPayload `json:"payload"`
+	}
+	if err := json.Unmarshal(banners[0].Event.Data, &evt); err != nil {
+		t.Fatalf("decoding the event: %v", err)
+	}
+	if want := clock.now().Add(lazySignInTTL); !evt.Payload.ExpiresAt.Equal(want) {
+		t.Errorf("expires_at = %v, want %v", evt.Payload.ExpiresAt, want)
 	}
 }
 

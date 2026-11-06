@@ -137,7 +137,7 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 	if err != nil {
 		reg.releaseOAuthRelay(attempt)
 		slog.Warn("mcp oauth relay: could not reach the loopback callback listener",
-			"server", body.Server, "port", target.Port(), "error", dialErrWithoutURL(err))
+			"pasted_under", body.Server, "port", target.Port(), "error", dialErrWithoutURL(err))
 		httpserver.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON("the local sign-in listener did not answer, so the code was not delivered. The sign-in may have timed out"))
 		return
@@ -146,14 +146,14 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 		// Refused: give the reservation back so a corrected paste can retry.
 		reg.releaseOAuthRelay(attempt)
 		slog.Warn("mcp oauth relay: the loopback listener refused the callback",
-			"server", body.Server, "port", target.Port(), "status", status)
+			"pasted_under", body.Server, "port", target.Port(), "status", status)
 		httpserver.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON("the local sign-in listener rejected that callback with HTTP "+strconv.Itoa(status)+". Start the sign-in again"))
 		return
 	}
 
 	slog.Info("mcp oauth relay: delivered a stranded callback to the loopback listener",
-		"server", body.Server, "port", target.Port(), "status", status)
+		"pasted_under", body.Server, "port", target.Port(), "status", status)
 	// KAS reports the connected state over _kiro/mcp/status; the client waits for that frame.
 	httpserver.WriteJSON(w, mcpOAuthRelayResp{Status: status})
 }

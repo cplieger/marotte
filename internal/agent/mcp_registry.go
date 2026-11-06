@@ -37,8 +37,7 @@ const signInTTL = 630 * time.Second
 // lazySignInTTL is KAS's LAZY_AUTH_TIMEOUT_MS: its callback listener for a mid-session re-auth waits this long.
 const lazySignInTTL = 300 * time.Second
 
-// maxConsentAnchors bounds the anchors: KAS runs one re-auth per server. Past it the oldest is evicted, never the
-// standing Sign in's.
+// maxConsentAnchors bounds the anchors: KAS runs one re-auth per server.
 const maxConsentAnchors = 8
 
 // signInAnchor is a consent URL KAS opened, identified by its state. Only relayed changes after it is created, so
@@ -53,7 +52,7 @@ type signInAnchor struct {
 	relayed bool
 }
 
-// consentShowing is how a consent URL KAS opened is shown; respondKiroOpenExternalURL answers and broadcasts by it.
+// consentShowing is how anchorConsentURL decided and published the showing of a consent URL KAS opened.
 type consentShowing int
 
 const (
@@ -64,9 +63,8 @@ const (
 )
 
 type consentShown struct {
-	expires time.Time // consentBanner only: when KAS stops waiting for the callback
-	server  string    // consentOnRow only
-	how     consentShowing
+	server string // consentOnRow only
+	how    consentShowing
 }
 
 // viewSignIn is a Sign in the user started in the view's session.
@@ -421,7 +419,7 @@ func (reg *mcpRegistry) consentAnchorsLocked() map[string]*signInAnchor {
 		if s == nil || !now.Before(s.deadline) {
 			continue
 		}
-		if a := reg.attemptAnchorLocked(s.attempt, now); a != nil {
+		if a := reg.attemptAnchorLocked(s.attempt); a != nil {
 			if out == nil {
 				out = map[string]*signInAnchor{}
 			}
@@ -431,10 +429,11 @@ func (reg *mcpRegistry) consentAnchorsLocked() map[string]*signInAnchor {
 	return out
 }
 
-// attemptAnchorLocked is the unexpired anchor attributed to attempt, nil when it has none.
-func (reg *mcpRegistry) attemptAnchorLocked(attempt uint64, now time.Time) *signInAnchor {
+// attemptAnchorLocked is the anchor attributed to attempt, nil when it has none. An attributed anchor expires with
+// its Sign in, so a caller that checked the Sign in needs no expiry check.
+func (reg *mcpRegistry) attemptAnchorLocked(attempt uint64) *signInAnchor {
 	for _, a := range reg.anchors {
-		if a.attempt == attempt && now.Before(a.expires) {
+		if a.attempt == attempt {
 			return a
 		}
 	}
@@ -690,7 +689,7 @@ func (reg *mcpRegistry) anchorConsentURL(ctx context.Context, authURL string, pa
 	if i := slices.IndexFunc(reg.views, func(v mcpView) bool { return v.signIn != nil && now.Before(v.signIn.deadline) }); i >= 0 {
 		standing = *reg.views[i].signIn
 	}
-	if state != "" && standing.attempt != 0 && reg.attemptAnchorLocked(standing.attempt, now) == nil {
+	if state != "" && standing.attempt != 0 && reg.attemptAnchorLocked(standing.attempt) == nil {
 		reg.addAnchorLocked(&signInAnchor{expires: standing.deadline, state: state, authURL: authURL, attempt: standing.attempt}, standing.attempt)
 		d := reg.deriveLocked(configured)
 		reg.mu.Unlock()
@@ -707,7 +706,8 @@ func (reg *mcpRegistry) anchorConsentURL(ctx context.Context, authURL string, pa
 		reg.addAnchorLocked(&signInAnchor{expires: expires, state: state, authURL: authURL}, standing.attempt)
 	}
 	reg.mu.Unlock()
-	return consentShown{how: consentBanner, expires: expires}
+	reg.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventOpenExternalURL, "", marotte.OpenExternalURLPayload{URL: authURL, ExpiresAt: expires}))
+	return consentShown{how: consentBanner}
 }
 
 // consentState is the state a consent URL carries, "" when it carries none or does not parse.
@@ -720,7 +720,9 @@ func consentState(authURL string) string {
 }
 
 // addAnchorLocked appends a, first evicting the oldest anchors past maxConsentAnchors other than the one attributed
-// to the standing attempt (0 when none stands).
+// to the standing attempt (0 when none stands). At most one anchor carries standing (anchorConsentURL attributes
+// only to a Sign in with none) and maxConsentAnchors > 1, so one is always evictable; otherwise IndexFunc returns -1
+// and Delete panics.
 func (reg *mcpRegistry) addAnchorLocked(a *signInAnchor, standing uint64) {
 	for len(reg.anchors) >= maxConsentAnchors {
 		j := slices.IndexFunc(reg.anchors, func(o *signInAnchor) bool { return standing == 0 || o.attempt != standing })
@@ -734,8 +736,7 @@ func (reg *mcpRegistry) pruneAnchorsLocked(now time.Time) {
 	reg.anchors = slices.DeleteFunc(reg.anchors, func(a *signInAnchor) bool { return !now.Before(a.expires) })
 }
 
-// oauthAttempt is a granted reservation to relay one anchor's callback, the only handle that can give it back. The
-// anchor pointer is its identity, so a release after the anchor left reg.anchors is a no-op.
+// oauthAttempt is a granted reservation to relay one anchor's callback, the only handle that can give it back.
 type oauthAttempt struct {
 	anchor *signInAnchor
 }
@@ -773,13 +774,11 @@ func (reg *mcpRegistry) reserveRelayLocked(pastedState string) (oauthAttempt, er
 }
 
 // releaseOAuthRelay gives back an undelivered reservation (refused paste, transport failure,
-// listener refusal); a delivery keeps it as the latch. A no-op once the anchor is gone.
+// listener refusal); a delivery keeps it as the latch.
 func (reg *mcpRegistry) releaseOAuthRelay(a oauthAttempt) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
-	if slices.Contains(reg.anchors, a.anchor) {
-		a.anchor.relayed = false
-	}
+	a.anchor.relayed = false
 }
 
 // clearAll wipes every view (and so every sign-in), record and anchor and broadcasts mcp_disconnected per
