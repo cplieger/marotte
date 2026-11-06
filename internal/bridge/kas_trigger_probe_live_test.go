@@ -7,6 +7,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -48,6 +49,24 @@ const probeRecipeJSON = `{
 // with no initiator ends a never-invoked run and a running one; and whether KAS resumes a watch-parked run after a
 // restart. It spends no model credits but starts kiro-cli, so it needs MAROTTE_LIVE_KIRO_CLI and -kas-trigger-probe.
 func TestProbeTriggeredLaunch(t *testing.T) {
+	p, ctx := newProbe(t)
+	p.newListsActive(ctx)
+	p.invokeInterval(ctx)
+	p.cancelUninvoked(ctx)
+	p.autoResume(ctx)
+	p.c.shutdown()
+}
+
+// TestProbeReleaseOrder records probe (c): a triggered run's release (the lease, then its host session) right after
+// its cancel's answer, before the cancel's terminal frame. It is its own test because it needs no 150 s restart.
+func TestProbeReleaseOrder(t *testing.T) {
+	p, ctx := newProbe(t)
+	p.releaseOrder(ctx)
+	p.c.shutdown()
+}
+
+func newProbe(t *testing.T) (*probe, context.Context) {
+	t.Helper()
 	bin := os.Getenv("MAROTTE_LIVE_KIRO_CLI")
 	if bin == "" {
 		t.Skip("MAROTTE_LIVE_KIRO_CLI names no kiro-cli binary")
@@ -61,7 +80,7 @@ func TestProbeTriggeredLaunch(t *testing.T) {
 	pin := pinnedKiroCLI(t)
 	checkBinaryVersion(t, bin, pin)
 	c := newCapture(t, &captureEnv{cli: bin, kiroCLI: pin})
-	p := &probe{c: c, t: t}
+	p := &probe{c: c, t: t, owner: map[string]marotte.SessionID{}}
 	if err := os.MkdirAll(filepath.Join(c.work, ".kiro", "workflows"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -72,16 +91,11 @@ func TestProbeTriggeredLaunch(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
-	defer cancel()
+	t.Cleanup(cancel)
 	p.start(ctx)
 	p.kas = kasVersion(t, pin)
 	p.source = p.recipeSource(ctx)
-
-	p.newListsActive(ctx)
-	p.invokeInterval(ctx)
-	p.cancelUninvoked(ctx)
-	p.autoResume(ctx)
-	p.c.shutdown()
+	return p, ctx
 }
 
 type probeFrame struct {
@@ -99,9 +113,24 @@ type probe struct {
 	e      *bridge.Engine
 	cond   *sync.Cond
 	frames []probeFrame
+	// owner places a run's frames on its host session's lane, as dev's engine router does once the launch
+	// registered the run's owner; a run with no owner row stays on the engine lane.
+	owner  map[string]marotte.SessionID
 	kas    string
 	source string
 	mu     sync.Mutex
+}
+
+func (p *probe) Route(h *bridge.FrameHead) marotte.SessionID {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.owner[h.WorkflowID]
+}
+
+func (p *probe) own(id string, s *bridge.Session) {
+	p.mu.Lock()
+	p.owner[id] = s.SessionID()
+	p.mu.Unlock()
 }
 
 // start starts an engine whose engine lane, and every host lane opened later, feed p.frames.
@@ -110,7 +139,7 @@ func (p *probe) start(ctx context.Context) {
 	if p.cond == nil {
 		p.cond = sync.NewCond(&p.mu)
 	}
-	e := bridge.NewEngine(p.c.env.cli, p.c.work)
+	e := bridge.NewEngine(p.c.env.cli, p.c.work, bridge.WithRouter(p))
 	lifetime, cancel := context.WithCancel(context.Background())
 	p.c.engines = append(p.c.engines, e)
 	p.c.cancels = append(p.c.cancels, cancel)
@@ -424,6 +453,59 @@ func (p *probe) cancelUninvoked(ctx context.Context) {
 	}
 }
 
+func (p *probe) releaseOrder(ctx context.Context) {
+	s, id := p.create(ctx)
+	p.own(id, s)
+	from := p.mark()
+	if _, err := p.invoke(ctx, s, id); err != nil {
+		p.t.Fatalf("invoke: %v", err)
+	}
+	start, ok := p.await(from, "_kiro/workflow/run_start", id, probeFrameMax)
+	if !ok {
+		p.t.Fatalf("no run_start for %s", id)
+	}
+	from = p.mark()
+	result, err := p.cancelEngineLane(ctx, id)
+	if err != nil {
+		p.t.Fatalf("cancel: %v", err)
+	}
+	answered := time.Now()
+	// The lease release touches only marotte's state; on the wire the two steps are this close.
+	early := p.since(from, id)
+	closeErr := s.Close(ctx)
+	closed := time.Now()
+	out := map[string]any{
+		"probe": "(c) cancel a running run, and on the cancel's answer release it as ReleaseTriggered does " +
+			"(releaseLease, then closeBridge, which closes the run's host session) before the cancel's terminal frame",
+		"criterion":             "the cancel's run_complete still arrives and the run ends aborted",
+		"run_start_lane":        start.Lane,
+		"cancel_result":         result,
+		"frames_before_close":   early,
+		"close_ms_after_answer": closed.Sub(answered).Milliseconds(),
+		"terminal_frame_before_close": slices.ContainsFunc(early, func(f probeFrame) bool {
+			return f.Method == "_kiro/workflow/run_complete"
+		}),
+	}
+	if closeErr != nil {
+		out["close_error"] = closeErr.Error()
+	}
+	f, got := p.await(from, "_kiro/workflow/run_complete", id, probeFrameMax)
+	if got {
+		out["run_complete_status"], out["run_complete_lane"] = f.Status, f.Lane
+		out["run_complete_ms_after_answer"] = f.at.Sub(answered).Milliseconds()
+	} else {
+		out["run_complete_status"] = "none within " + probeFrameMax.String()
+	}
+	row := p.listed(ctx, id)
+	out["listed_after"] = row
+	pass := got && f.Status == string(marotte.RunStatusAborted) && row != nil && row.Status == string(marotte.RunStatusAborted)
+	out["pass"] = pass
+	p.write("release-order", out)
+	if !pass {
+		p.t.Errorf("(c) the release before the terminal frame lost it or the run did not end aborted: %v", out)
+	}
+}
+
 func (p *probe) autoResume(ctx context.Context) {
 	s, id := p.create(ctx)
 	from := p.mark()
@@ -469,7 +551,7 @@ func (p *probe) write(name string, body map[string]any) {
 	p.t.Helper()
 	body["_meta"] = map[string]any{
 		"recorded": "live", "kiroCli": p.c.env.kiroCLI, "kas": p.kas,
-		"date": time.Now().UTC().Format(time.DateOnly), "regenerate": "go test ./internal/bridge/ -run TestProbeTriggeredLaunch -kas-trigger-probe",
+		"date": time.Now().UTC().Format(time.DateOnly), "regenerate": "go test ./internal/bridge/ -run " + p.t.Name() + " -kas-trigger-probe",
 	}
 	raw, err := json.MarshalIndent(body, "", "  ")
 	if err != nil {

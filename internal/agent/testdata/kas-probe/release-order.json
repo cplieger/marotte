@@ -1,0 +1,108 @@
+{
+  "_meta": {
+    "date": "2026-11-06",
+    "kas": "0.66.70",
+    "kiroCli": "3.0.0",
+    "recorded": "live",
+    "regenerate": "go test ./internal/bridge/ -run TestProbeReleaseOrder -kas-trigger-probe"
+  },
+  "cancel_result": {
+    "ok": true,
+    "previousStatus": "running"
+  },
+  "close_ms_after_answer": 5,
+  "criterion": "the cancel's run_complete still arrives and the run ends aborted",
+  "frames_before_close": [
+    {
+      "lane": "host",
+      "method": "_kiro/workflow/node_start",
+      "workflowId": "wf_16dd7393c060105f"
+    },
+    {
+      "lane": "host",
+      "method": "_kiro/workflow/node_start",
+      "workflowId": "wf_16dd7393c060105f"
+    },
+    {
+      "lane": "host",
+      "method": "_kiro/workflow/node_complete",
+      "workflowId": "wf_16dd7393c060105f",
+      "status": "aborted"
+    },
+    {
+      "lane": "host",
+      "method": "_kiro/workflow/node_complete",
+      "workflowId": "wf_16dd7393c060105f",
+      "status": "aborted"
+    },
+    {
+      "lane": "host",
+      "method": "_kiro/workflow/run_complete",
+      "workflowId": "wf_16dd7393c060105f",
+      "status": "aborted",
+      "params": {
+        "workflowId": "wf_16dd7393c060105f",
+        "status": "aborted",
+        "finalState": {
+          "workflowId": "wf_16dd7393c060105f",
+          "workflowName": "trigger-probe",
+          "status": "aborted",
+          "inputs": {
+            "run_id": "probe",
+            "wait": "off"
+          },
+          "artifacts": {},
+          "capturedOutputs": {},
+          "root": {
+            "nodeId": "wf_16dd7393c060105f",
+            "type": "sequence",
+            "status": "aborted",
+            "children": [
+              {
+                "nodeId": "run",
+                "type": "parallel",
+                "status": "aborted",
+                "children": [
+                  {
+                    "nodeId": "coordinator",
+                    "type": "watch",
+                    "status": "aborted",
+                    "branchId": "coordinator",
+                    "startedAt": "2026-11-06T04:18:04.670Z"
+                  }
+                ],
+                "startedAt": "2026-11-06T04:18:04.665Z"
+              }
+            ],
+            "startedAt": "2026-11-06T04:18:04.661Z"
+          },
+          "createdAt": "2026-11-06T04:18:04.644Z",
+          "planRevision": 0,
+          "parentSessionId": "sess_147e499f-ebd6-4252-b519-31147cf2fb6e",
+          "rootConversationId": "sess_147e499f-ebd6-4252-b519-31147cf2fb6e",
+          "workspacePath": "/work",
+          "memoryConfig": {
+            "mode": "disabled",
+            "reflection": false
+          },
+          "memoryConfigSource": "explicit",
+          "backgroundExecution": true
+        },
+        "parentSessionId": "sess_147e499f-ebd6-4252-b519-31147cf2fb6e",
+        "attention": []
+      }
+    }
+  ],
+  "listed_after": {
+    "workflowId": "wf_16dd7393c060105f",
+    "workflowName": "trigger-probe",
+    "status": "aborted"
+  },
+  "pass": true,
+  "probe": "(c) cancel a running run, and on the cancel's answer release it as ReleaseTriggered does (releaseLease, then closeBridge, which closes the run's host session) before the cancel's terminal frame",
+  "run_complete_lane": "host",
+  "run_complete_ms_after_answer": -2,
+  "run_complete_status": "aborted",
+  "run_start_lane": "host",
+  "terminal_frame_before_close": true
+}
