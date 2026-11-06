@@ -1,4 +1,4 @@
-// Code-block decoration: title bar (language + actions), highlighting, and Run for short shell snippets (a callback,
+// Code-block decoration: title bar (language + actions), highlighting, and Run for shell blocks (a callback,
 // to avoid a static cycle with shell.ts). One idempotent path, `decorateBlock`, decorates a still-streaming fence
 // provisionally and upgrades it on close. The provisional sweep is the only thing that decorates a fence the model
 // never closed: the renderer's per-block callback fires only on close, and `parser_end` closes no open token.
@@ -135,10 +135,7 @@ export function extractLang(pre: HTMLElement, code: HTMLElement | null): string 
   return "";
 }
 
-/**
- * Whether a finished fence earns Run: one command per click, so any `\n` or `\r` terminator refuses it
- * (a terminator test rather than a line count, which ignores blank lines and a trailing newline).
- */
+/** Whether a finished fence earns Run: a non-empty shell block that is not a `#!` script, of any line count. */
 export function isRunnableShell(lang: string, text: string): boolean {
   if (!SHELL_LANGS.has(lang)) {
     return false;
@@ -147,10 +144,7 @@ export function isRunnableShell(lang: string, text: string): boolean {
   if (trimmed === "") {
     return false;
   }
-  if (trimmed.startsWith("#!")) {
-    return false;
-  }
-  return !/[\r\n]/.test(trimmed);
+  return !trimmed.startsWith("#!");
 }
 
 /** Copy reads `getText` at click time; `className` is the button family of the row it joins. */
@@ -187,7 +181,7 @@ const HIDDEN_RUNE =
 
 function makeRunButton(pre: HTMLElement, text: string): HTMLButtonElement {
   const btn = el("button", { className: "code-act-btn" }, iconEl(ICON_PLAY)) as HTMLButtonElement;
-  const cmd = text.trim();
+  const cmd = text.trim().replaceAll("\r\n", "\n");
   const refusal = runRefusal(cmd);
   if (refusal !== null) {
     btn.setAttribute("data-tooltip", refusal);
@@ -203,19 +197,26 @@ function makeRunButton(pre: HTMLElement, text: string): HTMLButtonElement {
   return btn;
 }
 
+/** A line feed is the one control a block may hold: it shows as the line break it sends. */
 function runRefusal(cmd: string): string | null {
-  if (HIDDEN_RUNE.test(cmd)) {
+  // A space, not "": deleting LFs joins lone surrogates on adjacent lines into a pair \p{Cs} misses.
+  if (HIDDEN_RUNE.test(cmd.replaceAll("\n", " "))) {
     return "Contains hidden characters. Copy it to inspect.";
   }
   return shellRunCb === null ? "Shell not available" : null;
 }
 
-/** A line wider than `pre`'s box is partly out of view, so it runs only after the dialog shows all of it. */
+/**
+ * A block of several lines, or a line wider than `pre`'s box, runs only after the dialog shows all of it: a
+ * one-line click is consent to what it shows, a block's is not.
+ */
 async function runSeen(pre: HTMLElement, cmd: string): Promise<void> {
-  if (
-    pre.scrollWidth > pre.clientWidth &&
-    !(await confirm(`Part of this command was out of view. Run it?\n\n${cmd}`, "Run"))
-  ) {
+  const ask = cmd.includes("\n")
+    ? "Run these lines in the shell?"
+    : pre.scrollWidth > pre.clientWidth
+      ? "Part of this command was out of view. Run it?"
+      : null;
+  if (ask !== null && !(await confirm(`${ask}\n\n${cmd}`, "Run"))) {
     return;
   }
   shellRunCb?.(cmd);
