@@ -71,16 +71,23 @@ func newTestConfirmer(t *testing.T, opts ...testConfirmerOption) *testConfirmer 
 	return tc
 }
 
-// countingWriter counts the state file writes and removals that landed; a removal fails with removeErr while it is
-// set.
+// countingWriter counts the state file writes and removals that landed; a write fails with writeErr and a removal
+// with removeErr while it is set.
 type countingWriter struct {
 	launchrule.StateWriter
+	writeErr         error
 	removeErr        error
 	writes, removals int
 	mu               sync.Mutex
 }
 
 func (w *countingWriter) WriteState(ctx context.Context, ruleID string, st *launchrule.State) error {
+	w.mu.Lock()
+	failed := w.writeErr
+	w.mu.Unlock()
+	if failed != nil {
+		return failed
+	}
 	err := w.StateWriter.WriteState(ctx, ruleID, st)
 	if err == nil {
 		w.mu.Lock()
@@ -115,7 +122,22 @@ func (tc *testConfirmer) written() int {
 	return n
 }
 
-// restart stops the Confirmer as a process exit would, its bound timers with it, and loads a new one from the files
+// failWrites makes every state file write fail with err from now on, nil letting them land again.
+func (tc *testConfirmer) failWrites(err error) {
+	tc.writes.mu.Lock()
+	defer tc.writes.mu.Unlock()
+	tc.writes.writeErr = err
+}
+
+// writeBlock is the rule's write-failure block, empty when none holds it.
+func (tc *testConfirmer) writeBlock(ruleID string) string {
+	rv := tc.rule(ruleID)
+	rv.mu.Lock()
+	defer rv.mu.Unlock()
+	return rv.writeBlocked
+}
+
+// restart stops the Confirmer as a process exit would, its bound and write retry timers with it, and loads a new one from the files
 // and tc.leases, as the next boot does. It runs before tc.run.
 func (tc *testConfirmer) restart() {
 	tc.t.Helper()
@@ -125,6 +147,9 @@ func (tc *testConfirmer) restart() {
 			if r.bound != nil {
 				r.bound.Stop()
 			}
+		}
+		if rv.writeRetry != nil {
+			rv.writeRetry.Stop()
 		}
 		rv.mu.Unlock()
 	}

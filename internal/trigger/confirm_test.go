@@ -792,6 +792,122 @@ func TestNameAttemptFailureRecordedAbandoned(t *testing.T) {
 			}
 		})
 	})
-	t.Run("after a failed write", func(t *testing.T) { t.Skip("needs 5.6") })
+	t.Run("after a failed write", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.update(r.ID, func(es *eventState) bool { es.queue = []queueEntry{held("k1", "c1")}; return true })
+			tc.failWrites(errDiskFull)
+			if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, ErrAttemptNotWritten) {
+				t.Fatalf("NameAttempt = %v, want ErrAttemptNotWritten", err)
+			}
+			if es, file := tc.file(r.ID); len(file) != 0 || len(es.queue) != 1 || es.queue[0].Live != "" {
+				t.Errorf("file attempts %+v, queue %+v; want no record and k1 naming none before a write lands",
+					file, es.queue)
+			}
+			tc.failWrites(nil)
+			tc.persist(r.ID)
+			es, file := tc.file(r.ID)
+			if len(file) != 1 || file[0].WorkflowID != "wf_1" || file[0].State != persistedAbandoned ||
+				file[0].Cause != causeNameFailed {
+				t.Errorf("file attempts = %+v, want wf_1 abandoned with cause name_failed", file)
+			}
+			if len(es.queue) != 1 || es.queue[0].Live != "" || !tc.relaunchable(r.ID, "k1") {
+				t.Errorf("file queue = %+v, want k1 queued with no live record", es.queue)
+			}
+			tc.run()
+			tc.answerCancels(nil)
+			advance(launchConfirmBound + time.Second)
+			if cancels, _ := tc.fx.calls(); !slices.Equal(cancels, []string{"wf_1"}) {
+				t.Errorf("cancels = %v, want one, from the effect goroutine, and no bound for the cancelled run", cancels)
+			}
+		})
+	})
 	t.Run("the next launch uses a new workflow id", func(t *testing.T) { t.Skip("needs 5.8") })
+}
+
+func TestStoreWriteFailureBlocksRule(t *testing.T) {
+	t.Run("a failed poll write blocks the rule and logs the ERROR line", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.failWrites(errDiskFull)
+			h := tc.pollerOn()
+			h.runPage()
+			h.poll()
+			if got := tc.writeBlock(r.ID); got != writeBlockedText(&r) {
+				t.Errorf("write block = %q, want %q", got, writeBlockedText(&r))
+			}
+			for attr, want := range map[string]string{
+				"file": "launch-state/" + r.ID + ".json", "op": "write", "rule_id": r.ID, "error": errDiskFull.Error(),
+			} {
+				if got, _ := tc.log.AttrValueExact(logMsgNotWritten, attr); got != want {
+					t.Errorf("ERROR %q %s = %q, want %q", logMsgNotWritten, attr, got, want)
+				}
+			}
+		})
+	})
+	t.Run("the tick retries at the rule's poll interval, and the landed write lifts the block", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			spec := runSpec("success")
+			spec.IntervalMin = 10
+			r := tc.createRule(spec)
+			writeBlocked(tc, &r)
+			tc.failWrites(nil)
+			tc.woken()
+			advance(10*time.Minute - time.Second)
+			if n := tc.written(); n != 0 || tc.writeBlock(r.ID) == "" {
+				t.Fatalf("%d writes before the rule's interval, block %q; want none and the block kept", n,
+					tc.writeBlock(r.ID))
+			}
+			advance(time.Second)
+			if n := tc.written(); n != 1 {
+				t.Errorf("%d writes at the rule's interval, want the tick's one", n)
+			}
+			if got := tc.writeBlock(r.ID); got != "" {
+				t.Errorf("write block = %q, want it lifted", got)
+			}
+			if !tc.woken() {
+				t.Error("the launcher was not woken")
+			}
+			advance(30 * time.Minute)
+			if n := tc.written(); n != 0 {
+				t.Errorf("%d writes after the block lifted, want the tick stopped", n)
+			}
+		})
+	})
+	t.Run("a landed write lifts only the write-failure block", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.setStatus(r.ID, func(st *launchrule.Status) { st.Blocked = "session not idle" })
+			writeBlocked(tc, &r)
+			tc.failWrites(nil)
+			tc.persist(r.ID)
+			if got := tc.writeBlock(r.ID); got != "" {
+				t.Errorf("write block = %q, want it lifted", got)
+			}
+			if es, _ := tc.file(r.ID); es.raw.Status.Blocked != "session not idle" {
+				t.Errorf("file blocked = %q, want the other block kept", es.raw.Status.Blocked)
+			}
+		})
+	})
+}
+
+func TestPollWriteAfterFailedConfirmKeepsKey(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		unconfirmed(tc, &r)
+		tc.failWrites(errDiskFull)
+		tc.ConfirmEvent(r.ID, "k1", "wf_1")
+		tc.failWrites(nil)
+		h := tc.pollerOn()
+		h.runPage()
+		h.poll()
+		es, attempts := tc.file(r.ID)
+		if len(es.queue) != 0 || len(es.launched) != 1 || es.launched[0].Key != "k1" ||
+			es.launched[0].WorkflowID != "wf_1" {
+			t.Errorf("file queue %v, launched %+v; want k1 in launched under wf_1", keysOf(es.queue), es.launched)
+		}
+		if len(attempts) != 0 {
+			t.Errorf("file attempts = %+v, want none: the confirmed attempt has no record", attempts)
+		}
+	})
 }

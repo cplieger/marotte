@@ -102,6 +102,7 @@ func (s *stepper) named(ev *attemptEvent) {
 	s.rv.records = append(s.rv.records, rec)
 	e.Live = rec.workflowID
 	s.arm(rec)
+	s.nameRec = rec
 	s.status().RowText = "starting run " + rec.workflowID
 	s.res.write = true
 }

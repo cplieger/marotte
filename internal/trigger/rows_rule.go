@@ -98,9 +98,9 @@ func (s *stepper) deleteRule() {
 			s.removeRecord(r)
 		}
 	}
+	s.clearWriteBlock()
 	if err := s.c.writer.RemoveState(s.ruleID); err != nil {
-		slog.Error(logMsgNotWritten, "file", "launch-state/"+s.ruleID+".json", "op", "remove", "rule_id", s.ruleID,
-			"error", err)
+		slog.Error(logMsgNotWritten, "file", stateFile(s.ruleID), "op", "remove", "rule_id", s.ruleID, "error", err)
 	}
 }
 

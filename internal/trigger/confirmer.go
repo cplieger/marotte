@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"maps"
 	"sync"
+	"time"
 
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -37,9 +38,14 @@ func NewConfirmer(store *launchrule.Store, writer launchrule.StateWriter, leases
 
 // ruleValue is one event rule's in-memory state; mu covers all of it and every write of the rule's state file.
 type ruleValue struct {
-	records []*record
-	es      eventState
-	mu      sync.Mutex
+	// writeRetry is the write-failure tick's timer, armed while writeBlocked is set.
+	writeRetry *time.Timer
+	// writeBlocked is the write-failure block's sentence. It lives in memory only, since the write that would
+	// persist it is the one failing, and lifts when any write of the rule's whole value lands.
+	writeBlocked string
+	records      []*record
+	es           eventState
+	mu           sync.Mutex
 	// dropped is set when the Confirmer forgets the value; a step that waited for mu takes the rule's current one.
 	dropped bool
 	// newest is the hold policy E1 last saw, so it runs Q only on a change to newest.

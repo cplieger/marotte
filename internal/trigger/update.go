@@ -1,12 +1,13 @@
 package trigger
 
-// update applies fn to the rule's in-memory state under the rule's mutex and, when fn reports a change, has step
-// write the whole value (E10). A step that runs between the two writes the change too, so the order changes nothing.
+// update applies fn to the rule's in-memory state under the rule's mutex and, when fn reports a change or a write
+// of the rule failed, has step write the whole value (E10). A step that runs between the two writes the change too,
+// so the order changes nothing.
 func (c *Confirmer) update(ruleID string, fn func(es *eventState) bool) {
 	rv := c.lock(ruleID)
-	changed := fn(&rv.es)
+	retry := fn(&rv.es) || rv.writeBlocked != ""
 	rv.mu.Unlock()
-	if changed {
+	if retry {
 		c.deliver(ruleID, &attemptEvent{kind: evWriteRetry})
 	}
 }

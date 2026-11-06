@@ -127,10 +127,12 @@ var errImpossibleTransition = errors.New(logMsgImpossible)
 
 // stepper is one step call's view of its rule, under the rule's mutex.
 type stepper struct {
-	now    time.Time
-	c      *Confirmer
-	rv     *ruleValue
-	ruleID string
+	now time.Time
+	c   *Confirmer
+	rv  *ruleValue
+	// nameRec is the record A1 named, which W1 abandons when its write fails.
+	nameRec *record
+	ruleID  string
 	// def is the rule's definition; held is false once launch-rules.json no longer holds it.
 	def  launchrule.Rule
 	res  stepResult
@@ -160,14 +162,7 @@ func (c *Confirmer) step(ruleID string, ev *attemptEvent) stepResult {
 	if !named {
 		s.res = impossible(ruleID, rec, ev)
 	}
-	if s.res.write && s.held {
-		if err := c.writeLocked(ruleID, rv); err != nil {
-			slog.Error(logMsgNotWritten, "file", "launch-state/"+ruleID+".json", "op", "write", "rule_id", ruleID,
-				"error", err)
-		} else if s.wakeOnWrite {
-			s.wakeLauncher()
-		}
-	}
+	s.commit()
 	if !s.held && len(rv.records) == 0 {
 		c.forget(ruleID, rv)
 	}
