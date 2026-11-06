@@ -8,30 +8,28 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/textsearch"
 )
 
 // In-chat transcript search, server-side because the client holds a paginated window; the count and the hit list
-// find-in-chat.ts steps through make progressive collapse acceptable. Matching is textsearch's; this file owns
-// segmentation, scoped filters and hit context. No index: one linear pass over a log already read. Lexical, since
-// `_kiro/knowledge` cannot answer "which turn".
+// find-in-chat.ts steps through make progressive collapse acceptable. Matching is textsearch's; search_items.go owns
+// what one hit is (an item the transcript draws); this file owns the query, segmentation, scoped filters and hit
+// context. No index: one linear pass over a log already read. Lexical, since `_kiro/knowledge` cannot answer
+// "which turn".
 
-// The client's ranker slices the same radius (find-in-chat.ts's EXCERPT_RADIUS);
-// static-src/chat-search.node.test.ts keeps the two equal.
+// searchExcerptRadius is the runes of context an excerpt keeps on each side of the item's tightest window.
 const searchExcerptRadius = 60
 
-// maxSearchHits caps the hit list: a query matching every turn gets refined, not paged. Counting continues past it
+// maxSearchHits caps the hit list: a query matching every item gets refined, not paged. Counting continues past it
 // (SearchResult.Matched).
 const maxSearchHits = 200
 
-// SegmentKind identifies the span of an entry a hit landed in, so the client picks the right rendered surface.
+// SegmentKind identifies a searchable span of an item, so the client opens the surface that renders it.
 type SegmentKind string
 
-// Segment kinds in rendered order: a tool call has several segments across its tool_call and tool_result, so the kind
-// disambiguates offsets and a walk through one card follows the card.
+// Segment kinds in rendered order: a tool card has several segments across its tool_call and tool_result.
 const (
 	segmentContent       SegmentKind = "content"
 	segmentReasoning     SegmentKind = "reasoning"
@@ -52,103 +50,81 @@ const (
 	// segmentWake is a turn_wake's header text (marotte.WakeSearchTexts): its label and the messages it draws, which
 	// their own rows then leave out.
 	segmentWake SegmentKind = "wake"
-	// segmentEntry is the filter-only kind: a filter query with no text yields one hit per matching entry (offset 0,
-	// zero length).
-	segmentEntry SegmentKind = "entry"
 )
 
-// Hit locates one match; the client fetches the turns it needs and highlights locally. Offset indexes runes inside
-// the one segment SegmentKind names on EntryID, never a whole turn.
+// Hit is one matching item; the client pages its turn in, opens the containers holding it and marks its terms.
 type Hit struct {
 	// Caller is set on a hit in a prompt or steer an API caller sent, so a result names who sent the words.
 	Caller *marotte.Caller `json:"caller,omitempty"`
-	// TurnID is the matched entry's turn.
+	// TurnID is the item's turn.
 	TurnID string `json:"turn_id"`
-	// EntryID is the matched entry.
+	// EntryID is the item's anchor, its first member entry, which the client resolves the item's element by.
 	EntryID string `json:"entry_id"`
-	Excerpt string `json:"excerpt"`
-	// SegmentKind names the span the hit landed in.
-	SegmentKind SegmentKind `json:"segment_kind"`
-	// Lane is the entry's lane: "" for the chat's agent, a delegate's uuid inside its stream, so the client opens that
+	// Lane is the item's lane: "" for the chat's own flow, a delegate's uuid inside its stream, so the client opens that
 	// tab first.
 	Lane string `json:"lane,omitempty"`
+	// Kind is the item's kind, or "turn" for a spread hit.
+	Kind    ItemKind `json:"kind"`
+	Excerpt string   `json:"excerpt"`
+	// Segments are the distinct kinds of the item's segments holding a span, in rendered order; empty for a filter-only
+	// hit.
+	Segments []SegmentKind `json:"segments"`
 	// Turn is the 1-based session-absolute ordinal (turn_open's n), for marking the rail beyond the window.
 	Turn int `json:"turn"`
-	// Offset is the match's rune index inside its segment, so the right occurrence is highlighted.
-	Offset int `json:"offset"`
-	// SegmentLen is the segment's rune length, so the client never re-derives segmentation. Zero for entry hits.
-	SegmentLen int `json:"segment_len"`
 }
 
-// searchQuery is a parsed query: scoped filters plus free text.
+// searchQuery is a parsed query: scoped filters plus the free text's matcher.
 type searchQuery struct {
-	text string
-	file string
-	tool string
-	// needle is the prepared free text. Case sensitivity applies to it alone; filters stay case-insensitive, since paths
-	// are typed from memory.
-	needle textsearch.Needle
-	turn   int
-	// needleRunes is the free text's rune length, a match's length in its segment.
-	needleRunes int
+	file  string
+	tool  string
+	terms []textsearch.Term
+	// matcher is the prepared free text. Case sensitivity applies to it alone; filters stay case-insensitive, since
+	// paths are typed from memory.
+	matcher textsearch.Matcher
+	turn    int
 }
 
-// parseSearchQuery splits `file:` / `tool:` / `turn:` prefixes out of the query. Unknown prefixes stay in the text:
-// `http://` is literal.
+// isChatFilter is the chat search's filter rule: `file:` and `tool:` take any value, `turn:` a positive integer.
+// Anything else stays free text, so `http://` is literal.
+func isChatFilter(name, value string) bool {
+	switch name {
+	case "file", "tool":
+		return true
+	case "turn":
+		n, err := strconv.Atoi(value)
+		return err == nil && n > 0
+	}
+	return false
+}
+
+// parseSearchQuery parses raw through textsearch.ParseQuery with isChatFilter; the last filter of a name wins.
 func parseSearchQuery(raw string, caseSensitive bool) searchQuery {
-	q := searchQuery{turn: -1}
-	var text []string
-	for tok := range strings.FieldsSeq(raw) {
-		name, val, ok := strings.Cut(tok, ":")
-		if !ok || val == "" {
-			text = append(text, tok)
-			continue
-		}
-		switch strings.ToLower(name) {
+	pq := textsearch.ParseQuery(raw, isChatFilter)
+	q := searchQuery{terms: pq.Terms, turn: -1, matcher: textsearch.NewMatcher(pq.Terms, caseSensitive)}
+	for _, f := range pq.Filters {
+		switch f.Name {
 		case "file":
-			q.file = strings.ToLower(val)
+			q.file = strings.ToLower(f.Value)
 		case "tool":
-			q.tool = strings.ToLower(val)
+			q.tool = strings.ToLower(f.Value)
 		case "turn":
-			if n, err := strconv.Atoi(val); err == nil && n > 0 {
-				q.turn = n
-			} else {
-				text = append(text, tok)
-			}
-		default:
-			text = append(text, tok)
+			q.turn, _ = strconv.Atoi(f.Value)
 		}
 	}
-	q.text = strings.Join(text, " ")
-	q.needle = textsearch.NewNeedle(q.text, caseSensitive)
-	q.needleRunes = utf8.RuneCountInString(q.text)
 	return q
 }
 
 func (q *searchQuery) empty() bool {
-	return q.text == "" && q.file == "" && q.tool == "" && q.turn < 0
+	return q.matcher.Terms() == 0 && q.file == "" && q.tool == "" && q.turn < 0
 }
 
 // SearchResult is GET /api/chats/{id}/search's reply: hits capped at maxSearchHits plus the full tally.
 type SearchResult struct {
 	Matches []Hit `json:"matches"`
+	// Spread is true when no item held every term and the hits are turns whose items hold them between them.
+	Spread bool `json:"spread"`
+	// Matched counts matching items (or spread turns); Scanned counts the entries of drawn turns.
 	textsearch.Tally
-}
-
-// hitScan accumulates one scan: the kept hits, every occurrence counted past the cap, and the bytes of every segment
-// read.
-type hitScan struct {
-	hits    []Hit
-	matched int
-	chars   int
-}
-
-// The hit is built lazily, since past the cap its excerpt is discarded.
-func (sc *hitScan) add(mk func() Hit) {
-	sc.matched++
-	if len(sc.hits) < maxSearchHits {
-		sc.hits = append(sc.hits, mk())
-	}
 }
 
 // searchTurn is one turn as the scan sees it: its ordinal, whether the rail draws it, and the tool_call payloads its
@@ -166,46 +142,39 @@ type searchCall struct {
 	diff string
 }
 
-// search scans a chat's entries for a query and returns the hits and tally: Scanned counts every entry of a drawn
-// turn, Matched the occurrences, Truncated is false. Undrawn turns (absent from drawn) are skipped: no card renders
-// them. caseSensitive governs the free text only and travels on the request so both halves agree.
+// search scans a chat's entries for a query and returns the hits and tally. Undrawn turns (absent from drawn) are
+// skipped: no card renders them. caseSensitive governs the free text only and travels on the request so both halves
+// agree.
 func search(entries []marotte.Entry, drawn map[string]struct{}, raw string, caseSensitive bool) SearchResult {
-	res, _ := searchEntries(entries, drawn, raw, caseSensitive)
-	return res
+	return searchEntries(entries, drawn, raw, caseSensitive).res
 }
 
-// searchEntries is search plus the byte volume of the segments read, from one walk, for cross-chat ranking's
-// occurrences-per-byte.
-func searchEntries(entries []marotte.Entry, drawn map[string]struct{}, raw string, caseSensitive bool) (res SearchResult, chars int) {
+// itemScan is searchEntries' answer: the reply, the byte volume of the segments read (cross-chat ranking's
+// length norm) and the index in res.Matches of the tightest hit, -1 for none.
+type itemScan struct {
+	res   SearchResult
+	chars int
+	best  int
+}
+
+// searchEntries matches the query against every item of the drawn turns, falling back to turns when the query has
+// terms and no item holds them all.
+func searchEntries(entries []marotte.Entry, drawn map[string]struct{}, raw string, caseSensitive bool) itemScan {
 	q := parseSearchQuery(raw, caseSensitive)
 	if q.empty() {
-		return SearchResult{Matches: []Hit{}}, 0
+		return itemScan{res: SearchResult{Matches: []Hit{}}, best: -1}
 	}
 	turns := indexSearchTurns(entries, drawn)
-	woken := wakeFactsOf(entries)
-	sc := hitScan{hits: make([]Hit, 0, 16)}
 	scanned := 0
 	for i := range entries {
-		e := &entries[i]
-		t := turns[e.Turn]
-		if t == nil || !t.drawn {
-			continue
+		if t := turns[entries[i].Turn]; t != nil && t.drawn {
+			scanned++
 		}
-		scanned++
-		if _, ok := woken.drawn[e.ID]; ok && e.Kind == marotte.EntryKindSteer {
-			continue
-		}
-		segs := entrySegments(e, t, woken.names)
-		if !entryMatchesFilters(e, t, &q) {
-			continue
-		}
-		appendEntryHits(&sc, e, t.n, &q, segs)
 	}
-	return SearchResult{
-		Matches: sc.hits,
-		Scanned: scanned,
-		Matched: sc.matched,
-	}, sc.chars
+	items := searchItems(entries, turns)
+	sc := matchItems(items, &q)
+	sc.res.Scanned = scanned
+	return sc
 }
 
 // indexSearchTurns reads every turn_open's n and tool_call payload, so a result's filters read its call.
@@ -261,50 +230,23 @@ func (t *searchTurn) callFor(id string) *searchCall {
 	return c
 }
 
-// entryMatchesFilters applies the scoped filters, all of which must hold. `tool:` and `file:` read a call and its
-// result together, so output hits are found by the call's title.
-func entryMatchesFilters(e *marotte.Entry, t *searchTurn, q *searchQuery) bool {
-	if q.turn >= 0 && t.n != q.turn {
+// itemMatchesFilters applies the scoped filters, all of which must hold. `tool:` and `file:` keep only tool items,
+// read through the call and its result together, so output hits are found by the call's title.
+func itemMatchesFilters(it *searchItem, q *searchQuery) bool {
+	if q.turn >= 0 && it.ordinal != q.turn {
 		return false
 	}
 	if q.tool == "" && q.file == "" {
 		return true
 	}
-	call, result := toolPairOf(e, t)
-	if call == nil {
+	if it.call == nil {
 		return false
 	}
-	if q.tool != "" && !strings.Contains(strings.ToLower(call.Title), q.tool) &&
-		!strings.Contains(strings.ToLower(string(call.Kind)), q.tool) {
+	if q.tool != "" && !strings.Contains(strings.ToLower(it.call.Title), q.tool) &&
+		!strings.Contains(strings.ToLower(string(it.call.Kind)), q.tool) {
 		return false
 	}
-	if q.file != "" && !toolTouchesFile(call, result, q.file) {
-		return false
-	}
-	return true
-}
-
-// nil call for neither.
-func toolPairOf(e *marotte.Entry, t *searchTurn) (*marotte.EntryToolCall, *marotte.EntryToolResult) {
-	switch e.Kind {
-	case marotte.EntryKindToolCall:
-		return t.callPayload(e.ID), nil
-	case marotte.EntryKindToolResult:
-		var res marotte.EntryToolResult
-		if json.Unmarshal(e.Payload, &res) != nil {
-			return nil, nil
-		}
-		return t.callPayload(toolCallIDOfResult(e.ID)), &res
-	}
-	return nil, nil
-}
-
-// callPayload is the decoded tool_call payload for one id, nil when its create is gone.
-func (t *searchTurn) callPayload(id string) *marotte.EntryToolCall {
-	if c := t.calls[id]; c != nil {
-		return c.call
-	}
-	return nil
+	return q.file == "" || toolTouchesFile(it.call, it.result, q.file)
 }
 
 func toolCallIDOfResult(resultID string) string {
@@ -332,54 +274,6 @@ func toolTouchesFile(call *marotte.EntryToolCall, result *marotte.EntryToolResul
 		}
 	}
 	return false
-}
-
-// appendEntryHits adds every match in one entry, per segment, so no match spans two. ordinal is the turn's
-// turn_open.N. A filter-only query yields one hit per matching entry.
-func appendEntryHits(sc *hitScan, e *marotte.Entry, ordinal int, q *searchQuery, segs []segment) {
-	if q.text == "" {
-		sc.add(func() Hit {
-			var first string
-			if len(segs) > 0 {
-				first = segs[0].text
-			}
-			return Hit{
-				TurnID:      e.Turn,
-				EntryID:     e.ID,
-				Lane:        e.Lane,
-				Turn:        ordinal,
-				SegmentKind: segmentEntry,
-				Excerpt:     excerptAround([]rune(first), 0, 0),
-			}
-		})
-		return
-	}
-	for i := range segs {
-		sc.chars += len(segs[i].text)
-		appendSegmentHits(sc, e, ordinal, q, &segs[i])
-	}
-}
-
-func appendSegmentHits(sc *hitScan, e *marotte.Entry, ordinal int, q *searchQuery, seg *segment) {
-	var runes []rune
-	for hit := range q.needle.Occurrences(seg.text) {
-		if runes == nil {
-			runes = []rune(seg.text)
-		}
-		sc.add(func() Hit {
-			return Hit{
-				TurnID:      e.Turn,
-				EntryID:     e.ID,
-				Lane:        e.Lane,
-				Turn:        ordinal,
-				SegmentKind: seg.kind,
-				Offset:      hit.Rune,
-				SegmentLen:  len(runes),
-				Excerpt:     excerptAround(runes, hit.Rune, q.needleRunes),
-				Caller:      seg.caller,
-			}
-		})
-	}
 }
 
 type segment struct {
@@ -629,7 +523,7 @@ func inputLeafInDiff(leaf, diffText string) bool {
 	return diffText != "" && len(leaf) >= inputLeafDedupeMin && strings.Contains(diffText, leaf)
 }
 
-// rune-indexed so no character splits.
+// excerptAround cuts runes around [at, at+length), rune-indexed so no character splits.
 func excerptAround(runes []rune, at, length int) string {
 	start := max(at-searchExcerptRadius, 0)
 	end := min(at+length+searchExcerptRadius, len(runes))

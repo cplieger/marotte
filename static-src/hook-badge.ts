@@ -154,7 +154,7 @@ function mountBadge(group: HTMLElement): HTMLElement {
   const state: HookPopover = { folded: [], panel, ctl };
   popovers.set(badge, state);
   badge.addEventListener("click", () => {
-    toggleHookPopover(state);
+    toggleHookPopover(state, badge);
   });
   const header = group.querySelector(":scope > .tool-group-header");
   if (header === null) {
@@ -165,14 +165,40 @@ function mountBadge(group: HTMLElement): HTMLElement {
   return badge;
 }
 
-function toggleHookPopover(state: HookPopover): void {
+function toggleHookPopover(state: HookPopover, badge: HTMLElement): void {
   if (state.ctl.isOpen) {
     state.ctl.hide();
     return;
   }
+  // A reader's open moves focus into the list and back; set on every show, since find's open sets none.
+  state.ctl.setOptions({ initialFocus: state.panel, returnFocus: badge });
+  showList(state);
+}
+
+function showList(state: HookPopover): void {
   delete state.panel.dataset["keys"];
   renderHookList(state);
   state.ctl.show();
+}
+
+/** Open the badge's list without moving focus, for find-in-chat landing on a folded hook while the reader types.
+ *  False when `badge` is no hooks badge or the list is already open. */
+export function showHookPopover(badge: HTMLElement): boolean {
+  const state = popovers.get(badge);
+  if (state === undefined || state.ctl.isOpen) {
+    return false;
+  }
+  state.ctl.setOptions({ initialFocus: null, returnFocus: false });
+  showList(state);
+  return true;
+}
+
+/** Close the badge's list; a list `showHookPopover` opened moved no focus, so none moves back. */
+export function hideHookPopover(badge: HTMLElement): void {
+  const state = popovers.get(badge);
+  if (state?.ctl.isOpen === true) {
+    state.ctl.hide();
+  }
 }
 
 /** Rebuilt only when the entries change, so a focused chip keeps its focus. */

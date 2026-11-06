@@ -752,3 +752,14 @@ describe("a request an API caller sent", () => {
     expect(text(h).textContent).toBe("why that?");
   });
 });
+
+describe("search unit", () => {
+  it("stamps the request band, prompt and attachments, as the turn's header unit", () => {
+    const h = buildTurnHeader(data({ request: "fix the deadset failure" }));
+    const unit = h.querySelector<HTMLElement>("[data-find-unit]");
+    expect(unit?.dataset["findUnit"]).toBe("header");
+    expect(unit?.querySelector(".turn-req-text")?.textContent).toBe("fix the deadset failure");
+    expect(unit?.querySelector(".turn-req-attachments")).not.toBeNull();
+    expect(h.querySelector(".turn-head-row")?.closest("[data-find-unit]")).toBeNull();
+  });
+});

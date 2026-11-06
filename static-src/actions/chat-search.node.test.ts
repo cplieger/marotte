@@ -39,34 +39,34 @@ describe("the cross-chat search reply shared with the Go implementation", () => 
     expect(withLine?.best).toMatchObject({
       turn_id: "chat-001-t1",
       entry_id: "chat-001-t1",
-      segment_kind: "prompt",
-      offset: 22,
-      segment_len: 33,
+      kind: "header",
+      segments: ["prompt"],
     });
-    expect(withLine?.hits).toBe(3);
-    // A title-only match has no `best`: a zero hit's empty segment kind fails the registered enum.
+    // Two items, the prompt and the reply, however often the reply repeats the word.
+    expect(withLine?.hits).toBe(2);
+    expect(withLine?.spread).toBe(false);
+    // A title-only match has no `best`: a zero hit's empty item kind fails the registered enum.
     expect(titleOnly?.best).toBeUndefined();
     expect(titleOnly?.hits).toBe(0);
   });
 
   it("refuses a title-only match spelled as a zero hit", () => {
     const r = fx.result as { matches: Record<string, unknown>[] };
-    // Every other field is valid, so the refusal is attributable to the empty `segment_kind` alone.
+    // Every other field is valid, so the refusal is attributable to the empty `kind` alone.
     const zeroHit = {
       turn_id: "chat-003-t1",
       entry_id: "chat-003-t1",
       excerpt: "",
-      segment_kind: "",
+      kind: "",
+      segments: [],
       turn: 0,
-      offset: 0,
-      segment_len: 0,
     };
     const forged = { ...r, matches: [{ ...r.matches[1], best: zeroHit }] };
-    expect(() => decodeSearchAllResult(forged)).toThrow(/segment_kind/);
-    // Control: with a real segment kind the same hit decodes.
+    expect(() => decodeSearchAllResult(forged)).toThrow(/kind/);
+    // Control: with a real item kind the same hit decodes.
     const named = {
       ...r,
-      matches: [{ ...r.matches[1], best: { ...zeroHit, segment_kind: "prompt" } }],
+      matches: [{ ...r.matches[1], best: { ...zeroHit, kind: "header" } }],
     };
     expect(() => decodeSearchAllResult(named)).not.toThrow();
   });

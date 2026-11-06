@@ -153,7 +153,7 @@ describe("search reveal", () => {
   it("re-folds when the search closes", () => {
     const list = turns(6);
     openForSearch("c1", list[0]!.id);
-    expect(clearSearchOpened("c1")).toBe(true);
+    expect(clearSearchOpened("c1").length).toBeGreaterThan(0);
     expect(isTurnOpen("c1", list[0]!, 0, list.length)).toBe(false);
   });
 
@@ -167,7 +167,7 @@ describe("search reveal", () => {
   });
 
   it("reports nothing to clear when no search reveal is active", () => {
-    expect(clearSearchOpened("c1")).toBe(false);
+    expect(clearSearchOpened("c1")).toEqual([]);
   });
 
   it("does not persist a search reveal", () => {

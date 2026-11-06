@@ -1001,16 +1001,15 @@ const match = (over: Record<string, unknown> = {}) => ({
   id: "c-redis",
   name: "Redis migration",
   best: {
-    message_id: "m1",
-    turn_message_id: "m1",
+    turn_id: "t1",
+    entry_id: "m1",
     excerpt: "we moved the cache to redis",
-    role: "user",
-    segment_kind: "content",
+    kind: "message",
+    segments: ["content"],
     turn: 1,
-    offset: 22,
-    segment_len: 27,
   },
   hits: 3,
+  spread: false,
   score: 12,
   updated_at: 5000,
   ...over,
@@ -1966,5 +1965,74 @@ describe("history: the row's subtitle and time", () => {
     expect(oldTime.textContent).toBe(formatShortDate(old, { year: true }));
     // Inside the open control, at the trailing end of the title line.
     expect(openBtn(rowOf("s:sess_recent")).contains(recentTime)).toBe(true);
+  });
+});
+
+// History types like Find in chat: the same pause, Enter at once, and a floor under which typing alone does not
+// read every chat.
+describe("history: when the cross-chat search runs", () => {
+  beforeEach(resetAll);
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const ANSWER = { matches: [match()], spread: false, scanned: 2, matched: 1, truncated: false };
+
+  async function openBox(): Promise<HTMLInputElement> {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    mountView();
+    dispatch.mockResolvedValue({ sessions: [], runs: [] });
+    searchDispatch.mockResolvedValue(ANSWER as never);
+    const { loadHistoryView } = await freshModule();
+    loadHistoryView();
+    await openFind();
+    return document.getElementById("hist-search-input") as HTMLInputElement;
+  }
+
+  function type(input: HTMLInputElement, value: string): void {
+    input.value = value;
+    input.dispatchEvent(new Event("input"));
+  }
+
+  function enter(input: HTMLInputElement): void {
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+  }
+
+  it("searches once the reader pauses for 300 ms, not before", async () => {
+    const input = await openBox();
+    type(input, "deadset security failure");
+    vi.advanceTimersByTime(299);
+    expect(searchDispatch).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(searchDispatch).toHaveBeenCalledExactlyOnceWith("deadset security failure");
+  });
+
+  it("waits for three characters while typing, says so, and searches any length on Enter", async () => {
+    const input = await openBox();
+    type(input, "ab");
+    vi.advanceTimersByTime(1000);
+    await vi.waitFor(() => {
+      expect(document.getElementById("hist-search-note")?.textContent).toBe(
+        "Type 3 characters, or press Enter to search",
+      );
+    });
+    expect(searchDispatch).not.toHaveBeenCalled();
+
+    enter(input);
+    expect(searchDispatch).toHaveBeenCalledExactlyOnceWith("ab");
+  });
+
+  it("labels a row whose words no single message holds", async () => {
+    const input = await openBox();
+    searchDispatch.mockResolvedValue({ ...ANSWER, matches: [match({ spread: true })] } as never);
+    type(input, "deadset security failure");
+    enter(input);
+    await vi.waitFor(() => {
+      expect(chatsPane().querySelector(".entry-sub")?.textContent).toBe(
+        "Words spread across messages: we moved the cache to redis",
+      );
+    });
   });
 });

@@ -293,52 +293,43 @@ function stageServerHits(hits: Hit[]): void {
   vi.mocked(api.apiGetTyped).mockImplementation(((path: string, decode: (v: unknown) => unknown) =>
     Promise.resolve(
       path.includes("/search?q=")
-        ? decode({ matches: hits, scanned: 1, matched: hits.length, truncated: false })
+        ? decode({
+            matches: hits,
+            spread: false,
+            scanned: 1,
+            matched: hits.length,
+            truncated: false,
+          })
         : null,
     )) as typeof api.apiGetTyped);
 }
 
 function hitOn(turnID: string, at: number): Hit {
-  const text = sentinelText(at);
   return {
     turn_id: turnID,
     entry_id: `${turnID}-e${String(at)}`,
-    excerpt: text,
-    role: "assistant",
-    segment_kind: "content",
+    excerpt: sentinelText(at),
+    kind: "message",
+    segments: ["content"],
     turn: 1,
-    offset: text.indexOf(SENTINEL),
-    segment_len: text.length,
-  } as unknown as Hit;
+  };
 }
 
 function countText(): string {
   return document.getElementById("chat-find-count")?.textContent ?? "";
 }
 
-/** Open the find box, run the query, then step once — the reader's own gestures,
- *  because `navigateToHit` is reachable only from the stepping path. */
+/** Open the find box and run the query, the reader's own gestures; the answer lands on its hit. */
 async function findAndStep(query: string): Promise<void> {
   handleFindHotkey(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, cancelable: true }));
   const input = document.getElementById("chat-find-input") as HTMLInputElement;
-  const enter = (): void => {
-    input.value = query;
-    input.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
-    );
-  };
-  enter();
-  // The server answer landed and the counter carries its figure — beside the marks
-  // when there are some, as the empty state when the walker has nothing.
+  input.value = query;
+  input.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+  );
   await vi.waitFor(() => {
-    expect(countText()).toMatch(/in chat|matched, not shown here/);
+    expect(countText()).toMatch(/^\d+ of \d+/);
   });
-  // The counter is painted synchronously by the query callback; the shell's render,
-  // which records the navigable hits, lands a few microtask hops later.
-  await new Promise((resolve) => {
-    setTimeout(resolve, 0);
-  });
-  enter();
 }
 
 beforeEach(() => {

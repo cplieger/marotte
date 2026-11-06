@@ -30,6 +30,8 @@ export type ForgeStatus = "connected" | "retrying" | "refused" | "reconnect" | "
 
 export type InterruptMode = "steer" | "queue";
 
+export type ItemKind = "header" | "message" | "reasoning" | "tool" | "steer" | "plan" | "notice" | "turn_failure" | "turn";
+
 export type KnowledgeIndexingPhase = "started" | "completed";
 
 export type KnowledgeIndexingStatus = "success" | "failed";
@@ -84,7 +86,7 @@ export type RunStepTranscriptState = "ready" | "gone" | "unavailable";
 
 export type SafetyStatus = "idle" | "formalizing" | "evaluating" | "blocked" | "error";
 
-export type SegmentKind = "content" | "reasoning" | "tool_title" | "tool_disclosed" | "tool_diff" | "tool_denial" | "tool_input" | "tool_output" | "steer" | "prompt" | "plan" | "attachment" | "turn_failure" | "wake" | "entry";
+export type SegmentKind = "content" | "reasoning" | "tool_title" | "tool_disclosed" | "tool_diff" | "tool_denial" | "tool_input" | "tool_output" | "steer" | "prompt" | "plan" | "attachment" | "turn_failure" | "wake";
 
 export type SettledBy = "user" | "unattended" | "moot" | "ended";
 
@@ -1765,31 +1767,29 @@ export interface GovernanceStatePayload {
   admin_restricted?: boolean;
 }
 
-/**
- * Hit locates one match; the client fetches the turns it needs and highlights locally. Offset indexes runes inside
- * the one segment SegmentKind names on EntryID, never a whole turn.
- */
+/** Hit is one matching item; the client pages its turn in, opens the containers holding it and marks its terms. */
 export interface Hit {
   /** Caller is set on a hit in a prompt or steer an API caller sent, so a result names who sent the words. */
   caller?: Caller;
-  /** TurnID is the matched entry's turn. */
+  /** TurnID is the item's turn. */
   turn_id: string;
-  /** EntryID is the matched entry. */
+  /** EntryID is the item's anchor, its first member entry, which the client resolves the item's element by. */
   entry_id: string;
-  excerpt: string;
-  /** SegmentKind names the span the hit landed in. */
-  segment_kind: SegmentKind;
   /**
- * Lane is the entry's lane: "" for the chat's agent, a delegate's uuid inside its stream, so the client opens that
+ * Lane is the item's lane: "" for the chat's own flow, a delegate's uuid inside its stream, so the client opens that
  * tab first.
  */
   lane?: string;
+  /** Kind is the item's kind, or "turn" for a spread hit. */
+  kind: ItemKind;
+  excerpt: string;
+  /**
+ * Segments are the distinct kinds of the item's segments holding a span, in rendered order; empty for a filter-only
+ * hit.
+ */
+  segments: SegmentKind[];
   /** Turn is the 1-based session-absolute ordinal (turn_open's n), for marking the rail beyond the window. */
   turn: number;
-  /** Offset is the match's rune index inside its segment, so the right occurrence is highlighted. */
-  offset: number;
-  /** SegmentLen is the segment's rune length, so the client never re-derives segmentation. Zero for entry hits. */
-  segment_len: number;
 }
 
 /**
@@ -2176,12 +2176,17 @@ export interface MCPToolIdentity {
 
 /** Match is one chat that matched, with the evidence for showing it. */
 export interface Match {
-  /** Best is the earliest hit (bestHit), the row's line and jump target; absent on a title-only match. */
+  /**
+ * Best is the hit whose terms sit closest together (the tightest window, earliest on a tie), the row's line and
+ * jump target; absent on a title-only match.
+ */
   best?: Hit;
   name: string;
   id: string;
-  /** Hits is every occurrence the chat holds, so a row can say "and 11 more". */
+  /** Hits is every matching item (or spread turn) the chat holds, so a row can say "and 11 more". */
   hits: number;
+  /** Spread is true when no item of the chat holds every term, only a turn between its items. */
+  spread: boolean;
   /** Score ranks the row (scoreChat). */
   score: number;
   /** UpdatedAt breaks ties toward the more recent conversation. */
@@ -3456,6 +3461,8 @@ export interface SearchResponse {
 /** SearchResult is GET /api/chats/{id}/search's reply: hits capped at maxSearchHits plus the full tally. */
 export interface SearchResult {
   matches: Hit[];
+  /** Spread is true when no item held every term and the hits are turns whose items hold them between them. */
+  spread: boolean;
   /**
  * Scanned is how many units the scan READ, whole or in part (or whose index entry stood in).
  * A unit read and found out of scope, or vanished mid-walk, is scanned; one it meant to read

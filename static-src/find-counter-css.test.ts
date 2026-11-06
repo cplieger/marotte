@@ -20,7 +20,6 @@ vi.mock("./run-view.js", () => ({ openRunView: vi.fn() }));
 vi.mock("./subagent-view.js", () => ({ openSubagentView: vi.fn() }));
 vi.mock("./messages-blocks.js", () => ({
   blockElement: vi.fn(),
-  runOffsetOf: vi.fn(() => undefined),
 }));
 vi.mock("./editor-scroll.js", () => ({
   scrollToEditorLine: vi.fn(),

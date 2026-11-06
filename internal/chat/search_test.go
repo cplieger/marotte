@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,7 +22,12 @@ var segmentKinds = []SegmentKind{
 	segmentContent, segmentReasoning, segmentToolTitle, segmentToolDisclosed,
 	segmentToolDiff, segmentToolDenial, segmentToolInput, segmentToolOutput,
 	segmentSteer, segmentPrompt, segmentPlan, segmentAttachment, segmentTurnFailure,
-	segmentWake, segmentEntry,
+	segmentWake,
+}
+
+// itemKinds is every ItemKind the const block declares.
+var itemKinds = []ItemKind{
+	itemHeader, itemMessage, itemReasoning, itemTool, itemSteer, itemPlan, itemNotice, itemTurnFailure, itemTurn,
 }
 
 func openTurn(id string, n uint64, prompt *marotte.EntryPrompt) *turnFixture {
@@ -100,14 +106,14 @@ func transcript() ([]marotte.Entry, map[string]struct{}) {
 func TestSearch_FindsTextAndNamesItsTurn(t *testing.T) {
 	entries, drawn := transcript()
 	hits := searchHits(entries, drawn, "composer")
-	if len(hits) != 2 {
-		t.Fatalf("Search(%q) = %d hits, want 2 (the prompt and the reply)", "composer", len(hits))
-	}
-	if hits[0].TurnID != "t-2" || hits[0].EntryID != "t-2" || hits[0].Turn != 2 || hits[0].SegmentKind != segmentPrompt {
-		t.Errorf("hit 0 = %+v, want the prompt of t-2 in turn 2", hits[0])
-	}
-	if hits[1].TurnID != "t-2" || hits[1].EntryID != "a2" || hits[1].Turn != 2 {
-		t.Errorf("hit 1 = %+v, want a2 in turn t-2 (ordinal 2)", hits[1])
+	assertHits(t, hits, []wantHit{
+		{entry: "t-2", kind: itemHeader, segs: []SegmentKind{segmentPrompt}},
+		{entry: "a2", kind: itemMessage, segs: []SegmentKind{segmentContent}},
+	})
+	for _, h := range hits {
+		if h.TurnID != "t-2" || h.Turn != 2 {
+			t.Errorf("hit %+v, want turn t-2 (ordinal 2)", h)
+		}
 	}
 }
 
@@ -149,34 +155,16 @@ func TestSearch_CaseSensitivity(t *testing.T) {
 	}
 }
 
-// The rune offset is computed over the folded or original haystack; both modes must land on the same rune index.
-func TestSearch_OffsetsAreRuneIndicesInBothCaseModes(t *testing.T) {
-	entries, drawn := oneText("héllo wörld Needle")
-	for _, cs := range []bool{false, true} {
-		hits := search(entries, drawn, "Needle", cs).Matches
-		if len(hits) != 1 {
-			t.Fatalf("Search(case=%v) = %d hits, want 1", cs, len(hits))
-		}
-		if want := len([]rune("héllo wörld ")); hits[0].Offset != want {
-			t.Errorf("Search(case=%v) offset = %d, want %d (a rune index, not a byte)", cs, hits[0].Offset, want)
-		}
-	}
-}
-
-// Offsets are relative to the entry's own segment, so a tool call between two texts does not shift the second.
-func TestSearch_EveryOccurrenceIsAHitAtItsOwnOffset(t *testing.T) {
+// One item is one hit however often it holds the words, so the counter counts what the reader steps through.
+func TestSearch_AnItemIsOneHitHoweverManyOccurrences(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
 		text("a1", "intro paragraph").
 		tool(marotte.EntryToolCall{ID: "tc1", Title: "shell"}, nil).
 		text("a2", "retry retry retry"))
-	hits := searchHits(entries, drawn, "retry")
-	if len(hits) != 3 {
-		t.Fatalf("Search(%q) = %d hits, want 3", "retry", len(hits))
-	}
-	for i, want := range []int{0, 6, 12} {
-		if hits[i].EntryID != "a2" || hits[i].Offset != want || hits[i].SegmentLen != 17 {
-			t.Errorf("hit %d = %+v, want a2 at offset %d of 17", i, hits[i], want)
-		}
+	res := search(entries, drawn, "retry", false)
+	assertHits(t, res.Matches, []wantHit{{entry: "a2", kind: itemMessage, segs: []SegmentKind{segmentContent}}})
+	if res.Matched != 1 {
+		t.Errorf("Matched = %d, want 1 item", res.Matched)
 	}
 }
 
@@ -206,12 +194,12 @@ func TestSearch_SearchesThinkingAndToolOutput(t *testing.T) {
 		thinking("th1", "considering a mutex here").
 		tool(marotte.EntryToolCall{ID: "tc1", Title: "shell"},
 			&marotte.EntryToolResult{Status: marotte.ToolCompleted, Output: "permission denied"}))
-	if hits := searchHits(entries, drawn, "permission denied"); len(hits) != 1 || hits[0].SegmentKind != segmentToolOutput || hits[0].EntryID != "tc1:result" {
-		t.Errorf("Search(%q) = %+v, want one tool_output hit on tc1:result", "permission denied", hits)
-	}
-	if hits := searchHits(entries, drawn, "mutex"); len(hits) != 1 || hits[0].SegmentKind != segmentReasoning {
-		t.Errorf("Search(%q) = %+v, want one reasoning hit", "mutex", hits)
-	}
+	assertHits(t, searchHits(entries, drawn, "permission denied"), []wantHit{
+		{entry: "tc1", kind: itemTool, segs: []SegmentKind{segmentToolOutput}},
+	})
+	assertHits(t, searchHits(entries, drawn, "mutex"), []wantHit{
+		{entry: "th1", kind: itemReasoning, segs: []SegmentKind{segmentReasoning}},
+	})
 }
 
 func TestSearch_ScopedFilters(t *testing.T) {
@@ -246,29 +234,17 @@ func TestSearch_ScopedFilters(t *testing.T) {
 
 	// A read has a location and no diff, so locations count; a write is found through its diff path.
 	t.Run("file matches a read as well as a write", func(t *testing.T) {
-		got := searchHits(entries, drawn, "file:token.go")
-		if len(got) != 2 || got[0].EntryID != "tc1" || got[1].EntryID != "tc1:result" {
-			t.Errorf("file:token.go = %+v, want the reading call and its result", got)
-		}
-		got = searchHits(entries, drawn, "file:composer.ts")
-		if len(got) != 1 || got[0].EntryID != "tc2:result" {
-			t.Errorf("file:composer.ts = %+v, want the writing result alone", got)
-		}
+		assertHits(t, searchHits(entries, drawn, "file:token.go"), []wantHit{{entry: "tc1", kind: itemTool}})
+		assertHits(t, searchHits(entries, drawn, "file:composer.ts"), []wantHit{{entry: "tc2", kind: itemTool}})
 	})
 
 	t.Run("tool matches title or kind", func(t *testing.T) {
-		if got := searchHits(entries, drawn, "tool:readFile"); len(got) != 2 {
-			t.Errorf("tool:readFile = %d hits, want 2 (the call and its result)", len(got))
-		}
-		if got := searchHits(entries, drawn, "tool:edit"); len(got) != 2 {
-			t.Errorf("tool:edit = %d hits by kind, want 2", len(got))
-		}
+		assertHits(t, searchHits(entries, drawn, "tool:readFile"), []wantHit{{entry: "tc1", kind: itemTool}})
+		assertHits(t, searchHits(entries, drawn, "tool:edit"), []wantHit{{entry: "tc2", kind: itemTool}})
 	})
 
 	t.Run("filters combine", func(t *testing.T) {
-		if got := searchHits(entries, drawn, "tool:read turn:1"); len(got) != 2 {
-			t.Errorf("tool:read turn:1 = %+v, want the two tc1 entries", got)
-		}
+		assertHits(t, searchHits(entries, drawn, "tool:read turn:1"), []wantHit{{entry: "tc1", kind: itemTool}})
 		// An all-excluding filter returns nothing rather than ignoring itself.
 		if got := searchHits(entries, drawn, "tool:read turn:99"); len(got) != 0 {
 			t.Errorf("an impossible combination returned %d hits", len(got))
@@ -276,9 +252,10 @@ func TestSearch_ScopedFilters(t *testing.T) {
 	})
 
 	t.Run("filter plus free text", func(t *testing.T) {
-		if got := searchHits(entries, drawn, "turn:1 auth"); len(got) != 2 || got[0].EntryID != "t-1" || got[1].EntryID != "tc1:result" {
-			t.Errorf("turn:1 auth = %+v, want the prompt and the output of turn 1", got)
-		}
+		assertHits(t, searchHits(entries, drawn, "turn:1 auth"), []wantHit{
+			{entry: "t-1", kind: itemHeader, segs: []SegmentKind{segmentPrompt}},
+			{entry: "tc1", kind: itemTool, segs: []SegmentKind{segmentToolOutput}},
+		})
 	})
 }
 
@@ -297,8 +274,8 @@ func TestSearch_UnknownOrUnparseablePrefixStaysFreeText(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			entries, drawn := oneText(tc.content)
 			hits := searchHits(entries, drawn, tc.query)
-			if len(hits) != 1 || hits[0].SegmentKind != segmentContent {
-				t.Errorf("Search(%q) = %+v, want one content hit: the term is free text", tc.query, hits)
+			if len(hits) != 1 || hits[0].Kind != itemMessage {
+				t.Errorf("Search(%q) = %+v, want one message hit: the term is free text", tc.query, hits)
 			}
 		})
 	}
@@ -351,33 +328,35 @@ func TestSearch_ExcerptMarksOnlyTheSidesItActuallyCut(t *testing.T) {
 // drawn turn; Truncated stays false.
 func TestSearch_MatchedCountsPastTheHitCap(t *testing.T) {
 	cases := []struct {
-		name        string
-		occurrences int
-		wantHits    int
+		name     string
+		items    int
+		wantHits int
 	}{
-		{name: "under the cap", occurrences: maxSearchHits - 1, wantHits: maxSearchHits - 1},
-		{name: "exactly at the cap", occurrences: maxSearchHits, wantHits: maxSearchHits},
-		{name: "one past the cap", occurrences: maxSearchHits + 1, wantHits: maxSearchHits},
-		{name: "far past the cap", occurrences: 3 * maxSearchHits, wantHits: maxSearchHits},
+		{name: "under the cap", items: maxSearchHits - 1, wantHits: maxSearchHits - 1},
+		{name: "exactly at the cap", items: maxSearchHits, wantHits: maxSearchHits},
+		{name: "one past the cap", items: maxSearchHits + 1, wantHits: maxSearchHits},
+		{name: "far past the cap", items: 3 * maxSearchHits, wantHits: maxSearchHits},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			entries, drawn := chatOf(openTurn("t-1", 1, nil).
-				text("a1", strings.Repeat("hit ", tc.occurrences)).
-				text("a2", "nothing here"))
+			tf := openTurn("t-1", 1, nil)
+			for i := range tc.items {
+				tf.text("say-"+strconv.Itoa(i), "hit")
+			}
+			entries, drawn := chatOf(tf.text("a2", "nothing here"))
 			res := search(entries, drawn, "hit", false)
 			if len(res.Matches) != tc.wantHits {
-				t.Errorf("%d occurrences: got %d hits, want %d", tc.occurrences, len(res.Matches), tc.wantHits)
+				t.Errorf("%d items: got %d hits, want %d", tc.items, len(res.Matches), tc.wantHits)
 			}
-			if res.Matched != tc.occurrences {
-				t.Errorf("%d occurrences: Matched = %d, want %d", tc.occurrences, res.Matched, tc.occurrences)
+			if res.Matched != tc.items {
+				t.Errorf("%d items: Matched = %d, want %d", tc.items, res.Matched, tc.items)
 			}
 			if res.Scanned != len(entries) {
-				t.Errorf("%d occurrences: Scanned = %d, want %d (every entry of a drawn turn is read)", tc.occurrences, res.Scanned, len(entries))
+				t.Errorf("%d items: Scanned = %d, want %d (every entry of a drawn turn is read)", tc.items, res.Scanned, len(entries))
 			}
 			if res.Truncated {
-				t.Errorf("%d occurrences: Truncated = true, want false: the cut is Matched > len(Matches)", tc.occurrences)
+				t.Errorf("%d items: Truncated = true, want false: the cut is Matched > len(Matches)", tc.items)
 			}
 		})
 	}
@@ -404,7 +383,7 @@ func TestSearchEntries_CharsAreTheSpansTheScanRead(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, got := searchEntries(entries, drawn, tc.query, false); got != tc.want {
+			if got := searchEntries(entries, drawn, tc.query, false).chars; got != tc.want {
 				t.Errorf("searchEntries(%q) chars = %d, want %d", tc.query, got, tc.want)
 			}
 		})
@@ -511,7 +490,11 @@ func TestHandleSearch_CaseParam(t *testing.T) {
 // The handler writes the scan's reply, so a capped list arrives with its count.
 func TestHandleSearch_ReportsTheTally(t *testing.T) {
 	s, _ := newTestStore(t)
-	seedSearchChat(t, s, "c1", "One", "count these", strings.Repeat("hit ", maxSearchHits+1), "one lonely miss")
+	replies := make([]string, maxSearchHits+1, maxSearchHits+2)
+	for i := range replies {
+		replies[i] = "hit"
+	}
+	seedSearchChat(t, s, "c1", "One", "count these", append(replies, "one lonely miss")...)
 
 	cases := []struct {
 		name        string
@@ -531,9 +514,9 @@ func TestHandleSearch_ReportsTheTally(t *testing.T) {
 			if body.Matched != tc.wantMatched {
 				t.Errorf("q=%s: matched = %d, want %d", tc.query, body.Matched, tc.wantMatched)
 			}
-			// turn_open, two text entries, turn_close.
-			if body.Scanned != 4 {
-				t.Errorf("q=%s: scanned = %d, want 4", tc.query, body.Scanned)
+			// turn_open, every reply, turn_close.
+			if want := maxSearchHits + 4; body.Scanned != want {
+				t.Errorf("q=%s: scanned = %d, want %d", tc.query, body.Scanned, want)
 			}
 			if body.Truncated {
 				t.Errorf("q=%s: truncated = true, want false", tc.query)
@@ -555,11 +538,10 @@ func TestHandleSearch_ChatNameIsNotSearched(t *testing.T) {
 
 // assertHits compares field by field to name the broken coordinate.
 type wantHit struct {
-	entry      string
-	lane       string
-	kind       SegmentKind
-	offset     int
-	segmentLen int
+	entry string
+	lane  string
+	kind  ItemKind
+	segs  []SegmentKind
 }
 
 func assertHits(t *testing.T, hits []Hit, want []wantHit) {
@@ -572,41 +554,40 @@ func assertHits(t *testing.T, hits []Hit, want []wantHit) {
 		if h.EntryID != w.entry {
 			t.Errorf("hit %d EntryID = %q, want %q", i, h.EntryID, w.entry)
 		}
-		if h.SegmentKind != w.kind {
-			t.Errorf("hit %d SegmentKind = %q, want %q", i, h.SegmentKind, w.kind)
+		if h.Kind != w.kind {
+			t.Errorf("hit %d Kind = %q, want %q", i, h.Kind, w.kind)
 		}
 		if h.Lane != w.lane {
 			t.Errorf("hit %d Lane = %q, want %q", i, h.Lane, w.lane)
 		}
-		if h.Offset != w.offset {
-			t.Errorf("hit %d Offset = %d, want %d", i, h.Offset, w.offset)
+		if w.segs == nil {
+			w.segs = []SegmentKind{}
 		}
-		if h.SegmentLen != w.segmentLen {
-			t.Errorf("hit %d SegmentLen = %d, want %d", i, h.SegmentLen, w.segmentLen)
+		if !slices.Equal(h.Segments, w.segs) {
+			t.Errorf("hit %d Segments = %v, want %v", i, h.Segments, w.segs)
 		}
 	}
 }
 
-// The same text in the agent's and a delegate's lane is two hits, each with its own entry, lane and segment offset.
+// The same text in the agent's and a delegate's lane is two hits, each with its own entry and lane.
 func TestSearch_DistinguishesParentAndDelegateLanes(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
 		text("a1", "the needle in the parent").
 		laneText("sub-1", "a2", "the needle in the delegate"))
 	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "a1", kind: segmentContent, offset: 4, segmentLen: 24},
-		{entry: "a2", lane: "sub-1", kind: segmentContent, offset: 4, segmentLen: 26},
+		{entry: "a1", kind: itemMessage, segs: []SegmentKind{segmentContent}},
+		{entry: "a2", lane: "sub-1", kind: itemMessage, segs: []SegmentKind{segmentContent}},
 	})
 }
 
-// A tool's title is a segment of its tool_call and its output of the tool_result: two hits, in the call's lane.
+// A tool's title and its result's output are two segments of one card: one hit, anchored on the call, in its lane.
 func TestSearch_ToolTitleAndOutputAreSegmentsOfTheCallAndTheResult(t *testing.T) {
 	tf := openTurn("t-1", 1, nil).text("a1", "running the search now")
 	tf.add("sub-9", "tc1", marotte.EntryKindToolCall, marotte.EntryToolCall{ID: "tc1", Title: "grep needle"})
 	tf.add("sub-9", "tc1:result", marotte.EntryKindToolResult, marotte.EntryToolResult{Status: marotte.ToolCompleted, Output: "found a needle here"})
 	entries, drawn := chatOf(tf)
 	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "tc1", lane: "sub-9", kind: segmentToolTitle, offset: 5, segmentLen: 11},
-		{entry: "tc1:result", lane: "sub-9", kind: segmentToolOutput, offset: 8, segmentLen: 19},
+		{entry: "tc1", lane: "sub-9", kind: itemTool, segs: []SegmentKind{segmentToolTitle, segmentToolOutput}},
 	})
 }
 
@@ -626,23 +607,21 @@ func TestSearch_SteeringBoxFindsItsDocumentNamesInTheTitle(t *testing.T) {
 	})
 	entries, drawn := chatOf(tf)
 	assertHits(t, searchHits(entries, drawn, "testing.md"), []wantHit{
-		{entry: "g1", lane: "sub-9", kind: segmentToolTitle, offset: 33, segmentLen: 43},
+		{entry: "g1", lane: "sub-9", kind: itemTool, segs: []SegmentKind{segmentToolTitle}},
 	})
 	if hits := searchHits(entries, drawn, ".kiro/steering"); len(hits) != 0 {
 		t.Errorf("Search found %d hits in a steering box's ids, want 0: %+v", len(hits), hits)
 	}
 }
 
-// A result's new_text is its own segment with a rune offset; the diff path is not searched (`file:` and the title
-// reach it).
+// A result's new_text is its own segment; the diff path is not searched (`file:` and the title reach it).
 func TestSearch_DiffNewTextIsSearched(t *testing.T) {
 	entries, drawn := oneTool(
 		marotte.EntryToolCall{ID: "tc1", Title: "Replace in File"},
 		&marotte.EntryToolResult{Status: marotte.ToolCompleted, Diffs: []marotte.ToolDiff{{Path: "needle.go", NewText: "åß needle"}}},
 	)
-	// "åß " is 3 runes (5 bytes); the segment is 9 runes (11 bytes).
 	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "tc1:result", kind: segmentToolDiff, offset: 3, segmentLen: 9},
+		{entry: "tc1", kind: itemTool, segs: []SegmentKind{segmentToolDiff}},
 	})
 }
 
@@ -666,7 +645,7 @@ func TestSearch_DiffWithEmptyNewTextContributesNoSegment(t *testing.T) {
 		&marotte.EntryToolResult{Status: marotte.ToolCompleted, Diffs: []marotte.ToolDiff{{OldText: "the needle used to live here"}}},
 	)
 	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "tc1", kind: segmentToolTitle, offset: 7, segmentLen: 16},
+		{entry: "tc1", kind: itemTool, segs: []SegmentKind{segmentToolTitle}},
 	})
 }
 
@@ -679,9 +658,11 @@ func TestSearch_OnlyTheFirstDiffIsSearched(t *testing.T) {
 			{Path: "b.go", NewText: "second needle"},
 		}},
 	)
-	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "tc1:result", kind: segmentToolDiff, offset: 6, segmentLen: 12},
-	})
+	hits := searchHits(entries, drawn, "needle")
+	assertHits(t, hits, []wantHit{{entry: "tc1", kind: itemTool, segs: []SegmentKind{segmentToolDiff}}})
+	if hits[0].Excerpt != "first needle" {
+		t.Errorf("excerpt = %q, want the first diff's text", hits[0].Excerpt)
+	}
 }
 
 // inputCall builds a tool_call whose only searchable span is its input.
@@ -702,7 +683,7 @@ func TestSearch_ToolInputSearchesStringLeavesOnly(t *testing.T) {
 	}, {
 		name:  "a needle in a string value is a tool_input hit",
 		input: `{"cmd":"grep needle here"}`,
-		want:  []wantHit{{entry: "tc1", kind: segmentToolInput, offset: 5, segmentLen: 16}},
+		want:  []wantHit{{entry: "tc1", kind: itemTool, segs: []SegmentKind{segmentToolInput}}},
 	}, {
 		// The query is the bool's spelling; `true` would match every flag.
 		name:  "a bool leaf is not searched",
@@ -713,15 +694,14 @@ func TestSearch_ToolInputSearchesStringLeavesOnly(t *testing.T) {
 		query: "42",
 		input: `{"limit":42}`,
 	}, {
-		// Leaves "outer", "deep needle", "tail" form one segment, so the hit is 11 runes in.
 		name:  "a string nested in an array of objects is covered",
 		input: `{"a":"outer","edits":[{"newStr":"deep needle"}],"z":"tail"}`,
-		want:  []wantHit{{entry: "tc1", kind: segmentToolInput, offset: 11, segmentLen: 22}},
+		want:  []wantHit{{entry: "tc1", kind: itemTool, segs: []SegmentKind{segmentToolInput}}},
 	}, {
 		// Array elements are values, so alternating key/value in an array would drop every second path.
 		name:  "every element of a string array is covered",
 		input: `{"paths":["a.go","needle.go"]}`,
-		want:  []wantHit{{entry: "tc1", kind: segmentToolInput, offset: 5, segmentLen: 14}},
+		want:  []wantHit{{entry: "tc1", kind: itemTool, segs: []SegmentKind{segmentToolInput}}},
 	}}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -742,27 +722,18 @@ func TestSearch_ToolInputSearchesStringLeavesOnly(t *testing.T) {
 	}
 }
 
-// Leaves join in document order, the card's order. Different lengths make offsets (0, 24) order-specific (swapped:
-// 11 and 18), and reverse-alphabetical keys rule out a sorted walk.
+// Leaves join in document order, the card's order; reverse-alphabetical keys rule out a sorted walk.
 func TestSearch_ToolInputLeafOrderIsDocumentOrder(t *testing.T) {
 	entries, drawn := oneTool(inputCall(`{"z":"needle first","a":"and then a needle"}`), nil)
-	// "needle first\nand then a needle" is one 30-rune segment.
-	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "tc1", kind: segmentToolInput, offset: 0, segmentLen: 30},
-		{entry: "tc1", kind: segmentToolInput, offset: 24, segmentLen: 30},
-	})
+	hits := searchHits(entries, drawn, "needle")
+	assertHits(t, hits, []wantHit{{entry: "tc1", kind: itemTool, segs: []SegmentKind{segmentToolInput}}})
+	if hits[0].Excerpt != "needle first and then a needle" {
+		t.Errorf("excerpt = %q, want the leaves in document order", hits[0].Excerpt)
+	}
 }
 
-func TestSearch_ToolInputOffsetIsARuneIndex(t *testing.T) {
-	entries, drawn := oneTool(inputCall(`{"a":"åß","b":"ü needle"}`), nil)
-	// "åß\nü " is 5 runes (8 bytes); the segment is 11 runes (14 bytes).
-	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "tc1", kind: segmentToolInput, offset: 5, segmentLen: 11},
-	})
-}
-
-// An edit's payload appears as the input's newStr and as the result's diff, one rendered write, so one hit, on the
-// entry holding the text.
+// An edit's payload appears as the input's newStr and as the result's diff, one rendered write, so only the diff
+// segment holds it.
 func TestSearch_InputLeafDoesNotDoubleCountItsDiff(t *testing.T) {
 	const payload = "func fetch(ctx context.Context) error { return needle(ctx) }"
 	if len(payload) < inputLeafDedupeMin {
@@ -776,7 +747,7 @@ func TestSearch_InputLeafDoesNotDoubleCountItsDiff(t *testing.T) {
 		&marotte.EntryToolResult{Status: marotte.ToolCompleted, Diffs: []marotte.ToolDiff{{Path: "fetch.go", NewText: payload}}},
 	)
 	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "tc1:result", kind: segmentToolDiff, offset: 47, segmentLen: 60},
+		{entry: "tc1", kind: itemTool, segs: []SegmentKind{segmentToolDiff}},
 	})
 }
 
@@ -811,7 +782,7 @@ func TestInputLeafText_MalformedBytesYieldNoText(t *testing.T) {
 	}
 }
 
-// A plan renders as a card, so each plan entry is a segment on the plan entry's id.
+// A plan renders as one card, each of its entries a segment.
 func TestSearch_PlanIsSearched(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
 		text("a1", "starting now").
@@ -820,8 +791,7 @@ func TestSearch_PlanIsSearched(t *testing.T) {
 			{Content: "Fix the needle", Status: marotte.PlanPending},
 		}}))
 	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "plan-1", kind: segmentPlan, offset: 9, segmentLen: 15},
-		{entry: "plan-1", kind: segmentPlan, offset: 8, segmentLen: 14},
+		{entry: "plan-1", kind: itemPlan, segs: []SegmentKind{segmentPlan}},
 	})
 }
 
@@ -834,7 +804,7 @@ func TestSearch_DenialResourceIsSearched(t *testing.T) {
 		}},
 	)
 	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "tc1:result", kind: segmentToolDenial, offset: 7, segmentLen: 13},
+		{entry: "tc1", kind: itemTool, segs: []SegmentKind{segmentToolDenial}},
 	})
 }
 
@@ -844,11 +814,11 @@ func TestSearch_TurnFailureReasonIsSearched(t *testing.T) {
 		text("a1", "partial answer").
 		close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeFailed, FailureReason: "the needle budget ran out"}))
 	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "t-1:close", kind: segmentTurnFailure, offset: 4, segmentLen: 25},
+		{entry: "t-1:close", kind: itemTurnFailure, segs: []SegmentKind{segmentTurnFailure}},
 	})
 }
 
-// A steer's text is a `steer` segment, agent-origin notes included.
+// A steer's text is a steer item, agent-origin notes included.
 func TestSearch_SteerTextIsSearched(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
 		text("a1", "working on it").
@@ -856,27 +826,27 @@ func TestSearch_SteerTextIsSearched(t *testing.T) {
 			Text: "also check the needle", Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead,
 		}))
 	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "steer-1", kind: segmentSteer, offset: 15, segmentLen: 21},
+		{entry: "steer-1", kind: itemSteer, segs: []SegmentKind{segmentSteer}},
 	})
 }
 
-// A compaction failure's reason and a safety block's properties render as text, so each is a content segment.
-func TestSearch_CompactionFailedAndSafetyBlockedAreContentSegments(t *testing.T) {
+// A compaction failure's reason and a safety block's properties render as text, so each is a notice.
+func TestSearch_CompactionFailedAndSafetyBlockedAreNotices(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
 		add("", "cf-1", marotte.EntryKindCompactionFailed, marotte.EntryCompactionFailed{Reason: "needle too large"}).
 		add("", "sb-1", marotte.EntryKindSafetyBlocked, marotte.EntrySafetyBlocked{Properties: []string{"deletes data", "moves the needle"}}))
 	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "cf-1", kind: segmentContent, offset: 0, segmentLen: 16},
-		{entry: "sb-1", kind: segmentContent, offset: 23, segmentLen: 29},
+		{entry: "cf-1", kind: itemNotice, segs: []SegmentKind{segmentContent}},
+		{entry: "sb-1", kind: itemNotice, segs: []SegmentKind{segmentContent}},
 	})
 }
 
-// A model fallback's models and KAS's codes are one content segment, so find-in-chat lands on its row.
-func TestSearch_ModelFallbackIsAContentSegment(t *testing.T) {
+// A model fallback's models and KAS's codes are one notice, so find-in-chat lands on its row.
+func TestSearch_ModelFallbackIsANotice(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
 		add("", "fb-1", marotte.EntryKindModelFallback, marotte.EntryModelFallback{From: "opus-5", Trigger: "availability", Reason: "chainExhausted"}))
 	assertHits(t, searchHits(entries, drawn, "exhausted"), []wantHit{
-		{entry: "fb-1", kind: segmentContent, offset: 25, segmentLen: 34},
+		{entry: "fb-1", kind: itemNotice, segs: []SegmentKind{segmentContent}},
 	})
 }
 
@@ -887,7 +857,7 @@ func TestSearch_AttachmentNameIsSearchedAndPathIsNot(t *testing.T) {
 		Attachments: []marotte.Attachment{{Path: "docs/haystack/notes.md", Name: "needle-notes.md"}},
 	}))
 	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "t-1", kind: segmentAttachment, offset: 0, segmentLen: 15},
+		{entry: "t-1", kind: itemHeader, segs: []SegmentKind{segmentAttachment}},
 	})
 	if hits := searchHits(entries, drawn, "haystack"); len(hits) != 0 {
 		t.Errorf("the attachment PATH matched %d times, want 0: %+v", len(hits), hits)
@@ -904,7 +874,7 @@ func TestSearch_DisclosedDisplayNameIsSearched(t *testing.T) {
 		}},
 	)
 	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "tc1:result", kind: segmentToolDisclosed, offset: 0, segmentLen: 13},
+		{entry: "tc1", kind: itemTool, segs: []SegmentKind{segmentToolDisclosed}},
 	})
 	if hits := searchHits(entries, drawn, "haystack"); len(hits) != 0 {
 		t.Errorf("the disclosed URI matched %d times, want 0: %+v", len(hits), hits)
@@ -1006,8 +976,8 @@ func TestSearch_UnsearchedFieldsStayUnsearched(t *testing.T) {
 	}
 }
 
-// A tool call's segments follow the card: title and input on the tool_call, then disclosed, diff, denial and output
-// on the tool_result, which also pins bestHit's tie-break.
+// A tool card's segments follow the card: title and input on the tool_call, then disclosed, diff, denial and output
+// on the tool_result.
 func TestSearch_SegmentOrderFollowsTheRenderedCard(t *testing.T) {
 	entries, drawn := oneTool(
 		marotte.EntryToolCall{ID: "tc1", Title: "grep needle", Input: json.RawMessage(`{"cmd":"a needle in the input"}`)},
@@ -1020,12 +990,9 @@ func TestSearch_SegmentOrderFollowsTheRenderedCard(t *testing.T) {
 		},
 	)
 	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "tc1", kind: segmentToolTitle, offset: 5, segmentLen: 11},
-		{entry: "tc1", kind: segmentToolInput, offset: 2, segmentLen: 21},
-		{entry: "tc1:result", kind: segmentToolDisclosed, offset: 4, segmentLen: 16},
-		{entry: "tc1:result", kind: segmentToolDiff, offset: 2, segmentLen: 20},
-		{entry: "tc1:result", kind: segmentToolDenial, offset: 2, segmentLen: 16},
-		{entry: "tc1:result", kind: segmentToolOutput, offset: 8, segmentLen: 19},
+		{entry: "tc1", kind: itemTool, segs: []SegmentKind{
+			segmentToolTitle, segmentToolInput, segmentToolDisclosed, segmentToolDiff, segmentToolDenial, segmentToolOutput,
+		}},
 	})
 }
 
@@ -1042,25 +1009,25 @@ func TestSearch_HitsFollowFileOrder(t *testing.T) {
 	drawn := map[string]struct{}{"t-1": {}, "t-2": {}}
 	var got []string
 	for _, h := range searchHits(entries, drawn, "needle") {
-		got = append(got, h.EntryID+"/"+string(h.SegmentKind))
+		got = append(got, h.EntryID+"/"+string(h.Kind))
 	}
-	want := []string{"t-1/prompt", "a1/content", "b1/content", "t-2:close/turn_failure", "plan-1/plan"}
+	want := []string{"t-1/header", "a1/message", "b1/message", "t-2:close/turn_failure", "plan-1/plan"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("hit order = %v, want %v", got, want)
 	}
 }
 
-// Every kind in segmentKinds has a reachable producer; segmentEntry needs a filter-only query.
+// Every kind in segmentKinds has a reachable producer.
 func TestSearch_SegmentKindsAreExhaustive(t *testing.T) {
 	entries, drawn := searchContractEntries()
 	seen := make(map[SegmentKind]int)
-	for _, q := range []string{"retry", "turn:2"} {
-		hits := searchHits(entries, drawn, q)
-		if len(hits) == 0 {
-			t.Fatalf("Search(%q) found nothing; it can vouch for no kind at all", q)
-		}
-		for _, h := range hits {
-			seen[h.SegmentKind]++
+	hits := searchHits(entries, drawn, "retry")
+	if len(hits) == 0 {
+		t.Fatal("Search(retry) found nothing; it can vouch for no kind at all")
+	}
+	for _, h := range hits {
+		for _, k := range h.Segments {
+			seen[k]++
 		}
 	}
 	for _, kind := range segmentKinds {
@@ -1070,55 +1037,42 @@ func TestSearch_SegmentKindsAreExhaustive(t *testing.T) {
 	}
 }
 
-// Offsets and lengths count runes and are entry-relative even after earlier multibyte text.
-func TestSearch_SegmentOffsetsAreRuneIndices(t *testing.T) {
-	entries, drawn := chatOf(openTurn("t-1", 1, nil).
-		text("a1", "héllo wörld").
-		thinking("th1", "åß needle"))
-	// "åß " is 3 runes (5 bytes); the segment is 9 runes (11 bytes).
-	assertHits(t, searchHits(entries, drawn, "needle"), []wantHit{
-		{entry: "th1", kind: segmentReasoning, offset: 3, segmentLen: 9},
-	})
-}
-
-// A filter-only query yields one hit per matching entry as segment_kind "entry" (offset 0, zero length); a textless
-// tool_call is listed with an excerpt from its first span.
-func TestSearch_FilterOnlyHitsAreEntryKind(t *testing.T) {
+// A filter-only query yields one hit per kept item, with no segments; a textless call's excerpt is its title.
+func TestSearch_FilterOnlyHitsAreItems(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
 		text("a1", "prose here").
 		tool(marotte.EntryToolCall{ID: "tc1", Title: "shell"}, nil))
 	hits := searchHits(entries, drawn, "turn:1")
 	assertHits(t, hits, []wantHit{
-		{entry: "t-1", kind: segmentEntry},
-		{entry: "a1", kind: segmentEntry},
-		{entry: "tc1", kind: segmentEntry},
+		{entry: "a1", kind: itemMessage},
+		{entry: "tc1", kind: itemTool},
 	})
-	if hits[2].Excerpt != "shell" {
-		t.Errorf("tool-only entry excerpt = %q, want its title", hits[2].Excerpt)
+	if hits[1].Excerpt != "shell" {
+		t.Errorf("tool-only item excerpt = %q, want its title", hits[1].Excerpt)
 	}
 }
 
-// lane is optional on the generated type, so the encoder omits it when unset.
+// lane is optional on the generated type, so the encoder omits it when unset; segments is always a list.
 func TestHit_WireShape(t *testing.T) {
 	full, err := json.Marshal(Hit{
-		TurnID: "t-1", EntryID: "tc1:result", SegmentKind: segmentToolOutput, Lane: "sub-1", Turn: 3, Offset: 8, SegmentLen: 19,
+		TurnID: "t-1", EntryID: "tc1", Kind: itemTool, Segments: []SegmentKind{segmentToolOutput}, Lane: "sub-1", Turn: 3,
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	for _, key := range []string{`"turn_id":"t-1"`, `"entry_id":"tc1:result"`, `"segment_kind":"tool_output"`, `"lane":"sub-1"`, `"turn":3`, `"offset":8`, `"segment_len":19`} {
+	for _, key := range []string{`"turn_id":"t-1"`, `"entry_id":"tc1"`, `"kind":"tool"`, `"segments":["tool_output"]`, `"lane":"sub-1"`, `"turn":3`} {
 		if !strings.Contains(string(full), key) {
 			t.Errorf("marshalled hit %s lacks %s", full, key)
 		}
 	}
-	minimal, err := json.Marshal(Hit{TurnID: "t-1", EntryID: "a1", SegmentKind: segmentEntry})
+	minimal, err := json.Marshal(Hit{TurnID: "t-1", EntryID: "a1", Kind: itemMessage, Segments: []SegmentKind{}})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if strings.Contains(string(minimal), "lane") {
-		t.Errorf("marshalled agent-lane hit %s carries lane, want it omitted", minimal)
+	if strings.Contains(string(minimal), "lane") || !strings.Contains(string(minimal), `"segments":[]`) {
+		t.Errorf("marshalled agent-lane hit %s: want lane omitted and segments an empty list", minimal)
 	}
-	for _, key := range []string{"message_id", "block_index", "agent_subtask_id"} {
+	for _, key := range []string{"offset", "segment_len", "segment_kind"} {
 		if strings.Contains(string(full), key) {
 			t.Errorf("marshalled hit %s carries the deleted %s", full, key)
 		}

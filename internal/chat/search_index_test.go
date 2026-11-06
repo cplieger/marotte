@@ -63,7 +63,7 @@ func TestChatFilter_DistinctTrigramsAreDistinctKeys(t *testing.T) {
 	f := new(chatFilter)
 	f.addText("abc")
 	for _, variant := range []string{"xbc", "axc", "abx", "cba", "bca"} {
-		if f.holdsAll(queryTrigrams(variant)) {
+		if f.holdsAll(trigramsOf(variant)) {
 			t.Errorf("a filter over %q holds %q", "abc", variant)
 		}
 	}
@@ -80,8 +80,11 @@ func TestChatFilter_DistinctTrigramsAreDistinctKeys(t *testing.T) {
 	}
 }
 
-// Under three runes nothing is demanded; at three, one trigram of runes, case-folded. Invalid bytes collapse per run
-// as NewNeedle does.
+// trigramsOf is queryTrigrams over raw parsed as the chat search parses it.
+func trigramsOf(raw string) []uint64 { return queryTrigrams(parseSearchQuery(raw, false).terms) }
+
+// Under three runes a word demands nothing; at three, one trigram of runes, folded as the matcher folds. Invalid
+// bytes collapse per run as ParseQuery does.
 func TestQueryTrigrams_UnderThreeRunesDemandsNothing(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -95,18 +98,20 @@ func TestQueryTrigrams_UnderThreeRunesDemandsNothing(t *testing.T) {
 		{name: "three_runes", text: "abc", wantN: 1},
 		{name: "three_multibyte_runes", text: "é✓ß", wantN: 1},
 		{name: "four_runes", text: "abcd", wantN: 2},
+		{name: "each_word_on_its_own", text: "abcd ef ghi", wantN: 3},
+		{name: "a_phrase_word_by_word", text: `"abcd ghi"`, wantN: 3},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := len(queryTrigrams(tc.text)); got != tc.wantN {
+			if got := len(trigramsOf(tc.text)); got != tc.wantN {
 				t.Errorf("queryTrigrams(%q) has %d keys, want %d", tc.text, got, tc.wantN)
 			}
 		})
 	}
-	if a, b := queryTrigrams("AbC"), queryTrigrams("abc"); !slices.Equal(a, b) {
-		t.Errorf("queryTrigrams(%q) = %v, want the folded %v", "AbC", a, b)
+	if a, b := trigramsOf("ÀbC"), trigramsOf("abc"); !slices.Equal(a, b) {
+		t.Errorf("queryTrigrams(%q) = %v, want the folded %v", "ÀbC", a, b)
 	}
-	if a, b := queryTrigrams("a\xff\xfeb"), queryTrigrams("a\uFFFDb"); !slices.Equal(a, b) {
+	if a, b := trigramsOf("a\xff\xfeb"), trigramsOf("a\uFFFDb"); !slices.Equal(a, b) {
 		t.Errorf("queryTrigrams(%q) = %v, want one U+FFFD per invalid run, %v", "a\xff\xfeb", a, b)
 	}
 }

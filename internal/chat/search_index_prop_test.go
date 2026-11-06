@@ -12,10 +12,10 @@ import (
 )
 
 // The index never rejects a chat the scan matches. Logs cover every span kind, from an alphabet whose runes change
-// case and byte length under folding; queries are mostly case-flipped slices of spans. The oracle is the scan plus
-// titleHits.
+// case, accent and byte length under folding, with whitespace and quotes so queries hold several words and phrases;
+// queries are mostly case-flipped slices of spans. The oracle is the scan plus titleAll.
 func TestChatFilter_NeverRejectsAChatTheScanMatches(t *testing.T) {
-	alphabet := []rune("abcdeKkİiΣσßẞé✓ x\n")
+	alphabet := []rune("abcdeKkİiΣσßẞéÉ✓ x\n\"")
 	text := func(rt *rapid.T, label string, max int) string {
 		return string(rapid.SliceOfN(rapid.SampledFrom(alphabet), 3, max).Draw(rt, label))
 	}
@@ -42,15 +42,15 @@ func TestChatFilter_NeverRejectsAChatTheScanMatches(t *testing.T) {
 			query = flipCase(rt, sliceRunes(rt, rapid.SampledFrom(spans).Draw(rt, "span"), 6))
 		}
 
-		res, _ := searchEntries(entries, drawn, query, false)
-		matched := res.Matched > 0 || titleHits(name, query) > 0
+		res := searchEntries(entries, drawn, query, false).res
+		matched := res.Matched > 0 || titleAll(name, query) > 0
 		if !matched {
 			return
 		}
-		want := queryTrigrams(parseSearchQuery(query, false).text)
+		want := queryTrigrams(parseSearchQuery(query, false).terms)
 		if !buildChatFilter(name, entries).holdsAll(want) {
-			rt.Fatalf("filter rejected query %q that the scan matched (%d body hits, %d title hits) in chat %q with %d entries",
-				query, res.Matched, titleHits(name, query), name, len(entries))
+			rt.Fatalf("filter rejected query %q that the scan matched (%d body hits, title %d) in chat %q with %d entries",
+				query, res.Matched, titleAll(name, query), name, len(entries))
 		}
 		// The appender's filter: built over the log so far, then extended entry by entry. Neither half sees the scan's drawn
 		// set, which is the strictest the build can be held to.
@@ -60,8 +60,8 @@ func TestChatFilter_NeverRejectsAChatTheScanMatches(t *testing.T) {
 			extended.addEntry(&entries[i])
 		}
 		if !extended.holdsAll(want) {
-			rt.Fatalf("filter built over %d entries and extended with the other %d rejected query %q that the scan matched with every turn drawn (%d body hits, %d title hits) in chat %q",
-				builtOver, len(entries)-builtOver, query, res.Matched, titleHits(name, query), name)
+			rt.Fatalf("filter built over %d entries and extended with the other %d rejected query %q that the scan matched with every turn drawn (%d body hits, title %d) in chat %q",
+				builtOver, len(entries)-builtOver, query, res.Matched, titleAll(name, query), name)
 		}
 	})
 }

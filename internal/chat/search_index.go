@@ -1,7 +1,6 @@
 package chat
 
 import (
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -10,7 +9,7 @@ import (
 )
 
 // The cross-chat candidate index: one Bloom filter per chat over the rune trigrams of what the scan searches
-// (entrySegments spans plus the title, via textsearch.Fold). It prunes, never decides: no false negatives, and a
+// (entrySegments spans plus the title, via textsearch.FoldText). It prunes, never decides: no false negatives, and a
 // saturated filter admits all. In memory: the first reading query builds it, appends extend it under the chat lock,
 // and a rewind, rewrite, run_named, header write or remove drops it.
 
@@ -59,7 +58,7 @@ func (f *chatFilter) addEntry(e *marotte.Entry) {
 func (f *chatFilter) addText(s string) {
 	var a, b rune
 	seen := 0
-	for _, r := range textsearch.Fold(s) {
+	for _, r := range textsearch.FoldText(s) {
 		seen++
 		if seen >= trigramRunes {
 			f.add(trigramKey(a, b, r))
@@ -76,8 +75,8 @@ func (f *chatFilter) add(key uint64) {
 	}
 }
 
-// holdsAll reports whether every key's positions are set. No keys holds, so a query under three runes matches every
-// chat.
+// holdsAll reports whether every key's positions are set. No keys holds, so a query whose words are all under three
+// runes matches every chat.
 func (f *chatFilter) holdsAll(keys []uint64) bool {
 	for _, key := range keys {
 		h1, h2 := splitHash(key)
@@ -112,17 +111,18 @@ func splitHash(key uint64) (h1, h2 uint64) {
 	return h & (1<<32 - 1), h>>32 | 1
 }
 
-// queryTrigrams returns the trigram keys of the free text the needle scans, or nil under three runes. Prepared as
-// NewNeedle does: invalid UTF-8 becomes one U+FFFD per run before folding, so no trigram is demanded the needle never
-// scans.
-func queryTrigrams(text string) []uint64 {
-	runes := []rune(textsearch.Fold(strings.ToValidUTF8(text, "\uFFFD")))
-	if len(runes) < trigramRunes {
-		return nil
-	}
-	keys := make([]uint64, 0, len(runes)-trigramRunes+1)
-	for i := range len(runes) - trigramRunes + 1 {
-		keys = append(keys, trigramKey(runes[i], runes[i+1], runes[i+2]))
+// queryTrigrams returns the trigram keys of every word the matcher scans, a phrase's words one by one since no
+// trigram spans the whitespace between them; a word under three runes adds none. Prepared as the matcher folds, so
+// no trigram is demanded the scan never looks for.
+func queryTrigrams(terms []textsearch.Term) []uint64 {
+	var keys []uint64
+	for _, t := range terms {
+		for _, w := range t.Words {
+			runes := []rune(textsearch.FoldText(w))
+			for i := 0; i+trigramRunes <= len(runes); i++ {
+				keys = append(keys, trigramKey(runes[i], runes[i+1], runes[i+2]))
+			}
+		}
 	}
 	return keys
 }

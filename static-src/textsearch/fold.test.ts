@@ -2,7 +2,7 @@
 // shipping engine's `toLowerCase` is the one whose answer counts.
 
 import { describe, it, expect } from "vitest";
-import { fold } from "./fold.js";
+import { fold, foldText } from "./fold.js";
 
 describe("fold preserves length", () => {
   it("over every code point, one code unit in is one code unit out", () => {
@@ -52,5 +52,35 @@ describe("fold is the simple mapping", () => {
     expect(fold("Retry RETRY retry")).toBe("retry retry retry");
     expect(fold("😀 42 _")).toBe("😀 42 _");
     expect(fold("")).toBe("");
+  });
+});
+
+describe("foldText folds case and accents", () => {
+  it("over every code point, one code unit in is one code unit out", () => {
+    const grew: string[] = [];
+    for (let cp = 0; cp <= 0x10ffff; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) {
+        continue;
+      }
+      const s = String.fromCodePoint(cp);
+      if (foldText(s).length !== s.length) {
+        grew.push(`U+${cp.toString(16).toUpperCase()}`);
+      }
+    }
+    expect(grew).toEqual([]);
+  });
+
+  it("strips the marks of a precomposed letter and lowercases it", () => {
+    expect(foldText("Sécurité ÉCOLE garçon")).toBe("securite ecole garcon");
+    expect(foldText("ǕǖǗ")).toBe("uuu");
+  });
+
+  it("keeps letters with no canonical decomposition and a decomposed mark", () => {
+    expect(foldText("øßł")).toBe("øßł");
+    expect(foldText("e\u0301")).toBe("e\u0301");
+  });
+
+  it("keeps a lone surrogate as it is", () => {
+    expect(foldText("\ud800é")).toBe("\ud800e");
   });
 });
