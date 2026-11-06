@@ -16,7 +16,7 @@ type kasSessionNotify struct {
 	WorkflowID      string `json:"workflowId"`
 	// NodeID is the sending node: a step, or the repeat whose cap KAS's own note reports.
 	NodeID string `json:"nodeId"`
-	// NotifyID is the id KAS buffers the message under, absent from the current frame.
+	// NotifyID is the id of the steer row KAS persisted for the message; empty when the row did not persist.
 	NotifyID string `json:"notifyId"`
 	// Sender is "step" when a step messages its parent and "parent" when a session
 	// messages a child run's step; only the first is a question to the reader.

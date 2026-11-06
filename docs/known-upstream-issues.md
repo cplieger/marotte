@@ -132,7 +132,7 @@ Reported as [kirodotdev/Kiro#11819](https://github.com/kirodotdev/Kiro/issues/11
 
 ### A message sent just after a stop can run out of view
 
-When you stop a reply while workflow messages wait for the agent, kiro-cli starts a reply of its own to pass them on. A message that reaches kiro-cli while that reply is still starting can run with none of its output in the chat. What it does still happens, such as a message to a workflow step or a new workflow, and the agent forgets it afterwards.
+Before kiro-cli 2.33.1, when you stopped a reply while workflow messages waited for the agent, kiro-cli started a reply of its own to pass them on. A message that reached kiro-cli while that reply was still starting could run with none of its output in the chat. What it did still happened, such as a message to a workflow step or a new workflow, and the agent forgot it afterwards.
 
 Reported as [kirodotdev/Kiro#12011](https://github.com/kirodotdev/Kiro/issues/12011), closed as fixed in kiro-cli 2.33.1. marotte still waits to send your next message while kiro-cli reports the chat busy, including while kiro-cli is passing the waiting workflow messages on. A message you send after a stop therefore waits if that busy report has arrived.
 
