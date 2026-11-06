@@ -30,8 +30,10 @@ func TestEventInputsCarryFeedRepo(t *testing.T) {
 		in["trigger_key"] != q[0].Key {
 		t.Errorf("inputs = %v, want the connection, kind, rule id and key", in)
 	}
-	want := []string{"event_id", "forge", "head_sha", "repo", "result", "run_id", "trigger_key", "trigger_kind",
-		"trigger_rule", "workflow"}
+	want := []string{
+		"event_id", "forge", "head_sha", "repo", "result", "run_id", "trigger_key", "trigger_kind", "trigger_rule",
+		"workflow",
+	}
 	if got := slices.Sorted(maps.Keys(in)); !eq(got, want) {
 		t.Errorf("input names = %v, want %v", got, want)
 	}

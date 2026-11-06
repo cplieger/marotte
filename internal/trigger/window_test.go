@@ -1,6 +1,7 @@
 package trigger
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -29,10 +30,9 @@ func (h *harness) pollAt(t time.Time) {
 // lastSince is the bound the latest run call sent.
 func (h *harness) lastSince() time.Time {
 	h.t.Helper()
-	calls := h.src.recorded()
-	for i := len(calls) - 1; i >= 0; i-- {
-		if calls[i].list == "runs" {
-			return calls[i].since
+	for _, c := range slices.Backward(h.src.recorded()) {
+		if c.list == "runs" {
+			return c.since
 		}
 	}
 	h.t.Fatal("no run call was made")

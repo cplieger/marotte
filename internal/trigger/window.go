@@ -88,7 +88,7 @@ func (pr *pollRule) ageOut(h time.Time) {
 		}
 		delete(c.Runs, id)
 		if e.Hold != holdOutside {
-			pr.recordGap(launchrule.Gap{
+			pr.recordGap(&launchrule.Gap{
 				Cause: launchrule.GapAgedOut, From: e.CreatedAt, To: pr.start, RunID: id,
 				QueueFull: e.Hold == holdAtForge,
 			})
@@ -96,8 +96,8 @@ func (pr *pollRule) ageOut(h time.Time) {
 	}
 }
 
-func (pr *pollRule) recordGap(g launchrule.Gap) {
-	pr.st.raw.Status.Gaps = append(pr.st.raw.Status.Gaps, g)
+func (pr *pollRule) recordGap(g *launchrule.Gap) {
+	pr.st.raw.Status.Gaps = append(pr.st.raw.Status.Gaps, *g)
 	attrs := append(pr.attrs(), "cause", g.Cause, "from", g.From, "to", g.To)
 	switch {
 	case g.RunID != 0:
@@ -118,10 +118,10 @@ func runWalkComplete(w *Walk[forgeapi.Run]) bool {
 // pending run the walk's bound reached and the forge no longer listed.
 func (pr *pollRule) noteRunWalk(c *runCursor, w *Walk[forgeapi.Run], bound, h time.Time, listed map[int64]bool) {
 	if c.LastComplete.Add(-runReach).Before(h) {
-		pr.recordGap(launchrule.Gap{Cause: launchrule.GapOutage, From: c.LastComplete, To: pr.start})
+		pr.recordGap(&launchrule.Gap{Cause: launchrule.GapOutage, From: c.LastComplete, To: pr.start})
 	}
 	if w.Partial != nil && w.Partial.Reason == forgeapi.PartialResultWindow {
-		pr.recordGap(launchrule.Gap{
+		pr.recordGap(&launchrule.Gap{
 			Cause: launchrule.GapResultWindow, From: bound, To: pr.start, OmittedAtLeast: w.Partial.OmittedAtLeast,
 		})
 	}

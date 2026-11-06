@@ -85,7 +85,7 @@ func TestNewestDoesNotSupersedeLaunchingEntry(t *testing.T) {
 	h.runPage(run(41, forgeapi.CheckPassing, created))
 	h.poll()
 	k41 := h.queued(id)[0].Key
-	clear := h.marks.mark(id, k41)
+	done := h.marks.mark(id, k41)
 	h.runPage(run(42, forgeapi.CheckPassing, created.Add(time.Minute)))
 	h.poll()
 	es := h.state(id)
@@ -95,7 +95,7 @@ func TestNewestDoesNotSupersedeLaunchingEntry(t *testing.T) {
 	if got := h.eligible(id); len(got) != 0 {
 		t.Errorf("eligible while 41 launches = %v, want nothing", got)
 	}
-	clear()
+	done()
 
 	t.Run("an entry holding a live record", func(t *testing.T) { t.Skip("needs 5.8") })
 	t.Run("the launching entry's confirmation leaves the newer one queued", func(t *testing.T) { t.Skip("needs 5.8") })
@@ -197,14 +197,14 @@ func TestFifoHeadHoldsLaterEntries(t *testing.T) {
 	h.poll()
 	head := h.queued(a.ID)[0].Key
 
-	clear := h.marks.mark(a.ID, head)
+	done := h.marks.mark(a.ID, head)
 	if got := h.eligible(a.ID); len(got) != 0 {
 		t.Errorf("eligible while the head launches = %v, want nothing", got)
 	}
 	if got := h.eligible(b.ID); len(got) != 1 {
 		t.Errorf("the other rule's eligible = %v, want its head: one rule's flight holds no other rule", got)
 	}
-	clear()
+	done()
 
 	es := h.state(a.ID)
 	es.queue[0].Live = "wf-1"

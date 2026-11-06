@@ -25,6 +25,8 @@ type FeedRules struct {
 
 // Feeds groups the enabled event rules of rules, given in creation order, by feed. A feed reads the selector of
 // its earliest-created rule.
+//
+//deadset:ignore DS1102 -- the trigger runner groups its rules through it; until that lands only the tests do
 func Feeds(rules []launchrule.Rule) []FeedRules {
 	var out []FeedRules
 	index := map[string]int{}
@@ -54,7 +56,7 @@ type Poller struct {
 
 // NewPoller returns a Poller reading through src and keeping rule state in store.
 //
-//deadset:ignore DS1102 -- the trigger runner polls through it; until that lands only the tests do
+//deadset:ignore DS1101 -- the trigger runner polls through it; until that lands only the tests do
 func NewPoller(src FeedSource, store StateStore) *Poller {
 	return &Poller{src: src, store: store, now: time.Now, marks: newLaunchMarks()}
 }
@@ -71,6 +73,8 @@ type reads struct {
 
 // Poll reads fr's lists once and applies them to every rule on it. A rule whose state cannot be read is skipped,
 // and its file left as it is.
+//
+//deadset:ignore DS1102 -- the trigger runner calls it on each feed's timer; until that lands only the tests do
 func (p *Poller) Poll(ctx context.Context, fr FeedRules) {
 	start := p.now().UTC()
 	rules := make([]*pollRule, 0, len(fr.Rules))
@@ -179,17 +183,17 @@ func (p *Poller) write(ctx context.Context, pr *pollRule) {
 
 // pollRule is one rule's part of one poll.
 type pollRule struct {
-	rule *launchrule.Rule
-	ev   *launchrule.EventSpec
-	feed Feed
+	rule  *launchrule.Rule
+	ev    *launchrule.EventSpec
+	marks *launchMarks
 	// start is the poll's start, the instant every decision of the poll is taken at.
 	start time.Time
-	st    eventState
+	// gain is this poll's minted label-gain instant, zero until its first gain.
+	gain time.Time
+	feed Feed
 	// before is the state as loaded, so a poll that changed nothing writes nothing.
 	before []byte
-	// gain is this poll's minted label-gain instant, zero until its first gain.
-	gain  time.Time
-	marks *launchMarks
+	st     eventState
 	// full is set once the poll left a match unqueued.
 	full bool
 }

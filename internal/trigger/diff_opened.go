@@ -28,20 +28,11 @@ func (pr *pollRule) applyOpened(items []item, complete bool) {
 	for i := range items {
 		it := &items[i]
 		high = max(high, it.number)
-		if it.number <= floor {
+		if _, found := slices.BinarySearch(seen, it.number); found || it.number <= floor {
 			continue
 		}
-		if _, found := slices.BinarySearch(seen, it.number); found {
-			continue
-		}
-		if author, ok := pr.allowed(it); ok && !pr.enqueueOpened(it.number, author) {
-			if unqueued == 0 {
-				unqueued = it.number
-			}
-			continue
-		}
-		if at, found := slices.BinarySearch(oc.Seen, it.number); !found {
-			oc.Seen = slices.Insert(oc.Seen, at, it.number)
+		if !pr.observeOpened(oc, it) && unqueued == 0 {
+			unqueued = it.number
 		}
 	}
 	if !complete {
@@ -56,6 +47,17 @@ func (pr *pollRule) applyOpened(items []item, complete bool) {
 	oc.Floor = max(oc.Floor, next)
 	oc.PendingFloor = high
 	oc.Seen = slices.DeleteFunc(oc.Seen, func(n int) bool { return n <= oc.Floor })
+}
+
+// observeOpened accounts for a new item, false when it matched and the queue is full, which leaves it unseen.
+func (pr *pollRule) observeOpened(oc *openedCursor, it *item) bool {
+	if author, ok := pr.allowed(it); ok && !pr.enqueueOpened(it.number, author) {
+		return false
+	}
+	if at, found := slices.BinarySearch(oc.Seen, it.number); !found {
+		oc.Seen = slices.Insert(oc.Seen, at, it.number)
+	}
+	return true
 }
 
 // allowed answers the allowlist entry, as the operator typed it, that its author matches.

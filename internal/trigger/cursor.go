@@ -86,11 +86,11 @@ type cursor map[string]*repoCursor
 
 // eventState is an event rule's state with its event parts typed; the rest of the file is carried as read.
 type eventState struct {
-	raw        launchrule.State
 	cursor     cursor
 	queue      []queueEntry
 	launched   []launchedEntry
 	superseded []supersededEntry
+	raw        launchrule.State
 }
 
 func decodeState(st *launchrule.State) (eventState, error) {
@@ -130,29 +130,31 @@ func (es *eventState) encode() (launchrule.State, error) {
 		}
 	}
 	var err error
-	if len(c) > 0 {
-		if st.Cursor, err = json.Marshal(c); err != nil {
-			return launchrule.State{}, err
-		}
+	if st.Cursor, err = marshalUnlessEmpty(c, len(c)); err != nil {
+		return launchrule.State{}, err
 	}
 	for i := range es.queue {
-		raw, err := json.Marshal(&es.queue[i])
-		if err != nil {
-			return launchrule.State{}, err
+		raw, qerr := json.Marshal(&es.queue[i])
+		if qerr != nil {
+			return launchrule.State{}, qerr
 		}
 		st.Queue = append(st.Queue, raw)
 	}
-	if len(es.launched) > 0 {
-		if st.Launched, err = json.Marshal(es.launched); err != nil {
-			return launchrule.State{}, err
-		}
+	if st.Launched, err = marshalUnlessEmpty(es.launched, len(es.launched)); err != nil {
+		return launchrule.State{}, err
 	}
-	if len(es.superseded) > 0 {
-		if st.Superseded, err = json.Marshal(es.superseded); err != nil {
-			return launchrule.State{}, err
-		}
+	if st.Superseded, err = marshalUnlessEmpty(es.superseded, len(es.superseded)); err != nil {
+		return launchrule.State{}, err
 	}
 	return st, nil
+}
+
+// marshalUnlessEmpty encodes v, or nothing when it holds n == 0 elements, so the state file omits the part.
+func marshalUnlessEmpty(v any, n int) (json.RawMessage, error) {
+	if n == 0 {
+		return nil, nil
+	}
+	return json.Marshal(v)
 }
 
 // knows reports whether key is queued, launched or superseded: such a key is never queued again.

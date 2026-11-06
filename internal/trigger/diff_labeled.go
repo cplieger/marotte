@@ -22,42 +22,44 @@ func (pr *pollRule) applyLabeled(items []item, complete bool) {
 	if rc.Labeled.Items == nil {
 		rc.Labeled.Items = map[int]*labelEntry{}
 	}
-	part := itemPart(pr.ev.Kind)
 	slices.SortFunc(items, func(a, b item) int { return cmp.Compare(a.number, b.number) })
 	open := 0
 	for i := range items {
-		it := &items[i]
-		if !pr.admitsItem(it) {
-			continue
+		if pr.admitsItem(&items[i]) {
+			open++
+			pr.observeLabel(rc.Labeled, &items[i])
 		}
-		open++
-		e := rc.Labeled.Items[it.number]
-		present := pr.hasLabel(it)
-		if !present && it.cut {
-			pr.logCut(it)
-			if e != nil {
-				e.LastSeen = pr.start
-			}
-			continue
-		}
-		if e == nil {
-			e = &labelEntry{HasLabel: labelNo}
-		}
-		e.LastSeen = pr.start
-		switch {
-		case !present:
-			e.HasLabel = labelNo
-		case e.HasLabel != labelNo || pr.enqueueGain(part, it.number):
-			e.HasLabel = labelYes
-		case rc.Labeled.Items[it.number] == nil:
-			// Left at the forge with no entry, as an item the cursor has not seen.
-			continue
-		}
-		rc.Labeled.Items[it.number] = e
 	}
 	if complete {
 		pr.pruneLabeled(rc.Labeled, open)
 	}
+}
+
+// observeLabel applies one read row to its item's entry.
+func (pr *pollRule) observeLabel(lc *labeledCursor, it *item) {
+	e := lc.Items[it.number]
+	present := pr.hasLabel(it)
+	if !present && it.cut {
+		pr.logCut(it)
+		if e != nil {
+			e.LastSeen = pr.start
+		}
+		return
+	}
+	if e == nil {
+		e = &labelEntry{HasLabel: labelNo}
+	}
+	e.LastSeen = pr.start
+	switch {
+	case !present:
+		e.HasLabel = labelNo
+	case e.HasLabel != labelNo || pr.enqueueGain(itemPart(pr.ev.Kind), it.number):
+		e.HasLabel = labelYes
+	case lc.Items[it.number] == nil:
+		// Left at the forge with no entry, as an item the cursor has not seen.
+		return
+	}
+	lc.Items[it.number] = e
 }
 
 // enqueueGain queues the item's gain, false when the queue is full: the item then keeps has_label false and is

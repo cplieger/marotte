@@ -23,7 +23,6 @@ const stateDirName = "launch-state"
 
 // State is what the server writes about one rule, in that rule's own file: no client write reaches it.
 type State struct {
-	Status Status `json:"status"`
 	// Population is the event rule's keyenc.Join(connection, RepoRef.Encode(), kind) the state was built for.
 	Population string          `json:"population,omitempty"`
 	Cursor     json.RawMessage `json:"cursor,omitempty"`
@@ -32,6 +31,7 @@ type State struct {
 	Launched   json.RawMessage   `json:"launched,omitempty"`
 	Superseded json.RawMessage   `json:"superseded,omitempty"`
 	Attempts   json.RawMessage   `json:"attempts,omitempty"`
+	Status     Status            `json:"status"`
 }
 
 // Status is a rule's row state.
