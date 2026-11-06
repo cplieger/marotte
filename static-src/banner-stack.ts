@@ -7,7 +7,7 @@
 import { $ } from "./dom.js";
 import { activeSession } from "./store.js";
 import { LS_DISMISSED_BANNERS_KEY } from "./ls-keys.js";
-import { readPerChat, writePerChat } from "./per-chat-store.js";
+import { readPerChat, updatePerChat } from "./per-chat-store.js";
 import { isHttpURL } from "./url-safety.js";
 import { ICON_CLOSE } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -102,32 +102,25 @@ function validCodes(v: unknown): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-/** Write ONE chat's codes, which is what lets the store evict by chat. An empty
- *  list is a delete, so a chat with nothing dismissed keeps no slot. */
-function writeCodes(map: Record<string, string[]>, chatID: string, codes: string[]): void {
-  writePerChat(LS_DISMISSED_BANNERS_KEY, map, chatID, codes.length > 0 ? codes : undefined);
-}
-
 function isDismissed(chatID: string, code: string): boolean {
   return (dismissals()[chatID] ?? []).includes(code);
 }
 
 function persistDismiss(chatID: string, code: string): void {
-  const map = dismissals();
-  const codes = map[chatID] ?? [];
-  if (codes.includes(code)) {
-    return;
-  }
-  writeCodes(map, chatID, [...codes, code]);
+  updatePerChat(LS_DISMISSED_BANNERS_KEY, chatID, validCodes, (prev) =>
+    prev?.includes(code) === true ? prev : [...(prev ?? []), code],
+  );
 }
 
+/** An emptied list is a delete, so a chat with nothing dismissed keeps no slot. */
 function clearDismiss(chatID: string, code: string): void {
-  const map = dismissals();
-  const codes = map[chatID] ?? [];
-  const filtered = codes.filter((c) => c !== code);
-  if (filtered.length !== codes.length) {
-    writeCodes(map, chatID, filtered);
-  }
+  updatePerChat(LS_DISMISSED_BANNERS_KEY, chatID, validCodes, (prev) => {
+    if (prev?.includes(code) !== true) {
+      return prev;
+    }
+    const kept = prev.filter((c) => c !== code);
+    return kept.length > 0 ? kept : undefined;
+  });
 }
 
 /**

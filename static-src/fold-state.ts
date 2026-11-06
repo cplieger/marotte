@@ -1,7 +1,8 @@
 // Progressive collapse: which turns are open. One open by default, the newest; a turn folds when the next starts.
 
+import { BUS_FOLDS_CHANGED, emitBus } from "./bus.js";
 import { LS_TURN_FOLDS_KEY } from "./ls-keys.js";
-import { readPerChat, writePerChat } from "./per-chat-store.js";
+import { onPerChatChange, readPerChat, updatePerChat } from "./per-chat-store.js";
 import { severityOf } from "./turn-severity.js";
 import type { Turn } from "./turns.js";
 
@@ -16,18 +17,32 @@ const OPEN_TAIL = 1;
  * message id, which is stable across pagination.
  */
 type Overrides = Record<string, boolean>;
+/**
+ * A cache of the stored overrides, filled only by `load`. It is dropped after this window's write lands (the write may
+ * have evicted other chats) and when another window changes the key, so it equals storage whenever storage accepts a
+ * write. A refused write's fold is kept here, so it lasts until a later drop re-reads storage.
+ */
 const overrides = new Map<string, Overrides>();
 
 /** Not persisted, dropped when the search closes: a search must not permanently rearrange the transcript. */
 const searchOpened = new Map<string, Set<string>>();
 
 let loaded = false;
+/** Separate from `loaded`, which every cache drop resets: the listener registers once per page. */
+let watching = false;
 
 function load(): void {
   if (loaded) {
     return;
   }
   loaded = true;
+  if (!watching) {
+    watching = true;
+    onPerChatChange(LS_TURN_FOLDS_KEY, () => {
+      dropCache();
+      emitBus(BUS_FOLDS_CHANGED);
+    });
+  }
   for (const [chatID, byTurn] of Object.entries(readPerChat(LS_TURN_FOLDS_KEY, validOverrides))) {
     overrides.set(chatID, byTurn);
   }
@@ -47,11 +62,9 @@ function validOverrides(v: unknown): Overrides | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-/** One chat per key, which is what lets the store evict by chat. */
-function persist(chatID: string): void {
-  const byTurn = overrides.get(chatID);
-  const value = byTurn !== undefined && Object.keys(byTurn).length > 0 ? byTurn : undefined;
-  writePerChat(LS_TURN_FOLDS_KEY, Object.fromEntries(overrides), chatID, value);
+function dropCache(): void {
+  overrides.clear();
+  loaded = false;
 }
 
 /** Whether a turn renders open. `index`/`total` position it in the projected list (the resident window). */
@@ -82,14 +95,16 @@ export function isTurnOpen(chatID: string, t: Turn, index: number, total: number
 
 /** Record the reader's own choice for a turn. */
 export function setTurnOpen(chatID: string, turnID: string, open: boolean): void {
-  load();
-  let byTurn = overrides.get(chatID);
-  if (byTurn === undefined) {
-    byTurn = {};
-    overrides.set(chatID, byTurn);
+  const landed = updatePerChat(LS_TURN_FOLDS_KEY, chatID, validOverrides, (prev) => ({
+    ...prev,
+    [turnID]: open,
+  }));
+  if (landed) {
+    dropCache();
+    return;
   }
-  byTurn[turnID] = open;
-  persist(chatID);
+  load();
+  overrides.set(chatID, { ...(overrides.get(chatID) ?? {}), [turnID]: open });
 }
 
 /**
@@ -127,7 +142,6 @@ export function clearSearchOpened(chatID: string): boolean {
  * deleting the key alone does not reach a module-level cache.
  */
 export function resetFoldState(): void {
-  overrides.clear();
+  dropCache();
   searchOpened.clear();
-  loaded = false;
 }

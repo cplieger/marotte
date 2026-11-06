@@ -14,7 +14,7 @@ import {
 } from "./icons.js";
 import { LS_WEB_VIEWPORT_KEY } from "./ls-keys.js";
 import { openAtLine } from "./navigate.js";
-import { readPerChat, writePerChat } from "./per-chat-store.js";
+import { readPerChat, updatePerChat } from "./per-chat-store.js";
 import { getActiveTabKind } from "./tabs.js";
 import {
   PHONE_SHAPED_QUERY,
@@ -72,8 +72,8 @@ let layoutFrame = 0;
 let radiosSig: string | null = null;
 let showCounter = 0;
 
-// Read on every use rather than cached: the sign-out reset deletes the key, and
-// a cached copy would keep the old picks active and write them back.
+// Read on every use rather than cached: the sign-out reset and other windows change the key,
+// and a cached copy would keep the old picks active.
 function storedPicks(): Record<string, ViewportPick> {
   return readPerChat(LS_WEB_VIEWPORT_KEY, parseStoredPick);
 }
@@ -269,7 +269,7 @@ function choose(target: EventTarget | null): void {
 }
 
 function storePick(tab: WebTab, pick: ViewportPick): void {
-  writePerChat(LS_WEB_VIEWPORT_KEY, storedPicks(), tab.path, pick);
+  updatePerChat(LS_WEB_VIEWPORT_KEY, tab.path, parseStoredPick, () => pick);
   layout();
 }
 

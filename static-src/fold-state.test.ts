@@ -1,7 +1,7 @@
 // Which turns are open: three overriding layers, and their order is the design.
 import { describe, it, expect, beforeEach, onTestFinished, vi } from "vitest";
 
-import * as bus from "./bus.js";
+import { BUS_FOLDS_CHANGED, onBus } from "./bus.js";
 import {
   isTurnOpen,
   setTurnOpen,
@@ -255,7 +255,7 @@ describe("across windows", () => {
   it("tells the transcript once the cache has dropped", () => {
     expect(isTurnOpen("c1", t0, 0, 6)).toBe(false);
     const seen: boolean[] = [];
-    const off = bus.onBus(bus.BUS_FOLDS_CHANGED, () => {
+    const off = onBus(BUS_FOLDS_CHANGED, () => {
       seen.push(isTurnOpen("c1", t0, 0, 6));
     });
     onTestFinished(off);
