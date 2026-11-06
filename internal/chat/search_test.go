@@ -610,6 +610,29 @@ func TestSearch_ToolTitleAndOutputAreSegmentsOfTheCallAndTheResult(t *testing.T)
 	})
 }
 
+// A steering box draws its document names in its title and never its ids, so a name is a title hit and a path
+// segment of an id finds nothing.
+func TestSearch_SteeringBoxFindsItsDocumentNamesInTheTitle(t *testing.T) {
+	tf := openTurn("t-1", 1, nil).text("a1", "reading the module")
+	tf.add("sub-9", "g1", marotte.EntryKindToolCall, marotte.EntryToolCall{
+		ID:     "steering-1",
+		Title:  "Steering loaded: git-commits.md, testing.md",
+		Kind:   marotte.ToolKindSteering,
+		Status: marotte.ToolCompleted,
+		SteeringDocs: []string{
+			"file:///w/.kiro/steering/git-commits.md",
+			"file:///w/.kiro/steering/testing.md",
+		},
+	})
+	entries, drawn := chatOf(tf)
+	assertHits(t, searchHits(entries, drawn, "testing.md"), []wantHit{
+		{entry: "g1", lane: "sub-9", kind: segmentToolTitle, offset: 33, segmentLen: 43},
+	})
+	if hits := searchHits(entries, drawn, ".kiro/steering"); len(hits) != 0 {
+		t.Errorf("Search found %d hits in a steering box's ids, want 0: %+v", len(hits), hits)
+	}
+}
+
 // A result's new_text is its own segment with a rune offset; the diff path is not searched (`file:` and the title
 // reach it).
 func TestSearch_DiffNewTextIsSearched(t *testing.T) {

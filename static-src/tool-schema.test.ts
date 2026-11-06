@@ -37,6 +37,7 @@ describe("profileFor", () => {
     { kind: "think", expectedKind: "think", expectedWrites: false },
     { kind: "switch_mode", expectedKind: "switch_mode", expectedWrites: false },
     { kind: "hook", expectedKind: "hook", expectedWrites: false },
+    { kind: "steering", expectedKind: "steering", expectedWrites: false },
   ];
 
   it.each(kindCases)(
@@ -80,6 +81,7 @@ describe("toolDepth1", () => {
     { kind: "read", expected: "none" },
     { kind: "delete", expected: "none" },
     { kind: "hook", expected: "none" },
+    { kind: "steering", expected: "none" },
     { kind: "think", expected: "none" },
     { kind: "switch_mode", expected: "none" },
     // The two that carry real information.

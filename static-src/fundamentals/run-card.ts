@@ -10,6 +10,7 @@
 import { join as joinKey } from "@cplieger/keyenc";
 import { el } from "@cplieger/ui";
 import { createDisclosure } from "@cplieger/ui/disclosure";
+import { hasSelectionIn, selectableButton } from "../disclosure-row.js";
 import { STATE_WORD, paintStateMark, stateOf } from "../exec-view/status.js";
 import {
   counters,
@@ -218,6 +219,16 @@ export function buildRunCard(
 
   root.append(head, alert, body, foot);
 
+  // Capture, so it runs before the disclosure's own click listener: a drag selecting the run's name must not fold it.
+  head.addEventListener(
+    "click",
+    (e) => {
+      if (hasSelectionIn(head)) {
+        e.stopImmediatePropagation();
+      }
+    },
+    { capture: true },
+  );
   const ctl = createDisclosure(head, body, {
     open: cardOpen,
     onToggle: (isOpen, source) => {
@@ -250,30 +261,37 @@ export function buildRunCard(
   /** The run tab's model of `lastState`, which every region below reads. */
   let lastNodes: readonly ExecNode[] = [];
 
-  /** One step's row: a real anchor into the run tab with that node selected, yielding to a modified
-   *  click. Spans only, no `role` or `tabindex` (an anchor in a `role="button"` host is axe's
-   *  `nested-interactive`). `href` carries the node as a `#node=` fragment; the plain click goes
-   *  through `onOpen` to activate in place. */
+  /** One step's row: a `role="button"` head, not a link, because no engine selects a word inside a link and the
+   *  step's name is quotable. A click opens the run tab at that node in place; a modified or middle click opens the
+   *  node's route (`#node=` fragment) in a new tab, as a link would. */
   function stepRow(path: string): StepRow {
     const glyph = el("span", { className: "run-step-glyph", "aria-hidden": "true" });
     const nameEl2 = el("span", { className: "run-step-name" });
     const meta = el("span", { className: "run-step-meta" });
     const dur = el("span", { className: "run-step-dur" });
-    const rowHead = el(
-      "a",
-      { className: "run-step-head", href: buildPath({ kind: "run", id: workflowID, node: path }) },
-      glyph,
-      nameEl2,
-      meta,
-      dur,
-    );
-    rowHead.addEventListener("click", (e) => {
-      // A modified click is a deliberate escape from the app's own routing.
-      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || (e as MouseEvent).button !== 0) {
+    const href = buildPath({ kind: "run", id: workflowID, node: path });
+    const openNewTab = (): void => {
+      window.open(href, "_blank", "noopener");
+    };
+    const rowHead = selectableButton("div", "run-step-head", (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey) {
+        openNewTab();
         return;
       }
-      e.preventDefault();
       onOpen(workflowID, nameEl.textContent, path);
+    });
+    rowHead.append(glyph, nameEl2, meta, dur);
+    // No engine fires `click` for a middle click; cancelling its `mousedown` stops autoscroll.
+    rowHead.addEventListener("auxclick", (e: MouseEvent) => {
+      if (e.button === 1) {
+        e.preventDefault();
+        openNewTab();
+      }
+    });
+    rowHead.addEventListener("mousedown", (e: MouseEvent) => {
+      if (e.button === 1) {
+        e.preventDefault();
+      }
     });
     const rowRoot = el("div", { className: "run-step", "data-node": path }, rowHead);
     const row: StepRow = { root: rowRoot, head: rowHead, glyph, name: nameEl2, meta, dur };

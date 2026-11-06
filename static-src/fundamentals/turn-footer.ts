@@ -12,6 +12,7 @@ import { ASK_LABEL, type AskBucket } from "../interaction.js";
 import { ICON_INFO } from "../icons.js";
 import { openAtLine, openChange, openChangeSet } from "../navigate.js";
 import { sigChanged } from "../paint-sig.js";
+import { docName, docTarget } from "../steering-docs.js";
 import { creditFigure, formatElapsed } from "../strings.js";
 import { kindNoun } from "../tool-kind-noun.js";
 import { severityOf } from "../turn-severity.js";
@@ -26,7 +27,7 @@ import {
   type PanelRow,
   type PanelValue,
 } from "../turn-info-panel.js";
-import { relBeneath, workspaceRoot } from "../workspace.js";
+import { workspaceRoot } from "../workspace.js";
 
 // Mounted on a turn card (`messages.ts`) and a DELEGATE card (`subagent-block.ts`), so every
 // panel field is optional; Model and cost, Context and Diagnostics always withhold on a delegate.
@@ -503,22 +504,17 @@ function panelSignature(d: TurnSummaryData): string[] {
  *  a global one (`~/.kiro`), so any other id is plain text. */
 function steeringItems(ids: readonly string[]): PanelItem[] {
   const keys = occurrenceKeys(ids);
-  return ids.map((id, i) => {
-    const path = filePathOf(id);
-    return {
-      key: keys[i] ?? id,
-      className: "turn-info-item",
-      parts: [documentPart(path?.slice(path.lastIndexOf("/") + 1) ?? id, id)],
-    };
-  });
+  return ids.map((id, i) => ({
+    key: keys[i] ?? id,
+    className: "turn-info-item",
+    parts: [documentPart(docName(id), id)],
+  }));
 }
 
 /** A document's name, a button into the editor when `uri` is a file under the workspace. The sig
  *  is the name and the path it opens, so a root change that keeps the link keeps its node. */
 function documentPart(name: string, uri: string): ItemPart {
-  const path = filePathOf(uri);
-  const root = workspaceRoot();
-  const target = path !== null && root !== "" && relBeneath(root, path) !== null ? path : null;
+  const target = docTarget(uri);
   return {
     key: "name",
     sig: join(name, target ?? ""),
@@ -536,19 +532,6 @@ function documentLink(name: string, path: string): HTMLElement {
     openAtLine(path);
   });
   return btn;
-}
-
-/** The absolute path a `file:` URI names, or null for any other id. */
-function filePathOf(id: string): string | null {
-  if (!id.startsWith("file://")) {
-    return null;
-  }
-  try {
-    const path = decodeURIComponent(new URL(id).pathname);
-    return path === "" ? null : path;
-  } catch {
-    return null;
-  }
 }
 
 /** SORTED by path, matching `fileRows`' own sort: a `Record`'s insertion order is the order the

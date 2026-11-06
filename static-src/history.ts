@@ -676,13 +676,14 @@ async function deleteRow(row: HistoryRow): Promise<boolean> {
       : ` It also deletes the ${n === 1 ? "workflow run" : `${String(n)} workflow runs`} it started.`;
   const chatID = row.kind === "run" ? "" : (row.session?.chat_id ?? "");
   const stops = deleteStopsWork(chatID === "" ? [] : descendantChatsOf(chatID));
-  const ok = await confirm(
-    `Delete this ${label}? "${row.title}" and its stored history are removed for good.${runs}${
+  const ok = await confirm({
+    title: `Delete this ${label}?`,
+    body: `"${row.title}" and its stored history are removed for good.${runs}${
       stops.text === "" ? "" : ` ${stops.text}`
     }`,
-    "Delete",
-    "destructive",
-  );
+    confirmLabel: "Delete",
+    variant: "destructive",
+  });
   if (!ok) {
     return false;
   }
@@ -725,11 +726,12 @@ async function deleteChatAsked(
       return false;
     }
     const again = deleteStopsWork(descendantChatsOf(chatID), { sent: impact, server });
-    const yes = await confirm(
-      `What deleting "${title}" also stops changed. Delete it?${again.text === "" ? "" : ` ${again.text}`}`,
-      "Delete",
-      "destructive",
-    );
+    const yes = await confirm({
+      title: `Delete "${title}" anyway?`,
+      body: `What deleting it also stops changed.${again.text === "" ? "" : ` ${again.text}`}`,
+      confirmLabel: "Delete",
+      variant: "destructive",
+    });
     if (!yes) {
       return false;
     }

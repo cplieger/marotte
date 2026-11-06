@@ -342,11 +342,12 @@ const stepStackSource: SteerStackSource = {
   discard: async (waiting) => {
     const t = stackTarget.peek();
     if (waiting > 1) {
-      const ok = await confirm(
-        `Discard all ${String(waiting)} messages the step has not read yet? A workflow message is waiting beside them, so they clear together.`,
-        "Discard all",
-        "destructive",
-      );
+      const ok = await confirm({
+        title: `Discard all ${String(waiting)} messages the step has not read yet?`,
+        body: "A workflow message is waiting beside them, so they clear together.",
+        confirmLabel: "Discard all",
+        variant: "destructive",
+      });
       if (!ok) {
         return;
       }

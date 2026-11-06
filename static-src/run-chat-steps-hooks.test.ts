@@ -199,26 +199,28 @@ describe("a step's hooks in the run pane", () => {
       hook(t, 2, "seat guard"),
       hook(t, 3, "stop check", { hook_trigger: "Stop" }),
     ]);
-    expect(shownHookTitles(root)).toEqual(["Hook fired: stop check"]);
-    expect(badgeText(root)).toContain("1");
+    expect(shownHookTitles(root)).toEqual([]);
+    expect(badgeText(root)).toContain("2");
 
     setHookStatusShown(false);
     expect(shownHookTitles(root)).toEqual([]);
     expect(badgeText(root)).toBeNull();
 
     setHookStatusShown(true);
-    expect(shownHookTitles(root)).toEqual(["Hook fired: stop check"]);
-    expect(badgeText(root)).toContain("1");
+    expect(shownHookTitles(root)).toEqual([]);
+    expect(badgeText(root)).toContain("2");
   });
 
-  it("draws a quiet stop hook once Show hook status turns on after the step mounted without it", () => {
+  it("folds a quiet stop hook into the badge once Show hook status turns on after the step mounted without it", () => {
     setHookStatusShown(false);
     const root = paintStep((t) => [
       call(t, 1, { id: "cmd-a" }),
       hook(t, 2, "stop check", { hook_trigger: "Stop" }),
     ]);
     expect(shownHookTitles(root)).toEqual([]);
+    expect(badgeText(root)).toBeNull();
     setHookStatusShown(true);
-    expect(shownHookTitles(root)).toEqual(["Hook fired: stop check"]);
+    expect(shownHookTitles(root)).toEqual([]);
+    expect(badgeText(root)).toContain("1");
   });
 });

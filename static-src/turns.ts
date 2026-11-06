@@ -455,7 +455,8 @@ export function turnLedger(t: Turn): TurnLedger {
 }
 
 function countCall(led: TurnLedger, call: EntryToolCall): void {
-  if (call.kind === "hook" && !hookCounted(call, hookStatusShown())) {
+  // A steering box is KAS loading documents, not a tool the agent called; the close's list counts it.
+  if (call.kind === "steering" || (call.kind === "hook" && !hookCounted(call, hookStatusShown()))) {
     return;
   }
   led.kindCounts[call.kind] = (led.kindCounts[call.kind] ?? 0) + 1;

@@ -19,6 +19,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/schedule"
+	"github.com/cplieger/marotte/internal/trigger"
 )
 
 // eventRuleChecker runs an event rule's save-time forge reads; a refusal is a *launchrule.ForgeCheckError.
@@ -31,7 +32,10 @@ type eventRuleChecker interface {
 type launchRuleView struct {
 	NextRunAt *time.Time         `json:"next_run_at,omitempty"`
 	Status    *launchrule.Status `json:"status,omitempty"`
-	Error     string             `json:"error,omitempty"`
+	// Set only for event rules.
+	Cursor     *trigger.CursorSummary `json:"cursor,omitempty"`
+	Error      string                 `json:"error,omitempty"`
+	HeldEvents []trigger.HeldEvent    `json:"held_events,omitempty"`
 	launchrule.Rule
 	Held int `json:"held"`
 }
@@ -44,6 +48,14 @@ func launchRuleViewOf(r *launchrule.Rule, st *launchrule.State, readErr error) l
 	}
 	status := st.Status
 	v.Status, v.Held = &status, st.Held()
+	if r.When.Event != nil {
+		held, c, err := trigger.Summarize(st, time.Now())
+		if err != nil {
+			v.Error = err.Error()
+			return v
+		}
+		v.Cursor, v.HeldEvents = &c, held
+	}
 	if r.Enabled && r.When.Clock != nil {
 		// schedule.NextRunFrom as the runner uses it, floored at now.
 		if next, err := schedule.NextRunFrom(*r.When.Clock, status.Anchor, time.Now()); err == nil {

@@ -178,8 +178,8 @@ async function paint(
   return el;
 }
 
-function runButtons(view: HTMLElement): HTMLButtonElement[] {
-  return [...view.querySelectorAll<HTMLButtonElement>("button.steer-note-run")];
+function runButtons(view: HTMLElement): HTMLElement[] {
+  return [...view.querySelectorAll<HTMLElement>(".steer-note-run[role=button]")];
 }
 
 let seq = 0;

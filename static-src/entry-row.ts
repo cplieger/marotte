@@ -75,6 +75,7 @@ function timeNode(time: EntryTime): HTMLElement {
       className: "entry-time",
       datetime: new Date(time.ms).toISOString(),
       "data-tooltip": absoluteTime(time.ms),
+      "data-clock-tip": "full",
     },
     text,
   );

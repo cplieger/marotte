@@ -659,7 +659,8 @@ function applyStatusUpdate(card: HTMLDivElement, status: ToolStatus): void {
 
 function applyTitleUpdate(el: HTMLDivElement, tc: ToolCall): void {
   // A disclosed skill/agent names the document that entered the prompt; keep that through routine title frames.
-  if (el.dataset["disclosed"] !== undefined) {
+  // A steering box's title holds its document links, which a text rewrite would drop.
+  if (el.dataset["disclosed"] !== undefined || el.dataset["kind"] === "steering") {
     return;
   }
   const t = el.querySelector(".tool-title");

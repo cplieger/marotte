@@ -8,6 +8,7 @@ import { chatNotice } from "./notice-subject.js";
 import { loadSettings } from "./persist.js";
 import { getCachedModels } from "./picker.js";
 import { setComposerValue } from "./composer-value.js";
+import { tangentRefusal } from "./tangent-refusal.js";
 import type { Session } from "./types.js";
 
 const IN_MODE_PILL = "Switch modes and agents with the mode pill in the prompt bar.";
@@ -158,8 +159,9 @@ const HANDLERS: Readonly<Record<string, Verb>> = {
   tangent: {
     description: "Start a tangent from this conversation",
     run: (chatID) => {
-      if (isEmptyChat(get(chatID))) {
-        chatNotice(chatID, "Send a message first, then start a tangent from it.");
+      const refusal = tangentRefusal(get(chatID));
+      if (refusal !== null) {
+        chatNotice(chatID, refusal);
         return true;
       }
       // Lazy: chat.ts imports submit.ts, which imports this module.

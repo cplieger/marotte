@@ -338,7 +338,9 @@ describe("remove flow", () => {
     mockConfirm.mockResolvedValue(true);
     (list().querySelector(".knowledge-remove") as HTMLButtonElement).click();
     await flush();
-    expect(mockConfirm).toHaveBeenCalledWith(expect.any(String), "Remove", "destructive");
+    expect(mockConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ confirmLabel: "Remove", variant: "destructive" }),
+    );
     expect(mockRemove).toHaveBeenCalledWith({ name: "docs" }, expect.any(Object));
   });
 
@@ -668,11 +670,12 @@ describe("remove all", () => {
     mockConfirm.mockResolvedValue(true);
     clearBtn().click();
     await flush();
-    expect(mockConfirm).toHaveBeenCalledWith(
-      "Remove all 2 knowledge bases? kiro-cli on this machine uses the same list.",
-      "Remove all",
-      "destructive",
-    );
+    expect(mockConfirm).toHaveBeenCalledWith({
+      title: "Remove all 2 knowledge bases?",
+      body: "kiro-cli on this machine uses the same list.",
+      confirmLabel: "Remove all",
+      variant: "destructive",
+    });
     expect(mockClear).toHaveBeenCalledWith(undefined, expect.any(Object));
   });
 

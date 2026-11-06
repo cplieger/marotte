@@ -357,11 +357,12 @@ async function cloneRepo(
 }
 
 async function confirmRemoval(repo: Repo, btn: HTMLButtonElement, deps: RepoDeps): Promise<void> {
-  const ok = await confirmDialog(
-    `Delete the local copy of ${repo.name}? The remote stays intact. You can re-clone later.`,
-    "Delete",
-    "destructive",
-  );
+  const ok = await confirmDialog({
+    title: `Delete the local copy of ${repo.name}?`,
+    body: "The remote stays intact. You can re-clone later.",
+    confirmLabel: "Delete",
+    variant: "destructive",
+  });
   if (ok) {
     pressRow(btn, removeKey(repo), () => removeLocalRepo(repo, deps), deps);
   }

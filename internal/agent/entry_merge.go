@@ -528,13 +528,17 @@ func boundPromptID(entries []marotte.Entry, sid string) string {
 	return ""
 }
 
-// firstContentKey is rule two's key: the first content id with a say's `#k` suffix removed.
+// firstContentKey is rule two's key: the first content id with a say's `#k` suffix removed. A
+// steering box is skipped: each side mints its id.
 func firstContentKey(entries []marotte.Entry) string {
 	for i := range entries {
 		switch entries[i].Kind {
 		case marotte.EntryKindText, marotte.EntryKindThinking:
 			return marotte.SayIDOf(entries[i].ID)
 		case marotte.EntryKindToolCall:
+			if marotte.IsSteeringCallID(entries[i].ID) {
+				continue
+			}
 			return entries[i].ID
 		}
 	}
@@ -646,6 +650,8 @@ type recordEntryIndex struct {
 	// notices is every model_routed and model_fallback in seq order, per kind: neither side's
 	// frame carries an id, so the n-th notice of a kind in a paired turn is the n-th on the other side.
 	notices map[marotte.EntryKind][]int
+	// steering is every steering box in seq order, paired by ordinal for the same reason.
+	steering []int
 	// turnOpen and turnClose pair by kind: their ids are minted differently on each side.
 	turnOpen  int
 	turnClose int
@@ -690,6 +696,10 @@ func (idx *recordEntryIndex) add(e *marotte.Entry, i int) {
 		}
 	case marotte.EntryKindModelRouted, marotte.EntryKindModelFallback:
 		idx.notices[e.Kind] = append(idx.notices[e.Kind], i)
+	case marotte.EntryKindToolCall:
+		if marotte.IsSteeringCallID(e.ID) {
+			idx.steering = append(idx.steering, i)
+		}
 	case marotte.EntryKindSteer, marotte.EntryKindSteerDelivered:
 		idx.messages.add(e, i)
 	case marotte.EntryKindText, marotte.EntryKindThinking:
@@ -822,6 +832,7 @@ func pairEntries(rec, proj []marotte.Entry, idx recordEntryIndex) []entryPairing
 		pairing: make([]entryPairing, len(proj)),
 	}
 	notices := make(map[marotte.EntryKind]int, 2)
+	steering := 0
 	for j := range proj {
 		e := &proj[j]
 		switch e.Kind {
@@ -838,6 +849,15 @@ func pairEntries(rec, proj []marotte.Entry, idx recordEntryIndex) []entryPairing
 			c.claim(j, idx.bySay[marotte.SayIDOf(e.ID)]...)
 		case marotte.EntryKindSteer:
 			c.claimFirst(j, idx.steerTwins(e))
+		case marotte.EntryKindToolCall:
+			if !marotte.IsSteeringCallID(e.ID) {
+				c.claim(j, indexOr(idx.byID, e.ID))
+				continue
+			}
+			if steering < len(idx.steering) {
+				c.claim(j, idx.steering[steering])
+			}
+			steering++
 		default:
 			c.claim(j, indexOr(idx.byID, e.ID))
 		}

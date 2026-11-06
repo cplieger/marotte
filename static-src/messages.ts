@@ -16,6 +16,7 @@ import {
   sessionBusy,
 } from "./store.js";
 import { clearTurnSigs } from "./store-signals.js";
+import { BUS_FOLDS_CHANGED, onBus } from "./bus.js";
 import { onHookVisibility } from "./hook-fold.js";
 import { buildEvent } from "./messages-events.js";
 import { releaseClampsIn } from "./clamp-text.js";
@@ -125,7 +126,7 @@ import { wakeLine } from "./turn-wake.js";
 import { rewindChat } from "./actions/rewind.js";
 import { compactChat } from "./actions/chat.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
-import { confirm as confirmDialog } from "./confirm.js";
+import { confirm as confirmDialog, type Confirmation } from "./confirm.js";
 import { setComposerValue } from "./composer-value.js";
 import { registerCleanup } from "./actions/index.js";
 import {
@@ -566,6 +567,12 @@ export function mountChatView(): void {
   onReaderGesture(noteReaderMoved);
   onViewportChange(windowPass);
   onLiveEdgeRequest(mountLiveEdge);
+  onBus(BUS_FOLDS_CHANGED, () => {
+    const id = getActiveId();
+    if (id !== "") {
+      bumpMessages(id, "shape");
+    }
+  });
   // The tool layer sits below this module, so the multiplexer injects whether a view is parked and that a resident
   // view's chat must not have its messages evicted.
   initToolViewCallbacks({
@@ -1152,13 +1159,9 @@ function refreshToolTurn(session: Session, turnID: string | undefined): boolean 
  * The rewind confirmation, the only guard, so it states the losses: the turn and everything after leave, files
  * roll back to KAS's snapshots, and there is no undo.
  */
-function rewindConfirmText(target: EntryPrompt, discarded: readonly Turn[]): string {
+function rewindConfirmation(target: EntryPrompt, discarded: readonly Turn[]): Confirmation {
   const promptRaw = target.text.trim().replace(/\s+/g, " ");
   const prompt = truncate(promptRaw, 101);
-  const lines = ["Rewind to this turn?", ""];
-  if (prompt.length > 0) {
-    lines.push(`Prompt: "${prompt}"`);
-  }
 
   // Count across every dropped turn: a revert discards all of them.
   const calls = discarded.flatMap((t) =>
@@ -1174,24 +1177,33 @@ function rewindConfirmText(target: EntryPrompt, discarded: readonly Turn[]): str
   ];
   // `discarded` LEADS with the addressed turn, so the later ones are what remains.
   const later = Math.max(discarded.length - 1, 0);
-  const turnWord = later === 1 ? "turn" : "turns";
-  lines.push(`Discards this prompt and ${String(later)} later ${turnWord}.`);
+  const removes =
+    later === 0
+      ? "Removes this prompt and its reply."
+      : later === 1
+        ? "Removes this prompt, its reply and the turn after it."
+        : `Removes this prompt, its reply and the ${String(later)} later turns.`;
+  const facts = [prompt === "" ? "" : `Prompt: "${prompt}"`, removes];
   if (calls.length > 0) {
-    const toolPart = `${String(calls.length)} tool call${calls.length === 1 ? "" : "s"}`;
-    const filePart =
-      files.length > 0
-        ? `, ${String(files.length)} file${files.length === 1 ? "" : "s"} touched (${files.slice(0, 4).join(", ")}${files.length > 4 ? ", \u2026" : ""})`
-        : "";
-    lines.push(`Work being undone: ${toolPart}${filePart}.`);
+    const shown =
+      files.length > 4 ? files.slice(0, 4).join(", ") + ", \u2026" : files.join(", ") + ".";
+    facts.push(
+      `Undoes ${String(calls.length)} tool call${calls.length === 1 ? "" : "s"}` +
+        (files.length > 0
+          ? `, touching ${String(files.length)} file${files.length === 1 ? "" : "s"}: ${shown}`
+          : "."),
+    );
   }
-
-  lines.push("");
-  lines.push(
-    "Files are rolled back on disk to their state before this turn. This cannot be undone. " +
-      "If the message box is empty, the prompt's text comes back to it to edit and send again. " +
-      "Attachments are not restored.",
-  );
-  return lines.join("\n");
+  return {
+    title: "Rewind to this turn?",
+    body: [
+      facts.filter((f) => f !== "").join("\n"),
+      "Files on disk go back to their state before this turn. This cannot be undone.",
+      "If the message box is empty, the prompt's text comes back to it to edit and send again. Attachments are not restored.",
+    ].join("\n\n"),
+    confirmLabel: "Rewind",
+    variant: "destructive",
+  };
 }
 
 /** Refused mid-turn: KAS throws on a session with a live abortController. `mountRewind` disables the
@@ -1211,11 +1223,7 @@ async function handleRewindClick(target: EntryPrompt): Promise<void> {
   if (at < 0) {
     return;
   }
-  const proceed = await confirmDialog(
-    rewindConfirmText(target, turns.slice(at)),
-    "Rewind",
-    "destructive",
-  );
+  const proceed = await confirmDialog(rewindConfirmation(target, turns.slice(at)));
   if (!proceed) {
     return;
   }

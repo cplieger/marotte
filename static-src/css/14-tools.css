@@ -225,39 +225,29 @@
 }
 
 /* The hooks folded out of the rows: the fish-hook glyph and their count, in the header row's last column. A button
-   that opens the list of those hooks. Its first line centres in the same one-line box the header's glyphs use. */
+   that opens the list of those hooks. It takes the turn footer's control box (61-mcp-tools.css), so its paint, hover
+   and press are the footer buttons'; the shared expander holds the target. `align-self: start` keeps it on the
+   header's first line, centred in that line's box, when the header wraps, where the grid would stretch it. Its width
+   is floored at the row's tap size, so the expander never grows sideways into the header's own target. */
 .tool-group-hooks {
-  --row-first-line: calc(var(--row-tap) - 2 * var(--sp-2));
-
-  appearance: none;
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-1);
-  min-block-size: var(--row-tap);
+  align-self: start;
+  justify-content: center;
   min-inline-size: var(--row-tap);
-  padding: var(--sp-2) 0.75rem;
-  border: 0;
-  background: transparent;
-  color: var(--c-text-tertiary);
-  cursor: pointer;
+  margin-block-start: calc((var(--row-tap) - var(--ctl-h-sm)) / 2);
+  margin-inline-end: var(--sp-2);
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding-inline: var(--sp-2);
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
 
-  /* The same first-line offsets as the header's own glyph and count: the glyph's box stays its
-     drawing size on every tier, and only the offset grows with the touch row. */
   & > .tool-group-hooks-icon,
   & > .tool-group-hooks-n {
     display: inline-flex;
     align-items: center;
-  }
-
-  & > .tool-group-hooks-icon {
-    margin-block-start: calc((var(--row-first-line) - var(--icon-ui)) / 2);
-  }
-
-  & > .tool-group-hooks-n {
-    padding-block: calc((var(--row-first-line) - 1lh) / 2);
   }
 
   & svg {
@@ -267,11 +257,10 @@
   }
 }
 
-@media (any-hover: hover) {
-  .tool-group-hooks:hover {
-    color: var(--c-text-primary);
-    background: var(--c-hover);
-  }
+/* The footer row's ink, which the footer buttons inherit: the badge sits outside the header, so the shared box's
+   `color: inherit` would give it the box's primary ink and leave hover no lift. (0,2,0), under the shared hover. */
+.tool-group > .tool-group-hooks {
+  color: var(--c-text-secondary);
 }
 
 /* The list the hooks badge opens: one row per hook, its run count, its name and its hook file's chip. */
@@ -382,12 +371,11 @@
 }
 
 /* The WHOLE summary expands the card; `disclosure-row.ts` forwards the click to the
-   chevron button. Gated on `.has-disclosure`, which `refreshToolDisclosure` keeps
+   chevron button, skipping a click that ends a selection, so the title stays selectable
+   for "Quote in reply". Gated on `.has-disclosure`, which `refreshToolDisclosure` keeps
    exactly while the chevron is in the DOM. */
 .tool-summary.has-disclosure {
   cursor: pointer;
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 /* The shared recipe; gated for `.tool-group-header`'s reason. */
@@ -690,6 +678,31 @@
   & :where(.tool-file-icon) svg {
     width: 0.85em;
     height: 0.85em;
+  }
+}
+
+/* A steering title wraps: a button is an atomic inline even at `display: inline`, so an ellipsis
+   would drop every name that does not fit whole, all of them on a phone. */
+.tool-call[data-kind="steering"] .tool-title {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* The names are links inside the title's text run, so they read as text, not chips. */
+.tool-title > .steering-doc.tool-file-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  block-size: auto;
+  max-width: none;
+  text-decoration: underline dotted;
+
+  &:hover {
+    background: none;
+    color: var(--c-text-primary);
   }
 }
 
@@ -1170,7 +1183,8 @@ a.subagent-header {
 }
 
 .btn-small.primary,
-.btn-small.btn-primary {
+.btn-small.btn-primary,
+.uip-ask-ok:not(.is-destructive) {
   background: var(--c-accent);
   color: var(--c-on-accent);
   border-color: var(--c-accent);
@@ -1179,7 +1193,8 @@ a.subagent-header {
 /* The accent fill one rung deeper, through `--c-accent-hover`: a `brightness()` filter
    would step toward white in dark mode while every other hover steps toward ink. */
 .btn-small.primary:hover,
-.btn-small.btn-primary:hover {
+.btn-small.btn-primary:hover,
+.uip-ask-ok:not(.is-destructive):hover {
   background: var(--c-accent-hover);
   border-color: var(--c-accent-hover);
 }

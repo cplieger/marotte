@@ -79,7 +79,7 @@ const COLUMNS: readonly Column[] = [
     mount: (state) => {
       const card = el("div", "run-card");
       const step = el("div", "run-step", { "data-status": state });
-      const head = el("a", "run-step-head");
+      const head = el("div", "run-step-head", { role: "button" });
       const slot = el("span", "run-step-glyph");
       head.appendChild(slot);
       step.appendChild(head);
@@ -99,7 +99,7 @@ const COLUMNS: readonly Column[] = [
     mount: (state) => {
       const bar = el("div", "run-bar");
       const row = el("div", "run-bar-row", { "data-state": state });
-      const open = el("button", "run-bar-open");
+      const open = el("div", "run-bar-open", { role: "button", tabindex: "0" });
       const slot = el("span", "run-bar-glyph", { "data-status": state });
       open.appendChild(slot);
       row.appendChild(open);

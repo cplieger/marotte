@@ -147,7 +147,7 @@ a.subagent-header:focus-visible,
    block padding clear the band's [0, 2px] reach on all four edges. */
 .pill-account:focus-visible,
 .run-head:focus-visible,
-a.run-step-head:focus-visible,
+.run-step-head:focus-visible,
 .run-open:focus-visible,
 .tool-group-header:focus-visible,
 .tool-group-hooks:focus-visible,
@@ -179,8 +179,8 @@ a.run-step-head:focus-visible,
  *     (`.turn-ledger-summary` with no files to list, `.send-btn`) declares
  *     `opacity: 1`, or this rule would dim information nobody is being refused.
  *
- * `aria-disabled` is deliberately NOT matched: nothing in the app sets it, and a
- * selector for a state that cannot occur is a claim no reader can check.
+ * `aria-disabled` is deliberately NOT matched: a control that sets it keeps hover
+ * and focus for a reason or a keyboard path, and styles that face at its own rule.
  *
  * A switch's input is invisible, so its slider carries the face (a switch an
  * organization pins is the one disabled switch). */

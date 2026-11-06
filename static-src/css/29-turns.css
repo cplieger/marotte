@@ -59,11 +59,6 @@
      three surfaces the ink ramp declares two-level (01-tokens.css) — hint reads
      3.44:1 dark / 3.78:1 light under the wash, against this row's 11px timestamp. */
   color: var(--c-text-secondary);
-
-  /* Scoped to THIS row: `.turn-req` below holds the user's own prompt and stays
-     selectable (the header's click forwarder skips a click that ends a selection). */
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 .turn-n {
@@ -205,7 +200,7 @@
   overflow-wrap: anywhere;
 }
 
-/* The reply passage a prompt quoted: subordinate to the question, so muted, set off
+/* The transcript passage a prompt quoted, led by its source: subordinate to the question, so muted, set off
  * by a neutral rule and held to one line, open or folded. */
 .turn-req-quote {
   max-inline-size: 100%;
@@ -330,28 +325,24 @@
 /* A target inside the label's sentence: WCAG 2.5.8's inline exception, as for a prose link
  * (61-mcp-tools.css), or the paint floor makes the one-line label 24px tall. Its
  * `overflow: hidden` clips the shared expander. */
-button.turn-wake-run,
-button.turn-wake-row-run {
+.turn-wake-run[role="button"],
+.turn-wake-row-run[role="button"] {
   min-height: 0;
-  background: none;
-  border: 0;
-  padding: 0;
-  font: inherit;
   font-weight: var(--fw-medium);
   color: var(--c-text-primary);
   cursor: pointer;
   text-underline-offset: 2px;
 }
 
-button.turn-wake-run:focus-visible,
-button.turn-wake-row-run:focus-visible {
+.turn-wake-run[role="button"]:focus-visible,
+.turn-wake-row-run[role="button"]:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
 }
 
 @media (any-hover: hover) {
-  button.turn-wake-run:hover,
-  button.turn-wake-row-run:hover {
+  .turn-wake-run[role="button"]:hover,
+  .turn-wake-row-run[role="button"]:hover {
     color: var(--c-accent);
     text-decoration: underline;
   }
@@ -1425,9 +1416,10 @@ button.turn-wake-row-run:focus-visible {
   line-height: 1.4;
 }
 
-/* "Quote in reply" beside a selection inside a reply (selection-quote.ts). A gesture-summoned
- * overlay, so it takes the context menu's panel and shadow (12-tabs.css `.tab-context-menu`);
- * `.uip-popover` supplies the fixed position and the z-index. */
+/* "Quote in reply" and "Ask in a tangent" beside a selection of transcript content
+ * (selection-quote.ts). A gesture-summoned overlay, so it takes the context menu's panel and
+ * shadow (12-tabs.css `.tab-context-menu`); `.uip-popover` supplies the fixed position and the
+ * z-index. */
 .selection-quote {
   padding: var(--sp-1);
   border: 1px solid var(--c-border);
@@ -1457,15 +1449,20 @@ button.turn-wake-row-run:focus-visible {
     background var(--dur-micro) var(--ease-standard),
     box-shadow var(--dur-micro) var(--ease-standard);
 
-  /* The button cancels its pointerdown to keep the selection, and Firefox then gives it
+  /* The button cancels its mousedown to keep the selection, and Firefox then gives it
      no `:active`, so the JS-held class carries 03-base.css's press. */
   &.is-pressed {
     box-shadow: inset 0 0 0 100vmax var(--c-press);
   }
+
+  &[aria-disabled="true"] {
+    color: var(--c-text-tertiary);
+    cursor: default;
+  }
 }
 
 @media (any-hover: hover) {
-  .selection-quote-btn:hover {
+  .selection-quote-btn:not([aria-disabled="true"]):hover {
     background: var(--c-hover);
   }
 }

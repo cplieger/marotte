@@ -261,11 +261,12 @@ export function buildStepEndView(workflowID: string): StepEndView {
             onclick: () =>
               void (async () => {
                 const verb = status === "completed" ? "done" : "failed";
-                const ok = await confirm(
-                  `Mark ${label} ${verb}? ${end.confirm}`,
-                  end.label,
-                  end.variant,
-                );
+                const ok = await confirm({
+                  title: `Mark ${label} ${verb}?`,
+                  body: end.confirm,
+                  confirmLabel: end.label,
+                  variant: end.variant,
+                });
                 if (ok) {
                   void endRunStep.dispatch({ workflowID, nodePath: node.path, status });
                 }

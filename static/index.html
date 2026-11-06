@@ -76,6 +76,16 @@
               <svg class="pointer-icon-coarse hidden ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 14V4.75a1.75 1.75 0 0 1 3.5 0V10"/><path d="M13.5 11V9.5a1.75 1.75 0 0 0-3.5 0V11"/><path d="M17 12V10.5a1.75 1.75 0 0 0-3.5 0V12"/><path d="M17 12.5a1.75 1.75 0 1 1 3.5 0v2A6.5 6.5 0 0 1 14 21h-2c-2.2 0-3.4-.7-4.5-1.8l-3.6-3.6a1.6 1.6 0 0 1 2.3-2.3l.3.3"/></svg>
             </span>
           </button>
+          <!-- The Clock toggle (clock-toggle.ts): this screen's 12- or 24-hour choice, which
+               the browser's language list cannot reveal. Faces: Lucide's `watch` for
+               Automatic, the digits for the forced cycles. -->
+          <button type="button" id="clock-btn" class="icon-btn" data-tooltip="Clock: automatic. Switch to 24-hour" aria-label="Clock: automatic. Switch to 24-hour">
+            <span class="icon-swap">
+              <svg class="clock-icon-auto ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6"/><path d="M12 10v2l1 1"/><path d="m16.13 7.66-.81-4.05a2 2 0 0 0-2-1.61h-2.68a2 2 0 0 0-2 1.61l-.78 4.05"/><path d="m7.88 16.36.8 4a2 2 0 0 0 2 1.61h2.72a2 2 0 0 0 2-1.61l.81-4.05"/></svg>
+              <svg class="clock-icon-h23 hidden ic-ui" viewBox="0 0 24 24" fill="currentColor" stroke="none"><text x="12" y="16.5" text-anchor="middle" font-size="13" font-weight="600">24</text></svg>
+              <svg class="clock-icon-h12 hidden ic-ui" viewBox="0 0 24 24" fill="currentColor" stroke="none"><text x="12" y="16.5" text-anchor="middle" font-size="13" font-weight="600">12</text></svg>
+            </span>
+          </button>
           <button type="button" id="sidebar-close" class="icon-btn sidebar-close-only" data-tooltip="Close menu" aria-label="Close menu">
             <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
           </button>

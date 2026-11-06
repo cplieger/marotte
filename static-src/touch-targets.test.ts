@@ -156,6 +156,12 @@ function button(className: string, label: string): HTMLButtonElement {
   return b;
 }
 
+function roleButton(className: string, label: string): HTMLElement {
+  const b = make("div", className, { role: "button", tabindex: "0" });
+  b.textContent = label;
+  return b;
+}
+
 function box(className: string, children: readonly (Node | null)[]): HTMLElement {
   const div = make("div", className);
   div.append(...children.filter((c) => c !== null));
@@ -714,13 +720,13 @@ function plantFileRows(): void {
 function plantRunBar(): void {
   const fold = q("#run-bar-fold");
   fold.hidden = false;
-  const toggle = button("run-bar-open run-bar-toggle", "3 workflows running");
+  const toggle = roleButton("run-bar-open run-bar-toggle", "3 workflows running");
   toggle.setAttribute("aria-expanded", "true");
   fold.appendChild(toggle);
   const bar = q("#run-bar");
   bar.classList.remove("hidden");
   for (const name of ["deadset-ci", "land", "app-review"]) {
-    const open = button("run-bar-open", name);
+    const open = roleButton("run-bar-open", name);
     open.prepend(make("span", "run-bar-glyph", { "aria-hidden": "true" }));
     const row = make("li", "run-bar-row");
     row.appendChild(open);
@@ -1302,7 +1308,7 @@ const SURFACES: readonly Surface[] = [
     name: "a run card",
     sizes: TWO,
     setup: plantRun,
-    controls: ["a.run-open", "button.steer-note-run"],
+    controls: ["a.run-open", ".steer-note-run[role=button]"],
     rows: [".run-head", ".run-step-head"],
   },
   {
@@ -1805,7 +1811,7 @@ const SURFACES: readonly Surface[] = [
     name: "the confirm dialog",
     sizes: TWO,
     setup: () => {
-      void confirm("Delete this chat?", "Delete", "destructive");
+      void confirm({ title: "Delete this chat?", confirmLabel: "Delete", variant: "destructive" });
     },
     controls: [".uip-ask-cancel", ".uip-ask-ok"],
   },

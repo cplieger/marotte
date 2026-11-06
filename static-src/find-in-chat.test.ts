@@ -541,6 +541,8 @@ import {
   groupBody,
   refreshGroupHeader,
 } from "./tool-group.js";
+import { buildToolCard } from "./tool-card.js";
+import { setWorkspaceRoot, _resetForTest as resetWorkspaceRoot } from "./workspace.js";
 import type { Session } from "./types.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { Tally } from "./textsearch/copy.js";
@@ -1070,6 +1072,51 @@ describe("server-hit navigation", () => {
     expect(countText()).toBe("1 of 1");
   });
 
+  it("marks a steering box's document name inside its title, across the linked name", async () => {
+    // The server counts the offset over the whole title; the name sits inside a link button.
+    setWorkspaceRoot("/workspace");
+    stageChat(["u1"]);
+    const row = mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row"></div>`,
+    ).querySelector(".msg-row") as HTMLElement;
+    const title = "Steering loaded: testing.md, global.md";
+    const card = buildToolCard({
+      id: "steering-1",
+      title,
+      kind: "steering",
+      status: "completed",
+      live: false,
+      steeringDocs: [
+        "file:///workspace/.kiro/steering/testing.md",
+        "file:///config/home/.kiro/steering/global.md",
+      ],
+    });
+    card.dataset["entryId"] = "e1";
+    row.appendChild(card);
+    stageHits([
+      serverHit({
+        entry_id: "e1",
+        excerpt: title,
+        segment_kind: "tool_title",
+        offset: title.indexOf("testing"),
+        segment_len: title.length,
+      }),
+    ]);
+
+    try {
+      await openAndAdopt("testing");
+      typeAndEnter("testing");
+      await vi.waitFor(() => {
+        expect(
+          document.querySelector("button.steering-doc mark.find-hit-current")?.textContent,
+        ).toBe("testing");
+      });
+    } finally {
+      resetWorkspaceRoot();
+    }
+  });
+
   it("opens the tool group the transcript folded to reach a hit inside it", async () => {
     stageChat(["u1"]);
     const row = mountTurnCard(
@@ -1118,58 +1165,64 @@ describe("server-hit navigation", () => {
     expect(groupBody(group).inert).toBe(false);
   });
 
-  it("lands a hit on a folded hook's name on its group's hooks badge, opening the folded group", async () => {
-    stageChat(["u1"]);
-    const row = mountTurnCard(
-      "u1",
-      `<div data-reconcile-key="a1" class="msg-row"></div>`,
-    ).querySelector(".msg-row") as HTMLElement;
-    const group = buildToolGroupShell();
-    row.appendChild(group);
-    const members: Record<string, string>[] = [
-      { entryId: "e1", kind: "execute", title: "go vet" },
-      {
-        entryId: "e2",
-        kind: "hook",
-        title: "Hook fired: Destructive command guard",
-        filePath: ".kiro/hooks/destructive-guard.json",
-        filename: "destructive-guard.json",
-      },
-    ];
-    for (const m of members) {
-      const card = document.createElement("div");
-      card.className = "tool-call";
-      card.dataset["outcome"] = "ok";
-      Object.assign(card.dataset, m);
-      if (m["kind"] === "hook") {
-        card.setAttribute("data-hook-gates", "");
+  // The card stamps `data-hook-gates` for a tool-trigger hook (hook-fold.ts stampHookCard).
+  it.each<[string, boolean]>([
+    ["PreToolUse", true],
+    ["UserPromptSubmit", false],
+  ])(
+    "lands a hit on a folded %s hook on its group's hooks badge, opening the folded group",
+    async (hookTrigger, gates) => {
+      stageChat(["u1"]);
+      const row = mountTurnCard(
+        "u1",
+        `<div data-reconcile-key="a1" class="msg-row"></div>`,
+      ).querySelector(".msg-row") as HTMLElement;
+      const group = buildToolGroupShell();
+      row.appendChild(group);
+      const members: Record<string, string>[] = [
+        { entryId: "e1", kind: "execute", title: "go vet" },
+        {
+          entryId: "e2",
+          kind: "hook",
+          title: "Hook fired: Destructive command guard",
+          filePath: ".kiro/hooks/destructive-guard.json",
+          filename: "destructive-guard.json",
+          hookTrigger,
+        },
+      ];
+      for (const m of members) {
+        const card = document.createElement("div");
+        card.className = "tool-call";
+        card.dataset["outcome"] = "ok";
+        Object.assign(card.dataset, m);
+        card.toggleAttribute("data-hook-gates", m["kind"] === "hook" && gates);
+        groupBody(group).appendChild(card);
       }
-      groupBody(group).appendChild(card);
-    }
-    refreshGroupHeader(group);
-    autoCollapseGroup(group);
-    const head = group.querySelector(":scope > .tool-group-header");
-    expect(head?.getAttribute("aria-expanded")).toBe("false");
-    stageHits([
-      serverHit({
-        entry_id: "e2",
-        excerpt: "Hook fired: Destructive command guard",
-        segment_kind: "tool_title",
-        offset: 12,
-        segment_len: 37,
-      }),
-    ]);
+      refreshGroupHeader(group);
+      autoCollapseGroup(group);
+      const head = group.querySelector(":scope > .tool-group-header");
+      expect(head?.getAttribute("aria-expanded")).toBe("false");
+      stageHits([
+        serverHit({
+          entry_id: "e2",
+          excerpt: "Hook fired: Destructive command guard",
+          segment_kind: "tool_title",
+          offset: 12,
+          segment_len: 37,
+        }),
+      ]);
 
-    await openAndSearch("Destructive");
-    typeAndEnter("Destructive");
-    await vi.waitFor(() => {
-      expect(countText()).toBe("1 of 1 \u00b7 listed under the hooks badge");
-    });
-    expect(head?.getAttribute("aria-expanded")).toBe("true");
-    expect(group.querySelector(":scope > .tool-group-hooks")?.classList).toContain(
-      "find-target-flash",
-    );
-  });
+      await openAndSearch("Destructive");
+      typeAndEnter("Destructive");
+      await vi.waitFor(() => {
+        expect(countText()).toBe("1 of 1 \u00b7 listed under the hooks badge");
+      });
+      expect(head?.getAttribute("aria-expanded")).toBe("true");
+      expect(group.querySelector(":scope > .tool-group-hooks")?.classList).toContain(
+        "find-target-flash",
+      );
+    },
+  );
 
   // tool_diff: the card is the target, the mini-diff the walk, and the notice has three states.
 

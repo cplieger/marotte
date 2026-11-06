@@ -335,6 +335,12 @@ const ICON_TOOL_HOOK = svg(
   '<g transform="translate(0.25 1)"><circle cx="15" cy="4" r="2.5"/><path d="M15 6.5V14a4.5 4.5 0 0 1-9 0V8.5l3 3"/></g>',
 );
 
+/** A ship's wheel: rim, hub, four handled spokes and four inner ones; the handles keep it apart from the fetch globe. */
+const ICON_TOOL_STEERING = svg(
+  "ui",
+  '<circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="1.75"/><path d="M12 1.75v8.5M12 13.75v8.5M1.75 12h8.5M13.75 12h8.5"/><path d="M13.24 10.76l3-3M10.76 13.24l-3 3M13.24 13.24l3 3M10.76 10.76l-3-3"/>',
+);
+
 const ICON_BY_KIND: Record<ToolKind, string> = {
   read: ICON_TOOL_READ,
   edit: ICON_TOOL_EDIT,
@@ -345,6 +351,7 @@ const ICON_BY_KIND: Record<ToolKind, string> = {
   execute: ICON_TOOL_TERMINAL,
   shell: ICON_TOOL_TERMINAL,
   hook: ICON_TOOL_HOOK,
+  steering: ICON_TOOL_STEERING,
   command: ICON_TOOL_TERMINAL,
   think: ICON_TOOL_THINK,
   fetch: ICON_TOOL_FETCH,

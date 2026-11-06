@@ -351,9 +351,9 @@ describe("a run step's clamped output does not paint past its own clamp", () => 
     const row = document.createElement("div");
     row.className = "run-step";
     row.dataset["status"] = "completed";
-    const head = document.createElement("a");
+    const head = document.createElement("div");
     head.className = "run-step-head";
-    head.href = "/run/wf_1";
+    head.setAttribute("role", "button");
     row.append(head, cap);
 
     const card = document.createElement("div");
@@ -364,21 +364,6 @@ describe("a run step's clamped output does not paint past its own clamp", () => 
     card.appendChild(steps);
     return card;
   }
-
-  it("keeps a navigator row's own ink rather than taking the reset's link ink", () => {
-    // The reset layer inks every `a` as a link, and a row is a navigator, so it opts out.
-    const card = mount(step("captured"));
-    const head = card.querySelector<HTMLElement>(".run-step-head")!;
-    expect(css(head, "text-decoration-line")).toBe("none");
-
-    // The live token, not a literal: `--c-link` is theme-split.
-    const probe = document.createElement("a");
-    probe.href = "/run/wf_1";
-    probe.textContent = "link";
-    card.appendChild(probe);
-    expect(css(head, "color")).not.toBe(css(probe, "color"));
-    expect(css(head, "color")).toBe(css(card, "color"));
-  });
 
   const overflowing = Array.from(
     { length: 40 },

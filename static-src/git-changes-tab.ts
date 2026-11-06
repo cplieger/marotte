@@ -890,11 +890,12 @@ function unstagedGroupActions(r: RepoStatus, entries: FileEntry[]): HTMLButtonEl
           stagedCount > 0
             ? ` Your ${String(stagedCount)} staged file${stagedCount === 1 ? "" : "s"} stay${stagedCount === 1 ? "s" : ""} untouched.`
             : "";
-        return confirmDialog(
-          `Discard ${String(count)} unstaged change${count === 1 ? "" : "s"} in ${r.repo}? This cannot be undone.${keeps}`,
-          "Discard",
-          "destructive",
-        );
+        return confirmDialog({
+          title: `Discard ${String(count)} unstaged change${count === 1 ? "" : "s"} in ${r.repo}?`,
+          body: `This cannot be undone.${keeps}`,
+          confirmLabel: "Discard",
+          variant: "destructive",
+        });
       },
     },
   );
@@ -1023,11 +1024,12 @@ function renderFileRow(r: RepoStatus, f: FileEntry, partiallyStaged: boolean): H
           ),
         {
           confirm: () =>
-            confirmDialog(
-              `Discard changes to ${f.path}? This cannot be undone.`,
-              "Discard",
-              "destructive",
-            ),
+            confirmDialog({
+              title: `Discard changes to ${f.path}?`,
+              body: "This cannot be undone.",
+              confirmLabel: "Discard",
+              variant: "destructive",
+            }),
         },
         true,
       ),

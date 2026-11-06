@@ -23,7 +23,6 @@ const stateDirName = "launch-state"
 
 // State is what the server writes about one rule, in that rule's own file: no client write reaches it.
 type State struct {
-	Status Status `json:"status"`
 	// Population is the event rule's keyenc.Join(connection, RepoRef.Encode(), kind) the state was built for.
 	Population string          `json:"population,omitempty"`
 	Cursor     json.RawMessage `json:"cursor,omitempty"`
@@ -32,6 +31,7 @@ type State struct {
 	Launched   json.RawMessage   `json:"launched,omitempty"`
 	Superseded json.RawMessage   `json:"superseded,omitempty"`
 	Attempts   json.RawMessage   `json:"attempts,omitempty"`
+	Status     Status            `json:"status"`
 }
 
 // Status is a rule's row state.
@@ -49,10 +49,34 @@ type Status struct {
 	// FailingSince starts an event rule's 24-hour failure clock; zero when nothing is failing.
 	FailingSince time.Time `json:"failing_since,omitzero"`
 	// LastRunID is the only run whose outcome may land on the row.
-	LastRunID     string        `json:"last_run_id,omitempty"`
-	LastStatus    OutcomeStatus `json:"last_status,omitempty"`
-	LastReason    string        `json:"last_reason,omitempty"`
-	BoundAbandons int           `json:"bound_abandons,omitempty"`
+	LastRunID  string        `json:"last_run_id,omitempty"`
+	LastStatus OutcomeStatus `json:"last_status,omitempty"`
+	LastReason string        `json:"last_reason,omitempty"`
+	// Gaps are an event rule's stretches in which runs may have been missed, kept until the operator dismisses them.
+	Gaps          []Gap `json:"gaps,omitempty"`
+	BoundAbandons int   `json:"bound_abandons,omitempty"`
+}
+
+// The causes of a Gap.
+const (
+	GapOutage       = "outage"
+	GapAgedOut      = "aged_out"
+	GapResultWindow = "result_window"
+)
+
+// Gap is one stretch in which an event rule may have missed a run: no complete check for longer than the read
+// window reaches (outage), a run that reached the read horizon before it was seen to end or launched (aged_out),
+// or more runs created in one second than the forge lists (result_window).
+type Gap struct {
+	From  time.Time `json:"from"`
+	To    time.Time `json:"to"`
+	Cause string    `json:"cause"`
+	// RunID names the aged_out run.
+	RunID int64 `json:"run_id,omitempty"`
+	// OmittedAtLeast is a result_window's lower bound on the runs the forge did not list.
+	OmittedAtLeast int `json:"omitted_at_least,omitempty"`
+	// QueueFull marks an aged_out run that matched while the queue was full, rather than one still running.
+	QueueFull bool `json:"queue_full,omitempty"`
 }
 
 // Held is the number of events the rule holds.
@@ -243,6 +267,7 @@ func (s *Store) ruleState(ruleID string) (*ruleState, error) {
 
 func (st *State) clone() State {
 	c := *st
+	c.Status.Gaps = slices.Clone(st.Status.Gaps)
 	c.Cursor = slices.Clone(st.Cursor)
 	c.Queue = slices.Clone(st.Queue)
 	for i := range c.Queue {

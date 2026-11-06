@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/marotte/internal/launchrule"
 )
 
@@ -370,6 +371,69 @@ func TestEventRuleSaveAnswersTheForgeCheck(t *testing.T) {
 			t.Errorf("forge checks = %d for a pause, want 0", forge.count())
 		}
 	})
+}
+
+func TestLaunchRuleListShowsHeldEventsAndCursor(t *testing.T) {
+	_, st, mux := launchRuleHub(t, &fakeEventRuleChecker{})
+	r, err := st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := time.Date(2026, time.November, 5, 10, 0, 0, 0, time.UTC)
+	repoID := forgeapi.RepoRef{Selector: "cplieger/animap-source"}.Encode()
+	state := &launchrule.State{
+		Cursor: json.RawMessage(`{"` + repoID + `":{"runs":{"baseline_at":"2026-11-04T10:00:00Z",` +
+			`"last_complete":"2026-11-05T10:00:00Z","runs":{"7":{"created_at":"2026-11-05T09:00:00Z","state":"pending","hold":"pending"}},` +
+			`"fired":{"5":"2026-11-05T08:00:00Z","6":"2026-11-05T08:30:00Z"}}}}`),
+		Queue: []json.RawMessage{
+			json.RawMessage(`{"key":"k1","coalesce_key":"c","observed_at":"2026-11-05T10:00:00Z","inputs":{"run_id":"5"}}`),
+		},
+	}
+	if err := st.WriteState(t.Context(), r.ID, state); err != nil {
+		t.Fatal(err)
+	}
+	rec := sendRoute(t, mux, http.MethodGet, "/api/launch-rules", "")
+	var body struct {
+		Rules []struct {
+			Cursor *struct {
+				Watching  int  `json:"watching"`
+				Fired     int  `json:"fired"`
+				Baselined bool `json:"baselined"`
+			} `json:"cursor"`
+			HeldEvents []struct {
+				ObservedAt time.Time `json:"observed_at"`
+				Key        string    `json:"key"`
+			} `json:"held_events"`
+			Held int `json:"held"`
+		} `json:"rules"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || len(body.Rules) != 1 {
+		t.Fatalf("GET = %d %s, want the one rule", rec.Code, rec.Body.String())
+	}
+	got := body.Rules[0]
+	if got.Held != 1 || len(got.HeldEvents) != 1 || got.HeldEvents[0].Key != "k1" || !got.HeldEvents[0].ObservedAt.Equal(observed) {
+		t.Errorf("held %d, held_events %+v; want k1 observed at %v", got.Held, got.HeldEvents, observed)
+	}
+	if c := got.Cursor; c == nil || !c.Baselined || c.Watching != 1 || c.Fired != 2 {
+		t.Errorf("cursor = %+v, want baselined, 1 run watched and 2 fired", c)
+	}
+	if strings.Contains(rec.Body.String(), `"inputs":{"run_id"`) {
+		t.Errorf("GET = %s, want no held event's inputs", rec.Body.String())
+	}
+}
+
+func TestSaveRefusesUndatedRuns(t *testing.T) {
+	const undated = "This Gitea lists runs with no creation time, so marotte cannot watch them for a finished run"
+	forge := &fakeEventRuleChecker{err: &launchrule.ForgeCheckError{Text: undated}}
+	dir, _, mux := launchRuleHub(t, forge)
+	rec := sendRoute(t, mux, http.MethodPost, "/api/launch-rules", strings.Replace(runRuleBody,
+		`"connection":"github:github.com"`, `"connection":"gitea:gitea.example"`, 1))
+	if rec.Code != http.StatusBadRequest || errorText(t, rec) != undated {
+		t.Errorf("POST = %d %s, want 400 with %q", rec.Code, rec.Body.String(), undated)
+	}
+	if forge.count() != 1 || rulesFile(t, dir) != nil {
+		t.Errorf("forge checks %d, rules file %q; want the one check and nothing saved", forge.count(), rulesFile(t, dir))
+	}
 }
 
 // heldQueue is a state holding n events, a cursor, a launched and a superseded slot, and a confirmed run.

@@ -171,6 +171,7 @@ function writeValue(span: Element | null, v: PanelValue): void {
   }
   setText(t, formatClock(v.stamp));
   t.dateTime = when.toISOString();
+  t.dataset["clock"] = "short";
 }
 
 /** A full-row button that opens the list beneath it. The list is `hidden="until-found"` so

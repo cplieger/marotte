@@ -1,4 +1,4 @@
-// Confirm dialog over `@cplieger/ui/ask`'s `ask`, keeping marotte's positional `confirm(message, label?, variant?)`.
+// Confirm dialog over `@cplieger/ui/ask`'s `ask`: a short question as the heading, what it does as the body.
 // The destructive variant uses role="alertdialog" and focuses Cancel. Skin: `.uip-ask` in css/04-uip-skin.css.
 
 import { ask } from "@cplieger/ui/ask";
@@ -21,16 +21,27 @@ let activated: HTMLElement | null = null;
   { capture: true },
 );
 
+/** One confirmation. The title is the question and names the dialog; the body says what follows and describes it. */
+export interface Confirmation {
+  /** The question, short: "Delete notes.md?". */
+  readonly title: string;
+  /** What confirming does and what it costs. Omit it when the title says everything. */
+  readonly body?: string;
+  /** The confirm button's text. Default "Confirm". */
+  readonly confirmLabel?: string;
+  readonly variant?: "destructive" | "normal";
+}
+
 /** Show a confirmation dialog. Resolves true if the user confirms, false on cancel / Escape / backdrop click /
  *  preemption by a later confirm(). Focus returns to the control whose click opened it. */
-export function confirm(
-  message: string,
-  confirmLabel = "Confirm",
-  variant: "destructive" | "normal" = "normal",
-): Promise<boolean> {
+export function confirm(q: Confirmation): Promise<boolean> {
   if (activated?.isConnected === true && document.activeElement !== activated) {
     // Before `showModal`, which records the focused element as the one its close restores.
     activated.focus({ preventScroll: true });
   }
-  return ask(message, { confirmLabel, variant });
+  return ask(q.body ?? "", {
+    title: q.title,
+    confirmLabel: q.confirmLabel ?? "Confirm",
+    variant: q.variant ?? "normal",
+  });
 }

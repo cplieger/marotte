@@ -193,7 +193,7 @@ describe("the toggle's click", () => {
     // A cross-module coupling no rendering test would name: this slide and `icon-crisp.ts` must
     // not both write the `translate` property on the same element.
     const sheet = loadCSS("10-shell-app.css");
-    const SLIDE = ':is([id="theme-btn"], [id="pointer-mode-btn"]) svg';
+    const SLIDE = ".icon-swap svg";
     const base = ruleBody(sheet, SLIDE);
     expect(base, "the slide transitions `transform`").toMatch(/transition:[^;]*\btransform\b/);
     expect(base, "and NOT `translate`, which icon-crisp owns").not.toMatch(

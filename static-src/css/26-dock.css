@@ -1231,6 +1231,7 @@
   text-align: start;
   cursor: pointer;
   touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   transition:
     background-color var(--dur-micro) var(--ease-standard),
     opacity var(--dur-enter) var(--ease-enter),

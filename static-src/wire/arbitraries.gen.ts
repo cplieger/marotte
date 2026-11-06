@@ -56,7 +56,7 @@ export const arbSteerRowState: fc.Arbitrary<SteerRowState> = fc.constantFrom("qu
 export const arbSteerState: fc.Arbitrary<SteerState> = fc.constantFrom("read", "dropped");
 export const arbStopReason: fc.Arbitrary<StopReason> = fc.constantFrom("end_turn", "cancelled", "interrupted", "refusal", "unknown", "error", "content_filtered", "max_tokens", "max_turn_requests", "tool_use", "unterminated");
 export const arbTabKind: fc.Arbitrary<TabKind> = fc.constantFrom("chat", "editor", "run", "subagent", "settings", "git", "files", "history", "docs", "spec", "web");
-export const arbToolKind: fc.Arbitrary<ToolKind> = fc.constantFrom("execute", "shell", "read", "search", "fetch", "edit", "think", "hook", "write", "delete", "move", "command", "browser", "switch_mode", "mcp", "other");
+export const arbToolKind: fc.Arbitrary<ToolKind> = fc.constantFrom("execute", "shell", "read", "search", "fetch", "edit", "think", "hook", "steering", "write", "delete", "move", "command", "browser", "switch_mode", "mcp", "other");
 export const arbToolStatus: fc.Arbitrary<ToolStatus> = fc.constantFrom("pending", "in_progress", "completed", "failed", "aborted");
 export const arbTransport: fc.Arbitrary<Transport> = fc.constantFrom("stdio", "http", "sse", "registry");
 export const arbTurnOpenSourceName: fc.Arbitrary<TurnOpenSourceName> = fc.constantFrom("prompt", "wire_turn_start", "empty_retry", "event", "revert", "workflow_step");
@@ -1053,6 +1053,7 @@ const arbModel = fc.letrec<{
       truncated: tie("ToolTruncation"),
       input: fc.jsonValue(),
       locations: fc.array(tie("ToolLocation"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
+      steering_docs: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       diffs: fc.array(tie("ToolDiff"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       output_spans: fc.array(tie("TextSpan"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       ts: fc.double({ noNaN: true, noDefaultInfinity: true }),
@@ -2232,9 +2233,9 @@ const arbModel = fc.letrec<{
       initiator: fc.string(),
       initiator_reason: fc.string(),
       session_id: fc.string(),
-      credits: fc.double({ noNaN: true, noDefaultInfinity: true }),
       kind: arbRunProgressKind,
       node_path: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
+      credits: fc.double({ noNaN: true, noDefaultInfinity: true }),
     },
     { requiredKeys: ["workflow_id", "kind"] },
   ),
@@ -2744,6 +2745,7 @@ const arbModel = fc.letrec<{
       input: fc.jsonValue(),
       locations: fc.array(tie("ToolLocation"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       diffs: fc.array(tie("ToolDiff"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
+      steering_docs: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       output_spans: fc.array(tie("TextSpan"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       ts: fc.double({ noNaN: true, noDefaultInfinity: true }),
       duration_ms: fc.double({ noNaN: true, noDefaultInfinity: true }),

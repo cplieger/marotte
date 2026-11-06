@@ -275,14 +275,42 @@ export function slideDetails(details: HTMLDetailsElement, open: boolean): void {
 }
 
 /**
- * Checked at click time: a drag leaves the selection standing through `mouseup`, while a selection elsewhere was
- * collapsed by this click's mousedown.
+ * Whether this click ends a selection in `row`. Checked at click time: a drag leaves the selection standing through
+ * `mouseup`, while a selection elsewhere was collapsed by this click's mousedown.
  */
-function hasSelectionIn(row: HTMLElement): boolean {
+export function hasSelectionIn(row: HTMLElement): boolean {
   const sel = row.ownerDocument.defaultView?.getSelection() ?? null;
   if (sel === null || sel.isCollapsed || sel.rangeCount === 0) {
     return false;
   }
   const anchor = sel.getRangeAt(0).commonAncestorContainer;
   return row.contains(anchor) || anchor.contains(row);
+}
+
+/**
+ * A `role="button"` element, not a `<button>`, for a control whose words are content (a run's name): neither
+ * Chromium nor WebKit selects text inside a `<button>`, and those words must stay selectable to quote. Click, Enter
+ * and Space call `activate` with their event; a click that ends a selection in it does not.
+ */
+export function selectableButton(
+  tag: "div" | "span",
+  className: string,
+  activate: (e: MouseEvent | KeyboardEvent) => void,
+): HTMLElement {
+  const btn: HTMLElement = document.createElement(tag);
+  btn.className = className;
+  btn.setAttribute("role", "button");
+  btn.tabIndex = 0;
+  btn.addEventListener("click", (e: MouseEvent) => {
+    if (!hasSelectionIn(btn)) {
+      activate(e);
+    }
+  });
+  btn.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.target === btn && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      activate(e);
+    }
+  });
+  return btn;
 }

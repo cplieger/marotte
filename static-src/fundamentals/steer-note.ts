@@ -5,6 +5,7 @@
 
 import { el } from "@cplieger/ui";
 import { attachClamp } from "../clamp-text.js";
+import { selectableButton } from "../disclosure-row.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_SEND, ICON_TAB_CHAT, ICON_TAB_RUN, workflowIcon } from "../icons.js";
 import { absoluteTime } from "../relative-time.js";
@@ -134,6 +135,10 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
   if (d.acknowledged === true) {
     root.setAttribute("data-acknowledged", "true");
   }
+  // A program sent this message, not the reader.
+  if (d.origin === "user" && d.caller !== undefined) {
+    root.setAttribute("data-caller", "");
+  }
   if (readByDelegate(d)) {
     root.setAttribute("data-lane", d.lane);
   }
@@ -207,13 +212,9 @@ function runLabelEl(runLabel: string, open: (() => void) | undefined): HTMLEleme
   if (open === undefined) {
     return el("span", { className: "steer-note-run" }, runLabel);
   }
-  const btn = el("button", {
-    type: "button",
-    className: "steer-note-run",
-    "data-tooltip": "Open the workflow run",
-  });
+  const btn = selectableButton("span", "steer-note-run", open);
+  btn.dataset["tooltip"] = "Open the workflow run";
   btn.textContent = runLabel;
-  btn.addEventListener("click", open);
   return btn;
 }
 
@@ -270,7 +271,12 @@ function cleared(d: SteerNoteData): boolean {
 function stamp(ms: number): HTMLElement {
   return el(
     "time",
-    { datetime: new Date(ms).toISOString(), "data-tooltip": absoluteTime(ms) },
+    {
+      datetime: new Date(ms).toISOString(),
+      "data-tooltip": absoluteTime(ms),
+      "data-clock": "seconds",
+      "data-clock-tip": "full",
+    },
     formatClock(ms, { seconds: true }),
   );
 }

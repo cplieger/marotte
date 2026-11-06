@@ -291,7 +291,11 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
 describe("a11y: confirm dialog focus management", () => {
   it("destructive variant focuses cancel button", async () => {
     const { confirm } = await import("./confirm.js");
-    const p = confirm("Delete everything?", "Delete", "destructive");
+    const p = confirm({
+      title: "Delete everything?",
+      confirmLabel: "Delete",
+      variant: "destructive",
+    });
     const dialog = document.querySelector(".uip-ask")!;
     expect(dialog).not.toBeNull();
     const cancelBtn = dialog.querySelector<HTMLElement>(".uip-ask-cancel")!;
@@ -303,7 +307,7 @@ describe("a11y: confirm dialog focus management", () => {
 
   it("normal variant focuses the confirm button", async () => {
     const { confirm } = await import("./confirm.js");
-    const p = confirm("Continue?", "OK", "normal");
+    const p = confirm({ title: "Continue?", confirmLabel: "OK" });
     const dialog = document.querySelector(".uip-ask")!;
     const okBtn = dialog.querySelector<HTMLElement>(".uip-ask-ok")!;
     // The library focuses the primary (confirm) action for non-destructive

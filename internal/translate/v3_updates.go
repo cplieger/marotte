@@ -177,8 +177,8 @@ func (t *Translator) turnStarted(ctx context.Context, sc steerScope) {
 }
 
 // HandleSessionInfoUpdate folds v3 context-usage into the chat's usage and routes v3
-// compaction status. Parent-only, except a workflow step's hooks, model fallback and
-// metering, which go to its run turn (handleStepFrame).
+// compaction status. Parent-only, except a workflow step's hooks, steering, model fallback and
+// metering, which go to its run turn.
 func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var u sessionInfoUpdate
 	if json.Unmarshal(raw, &u) != nil {
@@ -191,6 +191,11 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 		t.turnStarted(ctx, sc)
 	}
 	if t.handleSteeringUpdate(ctx, sc, &u) {
+		return
+	}
+	// Before the step gate: a step's box lands in its run turn.
+	if len(u.Meta.Kiro.SteeringDocuments) > 0 {
+		t.handleSteeringInclusion(ctx, chatID, attr, &u.Meta.Kiro)
 		return
 	}
 	// Before the step gate: a step's ask is filed under this chat too.
@@ -268,7 +273,7 @@ func (t *Translator) handleStepFrame(ctx context.Context, chatID marotte.ChatID,
 }
 
 // HandleStepInfoUpdate is the parentless run host session's reading of a step's
-// session_info_update: the run turn's hooks, metering and model fallback, the withdrawal of an
+// session_info_update: the run turn's hooks, steering, metering and model fallback, the withdrawal of an
 // ask filed under `run:<id>`, and the step's own steering frames. It never reaches a chat header.
 func (t *Translator) HandleStepInfoUpdate(ctx context.Context, key marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var u sessionInfoUpdate
@@ -284,6 +289,10 @@ func (t *Translator) HandleStepInfoUpdate(ctx context.Context, key marotte.ChatI
 	}
 	if h := u.Meta.Kiro.Hook; h != nil {
 		t.handleHookUpdate(ctx, key, attr, h, u.Meta.Kiro.subtask())
+		return
+	}
+	if len(u.Meta.Kiro.SteeringDocuments) > 0 {
+		t.handleSteeringInclusion(ctx, key, attr, &u.Meta.Kiro)
 		return
 	}
 	if t.stepModelFallback(ctx, key, attr, &u.Meta.Kiro) {
