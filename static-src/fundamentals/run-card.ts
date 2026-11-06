@@ -10,6 +10,7 @@
 import { join as joinKey } from "@cplieger/keyenc";
 import { el } from "@cplieger/ui";
 import { createDisclosure } from "@cplieger/ui/disclosure";
+import { hasSelectionIn } from "../disclosure-row.js";
 import { STATE_WORD, paintStateMark, stateOf } from "../exec-view/status.js";
 import {
   counters,
@@ -218,6 +219,16 @@ export function buildRunCard(
 
   root.append(head, alert, body, foot);
 
+  // Capture, so it runs before the disclosure's own click listener: a drag selecting the run's name must not fold it.
+  head.addEventListener(
+    "click",
+    (e) => {
+      if (hasSelectionIn(head)) {
+        e.stopImmediatePropagation();
+      }
+    },
+    { capture: true },
+  );
   const ctl = createDisclosure(head, body, {
     open: cardOpen,
     onToggle: (isOpen, source) => {
@@ -273,6 +284,9 @@ export function buildRunCard(
         return;
       }
       e.preventDefault();
+      if (hasSelectionIn(rowHead)) {
+        return;
+      }
       onOpen(workflowID, nameEl.textContent, path);
     });
     const rowRoot = el("div", { className: "run-step", "data-node": path }, rowHead);

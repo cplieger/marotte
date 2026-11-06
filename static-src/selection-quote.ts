@@ -207,8 +207,11 @@ function writeQuote(block: string): void {
 /** A popover button that presses without moving focus or collapsing the selection it quotes. */
 function quoteButton(label: string): HTMLElement {
   const btn = el("button", { type: "button", className: "selection-quote-btn" }, label);
-  btn.addEventListener("pointerdown", (ev) => {
+  // `mousedown`, not `pointerdown`: WebKit fires no `click` for a tap whose `pointerdown` was cancelled.
+  btn.addEventListener("mousedown", (ev) => {
     ev.preventDefault();
+  });
+  btn.addEventListener("pointerdown", () => {
     if (btn.getAttribute("aria-disabled") !== "true") {
       btn.classList.add("is-pressed");
     }
@@ -220,6 +223,10 @@ function quoteButton(label: string): HTMLElement {
   }
   return btn;
 }
+
+/** Clears iOS's end-of-selection drag handle, whose knob hangs below the last line box. */
+const TOUCH_OFFSET_PX = 24;
+const MOUSE_OFFSET_PX = 4;
 
 let wired = false;
 
@@ -238,10 +245,11 @@ export function initSelectionQuote(): void {
     { getBoundingClientRect: () => (range === null ? new DOMRect() : endRect(range)) },
     panel,
     // The selection decides dismissal: a click elsewhere collapses it, and an outside-click close would race it.
-    { placement: "bottom", align: "start", offset: 4, closeOnOutside: false },
+    { placement: "bottom", align: "start", offset: MOUSE_OFFSET_PX, closeOnOutside: false },
   );
 
   let pointerHeld = false;
+  let touch = false;
   let frame: number | null = null;
   const evaluate = (): void => {
     frame = null;
@@ -252,6 +260,7 @@ export function initSelectionQuote(): void {
       return;
     }
     range = found.range;
+    pop.setOptions({ offset: touch ? TOUCH_OFFSET_PX : MOUSE_OFFSET_PX });
     pop.show();
   };
   const schedule = (): void => {
@@ -264,6 +273,7 @@ export function initSelectionQuote(): void {
     (ev) => {
       if (!(ev.target instanceof Node && panel.contains(ev.target))) {
         pointerHeld = true;
+        touch = ev.pointerType === "touch";
       }
     },
     { capture: true, passive: true },

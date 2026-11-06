@@ -1258,3 +1258,55 @@ describe("the card shows the run's structure, and only steps and watches as work
     expect(c.root.querySelector(".run-count .ev-sum-compact")?.textContent).toBe("0/4");
   });
 });
+
+// The head and a step row carry quotable names, so a drag that selects one ends in a click that must not fold the
+// card or open the run.
+describe("a click that ends a selection in a run card", () => {
+  function mounted(): { c: ReturnType<typeof buildRunCard>; opened: string[]; done: () => void } {
+    const opened: string[] = [];
+    const c = buildRunCard("wf_1", "Workflow run", (_id, _label, node) => {
+      opened.push(node ?? "");
+    });
+    c.render(runOf("running", step("a", "running")));
+    document.body.append(c.root);
+    return {
+      c,
+      opened,
+      done: () => {
+        document.getSelection()?.removeAllRanges();
+        c.root.remove();
+      },
+    };
+  }
+
+  function selectText(within: Element): void {
+    const range = document.createRange();
+    range.selectNodeContents(within);
+    document.getSelection()?.removeAllRanges();
+    document.getSelection()?.addRange(range);
+  }
+
+  it("leaves the card open when the click ends a selection of the run's name", () => {
+    const { c, done } = mounted();
+    const head = c.root.querySelector<HTMLElement>(".run-head");
+    selectText(c.root.querySelector(".run-name") as Element);
+    head?.click();
+    expect(c.root.classList.contains("collapsed")).toBe(false);
+    document.getSelection()?.removeAllRanges();
+    head?.click();
+    expect(c.root.classList.contains("collapsed")).toBe(true);
+    done();
+  });
+
+  it("opens no step when the click ends a selection of the step's name", () => {
+    const { c, opened, done } = mounted();
+    const row = c.root.querySelector<HTMLElement>(".run-step-head");
+    selectText(c.root.querySelector(".run-step-name") as Element);
+    row?.click();
+    expect(opened).toEqual([]);
+    document.getSelection()?.removeAllRanges();
+    row?.click();
+    expect(opened).toEqual([nodePathKey(["wf_1", "a"])]);
+    done();
+  });
+});

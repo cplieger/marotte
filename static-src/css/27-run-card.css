@@ -76,8 +76,6 @@
      what made sibling cards in one transcript disagree by a few pixels. */
   min-height: var(--row-tap);
   cursor: pointer;
-  -webkit-user-select: none;
-  user-select: none;
   min-width: 0;
   transition: background var(--dur-micro) var(--ease-standard);
 }
@@ -328,8 +326,6 @@
   padding: var(--sp-1) var(--sp-2);
   min-height: var(--row-tap);
   cursor: pointer;
-  -webkit-user-select: none;
-  user-select: none;
   min-width: 0;
   color: inherit;
   text-decoration: none;

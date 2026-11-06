@@ -125,7 +125,8 @@ describe("tool card summary affordance", () => {
     );
     const summary = card.querySelector<HTMLElement>(".tool-summary")!;
     expect(css(summary, "cursor")).toBe("pointer");
-    expect(css(summary, "user-select")).toBe("none");
+    // Selectable for "Quote in reply": disclosure-row.ts skips a click that ends a selection.
+    expect(css(summary, "user-select")).not.toBe("none");
     expect(css(summary, "transition-property")).toBe("background");
   });
 
@@ -480,11 +481,10 @@ describe("turn card header affordance", () => {
     }
   });
 
-  it("the prompt stays selectable; the meta row does not", async () => {
-    // A target without eating selection: disclosure-row.ts skips a click that ends one, so `user-select: none` stops at
-    // the meta row.
+  it("the prompt and the meta row stay selectable", async () => {
+    // A target without eating selection: disclosure-row.ts skips a click that ends one, so both can be quoted.
     const card = await turn("open");
-    expect(css(card.querySelector(".turn-head-row")!, "user-select")).toBe("none");
+    expect(css(card.querySelector(".turn-head-row")!, "user-select")).not.toBe("none");
     expect(css(card.querySelector(".turn-req-text")!, "user-select")).not.toBe("none");
   });
 

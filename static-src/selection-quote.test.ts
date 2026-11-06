@@ -426,6 +426,27 @@ describe("the Quote in reply button", () => {
     expect(action()).not.toBeNull();
   });
 
+  // iOS hangs its end-of-selection drag handle below the last line box; the panel must sit clear of it.
+  it("sits further below a selection a finger made than one a mouse made", async () => {
+    const { reply } = turn();
+    const gapAfter = async (pointerType: string): Promise<number> => {
+      document.getSelection()?.removeAllRanges();
+      await frames();
+      reply.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType }));
+      select(textOf(reply, 0), 0, textOf(reply, 0), 5);
+      reply.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerType }));
+      await frames();
+      const rects = document.getSelection()?.getRangeAt(0).getClientRects();
+      const last = rects?.item(rects.length - 1);
+      const panel = openPanel();
+      expect(panel).not.toBeNull();
+      return (panel?.getBoundingClientRect().top ?? 0) - (last?.bottom ?? 0);
+    };
+    expect(await gapAfter("mouse")).toBeLessThan(10);
+    expect(await gapAfter("touch")).toBeGreaterThanOrEqual(20);
+    expect(await gapAfter("mouse")).toBeLessThan(10);
+  });
+
   it("goes when the transcript scrolls", async () => {
     const { reply } = turn();
     select(textOf(reply, 0), 0, textOf(reply, 0), 5);
@@ -435,13 +456,17 @@ describe("the Quote in reply button", () => {
     expect(action()).toBeNull();
   });
 
+  // A cancelled `pointerdown` would cost the tap its `click` in WebKit, so only the mouse event is cancelled.
   it("keeps the selection when pressed", async () => {
     const { reply } = turn();
     select(textOf(reply, 0), 0, textOf(reply, 0), 5);
     await frames();
-    const press = new PointerEvent("pointerdown", { bubbles: true, cancelable: true });
-    action()?.dispatchEvent(press);
-    expect(press.defaultPrevented).toBe(true);
+    const pointer = new PointerEvent("pointerdown", { bubbles: true, cancelable: true });
+    const mouse = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    action()?.dispatchEvent(pointer);
+    action()?.dispatchEvent(mouse);
+    expect(pointer.defaultPrevented).toBe(false);
+    expect(mouse.defaultPrevented).toBe(true);
   });
 
   // The panel keeps its last left offset while hidden, so after the window narrows it is measured from
@@ -844,8 +869,11 @@ describe("Ask in a tangent", () => {
     const { reply } = turn();
     select(textOf(reply, 0), 0, textOf(reply, 0), 5);
     await frames();
-    const press = new PointerEvent("pointerdown", { bubbles: true, cancelable: true });
-    action("Ask in a tangent")?.dispatchEvent(press);
-    expect(press.defaultPrevented).toBe(true);
+    const pointer = new PointerEvent("pointerdown", { bubbles: true, cancelable: true });
+    const mouse = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    action("Ask in a tangent")?.dispatchEvent(pointer);
+    action("Ask in a tangent")?.dispatchEvent(mouse);
+    expect(pointer.defaultPrevented).toBe(false);
+    expect(mouse.defaultPrevented).toBe(true);
   });
 });

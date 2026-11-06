@@ -59,11 +59,6 @@
      three surfaces the ink ramp declares two-level (01-tokens.css) — hint reads
      3.44:1 dark / 3.78:1 light under the wash, against this row's 11px timestamp. */
   color: var(--c-text-secondary);
-
-  /* Scoped to THIS row: `.turn-req` below holds the user's own prompt and stays
-     selectable (the header's click forwarder skips a click that ends a selection). */
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 .turn-n {

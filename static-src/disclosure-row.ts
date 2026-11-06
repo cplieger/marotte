@@ -275,10 +275,10 @@ export function slideDetails(details: HTMLDetailsElement, open: boolean): void {
 }
 
 /**
- * Checked at click time: a drag leaves the selection standing through `mouseup`, while a selection elsewhere was
- * collapsed by this click's mousedown.
+ * Whether this click ends a selection in `row`. Checked at click time: a drag leaves the selection standing through
+ * `mouseup`, while a selection elsewhere was collapsed by this click's mousedown.
  */
-function hasSelectionIn(row: HTMLElement): boolean {
+export function hasSelectionIn(row: HTMLElement): boolean {
   const sel = row.ownerDocument.defaultView?.getSelection() ?? null;
   if (sel === null || sel.isCollapsed || sel.rangeCount === 0) {
     return false;

@@ -257,6 +257,16 @@ describe("the run bar", () => {
     });
     toggle.click();
     expect(rows().every((r) => r.hidden)).toBe(true);
+
+    const range = document.createRange();
+    range.selectNodeContents(toggle.querySelector(".run-bar-count")!);
+    document.getSelection()?.addRange(range);
+    toggle.click();
+    expect(
+      toggle.getAttribute("aria-expanded"),
+      "a click ending a selection leaves the list shut",
+    ).toBe("false");
+    document.getSelection()?.removeAllRanges();
     localStorage.removeItem("marotte.ui-state");
   });
 
@@ -318,6 +328,26 @@ describe("the run bar", () => {
       "Waiting for answer: which branch?",
     );
 
+    btn.click();
+    expect(openRunView).toHaveBeenCalledWith(id, "release", c);
+  });
+
+  // The row's name and status are quotable, so a drag selecting them ends in a click that must not open the run.
+  it("opens no run for a click that ends a selection in its row", async () => {
+    const c = chatID();
+    chats.push(c);
+    const id = runID("selected");
+    inspect.set(id, state({ display_name: "release", status: "running" }));
+    live(id, c);
+    await activate(c);
+    const btn = bar.querySelector<HTMLButtonElement>(".run-bar-open")!;
+    const range = document.createRange();
+    range.selectNodeContents(btn.querySelector(".ev-sum-label")!);
+    document.getSelection()?.removeAllRanges();
+    document.getSelection()?.addRange(range);
+    btn.click();
+    expect(openRunView).not.toHaveBeenCalled();
+    document.getSelection()?.removeAllRanges();
     btn.click();
     expect(openRunView).toHaveBeenCalledWith(id, "release", c);
   });

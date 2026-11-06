@@ -22,6 +22,7 @@ import { compactText, counters, progressPhrase, type ExecRun } from "./exec-view
 import { buildExecSummary, type ExecSummaryView } from "./exec-view/summary.js";
 import { wantsReader } from "./exec-view/alert.js";
 import { chevronEl } from "./chevron.js";
+import { hasSelectionIn } from "./disclosure-row.js";
 import { runBarOpen, setRunBarOpen } from "./device-view.js";
 import { holdRunClock, releaseRunClock, type RunClockHolder } from "./messages-blocks.js";
 import { openRunView } from "./run-view.js";
@@ -187,6 +188,9 @@ function buildSummary(bar: HTMLUListElement): HTMLButtonElement {
     el("span", { className: "run-bar-count" }),
   ) as HTMLButtonElement;
   btn.addEventListener("click", () => {
+    if (hasSelectionIn(btn)) {
+      return;
+    }
     setRunBarOpen(!runBarOpen());
     render(bar);
   });
@@ -224,6 +228,9 @@ function buildRow(id: string, chatID: string): HTMLElement {
   // first paint: a run whose label arrives with its first fetch would otherwise open a tab called
   // "Workflow run" for the rest of the session.
   btn.addEventListener("click", () => {
+    if (hasSelectionIn(btn)) {
+      return;
+    }
     void openRunView(id, runLabelOf(id) || FALLBACK_NAME, chatID);
   });
 
