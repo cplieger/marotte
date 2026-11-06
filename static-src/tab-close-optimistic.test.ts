@@ -358,6 +358,67 @@ describe("an unanswered close of the active tab", () => {
   });
 });
 
+describe("a close's put-back notice lands with the restored chat's content", () => {
+  /** Notices, each with the chat painted and the cover's state when it was raised. */
+  function atNotice(): { painted: string; covered: boolean }[] {
+    fx.chat.show.mockImplementation((id: string) => {
+      pointers.painted = id;
+      // A resident view's paint, which ends by releasing the cover (messages.ts).
+      if (resident.has(id)) {
+        releaseCover(id);
+      }
+    });
+    const seen: { painted: string; covered: boolean }[] = [];
+    registerTabNotice(() => {
+      seen.push({ painted: pointers.painted, covered: coverUp() });
+    });
+    return seen;
+  }
+
+  it("shows the closed chat, uncovered, before a refusal's notice", async () => {
+    const ids = await closing();
+    const seen = atNotice();
+    await frame();
+    tabServer.holdResponses();
+    tabServer.failNext("close_tab", 500);
+
+    const done = closeTab(ids["c"] ?? "");
+    await activationRan();
+    expect(pointers.painted, "the successor showed before the refusal").toBe("a");
+    tabServer.releaseResponses();
+    await done;
+
+    expect(seen, "the notice says the tab was put back while it was not on screen").toEqual([
+      { painted: "c", covered: false },
+    ]);
+  });
+
+  it("shows the closed chat, uncovered, before an unanswered close's notice", async () => {
+    const ids = await closing();
+    const seen = atNotice();
+    await frame();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    tabServer.setMode("manual");
+    tabServer.holdResponses();
+    tabServer.failNext("close_tab", 500);
+    try {
+      void closeTab(ids["c"] ?? "");
+      await activationRan();
+      expect(pointers.painted, "the successor showed before the restore").toBe("a");
+
+      await vi.advanceTimersByTimeAsync(5_000 + 1_000);
+      await settleTabs();
+
+      expect(seen, "the notice says the tab was restored while it was not on screen").toEqual([
+        { painted: "c", covered: false },
+      ]);
+    } finally {
+      vi.useRealTimers();
+      tabServer.releaseResponses();
+    }
+  });
+});
+
 describe("a pending close's view", () => {
   // `app.ts` wires this reader into the renderer's eviction exemption, so a refused close can
   // unpark the view it closed with its scroll and reading state.
