@@ -72,6 +72,7 @@ import {
   clickRow,
   cover,
   coverUp,
+  emptyChats,
   frame,
   pointers,
   resident,
@@ -131,12 +132,42 @@ describe("a switch paints the target tab at once", () => {
     expect(fx.chat.refresh, "a fresh view issued a load").not.toHaveBeenCalled();
   });
 
-  it("covers a switch to an empty chat in the gesture's frame", async () => {
+  it("covers a switch to an evicted chat whose window is empty", async () => {
     await strip("a", "e");
 
     clickRow(tabIdFor("chat", "e"));
     await frame();
     expect(coverUp(), "A's cards showed under no cover").toBe(true);
+  });
+
+  it("shows an empty chat's own page inside the click, with no cover", async () => {
+    await strip("a", "n");
+    emptyChats.add("n");
+
+    clickRow(tabIdFor("chat", "n"));
+
+    expect(fx.chat.show, "the empty page waited for a frame").toHaveBeenCalledWith("n");
+    expect(pointers.painted).toBe("n");
+    expect(coverUp(), "an empty chat flashed the cover").toBe(false);
+    await activationRan();
+    expect(coverUp()).toBe(false);
+    expect(fx.chat.show).toHaveBeenCalledTimes(1);
+  });
+
+  it("lifts a burst's cover when the burst ends on an empty chat", async () => {
+    await strip("a", "b", "n");
+    emptyChats.add("n");
+    fx.chat.page("b");
+
+    clickRow(tabIdFor("chat", "b"));
+    await frame();
+    expect(coverUp()).toBe(true);
+    clickRow(tabIdFor("chat", "n"));
+
+    expect(coverUp(), "B's cover stayed over N's empty page").toBe(false);
+    await activationRan();
+    expect(fx.chat.show.mock.calls.map((c) => c[0]), "B, superseded, was shown").toEqual(["n"]);
+    expect(fx.chat.refresh.mock.calls.map((c) => c[0])).toEqual(["n"]);
   });
 
   it("dispatches no second switch for a re-click on the tab being shown", async () => {

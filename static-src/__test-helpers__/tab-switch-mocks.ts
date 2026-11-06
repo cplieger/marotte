@@ -13,6 +13,8 @@ export const pointers = { active: "", painted: "" };
 
 /** Chat ids with resident turns; a chat absent here reads as evicted (known turns, empty window). */
 export const resident = new Set<string>();
+/** Chat ids with no conversation at all (no turns on the record); a just-created chat. */
+export const emptyChats = new Set<string>();
 
 /** Every icon name tabs.ts's graph imports, as "": Browser Mode links real ESM. */
 export function iconsMock(): Record<string, string> {
@@ -133,7 +135,7 @@ export function composerStateMock(): Record<string, Mock> {
 }
 
 /** The store mock's pointer readers, over `pointers`; a chat's resident turns come from
- *  `resident`. Spread over the canonical store mock. */
+ *  `resident`, its emptiness from `emptyChats`. Spread over the canonical store mock. */
 export function storePointerOverrides(): Record<string, unknown> {
   const session = (id: string): unknown =>
     id === ""
@@ -143,7 +145,7 @@ export function storePointerOverrides(): Record<string, unknown> {
           name: id,
           turns: new Map(),
           turn_order: resident.has(id) ? [`${id}-t1`] : [],
-          turn_count: 1,
+          turn_count: emptyChats.has(id) ? 0 : 1,
           has_more: false,
           thinking: false,
         };
@@ -161,6 +163,8 @@ export function storePointerOverrides(): Record<string, unknown> {
       pointers.painted = id;
     },
     get: (id: string) => session(id),
+    isEmptyChat: (s: { id: string } | undefined) =>
+      s === undefined || (emptyChats.has(s.id) && !resident.has(s.id)),
   };
 }
 
@@ -232,6 +236,7 @@ export function resetPointers(): void {
   pointers.active = "";
   pointers.painted = "";
   resident.clear();
+  emptyChats.clear();
 }
 
 /** One frame: the strip's `renderDOM` is a frame callback. */

@@ -91,7 +91,7 @@ import { showContextMenu } from "./context-menu.js";
 import type { ContextMenuItem } from "./context-menu.js";
 import { downloadChatExport } from "./chat-export.js";
 import { MAX_CHAT_NAME_UNITS, downloadKiroSession, renameChat } from "./actions/chat.js";
-import { get, getActiveId, getPaintedId, removeChat, setActive } from "./store.js";
+import { get, getActiveId, getPaintedId, isEmptyChat, removeChat, setActive } from "./store.js";
 import { relativeTime } from "./relative-time.js";
 import { restoreFailedSend, retargetComposer } from "./composer-state.js";
 import { info, error as toastError } from "./toast.js";
@@ -705,7 +705,8 @@ interface ActivationOpts {
 
 /** The GESTURE half, run inside the click: only writes that read no layout. The strip, the device
  *  view, the active chat and the cover move now; `runActivation` shows the view after this frame
- *  paints. Answers the record installed, or undefined when nothing changed. */
+ *  paints, or in this task for an empty chat, which gets no cover. Answers the record installed,
+ *  or undefined when nothing changed. */
 function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | undefined {
   const row = rowOfID(id);
   if (row === undefined || (id === state.active && opts.again !== true)) {
@@ -716,12 +717,18 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
   state.active = id;
   setActiveView(id);
   switchGen += 1;
+  let now = opts.now === true;
   if (row.subject.kind === "chat") {
     const ref = row.subject.ref;
     if (ref !== getActiveId()) {
       row.spec.onSelect?.();
     }
-    if (ref !== getPaintedId() || (opts.again === true && !hasResidentTurns(ref))) {
+    const session = get(ref);
+    if (session !== undefined && isEmptyChat(session)) {
+      // Its page is local and loads nothing, so it shows in this task and a cover would only flash.
+      dropCover();
+      now = true;
+    } else if (ref !== getPaintedId() || (opts.again === true && !hasResidentTurns(ref))) {
       holdCover(ref);
     } else {
       releaseCoverExceptFor(ref);
@@ -753,7 +760,7 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
   currentActivation = record;
   emit();
   const gen = record.gen;
-  if (opts.now === true) {
+  if (now) {
     runActivation(gen);
   } else {
     afterNextPaint(() => {
