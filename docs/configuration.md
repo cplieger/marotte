@@ -142,7 +142,7 @@ curl -X POST http://marotte:9847/api/sessions/$SESSION/notify \
 
 | Field | Rule |
 | --- | --- |
-| `text` | The message. Required, not only whitespace, at most 64 KiB. |
+| `text` | The message. Required, not only whitespace, at most 64 KiB. It may not start with `[notification/...]` or hold a `#[[kind:query]]` context reference. |
 | `source` | Who sent it, shown on the message. 1 to 32 characters of `A-Z a-z 0-9 . _ -`. |
 | `dedupe_key` | 1 to 128 printable ASCII characters. A second request for the same chat with the same key within 10 minutes of the first delivery is not delivered again. |
 
