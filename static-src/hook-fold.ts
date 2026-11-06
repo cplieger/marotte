@@ -106,14 +106,16 @@ export function foldGroupHooks(members: readonly HTMLElement[]): HookFold {
   return { rows, folded };
 }
 
-/** A quiet hook folds whatever its trigger; only a tool-trigger hook is a suspect for a refusal, so only it unfolds in
- *  a refused group. */
+/** A quiet hook folds whatever its trigger, but a refused group keeps as a row a hook that could have refused: a
+ *  tool-trigger one, or an unresolved one while status shows (with it off, `hookRenders` and the server hide it). */
 function hookFate(c: HTMLElement, refused: boolean, hasWork: boolean): "row" | "folded" | "hidden" {
   const quiet =
     c.dataset["kind"] === "hook" &&
     c.dataset["outcome"] === "ok" &&
     c.dataset["hookPrinted"] === undefined;
-  if (!quiet || (refused && c.hasAttribute("data-hook-gates"))) {
+  const suspect =
+    c.hasAttribute("data-hook-gates") || (statusShown && c.dataset["hookTrigger"] === undefined);
+  if (!quiet || (refused && suspect)) {
     return "row";
   }
   if (!statusShown) {

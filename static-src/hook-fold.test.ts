@@ -286,7 +286,7 @@ describe("passing turn hooks fold into the group they sit in", () => {
     await expect.poll(() => popoverTriggers()).toEqual(["at turn end (agent stops)"]);
   });
 
-  it("folds a turn hook in a refused group, where only the tool-trigger hooks unfold", () => {
+  it("folds a turn hook in a refused group, where the tool-trigger and unresolved-trigger hooks unfold", () => {
     const r = render((t) => [
       hook(t, 1, "prompt check", { hook_trigger: "UserPromptSubmit" }),
       call(t, 2, { id: "cmd-x", title: "rm -rf /", status: "failed" }),
@@ -294,8 +294,8 @@ describe("passing turn hooks fold into the group they sit in", () => {
       untriggered(hook(t, 4, "mystery")),
     ]);
     const shown = shownHookRows(r.body).map((c) => c.dataset["title"]);
-    expect(shown).toEqual([`Hook fired: ${GUARDS[0].name}`]);
-    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("2 hooks ran");
+    expect(shown).toEqual([`Hook fired: ${GUARDS[0].name}`, "Hook fired: mystery"]);
+    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("1 hook ran");
   });
 });
 
