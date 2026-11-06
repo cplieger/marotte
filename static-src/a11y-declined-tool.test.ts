@@ -2,13 +2,17 @@
 // Browser Mode mocks through an import map, so a module another test already imported cannot be mocked late.
 import { describe, it, expect, vi } from "vitest";
 import type * as Actions from "./actions/index.js";
+import type * as EditorOpeners from "./editor-openers.js";
+import type * as Scroll from "./scroll.js";
 
-vi.mock("./scroll.js", () => ({
+vi.mock("./scroll.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Scroll>()),
   setUserScrolledUp: (): void => {
     /* noop */
   },
 }));
-vi.mock("./editor-openers.js", () => ({
+vi.mock("./editor-openers.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof EditorOpeners>()),
   openFile: (): void => {
     /* noop */
   },
@@ -24,6 +28,21 @@ vi.mock("./actions/index.js", async (importOriginal) => ({
     /* noop */
   },
 }));
+
+// The real scroll module resolves the app's root elements when it loads.
+for (const id of [
+  "messages",
+  "messages-wrap",
+  "messages-wrap-outer",
+  "chat-view",
+  "scroll-bottom",
+]) {
+  if (document.getElementById(id) === null) {
+    const d = document.createElement("div");
+    d.id = id;
+    document.body.appendChild(d);
+  }
+}
 
 describe("a11y: declined tool aria-expanded", () => {
   it("a refusal's auto-open sets aria-expanded=true on the tool toggle", async () => {
