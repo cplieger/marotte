@@ -168,6 +168,22 @@ func TestHandleSessionInfoUpdate_SteeringInclusionBox(t *testing.T) {
 				if got := steeringCallsOf(t, base.chatEntries("c1")); len(got) != 0 {
 					t.Errorf("chat steering boxes after a step's inclusion = %d, want 0", len(got))
 				}
+				run := base.turns.runs[runPathKey("wf_1", attr.NodePath)]
+				if _, err := run.Close(t.Context(), marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}); err != nil {
+					t.Fatalf("close the run turn: %v", err)
+				}
+				closes := entriesOfKind(base.runEntries("wf_1", attr.NodePath), marotte.EntryKindTurnClose)
+				if len(closes) != 1 {
+					t.Fatalf("run turn closes = %d, want 1", len(closes))
+				}
+				var footer marotte.EntryTurnClose
+				payloadOf(t, closes[0], &footer)
+				if !slices.Equal(footer.Steering, steeringDocs) {
+					t.Errorf("run turn footer steering = %v, want %v", footer.Steering, steeringDocs)
+				}
+				if chat := base.turns.chats["c1"]; chat != nil {
+					t.Errorf("a step's inclusion opened a chat turn %s", chat.ID())
+				}
 			})
 		}
 	})

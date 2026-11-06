@@ -42,7 +42,7 @@ func steeringToolCall(docs []string, ts int64) marotte.EntryToolCall {
 }
 
 // handleSteeringInclusion records the box where the frame falls in the stream, in its subagent's
-// lane, and feeds the chat turn's footer list.
+// lane, and feeds the footer list of the turn that holds it (a step's run turn, else the chat's).
 func (t *Translator) handleSteeringInclusion(ctx context.Context, chatID marotte.ChatID, attr FrameAttribution, k *sessionInfoKiroBlock) {
 	docs := steeringDocIDs(k.SteeringDocuments)
 	if len(docs) == 0 {
@@ -52,9 +52,7 @@ func (t *Translator) handleSteeringInclusion(ctx context.Context, chatID marotte
 	if !ok {
 		return
 	}
-	if !attr.Step {
-		turn.NoteSteering(docs)
-	}
+	turn.NoteSteering(docs)
 	call := steeringToolCall(docs, time.Now().UnixMilli())
 	sealed, err := turn.SteeringLoaded(ctx, k.subtask(), &call)
 	t.publishSealed(ctx, sc, sealed)
