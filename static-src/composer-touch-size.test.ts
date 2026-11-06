@@ -135,6 +135,11 @@ function shown(el: Element): boolean {
   return el.getClientRects().length > 0 && el.getBoundingClientRect().width > 0;
 }
 
+/** What a control paints: the chip's open button is transparent, so its pill is the painted box. */
+function painted(el: HTMLElement): DOMRect {
+  return (el.closest<HTMLElement>(".attachment-pill") ?? el).getBoundingClientRect();
+}
+
 /** The composer's controls in row order, then the resume button: every one a target the contract covers. */
 function controls(): HTMLElement[] {
   const row = [
@@ -255,7 +260,7 @@ describe("the composer's controls and the resume button, against the toolbar's b
       expect(ref.painted, "the toolbar paints 36px on touch").toEqual({ w: 36, h: 36 });
       const off: string[] = [];
       for (const el of controls()) {
-        const r = el.getBoundingClientRect();
+        const r = painted(el);
         if (r.height !== ref.painted.h) {
           off.push(`${nameOf(el)} is ${String(r.height)}px tall`);
         }
@@ -282,8 +287,8 @@ describe("the composer's controls and the resume button, against the toolbar's b
         const at = `${String(viewport[0])} ${pointer} ${state}`;
         const off = controls()
           .filter((el) => el.id !== "scroll-bottom" || viewport !== DESKTOP)
-          .filter((el) => el.getBoundingClientRect().height !== ref.painted.h)
-          .map((el) => `${nameOf(el)} ${String(el.getBoundingClientRect().height)}px`);
+          .filter((el) => painted(el).height !== ref.painted.h)
+          .map((el) => `${nameOf(el)} ${String(painted(el).height)}px`);
         expect(off, `${at}: every control is the toolbar's height`).toEqual([]);
       }
     }
@@ -431,8 +436,10 @@ describe("the model and mode pills, by the room the row has", () => {
         const items = controls().filter((el) => row.contains(el));
         const tops = new Set(items.map((el) => el.getBoundingClientRect().top));
         expect(tops.size, `${at}: one line`).toBe(1);
+        // Only a clipping label can be cut; a slot's scroll width also counts its pill's expander.
         const cut = [...row.querySelectorAll<HTMLElement>("span")]
           .filter(shown)
+          .filter((el) => getComputedStyle(el).textOverflow === "ellipsis")
           .filter((el) => el.scrollWidth > el.clientWidth)
           .map(
             (el) =>

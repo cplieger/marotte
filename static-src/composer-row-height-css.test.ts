@@ -199,7 +199,7 @@ describe("the composer, measured at real viewport sizes", () => {
 
   it("spaces every pair of neighbouring controls by one gap, whatever the tier", async () => {
     // Touch spaces the whole row or none of it: an icon-only pill with its own lead sat apart from the pill before it.
-    // A long model name fills the phone row, so the spacer is 0 there and Send's gap is measurable too.
+    // On a phone Send's distance is the gap plus the spacer's own width: the spacer takes no gap of its own.
     for (const [w, h, tier] of [
       [1024, 768, "coarse"],
       [820, 1180, "coarse"],
@@ -240,9 +240,10 @@ describe("the composer, measured at real viewport sizes", () => {
         if (send === null) {
           throw new Error("the composer subtree did not mount");
         }
+        const spacer = document.querySelector(".pill-spacer")!.getBoundingClientRect().width;
         const last = pills.at(-1)!.getBoundingClientRect().right;
         expect(send.getBoundingClientRect().left - last, `${at}: the gap before Send`).toBeCloseTo(
-          first,
+          first + spacer,
           1,
         );
       }
