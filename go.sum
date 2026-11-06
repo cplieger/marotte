@@ -18,6 +18,8 @@ github.com/cplieger/go/keyenc v1.2.0-dev.2 h1:B6j+A7k9EHrAQrNX5KMo14lPsTwo/x7wQd
 github.com/cplieger/go/keyenc v1.2.0-dev.2/go.mod h1:YxYV/OxXxOyQetArMEAUl2IzU/AsH6vlgXvA0UUYASo=
 github.com/cplieger/go/keylock v1.0.0-dev.1 h1:4KT6TIuv44v7S9IAZQ+TMSFTujV5EQqYodesaeH7epg=
 github.com/cplieger/go/keylock v1.0.0-dev.1/go.mod h1:wV/zGnEWTzeH0tpTtcbpo62AGZSTfP+NC8QA3UwZbX4=
+github.com/cplieger/go/measure v1.0.0-dev.3 h1:BxcWofAcSibuM3WZFY/y9HKiiIwZE7gJD67dkm0HBeA=
+github.com/cplieger/go/measure v1.0.0-dev.3/go.mod h1:KY7f8SnaQkwhMKsmKIe+eIyYW7z0Xe6vE9AF02fMubw=
 github.com/cplieger/go/pathinside v1.0.0-dev.1 h1:iVkDRXYDDAgaTBm02ekQ+VH7KhXZTIpdpx8O9pGprY8=
 github.com/cplieger/go/pathinside v1.0.0-dev.1/go.mod h1:+Fj6L8z2GUfDFi/uvAzoxF1iIADDf83g4fMbrvelDUY=
 github.com/cplieger/go/scheduler v1.0.0-dev.1 h1:SliSxE9oAN2UWDgvipCQIKK1JJkcGnysGgGf43PWUT0=
