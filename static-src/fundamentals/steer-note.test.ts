@@ -8,6 +8,8 @@ import type { SteerReason } from "../types.js";
 import { mountAppCSS } from "../__test-helpers__/css-rules.js";
 import { glyphMarkup, registryMarkup } from "../__test-helpers__/glyph.js";
 import { ICON_TAB_CHAT, ICON_TAB_RUN, workflowIcon } from "../icons.js";
+import { appendQuote, quoteSelection } from "../message-quote.js";
+import { buildTurnHeader } from "./turn-header.js";
 
 function note(over: Partial<SteerNoteData> = {}): HTMLElement {
   return buildSteerNote({ text: "actually target main", origin: "user", dropped: false, ...over });
@@ -257,6 +259,42 @@ describe("the message keeps its shape", () => {
     expect(textOf(n, ".steer-note-text")).toBe("first line\n\nsecond line");
     // The accessible name still collapses, because it is announced as one string.
     expect(n.getAttribute("aria-label")).toBe("Mid-turn message: first line second line");
+  });
+});
+
+// The oracle is the turn header: a steer quoting the transcript draws the band a sent prompt does.
+describe("a steer that opens with a quoted passage", () => {
+  const steer = `${appendQuote("", quoteSelection("quoted", "From Kiro's reply"))}reply`;
+  const bandOf = (root: HTMLElement): HTMLElement | null =>
+    root.querySelector("blockquote.turn-req-quote");
+
+  it("draws the quote as the prompt's band before the reply", () => {
+    const header = buildTurnHeader({
+      n: 1,
+      outcome: "completed",
+      ts: 0,
+      request: steer,
+      attachments: [],
+    });
+    const n = note({ text: steer });
+    const band = bandOf(n);
+    expect(band?.innerHTML).toBe(bandOf(header)?.innerHTML);
+    expect(band?.textContent).toBe("From Kiro's reply: quoted");
+    expect(textOf(n, ".steer-note-text")).toBe("reply");
+    expect(band?.nextElementSibling?.classList.contains("steer-note-text")).toBe(true);
+    expect(n.getAttribute("aria-label")).toBe("Mid-turn message: From Kiro's reply: quoted reply");
+  });
+
+  it("hides the text of a steer that is only a quote", () => {
+    const n = note({ text: quoteSelection("quoted", "From Kiro's reply") });
+    expect(bandOf(n)?.textContent).toBe("From Kiro's reply: quoted");
+    expect(n.querySelector<HTMLElement>(".steer-note-text")?.hidden).toBe(true);
+  });
+
+  it("leaves a hand-typed blockquote as the reader's own text, as a prompt does", () => {
+    const n = note({ text: "> quoted\n\nreply" });
+    expect(bandOf(n)).toBeNull();
+    expect(textOf(n, ".steer-note-text")).toBe("> quoted\n\nreply");
   });
 });
 

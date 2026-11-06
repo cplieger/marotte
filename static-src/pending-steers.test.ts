@@ -134,6 +134,7 @@ import type { Entry, PendingSteer, QueuedPrompt, Session } from "./types.js";
 import type { Confirmation } from "./confirm.js";
 import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 import { confirmText } from "./__test-helpers__/confirm-text.js";
+import { QUOTE_ATTRIBUTION, appendQuote, quoteSelection } from "./message-quote.js";
 
 function makeSession(chatID: string): Session {
   return {
@@ -1055,6 +1056,19 @@ describe("the steer stack", () => {
     expect(rows().map(labelOf)).toEqual(["After this turn"]);
   });
 
+  it("draws a quoted follow-up's passage as a sent prompt's band, and names it without the marks", () => {
+    withQueued([
+      { id: "m-q", text: `${appendQuote("", quoteSelection("quoted", "From Kiro's reply"))}reply` },
+    ]);
+    const row = firstRow();
+    expect(row.querySelector(".steer-text > blockquote.turn-req-quote")?.textContent).toBe(
+      "From Kiro's reply: quoted",
+    );
+    expect(textOf(row)).toBe("From Kiro's reply: quotedreply");
+    expect(row.getAttribute("aria-label")).toBe("After this turn: From Kiro's reply: quoted reply");
+    expect(row.dataset["tooltip"]).toBe("From Kiro's reply: quoted\n\nreply");
+  });
+
   it("gives a held row no turn, so the follow-ups around it skip it", () => {
     withQueued([
       { id: "m-h", text: "from before", held: true },
@@ -1629,6 +1643,28 @@ describe("the row's clamp", () => {
       );
     }
   });
+
+  // The oracle is the turn header's band (`turn-header.test.ts`): one line, its source then the passage.
+  it("draws a quoted passage as a sent prompt's one-line band above the rest, within the four lines", () => {
+    const text = `${appendQuote("", quoteSelection(`${"word ".repeat(60)}end`, "From Kiro's reply"))}${LONG}`;
+    recordSteerQueued("chat-1", { id: "steer-1", text, origin: "user" });
+    const row = firstRow();
+    const band = textEl(row).querySelector<HTMLElement>(":scope > blockquote.turn-req-quote");
+    expect(band?.querySelector(".turn-req-quote-from")?.textContent).toBe("From Kiro's reply:");
+    expect(textEl(row).textContent).not.toContain(">");
+    expect(textEl(row).textContent).not.toContain(QUOTE_ATTRIBUTION);
+    const bandLine = parseFloat(getComputedStyle(band!).lineHeight);
+    expect(band!.getBoundingClientRect().height).toBeCloseTo(bandLine, 0);
+    const textLine = parseFloat(getComputedStyle(textEl(row)).lineHeight);
+    expect(textEl(row).clientHeight).toBeCloseTo(bandLine + 3 * textLine, 0);
+    expect(textEl(row).scrollHeight).toBeGreaterThan(textEl(row).clientHeight);
+    const read = `From Kiro's reply: ${"word ".repeat(60)}end\n\n${LONG.trim()}`;
+    expect(row.dataset["tooltip"]).toBe(read);
+    expect(row.getAttribute("aria-label")).toBe(
+      `Sent, waiting for the agent: ${read.replace(/\s+/g, " ")}`,
+    );
+    expect(actions(row)).toContain('Delete "From Kiro\'s reply: word word word word …"');
+  });
 });
 
 // The run tab mounts the same stack over a step's rows, with the chat's Edit and Delete and no
@@ -1661,6 +1697,32 @@ describe("a stack over a run step's rows", () => {
     expect(cancelDispatch).not.toHaveBeenCalled();
     steers.value = [];
     expect(stack.classList.contains("hidden")).toBe(true);
+    stack.remove();
+  });
+
+  it("draws a quoted message to the step as the chat's stack does", () => {
+    const text = `${appendQuote("", quoteSelection("quoted", "From Kiro's reply"))}reply`;
+    const src: SteerStackSource = {
+      read: () => ({
+        id: "wf_1|root/review",
+        steers: [{ id: "steer-s1", text, origin: "user" }],
+        queued: [],
+      }),
+      edit: () => Promise.resolve(),
+      editByClear: () => Promise.resolve(),
+      remove: () => Promise.resolve(),
+      discard: () => Promise.resolve(),
+      waitingFor: "the step",
+    };
+    const stack = document.createElement("ul");
+    stack.className = "steer-stack hidden";
+    document.body.appendChild(stack);
+    mountSteerStack(stack, src);
+    const row = stack.querySelector<HTMLElement>(".steer-row")!;
+    expect(row.querySelector(".steer-text > blockquote.turn-req-quote")?.textContent).toBe(
+      "From Kiro's reply: quoted",
+    );
+    expect(textOf(row)).toBe("From Kiro's reply: quotedreply");
     stack.remove();
   });
 });

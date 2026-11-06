@@ -984,6 +984,13 @@
   transition: color var(--dur-micro) var(--ease-standard);
 }
 
+/* The quote band clips its own overflow, so the line clamp does not count it: the band takes
+   one of the four lines here. */
+.steer-text:has(> .turn-req-quote) {
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
 /* --- Actions column ----------------------------------------------------- */
 
 /* PRESENT IN BOTH STATES, AND EMPTY WHILE SENDING, because this column sets the

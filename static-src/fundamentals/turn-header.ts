@@ -14,6 +14,7 @@ import { watchCut } from "../clamp-text.js";
 import { linkifyPaths } from "../linkify.js";
 import { buildAttachmentPill, type AttachmentRef } from "../attachment-pill.js";
 import { splitLeadingQuote } from "../message-quote.js";
+import { buildQuoteBand } from "../quote-band.js";
 // The dot's words, shared with the turn map — see turn-severity.ts.
 // Colour is never the sole channel (WCAG 1.4.1), and these are that channel.
 import { OUTCOME_LABEL, OUTCOME_TOOLTIP, severityOf } from "../turn-severity.js";
@@ -100,13 +101,15 @@ const FOLD_LABEL = "Expand or collapse this turn";
 /** The request band alone, for a turn drawn without card chrome: a run step's turn that a message resumed,
  *  headed by its Sent-by line when `caller` sent it through the API. */
 export function buildRequestHeader(request: string, caller?: Caller): HTMLElement {
-  const text = el("div", { className: "turn-req-text" }, request);
+  const quoted = splitLeadingQuote(request.trim());
+  const text = el("div", { className: "turn-req-text" }, quoted?.rest ?? request);
   linkifyPaths(text);
   const header = el(
     "div",
     { className: "turn-header", "data-trigger": caller === undefined ? "user" : "caller" },
     el("div", { className: "turn-req" }, text),
   );
+  syncQuote(header, quoted ?? undefined);
   syncSentBy(header, caller);
   return header;
 }
@@ -355,38 +358,22 @@ function syncQuote(
   if (req === null) {
     return;
   }
-  let band = req.querySelector<HTMLElement>(":scope > .turn-req-quote");
+  const band = req.querySelector<HTMLElement>(":scope > .turn-req-quote");
   if (quote === undefined) {
     band?.remove();
     return;
   }
-  if (band === null) {
-    band = el("blockquote", { className: "turn-req-quote" });
-    req.prepend(band);
-  }
   const key = join(quote.source ?? "", quote.quote);
-  if (band.dataset["key"] === key) {
+  if (band?.dataset["key"] === key) {
     return;
   }
-  band.dataset["key"] = key;
-  const text = el("span", { className: "turn-req-quote-text" }, quote.quote);
-  linkifyPaths(text);
-  band.replaceChildren(...(quote.source === null ? [] : [sourceEl(quote.source), " "]), text);
-}
-
-/** A quote's source line as the reader sees it: its code spans (CommonMark 6.1) drawn as code. */
-function sourceEl(source: string): HTMLElement {
-  const parts: (Node | string)[] = [];
-  let at = 0;
-  for (const m of source.matchAll(/(`+)(?!`)(.+?)(?<!`)\1(?!`)/g)) {
-    parts.push(source.slice(at, m.index));
-    const inner = m[2] ?? "";
-    const code = /^ .* $/.test(inner) && inner.trim() !== "" ? inner.slice(1, -1) : inner;
-    parts.push(el("code", {}, code));
-    at = m.index + m[0].length;
+  const next = buildQuoteBand(quote);
+  next.dataset["key"] = key;
+  if (band === null) {
+    req.prepend(next);
+  } else {
+    band.replaceWith(next);
   }
-  parts.push(source.slice(at), ":");
-  return el("span", { className: "turn-req-quote-from" }, ...parts);
 }
 
 /** A labelled request's full text, a sibling of the text so the folded clamp cannot hide it, shown
