@@ -48,6 +48,7 @@ var (
 	initBindRe = regexp.MustCompile(
 		`(` + jsIdent + `)\s*=\s*` + jsIdent + `\.clientCapabilities\?\._meta\?\.kiro`,
 	)
+	initBindLit = ".clientCapabilities?._meta?.kiro"
 
 	// settingEnabledFnRe names the mangled isSettingEnabled by its BODY, since the module-local
 	// identifier does not survive.
@@ -346,6 +347,77 @@ func keysIn(re *regexp.Regexp, src string) []string {
 	return slices.Sorted(maps.Keys(seen))
 }
 
+// indexesOf returns every non-overlapping index of lit in src.
+func indexesOf(src, lit string) []int {
+	var out []int
+	for next := 0; ; {
+		j := strings.Index(src[next:], lit)
+		if j < 0 {
+			return out
+		}
+		out = append(out, next+j)
+		next += j + len(lit)
+	}
+}
+
+// aroundReach is how far a findAround match may extend on either side of its literal.
+const aroundReach = 1 << 10
+
+// findAround returns re's submatch indices over src for the matches containing an occurrence of
+// lit, which every match of re must contain. Go's regexp skips ahead only on a literal prefix, so a
+// whole-bundle pattern opening on a class, an alternation or \b costs seconds under -race; this
+// runs re only on identifier-bounded windows around each lit.
+func findAround(re *regexp.Regexp, lit, src string) [][]int {
+	var out [][]int
+	seen := make(map[int]bool)
+	for _, at := range indexesOf(src, lit) {
+		lo, hi := max(0, at-aroundReach), min(len(src), at+len(lit)+aroundReach)
+		for lo > 0 && isIdentByte(src[lo-1], true) {
+			lo--
+		}
+		for hi < len(src) && isIdentByte(src[hi], true) {
+			hi++
+		}
+		for _, m := range re.FindAllStringSubmatchIndex(src[lo:hi], -1) {
+			if lo+m[0] > at || lo+m[1] < at+len(lit) || seen[lo+m[0]] {
+				continue
+			}
+			seen[lo+m[0]] = true
+			for i := range m {
+				if m[i] >= 0 {
+					m[i] += lo
+				}
+			}
+			out = append(out, m)
+		}
+	}
+	slices.SortFunc(out, func(a, b []int) int { return a[0] - b[0] })
+	return out
+}
+
+// submatches is FindStringSubmatch over findAround's first match: nil when there is none.
+func submatches(src string, ms [][]int) []string {
+	if len(ms) == 0 {
+		return nil
+	}
+	out := make([]string, len(ms[0])/2)
+	for i := range out {
+		if ms[0][2*i] >= 0 {
+			out[i] = src[ms[0][2*i]:ms[0][2*i+1]]
+		}
+	}
+	return out
+}
+
+// keysAround is keysIn over the whole bundle, through findAround.
+func keysAround(re *regexp.Regexp, lit, src string) []string {
+	seen := make(map[string]bool)
+	for _, m := range findAround(re, lit, src) {
+		seen[src[m[2]:m[3]]] = true
+	}
+	return slices.Sorted(maps.Keys(seen))
+}
+
 // requireNonEmpty keeps the census honest: each source is a regex over a 21 MB third-party bundle,
 // and it dies by matching nothing, which would read as a clean census.
 func requireNonEmpty(t *testing.T, source string, keys []string) []string {
@@ -364,7 +436,7 @@ would record the emptiness as the new expectation.`, source)
 func readCapabilityKeys(t *testing.T, src string) []string {
 	t.Helper()
 	resolved := requireNonEmpty(t, "resolveCapabilities body", resolvedBlockKeys(t, src))
-	stored := requireNonEmpty(t, "clientMeta reads", keysIn(clientMetaReadRe, src))
+	stored := requireNonEmpty(t, "clientMeta reads", keysAround(clientMetaReadRe, "clientMeta", src))
 	adhoc := requireNonEmpty(t, "initialize-scope reads", initScopeKeys(t, src))
 
 	all := slices.Concat(resolved, stored, adhoc)
@@ -407,7 +479,7 @@ of parameters. Re-read the pattern rather than regenerating the fixture.`,
 func initScopeKeys(t *testing.T, src string) []string {
 	t.Helper()
 	var keys []string
-	for _, m := range initBindRe.FindAllStringSubmatchIndex(src, -1) {
+	for _, m := range findAround(initBindRe, initBindLit, src) {
 		local := src[m[2]:m[3]]
 		scope := bindingScope(src, m[0])
 		if scope == "" {
@@ -441,16 +513,16 @@ func readSettingKeys(t *testing.T, src string) []string {
 
 	direct := requireNonEmpty(t, "isSettingEnabled calls", slices.Concat(
 		keysIn(settingEnabledRe, src),
-		keysIn(regexp.MustCompile(`\b`+regexp.QuoteMeta(settingFn)+
-			`\([^,()]*,\s*["'](`+jsIdent+`)["']\)`), src),
+		keysAround(regexp.MustCompile(`\b`+regexp.QuoteMeta(settingFn)+
+			`\([^,()]*,\s*["'](`+jsIdent+`)["']\)`), settingFn+"(", src),
 	))
 	features := requireNonEmpty(t, "isFeatureEnabled calls", slices.Concat(
 		keysIn(featureEnabledRe, src),
-		keysIn(regexp.MustCompile(`\b`+regexp.QuoteMeta(featureFn)+
-			`\(["'](`+jsIdent+`)["']\)`), src),
+		keysAround(regexp.MustCompile(`\b`+regexp.QuoteMeta(featureFn)+
+			`\(["'](`+jsIdent+`)["']\)`), featureFn+"(", src),
 	))
-	resolved := requireNonEmpty(t, "settings resolvers", keysIn(settingResolverRe, src))
-	destructured := requireNonEmpty(t, "destructuring resolvers", keysIn(settingDestructureRe, src))
+	resolved := requireNonEmpty(t, "settings resolvers", keysAround(settingResolverRe, ".data.", src))
+	destructured := requireNonEmpty(t, "destructuring resolvers", keysAround(settingDestructureRe, ".data.", src))
 	computed := requireNonEmpty(t, "computed-member resolver calls", computedResolverKeys(t, src))
 
 	all := slices.Concat(direct, features, resolved, destructured, computed)
@@ -463,7 +535,7 @@ func readSettingKeys(t *testing.T, src string) []string {
 func computedResolverKeys(t *testing.T, src string) []string {
 	t.Helper()
 	fn := discoverOne(t, "the computed-member settings resolver", settingComputedFnRe, src)
-	return keysIn(regexp.MustCompile(`\b`+regexp.QuoteMeta(fn)+`\([^,()]*,\s*["'](`+jsIdent+`)["']`), src)
+	return keysAround(regexp.MustCompile(`\b`+regexp.QuoteMeta(fn)+`\([^,()]*,\s*["'](`+jsIdent+`)["']`), fn+"(", src)
 }
 
 // A withheld row counts as declared: recording a deliberate omission is the table's job.
@@ -500,6 +572,16 @@ func TestCapabilityCensus(t *testing.T) {
 		for _, key := range readSettingKeys(t, src) {
 			if !declaredSettings[key] {
 				unclaimed = append(unclaimed, "setting "+key)
+			}
+		}
+		sessionKeys, err := sessionSchemaKeys(src)
+		if err != nil {
+			t.Fatalf("census source %q: %v", "session _meta.kiro schema", err)
+		}
+		declaredSession := declaredSessionKeys()
+		for _, key := range requireNonEmpty(t, "session _meta.kiro schema", sessionKeys) {
+			if !declaredSession[key] {
+				unclaimed = append(unclaimed, "session "+key)
 			}
 		}
 		slices.Sort(unclaimed)
@@ -549,7 +631,7 @@ const censusHeader = `# Client-side keys the kiro-cli agent server reads that in
 func TestAbsentTrueMatchesTheBundle(t *testing.T) {
 	forEachBundle(t, func(t *testing.T, b bundle) {
 		src := b.src
-		bundleTrue := requireNonEmpty(t, "inverse-default resolvers", keysIn(absentTrueResolverRe, src))
+		bundleTrue := requireNonEmpty(t, "inverse-default resolvers", keysAround(absentTrueResolverRe, ".data.", src))
 
 		for _, row := range table {
 			if !absentTrue[rowID(row)] {
@@ -597,8 +679,8 @@ var (
 
 func bundleEnvArms(src string) []string {
 	seen := make(map[string]bool)
-	for _, name := range featureEnvRe.FindAllString(src, -1) {
-		seen[name] = true
+	for _, m := range findAround(featureEnvRe, "KIRO_", src) {
+		seen[src[m[0]:m[1]]] = true
 	}
 	for _, m := range derivedGateRe.FindAllStringSubmatch(src, -1) {
 		upper := strings.ToUpper(camelBoundary.ReplaceAllString(m[1], "${1}_${2}"))
@@ -647,7 +729,7 @@ var trustClassifierReaderRe = regexp.MustCompile(
 // reader: a renamed variable or another accepted value would leave the row inert.
 func TestTrustClassifierGateMatchesBundle(t *testing.T) {
 	forEachBundle(t, func(t *testing.T, b bundle) {
-		m := trustClassifierReaderRe.FindStringSubmatch(b.src)
+		m := submatches(b.src, findAround(trustClassifierReaderRe, `="KIRO_TRUST_CLASSIFIER_MODE";function `, b.src))
 		if m == nil || m[1] != m[2] {
 			t.Fatalf("kiro-cli %s has no reader comparing KIRO_TRUST_CLASSIFIER_MODE with \"enforce\"; re-read the gate and the row's value",
 				activeKASVersion(t))

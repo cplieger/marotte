@@ -50,7 +50,7 @@ func TestRunStateLayoutMatchesBundle(t *testing.T) {
 			t.Fatalf("workflowBaseDirFor: found %d definitions joining sessionsPath, a bucket and a name; want 1", len(base))
 		}
 		nameRe := regexp.MustCompile(`[,;\s]` + regexp.QuoteMeta(base[0][1]) + `="([^"]+)"`)
-		name := nameRe.FindStringSubmatch(b.src)
+		name := submatches(b.src, findAround(nameRe, base[0][1]+`="`, b.src))
 		if name == nil {
 			t.Fatalf("the runs directory variable %s has no string assignment in the bundle", base[0][1])
 		}

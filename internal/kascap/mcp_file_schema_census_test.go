@@ -63,7 +63,7 @@ func extractMCPServerKeys(src string) ([]string, error) {
 		if len(sites) != 1 {
 			return nil, fmt.Errorf("spread %s: found %d `%s={` literals, want exactly 1", name, len(sites), name)
 		}
-		members, err := objectKeys(src, sites[0]+len(name)+1)
+		members, err := objectKeys(src, sites[0]+len(name)+1, nil)
 		if err != nil {
 			return nil, fmt.Errorf("spread %s: %w", name, err)
 		}
@@ -73,15 +73,29 @@ func extractMCPServerKeys(src string) ([]string, error) {
 }
 
 // objectKeys reads the depth-1 `key:` names of the object literal opening at src[open]. A member
-// it cannot name (a spread, a shorthand, a computed key) is an error, so a schema reshaped that way
-// fails the census rather than hiding a key.
-func objectKeys(src string, open int) ([]string, error) {
+// it cannot name (a spread, a shorthand, a computed key computed cannot resolve) is an error, so a
+// schema reshaped that way fails the census rather than hiding a key. computed maps the identifier
+// of a `[x]:` member to its key; nil refuses every computed member.
+func objectKeys(src string, open int, computed func(ident string) (string, error)) ([]string, error) {
 	var keys []string
 	depth := 0
 	expectKey := false
 	for i := open; i < len(src); i++ {
 		c := src[i]
 		switch {
+		case c == '[' && expectKey && depth == 1 && computed != nil:
+			ident := identAt(src, i+1)
+			end := i + 1 + len(ident)
+			if ident == "" || !strings.HasPrefix(src[end:], "]:") {
+				return nil, fmt.Errorf("unnamed member at %d: %.40q", i, src[i:])
+			}
+			key, err := computed(ident)
+			if err != nil {
+				return nil, fmt.Errorf("computed member at %d: %w", i, err)
+			}
+			keys = append(keys, key)
+			expectKey = false
+			i = end + 1
 		case c == '"' || c == '\'' || c == '`':
 			end := closingQuote(src, i)
 			if end < 0 {

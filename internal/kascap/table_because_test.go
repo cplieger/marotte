@@ -640,6 +640,17 @@ both reach applySandboxConfigOption, whose absent config defaults to backend
 If the premise ever flips, the order is: a content_chunk handler registered and
 green, THEN a toolCallId→card join (marotte keys on terminal_id today), and only
 THEN this row's send. Never the flag first.`,
+	"capability.nonInteractive": `WITHHELD. kiro-cli 3.1.0 reads _meta.kiro.nonInteractive on session/new and
+session/load (=== true) only to add the Default v2 system prompt's "Non-interactive
+session" section, which tells the model no user can answer questions or approve, and
+that ending its turn ends the session. Every marotte chat has a user at the composer,
+and a run step's asks reach the user through its parent, so true would be false here.`,
+	"object.shellEnvironment": `WITHHELD. kiro-cli 3.1.0 reads _meta.kiro.shellEnvironment on session/new and
+session/load as {workspaceFolder: {VAR: value or null}} and overlays the folder whose
+path is the longest prefix of a command's cwd onto the environment of the shells KAS
+spawns itself (null unsets). marotte hosts every shell through terminal/* (see
+capability.agentHostsForegroundShell) with its own environment, and has no
+per-folder environment setting to carry.`,
 	"capability.agentHostsForegroundShell": `WITHHELD. kiro-cli 2.32.0 reads clientMeta.agentHostsForegroundShell when it
 picks a session's terminal host: true runs every FOREGROUND execute_bash on KAS's
 in-process terminal even though marotte declares terminal:true, while background
