@@ -288,3 +288,76 @@ describe("a gesture after the paint keeps the cover until its own handler decide
     document.body.dispatchEvent(press("pointerup"));
   });
 });
+
+/** B's turns painted under a cover held for B; answers whether the cover was still up at the end of
+ *  the paint's own task. */
+async function paintSwitchToB(): Promise<boolean> {
+  store.setSessions([
+    withTurn(makeSession({ id: "cv-a", name: "a" }), "text of a"),
+    withTurn(makeSession({ id: "cv-b", name: "b" }), "text of b"),
+  ]);
+  store.setActive("cv-a");
+  setPainted("cv-a");
+  store.bumpMessages("cv-a", "load");
+  await flushed();
+  store.setActive("cv-b");
+  coverModule.holdCover("cv-b");
+  setPainted("cv-b");
+  await flushed();
+  return coverUp();
+}
+
+describe("a switch's cover lifts with its paint, and only a switch raises it", () => {
+  it("lifts in the task of the paint that shows the target's turns", async () => {
+    expect(await paintSwitchToB(), "the cover outlived the paint that showed B").toBe(false);
+    expect(wrap().hasAttribute("aria-busy")).toBe(false);
+  });
+
+  it("never comes back for typing and clicking in the composer after the switch", async () => {
+    const composer = document.getElementById("prompt-input");
+    if (composer === null) {
+      throw new Error("no #prompt-input");
+    }
+    // Made before the paint, as input queued behind the switch's long task is.
+    const queued = [
+      press("pointerdown"),
+      press("pointerup"),
+      new KeyboardEvent("keydown", { bubbles: true, key: "h" }),
+      new KeyboardEvent("keydown", { bubbles: true, key: "i" }),
+    ];
+    await paintSwitchToB();
+    await onScreen();
+    expect(coverUp(), "the cover never lifted").toBe(false);
+    for (const e of queued) {
+      composer.dispatchEvent(e);
+      expect(coverUp(), `a composer ${e.type} raised the cover`).toBe(false);
+    }
+    composer.dispatchEvent(press("pointerdown"));
+    expect(coverUp()).toBe(false);
+    await onScreen();
+    expect(coverUp(), "a composer press held the cover").toBe(false);
+    composer.dispatchEvent(press("pointerup"));
+  });
+
+  it("defers the lift a task only while the browser reports input waiting", async () => {
+    const nav = navigator as Navigator & { scheduling?: unknown };
+    const had = Object.getOwnPropertyDescriptor(nav, "scheduling");
+    let pending = true;
+    Object.defineProperty(nav, "scheduling", {
+      configurable: true,
+      value: { isInputPending: () => pending },
+    });
+    try {
+      expect(await paintSwitchToB(), "the cover lifted over waiting input").toBe(true);
+      pending = false;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(coverUp(), "the deferred lift did not run in the next task").toBe(false);
+    } finally {
+      if (had === undefined) {
+        delete nav.scheduling;
+      } else {
+        Object.defineProperty(nav, "scheduling", had);
+      }
+    }
+  });
+});
