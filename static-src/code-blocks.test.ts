@@ -34,7 +34,7 @@ describe("isRunnableShell", () => {
       text: "#!/usr/bin/env bash\nls",
       expected: false,
     },
-    // A multi-line block runs as one paste, so its line count does not matter.
+    // Run takes a block of any line count; shell.ts sends it as one submission.
     { name: "4-line script accepted", lang: "bash", text: "a\nb\nc\nd", expected: true },
     { name: "2-line block accepted", lang: "bash", text: "cd /tmp\nls -la", expected: true },
     {
@@ -340,6 +340,7 @@ describe("Run never sends a character the reader cannot see", () => {
     { name: "a lone carriage return (U+000D)", text: "echo hi\rrm -rf /tmp/x" },
     { name: "a paste-end sequence on a later line", text: "echo a\n\u001B[201~rm x" },
     { name: "a tab on a later line", text: "echo a\nls\t-la" },
+    { name: "lone surrogates split by a line end", text: "echo a\uD83D\n\uDE00ls" },
   ];
 
   for (const tc of hidden) {

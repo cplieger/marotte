@@ -199,7 +199,8 @@ function makeRunButton(pre: HTMLElement, text: string): HTMLButtonElement {
 
 /** A line feed is the one control a block may hold: it shows as the line break it sends. */
 function runRefusal(cmd: string): string | null {
-  if (HIDDEN_RUNE.test(cmd.replaceAll("\n", ""))) {
+  // A space, not "": deleting LFs joins lone surrogates on adjacent lines into a pair \p{Cs} misses.
+  if (HIDDEN_RUNE.test(cmd.replaceAll("\n", " "))) {
     return "Contains hidden characters. Copy it to inspect.";
   }
   return shellRunCb === null ? "Shell not available" : null;
