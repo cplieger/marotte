@@ -169,9 +169,7 @@ type Engine struct {
 	nextID                 atomic.Int64
 	// lastFrame is when readLoop last read a frame, in unix nanoseconds; 0 before the first.
 	lastFrame atomic.Int64
-	// frames counts the frames readLoop has read.
-	frames  atomic.Uint64
-	heapMiB int
+	heapMiB   int
 	// rssPeakMiB and heapLimitMiB are the memory sampler's record for ExitInfo. Guarded by mu.
 	rssPeakMiB   int
 	heapLimitMiB int

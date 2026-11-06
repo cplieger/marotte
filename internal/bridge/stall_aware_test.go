@@ -110,15 +110,23 @@ func TestStallAware_AnAnswerDuringTheCPUSampleGetsAFreshBudget(t *testing.T) {
 	defaultStallChecks(t)
 	synctest.Test(t, func(t *testing.T) {
 		b := newIdleEngine(t)
-		var ticks atomic.Uint64
+		var busy atomic.Bool
+		busy.Store(true)
+		cpu := switchableCPU(&busy)
 		var answerNext atomic.Bool
+		var answered atomic.Int64
+		start := time.Now()
 		b.cpuTicks = func() (uint64, bool) {
 			if answerNext.CompareAndSwap(true, false) {
-				go func() { time.Sleep(stallSample / 2); b.noteFrame(1) }()
+				go func() {
+					time.Sleep(stallSample / 2)
+					busy.Store(false)
+					answered.Store(int64(time.Since(start)))
+					b.noteFrame(1)
+				}()
 			}
-			return ticks.Add(1), true
+			return cpu()
 		}
-		start := time.Now()
 		ctx, cancel := b.StallAware(t.Context(), stallBudget)
 		defer cancel()
 
@@ -126,13 +134,49 @@ func TestStallAware_AnAnswerDuringTheCPUSampleGetsAFreshBudget(t *testing.T) {
 		at(start, armed)
 		answerNext.Store(true)
 		at(start, armed+stallRecheck+stallSample)
-		if answerNext.Load() {
+		if answered.Load() == 0 {
 			t.Fatal("Setup: no re-check sampled the CPU after the answer was armed")
 		}
-		at(start, armed+stallBudget)
+		answer := time.Duration(answered.Load())
+		at(start, answer+stallBudget-time.Millisecond)
 		if err := ctx.Err(); err != nil {
 			t.Fatalf("ctx.Err() = %v under %v after an answer read during the CPU sample, want a fresh %v budget",
 				err, stallBudget, stallBudget)
+		}
+		at(start, answer+stallBudget+stallRecheck+2*stallSample)
+		if err := ctx.Err(); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("ctx.Err() = %v past the restored budget on a quiet engine, want context.DeadlineExceeded", err)
+		}
+	})
+}
+
+// A late re-check can find the answer already older than stallQuiet while the CPU still burns: the answer still ends
+// the stall. A quiet window shorter than the re-check stands in for the timer's slack.
+func TestStallAware_AnAnswerOlderThanTheQuietWindowGetsAFreshBudget(t *testing.T) {
+	shortenStallChecks(t, time.Second, 2*time.Second, 250*time.Millisecond, 120*time.Second)
+	synctest.Test(t, func(t *testing.T) {
+		b := newIdleEngine(t)
+		var busy atomic.Bool
+		busy.Store(true)
+		b.cpuTicks = switchableCPU(&busy)
+		start := time.Now()
+		ctx, cancel := b.StallAware(t.Context(), stallBudget)
+		defer cancel()
+
+		firstCheckEnd := stallBudget + stallSample
+		at(start, firstCheckEnd+time.Millisecond)
+		b.noteFrame(1)
+		recheckEnd := firstCheckEnd + stallRecheck + stallSample
+		at(start, recheckEnd+time.Millisecond)
+		busy.Store(false)
+		at(start, recheckEnd+stallBudget-time.Millisecond)
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("ctx.Err() = %v under %v after the re-check that saw the answer, want a fresh %v budget",
+				err, stallBudget, stallBudget)
+		}
+		at(start, recheckEnd+stallBudget+stallSample+time.Millisecond)
+		if err := ctx.Err(); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("ctx.Err() = %v past the restored budget on a quiet engine, want context.DeadlineExceeded", err)
 		}
 	})
 }

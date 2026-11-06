@@ -29,30 +29,29 @@ func (e *Engine) Stalled() bool {
 	return stalled
 }
 
-// probeStall is Stalled's reading, and the frame count read once it ends: a frame read during the sample is liveness,
-// and shows in that count however the reading ended.
-func (e *Engine) probeStall(quiet, sample time.Duration) (stalled bool, frames uint64) {
-	before := e.frames.Load()
+// probeStall is Stalled's reading, and the last frame's time read once it ends: a frame read during the sample is
+// liveness, and shows in that time however the reading ended.
+func (e *Engine) probeStall(quiet, sample time.Duration) (stalled bool, lastFrame int64) {
 	last := e.lastFrame.Load()
 	if last != 0 && time.Since(time.Unix(0, last)) < quiet {
-		return false, e.frames.Load()
+		return false, last
 	}
 	// Notes node's group while it is unknown, as during initialize; Stalled never runs under writeMu.
 	e.engineLeader()
 	cpuBefore, ok := e.cpuTicks()
 	if !ok {
-		return false, e.frames.Load()
+		return false, e.lastFrame.Load()
 	}
 	gap := time.NewTimer(sample)
 	defer gap.Stop()
 	select {
 	case <-gap.C:
 	case <-e.done:
-		return false, e.frames.Load()
+		return false, e.lastFrame.Load()
 	}
 	cpuAfter, ok := e.cpuTicks()
-	after := e.frames.Load()
-	return ok && cpuAfter > cpuBefore && after == before, after
+	after := e.lastFrame.Load()
+	return ok && cpuAfter > cpuBefore && after == last, after
 }
 
 // StallAware is context.WithTimeout(ctx, d) for a call to this engine, except that an expiry finding the engine
@@ -85,7 +84,7 @@ func (e *Engine) extendWhileStalled(c *stallCtx) {
 		c.end(context.DeadlineExceeded)
 		return
 	}
-	stalled, frames := e.probeStall(c.quiet, c.sample)
+	stalled, lastFrame := e.probeStall(c.quiet, c.sample)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.err != nil {
@@ -93,14 +92,15 @@ func (e *Engine) extendWhileStalled(c *stallCtx) {
 	}
 	next := c.recheck
 	switch {
-	case stalled:
-	case c.extended && frames != c.stallFrames:
+	// Ahead of the stalled arm: a late re-check can find the answer older than quiet while the CPU still burns.
+	case c.extended && lastFrame != c.stallFrame:
 		next = c.budget
+	case stalled:
 	default:
 		c.endLocked(context.DeadlineExceeded)
 		return
 	}
-	c.extended, c.stallFrames = stalled, frames
+	c.extended, c.stallFrame = stalled, lastFrame
 	c.timer = time.AfterFunc(min(next, time.Until(c.ceiling)), func() { e.extendWhileStalled(c) })
 }
 
@@ -113,10 +113,10 @@ type stallCtx struct {
 	timer      *time.Timer // guarded by mu
 	stopParent func() bool // guarded by mu
 	ceiling    time.Time
-	// extended is whether the last check found a stall, and stallFrames the engine's frame count as that check
+	// extended is whether the last check found a stall, and stallFrame the engine's last frame time as that check
 	// ended; guarded by mu.
-	extended    bool
-	stallFrames uint64
+	extended   bool
+	stallFrame int64
 	// The budget and tunables read when the context was made: its timer goroutines can outlive the caller's cancel.
 	budget, quiet, sample, recheck time.Duration
 	mu                             sync.Mutex
