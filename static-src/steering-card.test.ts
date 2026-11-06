@@ -3,16 +3,16 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Turn } from "./turns.js";
+import toolsCSS from "./css/14-tools.css?raw";
+import type * as EditorOpeners from "./editor-openers.js";
 import type { Entry, EntryToolCall } from "./wire/types.gen.js";
 
 const openFile = vi.fn();
-vi.mock("./editor-openers.js", () => ({
-  // Undefined: present only so real-ESM linking succeeds.
+vi.mock("./editor-openers.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof EditorOpeners>()),
   openFile: (path: string, line?: number) => {
     openFile(path, line);
   },
-  openFileDiff: undefined,
-  openFileGitDiff: undefined,
 }));
 
 for (const id of [
@@ -243,5 +243,25 @@ describe("a steering box", () => {
     const read = body.querySelector<HTMLElement>('.tool-call[data-kind="read"]');
     expect(read?.closest(".tool-group")).not.toBeNull();
     expect(box.closest(".tool-group")).toBe(read?.closest(".tool-group"));
+  });
+
+  it("shows every name on a phone-width card, where one line cannot hold them", () => {
+    const style = document.createElement("style");
+    style.textContent = toolsCSS;
+    document.head.appendChild(style);
+    try {
+      const body = render(threeDocs, true);
+      body.style.inlineSize = "240px";
+      const title = onlyBox(body).querySelector<HTMLElement>(".tool-title");
+      const names = [...(title?.querySelectorAll<HTMLElement>(".steering-doc") ?? [])];
+      expect(names).toHaveLength(3);
+      const edge = title?.getBoundingClientRect().right ?? 0;
+      for (const n of names) {
+        expect(n.getBoundingClientRect().right, n.textContent).toBeLessThanOrEqual(edge + 0.5);
+      }
+      expect(title?.scrollWidth).toBeLessThanOrEqual(title?.clientWidth ?? 0);
+    } finally {
+      style.remove();
+    }
   });
 });
