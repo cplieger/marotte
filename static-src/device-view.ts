@@ -135,7 +135,7 @@ export function setPointerModeChoice(tier: PointerTier): void {
   writeBlob({ pointer_mode: tier });
 }
 
-/** How this screen draws the time of day; "auto" follows the browser (`locale-time.ts`). */
+/** How this screen draws the time of day; `locale-time.ts` decides what "auto" resolves to. */
 export type ClockChoice = "auto" | "h23" | "h12";
 
 /** The clock choice; "auto" when nothing valid is recorded. Never synced: a clock reads per screen. */

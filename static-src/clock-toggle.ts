@@ -68,8 +68,8 @@ function paint(choice: ClockChoice): void {
   btn.setAttribute("aria-label", label);
 }
 
-/** Wire the toggle and paint the stored choice. A click, or another tab's write, repaints every
- *  live time under `document` (`redrawClocks`). */
+/** Wire the toggle and paint the stored choice. A click, or another tab's write, redraws the
+ *  `time[data-clock]` and `time[data-clock-tip]` elements on the page (`redrawClocks`). */
 export function initClockToggle(): void {
   shown = null;
   paint(clock());
