@@ -57,8 +57,8 @@ export function holdCover(chatID: string): void {
 }
 
 /** Make the transcript under a held cover `inert` until a release; a no-op with no cover. Apart
- *  from `holdCover` because `inert` restyles every resident turn, which in a gesture's frame held
- *  WebKit's first paint past 100 ms; until it runs, the opaque cover takes the pointer. */
+ *  from `holdCover` because `inert` restyles every resident turn, which in a gesture's frame costs
+ *  a 4x-throttled CPU about 50 ms of style; until it runs, the opaque cover takes the pointer. */
 export function inertUnderCover(): void {
   if (holder !== "") {
     $.messagesWrap.inert = true;
