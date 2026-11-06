@@ -23,7 +23,8 @@ export interface AddForm {
   blocked(): boolean;
   /** Repaint the button after a change no input event announces (a value set by code, a lock). */
   sync(): void;
-  /** Write the error line, or clear it with null; `field`, the one the message concerns, is marked invalid. */
+  /** Write the error line, or clear it with null; `field`, the one the message concerns, is marked invalid and
+   *  described by the line. */
   setError(message: string | readonly (Node | string)[] | null, field?: Field): void;
 }
 
@@ -41,6 +42,25 @@ export function wireAddForm(form: HTMLFormElement, opts: AddFormOptions): AddFor
   const required = (): Field[] => fieldsOf(form).filter((f) => f.required);
   let pending = false;
   let marked: Field | undefined;
+  // Whether marking `marked` added the error id to its aria-describedby, so a clear removes only what it added.
+  let linked = false;
+  const describedBy = (f: Field): string[] =>
+    (f.getAttribute("aria-describedby") ?? "").split(" ").filter((t) => t !== "");
+  const unmark = (): void => {
+    for (const f of [...fieldsOf(form), marked]) {
+      f?.removeAttribute("aria-invalid");
+    }
+    if (marked !== undefined && linked) {
+      const rest = describedBy(marked).filter((t) => t !== error.id);
+      if (rest.length === 0) {
+        marked.removeAttribute("aria-describedby");
+      } else {
+        marked.setAttribute("aria-describedby", rest.join(" "));
+      }
+    }
+    marked = undefined;
+    linked = false;
+  };
   const control: AddForm = {
     form,
     button,
@@ -60,11 +80,17 @@ export function wireAddForm(form: HTMLFormElement, opts: AddFormOptions): AddFor
       } else {
         error.replaceChildren(...message);
       }
-      for (const f of [...fieldsOf(form), marked]) {
-        f?.removeAttribute("aria-invalid");
+      unmark();
+      if (message === null || field === undefined) {
+        return;
       }
-      marked = message === null ? undefined : field;
-      marked?.setAttribute("aria-invalid", "true");
+      marked = field;
+      field.setAttribute("aria-invalid", "true");
+      const ids = describedBy(field);
+      if (error.id !== "" && !ids.includes(error.id)) {
+        field.setAttribute("aria-describedby", [...ids, error.id].join(" "));
+        linked = true;
+      }
     },
   };
   const onEdit = (): void => {

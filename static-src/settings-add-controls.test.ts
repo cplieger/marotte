@@ -5,12 +5,17 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { page as browserPage } from "vitest/browser";
 
 import indexHtml from "../static/index.html?raw";
+import { fill } from "./__test-helpers__/add-forms.js";
 import { manifestSheets, mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { forgeRow } from "./__test-helpers__/forge-rows.js";
+import { settingsPayload } from "./__test-helpers__/settings.js";
+import { initAgentDirsUI } from "./agent-dirs-ui.js";
 import { renderConnectionTarget } from "./forge-auth-connection.js";
 import { buildOwnerScopes } from "./forge-auth-owners.js";
 import { renderPATForm } from "./forge-auth-pat.js";
 import { initKnowledge } from "./knowledge.js";
+import { initModal, setEditing } from "./mcp-panels.js";
+import { initNativePolicyUI, initPermissionsUI } from "./permissions-ui.js";
 
 interface Adder {
   readonly name: string;
@@ -83,8 +88,19 @@ const STATIC_SECTIONS = [
   "#native-policy-section",
   "#agent-ignore-section",
   "#agent-dirs-section",
-  "#mcp-disabled-tools",
+  "#mcp-modal",
   "#knowledge-section",
+] as const;
+
+/** Where Settings and the dialogs it opens are written in the shipped page. */
+const SHIPPED_ROOTS = ["#settings-view", "#mcp-modal"] as const;
+
+/** The forms and submits there that are not adders: the MCP dialog's main actions (inventory.md). */
+const NOT_ADDERS = [
+  "form.mcp-mode-panel[data-mcp-mode='remote']",
+  "form.mcp-mode-panel[data-mcp-mode='registry']",
+  "#mcp-remote-save",
+  "#mcp-registry-save",
 ] as const;
 
 const WIDTHS = {
@@ -125,6 +141,12 @@ beforeAll(() => {
   document.body.append(host);
   initKnowledge();
   document.querySelector<HTMLButtonElement>("#knowledge-add-btn")!.click();
+  initPermissionsUI(settingsPayload());
+  initNativePolicyUI();
+  initAgentDirsUI();
+  const server = { id: "srv-1", name: "example", transport: "stdio", enabled: true } as const;
+  setEditing({ id: server.id });
+  initModal({ mode: "raw", server: { ...server, created_at: 1, updated_at: 2 } });
 });
 
 afterAll(() => {
@@ -226,6 +248,40 @@ describe.each(ADDERS)("$name", (a) => {
     expect(submitOf(form).disabled).toBe(true);
   });
 
+  it("enables once its required fields are typed and disables again when one is cleared", () => {
+    const button = submitOf(formOf(a));
+    // A capability list is filled by the policy load, which this file does not run.
+    const seeded = a.required
+      .map(field)
+      .filter((f): f is HTMLSelectElement => f instanceof HTMLSelectElement && f.length === 0)
+      .map((f) => {
+        const option = new Option("fs_read", "fs_read");
+        f.add(option);
+        return option;
+      });
+    const typed = (f: HTMLInputElement | HTMLSelectElement): string =>
+      f instanceof HTMLSelectElement ? f.options[0]!.value : "docs";
+    try {
+      for (const s of a.required) {
+        fill(field(s), typed(field(s)));
+      }
+      expect(button.disabled, "every required field typed").toBe(false);
+      for (const s of a.required) {
+        fill(field(s), "");
+        expect(button.disabled, `${s} cleared`).toBe(true);
+        fill(field(s), typed(field(s)));
+        expect(button.disabled, `${s} typed again`).toBe(false);
+      }
+    } finally {
+      for (const s of a.required) {
+        fill(field(s), "");
+      }
+      for (const option of seeded) {
+        option.remove();
+      }
+    }
+  });
+
   it("points its required field at the error line", () => {
     const form = formOf(a);
     const error = errorOf(form);
@@ -298,15 +354,39 @@ describe("ADDERS", () => {
   const describeNode = (n: Element): string =>
     `${n.tagName.toLowerCase()}#${n.id}.${[...n.classList].join(".")} "${n.textContent.trim().slice(0, 40)}"`;
 
+  const excluded = (n: Element): boolean => NOT_ADDERS.some((s) => n.matches(s));
+
   it("names every form and every submit button the mounted surfaces show", () => {
     const forms = new Set(ADDERS.map(formOf));
     const submits = new Set([...forms].map(submitOf));
-    const strayForms = [...host.querySelectorAll("form")].filter((f) => !forms.has(f));
+    const strayForms = [...host.querySelectorAll("form")].filter(
+      (f) => !forms.has(f) && !excluded(f),
+    );
     const straySubmits = [...host.querySelectorAll("button")].filter(
-      (b) => b.type === "submit" && !submits.has(b),
+      (b) => b.type === "submit" && !submits.has(b) && !excluded(b),
     );
     expect(strayForms.map(describeNode), "a form outside ADDERS").toEqual([]);
     expect(straySubmits.map(describeNode), "a submit button outside ADDERS").toEqual([]);
+  });
+
+  it("names every form and every submit button the shipped Settings view and MCP dialog hold", () => {
+    const roots = SHIPPED_ROOTS.map((sel) => {
+      const root = shipped.querySelector(sel);
+      if (root === null) {
+        throw new Error(`static/index.html has no ${sel}`);
+      }
+      return root;
+    });
+    const isAdder = (form: HTMLFormElement | null): boolean =>
+      form !== null && ADDERS.some((a) => a.fields.some((s) => form.querySelector(s) !== null));
+    const strayForms = roots
+      .flatMap((r) => [...r.querySelectorAll("form")])
+      .filter((f) => !isAdder(f) && !excluded(f));
+    const straySubmits = roots
+      .flatMap((r) => [...r.querySelectorAll("button")])
+      .filter((b) => b.type === "submit" && !isAdder(b.form) && !excluded(b));
+    expect(strayForms.map(describeNode), "a form outside ADDERS and NOT_ADDERS").toEqual([]);
+    expect(straySubmits.map(describeNode), "a submit outside ADDERS and NOT_ADDERS").toEqual([]);
   });
 });
 

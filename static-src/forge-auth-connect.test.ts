@@ -648,6 +648,16 @@ describe("forge-auth: the connect dialog", () => {
       await vi.waitFor(() =>
         expect(statusText(slot)).toContain("git.example.com did not answer as a supported forge"),
       );
+      const serverField = slot.querySelector<HTMLInputElement>("[data-forge-host]")!;
+      const tokenField = slot.querySelector<HTMLInputElement>(
+        "form[data-forge-token] input[type='password']",
+      )!;
+      const errorId = slot.querySelector("form[data-forge-token] output.rf-error")!.id;
+      expect(serverField.getAttribute("aria-invalid"), "an address refusal marks Server").toBe(
+        "true",
+      );
+      expect(serverField.getAttribute("aria-describedby")?.split(" ")).toContain(errorId);
+      expect(tokenField.hasAttribute("aria-invalid"), "and not Token").toBe(false);
       await waitForOnClock(() => expect(connect.disabled).toBe(false), 3000);
       await vi.runAllTimersAsync();
       expect(spy).toHaveBeenCalledOnce();
@@ -671,6 +681,13 @@ describe("forge-auth: the connect dialog", () => {
 
       await vi.waitFor(() => expect(statusText(slot)).toBe("the token was refused"));
       expect(spy).toHaveBeenCalledOnce();
+      expect(
+        slot
+          .querySelector("form[data-forge-token] input[type='password']")!
+          .getAttribute("aria-invalid"),
+        "a token refusal marks Token",
+      ).toBe("true");
+      expect(slot.querySelector("[data-forge-host]")!.hasAttribute("aria-invalid")).toBe(false);
     });
 
     it("keeps Connect busy from the press until the token connect lands, across both calls", async () => {

@@ -140,6 +140,35 @@ describe("setError", () => {
     expect(optional.hasAttribute("aria-invalid")).toBe(false);
   });
 
+  it("points the field it marks at the line until the line clears", () => {
+    const { ctl, optional } = row();
+    optional.setAttribute("aria-describedby", "name-hint");
+    ctl.setError("refused", optional);
+    expect(optional.getAttribute("aria-describedby")?.split(" ")).toEqual([
+      "name-hint",
+      "thing-error",
+    ]);
+    ctl.setError(null);
+    expect(optional.getAttribute("aria-describedby")).toBe("name-hint");
+  });
+
+  it("points a field outside the form at the line, and a clear leaves it described by nothing", () => {
+    const { ctl } = row();
+    const outside = document.createElement("input");
+    document.body.append(outside);
+    ctl.setError("refused", outside);
+    expect(outside.getAttribute("aria-describedby")).toBe("thing-error");
+    ctl.setError(null);
+    expect(outside.hasAttribute("aria-describedby")).toBe(false);
+  });
+
+  it("keeps a field's own link to the line when its mark clears", () => {
+    const { ctl, required } = row();
+    ctl.setError("refused", required);
+    ctl.setError(null);
+    expect(required.getAttribute("aria-describedby")).toBe("thing-error");
+  });
+
   it("takes nodes, such as a Retry button", () => {
     const { ctl, error } = row();
     const retry = document.createElement("button");

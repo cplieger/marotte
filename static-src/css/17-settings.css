@@ -126,7 +126,6 @@
   gap: var(--sp-2);
 }
 
-/* The "+" add-account pill trails the header row. */
 .forge-kind-header > .action-pill {
   margin-inline-start: auto;
 }
@@ -1589,7 +1588,7 @@ select.native-rule-effect:focus-visible {
   }
 }
 
-/* --- Add rows (.add-form, built by add-form.ts) ----------------------------
+/* --- Add rows (.add-form, wired by add-form.ts) ----------------------------
  * Every Settings adder: its labelled fields wrap inside .add-form-fields, the
  * submit follows the last field on its line, and the error line takes a row of
  * its own. A grid column, not a wrapping flex item, so the button can never

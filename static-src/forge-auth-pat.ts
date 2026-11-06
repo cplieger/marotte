@@ -52,10 +52,18 @@ export interface PATFormDeps {
   connected: (slot: HTMLElement, id: string) => void;
 }
 
+/** The server's refusal codes whose remedy is a corrected address, so the Server field is the one marked. */
+const HOST_REFUSALS: ReadonlySet<string> = new Set([
+  "family_undetected",
+  "plaintext_refused",
+  "private_address_refused",
+]);
+
 /** The pane's two lines: progress under the row, and the row's own error line for a refusal. */
 interface Lines {
   note: (text: string) => void;
-  refuse: (why: string) => void;
+  /** `code` is the server's error code, when the refusal came from it. */
+  refuse: (why: string, code?: string) => void;
 }
 
 /** Connects with the host and token read once per press. Resolves to the id of the connection the server saved, or
@@ -140,9 +148,12 @@ function tokenForm(
         note: (text) => {
           status.textContent = text;
         },
-        refuse: (why) => {
+        refuse: (why, code) => {
           status.textContent = "";
-          row.setError(why, tokenInput);
+          row.setError(
+            why,
+            code !== undefined && HOST_REFUSALS.has(code) ? target.hostInput : tokenInput,
+          );
         },
       };
       lines.note("");
@@ -171,7 +182,7 @@ async function connectAs(
     return null;
   }
   if (o.status === "error") {
-    lines.refuse(o.error.message);
+    lines.refuse(o.error.message, o.error.code);
     return null;
   }
   if (o.value.forge_id === "") {
@@ -197,6 +208,7 @@ async function detectThenConnect(
       o.error.code === "family_undetected"
         ? `${host} did not answer as a supported forge (GitHub, GitLab, Gitea or Forgejo). Check the address.`
         : o.error.message,
+      o.error.code,
     );
     return null;
   }
