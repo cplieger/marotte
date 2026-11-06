@@ -1,5 +1,6 @@
-// A passing tool-trigger hook folds into its tool group's header badge; every other hook keeps its row. Rendered
-// through the production dispatcher, so the fold, the header and the window's predicates are the shipped ones.
+// A passing hook folds into its tool group's header badge, whatever its trigger; one that printed or failed keeps its
+// row. Rendered through the production dispatcher, so the fold, the header and the window's predicates are the
+// shipped ones.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { userEvent } from "vitest/browser";
@@ -258,6 +259,46 @@ describe("passing tool-trigger hooks fold into the group header", () => {
   });
 });
 
+describe("passing turn hooks fold into the group they sit in", () => {
+  it("folds a prompt-submit hook and an unresolved-trigger hook, counting them in the badge", async () => {
+    const r = render((t) => [
+      hook(t, 1, "prompt check", { hook_trigger: "UserPromptSubmit" }),
+      untriggered(hook(t, 2, "mystery")),
+      call(t, 3, { id: "cmd-a" }),
+      hook(t, 4, GUARDS[0].name),
+    ]);
+    expect(shownHookRows(r.body)).toHaveLength(0);
+    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("3 hooks ran");
+    await userEvent.click(hooksButton(r.body));
+    await expect
+      .poll(() => popoverTriggers())
+      .toEqual(["at turn start (prompt sent)", "trigger unknown", "before a tool runs"]);
+  });
+
+  it("folds a stop hook after the group's last command", async () => {
+    const r = render((t) => [
+      call(t, 1, { id: "cmd-a" }),
+      hook(t, 2, "stop check", { hook_trigger: "Stop" }),
+    ]);
+    expect(shownHookRows(r.body)).toHaveLength(0);
+    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("1 hook ran");
+    await userEvent.click(hooksButton(r.body));
+    await expect.poll(() => popoverTriggers()).toEqual(["at turn end (agent stops)"]);
+  });
+
+  it("folds a turn hook in a refused group, where the tool-trigger and unresolved-trigger hooks unfold", () => {
+    const r = render((t) => [
+      hook(t, 1, "prompt check", { hook_trigger: "UserPromptSubmit" }),
+      call(t, 2, { id: "cmd-x", title: "rm -rf /", status: "failed" }),
+      hook(t, 3, GUARDS[0].name),
+      untriggered(hook(t, 4, "mystery")),
+    ]);
+    const shown = shownHookRows(r.body).map((c) => c.dataset["title"]);
+    expect(shown).toEqual([`Hook fired: ${GUARDS[0].name}`, "Hook fired: mystery"]);
+    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("1 hook ran");
+  });
+});
+
 describe("a hook that does something keeps its row", () => {
   it("unfolds every hook of a group whose command is refused, live", () => {
     const r = render((t) => guardedCommands(t, 4));
@@ -302,16 +343,29 @@ describe("a hook that does something keeps its row", () => {
     expect(badge(r.body)?.textContent).toContain("1");
   });
 
-  it("keeps a prompt-submit hook and an unresolved-trigger hook as rows", () => {
+  it("keeps a printing and a failed turn hook as rows, folding the quiet one", () => {
     const r = render((t) => [
-      hook(t, 1, "prompt check", { hook_trigger: "UserPromptSubmit" }),
-      untriggered(hook(t, 2, "mystery")),
+      hook(t, 1, "prompt printer", { hook_trigger: "UserPromptSubmit", output: "3 unread" }),
+      hook(t, 2, "prompt check", { hook_trigger: "UserPromptSubmit" }),
       call(t, 3, { id: "cmd-a" }),
-      hook(t, 4, GUARDS[0].name),
+      hook(t, 4, "stop broken", { hook_trigger: "Stop", status: "failed" }),
     ]);
     const shown = shownHookRows(r.body).map((c) => c.dataset["title"]);
-    expect(shown).toEqual(["Hook fired: prompt check", "Hook fired: mystery"]);
-    expect(badge(r.body)?.textContent).toContain("1");
+    expect(shown).toEqual(["Hook fired: prompt printer", "Hook fired: stop broken"]);
+    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("1 hook ran");
+  });
+
+  it("keeps a quiet turn hook as a row when its group holds no other card", () => {
+    const r = render((t) => [
+      hook(t, 1, "prompt check", { hook_trigger: "UserPromptSubmit" }),
+      entry(t, 2, "text", { text: "on it" }, `${t}-say#2`),
+      call(t, 3, { id: "cmd-a" }),
+      entry(t, 4, "text", { text: "done" }, `${t}-say#4`),
+      hook(t, 5, "stop check", { hook_trigger: "Stop" }),
+    ]);
+    const shown = shownHookRows(r.body).map((c) => c.dataset["title"]);
+    expect(shown).toEqual(["Hook fired: prompt check", "Hook fired: stop check"]);
+    expect(r.body.querySelector(".tool-group-hooks")).toBeNull();
   });
 
   it("leaves hooks out of the header summary: a hook row is no operation", () => {
@@ -324,7 +378,7 @@ describe("a hook that does something keeps its row", () => {
     ]);
     const count = header(r.body).querySelector(".tool-group-count")?.textContent ?? "";
     expect(count).toBe("2 operations: 1 command, 1 edit");
-    expect(badge(r.body)?.textContent).toContain("2");
+    expect(badge(r.body)?.textContent).toContain("3");
   });
 
   it("still names a failed hook row in the header, without counting it as an operation", () => {
@@ -550,6 +604,34 @@ describe("Show hook status off", () => {
       "Hook fired: broken",
     ]);
     expect(shownRows(r.body).some((c) => c.dataset["title"] === "rm -rf /")).toBe(true);
+  });
+
+  it("hides every quiet turn hook, beside a command or a refused one, and draws no badge for them", () => {
+    setHookStatusShown(false);
+    const r = render((t) => [
+      hook(t, 1, "prompt check", { hook_trigger: "UserPromptSubmit" }),
+      untriggered(hook(t, 2, "mystery")),
+      call(t, 3, { id: "cmd-a" }),
+      hook(t, 4, "stop check", { hook_trigger: "Stop" }),
+      entry(t, 5, "text", { text: "between" }, `${t}-say#5`),
+      hook(t, 6, "spawn check", { hook_trigger: "SessionStart" }),
+      call(t, 7, { id: "cmd-x", title: "rm -rf /", status: "failed" }),
+    ]);
+    expect(shownHookRows(r.body)).toHaveLength(0);
+    expect(r.body.querySelector(".tool-group-hooks")).toBeNull();
+  });
+
+  it("hides an unresolved-trigger hook a refused group kept as a row once the switch turns off", () => {
+    const r = render((t) => [
+      hook(t, 1, "prompt check", { hook_trigger: "UserPromptSubmit" }),
+      call(t, 2, { id: "cmd-x", title: "rm -rf /", status: "failed" }),
+      untriggered(hook(t, 3, "mystery")),
+    ]);
+    expect(shownHookRows(r.body).map((c) => c.dataset["title"])).toEqual(["Hook fired: mystery"]);
+    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("1 hook ran");
+    setHookStatusShown(false);
+    expect(shownHookRows(r.body)).toHaveLength(0);
+    expect(r.body.querySelector(".tool-group-hooks")).toBeNull();
   });
 
   it("draws nothing for a wake turn holding only quiet stop hooks", () => {

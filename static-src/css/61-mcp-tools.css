@@ -129,7 +129,7 @@
 }
 
 /* THE TURN FOOTER'S CONTROL BOX for the action buttons, the ledger trigger and
-   Rewind, and the code block's header buttons: ONE definition, so they cannot drift.
+   Rewind, the code block's header buttons and a tool group's hooks badge: ONE definition, so they cannot drift.
    The paint stays under the hit floor so each control keeps air on every side in the
    band (29-turns.css); the shared expander below holds the target. The menu rows
    below put their own floor back.
@@ -138,7 +138,8 @@
 .turn-action-btn,
 .turn-ledger-summary,
 .turn-rewind,
-.code-act-btn {
+.code-act-btn,
+.tool-group-hooks {
   height: var(--ctl-h-sm);
   border: none;
   background: transparent;
@@ -183,7 +184,8 @@
 .turn-action-btn:hover,
 .turn-ledger-summary:hover,
 .turn-rewind:hover,
-.code-act-btn:hover {
+.code-act-btn:hover,
+.tool-group-hooks:hover {
   background: var(--c-hover);
   color: var(--c-text-primary);
 }
