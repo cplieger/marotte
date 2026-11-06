@@ -22,6 +22,7 @@ import {
 import { refreshChatView } from "./chat.js";
 import { chatTurnLive, get, isThinking, messagesVersionOf } from "./store.js";
 import { laneSig } from "./store-signals.js";
+import { onHookVisibility } from "./hook-fold.js";
 import { ICON_TAB_AGENT } from "./icons.js";
 import { blockShape, shapeExtends, sliceSubagent, type SubagentSlice } from "./subagent-slice.js";
 import { subagentToExec } from "./subagent-exec-source.js";
@@ -124,6 +125,18 @@ function installEffects(): void {
     return;
   }
   effectsInstalled = true;
+
+  // The switch moves which hook entries draw a card (`hookRenders`), which only a rebuild re-decides.
+  onHookVisibility(() => {
+    const m = mounted;
+    if (m === undefined) {
+      return;
+    }
+    for (const [id, rec] of m.bodies) {
+      rec.shape = [];
+      renderBody(rec, m.chatID, id, m.slice);
+    }
+  });
 
   // DEMAND is a SECOND effect whose ONLY tracked read is `openSubagentRefs()`; in the paint effect
   // it would repaint on every tab mutation (as `run-dots.ts` separates seed and paint).

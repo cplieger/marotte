@@ -9,6 +9,7 @@ import {
   updateDetachedBody,
 } from "./messages-blocks.js";
 import { buildRequestHeader } from "./fundamentals/turn-header.js";
+import { onHookVisibility } from "./hook-fold.js";
 import { blockShape, shapeExtends } from "./subagent-slice.js";
 import type { Turn } from "./turns.js";
 
@@ -40,6 +41,8 @@ interface TurnRender {
   /** The entry shape already mounted, for the update-versus-rebuild decision. */
   shape: readonly string[];
   sealed: boolean;
+  /** The last paint, which a Show hook status flip rebuilds from. */
+  last: RunStepPaint;
 }
 
 /** The pane's ROOT LANE is `""`. */
@@ -52,7 +55,7 @@ export function createRunStepStream(hostFor: StepHostFor): RunStepStream {
   const renders = new Map<string, TurnRender>();
 
   function paintTurn(nodePath: string, entry: RunStepPaint): void {
-    const { turn, live } = entry;
+    const { turn } = entry;
     const shape = blockShape(turn.body);
     let rec = renders.get(turn.id);
     if (rec === undefined) {
@@ -61,9 +64,15 @@ export function createRunStepStream(hostFor: StepHostFor): RunStepStream {
       const heading =
         request === "" ? undefined : buildRequestHeader(request, turn.trigger?.caller);
       hostFor(nodePath).append(...(heading === undefined ? [box] : [heading, box]));
-      rec = { heading, box, shape: [], sealed: false };
+      rec = { heading, box, shape: [], sealed: false, last: entry };
       renders.set(turn.id, rec);
     }
+    rec.last = entry;
+    render(rec, shape);
+  }
+
+  function render(rec: TurnRender, shape: readonly string[]): void {
+    const { turn, live } = rec.last;
     // The dispatcher's incremental update appends past a watermark, so it holds only while the
     // mounted prefix is unchanged. Tail growth keeps it; a re-read filling a hole inserts a
     // same-kind entry mid-turn, which is what `blockShape` carries `seq` for.
@@ -88,6 +97,14 @@ export function createRunStepStream(hostFor: StepHostFor): RunStepStream {
     }
   }
 
+  // The switch moves which hook entries draw a card (`hookRenders`), which only a rebuild re-decides.
+  const stopHookVisibility = onHookVisibility(() => {
+    for (const rec of renders.values()) {
+      rec.shape = [];
+      render(rec, blockShape(rec.last.turn.body));
+    }
+  });
+
   return {
     apply(paints) {
       const seen = new Set<string>();
@@ -110,6 +127,7 @@ export function createRunStepStream(hostFor: StepHostFor): RunStepStream {
       }
     },
     dispose() {
+      stopHookVisibility();
       for (const turnID of renders.keys()) {
         disposeDetachedBody(turnID, ROOT_LANE);
       }
