@@ -283,25 +283,10 @@ describe("a switch's cover lifts with its paint, and only a switch raises it", (
       () => true,
       async () => {
         expect(await paintSwitchToB()).toBe(true);
-        coverModule.noteSwitchRequest();
         coverModule.holdCover("cv-a");
         await nextTask();
         await nextTask();
         expect(coverUp(), "B's deferred lift uncovered a cover now held for A").toBe(true);
-      },
-    );
-  });
-
-  it("waits a task more when a switch was requested before the deferred lift", async () => {
-    await withInputPending(
-      () => true,
-      async () => {
-        expect(await paintSwitchToB()).toBe(true);
-        coverModule.noteSwitchRequest();
-        await nextTask();
-        expect(coverUp(), "lifted in the task a switch was requested before").toBe(true);
-        await nextTask();
-        expect(coverUp(), "a requested switch that held nothing kept the cover up").toBe(false);
       },
     );
   });

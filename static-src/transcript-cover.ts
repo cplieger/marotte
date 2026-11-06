@@ -11,20 +11,8 @@ let cover: HTMLDivElement | null = null;
 /** The chat the cover stands for; "" while it is down. */
 let holder = "";
 
-/** Bumped by every switch request (a tab activation, a history navigation), never by a press or a
- *  key that requests none. */
-let switchGen = 0;
-
-/** A release deferred to a later task, checked against `switchGen`; replaced by any hold or drop. */
-interface PendingLift {
-  gen: number;
-}
-let pendingLift: PendingLift | null = null;
-
-/** Count a switch request: a release deferred before it waits a task more for that switch. */
-export function noteSwitchRequest(): void {
-  switchGen += 1;
-}
+/** A release deferred to the next task; any hold or drop in between replaces it. */
+let pendingLift: object | null = null;
 
 interface InputScheduling {
   isInputPending?: () => boolean;
@@ -35,22 +23,6 @@ interface InputScheduling {
 function inputPending(): boolean {
   const scheduling = (navigator as Navigator & { scheduling?: InputScheduling }).scheduling;
   return scheduling?.isInputPending?.() === true;
-}
-
-/** Lift the cover for `p` in a later task, once no switch was requested since the last check; a
- *  hold or drop in between replaced it. */
-function liftLater(p: PendingLift): void {
-  setTimeout(() => {
-    if (pendingLift !== p) {
-      return;
-    }
-    if (p.gen !== switchGen) {
-      p.gen = switchGen;
-      liftLater(p);
-      return;
-    }
-    dropCover();
-  }, 0);
 }
 
 function ensureCover(): HTMLDivElement {
@@ -110,8 +82,8 @@ export function inertUnderCover(): void {
 }
 
 /** Lift the cover in this task when `chatID` is the chat it stands for, unless the browser reports
- *  input waiting, which may request another switch: then a task later, once no switch was
- *  requested since. A release for any other chat is a paint the cover is not waiting on. */
+ *  input waiting, which may request another switch: then in the next task, unless a hold or drop
+ *  came first. A release for any other chat is a paint the cover is not waiting on. */
 export function releaseCover(chatID: string): void {
   if (holder === "" || holder !== chatID || pendingLift !== null) {
     return;
@@ -120,9 +92,13 @@ export function releaseCover(chatID: string): void {
     dropCover();
     return;
   }
-  const p = { gen: switchGen };
+  const p = {};
   pendingLift = p;
-  liftLater(p);
+  setTimeout(() => {
+    if (pendingLift === p) {
+      dropCover();
+    }
+  }, 0);
 }
 
 /** Lift a cover held for any chat but `chatID`: the reader came back to the mounted transcript
