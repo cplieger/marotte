@@ -99,16 +99,17 @@ func (p *Poller) Poll(ctx context.Context, fr FeedRules) {
 func (p *Poller) load(r *launchrule.Rule, f Feed, start time.Time) *pollRule {
 	st, err := p.store.State(r.ID)
 	if err != nil {
-		slog.Debug("trigger poll skipped a rule", "rule_id", r.ID, "error", err)
+		slog.Debug(logMsgRuleSkipped, "rule_id", r.ID, "error", err)
 		return nil
 	}
 	es, err := decodeState(&st)
 	if err != nil {
-		slog.Error("trigger poll skipped a rule: its state does not decode", "rule_id", r.ID, "error", err)
+		slog.Error(logMsgStateBad, "rule_id", r.ID, "error", err)
 		return nil
 	}
 	before, err := json.Marshal(&st)
 	if err != nil {
+		slog.Error(logMsgRuleSkipped, "rule_id", r.ID, "error", err)
 		return nil
 	}
 	return &pollRule{rule: r, ev: r.When.Event, feed: f, start: start, st: es, before: before, marks: p.marks}

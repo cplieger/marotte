@@ -32,7 +32,7 @@ type eventRuleChecker interface {
 type launchRuleView struct {
 	NextRunAt *time.Time         `json:"next_run_at,omitempty"`
 	Status    *launchrule.Status `json:"status,omitempty"`
-	// Cursor and HeldEvents are an event rule's cursor counts and held events.
+	// Set only for event rules.
 	Cursor     *trigger.CursorSummary `json:"cursor,omitempty"`
 	Error      string                 `json:"error,omitempty"`
 	HeldEvents []trigger.HeldEvent    `json:"held_events,omitempty"`

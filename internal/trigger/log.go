@@ -10,4 +10,6 @@ const (
 	logMsgPoll          = "trigger poll"
 	logMsgLabelsCut     = "trigger labels cut"
 	logMsgNotWritten    = "launch rules not written"
+	logMsgRuleSkipped   = "trigger poll skipped a rule"
+	logMsgStateBad      = "trigger poll skipped a rule: its state does not decode"
 )

@@ -2,6 +2,7 @@ package trigger
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -227,6 +228,48 @@ func TestResultWindowRecordsGapNotResumed(t *testing.T) {
 	}
 	if got := inputOf(h.queued(r.ID), "run_id"); !eq(got, []string{"41"}) {
 		t.Errorf("queued %v, want the run the window listed", got)
+	}
+}
+
+func TestResultWindowExtendsOverlappingGap(t *testing.T) {
+	logs := captureLogs(t)
+	h := newHarness(t)
+	r := h.create(runSpec("success"))
+	h.runPage()
+	h.poll()
+	window := func(id int64, created time.Time, omitted int) {
+		h.src.runs = append(h.src.runs, forgeapi.Page[forgeapi.Run]{
+			Items:   []forgeapi.Run{run(id, forgeapi.CheckPassing, created)},
+			Partial: &forgeapi.Partial{Reason: forgeapi.PartialResultWindow, Fetched: 1000, OmittedAtLeast: omitted},
+		})
+	}
+	// Clean walks first, so each windowed walk's bound sits past the baseline and moves with last_complete.
+	for _, at := range []time.Duration{20 * time.Hour, 40 * time.Hour} {
+		h.pollAt(pollStart.Add(at))
+	}
+	crowded := pollStart.Add(40*time.Hour + 30*time.Minute)
+	for i, at := range []time.Duration{41 * time.Hour, 43 * time.Hour, 45 * time.Hour} {
+		window(41, crowded, 45+15*i)
+		h.pollAt(pollStart.Add(at))
+	}
+	g := h.gapsOf(r.ID, launchrule.GapResultWindow)
+	if len(g) != 1 || !g[0].To.Equal(pollStart.Add(45*time.Hour)) || g[0].OmittedAtLeast != 75 {
+		t.Errorf("gaps = %+v, want one result_window to the last poll omitting at least 75", g)
+	}
+	if n := strings.Count(logs.String(), logMsgCatchUpGap); n != 1 {
+		t.Errorf("logged %d catch-up gaps over one crowded stretch, want 1", n)
+	}
+
+	for _, at := range []time.Duration{60 * time.Hour, 80 * time.Hour} {
+		h.pollAt(pollStart.Add(at))
+	}
+	window(42, pollStart.Add(80*time.Hour+30*time.Minute), 10)
+	h.pollAt(pollStart.Add(81 * time.Hour))
+	if g := h.gapsOf(r.ID, launchrule.GapResultWindow); len(g) != 2 {
+		t.Errorf("gaps = %+v, want a second result_window after a clean stretch", g)
+	}
+	if n := strings.Count(logs.String(), logMsgCatchUpGap); n != 2 {
+		t.Errorf("logged %d catch-up gaps, want 2", n)
 	}
 }
 

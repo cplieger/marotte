@@ -121,15 +121,27 @@ func (pr *pollRule) noteRunWalk(c *runCursor, w *Walk[forgeapi.Run], bound, h ti
 		pr.recordGap(&launchrule.Gap{Cause: launchrule.GapOutage, From: c.LastComplete, To: pr.start})
 	}
 	if w.Partial != nil && w.Partial.Reason == forgeapi.PartialResultWindow {
-		pr.recordGap(&launchrule.Gap{
-			Cause: launchrule.GapResultWindow, From: bound, To: pr.start, OmittedAtLeast: w.Partial.OmittedAtLeast,
-		})
+		pr.noteResultWindow(bound, w.Partial.OmittedAtLeast)
 	}
 	for id, e := range c.Runs {
 		if e.Hold == holdPending && !e.CreatedAt.Before(bound) {
 			e.Unlisted = !listed[id]
 		}
 	}
+}
+
+// noteResultWindow records a walk the result window ended. A crowded second stays inside every walk until the
+// bound passes it, so a result_window gap the walk overlaps is extended in place and not logged again.
+func (pr *pollRule) noteResultWindow(bound time.Time, omitted int) {
+	gaps := pr.st.raw.Status.Gaps
+	for i := len(gaps) - 1; i >= 0; i-- {
+		if g := &gaps[i]; g.Cause == launchrule.GapResultWindow && !g.To.Before(bound) {
+			g.To = pr.start
+			g.OmittedAtLeast = max(g.OmittedAtLeast, omitted)
+			return
+		}
+	}
+	pr.recordGap(&launchrule.Gap{Cause: launchrule.GapResultWindow, From: bound, To: pr.start, OmittedAtLeast: omitted})
 }
 
 // runNotes are the row's remarks on a rule's watched runs at now: a run reading an unknown state for a day, and a
