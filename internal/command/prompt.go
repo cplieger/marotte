@@ -852,6 +852,7 @@ var authErrorNames = []string{
 	"TokenExpiredError",
 	"CredentialAbsentError",
 	"AuthRefreshFailedError",
+	"SignInRequiredError",
 	"ModelRegistryUnauthenticatedError",
 	"AccessDeniedError",
 	"MISSING_TOKEN",

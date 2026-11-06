@@ -2234,7 +2234,7 @@ describe("run view step transcripts", () => {
         "wf_1:limited": {
           outcome: "failed",
           failure_kind: "model_call_limit",
-          failure_reason: "kiro-cli stopped this step after 300 model calls in one turn.",
+          failure_reason: "kiro-cli stopped this step at its model-call limit for one turn.",
         },
       },
     });

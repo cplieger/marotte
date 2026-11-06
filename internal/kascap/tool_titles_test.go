@@ -73,8 +73,10 @@ func declaredToolMap(t *testing.T, name string) map[string]string {
 }
 
 // toolIDMetaSetRe matches the set of action types KAS stamps `_meta.kiro.toolId` for, declared
-// beside the disclose_context reader.
-var toolIDMetaSetRe = regexp.MustCompile(`new Set\(\[((?:"[a-z_]+",?)+)\]\);function [A-Za-z0-9_$]+\(t\)\{return [A-Za-z0-9_$]+\.has\(t\)\}function [A-Za-z0-9_$]+\(t,e\)\{if\(t!=="disclose_context"`)
+// beside the disclose_context reader. From 3.1.0 a keep-names call (`a(f,"isToolIdRoutedActionType");`)
+// follows the membership function.
+var toolIDMetaSetRe = regexp.MustCompile(`new Set\(\[((?:"[a-z_]+",?)+)\]\);function [A-Za-z0-9_$]+\(t\)\{return [A-Za-z0-9_$]+\.has\(t\)\}` +
+	`(?:[A-Za-z0-9_$]+\([A-Za-z0-9_$]+,"[A-Za-z]+"\);)?function [A-Za-z0-9_$]+\(t,e\)\{if\(t!=="disclose_context"`)
 
 // The pinned agent server titles a built-in from its tool class (`static id="x";static title="Y"`)
 // or definition object (`{id:"x",title:"Y"`), else falls back to the bare id when it carries no

@@ -39,13 +39,23 @@ func readParentControlReasons(t *testing.T) parentControlReasons {
 func parentControlFindings(src string, want parentControlReasons) []string {
 	var out []string
 	bound := func(literal string) string {
-		re := regexp.MustCompile(`(` + jsIdent + `)=` + regexp.QuoteMeta(strconv.Quote(literal)))
-		found := re.FindAllStringSubmatch(src, -1)
+		lit := "=" + strconv.Quote(literal)
+		var found []string
+		for i := 0; ; {
+			j := strings.Index(src[i:], lit)
+			if j < 0 {
+				break
+			}
+			if name, _ := identBefore(src, i+j); name != "" {
+				found = append(found, name)
+			}
+			i += j + len(lit)
+		}
 		if len(found) != 1 {
 			out = append(out, "found "+strconv.Itoa(len(found))+" bindings of "+strconv.Quote(literal)+", want exactly 1")
 			return ""
 		}
-		return found[0][1]
+		return found[0]
 	}
 	pause, resume := bound(want.Pause), bound(want.Resume)
 	for _, c := range []struct{ what, ident string }{{"pause", pause}, {"resume", resume}} {

@@ -71,6 +71,15 @@ func TestStepClose_GradedUnderKASsRecord(t *testing.T) {
 		},
 		{desc: "no signal on a completed step names the limit", close: toolUse, kas: unsignalled, known: true, want: limit},
 		{
+			desc:  "a max_turn_requests stop on a completed step names the limit",
+			close: stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: marotte.StopReasonMaxTurnRequests},
+			kas:   unsignalled, known: true,
+			want: stepClose{
+				outcome: marotte.TurnOutcomeFailed, kind: marotte.FailureKindModelCallLimit,
+				reason: marotte.ModelCallLimitStepReason, rawStop: marotte.StopReasonMaxTurnRequests,
+			},
+		},
+		{
 			desc:  "KAS's own failure keeps the close",
 			close: stepClose{outcome: marotte.TurnOutcomeFailed, rawStop: marotte.StopReasonToolUse},
 			kas:   workflow.StepRecord{Status: "failed"}, known: true,

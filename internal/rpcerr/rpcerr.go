@@ -141,6 +141,7 @@ var knownClasses = map[string]struct{}{
 	"TokenExpiredError":                 {},
 	"CredentialAbsentError":             {},
 	"AuthRefreshFailedError":            {},
+	"SignInRequiredError":               {},
 	"AccessDeniedError":                 {},
 	"AbortedError":                      {},
 }

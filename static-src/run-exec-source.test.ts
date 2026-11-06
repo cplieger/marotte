@@ -1224,7 +1224,7 @@ describe("the plan revision notice", () => {
 // limit; only the run log's close knows, and it arrives as the reply's `step_ends`.
 describe("runToExec reads the run log's step ends", () => {
   const CAPPED =
-    "kiro-cli stopped this step after 300 model calls in one turn, so its work may be unfinished. Rerun the step, or split its work into smaller steps.";
+    "kiro-cli stopped this step at its model-call limit for one turn, so its work may be unfinished. Rerun the step, or split its work into smaller steps.";
   const tree = (...children: unknown[]) =>
     stateWith({ nodeId: "wf_1", type: "sequence", status: "completed", children });
 

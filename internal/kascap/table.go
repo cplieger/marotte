@@ -368,6 +368,18 @@ var table = []decl{
 		send:        true,
 	},
 	{
+		key:      "nonInteractive",
+		door:     doorSession,
+		resolver: resolverCapability,
+		send:     false,
+	},
+	{
+		key:      "shellEnvironment",
+		door:     doorSession,
+		resolver: resolverObject,
+		send:     false,
+	},
+	{
 		key:      "disableAutoCompaction",
 		door:     doorSession,
 		resolver: resolverSetting,
@@ -546,6 +558,12 @@ var table = []decl{
 	},
 	{
 		key:      "KIRO_FEATURE_UNIFIED_AGENT_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
+		key:      "KIRO_FEATURE_UNIVERSAL_BACKGROUND_TOOL_ENABLED",
 		door:     doorEnvironment,
 		resolver: resolverEnv,
 		send:     false,

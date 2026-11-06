@@ -1,6 +1,7 @@
 package kascap
 
 import (
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -78,8 +79,23 @@ func TestPresetRules_ResolvesSpreads(t *testing.T) {
 // presetRules returns the rules of the registry preset id, with every spread resolved.
 func presetRules(t *testing.T, src, id string) []presetRule {
 	t.Helper()
-	re := regexp.MustCompile(`(?:^|[^A-Za-z0-9_$.])(` + jsIdent + `)=\{id:"` + regexp.QuoteMeta(id) + `",`)
-	return presetObjectRules(t, src, discoverOne(t, "preset "+id, re, src), 0)
+	lit := `={id:"` + id + `",`
+	seen := make(map[string]bool)
+	for i := 0; ; {
+		j := strings.Index(src[i:], lit)
+		if j < 0 {
+			break
+		}
+		name, start := identBefore(src, i+j)
+		if name != "" && (start == 0 || src[start-1] != '.') {
+			seen[name] = true
+		}
+		i += j + len(lit)
+	}
+	if len(seen) != 1 {
+		t.Fatalf("preset %s: found %d bindings %v of `<name>%s` in the bundle, want exactly 1", id, len(seen), slices.Sorted(maps.Keys(seen)), lit)
+	}
+	return presetObjectRules(t, src, slices.Collect(maps.Keys(seen))[0], 0)
 }
 
 func presetObjectRules(t *testing.T, src, name string, depth int) []presetRule {
@@ -128,12 +144,12 @@ func parseRule(t *testing.T, obj string) presetRule {
 // jsBinding returns the index of the bracket opening name's single `name=<open>` binding.
 func jsBinding(t *testing.T, src, name string, open byte) int {
 	t.Helper()
-	re := regexp.MustCompile(`(?:^|[^A-Za-z0-9_$.])` + regexp.QuoteMeta(name) + `=` + regexp.QuoteMeta(string(open)))
-	locs := re.FindAllStringIndex(src, -1)
-	if len(locs) != 1 {
-		t.Fatalf("binding %s=%c: found %d in the bundle, want exactly 1", name, open, len(locs))
+	lit := name + "=" + string(open)
+	sites := literalSites(src, lit, false)
+	if len(sites) != 1 {
+		t.Fatalf("binding %s: found %d in the bundle, want exactly 1", lit, len(sites))
 	}
-	return locs[0][1] - 1
+	return sites[0] + len(lit) - 1
 }
 
 // topLevelKey returns the index of the bracket ending key (`rules:[`) at depth 1 of obj, or -1.

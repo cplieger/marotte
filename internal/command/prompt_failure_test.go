@@ -168,6 +168,14 @@ func TestClassifyPromptFailure(t *testing.T) {
 			}),
 			want: classAuth,
 		},
+		// kiro-cli 3.1.0's refuseWhileSignedOut throws it before the turn starts.
+		"a prompt refused while signed out is auth": {
+			err: rpcErr(t, kasServerError, "Sign in to Kiro to send a prompt.", rpcerr.Mapped{
+				ErrorType:      "SignInRequiredError",
+				RetryErrorType: "CLIENT_ERROR",
+			}),
+			want: classAuth,
+		},
 		// ModelRegistryAccessDeniedError is left out: no sign-in fixes missing model access.
 		"an entitlement refusal is not auth": {
 			err: rpcErr(t, kasServerError, "…this account does not have access to them.", rpcerr.Mapped{

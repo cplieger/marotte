@@ -101,11 +101,13 @@ func DefaultFailureReason(o TurnOutcome) string {
 }
 
 // ModelCallLimitTurnReason and ModelCallLimitStepReason are what a FailureKindModelCallLimit
-// close says, for a chat turn and a workflow step. 300 is KAS's per-turn agent iteration
-// limit (`kXi` in kiro-cli 2.28.0's acp-server.js); the stop carries no count.
+// close says, for a chat turn and a workflow step. They name no count: KAS's agentIterationLimit
+// is per graph (300 for the chat, custom and plan graphs and for the plan handoff into vibe,
+// 1000 for spec generation in kiro-cli 3.1.0's acp-server.js), and the stop carries neither the
+// count nor the graph.
 const (
-	ModelCallLimitTurnReason = "kiro-cli stopped this turn after 300 model calls, so its work may be unfinished. Type \"continue\" to carry on, or split the work into smaller prompts."
-	ModelCallLimitStepReason = "kiro-cli stopped this step after 300 model calls in one turn, so its work may be unfinished. Rerun the step, or split its work into smaller steps."
+	ModelCallLimitTurnReason = "kiro-cli stopped this turn at its model-call limit, so its work may be unfinished. Type \"continue\" to carry on, or split the work into smaller prompts."
+	ModelCallLimitStepReason = "kiro-cli stopped this step at its model-call limit for one turn, so its work may be unfinished. Rerun the step, or split its work into smaller steps."
 )
 
 // EmptyAnswerStepReason is what a FailureKindEmptyAnswer close says.
@@ -161,14 +163,14 @@ func ConcludeStopReason(stop StopReason) TurnConclusion {
 		c.Outcome = TurnOutcomeFailed
 	case StopReasonRefusal, StopReasonContentFiltered:
 		c.Outcome = TurnOutcomeRefused
-	case StopReasonToolUse:
-		// The turn-level default, not truncated-and-completed like the bounds below: at the limit
-		// the model had asked for more work. A workflow step's grade is KAS's node record's
-		// (agent's stepClose.graded), since a tool-requested turn end stops here too.
+	case StopReasonToolUse, StopReasonMaxTurnRequests:
+		// The turn-level default, not truncated-and-completed like max_tokens: at the limit the
+		// model had asked for more work. A workflow step's grade is KAS's node record's (agent's
+		// stepClose.graded), since a tool-requested turn end stops on tool_use too.
 		c.Outcome = TurnOutcomeFailed
 		c.FailureKind = FailureKindModelCallLimit
 		c.Reason = ModelCallLimitTurnReason
-	case StopReasonMaxTokens, StopReasonMaxTurnRequests:
+	case StopReasonMaxTokens:
 		// The turn finished the work it was allowed to do, so it COMPLETED with its
 		// answer cut off. Grading it failed would report a bounded turn as broken.
 		c.Outcome = TurnOutcomeCompleted

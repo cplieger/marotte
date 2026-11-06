@@ -70,10 +70,10 @@ func stepCloseOf(c *marotte.EntryTurnClose) stepClose {
 	}
 }
 
-// stoppedOnToolUse is the turn-level tell of kiro-cli's model-call limit. It is not proof on its own: kiro-cli also
-// ends a turn whose last tool asked for it with the model's tool_use stop (update_workflow's handoff_ends_turn,
-// kiro-cli 2.32.0), and only KAS's node record tells the two apart.
-func (c *stepClose) stoppedOnToolUse() bool {
+// stoppedAtCallLimit is the turn-level tell of kiro-cli's model-call limit (a tool_use or max_turn_requests stop). It
+// is not proof on its own: kiro-cli also ends a turn whose last tool asked for it with the model's tool_use stop
+// (update_workflow's handoff_ends_turn, kiro-cli 2.32.0), and only KAS's node record tells the two apart.
+func (c *stepClose) stoppedAtCallLimit() bool {
 	return marotte.ConcludeStopReason(c.rawStop).FailureKind == marotte.FailureKindModelCallLimit
 }
 
@@ -84,21 +84,21 @@ func (c *stepClose) answeredNothing() bool {
 
 // mayBeBroken is whether KAS's record could change or confirm this close's grade, so a reader needs it.
 func (c *stepClose) mayBeBroken() bool {
-	return marotte.SeverityOf(c.outcome) == marotte.TurnSeverityBroken || c.stoppedOnToolUse() || c.answeredNothing()
+	return marotte.SeverityOf(c.outcome) == marotte.TurnSeverityBroken || c.stoppedAtCallLimit() || c.answeredNothing()
 }
 
 // mayNote is whether this close's grade could call for a step note: graded never makes a close refused, and the only
-// kinds it adds are the model-call limit on a tool_use stop and the empty answer.
+// kinds it adds are the model-call limit on a tool_use or max_turn_requests stop and the empty answer.
 func (c *stepClose) mayNote() bool {
 	return c.outcome == marotte.TurnOutcomeRefused || c.kind == marotte.FailureKindModelCallLimit ||
-		c.stoppedOnToolUse() || c.answeredNothing()
+		c.stoppedAtCallLimit() || c.answeredNothing()
 }
 
 // graded is the step's end under KAS's record of the node, the authority (known is false when KAS's record was not
 // read). A step KAS completed on a success signal ended completed whatever its turn's stop. A step KAS completed with
-// no signal is the model-call limit when its turn stopped on tool_use, and an empty answer when its own turn ended it
-// saying nothing: KAS retries an empty answer only when the model sent no stop reason, so one ending end_turn
-// completes the step.
+// no signal is the model-call limit when its turn stopped on tool_use or max_turn_requests, and an empty answer when
+// its own turn ended it saying nothing: KAS retries an empty answer only when the model sent no stop reason, so one
+// ending end_turn completes the step.
 func (c *stepClose) graded(kas workflow.StepRecord, known bool) stepClose {
 	g := *c
 	switch {
@@ -109,7 +109,7 @@ func (c *stepClose) graded(kas workflow.StepRecord, known bool) stepClose {
 			return stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: g.rawStop}
 		}
 		return g
-	case kas.Completed() && g.stoppedOnToolUse():
+	case kas.Completed() && g.stoppedAtCallLimit():
 		g.outcome = marotte.TurnOutcomeFailed
 		g.kind = marotte.FailureKindModelCallLimit
 		g.reason = marotte.ModelCallLimitStepReason

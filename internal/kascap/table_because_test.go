@@ -640,6 +640,17 @@ both reach applySandboxConfigOption, whose absent config defaults to backend
 If the premise ever flips, the order is: a content_chunk handler registered and
 green, THEN a toolCallId→card join (marotte keys on terminal_id today), and only
 THEN this row's send. Never the flag first.`,
+	"capability.nonInteractive": `WITHHELD. kiro-cli 3.1.0 reads _meta.kiro.nonInteractive on session/new and
+session/load (=== true) only to add the Default v2 system prompt's "Non-interactive
+session" section, which tells the model no user can answer questions or approve, and
+that ending its turn ends the session. Every marotte chat has a user at the composer,
+and a run step's asks reach the user through its parent, so true would be false here.`,
+	"object.shellEnvironment": `WITHHELD. kiro-cli 3.1.0 reads _meta.kiro.shellEnvironment on session/new and
+session/load as {workspaceFolder: {VAR: value or null}} and overlays the folder whose
+path is the longest prefix of a command's cwd onto the environment of the shells KAS
+spawns itself (null unsets). marotte hosts every shell through terminal/* (see
+capability.agentHostsForegroundShell) with its own environment, and has no
+per-folder environment setting to carry.`,
 	"capability.agentHostsForegroundShell": `WITHHELD. kiro-cli 2.32.0 reads clientMeta.agentHostsForegroundShell when it
 picks a session's terminal host: true runs every FOREGROUND execute_bash on KAS's
 in-process terminal even though marotte declares terminal:true, while background
@@ -750,6 +761,13 @@ The 60s/300s stream-idle watchdog and its _kiro/system/notify text (default on).
 Un-gates the bundled default-v2 mode. The gate reads only the environment and the
 experiment, so this variable is the one client lever: _meta.kiro.settings.unifiedAgent,
 which the bundle's experiment-gate helper names as its settingKey, has no reader.`,
+	"env.KIRO_FEATURE_UNIVERSAL_BACKGROUND_TOOL_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The universal_background_tool experiment (default off). On, a tool call can keep
+running as a session job after its call returns, the job_list and job_cancel tools
+mount, and KAS sends _kiro/job/update and serves _kiro/job/cancel and
+_kiro/job/output, none of which marotte renders or calls. The session setting of the
+same name is recorded unclaimed, so the ramp decides there too.`,
 	"env.KIRO_FEATURE_USER_AGENT_REFACTORING_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 Backend user-agent shape; not pinned by decision.`,

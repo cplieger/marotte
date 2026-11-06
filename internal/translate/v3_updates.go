@@ -397,8 +397,8 @@ const (
 )
 
 // knownSessionInfoKinds is every `_meta.kiro.kind` KAS multiplexes through
-// session_info_update (all 30 buildSessionInfoUpdate sites plus two via
-// SessionInfoEmitter.send). It separates a deliberately ignored kind from a new one;
+// session_info_update (its buildSessionInfoUpdate and SessionInfoEmitter.send sites).
+// It separates a deliberately ignored kind from a new one;
 // membership implies nothing about consumption.
 var knownSessionInfoKinds = map[string]struct{}{
 	// Consumed kinds are ABSENT, so one reaching this table means its sub-block did not decode.
@@ -408,6 +408,7 @@ var knownSessionInfoKinds = map[string]struct{}{
 	"focus_update":        {},
 	"recap":               {},
 	"repositories_update": {},
+	"session_usage":       {},
 }
 
 // logUnconsumedInfoKind reports a session_info_update nothing in the cascade consumed: a
