@@ -1114,8 +1114,8 @@
   --run-stack: 1;
 }
 
-/* A fling over a capped list rests on a row's start, never with a row cut in half under the fold
-   row's edge. Touch only: a wheel's small steps would snap back. */
+/* A fling over a capped list that stops near a row's start settles on that start. Touch only: a
+   wheel's small steps would snap back. */
 :where(:root[data-pointer="coarse"]) .run-bar {
   scroll-snap-type: y proximity;
 
