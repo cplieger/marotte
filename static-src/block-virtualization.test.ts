@@ -133,6 +133,41 @@ function toolTurn(turnID: string, count: number): Entry[] {
 }
 
 /**
+ * FIXTURE (2b): `groups` runs of sixteen settled tool calls, each after a `thinking` entry, then a trace and one lone
+ * call, so every run mounts as a group collapsed by position and every trace sealed.
+ */
+function groupsTurn(turnID: string, groups: number): Entry[] {
+  const out: Entry[] = [turnOpen(turnID)];
+  let at = 1;
+  for (let g = 0; g < groups; g++) {
+    out.push(sealed(turnID, at++, "thinking", { text: `step ${String(g)}` }));
+    for (let c = 0; c < 16; c++) {
+      out.push(
+        sealed(turnID, at++, "tool_call", {
+          id: `${turnID}-tc${String(at)}`,
+          title: "Run Command",
+          kind: "execute",
+          status: "completed",
+          ts: at,
+        }),
+      );
+    }
+  }
+  out.push(sealed(turnID, at++, "thinking", { text: "done" }));
+  out.push(
+    sealed(turnID, at++, "tool_call", {
+      id: `${turnID}-tc${String(at)}`,
+      title: "Run Command",
+      kind: "execute",
+      status: "completed",
+      ts: at,
+    }),
+  );
+  out.push(turnClose(turnID, at));
+  return out;
+}
+
+/**
  * FIXTURE (3): `runs` stretches of `per` sealed `text` entries split by a `thinking`
  * entry: a prose RUN boundary is only reachable this way.
  */
@@ -1181,5 +1216,35 @@ describe("unmounted ordinals hold the height their rows occupied", () => {
     expect(spacerHeight(t as Turn, { from: 0, to: 0 }, "tail", "")).toBe(
       measured + boxes.length * gap,
     );
+  });
+
+  it("prices a run of collapsed tool groups at the boxes they mount as", async () => {
+    const id = chatID();
+    const groups = 5;
+    const entries = groupsTurn("groups", groups);
+    forgetHeights(["groups"]);
+    activate(id, [entries]);
+    await vi.waitFor(() => {
+      expect(mountedSeqs("groups")).toHaveLength(groups * 17 + 2);
+    });
+    const body = bodyOf("groups");
+    expect(
+      body.querySelectorAll(":scope > .tool-group.tool-group-auto-collapsed"),
+      "the premise",
+    ).toHaveLength(groups);
+    const boxes = [...body.children].filter((c) => !c.classList.contains("turn-space"));
+    const measured = boxes.reduce((px, b) => px + (b as HTMLElement).offsetHeight, 0);
+    const gap = Number.parseFloat(getComputedStyle(body).rowGap);
+    const t = projectTurns({
+      turns: new Map<string, TurnState>([["groups", { entries, openEntries: new Map() }]]),
+      turn_order: ["groups"],
+    }).find((x: Turn) => x.id === "groups");
+    expect(t).not.toBeUndefined();
+    const priced = spacerHeight(t as Turn, { from: 0, to: 0 }, "tail", "");
+    // Two px a group: a header's or a trace's line box moves with the font stack.
+    expect(
+      Math.abs(priced - (measured + boxes.length * gap)),
+      `priced ${String(priced)}px`,
+    ).toBeLessThanOrEqual(2 * groups);
   });
 });

@@ -657,6 +657,7 @@ describe("a reading line on a turn's spacer", () => {
     const c = document.createElement("div");
     c.style.cssText = "display:flex;flex-direction:column;flex-shrink:0;";
     const body = document.createElement("div");
+    body.className = "turn-body";
     let last = body;
     for (let i = 0; i < rows; i++) {
       last = document.createElement("div");
@@ -692,6 +693,92 @@ describe("a reading line on a turn's spacer", () => {
     await land();
 
     expect(Math.round(screenTop(wrap, t.last) - before)).toBe(0);
+  });
+});
+
+describe("a reading line inside a spacer while the window moves", () => {
+  /** A turn card as residency builds it: header, a body opening with its head spacer, the body's rows, then the
+   *  card's tail spacer and footer. */
+  function spacedCard(): {
+    card: HTMLElement;
+    body: HTMLElement;
+    head: HTMLElement;
+    tail: HTMLElement;
+  } {
+    const div = (css: string, cls = ""): HTMLElement => {
+      const d = document.createElement("div");
+      d.className = cls;
+      d.style.cssText = `${css};flex-shrink:0;`;
+      return d;
+    };
+    const card = div("display:flex;flex-direction:column");
+    const body = div("display:flex;flex-direction:column", "turn-body");
+    const head = div("height:300px", "turn-space");
+    body.append(head);
+    for (let i = 0; i < 6; i++) {
+      body.append(div("height:100px"));
+    }
+    const tail = div("height:300px", "turn-space");
+    card.append(div("height:40px"), body, tail, div("height:40px"));
+    messagesEl.append(card);
+    return { card, body, head, tail };
+  }
+
+  /** Rows priced at 100px that mount at 250px, in the spacer's place. */
+  const realRows = (): HTMLElement[] =>
+    [0, 1].map(() => {
+      const d = document.createElement("div");
+      d.style.cssText = "height:250px;flex-shrink:0;";
+      return d;
+    });
+
+  it("holds the mounted row nearest the line while the window mounts at either end", async () => {
+    const wrap = await reset();
+    const above = block(1000);
+    const { body, head, tail } = spacedCard();
+    block(2000);
+    await land();
+    const line = (): number => wrap.getBoundingClientRect().top + wrap.clientHeight / 3;
+    const into = (sp: HTMLElement): number =>
+      Math.round(wrap.scrollTop + sp.getBoundingClientRect().top - line() + 50);
+    const moved: Record<string, number> = {};
+    const step = async (name: string, row: () => Element, change: () => void): Promise<void> => {
+      const held = row();
+      const at = screenTop(wrap, held);
+      change();
+      await land();
+      moved[name] = Math.round(screenTop(wrap, held) - at);
+    };
+    const firstRow = (): Element => head.nextElementSibling!;
+    const lastRow = (): Element => body.lastElementChild!;
+
+    // The line 50px into the head spacer: the first mounted row is the one nearest it.
+    await readAt(wrap, into(head));
+    await step("head spacer, head mount", firstRow, () => {
+      head.style.height = "100px";
+      head.after(...realRows());
+    });
+    await step("head spacer, growth above", firstRow, () => {
+      above.style.height = "1300px";
+    });
+
+    // The line 50px into the tail spacer: the last mounted row is the one nearest it.
+    await readAt(wrap, into(tail));
+    await step("tail spacer, head mount", lastRow, () => {
+      head.style.height = "0px";
+      head.after(...realRows());
+    });
+    await step("tail spacer, tail mount", lastRow, () => {
+      tail.style.height = "100px";
+      body.append(...realRows());
+    });
+
+    expect(moved).toEqual({
+      "head spacer, head mount": 0,
+      "head spacer, growth above": 0,
+      "tail spacer, head mount": 0,
+      "tail spacer, tail mount": 0,
+    });
   });
 });
 

@@ -460,4 +460,92 @@ describe("the residency anchor under a reader's own scroll", () => {
     }
     expect(lost).toEqual([]);
   }, 120000);
+
+  it("keeps the screen full of rows at every step while the window moves under the reader", async () => {
+    await openTurns(3, 20, groupedTurn);
+    const el = scroller();
+    const box = el.getBoundingClientRect();
+    const onScreen = (): number =>
+      [...root().querySelectorAll<HTMLElement>("[data-entry-seq], .tool-group")].filter((row) => {
+        const r = row.getBoundingClientRect();
+        return r.height > 0 && r.bottom > box.top && r.top < box.bottom;
+      }).length;
+    // What dev's native anchoring keeps on this walk's screen at its thinnest; fewer shows spacer where rows were.
+    const full = 38;
+    const thin: string[] = [];
+    for (let g = 0; g < 40 && el.scrollTop > 0; g++) {
+      await readerScrollsUp(300, 12);
+      const n = onScreen();
+      if (n < full && el.scrollTop > 0) {
+        thin.push(`gesture ${String(g)}: ${String(n)} rows at ${String(el.scrollTop)}`);
+      }
+    }
+    expect(thin).toEqual([]);
+  }, 120000);
+
+  it("shows no spacer in the viewport after any step up into the turn above or down into the turn below", async () => {
+    await openTurns(3, 20, groupedTurn);
+    const el = scroller();
+    const box = el.getBoundingClientRect();
+    /** Px of spacer on screen, each clipped to its own card. */
+    const spacerShown = (): number => {
+      let px = 0;
+      for (const sp of root().querySelectorAll<HTMLElement>(".turn-space")) {
+        const card = sp.closest(".turn")?.getBoundingClientRect();
+        const r = sp.getBoundingClientRect();
+        if (card !== undefined) {
+          px += Math.max(
+            0,
+            Math.min(r.bottom, card.bottom, box.bottom) - Math.max(r.top, card.top, box.top),
+          );
+        }
+      }
+      return px;
+    };
+    const shown: string[] = [];
+    const crossed = new Set<string>();
+    let from = turnAtViewportTop();
+    const step = async (dir: "up" | "down", g: number): Promise<void> => {
+      if (dir === "up") {
+        await readerScrollsUp(300, 12);
+      } else {
+        el.dispatchEvent(new WheelEvent("wheel", { deltaY: 1 }));
+        el.scrollTo({ top: el.scrollTop + 300, behavior: "instant" });
+        for (let f = 0; f < 12; f++) {
+          await frame();
+        }
+      }
+      // A turn the walk unfolds slides its body open with the content transparent (`slideTurnFolds`): read once it lands.
+      await Promise.all(
+        root()
+          .getAnimations({ subtree: true })
+          .filter((an) => {
+            const target = (an.effect as KeyframeEffect | null)?.target;
+            return target instanceof Element && target.matches(".turn > .turn-body");
+          })
+          .map((an) => an.finished.catch(() => undefined)),
+      );
+      await frame();
+      await frame();
+      const now = turnAtViewportTop();
+      if (now !== from) {
+        crossed.add(dir);
+        from = now;
+      }
+      const px = Math.round(spacerShown());
+      if (px > 1) {
+        shown.push(`${dir} ${String(g)}: ${String(px)}px at ${String(el.scrollTop)}`);
+      }
+    };
+    for (let g = 0; g < 40 && el.scrollTop > 0; g++) {
+      await step("up", g);
+    }
+    for (let g = 0; g < 40 && el.scrollTop < el.scrollHeight - el.clientHeight - 1; g++) {
+      await step("down", g);
+    }
+    expect(crossed, "the premise: the walk crossed turn boundaries both ways").toEqual(
+      new Set(["up", "down"]),
+    );
+    expect(shown).toEqual([]);
+  }, 180000);
 });

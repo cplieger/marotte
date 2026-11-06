@@ -59,8 +59,8 @@ function entryKey(stamped: Element): string {
 }
 
 /** The index of the element of `els` on `line`: the first, in document order, whose box ends below it, provided that
- *  box starts above `limit`, or the one above a spacer the line falls on; -1 when none. Bisected, because block flow
- *  stacks siblings down the page; `skip`s and box-less elements are passed over. */
+ *  box starts above `limit`; -1 when none. Bisected, because block flow stacks siblings down the page; `skip`s and
+ *  box-less elements are passed over. */
 function onLine(
   els: HTMLCollection,
   line: number,
@@ -88,22 +88,6 @@ function onLine(
       lo = j + 1;
     }
   }
-  // A box below a spacer moves whenever the window fills that spacer, so a line on one holds the box above it.
-  for (let j = (found >= 0 ? found : els.length) - 1; j >= 0; j--) {
-    const el = els[j];
-    if (el !== undefined && isSpacer(el)) {
-      const r = el.getBoundingClientRect();
-      if (r.top <= line && line < r.bottom) {
-        for (let k = j - 1; k >= 0; k--) {
-          if (counts(els[k])) {
-            return k;
-          }
-        }
-      }
-    } else if (counts(el)) {
-      break;
-    }
-  }
   return found >= 0 && (els[found]?.getBoundingClientRect().top ?? limit) < limit ? found : -1;
 }
 
@@ -111,6 +95,61 @@ function onLine(
  *  mount. */
 function isSpacer(el: Element): boolean {
   return el.classList.contains("turn-space");
+}
+
+/** Whether `line` falls in one of `card`'s spacers, its own or its body's. */
+function inSpacer(card: Element, line: number): boolean {
+  for (const sp of card.querySelectorAll(":scope > .turn-space, :scope > * > .turn-space")) {
+    const r = sp.getBoundingClientRect();
+    if (r.top <= line && line < r.bottom) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The mounted row of `card` nearest `line` (an open tool group's member cards count as rows): its body's laid-out rows in the scrollport (`top` to `limit`) first,
+ *  else any of them, else the card's own header or footer; null when the card shows nothing. */
+function nearestRow(card: Element, line: number, top: number, limit: number): Element | null {
+  const rows: Element[] = [];
+  const chrome: Element[] = [];
+  for (const kid of card.children) {
+    if (isSpacer(kid)) {
+      continue;
+    }
+    if (kid.classList.contains("turn-body")) {
+      for (const row of kid.children) {
+        if (isSpacer(row) || row.getClientRects().length === 0) {
+          continue;
+        }
+        // An open group is a column of rows; a closed one (its region inert) shows its header alone.
+        const members = [
+          ...row.querySelectorAll(":scope > .tool-group-body > [data-entry-seq]"),
+        ].filter((m) => m.closest("[inert]") === null && m.getClientRects().length > 0);
+        rows.push(...(members.length > 0 ? members : [row]));
+      }
+    } else if (kid.getClientRects().length > 0) {
+      chrome.push(kid);
+    }
+  }
+  const dist = (el: Element): number => {
+    const r = el.getBoundingClientRect();
+    return r.bottom <= line ? line - r.bottom : r.top > line ? r.top - line : 0;
+  };
+  const nearest = (els: Element[]): Element | null => {
+    let best: Element | null = null;
+    for (const el of els) {
+      if (best === null || dist(el) < dist(best)) {
+        best = el;
+      }
+    }
+    return best;
+  };
+  const seen = rows.filter((el) => {
+    const r = el.getBoundingClientRect();
+    return r.bottom > top && r.top < limit;
+  });
+  return nearest(seen) ?? nearest(rows) ?? nearest(chrome);
 }
 
 function lineAt(scope: AnchorScope): number {
@@ -144,6 +183,33 @@ export function readingAnchor(
   const card = kids[at];
   if (card === undefined) {
     return null;
+  }
+  // Invariant: anchors are mounted rows only, and only the owner picks them; a spacer is never one. A line in a
+  // spacer holds the mounted row nearest it, so the window plans from a real ordinal, never a priced one.
+  if (inSpacer(card, line)) {
+    const row = nearestRow(card, line, box.top, limit);
+    if (row === null) {
+      return null;
+    }
+    const stamp = row.matches(ENTRY_STAMP) ? row : row.querySelector(ENTRY_STAMP);
+    const marks: ReadingAnchor["marks"][number][] = [];
+    const offset = (el: Element): number => el.getBoundingClientRect().top - line;
+    marks.push({
+      node: new WeakRef(row),
+      sel: stamp === row ? entryKey(row) : null,
+      path: [],
+      offset: offset(row),
+    });
+    if (stamp !== null && stamp !== row) {
+      marks.push({
+        node: new WeakRef(stamp),
+        sel: entryKey(stamp),
+        path: [],
+        offset: offset(stamp),
+      });
+    }
+    marks.push({ node: new WeakRef(card), sel: null, path: [], offset: offset(card) });
+    return { marks, takenTop: viewOffset(scope) };
   }
   const chain = [card];
   for (;;) {

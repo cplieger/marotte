@@ -92,6 +92,9 @@
 .steer-group {
   display: flex;
   flex-direction: column;
+  /* A row of the turn body's flex column, as every card is: `overflow: hidden` drops its automatic minimum, so a
+   * body whose height animates would squash it, and a drop would record the squashed height. */
+  flex-shrink: 0;
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: var(--r);

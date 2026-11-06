@@ -160,6 +160,8 @@ export class ScrollController {
   private floorStale = false;
   /** Whether the owner's content delivery, or a microtask it queued, is running. */
   private delivering = false;
+  /** Whether a `heldMutation` callback is running. */
+  private mutating = false;
   private childSize = new WeakMap<Element, number>();
 
   private scrollbarWidth = "";
@@ -1037,6 +1039,49 @@ export class ScrollController {
     this.endSettle();
     this.writeTop(this.scrollEl.scrollTop + px);
     this.retake();
+  }
+
+  /** The element the owner holds on the reading line while Reading, or null while Following, in a press window or a
+   *  flight, or with no laid-out text. A residency plan centres on it, so the owner and the window never hold two
+   *  different lines. */
+  readerAt(): Element | null {
+    this.attributePending();
+    if (!this.holding()) {
+      return null;
+    }
+    if (this.anchor === null) {
+      this.retake();
+    }
+    return this.anchor === null ? null : (resolveAnchor(this.viewEl, this.anchor)?.el ?? null);
+  }
+
+  /** Run a residency change (a mount, an unmount, a spacer resize, a fold) as one owner hold in this task: no frame
+   *  reader, yielded task or later plan sees the change unanswered, and the delivery after it finds no drift. */
+  heldMutation(fn: () => void): void {
+    // Re-entrant: a nested change is answered by the outermost hold, one layout for the whole batch.
+    if (this.mutating) {
+      fn();
+      return;
+    }
+    this.attributePending();
+    if (this.holding() && this.anchor === null) {
+      this.retake();
+    }
+    this.mutating = true;
+    try {
+      fn();
+    } finally {
+      this.mutating = false;
+    }
+    if (this.holding()) {
+      this.holdAnchor();
+    }
+    this.floorAfter(!this.delivering);
+  }
+
+  /** Whether the owner holds the reader's text now: Reading, with no press window or flight letting it go. */
+  private holding(): boolean {
+    return this.state === "reading" && this.press === null && this.flight === null;
   }
 
   private jumpLanding(target: HTMLElement, block: ScrollLogicalPosition): number | null {

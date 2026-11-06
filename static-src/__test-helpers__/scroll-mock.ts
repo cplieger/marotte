@@ -15,6 +15,12 @@ export const scrollMock = {
   shiftScroll: vi.fn(),
   // `jumpToOffset` moves nothing here; a suite asserting a landing drives the scroller itself.
   jumpToOffset: vi.fn((): Promise<boolean> => Promise.resolve(true)),
+  // Holds nothing, as the owner while Following: residency falls back to its own top-edge reading.
+  readerAt: vi.fn((): Element | null => null),
+  // The held change runs.
+  heldMutation: vi.fn((fn: () => void) => {
+    fn();
+  }),
   followTargetChanged: vi.fn(),
   // A real answer: a suite asserting a landing must prime it, or the two coincide for any arithmetic.
   readingLineOffset: vi.fn(() => 0),

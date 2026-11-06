@@ -51,7 +51,7 @@ import {
   toolCallSigKey,
   toolCallSigs,
 } from "./store-signals.js";
-import { recordEntryHeight, recordRowHeight } from "./block-heights.js";
+import { recordEntryHeight, recordGroupHeight, recordRowHeight } from "./block-heights.js";
 import { lineDelta } from "./diff.js";
 import { isInternalToolTitle, isSubagentInvocation, isToolActive } from "./tool-schema.js";
 import type { TurnSummaryData } from "./fundamentals/turn-footer.js";
@@ -79,6 +79,7 @@ import { planElement, updatePlanElement } from "./messages-plan.js";
 import {
   buildToolGroupShell,
   groupBody,
+  groupIsBare,
   refreshGroupHeader,
   autoCollapseGroup,
   setGroupSuperseded,
@@ -1282,8 +1283,25 @@ function recordOutgoingHeight(st: TurnRender, seq: number): void {
   const view = head === seq ? st.proseRuns.get(seq) : undefined;
   if (view === undefined) {
     recordEntryHeight(st.turnID, seq, px);
+    recordToolGroupHeight(st, el);
   } else {
     recordRowHeight(st.turnID, { from: seq, to: (view.seqs[view.seqs.length - 1] ?? seq) + 1 }, px);
+  }
+}
+
+/** Record the group `card` sits in, against the members it holds, so a spacer standing for the whole run prices
+ *  its real box; a bare shell is the card itself, which `recordEntryHeight` has. */
+function recordToolGroupHeight(st: TurnRender, card: HTMLElement): void {
+  const group = card.parentElement?.closest<HTMLElement>(".tool-group") ?? null;
+  if (group?.parentElement !== st.bodyEl || groupIsBare(group)) {
+    return;
+  }
+  const seqs = [...groupBody(group).querySelectorAll<HTMLElement>(":scope > [data-entry-seq]")].map(
+    (m) => Number(m.dataset["entrySeq"]),
+  );
+  const px = group.offsetHeight;
+  if (seqs.length > 0 && px > 0) {
+    recordGroupHeight(st.turnID, { from: Math.min(...seqs), to: Math.max(...seqs) + 1 }, px);
   }
 }
 

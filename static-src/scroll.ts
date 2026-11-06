@@ -49,6 +49,15 @@ export function jumpTo(target: HTMLElement, opts?: ScrollIntoViewOptions): void 
 export function shiftScroll(px: number): void {
   getInstance().shiftBy(px);
 }
+/** The element the scroll owner holds on the reading line, or null when it holds none (Following, a press window,
+ *  a jump in flight). */
+export function readerAt(): Element | null {
+  return getInstance().readerAt();
+}
+/** Run a residency DOM change as one hold of the reader's text, in this task. */
+export function heldMutation(fn: () => void): void {
+  getInstance().heldMutation(fn);
+}
 /** Jump to an absolute offset, parking the reader unless it lands on the end. Resolves true once it landed, false
  *  when the reader or another jump took the scroller first. A smooth jump lands instantly under reduced motion. */
 export function jumpToOffset(px: number, behavior: "instant" | "smooth"): Promise<boolean> {

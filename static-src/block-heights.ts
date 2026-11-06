@@ -12,6 +12,7 @@ import {
   type EntryRange,
   type RunResults,
 } from "./block-window.js";
+import { isInternalToolTitle } from "./tool-schema.js";
 import type { Entry, EntryToolCall } from "./types.js";
 import { payloadOf, type Turn } from "./turns.js";
 // Type-only, so this costs no import edge at runtime: `tierNow` below reads the
@@ -31,6 +32,7 @@ export const ENTRY_ESTIMATE_PX: Readonly<Record<PointerTier, EntryEstimates>> = 
     thinking: 25, // NO reserve: a sealed trace's own `<summary>` row
     runCard: 71, // 27-run-card.css `.run-card` — `auto var(--run-card-content)` + 2px
     toolCard: 38, // 14-tools.css `.tool-call` — `auto var(--btn-h)` + 2px
+    toolGroup: 38, // NO reserve: a collapsed `.tool-group`, its `--row-tap` header + 2px
     subagentCard: 71, // `.subagent-block` — a delegate's card
     planCard: 70, // `.plan-message` — `auto 2.75rem` + `--sp-3` twice + 2px
     steerNote: 62, // NO reserve: a one-line note, head + one text line + padding
@@ -44,6 +46,7 @@ export const ENTRY_ESTIMATE_PX: Readonly<Record<PointerTier, EntryEstimates>> = 
     thinking: 44,
     runCard: 91,
     toolCard: 46,
+    toolGroup: 46,
     subagentCard: 91,
     // Tier-INVARIANT: the reserve is two line boxes plus a spacing token, and the card
     // reads no control-height token (14-tools.css `.plan-message`).
@@ -61,6 +64,7 @@ export interface EntryEstimates {
   readonly thinking: number;
   readonly runCard: number;
   readonly toolCard: number;
+  readonly toolGroup: number;
   readonly subagentCard: number;
   readonly planCard: number;
   readonly steerNote: number;
@@ -101,6 +105,12 @@ const entryHeights = new Map<string, Map<number, number>>();
  * Range-keyed: a row dropped under a PARTIAL window measured that slice only.
  */
 const rowHeights = new Map<string, Map<number, { range: EntryRange; px: number }>>();
+
+/**
+ * turn id → a tool run's first member `seq` → the range its group measured and its height. Range-keyed for the
+ * reason `rowHeights` is.
+ */
+const groupHeights = new Map<string, Map<number, { range: EntryRange; px: number }>>();
 
 /** What one `tool_call` entry mounts as, in pixels. `results` is the turn's own index, so
  *  the run test costs one lookup rather than a walk over the body per call. */
@@ -179,6 +189,16 @@ export function recordRowHeight(turnID: string, range: EntryRange, px: number): 
   per.set(range.from, { range, px });
 }
 
+/** Record what one tool run's group measured when dropped, against the run's member range. */
+export function recordGroupHeight(turnID: string, range: EntryRange, px: number): void {
+  let per = groupHeights.get(turnID);
+  if (per === undefined) {
+    per = new Map<number, { range: EntryRange; px: number }>();
+    groupHeights.set(turnID, per);
+  }
+  per.set(range.from, { range, px });
+}
+
 /**
  * The pixel height of the entries one spacer stands for: everything on `side` of the
  * mounted `range`, plus the gaps they carried, measured or estimated. `lane` has NO
@@ -194,7 +214,7 @@ export function spacerHeight(
   let boxes = 0;
   for (const box of spacerBoxes(t, range, side, lane)) {
     px += box.px;
-    boxes++;
+    boxes += box.gapless === true ? 0 : 1;
   }
   // The boundary gap: the head spacer is the body's first item, so the body's own `gap` follows it; the tail
   // spacer sits under the gapless `.turn`, so its gap to the last mounted row comes from here. No boxes, no gap.
@@ -221,7 +241,7 @@ export function spacerOrdinalAt(
   let last: number | undefined;
   for (const box of spacerBoxes(t, range, side, lane)) {
     last = box.seq;
-    y += box.px + ROW_GAP_PX;
+    y += box.px + (box.gapless === true ? 0 : ROW_GAP_PX);
     if (px < y) {
       return box.seq;
     }
@@ -229,13 +249,68 @@ export function spacerOrdinalAt(
   return last;
 }
 
-/** A prose run is one box, keyed by its first `seq`. */
+/** How a rendered entry takes part in a tool group: a plain call is a member, an internal one mounts nothing, and
+ *  anything else (a delegate's card, a run card, any other kind) ends the run, as `messages-blocks.ts`
+ *  `indexGroups` breaks it. */
+function groupRole(e: Entry, results: RunResults): "member" | "none" | "break" {
+  if (e.kind !== "tool_call") {
+    return "break";
+  }
+  const call = payloadOf(e, "tool_call");
+  if (call === undefined) {
+    return "break";
+  }
+  if (isInternalToolTitle(call.title)) {
+    return "none";
+  }
+  return effectiveRunID(e, results) === "" && (call.agent_subtask_id ?? "") === ""
+    ? "member"
+    : "break";
+}
+
+/** The tool run holding member `seq`: its members in order, over the whole turn. */
+function toolRun(
+  t: Turn,
+  seq: number,
+  lane: string,
+  folds: ReturnType<typeof turnFolds>,
+  results: RunResults,
+): number[] {
+  const role = (at: number): "member" | "none" | "break" => {
+    const e = entryAt(t, at);
+    return e === undefined || !entryRenders(e, lane, folds) ? "none" : groupRole(e, results);
+  };
+  const members = [seq];
+  for (let at = seq - 1; at >= 0; at--) {
+    const r = role(at);
+    if (r === "break") {
+      break;
+    }
+    if (r === "member") {
+      members.unshift(at);
+    }
+  }
+  const span = turnSpan(t);
+  for (let at = seq + 1; at < span; at++) {
+    const r = role(at);
+    if (r === "break") {
+      break;
+    }
+    if (r === "member") {
+      members.push(at);
+    }
+  }
+  return members;
+}
+
+/** A prose run is one box, keyed by its first `seq`; a tool run of two or more is one box, its group, keyed by its
+ *  first member. */
 function* spacerBoxes(
   t: Turn,
   range: EntryRange,
   side: "head" | "tail",
   lane: string,
-): Generator<{ seq: number; px: number }> {
+): Generator<{ seq: number; px: number; gapless?: true }> {
   const span = turnSpan(t);
   const stood: EntryRange =
     side === "head"
@@ -247,6 +322,16 @@ function* spacerBoxes(
   const folds = turnFolds(t, lane);
   const per = entryHeights.get(t.id);
   const rows = rowHeights.get(t.id);
+  const groups = groupHeights.get(t.id);
+  // A group is collapsed by position once anything renders after its run (`tool-group.ts`).
+  let lastRendered = -1;
+  for (let seq = span - 1; seq >= 0 && lastRendered < 0; seq--) {
+    const e = entryAt(t, seq);
+    if (e !== undefined && entryRenders(e, lane, folds) && groupRole(e, results) !== "none") {
+      lastRendered = seq;
+    }
+  }
+  const mounted = range.to > range.from;
   // The exclusive end of the run being priced: its later members share its box.
   let runTo = -1;
   for (let seq = stood.from; seq < stood.to; seq++) {
@@ -255,7 +340,45 @@ function* spacerBoxes(
       continue;
     }
     let own: number;
-    if (e.kind === "text") {
+    const role = groupRole(e, results);
+    if (role === "none") {
+      continue;
+    }
+    if (role === "member") {
+      if (seq < runTo) {
+        continue;
+      }
+      const members = toolRun(t, seq, lane, folds, results);
+      const first = members[0] ?? seq;
+      const last = members[members.length - 1] ?? seq;
+      runTo = last + 1;
+      const inside = members.filter((m) => m >= stood.from && m < stood.to);
+      const member = (m: number): number => per?.get(m) ?? est.toolCard;
+      const collapsed = members.length > 1 && lastRendered > last;
+      // A run crossing into the mounted rows is their group's: only an expanded one grows by the members here.
+      const joined = (first < stood.from || last >= stood.to) && mounted;
+      if (joined) {
+        // Inside the mounted group each member is its own box with none of the body's gaps; under a fold, nothing.
+        for (const m of collapsed ? [] : inside) {
+          yield { seq: m, px: member(m), gapless: true };
+        }
+        continue;
+      }
+      if (first < stood.from) {
+        // An empty window splits the run across both spacers; the one holding its first member prices it.
+        continue;
+      }
+      const measured = groups?.get(first);
+      if (members.length === 1) {
+        own = member(first);
+      } else if (measured?.range.from === first && measured.range.to === last + 1) {
+        own = measured.px;
+      } else {
+        own = collapsed
+          ? est.toolGroup
+          : est.toolGroup + members.reduce((px, m) => px + member(m), 0);
+      }
+    } else if (e.kind === "text") {
       if (seq < runTo) {
         continue;
       }
@@ -280,5 +403,6 @@ export function forgetHeights(turnIDs: Iterable<string>): void {
   for (const id of turnIDs) {
     entryHeights.delete(id);
     rowHeights.delete(id);
+    groupHeights.delete(id);
   }
 }

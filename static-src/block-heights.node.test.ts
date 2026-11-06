@@ -8,6 +8,7 @@ import {
   ROW_GAP_PX,
   forgetHeights,
   recordEntryHeight,
+  recordGroupHeight,
   recordRowHeight,
   spacerHeight,
 } from "./block-heights.js";
@@ -288,14 +289,20 @@ describe("the LANE the view is rooted in", () => {
 });
 
 describe("which ordinals a spacer stands in for", () => {
-  const four = (): Turn => turn("t", [call(1), call(2), call(3), call(4)]);
+  // Four separate boxes: consecutive calls would mount as one group.
+  const four = (): Turn =>
+    turn(
+      "t",
+      [1, 2, 3, 4].map((i) => entry(i, "compaction", {})),
+    );
+  const box = FINE.row;
 
   it("prices the ordinals BEFORE the mounted range for the head spacer", () => {
-    expect(spacerHeight(four(), { from: 3, to: 5 }, "head", "")).toBe(2 * 38 + GAP_PX);
+    expect(spacerHeight(four(), { from: 3, to: 5 }, "head", "")).toBe(2 * box + GAP_PX);
   });
 
   it("prices the ordinals AFTER the mounted range for the tail spacer", () => {
-    expect(spacerHeight(four(), { from: 0, to: 3 }, "tail", "")).toBe(2 * 38 + GAP_PX + GAP_PX);
+    expect(spacerHeight(four(), { from: 0, to: 3 }, "tail", "")).toBe(2 * box + GAP_PX + GAP_PX);
   });
 
   it("stands in for nothing once the mounted range reaches the turn's own edge", () => {
@@ -306,24 +313,26 @@ describe("which ordinals a spacer stands in for", () => {
   it("clamps a range that overruns the turn instead of walking past it", () => {
     // The head spacer of a range starting past the span stands for the whole turn; the tail
     // spacer of the same range stands for nothing, because there is nothing above the span.
-    expect(spacerHeight(four(), { from: 99, to: 99 }, "head", "")).toBe(4 * 38 + 3 * GAP_PX);
+    expect(spacerHeight(four(), { from: 99, to: 99 }, "head", "")).toBe(4 * box + 3 * GAP_PX);
     expect(spacerHeight(four(), { from: 99, to: 99 }, "tail", "")).toBe(0);
   });
 
   it("charges K−1 gaps between the boxes it replaces PLUS the boundary one", () => {
     // The boundary gap: the tail spacer sits under the gapless `.turn`.
-    expect(spacerHeight(four(), { from: 0, to: 1 }, "tail", "")).toBe(4 * 38 + 3 * GAP_PX + GAP_PX);
+    expect(spacerHeight(four(), { from: 0, to: 1 }, "tail", "")).toBe(
+      4 * box + 3 * GAP_PX + GAP_PX,
+    );
   });
 
   it("charges the head spacer no boundary gap, since it is the body's first item", () => {
-    expect(spacerHeight(four(), { from: 4, to: 5 }, "head", "")).toBe(3 * 38 + 2 * GAP_PX);
+    expect(spacerHeight(four(), { from: 4, to: 5 }, "head", "")).toBe(3 * box + 2 * GAP_PX);
   });
 });
 
 describe("what a drop measured", () => {
   it("prefers a measured entry height over that entry's estimate", () => {
     recordEntryHeight("m-entry", 1, 300);
-    expect(stood(turn("m-entry", [call(1), call(2)]))).toBe(300 + GAP_PX + 38 + GAP_PX);
+    expect(stood(turn("m-entry", [call(1), text(2)]))).toBe(300 + GAP_PX + 48 + GAP_PX);
   });
 
   it("prefers the ROW measurement for a prose run the window held whole", () => {
@@ -361,5 +370,56 @@ describe("what a drop measured", () => {
     expect(stood(t)).toBe(500 + GAP_PX + 300 + GAP_PX);
     forgetHeights(["m-forget"]);
     expect(stood(t)).toBe(48 + GAP_PX + 38 + GAP_PX);
+  });
+});
+
+describe("a run of tool calls, priced as the group it mounts as", () => {
+  it("prices a run followed by another entry at the collapsed group's height", () => {
+    const t = turn("g-collapsed", [call(1), call(2), call(3), text(4)]);
+    expect(stood(t)).toBe(FINE.toolGroup + GAP_PX + 48 + GAP_PX);
+  });
+
+  it("prices the last run, which nothing follows, as an open group of its members", () => {
+    const t = turn("g-open", [text(1), call(2), call(3)]);
+    expect(stood(t)).toBe(48 + GAP_PX + FINE.toolGroup + 2 * FINE.toolCard + GAP_PX);
+  });
+
+  it("prices a lone call as a plain card", () => {
+    expect(stood(turn("g-lone", [call(1), text(2)]))).toBe(FINE.toolCard + GAP_PX + 48 + GAP_PX);
+  });
+
+  it("prefers the group's recorded height for the same run", () => {
+    recordGroupHeight("g-measured", { from: 1, to: 3 }, 120);
+    const t = turn("g-measured", [call(1), call(2), text(3)]);
+    expect(stood(t)).toBe(120 + GAP_PX + 48 + GAP_PX);
+    forgetHeights(["g-measured"]);
+  });
+
+  it("ignores a recorded height for a different run range", () => {
+    recordGroupHeight("g-stale", { from: 1, to: 2 }, 120);
+    const t = turn("g-stale", [call(1), call(2), text(3)]);
+    expect(stood(t)).toBe(FINE.toolGroup + GAP_PX + 48 + GAP_PX);
+    forgetHeights(["g-stale"]);
+  });
+
+  it("charges an internal call nothing and lets it neither break nor join the run", () => {
+    const t = turn("g-internal", [
+      call(1),
+      call(2, { title: "Fetching your cloud config" }),
+      call(3),
+      text(4),
+    ]);
+    expect(stood(t)).toBe(FINE.toolGroup + GAP_PX + 48 + GAP_PX);
+  });
+
+  it("charges the spacer nothing for members of a collapsed group that is mounted", () => {
+    const t = turn("g-joined", [call(1), call(2), call(3), call(4), text(5)]);
+    // Ordinals 1 and 2 mounted: the head-side group holds 3 and 4 under its fold.
+    expect(spacerHeight(t, { from: 1, to: 3 }, "tail", "")).toBe(48 + GAP_PX);
+  });
+
+  it("charges the spacer the members of an open group that is mounted, with no gap of their own", () => {
+    const t = turn("g-joined-open", [text(1), call(2), call(3), call(4)]);
+    expect(spacerHeight(t, { from: 1, to: 3 }, "tail", "")).toBe(2 * FINE.toolCard);
   });
 });

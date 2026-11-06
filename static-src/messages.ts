@@ -44,6 +44,10 @@ import {
   jumpTo,
   attach as attachScroll,
   detach as detachScroll,
+  readerAt,
+  heldMutation,
+  onContentResize,
+  readingLineOffset,
 } from "./scroll.js";
 import type { ViewScrollState } from "./scroll-controller.js";
 import {
@@ -406,10 +410,12 @@ function rebuildTurnBody(session: Session, t: Turn, body: HTMLElement): void {
   clearTurnSigs(t.id);
   releaseClampsIn(body);
   releaseScrollableTablesIn(body);
-  body.replaceChildren();
-  buildAssistantBody(body, t, session.id, turnIsLive(t), want);
-  // The wipe took the head spacer.
-  syncSpacers(body, t, mountedWindow(t.id) ?? want);
+  heldMutation(() => {
+    body.replaceChildren();
+    buildAssistantBody(body, t, session.id, turnIsLive(t), want);
+    // The wipe took the head spacer.
+    syncSpacers(body, t, mountedWindow(t.id) ?? want);
+  });
   reattach();
 }
 
@@ -561,9 +567,10 @@ export function mountChatView(): void {
     return mountTurnBody(chatID, turnID, t === undefined ? undefined : turnOrdinalOf(t, entryID));
   }, foldReleasedTurn);
   // Scrolling re-windows, not repaints. Two hooks: the gesture says the reader moved, and the viewport change is the
-  // frame to measure in. `onViewportChange` alone also fires for the anchoring a pass's own mutations cause.
+  // frame to measure in. `onViewportChange` alone also fires for the hold a pass's own mutations cause.
   onReaderGesture(noteReaderMoved);
   onViewportChange(windowPass);
+  onContentResize(queueCoverPass);
   onLiveEdgeRequest(mountLiveEdge);
   onBus(BUS_FOLDS_CHANGED, () => {
     const id = getActiveId();
@@ -743,11 +750,99 @@ function seenRange(turnID: string, band: Band): EntryRange | undefined {
   return from < 0 ? undefined : { from, to };
 }
 
+/**
+ * The ordinals of each openable turn that its spacers, or its stub's face, stand for inside `band`, priced as the
+ * spacers price them. Invariant: a pass mounts every turn whose box meets the band, whichever turn the reader holds,
+ * so after it no spacer shows in the viewport; the ordinal budget alone would spend itself on short rows and leave a
+ * neighbour's spacer on screen.
+ */
+function coverBand(openable: readonly Turn[], band: Band): Map<string, EntryRange> {
+  const out = new Map<string, EntryRange>();
+  const byID = new Map(openable.map((t) => [t.id, t]));
+  const line = getScrollEl().getBoundingClientRect().top + readingLineOffset();
+  for (const card of turnCards(paintRoot())) {
+    const t = byID.get(card.getAttribute(KEY_ATTR) ?? "");
+    const box = card.getBoundingClientRect();
+    if (t === undefined || box.bottom <= band.top || box.top >= band.bottom) {
+      continue;
+    }
+    const range = coverCard(t, card, box, band, line);
+    if (range !== undefined) {
+      out.set(t.id, range);
+    }
+  }
+  return out;
+}
+
+function coverCard(
+  t: Turn,
+  card: HTMLElement,
+  box: DOMRect,
+  band: Band,
+  line: number,
+): EntryRange | undefined {
+  const span = turnSpan(t);
+  const have = mountedWindow(t.id);
+  if (have === undefined) {
+    if (card.querySelector(":scope > .turn-body") !== null || span === 0) {
+      return undefined;
+    }
+    // A stub: the tail of a turn above the reader, the head of one below, as far as the band reaches past its face.
+    if (box.bottom <= line) {
+      const whole = spacerHeight(t, { from: span, to: span }, "head", "");
+      const px = Math.min(whole, box.bottom - band.top);
+      const at = spacerOrdinalAt(t, { from: span, to: span }, "head", "", Math.max(0, whole - px));
+      return at === undefined ? undefined : { from: at, to: span };
+    }
+    const at = spacerOrdinalAt(t, { from: 0, to: 0 }, "tail", "", band.bottom - box.top);
+    return at === undefined ? undefined : { from: 0, to: at + 1 };
+  }
+  let out: EntryRange | undefined;
+  const spacers = card.querySelectorAll<HTMLElement>(
+    ':scope > .turn-body > .turn-space[data-space="head"], :scope > .turn-space[data-space="tail"]',
+  );
+  for (const sp of spacers) {
+    const side = sp.dataset["space"] === "head" ? "head" : "tail";
+    const r = sp.getBoundingClientRect();
+    const lo = Math.max(band.top, r.top, box.top);
+    const hi = Math.min(band.bottom, r.bottom, box.bottom);
+    if (hi <= lo) {
+      continue;
+    }
+    const a = spacerOrdinalAt(t, have, side, "", lo - r.top);
+    const b = spacerOrdinalAt(t, have, side, "", hi - r.top);
+    if (a !== undefined && b !== undefined) {
+      const r2 = { from: Math.min(a, b), to: Math.max(a, b) + 1 };
+      out = out === undefined ? r2 : hull(out, r2);
+    }
+  }
+  return out;
+}
+
+/** Whether any turn's spacer shows inside the scrollport, the state `coverBand` exists to prevent. */
+function spacerInView(): boolean {
+  const port = getScrollEl().getBoundingClientRect();
+  for (const card of turnCards(paintRoot())) {
+    const box = card.getBoundingClientRect();
+    if (box.bottom <= port.top || box.top >= port.bottom) {
+      continue;
+    }
+    for (const sp of card.querySelectorAll(".turn-space")) {
+      const r = sp.getBoundingClientRect();
+      if (Math.min(r.bottom, box.bottom, port.bottom) - Math.max(r.top, box.top, port.top) > 0.5) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function computeFoldPlan(
   chatID: string,
   turns: readonly Turn[],
   openable: readonly Turn[],
   anchor: ResidencyAnchor | undefined,
+  growOnly = false,
 ): void {
   foldPlan.clear();
   turnByID.clear();
@@ -757,6 +852,8 @@ function computeFoldPlan(
   // The transcript's root lane; `planResidency` takes no default.
   const window = planResidency(openable, anchor, "");
   const band = anchor === undefined ? undefined : readerBand();
+  // Following covers too: a fold flush or a mount's animation can bring a spacer into a view at the live edge.
+  const covered = band === undefined ? undefined : coverBand(openable, band);
   for (const [i, t] of turns.entries()) {
     turnByID.set(t.id, t);
     const hides = turnFoldHides(t);
@@ -771,7 +868,13 @@ function computeFoldPlan(
       grown === undefined ? asked : asked === undefined || covers(grown, asked) ? grown : asked;
     // Residency never takes what the reader can see: an ordinal mounted in the band stays, whatever the budget.
     const seen = band === undefined ? undefined : seenRange(t.id, band);
-    const kept = seen === undefined ? merged : merged === undefined ? seen : hull(merged, seen);
+    const cover = covered?.get(t.id);
+    // A pass no reader move asked for only fills: it keeps every mounted ordinal, and the next reader pass trims.
+    const held = growOnly ? mountedWindow(t.id) : undefined;
+    const kept = [seen, cover, held].reduce<EntryRange | undefined>(
+      (acc, r) => (r === undefined ? acc : acc === undefined ? r : hull(acc, r)),
+      merged,
+    );
     // A turn that renders nothing is bodied whatever the budget, for `.is-bodyless`; one with rows is a stub, since
     // an empty range emits the whole-turn tail spacer.
     const range = kept ?? (rendersNothing(t) ? EMPTY_RANGE : undefined);
@@ -841,11 +944,26 @@ function residencyAnchor(openable: readonly Turn[]): ResidencyAnchor | undefined
   if (scrollEl.scrollHeight <= scrollEl.clientHeight) {
     return undefined;
   }
+  const cards = turnCards(paintRoot());
+  const grown = new Map(openable.map((t) => [t.id, t]));
+  // The scroll owner's held text, so the plan and the hold never stand on two lines.
+  const held = readerAt();
+  const heldCard = held?.closest<HTMLElement>(".turn") ?? null;
+  const from = heldCard === null ? -1 : cards.indexOf(heldCard);
+  if (held !== null && from >= 0) {
+    for (let i = from; i < cards.length; i++) {
+      const card = cards[i];
+      const t = grown.get(card?.getAttribute(KEY_ATTR) ?? "");
+      if (card !== undefined && t !== undefined) {
+        // A card stepped forward to starts below the reader, so its first ordinal is the seed.
+        return { turnID: t.id, at: i === from ? heldOrdinal(t, card, held) : 0 };
+      }
+    }
+    return undefined;
+  }
   // Rects, not `offsetTop`: `scroll.ts` `scrollFrameRect` owns why.
   const top = scrollEl.getBoundingClientRect().top + scrollEl.clientTop;
-  const cards = turnCards(paintRoot());
   const at = pickIndex(cards, top);
-  const grown = new Map(openable.map((t) => [t.id, t]));
   for (let i = at; i < cards.length; i++) {
     const card = cards[i];
     const id = card?.getAttribute(KEY_ATTR);
@@ -857,6 +975,45 @@ function residencyAnchor(openable: readonly Turn[]): ResidencyAnchor | undefined
     return i === at ? { turnID: t.id, at: cardOrdinal(t, card, top) } : { turnID: t.id, at: 0 };
   }
   return undefined;
+}
+
+/** The ordinal of `t` that `el` renders: an entry or what holds it gives its seq, the turn header 0, anything after
+ *  the body (the footer) the last mounted ordinal. A held body or card means the line is on a spacer or a gap, so the
+ *  ordinal is the one the spacer prices on the reading line. */
+function heldOrdinal(t: Turn, card: HTMLElement, el: Element): number {
+  const range = mountedWindow(t.id);
+  if (range === undefined || card.hasAttribute("data-folded")) {
+    return 0;
+  }
+  const port = getScrollEl().getBoundingClientRect();
+  const held = el.getBoundingClientRect();
+  // A held row off screen means the reader sees only spacer (a drop deep into one): the plan mounts what the
+  // spacer prices on the line, or the screen stays blank.
+  if (held.bottom <= port.top || held.top >= port.bottom) {
+    return cardOrdinal(t, card, port.top + readingLineOffset());
+  }
+  const member =
+    el.closest<HTMLElement>("[data-entry-seq]") ??
+    el.closest(".tool-group")?.querySelector<HTMLElement>("[data-entry-seq]") ??
+    null;
+  const seq = Number(member?.dataset["entrySeq"]);
+  if (member !== null && member.dataset["entryTurn"] === t.id && Number.isInteger(seq)) {
+    return seq;
+  }
+  // An open entry carries no seq: the ordinal its render files it under.
+  for (let at = range.from; at < range.to; at++) {
+    if (blockElement(t.id, at)?.contains(el) === true) {
+      return at;
+    }
+  }
+  if (card.querySelector(":scope > .turn-header")?.contains(el) === true) {
+    return 0;
+  }
+  const body = card.querySelector(":scope > .turn-body");
+  if (el === card || body?.contains(el) === true) {
+    return cardOrdinal(t, card, port.top + readingLineOffset());
+  }
+  return Math.max(range.from, range.to - 1);
 }
 
 /** The index of the last entry starting at or above the client-space `top`, or 0; a subpixel short still counts. */
@@ -1011,12 +1168,14 @@ function paint(): void {
       skel.remove();
     }
   }
-  reconcile(root, turns, turnSpec);
-  // One walk builds the card list the rail and the fold pass share.
-  const cards = turnCards(root);
-  // Re-run per full pass: the set changes as pages load and turns arrive.
-  setResidentTurns(cards);
-  applyFoldPass(session.id, turns, cards, false);
+  heldMutation(() => {
+    reconcile(root, turns, turnSpec);
+    // One walk builds the card list the rail and the fold pass share.
+    const cards = turnCards(root);
+    // Re-run per full pass: the set changes as pages load and turns arrive.
+    setResidentTurns(cards);
+    applyFoldPass(session.id, turns, cards, false);
+  });
   // After the fold pass: an unmounted card is owed no build, and a folded one builds invisibly.
   drainColdBuilds();
   finalizeStreamingIfNeeded(turns);
@@ -1040,7 +1199,7 @@ function turnCards(root: HTMLElement): HTMLElement[] {
   return out;
 }
 
-/** Not re-entrant: a pass's mutations can scroll the reader through anchoring. Across frames the plan-equality exit
+/** Not re-entrant: a pass's mutations move the scroller through the owner's hold. Across frames the plan-equality exit
  *  terminates. */
 let inWindowPass = false;
 
@@ -1051,7 +1210,7 @@ let inWindowPass = false;
 let appliedPlan = "";
 
 /**
- * Whether the reader stated a position since the last scroll pass. Anchoring and the scroll controller's own writes
+ * Whether the reader stated a position since the last scroll pass. The scroll owner's holds and other writes
  * publish no gesture, so the pass cannot schedule itself.
  */
 let readerMoved = false;
@@ -1071,7 +1230,27 @@ function mountLiveEdge(): void {
   windowPass("live-edge");
 }
 
-type PassTrigger = "scroll" | "settle" | "live-edge";
+type PassTrigger = "scroll" | "settle" | "live-edge" | "cover";
+
+let coverFrame = 0;
+
+/** After a layout change no pass answered (rows settling to their real size, a fold's animation), re-plan in the next
+ *  frame if it left a spacer in view; out of the resize delivery, where a mount would resize a delivered box. */
+function queueCoverPass(): void {
+  if (coverFrame !== 0) {
+    return;
+  }
+  coverFrame = requestAnimationFrame(() => {
+    coverFrame = 0;
+    // Reading only: Following plans from the live edge, which no fill may push past the budget.
+    if (readingState() === "reading" && spacerInView()) {
+      windowPass("cover");
+    }
+  });
+}
+
+/** How many plans one window pass may apply while a spacer still shows in the viewport. */
+const WINDOW_PASS_ROUNDS = 3;
 
 /**
  * Re-window on a settled scroll frame the reader caused, over the last full pass's projection; `openable` is
@@ -1100,17 +1279,30 @@ function windowPass(trigger: PassTrigger = "scroll"): void {
   const openable = turns.filter(
     (t, i) => isTurnOpen(session.id, t, i, turns.length) || !turnFoldHides(t),
   );
-  const anchor = residencyAnchor(openable);
-  clearArrivedPin(session.id, anchor);
-  computeFoldPlan(session.id, turns, openable, anchor);
-  if (planSignature() === appliedPlan) {
-    return; // the common case for a scroll that stays inside the overscan
-  }
-  inWindowPass = true;
-  try {
-    applyFoldPass(session.id, turns, turnCards(paintRoot()), true);
-  } finally {
-    inWindowPass = false;
+  // Rows that came out shorter than their price can leave a spacer in view after one pass; each re-plan measures
+  // them, so a few converge.
+  for (let pass = 0; pass < WINDOW_PASS_ROUNDS; pass++) {
+    const anchor = residencyAnchor(openable);
+    clearArrivedPin(session.id, anchor);
+    computeFoldPlan(session.id, turns, openable, anchor, trigger === "cover");
+    if (planSignature() === appliedPlan) {
+      if (pass === 0) {
+        return; // the common case for a scroll that stays inside the overscan
+      }
+      break;
+    }
+    paintSyncEntries = PAINT_SYNC_ENTRIES;
+    inWindowPass = true;
+    try {
+      heldMutation(() => {
+        applyFoldPass(session.id, turns, turnCards(paintRoot()), true);
+      });
+    } finally {
+      inWindowPass = false;
+    }
+    if (!spacerInView()) {
+      break;
+    }
   }
   drainColdBuilds();
   refreshResumeLabel();
@@ -1366,7 +1558,7 @@ function disposeTurnBody(turnID: string): void {
 
 /**
  * Apply the plan to every card. Deferred while reading, since content vanishing above the reader is the failure;
- * `immediate` (the window pass) skips the deferral. The reader's position is held by native scroll anchoring.
+ * `immediate` (the window pass) skips the deferral. The scroll owner holds the reader's position (`heldMutation`).
  */
 function applyFoldPass(
   chatID: string,
@@ -1451,15 +1643,17 @@ function applyFoldPass(
     return;
   }
   const apply = (): void => {
-    for (const change of changes) {
-      change();
-    }
-    setCardsFolded(flips);
-    for (const { card, t } of flips) {
-      if (t !== undefined) {
-        syncTurnFace(card, t);
+    heldMutation(() => {
+      for (const change of changes) {
+        change();
       }
-    }
+      setCardsFolded(flips);
+      for (const { card, t } of flips) {
+        if (t !== undefined) {
+          syncTurnFace(card, t);
+        }
+      }
+    });
     // After the batch: a change the plan moved under has skipped itself.
     record();
     // A build in that batch got its first slice only, and the batch can run long after the paint.
@@ -1506,17 +1700,19 @@ function collectWindowMove(
     if (now?.from !== plan.from || now.to !== plan.to || !card.isConnected) {
       return;
     }
-    if (want.from < have.from) {
-      mountHeadRange(t, want, live);
-    } else if (want.from > have.from) {
-      dropHead(t, want);
-    }
-    if (want.to < have.to) {
-      dropTail(t, want);
-    } else if (want.to > have.to && !hasPendingBuild(t.id)) {
-      updateAssistantBody(body, t, chatID, live, want);
-    }
-    syncSpacers(body, t, mountedWindow(t.id) ?? want);
+    heldMutation(() => {
+      if (want.from < have.from) {
+        mountHeadRange(t, want, live);
+      } else if (want.from > have.from) {
+        dropHead(t, want);
+      }
+      if (want.to < have.to) {
+        dropTail(t, want);
+      } else if (want.to > have.to && !hasPendingBuild(t.id)) {
+        updateAssistantBody(body, t, chatID, live, want);
+      }
+      syncSpacers(body, t, mountedWindow(t.id) ?? want);
+    });
   });
   return true;
 }
@@ -1886,8 +2082,11 @@ function updateTurn(card: HTMLElement, t: Turn): void {
     // Only the tail extension is reachable here: the renderer renders past `st.window.to` only; head extension is
     // the fold pass's `mountHeadRange`.
     const range = bodyRange(t, plan);
-    updateAssistantBody(body, t, getActiveId(), turnIsLive(t), range);
-    syncSpacers(body, t, range);
+    heldMutation(() => {
+      updateAssistantBody(body, t, getActiveId(), turnIsLive(t), range);
+      // What is mounted, not the plan: a plan the deferred fold pass has not applied would price away mounted rows.
+      syncSpacers(body, t, mountedWindow(t.id) ?? range);
+    });
   }
   mountTurnFooter(card, t);
   mountRewind(card, t);
@@ -1973,9 +2172,11 @@ function hasPendingBuild(turnID: string): boolean {
 function startFirstSlice(body: HTMLElement, t: Turn, range: EntryRange): void {
   const take = Math.min(BUILD_BATCH_ENTRIES, Math.max(0, paintSyncEntries));
   const to = Math.min(range.to, range.from + take);
-  buildAssistantBody(body, t, getActiveId(), turnIsLive(t), { from: range.from, to });
+  heldMutation(() => {
+    buildAssistantBody(body, t, getActiveId(), turnIsLive(t), { from: range.from, to });
+    syncSpacers(body, t, { from: range.from, to });
+  });
   paintSyncEntries -= to - range.from;
-  syncSpacers(body, t, { from: range.from, to });
   if (to < range.to) {
     coldBuilds.add(t.id);
   }
@@ -2117,13 +2318,17 @@ async function buildTurnBodyBatches(chatID: string, turnID: string): Promise<voi
     const range = bodyRange(t, want);
     const to = nextBuildTo(turnID, range);
     if (to === "done") {
-      syncSpacers(body, t, range);
+      heldMutation(() => {
+        syncSpacers(body, t, range);
+      });
       syncTurnBodyless(card);
       return;
     }
     const slice = { from: range.from, to };
-    updateAssistantBody(body, t, chatID, turnIsLive(t), slice);
-    syncSpacers(body, t, slice);
+    heldMutation(() => {
+      updateAssistantBody(body, t, chatID, turnIsLive(t), slice);
+      syncSpacers(body, t, slice);
+    });
     const after = nextBuildTo(turnID, range);
     if (after === "done") {
       syncTurnBodyless(card);
