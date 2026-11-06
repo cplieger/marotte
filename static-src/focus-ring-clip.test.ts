@@ -13,7 +13,7 @@ const MEMBERS = [
   ".subagent-foot > .subagent-footer > .turn-ledger-summary",
   ".pill-account",
   ".run-head",
-  "a.run-step-head",
+  ".run-step-head",
   ".run-open",
   ".tool-group-header",
   ".tool-group-hooks",
@@ -244,7 +244,7 @@ function runCardWithFoot(): { clipper: HTMLElement; open: HTMLElement } {
 
 /** A step row's head is its only child, so all four edges are the head's. */
 function runStep(): { clipper: HTMLElement; head: HTMLElement } {
-  const head = node("a", "run-step-head", { href: "/run/wf-1#node=step" });
+  const head = node("div", "run-step-head", { role: "button", tabindex: "0" });
   head.append(node("span", "run-step-glyph"), span("run-step-name", "build"));
   const clipper = node("div", "run-step");
   clipper.appendChild(head);

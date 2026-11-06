@@ -790,7 +790,7 @@ describe("openTangentChat", () => {
   // The fork mints the id, so the sub-tab is adopted from its reply, parent included, with no
   // second POST.
   it("adopts the sub-tab from the fork's reply, parent and all, with no second POST", async () => {
-    await openTangentChat("c-parent");
+    expect(await openTangentChat("c-parent")).toBe("c-forked");
     expect(vi.mocked(openTab)).not.toHaveBeenCalled();
     const [subject, name] = vi.mocked(adoptSubject).mock.calls[0] ?? [];
     expect(subject).toMatchObject({
@@ -859,7 +859,7 @@ describe("openTangentChat", () => {
 
   it("opens no tab when the fork is refused", async () => {
     forkDispatch.mockResolvedValueOnce(null);
-    await openTangentChat("c-parent");
+    expect(await openTangentChat("c-parent")).toBe("");
     expect(vi.mocked(adoptSubject)).not.toHaveBeenCalled();
     expect(vi.mocked(activateTab)).not.toHaveBeenCalled();
   });
@@ -867,7 +867,7 @@ describe("openTangentChat", () => {
   it("lists a fork that resolves after a move without opening it", async () => {
     activeId = "c-elsewhere";
     vi.mocked(navigationHeld).mockReturnValueOnce(false);
-    await openTangentChat("c-parent");
+    expect(await openTangentChat("c-parent")).toBe("");
     expect(vi.mocked(adoptSubject).mock.calls[0]?.[0]).toMatchObject({ parent: "tb_parent" });
     expect(vi.mocked(activateTab)).not.toHaveBeenCalled();
     expect(vi.mocked(retargetComposer)).not.toHaveBeenCalled();
@@ -876,13 +876,13 @@ describe("openTangentChat", () => {
 
   it("does nothing when the parent is unknown", async () => {
     vi.mocked(get).mockReturnValue(undefined);
-    await openTangentChat("c-parent");
+    expect(await openTangentChat("c-parent")).toBe("");
     expect(vi.mocked(adoptSubject)).not.toHaveBeenCalled();
     expect(forkDispatch).not.toHaveBeenCalled();
   });
 
   it("does nothing for an empty parent id", async () => {
-    await openTangentChat("");
+    expect(await openTangentChat("")).toBe("");
     expect(vi.mocked(adoptSubject)).not.toHaveBeenCalled();
     expect(forkDispatch).not.toHaveBeenCalled();
   });

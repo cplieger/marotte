@@ -22,6 +22,7 @@ import { compactText, counters, progressPhrase, type ExecRun } from "./exec-view
 import { buildExecSummary, type ExecSummaryView } from "./exec-view/summary.js";
 import { wantsReader } from "./exec-view/alert.js";
 import { chevronEl } from "./chevron.js";
+import { selectableButton } from "./disclosure-row.js";
 import { runBarOpen, setRunBarOpen } from "./device-view.js";
 import { holdRunClock, releaseRunClock, type RunClockHolder } from "./messages-blocks.js";
 import { openRunView } from "./run-view.js";
@@ -38,7 +39,7 @@ const FOLD_AT = 3;
 
 /** One bar row's painted parts, kept so a repaint and the clock patch them in place. */
 interface RowView {
-  readonly btn: HTMLButtonElement;
+  readonly btn: HTMLElement;
   readonly glyph: HTMLElement;
   readonly summary: ExecSummaryView;
 }
@@ -177,24 +178,22 @@ function render(bar: HTMLUListElement): void {
 }
 
 /** The fold row: how many runs and how many need the reader, opening the list in place. */
-function buildSummary(bar: HTMLUListElement): HTMLButtonElement {
-  const glyph = el("span", { className: "run-bar-glyph", "aria-hidden": "true" });
-  const btn = el(
-    "button",
-    { type: "button", className: "run-bar-open run-bar-toggle", "aria-expanded": "false" },
-    el("span", { className: "run-bar-chev", "aria-hidden": "true" }, chevronEl()),
-    glyph,
-    el("span", { className: "run-bar-count" }),
-  ) as HTMLButtonElement;
-  btn.addEventListener("click", () => {
+function buildSummary(bar: HTMLUListElement): HTMLElement {
+  const btn = selectableButton("div", "run-bar-open run-bar-toggle", () => {
     setRunBarOpen(!runBarOpen());
     render(bar);
   });
+  btn.setAttribute("aria-expanded", "false");
+  btn.append(
+    el("span", { className: "run-bar-chev", "aria-hidden": "true" }, chevronEl()),
+    el("span", { className: "run-bar-glyph", "aria-hidden": "true" }),
+    el("span", { className: "run-bar-count" }),
+  );
   return btn;
 }
 
 function paintSummary(fold: HTMLElement, total: number, waiting: number, open: boolean): void {
-  const btn = fold.querySelector<HTMLButtonElement>(".run-bar-toggle");
+  const btn = fold.querySelector<HTMLElement>(".run-bar-toggle");
   if (btn === null) {
     return;
   }
@@ -213,19 +212,18 @@ function paintSummary(fold: HTMLElement, total: number, waiting: number, open: b
   }
 }
 
-/** One row: an `<li>` carrying the state, holding the `<button>` that opens the run's own tab. */
+/** One row: an `<li>` carrying the state, holding the control that opens the run's own tab. */
 function buildRow(id: string, chatID: string): HTMLElement {
   // No attribute means reserved box, nothing to show.
   const glyph = el("span", { className: "run-bar-glyph", "aria-hidden": "true" });
-  const btn = el("button", { type: "button", className: "run-bar-open" }) as HTMLButtonElement;
-  const summary = buildExecSummary({ alertHost: btn });
-  btn.append(glyph, summary.root);
-  // The NAME is resolved at click time rather than captured here, because this row outlives its
+  // The NAME is resolved at activation rather than captured here, because this row outlives its
   // first paint: a run whose label arrives with its first fetch would otherwise open a tab called
   // "Workflow run" for the rest of the session.
-  btn.addEventListener("click", () => {
+  const btn = selectableButton("div", "run-bar-open", () => {
     void openRunView(id, runLabelOf(id) || FALLBACK_NAME, chatID);
   });
+  const summary = buildExecSummary({ alertHost: btn });
+  btn.append(glyph, summary.root);
 
   const row = el("li", { className: "run-bar-row" }, btn);
   const view = { btn, glyph, summary };

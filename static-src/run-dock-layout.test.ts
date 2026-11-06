@@ -382,8 +382,9 @@ describe("the run summary on a phone", () => {
       document.body.prepend(frame);
       const bar = frame.querySelector<HTMLElement>("#run-bar")!;
       bar.classList.remove("hidden");
-      const btn = document.createElement("button");
-      btn.type = "button";
+      const btn = document.createElement("div");
+      btn.setAttribute("role", "button");
+      btn.tabIndex = 0;
       btn.className = "run-bar-open";
       const glyph = document.createElement("span");
       glyph.className = "run-bar-glyph";

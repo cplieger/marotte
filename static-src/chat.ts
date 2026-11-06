@@ -442,11 +442,13 @@ const FRESH_TANGENT_NOTICE =
  * Open a TANGENT off `parentChatID` as a SUB-TAB: `chat.fork` binds it to KAS's
  * `session/fork`, so nothing is copied or synced. It forks at the head, or after the turn
  * `atMessageID` opened. `TabSubject.Parent` is set once, making a cycle unrepresentable. The
- * sub-tab takes the view only if the user made no navigation since the call.
+ * sub-tab takes the view only if the user made no navigation since the call. Answers the
+ * tangent's id once it holds the view and the composer, or "" when nothing opened or the user
+ * moved elsewhere first.
  */
-export async function openTangentChat(parentChatID: string, atMessageID?: string): Promise<void> {
+export async function openTangentChat(parentChatID: string, atMessageID?: string): Promise<string> {
   if (parentChatID === "" || get(parentChatID) === undefined) {
-    return;
+    return "";
   }
   const ticket = claimNavigation();
   // The fork creates the chat and MINTS its id, so the sub-tab can only open once the
@@ -460,14 +462,15 @@ export async function openTangentChat(parentChatID: string, atMessageID?: string
   });
   if (created === null) {
     opFailed(opID);
-    return;
+    return "";
   }
   seedChat(created.chat);
   const id = created.chat.id;
   // The reply's subject already carries the PARENT the coordinator nested the tangent
   // under, so adopting it paints the sub-tab with no second POST.
   const tabID = adoptCreatedTab(opID, created);
-  if (navigationHeld(ticket)) {
+  const shown = navigationHeld(ticket);
+  if (shown) {
     if (tabID !== "") {
       activateTab(tabID);
     } else {
@@ -480,6 +483,7 @@ export async function openTangentChat(parentChatID: string, atMessageID?: string
   if (created.fresh) {
     chatNotice(id, FRESH_TANGENT_NOTICE, "warning");
   }
+  return shown ? id : "";
 }
 
 /**

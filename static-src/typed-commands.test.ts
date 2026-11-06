@@ -138,7 +138,7 @@ describe("handleTypedCommand", () => {
 
   it("refuses /tangent on a chat with no conversation", () => {
     expect(handleTypedCommand("c-none", "/tangent")).toBe(true);
-    expect(toasts).toEqual(["Send a message first, then start a tangent from it."]);
+    expect(toasts).toEqual(["Send a message first, then start a tangent from it"]);
     expect(toastChats).toEqual(["c-none"]);
   });
 

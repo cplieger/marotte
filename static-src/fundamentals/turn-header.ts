@@ -7,6 +7,7 @@
 import { join } from "@cplieger/keyenc";
 import { el } from "@cplieger/ui";
 import { chevronEl } from "../chevron.js";
+import { selectableButton } from "../disclosure-row.js";
 import { iconEl } from "../icon-el.js";
 import { workflowIcon } from "../icons.js";
 import { watchCut } from "../clamp-text.js";
@@ -188,7 +189,7 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   const body = d.request.trim();
   const label = d.label?.trim() ?? "";
   const quoted = label === "" ? splitLeadingQuote(body) : null;
-  syncQuote(header, quoted?.quote);
+  syncQuote(header, quoted ?? undefined);
   syncSentBy(header, d.caller);
   setRequestText(text, label !== "" ? label : (quoted?.rest ?? body));
   syncFullText(header, label === "" ? undefined : body);
@@ -309,14 +310,12 @@ function wakeRunEl(
   if (open === undefined) {
     return el("span", attrs, run.name);
   }
-  const btn = el(
-    "button",
-    { ...attrs, type: "button", "data-tooltip": "Open the workflow run" },
-    run.name,
-  );
-  btn.addEventListener("click", () => {
+  const btn = selectableButton("span", className, () => {
     open(run);
   });
+  btn.dataset["runId"] = run.id;
+  btn.dataset["tooltip"] = "Open the workflow run";
+  btn.textContent = run.name;
   return btn;
 }
 
@@ -332,24 +331,26 @@ export function syncWakeRowRuns(header: HTMLElement): void {
   }
   const clip = text.getBoundingClientRect();
   const folded = text.closest(".turn[data-folded]") !== null;
-  const buttons = text.querySelectorAll<HTMLButtonElement>("button.turn-wake-row-run");
+  const buttons = text.querySelectorAll<HTMLElement>('.turn-wake-row-run[role="button"]');
   buttons.forEach((btn, i) => {
     if (clip.height <= 0) {
       btn.inert = folded && i > 0;
       return;
     }
     const box = btn.getBoundingClientRect();
-    // `inert`, not `disabled`: a disabled button dims (40-a11y.css), and a shown row stays at full ink.
     btn.inert = box.top < clip.top - CLIP_EPSILON || box.bottom > clip.bottom + CLIP_EPSILON;
   });
 }
 
-/** Sub-pixel slack (px) for a button whose box rounds onto the clip edge. */
+/** Sub-pixel slack (px) for a run name whose box rounds onto the clip edge. */
 const CLIP_EPSILON = 0.5;
 
-/** The reply passage a prompt opened with (`message-quote.ts`), drawn as one band before the text; `quote`
- *  undefined removes it. */
-function syncQuote(header: HTMLElement, quote: string | undefined): void {
+/** The passage a prompt opened with (`message-quote.ts`), drawn as one band before the text, led by the line naming
+ *  its source when it has one; `quote` undefined removes it. */
+function syncQuote(
+  header: HTMLElement,
+  quote: { source: string | null; quote: string } | undefined,
+): void {
   const req = header.querySelector<HTMLElement>(":scope > .turn-req");
   if (req === null) {
     return;
@@ -363,10 +364,29 @@ function syncQuote(header: HTMLElement, quote: string | undefined): void {
     band = el("blockquote", { className: "turn-req-quote" });
     req.prepend(band);
   }
-  if (band.textContent !== quote) {
-    band.textContent = quote;
-    linkifyPaths(band);
+  const key = join(quote.source ?? "", quote.quote);
+  if (band.dataset["key"] === key) {
+    return;
   }
+  band.dataset["key"] = key;
+  const text = el("span", { className: "turn-req-quote-text" }, quote.quote);
+  linkifyPaths(text);
+  band.replaceChildren(...(quote.source === null ? [] : [sourceEl(quote.source), " "]), text);
+}
+
+/** A quote's source line as the reader sees it: its code spans (CommonMark 6.1) drawn as code. */
+function sourceEl(source: string): HTMLElement {
+  const parts: (Node | string)[] = [];
+  let at = 0;
+  for (const m of source.matchAll(/(`+)(?!`)(.+?)(?<!`)\1(?!`)/g)) {
+    parts.push(source.slice(at, m.index));
+    const inner = m[2] ?? "";
+    const code = /^ .* $/.test(inner) && inner.trim() !== "" ? inner.slice(1, -1) : inner;
+    parts.push(el("code", {}, code));
+    at = m.index + m[0].length;
+  }
+  parts.push(source.slice(at), ":");
+  return el("span", { className: "turn-req-quote-from" }, ...parts);
 }
 
 /** A labelled request's full text, a sibling of the text so the folded clamp cannot hide it, shown

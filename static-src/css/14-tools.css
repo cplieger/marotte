@@ -371,12 +371,11 @@
 }
 
 /* The WHOLE summary expands the card; `disclosure-row.ts` forwards the click to the
-   chevron button. Gated on `.has-disclosure`, which `refreshToolDisclosure` keeps
+   chevron button, skipping a click that ends a selection, so the title stays selectable
+   for "Quote in reply". Gated on `.has-disclosure`, which `refreshToolDisclosure` keeps
    exactly while the chevron is in the DOM. */
 .tool-summary.has-disclosure {
   cursor: pointer;
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 /* The shared recipe; gated for `.tool-group-header`'s reason. */

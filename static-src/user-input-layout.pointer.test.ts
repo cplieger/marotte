@@ -132,8 +132,9 @@ function mountChat(height: number): { dock: HTMLElement; bar: HTMLElement; compo
   const root = mountView(height, '<div id="chat-view"', '<div id="settings-view"');
   const fold = root.querySelector<HTMLElement>("#run-bar-fold")!;
   fold.hidden = false;
-  const toggle = document.createElement("button");
-  toggle.type = "button";
+  const toggle = document.createElement("div");
+  toggle.setAttribute("role", "button");
+  toggle.tabIndex = 0;
   toggle.className = "run-bar-open run-bar-toggle";
   toggle.setAttribute("aria-expanded", "false");
   const count = document.createElement("span");

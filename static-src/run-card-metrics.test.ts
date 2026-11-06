@@ -93,9 +93,10 @@ function stepRow(i: number): HTMLElement {
   dur.className = "run-step-dur";
   dur.textContent = "12s";
 
-  const head = document.createElement("a");
+  const head = document.createElement("div");
   head.className = "run-step-head";
-  head.href = `/run/r-${String(i)}#node=build-${String(i)}`;
+  head.setAttribute("role", "button");
+  head.tabIndex = 0;
   head.append(glyph, name, meta, dur);
 
   root.appendChild(head);

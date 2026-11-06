@@ -22,6 +22,7 @@ import { ICON_COMPACT, ICON_EXPORT, ICON_LINK, ICON_TANGENT_ROW } from "./icons.
 import { openFilePicker } from "./files-picker.js";
 import { uploadLimitHint } from "./upload-policy.js";
 import { openTangentChat } from "./chat.js";
+import { NO_CONVERSATION_TANGENT, tangentRefusal } from "./tangent-refusal.js";
 import { mergeTangentChat } from "./tangent-merge.js";
 import { submitPrompt } from "./submit.js";
 import { compactRefusal } from "./typed-commands.js";
@@ -194,8 +195,7 @@ function attachRow(): HTMLElement {
 const TANGENT_HINT = "Branch this conversation into a sub-chat that keeps its context";
 const TANGENT_HINT_EMPTY = "Send a message first. A tangent inherits the conversation";
 
-/** Disabled until the chat holds a conversation: a brand-new chat has nothing to fork server-side
- *  (`errForkParentUnknown`), and the failure would arrive after the sub-tab opened. */
+/** Disabled while `tangentRefusal` holds. */
 function tangentRow(): HTMLElement {
   const { row, btn, hint } = actionRow({
     icon: ICON_TANGENT_ROW,
@@ -206,11 +206,12 @@ function tangentRow(): HTMLElement {
       // signal write and the effect below.
       const session = activeSession.peek();
       if (session === undefined) {
-        toast.error("Send a message first, then start a tangent from it");
+        toast.error(NO_CONVERSATION_TANGENT);
         return;
       }
-      if (isEmptyChat(session)) {
-        chatNotice(session.id, "Send a message first, then start a tangent from it", "error");
+      const refusal = tangentRefusal(session);
+      if (refusal !== null) {
+        chatNotice(session.id, refusal, "error");
         return;
       }
       collapseAll();
@@ -222,7 +223,7 @@ function tangentRow(): HTMLElement {
   // A projection of the ACTIVE chat, re-read on tab switch; guarded on the value because
   // `activeSession` re-derives on every chunk.
   effect(() => {
-    const empty = isEmptyChat(activeSession.value);
+    const empty = tangentRefusal(activeSession.value) !== null;
     if (btn.disabled === empty) {
       return;
     }

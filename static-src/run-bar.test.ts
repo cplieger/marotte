@@ -240,7 +240,7 @@ describe("the run bar", () => {
     }
     inspect.set(ids[2]!, state({ display_name: ids[2], status: "paused" }));
     await activate(c);
-    const toggle = fold.querySelector<HTMLButtonElement>(".run-bar-toggle")!;
+    const toggle = fold.querySelector<HTMLElement>(".run-bar-toggle")!;
     expect(fold.hidden).toBe(false);
     expect(toggle.textContent).toBe("4 workflows, 1 needs you");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
@@ -257,6 +257,16 @@ describe("the run bar", () => {
     });
     toggle.click();
     expect(rows().every((r) => r.hidden)).toBe(true);
+
+    const range = document.createRange();
+    range.selectNodeContents(toggle.querySelector(".run-bar-count")!);
+    document.getSelection()?.addRange(range);
+    toggle.click();
+    expect(
+      toggle.getAttribute("aria-expanded"),
+      "a click ending a selection leaves the list shut",
+    ).toBe("false");
+    document.getSelection()?.removeAllRanges();
     localStorage.removeItem("marotte.ui-state");
   });
 
@@ -286,7 +296,7 @@ describe("the run bar", () => {
     );
     live(id, c);
     await activate(c);
-    const btn = bar.querySelector<HTMLButtonElement>(".run-bar-open")!;
+    const btn = bar.querySelector<HTMLElement>(".run-bar-open")!;
     expect(btn.dataset["alert"]).toBe("paused");
     expect(btn.querySelector(".ev-alert-text")?.textContent).toBe("Waiting: host unreachable");
     expect(btn.querySelector("[role]")).toBeNull();
@@ -312,7 +322,7 @@ describe("the run bar", () => {
     live(id, c);
     pushRunAsk(c, id);
     await activate(c);
-    const btn = bar.querySelector<HTMLButtonElement>(".run-bar-open")!;
+    const btn = bar.querySelector<HTMLElement>(".run-bar-open")!;
     expect(btn.dataset["alert"]).toBe("input");
     expect(btn.querySelector(".ev-alert-text")?.textContent).toBe(
       "Waiting for answer: which branch?",
@@ -320,6 +330,75 @@ describe("the run bar", () => {
 
     btn.click();
     expect(openRunView).toHaveBeenCalledWith(id, "release", c);
+  });
+
+  // The row's name and status are quotable, so a drag selecting them ends in a click that must not open the run.
+  it("opens no run for a click that ends a selection in its row", async () => {
+    const c = chatID();
+    chats.push(c);
+    const id = runID("selected");
+    inspect.set(id, state({ display_name: "release", status: "running" }));
+    live(id, c);
+    await activate(c);
+    const btn = bar.querySelector<HTMLElement>(".run-bar-open")!;
+    const range = document.createRange();
+    range.selectNodeContents(btn.querySelector(".ev-sum-label")!);
+    document.getSelection()?.removeAllRanges();
+    document.getSelection()?.addRange(range);
+    btn.click();
+    expect(openRunView).not.toHaveBeenCalled();
+    document.getSelection()?.removeAllRanges();
+    btn.click();
+    expect(openRunView).toHaveBeenCalledWith(id, "release", c);
+  });
+
+  // A `role="button"` row, so the run's name stays selectable on WebKit; the keys a `<button>` takes still work.
+  it("opens the run from its row with Enter or Space, as a focusable button", async () => {
+    const c = chatID();
+    chats.push(c);
+    const id = runID("keys");
+    inspect.set(id, state({ display_name: "release", status: "running" }));
+    live(id, c);
+    await activate(c);
+    const btn = bar.querySelector<HTMLElement>(".run-bar-open")!;
+    expect(btn.tagName).not.toBe("BUTTON");
+    expect(btn.getAttribute("role")).toBe("button");
+    expect(btn.tabIndex).toBe(0);
+    for (const key of ["Enter", " "]) {
+      openRunView.mockClear();
+      const press = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      btn.dispatchEvent(press);
+      expect(openRunView).toHaveBeenCalledExactlyOnceWith(id, "release", c);
+      expect(press.defaultPrevented, `${key} does not also scroll or type`).toBe(true);
+    }
+    openRunView.mockClear();
+    btn.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+    expect(openRunView).not.toHaveBeenCalled();
+  });
+
+  it("toggles the fold row with Enter or Space, keeping aria-expanded in step", async () => {
+    localStorage.removeItem("marotte.ui-state");
+    const c = chatID();
+    chats.push(c);
+    for (const n of ["k1", "k2", "k3"]) {
+      const id = runID(n);
+      inspect.set(id, state({ display_name: id }));
+      live(id, c);
+    }
+    await activate(c);
+    const toggle = fold.querySelector<HTMLElement>(".run-bar-toggle")!;
+    expect(toggle.tagName).not.toBe("BUTTON");
+    expect(toggle.getAttribute("role")).toBe("button");
+    expect(toggle.tabIndex).toBe(0);
+    toggle.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    toggle.dispatchEvent(
+      new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }),
+    );
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    localStorage.removeItem("marotte.ui-state");
   });
 
   it("names a run by the server's display name, else a fallback, never by its recipe", async () => {
@@ -397,7 +476,7 @@ describe("the run bar", () => {
     live(id, c);
     await activate(c);
 
-    bar.querySelector<HTMLButtonElement>(".run-bar-open")?.click();
+    bar.querySelector<HTMLElement>(".run-bar-open")?.click();
 
     expect(openRunView).toHaveBeenCalledTimes(1);
     expect(openRunView).toHaveBeenCalledWith(id, "nightly", c);
@@ -415,7 +494,7 @@ describe("the run bar", () => {
     live(id, c);
     await activate(c);
 
-    const btn = bar.querySelector<HTMLButtonElement>(".run-bar-open");
+    const btn = bar.querySelector<HTMLElement>(".run-bar-open");
     expect(rowText(".ev-sum-label")).toEqual([label]);
     expect(bar.querySelector(".ev-sum-label")?.getAttribute("data-tooltip")).toBe(label);
     expect(btn?.getAttribute("aria-label")).toContain(label);
@@ -672,7 +751,7 @@ describe("a render patches its rows rather than rebuilding them", () => {
     inspect.set(id, state());
     live(id, c);
     await activate(c);
-    const btn = bar.querySelector<HTMLButtonElement>(".run-bar-open");
+    const btn = bar.querySelector<HTMLElement>(".run-bar-open");
     btn?.focus();
     expect(document.activeElement).toBe(btn);
 
@@ -692,7 +771,7 @@ describe("a render patches its rows rather than rebuilding them", () => {
     live(second, c);
     await activate(c);
     expect(rowText(".ev-sum-label")).toEqual(["first", "second"]);
-    const btn = bar.querySelector<HTMLButtonElement>(".run-bar-open");
+    const btn = bar.querySelector<HTMLElement>(".run-bar-open");
     btn?.focus();
 
     await advance(second, { display_name: "second", status: "paused" });
@@ -733,7 +812,7 @@ describe("a render patches its rows rather than rebuilding them", () => {
     await activate(c);
     // Nothing fetched yet, so the row carries the fallback name.
     expect(rowText(".ev-sum-label")).toEqual(["Workflow run"]);
-    const btn = bar.querySelector<HTMLButtonElement>(".run-bar-open");
+    const btn = bar.querySelector<HTMLElement>(".run-bar-open");
 
     await advance(id, { display_name: "nightly sweep" });
 

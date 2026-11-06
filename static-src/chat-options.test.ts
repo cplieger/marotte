@@ -407,8 +407,7 @@ describe("start a tangent", () => {
     expect(collapseAll).toHaveBeenCalled();
   });
 
-  // Unavailable, not error-toasting, with no conversation: the fork would 404
-  // (errForkParentUnknown) after the sub-tab opened.
+  // Unavailable, not error-toasting, with no conversation.
   it.each([
     ["a brand-new chat with no messages", "c-active", 0],
     ["no active chat at all", "", 3],
