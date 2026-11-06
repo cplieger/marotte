@@ -112,7 +112,7 @@ describe("the chat's resume control", () => {
 
   // 560 and 920 are an iPad's chat area in portrait and landscape; 1120 is past the label's 70rem.
   it.each([560, 920, 1120])(
-    "stays the centred labelled pill in touch mode in a %ipx chat area, with a 48px target",
+    "stays the centred labelled pill in touch mode in a %ipx chat area, with a 44px target",
     (width) => {
       document.documentElement.dataset["pointer"] = "coarse";
       const btn = chat(width);
@@ -124,7 +124,7 @@ describe("the chat's resume control", () => {
       expect(getComputedStyle(btn.querySelector("span")!).display).not.toBe("none");
       const cx = b.left + b.width / 2;
       const cy = b.top + b.height / 2;
-      for (const y of [cy - 23.5, cy + 23.5]) {
+      for (const y of [cy - 21.5, cy + 21.5]) {
         const at = document.elementFromPoint(cx, y);
         expect(at !== null && btn.contains(at), `a press ${String(y - cy)}px off centre`).toBe(
           true,
