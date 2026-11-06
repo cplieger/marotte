@@ -16,11 +16,13 @@ type fakeCall struct {
 }
 
 // fakeSource answers each list from a queue of pages per list, and records every call. A list with no
-// page left answers an empty, complete page.
+// page left answers an empty, complete page. With forge set, Runs answers instead every run of forge created at
+// or after the bound's second, in one complete page, as the forge's created filter does.
 type fakeSource struct {
 	issues []forgeapi.Page[forgeapi.Issue]
 	prs    []forgeapi.Page[forgeapi.PullRequest]
 	runs   []forgeapi.Page[forgeapi.Run]
+	forge  *[]forgeapi.Run
 	errs   map[string]error
 	calls  []fakeCall
 	mu     sync.Mutex
@@ -65,6 +67,15 @@ func (s *fakeSource) Runs(_ context.Context, _ Feed, since time.Time, after forg
 	defer s.mu.Unlock()
 	if err := s.record("runs", after, since); err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
+	}
+	if s.forge != nil {
+		var page forgeapi.Page[forgeapi.Run]
+		for _, r := range *s.forge {
+			if !r.CreatedAt.Before(since.Truncate(time.Second)) {
+				page.Items = append(page.Items, r)
+			}
+		}
+		return page, nil
 	}
 	return pop(&s.runs), nil
 }

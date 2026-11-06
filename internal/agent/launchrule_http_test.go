@@ -372,6 +372,20 @@ func TestEventRuleSaveAnswersTheForgeCheck(t *testing.T) {
 	})
 }
 
+func TestSaveRefusesUndatedRuns(t *testing.T) {
+	const undated = "This Gitea lists runs with no creation time, so marotte cannot watch them for a finished run"
+	forge := &fakeEventRuleChecker{err: &launchrule.ForgeCheckError{Text: undated}}
+	dir, _, mux := launchRuleHub(t, forge)
+	rec := sendRoute(t, mux, http.MethodPost, "/api/launch-rules", strings.Replace(runRuleBody,
+		`"connection":"github:github.com"`, `"connection":"gitea:gitea.example"`, 1))
+	if rec.Code != http.StatusBadRequest || errorText(t, rec) != undated {
+		t.Errorf("POST = %d %s, want 400 with %q", rec.Code, rec.Body.String(), undated)
+	}
+	if forge.count() != 1 || rulesFile(t, dir) != nil {
+		t.Errorf("forge checks %d, rules file %q; want the one check and nothing saved", forge.count(), rulesFile(t, dir))
+	}
+}
+
 // heldQueue is a state holding n events, a cursor, a launched and a superseded slot, and a confirmed run.
 func heldQueue(n int) *launchrule.State {
 	st := &launchrule.State{

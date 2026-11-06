@@ -40,14 +40,22 @@ type openedCursor struct {
 type runHold string
 
 const (
+	// holdPending is a run not concluded, or reading an unknown state.
 	holdPending runHold = "pending"
+	// holdOutside is a run concluded with a result outside the filter, kept because a re-run can conclude it again.
 	holdOutside runHold = "outside"
+	// holdAtForge is a run that matched while the queue was full; it is matched again once the queue has room.
+	holdAtForge runHold = "at_forge"
 )
 
 type runEntry struct {
 	CreatedAt time.Time `json:"created_at"`
-	State     string    `json:"state"`
-	Hold      runHold   `json:"hold"`
+	// UnknownSince is when the run was first read in an unknown state, zero while its state is known.
+	UnknownSince time.Time `json:"unknown_since,omitzero"`
+	State        string    `json:"state"`
+	Hold         runHold   `json:"hold"`
+	// Unlisted marks a pending run a complete walk reaching its creation did not return.
+	Unlisted bool `json:"unlisted,omitempty"`
 }
 
 type runCursor struct {

@@ -63,7 +63,9 @@ type reads struct {
 	issues *Walk[forgeapi.Issue]
 	prs    *Walk[forgeapi.PullRequest]
 	runs   *Walk[forgeapi.Run]
-	since  time.Time
+	// since and horizon are the run walk's bound and H, both fixed when it starts.
+	since   time.Time
+	horizon time.Time
 }
 
 // Poll reads fr's lists once and applies them to every rule on it. A rule whose state cannot be read is skipped,
@@ -128,7 +130,13 @@ func (p *Poller) read(ctx context.Context, f Feed, rules []*pollRule, start time
 		rd.prs = &w
 	}
 	if needRuns {
-		rd.since = runBound(rules, start)
+		rd.horizon = horizon(start)
+		for _, pr := range rules {
+			if pr.ev.Kind == launchrule.KindRunConcluded {
+				pr.ageOut(rd.horizon)
+			}
+		}
+		rd.since = runBound(rules, start, rd.horizon)
 		w := walkRuns(ctx, p.src, f, rd.since)
 		rd.runs = &w
 	}
@@ -203,7 +211,7 @@ func (pr *pollRule) attrs() []any {
 func (pr *pollRule) apply(rd *reads) {
 	switch {
 	case pr.ev.Kind == launchrule.KindRunConcluded:
-		pr.applyRuns(rd.runs)
+		pr.applyRuns(rd.runs, rd.since, rd.horizon)
 	case itemPart(pr.ev.Kind) == partIssue:
 		items := issueItems(rd.issues.Items)
 		pr.applyItems(items, rd.issues.Complete())
