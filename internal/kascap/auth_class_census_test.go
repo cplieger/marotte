@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -16,50 +17,105 @@ const (
 	knownClassesSource = "../rpcerr/rpcerr.go"
 )
 
-// authBaseClasses are KAS's credential-refusal classes; every subclass of one refuses a credential too.
-var authBaseClasses = []string{"TokenExpiredError", "TokenInvalidError", "AuthRefreshFailedError"}
-
-// jsClassRe matches a minified class declaration naming itself: `<id>=class extends <base>{name="X"`.
-var jsClassRe = regexp.MustCompile(`(` + jsIdent + `)=class extends (` + jsIdent + `)\{name="([^"]+)"`)
+// authRefusalMessages are the texts KAS's credential-refusal classes pass to super. They route the
+// discovery rather than the class names, so a renamed class is still found and must then be named
+// by marotte's auth grade.
+var authRefusalMessages = []string{
+	"Authentication token has expired",
+	"Authentication token is invalid",
+	"Auth refresh callback failed: ",
+	"Sign in to Kiro to send a prompt.",
+}
 
 // missingTokenSetRe matches the Set literal of KAS's missing-token codes, anchored on one member.
 var missingTokenSetRe = regexp.MustCompile(`new Set\(\[([^\]]*"MALFORMED_TOKEN"[^\]]*)\]\)`)
 
-// bundleAuthClasses returns the names of the auth base classes and of every class extending one, at any depth.
-func bundleAuthClasses(t *testing.T, src string) []string {
-	t.Helper()
-	type decl struct{ base, name string }
-	decls := make(map[string]decl)
-	for _, m := range jsClassRe.FindAllStringSubmatch(src, -1) {
-		decls[m[1]] = decl{base: m[2], name: m[3]}
+// jsClass is one minified `<id>=class extends <base>{...}` declaration. name is its own `name="X"`
+// field, "" when it inherits one; head is the body, "" when it does not close within classHeadReach.
+type jsClass struct{ id, base, name, head string }
+
+const (
+	classExtends   = "=class extends "
+	classHeadReach = 64 << 10
+)
+
+// jsClasses returns every `<id>=class extends <base>{` declaration in src.
+func jsClasses(src string) []jsClass {
+	var out []jsClass
+	for at := strings.Index(src, classExtends); at >= 0; {
+		next := at + len(classExtends)
+		id, _ := identBefore(src, at)
+		base := identAt(src, next)
+		if open := next + len(base); id != "" && base != "" && open < len(src) && src[open] == '{' {
+			head := jsBracketed(src[:min(len(src), open+classHeadReach)], open)
+			out = append(out, jsClass{id: id, base: base, name: classNameField(head), head: head})
+		}
+		i := strings.Index(src[next:], classExtends)
+		if i < 0 {
+			break
+		}
+		at = next + i
 	}
-	auth := make(map[string]bool)
-	for _, base := range authBaseClasses {
-		var ids []string
-		for id, d := range decls {
-			if d.name == base {
-				ids = append(ids, id)
+	return out
+}
+
+// classNameField returns the `name="X"` member at depth 1 of a class body, after `{`, `}` or `;`.
+func classNameField(body string) string {
+	const field = `name="`
+	depth := 0
+	for i := 0; i < len(body); i++ {
+		switch c := body[i]; c {
+		case '"', '\'', '`':
+			i = jsStringEnd(body, i)
+		case '{', '[', '(':
+			depth++
+		case '}', ']', ')':
+			depth--
+		default:
+			if depth == 1 && strings.ContainsRune("{};", rune(body[i-1])) && strings.HasPrefix(body[i:], field) {
+				if end := strings.IndexByte(body[i+len(field):], '"'); end >= 0 {
+					return body[i+len(field) : i+len(field)+end]
+				}
 			}
 		}
-		if len(ids) != 1 {
-			t.Fatalf("found %d classes named %q in the bundle, want exactly 1; re-anchor on KAS's auth errors", len(ids), base)
+	}
+	return ""
+}
+
+// bundleAuthClasses returns the names of the classes passing an authRefusalMessages text to super,
+// and of every class extending one at any depth that names itself.
+func bundleAuthClasses(t *testing.T, src string) []string {
+	t.Helper()
+	classes := jsClasses(src)
+	auth := make(map[string]bool)
+	for _, msg := range authRefusalMessages {
+		var found []jsClass
+		for _, c := range classes {
+			if strings.Contains(c.head, "super(") && strings.Contains(c.head, msg) {
+				found = append(found, c)
+			}
 		}
-		auth[ids[0]] = true
+		if len(found) != 1 || found[0].name == "" {
+			t.Fatalf("found %d classes passing %q to super in the bundle, want exactly 1 naming itself; re-anchor on KAS's auth errors",
+				len(found), msg)
+		}
+		auth[found[0].id] = true
 	}
 	for grew := true; grew; {
 		grew = false
-		for id, d := range decls {
-			if !auth[id] && auth[d.base] {
-				auth[id], grew = true, true
+		for _, c := range classes {
+			if !auth[c.id] && auth[c.base] {
+				auth[c.id], grew = true, true
 			}
 		}
 	}
-	var names []string
-	for id := range auth {
-		names = append(names, decls[id].name)
+	seen := make(map[string]bool)
+	for _, c := range classes {
+		if auth[c.id] && c.name != "" {
+			seen[c.name] = true
+		}
 	}
-	slices.Sort(names)
-	return names
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // bundleMissingTokenCodes returns the members of the missing-token Set, resolving a member that names a variable
@@ -76,12 +132,20 @@ func bundleMissingTokenCodes(t *testing.T, src string) []string {
 			codes = append(codes, code)
 			continue
 		}
-		assign := regexp.MustCompile(`(?:^|[^A-Za-z0-9_$.])` + regexp.QuoteMeta(member) + `="([^"]*)"`)
-		found := assign.FindAllStringSubmatch(src[:locs[0][0]], -1)
-		if len(found) == 0 {
+		before := src[:locs[0][0]]
+		sites := literalSites(before, member+`="`, false)
+		value := -1
+		if len(sites) > 0 {
+			value = sites[len(sites)-1] + len(member) + 2
+		}
+		end := -1
+		if value >= 0 {
+			end = strings.IndexByte(before[value:], '"')
+		}
+		if end < 0 {
 			t.Fatalf("missing-token Set member %q is neither a string nor a variable assigned one before the Set", member)
 		}
-		codes = append(codes, found[len(found)-1][1])
+		codes = append(codes, before[value:value+end])
 	}
 	return codes
 }
@@ -160,16 +224,20 @@ func stringLit(t *testing.T, path string, e ast.Expr, consts map[string]string) 
 	return ""
 }
 
-// The fixture is the 2.37 bundle's own declarations, plus a second-level subclass and a non-auth sibling.
+// The fixture is the 3.0.0 and 3.1.0 bundles' own declarations (3.1.0 adds a keep-names static block),
+// plus a renamed refresh class, a second-level subclass, a subclass inheriting its name and a
+// non-auth sibling.
 func TestAuthSurfaceExtractors(t *testing.T) {
-	const src = `Jdt=class extends js{name="IllegalSessionPlacementError";constructor(e){}},` +
-		`J2=class extends js{name="TokenExpiredError";constructor(e){super(-32e3,e)}},` +
-		"Xp=class extends js{name=\"TokenInvalidError\";constructor(e){super(-32e3,`invalid${e}`)}}," +
-		`X2=class extends Xp{name="CredentialAbsentError"},Q$=class extends X2{name="DeepAbsentError"},` +
-		`_se=class extends js{name="AuthRefreshFailedError";constructor(e){}};` +
+	const src = "Jdt=class extends js{name=\"IllegalSessionPlacementError\";constructor(e){super(-32603,`Illegal session placement: ${e}`)}}," +
+		`Q2=class extends Do{static{a(this,"TokenExpiredError")}name="TokenExpiredError";constructor(e){super(-32e3,e??"Authentication token has expired")}},` +
+		"Xp=class extends js{name=\"TokenInvalidError\";constructor(e){super(-32e3,`Authentication token is invalid${e?`: ${e}`:\"\"}`)}}," +
+		`X2=class extends Xp{name="CredentialAbsentError"},Q$=class extends X2{name="DeepAbsentError"},Z9=class extends Q${},` +
+		"_se=class extends js{name=\"RenamedRefreshError\";constructor(e){super(-32e3,`Auth refresh callback failed: ${e}`)}}," +
+		`rSt=class extends Do{static{a(this,"SignInRequiredError")}name="SignInRequiredError";errorCategory="error";data;` +
+		`constructor(){super(-32e3,"Sign in to Kiro to send a prompt."),this.data={errorType:this.name}}};` +
 		`var JRi,lcc;JRi="MISSING_TOKEN",lcc=new Set([JRi,"MALFORMED_TOKEN","INVALID_AUTH"])`
 	if got, want := bundleAuthClasses(t, src), []string{
-		"AuthRefreshFailedError", "CredentialAbsentError", "DeepAbsentError", "TokenExpiredError", "TokenInvalidError",
+		"CredentialAbsentError", "DeepAbsentError", "RenamedRefreshError", "SignInRequiredError", "TokenExpiredError", "TokenInvalidError",
 	}; !slices.Equal(got, want) {
 		t.Errorf("bundleAuthClasses = %v, want %v", got, want)
 	}

@@ -750,6 +750,13 @@ The 60s/300s stream-idle watchdog and its _kiro/system/notify text (default on).
 Un-gates the bundled default-v2 mode. The gate reads only the environment and the
 experiment, so this variable is the one client lever: _meta.kiro.settings.unifiedAgent,
 which the bundle's experiment-gate helper names as its settingKey, has no reader.`,
+	"env.KIRO_FEATURE_UNIVERSAL_BACKGROUND_TOOL_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
+(decision: pin only where a marotte setting owns the behaviour).
+The universal_background_tool experiment (default off). On, a tool call can keep
+running as a session job after its call returns, the job_list and job_cancel tools
+mount, and KAS sends _kiro/job/update and serves _kiro/job/cancel and
+_kiro/job/output, none of which marotte renders or calls. The session setting of the
+same name is recorded unclaimed, so the ramp decides there too.`,
 	"env.KIRO_FEATURE_USER_AGENT_REFACTORING_ENABLED": `Withheld so the arm follows AWS's experiment ramp, as it does in kiro-cli's own TUI
 (decision: pin only where a marotte setting owns the behaviour).
 Backend user-agent shape; not pinned by decision.`,

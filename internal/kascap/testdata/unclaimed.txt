@@ -15,4 +15,5 @@ capability telemetry
 setting _suggestedPrompts
 setting c2s
 setting sessionRecap
+setting universalBackgroundTool
 setting verifyFirstWorkflow

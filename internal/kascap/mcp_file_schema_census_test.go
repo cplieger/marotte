@@ -14,9 +14,24 @@ import (
 	"testing"
 )
 
-// mcpServerSchemaRe is KAS's per-server mcp.json schema: one zod object spreading four shared member
-// literals (common, stdio, remote, declaration).
-var mcpServerSchemaRe = regexp.MustCompile(`[\w$]+=[\w$]+\.object\(\{\.\.\.([\w$]+),\.\.\.([\w$]+),\.\.\.([\w$]+),\.\.\.([\w$]+)\}\)`)
+// mcpServerSchemaRe is KAS's per-server mcp.json schema, `<x>=<zod>.object({...a,...b,...c,...d})`:
+// one zod object spreading four shared member literals (common, stdio, remote, declaration). It is
+// matched at each mcpServerSchemaLit site, with identRunBefore checking the `<x>=<zod>` lead.
+var mcpServerSchemaRe = regexp.MustCompile(`^\.object\(\{\.\.\.([\w$]+),\.\.\.([\w$]+),\.\.\.([\w$]+),\.\.\.([\w$]+)\}\)`)
+
+const mcpServerSchemaLit = ".object({..."
+
+// identRunBefore reports whether src[:end] ends with `<ident bytes><sep><ident bytes>`.
+func identRunBefore(src string, end int, sep byte) bool {
+	i := end
+	for i > 0 && isIdentByte(src[i-1], true) {
+		i--
+	}
+	if i == end || i == 0 || src[i-1] != sep {
+		return false
+	}
+	return i-1 > 0 && isIdentByte(src[i-2], true)
+}
 
 // mcpFileExclusions are the bundle's per-server keys kasServer deliberately has no field for.
 var mcpFileExclusions = map[string]string{
@@ -27,18 +42,28 @@ var mcpFileExclusions = map[string]string{
 // extractMCPServerKeys returns the member names of the per-server schema's spread literals, in
 // declaration order.
 func extractMCPServerKeys(src string) ([]string, error) {
-	matches := mcpServerSchemaRe.FindAllStringSubmatch(src, -1)
+	var matches [][]string
+	for i := 0; ; {
+		j := strings.Index(src[i:], mcpServerSchemaLit)
+		if j < 0 {
+			break
+		}
+		at := i + j
+		i = at + len(mcpServerSchemaLit)
+		if m := mcpServerSchemaRe.FindStringSubmatch(src[at:]); m != nil && identRunBefore(src, at, '=') {
+			matches = append(matches, m)
+		}
+	}
 	if len(matches) != 1 {
 		return nil, fmt.Errorf("per-server schema: found %d spread objects, want exactly 1", len(matches))
 	}
 	var keys []string
 	for _, name := range matches[0][1:] {
-		def := regexp.MustCompile(`(?:^|[^\w$])` + regexp.QuoteMeta(name) + `=\{`)
-		locs := def.FindAllStringIndex(src, -1)
-		if len(locs) != 1 {
-			return nil, fmt.Errorf("spread %s: found %d `%s={` literals, want exactly 1", name, len(locs), name)
+		sites := literalSites(src, name+"={", true)
+		if len(sites) != 1 {
+			return nil, fmt.Errorf("spread %s: found %d `%s={` literals, want exactly 1", name, len(sites), name)
 		}
-		members, err := objectKeys(src, locs[0][1]-1)
+		members, err := objectKeys(src, sites[0]+len(name)+1)
 		if err != nil {
 			return nil, fmt.Errorf("spread %s: %w", name, err)
 		}

@@ -279,6 +279,46 @@ func jsStringEnd(src string, i int) int {
 	return i
 }
 
+// identBefore returns the identifier ending at src[end] and where it starts: the maximal run of
+// identifier bytes, "" when that run is empty or opens with a digit.
+func identBefore(src string, end int) (string, int) {
+	start := end
+	for start > 0 && isIdentByte(src[start-1], true) {
+		start--
+	}
+	if start == end || !isIdentByte(src[start], false) {
+		return "", start
+	}
+	return src[start:end], start
+}
+
+// identAt returns the identifier starting at src[i], "" when there is none.
+func identAt(src string, i int) string {
+	end := i
+	for end < len(src) && isIdentByte(src[end], end > i) {
+		end++
+	}
+	return src[i:end]
+}
+
+// literalSites returns every index where lit starts in src at an identifier boundary: not after an
+// identifier byte, nor after a dot unless afterDot. A literal search, because a regexp opening on a
+// character class scans the whole bundle byte by byte, which -race makes minutes per test.
+func literalSites(src, lit string, afterDot bool) []int {
+	var sites []int
+	for i := 0; ; {
+		j := strings.Index(src[i:], lit)
+		if j < 0 {
+			return sites
+		}
+		at := i + j
+		if at == 0 || !isIdentByte(src[at-1], true) && (afterDot || src[at-1] != '.') {
+			sites = append(sites, at)
+		}
+		i = at + len(lit)
+	}
+}
+
 // discoverOne returns the single group-1 match of re and fails unless there is exactly one, for
 // every dynamic anchor.
 func discoverOne(t *testing.T, what string, re *regexp.Regexp, src string) string {

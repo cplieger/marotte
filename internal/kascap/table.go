@@ -551,6 +551,12 @@ var table = []decl{
 		send:     false,
 	},
 	{
+		key:      "KIRO_FEATURE_UNIVERSAL_BACKGROUND_TOOL_ENABLED",
+		door:     doorEnvironment,
+		resolver: resolverEnv,
+		send:     false,
+	},
+	{
 		key:      "KIRO_FEATURE_USER_AGENT_REFACTORING_ENABLED",
 		door:     doorEnvironment,
 		resolver: resolverEnv,
