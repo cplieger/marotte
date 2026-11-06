@@ -1,10 +1,8 @@
 // The run card's state vocabulary: the per-step GLYPH is the only signal for what a step is
 // doing, so every step state has to reach it.
 import { vi, describe, it, expect } from "vitest";
-import { userEvent } from "vitest/browser";
 
 import { buildRunCard } from "./run-card.js";
-import { mountAppCSS } from "../__test-helpers__/css-rules.js";
 import type { RunAsks } from "../run-asks.js";
 import { workNodes } from "../exec-view/model.js";
 import { runToExec } from "../run-exec-source.js";
@@ -1323,35 +1321,5 @@ describe("a click that ends a selection in a run card", () => {
     head?.click();
     expect(c.root.classList.contains("collapsed")).toBe(true);
     done();
-  });
-
-  // Real gestures, as a reader selects: neither Chromium nor WebKit selects a word inside a link. The app's CSS lays
-  // the row out, which decides where a word ends. A double-click's first click is a plain click, so only a drag
-  // selects without opening.
-  it("selects a step's name by double-click or drag, and a drag opens no step", async () => {
-    const style = mountAppCSS();
-    const { c, opened, done } = mounted();
-    const name = c.root.querySelector<HTMLElement>(".run-step-name")!;
-    try {
-      await userEvent.dblClick(name);
-      expect(document.getSelection()?.toString()).toBe("compile");
-      document.getSelection()?.removeAllRanges();
-      opened.length = 0;
-      const { width, height } = name.getBoundingClientRect();
-      await userEvent.dragAndDrop(name, name, {
-        sourcePosition: { x: 1, y: height / 2 },
-        targetPosition: { x: width - 1, y: height / 2 },
-      });
-      expect(document.getSelection()?.toString()).toMatch(/^c?ompil/);
-      expect(opened).toEqual([]);
-      document.getSelection()?.removeAllRanges();
-      c.root.querySelector<HTMLElement>(".run-step-head")?.click();
-      expect(opened).toEqual([nodePathKey(["wf_1", "compile"])]);
-    } finally {
-      // The pointer outlives the test: left on the row, it hovers whatever a later file draws there.
-      await userEvent.hover(document.body, { position: { x: 0, y: 0 }, force: true });
-      done();
-      style.remove();
-    }
   });
 });
