@@ -3,19 +3,24 @@ package agent
 import (
 	"fmt"
 	"maps"
+	"strings"
 	"sync"
 
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// fakeConfirmer records every TriggerConfirmer call as one line, in order, and answers from its fields.
+// fakeConfirmer records every TriggerConfirmer call as one line, in order, and answers from its fields. live maps an
+// event key to the run its live attempt names, set by NameAttempt; a ConfirmEvent naming that run moves the key to
+// launched, as the attempt table's run_start row does.
 type fakeConfirmer struct {
 	nameErr    error
 	retriedErr error
 	bootHeld   map[string]bool
+	live       map[string]string
 	pruned     []map[string]marotte.RunStatus
 	calls      []string
+	launched   []string
 	mu         sync.Mutex
 	retried    bool
 }
@@ -36,11 +41,43 @@ func (f *fakeConfirmer) recorded() []string {
 
 func (f *fakeConfirmer) NameAttempt(ruleID, eventKey, workflowID string) error {
 	f.record("NameAttempt %s %s %s", ruleID, eventKey, workflowID)
-	return f.nameErr
+	if f.nameErr != nil {
+		return f.nameErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.live == nil {
+		f.live = map[string]string{}
+	}
+	f.live[eventKey] = workflowID
+	return nil
 }
 
 func (f *fakeConfirmer) ConfirmEvent(ruleID, eventKey, workflowID string) {
 	f.record("ConfirmEvent %s %s %s", ruleID, eventKey, workflowID)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.live[eventKey] == workflowID {
+		delete(f.live, eventKey)
+		f.launched = append(f.launched, eventKey)
+	}
+}
+
+func (f *fakeConfirmer) launchedKeys() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.launched...)
+}
+
+// count is how many recorded calls start with prefix.
+func (f *fakeConfirmer) count(prefix string) int {
+	n := 0
+	for _, c := range f.recorded() {
+		if strings.HasPrefix(c, prefix) {
+			n++
+		}
+	}
+	return n
 }
 
 func (f *fakeConfirmer) BootHeld(workflowID string) bool {

@@ -646,6 +646,9 @@ func (rs *Runs) retry(
 	if refused := rs.refuseClosedLauncher(workflowID, launchers); refused != nil {
 		return out, refused
 	}
+	if handErr := rs.handBackAbandoned(cctx, workflowID); handErr != nil {
+		return out, handErr
+	}
 	// The lease before the verb, since retry's `run_start` can beat the reply, and before the host session's load,
 	// which reads its presets from it.
 	minted := rs.leaseForRetry(cctx, workflowID, &origin, holders, aff)
@@ -687,7 +690,7 @@ func (rs *Runs) retry(
 func (rs *Runs) leaseForRetry(
 	ctx context.Context, workflowID string, origin *runOrigin, holders []marotte.ChatID, aff *runAffordance,
 ) (minted bool) {
-	if l, held := rs.lease(workflowID); held && l.ScheduleID != "" {
+	if l, held := rs.lease(workflowID); held && (l.ScheduleID != "" || l.RuleID != "") {
 		rs.settleMissedEnd(ctx, &l, aff.status)
 	}
 	if l, held := rs.lease(workflowID); held {
@@ -698,6 +701,24 @@ func (rs *Runs) leaseForRetry(
 	}
 	rs.grantRetryLease(ctx, workflowID, origin, holders)
 	return true
+}
+
+// handBackAbandoned gives a person's retry of a run its rule abandoned a manual lease: the triggered lease goes, so a
+// restart finds no lease naming the rule's queued event and cancels nothing. An error refuses the retry with the
+// lease untouched.
+func (rs *Runs) handBackAbandoned(ctx context.Context, workflowID string) error {
+	l, held := rs.lease(workflowID)
+	if !held || l.RuleID == "" || rs.confirmer == nil {
+		return nil
+	}
+	abandoned, err := rs.confirmer.Retried(workflowID)
+	if err != nil {
+		return fmt.Errorf("workflow retry: %w", err)
+	}
+	if abandoned {
+		rs.releaseLease(ctx, workflowID)
+	}
+	return nil
 }
 
 // retryCall issues the verb and decodes its report.

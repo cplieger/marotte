@@ -81,7 +81,14 @@ func (rs *Runs) grantRetryLease(ctx context.Context, workflowID string, o *runOr
 
 // settleMissedEnd ends a scheduled run whose terminal frame marotte missed, as observeComplete would have, before a
 // person retries it: a scheduled lease is that one run's, and the retry is the person's (manual, attended, no row).
+// A triggered lease is kept: the retry re-runs the event under it, and its run_start confirms the event.
 func (rs *Runs) settleMissedEnd(ctx context.Context, l *runlease.Lease, status marotte.RunStatus) {
+	if l.RuleID != "" {
+		if rs.confirmer != nil {
+			rs.confirmer.RecordOutcome(l.RuleID, l.WorkflowID, runEnding(status, ""))
+		}
+		return
+	}
 	rs.recordScheduleEnding(ctx, scheduleRun(l), status, "")
 	rs.forgetBounds(ctx, l.WorkflowID)
 }

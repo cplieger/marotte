@@ -11,6 +11,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/chat/archive"
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 )
@@ -159,5 +160,165 @@ func TestReattributeRuns_AttributesARunWhoseLeaseEndedUnattributed(t *testing.T)
 	}
 	if v, err := cs.PurgeIdle(t.Context(), "c-idle", time.Now().Add(time.Hour)); err != nil || v.Outcome != archive.PurgePurged {
 		t.Errorf("PurgeIdle(c-idle) = %+v, %v; want purged: no unattributed run is left", v, err)
+	}
+}
+
+const testEventKey = "github.com/o/r/run/7/success"
+
+// triggeredMarkRig is newMarkRig whose wf_1 holds rule-1's triggered lease, launched from c-launcher's session.
+func triggeredMarkRig(t *testing.T, fc *fakeConfirmer) *Runtime {
+	t.Helper()
+	h, _ := newMarkRig(t, nil)
+	h.runs.confirmer = fc
+	h.runs.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec())
+	return h
+}
+
+// The run's first run_start confirms its event once; a resume's run_start of the same life confirms nothing more.
+func TestRunStartConfirmsTriggeredEvent(t *testing.T) {
+	fc := &fakeConfirmer{live: map[string]string{testEventKey: "wf_1"}}
+	h := triggeredMarkRig(t, fc)
+
+	startRun(t, h, "", "wf_1", "sess_launcher")
+	startRun(t, h, "", "wf_1", "sess_launcher")
+
+	want := "ConfirmEvent rule-1 " + testEventKey + " wf_1"
+	if got := fc.recorded(); !slices.Equal(got, []string{want}) {
+		t.Errorf("confirmer calls = %q, want exactly [%q]", got, want)
+	}
+	if got := fc.launchedKeys(); !slices.Equal(got, []string{testEventKey}) {
+		t.Errorf("launched = %q, want the event's key", got)
+	}
+}
+
+// Only a triggered lease names an event: every other origin's run_start reaches no confirmer. A retry under the kept
+// triggered lease begins a new life, so its run_start is handed over again for the confirmer to decide.
+func TestRunStartWithoutRuleConfirmsNothing(t *testing.T) {
+	for name, o := range map[string]launchOrigin{
+		"manual":    manualLaunch(),
+		"scheduled": scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Now().Add(time.Hour)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			fc := &fakeConfirmer{}
+			h, _ := newMarkRig(t, nil)
+			h.runs.confirmer = fc
+			h.runs.grantLease(t.Context(), "wf_1", "publish", o, hostSec())
+
+			startRun(t, h, "", "wf_1", "sess_launcher")
+
+			if got := fc.recorded(); len(got) != 0 {
+				t.Errorf("confirmer calls = %q, want none", got)
+			}
+		})
+	}
+	t.Run("granted by run_start", func(t *testing.T) {
+		fc := &fakeConfirmer{}
+		h, _ := newMarkRig(t, nil)
+		h.runs.confirmer = fc
+
+		startRun(t, h, "", "wf_1", "sess_launcher")
+
+		if _, held := h.runs.lease("wf_1"); !held {
+			t.Fatal("Setup: run_start granted no lease")
+		}
+		if got := fc.recorded(); len(got) != 0 {
+			t.Errorf("confirmer calls = %q, want none", got)
+		}
+	})
+	t.Run("retry under the kept triggered lease", func(t *testing.T) {
+		fc := &fakeConfirmer{}
+		h := triggeredMarkRig(t, fc)
+		startRun(t, h, "", "wf_1", "sess_launcher")
+
+		h.runs.restartLife(t.Context(), "wf_1")
+		startRun(t, h, "", "wf_1", "sess_launcher")
+
+		if n := fc.count("ConfirmEvent rule-1 " + testEventKey + " wf_1"); n != 2 {
+			t.Errorf("ConfirmEvent calls = %d, want 2: the retried run's run_start was not handed over", n)
+		}
+	})
+}
+
+// A run_start and an outcome of a run whose rule was deleted write no state file for the rule.
+func TestConfirmForDeletedRuleWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	st, err := launchrule.NewStore(dir)
+	if err != nil {
+		t.Fatalf("launchrule.NewStore: %v", err)
+	}
+	rule := putClockRule(t, st, "bundled://publish", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	if err := st.Delete(t.Context(), rule.ID); err != nil {
+		t.Fatalf("Setup: Delete: %v", err)
+	}
+	stateFile := filepath.Join(dir, "launch-state", rule.ID+".json")
+	h, _ := newMarkRig(t, nil)
+	h.runs.launchRules = st
+	h.runs.confirmer = &fakeConfirmer{}
+	o := triggeredLaunch(rule.ID, testEventKey, "github.com/o/r/run/7", "run 7")
+	h.runs.grantLease(t.Context(), "wf_1", "publish", o, hostSec())
+
+	startRun(t, h, "", "wf_1", "sess_launcher")
+	h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
+		"workflowId": "wf_1", "status": "completed",
+	}))
+
+	if _, err := os.Stat(stateFile); !os.IsNotExist(err) {
+		t.Errorf("state file of the deleted rule: Stat err = %v, want not exist", err)
+	}
+	if rules := st.Clocks(); len(rules) != 0 {
+		t.Errorf("rules after the run = %+v, want none: the deleted rule came back", rules)
+	}
+}
+
+// run_start hands the frame's own run to the confirmer, which confirms only the live attempt naming it: a run whose
+// attempt was abandoned, or whose event's live attempt is another run, leaves the key queued.
+func TestRunStartOfAbandonedAttemptConfirmsNothing(t *testing.T) {
+	for name, live := range map[string]map[string]string{
+		"abandoned":          {},
+		"another run's live": {testEventKey: "wf_2"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fc := &fakeConfirmer{live: live}
+			h := triggeredMarkRig(t, fc)
+
+			startRun(t, h, "", "wf_1", "sess_launcher")
+
+			if n := fc.count("ConfirmEvent rule-1 " + testEventKey + " wf_1"); n != 1 {
+				t.Errorf("ConfirmEvent for wf_1 called %d times, want 1 naming the frame's run", n)
+			}
+			if got := fc.launchedKeys(); len(got) != 0 {
+				t.Errorf("launched = %q, want the key still queued", got)
+			}
+		})
+	}
+}
+
+// A boot-held attempt's run_start that arrives once the runtime exists, with no trigger runner yet, still confirms:
+// the confirmer is wired at construction and the lease is loaded from disk.
+func TestRunStartBeforeRunnerConstructedConfirms(t *testing.T) {
+	dir := t.TempDir()
+	seed, err := runlease.NewStore(dir)
+	if err != nil {
+		t.Fatalf("runlease.NewStore: %v", err)
+	}
+	seedRuns := &Runs{chats: newTestChatStore(), leases: seed}
+	if !seedRuns.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec()) {
+		t.Fatal("Setup: the triggered lease was not persisted")
+	}
+	loaded, err := runlease.NewStore(dir)
+	if err != nil {
+		t.Fatalf("reopen runlease.NewStore: %v", err)
+	}
+	fc := &fakeConfirmer{bootHeld: map[string]bool{"wf_1": true}, live: map[string]string{testEventKey: "wf_1"}}
+	h, _ := newMarkRig(t, nil)
+	h.runs.mu.Lock()
+	h.runs.leases = loaded
+	h.runs.confirmer = fc
+	h.runs.mu.Unlock()
+
+	startRun(t, h, "", "wf_1", "sess_launcher")
+
+	if got := fc.launchedKeys(); !slices.Equal(got, []string{testEventKey}) {
+		t.Errorf("launched = %q, want the boot-held attempt's key confirmed", got)
 	}
 }

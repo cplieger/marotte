@@ -87,6 +87,9 @@ type runBoundsState struct {
 	healWriteFailed map[string]struct{}
 	// cancelRetries counts refused-cancel retries since the last progress, separate from heals so neither starves the other.
 	cancelRetries map[string]int
+	// confirmed names triggered runs whose run_start this life reached the confirmer. Cleared with executed, so a
+	// retry's run_start is handed over again.
+	confirmed map[string]struct{}
 	// armedAt is when each bounded run's current executing stretch began, mirroring Bounded(). The
 	// backstop's anchor, not Lease.StartedAt, which is wall time.
 	armedAt map[string]time.Time
@@ -384,6 +387,7 @@ func (rs *Runs) clearExecuted(workflowID string) {
 	delete(rs.bounds.armedAt, workflowID)
 	delete(rs.bounds.executed, workflowID)
 	delete(rs.bounds.arms, workflowID)
+	delete(rs.bounds.confirmed, workflowID)
 }
 
 // bounded reports whether marotte believes the run is executing under its deadline. Its readers must not clear it.

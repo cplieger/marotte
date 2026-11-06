@@ -1258,7 +1258,7 @@ func TestTriggeredInvokeErrorReturnsWorkflowID(t *testing.T) {
 	launchableRecipe(br, "wf_1")
 	delete(br.callResults, methodKiroWorkflowInvoke)
 	br.callErrs = map[string]error{methodKiroWorkflowInvoke: errHoldFault}
-	o := triggeredLaunch(entry.ID, "github.com/o/r/run/7/success", "github.com/o/r/run/7", "run 7")
+	o := triggeredLaunch(entry.ID, "github.com/o/r/run/8/failure", "github.com/o/r/run/8", "run 8")
 
 	id, _, err := h.runs.launchAs(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, o)
 	if id != "wf_1" || !errors.Is(err, errHoldFault) {
@@ -1524,5 +1524,200 @@ func TestCancelAbandonedLostClaimIsAnError(t *testing.T) {
 	}
 	if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
 		t.Error("a cancel went out though another terminator holds the claim")
+	}
+}
+
+func callCount(br *fakeBridge, method string) int {
+	br.mu.Lock()
+	defer br.mu.Unlock()
+	n := 0
+	for _, m := range br.calls {
+		if m == method {
+			n++
+		}
+	}
+	return n
+}
+
+// lostInvokeHub launches rule-1's event as wf_1 over a KAS that consumes the run's run_start on the host lane while
+// invoke blocks, then fails the invoke.
+func lostInvokeHub(t *testing.T) (*Runtime, *fakeBridge, *fakeConfirmer, error) {
+	t.Helper()
+	fc := &fakeConfirmer{}
+	h, _, br := newTestHub(WithTriggerConfirmer(fc))
+	launchableRecipe(br, "wf_1")
+	br.mu.Lock()
+	delete(br.callResults, methodKiroWorkflowInvoke)
+	br.callResults[methodKiroWorkflowCancel] = json.RawMessage(`{}`)
+	br.onCallFails = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool, error) {
+		if method != methodKiroWorkflowInvoke {
+			return nil, nil, false, nil
+		}
+		h.runs.observeStart(t.Context(), runChatID("wf_1"), runNotif(methodWFRunStart, map[string]any{
+			"workflowId": "wf_1", "workflowName": "publish",
+		}))
+		return nil, nil, false, errHoldFault
+	}
+	br.mu.Unlock()
+	id, _, err := h.runs.launchAs(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, eventLaunch())
+	if id != "wf_1" {
+		t.Fatalf("launchAs id = %q (%v), want wf_1", id, err)
+	}
+	return h, br, fc, err
+}
+
+// A run_start consumed while invoke blocks confirms the event; the invoke's error then cancels nothing and launches
+// nothing again, and the run keeps its lease.
+func TestLostInvokeRunStartIsKept(t *testing.T) {
+	h, br, fc, err := lostInvokeHub(t)
+
+	if !errors.Is(err, errHoldFault) {
+		t.Errorf("launchAs err = %v, want the invoke error", err)
+	}
+	if got := fc.launchedKeys(); !slices.Equal(got, []string{"github.com/o/r/run/7/success"}) {
+		t.Errorf("launched = %q, want the event confirmed by its run_start", got)
+	}
+	if l, held := h.runs.lease("wf_1"); !held || l.Origin != runlease.OriginTriggered {
+		t.Errorf("lease = %+v held %v, want the triggered lease kept", l, held)
+	}
+	if n := callCount(br, methodKiroWorkflowCancel); n != 0 {
+		t.Errorf("workflow/cancel sent %d times, want none: the run started", n)
+	}
+	if n := callCount(br, methodKiroWorkflowNew); n != 1 {
+		t.Errorf("workflow/new sent %d times, want 1", n)
+	}
+}
+
+// After a confirmed run's invoke error marotte leaves the run to end by itself: a resume confirms nothing more, no
+// cancel is sent, and its own terminal frame releases its lease.
+func TestInvokeErrorAfterConfirmKeepsRun(t *testing.T) {
+	h, br, fc, _ := lostInvokeHub(t)
+
+	h.runs.observeStart(t.Context(), runChatID("wf_1"), runNotif(methodWFRunStart, map[string]any{
+		"workflowId": "wf_1", "workflowName": "publish",
+	}))
+	if h.bridge.mgr.get(runChatID("wf_1")) == nil {
+		t.Error("the confirmed run's host session was closed after the invoke error")
+	}
+	h.runs.observeComplete(t.Context(), runChatID("wf_1"), runNotif(methodWFRunComplete, map[string]any{
+		"workflowId": "wf_1", "status": "completed",
+	}))
+
+	if n := fc.count("ConfirmEvent"); n != 1 {
+		t.Errorf("ConfirmEvent called %d times, want 1: the first run_start confirms, a resume's confirms nothing more", n)
+	}
+	if n := callCount(br, methodKiroWorkflowCancel); n != 0 {
+		t.Errorf("workflow/cancel sent %d times, want none", n)
+	}
+	if _, held := h.runs.lease("wf_1"); held {
+		t.Error("the run's terminal frame left its lease held")
+	}
+}
+
+// triggeredRetryHub is a runtime whose failed run wf_1 holds rule-1's triggered lease on a lease store in dir.
+func triggeredRetryHub(t *testing.T, fc *fakeConfirmer, dir string) (*Runtime, *fakeBridge) {
+	t.Helper()
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowRetry: json.RawMessage(`{}`),
+		methodKiroWorkflowList: json.RawMessage(`{"runs":[{"workflowId":"wf_1","name":"publish",` +
+			`"status":"failed","parentSessionId":"` + testLaunchSession + `"}]}`),
+	}
+	st, err := runlease.NewStore(dir)
+	if err != nil {
+		t.Fatalf("runlease.NewStore: %v", err)
+	}
+	h.runs.mu.Lock()
+	h.runs.leases = st
+	h.runs.confirmer = fc
+	h.runs.mu.Unlock()
+	h.runs.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec())
+	h.runs.recordParentSession(t.Context(), "wf_1", testLaunchSession)
+	return h, br
+}
+
+func retryFailed(t *testing.T, h *Runtime) error {
+	t.Helper()
+	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"}))
+	return err
+}
+
+// A person's retry of a run its rule abandoned is the person's: a manual lease replaces the triggered one before the
+// verb, its run_start confirms nothing, and a restart finds no triggered lease to cancel. A failed hand-back refuses
+// the retry and keeps the triggered lease.
+func TestRetryOfAbandonedRunTakesRetryLease(t *testing.T) {
+	t.Run("handed back", func(t *testing.T) {
+		dir := t.TempDir()
+		fc := &fakeConfirmer{retried: true}
+		h, br := triggeredRetryHub(t, fc, dir)
+
+		if err := retryFailed(t, h); err != nil {
+			t.Fatalf("retry: %v", err)
+		}
+		if !br.called(methodKiroWorkflowRetry) {
+			t.Error("the retry verb was not sent")
+		}
+		if l, held := h.runs.lease("wf_1"); !held || l.Origin != runlease.OriginManual || l.RuleID != "" {
+			t.Errorf("lease = %+v held %v, want a manual lease naming no rule", l, held)
+		}
+		h.runs.observeStart(t.Context(), "", runNotif(methodWFRunStart, map[string]any{
+			"workflowId": "wf_1", "workflowName": "publish", "parentSessionId": testLaunchSession,
+		}))
+		if n := fc.count("ConfirmEvent"); n != 0 {
+			t.Errorf("ConfirmEvent called %d times for the person's run, want none", n)
+		}
+		reopened, err := runlease.NewStore(dir)
+		if err != nil {
+			t.Fatalf("reopen runlease.NewStore: %v", err)
+		}
+		if l, held := reopened.Get("wf_1"); held && (l.Origin == runlease.OriginTriggered || l.RuleID != "") {
+			t.Errorf("lease on disk after the retry = %+v, want no triggered lease a restart would cancel", l)
+		}
+	})
+	t.Run("hand-back refused", func(t *testing.T) {
+		errWrite := errors.New("could not write launch-state/rule-1.json")
+		fc := &fakeConfirmer{retriedErr: errWrite}
+		h, br := triggeredRetryHub(t, fc, t.TempDir())
+
+		if err := retryFailed(t, h); !errors.Is(err, errWrite) {
+			t.Errorf("retry err = %v, want the confirmer's write error", err)
+		}
+		if br.called(methodKiroWorkflowRetry) {
+			t.Error("the retry verb was sent after the hand-back failed")
+		}
+		if l, held := h.runs.lease("wf_1"); !held || l.Origin != runlease.OriginTriggered || l.RuleID != "rule-1" {
+			t.Errorf("lease = %+v held %v, want the triggered lease untouched", l, held)
+		}
+	})
+}
+
+// A retry of a run whose attempt is still live keeps the triggered lease and starts a new life, so the retried run's
+// run_start reaches the confirmer again.
+func TestRetryOfLiveTriggeredRunRestartsBound(t *testing.T) {
+	fc := &fakeConfirmer{}
+	h, br := triggeredRetryHub(t, fc, t.TempDir())
+	start := func() {
+		h.runs.observeStart(t.Context(), runChatID("wf_1"), runNotif(methodWFRunStart, map[string]any{
+			"workflowId": "wf_1", "workflowName": "publish",
+		}))
+	}
+	start()
+
+	if err := retryFailed(t, h); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	start()
+
+	if n := fc.count("Retried wf_1"); n != 1 {
+		t.Errorf("Retried called %d times, want 1", n)
+	}
+	if !br.called(methodKiroWorkflowRetry) {
+		t.Error("the retry verb was not sent")
+	}
+	if l, held := h.runs.lease("wf_1"); !held || l.Origin != runlease.OriginTriggered || l.RuleID != "rule-1" {
+		t.Errorf("lease = %+v held %v, want the triggered lease kept, no manual one", l, held)
+	}
+	if n := fc.count("ConfirmEvent rule-1"); n != 2 {
+		t.Errorf("ConfirmEvent called %d times, want 2: the retried run's run_start was not handed over", n)
 	}
 }

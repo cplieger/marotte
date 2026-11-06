@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 )
@@ -572,4 +573,37 @@ func TestRetry_ARunWhoseEndWasMissedStartsWithItsOwnBudgets(t *testing.T) {
 	if h.runs.autoResumeStopped("wf_1") {
 		t.Error("the retried run reads stopped before any run_start: it inherited its last run's auto-resume stop")
 	}
+}
+
+// A person's retry of a triggered run whose end marotte missed records that ending on the rule's row through the
+// confirmer and keeps the triggered lease; a run the rule abandoned records nothing.
+func TestRetrySettlesTriggeredMissedEnd(t *testing.T) {
+	t.Run("live", func(t *testing.T) {
+		fc := &fakeConfirmer{}
+		h, _ := triggeredRetryHub(t, fc, t.TempDir())
+
+		if err := retryFailed(t, h); err != nil {
+			t.Fatalf("retry: %v", err)
+		}
+
+		want := "RecordOutcome rule-1 wf_1 " + string(launchrule.StatusFailed)
+		if n := fc.count(want); n != 1 {
+			t.Errorf("calls = %q, want one %q", fc.recorded(), want)
+		}
+		if l, held := h.runs.lease("wf_1"); !held || l.Origin != runlease.OriginTriggered {
+			t.Errorf("lease = %+v held %v, want the triggered lease kept", l, held)
+		}
+	})
+	t.Run("abandoned", func(t *testing.T) {
+		fc := &fakeConfirmer{retried: true}
+		h, _ := triggeredRetryHub(t, fc, t.TempDir())
+
+		if err := retryFailed(t, h); err != nil {
+			t.Fatalf("retry: %v", err)
+		}
+
+		if n := fc.count("RecordOutcome"); n != 0 {
+			t.Errorf("calls = %q, want no outcome for a run its rule abandoned", fc.recorded())
+		}
+	})
 }
