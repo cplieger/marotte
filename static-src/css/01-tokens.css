@@ -413,6 +413,10 @@
     --ctl-h-dense: 2rem;
     --ctl-h-sm: 1.5rem;
     --hit-floor: 1.5rem;
+    /* The coarse tier's --hit-floor, tier-independent so an inset sized to contain a
+     * touch expander can read it: 44px is Apple's HIG figure and WCAG 2.5.5 (AAA),
+     * against WCAG 2.5.8's 24px (AA) on the fine tier. */
+    --hit-floor-touch: 2.75rem;
     --btn-h: var(--ctl-h);
     /* The smallest painted box of an interactive element, WCAG 2.5.8's 24px. */
     --paint-floor: 1.5rem;
@@ -469,10 +473,9 @@
     --row-h: var(--row-h-2);
   }
 
-  /* A finger or a pen: 44px is Apple's HIG figure and WCAG 2.5.5 (AAA), against
-   * WCAG 2.5.8's 24px (AA) on the fine tier. */
+  /* A finger or a pen. */
   :root[data-pointer="coarse"] {
-    --hit-floor: 2.75rem;
+    --hit-floor: var(--hit-floor-touch);
     --row-tap-line: var(--hit-floor);
   }
 
@@ -482,7 +485,7 @@
    * trackpad. */
   @media (width <= 48rem) {
     :root:not([data-pointer="fine"]) {
-      --hit-floor: 2.75rem;
+      --hit-floor: var(--hit-floor-touch);
       --row-tap-line: var(--hit-floor);
     }
   }

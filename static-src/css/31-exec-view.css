@@ -1065,7 +1065,7 @@
    the clock and the alert line before the verbs keep their x; the chevron is flush with
    its start edge and takes that corner. */
 .ev-dock-head {
-  --head-act-in: calc((2.75rem - var(--ctl-h-dense)) / 2);
+  --head-act-in: calc((var(--hit-floor-touch) - var(--ctl-h-dense)) / 2);
 
   position: relative;
   display: flex;
