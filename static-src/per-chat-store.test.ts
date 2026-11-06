@@ -1,6 +1,5 @@
-// The per-chat localStorage maps three viewer-owned stores sit on (fold overrides, banner
-// dismissals, web preview widths).
-import { describe, it, expect, beforeEach, onTestFinished, vi } from "vitest";
+// The per-chat localStorage maps the viewer-owned stores sit on.
+import { describe, it, expect, beforeEach, vi } from "vitest";
 
 import { readPerChat, updatePerChat, onPerChatChange, MAX_CHATS } from "./per-chat-store.js";
 
@@ -172,8 +171,8 @@ describe("other windows' changes", () => {
     let sent: string | null = "";
     const seenA: (string | null)[] = [];
     const seenB: (string | null)[] = [];
-    onTestFinished(onPerChatChange("marotte.test-a", () => seenA.push(sent)));
-    onTestFinished(onPerChatChange("marotte.test-b", () => seenB.push(sent)));
+    onPerChatChange("marotte.test-a", () => seenA.push(sent));
+    onPerChatChange("marotte.test-b", () => seenB.push(sent));
     for (const key of ["marotte.test-a", "marotte.test-b", null]) {
       sent = key;
       window.dispatchEvent(new StorageEvent("storage", { key, storageArea: localStorage }));

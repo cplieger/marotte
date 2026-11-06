@@ -72,39 +72,13 @@ export function updatePerChat<T>(
   }
 }
 
-const changeListeners = new Map<string, Set<() => void>>();
-let listening = false;
-
 /** Call `fn` when another window changes `key`, or clears localStorage. The browser fires no
- *  `storage` event in the window that wrote, so a caller's own writes never reach `fn`.
- *  Returns the unsubscribe. */
-export function onPerChatChange(key: string, fn: () => void): () => void {
-  let fns = changeListeners.get(key);
-  if (fns === undefined) {
-    fns = new Set();
-    changeListeners.set(key, fns);
-  }
-  fns.add(fn);
-  if (!listening) {
-    listening = true;
-    window.addEventListener("storage", onStorage);
-  }
-  const registered = fns;
-  return () => {
-    registered.delete(fn);
-  };
-}
-
-function onStorage(event: StorageEvent): void {
-  // A same-origin sessionStorage change fires the same event; it says nothing about these maps.
-  if (event.storageArea !== localStorage) {
-    return;
-  }
-  const sets =
-    event.key === null ? [...changeListeners.values()] : [changeListeners.get(event.key)];
-  for (const fns of sets) {
-    for (const fn of [...(fns ?? [])]) {
+ *  `storage` event in the window that wrote, so a caller's own writes never reach `fn`. */
+export function onPerChatChange(key: string, fn: () => void): void {
+  window.addEventListener("storage", (event) => {
+    // A same-origin sessionStorage change fires the same event; it says nothing about these maps.
+    if (event.storageArea === localStorage && (event.key === key || event.key === null)) {
       fn();
     }
-  }
+  });
 }
