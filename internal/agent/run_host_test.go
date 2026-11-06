@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,7 +23,9 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/trigger"
 )
 
 type bufferedEvent struct {
@@ -1159,5 +1163,366 @@ func TestManualLaunchInputsUnfiltered(t *testing.T) {
 	}
 	if got, want := sentInputs(t, br), map[string]any{"lane": "fast", "stray": "x"}; !maps.Equal(got, want) {
 		t.Errorf("workflow/new inputs = %v, want %v", got, want)
+	}
+}
+
+// hostGone waits for the run's host session to be closed.
+func hostGone(t *testing.T, h *Runtime, workflowID string) bool {
+	t.Helper()
+	stop := time.Now().Add(5 * time.Second)
+	for h.bridge.mgr.get(runChatID(workflowID)) != nil {
+		if time.Now().After(stop) {
+			return false
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return true
+}
+
+func routed(h *Runtime, workflowID string) bool {
+	h.runs.router.mu.Lock()
+	defer h.runs.router.mu.Unlock()
+	_, ok := h.runs.router.owner[workflowID]
+	return ok
+}
+
+// Two launches of one recipe released together pass one single-run check at a time: the second reads the run the
+// first created, listed active before its invoke, and is refused as busy.
+func TestConcurrentLaunchesOneRecipeOneRun(t *testing.T) {
+	h, _, br := newTestHub()
+	launchableRecipe(br, "wf_1")
+	var news atomic.Int32
+	var created atomic.Bool
+	// Holds each run-list read until both launches are reading, or 500 ms pass: launches with no lock between the
+	// check and workflow/new then both read the list before either creates a run.
+	var arrived sync.WaitGroup
+	arrived.Add(2)
+	both := make(chan struct{})
+	go func() { arrived.Wait(); close(both) }()
+	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		switch method {
+		case methodKiroWorkflowList:
+			seen := created.Load()
+			arrived.Done()
+			select {
+			case <-both:
+			case <-time.After(500 * time.Millisecond):
+			}
+			if seen {
+				return json.RawMessage(`{"runs":[{"workflowId":"wf_1","name":"publish","workflowName":"publish",` +
+					`"status":"running"}]}`), nil, true
+			}
+		case methodKiroWorkflowNew:
+			news.Add(1)
+			created.Store(true)
+		}
+		return nil, nil, false
+	}
+
+	errs := make(chan error, 2)
+	go func() {
+		_, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
+		errs <- err
+	}()
+	go func() {
+		_, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"}, nil,
+			marotte.RunDefaults{}, time.Now().Add(time.Hour))
+		errs <- err
+	}()
+	var busy, ok int
+	for range 2 {
+		err := <-errs
+		var be *schedule.BusyError
+		switch {
+		case err == nil:
+			ok++
+		case errors.As(err, &be) && be.WorkflowID == "wf_1":
+			busy++
+		default:
+			t.Errorf("a launch failed with %v, want one launched and one BusyError naming wf_1", err)
+		}
+	}
+	if n := news.Load(); n != 1 {
+		t.Errorf("workflow/new sent %d times, want 1: one recipe got two live runs", n)
+	}
+	if ok != 1 || busy != 1 {
+		t.Errorf("%d launched and %d refused as busy, want 1 and 1", ok, busy)
+	}
+}
+
+// A triggered invoke that fails returns the run's id with the error and keeps its lease and host session: a lost
+// reply can follow a run_start that already confirmed the event.
+func TestTriggeredInvokeErrorReturnsWorkflowID(t *testing.T) {
+	h, br, st, entry := scheduledHub(t)
+	h.runs.confirmer = &fakeConfirmer{}
+	launchableRecipe(br, "wf_1")
+	delete(br.callResults, methodKiroWorkflowInvoke)
+	br.callErrs = map[string]error{methodKiroWorkflowInvoke: errHoldFault}
+	o := triggeredLaunch(entry.ID, "github.com/o/r/run/7/success", "github.com/o/r/run/7", "run 7")
+
+	id, _, err := h.runs.launchAs(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, o)
+	if id != "wf_1" || !errors.Is(err, errHoldFault) {
+		t.Fatalf("launchAs = %q, %v; want wf_1 with the invoke error", id, err)
+	}
+	if l, held := h.runs.lease("wf_1"); !held || l.Origin != runlease.OriginTriggered {
+		t.Errorf("lease = %+v held %v, want the triggered lease kept", l, held)
+	}
+	if h.bridge.mgr.get(runChatID("wf_1")) == nil {
+		t.Error("the run's host session was closed, so a run KAS may have started has no lane")
+	}
+	if row := st.Clocks()[0]; row.LastRunID != "" || row.LastStatus != "" {
+		t.Errorf("row = %+v, want nothing written for a triggered launch", row)
+	}
+
+	h.runs.observeStart(t.Context(), runChatID("wf_1"), runNotif(methodWFRunStart, map[string]any{
+		"workflowId": "wf_1", "workflowName": "publish",
+	}))
+	if l, held := h.runs.lease("wf_1"); !held || l.Origin != runlease.OriginTriggered || l.RuleID != entry.ID {
+		t.Errorf("after run_start lease = %+v held %v, want the triggered lease, not a fresh manual one", l, held)
+	}
+}
+
+// releaseOrderFixture is the probe's recording of a cancel landing before the run's host session closed.
+type releaseOrderFixture struct {
+	CancelResult      json.RawMessage `json:"cancel_result"`
+	ListedAfter       json.RawMessage `json:"listed_after"`
+	FramesBeforeClose []struct {
+		Params map[string]any `json:"params"`
+		Method string         `json:"method"`
+		Lane   string         `json:"lane"`
+		Status string         `json:"status"`
+	} `json:"frames_before_close"`
+}
+
+func readKASProbe(t *testing.T, name string, v any) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "kas-probe", name))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	if err := json.Unmarshal(raw, v); err != nil {
+		t.Fatalf("decode %s: %v", name, err)
+	}
+}
+
+// ReleaseTriggered releases the lease and closes the run's host session. Replayed in the recorded order (the cancel's
+// run_complete on the host lane, then the cancel's answer, then the release), the run ends aborted with nothing left.
+func TestReleaseTriggeredReleasesLeaseAndHost(t *testing.T) {
+	t.Run("releases the lease and the host session", func(t *testing.T) {
+		h, _, br := newTestHub()
+		h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+		h.runs.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec())
+
+		h.runs.ReleaseTriggered(t.Context(), "wf_1")
+
+		if _, held := h.runs.lease("wf_1"); held {
+			t.Error("the lease survived ReleaseTriggered")
+		}
+		if !hostGone(t, h, "wf_1") {
+			t.Error("the run's host session survived ReleaseTriggered")
+		}
+	})
+	t.Run("in the recorded order", func(t *testing.T) {
+		var fx releaseOrderFixture
+		readKASProbe(t, "release-order.json", &fx)
+		var complete map[string]any
+		for _, f := range fx.FramesBeforeClose {
+			if f.Method == methodWFRunComplete {
+				complete = f.Params
+			}
+		}
+		if complete == nil {
+			t.Fatal("the fixture holds no run_complete before the close")
+		}
+		id, _ := complete["workflowId"].(string)
+		h, _, br := newTestHub()
+		br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: fx.CancelResult}
+		h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
+		h.runs.grantLease(t.Context(), id, "trigger-probe", eventLaunch(), hostSec())
+		h.runs.armDeadline(t.Context(), id)
+		h.dispatch(t.Context(), runChatID(id), br, runNotif(methodWFRunComplete, complete))
+
+		if err := h.runs.CancelAbandoned(t.Context(), id); err != nil && !errors.Is(err, errTerminationClaimed) {
+			t.Fatalf("CancelAbandoned: %v", err)
+		}
+		h.runs.ReleaseTriggered(t.Context(), id)
+
+		if _, held := h.runs.lease(id); held {
+			t.Error("the lease survived the release")
+		}
+		if !hostGone(t, h, id) {
+			t.Error("the host session survived the release")
+		}
+		if h.runs.bounded(id) {
+			t.Error("the released run is still bounded")
+		}
+	})
+}
+
+// A triggered lease that is not persisted, or not granted at all, stops the launch before the run is routed or
+// invoked: after a restart nothing would name it. The cancel is the attempt table's, not the launch's.
+func TestTriggeredLeaseGrantFailureWritesNoInvoke(t *testing.T) {
+	for name, tc := range map[string]struct {
+		workflowID string
+		durable    bool
+	}{
+		"a lease that does not persist":          {workflowID: "wf_1"},
+		"a workflow id that is not a plain name": {workflowID: "wf 1", durable: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var opts []Option
+			if !tc.durable {
+				opts = append(opts, WithRunLeases(undurableLeaseStore(t)))
+			}
+			h, _, br := newTestHub(opts...)
+			h.runs.confirmer = &fakeConfirmer{}
+			launchableRecipe(br, tc.workflowID)
+
+			id, _, err := h.runs.launchAs(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, eventLaunch())
+			if id != tc.workflowID || !errors.Is(err, trigger.ErrLeaseNotGranted) {
+				t.Fatalf("launchAs = %q, %v; want %q with trigger.ErrLeaseNotGranted", id, err, tc.workflowID)
+			}
+			wire := br.wireLog()
+			if slices.Contains(wire, methodKiroWorkflowInvoke) {
+				t.Error("the run was invoked though its lease could not be written")
+			}
+			if slices.Contains(wire, methodKiroWorkflowCancel) {
+				t.Error("the launch sent a cancel; the attempt table owns it")
+			}
+			if routed(h, tc.workflowID) {
+				t.Error("the run was routed to its host though it will never be invoked")
+			}
+			if !hostGone(t, h, tc.workflowID) {
+				t.Error("the host session of a run that will never be invoked stayed open")
+			}
+		})
+	}
+}
+
+// A scheduled launch whose invoke KAS refuses keeps dev's arm: the row records the failure, the lease is released and
+// the host session closed.
+func TestScheduledInvokeErrorKeepsDevArm(t *testing.T) {
+	h, br, st, entry := nightlyLaunch(t)
+	delete(br.callResults, methodKiroWorkflowInvoke)
+	br.callRPCErrs = map[string]*marotte.RPCError{methodKiroWorkflowInvoke: {Code: -32603, Message: "invoke refused"}}
+
+	id, _, err := h.runs.LaunchScheduled(t.Context(), entry.Source, entry.Row(), nil, marotte.RunDefaults{},
+		time.Now().Add(time.Hour))
+	if id != "wf_1" || err == nil {
+		t.Fatalf("LaunchScheduled = %q, %v; want wf_1 with the refusal", id, err)
+	}
+	if row := st.Clocks()[0]; row.LastRunID != "wf_1" || row.LastStatus != launchrule.StatusFailed {
+		t.Errorf("row = %+v, want wf_1 failed", row)
+	}
+	if _, held := h.runs.lease("wf_1"); held {
+		t.Error("the lease of a run KAS refused to start survived")
+	}
+	if !hostGone(t, h, "wf_1") {
+		t.Error("the host session of a run KAS refused to start stayed open")
+	}
+}
+
+// cancelUninvokedFixture is the probe's engine-lane cancel of a created, never-invoked run.
+type cancelUninvokedFixture struct {
+	Uninvoked struct {
+		CancelResult json.RawMessage `json:"cancel_result"`
+		ListedBefore json.RawMessage `json:"listed_before"`
+		ListedAfter  json.RawMessage `json:"listed_after"`
+	} `json:"uninvoked"`
+}
+
+// An abandoned run that was created and never invoked is cancelled on the engine lane with no initiator, leaves the
+// list's active set, and the recipe's next launch is not refused as busy.
+func TestCancelAbandonedEndsUninvokedRun(t *testing.T) {
+	var fx cancelUninvokedFixture
+	readKASProbe(t, "cancel-uninvoked.json", &fx)
+	var before struct {
+		WorkflowID   string `json:"workflowId"`
+		WorkflowName string `json:"workflowName"`
+	}
+	if err := json.Unmarshal(fx.Uninvoked.ListedBefore, &before); err != nil {
+		t.Fatalf("decode listed_before: %v", err)
+	}
+	h, _, br := newTestHub()
+	launchableRecipe(br, "wf_next")
+	br.callResults[methodKiroWorkflowListRecipes] = json.RawMessage(
+		`{"recipes":[{"name":"` + before.WorkflowName + `","source":"bundled://probe"}]}`,
+	)
+	br.callResults[methodKiroWorkflowCancel] = fx.Uninvoked.CancelResult
+	var cancelled atomic.Bool
+	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		switch method {
+		case methodKiroWorkflowCancel:
+			cancelled.Store(true)
+		case methodKiroWorkflowList:
+			listed := fx.Uninvoked.ListedBefore
+			if cancelled.Load() {
+				listed = fx.Uninvoked.ListedAfter
+			}
+			return json.RawMessage(`{"runs":[` + string(listed) + `]}`), nil, true
+		}
+		return nil, nil, false
+	}
+	if err := h.runs.recipeIdle(t.Context(), before.WorkflowName, ""); err == nil {
+		t.Fatal("the fixture's created run did not hold its recipe before the cancel")
+	}
+
+	if err := h.runs.CancelAbandoned(t.Context(), before.WorkflowID); err != nil {
+		t.Fatalf("CancelAbandoned: %v", err)
+	}
+	params := br.paramsFor(methodKiroWorkflowCancel)
+	if params[keyWorkflowID] != before.WorkflowID {
+		t.Errorf("cancel params %v, want the abandoned run's id", params)
+	}
+	if _, attributed := params["initiator"]; attributed {
+		t.Errorf("cancel params %v carry an initiator; an abandoned run's cancel is nobody's", params)
+	}
+	if _, _, err := h.runs.launch(t.Context(), "bundled://probe", nil, marotte.RunDefaults{}); err != nil {
+		t.Errorf("the next launch after the cancel = %v, want it launched", err)
+	}
+}
+
+// A cancel KAS refuses leaves the run and its lease, so the recipe stays busy and the next launch names the run.
+func TestCancelAbandonedRefusedKeepsRecipeBusy(t *testing.T) {
+	h, _, br := newTestHub()
+	h.runs.cancelRetryBase = time.Hour
+	launchableRecipe(br, "wf_2")
+	br.callResults[methodKiroWorkflowList] = json.RawMessage(
+		`{"runs":[{"workflowId":"wf_1","name":"publish","workflowName":"publish","status":"running"}]}`,
+	)
+	br.callRPCErrs = map[string]*marotte.RPCError{methodKiroWorkflowCancel: {Code: -32603, Message: "cancel refused"}}
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	h.runs.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec())
+	h.runs.armDeadline(t.Context(), "wf_1")
+
+	if err := h.runs.CancelAbandoned(t.Context(), "wf_1"); err == nil {
+		t.Fatal("a refused cancel reported success")
+	}
+	if _, held := h.runs.lease("wf_1"); !held {
+		t.Error("the refused cancel released the run's lease")
+	}
+	_, _, err := h.runs.launch(t.Context(), "bundled://publish", nil, marotte.RunDefaults{})
+	var be *schedule.BusyError
+	if !errors.As(err, &be) || be.WorkflowID != "wf_1" {
+		t.Errorf("the next launch = %v, want a BusyError naming wf_1", err)
+	}
+}
+
+// A cancel that loses the termination claim sent nothing, so it is an error and not a landed cancel.
+func TestCancelAbandonedLostClaimIsAnError(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	h.runs.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec())
+	if !h.runs.claimTermination("wf_1") {
+		t.Fatal("the fixture could not take the claim another terminator holds")
+	}
+
+	err := h.runs.CancelAbandoned(t.Context(), "wf_1")
+	if !errors.Is(err, errTerminationClaimed) {
+		t.Errorf("CancelAbandoned = %v, want errTerminationClaimed", err)
+	}
+	if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
+		t.Error("a cancel went out though another terminator holds the claim")
 	}
 }

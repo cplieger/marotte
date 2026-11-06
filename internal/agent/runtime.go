@@ -473,6 +473,7 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 		mutations:       newRunMutations(),
 		hosts:           keylock.New(cmp.Compare[string]),
 		resumes:         keylock.New(cmp.Compare[string]),
+		launchLocks:     keylock.New(cmp.Compare[string]),
 		sweep:           gateSweep{turns: keylock.New(cmp.Compare[string])},
 	}
 

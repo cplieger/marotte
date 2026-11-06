@@ -325,7 +325,7 @@ func (p *probe) listed(ctx context.Context, id string) *listedRun {
 
 func active(r *listedRun) bool { return r != nil && marotte.RunStatus(r.Status).Active() }
 
-func (p *probe) invoke(ctx context.Context, s *bridge.Session, id string) (time.Time, error) {
+func invokeRun(ctx context.Context, s *bridge.Session, id string) (time.Time, error) {
 	resp, err := s.Call(ctx, "_kiro/workflow/invoke", map[string]any{"workflowId": id})
 	at := time.Now()
 	if err == nil && resp.Error != nil {
@@ -369,7 +369,7 @@ func (p *probe) invokeInterval(ctx context.Context) {
 	for range probeInvokes {
 		s, id := p.create(ctx)
 		from := p.mark()
-		replied, err := p.invoke(ctx, s, id)
+		replied, err := invokeRun(ctx, s, id)
 		sm := sample{WorkflowID: id}
 		if err != nil {
 			sm.Error = err.Error()
@@ -432,7 +432,7 @@ func (p *probe) cancelUninvoked(ctx context.Context) {
 
 	rs, rid := p.create(ctx)
 	from := p.mark()
-	if _, err := p.invoke(ctx, rs, rid); err != nil {
+	if _, err := invokeRun(ctx, rs, rid); err != nil {
 		p.t.Fatalf("invoke: %v", err)
 	}
 	if _, ok := p.await(from, "_kiro/workflow/run_start", rid, probeFrameMax); !ok {
@@ -457,7 +457,7 @@ func (p *probe) releaseOrder(ctx context.Context) {
 	s, id := p.create(ctx)
 	p.own(id, s)
 	from := p.mark()
-	if _, err := p.invoke(ctx, s, id); err != nil {
+	if _, err := invokeRun(ctx, s, id); err != nil {
 		p.t.Fatalf("invoke: %v", err)
 	}
 	start, ok := p.await(from, "_kiro/workflow/run_start", id, probeFrameMax)
@@ -509,7 +509,7 @@ func (p *probe) releaseOrder(ctx context.Context) {
 func (p *probe) autoResume(ctx context.Context) {
 	s, id := p.create(ctx)
 	from := p.mark()
-	if _, err := p.invoke(ctx, s, id); err != nil {
+	if _, err := invokeRun(ctx, s, id); err != nil {
 		p.t.Fatalf("invoke: %v", err)
 	}
 	if _, ok := p.await(from, "_kiro/workflow/run_start", id, probeFrameMax); !ok {

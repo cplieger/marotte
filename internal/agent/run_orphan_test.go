@@ -407,7 +407,7 @@ func TestRecipeIdle_ReappearanceClearsTheAbsenceClock(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	if err := h.runs.recipeIdle(t.Context(), "another-recipe"); err != nil {
+	if err := h.runs.recipeIdle(t.Context(), "another-recipe", ""); err != nil {
 		t.Fatalf("recipeIdle(another-recipe): %v", err)
 	}
 	got, held := h.runs.lease("wf_1")
@@ -639,7 +639,7 @@ func TestRecipeIdle_ClearsABlockingOrphanAndProceeds(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	if err := h.runs.recipeIdle(t.Context(), "publish"); err != nil {
+	if err := h.runs.recipeIdle(t.Context(), "publish", ""); err != nil {
 		t.Fatalf("admission refused a launch over an orphan it owns: %v", err)
 	}
 	if got := h.runs.endReason("wf_old"); got != runEndOrphaned {
@@ -661,7 +661,7 @@ func TestRecipeIdle_RefusesALabelledRunOfTheSameRecipe(t *testing.T) {
 		}),
 	}
 
-	if err := h.runs.recipeIdle(t.Context(), "publish"); err == nil {
+	if err := h.runs.recipeIdle(t.Context(), "publish", ""); err == nil {
 		t.Fatal("admission allowed a second live run of a recipe whose live run wears a label")
 	}
 }
@@ -704,7 +704,7 @@ func TestRecipeIdle_StillRefusesEveryBlockingRowItCannotExplain(t *testing.T) {
 				}
 			}
 
-			if err := h.runs.recipeIdle(t.Context(), "publish"); err == nil {
+			if err := h.runs.recipeIdle(t.Context(), "publish", ""); err == nil {
 				t.Fatal("admission allowed a second live run of one recipe")
 			}
 			for _, m := range br.callLog() {

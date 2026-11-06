@@ -1,0 +1,75 @@
+package agent
+
+import (
+	"fmt"
+	"maps"
+	"sync"
+
+	"github.com/cplieger/marotte/internal/launchrule"
+	"github.com/cplieger/marotte/internal/marotte"
+)
+
+// fakeConfirmer records every TriggerConfirmer call as one line, in order, and answers from its fields.
+type fakeConfirmer struct {
+	nameErr    error
+	retriedErr error
+	bootHeld   map[string]bool
+	pruned     []map[string]marotte.RunStatus
+	calls      []string
+	mu         sync.Mutex
+	retried    bool
+}
+
+var _ TriggerConfirmer = (*fakeConfirmer)(nil)
+
+func (f *fakeConfirmer) record(format string, args ...any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, fmt.Sprintf(format, args...))
+}
+
+func (f *fakeConfirmer) recorded() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
+func (f *fakeConfirmer) NameAttempt(ruleID, eventKey, workflowID string) error {
+	f.record("NameAttempt %s %s %s", ruleID, eventKey, workflowID)
+	return f.nameErr
+}
+
+func (f *fakeConfirmer) ConfirmEvent(ruleID, eventKey, workflowID string) {
+	f.record("ConfirmEvent %s %s %s", ruleID, eventKey, workflowID)
+}
+
+func (f *fakeConfirmer) BootHeld(workflowID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.bootHeld[workflowID]
+}
+
+func (f *fakeConfirmer) PruneAbandoned(ruleID string, statuses map[string]marotte.RunStatus) {
+	f.record("PruneAbandoned %s", ruleID)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pruned = append(f.pruned, maps.Clone(statuses))
+}
+
+func (f *fakeConfirmer) RuleChanged(ruleID string, change launchrule.Change) {
+	f.record("RuleChanged %s %s", ruleID, change)
+}
+
+func (f *fakeConfirmer) Retried(workflowID string) (bool, error) {
+	f.record("Retried %s", workflowID)
+	return f.retried, f.retriedErr
+}
+
+func (f *fakeConfirmer) RecordOutcome(ruleID, workflowID string, outcome launchrule.Outcome) {
+	f.record("RecordOutcome %s %s %s", ruleID, workflowID, outcome.Status)
+}
+
+func (f *fakeConfirmer) DismissGap(ruleID string) error {
+	f.record("DismissGap %s", ruleID)
+	return nil
+}

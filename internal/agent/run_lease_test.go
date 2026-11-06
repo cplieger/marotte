@@ -569,3 +569,84 @@ func TestLaunchScheduled_ARunOfARecreatedScheduleLeavesTheNewRowAlone(t *testing
 		t.Errorf("recreated row = %+v, want no run recorded on it", row)
 	}
 }
+
+// eventLaunch is a triggered launch of one queued event of rule rule-1.
+func eventLaunch() launchOrigin {
+	return triggeredLaunch("rule-1", "github.com/o/r/run/7/success", "github.com/o/r/run/7", "run 7")
+}
+
+// A triggered launch's lease is granted between workflow/new and invoke, and the event counts as launched only on the
+// run's run_start: the grant confirms nothing.
+func TestGrantLeaseDoesNotConfirmEvent(t *testing.T) {
+	fc := &fakeConfirmer{}
+	h, _, br := newTestHub(WithTriggerConfirmer(fc))
+	launchableRecipe(br, "wf_1")
+
+	if _, _, err := h.runs.launchAs(t.Context(), "bundled://publish", nil, marotte.RunDefaults{}, eventLaunch()); err != nil {
+		t.Fatalf("launchAs: %v", err)
+	}
+	l, held := h.runs.lease("wf_1")
+	if !held {
+		t.Fatal("the triggered launch granted no lease")
+	}
+	if l.Origin != runlease.OriginTriggered || !l.Unattended {
+		t.Errorf("lease origin %q unattended %v, want triggered and unattended", l.Origin, l.Unattended)
+	}
+	if l.RuleID != "rule-1" || l.EventKey != "github.com/o/r/run/7/success" {
+		t.Errorf("lease rule %q event %q, want the launch's rule-1 and its event key", l.RuleID, l.EventKey)
+	}
+	for _, c := range fc.recorded() {
+		if strings.HasPrefix(c, "ConfirmEvent") {
+			t.Errorf("the grant confirmed the event (%q) before any run_start", c)
+		}
+	}
+}
+
+// The coalesce key is written on every triggered lease and survives a restart; nothing in this release reads it.
+func TestTriggeredGrantStoresCoalesceKey(t *testing.T) {
+	dir := t.TempDir()
+	st, err := runlease.NewStore(dir)
+	if err != nil {
+		t.Fatalf("runlease.NewStore: %v", err)
+	}
+	h := &Runs{chats: newTestChatStore(), leases: st}
+
+	if !h.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec()) {
+		t.Fatal("grantLease reported a lease it wrote as not persisted")
+	}
+	reopened, err := runlease.NewStore(dir)
+	if err != nil {
+		t.Fatalf("reopen runlease.NewStore: %v", err)
+	}
+	l, held := reopened.Get("wf_1")
+	if !held {
+		t.Fatal("the triggered lease did not survive a reload")
+	}
+	if l.CoalesceKey != "github.com/o/r/run/7" {
+		t.Errorf("coalesce key after reload = %q, want github.com/o/r/run/7", l.CoalesceKey)
+	}
+}
+
+// A triggered run's row start is written by its confirmation, so the grant leaves the rule's row alone; a scheduled
+// grant still records the start.
+func TestTriggeredGrantWritesNoRowStart(t *testing.T) {
+	t.Run("triggered", func(t *testing.T) {
+		h, _, st, entry := scheduledHub(t)
+		o := triggeredLaunch(entry.ID, "github.com/o/r/run/7/success", "github.com/o/r/run/7", "run 7")
+
+		h.runs.grantLease(t.Context(), "wf_1", "nightly", o, hostSec())
+
+		if row := st.Clocks()[0]; row.LastRunID != "" || row.LastStatus != "" || !row.LastRunAt.IsZero() {
+			t.Errorf("row = %+v after a triggered grant, want no start recorded", row)
+		}
+	})
+	t.Run("scheduled", func(t *testing.T) {
+		h, _, st, entry := scheduledHub(t)
+
+		h.runs.grantLease(t.Context(), "wf_1", "nightly", scheduledLaunch(entry.Row(), time.Now().Add(time.Hour)), hostSec())
+
+		if row := st.Clocks()[0]; row.LastRunID != "wf_1" || row.LastStatus != launchrule.StatusStarted {
+			t.Errorf("row = %+v after a scheduled grant, want wf_1 started", row)
+		}
+	})
+}

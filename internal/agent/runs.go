@@ -28,6 +28,9 @@ type Runs struct {
 	launchRules *launchrule.Store `wiring:"optional"`
 	leases      *runlease.Store   `wiring:"optional"`
 	eventRules  eventRuleChecker  `wiring:"optional"`
+	confirmer   TriggerConfirmer  `wiring:"optional"`
+	// launchLocks serializes, per recipe name, a launch's single-run check through its lease grant (launchAs).
+	launchLocks *keylock.Set[string]
 	// log is the run record: one entry log per run under <configDir>/runs, its open step turns and hosts.
 	log     *runLog `wiring:"optional"`
 	bridges *bridgeManager

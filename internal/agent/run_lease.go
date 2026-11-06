@@ -28,9 +28,28 @@ type launchOrigin struct {
 	slotAt time.Time
 	// row is the schedule row a scheduled run reports to, nil for any other.
 	row *launchrule.Row
+	// event is a triggered launch's event, nil for any other origin.
+	event *triggerEvent
 	// chatID is the launching chat for an agent's run (runStartLaunch), empty for a parentless launch.
 	chatID string
 	origin runlease.Origin
+}
+
+// triggerEvent is the queued event a triggered launch delivers, and the run label it sends before runLabelFor
+// shapes it.
+type triggerEvent struct {
+	ruleID      string
+	eventKey    string
+	coalesceKey string
+	label       string
+}
+
+// ruleID is the event rule of a triggered launch, empty for any other.
+func (o *launchOrigin) ruleID() string {
+	if o.event == nil {
+		return ""
+	}
+	return o.event.ruleID
 }
 
 // manualLaunch is the Run button and a parentless run's retry: attended, no schedule row. The slot depends on the resolved recipe, so launch sets it.
@@ -72,6 +91,15 @@ func scheduledLaunch(row launchrule.Row, slotAt time.Time) launchOrigin {
 	return launchOrigin{origin: runlease.OriginScheduled, row: &row, slotAt: slotAt}
 }
 
+// triggeredLaunch is an event rule's launch of one queued event.
+//
+//deadset:ignore DS1004 -- the trigger runner's launch builds it; until that lands only the tests launch a triggered run
+func triggeredLaunch(ruleID, eventKey, coalesceKey, label string) launchOrigin {
+	return launchOrigin{origin: runlease.OriginTriggered, event: &triggerEvent{
+		ruleID: ruleID, eventKey: eventKey, coalesceKey: coalesceKey, label: label,
+	}}
+}
+
 // scheduleRow is the row the run reports to, zero for an unscheduled run.
 func (o *launchOrigin) scheduleRow() launchrule.Row {
 	if o.row == nil {
@@ -80,12 +108,16 @@ func (o *launchOrigin) scheduleRow() launchrule.Row {
 	return *o.row
 }
 
-// runLabel is the label sent for a run, set only for a scheduled one so History shows which runs nobody started.
+// runLabel is the label sent for a run, set only for a scheduled or triggered one so History shows which runs nobody
+// started.
 func (o launchOrigin) runLabel(recipe string) string {
-	if o.origin != runlease.OriginScheduled {
-		return ""
+	switch {
+	case o.origin == runlease.OriginScheduled:
+		return runLabelFor(recipe + " · scheduled")
+	case o.event != nil:
+		return runLabelFor(recipe + " · " + o.event.label)
 	}
-	return runLabelFor(recipe + " · scheduled")
+	return ""
 }
 
 // runLabelMaxUnits is KAS's runLabel cap, counted in UTF-16 code units.
@@ -155,10 +187,13 @@ func (rs *Runs) leaseStore() *runlease.Store {
 }
 
 // grantLease records a run marotte put on the wire, between `new` and `invoke`, before anything executes; host is a
-// parentless launch's host-session security input, nil for a chat-parented run. Unattended only for a scheduled run.
-// A persist failure is logged: the in-memory lease still bounds the run.
-func (rs *Runs) grantLease(ctx context.Context, workflowID, recipe string, o launchOrigin, host *runlease.HostSecurity) {
-	rs.grantKeeping(ctx, workflowID, recipe, &o, host, nil)
+// parentless launch's host-session security input, nil for a chat-parented run. Unattended for a scheduled or
+// triggered run. A persist failure is logged: the in-memory lease still bounds the run. It reports whether the lease
+// was granted and persisted.
+func (rs *Runs) grantLease(
+	ctx context.Context, workflowID, recipe string, o launchOrigin, host *runlease.HostSecurity,
+) (persisted bool) {
+	return rs.grantKeeping(ctx, workflowID, recipe, &o, host, nil)
 }
 
 // leaseKeep is what a grant records of the run's keep facts.
@@ -172,10 +207,10 @@ type leaseKeep struct {
 // grantKeeping is grantLease recording keep, the run's keep holders, on the lease; nil records none.
 func (rs *Runs) grantKeeping(
 	ctx context.Context, workflowID, recipe string, o *launchOrigin, host *runlease.HostSecurity, keep *leaseKeep,
-) {
+) (persisted bool) {
 	if !ids.ValidChatID(workflowID) {
 		slog.Warn("run lease not granted: the workflow id is not a plain name", "workflow_id", logsafe.Field(workflowID))
-		return
+		return false
 	}
 	l := runlease.Lease{
 		StartedAt:  time.Now(),
@@ -185,21 +220,30 @@ func (rs *Runs) grantKeeping(
 		Recipe:     recipe,
 		Origin:     o.origin,
 		ScheduleID: o.scheduleRow().ID,
-		Unattended: o.origin == runlease.OriginScheduled,
+		Unattended: o.origin == runlease.OriginScheduled || o.origin == runlease.OriginTriggered,
 		Host:       host,
+	}
+	if e := o.event; e != nil {
+		l.RuleID, l.EventKey, l.CoalesceKey, l.RunLabel = e.ruleID, e.eventKey, e.coalesceKey, o.runLabel(recipe)
 	}
 	if keep != nil {
 		l.KeepChats, l.Unattributed = keep.chats, keep.unattributed
 	}
+	persisted = true
 	if err := rs.leaseStore().Put(ctx, &l); err != nil {
+		persisted = false
 		slog.Error("run lease not persisted; this run's envelope will not survive a restart",
 			"workflow_id", workflowID, "recipe", recipe, "origin", o.origin, "error", err)
 	}
 	rs.beginLife(workflowID)
-	run := scheduleRun(&l)
-	rs.writeSchedule(run, func() error { return rs.launchRules.RecordStart(ctx, run) })
+	// A triggered run's row start is its run_start's confirmation, not the grant.
+	if o.origin != runlease.OriginTriggered {
+		run := scheduleRun(&l)
+		rs.writeSchedule(run, func() error { return rs.launchRules.RecordStart(ctx, run) })
+	}
 	// Named from the grant on, so every pending_snapshot names every run marotte answers for.
 	rs.cellFor(workflowID)
+	return persisted
 }
 
 // Idempotent: the terminal frame and cancel both release. Every path that ends a run comes here, so
