@@ -146,8 +146,9 @@ func (rs *Runs) askBootPass(ctx context.Context) {
 		"took", time.Since(started).Round(time.Millisecond))
 }
 
-// releaseIfOver releases a run's lease when KAS says it is over, for a stop with no confirmation. Unknown
-// needs no check, since a landed cancel proved KAS resolved the id; an unreadable run is left; a running run is a no-op.
+// releaseIfOver drops a run's lease and bounds (forgetBounds) when KAS says it is over, for a stop with no terminal
+// frame. Unknown needs no check, since a landed cancel proved KAS resolved the id; an unreadable run is left; a running
+// run is a no-op.
 func (rs *Runs) releaseIfOver(ctx context.Context, workflowID string) {
 	if workflowID == "" {
 		return
@@ -165,7 +166,7 @@ func (rs *Runs) releaseIfOver(ctx context.Context, workflowID string) {
 	if l, held := rs.lease(workflowID); held {
 		rs.recordScheduleEnding(ctx, ruleRun(&l), res.State.Status, res.State.StopReason)
 	}
-	rs.releaseLease(ctx, workflowID)
+	rs.forgetBounds(ctx, workflowID)
 }
 
 // reconcileLeasePresence settles every lease against one run list: terminal releases, listed resets the

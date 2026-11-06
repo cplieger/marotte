@@ -212,9 +212,9 @@ func TestRunStart_AResumeCarriesKASsAttributionVerbatim(t *testing.T) {
 	}
 }
 
-// TestRunStart_CarriesTheScheduledMark pins a mark only the launch path knows, keyed on
+// TestRunStart_CarriesTheUnattendedMark pins a mark only the launch path knows, keyed on
 // the WORKFLOW id (chatID is "" for exactly these runs).
-func TestRunStart_CarriesTheScheduledMark(t *testing.T) {
+func TestRunStart_CarriesTheUnattendedMark(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		unattended map[string]string

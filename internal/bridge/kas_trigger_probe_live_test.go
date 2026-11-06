@@ -57,8 +57,8 @@ func TestProbeTriggeredLaunch(t *testing.T) {
 	p.c.shutdown()
 }
 
-// TestProbeReleaseOrder records probe (c): a triggered run's release (the lease, then its host session) right after
-// its cancel's answer, before the cancel's terminal frame. It is its own test because it needs no 150 s restart.
+// TestProbeReleaseOrder records whether a cancelled run's terminal frame still reaches its lane when the lease and host
+// session are released right after the cancel's answer. It is its own test because it needs no 150 s restart.
 func TestProbeReleaseOrder(t *testing.T) {
 	p, ctx := newProbe(t)
 	p.releaseOrder(ctx)
@@ -334,7 +334,7 @@ func invokeRun(ctx context.Context, s *bridge.Session, id string) (time.Time, er
 	return at, err
 }
 
-// cancelEngineLane is the cancel row A5 sends: engine lane, no initiator.
+// cancelEngineLane is an abandoned run's cancel: engine lane, no initiator.
 func (p *probe) cancelEngineLane(ctx context.Context, id string) (json.RawMessage, error) {
 	return p.engineCall(ctx, "_kiro/workflow/cancel", map[string]any{"workflowId": id})
 }

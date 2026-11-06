@@ -1308,15 +1308,21 @@ func readKASProbe(t *testing.T, name string, v any) {
 // ReleaseTriggered releases the lease and closes the run's host session. Replayed in the recorded order (the cancel's
 // run_complete on the host lane, then the cancel's answer, then the release), the run ends aborted with nothing left.
 func TestReleaseTriggeredReleasesLeaseAndHost(t *testing.T) {
-	t.Run("releases the lease and the host session", func(t *testing.T) {
+	t.Run("releases the lease, the termination claim and the host session", func(t *testing.T) {
 		h, _, br := newTestHub()
 		h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
 		h.runs.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec())
+		if !h.runs.claimTermination("wf_1") {
+			t.Fatal("the fixture could not take the claim the landed cancel held")
+		}
 
 		h.runs.ReleaseTriggered(t.Context(), "wf_1")
 
 		if _, held := h.runs.lease("wf_1"); held {
 			t.Error("the lease survived ReleaseTriggered")
+		}
+		if !h.runs.claimTermination("wf_1") {
+			t.Error("the released run's termination claim outlived it")
 		}
 		if !hostGone(t, h, "wf_1") {
 			t.Error("the run's host session survived ReleaseTriggered")
@@ -1477,8 +1483,33 @@ func TestCancelAbandonedEndsUninvokedRun(t *testing.T) {
 	if _, attributed := params["initiator"]; attributed {
 		t.Errorf("cancel params %v carry an initiator; an abandoned run's cancel is nobody's", params)
 	}
+	if !h.runs.claimTermination(before.WorkflowID) {
+		t.Error("the cancelled run's termination claim survived, though it sends no run_complete to release it")
+	}
 	if _, _, err := h.runs.launch(t.Context(), "bundled://probe", nil, marotte.RunDefaults{}); err != nil {
 		t.Errorf("the next launch after the cancel = %v, want it launched", err)
+	}
+}
+
+// A refused cancel of a run that was never invoked, so never armed, is still re-attempted while its lease is held.
+func TestCancelAbandonedRefusedRetriesUnarmedRun(t *testing.T) {
+	h, _, br := newTestHub()
+	setCancelRetryDelay(h.runs, time.Millisecond)
+	br.callRPCErrs = map[string]*marotte.RPCError{methodKiroWorkflowCancel: {Code: -32603, Message: "cancel refused"}}
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	h.runs.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec())
+
+	if err := h.runs.CancelAbandoned(t.Context(), "wf_1"); err == nil {
+		t.Fatal("a refused cancel reported success")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for callsOf(br, methodKiroWorkflowCancel) < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("workflow/cancel sent %d times, want a re-attempt after the refusal",
+				callsOf(br, methodKiroWorkflowCancel))
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
@@ -1636,6 +1667,13 @@ func triggeredRetryHub(t *testing.T, fc *fakeConfirmer, dir string) (*Runtime, *
 	return h, br
 }
 
+func executedRecorded(rs *Runs, workflowID string) bool {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	_, ok := rs.bounds.executed[workflowID]
+	return ok
+}
+
 func retryFailed(t *testing.T, h *Runtime) error {
 	t.Helper()
 	_, err := h.runs.retry(t.Context(), "wf_1", h.runs.affordance("wf_1", &runHead{Status: "failed"}))
@@ -1650,9 +1688,17 @@ func TestRetryOfAbandonedRunTakesRetryLease(t *testing.T) {
 		dir := t.TempDir()
 		fc := &fakeConfirmer{retried: true}
 		h, br := triggeredRetryHub(t, fc, dir)
+		h.runs.armDeadline(t.Context(), "wf_1")
+		h.runs.disarmDeadline(t.Context(), "wf_1")
+		if !executedRecorded(h.runs, "wf_1") {
+			t.Fatal("the fixture's abandoned run banked no executed time")
+		}
 
 		if err := retryFailed(t, h); err != nil {
 			t.Fatalf("retry: %v", err)
+		}
+		if executedRecorded(h.runs, "wf_1") {
+			t.Error("the abandoned run's executed time carried into the person's retry, shortening its backstop")
 		}
 		if !br.called(methodKiroWorkflowRetry) {
 			t.Error("the retry verb was not sent")

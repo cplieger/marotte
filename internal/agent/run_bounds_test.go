@@ -1250,6 +1250,9 @@ func TestCancel_ReleasesTheLeaseOfAPausedRunThatSendsNoTerminalFrame(t *testing.
 		t.Error("a landed cancel of a paused run left its lease behind, so the run stays " +
 			"advertised as live and its chat stays exempt from eviction")
 	}
+	if !h.runs.claimTermination("wf_1") {
+		t.Error("the stopped run's termination claim outlived it, though no run_complete comes to release it")
+	}
 	log := br.callLog()
 	cancelAt := slices.Index(log, methodKiroWorkflowCancel)
 	inspectAt := slices.Index(log, methodKiroWorkflowInspect)

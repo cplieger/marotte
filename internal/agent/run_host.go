@@ -247,8 +247,8 @@ func (rs *Runs) startLaunched(
 }
 
 // leaseLaunched grants a created run's lease before anything can execute (runlease.Lease). A triggered launch first
-// names its attempt; an error from either step means the run must not be invoked, and the attempt table has queued
-// its cancel.
+// names its attempt; an error from either step means the run must not be invoked, and the launch sends no cancel:
+// NameAttempt's error means the confirmer already queued one, trigger.ErrLeaseNotGranted that the caller queues it.
 func (rs *Runs) leaseLaunched(
 	ctx context.Context, wfID, recipe string, o *launchOrigin, host *runlease.HostSecurity,
 ) error {
@@ -400,19 +400,27 @@ func (rs *Runs) CancelAbandoned(ctx context.Context, workflowID string) error {
 	if !rs.claimTermination(workflowID) {
 		return errTerminationClaimed
 	}
-	stop := runStop{}
-	return rs.finishTermination(cctx, workflowID, "", stop, func(ctx context.Context) error {
-		if !rs.bounded(workflowID) {
+	err := rs.finishTermination(cctx, workflowID, "", runStop{}, func(ctx context.Context) error {
+		// A never-invoked run is never armed, so its lease, not bounded, says marotte still holds it.
+		if _, held := rs.lease(workflowID); !held {
 			return nil
 		}
-		return rs.cancelAs(ctx, workflowID, stop)
+		if err := rs.CancelAbandoned(ctx, workflowID); !errors.Is(err, errTerminationClaimed) {
+			return err
+		}
+		return nil
 	})
+	if _, held := rs.lease(workflowID); err == nil && !held {
+		// No run_complete follows a never-invoked run's cancel, so nothing else drops its claim.
+		rs.forgetBounds(cctx, workflowID)
+	}
+	return err
 }
 
-// ReleaseTriggered ends marotte's hold on an abandoned triggered run whose cancel landed: its lease, then its host
-// session.
+// ReleaseTriggered ends marotte's hold on an abandoned triggered run whose cancel landed: its lease and bounds, then
+// its host session.
 func (rs *Runs) ReleaseTriggered(ctx context.Context, workflowID string) {
-	rs.releaseLease(ctx, workflowID)
+	rs.forgetBounds(ctx, workflowID)
 	rs.coord.closeBridge(ctx, runChatID(workflowID), marotte.TurnOutcomeInterrupted)
 }
 
@@ -703,8 +711,8 @@ func (rs *Runs) leaseForRetry(
 	return true
 }
 
-// handBackAbandoned gives a person's retry of a run its rule abandoned a manual lease: the triggered lease goes, so a
-// restart finds no lease naming the rule's queued event and cancels nothing. An error refuses the retry with the
+// handBackAbandoned gives a person's retry of a run its rule abandoned a manual lease: the triggered lease and its
+// bounds go, so a restart finds no lease naming the rule's queued event and cancels nothing. An error refuses the retry with the
 // lease untouched.
 func (rs *Runs) handBackAbandoned(ctx context.Context, workflowID string) error {
 	l, held := rs.lease(workflowID)
@@ -716,7 +724,7 @@ func (rs *Runs) handBackAbandoned(ctx context.Context, workflowID string) error 
 		return fmt.Errorf("workflow retry: %w", err)
 	}
 	if abandoned {
-		rs.releaseLease(ctx, workflowID)
+		rs.forgetBounds(ctx, workflowID)
 	}
 	return nil
 }
