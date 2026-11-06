@@ -111,6 +111,8 @@ interface Harness {
   /** Deliver a screen frame on the feature bus, as the kernel does on every frame it renders;
    *  `rows` is the row count the frame carries. */
   screenFrame: (rows: number) => void;
+  /** Set what the engine reports for DEC mode 2004, as its modes frame does. */
+  setBracketedPaste: (on: boolean) => void;
 }
 
 /** The mock features are a string and a bare `{ setup: vi.fn() }`, so the guard reads the shape
@@ -191,7 +193,10 @@ async function setup(
   // every feature's setup with the real context; here the fake records the `wire:screen` listeners
   // so a test can deliver a frame.
   let screenListeners: ((msg: unknown) => void)[] = [];
+  // The engine's ModeState starts with bracketed paste on, before the server's first modes frame.
+  let bracketedPaste = true;
   const fakeCtx = {
+    modes: { isBracketedPaste: () => bracketedPaste },
     on: (event: string, fn: (msg: unknown) => void): (() => void) => {
       if (event === "wire:screen") {
         screenListeners.push(fn);
@@ -320,6 +325,9 @@ async function setup(
       for (const fn of [...screenListeners]) {
         fn(msg);
       }
+    },
+    setBracketedPaste: (on: boolean) => {
+      bracketedPaste = on;
     },
   };
 }
@@ -506,7 +514,7 @@ describe("shell.ts: host-driven actions", () => {
 
   // Enter on a PTY is CR (0x0d), the byte the engine's keyboard module sends for the key, so LF
   // must not appear.
-  it("runs the command: the text followed by one CR, in a single send", async () => {
+  it("runs a one-line command unbracketed: the text and one CR, in a single send", async () => {
     const h = await setup();
     h.mod.initShellPanel(); // registers the run callback
     h.shellBtn.click(); // open so the terminal (and its handle) exists
@@ -561,6 +569,54 @@ describe("shell.ts: host-driven actions", () => {
     h.screenFrame(24);
     await Promise.resolve();
     expect(h.sendSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // DEC mode 2004 (xterm ctlseqs "Bracketed Paste Mode"): ESC [200~ opens the paste and ESC [201~
+  // closes it, so bash takes the block as one input; the CR after it is the one Enter.
+  it("runs a multi-line block as one bracketed paste and one CR, in a single send", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    h.screenFrame(24);
+
+    h.getRunCb()?.("cd /tmp\nls -la");
+    await Promise.resolve();
+
+    expect(h.sendSpy).toHaveBeenCalledTimes(1);
+    expect(h.sendSpy).toHaveBeenCalledWith(
+      new TextEncoder().encode("\x1b[200~cd /tmp\rls -la\x1b[201~\r"),
+    );
+  });
+
+  // Without mode 2004 the markers would be typed as text, so the lines go as typed keys, each
+  // line end a CR as the terminal's own paste sends it, with one more CR to submit the last line.
+  it("sends the lines unbracketed when the program has bracketed paste off", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    h.screenFrame(24);
+    h.setBracketedPaste(false);
+
+    h.getRunCb()?.("cd /tmp\nls -la");
+    await Promise.resolve();
+
+    expect(h.sendSpy).toHaveBeenCalledTimes(1);
+    expect(h.sendSpy).toHaveBeenCalledWith(new TextEncoder().encode("cd /tmp\rls -la\r"));
+  });
+
+  // The server's modes frame lands with the session's first frames, so the mode is read at send
+  // time, after the gate, never when Run is clicked.
+  it("reads the paste mode when it sends, not when Run was clicked", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+
+    h.getRunCb()?.("cd /tmp\nls -la");
+    h.setBracketedPaste(false);
+    h.screenFrame(24);
+    await Promise.resolve();
+
+    expect(h.sendSpy).toHaveBeenCalledTimes(1);
+    expect(h.sendSpy).toHaveBeenCalledWith(new TextEncoder().encode("cd /tmp\rls -la\r"));
   });
 
   // Reopening reuses the terminal, which has already drawn, so nothing waits.

@@ -613,12 +613,13 @@ describe("a group the window drops", () => {
     expect(badge(body)?.textContent).toContain("4");
   });
 
-  it("recounts a group that keeps some of its cards", () => {
+  it("recounts a group that keeps some of its cards", async () => {
     const { body, turn } = mount("t-drop-part");
     dropHead(turn, { from: 4, to: 14 });
     const first = body.querySelector<HTMLElement>(".tool-group")!;
     expect(first.querySelectorAll(".tool-call")).toHaveLength(3);
     expect(badge(first)?.textContent).toContain("2");
-    expect(first.querySelectorAll(".tool-hook-item")).toHaveLength(2);
+    await userEvent.click(hooksButton(first));
+    await expect.poll(() => popoverEntries().map(([n]) => n)).toEqual(["1\u00d7", "1\u00d7"]);
   });
 });
