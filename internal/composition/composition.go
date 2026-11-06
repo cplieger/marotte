@@ -110,6 +110,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	slog.Info("boot paths resolved",
 		"config_dir", cfg.ConfigDir, "work_dir", cfg.WorkDir, "kiro_home", workspace.KiroHome())
 	logBridgeEnvPosture(cfg)
+	logNotifyPosture(cfg)
 
 	// Before the first write into any root: every writer below would otherwise run in a second
 	// instance too, rendering its own state over the live one's.
@@ -328,6 +329,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithWorkDir(cfg.WorkDir),
 		server.WithTrustedProxies(cfg.TrustedProxies),
 		server.WithHostPolicy(cfg.HostPolicy),
+		server.WithNotifyGate(cfg.NotifyGate),
 		// ListenAndServe is callable twice and a second close panics.
 		server.WithOnListen(sync.OnceFunc(func() { close(listenerBound) })),
 	)
