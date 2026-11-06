@@ -956,11 +956,11 @@ body.sidebar-resizing {
   background: var(--c-bg-tertiary);
 }
 
-/* THE ICON-SWAP SLIDE, shared by the theme cycle and the touch/mouse toggle (driven
- * by theme.ts and pointer-mode.ts). Every glyph stays in the DOM and `.hidden` picks
- * the visible one; on a change the outgoing icon slides down (`.icon-setting`), then
- * the incoming one slides up from below (removal of `.icon-rising`). The GLOW below
- * is the theme's alone.
+/* THE ICON-SWAP SLIDE, shared by the theme cycle, the touch/mouse toggle and the
+ * Clock toggle (driven by theme.ts, pointer-mode.ts and clock-toggle.ts). Every
+ * glyph stays in the DOM and `.hidden` picks the visible one; on a change the
+ * outgoing icon slides down (`.icon-setting`), then the incoming one slides up from
+ * below (removal of `.icon-rising`). The GLOW below is the theme's alone.
  * The clip of the +/-2rem travel is on this wrapper, the button's size, never on the
  * button: a clip there would cut its hit expander (61-mcp-tools.css). */
 .icon-swap {
@@ -979,14 +979,14 @@ body.sidebar-resizing {
  * interpolated box 250ms later, computes a different offset and writes again — a
  * self-sustaining wiggle with no gesture behind it. The two properties compose
  * additively, so `transform` carries the slide and `translate` stays the snap's alone. */
-:is([id="theme-btn"], [id="pointer-mode-btn"]) svg {
+.icon-swap svg {
   display: inline-block;
   transition:
     transform 0.35s var(--ease-enter),
     opacity 0.25s var(--ease-enter);
 }
 
-:is([id="theme-btn"], [id="pointer-mode-btn"]) svg.icon-setting {
+.icon-swap svg.icon-setting {
   transform: translateY(2rem);
   opacity: 0;
   transition:
@@ -994,7 +994,7 @@ body.sidebar-resizing {
     opacity 0.2s var(--ease-exit);
 }
 
-:is([id="theme-btn"], [id="pointer-mode-btn"]) svg.icon-rising {
+.icon-swap svg.icon-rising {
   transform: translateY(-2rem);
   opacity: 0;
 }

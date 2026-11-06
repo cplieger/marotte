@@ -1,7 +1,8 @@
 // The localStorage keys and theme attribute shared across modules; prepaint.js bundles this module.
 
 /**
- * Everything about this screen: active tab, shell fields, sidebar width, pointer fields, the theme's pre-paint cache.
+ * Everything about this screen: active tab, shell fields, sidebar width, pointer fields, the clock choice, the theme's
+ * pre-paint cache.
  * `device-view.ts` is the only writer (read-modify-write of one JSON document). The name is kept on purpose: renaming
  * would reset every reader's shell height and theme.
  */

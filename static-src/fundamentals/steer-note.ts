@@ -238,7 +238,12 @@ function cleared(d: SteerNoteData): boolean {
 function stamp(ms: number): HTMLElement {
   return el(
     "time",
-    { datetime: new Date(ms).toISOString(), "data-tooltip": absoluteTime(ms) },
+    {
+      datetime: new Date(ms).toISOString(),
+      "data-tooltip": absoluteTime(ms),
+      "data-clock": "seconds",
+      "data-clock-tip": "full",
+    },
     formatClock(ms, { seconds: true }),
   );
 }

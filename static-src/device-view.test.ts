@@ -9,11 +9,13 @@ import {
   cacheTheme,
   cachedPointerTier,
   cachedTheme,
+  clockChoice,
   coarseEverSeen,
   loadDeviceView,
   markCoarseSeen,
   pointerModeChoice,
   setActiveView,
+  setClockChoice,
   setPointerModeChoice,
   setShellHeight,
   setShellOpen,
@@ -22,7 +24,7 @@ import {
   shellOpen,
   sidebarWidth,
 } from "./device-view.js";
-import { LS_UI_STATE_KEY } from "./ls-keys.js";
+import { LS_UI_STATE_KEY, clearDeviceKeys } from "./ls-keys.js";
 
 function blob(): Record<string, unknown> {
   const raw = localStorage.getItem(LS_UI_STATE_KEY);
@@ -177,6 +179,43 @@ describe("the pointer fields", () => {
 
     expect(pointerModeChoice()).toBe("coarse");
     expect(cachedPointerTier()).toBe("fine");
+  });
+});
+
+describe("the clock choice", () => {
+  it("round-trips the three choices in this screen's blob", () => {
+    for (const c of ["h23", "h12", "auto"] as const) {
+      setClockChoice(c);
+      expect(clockChoice()).toBe(c);
+      expect(blob()["clock"]).toBe(c);
+    }
+  });
+
+  it("reads an absent or unrecognised value as automatic", () => {
+    expect(clockChoice()).toBe("auto");
+    localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ clock: true }));
+    expect(clockChoice()).toBe("auto");
+    localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ clock: "constructor" }));
+    expect(clockChoice()).toBe("auto");
+  });
+
+  it("keeps its siblings, and a sibling write keeps it", () => {
+    cacheTheme("light");
+    setPointerModeChoice("coarse");
+    setClockChoice("h23");
+    setSidebarWidth(300);
+    expect(blob()).toMatchObject({
+      theme: "light",
+      pointer_mode: "coarse",
+      clock: "h23",
+      sidebar_w: 300,
+    });
+  });
+
+  it("goes with the other device fields at sign-out", () => {
+    setClockChoice("h12");
+    clearDeviceKeys();
+    expect(clockChoice()).toBe("auto");
   });
 });
 

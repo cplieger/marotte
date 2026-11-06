@@ -476,6 +476,9 @@ class Elements {
   get pointerModeBtn(): HTMLButtonElement {
     return byId("pointer-mode-btn");
   }
+  get clockBtn(): HTMLButtonElement {
+    return byId("clock-btn");
+  }
 
   get chatArea(): HTMLElement {
     return byId("chat-area");

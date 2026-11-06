@@ -132,6 +132,7 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   if (time !== null && d.ts > 0) {
     const when = new Date(d.ts);
     time.dateTime = when.toISOString();
+    time.dataset["clock"] = "short";
     time.textContent = formatClock(d.ts);
   }
 
