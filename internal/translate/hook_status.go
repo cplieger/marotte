@@ -47,13 +47,13 @@ func (h *hookUpdateBlock) hookResult() (printed string, exitFailed bool) {
 // hookStatusCompleted is the wire status of a hook execution KAS reports as successful.
 const hookStatusCompleted = "completed"
 
-// handleHookUpdate appends a `Hook fired` tool_call card to the chat's open turn, in the
-// lane of the sub-agent that ran it (subtask, "" for the chat's own agent). Every hook is
-// recorded: hooks.showStatus is applied where the transcript draws. A step's hook update
-// never reaches here: the attribution gate drops it.
-func (t *Translator) handleHookUpdate(ctx context.Context, chatID marotte.ChatID, h *hookUpdateBlock, subtask string) {
-	turn := t.turns.TurnFoldTarget(ctx, chatID)
-	if turn == nil {
+// handleHookUpdate appends a `Hook fired` tool_call card to the turn a content frame with
+// attr folds into (the chat's, or a step's run turn), in the lane of the sub-agent that ran
+// it (subtask, "" for the session's own agent). Every hook is recorded: hooks.showStatus is
+// applied where the transcript draws.
+func (t *Translator) handleHookUpdate(ctx context.Context, chatID marotte.ChatID, attr FrameAttribution, h *hookUpdateBlock, subtask string) {
+	turn, sc, ok := t.foldTarget(ctx, chatID, attr)
+	if !ok {
 		return
 	}
 	call := hookToolCall(h, time.Now().UnixMilli(), t.workDir)
@@ -62,9 +62,9 @@ func (t *Translator) handleHookUpdate(ctx context.Context, chatID marotte.ChatID
 	}
 	entry := marotte.EntryToolCallOf(&call)
 	sealed, err := turn.ToolCall(ctx, subtask, &entry)
-	t.publishSealed(ctx, chatScope(chatID), sealed)
+	t.publishSealed(ctx, sc, sealed)
 	if err != nil {
-		appendFailed(chatScope(chatID), "hook tool_call", err)
+		appendFailed(sc, "hook tool_call", err)
 	}
 }
 

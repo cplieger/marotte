@@ -1,10 +1,13 @@
 package translate
 
 import (
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // hookUpdateFrame builds the `update` object of a hook_update session_info_update with
@@ -140,15 +143,77 @@ func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 			t.Errorf("len(Title) = %d, want <= %d", len(title), maxLen)
 		}
 	})
+}
 
-	t.Run("DroppedForAStep", func(t *testing.T) {
-		for _, attr := range []FrameAttribution{{Step: true}} {
-			events, calls := hookCardCase(t, hookUpdateFrame(t, "probe", hookStatusCompleted), attr)
-			if hasEntryAppended(events, marotte.EntryKindToolCall) || len(calls) != 0 {
-				t.Errorf("attribution %+v produced events=%v calls=%d; want nothing", attr, hasEntryAppended(events, marotte.EntryKindToolCall), len(calls))
+// A step's hook goes to its run turn by both doors a step's session_info_update takes: the
+// launching chat's and a parentless run's host session.
+func TestStepHookUpdate_RecordedInTheStepsRunTurn(t *testing.T) {
+	doors := map[string]func(tr *Translator, t *testing.T, raw []byte, attr FrameAttribution){
+		"chat_hosted": func(tr *Translator, t *testing.T, raw []byte, attr FrameAttribution) {
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", raw, attr)
+		},
+		"run_hosted": func(tr *Translator, t *testing.T, raw []byte, attr FrameAttribution) {
+			tr.HandleStepInfoUpdate(t.Context(), "run:wf_1", raw, attr)
+		},
+	}
+	for name, feed := range doors {
+		t.Run(name, func(t *testing.T) {
+			base, events := newEventCaptureDeps()
+			tr := New(rolesOf(&hookTriggerDeps{baseDeps: base, triggers: map[string]string{"h1": "PreToolUse"}}))
+			attr := FrameAttribution{Step: true, RunID: "wf_1", SessionID: "sess_step", NodePath: workflow.PathKey([]string{"wf_1", "build"})}
+			passing := hookUpdateFrame(t, "guard", hookStatusCompleted)
+			passing["_meta"].(map[string]any)["kiro"].(map[string]any)["agentSubtaskId"] = "sub-1"
+			failing := hookUpdateFrame(t, "lint", hookStatusCompleted)
+			hookBlock(failing)["operationId"] = "op-2"
+			hookBlock(failing)["output"] = map[string]any{"result": map[string]any{"output": "2 errors\n", "exitCode": 1}}
+
+			feed(tr, t, mustJSON(t, passing), attr)
+			feed(tr, t, mustJSON(t, failing), attr)
+
+			entries := base.runEntries("wf_1", attr.NodePath)
+			calls := toolCallsOf(t, entries)
+			want := []marotte.EntryToolCall{
+				{ID: "hook-op-1", Title: "Hook fired: guard", Kind: marotte.ToolKindHook, Status: marotte.ToolCompleted, HookTrigger: "PreToolUse"},
+				{ID: "hook-op-2", Title: "Hook fired: lint", Kind: marotte.ToolKindHook, Status: marotte.ToolFailed, Output: "2 errors\n", HookTrigger: "PreToolUse"},
 			}
+			if len(calls) != len(want) {
+				t.Fatalf("run turn tool calls = %+v, want the step's two hook cards", calls)
+			}
+			for i := range want {
+				got := calls[i]
+				got.Ts = 0
+				if !reflect.DeepEqual(got, want[i]) {
+					t.Errorf("run turn hook card %d = %+v, want %+v", i, got, want[i])
+				}
+			}
+			var lanes []string
+			for i := range entries {
+				if entries[i].Kind == marotte.EntryKindToolCall {
+					lanes = append(lanes, entries[i].Lane)
+				}
+			}
+			if !slices.Equal(lanes, []string{"sub-1", ""}) {
+				t.Errorf("hook tool_call lanes = %q, want [sub-1 \"\"]", lanes)
+			}
+			if got := toolCallsOf(t, base.chatEntries("c1")); len(got) != 0 {
+				t.Errorf("chat tool calls after a step's hooks = %+v, want none", got)
+			}
+			if n := runToolCallsAppended(events, "wf_1"); n != 2 {
+				t.Errorf("entry_appended{tool_call} for run wf_1 = %d, want 2", n)
+			}
+		})
+	}
+}
+
+func runToolCallsAppended(events *[]marotte.ServerEvent, runID string) int {
+	n := 0
+	for _, e := range *events {
+		p, ok := e.Payload.(marotte.EntryAppendedPayload)
+		if e.Type == marotte.EventEntryAppended && ok && p.Entry.Kind == marotte.EntryKindToolCall && p.WorkflowID == runID && e.ChatID == "" {
+			n++
 		}
-	})
+	}
+	return n
 }
 
 func TestHandleSessionInfoUpdate_HookCardSourcePath(t *testing.T) {

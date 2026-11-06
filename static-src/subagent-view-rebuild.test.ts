@@ -61,6 +61,7 @@ const { subagentRef } = await import("./tab-materialize.js");
 const { sliceSubagent } = await import("./subagent-slice.js");
 const { showSubagent } = await import("./subagent-view.js");
 const { clearAllEntrySigs } = await import("./store-signals.js");
+const { setHookStatusShown } = await import("./hook-fold.js");
 const { rebuildDetached, disposeDetachedBody, buildDetachedBody } =
   await import("./messages-blocks.js");
 const blocksActual = await vi.importActual<typeof BlocksModule>("./messages-blocks.js");
@@ -139,6 +140,7 @@ function body(): HTMLElement {
 
 beforeEach(() => {
   clearAllEntrySigs();
+  setHookStatusShown(true);
   vi.mocked(rebuildDetached).mockImplementation(blocksActual.rebuildDetached);
   vi.mocked(disposeDetachedBody).mockImplementation(blocksActual.disposeDetachedBody);
   vi.mocked(buildDetachedBody).mockImplementation(blocksActual.buildDetachedBody);
@@ -191,6 +193,44 @@ describe("a delegate's page rebuilding its body", () => {
 
     await vi.waitFor(() => {
       expect(order).toEqual(["open", "dispose", "build", "close"]);
+    });
+  });
+});
+
+describe("a delegate's page following Show hook status", () => {
+  it("draws a quiet stop hook once the switch turns on after the page mounted without it", async () => {
+    setHookStatusShown(false);
+    nextSeq = 0;
+    const chat = "c-hook-flip";
+    const turn = "t-hook-flip";
+    store.setSessions([makeSession(chat)]);
+    store.openTurn(chat, turnOpen(turn));
+    push(chat, turn, "tool_call", invocation("tc-hf", "hf-A"), { id: "tc-hf" });
+    push(chat, turn, "text", { text: "delegate work" }, { lane: "hf-A" });
+    push(
+      chat,
+      turn,
+      "tool_call",
+      makeToolCall({
+        id: "hook-op-hf",
+        title: "Hook fired: stop check",
+        kind: "hook",
+        status: "completed",
+        hook_trigger: "Stop",
+      }),
+      { id: "hook-hf", lane: "hf-A" },
+    );
+    refs = [subagentRef(chat, "hf-A")];
+    refsVersion.value += 1;
+    showSubagent(chat, "hf-A");
+    await vi.waitFor(() => {
+      expect(body().textContent).toContain("delegate work");
+    });
+    expect(body().querySelector('.tool-call[data-kind="hook"]')).toBeNull();
+
+    setHookStatusShown(true);
+    await vi.waitFor(() => {
+      expect(body().querySelector('.tool-call[data-kind="hook"]')).not.toBeNull();
     });
   });
 });

@@ -32,9 +32,12 @@ export function setHookStatusShown(shown: boolean): void {
   }
 }
 
-/** Run fn whenever hooks.showStatus changes. */
-export function onHookVisibility(fn: () => void): void {
+/** Run fn whenever hooks.showStatus changes, until the returned function is called. */
+export function onHookVisibility(fn: () => void): () => void {
   listeners.add(fn);
+  return () => {
+    listeners.delete(fn);
+  };
 }
 
 /** A hook that ran, passed and printed nothing. Every other hook keeps its row whatever the switch says. */
