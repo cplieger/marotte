@@ -211,12 +211,15 @@ function runRefusal(cmd: string): string | null {
  * one-line click is consent to what it shows, a block's is not.
  */
 async function runSeen(pre: HTMLElement, cmd: string): Promise<void> {
-  const ask = cmd.includes("\n")
-    ? "Run these lines in the shell?"
-    : pre.scrollWidth > pre.clientWidth
-      ? "Part of this command was out of view. Run it?"
-      : null;
-  if (ask !== null && !(await confirm(`${ask}\n\n${cmd}`, "Run"))) {
+  const lines = cmd.includes("\n");
+  if (
+    (lines || pre.scrollWidth > pre.clientWidth) &&
+    !(await confirm({
+      title: lines ? "Run these lines in the shell?" : "Run this command?",
+      body: lines ? cmd : `Part of it was out of view:\n\n${cmd}`,
+      confirmLabel: "Run",
+    }))
+  ) {
     return;
   }
   shellRunCb?.(cmd);

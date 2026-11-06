@@ -39,7 +39,11 @@ describe("a confirm's focus", () => {
     });
     let answer: Promise<boolean> | undefined;
     opener.addEventListener("click", () => {
-      answer = confirm("Rewind to this turn?", "Rewind", "destructive");
+      answer = confirm({
+        title: "Rewind to this turn?",
+        confirmLabel: "Rewind",
+        variant: "destructive",
+      });
     });
     document.body.append(scroller, opener);
     hosts.push(scroller, opener);
@@ -69,7 +73,7 @@ describe("a confirm's focus", () => {
     field.focus();
     await new Promise((r) => setTimeout(r, 0));
 
-    const answer = confirm("Discard?");
+    const answer = confirm({ title: "Discard?" });
     const dialog = document.querySelector<HTMLDialogElement>("dialog.uip-ask");
     if (dialog === null) {
       throw new Error("no confirm");

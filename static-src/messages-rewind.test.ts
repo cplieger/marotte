@@ -5,11 +5,12 @@ import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import type { TurnState } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 import type * as Confirm from "./confirm.js";
+import { confirmText } from "./__test-helpers__/confirm-text.js";
 import type * as Toast from "./toast.js";
 import type * as StoreLoad from "./store-load.js";
 
 const mocks = vi.hoisted(() => ({
-  confirm: vi.fn((_message: string) => Promise.resolve(true)),
+  confirm: vi.fn((_q: Confirm.Confirmation) => Promise.resolve(true)),
 }));
 
 vi.mock("./confirm.js", async (importOriginal) => ({
@@ -62,14 +63,26 @@ const mockSend = vi.mocked(transport.send);
 
 messages.mountChatView();
 
-function promptTurn(n: number): Entry[] {
+/** Prompt turn `n`; each `calls` element is one edit tool call and the paths it touched. */
+function promptTurn(n: number, calls: readonly (readonly string[])[] = []): Entry[] {
   const id = `t${String(n)}`;
   const at = (seq: number, kind: Entry["kind"], payload: unknown): Entry =>
     ({ id: `${id}-e${String(seq)}`, turn: id, kind, seq, ts: 1000, payload }) as Entry;
+  const tools = calls.map((paths, i) =>
+    at(2 + i, "tool_call", {
+      id: `${id}-c${String(i)}`,
+      title: "Edit",
+      kind: "edit",
+      status: "completed",
+      ts: 1000,
+      locations: paths.map((path) => ({ path })),
+    }),
+  );
   return [
     at(0, "turn_open", { prompt: { id: `${id}-p`, text: `prompt ${id}` }, source: "prompt", n }),
     at(1, "text", { text: `reply ${id}` }),
-    at(2, "turn_close", { outcome: "completed" }),
+    ...tools,
+    at(2 + tools.length, "turn_close", { outcome: "completed" }),
   ];
 }
 
@@ -90,15 +103,18 @@ function cards(): HTMLElement[] {
   return root === null ? [] : [...root.querySelectorAll<HTMLElement>(":scope > .turn")];
 }
 
-/** A settled chat of `count` prompt turns, active and painted; returns its id. */
-async function paintChat(count: number): Promise<string> {
+/** A settled chat of `count` prompt turns, active and painted, turn 2 making `calls`; returns its id. */
+async function paintChat(
+  count: number,
+  calls: readonly (readonly string[])[] = [],
+): Promise<string> {
   seq += 1;
   const id = `rw${String(seq)}`;
   const turns = new Map<string, TurnState>();
   const order: string[] = [];
   for (let n = 1; n <= count; n++) {
-    const entries = promptTurn(n);
-    turns.set(`t${String(n)}`, { entries, openEntries: new Map(), closeAt: 2 });
+    const entries = promptTurn(n, n === 2 ? calls : []);
+    turns.set(`t${String(n)}`, { entries, openEntries: new Map(), closeAt: entries.length - 1 });
     order.push(`t${String(n)}`);
   }
   observeStamp({ kind: "chat", ref: id, version: "1" });
@@ -251,10 +267,56 @@ describe("the rewind confirm", () => {
     mocks.confirm.mockResolvedValue(false);
     await rewindFirstTurn();
 
-    const text = mocks.confirm.mock.calls[0]?.[0] ?? "";
+    const text = confirmText(mocks.confirm.mock.calls[0]?.[0]);
     expect(text).toMatch(/prompt's text comes back/);
     expect(text).toMatch(/Attachments are not restored/);
     expect(text).not.toMatch(/retype/);
     expect(text).toMatch(/This cannot be undone/);
+  });
+
+  it("asks a destructive question with a Rewind button", async () => {
+    await paintChat(3);
+    mocks.confirm.mockResolvedValue(false);
+    await rewindFirstTurn();
+
+    const q = mocks.confirm.mock.calls[0]?.[0];
+    expect([q?.title, q?.confirmLabel, q?.variant]).toEqual([
+      "Rewind to this turn?",
+      "Rewind",
+      "destructive",
+    ]);
+  });
+
+  // Rewinding from the first card targets turn 2, so a chat of N turns drops N - 2 later ones.
+  it.each([
+    [2, "Removes this prompt and its reply."],
+    [3, "Removes this prompt, its reply and the turn after it."],
+    [4, "Removes this prompt, its reply and the 2 later turns."],
+  ])("counts the later turns it removes in a chat of %i", async (count, removes) => {
+    await paintChat(count);
+    mocks.confirm.mockResolvedValue(false);
+    await rewindFirstTurn();
+
+    expect(mocks.confirm.mock.calls[0]?.[0].body?.split("\n")).toContain(removes);
+  });
+
+  it.each([
+    ["no tool call", [], undefined],
+    ["one call on one file", [["/w/src/a.ts"]], "Undoes 1 tool call, touching 1 file: a.ts."],
+    [
+      "calls on five files, listing four",
+      [
+        ["/w/a.ts", "/w/b.ts"],
+        ["/w/c.ts", "/w/d.ts", "/w/e.ts"],
+      ],
+      "Undoes 2 tool calls, touching 5 files: a.ts, b.ts, c.ts, d.ts, \u2026",
+    ],
+  ] as const)("states the work it undoes for %s", async (_, calls, undoes) => {
+    await paintChat(2, calls);
+    mocks.confirm.mockResolvedValue(false);
+    await rewindFirstTurn();
+
+    const lines = mocks.confirm.mock.calls[0]?.[0].body?.split("\n") ?? [];
+    expect(lines.find((l) => l.startsWith("Undoes"))).toBe(undoes);
   });
 });

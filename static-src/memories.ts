@@ -606,11 +606,12 @@ async function saveEdit(id: string, edit: MemoryEdit): Promise<void> {
 }
 
 async function deleteOne(m: MemoryRecord): Promise<void> {
-  const ok = await confirmDialog(
-    `Delete the memory "${displayTitle(m)}"? This cannot be undone.`,
-    "Delete",
-    "destructive",
-  );
+  const ok = await confirmDialog({
+    title: `Delete the memory "${displayTitle(m)}"?`,
+    body: "This cannot be undone.",
+    confirmLabel: "Delete",
+    variant: "destructive",
+  });
   if (!ok) {
     return;
   }
@@ -630,13 +631,14 @@ async function deleteMany(ids: string[], all = false): Promise<void> {
   }
   const n = ids.length.toLocaleString("en-US");
   const noun = ids.length === 1 ? "memory" : "memories";
-  const ok = await confirmDialog(
-    all
-      ? `Delete all ${n} ${noun}? The agent will forget everything it saved. This cannot be undone.`
-      : `Delete ${n} selected ${noun}? This cannot be undone.`,
-    all ? "Delete all" : "Delete",
-    "destructive",
-  );
+  const ok = await confirmDialog({
+    title: all ? `Delete all ${n} ${noun}?` : `Delete ${n} selected ${noun}?`,
+    body: all
+      ? "The agent will forget everything it saved. This cannot be undone."
+      : "This cannot be undone.",
+    confirmLabel: all ? "Delete all" : "Delete",
+    variant: "destructive",
+  });
   if (!ok) {
     return;
   }

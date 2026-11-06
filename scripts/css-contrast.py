@@ -1772,6 +1772,15 @@ def main() -> int:
         text_pairs += [
             ("accent on bg-primary", "--c-accent", "--c-bg-primary", 4.5),
             ("on-accent on accent", "--c-on-accent", "--c-accent", 4.5),
+            ("on-accent on accent-hover", "--c-on-accent", "--c-accent-hover", 4.5),
+            # The destructive confirm's fill and its hover (04-uip-skin.css `.uip-ask-ok.is-destructive`).
+            ("on-accent on red", "--c-on-accent", "--c-red", 4.5),
+            (
+                "on-accent on red hover",
+                "--c-on-accent",
+                "color-mix(in oklch, var(--c-red), oklch(0% 0 none) 10%)",
+                4.5,
+            ),
             ("link on bg-primary", "--c-link", "--c-bg-primary", 4.5),
             ("green on bg-primary", "--c-green", "--c-bg-primary", 4.5),
             ("red on bg-primary", "--c-red", "--c-bg-primary", 4.5),

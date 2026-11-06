@@ -576,14 +576,16 @@ class NativePolicyController {
     const leavingCustom = this.activeProfile === CUSTOM_PROFILE;
     const editable = this.lastRules.filter((r) => this.writable.has(r.scope)).length;
     if (leavingCustom && editable > 0) {
-      const ok = await confirm(
-        `Switch to ${profileLabel(id)}? Your ${String(editable)} custom ` +
+      const ok = await confirm({
+        title: `Switch to ${profileLabel(id)}?`,
+        body:
+          `Your ${String(editable)} custom ` +
           `${editable === 1 ? "rule STAYS" : "rules STAY"} on disk and ${editable === 1 ? "keeps" : "keep"} ` +
           `applying alongside that profile, so the agent can end up with more than its name suggests. ` +
           `Remove them in the table first if that is not what you want.`,
-        "Switch anyway",
-        "destructive",
-      );
+        confirmLabel: "Switch anyway",
+        variant: "destructive",
+      });
       if (!ok) {
         void this.load();
         return;
@@ -599,15 +601,17 @@ class NativePolicyController {
   /** It is the one that grants `power`, so a power installed afterwards runs its author's code at
    *  this privilege with nothing asking, and it is also the one whose name invites a click. */
   private confirmLoosest(): Promise<boolean> {
-    return confirm(
-      `Allow every capability without asking? This includes "power", so a power you ` +
+    return confirm({
+      title: "Allow every capability without asking?",
+      body:
+        `This includes "power", so a power you ` +
         `install runs its author's code at your privilege with no prompt. It does NOT ` +
         `silence every prompt: Kiro still refuses file-tool writes to its own settings ` +
         `directories and still asks before that tool writes .git, .kiro/agents, ` +
         `.kiro/hooks and .vscode. A shell command can write any of them with no prompt.`,
-      "Allow everything",
-      "destructive",
-    );
+      confirmLabel: "Allow everything",
+      variant: "destructive",
+    });
   }
 
   /** Copy the profile in force into the editable table and switch to Custom. The starting-point
@@ -801,10 +805,11 @@ class NativePolicyController {
     const RANK: Record<string, number> = { deny: 3, ask: 2, evaluate: 1, allow: 0 };
     let confirmFlag = false;
     if ((RANK[next] ?? 0) < (RANK[r.effect] ?? 0)) {
-      const ok = await confirm(
-        `Change this "${r.capability}" rule from ${r.effect} to ${next}? That WIDENS what the agent is allowed to do.`,
-        "Widen rule",
-      );
+      const ok = await confirm({
+        title: `Change this "${r.capability}" rule from ${r.effect} to ${next}?`,
+        body: "That WIDENS what the agent is allowed to do.",
+        confirmLabel: "Widen rule",
+      });
       if (!ok) {
         sel.value = r.effect;
         return;
@@ -865,10 +870,11 @@ class NativePolicyController {
     const scope = r.scope as "user" | "workspace";
     let confirmFlag = false;
     if (r.effect === "deny") {
-      const ok = await confirm(
-        `Remove this deny rule for "${r.capability}"? That WIDENS what the agent is allowed to do.`,
-        "Remove deny rule",
-      );
+      const ok = await confirm({
+        title: `Remove this deny rule for "${r.capability}"?`,
+        body: "That WIDENS what the agent is allowed to do.",
+        confirmLabel: "Remove deny rule",
+      });
       if (!ok) {
         return;
       }

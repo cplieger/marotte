@@ -5,16 +5,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 import type * as ModChanges from "./git-changes-tab.js";
 import type { GitFileEntry, GitRepoStatus } from "./git-types.js";
+import { confirmText } from "./__test-helpers__/confirm-text.js";
+import type { Confirmation } from "./confirm.js";
 
 // Cache-buster: `vi.resetModules()` does not re-evaluate a module in Browser Mode (URL-keyed module map), and
 // `refreshGeneration` and the abort controller are module state.
 let bootSeq = 0;
 
 const apiGet = vi.fn();
-// Typed with the real signature so `mock.calls[0][0]` is the message.
-const confirmDialog = vi.fn(
-  async (_message: string, _label?: string, _variant?: "destructive" | "normal") => true,
-);
+// Typed with the real signature so `mock.calls[0][0]` is the question.
+const confirmDialog = vi.fn(async (_q: Confirmation) => true);
 const openChange = vi.fn();
 
 const dispatches: { name: string; args: unknown }[] = [];
@@ -398,7 +398,7 @@ describe("Discard all", () => {
 
     await clickBtn(head as HTMLElement, "Discard all");
 
-    const msg = String(confirmDialog.mock.calls[0]?.[0] ?? "");
+    const msg = confirmText(confirmDialog.mock.calls[0]?.[0]);
     expect(msg).toContain("Discard 1 unstaged change in demo?");
     expect(msg).not.toContain("2 unstaged");
   });
@@ -412,7 +412,7 @@ describe("Discard all", () => {
 
     await clickBtn(head as HTMLElement, "Discard all");
 
-    expect(String(confirmDialog.mock.calls[0]?.[0] ?? "")).toContain(
+    expect(confirmText(confirmDialog.mock.calls[0]?.[0])).toContain(
       "Your 2 staged files stay untouched.",
     );
   });
@@ -423,7 +423,7 @@ describe("Discard all", () => {
 
     await clickBtn(head as HTMLElement, "Discard all");
 
-    expect(String(confirmDialog.mock.calls[0]?.[0] ?? "")).not.toContain("untouched");
+    expect(confirmText(confirmDialog.mock.calls[0]?.[0])).not.toContain("untouched");
   });
 
   it("dispatches nothing when the confirm is declined", async () => {

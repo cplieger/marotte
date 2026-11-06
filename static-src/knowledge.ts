@@ -360,11 +360,12 @@ function removeBtn(name: string): HTMLElement {
 }
 
 async function onRemove(name: string): Promise<void> {
-  const ok = await confirmDialog(
-    `Remove knowledge base "${name}"? The indexed data is deleted and the agent loses access to it.`,
-    "Remove",
-    "destructive",
-  );
+  const ok = await confirmDialog({
+    title: `Remove knowledge base "${name}"?`,
+    body: "The indexed data is deleted and the agent loses access to it.",
+    confirmLabel: "Remove",
+    variant: "destructive",
+  });
   if (!ok) {
     return;
   }
@@ -482,11 +483,12 @@ export function initKnowledge(): void {
 
 /** The list is kiro-cli's own, so clearing it clears it for the TUI on this machine too; the confirm says so. */
 async function onClearAll(): Promise<void> {
-  const ok = await confirmDialog(
-    `Remove all ${String(listedCount)} knowledge base${listedCount === 1 ? "" : "s"}? kiro-cli on this machine uses the same list.`,
-    "Remove all",
-    "destructive",
-  );
+  const ok = await confirmDialog({
+    title: `Remove all ${String(listedCount)} knowledge base${listedCount === 1 ? "" : "s"}?`,
+    body: "kiro-cli on this machine uses the same list.",
+    confirmLabel: "Remove all",
+    variant: "destructive",
+  });
   if (!ok) {
     return;
   }

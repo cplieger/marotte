@@ -49,6 +49,7 @@ import { renderMemoriesPanel, setMemoryCountsListener, _resetMemoriesForTest } f
 import { confirm } from "./confirm.js";
 import { apiGetTypedOrError } from "./api-client.js";
 import { dispatch } from "./bus.js";
+import { confirmText } from "./__test-helpers__/confirm-text.js";
 
 function record(id: string, scope: string | null, title: string, updated = 1_700_000_000) {
   return {
@@ -248,7 +249,7 @@ describe("bulk delete", () => {
     await mount();
     button("Delete all").click();
     await settle();
-    expect(vi.mocked(confirm).mock.calls[0]?.[0]).toContain("Delete all 5 memories");
+    expect(confirmText(vi.mocked(confirm).mock.calls[0]?.[0])).toContain("Delete all 5 memories");
     expect(deleted.sort()).toEqual(["a", "b", "c", "d", "e"]);
   });
 

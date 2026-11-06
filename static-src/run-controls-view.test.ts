@@ -14,8 +14,8 @@ const m = vi.hoisted(() => ({
 
 vi.mock("./confirm.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Confirm>()),
-  confirm: vi.fn((message: string) => {
-    m.asked.push(message);
+  confirm: vi.fn((q: Confirm.Confirmation) => {
+    m.asked.push(`${q.title} ${q.body ?? ""}`.trim());
     return Promise.resolve(m.confirmed);
   }),
 }));

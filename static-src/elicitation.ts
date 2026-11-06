@@ -48,11 +48,7 @@ export function buildElicitationCard(
     );
   }
 
-  const declineBtn = el(
-    "button",
-    { type: "button", className: "btn-small confirm-danger" },
-    "Decline",
-  );
+  const declineBtn = el("button", { type: "button", className: "btn-small btn-danger" }, "Decline");
   declineBtn.addEventListener("click", () => {
     onSubmit("decline");
   });

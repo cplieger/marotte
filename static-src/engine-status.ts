@@ -122,12 +122,12 @@ function runGroups(runs: EngineBusy["runs"]): { text: string; n: number }[] {
 /** The confirmation's text: what a restart now interrupts, or that marotte could not read it (`busy` null). */
 export function restartConfirmText(busy: EngineBusy | null): string {
   if (busy === null) {
-    return "Restart the agent engine? marotte could not read what is running: any running reply stops, and running workflows pause and resume by themselves.";
+    return "marotte could not read what is running: any running reply stops, and running workflows pause and resume by themselves.";
   }
   const chats = busy.turns.map((t) => ({ text: t.name === "" ? "Untitled chat" : t.name, n: 1 }));
   const runs = busy.runs.length;
   if (chats.length === 0 && runs === 0) {
-    return "Restart the agent engine? Nothing is running, so nothing is interrupted.";
+    return "Nothing is running, so nothing is interrupted.";
   }
   const parts: string[] = [];
   if (chats.length > 0) {
@@ -152,11 +152,12 @@ export async function requestRestart(): Promise<void> {
   const fresh = await readEngineStatus();
   const busy = fresh?.busy ?? null;
   const interrupts = busy === null || busy.turns.length > 0 || busy.runs.length > 0;
-  const ok = await confirm(
-    restartConfirmText(busy),
-    "Restart now",
-    interrupts ? "destructive" : "normal",
-  );
+  const ok = await confirm({
+    title: "Restart the agent engine?",
+    body: restartConfirmText(busy),
+    confirmLabel: "Restart now",
+    variant: interrupts ? "destructive" : "normal",
+  });
   if (ok) {
     await restartEngine.dispatch(undefined);
   }

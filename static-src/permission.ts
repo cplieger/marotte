@@ -227,7 +227,7 @@ function buildToolPermissionCard(
         type: "button",
         className: opt.kind.startsWith("allow")
           ? "btn-small confirm-allow"
-          : "btn-small confirm-danger",
+          : "btn-small btn-danger",
       },
       threeAllows && opt.kind === "allow_once" ? "Allow once" : opt.name,
     );
@@ -451,7 +451,7 @@ function buildTurnApprovalCard(
   if (rejectOpt !== undefined) {
     const rejectAll = el(
       "button",
-      { type: "button", className: "btn-small confirm-danger" },
+      { type: "button", className: "btn-small btn-danger" },
       "Roll back all",
     );
     rejectAll.addEventListener("click", () => {

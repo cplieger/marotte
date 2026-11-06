@@ -463,11 +463,11 @@ async function installOne(p: PowerRow): Promise<void> {
     `/api/powers/${encodeURIComponent(p.name)}/servers`,
     decodeServers,
   );
-  const ok = await confirmDialog(
-    `Install the ${title(p)} Power? ${serverSentence(servers)}`,
-    "Install",
-    "normal",
-  );
+  const ok = await confirmDialog({
+    title: `Install the ${title(p)} Power?`,
+    body: serverSentence(servers),
+    confirmLabel: "Install",
+  });
   if (!ok) {
     return;
   }
@@ -475,11 +475,12 @@ async function installOne(p: PowerRow): Promise<void> {
 }
 
 async function uninstallOne(p: PowerRow): Promise<void> {
-  const ok = await confirmDialog(
-    `Uninstall the ${title(p)} Power? Its MCP servers stop and its skills and steering are removed.`,
-    "Uninstall",
-    "destructive",
-  );
+  const ok = await confirmDialog({
+    title: `Uninstall the ${title(p)} Power?`,
+    body: "Its MCP servers stop and its skills and steering are removed.",
+    confirmLabel: "Uninstall",
+    variant: "destructive",
+  });
   if (!ok) {
     return;
   }

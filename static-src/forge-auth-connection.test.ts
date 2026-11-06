@@ -53,6 +53,7 @@ import { outcomesOf } from "./__test-helpers__/press-feedback.js";
 import { fill } from "./__test-helpers__/add-forms.js";
 import { _resetForTest as resetForgeStore, readForges } from "./forge-store.js";
 import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
+import { confirmText } from "./__test-helpers__/confirm-text.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -441,7 +442,7 @@ describe("forge-auth: the connection row", () => {
     const oldOut = button(row, "Sign out")!;
 
     oldOut.click();
-    expect(vi.mocked(confirmDialog).mock.calls[0]?.[0]).toBe(
+    expect(confirmText(vi.mocked(confirmDialog).mock.calls[0]?.[0])).toBe(
       "Sign out of alice? Its stored token will be removed.",
     );
     rowsNow = [account({ account: "acct-2", username: "bob" })];
@@ -459,7 +460,7 @@ describe("forge-auth: the connection row", () => {
     expect(newOut).not.toBe(oldOut);
     newOut.click();
     await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(confirmDialog).mock.calls[1]?.[0]).toBe(
+    expect(confirmText(vi.mocked(confirmDialog).mock.calls[1]?.[0])).toBe(
       "Sign out of bob? Its stored token will be removed.",
     );
     rowsNow = [];

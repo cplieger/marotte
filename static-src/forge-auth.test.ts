@@ -510,10 +510,10 @@ describe("forge-auth: 4-section layout", () => {
     await Promise.resolve();
 
     expect(mockedConfirm).toHaveBeenCalled();
-    const [msg, label, variant] = mockedConfirm.mock.calls[0]!;
-    expect(msg).toContain("Sign out of a@x.io");
-    expect(label).toBe("Sign out");
-    expect(variant).toBe("destructive");
+    const q = mockedConfirm.mock.calls[0]![0];
+    expect(q.title).toContain("Sign out of a@x.io");
+    expect(q.confirmLabel).toBe("Sign out");
+    expect(q.variant).toBe("destructive");
     expect(fetchSpy).toHaveBeenCalledWith(
       "/api/forges/github%3Agithub.com",
       expect.objectContaining({ method: "DELETE" }),

@@ -241,34 +241,6 @@
   user-select: none;
 }
 
-/* Subtle top-border glow when disconnected / reconnecting */
-/* Confirm dialog */
-.confirm-card {
-  width: 18.75rem;
-  text-align: center;
-}
-
-.confirm-text {
-  font-size: var(--fs-md);
-  color: var(--c-text-primary);
-}
-
-.confirm-actions {
-  display: flex;
-  gap: var(--sp-2);
-  justify-content: center;
-  padding-block-start: var(--sp-3);
-}
-
-.confirm-danger {
-  border-color: var(--c-red);
-  color: var(--c-red);
-}
-
-.confirm-danger:hover {
-  background: color-mix(in srgb, var(--c-red) 15%, transparent);
-}
-
 /* Terminal link detection. OSC 8 hyperlinks (base .term-link) underline on HOVER
    only: an app can attach one OSC 8 link to a whole padded/bordered region (e.g.
    a markdown link whose URL wraps inside a table cell, where the link stays open

@@ -1805,7 +1805,7 @@ const SURFACES: readonly Surface[] = [
     name: "the confirm dialog",
     sizes: TWO,
     setup: () => {
-      void confirm("Delete this chat?", "Delete", "destructive");
+      void confirm({ title: "Delete this chat?", confirmLabel: "Delete", variant: "destructive" });
     },
     controls: [".uip-ask-cancel", ".uip-ask-ok"],
   },

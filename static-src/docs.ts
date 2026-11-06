@@ -1031,11 +1031,12 @@ function rowGates(doc: KiroDoc, hook: HookState | undefined): RowGates {
 
 /** The confirm is the guard: a `.kiro` file has no undo. */
 async function deleteRow(doc: KiroDoc): Promise<void> {
-  const ok = await confirmDialog(
-    `Delete ${doc.name}? This cannot be undone.`,
-    "Delete",
-    "destructive",
-  );
+  const ok = await confirmDialog({
+    title: `Delete ${doc.name}?`,
+    body: "This cannot be undone.",
+    confirmLabel: "Delete",
+    variant: "destructive",
+  });
   if (!ok) {
     return;
   }

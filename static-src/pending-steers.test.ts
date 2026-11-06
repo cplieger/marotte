@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => {
     removeDispatch: vi.fn((_args: { chatID: string; steerID: string }) => ({
       outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
     })),
-    confirmMock: vi.fn((_message: string) => Promise.resolve(true)),
+    confirmMock: vi.fn((_q: Confirmation) => Promise.resolve(true)),
     setComposerValueMock: vi.fn(),
     composerDraftMock: vi.fn((_chatID: string) => ""),
     restoreRefusedEditMock: vi.fn(),
@@ -109,7 +109,9 @@ import {
 import { initPendingSteers, mountSteerStack, type SteerStackSource } from "./pending-steers.js";
 import { signal } from "@cplieger/ui";
 import type { Entry, PendingSteer, QueuedPrompt, Session } from "./types.js";
+import type { Confirmation } from "./confirm.js";
 import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
+import { confirmText } from "./__test-helpers__/confirm-text.js";
 
 function makeSession(chatID: string): Session {
   return {
@@ -781,7 +783,7 @@ describe("the steer stack", () => {
     await vi.waitFor(() => {
       expect(confirmMock).toHaveBeenCalled();
     });
-    expect(String(confirmMock.mock.calls[0]?.[0])).toContain("2");
+    expect(confirmText(confirmMock.mock.calls[0]?.[0])).toContain("2");
   });
 
   it("sends nothing when the multi-message confirm is declined", async () => {
