@@ -31,6 +31,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/mcp"
 	"github.com/cplieger/marotte/internal/mcp/prewarm"
+	"github.com/cplieger/marotte/internal/obs"
 	"github.com/cplieger/marotte/internal/powers"
 	"github.com/cplieger/marotte/internal/preview"
 	"github.com/cplieger/marotte/internal/push"
@@ -308,6 +309,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithMCPRegistry(mcpRegistry),
 		server.WithForges(forgesHTTP),
 		server.WithPreview(preview.New(cfg.WorkDir, sensitive, previewSigner, slog.Default())),
+		server.WithMetrics(obs.Handler()),
 		server.WithTools(tools),
 		server.WithAccountUsage(h),
 		server.WithPolicy(h.Config()),
