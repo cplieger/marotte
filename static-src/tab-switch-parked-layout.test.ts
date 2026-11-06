@@ -1,6 +1,6 @@
 // Re-showing a parked chat forces at most one layout: the gesture reads nothing, the outgoing view's
 // detach reads before any write, and the restore's scroll write is the one forced access, with
-// every later read (anchor, edge distance, icon pass, rail) after it. Real store, renderer and
+// every later read (anchor, edge distance, rail) after it. Real store, renderer and
 // scroll controller; layouts counted by `layout-spy.ts`.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { makeSession } from "./__test-helpers__/model.js";
