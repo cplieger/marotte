@@ -128,7 +128,8 @@ func (sc *toolRunScan) observe(i int, e *marotte.Entry) {
 		}
 	case marotte.EntryKindTurnOpen, marotte.EntryKindTurnClose, marotte.EntryKindTurnBind,
 		marotte.EntryKindTurnWake, marotte.EntryKindRunNamed, marotte.EntryKindToolResult,
-		marotte.EntryKindReconciled, marotte.EntryKindSteerDelivered, marotte.EntryKindSteerCleared:
+		marotte.EntryKindReconciled, marotte.EntryKindSteerDelivered, marotte.EntryKindSteerCleared,
+		marotte.EntryKindStepGraded:
 	default:
 		sc.flush(k)
 	}

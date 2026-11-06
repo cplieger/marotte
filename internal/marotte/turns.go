@@ -166,7 +166,7 @@ func ConcludeStopReason(stop StopReason) TurnConclusion {
 	case StopReasonToolUse, StopReasonMaxTurnRequests:
 		// The turn-level default, not truncated-and-completed like max_tokens: at the limit the
 		// model had asked for more work. A workflow step's grade is KAS's node record's (agent's
-		// stepClose.graded), since a tool-requested turn end stops on tool_use too.
+		// runLog.gradeLocked), since a tool-requested turn end stops on tool_use too.
 		c.Outcome = TurnOutcomeFailed
 		c.FailureKind = FailureKindModelCallLimit
 		c.Reason = ModelCallLimitTurnReason

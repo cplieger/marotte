@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -57,14 +58,38 @@ func chatSteers(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []marott
 	return out
 }
 
-// TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat pins that KAS grades a refused step `completed`.
+// inspectWithLoopStep is an inspect reply whose tree holds one step inside iteration n of a repeat under the run's
+// root sequence, at path [workflowID, repeatID, iter-n, nodeID].
+func inspectWithLoopStep(t *testing.T, workflowID, repeatID string, n int, nodeID, status string) json.RawMessage {
+	t.Helper()
+	step := map[string]any{"nodeId": nodeID, "type": "step", "status": status, "sessionId": "step-session-1"}
+	iter := map[string]any{
+		"nodeId": repeatID + "#" + strconv.Itoa(n), "type": "sequence", "status": status, "iteration": n,
+		"children": []any{step},
+	}
+	repeat := map[string]any{"nodeId": repeatID, "type": "repeat", "status": "running", "children": []any{iter}}
+	raw, err := json.Marshal(map[string]any{
+		"workflowId": workflowID,
+		"state": map[string]any{
+			"workflowId": workflowID, "status": "running",
+			"root": map[string]any{"nodeId": workflowID, "type": "sequence", "status": "running", "children": []any{repeat}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal inspect: %v", err)
+	}
+	return raw
+}
+
+// TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat pins that KAS grades a refused step `completed`, and that the
+// note follows the grade recorded under KAS's record, never the seal alone.
 func TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat(t *testing.T) {
 	const (
 		id     = "wf_1"
 		chatID = marotte.ChatID("c1")
 	)
 	path := []string{"wf_1", "loop", "iter-1", "build"}
-	h, cs, _ := runLoggingHub(t)
+	h, cs, br := runLoggingHub(t)
 	seedChat(t, cs, chatID)
 	h.runs.grantLease(t.Context(), id, "nightly",
 		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
@@ -74,6 +99,12 @@ func TestRunNodeComplete_ARefusedStepTellsTheLaunchingChat(t *testing.T) {
 	})
 
 	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
+	joinInflight(t, h)
+	if steers := chatSteers(t, cs, chatID); len(steers) != 0 {
+		t.Fatalf("an unreadable record left %d notes, want none: %+v", len(steers), steers)
+	}
+	br.setCallResult(methodKiroWorkflowInspect, inspectWithLoopStep(t, id, "loop", 1, "build", "completed"))
+	stepEndsOf(t, h, id)
 	joinInflight(t, h)
 
 	entries, err := cs.All(t.Context(), chatID)
@@ -164,13 +195,15 @@ func TestRunNodeComplete_ARefusalWithNoMetadataStillLeavesANote(t *testing.T) {
 		id     = "wf_1"
 		chatID = marotte.ChatID("c1")
 	)
-	h, cs, _ := runLoggingHub(t)
+	path := []string{id, "build"}
+	h, cs, br := runLoggingHub(t)
+	br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, id, "build", "completed", ""))
 	seedChat(t, cs, chatID)
 	h.runs.grantLease(t.Context(), id, "nightly",
 		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
-	refuseStep(t, h.runs, id, []string{"build"}, nil)
+	refuseStep(t, h.runs, id, path, nil)
 
-	h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, "completed", "")
+	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
 	joinInflight(t, h)
 
 	steers := chatSteers(t, cs, chatID)
@@ -228,13 +261,20 @@ func TestRunNodeComplete_AStepThatRanLeavesNoNote(t *testing.T) {
 // failure is what proves nothing was attempted. No t.Parallel: captureLogs swaps the slog default.
 func TestRunNodeComplete_AParentlessRunLeavesNoNote(t *testing.T) {
 	const id = "wf_1"
-	h, cs, _ := runLoggingHub(t)
+	path := []string{id, "build"}
+	h, cs, br := runLoggingHub(t)
+	br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, id, "build", "completed", ""))
 	leased(t, h.runs, id)
-	refuseStep(t, h.runs, id, []string{"build"}, &marotte.RefusalInfo{Category: "policy"})
+	refuseStep(t, h.runs, id, path, &marotte.RefusalInfo{Category: "policy"})
 	logs := captureLogs(t)
 
-	h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, "completed", "")
+	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
 	joinInflight(t, h)
+
+	// The grade is recorded, so only the note was withheld.
+	if got := gradesOf(t, h, id); len(got) != 1 {
+		t.Errorf("step_graded entries = %+v, want one", got)
+	}
 
 	if strings.Contains(logs.String(), "a steer was not recorded") {
 		t.Errorf("a parentless run's refusal tried to write a note: %s", logs.String())
@@ -250,15 +290,17 @@ func TestRunNodeComplete_ARefusalIsNotedOnce(t *testing.T) {
 		id     = "wf_1"
 		chatID = marotte.ChatID("c1")
 	)
-	h, cs, _ := runLoggingHub(t)
+	path := []string{id, "build"}
+	h, cs, br := runLoggingHub(t)
+	br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, id, "build", "completed", ""))
 	seedChat(t, cs, chatID)
 	h.runs.grantLease(t.Context(), id, "nightly",
 		launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
-	refuseStep(t, h.runs, id, []string{"build"}, &marotte.RefusalInfo{Category: "policy"})
+	refuseStep(t, h.runs, id, path, &marotte.RefusalInfo{Category: "policy"})
 
-	h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, "completed", "")
+	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
 	joinInflight(t, h)
-	h.runs.RunNodeComplete(t.Context(), id, []string{"build"}, "completed", "")
+	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
 	joinInflight(t, h)
 
 	if steers := chatSteers(t, cs, chatID); len(steers) != 1 {
@@ -270,10 +312,10 @@ func TestRunNodeComplete_ARefusalIsNotedOnce(t *testing.T) {
 // wf_1/inc/inc/a, the same text as a four-deep path; its key wf_1:inc:inc/a is not wf_1:inc:inc:a.
 func TestStepNoteText_KeepsAnIncludedStepsPathUnambiguous(t *testing.T) {
 	path := []string{"wf_1", "inc", "inc/a"}
-	if got, want := stepModelCallLimitNoteText("nightly", path), "nightly step wf_1:inc:inc/a stopped early. "+marotte.ModelCallLimitStepReason; got != want {
+	if got, want := stepModelCallLimitNoteText("nightly", workflow.PathKey(path)), "nightly step wf_1:inc:inc/a stopped early. "+marotte.ModelCallLimitStepReason; got != want {
 		t.Errorf("model-call-limit note = %q, want %q", got, want)
 	}
-	if got := stepRefusalNoteText("nightly", path, nil); !strings.HasPrefix(got, "nightly step wf_1:inc:inc/a was declined by the model.") {
+	if got := stepRefusalNoteText("nightly", workflow.PathKey(path), nil); !strings.HasPrefix(got, "nightly step wf_1:inc:inc/a was declined by the model.") {
 		t.Errorf("refusal note = %q, want it to name the step's path", got)
 	}
 }
