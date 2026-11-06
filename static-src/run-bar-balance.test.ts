@@ -41,6 +41,7 @@ afterEach(async () => {
   style?.remove();
   style = null;
   document.documentElement.removeAttribute("data-pointer");
+  document.documentElement.style.removeProperty("--dock-viewport-h");
   await browser.viewport(1280, 720);
 });
 
@@ -468,6 +469,25 @@ describe("the run bar box's cap", () => {
       }
     });
   }
+
+  it("keeps one whole run in view in touch mode when the keyboard leaves a 300px viewport", async () => {
+    await browser.viewport(1024, 768);
+    style = mountAppCSS();
+    document.documentElement.setAttribute("data-pointer", "coarse");
+    // The visual viewport `dock-ask.ts` publishes with the keyboard up: a cap of 75px leaves the
+    // list less than one row under the fold row.
+    document.documentElement.style.setProperty("--dock-viewport-h", "300px");
+    const { box, rows } = mount(14, true, 1000);
+    await settle();
+    const list = box.querySelector<HTMLElement>(".run-bar")!;
+    const clip = list.getBoundingClientRect();
+    const first = rows[0]!.getBoundingClientRect();
+    expect(first.top, "the first run starts inside the list").toBeGreaterThanOrEqual(
+      clip.top - 0.5,
+    );
+    expect(first.bottom, "and ends inside it").toBeLessThanOrEqual(clip.bottom + 0.5);
+    expect(list.scrollHeight, "the rest scroll").toBeGreaterThan(list.clientHeight);
+  });
 
   it("keeps the fold row in view while a long list scrolls", async () => {
     await browser.viewport(360, 740);

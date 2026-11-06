@@ -1122,14 +1122,18 @@
 }
 
 /* The list ends on a whole run: the room the box's cap leaves under the fold row, rounded down to
-   a number of rows. A fling that stops near a row's start settles on that start, so a scrolled
-   list shows whole runs too. Touch only: a wheel's small steps would snap back. */
+   a number of rows, and never under one row, so a short visual viewport (keyboard up) keeps one
+   run in view, scrollable. A fling that stops near a row's start settles on that start, so a
+   scrolled list shows whole runs too. Touch only: a wheel's small steps would snap back. */
 :where(:root[data-pointer="coarse"]) .run-bar {
   --run-room: var(--run-cap);
 
-  max-block-size: calc(
-    round(down, var(--run-room) + var(--run-row-gap), var(--run-row-h) + var(--run-row-gap)) -
-      var(--run-row-gap)
+  max-block-size: max(
+    var(--run-row-h),
+    calc(
+      round(down, var(--run-room) + var(--run-row-gap), var(--run-row-h) + var(--run-row-gap)) -
+        var(--run-row-gap)
+    )
   );
   scroll-snap-type: y proximity;
 
