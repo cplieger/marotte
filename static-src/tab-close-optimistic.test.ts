@@ -74,6 +74,7 @@ import {
 } from "./tabs.js";
 import { getSessions } from "./store.js";
 import { removePendingFor } from "./tabs-sync.js";
+import { releaseCover } from "./transcript-cover.js";
 import { tabServer, settleTabs } from "./__test-helpers__/tabs-server.js";
 import { fx, installSwitchSuite, strip } from "./__test-helpers__/tab-switch-suite.js";
 import {
@@ -198,6 +199,36 @@ describe("a refused close", () => {
     expect(coverUp(), "the cover held for A stood over C's own transcript").toBe(false);
   });
 
+  it("shows the closed chat again, uncovered, when the refusal lands inside the successor's show", async () => {
+    const ids = await closing();
+    const c = ids["c"] ?? "";
+    await frame();
+    tabServer.holdResponses();
+    tabServer.failNext("close_tab", 500);
+    fx.chat.show.mockImplementationOnce((id: string) => {
+      pointers.painted = id;
+      tabServer.releaseResponses();
+    });
+
+    const done = closeTab(c);
+    await activationRan();
+    await done;
+    await settleTabs();
+    await activationRan();
+
+    expect(fx.chat.show.mock.calls, "the successor, then the restored chat").toEqual([
+      ["a"],
+      ["c"],
+    ]);
+    expect(getActiveTabId()).toBe(c);
+    expect(pointers).toEqual({ active: "c", painted: "c" });
+    // The fake show runs no transcript pass; C's pass is the cover's releaser, so it must stand for C.
+    releaseCover("a");
+    expect(coverUp(), "a cover held for the successor").toBe(true);
+    releaseCover("c");
+    expect(coverUp(), "C's paint lifts the cover").toBe(false);
+  });
+
   it("keeps a row whose refusal lands during its exit", async () => {
     const ids = await closing();
     const c = ids["c"] ?? "";
@@ -299,7 +330,9 @@ describe("an unanswered close of the active tab", () => {
 
       expect(rowIDs()).toEqual(before);
       expect(getActiveTabId()).toBe(c);
-      expect(notices).toEqual([["c", "c", "Close not confirmed, so the tab was restored.", "info"]]);
+      expect(notices).toEqual([
+        ["c", "c", "Close not confirmed, so the tab was restored.", "info"],
+      ]);
     } finally {
       vi.useRealTimers();
       tabServer.releaseResponses();

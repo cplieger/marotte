@@ -74,6 +74,54 @@ describe("the history edge after an attach", () => {
     expect(load, "requests after the gesture").toHaveBeenCalledTimes(1);
   });
 
+  it("asks for no older page when a shrink clamps the controller's own pin onto the new bottom", async () => {
+    const s = scene(VIEWPORT_PX / 4);
+    s.controller.attach({ el: s.view, scrollTop: 0, readingState: "following" });
+    s.controller.applyPendingRestore();
+    const load = vi.fn();
+    s.controller.setLoadMore(load, true);
+    await frames(5);
+    // The page lands: the controller pins its bottom in the next frame. A frame callback queued after
+    // that pin shrinks the page, so the browser clamps the pin's landing before its scroll event, onto
+    // a bottom whose history edge is inside the lead.
+    const page = document.createElement("div");
+    page.style.height = `${String(VIEWPORT_PX * 8)}px`;
+    s.view.appendChild(page);
+    await Promise.resolve();
+    requestAnimationFrame(() => {
+      page.style.height = `${String(VIEWPORT_PX)}px`;
+    });
+    await frames(5);
+    const premise = {
+      atBottom: s.scroller.scrollTop === s.scroller.scrollHeight - s.scroller.clientHeight,
+      top: s.scroller.scrollTop,
+    };
+    expect(premise, "the pin was clamped onto the shrunk page's bottom").toEqual({
+      atBottom: true,
+      top: VIEWPORT_PX * 0.25,
+    });
+    expect(load, "older-page requests with no reader gesture").not.toHaveBeenCalled();
+  });
+
+  it("asks for no older page when the reader's first scroll leaves the edge before the observer reports it", async () => {
+    const s = scene(VIEWPORT_PX / 4);
+    s.controller.attach({ el: s.view, scrollTop: 0, readingState: "following" });
+    s.controller.applyPendingRestore();
+    const load = vi.fn();
+    s.controller.setLoadMore(load, true);
+    await frames(5);
+    // The page lands and the reader scrolls down it in one task: the scroll event is dispatched in
+    // the next frame, before the edge observer's report of the new geometry.
+    const page = document.createElement("div");
+    page.style.height = `${String(VIEWPORT_PX * 8)}px`;
+    s.view.appendChild(page);
+    s.scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: 120 }));
+    s.scroller.scrollTop = VIEWPORT_PX * 6;
+    await frames(3);
+    expect(s.scroller.scrollTop, "the reader's scroll landed").toBe(VIEWPORT_PX * 6);
+    expect(load, "older-page requests with the edge 6 viewports away").not.toHaveBeenCalled();
+  });
+
   it("fills an underfilled window at attach", async () => {
     const s = scene(VIEWPORT_PX / 4);
     s.controller.attach({ el: s.view, scrollTop: 0, readingState: "following" });

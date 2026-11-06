@@ -1351,8 +1351,24 @@ export class ScrollController {
   private armEdge(): void {
     if (!this.edgeArmed) {
       this.edgeArmed = true;
+      // Measured, not the observer's last report: a page that landed since pushed the edge away, and the report of
+      // that arrives a frame after the scroll that arms it.
+      this.topNear = this.historyEdgeNear();
       this.pokeTop();
     }
+  }
+
+  /** Whether the history edge stands inside the lead above the scrollport now; the observer's last report before
+   *  its lead is sized. */
+  private historyEdgeNear(): boolean {
+    const edge = this.topSentinel;
+    if (this.nearMargin < 0) {
+      return this.topNear;
+    }
+    if (edge?.isConnected !== true || edge.getClientRects().length === 0) {
+      return false;
+    }
+    return edge.getBoundingClientRect().top >= this.scrollEl.getBoundingClientRect().top - this.nearMargin;
   }
 
   private pokeTop(): void {

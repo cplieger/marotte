@@ -3218,6 +3218,34 @@ describe("a parked view's restore under a platform reset", () => {
     });
   });
 
+  // A row above the reader takes its real size in the pass that re-shows the view (a cold card built, a
+  // content-visibility estimate replaced): the reader's text holds still, so the offset moves by the growth.
+  it("keeps a reader's text still when a row above them grows in the restoring pass", async () => {
+    const view = rowsView();
+    await switchBackUnderReset(view, "reading", () => {
+      (view.children[2] as HTMLElement).style.height = "136px";
+    });
+
+    expect({ top: scroll.getScrollEl().scrollTop, state: scroll.readingState() }).toEqual({
+      top: 1236,
+      state: "reading",
+    });
+  });
+
+  it("keeps a following reader on the live edge when a row above grows in the restoring pass", async () => {
+    const view = rowsView();
+    const seen = await switchBackUnderReset(view, "following", () => {
+      (view.children[2] as HTMLElement).style.height = "136px";
+    });
+    const wrap = scroll.getScrollEl();
+    const edge = wrap.scrollHeight - wrap.clientHeight;
+
+    expect({
+      off: seen.filter((top) => Math.abs(top - edge) >= 1),
+      state: scroll.readingState(),
+    }).toEqual({ off: [], state: "following" });
+  });
+
   it("hands the scroller to a reader who scrolls before the restore settles", async () => {
     const wrap = scroll.getScrollEl();
     const view = rowsView();
