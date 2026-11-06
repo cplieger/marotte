@@ -76,10 +76,6 @@ class ContextBarController {
     const modelLabel = model === "" ? "auto" : humanName(model);
     const pending = opts.pendingModel ?? "";
     $.switchModelBtn.classList.toggle("pending", pending !== "");
-    $.switchModelBtn.setAttribute(
-      "data-tooltip",
-      pending === "" ? "Switch model" : `Switch to ${humanName(pending)} after current turn`,
-    );
     $.ctxModelPill.textContent = modelLabel;
 
     // The tier rides its OWN element, not the model label, for two reasons. The label is capped at
@@ -88,16 +84,16 @@ class ContextBarController {
     $.ctxEffortPill.textContent = effort === "" ? "" : `· ${effort}`;
     $.ctxEffortPill.classList.toggle("hidden", effort === "");
     // The button's aria-label wins over its own text, so the current selection reaches assistive
-    // tech only from here. Spelled in words rather than with the separator, which a screen reader
-    // reads out.
+    // tech only from here, and the tooltip repeats it because a phone's pill is icon-only. Spelled
+    // in words rather than with the separator, which a screen reader reads out.
     const current =
       effort === ""
         ? `Switch model, currently ${modelLabel}`
         : `Switch model, currently ${modelLabel} at ${effort} reasoning effort`;
-    $.switchModelBtn.setAttribute(
-      "aria-label",
-      pending === "" ? current : `${current}, switching to ${humanName(pending)} after this turn`,
-    );
+    const name =
+      pending === "" ? current : `${current}, switching to ${humanName(pending)} after this turn`;
+    $.switchModelBtn.setAttribute("aria-label", name);
+    $.switchModelBtn.setAttribute("data-tooltip", name);
     $.ctxTokens.textContent =
       contextSize > 0
         ? `${formatTokens(Math.round(tokensUsed(pct, contextSize)))} / ${formatTokens(contextSize)}`

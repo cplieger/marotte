@@ -8,7 +8,7 @@ marotte has no login of its own. Anyone who can reach port 9847 can use the agen
 
 Signing in on the page gives the agent your Kiro account. That is the agent's identity, and it does not protect marotte itself. marotte keeps the sign-in in `/config/signin.json`, which only the container's user may read or write. marotte tightens a file that others can read, and refuses to use one it cannot tighten. It never reads the sign-in of a `kiro-cli` you run in the terminal.
 
-Set `ALLOWED_HOSTS` on any server that stays up, and set `TRUSTED_PROXIES` when a proxy sits in front. [Configuration](configuration.md) explains both. Requests that change state from another website are refused with `403`.
+Set `ALLOWED_HOSTS` on any server that stays up, and set `TRUSTED_PROXIES` when a proxy sits in front. [Configuration](configuration.md) explains both. Requests that change state from another website are refused with `403`. The one route that skips `ALLOWED_HOSTS`, the [notify route](configuration.md#waking-a-chat-from-another-service-marotte_notify_token), answers only a request carrying `MAROTTE_NOTIFY_TOKEN`, and that token opens no other route.
 
 The file browser shows only the folders it is given, `/workspace`, `/config`, `/uploads` and the agent's additional directories by default. Credential and internal files under `/config`, such as SSH keys, cloud tokens, forge credentials, the Kiro sign-in, the chat store and the MCP configuration, stay hidden. The preview tab follows the same list. It refuses a page whose folder holds those files or sits among them.
 

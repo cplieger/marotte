@@ -1098,10 +1098,8 @@ label.toggle-inline:has(> .toggle) {
     max-height: 8rem;
   }
 
-  /* Send paints 24px wide, so the field keeps half its inline tap gap clear. */
   & > .send-btn {
     margin: var(--composer-pill-pad);
-    margin-inline-start: max(var(--composer-pill-pad), calc(var(--tap-gap-sm) / 2));
   }
 }
 

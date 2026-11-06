@@ -73,7 +73,12 @@ export function initRolePicker(refreshCatalog: () => void): void {
 
 function refreshPill(modeID: string): void {
   byId<HTMLElement>("role-pill-icon").replaceChildren(iconEl(iconForMode(normalizeModeID(modeID))));
-  byId<HTMLSpanElement>("role-pill-label").textContent = labelForMode(modeID);
+  const label = labelForMode(modeID);
+  byId<HTMLSpanElement>("role-pill-label").textContent = label;
+  // The tooltip repeats the accessible name because a phone's pill is icon-only.
+  const name = `Switch mode, currently ${label}`;
+  $.rolePill.setAttribute("aria-label", name);
+  $.rolePill.setAttribute("data-tooltip", name);
 }
 
 function renderOptions(list: HTMLElement): void {
@@ -97,7 +102,7 @@ function renderOptions(list: HTMLElement): void {
   const bundled = modes.filter((p) => !isCustomAgent(p));
   const workspace = modes.filter(isCustomAgent);
 
-  // No "Switch mode for this chat" heading: the pill's own tooltip says that, and a menu that
+  // No "Switch mode" heading: the pill's own tooltip says that, and a menu that
   // opened from a control labelled with its purpose does not need to restate it in its first row.
   // The "Custom agents" divider below IS needed — it separates two groups.
   const items: HTMLElement[] = [];

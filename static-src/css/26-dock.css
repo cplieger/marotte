@@ -274,7 +274,7 @@
   :where(:root[data-keyboard]) & {
     box-sizing: content-box;
     max-block-size: calc(
-      var(--dock-viewport-h, 100dvh) + var(--composer-ctl-h) + 2 * var(--composer-pill-pad) + 2px
+      var(--dock-viewport-h, 100dvh) + var(--btn-h) + 2 * var(--composer-pill-pad) + 2px
     );
   }
 }
@@ -310,12 +310,12 @@
   /* One draft line and the pill row (each `--composer-rest-h`, 15-input.css), the box's two
      borders and the row's divider. */
   & > [id="prompt-box"] {
-    min-block-size: calc(2 * (var(--composer-ctl-h) + 2 * var(--composer-pill-pad)) + 3px);
+    min-block-size: calc(2 * (var(--btn-h) + 2 * var(--composer-pill-pad)) + 3px);
   }
 
   & > [id="run-composer"] {
     flex: 0 1 auto;
-    min-block-size: calc(var(--composer-ctl-h) + 2 * var(--composer-pill-pad) + 2px);
+    min-block-size: calc(var(--btn-h) + 2 * var(--composer-pill-pad) + 2px);
 
     & > .run-composer-box {
       min-block-size: 0;
@@ -1159,6 +1159,10 @@
 .run-bar-fold {
   flex-shrink: 0;
 
+  /* The gap moves with the list's slide, so the box neither steps before an open nor after a
+     close. */
+  transition: margin-block-end var(--uip-disclosure-duration) var(--uip-disclosure-easing);
+
   &:has(> [aria-expanded="true"]) {
     margin-block-end: var(--run-row-gap);
   }
@@ -1319,8 +1323,12 @@
   outline-offset: var(--focus-offset-inset);
 }
 
-.run-bar-row[hidden] {
-  display: none;
+/* Folded, the rows stay rendered: a row leaving `display: none` would replay its entry rise.
+   `visibility` takes them out of the tab order and the accessibility tree. `run-bar.ts` slides
+   between this and the open height. */
+.run-bar[data-folded] {
+  block-size: 0;
+  visibility: hidden;
 }
 
 /* From `FOLD_AT` runs the fold row heads the box, one line: a chevron, the mark and the

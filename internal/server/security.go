@@ -13,6 +13,7 @@ import (
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/notify"
 )
 
 // baseCSPPolicy is the CSP applied to every response. script-src is 'self' alone: the page
@@ -51,9 +52,13 @@ func buildCSPPolicy(staticFS fs.FS) (string, error) {
 // SecurityHeaders so its 403 carries the baseline headers. CSRF exempts GET, so the shell
 // WebSocket handshake's origin gate is the terminal engine's, not this. A CSRF refusal is
 // logged and answered with the JSON error envelope, which csrf.Handler's text/plain 403 is not.
+//
+// A POST to the notify route skips the host gate alone, so a service on the container network
+// can call it by its service name. Rebinding gains nothing there: the route answers only a
+// request carrying the notify token, which a rebound browser page does not hold.
 func securityMiddleware(cspPolicy string, hostPolicy *httpserver.HostPolicy, next http.Handler) http.Handler {
 	csrf := http.NewCrossOriginProtection()
-	checked := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := csrf.Check(r); err != nil {
 			logOriginRefusal(r, "csrf", err.Error())
 			httpreply.Forbidden(w, "cross-origin request refused")
@@ -61,15 +66,19 @@ func securityMiddleware(cspPolicy string, hostPolicy *httpserver.HostPolicy, nex
 		}
 		next.ServeHTTP(w, r)
 	})
+	hostGated := hostPolicy.Middleware()(guarded)
 	return httpserver.SecurityHeaders(
 		httpserver.WithCSP(cspPolicy),
 		httpserver.WithReferrerPolicy("same-origin"),
-	)(hostPolicy.Middleware()(checked))
+	)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && notify.IsRoute(r.URL.Path) {
+			guarded.ServeHTTP(w, r)
+			return
+		}
+		hostGated.ServeHTTP(w, r)
+	}))
 }
 
-// logOriginRefusal writes the one Warn line a CSRF or fetch-metadata refusal gets. It carries no
-// path: a preview path holds a bearer token that only the access log's template hides, and the
-// access line pairs with this one by request_id.
 func logOriginRefusal(r *http.Request, gate, reason string) {
 	slog.Warn("request refused by origin gate",
 		"gate", gate,

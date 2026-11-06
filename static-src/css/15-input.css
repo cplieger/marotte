@@ -64,15 +64,10 @@
      read the same one declaration. */
   --pill-inset: var(--sp-1);
 
-  /* THE ROW'S INLINE PADDING, read by BOTH icon-only controls so their boxes cannot
-     drift apart rather than agreeing by coincidence. */
+  /* THE ROW'S INLINE PADDING, read by `.pill` and `.send-btn` so a labelled control's
+     text sits the same distance from its border in both. The box's one control size is
+     the toolbar's `--btn-h` (01-tokens.css), on both axes for an icon-only control. */
   --pill-pad-inline: var(--sp-2);
-
-  /* ONE CONTROL HEIGHT FOR THIS BOX: the pill row's controls and the textarea's
-     resting band below both read it, so the box's two rows cannot disagree. One
-     value on every tier: --hit-floor grows the TARGET through the shared expander
-     (61-mcp-tools.css), never the painted box. */
-  --composer-ctl-h: 2rem;
 
   /* HOW MUCH OF THE HOME-INDICATOR INSET THIS BAR HONOURS, and it is a cap rather
      than the whole figure. Apple reserves 34pt at the bottom and asks that no
@@ -84,21 +79,17 @@
 
   /* THE ROW'S OWN PADDING PAYS FOR THE EXPANDER'S BLOCK REACH, so a pill's target
      never overhangs into `#prompt-input`'s box (a target reaching into its
-     neighbour's). The reach is (--hit-floor - box) / 2 above the painted box, 6px
+     neighbour's). The reach is (--hit-floor - box) / 2 above the painted box, 4px
      on a coarse pointer, and the floor at --pill-inset keeps the 4px chrome inset
      wherever the box already clears the target. It is the ROW's padding and NOT
      --pill-inset, because raising the inset raises the gap between the controls
      with it, which costs the pills' label width. */
-  --composer-pill-pad: max(var(--pill-inset), calc((var(--hit-floor) - var(--composer-ctl-h)) / 2));
+  --composer-pill-pad: max(var(--pill-inset), calc((var(--hit-floor) - var(--btn-h)) / 2));
 
   /* THE PILL ROW'S ONE GAP, between every pair of controls, so touch spaces the whole
-     row or none of it: the hit floor minus the icon-only pill's width (`--icon-ui`
-     plus its padding and border), where two icon-only neighbours' inline reaches meet
-     instead of crossing. --pill-inset (4px) on a mouse, 10px on touch. */
-  --pill-gap: max(
-    var(--pill-inset),
-    calc(var(--hit-floor) - var(--icon-ui) - 2 * var(--pill-pad-inline) - 2px)
-  );
+     row or none of it: the toolbar's spacing for `--btn-h` boxes, where two icon-only
+     neighbours' targets meet instead of crossing. 4px on a mouse, 8px on touch. */
+  --pill-gap: max(var(--pill-inset), var(--tap-gap));
 }
 
 .prompt-box {
@@ -176,28 +167,10 @@
      air below it down to the divider the pill row draws are equal at every line
      count. `1lh` is this element's own line-height, so the derivation follows
      the type scale instead of restating it.
-     It was `var(--sp-3) var(--sp-4) var(--sp-1)`: 12px above the text and 4px
-     below it. `min-height` hid most of that at rest, because a single line is
-     shorter than the box and the slack lands UNDER the text — measured 12.00px
-     above against 8.40px below, close enough to read as intentional. At two
-     lines the slack is gone and the ratio is 12.00 against 3.99, which is the
-     reported defect: the second line sits on the divider.
-     `min-height` is now what the padding is derived FROM rather than a floor
-     fighting it, so the natural single-line height IS the pill row's band and the
-     resting box did not change size.
-
-     DERIVED from the pill row rather than declared, so this row and the one under
-     it are the same band on every pointer tier: the row is one control plus its
-     two --pill-inset edges. Its 1px divider is deliberately NOT in the sum — the
-     hairline is the boundary between the two bands, so counting it here would
-     make this row 1px taller than the pill band and put the box 0.5px out of
-     vertical symmetry about it. */
-  /* The pill ROW's band, restated: its controls plus the padding that row actually
-     carries. `--pill-inset` was the term until the row's inset became the
-     expander's, and reading the old one here left the textarea 44px over a 45px
-     pill row on a finger — the same class of disagreement between this box's two
-     rows that `--composer-ctl-h` exists to close. */
-  --composer-rest-h: calc(var(--composer-ctl-h) + 2 * var(--composer-pill-pad));
+     The pill row's band (one control plus its two `--composer-pill-pad` edges), so
+     the two rows match on every tier. The 1px divider between them is not in the
+     sum: counting it would put the box 0.5px out of symmetry about it. */
+  --composer-rest-h: calc(var(--btn-h) + 2 * var(--composer-pill-pad));
 
   padding: calc((var(--composer-rest-h) - 1lh) / 2) var(--sp-4);
 
@@ -261,12 +234,9 @@
 
   /* THE BOX'S ONE CONTROL HEIGHT, so the chip row cannot disagree with the pill row
      under it or the textarea over it; its two `<button>` children would otherwise
-     size it from their own boxes. The fallback is not a spare: this component has a
-     SECOND home outside `#prompt-form` (a sent turn's header, 29-turns.css), where
-     that property does not resolve, and a `var()` with nothing behind it invalidates
-     the declaration. It must stay the value `#prompt-form` declares;
-     `composer-row-height-css.test.ts` pins the two equal. */
-  block-size: var(--composer-ctl-h, 2rem);
+     size it from their own boxes. A root token, so it also resolves in the chip's
+     second home, a sent turn's header (29-turns.css). */
+  block-size: var(--btn-h);
 
   /* Block padding would be dead weight under a declared height, and the 0.15rem it
      replaces is what made the chip 4.8px taller than its own content asked for. */
@@ -284,27 +254,13 @@
     background var(--dur-micro) var(--ease-standard),
     border-color var(--dur-micro) var(--ease-standard);
 
-  /* THE TRAILING RUNG IS THE ×'s OWN WELL WHENEVER THERE IS A ×, which is `.tab`'s
-     asymmetric-inline-padding rule (10-shell-app.css) applied to this chip. `--sp-2`
-     is authored for TEXT at both ends; the trailing child here is a button that paints
-     a box on hover and on press, so its distance from the border is a visible
-     relationship and it wants the same well it has above and below. The well is the
-     block inset `align-items: center` already produces, so this is that arithmetic and
-     not a second number: `(content height - box) / 2`, 3px on a mouse and 5px on a
-     finger. Measured at 1440 fine before it, the border sat 9px from the leading
-     emoji's ink and 15px from the ×'s, which is the reported defect.
-
-     GATED ON THE BUTTON EXISTING, and that is forced rather than tidy:
-     `buildAttachmentPill` builds no × for a read-only pill (a sent turn's header,
-     `onRemove` omitted), where the trailing child is the ELLIPSISED LABEL — text, which
-     is what `--sp-2` is the rung for. Verified unmoved at 9px both ends.
-
-     The height term restates `block-size`'s expression rather than reading a shared
-     property, because that declaration's own form is pinned by
-     `composer-row-height-css.test.ts` ("the same EXPRESSION the box declares"); the 2px
-     is this chip's two borders. */
+  /* The × paints a box on hover and press, so its inline well matches the block well
+     `align-items: center` gives it: `(content height - box) / 2`, the 2px being the
+     chip's borders (`.tab`'s asymmetric padding, 10-shell-app.css). Gated on the ×
+     existing: a read-only chip (a sent turn's header) ends in its label, which keeps
+     `--sp-2`, the rung for text. */
   &:has(> .attachment-close) {
-    padding-inline-end: calc((var(--composer-ctl-h, 2rem) - 2px - var(--close-box)) / 2);
+    padding-inline-end: calc((var(--btn-h) - 2px - var(--close-box)) / 2);
   }
 }
 
@@ -329,10 +285,8 @@
   cursor: pointer;
   border-radius: var(--r-sm);
 
-  /* PHYSICAL, and the pair is what lets the chip above declare its own height: a
-     logical `min-block-size` is a DIFFERENT property from the floor's `min-height`,
-     resolved against it by source order rather than by specificity, and
-     61-mcp-tools.css sorts later. `min-width` was already here for the ellipsis. */
+  /* Drops the shared paint floor (61-mcp-tools.css) so the button is its text's height
+     inside the chip's `block-size`; `min-width: 0` lets the name ellipsise. */
   min-height: 0;
   position: relative;
 }
@@ -437,24 +391,16 @@
   container-name: pill-row;
 }
 
-/* There is no `.pill-label` rule. It styled the optional text label on the
- * Attach and Autopilot pills, and both are gone — Autopilot with the staged-write
- * store, Attach into the chat-options menu — so the rule and its
- * `@container pill-row (width < 24rem)` hide had no emitter left. The two pills
- * that still carry a label use their own classes (`.pill-role-label`, and the
- * model pill's `#ctx-model-pill`), each with its own ellipsis handling, because
- * the slot layer's `min-width: 0` is scoped to exactly those two. */
-
 .pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.25rem;
   padding: 0 var(--pill-pad-inline);
-  /* The box's one control height, shared with .send-btn and with the textarea's
-   * resting band, so the prompt-pills row reads as one uniform line of controls
-   * and the row above it matches. Derivation: --composer-ctl-h on #prompt-form. */
-  height: var(--composer-ctl-h);
+  /* The toolbar's button box, shared with .send-btn and with the textarea's resting
+   * band: an icon-only pill is its square, a labelled one grows from it. */
+  height: var(--btn-h);
+  min-inline-size: var(--btn-h);
   border: 1px solid var(--c-border);
 
   /* The CONCENTRIC radius, not height/2 and not the ladder's --r-md. A stadium
@@ -1448,9 +1394,9 @@
     margin-block-end: calc(-1 * var(--account-reach));
   }
 
-  /* A row, so its box is the target: `--hit-floor`, PHYSICAL as `.code-refs-link`
-     declares it, so it survives a later move inside an `<li>`, whose prose exemption
-     (61-mcp-tools.css) zeroes the floor. */
+  /* A row, so its box is the target: `--hit-floor` at class specificity, as
+     `.code-refs-link` restates it, so it survives a later move inside an `<li>`,
+     whose prose exemption (61-mcp-tools.css) zeroes the zero-specificity floor. */
   min-height: var(--hit-floor);
   justify-content: space-between;
 
@@ -1866,22 +1812,12 @@
   gap: 0.25rem;
   font-size: var(--fs-xs);
 
-  /* THE SAME BLOCK SIZE AND INLINE PADDING AS `#chat-options-btn`, so on a phone-shaped
-     viewport, where the word is hidden, Send is that button's box and differs by
-     COLOUR alone. Wider than tall on purpose: a square read as a different size
-     class, and the width comes from the shared padding rather than a second literal. */
-  block-size: var(--composer-ctl-h);
-
-  /* The row's padding, or whatever keeps this button wider than tall (the ratified
-     shape — the surplus width is free touch area), whichever is larger. The second
-     arm is that inequality solved for the padding, plus 1px so it is strict; it does
-     not bind at either tier today, and it is what keeps the property structural if
-     `--icon-ui` or `--pill-pad-inline` moves. Both terms are the row's own, so
-     neither can drift from it, and the result is `#chat-options-btn`'s padding. */
-  padding-inline: max(
-    var(--pill-pad-inline),
-    calc((var(--composer-ctl-h) - 2px - var(--icon-ui)) / 2 + 1px)
-  );
+  /* THE TOOLBAR'S BUTTON BOX, as `.pill` beside it: where the word is hidden (a
+     phone-shaped viewport) Send is `#chat-options-btn`'s square and differs by COLOUR
+     alone; with the word it grows from that square by the row's own padding. */
+  block-size: var(--btn-h);
+  min-inline-size: var(--btn-h);
+  padding-inline: var(--pill-pad-inline);
   flex-shrink: 0;
 
   /* `background` and `border-color` are both named: the face is a fill AND an
@@ -1976,24 +1912,10 @@
    carries only the cross-surface shell rules). Its touch SIZES are on the tier,
    in the block after this one. */
 @media (width <= 48rem) {
-  /* NO `.send-btn { min-width: var(--btn-h) }` here any more, and it must not come
-     back on a width query. It existed to make Send 44 wide on a phone, which the
-     app-wide floor already did on the POINTER tier — and it broke squareness in
-     the one case a width query cannot see: a NARROW window with a mouse, where
-     the block axis is 32 and this rule declared the inline axis 44. The base rule
-     derives both axes from one term instead (see `.send-btn` above). */
-
   /* THE HOME-INDICATOR INSET IS NOT THIS ROW'S: spent inside the card it left 21px
      of card under the buttons on a phone. `50-mobile.css`'s
      `[id="prompt-form"].bottom-bar` spends it below the card, capped (the whole
      inset on an installed phone), and `safe-area-inset.test.ts` pins that. */
-
-  /* No --composer-rest-h override here any more, and it must not come back on a
-     WIDTH query. It used to carry the match between the textarea's band and the
-     pill row's, keyed on width, so a touch DESKTOP — wide, coarse — kept a 40px
-     textarea over a 52px pill row, which is the same defect one tier up. THE TIER
-     IS THE POINTER, NOT THE WIDTH (01-tokens.css): the base derivation reads
-     --composer-ctl-h, so both rows follow whichever tier is in force. */
 
   /* A popup card must fit the screen it is on. The width cap keeps an anchored
      card from running off the right edge; the height cap trades the shared
@@ -2040,6 +1962,50 @@
   .pill-model-effort,
   .send-btn-label {
     display: none;
+  }
+}
+
+/* The model and mode pills go icon-only where the fullest labelled row (mid-turn, task
+   list shown) stops fitting with the catalog's widest pills, "claude sonnet 5.5 · medium"
+   and "Semantic Reviewer": 630px mouse, 654px touch with the tier and Send's word, 496px
+   and 520px without; each threshold adds 10 to 12px (`button-size.test.ts` sweeps it). A
+   longer name, such as a custom agent's, ellipsises within its cap. A container query
+   cannot read `--pill-gap`, so the tier is a selector. The names stay in aria-label and
+   the tooltip (`status.ts`, `role-picker.ts`). */
+@media (width > 48rem) and (height > 30rem) {
+  @container pill-row (width < 40rem) {
+    .pill-model > :is([id="ctx-model-pill"], .pill-model-effort),
+    .pill-role-label {
+      display: none;
+    }
+  }
+
+  @container pill-row (width < 41.5rem) {
+    :root[data-pointer="coarse"]
+      :is(.pill-model > [id="ctx-model-pill"], .pill-model-effort, .pill-role-label) {
+      display: none;
+    }
+  }
+}
+
+@media (width <= 48rem), (height <= 30rem) {
+  @container pill-row (width < 31.75rem) {
+    .pill-model > [id="ctx-model-pill"],
+    .pill-role-label {
+      display: none;
+    }
+  }
+
+  @container pill-row (width < 33.25rem) {
+    :root[data-pointer="coarse"] :is(.pill-model > [id="ctx-model-pill"], .pill-role-label) {
+      display: none;
+    }
+
+    @media (width <= 48rem) {
+      :root:not([data-pointer]) :is(.pill-model > [id="ctx-model-pill"], .pill-role-label) {
+        display: none;
+      }
+    }
   }
 }
 

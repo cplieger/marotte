@@ -22,7 +22,7 @@ import { compactText, counters, progressPhrase, type ExecRun } from "./exec-view
 import { buildExecSummary, type ExecSummaryView } from "./exec-view/summary.js";
 import { wantsReader } from "./exec-view/alert.js";
 import { chevronEl } from "./chevron.js";
-import { selectableButton } from "./disclosure-row.js";
+import { isSliding, selectableButton, slideBox, targetOpen } from "./disclosure-row.js";
 import { runBarOpen, setRunBarOpen } from "./device-view.js";
 import { holdRunClock, releaseRunClock, type RunClockHolder } from "./messages-blocks.js";
 import { openRunView } from "./run-view.js";
@@ -136,15 +136,14 @@ function render(bar: HTMLUListElement): void {
   // moved node loses focus, so the focused row button is handed it back.
   const focused = document.activeElement;
   const held = focused instanceof HTMLElement && bar.contains(focused) ? focused : null;
+  const before = bar.childElementCount;
   // KEYED BY RUN ID, and each surviving row is PATCHED rather than rebuilt. Both halves are needed.
   reconcile(bar, ids, {
     key: (id: string) => id,
     mount: (id: string) => buildRow(id, chatID),
     update: paintRow,
   });
-  for (const row of bar.querySelectorAll<HTMLElement>(":scope > .run-bar-row")) {
-    row.hidden = !open;
-  }
+  settleFold(bar, open, bar.childElementCount !== before);
   if (held !== null && held.isConnected && document.activeElement !== held) {
     held.focus({ preventScroll: true });
   }
@@ -180,7 +179,10 @@ function render(bar: HTMLUListElement): void {
 /** The fold row: how many runs and how many need the reader, opening the list in place. */
 function buildSummary(bar: HTMLUListElement): HTMLElement {
   const btn = selectableButton("div", "run-bar-open run-bar-toggle", () => {
-    setRunBarOpen(!runBarOpen());
+    const open = !runBarOpen();
+    setRunBarOpen(open);
+    // 0 is `.run-bar[data-folded]`'s `block-size` (26-dock.css).
+    slideBox(bar, open, applyOpen(bar), { fade: true, closedHeight: 0 });
     render(bar);
   });
   btn.setAttribute("aria-expanded", "false");
@@ -190,6 +192,26 @@ function buildSummary(bar: HTMLUListElement): HTMLElement {
     el("span", { className: "run-bar-count" }),
   );
   return btn;
+}
+
+/** The `apply` of the list's `slideBox`: folded is `.run-bar[data-folded]` (26-dock.css). */
+function applyOpen(bar: HTMLUListElement): (open: boolean) => void {
+  return (open) => {
+    bar.toggleAttribute("data-folded", !open);
+  };
+}
+
+/** Bring the list to `open` at once, unless the reader's slide is already heading there: it owns the attribute until
+ *  it ends, so a repaint mid-close keeps the rows shown. An open whose rows came or went (`resized`) slides on to the
+ *  new height; a slide heading the other way (the fold row left) is cut. */
+function settleFold(bar: HTMLUListElement, open: boolean, resized: boolean): void {
+  if (!isSliding(bar)) {
+    applyOpen(bar)(open);
+  } else if (targetOpen(bar, open) !== open) {
+    slideBox(bar, open, applyOpen(bar), { motion: false });
+  } else if (open && resized) {
+    slideBox(bar, true, applyOpen(bar), { fade: true });
+  }
 }
 
 function paintSummary(fold: HTMLElement, total: number, waiting: number, open: boolean): void {
