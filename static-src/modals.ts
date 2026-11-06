@@ -5,7 +5,7 @@
 import { createModal, type ModalController } from "@cplieger/ui/modal";
 import { el } from "@cplieger/ui";
 import { pollUntil, registerCleanup } from "./actions/index.js";
-import { $, byId } from "./dom.js";
+import { $, byId, queryAll } from "./dom.js";
 import { apiGetTyped, apiPostTypedOrError } from "./api-client.js";
 import {
   decodeLoginOptions,
@@ -73,7 +73,7 @@ function wireCloseButtons(content: HTMLElement, ctrl: ModalController): void {
 
 /** Auto-wire every `[data-modal]` element. Optional: openModal initialises lazily. */
 export function initAllModals(): void {
-  for (const content of document.querySelectorAll<HTMLElement>("[data-modal]")) {
+  for (const content of queryAll<HTMLElement>("[data-modal]")) {
     ensureModal(content);
   }
 }
@@ -210,7 +210,7 @@ let loginAbort: AbortController | null = null;
 let loginUnregister: (() => void) | null = null;
 
 function loginButtons(): HTMLButtonElement[] {
-  return [...document.querySelectorAll<HTMLButtonElement>("#login-modal .modal-btn")];
+  return [...queryAll<HTMLButtonElement>("#login-modal .modal-btn")];
 }
 
 /** The doors stay closed while an attempt is out: the server refuses a second one until the first ends. */

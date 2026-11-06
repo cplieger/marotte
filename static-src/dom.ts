@@ -16,6 +16,17 @@ export function maybeEl<T extends HTMLElement>(id: string): T | null {
   return document.getElementById(id) as T | null;
 }
 
+/** The page's first element matching `selector`, or null. T is the call-site contract for the subclass. */
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- T is the call-site contract for the returned element subclass
+export function queryEl<T extends Element = Element>(selector: string): T | null {
+  return document.querySelector<T>(selector);
+}
+
+/** Every element of the page matching `selector`, in document order. */
+export function queryAll<T extends Element = Element>(selector: string): T[] {
+  return [...document.querySelectorAll<T>(selector)];
+}
+
 /**
  * Force a synchronous style and layout flush for `el`, so removing and re-adding a class in one task restarts an
  * animation. Returns the value read.

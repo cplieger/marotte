@@ -2,6 +2,7 @@
 // and the identity verdict gating one sidebar row rather than the app. Every collaborator
 // is mocked: under test are the ORDER of reads and the branches over their answers.
 
+import type * as Dom from "./dom.js";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as BootModule from "./boot.js";
 import type * as RoutePath from "./route-path.js";
@@ -234,7 +235,10 @@ vi.mock("./fold-state.js", () => ({ resetFoldState: m.resetFoldState }));
 vi.mock("./banner-stack.js", () => ({ GLOBAL_BANNER: "*", showBanner: m.showBanner }));
 // The composer, reached for one call only: a reduced boot blurs it. And the shell
 // panel, which a signed-out boot shuts.
-vi.mock("./dom.js", () => ({ $: { promptInput: { blur: m.blur }, shellPanel: m.shellPanel } }));
+vi.mock("./dom.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Dom>()),
+  $: { promptInput: { blur: m.blur }, shellPanel: m.shellPanel },
+}));
 vi.mock("./shell.js", () => ({ restoreShell: m.restoreShell }));
 vi.mock("./reload-guard.js", () => ({
   bootMode: m.bootMode,

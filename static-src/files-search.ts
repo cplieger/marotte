@@ -3,7 +3,7 @@
 import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { rovingFocus, type RovingFocusController } from "@cplieger/ui/roving-focus";
-import { $, byId } from "./dom.js";
+import { $, byId, maybeEl } from "./dom.js";
 import { apiGetTypedOrError } from "./api-client.js";
 import { openAtLine, openFileOrPage } from "./navigate.js";
 import { reconcile } from "./reconcile.js";
@@ -621,7 +621,7 @@ export function toggleFilesSearch(): void {
 /** @internal Test seam: the lazily-built search bar, once it exists. */
 // deadset:ignore DS1102 -- test seam: observes the lazily built search bar
 export function _filesSearchBar(): HTMLElement | null {
-  return document.getElementById("fb-search");
+  return maybeEl("fb-search");
 }
 
 /** @internal Test seam: the results list, once it exists. */

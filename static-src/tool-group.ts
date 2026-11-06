@@ -19,6 +19,7 @@ import { STEERING_TITLE_PREFIX } from "./steering-docs.js";
 import { kindNoun } from "./tool-kind-noun.js";
 import type { ToolKind } from "./tool-schema.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui/disclosure";
+import { queryAll } from "./dom.js";
 
 /** The body is closed, whoever closed it: the header click toggles it, and find-in-chat's reveal reads
  *  it, so a close that leaves it off makes the next header click close the group again. */
@@ -131,7 +132,7 @@ export function refreshGroupHeader(group: HTMLElement): void {
 
 // A switch flip moves which members are rows on every mounted group at once.
 onHookVisibility(() => {
-  for (const group of document.querySelectorAll<HTMLElement>(".tool-group")) {
+  for (const group of queryAll<HTMLElement>(".tool-group")) {
     refreshGroupHeader(group);
   }
 });

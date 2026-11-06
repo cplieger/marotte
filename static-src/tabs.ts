@@ -54,7 +54,7 @@ import { join as joinKey } from "@cplieger/keyenc";
 import { ICON_CLOSE, ICON_PIN_FILLED, ICON_TAB_SUBTAB } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { activeView, setActiveView } from "./device-view.js";
-import { $ } from "./dom.js";
+import { $, queryAll, queryEl } from "./dom.js";
 import { swapViews } from "./view-swap.js";
 import { signal, effect, el } from "@cplieger/ui";
 import {
@@ -1287,7 +1287,7 @@ const CLS_RUN_DOT = "tab-run-dot";
 const CLS_RUN_DOT_SR = "tab-run-sr";
 
 function elementOf(id: string): HTMLElement | null {
-  return document.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(id)}"]`);
+  return queryEl<HTMLElement>(`[data-tab-id="${CSS.escape(id)}"]`);
 }
 
 /** Paint one row's hover tooltip: its full title. Guarded because renderDOM calls
@@ -1760,13 +1760,13 @@ function showView(row: TabRow): void {
   // Swap the view ONLY when it is not already the right one: this re-runs on every projection
   // mutation, and a re-swap replays the entry fade. Read from the DOM, not a cached selector, so a
   // second writer of these classes can never leave a view hidden.
-  const target = document.querySelector(row.spec.view);
-  const shown = [...document.querySelectorAll(ALL_VIEWS_SELECTOR)].filter(
+  const target = queryEl(row.spec.view);
+  const shown = [...queryAll(ALL_VIEWS_SELECTOR)].filter(
     (n) => !(n as HTMLElement).classList.contains("hidden"),
   );
   if (shown.length !== 1 || shown[0] !== target) {
     swapViews(() => {
-      for (const node of document.querySelectorAll(ALL_VIEWS_SELECTOR)) {
+      for (const node of queryAll(ALL_VIEWS_SELECTOR)) {
         (node as HTMLElement).classList.add("hidden");
       }
       target?.classList.remove("hidden");
@@ -1789,8 +1789,8 @@ function showView(row: TabRow): void {
  *  HIDES the other views without disposing anything, so a rollback finds state intact. No
  *  pushRoute: the settlement's own activation corrects the URL. */
 function showEmptySurface(): void {
-  const target = document.querySelector(TAB_VIEWS.chat);
-  const shown = [...document.querySelectorAll(ALL_VIEWS_SELECTOR)].filter(
+  const target = queryEl(TAB_VIEWS.chat);
+  const shown = [...queryAll(ALL_VIEWS_SELECTOR)].filter(
     (n) => !(n as HTMLElement).classList.contains("hidden"),
   );
   // Same swap guard as showView: this effect re-runs on every projection
@@ -1798,7 +1798,7 @@ function showEmptySurface(): void {
   // that never left.
   if (shown.length !== 1 || shown[0] !== target) {
     swapViews(() => {
-      for (const node of document.querySelectorAll(ALL_VIEWS_SELECTOR)) {
+      for (const node of queryAll(ALL_VIEWS_SELECTOR)) {
         (node as HTMLElement).classList.add("hidden");
       }
       target?.classList.remove("hidden");

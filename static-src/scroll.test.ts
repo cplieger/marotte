@@ -1,4 +1,5 @@
 // The follow model: reading state, the live-edge pins and the reader's own gestures.
+import type * as Dom from "./dom.js";
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from "vitest";
 
 // Read for the premise test below: the regression cases only reproduce production while `.msg-row`
@@ -11,7 +12,8 @@ import { framesDrained } from "./__test-helpers__/frame-queue.js";
 
 // The module builds its singleton against $.messages / $.messagesWrap at import, and reads
 // $.scrollBottom in init.
-vi.mock("./dom.js", () => ({
+vi.mock("./dom.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Dom>()),
   $: new Proxy(
     {},
     {

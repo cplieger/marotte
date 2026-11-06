@@ -68,6 +68,7 @@ const decodeLocalReposResponse: Decoder<LocalReposResponse> = (v) => {
 };
 
 import { iconEl } from "./icon-el.js";
+import { maybeEl } from "./dom.js";
 
 /** Why an account's last list-wide press (Load more, Clone all, Delete all) fell
  *  short, by forge ID, until the next one. */
@@ -119,7 +120,7 @@ function ensurePanelEffect(): void {
   panelEffectStarted = true;
   effect(() => {
     touch(stateVersion);
-    const root = document.getElementById("forges-panel");
+    const root = maybeEl("forges-panel");
     if (root === null) {
       return;
     }
@@ -153,7 +154,7 @@ function manageAccountURL(kind: ForgeKind, host: string): string {
 export async function renderForgesPanel({
   fresh = false,
 }: { fresh?: boolean } = {}): Promise<boolean> {
-  if (document.getElementById("forges-panel") === null) {
+  if (maybeEl("forges-panel") === null) {
     return true;
   }
   // Issued before anything reads the store, so a first open sends one rows read, not two.

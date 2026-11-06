@@ -6,6 +6,7 @@ import { onSSE } from "./bus.js";
 import { apiGetTyped } from "./api-client.js";
 import { decodeGovernanceStatePayload } from "./wire/decoders.gen.js";
 import type { GovernanceStatePayload, GovernanceFeatures, GovernanceLock } from "./types.js";
+import { maybeEl } from "./dom.js";
 
 let current: GovernanceStatePayload | null = null;
 const listeners = new Set<(g: GovernanceStatePayload) => void>();
@@ -58,9 +59,7 @@ function set(g: GovernanceStatePayload): void {
   current = g;
   renderOrgPolicy(g);
   paintSettingLocks();
-  document
-    .getElementById("security-profile-admin")
-    ?.classList.toggle("hidden", g.admin_restricted !== true);
+  maybeEl("security-profile-admin")?.classList.toggle("hidden", g.admin_restricted !== true);
   for (const fn of listeners) {
     fn(g);
   }
@@ -110,14 +109,14 @@ export function writeSwitch(input: HTMLInputElement, value: boolean): void {
  */
 export function paintSettingLocks(): void {
   for (const row of lockableSwitches) {
-    const input = document.getElementById(row.inputID) as HTMLInputElement | null;
+    const input = maybeEl<HTMLInputElement>(row.inputID);
     const text = input?.closest(".section-option")?.querySelector<HTMLElement>(":scope > div");
     if (input === null || text === null || text === undefined) {
       continue;
     }
     const lock = settingLock(row.key);
     const noteID = `${row.inputID}-lock`;
-    let note = document.getElementById(noteID);
+    let note = maybeEl(noteID);
     input.disabled = lock !== undefined;
     if (lock === undefined) {
       const held = input.dataset["heldValue"];
@@ -152,7 +151,7 @@ const POLICY_ROWS: readonly { key: keyof GovernanceFeatures; label: string }[] =
 
 /** Shown only for a known enterprise policy: on a personal account no organization controls these flags. */
 function renderOrgPolicy(g: GovernanceStatePayload): void {
-  const section = document.getElementById("general-governance-section");
+  const section = maybeEl("general-governance-section");
   if (section === null) {
     return;
   }

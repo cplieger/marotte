@@ -27,7 +27,7 @@ import { releaseScrollableTablesIn } from "./table-scroll.js";
 import { effect, el, touch } from "@cplieger/ui";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { CHAT_SKELETON_ID } from "./skeleton.js";
-import { $ } from "./dom.js";
+import { $, maybeEl } from "./dom.js";
 import {
   followTargetChanged,
   getScrollEl,
@@ -1171,7 +1171,7 @@ function paint(): void {
   // The placeholder never coexists with content, so it is dropped where content lands, scoped to this view. An empty
   // turn list is a chat still loading; the load-more furniture mounts beside real turns.
   if (turns.length > 0) {
-    const skel = document.getElementById(CHAT_SKELETON_ID);
+    const skel = maybeEl(CHAT_SKELETON_ID);
     if (skel !== null && root.contains(skel)) {
       skel.remove();
     }

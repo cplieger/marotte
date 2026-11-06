@@ -4,6 +4,7 @@
 import { el } from "@cplieger/ui";
 import { settingsAsShown } from "./persist.js";
 import type { OutputStyle } from "./wire/types.gen.js";
+import { maybeEl } from "./dom.js";
 
 const DEFAULT_STYLE = "default";
 const DEFAULT_HINT = "Default uses Kiro's standard response style.";
@@ -11,7 +12,7 @@ const DEFAULT_HINT = "Default uses Kiro's standard response style.";
 let served: readonly OutputStyle[] = [];
 
 function outputStyleSelect(): HTMLSelectElement | null {
-  return document.getElementById("output-style") as HTMLSelectElement | null;
+  return maybeEl<HTMLSelectElement>("output-style");
 }
 
 /** Rebuilds the select from the served styles and re-selects the stored one. Default stays an
@@ -45,7 +46,7 @@ export function paintOutputStyle(stored: string): void {
 
 /** The hint under the select: the shown style's own description, in kiro-cli's words. */
 export function paintOutputStyleHint(id: string): void {
-  const hint = document.getElementById("output-style-hint");
+  const hint = maybeEl("output-style-hint");
   if (hint === null) {
     return;
   }

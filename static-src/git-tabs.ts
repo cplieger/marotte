@@ -6,6 +6,7 @@ import type { GitTab } from "./route-path.js";
 import { setGitTab as setGitTabRoute } from "./tabs.js";
 import { initSegmentedBar } from "./segmented-bar.js";
 import { setPageSubtitle } from "./page-title.js";
+import { maybeEl, queryAll } from "./dom.js";
 
 // GitTab lives in route-path.ts, the URL source of truth; re-exported for existing callers.
 export type { GitTab };
@@ -65,7 +66,7 @@ export function forceGitTab(tab: GitTab): void {
 
 /** Wire the tab buttons and panel visibility. Idempotent; acts only when the tab bar is in the DOM. */
 export function initGitTabs(): void {
-  const bar = document.getElementById("git-tab-bar");
+  const bar = maybeEl("git-tab-bar");
   if (bar === null) {
     return;
   }
@@ -80,7 +81,7 @@ export function initGitTabs(): void {
   onGitTabChange((tab) => {
     paint(tab);
     // The panel half of the pairing the controller's `aria-controls` writes.
-    for (const panel of document.querySelectorAll<HTMLDivElement>("[data-git-panel]")) {
+    for (const panel of queryAll<HTMLDivElement>("[data-git-panel]")) {
       const panelTab = panel.dataset["gitPanel"] ?? "";
       panel.classList.toggle("hidden", panelTab !== tab);
       panel.setAttribute("role", "tabpanel");

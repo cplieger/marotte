@@ -1,6 +1,8 @@
 // Whether this tab shows the PR list: the git view on screen, its PRs panel active, the page visible. The `hidden`
 // class is the one state every way in and out writes, so it is observed rather than mirrored.
 
+import { maybeEl, queryEl } from "./dom.js";
+
 /** One poll interval, the cadence the watch holds the poller at. */
 const WATCH_RENEW_MS = 60_000;
 
@@ -16,8 +18,8 @@ export const VIEW_PAGE = Array.from(crypto.getRandomValues(new Uint8Array(16)), 
  *  and with true every `WATCH_RENEW_MS` while it stays. Answers the teardown. A
  *  page without the git view observes nothing. */
 export function observePRView(post: (watching: boolean) => void): () => void {
-  const view = document.getElementById("git-view");
-  const panel = document.querySelector<HTMLElement>('[data-git-panel="prs"]');
+  const view = maybeEl("git-view");
+  const panel = queryEl<HTMLElement>('[data-git-panel="prs"]');
   if (view === null || panel === null) {
     return () => undefined;
   }

@@ -5,6 +5,7 @@ import { flashTarget } from "./flash-target.js";
 import { forceSettingsTab } from "./settings-tabs.js";
 import { pushRoute } from "./router.js";
 import type { SettingsTab } from "./route-path.js";
+import { maybeEl } from "./dom.js";
 
 /** The `?highlight=` value this page load carried, read once at import time (see the mechanic
  *  above). Consumed at most once. */
@@ -27,7 +28,7 @@ export function highlightControl(id: string): void {
   if (id === "") {
     return;
   }
-  flashTarget(() => document.getElementById(id));
+  flashTarget(() => maybeEl(id));
 }
 
 /** Open Settings on `tab` and highlight `controlID`. The in-app form of the deep link: what a

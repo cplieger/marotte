@@ -15,6 +15,7 @@ import {
 } from "./reading-anchor.js";
 import { edgeSlack, GestureTracker, type Aim } from "./scroll-gesture.js";
 import { loadMoreSkeleton } from "./skeleton.js";
+import { maybeEl } from "./dom.js";
 
 /** Air under the live block's bottom when Following pins it above the scrollport's bottom edge. */
 const LIVE_ANCHOR_AIR_PX = 50;
@@ -1576,7 +1577,7 @@ export class ScrollController {
     this.floorAfter(true);
     this.onLoadMore();
     const observer = new MutationObserver(() => {
-      if (document.getElementById(SKELETON_ID) === null) {
+      if (maybeEl(SKELETON_ID) === null) {
         this.endLoadPass();
         // A short page may leave the edge inside the lead; an empty one stays quiet until the edge re-enters, or the
         // same failing request would loop.

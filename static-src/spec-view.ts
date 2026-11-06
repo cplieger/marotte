@@ -24,6 +24,7 @@ import { decodeSpec } from "./wire/decoders.gen.js";
 import type { Spec, SpecDoc, SpecDocRole, SpecTaskNode } from "./wire/types.gen.js";
 import { absPath } from "./workspace.js";
 import { formatFullStamp } from "./locale-time.js";
+import { maybeEl, queryEl } from "./dom.js";
 
 /** Tree depth, read by css/32-spec.css to indent a row, its note and its detail. */
 const DEPTH_PROP = "--depth";
@@ -121,7 +122,7 @@ let shown = "";
 
 /** `.page-content` is shared by every spec tab, so each spec keeps its own offset. */
 const pageScroll = new SharedScroll(
-  () => document.querySelector<HTMLElement>("[id='spec-view'] > .page-content"),
+  () => queryEl<HTMLElement>("[id='spec-view'] > .page-content"),
   () => shown,
 );
 
@@ -191,7 +192,7 @@ function release(ref: string): void {
 export function showSpec(dir: string): void {
   const st = stateFor(dir);
   installOnce();
-  const body = document.getElementById("spec-body");
+  const body = maybeEl("spec-body");
   if (body !== null) {
     const page = pageFor(dir, st);
     if (page.root.parentElement !== body) {
@@ -486,7 +487,7 @@ function pageVisible(ref: string): boolean {
   if (shown !== ref) {
     return false;
   }
-  const view = document.getElementById("spec-view");
+  const view = maybeEl("spec-view");
   return view !== null && view.offsetParent !== null;
 }
 

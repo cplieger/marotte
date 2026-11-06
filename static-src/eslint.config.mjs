@@ -28,4 +28,20 @@ export default [
     files: ["scripts/*.ts"],
     rules: { "no-console": "off" },
   },
+  {
+    // dom.ts owns page-wide lookups. The audit walkers are serialised into the page and may use
+    // only page globals (audit/walkers.ts), so they cannot import it.
+    files: ["**/*.ts"],
+    ignores: ["dom.ts", "audit/**", "**/*.test.ts", "scripts/**"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "MemberExpression[object.name='document'][property.name=/^(getElementById|querySelector|querySelectorAll)$/]",
+          message: "Look elements up through dom.ts (byId, maybeEl, queryEl, queryAll).",
+        },
+      ],
+    },
+  },
 ];

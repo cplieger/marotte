@@ -3,7 +3,7 @@
 // setSettingsTab() also pushes the URL so deep-linking and Back work.
 
 import { signal, subscribe } from "@cplieger/ui";
-import { $ } from "./dom.js";
+import { $, queryAll } from "./dom.js";
 import { swapViews } from "./view-swap.js";
 import type { SettingsTab } from "./route-path.js";
 import { pushRoute } from "./router.js";
@@ -89,7 +89,7 @@ export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => voi
     paint(tab);
     const swap = (): HTMLElement | null => {
       let active: HTMLElement | null = null;
-      for (const panel of document.querySelectorAll<HTMLDivElement>("[data-settings-panel]")) {
+      for (const panel of queryAll<HTMLDivElement>("[data-settings-panel]")) {
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         const panelTab = panel.dataset["settingsPanel"]!;
         const isActive = panelTab === tab;

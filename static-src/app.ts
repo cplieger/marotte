@@ -10,7 +10,7 @@ import { mountLiveRegions } from "@cplieger/ui/announce";
 import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_RECONCILE } from "./bus.js";
 import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { $ } from "./dom.js";
+import { $, maybeEl } from "./dom.js";
 import { guardDuplicateActivation, initSidebarSwipe } from "./platform.js";
 import { initShellViewport } from "./shell-viewport.js";
 import { initPointerTier } from "./pointer-tier.js";

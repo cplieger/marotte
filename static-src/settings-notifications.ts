@@ -15,7 +15,7 @@ import { KEYED_PUSH_KINDS } from "./push-kinds.js";
 import { newestSettings, patchSettings, settingsAsShown } from "./persist.js";
 import type { EffectiveSettings, PatchAnswer, SettingsSwitch } from "./persist.js";
 import { createDisclosure } from "@cplieger/ui/disclosure";
-import { $, byId } from "./dom.js";
+import { $, byId, maybeEl } from "./dom.js";
 import { isIOS, isStandalone } from "./platform.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 
@@ -50,7 +50,7 @@ function kindRows(): KindRow[] {
   const rows: KindRow[] = [];
   for (const [kind, settingsKey] of Object.entries(KEYED_PUSH_KINDS)) {
     const id = KIND_INPUT_IDS[kind];
-    if (id === undefined || document.getElementById(id) === null) {
+    if (id === undefined || maybeEl(id) === null) {
       continue;
     }
     rows.push({ kind, settingsKey, input: byId<HTMLInputElement>(id) });

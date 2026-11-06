@@ -5,7 +5,7 @@
 // turn's own divider. While a turn streams and the composer holds a send (text or a staged file), a
 // second button beside Cancel sends it, because a touch Return is a new line.
 
-import { $, byId } from "./dom.js";
+import { $, byId, maybeEl, queryEl } from "./dom.js";
 import { activeSession, getActive, getActiveId, sessionBusy } from "./store.js";
 import { sessionDrain, turnsPhrase } from "./queue-slots.js";
 import { payloadOf, turnOpenOf } from "./turns.js";
@@ -469,7 +469,7 @@ class PromptInputController {
  *  close an import cycle. */
 function menuOpen(el: HTMLTextAreaElement): boolean {
   const id = el.getAttribute("aria-controls");
-  const menu = id === null ? null : document.getElementById(id);
+  const menu = id === null ? null : maybeEl(id);
   return menu !== null && !menu.hidden;
 }
 
@@ -477,10 +477,7 @@ function menuOpen(el: HTMLTextAreaElement): boolean {
  *  without stopping the key, so it runs after the composer and must be asked. `is-open` is
  *  ui-primitives' open-state class (docs/popup.md, docs/popover.md). */
 function escapeOwnerOpen(): boolean {
-  return (
-    document.querySelector(".uip-popup.is-open, .uip-popover.is-open, .turn-actions-more[open]") !==
-    null
-  );
+  return queryEl(".uip-popup.is-open, .uip-popover.is-open, .turn-actions-more[open]") !== null;
 }
 
 /** The touch keyboard's Return label follows what Return does. */

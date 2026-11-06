@@ -6,6 +6,7 @@
 //     `vk-dot-wave` leaves an opaque band on the disc, which `content: none` prevents.
 // The CSS half reads SOURCE: the test page loads no app stylesheet.
 
+import type * as Dom from "./dom.js";
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import cssContrastScript from "../scripts/css-contrast.py?raw";
 import chatSrc from "./chat.ts?raw";
@@ -323,9 +324,10 @@ vi.mock("./editor-openers.js", () => ({
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 
 /** The tab strip's real render target, so renderDOM runs for real. */
-vi.mock("./dom.js", () => {
+vi.mock("./dom.js", async (importOriginal) => {
   const cache = new Map<string, HTMLElement>();
   return {
+    ...(await importOriginal<typeof Dom>()),
     $: new Proxy(
       {},
       {

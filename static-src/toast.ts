@@ -5,6 +5,7 @@
 import { toast, _resetForTest as uipResetToast } from "@cplieger/ui/toast";
 import type { ToastLevel, ToastRetry } from "@cplieger/ui/toast";
 import type { NoticeLevel } from "./wire/types.gen.js";
+import { queryAll } from "./dom.js";
 
 export type { ToastLevel, ToastRetry };
 
@@ -58,7 +59,7 @@ const observed = new WeakSet<Element>();
 const SEEN_ATTR = "data-toast-seen";
 
 function tagMounted(): void {
-  for (const stack of document.querySelectorAll(".uip-toast-stack")) {
+  for (const stack of queryAll(".uip-toast-stack")) {
     if (!observed.has(stack)) {
       observed.add(stack);
       new MutationObserver(tagMounted).observe(stack, { childList: true });

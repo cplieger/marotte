@@ -1,6 +1,6 @@
 // Add/edit modal forms (registry search, npm, remote, raw JSON, registry overrides), submit helpers and pair editors.
 
-import { $, byId } from "./dom.js";
+import { $, byId, maybeEl, queryAll, queryEl } from "./dom.js";
 import { el } from "@cplieger/ui";
 import { closeModal, RollingOutput } from "./modals.js";
 import {
@@ -148,7 +148,7 @@ const PANEL_SELECTOR = ".mcp-mode-panel[data-mcp-mode]";
 
 function setMode(mode: AddMode, existing: Server | null): void {
   // HTMLElement: the remote panel is a <form>, and this loop touches only classList and dataset.
-  for (const panel of document.querySelectorAll<HTMLElement>(PANEL_SELECTOR)) {
+  for (const panel of queryAll<HTMLElement>(PANEL_SELECTOR)) {
     const panelMode = panel.dataset["mcpMode"] ?? "";
     panel.classList.toggle("hidden", panelMode !== mode);
     if (!MODE_TABS.some((t) => t.id === panelMode)) {
@@ -182,7 +182,7 @@ const CLS_FIELD_INVALID = "field-invalid";
 
 /** Runs at the top of each submit, so a fixed field stops claiming to be wrong. */
 function clearFieldMarks(): void {
-  for (const node of document.querySelectorAll<HTMLElement>("." + CLS_FIELD_INVALID)) {
+  for (const node of queryAll<HTMLElement>("." + CLS_FIELD_INVALID)) {
     node.classList.remove(CLS_FIELD_INVALID);
     node.removeAttribute("aria-invalid");
   }
@@ -193,7 +193,7 @@ function markInvalidFields(fields: readonly ValidationField[]): string[] {
   for (const f of fields) {
     lines.push(f.message);
     for (const id of FIELD_INPUT_IDS[f.field] ?? []) {
-      const node = document.getElementById(id);
+      const node = maybeEl(id);
       if (node === null) {
         continue;
       }
@@ -361,7 +361,7 @@ const NPM_PANEL_SELECTOR = '.mcp-mode-panel[data-mcp-mode="npm"]';
 
 /** Paste JSON is the only tab that can express a `uvx`, `docker` or bare-binary server. */
 function showOtherCommandsNote(): void {
-  const panel = document.querySelector<HTMLDivElement>(NPM_PANEL_SELECTOR);
+  const panel = queryEl<HTMLDivElement>(NPM_PANEL_SELECTOR);
   if (panel?.querySelector("." + CLS_NPM_ALT) !== null) {
     return;
   }
@@ -379,7 +379,7 @@ function showOtherCommandsNote(): void {
 
 // The banner installs Node in one click; the fields stay usable meanwhile, and the banner removes itself on success.
 async function gateNpmPanelOnNode(): Promise<void> {
-  const panel = document.querySelector<HTMLDivElement>(NPM_PANEL_SELECTOR);
+  const panel = queryEl<HTMLDivElement>(NPM_PANEL_SELECTOR);
   if (panel === null) {
     return;
   }
@@ -562,9 +562,7 @@ function initRemotePanel(existing: Server | null): void {
 
 /** Resolved by the same attribute the panel loop uses. */
 function remotePanel(): HTMLFormElement {
-  const form = document.querySelector<HTMLFormElement>(
-    'form.mcp-mode-panel[data-mcp-mode="remote"]',
-  );
+  const form = queryEl<HTMLFormElement>('form.mcp-mode-panel[data-mcp-mode="remote"]');
   if (form === null) {
     throw new Error("mcp: remote panel form missing");
   }
@@ -619,9 +617,7 @@ function initRegistryPanel(existing: Server): void {
 }
 
 function registryPanel(): HTMLFormElement {
-  const form = document.querySelector<HTMLFormElement>(
-    'form.mcp-mode-panel[data-mcp-mode="registry"]',
-  );
+  const form = queryEl<HTMLFormElement>('form.mcp-mode-panel[data-mcp-mode="registry"]');
   if (form === null) {
     throw new Error("mcp: registry panel form missing");
   }
@@ -689,7 +685,7 @@ const CLS_RAW_EDIT = "mcp-raw-edit-note";
 
 /** The box holds this server's stored record, and saving replaces it. */
 function showRawEditNote(editing: boolean): void {
-  const panel = document.querySelector<HTMLDivElement>('.mcp-mode-panel[data-mcp-mode="raw"]');
+  const panel = queryEl<HTMLDivElement>('.mcp-mode-panel[data-mcp-mode="raw"]');
   if (panel === null) {
     return;
   }

@@ -8,6 +8,7 @@ import { loadSettings } from "./persist.js";
 import { patchAppSettings } from "./actions/settings.js";
 import { readAffordances } from "./actions/git-prs.js";
 import { ensureForges, usableAccount } from "./forge-store.js";
+import { maybeEl } from "./dom.js";
 
 /** What the caller renders into the dialog chrome, and the repository whose
  *  merge methods it offers. */
@@ -157,17 +158,17 @@ function setStatus(status: HTMLElement, text: string, tone: "pending" | "error" 
  * persists a changed choice as the next default first.
  */
 export async function openMergeMethodDialog(opts: MergeDialogOpts): Promise<string | null> {
-  const dlg = document.getElementById("pr-merge-dialog") as HTMLDialogElement | null;
+  const dlg = maybeEl<HTMLDialogElement>("pr-merge-dialog");
   if (dlg === null) {
     return null;
   }
   const ctl = controllerFor(dlg);
 
-  const title = document.getElementById("pr-merge-title");
-  const message = document.getElementById("pr-merge-message");
-  const methods = document.getElementById("pr-merge-methods");
-  const status = document.getElementById("pr-merge-status");
-  const confirmBtn = document.getElementById("pr-merge-confirm-btn") as HTMLButtonElement | null;
+  const title = maybeEl("pr-merge-title");
+  const message = maybeEl("pr-merge-message");
+  const methods = maybeEl("pr-merge-methods");
+  const status = maybeEl("pr-merge-status");
+  const confirmBtn = maybeEl<HTMLButtonElement>("pr-merge-confirm-btn");
   if (
     title === null ||
     message === null ||

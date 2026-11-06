@@ -6,9 +6,10 @@ import { withAsyncFeedback } from "./async-button.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_REFRESH } from "./icons.js";
 import { renderForgesPanel } from "./forge-auth.js";
+import { maybeEl } from "./dom.js";
 
 export function initSourcesTab(): void {
-  const refreshBtn = document.getElementById("git-refresh-sources-btn") as HTMLButtonElement | null;
+  const refreshBtn = maybeEl<HTMLButtonElement>("git-refresh-sources-btn");
   if (refreshBtn !== null) {
     refreshBtn.replaceChildren(iconEl(ICON_REFRESH));
     refreshBtn.addEventListener("click", () => {
@@ -25,7 +26,7 @@ export function initSourcesTab(): void {
 /** Mount the Sources panel and read its data again. `fresh` re-reads every repository list from its forge. False
  *  when a read failed (`renderForgesPanel`). */
 export function refreshSources(opts: { fresh?: boolean } = {}): Promise<boolean> {
-  const root = document.getElementById("git-sources-mount");
+  const root = maybeEl("git-sources-mount");
   if (root === null) {
     return Promise.resolve(true);
   }
