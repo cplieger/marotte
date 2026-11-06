@@ -116,13 +116,15 @@ vi.mock("../engine-status.js", () => ({
 // PARTIAL: the gap door's two run readers are spies (they share a token and both fetch), while
 // `adoptConnectRuns` is REAL, since the state it seeds is what the connect door owns. `vi.hoisted`
 // for the api-client pair's reason below.
-const { mockInvalidateCachedRuns, mockRebuildLiveRuns } = vi.hoisted(() => ({
+const { mockInvalidateCachedRuns, mockRebuildLiveRuns, mockRereadHeldRuns } = vi.hoisted(() => ({
   mockInvalidateCachedRuns: vi.fn(),
   mockRebuildLiveRuns: vi.fn(),
+  mockRereadHeldRuns: vi.fn(),
 }));
 vi.mock("../run-store.js", async (importOriginal) => ({
   ...(await importOriginal<typeof RunStore>()),
   rebuildLiveRuns: mockRebuildLiveRuns,
+  rereadHeldRuns: mockRereadHeldRuns,
   invalidateCachedRuns: mockInvalidateCachedRuns,
 }));
 
@@ -546,6 +548,17 @@ describe("BUS_RECONCILE handler", () => {
     const first = mockInvalidateCachedRuns.mock.calls[0]?.[0];
     const second = mockInvalidateCachedRuns.mock.calls[1]?.[0];
     expect(second).not.toBe(first);
+  });
+
+  // The revalidation that emitted the reconcile already re-read every held run (sse-adapter.test.ts).
+  it("a reconcile re-reads no run itself", () => {
+    setSessions([makeSession("a")]);
+    const signal = fireReconcile();
+
+    expect(mockRereadHeldRuns).not.toHaveBeenCalled();
+    expect(mockInvalidateCachedRuns).not.toHaveBeenCalled();
+    expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
+    expect(mockRebuildLiveRuns.mock.calls[0]).toEqual([signal]);
   });
 
   it("passes the run's signal to the list read and the catalog read", () => {
