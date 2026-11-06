@@ -178,14 +178,9 @@ var abandonableWriteSites = []durableSite{{
 	because: "a send_queued_now's undo on the REQUEST's context: a lost clear leaves the row at the head marked, which the next drain sends first, where the reader asked it to go",
 }, {
 	file:    "internal/agent/auto_compact.go",
-	fn:      "markIfLive",
+	fn:      "setRow",
 	calls:   []string{"Mutate"},
-	because: "a queued compaction's mark on its caller's context: a request that died never told the reader it was queued, and a reading's lost mark leaves the turn's end, which compacts at the point anyway",
-}, {
-	file:    "internal/agent/auto_compact.go",
-	fn:      "clear",
-	calls:   []string{"Mutate"},
-	because: "a queued compaction's removal: a lost one leaves the row, which the next turn's end runs, a cancel removes or a restart drops",
+	because: "the queued compaction's row on its caller's context, which only shows the compactor's record: a lost mark queues nothing and a press that died never told the reader it was queued; a lost clear leaves a stale row that the next write, a cancel or a restart removes",
 }, {
 	file:    "internal/translate/streaming_content.go",
 	fn:      "appendSteerAck",

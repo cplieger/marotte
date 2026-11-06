@@ -3,44 +3,45 @@ package agent
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// hookQueue runs a step just before a queue write or a queue read, so another caller's step finishes before that
-// call's section begins.
+// hookQueue runs a step just before each queue section begins and just after it ends, so another caller's whole
+// section falls between this caller's section and its next step.
 type hookQueue struct {
 	compactQueue
-	beforeMark    func()
-	beforePending func()
+	before func()
+	after  func()
 }
 
-func (q hookQueue) markIfLive(ctx context.Context, chatID marotte.ChatID, admit func(turn string) bool) (bool, error) {
-	if q.beforeMark != nil {
-		q.beforeMark()
+func (q hookQueue) section(ctx context.Context, chatID marotte.ChatID, fn func(t queueTurn, row func(bool) error) error) error {
+	if q.before != nil {
+		q.before()
 	}
-	return q.compactQueue.markIfLive(ctx, chatID, admit)
-}
-
-func (q hookQueue) pending(ctx context.Context, chatID marotte.ChatID) bool {
-	if q.beforePending != nil {
-		q.beforePending()
+	err := q.compactQueue.section(ctx, chatID, fn)
+	if q.after != nil {
+		q.after()
 	}
-	return q.compactQueue.pending(ctx, chatID)
+	return err
 }
 
-// cancelOnce is a hook step that cancels the chat's queued compaction the first time it runs.
+// cancelOnce is a hook step that cancels the chat's queued compaction the first time it runs; the cancel's own
+// section passes it by.
 func cancelOnce(t *testing.T, cancel func(context.Context, marotte.ChatID) error) func() {
 	t.Helper()
-	var once sync.Once
+	var fired atomic.Bool
 	return func() {
-		once.Do(func() {
-			if err := cancel(t.Context(), "c1"); err != nil {
-				t.Errorf("cancel: %v", err)
-			}
-		})
+		if fired.Swap(true) {
+			return
+		}
+		if err := cancel(t.Context(), "c1"); err != nil {
+			t.Errorf("cancel: %v", err)
+		}
 	}
 }
 
@@ -52,7 +53,7 @@ func TestAutoCompact_ACancelAsTheCrossingWritesHolds(t *testing.T) {
 	if out, err := r.ac.request(t.Context(), "c1"); err != nil || out != command.CompactQueued {
 		t.Fatalf("the reader's press during the turn = (%v, %v), want queued", out, err)
 	}
-	r.ac.queue = hookQueue{compactQueue: r.ac.queue, beforeMark: cancelOnce(t, r.ac.cancel)}
+	r.ac.queue = hookQueue{compactQueue: r.ac.queue, before: cancelOnce(t, r.ac.cancel)}
 	r.reading(92)
 	r.ac.noteUsage(t.Context(), "c1", 92)
 	r.closeTurn(t, false)
@@ -72,7 +73,7 @@ func TestAutoCompact_ACancelAsTheCrossingWritesHoldsOnTheRecord(t *testing.T) {
 	if out, err := h.RequestCompact(t.Context(), "c1"); err != nil || out != command.CompactQueued {
 		t.Fatalf("the reader's press during the turn = (%v, %v), want queued", out, err)
 	}
-	r.ac.queue = hookQueue{compactQueue: r.ac.queue, beforeMark: cancelOnce(t, h.CancelCompact)}
+	r.ac.queue = hookQueue{compactQueue: r.ac.queue, before: cancelOnce(t, h.CancelCompact)}
 
 	r.reading(92)
 	h.coord.ObserveContextUsage(t.Context(), "c1", 92)
@@ -251,45 +252,46 @@ func TestAutoCompact_APressDuringARefusedTurnEndRunAfterTheCancelWaitsForTheNewT
 	}
 }
 
-// The record queue decides with the turn the request belongs to: admit refuses only a new request, and withdraw hands
-// decline the open turn, then the finished one, and on a chat with no lifecycle only clears.
-func TestRecordCompactQueue_DecidesWithTheRequestsTurn(t *testing.T) {
+// The record queue's section names the open turn, then the finished one, with whether a turn is live; its row writer
+// sets and clears the record's row and is idempotent; a chat with no lifecycle gets no turn and a plain writer.
+func TestRecordCompactQueue_SectionNamesTheRequestsTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	q := recordCompactQueue{bc: h.coord}
 	row := func() bool {
 		c, _ := cs.Get(t.Context(), "c1")
 		return c.CompactPending != nil
 	}
-	var seen string
-	refuse := func(turn string) bool {
-		seen = turn
-		return false
+	in := func(chatID marotte.ChatID, set ...bool) queueTurn {
+		var got queueTurn
+		err := q.section(t.Context(), chatID, func(turn queueTurn, write func(bool) error) error {
+			got = turn
+			for _, on := range set {
+				if err := write(on); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Errorf("section(%s): %v", chatID, err)
+		}
+		return got
 	}
 	id, _ := h.stagePromptTurn(t, "c1")
 
-	if queued, err := q.markIfLive(t.Context(), "c1", refuse); err != nil || queued || row() || seen != id {
-		t.Errorf("a refused new request: (%v, %v), row %v, admit saw %q; want (false, nil), no row, %q", queued, err, row(), seen, id)
+	if got := in("c1", true, true); got.id != id || !got.live || !got.open || !got.queueable() || !row() {
+		t.Errorf("during the turn: %+v, row %v; want turn %q, live, open, queueable, and the row on", got, row(), id)
 	}
-	if queued, err := q.markIfLive(t.Context(), "c1", nil); err != nil || !queued || !row() {
-		t.Fatalf("the reader's press: (%v, %v), row %v; want queued", queued, err, row())
-	}
-	if queued, err := q.markIfLive(t.Context(), "c1", refuse); err != nil || !queued || !row() {
-		t.Errorf("a refusing admit over a request already there: (%v, %v), row %v; want it kept", queued, err, row())
-	}
-	var declined string
-	decline := func(turn string) { declined = turn }
-	if err := q.withdraw(t.Context(), "c1", decline); err != nil || declined != id || row() {
-		t.Errorf("withdraw during the turn: %v, declined %q, row %v; want %q and the row gone", err, declined, row(), id)
+	if in("c1", false); row() {
+		t.Error("the writer's clear left the row on")
 	}
 	h.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "the pipe died", "", 0)
 	waitFor(t, func() bool { return !h.coord.turns.live("c1") })
-	declined = ""
-	if err := q.withdraw(t.Context(), "c1", decline); err != nil || declined != id {
-		t.Errorf("withdraw after the close: %v, declined %q; want the finished turn %q", err, declined, id)
+	if got := in("c1"); got.id != id || got.live {
+		t.Errorf("after the close: %+v; want the finished turn %q, not live", got, id)
 	}
-	called := false
-	if err := q.withdraw(t.Context(), "c-none", func(string) { called = true }); err != nil || called {
-		t.Errorf("withdraw with no lifecycle: %v, decline called %v; want a plain clear", err, called)
+	if got := in("c-none", true, false); got != (queueTurn{}) {
+		t.Errorf("with no lifecycle: %+v; want no turn", got)
 	}
 }
 
@@ -298,9 +300,131 @@ func TestAutoCompact_ACancelAsTheTurnEndReadsTheQueueHolds(t *testing.T) {
 	r := newCompactRig(90)
 	r.turn(t, 92)
 	r.finishTurn()
-	r.ac.queue = hookQueue{compactQueue: r.ac.queue, beforePending: cancelOnce(t, r.ac.cancel)}
+	r.ac.queue = hookQueue{compactQueue: r.ac.queue, before: cancelOnce(t, r.ac.cancel)}
 	r.turnEnd(t, false)
 	if r.isQueued() || r.count() != 0 {
 		t.Errorf("a cancel as the turn end read the queue: queued %v, calls %d; want neither", r.isQueued(), r.count())
+	}
+}
+
+// The reader cancels just after the turn end's section, before its call goes out, and KAS opens its next turn and
+// refuses the call: the cancelled compaction is not queued behind that turn, whose end at 40% compacts nothing.
+func TestAutoCompact_ACancelArrivingAsTheTurnEndClaimsHolds(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 92)
+	r.finishTurn()
+	r.ac.queue = hookQueue{compactQueue: r.ac.queue, after: cancelOnce(t, r.ac.cancel)}
+	r.setRefuse(true)
+	r.onCompact = r.kasOpensTheNextTurn
+	r.turnEnd(t, false)
+	if r.isQueued() || r.count() != 1 || len(r.failures) != 0 {
+		t.Errorf("a cancel as the turn end claimed: queued %v, calls %d, failures %v; want not queued, 1 call, no failure",
+			r.isQueued(), r.count(), r.failures)
+	}
+	r.setRefuse(false)
+	r.onCompact = nil
+	r.reading(40)
+	r.closeTurn(t, false)
+	if r.count() != 1 {
+		t.Errorf("KAS's turn's end at 40%%: calls %d; want only the refused run", r.count())
+	}
+}
+
+// The same on the release: a press under the close's hold, cancelled just after the release's section.
+func TestAutoCompact_ACancelArrivingAsTheReleaseClaimsHolds(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t)
+	r.finishTurn()
+	r.pressUnderHold(t)
+	r.ac.queue = hookQueue{compactQueue: r.ac.queue, after: cancelOnce(t, r.ac.cancel)}
+	r.setRefuse(true)
+	r.onCompact = r.kasOpensTheNextTurn
+	r.ac.afterRelease(t.Context(), "c1", false)
+	if r.isQueued() || r.count() != 1 || len(r.failures) != 0 {
+		t.Errorf("a cancel as the release claimed: queued %v, calls %d, failures %v; want not queued, 1 call, no failure",
+			r.isQueued(), r.count(), r.failures)
+	}
+	r.setRefuse(false)
+	r.onCompact = nil
+	r.reading(40)
+	r.closeTurn(t, false)
+	if r.count() != 1 {
+		t.Errorf("KAS's turn's end at 40%%: calls %d; want only the refused run", r.count())
+	}
+}
+
+// The turn end runs just after the reader's cancel's section, before the cancel returns: it runs nothing.
+func TestAutoCompact_ATurnEndArrivingAsTheCancelWritesRunsNothing(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 92)
+	r.finishTurn()
+	var fired atomic.Bool
+	r.ac.queue = hookQueue{compactQueue: r.ac.queue, after: func() {
+		if !fired.Swap(true) {
+			r.turnEnd(t, false)
+		}
+	}}
+	if err := r.ac.cancel(t.Context(), "c1"); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if r.isQueued() || r.count() != 0 {
+		t.Errorf("a turn end as the cancel wrote: queued %v, calls %d; want neither", r.isQueued(), r.count())
+	}
+}
+
+// A call is settled once: settling the refused call again, after KAS's turn closed and its end claimed the queued
+// run once more, leaves that run's call alone, toasts nothing, and the run's own end settles it.
+func TestAutoCompact_ASecondSettleOfOneCallDoesNothing(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newCompactRig(90)
+		r.turn(t, 92)
+		r.setRefuse(true)
+		r.onCompact = r.kasOpensTheNextTurn
+		r.closeTurn(t, false)
+		if !r.isQueued() || len(r.failures) != 0 {
+			t.Fatalf("the refused run under KAS's turn: queued %v, failures %v; want queued again", r.isQueued(), r.failures)
+		}
+		r.ac.mu.Lock()
+		refused := r.ac.chats["c1"].queued.call
+		r.ac.mu.Unlock()
+		r.setRefuse(false)
+		r.onCompact = nil
+		r.block = make(chan struct{})
+		r.finishTurn()
+		go r.turnEnd(t, false)
+		synctest.Wait()
+		r.ac.settle(t.Context(), "c1", refused, true)
+		if !r.isQueued() || len(r.failures) != 0 {
+			t.Errorf("a second settle of the refused call: queued %v, failures %v; want the running row kept and no toast",
+				r.isQueued(), r.failures)
+		}
+		close(r.block)
+		synctest.Wait()
+		if r.isQueued() || r.count() != 2 {
+			t.Errorf("KAS's turn's end: queued %v, calls %d; want the row gone and 2 calls", r.isQueued(), r.count())
+		}
+	})
+}
+
+// A cancel after the refused run was queued behind KAS's turn removes it: that turn's end compacts nothing.
+func TestAutoCompact_ACancelAfterARefusalHolds(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 92)
+	r.setRefuse(true)
+	r.onCompact = r.kasOpensTheNextTurn
+	r.closeTurn(t, false)
+	if !r.isQueued() {
+		t.Fatal("the refused run under KAS's turn was not queued again")
+	}
+	if err := r.ac.cancel(t.Context(), "c1"); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	r.setRefuse(false)
+	r.onCompact = nil
+	r.reading(92)
+	r.closeTurn(t, false)
+	if r.isQueued() || r.count() != 1 {
+		t.Errorf("KAS's turn's end after the cancel: queued %v, calls %d; want no row and only the refused call",
+			r.isQueued(), r.count())
 	}
 }

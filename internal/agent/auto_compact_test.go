@@ -29,58 +29,28 @@ type compactRig struct {
 	pct      int
 	enabled  bool
 	live     bool
-	refuse   bool
-	queued   bool
-	mu       sync.Mutex
+	// hold is a close's KAS hold with no turn live, under which a press is queued for the release.
+	hold   bool
+	refuse bool
+	queued bool
+	mu     sync.Mutex
 }
 
-// rigQueue is the record's request as a flag: marked only while the rig's turn is live. r.mu is its section, as the
-// lifecycle is the record queue's.
+// rigQueue is the record's row as a flag. r.mu is its section, as the lifecycle is the record queue's; marks counts
+// each time the row goes on.
 type rigQueue struct{ r *compactRig }
 
-// markIfLive counts each admitted mark, a request already there included.
-func (q rigQueue) markIfLive(_ context.Context, _ marotte.ChatID, admit func(turn string) bool) (bool, error) {
+func (q rigQueue) section(_ context.Context, _ marotte.ChatID, fn func(t queueTurn, row func(bool) error) error) error {
 	q.r.mu.Lock()
 	defer q.r.mu.Unlock()
-	if !q.r.live {
-		return false, nil
-	}
-	if admit != nil && !admit(q.r.turnIDLocked()) {
-		return q.r.queued, nil
-	}
-	q.r.queued = true
-	q.r.marks++
-	return true, nil
-}
-
-func (q rigQueue) withdraw(_ context.Context, _ marotte.ChatID, decline func(turn string)) error {
-	q.r.mu.Lock()
-	defer q.r.mu.Unlock()
-	decline(q.r.turnIDLocked())
-	q.r.queued = false
-	return nil
-}
-
-func (q rigQueue) pending(context.Context, marotte.ChatID) bool {
-	q.r.mu.Lock()
-	defer q.r.mu.Unlock()
-	return q.r.queued
-}
-
-func (q rigQueue) clear(context.Context, marotte.ChatID) error {
-	q.r.mu.Lock()
-	defer q.r.mu.Unlock()
-	q.r.queued = false
-	return nil
-}
-
-func (q rigQueue) clearIfIdle(context.Context, marotte.ChatID) error {
-	q.r.mu.Lock()
-	defer q.r.mu.Unlock()
-	if !q.r.live {
-		q.r.queued = false
-	}
-	return nil
+	t := queueTurn{id: q.r.turnIDLocked(), live: q.r.live, holds: q.r.hold, open: true}
+	return fn(t, func(on bool) error {
+		if on && !q.r.queued {
+			q.r.marks++
+		}
+		q.r.queued = on
+		return nil
+	})
 }
 
 func newCompactRig(pct int) *compactRig {
@@ -88,11 +58,6 @@ func newCompactRig(pct int) *compactRig {
 	entry := testBridge(r.bridge, bridgeIdle)
 	r.ac = &autoCompactor{
 		chats: map[marotte.ChatID]*autoCompactState{},
-		live: func(marotte.ChatID) bool {
-			r.mu.Lock()
-			defer r.mu.Unlock()
-			return r.live
-		},
 		turnOf: func(marotte.ChatID) (string, bool) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
@@ -202,11 +167,19 @@ func (r *compactRig) isQueued() bool {
 	return r.queued
 }
 
-// markRow writes the record's request the way a press under a close's KAS hold does, with no turn live.
-func (r *compactRig) markRow() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.queued = true
+// pressUnderHold is the reader's press under a close's KAS hold with no turn live, which queues it for the release.
+func (r *compactRig) pressUnderHold(t *testing.T) {
+	t.Helper()
+	setHold := func(on bool) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.hold = on
+	}
+	setHold(true)
+	defer setHold(false)
+	if out, err := r.ac.request(t.Context(), "c1"); err != nil || out != command.CompactQueued {
+		t.Errorf("a press under the close's hold = (%v, %v), want queued", out, err)
+	}
 }
 
 // turn models one turn in which KAS reports each reading in order; the turn stays live until closed.
@@ -488,28 +461,28 @@ func TestAutoCompact_AReadingLessTurnAfterACompactionCompactsNothing(t *testing.
 	}
 }
 
-// A close that finds no session still ends the turn's state: the next turn's crossing queues again.
-func TestAutoCompact_ACloseWithNoSessionStillEndsTheTurn(t *testing.T) {
+// A close that finds no session runs nothing and keeps the queued compaction, which the next turn's end runs once.
+func TestAutoCompact_ACloseWithNoSessionKeepsTheQueuedCompaction(t *testing.T) {
 	r := newCompactRig(90)
 	r.turn(t, 92)
 	withSession := r.ac.bridgeOf
 	r.ac.bridgeOf = func(marotte.ChatID) *sharedBridge { return nil }
 	r.closeTurn(t, false)
 	r.ac.bridgeOf = withSession
-	r.turn(t, 95)
-	if got := r.markCount(); got != 2 {
-		t.Fatalf("the next turn's crossing of 90 after a sessionless close made %d marks in total, want 2", got)
+	if r.count() != 0 || !r.isQueued() {
+		t.Fatalf("a sessionless close: calls %d, queued %v; want no call and the row kept", r.count(), r.isQueued())
 	}
+	r.turn(t, 95)
 	r.closeTurn(t, false)
 	if r.count() != 1 || r.isQueued() {
 		t.Errorf("the next turn's end: calls %d, queued %v; want 1 call and the row gone", r.count(), r.isQueued())
 	}
 }
 
-// The reader's compaction on an idle chat stands for a row left on the record, so no later turn end runs it again.
+// The reader's compaction on an idle chat takes a request left queued, so no later turn end runs it again.
 func TestCompactRequest_AnIdleRunTakesTheQueuedRow(t *testing.T) {
 	r := newCompactRig(90)
-	r.markRow()
+	r.pressUnderHold(t)
 	if out, err := r.ac.request(t.Context(), "c1"); out != command.CompactAccepted || err != nil {
 		t.Fatalf("request on an idle chat = %v, %v; want accepted", out, err)
 	}
@@ -527,7 +500,7 @@ func TestCompactRequest_AnIdleRunTakesTheQueuedRow(t *testing.T) {
 func TestAutoCompact_APressDuringTheTurnEndsRunIsSatisfiedByIt(t *testing.T) {
 	r := newCompactRig(90)
 	r.reading(93)
-	r.onCompact = r.markRow
+	r.onCompact = func() { r.pressUnderHold(t) }
 	ran := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
 	r.onCompact = nil
 	if !ran || r.isQueued() {
@@ -548,7 +521,7 @@ func TestAutoCompact_ARowWrittenUnderTheHoldRunsAtTheRelease(t *testing.T) {
 	if ran {
 		t.Fatal("a turn end at 50 with pct 90 and nothing queued reported a compaction")
 	}
-	r.markRow()
+	r.pressUnderHold(t)
 	r.ac.afterRelease(t.Context(), "c1", ran)
 	if r.count() != 1 || r.isQueued() {
 		t.Errorf("the row written under the hold: calls %d, queued %v; want 1 call and the row gone", r.count(), r.isQueued())
@@ -559,7 +532,7 @@ func TestAutoCompact_ARowWrittenUnderTheHoldRunsAtTheRelease(t *testing.T) {
 func TestAutoCompact_ARowUnderANewTurnWaitsForThatTurnsEnd(t *testing.T) {
 	for _, ran := range []bool{false, true} {
 		r := newCompactRig(90)
-		r.markRow()
+		r.pressUnderHold(t)
 		r.setLive(true)
 		r.ac.afterRelease(t.Context(), "c1", ran)
 		if r.count() != 0 || !r.isQueued() {
@@ -671,7 +644,7 @@ func TestAutoCompact_AReadingFromTheWireQueuesOnTheRecord(t *testing.T) {
 // onHub points the rig's queue and turn reads at the hub's record and registry.
 func (r *compactRig) onHub(h *Runtime) {
 	r.ac.queue = recordCompactQueue{bc: h.coord}
-	r.ac.live, r.ac.turnOf = h.coord.turns.live, h.coord.turns.compactTurn
+	r.ac.turnOf = h.coord.turns.compactTurn
 	h.coord.autoCompact = r.ac
 }
 
@@ -834,9 +807,7 @@ func TestCompactRequest_ATurnEndJoinsTheRunningCompaction(t *testing.T) {
 		r.block = make(chan struct{})
 		go func() { _, _ = r.ac.request(context.Background(), "c1") }()
 		synctest.Wait()
-		r.mu.Lock()
-		r.queued = true
-		r.mu.Unlock()
+		r.pressUnderHold(t)
 		closed := make(chan struct{})
 		go func() {
 			r.ac.afterTurn(context.Background(), "c1", r.lastTurn(), false)
