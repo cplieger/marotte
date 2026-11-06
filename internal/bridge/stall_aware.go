@@ -49,12 +49,13 @@ func (e *Engine) stalled(quiet, sample time.Duration) bool {
 }
 
 // StallAware is context.WithTimeout(ctx, d) for a call to this engine, except that an expiry finding the engine
-// Stalled waits for the stall to end, re-checking every stallRecheck, up to d+stallExtendCeiling. Its Err after an
+// Stalled waits for the stall to end, re-checking every stallRecheck, and a stall the engine ends by reading a frame
+// starts d over, for the calls a door makes after the late answer; all up to d+stallExtendCeiling. Its Err after an
 // expiry is context.DeadlineExceeded, as is that of every context derived from it.
 func (e *Engine) StallAware(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
 	c := &stallCtx{
 		parent: ctx, ceiling: time.Now().Add(d + stallExtendCeiling), done: make(chan struct{}),
-		quiet: stallQuiet, sample: stallSample, recheck: stallRecheck,
+		budget: d, quiet: stallQuiet, sample: stallSample, recheck: stallRecheck,
 	}
 	cancel := func() { c.end(context.Canceled) }
 	if err := ctx.Err(); err != nil {
@@ -73,15 +74,28 @@ func (e *Engine) extendWhileStalled(c *stallCtx) {
 	if c.Err() != nil {
 		return
 	}
-	if time.Now().Before(c.ceiling) && e.stalled(c.quiet, c.sample) {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		if c.err == nil {
-			c.timer = time.AfterFunc(min(c.recheck, time.Until(c.ceiling)), func() { e.extendWhileStalled(c) })
-		}
+	frame := e.lastFrame.Load()
+	next := c.recheck
+	if !time.Now().Before(c.ceiling) {
+		c.end(context.DeadlineExceeded)
 		return
 	}
-	c.end(context.DeadlineExceeded)
+	if !e.stalled(c.quiet, c.sample) {
+		c.mu.Lock()
+		answered := c.extended && frame != c.stallFrame
+		c.mu.Unlock()
+		if !answered {
+			c.end(context.DeadlineExceeded)
+			return
+		}
+		next = c.budget
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err == nil {
+		c.extended, c.stallFrame = next == c.recheck, frame
+		c.timer = time.AfterFunc(min(next, time.Until(c.ceiling)), func() { e.extendWhileStalled(c) })
+	}
 }
 
 // stallCtx is StallAware's context. It is not built on context.WithCancelCause: that context and every child of it
@@ -93,9 +107,12 @@ type stallCtx struct {
 	timer      *time.Timer // guarded by mu
 	stopParent func() bool // guarded by mu
 	ceiling    time.Time
-	// The tunables read when the context was made: its timer goroutines can outlive the caller's cancel.
-	quiet, sample, recheck time.Duration
-	mu                     sync.Mutex
+	// extended is whether the last check found a stall, and stallFrame the engine's last frame then; guarded by mu.
+	extended   bool
+	stallFrame int64
+	// The budget and tunables read when the context was made: its timer goroutines can outlive the caller's cancel.
+	budget, quiet, sample, recheck time.Duration
+	mu                             sync.Mutex
 }
 
 func (c *stallCtx) end(err error) {

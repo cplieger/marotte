@@ -75,6 +75,35 @@ func TestStallAware_ExtendsUntilTheStallEnds(t *testing.T) {
 	})
 }
 
+// A stall the engine ends by reading a frame (the late answer) gives the call its budget again, for the calls a door
+// makes after that answer.
+func TestStallAware_AnEngineAnsweringAfterAStallGetsAFreshBudget(t *testing.T) {
+	defaultStallChecks(t)
+	synctest.Test(t, func(t *testing.T) {
+		b := newIdleEngine(t)
+		var busy atomic.Bool
+		busy.Store(true)
+		b.cpuTicks = switchableCPU(&busy)
+		start := time.Now()
+		ctx, cancel := b.StallAware(t.Context(), stallBudget)
+		defer cancel()
+
+		const answered = stallBudget + 30*time.Second
+		at(start, answered)
+		busy.Store(false)
+		b.noteFrame(1)
+		at(start, answered+stallBudget-time.Second)
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("expired %v after the engine answered out of a stall: %v, want a fresh %v budget",
+				time.Since(start)-answered, err, stallBudget)
+		}
+		at(start, answered+stallBudget+stallRecheck+2*stallSample)
+		if err := ctx.Err(); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("ctx.Err() = %v past the restored budget on a quiet engine, want context.DeadlineExceeded", err)
+		}
+	})
+}
+
 func TestStallAware_StopsAtTheExtensionCeiling(t *testing.T) {
 	defaultStallChecks(t)
 	synctest.Test(t, func(t *testing.T) {
