@@ -1,9 +1,9 @@
 package agent
 
-// The unattended floor: a scheduled run's permission request has nobody to answer, so it is refused on a
-// short budget rather than parking the run (and, through the single-run rule, its whole schedule), and a
-// pause nobody resumes ends the run on the same budget. Scheduled runs only. Deny by default;
-// `scheduled_auto_approve` opts in.
+// The unattended floor: a scheduled or triggered run's permission request has nobody to answer, so it is refused
+// on a short budget rather than parking the run (and, through the single-run rule, its whole recipe), and a
+// pause nobody resumes ends the run on the same budget. Unattended leases only. Deny by default;
+// `scheduled_auto_approve` opts in for both origins.
 
 import (
 	"cmp"
@@ -31,7 +31,7 @@ const unattendedApprovalBudget = 180 * time.Second
 const maxToolNameBytes = 128
 
 // unattendedRejectionReason is the deny note, so the step's agent does not retry.
-const unattendedRejectionReason = "This is a scheduled run and no one is watching it, " +
+const unattendedRejectionReason = "This run started with no one watching it, " +
 	"so the permission was refused automatically. Finish the task without it, " +
 	"or stop and name the permission the task needs."
 
@@ -114,7 +114,7 @@ func (rs *Runs) permissionWithUnattendedFloor(inner askHandler) askHandler {
 		if !held || !l.Unattended || msg.ID == nil {
 			return
 		}
-		run := scheduleRun(&l)
+		run := ruleRun(&l)
 		acpID := *msg.ID
 		name := permissionAskName(msg.Params)
 		// A timer parks no goroutine and is a no-op once answered: both paths claim from the tracker.
@@ -185,7 +185,7 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, origin acpResponder, acp
 	// A fixed message with the outcome as a field, so alert rules can match it.
 	slog.Warn(logMsgUnattendedPermission,
 		"outcome", verb, "chat_id", chatID, "tool", name.tool, "subject", name.subject,
-		"budget", unattendedApprovalBudget, "schedule_id", run.ScheduleID)
+		"budget", unattendedApprovalBudget, "schedule_id", run.ScheduleID, "rule_id", run.RuleID)
 	if verb == outcomeApproved {
 		// An approval is not a failure.
 		return
@@ -260,8 +260,8 @@ func (rs *Runs) endUnattended(ctx context.Context, workflowID string, req *runRe
 	case !fault:
 		reason = reasonPausedOther(r.res.State.PauseReason)
 	}
-	slog.Error(logMsgRunPausedUnattended, "workflow_id", workflowID, "schedule_id", l.ScheduleID,
-		"recipe", l.Recipe, "fault", fault, "pause_reason", scrubLog(r.res.State.PauseReason), waitedKey, waited)
+	slog.Error(logMsgRunPausedUnattended, "workflow_id", workflowID, "origin", string(l.Origin),
+		"schedule_id", l.ScheduleID, "rule_id", l.RuleID, "recipe", l.Recipe, "fault", fault, "pause_reason", scrubLog(r.res.State.PauseReason), waitedKey, waited)
 	// The retry is this pause's alone: a pause after an arm (a resume) has its own watch or heal.
 	again := func(ctx context.Context) error {
 		if rs.lastArmSeq(workflowID) != seq {
@@ -274,7 +274,7 @@ func (rs *Runs) endUnattended(ctx context.Context, workflowID string, req *runRe
 		return err
 	}
 	// Overwrites the cancel's own ending, which may land first and names no pause.
-	rs.recordScheduleOutcome(ctx, scheduleRun(&l), launchrule.Outcome{Status: launchrule.StatusFailed, Reason: reason})
+	rs.recordScheduleOutcome(ctx, ruleRun(&l), launchrule.Outcome{Status: launchrule.StatusFailed, Reason: reason})
 	return nil
 }
 

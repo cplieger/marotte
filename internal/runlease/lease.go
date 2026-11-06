@@ -17,14 +17,16 @@ import (
 )
 
 // Origin says which launch produced the run: scheduled (bounded by its next slot and the
-// ceiling, unattended, sweepable), manual (ceiling, attended, sweepable), agent (ceiling
-// alone, chat-parented, excluded from the orphan sweep's cancel arm).
+// ceiling, unattended, sweepable), triggered (a forge event's launch rule: ceiling,
+// unattended, sweepable), manual (ceiling, attended, sweepable), agent (ceiling alone,
+// chat-parented, excluded from the orphan sweep's cancel arm).
 type Origin string
 
-// The three launches marotte knows. There is no `tui` value: a TUI-launched run has no
+// The four launches marotte knows. There is no `tui` value: a TUI-launched run has no
 // lease, and that absence keeps the sweep off it.
 const (
 	OriginScheduled Origin = "scheduled"
+	OriginTriggered Origin = "triggered"
 	OriginManual    Origin = "manual"
 	OriginAgent     Origin = "agent"
 )
@@ -32,7 +34,7 @@ const (
 // valid reports whether an origin is one this build understands. An unknown origin
 // cannot be reasoned about: sweepable and unattended are both unanswerable.
 func (o Origin) valid() bool {
-	return o == OriginScheduled || o == OriginManual || o == OriginAgent
+	return o == OriginScheduled || o == OriginTriggered || o == OriginManual || o == OriginAgent
 }
 
 // Lease is marotte's record of one run. Field order is govet fieldalignment's.
@@ -70,6 +72,13 @@ type Lease struct {
 	// ScheduleID names the clock rule that asked for the run, the only row its outcome lands on. Set iff Origin
 	// is scheduled.
 	ScheduleID string `json:"schedule_id,omitempty"`
+	// RuleID, EventKey and CoalesceKey name the event rule, the event and its coalesce key a triggered launch
+	// was for; run_start confirms that event. Set iff Origin is triggered.
+	RuleID      string `json:"rule_id,omitempty"`
+	EventKey    string `json:"event_key,omitempty"`
+	CoalesceKey string `json:"coalesce_key,omitempty"`
+	// RunLabel is the label a triggered launch sent KAS, kept so the run is named the same after a restart.
+	RunLabel string `json:"run_label,omitempty"`
 	// KeepChats is every chat holding this run's keep fact, which each sign of life rewrites. It only grows.
 	KeepChats []string `json:"keep_chats,omitempty"`
 	// Unattended marks a run with nobody to answer a permission request, which arms
@@ -143,7 +152,7 @@ func (l *Lease) check() error {
 		return fmt.Errorf("lease workflow id %q is not a valid workflow id", logsafe.Field(l.WorkflowID))
 	}
 	if !l.Origin.valid() {
-		return fmt.Errorf("lease origin %q is not one of scheduled/manual/agent", l.Origin)
+		return fmt.Errorf("lease origin %q is not one of scheduled/manual/agent/triggered", l.Origin)
 	}
 	return nil
 }

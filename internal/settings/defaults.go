@@ -40,9 +40,10 @@ const (
 	// unknown value resolves to policyfile.DefaultProfile, never to Custom (no presets).
 	KeySecurityProfile = "security_profile"
 
-	// KeyScheduledAutoApprove lets a SCHEDULED run's tool requests be approved instead of refused
-	// after the unattended budget. Off by default, and its own switch: unattended consent must be
-	// chosen, not inherited.
+	// KeyScheduledAutoApprove lets a scheduled or triggered run's tool requests be approved instead
+	// of refused after the unattended budget; a triggered run can read text other people wrote. Off
+	// by default, and its own switch: unattended consent must be chosen, not inherited. The key
+	// keeps its name so a saved value keeps working.
 	KeyScheduledAutoApprove = "scheduled_auto_approve"
 
 	// KeyKnowledgeEnabled reaches the agent per spawn under _meta.kiro.settings; it defaults TRUE.

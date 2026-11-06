@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cplieger/marotte/internal/chat"
@@ -25,6 +26,7 @@ import (
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/trigger"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -129,9 +131,11 @@ func (rs *Runs) launchAs(
 		// A manual run yields to its recipe's next slot.
 		o.slotAt = rs.manualSlot(recipe.Source)
 	}
-	if bErr := rs.recipeIdle(cctx, recipe.Name); bErr != nil {
+	unlock, bErr := rs.lockIdleRecipe(cctx, recipe.Name, &o)
+	if bErr != nil {
 		return "", "", unanswered(ctx, bErr)
 	}
+	defer unlock()
 	var dropped []string
 	if o.origin == runlease.OriginScheduled {
 		inputs, dropped = declaredInputs(inputs, recipe.Inputs)
@@ -191,19 +195,78 @@ func (rs *Runs) launchAs(
 		return nil
 	})
 	relay.begin()
-	// The run's envelope, before anything can execute (runlease.Lease).
-	rs.grantLease(rctx, wfID, recipe.Name, o, hostSecurityOf(presets))
-	rs.recordParentSession(rctx, wfID, string(parent))
-	// Visible to Route before invoke is written, so the run's first frame reaches the host's lane.
-	rs.router.registerOwner(wfID, parent)
-	if _, err := rs.write(rctx, a, sb, wfID, methodKiroWorkflowInvoke,
-		map[string]any{keyWorkflowID: wfID}, mutationDrive); err != nil {
-		return wfID, recipe.Name, rs.invokeFailed(durable.Context(rctx), wfID, recipe.Name, o, err)
+	if sErr := rs.startLaunched(rctx, a, sb, wfID, recipe.Name, &o, hostSecurityOf(presets), unlock); sErr != nil {
+		return wfID, recipe.Name, sErr
 	}
-	// After invoke, so a run that never started leaves no timer.
-	rs.armDeadline(rctx, wfID)
 	logLaunched(wfID, recipe.Name, dropped)
 	return wfID, recipe.Name, nil
+}
+
+// lockIdleRecipe takes the recipe's launch lock and runs the single-run check under it. The caller holds the lock until
+// the run's lease is granted, when KAS already lists the created run as active, so an overlapping launch finds it
+// busy; unlock is idempotent.
+func (rs *Runs) lockIdleRecipe(ctx context.Context, recipe string, o *launchOrigin) (unlock func(), err error) {
+	if o.event != nil && rs.confirmer == nil {
+		return nil, errNoTriggerConfirmer
+	}
+	release, err := rs.launchLocks.Lock(ctx, recipe)
+	if err != nil {
+		return nil, err
+	}
+	unlock = sync.OnceFunc(release)
+	if err := rs.recipeIdle(ctx, recipe, o.ruleID()); err != nil {
+		unlock()
+		return nil, err
+	}
+	return unlock, nil
+}
+
+// startLaunched leases, routes and invokes a run workflow/new created on sb, releasing the recipe's launch lock once
+// the lease is granted. A run that must not be invoked has its host session closed.
+func (rs *Runs) startLaunched(
+	ctx context.Context, a runAdmission, sb *sharedBridge, wfID, recipe string, o *launchOrigin,
+	host *runlease.HostSecurity, unlock func(),
+) error {
+	err := rs.leaseLaunched(ctx, wfID, recipe, o, host)
+	unlock()
+	if err != nil {
+		rs.coord.closeBridge(ctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
+		return err
+	}
+	parent := sb.SessionID()
+	rs.recordParentSession(ctx, wfID, string(parent))
+	// Visible to Route before invoke is written, so the run's first frame reaches the host's lane.
+	rs.router.registerOwner(wfID, parent)
+	if _, err := rs.write(ctx, a, sb, wfID, methodKiroWorkflowInvoke,
+		map[string]any{keyWorkflowID: wfID}, mutationDrive); err != nil {
+		return rs.invokeFailed(durable.Context(ctx), wfID, recipe, o, err)
+	}
+	// After invoke, so a run that never started leaves no timer.
+	rs.armDeadline(ctx, wfID)
+	return nil
+}
+
+// leaseLaunched grants a created run's lease before anything can execute (runlease.Lease). A triggered launch first
+// names its attempt; an error from either step means the run must not be invoked, and the launch sends no cancel:
+// NameAttempt's error means the confirmer already queued one, trigger.ErrLeaseNotGranted that the caller queues it.
+func (rs *Runs) leaseLaunched(
+	ctx context.Context, wfID, recipe string, o *launchOrigin, host *runlease.HostSecurity,
+) error {
+	if o.event == nil {
+		rs.grantLease(ctx, wfID, recipe, *o, host)
+		return nil
+	}
+	// Owned from the naming through the grant, so a cancel the rule queues meanwhile runs once the lease is written.
+	release := rs.owners.holdAlways(wfID)
+	defer release()
+	if err := rs.confirmer.NameAttempt(o.event.ruleID, o.event.eventKey, wfID); err != nil {
+		return err
+	}
+	if !rs.grantLease(ctx, wfID, recipe, *o, host) {
+		// After a restart nothing would name the run, so its run_start would mint a lease that confirms nothing.
+		return trigger.ErrLeaseNotGranted
+	}
+	return nil
 }
 
 func logLaunched(wfID, recipe string, dropped []string) {
@@ -214,11 +277,17 @@ func logLaunched(wfID, recipe string, dropped []string) {
 	slog.Info("workflow run launched", attrs...)
 }
 
-// invokeFailed settles a launch whose invoke failed and returns its error. An unconfirmed (verdictOf) or
-// deadline-outlived answer may have started the run, so it keeps its lease, route and bridge under an armed deadline (errLaunchUnconfirmed); a
-// refusal records the schedule failure on the row grantLease wrote and releases the run.
-func (rs *Runs) invokeFailed(ctx context.Context, wfID, recipe string, o launchOrigin, err error) error {
+// invokeFailed settles a launch whose invoke failed and returns its error. For a manual or scheduled launch, an
+// unconfirmed (verdictOf) or deadline-outlived answer may have started the run, so it keeps its lease, route and
+// bridge under an armed deadline (errLaunchUnconfirmed); a refusal records the failure on the row grantLease wrote and
+// releases the run. A triggered launch returns with its lease and host session kept and its deadline unarmed,
+// whatever the error: a lost reply can follow a run_start that already confirmed the event and armed it, and the
+// attempt table decides from what the error proves.
+func (rs *Runs) invokeFailed(ctx context.Context, wfID, recipe string, o *launchOrigin, err error) error {
 	err = fmt.Errorf("workflow invoke: %w", err)
+	if o.event != nil {
+		return err
+	}
 	if verdictOf(err) == kasUnconfirmed || isCtxErr(err) {
 		rs.armDeadline(ctx, wfID)
 		slog.Warn("a workflow run's start was sent but its answer was lost; kept as launched",
@@ -316,6 +385,8 @@ func (rs *Runs) cancelAs(ctx context.Context, workflowID string, stop runStop) e
 		return rs.cancelAs(ctx, workflowID, stop)
 	})
 }
+
+var errNoTriggerConfirmer = errors.New("a triggered launch needs the launch rules, which are not wired")
 
 // cancelRPC issues the cancel verb only. The host session stays resident: the run certifies the cancel at its node
 // boundary, and its terminal `run_complete` releases the host.
@@ -495,6 +566,11 @@ const clientRequestBudget = 30 * time.Second
 var errRetryRunDeleting = errors.New("this run is being deleted or checked for deletion, so nothing was retried. " +
 	"Try again in a moment")
 
+// errRetryRunOwned is a retry that waited out retryTimeout for the run's owner (runOwners): its launch rule's cancel
+// or another retry of it.
+var errRetryRunOwned = errors.New("this run is still being cancelled or retried, so nothing was retried. " +
+	"Try again in a moment")
+
 // errRetrySlow reports a retry whose run's session did not load within retryTimeout, so the verb was never sent;
 // the REST layer answers 503.
 var errRetrySlow = errors.New(
@@ -547,6 +623,11 @@ func (rs *Runs) retry(
 	if refused := rs.refuseClosedLauncher(workflowID, launchers); refused != nil {
 		return out, refused
 	}
+	own, err := rs.ownForRetry(cctx, workflowID)
+	if err != nil {
+		return out, err
+	}
+	defer own()
 	// The lease before the verb, since retry's `run_start` can beat the reply, and before the host session's load,
 	// which reads its presets from it.
 	minted := rs.leaseForRetry(cctx, workflowID, &origin, holders, aff)
@@ -584,11 +665,25 @@ func (rs *Runs) retry(
 	return out, nil
 }
 
+// ownForRetry makes the retry the run's owner (runOwners), then hands an abandoned run back to the person
+// (handBackAbandoned). release is nil exactly when err is not.
+func (rs *Runs) ownForRetry(ctx context.Context, workflowID string) (release func(), err error) {
+	release, err = rs.owners.hold(ctx, workflowID)
+	if err != nil {
+		return nil, command.StatusError(http.StatusConflict, errRetryRunOwned)
+	}
+	if err := rs.handBackAbandoned(ctx, workflowID); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
+}
+
 // leaseForRetry renews the run's lease for the retry, or grants one from origin, reporting whether it minted one.
 func (rs *Runs) leaseForRetry(
 	ctx context.Context, workflowID string, origin *runOrigin, holders []marotte.ChatID, aff *runAffordance,
 ) (minted bool) {
-	if l, held := rs.lease(workflowID); held && l.ScheduleID != "" {
+	if l, held := rs.lease(workflowID); held && (l.ScheduleID != "" || l.RuleID != "") {
 		rs.settleMissedEnd(ctx, &l, aff.status)
 	}
 	if l, held := rs.lease(workflowID); held {
@@ -950,7 +1045,8 @@ func (rs *Runs) recipeBySource(ctx context.Context, source string) (marotte.Reci
 
 // recipeIdle enforces the single-run rule (one live run per recipe, globally) against KAS's run list, the only source that sees runs
 // marotte did not launch. The leases explain a blocking row as marotte's own orphan.
-func (rs *Runs) recipeIdle(ctx context.Context, name string) error {
+// ruleID names the event rule of a triggered launch, which is handed the run list's statuses; empty for any other.
+func (rs *Runs) recipeIdle(ctx context.Context, name, ruleID string) error {
 	runs, err := rs.list(ctx, nil)
 	if err != nil {
 		// Launching blind could allow a second live run.
@@ -961,6 +1057,9 @@ func (rs *Runs) recipeIdle(ctx context.Context, name string) error {
 		status[runs[i].WorkflowID] = runs[i].Status
 	}
 	rs.reconcileLeasePresence(ctx, status, time.Now(), false)
+	if ruleID != "" && rs.confirmer != nil {
+		rs.confirmer.PruneAbandoned(ruleID, status)
+	}
 
 	for i := range runs {
 		// WorkflowName is the recipe; Name carries any stamped label, which made this guard fail open.

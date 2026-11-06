@@ -95,9 +95,9 @@ class PermissionsUIController {
         );
       });
     }
-    // Whether a SCHEDULED run's tool request is approved or refused when nobody answers it. Its own
-    // switch rather than a read of the policy above, because approving while watching is a
-    // different consent from approving unattended.
+    // Whether a scheduled or triggered run's tool request is approved or refused when nobody
+    // answers it. Its own switch rather than a read of the policy above, because approving while
+    // watching is a different consent from approving unattended.
     const schedCheckbox = maybeEl<HTMLInputElement>("scheduled-auto-approve-checkbox");
     if (schedCheckbox !== null) {
       schedCheckbox.checked = initial.scheduled_auto_approve;

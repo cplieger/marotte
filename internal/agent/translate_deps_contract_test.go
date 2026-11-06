@@ -96,11 +96,11 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 		r.Governance.SetGovernance(t.Context(), marotte.GovernanceStatePayload{})
 	})
 
-	t.Run("IsScheduledRun_false_for_an_unlaunched_run", func(t *testing.T) {
-		// A manual run reported as scheduled would toast every hand launch.
+	t.Run("UnattendedOrigin_empty_for_an_unlaunched_run", func(t *testing.T) {
+		// A manual run reported as unattended would toast every hand launch.
 		r := newRoles(t)
-		if r.RunOrigin.IsScheduled("wf-never-launched") {
-			t.Error("IsScheduled(unlaunched) = true, want false")
+		if got := r.RunOrigin.UnattendedOrigin("wf-never-launched"); got != "" {
+			t.Errorf("UnattendedOrigin(unlaunched) = %q, want empty", got)
 		}
 	})
 

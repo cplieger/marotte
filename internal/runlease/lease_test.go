@@ -1,6 +1,7 @@
 package runlease
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -171,6 +172,19 @@ func TestOriginValid(t *testing.T) {
 		if o.valid() {
 			t.Errorf("%q accepted", o)
 		}
+	}
+}
+
+// TestOriginTriggeredValid pins the event-trigger origin as one the store writes and loads, and check's
+// refusal as naming it among the known origins.
+func TestOriginTriggeredValid(t *testing.T) {
+	t.Parallel()
+	if !OriginTriggered.valid() {
+		t.Errorf("%q rejected", OriginTriggered)
+	}
+	err := (&Lease{WorkflowID: "wf_1", Origin: "tui"}).check()
+	if err == nil || !strings.Contains(err.Error(), "scheduled/manual/agent/triggered") {
+		t.Errorf("check() = %v, want the refusal to list triggered among the origins", err)
 	}
 }
 

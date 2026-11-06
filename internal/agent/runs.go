@@ -28,6 +28,9 @@ type Runs struct {
 	launchRules *launchrule.Store `wiring:"optional"`
 	leases      *runlease.Store   `wiring:"optional"`
 	eventRules  eventRuleChecker  `wiring:"optional"`
+	confirmer   TriggerConfirmer  `wiring:"optional"`
+	// launchLocks serializes, per recipe name, a launch's single-run check through its lease grant (launchAs).
+	launchLocks *keylock.Set[string]
 	// log is the run record: one entry log per run under <configDir>/runs, its open step turns and hosts.
 	log     *runLog `wiring:"optional"`
 	bridges *bridgeManager
@@ -67,6 +70,9 @@ type Runs struct {
 	unconfirmed unconfirmedSends
 	// life admits every step-session mutation against a Delete (run_lifecycle.go).
 	life runLifecycle
+	// owners serializes, per run, an abandoned run's cancel and release against a retry and a triggered launch's
+	// lease grant (run_abandon.go).
+	owners runOwners
 	// purgeFailed holds the runs whose finished-run purge delete failed recently (run_purge.go).
 	purgeFailed purgeFailures
 	// purgePace is when the finished-run purge last reached a delete (run_purge.go).
@@ -117,25 +123,39 @@ func (rs *Runs) useLog(l *runLog) {
 	rs.log = l
 }
 
-// scheduleRun names the schedule row a lease's run reports to; ScheduleID is "" for an unscheduled run.
-func scheduleRun(l *runlease.Lease) launchrule.Run {
-	return launchrule.Run{StartedAt: l.StartedAt, ScheduleID: l.ScheduleID, WorkflowID: l.WorkflowID}
+// ruleRun names the rule row a lease's run reports to: a clock rule's ScheduleID, an event rule's RuleID, neither
+// for a manual or agent run.
+func ruleRun(l *runlease.Lease) launchrule.Run {
+	return launchrule.Run{StartedAt: l.StartedAt, ScheduleID: l.ScheduleID, RuleID: l.RuleID, WorkflowID: l.WorkflowID}
 }
 
-// recordScheduleOutcome overwrites run's outcome on its row (launchrule.Store.RecordOutcome). No schedule or
-// no store is a no-op.
+// recordScheduleOutcome overwrites run's outcome on its row (launchrule.Store.RecordOutcome). An event rule's run goes
+// to the confirmer, which lands it only for the run that confirmed the rule's event, so an abandoned attempt's run and
+// a deleted rule's run write nothing. No rule or no store is a no-op.
 func (rs *Runs) recordScheduleOutcome(ctx context.Context, run launchrule.Run, outcome launchrule.Outcome) {
+	if run.RuleID != "" {
+		if rs.confirmer != nil {
+			rs.confirmer.RecordOutcome(run.RuleID, run.WorkflowID, outcome)
+		}
+		return
+	}
 	rs.writeSchedule(run, func() error { return rs.launchRules.RecordOutcome(ctx, run, outcome) })
 }
 
 // recordScheduleEnding fills run's ending on a row still reading started (launchrule.Store.RecordEnding).
 func (rs *Runs) recordScheduleEnding(ctx context.Context, run launchrule.Run, status marotte.RunStatus, stopReason string) {
 	outcome := runEnding(status, stopReason)
+	if run.RuleID != "" {
+		if rs.confirmer != nil {
+			rs.confirmer.RecordEnding(run.RuleID, run.WorkflowID, outcome)
+		}
+		return
+	}
 	rs.writeSchedule(run, func() error { return rs.launchRules.RecordEnding(ctx, run, outcome) })
 }
 
 func (rs *Runs) writeSchedule(run launchrule.Run, write func() error) {
-	if rs.launchRules == nil || run.ScheduleID == "" {
+	if rs.launchRules == nil || run.ScheduleID == "" || run.RuleID != "" {
 		return
 	}
 	switch err := write(); {

@@ -1,0 +1,17 @@
+{
+  "_meta": {
+    "date": "2026-11-06",
+    "kas": "0.66.70",
+    "kiroCli": "3.0.0",
+    "recorded": "live",
+    "regenerate": "go test ./internal/bridge/ -run TestProbeTriggeredLaunch -kas-trigger-probe"
+  },
+  "criterion": "the list names the created run with an Active() status",
+  "listed": {
+    "workflowId": "wf_92c831966b9351ba",
+    "workflowName": "trigger-probe",
+    "status": "running"
+  },
+  "pass": true,
+  "probe": "(a) workflow/new of a recipe of example 1's shape, then workflow/list before invoke"
+}

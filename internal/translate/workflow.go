@@ -110,7 +110,7 @@ func (t *Translator) HandleRunStart(ctx context.Context, chatID marotte.ChatID, 
 		Initiator:       p.Initiator,
 		InitiatorReason: p.InitiatorReason,
 		// Keyed on the workflow id: this frame's chat id is empty for exactly these runs.
-		Scheduled: t.runOrigin.IsScheduled(p.WorkflowID),
+		Unattended: t.runOrigin.UnattendedOrigin(p.WorkflowID),
 	}))
 }
 

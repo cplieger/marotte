@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -427,5 +428,90 @@ func TestScheduledRun_AReleaseWithoutAFrameRecordsTheEnding(t *testing.T) {
 		if row := onlyRow(t, st); string(row.LastStatus) != "completed" {
 			t.Errorf("the row reads (%q, %q), want completed", row.LastStatus, row.LastReason)
 		}
+	})
+}
+
+// triggeredHub is scheduledHub with a recording confirmer and one triggered run, wf_1, of rule-1 leased on a bridge
+// whose cancel lands.
+func triggeredHub(t *testing.T) (*Runtime, *fakeConfirmer, *launchrule.Store) {
+	t.Helper()
+	h, br, st, _ := scheduledHub(t)
+	fc := &fakeConfirmer{}
+	h.runs.confirmer = fc
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	h.runs.grantLease(t.Context(), "wf_1", "nightly", eventLaunch(), hostSec())
+	return h, fc, st
+}
+
+// assertClockRowUntouched fails when a triggered run's outcome reached the clock rule's row: an event rule's row is
+// the confirmer's to write.
+func assertClockRowUntouched(t *testing.T, st *launchrule.Store) {
+	t.Helper()
+	if row := onlyRow(t, st); row.LastRunID != "" || row.LastStatus != "" {
+		t.Errorf("the clock rule's row reads (%q, %q, %q), want untouched by a triggered run",
+			row.LastRunID, row.LastStatus, row.LastReason)
+	}
+}
+
+// A triggered run's ending reaches its rule's row through the confirmer, which applies the rule's last_run_id
+// guard; the ending is handed over as an ending, so it cannot overwrite a cause written first.
+func TestTriggeredRunOutcomeOnRuleRow(t *testing.T) {
+	h, fc, st := triggeredHub(t)
+
+	h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
+		"workflowId": "wf_1", "status": "failed", "finalState": map[string]any{"stopReason": "step build failed"},
+	}))
+
+	want := []string{"RecordEnding rule-1 wf_1 failed step build failed"}
+	if got := fc.recorded(); !slices.Equal(got, want) {
+		t.Errorf("confirmer calls = %q, want %q", got, want)
+	}
+	assertClockRowUntouched(t, st)
+}
+
+// Every writer hands a triggered run's outcome to the confirmer under the run's own workflow id, which the
+// confirmer matches against the rule's last_run_id, so an abandoned attempt's run, which never confirmed, writes
+// nothing on the row; the agent itself writes no row.
+func TestAbandonedRunOutcomeReachesNoRow(t *testing.T) {
+	t.Run("its cancel's terminal frame", func(t *testing.T) {
+		h, fc, st := triggeredHub(t)
+		h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
+			"workflowId": "wf_1", "status": "aborted",
+		}))
+		if got := fc.count("RecordEnding rule-1 wf_1 failed"); got != 1 {
+			t.Errorf("RecordEnding for wf_1 called %d times, want 1; calls %q", got, fc.recorded())
+		}
+		assertClockRowUntouched(t, st)
+	})
+	t.Run("a stall", func(t *testing.T) {
+		h, fc, st := triggeredHub(t)
+		h.runs.armDeadline(t.Context(), "wf_1")
+		l, _ := h.runs.lease("wf_1")
+		h.runs.cancelExpired("wf_1", l.Deadline)
+		h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
+			"workflowId": "wf_1", "status": "cancelled",
+		}))
+		var stall string
+		for _, c := range fc.recorded() {
+			if strings.HasPrefix(c, "RecordOutcome rule-1 wf_1 failed") && strings.Contains(c, "15 minutes") {
+				stall = c
+			}
+		}
+		if stall == "" {
+			t.Errorf("no RecordOutcome naming the stall for wf_1; calls %q", fc.recorded())
+		}
+		if got := fc.count("RecordOutcome rule-1 wf_1 failed the run was cancelled"); got != 0 {
+			t.Errorf("the cancel's own ending was sent as an outcome, which would overwrite the stall's reason")
+		}
+		assertClockRowUntouched(t, st)
+	})
+	t.Run("a release from the run list", func(t *testing.T) {
+		h, fc, st := triggeredHub(t)
+		h.runs.reconcileLeasePresence(t.Context(),
+			map[string]marotte.RunStatus{"wf_1": marotte.RunStatusCancelled}, time.Now(), false)
+		if got := fc.count("RecordEnding rule-1 wf_1 failed"); got != 1 {
+			t.Errorf("RecordEnding for wf_1 called %d times, want 1; calls %q", got, fc.recorded())
+		}
+		assertClockRowUntouched(t, st)
 	})
 }

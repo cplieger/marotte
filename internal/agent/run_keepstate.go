@@ -211,10 +211,31 @@ func (rs *Runs) startRunMarks(ctx context.Context, chatID marotte.ChatID, f *lif
 		return
 	}
 	rs.recordKeepChats(ctx, &l, holders)
+	rs.confirmStart(&l)
 	if unattributed && !l.Unattributed {
 		if err := rs.leaseStore().SetUnattributed(ctx, wf, true); err != nil {
 			slog.Warn("run start: the unattributed mark was not recorded on disk", "workflow_id", wf, "error", err)
 		}
+	}
+}
+
+// confirmStart hands a triggered run's first run_start of its current life to the confirmer; a resume's later
+// run_start changes nothing. The held lease is the launch's own, since its host session is the run's lane.
+func (rs *Runs) confirmStart(l *runlease.Lease) {
+	if l.RuleID == "" || rs.confirmer == nil {
+		return
+	}
+	rs.mu.Lock()
+	_, done := rs.bounds.confirmed[l.WorkflowID]
+	if !done {
+		if rs.bounds.confirmed == nil {
+			rs.bounds.confirmed = map[string]struct{}{}
+		}
+		rs.bounds.confirmed[l.WorkflowID] = struct{}{}
+	}
+	rs.mu.Unlock()
+	if !done {
+		rs.confirmer.ConfirmEvent(l.RuleID, l.EventKey, l.WorkflowID)
 	}
 }
 

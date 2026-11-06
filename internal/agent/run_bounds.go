@@ -87,6 +87,9 @@ type runBoundsState struct {
 	healWriteFailed map[string]struct{}
 	// cancelRetries counts refused-cancel retries since the last progress, separate from heals so neither starves the other.
 	cancelRetries map[string]int
+	// confirmed names triggered runs whose run_start this life reached the confirmer. Cleared with executed, so a
+	// retry's run_start is handed over again.
+	confirmed map[string]struct{}
 	// armedAt is when each bounded run's current executing stretch began, mirroring Bounded(). The
 	// backstop's anchor, not Lease.StartedAt, which is wall time.
 	armedAt map[string]time.Time
@@ -384,6 +387,7 @@ func (rs *Runs) clearExecuted(workflowID string) {
 	delete(rs.bounds.armedAt, workflowID)
 	delete(rs.bounds.executed, workflowID)
 	delete(rs.bounds.arms, workflowID)
+	delete(rs.bounds.confirmed, workflowID)
 }
 
 // bounded reports whether marotte believes the run is executing under its deadline. Its readers must not clear it.
@@ -552,7 +556,7 @@ func (rs *Runs) retryTermination(ctx context.Context, workflowID, reason string,
 			"attempts", attempt, "reason", reason)
 		// Only a stop marotte decided reports on the row: a person's cancel (reason "") failed in front of them.
 		if l, held := rs.lease(workflowID); held && reason != "" {
-			rs.recordScheduleOutcome(ctx, scheduleRun(&l),
+			rs.recordScheduleOutcome(ctx, ruleRun(&l),
 				launchrule.Outcome{Status: launchrule.StatusFailed, Reason: reasonCancelRefused})
 		}
 		return
@@ -766,7 +770,7 @@ func (rs *Runs) cancelExpired(workflowID string, armedFor time.Time) {
 	// Overwrites the cancel's own terminal frame, which may land first and names no bound.
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
-	rs.recordScheduleOutcome(ctx, scheduleRun(&l), launchrule.Outcome{Status: launchrule.StatusFailed, Reason: rowReason})
+	rs.recordScheduleOutcome(ctx, ruleRun(&l), launchrule.Outcome{Status: launchrule.StatusFailed, Reason: rowReason})
 }
 
 // backstopSpent reports whether the absolute budget is gone now, counting the open stretch: the
@@ -922,7 +926,7 @@ func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg 
 		// Before forgetBounds, which releases the lease the label, the parent and the schedule come from.
 		rs.notifyRunOutcome(ctx, chatID, &f)
 		if l, held := rs.lease(f.WorkflowID); held {
-			rs.recordScheduleEnding(ctx, scheduleRun(&l), f.Status, f.FinalState.StopReason)
+			rs.recordScheduleEnding(ctx, ruleRun(&l), f.Status, f.FinalState.StopReason)
 		}
 		rs.forgetBounds(ctx, f.WorkflowID)
 		rs.translate.ForgetRunSteps(f.WorkflowID)
@@ -984,7 +988,7 @@ func (rs *Runs) runName(workflowID string) string {
 // launch sent KAS, else its recipe's own name.
 func (rs *Runs) leasedRunName(l *runlease.Lease) string {
 	return cmp.Or(rs.translate.RunName(l.WorkflowID),
-		marotte.RunDisplayName(launchOrigin{origin: l.Origin}.runLabel(l.Recipe), l.Recipe))
+		marotte.RunDisplayName(leaseRunLabel(l), l.Recipe))
 }
 
 // A node pause is a step waiting inside a running run.

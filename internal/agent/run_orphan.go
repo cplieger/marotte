@@ -27,6 +27,24 @@ const reasonLeaseAbsent = "no terminal signal was seen and the run stayed absent
 // reasonOrphaned is the schedule row's reason for a run swept after its process died; the next slot is the recovery.
 const reasonOrphaned = "stopped because the server restarted while it was running. Run it again, or wait for the next slot"
 
+// reasonOrphanedTriggered is reasonOrphaned for an event rule's run: a trigger has no next slot, and the swept
+// event is not queued again.
+const reasonOrphanedTriggered = "stopped because the server restarted while it was running; its event is not launched again. " +
+	"Run it by hand if it is still needed"
+
+func orphanedReason(l *runlease.Lease) string {
+	if l.RuleID != "" {
+		return reasonOrphanedTriggered
+	}
+	return reasonOrphaned
+}
+
+// bootHeld reports a run the trigger confirmer holds until its launch bound: neither the sweep nor the admission
+// backstop may cancel it, since a resume's run_start may still confirm it.
+func (rs *Runs) bootHeld(workflowID string) bool {
+	return rs.confirmer != nil && rs.confirmer.BootHeld(workflowID)
+}
+
 // sweepOrphaned clears every lease whose run a dead process left paused. Best-effort: skipping costs a stale
 // row, cancelling a live run destroys work. Reports whether it reached KAS.
 func (rs *Runs) sweepOrphaned(ctx context.Context) (reached bool) {
@@ -50,6 +68,11 @@ func (rs *Runs) sweepOrphaned(ctx context.Context) (reached bool) {
 	rs.reconcileLeasePresence(cctx, status, time.Now(), true)
 
 	held := rs.leaseStore().List()
+	// Read once per pass: a run its resume confirms mid-pass leaves the set, and this pass must still skip it.
+	bootHeld := make(map[string]bool, len(held))
+	for i := range held {
+		bootHeld[held[i].WorkflowID] = rs.bootHeld(held[i].WorkflowID)
+	}
 	for i := range held {
 		l := &held[i]
 		st, known := status[l.WorkflowID]
@@ -60,6 +83,8 @@ func (rs *Runs) sweepOrphaned(ctx context.Context) (reached bool) {
 		switch {
 		case l.Origin == runlease.OriginAgent:
 			// KAS parents an agent's run on its chat, so it heals with that chat.
+		case bootHeld[l.WorkflowID]:
+			// Its launch bound decides it.
 		case st == marotte.RunStatusPaused && rs.restartPaused(cctx, l.WorkflowID):
 			rs.clearOrphaned(cctx, l)
 		}
@@ -121,8 +146,9 @@ func (rs *Runs) askBootPass(ctx context.Context) {
 		"took", time.Since(started).Round(time.Millisecond))
 }
 
-// releaseIfOver releases a run's lease when KAS says it is over, for a stop with no confirmation. Unknown
-// needs no check, since a landed cancel proved KAS resolved the id; an unreadable run is left; a running run is a no-op.
+// releaseIfOver drops a run's lease and bounds (forgetBounds) when KAS says it is over, for a stop with no terminal
+// frame. Unknown needs no check, since a landed cancel proved KAS resolved the id; an unreadable run is left; a running
+// run is a no-op.
 func (rs *Runs) releaseIfOver(ctx context.Context, workflowID string) {
 	if workflowID == "" {
 		return
@@ -138,9 +164,9 @@ func (rs *Runs) releaseIfOver(ctx context.Context, workflowID string) {
 	slog.Info("releasing the lease of a run that stopped without a terminal frame",
 		"workflow_id", workflowID, "status", res.State.Status)
 	if l, held := rs.lease(workflowID); held {
-		rs.recordScheduleEnding(ctx, scheduleRun(&l), res.State.Status, res.State.StopReason)
+		rs.recordScheduleEnding(ctx, ruleRun(&l), res.State.Status, res.State.StopReason)
 	}
-	rs.releaseLease(ctx, workflowID)
+	rs.forgetBounds(ctx, workflowID)
 }
 
 // reconcileLeasePresence settles every lease against one run list: terminal releases, listed resets the
@@ -154,8 +180,8 @@ func (rs *Runs) reconcileLeasePresence(ctx context.Context, status map[string]ma
 			if st.Terminal() {
 				slog.Info("releasing the lease of a run with terminal status",
 					"workflow_id", l.WorkflowID, "recipe", l.Recipe, "status", st)
-				rs.recordScheduleEnding(ctx, scheduleRun(l), st, "")
-				rs.releaseLease(ctx, l.WorkflowID)
+				rs.recordScheduleEnding(ctx, ruleRun(l), st, "")
+				rs.forgetBounds(ctx, l.WorkflowID)
 				continue
 			}
 			if !l.FirstAbsentAt.IsZero() {
@@ -167,7 +193,7 @@ func (rs *Runs) reconcileLeasePresence(ctx context.Context, status map[string]ma
 		if inspectAbsent && rs.inspectConfirmsGone(ctx, l.WorkflowID) {
 			slog.Info("boot: releasing the lease of a run inspect confirmed is over",
 				"workflow_id", l.WorkflowID, "recipe", l.Recipe)
-			rs.releaseLease(ctx, l.WorkflowID)
+			rs.forgetBounds(ctx, l.WorkflowID)
 			continue
 		}
 		rs.observeAbsentLease(ctx, l, now)
@@ -213,8 +239,8 @@ func (rs *Runs) observeAbsentLease(ctx context.Context, l *runlease.Lease, now t
 
 	slog.Warn("run stayed absent past the lease budget; no terminal signal was ever seen",
 		"workflow_id", l.WorkflowID, "recipe", l.Recipe, "first_absent_at", l.FirstAbsentAt)
-	rs.recordScheduleOutcome(ctx, scheduleRun(l), launchrule.Outcome{Status: launchrule.StatusUnknown, Reason: reasonLeaseAbsent})
-	rs.releaseLease(ctx, l.WorkflowID)
+	rs.recordScheduleOutcome(ctx, ruleRun(l), launchrule.Outcome{Status: launchrule.StatusUnknown, Reason: reasonLeaseAbsent})
+	rs.forgetBounds(ctx, l.WorkflowID)
 }
 
 func (rs *Runs) setFirstAbsentAt(ctx context.Context, workflowID string, at time.Time) {
@@ -232,8 +258,8 @@ func (rs *Runs) clearBlockingOrphan(ctx context.Context, workflowID string, stat
 		return false
 	}
 	l, held := rs.lease(workflowID)
-	if !held || l.Origin == runlease.OriginAgent {
-		// No lease means the TUI's; an agent's run belongs to its chat.
+	if !held || l.Origin == runlease.OriginAgent || rs.bootHeld(workflowID) {
+		// No lease means the TUI's; an agent's run belongs to its chat; a boot-held run's launch bound decides it.
 		return false
 	}
 	if !rs.restartPaused(ctx, workflowID) {
@@ -267,10 +293,10 @@ func (rs *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease) bool {
 	rs.recordEnd(l.WorkflowID, runEndOrphaned)
 	// ERROR: an alert rule keys on logMsgRunOrphaned.
 	slog.Error(logMsgRunOrphaned, "workflow_id", l.WorkflowID, "recipe", l.Recipe,
-		"origin", string(l.Origin), "schedule_id", l.ScheduleID)
+		"origin", string(l.Origin), "schedule_id", l.ScheduleID, "rule_id", l.RuleID)
 	// The schedule's row too, or every later slot is refused as an overlap.
-	rs.recordScheduleOutcome(ctx, scheduleRun(l), launchrule.Outcome{Status: launchrule.StatusFailed, Reason: reasonOrphaned})
-	rs.releaseLease(ctx, l.WorkflowID)
+	rs.recordScheduleOutcome(ctx, ruleRun(l), launchrule.Outcome{Status: launchrule.StatusFailed, Reason: orphanedReason(l)})
+	rs.forgetBounds(ctx, l.WorkflowID)
 	return true
 }
 

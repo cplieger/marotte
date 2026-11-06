@@ -375,9 +375,10 @@ type Option func(*Translator)
 // runOriginAccess answers where a run-shaped fact came from. In-memory on the host: a
 // run that outlives a restart reports false afterwards.
 type runOriginAccess interface {
-	// IsScheduled reports whether a run was launched by a schedule, keyed by
-	// workflow id because a parentless run's frames carry no topic.
-	IsScheduled(workflowID string) bool
+	// UnattendedOrigin is the origin of a run launched with nobody present, "scheduled"
+	// or "triggered", else "". Keyed by workflow id because a parentless run's frames
+	// carry no topic.
+	UnattendedOrigin(workflowID string) string
 	// RunLabel is the label marotte gave a run at launch, "" when it gave none.
 	RunLabel(workflowID string) string
 	// ReadRun asks for one read of a run's state in the background; its reply reaches RecordInspect,

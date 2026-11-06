@@ -1,0 +1,115 @@
+{
+  "_meta": {
+    "date": "2026-11-06",
+    "kas": "0.66.70",
+    "kiroCli": "3.0.0",
+    "recorded": "live",
+    "regenerate": "go test ./internal/bridge/ -run TestProbeTriggeredLaunch -kas-trigger-probe"
+  },
+  "criterion": "every interval is at most one minute (launchConfirmBound, 5 minutes, rests on it)",
+  "pass": true,
+  "probe": "(b) 20 invokes: the interval from the invoke reply to run_start",
+  "samples": [
+    {
+      "workflowId": "wf_cec09267018f8e43",
+      "seconds": 0.011273621,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_145485e30efae863",
+      "seconds": 0.0064471,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_2d61c9d0b99a25ef",
+      "seconds": 0.004871309,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_d0a6128e4cfcaeed",
+      "seconds": 0.003955375,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_4db02f9401efefdc",
+      "seconds": 0.007827401,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_f876d8862c2f72d6",
+      "seconds": 0.007980694,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_75874f606762db32",
+      "seconds": 0.00774012,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_ba9ffe21d529b547",
+      "seconds": 0.010483425,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_4e9afab37a01367f",
+      "seconds": 0.008053525,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_431ea3d7bb3ff9bc",
+      "seconds": 0.004283303,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_4f18db8f532764b5",
+      "seconds": 0.006578011,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_8c6be9c1e0f2b34e",
+      "seconds": 0.008893295,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_3cdedbda3c93bcf1",
+      "seconds": 0.009825727,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_00d0173990577234",
+      "seconds": 0.009379871,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_670e1986d82b8d0b",
+      "seconds": 0.008004461,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_60408c8569fd8582",
+      "seconds": 0.004995108,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_ec58ab12ec5ee439",
+      "seconds": 0.008256898,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_dd63d5c7dfe1aab1",
+      "seconds": 0.027585194,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_2803ef7ffe55e1f3",
+      "seconds": 0.013835023,
+      "lane": "engine"
+    },
+    {
+      "workflowId": "wf_43ada23e1ce84ff1",
+      "seconds": 0.024918576,
+      "lane": "engine"
+    }
+  ],
+  "worst_seconds": 0.027585194
+}

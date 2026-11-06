@@ -3143,24 +3143,21 @@ export interface RunStanding {
 }
 
 /**
- * RunStartedPayload is the payload for type="run_started": a run began on this
- * chat. Name is its display label, carried because a client that has never
- * fetched this run has nothing to label the row with.
+ * RunStartedPayload is the payload for type="run_started": a run began on this chat. Name is its display label, for a
+ * client that has never fetched the run.
  * //
- * Scheduled marks a run the SCHEDULER launched, and it travels because only the
- * launch path knows: a manual launch is parentless too, so events cannot separate
- * the two. It drives the client's start signal — a manual launch already has the
- * user's attention, a scheduled one began with nobody looking.
+ * Unattended is "scheduled" or "triggered" for a run that began with nobody looking, and empty otherwise. Only the
+ * launch path knows it, since a manual launch is parentless too.
  * //
- * Initiator and InitiatorReason are KAS's attribution on the `run_start` a resume emits, verbatim;
- * a launch carries neither.
+ * Initiator and InitiatorReason are KAS's attribution on the `run_start` a resume emits, verbatim; a launch carries
+ * neither.
  */
 export interface RunStartedPayload {
   workflow_id: string;
   name?: string;
   initiator?: string;
   initiator_reason?: string;
-  scheduled?: boolean;
+  unattended?: string;
 }
 
 /**

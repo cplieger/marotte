@@ -402,17 +402,26 @@ describe("run toasts", () => {
   // outlives a test (it is keyed on the run, and a run does not restart because a
   // test ended), so sharing an id between cases would have one suppress another.
   it("announces a SCHEDULED run's start and names it", () => {
-    send("run_started", { workflow_id: "wf_ann_1", name: "nightly-publish", scheduled: true });
+    send("run_started", {
+      workflow_id: "wf_ann_1",
+      name: "nightly-publish",
+      unattended: "scheduled",
+    });
     expect(toastInfo).toHaveBeenCalledTimes(1);
     expect(toastInfo.mock.calls[0]?.[0]).toBe("Scheduled run started: nightly-publish");
   });
 
+  it("toasts a triggered run's start", () => {
+    send("run_started", { workflow_id: "wf_trig_1", name: "fix-ci", unattended: "triggered" });
+    expect(toasts()).toEqual(["Triggered run started: fix-ci"]);
+  });
+
   // A manual launch already has the user's attention: they pressed Run, and a run
-  // tab opened in front of them. The flag is absent on the wire for such a run
-  // rather than false, so an older server reads as manual too.
+  // tab opened in front of them. The field is absent on the wire for such a run
+  // rather than empty, so an older server reads as manual too.
   it("says nothing when a run started manually", () => {
     send("run_started", { workflow_id: "wf_man_1", name: "publish" });
-    send("run_started", { workflow_id: "wf_man_2", name: "publish", scheduled: false });
+    send("run_started", { workflow_id: "wf_man_2", name: "publish", unattended: "" });
     expect(toasts()).toEqual([]);
   });
 
@@ -421,17 +430,17 @@ describe("run toasts", () => {
   // from producing a stack of identical toasts.
   it("announces a scheduled start once however often the frame re-fires", () => {
     for (let i = 0; i < 3; i++) {
-      send("run_started", { workflow_id: "wf_resume", name: "nightly", scheduled: true });
+      send("run_started", { workflow_id: "wf_resume", name: "nightly", unattended: "scheduled" });
     }
     expect(toastInfo).toHaveBeenCalledTimes(1);
 
     // A different run is a different announcement.
-    send("run_started", { workflow_id: "wf_resume_other", name: "other", scheduled: true });
+    send("run_started", { workflow_id: "wf_resume_other", name: "other", unattended: "scheduled" });
     expect(toastInfo).toHaveBeenCalledTimes(2);
   });
 
   it("announces a completion for a scheduled AND a manual run", () => {
-    send("run_started", { workflow_id: "wf_sched", name: "nightly", scheduled: true });
+    send("run_started", { workflow_id: "wf_sched", name: "nightly", unattended: "scheduled" });
     send("run_started", { workflow_id: "wf_manual", name: "by-hand" });
     toastInfo.mockClear();
 
@@ -445,7 +454,7 @@ describe("run toasts", () => {
 
   it("names a labelled run by the fetched run's label over the frame's name", () => {
     fetchedLabel.mockImplementation((id) => (id === "wf_labelled" ? "publish-docs" : ""));
-    send("run_started", { workflow_id: "wf_labelled", name: "publish", scheduled: true });
+    send("run_started", { workflow_id: "wf_labelled", name: "publish", unattended: "scheduled" });
     send("run_finished", { workflow_id: "wf_labelled", status: "completed", name: "publish" });
     expect(toasts()).toEqual(["Scheduled run started: publish-docs", "publish-docs finished"]);
   });
@@ -478,9 +487,9 @@ describe("run toasts", () => {
   // A pause is also not the end of the run's start signal: the client stopped
   // believing it was running, so a resumed scheduled run announces itself again.
   it("re-announces a scheduled start after the run stopped", () => {
-    send("run_started", { workflow_id: "wf_restart", name: "nightly", scheduled: true });
+    send("run_started", { workflow_id: "wf_restart", name: "nightly", unattended: "scheduled" });
     send("run_finished", { workflow_id: "wf_restart", status: "paused", name: "nightly" });
-    send("run_started", { workflow_id: "wf_restart", name: "nightly", scheduled: true });
+    send("run_started", { workflow_id: "wf_restart", name: "nightly", unattended: "scheduled" });
     expect(toastInfo).toHaveBeenCalledTimes(2);
   });
 
@@ -489,7 +498,7 @@ describe("run toasts", () => {
   it("falls back to a generic label when the frame carries no name", () => {
     send("run_finished", { workflow_id: "wf_noname", status: "completed" });
     expect(toastEnd.mock.calls[0]?.[0]).toBe("Workflow run finished");
-    send("run_started", { workflow_id: "wf_noname_2", scheduled: true });
+    send("run_started", { workflow_id: "wf_noname_2", unattended: "scheduled" });
     expect(toastInfo.mock.calls[0]?.[0]).toBe("Scheduled run started: Workflow run");
   });
 

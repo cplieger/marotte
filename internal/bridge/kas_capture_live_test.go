@@ -20,6 +20,7 @@ import (
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/kascap"
+	"github.com/cplieger/marotte/internal/kirorelease"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workspace"
 )
@@ -139,6 +140,11 @@ func newCapture(t *testing.T, env *captureEnv) *capture {
 	}
 	c.cond = sync.NewCond(&c.mu)
 	t.Setenv("KIRO_HOME", c.home)
+	// Unset, the pinned binary replaces itself with the newest release during a capture, so the next run on the same
+	// path is refused by checkBinaryVersion.
+	if out, err := exec.CommandContext(t.Context(), env.cli, kirorelease.AutoUpdateGate().Args...).CombinedOutput(); err != nil {
+		t.Fatalf("turn off kiro-cli's self-update: %v: %s", err, out)
+	}
 	if err := os.WriteFile(filepath.Join(c.work, "notes.txt"), []byte(notesBody), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -95,10 +95,10 @@ func TestBaseDeps_FullContract(t *testing.T) {
 		}
 	})
 
-	t.Run("IsScheduledRun_false_for_an_unmarked_run", func(t *testing.T) {
-		// A manual run must never read as scheduled, so the zero value is the manual case.
-		if d.IsScheduled("wf-unknown") {
-			t.Error("IsScheduled(unknown) = true, want false")
+	t.Run("UnattendedOrigin_empty_for_an_unmarked_run", func(t *testing.T) {
+		// A manual run must never read as unattended, so the zero value is the manual case.
+		if got := d.UnattendedOrigin("wf-unknown"); got != "" {
+			t.Errorf("UnattendedOrigin(unknown) = %q, want empty", got)
 		}
 	})
 }

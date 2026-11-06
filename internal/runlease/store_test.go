@@ -71,6 +71,54 @@ func TestStore_RoundTripsALeaseAcrossARestart(t *testing.T) {
 	}
 }
 
+// TestTriggeredLeaseRoundTrip pins the four fields a triggered launch writes: the rule and event key confirm the
+// event on run_start after a restart, and the label is what the run is called once the process is gone.
+func TestTriggeredLeaseRoundTrip(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	want := Lease{
+		StartedAt:   time.Date(2026, 8, 1, 3, 0, 0, 0, time.UTC),
+		WorkflowID:  "wf_1",
+		Recipe:      "weekly-questions",
+		Origin:      OriginTriggered,
+		RuleID:      "r-1",
+		EventKey:    "run:42",
+		CoalesceKey: "branch:main",
+		RunLabel:    "weekly-questions: run 42 succeeded",
+		Unattended:  true,
+	}
+	if err := s.Put(t.Context(), &want); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	reopened, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	got, ok := reopened.Get("wf_1")
+	if !ok {
+		t.Fatal("the triggered lease did not survive the restart")
+	}
+	if got.Origin != OriginTriggered {
+		t.Errorf("Origin = %q, want %q", got.Origin, OriginTriggered)
+	}
+	if got.RuleID != want.RuleID {
+		t.Errorf("RuleID = %q, want %q", got.RuleID, want.RuleID)
+	}
+	if got.EventKey != want.EventKey {
+		t.Errorf("EventKey = %q, want %q", got.EventKey, want.EventKey)
+	}
+	if got.CoalesceKey != want.CoalesceKey {
+		t.Errorf("CoalesceKey = %q, want %q", got.CoalesceKey, want.CoalesceKey)
+	}
+	if got.RunLabel != want.RunLabel {
+		t.Errorf("RunLabel = %q, want %q", got.RunLabel, want.RunLabel)
+	}
+}
+
 // TestStore_FileShapeIsAVersionedObject pins that the file carries a version from the first write.
 func TestStore_FileShapeIsAVersionedObject(t *testing.T) {
 	t.Parallel()

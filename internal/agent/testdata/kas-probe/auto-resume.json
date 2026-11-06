@@ -1,0 +1,19 @@
+{
+  "_meta": {
+    "date": "2026-11-06",
+    "kas": "0.66.70",
+    "kiroCli": "3.0.0",
+    "recorded": "live",
+    "regenerate": "go test ./internal/bridge/ -run TestProbeTriggeredLaunch -kas-trigger-probe"
+  },
+  "down_seconds": 155.763724441,
+  "frames_after_restart": null,
+  "listed_after_restart": {
+    "workflowId": "wf_a4f26f27351768f8",
+    "workflowName": "trigger-probe",
+    "status": "paused"
+  },
+  "probe": "(e) a watch-parked run, KAS stopped and started again after 150 s: does auto-resume send run_start, and how long after the restart",
+  "run_start": false,
+  "waited_seconds": 180
+}
