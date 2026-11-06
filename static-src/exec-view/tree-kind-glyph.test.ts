@@ -1,6 +1,6 @@
 // The exec tree's kind column: one glyph per `ExecKind`, six distinct marks, none
 // borrowed from git or from the run page's own header, and the drawings this
-// column owns kept on the icon grid `icon-crisp.ts` snaps to.
+// column owns kept on the 3-unit icon grid.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { buildExecTree } from "./tree.js";
 import { iconEl } from "../icon-el.js";
