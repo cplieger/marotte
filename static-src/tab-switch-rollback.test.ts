@@ -63,9 +63,11 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   }))),
 }));
 
-import { ActionError } from "@cplieger/ui/actions";
+import { ActionError, configure } from "@cplieger/ui/actions";
 import { getActiveTabId, hasTab, activateTab } from "./tabs.js";
 import { removeChat } from "./store.js";
+import { releaseCover } from "./transcript-cover.js";
+import { takeSubject } from "./actions/subject.js";
 import { tabServer, settleTabs } from "./__test-helpers__/tabs-server.js";
 import { until } from "./__test-helpers__/until.js";
 import { fx, installSwitchSuite, strip } from "./__test-helpers__/tab-switch-suite.js";
@@ -75,6 +77,7 @@ import {
   coverUp,
   held,
   pointers,
+  resident,
   rowEl,
 } from "./__test-helpers__/tab-switch-mocks.js";
 
@@ -212,5 +215,34 @@ describe("a refused switch reverts with the toast", () => {
     expect(fx.chat.show).toHaveBeenCalledWith("b");
     expect(fx.chat.refresh).toHaveBeenCalledTimes(1);
     expect(page.signal?.aborted).toBe(false);
+  });
+});
+
+describe("a refused switch's toast lands with the previous tab's content", () => {
+  it("shows the previous tab, uncovered, before the toast is raised", async () => {
+    const ids = await strip("a", "b");
+    fx.chat.show.mockImplementation((id: string) => {
+      pointers.painted = id;
+      // A resident view's paint, which ends by releasing the cover (messages.ts).
+      if (resident.has(id)) {
+        releaseCover(id);
+      }
+    });
+    const atToast: { painted: string; covered: boolean }[] = [];
+    configure({
+      error: () => {
+        takeSubject();
+        atToast.push({ painted: pointers.painted, covered: coverUp() });
+      },
+    });
+    refuse("b", server503(), 3);
+
+    clickRow(ids["b"] ?? "");
+    await until(() => atToast.length > 0, "the switch's refusal notice", { timeout: 5000 });
+
+    expect(atToast, "the toast says back on A while A was not on screen").toEqual([
+      { painted: "a", covered: false },
+    ]);
+    expect(getActiveTabId()).toBe(ids["a"]);
   });
 });
