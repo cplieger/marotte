@@ -750,3 +750,41 @@ func TestTurnBind_ClosesBoundOnlyOnceTheBindIsOnDisk(t *testing.T) {
 		t.Error("Bound() still open after a bind reached the sink")
 	}
 }
+
+// A steering box is a laned record of what KAS loaded, never turn content or a call in flight:
+// it seals its lane's prose, mints its own id, leaves Emitted and the reap alone, and the
+// close aborts nothing for it.
+func TestSteeringLoaded_RecordsABoxThatIsNotContent(t *testing.T) {
+	ctx := t.Context()
+	turn, rec := open(t)
+	rec.seal(turn.SteeringLoaded(ctx, "sub-1", &marotte.EntryToolCall{Kind: marotte.ToolKindSteering, Status: marotte.ToolCompleted}))
+	if turn.Emitted() {
+		t.Error("Emitted() = true after only a steering box, want false")
+	}
+	if turn.HasCallSince(0) {
+		t.Error("a steering box extended the reap")
+	}
+	if len(rec.entries) != 1 {
+		t.Fatalf("sealed %d entries, want 1", len(rec.entries))
+	}
+	got := rec.entries[0]
+	var call marotte.EntryToolCall
+	if err := json.Unmarshal(got.Payload, &call); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if !marotte.IsSteeringCallID(got.ID) || call.ID != got.ID || got.Lane != "sub-1" || got.Kind != marotte.EntryKindToolCall {
+		t.Errorf("box = id %q payload id %q lane %q kind %s, want a minted steering id on both in lane sub-1",
+			got.ID, call.ID, got.Lane, got.Kind)
+	}
+	rec.seal(turn.TextDelta(ctx, "", "s1", "prose"))
+	rec.seal(turn.SteeringLoaded(ctx, "", &marotte.EntryToolCall{Kind: marotte.ToolKindSteering}))
+	equalShape(t, rec.shape()[1:], []string{"/text", "/tool_call"}, "a box after open prose")
+	if rec.entries[2].ID == got.ID {
+		t.Errorf("second box reused id %q", got.ID)
+	}
+	rec.seal(turn.Close(ctx, marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}))
+	equalShape(t, rec.shape()[3:], []string{"/turn_close"}, "the close")
+	if _, err := turn.SteeringLoaded(ctx, "", &marotte.EntryToolCall{}); !errors.Is(err, ErrClosed) {
+		t.Errorf("SteeringLoaded after a close returned %v, want ErrClosed", err)
+	}
+}

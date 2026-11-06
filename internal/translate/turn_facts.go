@@ -106,24 +106,17 @@ func boundedIDs(in []string) []string {
 	return out
 }
 
-// noteTurnFacts records the per-turn facts a session_info_update carries on the
-// chat's own open turn: an ask, its answer, or the steering KAS added. Reports
-// whether the frame was one of those.
+// noteTurnFacts records the ask a session_info_update carries on the chat's own open
+// turn. Reports whether the frame was one.
 func (t *Translator) noteTurnFacts(chatID marotte.ChatID, k *sessionInfoKiroBlock) bool {
-	switch {
-	case k.PendingInteraction != nil:
-		if turn, ok := t.turns.OwnTurn(chatID); ok {
-			p := k.PendingInteraction
-			turn.NoteAsk(p.ToolCallID, p.InteractionType, p.askOptions())
-		}
-		return true
-	case len(k.SteeringDocuments) > 0:
-		if turn, ok := t.turns.OwnTurn(chatID); ok {
-			turn.NoteSteering(steeringDocIDs(k.SteeringDocuments))
-		}
-		return true
+	p := k.PendingInteraction
+	if p == nil {
+		return false
 	}
-	return false
+	if turn, ok := t.turns.OwnTurn(chatID); ok {
+		turn.NoteAsk(p.ToolCallID, p.InteractionType, p.askOptions())
+	}
+	return true
 }
 
 // A resolution always withdraws its pending ask; facts are recorded on the chat's own turn only (a

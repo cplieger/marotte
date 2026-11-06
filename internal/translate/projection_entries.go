@@ -99,6 +99,8 @@ type EntryProjection struct {
 	// content after a turn_end with no turn_start continues that turn.
 	cur       []marotte.Entry
 	callOrder []string
+	// heldSteering is the steering sets replayed between turns, for the next turn to open with.
+	heldSteering []heldSteering
 	// workDir is the workspace root a projected diff path is made relative to. A plain
 	// string keeps the projection dependency-free.
 	workDir string
@@ -175,6 +177,10 @@ func (p *EntryProjection) Turns() []ProjectedTurn {
 	// carries rule one's key.
 	if p.prompt != nil {
 		p.openTurn()
+	}
+	if len(p.heldSteering) > 0 {
+		p.ensureTurn(marotte.TurnOpenNameWireTurnStart)
+		p.drainSteering()
 	}
 	p.closeTurn()
 	p.sealCur()
@@ -479,8 +485,6 @@ func (p *EntryProjection) noteAskFact(k *replayInfoKiro) {
 	case k.InteractionResolved != nil:
 		r := k.InteractionResolved
 		p.facts.footer.NoteAnswer(r.ToolCallID, r.Outcome, displayText(r.SelectedOption))
-	case k.Kind == infoKindSteeringInclusion:
-		p.facts.footer.NoteSteering(steeringDocIDs(k.SteeringDocuments))
 	}
 }
 
@@ -505,8 +509,10 @@ func (p *EntryProjection) ingestInfo(raw json.RawMessage) {
 			Recoveries:       boundedIDs(k.Recoveries),
 			ContextBreakdown: contextBreakdownFrom(k.ContextBreakdown),
 		})
-	case infoKindPendingInteraction, infoKindInteractionResolved, infoKindSteeringInclusion:
+	case infoKindPendingInteraction, infoKindInteractionResolved:
 		p.noteAskFact(&u.Meta.Kiro)
+	case infoKindSteeringInclusion:
+		p.ingestSteering(&u.Meta.Kiro)
 	case infoKindTurnTiming:
 		p.facts.footer.NoteFirstOutput(firstOutputFrom(u.Meta.Kiro.TTFT))
 	case infoKindDisplayError:
@@ -663,6 +669,7 @@ func (p *EntryProjection) startTurn(source marotte.TurnOpenSourceName, prompt *m
 		Source:    source,
 		KASTurnID: kasTurn,
 	})
+	p.drainSteering()
 }
 
 // closeTurn settles the newest turn and appends its turn_close when a turn_end reached it.

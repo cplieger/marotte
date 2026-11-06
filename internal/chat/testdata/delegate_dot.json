@@ -44,10 +44,10 @@
       "terminal": true,
       "sites": [
         "internal/chat/entrylog.go:1088",
-        "internal/translate/projection_entries.go:713",
+        "internal/translate/projection_entries.go:720",
         "internal/translate/streaming_tools.go:414",
-        "internal/translate/wire_enums.go:35",
-        "internal/turnlog/turnlog.go:667"
+        "internal/translate/wire_enums.go:36",
+        "internal/turnlog/turnlog.go:689"
       ]
     },
     {
@@ -59,7 +59,8 @@
       "terminal": true,
       "sites": [
         "internal/translate/hook_status.go:120",
-        "internal/translate/wire_enums.go:33"
+        "internal/translate/steering_inclusion.go:38",
+        "internal/translate/wire_enums.go:34"
       ]
     },
     {
@@ -72,7 +73,7 @@
       "sites": [
         "internal/translate/hook_status.go:122",
         "internal/translate/hook_status.go:75",
-        "internal/translate/wire_enums.go:34"
+        "internal/translate/wire_enums.go:35"
       ]
     },
     {
@@ -83,8 +84,8 @@
       "page_word": "running",
       "terminal": false,
       "sites": [
-        "internal/translate/wire_enums.go:32",
-        "internal/translate/wire_enums.go:63"
+        "internal/translate/wire_enums.go:33",
+        "internal/translate/wire_enums.go:64"
       ]
     },
     {
@@ -95,8 +96,8 @@
       "page_word": "not started",
       "terminal": false,
       "sites": [
-        "internal/translate/wire_enums.go:31",
-        "internal/translate/wire_enums.go:79"
+        "internal/translate/wire_enums.go:32",
+        "internal/translate/wire_enums.go:80"
       ]
     }
   ],
@@ -113,12 +114,12 @@
   ],
   "sites": [
     {
-      "site": "internal/agent/entry_merge.go:996",
+      "site": "internal/agent/entry_merge.go:1016",
       "form": "compare",
       "status": "aborted"
     },
     {
-      "site": "internal/agent/entry_merge.go:996",
+      "site": "internal/agent/entry_merge.go:1016",
       "form": "compare",
       "status": "completed"
     },
@@ -163,9 +164,14 @@
       "status": "failed"
     },
     {
-      "site": "internal/translate/projection_entries.go:713",
+      "site": "internal/translate/projection_entries.go:720",
       "form": "status_field",
       "status": "aborted"
+    },
+    {
+      "site": "internal/translate/steering_inclusion.go:38",
+      "form": "status_field",
+      "status": "completed"
     },
     {
       "site": "internal/translate/streaming_tools.go:389",
@@ -208,42 +214,42 @@
       "status": "pending"
     },
     {
-      "site": "internal/translate/wire_enums.go:31",
-      "form": "map_key",
-      "status": "pending"
-    },
-    {
       "site": "internal/translate/wire_enums.go:32",
       "form": "map_key",
-      "status": "in_progress"
+      "status": "pending"
     },
     {
       "site": "internal/translate/wire_enums.go:33",
       "form": "map_key",
-      "status": "completed"
+      "status": "in_progress"
     },
     {
       "site": "internal/translate/wire_enums.go:34",
       "form": "map_key",
-      "status": "failed"
+      "status": "completed"
     },
     {
       "site": "internal/translate/wire_enums.go:35",
       "form": "map_key",
+      "status": "failed"
+    },
+    {
+      "site": "internal/translate/wire_enums.go:36",
+      "form": "map_key",
       "status": "aborted"
     },
     {
-      "site": "internal/translate/wire_enums.go:63",
+      "site": "internal/translate/wire_enums.go:64",
       "form": "return",
       "status": "in_progress"
     },
     {
-      "site": "internal/translate/wire_enums.go:79",
+      "site": "internal/translate/wire_enums.go:80",
       "form": "status_assign",
       "status": "pending"
     },
     {
-      "site": "internal/turnlog/turnlog.go:667",
+      "site": "internal/turnlog/turnlog.go:689",
       "form": "status_field",
       "status": "aborted"
     }
