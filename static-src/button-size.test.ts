@@ -1,6 +1,7 @@
-// The composer's controls and the resume button are the chat toolbar's buttons on every tier: the same
-// painted box (`--btn-h`) and the same target (the shared expander up to `--hit-floor`), with no two targets
-// overlapping. On a row too narrow for the fullest labelled line, the model and mode pills drop their text.
+// Every button is the chat toolbar's on every tier: the same painted box (`--btn-h`) and a target that
+// reaches `--hit-floor` through the shared expander, with no two targets overlapping. CENSUS names every
+// button family and its reference; a family that keeps its own size says where that is documented. On a
+// row too narrow for the fullest labelled line, the model and mode pills drop their text.
 // The fixture is the production `#app`, so the toolbar reference and the controls share one layout.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { page } from "vitest/browser";
@@ -9,7 +10,9 @@ import indexHtml from "../static/index.html?raw";
 import { buildAttachmentPill } from "./attachment-pill.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_CANCEL, ICON_HOURGLASS, ICON_MODEL, ICON_SEND } from "./icons.js";
-import { iconForMode } from "./roles.js";
+import { setActive, setSessions } from "./store.js";
+import type { updateContextBar as updateContextBarFn } from "./status.js";
+import { makeSession } from "./__test-helpers__/model.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 type Pointer = "coarse" | "fine";
@@ -34,9 +37,24 @@ const TOOLBAR = [
 const SQUARE = ["chat-options-btn", "task-list-pill", "midturn-send-btn", "scroll-bottom"];
 
 /** The longest names the rig's chats carry, so a fit decided on them holds for the common case. */
+const MODEL_ID = "claude-opus-5.5";
 const MODEL = "claude opus 5.5";
-const EFFORT = "· High";
+const EFFORT = "High";
+const MODE_ID = "default-v2";
 const MODE = "Default V2";
+
+/** The production writers of the model and mode pills, loaded once a page is mounted: their module graph
+ *  resolves page elements at import, and `initRolePicker` installs a lasting effect, so it runs once. */
+let writers: { updateContextBar: typeof updateContextBarFn } | undefined;
+let sessionSeq = 0;
+
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      resolve();
+    });
+  });
+}
 
 let style: HTMLStyleElement;
 let entry: { readonly width: number; readonly height: number };
@@ -73,16 +91,39 @@ function label(text: string): HTMLSpanElement {
   return span;
 }
 
-/** The DOM `model-switcher.ts`, `status.ts`, `role-picker.ts`, `prompt-input.ts` and `attachment-pill.ts` write. */
-function dress(state: State): void {
+/** The model, mode and context pills as `status.ts` and `role-picker.ts` write them. */
+async function writeNames(): Promise<void> {
+  if (writers === undefined) {
+    const [{ updateContextBar }, { initRolePicker }] = await Promise.all([
+      import("./status.js"),
+      import("./role-picker.js"),
+    ]);
+    initRolePicker(() => {
+      /* no catalog to refresh */
+    });
+    writers = { updateContextBar };
+  }
+  sessionSeq += 1;
+  const id = `c-census-${String(sessionSeq)}`;
+  setSessions([makeSession({ id, current_mode_id: MODE_ID })]);
+  setActive(id);
+  writers.updateContextBar({
+    pct: 66,
+    contextSize: 200_000,
+    compaction: { band: null, t: 0 },
+    credits: 0,
+    turnCount: 0,
+    lastTurnMs: 0,
+    model: MODEL_ID,
+    effort: EFFORT,
+  });
+  await nextFrame();
+}
+
+/** The DOM `model-switcher.ts`, `prompt-input.ts` and `attachment-pill.ts` write. */
+async function dress(state: State): Promise<void> {
   byId("switch-model-btn").prepend(iconEl(ICON_MODEL));
-  byId("ctx-model-pill").textContent = MODEL;
-  const effort = byId("ctx-effort-pill");
-  effort.textContent = EFFORT;
-  effort.classList.remove("hidden");
-  byId("role-pill-icon").replaceChildren(iconEl(iconForMode("default-v2")));
-  byId("role-pill-label").textContent = MODE;
-  byId("context-label").textContent = "66%";
+  await writeNames();
   const send = byId("send-btn");
   if (state === "idle") {
     send.replaceChildren(label("Send"), iconEl(ICON_SEND));
@@ -128,7 +169,16 @@ async function mount(
     throw new Error("index.html has no #app");
   }
   document.body.replaceChildren(document.importNode(app, true));
-  dress(state);
+  await dress(state);
+}
+
+/** The run tab in place of the chat: its composer's Send and its resume button. */
+async function mountRun(viewport: readonly [number, number], pointer: Pointer): Promise<void> {
+  await mount(viewport, pointer, "idle");
+  byId("chat-view").classList.add("hidden");
+  byId("run-view").classList.remove("hidden");
+  byId("run-scroll-bottom").classList.remove("hidden");
+  byId("run-send-btn").replaceChildren(iconEl(ICON_SEND));
 }
 
 function shown(el: Element): boolean {
@@ -522,4 +572,377 @@ describe("the model and mode pills, by the room the row has", () => {
       expect(wrong, `${String(viewport[0])} ${pointer}: the text follows the fit`).toEqual([]);
     }
   });
+});
+
+/** What a family is held to. `toolbar`: the chat toolbar's painted size and target. `tab-row`: the sidebar's tab
+ *  row height. The other kinds keep their own size and name where that is decided. */
+type Family =
+  | {
+      readonly name: string;
+      readonly selector: string;
+      readonly kind: "toolbar" | "tab-row";
+      /** The surface not yet held to it, by the order the surfaces are being moved. */
+      readonly pending?: "sidebar" | "rest";
+    }
+  | {
+      readonly name: string;
+      readonly selector: string;
+      readonly kind: "own-size" | "row" | "inline" | "dense" | "turn-map";
+      readonly documented: string;
+      readonly pending?: "sidebar" | "rest";
+    };
+
+/** Every button family the app has, each control in exactly one. A new control joins a family or adds one. */
+const CENSUS: readonly Family[] = [
+  { name: "chat toolbar", selector: ".chat-toolbar .icon-btn", kind: "toolbar" },
+  { name: "composer pill", selector: ".prompt-pills .pill", kind: "toolbar" },
+  { name: "composer send", selector: ".prompt-pills .send-btn", kind: "toolbar" },
+  { name: "run composer send", selector: ".run-composer .send-btn", kind: "toolbar" },
+  { name: "resume", selector: ".scroll-resume", kind: "toolbar" },
+  { name: "attachment chip", selector: ".attachment-pill .attachment-open", kind: "toolbar" },
+  {
+    name: "attachment chip remove",
+    selector: ".attachment-pill .attachment-close",
+    kind: "own-size",
+    documented:
+      "15-input.css `.attachment-open::after, .attachment-close::after`: a block-only reach keeps the destructive x off the filename",
+  },
+  { name: "new chat", selector: "#new-chat", kind: "tab-row", pending: "sidebar" },
+  { name: "history", selector: "#history-btn", kind: "tab-row", pending: "sidebar" },
+  {
+    name: "sidebar header",
+    selector: ".sidebar-header-actions .icon-btn",
+    kind: "toolbar",
+    pending: "sidebar",
+  },
+  { name: "account", selector: "#account-btn", kind: "toolbar", pending: "sidebar" },
+  { name: "log out", selector: "#logout-btn", kind: "toolbar", pending: "sidebar" },
+  {
+    name: "account card link",
+    selector: ".pill-account",
+    kind: "row",
+    documented: "15-input.css `.pill-account`: a row, its box the target",
+  },
+  {
+    name: "tab row",
+    selector: "#tab-list .tab",
+    kind: "row",
+    documented: "10-shell-app.css `.tab`: `--row-tap`",
+  },
+  {
+    name: "tab close",
+    selector: ".tab-close",
+    kind: "dense",
+    documented: "10-shell-app.css `.tab-close`: a row action",
+    pending: "sidebar",
+  },
+  {
+    name: "dialog close",
+    selector:
+      "dialog .icon-btn, [id$='-modal-close'], [id='filepicker-close'], [id='shortcuts-close']",
+    kind: "toolbar",
+    pending: "rest",
+  },
+  {
+    name: "view toolbar",
+    selector: ".view-toolbar-inner .icon-btn",
+    kind: "toolbar",
+    pending: "rest",
+  },
+  { name: "editor find bar", selector: ".editor-find-btn", kind: "toolbar", pending: "rest" },
+  {
+    name: "text button",
+    selector:
+      ":is(.btn, .btn-small, .btn-save, .action-pill):not(.add-form > .btn, .list-row .btn-small, [id='knowledge-add-btn'], [id='knowledge-clear-btn'])",
+    kind: "toolbar",
+    pending: "rest",
+  },
+  {
+    name: "add-form submit",
+    selector: ".add-form > .btn",
+    kind: "own-size",
+    documented:
+      "17-settings.css `.add-form > .btn`: the dense field it submits sets the row's height",
+  },
+  {
+    name: "glyphless action pill",
+    selector: "[id='knowledge-add-btn'], [id='knowledge-clear-btn']",
+    kind: "own-size",
+    documented:
+      "14-tools.css `.action-pill`: an empty button's text strut, unconfirmed on a real render",
+    pending: "rest",
+  },
+  { name: "run card open", selector: "a.run-open", kind: "toolbar", pending: "rest" },
+  { name: "shell header", selector: ".shell-header-btn", kind: "toolbar", pending: "rest" },
+  { name: "sign-in", selector: ".modal-btn", kind: "toolbar", pending: "rest" },
+  {
+    name: "segment",
+    selector: ".seg",
+    kind: "own-size",
+    documented: "11-page-lists.css `.seg`: drawn inside its track, whose height is the control's",
+  },
+  {
+    name: "disclosure and list rows",
+    selector:
+      ".chat-opt-btn, .chat-opt-strip-btn, .run-bar-open, .run-bar-toggle, .tool-group-header, .reasoning-summary, .run-head, .tool-diff-stats, .native-explain-summary, .turn-file-row, .turn-info-dbtn, .entry, .fb-row, .ev-dock-row",
+    kind: "row",
+    documented: "each family's `--row-tap*` rule: a row, its own target",
+  },
+  {
+    name: "in a sentence",
+    selector: ".inline-file-link, .steer-note-run, .turn-wake-run, .turn-pill-link",
+    kind: "inline",
+    documented:
+      "61-mcp-tools.css: links and inline controls in prose carry no expander (WCAG 2.5.8)",
+  },
+  {
+    name: "turn footer and code actions",
+    selector:
+      ".turn-action-btn, .turn-action-more, .turn-rewind, .turn-ledger-summary, .code-act-btn, .tool-group-hooks",
+    kind: "dense",
+    documented:
+      "61-mcp-tools.css, the turn footer's control box: `--ctl-h-sm` with the shared expander",
+    pending: "rest",
+  },
+  {
+    name: "row chevrons and row actions",
+    selector:
+      ".tool-disclosure, .turn-fold-toggle, .entry-delete, .list-row-btn, .list-row .btn-small, .git-action-btn, .upload-progress-cancel, .run-icon-btn, .ev-box-toggle",
+    kind: "dense",
+    documented: "each family's `--ctl-h-dense` or `--ctl-h-sm` rule: an action inside a row",
+    pending: "rest",
+  },
+  {
+    name: "turn map steps",
+    selector: ".turn-map-step",
+    kind: "turn-map",
+    documented:
+      "29-turns.css `.turn-map-step` and 13-messages.css, the docked resume: the map's step size",
+    pending: "rest",
+  },
+];
+
+const CONTROL = "button, summary, [role='button'], a[href]";
+
+/** The painted size of a length token, measured rather than parsed. */
+function tokenPx(token: string): number {
+  const probe = document.createElement("div");
+  probe.style.blockSize = `var(${token})`;
+  document.body.appendChild(probe);
+  const px = probe.getBoundingClientRect().height;
+  probe.remove();
+  return px;
+}
+
+/** A control showing no text is icon-only, so the reference's square. */
+function iconOnly(el: HTMLElement): boolean {
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n !== null; n = walker.nextNode()) {
+    const parent = n.parentElement;
+    if ((n.textContent ?? "").trim() !== "" && parent !== null && shown(parent)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** The docked resume button follows the turn map's step size, not the toolbar's (the "turn map steps" family). */
+function docked(el: HTMLElement, viewport: readonly [number, number], pointer: Pointer): boolean {
+  return el.id === "scroll-bottom" && viewport === DESKTOP && pointer === "fine";
+}
+
+function familiesOf(el: Element): Family[] {
+  return CENSUS.filter((f) => el.matches(f.selector));
+}
+
+/** The controls on the mounted surface that a held family covers. */
+function held(): { el: HTMLElement; family: Family }[] {
+  return [...document.querySelectorAll<HTMLElement>(CONTROL)]
+    .filter(shown)
+    .map((el) => ({ el, family: familiesOf(el)[0] }))
+    .filter((c): c is { el: HTMLElement; family: Family } => c.family?.pending === undefined)
+    .filter(({ family }) => family.kind === "toolbar" || family.kind === "own-size");
+}
+
+const PRESETS = [
+  ["phone", PHONE],
+  ["iPad", IPAD],
+  ["desktop", DESKTOP],
+] as const;
+const TIERS: readonly Pointer[] = ["coarse", "fine"];
+type Surface = "chat idle" | "chat steer" | "chat queue" | "run";
+const SURFACES: readonly Surface[] = ["chat idle", "chat steer", "chat queue", "run"];
+const CHAT_STATE: Readonly<Record<Exclude<Surface, "run">, State>> = {
+  "chat idle": "idle",
+  "chat steer": "steer",
+  "chat queue": "queue",
+};
+
+/** The controls each surface must put in front of the checks, so an empty set cannot pass them. */
+const COVERS: Readonly<Record<Surface, readonly string[]>> = {
+  "chat idle": [
+    "#settings-btn",
+    "#context-indicator",
+    "#switch-model-btn",
+    "#role-pill",
+    "#chat-options-btn",
+    "#send-btn",
+    "#scroll-bottom",
+    ".attachment-open",
+    ".attachment-close",
+  ],
+  "chat steer": ["#midturn-send-btn", "#task-list-pill", "#send-btn", ".attachment-close"],
+  "chat queue": ["#midturn-send-btn", "#task-list-pill", "#send-btn", "#scroll-bottom"],
+  run: ["#settings-btn", "#run-send-btn", "#run-scroll-bottom"],
+};
+
+async function mountSurface(
+  viewport: readonly [number, number],
+  pointer: Pointer,
+  surface: Surface,
+): Promise<void> {
+  if (surface === "run") {
+    await mountRun(viewport, pointer);
+  } else {
+    await mount(viewport, pointer, CHAT_STATE[surface]);
+  }
+  const controls = held().map(({ el }) => el);
+  const missing = COVERS[surface].filter((sel) => !controls.some((el) => el.matches(sel)));
+  expect(missing, `${surface}: the held controls are on screen`).toEqual([]);
+}
+
+describe("the button census", () => {
+  it("puts every control on the shipped page in exactly one family", async () => {
+    await mount(PHONE, "coarse", "queue");
+    const wrong = [...document.querySelectorAll<HTMLElement>(CONTROL)]
+      .map((el) => ({ el, names: familiesOf(el).map((f) => f.name) }))
+      .filter(({ names }) => names.length !== 1)
+      .map(
+        ({ el, names }) =>
+          `${el.tagName.toLowerCase()}#${el.id}.${el.className}: ${names.length === 0 ? "no family" : names.join(", ")}`,
+      );
+    expect(wrong, "every control is classified once").toEqual([]);
+  });
+
+  for (const [preset, viewport] of PRESETS) {
+    for (const pointer of TIERS) {
+      const at = `${preset} ${pointer}`;
+
+      it(`paints every held control at the toolbar's --btn-h, ${at}`, async () => {
+        for (const surface of SURFACES) {
+          await mountSurface(viewport, pointer, surface);
+          const btn = tokenPx("--btn-h");
+          const ref = byId("settings-btn").getBoundingClientRect();
+          expect([ref.width, ref.height], `${surface}: the toolbar paints --btn-h`).toEqual([
+            btn,
+            btn,
+          ]);
+          const off: string[] = [];
+          for (const { el, family } of held()) {
+            if (family.kind !== "toolbar" || docked(el, viewport, pointer)) {
+              continue;
+            }
+            const r = painted(el);
+            if (r.height !== btn) {
+              off.push(`${nameOf(el)} is ${String(r.height)}px tall`);
+            }
+            if (iconOnly(el) && r.width !== btn) {
+              off.push(`${nameOf(el)} is icon-only and ${String(r.width)}px wide`);
+            }
+          }
+          expect(off, `${surface}: painted at --btn-h (${String(btn)}px)`).toEqual([]);
+        }
+      });
+
+      it(`gives every held control a target at the floor, ${at}`, async () => {
+        for (const surface of SURFACES) {
+          await mountSurface(viewport, pointer, surface);
+          const floor = floorPx();
+          expect(floor, "the tier's floor").toBe(pointer === "coarse" ? 44 : 24);
+          const off: string[] = [];
+          for (const { el, family } of held()) {
+            const hit = hitRect(el);
+            // The probe reaches the declared target's edges: a press 1px inside each one answers to the control.
+            const t = targetRect(el);
+            const cx = (t.left + t.right) / 2;
+            const cy = (t.top + t.bottom) / 2;
+            const edges = [
+              [t.left + 1, cy],
+              [t.right - 1, cy],
+              [cx, t.top + 1],
+              [cx, t.bottom - 1],
+            ] as const;
+            if (!edges.every(([x, y]) => owns(el, x, y))) {
+              off.push(`${nameOf(el)}'s target edge answers to another element`);
+            }
+            if (height(hit) < floor - 2 * STEP) {
+              off.push(`${nameOf(el)} reaches ${String(height(hit))}px tall`);
+            }
+            // The chip's x keeps a block-only reach (its family's documented size).
+            if (family.kind === "toolbar" && width(hit) < floor - 2 * STEP) {
+              off.push(`${nameOf(el)} reaches ${String(width(hit))}px wide`);
+            }
+          }
+          expect(off, `${surface}: every target clears ${String(floor)}px`).toEqual([]);
+        }
+      });
+
+      it(`lets no two held targets overlap, ${at}`, async () => {
+        for (const surface of SURFACES) {
+          await mountSurface(viewport, pointer, surface);
+          const all = held().map(({ el }) => el);
+          const crossed: string[] = [];
+          for (const [i, a] of all.entries()) {
+            const ta = targetRect(a);
+            for (const b of all.slice(i + 1)) {
+              if (a.contains(b) || b.contains(a)) {
+                continue;
+              }
+              const tb = targetRect(b);
+              const dx = Math.min(ta.right, tb.right) - Math.max(ta.left, tb.left);
+              const dy = Math.min(ta.bottom, tb.bottom) - Math.max(ta.top, tb.top);
+              if (dx > 0.5 && dy > 0.5) {
+                crossed.push(`${nameOf(a)} and ${nameOf(b)} share ${String(dx)}x${String(dy)}px`);
+              }
+            }
+          }
+          expect(crossed, `${surface}: no two targets overlap`).toEqual([]);
+        }
+      });
+    }
+  }
+
+  for (const pointer of TIERS) {
+    it(`shows the model and mode pills as named icons on one row at the phone preset, ${pointer}`, async () => {
+      for (const state of STATES) {
+        await mount(PHONE, pointer, state);
+        const names: [string, string, string][] = [
+          ["switch-model-btn", "ctx-model-pill", MODEL],
+          ["role-pill", "role-pill-label", MODE],
+        ];
+        for (const [id, labelId, current] of names) {
+          const pill = byId(id);
+          expect(shown(byId(labelId)), `${state}: #${id} draws no text`).toBe(false);
+          expect(iconOnly(pill), `${state}: #${id} is icon-only`).toBe(true);
+          expect(pill.getAttribute("aria-label"), `${state}: #${id}'s name`).toContain(current);
+          expect(pill.getAttribute("data-tooltip"), `${state}: #${id}'s tooltip`).toBe(
+            pill.getAttribute("aria-label"),
+          );
+        }
+        const row = document.querySelector<HTMLElement>(".prompt-pills");
+        if (row === null) {
+          throw new Error("no pill row");
+        }
+        expect(row.scrollWidth, `${state}: nothing overflows the row`).toBeLessThanOrEqual(
+          row.clientWidth,
+        );
+        const tops = new Set(
+          [...row.querySelectorAll<HTMLElement>(".pill, .send-btn")]
+            .filter(shown)
+            .map((el) => el.getBoundingClientRect().top),
+        );
+        expect(tops.size, `${state}: one line`).toBe(1);
+      }
+    });
+  }
 });
