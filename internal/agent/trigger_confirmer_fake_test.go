@@ -14,7 +14,9 @@ import (
 // event key to the run its live attempt names, set by NameAttempt; a ConfirmEvent naming that run moves the key to
 // launched, as the attempt table's run_start row does.
 type fakeConfirmer struct {
-	nameErr    error
+	nameErr error
+	// onName runs inside NameAttempt, before it returns.
+	onName     func()
 	retriedErr error
 	bootHeld   map[string]bool
 	live       map[string]string
@@ -41,6 +43,9 @@ func (f *fakeConfirmer) recorded() []string {
 
 func (f *fakeConfirmer) NameAttempt(ruleID, eventKey, workflowID string) error {
 	f.record("NameAttempt %s %s %s", ruleID, eventKey, workflowID)
+	if f.onName != nil {
+		f.onName()
+	}
 	if f.nameErr != nil {
 		return f.nameErr
 	}

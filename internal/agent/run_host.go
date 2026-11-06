@@ -256,6 +256,9 @@ func (rs *Runs) leaseLaunched(
 		rs.grantLease(ctx, wfID, recipe, *o, host)
 		return nil
 	}
+	// Owned from the naming through the grant, so a cancel the rule queues meanwhile runs once the lease is written.
+	release := rs.owners.holdAlways(wfID)
+	defer release()
 	if err := rs.confirmer.NameAttempt(o.event.ruleID, o.event.eventKey, wfID); err != nil {
 		return err
 	}
@@ -274,12 +277,12 @@ func logLaunched(wfID, recipe string, dropped []string) {
 	slog.Info("workflow run launched", attrs...)
 }
 
-// invokeFailed settles a launch whose invoke failed and returns its error. An unconfirmed (verdictOf) or
-// deadline-outlived answer may have started the run, so it keeps its lease, route and bridge under an armed deadline (errLaunchUnconfirmed); a
-// refusal records the schedule failure on the row grantLease wrote and releases the run.
-//
-// A triggered launch keeps its lease and host session whatever the error: a lost reply can follow a run_start that
-// already confirmed the event, and the attempt table decides from what the error proves.
+// invokeFailed settles a launch whose invoke failed and returns its error. For a manual or scheduled launch, an
+// unconfirmed (verdictOf) or deadline-outlived answer may have started the run, so it keeps its lease, route and
+// bridge under an armed deadline (errLaunchUnconfirmed); a refusal records the failure on the row grantLease wrote and
+// releases the run. A triggered launch returns with its lease and host session kept and its deadline unarmed,
+// whatever the error: a lost reply can follow a run_start that already confirmed the event and armed it, and the
+// attempt table decides from what the error proves.
 func (rs *Runs) invokeFailed(ctx context.Context, wfID, recipe string, o *launchOrigin, err error) error {
 	err = fmt.Errorf("workflow invoke: %w", err)
 	if o.event != nil {
@@ -383,47 +386,7 @@ func (rs *Runs) cancelAs(ctx context.Context, workflowID string, stop runStop) e
 	})
 }
 
-// errTerminationClaimed is a cancel not sent because another terminator holds the run's claim, which proves nothing
-// about whether the run ends.
-var errTerminationClaimed = errors.New("another stop of this run is in progress")
-
 var errNoTriggerConfirmer = errors.New("a triggered launch needs the launch rules, which are not wired")
-
-// CancelAbandoned cancels a run its event rule abandoned, unattributed, under its own 45 s timeout. It returns nil
-// only when its own cancel verb did; a lost termination claim is errTerminationClaimed.
-func (rs *Runs) CancelAbandoned(ctx context.Context, workflowID string) error {
-	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionListTimeout)
-	defer cancel()
-	if workflowID == "" {
-		return errors.New("missing workflow id")
-	}
-	if !rs.claimTermination(workflowID) {
-		return errTerminationClaimed
-	}
-	err := rs.finishTermination(cctx, workflowID, "", runStop{}, func(ctx context.Context) error {
-		// A never-invoked run is never armed, so its lease, not bounded, says marotte still holds it.
-		if _, held := rs.lease(workflowID); !held {
-			return nil
-		}
-		if err := rs.CancelAbandoned(ctx, workflowID); !errors.Is(err, errTerminationClaimed) {
-			return err
-		}
-		return nil
-	})
-	if _, held := rs.lease(workflowID); err == nil && !held {
-		// releaseIfOver returns at once when no lease is held, so a landed cancel whose lease is already gone has
-		// nobody else to drop its claim.
-		rs.forgetBounds(cctx, workflowID)
-	}
-	return err
-}
-
-// ReleaseTriggered ends marotte's hold on an abandoned triggered run whose cancel landed: its lease and bounds, then
-// its host session.
-func (rs *Runs) ReleaseTriggered(ctx context.Context, workflowID string) {
-	rs.forgetBounds(ctx, workflowID)
-	rs.coord.closeBridge(ctx, runChatID(workflowID), marotte.TurnOutcomeInterrupted)
-}
 
 // cancelRPC issues the cancel verb only. The host session stays resident: the run certifies the cancel at its node
 // boundary, and its terminal `run_complete` releases the host.
@@ -603,6 +566,11 @@ const clientRequestBudget = 30 * time.Second
 var errRetryRunDeleting = errors.New("this run is being deleted or checked for deletion, so nothing was retried. " +
 	"Try again in a moment")
 
+// errRetryRunOwned is a retry that waited out retryTimeout for the run's owner (runOwners): its launch rule's cancel
+// or another retry of it.
+var errRetryRunOwned = errors.New("this run is still being cancelled or retried, so nothing was retried. " +
+	"Try again in a moment")
+
 // errRetrySlow reports a retry whose run's session did not load within retryTimeout, so the verb was never sent;
 // the REST layer answers 503.
 var errRetrySlow = errors.New(
@@ -655,9 +623,11 @@ func (rs *Runs) retry(
 	if refused := rs.refuseClosedLauncher(workflowID, launchers); refused != nil {
 		return out, refused
 	}
-	if handErr := rs.handBackAbandoned(cctx, workflowID); handErr != nil {
-		return out, handErr
+	own, err := rs.ownForRetry(cctx, workflowID)
+	if err != nil {
+		return out, err
 	}
+	defer own()
 	// The lease before the verb, since retry's `run_start` can beat the reply, and before the host session's load,
 	// which reads its presets from it.
 	minted := rs.leaseForRetry(cctx, workflowID, &origin, holders, aff)
@@ -695,6 +665,20 @@ func (rs *Runs) retry(
 	return out, nil
 }
 
+// ownForRetry makes the retry the run's owner (runOwners), then hands an abandoned run back to the person
+// (handBackAbandoned). release is nil exactly when err is not.
+func (rs *Runs) ownForRetry(ctx context.Context, workflowID string) (release func(), err error) {
+	release, err = rs.owners.hold(ctx, workflowID)
+	if err != nil {
+		return nil, command.StatusError(http.StatusConflict, errRetryRunOwned)
+	}
+	if err := rs.handBackAbandoned(ctx, workflowID); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
+}
+
 // leaseForRetry renews the run's lease for the retry, or grants one from origin, reporting whether it minted one.
 func (rs *Runs) leaseForRetry(
 	ctx context.Context, workflowID string, origin *runOrigin, holders []marotte.ChatID, aff *runAffordance,
@@ -710,24 +694,6 @@ func (rs *Runs) leaseForRetry(
 	}
 	rs.grantRetryLease(ctx, workflowID, origin, holders)
 	return true
-}
-
-// handBackAbandoned reports every retry to the confirmer, whatever lease is held: an abandoned record outlives the
-// triggered lease once its cancel lands (ReleaseTriggered), and left behind it would read the person's retry as the
-// rule's unfinished cancel. true drops the triggered lease and its bounds, so the retry is leased as the person's and
-// a restart cancels nothing; an error refuses the retry with the lease untouched.
-func (rs *Runs) handBackAbandoned(ctx context.Context, workflowID string) error {
-	if rs.confirmer == nil {
-		return nil
-	}
-	abandoned, err := rs.confirmer.Retried(workflowID)
-	if err != nil {
-		return fmt.Errorf("workflow retry: %w", err)
-	}
-	if abandoned {
-		rs.forgetBounds(ctx, workflowID)
-	}
-	return nil
 }
 
 // retryCall issues the verb and decodes its report.

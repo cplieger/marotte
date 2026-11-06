@@ -70,6 +70,9 @@ type Runs struct {
 	unconfirmed unconfirmedSends
 	// life admits every step-session mutation against a Delete (run_lifecycle.go).
 	life runLifecycle
+	// owners serializes, per run, an abandoned run's cancel and release against a retry and a triggered launch's
+	// lease grant (run_abandon.go).
+	owners runOwners
 	// purgeFailed holds the runs whose finished-run purge delete failed recently (run_purge.go).
 	purgeFailed purgeFailures
 	// purgePace is when the finished-run purge last reached a delete (run_purge.go).
