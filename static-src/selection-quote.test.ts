@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vite
 import { page } from "vitest/browser";
 import type * as Chat from "./chat.js";
 import type * as Dom from "./dom.js";
+import type * as NoticeSubject from "./notice-subject.js";
+import type * as Toast from "./toast.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { QUOTE_ATTRIBUTION } from "./message-quote.js";
 import { setActive, setSessions } from "./store.js";
@@ -15,6 +17,15 @@ const { openTangentChat } = vi.hoisted(() => ({
 vi.mock("./chat.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Chat>()),
   openTangentChat,
+}));
+const { chatNotice, toastError } = vi.hoisted(() => ({ chatNotice: vi.fn(), toastError: vi.fn() }));
+vi.mock("./notice-subject.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof NoticeSubject>()),
+  chatNotice,
+}));
+vi.mock("./toast.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Toast>()),
+  error: toastError,
 }));
 // The real chat.js graph runs effects against the whole app shell; an element this file does not build is a
 // detached stub, so only the shell below is real.
@@ -78,6 +89,8 @@ beforeEach(() => {
   setSessions([chat("c-active", 2)]);
   setActive("c-active");
   openTangentChat.mockReset();
+  chatNotice.mockReset();
+  toastError.mockReset();
 });
 
 afterEach(async () => {
@@ -122,6 +135,14 @@ function span(className: string, text: string): HTMLSpanElement {
 function button(className: string, text: string): HTMLButtonElement {
   const b = node("button", className, text);
   b.type = "button";
+  return b;
+}
+
+/** A `div[role=button]`, as run-card.ts and run-bar.ts render a control whose words are quotable. */
+function roleButton(className: string, ...kids: (Node | string)[]): HTMLDivElement {
+  const b = div(className, ...kids);
+  b.setAttribute("role", "button");
+  b.tabIndex = 0;
   return b;
 }
 
@@ -233,7 +254,7 @@ function runCard(name: string): { name: HTMLElement; capture: HTMLElement } {
 function runBarRow(name: string): { label: HTMLElement; state: HTMLElement } {
   const label = span("ev-sum-label", name);
   const state = span("ev-sum-state", "Step 2 of 5");
-  runBar.append(node("li", "run-bar-row", button("run-bar-open", "")));
+  runBar.append(node("li", "run-bar-row", roleButton("run-bar-open", "")));
   runBar.lastElementChild?.firstElementChild?.append(node("span", "ev-sum", label, state));
   return { label, state };
 }
@@ -627,7 +648,7 @@ describe("what a quote can come from", () => {
   });
 
   it("names the run list for the recap box's fold row", async () => {
-    runBarFold.append(button("run-bar-open run-bar-toggle", "2 workflows running"));
+    runBarFold.append(roleButton("run-bar-open run-bar-toggle", "2 workflows running"));
     selectAll(runBarFold);
     expect(await sourceLine()).toBe("> From the run list:");
   });
@@ -867,6 +888,10 @@ describe("Ask in a tangent", () => {
     btn?.click();
     await frames();
     expect(openTangentChat).not.toHaveBeenCalled();
+    expect(
+      chatNotice,
+      "a tap shows the reason touch has no tooltip for",
+    ).toHaveBeenCalledExactlyOnceWith("c-active", NO_TANGENT, "error");
     expect(input.value).toBe("");
     expect(action()?.getAttribute("aria-disabled")).not.toBe("true");
   });
@@ -879,6 +904,11 @@ describe("Ask in a tangent", () => {
     const btn = action("Ask in a tangent");
     expect(btn?.getAttribute("aria-disabled")).toBe("true");
     expect(btn?.dataset["tooltip"]).toBe(NO_TANGENT);
+    btn?.click();
+    await frames();
+    expect(openTangentChat).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledExactlyOnceWith(NO_TANGENT);
+    expect(chatNotice).not.toHaveBeenCalled();
   });
 
   it("enables once the chat has a message", async () => {

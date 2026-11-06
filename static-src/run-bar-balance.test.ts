@@ -46,7 +46,7 @@ afterEach(async () => {
 
 interface Mounted {
   box: HTMLElement;
-  toggle: HTMLButtonElement | null;
+  toggle: HTMLElement | null;
   rows: HTMLElement[];
 }
 
@@ -67,10 +67,11 @@ function mount(count: number, open: boolean, width: number): Mounted {
 
   const folded = count >= 3;
   fold.hidden = !folded;
-  let toggle: HTMLButtonElement | null = null;
+  let toggle: HTMLElement | null = null;
   if (folded) {
-    toggle = document.createElement("button");
-    toggle.type = "button";
+    toggle = document.createElement("div");
+    toggle.setAttribute("role", "button");
+    toggle.tabIndex = 0;
     toggle.className = "run-bar-open run-bar-toggle";
     toggle.setAttribute("aria-expanded", String(open));
     const chev = document.createElement("span");
@@ -90,8 +91,9 @@ function mount(count: number, open: boolean, width: number): Mounted {
     const li = document.createElement("li");
     li.className = "run-bar-row";
     li.hidden = folded && !open;
-    const btn = document.createElement("button");
-    btn.type = "button";
+    const btn = document.createElement("div");
+    btn.setAttribute("role", "button");
+    btn.tabIndex = 0;
     btn.className = "run-bar-open";
     const glyph = document.createElement("span");
     glyph.className = "run-bar-glyph";

@@ -81,8 +81,9 @@ function mountBand(states: readonly string[]): {
     const li = document.createElement("li");
     li.className = "run-bar-row";
     li.dataset["state"] = state;
-    const btn = document.createElement("button");
-    btn.type = "button";
+    const btn = document.createElement("div");
+    btn.setAttribute("role", "button");
+    btn.tabIndex = 0;
     btn.className = "run-bar-open";
     for (const cls of [
       "run-bar-glyph",
@@ -289,8 +290,9 @@ describe("the run bar's box", () => {
     if (fold) {
       const foldEl = document.createElement("div");
       foldEl.className = "run-bar-fold";
-      const btn = document.createElement("button");
-      btn.type = "button";
+      const btn = document.createElement("div");
+      btn.setAttribute("role", "button");
+      btn.tabIndex = 0;
       btn.className = "run-bar-open run-bar-toggle";
       btn.setAttribute("aria-expanded", "true");
       btn.textContent = `${String(runs.length)} workflows running`;
@@ -301,8 +303,9 @@ describe("the run bar's box", () => {
     for (const r of runs) {
       const li = document.createElement("li");
       li.className = "run-bar-row";
-      const btn = document.createElement("button");
-      btn.type = "button";
+      const btn = document.createElement("div");
+      btn.setAttribute("role", "button");
+      btn.tabIndex = 0;
       btn.className = "run-bar-open";
       const glyph = document.createElement("span");
       glyph.className = "run-bar-glyph";

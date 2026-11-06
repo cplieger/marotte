@@ -85,7 +85,8 @@ export function splitLeadingQuote(
     .slice(0, end - 1)
     .map((line) => (line.startsWith("> ") ? line.slice(2) : line.slice(1)));
   const head = inner[0] ?? "";
-  // The source line `quoteSelection` writes; an older quote opens on its text.
+  // A `From …:` line then a blank line is the source line `quoteSelection` writes; an older quote opening that way
+  // draws its first line as the source.
   const named = head.startsWith("From ") && head.endsWith(":") && inner[1] === "";
   const quoted = unescapeContext(
     inner

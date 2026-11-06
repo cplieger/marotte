@@ -1178,11 +1178,7 @@
   text-align: start;
   cursor: pointer;
   touch-action: manipulation;
-
-  /* A button's text is unselectable by default; this opens it to "Quote in reply" (run-bar.ts skips a click that
-     ends a selection). WebKit selects no text inside a button either way. */
-  -webkit-user-select: text;
-  user-select: text;
+  -webkit-tap-highlight-color: transparent;
   transition:
     background-color var(--dur-micro) var(--ease-standard),
     opacity var(--dur-enter) var(--ease-enter),

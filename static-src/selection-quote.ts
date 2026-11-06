@@ -11,7 +11,9 @@ import { setComposerValue } from "./composer-value.js";
 import { $ } from "./dom.js";
 import { appendQuote, codeSpan, quoteSelection } from "./message-quote.js";
 import { activeSession } from "./store.js";
-import { tangentRefusal } from "./tangent-refusal.js";
+import { chatNotice } from "./notice-subject.js";
+import { NO_CONVERSATION_TANGENT, tangentRefusal } from "./tangent-refusal.js";
+import * as toast from "./toast.js";
 
 /** A control: its text is a UI label, never quoted. */
 const CONTROL = [
@@ -333,8 +335,15 @@ export function initSelectionQuote(): void {
   });
   askBtn.addEventListener("click", () => {
     // Re-read at click time, as the Chat options row does: the popover outlives a chat switch.
+    // A refusal is posted too, as the Chat options row posts it: touch never shows the tooltip.
     const session = activeSession.peek();
-    if (session === undefined || tangentRefusal(session) !== null) {
+    if (session === undefined) {
+      toast.error(NO_CONVERSATION_TANGENT);
+      return;
+    }
+    const refusal = tangentRefusal(session);
+    if (refusal !== null) {
+      chatNotice(session.id, refusal, "error");
       return;
     }
     const block = takeQuote();
