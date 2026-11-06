@@ -190,7 +190,7 @@ describe("forge-auth: the connection row", () => {
     expect(slot.querySelector<HTMLInputElement>("[data-forge-host]")?.value).toBe(
       "git.example.com",
     );
-    expect(slot.querySelector("form.forge-pat-form")).not.toBeNull();
+    expect(slot.querySelector("form[data-forge-token]")).not.toBeNull();
   });
 
   it("names no one on a reconnect row with no identity, and claims nothing is loading", async () => {
@@ -762,6 +762,42 @@ describe("forge-auth: the connection row", () => {
 
       expect(add.disabled).toBe(true);
       expect(add.getAttribute("aria-busy")).toBe("true");
+    });
+
+    it("keeps Add owner disabled through typing while the add is in flight", async () => {
+      const block = owners(await showRow(account({ owner_scopes: ["acme"] })));
+      const { spy, answer } = queuedFetch();
+      const add = button(block, "Add owner")!;
+
+      addOwner(block, "beta");
+      await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+      addOwner(block, "gamma");
+
+      expect(add.disabled).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(1);
+      answer(0, json({ owners: ["acme", "beta"] }));
+      await vi.waitFor(() => expect(chips(block)).toEqual(["acme", "beta"]));
+    });
+
+    it("leaves Add owner disabled on the emptied field once the add lands, past any feedback reset", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const block = owners(await showRow(account({ owner_scopes: ["acme"] })));
+        const { spy, answer } = queuedFetch();
+        const add = button(block, "Add owner")!;
+
+        addOwner(block, "beta");
+        await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+        answer(0, json({ owners: ["acme", "beta"] }));
+        await vi.waitFor(() => expect(chips(block)).toEqual(["acme", "beta"]));
+        await vi.advanceTimersByTimeAsync(5_000);
+
+        expect(block.querySelector<HTMLInputElement>("form input")!.value).toBe("");
+        expect(add.disabled).toBe(true);
+        expect(add.hasAttribute("aria-busy")).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("says on GitLab that an owner is a group", async () => {

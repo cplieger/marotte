@@ -91,16 +91,13 @@ export function buildOwnerScopes(a: ConfiguredForge): HTMLElement {
       const report = (text: string): void => {
         row.setError(text, input);
       };
-      void withAsyncFeedback(
-        row.button,
-        async () => {
-          await write(block, (cur) => [...cur, owner], `Could not add ${owner}`, report);
+      // write reports its refusal on the row before it rejects; the new chip is the success cue.
+      return write(block, (cur) => [...cur, owner], `Could not add ${owner}`, report).then(
+        () => {
           input.value = "";
         },
-        { keepLabel: true },
-      ).finally(() => {
-        row.sync();
-      });
+        () => undefined,
+      );
     },
   });
 

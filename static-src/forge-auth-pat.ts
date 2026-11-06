@@ -1,6 +1,6 @@
 import type { ForgeKind } from "./wire/types.gen.js";
 import { connectPAT, detectForge, type ConnectionOptions } from "./actions/forge.js";
-import { withAsyncFeedback } from "./async-button.js";
+import { buildAddForm, wireAddForm } from "./add-form.js";
 import type { ConnectionTarget } from "./forge-auth-connection.js";
 import { kindTitle } from "./forge-types.js";
 import { el } from "@cplieger/ui";
@@ -48,15 +48,19 @@ const PAT_SCOPES: Record<ForgeKind, string> = {
 const ANY_FORGE_SCOPES = `Token scopes: ${SCOPES.github} on GitHub (classic token), ${SCOPES.gitlab} on GitLab, ${SCOPES.gitea} on Gitea or Forgejo.`;
 
 export interface PATFormDeps {
-  closeSlot: (slot: HTMLElement) => void;
   /** The token connected the account `id` from the pane in `slot`. */
   connected: (slot: HTMLElement, id: string) => void;
 }
 
-/** Connects with the host and token read once per press. Resolves to the id of
- *  the connection the server saved, or null when the request was cancelled;
- *  rejects after writing the refusal into `status`. */
-type Connect = (host: string, token: string, status: HTMLElement) => Promise<string | null>;
+/** The pane's two lines: progress under the row, and the row's own error line for a refusal. */
+interface Lines {
+  note: (text: string) => void;
+  refuse: (why: string) => void;
+}
+
+/** Connects with the host and token read once per press. Resolves to the id of the connection the server saved, or
+ *  null when the request was cancelled or refused, after `lines` says which. */
+type Connect = (host: string, token: string, lines: Lines) => Promise<string | null>;
 
 export function renderPATForm(
   hostEl: HTMLElement,
@@ -82,8 +86,8 @@ export function renderPATForm(
   hostEl.appendChild(helpEl);
   hostEl.appendChild(el("p", { className: "forge-help forge-scopes" }, PAT_SCOPES[kind]));
   hostEl.appendChild(
-    tokenForm(slot, target, deps, (host, token, status) =>
-      connectAs({ kind, host, token, options: target.options() }, status),
+    tokenForm(slot, target, deps, (host, token, lines) =>
+      connectAs({ kind, host, token, options: target.options() }, lines),
     ),
   );
 }
@@ -98,124 +102,105 @@ export function renderDetectForm(
 ): void {
   hostEl.replaceChildren(
     el("p", { className: "forge-help forge-scopes" }, ANY_FORGE_SCOPES),
-    tokenForm(slot, target, deps, (host, token, status) =>
-      detectThenConnect(host, token, target.options(), status),
+    tokenForm(slot, target, deps, (host, token, lines) =>
+      detectThenConnect(host, token, target.options(), lines),
     ),
   );
 }
 
+let tokenForms = 0;
+
+/** The token row, plus a progress line under it. The pane's `+` opener closes it, so the row carries no Cancel. */
 function tokenForm(
   slot: HTMLElement,
   target: ConnectionTarget,
   deps: PATFormDeps,
   connect: Connect,
-): HTMLFormElement {
-  const form = el("form", { className: "forge-pat-form" }) as HTMLFormElement;
-
+): DocumentFragment {
   const tokenInput = el("input", {
     type: "password",
-    placeholder: "token",
-    className: "tool-form-input",
-    "aria-label": "Personal access token",
+    placeholder: "personal access token",
     autocomplete: "off",
-    required: true,
   }) as HTMLInputElement;
-  form.appendChild(tokenInput);
-
-  const status = el("div", { className: "forge-card-status", "aria-live": "polite" });
-  form.appendChild(status);
-
-  const submit = el(
-    "button",
-    { type: "submit", className: "btn-small btn-primary" },
-    "Connect",
-  ) as HTMLButtonElement;
-  form.appendChild(submit);
-
-  const cancel = el("button", { type: "button", className: "btn-small" }, "Cancel");
-  cancel.addEventListener("click", () => {
-    deps.closeSlot(slot);
+  tokenForms += 1;
+  const form = buildAddForm({
+    fields: [{ label: "Token", control: tokenInput }],
+    label: "Connect",
+    ariaLabel: "Connect with a token",
+    errorId: `forge-token-error-${String(tokenForms)}`,
   });
-  form.appendChild(cancel);
+  form.dataset["forgeToken"] = "";
+  const status = el("div", { className: "forge-card-status", "aria-live": "polite" });
 
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const host = target.host();
-    const token = tokenInput.value.trim();
-    if (host === "" || token === "") {
-      setLine(status, "Both host and token are required.", "err");
-      return;
-    }
-    setLine(status, "");
-    void withAsyncFeedback(
-      submit,
-      async () => {
-        const id = await connect(host, token, status);
-        if (id === null) {
-          return;
-        }
+  const row = wireAddForm(form, {
+    refuse: () => (target.host() === "" ? "Enter the server's host." : null),
+    refuses: target.hostInput,
+    onSubmit: async () => {
+      const lines: Lines = {
+        note: (text) => {
+          status.textContent = text;
+        },
+        refuse: (why) => {
+          status.textContent = "";
+          row.setError(why, tokenInput);
+        },
+      };
+      lines.note("");
+      row.setError(null);
+      const id = await connect(target.host(), tokenInput.value.trim(), lines);
+      if (id !== null) {
         tokenInput.value = "";
         deps.connected(slot, id);
-      },
-      { keepLabel: true },
-    );
+      }
+    },
   });
 
-  return form;
+  const frag = document.createDocumentFragment();
+  frag.append(form, status);
+  return frag;
 }
 
-/** Connect, landing the outcome in `status`: the saved connection's id, or null
- *  when cancelled. Rejects on a refusal so the button's feedback shows it. */
 async function connectAs(
   args: Parameters<typeof connectPAT.dispatch>[0],
-  status: HTMLElement,
+  lines: Lines,
 ): Promise<string | null> {
-  // The framework's error toast is suppressed (error: false), so this status line is the only failure surface.
+  // The framework's error toast is suppressed (error: false), so the row's error line is the only failure surface.
   const o = await connectPAT.dispatch(args).outcome;
   if (o.status === "cancelled") {
-    setLine(status, "");
+    lines.note("");
     return null;
   }
   if (o.status === "error") {
-    return refuse(status, o.error.message);
+    lines.refuse(o.error.message);
+    return null;
   }
   if (o.value.forge_id === "") {
-    return refuse(status, "the server answered no connection id");
+    lines.refuse("the server answered no connection id");
+    return null;
   }
-  setLine(status, "Connected.", "ok");
   return o.value.forge_id;
-}
-
-function refuse(status: HTMLElement, why: string): never {
-  setLine(status, why, "err");
-  throw new Error(why);
 }
 
 async function detectThenConnect(
   host: string,
   token: string,
   options: ConnectionOptions,
-  status: HTMLElement,
+  lines: Lines,
 ): Promise<string | null> {
   const o = await detectForge.dispatch({ host, token, options }).outcome;
   if (o.status === "cancelled") {
-    setLine(status, "");
+    lines.note("");
     return null;
   }
   if (o.status === "error") {
-    const refusal =
+    lines.refuse(
       o.error.code === "family_undetected"
         ? `${host} did not answer as a supported forge (GitHub, GitLab, Gitea or Forgejo). Check the address.`
-        : o.error.message;
-    setLine(status, refusal, "err");
-    throw new Error(refusal);
+        : o.error.message,
+    );
+    return null;
   }
   const kind = o.value.kind;
-  setLine(status, `${kindTitle(kind)} found. Connecting...`);
-  return connectAs({ kind, host, token, options }, status);
-}
-
-function setLine(status: HTMLElement, text: string, kind: "ok" | "err" | "" = ""): void {
-  status.textContent = text;
-  status.className = kind === "" ? "forge-card-status" : `forge-card-status ${kind}`;
+  lines.note(`${kindTitle(kind)} found. Connecting...`);
+  return connectAs({ kind, host, token, options }, lines);
 }

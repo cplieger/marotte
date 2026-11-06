@@ -672,7 +672,6 @@ const reposRenderDeps: ReposRenderDeps = {
 };
 
 const patDeps: PATFormDeps = {
-  closeSlot,
   connected: onConnected,
 };
 

@@ -391,10 +391,6 @@ function buildKnowledgeForm(): HTMLFormElement {
     id: "knowledge-add-name",
     autocomplete: "off",
   }) as HTMLInputElement;
-  const cancel = el("button", { type: "button", className: "btn" }, "Cancel") as HTMLButtonElement;
-  cancel.addEventListener("click", () => {
-    hideAddForm();
-  });
   const form = buildAddForm({
     fields: [
       { label: "Directory", control: pathInput, size: "grow" },
@@ -404,13 +400,10 @@ function buildKnowledgeForm(): HTMLFormElement {
     ariaLabel: "Add a knowledge base",
     id: "knowledge-add-form",
     errorId: "knowledge-add-error",
-    trailing: cancel,
   });
   form.hidden = true;
   const row = wireAddForm(form, {
-    onSubmit: () => {
-      void onAdd(pathInput, nameInput, row);
-    },
+    onSubmit: () => onAdd(pathInput, nameInput, row),
   });
   registerCleanup(
     bindLoadingState("knowledge.add", row.button, { disabledFn: () => row.blocked() }),
@@ -426,8 +419,8 @@ async function onAdd(
   row.setError(null);
   const path = pathInput.value.trim();
   const name = nameInput.value.trim();
-  // `error: false` keeps this off the toasts, so the field is the only surface for the server's message, carried only by
-  // the typed outcome.
+  // `error: false` keeps this off the toasts, so the row's error line is the only surface for the server's message,
+  // carried only by the typed outcome.
   const out = await addKnowledge.dispatch({ path, name }).outcome;
   const label = name !== "" ? name : path;
   if (out.status !== "success") {
@@ -445,7 +438,6 @@ async function onAdd(
   showToast(`Indexing "${label}" in the background…`, "success");
   pathInput.value = "";
   nameInput.value = "";
-  row.sync();
   hideAddForm();
   loadKnowledge();
 }

@@ -787,28 +787,45 @@ interface ToolListRow {
   submit: () => void;
 }
 
-/** Each section's add row, wired on its first open. */
-const toolListRows = new WeakMap<ToolListSection, ToolListRow>();
+/** Each add row, wired on its form's first open. */
+const toolListRows = new WeakMap<HTMLFormElement, ToolListRow>();
+
+function formOf(cfg: ToolListSection, input: HTMLInputElement): HTMLFormElement {
+  if (input.form === null) {
+    throw new Error(`#${cfg.inputID} is not in its add form`);
+  }
+  return input.form;
+}
 
 function toolListRow(cfg: ToolListSection, input: HTMLInputElement): ToolListRow {
-  const known = toolListRows.get(cfg);
+  const form = formOf(cfg, input);
+  const known = toolListRows.get(form);
   if (known !== undefined) {
     return known;
-  }
-  const form = input.form;
-  if (form === null) {
-    throw new Error(`#${cfg.inputID} is not in its add form`);
   }
   const entry: ToolListRow = {
     row: wireAddForm(form, {
       onSubmit: () => {
         entry.submit();
       },
+      refuse: () => alreadyListed(cfg, input),
     }),
     submit: () => undefined,
   };
-  toolListRows.set(cfg, entry);
+  toolListRows.set(form, entry);
   return entry;
+}
+
+function alreadyListed(cfg: ToolListSection, input: HTMLInputElement): string | null {
+  return cfg.read().includes(input.value.trim()) ? "Already blocked." : null;
+}
+
+/** Re-check the typed name after the list changed under it (a chip removed, a suggestion taken). */
+function recheckToolInput(cfg: ToolListSection): void {
+  const input = byId<HTMLInputElement>(cfg.inputID);
+  const row = toolListRows.get(formOf(cfg, input))?.row;
+  row?.setError(alreadyListed(cfg, input), input);
+  row?.sync();
 }
 
 function initToolListSection(cfg: ToolListSection, server: Server | null): void {
@@ -837,9 +854,6 @@ function initToolListSection(cfg: ToolListSection, server: Server | null): void 
     const name = input.value.trim();
     input.value = "";
     entry.row.sync();
-    if (cfg.read().includes(name)) {
-      return;
-    }
     cfg.write([...cfg.read(), name]);
     renderToolChips(cfg, chips, section, knownTools);
     renderToolSuggestions(cfg, section, knownTools, chips);
@@ -870,6 +884,7 @@ function renderToolSuggestions(
         cfg.write([...cfg.read(), name]);
         renderToolChips(cfg, chips, section, knownTools);
         renderToolSuggestions(cfg, section, knownTools, chips);
+        recheckToolInput(cfg);
       }
     });
     suggestionsEl.appendChild(pill);
@@ -895,6 +910,7 @@ function renderToolChips(
           cfg.write(cfg.read().filter((n) => n !== name));
           renderToolChips(cfg, container, section, knownTools);
           renderToolSuggestions(cfg, section, knownTools, container);
+          recheckToolInput(cfg);
         },
       }),
     );

@@ -70,8 +70,8 @@ async function catchUp(): Promise<void> {
   paintError(["Saved, but the newest list could not be loaded. ", retry]);
 }
 
-/** Sends next as the whole list; a refusal keeps the list and shows the server's reason beside the
- *  field. On success the panel adopts the settings the write committed rather than painting next:
+/** Sends next as the whole list; a refusal keeps the list and shows the server's reason on the add
+ *  row's error line. On success the panel adopts the settings the write committed rather than painting next:
  *  the server decides which kept entries it grants, and removing one entry can change another's verdict.
  *  An answer the page does not adopt gives way to the newest settings (catchUp). */
 async function save(next: readonly string[]): Promise<boolean> {
@@ -174,11 +174,10 @@ export function initAgentDirsUI(): void {
         row?.sync();
         return;
       }
-      void save([...dirs, val]).then((ok) => {
+      return save([...dirs, val]).then((ok) => {
         if (ok) {
           field.value = "";
         }
-        row?.sync();
         field.focus();
       });
     },

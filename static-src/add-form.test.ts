@@ -3,7 +3,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { fill } from "./__test-helpers__/add-forms.js";
 import { buildAddForm, wireAddForm } from "./add-form.js";
 
-function row(opts: { refuse?: () => string | null; busy?: () => boolean } = {}) {
+function row(
+  opts: {
+    refuse?: () => string | null;
+    busy?: () => boolean;
+    onSubmit?: () => unknown;
+  } = {},
+) {
   const required = document.createElement("input");
   const optional = document.createElement("input");
   const form = buildAddForm({
@@ -21,6 +27,7 @@ function row(opts: { refuse?: () => string | null; busy?: () => boolean } = {}) 
     ...opts,
     onSubmit: () => {
       submits.push(required.value);
+      return opts.onSubmit?.();
     },
   });
   const error = form.querySelector("output")!;
@@ -80,6 +87,30 @@ describe("submitting", () => {
     fill(required, "docs");
     form.requestSubmit();
     expect(submits).toEqual(["docs"]);
+  });
+
+  it("holds the button disabled while a returned save is in flight, whatever is typed", async () => {
+    let settle = (): void => undefined;
+    const { ctl, form, required, optional, submits } = row({
+      onSubmit: () =>
+        new Promise<void>((resolve) => {
+          settle = resolve;
+        }),
+    });
+    fill(required, "docs");
+    form.requestSubmit();
+    expect(ctl.button.disabled).toBe(true);
+    expect(ctl.button.getAttribute("aria-busy")).toBe("true");
+    fill(required, "docs2");
+    fill(optional, "name");
+    expect(ctl.button.disabled).toBe(true);
+    form.requestSubmit();
+    expect(submits).toEqual(["docs"]);
+    settle();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ctl.button.disabled).toBe(false);
+    expect(ctl.button.hasAttribute("aria-busy")).toBe(false);
   });
 
   it("does nothing while blocked, even when the form is submitted directly", () => {

@@ -7,7 +7,9 @@ import { page as browserPage } from "vitest/browser";
 import indexHtml from "../static/index.html?raw";
 import { manifestSheets, mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { forgeRow } from "./__test-helpers__/forge-rows.js";
+import { renderConnectionTarget } from "./forge-auth-connection.js";
 import { buildOwnerScopes } from "./forge-auth-owners.js";
+import { renderPATForm } from "./forge-auth-pat.js";
 import { initKnowledge } from "./knowledge.js";
 
 interface Adder {
@@ -17,8 +19,6 @@ interface Adder {
   /** The fields the button stays disabled without. */
   readonly required: readonly string[];
   readonly label: string;
-  /** A button allowed between the add button and the error line. */
-  readonly trailing?: string;
 }
 
 const ADDERS: readonly Adder[] = [
@@ -59,11 +59,16 @@ const ADDERS: readonly Adder[] = [
     label: "Add owner",
   },
   {
+    name: "Sources, Add an account's token",
+    fields: ["form[data-forge-token] input[type='password']"],
+    required: ["form[data-forge-token] input[type='password']"],
+    label: "Connect",
+  },
+  {
     name: "Knowledge bases",
     fields: ["#knowledge-add-path", "#knowledge-add-name"],
     required: ["#knowledge-add-path"],
     label: "Add knowledge base",
-    trailing: "Cancel",
   },
   {
     name: "MCP Disabled tools",
@@ -90,6 +95,7 @@ const WIDTHS = {
 /** `--ctl-h-dense`, stated so a token retune fails here. */
 const CTL_H_DENSE = 32;
 
+const ctx = document.createElement("canvas").getContext("2d")!;
 const shipped = new DOMParser().parseFromString(indexHtml, "text/html");
 const host = document.createElement("div");
 let style: HTMLStyleElement;
@@ -111,6 +117,11 @@ beforeAll(() => {
   const owners = buildOwnerScopes(forgeRow()) as HTMLDetailsElement;
   owners.open = true;
   host.append(owners);
+  const pane = document.createElement("div");
+  renderPATForm(pane, "github", pane, renderConnectionTarget("github"), {
+    connected: () => undefined,
+  });
+  host.append(pane);
   document.body.append(host);
   initKnowledge();
   document.querySelector<HTMLButtonElement>("#knowledge-add-btn")!.click();
@@ -173,13 +184,9 @@ describe.each(ADDERS)("$name", (a) => {
     for (const [i, label] of fields.entries()) {
       expect(label, `${a.fields[i]!} is the wrapper's child`).toBe(wrap?.children[i]);
     }
-    const trailing = a.trailing === undefined ? [] : [kids[2]];
-    expect(kids.slice(1), "then the button, any trailing button and the error line").toEqual([
-      button,
-      ...trailing,
-      errorOf(form),
-    ]);
     expect(kids[1], "the submit follows the fields").toBe(button);
+    expect(kids[2], "the error line follows the submit").toBe(errorOf(form));
+    expect(kids.length, "nothing else in the row").toBe(3);
     for (const [i, label] of fields.entries()) {
       expect(label?.classList.contains("rf-field"), `${a.fields[i]!} is in a label.rf-field`).toBe(
         true,
@@ -198,9 +205,6 @@ describe.each(ADDERS)("$name", (a) => {
         `${cs.borderTopStyle} ${cs.borderTopWidth}`,
         `${a.fields[i]!} paints the theme border`,
       ).toBe("solid 1px");
-    }
-    if (a.trailing !== undefined) {
-      expect(kids[2]?.textContent.trim()).toBe(a.trailing);
     }
   });
 
@@ -238,38 +242,28 @@ describe.each(Object.entries(WIDTHS))("at %s width", (_width, w) => {
     host.style.inlineSize = `${String(w.host)}px`;
   });
 
-  describe.each(ADDERS.filter((a) => a.trailing === undefined))("$name, one button", (a) => {
-    it("keeps its button beside its last field", () => {
-      const button = submitOf(formOf(a)).getBoundingClientRect();
-      const last = field(a.fields.at(-1)!).getBoundingClientRect();
-      expect(button.left).toBeGreaterThanOrEqual(last.right);
-      expect(button.top + button.height / 2).toBeCloseTo(last.top + last.height / 2, 0);
-    });
-  });
-
   describe.each(ADDERS)("$name", (a) => {
-    it("keeps its fields at least 10rem wide", () => {
-      const form = formOf(a);
-      const fields = form.querySelector(".add-form-fields")!.getBoundingClientRect();
-      expect(fields.width).toBeGreaterThanOrEqual(
-        Math.min(160, form.getBoundingClientRect().width) - 0.5,
-      );
+    it("leaves every field room for its whole placeholder", () => {
+      formOf(a);
+      for (const s of a.fields) {
+        const f = field(s);
+        if (!(f instanceof HTMLInputElement) || f.placeholder === "") {
+          continue;
+        }
+        const cs = getComputedStyle(f);
+        ctx.font = cs.font;
+        const room = f.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+        expect(room, `${s} shows "${f.placeholder}"`).toBeGreaterThanOrEqual(
+          ctx.measureText(f.placeholder).width,
+        );
+      }
     });
 
-    it("paints its button --ctl-h-dense tall, beside its last field or under the fields at the end", () => {
+    it("paints its button --ctl-h-dense tall, beside its last field and centred on it", () => {
       const form = formOf(a);
       const button = submitOf(form).getBoundingClientRect();
       const last = field(a.fields.at(-1)!).getBoundingClientRect();
-      const fields = form.querySelector(".add-form-fields")!.getBoundingClientRect();
       expect(button.height, "the dense control height on every tier").toBeCloseTo(CTL_H_DENSE, 0);
-      if (button.top >= fields.bottom) {
-        const end = form.lastElementChild!.previousElementSibling!.getBoundingClientRect();
-        expect(end.right, "a wrapped row ends at the form's inline end").toBeCloseTo(
-          form.getBoundingClientRect().right,
-          0,
-        );
-        return;
-      }
       expect(button.left, "the button follows its last field").toBeGreaterThanOrEqual(last.right);
       expect(
         button.top + button.height / 2,
@@ -297,6 +291,22 @@ describe.each(Object.entries(WIDTHS))("at %s width", (_width, w) => {
         error.textContent = "";
       }
     });
+  });
+});
+
+describe("ADDERS", () => {
+  const describeNode = (n: Element): string =>
+    `${n.tagName.toLowerCase()}#${n.id}.${[...n.classList].join(".")} "${n.textContent.trim().slice(0, 40)}"`;
+
+  it("names every form and every submit button the mounted surfaces show", () => {
+    const forms = new Set(ADDERS.map(formOf));
+    const submits = new Set([...forms].map(submitOf));
+    const strayForms = [...host.querySelectorAll("form")].filter((f) => !forms.has(f));
+    const straySubmits = [...host.querySelectorAll("button")].filter(
+      (b) => b.type === "submit" && !submits.has(b),
+    );
+    expect(strayForms.map(describeNode), "a form outside ADDERS").toEqual([]);
+    expect(straySubmits.map(describeNode), "a submit button outside ADDERS").toEqual([]);
   });
 });
 

@@ -2,8 +2,9 @@
    Knowledge bases (Settings → Instructions)
 
    The list reuses the generic .list-* + .page-section + .action-pill classes;
-   this slice only adds the inline add-form, the enable hint, and the live
-   indexing progress bar. Unlayered (like the other component slices) so it
+   this slice only adds the enable hint, the item-count meta, and the live
+   indexing progress bar. The add row is the shared .add-form
+   (17-settings.css). Unlayered (like the other component slices) so it
    wins over the layered base by source order. Reduced-motion is handled
    globally in 40-a11y.css (the progress-bar width transition degrades there).
    ========================================================================== */

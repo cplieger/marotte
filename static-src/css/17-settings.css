@@ -630,17 +630,6 @@
   gap: var(--sp-2);
 }
 
-.forge-pat-form {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-2);
-  align-items: center;
-}
-
-.forge-pat-form .tool-form-input {
-  flex: 1 1 12rem;
-}
-
 .forge-help {
   margin: 0;
   font-size: var(--fs-xs);
@@ -1602,32 +1591,19 @@ select.native-rule-effect:focus-visible {
 
 /* --- Add rows (.add-form, built by add-form.ts) ----------------------------
  * Every Settings adder: its labelled fields wrap inside .add-form-fields, the
- * submit (and an optional Cancel) follows the last field on its line, and the
- * error line takes a row of its own. The fields never narrow under 10rem: when
- * the buttons cannot sit beside them they move under the fields, at the inline
- * end. Free space goes to the fields first, so the auto margin acts only then. */
+ * submit follows the last field on its line, and the error line takes a row of
+ * its own. A grid column, not a wrapping flex item, so the button can never
+ * drop under the fields. */
 .add-form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
+  container: add-form / inline-size;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
   gap: var(--sp-2) var(--sp-3);
   margin-block: var(--sp-2);
 
   &[hidden] {
     display: none;
-  }
-
-  & > .add-form-fields {
-    flex: 1 1 10rem;
-  }
-
-  /* Room for both buttons: below it, they move under the fields together. */
-  &:has(> .btn ~ .btn) > .add-form-fields {
-    flex-basis: 14rem;
-  }
-
-  & > .btn:first-of-type {
-    margin-inline-start: auto;
   }
 }
 
@@ -1651,11 +1627,27 @@ select.native-rule-effect:focus-visible {
   }
 }
 
+/* Too narrow for two fields on a line: each field takes the full row and only
+   the last shares its row with the button, so earlier fields keep the width
+   the button column would take. */
+@container add-form (inline-size < 30rem) {
+  .add-form-fields {
+    display: contents;
+
+    & > .rf-field {
+      grid-column: 1 / -1;
+    }
+
+    & > .rf-field:last-child {
+      grid-column: 1;
+    }
+  }
+}
+
 /* The dense row action beside a dense field: centred on the last field, whose
    height follows the pointer tier while the button's does not. `padding-block: 0`
    holds it on 32px, since .btn's padding plus the label's line box is 33. */
 .add-form > .btn {
-  flex: none;
   min-block-size: var(--ctl-h-dense);
   padding-block: 0;
   margin-block-end: calc((var(--field-h-dense) - var(--ctl-h-dense)) / 2);
@@ -1664,7 +1656,7 @@ select.native-rule-effect:focus-visible {
 }
 
 .rf-error {
-  flex: 1 0 100%;
+  grid-column: 1 / -1;
   color: var(--c-red);
 
   &:empty {

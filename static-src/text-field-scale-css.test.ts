@@ -269,8 +269,8 @@ describe("the controls, measured over the shipped markup", () => {
       expect(formTierSelectors(token).length, `${token} has consumers`).toBeGreaterThan(0);
     }
 
-    // The PEER consumers are a closed set: two of the three rows are built by JS, so the measured case
-    // cannot reach them and this source contract is the only guard.
+    // The PEER consumers are a closed set: some of their rows are built by JS (the knowledge, owner and token
+    // add rows), so the measured case cannot reach them and this source contract is the only guard.
     expect(formTierSelectors("--fs-form-peer").sort()).toEqual([
       ".add-form > .btn",
       ".filepicker-footer .btn-save",

@@ -367,9 +367,7 @@ class NativePolicyController {
     }
     const ruleRow = wireAddForm(ruleForm, {
       busy: () => this.locked,
-      onSubmit: () => {
-        void this.addRule();
-      },
+      onSubmit: () => this.addRule(),
     });
     this.addRow = ruleRow;
     maybeEl<HTMLButtonElement>("security-profile-customize")?.addEventListener("click", () => {
@@ -378,9 +376,7 @@ class NativePolicyController {
     const explainForm = maybeEl<HTMLButtonElement>("native-explain-run")?.form ?? null;
     if (explainForm !== null) {
       this.explainRow = wireAddForm(explainForm, {
-        onSubmit: () => {
-          void this.runExplain();
-        },
+        onSubmit: () => this.runExplain(),
       });
     }
     registerCleanup(
@@ -839,9 +835,6 @@ class NativePolicyController {
     const effect = maybeEl<HTMLSelectElement>("native-rule-effect")?.value ?? "ask";
     const match = splitGlobs(maybeEl<HTMLInputElement>("native-rule-match")?.value ?? "");
     const exclude = splitGlobs(maybeEl<HTMLInputElement>("native-rule-exclude")?.value ?? "");
-    if (capability === "") {
-      return;
-    }
     this.addRow?.setError(null);
     const res = await editNativeRule.dispatch({
       op: "add",
@@ -899,7 +892,7 @@ class NativePolicyController {
     const capability = maybeEl<HTMLSelectElement>("native-explain-capability")?.value ?? "";
     const resource = (maybeEl<HTMLInputElement>("native-explain-resource")?.value ?? "").trim();
     const out = maybeEl("native-explain-result");
-    if (capability === "" || out === null) {
+    if (out === null) {
       return;
     }
     out.textContent = "";

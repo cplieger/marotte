@@ -360,3 +360,30 @@ describe("the npm panel's copy", () => {
     expect(document.querySelectorAll(".mcp-npm-alt")).toHaveLength(1);
   });
 });
+
+describe("the Disabled tools add row", () => {
+  it("keeps a tool that is already blocked in the field and says so on the row", async () => {
+    const { setEditing, initModal, editModeFor } = await import("./mcp-panels.js");
+    const s = record({ command: "uvx", args: ["mcp-server-git"], disabled_tools: ["dangerous"] });
+    setEditing({ id: s.id });
+    initModal({ mode: editModeFor(s), server: s });
+
+    const input = document.getElementById("mcp-disabled-input") as HTMLInputElement;
+    const add = document.getElementById("mcp-disabled-add") as HTMLButtonElement;
+    const error = document.getElementById("mcp-disabled-error");
+    input.value = " dangerous ";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(add.disabled, "Block tool on an already-blocked name").toBe(true);
+    expect(error?.textContent).toBe("Already blocked.");
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    input.form?.requestSubmit();
+    expect(input.value, "the typed name stays").toBe(" dangerous ");
+    expect(document.querySelectorAll("#mcp-disabled-chips .chip")).toHaveLength(1);
+
+    document.querySelector<HTMLButtonElement>("#mcp-disabled-chips .chip-remove")?.click();
+    expect(add.disabled, "Block tool once the name is unblocked").toBe(false);
+    expect(error?.textContent).toBe("");
+    expect(input.hasAttribute("aria-invalid")).toBe(false);
+  });
+});

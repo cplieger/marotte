@@ -6,17 +6,20 @@ import { el } from "@cplieger/ui";
 type Field = HTMLInputElement | HTMLSelectElement;
 
 export interface AddFormOptions {
-  readonly onSubmit: () => void;
+  /** A returned promise holds the button disabled until it settles, whatever is typed meanwhile. */
+  readonly onSubmit: () => unknown;
   /** Why the client refuses the values as typed, or null; shown on the error line while it holds. */
   readonly refuse?: () => string | null;
-  /** True while the row must not submit: a save in flight, a lock. */
+  /** The field a refusal names, inside the form or not; its edits re-check the row. The first required one when unset. */
+  readonly refuses?: Field;
+  /** True while the row must not submit for a reason outside its own save, such as a lock. */
   readonly busy?: () => boolean;
 }
 
 export interface AddForm {
   readonly form: HTMLFormElement;
   readonly button: HTMLButtonElement;
-  /** True when a press would do nothing: a required field empty, a refusal, or busy. */
+  /** True when a press would do nothing: a required field empty, a refusal, busy, or a submit in flight. */
   blocked(): boolean;
   /** Repaint the button after a change no input event announces (a value set by code, a lock). */
   sync(): void;
@@ -36,10 +39,13 @@ export function wireAddForm(form: HTMLFormElement, opts: AddFormOptions): AddFor
     throw new Error("an .add-form needs a submit button and an output.rf-error");
   }
   const required = (): Field[] => fieldsOf(form).filter((f) => f.required);
+  let pending = false;
+  let marked: Field | undefined;
   const control: AddForm = {
     form,
     button,
     blocked: () =>
+      pending ||
       required().some((f) => f.value.trim() === "") ||
       (opts.refuse?.() ?? null) !== null ||
       (opts.busy?.() ?? false),
@@ -54,24 +60,38 @@ export function wireAddForm(form: HTMLFormElement, opts: AddFormOptions): AddFor
       } else {
         error.replaceChildren(...message);
       }
-      for (const f of fieldsOf(form)) {
-        f.removeAttribute("aria-invalid");
+      for (const f of [...fieldsOf(form), marked]) {
+        f?.removeAttribute("aria-invalid");
       }
-      if (message !== null) {
-        field?.setAttribute("aria-invalid", "true");
-      }
+      marked = message === null ? undefined : field;
+      marked?.setAttribute("aria-invalid", "true");
     },
   };
   const onEdit = (): void => {
-    control.setError(opts.refuse?.() ?? null, required()[0]);
+    control.setError(opts.refuse?.() ?? null, opts.refuses ?? required()[0]);
     control.sync();
   };
   form.addEventListener("input", onEdit);
   form.addEventListener("change", onEdit);
+  if (opts.refuses !== undefined && opts.refuses.form !== form) {
+    opts.refuses.addEventListener("input", onEdit);
+  }
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    if (!control.blocked()) {
-      opts.onSubmit();
+    if (control.blocked()) {
+      return;
+    }
+    const result = opts.onSubmit();
+    if (result instanceof Promise) {
+      // aria-busy keeps the disabled button at full ink with a progress cursor (40-a11y.css).
+      pending = true;
+      button.setAttribute("aria-busy", "true");
+      control.sync();
+      void result.finally(() => {
+        pending = false;
+        button.removeAttribute("aria-busy");
+        control.sync();
+      });
     }
   });
   control.sync();
@@ -89,13 +109,11 @@ interface AddFieldSpec {
 
 export interface AddFormSpec {
   readonly fields: readonly AddFieldSpec[];
-  /** The button's text, "Add" and the noun the row creates. */
+  /** The button's text: a verb and the noun the row creates, or the list's own verb ("Block tool", "Test"). */
   readonly label: string;
   readonly ariaLabel: string;
   readonly id?: string;
   readonly errorId: string;
-  /** A button after the submit, such as Cancel. */
-  readonly trailing?: HTMLButtonElement;
 }
 
 /** Build a `.add-form` row in the shape index.html writes by hand; wire it with wireAddForm. */
@@ -129,7 +147,6 @@ export function buildAddForm(spec: AddFormSpec): HTMLFormElement {
     },
     el("div", { className: "add-form-fields" }, ...labels),
     button,
-    ...(spec.trailing === undefined ? [] : [spec.trailing]),
     error,
   ) as HTMLFormElement;
 }
