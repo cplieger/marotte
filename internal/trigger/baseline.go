@@ -19,8 +19,12 @@ func (pr *pollRule) baselineLabeled(rc *repoCursor, items []item) {
 			continue
 		}
 		state := labelNo
-		if pr.hasLabel(&items[i]) {
+		switch {
+		case pr.hasLabel(&items[i]):
 			state = labelYes
+		case items[i].cut:
+			state = labelUnknown
+			pr.logCut(&items[i])
 		}
 		lc.Items[items[i].number] = &labelEntry{HasLabel: state, LastSeen: pr.start}
 	}

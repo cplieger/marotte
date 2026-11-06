@@ -1,10 +1,14 @@
 package trigger
 
-import "time"
+import (
+	"log/slog"
+	"time"
+)
 
 // applyLabeled diffs one walk of the open items against the labeled cursor: the label read present over
 // has_label false, or over no entry, is a gain and fires; present over unknown settles it silently; absent sets
-// has_label false. An entry the walk did not read is left as it was.
+// has_label false. An entry the walk did not read is left as it was, and so is one whose row may be cut and
+// lacks the label, so a cut set never reads as a removal followed by a gain.
 func (pr *pollRule) applyLabeled(items []item, complete bool) {
 	rc := pr.repoCursor()
 	if rc.Labeled == nil {
@@ -23,12 +27,20 @@ func (pr *pollRule) applyLabeled(items []item, complete bool) {
 			continue
 		}
 		e := rc.Labeled.Items[it.number]
+		present := pr.hasLabel(it)
+		if !present && it.cut {
+			pr.logCut(it)
+			if e != nil {
+				e.LastSeen = pr.start
+			}
+			continue
+		}
 		if e == nil {
 			e = &labelEntry{HasLabel: labelNo}
 			rc.Labeled.Items[it.number] = e
 		}
 		e.LastSeen = pr.start
-		if !pr.hasLabel(it) {
+		if !present {
 			e.HasLabel = labelNo
 			continue
 		}
@@ -59,4 +71,8 @@ func (pr *pollRule) mint() time.Time {
 		pr.st.raw.Status.LastMinted = pr.gain
 	}
 	return pr.gain
+}
+
+func (pr *pollRule) logCut(it *item) {
+	slog.Debug(logMsgLabelsCut, append(pr.attrs(), "item", it.number, "omitted_at_least", it.omitted)...)
 }

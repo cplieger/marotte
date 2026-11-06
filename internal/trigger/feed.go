@@ -47,6 +47,8 @@ type Walk[T any] struct {
 	Items []T
 	// Calls counts the list calls the walk made.
 	Calls int
+	// lastFrom is where the rows of the walk's last call start in Items.
+	lastFrom int
 }
 
 // Complete reports whether the walk read the whole list: no error and no partial page.
@@ -67,6 +69,7 @@ func walk[T any](call func(after forgeapi.Cursor) (forgeapi.Page[T], error)) Wal
 			w.Err = err
 			return w
 		}
+		w.lastFrom = len(w.Items)
 		w.Items = append(w.Items, page.Items...)
 		w.Partial = page.Partial
 		if page.Partial == nil {

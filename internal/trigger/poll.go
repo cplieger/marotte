@@ -216,8 +216,8 @@ func (pr *pollRule) apply(rd *reads) {
 		items := issueItems(rd.issues.Items)
 		pr.applyItems(items, rd.issues.Complete())
 	default:
-		items := prItems(rd.prs.Items)
-		pr.applyItems(items, rd.prs.Complete())
+		kind, _ := connectionParts(pr.feed.Connection)
+		pr.applyItems(prItems(rd.prs, kind == "gitlab"), rd.prs.Complete())
 	}
 }
 
@@ -245,6 +245,10 @@ type item struct {
 	target string
 	labels []forgeapi.Label
 	number int
+	// omitted is a cut row's lower bound on the labels it left out.
+	omitted int
+	// cut marks a row whose label set may be cut: an absent label on it is no observation.
+	cut bool
 }
 
 func issueItems(in []forgeapi.Issue) []item {
@@ -255,12 +259,24 @@ func issueItems(in []forgeapi.Issue) []item {
 	return out
 }
 
-func prItems(in []forgeapi.PullRequest) []item {
-	out := make([]item, 0, len(in))
-	for i := range in {
-		out = append(out, item{
-			number: in[i].Ref.Number, author: in[i].Author, labels: in[i].Labels, target: in[i].TargetBranch,
-		})
+// prItems reads a pull request walk's rows. A row's labels may be cut in exactly two cases: a GitLab row marked
+// PartialPaginationCap, where the marker means its label connection names a further page, and any row of a call
+// whose page is PartialGraphQLPartial, whose document answered data with errors forgeapi could not place on a row.
+// Every other row is whole, whatever its own marker: on GitHub and Gitea a row's PartialPaginationCap is the
+// check fold, and its labels are the whole set.
+func prItems(w *Walk[forgeapi.PullRequest], gitlab bool) []item {
+	pageCut := w.Partial != nil && w.Partial.Reason == forgeapi.PartialGraphQLPartial
+	out := make([]item, 0, len(w.Items))
+	for i := range w.Items {
+		p := &w.Items[i]
+		it := item{number: p.Ref.Number, author: p.Author, labels: p.Labels, target: p.TargetBranch}
+		switch {
+		case pageCut && i >= w.lastFrom:
+			it.cut, it.omitted = true, w.Partial.OmittedAtLeast
+		case gitlab && p.Partial != nil && p.Partial.Reason == forgeapi.PartialPaginationCap:
+			it.cut, it.omitted = true, p.Partial.OmittedAtLeast
+		}
+		out = append(out, it)
 	}
 	return out
 }
