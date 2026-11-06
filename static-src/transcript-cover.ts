@@ -156,7 +156,7 @@ export function holdCover(chatID: string): void {
  *  from `holdCover` because `inert` restyles every resident turn, which in a gesture's frame costs
  *  a 4x-throttled CPU about 50 ms of style; until it runs, the opaque cover takes the pointer. */
 export function inertUnderCover(): void {
-  // A cover already released is lifting; `inert` now would restyle the turns twice for nothing.
+  // A cover whose release is pending lifts within a frame; `inert` now would restyle the turns twice.
   if (holder !== "" && pendingRelease === null) {
     $.messagesWrap.inert = true;
   }

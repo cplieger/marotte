@@ -17,8 +17,7 @@ import { decodeTabList } from "./wire/decoders.gen.js";
 const OP_TTL_MS = 60_000;
 
 /** How long a close may stay unanswered before its op VERIFIES by re-listing (the removal stays applied). The op's
- *  own clock, because a dispatch can stay unsettled past its transport deadline (WebKit holds an active close's POST
- *  behind the successor's activation). */
+ *  own clock, because a dispatch has been seen unsettled past its transport deadline (WebKit, an active close). */
 export const CLOSE_CONFIRM_MS = 5000;
 
 /** Re-list backoff for a `verifying` remove, capped at the last entry. */
