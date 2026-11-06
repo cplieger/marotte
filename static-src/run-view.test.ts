@@ -226,11 +226,14 @@ vi.mock("./run-chat-steps.js", () => ({
         m.paint.set(path, {
           turns: list.length,
           live: list.map((p) => p.live),
-          // Each painted turn's close as `outcome/failure_kind`, the grade the pane is handed.
+          // Each painted turn's close as `outcome/failure_kind`, the grade the pane is handed, with
+          // `/declined` when it still carries a refusal.
           closes: list.map((p) => {
             const close = p.turn.body.find((e) => e.kind === "turn_close")?.payload as
-              { outcome: string; failure_kind?: string } | undefined;
-            return close === undefined ? undefined : `${close.outcome}/${close.failure_kind ?? ""}`;
+              { outcome: string; failure_kind?: string; refusal?: unknown } | undefined;
+            return close === undefined
+              ? undefined
+              : `${close.outcome}/${close.failure_kind ?? ""}${close.refusal === undefined ? "" : "/declined"}`;
           }),
         });
         const host = hostFor(path);
@@ -283,7 +286,14 @@ import { stepTranscriptVersion } from "./run-step-transcript.js";
 // The REAL invalidation (the run-store mock overrides only its launching-chat memory), so a case
 // can drive a second fetch of the SAME run: that is how a step settling under the reader's cursor
 // reaches the page in production.
-import { appendRunEntry, forgetRun, invalidateRun, openRunTurn } from "./run-store.js";
+import {
+  appendRunEntry,
+  forgetRun,
+  invalidateRun,
+  openRunTurn,
+  registerRunStateDemand,
+  rereadHeldRuns,
+} from "./run-store.js";
 // The REAL router: a zero-import leaf, so no mock, and taking the node from the PARSER rather than
 // a literal is what makes the fragment case below cover the
 import { parseRoute } from "./route-path.js";
@@ -2274,6 +2284,123 @@ describe("run view step transcripts", () => {
       body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1:grow"] .step-marker')
         ?.textContent,
     ).toBe("wf_1:grow:1:2");
+  });
+});
+
+// A step's grade is the run read's `step_ends` (the server records it once, in the run log), and
+// the step pane and the step tree both read it there, so one run read keeps them together.
+describe("a step's recorded grade", () => {
+  const root = (status: string): unknown => ({
+    nodeId: "wf_1",
+    type: "sequence",
+    status: "running",
+    children: [
+      { nodeId: "declined", type: "step", status, children: [] },
+      { nodeId: "limited", type: "step", status, children: [] },
+    ],
+  });
+  const limit = {
+    outcome: "failed",
+    failure_kind: "model_call_limit",
+    failure_reason: "kiro-cli stopped this step at its model-call limit for one turn.",
+  };
+  let unhold: (() => void) | undefined;
+
+  afterEach(() => {
+    unhold?.();
+    unhold = undefined;
+    forgetRun("wf_1");
+  });
+
+  function rowState(body: HTMLElement, path: string): string | null | undefined {
+    return body.querySelector(`.ev-row[data-path="${path}"]`)?.getAttribute("data-state");
+  }
+
+  async function until(done: () => boolean): Promise<void> {
+    for (let i = 0; i < 200 && !done(); i++) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 1);
+      });
+    }
+  }
+
+  /** Answer the next run read with `ends` as its `step_ends`, re-read the held runs, and wait for
+   *  the read to land. */
+  async function rereadWith(ends: Record<string, unknown>): Promise<void> {
+    const was = m.projected.length;
+    m.reply.current = { ...(m.reply.current as RunInspectReply), step_ends: ends } as RunInspectReply;
+    rereadHeldRuns();
+    await until(() => m.projected.length > was);
+  }
+
+  it("paints a refused step KAS completed as completed, with no declined note", async () => {
+    logStep("wf_1", "wf_1:declined", "no", {
+      close: { outcome: "refused", refusal: { category: "x" } },
+    });
+    const { body } = await paint(openRunView, "running", {
+      root: root("completed"),
+      stepEnds: { "wf_1:declined": { outcome: "completed" } },
+    });
+    await until(() => m.paint.has("wf_1:declined"));
+
+    expect(m.paint.get("wf_1:declined")?.closes).toEqual(["completed/"]);
+    expect(rowState(body, "wf_1:declined")).toBe("ok");
+  });
+
+  it("the pane and the tree follow the run re-read after a missed refused-but-completed grade", async () => {
+    unhold = registerRunStateDemand((id) => id === "wf_1");
+    logStep("wf_1", "wf_1:declined", "no", {
+      close: { outcome: "refused", refusal: { category: "x" } },
+    });
+    const { body } = await paint(openRunView, "running", {
+      root: root("completed"),
+      stepEnds: { "wf_1:declined": { outcome: "refused" } },
+    });
+    await until(() => m.paint.has("wf_1:declined"));
+    expect(m.paint.get("wf_1:declined")?.closes).toEqual(["refused//declined"]);
+    expect(rowState(body, "wf_1:declined")).toBe("fail");
+
+    await rereadWith({ "wf_1:declined": { outcome: "completed" } });
+    await until(() => rowState(body, "wf_1:declined") === "ok");
+
+    expect(m.paint.get("wf_1:declined")?.closes).toEqual(["completed/"]);
+    expect(rowState(body, "wf_1:declined")).toBe("ok");
+  });
+
+  it("the pane and the tree follow the run re-read after a missed model-call-limit grade", async () => {
+    unhold = registerRunStateDemand((id) => id === "wf_1");
+    logStep("wf_1", "wf_1:limited", "working", {
+      close: { outcome: "completed", stop_reason_raw: "tool_use" },
+    });
+    const { body } = await paint(openRunView, "running", { root: root("completed"), stepEnds: {} });
+    await until(() => m.paint.has("wf_1:limited"));
+    expect(m.paint.get("wf_1:limited")?.closes).toEqual(["completed/"]);
+    expect(rowState(body, "wf_1:limited")).toBe("ok");
+
+    await rereadWith({ "wf_1:limited": limit });
+    await until(() => rowState(body, "wf_1:limited") === "fail");
+
+    expect(m.paint.get("wf_1:limited")?.closes).toEqual(["failed/model_call_limit"]);
+    expect(rowState(body, "wf_1:limited")).toBe("fail");
+  });
+
+  it("a second re-read follows a grade the first did not carry yet", async () => {
+    unhold = registerRunStateDemand((id) => id === "wf_1");
+    logStep("wf_1", "wf_1:limited", "working", {
+      close: { outcome: "completed", stop_reason_raw: "tool_use" },
+    });
+    const { body } = await paint(openRunView, "running", { root: root("completed"), stepEnds: {} });
+    await until(() => m.paint.has("wf_1:limited"));
+
+    await rereadWith({});
+    expect(m.paint.get("wf_1:limited")?.closes).toEqual(["completed/"]);
+    expect(rowState(body, "wf_1:limited")).toBe("ok");
+
+    await rereadWith({ "wf_1:limited": limit });
+    await until(() => rowState(body, "wf_1:limited") === "fail");
+
+    expect(m.paint.get("wf_1:limited")?.closes).toEqual(["failed/model_call_limit"]);
+    expect(rowState(body, "wf_1:limited")).toBe("fail");
   });
 });
 

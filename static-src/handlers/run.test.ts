@@ -661,6 +661,29 @@ describe("a run's own log", () => {
     expect(invalidate).toHaveBeenLastCalledWith(RUN);
   });
 
+  it("refetches the run when a step's grade is recorded", () => {
+    const e = entry("step_graded" as string, { outcome: "completed" }, 3);
+
+    send("entry_appended", { workflow_id: RUN, entry: e }, "");
+
+    expect(runAppended).toHaveBeenCalledWith(RUN, e);
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenLastCalledWith(RUN);
+  });
+
+  it("leaves a completed tool_use close to its recorded grade", () => {
+    send(
+      "turn_closed",
+      {
+        workflow_id: RUN,
+        entry: entry("turn_close", { outcome: "completed", stop_reason_raw: "tool_use" }, 2),
+      },
+      "",
+    );
+
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
   it("leaves a frame carrying no workflow id to the chat's own handler", () => {
     // The other half of the partition, and the half that cannot be asserted from the
     // chat handler's suite: this module has to do NOTHING for a chat's log, or one frame

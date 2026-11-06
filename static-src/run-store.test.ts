@@ -1722,3 +1722,112 @@ describe("a run's log orders its turns by the run's own ordinal", () => {
     expect(store.runTurns("r-order").map(([id]) => id)).toEqual(["t-first", "t-second", "t-third"]);
   });
 });
+
+describe("rereadHeldRuns re-reads every run a reader holds", () => {
+  const unregisters: (() => void)[] = [];
+
+  function hold(...ids: string[]): void {
+    unregisters.push(store.registerRunStateDemand((id) => ids.includes(id)));
+  }
+
+  afterEach(async () => {
+    await settle();
+    for (const un of unregisters.splice(0)) {
+      un();
+    }
+    for (const id of ["wf_1", "wf_2", "wf_3"]) {
+      store.forgetRun(id);
+      store.noteRunSettled(id);
+    }
+  });
+
+  it("reads each held run once, and no run nobody holds", async () => {
+    await seedRun("wf_1", { workflowId: "wf_1", status: "running" });
+    await seedRun("wf_2", { workflowId: "wf_2", status: "running" });
+    hold("wf_1");
+
+    responses = [{ workflowId: "wf_1", status: "completed" }];
+    store.rereadHeldRuns();
+    await settle();
+
+    expect(fetches).toEqual(["/api/runs/wf_1"]);
+    expect(store.runState("wf_1")?.status).toBe("completed");
+  });
+
+  it("sends no read when no run is held", async () => {
+    await seedRun("wf_1", { workflowId: "wf_1", status: "running" });
+    store.rereadHeldRuns();
+    await settle();
+    expect(fetches).toEqual([]);
+
+    store.forgetRun("wf_1");
+    hold("wf_2");
+    store.rereadHeldRuns();
+    await settle();
+    expect(fetches).toEqual([]);
+  });
+
+  it("reads again on every call", async () => {
+    await seedRun("wf_1", { workflowId: "wf_1", status: "running" });
+    hold("wf_1");
+
+    responses = [{ workflowId: "wf_1", status: "running" }];
+    store.rereadHeldRuns();
+    await settle();
+    responses = [{ workflowId: "wf_1", status: "running" }];
+    store.rereadHeldRuns();
+    await settle();
+
+    expect(fetches).toEqual(["/api/runs/wf_1", "/api/runs/wf_1"]);
+  });
+
+  it("a call while a read is out adds one trailing read", async () => {
+    await seedRun("wf_1", { workflowId: "wf_1", status: "running" });
+    hold("wf_1");
+    responses = [
+      { workflowId: "wf_1", status: "running" },
+      { workflowId: "wf_1", status: "completed" },
+    ];
+
+    store.invalidateRun("wf_1");
+    store.rereadHeldRuns();
+    store.rereadHeldRuns();
+    await settle();
+    await settle();
+
+    expect(fetches).toEqual(["/api/runs/wf_1", "/api/runs/wf_1"]);
+    expect(store.runState("wf_1")?.status).toBe("completed");
+  });
+
+  it("readRunUnlessOut asks nothing while a read is out", async () => {
+    responses = [{ workflowId: "wf_1", status: "running" }];
+    store.invalidateRun("wf_1");
+    store.readRunUnlessOut("wf_1");
+    await settle();
+    await settle();
+    expect(fetches).toEqual(["/api/runs/wf_1"]);
+
+    fetches.length = 0;
+    responses = [{ workflowId: "wf_1", status: "running" }];
+    store.readRunUnlessOut("wf_1");
+    await settle();
+    expect(fetches).toEqual(["/api/runs/wf_1"]);
+  });
+
+  it("the live-run rebuild reads only a held run with no state", async () => {
+    await seedRun("wf_1", { workflowId: "wf_1", status: "running" });
+    hold("wf_1", "wf_2");
+    liveRunsReply = {
+      runs: [
+        { workflow_id: "wf_1", chat_id: "", executing: true },
+        { workflow_id: "wf_2", chat_id: "", executing: true },
+        { workflow_id: "wf_3", chat_id: "", executing: true },
+      ],
+    };
+    responses = [{ workflowId: "wf_2", status: "running" }];
+
+    await store.rebuildLiveRuns();
+
+    expect(fetches.filter((p) => p !== "/api/runs/live")).toEqual(["/api/runs/wf_2"]);
+  });
+});
