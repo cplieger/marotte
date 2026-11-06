@@ -12,6 +12,7 @@ import { dispatch } from "./bus.js";
 import type { ServerEvent } from "./types.js";
 import { applyAgentDirs, initAgentDirsUI } from "./agent-dirs-ui.js";
 import { byId } from "./dom.js";
+import { fill } from "./__test-helpers__/add-forms.js";
 import { __testResetTracking, loadSettings, patchSettings } from "./persist.js";
 import { additionalDirectories, _resetForTest as resetWorkspace } from "./workspace.js";
 import { areNotificationsEnabled, isKindEnabled } from "./notify.js";
@@ -159,7 +160,7 @@ function twoKindsOn(): EffectiveSettings {
 }
 
 function add(dir: string): void {
-  byId<HTMLInputElement>("agent-dirs-input").value = dir;
+  fill(byId<HTMLInputElement>("agent-dirs-input"), dir);
   byId<HTMLButtonElement>("agent-dirs-add").click();
 }
 
@@ -201,7 +202,7 @@ afterAll(() => {
 
 describe("settings sync ordering", () => {
   it("ignores a write's answer that arrives after a newer settings event", async () => {
-    byId<HTMLInputElement>("agent-dirs-input").value = "/a";
+    fill(byId<HTMLInputElement>("agent-dirs-input"), "/a");
     byId<HTMLButtonElement>("agent-dirs-add").click();
     await settled();
     expect(patches).toHaveLength(1);
@@ -221,7 +222,7 @@ describe("settings sync ordering", () => {
   });
 
   it("ignores a write's answer that arrives after a newer settings event and before its read answers", async () => {
-    byId<HTMLInputElement>("agent-dirs-input").value = "/a";
+    fill(byId<HTMLInputElement>("agent-dirs-input"), "/a");
     byId<HTMLButtonElement>("agent-dirs-add").click();
     await settled();
     expect(patches).toHaveLength(1);
@@ -373,7 +374,7 @@ describe("settings sync ordering", () => {
     await settled();
     expect(chipLabels()).toEqual(["/data", "/b"]);
     expect(byId<HTMLInputElement>("agent-dirs-input").disabled).toBe(false);
-    expect(byId("agent-dirs-error").classList.contains("hidden")).toBe(true);
+    expect(byId("agent-dirs-error").textContent).toBe("");
   });
 
   it("leaves a switch and the next write to newer settings read before its write failed", async () => {
@@ -790,7 +791,7 @@ describe("settings sync ordering", () => {
     await settled();
     expect(byId<HTMLInputElement>("supervised-default-checkbox").checked).toBe(true);
 
-    byId<HTMLInputElement>("agent-ignore-input").value = ".env.dec";
+    fill(byId<HTMLInputElement>("agent-ignore-input"), ".env.dec");
     byId<HTMLButtonElement>("agent-ignore-add").click();
     await debounced();
     expect(patches[0]?.body).toEqual({

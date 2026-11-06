@@ -50,6 +50,7 @@ import { abortPoll } from "./forge-auth-oauth.js";
 import { apiGetTyped } from "./api-client.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { outcomesOf } from "./__test-helpers__/press-feedback.js";
+import { fill } from "./__test-helpers__/add-forms.js";
 import { _resetForTest as resetForgeStore, readForges } from "./forge-store.js";
 import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
 
@@ -189,7 +190,7 @@ describe("forge-auth: the connection row", () => {
     expect(slot.querySelector<HTMLInputElement>("[data-forge-host]")?.value).toBe(
       "git.example.com",
     );
-    expect(slot.querySelector("form.forge-pat-form")).not.toBeNull();
+    expect(slot.querySelector("form[data-forge-token]")).not.toBeNull();
   });
 
   it("names no one on a reconnect row with no identity, and claims nothing is loading", async () => {
@@ -632,7 +633,7 @@ describe("forge-auth: the connection row", () => {
     }
 
     function addOwner(block: HTMLElement, owner: string): void {
-      block.querySelector<HTMLInputElement>("form input")!.value = owner;
+      fill(block.querySelector<HTMLInputElement>("form input")!, owner);
       block.querySelector<HTMLFormElement>("form")!.requestSubmit();
     }
 
@@ -708,7 +709,7 @@ describe("forge-auth: the connection row", () => {
       );
 
       await vi.waitFor(() => {
-        expect(block.querySelector(".forge-card-status")?.textContent).toContain(
+        expect(block.querySelector("form .rf-error")?.textContent).toContain(
           "list_owner_invalid: owners[1]: not an owner name",
         );
       });
@@ -741,7 +742,7 @@ describe("forge-auth: the connection row", () => {
       expect(bodyOf(spy, 1)).toEqual({ owners: ["beta"] });
     });
 
-    it("asks for an owner and sends nothing when the field is empty", async () => {
+    it("keeps Add owner disabled and sends nothing while the field is blank", async () => {
       const block = owners(await showRow(account({ owner_scopes: ["acme"] })));
       const { spy } = queuedFetch();
 
@@ -749,18 +750,54 @@ describe("forge-auth: the connection row", () => {
       await new Promise((r) => setTimeout(r, 0));
 
       expect(spy).not.toHaveBeenCalled();
-      expect(block.querySelector(".forge-card-status")?.textContent).toBe("Name an owner first.");
+      expect(button(block, "Add owner")?.disabled).toBe(true);
     });
 
     it("shows Add busy from the press", async () => {
       const block = owners(await showRow(account()));
       queuedFetch();
-      const add = button(block, "Add")!;
+      const add = button(block, "Add owner")!;
 
       addOwner(block, "beta");
 
       expect(add.disabled).toBe(true);
       expect(add.getAttribute("aria-busy")).toBe("true");
+    });
+
+    it("keeps Add owner disabled through typing while the add is in flight", async () => {
+      const block = owners(await showRow(account({ owner_scopes: ["acme"] })));
+      const { spy, answer } = queuedFetch();
+      const add = button(block, "Add owner")!;
+
+      addOwner(block, "beta");
+      await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+      addOwner(block, "gamma");
+
+      expect(add.disabled).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(1);
+      answer(0, json({ owners: ["acme", "beta"] }));
+      await vi.waitFor(() => expect(chips(block)).toEqual(["acme", "beta"]));
+    });
+
+    it("leaves Add owner disabled on the emptied field once the add lands, past any feedback reset", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const block = owners(await showRow(account({ owner_scopes: ["acme"] })));
+        const { spy, answer } = queuedFetch();
+        const add = button(block, "Add owner")!;
+
+        addOwner(block, "beta");
+        await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+        answer(0, json({ owners: ["acme", "beta"] }));
+        await vi.waitFor(() => expect(chips(block)).toEqual(["acme", "beta"]));
+        await vi.advanceTimersByTimeAsync(5_000);
+
+        expect(block.querySelector<HTMLInputElement>("form input")!.value).toBe("");
+        expect(add.disabled).toBe(true);
+        expect(add.hasAttribute("aria-busy")).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("says on GitLab that an owner is a group", async () => {

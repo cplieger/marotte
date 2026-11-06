@@ -19,6 +19,7 @@ import { areNotificationsEnabled, isKindEnabled } from "./notify.js";
 import { initNotificationToggles } from "./settings-notifications.js";
 import { getLastModel, setLastModel } from "./session-context.js";
 import { initAgentDirsUI } from "./agent-dirs-ui.js";
+import { fill } from "./__test-helpers__/add-forms.js";
 import { additionalDirectories, _resetForTest as resetWorkspace } from "./workspace.js";
 
 type Action =
@@ -215,7 +216,7 @@ async function apply(w: World, a: Action): Promise<void> {
       }
       const remove = chipRemove("/a");
       if (remove === null) {
-        byId<HTMLInputElement>("agent-dirs-input").value = "/a";
+        fill(byId<HTMLInputElement>("agent-dirs-input"), "/a");
         byId<HTMLButtonElement>("agent-dirs-add").click();
       } else {
         remove.click();

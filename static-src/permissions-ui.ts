@@ -5,6 +5,8 @@ import type { EffectiveSettings } from "./persist.js";
 import { maybeEl } from "./dom.js";
 import { apiGet } from "./api-client.js";
 import { buildChip } from "./chip.js";
+import { wireAddForm } from "./add-form.js";
+import type { AddForm } from "./add-form.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
 import { editNativeRule, explainPolicy, setSecurityProfile } from "./actions/permissions.js";
 import { reconcile } from "./reconcile.js";
@@ -145,45 +147,26 @@ class PermissionsUIController {
     this.renderIgnoreChips();
 
     const input = maybeEl<HTMLInputElement>("agent-ignore-input");
-    const addBtn = maybeEl<HTMLButtonElement>("agent-ignore-add");
-    if (input === null || addBtn === null) {
+    const form = input?.form ?? null;
+    if (input === null || form === null) {
       return;
     }
-    // A REJECTED value disables Add and says which rule refused it; an EMPTY one leaves the button
-    // alone, so it is never disabled at rest.
-    const syncAddState = (): void => {
-      const val = input.value.trim();
-      const reason = val === "" ? null : agentIgnoreEntryError(val);
-      addBtn.disabled = reason !== null;
-      if (reason === null) {
-        addBtn.removeAttribute("data-tooltip");
-      } else {
-        addBtn.setAttribute("data-tooltip", reason);
-      }
-    };
-    const submit = (): void => {
-      const val = input.value.trim();
-      if (val === "" || agentIgnoreEntryError(val) !== null) {
-        return;
-      }
-      if (this.ignoreFiles.includes(val)) {
+    // A rejected value says which rule refused it on the row's error line; an empty one only disables Add.
+    const row = wireAddForm(form, {
+      refuse: () => {
+        const val = input.value.trim();
+        return val === "" ? null : agentIgnoreEntryError(val);
+      },
+      onSubmit: () => {
+        const val = input.value.trim();
+        if (!this.ignoreFiles.includes(val)) {
+          this.saveIgnoreFiles([...this.ignoreFiles, val]);
+        }
         input.value = "";
-        syncAddState();
-        return;
-      }
-      this.saveIgnoreFiles([...this.ignoreFiles, val]);
-      input.value = "";
-      // Refocus for repeat entry (adding several files in a row).
-      input.focus();
-      syncAddState();
-    };
-    input.addEventListener("input", syncAddState);
-    addBtn.addEventListener("click", submit);
-    input.addEventListener("keydown", (e: KeyboardEvent) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        submit();
-      }
+        // Refocus for repeat entry (adding several files in a row).
+        input.focus();
+        row.sync();
+      },
     });
   }
 
@@ -371,23 +354,36 @@ class NativePolicyController {
   /** The rules the last completed read-back reported, kept so the picker's own line can be
    *  repainted without spending another request on the bridge. */
   private lastRules: PolicyRule[] = [];
+  /** A profile other than Custom owns the rules, so the add row is locked with the table. */
+  private locked = false;
+  private addRow: AddForm | null = null;
+  private explainRow: AddForm | null = null;
 
   init(): void {
     this.loaded = false;
-    const addBtn = maybeEl<HTMLButtonElement>("native-rule-add");
-    if (addBtn === null) {
+    const ruleForm = maybeEl<HTMLButtonElement>("native-rule-add")?.form ?? null;
+    if (ruleForm === null) {
       return; // permissions panel not present in this build
     }
-    addBtn.addEventListener("click", () => {
-      void this.addRule();
+    const ruleRow = wireAddForm(ruleForm, {
+      busy: () => this.locked,
+      onSubmit: () => this.addRule(),
     });
+    this.addRow = ruleRow;
     maybeEl<HTMLButtonElement>("security-profile-customize")?.addEventListener("click", () => {
       void this.customize();
     });
-    maybeEl<HTMLButtonElement>("native-explain-run")?.addEventListener("click", () => {
-      void this.runExplain();
-    });
-    registerCleanup(bindLoadingState("permissions.edit_native_rule", addBtn));
+    const explainForm = maybeEl<HTMLButtonElement>("native-explain-run")?.form ?? null;
+    if (explainForm !== null) {
+      this.explainRow = wireAddForm(explainForm, {
+        onSubmit: () => this.runExplain(),
+      });
+    }
+    registerCleanup(
+      bindLoadingState("permissions.edit_native_rule", ruleRow.button, {
+        disabledFn: () => ruleRow.blocked(),
+      }),
+    );
     registerCleanup(
       onSSE("permissions_changed", () => {
         this.reloadOnChange();
@@ -555,13 +551,18 @@ class NativePolicyController {
     if (scope === null) {
       return;
     }
-    for (const control of scope.querySelectorAll<
-      HTMLInputElement | HTMLButtonElement | HTMLSelectElement
-    >(
-      "#native-policy-list select, #native-policy-list button, [data-rule-form='add'] input, [data-rule-form='add'] select, [data-rule-form='add'] button",
+    this.locked = locked;
+    for (const control of scope.querySelectorAll<HTMLButtonElement | HTMLSelectElement>(
+      "#native-policy-list select, #native-policy-list button",
     )) {
       control.disabled = locked;
     }
+    for (const field of this.addRow?.form.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+      "input, select",
+    ) ?? []) {
+      field.disabled = locked;
+    }
+    this.addRow?.sync();
   }
 
   /** The leaving-Custom confirm says the user's own rules SURVIVE, because a grant outliving a
@@ -672,6 +673,8 @@ class NativePolicyController {
         sel.value = chosen;
       }
     }
+    this.addRow?.sync();
+    this.explainRow?.sync();
   }
 
   private render(rules: PolicyRule[]): void {
@@ -832,9 +835,7 @@ class NativePolicyController {
     const effect = maybeEl<HTMLSelectElement>("native-rule-effect")?.value ?? "ask";
     const match = splitGlobs(maybeEl<HTMLInputElement>("native-rule-match")?.value ?? "");
     const exclude = splitGlobs(maybeEl<HTMLInputElement>("native-rule-exclude")?.value ?? "");
-    if (capability === "") {
-      return;
-    }
+    this.addRow?.setError(null);
     const res = await editNativeRule.dispatch({
       op: "add",
       scope,
@@ -855,6 +856,8 @@ class NativePolicyController {
         mi.focus();
       }
       void this.load();
+    } else if (res?.error !== undefined) {
+      this.addRow?.setError(res.error);
     }
   }
 
@@ -889,18 +892,23 @@ class NativePolicyController {
     const capability = maybeEl<HTMLSelectElement>("native-explain-capability")?.value ?? "";
     const resource = (maybeEl<HTMLInputElement>("native-explain-resource")?.value ?? "").trim();
     const out = maybeEl("native-explain-result");
-    if (capability === "" || out === null) {
+    if (out === null) {
       return;
     }
+    out.textContent = "";
     // Shell decisions are always resource-scoped (there is no command-independent shell decision to
     // simulate).
     if (capability === "shell" && resource === "") {
-      out.textContent = "Enter a command to test the shell capability.";
+      this.explainRow?.setError(
+        "Enter a command to test the shell capability.",
+        maybeEl<HTMLInputElement>("native-explain-resource") ?? undefined,
+      );
       return;
     }
+    this.explainRow?.setError(null);
     const res = await explainPolicy.dispatch({ capability, resource });
     if (res === null) {
-      out.textContent = "Could not evaluate: kiro-cli did not answer.";
+      this.explainRow?.setError("Could not evaluate: kiro-cli did not answer.");
       return;
     }
     // The control is labelled "why?", so the matched RULE is the answer: a scope names only the

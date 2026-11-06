@@ -40,6 +40,7 @@ vi.mock("./actions/permissions.js", () => ({
 
 import { initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
 import { byId } from "./dom.js";
+import { shippedAddForm } from "./__test-helpers__/add-forms.js";
 
 /** The ladder as the server reports it. A short stand-in for policyfile.Profiles(): what matters
  *  is that the client renders the server's list in the server's ORDER, not what that list
@@ -148,11 +149,7 @@ beforeEach(() => {
   section.appendChild(tag("p", "native-policy-status"));
   section.appendChild(tag("div", "native-policy-list"));
   section.appendChild(tag("p", "native-policy-empty-hint"));
-  const adder = document.createElement("div");
-  adder.setAttribute("data-rule-form", "add");
-  const add = tag<HTMLButtonElement>("button", "native-rule-add");
-  adder.appendChild(add);
-  section.appendChild(adder);
+  section.appendChild(shippedAddForm("native-rule-capability"));
   document.body.appendChild(section);
 
   document.body.appendChild(tag("div", "security-profile-list"));

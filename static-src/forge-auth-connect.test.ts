@@ -50,6 +50,7 @@ import { abortPoll } from "./forge-auth-oauth.js";
 import { apiGetTyped } from "./api-client.js";
 import { _resetForTest as resetForgeStore } from "./forge-store.js";
 import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
+import { fill } from "./__test-helpers__/add-forms.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -121,14 +122,14 @@ describe("forge-auth: the connect dialog", () => {
   }
 
   function connectButton(slot: HTMLElement): HTMLButtonElement {
-    return [...slot.querySelectorAll<HTMLButtonElement>("form.forge-pat-form button")].find((b) =>
-      b.textContent.includes("Connect"),
-    )!;
+    return slot.querySelector<HTMLButtonElement>("form[data-forge-token] button[type='submit']")!;
   }
 
   function typeToken(slot: HTMLElement, token: string): void {
-    slot.querySelector<HTMLInputElement>("form.forge-pat-form input[type='password']")!.value =
-      token;
+    fill(
+      slot.querySelector<HTMLInputElement>("form[data-forge-token] input[type='password']")!,
+      token,
+    );
   }
 
   function setHost(slot: HTMLElement, host: string): void {
@@ -141,7 +142,7 @@ describe("forge-auth: the connect dialog", () => {
     const slot = await openPane("gitlab", { github: true, gitlab: true });
     const start = slot.querySelector<HTMLButtonElement>("[data-forge-device-start]");
     expect(start?.textContent).toBe("Sign in with GitLab");
-    expect(slot.querySelector("form.forge-pat-form")).not.toBeNull();
+    expect(slot.querySelector("form[data-forge-token]")).not.toBeNull();
   });
 
   it("notes on GitLab's device path that a two-hour token is renewed by its refresh token", async () => {
@@ -295,7 +296,7 @@ describe("forge-auth: the connect dialog", () => {
   });
 
   function statusLine(slot: HTMLElement): string | null | undefined {
-    return slot.querySelector("form.forge-pat-form .forge-card-status")?.textContent;
+    return slot.querySelector("form[data-forge-token] output.rf-error")?.textContent;
   }
 
   it.each([
@@ -315,7 +316,7 @@ describe("forge-auth: the connect dialog", () => {
 
     await vi.waitFor(() => expect(statusLine(slot)).toBe(body.error));
     expect(spy).toHaveBeenCalledOnce();
-    expect(slot.querySelector("form.forge-pat-form")).not.toBeNull();
+    expect(slot.querySelector("form[data-forge-token]")).not.toBeNull();
     expect(panel().querySelector(".forge-account-row")).toBeNull();
   });
 
@@ -328,7 +329,7 @@ describe("forge-auth: the connect dialog", () => {
     answer(json({ forge_id: "" }));
 
     await vi.waitFor(() => expect(statusLine(slot)).toBe("the server answered no connection id"));
-    expect(slot.querySelector("form.forge-pat-form")).not.toBeNull();
+    expect(slot.querySelector("form[data-forge-token]")).not.toBeNull();
   });
 
   it("sends a sign-in that ran out of time once, and says so", async () => {
@@ -377,15 +378,12 @@ describe("forge-auth: the connect dialog", () => {
 
     answer(json({ error: "the token was refused", kind: "unauthorized" }, 401));
     await vi.waitFor(() => {
-      expect(connect.dataset["asyncStatus"]).toBe("error");
+      expect(statusLine(slot)).toBe("the token was refused");
     });
     await waitForOnClock(() => {
       expect(connect.disabled).toBe(false);
     }, 3000);
     expect(connect.hasAttribute("aria-busy")).toBe(false);
-    expect(slot.querySelector("form.forge-pat-form .forge-card-status")?.textContent).toBe(
-      "the token was refused",
-    );
   });
 
   it("keeps Connect busy through a background repaint of the panel", async () => {
@@ -571,7 +569,11 @@ describe("forge-auth: the connect dialog", () => {
     }
 
     function statusText(slot: HTMLElement): string {
-      return slot.querySelector("form.forge-pat-form .forge-card-status")?.textContent ?? "";
+      return slot.querySelector("form[data-forge-token] output.rf-error")?.textContent ?? "";
+    }
+
+    function noteText(slot: HTMLElement): string {
+      return slot.querySelector("form[data-forge-token] + .forge-card-status")?.textContent ?? "";
     }
 
     it("continues a detect answering gitea as that kind's token connect with the same token and options", async () => {
@@ -646,7 +648,16 @@ describe("forge-auth: the connect dialog", () => {
       await vi.waitFor(() =>
         expect(statusText(slot)).toContain("git.example.com did not answer as a supported forge"),
       );
-      expect(connect.dataset["asyncStatus"]).toBe("error");
+      const serverField = slot.querySelector<HTMLInputElement>("[data-forge-host]")!;
+      const tokenField = slot.querySelector<HTMLInputElement>(
+        "form[data-forge-token] input[type='password']",
+      )!;
+      const errorId = slot.querySelector("form[data-forge-token] output.rf-error")!.id;
+      expect(serverField.getAttribute("aria-invalid"), "an address refusal marks Server").toBe(
+        "true",
+      );
+      expect(serverField.getAttribute("aria-describedby")?.split(" ")).toContain(errorId);
+      expect(tokenField.hasAttribute("aria-invalid"), "and not Token").toBe(false);
       await waitForOnClock(() => expect(connect.disabled).toBe(false), 3000);
       await vi.runAllTimersAsync();
       expect(spy).toHaveBeenCalledOnce();
@@ -654,7 +665,8 @@ describe("forge-auth: the connect dialog", () => {
         "git.example.com",
       );
       expect(
-        slot.querySelector<HTMLInputElement>("form.forge-pat-form input[type='password']")!.value,
+        slot.querySelector<HTMLInputElement>("form[data-forge-token] input[type='password']")!
+          .value,
       ).toBe("tok-1");
     });
 
@@ -669,6 +681,13 @@ describe("forge-auth: the connect dialog", () => {
 
       await vi.waitFor(() => expect(statusText(slot)).toBe("the token was refused"));
       expect(spy).toHaveBeenCalledOnce();
+      expect(
+        slot
+          .querySelector("form[data-forge-token] input[type='password']")!
+          .getAttribute("aria-invalid"),
+        "a token refusal marks Token",
+      ).toBe("true");
+      expect(slot.querySelector("[data-forge-host]")!.hasAttribute("aria-invalid")).toBe(false);
     });
 
     it("keeps Connect busy from the press until the token connect lands, across both calls", async () => {
@@ -687,24 +706,38 @@ describe("forge-auth: the connect dialog", () => {
       await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
       expect(connect.disabled).toBe(true);
       expect(connect.getAttribute("aria-busy")).toBe("true");
-      expect(statusText(slot)).toBe("GitHub found. Connecting...");
+      expect(noteText(slot)).toBe("GitHub found. Connecting...");
 
       answer(1, json({ error: "the token was refused", kind: "unauthorized" }, 401));
-      await vi.waitFor(() => expect(connect.dataset["asyncStatus"]).toBe("error"));
+      await vi.waitFor(() => expect(statusText(slot)).toBe("the token was refused"));
       await waitForOnClock(() => expect(connect.disabled).toBe(false), 3000);
       expect(connect.hasAttribute("aria-busy")).toBe(false);
-      expect(statusText(slot)).toBe("the token was refused");
+      expect(noteText(slot), "the refusal replaces the progress note").toBe("");
     });
 
-    it("sends nothing for an empty address", async () => {
+    it("holds Connect disabled for an empty address, names it on the row, and sends nothing", async () => {
       const slot = await openPane("other");
       typeToken(slot, "tok-1");
       const { spy } = queuedFetch();
+      const host = slot.querySelector<HTMLInputElement>("[data-forge-host]")!;
 
       connectButton(slot).click();
 
-      expect(statusText(slot)).toBe("Both host and token are required.");
+      expect(connectButton(slot).disabled).toBe(true);
+      expect(statusText(slot)).toBe("Enter the server's host.");
+      expect(host.getAttribute("aria-invalid")).toBe("true");
       expect(spy).not.toHaveBeenCalled();
+
+      setHost(slot, "git.example.com");
+      expect(connectButton(slot).disabled).toBe(false);
+      expect(statusText(slot)).toBe("");
+      expect(host.hasAttribute("aria-invalid")).toBe(false);
+    });
+
+    it("holds Connect disabled while the token is empty", async () => {
+      const slot = await openPane("other");
+      setHost(slot, "git.example.com");
+      expect(connectButton(slot).disabled).toBe(true);
     });
 
     it("names each family's minimum token scopes", async () => {

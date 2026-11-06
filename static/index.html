@@ -1010,8 +1010,9 @@
               <p id="native-policy-empty-hint" class="section-hint hidden">No policy rules loaded yet.</p>
 
               <h3 class="section-subtitle">Add a rule</h3>
-              <div class="rule-form" data-rule-form="policy" role="group" aria-label="Add a policy rule">
-                <label class="rf-field">
+              <form class="add-form" aria-label="Add a policy rule">
+                <div class="add-form-fields">
+                <label class="rf-field rf-compact">
                   <span class="rf-label">Scope</span>
                   <select id="native-rule-scope" class="rf-select">
                     <option value="workspace">Workspace</option>
@@ -1020,9 +1021,9 @@
                 </label>
                 <label class="rf-field">
                   <span class="rf-label">Capability</span>
-                  <select id="native-rule-capability" class="rf-select"></select>
+                  <select id="native-rule-capability" class="rf-select" required aria-describedby="native-rule-error"></select>
                 </label>
-                <label class="rf-field">
+                <label class="rf-field rf-compact">
                   <span class="rf-label">Effect</span>
                   <select id="native-rule-effect" class="rf-select">
                     <option value="ask" selected>Ask</option>
@@ -1039,24 +1040,29 @@
                   <span class="rf-label">Exclude globs <span class="rf-optional">(optional)</span></span>
                   <input id="native-rule-exclude" class="rf-input rf-mono" type="text" autocomplete="off" placeholder="**/secrets/**…">
                 </label>
-                <button id="native-rule-add" class="btn rf-submit" type="button">Add rule</button>
-              </div>
+                </div>
+                <button id="native-rule-add" class="btn" type="submit" disabled>Add rule</button>
+                <output id="native-rule-error" class="rf-error"></output>
+              </form>
               <p class="section-hint">Leave Match empty to cover the whole capability. Use Exclude to carve out exceptions.</p>
 
               <details id="native-policy-explain-box">
                 <summary class="section-subtitle native-explain-summary">Test a decision (why?)</summary>
                 <p class="section-hint">Check what would happen for an action, without running it.</p>
-                <div class="rule-form" data-rule-form="explain" role="group" aria-label="Test a policy decision">
+                <form class="add-form" aria-label="Test a policy decision">
+                  <div class="add-form-fields">
                   <label class="rf-field">
                     <span class="rf-label">Capability</span>
-                    <select id="native-explain-capability" class="rf-select"></select>
+                    <select id="native-explain-capability" class="rf-select" required aria-describedby="native-explain-error"></select>
                   </label>
                   <label class="rf-field rf-grow">
                     <span class="rf-label">Resource</span>
-                    <input id="native-explain-resource" class="rf-input rf-mono" type="text" autocomplete="off" placeholder="a path, or a command for shell…">
+                    <input id="native-explain-resource" class="rf-input rf-mono" type="text" autocomplete="off" placeholder="a path or shell command…">
                   </label>
-                  <button id="native-explain-run" class="btn rf-submit" type="button">Test</button>
-                </div>
+                  </div>
+                  <button id="native-explain-run" class="btn" type="submit" disabled>Test</button>
+                  <output id="native-explain-error" class="rf-error"></output>
+                </form>
                 <p id="native-explain-result" class="section-hint"></p>
               </details>
             </div>
@@ -1105,16 +1111,19 @@
                 <p class="section-hint">Files the agent's file tools cannot read: <code>.kiroignore</code> is always used, and you can add others such as <code>.gitignore</code>. Shell commands can still read them, so this does not hide secrets.</p>
                 <div id="agent-ignore-floor" class="chip-list"></div>
                 <div id="agent-ignore-chips" class="chip-list"></div>
-                <div class="rule-form" data-rule-form="ignore" role="group" aria-label="Add an agent ignore file">
-                  <label class="rf-field rf-grow">
-                    <span class="rf-label">Path</span>
-                    <input id="agent-ignore-input" class="rf-input rf-mono" type="text" autocomplete="off" placeholder="e.g. .gitignore">
-                  </label>
-                  <button id="agent-ignore-add" class="btn rf-submit" type="button">Add</button>
-                </div>
                 <p id="agent-ignore-empty-hint" class="section-hint hidden">
                   Nothing added. The common choice is .gitignore, which keeps every gitignored path away from the file tools.
                 </p>
+                <form class="add-form" aria-label="Add an agent ignore file">
+                  <div class="add-form-fields">
+                  <label class="rf-field">
+                    <span class="rf-label">Path</span>
+                    <input id="agent-ignore-input" class="rf-input rf-mono" type="text" autocomplete="off" placeholder="e.g. .gitignore" required aria-describedby="agent-ignore-error">
+                  </label>
+                  </div>
+                  <button id="agent-ignore-add" class="btn" type="submit" disabled>Add file</button>
+                  <output id="agent-ignore-error" class="rf-error"></output>
+                </form>
               </div>
             </div>
 
@@ -1126,16 +1135,18 @@
                 </div>
                 <p class="section-hint">Directories outside the workspace that the agent can read, write and start shell commands in; the workspace and marotte's config directory cannot be added. A change reaches the file tools, the folder a shell command may start in and the file browser at once, and kiro-cli whenever a chat's session opens or reloads: at its next message, or when you fork or rewind it. A running workflow keeps the list it started with.</p>
                 <div id="agent-dirs-chips" class="chip-list"></div>
-                <ul id="agent-dirs-refused" class="section-hint agent-dirs-error agent-dirs-refused hidden"></ul>
-                <div class="rule-form" data-rule-form="directory" role="group" aria-label="Add an additional directory">
-                  <label class="rf-field rf-grow">
-                    <span class="rf-label">Directory</span>
-                    <input id="agent-dirs-input" class="rf-input rf-mono" type="text" autocomplete="off" placeholder="/data" aria-describedby="agent-dirs-error">
-                  </label>
-                  <button id="agent-dirs-add" class="btn rf-submit" type="button">Add</button>
-                </div>
-                <p id="agent-dirs-error" class="section-hint agent-dirs-error hidden" role="alert"></p>
+                <ul id="agent-dirs-refused" class="section-hint agent-dirs-refused hidden"></ul>
                 <p id="agent-dirs-empty-hint" class="section-hint hidden">Nothing added. Agents reach only the workspace.</p>
+                <form class="add-form" aria-label="Add an additional directory">
+                  <div class="add-form-fields">
+                  <label class="rf-field">
+                    <span class="rf-label">Directory</span>
+                    <input id="agent-dirs-input" class="rf-input rf-mono" type="text" autocomplete="off" placeholder="/data" required aria-describedby="agent-dirs-error">
+                  </label>
+                  </div>
+                  <button id="agent-dirs-add" class="btn" type="submit" disabled>Add directory</button>
+                  <output id="agent-dirs-error" class="rf-error"></output>
+                </form>
               </div>
             </div>
           </div>
@@ -1799,12 +1810,16 @@
       </div>
       <p class="section-hint">Block specific tools from this server without disabling the whole integration. Type the tool name exactly as it appears in the agent's tool list, for example <code>create_issue</code>.</p>
       <div id="mcp-disabled-chips" class="chip-list"></div>
-      <div class="chip-adder">
-        <input id="mcp-disabled-input" class="chip-input" type="text" autocomplete="off" placeholder="e.g. create_issue" aria-label="Add disabled tool">
-        <button id="mcp-disabled-add" class="action-pill" type="button" data-tooltip="Block tool" aria-label="Block tool">
-          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-        </button>
-      </div>
+      <form class="add-form" aria-label="Block a tool">
+        <div class="add-form-fields">
+        <label class="rf-field">
+          <span class="rf-label">Tool name</span>
+          <input id="mcp-disabled-input" class="rf-input rf-mono" type="text" autocomplete="off" placeholder="e.g. create_issue" required aria-describedby="mcp-disabled-error">
+        </label>
+        </div>
+        <button id="mcp-disabled-add" class="btn" type="submit" disabled>Block tool</button>
+        <output id="mcp-disabled-error" class="rf-error"></output>
+      </form>
     </div>
   </div>
 

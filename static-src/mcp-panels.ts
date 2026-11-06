@@ -17,6 +17,8 @@ import {
   collectKeyPairs,
 } from "./mcp-pairs.js";
 import { buildChip } from "./chip.js";
+import { wireAddForm } from "./add-form.js";
+import type { AddForm } from "./add-form.js";
 import {
   type ValidationField,
   importServers,
@@ -761,7 +763,6 @@ interface ToolListSection {
   readonly sectionID: string;
   readonly chipsID: string;
   readonly inputID: string;
-  readonly addID: string;
   readonly removeTitle: string;
   stored(server: Server): string[] | undefined;
   read(): string[];
@@ -772,7 +773,6 @@ const SECTION_DISABLED: ToolListSection = {
   sectionID: "mcp-disabled-tools",
   chipsID: "mcp-disabled-chips",
   inputID: "mcp-disabled-input",
-  addID: "mcp-disabled-add",
   removeTitle: "Unblock",
   stored: (s) => s.disabled_tools,
   read: () => session.disabledToolsList,
@@ -781,11 +781,57 @@ const SECTION_DISABLED: ToolListSection = {
   },
 };
 
+interface ToolListRow {
+  readonly row: AddForm;
+  /** The open server's handler, swapped on every open. */
+  submit: () => void;
+}
+
+/** Each add row, wired on its form's first open. */
+const toolListRows = new WeakMap<HTMLFormElement, ToolListRow>();
+
+function formOf(cfg: ToolListSection, input: HTMLInputElement): HTMLFormElement {
+  if (input.form === null) {
+    throw new Error(`#${cfg.inputID} is not in its add form`);
+  }
+  return input.form;
+}
+
+function toolListRow(cfg: ToolListSection, input: HTMLInputElement): ToolListRow {
+  const form = formOf(cfg, input);
+  const known = toolListRows.get(form);
+  if (known !== undefined) {
+    return known;
+  }
+  const entry: ToolListRow = {
+    row: wireAddForm(form, {
+      onSubmit: () => {
+        entry.submit();
+      },
+      refuse: () => alreadyListed(cfg, input),
+    }),
+    submit: () => undefined,
+  };
+  toolListRows.set(form, entry);
+  return entry;
+}
+
+function alreadyListed(cfg: ToolListSection, input: HTMLInputElement): string | null {
+  return cfg.read().includes(input.value.trim()) ? "Already blocked." : null;
+}
+
+/** Re-check the typed name after the list changed under it (a chip removed, a suggestion taken). */
+function recheckToolInput(cfg: ToolListSection): void {
+  const input = byId<HTMLInputElement>(cfg.inputID);
+  const row = toolListRows.get(formOf(cfg, input))?.row;
+  row?.setError(alreadyListed(cfg, input), input);
+  row?.sync();
+}
+
 function initToolListSection(cfg: ToolListSection, server: Server | null): void {
   const section = byId<HTMLDivElement>(cfg.sectionID);
   const chips = byId<HTMLDivElement>(cfg.chipsID);
   const input = byId<HTMLInputElement>(cfg.inputID);
-  const addBtn = byId<HTMLButtonElement>(cfg.addID);
 
   if (server === null) {
     section.classList.add("hidden");
@@ -800,23 +846,17 @@ function initToolListSection(cfg: ToolListSection, server: Server | null): void 
   const knownTools = discoverySignalFor(server.name).peek().tools;
   renderToolChips(cfg, chips, section, knownTools);
 
-  const add = (): void => {
+  const entry = toolListRow(cfg, input);
+  input.value = "";
+  entry.row.setError(null);
+  entry.row.sync();
+  entry.submit = (): void => {
     const name = input.value.trim();
-    if (name === "" || cfg.read().includes(name)) {
-      return;
-    }
-    cfg.write([...cfg.read(), name]);
     input.value = "";
+    entry.row.sync();
+    cfg.write([...cfg.read(), name]);
     renderToolChips(cfg, chips, section, knownTools);
     renderToolSuggestions(cfg, section, knownTools, chips);
-  };
-
-  addBtn.onclick = add;
-  input.onkeydown = (e: KeyboardEvent): void => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      add();
-    }
   };
 
   renderToolSuggestions(cfg, section, knownTools, chips);
@@ -844,6 +884,7 @@ function renderToolSuggestions(
         cfg.write([...cfg.read(), name]);
         renderToolChips(cfg, chips, section, knownTools);
         renderToolSuggestions(cfg, section, knownTools, chips);
+        recheckToolInput(cfg);
       }
     });
     suggestionsEl.appendChild(pill);
@@ -869,6 +910,7 @@ function renderToolChips(
           cfg.write(cfg.read().filter((n) => n !== name));
           renderToolChips(cfg, container, section, knownTools);
           renderToolSuggestions(cfg, section, knownTools, container);
+          recheckToolInput(cfg);
         },
       }),
     );

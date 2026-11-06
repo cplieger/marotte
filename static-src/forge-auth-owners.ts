@@ -8,6 +8,7 @@ import { iconEl } from "./icon-el.js";
 import { ICON_EXEC_GROUP } from "./icons.js";
 import { reconcile } from "./reconcile.js";
 import { withAsyncFeedback } from "./async-button.js";
+import { buildAddForm, wireAddForm } from "./add-form.js";
 import { setOwners } from "./actions/forge.js";
 import { readForges } from "./forge-store.js";
 import type { ConfiguredForge } from "./wire/types.gen.js";
@@ -43,27 +44,16 @@ export function buildOwnerScopes(a: ConfiguredForge): HTMLElement {
 
   const status = el("div", { className: "forge-card-status", "aria-live": "polite" });
   const input = el("input", {
-    className: "rf-input",
     type: "text",
     autocomplete: "off",
     placeholder: a.kind === "gitlab" ? "my-group" : "an organization or user",
   }) as HTMLInputElement;
-  const add = el(
-    "button",
-    { type: "submit", className: "btn rf-submit" },
-    "Add",
-  ) as HTMLButtonElement;
-  const form = el(
-    "form",
-    { className: "rule-form", "data-rule-form": "owner", "aria-label": "Add an owner" },
-    el(
-      "label",
-      { className: "rf-field rf-grow" },
-      el("span", { className: "rf-label" }, "Owner"),
-      input,
-    ),
-    add,
-  ) as HTMLFormElement;
+  const form = buildAddForm({
+    fields: [{ label: "Owner", control: input }],
+    label: "Add owner",
+    ariaLabel: "Add an owner",
+    errorId: `forge-owner-error-${a.id}`,
+  });
 
   const hint =
     a.kind === "gitlab"
@@ -93,22 +83,22 @@ export function buildOwnerScopes(a: ConfiguredForge): HTMLElement {
   };
   blocks.set(details, block);
 
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const owner = input.value.trim();
-    if (owner === "") {
-      setLine(status, "Name an owner first.", "err");
-      return;
-    }
-    setLine(status, "");
-    void withAsyncFeedback(
-      add,
-      async () => {
-        await write(block, (cur) => [...cur, owner], `Could not add ${owner}`);
-        input.value = "";
-      },
-      { keepLabel: true },
-    );
+  const row = wireAddForm(form, {
+    onSubmit: () => {
+      const owner = input.value.trim();
+      setLine(status, "");
+      row.setError(null);
+      const report = (text: string): void => {
+        row.setError(text, input);
+      };
+      // write reports its refusal on the row before it rejects; the new chip is the success cue.
+      return write(block, (cur) => [...cur, owner], `Could not add ${owner}`, report).then(
+        () => {
+          input.value = "";
+        },
+        () => undefined,
+      );
+    },
   });
 
   block.rowOwners = join(...(a.owner_scopes ?? []));
@@ -149,7 +139,14 @@ function paintOwners(block: Block): void {
           setLine(block.status, "");
           const remove = chip.querySelector<HTMLButtonElement>(".chip-remove");
           const run = (): Promise<void> =>
-            write(block, (cur) => cur.filter((o) => o !== owner), `Could not remove ${owner}`);
+            write(
+              block,
+              (cur) => cur.filter((o) => o !== owner),
+              `Could not remove ${owner}`,
+              (t) => {
+                setLine(block.status, t, "err");
+              },
+            );
           void (remove === null ? run() : withAsyncFeedback(remove, run));
         },
       });
@@ -159,11 +156,12 @@ function paintOwners(block: Block): void {
 }
 
 /** Queue one whole-list write after the one in flight; `next` builds its list
- *  from what the server last stored. Rejects after writing the refusal. */
+ *  from what the server last stored. Rejects after reporting the refusal. */
 function write(
   block: Block,
   next: (cur: readonly string[]) => readonly string[],
   failure: string,
+  report: (refusal: string) => void,
 ): Promise<void> {
   const run = block.chain.then(async () => {
     const o = await setOwners.dispatch({ forgeId: block.id, owners: next(block.owners) }).outcome;
@@ -172,7 +170,7 @@ function write(
     }
     if (o.status === "error") {
       const refusal = `${failure}. ${o.error.message}`;
-      setLine(block.status, refusal, "err");
+      report(refusal);
       throw new Error(refusal);
     }
     block.owners = o.value.owners;

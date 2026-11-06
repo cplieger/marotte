@@ -23,7 +23,7 @@ const RUNGS = ["--fs-xs", "--fs-sm", "--fs-base", "--fs-md", "--fs-lg", "--fs-xl
 const BODY_RUNG = "--fs-md";
 
 /** The rows measured for overflow, all present in the shipped markup. */
-const TIGHT_ROWS = [".prompt-pills", ".bottom-bar", ".mcp-modal-tabs", ".rule-form", ".seg-bar"];
+const TIGHT_ROWS = [".prompt-pills", ".bottom-bar", ".mcp-modal-tabs", ".add-form", ".seg-bar"];
 
 describe("the declarations, read from source", () => {
   it("declares no font size on a text control keyed on the pointer tier", () => {
@@ -269,13 +269,12 @@ describe("the controls, measured over the shipped markup", () => {
       expect(formTierSelectors(token).length, `${token} has consumers`).toBeGreaterThan(0);
     }
 
-    // The PEER consumers are a closed set: two of the three rows are built by JS, so the measured case
-    // cannot reach them and this source contract is the only guard.
+    // The PEER consumers are a closed set: some of their rows are built by JS (the knowledge, owner and token
+    // add rows), so the measured case cannot reach them and this source contract is the only guard.
     expect(formTierSelectors("--fs-form-peer").sort()).toEqual([
+      ".add-form > .btn",
       ".filepicker-footer .btn-save",
-      ".knowledge-add-form .btn-small",
       ".native-rule-effect",
-      ".rule-form .rf-submit",
     ]);
   });
 
@@ -357,10 +356,10 @@ describe("the controls, measured over the shipped markup", () => {
     ["a desktop with a fine pointer", 1280, 800, "fine" as const],
   ])("matches a row-sharing button to the field it sits beside, on %s", async (_l, w, h, p) => {
     // The PEER half, which the one-rung tolerance cannot see, asserted as equality on NAMED containers.
-    // Only those the shipped markup renders; `.knowledge-add-form` is guarded by the closed set above.
+    // Only those the shipped markup renders; the built add rows share `.add-form` with the static ones.
     await mountPage(w, h, p);
     const mismatched: string[] = [];
-    for (const sel of [".editor-goto", ".filepicker-footer", ".rule-form"]) {
+    for (const sel of [".editor-goto", ".filepicker-footer", ".add-form"]) {
       const rows = [...document.querySelectorAll<HTMLElement>(sel)];
       expect(rows.length, `${sel} is not in the shipped markup`).toBeGreaterThan(0);
       for (const row of rows) {

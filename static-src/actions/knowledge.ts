@@ -12,7 +12,7 @@ interface AddArgs {
 }
 
 /** Start a background index of a directory. `error: false`: the add form writes the failure
- *  beside its field from the dispatch's typed outcome. */
+ *  on its row's error line from the dispatch's typed outcome. */
 export const addKnowledge = apiAction<AddArgs, { message?: string }>({
   name: "knowledge.add",
   idempotencyKey: true,

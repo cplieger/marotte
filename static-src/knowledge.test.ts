@@ -52,6 +52,7 @@ import {
 } from "./actions/knowledge.js";
 import { initKnowledge, loadKnowledge } from "./knowledge.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
+import { fill } from "./__test-helpers__/add-forms.js";
 
 const mockGet = vi.mocked(apiGetTyped);
 const mockConfirm = vi.mocked(confirmDialog);
@@ -255,7 +256,7 @@ describe("add flow", () => {
   }
 
   function submit(path: string): void {
-    (document.getElementById("knowledge-add-path") as HTMLInputElement).value = path;
+    fill(document.getElementById("knowledge-add-path") as HTMLInputElement, path);
     (document.getElementById("knowledge-add-form") as HTMLFormElement).dispatchEvent(
       new Event("submit", { cancelable: true }),
     );

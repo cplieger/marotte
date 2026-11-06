@@ -91,10 +91,10 @@ describe("a11y: missing labels", () => {
   });
 });
 
-describe("a11y: permissions rule-form labels (static markup)", () => {
-  // Every Permissions-panel rule-form control sits inside a <label> with a visible
+describe("a11y: permissions add-row labels (static markup)", () => {
+  // Every Permissions-panel add-row control sits inside a <label> with a visible
   // .rf-label, and the submit affordance is a labeled button, not an icon-only pill.
-  it("every rule-form control has a visible label and a labeled submit button", () => {
+  it("every add-row control has a visible label and a labeled submit button", () => {
     // Parse only the permissions-panel slice: a full-document parse would make the runner
     // fetch the <link rel=stylesheet>.
     const start = indexHtml.indexOf("<!-- Permissions:");
@@ -104,15 +104,15 @@ describe("a11y: permissions rule-form labels (static markup)", () => {
     const doc = document.createElement("div");
     doc.innerHTML = indexHtml.slice(start, end);
 
-    const forms = Array.from(doc.querySelectorAll<HTMLElement>(".rule-form"));
-    const kinds = forms.map((f) => f.getAttribute("data-rule-form"));
-    expect(kinds.sort()).toEqual(["directory", "explain", "ignore", "policy"]);
+    const forms = Array.from(doc.querySelectorAll<HTMLFormElement>("form.add-form"));
+    expect(forms.map((f) => f.getAttribute("aria-label")).sort()).toEqual([
+      "Add a policy rule",
+      "Add an additional directory",
+      "Add an agent ignore file",
+      "Test a policy decision",
+    ]);
 
     for (const form of forms) {
-      // Grouped + named for assistive tech.
-      expect(form.getAttribute("role")).toBe("group");
-      expect(form.getAttribute("aria-label")).toBeTruthy();
-
       for (const control of Array.from(form.querySelectorAll("select, input"))) {
         const label = control.closest("label");
         expect(label, `control #${control.id} must be wrapped in a <label>`).not.toBeNull();
@@ -120,7 +120,7 @@ describe("a11y: permissions rule-form labels (static markup)", () => {
         expect(labelText, `control #${control.id} needs visible label text`).not.toBe("");
       }
 
-      const submit = form.querySelector<HTMLButtonElement>("button.rf-submit");
+      const submit = form.querySelector<HTMLButtonElement>("button[type='submit']");
       expect(submit).not.toBeNull();
       expect(submit?.textContent?.trim(), "submit must carry a visible text label").not.toBe("");
     }

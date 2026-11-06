@@ -155,6 +155,15 @@ describe("forge-auth: 4-section layout", () => {
     }
   });
 
+  it("draws each Add an account opener as the shared icon-only action pill", async () => {
+    mockedApiGet.mockResolvedValueOnce({ forges: [], kinds: ["github"] });
+    await renderForgesPanel();
+    for (const btn of panel().querySelectorAll<HTMLElement>("[data-forge-add]")) {
+      expect([...btn.classList]).toEqual(["action-pill"]);
+      expect(btn.querySelector("svg")?.classList.contains("ic-ui")).toBe(true);
+    }
+  });
+
   it("the add pane opens above the account list, next to the + that opened it", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [
@@ -178,7 +187,7 @@ describe("forge-auth: 4-section layout", () => {
     const header = kids.indexOf(section.querySelector(".forge-kind-header")!);
     const slot = kids.indexOf(section.querySelector("[data-forge-slot]")!);
     const list = kids.indexOf(section.querySelector(".forge-account-list")!);
-    expect(section.querySelector("form.forge-pat-form")).not.toBeNull();
+    expect(section.querySelector("form[data-forge-token]")).not.toBeNull();
     expect(header).toBeLessThan(slot);
     expect(slot).toBeLessThan(list);
   });
@@ -383,10 +392,10 @@ describe("forge-auth: 4-section layout", () => {
     const btn = section.querySelector<HTMLButtonElement>("[data-forge-add]")!;
     const slot = section.querySelector<HTMLElement>("[data-forge-slot]")!;
     btn.click();
-    expect(slot.querySelector("form.forge-pat-form"), "first click opens").not.toBeNull();
+    expect(slot.querySelector("form[data-forge-token]"), "first click opens").not.toBeNull();
     expect(slot.dataset["mode"]).toBe("add");
     btn.click();
-    expect(slot.querySelector("form.forge-pat-form"), "second click closes").toBeNull();
+    expect(slot.querySelector("form[data-forge-token]"), "second click closes").toBeNull();
     expect(slot.dataset["mode"]).toBeUndefined();
   });
 

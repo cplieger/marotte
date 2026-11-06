@@ -6,6 +6,8 @@ import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { maybeEl } from "./dom.js";
 import { buildChip } from "./chip.js";
+import { wireAddForm } from "./add-form.js";
+import type { AddForm } from "./add-form.js";
 import { reconcile } from "./reconcile.js";
 import { serverSentence } from "./actions/server-sentence.js";
 import { setAdditionalDirectories } from "./actions/settings.js";
@@ -24,37 +26,24 @@ let refused: Readonly<Record<string, string>> = {};
  *  list would drop the change it missed. Only an adopted payload unlocks a "behind" panel. */
 let lock: "none" | "saving" | "behind" = "none";
 
-function els(): { input: HTMLInputElement; add: HTMLButtonElement; error: HTMLElement } | null {
-  const input = maybeEl<HTMLInputElement>("agent-dirs-input");
-  const add = maybeEl<HTMLButtonElement>("agent-dirs-add");
-  const error = maybeEl("agent-dirs-error");
-  if (input === null || add === null || error === null) {
-    return null;
-  }
-  return { input, add, error };
+/** The add row, once initAgentDirsUI has wired it. */
+let row: AddForm | null = null;
+
+function input(): HTMLInputElement | null {
+  return maybeEl<HTMLInputElement>("agent-dirs-input");
 }
 
-function paintError(message: string | null): void {
-  const e = els();
-  if (e === null) {
-    return;
-  }
-  e.error.textContent = message ?? "";
-  e.error.classList.toggle("hidden", message === null);
-  if (message === null) {
-    e.input.removeAttribute("aria-invalid");
-  } else {
-    e.input.setAttribute("aria-invalid", "true");
-  }
+function paintError(message: string | readonly (Node | string)[] | null): void {
+  row?.setError(message, input() ?? undefined);
 }
 
 function paintLock(): void {
   const locked = lock !== "none";
-  const e = els();
-  if (e !== null) {
-    e.input.disabled = locked;
-    e.add.disabled = locked;
+  const i = input();
+  if (i !== null) {
+    i.disabled = locked;
   }
+  row?.sync();
   const chips = maybeEl("agent-dirs-chips");
   for (const b of chips?.querySelectorAll<HTMLButtonElement>(".chip-remove") ?? []) {
     b.disabled = locked;
@@ -70,21 +59,19 @@ async function catchUp(): Promise<void> {
     applyAgentDirs(s);
     return;
   }
-  const e = els();
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- a settings event's applyAgentDirs can release the lock during the await
-  if (lock !== "behind" || e === null) {
+  if (lock !== "behind") {
     return;
   }
   const retry = el("button", { type: "button", className: "btn-small" }, "Retry");
   retry.addEventListener("click", () => {
     void catchUp();
   });
-  e.error.replaceChildren("Saved, but the newest list could not be loaded. ", retry);
-  e.error.classList.remove("hidden");
+  paintError(["Saved, but the newest list could not be loaded. ", retry]);
 }
 
-/** Sends next as the whole list; a refusal keeps the list and shows the server's reason beside the
- *  field. On success the panel adopts the settings the write committed rather than painting next:
+/** Sends next as the whole list; a refusal keeps the list and shows the server's reason on the add
+ *  row's error line. On success the panel adopts the settings the write committed rather than painting next:
  *  the server decides which kept entries it grants, and removing one entry can change another's verdict.
  *  An answer the page does not adopt gives way to the newest settings (catchUp). */
 async function save(next: readonly string[]): Promise<boolean> {
@@ -173,35 +160,26 @@ export function applyAgentDirs(s: EffectiveSettings): void {
 
 /** Register the add form's listeners, once per page. */
 export function initAgentDirsUI(): void {
-  const e = els();
-  if (e === null) {
+  const field = input();
+  const form = field?.form ?? null;
+  if (field === null || form === null) {
     return;
   }
-  const { input, add } = e;
-  const submit = (): void => {
-    const val = input.value;
-    if (val === "" || lock !== "none") {
-      return;
-    }
-    if (dirs.includes(val)) {
-      input.value = "";
-      return;
-    }
-    void save([...dirs, val]).then((ok) => {
-      if (ok) {
-        input.value = "";
+  row = wireAddForm(form, {
+    busy: () => lock !== "none",
+    onSubmit: () => {
+      const val = field.value;
+      if (dirs.includes(val)) {
+        field.value = "";
+        row?.sync();
+        return;
       }
-      input.focus();
-    });
-  };
-  add.addEventListener("click", submit);
-  input.addEventListener("keydown", (ev: KeyboardEvent) => {
-    if (ev.key === "Enter") {
-      ev.preventDefault();
-      submit();
-    }
-  });
-  input.addEventListener("input", () => {
-    paintError(null);
+      return save([...dirs, val]).then((ok) => {
+        if (ok) {
+          field.value = "";
+        }
+        field.focus();
+      });
+    },
   });
 }
