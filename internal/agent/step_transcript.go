@@ -43,7 +43,7 @@ func (rs *Runs) stepTranscript(ctx context.Context, workflowID, nodePath string)
 	if rs.log != nil {
 		if g := rs.gradeStep(ctx, workflowID, nodePath); g != nil {
 			l, held := rs.lease(workflowID)
-			rs.recordGrade(ctx, workflowID, g, l, held)
+			rs.recordGrade(ctx, workflowID, g, &l, held)
 		}
 		if rs.fromRunLog(ctx, &out) {
 			return out, nil

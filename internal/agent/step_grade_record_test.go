@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -61,9 +62,9 @@ func closeTurnOf(t *testing.T, h *Runtime, workflowID string) string {
 	if err != nil {
 		t.Fatalf("read the run log: %v", err)
 	}
-	for i := len(all) - 1; i >= 0; i-- {
-		if all[i].Kind == marotte.EntryKindTurnClose {
-			return all[i].Turn
+	for _, e := range slices.Backward(all) {
+		if e.Kind == marotte.EntryKindTurnClose {
+			return e.Turn
 		}
 	}
 	t.Fatalf("the run log of %s holds no turn_close", workflowID)

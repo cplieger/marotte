@@ -107,7 +107,7 @@ func (rs *Runs) gradeStepEnd(workflowID, nodePath string, sealed []turnlog.Seale
 		ctx, cancel := rs.lifecycle.derivedContext()
 		defer cancel()
 		if g := rs.gradeStep(ctx, workflowID, nodePath); g != nil {
-			rs.recordGrade(ctx, workflowID, g, l, held)
+			rs.recordGrade(ctx, workflowID, g, &l, held)
 		}
 	})
 }
@@ -125,7 +125,7 @@ func (rs *Runs) gradeStep(ctx context.Context, workflowID, nodePath string) *ste
 
 // recordGrade announces a step's grade and leaves the launching chat the note it calls for. Every trigger of a grade
 // calls it, so a close is noted once, by the trigger that recorded its grade. l and held are the caller's lease read.
-func (rs *Runs) recordGrade(ctx context.Context, workflowID string, g *stepGrade, l runlease.Lease, held bool) {
+func (rs *Runs) recordGrade(ctx context.Context, workflowID string, g *stepGrade, l *runlease.Lease, held bool) {
 	translate.PublishAppended(ctx, rs.bus, "", workflowID, g.entry)
 	if !g.mayNote || rs.coord == nil || rs.lifecycle == nil || !held || l.ChatID == "" {
 		return
@@ -134,7 +134,7 @@ func (rs *Runs) recordGrade(ctx context.Context, workflowID string, g *stepGrade
 	rs.lifecycle.goUnlessDraining(func() {
 		nctx, cancel := rs.lifecycle.derivedContext()
 		defer cancel()
-		rs.noteGradedStepEnd(nctx, &l, g.nodePath, &g.grade, g.sessionID)
+		rs.noteGradedStepEnd(nctx, l, g.nodePath, &g.grade, g.sessionID)
 	})
 }
 
@@ -144,7 +144,7 @@ func (rs *Runs) stepEnds(ctx context.Context, workflowID string, kas map[string]
 	if len(graded) > 0 {
 		l, held := rs.lease(workflowID)
 		for _, g := range graded {
-			rs.recordGrade(ctx, workflowID, g, l, held)
+			rs.recordGrade(ctx, workflowID, g, &l, held)
 		}
 	}
 	return ends, err
