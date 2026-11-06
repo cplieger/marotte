@@ -182,7 +182,7 @@ func TestEngineLane_AnAnchoredURLSeenAgainWithNoPageIsAnswered(t *testing.T) {
 	}
 
 	h.mcpRegistry.mu.RLock()
-	n := len(h.mcpRegistry.lazySignIns)
+	n := len(h.mcpRegistry.anchors)
 	h.mcpRegistry.mu.RUnlock()
 	if n != 1 {
 		t.Errorf("anchors = %d, want the one for st-l", n)
@@ -247,7 +247,7 @@ func TestEngineLane_OpenExternalURLWithAPageConnectedIsShownEverywhere(t *testin
 		t.Errorf("event = topic %q data %s, want every page's topic carrying the URL", shown[0].Event.Topic, shown[0].Event.Data)
 	}
 	h.mcpRegistry.mu.RLock()
-	anchors := slices.Clone(h.mcpRegistry.lazySignIns)
+	anchors := slices.Clone(h.mcpRegistry.anchors)
 	h.mcpRegistry.mu.RUnlock()
 	if len(anchors) != 1 || anchors[0].state != "s1" || anchors[0].authURL != consent {
 		t.Fatalf("anchors = %+v, want one on the URL keyed by its state s1", anchors)
@@ -259,8 +259,8 @@ func TestEngineLane_OpenExternalURLWithAPageConnectedIsShownEverywhere(t *testin
 		t.Fatalf("decoding the event: %v", err)
 	}
 	// A page replaying the event later must see when KAS stopped waiting, not a fresh 300 s.
-	if !evt.Payload.ExpiresAt.Equal(anchors[0].deadline) {
-		t.Errorf("expires_at = %v, want the anchor's deadline %v", evt.Payload.ExpiresAt, anchors[0].deadline)
+	if !evt.Payload.ExpiresAt.Equal(anchors[0].expires) {
+		t.Errorf("expires_at = %v, want the anchor's deadline %v", evt.Payload.ExpiresAt, anchors[0].expires)
 	}
 }
 
@@ -285,7 +285,7 @@ func TestEngineLane_OpenExternalURLWithNoPageConnectedIsRefused(t *testing.T) {
 		}
 	}
 	h.mcpRegistry.mu.RLock()
-	n := len(h.mcpRegistry.lazySignIns)
+	n := len(h.mcpRegistry.anchors)
 	h.mcpRegistry.mu.RUnlock()
 	if n != 0 {
 		t.Errorf("anchors = %d, want none for a refused URL", n)

@@ -704,18 +704,17 @@ func TestMCPRegistry_OwnDisabledServerLeavesTheSnapshot(t *testing.T) {
 }
 
 // Another session's sign-in prompt and the signing-in session's connecting report are not a new attempt: the
-// record, its relay latch and the client's paste box all stand.
+// row's relay latch and the client's paste box both stand.
 func TestMCPRegistry_IdenticalFrameKeepsTheRelayLatch(t *testing.T) {
 	h := newHubWithMCPConfig(t, nil)
 	reportMCP(t, h, "sess_a", oauthMCP("remote", "https://auth.example/passive"))
 	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "remote"); err != nil {
 		t.Fatalf("claimSignIn: %v", err)
 	}
-	if _, ok := h.mcpRegistry.claimSignInURL(t.Context(), "https://auth.example/a?state=s"); !ok {
-		t.Fatal("claimSignInURL refused the standing sign-in")
+	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), "https://auth.example/a?state=s", false); shown.how != consentOnRow {
+		t.Fatalf("anchorConsentURL = %+v, want on the standing sign-in's row", shown)
 	}
-	attempt, err := h.mcpRegistry.beginOAuthRelay(t.Context(), "remote", "s")
-	if err != nil {
+	if _, err := h.mcpRegistry.beginOAuthRelay(t.Context(), "s"); err != nil {
 		t.Fatalf("beginOAuthRelay: %v", err)
 	}
 	before := h.bus.fanout.Position().Head
@@ -723,11 +722,8 @@ func TestMCPRegistry_IdenticalFrameKeepsTheRelayLatch(t *testing.T) {
 	reportMCP(t, h, "sess_b", oauthMCP("remote", "https://auth.example/passive"))
 	reportMCP(t, h, "sess_a", translate.MCPServerReport{Name: "remote", State: translate.MCPReportConnecting})
 
-	h.mcpRegistry.mu.RLock()
-	rec := h.mcpRegistry.servers["remote"]
-	h.mcpRegistry.mu.RUnlock()
-	if rec != attempt.rec || !rec.Relayed {
-		t.Errorf("record after identical frames = %p relayed %t, want the reserved %p still relayed", rec, rec.Relayed, attempt.rec)
+	if row := rowOf(t, h, "remote"); row.State != mcpStateSigningIn || !row.Relayed {
+		t.Errorf("row after identical frames = %+v, want it still signing_in and relayed", row)
 	}
 	if got := filterTypes(extractTypes(t, bufferedSince(h, before)), string(marotte.EventMCPOAuthNeeded)); len(got) != 0 {
 		t.Errorf("mcp_oauth_needed after identical frames = %d, want none", len(got))
@@ -959,7 +955,7 @@ func TestMCPRegistry_SnapshotListsAServerAnySessionConnected(t *testing.T) {
 	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "linear"); err != nil {
 		t.Fatalf("claimSignIn = %v", err)
 	}
-	h.mcpRegistry.claimSignInURL(t.Context(), "https://p.example/a?state=s")
+	h.mcpRegistry.anchorConsentURL(t.Context(), "https://p.example/a?state=s", false)
 	if got := rowOf(t, h, "linear").State; got != mcpStateSigningIn {
 		t.Fatalf("row state = %q, want signing_in", got)
 	}

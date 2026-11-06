@@ -37,26 +37,44 @@ const signInTTL = 630 * time.Second
 // lazySignInTTL is KAS's LAZY_AUTH_TIMEOUT_MS: its callback listener for a mid-session re-auth waits this long.
 const lazySignInTTL = 300 * time.Second
 
-// maxLazySignIns bounds the anchors: KAS runs one re-auth per server, and the oldest is evicted past it.
-const maxLazySignIns = 8
+// maxConsentAnchors bounds the anchors: KAS runs one re-auth per server. Past it the oldest is evicted, never the
+// standing Sign in's.
+const maxConsentAnchors = 8
 
-// lazySignIn is a consent URL no Sign in claimed, a mid-session re-auth: the URL names no server or session, so a
-// pasted callback's state picks it. relayed is its single-use latch, as mcpServerRuntime.Relayed is a record's.
-type lazySignIn struct {
-	deadline time.Time
-	authURL  string
-	state    string
-	relayed  bool
+// signInAnchor is a consent URL KAS opened, identified by its state. Only relayed changes after it is created, so
+// authURL is read without the lock. attempt is the Sign in it was attributed to, 0 when none.
+type signInAnchor struct {
+	expires time.Time
+	state   string
+	authURL string
+	attempt uint64
+	// relayed is the anchor's single-use relay latch (mcp_oauth_relay.go), set on reservation and kept on
+	// delivery, so a resubmit gets "already relayed". A failed relay gives it back.
+	relayed bool
 }
 
-// viewSignIn is a Sign in the user started in the view's session. authURL is the consent URL KAS opened for it, ""
-// until it opens one.
+// consentShowing is how a consent URL KAS opened is shown; respondKiroOpenExternalURL answers and broadcasts by it.
+type consentShowing int
+
+const (
+	consentRefused consentShowing = iota // a new unattributed URL with no page connected: nothing is kept
+	consentOnRow                         // attributed: the row and mcp_sign_in_open are published
+	consentSeen                          // its state is already anchored: nothing new is shown
+	consentBanner                        // unattributed with a page connected: shown on every page
+)
+
+type consentShown struct {
+	expires time.Time // consentBanner only: when KAS stops waiting for the callback
+	server  string    // consentOnRow only
+	how     consentShowing
+}
+
+// viewSignIn is a Sign in the user started in the view's session.
 type viewSignIn struct {
 	deadline time.Time
 	server   string
-	authURL  string
 	// attempt is the claim that filed it: a sign-in that outlives it (a status ended it and a second Sign in filed
-	// another) must not end the second one.
+	// another) must not end the second one, nor take its consent URL.
 	attempt uint64
 }
 
@@ -68,15 +86,14 @@ type mcpServerRuntime struct {
 	Origin      marotte.Origin
 	OriginRoot  string
 	OriginPower string
-	// OAuthURL is the consent URL KAS opened for a Sign in, set only while signing_in: the relay's anchor.
+	// OAuthURL is the standing Sign in's anchored consent URL, set only while signing_in.
 	OAuthURL          string
 	Error             string
 	Tools             []string
 	Prompts           []marotte.MCPPromptInfo
 	Resources         []marotte.MCPResourceInfo
 	ResourceTemplates []marotte.MCPResourceTemplateInfo
-	// Relayed is this attempt's single-use relay latch (mcp_oauth_relay.go), set on reservation and
-	// kept on delivery, so a resubmit gets "already relayed". A failed relay gives it back.
+	// Relayed is the row's anchor's relay latch, filled by snapshot; a stored record never holds it.
 	Relayed bool
 	Shadows bool
 }
@@ -121,18 +138,19 @@ type mcpRegistry struct {
 	notifyCh chan struct{}
 	// launchResets counts each server's automatic resets since it last connected (resetFailedForLaunch).
 	launchResets map[string]int
-	// now reads the clock for the sign-ins' and the lazy anchors' deadlines.
+	// now reads the clock for the sign-ins' and the anchors' deadlines.
 	now func() time.Time
 	// views is in recording order; resolveServers picks the view that represents each name.
 	views []mcpView
-	// lazySignIns are engine-wide: a mid-session re-auth's consent URL names no session to file it under.
-	lazySignIns []*lazySignIn
+	// anchors are engine-wide, oldest first, each added by anchorConsentURL: a consent URL names no session to
+	// file it under.
+	anchors []*signInAnchor
 	// signIns counts the sign-ins claimed, minting viewSignIn.attempt.
 	signIns uint64
 	mu      sync.RWMutex
 }
 
-var _ signInURLClaimer = (*mcpRegistry)(nil)
+var _ consentAnchorer = (*mcpRegistry)(nil)
 
 func newMCPRegistry(engine *engineOwner, b *bus, lt *lifetime, cfg mcpNameSets,
 	sessionOf func(marotte.ChatID) (marotte.SessionID, bool),
@@ -167,9 +185,14 @@ func (reg *mcpRegistry) setOnChange(fn func()) {
 func (reg *mcpRegistry) snapshot() []mcpServerRuntime {
 	reg.mu.RLock()
 	defer reg.mu.RUnlock()
+	anchors := reg.consentAnchorsLocked()
 	out := make([]mcpServerRuntime, 0, len(reg.servers))
 	for _, v := range reg.servers {
-		out = append(out, *v)
+		row := *v
+		if a := anchors[row.Name]; a != nil && row.State == mcpStateSigningIn && row.OAuthURL == a.authURL {
+			row.Relayed = a.relayed
+		}
+		out = append(out, row)
 	}
 	slices.SortFunc(out, func(a, b mcpServerRuntime) int { return cmp.Compare(a.Name, b.Name) })
 	return out
@@ -366,14 +389,17 @@ type mcpDerived struct {
 	anyView   bool
 }
 
-// deriveLocked rebuilds servers from views. A record keeps its pointer, and so its relay latch, while its state and
-// authorization URL stand; any other change updates it in place. Only a changed record raises an event.
+// deriveLocked rebuilds servers from views. Only a changed record raises an event.
 func (reg *mcpRegistry) deriveLocked(configured map[string]struct{}) mcpDerived {
 	d := mcpDerived{anyView: len(reg.views) > 0, registry: unionRegistry(reg.views)}
 	next := make(map[string]*mcpServerRuntime, len(reg.servers))
-	signingIn := reg.consentURLsLocked()
+	anchors := reg.consentAnchorsLocked()
 	for _, r := range resolveServers(reg.views) {
-		reg.deriveServerLocked(&d, next, &r, configured, signingIn[r.report.Name])
+		var consentURL string
+		if a := anchors[r.report.Name]; a != nil {
+			consentURL = a.authURL
+		}
+		reg.deriveServerLocked(&d, next, &r, configured, consentURL)
 	}
 	for name := range reg.servers {
 		if _, ok := next[name]; !ok {
@@ -385,23 +411,38 @@ func (reg *mcpRegistry) deriveLocked(configured map[string]struct{}) mcpDerived 
 	return d
 }
 
-// consentURLsLocked is each server's consent URL from the unexpired sign-in KAS opened one for.
-func (reg *mcpRegistry) consentURLsLocked() map[string]string {
+// consentAnchorsLocked is, per server, the unexpired anchor attributed to its standing unexpired Sign in. It never
+// writes reg.anchors: snapshot calls it under the read lock.
+func (reg *mcpRegistry) consentAnchorsLocked() map[string]*signInAnchor {
 	now := reg.now()
-	var out map[string]string
+	var out map[string]*signInAnchor
 	for _, v := range reg.views {
-		if s := v.signIn; s != nil && s.authURL != "" && now.Before(s.deadline) {
+		s := v.signIn
+		if s == nil || !now.Before(s.deadline) {
+			continue
+		}
+		if a := reg.attemptAnchorLocked(s.attempt, now); a != nil {
 			if out == nil {
-				out = map[string]string{}
+				out = map[string]*signInAnchor{}
 			}
-			out[s.server] = s.authURL
+			out[s.server] = a
 		}
 	}
 	return out
 }
 
-// deriveServerLocked files r's record into next, reusing the current record while its state and authorization
-// URL stand; a server recordFor rejects is left out. A non-empty consentURL makes the record signing_in with it.
+// attemptAnchorLocked is the unexpired anchor attributed to attempt, nil when it has none.
+func (reg *mcpRegistry) attemptAnchorLocked(attempt uint64, now time.Time) *signInAnchor {
+	for _, a := range reg.anchors {
+		if a.attempt == attempt && now.Before(a.expires) {
+			return a
+		}
+	}
+	return nil
+}
+
+// deriveServerLocked files r's record into next; a server recordFor rejects is left out. A non-empty consentURL
+// makes the record signing_in with it.
 func (reg *mcpRegistry) deriveServerLocked(d *mcpDerived, next map[string]*mcpServerRuntime,
 	r *mcpResolution, configured map[string]struct{}, consentURL string,
 ) {
@@ -420,17 +461,13 @@ func (reg *mcpRegistry) deriveServerLocked(d *mcpDerived, next map[string]*mcpSe
 		delete(reg.launchResets, s.Name)
 	}
 	old := reg.servers[s.Name]
+	next[s.Name] = rec
 	if old != nil && old.State == rec.State && old.OAuthURL == rec.OAuthURL {
-		next[s.Name] = old
 		if !sameRecord(old, rec) {
-			ev := inPlaceEvent(old, rec)
-			rec.Relayed = old.Relayed
-			*old = *rec
-			d.change(ev)
+			d.change(inPlaceEvent(old, rec))
 		}
 		return
 	}
-	next[s.Name] = rec
 	d.change(stateEvent(rec))
 }
 
@@ -449,7 +486,7 @@ func (d *mcpDerived) change(ev *marotte.ServerEvent) {
 	}
 }
 
-// stateEvent is the SSE event announcing rec; a disabled server has none, and claimSignInURL's mcp_sign_in_open
+// stateEvent is the SSE event announcing rec; a disabled server has none, and anchorConsentURL's mcp_sign_in_open
 // announces a signing_in one.
 func stateEvent(rec *mcpServerRuntime) *marotte.ServerEvent {
 	var ev marotte.ServerEvent
@@ -635,97 +672,117 @@ func (reg *mcpRegistry) handlePool(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, map[string][]poolServerJSON{"servers": out})
 }
 
-// anchorSignInURL records a consent URL no Sign in claimed and returns when KAS stops waiting for its callback. A
-// URL with no state could never match a paste, so it is not kept.
-func (reg *mcpRegistry) anchorSignInURL(authURL string) time.Time {
-	deadline := reg.now().Add(lazySignInTTL)
+// anchorConsentURL is the one writer of new anchors, and decides how a consent URL KAS opened is shown. A state an
+// unexpired anchor holds is consentSeen whatever pageConnected says. A new anchor takes the standing Sign in only
+// while that Sign in has none, so a later URL never rewrites its row. A URL with no state is never an anchor: no
+// paste could match it.
+func (reg *mcpRegistry) anchorConsentURL(ctx context.Context, authURL string, pageConnected bool) consentShown {
+	state := consentState(authURL)
+	configured := reg.configuredNames(ctx)
+	reg.mu.Lock()
+	now := reg.now()
+	reg.pruneAnchorsLocked(now)
+	if state != "" && slices.ContainsFunc(reg.anchors, func(a *signInAnchor) bool { return a.state == state }) {
+		reg.mu.Unlock()
+		return consentShown{how: consentSeen}
+	}
+	var standing viewSignIn
+	if i := slices.IndexFunc(reg.views, func(v mcpView) bool { return v.signIn != nil && now.Before(v.signIn.deadline) }); i >= 0 {
+		standing = *reg.views[i].signIn
+	}
+	if state != "" && standing.attempt != 0 && reg.attemptAnchorLocked(standing.attempt, now) == nil {
+		reg.addAnchorLocked(&signInAnchor{expires: standing.deadline, state: state, authURL: authURL, attempt: standing.attempt}, standing.attempt)
+		d := reg.deriveLocked(configured)
+		reg.mu.Unlock()
+		reg.publish(ctx, d)
+		reg.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventMCPSignInOpen, "", marotte.MCPSignInOpenPayload{Server: standing.server, URL: authURL}))
+		return consentShown{how: consentOnRow, server: standing.server}
+	}
+	if !pageConnected {
+		reg.mu.Unlock()
+		return consentShown{how: consentRefused}
+	}
+	expires := now.Add(lazySignInTTL)
+	if state != "" {
+		reg.addAnchorLocked(&signInAnchor{expires: expires, state: state, authURL: authURL}, standing.attempt)
+	}
+	reg.mu.Unlock()
+	return consentShown{how: consentBanner, expires: expires}
+}
+
+// consentState is the state a consent URL carries, "" when it carries none or does not parse.
+func consentState(authURL string) string {
 	u, err := url.Parse(authURL)
 	if err != nil {
-		return deadline
+		return ""
 	}
-	state := u.Query().Get("state")
-	if state == "" {
-		return deadline
-	}
-	reg.mu.Lock()
-	defer reg.mu.Unlock()
-	reg.pruneLazySignInsLocked()
-	if len(reg.lazySignIns) >= maxLazySignIns {
-		reg.lazySignIns = slices.Delete(reg.lazySignIns, 0, len(reg.lazySignIns)-maxLazySignIns+1)
-	}
-	reg.lazySignIns = append(reg.lazySignIns, &lazySignIn{deadline: deadline, authURL: authURL, state: state})
-	return deadline
+	return u.Query().Get("state")
 }
 
-func (reg *mcpRegistry) pruneLazySignInsLocked() {
-	now := reg.now()
-	reg.lazySignIns = slices.DeleteFunc(reg.lazySignIns, func(l *lazySignIn) bool { return !now.Before(l.deadline) })
+// addAnchorLocked appends a, first evicting the oldest anchors past maxConsentAnchors other than the one attributed
+// to the standing attempt (0 when none stands).
+func (reg *mcpRegistry) addAnchorLocked(a *signInAnchor, standing uint64) {
+	for len(reg.anchors) >= maxConsentAnchors {
+		j := slices.IndexFunc(reg.anchors, func(o *signInAnchor) bool { return standing == 0 || o.attempt != standing })
+		reg.anchors = slices.Delete(reg.anchors, j, j+1)
+	}
+	reg.anchors = append(reg.anchors, a)
 }
 
-// oauthAttempt is a granted reservation to relay one authorization attempt's callback, the only
-// handle that can give it back. The record pointer (rec, or lazy for a sign-in no Sign in started) is the
-// attempt's identity: a state or URL change installs a fresh record, so a stale token's release is a no-op. authURL
-// is copied in so the handler never reads a later attempt's anchor; rec and lazy are only dereferenced under the lock.
+// pruneAnchorsLocked drops the expired anchors. Write lock only: a reader under the read lock filters by expiry.
+func (reg *mcpRegistry) pruneAnchorsLocked(now time.Time) {
+	reg.anchors = slices.DeleteFunc(reg.anchors, func(a *signInAnchor) bool { return !now.Before(a.expires) })
+}
+
+// oauthAttempt is a granted reservation to relay one anchor's callback, the only handle that can give it back. The
+// anchor pointer is its identity, so a release after the anchor left reg.anchors is a no-op.
 type oauthAttempt struct {
-	rec     *mcpServerRuntime
-	lazy    *lazySignIn
-	server  string
-	authURL string
+	anchor *signInAnchor
 }
 
-// beginOAuthRelay reserves the named server's unexpired Sign in, or else the unexpired lazy anchor whose state is
-// the pasted callback's. All under one lock: a concurrent paste gets errRelayAlreadyDone, a state no anchor holds
-// errRelayStateDrift, nothing in flight errRelayNoFlow.
-func (reg *mcpRegistry) beginOAuthRelay(ctx context.Context, name, pastedState string) (oauthAttempt, error) {
+// beginOAuthRelay reserves the unexpired anchor whose state is the pasted callback's, all under one lock: a
+// concurrent paste gets errRelayAlreadyDone, a state no anchor holds errRelayStateDrift, no anchor at all
+// errRelayNoFlow.
+func (reg *mcpRegistry) beginOAuthRelay(ctx context.Context, pastedState string) (oauthAttempt, error) {
 	configured := reg.configuredNames(ctx)
 	reg.mu.Lock()
 	d := reg.expireSignInsLocked(configured)
-	a, err := reg.reserveRelayLocked(name, pastedState)
+	a, err := reg.reserveRelayLocked(pastedState)
 	reg.mu.Unlock()
 	reg.publish(ctx, d)
 	return a, err
 }
 
-func (reg *mcpRegistry) reserveRelayLocked(name, pastedState string) (oauthAttempt, error) {
-	if s, exists := reg.servers[name]; exists && s.State == mcpStateSigningIn && s.OAuthURL != "" {
-		if s.Relayed {
-			return oauthAttempt{}, errRelayAlreadyDone
-		}
-		s.Relayed = true
-		return oauthAttempt{rec: s, server: name, authURL: s.OAuthURL}, nil
-	}
-	reg.pruneLazySignInsLocked()
-	if len(reg.lazySignIns) == 0 {
+func (reg *mcpRegistry) reserveRelayLocked(pastedState string) (oauthAttempt, error) {
+	reg.pruneAnchorsLocked(reg.now())
+	if len(reg.anchors) == 0 {
 		return oauthAttempt{}, errRelayNoFlow
 	}
-	for _, l := range reg.lazySignIns {
-		// Constant-time, as matchAdvertisedCallback's: the state is secret-equivalent.
-		if subtle.ConstantTimeCompare([]byte(l.state), []byte(pastedState)) != 1 {
+	for _, a := range reg.anchors {
+		// Constant-time: the state is secret-equivalent, and an early exit would leak it to a retrying caller.
+		if subtle.ConstantTimeCompare([]byte(a.state), []byte(pastedState)) != 1 {
 			continue
 		}
-		if l.relayed {
+		if a.relayed {
 			return oauthAttempt{}, errRelayAlreadyDone
 		}
-		l.relayed = true
-		return oauthAttempt{lazy: l, server: name, authURL: l.authURL}, nil
+		a.relayed = true
+		return oauthAttempt{anchor: a}, nil
 	}
 	return oauthAttempt{}, errRelayStateDrift
 }
 
 // releaseOAuthRelay gives back an undelivered reservation (refused paste, transport failure,
-// listener refusal); a delivery keeps it as the latch. A no-op unless the attempt is current.
+// listener refusal); a delivery keeps it as the latch. A no-op once the anchor is gone.
 func (reg *mcpRegistry) releaseOAuthRelay(a oauthAttempt) {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
-	switch {
-	case a.rec != nil && reg.servers[a.server] == a.rec:
-		a.rec.Relayed = false
-	case a.lazy != nil && slices.Contains(reg.lazySignIns, a.lazy):
-		a.lazy.relayed = false
+	if slices.Contains(reg.anchors, a.anchor) {
+		a.anchor.relayed = false
 	}
 }
 
-// clearAll wipes every view (and so every sign-in), record and lazy anchor and broadcasts mcp_disconnected per
+// clearAll wipes every view (and so every sign-in), record and anchor and broadcasts mcp_disconnected per
 // server when the engine ends: MCP subprocesses live inside kiro-cli.
 func (reg *mcpRegistry) clearAll(ctx context.Context) {
 	reg.mu.Lock()
@@ -734,7 +791,7 @@ func (reg *mcpRegistry) clearAll(ctx context.Context) {
 	reg.launchResets = make(map[string]int)
 	hadPool := slices.ContainsFunc(reg.views, func(v mcpView) bool { return len(viewPool(v.servers)) > 0 })
 	reg.views = nil
-	reg.lazySignIns = nil
+	reg.anchors = nil
 	reg.mu.Unlock()
 	if hadPool {
 		reg.poolChanged()

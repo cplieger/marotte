@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/translate"
@@ -24,21 +23,20 @@ func (in *inbound) handleKiroClientRequest(ctx context.Context, chatID marotte.C
 	return true
 }
 
-// signInURLClaimer owns the consent URLs KAS opens: the frame names neither a server nor a session.
-type signInURLClaimer interface {
-	// claimSignInURL gives url to the sign-in the user started, when one is pending.
-	claimSignInURL(ctx context.Context, url string) (server string, ok bool)
-	// anchorSignInURL records an unclaimed url as the anchor a pasted callback with its state is relayed on, and
-	// returns when KAS stops waiting for that callback.
-	anchorSignInURL(url string) time.Time
+// consentAnchorer owns the consent URLs KAS opens: the frame names neither a server nor a session.
+type consentAnchorer interface {
+	// anchorConsentURL keeps url as the anchor a pasted callback with its state is relayed on, and says how to show
+	// it; pageConnected is whether any page could.
+	anchorConsentURL(ctx context.Context, url string, pageConnected bool) consentShown
 }
 
 // openedReply is _kiro/openExternalUrl's success.
 func openedReply() map[string]any { return map[string]any{"success": true} }
 
 // respondKiroOpenExternalURL is _kiro/openExternalUrl's one owner, on the engine lane (KAS's frame names no
-// session). A pending sign-in claims the URL; an unclaimed one is shown on every connected page, and refused when no
-// page is connected: a success makes KAS wait on a callback for up to 300 s, an error ends the attempt at once.
+// session). The registry anchors every URL: the first after a Sign in goes to its row, a state already anchored is
+// answered as seen, and any other is shown on every page, refused when none is connected: a success makes KAS wait
+// on a callback for up to 300 s, an error ends the attempt at once.
 func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, origin acpResponder, msg *marotte.RPCResponse) {
 	var p struct {
 		URL string `json:"url"`
@@ -54,23 +52,25 @@ func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, origin acpRes
 		})
 		return
 	}
-	if server, ok := in.signIns.claimSignInURL(ctx, p.URL); ok {
-		slog.Info("v3 openExternalUrl: showing the consent page on the server signing in", "server", server)
-		in.respondBridge(ctx, "", origin, msg, openedReply(), nil)
-		return
-	}
-	if in.bus.fanout.ClientCount() == 0 {
+	shown := in.signIns.anchorConsentURL(ctx, p.URL, in.bus.fanout.ClientCount() > 0)
+	switch shown.how {
+	case consentRefused:
 		slog.Warn("v3 openExternalUrl: refusing a sign-in URL, since no page is connected to show it")
 		in.respondBridge(ctx, "", origin, msg, nil, &marotte.RPCError{
 			Code:    -32000,
 			Message: "no client can open this URL",
 		})
-		return
+	case consentOnRow:
+		slog.Info("v3 openExternalUrl: showing the consent page on the server signing in", "server", shown.server)
+		in.respondBridge(ctx, "", origin, msg, openedReply(), nil)
+	case consentSeen:
+		slog.Debug("v3 openExternalUrl: answering a consent URL already anchored")
+		in.respondBridge(ctx, "", origin, msg, openedReply(), nil)
+	case consentBanner:
+		slog.Info("v3 openExternalUrl: showing a consent URL no standing Sign in took on every page")
+		in.respondBridge(ctx, "", origin, msg, openedReply(), nil)
+		in.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventOpenExternalURL, "", marotte.OpenExternalURLPayload{URL: p.URL, ExpiresAt: shown.expires}))
 	}
-	expires := in.signIns.anchorSignInURL(p.URL)
-	slog.Info("v3 openExternalUrl: showing a sign-in no Sign in started on every page")
-	in.respondBridge(ctx, "", origin, msg, openedReply(), nil)
-	in.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventOpenExternalURL, "", marotte.OpenExternalURLPayload{URL: p.URL, ExpiresAt: expires}))
 }
 
 func kiroShellTypeResult() map[string]any {

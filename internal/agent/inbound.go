@@ -14,7 +14,7 @@ type inbound struct {
 	specs   *spec.Notifier
 	secrets *secretstore.Store `wiring:"optional"`
 	// signIns is the MCP registry, which owns every consent URL KAS opens.
-	signIns signInURLClaimer
+	signIns consentAnchorer
 	// stepRun names the run a step session belongs to (engineRouter.StepRun).
 	stepRun func(marotte.SessionID) (string, bool)
 }
