@@ -307,33 +307,6 @@
   inset-inline: 0;
 }
 
-.chip-adder {
-  position: relative;
-  display: inline-flex;
-
-  /* At zero gap the field's border butts the pill's. */
-  gap: var(--sp-2);
-}
-
-/* The adder's field takes `--btn-h`, the height of the `.action-pill` beside it, on
-   both pointer tiers. */
-.chip-input {
-  flex: 1;
-  min-block-size: var(--field-h);
-  padding: var(--sp-1) var(--sp-2);
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  background: var(--c-bg-primary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-sm);
-  color: var(--c-text-primary);
-}
-
-.chip-input:focus {
-  border-color: var(--c-accent);
-  outline: none;
-}
-
 .chip-menu {
   position: absolute;
   inset-inline-start: 0;

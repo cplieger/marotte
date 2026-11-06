@@ -40,6 +40,7 @@ vi.mock("./actions/permissions.js", () => ({
 
 import { initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
 import { byId } from "./dom.js";
+import { shippedAddForm } from "./__test-helpers__/add-forms.js";
 
 const SOURCE = "/home/u/.kiro/settings/permissions.yaml";
 
@@ -122,14 +123,8 @@ beforeEach(() => {
   section.appendChild(tag("p", "native-policy-status"));
   section.appendChild(tag("div", "native-policy-list"));
   section.appendChild(tag("p", "native-policy-empty-hint"));
-  const adder = document.createElement("div");
-  adder.setAttribute("data-rule-form", "add");
-  adder.appendChild(tag<HTMLSelectElement>("select", "native-rule-capability"));
-  adder.appendChild(tag<HTMLButtonElement>("button", "native-rule-add"));
-  section.appendChild(adder);
-  section.appendChild(tag<HTMLSelectElement>("select", "native-explain-capability"));
-  section.appendChild(tag<HTMLInputElement>("input", "native-explain-resource"));
-  section.appendChild(tag<HTMLButtonElement>("button", "native-explain-run"));
+  section.appendChild(shippedAddForm("native-rule-capability"));
+  section.appendChild(shippedAddForm("native-explain-capability"));
   section.appendChild(tag("p", "native-explain-result"));
   document.body.appendChild(section);
 

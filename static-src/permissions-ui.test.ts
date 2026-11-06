@@ -42,6 +42,7 @@ import {
   AGENT_IGNORE_FLOOR,
 } from "./permissions-ui.js";
 import { byId } from "./dom.js";
+import { fill, shippedAddForm } from "./__test-helpers__/add-forms.js";
 
 function div(id: string): HTMLDivElement {
   const e = document.createElement("div");
@@ -52,18 +53,6 @@ function hint(id: string): HTMLParagraphElement {
   const e = document.createElement("p");
   e.id = id;
   e.className = "section-hint hidden";
-  return e;
-}
-function input(id: string): HTMLInputElement {
-  const e = document.createElement("input");
-  e.id = id;
-  e.type = "text";
-  return e;
-}
-function button(id: string): HTMLButtonElement {
-  const e = document.createElement("button");
-  e.id = id;
-  e.type = "button";
   return e;
 }
 function checkbox(id: string): HTMLInputElement {
@@ -102,8 +91,7 @@ beforeEach(() => {
   // Agent ignore section.
   document.body.appendChild(div("agent-ignore-chips"));
   document.body.appendChild(hint("agent-ignore-empty-hint"));
-  document.body.appendChild(input("agent-ignore-input"));
-  document.body.appendChild(button("agent-ignore-add"));
+  document.body.appendChild(shippedAddForm("agent-ignore-input"));
 
   mocks.patchSettings.mockResolvedValue({ outcome: "failed" });
   mocks.shown = null;
@@ -146,7 +134,7 @@ describe("the panel follows the settings as shown", () => {
   it("builds an add from the list another device saved, not the one this page opened with", async () => {
     initWith([".gitignore"]);
     applyPermissionsPanel(settingsPayload({ agent_ignore_files: [".gitignore", ".npmignore"] }));
-    byId<HTMLInputElement>("agent-ignore-input").value = ".env.dec";
+    fill(byId<HTMLInputElement>("agent-ignore-input"), ".env.dec");
     byId<HTMLButtonElement>("agent-ignore-add").click();
     await flush();
     expect(mocks.patchSettings).toHaveBeenCalledWith({
@@ -158,7 +146,7 @@ describe("the panel follows the settings as shown", () => {
     initWith([".gitignore"]);
     // The write failed, so the settings as shown are what the server holds.
     mocks.shown = settingsPayload({ agent_ignore_files: [".gitignore"] });
-    byId<HTMLInputElement>("agent-ignore-input").value = ".env.dec";
+    fill(byId<HTMLInputElement>("agent-ignore-input"), ".env.dec");
     byId<HTMLButtonElement>("agent-ignore-add").click();
     expect(ignoreChips().map(chipLabel), "the add, while its write is out").toEqual([
       ".gitignore",
@@ -176,7 +164,7 @@ describe("renderIgnoreChips — keyed reconcile", () => {
     initWith([]);
 
     const pathInput = byId<HTMLInputElement>("agent-ignore-input");
-    pathInput.value = ".dockerignore";
+    fill(pathInput, ".dockerignore");
     byId<HTMLButtonElement>("agent-ignore-add").click();
     await flush();
 
@@ -195,7 +183,7 @@ describe("renderIgnoreChips — keyed reconcile", () => {
 
     // Add a third entry; the keyed reconcile must reuse the existing .gitignore node rather than
     // rebuilding the whole row.
-    byId<HTMLInputElement>("agent-ignore-input").value = ".dockerignore";
+    fill(byId<HTMLInputElement>("agent-ignore-input"), ".dockerignore");
     byId<HTMLButtonElement>("agent-ignore-add").click();
     await flush();
 
@@ -221,7 +209,7 @@ describe("renderIgnoreChips — keyed reconcile", () => {
     expect(ignoreChips().map(chipLabel)).toEqual([".gitignore", ".kiroignore"]);
     expect(byId("agent-ignore-empty-hint").classList.contains("hidden")).toBe(true);
 
-    byId<HTMLInputElement>("agent-ignore-input").value = ".env.dec";
+    fill(byId<HTMLInputElement>("agent-ignore-input"), ".env.dec");
     byId<HTMLButtonElement>("agent-ignore-add").click();
     await flush();
 
@@ -233,7 +221,7 @@ describe("renderIgnoreChips — keyed reconcile", () => {
   it("ignores duplicate adds", async () => {
     initWith([".gitignore"]);
 
-    byId<HTMLInputElement>("agent-ignore-input").value = ".gitignore";
+    fill(byId<HTMLInputElement>("agent-ignore-input"), ".gitignore");
     byId<HTMLButtonElement>("agent-ignore-add").click();
     await flush();
 

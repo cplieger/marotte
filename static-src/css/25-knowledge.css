@@ -21,52 +21,6 @@
   background: color-mix(in srgb, var(--c-yellow) 8%, transparent);
 }
 
-/* Inline add form: revealed by the + button. display is set only when NOT
-   hidden so the UA [hidden]{display:none} still wins when collapsed. */
-.knowledge-add-form:not([hidden]) {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-2);
-  margin-block: var(--sp-2);
-}
-
-.knowledge-add-form .tool-form-input {
-  flex: 1 1 12rem;
-  min-inline-size: 0;
-  touch-action: manipulation;
-}
-
-/* The row's buttons share it with two fields at equal rank, so they take the
-   form peer rung (01-tokens.css "The FORM type scale"). */
-.knowledge-add-form .btn-small {
-  font-size: var(--fs-form-peer);
-}
-
-/* The path is required and holds the longer value, so it takes the larger share
-   of the row; the name is optional and can be narrow. Both selectors score the
-   same as the rule above and win on source order. */
-.knowledge-add-form [id="knowledge-add-path"] {
-  flex: 2 1 14rem;
-}
-
-.knowledge-add-form [id="knowledge-add-name"] {
-  flex: 1 1 8rem;
-}
-
-/* The add form's own failure surface. `knowledge.add` carries `error: false`, so
-   this is the only place the server's message reaches a reader. Whole row, so a
-   long path error does not squeeze the fields beside it; hidden while empty, so
-   the form reserves no space for a message it is not showing. */
-.knowledge-add-error {
-  flex: 1 0 100%;
-  color: var(--c-red);
-}
-
-.knowledge-add-error:empty {
-  display: none;
-}
-
 /* Item-count meta uses tabular figures so counts don't jitter. */
 .knowledge-meta {
   font-variant-numeric: tabular-nums;

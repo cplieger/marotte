@@ -155,6 +155,15 @@ describe("forge-auth: 4-section layout", () => {
     }
   });
 
+  it("draws each Add an account opener as the shared icon-only action pill", async () => {
+    mockedApiGet.mockResolvedValueOnce({ forges: [], kinds: ["github"] });
+    await renderForgesPanel();
+    for (const btn of panel().querySelectorAll<HTMLElement>("[data-forge-add]")) {
+      expect([...btn.classList]).toEqual(["action-pill"]);
+      expect(btn.querySelector("svg")?.classList.contains("ic-ui")).toBe(true);
+    }
+  });
+
   it("the add pane opens above the account list, next to the + that opened it", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [

@@ -4,6 +4,8 @@
 import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { byId } from "./dom.js";
+import { buildAddForm, wireAddForm } from "./add-form.js";
+import type { AddForm } from "./add-form.js";
 import { reconcile } from "./reconcile.js";
 import { showToast } from "./toast.js";
 import { confirm as confirmDialog } from "./confirm.js";
@@ -376,82 +378,74 @@ async function onRemove(name: string): Promise<void> {
   );
 }
 
-function buildAddForm(): HTMLFormElement {
+function buildKnowledgeForm(): HTMLFormElement {
   const pathInput = el("input", {
     type: "text",
     id: "knowledge-add-path",
-    className: "tool-form-input",
-    placeholder: "Directory path, for example docs or /abs/path…",
-    "aria-label": "Knowledge base directory path",
+    className: "rf-mono",
+    autocomplete: "off",
+    placeholder: "docs or /abs/path…",
   }) as HTMLInputElement;
   const nameInput = el("input", {
     type: "text",
     id: "knowledge-add-name",
-    className: "tool-form-input",
-    placeholder: "Name, optional…",
-    "aria-label": "Knowledge base name",
+    autocomplete: "off",
   }) as HTMLInputElement;
-  const submit = el(
-    "button",
-    { type: "submit", className: "btn-small" },
-    "Add",
-  ) as HTMLButtonElement;
-  const cancel = el("button", { type: "button", className: "btn-small" }, "Cancel");
+  const cancel = el("button", { type: "button", className: "btn" }, "Cancel") as HTMLButtonElement;
   cancel.addEventListener("click", () => {
     hideAddForm();
   });
-  // `<output>` carries an implicit `status` live region, so its message is announced without aria-live.
-  const error = el("output", {
-    className: "knowledge-add-error",
-    id: "knowledge-add-error",
-  }) as HTMLOutputElement;
-  const form = el(
-    "form",
-    { className: "knowledge-add-form", id: "knowledge-add-form" },
-    pathInput,
-    nameInput,
-    submit,
-    cancel,
-    error,
-  ) as HTMLFormElement;
-  form.hidden = true;
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    void onAdd(pathInput, nameInput, error);
+  const form = buildAddForm({
+    fields: [
+      { label: "Directory", control: pathInput, size: "grow" },
+      { label: "Name", control: nameInput, optional: true },
+    ],
+    label: "Add knowledge base",
+    ariaLabel: "Add a knowledge base",
+    id: "knowledge-add-form",
+    errorId: "knowledge-add-error",
+    trailing: cancel,
   });
-  registerCleanup(bindLoadingState("knowledge.add", submit, { preserveDisabled: true }));
+  form.hidden = true;
+  const row = wireAddForm(form, {
+    onSubmit: () => {
+      void onAdd(pathInput, nameInput, row);
+    },
+  });
+  registerCleanup(
+    bindLoadingState("knowledge.add", row.button, { disabledFn: () => row.blocked() }),
+  );
   return form;
 }
 
 async function onAdd(
   pathInput: HTMLInputElement,
   nameInput: HTMLInputElement,
-  error: HTMLOutputElement,
+  row: AddForm,
 ): Promise<void> {
-  error.textContent = "";
+  row.setError(null);
   const path = pathInput.value.trim();
-  if (path === "") {
-    pathInput.focus();
-    return;
-  }
   const name = nameInput.value.trim();
   // `error: false` keeps this off the toasts, so the field is the only surface for the server's message, carried only by
   // the typed outcome.
   const out = await addKnowledge.dispatch({ path, name }).outcome;
   const label = name !== "" ? name : path;
   if (out.status !== "success") {
-    error.textContent =
+    row.setError(
       out.status !== "error"
         ? "The add was cancelled before it ran."
         : mayStillApply(out.error)
           ? `Still adding "${label}"; the list updates when it lands`
-          : out.error.message;
+          : out.error.message,
+      pathInput,
+    );
     pathInput.focus();
     return;
   }
   showToast(`Indexing "${label}" in the background…`, "success");
   pathInput.value = "";
   nameInput.value = "";
+  row.sync();
   hideAddForm();
   loadKnowledge();
 }
@@ -469,7 +463,7 @@ export function initKnowledge(): void {
   const addBtn = byId<HTMLButtonElement>("knowledge-add-btn");
   addBtn.innerHTML = ICON_PLUS_UI;
 
-  const form = buildAddForm();
+  const form = buildKnowledgeForm();
   byId<HTMLDivElement>("knowledge-list").before(form);
 
   addBtn.addEventListener("click", () => {

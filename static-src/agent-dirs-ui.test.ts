@@ -19,6 +19,7 @@ vi.mock("./actions/settings.js", async (importOriginal) => ({
 
 import { applyAgentDirs, initAgentDirsUI } from "./agent-dirs-ui.js";
 import { byId } from "./dom.js";
+import { fill, shippedAddForm } from "./__test-helpers__/add-forms.js";
 import { servedFileRoute } from "./utils-url.js";
 import { additionalDirectories, _resetForTest as resetWorkspace } from "./workspace.js";
 
@@ -71,8 +72,7 @@ function chipLabels(): string[] {
 }
 
 function add(value: string): void {
-  const input = byId<HTMLInputElement>("agent-dirs-input");
-  input.value = value;
+  fill(byId<HTMLInputElement>("agent-dirs-input"), value);
   byId<HTMLButtonElement>("agent-dirs-add").click();
 }
 
@@ -82,10 +82,8 @@ beforeEach(() => {
     <span class="settings-save-status hidden" data-save-status="additional_directories"></span>
     <div id="agent-dirs-chips"></div>
     <ul id="agent-dirs-refused" class="hidden"></ul>
-    <input id="agent-dirs-input" type="text">
-    <button id="agent-dirs-add" type="button">Add</button>
-    <p id="agent-dirs-error" class="hidden"></p>
     <p id="agent-dirs-empty-hint" class="hidden"></p>`;
+  document.body.append(shippedAddForm("agent-dirs-input"));
   initAgentDirsUI();
   applyAgentDirs(settingsPayload({ additional_directories: ["/data"] }));
 });
@@ -141,7 +139,6 @@ describe("additional directories", () => {
     await flush();
     const error = byId("agent-dirs-error");
     expect(error.textContent).toBe(reason);
-    expect(error.classList.contains("hidden")).toBe(false);
     expect(byId("agent-dirs-input").getAttribute("aria-invalid")).toBe("true");
     expect(byId<HTMLInputElement>("agent-dirs-input").value).toBe("/config");
     expect(byId<HTMLInputElement>("agent-dirs-input").disabled).toBe(false);
@@ -155,8 +152,8 @@ describe("additional directories", () => {
     const blurred = new Promise((resolve) => {
       input.addEventListener("blur", resolve, { once: true });
     });
-    input.value = "relative";
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    fill(input, "relative");
+    input.form?.requestSubmit();
     await blurred;
     settle({ status: "error", error: { message: "refused", status: 400 } });
     await flush();
@@ -168,8 +165,8 @@ describe("additional directories", () => {
     refuse("refused");
     add("relative");
     await flush();
-    byId("agent-dirs-input").dispatchEvent(new Event("input"));
-    expect(byId("agent-dirs-error").classList.contains("hidden")).toBe(true);
+    byId("agent-dirs-input").dispatchEvent(new Event("input", { bubbles: true }));
+    expect(byId("agent-dirs-error").textContent).toBe("");
     expect(byId("agent-dirs-input").hasAttribute("aria-invalid")).toBe(false);
   });
 
@@ -196,10 +193,10 @@ describe("additional directories", () => {
     expect(chipLabels()).toEqual(["/data", "/srv/reports "]);
   });
 
-  it("leaves a blank-only entry for the server to explain", () => {
-    refuse(`invalid additional directory " ": give an absolute path`);
+  it("keeps Add directory disabled for a blank-only entry and sends nothing", () => {
     add(" ");
-    expect(mocks.dispatch).toHaveBeenCalledWith({ dirs: ["/data", " "] });
+    expect(byId<HTMLButtonElement>("agent-dirs-add").disabled).toBe(true);
+    expect(mocks.dispatch).not.toHaveBeenCalled();
   });
 
   it("starts no second write until the first one's answer is adopted, then builds on it", async () => {

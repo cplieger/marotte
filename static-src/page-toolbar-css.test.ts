@@ -283,10 +283,10 @@ describe("a row's hovered action paints once", () => {
   });
 });
 
-describe("the Permissions rule forms", () => {
+describe("the Permissions add rows", () => {
   const permissions = (() => {
     const doc = new DOMParser().parseFromString(indexHtml, "text/html");
-    return [...doc.querySelectorAll<HTMLElement>(".rule-form")];
+    return [...doc.querySelectorAll<HTMLElement>("form.add-form")];
   })();
 
   it.each(TIERS)("a select fits its field's column and leaves the column gap (%s)", (tier) => {

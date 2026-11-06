@@ -35,6 +35,7 @@ vi.mock("./actions/permissions.js", () => ({
 
 import { initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
 import { byId } from "./dom.js";
+import { shippedAddForm } from "./__test-helpers__/add-forms.js";
 
 function initAndLoad(): void {
   initNativePolicyUI();
@@ -46,21 +47,6 @@ function el<T extends HTMLElement>(tag: string, id: string): T {
   e.id = id;
   return e;
 }
-function selectWith(id: string, values: string[], selected?: string): HTMLSelectElement {
-  const s = document.createElement("select");
-  s.id = id;
-  for (const v of values) {
-    const o = document.createElement("option");
-    o.value = v;
-    o.textContent = v;
-    if (v === selected) {
-      o.selected = true;
-    }
-    s.appendChild(o);
-  }
-  return s;
-}
-
 async function flush(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
@@ -115,15 +101,8 @@ beforeEach(() => {
   document.body.appendChild(el("p", "native-policy-status"));
   document.body.appendChild(el("div", "native-policy-list"));
   document.body.appendChild(el("p", "native-policy-empty-hint"));
-  document.body.appendChild(selectWith("native-rule-scope", ["workspace", "user"], "workspace"));
-  document.body.appendChild(selectWith("native-rule-capability", []));
-  document.body.appendChild(selectWith("native-rule-effect", ["ask", "allow", "deny"], "ask"));
-  document.body.appendChild(el<HTMLInputElement>("input", "native-rule-match"));
-  document.body.appendChild(el<HTMLInputElement>("input", "native-rule-exclude"));
-  document.body.appendChild(el<HTMLButtonElement>("button", "native-rule-add"));
-  document.body.appendChild(selectWith("native-explain-capability", []));
-  document.body.appendChild(el<HTMLInputElement>("input", "native-explain-resource"));
-  document.body.appendChild(el<HTMLButtonElement>("button", "native-explain-run"));
+  document.body.appendChild(shippedAddForm("native-rule-capability"));
+  document.body.appendChild(shippedAddForm("native-explain-capability"));
   document.body.appendChild(el("p", "native-explain-result"));
 
   mocks.apiGet.mockResolvedValue(sampleView);
@@ -283,7 +262,9 @@ describe("native policy editor", () => {
     await flush();
 
     expect(mocks.explainDispatch).not.toHaveBeenCalled();
-    expect(byId("native-explain-result").textContent).toContain("Enter a command");
+    expect(byId("native-explain-result").textContent).toBe("");
+    expect(byId("native-explain-error").textContent).toContain("Enter a command");
+    expect(byId("native-explain-resource").getAttribute("aria-invalid")).toBe("true");
   });
 
   it("removes a non-deny rule directly (no confirm)", async () => {
@@ -485,7 +466,7 @@ describe("native policy status line", () => {
     byId<HTMLButtonElement>("native-explain-run").click();
     await flush();
 
-    expect(byId("native-explain-result").textContent).toBe(
+    expect(byId("native-explain-error").textContent).toBe(
       "Could not evaluate: kiro-cli did not answer.",
     );
   });

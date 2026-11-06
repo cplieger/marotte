@@ -1650,7 +1650,7 @@ const SURFACES: readonly Surface[] = [
       "#agent-dirs-add",
       "#agent-dirs-chips .chip-remove",
     ],
-    rows: ['.rule-form[data-rule-form="policy"] .rf-select', "#native-rule-match", ".native-rule"],
+    rows: [".add-form .rf-select", "#native-rule-match", ".native-rule"],
   },
   {
     name: "the Docs page",

@@ -50,6 +50,7 @@ import { abortPoll } from "./forge-auth-oauth.js";
 import { apiGetTyped } from "./api-client.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { outcomesOf } from "./__test-helpers__/press-feedback.js";
+import { fill } from "./__test-helpers__/add-forms.js";
 import { _resetForTest as resetForgeStore, readForges } from "./forge-store.js";
 import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock.js";
 
@@ -632,7 +633,7 @@ describe("forge-auth: the connection row", () => {
     }
 
     function addOwner(block: HTMLElement, owner: string): void {
-      block.querySelector<HTMLInputElement>("form input")!.value = owner;
+      fill(block.querySelector<HTMLInputElement>("form input")!, owner);
       block.querySelector<HTMLFormElement>("form")!.requestSubmit();
     }
 
@@ -708,7 +709,7 @@ describe("forge-auth: the connection row", () => {
       );
 
       await vi.waitFor(() => {
-        expect(block.querySelector(".forge-card-status")?.textContent).toContain(
+        expect(block.querySelector("form .rf-error")?.textContent).toContain(
           "list_owner_invalid: owners[1]: not an owner name",
         );
       });
@@ -741,7 +742,7 @@ describe("forge-auth: the connection row", () => {
       expect(bodyOf(spy, 1)).toEqual({ owners: ["beta"] });
     });
 
-    it("asks for an owner and sends nothing when the field is empty", async () => {
+    it("keeps Add owner disabled and sends nothing while the field is blank", async () => {
       const block = owners(await showRow(account({ owner_scopes: ["acme"] })));
       const { spy } = queuedFetch();
 
@@ -749,13 +750,13 @@ describe("forge-auth: the connection row", () => {
       await new Promise((r) => setTimeout(r, 0));
 
       expect(spy).not.toHaveBeenCalled();
-      expect(block.querySelector(".forge-card-status")?.textContent).toBe("Name an owner first.");
+      expect(button(block, "Add owner")?.disabled).toBe(true);
     });
 
     it("shows Add busy from the press", async () => {
       const block = owners(await showRow(account()));
       queuedFetch();
-      const add = button(block, "Add")!;
+      const add = button(block, "Add owner")!;
 
       addOwner(block, "beta");
 

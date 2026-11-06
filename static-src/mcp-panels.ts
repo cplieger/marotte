@@ -17,6 +17,8 @@ import {
   collectKeyPairs,
 } from "./mcp-pairs.js";
 import { buildChip } from "./chip.js";
+import { wireAddForm } from "./add-form.js";
+import type { AddForm } from "./add-form.js";
 import {
   type ValidationField,
   importServers,
@@ -761,7 +763,6 @@ interface ToolListSection {
   readonly sectionID: string;
   readonly chipsID: string;
   readonly inputID: string;
-  readonly addID: string;
   readonly removeTitle: string;
   stored(server: Server): string[] | undefined;
   read(): string[];
@@ -772,7 +773,6 @@ const SECTION_DISABLED: ToolListSection = {
   sectionID: "mcp-disabled-tools",
   chipsID: "mcp-disabled-chips",
   inputID: "mcp-disabled-input",
-  addID: "mcp-disabled-add",
   removeTitle: "Unblock",
   stored: (s) => s.disabled_tools,
   read: () => session.disabledToolsList,
@@ -781,11 +781,40 @@ const SECTION_DISABLED: ToolListSection = {
   },
 };
 
+interface ToolListRow {
+  readonly row: AddForm;
+  /** The open server's handler, swapped on every open. */
+  submit: () => void;
+}
+
+/** Each section's add row, wired on its first open. */
+const toolListRows = new WeakMap<ToolListSection, ToolListRow>();
+
+function toolListRow(cfg: ToolListSection, input: HTMLInputElement): ToolListRow {
+  const known = toolListRows.get(cfg);
+  if (known !== undefined) {
+    return known;
+  }
+  const form = input.form;
+  if (form === null) {
+    throw new Error(`#${cfg.inputID} is not in its add form`);
+  }
+  const entry: ToolListRow = {
+    row: wireAddForm(form, {
+      onSubmit: () => {
+        entry.submit();
+      },
+    }),
+    submit: () => undefined,
+  };
+  toolListRows.set(cfg, entry);
+  return entry;
+}
+
 function initToolListSection(cfg: ToolListSection, server: Server | null): void {
   const section = byId<HTMLDivElement>(cfg.sectionID);
   const chips = byId<HTMLDivElement>(cfg.chipsID);
   const input = byId<HTMLInputElement>(cfg.inputID);
-  const addBtn = byId<HTMLButtonElement>(cfg.addID);
 
   if (server === null) {
     section.classList.add("hidden");
@@ -800,23 +829,20 @@ function initToolListSection(cfg: ToolListSection, server: Server | null): void 
   const knownTools = discoverySignalFor(server.name).peek().tools;
   renderToolChips(cfg, chips, section, knownTools);
 
-  const add = (): void => {
+  const entry = toolListRow(cfg, input);
+  input.value = "";
+  entry.row.setError(null);
+  entry.row.sync();
+  entry.submit = (): void => {
     const name = input.value.trim();
-    if (name === "" || cfg.read().includes(name)) {
+    input.value = "";
+    entry.row.sync();
+    if (cfg.read().includes(name)) {
       return;
     }
     cfg.write([...cfg.read(), name]);
-    input.value = "";
     renderToolChips(cfg, chips, section, knownTools);
     renderToolSuggestions(cfg, section, knownTools, chips);
-  };
-
-  addBtn.onclick = add;
-  input.onkeydown = (e: KeyboardEvent): void => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      add();
-    }
   };
 
   renderToolSuggestions(cfg, section, knownTools, chips);

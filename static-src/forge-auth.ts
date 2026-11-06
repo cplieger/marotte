@@ -292,7 +292,7 @@ function buildSectionShell(
     "button",
     {
       type: "button",
-      className: "btn-small forge-kind-add-btn",
+      className: "action-pill",
       "data-forge-add": key,
       "aria-label": "Add an account",
       "aria-expanded": "false",

@@ -126,19 +126,9 @@
   gap: var(--sp-2);
 }
 
-/* The "+" add-account button sits at the right edge of the header
- * row, vertically centered. Square shape (overrides btn-small's
- * wider horizontal padding) so the icon doesn't stretch the button. */
-.forge-kind-add-btn {
+/* The "+" add-account pill trails the header row. */
+.forge-kind-header > .action-pill {
   margin-inline-start: auto;
-  flex-shrink: 0;
-  padding: var(--sp-1);
-  min-width: var(--btn-h);
-}
-
-.forge-kind-add-btn svg {
-  width: 14px;
-  height: 14px;
 }
 
 /* Two-letter kind badge (SVG glyph) — mirrors .repo-picker-badge
@@ -1610,33 +1600,76 @@ select.native-rule-effect:focus-visible {
   }
 }
 
-/* --- Permissions rule forms (.rule-form) --------------------------------
- * One shared labeled-field-grid vocabulary for the adders on the
- * Permissions panel (Active policy, Test a decision, Agent ignore) and a
- * forge connection's Owner, sized to the design system's 24px desktop hit floor. */
-.rule-form {
-  display: grid;
+/* --- Add rows (.add-form, built by add-form.ts) ----------------------------
+ * Every Settings adder: its labelled fields wrap inside .add-form-fields, the
+ * submit (and an optional Cancel) follows the last field on its line, and the
+ * error line takes a row of its own. The fields never narrow under 10rem: when
+ * the buttons cannot sit beside them they move under the fields, at the inline
+ * end. Free space goes to the fields first, so the auto margin acts only then. */
+.add-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
   gap: var(--sp-2) var(--sp-3);
-  align-items: end; /* labels float above; controls + button share a baseline */
   margin-block: var(--sp-2);
+
+  &[hidden] {
+    display: none;
+  }
+
+  & > .add-form-fields {
+    flex: 1 1 10rem;
+  }
+
+  /* Room for both buttons: below it, they move under the fields together. */
+  &:has(> .btn ~ .btn) > .add-form-fields {
+    flex-basis: 14rem;
+  }
+
+  & > .btn:first-of-type {
+    margin-inline-start: auto;
+  }
 }
 
-/* Per-adder column plans (same field classes, different templates). */
+.add-form-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--sp-2) var(--sp-3);
+  min-inline-size: 0;
 
-/* Scope | Capability | Effect | Match | submit */
-.rule-form[data-rule-form="policy"] {
-  grid-template-columns: 8rem minmax(10rem, 1fr) var(--rf-compact-w) minmax(14rem, 2fr) auto;
+  & > .rf-field {
+    flex: 1 1 10rem;
+  }
+
+  & > .rf-compact {
+    flex: 0 1 8rem;
+  }
+
+  & > .rf-grow {
+    flex: 2 1 14rem;
+  }
 }
 
-/* Capability | Resource | Test */
-.rule-form[data-rule-form="explain"] {
-  grid-template-columns: minmax(10rem, 1fr) minmax(14rem, 2fr) auto;
+/* The dense row action beside a dense field: centred on the last field, whose
+   height follows the pointer tier while the button's does not. `padding-block: 0`
+   holds it on 32px, since .btn's padding plus the label's line box is 33. */
+.add-form > .btn {
+  flex: none;
+  min-block-size: var(--ctl-h-dense);
+  padding-block: 0;
+  margin-block-end: calc((var(--field-h-dense) - var(--ctl-h-dense)) / 2);
+  font-size: var(--fs-form-peer);
+  white-space: nowrap;
 }
 
-/* Path | Add, and a forge connection's Owner | Add */
-.rule-form[data-rule-form="ignore"],
-.rule-form[data-rule-form="owner"] {
-  grid-template-columns: minmax(14rem, 1fr) auto;
+.rf-error {
+  flex: 1 0 100%;
+  color: var(--c-red);
+
+  &:empty {
+    display: none;
+  }
 }
 
 .rf-field {
@@ -1657,11 +1690,9 @@ select.native-rule-effect:focus-visible {
   opacity: 0.7;
 }
 
-.rule-form,
 .rf-select,
 .rf-input {
-  /* The width a short value gets: the small whole number and the shortest dropdown read as one family.
-     On the form too, because the policy grid sizes its Effect column from it. */
+  /* The width a short value gets: the small whole number and the shortest dropdown read as one family. */
   --rf-compact-w: 7rem;
 }
 
@@ -1705,59 +1736,12 @@ select.native-rule-effect:focus-visible {
   outline-offset: var(--focus-offset-field);
 }
 
-/* Labeled submit button, not an icon pill. Takes the dense tier, overriding .btn's
- * --btn-h min-height.
- *
- * The dense-tier button pattern, copied whole from `.list-row .btn-small`
- * (14-tools.css), including the `padding-block: 0` — the base's own padding plus
- * the label's line box is 33px on its own, so the padding is what holds it on 32
- * rather than letting the label push it a pixel over. `block-size` is DROPPED: a
- * declared height clips the label at a larger user font. */
-.rule-form .rf-submit {
-  min-block-size: var(--ctl-h-dense);
-  padding-block: 0;
-
-  /* Equal rank with the fields it submits, so it takes the peer rung rather than
-     the label one (01-tokens.css "The FORM type scale"). */
-  font-size: var(--fs-form-peer);
-}
-
-/* Tablet: two columns; the grow field + submit take full rows.
- * [data-rule-form] keeps specificity level with the per-adder
- * templates above so the override wins by source order. */
-@media (width <= 48rem) {
-  .rule-form[data-rule-form] {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .rule-form .rf-grow,
-  .rule-form .rf-submit {
-    grid-column: 1 / -1;
-  }
-
-  .rule-form .rf-submit {
-    justify-self: start;
-  }
-}
-
-/* Phone: single column. The heights need no answer here: the fields carry the touch
-   floor through `--field-h-dense` above, which follows the POINTER tier rather than a
-   width, so this breakpoint owns layout only. */
-@media (width <= 40rem) {
-  .rule-form[data-rule-form] {
-    grid-template-columns: 1fr;
-  }
-}
-
 .native-policy-status-error {
   color: var(--c-red);
 }
 
-.section-hint.agent-dirs-error {
+.section-hint.agent-dirs-refused {
   color: var(--c-red);
-}
-
-.agent-dirs-refused {
   list-style: none;
   padding: 0;
 }
