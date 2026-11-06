@@ -257,6 +257,12 @@
   }
 }
 
+/* The footer row's ink, which the footer buttons inherit: the badge sits outside the header, so the shared box's
+   `color: inherit` would give it the box's primary ink and leave hover no lift. (0,2,0), under the shared hover. */
+.tool-group > .tool-group-hooks {
+  color: var(--c-text-secondary);
+}
+
 /* The list the hooks badge opens: one row per hook, its run count, its name and its hook file's chip. */
 .tool-hook-popover {
   min-inline-size: 16rem;

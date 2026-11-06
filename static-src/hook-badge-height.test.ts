@@ -48,14 +48,17 @@ function group(lines: number): { header: HTMLElement; badge: HTMLElement } {
   return { header, badge };
 }
 
-/** A turn footer action button, the badge's styling reference. */
+/** A turn footer action button in its footer row, the badge's styling reference. */
 function footerButton(): HTMLElement {
+  const footer = document.createElement("div");
+  footer.className = "turn-footer";
   const b = document.createElement("button");
   b.type = "button";
   b.className = "turn-action-btn";
   b.innerHTML = '<svg viewBox="0 0 24 24"></svg>';
-  document.body.append(b);
-  hosts.push(b);
+  footer.append(b);
+  document.body.append(footer);
+  hosts.push(footer);
   return b;
 }
 
@@ -80,6 +83,7 @@ describe("the hooks badge", () => {
       "height",
       "border-top-left-radius",
       "background-color",
+      "color",
       "transition-property",
     ]) {
       expect(got.getPropertyValue(prop), prop).toBe(ref.getPropertyValue(prop));
