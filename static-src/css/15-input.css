@@ -2010,7 +2010,8 @@
   }
 
   @container pill-row (width < 36.5rem) {
-    :root[data-pointer="coarse"] :is(.pill-model > [id="ctx-model-pill"], .pill-model-effort, .pill-role-label) {
+    :root[data-pointer="coarse"]
+      :is(.pill-model > [id="ctx-model-pill"], .pill-model-effort, .pill-role-label) {
       display: none;
     }
   }

@@ -28,8 +28,10 @@ describe("the phone-shaped arm of the tier's visibility rule", () => {
   it("is display:none under BOTH the narrow and the short arm", () => {
     // `ruleContaining` demands one match per scope, so asking under each arm fails when one is dropped; both bodies
     // must carry the same declaration.
-    const narrow = ruleContaining(loadCSS("15-input.css"), TIER, "48rem");
-    const short = ruleContaining(loadCSS("15-input.css"), TIER, "30rem");
+    // The scopes name the comparison, because the wide arm's `(width > 48rem) and (height > 30rem)`
+    // hides the tier too, for the row's fit rather than the viewport's shape.
+    const narrow = ruleContaining(loadCSS("15-input.css"), TIER, "width <= 48rem");
+    const short = ruleContaining(loadCSS("15-input.css"), TIER, "height <= 30rem");
     expect(narrow.body).toMatch(/display:\s*none/);
     expect(short.body, "both arms hide it the same way").toBe(narrow.body);
   });

@@ -101,11 +101,11 @@ describe("the bottom stack", () => {
     }
   });
 
-  // 12 - 1px border - the row's inset: 4px on a mouse, and on a finger the 6px the 32px controls'
-  // targets reach past their box ((44 - 32) / 2).
+  // 12 - 1px border - the row's 4px inset on both tiers: the house inset on a mouse, and on a
+  // finger the 4px the 36px controls' targets reach past their box ((44 - 36) / 2).
   for (const [pointer, radius] of [
     ["fine", "7px"],
-    ["coarse", "5px"],
+    ["coarse", "7px"],
   ] as const) {
     it(`rounds the composer's controls at the concentric ${radius} on a ${pointer} pointer`, () => {
       document.documentElement.dataset["pointer"] = pointer;
