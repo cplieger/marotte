@@ -151,6 +151,8 @@ func (s *Store) Replace(ctx context.Context, id string, in *Rule, confirmDrop in
 	if err := CheckEdit(&s.rules[i], &r); err != nil {
 		return Rule{}, err
 	}
+	// The stored id, not the caller's: they are equal, and only the stored one is known to be well formed.
+	id = s.rules[i].ID
 	r.ID = id
 	rs := s.states[id]
 	rebaseline := population(&s.rules[i]) != population(&r)
@@ -223,23 +225,26 @@ func (s *Store) dropStaleWaitLocked(ctx context.Context, r *Rule) {
 // Delete removes the rule id names, then its state file; ErrNotFound when no rule has it. A state file that will
 // not go is logged and removed at the next load, so the rule's deletion still stands.
 func (s *Store) Delete(ctx context.Context, id string) error {
-	if err := s.deleteRule(ctx, id); err != nil {
+	stored, err := s.deleteRule(ctx, id)
+	if err != nil {
 		return err
 	}
-	s.removeState(id)
+	s.removeState(stored)
 	return nil
 }
 
-func (s *Store) deleteRule(ctx context.Context, id string) error {
+// deleteRule returns the stored id, which equals id and is known to be well formed.
+func (s *Store) deleteRule(ctx context.Context, id string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	i := s.indexLocked(id)
 	if i < 0 {
-		return ErrNotFound
+		return "", ErrNotFound
 	}
+	id = s.rules[i].ID
 	next := slices.Delete(slices.Clone(s.rules), i, i+1)
 	if err := s.persistLocked(ctx, next); err != nil {
-		return err
+		return "", err
 	}
 	s.rules = next
 	if rs := s.states[id]; rs != nil {
@@ -248,7 +253,7 @@ func (s *Store) deleteRule(ctx context.Context, id string) error {
 		rs.mu.Unlock()
 	}
 	delete(s.states, id)
-	return nil
+	return id, nil
 }
 
 func (s *Store) indexLocked(id string) int {

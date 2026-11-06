@@ -185,13 +185,13 @@ func (s Spec) timesOn(day time.Time) []time.Time {
 	}
 	switch s.Freq {
 	case FreqMinutely:
-		out := make([]time.Time, 0, minutesPerDay/s.Interval+1)
+		out := make([]time.Time, 0, minutesPerDay/minMinuteInterval)
 		for md := s.Minute % s.Interval; md < minutesPerDay; md += s.Interval {
 			out = append(out, at(md/60, md%60))
 		}
 		return out
 	case FreqHourly:
-		out := make([]time.Time, 0, 24/s.Interval+1)
+		out := make([]time.Time, 0, 24)
 		for h := 0; h < 24; h += s.Interval {
 			out = append(out, at(h, s.Minute))
 		}
