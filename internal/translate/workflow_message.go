@@ -370,8 +370,8 @@ func (t *Translator) workflowMessageRead(ctx context.Context, sc steerScope, kas
 // cut after it loses nothing and a refused fact has no effect. named counts the workflow messages
 // among kasIDs: a reader's cancel that cleared one makes the next turn a re-wake no row names.
 //
-// The epoch stands in for an id: once kirodotdev/Kiro#12012 puts notifyId on the notify frame,
-// settling each row whose kas_id the clear names, delivered or dropped by its cause, replaces it.
+// The epoch stands in for an id (kirodotdev/Kiro#12209): kiro-cli 3.1.0's notifyId is the id a
+// clear names, so settling each row whose kas_id the clear names, by its cause, can replace it.
 func (t *Translator) settleClear(ctx context.Context, sc steerScope, cause marotte.SteerClearCause, named int, kasIDs []string) bool {
 	session := t.bufferSession(sc)
 	epoch, ok := t.epochMessages(ctx, sc, session)
