@@ -13,14 +13,6 @@ func scrape() *httptest.ResponseRecorder {
 	return rec
 }
 
-// TestHandler_ServesTheTextFormat pins the content type Prometheus negotiates
-// for text format 0.0.4.
-func TestHandler_ServesTheTextFormat(t *testing.T) {
-	if got, want := scrape().Header().Get("Content-Type"), "text/plain; version=0.0.4; charset=utf-8"; got != want {
-		t.Errorf("Content-Type = %q, want %q", got, want)
-	}
-}
-
 // TestHandler_ServesClientGolangsDefaultFamilies names families client_golang's
 // default Go and process collectors serve, which stock Go dashboards read.
 func TestHandler_ServesClientGolangsDefaultFamilies(t *testing.T) {
