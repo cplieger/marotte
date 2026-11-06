@@ -1,0 +1,49 @@
+{
+  "_meta": {
+    "date": "2026-11-06",
+    "kas": "0.66.70",
+    "kiroCli": "3.0.0",
+    "recorded": "live",
+    "regenerate": "go test ./internal/bridge/ -run TestProbeTriggeredLaunch -kas-trigger-probe"
+  },
+  "criterion": "the answer, the terminal status, and that the run leaves the list's Active() set",
+  "pass": true,
+  "probe": "(d) _kiro/workflow/cancel with no initiator on the engine lane: a created, never-invoked run whose host session is closed, and a running run",
+  "running": {
+    "active_after": false,
+    "cancel_result": {
+      "ok": true,
+      "previousStatus": "running"
+    },
+    "listed_after": {
+      "workflowId": "wf_a51833537dc0b44e",
+      "workflowName": "trigger-probe",
+      "status": "aborted"
+    },
+    "listed_before": {
+      "workflowId": "wf_a51833537dc0b44e",
+      "workflowName": "trigger-probe",
+      "status": "running"
+    },
+    "run_complete_lane": "engine",
+    "run_complete_status": "aborted"
+  },
+  "uninvoked": {
+    "active_after": false,
+    "cancel_result": {
+      "ok": true,
+      "previousStatus": "running"
+    },
+    "listed_after": {
+      "workflowId": "wf_6b9c850cb8e00bb4",
+      "workflowName": "trigger-probe",
+      "status": "aborted"
+    },
+    "listed_before": {
+      "workflowId": "wf_6b9c850cb8e00bb4",
+      "workflowName": "trigger-probe",
+      "status": "running"
+    },
+    "run_complete_status": "none within 1m0s"
+  }
+}
