@@ -67,7 +67,8 @@ const ICON: Record<RunVerb, string> = {
 
 /** What each verb says on hover; a button shows its icon alone, its name in `aria-label`. */
 const TIP: Record<RunVerb, string> = {
-  pause: "Pause the run at the end of its current step",
+  pause:
+    "Pause the run. Its current turn is cancelled, and the run picks up from there when resumed",
   resume: "Resume the run",
   extend: "Add passes to the paused loop",
   finish_loop: "End the paused loop and go on",

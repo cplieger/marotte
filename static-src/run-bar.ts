@@ -1,8 +1,10 @@
 // The run bar: one box holding a line per LIVE workflow run the active chat launched, in the bottom
 // bar between the interaction dock and the steer stack. From `FOLD_AT` runs a fold row heads the
-// list, outside the list's clip so its touch target can reach past the row.
+// list, outside the list's clip so its touch target can reach past the row. One batch button sits
+// at the box's top right: on the fold row, else at the end of the first run's line.
 
 import { el, computed, effect, touch, untracked } from "@cplieger/ui";
+import { join } from "@cplieger/keyenc";
 import { reconcile } from "./reconcile.js";
 import { announce } from "@cplieger/ui/announce";
 import { $ } from "./dom.js";
@@ -10,7 +12,9 @@ import { watchActiveId } from "./store.js";
 import {
   liveRunIDsForChat,
   runIsLive,
+  runControls,
   runLabelOf,
+  runPausedByPerson,
   runPlan,
   runState,
   runStepEnds,
@@ -26,6 +30,10 @@ import { isSliding, selectableButton, slideBox, targetOpen } from "./disclosure-
 import { runBarOpen, setRunBarOpen } from "./device-view.js";
 import { holdRunClock, releaseRunClock, type RunClockHolder } from "./messages-blocks.js";
 import { openRunView } from "./run-view.js";
+import { bindLoadingState } from "./actions/index.js";
+import { pauseRuns, resumeRuns, type RunRef } from "./actions/runs.js";
+import { iconEl } from "./icon-el.js";
+import { ICON_PAUSE, ICON_RESUME } from "./icons.js";
 import type { ExecState } from "./exec-view/status.js";
 import type { TabRunDotStatus } from "./tabs.js";
 
@@ -55,6 +63,8 @@ let prevCount = 0;
 let prevChatID = "";
 const holds = new Map<string, Hold>();
 const rowViews = new WeakMap<HTMLElement, RowView>();
+/** The batch button, built once by `initRunBar` and moved between its two seats. */
+let batchBtn: HTMLButtonElement | null = null;
 /** The render effect's disposer, held only so `_resetRunBarForTest` can stop it. Production
  *  never tears the bar down — it lives as long as the page. */
 let stopRender: (() => void) | null = null;
@@ -66,6 +76,7 @@ export function initRunBar(): void {
   }
   bound = true;
   const bar = $.runBar;
+  batchBtn = buildBatchButton();
   const sig = computed(() => key());
   stopRender = effect(() => {
     touch(sig);
@@ -101,7 +112,110 @@ function key(): string {
       ].join("\u0002"),
     );
   }
+  const batch = batchOf(rows(chatID));
+  parts.push(batch === null ? "" : join(batch.verb, ...batch.targets));
   return parts.join("\u0001");
+}
+
+/** What the batch button does now: pause every listed run that runs, else resume every one a person or the parent
+ *  chat parked. `targets` are the runs the server offers that verb on, so it is empty while every running run's pause
+ *  is already landing, and it never holds a run waiting for an answer or at a loop's pass limit, which the server
+ *  offers no resume on (a resume re-parks them). */
+interface Batch {
+  readonly verb: "pause" | "resume";
+  readonly targets: readonly string[];
+}
+
+function batchOf(ids: readonly string[]): Batch | null {
+  const offers = (id: string, verb: string): boolean =>
+    runControls(id)?.verbs.includes(verb) === true;
+  const running = ids.filter((id) => runState(id)?.status === "running");
+  if (running.length > 0) {
+    return { verb: "pause", targets: running.filter((id) => offers(id, "pause")) };
+  }
+  const parked = ids.filter((id) => {
+    const st = runState(id);
+    return st !== undefined && runPausedByPerson(st) && offers(id, "resume");
+  });
+  return parked.length === 0 ? null : { verb: "resume", targets: parked };
+}
+
+const BATCH_VIEW: Record<Batch["verb"], { label: string; icon: string; tip: string }> = {
+  pause: {
+    label: "Pause all",
+    icon: ICON_PAUSE,
+    tip: "Pause every running run here. Each one's current turn is cancelled, and the run picks up from there when resumed",
+  },
+  resume: {
+    label: "Resume all",
+    icon: ICON_RESUME,
+    tip: "Resume every run here that was paused by hand or by this chat. A run waiting for an answer or at a loop's pass limit stays paused",
+  },
+};
+
+const PAUSING_TIP = "Every running run here is already pausing";
+
+/** The runs the batch addresses at click time, named as the reader sees them. */
+function batchRefs(targets: readonly string[]): RunRef[] {
+  return targets.map((id) => ({ id, name: runLabelOf(id) || FALLBACK_NAME }));
+}
+
+function buildBatchButton(): HTMLButtonElement {
+  const btn = el("button", {
+    type: "button",
+    className: "icon-btn run-bar-all",
+    hidden: true,
+    onclick: () => {
+      const batch = batchOf(rows(watchActiveId()));
+      if (batch === null || batch.targets.length === 0) {
+        return;
+      }
+      const action = batch.verb === "pause" ? pauseRuns : resumeRuns;
+      void action.dispatch(batchRefs(batch.targets));
+    },
+  }) as HTMLButtonElement;
+  // `disabledFn` is read when a batch settles, so the idle state is the runs' own, never a blanket enable.
+  bindLoadingState([pauseRuns.name, resumeRuns.name], btn, {
+    disabledFn: () => untracked(() => batchOf(rows(watchActiveId()))?.targets.length === 0),
+  });
+  return btn;
+}
+
+/** Seat and paint the batch button: on the fold row while it shows, else at the end of the first run's line, the
+ *  column every row reserves while `.run-bar[data-all]` (26-dock.css). Parked hidden on the fold with nothing to do,
+ *  so it stays connected and its loading binding lives. */
+function paintBatch(bar: HTMLUListElement, ids: readonly string[], folds: boolean): void {
+  const btn = batchBtn;
+  if (btn === null) {
+    return;
+  }
+  const batch = ids.length === 0 ? null : batchOf(ids);
+  const first = bar.querySelector<HTMLElement>(":scope > li.run-bar-row");
+  const seat = batch === null || folds || first === null ? $.runBarFold : first;
+  bar.toggleAttribute("data-all", batch !== null && !folds);
+  if (btn.parentElement !== seat) {
+    const focused = document.activeElement === btn;
+    seat.append(btn);
+    if (focused) {
+      btn.focus({ preventScroll: true });
+    }
+  }
+  btn.hidden = batch === null;
+  if (batch === null) {
+    return;
+  }
+  const view = BATCH_VIEW[batch.verb];
+  if (btn.dataset["verb"] !== batch.verb) {
+    btn.dataset["verb"] = batch.verb;
+    btn.replaceChildren(iconEl(view.icon));
+    btn.setAttribute("aria-label", view.label);
+  }
+  const idle = btn.getAttribute("aria-busy") !== "true";
+  const none = batch.targets.length === 0;
+  if (idle) {
+    btn.disabled = none;
+  }
+  btn.dataset["tooltip"] = none ? PAUSING_TIP : view.tip;
 }
 
 /** The runs this bar shows for a chat: the live inventory minus anything the store can PROVE has
@@ -150,11 +264,12 @@ function render(bar: HTMLUListElement): void {
   const fold = $.runBarFold;
   fold.hidden = !folds;
   if (folds) {
-    if (fold.firstElementChild === null) {
-      fold.append(buildSummary(bar));
+    if (fold.querySelector(".run-bar-toggle") === null) {
+      fold.prepend(buildSummary(bar));
     }
     paintSummary(fold, ids.length, waiting.length, open);
   }
+  paintBatch(bar, ids, folds);
   if (ids.length === 0) {
     // Reset the announce baseline so arriving at a chat that already has runs reads them out fresh,
     // while the empty case stays silent.
@@ -367,6 +482,8 @@ export function _resetRunBarForTest(): void {
     releaseRunClock(id, hold);
   }
   holds.clear();
+  batchBtn?.remove();
+  batchBtn = null;
   bound = false;
   prevCount = 0;
   prevChatID = "";

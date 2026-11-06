@@ -829,7 +829,7 @@ describe("runToExec alert precedence", () => {
       undefined,
       NO_ASKS,
     );
-    expect(pending.alert).toEqual({ kind: "paused", text: "Pausing after the current step" });
+    expect(pending.alert).toEqual({ kind: "paused", text: "Pausing: stopping the current turn" });
 
     const failed = runToExec(
       stateWith(step("a", "failed", { failureReason: "exit 1" }), { status: "failed" }),

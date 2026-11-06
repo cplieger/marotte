@@ -388,7 +388,7 @@ describe("an unanswered ask", () => {
       ...runOf("running", step("a", "running")),
       pausePending: { initiator: "user" },
     };
-    expect(alertText(buildAndRender(pending, NO_ASKS))).toBe("Pausing after the current step");
+    expect(alertText(buildAndRender(pending, NO_ASKS))).toBe("Pausing: stopping the current turn");
   });
 
   it("outranks a pause, which is the state a click cannot resolve", () => {

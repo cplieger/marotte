@@ -1141,6 +1141,11 @@
     --run-room: calc(var(--run-cap) - var(--run-fold-h) - var(--run-row-gap));
   }
 
+  /* The batch button is taller than the bare fold row; it shows there only while the fold row does. */
+  .run-bar-fold:has(> .run-bar-all:not([hidden])) + & {
+    --run-room: calc(var(--run-cap) - max(var(--run-fold-h), var(--btn-h)) - var(--run-row-gap));
+  }
+
   & > li {
     scroll-snap-align: start;
   }
@@ -1155,9 +1160,17 @@
 
 /* The fold row sits outside the list's clip so its touch target can reach up into the box's
    padding and the stack gap above, and it stays on screen while the list scrolls. The list's own
-   row gap is restored below it while open. */
+   row gap is restored below it while open. It is the box's header: the toggle takes the line and the batch button
+   (`.run-bar-all`) ends it. */
 .run-bar-fold {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+
+  &[hidden] {
+    display: none;
+  }
 
   /* The gap moves with the list's slide, so the box neither steps before an open nor after a
      close. */
@@ -1176,10 +1189,13 @@
    The list takes what the host's cap leaves under the fold row and scrolls inside itself
    past it. */
 .run-bar {
+  /* The batch button's column (`.run-bar-all`), reserved on every row while it shows. */
+  --run-all-track: [all end];
+
   display: grid;
   grid-template-columns:
     [glyph] auto [title] fit-content(18rem) [state] auto [progress] auto
-    [bar] minmax(3rem, 1fr) [clock] auto [end];
+    [bar] minmax(3rem, 1fr) [clock] auto var(--run-all-track);
   align-content: start;
   gap: var(--run-row-gap) var(--sp-2);
   margin: 0;
@@ -1208,6 +1224,10 @@
     border-start-end-radius: 0;
   }
 
+  &[data-all] {
+    --run-all-track: [all] auto [end];
+  }
+
   & > li {
     display: grid;
     grid-column: 1 / -1;
@@ -1223,7 +1243,7 @@
   position: relative;
   min-block-size: var(--row-tap-sm);
   display: grid;
-  grid-column: 1 / -1;
+  grid-column: glyph / all;
   grid-template-columns: subgrid;
   align-items: center;
   row-gap: 0;
@@ -1331,12 +1351,64 @@
   visibility: hidden;
 }
 
+/* Pause all or Resume all, the box's top-right control: at the end of the first run's line, or of the fold row
+   (`run-bar.ts` `paintBatch`). It paints at the stand-alone control height and takes the shared expander. */
+.run-bar-all {
+  /* What the shared expander adds to reach the hit floor, 0 on a mouse. */
+  --all-reach: max(0px, var(--hit-floor) - var(--btn-h));
+
+  grid-column: all;
+  align-self: center;
+  inline-size: var(--btn-h);
+  block-size: var(--btn-h);
+  padding: 0;
+  color: var(--c-text-control);
+
+  &[hidden] {
+    display: none;
+  }
+
+  /* On a run's line the list clips at the end edge, so the target reaches only back over the column gap and a
+     margin that tops it up, meeting the run's own line; above and below it stays inside the row. */
+  .run-bar > li > & {
+    margin-inline-start: max(0px, var(--all-reach) - var(--sp-1));
+
+    &::after {
+      inset-inline: calc(-1 * var(--all-reach)) 0;
+    }
+  }
+
+  /* On the fold row it reaches up into the box's padding and the stack gap, short of the member above, and down
+     over the row gap only, as the toggle does, so the first run's line keeps its own target. */
+  .run-bar-fold > & {
+    &::after {
+      inset-block: calc(
+          -1 *
+            clamp(
+              0px,
+              calc(var(--hit-floor) - 100% - var(--run-row-gap)),
+              calc(var(--stack-in) + var(--stack-gap))
+            )
+        )
+        calc(-1 * clamp(0px, calc(var(--hit-floor) - 100%), var(--run-row-gap)));
+    }
+  }
+
+  @media (any-hover: hover) {
+    &:hover {
+      background: var(--c-hover);
+      color: var(--c-text-primary);
+    }
+  }
+}
+
 /* From `FOLD_AT` runs the fold row heads the box, one line: a chevron, the mark and the
    count. */
 .run-bar-toggle {
   display: flex;
+  flex: 1 1 0;
+  min-inline-size: 0;
   gap: var(--sp-2);
-  inline-size: 100%;
 }
 
 .run-bar-chev {
@@ -1373,7 +1445,7 @@
   .run-bar {
     grid-template-columns:
       [glyph] auto [title state] auto [progress] minmax(0, 1fr)
-      [clock] auto [end];
+      [clock] auto var(--run-all-track);
     column-gap: var(--sp-1);
   }
 
@@ -1432,7 +1504,7 @@
 
     /* An alert takes the second line's progress column, the row stays two lines tall. */
     &[data-alert] .ev-alert-line {
-      grid-column: progress / end;
+      grid-column: progress / all;
       grid-row: 2;
     }
 

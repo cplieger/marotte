@@ -537,7 +537,7 @@ describe("the notes", () => {
   });
 
   it("carry the plan notice, washed only for a rejection, and the consumer's own lines", () => {
-    notes = ["A pause is already requested; the run stops at the end of its current step."];
+    notes = ["A pause is already requested; the run's current turn is being stopped."];
     page.render({
       ...run([step("a", "running", 0)]),
       notice: { text: "Plan revised: 2 steps queued after a", failed: false },
@@ -545,7 +545,7 @@ describe("the notes", () => {
     const all = (): HTMLElement[] => [...host.querySelectorAll<HTMLElement>(".ev-dock-note")];
     expect(all().map((n) => [n.textContent, n.hasAttribute("data-failed")])).toEqual([
       ["Plan revised: 2 steps queued after a", false],
-      ["A pause is already requested; the run stops at the end of its current step.", false],
+      ["A pause is already requested; the run's current turn is being stopped.", false],
     ]);
     notes = [];
     page.render({ ...run([step("a", "running", 0)]), notice: { text: "rejected", failed: true } });
