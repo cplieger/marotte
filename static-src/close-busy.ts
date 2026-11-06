@@ -155,8 +155,8 @@ function perChat(
   return `${named} ${listOf(chats.map((c) => c.name))}`;
 }
 
-/** What the close stops, as the clauses after "Closing <name>"; `ref` is the closed tab's own
- *  chat ("" for none), which goes unnamed. */
+/** What the close stops, as the verb phrases after "It" in the close confirm's body; `ref` is the
+ *  closed tab's own chat ("" for none), which goes unnamed. */
 function stopsClauses(ref: string, work: WorkByKind): string[] {
   const parts: string[] = [];
   if (work.replies.length > 0) {

@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => {
     removeDispatch: vi.fn((_args: { chatID: string; steerID: string }) => ({
       outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
     })),
-    confirmMock: vi.fn((_message: string) => Promise.resolve(true)),
+    confirmMock: vi.fn((_q: Confirmation) => Promise.resolve(true)),
     setComposerValueMock: vi.fn(),
     composerDraftMock: vi.fn((_chatID: string) => ""),
     restoreRefusedEditMock: vi.fn(),
@@ -109,6 +109,7 @@ import {
 import { initPendingSteers, mountSteerStack, type SteerStackSource } from "./pending-steers.js";
 import { signal } from "@cplieger/ui";
 import type { Entry, PendingSteer, QueuedPrompt, Session } from "./types.js";
+import type { Confirmation } from "./confirm.js";
 import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 import { confirmText } from "./__test-helpers__/confirm-text.js";
 

@@ -1172,7 +1172,9 @@ function rewindConfirmation(target: EntryPrompt, discarded: readonly Turn[]): Co
   const removes =
     later === 0
       ? "Removes this prompt and its reply."
-      : `Removes this prompt, its reply and the ${String(later)} later turn${later === 1 ? "" : "s"}.`;
+      : later === 1
+        ? "Removes this prompt, its reply and the turn after it."
+        : `Removes this prompt, its reply and the ${String(later)} later turns.`;
   const facts = [prompt === "" ? "" : `Prompt: "${prompt}"`, removes];
   if (calls.length > 0) {
     const shown = files.slice(0, 4).join(", ") + (files.length > 4 ? ", \u2026" : "");

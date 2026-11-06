@@ -298,9 +298,7 @@
 
 /* ==========================================================================
    Ask (boolean confirm shape): a title, a quieter body, then Cancel and a filled
-   OK. The base owns the native <dialog> leave fade + backdrop. (marotte has no
-   input-ask consumer yet; add .uip-ask--input / .uip-ask-form / .uip-ask-input
-   rules when one appears.)
+   OK. The base owns the native <dialog> leave fade + backdrop.
    ========================================================================== */
 
 .uip-ask {
@@ -319,6 +317,7 @@
   margin-block: 0 var(--sp-2);
   font-size: var(--fs-md);
   font-weight: var(--fw-semibold);
+  overflow-wrap: anywhere;
 }
 
 /* A message can quote a command: keep its spacing and wrap a long token, so all of it is on screen. */
@@ -346,7 +345,8 @@
 /* NO SKIN HERE: OK and Cancel JOIN `.btn-small`'s rule lists in 14-tools.css, and a
    non-destructive OK joins `.btn-primary`'s: the library builds them, so they cannot carry
    the classes in markup. Only the destructive fill, which no other button has, lives here.
-   Darker on hover in both themes, as `--c-accent-hover` is. */
+   Darker on hover in both themes, as `--c-accent-hover` is. The hover arm restates the ink:
+   the ghost `.uip-ask-ok:hover` in 14-tools.css ties this rule's specificity and comes later. */
 .uip-ask-ok.is-destructive {
   background: var(--c-red);
   border-color: var(--c-red);
@@ -355,6 +355,7 @@
   &:hover {
     background: color-mix(in oklch, var(--c-red), oklch(0% 0 none) 10%);
     border-color: color-mix(in oklch, var(--c-red), oklch(0% 0 none) 10%);
+    color: var(--c-on-accent);
   }
 }
 

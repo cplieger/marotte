@@ -10,6 +10,7 @@ import { useSteppableClock, waitForOnClock } from "./__test-helpers__/fake-clock
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import { formatShortDate } from "./locale-time.js";
 import { confirmText } from "./__test-helpers__/confirm-text.js";
+import type { Confirmation } from "./confirm.js";
 
 /**
  * Cache-buster: `vi.resetModules()` does not re-evaluate a module in Browser Mode (URL-keyed module map). The `.ts`
@@ -59,7 +60,7 @@ const { actionNotice, deleteStopsWork, descendantChatsOf } = vi.hoisted(() => ({
   descendantChatsOf: vi.fn((_ref: string): { ref: string; name: string }[] => []),
 }));
 const deleteRunDispatch = vi.fn(async () => ({ ok: true }));
-const confirmMock = vi.fn(async (_message: string, _label?: string, _variant?: string) => true);
+const confirmMock = vi.fn(async (_q: Confirmation) => true);
 const closeTab = vi.fn();
 const setHistoryTab = vi.fn();
 const pushRoute = vi.fn();

@@ -258,4 +258,30 @@ describe("the rewind confirm", () => {
     expect(text).not.toMatch(/retype/);
     expect(text).toMatch(/This cannot be undone/);
   });
+
+  it("asks a destructive question with a Rewind button", async () => {
+    await paintChat(3);
+    mocks.confirm.mockResolvedValue(false);
+    await rewindFirstTurn();
+
+    const q = mocks.confirm.mock.calls[0]?.[0];
+    expect([q?.title, q?.confirmLabel, q?.variant]).toEqual([
+      "Rewind to this turn?",
+      "Rewind",
+      "destructive",
+    ]);
+  });
+
+  // Rewinding from the first card targets turn 2, so a chat of N turns drops N - 2 later ones.
+  it.each([
+    [2, "Removes this prompt and its reply."],
+    [3, "Removes this prompt, its reply and the turn after it."],
+    [4, "Removes this prompt, its reply and the 2 later turns."],
+  ])("counts the later turns it removes in a chat of %i", async (count, removes) => {
+    await paintChat(count);
+    mocks.confirm.mockResolvedValue(false);
+    await rewindFirstTurn();
+
+    expect(mocks.confirm.mock.calls[0]?.[0].body?.split("\n")).toContain(removes);
+  });
 });
