@@ -28,27 +28,27 @@ func stepCloseOf(c *marotte.EntryTurnClose) stepClose {
 	}
 }
 
-// stoppedOnToolUse is the turn-level tell of kiro-cli's model-call limit (a tool_use or max_turn_requests stop). It is
+// stoppedAtCallLimit is the turn-level tell of kiro-cli's model-call limit (a tool_use or max_turn_requests stop). It is
 // not proof on its own: kiro-cli also ends a turn whose last tool asked for it with the model's tool_use stop
 // (update_workflow's handoff_ends_turn, kiro-cli 2.32.0), and only KAS's node record tells the two apart.
-func (c stepClose) stoppedOnToolUse() bool {
+func (c stepClose) stoppedAtCallLimit() bool {
 	return marotte.ConcludeStopReason(c.rawStop).FailureKind == marotte.FailureKindModelCallLimit
 }
 
 // mayBeBroken is whether KAS's record could change or confirm this close's grade, so a reader needs it.
 func (c stepClose) mayBeBroken() bool {
-	return marotte.SeverityOf(c.outcome) == marotte.TurnSeverityBroken || c.stoppedOnToolUse()
+	return marotte.SeverityOf(c.outcome) == marotte.TurnSeverityBroken || c.stoppedAtCallLimit()
 }
 
 // mayNote is whether this close's grade could call for a step note: graded never makes a close refused, and the only
-// kind it adds is the model-call limit on a tool_use stop.
+// kind it adds is the model-call limit on a tool_use or max_turn_requests stop.
 func (c stepClose) mayNote() bool {
-	return c.outcome == marotte.TurnOutcomeRefused || c.kind == marotte.FailureKindModelCallLimit || c.stoppedOnToolUse()
+	return c.outcome == marotte.TurnOutcomeRefused || c.kind == marotte.FailureKindModelCallLimit || c.stoppedAtCallLimit()
 }
 
 // graded is the step's end under KAS's record of the node, the authority (known is false when KAS's record was not
 // read). A step KAS completed on a success signal ended completed whatever its turn's stop. The model-call limit is
-// named only for a step KAS completed with no success signal whose turn stopped on tool_use.
+// named only for a step KAS completed with no success signal whose turn stopped on tool_use or max_turn_requests.
 func (c stepClose) graded(kas workflow.StepRecord, known bool) stepClose {
 	switch {
 	case !known:
@@ -58,7 +58,7 @@ func (c stepClose) graded(kas workflow.StepRecord, known bool) stepClose {
 			return stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: c.rawStop}
 		}
 		return c
-	case kas.Completed() && c.stoppedOnToolUse():
+	case kas.Completed() && c.stoppedAtCallLimit():
 		c.outcome = marotte.TurnOutcomeFailed
 		c.kind = marotte.FailureKindModelCallLimit
 		c.reason = marotte.ModelCallLimitStepReason
