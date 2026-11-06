@@ -25,7 +25,7 @@ func authorize(t *testing.T, g Gate, header string) (*httptest.ResponseRecorder,
 		r.Header.Set("Authorization", header)
 	}
 	w := httptest.NewRecorder()
-	return w, g.Authorize(w, r)
+	return w, g.authorize(w, r)
 }
 
 func TestGate_Authorize(t *testing.T) {

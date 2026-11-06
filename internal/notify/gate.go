@@ -45,10 +45,11 @@ func ParseToken(value string) (Gate, error) {
 // On reports whether a token is configured.
 func (g Gate) On() bool { return g.on }
 
-// Authorize is the route's one credential check: it reports whether r may call the notify verb,
-// and on false has written the 401. Every other credential is refused here, so swapping this
-// method is the whole change when the route moves to a scoped key.
-func (g Gate) Authorize(w http.ResponseWriter, r *http.Request) bool {
+// authorize is the route's one credential check: it reports whether r may call the notify verb,
+// and on false has written the 401. Every other credential is refused here; this method and
+// Carries, which the server's token confinement calls, are the whole change when the route moves
+// to a scoped key.
+func (g Gate) authorize(w http.ResponseWriter, r *http.Request) bool {
 	if !g.on {
 		httpserver.WriteJSONStatus(w, http.StatusUnauthorized, httpserver.ErrorResponse{
 			Error: "notify is off: set " + TokenEnv + " (or " + TokenEnv + "_FILE) to enable it",

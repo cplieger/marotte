@@ -96,9 +96,3 @@ func (d *dedupeTable) release(k dedupeKey) {
 	delete(d.entries, k)
 	d.mu.Unlock()
 }
-
-func (d *dedupeTable) len() int {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return len(d.entries)
-}

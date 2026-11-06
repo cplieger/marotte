@@ -80,7 +80,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	if !h.gate.Authorize(w, r) {
+	if !h.gate.authorize(w, r) {
 		return
 	}
 	session := r.PathValue("session")

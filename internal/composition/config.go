@@ -73,6 +73,8 @@ type Config struct {
 	// BrowseRoots is the file browser's allow-list: WorkDir, ConfigDir, marotte.DefaultUploadDir,
 	// plus MAROTTE_BROWSE_ROOTS grants (colon-separated absolute paths). Everything else is denied.
 	BrowseRoots []string
+	// notifyErr is a configured but unusable notify token, which validateConfig makes fatal.
+	notifyErr error
 	// ACPArgs are operator kiro-cli launch flags from MAROTTE_KIRO_ACP_ARGS, filtered by
 	// bridge.ParseACPArgs and appended to the agent engine's argv. An escape hatch for a flag
 	// upstream adds, not a capability switch.
@@ -82,8 +84,6 @@ type Config struct {
 	// NotifyGate admits the notify route's bearer token from notify.TokenEnv; the zero Gate is
 	// the door off. It holds the token's digest only.
 	NotifyGate notify.Gate
-	// notifyErr is a configured but unusable notify token, which validateConfig makes fatal.
-	notifyErr error
 	// KiroAPIKeySet records whether bridge.KiroAPIKeyVar is present. The value
 	// is never read into Config.
 	KiroAPIKeySet bool

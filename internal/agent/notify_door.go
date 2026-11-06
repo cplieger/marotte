@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"fmt"
+	"slices"
 
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -46,7 +48,13 @@ func (d notifyDoor) Deliver(ctx context.Context, session, text, source string) (
 	if err != nil {
 		return "", notifyError(err)
 	}
-	return string(got), nil
+	switch got {
+	case command.NotifySteer:
+		return notify.DeliveredSteer, nil
+	case command.NotifyPrompt:
+		return notify.DeliveredPrompt, nil
+	}
+	return "", fmt.Errorf("notify: unknown delivery %q", got)
 }
 
 // chatForSession answers the chat whose current session is session, else the one chat whose earlier sessions hold
@@ -61,12 +69,9 @@ func chatForSession(headers []marotte.ChatHeader, session string) (marotte.ChatI
 		if h.ACPSessionID == session {
 			return marotte.ChatID(h.ID), true
 		}
-		for _, s := range h.PriorACPSessionIDs {
-			if s == session {
-				owner = marotte.ChatID(h.ID)
-				owners++
-				break
-			}
+		if slices.Contains(h.PriorACPSessionIDs, session) {
+			owner = marotte.ChatID(h.ID)
+			owners++
 		}
 	}
 	return owner, owners == 1

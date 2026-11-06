@@ -13,6 +13,7 @@ import (
 // NotifyDelivery is how Notify delivered a message.
 type NotifyDelivery string
 
+// The deliveries, spelled as the notify route answers them.
 const (
 	NotifyPrompt NotifyDelivery = "prompt"
 	NotifySteer  NotifyDelivery = "steer"
@@ -55,6 +56,7 @@ func (d *Dispatcher) notifyAs(ctx context.Context, t marotte.CommandType, chatID
 // NotifyRefusal is what a Notify error means to its outside caller.
 type NotifyRefusal int
 
+// The refusal classes; NotifyFailed is any other fault, which the notify route answers 500.
 const (
 	NotifyFailed NotifyRefusal = iota
 	NotifyUnknownChat

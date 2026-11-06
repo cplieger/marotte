@@ -16,12 +16,13 @@ type doorRig struct {
 	delivered []marotte.ChatID
 	froms     []*marotte.Caller
 	answer    error
+	verb      command.NotifyDelivery
 	draining  bool
 	ready     bool
 }
 
 func newDoorRig(headers ...marotte.ChatHeader) *doorRig {
-	rig := &doorRig{ready: true}
+	rig := &doorRig{ready: true, verb: command.NotifySteer}
 	rig.door = notifyDoor{
 		enter: func() (func(), bool) {
 			if rig.draining {
@@ -37,7 +38,7 @@ func newDoorRig(headers ...marotte.ChatHeader) *doorRig {
 			if rig.answer != nil {
 				return "", rig.answer
 			}
-			return command.NotifySteer, nil
+			return rig.verb, nil
 		},
 	}
 	return rig
@@ -71,12 +72,14 @@ func TestNotifyDoor_SessionLookup(t *testing.T) {
 		{"an earlier session of a chat", []marotte.ChatHeader{header("c1", "s2", "s1")}, "s1", "c1"},
 		{
 			"the current holder wins over a chat that ran on it before",
-			[]marotte.ChatHeader{header("older", "s-older", "s1"), header("c1", "s1")}, "s1", "c1",
+			[]marotte.ChatHeader{header("older", "s-older", "s1"), header("c1", "s1")},
+			"s1", "c1",
 		},
 		{"no chat", []marotte.ChatHeader{header("c1", "s2")}, "s1", ""},
 		{
 			"two chats with it only in their history",
-			[]marotte.ChatHeader{header("a", "s-a", "s1"), header("b", "s-b", "s1")}, "s1", "",
+			[]marotte.ChatHeader{header("a", "s-a", "s1"), header("b", "s-b", "s1")},
+			"s1", "",
 		},
 	}
 	for _, tc := range cases {
@@ -148,4 +151,22 @@ func TestNotifyDoor_MapsRefusals(t *testing.T) {
 			t.Errorf("err = %v, want the failure itself", err)
 		}
 	})
+}
+
+func TestNotifyDoor_AnswersTheRouteSpelling(t *testing.T) {
+	for verb, want := range map[command.NotifyDelivery]string{
+		command.NotifySteer:  notify.DeliveredSteer,
+		command.NotifyPrompt: notify.DeliveredPrompt,
+	} {
+		rig := newDoorRig(header("c1", "s1"))
+		rig.verb = verb
+		if got, err := rig.door.Deliver(t.Context(), "s1", "wake", "grelot"); err != nil || got != want {
+			t.Errorf("Deliver after a %q delivery = %q, %v; want %q", verb, got, err, want)
+		}
+	}
+	rig := newDoorRig(header("c1", "s1"))
+	rig.verb = "queued"
+	if got, err := rig.door.Deliver(t.Context(), "s1", "wake", "grelot"); err == nil {
+		t.Errorf("Deliver after an unknown delivery = %q, nil; want an error, not a verb grelot cannot read", got)
+	}
 }

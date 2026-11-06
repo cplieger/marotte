@@ -67,8 +67,6 @@ type Server struct {
 	authUnavailable func() bool
 	// hostPolicy is the ALLOWED_HOSTS allowlist; nil or inactive accepts any Host.
 	hostPolicy *httpserver.HostPolicy
-	// notifyGate is the notify route's credential; the zero Gate is the door off.
-	notifyGate notify.Gate
 	// notifyDeliverer is the chats the notify route delivers into; nil leaves the route unmounted.
 	notifyDeliverer notify.Deliverer
 	// onListen fires once per successful bind, before serving: the evidence that this process
@@ -90,6 +88,8 @@ type Server struct {
 	ready atomic.Bool
 	// ignoredPublicWarned latches clientIP's one warning per process.
 	ignoredPublicWarned atomic.Bool
+	// notifyGate is the notify route's credential; the zero Gate is the door off.
+	notifyGate notify.Gate
 }
 
 // Option configures a Server at construction time.

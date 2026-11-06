@@ -364,3 +364,9 @@ func TestDedupe_SizeCapAndExpiry(t *testing.T) {
 		}
 	})
 }
+
+func (d *dedupeTable) len() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.entries)
+}
