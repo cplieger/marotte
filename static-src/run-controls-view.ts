@@ -166,8 +166,8 @@ function render(workflowID: string, answer: RunControlsResponse): HTMLElement | 
       continue;
     }
     const action = RUN_ACTION[verb];
-    // No optimistic flip: every verb settles at a node boundary, so the run still reads `running`
-    // when the reply lands, and the `run_progress` invalidation repaints the row.
+    // No optimistic flip: a verb's reply confirms the ask before the run's status moves, so the row still
+    // reads its old status when the reply lands, and the `run_progress` invalidation repaints it.
     const btn = button(verb, () => void action.dispatch(workflowID));
     // A retry loads the run's session and can take tens of seconds; unbound, the button looks dead
     // and can be clicked again meanwhile.

@@ -127,8 +127,8 @@ const (
 	// The only verb that removes a run from `_kiro/workflow/list`; cancel only settles a status.
 	methodKiroWorkflowDelete = "_kiro/workflow/delete"
 	methodKiroWorkflowResume = "_kiro/workflow/resume"
-	// Stops the run at the next node boundary. cancel's `targetStatus` is never sent, so a stop
-	// records the same status whichever door was used.
+	// Stops the run by cancelling its in-flight turn (KAS pauseAbortController). cancel's
+	// `targetStatus` is never sent, so a stop records the same status whichever door was used.
 	methodKiroWorkflowPause = "_kiro/workflow/pause"
 
 	// Resets a failed or aborted run's failed and aborted nodes plus ancestors; KAS loads an
