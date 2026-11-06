@@ -254,7 +254,8 @@ func TestHandler_BodyValidation(t *testing.T) {
 		{"dedupe_key with a control byte", notifyBody(t, "wake", "grelot", "m\x01"), "dedupe_key"},
 		{"not JSON", `text=wake`, "body"},
 		{"a JSON array", `[]`, "body"},
-		{"a field of the wrong type", `{"text":1,"source":"grelot","dedupe_key":"m-1"}`, "body"},
+		{"a field of the wrong type", `{"text":1,"source":"grelot","dedupe_key":"m-1"}`, "text"},
+		{"a later field of the wrong type", `{"text":"wake","source":"grelot","dedupe_key":true}`, "dedupe_key"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

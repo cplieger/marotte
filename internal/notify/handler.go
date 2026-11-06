@@ -95,6 +95,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			httpserver.WriteJSONStatus(w, http.StatusRequestEntityTooLarge, httpreply.ErrorJSON("body: over 512 KiB"))
 			return
 		}
+		if typeErr, ok := errors.AsType[*json.UnmarshalTypeError](err); ok && typeErr.Field != "" {
+			httpreply.BadRequest(w, typeErr.Field+": want a string")
+			return
+		}
 		httpreply.BadRequest(w, "body: want a JSON object with string fields text, source and dedupe_key")
 		return
 	}
