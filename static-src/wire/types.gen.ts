@@ -94,7 +94,7 @@ export type SlashCommandKind = "steering" | "prompt" | "goal";
 
 export type SpecDocRole = "requirements" | "design" | "tasks" | "other";
 
-export type SteerOrigin = "user" | "agent" | "parent" | "step";
+export type SteerOrigin = "user" | "agent" | "parent" | "step" | "peer";
 
 export type SteerReason = "restart" | "boundary";
 
@@ -1223,7 +1223,10 @@ export interface EntrySteer {
   state?: SteerState;
   reason?: SteerReason;
   severity?: string;
-  /** KASID is the id the notify frame gave a workflow message (`notifyId`), empty while it carries none. */
+  /**
+ * KASID is the id the notify frame gave a workflow message (`notifyId`), the id a steering clear
+ * names it by; empty when KAS failed to persist the message.
+ */
   kas_id?: string;
   /** ToSession is the KAS session a workflow message was sent to, on the receiver's row only. */
   to_session?: string;
@@ -1235,8 +1238,8 @@ export interface EntrySteer {
   produced_ts?: number;
   read_ts?: number;
   /**
- * Cleared marks a workflow message its receiver's buffer was emptied of before any take-up or
- * wake proved it read; State stays absent, since whether it was read is not known.
+ * Cleared marks a workflow message its receiver's buffer was emptied of with no proof it was read
+ * or dropped; State stays absent, since which is not known.
  */
   cleared?: boolean;
 }
@@ -1252,8 +1255,8 @@ export interface EntrySteerAck {
 
 /**
  * EntrySteerCleared is the steer_cleared payload: KAS emptied Session's steering buffer, naming
- * IDs, for Cause. It ends the epoch of every workflow message filed before it whose ToSession is
- * Session, settling each one still unsettled cleared. It renders nothing.
+ * IDs, for Cause. Settlement says what it means for each unsettled workflow message filed before
+ * it. It renders nothing.
  */
 export interface EntrySteerCleared {
   cause: string;
@@ -1264,14 +1267,16 @@ export interface EntrySteerCleared {
 /**
  * EntrySteerDelivered is the steer_delivered payload: the receiver took up the workflow message
  * SteerID names, recorded at send, at ReadTs; Cleared instead says a steering clear emptied the
- * receiver's buffer at ReadTs with no proof it was read. It renders on that message's row, not
- * where it sits. KASID is the id KAS persisted the message under, which its replay row carries.
+ * receiver's buffer at ReadTs with no proof it was read, and Dropped that a turn-boundary clear
+ * named it unread. It renders on that message's row, not where it sits. KASID is the id KAS
+ * persisted the message under, which its replay row carries.
  */
 export interface EntrySteerDelivered {
   steer_id: string;
   kas_id?: string;
   read_ts: number;
   cleared?: boolean;
+  dropped?: boolean;
 }
 
 /** EntryText is the text payload. */
@@ -1349,9 +1354,13 @@ export interface EntryToolResult {
   terminal_id?: string;
   workflow_id?: string;
   classifier_note?: string;
+  /** DelegateStop is ToolCall's. */
+  delegate_stop?: string;
   output_spans?: TextSpan[];
   diffs?: ToolDiff[];
   locations?: ToolLocation[];
+  /** Input is set only when an update revised the create's input; absent means the create's stands. */
+  input?: unknown;
   duration_ms?: number;
   output_bytes?: number;
   has_full?: boolean;
@@ -2132,6 +2141,17 @@ export interface MCPOAuthPayload {
 }
 
 /**
+ * MCPSignInClosedPayload is the payload for type="mcp_sign_in_closed": KAS ended the mid-session
+ * re-auth FlowID names (_kiro/mcp/oauthCompleted), whose open_external_url banner closes. Success
+ * false means it got no token, and the server's next tool call asks again.
+ */
+export interface MCPSignInClosedPayload {
+  server: string;
+  flow_id: string;
+  success: boolean;
+}
+
+/**
  * MCPSignInOpenPayload is the payload for type="mcp_sign_in_open": kiro-cli opened URL, the consent page of the
  * sign-in the user started on Server's row.
  */
@@ -2241,10 +2261,14 @@ export interface OpenEntry {
  * window.open() not driven by a user gesture, so the client surfaces a banner link rather
  * than auto-opening. Only http/https URLs are broadcast. ExpiresAt is when KAS stops waiting for
  * the callback; a replayed event carries the original time, so the client shows only what is left.
+ * Server is the MCP server KAS named, and FlowID the mid-session re-auth that mcp_sign_in_closed
+ * ends; either is absent when KAS named none.
  */
 export interface OpenExternalURLPayload {
   expires_at: string;
   url: string;
+  server?: string;
+  flow_id?: string;
 }
 
 /**
@@ -3120,6 +3144,11 @@ export interface RunProgressPayload {
  * shape-changing kinds, which is what tells the client to refetch instead.
  */
   node_path?: string[];
+  /**
+ * Credits is the step session's whole credit-unit total KAS recorded at the step's end, on
+ * node_complete only; zero when KAS recorded none.
+ */
+  credits?: number;
 }
 
 /**
@@ -4039,6 +4068,11 @@ export interface ToolCall {
  */
   classifier_note?: string;
   /**
+ * DelegateStop is a sub-agent invocation's raw stop when its delegate did not end its turn
+ * cleanly; DelegateStatus has already graded Status from it. A plain string: KAS's set is open.
+ */
+  delegate_stop?: string;
+  /**
  * HookTrigger is a hook card's canonical trigger (CanonicalHookTrigger), empty when
  * the hook list did not name it.
  */
@@ -4326,6 +4360,8 @@ export interface ToolProgressPayload {
   diffs_appended?: ToolDiff[];
   /** Locations are REPLACED wholesale when present. */
   locations?: ToolLocation[];
+  /** Input is the call's whole argument object, REPLACED when present. */
+  input?: unknown;
   /**
  * The scalars last, so the GC scan region stops above them (govet fieldalignment).
  * OutputReplace's meaning is on OutputDelta.

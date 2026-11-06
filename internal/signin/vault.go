@@ -297,6 +297,26 @@ func (v *Vault) AccountPending(id BackendID) bool {
 	return s.accountPendingLocked()
 }
 
+// ReadingAccount names the account a reading the running engine takes now describes, ok only when that is the
+// signed-in (desired) account. The engine caches the credential it was last answered, so basis decides while it is
+// set and effective only before the engine's first answer. A renewal keeps the key; a sign-in changes it.
+func (v *Vault) ReadingAccount(id BackendID) (gen uint64, ok bool) {
+	s := v.slots[id]
+	if s == nil {
+		return 0, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	held := s.basis
+	if held == nil {
+		held = s.effective
+	}
+	if s.kindLocked() != StatusSignedIn || held == nil || held.gen != s.desired.gen {
+		return 0, false
+	}
+	return held.gen, true
+}
+
 // EngineSpawned promotes the desired record to effective and clears basis, because a new engine
 // holds no cached credential. The engine owner calls it at each spawn before it computes the
 // fingerprint it records; it fires neither OnChange nor OnAnswerability.

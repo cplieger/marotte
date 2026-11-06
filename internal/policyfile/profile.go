@@ -129,6 +129,12 @@ func ProfileFor(id string) (Profile, bool) {
 	return Profile{}, false
 }
 
+// DelegatesToSafetyCheck reports whether a session opened with presets hands the requests no rule settles to
+// Kiro's safety check (KAS's trust classifier) instead of asking a person.
+func DelegatesToSafetyCheck(presets []string) bool {
+	return slices.Contains(presets, presetApproveForMe)
+}
+
 // DefaultProfile is what an unset or unrecognised setting resolves to. Guarded
 // rather than Custom: it reproduces the floor marotte ships today, where Custom
 // would silently remove the fs_read floor from an instance that never chose to.

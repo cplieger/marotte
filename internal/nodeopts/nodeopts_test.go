@@ -82,6 +82,29 @@ func TestWithHeapLimit_RefusesWhatNodeRefuses(t *testing.T) {
 	}
 }
 
+func TestSetsHeapPercentage(t *testing.T) {
+	for _, tc := range []struct {
+		inherited string
+		want      bool
+	}{
+		{"", false},
+		{"--max-old-space-size=4096 --trace-warnings", false},
+		{"--max-old-space-size-percentage=50", true},
+		{"--trace-warnings --max_old_space_size_percentage=10", true},
+		{`--title="--max-old-space-size-percentage=50"`, false},
+	} {
+		got, err := SetsHeapPercentage(tc.inherited)
+		if err != nil || got != tc.want {
+			t.Errorf("SetsHeapPercentage(%q) = %v, %v; want %v", tc.inherited, got, err, tc.want)
+		}
+	}
+	for _, in := range []string{`--title="a b`, "--max-old-space-size-percentage"} {
+		if _, err := SetsHeapPercentage(in); err == nil {
+			t.Errorf("SetsHeapPercentage(%q) = nil error, want the value refused", in)
+		}
+	}
+}
+
 func TestWithHeapLimit_ZeroReturnsTheInputUnparsed(t *testing.T) {
 	for _, in := range []string{"", "--max-old-space-size=8", `--title="unterminated`, "--max-old-space-size 1"} {
 		got, err := WithHeapLimit(in, 0)

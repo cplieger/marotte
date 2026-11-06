@@ -9,6 +9,7 @@ import {
   applyToolProgress,
   foldToolCallDelta,
   settledToolCall,
+  paintsTheSame,
   republishWindowToolCalls,
   renderCauseOf,
   setWorkingLabel,
@@ -254,6 +255,8 @@ describe("settledToolCall carries every member the result sends", () => {
           rule: { capability: "shell", effect: "deny" },
         },
         declined: true,
+        delegate_stop: "max_turn_requests",
+        input: { path: "main.go", text: "b" },
       }),
     );
     expect(merged).toMatchObject({
@@ -276,6 +279,8 @@ describe("settledToolCall carries every member the result sends", () => {
         rule: { capability: "shell", effect: "deny" },
       },
       declined: true,
+      delegate_stop: "max_turn_requests",
+      input: { path: "main.go", text: "b" },
     });
   });
 
@@ -394,5 +399,36 @@ describe("two tool updates in one tick", () => {
     setWorkingLabel("a", "Compacting");
     await Promise.resolve();
     expect(renderCauseOf("a")).toEqual({ cause: "fact" });
+  });
+});
+
+describe("paintsTheSame reads every field the card's update reads", () => {
+  it("is false when only the input differs, since a resting diff is drawn from it", () => {
+    expect(
+      paintsTheSame(
+        toolCall("c1", { input: { path: "a" } }),
+        toolCall("c1", { input: { path: "a", text: "x" } }),
+      ),
+    ).toBe(false);
+  });
+
+  it("is false when only the declined mark differs", () => {
+    expect(paintsTheSame(toolCall("c1"), toolCall("c1", { declined: true }))).toBe(false);
+  });
+
+  it("is false when only the denial differs", () => {
+    const denial = {
+      capability: "shell",
+      resource: "rm -rf /",
+      scope: "user",
+      source: "permissions.yaml",
+    };
+    expect(paintsTheSame(toolCall("c1"), toolCall("c1", { denial }))).toBe(false);
+  });
+
+  it("is false when only the stop differs, since the card's state word reads it", () => {
+    expect(paintsTheSame(toolCall("c1"), { ...toolCall("c1"), delegate_stop: "max_tokens" })).toBe(
+      false,
+    );
   });
 });

@@ -990,9 +990,9 @@
    row's height: it reserves its controls' `--hit-floor` target, so a column arriving
    with its buttons would grow the row, and the bar grows UPWARD, jumping the
    transcript and moving the `scrollHeight` the turn map reads. So the box is reserved
-   and only its CONTENTS change. The WIDTH is not reserved: the column holds two or
-   three controls depending on how many messages are unread, so there is no single
-   width to hold open. */
+   and only its CONTENTS change. The WIDTH is not reserved: the column holds one to
+   four controls depending on the row's state and its neighbours, so there is no
+   single width to hold open. */
 .steer-actions {
   display: inline-flex;
   flex: none;
@@ -1194,6 +1194,15 @@
      fold row the top edge is square, since it is no corner of the box. */
   border-radius: var(--stack-in-r);
 
+  /* The credits column exists only while a row states credits: an empty track still takes a
+     column gap, which would pull every clock off the row's end. `:where` keeps this at the base
+     rule's weight, so the narrow layout below still replaces it. */
+  &:where(:has(.ev-sum-credits)) {
+    grid-template-columns:
+      [glyph] auto [title] fit-content(18rem) [state] auto [progress] auto
+      [bar] minmax(3rem, 1fr) [clock] auto [credits] auto [end];
+  }
+
   .run-bar-fold:not([hidden]) + & {
     border-start-start-radius: 0;
     border-start-end-radius: 0;
@@ -1266,6 +1275,11 @@
 
   & .ev-sum-clock {
     grid-column: clock;
+    justify-self: end;
+  }
+
+  & .ev-sum-credits {
+    grid-column: credits;
     justify-self: end;
   }
 
@@ -1353,8 +1367,8 @@
 }
 
 /* A phone, or touch: two lines in a row, never under the hit floor's 44px. Line one is
-   the title and the clock, line two the state and the progress, each in shared
-   columns; the bar is a band along the row's bottom edge. */
+   the title and the clock, line two the state, the progress and the credits, each in
+   shared columns; the bar is a band along the row's bottom edge. */
 @container run-dock (width < 30rem) or style(--run-stack: 1) {
   .run-bar {
     grid-template-columns:
@@ -1398,6 +1412,12 @@
       font-size: var(--fs-xs);
     }
 
+    & .ev-sum-credits {
+      grid-column: clock;
+      grid-row: 2;
+      font-size: var(--fs-xs);
+    }
+
     & .ev-mini {
       position: absolute;
       inset-inline: var(--sp-3);
@@ -1414,6 +1434,10 @@
     &[data-alert] .ev-alert-line {
       grid-column: progress / end;
       grid-row: 2;
+    }
+
+    &[data-alert]:has(.ev-sum-credits) .ev-alert-line {
+      grid-column: progress / clock;
     }
   }
 

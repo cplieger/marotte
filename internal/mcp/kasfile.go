@@ -408,18 +408,6 @@ func (s *Store) refuseKAS(info os.FileInfo, cause error) error {
 	return fmt.Errorf("%w: %w", ErrKASUnreadable, cause)
 }
 
-// utf8BOM is the byte-order mark a Windows editor prepends to a saved UTF-8 file.
-var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
-
-// decodeUserJSON prepares a hand-editable JSON file for json.Unmarshal: it strips a leading
-// UTF-8 BOM, and empty reports content that is only JSON whitespace (RFC 8259 §2: space, tab,
-// LF, CR), which both readers take as no servers. \v and \f are not JSON whitespace, so
-// bytes.TrimSpace would wave through a file JSON rejects.
-func decodeUserJSON(data []byte) (doc []byte, empty bool) {
-	doc = bytes.TrimPrefix(data, utf8BOM)
-	return doc, len(bytes.Trim(doc, " \t\n\r")) == 0
-}
-
 // kasConfigPath is the file KAS reads for user-level MCP servers.
 //
 // HOME, not the workspace. KAS reads BOTH the home and workspace paths,

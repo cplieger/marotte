@@ -29,6 +29,12 @@ func (rt *Runtime) initWorkspaceHandlers() {
 			rt.config.cacheConfigurationState(msg.Params)
 			rt.standing.refetchSoon()
 		},
+		methodKiroMemoryChanged: func(_ context.Context, _ marotte.ChatID, _ *marotte.RPCResponse) {
+			rt.config.broadcastMemoriesChanged()
+		},
+		methodKiroMemorySyncStatus: func(_ context.Context, _ marotte.ChatID, _ *marotte.RPCResponse) {
+			rt.config.broadcastMemorySyncChanged()
+		},
 		methodV3PolicyChanged: rt.translator.HandlePolicyChanged,
 		methodV3PolicyError:   rt.translator.HandlePolicyError,
 		methodV3SteeringDocs:  rt.translator.HandleSteeringDocuments,

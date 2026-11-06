@@ -100,6 +100,23 @@ func DefaultFailureReason(o TurnOutcome) string {
 	return ""
 }
 
+// DelegateStatus grades a sub-agent's invocation as the turn it was: a `completed` call whose
+// delegate stopped on stop is failed when that stop breaks a turn, aborted when it stops one, and
+// left alone when it is clean (max_tokens completes, truncated). Any other status stands.
+func DelegateStatus(status ToolStatus, stop StopReason) ToolStatus {
+	if status != ToolCompleted || stop == "" {
+		return status
+	}
+	switch SeverityOf(ConcludeStopReason(stop).Outcome) {
+	case TurnSeverityBroken:
+		return ToolFailed
+	case TurnSeverityStopped:
+		return ToolAborted
+	case TurnSeverityClean, TurnSeverityRunning:
+	}
+	return status
+}
+
 // ModelCallLimitTurnReason and ModelCallLimitStepReason are what a FailureKindModelCallLimit
 // close says, for a chat turn and a workflow step. They name no count: KAS's agentIterationLimit
 // is per graph (300 for the chat, custom and plan graphs and for the plan handoff into vibe,

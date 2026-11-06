@@ -1,5 +1,7 @@
 package marotte
 
+import "encoding/json"
+
 // The SSE payloads of the entry log's live path: one frame per append to the
 // log, one per delta into an open entry, and two live-only replaces (tool
 // progress, code references) whose durable value the tool_result and the
@@ -100,6 +102,8 @@ type ToolProgressPayload struct {
 	DiffsAppended []ToolDiff `json:"diffs_appended,omitempty"`
 	// Locations are REPLACED wholesale when present.
 	Locations []ToolLocation `json:"locations,omitempty"`
+	// Input is the call's whole argument object, REPLACED when present.
+	Input json.RawMessage `json:"input,omitempty"`
 	// The scalars last, so the GC scan region stops above them (govet fieldalignment).
 	// OutputReplace's meaning is on OutputDelta.
 	DurationMs    int  `json:"duration_ms,omitempty"`

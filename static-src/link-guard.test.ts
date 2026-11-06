@@ -109,6 +109,17 @@ describe("reformPayloadLinks", () => {
     expect(copied).toHaveBeenCalledExactlyOnceWith(URL_);
   });
 
+  it("names an unparsable link's host without half an emoji", () => {
+    const { a } = anchorWithText();
+    // "[" opens an IPv6 host that never closes, so the URL does not parse; the emoji sits at
+    // units 39 and 40, astride the 40-unit cut.
+    const raw = `http://[${"a".repeat(31)}\u{1F600}?body=${"word ".repeat(50)}`;
+    const b = formPayloadLink(a, raw);
+    const name = b.getAttribute("aria-label") ?? "";
+    expect(name).toBe(`Copy link to http://[${"a".repeat(31)}`);
+    expect(name).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+
   it("never turns a guarded button with an unsafe scheme into a link", () => {
     const { a } = anchorWithText();
     const b = formPayloadLink(a, "javascript:alert(1)");

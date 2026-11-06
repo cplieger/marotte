@@ -193,43 +193,88 @@ func TestAccount(t *testing.T) {
 		m       Mapped
 		message string
 		want    string
+		limit   bool
 	}{
 		{
 			"a context overflow names the compact remedy",
-			Mapped{ErrorType: ContextWindowExceededError, RequestID: "r1"},
+			Mapped{ErrorType: contextWindowExceededError, RequestID: "r1"},
 			"Context limit exceeded unexpectedly. Please try again.",
 			"This chat reached the model's context limit. Compact the context, then send the prompt again. (request r1)",
+			true,
+		},
+		{
+			"context limit keeps the request id from the message",
+			Mapped{ErrorType: contextWindowExceededError},
+			"Context limit exceeded unexpectedly. Please try again. (Request ID: 7f3a-b2)",
+			"This chat reached the model's context limit. Compact the context, then send the prompt again. (request 7f3a-b2)",
+			true,
+		},
+		{
+			"request size cap is a context limit",
+			Mapped{ErrorType: "GenericValidationError", RetryErrorType: "CLIENT_ERROR"},
+			"Request exceeds the maximum allowed size (Request ID: 9c1e)",
+			"This chat is larger than the model service accepts in one request, usually because of earlier images. Compact the context, then send the prompt again. (request 9c1e)",
+			true,
+		},
+		{
+			"an echoed size-cap phrase is not a context limit",
+			Mapped{ErrorType: "GenericValidationError", RetryErrorType: "CLIENT_ERROR"},
+			"Tool output said: Request exceeds the maximum allowed size",
+			"Tool output said: Request exceeds the maximum allowed size",
+			false,
+		},
+		{
+			"the size-cap phrase on another class is not a context limit",
+			Mapped{ErrorType: "BedrockValidationError", RetryErrorType: "CLIENT_ERROR"},
+			"Request exceeds the maximum allowed size",
+			"Request exceeds the maximum allowed size",
+			false,
+		},
+		{
+			"another generic validation error keeps KAS's prose",
+			Mapped{ErrorType: "GenericValidationError", RetryErrorType: "CLIENT_ERROR"},
+			"Improperly formed request. (Request ID: 9c1e)",
+			"Improperly formed request. (Request ID: 9c1e)",
+			false,
 		},
 		{
 			"a throttle says kiro-cli already retried",
 			Mapped{ErrorType: "ClientThrottleError", RetryErrorType: RetryThrottling},
 			"Too many requests.",
 			"Too many requests. kiro-cli already retried. Wait a moment and send again, or switch to another model.",
+			false,
 		},
 		{
 			"an unreachable model registry names the sign-in remedy",
 			Mapped{ErrorType: "ModelRegistryUnavailableError", RetryErrorType: "SERVER_ERROR"},
 			"Kiro could not load the available models.",
 			"Kiro could not load the available models. Sign in to Kiro from the account menu, then send the prompt again.",
+			false,
 		},
 		{
 			"a transient class keeps KAS's prose alone",
 			Mapped{ErrorType: "ProxyAuthenticationRequiredError", RetryErrorType: "TRANSIENT", RequestID: "req-407"},
 			"Your network proxy refused the connection.",
 			"Your network proxy refused the connection. (request req-407)",
+			false,
 		},
 		{
 			"a minified class name gets the message alone",
 			Mapped{ErrorType: "ge"},
 			"Your connection was interrupted.",
 			"Your connection was interrupted.",
+			false,
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			if got := Account(c.m, c.message); got != c.want {
-				t.Errorf("Account(%+v, %q) = %q, want %q", c.m, c.message, got, c.want)
+			got, limit := Account(c.m, c.message)
+			if got != c.want {
+				t.Errorf("Account(%+v, %q) text = %q, want %q", c.m, c.message, got, c.want)
+			}
+			if limit != c.limit {
+				t.Errorf("Account(%+v, %q) contextLimit = %v, want %v", c.m, c.message, limit, c.limit)
 			}
 		})
 	}

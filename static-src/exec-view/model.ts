@@ -106,6 +106,8 @@ export interface ExecRun {
   nodes: ExecNode[];
   /** What this execution was asked to do. */
   inputs?: Record<string, string>;
+  /** What the execution has cost in credits so far, as its source states it; absent when unknown. */
+  credits?: number;
   /** One line about why the execution wants a person, pre-composed by the adapter. */
   alert?: { kind: "input" | "paused" | "stopped" | "failed"; text: string };
   /** Every question waiting on a person, in the order the source lists them. */

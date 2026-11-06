@@ -59,6 +59,27 @@ func WithHeapLimit(inherited string, mib int) (string, error) {
 	return strings.Join(kept, " "), nil
 }
 
+// SetsHeapPercentage reports whether inherited carries V8's heap percentage flag, which beats a heap size flag
+// wherever either sits, node's argv included. A value Node itself would refuse is an error.
+func SetsHeapPercentage(inherited string) (bool, error) {
+	tokens, err := lex(inherited)
+	if err != nil {
+		return false, err
+	}
+	found := false
+	for _, tk := range tokens {
+		heap, err := isHeapToken(tk.text)
+		if err != nil {
+			return false, err
+		}
+		name, _, _ := strings.Cut(tk.text, "=")
+		if heap && strings.ReplaceAll(name, "_", "-") == heapFlag+"-percentage" {
+			found = true
+		}
+	}
+	return found, nil
+}
+
 // lex splits s as Node does: only an ASCII space outside double quotes separates; a quote toggles quoting and is not
 // part of the token; inside quotes a backslash takes the next byte literally.
 func lex(s string) ([]token, error) {

@@ -131,8 +131,14 @@ func TestSwitchModel_ALiveIdleChatRecordsTheSwitchAndResetsUsage(t *testing.T) {
 	if _, err := h.coord.openBridge(t.Context(), "c1", "m-old"); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	// The session open records the fake's model, so re-seed m-old after it.
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Model = "m-old"; return true })
+	// The session open records the fake's model, so re-seed m-old after it, and the session's credit total.
+	var sessionID string
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Model = "m-old"
+		sessionID = c.ACPSessionID
+		c.SetSessionCredits(sessionID, 1.23, false)
+		return true
+	})
 
 	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "switch_model", ChatID: "c1",
@@ -151,6 +157,49 @@ func TestSwitchModel_ALiveIdleChatRecordsTheSwitchAndResetsUsage(t *testing.T) {
 	}
 	if c.Usage.ContextSize != 200000 || c.Usage.ContextPct != 0 || c.Usage.Credits != 0 {
 		t.Errorf("usage = %+v, want the counters reset and context_size 200000 preserved", c.Usage)
+	}
+	// The session keeps counting from its old total, so the reset must hold against the next one.
+	h.handleSessionUpdate(t.Context(), "c1", sessionUsageFrame(t, sessionID, 1.53, false))
+	if c, _ := cs.Get(t.Context(), "c1"); c.Usage.Credits < 0.29 || c.Usage.Credits > 0.31 {
+		t.Errorf("credits after the next session total = %v, want the 0.3 spent since the switch", c.Usage.Credits)
+	}
+}
+
+// sessionUsageFrame is KAS's session_usage update for sessionID: its running credit total.
+func sessionUsageFrame(t *testing.T, sessionID string, total float64, replay bool) *marotte.RPCResponse {
+	t.Helper()
+	kiro := map[string]any{"kind": "session_usage", "credits": []map[string]any{{"usage": total, "unit": "credit"}}}
+	if replay {
+		kiro["replay"] = true
+	}
+	params, err := json.Marshal(map[string]any{
+		"sessionId": sessionID,
+		"update":    map[string]any{"sessionUpdate": "session_info_update", "_meta": map[string]any{"kiro": kiro}},
+	})
+	if err != nil {
+		t.Fatalf("marshal session_usage: %v", err)
+	}
+	return &marotte.RPCResponse{Method: "session/update", Params: params}
+}
+
+// KAS stamps the load-time total replay, yet it is the resumed session's current figure.
+func TestReplayedSessionUsage_ReachesTheHeader(t *testing.T) {
+	const chatID = marotte.ChatID("chat-resumed")
+	h, cs, _ := newTestHub()
+	defer shutdownHub(t, h)
+	registerParentSession(t, h, chatID, "parent-A")
+	seedChat(t, cs, chatID)
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
+		c.RecordSession("parent-A")
+		return true
+	}); err != nil {
+		t.Fatalf("recording the chat's session: %v", err)
+	}
+
+	h.handleSessionUpdate(t.Context(), chatID, sessionUsageFrame(t, "parent-A", 4.5, true))
+
+	if c, _ := cs.Get(t.Context(), chatID); c.Usage.Credits != 4.5 {
+		t.Errorf("credits = %v, want the resumed session's 4.5", c.Usage.Credits)
 	}
 }
 

@@ -18,7 +18,7 @@ const (
 	emailTimeout       = 10 * time.Second
 )
 
-// User text for the profile lookup's failures (IAM Identity Center only; Builder ID goes on).
+// User text for the profile lookup's failures (IAM Identity Center only).
 const (
 	textNoProfile          = "This account has no Kiro profile marotte can use."
 	textProfileUnreachable = "marotte could not reach Kiro to look up this account's profile. Try again."
@@ -91,10 +91,7 @@ func decodeProfiles(body []byte) ([]profile, error) {
 func (b *Backend) readEmail(ctx context.Context, management, accessToken, profileArn string) string {
 	ctx, cancel := context.WithTimeout(ctx, b.emailTimeout)
 	defer cancel()
-	q := url.Values{"isEmailRequired": {"true"}}
-	if profileArn != "" {
-		q.Set("profileArn", profileArn)
-	}
+	q := url.Values{"isEmailRequired": {"true"}, "profileArn": {profileArn}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, management+"/Get-Usage-Limits?"+q.Encode(), http.NoBody)
 	if err != nil {
 		slog.Warn("sign-in: the account email could not be read", "error", err)

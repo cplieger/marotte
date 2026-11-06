@@ -48,7 +48,7 @@ type contextItemWire struct {
 // own owner. Category keys stay open (an unknown one is kept under its wire key), every numeric
 // `*Chars` member beside `chars` becomes a part, and an item's uri survives only as a file: link.
 func contextBreakdownFrom(raw json.RawMessage) *marotte.ContextBreakdown {
-	if len(raw) == 0 || string(raw) == "null" {
+	if len(raw) == 0 || string(raw) == jsonNull {
 		return nil
 	}
 	var w contextBreakdownWire

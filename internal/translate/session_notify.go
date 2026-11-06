@@ -16,10 +16,12 @@ type kasSessionNotify struct {
 	WorkflowID      string `json:"workflowId"`
 	// NodeID is the sending node: a step, or the repeat whose cap KAS's own note reports.
 	NodeID string `json:"nodeId"`
-	// NotifyID is the id of the steer row KAS persisted for the message; empty when the row did not persist.
+	// NotifyID is KAS's id for the message: its buffer key, its persisted row's id and the id a
+	// steering clear names. Empty when KAS failed to persist the row.
 	NotifyID string `json:"notifyId"`
-	// Sender is "step" when a step messages its parent and "parent" when a session
-	// messages a child run's step; only the first is a question to the reader.
+	// Sender is "step" when a step messages its parent, "parent" when a session messages a child
+	// run's step, and "peer" when one top-level session messages another; only the first is a
+	// question to the reader.
 	Sender string `json:"sender"`
 }
 
@@ -27,6 +29,7 @@ type kasSessionNotify struct {
 const (
 	senderStep   = "step"
 	senderParent = "parent"
+	senderPeer   = "peer"
 )
 
 // severityWarning is the ONE severity that parks a run (KAS maps it to `need_input`); the

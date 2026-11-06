@@ -262,6 +262,26 @@ func TestClassifyPromptFailure(t *testing.T) {
 			}),
 			want: classThrottled,
 		},
+		// KAS already retried both transient classes, so marotte does not resend them.
+		"an unreachable network is final": {
+			err: rpcErr(t, kasServerError, "Kiro cannot reach the network. Check your connection and try again.", rpcerr.Mapped{
+				ErrorType: "NetworkUnreachableError", RetryErrorType: "TRANSIENT",
+			}),
+			want: classFatal,
+		},
+		"an over-long stream line is final": {
+			err: rpcErr(t, kasServerError, "Kiro couldn't read the response. Please try again.", rpcerr.Mapped{
+				ErrorType: "StreamLineTooLongError", RetryErrorType: "TRANSIENT",
+			}),
+			want: classFatal,
+		},
+		// No sign-in assigns a seat, so the refusal must not route to Sign in.
+		"seat unavailable is not auth": {
+			err: rpcErr(t, kasServerError, "You don't have a Kiro seat yet. Ask your administrator to assign you a seat.", rpcerr.Mapped{
+				ErrorType: "SeatUnavailableError", RetryErrorType: "CLIENT_ERROR",
+			}),
+			want: classFatal,
+		},
 		// Untyped errors fail closed even when their text looks retryable.
 		"untyped not-idle text is fatal":   {err: errors.New("agent is not idle right now"), want: classFatal},
 		"untyped internal text is fatal":   {err: errors.New("Internal error"), want: classFatal},
@@ -316,6 +336,13 @@ func TestRetryPolicy_NeverRetriesADeadBridgeOrAThrottle(t *testing.T) {
 
 // TestPromptFailureReason_NamesAThrottle pins the user-facing half: a throttled
 // turn's reason names the cause and the remedy, the one failure where both are known.
+// failureReason is the reason promptFailureAccount gives a failed prompt call.
+func failureReason(t *testing.T, err error, inlinedImage bool) string {
+	t.Helper()
+	_, reason, _ := promptFailureAccount(t.Context(), err, inlinedImage)
+	return reason
+}
+
 func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 	const kasMsg = "Too many requests, please wait before trying again."
 	err := rpcErr(t, kasServerError, kasMsg, rpcerr.Mapped{
@@ -323,7 +350,7 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 		RetryErrorType: "THROTTLING",
 		RequestID:      "req-9",
 	})
-	got := promptFailureReason(err, false)
+	got := failureReason(t, err, false)
 
 	if !strings.Contains(got, kasMsg) {
 		t.Errorf("reason %q dropped KAS's own user-facing message", got)
@@ -338,7 +365,7 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 		ErrorType:      "GenericValidationError",
 		RetryErrorType: "CLIENT_ERROR",
 	})
-	if reason := promptFailureReason(other, false); strings.Contains(reason, "already retried") {
+	if reason := failureReason(t, other, false); strings.Contains(reason, "already retried") {
 		t.Errorf("a validation error was given throttle advice: %q", reason)
 	}
 
@@ -347,7 +374,7 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 		RetryErrorType: "THROTTLING",
 		RequestID:      "req-11",
 	})
-	got = promptFailureReason(blank, false)
+	got = failureReason(t, blank, false)
 	for _, leak := range []string{"{", "retryErrorType", "\"requestId\""} {
 		if strings.Contains(got, leak) {
 			t.Errorf("empty-message mapped error leaked the raw triplet (%q) at the user: %q", leak, got)
@@ -361,8 +388,8 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 	}
 
 	plain := errors.New("some other failure")
-	if got := promptFailureReason(plain, false); got != plain.Error() {
-		t.Errorf("promptFailureReason(%v) = %q, want it passed through unchanged", plain, got)
+	if got := failureReason(t, plain, false); got != plain.Error() {
+		t.Errorf("promptFailureAccount(%v) = %q, want it passed through unchanged", plain, got)
 	}
 }
 
@@ -371,10 +398,10 @@ func TestPromptFailureReason_ModelRegistryUnavailableNamesLoginRemedy(t *testing
 		ErrorType:      "ModelRegistryUnavailableError",
 		RetryErrorType: "SERVER_ERROR",
 	})
-	got := promptFailureReason(err, false)
+	got := failureReason(t, err, false)
 	for _, want := range []string{"Kiro could not load the available models.", "Sign in to Kiro from the account menu"} {
 		if !strings.Contains(got, want) {
-			t.Errorf("promptFailureReason(ModelRegistryUnavailableError) = %q, want it to mention %q", got, want)
+			t.Errorf("promptFailureAccount(ModelRegistryUnavailableError) = %q, want it to mention %q", got, want)
 		}
 	}
 	if retriesFor(err) {
@@ -385,8 +412,8 @@ func TestPromptFailureReason_ModelRegistryUnavailableNamesLoginRemedy(t *testing
 		ErrorType:      "InternalServerError",
 		RetryErrorType: "SERVER_ERROR",
 	})
-	if got := promptFailureReason(other, false); strings.Contains(got, "Sign in to Kiro from the account menu") {
-		t.Errorf("promptFailureReason(InternalServerError) = %q, want no login remedy", got)
+	if got := failureReason(t, other, false); strings.Contains(got, "Sign in to Kiro from the account menu") {
+		t.Errorf("promptFailureAccount(InternalServerError) = %q, want no login remedy", got)
 	}
 }
 
@@ -402,8 +429,8 @@ func TestClassifyRPCFailure_McpServersNotReadyIsFatalWithKASProse(t *testing.T) 
 	if got := classifyPromptFailure(err); got != classFatal {
 		t.Errorf("classifyPromptFailure(McpServersNotReadyError) = %v, want %v", got, classFatal)
 	}
-	if got := promptFailureReason(err, false); !strings.Contains(got, prose) {
-		t.Errorf("promptFailureReason(McpServersNotReadyError) = %q, want KAS's sentence naming the server", got)
+	if got := failureReason(t, err, false); !strings.Contains(got, prose) {
+		t.Errorf("promptFailureAccount(McpServersNotReadyError) = %q, want KAS's sentence naming the server", got)
 	}
 }
 
@@ -412,7 +439,7 @@ func TestClassifyRPCFailure_McpServersNotReadyIsFatalWithKASProse(t *testing.T) 
 func TestPromptFailureReason_NamesTheRefusalAsTerminal(t *testing.T) {
 	const cause = "ImageSizeExceeded: image exceeds 5 MB maximum: 6714372 bytes > 5242880"
 	err := rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{"details": cause})
-	got := promptFailureReason(err, true)
+	got := failureReason(t, err, true)
 
 	if !strings.Contains(got, cause) {
 		t.Errorf("reason %q dropped the backend's own account of the refusal", got)
@@ -426,7 +453,7 @@ func TestPromptFailureReason_NamesTheRefusalAsTerminal(t *testing.T) {
 	other := rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 		"details": "upstream connection reset",
 	})
-	if reason := promptFailureReason(other, false); strings.Contains(reason, "refused as sent") {
+	if reason := failureReason(t, other, false); strings.Contains(reason, "refused as sent") {
 		t.Errorf("a transient internal error was told its request was refused: %q", reason)
 	}
 }
@@ -444,7 +471,7 @@ func TestPromptFailureReason_HandlesAHalfFilledTriplet(t *testing.T) {
 		if got := classifyPromptFailure(err); got != classThrottled {
 			t.Errorf("classifyPromptFailure(retryErrorType only) = %s, want %s", got, classThrottled)
 		}
-		if got := promptFailureReason(err, false); !strings.Contains(got, "already retried") {
+		if got := failureReason(t, err, false); !strings.Contains(got, "already retried") {
 			t.Errorf("reason %q does not carry the throttle advice", got)
 		}
 	})
@@ -453,7 +480,7 @@ func TestPromptFailureReason_HandlesAHalfFilledTriplet(t *testing.T) {
 		err := rpcErr(t, kasServerError, "", rpcerr.Mapped{
 			ErrorType: "ImprovementServiceUnavailable",
 		})
-		got := promptFailureReason(err, false)
+		got := failureReason(t, err, false)
 		if !strings.Contains(got, "ImprovementServiceUnavailable") {
 			t.Errorf("reason %q does not name the errorType, the only readable token it has", got)
 		}
@@ -467,7 +494,7 @@ func TestPromptFailureReason_HistoryShapedRefusalNamesRewind(t *testing.T) {
 	const cause = "ImageCountExceeded: too many images"
 	err := rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{"details": cause})
 
-	got := promptFailureReason(err, false)
+	got := failureReason(t, err, false)
 	for _, want := range []string{"Rewind", "Reopening the chat does not clear it", "file or MCP tool"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("promptFailureReason history refusal = %q, want it to mention %q", got, want)
@@ -479,7 +506,7 @@ func TestPromptFailureReason_PromptShapedRefusalKeepsSmallerAdvice(t *testing.T)
 	const cause = "ImageSizeExceeded: image exceeds the maximum"
 	err := rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{"details": cause})
 
-	got := promptFailureReason(err, true)
+	got := failureReason(t, err, true)
 	if !strings.Contains(got, "Make the prompt or its attachments smaller") {
 		t.Errorf("promptFailureReason current-prompt refusal = %q, want smaller-attachment advice", got)
 	}
@@ -519,6 +546,33 @@ func TestContextWindowExceededIsPermanentAndNamesRecovery(t *testing.T) {
 	}
 }
 
+// TestRequestSizeCapIsPermanentAndOffersCompact drives the model service's byte-cap refusal, which KAS
+// types GenericValidationError with the service's sentence and its request id.
+func TestRequestSizeCapIsPermanentAndOffersCompact(t *testing.T) {
+	err := rpcErr(t, kasServerError, "Request exceeds the maximum allowed size (Request ID: req-413)", rpcerr.Mapped{
+		ErrorType:      "GenericValidationError",
+		RetryErrorType: "CLIENT_ERROR",
+	})
+
+	if got := classifyPromptFailure(err); got != classFatal {
+		t.Errorf("classifyPromptFailure(request size cap) = %s, want %s", got, classFatal)
+	}
+	if retriesFor(err) {
+		t.Error("the request size cap is retryable, want a permanent failure")
+	}
+	stop, got, kind := promptFailureAccount(t.Context(), err, false)
+	if stop != marotte.StopReasonInterrupted || kind != marotte.FailureKindContextLimit {
+		t.Errorf("promptFailureAccount(request size cap) stop, kind = %q, %q; want %q, %q",
+			stop, kind, marotte.StopReasonInterrupted, marotte.FailureKindContextLimit)
+	}
+	if !strings.Contains(got, "larger than the model service accepts in one request") || !strings.Contains(got, "Compact the context") {
+		t.Errorf("reason = %q, want the request-size sentence and the compact remedy", got)
+	}
+	if !strings.Contains(got, "req-413") {
+		t.Errorf("reason = %q, want the request id kept", got)
+	}
+}
+
 // TestFailureKind_OnlyTheContextOverflowIsClassified pins that the predicate
 // keys on the error TYPE: a sibling -32000 class carries no kind.
 func TestFailureKind_OnlyTheContextOverflowIsClassified(t *testing.T) {
@@ -542,7 +596,7 @@ func TestPromptFailureReason_SanitizesUpstreamText(t *testing.T) {
 		RetryErrorType: "CLIENT_ERROR",
 		RequestID:      "req" + bidi + "-3",
 	})
-	got := promptFailureReason(err, false)
+	got := failureReason(t, err, false)
 
 	for _, unsafe := range []string{bidi, c1} {
 		if strings.Contains(got, unsafe) {
@@ -557,14 +611,14 @@ func TestPromptFailureReason_SanitizesUpstreamText(t *testing.T) {
 		ErrorType:      "Bad" + bidi + "Error",
 		RetryErrorType: "CLIENT_ERROR",
 	})
-	if reason := promptFailureReason(blank, false); strings.Contains(reason, bidi) {
+	if reason := failureReason(t, blank, false); strings.Contains(reason, bidi) {
 		t.Errorf("errorType reached the reader unsanitized: %q", reason)
 	}
 
 	login := rpcErr(t, kasServerError, "Kiro could not"+bidi+" load models.", rpcerr.Mapped{
 		ErrorType: "ModelRegistryUnavailableError",
 	})
-	reason := promptFailureReason(login, false)
+	reason := failureReason(t, login, false)
 	if strings.Contains(reason, bidi) {
 		t.Errorf("the login-remedy branch passed its message through raw: %q", reason)
 	}
@@ -585,7 +639,7 @@ func TestPromptFailureReason_BoundsUpstreamProseAndKeepsTheRemedy(t *testing.T) 
 		RetryErrorType: "THROTTLING",
 		RequestID:      "req-42",
 	})
-	got := promptFailureReason(err, false)
+	got := failureReason(t, err, false)
 
 	const proseCap, idCap = 1024, 128
 	if len(got) > proseCap+idCap+512 {
@@ -601,7 +655,7 @@ func TestPromptFailureReason_BoundsUpstreamProseAndKeepsTheRemedy(t *testing.T) 
 		ErrorType: "AgentModelPinUnservableError",
 		RequestID: strings.Repeat("z", 5000),
 	})
-	if reason := promptFailureReason(long, false); len(reason) > idCap+512 {
+	if reason := failureReason(t, long, false); len(reason) > idCap+512 {
 		t.Errorf("an oversized request id was not bounded: %d bytes", len(reason))
 	}
 }

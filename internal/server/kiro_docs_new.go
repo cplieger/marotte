@@ -435,12 +435,14 @@ func newAgentDoc(req *kiroDocNewRequest, _ matcherCheck) (newDoc, error) {
 	}, nil
 }
 
-// The IDE hook editor's trigger list.
+// The New hook form's trigger list: the IDE hook editor's ten plus the two compaction triggers KAS
+// loads. Manual and SessionEnd stay out.
 var hookTriggers = map[string]bool{
 	"PostFileCreate": true, "PostFileSave": true, "PostFileDelete": true,
 	"PreToolUse": true, "PostToolUse": true,
 	"UserPromptSubmit": true, "SessionStart": true, "Stop": true,
 	"PreTaskExec": true, "PostTaskExec": true,
+	"PreCompact": true, "PostCompact": true,
 }
 
 // hookEntry and hookAction are the IDE's toAgentHookDocument; field order is its key order.

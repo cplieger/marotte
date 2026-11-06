@@ -15,6 +15,7 @@ func fetchMetadataGate(next http.Handler) http.Handler {
 		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, apiPathPrefix) {
 			switch r.Header.Get("Sec-Fetch-Site") {
 			case "cross-site", "same-site":
+				logOriginRefusal(r, "fetch-metadata", "cross-site API request")
 				httpreply.Forbidden(w, "cross-site requests to the API are refused")
 				return
 			}

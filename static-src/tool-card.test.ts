@@ -1670,7 +1670,7 @@ describe("a card's title", () => {
       input: { command: "cat <<'EOF' > out.txt\n" + "x".repeat(300) + "\nEOF\n" },
       live: false,
     });
-    expect(card.dataset["title"]).toBe("cat <<'EOF' > out.txt " + "x".repeat(95) + "\u2026");
+    expect(card.dataset["title"]).toBe("cat <<'EOF' > out.txt " + "x".repeat(97) + "\u2026");
   });
 
   it("keeps the placeholder when the call carries no command", () => {

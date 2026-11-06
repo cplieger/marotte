@@ -48,6 +48,12 @@ vi.mock("./governance.js", () => ({
 }));
 vi.mock("./actions/tools.js", () => ({ runDiagnostics: vi.fn() }));
 
+const mockResetAccountUsage = vi.fn();
+vi.mock("./account-usage.js", () => ({
+  resetAccountUsage: () => mockResetAccountUsage(),
+  loadAccountUsage: vi.fn(),
+}));
+
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 
 const mockFetch = vi.fn();
@@ -172,6 +178,31 @@ describe("the sign-in rows and Sign out", () => {
       expect(shown(id), id).toBeNull();
     }
     expect(logoutBtn().disabled).toBe(false);
+  });
+});
+
+describe("the account usage rows", () => {
+  it("are reset only when the rendered account changes", () => {
+    renderIdentity(signedIn("a@example.invalid"));
+    mockResetAccountUsage.mockClear();
+
+    renderIdentity(signedIn("a@example.invalid"));
+    expect(mockResetAccountUsage, "a repeat of the same account").toHaveBeenCalledTimes(0);
+    renderIdentity(signedIn("b@example.invalid"));
+    expect(mockResetAccountUsage, "another email").toHaveBeenCalledTimes(1);
+    renderIdentity(signedIn("b@example.invalid", { startUrl: "https://other.awsapps.com/start" }));
+    expect(mockResetAccountUsage, "another start URL").toHaveBeenCalledTimes(2);
+    renderIdentity(
+      signedIn("b@example.invalid", {
+        startUrl: "https://other.awsapps.com/start",
+        region: "eu-west-1",
+      }),
+    );
+    expect(mockResetAccountUsage, "another region").toHaveBeenCalledTimes(3);
+    renderIdentity({ state: "signed_out" });
+    expect(mockResetAccountUsage, "a sign-out").toHaveBeenCalledTimes(4);
+    renderIdentity({ state: "signed_out" });
+    expect(mockResetAccountUsage, "a repeat sign-out").toHaveBeenCalledTimes(4);
   });
 });
 

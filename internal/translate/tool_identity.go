@@ -26,10 +26,18 @@ var builtinToolByTitle = map[string]string{
 	webSearchTool:              webSearchTool,
 }
 
-// builtinToolAliases maps a tool id KAS names in an envelope to the id it titles the call by.
-// kascap's TestBuiltinToolAliasesMatchTheBundle pins each pair against the pinned agent server.
-var builtinToolAliases = map[string]string{
-	"remote_web_search": webSearchTool,
+// KAS's remote wrapper serves a tool Kiro hosts itself (web_search, the learnings tools) under the
+// id remote_<name> and the MCP identity remote/<name>; it is never a user MCP integration, whose ids
+// KAS builds as mcp_<server>_<tool>. kascap's TestRemoteWrapperIdentityMatchesTheBundle pins both.
+const (
+	remoteWrapperServer   = "remote"
+	remoteWrapperIDPrefix = "remote_"
+)
+
+// remoteWrappedTool is the tool a remote-wrapper id serves, ok only for a non-empty name.
+func remoteWrappedTool(toolID string) (string, bool) {
+	name, ok := strings.CutPrefix(toolID, remoteWrapperIDPrefix)
+	return name, ok && name != ""
 }
 
 // distinguishedBuiltins is every built-in id the transcript draws a glyph of its own for: the
@@ -124,8 +132,8 @@ func envelopeIdentity(rawInput json.RawMessage) (string, *marotte.MCPToolIdentit
 }
 
 func envelopeBuiltin(id string) string {
-	if alias, ok := builtinToolAliases[id]; ok {
-		id = alias
+	if name, ok := remoteWrappedTool(id); ok {
+		id = name
 	}
 	if !distinguishedBuiltins[id] {
 		return ""

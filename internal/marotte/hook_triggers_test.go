@@ -28,6 +28,11 @@ func TestCanonicalHookTrigger(t *testing.T) {
 		// SessionEnd is canonical, never an alias of the per-turn Stop.
 		{"SessionEnd", "SessionEnd"},
 		{"sessionEnd", "SessionEnd"},
+		// The compaction triggers and their camelCase aliases.
+		{"PreCompact", "PreCompact"},
+		{"preCompact", "PreCompact"},
+		{"postCompact", "PostCompact"},
+		{"POSTCOMPACT", "PostCompact"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
@@ -73,6 +78,8 @@ func TestEveryCanonicalTriggerHasASubject(t *testing.T) {
 		"UserPromptSubmit": HookMatcherSubjectNone,
 		"PreTaskExec":      HookMatcherSubjectNone,
 		"PostTaskExec":     HookMatcherSubjectNone,
+		"PreCompact":       HookMatcherSubjectNone,
+		"PostCompact":      HookMatcherSubjectNone,
 		"Manual":           HookMatcherSubjectNone,
 	}
 
@@ -111,6 +118,7 @@ func TestClassifyHookMatcher(t *testing.T) {
 		{"stop with a matcher", "Stop", "anything", hookMatcherIneffective},
 		{"manual with a matcher", "Manual", "x", hookMatcherIneffective},
 		{"session end with a matcher", "SessionEnd", "x", hookMatcherIneffective},
+		{"pre compact with a matcher", "PreCompact", "x", hookMatcherIneffective},
 		// The alias spelling has to reach the same verdict, or the check is
 		// bypassable by writing the trigger differently.
 		{"an alias reaches the same verdict", "userTriggered", "x", hookMatcherIneffective},

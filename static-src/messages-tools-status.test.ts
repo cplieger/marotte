@@ -349,3 +349,29 @@ describe("a denial on the terminal frame", () => {
     group.remove();
   });
 });
+
+describe("an append whose text lands after the create", () => {
+  it("draws its diff once an update brings the text", () => {
+    const create: ToolCall = {
+      id: "append-1",
+      title: "Append to notes.txt",
+      kind: "edit",
+      tool_name: "fs_append",
+      status: "in_progress",
+      input: { path: "notes.txt" },
+      ts: 0,
+    };
+    const card = buildToolCard({ ...create, live: true, input: { path: "notes.txt" } });
+    document.body.appendChild(card);
+    expect(card.querySelector(".tool-diff-preview")).toBeNull();
+
+    applyToolCallUpdate(
+      card,
+      { ...create, status: "pending", input: { path: "notes.txt", text: "one more line\n" } },
+      "c1",
+    );
+
+    expect(card.querySelector(".tool-diff-preview")).not.toBeNull();
+    card.remove();
+  });
+});

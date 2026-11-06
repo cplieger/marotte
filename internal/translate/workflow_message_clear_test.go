@@ -628,3 +628,118 @@ func TestWorkflowMessage_AClearsSettlementTheReceiverRefusesStillReachesBothLogs
 		t.Errorf("step stamps = %+v, want the sender's copy cleared", d)
 	}
 }
+
+// takeUp is KAS injecting the notification it buffered under id.
+func takeUp(t *testing.T, tr *Translator, id, severity, text string) {
+	t.Helper()
+	tr.HandleSessionInfoUpdate(t.Context(), testChat, steerFrame(t, "steering_injected", map[string]any{
+		"messageId": id, "content": "[notification/" + severity + "] " + text, "notificationSeverity": severity,
+	}), FrameAttribution{})
+}
+
+func stepReportAs(t *testing.T, tr *Translator, severity, text, notifyID string) {
+	t.Helper()
+	tr.HandleWorkflowMessage(t.Context(), testChat, kasNotify("step", testStep, testParent, severity, text, notifyID))
+}
+
+// KAS mints one id for the buffered message, its persisted row and the notify (kiro-cli 3.1.0
+// deliverSendMessageAdmitted), so a take-up settles the row that id names whatever the words.
+func TestWorkflowMessage_ATakeUpSettlesTheRowItsNotifyIDNames(t *testing.T) {
+	deps, tr := messageDeps(t)
+	deps.turns.chatTurn(testChat)
+	stepReportAs(t, tr, "info", "same words", "notify-a")
+	stepReportAs(t, tr, "info", "same words", "notify-b")
+	rows := steerRows(t, deps, testChat)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+
+	takeUp(t, tr, "notify-b", "info", "same words")
+
+	stamps := stampsByRow(t, deps)
+	if d, ok := stamps[rows[0].ID]; ok {
+		t.Errorf("notify-a row stamped %+v, want it still waiting", d)
+	}
+	if d := stamps[rows[1].ID]; len(d) != 1 || d[0].Cleared || d[0].Dropped || d[0].KASID != "notify-b" {
+		t.Errorf("notify-b row stamps = %+v, want one delivered naming notify-b", d)
+	}
+}
+
+// A turn-boundary clear empties steering KAS never injected, so a row it names was dropped unread; a row with an id
+// it does not name (its message woke the turn, or reached the buffer after the clear) stays waiting. A row KAS gave
+// no id still settles cleared with its session's epoch.
+func TestWorkflowMessage_ABoundaryClearDropsOnlyTheRowsItNames(t *testing.T) {
+	deps, tr := messageDeps(t)
+	deps.turns.chatTurn(testChat)
+	stepReportAs(t, tr, "info", "named", "notify-a")
+	stepReportAs(t, tr, "info", "not named", "notify-b")
+	stepReport(t, tr, "info", "no id")
+	rows := steerRows(t, deps, testChat)
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want 3", len(rows))
+	}
+
+	clearSteering(t, tr, "notify-a")
+
+	stamps := stampsByRow(t, deps)
+	if d := stamps[rows[0].ID]; len(d) != 1 || !d[0].Dropped || d[0].Cleared || d[0].ReadTs == 0 {
+		t.Errorf("named row stamps = %+v, want one dropped", d)
+	}
+	if d, ok := stamps[rows[1].ID]; ok {
+		t.Errorf("unnamed row stamped %+v, want it still waiting", d)
+	}
+	if d := stamps[rows[2].ID]; !clearedOnce(d) {
+		t.Errorf("id-less row stamps = %+v, want one cleared", d)
+	}
+	if d := deliveredOf(t, deps.runEntries(testWfRun, workflow.PathKey([]string{testWfRun, "review"}))); len(d) != 2 || !d[0].Dropped || !d[1].Cleared {
+		t.Errorf("step stamps = %+v, want the sender's named row dropped and its id-less row cleared", d)
+	}
+}
+
+// KAS re-prompts every unread notification the reader's stop cleared (rewakeClearedNotifications), so a row the
+// cancel named waits for that re-wake turn and reads delivered at its first frame.
+func TestWorkflowMessage_ACancelClearSettlesNamedRowsDeliveredAtTheRewake(t *testing.T) {
+	for _, reason := range []string{"notification-rewake", "send-message-wake"} {
+		t.Run(reason, func(t *testing.T) {
+			deps, tr := messageDeps(t)
+			deps.turns.chatTurn(testChat)
+			stepReportAs(t, tr, "info", "cleared by the stop", "notify-a")
+			rows := steerRows(t, deps, testChat)
+			stopTurn(deps, testChat)
+
+			clearSteering(t, tr, "notify-a")
+
+			if d, ok := stampsByRow(t, deps)[rows[0].ID]; ok {
+				t.Fatalf("row stamped %+v at the stop, want it waiting for the re-wake", d)
+			}
+			resumeAfterStop(deps)
+			chatWake(t, tr, reason)
+
+			if d := chatLogStamps(t, deps)[rows[0].ID]; !deliveredOnce(d) {
+				t.Errorf("row stamps = %+v, want one delivered at the re-wake", d)
+			}
+		})
+	}
+}
+
+// KAS only logs a failed re-wake, so a row the stop named that the next turn did not re-deliver settles cleared at
+// the turn after it.
+func TestWorkflowMessage_ACancelClearSettlesNamedRowsClearedWhenNoRewakeFollows(t *testing.T) {
+	deps, tr := messageDeps(t)
+	deps.turns.chatTurn(testChat)
+	stepReportAs(t, tr, "info", "cleared by the stop", "notify-a")
+	rows := steerRows(t, deps, testChat)
+	stopTurn(deps, testChat)
+	clearSteering(t, tr, "notify-a")
+	resumeAfterStop(deps)
+
+	turnStartOn(t, tr, FrameAttribution{})
+	if d, ok := chatLogStamps(t, deps)[rows[0].ID]; ok {
+		t.Fatalf("row stamped %+v at the first turn after the stop, want it still waiting", d)
+	}
+	turnStartOn(t, tr, FrameAttribution{})
+
+	if d := chatLogStamps(t, deps)[rows[0].ID]; len(d) != 1 || !d[0].Cleared {
+		t.Errorf("row stamps = %+v, want one cleared once a turn passed with no re-wake", d)
+	}
+}

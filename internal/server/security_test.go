@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -77,7 +78,107 @@ func TestSecurityMiddleware_OriginCheck(t *testing.T) {
 			if rec.Code != tc.wantCode {
 				t.Errorf("got status %d, want %d", rec.Code, tc.wantCode)
 			}
+			if tc.wantCode != http.StatusForbidden {
+				return
+			}
+			if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+				t.Errorf("refusal Content-Type = %q, want application/json", ct)
+			}
+			var envelope struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil || envelope.Error == "" {
+				t.Errorf("refusal body = %q, want the JSON error envelope with a non-empty error", rec.Body)
+			}
 		})
+	}
+}
+
+// TestSecurityMiddleware_RefusalsAreLogged pins one Warn per CSRF or fetch-metadata refusal,
+// naming the gate and carrying the Origin as its RFC 6454 serialization only (no path or query),
+// correlatable to the access line by request_id, and no line for an admitted request.
+func TestSecurityMiddleware_RefusalsAreLogged(t *testing.T) {
+	buf := captureLogs(t)
+	h := securityMiddleware(baseCSPPolicy, nil, fetchMetadataGate(helloMux()))
+	serve := func(req *http.Request, id string) int {
+		buf.Reset()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req.WithContext(httpserver.WithRequestID(req.Context(), id)))
+		return rec.Code
+	}
+	const refusal = `msg="request refused by origin gate"`
+
+	t.Run("csrf", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "http://example.com/x", http.NoBody)
+		req.Header.Set("Origin", "http://attacker.example/path?tok=x")
+		if code := serve(req, "req-csrf"); code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", code)
+		}
+		got := buf.String()
+		if n := strings.Count(got, refusal); n != 1 {
+			t.Fatalf("refusal records = %d, want 1; log:\n%s", n, got)
+		}
+		for _, want := range []string{"level=WARN", "gate=csrf", "host=example.com", "origin=http://attacker.example ", "request_id=req-csrf", "Origin does not match Host"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("log lacks %q:\n%s", want, got)
+			}
+		}
+		for _, leak := range []string{"/path", "tok=x"} {
+			if strings.Contains(got, leak) {
+				t.Errorf("log carries the Origin's %q, want scheme://host only:\n%s", leak, got)
+			}
+		}
+	})
+
+	t.Run("fetch-metadata", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "http://example.com/api/x", http.NoBody)
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		if code := serve(req, "req-fm"); code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", code)
+		}
+		got := buf.String()
+		if n := strings.Count(got, refusal); n != 1 {
+			t.Fatalf("refusal records = %d, want 1; log:\n%s", n, got)
+		}
+		for _, want := range []string{"level=WARN", "gate=fetch-metadata", "sec_fetch_site=cross-site", "request_id=req-fm"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("log lacks %q:\n%s", want, got)
+			}
+		}
+	})
+
+	t.Run("admitted requests write no refusal", func(t *testing.T) {
+		post := httptest.NewRequest(http.MethodPost, "http://example.com/api/x", http.NoBody)
+		post.Header.Set("Origin", "http://example.com")
+		post.Header.Set("Sec-Fetch-Site", "same-origin")
+		get := httptest.NewRequest(http.MethodGet, "http://example.com/api/x", http.NoBody)
+		get.Header.Set("Origin", "http://attacker.example")
+		for _, req := range []*http.Request{post, get} {
+			if code := serve(req, "req-ok"); code != http.StatusOK {
+				t.Errorf("%s status = %d, want 200", req.Method, code)
+			}
+			if got := buf.String(); strings.Contains(got, refusal) {
+				t.Errorf("%s admitted request logged a refusal:\n%s", req.Method, got)
+			}
+		}
+	})
+}
+
+func TestOriginBase(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{"null", "null"},
+		{"https://app.example", "https://app.example"},
+		{"http://a.example:8080/p?tok=x#f", "http://a.example:8080"},
+		{"http://user:pw@a.example", "http://a.example"},
+		{"not an origin", "malformed"},
+		{"http://[::1", "malformed"},
+		{"/relative", "malformed"},
+	}
+	for _, c := range cases {
+		if got := originBase(c.in); got != c.want {
+			t.Errorf("originBase(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }
 

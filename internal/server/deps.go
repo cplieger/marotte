@@ -55,6 +55,9 @@ type SteeringGenerator interface {
 // _kiro/account/getUsage for GET /api/account/usage. Exported for server.WithAccountUsage.
 type AccountUsageProvider interface {
 	AccountUsage(ctx context.Context) (*marotte.AccountUsage, error)
+	// UsageAccount names the account a reading taken now describes; ok is false when no reading describes the
+	// signed-in account.
+	UsageAccount() (key uint64, ok bool)
 }
 
 // policyProvider READS kiro-cli's native Cedar policy, backing GET /api/permissions and

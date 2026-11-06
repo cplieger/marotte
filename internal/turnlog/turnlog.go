@@ -60,9 +60,11 @@ type Sealed struct {
 // value the progress frames fold into and the result seals. StartedTs is the
 // tool_call entry's own stamp, so a duration needs no clock in here.
 type OpenCall struct {
-	Lane      string
-	Call      marotte.ToolCall
-	StartedTs int64
+	Lane string
+	// CreatedInput is the create frame's input, so a result persists Input only when an update revised it.
+	CreatedInput json.RawMessage
+	Call         marotte.ToolCall
+	StartedTs    int64
 }
 
 // lane is one agent's state inside a turn: at most one open entry, and the bytes
@@ -884,7 +886,7 @@ func (t *Turn) trackCall(id, key string, call *marotte.EntryToolCall, ts int64) 
 	if _, dup := t.calls[id]; dup {
 		return
 	}
-	t.calls[id] = &OpenCall{Call: marotte.ToolCallOfEntry(call), Lane: key, StartedTs: ts}
+	t.calls[id] = &OpenCall{Call: marotte.ToolCallOfEntry(call), CreatedInput: call.Input, Lane: key, StartedTs: ts}
 	t.callOrder = append(t.callOrder, id)
 }
 

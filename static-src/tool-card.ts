@@ -41,15 +41,19 @@ import { buildPath } from "./route-path.js";
 import { askBucket, interactionFact } from "./interaction.js";
 import { el } from "@cplieger/ui";
 
-/** Build a tool-call element. Does not append it to the DOM. */
-export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
-  const info = renderInfoFor(opts.kind, opts.input, {
+function renderInfoOf(opts: BuildToolCardOpts): ToolRenderInfo {
+  return renderInfoFor(opts.kind, opts.input, {
     disclosed: opts.disclosed,
     denial: opts.denial,
     sourcePath: opts.sourcePath,
     toolName: opts.toolName,
     mcp: opts.mcp,
   });
+}
+
+/** Build a tool-call element. Does not append it to the DOM. */
+export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
+  const info = renderInfoOf(opts);
   const depth1 = toolDepth1(info.kind);
   const withToggle = hasDepth1(info.kind);
   const shellTitle = commandTitle(opts.title, opts.kind, opts.input);
@@ -270,6 +274,18 @@ function restingDiff(
     return { path: info.filePath, src: info.diffSources };
   }
   return null;
+}
+
+/** Insert a diff card's resting diff once the call can draw one: an update can bring the input
+ *  (an append's `text`) the create frame lacked. Idempotent. */
+export function syncRestingDiff(node: HTMLDivElement, opts: BuildToolCardOpts): void {
+  if (node.dataset["depth1"] !== "diff" || node.querySelector(".tool-diff-preview") !== null) {
+    return;
+  }
+  const resting = restingDiff(opts, renderInfoOf(opts));
+  if (resting !== null) {
+    insertDiffPreview(node, resting.path, resting.src);
+  }
 }
 
 /** Two facts a move's claim line cannot carry. */

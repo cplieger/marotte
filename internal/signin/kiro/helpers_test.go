@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -27,6 +28,7 @@ type call struct {
 }
 
 type scripted struct {
+	header http.Header
 	body   string
 	status int
 }
@@ -38,6 +40,8 @@ type fakeAWS struct {
 	srv *httptest.Server
 	// deviceAnswers is consumed one per device-grant poll; when empty the grant succeeds.
 	deviceAnswers []scripted
+	register      scripted
+	authorization scripted
 	refresh       scripted
 	profiles      scripted
 	email         scripted
@@ -52,11 +56,13 @@ type fakeAWS struct {
 func newFakeAWS(t *testing.T, account string) *fakeAWS {
 	t.Helper()
 	f := &fakeAWS{
-		account:  account,
-		profiles: scripted{status: 200, body: `{"profiles":[{"arn":"arn:aws:codewhisperer:us-east-1:111:profile/` + account + `","profileName":"` + account + `-profile"}]}`},
-		email:    scripted{status: 200, body: `{"userInfo":{"email":"` + account + `@example.com"}}`},
-		refresh:  scripted{status: 200, body: `{"accessToken":"` + account + `-access-2","expiresIn":3600}`},
-		ttl:      "3600",
+		account:       account,
+		register:      scripted{status: 200, body: `{"clientId":"client-1","clientSecret":"client-secret-1","clientSecretExpiresAt":4102444800}`},
+		authorization: scripted{status: 200, body: `{"deviceCode":"device-1","userCode":"ABCD-EFGH","verificationUri":"https://device.sso.example/","verificationUriComplete":"https://device.sso.example/?user_code=ABCD-EFGH","expiresIn":600,"interval":1}`},
+		profiles:      scripted{status: 200, body: `{"profiles":[{"arn":"arn:aws:codewhisperer:us-east-1:111:profile/` + account + `","profileName":"` + account + `-profile"}]}`},
+		email:         scripted{status: 200, body: `{"userInfo":{"email":"` + account + `@example.com"}}`},
+		refresh:       scripted{status: 200, body: `{"accessToken":"` + account + `-access-2","expiresIn":3600}`},
+		ttl:           "3600",
 	}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
@@ -102,9 +108,9 @@ func (f *fakeAWS) serve(w http.ResponseWriter, r *http.Request) {
 	oidc, management := host == hostOIDC, host == hostManagement
 	switch {
 	case oidc && path == "/client/register":
-		answer = scripted{status: 200, body: `{"clientId":"client-1","clientSecret":"client-secret-1","clientSecretExpiresAt":4102444800}`}
+		answer = f.register
 	case oidc && path == "/device_authorization":
-		answer = scripted{status: 200, body: `{"deviceCode":"device-1","userCode":"ABCD-EFGH","verificationUri":"https://device.sso.example/","verificationUriComplete":"https://device.sso.example/?user_code=ABCD-EFGH","expiresIn":600,"interval":1}`}
+		answer = f.authorization
 	case oidc && path == "/token" && strings.Contains(string(body), refreshGrant):
 		answer = f.refresh
 	case oidc && path == "/token":
@@ -130,6 +136,7 @@ func (f *fakeAWS) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	maps.Copy(w.Header(), answer.header)
 	w.WriteHeader(answer.status)
 	_, _ = io.WriteString(w, answer.body)
 }

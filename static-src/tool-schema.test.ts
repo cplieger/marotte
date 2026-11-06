@@ -274,7 +274,7 @@ describe("commandTitle", () => {
       "make lint",
     );
     expect(commandTitle("Run Command", "execute", { command: "a".repeat(200) })).toBe(
-      "a".repeat(117) + "\u2026",
+      "a".repeat(119) + "\u2026",
     );
   });
 

@@ -1,11 +1,11 @@
-// The run's one-line summary: name, state word, progress, mini bar and clock. One painter for the
-// run dock's head and the chat's run bar rows, so the two never word a run differently. An alert it
-// shows takes the progress's place; the dock gives every alert it does not show here a region of
-// its own.
+// The run's one-line summary: name, state word, progress, mini bar, clock and credits. One painter
+// for the run dock's head and the chat's run bar rows, so the two never word a run differently. An
+// alert it shows takes the progress's place; the dock gives every alert it does not show here a
+// region of its own.
 
 import { el } from "@cplieger/ui";
 import { reconcile } from "../reconcile.js";
-import { formatElapsed } from "../strings.js";
+import { creditFigure, formatElapsed } from "../strings.js";
 import {
   miniBar,
   summaryProgress,
@@ -44,6 +44,7 @@ export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
   const progress = buildProgress();
   const mini = el("span", { className: "ev-mini", "aria-hidden": "true" });
   const clock = el("span", { className: "ev-sum-clock" });
+  const credits = el("span", { className: "ev-sum-credits" });
   // Plain text: a run bar row's tab dot and notification already announce it.
   const line = buildAlertLine("span", "ev-alert-line");
   const root = el("span", { className: "ev-sum" }, label, state, progress.root, mini, clock);
@@ -74,6 +75,18 @@ export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
     }
   };
 
+  // Present only while there is a figure: the run bar opens its credits column on that presence.
+  const paintCredits = (figure: string): void => {
+    if (figure === "") {
+      credits.remove();
+      return;
+    }
+    setText(credits, `${figure} cr`);
+    if (clock.nextSibling !== credits) {
+      clock.after(credits);
+    }
+  };
+
   return {
     root,
     paint(run) {
@@ -85,17 +98,22 @@ export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
       paintMini(mini, miniBar(run));
       const win = execWindow(run.nodes, run.live);
       setText(clock, win === undefined ? "" : formatElapsed(win.span));
+      const spent = run.credits !== undefined && run.credits > 0 ? creditFigure(run.credits) : "";
+      paintCredits(spent);
       paintAlert(run);
       described =
         opts.alertHost !== undefined && shown(run.alert)
           ? `${run.label}: ${run.alert.text}`
-          : [run.label, word, phrase.words].filter((s) => s !== "").join(", ");
+          : [run.label, word, phrase.words, spent === "" ? "" : `${spent} credits`]
+              .filter((s) => s !== "")
+              .join(", ");
     },
     paintPending(name) {
       setLabel(label, name);
       for (const part of [state, clock]) {
         setText(part, "");
       }
+      paintCredits("");
       progress.paint(undefined);
       mini.replaceChildren();
       paintAlert(undefined);

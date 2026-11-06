@@ -8,6 +8,7 @@ package rpcerr
 import (
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
 
 	"github.com/cplieger/go/textsafe"
@@ -99,11 +100,13 @@ type Mapped struct {
 // The KAS class names and retry types marotte keys a remedy on.
 const (
 	RetryThrottling                = "THROTTLING"
-	ContextWindowExceededError     = "ContextWindowExceededError"
+	contextWindowExceededError     = "ContextWindowExceededError"
+	genericValidationError         = "GenericValidationError"
 	modelRegistryUnavailableError  = "ModelRegistryUnavailableError"
 	mappedProseCap                 = 1024
 	mappedRequestIDCap             = 128
 	contextLimitSentence           = "This chat reached the model's context limit. Compact the context, then send the prompt again."
+	requestSizeSentence            = "This chat is larger than the model service accepts in one request, usually because of earlier images. Compact the context, then send the prompt again."
 	modelRegistryUnavailableRemedy = " Sign in to Kiro from the account menu, then send the prompt again."
 	throttledRemedy                = " kiro-cli already retried. Wait a moment and send again, or switch to another model."
 	mappedFallbackProse            = "the model backend refused the request"
@@ -118,10 +121,11 @@ const (
 )
 
 // knownClasses are KAS error class names worth showing a reader: the classes
-// marotte keys a remedy on, plus the ones measured on real session logs. Any
+// marotte keys a remedy on, every model-call class (kascap's
+// TestModelCallClassesAreKnown), and the ones measured on real session logs. Any
 // other errorType is an unmapped error whose class name the bundle minified.
 var knownClasses = map[string]struct{}{
-	ContextWindowExceededError:          {},
+	contextWindowExceededError:          {},
 	modelRegistryUnavailableError:       {},
 	"ModelRegistryUnauthenticatedError": {},
 	"ModelRegistryAccessDeniedError":    {},
@@ -134,7 +138,7 @@ var knownClasses = map[string]struct{}{
 	"ConnectionResetError":              {},
 	"StreamIdleTimeoutError":            {},
 	"ModelRefreshTimeoutError":          {},
-	"GenericValidationError":            {},
+	genericValidationError:              {},
 	"BedrockValidationError":            {},
 	"InvalidModelError":                 {},
 	"TokenInvalidError":                 {},
@@ -144,6 +148,25 @@ var knownClasses = map[string]struct{}{
 	"SignInRequiredError":               {},
 	"AccessDeniedError":                 {},
 	"AbortedError":                      {},
+	"AccountNotSupportedError":          {},
+	"ClientNetworkError":                {},
+	"DocumentValidationError":           {},
+	"ImageValidationError":              {},
+	"InternalServerError":               {},
+	"InvalidToolFormatError":            {},
+	"NetworkUnreachableError":           {},
+	"NewUserAccessPausedError":          {},
+	"NoResponseError":                   {},
+	"OutputParseError":                  {},
+	"ProxyAuthenticationRequiredError":  {},
+	"SeatUnavailableError":              {},
+	"StreamLineTooLongError":            {},
+	"TemporarilySuspendedError":         {},
+	"TlsCertificateError":               {},
+	"TlsProtocolError":                  {},
+	"UnsupportedClientVersionError":     {},
+	"UnsupportedMessageTypeError":       {},
+	"UsageLimitReachedError":            {},
 }
 
 // KnownClass reports whether name is a KAS error class a reader can be shown.
@@ -173,18 +196,30 @@ func mappedOf(raw json.RawMessage) (Mapped, bool) {
 	return m, true
 }
 
-// Account is what a typed KAS error says on a turn card: KAS's message plus
-// marotte's remedy for its class, keyed on exact class names only, so a minified
-// errorType gets the message alone. Each half has its own budget, so a long
-// message cannot cut off the remedy or the request id.
-func Account(m Mapped, message string) string {
-	if m.ErrorType == ContextWindowExceededError {
+// requestSizeRe is the model service's refusal of a request over its byte cap, which KAS
+// types GenericValidationError (no reason, not on its own overflow list). Anchored, so a
+// message that only quotes the phrase further in is not taken for it.
+var requestSizeRe = regexp.MustCompile(`(?i)^Request exceeds the maximum allowed size\b`)
+
+// kasRequestIDRe is the request id KAS's withRequestId appends to a model-call message.
+var kasRequestIDRe = regexp.MustCompile(`\(Request ID: ([^()\s]+)\)\s*$`)
+
+// Account is what a typed KAS error says on a turn card, and whether it is a context
+// overflow (the Compact remedy): KAS's message plus marotte's remedy for its class,
+// keyed on exact class names only, so a minified errorType gets the message alone.
+// Each half has its own budget, so a long message cannot cut off the remedy or the
+// request id.
+func Account(m Mapped, message string) (text string, contextLimit bool) {
+	switch {
+	case m.ErrorType == contextWindowExceededError:
 		// KAS's own sentence names a setting the reader cannot reach.
-		return withRequestID(contextLimitSentence, m.RequestID)
+		return withRequestID(contextLimitSentence, requestIDOf(m, message)), true
+	case m.ErrorType == genericValidationError && requestSizeRe.MatchString(strings.TrimSpace(message)):
+		return withRequestID(requestSizeSentence, requestIDOf(m, message)), true
 	}
 	msg := strings.TrimSpace(sanitize(message, mappedProseCap))
 	if m.ErrorType == modelRegistryUnavailableError {
-		return msg + modelRegistryUnavailableRemedy
+		return msg + modelRegistryUnavailableRemedy, false
 	}
 	if msg == "" {
 		msg = strings.TrimSpace(sanitize(m.ErrorType, mappedProseCap))
@@ -195,7 +230,19 @@ func Account(m Mapped, message string) string {
 	if m.RetryErrorType == RetryThrottling {
 		msg += throttledRemedy
 	}
-	return withRequestID(msg, m.RequestID)
+	return withRequestID(msg, m.RequestID), false
+}
+
+// requestIDOf is the envelope's request id, else the one KAS wrote into a message that
+// Account replaces (a display_error carries no requestId of its own).
+func requestIDOf(m Mapped, message string) string {
+	if m.RequestID != "" {
+		return m.RequestID
+	}
+	if sub := kasRequestIDRe.FindStringSubmatch(message); sub != nil {
+		return sub[1]
+	}
+	return ""
 }
 
 func withRequestID(msg, id string) string {

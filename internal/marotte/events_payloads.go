@@ -517,9 +517,22 @@ type GovernanceRegistryServer struct {
 // window.open() not driven by a user gesture, so the client surfaces a banner link rather
 // than auto-opening. Only http/https URLs are broadcast. ExpiresAt is when KAS stops waiting for
 // the callback; a replayed event carries the original time, so the client shows only what is left.
+// Server is the MCP server KAS named, and FlowID the mid-session re-auth that mcp_sign_in_closed
+// ends; either is absent when KAS named none.
 type OpenExternalURLPayload struct {
 	ExpiresAt time.Time `json:"expires_at"`
 	URL       string    `json:"url"`
+	Server    string    `json:"server,omitempty"`
+	FlowID    string    `json:"flow_id,omitempty"`
+}
+
+// MCPSignInClosedPayload is the payload for type="mcp_sign_in_closed": KAS ended the mid-session
+// re-auth FlowID names (_kiro/mcp/oauthCompleted), whose open_external_url banner closes. Success
+// false means it got no token, and the server's next tool call asks again.
+type MCPSignInClosedPayload struct {
+	Server  string `json:"server"`
+	FlowID  string `json:"flow_id"`
+	Success bool   `json:"success"`
 }
 
 // RPC error code constants for typed dispatch in retry logic.
@@ -656,9 +669,13 @@ type HooksChangedPayload struct{}
 // and empty: the installed Powers moved, so the Powers tab refetches.
 type PowersChangedPayload struct{}
 
-// MemoriesChangedPayload is the payload for type="memories_changed", workspace-global and empty: a memory write
-// answered, so the Memories list refetches.
+// MemoriesChangedPayload is the payload for type="memories_changed", workspace-global and empty: the memory store
+// changed (KAS's _kiro/memory/changed, or a marotte write answered), so the Memories list refetches.
 type MemoriesChangedPayload struct{}
+
+// MemorySyncChangedPayload is the payload for type="memory_sync_changed", workspace-global and empty: KAS's memory
+// sync state or the memorySync choice moved, so the Memories tab's Cloud sync section refetches.
+type MemorySyncChangedPayload struct{}
 
 // KnowledgeChangedPayload is the payload for type="knowledge_changed", workspace-global and empty: a knowledge
 // base change answered, so the Knowledge list refetches.

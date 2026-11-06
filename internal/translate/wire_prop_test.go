@@ -63,6 +63,7 @@ func TestACPWire_RoundTrip_Rapid(t *testing.T) {
 				Status:     "completed",
 				// Set explicitly: a nil json.RawMessage round-trips as the bytes `null`, which DeepEqual
 				// would flag.
+				RawInput:  json.RawMessage(`{}`),
 				RawOutput: json.RawMessage(`{}`),
 			}
 

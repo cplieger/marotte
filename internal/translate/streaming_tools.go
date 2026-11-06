@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/pathinside"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/buffer"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/sanitize"
@@ -29,6 +31,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID marotte.ChatID, 
 	// Dropped before the fold target, which would open a wire turn and split the user's own
 	// (the cloud-config fetch runs during session creation).
 	if isInternalTool(tc.Meta.Kiro.ToolID) {
+		t.internalCalls.add(tc.ToolCallID, chatID)
 		return
 	}
 	turn, sc, ok := t.foldTarget(ctx, chatID, attr)
@@ -116,7 +119,14 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID marotte.Ch
 		return
 	}
 	tu.gate()
-	content := t.parseToolUpdateContent(tu.ToolCallID, tu.Content)
+	// Before the fold target, so an internal call's settle opens no turn and folds into no real call.
+	if t.internalCalls.holds(tu.ToolCallID) {
+		if tu.Status.Terminal() {
+			t.settleInternalCall(ctx, chatID, &tu)
+		}
+		return
+	}
+	content := updateContent(t.relPath, &tu)
 	sc := scopeOf(chatID, attr)
 	// An update never OPENS a turn; with none open it is an orphan (chat) or a late frame
 	// for a closed step turn.
@@ -142,6 +152,9 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID marotte.Ch
 		return
 	}
 	res := marotte.EntryToolResultOf(&tc)
+	if !bytes.Equal(tc.Input, open.CreatedInput) {
+		res.Input = tc.Input
+	}
 	sealed, err := turn.ToolResult(ctx, tu.Meta.Kiro.AgentSubtaskID, tu.ToolCallID, &res)
 	t.publishSealed(ctx, sc, sealed)
 	if err != nil {
@@ -173,8 +186,13 @@ func (t *Translator) lateStepResult(ctx context.Context, chatID marotte.ChatID, 
 	t.adoptTerminalOutput(chatID, &tc)
 	mergeCheckpoint(&tc, tu.Meta.Kiro.Checkpoint)
 	mergeToolMeta(&tc, tu)
+	tc.Status, tc.DelegateStop = delegateGrade(tc.Status, tu.Meta.Kiro.StopReason, "")
+	res := marotte.EntryToolResultOf(&tc)
+	if inputRevision(tu.RawInput) {
+		res.Input = tu.RawInput
+	}
 	e := marotte.Entry{Kind: marotte.EntryKindToolResult, ID: marotte.ToolResultID(tu.ToolCallID), Lane: tu.Meta.Kiro.AgentSubtaskID}
-	setPayload(&e, marotte.EntryToolResultOf(&tc))
+	setPayload(&e, res)
 	if err := t.runs.RunAppendAfterClosed(ctx, attr.RunID, attr.NodePath, &e); err != nil {
 		appendFailed(runScope(attr.RunID), "late tool_result", err)
 		return
@@ -183,7 +201,7 @@ func (t *Translator) lateStepResult(ctx context.Context, chatID marotte.ChatID, 
 }
 
 // Every omitted field means "unchanged", so applying it to `before` reconstructs `after` exactly;
-// the client keeps no accumulation rules. Input never changes on an update.
+// the client keeps no accumulation rules.
 func toolProgress(turn string, before, after *marotte.ToolCall) marotte.ToolProgressPayload {
 	d := marotte.ToolProgressPayload{Turn: turn, ToolCallID: after.ID}
 	if after.Title != before.Title {
@@ -205,7 +223,7 @@ func toolProgress(turn string, before, after *marotte.ToolCall) marotte.ToolProg
 	return d
 }
 
-// Only Diffs accumulates; the other two are absolute and go entire whenever they change.
+// Only Diffs accumulates; the others are absolute and go entire whenever they change.
 func deltaContent(d *marotte.ToolProgressPayload, before, after *marotte.ToolCall) {
 	if !slices.Equal(after.OutputSpans, before.OutputSpans) {
 		d.OutputSpans = after.OutputSpans
@@ -216,6 +234,9 @@ func deltaContent(d *marotte.ToolProgressPayload, before, after *marotte.ToolCal
 	}
 	if !slices.Equal(after.Locations, before.Locations) {
 		d.Locations = after.Locations
+	}
+	if !bytes.Equal(after.Input, before.Input) {
+		d.Input = after.Input
 	}
 }
 
@@ -324,6 +345,17 @@ func parseToolContent(
 	return out
 }
 
+// updateContent parses an update's content blocks, shared by the live fold and the replay. A failed update
+// contributes no diff: KAS's diff then describes a write that never happened (a str_replace whose oldStr was
+// not found sends the whole file against "").
+func updateContent(relPath func(string) string, tu *acpToolCallUpdateWire) toolUpdateContent {
+	content := parseToolContent(relPath, tu.ToolCallID, tu.Content)
+	if tu.Status == marotte.ToolFailed {
+		content.diffs = nil
+	}
+	return content
+}
+
 // Separate from the switch, whose arms pair a type with a payload condition.
 func knownToolContentType(t string) bool {
 	switch t {
@@ -364,6 +396,11 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID marotte.Cha
 	if len(tu.Locations) > 0 {
 		tc.Locations = tu.Locations
 	}
+	// The create frame's input can be partial (fs_append streams {path} first), and KAS's
+	// permission request carries none, so the update's rawInput is the only full copy.
+	if inputRevision(tu.RawInput) {
+		tc.Input = tu.RawInput
+	}
 	t.applyToolCallDiffs(chatID, turn, tc, content.diffs)
 	if tu.Meta.Kiro.AgentSubtaskID != "" && tu.Meta.Kiro.AgentSubtaskID != open.Lane {
 		slog.Warn("tool_call_update lane disagrees with its call's lane; folding where the call is",
@@ -380,6 +417,37 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID marotte.Cha
 	}
 	mergeCheckpoint(tc, tu.Meta.Kiro.Checkpoint)
 	mergeToolMeta(tc, tu)
+	// Last, so engineRefusal and gradeStoppedCall read KAS's own status.
+	tc.Status, tc.DelegateStop = delegateGrade(tc.Status, tu.Meta.Kiro.StopReason, tc.DelegateStop)
+}
+
+// delegateGrade is a sub-agent result's status and stop, shared by the live fold and the replay so a
+// reloaded card paints what the live one did. held is the stop already adopted ("" before any).
+func delegateGrade(status marotte.ToolStatus, raw, held string) (graded marotte.ToolStatus, stop string) {
+	if raw == "" {
+		return status, held
+	}
+	stop = textsafe.SanitizeSingleLineBounded(raw, maxDelegateStopBytes)
+	if !marotte.ConcludeStopReason(marotte.StopReason(stop)).Known && census.claimValue("delegateStopReason="+stop) {
+		slog.Warn("wire census: UNKNOWN sub-agent stop reason, graded as stopped", "stop_reason", stop)
+	}
+	return marotte.DelegateStatus(status, marotte.StopReason(stop)), stop
+}
+
+// jsonNull is JSON's null literal, as a raw value spells it.
+const jsonNull = "null"
+
+// maxDelegateStopBytes bounds a stop reason: KAS's values are short identifiers.
+const maxDelegateStopBytes = 64
+
+// inputRevision reports whether an update's rawInput replaces the call's input. KAS's stream-error
+// path sends the streamed args, which are {} for a call aborted before they landed.
+func inputRevision(raw json.RawMessage) bool {
+	switch string(bytes.TrimSpace(raw)) {
+	case "", jsonNull, "{}":
+		return false
+	}
+	return true
 }
 
 // One-way: keyed on a workflow tool's verdict field (rawOutputVerdict is present=false for every

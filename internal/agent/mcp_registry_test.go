@@ -711,7 +711,7 @@ func TestMCPRegistry_IdenticalFrameKeepsTheRelayLatch(t *testing.T) {
 	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "remote"); err != nil {
 		t.Fatalf("claimSignIn: %v", err)
 	}
-	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), "https://auth.example/a?state=s", false); shown.how != consentOnRow {
+	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: "https://auth.example/a?state=s", Server: "remote"}, false); shown.how != consentOnRow {
 		t.Fatalf("anchorConsentURL = %+v, want on the standing sign-in's row", shown)
 	}
 	if _, err := h.mcpRegistry.beginOAuthRelay(t.Context(), "s"); err != nil {
@@ -955,7 +955,7 @@ func TestMCPRegistry_SnapshotListsAServerAnySessionConnected(t *testing.T) {
 	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "linear"); err != nil {
 		t.Fatalf("claimSignIn = %v", err)
 	}
-	h.mcpRegistry.anchorConsentURL(t.Context(), "https://p.example/a?state=s", false)
+	h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: "https://p.example/a?state=s", Server: "linear"}, false)
 	if got := rowOf(t, h, "linear").State; got != mcpStateSigningIn {
 		t.Fatalf("row state = %q, want signing_in", got)
 	}

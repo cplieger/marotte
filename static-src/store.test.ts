@@ -1704,6 +1704,18 @@ describe("settledToolCall joins a call with its result", () => {
     expect(settledToolCall(toolCall("c1"), toolResult({ offload })).offload).toEqual(offload);
   });
 
+  it("takes the input an update revised", () => {
+    const input = { path: "a", text: "x" };
+    expect(
+      settledToolCall(toolCall("c1", { input: { path: "a" } }), toolResult({ input })).input,
+    ).toEqual(input);
+  });
+
+  it("keeps the create's input when the result carries none", () => {
+    const input = { path: "a" };
+    expect(settledToolCall(toolCall("c1", { input }), toolResult()).input).toBe(input);
+  });
+
   it("carries the result's answered interaction onto the card", () => {
     const interaction = { type: "tool_approval", outcome: "selected", choice: "allow_always" };
     expect(settledToolCall(toolCall("c1"), toolResult({ interaction })).interaction).toEqual(
@@ -1741,6 +1753,17 @@ describe("foldToolCallDelta", () => {
       delta({ diffs_appended: [{ path: "b", old_text: "", new_text: "2" }] }),
     );
     expect(next.diffs?.map((d) => d.path)).toEqual(["a", "b"]);
+  });
+
+  it("replaces the input when the frame carries one", () => {
+    const input = { path: "a", text: "x" };
+    const next = foldToolCallDelta(toolCall("c1", { input: { path: "a" } }), delta({ input }));
+    expect(next.input).toEqual(input);
+  });
+
+  it("keeps the input when the frame carries none", () => {
+    const input = { path: "a" };
+    expect(foldToolCallDelta(toolCall("c1", { input }), delta({ title: "x" })).input).toBe(input);
   });
 
   it("latches declined one way", () => {

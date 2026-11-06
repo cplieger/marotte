@@ -88,6 +88,10 @@ var steerLabels = map[marotte.SteerOrigin]map[marotte.SteerState]string{
 		marotte.SteerStateRead:    "Message to the main agent",
 		marotte.SteerStateDropped: "Message to the main agent not delivered",
 	},
+	marotte.SteerOriginPeer: {
+		marotte.SteerStateRead:    "Message from another chat",
+		marotte.SteerStateDropped: "Message from another chat not delivered",
+	},
 }
 
 // steerReasonClauses is the wording for each reason a producer writes, which the client's REASONS table must match.
@@ -100,9 +104,9 @@ func TestSteerLabelContract(t *testing.T) {
 	consts := steerPackageConsts(t)
 	origins := steerEnumMembers(t, consts, "SteerOrigin")
 	states := steerEnumMembers(t, consts, "SteerState")
-	if strings.Join(origins, ",") != "agent,parent,step,user" {
+	if strings.Join(origins, ",") != "agent,parent,peer,step,user" {
 		t.Fatalf("SteerOrigin membership moved to %v; the fixture and its client reader "+
-			"cover the four it had, so extend both before regenerating", origins)
+			"cover the five it had, so extend both before regenerating", origins)
 	}
 	if strings.Join(states, ",") != "dropped,read" {
 		t.Fatalf("SteerState membership moved to %v; the fixture and its client reader "+

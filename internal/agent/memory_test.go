@@ -196,3 +196,39 @@ func TestHandleMemoryOne_AStalledEngineAnswersStillApplying(t *testing.T) {
 		})
 	}
 }
+
+// KAS tells the client after any change to the store, the agent's own writes included, so an open Memories tab
+// refetches without a marotte write.
+func TestMemoryChangedNotification_BroadcastsRefetch(t *testing.T) {
+	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	before := len(eventsOfType(h, marotte.EventMemoriesChanged))
+
+	h.engineNotification(&marotte.RPCResponse{Method: methodKiroMemoryChanged, Params: json.RawMessage(
+		`{"total":2,"counts":{"byType":{"SEMANTIC":2},"byScope":{"Global":2}}}`,
+	)})
+
+	awaitEventCount(t, h, marotte.EventMemoriesChanged, before+1)
+}
+
+// A record the cloud has not taken yet carries KAS's pending mark to the tab.
+func TestMemoryListCarriesCloudState(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.setCallResult(methodKiroMemoryList, json.RawMessage(`{"memories":[`+
+		`{"id":"m1","memoryType":"SEMANTIC","title":"a","summary":"s","_meta":{"kiro":{"cloudState":"pending"}}},`+
+		`{"id":"m2","memoryType":"SEMANTIC","title":"b","summary":"s"}]}`))
+	rec := httptest.NewRecorder()
+	h.config.handleMemoryCollection(rec, httptest.NewRequest(http.MethodGet, "/api/memory", nil))
+
+	var got memoryListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got.Memories) != 2 {
+		t.Fatalf("GET = %d %s, want two rows", rec.Code, rec.Body.String())
+	}
+	if got.Memories[0].CloudState != "pending" || got.Memories[1].CloudState != "" {
+		t.Errorf("cloud states = %q, %q, want pending then none", got.Memories[0].CloudState, got.Memories[1].CloudState)
+	}
+	if strings.Contains(rec.Body.String(), `"_meta"`) {
+		t.Errorf("body %s passes KAS's _meta through", rec.Body.String())
+	}
+}

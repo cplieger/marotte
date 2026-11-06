@@ -40,6 +40,9 @@ const (
 	textDenied          = "The sign-in was declined in the browser."
 	textExpired         = "The sign-in code expired before it was approved. Start the sign-in again."
 	textOIDCRefused     = "The AWS sign-in service refused the sign-in."
+	textStartURLRefused = "AWS did not accept this start URL. Use your organization's AWS access portal URL, which looks like https://your-company.awsapps.com/start."
+	// textRegionRefused takes the region the portal was looked up in.
+	textRegionRefused = "AWS did not find this start URL in the %s region. Check the region of your organization's AWS access portal."
 )
 
 // newHTTPClient never follows a redirect: a 3xx is the response, classified as a transport failure,
@@ -109,7 +112,7 @@ func (b *Backend) registerClient(ctx context.Context, oidcBase string) (clientRe
 		return clientRegistration{}, err
 	}
 	if resp.status != http.StatusOK {
-		return clientRegistration{}, fmt.Errorf("kiro: client registration answered %d", resp.status)
+		return clientRegistration{}, newStatusError("client registration", resp)
 	}
 	var reg clientRegistration
 	if err := json.Unmarshal(resp.body, &reg); err != nil {
@@ -140,9 +143,34 @@ func (b *Backend) authorizeDevice(ctx context.Context, oidcBase string, reg clie
 		return deviceAuthorization{}, err
 	}
 	if resp.status != http.StatusOK {
-		return deviceAuthorization{}, fmt.Errorf("kiro: device authorization answered %d", resp.status)
+		return deviceAuthorization{}, newStatusError("device authorization", resp)
 	}
 	return decodeDeviceAuthorization(resp.body)
+}
+
+// statusError is a non-200 answer from an SSO-OIDC endpoint. code is the bounded OAuth error of a
+// 4xx; AWS's error_description is upstream text, read only to set startURLDetail.
+type statusError struct {
+	op             string
+	code           string
+	status         int
+	startURLDetail bool
+}
+
+func newStatusError(op string, resp response) *statusError {
+	e := &statusError{op: op, status: resp.status}
+	if resp.status/100 == 4 {
+		e.code = oauthError(resp)
+		var d struct {
+			Description string `json:"error_description"`
+		}
+		e.startURLDetail = json.Unmarshal(resp.body, &d) == nil && strings.Contains(strings.ToLower(d.Description), "start url")
+	}
+	return e
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("kiro: %s answered %d %s", e.op, e.status, e.code)
 }
 
 func decodeDeviceAuthorization(body []byte) (deviceAuthorization, error) {
@@ -213,6 +241,8 @@ func oauthError(resp response) string {
 		return "expired_token"
 	case "AccessDeniedException":
 		return "access_denied"
+	case "InvalidRequestException":
+		return "invalid_request"
 	}
 	return "unknown"
 }

@@ -13,6 +13,8 @@ interface ListReply {
 
 let listReply: ListReply;
 let oneReply: ListReply;
+let syncReply: ListReply;
+const syncWrites: { scope: string; on: boolean }[] = [];
 let confirmAnswer = true;
 const deleted: string[] = [];
 const refusedDeletes = new Set<string>();
@@ -21,7 +23,8 @@ const updated: { id: string; edit: unknown }[] = [];
 vi.mock("./api-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClient>()),
   apiGetTypedOrError: vi.fn(async (path: string, decode: (v: unknown) => unknown) => {
-    const r = path === "/api/memory" ? listReply : oneReply;
+    const r =
+      path === "/api/memory" ? listReply : path === "/api/memory/sync" ? syncReply : oneReply;
     return r.ok ? { ...r, data: decode(r.data) } : r;
   }),
 }));
@@ -35,6 +38,12 @@ vi.mock("./actions/memory.js", async (importOriginal) => ({
     dispatch: vi.fn(async (args: { id: string }) => {
       deleted.push(args.id);
       return refusedDeletes.has(args.id) ? null : undefined;
+    }),
+  },
+  setMemorySync: {
+    dispatch: vi.fn(async (args: { scope: string; on: boolean }) => {
+      syncWrites.push(args);
+      return {};
     }),
   },
   updateMemory: {
@@ -123,6 +132,11 @@ beforeEach(() => {
     cap: 1000,
   });
   oneReply = ok({ memory: { ...record("b", "repo:org/one", "Newer"), content: "full text" } });
+  syncReply = ok({
+    status: { state: "off" },
+    choice: { enabled: false, account: false, device: false },
+  });
+  syncWrites.length = 0;
 });
 
 describe("the list", () => {
@@ -335,5 +349,95 @@ describe("a memory change kiro-cli reports", () => {
     dispatch({ type: "memories_changed", chat_id: "" });
     await settle();
     expect(vi.mocked(apiGetTypedOrError).mock.calls.length).toBe(before);
+  });
+});
+
+describe("the Cloud sync section", () => {
+  function status(): string {
+    return panel.querySelector(".memories-cloud-status")?.textContent ?? "";
+  }
+  function cloudBox(scope: string): HTMLInputElement {
+    const b = panel.querySelector<HTMLInputElement>(
+      `.memories-cloud-switch[data-scope="${scope}"]`,
+    );
+    if (b === null) {
+      throw new Error(`no ${scope} switch`);
+    }
+    return b;
+  }
+
+  it("states the sync and holds the device switch until the account syncs", async () => {
+    await mount();
+    expect(status()).toBe("Cloud sync: off");
+    expect(cloudBox("account").checked).toBe(false);
+    expect(cloudBox("account").disabled).toBe(false);
+    expect(cloudBox("device").disabled).toBe(true);
+    expect(panel.querySelector(".memories-cloud-hint")?.textContent).toBe(
+      "Turn on account sync to sync this device",
+    );
+  });
+
+  it("counts what is waiting to upload, and offers the device switch once the account syncs", async () => {
+    syncReply = ok({
+      status: { state: "synced", last_sync_at: "2026-11-06T10:00:00.000Z", pending: 3 },
+      choice: { enabled: true, account: true, device: false },
+    });
+    await mount();
+    expect(status()).toBe("Cloud sync: synced, 3 not uploaded yet");
+    expect(cloudBox("account").checked).toBe(true);
+    expect(cloudBox("device").disabled).toBe(false);
+  });
+
+  it("names the layer that locks the choice and offers neither switch", async () => {
+    syncReply = ok({
+      status: { state: "off" },
+      choice: {
+        enabled: false,
+        account: false,
+        device: false,
+        lock: { layer: "organization", name: "Your organization" },
+      },
+    });
+    await mount();
+    expect(panel.querySelector(".memories-cloud-hint")?.textContent).toBe(
+      "Locked by Your organization",
+    );
+    expect(cloudBox("account").disabled).toBe(true);
+    expect(cloudBox("device").disabled).toBe(true);
+  });
+
+  it("writes the account's choice when its switch moves", async () => {
+    await mount();
+    const box = cloudBox("account");
+    box.checked = true;
+    box.dispatchEvent(new Event("change"));
+    await settle();
+    expect(syncWrites).toEqual([{ scope: "account", on: true }]);
+  });
+
+  it("refetches when KAS reports the sync moved", async () => {
+    await mount();
+    syncReply = ok({
+      status: { state: "unavailable", reason: "notSignedIn" },
+      choice: { enabled: false, account: false, device: false },
+    });
+    dispatch({ type: "memory_sync_changed", chat_id: "" });
+    await settle();
+    expect(status()).toBe("Cloud sync: sign in to Kiro to sync");
+  });
+
+  it("marks a record the cloud has not taken yet", async () => {
+    listReply = ok({
+      memories: [
+        { ...record("a", "global", "Waiting"), cloud_state: "pending" },
+        record("b", "global", "Taken"),
+      ],
+      cap: 1000,
+    });
+    await mount();
+    const marks = [...panel.querySelectorAll(".entry")].map(
+      (r) => r.querySelector(".memories-pending")?.textContent ?? "",
+    );
+    expect(marks).toEqual(["Not synced", ""]);
   });
 });

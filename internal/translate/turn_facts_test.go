@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -228,6 +229,9 @@ func TestEntryProjection_NamesAKnownEngineClass(t *testing.T) {
 	for _, tt := range []struct{ errorType, want string }{
 		{errorType: "ModelThrottleError", want: "ModelThrottleError"},
 		{errorType: "CredentialAbsentError", want: "CredentialAbsentError"},
+		{errorType: "NetworkUnreachableError", want: "NetworkUnreachableError"},
+		{errorType: "StreamLineTooLongError", want: "StreamLineTooLongError"},
+		{errorType: "SeatUnavailableError", want: "SeatUnavailableError"},
 		{errorType: "ye"},
 	} {
 		t.Run(tt.errorType, func(t *testing.T) {
@@ -244,5 +248,29 @@ func TestEntryProjection_NamesAKnownEngineClass(t *testing.T) {
 				t.Errorf("engine_error_class = %q, want %q", footer.EngineErrorClass, tt.want)
 			}
 		})
+	}
+}
+
+// A replayed byte-cap refusal closes as a context limit, so a reloaded chat keeps the Compact action the live
+// card had.
+func TestEntryProjection_RequestSizeCapIsAContextLimit(t *testing.T) {
+	turns := entryProject([][2]any{
+		turnStartFrame(t),
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", infoKindDisplayError, map[string]any{
+			"displayError": map[string]any{
+				"message":        "Request exceeds the maximum allowed size (Request ID: req-413)",
+				"errorType":      "GenericValidationError",
+				"retryErrorType": "CLIENT_ERROR",
+			},
+		})),
+		turnEndFrame(t, "error"),
+	})
+	var footer marotte.EntryTurnClose
+	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindTurnClose), &footer)
+	if footer.FailureKind != marotte.FailureKindContextLimit {
+		t.Errorf("failure_kind = %q, want %q", footer.FailureKind, marotte.FailureKindContextLimit)
+	}
+	if !strings.Contains(footer.FailureReason, "larger than the model service accepts in one request") {
+		t.Errorf("failure_reason = %q, want the request-size sentence", footer.FailureReason)
 	}
 }

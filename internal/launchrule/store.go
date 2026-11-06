@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/marotte/internal/userjson"
 )
 
 // rulesFileName is the definitions file, beside mcp.json in the config dir.
@@ -61,7 +62,7 @@ func (s *Store) loadRules() (map[string]error, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", s.path, err)
 	}
-	if err := json.Unmarshal(data, &s.rules); err != nil {
+	if err := json.Unmarshal(userjson.Body(data), &s.rules); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", s.path, err)
 	}
 	seen := make(map[string]bool, len(s.rules))

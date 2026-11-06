@@ -3,6 +3,7 @@ package auth
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -29,7 +30,10 @@ func TestReadLoginOptions(t *testing.T) {
 			body: `{"settings":{"idc_start_url":"https://d-123.awsapps.com/start","idc_region":"eu-west-1"}}`,
 			want: LoginOptions{BuilderID: true, IDC: true, IDCStartURL: "https://d-123.awsapps.com/start", IDCRegion: "eu-west-1"},
 		},
-		{name: "http_start_url_dropped", body: `{"settings":{"idc_start_url":"http://x.example/start","idc_region":"nope"}}`, want: LoginOptions{BuilderID: true, IDC: true}},
+		{name: "bare_host_start_url_kept_bad_region_dropped", body: `{"settings":{"idc_start_url":"d-123.awsapps.com","idc_region":"nope"}}`, want: LoginOptions{BuilderID: true, IDC: true, IDCStartURL: "d-123.awsapps.com"}},
+		{name: "http_start_url_dropped", body: `{"settings":{"idc_start_url":"http://d-123.awsapps.com/start"}}`, want: LoginOptions{BuilderID: true, IDC: true}},
+		{name: "start_url_with_credentials_dropped", body: `{"settings":{"idc_start_url":"https://user:pw@d-123.awsapps.com/start"}}`, want: LoginOptions{BuilderID: true, IDC: true}},
+		{name: "oversize_start_url_dropped", body: `{"settings":{"idc_start_url":"https://x.example/` + strings.Repeat("a", maxProviderLen) + `"}}`, want: LoginOptions{BuilderID: true, IDC: true}},
 		{name: "every_method_denied_is_ignored", body: `{"rules":[{"capability":"signin_method","effect":"deny","match":["google","github","builder_id","idc","external_idp"]}]}`, want: LoginOptions{BuilderID: true, IDC: true}},
 		{name: "allow_effect_ignores_the_restriction", body: `{"rules":[{"capability":"signin_method","effect":"allow","match":["idc"]}]}`, want: LoginOptions{BuilderID: true, IDC: true}},
 		{name: "unknown_exclude_ignores_the_restriction", body: `{"rules":[{"capability":"signin_method","effect":"deny","match":["idc"],"exclude":["sso"]}]}`, want: LoginOptions{BuilderID: true, IDC: true}},

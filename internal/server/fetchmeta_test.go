@@ -25,7 +25,9 @@ func TestFetchMetadataGate(t *testing.T) {
 		{"/", "cross-site", http.StatusTeapot},
 		{"/apix", "cross-site", http.StatusTeapot},
 	}
+	buf := captureLogs(t)
 	for _, c := range cases {
+		buf.Reset()
 		req := httptest.NewRequest(http.MethodGet, c.path, http.NoBody)
 		if c.site != "" {
 			req.Header.Set("Sec-Fetch-Site", c.site)
@@ -41,6 +43,13 @@ func TestFetchMetadataGate(t *testing.T) {
 		}
 		if c.want == http.StatusForbidden && !strings.Contains(rec.Body.String(), `"error"`) {
 			t.Errorf("%s refusal body = %q, want the JSON error envelope", c.path, rec.Body)
+		}
+		wantRecords := 0
+		if c.want == http.StatusForbidden {
+			wantRecords = 1
+		}
+		if n := strings.Count(buf.String(), `msg="request refused by origin gate"`); n != wantRecords {
+			t.Errorf("%s with Sec-Fetch-Site %q logged %d refusal records, want %d", c.path, c.site, n, wantRecords)
 		}
 	}
 }

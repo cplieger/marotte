@@ -1,7 +1,19 @@
 // Unit tests for strings.ts — pure functions, no DOM dependency.
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
-import { escText, escAttr, formatElapsed, humanName, rateLabel, truncate } from "./strings.js";
+import {
+  creditFigure,
+  cutAt,
+  escText,
+  escAttr,
+  formatElapsed,
+  humanName,
+  rateLabel,
+  truncate,
+} from "./strings.js";
+
+/** A high surrogate with no low surrogate after it: what the DOM draws as U+FFFD. */
+const LONE_HIGH = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/;
 
 describe("escText", () => {
   it("passes through plain text unchanged", () => {
@@ -154,15 +166,51 @@ describe("truncate", () => {
 
   it("truncates strings longer than max with ellipsis", () => {
     const s = "a".repeat(41);
-    expect(truncate(s)).toBe("a".repeat(37) + "\u2026");
+    expect(truncate(s)).toBe("a".repeat(39) + "\u2026");
   });
 
   it("respects custom max parameter", () => {
-    expect(truncate("abcdefghij", 7)).toBe("abcd\u2026");
+    expect(truncate("abcdefghij", 7)).toBe("abcdef\u2026");
+  });
+
+  it("never ends a cut on half an emoji, and stays within max", () => {
+    const out = truncate("a".repeat(38) + "\u{1F600}x", 40);
+    expect(out).not.toMatch(LONE_HIGH);
+    expect(out).toBe("a".repeat(38) + "\u2026");
+  });
+
+  it("keeps a whole emoji that ends right at the cut", () => {
+    expect(truncate("a".repeat(37) + "\u{1F600}xyz", 40)).toBe("a".repeat(37) + "\u{1F600}\u2026");
   });
 
   it("handles empty string", () => {
     expect(truncate("")).toBe("");
+  });
+});
+
+describe("cutAt", () => {
+  it("drops a high surrogate whose pair was cut", () => {
+    expect(cutAt("ab\u{1F600}", 3)).toBe("ab");
+  });
+
+  it("keeps a pair the cut does not split", () => {
+    expect(cutAt("ab\u{1F600}c", 4)).toBe("ab\u{1F600}");
+  });
+
+  it("returns a string no longer than the cut unchanged", () => {
+    expect(cutAt("ab\u{1F600}", 4)).toBe("ab\u{1F600}");
+    expect(cutAt("", 3)).toBe("");
+  });
+});
+
+describe("creditFigure", () => {
+  it("states a sub-cent charge as under a cent, never as 0.00", () => {
+    expect(creditFigure(0.004)).toBe("<0.01");
+  });
+
+  it("states any other charge to the cent", () => {
+    expect(creditFigure(1.2)).toBe("1.20");
+    expect(creditFigure(3.14159)).toBe("3.14");
   });
 });
 

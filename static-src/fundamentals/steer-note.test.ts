@@ -7,7 +7,7 @@ import { buildSteerNote, setSteerNoteRunLabel, type SteerNoteData } from "./stee
 import type { SteerReason } from "../types.js";
 import { mountAppCSS } from "../__test-helpers__/css-rules.js";
 import { glyphMarkup, registryMarkup } from "../__test-helpers__/glyph.js";
-import { ICON_TAB_RUN, workflowIcon } from "../icons.js";
+import { ICON_TAB_CHAT, ICON_TAB_RUN, workflowIcon } from "../icons.js";
 
 function note(over: Partial<SteerNoteData> = {}): HTMLElement {
   return buildSteerNote({ text: "actually target main", origin: "user", dropped: false, ...over });
@@ -204,6 +204,38 @@ describe("whose words the note holds", () => {
     expect(drawn(note({ origin: "parent" }))).toBe(registryMarkup(workflowIcon("message")));
     expect(drawn(note({ origin: "step" }))).toBe(registryMarkup(workflowIcon("message")));
     expect(drawn(note({ origin: "agent" }))).toBe(registryMarkup(ICON_TAB_RUN));
+  });
+});
+
+describe("a message between two chats", () => {
+  it("names the chat it came from on the receiver's row", () => {
+    const n = note({ text: "the schema moved", origin: "peer", chatName: "Billing", sentAt: 1 });
+    expect(textOf(n, ".steer-note-label")).toBe("From Billing");
+    expect(n.getAttribute("aria-label")).toBe("From Billing: the schema moved");
+  });
+
+  it("names the chat it went to on the sender's copy, and its drop", () => {
+    const n = note({ origin: "peer", chatName: "Billing", sent: true, dropped: true });
+    expect(textOf(n, ".steer-note-label")).toBe("To Billing, not delivered");
+  });
+
+  it("says another chat when this client holds no name for it", () => {
+    expect(textOf(note({ origin: "peer" }), ".steer-note-label")).toBe("Message from another chat");
+    expect(textOf(note({ origin: "peer", sent: true }), ".steer-note-label")).toBe(
+      "Message to another chat",
+    );
+  });
+
+  it("opens the other chat from its label, and draws the chat glyph", () => {
+    const open = vi.fn();
+    const n = note({ origin: "peer", chatName: "Billing", onOpenChat: open });
+    const btn = n.querySelector<HTMLButtonElement>("button.steer-note-chat");
+    expect(btn?.textContent).toBe("From Billing");
+    btn?.click();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(glyphMarkup(n.querySelector(".tool-icon")?.firstElementChild)).toBe(
+      registryMarkup(ICON_TAB_CHAT),
+    );
   });
 });
 

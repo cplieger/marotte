@@ -6,6 +6,7 @@ import type { ToolCall } from "./types.js";
 import { delegateStatusFor } from "./store.js";
 import { humanName } from "./strings.js";
 import { modelCategoryOf, subagentLabel, subagentName } from "./roles.js";
+import { delegateStopSentence } from "./delegate-stop.js";
 import { inFlight, type ExecState } from "./exec-view/status.js";
 import type { ExecFact, ExecNode, ExecRun } from "./exec-view/model.js";
 import type { SubagentSlice } from "./subagent-slice.js";
@@ -56,6 +57,7 @@ function factsOf(invocation: ToolCall | undefined): ExecFact[] {
   };
   add("Agent", subagentName(invocation));
   add("Category", modelCategoryOf(invocation));
+  add("Stopped", delegateStopSentence(invocation.delegate_stop));
   add("Subtask", invocation.agent_subtask_id ?? "", true);
   add("Call", invocation.id, true);
   return facts;

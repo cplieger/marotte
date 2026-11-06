@@ -296,12 +296,38 @@ describe("the run summary", () => {
     }
   });
 
+  it("states a run's credits after the clock, in its name too", () => {
+    const view = build(false);
+    view.paint(
+      run([step("a", "ok"), step("b", "running"), step("c", "pending")], { credits: 3.1 }),
+    );
+    expect(part(view, "ev-sum-credits")).toBe("3.10 cr");
+    const clock = view.root.querySelector(".ev-sum-clock");
+    expect(clock?.nextElementSibling?.classList.contains("ev-sum-credits")).toBe(true);
+    expect(view.describe()).toBe("nightly, running, step 2 of 3, 3.10 credits");
+  });
+
+  it("states a sub-cent run as under a cent, and drops the figure once credits go", () => {
+    const view = build(false);
+    view.paint(run([step("a", "running")], { credits: 0.004 }));
+    expect(part(view, "ev-sum-credits")).toBe("<0.01 cr");
+    view.paint(run([step("a", "running")]));
+    expect(view.root.querySelector(".ev-sum-credits")).toBeNull();
+    expect(view.describe()).toBe("nightly, running");
+  });
+
   it("paints a run with no model as its name alone", () => {
     const view = build(true);
-    view.paint(run([step("a", "waiting")], { alert: { kind: "paused", text: "Waiting" } }));
+    view.paint(
+      run([step("a", "waiting")], { alert: { kind: "paused", text: "Waiting" }, credits: 2 }),
+    );
     view.paintPending("Workflow run");
     expect(part(view, "ev-sum-label")).toBe("Workflow run");
-    expect([part(view, "ev-sum-state"), part(view, "ev-sum-clock")]).toEqual(["", ""]);
+    expect([
+      part(view, "ev-sum-state"),
+      part(view, "ev-sum-clock"),
+      part(view, "ev-sum-credits"),
+    ]).toEqual(["", "", ""]);
     expect(progress(view).hidden).toBe(true);
     expect(host.dataset["alert"]).toBeUndefined();
     expect(view.describe()).toBe("Workflow run");

@@ -23,6 +23,8 @@ interface SubagentBox {
   readonly root: HTMLDivElement;
   /** Update the header status glyph and the announced state word. */
   setStatus(status: ToolStatus): void;
+  /** Why the delegate stopped, appended to the announced state word; empty removes it. */
+  setStop(word: string): void;
   /** Update the delegate's display name. */
   setName(name: string): void;
   /** Secondary identity beside the name (the requested model category); empty removes
@@ -128,18 +130,20 @@ function buildShell(name: string, status: ToolStatus, opener?: SubagentOpener): 
   let lastStatus = status;
   let displayName = name;
   let displayDetail = "";
+  let stopWord = "";
 
   /** Write the name and its state word into whichever channel this head has. */
   const refreshName = (s: ToolStatus): void => {
+    const state = stopWord === "" ? stateWord(s) : `${stateWord(s)}, ${stopWord}`;
     if (headLink === null) {
       if (stateEl !== null) {
-        stateEl.textContent = stateWord(s);
+        stateEl.textContent = state;
       }
       return;
     }
     // `<thing>, <state word>`: the link role already says the head opens something.
     const parts = displayDetail === "" ? [displayName] : [displayName, displayDetail];
-    headLink.setAttribute("aria-label", `${parts.join(", ")}, ${stateWord(s)}`);
+    headLink.setAttribute("aria-label", `${parts.join(", ")}, ${state}`);
   };
 
   const applyIcon = (s: ToolStatus): void => {
@@ -169,6 +173,10 @@ function buildShell(name: string, status: ToolStatus, opener?: SubagentOpener): 
       setStatus(s: ToolStatus): void {
         lastStatus = s;
         applyIcon(s);
+      },
+      setStop(word: string): void {
+        stopWord = word;
+        refreshName(lastStatus);
       },
       setName(n: string): void {
         displayName = n;

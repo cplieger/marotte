@@ -1,7 +1,7 @@
 // The WORKFLOW adapter: KAS's `inspect` reply folded into the exec view's model.
 
 import { nodePathKey, nodePathSegment } from "./run-node-key.js";
-import { truncate } from "./strings.js";
+import { creditFigure, truncate } from "./strings.js";
 import {
   pauseDetailPhrase,
   pausePendingSentence,
@@ -262,6 +262,7 @@ function stepFacts(
   if (node.continuationAttempts !== undefined && node.continuationAttempts > 0) {
     add("Retries", String(node.continuationAttempts));
   }
+  add("Credits", node.credits === undefined ? undefined : creditFigure(node.credits));
   add("Pass", node.iteration === undefined ? undefined : String(node.iteration + 1));
   add("Branch", node.branchId);
   add("Recipe", plan?.includedFrom?.name ?? include?.name);
@@ -798,6 +799,10 @@ export function runToExec(
   if (state.inputs !== undefined && Object.keys(state.inputs).length > 0) {
     out.inputs = state.inputs;
   }
+  const credits = root === undefined ? 0 : runCredits(root);
+  if (credits > 0) {
+    out.credits = credits;
+  }
   const alert = alertOf(state, asks, nodes);
   if (alert !== undefined) {
     out.alert = alert;
@@ -813,6 +818,15 @@ export function runToExec(
     out.focus = focus;
   }
   return out;
+}
+
+/** Every node's credits over the tree, as KAS sums run_complete's figure: only steps carry them. */
+function runCredits(node: RunNode): number {
+  let total = node.credits ?? 0;
+  for (const k of node.children ?? []) {
+    total += runCredits(k);
+  }
+  return total;
 }
 
 /** A recipe's plan (`Recipe.plan`) drawn as its run tab draws it before the first step starts:

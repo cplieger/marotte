@@ -190,12 +190,11 @@ func engineAccount(t *activeTurn, stop marotte.StopReason) (string, marotte.Fail
 	if e == nil || c.FailureKind != "" || marotte.SeverityOf(c.Outcome) != marotte.TurnSeverityBroken {
 		return "", ""
 	}
-	m := rpcerr.Mapped{ErrorType: e.ErrorType, RetryErrorType: e.RetryErrorType}
-	var kind marotte.FailureKind
-	if m.ErrorType == rpcerr.ContextWindowExceededError {
-		kind = marotte.FailureKindContextLimit
+	text, overflow := rpcerr.Account(rpcerr.Mapped{ErrorType: e.ErrorType, RetryErrorType: e.RetryErrorType}, e.Message)
+	if overflow {
+		return text, marotte.FailureKindContextLimit
 	}
-	return rpcerr.Account(m, e.Message), kind
+	return text, ""
 }
 
 // closeFacts is what a won close hands its pipeline: the outcome, the fence naming the turn, a death's forwarder

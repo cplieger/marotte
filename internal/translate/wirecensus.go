@@ -152,7 +152,7 @@ func jsonKindOf(raw json.RawMessage) string {
 		case 't', 'f':
 			return "bool"
 		case 'n':
-			return "null"
+			return jsonNull
 		default:
 			return "number"
 		}

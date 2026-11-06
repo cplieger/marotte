@@ -65,6 +65,16 @@ func (o *engineOwner) workspaceConfigurationRaw(ctx context.Context, roots []str
 		map[string]any{"observer": "workspace", "roots": roots})
 }
 
+// connectionConfigurationRaw issues getState for the connection's view, the account's and this host's settings.
+func (o *engineOwner) connectionConfigurationRaw(ctx context.Context) (json.RawMessage, error) {
+	return o.rawCall(ctx, "configuration getState call", methodKiroConfigurationGet, map[string]any{"observer": "connection"})
+}
+
+func (o *engineOwner) configurationSetRaw(ctx context.Context, krn, value, layer string) (json.RawMessage, error) {
+	return o.rawCall(ctx, "configuration set call", methodKiroConfigurationSet,
+		map[string]any{"krn": krn, "value": value, "layer": layer})
+}
+
 // No triggerHook wrapper: it runs `sh -c` on a command a hook file names.
 
 func (o *engineOwner) renameSessionRaw(ctx context.Context, sessionID, title string) (json.RawMessage, error) {

@@ -635,7 +635,7 @@ func TestEntryProjection_AWorkflowMessageRowCarriesItsSenderAndSendTime(t *testi
 	for _, c := range []struct {
 		sender string
 		want   marotte.SteerOrigin
-	}{{"step", marotte.SteerOriginStep}, {"parent", marotte.SteerOriginParent}} {
+	}{{"step", marotte.SteerOriginStep}, {"parent", marotte.SteerOriginParent}, {"peer", marotte.SteerOriginPeer}} {
 		t.Run(c.sender, func(t *testing.T) {
 			k, raw := replayFrame(t, replayUserChunkKind, "part 1 done", "", map[string]any{
 				"messageId": "notify-1",
@@ -1212,5 +1212,37 @@ func TestEntryProjection_ACallTheLiveWireNeverOpenedIsDropped(t *testing.T) {
 				t.Errorf("the projection holds %s %q, which the live chat never showed:\n%s", e.Kind, e.ID, dumpTurns(turns))
 			}
 		}
+	}
+}
+
+// A replayed failed edit's diff names a write that never happened, so the reloaded card draws none.
+func TestEntryProjection_AFailedEditContributesNoDiff(t *testing.T) {
+	update := pair(marotte.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolUpdate),
+		"toolCallId":    "call-1",
+		"status":        "failed",
+		"content":       []map[string]any{{"type": "diff", "path": "/w/a.go", "oldText": "package a\n", "newText": ""}},
+		"_meta":         map[string]any{"kiro": map[string]any{"replay": true, "messageId": "call-1-result", "timestamp": "2026-09-15T12:00:07.000Z"}},
+	}))
+	turns := entryProject([][2]any{turnStartFrame(t), toolCallFrame(t, "call-1", nil), update, turnEndFrame(t, "end_turn")})
+	var res marotte.EntryToolResult
+	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindToolResult), &res)
+	if len(res.Diffs) != 0 {
+		t.Errorf("tool_result diffs = %+v, want none from a failed edit", res.Diffs)
+	}
+}
+
+// A reloaded chat grades a replayed sub-agent result as the live fold did.
+func TestEntryProjection_AReplayedDelegateStopGradesTheResult(t *testing.T) {
+	turns := entryProject([][2]any{
+		turnStartFrame(t),
+		toolCallFrame(t, "call-1", map[string]any{"kind": "agent-subtask", "agentSubtaskId": "sub-1"}),
+		toolUpdateFrame(t, "call-1", "completed", map[string]any{"stopReason": "max_turn_requests"}),
+		turnEndFrame(t, "end_turn"),
+	})
+	var res marotte.EntryToolResult
+	payloadOf(t, entryOfKind(t, turns[0], marotte.EntryKindToolResult), &res)
+	if res.Status != marotte.ToolFailed || res.DelegateStop != "max_turn_requests" {
+		t.Errorf("tool_result status, delegate_stop = %q, %q; want failed, max_turn_requests", res.Status, res.DelegateStop)
 	}
 }

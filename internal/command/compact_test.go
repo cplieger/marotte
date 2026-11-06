@@ -62,9 +62,9 @@ func TestCmdCompact_NoBridgeSaysNothingWasCompacted(t *testing.T) {
 	}
 }
 
-// TestCmdCompact_RefusalNamesBothClasses: every {success: false} gets this one text, whether KAS
-// refused to start or a started summary did not commit, so the text must name both.
-func TestCmdCompact_RefusalNamesBothClasses(t *testing.T) {
+// TestCmdCompact_RefusalNamesEveryCause: every {success: false} gets this one text, whether KAS
+// refused to start, a started summary did not commit, or a PreCompact hook blocked it.
+func TestCmdCompact_RefusalNamesEveryCause(t *testing.T) {
 	b := &recordingBridge{result: map[string]any{"success": false}, sessionID: "sess-1"}
 
 	_, err := cmdCompact(t.Context(), newBridgeHost(testsupport.NewInMemoryChatStore(), b), nil, compactReq("c1"))
@@ -75,7 +75,7 @@ func TestCmdCompact_RefusalNamesBothClasses(t *testing.T) {
 		t.Errorf("status = %d, want 409", got)
 	}
 	text := errText(err)
-	for _, want := range []string{"busy", "summary failed"} {
+	for _, want := range []string{"busy", "summary failed", "PreCompact hook"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("refusal %q does not contain %q", text, want)
 		}

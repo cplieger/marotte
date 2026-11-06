@@ -926,13 +926,6 @@ func authClass(name string) bool {
 	return slices.Contains(authErrorNames, name)
 }
 
-// contextWindowExceeded reports a turn that overflowed the model's context
-// window, which KAS sends as a typed error at any code.
-func contextWindowExceeded(err error) bool {
-	m, ok := rpcerr.MappedOf(err)
-	return ok && m.ErrorType == rpcerr.ContextWindowExceededError
-}
-
 // isAuthShaped reports whether an internal error is really an authentication failure, matched on
 // the payload since KAS collapses both onto -32603. `credentials` is not a marker: it matched an
 // AWS SDK message promising a refresh.
@@ -997,21 +990,24 @@ func promptFailureAccount(ctx context.Context, err error, inlinedImage bool) (st
 		}
 		return marotte.StopReasonInterrupted, "The turn was cancelled before the agent answered.", ""
 	}
-	if contextWindowExceeded(err) {
-		kind = marotte.FailureKindContextLimit
+	if re, ok := errors.AsType[*marotte.RPCError](err); ok {
+		if m, mapped := rpcerr.MappedOf(re); mapped {
+			text, overflow := rpcerr.Account(m, re.Message)
+			if overflow {
+				kind = marotte.FailureKindContextLimit
+			}
+			return marotte.StopReasonInterrupted, text, kind
+		}
 	}
-	return marotte.StopReasonInterrupted, promptFailureReason(err, inlinedImage), kind
+	return marotte.StopReasonInterrupted, promptFailureReason(err, inlinedImage), ""
 }
 
-// promptFailureReason renders a failure into something worth showing the
-// user: a typed KAS error through rpcerr.Account, anything else as its text.
+// promptFailureReason renders an untyped failure (no KAS error envelope) into
+// something worth showing the user.
 func promptFailureReason(err error, inlinedImage bool) string {
 	re, ok := errors.AsType[*marotte.RPCError](err)
 	if !ok {
 		return rpcerr.Text(err)
-	}
-	if m, mapped := rpcerr.MappedOf(re); mapped {
-		return rpcerr.Account(m, re.Message)
 	}
 	return rpcerr.Text(err) + validationGuidance(re, inlinedImage)
 }

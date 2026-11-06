@@ -123,6 +123,7 @@ const (
 	EventMCPPoolChanged  EventType = "mcp_pool_changed"
 	EventMCPPrewarm      EventType = "mcp_prewarm"
 	EventMCPSignInOpen   EventType = "mcp_sign_in_open"
+	EventMCPSignInClosed EventType = "mcp_sign_in_closed"
 	EventModeChanged     EventType = "mode_changed"
 	EventOpenExternalURL EventType = "open_external_url"
 	// EventPermissionNeeded carries a turn's verdict as well as an individual
@@ -163,11 +164,12 @@ const (
 	EventRecipesChanged EventType = "recipes_changed"
 	// EventPowersChanged is an empty refetch signal for GET /api/powers.
 	EventPowersChanged EventType = "powers_changed"
-	// EventMemoriesChanged and EventKnowledgeChanged are empty refetch signals for GET /api/memory and
-	// GET /api/knowledge.
-	EventMemoriesChanged  EventType = "memories_changed"
-	EventKnowledgeChanged EventType = "knowledge_changed"
-	EventSettingsUpdated  EventType = "settings_updated"
+	// EventMemoriesChanged, EventMemorySyncChanged and EventKnowledgeChanged are empty refetch signals for
+	// GET /api/memory, GET /api/memory/sync and GET /api/knowledge.
+	EventMemoriesChanged   EventType = "memories_changed"
+	EventMemorySyncChanged EventType = "memory_sync_changed"
+	EventKnowledgeChanged  EventType = "knowledge_changed"
+	EventSettingsUpdated   EventType = "settings_updated"
 	// EventEngineStatus carries EngineStatus on every engine state change, and on every pending or busy change while a
 	// restart is pending.
 	EventEngineStatus EventType = "engine_status"

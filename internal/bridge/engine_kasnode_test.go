@@ -87,13 +87,16 @@ func TestProcessEnv_TheSettingNamesTheLauncher(t *testing.T) {
 		if got := launcherEnv(env); !slices.Equal(got, want) {
 			t.Errorf("launcher variables = %q, want %q", got, want)
 		}
-		if !slices.Equal(e.nodeArgs, kasnode.Flags) {
-			t.Errorf("nodeArgs = %q, want kasnode.Flags %q", e.nodeArgs, kasnode.Flags)
+		if want := append(slices.Clone(kasnode.Flags), "--max-old-space-size=4096"); !slices.Equal(e.nodeArgs, want) {
+			t.Errorf("nodeArgs = %q, want %q", e.nodeArgs, want)
 		}
-		// The flags ride the launcher's argv, so NODE_OPTIONS, which every agent command inherits, is today's: the
-		// inherited semi-space flag once and the heap limit.
-		if opts, _ := envValue(env, nodeOptionsVar); opts != "--max-semi-space-size=64 --max-old-space-size=4096" {
-			t.Errorf("NODE_OPTIONS = %q, want the inherited semi-space flag once and the heap limit", opts)
+		if v, _ := envValue(env, kasnode.HeapLimitVar); v != "4096" {
+			t.Errorf("%s = %q, want 4096 for the launcher", kasnode.HeapLimitVar, v)
+		}
+		// The flags and the heap limit ride the launcher's argv; NODE_OPTIONS, which every program the agent runs
+		// inherits, stays as inherited.
+		if opts, _ := envValue(env, nodeOptionsVar); opts != "--max-semi-space-size=64" {
+			t.Errorf("NODE_OPTIONS = %q, want the inherited value only", opts)
 		}
 		for _, kv := range env {
 			if strings.Contains(kv, "--experimental-async-context-frame") {
@@ -104,15 +107,51 @@ func TestProcessEnv_TheSettingNamesTheLauncher(t *testing.T) {
 	t.Run("off", func(t *testing.T) {
 		t.Setenv(kasnode.LaunchVar, "/inherited/node")
 		e := kasNodeEngine(t, cli, false)
-		if got := launcherEnv(e.processEnv()); len(got) != 0 {
+		e.heapMiB = 4096
+		env := e.processEnv()
+		if got := launcherEnv(env); len(got) != 0 {
 			t.Errorf("launcher variables = %q, want none: off is kiro-cli's stock launch", got)
+		}
+		// kiro-cli starts node itself, so NODE_OPTIONS is the only way in.
+		if opts, _ := envValue(env, nodeOptionsVar); opts != "--max-semi-space-size=64 --max-old-space-size=4096" {
+			t.Errorf("NODE_OPTIONS = %q, want the inherited value and the heap limit", opts)
 		}
 		if e.nodeArgs != nil {
 			t.Errorf("nodeArgs = %q, want nil", e.nodeArgs)
 		}
 	})
+	t.Run("on with no heap limit", func(t *testing.T) {
+		t.Setenv(kasnode.HeapLimitVar, "2048")
+		e := kasNodeEngine(t, cli, true)
+		env := e.processEnv()
+		if v, ok := envValue(env, kasnode.HeapLimitVar); ok {
+			t.Errorf("%s = %q, want unset with no limit configured", kasnode.HeapLimitVar, v)
+		}
+		if !slices.Equal(e.nodeArgs, kasnode.Flags) {
+			t.Errorf("nodeArgs = %q, want kasnode.Flags %q", e.nodeArgs, kasnode.Flags)
+		}
+	})
 	if n := logs.CountLevel(slog.LevelWarn, "high throughput"); n != 0 {
 		t.Errorf("%d high throughput warnings, want none when every check passes", n)
+	}
+}
+
+// Node ranks a NODE_OPTIONS heap percentage above a heap size on its argv, so the limit then goes into NODE_OPTIONS,
+// replacing the percentage, as it does without the launcher.
+func TestProcessEnv_AnInheritedHeapPercentageKeepsTheLimitInNodeOptions(t *testing.T) {
+	cli, _ := kasNodeFixture(t, kasnode.ValidatedNodeVersion)
+	t.Setenv(nodeOptionsVar, "--max-old-space-size-percentage=50 --trace-warnings")
+	e := kasNodeEngine(t, cli, true)
+	e.heapMiB = 4096
+	env := e.processEnv()
+	if opts, _ := envValue(env, nodeOptionsVar); opts != "--trace-warnings --max-old-space-size=4096" {
+		t.Errorf("NODE_OPTIONS = %q, want the percentage replaced by the limit", opts)
+	}
+	if v, ok := envValue(env, kasnode.HeapLimitVar); ok {
+		t.Errorf("%s = %q, want unset: the limit is in NODE_OPTIONS", kasnode.HeapLimitVar, v)
+	}
+	if !slices.Equal(e.nodeArgs, kasnode.Flags) {
+		t.Errorf("nodeArgs = %q, want kasnode.Flags %q", e.nodeArgs, kasnode.Flags)
 	}
 }
 

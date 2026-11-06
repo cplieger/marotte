@@ -721,9 +721,11 @@ func (d *baseDeps) AccumulateSpend(ctx context.Context, chatID marotte.ChatID, c
 	if credits <= 0 {
 		return
 	}
-	d.mutateUsage(ctx, chatID, func(u *marotte.Usage) {
-		u.Credits += credits
-		u.HasRealData = true
+	_, _ = d.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
+		if exists {
+			c.AddSpend(credits)
+		}
+		return exists
 	})
 }
 

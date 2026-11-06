@@ -376,6 +376,25 @@ func TestMalformedFileIsAnError(t *testing.T) {
 	}
 }
 
+// launch-rules.json is a file the user fixes on the volume, so a Windows editor's UTF-8 byte
+// order mark must not fail the store and switch launch rules off.
+func TestNewStore_BOMPrefixedRulesLoad(t *testing.T) {
+	dir := t.TempDir()
+	rule, err := openStore(t, dir).Create(t.Context(), clockRule("bundled://weekly"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	body := append([]byte("\uFEFF"), readRules(t, dir)...)
+	if err := os.WriteFile(filepath.Join(dir, rulesFileName), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := openStore(t, dir).List()
+	if len(got) != 1 || got[0].ID != rule.ID {
+		t.Errorf("rules = %+v, want the one stored rule %s", got, rule.ID)
+	}
+}
+
 // A rule this build refuses (one a newer build wrote, say) blocks itself alone: the other rules load and run, and
 // the refused one is listed with its error, never fires, and can be replaced or deleted.
 func TestRefusedStoredRuleBlocksOnlyItself(t *testing.T) {

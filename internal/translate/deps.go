@@ -327,7 +327,9 @@ type Translator struct {
 	wakeMem   *wakeMemory
 	runNames  *runNames
 	slotWaits *slotWaits
-	workDir   string // last for fieldalignment, as in Roles
+	// internalCalls are the dropped internal calls awaiting their settle (isInternalTool).
+	internalCalls *internalCalls
+	workDir       string // last for fieldalignment, as in Roles
 }
 
 // New constructs a Translator over the roles the host supplies.
@@ -362,6 +364,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		wakeMem:        newWakeMemory(),
 		runNames:       newRunNames(),
 		slotWaits:      &slotWaits{},
+		internalCalls:  &internalCalls{},
 	}
 	for _, o := range opts {
 		o(t)
@@ -417,7 +420,7 @@ type turnInterruptAccess interface {
 // in two because a step's credits belong to the launching chat while the
 // conversation turn count and duration are the conversation's.
 type turnMetering interface {
-	// AccumulateSpend adds a turn_completion's credit spend, step frames included.
+	// AccumulateSpend adds a step turn_completion's credit spend to the launching chat.
 	AccumulateSpend(ctx context.Context, chatID marotte.ChatID, credits float64)
 	// StageConversationTurnSummary accumulates a conversation turn's reported
 	// duration, so several frames for one turn sum.

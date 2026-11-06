@@ -84,6 +84,10 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 	}
 	mcpTool := mcpToolIdentity(&req.Meta.Kiro)
 	title := displayText(req.ToolCall.Title)
+	if name, ok := remoteWrapperAsk(&req.Meta.Kiro); ok {
+		// KAS's own title here is its fallback "remote/<name>"; the transcript row titles the call <name>.
+		title = displayText(name)
+	}
 	consent := permissionConsent(&req.Meta.Kiro.Consent)
 
 	evt := marotte.NewEvent(marotte.EventPermissionNeeded, chatID, marotte.PermissionNeededPayload{
@@ -163,8 +167,22 @@ func (t *Translator) askStep(sessionID string, k *acpPermissionKiroBlock) (stepR
 	return step, &marotte.PermissionWatch{WorkflowID: w.WorkflowID, NodeID: w.NodeID}
 }
 
-// mcpToolIdentity is the MCP server and tool an ask names, nil unless both are.
+// remoteWrapperAsk is the built-in an ask from KAS's remote wrapper runs. Its id and identity must
+// name the same tool: an ask whose two fields disagree keeps the MCP rendering.
+func remoteWrapperAsk(k *acpPermissionKiroBlock) (string, bool) {
+	name, ok := remoteWrappedTool(k.ToolID)
+	if !ok || k.MCPTool.Identity.ServerName != remoteWrapperServer || k.MCPTool.Identity.ToolName != name {
+		return "", false
+	}
+	return name, true
+}
+
+// mcpToolIdentity is the MCP server and tool an ask names, nil unless both are or when the ask
+// is the remote wrapper's, which names a built-in.
 func mcpToolIdentity(k *acpPermissionKiroBlock) *marotte.MCPToolIdentity {
+	if _, ok := remoteWrapperAsk(k); ok {
+		return nil
+	}
 	serverName := displayText(k.MCPTool.Identity.ServerName)
 	toolName := displayText(k.MCPTool.Identity.ToolName)
 	if serverName == "" || toolName == "" {

@@ -178,6 +178,27 @@ describe("the login poll", () => {
   });
 });
 
+describe("the start URL", () => {
+  it("posts the start URL as typed, leaving its shape to the server", async () => {
+    let posted: unknown;
+    worker.use(
+      http.post("/api/login", async ({ request }) => {
+        posted = await request.json();
+        return HttpResponse.json({ error: "refused" }, { status: 400 });
+      }),
+    );
+    const provider = document.getElementById("modal-provider") as HTMLInputElement;
+    provider.value = "acme.awsapps.com";
+    (document.getElementById("modal-sso-submit") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(status().textContent).toBe("refused");
+    });
+    expect(posted).toEqual({ provider: "acme.awsapps.com" });
+    expect(provider.value).toBe("acme.awsapps.com");
+    provider.value = "";
+  });
+});
+
 describe("the sign-in start", () => {
   function modal(): HTMLDivElement {
     return document.getElementById("login-modal") as HTMLDivElement;

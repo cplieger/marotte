@@ -15,6 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/memlimit"
 	"github.com/cplieger/marotte/internal/nodeopts"
+	"github.com/cplieger/marotte/internal/userjson"
 )
 
 // ErrUnreadable marks the Update failure about the STORED document: config.json exists and
@@ -46,7 +47,7 @@ func Update(ctx context.Context, configDir string, fn func(doc map[string]json.R
 	if err != nil {
 		return nil, err
 	}
-	doc, err := readDocument(path)
+	doc, err := Stored(configDir)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUnreadable, err)
 	}
@@ -98,9 +99,17 @@ func ValidateCompactionPatch(patch map[string]json.RawMessage) error {
 	return nil
 }
 
-// An absent file is an empty map, every other fault an error. readRegular refuses a FIFO, which
-// under Update's lock would wedge every later write.
-func readDocument(path string) (map[string]json.RawMessage, error) {
+// Stored reads configDir's config.json uncached, for a caller that needs the whole document:
+// Update's merge and the settings GET. An absent file is an empty map, every other fault an
+// error. readRegular refuses a FIFO, which under Update's lock would wedge every later write.
+func Stored(configDir string) (map[string]json.RawMessage, error) {
+	if configDir == "" {
+		return nil, errors.New("settings: no config dir")
+	}
+	path, err := filepath.Abs(filepath.Join(configDir, filename))
+	if err != nil {
+		return nil, err
+	}
 	data, info, err := readRegular(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -112,7 +121,7 @@ func readDocument(path string) (map[string]json.RawMessage, error) {
 		return nil, fmt.Errorf("settings: %s is %d bytes, over the %d-byte cap", path, info.Size(), maxBytes)
 	}
 	doc := make(map[string]json.RawMessage)
-	if err := json.Unmarshal(data, &doc); err != nil {
+	if err := json.Unmarshal(userjson.Body(data), &doc); err != nil {
 		return nil, err
 	}
 	// A top-level `null` parses into a NIL map with no error, and maps.Copy onto nil panics.

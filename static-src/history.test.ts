@@ -1773,6 +1773,11 @@ describe("history: the row's subtitle and time", () => {
     expect(sub("s:sess_owned")).toBe("claude-opus-5 · Default · 34 turns · 12.50 cr");
   });
 
+  it("states a sub-cent metered chat as under a cent, never as 0.00", async () => {
+    await render({ sessions: [{ ...ownedRow, ...facts, credits: 0.004 }], runs: [] });
+    expect(sub("s:sess_owned")).toBe("claude-opus-5 · Default · 34 turns · <0.01 cr");
+  });
+
   it("omits a zero credit total rather than printing 0.00", async () => {
     // An unmetered chat would carry a cost column that says nothing.
     await render({

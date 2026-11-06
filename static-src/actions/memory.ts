@@ -43,3 +43,16 @@ export const deleteMemory = apiAction<DeleteArgs>({
   }),
   error: stillOr("deleting the memory", "Couldn't delete the memory"),
 });
+
+interface SyncArgs {
+  scope: "account" | "device";
+  on: boolean;
+}
+
+/** Writes the memorySync choice at the account's or this device's layer; the section refetches on memory_sync_changed. */
+export const setMemorySync = apiAction<SyncArgs>({
+  name: "memory.sync",
+  dedupe: (args) => `memory.sync:${args.scope}`,
+  request: (body) => ({ method: "PUT", path: `${MEMORY_API}/sync`, body }),
+  error: stillOr("changing memory sync", "Couldn't change memory sync"),
+});

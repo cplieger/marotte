@@ -51,6 +51,7 @@ vi.mock("./tool-card.js", () => ({
     return card;
   }),
   insertDiffPreview: vi.fn(),
+  syncRestingDiff: vi.fn(),
   expandToolDetails: vi.fn(),
   applyOutcome: vi.fn(),
   refreshToolDisclosure: vi.fn(),

@@ -33,8 +33,19 @@ const mocks = vi.hoisted(() => {
       outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
     })),
     announceMock: vi.fn((_message: string) => undefined),
+    queueDispatch: vi.fn((_args: { chatID: string; text: string; messageID: string }) => ({
+      outcome: Promise.resolve<QueueOutcome>({ status: "success" }),
+    })),
+    submitPromptMock: vi.fn((_chatID: string, _text: string, _opts?: unknown) =>
+      Promise.resolve("sent"),
+    ),
+    restoreFailedSendMock: vi.fn((_chatID: string, _text: string) => undefined),
   };
 });
+
+type QueueOutcome =
+  | { status: "success" }
+  | { status: "error"; error: { status?: number; code?: string; message: string } };
 
 type RemoveOutcome =
   | { status: "success"; value?: boolean }
@@ -47,6 +58,13 @@ vi.mock("./actions/chat.js", () => ({
   removeSteer: { dispatch: mocks.removeDispatch },
   unqueuePrompt: { dispatch: mocks.unqueueDispatch },
   sendQueuedNow: { dispatch: mocks.sendQueuedNowDispatch },
+  queuePrompt: { dispatch: mocks.queueDispatch },
+}));
+vi.mock("./submit.js", () => ({
+  submitPrompt: mocks.submitPromptMock,
+  submitLabelled: vi.fn(),
+  forgetDeletedChat: vi.fn(),
+  inFlightMessageIDs: vi.fn(() => []),
 }));
 // Every export is present so real-ESM linking succeeds; only the restore is observed.
 vi.mock("./attachments.js", () => ({
@@ -71,6 +89,7 @@ vi.mock("./composer-value.js", () => ({ setComposerValue: mocks.setComposerValue
 vi.mock("./composer-state.js", () => ({
   composerDraft: mocks.composerDraftMock,
   restoreRefusedEdit: mocks.restoreRefusedEditMock,
+  restoreFailedSend: mocks.restoreFailedSendMock,
 }));
 // The refusal is a chat notice; the message is what these cases read.
 vi.mock("./notice-subject.js", async () => {
@@ -94,6 +113,9 @@ const {
   addAttachmentMock,
   removeAttachmentMock,
   sendQueuedNowDispatch,
+  queueDispatch,
+  submitPromptMock,
+  restoreFailedSendMock,
 } = mocks;
 
 import {
@@ -240,6 +262,7 @@ function promptInput(): HTMLTextAreaElement {
 
 const PER_ROW = (text: string): string[] => [
   "Send this message now",
+  "Queue this message instead",
   "Edit this message",
   `Delete "${text}"`,
 ];
@@ -275,6 +298,10 @@ describe("the steer stack", () => {
     removeAttachmentMock.mockClear();
     sendQueuedNowDispatch.mockReset();
     sendQueuedNowDispatch.mockReturnValue({ outcome: Promise.resolve({ status: "success" }) });
+    queueDispatch.mockReset();
+    queueDispatch.mockReturnValue({ outcome: Promise.resolve({ status: "success" }) });
+    submitPromptMock.mockClear();
+    restoreFailedSendMock.mockClear();
   });
 
   it("renders into the bottom-bar stack rather than inside the composer", () => {
@@ -555,11 +582,7 @@ describe("the steer stack", () => {
     expect(actions(rowAt(2))).toEqual(["Edit this message", 'Delete "held"']);
 
     recordSteerQueued("chat-1", { id: "steer-1", text: "mine", origin: "user" });
-    expect(actions(rowAt(1))).toEqual([
-      "Send this message now",
-      "Edit this message",
-      'Delete "later"',
-    ]);
+    expect(actions(rowAt(1))).toEqual(PER_ROW("later"));
   });
 
   it("offers no controls on a message that is still sending", () => {
@@ -577,7 +600,15 @@ describe("the steer stack", () => {
   it("shortens a long message inside the delete's name", () => {
     const long = "rebase onto main and re-run the census against both bundles first";
     recordSteerQueued("chat-1", { id: "steer-1", text: long, origin: "user" });
-    expect(actions(firstRow())[2]).toBe('Delete "rebase onto main and re-run the census …"');
+    expect(actions(firstRow()).at(-1)).toBe('Delete "rebase onto main and re-run the census …"');
+  });
+
+  it("cuts the delete's name before an emoji the cut would split", () => {
+    const text = "a".repeat(38) + "\u{1F600} and the rest";
+    recordSteerQueued("chat-1", { id: "steer-1", text, origin: "user" });
+    const name = actions(firstRow()).find((a) => a.startsWith("Delete"));
+    expect(name).toBe(`Delete "${"a".repeat(38)}\u2026"`);
+    expect(name).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
   });
 
   it("gives a still-sending row no controls beside a confirmed one that has them", () => {
@@ -735,6 +766,126 @@ describe("the steer stack", () => {
     expect(removeDispatch).toHaveBeenCalledTimes(1);
     expect(confirmMock).not.toHaveBeenCalled();
     expect(clearDispatch).not.toHaveBeenCalled();
+  });
+
+  it("queues instead: deletes the steer, then queues the same words under a new id", async () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: "keep me", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "run the census after", origin: "user" });
+    clickAction(rowAt(1), "Queue this message instead");
+
+    await vi.waitFor(() => {
+      expect(queueDispatch).toHaveBeenCalledTimes(1);
+    });
+    expect(removeDispatch.mock.calls).toEqual([[{ chatID: "chat-1", steerID: "steer-2" }]]);
+    const [queued] = queueDispatch.mock.calls[0] ?? [];
+    expect(queued?.chatID).toBe("chat-1");
+    expect(queued?.text).toBe("run the census after");
+    expect(queued?.messageID).toMatch(/^m-/);
+    const removed = removeDispatch.mock.invocationCallOrder[0] ?? Infinity;
+    const queuedAt = queueDispatch.mock.invocationCallOrder[0] ?? -Infinity;
+    expect(removed).toBeLessThan(queuedAt);
+    expect(restoreFailedSendMock).not.toHaveBeenCalled();
+    expect(submitPromptMock).not.toHaveBeenCalled();
+    expect(errorToastMock).not.toHaveBeenCalled();
+  });
+
+  it("queues nothing when the server refuses the delete, and says why", async () => {
+    removeDispatch.mockReturnValue({
+      outcome: Promise.resolve({
+        status: "error",
+        error: { status: 409, message: "The agent already read that message" },
+      }),
+    });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "run it after", origin: "user" });
+    clickAction(firstRow(), "Queue this message instead");
+
+    await vi.waitFor(() => {
+      expect(errorToastMock).toHaveBeenCalledWith("The agent already read that message");
+    });
+    expect(queueDispatch).not.toHaveBeenCalled();
+    expect(restoreFailedSendMock).not.toHaveBeenCalled();
+  });
+
+  it("puts the words in the message box when the delete's reply is lost", async () => {
+    removeDispatch.mockReturnValue({
+      outcome: Promise.resolve({ status: "error", error: { status: 0, message: "network" } }),
+    });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "run it after", origin: "user" });
+    clickAction(firstRow(), "Queue this message instead");
+
+    await vi.waitFor(() => {
+      expect(restoreFailedSendMock).toHaveBeenCalledWith("chat-1", "run it after");
+    });
+    expect(queueDispatch).not.toHaveBeenCalled();
+    expect(errorToastMock).toHaveBeenCalledWith("Could not confirm the message was moved");
+  });
+
+  it("sends the words as a prompt when the turn ended between the delete and the queue", async () => {
+    queueDispatch.mockReturnValue({
+      outcome: Promise.resolve({
+        status: "error",
+        error: { status: 409, code: "no_turn", message: "No turn is running" },
+      }),
+    });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "run it after", origin: "user" });
+    clickAction(firstRow(), "Queue this message instead");
+
+    await vi.waitFor(() => {
+      expect(submitPromptMock).toHaveBeenCalledWith("chat-1", "run it after", { attachments: [] });
+    });
+    expect(restoreFailedSendMock).not.toHaveBeenCalled();
+    expect(errorToastMock).not.toHaveBeenCalled();
+  });
+
+  it("puts the words in the message box when the queue refuses them after the delete", async () => {
+    queueDispatch.mockReturnValue({
+      outcome: Promise.resolve({
+        status: "error",
+        error: { status: 409, code: "full", message: "The follow-up queue is full" },
+      }),
+    });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "run it after", origin: "user" });
+    clickAction(firstRow(), "Queue this message instead");
+
+    await vi.waitFor(() => {
+      expect(errorToastMock).toHaveBeenCalledWith("The follow-up queue is full");
+    });
+    expect(restoreFailedSendMock.mock.calls).toEqual([["chat-1", "run it after"]]);
+    expect(submitPromptMock).not.toHaveBeenCalled();
+  });
+
+  it("puts the words in the message box when the queue's reply is lost", async () => {
+    queueDispatch.mockReturnValue({
+      outcome: Promise.resolve({ status: "error", error: { status: 0, message: "network" } }),
+    });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "run it after", origin: "user" });
+    clickAction(firstRow(), "Queue this message instead");
+
+    await vi.waitFor(() => {
+      expect(restoreFailedSendMock).toHaveBeenCalledWith("chat-1", "run it after");
+    });
+  });
+
+  it("leaves the box alone when the queue's reply is lost but its row landed", async () => {
+    queueDispatch.mockImplementation(({ chatID, text, messageID }) => {
+      const s = get(chatID);
+      if (s !== undefined) {
+        setSessions([{ ...s, queued: [{ id: messageID, text }] }]);
+      }
+      return {
+        outcome: Promise.resolve({ status: "error", error: { status: 0, message: "network" } }),
+      };
+    });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "run it after", origin: "user" });
+    clickAction(firstRow(), "Queue this message instead");
+
+    await vi.waitFor(() => {
+      expect(queueDispatch).toHaveBeenCalled();
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(restoreFailedSendMock).not.toHaveBeenCalled();
+    expect(errorToastMock).not.toHaveBeenCalled();
   });
 
   it("reports a refused delete in the server's words", async () => {
@@ -1377,7 +1528,7 @@ describe("the row across its own confirmation", () => {
       recordSteerQueued("chat-1", { id: "steer-m-1", text: "use tabs instead", origin: "user" });
       await settles();
 
-      expect(actions(row), "the controls did arrive").toHaveLength(3);
+      expect(actions(row), "the controls did arrive").toHaveLength(4);
       expect(
         row.getBoundingClientRect().height,
         "and the row did not grow under the reader",
@@ -1467,7 +1618,7 @@ describe("the row's clamp", () => {
   it("keeps every control on the row at the clamped height", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: LONG, origin: "user" });
     const row = firstRow();
-    expect(actions(row).length, "one unread message, so Edit is offered too").toBe(3);
+    expect(actions(row).length, "one unread message, so every per-row control is offered").toBe(4);
 
     const textBox = textEl(row).getBoundingClientRect();
     for (const btn of row.querySelectorAll<HTMLElement>(".steer-act")) {

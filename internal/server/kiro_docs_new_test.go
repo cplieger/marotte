@@ -167,6 +167,26 @@ func TestHandleKiroDocNew_WritesKirosTemplate(t *testing.T) {
 				"      \"action\": {\n        \"type\": \"agent\",\n        \"prompt\": \"Say hello\"\n      },\n" +
 				"      \"enabled\": true\n    }\n  ]\n}\n",
 		},
+		{
+			name: "hook_pre_compact_drops_its_matcher",
+			body: `{"category":"hook","name":"Keep Notes","trigger":"PreCompact","matcher":"x","action":"command","content":"cat notes.md"}`,
+			rel:  "hooks/keep-notes.json",
+			want: "{\n  \"version\": \"v1\",\n  \"hooks\": [\n    {\n" +
+				"      \"name\": \"Keep Notes\",\n" +
+				"      \"trigger\": \"PreCompact\",\n" +
+				"      \"action\": {\n        \"type\": \"command\",\n        \"command\": \"cat notes.md\"\n      },\n" +
+				"      \"enabled\": true\n    }\n  ]\n}\n",
+		},
+		{
+			name: "hook_post_compact",
+			body: `{"category":"hook","name":"After","trigger":"PostCompact","action":"agent","content":"Re-read the plan"}`,
+			rel:  "hooks/after.json",
+			want: "{\n  \"version\": \"v1\",\n  \"hooks\": [\n    {\n" +
+				"      \"name\": \"After\",\n" +
+				"      \"trigger\": \"PostCompact\",\n" +
+				"      \"action\": {\n        \"type\": \"agent\",\n        \"prompt\": \"Re-read the plan\"\n      },\n" +
+				"      \"enabled\": true\n    }\n  ]\n}\n",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

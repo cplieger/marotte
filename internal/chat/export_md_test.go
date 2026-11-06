@@ -230,7 +230,12 @@ func TestRenderChatMarkdown_NamesAWorkflowMessagesFarEnd(t *testing.T) {
 	entries, _ := chatOf(openTurn("t-1", 1, prompt("m-1", "go")).
 		add("", "notify-1", marotte.EntryKindSteer, marotte.EntrySteer{Text: "weigh this", Origin: marotte.SteerOriginParent, Step: "review"}).
 		add("", "notify-2", marotte.EntryKindSteer, marotte.EntrySteer{Text: "part 1 done", Origin: marotte.SteerOriginStep, Step: "build"}).
-		add("", "notify-3", marotte.EntryKindSteer, marotte.EntrySteer{Text: "need a decision", Origin: marotte.SteerOriginStep}))
+		add("", "notify-3", marotte.EntryKindSteer, marotte.EntrySteer{Text: "need a decision", Origin: marotte.SteerOriginStep}).
+		add("", "notify-4", marotte.EntryKindSteer, marotte.EntrySteer{
+			Text: "part 2 done", Origin: marotte.SteerOriginStep, Step: "build", State: marotte.SteerStateDropped, Reason: marotte.SteerReasonBoundary,
+		}).
+		add("", "notify-5", marotte.EntryKindSteer, marotte.EntrySteer{Text: "schema moved", Origin: marotte.SteerOriginPeer, Chat: "c2", ToSession: "sess_1"}).
+		add("", "notify-6", marotte.EntryKindSteer, marotte.EntrySteer{Text: "thanks", Origin: marotte.SteerOriginPeer, Chat: "c2"}))
 
 	md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Orchestrated"}, entries)
 
@@ -238,6 +243,9 @@ func TestRenderChatMarkdown_NamesAWorkflowMessagesFarEnd(t *testing.T) {
 		"**Message to step `review`**\n\nweigh this",
 		"**Message from step `build`**\n\npart 1 done",
 		"**Message to the main agent**\n\nneed a decision",
+		"**Message from step `build`, not delivered**\n\npart 2 done",
+		"**Message from chat `c2`**\n\nschema moved",
+		"**Message to chat `c2`**\n\nthanks",
 	} {
 		if !strings.Contains(md, want) {
 			t.Errorf("markdown missing %q\n---\n%s", want, md)

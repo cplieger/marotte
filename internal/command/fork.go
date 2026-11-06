@@ -221,6 +221,8 @@ func forkCreate(p marotte.ForkChatCommand, chatID marotte.ChatID, parent *marott
 				// of this field and keeps the reaper's keep-list chain
 				// invariant.
 				c.RecordSession(sessionID)
+				// After RecordSession, which clears it: the fork's totals start at the parent's spend.
+				c.SpendInherited = true
 			}
 		},
 	}

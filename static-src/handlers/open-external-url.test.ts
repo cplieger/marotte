@@ -58,9 +58,12 @@ describe("open_external_url handler", () => {
     expect(call[6]).toBeInstanceOf(HTMLDetailsElement);
   });
 
-  it("clears the last sign-in's banner first, so a dismissed one does not hide the new one", () => {
+  it("clears the last sign-in's banner and failure first, so a dismissed one does not hide the new one", () => {
     fireSSE("open_external_url", "", signIn("https://auth.example.com/oauth?state=s"));
-    expect(mockClearBannerCodes).toHaveBeenCalledWith("*", ["open_external_url"]);
+    expect(mockClearBannerCodes).toHaveBeenCalledWith("*", [
+      "open_external_url",
+      "mcp_sign_in_failed",
+    ]);
     const cleared = mockClearBannerCodes.mock.invocationCallOrder[0] ?? Infinity;
     const shown = mockShowBanner.mock.invocationCallOrder[0] ?? -Infinity;
     expect(cleared).toBeLessThan(shown);
@@ -103,6 +106,58 @@ describe("open_external_url handler", () => {
 
   it("ignores a non-string url", () => {
     fireSSE("open_external_url", "", { url: 123 });
+    expect(mockShowBanner).not.toHaveBeenCalled();
+  });
+});
+
+describe("a sign-in KAS names its server and flow for", () => {
+  function lazy(server: string, flow: string): Record<string, string> {
+    return { ...signIn(`https://auth.example.com/oauth?state=${flow}`), server, flow_id: flow };
+  }
+
+  it("names the server, and hands it to the paste box", () => {
+    fireSSE("open_external_url", "", lazy("linear", "f1"));
+    expect(mockShowBanner.mock.calls[0]?.[2]).toBe("linear needs you to sign in.");
+    expect(mockRenderOAuthRelay).toHaveBeenCalledWith("linear");
+  });
+
+  it("closes the banner when its flow succeeds, and stops the countdown", () => {
+    fireSSE("open_external_url", "", lazy("linear", "f1"));
+    mockClearBannerCodes.mockClear();
+    mockShowBanner.mockClear();
+
+    fireSSE("mcp_sign_in_closed", "", { server: "linear", flow_id: "f1", success: true });
+
+    expect(mockClearBannerCodes).toHaveBeenCalledWith("*", ["open_external_url"]);
+    expect(mockShowBanner).not.toHaveBeenCalled();
+    mockClearBannerCodes.mockClear();
+    vi.advanceTimersByTime(300_000);
+    expect(mockClearBannerCodes).not.toHaveBeenCalled();
+  });
+
+  it("turns into a warning naming the server when its flow ends without a token", () => {
+    fireSSE("open_external_url", "", lazy("linear", "f1"));
+    mockShowBanner.mockClear();
+
+    fireSSE("mcp_sign_in_closed", "", { server: "linear", flow_id: "f1", success: false });
+
+    expect(mockShowBanner).toHaveBeenCalledWith(
+      "*",
+      "mcp_sign_in_failed",
+      "linear: the sign-in did not complete. Its next tool call asks again.",
+      "warning",
+      true,
+    );
+  });
+
+  it("leaves the banner up when another flow closes", () => {
+    fireSSE("open_external_url", "", lazy("linear", "f1"));
+    mockClearBannerCodes.mockClear();
+    mockShowBanner.mockClear();
+
+    fireSSE("mcp_sign_in_closed", "", { server: "github", flow_id: "f2", success: false });
+
+    expect(mockClearBannerCodes).not.toHaveBeenCalled();
     expect(mockShowBanner).not.toHaveBeenCalled();
   });
 });

@@ -30,11 +30,11 @@ const (
 	HookMatcherSubjectNone HookMatcherSubject = "none"
 )
 
-// The twelve canonical trigger names, as KAS's hook loader spells them.
+// The fourteen canonical trigger names, as KAS's hook loader spells them.
 //
 // Constants rather than repeated literals because the spelling table below points
 // many spellings at ONE canonical name, and that is the file's invariant: a typo
-// in an alias would otherwise mint a silent thirteenth trigger that KAS then drops.
+// in an alias would otherwise mint a silent fifteenth trigger that KAS then drops.
 // Unexported — nothing outside this package names a trigger, it normalizes one.
 const (
 	triggerSessionStart     = "SessionStart"
@@ -48,6 +48,8 @@ const (
 	triggerPostFileCreate   = "PostFileCreate"
 	triggerPostFileSave     = "PostFileSave"
 	triggerPostFileDelete   = "PostFileDelete"
+	triggerPreCompact       = "PreCompact"
+	triggerPostCompact      = "PostCompact"
 	triggerManual           = "Manual"
 )
 
@@ -66,6 +68,8 @@ var triggerSubjects = map[string]HookMatcherSubject{
 	triggerPostFileCreate:   hookMatcherSubjectFilePath,
 	triggerPostFileSave:     hookMatcherSubjectFilePath,
 	triggerPostFileDelete:   hookMatcherSubjectFilePath,
+	triggerPreCompact:       HookMatcherSubjectNone,
+	triggerPostCompact:      HookMatcherSubjectNone,
 	triggerManual:           HookMatcherSubjectNone,
 }
 
@@ -84,6 +88,8 @@ var hookTriggerNames = map[string]string{
 	"postfilecreate":   triggerPostFileCreate,
 	"postfilesave":     triggerPostFileSave,
 	"postfiledelete":   triggerPostFileDelete,
+	"precompact":       triggerPreCompact,
+	"postcompact":      triggerPostCompact,
 	"manual":           triggerManual,
 	// v2 / Kiro-IDE camelCase aliases.
 	"agentstop":         triggerStop,

@@ -344,6 +344,13 @@ const HOOK_TRIGGER_GROUPS = [
       ["PostTaskExec", "Post Task Execution"],
     ],
   ],
+  [
+    "Compaction Hooks",
+    [
+      ["PreCompact", "Pre Compaction"],
+      ["PostCompact", "Post Compaction"],
+    ],
+  ],
 ] as const;
 
 interface MatcherCopy {

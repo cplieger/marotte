@@ -5,6 +5,7 @@ import { createBus } from "@cplieger/ui";
 
 import type {
   EngineStatus,
+  MCPSignInClosedPayload,
   MCPSignInOpenPayload,
   NotificationPayload,
   RunAsksPayload,
@@ -117,6 +118,7 @@ export interface SSEPayloads {
   readonly mcp_connected: MCPConnectedPayload;
   readonly mcp_oauth_needed: MCPOAuthPayload;
   readonly mcp_sign_in_open: MCPSignInOpenPayload;
+  readonly mcp_sign_in_closed: MCPSignInClosedPayload;
   readonly mcp_failed: MCPFailedPayload;
   readonly mcp_disconnected: MCPDisconnectedPayload;
   readonly mcp_prewarm: { readonly package: string; readonly state: string };
@@ -137,6 +139,7 @@ export interface SSEPayloads {
   readonly forge_inventory: InventoryChangedPayload;
   readonly hooks_changed: undefined;
   readonly memories_changed: undefined;
+  readonly memory_sync_changed: undefined;
   readonly knowledge_changed: undefined;
   readonly recipes_changed: undefined;
   readonly powers_changed: undefined;

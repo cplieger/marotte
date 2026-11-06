@@ -231,6 +231,11 @@ func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID marotte.ChatI
 
 	// A replayed frame is history: live handlers would open a phantom turn nothing ends. The gate is per frame, since current-state frames are untagged.
 	if base.Meta.Kiro.Replay {
+		// The load-time credit total is the session's current figure, not history (InfoKindSessionUsage).
+		if base.Kind == marotte.ACPUpdateSessionInfo && base.Meta.Kiro.Kind == translate.InfoKindSessionUsage && attr.ChatOwned() {
+			rt.translator.HandleSessionInfoUpdate(ctx, chatID, env.Update, attr)
+			return
+		}
 		// A load in flight consumes the frame; otherwise it is dropped.
 		if !rt.replay.ingestReplayFrame(chatID, base.Kind, env.Update) {
 			slog.Debug("session/update: dropping replayed frame, no load in flight",

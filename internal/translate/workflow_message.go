@@ -36,14 +36,19 @@ type workflowMessage struct {
 
 // row is the message's entry in scope's log, waiting: a take-up, its wake or its epoch's clear
 // settles it. Each row names its peer, which the settlement stamps from the receiver's log alone:
-// the step on the chat's row, the chat on the step's.
+// the step on the chat's row, the chat on the step's, the other chat on a chat-to-chat row's.
 func (m *workflowMessage) row(scope steerScope) *marotte.EntrySteer {
 	e := &marotte.EntrySteer{
 		Text: m.text, Origin: m.origin, Severity: m.severity, KASID: m.kasID, ProducedTs: m.sentTs, StepPath: m.path,
 	}
-	if scope.run == "" {
+	switch {
+	case m.origin == marotte.SteerOriginPeer && scope.key == m.to.key:
+		e.Chat = m.from.key
+	case m.origin == marotte.SteerOriginPeer:
+		e.Chat = m.to.key
+	case scope.run == "":
 		e.Step, e.OriginRun = m.step, m.run
-	} else {
+	default:
 		e.Chat = m.chat
 	}
 	return e
@@ -77,7 +82,7 @@ func (t *Translator) HandleWorkflowMessage(ctx context.Context, chatID marotte.C
 // session as the target. A step-sender notify to the chat whose caller is no known step session is
 // one row in the chat's log, naming the node, with no sender's copy: KAS's own notes about a run (a
 // repeat's cap, a network wait, a stopped step) name no caller or a step marotte may not know. A
-// run host session is no chat.
+// run host session is no chat. A peer message is peerMessageOf's.
 func (t *Translator) workflowMessageOf(chatID marotte.ChatID, p *kasSessionNotify) (*workflowMessage, bool) {
 	if strings.HasPrefix(string(chatID), marotte.RunSubjectPrefix) {
 		return nil, false
@@ -89,6 +94,9 @@ func (t *Translator) workflowMessageOf(chatID marotte.ChatID, p *kasSessionNotif
 	m := &workflowMessage{
 		id: marotte.WorkflowMessageIDPrefix + ids.NewMessageID(), kasID: p.NotifyID, text: p.Message,
 		severity: p.Severity, toSession: p.SessionID, chat: chatID, sentTs: time.Now().UnixMilli(),
+	}
+	if p.Sender == senderPeer {
+		return t.peerMessageOf(m, own, p)
 	}
 	var stepSession string
 	switch {
@@ -117,6 +125,30 @@ func (t *Translator) workflowMessageOf(chatID marotte.ChatID, p *kasSessionNotif
 	return m, true
 }
 
+// peerMessageOf resolves a chat-to-chat message whose frame reached either end's chat: the
+// receiver's row names the sender's chat, and the sender's copy is filed only while the sender's
+// session is a resident chat's. A frame reaching the sender whose receiver is no resident chat
+// records nothing, since no log takes the received row.
+func (t *Translator) peerMessageOf(m *workflowMessage, own string, p *kasSessionNotify) (*workflowMessage, bool) {
+	m.origin = marotte.SteerOriginPeer
+	switch {
+	case p.SessionID == own:
+		m.to = chatSteerScope(m.chat)
+		if from, ok := t.sessions.ChatForACPSession(p.CallerSessionID); ok && from != m.chat {
+			m.from = chatSteerScope(from)
+		}
+	case p.CallerSessionID == own:
+		to, ok := t.sessions.ChatForACPSession(p.SessionID)
+		if !ok || to == m.chat {
+			return nil, false
+		}
+		m.to, m.from = chatSteerScope(to), chatSteerScope(m.chat)
+	default:
+		return nil, false
+	}
+	return m, true
+}
+
 const severitySuccess = "success"
 
 // alwaysBuffered reports a message KAS buffers whatever the receiver is doing, so it never wakes one
@@ -125,11 +157,34 @@ func alwaysBuffered(origin marotte.SteerOrigin, severity string) bool {
 	return origin == marotte.SteerOriginStep && severity == severitySuccess
 }
 
-// workflowMessageWoke settles the waker of a send-message-wake turn at the turn's first such frame
-// (settleWaker owns the rule).
+// workflowMessageWoke settles, at the turn's first agent-initiated frame, the rows a reader's cancel
+// left for this re-wake turn, delivered, then the waker of a send-message-wake turn (settleWaker
+// owns the rule). KAS's re-wake after a cancel is a notification-rewake, or a send-message-wake
+// when rewakeWithInfo re-delivers an info note.
 func (t *Translator) workflowMessageWoke(ctx context.Context, chatID marotte.ChatID, attr FrameAttribution, reason agentInitiatedReason) {
+	if reason != reasonSendMessageWake && reason != reasonNotificationRewake {
+		return
+	}
+	sc := frameSteerScope(chatID, attr)
+	if rowIDs := t.wakes.rewoken(t.bufferSession(sc)); len(rowIDs) > 0 {
+		t.settleRows(ctx, sc, rowIDs, marotte.EntrySteerDelivered{ReadTs: time.Now().UnixMilli()})
+	}
 	if reason == reasonSendMessageWake {
-		t.settleWaker(ctx, frameSteerScope(chatID, attr), wakeOpen)
+		t.settleWaker(ctx, sc, wakeOpen)
+	}
+}
+
+// settleRows files d for each of sc's unsettled rows rowIDs names.
+func (t *Translator) settleRows(ctx context.Context, sc steerScope, rowIDs []string, d marotte.EntrySteerDelivered) {
+	epoch, ok := t.epochMessages(ctx, sc, t.bufferSession(sc))
+	if !ok {
+		return
+	}
+	for i := range epoch {
+		if slices.Contains(rowIDs, epoch[i].ID) {
+			d.SteerID = epoch[i].ID
+			t.settleMessage(ctx, sc, &epoch[i], d)
+		}
 	}
 }
 
@@ -197,11 +252,15 @@ type sessionWakes struct {
 	// these can have woken a resume.
 	pausedFiled map[string]struct{}
 	filed       []string
-	before      int
-	state       wakeState
+	// rewaking is the rows the rewake cancel named by id, which the re-wake turn delivers;
+	// rewakeTurn is set once a turn started after it, so the next turn_start expires them.
+	rewaking []string
+	before   int
+	state    wakeState
 	// rewake is a reader's cancel that cleared a workflow message: KAS may re-deliver it by a
 	// send-message-wake with no new notify (rewakeWithInfo), whose waker no row names.
-	rewake bool
+	rewake     bool
+	rewakeTurn bool
 	// A step session's resume is the wake no frame names: KAS wakes a paused step with a parent's
 	// message and stamps no reason on the step's frames (kiro-cli 2.37.1 driveExecution), so the
 	// pause, the node's next node_start and that turn_start are the evidence. paused runs from
@@ -222,7 +281,7 @@ func (w *wakeLedger) entry(session string) *sessionWakes {
 
 // forgetIdle drops session's entry once it holds nothing a later call reads.
 func (w *wakeLedger) forgetIdle(session string, s *sessionWakes) {
-	if len(s.filed) == 0 && s.state == wakeDone && !s.rewake && !s.paused && !s.resumed {
+	if len(s.filed) == 0 && s.state == wakeDone && !s.rewake && len(s.rewaking) == 0 && !s.paused && !s.resumed {
 		delete(w.by, session)
 	}
 }
@@ -275,13 +334,19 @@ func (w *wakeLedger) forget(session string) {
 
 // turnStarted records session's turn_start: the rows filed so far are its candidate wakers, unless a
 // reader's cancel just cleared a message KAS may re-deliver in it. It reports a step's resume, whose
-// waker the caller settles at once, because none of the turn's frames names it.
-func (w *wakeLedger) turnStarted(session string) bool {
+// waker the caller settles at once, because none of the turn's frames names it, and the rows a
+// cancel left for a re-wake that the turn before this one did not deliver.
+func (w *wakeLedger) turnStarted(session string) (resume bool, expired []string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	s, ok := w.by[session]
 	if !ok {
-		return false
+		return false, nil
+	}
+	if s.rewakeTurn {
+		expired, s.rewaking, s.rewakeTurn = s.rewaking, nil, false
+	} else if len(s.rewaking) > 0 {
+		s.rewakeTurn = true
 	}
 	s.before, s.state = len(s.filed), wakeOpen
 	s.resume, s.resumed = s.resumed, false
@@ -289,18 +354,33 @@ func (w *wakeLedger) turnStarted(session string) bool {
 		s.state = wakeDone
 	}
 	s.rewake = false
-	resume := s.resume && s.state == wakeOpen
+	resume = s.resume && s.state == wakeOpen
 	w.forgetIdle(session, s)
-	return resume
+	return resume, expired
 }
 
-// cleared ends session's epoch: every row filed to it is settled. rewake marks a reader's cancel
-// that cleared a workflow message.
-func (w *wakeLedger) cleared(session string, rewake bool) {
+// rewoken answers and forgets the rows session's re-wake turn delivers, once that turn started.
+func (w *wakeLedger) rewoken(session string) []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	s, ok := w.by[session]
+	if !ok || !s.rewakeTurn {
+		return nil
+	}
+	rowIDs := s.rewaking
+	s.rewaking, s.rewakeTurn = nil, false
+	w.forgetIdle(session, s)
+	return rowIDs
+}
+
+// cleared ends session's epoch: every row filed to it is settled, or left in rewaking for the
+// re-wake turn. rewake marks a reader's cancel that cleared a workflow message.
+func (w *wakeLedger) cleared(session string, rewake bool, rewaking []string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	s := w.entry(session)
 	s.filed, s.before, s.state, s.rewake, s.pausedFiled = nil, 0, wakeDone, rewake, nil
+	s.rewaking, s.rewakeTurn = rewaking, false
 	w.forgetIdle(session, s)
 }
 
@@ -347,15 +427,19 @@ func (w *wakeLedger) resolve(session string, state wakeState, unsettled map[stri
 	w.forgetIdle(session, s)
 }
 
-// workflowMessageRead settles a notification steer's take-up against the oldest unsettled workflow
-// message of sc's current epoch with these words (KAS drains its buffer in append order; the
-// take-up names no sender, so two senders' identical words are told apart by order only). Both rows
-// are stamped delivered and the caller appends no steer. kasID is KAS's id for the row it
-// persisted, which the replay merge pairs on.
+// workflowMessageRead settles a notification steer's take-up against the unsettled workflow
+// message of sc's current epoch that KAS's id kasID names, else the oldest with these words among
+// those KAS gave no id (KAS drains its buffer in append order; the take-up names no sender, so two
+// senders' identical words are told apart by order only). Both rows are stamped delivered and the
+// caller appends no steer. The replay merge pairs on kasID.
 func (t *Translator) workflowMessageRead(ctx context.Context, sc steerScope, kasID, text string) bool {
 	epoch, _ := t.epochMessages(ctx, sc, t.bufferSession(sc))
+	match := func(m *marotte.WorkflowMessage) bool { return m.Steer.KASID == "" && m.Steer.Text == text }
+	if slices.ContainsFunc(epoch, func(m marotte.WorkflowMessage) bool { return m.Steer.KASID == kasID && kasID != "" }) {
+		match = func(m *marotte.WorkflowMessage) bool { return m.Steer.KASID == kasID }
+	}
 	for i := range epoch {
-		if epoch[i].Steer.Text == text {
+		if match(&epoch[i]) {
 			t.settleMessage(ctx, sc, &epoch[i], marotte.EntrySteerDelivered{SteerID: epoch[i].ID, KASID: kasID, ReadTs: time.Now().UnixMilli()})
 			t.settleWaker(ctx, sc, wakePending)
 			return true
@@ -364,32 +448,33 @@ func (t *Translator) workflowMessageRead(ctx context.Context, sc steerScope, kas
 	return false
 }
 
-// settleClear files a clear of sc's buffer naming kasIDs, then settles cleared every unsettled
-// message of its epoch (no frame says which one KAS re-delivers or drops), and reports whether the
-// fact landed. The fact goes first and the receiver's fold settles the epoch from it alone, so a
-// cut after it loses nothing and a refused fact has no effect. named counts the workflow messages
-// among kasIDs: a reader's cancel that cleared one makes the next turn a re-wake no row names.
-//
-// The epoch stands in for an id (kirodotdev/Kiro#12209); kiro-cli 3.1.0's notifyId is the id a
-// clear names.
+// settleClear files a clear of sc's buffer naming kasIDs, then settles its epoch's messages by the
+// fold's rule (marotte.EntrySteerCleared.Settlement), and reports whether the fact landed. The fact
+// goes first and the receiver's fold settles from it alone, so a cut after it loses nothing and a
+// refused fact has no effect. named counts the workflow messages among kasIDs: a reader's cancel
+// that cleared one makes the next turn a re-wake.
 func (t *Translator) settleClear(ctx context.Context, sc steerScope, cause marotte.SteerClearCause, named int, kasIDs []string) bool {
 	session := t.bufferSession(sc)
-	epoch, ok := t.epochMessages(ctx, sc, session)
+	epoch, _ := t.epochMessages(ctx, sc, session)
 	c := &marotte.EntrySteerCleared{Cause: cause, Session: session, IDs: append([]string{}, kasIDs...)}
 	if !t.appendCleared(ctx, sc, c) {
 		return false
 	}
-	t.wakes.cleared(session, cause == marotte.SteerClearCauseCancel && named > 0)
-	if !ok {
-		return true
-	}
 	now := time.Now().UnixMilli()
+	var rewaking []string
 	for i := range epoch {
-		d := marotte.EntrySteerDelivered{SteerID: epoch[i].ID, ReadTs: now, Cleared: true}
+		d, settles := c.Settlement(&epoch[i], now)
+		if !settles {
+			if c.Rewakes(&epoch[i]) {
+				rewaking = append(rewaking, epoch[i].ID)
+			}
+			continue
+		}
 		// The peer follows whether or not this lands: the receiver's fold reads it from the fact.
 		t.appendDelivered(ctx, sc, &d)
 		t.mirrorSettlement(ctx, sc, &epoch[i], d)
 	}
+	t.wakes.cleared(session, cause == marotte.SteerClearCauseCancel && named > 0, rewaking)
 	return true
 }
 
@@ -456,7 +541,10 @@ func (t *Translator) mirrorSettlement(ctx context.Context, sc steerScope, m *mar
 		}
 		return
 	}
-	if m.Steer.OriginRun != "" && m.Steer.StepPath != "" {
+	switch {
+	case m.Steer.Origin == marotte.SteerOriginPeer && m.Steer.Chat != "":
+		t.appendDelivered(ctx, chatSteerScope(m.Steer.Chat), &d)
+	case m.Steer.OriginRun != "" && m.Steer.StepPath != "":
 		t.appendDelivered(ctx, steerScope{run: m.Steer.OriginRun, path: m.Steer.StepPath}, &d)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"slices"
 
 	"github.com/cplieger/go/httpserver"
+	kirosignin "github.com/cplieger/marotte/internal/signin/kiro"
 )
 
 // managedSettingsPath is the administrator's file kiro-cli's login reads its sign-in controls from on Linux.
@@ -70,7 +71,8 @@ func readLoginOptions(path string) LoginOptions {
 		slog.Warn("login controls: the managed settings file is not valid JSON; every sign-in method is offered", "path", path, "error", err)
 		return opts
 	}
-	if validateProvider(ms.Settings.IDCStartURL) == nil {
+	// A start URL the sign-in would refuse is not pre-filled.
+	if validateProvider(ms.Settings.IDCStartURL) == nil && kirosignin.CheckStartURL(ms.Settings.IDCStartURL) == nil {
 		opts.IDCStartURL = ms.Settings.IDCStartURL
 	}
 	if validateRegion(ms.Settings.IDCRegion) == nil {

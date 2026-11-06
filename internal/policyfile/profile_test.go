@@ -140,3 +140,16 @@ func TestProfiles_ReturnsAnIsolatedCopy(t *testing.T) {
 		t.Error("ProfileFor shares its backing array with the package copy")
 	}
 }
+
+// TestDelegatesToSafetyCheck_OnlyTheDelegatedProfile: only approve-for-me hands asks to Kiro's safety check, so only
+// Delegated reports it; Unrestricted's allow-all settles every request itself, and nil is Custom.
+func TestDelegatesToSafetyCheck_OnlyTheDelegatedProfile(t *testing.T) {
+	for _, p := range Profiles() {
+		if got, want := DelegatesToSafetyCheck(p.Presets), p.ID == ProfileDelegated; got != want {
+			t.Errorf("DelegatesToSafetyCheck(%s %v) = %v, want %v", p.ID, p.Presets, got, want)
+		}
+	}
+	if !DelegatesToSafetyCheck([]string{"approve-for-me"}) {
+		t.Error("DelegatesToSafetyCheck missed KAS's approve-for-me preset id")
+	}
+}

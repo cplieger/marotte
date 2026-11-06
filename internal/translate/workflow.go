@@ -50,6 +50,8 @@ type kasRunNode struct {
 	InitiatorReason string            `json:"initiatorReason"`
 	PendingSteps    []json.RawMessage `json:"pendingSteps"`
 	NodePath        []string          `json:"nodePath"`
+	// Credits stays raw so a malformed member costs only itself, never the node_complete frame.
+	Credits json.RawMessage `json:"credits"`
 }
 
 // retryWaitKind marks a `node_paused` KAS sends while a step waits out a transient failure: the
@@ -60,7 +62,7 @@ func (p *kasRunNode) retryWait() bool { return p.Kind == retryWaitKind }
 
 // `finalState` is read for the run's name, the one lifecycle frame with no top-level name, and for
 // what a wake turn it starts says (autoWakeParentOnComplete reads the same fields); the client
-// refetches the rest.
+// refetches the rest. `credits` is not read: the client sums the refetched tree's step credits.
 type kasRunComplete struct {
 	WorkflowID string `json:"workflowId"`
 	Status     string `json:"status"`
@@ -193,6 +195,7 @@ func runProgress(
 		out.Status = p.Status
 		out.EndedAt = stamp
 		out.FailureReason = p.FailureReason
+		out.Credits = nodeCredits(p.Credits)
 	case marotte.RunProgressNodePaused:
 		out.NodePath = nodePathOf(p.NodePath, node)
 		if p.retryWait() {
@@ -212,6 +215,20 @@ func runProgress(
 	case marotte.RunProgressLoopIteration, marotte.RunProgressStepsQueued:
 	}
 	return out
+}
+
+// nodeCredits is a step's credit-unit total from node_complete's `credits`, the step session's
+// whole spend; 0 for an absent or malformed member, which KAS's own schema drops too.
+func nodeCredits(raw json.RawMessage) float64 {
+	if len(raw) == 0 {
+		return 0
+	}
+	var summaries []promptTurnSummary
+	if err := json.Unmarshal(raw, &summaries); err != nil {
+		slog.Debug("workflow node_complete: credits not decoded", "err", err)
+		return 0
+	}
+	return creditsOf(summaries)
 }
 
 // planUpdateOf reads a `steps_queued`: steps without a resolution queue a revision, a resolution

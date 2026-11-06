@@ -1,7 +1,8 @@
 // Package settings is the one reader for <configDir>/config.json: Field (typed key), FieldInto
 // (pointer target), FieldStrict (unreadable kept apart from absent, for a caller gating a
 // destructive action) and Read (one parsed generation for several keys), all through one
-// freshness-checked cache capped at maxBytes.
+// freshness-checked cache capped at maxBytes; Stored reads the whole document uncached, as a map
+// its caller owns. Every reader accepts one leading UTF-8 byte order mark.
 //
 // There is no exported raw-bytes reader: the cache's slice is shared by every caller, so an
 // exported accessor would let any caller corrupt every other's settings. For the same reason a
@@ -20,6 +21,7 @@ import (
 	"sync"
 
 	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/marotte/internal/userjson"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -259,7 +261,8 @@ func parsedOf(configDir string, g generation) (map[string]json.RawMessage, error
 	c.mu.Unlock()
 
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(g.data, &raw); err != nil {
+	// Stripped here, not in reload: the cache holds the file's exact bytes.
+	if err := json.Unmarshal(userjson.Body(g.data), &raw); err != nil {
 		return nil, err
 	}
 

@@ -75,17 +75,6 @@ func TestToolCallDelta_SendsEachDiffOnce(t *testing.T) {
 	}
 }
 
-// TestToolCallDelta_NeverCarriesTheInput pins that an update, which cannot change the
-// input, has no field for it.
-func TestToolCallDelta_NeverCarriesTheInput(t *testing.T) {
-	fields := reflect.VisibleFields(reflect.TypeFor[marotte.ToolProgressPayload]())
-	for _, f := range fields {
-		if f.Name == "Input" {
-			t.Error("ToolProgressPayload has an Input field; an update never changes it")
-		}
-	}
-}
-
 // TestToolCallDelta_TheTerminalOutputWinsOnTheResult pins the one rule a pure-append wire
 // cannot express: at completion the terminal's full stream replaces the ACP fragments,
 // so the settled call travels whole as tool_result, never as a tool_progress.

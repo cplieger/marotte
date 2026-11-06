@@ -11,6 +11,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/translate"
@@ -103,6 +104,73 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 	}
 	if after.UnattendedOrigin("wf_1") != "scheduled" {
 		t.Error("the origin did not survive")
+	}
+}
+
+// TestUnattendedFloor_DelegatedLeaseRefusesAnUnclearedAsk pins that the floor reads the delegation from the presets the
+// run's lease recorded, and that a lease which recorded none fails closed.
+func TestUnattendedFloor_DelegatedLeaseRefusesAnUnclearedAsk(t *testing.T) {
+	delegated, ok := policyfile.ProfileFor(policyfile.ProfileDelegated)
+	if !ok {
+		t.Fatal("no Delegated profile")
+	}
+	trusted, ok := policyfile.ProfileFor(policyfile.ProfileTrusted)
+	if !ok {
+		t.Fatal("no Trusted profile")
+	}
+	prev := unattendedAskBudget
+	unattendedAskBudget = 10 * time.Millisecond
+	t.Cleanup(func() { unattendedAskBudget = prev })
+	for _, tc := range []struct {
+		name       string
+		host       *runlease.HostSecurity
+		wantOption string
+	}{
+		{name: "delegated_presets", host: &runlease.HostSecurity{Presets: delegated.Presets}, wantOption: "reject"},
+		{name: "no_recorded_presets", host: nil, wantOption: "reject"},
+		{name: "trusted_presets", host: &runlease.HostSecurity{Presets: trusted.Presets}, wantOption: "accept"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			body, err := json.Marshal(map[string]any{settings.KeyScheduledAutoApprove: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), body, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
+			chatID := runChatID("wf_floor")
+			h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
+			h.runs.grantLease(t.Context(), "wf_floor", "nightly", scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Time{}), tc.host)
+
+			id := int64(4244)
+			h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+				marotte.PermissionNeededPayload{RequestID: id}), br)
+			wrapped := h.runs.permissionWithUnattendedFloor(func(context.Context, marotte.ChatID, translate.AskOrigin, *marotte.RPCResponse) {})
+			wrapped(t.Context(), chatID, br, &marotte.RPCResponse{
+				Method: marotte.MethodRequestPermission,
+				ID:     &id,
+				Params: json.RawMessage(`{"options":[{"optionId":"accept","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}],` +
+					`"_meta":{"kiro":{"toolId":"fs_write","consent":{"askType":"implicit","capability":"fs_write"}}}}`),
+			})
+
+			select {
+			case <-br.done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the floor answered nothing")
+			}
+			br.respMu.Lock()
+			got := br.response
+			br.respMu.Unlock()
+			outcome, ok := got.result.(*marotte.PermissionOutcome)
+			if !ok {
+				t.Fatalf("answered with %T (%v), want a permission outcome", got.result, got.result)
+			}
+			if outcome.Outcome.OptionID != tc.wantOption {
+				t.Errorf("optionId = %q, want %q", outcome.Outcome.OptionID, tc.wantOption)
+			}
+		})
 	}
 }
 
@@ -386,7 +454,7 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 			h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 				marotte.PermissionNeededPayload{RequestID: id}), br)
 
-			h.runs.answerUnattended(chatID, br, id, launchrule.Run{ScheduleID: "sched-1", WorkflowID: "wf_1"}, askName{tool: "execute_bash"},
+			h.runs.answerUnattended(chatID, br, id, launchrule.Run{ScheduleID: "sched-1", WorkflowID: "wf_1"}, false, askName{tool: "execute_bash"},
 				[]byte(`{"options":`+tc.options+tc.meta+`}`))
 
 			select {
@@ -442,7 +510,7 @@ func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing
 	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 
-	h.runs.answerUnattended(chatID, br, id, launchrule.Run{ScheduleID: "sched-1", WorkflowID: "wf_1"}, askName{tool: "execute_bash"}, []byte(`{
+	h.runs.answerUnattended(chatID, br, id, launchrule.Run{ScheduleID: "sched-1", WorkflowID: "wf_1"}, false, askName{tool: "execute_bash"}, []byte(`{
 		"options":[{"optionId":"accept","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}],
 		"_meta":{"kiro":{"consent":{"scope":"administration"}}}}`))
 
@@ -465,13 +533,23 @@ func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing
 }
 
 // With the switch on, an ask Kiro's safety check handed to a person is still refused, and the row says who
-// asked; the same ask without the stamp is approved.
+// asked. KAS stamps only a tripped breaker and an oversized action; under a delegated session every other implicit
+// tool ask (a failed or timed-out check, a sensitive path) reaches the floor unstamped and is refused too.
 func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
+	const implicitWrite = `,"_meta":{"kiro":{"toolId":"fs_write","consent":{"askType":"implicit","capability":"fs_write"}}}`
 	for _, tc := range []struct {
 		name, meta, wantOption string
+		delegated              bool
 	}{
 		{name: "handed_over", meta: `,"_meta":{"kiro":{"trustClassifier":{"decision":"prompt","reason":"Kiro's safety check flagged this"}}}`, wantOption: "reject"},
-		{name: "unstamped", wantOption: "accept"},
+		{name: "not_delegated_unstamped", meta: implicitWrite, wantOption: "accept"},
+		{name: "delegated_implicit_unstamped", meta: implicitWrite, delegated: true, wantOption: "reject"},
+		{name: "delegated_undecodable_kiro_block", meta: `,"_meta":{"kiro":{"toolId":"fs_write","consent":"implicit"}}`, delegated: true, wantOption: "reject"},
+		// An ask rule's ask is the policy's own, not one the safety check passed on.
+		{name: "delegated_explicit_ask_rule", meta: `,"_meta":{"kiro":{"toolId":"fs_write","consent":{"askType":"explicit","capability":"fs_write"}}}`, delegated: true, wantOption: "accept"},
+		// KAS never sends a workflow ask to the safety check, so a plan approval stays approvable.
+		{name: "delegated_workflow_capability", meta: `,"_meta":{"kiro":{"toolId":"update_workflow","consent":{"askType":"implicit","capability":"workflow"}}}`, delegated: true, wantOption: "accept"},
+		{name: "delegated_turn_approval", meta: `,"_meta":{"kiro":{"type":"turn_approval"}}`, delegated: true, wantOption: "accept"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -499,7 +577,7 @@ func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
 			h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 				marotte.PermissionNeededPayload{RequestID: id}), br)
 
-			h.runs.answerUnattended(chatID, br, id, run, askName{tool: "fs_write"}, []byte(
+			h.runs.answerUnattended(chatID, br, id, run, tc.delegated, askName{tool: "fs_write"}, []byte(
 				`{"options":[{"optionId":"accept","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}]`+tc.meta+`}`,
 			))
 
@@ -554,7 +632,7 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 	logs := captureLogs(t)
 
-	h.runs.answerUnattended(chatID, br, id, run, askName{tool: "execute_bash"},
+	h.runs.answerUnattended(chatID, br, id, run, false, askName{tool: "execute_bash"},
 		[]byte(`{"options":[{"optionId":"reject","kind":"reject_once"}]}`))
 
 	rows := st.Clocks()
@@ -599,7 +677,7 @@ func TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow(t *testing
 
 	params := []byte(`{"options":[{"optionId":"reject","kind":"reject_once"}],"_meta":{"kiro":{"toolId":"kiro_powers",
 		"consent":{"capability":"power","resource":"github/github/create_pr"}}}}`)
-	h.runs.answerUnattended(chatID, br, id, run, permissionAskName(params), params)
+	h.runs.answerUnattended(chatID, br, id, run, false, permissionAskName(params), params)
 
 	rows := st.Clocks()
 	if len(rows) != 1 {
@@ -642,7 +720,7 @@ func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 	logs := captureLogs(t)
 
-	h.runs.answerUnattended(chatID, br, id, run, askName{tool: "execute_bash"},
+	h.runs.answerUnattended(chatID, br, id, run, false, askName{tool: "execute_bash"},
 		[]byte(`{"options":[{"optionId":"reject","kind":"reject_once"}]}`))
 
 	rows := st.Clocks()
@@ -693,7 +771,7 @@ func answerTriggered(t *testing.T, autoApprove bool, params string) (*marotte.Pe
 	id := int64(5150)
 	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 		marotte.PermissionNeededPayload{RequestID: id}), br)
-	h.runs.answerUnattended(chatID, br, id, ruleRun(&l), askName{tool: "execute_bash"}, []byte(params))
+	h.runs.answerUnattended(chatID, br, id, ruleRun(&l), false, askName{tool: "execute_bash"}, []byte(params))
 
 	select {
 	case <-br.done:

@@ -13,11 +13,11 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// errCompactRefused names both classes because KAS answers a bare {success: false} both when it
-// refuses to start (a turn, a prompt still being saved, a running compaction) and when a started
-// summary does not commit (the session, a prompt or the history moved, its 300 s bound, a model
-// error), with no field telling them apart.
-var errCompactRefused = errors.New("the agent was still busy with a turn, a new message or another compaction, or the summary failed or the chat changed before it finished. Try again once the chat is idle")
+// errCompactRefused names every cause because KAS answers a bare {success: false} when it refuses
+// to start (a turn, a prompt still being saved, a running compaction), when a started summary does
+// not commit (the session, a prompt or the history moved, its 300 s bound, a model error), and when
+// a PreCompact hook blocks it, with no field telling them apart.
+var errCompactRefused = errors.New("the agent was still busy with a turn, a new message or another compaction, the summary failed or the chat changed before it finished, or a PreCompact hook blocked it (its card shows why). Try again once the chat is idle, or check the hook")
 
 // compactBridge is what compact needs of a bridge: one call on its own session.
 type compactBridge interface {

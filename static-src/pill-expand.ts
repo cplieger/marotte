@@ -9,6 +9,12 @@ import { onViewportChange, viewportBox, viewportMoved } from "./viewport-frame.j
 /** Single-open coordination group shared by every expandable pill. */
 const PILL_GROUP = "pill-expand";
 
+/** An expandable pill, for a caller that opens its card without a click on the pill. */
+export interface Expandable {
+  /** Open the card as a click would, closing any other open pill; a no-op while open. */
+  open(): void;
+}
+
 export function makeExpandable(
   pill: HTMLElement,
   contentEl: HTMLElement,
@@ -18,7 +24,7 @@ export function makeExpandable(
     signal?: AbortSignal;
     haspopup?: "menu" | "listbox" | "tree" | "grid" | "dialog" | true;
   },
-): void {
+): Expandable {
   const listenerOpts = opts?.signal !== undefined ? { signal: opts.signal } : undefined;
   let releaseViewport: (() => void) | undefined;
   let expanded = false;
@@ -100,6 +106,12 @@ export function makeExpandable(
     popup.dispose();
     collapse();
   });
+
+  return {
+    open: () => {
+      popup.show();
+    },
+  };
 }
 
 /** Measure the card's clamp now, then re-measure while it is open; the returned function

@@ -47,7 +47,7 @@ func (rt *router) handleToolCall(w http.ResponseWriter, r *http.Request, chatID 
 }
 
 // findToolCall finds a tool call's create and settle by id, newest first, folding them into the bulk: input from the
-// create; output, diffs and spans from the result if settled, else the create.
+// result when an update revised it, else the create; output, diffs and spans from the result if settled, else the create.
 func findToolCall(entries []marotte.Entry, id string) (marotte.ToolCallBulk, bool) {
 	resultID := marotte.ToolResultID(id)
 	var bulk marotte.ToolCallBulk
@@ -70,17 +70,22 @@ func adoptToolResult(bulk *marotte.ToolCallBulk, e *marotte.Entry) bool {
 		return false
 	}
 	bulk.Output, bulk.Diffs, bulk.OutputSpans = res.Output, res.Diffs, res.OutputSpans
+	bulk.Input = res.Input
 	return true
 }
 
-// adoptToolCreate copies the create's id and input into the bulk, and its output unless already settled; reports
+// adoptToolCreate copies the create's id into the bulk, its input unless the result revised it, and its output unless
+// already settled; reports
 // whether it decoded.
 func adoptToolCreate(bulk *marotte.ToolCallBulk, e *marotte.Entry, settled bool) bool {
 	var call marotte.EntryToolCall
 	if json.Unmarshal(e.Payload, &call) != nil {
 		return false
 	}
-	bulk.ID, bulk.Input = call.ID, call.Input
+	bulk.ID = call.ID
+	if len(bulk.Input) == 0 {
+		bulk.Input = call.Input
+	}
 	if !settled {
 		bulk.Output, bulk.Diffs, bulk.OutputSpans = call.Output, call.Diffs, call.OutputSpans
 	}

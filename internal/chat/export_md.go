@@ -539,19 +539,25 @@ func writeParagraph(b *strings.Builder, text string) {
 // the prompt.
 func steerHeading(p *marotte.EntrySteer) string {
 	who := "User"
+	dropped := ""
+	if p.State == marotte.SteerStateDropped {
+		dropped = ", not delivered"
+	}
 	switch p.Origin {
 	case marotte.SteerOriginAgent:
 		return "**Agent note**\n\n"
 	case marotte.SteerOriginParent:
 		if p.Step != "" {
-			return fmt.Sprintf("**Message to step %#q**\n\n", oneLine(p.Step))
+			return fmt.Sprintf("**Message to step %#q%s**\n\n", oneLine(p.Step), dropped)
 		}
 		who = "Main agent"
 	case marotte.SteerOriginStep:
 		if p.Step != "" {
-			return fmt.Sprintf("**Message from step %#q**\n\n", oneLine(p.Step))
+			return fmt.Sprintf("**Message from step %#q%s**\n\n", oneLine(p.Step), dropped)
 		}
 		return "**Message to the main agent**\n\n"
+	case marotte.SteerOriginPeer:
+		return peerHeading(p, dropped)
 	case marotte.SteerOriginUser:
 		if p.Caller != nil {
 			who = oneLine(p.Caller.SentBy())
@@ -561,6 +567,18 @@ func steerHeading(p *marotte.EntrySteer) string {
 		return "**" + who + " (mid-turn, not delivered)**\n\n"
 	}
 	return "**" + who + " (mid-turn)**\n\n"
+}
+
+// peerHeading names a chat-to-chat message's direction from the row: only the receiver's row carries ToSession.
+func peerHeading(p *marotte.EntrySteer, dropped string) string {
+	dir, chat := "from", "another chat"
+	if p.ToSession == "" {
+		dir = "to"
+	}
+	if p.Chat != "" {
+		chat = fmt.Sprintf("chat %#q", oneLine(string(p.Chat)))
+	}
+	return fmt.Sprintf("**Message %s %s%s**\n\n", dir, chat, dropped)
 }
 
 // writePlanMarkdown renders the plan as a GFM task list: completed [x], in progress [ ] with a suffix.

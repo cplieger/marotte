@@ -61,6 +61,9 @@ export interface RunNode {
   retryReason?: string;
   completionSignal?: "success" | "need_input" | "error";
   continuationAttempts?: number;
+  /** KAS's credit-unit total for the step's session, recorded when the step ends; absent when KAS
+   *  recorded none. */
+  credits?: number;
   /** This store's, not KAS's: orders this node's current execution against every other of every
    *  run. A later execution carries a larger value, and an execution keeps its value however each
    *  source re-reports it. Absent on a node with no start. */
@@ -215,9 +218,11 @@ interface RunInspect {
   nodePlan?: unknown;
 }
 
-interface RawRunNode extends Omit<RunNode, "status" | "children"> {
+interface RawRunNode extends Omit<RunNode, "status" | "children" | "credits"> {
   status: string;
   children?: RawRunNode[];
+  /** KAS's `[{usage, unit?, unitPlural?}]`, read through `creditTotal`. */
+  credits?: unknown;
 }
 
 interface RawRunState extends Omit<RunState, "status" | "root" | "displayName"> {
@@ -271,12 +276,40 @@ function planUpdateOf(raw: unknown): RunPlanUpdate | undefined {
 }
 
 function classifyRunNode(node: RawRunNode): RunNode {
-  const { status, children, ...rest } = node;
+  const { status, children, credits, ...rest } = node;
   const out: RunNode = { ...rest, status: classifyRunNodeStatus(status) };
+  const total = creditTotal(credits);
+  if (total !== undefined) {
+    out.credits = total;
+  }
   if (children !== undefined) {
     out.children = children.map(classifyRunNode);
   }
   return out;
+}
+
+/** The credit-unit sum of KAS's node `credits`, or undefined for no positive total. An element
+ *  with another unit or a usage that is not a finite number counts for nothing, as on the server
+ *  (`translate.creditsOf`). */
+function creditTotal(raw: unknown): number | undefined {
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  let total = 0;
+  for (const item of raw as unknown[]) {
+    if (typeof item !== "object" || item === null) {
+      continue;
+    }
+    const { usage, unit } = item as { usage?: unknown; unit?: unknown };
+    if (
+      typeof usage === "number" &&
+      Number.isFinite(usage) &&
+      (unit === undefined || unit === "credit")
+    ) {
+      total += usage;
+    }
+  }
+  return total > 0 ? total : undefined;
 }
 
 function classifyRunState(state: RawRunState, starts: StepStarts): RunState {
@@ -594,6 +627,8 @@ export interface RunProgressFrame {
   pause_reason?: string;
   retry_reason?: string;
   session_id?: string;
+  /** node_complete's step credit total; absent on every other frame. */
+  credits?: number;
 }
 
 /** Rebuild `node`'s subtree with the addressed descendant patched, or `undefined` when this tree
@@ -666,6 +701,7 @@ function patchedLeaf(
   const sessionId = nonEmpty(p.session_id);
   const pauseReason = nonEmpty(p.pause_reason);
   const retryReason = nonEmpty(p.retry_reason);
+  const credits = p.credits !== undefined && p.credits > 0 ? p.credits : undefined;
   // A frame that is not a retry wait ends one: KAS re-sends node_start after the wait.
   const retryEnds = retryReason === undefined && node.retryReason !== undefined;
   const moved =
@@ -676,6 +712,7 @@ function patchedLeaf(
     (sessionId !== undefined && sessionId !== node.sessionId) ||
     (pauseReason !== undefined && pauseReason !== node.pauseReason) ||
     (retryReason !== undefined && retryReason !== node.retryReason) ||
+    (credits !== undefined && credits !== node.credits) ||
     retryEnds;
   if (!moved) {
     return node;
@@ -688,6 +725,7 @@ function patchedLeaf(
     ...(sessionId === undefined ? {} : { sessionId }),
     ...(pauseReason === undefined ? {} : { pauseReason }),
     ...(retryReason === undefined ? {} : { retryReason }),
+    ...(credits === undefined ? {} : { credits }),
   };
   if (retryEnds) {
     delete out.retryReason;

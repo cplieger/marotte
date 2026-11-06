@@ -146,6 +146,7 @@ import {
   initTurnActionsBodyProbe,
 } from "./messages-turn-actions.js";
 import { syncCodeReferences } from "./code-refs.js";
+import { truncate } from "./strings.js";
 import { syncRefusal, setRefusalRewindHandler } from "./refusal.js";
 
 // --- Public re-exports ---
@@ -1160,7 +1161,7 @@ function refreshToolTurn(session: Session, turnID: string | undefined): boolean 
  */
 function rewindConfirmation(target: EntryPrompt, discarded: readonly Turn[]): Confirmation {
   const promptRaw = target.text.trim().replace(/\s+/g, " ");
-  const prompt = promptRaw.length > 100 ? promptRaw.slice(0, 100) + "\u2026" : promptRaw;
+  const prompt = truncate(promptRaw, 101);
 
   // Count across every dropped turn: a revert discards all of them.
   const calls = discarded.flatMap((t) =>

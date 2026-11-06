@@ -147,3 +147,26 @@ func TestConcludeStopReason_AToolUseStopIsTheModelCallLimit(t *testing.T) {
 		t.Errorf("SeverityOf(%q) = %q, want broken: the step's work may be unfinished", got.Outcome, sev)
 	}
 }
+
+// A delegate is graded as the turn it ran: KAS reports every finished sub-agent `completed`.
+func TestDelegateStatus_GradesThroughTheTurnTable(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		status ToolStatus
+		stop   StopReason
+		want   ToolStatus
+	}{
+		{name: "no stop", status: ToolCompleted, want: ToolCompleted},
+		{name: "turn limit", status: ToolCompleted, stop: StopReasonMaxTurnRequests, want: ToolFailed},
+		{name: "refusal", status: ToolCompleted, stop: StopReasonRefusal, want: ToolFailed},
+		{name: "report cut off", status: ToolCompleted, stop: StopReasonMaxTokens, want: ToolCompleted},
+		{name: "an unknown stop", status: ToolCompleted, stop: "some_new_stop", want: ToolAborted},
+		{name: "already failed", status: ToolFailed, stop: StopReasonMaxTurnRequests, want: ToolFailed},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DelegateStatus(tt.status, tt.stop); got != tt.want {
+				t.Errorf("DelegateStatus(%q, %q) = %q, want %q", tt.status, tt.stop, got, tt.want)
+			}
+		})
+	}
+}

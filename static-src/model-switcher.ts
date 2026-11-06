@@ -23,7 +23,7 @@ import {
   retryCatalog,
   RETRY_LABEL,
 } from "./picker.js";
-import { makeExpandable, collapseAll } from "./pill-expand.js";
+import { makeExpandable, collapseAll, type Expandable } from "./pill-expand.js";
 import { bindLoadingState, transportAction, RETRY_STANDARD } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
 import { el, effect } from "@cplieger/ui";
@@ -167,7 +167,7 @@ class ModelSwitchController {
     // descendant selector, so it must not be wrapped.
     $.switchModelBtn.prepend(iconEl(ICON_MODEL));
     const expandContent = $.modelSwitchList;
-    makeExpandable($.switchModelBtn, expandContent, {
+    this.card = makeExpandable($.switchModelBtn, expandContent, {
       onExpand: () => {
         const session = getActive();
         this.draft =
@@ -274,6 +274,8 @@ class ModelSwitchController {
     });
     return btn;
   }
+
+  private card: Expandable | null = null;
 
   private modelNav: RovingFocusController | null = null;
 
@@ -446,6 +448,10 @@ class ModelSwitchController {
     opt.setAttribute("aria-selected", isCurrent ? "true" : "false");
   }
 
+  openCard(): void {
+    this.card?.open();
+  }
+
   /** `effort` is a switch's effort (PillCommand); `chatID` names the chat the pick was made on,
    *  defaulting to the active one. */
   requestModelSwitch(modelID: string, effort?: string, chatID?: string): void {
@@ -458,7 +464,7 @@ class ModelSwitchController {
     if (isEmpty) {
       // Local apply PLUS the command: every header echo carries the record, so a
       // local-only pick would be clobbered.
-      this.applyLocalChoice(modelID);
+      this.applyLocalChoice(modelID, session.id);
       this.fire(session.id, modelID, effort);
       return;
     }
@@ -466,8 +472,8 @@ class ModelSwitchController {
     this.fire(session.id, modelID, effort);
   }
 
-  private applyLocalChoice(modelID: string): void {
-    applyLocalModel(modelID);
+  private applyLocalChoice(modelID: string, chatID?: string): void {
+    applyLocalModel(modelID, chatID);
   }
 
   private fire(chatID: string, modelID: string, effort: string | undefined): void {
@@ -485,9 +491,14 @@ export function initModelSwitcher(): void {
   controller.init();
 }
 
-function applyLocalModel(modelID: string): void {
+/** Open the model pill's card. */
+export function openModelCard(): void {
+  controller.openCard();
+}
+
+function applyLocalModel(modelID: string, chatID?: string): void {
   setLastModel(modelID);
-  const session = getActive();
+  const session = chatID === undefined ? getActive() : get(chatID);
   if (session !== undefined) {
     // setModel replaces the session object; chat.ts's effect repaints from the new one.
     setModel(session.id, modelID);
@@ -496,7 +507,8 @@ function applyLocalModel(modelID: string): void {
 }
 
 /** The one door for a model pick from ANY surface, so an empty-chat pick
- *  persists on the record. */
-export function pickModel(modelID: string): void {
-  controller.requestModelSwitch(modelID);
+ *  persists on the record. `chatID` names the chat the pick was made on, defaulting to the
+ *  active one. */
+export function pickModel(modelID: string, chatID?: string): void {
+  controller.requestModelSwitch(modelID, undefined, chatID);
 }

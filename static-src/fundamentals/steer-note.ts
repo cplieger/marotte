@@ -7,7 +7,7 @@ import { el } from "@cplieger/ui";
 import { attachClamp } from "../clamp-text.js";
 import { selectableButton } from "../disclosure-row.js";
 import { iconEl } from "../icon-el.js";
-import { ICON_SEND, ICON_TAB_RUN, workflowIcon } from "../icons.js";
+import { ICON_SEND, ICON_TAB_CHAT, ICON_TAB_RUN, workflowIcon } from "../icons.js";
 import { absoluteTime } from "../relative-time.js";
 import { sentBy } from "../sent-by.js";
 import type { Caller, SteerOrigin, SteerReason } from "../types.js";
@@ -31,6 +31,12 @@ export interface SteerNoteData {
   lane?: string;
   /** A workflow message's far end in the launching chat's log: the step, by node id. */
   step?: string;
+  /** A peer message's far end: the other chat's name, "" when this client holds none. */
+  chatName?: string;
+  /** This chat sent the peer message, so the label says where it went. */
+  sent?: boolean;
+  /** Opens the other chat. Without it the label is plain text. */
+  onOpenChat?: () => void;
   /** The run the note came from, which groups a chat's workflow updates. */
   run?: string;
   /** What the run is called (the dock row's name), drawn before the step; set with `run`. */
@@ -64,7 +70,17 @@ const LABELS: Record<SteerOrigin, { read: string; dropped: string }> = {
     read: "Message to the main agent",
     dropped: "Message to the main agent not delivered",
   },
+  peer: {
+    read: "Message from another chat",
+    dropped: "Message from another chat not delivered",
+  },
 };
+
+/** A peer message names the other chat and which way it went. */
+function peerLabels(name: string, sent: boolean): { read: string; dropped: string } {
+  const read = `${sent ? "To" : "From"} ${name}`;
+  return { read, dropped: `${read}, not delivered` };
+}
 
 /** The launching chat's side of a workflow message, which names the step. */
 const STEP_LABELS: Record<"parent" | "step", (step: string) => { read: string; dropped: string }> =
@@ -89,6 +105,7 @@ const GLYPHS: Record<SteerOrigin, string> = {
   agent: ICON_TAB_RUN,
   parent: workflowIcon("message"),
   step: workflowIcon("message"),
+  peer: ICON_TAB_CHAT,
 };
 
 /** Lines the reader's own message shows before the opener appears. */
@@ -146,7 +163,7 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
   // The step and the times share one box the phone layout flows as text; the space is its break
   // point, and a flex or grid head renders none.
   const meta = el("span", { className: "steer-note-meta" });
-  meta.appendChild(el("span", { className: "steer-note-label" }, label));
+  meta.appendChild(labelEl(label, d.origin === "peer" ? d.onOpenChat : undefined));
   head.appendChild(meta);
   root.appendChild(head);
   if (d.sentAt !== undefined && d.sentAt > 0) {
@@ -173,6 +190,21 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
   body.appendChild(more);
   attachClamp(text, more, { lines: CLAMP_LINES });
   return root;
+}
+
+/** The note's label, a button that opens the other chat on a peer message the caller can open. */
+function labelEl(label: string, open: (() => void) | undefined): HTMLElement {
+  if (open === undefined) {
+    return el("span", { className: "steer-note-label" }, label);
+  }
+  const btn = el("button", {
+    type: "button",
+    className: "steer-note-label steer-note-chat",
+    "data-tooltip": "Open the chat",
+  });
+  btn.textContent = label;
+  btn.addEventListener("click", open);
+  return btn;
 }
 
 /** The run's name in front of the step. A button when the caller can open the run, text otherwise. */
@@ -252,6 +284,12 @@ function stamp(ms: number): HTMLElement {
 function baseLabels(d: SteerNoteData): { read: string; dropped: string } {
   if ((d.origin === "parent" || d.origin === "step") && d.step !== undefined && d.step !== "") {
     return STEP_LABELS[d.origin](d.step);
+  }
+  if (d.origin === "peer" && d.chatName !== undefined && d.chatName !== "") {
+    return peerLabels(d.chatName, d.sent === true);
+  }
+  if (d.origin === "peer" && d.sent === true) {
+    return { read: "Message to another chat", dropped: "Message to another chat not delivered" };
   }
   if (d.origin === "user" && d.caller !== undefined) {
     const by = sentBy(d.caller);

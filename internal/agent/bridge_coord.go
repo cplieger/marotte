@@ -1532,6 +1532,7 @@ func (bc *bridgeCoordinator) persistModelSwitch(ctx context.Context, chatID maro
 		}
 		mv.landOn(c)
 		c.Usage = marotte.Usage{ContextSize: contextSize}
+		c.ResetSpend()
 		return true
 	}); err != nil {
 		slog.Error("switch_model: persist model", "chat_id", chatID, "error", err)

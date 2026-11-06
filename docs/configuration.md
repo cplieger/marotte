@@ -89,13 +89,17 @@ kiro-cli's telemetry is a setting, not a variable: **kiro-cli telemetry** under 
 
 The agent engine's memory limit is a setting, not a variable: **Agent engine memory limit** under **Agent engine** on the **General** tab in **Settings**. Empty keeps kiro-cli's default, about 4 GB. A value is in MiB, from 1024 to 65536, and at most the container's memory limit minus 512 when the container has one. It bounds the engine's JavaScript heap only, not its native memory. A change applies after the agent engine restarts.
 
-marotte applies the limit through `NODE_OPTIONS`. A heap-size flag you set there gives way to the setting, and every other option in the variable is kept as written. A `NODE_OPTIONS` it cannot read, such as one with an unterminated quote, makes **Settings** refuse a limit until you fix the variable.
+With **High throughput optimizations** in use, marotte puts the limit on the command line of kiro-cli's own Node.js, beside the high throughput flags, and leaves `NODE_OPTIONS` as you set it. The MCP servers, hooks and workflow watch commands the engine starts then keep their own heap size. A heap-size flag you set in `NODE_OPTIONS` gives way to the setting.
+
+Without the optimizations, kiro-cli starts Node.js itself, so marotte applies the limit through `NODE_OPTIONS`. It does the same when your `NODE_OPTIONS` sets `--max-old-space-size-percentage`, which Node.js ranks above any heap size. The MCP servers, hooks and workflow watch commands the engine starts inherit `NODE_OPTIONS`, so a Node.js one then runs under the engine's limit too. Agent shell commands do not inherit it. In `NODE_OPTIONS`, a heap-size flag you set gives way to the setting, and every other option is kept as written. A `NODE_OPTIONS` marotte cannot read, such as one with an unterminated quote, makes **Settings** refuse a limit until you fix the variable.
 
 marotte checks the engine's memory use once a minute. The first time it reaches 80% of the limit in an engine start, marotte's log shows `engine memory high` with the figures. When the engine stops, its `engine exited` line shows `rss_peak_mib`, the most memory the engine used, and `heap_limit_mib`, the limit it ran with. With the setting empty, that is kiro-cli's default. If marotte cannot read that default, `heap_limit_mib` is 0, marotte's log says the default is unknown, and it does not log `engine memory high`.
 
 ## Debug logs
 
-**Debug logs** under **Experimental features** on the **General** tab in **Settings** writes more detailed logs for troubleshooting. marotte's own log, which `docker logs marotte` shows, switches at once. The agent engine's log, `kiro.log` in a folder per engine start under `/config/home/.kiro/logs/`, switches after the agent engine restarts. So does kiro-cli's own log, `/tmp/kiro-log/kiro-chat.log`, which then grows by about 11 KB at each engine start and about 1.4 MB a day while the engine is idle. The engine restarts by itself once no reply and no workflow is running.
+**Debug logs** under **Experimental features** on the **General** tab in **Settings** writes more detailed logs for troubleshooting. marotte's own log, which `docker logs marotte` shows, switches at once. The agent engine's log, `kiro.log` in a folder per engine start under `/config/home/.kiro/logs/`, switches after the agent engine restarts. So does kiro-cli's own log, `/tmp/kiro-log/kiro-chat.log`. The engine restarts by itself once no reply and no workflow is running.
+
+`/tmp/kiro-log/kiro-chat.log` also holds the agent engine's startup and console lines, Node.js warnings included, whatever **Debug logs** is set to; `docker logs marotte` does not show them. The lines that say why the engine died, such as a JavaScript heap out of memory, still reach `docker logs marotte`.
 
 ## High throughput optimizations
 

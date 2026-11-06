@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
 	"maps"
@@ -218,7 +217,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 // directory is checked against dirs at this GET.
 func handleSettingsGet(w http.ResponseWriter, dirs settings.AgentDirs, defaults kiroDefaultsReader) {
 	path := filepath.Join(dirs.Config, settings.Filename)
-	stored, err := readStoredSettings(path)
+	stored, err := settings.Stored(dirs.Config)
 	if err != nil {
 		slog.Warn("settings: serving defaults, stored config unreadable", "path", path, "error", logsafe.Field(err.Error()))
 		effective := settings.EffectiveDefaults()
@@ -257,48 +256,9 @@ func fillKiroDefaults(e *marotte.EffectiveSettings, defaults kiroDefaultsReader)
 	}
 }
 
-// maxSettingsBytes caps the existing settings file read+merged on PATCH so a
-// corrupt or runaway config can't pin memory.
-const maxSettingsBytes = 1 << 20
-
 // msgSettingsUnreadable is a settings write's answer when the stored file could not be read:
 // unreadable, and nothing was written over it.
 const msgSettingsUnreadable = "config.json could not be read, so your settings were not overwritten"
-
-// An ABSENT file is an empty map and nil error, every other fault an error. Shared mechanics with
-// the write, not its policy: settings.Update refuses an unreadable document, a read fails open.
-// OpenRegular because os.Open blocks forever on a FIFO and follows a final symlink.
-func readStoredSettings(path string) (map[string]json.RawMessage, error) {
-	// Absolute because OpenRegular requires it.
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return nil, err
-	}
-	f, info, err := filesafe.OpenRegular(abs)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return map[string]json.RawMessage{}, nil
-		}
-		return nil, err
-	}
-	defer func() { _ = f.Close() }()
-	if info.Size() > maxSettingsBytes {
-		return nil, fmt.Errorf("settings: %s is %d bytes, over the %d-byte cap", abs, info.Size(), maxSettingsBytes)
-	}
-	data := make([]byte, info.Size())
-	if _, err := io.ReadFull(f, data); err != nil {
-		return nil, err
-	}
-	existing := make(map[string]json.RawMessage)
-	if err := json.Unmarshal(data, &existing); err != nil {
-		return nil, err
-	}
-	// A top-level `null` unmarshals to a NIL map with no error, and maps.Copy onto nil panics.
-	if existing == nil {
-		return nil, fmt.Errorf("settings: %s contains a top-level null, not an object", abs)
-	}
-	return existing, nil
-}
 
 // patchRefusedError is a refusal found while merging, under settings.Update's lock; it answers 400.
 type patchRefusedError struct{ error }

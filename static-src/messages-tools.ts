@@ -13,6 +13,7 @@ import {
   syncClassifierMarks,
   buildToolCard,
   insertDiffPreview,
+  syncRestingDiff,
   expandToolDetails,
   applyOutcome,
   refreshToolDisclosure,
@@ -611,6 +612,7 @@ export function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: st
   if (tc.diffs !== undefined && tc.diffs.length > 0) {
     applyDiffUpdate(el, tc.diffs);
   }
+  syncRestingDiff(el, toolCardOptsFor(tc, true, chatID));
   syncOffloadLink(el, tc.offload);
   syncInteractionFact(el, tc.interaction);
   syncClassifierMarks(el, tc.classifier_approved === true, tc.classifier_note ?? "");

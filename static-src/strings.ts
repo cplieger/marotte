@@ -24,9 +24,17 @@ export function humanName(s: string): string {
   return s.replace(/[-_]/g, " ");
 }
 
-/** Truncate a string to `max` characters with an ellipsis (…). */
+/** The first `end` UTF-16 units of `s`, one fewer when the cut would split a surrogate pair, so the
+ *  result never ends in a lone high surrogate (drawn as U+FFFD). */
+export function cutAt(s: string, end: number): string {
+  const head = s.slice(0, end);
+  const last = head.charCodeAt(head.length - 1);
+  return head.length < s.length && last >= 0xd800 && last <= 0xdbff ? head.slice(0, -1) : head;
+}
+
+/** Truncate a string to at most `max` characters, the last an ellipsis (…). */
 export function truncate(s: string, max = 40): string {
-  return s.length > max ? s.slice(0, max - 3) + "\u2026" : s;
+  return s.length > max ? cutAt(s, max - 1) + "\u2026" : s;
 }
 
 /** A model's credit multiplier as `Nx`, or "" when the catalog carried none. `rate_multiplier` is
@@ -125,6 +133,12 @@ export function windowSpans(spans: readonly TextSpan[], kept: readonly KeptRange
     }
   }
   return out;
+}
+
+/** A positive credit figure for a reader. `toFixed(2)` alone renders a sub-cent charge as `0.00`,
+ *  contradicting the caller's `> 0` gate. */
+export function creditFigure(credits: number): string {
+  return credits < 0.005 ? "<0.01" : credits.toFixed(2);
 }
 
 /** A wall-clock span for a reader: tenths below a minute, whole seconds above, "0.0s" for zero

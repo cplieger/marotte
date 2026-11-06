@@ -483,7 +483,7 @@ func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeLaunchErr(w http.ResponseWriter, source string, err error) {
-	if writeStatusErr(w, err) {
+	if writeDefaultsErr(w, err) || writeStatusErr(w, err) {
 		return
 	}
 	if busy, ok := errors.AsType[*schedule.BusyError](err); ok {

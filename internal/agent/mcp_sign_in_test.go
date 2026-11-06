@@ -57,16 +57,18 @@ func awaitResets(t *testing.T, lane *fakeBridge, n int) {
 	}
 }
 
-// standingSignIn is the server whose sign-in stands in any view, "" when none does.
+// standingSignIn is the servers whose sign-ins stand in any view, sorted and comma-joined, "" when none does.
 func standingSignIn(h *Runtime) string {
 	h.mcpRegistry.mu.RLock()
 	defer h.mcpRegistry.mu.RUnlock()
+	var out []string
 	for _, v := range h.mcpRegistry.views {
-		if v.signIn != nil {
-			return v.signIn.server
+		for _, s := range v.signIns {
+			out = append(out, s.server)
 		}
 	}
-	return ""
+	slices.Sort(out)
+	return strings.Join(out, ",")
 }
 
 func rowOf(t *testing.T, h *Runtime, name string) mcpServerRuntime {
@@ -166,7 +168,7 @@ func TestSignIn_RefusesAServerAlreadySigningIn(t *testing.T) {
 		t.Fatalf("first sign-in = %d, want 202", code)
 	}
 	awaitResets(t, lane, 1)
-	h.mcpRegistry.anchorConsentURL(t.Context(), "https://provider.example/authorize?state=s", false)
+	h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: "https://provider.example/authorize?state=s", Server: "linear"}, false)
 
 	if code, body := postSignIn(h, "linear"); code != http.StatusConflict || !strings.Contains(body, errSignInInProgress.Error()) {
 		t.Errorf("second sign-in = %d %s, want 409 in progress", code, body)
@@ -187,23 +189,54 @@ func TestSignIn_RefusesAnUnknownServer(t *testing.T) {
 	}
 }
 
-// openExternalUrl names no server or session, so a second concurrent sign-in, in any session, would make its consent
-// page unattributable.
-func TestSignIn_OneSignInAcrossSessions(t *testing.T) {
-	h, lane := signInHub(t, "linear", "github")
-	if code, _ := postSignIn(h, "linear"); code != http.StatusAccepted {
-		t.Fatalf("first sign-in = %d, want 202", code)
+// openExternalUrl names its server, so two servers sign in at once even in one session, and each consent URL lands on
+// its own server's row.
+func TestSignIn_TwoServersSignInAtOnce(t *testing.T) {
+	h := newHubWithMCPConfig(t, enabledConfig("linear", "github"))
+	if !awaitEngine(h) {
+		t.Fatal("the engine never became ready")
 	}
+	lane := fakeSourceOf(t, h).lane
+	reportMCP(t, h, "sess-both", awaitingSignIn("linear", marotte.MCPSource{}), awaitingSignIn("github", marotte.MCPSource{}))
 
-	code, body := postSignIn(h, "github")
+	for _, server := range []string{"linear", "github"} {
+		if code, body := postSignIn(h, server); code != http.StatusAccepted {
+			t.Fatalf("%s's sign-in = %d %s, want 202", server, code, body)
+		}
+	}
+	awaitResets(t, lane, 2)
+	joinInflight(t, h)
 
-	if code != http.StatusConflict || !strings.Contains(body, errAnotherSignInStands.Error()) {
-		t.Errorf("second server's sign-in = %d %s, want 409 another sign-in stands", code, body)
+	if got := standingSignIn(h); got != "github,linear" {
+		t.Errorf("standing sign-ins = %q, want both", got)
+	}
+	for _, server := range []string{"github", "linear"} {
+		req := consentRequest{URL: "https://p.example/a?state=st-" + server, Server: server}
+		if shown := h.mcpRegistry.anchorConsentURL(t.Context(), req, false); shown.how != consentOnRow || shown.server != server {
+			t.Errorf("%s's consent URL = %+v, want on its own row", server, shown)
+		}
+	}
+	if code, body := postSignIn(h, "linear"); code != http.StatusConflict || !strings.Contains(body, errSignInInProgress.Error()) {
+		t.Errorf("a second sign-in for linear = %d %s, want 409 in progress", code, body)
+	}
+}
+
+// A consent URL KAS names another server for is never taken by the standing Sign in: it is a banner naming that
+// server, and the standing row keeps waiting for its own.
+func TestSignIn_ConsentURLForAnotherServerIsNotTakenByTheStandingSignIn(t *testing.T) {
+	h, lane := signInHub(t, "linear")
+	if code, _ := postSignIn(h, "linear"); code != http.StatusAccepted {
+		t.Fatalf("sign-in = %d, want 202", code)
 	}
 	awaitResets(t, lane, 1)
 	joinInflight(t, h)
-	if p := lane.paramsFor(methodV3MCPResetServer); p[keyServerName] != "linear" {
-		t.Errorf("reset sent for %v, want only linear's", p[keyServerName])
+
+	req := consentRequest{URL: "https://p.example/a?state=s", Server: "github", FlowID: "f1"}
+	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), req, true); shown.how != consentBanner {
+		t.Errorf("github's consent URL = %+v, want a banner", shown)
+	}
+	if row := rowOf(t, h, "linear"); row.OAuthURL != "" || standingSignIn(h) != "linear" {
+		t.Errorf("linear's row = %+v, want its Sign in standing with no consent URL", row)
 	}
 }
 
@@ -237,10 +270,10 @@ func TestSignIn_TheStandingSignInExpiresAtItsDeadline(t *testing.T) {
 	}
 
 	clock.advance(signInTTL - time.Second)
-	if code, _ := postSignIn(h, "github"); code != http.StatusConflict {
+	if code, _ := postSignIn(h, "linear"); code != http.StatusConflict {
 		t.Fatalf("sign-in a second before the deadline = %d, want 409", code)
 	}
-	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), "https://p.example/a?state=s", false); shown.how != consentOnRow || shown.server != "linear" {
+	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: "https://p.example/a?state=s", Server: "linear"}, false); shown.how != consentOnRow || shown.server != "linear" {
 		t.Errorf("a consent URL before the deadline = %+v, want on linear's row", shown)
 	}
 	reportMCP(t, h, sessionOf("linear"), awaitingSignIn("linear", marotte.MCPSource{}))
@@ -248,16 +281,16 @@ func TestSignIn_TheStandingSignInExpiresAtItsDeadline(t *testing.T) {
 		t.Fatalf("re-sign-in = %d, want 202", code)
 	}
 	clock.advance(signInTTL)
-	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), "https://p.example/a?state=s", false); shown.how != consentRefused {
+	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: "https://p.example/a?state=s", Server: "linear"}, false); shown.how != consentRefused {
 		t.Errorf("a consent URL after the deadline = %+v, want refused, not taken by an expired sign-in", shown)
 	}
 
-	if code, body := postSignIn(h, "github"); code != http.StatusAccepted {
+	if code, body := postSignIn(h, "linear"); code != http.StatusAccepted {
 		t.Errorf("sign-in after the deadline = %d %s, want 202", code, body)
 	}
 	awaitResets(t, lane, 3)
-	if got := standingSignIn(h); got != "github" {
-		t.Errorf("standing sign-in = %q, want github's", got)
+	if got := standingSignIn(h); got != "linear" {
+		t.Errorf("standing sign-in = %q, want linear's new one", got)
 	}
 }
 
@@ -456,7 +489,7 @@ func TestSignIn_AConnectingReportKeepsTheSignIn(t *testing.T) {
 		t.Fatalf("claimSignIn = %v", err)
 	}
 	const consent = "https://provider.example/authorize?state=s"
-	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), consent, false); shown.how != consentOnRow {
+	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: consent, Server: "linear"}, false); shown.how != consentOnRow {
 		t.Fatalf("anchorConsentURL = %+v, want on the standing sign-in's row", shown)
 	}
 
@@ -552,7 +585,7 @@ func TestSignIn_AnExpiredSignInReturnsItsServerToNeedsAuth(t *testing.T) {
 		t.Fatalf("sign-in = %d, want 202", code)
 	}
 	awaitResets(t, lane, 1)
-	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), "https://provider.example/authorize?state=s", false); shown.how != consentOnRow {
+	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: "https://provider.example/authorize?state=s", Server: "linear"}, false); shown.how != consentOnRow {
 		t.Fatalf("anchorConsentURL = %+v, want on the standing sign-in's row", shown)
 	}
 	if row := rowOf(t, h, "linear"); row.State != mcpStateSigningIn {
@@ -584,7 +617,7 @@ func TestSignIn_TheDeadlineEndsTheSignInWithNoFrame(t *testing.T) {
 			t.Fatalf("sign-in = %d, want 202", code)
 		}
 		awaitResets(t, lane, 1)
-		if shown := h.mcpRegistry.anchorConsentURL(t.Context(), "https://provider.example/authorize?state=s", false); shown.how != consentOnRow {
+		if shown := h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: "https://provider.example/authorize?state=s", Server: "linear"}, false); shown.how != consentOnRow {
 			t.Fatalf("anchorConsentURL = %+v, want on the standing sign-in's row", shown)
 		}
 		before := h.bus.fanout.Position().Head
@@ -616,7 +649,7 @@ func TestOpenExternalURL_ClaimedBySignInRecordsTheAnchor(t *testing.T) {
 	}
 	before := h.bus.fanout.Position().Head
 
-	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, 21, consent))
+	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, 21, "theirs", consent))
 
 	answer := awaitLaneAnswer(t, lane, 21)
 	joinInflight(t, h)
@@ -737,7 +770,7 @@ func TestSignIn_AnEarlierAttemptsLateFailureLeavesTheNextOneAlone(t *testing.T) 
 	if row := rowOf(t, h, "linear"); row.State != mcpStateOAuth || row.Error != "" {
 		t.Errorf("row = %+v, want it waiting for the second sign-in, not failed", row)
 	}
-	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), "https://provider.example/authorize?state=s2", false); shown.how != consentOnRow || shown.server != "linear" {
+	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), consentRequest{URL: "https://provider.example/authorize?state=s2", Server: "linear"}, false); shown.how != consentOnRow || shown.server != "linear" {
 		t.Errorf("the second attempt's consent URL = %+v, want on linear's row", shown)
 	}
 }

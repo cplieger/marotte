@@ -1150,6 +1150,19 @@ describe("a delegate card's status follows its invocation CALL", () => {
     expect(head.getAttribute("aria-label")).toContain("failed");
   });
 
+  it("says why a delegate stopped when its settle carries a stop", () => {
+    const call = toolCall("tool-sub-A", {
+      title: "Sub-agent: sub-A",
+      agent_subtask_id: "sub-A",
+      status: "in_progress",
+    });
+    const r = render([callEntry("t", 1, call)]);
+    const head = cardOf(r).querySelector(".subagent-header") as HTMLElement;
+    const sig = ensureToolCallSig(CHAT_ID, "tool-sub-A", call);
+    sig.value = { ...call, status: "failed", delegate_stop: "max_turn_requests" };
+    expect(head.getAttribute("aria-label")).toMatch(/failed, stopped at its turn limit$/);
+  });
+
   // kiro-cli no longer reads `inlineAgent`, so its input marks nothing on the card.
   it("shows no inline mark or model for an inlineAgent input", () => {
     const r = render([

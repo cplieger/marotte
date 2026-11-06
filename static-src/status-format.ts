@@ -18,5 +18,5 @@ export function formatMetering(v: number): string {
   if (Number.isInteger(v)) {
     return String(v);
   }
-  return v.toFixed(2);
+  return v > 0 && v < 0.005 ? "<0.01" : v.toFixed(2);
 }

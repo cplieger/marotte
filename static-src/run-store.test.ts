@@ -230,6 +230,70 @@ describe("the reply's read position travels beside the state", () => {
   });
 });
 
+describe("a step's credits", () => {
+  afterEach(() => {
+    store.forgetRun("cr");
+  });
+
+  it.each([
+    [
+      "the credit unit, named or not, summed",
+      [{ usage: 0.5 }, { usage: 0.25, unit: "credit" }, { usage: 7, unit: "token" }],
+      0.75,
+    ],
+    ["a string", "x", undefined],
+    ["a usage that is not a number", [{ usage: "1" }], undefined],
+    ["an empty array", [], undefined],
+    ["a zero total", [{ usage: 0, unit: "credit" }], undefined],
+  ])("decodes %s from an inspect read", async (_label, credits, want) => {
+    responses = [
+      {
+        workflowId: "cr",
+        status: "completed",
+        root: {
+          nodeId: "cr",
+          type: "sequence",
+          status: "completed",
+          children: [{ nodeId: "build", type: "step", status: "completed", credits }],
+        },
+      },
+    ];
+    store.invalidateRun("cr");
+    await settle();
+    expect(store.peekRunState("cr")?.root?.children?.[0]?.credits).toBe(want);
+  });
+
+  it("lands a node_complete frame's credits without a refetch", async () => {
+    responses = [
+      {
+        workflowId: "cr",
+        status: "running",
+        root: {
+          nodeId: "cr",
+          type: "sequence",
+          status: "running",
+          children: [step("build", { status: "completed", endedAt: "2026-11-06T10:00:00Z" })],
+        },
+      },
+    ];
+    store.invalidateRun("cr");
+    await settle();
+    fetches.length = 0;
+    expect(
+      store.applyRunProgress({
+        workflow_id: "cr",
+        node_path: ["cr", "build"],
+        status: "completed",
+        ended_at: "2026-11-06T10:00:00Z",
+        credits: 2,
+      }),
+    ).toBe(true);
+    // Every other field equals the cached node, so only the credits moved it.
+    expect(store.peekRunState("cr")?.root?.children?.[0]?.credits).toBe(2);
+    expect(fetches).toEqual([]);
+  });
+});
+
 describe("the reply's auto_resume_stopped_at travels beside the state", () => {
   it.each([
     ["a timestamp", "2026-11-04T09:00:00Z", "2026-11-04T09:00:00Z"],

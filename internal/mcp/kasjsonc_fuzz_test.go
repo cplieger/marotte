@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"maps"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/userjson"
 )
 
 // A write that changes nothing reproduces the file, and a write of marotte's keys leaves a file
@@ -32,7 +34,7 @@ func FuzzKASDoc_patchKeepsOtherMembers(f *testing.F) {
 			if err != nil {
 				t.Fatalf("render unchanged: %v", err)
 			}
-			body, _ := decodeUserJSON([]byte(data))
+			body := userjson.Body([]byte(data))
 			if got := string(out); got != string(body) && got != string(body)+"\n" {
 				t.Fatalf("an unchanged write rewrote the file:\n%q\nto\n%q", body, got)
 			}
