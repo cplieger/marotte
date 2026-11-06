@@ -1680,9 +1680,9 @@ func retryFailed(t *testing.T, h *Runtime) error {
 	return err
 }
 
-// A person's retry of a run its rule abandoned is the person's: a manual lease replaces the triggered one before the
-// verb, its run_start confirms nothing, and a restart finds no triggered lease to cancel. A failed hand-back refuses
-// the retry and keeps the triggered lease.
+// A person's retry of a run its rule abandoned is the person's, whether or not the cancel already released the
+// triggered lease: a manual lease is held before the verb, its run_start confirms nothing, and a restart finds no
+// triggered lease to cancel. A failed hand-back refuses the retry and leaves the lease as it was.
 func TestRetryOfAbandonedRunTakesRetryLease(t *testing.T) {
 	t.Run("handed back", func(t *testing.T) {
 		dir := t.TempDir()
@@ -1733,6 +1733,43 @@ func TestRetryOfAbandonedRunTakesRetryLease(t *testing.T) {
 		}
 		if l, held := h.runs.lease("wf_1"); !held || l.Origin != runlease.OriginTriggered || l.RuleID != "rule-1" {
 			t.Errorf("lease = %+v held %v, want the triggered lease untouched", l, held)
+		}
+	})
+	t.Run("handed back after the cancel released the lease", func(t *testing.T) {
+		fc := &fakeConfirmer{retried: true}
+		h, br := triggeredRetryHub(t, fc, t.TempDir())
+		if !h.runs.claimTermination("wf_1") {
+			t.Fatal("the fixture could not take the claim the landed cancel held")
+		}
+		h.runs.ReleaseTriggered(t.Context(), "wf_1")
+
+		if err := retryFailed(t, h); err != nil {
+			t.Fatalf("retry: %v", err)
+		}
+		if n := fc.count("Retried wf_1"); n != 1 {
+			t.Errorf("Retried called %d times, want 1: the abandoned record outlives the released lease", n)
+		}
+		if !br.called(methodKiroWorkflowRetry) {
+			t.Error("the retry verb was not sent")
+		}
+		if l, held := h.runs.lease("wf_1"); !held || l.Origin != runlease.OriginManual || l.RuleID != "" {
+			t.Errorf("lease = %+v held %v, want a manual lease naming no rule", l, held)
+		}
+	})
+	t.Run("hand-back refused with no lease held", func(t *testing.T) {
+		errWrite := errors.New("could not write launch-state/rule-1.json")
+		fc := &fakeConfirmer{retriedErr: errWrite}
+		h, br := triggeredRetryHub(t, fc, t.TempDir())
+		h.runs.ReleaseTriggered(t.Context(), "wf_1")
+
+		if err := retryFailed(t, h); !errors.Is(err, errWrite) {
+			t.Errorf("retry err = %v, want the confirmer's write error", err)
+		}
+		if br.called(methodKiroWorkflowRetry) {
+			t.Error("the retry verb was sent after the hand-back failed")
+		}
+		if l, held := h.runs.lease("wf_1"); held {
+			t.Errorf("lease = %+v, want none minted for a refused retry", l)
 		}
 	})
 }

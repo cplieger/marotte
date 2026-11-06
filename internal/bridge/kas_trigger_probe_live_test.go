@@ -29,8 +29,8 @@ const (
 	probeResumeBy = 3 * time.Minute
 )
 
-// probeRecipeJSON has example 1's shape (declared inputs, a parallel over a watch) with a command watch that
-// prints "idle" and polls every ten minutes, so a run stays running, spends no model credits and never ends itself.
+// probeRecipeJSON is a parallel over one command watch that prints "idle" and polls every ten minutes, so a run
+// stays running, spends no model credits and never ends itself.
 const probeRecipeJSON = `{
   "name": "trigger-probe",
   "description": "A run that parks on a command watch until it is cancelled.",

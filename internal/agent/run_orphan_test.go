@@ -294,6 +294,10 @@ func TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned(t *testing.T) {
 	if _, held := h.runs.lease("wf_1"); held {
 		t.Error("the cleared orphan kept its lease, so the recipe still reads as marotte's own")
 	}
+	// A cancelled paused run sends no run_complete, so the sweep itself must drop the claim.
+	if !h.runs.claimTermination("wf_1") {
+		t.Error("the cleared orphan's termination claim outlived it")
+	}
 }
 
 // TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow pins that the schedule must stop reading "started".

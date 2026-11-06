@@ -411,7 +411,8 @@ func (rs *Runs) CancelAbandoned(ctx context.Context, workflowID string) error {
 		return nil
 	})
 	if _, held := rs.lease(workflowID); err == nil && !held {
-		// No run_complete follows a never-invoked run's cancel, so nothing else drops its claim.
+		// releaseIfOver returns at once when no lease is held, so a landed cancel whose lease is already gone has
+		// nobody else to drop its claim.
 		rs.forgetBounds(cctx, workflowID)
 	}
 	return err
@@ -711,12 +712,12 @@ func (rs *Runs) leaseForRetry(
 	return true
 }
 
-// handBackAbandoned gives a person's retry of a run its rule abandoned a manual lease: the triggered lease and its
-// bounds go, so a restart finds no lease naming the rule's queued event and cancels nothing. An error refuses the retry with the
-// lease untouched.
+// handBackAbandoned reports every retry to the confirmer, whatever lease is held: an abandoned record outlives the
+// triggered lease once its cancel lands (ReleaseTriggered), and left behind it would read the person's retry as the
+// rule's unfinished cancel. true drops the triggered lease and its bounds, so the retry is leased as the person's and
+// a restart cancels nothing; an error refuses the retry with the lease untouched.
 func (rs *Runs) handBackAbandoned(ctx context.Context, workflowID string) error {
-	l, held := rs.lease(workflowID)
-	if !held || l.RuleID == "" || rs.confirmer == nil {
+	if rs.confirmer == nil {
 		return nil
 	}
 	abandoned, err := rs.confirmer.Retried(workflowID)
