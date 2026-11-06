@@ -438,6 +438,37 @@ describe("the run bar box's cap", () => {
     expect(getComputedStyle(list).scrollSnapType, "a wheel scrolls freely").toBe("none");
   });
 
+  for (const [w, h] of [
+    [1024, 768],
+    [1366, 1024],
+    [820, 1180],
+    [390, 844],
+  ] as const) {
+    it(`ends a long list on a whole run in touch mode at ${String(w)}x${String(h)}`, async () => {
+      await browser.viewport(w, h);
+      style = mountAppCSS();
+      document.documentElement.setAttribute("data-pointer", "coarse");
+      const { box, rows } = mount(14, true, Math.min(1000, w - 16));
+      await settle();
+      const list = box.querySelector<HTMLElement>(".run-bar")!;
+      expect(list.scrollHeight, "more runs than the cap shows").toBeGreaterThan(list.clientHeight);
+      const cap = (w <= 768 ? 0.5 : 0.25) * h;
+      expect(box.getBoundingClientRect().height - chromeOf(box)).toBeLessThanOrEqual(cap + 0.5);
+      const clip = list.getBoundingClientRect();
+      const shown = rows.filter((r) => r.getBoundingClientRect().top < clip.bottom - 0.5);
+      expect(shown.length, "a run shows").toBeGreaterThan(0);
+      for (const r of shown) {
+        const glyph = r.querySelector(".run-bar-glyph")!.getBoundingClientRect();
+        expect(r.getBoundingClientRect().bottom, "every run shown is whole").toBeLessThanOrEqual(
+          clip.bottom + 0.5,
+        );
+        expect(glyph.bottom, "its status square inside the clip").toBeLessThanOrEqual(
+          clip.bottom + 0.5,
+        );
+      }
+    });
+  }
+
   it("keeps the fold row in view while a long list scrolls", async () => {
     await browser.viewport(360, 740);
     style = mountAppCSS();

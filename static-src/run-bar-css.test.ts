@@ -458,7 +458,8 @@ describe("the run bar's box", () => {
       try {
         const bar = mountRows([...SEVEN, ...SEVEN], true, 344);
         expect(bar.scrollHeight).toBeGreaterThan(bar.clientHeight);
-        // The cap is the box's content: the fold row, its gap and the list together.
+        // The cap is the box's content: the fold row, its gap and the list together, ending on a
+        // whole run, so it falls short of half the viewport by less than one run's pitch.
         const box = bar.parentElement!;
         const cs = getComputedStyle(box);
         const chrome =
@@ -466,7 +467,11 @@ describe("the run bar's box", () => {
           parseFloat(cs.paddingBottom) +
           parseFloat(cs.borderTopWidth) +
           parseFloat(cs.borderBottomWidth);
-        expect(box.getBoundingClientRect().height - chrome).toBeCloseTo(0.5 * 740, 0);
+        const rows = bar.querySelectorAll(":scope > li");
+        const pitch = rows[1]!.getBoundingClientRect().top - rows[0]!.getBoundingClientRect().top;
+        const content = box.getBoundingClientRect().height - chrome;
+        expect(content).toBeLessThanOrEqual(0.5 * 740 + 0.5);
+        expect(content).toBeGreaterThan(0.5 * 740 - pitch);
       } finally {
         document.documentElement.removeAttribute("data-pointer");
         host.remove();

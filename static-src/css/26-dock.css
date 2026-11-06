@@ -1103,24 +1103,49 @@
   /* The gap between runs, and under an open fold row. */
   --run-row-gap: var(--sp-05);
 
+  /* The stacked fold row's painted height; its ::after reaches the rest of the floor. */
+  --run-fold-h: calc(var(--hit-floor) - var(--run-row-gap) - var(--stack-in) - var(--stack-gap));
+
   &:has(> .run-bar.hidden) {
     display: none;
   }
 }
 
 /* Touch takes the two-line rows below at every width: a row is 44px under a finger, and one
-   padded line leaves that height empty. */
+   padded line leaves that height empty. The list, not the box, carries the cap there (below),
+   so a fold row an engine draws a pixel taller never cuts the last run. */
 :where(:root[data-pointer="coarse"]) .run-bar-host {
   --run-stack: 1;
+  --run-row-h: 2.875rem;
+
+  max-block-size: none;
 }
 
-/* A fling over a capped list that stops near a row's start settles on that start. Touch only: a
-   wheel's small steps would snap back. */
+/* The list ends on a whole run: the room the box's cap leaves under the fold row, rounded down to
+   a number of rows. A fling that stops near a row's start settles on that start, so a scrolled
+   list shows whole runs too. Touch only: a wheel's small steps would snap back. */
 :where(:root[data-pointer="coarse"]) .run-bar {
+  --run-room: var(--run-cap);
+
+  max-block-size: calc(
+    round(down, var(--run-room) + var(--run-row-gap), var(--run-row-h) + var(--run-row-gap)) -
+      var(--run-row-gap)
+  );
   scroll-snap-type: y proximity;
+
+  .run-bar-fold:not([hidden]) + & {
+    --run-room: calc(var(--run-cap) - var(--run-fold-h) - var(--run-row-gap));
+  }
 
   & > li {
     scroll-snap-align: start;
+  }
+
+  /* A token height, never the sum of a `normal` line box, which differs by engine and font: the
+     cap counts rows by it. The title's line takes what the second line leaves. */
+  & > li > .run-bar-open {
+    block-size: calc(var(--run-row-h) + var(--row-top, var(--sp-1)) - var(--sp-1));
+    grid-template-rows: minmax(0, 1fr) calc(var(--fs-sm) * 1.35);
   }
 }
 
@@ -1384,9 +1409,7 @@
      the row gap; the first row stacks above it. The box keeps what the floor needs past those
      two reaches. */
   .run-bar-toggle {
-    min-block-size: calc(
-      var(--hit-floor) - var(--run-row-gap) - var(--stack-in) - var(--stack-gap)
-    );
+    min-block-size: var(--run-fold-h);
     padding-block: calc(var(--run-air) - 1.5px) calc(var(--run-air) - 0.5px);
 
     &::after {
