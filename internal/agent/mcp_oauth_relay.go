@@ -195,7 +195,7 @@ func validateRelayAddress(pasted, authURL string) (*url.URL, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := validateCallbackQuery(u.RawQuery); err != nil {
+	if _, err = validateCallbackQuery(u.RawQuery); err != nil {
 		return nil, err
 	}
 

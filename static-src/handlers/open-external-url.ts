@@ -1,6 +1,6 @@
-// KAS opens a sign-in page no Sign in started (a mid-session re-auth). The URL names no chat or server, so every
-// page shows it. An SSE event is no user gesture, so window.open() would be popup-blocked: a banner with a link,
-// http/https only, and the paste box for a callback the browser cannot reach.
+// KAS opens a sign-in page no standing Sign in took (a mid-session re-auth, or a URL after the Sign in's own). The
+// URL names no chat or server, so every page shows it. An SSE event is no user gesture, so window.open() would be
+// popup-blocked: a banner with a link, http/https only, and the paste box for a callback the browser cannot reach.
 
 import { onSSE } from "../bus.js";
 import { clearBannerCodes, GLOBAL_BANNER, showBanner } from "../banner-stack.js";
