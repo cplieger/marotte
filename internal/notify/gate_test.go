@@ -35,6 +35,9 @@ func TestGate_Authorize(t *testing.T) {
 		if ok || w.Code != http.StatusUnauthorized {
 			t.Fatalf("ok=%v code=%d, want refused 401", ok, w.Code)
 		}
+		if got := w.Header().Get("WWW-Authenticate"); got != "Bearer" {
+			t.Errorf("WWW-Authenticate = %q, want Bearer", got)
+		}
 		if !strings.Contains(w.Body.String(), TokenEnv) {
 			t.Errorf("body %q does not name %s", w.Body.String(), TokenEnv)
 		}

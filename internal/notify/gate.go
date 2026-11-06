@@ -51,6 +51,7 @@ func (g Gate) On() bool { return g.on }
 // to a scoped key.
 func (g Gate) authorize(w http.ResponseWriter, r *http.Request) bool {
 	if !g.on {
+		w.Header().Set("WWW-Authenticate", "Bearer") // RFC 9110 section 15.5.2: every 401 carries it.
 		httpserver.WriteJSONStatus(w, http.StatusUnauthorized, httpserver.ErrorResponse{
 			Error: "notify is off: set " + TokenEnv + " (or " + TokenEnv + "_FILE) to enable it",
 		})
