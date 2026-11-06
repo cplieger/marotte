@@ -169,6 +169,13 @@ describe("the New button", () => {
     sync("skills");
     expect(document.querySelector(".docs-new-popover")).toBeNull();
   });
+
+  it("keeps announcing itself as a dialog trigger after the form closes", () => {
+    openForm("steering");
+    sync("skills");
+    expect(button()?.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(button()?.getAttribute("aria-expanded")).toBe("false");
+  });
 });
 
 describe("a file kind's form", () => {

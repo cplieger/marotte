@@ -97,6 +97,17 @@
   border-radius: var(--r);
   overflow: hidden;
 
+  /* The hooks badge is a button, so it cannot sit inside the header's `role="button"`: it takes a column of its own
+     beside the header, and the body spans both. Before `[hidden]` below, which must win the tie. */
+  &.tool-group-has-hooks {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+
+    & > .tool-group-body {
+      grid-column: 1 / -1;
+    }
+  }
+
   /* The `display` above beats the UA's `[hidden]`; a group whose every member is hidden is. */
   &[hidden] {
     display: none;
@@ -213,19 +224,31 @@
   padding-block: calc((var(--row-first-line) - 1lh) / 2);
 }
 
-/* The hooks folded out of the rows: the fish-hook glyph and their count, after the summary.
-   Text, not a control: the header row is the target. */
-.tool-group-header > .tool-group-hooks {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: var(--sp-1);
-  margin-inline-start: auto;
-  padding-block: calc((var(--row-first-line) - 1lh) / 2);
-  color: var(--c-text-tertiary);
+/* The hooks folded out of the rows: the fish-hook glyph and their count, in the header row's last column. A button
+   that opens the list of those hooks. Its first line centres in the same one-line box the header's glyphs use. */
+.tool-group-hooks {
+  --row-first-line: calc(var(--row-tap) - 2 * var(--sp-2));
 
-  & > .tool-group-hooks-icon {
+  appearance: none;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-1);
+  min-block-size: var(--row-tap);
+  min-inline-size: var(--row-tap);
+  padding: var(--sp-2) 0.75rem;
+  border: 0;
+  background: transparent;
+  color: var(--c-text-tertiary);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+
+  & > .tool-group-hooks-icon,
+  & > .tool-group-hooks-n {
     display: inline-flex;
+    align-items: center;
+    block-size: var(--row-first-line);
   }
 
   & svg {
@@ -235,13 +258,38 @@
   }
 }
 
-/* The folded hooks, listed when the group is open: one row each, its name and its hook
-   file's chip, in the member rows' column. */
+@media (any-hover: hover) {
+  .tool-group-hooks:hover {
+    color: var(--c-text-primary);
+    background: var(--c-hover);
+  }
+}
+
+/* The list the hooks badge opens: one row per hook, its run count, its name and its hook file's chip. */
+.tool-hook-popover {
+  min-inline-size: 16rem;
+  max-inline-size: min(28rem, calc(100vw - 1rem));
+  max-block-size: 60dvh;
+  overflow-y: auto;
+  padding: var(--sp-1);
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  box-shadow:
+    var(--shadow-ambient),
+    0 8px 24px oklch(0% 0 none / 30%);
+  font-size: var(--fs-sm);
+
+  /* Focus lands on the panel itself so Escape and Tab work from the first key; it is no control. */
+  &:focus-visible {
+    outline: none;
+  }
+}
+
 .tool-hook-list {
   margin: 0;
   padding: 0;
   list-style: none;
-  border-top: 1px solid color-mix(in srgb, var(--c-border) 55%, transparent);
 }
 
 .tool-hook-item {
@@ -250,21 +298,39 @@
   gap: var(--sp-2);
   min-height: var(--row-tap-sm);
   padding-block: var(--sp-1);
-  padding-inline: calc(0.75rem + var(--tool-chev-box) + var(--sp-2)) 0.75rem;
+  padding-inline: 0.75rem;
   min-width: 0;
-  font-size: var(--fs-sm);
   color: var(--c-text-secondary);
 
   /* Read by `.tool-file-link`, which `.tool-header` otherwise declares it for. */
   --tool-chev-box: 1.5rem;
   --tool-badge-h: calc(var(--btn-h) - 2 * var(--sp-2));
 
-  & > .tool-title {
+  & > .tool-hook-count {
+    flex: none;
+    min-inline-size: 2.5ch;
+    color: var(--c-text-tertiary);
+    font-variant-numeric: tabular-nums;
+    text-align: end;
+  }
+
+  & > .tool-hook-text {
+    display: flex;
     flex: 1 1 auto;
+    flex-direction: column;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+
+    & > .tool-title,
+    & > .tool-hook-trigger {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    & > .tool-hook-trigger {
+      color: var(--c-text-tertiary);
+      font-size: var(--fs-xs);
+    }
   }
 }
 

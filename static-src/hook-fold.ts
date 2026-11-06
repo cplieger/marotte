@@ -1,12 +1,8 @@
-// Which hook cards a reader sees: a row, folded into its tool group's header badge, or hidden. The one owner of
+// Which hook cards a reader sees: a row, folded into its tool group's hooks badge, or hidden. The one owner of
 // that decision; every hook visibility question routes here. internal/chat/hook_visibility.go is its server twin, so
-// find-in-chat counts no hook this hides.
+// find-in-chat counts no hook this hides. DOM-free at import: block-window.ts reads it under Node, so the badge
+// and its popover live in hook-badge.ts.
 
-import { el } from "@cplieger/ui";
-import { CHROME_ATTR } from "./chrome-attr.js";
-import { iconEl } from "./icon-el.js";
-import { fileIcon, toolIcon } from "./icons.js";
-import { kindNoun } from "./tool-kind-noun.js";
 import type { ToolStatus } from "./types.js";
 
 /** The fields of a settled hook call the rules read. */
@@ -46,6 +42,12 @@ export function hookQuiet(call: HookFacts): boolean {
   return call.status === "completed" && (call.output ?? "").trim() === "";
 }
 
+/** Whether a hook run is part of what the chat counts: every run while hook status shows, else only those that failed
+ *  or printed. A quiet hook that a refused group keeps as a row is not counted: the ledger cannot see the group. */
+export function hookCounted(call: HookFacts, showStatus: boolean): boolean {
+  return showStatus || !hookQuiet(call);
+}
+
 /** A hook that gates one tool call. An unresolved trigger is not one. */
 export function isToolTriggerHook(call: HookFacts): boolean {
   return call.hook_trigger === "PreToolUse" || call.hook_trigger === "PostToolUse";
@@ -67,6 +69,7 @@ export function stampHookCard(card: HTMLElement, call: Partial<HookFacts>): void
     card.dataset["hookPrinted"] = "1";
   }
   if (call.hook_trigger !== undefined) {
+    card.dataset["hookTrigger"] = call.hook_trigger;
     card.toggleAttribute("data-hook-gates", isToolTriggerHook(call as HookFacts));
   }
 }
@@ -118,106 +121,4 @@ function hookFate(c: HTMLElement, refused: boolean, hasWork: boolean): "row" | "
     return "hidden";
   }
   return hasWork ? "folded" : "row";
-}
-
-/** Paint the header's fish-hook badge for n folded hooks, absent at zero. */
-export function syncHookBadge(header: HTMLElement, n: number): void {
-  let badge = header.querySelector<HTMLElement>(":scope > .tool-group-hooks");
-  if (n === 0) {
-    badge?.remove();
-    return;
-  }
-  if (badge === null) {
-    badge = el(
-      "span",
-      { className: "tool-group-hooks", [CHROME_ATTR]: "" },
-      el(
-        "span",
-        { className: "tool-group-hooks-icon", "aria-hidden": "true" },
-        iconEl(toolIcon({ kind: "hook", toolName: "" })),
-      ),
-      el("span", { className: "tool-group-hooks-n", "aria-hidden": "true" }),
-      el("span", { className: "sr-only" }),
-    );
-    header.appendChild(badge);
-  }
-  const count = String(n);
-  const visible = badge.querySelector(".tool-group-hooks-n");
-  if (visible !== null && visible.textContent !== count) {
-    visible.textContent = count;
-  }
-  const spoken = `, ${count} ${kindNoun("hook", n)} ran`;
-  const name = badge.querySelector(".sr-only");
-  if (name !== null && name.textContent !== spoken) {
-    name.textContent = spoken;
-  }
-}
-
-/** List the folded hooks as the body's last child, each with its hook file's chip; absent with none. Rebuilt only
- *  when the folded set changes, so a focused chip keeps its focus. */
-export function syncHookList(body: HTMLElement, folded: readonly HTMLElement[]): void {
-  let list = body.querySelector<HTMLElement>(":scope > .tool-hook-list");
-  if (folded.length === 0) {
-    list?.remove();
-    return;
-  }
-  const keys = folded.map((c) => c.dataset["toolId"] ?? "").join("\n");
-  list ??= el("ul", { className: "tool-hook-list", "aria-label": "Hooks that ran" });
-  if (list.dataset["keys"] !== keys) {
-    list.dataset["keys"] = keys;
-    list.replaceChildren(...folded.map(hookItem));
-  }
-  if (list.parentElement !== body || list.nextElementSibling !== null) {
-    body.appendChild(list);
-  }
-}
-
-function hookItem(card: HTMLElement): HTMLElement {
-  const title = card.dataset["title"] ?? "";
-  const item = el(
-    "li",
-    { className: "tool-hook-item", "data-hook-for": card.dataset["toolId"] ?? "" },
-    el(
-      "span",
-      { className: "tool-icon is-ok", "aria-hidden": "true" },
-      iconEl(toolIcon({ kind: "hook", toolName: "" })),
-    ),
-    el("span", { className: "tool-title" }, title),
-  );
-  const path = card.dataset["filePath"] ?? "";
-  const name = card.dataset["filename"] ?? "";
-  if (path !== "") {
-    const chip = el(
-      "button",
-      {
-        type: "button",
-        className: "tool-file-link",
-        "data-path": path,
-        "data-tooltip": path,
-        "aria-label": `Open the hook file ${name}`,
-      },
-      el("span", { className: "tool-file-icon" }, iconEl(fileIcon(name, false))),
-      el("span", { className: "tool-file-name" }, name),
-    );
-    // The folded card's own chip owns what a hook file opens.
-    chip.addEventListener("click", (e: Event) => {
-      e.stopPropagation();
-      card.querySelector<HTMLElement>(".tool-file-link")?.click();
-    });
-    item.appendChild(chip);
-  }
-  return item;
-}
-
-/** The list item standing for a folded hook card, where find-in-chat lands a hit on that card. */
-export function foldedHookItem(card: HTMLElement): HTMLElement | null {
-  if (!card.hasAttribute("data-hook-folded")) {
-    return null;
-  }
-  const id = CSS.escape(card.dataset["toolId"] ?? "");
-  return (
-    card
-      .closest(".tool-group")
-      ?.querySelector<HTMLElement>(`.tool-hook-list > li[data-hook-for="${id}"]`) ?? null
-  );
 }

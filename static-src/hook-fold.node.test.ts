@@ -2,7 +2,7 @@
 // is dropped at the entry when Show hook status is off.
 
 import { describe, it, expect } from "vitest";
-import { hookQuiet, hookRenders, isToolTriggerHook } from "./hook-fold.js";
+import { hookCounted, hookQuiet, hookRenders, isToolTriggerHook } from "./hook-fold.js";
 import type { ToolCall } from "./types.js";
 
 function hook(over: Partial<ToolCall> = {}): ToolCall {
@@ -52,5 +52,16 @@ describe("hookRenders", () => {
     ["quiet tool hook, switch off", { hook_trigger: "PreToolUse" }, false, true],
   ])("%s → %s", (_name, over, shown, want) => {
     expect(hookRenders(hook(over), shown)).toBe(want);
+  });
+});
+
+describe("hookCounted", () => {
+  it.each<[string, Partial<ToolCall>, boolean, boolean]>([
+    ["quiet hook, switch on", {}, true, true],
+    ["quiet hook, switch off", {}, false, false],
+    ["failed hook, switch off", { status: "failed" }, false, true],
+    ["printing hook, switch off", { output: "2 warnings" }, false, true],
+  ])("%s → %s", (_name, over, shown, want) => {
+    expect(hookCounted(hook(over), shown)).toBe(want);
   });
 });

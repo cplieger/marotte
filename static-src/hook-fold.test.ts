@@ -28,6 +28,7 @@ const { initToolCallbacks } = await import("./messages-tools.js");
 const { refreshGroupHeader } = await import("./tool-group.js");
 const { setActive } = await import("./store.js");
 const { setHookStatusShown } = await import("./hook-fold.js");
+const { hookTriggerLabel } = await import("./hook-badge.js");
 
 const CHAT_ID = "c-hook-fold";
 setActive(CHAT_ID);
@@ -168,15 +169,39 @@ function badge(root: HTMLElement): HTMLElement | null {
   return b === null || b.hidden ? null : b;
 }
 
-/** The text an assistive technology reads off an element: aria-hidden subtrees skipped. */
-function spokenText(node: Node): string {
-  if (node instanceof HTMLElement && node.getAttribute("aria-hidden") === "true") {
-    return "";
+function hooksButton(root: HTMLElement): HTMLButtonElement {
+  const b = root.querySelector<HTMLButtonElement>(".tool-group > .tool-group-hooks");
+  if (b === null) {
+    throw new Error("no hooks badge button");
   }
-  if (node.nodeType === Node.TEXT_NODE) {
-    return node.textContent ?? "";
-  }
-  return [...node.childNodes].map(spokenText).join("");
+  return b;
+}
+
+function popoverPanel(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(".tool-hook-popover");
+}
+
+/** The popover's entries as [count, name], top to bottom. */
+function popoverEntries(): string[][] {
+  return [...(popoverPanel()?.querySelectorAll<HTMLElement>(".tool-hook-item") ?? [])].map((li) => [
+    li.querySelector(".tool-hook-count")?.textContent ?? "",
+    li.querySelector(".tool-title")?.textContent ?? "",
+  ]);
+}
+
+/** The popover's entries' trigger lines, top to bottom. */
+function popoverTriggers(): string[] {
+  return [...(popoverPanel()?.querySelectorAll(".tool-hook-trigger") ?? [])].map(
+    (t) => t.textContent,
+  );
+}
+
+/** One command followed by a passing run of each named hook, in order. */
+function commandWithHooks(...names: string[]): (turnID: string) => Entry[] {
+  return (t) => [
+    call(t, 1, { id: "cmd-a", title: "go vet" }),
+    ...names.map((n, i) => hook(t, 2 + i, n)),
+  ];
 }
 
 beforeEach(() => {
@@ -188,6 +213,9 @@ beforeEach(() => {
 
 afterEach(() => {
   resetBlockRenders();
+  for (const panel of document.querySelectorAll(".tool-hook-popover")) {
+    panel.remove();
+  }
   for (const host of hosts) {
     host.remove();
   }
@@ -204,7 +232,7 @@ describe("passing tool-trigger hooks fold into the group header", () => {
     expect(count.startsWith("Ran 4 commands")).toBe(true);
     expect(count).not.toContain("hook");
     expect(badge(r.body)?.textContent).toContain("8");
-    expect(spokenText(header(r.body)).trimEnd().endsWith(", 8 hooks ran")).toBe(true);
+    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("8 hooks ran");
   });
 
   it("keeps a lone command with its two guards a group: Ran 1 command with a 2 badge", () => {
@@ -215,27 +243,7 @@ describe("passing tool-trigger hooks fold into the group header", () => {
       /^Ran 1 command/,
     );
     expect(badge(r.body)?.textContent).toContain("2");
-    expect(spokenText(header(r.body)).trimEnd().endsWith(", 2 hooks ran")).toBe(true);
-  });
-
-  it("lists the folded hooks with their file links when the group is open, each reachable by Tab", async () => {
-    const r = render((t) => guardedCommands(t, 1));
-    const list = r.body.querySelector<HTMLElement>(".tool-hook-list");
-    expect(list).not.toBeNull();
-    const items = [...(list?.querySelectorAll<HTMLElement>("li") ?? [])];
-    expect(items.map((li) => li.textContent.trim())).toEqual(
-      GUARDS.map((g) => expect.stringContaining(`Hook fired: ${g.name}`) as unknown as string),
-    );
-    const links = [...(list?.querySelectorAll<HTMLElement>(".tool-file-link") ?? [])];
-    expect(links.map((l) => l.getAttribute("aria-label"))).toEqual(
-      GUARDS.map((g) => `Open the hook file ${g.file.split("/").pop() ?? ""}`),
-    );
-    // The command card has nothing to disclose, so the header's next tab stop is the list's first link.
-    header(r.body).focus();
-    await userEvent.tab();
-    expect(document.activeElement).toBe(links[0]);
-    await userEvent.tab();
-    expect(document.activeElement).toBe(links[1]);
+    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("2 hooks ran");
   });
 
   it("shows only the badge while the group is collapsed", () => {
@@ -246,9 +254,7 @@ describe("passing tool-trigger hooks fold into the group header", () => {
     const group = r.body.querySelector<HTMLElement>(".tool-group");
     expect(group?.classList.contains("tool-group-collapsed")).toBe(true);
     expect(badge(r.body)?.textContent).toContain("4");
-    const list = r.body.querySelector<HTMLElement>(".tool-hook-list");
-    // Inside the closed body region, so nothing of it is in view.
-    expect(list === null || list.closest(".tool-group-body") !== null).toBe(true);
+    expect(r.body.querySelector(".tool-hook-list")).toBeNull();
   });
 });
 
@@ -308,19 +314,216 @@ describe("a hook that does something keeps its row", () => {
     expect(badge(r.body)?.textContent).toContain("1");
   });
 
-  it("counts only rows in the header", () => {
+  it("leaves hooks out of the header summary: a hook row is no operation", () => {
     const r = render((t) => [
-      hook(t, 1, "prompt check", { hook_trigger: "UserPromptSubmit" }),
-      ...guardedCommands(t, 2, 2),
+      call(t, 1, { id: "cmd-a", title: "go vet" }),
+      call(t, 2, { id: "edit-a", title: "Edit a.ts", kind: "edit" }),
+      hook(t, 3, "prompt check", { hook_trigger: "UserPromptSubmit" }),
+      hook(t, 4, GUARDS[0].name),
+      hook(t, 5, GUARDS[1].name),
     ]);
     const count = header(r.body).querySelector(".tool-group-count")?.textContent ?? "";
-    expect(count).toMatch(/^3 operations: 2 commands, 1 hook/);
+    expect(count).toBe("2 operations: 1 command, 1 edit");
+    expect(badge(r.body)?.textContent).toContain("2");
+  });
+
+  it("still names a failed hook row in the header, without counting it as an operation", () => {
+    const r = render((t) => [
+      call(t, 1, { id: "cmd-a", title: "go vet" }),
+      call(t, 2, { id: "cmd-b", title: "go test" }),
+      hook(t, 3, "broken", { status: "failed" }),
+    ]);
+    const count = header(r.body).querySelector(".tool-group-count")?.textContent ?? "";
+    expect(count).toMatch(/^Ran 2 commands: go vet, go test/);
+    expect(count).toContain("1 failed");
+    expect(count).not.toContain("hook");
   });
 
   it("draws a group of only quiet tool-trigger hooks as rows: there is no card to fold into", () => {
     const r = render((t) => [hook(t, 1, GUARDS[0].name), hook(t, 2, GUARDS[1].name)]);
     expect(shownHookRows(r.body)).toHaveLength(2);
     expect(badge(r.body)).toBeNull();
+  });
+});
+
+describe("the hooks badge opens a popover of the folded hooks", () => {
+  const GUARD_A = GUARDS[0].name;
+  const GUARD_B = GUARDS[1].name;
+
+  it("is a button outside the header's own button, counting runs, with no list in the group", () => {
+    const r = render(commandWithHooks(GUARD_A, GUARD_A, GUARD_A, GUARD_B, GUARD_B));
+    const b = hooksButton(r.body);
+    expect(b.tagName).toBe("BUTTON");
+    expect(b.closest(".tool-group-header")).toBeNull();
+    expect(b.textContent).toContain("5");
+    expect(b.getAttribute("aria-label")).toBe("5 hooks ran");
+    expect(r.body.querySelector(".tool-hook-list")).toBeNull();
+    expect(popoverPanel()).toBeNull();
+  });
+
+  it("lists each distinct hook once with its run count, in order of first appearance", async () => {
+    const r = render(commandWithHooks(GUARD_B, GUARD_A, GUARD_B, GUARD_B, GUARD_A));
+    await userEvent.click(hooksButton(r.body));
+    await expect
+      .poll(() => popoverEntries())
+      .toEqual([
+        ["3×", GUARD_B],
+        ["2×", GUARD_A],
+      ]);
+    expect(hooksButton(r.body).getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("states each entry's trigger in plain words", async () => {
+    const r = render((t) => [
+      call(t, 1, { id: "cmd-a", title: "go vet" }),
+      hook(t, 2, GUARD_A, { hook_trigger: "PreToolUse" }),
+      hook(t, 3, GUARD_B, { hook_trigger: "PostToolUse" }),
+    ]);
+    await userEvent.click(hooksButton(r.body));
+    await expect.poll(() => popoverTriggers()).toEqual(["before a tool runs", "after a tool runs"]);
+  });
+
+  it("keeps one hook on two triggers as two entries", async () => {
+    const r = render((t) => [
+      call(t, 1, { id: "cmd-a", title: "go vet" }),
+      hook(t, 2, GUARD_A, { hook_trigger: "PreToolUse" }),
+      hook(t, 3, GUARD_A, { hook_trigger: "PostToolUse" }),
+      hook(t, 4, GUARD_A, { hook_trigger: "PreToolUse" }),
+    ]);
+    expect(hooksButton(r.body).textContent).toContain("3");
+    await userEvent.click(hooksButton(r.body));
+    await expect
+      .poll(() => popoverEntries())
+      .toEqual([
+        ["2×", GUARD_A],
+        ["1×", GUARD_A],
+      ]);
+    expect(popoverTriggers()).toEqual(["before a tool runs", "after a tool runs"]);
+  });
+
+  it("gives each entry its hook file's chip", async () => {
+    const r = render(commandWithHooks(GUARD_A, GUARD_B));
+    await userEvent.click(hooksButton(r.body));
+    await expect.poll(() => popoverEntries()).toHaveLength(2);
+    const labels = [...(popoverPanel()?.querySelectorAll(".tool-file-link") ?? [])].map((l) =>
+      l.getAttribute("aria-label"),
+    );
+    expect(labels).toEqual([
+      "Open the hook file animap-seat-guard.json",
+      "Open the hook file Destructive-command-guard.json",
+    ]);
+  });
+
+  it("keeps a failed run of a hook in place and out of the passing count", async () => {
+    const r = render((t) => [
+      call(t, 1, { id: "cmd-a", title: "go vet" }),
+      hook(t, 2, GUARD_A),
+      hook(t, 3, GUARD_A),
+      hook(t, 4, GUARD_A),
+      hook(t, 5, GUARD_A, { status: "failed" }),
+    ]);
+    const rows = shownHookRows(r.body);
+    expect(rows.map((c) => c.dataset["outcome"])).toEqual(["fail"]);
+    expect(hooksButton(r.body).textContent).toContain("3");
+    await userEvent.click(hooksButton(r.body));
+    await expect.poll(() => popoverEntries()).toEqual([["3×", GUARD_A]]);
+  });
+
+  it("opens from the keyboard, moves focus inside, and returns it on Escape", async () => {
+    const r = render(commandWithHooks(GUARD_A, GUARD_A));
+    const b = hooksButton(r.body);
+    b.focus();
+    await userEvent.keyboard("{Enter}");
+    await expect.poll(() => popoverPanel()?.contains(document.activeElement)).toBe(true);
+    await userEvent.keyboard("{Escape}");
+    await expect.poll(() => popoverPanel()).toBeNull();
+    expect(document.activeElement).toBe(b);
+    expect(b.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(b.getAttribute("aria-expanded")).toBe("false");
+    await userEvent.keyboard(" ");
+    await expect.poll(() => popoverEntries()).toEqual([["2×", GUARD_A]]);
+  });
+
+  it("leaves the group's own fold alone when the badge is pressed", async () => {
+    const r = render(commandWithHooks(GUARD_A));
+    const head = header(r.body);
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+    await userEvent.click(hooksButton(r.body));
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("follows a hook arriving while it is open", async () => {
+    const r = render(commandWithHooks(GUARD_A));
+    await userEvent.click(hooksButton(r.body));
+    await expect.poll(() => popoverEntries()).toEqual([["1×", GUARD_A]]);
+    const card = r.body.querySelector<HTMLElement>(
+      `.tool-call[data-title="Hook fired: ${GUARD_A}"]`,
+    );
+    expect(card).not.toBeNull();
+    const twin = card?.cloneNode(true) as HTMLElement;
+    card?.after(twin);
+    refreshGroupHeader(r.body.querySelector<HTMLElement>(".tool-group") as HTMLElement);
+    await expect.poll(() => popoverEntries()).toEqual([["2×", GUARD_A]]);
+  });
+});
+
+describe("hook trigger wording", () => {
+  it.each<[string, string]>([
+    ["SessionStart", "at agent spawn (session start)"],
+    ["SessionEnd", "at session end"],
+    ["UserPromptSubmit", "at turn start (prompt sent)"],
+    ["Stop", "at turn end (agent stops)"],
+    ["PreToolUse", "before a tool runs"],
+    ["PostToolUse", "after a tool runs"],
+    ["PreTaskExec", "before a spec task"],
+    ["PostTaskExec", "after a spec task"],
+    ["PostFileCreate", "after a file is created"],
+    ["PostFileSave", "after a file is saved"],
+    ["PostFileDelete", "after a file is deleted"],
+    ["Manual", "run by hand"],
+  ])("words %s as %s", (trigger, want) => {
+    expect(hookTriggerLabel(trigger)).toBe(want);
+  });
+
+  it("shows a trigger it has no wording for as it came, and an unnamed one as unknown", () => {
+    expect(hookTriggerLabel("FutureTrigger")).toBe("FutureTrigger");
+    expect(hookTriggerLabel("constructor")).toBe("constructor");
+    expect(hookTriggerLabel("")).toBe("trigger unknown");
+  });
+});
+
+describe("Show hook status gates the badge and its popover", () => {
+  const A = GUARDS[0].name;
+
+  it("draws the badge with the switch on and none with it off", () => {
+    const r = render(commandWithHooks(A, A));
+    expect(hooksButton(r.body).textContent).toContain("2");
+    setHookStatusShown(false);
+    expect(r.body.querySelector(".tool-group-hooks")).toBeNull();
+    expect(popoverPanel()).toBeNull();
+  });
+
+  it("closes an open popover when the switch turns off, and offers it again when it turns on", async () => {
+    const r = render(commandWithHooks(A, A));
+    await userEvent.click(hooksButton(r.body));
+    await expect.poll(() => popoverEntries()).toEqual([["2×", A]]);
+    setHookStatusShown(false);
+    await expect.poll(() => popoverPanel()).toBeNull();
+    expect(r.body.querySelector(".tool-group-hooks")).toBeNull();
+    setHookStatusShown(true);
+    await userEvent.click(hooksButton(r.body));
+    await expect.poll(() => popoverEntries()).toEqual([["2×", A]]);
+  });
+
+  it("keeps a failed hook's row and leaves it out of the badge with the switch off", () => {
+    setHookStatusShown(false);
+    const r = render((t) => [
+      call(t, 1, { id: "cmd-a", title: "go vet" }),
+      hook(t, 2, A),
+      hook(t, 3, A, { status: "failed" }),
+    ]);
+    expect(r.body.querySelector(".tool-group-hooks")).toBeNull();
+    expect(shownHookRows(r.body).map((c) => c.dataset["outcome"])).toEqual(["fail"]);
   });
 });
 

@@ -234,8 +234,8 @@ function turn(...body: HTMLElement[]): HTMLElement {
   return t;
 }
 
-/** A finished turn: its fold, an open tool group with two file edits and a folded passing guard listed under
- *  them, its footer's actions, in the shapes `turns.ts` and `fundamentals/turn-footer.ts` build. */
+/** A finished turn: its fold, an open tool group with two file edits and a folded passing guard counted on its
+ *  hooks badge, its footer's actions, in the shapes `turns.ts` and `fundamentals/turn-footer.ts` build. */
 function plantTurn(): void {
   const shell = buildToolGroupShell();
   for (const path of ["static-src/app.ts", "README.md"]) {
@@ -1243,7 +1243,7 @@ const SURFACES: readonly Surface[] = [
       ".tool-header",
       "summary.reasoning-summary",
       ".tool-diff-stats",
-      ".tool-hook-item",
+      ".tool-group-hooks",
     ],
   },
   {
