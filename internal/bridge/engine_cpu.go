@@ -41,6 +41,7 @@ func parseStatCPU(raw []byte) (uint64, bool) {
 func (e *Engine) noteFrame(n int) {
 	if n > 0 {
 		e.lastFrame.Store(time.Now().UnixNano())
+		e.frames.Add(1)
 	}
 }
 

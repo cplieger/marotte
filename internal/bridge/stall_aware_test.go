@@ -104,6 +104,39 @@ func TestStallAware_AnEngineAnsweringAfterAStallGetsAFreshBudget(t *testing.T) {
 	})
 }
 
+// The late answer can land while a re-check samples the engine's CPU: that frame ends the stall like one read between
+// re-checks.
+func TestStallAware_AnAnswerDuringTheCPUSampleGetsAFreshBudget(t *testing.T) {
+	defaultStallChecks(t)
+	synctest.Test(t, func(t *testing.T) {
+		b := newIdleEngine(t)
+		var ticks atomic.Uint64
+		var answerNext atomic.Bool
+		b.cpuTicks = func() (uint64, bool) {
+			if answerNext.CompareAndSwap(true, false) {
+				go func() { time.Sleep(stallSample / 2); b.noteFrame(1) }()
+			}
+			return ticks.Add(1), true
+		}
+		start := time.Now()
+		ctx, cancel := b.StallAware(t.Context(), stallBudget)
+		defer cancel()
+
+		const armed = stallBudget + 30*time.Second
+		at(start, armed)
+		answerNext.Store(true)
+		at(start, armed+stallRecheck+stallSample)
+		if answerNext.Load() {
+			t.Fatal("Setup: no re-check sampled the CPU after the answer was armed")
+		}
+		at(start, armed+stallBudget)
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("ctx.Err() = %v under %v after an answer read during the CPU sample, want a fresh %v budget",
+				err, stallBudget, stallBudget)
+		}
+	})
+}
+
 func TestStallAware_StopsAtTheExtensionCeiling(t *testing.T) {
 	defaultStallChecks(t)
 	synctest.Test(t, func(t *testing.T) {
