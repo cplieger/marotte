@@ -59,7 +59,7 @@
       "terminal": true,
       "sites": [
         "internal/translate/hook_status.go:120",
-        "internal/translate/steering_inclusion.go:38",
+        "internal/translate/steering_inclusion.go:74",
         "internal/translate/wire_enums.go:34"
       ]
     },
@@ -169,7 +169,7 @@
       "status": "aborted"
     },
     {
-      "site": "internal/translate/steering_inclusion.go:38",
+      "site": "internal/translate/steering_inclusion.go:74",
       "form": "status_field",
       "status": "completed"
     },

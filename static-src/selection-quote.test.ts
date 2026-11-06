@@ -615,6 +615,12 @@ describe("what a quote can come from", () => {
     expect(await sourceLine()).toBe("> From the hook `pre-commit`:");
   });
 
+  it("names a steering box without repeating its title, which is the quoted content", async () => {
+    const { title } = toolCard("steering", "Steering loaded: git-commits.md, testing.md", "");
+    selectAll(title);
+    expect(await sourceLine()).toBe("> From the steering box:");
+  });
+
   it("names Kiro's thinking", async () => {
     const { body } = thinking("weighing two options");
     selectAll(body);

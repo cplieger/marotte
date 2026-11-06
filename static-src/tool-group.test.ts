@@ -32,13 +32,6 @@ describe("labelWithSamples", () => {
     [3, "file", "Read", ["a.ts", "b.ts", "c.ts"], "Read 3 files: a.ts, b.ts, +1 more"],
     [2, "file", "Edited", ["x.go", "y.go"], "Edited 2 files: x.go, y.go"],
     [1, "command", "Ran", ["ls -la"], "Ran 1 command: ls -la"],
-    [
-      5,
-      "search",
-      "Searched",
-      ["foo", "bar", "baz", "qux", "quux"],
-      "Searched 5 searchs: foo, bar, +3 more",
-    ],
     [2, "file", "Read", ["same.ts", "same.ts"], "Read 2 files: same.ts"],
   ];
   it.each(cases)("labelWithSamples(%i, %s, %s, %j) => %s", (n, noun, verb, samples, expected) => {
@@ -68,6 +61,8 @@ describe("kindNoun", () => {
     ["shell", 2, "shell commands"],
     ["hook", 1, "hook"],
     ["hook", 2, "hooks"],
+    ["steering", 1, "steering set"],
+    ["steering", 2, "steering sets"],
     ["browser", 1, "page"],
     ["browser", 2, "pages"],
     ["command", 1, "command"],
@@ -105,6 +100,22 @@ describe("summarizeSameKind", () => {
     ];
     expect(summarizeSameKind("execute", infos)).toBe(
       "Ran 3 commands: npm test, npm build, +1 more",
+    );
+  });
+
+  it("search plural", () => {
+    const infos = makeInfos("search", ["", "", ""], ["foo", "bar", "baz"]);
+    expect(summarizeSameKind("search", infos)).toBe("Searched 3 searches: foo, bar, +1 more");
+  });
+
+  it("steering samples the document names, not the repeated title prefix", () => {
+    const infos = makeInfos(
+      "steering",
+      ["", ""],
+      ["Steering loaded: go.md, testing.md", "Steering loaded: git-commits.md"],
+    );
+    expect(summarizeSameKind("steering", infos)).toBe(
+      "Loaded 2 steering sets: go.md, testing.md, git-commits.md",
     );
   });
 
@@ -183,6 +194,14 @@ describe("summarizeMixed", () => {
       { kind: "execute", filename: "", title: "npm test", mcpServer: "" },
     ];
     expect(summarizeMixed(infos)).toBe("4 operations: 2 reads, 1 edit, 1 command");
+  });
+
+  it("names a steering box by the noun its own group uses", () => {
+    const infos: CallInfo[] = [
+      { kind: "read", filename: "a.ts", title: "", mcpServer: "" },
+      { kind: "steering", filename: "", title: "Steering loaded: ts.md", mcpServer: "" },
+    ];
+    expect(summarizeMixed(infos)).toBe("2 operations: 1 read, 1 steering set");
   });
 });
 

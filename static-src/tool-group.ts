@@ -15,6 +15,7 @@ import { outcomeIcon } from "./icons.js";
 import { foldGroupHooks, onHookVisibility } from "./hook-fold.js";
 import { syncHookBadge } from "./hook-badge.js";
 import { setUserScrolledUp } from "./scroll.js";
+import { STEERING_TITLE_PREFIX } from "./steering-docs.js";
 import { kindNoun } from "./tool-kind-noun.js";
 import type { ToolKind } from "./tool-schema.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui/disclosure";
@@ -280,19 +281,24 @@ export function summarize(calls: HTMLElement[]): string {
   return summarizeMixed(infos);
 }
 
+/** `many` defaults to `noun` plus "s". `docNames` samples a title past the steering prefix, its
+ *  document names. */
 const TOOL_KIND_LABELS: Readonly<
-  Record<ToolKind, { verb: string; noun: string; samplesFrom: "files" | "titles" }>
+  Record<
+    ToolKind,
+    { verb: string; noun: string; many?: string; samplesFrom: "files" | "titles" | "docNames" }
+  >
 > = {
   read: { verb: "Read", noun: "file", samplesFrom: "files" },
   edit: { verb: "Edited", noun: "file", samplesFrom: "files" },
   write: { verb: "Wrote", noun: "file", samplesFrom: "files" },
   delete: { verb: "Deleted", noun: "file", samplesFrom: "files" },
   move: { verb: "Moved", noun: "file", samplesFrom: "files" },
-  search: { verb: "Searched", noun: "search", samplesFrom: "titles" },
+  search: { verb: "Searched", noun: "search", many: "searches", samplesFrom: "titles" },
   execute: { verb: "Ran", noun: "command", samplesFrom: "titles" },
   shell: { verb: "Ran", noun: "shell command", samplesFrom: "titles" },
   hook: { verb: "Ran", noun: "hook", samplesFrom: "titles" },
-  steering: { verb: "Loaded", noun: "steering set", samplesFrom: "titles" },
+  steering: { verb: "Loaded", noun: "steering set", samplesFrom: "docNames" },
   fetch: { verb: "Fetched", noun: "URL", samplesFrom: "titles" },
   think: { verb: "", noun: "thinking step", samplesFrom: "titles" },
   switch_mode: { verb: "", noun: "mode switch", samplesFrom: "titles" },
@@ -314,11 +320,21 @@ export function summarizeSameKind(kind: ToolKind, infos: CallInfo[]): string {
     const plural = n === 1 ? label.noun : kindNoun(kind, n);
     return `${String(n)} ${plural}`;
   }
-  const samples =
-    label.samplesFrom === "files"
-      ? infos.map((i) => i.filename).filter((s) => s !== "")
-      : infos.map((i) => i.title).filter((s) => s !== "");
-  return labelWithSamples(n, label.noun, label.verb, samples);
+  const samples = infos.map((i) => sampleOf(i, label.samplesFrom)).filter((s) => s !== "");
+  return labelWithSamples(n, label.noun, label.verb, samples, label.many);
+}
+
+function sampleOf(info: CallInfo, from: "files" | "titles" | "docNames"): string {
+  switch (from) {
+    case "files":
+      return info.filename;
+    case "titles":
+      return info.title;
+    case "docNames":
+      return info.title.startsWith(STEERING_TITLE_PREFIX)
+        ? info.title.slice(STEERING_TITLE_PREFIX.length)
+        : info.title;
+  }
 }
 
 export function summarizeMCP(infos: CallInfo[]): string {
@@ -346,8 +362,14 @@ export function summarizeMCP(infos: CallInfo[]): string {
   return `${String(n)} integration call${n === 1 ? "" : "s"}: ${parts.join(", ")}`;
 }
 
-export function labelWithSamples(n: number, noun: string, verb: string, samples: string[]): string {
-  const pluralNoun = n === 1 ? noun : `${noun}s`;
+export function labelWithSamples(
+  n: number,
+  noun: string,
+  verb: string,
+  samples: string[],
+  many = `${noun}s`,
+): string {
+  const pluralNoun = n === 1 ? noun : many;
   const head = `${verb} ${String(n)} ${pluralNoun}`;
   const uniq = dedup(samples);
   if (uniq.length === 0) {
