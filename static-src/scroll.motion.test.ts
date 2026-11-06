@@ -496,6 +496,41 @@ describe("the reader's own scroll event, whatever came with it", () => {
     });
   });
 
+  it("counts a reader's move that an owner hold answers before its scroll event", async () => {
+    const wrap = await reset();
+    const gone = block(300);
+    const rows = Array.from({ length: 13 }, () => block(200));
+    block(100);
+    await land();
+    wheel(wrap, -3);
+    platformScroll(wrap, 2000);
+    await land(400);
+    expect(scroll.readingState(), "the premise").toBe("reading");
+    let published = 0;
+    const off = scroll.onReaderGesture(() => {
+      published++;
+    });
+    try {
+      wheel(wrap, -3);
+      platformScroll(wrap, 1400);
+      // A turn removed above in the same task: the owner holds it in the removal's microtask, before the scroll event.
+      gone.remove();
+      await land(400);
+      const moved = { published, scrollTop: wrap.scrollTop };
+      // Below the reading line the reader moved to, above the one they left.
+      const text = screenTop(wrap, rows[6]!);
+      rows[7]!.style.height = "260px";
+      await land();
+
+      expect({ moved, held: screenTop(wrap, rows[6]!) - text }).toEqual({
+        moved: { published: 1, scrollTop: 1100 },
+        held: 0,
+      });
+    } finally {
+      off();
+    }
+  });
+
   it("leaves a scroll up with no input behind it where it took the reader, while a stream grows", async () => {
     const { wrap, clock } = await followingWithClock();
     const stop = grower(clock, 8);

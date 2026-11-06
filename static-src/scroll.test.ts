@@ -844,14 +844,16 @@ describe("the streaming auto-scroll", () => {
   // One frame per burst of mutations, but the guard has to re-arm or the second chunk of a stream
   // never scrolls.
   it("re-arms the frame guard so the next chunk scrolls too", async () => {
-    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
+    // Starts on the end: a reader the fake moved with no scroll event would be read as a reader scroll.
+    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
+    s.scrollHeight = 2500;
     messagesEl.appendChild(document.createElement("div"));
     await settle();
     const afterFirst = s.scrollTop;
     s.scrollHeight = 3000;
     messagesEl.appendChild(document.createElement("div"));
     await settle();
-    expect([afterFirst, s.scrollTop]).toEqual([1500, 2500]);
+    expect([afterFirst, s.scrollTop]).toEqual([2000, 2500]);
   });
 });
 

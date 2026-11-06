@@ -651,6 +651,50 @@ describe("growth inside the owner's own observer callbacks", () => {
   });
 });
 
+describe("a reading line on a turn's spacer", () => {
+  /** A turn card: rows, then the spacer standing in for rows the window has not mounted, then its footer. */
+  function card(rows: number): { card: HTMLElement; last: HTMLElement; spacer: HTMLElement } {
+    const c = document.createElement("div");
+    c.style.cssText = "display:flex;flex-direction:column;flex-shrink:0;";
+    const body = document.createElement("div");
+    let last = body;
+    for (let i = 0; i < rows; i++) {
+      last = document.createElement("div");
+      last.style.cssText = "height:100px;flex-shrink:0;";
+      body.append(last);
+    }
+    const spacer = document.createElement("div");
+    spacer.className = "turn-space";
+    spacer.style.cssText = "height:150px;flex-shrink:0;";
+    const footer = document.createElement("div");
+    footer.style.cssText = "height:40px;flex-shrink:0;";
+    c.append(body, spacer, footer);
+    messagesEl.append(c);
+    return { card: c, last, spacer };
+  }
+
+  it("holds the rows above the spacer while the window fills it, not the footer below", async () => {
+    const wrap = await reset();
+    block(1000);
+    const t = card(10);
+    block(2000);
+    await land();
+    const line = wrap.getBoundingClientRect().top + wrap.clientTop + wrap.clientHeight / 3;
+    // The spacer's top 100px above the reading line: the last row sits just above it on screen.
+    await readAt(
+      wrap,
+      Math.round(wrap.scrollTop + t.spacer.getBoundingClientRect().top - (line - 100)),
+    );
+    const before = screenTop(wrap, t.last);
+
+    // Rows mounted in the spacer's place came out taller than it priced them.
+    t.spacer.style.height = "450px";
+    await land();
+
+    expect(Math.round(screenTop(wrap, t.last) - before)).toBe(0);
+  });
+});
+
 describe("every owner move re-takes the text the reader sees", () => {
   afterEach(async () => {
     await resetA11yMedia();

@@ -511,10 +511,11 @@ describe("the transcript's mutation observer", () => {
     h.messagesEl.appendChild(row);
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
     await settle();
-    g.scrollTop = 0;
+    // The content grows past the end with no size report the fake could send: only the mutation can queue the write.
+    g.scrollHeight = 2600;
     row.appendChild(document.createElement("span"));
     await settle();
-    expect(g.scrollTop).toBe(1500);
+    expect(g.scrollTop).toBe(2100);
   });
 
   it("scrolls when a row's text grows", async () => {
@@ -527,10 +528,10 @@ describe("the transcript's mutation observer", () => {
     h.messagesEl.appendChild(row);
     const g = fakeGeometry(h.scrollEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
     await settle();
-    g.scrollTop = 0;
+    g.scrollHeight = 2600;
     text.data += "tence";
     await settle();
-    expect(g.scrollTop).toBe(1500);
+    expect(g.scrollTop).toBe(2100);
   });
 });
 

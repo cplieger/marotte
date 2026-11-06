@@ -350,6 +350,15 @@ export class ScrollController {
     this.onReaderScroll(t, max);
   }
 
+  /** Attribute a move the scroller made since the last scroll event, before an owner write lands on top of it: the
+   *  write's own record would otherwise also cover the move's event, and the move would never count. A task between a
+   *  reader's scroll and its event (a build batch, a removal's microtask) makes the gap. */
+  private attributePending(): void {
+    if (this.lastT >= 0 && Math.abs(this.clampedTop() - this.lastT) >= edgeSlack()) {
+      this.onScroll();
+    }
+  }
+
   /** A reader scroll event: hold first, so a size change of this frame is not re-taken as the reader's position. */
   private onReaderScroll(t: number, max: number): void {
     this.endPress();
@@ -421,6 +430,7 @@ export class ScrollController {
    *  window is open. Resize-loop invariant: a correction inside a resize delivery moves no farther than the size
    *  change it answers, so it reveals only boxes the near lead has laid out (`ro-loop-gate.ts` fails a loop). */
   private correct(): void {
+    this.attributePending();
     if (this.flight !== null) {
       return;
     }
@@ -647,6 +657,7 @@ export class ScrollController {
    *  changes the view's own box, so inside the content delivery it waits for the next frame, where no observer of the
    *  view is skipped; the correction already ran against the content's own end, so the lowering clamps nothing. */
   private floorAfter(now: boolean): void {
+    this.attributePending();
     if (this.floorPx === null || !this.floorStale) {
       this.holdFloor();
       return;
@@ -696,6 +707,7 @@ export class ScrollController {
   /** Clear the floor and hold it again at the lowered size. A clamp the lowering causes is the owner's move: recorded
    *  as its write and, in Reading, followed by a re-take, so no hold pays it back later. */
   private lowerFloor(): void {
+    this.attributePending();
     this.cancelLower();
     this.floorStale = false;
     if (this.floorPx === null) {
@@ -942,7 +954,9 @@ export class ScrollController {
     return matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth";
   }
 
+  /** Motion the caller overrides, a pending unattributed move included. */
   private dropMotion(): void {
+    this.lastT = this.lastT < 0 ? -1 : this.clampedTop();
     this.gesture.forget();
     this.read = null;
     this.endSettle();
@@ -1019,6 +1033,7 @@ export class ScrollController {
 
   /** Move the scroller by `px` as an owner write that sets no reading state: a layout compensation. */
   shiftBy(px: number): void {
+    this.attributePending();
     this.endSettle();
     this.writeTop(this.scrollEl.scrollTop + px);
     this.retake();

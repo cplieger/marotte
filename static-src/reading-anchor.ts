@@ -59,8 +59,8 @@ function entryKey(stamped: Element): string {
 }
 
 /** The index of the element of `els` on `line`: the first, in document order, whose box ends below it, provided that
- *  box starts above `limit`; -1 when none. Bisected, because block flow stacks siblings down the page; `skip`s and
- *  box-less elements are passed over. */
+ *  box starts above `limit`, or the one above a spacer the line falls on; -1 when none. Bisected, because block flow
+ *  stacks siblings down the page; `skip`s and box-less elements are passed over. */
 function onLine(
   els: HTMLCollection,
   line: number,
@@ -86,6 +86,22 @@ function onLine(
       hi = mid;
     } else {
       lo = j + 1;
+    }
+  }
+  // A box below a spacer moves whenever the window fills that spacer, so a line on one holds the box above it.
+  for (let j = (found >= 0 ? found : els.length) - 1; j >= 0; j--) {
+    const el = els[j];
+    if (el !== undefined && isSpacer(el)) {
+      const r = el.getBoundingClientRect();
+      if (r.top <= line && line < r.bottom) {
+        for (let k = j - 1; k >= 0; k--) {
+          if (counts(els[k])) {
+            return k;
+          }
+        }
+      }
+    } else if (counts(el)) {
+      break;
     }
   }
   return found >= 0 && (els[found]?.getBoundingClientRect().top ?? limit) < limit ? found : -1;
