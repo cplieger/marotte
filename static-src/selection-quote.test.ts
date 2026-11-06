@@ -6,6 +6,7 @@ import type * as NoticeSubject from "./notice-subject.js";
 import type * as Toast from "./toast.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { QUOTE_ATTRIBUTION } from "./message-quote.js";
+import { buildTurnHeader } from "./fundamentals/turn-header.js";
 import { setActive, setSessions } from "./store.js";
 import type { Session } from "./types.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -259,6 +260,18 @@ function runBarRow(name: string): { label: HTMLElement; state: HTMLElement } {
   return { label, state };
 }
 
+/** A turn card holding `rows` in its body and `cardRows` beside the body, as notices and the footer sit. */
+function turnWith(rows: readonly HTMLElement[], cardRows: readonly HTMLElement[] = []): void {
+  messages.append(div("turn", div("turn-body", ...rows), ...cardRows));
+}
+
+/** A boundary row as `messages-events.ts` draws one. */
+function boundaryRow(label: string): HTMLElement {
+  const icon = span("boundary-icon", "↻");
+  icon.setAttribute("aria-hidden", "true");
+  return div("boundary boundary-reset", icon, span("boundary-label", label));
+}
+
 function select(from: Node, fromOffset: number, to: Node, toOffset: number): void {
   document.getSelection()?.setBaseAndExtent(from, fromOffset, to, toOffset);
 }
@@ -433,14 +446,6 @@ describe("the Quote in reply button", () => {
       await frames();
       expect(action()).toBeNull();
     });
-  });
-
-  it("does not show for a compaction summary, which shares the prose skin", async () => {
-    const summary = div("compaction-body message assistant", p("summary text"));
-    messages.append(div("turn", div("turn-body", summary)));
-    select(textOf(summary, 0), 0, textOf(summary, 0), 7);
-    await frames();
-    expect(action()).toBeNull();
   });
 
   it("does not show for prose outside the transcript", async () => {
@@ -652,6 +657,73 @@ describe("what a quote can come from", () => {
     selectAll(runBarFold);
     expect(await sourceLine()).toBe("> From the run list:");
   });
+
+  it("names a run whose name holds backticks as code, which the sent quote's band draws as code", async () => {
+    const { name } = runCard("deploy `prod`");
+    selectAll(name);
+    expect(await sourceLine()).toBe("> From run `` deploy `prod` ``:");
+    const header = buildTurnHeader({
+      n: 2,
+      outcome: "completed",
+      ts: 0,
+      request: `${input.value}why?`,
+      attachments: [],
+    });
+    const from = header.querySelector(".turn-req-quote-from");
+    expect(from?.textContent).toBe("From run deploy `prod`:");
+    expect(from?.querySelector("code")?.textContent).toBe("deploy `prod`");
+  });
+
+  it("names the turn's notice", async () => {
+    const notice = div("turn-notice", "The agent stopped: the context window is full.");
+    notice.setAttribute("role", "status");
+    turnWith([div("msg-row", div("message assistant", p("partial reply")))], [notice]);
+    selectAll(notice);
+    expect(await sourceLine()).toBe("> From the turn's notice:");
+  });
+
+  it("names Kiro's plan for one of its entries", async () => {
+    const entry = div("plan-entry", "🔄 Write the failing test");
+    turnWith([div("plan-message", div("plan-header", "Plan"), div("plan-entries", entry))]);
+    selectAll(entry);
+    expect(await sourceLine()).toBe("> From Kiro's plan:");
+  });
+
+  it("names the turn details", async () => {
+    const panel = div("turn-info-panel", "3 files changed");
+    const ledger = button("turn-ledger-summary", "Turn details");
+    turnWith([], [div("turn-footer", ledger, panel)]);
+    selectAll(panel);
+    expect(await sourceLine()).toBe("> From the turn details:");
+  });
+
+  it("names the compaction summary, which shares the reply's prose skin", async () => {
+    const summary = div("compaction-body message assistant", p("summary text"));
+    const head = node(
+      "summary",
+      "compaction-head",
+      span("compaction-label", "Conversation compacted"),
+    );
+    const block = node("details", "compaction", head, summary);
+    block.open = true;
+    turnWith([block]);
+    select(textOf(summary, 0), 0, textOf(summary, 0), 7);
+    expect(await sourceLine()).toBe("> From the compaction summary:");
+  });
+
+  it("names a boundary row as the transcript", async () => {
+    const row = boundaryRow("Context reset · an empty reply was retried in a new session");
+    turnWith([row]);
+    selectAll(row.querySelector(".boundary-label")!);
+    expect(await sourceLine()).toBe("> From the transcript:");
+  });
+
+  it("names any other transcript row as the transcript", async () => {
+    const callout = div("refusal-callout", "The model declined to continue");
+    turnWith([], [callout]);
+    selectAll(callout);
+    expect(await sourceLine()).toBe("> From the transcript:");
+  });
 });
 
 describe("what a quote cannot come from", () => {
@@ -721,6 +793,23 @@ describe("what a quote cannot come from", () => {
     expect(await sourceLine()).toBeNull();
   });
 
+  it("refuses a disclosure's summary row", async () => {
+    const head = node(
+      "summary",
+      "compaction-head",
+      span("compaction-label", "Conversation compacted"),
+    );
+    const block = node(
+      "details",
+      "compaction",
+      head,
+      div("compaction-body message assistant", p("kept")),
+    );
+    turnWith([block]);
+    selectAll(head);
+    expect(await sourceLine()).toBeNull();
+  });
+
   it("refuses the sidebar", async () => {
     sidebar.append(span("chat-name", "My chat"));
     selectAll(sidebar);
@@ -770,6 +859,38 @@ describe("a selection across two sources", () => {
     const { output } = toolCard("execute", "make", "done");
     const { body } = thinking("next step");
     select(textIn(output), 0, textIn(body), 4);
+    expect(await sourceLine()).toBeNull();
+  });
+
+  it("refuses one reaching from the turn's notice back into the reply", async () => {
+    const reply = div("message assistant", p("partial reply"));
+    const notice = div("turn-notice", "The agent stopped.");
+    turnWith([div("msg-row", reply)], [notice]);
+    select(textOf(reply, 0), 3, textIn(notice), 5);
+    expect(await sourceLine()).toBeNull();
+    select(textIn(notice), 5, textOf(reply, 0), 3);
+    expect(await sourceLine()).toBeNull();
+  });
+
+  it("refuses one spanning two rows that no kind names", async () => {
+    const first = boundaryRow("Mode: Plan");
+    const second = boundaryRow("Mode: Execute");
+    turnWith([first, second]);
+    select(
+      textIn(first.querySelector(".boundary-label")!),
+      0,
+      textIn(second.querySelector(".boundary-label")!),
+      4,
+    );
+    expect(await sourceLine()).toBeNull();
+  });
+
+  it("refuses one reaching from a delegate's card into a reply inside it", async () => {
+    const { card, title, badge } = toolCard("delegate", "review the diff", "done");
+    badge.remove();
+    const inner = div("message assistant", p("the subagent's reply"));
+    card.append(inner);
+    select(textIn(title), 0, textOf(inner, 0), 4);
     expect(await sourceLine()).toBeNull();
   });
 

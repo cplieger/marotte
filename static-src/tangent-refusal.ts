@@ -1,5 +1,4 @@
-// Whether a tangent can start, and the sentence saying why not, for every door that starts one: Chat options,
-// `/tangent` and the selection popover's "Ask in a tangent".
+// Whether a tangent can start off a chat, and the sentence saying why not.
 
 import { isEmptyChat } from "./store.js";
 import type { Session } from "./types.js";

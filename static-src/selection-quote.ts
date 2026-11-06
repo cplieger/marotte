@@ -15,10 +15,11 @@ import { chatNotice } from "./notice-subject.js";
 import { NO_CONVERSATION_TANGENT, tangentRefusal } from "./tangent-refusal.js";
 import * as toast from "./toast.js";
 
-/** A control: its text is a UI label, never quoted. */
+/** A control or chrome: its text is a UI label, never quoted. */
 const CONTROL = [
   "button",
   '[role="button"]',
+  "summary",
   "input",
   "textarea",
   "select",
@@ -31,7 +32,11 @@ const CONTROL = [
 /** Controls whose text is content, a run's or a file's name, so they quote as the source around them does. Chrome
  *  inside one is still chrome. */
 const NAMING_CONTROL =
-  ".run-bar-open, .run-head, .run-step-head, .turn-wake-run, .turn-wake-row-run, .tool-file-link, .steer-note-run";
+  ".run-bar-open, .run-head, .turn-wake-run, .turn-wake-row-run, .tool-file-link, .steer-note-run";
+
+function isControl(e: Element): boolean {
+  return e.matches(CONTROL) && (!e.matches(NAMING_CONTROL) || e.matches(`[${CHROME_ATTR}]`));
+}
 
 function textOf(root: Element, selector: string): string {
   return root.querySelector(selector)?.textContent.trim() ?? "";
@@ -63,15 +68,21 @@ function steerLabel(note: Element): string {
   }
 }
 
+/** `From run <name>`, the name as a code span only when it holds a backtick, which the drawn quote band would
+ *  otherwise read as one. */
 function runLabel(root: Element, nameSelector: string): string {
   const name = textOf(root, nameSelector);
-  return name === "" ? "From a run" : `From run ${name}`;
+  if (name === "") {
+    return "From a run";
+  }
+  return `From run ${name.includes("`") ? codeSpan(name) : name}`;
 }
 
-/** The transcript's quotable sources: one entry per kind of content, its root and the line naming it. `inner` is
- *  the element the selection starts in. */
-const SOURCES: readonly { root: string; label: (source: Element, inner: Element) => string }[] = [
+/** The kinds of content a quote names, each its own source so a selection crossing two refuses. `inner` is the
+ *  element the selection starts in. This table names sources; it does not decide what quotes. */
+const LABELLED: readonly { root: string; label: (source: Element, inner: Element) => string }[] = [
   { root: ".message.assistant:not(.compaction-body)", label: () => "From Kiro's reply" },
+  { root: ".compaction-body", label: () => "From the compaction summary" },
   {
     root: ".turn-req",
     label: (req) =>
@@ -79,7 +90,10 @@ const SOURCES: readonly { root: string; label: (source: Element, inner: Element)
         ? "From your earlier message"
         : "From the turn header",
   },
-  { root: ".turn-head-row", label: () => "From the turn header" },
+  { root: ".turn-header", label: () => "From the turn header" },
+  { root: ".turn-notice", label: () => "From the turn's notice" },
+  { root: ".turn-info-panel", label: () => "From the turn details" },
+  { root: ".plan-message", label: () => "From Kiro's plan" },
   { root: ".tool-call", label: toolLabel },
   { root: ".reasoning-block", label: () => "From Kiro's thinking" },
   { root: ".steer-note", label: steerLabel },
@@ -88,7 +102,13 @@ const SOURCES: readonly { root: string; label: (source: Element, inner: Element)
   { root: "#run-bar-fold", label: () => "From the run list" },
 ];
 
-const SOURCE_ROOTS = SOURCES.map((s) => s.root).join(",");
+const LABELLED_ROOTS = LABELLED.map((s) => s.root).join(",");
+
+/** The line for content in no labelled kind, whose source is its transcript row. */
+const TRANSCRIPT_LABEL = "From the transcript";
+
+/** A transcript row is a direct child of one of these, or of a content region. */
+const ROW_PARENT = ".transcript-view, .turn, .turn-body";
 
 /** The regions holding transcript content; everything else on the page (composer, sidebar, Settings, popovers) is
  *  not quotable. */
@@ -100,13 +120,34 @@ function elementOf(node: Node): Element | null {
   return node instanceof Element ? node : node.parentElement;
 }
 
-/** The innermost source holding `node` inside a content region and not inside a control, or null. */
+/** The innermost transcript row holding `inner`, or null for an element no row holds. */
+function rowOf(inner: Element, region: Element): Element | null {
+  for (let e: Element | null = inner; e !== null && e !== region; e = e.parentElement) {
+    const parent = e.parentElement;
+    if (parent === region || parent?.matches(ROW_PARENT) === true) {
+      return e;
+    }
+  }
+  return null;
+}
+
+/**
+ * The one quotability rule: text inside a content region is quotable unless it or an ancestor is a control or
+ * chrome. Returns the source holding `node` (its innermost labelled kind, else its transcript row), or null.
+ */
 function sourceOf(node: Node): Element | null {
-  const source = elementOf(node)?.closest(SOURCE_ROOTS) ?? null;
-  if (source === null || !contentRegions().some((r) => r.contains(source))) {
+  const inner = elementOf(node);
+  const region = contentRegions().find((r) => inner !== null && r.contains(inner));
+  if (inner === null || region === undefined) {
     return null;
   }
-  return source.closest(CONTROL) === null ? source : null;
+  for (let e: Element | null = inner; e !== null && region.contains(e); e = e.parentElement) {
+    if (isControl(e)) {
+      return null;
+    }
+  }
+  const labelled = inner.closest(LABELLED_ROOTS);
+  return labelled !== null && region.contains(labelled) ? labelled : rowOf(inner, region);
 }
 
 /** Whether `a` to `b` covers no text, so an end there selects nothing outside the source. */
@@ -117,30 +158,33 @@ function coversNoText(a: [Node, number], b: [Node, number]): boolean {
   return gap.toString() === "";
 }
 
-/** Whether `range` covers text of a control inside `source`, such as a code block's title bar or a button. Touching
- *  one without covering its text, as a range ending at its start does, is not. */
-function coversControl(range: Range, source: Element): boolean {
-  for (const control of source.querySelectorAll(CONTROL)) {
-    if (control.matches(NAMING_CONTROL) && !control.matches(`[${CHROME_ATTR}]`)) {
-      continue;
-    }
-    // Clipping to a range that misses `control` collapses `part`, so it reads "".
-    const part = document.createRange();
-    part.selectNodeContents(control);
-    if (range.compareBoundaryPoints(Range.START_TO_START, part) > 0) {
-      part.setStart(range.startContainer, range.startOffset);
-    }
-    if (range.compareBoundaryPoints(Range.END_TO_END, part) < 0) {
-      part.setEnd(range.endContainer, range.endOffset);
-    }
-    if (part.toString() !== "") {
+/** Whether `range` covers text of `e`. Touching it without covering its text, as a range ending at its start
+ *  does, is not. */
+function coversTextOf(range: Range, e: Element): boolean {
+  // Clipping to a range that misses `e` collapses `part`, so it reads "".
+  const part = document.createRange();
+  part.selectNodeContents(e);
+  if (range.compareBoundaryPoints(Range.START_TO_START, part) > 0) {
+    part.setStart(range.startContainer, range.startOffset);
+  }
+  if (range.compareBoundaryPoints(Range.END_TO_END, part) < 0) {
+    part.setEnd(range.endContainer, range.endOffset);
+  }
+  return part.toString() !== "";
+}
+
+/** Whether `range` covers text `source` does not own: a control's or chrome's, such as a code block's title bar,
+ *  or a labelled kind's nested inside it, which is a second source. */
+function coversForeignText(range: Range, source: Element): boolean {
+  for (const e of source.querySelectorAll(`${CONTROL},${LABELLED_ROOTS}`)) {
+    if ((isControl(e) || e.matches(LABELLED_ROOTS)) && coversTextOf(range, e)) {
       return true;
     }
   }
   return false;
 }
 
-/** The source holding the whole of `range` with none of its controls' text, or null. An end outside the source
+/** The source holding the whole of `range` with none of its foreign text, or null. An end outside the source
  *  counts as inside when no text lies between it and the source, as a triple-click's end at the next block's
  *  start does. */
 function sourceOfRange(range: Range): Element | null {
@@ -160,15 +204,15 @@ function sourceOfRange(range: Range): Element | null {
   ) {
     return null;
   }
-  return coversControl(range, source) ? null : source;
+  return coversForeignText(range, source) ? null : source;
 }
 
 /** The line naming where `range`'s text comes from. */
 function sourceLabel(source: Element, range: Range): string {
   const inner = elementOf(range.startContainer);
-  const entry = SOURCES.find((s) => source.matches(s.root));
+  const entry = LABELLED.find((s) => source.matches(s.root));
   if (entry === undefined) {
-    throw new Error("a source matched no entry");
+    return TRANSCRIPT_LABEL;
   }
   return entry.label(source, inner !== null && source.contains(inner) ? inner : source);
 }
@@ -319,7 +363,8 @@ export function initSelectionQuote(): void {
     }
   });
 
-  // `aria-disabled` rather than `disabled`: a disabled button takes no hover or focus, so its tooltip could not say why.
+  // `aria-disabled`, not `disabled`: a disabled button fires no click and takes no focus, and a tap must still post
+  // the refusal.
   effect(() => {
     const refusal = tangentRefusal(activeSession.value);
     if ((askBtn.dataset["tooltip"] ?? null) === refusal) {
