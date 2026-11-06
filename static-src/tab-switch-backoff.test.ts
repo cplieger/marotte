@@ -1,7 +1,7 @@
 // `tabs.switch`'s own retry loop: a newer switch landing during a back-off supersedes the older
 // one, and the time bound firing during a back-off reverts only the switch the reader is still on.
 // Real tabs.ts and its real `settle`, through the dispatched action.
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type * as TabsDrag from "./tabs-drag.js";
 
 vi.mock("./router.js", async (importOriginal) => ({
@@ -72,10 +72,6 @@ import { activationRan, clickRow, held, pointers } from "./__test-helpers__/tab-
 
 installSwitchSuite();
 
-afterEach(() => {
-  setSwitchBoundForTest(null);
-});
-
 function refuseOnce(chatID: string): void {
   const h = held();
   h.reject(new ActionError("load failed", { status: 503 }));
@@ -85,8 +81,11 @@ function refuseOnce(chatID: string): void {
 /** Longer than the first back-off (300 ms), so a second attempt would have run. */
 const PAST_BACKOFF_MS = 450;
 
+// Each case sets its own bound once: the seam redefines `tabs.switch`, and a second definition
+// between two framework resets warns of a duplicate action name.
 describe("the switch's back-off", () => {
   it("answers superseded when a newer switch lands during the back-off", async () => {
+    setSwitchBoundForTest(null);
     const ids = await strip("a", "b", "c");
     refuseOnce("b");
 

@@ -58,6 +58,8 @@ messages.mountChatView();
 beforeEach(() => {
   apiGetMock.mockResolvedValue({ turns: [] });
   confirmMock.mockResolvedValue(true);
+  // A dispatch answers a handle; a cancelled outcome ends the flow before the composer.
+  rewindMock.mockReturnValue({ outcome: Promise.resolve({ status: "cancelled" }) });
 });
 
 // --- Fixtures -------------------------------------------------------------------------

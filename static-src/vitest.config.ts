@@ -149,13 +149,14 @@ function browserProject(
             }
             const scale = box.width / frameWidth;
             const cdp = await page.context().newCDPSession(page);
+            const sent: Promise<unknown>[] = [];
             const send = (
               type: "mouseMoved" | "mousePressed" | "mouseReleased",
               x: number,
               y: number,
             ): void => {
               const pressed = type === "mousePressed";
-              cdp
+              const ack = cdp
                 .send("Input.dispatchMouseEvent", {
                   type,
                   x,
@@ -167,6 +168,7 @@ function browserProject(
                 .catch((e: unknown) => {
                   console.error("queueClicks", type, e);
                 });
+              sent.push(ack);
             };
             const sleep = (ms: number): Promise<void> =>
               new Promise((resolve) => setTimeout(resolve, ms));
@@ -180,6 +182,11 @@ function browserProject(
                 await sleep(holdMs);
                 send("mouseReleased", x, y);
               }
+              // Detach only once every event is acked, so no event is still in flight on the session.
+              await Promise.all(sent);
+              await cdp.detach().catch((e: unknown) => {
+                console.error("queueClicks detach", e);
+              });
             })();
           },
         },

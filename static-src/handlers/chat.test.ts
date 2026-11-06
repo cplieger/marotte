@@ -1,7 +1,7 @@
 // Drives the REAL store and asserts its state ("the chat appears / disappears"); tabs.ts stays a
 // mock, since closing a tab is outside this handler's contract.
 
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { setSessions, getSessions, get, setActive } from "../store.js";
 import type { Session, ChatHeader } from "../types.js";
 import { framedSince, headerFrameMark } from "../header-frames.js";
@@ -192,6 +192,11 @@ describe("chat_created and the id-less chat URL", () => {
 });
 
 describe("chat_deleted", () => {
+  // The handler's banner cleanup is a dynamic import: settle it before the file's mocks go.
+  afterEach(async () => {
+    await vi.dynamicImportSettled();
+  });
+
   it("removes the chat from the store", () => {
     setSessions([makeSession("c1")]);
     fireSSE("chat_deleted", "", { id: "c1" });
