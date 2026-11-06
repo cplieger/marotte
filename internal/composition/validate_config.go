@@ -18,6 +18,9 @@ import (
 // reports through /api/health.
 func validateConfig(ctx context.Context, cfg *Config) error {
 	var errs []error
+	if cfg.notifyErr != nil {
+		errs = append(errs, cfg.notifyErr)
+	}
 
 	// Both folders are written into the generated steering documents verbatim.
 	for _, d := range []struct{ env, dir string }{{"KIRO_CONFIG_DIR", cfg.ConfigDir}, {"KIRO_WORK_DIR", cfg.WorkDir}} {

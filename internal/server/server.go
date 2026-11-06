@@ -15,6 +15,7 @@ import (
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/notify"
 	"github.com/cplieger/marotte/internal/preview"
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/tabs"
@@ -66,6 +67,8 @@ type Server struct {
 	authUnavailable func() bool
 	// hostPolicy is the ALLOWED_HOSTS allowlist; nil or inactive accepts any Host.
 	hostPolicy *httpserver.HostPolicy
+	// notifyDeliverer is the chats the notify route delivers into; nil leaves the route unmounted.
+	notifyDeliverer notify.Deliverer
 	// onListen fires once per successful bind, before serving: the evidence that this process
 	// serves its config dir.
 	onListen  func()
@@ -85,6 +88,8 @@ type Server struct {
 	ready atomic.Bool
 	// ignoredPublicWarned latches clientIP's one warning per process.
 	ignoredPublicWarned atomic.Bool
+	// notifyGate is the notify route's credential; the zero Gate is the door off.
+	notifyGate notify.Gate
 }
 
 // Option configures a Server at construction time.
@@ -240,6 +245,16 @@ func WithHostPolicy(p *httpserver.HostPolicy) Option {
 	return func(s *Server) { s.hostPolicy = p }
 }
 
+// WithNotifyGate sets the notify route's credential, which the server refuses on every other route.
+func WithNotifyGate(g notify.Gate) Option {
+	return func(s *Server) { s.notifyGate = g }
+}
+
+// WithNotifyDeliverer mounts the notify route over d, the chats it delivers into.
+func WithNotifyDeliverer(d notify.Deliverer) Option {
+	return func(s *Server) { s.notifyDeliverer = d }
+}
+
 // WithOnListen registers a callback fired once the listener has SUCCESSFULLY bound (a bind
 // failure never fires it). It runs on the bind goroutine ahead of serving, so it must not block.
 func WithOnListen(fn func()) Option {
@@ -268,6 +283,9 @@ func (s *Server) routes() *http.ServeMux {
 	mux.Handle("/", spaHandler(s.staticFS))
 	registerAPIFallback(mux)
 	s.agent.RegisterRoutes(mux)
+	if s.notifyDeliverer != nil {
+		mux.Handle(notify.Pattern, notify.NewHandler(s.notifyGate, s.notifyDeliverer))
+	}
 	mux.HandleFunc("/api/version", s.handleVersion)
 	mux.HandleFunc("/api/diagnostics", s.handleDiagnostics)
 	mux.HandleFunc("/api/kiro-settings", s.handleKiroSettings)
@@ -397,7 +415,7 @@ func registerAPIFallback(mux *http.ServeMux) {
 }
 
 // middlewareStack returns the middleware wrapping the route mux, OUTERMOST FIRST: access log,
-// recovery, security (CSP + ALLOWED_HOSTS + CSRF), Fetch Metadata, canonical path, compression,
+// recovery, security (CSP + ALLOWED_HOSTS + CSRF), notify-token confinement, Fetch Metadata, canonical path, compression,
 // dedup. A method so the ORDER, a security property, is assertable without a port.
 func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []httpserver.Middleware {
 	return []httpserver.Middleware{
@@ -415,6 +433,7 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []htt
 		),
 		httpserver.Recoverer(),
 		func(next http.Handler) http.Handler { return securityMiddleware(cspPolicy, s.hostPolicy, next) },
+		confineNotifyToken(s.notifyGate),
 		fetchMetadataGate,
 		// INSIDE the host and CSRF gates (their 403 is not shadowed), OUTSIDE the mux (ServeMux
 		// canonicalizes before routing) and the dedup cache (a refusal mints no replay entry).
@@ -471,4 +490,18 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	httpserver.WriteJSON(w, healthBody{Status: "ok"})
+}
+
+// confineNotifyToken refuses the notify token on every path but the notify route, so a leaked
+// token opens no other door.
+func confineNotifyToken(gate notify.Gate) httpserver.Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !notify.IsRoute(r.URL.Path) && gate.Carries(r) {
+				httpreply.Forbidden(w, "this token admits only POST /api/sessions/{session}/notify")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }

@@ -2,6 +2,7 @@ package composition
 
 import (
 	"cmp"
+	"errors"
 	"log/slog"
 	"net/netip"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/notify"
 	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/pin"
@@ -71,12 +73,17 @@ type Config struct {
 	// BrowseRoots is the file browser's allow-list: WorkDir, ConfigDir, marotte.DefaultUploadDir,
 	// plus MAROTTE_BROWSE_ROOTS grants (colon-separated absolute paths). Everything else is denied.
 	BrowseRoots []string
+	// notifyErr is a configured but unusable notify token, which validateConfig makes fatal.
+	notifyErr error
 	// ACPArgs are operator kiro-cli launch flags from MAROTTE_KIRO_ACP_ARGS, filtered by
 	// bridge.ParseACPArgs and appended to the agent engine's argv. An escape hatch for a flag
 	// upstream adds, not a capability switch.
 	ACPArgs []string
 	// ToolCatalogRefresh is the engine refresh cadence (toolbelt's 24h default), with no env override.
 	ToolCatalogRefresh time.Duration
+	// NotifyGate admits the notify route's bearer token from notify.TokenEnv; the zero Gate is
+	// the door off. It holds the token's digest only.
+	NotifyGate notify.Gate
 	// KiroAPIKeySet records whether bridge.KiroAPIKeyVar is present. The value
 	// is never read into Config.
 	KiroAPIKeySet bool
@@ -88,7 +95,10 @@ func ConfigFromEnv() Config {
 	paths := resolveBootPaths(envx.Source{})
 	configDir := paths.configDir
 	workDir := absDir("KIRO_WORK_DIR", cmp.Or(envx.String("KIRO_WORK_DIR"), "/workspace"))
+	notifyGate, notifyErr := notifyGateFromEnv()
 	return Config{
+		NotifyGate:          notifyGate,
+		notifyErr:           notifyErr,
 		WorkDir:             workDir,
 		ConfigDir:           configDir,
 		KiroCLIVersion:      envx.String("KIRO_CLI_VERSION"),
@@ -222,4 +232,46 @@ func parseAllowedHosts(raw string) *httpserver.HostPolicy {
 			"hint", "fix the entries listed in the preceding warning to restore browser access")
 	}
 	return policy
+}
+
+// notifyGateFromEnv reads notify.TokenEnv through envx's file convention. Unset is the door off
+// with no error; anything configured but unusable is an error naming the key and the failure
+// class only, because envx's own errors carry the file path.
+func notifyGateFromEnv() (notify.Gate, error) {
+	const key = notify.TokenEnv
+	if envx.IsBlankSecretFilePath(key) {
+		return notify.Gate{}, errors.New(key + "_FILE is set but blank: unset it, or point it at the token file")
+	}
+	value, _, err := envx.SecretWithSource(key)
+	var missing *envx.MissingError
+	switch {
+	case errors.As(err, &missing):
+		return notify.Gate{}, nil
+	case err != nil:
+		return notify.Gate{}, errors.New(key + "_FILE cannot be used: " + secretFileFailure(err))
+	}
+	return notify.ParseToken(value)
+}
+
+// secretFileFailure names an envx secret-file failure's class without its path.
+func secretFileFailure(err error) string {
+	switch {
+	case errors.Is(err, envx.ErrBlankSecretFile):
+		return "the file is blank"
+	case errors.Is(err, envx.ErrSecretFilePathRejected):
+		return "the path must be clean, with no .. component"
+	case errors.Is(err, envx.ErrSecretFileTooLarge), errors.Is(err, envx.ErrSecretFileGrew):
+		return "the file is too large"
+	default:
+		return "the file cannot be read"
+	}
+}
+
+// logNotifyPosture writes the boot's one line on whether the notify route admits a token.
+func logNotifyPosture(cfg *Config) {
+	if !cfg.NotifyGate.On() {
+		slog.Info("notify route is off: " + notify.TokenEnv + " is unset, so POST /api/sessions/{session}/notify answers 401")
+		return
+	}
+	slog.Info("notify route is on: " + notify.TokenEnv + " admits POST /api/sessions/{session}/notify and nothing else")
 }
