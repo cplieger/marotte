@@ -79,29 +79,9 @@ interface Motion {
 }
 
 function currentMotion(): Motion {
-  return motionOf(document.getAnimations());
-}
-
-/** The motion that can move icons inside `around`: every animation inside those boxes, and each ancestor's own (a
- *  drawer's slide). A caller passes every box whose resize it answers, since a layout animation elsewhere in the view
- *  moves them only by resizing one. Gecko's `Document.getAnimations()` visits every element of the document. */
-function motionAround(around: Iterable<Element>): Motion {
-  const anims: Animation[] = [];
-  const walked = new Set<Element>();
-  for (const box of around) {
-    anims.push(...box.getAnimations({ subtree: true }));
-    for (let e = box.parentElement; e !== null && !walked.has(e); e = e.parentElement) {
-      walked.add(e);
-      anims.push(...e.getAnimations());
-    }
-  }
-  return motionOf(anims);
-}
-
-function motionOf(anims: Iterable<Animation>): Motion {
   const movers: { el: Element; forever: boolean }[] = [];
   let reflowing = false;
-  for (const a of anims) {
+  for (const a of document.getAnimations()) {
     const fx = a.effect;
     if (a.playState !== "running" || !(fx instanceof KeyframeEffect) || fx.target === null) {
       continue;
@@ -142,177 +122,17 @@ function toLocal(m: DOMMatrix, scale: number, dx: number, dy: number): [number, 
 }
 
 /**
- * Set when an icon was declined on a reading that can change (a finite animation, a moving ancestor), so the caller
- * re-asks. An infinite animation and a static ancestor scale are permanent declines and do not set it, or the page
- * would poll forever.
+ * Set when an icon was declined on a reading that can change (a finite animation, an ancestor scale or tilt), so the
+ * caller re-asks. An infinite animation is a permanent decline and does not set it, or the page would poll forever.
  */
 let deferred = false;
 
-/** Icons under a static ancestor scale or tilt, rebuilt by every full pass; a transform ending on an ancestor of one
- *  re-arms the snap. */
-const staticScaled = new Set<SVGSVGElement>();
-
-/** Per-pass computed styles, so the containing-block walk reads each ancestor once. */
-type StyleMemo = Map<Element, CSSStyleDeclaration>;
-/** Per pass: the content offset an ancestor and those above it add, reached in flow. */
-type OffsetMemo = Map<Element, { x: number; y: number }>;
-
-function styleOf(el: Element, memo: StyleMemo): CSSStyleDeclaration {
-  let cs = memo.get(el);
-  if (cs === undefined) {
-    cs = getComputedStyle(el);
-    memo.set(el, cs);
-  }
-  return cs;
-}
-
-const CB_PROPS = ["transform", "translate", "scale", "rotate", "perspective", "filter"] as const;
-
-/** Whether `cs` makes its box a containing block for fixed and absolute descendants (CSS Position 3 §2.1). */
-function containsFixed(cs: CSSStyleDeclaration): boolean {
-  if (CB_PROPS.some((p) => cs[p] !== "none" && cs[p] !== "")) {
-    return true;
-  }
-  if (/\b(layout|paint|strict|content)\b/.test(cs.contain) || cs.contentVisibility === "auto") {
-    return true;
-  }
-  return /\b(transform|translate|scale|rotate|perspective|filter)\b/.test(cs.willChange);
-}
-
-function scrolls(cs: CSSStyleDeclaration, axis: "x" | "y"): boolean {
-  const o = axis === "y" ? cs.overflowY : cs.overflowX;
-  return o === "auto" || o === "scroll";
-}
-
-/** Whether a sticky box is stuck on `axis` against `scroller`'s scrollport: only then does it not move with the
- *  scroller's content. */
-function stuck(box: Element, cs: CSSStyleDeclaration, scroller: Element, axis: "x" | "y"): boolean {
-  const r = box.getBoundingClientRect();
-  const s = scroller.getBoundingClientRect();
-  const near = (a: number, b: number): boolean => Math.abs(a - b) <= 0.5;
-  if (axis === "y") {
-    const top = s.top + scroller.clientTop;
-    return (
-      (cs.top !== "auto" && near(r.top, top + parseFloat(cs.top))) ||
-      (cs.bottom !== "auto" && near(r.bottom, top + scroller.clientHeight - parseFloat(cs.bottom)))
-    );
-  }
-  const left = s.left + scroller.clientLeft;
-  return (
-    (cs.left !== "auto" && near(r.left, left + parseFloat(cs.left))) ||
-    (cs.right !== "auto" && near(r.right, left + scroller.clientWidth - parseFloat(cs.right)))
-  );
-}
-
-/** The scroll offsets that move `el` with its content: each scroller in its containing-block chain, less the axis a
- *  stuck sticky box pins to its nearest scroller. Added to a screen rect, it measures `el` in content space, where a
- *  scroll changes nothing, so no scroll leaves a snap stale. A top-layer box takes none. */
-function contentOffset(el: Element, memo: StyleMemo, above: OffsetMemo): { x: number; y: number } {
-  let x = 0;
-  let y = 0;
-  // From an ancestor entered in flow with no sticky box pending, the rest of the walk depends on that ancestor alone.
-  const entered: { a: Element; x: number; y: number }[] = [];
-  const at: { mode: "flow" | "absolute" | "fixed" } = { mode: "flow" };
-  const sticky: { box: Element; cs: CSSStyleDeclaration }[] = [];
-  const settle = (box: Element, cs: CSSStyleDeclaration): void => {
-    if (cs.position === "fixed") {
-      at.mode = "fixed";
-    } else if (cs.position === "absolute") {
-      at.mode = "absolute";
-    } else if (cs.position === "sticky") {
-      sticky.push({ box, cs });
-    }
-  };
-  if (el.matches(":modal, :popover-open")) {
-    return { x, y };
-  }
-  settle(el, styleOf(el, memo));
-  for (let a = el.parentElement; a !== null; a = a.parentElement) {
-    if (at.mode === "flow" && sticky.length === 0) {
-      const known = above.get(a);
-      if (known !== undefined) {
-        x += known.x;
-        y += known.y;
-        break;
-      }
-      entered.push({ a, x, y });
-    }
-    const cs = styleOf(a, memo);
-    if (a.matches(":modal, :popover-open")) {
-      break;
-    }
-    if (at.mode === "fixed" && containsFixed(cs)) {
-      at.mode = "flow";
-    } else if (at.mode === "absolute" && (cs.position !== "static" || containsFixed(cs))) {
-      at.mode = "flow";
-    } else if (at.mode !== "flow") {
-      settle(a, cs);
-      continue;
-    }
-    for (const axis of ["x", "y"] as const) {
-      if (!scrolls(cs, axis)) {
-        continue;
-      }
-      const pinned = sticky.findIndex((s) => stuck(s.box, s.cs, a, axis));
-      if (pinned >= 0) {
-        sticky.splice(pinned, 1);
-        continue;
-      }
-      if (axis === "y") {
-        y += a.scrollTop;
-      } else {
-        x += a.scrollLeft;
-      }
-    }
-    if (scrolls(cs, "x") || scrolls(cs, "y")) {
-      sticky.length = 0;
-    }
-    settle(a, cs);
-  }
-  for (const e of entered) {
-    above.set(e.a, { x: x - e.x, y: y - e.y });
-  }
-  return { x, y };
-}
-
 /** Returns how many boxes moved. Resets and republishes `deferred` for this pass. */
 export function snapIcons(root: ParentNode = document): number {
-  staticScaled.clear();
-  return snapWith(root.querySelectorAll<SVGSVGElement>(TIERS), currentMotion());
+  return snapWith(root, currentMotion());
 }
 
-/** Snap, in one pass, every tier icon inside `rows` and every one inside `cards` whose nearest `skip` ancestor does not
- *  lie inside that card, declining under motion inside `cards` or `resized` (`motionAround`). Reads boxes and writes
- *  only `translate`; a no-op before `initIconCrisp`. */
-export function snapIconsIn(
-  rows: Iterable<Element>,
-  cards: ReadonlySet<Element>,
-  skip: string,
-  resized: Iterable<Element> = [],
-): void {
-  if (resize === undefined) {
-    return;
-  }
-  const icons = new Set<SVGSVGElement>();
-  for (const box of rows) {
-    for (const ic of iconsIn(box)) {
-      icons.add(ic);
-    }
-  }
-  for (const card of cards) {
-    for (const ic of iconsIn(card)) {
-      const s = ic.closest(skip);
-      if (s === null || s === card || !card.contains(s)) {
-        icons.add(ic);
-      }
-    }
-  }
-  if (icons.size > 0) {
-    snapWith(icons, motionAround(new Set([...cards, ...resized])));
-  }
-}
-
-function snapWith(icons: Iterable<SVGSVGElement>, motion: Motion): number {
+function snapWith(root: ParentNode, motion: Motion): number {
   deferred = false;
   // A reading against a moving origin (the phone drawer's slide, a row collapsing above) is undone by the settle pass
   // once the motion lands, which reads as a wobble.
@@ -323,9 +143,7 @@ function snapWith(icons: Iterable<SVGSVGElement>, motion: Motion): number {
   // Every rect read before any style write: interleaving forces a layout per icon.
   const work: { el: SVGSVGElement; sx: number; sy: number; tx: number; ty: number }[] = [];
   const dpr = window.devicePixelRatio;
-  const memo: StyleMemo = new Map();
-  const above: OffsetMemo = new Map();
-  for (const el of icons) {
+  for (const el of root.querySelectorAll<SVGSVGElement>(TIERS)) {
     const movers = motion.movers.filter((m) => m.el.contains(el));
     if (movers.length > 0) {
       if (movers.every((m) => !m.forever)) {
@@ -344,18 +162,17 @@ function snapWith(icons: Iterable<SVGSVGElement>, motion: Motion): number {
       continue;
     }
     // Layout size ignores transforms, so disagreeing with painted size means an ancestor scale or tilt. A translate
-    // written under it is scaled with it, so passes can chase their own offset. With nothing moving it is static:
-    // declined until a transform ends on that ancestor.
-    const layout = parseFloat(styleOf(el, memo).inlineSize);
+    // written under it is scaled with it, so passes can chase their own offset; declined and re-asked, since a static
+    // one can lift.
+    const layout = parseFloat(getComputedStyle(el).inlineSize);
     if (Math.abs(rect.width - layout) > 0.02) {
-      staticScaled.add(el);
+      deferred = true;
       continue;
     }
-    const off = contentOffset(el, memo, above);
     const phase = wantedDevicePhase(el, dpr);
     const prev = applied.get(el) ?? { sx: 0, sy: 0, tx: 0, ty: 0 };
-    const sx = axisOffset(rect.x + off.x, prev.sx, scale, phase, dpr);
-    const sy = axisOffset(rect.y + off.y, prev.sy, scale, phase, dpr);
+    const sx = axisOffset(rect.x, prev.sx, scale, phase, dpr);
+    const sy = axisOffset(rect.y, prev.sy, scale, phase, dpr);
     const local = toLocal(m, scale, sx, sy);
     if (local === null) {
       continue;
@@ -433,11 +250,20 @@ function scheduleAdded(nodes: SVGSVGElement[]): void {
     const batch = [...pending];
     pending.clear();
     // Per arrival, so cost tracks arrivals; the animation scan is per batch.
-    snapWith(
-      batch.filter((el) => el.isConnected),
-      currentMotion(),
-    );
+    const motion = currentMotion();
+    for (const el of batch) {
+      if (el.isConnected) {
+        snapWith(scopeOf(el), motion);
+      }
+    }
   });
+}
+
+/** Yields exactly `el`, so `snapIcons` serves one element too. */
+function scopeOf(el: SVGSVGElement): ParentNode {
+  return {
+    querySelectorAll: () => [el] as unknown as NodeListOf<Element>,
+  } as unknown as ParentNode;
 }
 
 function iconsIn(node: Node): SVGSVGElement[] {
@@ -489,25 +315,6 @@ export function initIconCrisp(): void {
     attributes: true,
     attributeFilter: ["aria-expanded"],
   });
-  // A static scale's decline lifts only when a transform ends on its ancestor; hover colours end constantly and match
-  // neither filter.
-  const rearm = (e: Event): void => {
-    const target = e.target;
-    if (!(target instanceof Element)) {
-      return;
-    }
-    if (e instanceof TransitionEvent && !MOVES.includes(e.propertyName)) {
-      return;
-    }
-    for (const ic of staticScaled) {
-      if (target.contains(ic)) {
-        scheduleFull();
-        return;
-      }
-    }
-  };
-  document.addEventListener("transitionend", rearm, { capture: true, passive: true });
-  document.addEventListener("animationend", rearm, { capture: true, passive: true });
   // A web font landing changes control heights.
   void document.fonts.ready.then(scheduleFull);
 }

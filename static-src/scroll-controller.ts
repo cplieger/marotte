@@ -2,7 +2,6 @@
 // never scroll.ts, which binds the chat's controller at load.
 
 import { el } from "@cplieger/ui";
-import { snapIconsIn } from "./icon-crisp.js";
 import {
   ENTRY_STAMP,
   layoutDrift,
@@ -173,8 +172,6 @@ export class ScrollController {
   private gutterObserver: ResizeObserver | null = null;
   private nearObserver: IntersectionObserver | null = null;
   private nearTargets = new Set<Element>();
-  /** The skippable boxes currently `[data-near]`, the rows whose icons a layout move re-snaps. */
-  private nearNow = new Set<Element>();
   private nearMargin = -1;
   private observedChildren = new Set<Element>();
 
@@ -556,7 +553,6 @@ export class ScrollController {
     this.delivering = true;
     this.pressResized = true;
     let shrank = false;
-    let from: Element | null = null;
     for (const e of entries) {
       const size = e.borderBoxSize[0]?.blockSize ?? e.contentRect.height;
       const prev = this.childSize.get(e.target);
@@ -564,66 +560,18 @@ export class ScrollController {
         shrank = true;
       }
       this.childSize.set(e.target, size);
-      if (
-        from === null ||
-        from.compareDocumentPosition(e.target) & Node.DOCUMENT_POSITION_PRECEDING
-      ) {
-        from = e.target;
-      }
     }
     if (shrank) {
       this.floorStale = true;
     }
     this.correct();
     this.floorAfter(false);
-    if (from !== null) {
-      this.snapMoved(
-        from,
-        entries.map((e) => e.target),
-      );
-    }
     for (const cb of this.contentResizeListeners) {
       cb();
     }
     queueMicrotask(() => {
       this.delivering = false;
     });
-  }
-
-  /** Re-snap the icons a layout move under `from` carried: the near band's rows at or after it, and their turns' own
-   *  header and footer icons. A row outside the band is never read; its icons are not painted. */
-  private snapMoved(from: Element, resized: readonly Element[]): void {
-    const rows = this.inSnapReach(
-      [...this.nearNow].filter(
-        (box) =>
-          from.contains(box) ||
-          (from.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
-      ),
-    );
-    if (rows.length > 0) {
-      snapIconsIn(rows, this.cardsOf(rows), SKIPPABLE, resized);
-    }
-  }
-
-  /** The boxes whose top is above the scrollport's bottom edge plus one scrollport, which bounds the walk's cost by the
-   *  viewport. A row below keeps its last snap until a later delivery reaches it. */
-  private inSnapReach(boxes: Element[]): Element[] {
-    const limit = this.scrollEl.getBoundingClientRect().bottom + this.scrollEl.clientHeight;
-    return boxes.filter((box) => box.getBoundingClientRect().top <= limit);
-  }
-
-  private cardsOf(boxes: Iterable<Element>): Set<Element> {
-    const cards = new Set<Element>();
-    for (const box of boxes) {
-      let c: Element | null = box;
-      while (c !== null && c.parentElement !== this.viewEl) {
-        c = c.parentElement;
-      }
-      if (c !== null) {
-        cards.add(c);
-      }
-    }
-    return cards;
   }
 
   // ---- the clamp floor ----
@@ -1222,7 +1170,6 @@ export class ScrollController {
     this.observedChildren.clear();
     this.nearObserver?.disconnect();
     this.nearTargets.clear();
-    this.nearNow.clear();
   }
 
   /** Build the near observer for the scrollport's current height, if its lead changed: a rootMargin is fixed for an
@@ -1250,23 +1197,15 @@ export class ScrollController {
   /** The `[data-near]` toggle changes sizes in this task, after the previous paint and before the next frame's
    *  animation-frame callbacks, so it is corrected here, with the floor raised before the write. */
   private onNear(entries: readonly IntersectionObserverEntry[]): void {
-    const entering: Element[] = [];
     for (const entry of entries) {
       entry.target.toggleAttribute("data-near", entry.isIntersecting);
-      if (entry.isIntersecting) {
-        this.nearNow.add(entry.target);
-        entering.push(entry.target);
-      } else {
-        this.nearNow.delete(entry.target);
+      if (!entry.isIntersecting) {
         this.floorStale = true;
       }
     }
     this.holdFloor();
     this.correct();
     this.floorAfter(true);
-    if (entering.length > 0) {
-      snapIconsIn(entering, this.cardsOf(entering), SKIPPABLE);
-    }
   }
 
   private fitTopObserver(margin: number): void {
@@ -1310,7 +1249,6 @@ export class ScrollController {
           forEachSkippable(node, (box) => {
             observer.unobserve(box);
             this.nearTargets.delete(box);
-            this.nearNow.delete(box);
           });
         }
       }
