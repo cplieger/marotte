@@ -37,6 +37,7 @@ import { markBootDone } from "./view-swap.js";
 import { ingestTabsChanged, listTabs, removePendingFor } from "./tabs-sync.js";
 import { setParkedViewExemption } from "./messages.js";
 import { onPopState } from "./router.js";
+import { noteSwitchRequest } from "./transcript-cover.js";
 import type { Route } from "./route-path.js";
 import { initModelPicker } from "./picker.js";
 import { refreshRuntimeLine } from "./status.js";
@@ -518,6 +519,7 @@ function setupInput(): void {
 // URL routing
 
 onPopState((route: Route) => {
+  noteSwitchRequest();
   void applyRoute(route, "history");
 });
 

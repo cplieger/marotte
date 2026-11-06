@@ -3,7 +3,6 @@
 // this module, so a burst of switches shares one element and one skeleton.
 
 import { $, setBusy } from "./dom.js";
-import { afterNextPaint } from "./next-paint.js";
 import { chatSkeleton } from "./skeleton.js";
 
 const COVER_ID = "transcript-cover";
@@ -12,96 +11,46 @@ let cover: HTMLDivElement | null = null;
 /** The chat the cover stands for; "" while it is down. */
 let holder = "";
 
-/** A paint's release, waiting for that paint to reach the screen; replaced by any hold or drop. */
-interface PendingRelease {
-  /** `gestureGen` when the release was asked for, moved forward on each re-check. */
-  gestureGen: number;
+/** Bumped by every switch request (a tab activation, a history navigation), never by a press or a
+ *  key that requests none. */
+let switchGen = 0;
+
+/** A release deferred to a later task, checked against `switchGen`; replaced by any hold or drop. */
+interface PendingLift {
+  gen: number;
 }
-let pendingRelease: PendingRelease | null = null;
+let pendingLift: PendingLift | null = null;
 
-/** The last lift a release made, until the next gesture: a gesture the browser received before
- *  `at` was made over the cover and only dispatched after it, queued behind a long task. */
-let lifted: { readonly chat: string; readonly at: number } | null = null;
+/** Count a switch request: a release deferred before it waits a task more for that switch. */
+export function noteSwitchRequest(): void {
+  switchGen += 1;
+}
 
-/** Bumped in the capture phase by every press and key, before any door's own handler runs. */
-let gestureGen = 0;
-/** Primary-button presses still down: each may end in a click that switches again. */
-const pressed = new Set<number>();
-let watching = false;
+interface InputScheduling {
+  isInputPending?: () => boolean;
+}
 
-function watchGestures(): void {
-  if (watching) {
-    return;
-  }
-  watching = true;
-  const opts = { capture: true, passive: true } as const;
-  window.addEventListener(
-    "pointerdown",
-    (e) => {
-      onGesture(e);
-      if (e.button === 0) {
-        pressed.add(e.pointerId);
-      }
-    },
-    opts,
-  );
-  const ended = (e: PointerEvent): void => {
-    if (pressed.delete(e.pointerId) && pressed.size === 0) {
-      recheckSoon();
+/** Input the browser has received and not yet dispatched, where it can tell (Chromium); elsewhere
+ *  false, and a click queued behind the paint can show the superseded chat for one frame. */
+function inputPending(): boolean {
+  const scheduling = (navigator as Navigator & { scheduling?: InputScheduling }).scheduling;
+  return scheduling?.isInputPending?.() === true;
+}
+
+/** Lift the cover for `p` in a later task, once no switch was requested since the last check; a
+ *  hold or drop in between replaced it. */
+function liftLater(p: PendingLift): void {
+  setTimeout(() => {
+    if (pendingLift !== p) {
+      return;
     }
-  };
-  window.addEventListener("pointerup", ended, opts);
-  window.addEventListener("pointercancel", ended, opts);
-  window.addEventListener("keydown", onGesture, opts);
-  // A press released outside a blurred window delivers no pointerup.
-  window.addEventListener("blur", () => {
-    if (pressed.size > 0) {
-      pressed.clear();
-      recheckSoon();
+    if (p.gen !== switchGen) {
+      p.gen = switchGen;
+      liftLater(p);
+      return;
     }
-  });
-}
-
-/** Count the gesture, and put a lifted cover back when the gesture predates the lift (`timeStamp`
- *  is when the browser received the input), so its own handler decides before any frame shows
- *  the superseded chat. */
-function onGesture(e: Event): void {
-  gestureGen += 1;
-  const last = lifted;
-  lifted = null;
-  if (last !== null && holder === "" && e.timeStamp < last.at) {
-    holdCover(last.chat);
-    pendingRelease = { gestureGen };
-    recheckSoon();
-  }
-}
-
-/** Settle the pending release after the next paint; a press still down defers it to its end. */
-function recheckSoon(): void {
-  const p = pendingRelease;
-  if (p !== null) {
-    afterNextPaint(() => {
-      settleRelease(p);
-    });
-  }
-}
-
-/** Lift the cover for `p` unless a hold or drop replaced it, a press is down, or a gesture arrived
- *  since the last check, whose handler may switch again: then check once more a task later. */
-function settleRelease(p: PendingRelease): void {
-  if (pendingRelease !== p || pressed.size > 0) {
-    return;
-  }
-  if (p.gestureGen !== gestureGen) {
-    p.gestureGen = gestureGen;
-    setTimeout(() => {
-      settleRelease(p);
-    }, 0);
-    return;
-  }
-  const chat = holder;
-  dropCover();
-  lifted = { chat, at: performance.now() };
+    dropCover();
+  }, 0);
 }
 
 function ensureCover(): HTMLDivElement {
@@ -142,11 +91,9 @@ export function moveFocusOffTranscript(): void {
  *  re-animating it. The transcript under it is `aria-busy` until a release; `inertUnderCover`
  *  makes it `inert`. */
 export function holdCover(chatID: string): void {
-  watchGestures();
   const node = ensureCover();
   holder = chatID;
-  pendingRelease = null;
-  lifted = null;
+  pendingLift = null;
   node.hidden = false;
   delete node.dataset["state"];
   setBusy($.messagesWrap, true);
@@ -156,21 +103,26 @@ export function holdCover(chatID: string): void {
  *  from `holdCover` because `inert` restyles every resident turn, which in a gesture's frame costs
  *  a 4x-throttled CPU about 50 ms of style; until it runs, the opaque cover takes the pointer. */
 export function inertUnderCover(): void {
-  // A cover whose release is pending lifts within a frame; `inert` now would restyle the turns twice.
-  if (holder !== "" && pendingRelease === null) {
+  // A deferred lift runs a task from now; `inert` now would restyle the turns twice.
+  if (holder !== "" && pendingLift === null) {
     $.messagesWrap.inert = true;
   }
 }
 
-/** Lift the cover when `chatID` is the chat it stands for, once the paint that called this is on
- *  screen and no newer gesture (a press, a click, a key) has switched again; a hold or drop in
- *  between cancels it. A release for any other chat is a paint the cover is not waiting on. */
+/** Lift the cover in this task when `chatID` is the chat it stands for, unless the browser reports
+ *  input waiting, which may request another switch: then a task later, once no switch was
+ *  requested since. A release for any other chat is a paint the cover is not waiting on. */
 export function releaseCover(chatID: string): void {
-  if (holder === "" || holder !== chatID || pendingRelease !== null) {
+  if (holder === "" || holder !== chatID || pendingLift !== null) {
     return;
   }
-  pendingRelease = { gestureGen };
-  recheckSoon();
+  if (!inputPending()) {
+    dropCover();
+    return;
+  }
+  const p = { gen: switchGen };
+  pendingLift = p;
+  liftLater(p);
 }
 
 /** Lift a cover held for any chat but `chatID`: the reader came back to the mounted transcript
@@ -186,8 +138,7 @@ export function releaseCoverExceptFor(chatID: string): void {
 export function dropCover(): void {
   const wasHeld = holder !== "";
   holder = "";
-  pendingRelease = null;
-  lifted = null;
+  pendingLift = null;
   $.messagesWrap.inert = false;
   setBusy($.messagesWrap, false);
   if (cover === null || !wasHeld) {

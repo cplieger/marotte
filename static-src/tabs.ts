@@ -64,6 +64,7 @@ import {
   holdCover,
   inertUnderCover,
   moveFocusOffTranscript,
+  noteSwitchRequest,
   releaseCoverExceptFor,
 } from "./transcript-cover.js";
 import { afterNextPaint } from "./next-paint.js";
@@ -701,6 +702,7 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
   if (row === undefined || (id === state.active && opts.again !== true)) {
     return undefined;
   }
+  noteSwitchRequest();
   // First, at the clean style the click starts from, so its focusability check forces nothing.
   moveFocusOffTranscript();
   state.active = id;

@@ -1,12 +1,11 @@
 // The transcript cover is released only by the paint that puts the painted chat's turns or empty
-// page on screen, and lifts once that paint is on screen unless a newer press or key may switch
-// again. Real store, renderer and scroll controller.
+// page on screen, and lifts in that paint's task unless the browser reports input waiting. Only a
+// switch request raises or holds it. Real store, renderer and scroll controller.
 import { describe, it, expect, beforeEach } from "vitest";
 import type { Session } from "./types.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { Entry } from "./wire/types.gen.js";
 import { loadCSS } from "./__test-helpers__/css-rules.js";
-import { until } from "./__test-helpers__/until.js";
 
 for (const id of [
   "chat-view",
@@ -88,31 +87,31 @@ async function flushed(): Promise<void> {
   await Promise.resolve();
 }
 
-/** One frame, then one task: a release asked for before it has had its chance to lift. */
-async function onScreen(): Promise<void> {
-  await new Promise((resolve) => requestAnimationFrame(resolve));
+async function nextTask(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function press(type: "pointerdown" | "pointerup", pointerId = 1): PointerEvent {
-  return new PointerEvent(type, { bubbles: true, button: 0, pointerId });
+function press(type: "pointerdown" | "pointerup"): PointerEvent {
+  return new PointerEvent(type, { bubbles: true, button: 0, pointerId: 1 });
 }
 
-/** B's turns painted under a cover held for B, the release asked for and not yet lifted. */
-async function paintedUnderCover(): Promise<void> {
-  store.setSessions([
-    withTurn(makeSession({ id: "cv-a", name: "a" }), "text of a"),
-    withTurn(makeSession({ id: "cv-b", name: "b" }), "text of b"),
-  ]);
-  store.setActive("cv-a");
-  setPainted("cv-a");
-  store.bumpMessages("cv-a", "load");
-  await flushed();
-  store.setActive("cv-b");
-  coverModule.holdCover("cv-b");
-  setPainted("cv-b");
-  await flushed();
-  expect(coverUp(), "the cover lifted inside the paint's own task").toBe(true);
+/** Run `fn` with `navigator.scheduling.isInputPending` answering `pending()`. */
+async function withInputPending(pending: () => boolean, fn: () => Promise<void>): Promise<void> {
+  const nav = navigator as Navigator & { scheduling?: unknown };
+  const had = Object.getOwnPropertyDescriptor(nav, "scheduling");
+  Object.defineProperty(nav, "scheduling", {
+    configurable: true,
+    value: { isInputPending: pending },
+  });
+  try {
+    await fn();
+  } finally {
+    if (had === undefined) {
+      delete nav.scheduling;
+    } else {
+      Object.defineProperty(nav, "scheduling", had);
+    }
+  }
 }
 
 beforeEach(() => {
@@ -124,7 +123,7 @@ beforeEach(() => {
 });
 
 describe("the cover is released by the paint that shows content", () => {
-  it("stays over an evicted chat until its page lands, then lifts once that paint is on screen", async () => {
+  it("stays over an evicted chat until its page lands, then lifts in that paint's task", async () => {
     const a = withTurn(makeSession({ id: "cv-a", name: "a" }), "text of a");
     store.setSessions([a, evicted("cv-b")]);
     store.setActive("cv-a");
@@ -151,14 +150,12 @@ describe("the cover is released by the paint that shows content", () => {
     await flushed();
     const view = messages.transcriptViewFor("cv-b");
     expect(view?.querySelectorAll(".turn").length ?? 0).toBeGreaterThan(0);
-    expect(coverUp(), "the cover lifted before B's turns reached the screen").toBe(true);
-    await onScreen();
     expect(coverUp(), "the paint that mounted B's turns left the cover up").toBe(false);
     expect(wrap().hasAttribute("aria-busy")).toBe(false);
     expect(wrap().inert).toBe(false);
   });
 
-  it("lifts after the activation's paint when the target is parked with its turns", async () => {
+  it("lifts in the activation's paint when the target is parked with its turns", async () => {
     store.setSessions([
       withTurn(makeSession({ id: "cv-c", name: "c" }), "text of c"),
       withTurn(makeSession({ id: "cv-d", name: "d" }), "text of d"),
@@ -179,7 +176,6 @@ describe("the cover is released by the paint that shows content", () => {
     expect(
       messages.transcriptViewFor("cv-d")?.querySelectorAll(".turn").length ?? 0,
     ).toBeGreaterThan(0);
-    await onScreen();
     expect(coverUp()).toBe(false);
   });
 
@@ -197,7 +193,6 @@ describe("the cover is released by the paint that shows content", () => {
     coverModule.holdCover("cv-empty");
     setPainted("cv-empty");
     await flushed();
-    await onScreen();
     expect(coverUp()).toBe(false);
   });
 
@@ -215,77 +210,7 @@ describe("the cover is released by the paint that shows content", () => {
     coverModule.holdCover("cv-g");
     store.bumpMessages("cv-f", "load");
     await flushed();
-    await onScreen();
     expect(coverUp(), "F's repaint released G's cover").toBe(true);
-  });
-});
-
-describe("a gesture after the paint keeps the cover until its own handler decides", () => {
-  it("waits out a press that is still down, then lifts once it ends", async () => {
-    await paintedUnderCover();
-    document.body.dispatchEvent(press("pointerdown"));
-    await onScreen();
-    await onScreen();
-    expect(coverUp(), "the cover lifted under a press that may still click").toBe(true);
-    document.body.dispatchEvent(press("pointerup"));
-    expect(coverUp()).toBe(true);
-    await until(() => !coverUp(), "the cover lifts once the press ended");
-  });
-
-  it("lifts after a blur ends a press whose release the page never saw", async () => {
-    await paintedUnderCover();
-    document.body.dispatchEvent(press("pointerdown"));
-    await onScreen();
-    expect(coverUp()).toBe(true);
-    window.dispatchEvent(new FocusEvent("blur"));
-    await until(() => !coverUp(), "the cover lifts once a blur ended the press");
-  });
-
-  it("checks again a task after a key, and lifts when the key switched nothing", async () => {
-    await paintedUnderCover();
-    let upInKeyTask = false;
-    requestAnimationFrame(() => {
-      document.body.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "x" }));
-      setTimeout(() => {
-        upInKeyTask = coverUp();
-      }, 0);
-    });
-    await onScreen();
-    await onScreen();
-    expect(upInKeyTask, "the cover lifted in the task the key's handler ran in").toBe(true);
-    expect(coverUp()).toBe(false);
-  });
-
-  it("is handed to the chat a later press switches to, never lifted for the superseded one", async () => {
-    await paintedUnderCover();
-    document.body.dispatchEvent(press("pointerdown"));
-    document.body.dispatchEvent(press("pointerup"));
-    coverModule.holdCover("cv-a");
-    await onScreen();
-    await onScreen();
-    expect(coverUp(), "B's release lifted a cover now held for A").toBe(true);
-    coverModule.dropCover();
-  });
-
-  it("goes back up for a press made before the lift and dispatched after it", async () => {
-    await paintedUnderCover();
-    // Created now, so its timeStamp predates the lift, as a press queued behind a long task's does.
-    const queued = press("pointerdown");
-    await onScreen();
-    expect(coverUp(), "the release never lifted").toBe(false);
-    document.body.dispatchEvent(queued);
-    expect(coverUp(), "a press made over the cover found it lifted").toBe(true);
-    document.body.dispatchEvent(press("pointerup"));
-    await until(() => !coverUp(), "the cover lifts again once the press switched nothing");
-  });
-
-  it("stays down for a press made after the lift", async () => {
-    await paintedUnderCover();
-    await onScreen();
-    expect(coverUp()).toBe(false);
-    document.body.dispatchEvent(press("pointerdown"));
-    expect(coverUp(), "a press after the lift raised the cover").toBe(false);
-    document.body.dispatchEvent(press("pointerup"));
   });
 });
 
@@ -326,38 +251,58 @@ describe("a switch's cover lifts with its paint, and only a switch raises it", (
       new KeyboardEvent("keydown", { bubbles: true, key: "i" }),
     ];
     await paintSwitchToB();
-    await onScreen();
     expect(coverUp(), "the cover never lifted").toBe(false);
     for (const e of queued) {
       composer.dispatchEvent(e);
       expect(coverUp(), `a composer ${e.type} raised the cover`).toBe(false);
     }
     composer.dispatchEvent(press("pointerdown"));
-    expect(coverUp()).toBe(false);
-    await onScreen();
-    expect(coverUp(), "a composer press held the cover").toBe(false);
+    await nextTask();
+    expect(coverUp(), "a composer press raised the cover").toBe(false);
     composer.dispatchEvent(press("pointerup"));
   });
 
   it("defers the lift a task only while the browser reports input waiting", async () => {
-    const nav = navigator as Navigator & { scheduling?: unknown };
-    const had = Object.getOwnPropertyDescriptor(nav, "scheduling");
     let pending = true;
-    Object.defineProperty(nav, "scheduling", {
-      configurable: true,
-      value: { isInputPending: () => pending },
-    });
-    try {
-      expect(await paintSwitchToB(), "the cover lifted over waiting input").toBe(true);
-      pending = false;
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(coverUp(), "the deferred lift did not run in the next task").toBe(false);
-    } finally {
-      if (had === undefined) {
-        delete nav.scheduling;
-      } else {
-        Object.defineProperty(nav, "scheduling", had);
-      }
-    }
+    await withInputPending(
+      () => pending,
+      async () => {
+        expect(await paintSwitchToB(), "the cover lifted over waiting input").toBe(true);
+        expect(wrap().inert, "a deferred lift made the turns inert").toBe(false);
+        coverModule.inertUnderCover();
+        expect(wrap().inert, "inert under a lift a task away").toBe(false);
+        pending = false;
+        await nextTask();
+        expect(coverUp(), "the deferred lift did not run in the next task").toBe(false);
+      },
+    );
+  });
+
+  it("keeps a deferred lift for a cover a later switch handed to another chat", async () => {
+    await withInputPending(
+      () => true,
+      async () => {
+        expect(await paintSwitchToB()).toBe(true);
+        coverModule.noteSwitchRequest();
+        coverModule.holdCover("cv-a");
+        await nextTask();
+        await nextTask();
+        expect(coverUp(), "B's deferred lift uncovered a cover now held for A").toBe(true);
+      },
+    );
+  });
+
+  it("waits a task more when a switch was requested before the deferred lift", async () => {
+    await withInputPending(
+      () => true,
+      async () => {
+        expect(await paintSwitchToB()).toBe(true);
+        coverModule.noteSwitchRequest();
+        await nextTask();
+        expect(coverUp(), "lifted in the task a switch was requested before").toBe(true);
+        await nextTask();
+        expect(coverUp(), "a requested switch that held nothing kept the cover up").toBe(false);
+      },
+    );
   });
 });

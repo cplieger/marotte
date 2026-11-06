@@ -1,6 +1,6 @@
 // A burst of real clicks, each pressed while the previous target's view is still being shown and
-// released after it, keeps the one cover up until the last target paints: no frame shows a
-// superseded tab's content, also while a press waits for its release. Real tabs.ts and
+// released after it: no uncovered frame shows the content of a tab other than the active one. A
+// press only switches once it clicks, so the tab it leaves may show until then. Real tabs.ts and
 // transcript-cover.ts against the fake tab server.
 import { describe, it, expect, vi } from "vitest";
 import type * as TabsDrag from "./tabs-drag.js";
@@ -90,6 +90,7 @@ function busy(ms: number): void {
 interface Sample {
   readonly up: boolean;
   readonly painted: string;
+  readonly active: string;
 }
 
 /** What each frame paints, read in its animation-frame callback, as the visual harness reads it. */
@@ -98,7 +99,7 @@ function sampleFrames(): { readonly samples: Sample[]; stop(): void } {
   let on = true;
   const tick = (): void => {
     if (on) {
-      samples.push({ up: coverUp(), painted: pointers.painted });
+      samples.push({ up: coverUp(), painted: pointers.painted, active: getActiveTabId() });
       requestAnimationFrame(tick);
     }
   };
@@ -153,7 +154,9 @@ describe("a burst of real clicks queued behind each show", () => {
     expect(callsFor(fx.chat.show, "c"), "C was never shown").toBe(1);
     const firstUp = frames.samples.findIndex((s) => s.up);
     expect(firstUp, "no frame showed the cover").toBeGreaterThanOrEqual(0);
-    const leaked = frames.samples.slice(firstUp).filter((s) => !s.up && s.painted !== "d");
+    const leaked = frames.samples
+      .slice(firstUp)
+      .filter((s) => !s.up && ids[s.painted] !== s.active);
     expect(leaked, "frames showing a superseded tab's content uncovered").toEqual([]);
     expect(getActiveTabId()).toBe(ids["d"]);
     expect(fx.notices).toEqual([]);
