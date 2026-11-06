@@ -23,6 +23,7 @@ Variables go in the `environment:` block of `compose.yaml` and are read at start
 | `MAROTTE_TOOL_CATALOG_URL` | Where catalog updates come from. Point it at a fork or a mirror. | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest release |
 | `MAROTTE_BUNDLED_TOOLS` | File inside the image naming the tools marotte bundles. A wrong path leaves the suggested language servers unable to install. | `/opt/marotte/bundled-tools.json` |
 | `VAPID_SUBJECT` | Contact address placed in the keys used for push notifications. | `mailto:marotte@noreply.invalid` |
+| `MAROTTE_NOTIFY_TOKEN` | Bearer token another service sends to [wake a chat](#waking-a-chat-from-another-service-marotte_notify_token). `MAROTTE_NOTIFY_TOKEN_FILE` reads it from a file instead. | _(unset: off)_ |
 
 ## Host allowlist (`ALLOWED_HOSTS`)
 
@@ -114,6 +115,48 @@ Keep credentials out of the container environment anyway. Forge credentials belo
 environment:
   MAROTTE_ALLOW_BRIDGE_ENV: "BUILDKITE_AGENT_TOKEN"
 ```
+
+## Waking a chat from another service (`MAROTTE_NOTIFY_TOKEN`)
+
+A service on your network, such as a mail or job server for your agents, can hand a chat a message with one request. marotte steers the message into the chat's running reply, or sends it as a new message when the chat is idle, the same way **Steer** and **Send** on the page do. The message box, its draft and a question the chat is waiting on you for are left as they are. The delivered message shows "Sent by" and the caller's `source`.
+
+The route is off until you give it a token. Generate a random value of 32 to 512 characters, for example with `openssl rand -base64 48`, and give the same value to the calling service. Prefer a Docker secret, read through the `_FILE` variant:
+
+```yaml
+environment:
+  MAROTTE_NOTIFY_TOKEN_FILE: /run/secrets/marotte_notify_token
+secrets:
+  - marotte_notify_token
+```
+
+`MAROTTE_NOTIFY_TOKEN` set to the value itself works too. A token outside 32 to 512 of the characters `A-Z a-z 0-9 - . _ ~ + /`, with optional trailing `=`, or a `_FILE` that is blank or cannot be read, stops startup with a message naming the variable. Unset, startup logs one line saying the route is off. marotte keeps only a hash of the token and never logs it. kiro-cli does not get `MAROTTE_NOTIFY_TOKEN`, because its name ends in `_TOKEN`, but the shell commands the agent runs [inherit the container's environment](#credentials-in-the-container-environment-marotte_allow_bridge_env), so the `_FILE` form keeps the value out of their reach unless they open the file.
+
+The request names the chat by its session ID, which the agent's shell commands carry as `KIRO_SESSION_ID`:
+
+```sh
+curl -X POST http://marotte:9847/api/sessions/$SESSION/notify \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"You have new mail.","source":"mail","dedupe_key":"mail-1234"}'
+```
+
+| Field | Rule |
+| --- | --- |
+| `text` | The message. Required, not only whitespace, at most 64 KiB. |
+| `source` | Who sent it, shown on the message. 1 to 32 characters of `A-Z a-z 0-9 . _ -`. |
+| `dedupe_key` | 1 to 128 printable ASCII characters. A second request for the same chat with the same key within 10 minutes of the first delivery is not delivered again. |
+
+| Answer | Meaning |
+| --- | --- |
+| `200 {"delivered":"steer"}` or `200 {"delivered":"prompt"}` | Delivered into the running reply, or as a new message. |
+| `200 {"duplicate":true}` | The same `dedupe_key` was delivered to this chat in the last 10 minutes. |
+| `400` | A field is missing or breaks its rule, and the error names it, or `body` when the body is not a JSON object. |
+| `401` | The token is missing or wrong, or the route is off. The off answer names `MAROTTE_NOTIFY_TOKEN`. |
+| `404` | No chat holds this session. |
+| `413` | The body is over 512 KiB. |
+| `503` with `Retry-After` | The agent engine is starting, stopping or cannot take a message now, or a request with the same key is still being delivered. Retry with the same `dedupe_key`. |
+
+The token opens this route and nothing else: a request that carries it to any other address is answered `403`. This one route also skips the `ALLOWED_HOSTS` check, so a service in the same compose network can call `http://marotte:9847` without adding `marotte` to the list. Every other route keeps the check.
 
 ## Launch flags
 
