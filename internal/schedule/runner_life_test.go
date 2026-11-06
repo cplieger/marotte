@@ -3,6 +3,7 @@ package schedule
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -40,7 +41,7 @@ func TestSweep_ARecreatedScheduleKeepsItsOwnRow(t *testing.T) {
 			}
 			r.sweep(t.Context())
 			got := st.Clocks()[0]
-			if got.ID != reborn.ID || got.Status != reborn.Status {
+			if got.ID != reborn.ID || !reflect.DeepEqual(got.Status, reborn.Status) {
 				t.Errorf("recreated row = %+v, want it as the store created it: %+v", got, reborn)
 			}
 		})
