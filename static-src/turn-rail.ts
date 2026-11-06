@@ -153,6 +153,8 @@ let inView: ReadonlySet<string> = new Set();
 let rovingKey: string | undefined;
 let shown: readonly TurnBin[] = [];
 let shownSlots = 0;
+/** The chat whose rows the stack holds, which tells a re-point's repaint from an in-place one. */
+let stackChatID = "";
 
 /** The one writer of the turn set: the resident window merged into the fetched
  *  index, so the newest turn appears the moment its card mounts and the index only
@@ -583,7 +585,18 @@ function paintMap(
   setAttr(m.nav, "aria-busy", pending.size > 0 ? "true" : null);
   setStyleVar(m.stack, "--turn-map-slots", String(Math.max(1, layout.slots)));
   dropScrubbedRow(m, rows);
+  // WebKit restyles every row on each row insertion or removal once a hover has matched the
+  // fisheye's sibling rules (29-turns.css), so a re-point swaps the whole rail off the document.
+  // A focused row stays in place: removal would blur it.
+  const offDocument = stackChatID !== chatID && !m.stack.contains(document.activeElement);
+  stackChatID = chatID;
+  if (offDocument) {
+    m.stack.remove();
+  }
   reconcile(m.stack, rows, { key: (r) => r.bin.key, mount: mountPill, update: paintPill });
+  if (offDocument) {
+    m.track.append(m.stack);
+  }
   if (scrubPointer !== undefined) {
     scrubTo(m, scrubY);
   }
