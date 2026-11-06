@@ -24,8 +24,29 @@ func openExternalURLMsg(t *testing.T, id int64, url string) *marotte.RPCResponse
 	}
 }
 
-// connectPage holds one live SSE connection, a page that can show a URL, until the test ends.
-func connectPage(t *testing.T, h *Runtime) {
+// openURL is the engine opening url on its lane, answered once the answer's broadcasts are buffered.
+func openURL(t *testing.T, h *Runtime, lane *fakeBridge, id int64, url string) error {
+	t.Helper()
+	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, id, url))
+	answer := awaitLaneAnswer(t, lane, id)
+	joinInflight(t, h)
+	return answer.err
+}
+
+// eventsSince is the buffered events of type typ after the buffer position since.
+func eventsSince(h *Runtime, since uint64, typ marotte.EventType) []sse.ReplayEvent {
+	var out []sse.ReplayEvent
+	for _, e := range bufferedSince(h, since) {
+		if strings.Contains(string(e.Event.Data), `"type":"`+string(typ)+`"`) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// connectPage holds one live SSE connection, a page that can show a URL, until the test ends or disconnect is
+// called; disconnect returns once no page is connected.
+func connectPage(t *testing.T, h *Runtime) (disconnect func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	served := make(chan struct{})
@@ -45,6 +66,156 @@ func connectPage(t *testing.T, h *Runtime) {
 			t.Fatal("the page's SSE connection never subscribed")
 		}
 		time.Sleep(time.Millisecond)
+	}
+	return func() {
+		cancel()
+		<-served
+		deadline := time.Now().Add(5 * time.Second)
+		for h.bus.fanout.ClientCount() != 0 {
+			if time.Now().After(deadline) {
+				t.Fatal("the page's SSE connection never unsubscribed")
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+}
+
+// signingInOnLane is a runtime whose linear waits for sign-in with Sign in pressed, and the engine lane that opens
+// its consent URLs.
+func signingInOnLane(t *testing.T) (*Runtime, *fakeBridge) {
+	t.Helper()
+	h, _, lane := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	reportMCP(t, h, sessionOf("linear"), awaitingSignIn("linear", marotte.MCPSource{}))
+	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "linear"); err != nil {
+		t.Fatalf("claimSignIn(linear) = %v", err)
+	}
+	return h, lane
+}
+
+// A later consent URL, another server's re-auth, takes no standing Sign in's slot: it is shown on every page.
+func TestEngineLane_AConsentURLAfterTheSignInsOwnIsShownEverywhere(t *testing.T) {
+	lA := newCallbackListener(t, http.StatusOK)
+	lB := newCallbackListener(t, http.StatusOK)
+	h, _, lane := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	h.mcpRegistry.mu.Lock()
+	h.mcpRegistry.now = clock.now
+	h.mcpRegistry.mu.Unlock()
+	reportMCP(t, h, sessionOf("linear"), awaitingSignIn("linear", marotte.MCPSource{}))
+	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "linear"); err != nil {
+		t.Fatalf("claimSignIn(linear) = %v", err)
+	}
+	connectPage(t, h)
+	if err := openURL(t, h, lane, 1, authURLFor(t, lA.srv.URL, "st-a")); err != nil {
+		t.Fatalf("A's answer = %v, want success", err)
+	}
+	before := h.bus.fanout.Position().Head
+	urlB := authURLFor(t, lB.srv.URL, "st-b")
+
+	if err := openURL(t, h, lane, 2, urlB); err != nil {
+		t.Fatalf("B's answer = %v, want success", err)
+	}
+
+	shown := eventsSince(h, before, marotte.EventOpenExternalURL)
+	if len(shown) != 1 {
+		t.Fatalf("open_external_url events since A = %d, want 1 for B", len(shown))
+	}
+	var evt struct {
+		Payload marotte.OpenExternalURLPayload `json:"payload"`
+	}
+	if err := json.Unmarshal(shown[0].Event.Data, &evt); err != nil {
+		t.Fatalf("decoding the event: %v", err)
+	}
+	if evt.Payload.URL != urlB {
+		t.Errorf("banner url = %q, want B %q", evt.Payload.URL, urlB)
+	}
+	// KAS's LAZY_AUTH_TIMEOUT_MS: B is not the standing Sign in's, so it gets the lazy wait.
+	if want := clock.now().Add(lazySignInTTL); !evt.Payload.ExpiresAt.Equal(want) {
+		t.Errorf("expires_at = %v, want %v", evt.Payload.ExpiresAt, want)
+	}
+	if n := len(eventsSince(h, before, marotte.EventMCPSignInOpen)); n != 0 {
+		t.Errorf("mcp_sign_in_open events since A = %d, want none: B is not linear's", n)
+	}
+}
+
+// A URL with no state could never be relayed, so it must not take the standing Sign in's slot from the real one.
+func TestEngineLane_AConsentURLWithoutAStateLeavesTheSignInWaiting(t *testing.T) {
+	lA := newCallbackListener(t, http.StatusOK)
+	h, lane := signingInOnLane(t)
+	connectPage(t, h)
+	before := h.bus.fanout.Position().Head
+
+	if err := openURL(t, h, lane, 1, "https://provider.example/authorize?client_id=x"); err != nil {
+		t.Fatalf("the stateless URL's answer = %v, want success", err)
+	}
+	if n := len(eventsSince(h, before, marotte.EventOpenExternalURL)); n != 1 {
+		t.Errorf("open_external_url events = %d, want the stateless URL shown on every page", n)
+	}
+	if row := rowOf(t, h, "linear"); row.State != mcpStateOAuth || row.OAuthURL != "" {
+		t.Errorf("row after the stateless URL = %+v, want needs_auth with no consent URL", row)
+	}
+	urlA := authURLFor(t, lA.srv.URL, "st-a")
+	if err := openURL(t, h, lane, 2, urlA); err != nil {
+		t.Fatalf("A's answer = %v, want success", err)
+	}
+	if row := rowOf(t, h, "linear"); row.State != mcpStateSigningIn || row.OAuthURL != urlA {
+		t.Errorf("row after A = %+v, want signing_in on A", row)
+	}
+}
+
+// A state already anchored is answered as seen, even with no page left to show it: KAS's attempt keeps waiting.
+func TestEngineLane_AnAnchoredURLSeenAgainWithNoPageIsAnswered(t *testing.T) {
+	lL := newCallbackListener(t, http.StatusOK)
+	h, _, lane := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	disconnect := connectPage(t, h)
+	urlL := authURLFor(t, lL.srv.URL, "st-l")
+	if err := openURL(t, h, lane, 1, urlL); err != nil {
+		t.Fatalf("first answer = %v, want success", err)
+	}
+	disconnect()
+
+	if err := openURL(t, h, lane, 2, urlL); err != nil {
+		t.Errorf("second answer = %v, want success: its state is already anchored", err)
+	}
+
+	h.mcpRegistry.mu.RLock()
+	n := len(h.mcpRegistry.anchors)
+	h.mcpRegistry.mu.RUnlock()
+	if n != 1 {
+		t.Errorf("anchors = %d, want the one for st-l", n)
+	}
+	if rec := postRelay(t, h, "", pastedFor(t, lL.srv.URL, "cl", "st-l")); rec.Code != http.StatusOK {
+		t.Errorf("L's paste = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+}
+
+// A consent URL seen again keeps its attribution and shows nothing new: no second sign-in-open resets the row's
+// relayed state on the pages.
+func TestEngineLane_AConsentURLSeenAgainKeepsItsAttribution(t *testing.T) {
+	lA := newCallbackListener(t, http.StatusOK)
+	h, lane := signingInOnLane(t)
+	connectPage(t, h)
+	urlA := authURLFor(t, lA.srv.URL, "st-a")
+	if err := openURL(t, h, lane, 1, urlA); err != nil {
+		t.Fatalf("first answer = %v, want success", err)
+	}
+	before := h.bus.fanout.Position().Head
+
+	if err := openURL(t, h, lane, 2, urlA); err != nil {
+		t.Errorf("second answer = %v, want success", err)
+	}
+
+	if row := rowOf(t, h, "linear"); row.State != mcpStateSigningIn || row.OAuthURL != urlA {
+		t.Errorf("row = %+v, want signing_in on A", row)
+	}
+	if n := len(eventsSince(h, before, marotte.EventOpenExternalURL)); n != 0 {
+		t.Errorf("open_external_url events since the first open = %d, want none", n)
+	}
+	if n := len(eventsSince(h, before, marotte.EventMCPSignInOpen)); n != 0 {
+		t.Errorf("mcp_sign_in_open events since the first open = %d, want none", n)
 	}
 }
 
@@ -76,7 +247,7 @@ func TestEngineLane_OpenExternalURLWithAPageConnectedIsShownEverywhere(t *testin
 		t.Errorf("event = topic %q data %s, want every page's topic carrying the URL", shown[0].Event.Topic, shown[0].Event.Data)
 	}
 	h.mcpRegistry.mu.RLock()
-	anchors := slices.Clone(h.mcpRegistry.lazySignIns)
+	anchors := slices.Clone(h.mcpRegistry.anchors)
 	h.mcpRegistry.mu.RUnlock()
 	if len(anchors) != 1 || anchors[0].state != "s1" || anchors[0].authURL != consent {
 		t.Fatalf("anchors = %+v, want one on the URL keyed by its state s1", anchors)
@@ -88,8 +259,8 @@ func TestEngineLane_OpenExternalURLWithAPageConnectedIsShownEverywhere(t *testin
 		t.Fatalf("decoding the event: %v", err)
 	}
 	// A page replaying the event later must see when KAS stopped waiting, not a fresh 300 s.
-	if !evt.Payload.ExpiresAt.Equal(anchors[0].deadline) {
-		t.Errorf("expires_at = %v, want the anchor's deadline %v", evt.Payload.ExpiresAt, anchors[0].deadline)
+	if !evt.Payload.ExpiresAt.Equal(anchors[0].expires) {
+		t.Errorf("expires_at = %v, want the anchor's deadline %v", evt.Payload.ExpiresAt, anchors[0].expires)
 	}
 }
 
@@ -114,7 +285,7 @@ func TestEngineLane_OpenExternalURLWithNoPageConnectedIsRefused(t *testing.T) {
 		}
 	}
 	h.mcpRegistry.mu.RLock()
-	n := len(h.mcpRegistry.lazySignIns)
+	n := len(h.mcpRegistry.anchors)
 	h.mcpRegistry.mu.RUnlock()
 	if n != 0 {
 		t.Errorf("anchors = %d, want none for a refused URL", n)

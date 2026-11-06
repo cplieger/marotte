@@ -118,23 +118,20 @@ func TestLaunchScheduled_ResetsNoServerAwaitingSignInOrDisabled(t *testing.T) {
 	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "remote"); err != nil {
 		t.Fatalf("claimSignIn: %v", err)
 	}
-	if _, ok := h.mcpRegistry.claimSignInURL(t.Context(), "https://auth.example/consent?state=s"); !ok {
-		t.Fatal("claimSignInURL refused the standing sign-in")
+	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), "https://auth.example/consent?state=s", false); shown.how != consentOnRow {
+		t.Fatalf("anchorConsentURL = %+v, want on the standing sign-in's row", shown)
 	}
-	if _, err := h.mcpRegistry.beginOAuthRelay(t.Context(), "remote", "s"); err != nil {
+	if _, err := h.mcpRegistry.beginOAuthRelay(t.Context(), "s"); err != nil {
 		t.Fatalf("beginOAuthRelay: %v", err)
 	}
-	rec := h.mcpRegistry.servers["remote"]
 
 	launchScheduledOK(t, h, br)
 
 	if n := countCalls(br, methodV3MCPResetServer); n != 0 {
 		t.Errorf("resets sent = %d, want none", n)
 	}
-	h.mcpRegistry.mu.RLock()
-	defer h.mcpRegistry.mu.RUnlock()
-	if got := h.mcpRegistry.servers["remote"]; got != rec || !got.Relayed {
-		t.Errorf("the sign-in record = %p relayed %v, want the same %p still relayed", got, got != nil && got.Relayed, rec)
+	if row := rowOf(t, h, "remote"); row.State != mcpStateSigningIn || !row.Relayed {
+		t.Errorf("row = %+v, want it still signing_in and relayed", row)
 	}
 }
 

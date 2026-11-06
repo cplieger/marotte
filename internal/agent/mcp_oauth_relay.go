@@ -10,7 +10,6 @@ package agent
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"io"
 	"log/slog"
@@ -51,7 +50,7 @@ var relayQueryKeys = map[string]struct{}{
 
 // Refusal reasons, one value each so the handler maps a status and tests assert the reason.
 var (
-	errRelayNoFlow      = errors.New("no sign-in is in progress for this server; press Sign in first")
+	errRelayNoFlow      = errors.New("no sign-in is waiting for a callback; press Sign in first")
 	errRelayAlreadyDone = errors.New("this sign-in's callback was already delivered")
 	errRelayTooLong     = errors.New("that address is too long to be a sign-in callback")
 	errRelayBadBytes    = errors.New("that address contains characters a URL cannot carry")
@@ -64,7 +63,6 @@ var (
 	errRelayNoCode      = errors.New("that address carries no authorization code, so the sign-in did not complete")
 	errRelayBadQuery    = errors.New("that address carries a query parameter this callback does not use")
 	errRelayNoRedirect  = errors.New("this sign-in did not advertise a callback address, so there is nothing to relay to")
-	errRelayNoState     = errors.New("this sign-in carries no state value, so a pasted callback cannot be verified against it")
 	errRelayTargetDrift = errors.New("that address is not the callback address this sign-in asked for")
 	errRelayStateDrift  = errors.New("that address belongs to a different sign-in")
 )
@@ -102,8 +100,8 @@ type mcpOAuthRelayResp struct {
 }
 
 // handleOAuthRelay serves POST /api/mcp/oauth-relay {server, redirect_url}, replaying a stranded
-// callback into KAS's listener. A server with no Sign in pending, or none named, resolves through the pasted
-// callback's state. Not LoopbackOnly: a remote browser must reach it; the loopback constraint is on the outbound dial.
+// callback into KAS's listener. Every paste resolves through its own state; the named server is only logged. Not
+// LoopbackOnly: a remote browser must reach it; the loopback constraint is on the outbound dial.
 func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
@@ -114,21 +112,21 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	// The paste's own shape first, since its state picks a lazy anchor; it is matched against an anchor only below.
+	// The paste's own shape first, since its state picks the anchor; it is matched against the anchor only below.
 	state, err := pastedCallbackState(body.RedirectURL)
 	if err != nil {
 		httpreply.BadRequest(w, err.Error())
 		return
 	}
-	// Reserve, then derive everything from the reservation: a new status or sign-in can replace the record
-	// meanwhile, and a code validated against attempt A must never replay under B.
-	attempt, err := reg.beginOAuthRelay(req.Context(), body.Server, state)
+	// Reserve, then validate against the reserved anchor only: a code validated against attempt A must never
+	// replay under B.
+	attempt, err := reg.beginOAuthRelay(req.Context(), state)
 	if err != nil {
 		httpreply.Conflict(w, err.Error())
 		return
 	}
 
-	target, err := validateRelayAddress(body.RedirectURL, attempt.authURL)
+	target, err := validateRelayAddress(body.RedirectURL, attempt.anchor.authURL)
 	if err != nil {
 		reg.releaseOAuthRelay(attempt)
 		httpreply.BadRequest(w, err.Error())
@@ -139,7 +137,7 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 	if err != nil {
 		reg.releaseOAuthRelay(attempt)
 		slog.Warn("mcp oauth relay: could not reach the loopback callback listener",
-			"server", body.Server, "port", target.Port(), "error", dialErrWithoutURL(err))
+			"pasted_under", body.Server, "port", target.Port(), "error", dialErrWithoutURL(err))
 		httpserver.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON("the local sign-in listener did not answer, so the code was not delivered. The sign-in may have timed out"))
 		return
@@ -148,14 +146,14 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 		// Refused: give the reservation back so a corrected paste can retry.
 		reg.releaseOAuthRelay(attempt)
 		slog.Warn("mcp oauth relay: the loopback listener refused the callback",
-			"server", body.Server, "port", target.Port(), "status", status)
+			"pasted_under", body.Server, "port", target.Port(), "status", status)
 		httpserver.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON("the local sign-in listener rejected that callback with HTTP "+strconv.Itoa(status)+". Start the sign-in again"))
 		return
 	}
 
 	slog.Info("mcp oauth relay: delivered a stranded callback to the loopback listener",
-		"server", body.Server, "port", target.Port(), "status", status)
+		"pasted_under", body.Server, "port", target.Port(), "status", status)
 	// KAS reports the connected state over _kiro/mcp/status; the client waits for that frame.
 	httpserver.WriteJSON(w, mcpOAuthRelayResp{Status: status})
 }
@@ -197,12 +195,11 @@ func validateRelayAddress(pasted, authURL string) (*url.URL, error) {
 	if err != nil {
 		return nil, err
 	}
-	q, err := validateCallbackQuery(u.RawQuery)
-	if err != nil {
+	if _, err = validateCallbackQuery(u.RawQuery); err != nil {
 		return nil, err
 	}
 
-	advertised, err := matchAdvertisedCallback(u, q.Get("state"), authURL)
+	advertised, err := matchAdvertisedCallback(u, authURL)
 	if err != nil {
 		return nil, err
 	}
@@ -272,17 +269,15 @@ func validateCallbackQuery(rawQuery string) (url.Values, error) {
 	return q, nil
 }
 
-// matchAdvertisedCallback binds a paste to KAS's authorization URL and returns the advertised
-// callback to dial: the route's whole security argument. Port and path must agree; host is
-// the advertisement's. A missing stored `state` is a refusal, never a waiver.
-func matchAdvertisedCallback(pasted *url.URL, pastedState, authURL string) (*url.URL, error) {
+// matchAdvertisedCallback binds a paste's dial target to KAS's authorization URL and returns the
+// advertised callback to dial; the reservation already bound its state. Port and path must agree;
+// host is the advertisement's.
+func matchAdvertisedCallback(pasted *url.URL, authURL string) (*url.URL, error) {
 	auth, err := url.Parse(authURL)
 	if err != nil {
 		return nil, errRelayNoRedirect
 	}
-	aq := auth.Query()
-
-	redirect := aq.Get("redirect_uri")
+	redirect := auth.Query().Get("redirect_uri")
 	if redirect == "" {
 		return nil, errRelayNoRedirect
 	}
@@ -293,16 +288,6 @@ func matchAdvertisedCallback(pasted *url.URL, pastedState, authURL string) (*url
 	}
 	if want.Port() != pasted.Port() || want.EscapedPath() != pasted.EscapedPath() {
 		return nil, errRelayTargetDrift
-	}
-
-	wantState := aq.Get("state")
-	if wantState == "" {
-		return nil, errRelayNoState
-	}
-	// Constant-time: an early exit would leak a secret-equivalent value to a retrying caller.
-	if len(wantState) != len(pastedState) ||
-		subtle.ConstantTimeCompare([]byte(wantState), []byte(pastedState)) != 1 {
-		return nil, errRelayStateDrift
 	}
 	// url.Clone: the caller overwrites RawQuery, and a struct copy would share User.
 	return want.Clone(), nil

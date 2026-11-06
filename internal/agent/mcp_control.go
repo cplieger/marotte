@@ -230,27 +230,6 @@ func (reg *mcpRegistry) releaseAttempt(attempt uint64) {
 	reg.mu.Unlock()
 }
 
-// claimSignInURL gives a consent URL KAS opens while a sign-in stands to that sign-in: its server's record turns
-// signing_in with the URL as the relay's anchor. A lazy sign-in another server starts meanwhile is attributed to the
-// standing one too; the relay still delivers to the listener that URL names.
-func (reg *mcpRegistry) claimSignInURL(ctx context.Context, url string) (string, bool) {
-	configured := reg.configuredNames(ctx)
-	reg.mu.Lock()
-	now := reg.now()
-	i := slices.IndexFunc(reg.views, func(v mcpView) bool { return v.signIn != nil && now.Before(v.signIn.deadline) })
-	if i < 0 {
-		reg.mu.Unlock()
-		return "", false
-	}
-	server := reg.views[i].signIn.server
-	reg.views[i].signIn.authURL = url
-	d := reg.deriveLocked(configured)
-	reg.mu.Unlock()
-	reg.publish(ctx, d)
-	reg.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventMCPSignInOpen, "", marotte.MCPSignInOpenPayload{Server: server, URL: url}))
-	return server, true
-}
-
 // startSignIn claims the sign-in and sends resetServer {startOAuth} for its session in the background: KAS answers
 // within 60 s whatever the connect does, so the answer is no verdict, and the sign-in ends with the server's next
 // status in that session.
