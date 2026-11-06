@@ -66,6 +66,7 @@ import {
   moveFocusOffTranscript,
   releaseCoverExceptFor,
 } from "./transcript-cover.js";
+import { afterNextPaint } from "./next-paint.js";
 import { ActionError, retryNetwork, type ActionErrorLike } from "./actions/index.js";
 import { CLOSE_IMPACT_CHANGED, serverImpactOf } from "./actions/close-impact.js";
 import { newOpID } from "./transport.js";
@@ -634,19 +635,6 @@ function recordOf(gen: number): ActivationRecord | undefined {
 
 function activationPending(): boolean {
   return currentActivation !== null && !currentActivation.ran;
-}
-
-/** Run `fn` in a task after the next frame paints, so the gesture's writes are on screen first. A
- *  hidden page fires no frame callbacks (a notification click can activate one), so it gets a bare
- *  task. */
-function afterNextPaint(fn: () => void): void {
-  if (document.hidden) {
-    setTimeout(fn, 0);
-    return;
-  }
-  requestAnimationFrame(() => {
-    setTimeout(fn, 0);
-  });
 }
 
 /** Record `id` as visited and as a failed switch's return target once its activation's refresh

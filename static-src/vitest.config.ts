@@ -132,9 +132,10 @@ function browserProject(
             }
           },
           /** Real mouse clicks at `points` (CSS px in a tester frame `frameWidth` wide), each pressed
-           *  `gapMs` after the last one settled and released `holdMs` after its press; answers once
-           *  they are scheduled. Raw `page.mouse`, because `userEvent` first evaluates in the page and
-           *  so waits out a busy main thread, which a click queued behind a long task must not. */
+           *  `gapMs` after the last one's release and released `holdMs` after its press; answers once
+           *  they are scheduled. Raw CDP input, unawaited: Playwright's `mouse` waits for each
+           *  event's ack, and a move is acked only after a busy main thread frees, so its press would
+           *  reach the page after the long task instead of waiting in the input queue behind it. */
           async queueClicks(
             { page, frame },
             points: readonly { readonly x: number; readonly y: number }[],
@@ -147,17 +148,39 @@ function browserProject(
               throw new Error("the tester frame has no box");
             }
             const scale = box.width / frameWidth;
+            const cdp = await page.context().newCDPSession(page);
+            const send = (
+              type: "mouseMoved" | "mousePressed" | "mouseReleased",
+              x: number,
+              y: number,
+            ): void => {
+              const pressed = type === "mousePressed";
+              cdp
+                .send("Input.dispatchMouseEvent", {
+                  type,
+                  x,
+                  y,
+                  button: type === "mouseMoved" ? "none" : "left",
+                  buttons: pressed ? 1 : 0,
+                  clickCount: type === "mouseMoved" ? 0 : 1,
+                })
+                .catch((e: unknown) => {
+                  console.error("queueClicks", type, e);
+                });
+            };
+            const sleep = (ms: number): Promise<void> =>
+              new Promise((resolve) => setTimeout(resolve, ms));
             void (async () => {
               for (const p of points) {
-                await new Promise((resolve) => setTimeout(resolve, gapMs));
-                await page.mouse.move(box.x + p.x * scale, box.y + p.y * scale);
-                await page.mouse.down();
-                await new Promise((resolve) => setTimeout(resolve, holdMs));
-                await page.mouse.up();
+                await sleep(gapMs);
+                const x = box.x + p.x * scale;
+                const y = box.y + p.y * scale;
+                send("mouseMoved", x, y);
+                send("mousePressed", x, y);
+                await sleep(holdMs);
+                send("mouseReleased", x, y);
               }
-            })().catch((e: unknown) => {
-              console.error("queueClicks", e);
-            });
+            })();
           },
         },
       },

@@ -243,6 +243,7 @@ describe("a refused close", () => {
     releaseCover("a");
     expect(coverUp(), "a cover held for the successor").toBe(true);
     releaseCover("c");
+    await activationRan();
     expect(coverUp(), "C's paint lifts the cover").toBe(false);
   });
 

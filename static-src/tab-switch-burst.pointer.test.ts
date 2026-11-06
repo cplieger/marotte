@@ -1,7 +1,7 @@
-// A burst of real clicks, each pressed while the previous target's view is still being shown, keeps
-// the one cover up until the last target paints: no frame shows a superseded tab's content, also
-// while a press waits for its release. Real tabs.ts and transcript-cover.ts against the fake tab
-// server.
+// A burst of real clicks, each pressed while the previous target's view is still being shown and
+// released after it, keeps the one cover up until the last target paints: no frame shows a
+// superseded tab's content, also while a press waits for its release. Real tabs.ts and
+// transcript-cover.ts against the fake tab server.
 import { describe, it, expect, vi } from "vitest";
 import type * as TabsDrag from "./tabs-drag.js";
 
@@ -73,11 +73,11 @@ import { coverUp, pointers, rowEl } from "./__test-helpers__/tab-switch-mocks.js
 
 installSwitchSuite();
 
-/** Long enough that a click sent `GAP_MS` after the previous one lands inside this show. */
+/** Long enough that a press sent `GAP_MS` after the previous release lands inside this show, and
+ *  short enough that its release, `HOLD_MS` later, lands after it. */
 const SHOW_MS = 300;
-const GAP_MS = 60;
-/** A hand's press: the button is down this long before the click. */
-const HOLD_MS = 100;
+const GAP_MS = 200;
+const HOLD_MS = 200;
 
 /** Hold the main thread, as a heavy chat's show does. */
 function busy(ms: number): void {
@@ -148,7 +148,7 @@ describe("a burst of real clicks queued behind each show", () => {
     });
     frames.stop();
 
-    // The premise: B's and C's shows ran, so C's and D's clicks each waited behind one.
+    // The premise: B's and C's shows ran, so C's and D's presses each waited behind one.
     expect(callsFor(fx.chat.show, "b"), "B was never shown").toBe(1);
     expect(callsFor(fx.chat.show, "c"), "C was never shown").toBe(1);
     const firstUp = frames.samples.findIndex((s) => s.up);
