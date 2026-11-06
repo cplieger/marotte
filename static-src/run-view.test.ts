@@ -2328,7 +2328,10 @@ describe("a step's recorded grade", () => {
    *  the read to land. */
   async function rereadWith(ends: Record<string, unknown>): Promise<void> {
     const was = m.projected.length;
-    m.reply.current = { ...(m.reply.current as RunInspectReply), step_ends: ends } as RunInspectReply;
+    m.reply.current = {
+      ...(m.reply.current as RunInspectReply),
+      step_ends: ends,
+    } as RunInspectReply;
     rereadHeldRuns();
     await until(() => m.projected.length > was);
   }
@@ -2895,10 +2898,14 @@ describe("showRun and refreshRun", () => {
     expect(invalidateRun).not.toHaveBeenCalled();
   });
 
-  it("refreshRun invalidates the run, whose read carries its controls", () => {
+  it("refreshRun reads the run, whose read carries its controls, unless a read of it is out", () => {
+    refreshRun("wf_refresh");
     refreshRun("wf_refresh");
 
-    expect(invalidateRun).toHaveBeenCalledWith("wf_refresh");
+    const reads = vi
+      .mocked(apiGetOrError)
+      .mock.calls.filter(([path]) => path === "/api/runs/wf_refresh");
+    expect(reads).toHaveLength(1);
   });
 });
 

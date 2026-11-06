@@ -92,6 +92,7 @@ export function entryRenders(e: Entry, lane: string, folds: TurnFolds): boolean 
   switch (e.kind) {
     case "turn_open":
     case "turn_close":
+    case "step_graded":
     case "turn_bind":
     case "turn_wake":
     case "run_named":

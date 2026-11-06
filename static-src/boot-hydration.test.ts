@@ -28,8 +28,8 @@ vi.mock("./run-store.js", () => ({
   // on the mock or the module graph does not link (a mock is linked, not read off an object).
   runTurnHeldSeq: vi.fn(() => undefined),
   adoptConnectRuns: vi.fn(),
-  invalidateCachedRuns: vi.fn(),
   invalidateRun: vi.fn(),
+  rereadHeldRuns: vi.fn(),
   forgetRun: vi.fn(),
   noteRunLive: vi.fn(),
   noteRunSettled: vi.fn(),

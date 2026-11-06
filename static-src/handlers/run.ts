@@ -188,6 +188,10 @@ onSSE("entry_appended", (_chatID, p) => {
   const runID = forRun(p);
   if (runID !== "") {
     appendRunEntry(runID, p.entry);
+    if (p.entry.kind === "step_graded") {
+      // Both views read a step's grade from the run read's `step_ends`, which projects this entry.
+      invalidateRun(runID);
+    }
   }
 });
 
@@ -198,10 +202,9 @@ onSSE("turn_closed", (_chatID, p) => {
     appendRunEntry(runID, p.entry);
     // The tree grades a broken step from the run read's `step_ends`, and the applied
     // `node_complete` still says KAS's `completed`, so only a refetch turns the row red live. A
-    // `tool_use` stop is broken only under KAS's record of the step, which the server reads
-    // (`stepClose.graded`).
+    // grade under KAS's record arrives as its own `step_graded` entry.
     const close = payloadOf(p.entry, "turn_close");
-    if (isBroken(close?.outcome) || close?.stop_reason_raw === "tool_use") {
+    if (isBroken(close?.outcome)) {
       invalidateRun(runID);
     }
   }

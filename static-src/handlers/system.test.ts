@@ -113,11 +113,10 @@ vi.mock("../engine-status.js", () => ({
   reconcileEngineStatus: mockReconcileEngineStatus,
 }));
 
-// PARTIAL: the gap door's two run readers are spies (they share a token and both fetch), while
+// PARTIAL: the gap door's run readers are spies (both fetch), while
 // `adoptConnectRuns` is REAL, since the state it seeds is what the connect door owns. `vi.hoisted`
 // for the api-client pair's reason below.
-const { mockInvalidateCachedRuns, mockRebuildLiveRuns, mockRereadHeldRuns } = vi.hoisted(() => ({
-  mockInvalidateCachedRuns: vi.fn(),
+const { mockRebuildLiveRuns, mockRereadHeldRuns } = vi.hoisted(() => ({
   mockRebuildLiveRuns: vi.fn(),
   mockRereadHeldRuns: vi.fn(),
 }));
@@ -125,7 +124,6 @@ vi.mock("../run-store.js", async (importOriginal) => ({
   ...(await importOriginal<typeof RunStore>()),
   rebuildLiveRuns: mockRebuildLiveRuns,
   rereadHeldRuns: mockRereadHeldRuns,
-  invalidateCachedRuns: mockInvalidateCachedRuns,
 }));
 
 // Replaced so a per-run read is OBSERVABLE (the connect adoption issues none, the fallback one).
@@ -521,42 +519,12 @@ describe("BUS_RECONCILE handler", () => {
     expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
   });
 
-  // Run node state is APPLIED from `run_progress`, so frames lost in a gap leave a stale tree.
-  it("re-reads every cached run, because the progress frames it missed were applied ones", () => {
-    setSessions([makeSession("a")]);
-    fireReconcile();
-    expect(mockInvalidateCachedRuns).toHaveBeenCalledTimes(1);
-  });
-
-  // ONE token for both run readers (one request per live run, not two); its meaning is
-  // run-store.test.ts's.
-  it("threads ONE cause and the run's signal through both of its run readers", () => {
-    setSessions([makeSession("a")]);
-    const signal = fireReconcile();
-
-    const cause = mockInvalidateCachedRuns.mock.calls[0]?.[0];
-    expect(typeof cause).toBe("string");
-    expect(cause).not.toBe("");
-    expect(mockRebuildLiveRuns).toHaveBeenCalledWith(cause, signal);
-  });
-
-  it("derives the token from the cause, so two reconciles are two tokens", () => {
-    setSessions([makeSession("a")]);
-    fireReconcile("full:hello");
-    fireReconcile("must_refetch");
-
-    const first = mockInvalidateCachedRuns.mock.calls[0]?.[0];
-    const second = mockInvalidateCachedRuns.mock.calls[1]?.[0];
-    expect(second).not.toBe(first);
-  });
-
   // The revalidation that emitted the reconcile already re-read every held run (sse-adapter.test.ts).
   it("a reconcile re-reads no run itself", () => {
     setSessions([makeSession("a")]);
     const signal = fireReconcile();
 
     expect(mockRereadHeldRuns).not.toHaveBeenCalled();
-    expect(mockInvalidateCachedRuns).not.toHaveBeenCalled();
     expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
     expect(mockRebuildLiveRuns.mock.calls[0]).toEqual([signal]);
   });

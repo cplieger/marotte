@@ -9,10 +9,6 @@ vi.mock("../run-store.js", () => ({
   // refetches. A case that pins the APPLY path sets it true.
   applyRunProgress: vi.fn(() => false),
   invalidateRun: vi.fn(),
-  // The affordance refetch a run's ENDING triggers: the verb set changes at exactly
-  // that moment (a live run's Pause/Cancel becomes a failed run's Retry) and nothing
-  // else in the frame stream says so.
-  invalidateCachedRuns: vi.fn(),
   noteRunChat: vi.fn(),
   noteRunLabel: vi.fn(),
   noteRunResumed: vi.fn(),
@@ -645,24 +641,8 @@ describe("a run's own log", () => {
     }
   });
 
-  it("refetches the run when a step's turn closes on a tool_use stop the server grades", () => {
-    // A completed close with a `tool_use` stop is the model-call limit only under KAS's record of
-    // the step, which the run read's `step_ends` carries.
-    send(
-      "turn_closed",
-      {
-        workflow_id: RUN,
-        entry: entry("turn_close", { outcome: "completed", stop_reason_raw: "tool_use" }, 2),
-      },
-      "",
-    );
-
-    expect(invalidate).toHaveBeenCalledTimes(1);
-    expect(invalidate).toHaveBeenLastCalledWith(RUN);
-  });
-
   it("refetches the run when a step's grade is recorded", () => {
-    const e = entry("step_graded" as string, { outcome: "completed" }, 3);
+    const e = entry("step_graded", { outcome: "completed" }, 3);
 
     send("entry_appended", { workflow_id: RUN, entry: e }, "");
 

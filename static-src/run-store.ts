@@ -365,20 +365,13 @@ function nodeInFlight(status: ClassifiedRunNodeStatus): boolean {
 const cells = new Map<string, Signal<RunState | undefined>>();
 
 /** Together they collapse an event storm into at most two requests: KAS emits a `run_progress` per
- *  node event, and the state that matters is the one AFTER the last of them. `stale` carries the
- *  CAUSE the trailing fetch will run under, so the token below survives a coalesce. */
+ *  node event, and the state that matters is the one AFTER the last of them. */
 const inFlight = new Set<string>();
-const stale = new Map<string, string>();
+const stale = new Set<string>();
 
 /** Runs forgotten while their read was out; the read drops its answer and its retry, so a late
  *  response cannot rebuild the state `forgetRun` just released. */
 const forgotten = new Set<string>();
-
-/** The invalidation CAUSE behind each run's current answer: recorded when its fetch is ISSUED
- *  and kept once that fetch has answered, which is what makes one cause cost one request per run
- *  however the two callers interleave — a second invalidation naming a cause this run was
- *  already READ for is a no-op, because that read was issued after the cause. */
-const answeredCause = new Map<string, string>();
 
 /** The ladder behind a run read that produced nothing: three attempts at 1s doubling, one per
  *  workflow id. Bounded because a failed read does not always clear within a few seconds, such as
@@ -746,36 +739,38 @@ function nodeStatus(v: string | undefined): RunNode["status"] | undefined {
 /** Re-read a run from the server. Safe to call on every SSE frame: a second call while a fetch
  *  is in flight sets a flag rather than issuing a request, and one trailing fetch runs when the
  *  first settles. */
-export function invalidateRun(workflowID: string, cause = ""): void {
+export function invalidateRun(workflowID: string): void {
   if (workflowID === "") {
     return;
   }
-  if (cause !== "" && answeredCause.get(workflowID) === cause) {
-    return;
-  }
   if (inFlight.has(workflowID)) {
-    stale.set(workflowID, cause);
+    stale.add(workflowID);
     return;
   }
-  void fetchRun(workflowID, cause);
+  void fetchRun(workflowID);
 }
 
-/** Re-read every run this client holds state for. The gap-recovery half of the push contract:
- *  `run_progress` frames are APPLIED rather than refetched, so an outage that swallows them
- *  leaves a node reading `running` with its clock ticking and nothing to notice it. */
-export function invalidateCachedRuns(cause = ""): void {
+/** Read a run's current state unless a read of it is already out, which is that ask. */
+export function readRunUnlessOut(workflowID: string): void {
+  if (!inFlight.has(workflowID)) {
+    invalidateRun(workflowID);
+  }
+}
+
+/** The gap repair for everything a run's state applies from frames (`run_progress`, `node_complete`,
+ *  a step's recorded grade in `step_ends`). Every reader registers a demand, so a run nobody holds
+ *  is read by its next reader. A held run whose read is out gets one trailing read, since that read
+ *  may predate the gap. */
+export function rereadHeldRuns(): void {
   for (const id of cells.keys()) {
-    invalidateRun(id, cause);
+    if (runStateDemanded(id)) {
+      invalidateRun(id);
+    }
   }
 }
 
-async function fetchRun(workflowID: string, cause = ""): Promise<void> {
+async function fetchRun(workflowID: string): Promise<void> {
   inFlight.add(workflowID);
-  // Recorded at ISSUE, which is what lets ONE rule in `invalidateRun` serve both cases: a
-  // same-cause invalidation arriving while this read is open is already covered.
-  if (cause !== "") {
-    answeredCause.set(workflowID, cause);
-  }
   let answered = false;
   let dropped: boolean;
   // The status of a read that produced nothing, which is what tells a SETTLED answer from the
@@ -792,7 +787,7 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
     } else if (d?.state !== undefined && executionsOf(workflowID).frames !== issued) {
       // A frame changed the tree while this read was out, so the answer may predate it. Only a
       // read issued after the frame can say which side of it KAS is on.
-      stale.set(workflowID, stale.get(workflowID) ?? cause);
+      stale.add(workflowID);
       answered = true;
     } else if (d?.state !== undefined) {
       // The plan, the step ends and the verbs BEFORE the state, because the state assignment is what
@@ -839,18 +834,13 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
     } else if (answered) {
       cancelRunRetry(workflowID);
     } else {
-      if (cause !== "") {
-        // The read produced nothing, so it claims nothing: a cause standing over an answer nobody
-        // got would turn the gap's own recovery into a no-op.
-        answeredCause.delete(workflowID);
-      }
       if (failed === RUN_GONE_STATUS) {
         // CANCELLED rather than merely not armed: a rung an earlier transient armed is still due,
         // and the answer it would collect is this one.
         cancelRunRetry(workflowID);
         goneCell(workflowID).value = true;
       } else {
-        scheduleRunRetry(workflowID, cause, failed);
+        scheduleRunRetry(workflowID, failed);
       }
     }
   }
@@ -859,14 +849,12 @@ async function fetchRun(workflowID: string, cause = ""): Promise<void> {
     // so only a registered demand lets the trailing read recreate the cell.
     stale.delete(workflowID);
   }
-  const next = stale.get(workflowID);
-  if (next !== undefined) {
-    stale.delete(workflowID);
-    await fetchRun(workflowID, next);
+  if (stale.delete(workflowID)) {
+    await fetchRun(workflowID);
   }
 }
 
-function scheduleRunRetry(workflowID: string, cause: string, status: number): void {
+function scheduleRunRetry(workflowID: string, status: number): void {
   // The CONTINUATION as well as the door: its one caller is that `finally`, reached by the first
   // failed read and by every rung's, so the count is KEPT rather than reset, or the ladder would
   // have no end.
@@ -889,7 +877,7 @@ function scheduleRunRetry(workflowID: string, cause: string, status: number): vo
   ladder.attempts++;
   ladder.timer = setTimeout(() => {
     ladder.timer = undefined;
-    invalidateRun(workflowID, cause);
+    invalidateRun(workflowID);
   }, delay);
   runRetries.set(workflowID, ladder);
 }
@@ -950,7 +938,6 @@ export function forgetRun(workflowID: string): void {
   }
   cells.delete(workflowID);
   stale.delete(workflowID);
-  answeredCause.delete(workflowID);
   cancelRunRetry(workflowID);
   plans.delete(workflowID);
   executions.delete(workflowID);
@@ -1157,26 +1144,28 @@ export function registerLiveRunObserver(fn: (workflowID: string) => void): void 
 /** Rebuild the inventory from the server. A FAILED fetch keeps the event-fed state: a stale
  *  exemption costs memory, a wrongly-evicted live chat costs correctness, and the next gap or
  *  boot retries. */
-export async function rebuildLiveRuns(cause = "", signal?: AbortSignal): Promise<void> {
+export async function rebuildLiveRuns(signal?: AbortSignal): Promise<void> {
   const d = await apiGetTyped("/api/runs/live", decodeLiveRunsResponse, signal);
   if (d === null) {
     return;
   }
-  adoptLiveRuns(d.runs, cause);
+  adoptLiveRuns(d.runs, true);
   // AFTER the adoption: the `runs` digest stamp certifies the inventory now held.
   observeStamp(d.subject);
 }
 
-/** Adopt an inventory somebody else already read. */
-function adoptLiveRuns(rows: readonly LiveRun[], cause?: string): void {
+/** Adopt an inventory somebody else already read. `readHeld` reads each live run a reader holds that
+ *  has no state yet; a run with state is kept current by its frames and by `rereadHeldRuns`. */
+function adoptLiveRuns(rows: readonly LiveRun[], readHeld: boolean): void {
   liveRunChats.clear();
   for (const r of rows) {
     if (r.workflow_id !== "") {
       liveRunChats.set(r.workflow_id, { chat: r.chat_id, executing: r.executing });
       noteRunChat(r.workflow_id, r.chat_id);
       noteRunKnown?.(r.workflow_id);
-      if (cause !== undefined) {
-        invalidateRun(r.workflow_id, cause);
+      // After the `liveRunChats` write: a chat tab's demand reads it to hold this run.
+      if (readHeld && !cells.has(r.workflow_id) && runStateDemanded(r.workflow_id)) {
+        readRunUnlessOut(r.workflow_id);
       }
     }
   }
@@ -1188,10 +1177,10 @@ function adoptLiveRuns(rows: readonly LiveRun[], cause?: string): void {
  *  not state one. */
 export function adoptConnectRuns(p: ConnectedPayload): void {
   if (!p.live_runs_stated) {
-    void rebuildLiveRuns("connect");
+    void rebuildLiveRuns();
     return;
   }
-  adoptLiveRuns(p.live_runs ?? []);
+  adoptLiveRuns(p.live_runs ?? [], false);
 }
 
 // A run owns its record, so its steps' entries arrive as the six entry events with an EMPTY chat id
