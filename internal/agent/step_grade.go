@@ -29,8 +29,8 @@ type stepClose struct {
 type stepGrade struct {
 	entry     *marotte.Entry
 	nodePath  string
-	grade     stepClose // the close under the grade (withGrade)
 	sessionID string    // KAS's record's step session, named by the empty-answer note
+	grade     stepClose // the close under the grade (withGrade)
 	mayNote   bool      // the close before its grade mayNote()
 }
 

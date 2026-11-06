@@ -779,34 +779,50 @@ func (r *runLog) stepEnds(ctx context.Context, workflowID string, kas map[string
 	if !ok || rec.removed {
 		return nil, nil, nil
 	}
-	if err := scanStepFactsLocked(rec, l); err != nil {
-		return nil, nil, err
+	if scanErr := scanStepFactsLocked(rec, l); scanErr != nil {
+		return nil, nil, scanErr
 	}
+	graded, err = r.gradeDueLocked(ctx, rec, kas)
+	return stepEndsLocked(rec, kas), graded, err
+}
+
+// gradeDueLocked records the grade of every path's newest close kas makes due, in path order. Caller holds runLog.mu
+// and has scanned the record's step facts.
+func (r *runLog) gradeDueLocked(ctx context.Context, rec *runRecord, kas map[string]workflow.StepRecord) ([]*stepGrade, error) {
+	var graded []*stepGrade
 	var errs []error
-	ends = make(map[string]marotte.RunStepEnd)
 	for _, path := range slices.Sorted(maps.Keys(rec.closes)) {
 		st, known := kas[path]
-		if known {
-			g, gErr := r.gradeLocked(ctx, rec, path, st)
-			if gErr != nil {
-				errs = append(errs, gErr)
-			}
-			if g != nil {
-				graded = append(graded, g)
-			}
+		if !known {
+			continue
 		}
-		c := rec.closes[path]
+		g, err := r.gradeLocked(ctx, rec, path, st)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		if g != nil {
+			graded = append(graded, g)
+		}
+	}
+	return graded, errors.Join(errs...)
+}
+
+// stepEndsLocked answers each path's step end from its newest close (stepClose.end). Caller holds runLog.mu.
+func stepEndsLocked(rec *runRecord, kas map[string]workflow.StepRecord) map[string]marotte.RunStepEnd {
+	ends := make(map[string]marotte.RunStepEnd)
+	for path, c := range rec.closes {
 		end, ok := c.end()
 		if !ok {
 			continue
 		}
 		if end.Outcome == marotte.TurnOutcomeInterrupted {
+			st, known := kas[path]
 			// A grade is recorded only under a completed record, so a graded interruption was resumed.
 			end.Resumed = rec.starts[path].open || c.hasGrade || (known && st.Completed())
 		}
 		ends[path] = end
 	}
-	return ends, graded, errors.Join(errs...)
+	return ends
 }
 
 // dueGradeLocked is whether the path's newest close c needs a grade under KAS's record. A turn open on the path is a
