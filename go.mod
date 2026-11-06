@@ -17,7 +17,7 @@ require (
 )
 
 require (
-	github.com/cplieger/forgeapi/v2 v2.0.0-dev.2
+	github.com/cplieger/forgeapi/v2 v2.0.0-dev.3
 	github.com/cplieger/go/envx v1.0.0-dev.1
 	github.com/cplieger/go/filesafe v1.0.0-dev.2
 	github.com/cplieger/go/httpserver v1.0.0-dev.4
@@ -28,7 +28,7 @@ require (
 	github.com/cplieger/go/sse v1.5.0-dev.6
 	github.com/cplieger/go/ssrf v1.0.0-dev.1
 	github.com/cplieger/go/textsafe v1.0.0-dev.1
-	github.com/cplieger/go/wiregen v1.0.0-dev.1
+	github.com/cplieger/go/wiregen v1.0.0-dev.2
 	github.com/cplieger/go/yamlenv v1.0.0-dev.2
 	github.com/cplieger/toolbelt/v3 v3.15.0-dev.12
 	github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.5
