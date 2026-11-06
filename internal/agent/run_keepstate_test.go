@@ -242,12 +242,12 @@ func TestRunStartWithoutRuleConfirmsNothing(t *testing.T) {
 // A run_start and an outcome of a run whose rule was deleted write no state file for the rule.
 func TestConfirmForDeletedRuleWritesNothing(t *testing.T) {
 	dir := t.TempDir()
-	st, err := launchrule.NewStore(dir)
+	st, _, err := launchrule.NewStore(dir)
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
 	rule := putClockRule(t, st, "bundled://publish", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
-	if err := st.Delete(t.Context(), rule.ID); err != nil {
+	if _, err := st.Delete(t.Context(), rule.ID); err != nil {
 		t.Fatalf("Setup: Delete: %v", err)
 	}
 	stateFile := filepath.Join(dir, "launch-state", rule.ID+".json")

@@ -24,6 +24,7 @@ const (
 type harness struct {
 	t     *testing.T
 	store *launchrule.Store
+	c     *Confirmer
 	src   *fakeSource
 	marks *launchMarks
 	now   time.Time
@@ -40,11 +41,11 @@ func newHarness(t *testing.T) *harness {
 // reopen loads the store again from disk, as a restart does.
 func (h *harness) reopen() {
 	h.t.Helper()
-	st, err := launchrule.NewStore(h.dir)
+	st, w, err := launchrule.NewStore(h.dir)
 	if err != nil {
 		h.t.Fatalf("Setup: NewStore: %v", err)
 	}
-	h.store = st
+	h.store, h.c = st, NewConfirmer(st, w)
 }
 
 func (h *harness) create(ev *launchrule.EventSpec) launchrule.Rule {
@@ -61,7 +62,7 @@ func (h *harness) create(ev *launchrule.EventSpec) launchrule.Rule {
 // poll runs one poll of every feed at h.now, then moves h.now on by five minutes.
 func (h *harness) poll() {
 	h.t.Helper()
-	p := &Poller{src: h.src, store: h.store, now: func() time.Time { return h.now }, marks: h.marks}
+	p := &Poller{src: h.src, c: h.c, now: func() time.Time { return h.now }, marks: h.marks}
 	for _, fr := range Feeds(h.store.List()) {
 		p.Poll(h.t.Context(), fr)
 	}
@@ -81,16 +82,13 @@ func (h *harness) state(ruleID string) eventState {
 	return es
 }
 
-// seed writes es as the rule's state file.
+// seed makes es the rule's state, written through the Confirmer as a poll's change is.
 func (h *harness) seed(ruleID string, es *eventState) {
 	h.t.Helper()
-	st, err := es.encode()
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	if err := h.store.WriteState(h.t.Context(), ruleID, &st); err != nil {
-		h.t.Fatalf("Setup: WriteState: %v", err)
-	}
+	h.c.update(ruleID, func(cur *eventState) bool {
+		*cur = *es
+		return true
+	})
 }
 
 func (h *harness) queued(ruleID string) []queueEntry {

@@ -18,23 +18,24 @@ import (
 // a row no task has built yet fails loudly instead of passing for the wrong reason.
 type testConfirmer struct {
 	*Confirmer
-	t     *testing.T
-	store *launchrule.Store
-	log   *capture.Recorder
-	fx    *recordingEffects
-	ready chan struct{}
-	dir   string
-	a0    bool
+	t      *testing.T
+	store  *launchrule.Store
+	log    *capture.Recorder
+	fx     *recordingEffects
+	writes *countingWriter
+	ready  chan struct{}
+	dir    string
+	a0     bool
 }
 
 type testConfirmerOption func(*testConfirmerConfig)
 
 type testConfirmerConfig struct {
-	writer func(*launchrule.Store) launchrule.StateWriter
+	writer func(launchrule.StateWriter) launchrule.StateWriter
 }
 
-// withWriter puts the writer w returns between the Confirmer and the store.
-func withWriter(w func(*launchrule.Store) launchrule.StateWriter) testConfirmerOption {
+// withWriter puts the writer w returns, given the store's own, between the Confirmer and the store.
+func withWriter(w func(launchrule.StateWriter) launchrule.StateWriter) testConfirmerOption {
 	return func(c *testConfirmerConfig) { c.writer = w }
 }
 
@@ -46,17 +47,17 @@ func newTestConfirmer(t *testing.T, opts ...testConfirmerOption) *testConfirmer 
 	}
 	rec := capture.Default(t)
 	dir := t.TempDir()
-	st, err := launchrule.NewStore(dir)
+	st, w, err := launchrule.NewStore(dir)
 	if err != nil {
 		t.Fatalf("Setup: NewStore: %v", err)
 	}
-	var w launchrule.StateWriter = st
 	if cfg.writer != nil {
-		w = cfg.writer(st)
+		w = cfg.writer(w)
 	}
+	counted := &countingWriter{StateWriter: w}
 	tc := &testConfirmer{
-		Confirmer: NewConfirmer(st, w), t: t, store: st, log: rec, fx: &recordingEffects{}, ready: make(chan struct{}),
-		dir: dir,
+		Confirmer: NewConfirmer(st, counted), t: t, store: st, log: rec, fx: &recordingEffects{},
+		ready: make(chan struct{}), dir: dir, writes: counted,
 	}
 	t.Cleanup(func() {
 		if n := rec.CountExact(logMsgImpossible); n > 0 && !tc.a0 {
@@ -64,6 +65,42 @@ func newTestConfirmer(t *testing.T, opts ...testConfirmerOption) *testConfirmer 
 		}
 	})
 	return tc
+}
+
+// countingWriter counts the state file writes and removals that landed.
+type countingWriter struct {
+	launchrule.StateWriter
+	writes, removals int
+	mu               sync.Mutex
+}
+
+func (w *countingWriter) WriteState(ctx context.Context, ruleID string, st *launchrule.State) error {
+	err := w.StateWriter.WriteState(ctx, ruleID, st)
+	if err == nil {
+		w.mu.Lock()
+		w.writes++
+		w.mu.Unlock()
+	}
+	return err
+}
+
+func (w *countingWriter) RemoveState(ruleID string) error {
+	err := w.StateWriter.RemoveState(ruleID)
+	if err == nil {
+		w.mu.Lock()
+		w.removals++
+		w.mu.Unlock()
+	}
+	return err
+}
+
+// written is the count of landed writes since the last call.
+func (tc *testConfirmer) written() int {
+	tc.writes.mu.Lock()
+	defer tc.writes.mu.Unlock()
+	n := tc.writes.writes
+	tc.writes.writes = 0
+	return n
 }
 
 // expectA0 lets the test end with ERROR logMsgImpossible lines.
@@ -92,6 +129,31 @@ func (tc *testConfirmer) createRule(spec *launchrule.EventSpec) launchrule.Rule 
 		tc.t.Fatalf("Setup: Create: %v", err)
 	}
 	return r
+}
+
+// changeRule replaces the rule with fn's edit of it, as the launch-rule PUT does, and hands the change to c once
+// the store took it.
+func changeRule(t *testing.T, c *Confirmer, ruleID string, confirmDrop int, fn func(r *launchrule.Rule)) error {
+	t.Helper()
+	r, ok := c.store.Get(ruleID)
+	if !ok {
+		t.Fatalf("Setup: no rule %s", ruleID)
+	}
+	fn(&r)
+	_, change, err := c.store.Replace(t.Context(), ruleID, &r, confirmDrop)
+	if err == nil && change != "" {
+		c.RuleChanged(ruleID, change)
+	}
+	return err
+}
+
+// deleteRule deletes the event rule, as the launch-rule DELETE does, and hands the delete to c.
+func deleteRule(t *testing.T, c *Confirmer, ruleID string) {
+	t.Helper()
+	if _, err := c.store.Delete(t.Context(), ruleID); err != nil {
+		t.Fatalf("Setup: Delete: %v", err)
+	}
+	c.RuleChanged(ruleID, launchrule.ChangeDelete)
 }
 
 // seedRecord puts rec among the rule's records in memory, as an earlier row would have.

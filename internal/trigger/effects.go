@@ -3,6 +3,7 @@ package trigger
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 // Effects is what the Confirmer asks of the runs it abandoned. *agent.Runs implements it.
@@ -63,19 +64,24 @@ func (q *effectQueue) take() []queuedEffect {
 }
 
 // Run runs the queued cancels and releases through fx, one at a time and outside every lock, handing each cancel's
-// answer back to step, until ctx ends. Nothing runs before engineReady closes; what is queued before then waits.
+// answer back to step, and the hourly TTL ticker, until ctx ends. Nothing runs before engineReady closes; what is
+// queued before then waits.
 func (c *Confirmer) Run(ctx context.Context, engineReady <-chan struct{}, fx Effects) {
 	select {
 	case <-engineReady:
 	case <-ctx.Done():
 		return
 	}
+	ttl := time.NewTicker(ttlInterval)
+	defer ttl.Stop()
 	for {
 		for _, e := range c.effects.take() {
 			c.runEffect(ctx, fx, e)
 		}
 		select {
 		case <-c.effects.signal:
+		case <-ttl.C:
+			c.expireAbandoned()
 		case <-ctx.Done():
 			return
 		}

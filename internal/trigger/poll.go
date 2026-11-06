@@ -11,12 +11,6 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 )
 
-// StateStore is the rule state a poll reads and writes, one rule's file per write.
-type StateStore interface {
-	State(ruleID string) (launchrule.State, error)
-	WriteState(ctx context.Context, ruleID string, st *launchrule.State) error
-}
-
 // FeedRules is one feed and the enabled event rules that share it, in creation order.
 type FeedRules struct {
 	Feed  Feed
@@ -46,19 +40,19 @@ func Feeds(rules []launchrule.Rule) []FeedRules {
 	return out
 }
 
-// Poller reads feeds and queues what matched, one state write per rule and poll.
+// Poller reads feeds and queues what matched, applying each rule's part through the Confirmer, which writes it.
 type Poller struct {
 	src   FeedSource
-	store StateStore
+	c     *Confirmer
 	now   func() time.Time
 	marks *launchMarks
 }
 
-// NewPoller returns a Poller reading through src and keeping rule state in store.
+// NewPoller returns a Poller reading through src and keeping rule state in c.
 //
 //deadset:ignore DS1101 -- the trigger runner polls through it; until that lands only the tests do
-func NewPoller(src FeedSource, store StateStore) *Poller {
-	return &Poller{src: src, store: store, now: time.Now, marks: newLaunchMarks()}
+func NewPoller(src FeedSource, c *Confirmer) *Poller {
+	return &Poller{src: src, c: c, now: time.Now, marks: newLaunchMarks()}
 }
 
 // reads is what one poll read of a feed, each list walked at most once whatever its rules.
@@ -88,31 +82,25 @@ func (p *Poller) Poll(ctx context.Context, fr FeedRules) {
 	}
 	rd := p.read(ctx, fr.Feed, rules, start)
 	for _, pr := range rules {
-		pr.apply(&rd)
-		pr.logFull()
-		p.write(ctx, pr)
+		p.c.update(pr.rule.ID, func(es *eventState) bool { return pr.applyTo(es, &rd) })
 	}
 	slog.Debug(logMsgPoll, "connection", fr.Feed.Connection, "repo", fr.Feed.Selector,
 		"reads", rd.calls(), "since", rd.since, "took", p.now().Sub(start))
 }
 
+// load plans the rule's part of the poll on a copy of its state; the poll's changes are applied to the rule's
+// current value, under its mutex, once the reads are back.
 func (p *Poller) load(r *launchrule.Rule, f Feed, start time.Time) *pollRule {
-	st, err := p.store.State(r.ID)
-	if err != nil {
+	if _, err := p.c.store.State(r.ID); err != nil {
 		slog.Debug(logMsgRuleSkipped, "rule_id", r.ID, "error", err)
 		return nil
 	}
-	es, err := decodeState(&st)
+	es, err := p.c.snapshot(r.ID)
 	if err != nil {
 		slog.Error(logMsgStateBad, "rule_id", r.ID, "error", err)
 		return nil
 	}
-	before, err := json.Marshal(&st)
-	if err != nil {
-		slog.Error(logMsgRuleSkipped, "rule_id", r.ID, "error", err)
-		return nil
-	}
-	return &pollRule{rule: r, ev: r.When.Event, feed: f, start: start, st: es, before: before, marks: p.marks}
+	return &pollRule{rule: r, ev: r.When.Event, feed: f, start: start, st: es, marks: p.marks}
 }
 
 func (p *Poller) read(ctx context.Context, f Feed, rules []*pollRule, start time.Time) reads {
@@ -138,11 +126,6 @@ func (p *Poller) read(ctx context.Context, f Feed, rules []*pollRule, start time
 	}
 	if needRuns {
 		rd.horizon = horizon(start)
-		for _, pr := range rules {
-			if pr.ev.Kind == launchrule.KindRunConcluded {
-				pr.ageOut(rd.horizon)
-			}
-		}
 		rd.since = runBound(rules, start, rd.horizon)
 		w := walkRuns(ctx, p.src, f, rd.since)
 		rd.runs = &w
@@ -164,24 +147,6 @@ func (rd *reads) calls() int {
 	return n
 }
 
-// write stores pr's state when the poll changed it.
-func (p *Poller) write(ctx context.Context, pr *pollRule) {
-	st, err := pr.st.encode()
-	if err == nil {
-		var after []byte
-		if after, err = json.Marshal(&st); err == nil && bytes.Equal(after, pr.before) {
-			return
-		}
-	}
-	if err == nil {
-		err = p.store.WriteState(ctx, pr.rule.ID, &st)
-	}
-	if err != nil {
-		slog.Error(logMsgNotWritten, "file", "launch-state/"+pr.rule.ID+".json", "op", "write",
-			"rule_id", pr.rule.ID, "error", err)
-	}
-}
-
 // pollRule is one rule's part of one poll.
 type pollRule struct {
 	rule  *launchrule.Rule
@@ -192,11 +157,31 @@ type pollRule struct {
 	// gain is this poll's minted label-gain instant, zero until its first gain.
 	gain time.Time
 	feed Feed
-	// before is the state as loaded, so a poll that changed nothing writes nothing.
-	before []byte
-	st     eventState
+	st   eventState
 	// full is set once the poll left a match unqueued.
 	full bool
+}
+
+// applyTo applies the poll's reads to the rule's current state es, answering whether they changed it.
+func (pr *pollRule) applyTo(es *eventState, rd *reads) bool {
+	before, err := stateJSON(es)
+	pr.st = *es
+	if pr.ev.Kind == launchrule.KindRunConcluded {
+		pr.ageOut(rd.horizon)
+	}
+	pr.apply(rd)
+	pr.logFull()
+	*es = pr.st
+	after, aerr := stateJSON(es)
+	return err != nil || aerr != nil || !bytes.Equal(before, after)
+}
+
+func stateJSON(es *eventState) ([]byte, error) {
+	st, err := es.encode()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(&st)
 }
 
 func (pr *pollRule) labeled() bool {

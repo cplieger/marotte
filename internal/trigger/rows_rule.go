@@ -1,0 +1,145 @@
+package trigger
+
+import (
+	"log/slog"
+	"slices"
+	"time"
+
+	"github.com/cplieger/marotte/internal/launchrule"
+	"github.com/cplieger/marotte/internal/marotte"
+)
+
+// The causes of an abandon a rule event makes.
+const (
+	causeEdit   = "edit"
+	causeDelete = "delete"
+)
+
+// abandonedTTL is how long a record whose cancel landed outlives it: twice the 24-hour clock, so a cancelled run
+// that still blocks its recipe has had the rule blocked and paged before its record goes.
+const abandonedTTL = 48 * time.Hour
+
+// ruleRow runs the rule row of ev over every record the rule holds, then its own changes.
+func (s *stepper) ruleRow(ev *attemptEvent) bool {
+	switch ev.kind {
+	case evEditFilter:
+		s.editFilter()
+	case evEditRebaseline:
+		s.rebaseline()
+	case evDelete:
+		s.deleteRule()
+	case evResume:
+		s.resetFailures() // E4, A25 per record
+		s.res.write = true
+		s.wakeLauncher()
+	case evPause:
+		// E8, A25 per record: the count, the block and the clock are kept.
+	case evRunGone:
+		s.dropAbandoned(func(r *record) bool { return !listedActive(ev.statuses, r.workflowID) && s.aged(r) }) // E5
+	case evTTL:
+		s.dropAbandoned(s.aged) // E6
+	case evWriteRetry:
+		s.res.write, s.wakeOnWrite = true, true // E10
+	default:
+		return false
+	}
+	return true
+}
+
+// editFilter is E1: live records keep their bound (A11), abandoned ones stay (A20).
+func (s *stepper) editFilter() {
+	s.resetFailures()
+	if newest := isNewest(&s.def); newest && !s.rv.newest {
+		for _, e := range slices.Clone(s.rv.es.queue) {
+			if e.Live == "" {
+				s.requeue(e.Key)
+			}
+		}
+	}
+	s.rv.newest = isNewest(&s.def)
+	s.res.write = true
+	s.wakeLauncher()
+}
+
+// rebaseline is E2: the rule watches a new population, so its live attempts are abandoned (A9), its abandoned ones
+// kept (A20), and its cursor and queues start over.
+func (s *stepper) rebaseline() {
+	for _, r := range slices.Clone(s.rv.records) {
+		if r.state.live() {
+			r.owesRelease = r.inFlight
+			s.abandon(r, causeEdit)
+		}
+	}
+	es := &s.rv.es
+	es.cursor, es.queue, es.launched, es.superseded = cursor{}, nil, nil, nil
+	s.resetFailures()
+	es.raw.Population = launchrule.Population(&s.def)
+	s.rv.newest = isNewest(&s.def)
+	s.res.write = true
+}
+
+// deleteRule is E3: every record is cancelled and leaves once nothing waits on it (A10, A21), and the state file
+// goes.
+func (s *stepper) deleteRule() {
+	for _, r := range slices.Clone(s.rv.records) {
+		switch {
+		case r.state.live():
+			r.owesRelease, r.unpersisted = r.inFlight, true
+			s.abandon(r, causeDelete)
+		case r.state == stateAbandonedCancelling:
+			r.unpersisted = true
+			r.cancelsOut++
+			s.res.effects = append(s.res.effects, attemptEffect{kind: effectCancel, workflowID: r.workflowID})
+		case r.inFlight || r.owesRelease || r.cancelsOut > 0:
+			r.unpersisted = true
+		default:
+			s.removeRecord(r)
+		}
+	}
+	if err := s.c.writer.RemoveState(s.ruleID); err != nil {
+		slog.Error(logMsgNotWritten, "file", "launch-state/"+s.ruleID+".json", "op", "remove", "rule_id", s.ruleID,
+			"error", err)
+	}
+}
+
+// resetFailures sets the rule's failure counts to zero and lifts its block, with the row text the block wrote.
+func (s *stepper) resetFailures() {
+	st := s.status()
+	st.BoundAbandons, st.FailingSince = 0, time.Time{}
+	if st.Blocked != "" {
+		st.Blocked, st.RowText = "", ""
+	}
+}
+
+// aged is A18's and A19's shared condition: nothing waits on the record and its cancel landed abandonedTTL ago. A
+// record whose cancel never landed is kept, since it is what names a live run nothing else does (A37).
+func (s *stepper) aged(r *record) bool {
+	return r.state == stateAbandonedCancelled && !r.inFlight && !r.owesRelease &&
+		s.now.Sub(r.cancelLandedAt) > abandonedTTL
+}
+
+// dropAbandoned drops each abandoned record gone answers true for (A18, A19) and keeps the rest (A26, A37), writing
+// only when it dropped one.
+func (s *stepper) dropAbandoned(gone func(*record) bool) {
+	for _, r := range slices.Clone(s.rv.records) {
+		if r.state.abandoned() && gone(r) {
+			s.removeRecord(r)
+			s.res.write = true
+		}
+	}
+}
+
+func (s *stepper) removeRecord(rec *record) {
+	s.rv.records = slices.DeleteFunc(s.rv.records, func(r *record) bool { return r == rec })
+}
+
+// listedActive reports a run the list shows still live; a run the list does not hold is gone.
+func listedActive(statuses map[string]marotte.RunStatus, workflowID string) bool {
+	st, ok := statuses[workflowID]
+	return ok && st.Active()
+}
+
+func isNewest(r *launchrule.Rule) bool {
+	ev := r.When.Event
+	return ev != nil && ev.Hold != nil && ev.Hold.Policy == launchrule.HoldNewest
+}

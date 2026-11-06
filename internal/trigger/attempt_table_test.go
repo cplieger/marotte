@@ -371,9 +371,7 @@ func deletedRuleNamed(name string, cancelErr error) attemptCase {
 		name: name,
 		setup: func(tc *testConfirmer, r *launchrule.Rule) {
 			tc.run()
-			if err := tc.store.Delete(tc.t.Context(), r.ID); err != nil {
-				tc.t.Fatalf("Setup: Delete: %v", err)
-			}
+			deleteRule(tc.t, tc.Confirmer, r.ID)
 		},
 		deliver: func(tc *testConfirmer, r *launchrule.Rule) {
 			if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, ErrAttemptGone) {
@@ -561,7 +559,7 @@ func confirmed(t *testing.T, tc *testConfirmer, r *launchrule.Rule) {
 }
 
 func TestAttemptTable(t *testing.T) {
-	for _, c := range attemptCases {
+	for _, c := range slices.Concat(attemptCases, ruleRowCases) {
 		t.Run(c.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				tc := newTestConfirmer(t)

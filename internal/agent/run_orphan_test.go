@@ -310,7 +310,7 @@ func TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow(t *testing.T) {
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stalePauseReason),
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
 	}
-	st, err := launchrule.NewStore(t.TempDir())
+	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t 
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
 	br.callErrs = map[string]error{methodKiroWorkflowInspect: errHoldFault}
 
-	st, err := launchrule.NewStore(t.TempDir())
+	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}

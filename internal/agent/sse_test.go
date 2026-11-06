@@ -374,7 +374,7 @@ func TestRegisterRoutes_DrainingGate(t *testing.T) {
 func newDrainGateHub(t *testing.T) *Runtime {
 	t.Helper()
 	h, _, _ := newTestHub()
-	st, err := launchrule.NewStore(t.TempDir())
+	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}

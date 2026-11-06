@@ -22,7 +22,7 @@ import (
 
 func mustStore(t *testing.T) *launchrule.Store {
 	t.Helper()
-	s, err := launchrule.NewStore(t.TempDir())
+	s, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -100,7 +100,7 @@ func newFixture(t *testing.T, now time.Time) (*launchrule.Store, *fakeLauncher, 
 // newFixtureIn is newFixture with its store in dir, for a test that reopens it.
 func newFixtureIn(t *testing.T, dir string, now time.Time) (*launchrule.Store, *fakeLauncher, *Runner) {
 	t.Helper()
-	st, err := launchrule.NewStore(dir)
+	st, _, err := launchrule.NewStore(dir)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestSweep_SendsTheSchedulesModelPick(t *testing.T) {
 	st, l, r := newFixture(t, due.Add(30*time.Second))
 	e := st.Clocks()[0].Rule
 	e.Model, e.Effort = "opus", "high"
-	if _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
+	if _, _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
 	r.sweep(t.Context())
@@ -163,7 +163,7 @@ func TestFirePassesInputs(t *testing.T) {
 	st, l, r := newFixture(t, due.Add(30*time.Second))
 	e := st.Clocks()[0].Rule
 	e.Inputs = map[string]string{"lane": "fast", "cap": "3"}
-	if _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
+	if _, _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
 	r.sweep(t.Context())
@@ -257,7 +257,7 @@ func TestSweep_SkipsDisabled(t *testing.T) {
 	st, l, r := newFixture(t, due.Add(30*time.Second))
 	e := st.Clocks()[0].Rule
 	e.Enabled = false
-	if _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
+	if _, _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
 	r.sweep(t.Context())
@@ -484,12 +484,12 @@ func TestSweep_HoldsASlotWhileNoRunCanStart(t *testing.T) {
 		r.sweep(t.Context())
 		e := st.Clocks()[0].Rule
 		e.Enabled = false
-		if _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
+		if _, _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
 			t.Fatalf("Replace: %v", err)
 		}
 		r.sweep(t.Context())
 		e.Enabled = true
-		if _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
+		if _, _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
 			t.Fatalf("Replace: %v", err)
 		}
 		logs := captureLogs(t)
@@ -504,7 +504,7 @@ func TestSweep_HoldsASlotWhileNoRunCanStart(t *testing.T) {
 		st, l, r := newFixture(t, due.Add(30*time.Second))
 		l.failWith(refused)
 		r.sweep(t.Context())
-		if err := st.Delete(t.Context(), st.Clocks()[0].ID); err != nil {
+		if _, err := st.Delete(t.Context(), st.Clocks()[0].ID); err != nil {
 			t.Fatalf("Delete: %v", err)
 		}
 		r.sweep(t.Context())
@@ -660,7 +660,7 @@ func dailyAt2(source string) *launchrule.Rule {
 
 func TestClockRuleFromLaunchRuleStore(t *testing.T) {
 	dir := t.TempDir()
-	st, err := launchrule.NewStore(dir)
+	st, _, err := launchrule.NewStore(dir)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -678,7 +678,7 @@ func TestClockRuleFromLaunchRuleStore(t *testing.T) {
 	if _, ids, _ := l.snap(); !slices.Equal(ids, []string{rule.ID}) {
 		t.Errorf("launches attributed to %v, want the one rule %s", ids, rule.ID)
 	}
-	reopened, err := launchrule.NewStore(dir)
+	reopened, _, err := launchrule.NewStore(dir)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -693,7 +693,7 @@ func TestClockRuleFromLaunchRuleStore(t *testing.T) {
 
 func TestClockRunnerSkipsUnreadableRule(t *testing.T) {
 	dir := t.TempDir()
-	st, err := launchrule.NewStore(dir)
+	st, _, err := launchrule.NewStore(dir)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -706,7 +706,7 @@ func TestClockRunnerSkipsUnreadableRule(t *testing.T) {
 	if err := os.WriteFile(path, []byte(broken), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := launchrule.NewStore(dir)
+	reopened, _, err := launchrule.NewStore(dir)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}

@@ -25,10 +25,17 @@ type Confirmer struct {
 
 // NewConfirmer returns a Confirmer over the rules in store, persisting their state through writer.
 func NewConfirmer(store *launchrule.Store, writer launchrule.StateWriter) *Confirmer {
-	return &Confirmer{
+	c := &Confirmer{
 		store: store, writer: writer, rules: map[string]*ruleValue{}, bootHeld: map[string]bool{},
 		effects: newEffectQueue(), wake: make(chan struct{}, 1),
 	}
+	// Loaded now, while each value still has its rule's hold policy: E1 compares an edit's policy with it.
+	for _, r := range store.List() {
+		if r.When.Event != nil {
+			c.rule(r.ID)
+		}
+	}
+	return c
 }
 
 // ruleValue is one event rule's in-memory state; mu covers all of it and every write of the rule's state file.
@@ -38,6 +45,8 @@ type ruleValue struct {
 	mu      sync.Mutex
 	// dropped is set when the Confirmer forgets the value; a step that waited for mu takes the rule's current one.
 	dropped bool
+	// newest is the hold policy E1 last saw, so it runs Q only on a change to newest.
+	newest bool
 }
 
 func (rv *ruleValue) find(workflowID string) *record {
@@ -57,6 +66,9 @@ func (c *Confirmer) rule(ruleID string) *ruleValue {
 		return rv
 	}
 	rv := &ruleValue{}
+	if def, ok := c.store.Get(ruleID); ok {
+		rv.newest = isNewest(&def)
+	}
 	if st, err := c.store.State(ruleID); err == nil {
 		if es, derr := decodeState(&st); derr == nil {
 			rv.es = es

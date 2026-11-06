@@ -563,7 +563,7 @@ func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
 			h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
 			chatID := runChatID("wf_classifier")
 			h.bridge.mgr.insert(chatID, testBridge(br, bridgeIdle))
-			st, err := launchrule.NewStore(t.TempDir())
+			st, _, err := launchrule.NewStore(t.TempDir())
 			if err != nil {
 				t.Fatalf("launchrule.NewStore: %v", err)
 			}
@@ -615,7 +615,7 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	chatID := runChatID("wf_deny")
 	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
-	st, err := launchrule.NewStore(t.TempDir())
+	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
@@ -658,7 +658,7 @@ func TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow(t *testing
 	chatID := runChatID("wf_deny")
 	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
-	st, err := launchrule.NewStore(t.TempDir())
+	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
@@ -703,7 +703,7 @@ func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *
 	br.during = func() { h.bus.endAsksOf(br) }
 	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
-	st, err := launchrule.NewStore(t.TempDir())
+	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}

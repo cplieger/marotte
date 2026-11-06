@@ -31,6 +31,8 @@ func (s *stepper) apply(rec *record, ev *attemptEvent) bool {
 		s.boundReached(rec)
 	case rec.state.abandoned():
 		return s.abandoned(rec, ev)
+	case ev.kind == evCancelOK || ev.kind == evCancelError:
+		// A26: the bound decides a live record.
 	default:
 		return false
 	}

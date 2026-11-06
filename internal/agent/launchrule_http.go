@@ -121,13 +121,24 @@ func (rr *runRoutes) handleLaunchRuleReplace(w http.ResponseWriter, r *http.Requ
 	if !rr.prepareRule(r.Context(), w, &rule, &prev) {
 		return
 	}
-	saved, err := rr.runs.launchRules.Replace(r.Context(), id, &rule, confirmDrop)
+	saved, change, err := rr.runs.launchRules.Replace(r.Context(), id, &rule, confirmDrop)
+	if err == nil {
+		rr.ruleChanged(saved.ID, change)
+	}
 	rr.answerSave(w, &saved, err)
+}
+
+// ruleChanged hands an event rule's landed definitions write to the confirmer, which owns the rule's state; a
+// clock rule's change is empty.
+func (rr *runRoutes) ruleChanged(id string, change launchrule.Change) {
+	if change != "" && rr.runs.confirmer != nil {
+		rr.runs.confirmer.RuleChanged(id, change)
+	}
 }
 
 func (rr *runRoutes) handleLaunchRuleDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	err := rr.runs.launchRules.Delete(r.Context(), id)
+	deleted, err := rr.runs.launchRules.Delete(r.Context(), id)
 	switch {
 	case errors.Is(err, launchrule.ErrNotFound):
 		httpreply.NotFound(w, "no such launch rule")
@@ -135,6 +146,9 @@ func (rr *runRoutes) handleLaunchRuleDelete(w http.ResponseWriter, r *http.Reque
 	case err != nil:
 		httpreply.ServerError(w, "could not delete the launch rule", err)
 		return
+	}
+	if deleted.When.Event != nil {
+		rr.ruleChanged(deleted.ID, launchrule.ChangeDelete)
 	}
 	slog.Info("launch rule deleted", "id", logsafe.Field(id))
 	httpserver.WriteJSON(w, map[string]any{"ok": true})

@@ -3,11 +3,14 @@ package trigger
 import (
 	"context"
 	"errors"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -56,8 +59,8 @@ func calledFromStep() bool {
 // Every write of an event rule's state the Confirmer makes, through any of its entry points, is step's.
 func TestEveryAttemptWriteGoesThroughStep(t *testing.T) {
 	guard := &stepGuard{}
-	tc := newTestConfirmer(t, withWriter(func(st *launchrule.Store) launchrule.StateWriter {
-		guard.StateWriter = st
+	tc := newTestConfirmer(t, withWriter(func(w launchrule.StateWriter) launchrule.StateWriter {
+		guard.StateWriter = w
 		return guard
 	}))
 	// The entry points whose rows are not built yet land on A0.
@@ -65,6 +68,11 @@ func TestEveryAttemptWriteGoesThroughStep(t *testing.T) {
 	r := tc.createRule(runSpec("success"))
 	tc.run()
 	tc.engineReady()
+
+	h := tc.pollerOn()
+	h.runPage(run(41, forgeapi.CheckPassing, pollStart.Add(-time.Minute)))
+	h.poll()
+	_ = changeRule(t, tc.Confirmer, r.ID, 0, moveRepo)
 
 	_ = tc.NameAttempt(r.ID, "k1", "wf_1")
 	tc.ConfirmEvent(r.ID, "k1", "wf_1")
@@ -86,4 +94,9 @@ func TestEveryAttemptWriteGoesThroughStep(t *testing.T) {
 		t.Errorf("state writes outside step: %v", guard.outside)
 	}
 	assertNoStateFile(t, tc, r.ID)
+	for _, m := range []string{"WriteState", "RemoveState"} {
+		if _, ok := reflect.TypeFor[*launchrule.Store]().MethodByName(m); ok {
+			t.Errorf("*launchrule.Store has the exported state write %s, want it on the store's writer only", m)
+		}
+	}
 }

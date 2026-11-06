@@ -15,6 +15,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/marotte/internal/launchrule"
+	"github.com/cplieger/marotte/internal/trigger"
 )
 
 // fakeEventRuleChecker answers every save-time forge check with err, counting the checks.
@@ -47,21 +48,58 @@ func launchRuleHub(t *testing.T, forge *fakeEventRuleChecker) (dir string, st *l
 // launchRuleHubListing is launchRuleHub with the recipe listing replaced by listing when it is not empty.
 func launchRuleHubListing(t *testing.T, forge *fakeEventRuleChecker, listing string) (dir string, st *launchrule.Store, mux *http.ServeMux) {
 	t.Helper()
+	rh := newRuleHub(t, forge, listing)
+	return rh.dir, rh.st, rh.mux
+}
+
+// ruleHub is launchRuleHub's runtime with the real trigger confirmer over its store, every RuleChanged recorded.
+type ruleHub struct {
+	st   *launchrule.Store
+	w    launchrule.StateWriter
+	conf *changeRecorder
+	mux  *http.ServeMux
+	dir  string
+}
+
+func newRuleHub(t *testing.T, forge *fakeEventRuleChecker, listing string) *ruleHub {
+	t.Helper()
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_rule")
 	if listing != "" {
 		br.setCallResult(methodKiroWorkflowListRecipes, json.RawMessage(listing))
 	}
-	dir = t.TempDir()
-	st, err := launchrule.NewStore(dir)
+	rh := &ruleHub{dir: t.TempDir(), mux: http.NewServeMux()}
+	var err error
+	rh.st, rh.w, err = launchrule.NewStore(rh.dir)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	h.runs.launchRules = st
+	rh.conf = &changeRecorder{Confirmer: trigger.NewConfirmer(rh.st, rh.w)}
+	h.runs.launchRules = rh.st
+	h.runs.confirmer = rh.conf
 	h.SetEventRuleChecker(forge)
-	mux = http.NewServeMux()
-	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(mux)
-	return dir, st, mux
+	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(rh.mux)
+	return rh
+}
+
+// changeRecorder is the real confirmer, recording each change the routes hand it.
+type changeRecorder struct {
+	*trigger.Confirmer
+	changes []launchrule.Change
+	mu      sync.Mutex
+}
+
+func (c *changeRecorder) RuleChanged(ruleID string, change launchrule.Change) {
+	c.mu.Lock()
+	c.changes = append(c.changes, change)
+	c.mu.Unlock()
+	c.Confirmer.RuleChanged(ruleID, change)
+}
+
+func (c *changeRecorder) delivered() []launchrule.Change {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]launchrule.Change(nil), c.changes...)
 }
 
 func sendRoute(t *testing.T, mux *http.ServeMux, method, target, body string) *httptest.ResponseRecorder {
@@ -108,7 +146,7 @@ func eventRuleOf(repo string) *launchrule.Rule {
 // panic; with one, skipping them would 404 a working feature.
 func TestRegisterLaunchRules_MountsTheSurfaceOnlyWithAStoreBehindIt(t *testing.T) {
 	t.Run("a configured store gets the routes", func(t *testing.T) {
-		st, err := launchrule.NewStore(t.TempDir())
+		st, _, err := launchrule.NewStore(t.TempDir())
 		if err != nil {
 			t.Fatalf("launchrule.NewStore: %v", err)
 		}
@@ -374,7 +412,8 @@ func TestEventRuleSaveAnswersTheForgeCheck(t *testing.T) {
 }
 
 func TestLaunchRuleListShowsHeldEventsAndCursor(t *testing.T) {
-	_, st, mux := launchRuleHub(t, &fakeEventRuleChecker{})
+	rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
+	st, mux := rh.st, rh.mux
 	r, err := st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))
 	if err != nil {
 		t.Fatal(err)
@@ -389,7 +428,7 @@ func TestLaunchRuleListShowsHeldEventsAndCursor(t *testing.T) {
 			json.RawMessage(`{"key":"k1","coalesce_key":"c","observed_at":"2026-11-05T10:00:00Z","inputs":{"run_id":"5"}}`),
 		},
 	}
-	if err := st.WriteState(t.Context(), r.ID, state); err != nil {
+	if err := rh.w.WriteState(t.Context(), r.ID, state); err != nil {
 		t.Fatal(err)
 	}
 	rec := sendRoute(t, mux, http.MethodGet, "/api/launch-rules", "")
@@ -440,7 +479,7 @@ func TestSaveRefusesUndatedRuns(t *testing.T) {
 func heldQueue(n int) *launchrule.State {
 	st := &launchrule.State{
 		Status:     launchrule.Status{LastRunID: "wf_confirmed", LastMinted: time.Date(2026, time.November, 2, 9, 0, 0, 0, time.UTC)},
-		Cursor:     json.RawMessage(`{"baseline_at":"2026-11-01T00:00:00Z"}`),
+		Cursor:     json.RawMessage(`{"r":{"runs":{"baseline_at":"2026-11-01T00:00:00Z","last_complete":"2026-11-01T00:00:00Z"}}}`),
 		Launched:   json.RawMessage(`[{"key":"run:1"}]`),
 		Superseded: json.RawMessage(`[{"key":"run:0"}]`),
 	}
@@ -451,7 +490,8 @@ func heldQueue(n int) *launchrule.State {
 }
 
 func TestRebaselineEditDropsHeldEvents(t *testing.T) {
-	dir, st, mux := launchRuleHub(t, &fakeEventRuleChecker{})
+	rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
+	dir, st, mux := rh.dir, rh.st, rh.mux
 	r, err := st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -462,7 +502,7 @@ func TestRebaselineEditDropsHeldEvents(t *testing.T) {
 	}
 	held := heldQueue(3)
 	held.Population = fresh.Population
-	if err := st.WriteState(t.Context(), r.ID, held); err != nil {
+	if err := rh.w.WriteState(t.Context(), r.ID, held); err != nil {
 		t.Fatalf("WriteState: %v", err)
 	}
 	moved := strings.Replace(runRuleBody, "cplieger/animap-source", "cplieger/animap", 1)
@@ -500,7 +540,7 @@ func TestRebaselineEditDropsHeldEvents(t *testing.T) {
 		if rec := sendRoute(t, mux, http.MethodPut, "/api/launch-rules/"+r.ID, body); rec.Code != http.StatusOK {
 			t.Fatalf("PUT with confirm_drop 3 = %d %s, want 200", rec.Code, rec.Body.String())
 		}
-		reloaded, err := launchrule.NewStore(dir)
+		reloaded, _, err := launchrule.NewStore(dir)
 		if err != nil {
 			t.Fatalf("reload: %v", err)
 		}
@@ -519,7 +559,40 @@ func TestRebaselineEditDropsHeldEvents(t *testing.T) {
 		}
 	})
 	t.Run("the attempt in flight is abandoned with cause=edit", func(t *testing.T) {
-		t.Skip("needs 5.4")
+		rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
+		r, err := rh.st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		fresh, _ := rh.st.State(r.ID)
+		held := heldQueue(1)
+		held.Population = fresh.Population
+		if err := rh.w.WriteState(t.Context(), r.ID, held); err != nil {
+			t.Fatalf("WriteState: %v", err)
+		}
+		if err := rh.conf.NameAttempt(r.ID, "run:a", "wf_flight"); err != nil {
+			t.Fatalf("Setup: NameAttempt: %v", err)
+		}
+		body := strings.TrimSuffix(moved, "}") + `,"confirm_drop":1}`
+		if rec := sendRoute(t, rh.mux, http.MethodPut, "/api/launch-rules/"+r.ID, body); rec.Code != http.StatusOK {
+			t.Fatalf("PUT with confirm_drop 1 = %d %s, want 200", rec.Code, rec.Body.String())
+		}
+		s, err := rh.st.State(r.ID)
+		if err != nil {
+			t.Fatalf("State: %v", err)
+		}
+		var attempts []struct {
+			WorkflowID string `json:"workflow_id"`
+			State      string `json:"state"`
+			Cause      string `json:"cause"`
+		}
+		if err := json.Unmarshal(s.Attempts, &attempts); err != nil || len(attempts) != 1 ||
+			attempts[0].WorkflowID != "wf_flight" || attempts[0].State != "abandoned" || attempts[0].Cause != "edit" {
+			t.Errorf("attempts = %s (%v), want wf_flight abandoned with cause edit", s.Attempts, err)
+		}
+		if s.Held() != 0 {
+			t.Errorf("held = %d after the rebaseline, want 0", s.Held())
+		}
 	})
 }
 
@@ -537,7 +610,8 @@ func TestPutRefusesWhenBranchSwitch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			forge := &fakeEventRuleChecker{}
-			dir, st, mux := launchRuleHub(t, forge)
+			rh := newRuleHub(t, forge, "")
+			dir, st, mux := rh.dir, rh.st, rh.mux
 			r, err := st.Create(t.Context(), tc.seed)
 			if err != nil {
 				t.Fatalf("Create: %v", err)
@@ -555,7 +629,9 @@ func TestPutRefusesWhenBranchSwitch(t *testing.T) {
 				t.Errorf("a refused switch read the forge %d times", forge.count())
 			}
 			t.Run("no RuleChanged is delivered", func(t *testing.T) {
-				t.Skip("needs 5.4")
+				if got := rh.conf.delivered(); len(got) != 0 {
+					t.Errorf("RuleChanged delivered %v for a refused switch, want none", got)
+				}
 			})
 		})
 	}

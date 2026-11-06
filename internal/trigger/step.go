@@ -135,6 +135,8 @@ type stepper struct {
 	def  launchrule.Rule
 	res  stepResult
 	held bool
+	// wakeOnWrite wakes the launcher once the step's write lands.
+	wakeOnWrite bool
 }
 
 // step applies the attempt table's row for ev to the rule and writes the rule's state file at most once. It is the
@@ -145,15 +147,22 @@ func (c *Confirmer) step(ruleID string, ev *attemptEvent) stepResult {
 	s := &stepper{c: c, rv: rv, ruleID: ruleID, now: time.Now()}
 	s.def, s.held = c.store.Get(ruleID)
 	var rec *record
+	var named bool
 	if ev.kind.isRecord() {
 		rec = rv.find(ev.workflowID)
+		named = s.apply(rec, ev)
+	} else {
+		named = s.ruleRow(ev)
 	}
-	if !s.apply(rec, ev) {
+	if !named {
 		s.res = impossible(ruleID, rec, ev)
 	}
 	if s.res.write && s.held {
 		if err := c.writeLocked(ruleID, rv); err != nil {
-			slog.Error(logMsgNotWritten, "rule_id", ruleID, "error", err)
+			slog.Error(logMsgNotWritten, "file", "launch-state/"+ruleID+".json", "op", "write", "rule_id", ruleID,
+				"error", err)
+		} else if s.wakeOnWrite {
+			s.wakeLauncher()
 		}
 	}
 	if !s.held && len(rv.records) == 0 {

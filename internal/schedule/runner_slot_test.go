@@ -226,7 +226,7 @@ func TestSweep_SettlesEachSlotTransition(t *testing.T) {
 				t.Errorf("launches = %d, want %d", n, tc.launches)
 			}
 			// The persisted row is the one a restart sees; the held one is what the next write persists.
-			again, err := launchrule.NewStore(dir)
+			again, _, err := launchrule.NewStore(dir)
 			if err != nil {
 				t.Fatalf("reopen: %v", err)
 			}
@@ -317,7 +317,7 @@ func TestSweep_AShutdownDuringALaunchRecordsWhatTheLaunchCreated(t *testing.T) {
 			if refired := l.launched() > launched; refired != tc.refires {
 				t.Errorf("the next start fired the slot = %v, want %v", refired, tc.refires)
 			}
-			again, err := launchrule.NewStore(dir)
+			again, _, err := launchrule.NewStore(dir)
 			if err != nil {
 				t.Fatalf("reopen: %v", err)
 			}

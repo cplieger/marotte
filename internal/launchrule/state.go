@@ -122,8 +122,8 @@ func (rs *ruleState) blocked() error {
 // removeFile is a test seam for a state file removal that fails.
 var removeFile = os.Remove
 
-// population is the population a fresh state of r carries: an event rule's, empty for a clock rule.
-func population(r *Rule) string {
+// Population is the population a fresh state of r carries: an event rule's, empty for a clock rule.
+func Population(r *Rule) string {
 	ev := r.When.Event
 	if ev == nil {
 		return ""
@@ -162,7 +162,7 @@ func (s *Store) loadStates(refused map[string]error) {
 }
 
 func (s *Store) readState(r *Rule) *ruleState {
-	rs := &ruleState{state: State{Population: population(r)}}
+	rs := &ruleState{state: State{Population: Population(r)}}
 	data, err := os.ReadFile(s.statePath(r.ID))
 	if errors.Is(err, os.ErrNotExist) {
 		return rs
@@ -208,18 +208,19 @@ func (s *Store) State(ruleID string) (State, error) {
 	return rs.state.clone(), nil
 }
 
-// StateWriter is the raw write and removal of a rule's state file, which the trigger confirmer persists event
-// rules through.
+// StateWriter is the raw write and removal of a rule's state file. NewStore hands out the only one, which the
+// trigger confirmer holds, so every write of an event rule's state goes through it.
 type StateWriter interface {
 	WriteState(ctx context.Context, ruleID string, in *State) error
 	RemoveState(ruleID string) error
 }
 
-var _ StateWriter = (*Store)(nil)
+type stateWriter struct{ s *Store }
 
 // WriteState replaces the rule's state file with in, touching no other file. ErrNotFound for no such rule; a
 // blocked rule refuses with what State answers, so its file is never overwritten.
-func (s *Store) WriteState(ctx context.Context, ruleID string, in *State) error {
+func (w stateWriter) WriteState(ctx context.Context, ruleID string, in *State) error {
+	s := w.s
 	rs, err := s.ruleState(ruleID)
 	if err != nil {
 		return err
@@ -236,6 +237,9 @@ func (s *Store) WriteState(ctx context.Context, ruleID string, in *State) error 
 	return s.writeStateLocked(ctx, ruleID, rs, &st)
 }
 
+// RemoveState removes the rule's state file; a file already gone is not an error.
+func (w stateWriter) RemoveState(ruleID string) error { return w.s.removeStateFile(ruleID) }
+
 // writeStateLocked writes st as the rule's state file and, once it lands, as rs's state; rs.mu is held.
 func (s *Store) writeStateLocked(ctx context.Context, ruleID string, rs *ruleState, st *State) error {
 	data, err := json.MarshalIndent(st, "", "  ")
@@ -250,18 +254,17 @@ func (s *Store) writeStateLocked(ctx context.Context, ruleID string, rs *ruleSta
 	return nil
 }
 
-// RemoveState removes the rule's state file; a file already gone is not an error.
-func (s *Store) RemoveState(ruleID string) error {
+func (s *Store) removeStateFile(ruleID string) error {
 	if err := removeFile(s.statePath(ruleID)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove the state of launch rule %s: %w", ruleID, err)
 	}
 	return nil
 }
 
-// removeState is RemoveState for a rule already out of the definitions: a failure is logged, and the next load,
+// removeState is removeStateFile for a rule already out of the definitions: a failure is logged, and the next load,
 // finding the file's rule gone, removes it again.
 func (s *Store) removeState(ruleID string) {
-	if err := s.RemoveState(ruleID); err != nil {
+	if err := s.removeStateFile(ruleID); err != nil {
 		slog.Warn("launch rules: a deleted rule's state file stays until the next start", "rule", ruleID, "error", err)
 	}
 }

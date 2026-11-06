@@ -284,7 +284,7 @@ func TestCancelExpiredRun_LogsAScheduleDeletedDuringItsRunAtInfo(t *testing.T) {
 	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 
 	// An EMPTY schedule store: the lease names a schedule that is no longer there.
-	st, err := launchrule.NewStore(t.TempDir())
+	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
@@ -504,7 +504,7 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 
-	st, err := launchrule.NewStore(t.TempDir())
+	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
@@ -553,7 +553,7 @@ func TestCancelExpiredRun_ARefusedSlotCancelLeavesTheScheduleRowUntouched(t *tes
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner pid 979344 is live")}
 	h.bridge.mgr.insert(runChatID(id), testBridge(br, bridgeIdle))
 
-	st, err := launchrule.NewStore(t.TempDir())
+	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}

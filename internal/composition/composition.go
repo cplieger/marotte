@@ -162,9 +162,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		filepath.Join(workspace.KiroHome(), "powers", "installed"),
 	)
 
-	launchRules := openLaunchRuleStore(cfg.ConfigDir)
+	launchRules, ruleStates := openLaunchRuleStore(cfg.ConfigDir)
 	leaseStore := openRunLeaseStore(cfg.ConfigDir)
-	confirmer := openTriggerConfirmer(launchRules)
+	confirmer := openTriggerConfirmer(launchRules, ruleStates)
 
 	presence := push.NewPresence()
 	pushSvc := push.New(appCtx, cfg.ConfigDir, cfg.VapidSub, push.WithPresence(presence))
@@ -864,24 +864,25 @@ func warnIfNoLSPEnabled(e *toolbelt.Engine) {
 		"hint", "enable gopls (Go), typescript-language-server (TypeScript), or pyright (Python) in Settings -> Tools")
 }
 
-// openLaunchRuleStore opens the launch-rule store, or nil to leave scheduling off. A
+// openLaunchRuleStore opens the launch-rule store and its state writer, or nils to leave scheduling off. A
 // malformed launch-rules.json warns rather than aborting boot (invariant 6: a bad file on the
 // volume must still leave a way IN to fix it).
-func openLaunchRuleStore(dir string) *launchrule.Store {
-	st, err := launchrule.NewStore(dir)
+func openLaunchRuleStore(dir string) (*launchrule.Store, launchrule.StateWriter) {
+	st, w, err := launchrule.NewStore(dir)
 	if err != nil {
 		slog.Warn("launch rules disabled", "error", err)
-		return nil
+		return nil, nil
 	}
-	return st
+	return st, w
 }
 
-// openTriggerConfirmer builds the event rules' confirmer over the launch-rule store, nil when there is none.
-func openTriggerConfirmer(st *launchrule.Store) *trigger.Confirmer {
+// openTriggerConfirmer builds the event rules' confirmer over the launch-rule store, nil when there is none. The
+// confirmer is the only holder of w, so every event rule's state write is its own.
+func openTriggerConfirmer(st *launchrule.Store, w launchrule.StateWriter) *trigger.Confirmer {
 	if st == nil {
 		return nil
 	}
-	return trigger.NewConfirmer(st, st)
+	return trigger.NewConfirmer(st, w)
 }
 
 // withTriggerConfirmer hands c to the runtime, or nothing for a nil c: a nil *trigger.Confirmer inside the

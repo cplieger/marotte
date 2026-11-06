@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cplieger/marotte/internal/launchrule"
 )
 
 func TestLabelGainOnce(t *testing.T) {
@@ -63,9 +65,7 @@ func TestLabeledEventIDNotReusedAfterRecreate(t *testing.T) {
 		h.poll()
 		h.poll()
 		old := inputOf(h.queued(first.ID), "event_id")
-		if err := h.store.Delete(t.Context(), first.ID); err != nil {
-			t.Fatal(err)
-		}
+		deleteRule(t, h.c, first.ID)
 		second := h.create(labeledSpec())
 		h.now = pollStart
 		h.issuePage(issue(12, "alice"))
@@ -87,11 +87,11 @@ func TestLabeledEventIDNotReusedAfterRecreate(t *testing.T) {
 		old := inputOf(h.queued(r.ID), "event_id")
 		edited := r
 		edited.When.Event.Repo = "cplieger/other"
-		if _, err := h.store.Replace(t.Context(), r.ID, &edited, 1); err != nil {
+		if err := changeRule(t, h.c, r.ID, 1, func(r *launchrule.Rule) { *r = edited }); err != nil {
 			t.Fatal(err)
 		}
 		edited.When.Event.Repo = testRepo
-		if _, err := h.store.Replace(t.Context(), r.ID, &edited, 0); err != nil {
+		if err := changeRule(t, h.c, r.ID, 0, func(r *launchrule.Rule) { *r = edited }); err != nil {
 			t.Fatal(err)
 		}
 		h.now = pollStart
@@ -163,11 +163,11 @@ func TestGainMintMonotonic(t *testing.T) {
 	t.Run("kept across a rebaseline and dropped entries", func(t *testing.T) {
 		edited := r
 		edited.When.Event.Repo = "cplieger/other"
-		if _, err := h.store.Replace(t.Context(), r.ID, &edited, 2); err != nil {
+		if err := changeRule(t, h.c, r.ID, 2, func(r *launchrule.Rule) { *r = edited }); err != nil {
 			t.Fatal(err)
 		}
 		edited.When.Event.Repo = testRepo
-		if _, err := h.store.Replace(t.Context(), r.ID, &edited, 0); err != nil {
+		if err := changeRule(t, h.c, r.ID, 0, func(r *launchrule.Rule) { *r = edited }); err != nil {
 			t.Fatal(err)
 		}
 		if got := h.state(r.ID).raw.Status.LastMinted; !got.Equal(second) {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/marotte/internal/launchrule"
 )
 
 func TestMixedCaseSelectorsShareFeedAndKey(t *testing.T) {
@@ -50,7 +51,7 @@ func TestFeedsSkipPausedRules(t *testing.T) {
 	h.create(runSpec("success"))
 	paused := h.create(labeledSpec())
 	paused.Enabled = false
-	if _, err := h.store.Replace(t.Context(), paused.ID, &paused, 0); err != nil {
+	if err := changeRule(t, h.c, paused.ID, 0, func(r *launchrule.Rule) { *r = paused }); err != nil {
 		t.Fatal(err)
 	}
 	feeds := Feeds(h.store.List())
