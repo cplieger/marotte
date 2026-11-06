@@ -274,7 +274,7 @@
   :where(:root[data-keyboard]) & {
     box-sizing: content-box;
     max-block-size: calc(
-      var(--dock-viewport-h, 100dvh) + var(--composer-ctl-h) + 2 * var(--composer-pill-pad) + 2px
+      var(--dock-viewport-h, 100dvh) + var(--btn-h) + 2 * var(--composer-pill-pad) + 2px
     );
   }
 }
@@ -310,12 +310,12 @@
   /* One draft line and the pill row (each `--composer-rest-h`, 15-input.css), the box's two
      borders and the row's divider. */
   & > [id="prompt-box"] {
-    min-block-size: calc(2 * (var(--composer-ctl-h) + 2 * var(--composer-pill-pad)) + 3px);
+    min-block-size: calc(2 * (var(--btn-h) + 2 * var(--composer-pill-pad)) + 3px);
   }
 
   & > [id="run-composer"] {
     flex: 0 1 auto;
-    min-block-size: calc(var(--composer-ctl-h) + 2 * var(--composer-pill-pad) + 2px);
+    min-block-size: calc(var(--btn-h) + 2 * var(--composer-pill-pad) + 2px);
 
     & > .run-composer-box {
       min-block-size: 0;

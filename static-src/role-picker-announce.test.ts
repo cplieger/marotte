@@ -45,6 +45,14 @@ describe("switching a live chat's mode", () => {
     expect(document.getElementById("role-pill-label")?.textContent).toBe("Spec");
   });
 
+  it("names the mode in the pill's accessible name and tooltip, which an icon-only pill shows no text for", () => {
+    setCurrentMode("c-live", "spec");
+
+    const pill = document.getElementById("role-pill");
+    expect(pill?.getAttribute("aria-label")).toBe("Switch mode, currently Spec");
+    expect(pill?.getAttribute("data-tooltip")).toBe("Switch mode, currently Spec");
+  });
+
   it.fails("announces the new mode through a polite live region", async () => {
     setCurrentMode("c-live", "spec");
 

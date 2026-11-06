@@ -16,7 +16,7 @@
    * both insets, the resume control's dock and both measured container thresholds. */
   --rail-w: 2.75rem;
 
-  /* The step buttons' height and the resume control's target. */
+  /* The turn map's step buttons' height. */
   --rail-hit: var(--hit-floor);
   --rail-inset-end: calc(50% - var(--content-max-w) / 2 - var(--rail-w) - var(--sp-2));
   --rail-inset-start: calc(100% - var(--rail-inset-end) - var(--rail-w));
@@ -1358,10 +1358,8 @@
 /* THE RESUME CONTROL, one component for the chat (`#scroll-bottom`) and the run tab
    (`#run-scroll-bottom`): a square glyph button in the reading area's end corner, each
    view placing it. NO DROP SHADOW: the opaque fill separates it from the text under it.
-
-   The painted box is the glyph plus `--sp-2` plus its border, square by construction
-   (the svg is `--icon-ui` on both axes, 03-base.css; the label hidden). The TARGET is
-   the shared expander (61-mcp-tools.css), here sized off `--rail-hit` below. */
+   It paints at least the toolbar's `--btn-h` and takes the shared expander
+   (61-mcp-tools.css) as its target; the rules below shape the labelled and docked forms. */
 .scroll-resume {
   z-index: 10;
   display: flex;
@@ -1369,6 +1367,8 @@
   justify-content: center;
   gap: var(--sp-1);
   padding: var(--sp-2);
+  min-width: var(--btn-h);
+  min-height: var(--btn-h);
   border-radius: var(--r);
   border: 1px solid var(--c-border);
   background: var(--c-bg-secondary);
@@ -1403,13 +1403,6 @@
   bottom: var(--sp-4);
 }
 
-/* THE TARGET IS `--rail-hit`, the turn map's navigator target, rather than the shared
- * `--hit-floor`, so a finger gets 44px in mouse mode too. */
-[id="scroll-bottom"]::after {
-  inset-block: min(0px, calc((100% - var(--rail-hit)) / 2));
-  inset-inline: min(0px, calc((100% - var(--rail-hit)) / 2));
-}
-
 /* Past a phone the chat's control is the labelled pill centred over the transcript
    ("N new blocks"), unless the turn map's foot takes it below. */
 @media (width > 48rem) {
@@ -1418,7 +1411,6 @@
     left: 50%;
     bottom: var(--sp-3);
     transform: translateX(-50%);
-    min-height: var(--btn-h);
     padding: 0 var(--sp-3);
   }
 
