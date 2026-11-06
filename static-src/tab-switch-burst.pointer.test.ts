@@ -1,7 +1,7 @@
 // A burst of real clicks, each pressed while the previous target's view is still being shown and
-// released after it: no uncovered frame shows the content of a tab other than the active one. A
-// press only switches once it clicks, so the tab it leaves may show until then. Real tabs.ts and
-// transcript-cover.ts against the fake tab server.
+// released after it. No uncovered frame shows a tab other than the active one, and once a click is
+// sent the tab it leaves shows uncovered for no more than input latency, even while that tab's
+// stream repaints it. Real tabs.ts and transcript-cover.ts against the fake tab server.
 import { describe, it, expect, vi } from "vitest";
 import type * as TabsDrag from "./tabs-drag.js";
 
@@ -78,6 +78,10 @@ installSwitchSuite();
 const SHOW_MS = 300;
 const GAP_MS = 200;
 const HOLD_MS = 200;
+/** A sent click dispatches in the task after the paint that freed the main thread, and the frame
+ *  after it is covered: about a frame of input latency. Main-thread work while the tab it leaves
+ *  shows uncovered, such as a view's show, runs past it. */
+const STALE_MS = 100;
 
 /** Hold the main thread, as a heavy chat's show does. */
 function busy(ms: number): void {
@@ -88,6 +92,9 @@ function busy(ms: number): void {
 }
 
 interface Sample {
+  /** When the frame's callbacks ran, just before it paints. The frame's own timestamp is its
+   *  begin, which a long task in between pushes the paint well past. */
+  readonly at: number;
   readonly up: boolean;
   readonly painted: string;
   readonly active: string;
@@ -99,7 +106,12 @@ function sampleFrames(): { readonly samples: Sample[]; stop(): void } {
   let on = true;
   const tick = (): void => {
     if (on) {
-      samples.push({ up: coverUp(), painted: pointers.painted, active: getActiveTabId() });
+      samples.push({
+        at: performance.now(),
+        up: coverUp(),
+        painted: pointers.painted,
+        active: getActiveTabId(),
+      });
       requestAnimationFrame(tick);
     }
   };
@@ -110,6 +122,56 @@ function sampleFrames(): { readonly samples: Sample[]; stop(): void } {
       on = false;
     },
   };
+}
+
+/** A click's release as the page received it: `at` is its event time, so a release that waited
+ *  behind a long task still reads when it was sent. */
+interface Sent {
+  readonly at: number;
+  readonly ref: string;
+}
+
+/** Record each trusted release, in order, as the click on the matching ref of `refs`. */
+function recordReleases(refs: readonly string[]): { readonly sent: Sent[]; stop(): void } {
+  const sent: Sent[] = [];
+  const onUp = (e: PointerEvent): void => {
+    const ref = refs[sent.length];
+    if (e.isTrusted && ref !== undefined) {
+      sent.push({ at: e.timeStamp, ref });
+    }
+  };
+  window.addEventListener("pointerup", onUp, { capture: true });
+  return {
+    sent,
+    stop: () => {
+      window.removeEventListener("pointerup", onUp, { capture: true });
+    },
+  };
+}
+
+/** Milliseconds each chat showed uncovered while a click for another tab had been sent. A frame
+ *  stays on screen until the next one, and the tab requested at an instant is the last one sent. */
+function staleWindows(samples: readonly Sample[], sent: readonly Sent[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (let i = 0; i + 1 < samples.length; i++) {
+    const s = samples[i];
+    const next = samples[i + 1];
+    if (s === undefined || next === undefined || s.up) {
+      continue;
+    }
+    for (let k = 0; k < sent.length; k++) {
+      const req = sent[k];
+      if (req === undefined || req.ref === s.painted) {
+        continue;
+      }
+      const until = sent[k + 1]?.at ?? Infinity;
+      const overlap = Math.min(next.at, until) - Math.max(s.at, req.at);
+      if (overlap > 0) {
+        out[s.painted] = (out[s.painted] ?? 0) + overlap;
+      }
+    }
+  }
+  return out;
 }
 
 /** The row's name: a point on the row that is not its close button. */
@@ -136,10 +198,21 @@ describe("a burst of real clicks queued behind each show", () => {
       pointers.painted = id;
       releaseCover(id);
     });
+    // The chat being left keeps streaming: a repaint of it lands before the next frame, and a
+    // paint's last write releases for its chat.
+    fx.chat.select.mockImplementation((id: string) => {
+      const leaving = pointers.painted;
+      pointers.active = id;
+      queueMicrotask(() => {
+        releaseCover(leaving);
+      });
+    });
+    const refs = ["b", "c", "d"];
+    const releases = recordReleases(refs);
     const frames = sampleFrames();
 
     await queueClicks(
-      ["b", "c", "d"].map((r) => centreOf(nameOf(ids[r] ?? ""))),
+      refs.map((r) => centreOf(nameOf(ids[r] ?? ""))),
       GAP_MS,
       HOLD_MS,
     );
@@ -148,16 +221,25 @@ describe("a burst of real clicks queued behind each show", () => {
       detail: () => `painted ${pointers.painted}, cover up ${String(coverUp())}`,
     });
     frames.stop();
+    releases.stop();
 
     // The premise: B's and C's shows ran, so C's and D's presses each waited behind one.
     expect(callsFor(fx.chat.show, "b"), "B was never shown").toBe(1);
     expect(callsFor(fx.chat.show, "c"), "C was never shown").toBe(1);
-    const firstUp = frames.samples.findIndex((s) => s.up);
-    expect(firstUp, "no frame showed the cover").toBeGreaterThanOrEqual(0);
-    const leaked = frames.samples
-      .slice(firstUp)
-      .filter((s) => !s.up && ids[s.painted] !== s.active);
+    expect(
+      releases.sent.map((r) => r.ref),
+      "a release went unrecorded",
+    ).toEqual(refs);
+    const leaked = frames.samples.filter((s) => !s.up && ids[s.painted] !== s.active);
     expect(leaked, "frames showing a superseded tab's content uncovered").toEqual([]);
+    expect(
+      frames.samples.some((s) => s.up),
+      "no frame showed the cover",
+    ).toBe(true);
+    const stale = Object.entries(staleWindows(frames.samples, releases.sent)).filter(
+      ([, ms]) => ms > STALE_MS,
+    );
+    expect(stale, "ms a tab showed uncovered after a click left it").toEqual([]);
     expect(getActiveTabId()).toBe(ids["d"]);
     expect(fx.notices).toEqual([]);
   });
