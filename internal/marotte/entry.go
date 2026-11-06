@@ -195,6 +195,7 @@ type EntryToolCall struct {
 	Truncated      *ToolTruncation  `json:"truncated,omitempty"`
 	Input          json.RawMessage  `json:"input,omitempty"`
 	Locations      []ToolLocation   `json:"locations,omitempty"`
+	SteeringDocs   []string         `json:"steering_docs,omitempty"`
 	Diffs          []ToolDiff       `json:"diffs,omitempty"`
 	OutputSpans    []TextSpan       `json:"output_spans,omitempty"`
 	Ts             int64            `json:"ts"`
@@ -610,6 +611,15 @@ func ToolResultID(callID string) string {
 	return callID + ":result"
 }
 
+// SteeringCallIDPrefix starts every steering card's id. KAS's steering_inclusion carries
+// no id, so the replay merge pairs these cards by ordinal per turn instead.
+const SteeringCallIDPrefix = "steering-"
+
+// IsSteeringCallID reports whether a tool_call id is a steering card's.
+func IsSteeringCallID(id string) bool {
+	return strings.HasPrefix(id, SteeringCallIDPrefix)
+}
+
 // SteerAckID is the steer_ack entry id for a steer: `<steer>:ack`.
 func SteerAckID(steerID string) string {
 	return steerID + ":ack"
@@ -648,6 +658,7 @@ func EntryToolCallOf(tc *ToolCall) EntryToolCall {
 		Truncated:      tc.Truncated,
 		Input:          tc.Input,
 		Locations:      tc.Locations,
+		SteeringDocs:   tc.SteeringDocs,
 		Diffs:          tc.Diffs,
 		OutputSpans:    tc.OutputSpans,
 		Ts:             tc.Ts,
@@ -683,6 +694,7 @@ func ToolCallOfEntry(e *EntryToolCall) ToolCall {
 		Truncated:      e.Truncated,
 		Input:          e.Input,
 		Locations:      e.Locations,
+		SteeringDocs:   e.SteeringDocs,
 		Diffs:          e.Diffs,
 		OutputSpans:    e.OutputSpans,
 		Ts:             e.Ts,

@@ -16,6 +16,7 @@ const KIND_NOUNS: Readonly<Record<ToolKind, { one: string; many: string }>> = {
   execute: { one: "command", many: "commands" },
   shell: { one: "shell command", many: "shell commands" },
   hook: { one: "hook", many: "hooks" },
+  steering: { one: "steering load", many: "steering loads" },
   fetch: { one: "fetch", many: "fetches" },
   think: { one: "thinking step", many: "thinking steps" },
   switch_mode: { one: "mode switch", many: "mode switches" },

@@ -292,6 +292,7 @@ const TOOL_KIND_LABELS: Readonly<
   execute: { verb: "Ran", noun: "command", samplesFrom: "titles" },
   shell: { verb: "Ran", noun: "shell command", samplesFrom: "titles" },
   hook: { verb: "Ran", noun: "hook", samplesFrom: "titles" },
+  steering: { verb: "Loaded", noun: "steering set", samplesFrom: "titles" },
   fetch: { verb: "Fetched", noun: "URL", samplesFrom: "titles" },
   think: { verb: "", noun: "thinking step", samplesFrom: "titles" },
   switch_mode: { verb: "", noun: "mode switch", samplesFrom: "titles" },

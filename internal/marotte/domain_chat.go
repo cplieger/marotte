@@ -12,7 +12,8 @@ type ToolKind string
 
 // ToolKindExecute and the following constants define the valid ToolKind values. KAS
 // emits only read/edit/delete/move/search/execute/think/fetch/switch_mode/other; the rest
-// back WorkingLabelForKind's table. ToolKindHook is marotte's own `Hook fired` card.
+// back WorkingLabelForKind's table. ToolKindHook is marotte's own `Hook fired` card and
+// ToolKindSteering its `Steering loaded` card.
 const (
 	ToolKindExecute    ToolKind = "execute"
 	ToolKindShell      ToolKind = "shell"
@@ -22,6 +23,7 @@ const (
 	ToolKindEdit       ToolKind = "edit"
 	ToolKindThink      ToolKind = "think"
 	ToolKindHook       ToolKind = "hook"
+	ToolKindSteering   ToolKind = "steering"
 	ToolKindWrite      ToolKind = "write"
 	ToolKindDelete     ToolKind = "delete"
 	ToolKindMove       ToolKind = "move"
@@ -124,6 +126,9 @@ type ToolCall struct {
 	Input     json.RawMessage `json:"input,omitempty"`
 	Locations []ToolLocation  `json:"locations,omitempty"`
 	Diffs     []ToolDiff      `json:"diffs,omitempty"`
+	// SteeringDocs are the document ids (a file URI for an on-disk doc) a steering card
+	// announces, as KAS's steering_inclusion sent them.
+	SteeringDocs []string `json:"steering_docs,omitempty"`
 	// OutputSpans styles ranges of Output, parsed server-side so Output stays plain
 	// text and the client never builds HTML from agent-controlled bytes.
 	OutputSpans []TextSpan `json:"output_spans,omitempty"`

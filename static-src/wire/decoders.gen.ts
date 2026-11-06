@@ -50,7 +50,7 @@ const STEER_REASONS = ["restart", "boundary"] as const;
 const STEER_ROW_STATES = ["queued", "delivering", "unsent", "removed"] as const;
 const STEER_STATES = ["read", "dropped"] as const;
 const TAB_KINDS = ["chat", "editor", "run", "subagent", "settings", "git", "files", "history", "docs", "spec", "web"] as const;
-const TOOL_KINDS = ["execute", "shell", "read", "search", "fetch", "edit", "think", "hook", "write", "delete", "move", "command", "browser", "switch_mode", "mcp", "other"] as const;
+const TOOL_KINDS = ["execute", "shell", "read", "search", "fetch", "edit", "think", "hook", "steering", "write", "delete", "move", "command", "browser", "switch_mode", "mcp", "other"] as const;
 const TOOL_STATUSS = ["pending", "in_progress", "completed", "failed", "aborted"] as const;
 const TURN_OPEN_SOURCE_NAMES = ["prompt", "wire_turn_start", "empty_retry", "event", "revert", "workflow_step"] as const;
 const TURN_OUTCOMES = ["running", "completed", "cancelled", "interrupted", "failed", "refused", "unknown", "empty"] as const;
@@ -1376,6 +1376,10 @@ export const decodeEntryToolCall: Decoder<EntryToolCall> = (v) => {
   {
     const $v = own(o, "locations");
     if ($v !== undefined && $v !== null) out.locations = own(o, "locations") === null ? [] : decodeArray(own(o, "locations"), decodeToolLocation, "$.entry_tool_call.locations");
+  }
+  {
+    const $v = own(o, "steering_docs");
+    if ($v !== undefined && $v !== null) out.steering_docs = own(o, "steering_docs") === null ? [] : decodeArray(own(o, "steering_docs"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.entry_tool_call.steering_docs");
   }
   {
     const $v = own(o, "diffs");
@@ -4481,6 +4485,10 @@ export const decodeToolCall: Decoder<ToolCall> = (v) => {
   {
     const $v = own(o, "diffs");
     if ($v !== undefined && $v !== null) out.diffs = own(o, "diffs") === null ? [] : decodeArray(own(o, "diffs"), decodeToolDiff, "$.tool_call.diffs");
+  }
+  {
+    const $v = own(o, "steering_docs");
+    if ($v !== undefined && $v !== null) out.steering_docs = own(o, "steering_docs") === null ? [] : decodeArray(own(o, "steering_docs"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.tool_call.steering_docs");
   }
   {
     const $v = own(o, "output_spans");
