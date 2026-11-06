@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -585,6 +586,66 @@ func TestRunAsks_TheParentsSendMessageEndsTheCard(t *testing.T) {
 	}
 	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
 		t.Error("the second route's answer reached KAS")
+	}
+}
+
+// Beside a running sibling KAS keeps an answered step paused and runs the answer as a wake turn
+// (kirodotdev/Kiro#11863): the step is working, so its question leaves while that turn runs, and a
+// turn that ends with no signal asks again.
+func TestRunAsks_AnAnsweredStepsWakeTurnRaisesNoSecondQuestion(t *testing.T) {
+	logs := captureLogs(t)
+	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusRunning,
+		parkedStep("review", "sess_step"), askStepNode{id: "build", status: "running", session: "sess_build"}))
+	raised := func() int {
+		joinInflight(t, h)
+		return strings.Count(logs.String(), "a workflow step is waiting for an answer")
+	}
+	h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeStart)
+	h.runs.onNotify(t.Context(), runChatID("wf_1"), runNotif(methodKiroSessionNotify, map[string]any{
+		"sessionId": "sess_parent", "callerSessionId": "sess_step", "message": "Which branch?",
+		"severity": "warning", "sender": "step", "workflowId": "wf_1",
+	}))
+	h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeEnd)
+	asked := readNow(t, h, "wf_1").asks
+	if n := raised(); len(asked) != 1 || n != 1 {
+		t.Fatalf("Setup: the park = %+v, raised %d times, want one ask raised once", asked, n)
+	}
+
+	h.runs.onNotify(t.Context(), runChatID("wf_1"), runNotif(methodKiroSessionNotify, map[string]any{
+		"sessionId": "sess_step", "callerSessionId": testLaunchSession, "message": "Use main.",
+		"severity": "info", "sender": "parent", "workflowId": "wf_1",
+	}))
+	h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeStart)
+	if got := readNow(t, h, "wf_1").asks; len(got) != 0 {
+		t.Errorf("during the wake turn the asks = %+v, want none: the step is working on the answer", got)
+	}
+	if n := raised(); n != 1 {
+		t.Errorf("the question was raised %d times by the wake turn, want once", n)
+	}
+
+	h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeEnd)
+	again := readNow(t, h, "wf_1").asks
+	if len(again) != 1 || again[0].ID == asked[0].ID {
+		t.Fatalf("after the wake turn ended with no signal the asks = %+v, want one new ask", again)
+	}
+	if n := raised(); n != 2 {
+		t.Errorf("the re-park was raised %d times in all, want twice", n)
+	}
+}
+
+// No turn_end follows an engine that died mid-turn, so the engine's end closes the step's turn: a step KAS parks
+// after the respawn asks its question.
+func TestRunAsks_AStepTurnOpenWhenTheEngineEndedAsksAfterTheRespawn(t *testing.T) {
+	h, _, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusRunning,
+		parkedStep("review", "sess_step"), askStepNode{id: "build", status: "running", session: "sess_build"}))
+	h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeStart)
+	if got := readNow(t, h, "wf_1").asks; len(got) != 0 {
+		t.Fatalf("Setup: with the step's turn open the asks = %+v, want none", got)
+	}
+
+	h.onEngineEnded(1)
+	if got := readNow(t, h, "wf_1").asks; len(got) != 1 || got[0].NodeID != "review" {
+		t.Errorf("after the engine ended the asks = %+v, want the parked step's one ask", got)
 	}
 }
 

@@ -20,7 +20,7 @@ export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | 
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed";
 
-export type FailureKind = "context_limit" | "model_call_limit";
+export type FailureKind = "context_limit" | "model_call_limit" | "empty_answer";
 
 export type FileMatchKind = "content" | "name" | "dir";
 
@@ -1406,6 +1406,11 @@ export interface EntryTurnClose {
  * source cannot say so: a replayed `event` turn can be one KAS ran.
  */
   carrier?: boolean;
+  /**
+ * Unanswered marks a workflow step's close that its own turn ended with no answer text and no
+ * signal call after its last tool call; the run grades it against KAS's record of the step.
+ */
+  unanswered?: boolean;
 }
 
 /**

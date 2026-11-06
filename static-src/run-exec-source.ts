@@ -306,12 +306,60 @@ function stepFacts(
   return facts;
 }
 
+/** KAS records a paused step's success or error at once but applies it only when its run loop
+ *  settles (kirodotdev/Kiro#12281): once every running step stops, or on the next resume. Only a
+ *  running or paused run says which, so any other status labels nothing. */
+function pendingEndOf(node: RunNode, run: ClassifiedRunStatus): ExecNode["pendingEnd"] {
+  if (node.status !== "paused" || (run !== "running" && run !== "paused")) {
+    return undefined;
+  }
+  const status =
+    node.completionSignal === "success"
+      ? "completed"
+      : node.completionSignal === "error"
+        ? "failed"
+        : undefined;
+  if (status === undefined) {
+    return undefined;
+  }
+  const word = status === "completed" ? "Done" : "Failed";
+  const when = run === "paused" ? "the run resumes" : "the run's other steps finish";
+  return { status, text: `${word}, applies when ${when}` };
+}
+
+/** KAS holds the parallel branch of a paused step a client marked done or failed until the run loop
+ *  settles (kirodotdev/Kiro#12281): the step reads completed or failed and the containers holding it
+ *  stay paused with nothing in them paused or running. A repeat paused at its cap looks the same,
+ *  but the run pauses on the cap instead, so it labels nothing. */
+function heldLaneText(node: RunNode, kind: ExecKind, run: ClassifiedRunStatus): string | undefined {
+  if (isWork({ kind }) || node.status !== "paused" || run !== "running") {
+    return undefined;
+  }
+  const ended: RunNode[] = [];
+  const held = (n: RunNode): boolean => {
+    const kids = n.children ?? [];
+    if (isWork({ kind: kindOf(n.type) })) {
+      ended.push(n);
+      return n.status !== "paused" && n.status !== "running";
+    }
+    const capped = n.type === "repeat" && n.status === "paused" && kids.at(-1)?.status !== "paused";
+    return !capped && kids.every(held);
+  };
+  if (!held(node)) {
+    return undefined;
+  }
+  return ended.some((n) => n.status === "failed")
+    ? "Failed, applies when the run's other steps finish"
+    : "Done, moves on when the run's other steps finish";
+}
+
 function subtitleOf(
   node: RunNode,
   kind: ExecKind,
   plan: PlanEntry | undefined,
   watch: WatchResult | undefined,
   done: boolean,
+  detail: string | undefined,
 ): string {
   const bits: string[] = [];
   if (kind === "repeat") {
@@ -347,8 +395,10 @@ function subtitleOf(
       bits.push(`${String(n)} ${n === 1 ? "retry" : "retries"}`);
     }
   }
-  // Kiro's step detail: a pause's reason, else a retry wait's, verbatim.
-  if (node.status === "paused" && node.pauseReason !== undefined) {
+  // A recorded end or a held lane, else Kiro's pause reason or retry wait, verbatim.
+  if (detail !== undefined) {
+    bits.push(detail);
+  } else if (node.status === "paused" && node.pauseReason !== undefined) {
     bits.push(`Paused: ${truncate(node.pauseReason, 80)}`);
   } else if (node.status === "running" && node.retryReason !== undefined) {
     bits.push(`Retrying: ${truncate(node.retryReason, 80)}`);
@@ -522,6 +572,10 @@ function toNode(
   if (work && endable(node, ctx)) {
     out.endable = true;
   }
+  const pendingEnd = work ? pendingEndOf(node, ctx.run) : undefined;
+  if (pendingEnd !== undefined) {
+    out.pendingEnd = pendingEnd;
+  }
   if (pass !== undefined) {
     out.pass = pass;
   }
@@ -548,7 +602,8 @@ function toNode(
     kind === "watch" && node.capturedOutput !== undefined
       ? watchResult(node.capturedOutput)
       : undefined;
-  const sub = subtitleOf(node, kind, plan, watch, settled(state));
+  const detail = pendingEnd?.text ?? heldLaneText(node, kind, ctx.run);
+  const sub = subtitleOf(node, kind, plan, watch, settled(state), detail);
   if (sub !== "") {
     out.subtitle = sub;
   }

@@ -143,7 +143,7 @@ func askedPosition(asks []workflow.Ask, askID string) string {
 
 // A paused step on a run whose loop still runs is refused: KAS's reroute declines then and the prompt
 // would run as a turn no run owns. With a running sibling that lasts until every sibling stops
-// (kirodotdev/Kiro#11733), so it is waits_on_run, not a retryable busy.
+// (kirodotdev/Kiro#12281), so it is waits_on_run, not a retryable busy.
 func stepMessageVerb(s *stepNow, asked bool) (marotte.RunStepMessageVerb, marotte.RunStepMessageRefusal) {
 	switch {
 	case s.run.Terminal():
@@ -173,8 +173,9 @@ var stepRefusalText = map[marotte.RunStepMessageRefusal]string{
 	marotte.RunStepFinished:   "this step has finished, so it cannot take a message",
 	marotte.RunStepRunPaused:  "the run is paused; resume it to message this step",
 	marotte.RunStepBusy:       "this step cannot take a message right now; try again in a moment",
-	marotte.RunStepWaitsOnRun: "this step waits until the run's other steps finish; use Mark step done to end it now",
-	marotte.RunStepFull:       "too many unread messages are waiting for this step",
+	marotte.RunStepWaitsOnRun: "Mark step done ends this step now; its lane moves on when the run's other steps finish, " +
+		"or at once if you pause and resume the run, which interrupts them",
+	marotte.RunStepFull: "too many unread messages are waiting for this step",
 }
 
 func stepRefusal(r marotte.RunStepMessageRefusal) error {

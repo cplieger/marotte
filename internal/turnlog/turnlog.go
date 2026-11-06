@@ -329,6 +329,17 @@ func (t *Turn) SealLane(ctx context.Context, key string) ([]Sealed, error) {
 	return t.sealLane(ctx, key)
 }
 
+// SealOpen freezes every lane's open entry and settles its steer carry, as Close does first, for a caller that
+// reads the sealed entries before choosing the turn's conclusion.
+func (t *Turn) SealOpen(ctx context.Context) ([]Sealed, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed {
+		return nil, ErrClosed
+	}
+	return t.sealAll(ctx)
+}
+
 // ChangedFile accumulates one path's line delta. Two edits to one file in one
 // turn sum, which is the turn's own churn.
 func (t *Turn) ChangedFile(path string, added, removed int, isNew bool) {
@@ -674,6 +685,7 @@ func (t *Turn) Close(ctx context.Context, c marotte.TurnConclusion) ([]Sealed, e
 		Credits:        t.agg.credits,
 		ElapsedMs:      t.agg.elapsed,
 		Truncated:      c.Truncated,
+		Unanswered:     c.Unanswered,
 	}
 	t.agg.facts.Stamp(&footer)
 	if e := t.agg.engine; e != nil {

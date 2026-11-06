@@ -86,8 +86,15 @@ type StepSession struct {
 	SessionID string
 	// Status is KAS's node status word, verbatim.
 	Status string
+	// CompletionSignal is the signal KAS recorded on the node, verbatim; "" for none.
+	CompletionSignal string
 	// Path is the node path from the root to this step in KAS's WIRE spelling (see pathSegment).
 	Path []string
+}
+
+// EndSignalled reports whether KAS recorded a success or an error signal on the step.
+func (s *StepSession) EndSignalled() bool {
+	return s.CompletionSignal == signalSuccess || s.CompletionSignal == signalError
 }
 
 // PathKey is a node path's one string identity: the run log's turn key, the step-transcript
@@ -116,8 +123,10 @@ func StepSessions(s *State) []StepSession {
 func Steps(s *State) []StepSession {
 	var out []StepSession
 	for _, v := range nodes(s) {
-		if v.n.Type == "step" {
-			out = append(out, StepSession{NodeID: v.n.NodeID, SessionID: v.n.SessionID, Status: v.n.Status, Path: v.path})
+		if v.n.Type == nodeTypeStep {
+			out = append(out, StepSession{
+				NodeID: v.n.NodeID, SessionID: v.n.SessionID, Status: v.n.Status, CompletionSignal: v.n.CompletionSignal, Path: v.path,
+			})
 		}
 	}
 	return out

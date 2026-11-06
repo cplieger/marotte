@@ -13,7 +13,7 @@ export const arbDenialBasis: fc.Arbitrary<DenialBasis> = fc.constantFrom("unpars
 export const arbEngineState: fc.Arbitrary<EngineState> = fc.constantFrom("starting", "ready", "restarting", "down");
 export const arbEntryKind: fc.Arbitrary<EntryKind> = fc.constantFrom("turn_open", "turn_bind", "turn_wake", "run_named", "text", "thinking", "tool_call", "tool_result", "steer", "steer_ack", "steer_delivered", "steer_cleared", "plan", "compaction", "compaction_failed", "safety_blocked", "model_switched", "model_routed", "model_fallback", "mode_switched", "turn_revert", "context_reset", "reconciled", "turn_close");
 export const arbErrorCode: fc.Arbitrary<ErrorCode> = fc.constantFrom("recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "supervised_not_applied", "model_not_served", "auth_token_unavailable", "tangent_merge_failed");
-export const arbFailureKind: fc.Arbitrary<FailureKind> = fc.constantFrom("context_limit", "model_call_limit");
+export const arbFailureKind: fc.Arbitrary<FailureKind> = fc.constantFrom("context_limit", "model_call_limit", "empty_answer");
 export const arbFileMatchKind: fc.Arbitrary<FileMatchKind> = fc.constantFrom("content", "name", "dir");
 export const arbForgeStatus: fc.Arbitrary<ForgeStatus> = fc.constantFrom("connected", "retrying", "refused", "reconnect", "unusable");
 export const arbInterruptMode: fc.Arbitrary<InterruptMode> = fc.constantFrom("steer", "queue");
@@ -1115,6 +1115,7 @@ const arbModel = fc.letrec<{
       elapsed_ms: fc.double({ noNaN: true, noDefaultInfinity: true }),
       truncated: fc.boolean(),
       carrier: fc.boolean(),
+      unanswered: fc.boolean(),
     },
     { requiredKeys: ["outcome"] },
   ),

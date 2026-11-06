@@ -49,6 +49,10 @@ type runTurn struct {
 	// top is the run's top-level step this one sits under ("" when unknown), held because path is never
 	// split back (workflow.PathKey).
 	top string
+	// answer folds the step's current KAS turn: the sink feeds it, and a turn_start resets it.
+	answer answerFold
+	// ownEnd is whether the step's newest edge is its own turn's turn_end, with no turn_start or node_paused after.
+	ownEnd bool
 	// seq is the newest seq the sink assigned, written on the dispatch goroutine and read by the digest.
 	seq atomic.Uint64
 }
@@ -64,6 +68,7 @@ func (s runSink) Append(ctx context.Context, e *marotte.Entry) error {
 		return err
 	}
 	s.turn.seq.Store(e.Seq)
+	s.turn.answer.see(e)
 	return nil
 }
 
@@ -572,7 +577,37 @@ func (r *runLog) stopReason(workflowID, nodePath string, raw marotte.StopReason)
 		return false
 	}
 	t.rawStop = raw
+	t.ownEnd = true
 	return true
+}
+
+// turnStarted records a step's turn_start on its open turn; false with no open turn.
+func (r *runLog) turnStarted(workflowID, nodePath string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t := r.openLocked(workflowID, nodePath)
+	if t == nil {
+		return false
+	}
+	t.ownEnd = false
+	t.answer.reset()
+	return true
+}
+
+// paused records a step's node_paused on its open turn: whatever ends the step next, its turn did not.
+func (r *runLog) paused(workflowID, nodePath string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if t := r.openLocked(workflowID, nodePath); t != nil {
+		t.ownEnd = false
+	}
+}
+
+// unanswered is whether the step's own turn ended it having said nothing. KAS completes a step at its turn's end
+// only when nothing else ended it; Mark step done or a parent's update_status lands after a node_paused or inside a
+// turn, and KAS clears the step's signal on that path too (applyPausedStepFinish), so only this tells them apart.
+func (t *runTurn) unanswered() bool {
+	return t.ownEnd && t.answer.silent()
 }
 
 func (r *runLog) openLocked(workflowID, nodePath string) *runTurn {
@@ -608,8 +643,11 @@ func (r *runLog) closeNode(ctx context.Context, workflowID, nodePath, status, re
 	if c.Known && t.rawStop != "" {
 		c.RawStop = t.rawStop
 	}
-	sealed, err = r.closeLocked(ctx, rec, t, c)
-	return sealed, true, err
+	// The fold reads sealed entries, and the answer is still coalescing until a seal.
+	sealed, err = t.turn.SealOpen(ctx)
+	c.Unanswered = err == nil && t.unanswered()
+	closing, cerr := r.closeLocked(ctx, rec, t, c)
+	return append(sealed, closing...), true, errors.Join(err, cerr)
 }
 
 // closeRunTurns closes every open turn of a run with one outcome and, when terminal, drops the host.
@@ -711,7 +749,9 @@ func (*runLog) closeLocked(ctx context.Context, rec *runRecord, t *runTurn, c ma
 	delete(rec.open, t.path)
 	rec.closed[t.path] = t.turn.ID()
 	if rec.closes != nil {
-		rec.closes[t.path] = stepClose{outcome: c.Outcome, reason: c.Reason, kind: c.FailureKind, rawStop: c.RawStop}
+		rec.closes[t.path] = stepClose{
+			outcome: c.Outcome, reason: c.Reason, kind: c.FailureKind, rawStop: c.RawStop, unanswered: c.Unanswered,
+		}
 	}
 	if rec.starts != nil {
 		noteAttemptClose(rec.starts, t.path, c.Outcome)
@@ -739,7 +779,8 @@ func (r *runLog) stepEnds(ctx context.Context, workflowID string, kas map[string
 	ends := make(map[string]marotte.RunStepEnd)
 	for path, c := range rec.closes {
 		st, known := kas[path]
-		end, broken := c.graded(st, known).end()
+		g := c.graded(st, known)
+		end, broken := g.end()
 		if !broken {
 			continue
 		}
