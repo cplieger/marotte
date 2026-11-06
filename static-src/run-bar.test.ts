@@ -1075,8 +1075,8 @@ describe("the run bar's fold motion", () => {
   });
 });
 
-// The box's one batch control: Pause all while a listed run runs, Resume all once none runs and a
-// person or the parent chat paused one. Each run goes through its own pause or resume route.
+// The box's one batch control: Pause all while a listed run runs, Resume all once none runs and one is a plain pause.
+// Each run goes through its own pause or resume route.
 describe("Pause all and Resume all", () => {
   const PAUSABLE = { verbs: ["pause", "cancel"] };
   const RESUMABLE = { verbs: ["resume", "cancel"] };
@@ -1336,6 +1336,19 @@ describe("Pause all and Resume all", () => {
     const c = chatID();
     chats.push(c);
     await mount(c, { [runID("limited")]: throttled("limited") });
+    expect(batchButton()?.getAttribute("aria-label")).toBe("Resume all");
+  });
+
+  // An empty class is read as a transient error, as the pause's own detail line reads it.
+  it("offers Resume all for a self-paused run whose detail names an empty class", async () => {
+    const c = chatID();
+    chats.push(c);
+    await mount(c, {
+      [runID("blank")]: {
+        ...throttled("blank"),
+        pauseDetail: { class: "", code: "ServiceUnavailable" },
+      },
+    });
     expect(batchButton()?.getAttribute("aria-label")).toBe("Resume all");
   });
 

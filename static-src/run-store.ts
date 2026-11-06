@@ -176,16 +176,16 @@ export function runPausedByPerson(state: RunState): boolean {
   );
 }
 
-/** Whether KAS paused the run itself once its retries ran out against a rate limit: no initiator, a transient-error
- *  class. A plain pause a person waits out, and the reason marotte may have stopped resuming it. */
-export function runPausedByRateLimit(state: RunState): boolean {
+/** Whether KAS paused the run itself on a transient fault (a rate limit, a 5xx, a dropped connection): no initiator, a
+ *  transient-error class. */
+export function runPausedByTransientError(state: RunState): boolean {
   const detail = state.pauseDetail;
   return (
     state.status === "paused" &&
     (state.stopInitiator ?? "") === "" &&
     detail?.code !== undefined &&
     detail.code !== "" &&
-    (detail.class ?? "transient-error") === "transient-error"
+    (detail.class === undefined || detail.class === "" || detail.class === "transient-error")
   );
 }
 

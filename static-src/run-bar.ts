@@ -15,7 +15,7 @@ import {
   runControls,
   runLabelOf,
   runPausedByPerson,
-  runPausedByRateLimit,
+  runPausedByTransientError,
   runPlan,
   runState,
   runStepEnds,
@@ -119,7 +119,7 @@ function key(): string {
 }
 
 /** What the batch button does now: pause every listed run that runs, else resume every one a person, the parent
- *  chat or a rate limit parked. `targets` are the runs the server offers that verb on, so it is empty while every
+ *  chat or a transient error parked. `targets` are the runs the server offers that verb on, so it is empty while every
  *  running run's pause is already landing, and it never holds a run waiting for an answer or at a loop's pass limit,
  *  which the server offers no resume on (a resume re-parks them). */
 interface Batch {
@@ -138,7 +138,7 @@ function batchOf(ids: readonly string[]): Batch | null {
     const st = runState(id);
     return (
       st !== undefined &&
-      (runPausedByPerson(st) || runPausedByRateLimit(st)) &&
+      (runPausedByPerson(st) || runPausedByTransientError(st)) &&
       offers(id, "resume")
     );
   });
@@ -154,7 +154,7 @@ const BATCH_VIEW: Record<Batch["verb"], { label: string; icon: string; tip: stri
   resume: {
     label: "Resume all",
     icon: ICON_RESUME,
-    tip: "Resume every run here that was paused by hand, by this chat or by a rate limit. A run waiting for an answer or at a loop's pass limit stays paused",
+    tip: "Resume every run here that was paused by hand, by an agent, by this chat or by a transient error such as a rate limit. A run waiting for an answer or at a loop's pass limit stays paused",
   },
 };
 
