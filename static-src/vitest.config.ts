@@ -131,6 +131,34 @@ function browserProject(
               );
             }
           },
+          /** Real mouse clicks at `points` (CSS px in a tester frame `frameWidth` wide), each pressed
+           *  `gapMs` after the last one settled and released `holdMs` after its press; answers once
+           *  they are scheduled. Raw `page.mouse`, because `userEvent` first evaluates in the page and
+           *  so waits out a busy main thread, which a click queued behind a long task must not. */
+          async queueClicks(
+            { page, frame },
+            points: readonly { readonly x: number; readonly y: number }[],
+            gapMs: number,
+            holdMs: number,
+            frameWidth: number,
+          ) {
+            const box = await (await (await frame()).frameElement()).boundingBox();
+            if (box === null) {
+              throw new Error("the tester frame has no box");
+            }
+            const scale = box.width / frameWidth;
+            void (async () => {
+              for (const p of points) {
+                await new Promise((resolve) => setTimeout(resolve, gapMs));
+                await page.mouse.move(box.x + p.x * scale, box.y + p.y * scale);
+                await page.mouse.down();
+                await new Promise((resolve) => setTimeout(resolve, holdMs));
+                await page.mouse.up();
+              }
+            })().catch((e: unknown) => {
+              console.error("queueClicks", e);
+            });
+          },
         },
       },
     },
