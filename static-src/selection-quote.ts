@@ -1,25 +1,109 @@
-// "Quote in reply": a button beside a text selection inside one reply, which appends the selected text to the
-// composer as a quote. The button follows the selection: it shows while one qualifies and goes when it stops.
+// "Quote in reply": a button beside a text selection inside one source of transcript content, which appends the
+// selected text to the composer as a quote naming that source. The button follows the selection: it shows while one
+// qualifies and goes when it stops.
 
 import { el } from "@cplieger/ui";
 import { createPopover, type PopoverController } from "@cplieger/ui/popover";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { setComposerValue } from "./composer-value.js";
 import { $ } from "./dom.js";
-import { appendQuote, quoteSelection } from "./message-quote.js";
+import { appendQuote, codeSpan, quoteSelection } from "./message-quote.js";
 
-const REPLY = ".message.assistant";
+/** A control: its text is a UI label, never quoted. */
+const CONTROL = [
+  "button",
+  '[role="button"]',
+  "input",
+  "textarea",
+  "select",
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role^="menu"]',
+  ".uip-popover",
+  `[${CHROME_ATTR}]`,
+].join(",");
 
-/** Whether `reply` is reply prose in the transcript: a compaction summary shares the prose skin without being one. */
-function isReply(reply: Element, transcript: Element): boolean {
-  return transcript.contains(reply) && !reply.classList.contains("compaction-body");
+/** Controls whose text is content, a run's or a file's name, so they quote as the source around them does. Chrome
+ *  inside one is still chrome. */
+const NAMING_CONTROL =
+  ".run-bar-open, .run-head, .run-step-head, .turn-wake-run, .turn-wake-row-run, .tool-file-link, .steer-note-run";
+
+function textOf(root: Element, selector: string): string {
+  return root.querySelector(selector)?.textContent.trim() ?? "";
+}
+
+function toolLabel(card: Element, inner: Element): string {
+  const title = textOf(card, ".tool-title");
+  if (title === "") {
+    return card.getAttribute("data-kind") === "hook" ? "From a hook" : "From a tool call";
+  }
+  if (card.getAttribute("data-kind") === "hook") {
+    return `From the hook ${codeSpan(title)}`;
+  }
+  return inner.closest(".tool-output") !== null
+    ? `From the output of ${codeSpan(title)}`
+    : `From the tool call ${codeSpan(title)}`;
+}
+
+function steerLabel(note: Element): string {
+  switch (note.getAttribute("data-origin")) {
+    case "agent":
+      return "From a workflow result";
+    case "user":
+      return note.hasAttribute("data-caller")
+        ? "From a mid-turn message"
+        : "From your mid-turn message";
+    default:
+      return "From a workflow message";
+  }
+}
+
+function runLabel(root: Element, nameSelector: string): string {
+  const name = textOf(root, nameSelector);
+  return name === "" ? "From a run" : `From run ${name}`;
+}
+
+/** The transcript's quotable sources: one entry per kind of content, its root and the line naming it. `inner` is
+ *  the element the selection starts in. */
+const SOURCES: readonly { root: string; label: (source: Element, inner: Element) => string }[] = [
+  { root: ".message.assistant:not(.compaction-body)", label: () => "From Kiro's reply" },
+  {
+    root: ".turn-req",
+    label: (req) =>
+      req.closest<HTMLElement>(".turn-header")?.dataset["trigger"] === "user"
+        ? "From your earlier message"
+        : "From the turn header",
+  },
+  { root: ".turn-head-row", label: () => "From the turn header" },
+  { root: ".tool-call", label: toolLabel },
+  { root: ".reasoning-block", label: () => "From Kiro's thinking" },
+  { root: ".steer-note", label: steerLabel },
+  { root: ".run-card", label: (card) => runLabel(card, ".run-name") },
+  { root: ".run-bar-row", label: (row) => runLabel(row, ".ev-sum-label") },
+  { root: "#run-bar-fold", label: () => "From the run list" },
+];
+
+const SOURCE_ROOTS = SOURCES.map((s) => s.root).join(",");
+
+/** The regions holding transcript content; everything else on the page (composer, sidebar, Settings, popovers) is
+ *  not quotable. */
+function contentRegions(): readonly Element[] {
+  return [$.messages, $.runBar, $.runBarFold];
 }
 
 function elementOf(node: Node): Element | null {
   return node instanceof Element ? node : node.parentElement;
 }
 
-/** Whether `a` to `b` covers no text, so an end there selects nothing outside the reply. */
+/** The innermost source holding `node` inside a content region and not inside a control, or null. */
+function sourceOf(node: Node): Element | null {
+  const source = elementOf(node)?.closest(SOURCE_ROOTS) ?? null;
+  if (source === null || !contentRegions().some((r) => r.contains(source))) {
+    return null;
+  }
+  return source.closest(CONTROL) === null ? source : null;
+}
+
+/** Whether `a` to `b` covers no text, so an end there selects nothing outside the source. */
 function coversNoText(a: [Node, number], b: [Node, number]): boolean {
   const gap = document.createRange();
   gap.setStart(...a);
@@ -27,13 +111,16 @@ function coversNoText(a: [Node, number], b: [Node, number]): boolean {
   return gap.toString() === "";
 }
 
-/** Whether `range` covers text inside a `[data-vk-chrome]` element of `reply`, such as a code block's title bar:
- *  UI text, not the reply. Touching one without covering its text, as a range ending at its start does, is not. */
-function coversChrome(range: Range, reply: Element): boolean {
-  for (const chrome of reply.querySelectorAll(`[${CHROME_ATTR}]`)) {
-    // Clipping to a range that misses `chrome` collapses `part`, so it reads "".
+/** Whether `range` covers text of a control inside `source`, such as a code block's title bar or a button. Touching
+ *  one without covering its text, as a range ending at its start does, is not. */
+function coversControl(range: Range, source: Element): boolean {
+  for (const control of source.querySelectorAll(CONTROL)) {
+    if (control.matches(NAMING_CONTROL) && !control.matches(`[${CHROME_ATTR}]`)) {
+      continue;
+    }
+    // Clipping to a range that misses `control` collapses `part`, so it reads "".
     const part = document.createRange();
-    part.selectNodeContents(chrome);
+    part.selectNodeContents(control);
     if (range.compareBoundaryPoints(Range.START_TO_START, part) > 0) {
       part.setStart(range.startContainer, range.startOffset);
     }
@@ -47,31 +134,41 @@ function coversChrome(range: Range, reply: Element): boolean {
   return false;
 }
 
-/** The reply holding the whole of `range` with none of its UI text, or null. An end outside the reply counts as
- *  inside when no text lies between it and the reply, as a triple-click's end at the next block's start does. */
-function replyOfRange(range: Range, transcript: Element): HTMLElement | null {
-  const start = elementOf(range.startContainer);
-  const end = elementOf(range.endContainer);
-  const reply = start?.closest<HTMLElement>(REPLY) ?? end?.closest<HTMLElement>(REPLY) ?? null;
-  if (reply === null || !isReply(reply, transcript)) {
-    return null;
-  }
-  const startIn = reply.contains(range.startContainer);
-  const endIn = reply.contains(range.endContainer);
-  if (!startIn && !coversNoText([range.startContainer, range.startOffset], [reply, 0])) {
+/** The source holding the whole of `range` with none of its controls' text, or null. An end outside the source
+ *  counts as inside when no text lies between it and the source, as a triple-click's end at the next block's
+ *  start does. */
+function sourceOfRange(range: Range): Element | null {
+  const source = sourceOf(range.startContainer) ?? sourceOf(range.endContainer);
+  if (source === null) {
     return null;
   }
   if (
-    !endIn &&
-    !coversNoText([reply, reply.childNodes.length], [range.endContainer, range.endOffset])
+    !source.contains(range.startContainer) &&
+    !coversNoText([range.startContainer, range.startOffset], [source, 0])
   ) {
     return null;
   }
-  return coversChrome(range, reply) ? null : reply;
+  if (
+    !source.contains(range.endContainer) &&
+    !coversNoText([source, source.childNodes.length], [range.endContainer, range.endOffset])
+  ) {
+    return null;
+  }
+  return coversControl(range, source) ? null : source;
+}
+
+/** The line naming where `range`'s text comes from. */
+function sourceLabel(source: Element, range: Range): string {
+  const inner = elementOf(range.startContainer);
+  const entry = SOURCES.find((s) => source.matches(s.root));
+  if (entry === undefined) {
+    throw new Error("a source matched no entry");
+  }
+  return entry.label(source, inner !== null && source.contains(inner) ? inner : source);
 }
 
 /** The current selection and its quote block, or null when it does not qualify. */
-function selectedQuote(transcript: Element): { range: Range; block: string } | null {
+function selectedQuote(): { range: Range; block: string } | null {
   const sel = document.getSelection();
   // Only range 0 is checked, and Firefox can hold several whose text `toString()` joins
   // (https://developer.mozilla.org/en-US/docs/Web/API/Selection/addRange).
@@ -79,11 +176,12 @@ function selectedQuote(transcript: Element): { range: Range; block: string } | n
     return null;
   }
   const range = sel.getRangeAt(0);
-  if (replyOfRange(range, transcript) === null) {
+  const source = sourceOfRange(range);
+  if (source === null) {
     return null;
   }
   // The selection's own text keeps the rendered line breaks a Range's text drops.
-  const block = quoteSelection(sel.toString());
+  const block = quoteSelection(sel.toString(), sourceLabel(source, range));
   return block === "" ? null : { range, block };
 }
 
@@ -96,7 +194,7 @@ function endRect(range: Range): DOMRect {
 
 let wired = false;
 
-/** Watch the document's selection and offer "Quote in reply" for one inside a reply in `$.messages`. Idempotent. */
+/** Watch the document's selection and offer "Quote in reply" for one inside one transcript source. Idempotent. */
 export function initSelectionQuote(): void {
   if (wired) {
     return;
@@ -116,7 +214,7 @@ export function initSelectionQuote(): void {
   let frame: number | null = null;
   const evaluate = (): void => {
     frame = null;
-    const found = pointerHeld ? null : selectedQuote($.messages);
+    const found = pointerHeld ? null : selectedQuote();
     if (found === null) {
       range = null;
       pop.hide();
@@ -169,7 +267,7 @@ export function initSelectionQuote(): void {
     });
   }
   btn.addEventListener("click", () => {
-    const found = selectedQuote($.messages);
+    const found = selectedQuote();
     pop.hide();
     range = null;
     if (found === null) {

@@ -30,6 +30,7 @@ describe("a steer an API caller sent", () => {
     const n = note({ text: "Agent Mail: 1 new message", caller: { label: "Agent Mail" } });
     expect(textOf(n, ".steer-note-label")).toBe("Sent by Agent Mail");
     expect(n.getAttribute("aria-label")).toBe("Sent by Agent Mail: Agent Mail: 1 new message");
+    expect(n.hasAttribute("data-caller")).toBe(true);
   });
 
   it("names an unlabelled program as an API caller, and keeps the unread clause", () => {
@@ -51,6 +52,7 @@ describe("the read state", () => {
     // The label and the glyph are both visual, so the state has to be in the
     // accessible name too.
     expect(n.getAttribute("aria-label")).toBe("Mid-turn message: actually target main");
+    expect(n.hasAttribute("data-caller")).toBe(false);
   });
 
   // THAT the agent acknowledged it, which is the whole of what the note records

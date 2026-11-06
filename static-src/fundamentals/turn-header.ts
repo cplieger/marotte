@@ -187,7 +187,7 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   const body = d.request.trim();
   const label = d.label?.trim() ?? "";
   const quoted = label === "" ? splitLeadingQuote(body) : null;
-  syncQuote(header, quoted?.quote);
+  syncQuote(header, quoted ?? undefined);
   syncSentBy(header, d.caller);
   setRequestText(text, label !== "" ? label : (quoted?.rest ?? body));
   syncFullText(header, label === "" ? undefined : body);
@@ -346,9 +346,12 @@ export function syncWakeRowRuns(header: HTMLElement): void {
 /** Sub-pixel slack (px) for a button whose box rounds onto the clip edge. */
 const CLIP_EPSILON = 0.5;
 
-/** The reply passage a prompt opened with (`message-quote.ts`), drawn as one band before the text; `quote`
- *  undefined removes it. */
-function syncQuote(header: HTMLElement, quote: string | undefined): void {
+/** The passage a prompt opened with (`message-quote.ts`), drawn as one band before the text, led by the line naming
+ *  its source when it has one; `quote` undefined removes it. */
+function syncQuote(
+  header: HTMLElement,
+  quote: { source: string | null; quote: string } | undefined,
+): void {
   const req = header.querySelector<HTMLElement>(":scope > .turn-req");
   if (req === null) {
     return;
@@ -362,10 +365,29 @@ function syncQuote(header: HTMLElement, quote: string | undefined): void {
     band = el("blockquote", { className: "turn-req-quote" });
     req.prepend(band);
   }
-  if (band.textContent !== quote) {
-    band.textContent = quote;
-    linkifyPaths(band);
+  const key = join(quote.source ?? "", quote.quote);
+  if (band.dataset["key"] === key) {
+    return;
   }
+  band.dataset["key"] = key;
+  const text = el("span", { className: "turn-req-quote-text" }, quote.quote);
+  linkifyPaths(text);
+  band.replaceChildren(...(quote.source === null ? [] : [sourceEl(quote.source), " "]), text);
+}
+
+/** A quote's source line as the reader sees it: its code spans (CommonMark 6.1) drawn as code. */
+function sourceEl(source: string): HTMLElement {
+  const parts: (Node | string)[] = [];
+  let at = 0;
+  for (const m of source.matchAll(/(`+)(?!`)(.+?)(?<!`)\1(?!`)/g)) {
+    parts.push(source.slice(at, m.index));
+    const inner = m[2] ?? "";
+    const code = /^ .* $/.test(inner) && inner.trim() !== "" ? inner.slice(1, -1) : inner;
+    parts.push(el("code", {}, code));
+    at = m.index + m[0].length;
+  }
+  parts.push(source.slice(at), ":");
+  return el("span", { className: "turn-req-quote-from" }, ...parts);
 }
 
 /** A labelled request's full text, a sibling of the text so the folded clamp cannot hide it, shown

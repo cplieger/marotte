@@ -205,7 +205,7 @@
   overflow-wrap: anywhere;
 }
 
-/* The reply passage a prompt quoted: subordinate to the question, so muted, set off
+/* The transcript passage a prompt quoted, led by its source: subordinate to the question, so muted, set off
  * by a neutral rule and held to one line, open or folded. */
 .turn-req-quote {
   max-inline-size: 100%;
@@ -1425,7 +1425,7 @@ button.turn-wake-row-run:focus-visible {
   line-height: 1.4;
 }
 
-/* "Quote in reply" beside a selection inside a reply (selection-quote.ts). A gesture-summoned
+/* "Quote in reply" beside a selection of transcript content (selection-quote.ts). A gesture-summoned
  * overlay, so it takes the context menu's panel and shadow (12-tabs.css `.tab-context-menu`);
  * `.uip-popover` supplies the fixed position and the z-index. */
 .selection-quote {

@@ -117,6 +117,10 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
   if (d.acknowledged === true) {
     root.setAttribute("data-acknowledged", "true");
   }
+  // A program's message, not the reader's: selection-quote.ts names its source by it.
+  if (d.origin === "user" && d.caller !== undefined) {
+    root.setAttribute("data-caller", "");
+  }
   if (readByDelegate(d)) {
     root.setAttribute("data-lane", d.lane);
   }

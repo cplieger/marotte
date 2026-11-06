@@ -133,7 +133,11 @@ describe("splitLeadingQuote", () => {
   });
 
   it("returns an empty rest for a prompt that is only the quote", () => {
-    expect(splitLeadingQuote(quoteSelection("x", SRC))).toEqual({ source: SRC, quote: "x", rest: "" });
+    expect(splitLeadingQuote(quoteSelection("x", SRC))).toEqual({
+      source: SRC,
+      quote: "x",
+      rest: "",
+    });
   });
 
   it("reads a quote sent before quotes named their source", () => {

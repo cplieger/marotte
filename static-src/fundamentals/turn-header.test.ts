@@ -9,7 +9,7 @@ import { initAttachmentPillCallbacks } from "../attachment-pill.js";
 import { wakeLine } from "../turn-wake.js";
 import { namedWake } from "../turns.js";
 import type { EntryTurnWake } from "../wire/types.gen.js";
-import { appendQuote, quoteSelection } from "../message-quote.js";
+import { QUOTE_ATTRIBUTION, appendQuote, codeSpan, quoteSelection } from "../message-quote.js";
 
 function data(over: Partial<TurnHeaderData> = {}): TurnHeaderData {
   return {
@@ -554,15 +554,41 @@ describe("a woken turn's header", () => {
 });
 
 describe("a request that opens with a quoted reply passage", () => {
-  const quoted = `${appendQuote("", quoteSelection("the passage\nover two lines"))}why that?`;
+  const quoted = `${appendQuote("", quoteSelection("the passage\nover two lines", "From Kiro's reply"))}why that?`;
   const band = (h: HTMLElement): HTMLElement | null =>
     h.querySelector(".turn-req > .turn-req-quote");
 
-  it("draws the passage as a band before the question, without the attribution", () => {
+  it("draws the passage as a band before the question, led by its source, without the attribution", () => {
     const h = buildTurnHeader(data({ request: quoted }));
-    expect(band(h)?.textContent).toBe("the passage\nover two lines");
+    expect(band(h)?.textContent).toBe("From Kiro's reply: the passage\nover two lines");
+    expect(band(h)?.querySelector(".turn-req-quote-from")?.textContent).toBe("From Kiro's reply:");
     expect(band(h)?.nextElementSibling).toBe(text(h));
     expect(text(h).textContent).toBe("why that?");
+  });
+
+  it("draws a source's command as code", () => {
+    const source = `From the output of ${codeSpan("a`b")}`;
+    const h = buildTurnHeader(
+      data({ request: `${appendQuote("", quoteSelection("FAIL", source))}why?` }),
+    );
+    const from = band(h)?.querySelector(".turn-req-quote-from");
+    expect(from?.textContent).toBe("From the output of a`b:");
+    expect(from?.querySelector("code")?.textContent).toBe("a`b");
+  });
+
+  it("draws a quote sent before quotes named their source as the passage alone", () => {
+    const h = buildTurnHeader(data({ request: `> old words\n>\n> ${QUOTE_ATTRIBUTION}\n\nwhy?` }));
+    expect(band(h)?.textContent).toBe("old words");
+    expect(band(h)?.querySelector(".turn-req-quote-from")).toBeNull();
+  });
+
+  it("redraws the band when only the source changes", () => {
+    const h = buildTurnHeader(data({ request: quoted }));
+    const other = `${appendQuote("", quoteSelection("the passage\nover two lines", "From Kiro's thinking"))}why that?`;
+    updateTurnHeader(h, data({ request: other }));
+    expect(band(h)?.querySelector(".turn-req-quote-from")?.textContent).toBe(
+      "From Kiro's thinking:",
+    );
   });
 
   it("leaves a hand-typed blockquote as the prompt's own text", () => {
@@ -598,7 +624,7 @@ describe("a request that opens with a quoted reply passage", () => {
     try {
       const passage = `${"word ".repeat(40)}\n  second line`;
       const h = buildTurnHeader(
-        data({ request: `${appendQuote("", quoteSelection(passage))}why?` }),
+        data({ request: `${appendQuote("", quoteSelection(passage, "From Kiro's reply"))}why?` }),
       );
       card.append(h);
       document.body.append(card);
@@ -660,7 +686,7 @@ describe("a request an API caller sent", () => {
   });
 
   it("puts the Sent-by line above a quoted reply passage", () => {
-    const quoted = `${appendQuote("", quoteSelection("the passage"))}why that?`;
+    const quoted = `${appendQuote("", quoteSelection("the passage", "From Kiro's reply"))}why that?`;
     const h = buildTurnHeader(data({ request: quoted, caller: { label: "Agent Mail" } }));
     const req = h.querySelector(".turn-req")!;
     expect(req.firstElementChild).toBe(sentByLine(h));

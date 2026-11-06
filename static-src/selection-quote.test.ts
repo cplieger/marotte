@@ -143,7 +143,13 @@ function toolCard(
   kind: string,
   titleText: string,
   outputText: string,
-): { card: HTMLElement; title: HTMLElement; output: HTMLElement; input: HTMLElement; badge: HTMLElement } {
+): {
+  card: HTMLElement;
+  title: HTMLElement;
+  output: HTMLElement;
+  input: HTMLElement;
+  badge: HTMLElement;
+} {
   const title = span("tool-title", titleText);
   const badge = span("tool-mcp-badge", "github");
   badge.setAttribute(CHROME_ATTR, "");
@@ -198,9 +204,7 @@ function runCard(name: string): { name: HTMLElement; capture: HTMLElement } {
 function runBarRow(name: string): { label: HTMLElement; state: HTMLElement } {
   const label = span("ev-sum-label", name);
   const state = span("ev-sum-state", "Step 2 of 5");
-  runBar.append(
-    node("li", "run-bar-row", button("run-bar-open", "")),
-  );
+  runBar.append(node("li", "run-bar-row", button("run-bar-open", "")));
   runBar.lastElementChild?.firstElementChild?.append(node("span", "ev-sum", label, state));
   return { label, state };
 }
@@ -543,6 +547,13 @@ describe("what a quote can come from", () => {
     expect(await sourceLine()).toBe(line);
   });
 
+  it("names a mid-turn message another program sent without calling it the reader's", async () => {
+    const { text } = steerNote("user", "Agent Mail: 1 new message");
+    text.closest(".steer-note")?.setAttribute("data-caller", "");
+    selectAll(text);
+    expect(await sourceLine()).toBe("> From a mid-turn message:");
+  });
+
   it("names the run for a run card's name and its step output", async () => {
     const { name, capture } = runCard("marotte-touch-mode-consistency");
     selectAll(name);
@@ -562,7 +573,7 @@ describe("what a quote can come from", () => {
   });
 
   it("names the run list for the recap box's fold row", async () => {
-    runBarFold.append(button("run-bar-fold-btn", "2 workflows running"));
+    runBarFold.append(button("run-bar-open run-bar-toggle", "2 workflows running"));
     selectAll(runBarFold);
     expect(await sourceLine()).toBe("> From the run list:");
   });
