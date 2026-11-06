@@ -2,8 +2,10 @@ package translate
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -85,6 +87,41 @@ func TestSteeringDocName(t *testing.T) {
 		if got := steeringDocName(id); got != want {
 			t.Errorf("steeringDocName(%q) = %q, want %q", id, got, want)
 		}
+	}
+}
+
+// A set too long for one display line names the whole documents that fit and counts the rest, so
+// the client can still link each name it shows.
+func TestSteeringToolCall_TitleKeepsWholeNamesUnderTheCap(t *testing.T) {
+	names := make([]string, 60)
+	docs := make([]string, len(names))
+	for i := range names {
+		names[i] = fmt.Sprintf("document-number-%02d.md", i)
+		docs[i] = "file:///w/.kiro/steering/" + names[i]
+	}
+	titleOf := func(shown int) string {
+		return steeringTitlePrefix + strings.Join(names[:shown], ", ") + fmt.Sprintf(" +%d more", len(names)-shown)
+	}
+	call := steeringToolCall(docs, 0)
+	shown := -1
+	for k := 1; k < len(names); k++ {
+		if call.Title == titleOf(k) {
+			shown = k
+		}
+	}
+	if shown < 0 {
+		t.Fatalf("title = %q, want the prefix, the first names whole, then \" +N more\"", call.Title)
+	}
+	if len(call.Title) > maxDisplayTextBytes || len(titleOf(shown+1)) <= maxDisplayTextBytes {
+		t.Errorf("title shows %d names in %d bytes, want the most that fit in %d", shown, len(call.Title), maxDisplayTextBytes)
+	}
+	if !slices.Equal(call.SteeringDocs, docs) {
+		t.Errorf("steering_docs = %d ids, want all %d", len(call.SteeringDocs), len(docs))
+	}
+
+	huge := strings.Repeat("x", maxDisplayTextBytes)
+	if got, want := steeringToolCall([]string{huge}, 0).Title, displayText(steeringTitlePrefix+huge); got != want {
+		t.Errorf("a first name past the cap: title = %q, want the cut %q", got, want)
 	}
 }
 

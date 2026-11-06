@@ -202,6 +202,24 @@ describe("a steering box", () => {
     );
   });
 
+  it("links the names a capped title shows and reads the rest as a count", () => {
+    const docs = [WORKSPACE_DOC, GLOBAL_DOC, BUILTIN_DOC];
+    const capped = "Steering loaded: git commits.md +2 more";
+    const box = onlyBox(render((turnID) => [steering(turnID, 1, docs, capped)], true));
+    expect(box.querySelector(".tool-title")?.textContent).toBe(capped);
+    expect(nameParts(box)).toEqual([
+      ["git commits.md", "/workspace/.kiro/steering/git commits.md"],
+    ]);
+  });
+
+  it("draws a title whose count disagrees with its documents as plain text", () => {
+    const docs = [WORKSPACE_DOC, GLOBAL_DOC, BUILTIN_DOC];
+    const wrong = "Steering loaded: git commits.md +5 more";
+    const box = onlyBox(render((turnID) => [steering(turnID, 1, docs, wrong)], true));
+    expect(box.querySelector(".tool-title")?.textContent).toBe(wrong);
+    expect(nameParts(box)).toEqual([]);
+  });
+
   it("names every document as text before the workspace root is known", () => {
     resetWorkspaceRoot();
     const box = onlyBox(render(threeDocs, true));

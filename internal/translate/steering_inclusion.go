@@ -3,9 +3,11 @@ package translate
 import (
 	"context"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -25,6 +27,40 @@ func steeringDocName(id string) string {
 	return id
 }
 
+// steeringTitle names the documents that fit whole within the display cap, then counts the rest,
+// so the client can still link each name it shows; the turn footer lists every document. A first
+// name past the cap is cut like any display text, and the client draws that title unlinked.
+func steeringTitle(names []string) string {
+	clean := make([]string, len(names))
+	for i, n := range names {
+		clean[i] = textsafe.SanitizeSingleLine(n)
+	}
+	full := steeringTitlePrefix + strings.Join(clean, ", ")
+	if len(full) <= maxDisplayTextBytes {
+		return full
+	}
+	width, shown := len(steeringTitlePrefix), 0
+	for ; shown < len(clean); shown++ {
+		next := width + len(clean[shown])
+		if shown > 0 {
+			next += len(", ")
+		}
+		if next+len(steeringMoreTail(len(clean)-shown-1)) > maxDisplayTextBytes {
+			break
+		}
+		width = next
+	}
+	if shown == 0 {
+		return displayText(full)
+	}
+	return steeringTitlePrefix + strings.Join(clean[:shown], ", ") + steeringMoreTail(len(clean)-shown)
+}
+
+// steeringMoreTail counts the documents a title leaves out; the client parses the same words.
+func steeringMoreTail(n int) string {
+	return " +" + strconv.Itoa(n) + " more"
+}
+
 // steeringToolCall is the box for one steering_inclusion, shared by the live and replay paths so
 // the two payloads are byte-identical. The caller mints the id.
 func steeringToolCall(docs []string, ts int64) marotte.EntryToolCall {
@@ -33,7 +69,7 @@ func steeringToolCall(docs []string, ts int64) marotte.EntryToolCall {
 		names[i] = steeringDocName(id)
 	}
 	return marotte.EntryToolCall{
-		Title:        displayText(steeringTitlePrefix + strings.Join(names, ", ")),
+		Title:        steeringTitle(names),
 		Kind:         marotte.ToolKindSteering,
 		Status:       marotte.ToolCompleted,
 		SteeringDocs: docs,

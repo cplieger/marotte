@@ -408,16 +408,18 @@ function buildHeader(
   return header;
 }
 
-/** A steering box's title with each document's name a link into the editor where it can open one.
- *  Null when the server's title is not the prefix plus these names, so the title's text, which
- *  find-in-chat offsets count over, is always the server's. */
+/** A steering box's title with each document's name it shows a link into the editor where it can
+ *  open one. Null when the server's title is not the prefix plus these names (or their first ones
+ *  and a count of the rest), so the title's text, which find-in-chat offsets count over, is always
+ *  the server's. */
 function steeringTitle(title: string, docs: readonly string[]): HTMLElement | null {
   const names = docs.map(docName);
-  if (docs.length === 0 || title !== STEERING_TITLE_PREFIX + names.join(", ")) {
+  const shown = steeringShown(title, names);
+  if (shown === null) {
     return null;
   }
   const span = el("span", { className: "tool-title" }, STEERING_TITLE_PREFIX);
-  docs.forEach((id, i) => {
+  docs.slice(0, shown).forEach((id, i) => {
     const name = names[i] ?? id;
     if (i > 0) {
       span.append(", ");
@@ -444,7 +446,30 @@ function steeringTitle(title: string, docs: readonly string[]): HTMLElement | nu
     });
     span.appendChild(link);
   });
+  if (shown < docs.length) {
+    span.append(steeringMoreTail(docs.length - shown));
+  }
   return span;
+}
+
+/** How many names the server's title shows whole: all of them, or the first ones before the
+ *  server's `steeringMoreTail` count of the rest. Null for any other title. */
+function steeringShown(title: string, names: readonly string[]): number | null {
+  if (names.length === 0) {
+    return null;
+  }
+  if (title === STEERING_TITLE_PREFIX + names.join(", ")) {
+    return names.length;
+  }
+  const hidden = Number(/ \+(\d+) more$/.exec(title)?.[1]);
+  const shown = names.length - hidden;
+  const capped =
+    STEERING_TITLE_PREFIX + names.slice(0, shown).join(", ") + steeringMoreTail(hidden);
+  return shown >= 1 && shown < names.length && title === capped ? shown : null;
+}
+
+function steeringMoreTail(hidden: number): string {
+  return ` +${String(hidden)} more`;
 }
 
 /** What a caller may state; the History page states a run's verdict through the same
