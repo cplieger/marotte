@@ -67,9 +67,7 @@ func (pr *pollRule) hold(e *queueEntry) bool {
 }
 
 // supersede replaces every queued entry of e's coalesce key with e, except one in flight: the newer event is then
-// queued beside it, since its run may already be starting and a supersede would launch a second one. Each
-// superseded key names the newest entry of its coalesce key, so every one gains that entry's run once it is
-// confirmed.
+// queued beside it, since its run may already be starting and a supersede would launch a second one.
 func (pr *pollRule) supersede(e *queueEntry) {
 	es := &pr.st
 	kept := es.queue[:0]
@@ -79,17 +77,9 @@ func (pr *pollRule) supersede(e *queueEntry) {
 			kept = append(kept, o)
 			continue
 		}
-		for j := range es.superseded {
-			if es.superseded[j].By == o.Key {
-				es.superseded[j].By = e.Key
-			}
-		}
-		es.superseded = append(es.superseded, supersededEntry{Key: o.Key, By: e.Key})
+		es.supersedeBy(o.Key, e.Key)
 	}
 	es.queue = kept
-	if n := len(es.superseded) - maxSuperseded; n > 0 {
-		es.superseded = slices.Delete(es.superseded, 0, n)
-	}
 }
 
 // logFull warns once per poll that left a match unqueued.

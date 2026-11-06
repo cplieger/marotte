@@ -89,7 +89,7 @@ func (c *Confirmer) runEffect(ctx context.Context, fx Effects, e queuedEffect) {
 		if err := fx.CancelAbandoned(ctx, e.effect.workflowID); err != nil {
 			ev.kind, ev.err = evCancelError, err
 		}
-		c.deliver(e.ruleID, ev)
+		c.deliver(e.ruleID, &ev)
 	case effectRelease:
 		fx.ReleaseTriggered(ctx, e.effect.workflowID)
 	}

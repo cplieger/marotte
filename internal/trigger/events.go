@@ -76,6 +76,8 @@ type attemptEvent struct {
 	statuses   map[string]marotte.RunStatus
 	workflowID string
 	// key is the event key named, or whose launch ended.
-	key  string
-	kind eventKind
+	key string
+	// launchingRule is a busy's rule whose launch the run blocked, when the step runs on the rule holding the run.
+	launchingRule string
+	kind          eventKind
 }

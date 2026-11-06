@@ -126,8 +126,8 @@ func (rs *Runs) LaunchTriggered(
 		return "", errRuntimeDraining
 	}
 	defer release()
-	if err := rs.checkRunDefaults(ctx, defaults); err != nil {
-		return "", err
+	if dErr := rs.checkRunDefaults(ctx, defaults); dErr != nil {
+		return "", dErr
 	}
 	o := triggeredLaunch(ruleID, eventKey, coalesceKey, trigger.EventLabel(inputs))
 	workflowID, _, err = rs.launchAs(ctx, source, inputs, defaults, o)
@@ -160,10 +160,7 @@ func (rs *Runs) launchAs(
 		return "", "", unanswered(ctx, bErr)
 	}
 	defer unlock()
-	var dropped []string
-	if o.origin == runlease.OriginScheduled || o.origin == runlease.OriginTriggered {
-		inputs, dropped = declaredInputs(inputs, recipe.Inputs)
-	}
+	inputs, dropped := o.sentInputs(inputs, recipe.Inputs)
 	if o.origin == runlease.OriginScheduled {
 		// Before the door: KAS's reset reconnects unconditionally, so a reset after the host's acquire began a fresh
 		// connect would connect twice and close the good one.
@@ -325,6 +322,15 @@ func (rs *Runs) invokeFailed(ctx context.Context, wfID, recipe string, o *launch
 	rs.releaseLease(ctx, wfID)
 	rs.coord.closeBridge(ctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
 	return err
+}
+
+// sentInputs is what the launch sends of inputs: an unattended launch sends only the inputs its recipe declares,
+// naming the rest in dropped, since nobody is there to fix a stored input its recipe no longer has.
+func (o *launchOrigin) sentInputs(inputs, declared map[string]string) (sent map[string]string, dropped []string) {
+	if o.origin != runlease.OriginScheduled && o.origin != runlease.OriginTriggered {
+		return inputs, nil
+	}
+	return declaredInputs(inputs, declared)
 }
 
 func declaredInputs(inputs, declared map[string]string) (kept map[string]string, dropped []string) {

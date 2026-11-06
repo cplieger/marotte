@@ -127,8 +127,6 @@ func (o *runOwners) set(workflowID string, s abandonedHold) {
 
 // errTerminationClaimed is a cancel not sent because another terminator holds the run's claim, which proves nothing
 // about whether the run ends.
-//
-//deadset:ignore DS1102 -- CancelAbandoned returns it; until the trigger runner calls CancelAbandoned only the tests do
 var errTerminationClaimed = errors.New("another stop of this run is in progress")
 
 // errAbandonHandedBack is a cancel not sent because the rule's hold on the run ended: a person's retry took it, or
@@ -138,8 +136,6 @@ var errAbandonHandedBack = errors.New("the run is no longer its launch rule's to
 // CancelAbandoned cancels a run its event rule abandoned, unattributed, under its own 45 s timeout, which also bounds
 // the wait for the run's owner. It returns nil only when its own cancel verb did; a lost termination claim is
 // errTerminationClaimed, and a run whose hold ended is errAbandonHandedBack.
-//
-//deadset:ignore DS1102 -- the trigger runner's effects call it; until that lands only the tests do
 func (rs *Runs) CancelAbandoned(ctx context.Context, workflowID string) error {
 	if workflowID == "" {
 		return errors.New("missing workflow id")
@@ -184,8 +180,6 @@ func (rs *Runs) CancelAbandoned(ctx context.Context, workflowID string) error {
 
 // ReleaseTriggered ends marotte's hold on an abandoned triggered run whose cancel landed: its lease and bounds, then
 // its host session. It waits for the run's owner, and leaves alone a run a person's retry already took.
-//
-//deadset:ignore DS1102 -- the trigger runner's effects call it; until that lands only the tests do
 func (rs *Runs) ReleaseTriggered(ctx context.Context, workflowID string) {
 	release := rs.owners.holdAlways(workflowID)
 	defer release()

@@ -60,7 +60,7 @@ func TestEveryAttemptWriteGoesThroughStep(t *testing.T) {
 		guard.StateWriter = st
 		return guard
 	}))
-	// No row is built yet, so every entry point below lands on A0.
+	// The entry points whose rows are not built yet land on A0.
 	tc.expectA0()
 	r := tc.createRule(runSpec("success"))
 	tc.run()

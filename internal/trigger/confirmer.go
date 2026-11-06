@@ -3,6 +3,7 @@ package trigger
 import (
 	"errors"
 	"log/slog"
+	"maps"
 	"sync"
 
 	"github.com/cplieger/marotte/internal/launchrule"
@@ -32,8 +33,8 @@ func NewConfirmer(store *launchrule.Store, writer launchrule.StateWriter) *Confi
 
 // ruleValue is one event rule's in-memory state; mu covers all of it and every write of the rule's state file.
 type ruleValue struct {
-	es      eventState
 	records []*record
+	es      eventState
 	mu      sync.Mutex
 }
 
@@ -67,15 +68,11 @@ func (c *Confirmer) rule(ruleID string) *ruleValue {
 func (c *Confirmer) loaded() map[string]*ruleValue {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	out := make(map[string]*ruleValue, len(c.rules))
-	for id, rv := range c.rules {
-		out[id] = rv
-	}
-	return out
+	return maps.Clone(c.rules)
 }
 
 // deliver runs ev through step and then its effects.
-func (c *Confirmer) deliver(ruleID string, ev attemptEvent) stepResult {
+func (c *Confirmer) deliver(ruleID string, ev *attemptEvent) stepResult {
 	res := c.step(ruleID, ev)
 	c.dispatch(ruleID, res.effects)
 	return res
@@ -84,12 +81,36 @@ func (c *Confirmer) deliver(ruleID string, ev attemptEvent) stepResult {
 // NameAttempt records the run workflow/new created for the rule's queued event. An error means the run must not be
 // invoked.
 func (c *Confirmer) NameAttempt(ruleID, eventKey, workflowID string) error {
-	return c.deliver(ruleID, attemptEvent{kind: evNamed, key: eventKey, workflowID: workflowID}).err
+	return c.deliver(ruleID, &attemptEvent{kind: evNamed, key: eventKey, workflowID: workflowID}).err
 }
 
 // ConfirmEvent is the run's run_start.
 func (c *Confirmer) ConfirmEvent(ruleID, eventKey, workflowID string) {
-	c.deliver(ruleID, attemptEvent{kind: evRunStart, key: eventKey, workflowID: workflowID})
+	c.deliver(ruleID, &attemptEvent{kind: evRunStart, key: eventKey, workflowID: workflowID})
+}
+
+// LaunchReturned is the return of the LaunchTriggered call that created workflowID, with the error it returned.
+// It is delivered only for a call that created a run.
+//
+//deadset:ignore DS1102 -- the launcher delivers each call's return through it; until that lands only the tests do
+func (c *Confirmer) LaunchReturned(ruleID, workflowID string, err error) {
+	c.deliver(ruleID, &attemptEvent{kind: launchReturnKind(err), workflowID: workflowID, err: err})
+}
+
+// launchReturnKind reads what a launch's error proves. An in-band refusal, a lease never granted, or a run the
+// confirmer already abandoned prove KAS did not take the invoke; any other error (a deadline, the bridge ending)
+// proves nothing, and the bound decides.
+func launchReturnKind(err error) eventKind {
+	switch {
+	case err == nil:
+		return evInvokeOK
+	case errors.Is(err, ErrLeaseNotGranted), errors.Is(err, ErrAttemptGone), errors.Is(err, ErrAttemptNotWritten):
+		return evInvokeError
+	}
+	if _, ok := errors.AsType[*marotte.RPCError](err); ok {
+		return evInvokeError
+	}
+	return evInvokeReplyLost
 }
 
 // BootHeld reports a run whose attempt the boot load holds until its bound.
@@ -99,9 +120,15 @@ func (c *Confirmer) BootHeld(workflowID string) bool {
 	return c.bootHeld[workflowID]
 }
 
+func (c *Confirmer) releaseBootHeld(workflowID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.bootHeld, workflowID)
+}
+
 // PruneAbandoned hands over a triggered launch's run list.
 func (c *Confirmer) PruneAbandoned(ruleID string, statuses map[string]marotte.RunStatus) {
-	c.deliver(ruleID, attemptEvent{kind: evRunGone, statuses: statuses})
+	c.deliver(ruleID, &attemptEvent{kind: evRunGone, statuses: statuses})
 }
 
 // errUnknownChange is a RuleChanged whose change this build does not know.
@@ -122,7 +149,7 @@ func (c *Confirmer) RuleChanged(ruleID string, change launchrule.Change) {
 		slog.Error(logMsgImpossible, "rule_id", ruleID, "event", string(change), "error", errUnknownChange)
 		return
 	}
-	c.deliver(ruleID, attemptEvent{kind: kind})
+	c.deliver(ruleID, &attemptEvent{kind: kind})
 }
 
 // Retried is a person's retry of the run: true means the rule abandoned it and handed it to the person, an error
@@ -133,7 +160,7 @@ func (c *Confirmer) Retried(workflowID string) (bool, error) {
 		held := rv.find(workflowID) != nil
 		rv.mu.Unlock()
 		if held {
-			res := c.deliver(id, attemptEvent{kind: evRetried, workflowID: workflowID})
+			res := c.deliver(id, &attemptEvent{kind: evRetried, workflowID: workflowID})
 			return res.handedBack, res.err
 		}
 	}
@@ -142,15 +169,15 @@ func (c *Confirmer) Retried(workflowID string) (bool, error) {
 
 // RecordOutcome writes the run's outcome on its rule's row.
 func (c *Confirmer) RecordOutcome(ruleID, _ string, _ launchrule.Outcome) {
-	c.deliver(ruleID, attemptEvent{kind: evWriteRetry})
+	c.deliver(ruleID, &attemptEvent{kind: evWriteRetry})
 }
 
 // RecordEnding is RecordOutcome for how the run ended on its own.
 func (c *Confirmer) RecordEnding(ruleID, _ string, _ launchrule.Outcome) {
-	c.deliver(ruleID, attemptEvent{kind: evWriteRetry})
+	c.deliver(ruleID, &attemptEvent{kind: evWriteRetry})
 }
 
 // DismissGap clears the rule's catch-up gap segment.
 func (c *Confirmer) DismissGap(ruleID string) error {
-	return c.deliver(ruleID, attemptEvent{kind: evWriteRetry}).err
+	return c.deliver(ruleID, &attemptEvent{kind: evWriteRetry}).err
 }

@@ -2,8 +2,12 @@ package trigger
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 	"sync"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/launchrule"
@@ -108,6 +112,98 @@ func (tc *testConfirmer) recordOf(ruleID, workflowID string) *record {
 		return &c
 	}
 	return nil
+}
+
+// held is a queued event of key and coalesce, its event_id derived from key.
+func held(key, coalesce string) queueEntry {
+	return queueEntry{Key: key, CoalesceKey: coalesce, Inputs: map[string]string{"event_id": "id/" + key}}
+}
+
+// enqueue appends entries to the rule's queue in memory, as a poll would have.
+func (tc *testConfirmer) enqueue(ruleID string, entries ...queueEntry) {
+	rv := tc.rule(ruleID)
+	rv.mu.Lock()
+	defer rv.mu.Unlock()
+	rv.es.queue = append(rv.es.queue, entries...)
+}
+
+// setStatus changes the rule's in-memory status, as earlier rows would have.
+func (tc *testConfirmer) setStatus(ruleID string, set func(st *launchrule.Status)) {
+	rv := tc.rule(ruleID)
+	rv.mu.Lock()
+	defer rv.mu.Unlock()
+	set(&rv.es.raw.Status)
+}
+
+// memory is a copy of the rule's in-memory queue, launched and superseded lists, and status.
+func (tc *testConfirmer) memory(ruleID string) (eventState, launchrule.Status) {
+	rv := tc.rule(ruleID)
+	rv.mu.Lock()
+	defer rv.mu.Unlock()
+	es := eventState{
+		queue:      slices.Clone(rv.es.queue),
+		launched:   slices.Clone(rv.es.launched),
+		superseded: slices.Clone(rv.es.superseded),
+	}
+	return es, rv.es.raw.Status
+}
+
+// file is the rule's state as the store last wrote it, with its attempts decoded.
+func (tc *testConfirmer) file(ruleID string) (eventState, []attemptEntry) {
+	tc.t.Helper()
+	st, err := tc.store.State(ruleID)
+	if err != nil {
+		tc.t.Fatalf("State(%s): %v", ruleID, err)
+	}
+	es, err := decodeState(&st)
+	if err != nil {
+		tc.t.Fatalf("decodeState(%s): %v", ruleID, err)
+	}
+	var attempts []attemptEntry
+	if len(st.Attempts) > 0 {
+		if err := json.Unmarshal(st.Attempts, &attempts); err != nil {
+			tc.t.Fatalf("attempts of %s: %v", ruleID, err)
+		}
+	}
+	return es, attempts
+}
+
+// cancels are the workflow ids of the cancels queued for the effect goroutine and not yet run.
+func (tc *testConfirmer) cancels() []string {
+	tc.effects.mu.Lock()
+	defer tc.effects.mu.Unlock()
+	var out []string
+	for _, e := range tc.effects.pending {
+		if e.effect.kind == effectCancel {
+			out = append(out, e.effect.workflowID)
+		}
+	}
+	return out
+}
+
+// woken reports, and clears, a wake of the launcher since the last call.
+func (tc *testConfirmer) woken() bool {
+	select {
+	case <-tc.wake:
+		return true
+	default:
+		return false
+	}
+}
+
+// name is NameAttempt for a queued key, failing the test on an error.
+func (tc *testConfirmer) name(ruleID, key, workflowID string) {
+	tc.t.Helper()
+	if err := tc.NameAttempt(ruleID, key, workflowID); err != nil {
+		tc.t.Fatalf("NameAttempt(%s, %s) = %v, want nil", key, workflowID, err)
+	}
+}
+
+// advance moves the bubble's clock on by d and lets every timer due by then finish its delivery. It runs inside
+// synctest.Test only.
+func advance(d time.Duration) {
+	time.Sleep(d)
+	synctest.Wait()
 }
 
 // recordingEffects records each cancel and release the effect goroutine runs, answering every cancel with

@@ -39,7 +39,7 @@ type Status struct {
 	// Anchor is a clock rule's next-run origin: its creation, then its last fire or skip.
 	Anchor time.Time `json:"anchor,omitzero"`
 	// LastRunAt is a clock rule's last slot's due time, or its run's start (RecordStart) until the runner records
-	// that slot.
+	// that slot; an event rule's last confirmed launch.
 	LastRunAt time.Time `json:"last_run_at,omitzero"`
 	// WaitingFor is a clock rule's due slot whose launch is retried until the agent engine answers; zero when none.
 	// It is persisted so a restart resumes the wait instead of skipping the slot as missed while offline.
@@ -52,6 +52,10 @@ type Status struct {
 	LastRunID  string        `json:"last_run_id,omitempty"`
 	LastStatus OutcomeStatus `json:"last_status,omitempty"`
 	LastReason string        `json:"last_reason,omitempty"`
+	// Blocked is why an event rule launches nothing until the operator edits or resumes it; empty when nothing does.
+	Blocked string `json:"blocked,omitempty"`
+	// RowText is an event rule's launch state as its row reads it, which the trigger confirmer writes.
+	RowText string `json:"row_text,omitempty"`
 	// Gaps are an event rule's stretches in which runs may have been missed, kept until the operator dismisses them.
 	Gaps          []Gap `json:"gaps,omitempty"`
 	BoundAbandons int   `json:"bound_abandons,omitempty"`
@@ -215,8 +219,6 @@ var _ StateWriter = (*Store)(nil)
 
 // WriteState replaces the rule's state file with in, touching no other file. ErrNotFound for no such rule; a
 // blocked rule refuses with what State answers, so its file is never overwritten.
-//
-//deadset:ignore DS1102 -- test seam until the forge event runner writes state through it
 func (s *Store) WriteState(ctx context.Context, ruleID string, in *State) error {
 	rs, err := s.ruleState(ruleID)
 	if err != nil {

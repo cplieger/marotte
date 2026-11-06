@@ -2,9 +2,13 @@ package trigger
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
+
+	"github.com/cplieger/marotte/internal/launchrule"
 )
 
 // attemptState is a record's state in the attempt table; none is a workflow id the rule holds no record for.
@@ -35,11 +39,72 @@ func (s attemptState) String() string {
 	return stateNames[s]
 }
 
+// live reports a pending state: only a live record is its entry's current attempt.
+func (s attemptState) live() bool {
+	return s == stateInvoking || s == stateInvokedUnconfirmed || s == stateBootHeld
+}
+
+// The causes of an abandon, as the record and the log line carry them.
+const (
+	causeNameFailed      = "name_failed"
+	causeInvokeError     = "invoke_error"
+	causeLeaseNotGranted = "lease_not_granted"
+	causeBound           = "bound"
+)
+
 // record is one launch attempt of an event rule: the run marotte created for the event key.
 type record struct {
-	workflowID string
-	key        string
-	state      attemptState
+	at             time.Time
+	cancelLandedAt time.Time
+	// inputs and coalesceKey are the entry's, carried so a confirmation writes them on its launched entry.
+	inputs      map[string]string
+	bound       *time.Timer
+	workflowID  string
+	key         string
+	coalesceKey string
+	cause       string
+	state       attemptState
+	// cancelsOut counts the cancels queued for the record whose answer has not come back.
+	cancelsOut int
+	// inFlight holds from A1 until the LaunchTriggered call that named the record returns.
+	inFlight bool
+	// owesRelease marks a record abandoned while in flight: its cancel may have landed before its lease existed.
+	owesRelease bool
+	// unpersisted marks a record of a rule the definitions no longer hold, which writes nothing.
+	unpersisted bool
+}
+
+// The persisted states of a record: every live state is pending, every abandoned one abandoned.
+const (
+	persistedPending   = "pending"
+	persistedAbandoned = "abandoned"
+)
+
+// attemptEntry is a record as the state file's attempts list holds it.
+type attemptEntry struct {
+	At             time.Time `json:"at"`
+	CancelLandedAt time.Time `json:"cancel_landed_at,omitzero"`
+	WorkflowID     string    `json:"workflow_id"`
+	Key            string    `json:"key"`
+	State          string    `json:"state"`
+	Cause          string    `json:"cause,omitempty"`
+}
+
+func encodeAttempts(records []*record) (json.RawMessage, error) {
+	out := make([]attemptEntry, 0, len(records))
+	for _, r := range records {
+		if r.unpersisted {
+			continue
+		}
+		state := persistedAbandoned
+		if r.state.live() {
+			state = persistedPending
+		}
+		out = append(out, attemptEntry{
+			WorkflowID: r.workflowID, Key: r.key, State: state, Cause: r.cause, At: r.at, CancelLandedAt: r.cancelLandedAt,
+		})
+	}
+	return marshalUnlessEmpty(out, len(out))
 }
 
 // stepResult is what one step decided.
@@ -56,23 +121,39 @@ type stepResult struct {
 // errImpossibleTransition answers a call whose cell no row of the attempt table names.
 var errImpossibleTransition = errors.New(logMsgImpossible)
 
+// stepper is one step call's view of its rule, under the rule's mutex.
+type stepper struct {
+	now    time.Time
+	c      *Confirmer
+	rv     *ruleValue
+	ruleID string
+	// def is the rule's definition; held is false once launch-rules.json no longer holds it.
+	def  launchrule.Rule
+	res  stepResult
+	held bool
+}
+
 // step applies the attempt table's row for ev to the rule and writes the rule's state file at most once. It is the
 // only writer of an event rule's state; no caller holds another rule's mutex while it calls step.
-func (c *Confirmer) step(ruleID string, ev attemptEvent) stepResult {
+func (c *Confirmer) step(ruleID string, ev *attemptEvent) stepResult {
 	rv := c.rule(ruleID)
 	rv.mu.Lock()
 	defer rv.mu.Unlock()
+	s := &stepper{c: c, rv: rv, ruleID: ruleID, now: time.Now()}
+	s.def, s.held = c.store.Get(ruleID)
 	var rec *record
 	if ev.kind.isRecord() {
 		rec = rv.find(ev.workflowID)
 	}
-	res := impossible(ruleID, rec, &ev)
-	if res.write {
+	if !s.apply(rec, ev) {
+		s.res = impossible(ruleID, rec, ev)
+	}
+	if s.res.write && s.held {
 		if err := c.writeLocked(ruleID, rv); err != nil {
 			slog.Error(logMsgNotWritten, "rule_id", ruleID, "error", err)
 		}
 	}
-	return res
+	return s.res
 }
 
 // impossible is row A0: a cell no other row names, where an implementation bug lands, loudly.
@@ -89,6 +170,9 @@ func impossible(ruleID string, rec *record, ev *attemptEvent) stepResult {
 // writeLocked writes the rule's whole value as its state file; rv.mu is held.
 func (c *Confirmer) writeLocked(ruleID string, rv *ruleValue) error {
 	st, err := rv.es.encode()
+	if err == nil {
+		st.Attempts, err = encodeAttempts(rv.records)
+	}
 	if err != nil {
 		return fmt.Errorf("encode the state of launch rule %s: %w", ruleID, err)
 	}
