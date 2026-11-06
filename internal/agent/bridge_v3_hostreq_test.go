@@ -25,12 +25,12 @@ func openExternalURLMsg(t *testing.T, id int64, url string) *marotte.RPCResponse
 }
 
 // openURL is the engine opening url on its lane, answered once the answer's broadcasts are buffered.
-func openURL(t *testing.T, h *Runtime, lane *fakeBridge, id int64, url string) (any, error) {
+func openURL(t *testing.T, h *Runtime, lane *fakeBridge, id int64, url string) error {
 	t.Helper()
 	h.engineFrame(fakeSourceOf(t, h).current(), openExternalURLMsg(t, id, url))
 	answer := awaitLaneAnswer(t, lane, id)
 	joinInflight(t, h)
-	return answer.result, answer.err
+	return answer.err
 }
 
 // eventsSince is the buffered events of type typ after the buffer position since.
@@ -108,13 +108,13 @@ func TestEngineLane_AConsentURLAfterTheSignInsOwnIsShownEverywhere(t *testing.T)
 		t.Fatalf("claimSignIn(linear) = %v", err)
 	}
 	connectPage(t, h)
-	if _, err := openURL(t, h, lane, 1, authURLFor(t, lA.srv.URL, "st-a")); err != nil {
+	if err := openURL(t, h, lane, 1, authURLFor(t, lA.srv.URL, "st-a")); err != nil {
 		t.Fatalf("A's answer = %v, want success", err)
 	}
 	before := h.bus.fanout.Position().Head
 	urlB := authURLFor(t, lB.srv.URL, "st-b")
 
-	if _, err := openURL(t, h, lane, 2, urlB); err != nil {
+	if err := openURL(t, h, lane, 2, urlB); err != nil {
 		t.Fatalf("B's answer = %v, want success", err)
 	}
 
@@ -147,7 +147,7 @@ func TestEngineLane_AConsentURLWithoutAStateLeavesTheSignInWaiting(t *testing.T)
 	connectPage(t, h)
 	before := h.bus.fanout.Position().Head
 
-	if _, err := openURL(t, h, lane, 1, "https://provider.example/authorize?client_id=x"); err != nil {
+	if err := openURL(t, h, lane, 1, "https://provider.example/authorize?client_id=x"); err != nil {
 		t.Fatalf("the stateless URL's answer = %v, want success", err)
 	}
 	if n := len(eventsSince(h, before, marotte.EventOpenExternalURL)); n != 1 {
@@ -157,7 +157,7 @@ func TestEngineLane_AConsentURLWithoutAStateLeavesTheSignInWaiting(t *testing.T)
 		t.Errorf("row after the stateless URL = %+v, want needs_auth with no consent URL", row)
 	}
 	urlA := authURLFor(t, lA.srv.URL, "st-a")
-	if _, err := openURL(t, h, lane, 2, urlA); err != nil {
+	if err := openURL(t, h, lane, 2, urlA); err != nil {
 		t.Fatalf("A's answer = %v, want success", err)
 	}
 	if row := rowOf(t, h, "linear"); row.State != mcpStateSigningIn || row.OAuthURL != urlA {
@@ -172,12 +172,12 @@ func TestEngineLane_AnAnchoredURLSeenAgainWithNoPageIsAnswered(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	disconnect := connectPage(t, h)
 	urlL := authURLFor(t, lL.srv.URL, "st-l")
-	if _, err := openURL(t, h, lane, 1, urlL); err != nil {
+	if err := openURL(t, h, lane, 1, urlL); err != nil {
 		t.Fatalf("first answer = %v, want success", err)
 	}
 	disconnect()
 
-	if _, err := openURL(t, h, lane, 2, urlL); err != nil {
+	if err := openURL(t, h, lane, 2, urlL); err != nil {
 		t.Errorf("second answer = %v, want success: its state is already anchored", err)
 	}
 
@@ -199,12 +199,12 @@ func TestEngineLane_AConsentURLSeenAgainKeepsItsAttribution(t *testing.T) {
 	h, lane := signingInOnLane(t)
 	connectPage(t, h)
 	urlA := authURLFor(t, lA.srv.URL, "st-a")
-	if _, err := openURL(t, h, lane, 1, urlA); err != nil {
+	if err := openURL(t, h, lane, 1, urlA); err != nil {
 		t.Fatalf("first answer = %v, want success", err)
 	}
 	before := h.bus.fanout.Position().Head
 
-	if _, err := openURL(t, h, lane, 2, urlA); err != nil {
+	if err := openURL(t, h, lane, 2, urlA); err != nil {
 		t.Errorf("second answer = %v, want success", err)
 	}
 

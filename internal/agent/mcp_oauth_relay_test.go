@@ -478,10 +478,10 @@ func TestOAuthRelay_ALaterConsentURLLeavesTheStandingSignInsAnchor(t *testing.T)
 	h, lane := signingInOnLane(t)
 	connectPage(t, h)
 	urlA := authURLFor(t, lA.srv.URL, "st-a")
-	if _, err := openURL(t, h, lane, 1, urlA); err != nil {
+	if err := openURL(t, h, lane, 1, urlA); err != nil {
 		t.Fatalf("A's answer = %v, want success", err)
 	}
-	if _, err := openURL(t, h, lane, 2, authURLFor(t, lB.srv.URL, "st-b")); err != nil {
+	if err := openURL(t, h, lane, 2, authURLFor(t, lB.srv.URL, "st-b")); err != nil {
 		t.Fatalf("B's answer = %v, want success", err)
 	}
 
@@ -503,14 +503,14 @@ func TestOAuthRelay_APasteIsRelayedByItsStateWhicheverServerItNames(t *testing.T
 	h, _, lane := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	connectPage(t, h)
-	if _, err := openURL(t, h, lane, 1, authURLFor(t, lL.srv.URL, "st-l")); err != nil {
+	if err := openURL(t, h, lane, 1, authURLFor(t, lL.srv.URL, "st-l")); err != nil {
 		t.Fatalf("L's answer = %v, want success", err)
 	}
 	reportMCP(t, h, sessionOf("linear"), awaitingSignIn("linear", marotte.MCPSource{}))
 	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "linear"); err != nil {
 		t.Fatalf("claimSignIn(linear) = %v", err)
 	}
-	if _, err := openURL(t, h, lane, 2, authURLFor(t, lA.srv.URL, "st-a")); err != nil {
+	if err := openURL(t, h, lane, 2, authURLFor(t, lA.srv.URL, "st-a")); err != nil {
 		t.Fatalf("A's answer = %v, want success", err)
 	}
 
@@ -528,11 +528,11 @@ func TestOAuthRelay_LaterURLsNeverEvictTheStandingSignInsAnchor(t *testing.T) {
 	h, lane := signingInOnLane(t)
 	connectPage(t, h)
 	urlA := authURLFor(t, lA.srv.URL, "st-a")
-	if _, err := openURL(t, h, lane, 1, urlA); err != nil {
+	if err := openURL(t, h, lane, 1, urlA); err != nil {
 		t.Fatalf("A's answer = %v, want success", err)
 	}
 	for i := range maxConsentAnchors {
-		if _, err := openURL(t, h, lane, int64(2+i), authURLFor(t, lA.srv.URL, "st-later-"+strconv.Itoa(i))); err != nil {
+		if err := openURL(t, h, lane, int64(2+i), authURLFor(t, lA.srv.URL, "st-later-"+strconv.Itoa(i))); err != nil {
 			t.Fatalf("later URL %d's answer = %v, want success", i, err)
 		}
 	}

@@ -659,7 +659,7 @@ func TestSignIn_AnAnchorOutlivesTheSignInThatTookIt(t *testing.T) {
 	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "linear"); err != nil {
 		t.Fatalf("claimSignIn(linear) = %v", err)
 	}
-	if _, err := openURL(t, h, lane, 1, authURLFor(t, lA.srv.URL, "st-a")); err != nil {
+	if err := openURL(t, h, lane, 1, authURLFor(t, lA.srv.URL, "st-a")); err != nil {
 		t.Fatalf("A's answer = %v, want success", err)
 	}
 
