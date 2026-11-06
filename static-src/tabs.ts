@@ -690,7 +690,7 @@ interface ActivationOpts {
   /** Start a fresh activation of the tab already active (a Retry after a failed load). */
   readonly again?: boolean;
   /** Run the activation half in this task: boot, where nothing has painted that could go first,
-   *  and a refused switch's revert, whose toast is raised when the revert returns. */
+   *  and a refused switch's revert or a close's put-back, whose notice is raised when it returns. */
   readonly now?: boolean;
 }
 
@@ -889,8 +889,8 @@ export function activateTab(id: string): Promise<void> {
 }
 
 /** Activate a tab WITHOUT dismissing the drawer: the app moved the view, the reader did not (a
- *  close handing the view to its successor, a rollback restoring a refused close's tab). Deferred
- *  like a switch, but it never reverts: its failure is painted in the view. */
+ *  close handing the view to its successor). Deferred like a switch, but it never reverts: its
+ *  failure is painted in the view. */
 function activateTabQuietly(id: string): void {
   beginActivation(id, { quiet: true });
 }
@@ -1427,7 +1427,7 @@ function rollbackClose(c: CapturedClose): void {
   }
   emit();
   if (c.activeTabID !== "" && hasRow(c.activeTabID)) {
-    activateTabQuietly(c.activeTabID);
+    beginActivation(c.activeTabID, { quiet: true, now: true });
   } else if (c.storeActive !== "" && getActiveTabKind() !== "chat") {
     reselectPaintedChat();
   }
