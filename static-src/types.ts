@@ -394,8 +394,8 @@ export interface Session {
   /** The server-held follow-ups (`ChatHeader.queued_prompts`), drained one per clean
    *  turn end. A header read replaces it, so an absent list is a clear. */
   queued?: QueuedPrompt[];
-  /** A compaction the reader asked for while a turn ran, run at its close (`ChatHeader.compact_pending`). A header
-   *  read replaces it, so absent is none. */
+  /** A compaction queued for a turn's end (`ChatHeader.compact_pending`). A header read replaces it, so absent is
+   *  none. */
   compact_queued?: boolean;
   /** `ChatHeader.tangent`. */
   tangent?: boolean;

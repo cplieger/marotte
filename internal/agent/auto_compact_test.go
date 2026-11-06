@@ -900,6 +900,30 @@ func TestCompactRequest_RefusedOnAnIdleChatIsRefused(t *testing.T) {
 	}
 }
 
+// KAS opens and closes its own turn during an idle press's call, a second press is queued behind that turn, and the
+// call is then refused with no turn live: the second press's row is dropped and its pages are told.
+func TestCompactRequest_APressQueuedDuringARefusedIdlePressIsReported(t *testing.T) {
+	r := newCompactRig(90)
+	r.setRefuse(true)
+	var once sync.Once
+	r.onCompact = func() {
+		once.Do(func() {
+			r.setLive(true)
+			if out, err := r.ac.request(t.Context(), "c1"); err != nil || out != command.CompactQueued {
+				t.Errorf("a press during KAS's turn = (%v, %v), want queued", out, err)
+			}
+			r.setLive(false)
+		})
+	}
+	if out, err := r.ac.request(t.Context(), "c1"); err != nil || out != command.CompactRefused {
+		t.Errorf("the idle press = (%v, %v), want refused", out, err)
+	}
+	if r.count() != 1 || r.isQueued() || !slices.Equal(r.failures, []string{queuedCompactFailed}) {
+		t.Errorf("after the refusal: calls %d, queued %v, failures %v; want 1 call, the row gone, one failure",
+			r.count(), r.isQueued(), r.failures)
+	}
+}
+
 func TestCompactRequest_NoSessionCompactsNothing(t *testing.T) {
 	r := newCompactRig(90)
 	r.ac.bridgeOf = func(marotte.ChatID) *sharedBridge { return nil }

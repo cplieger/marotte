@@ -29,7 +29,7 @@ import type { PendingSteer, QueuedPrompt } from "./types.js";
 import { readQuoted, splitLeadingQuote } from "./message-quote.js";
 import { buildQuoteBand } from "./quote-band.js";
 
-/** A compaction the reader asked for while a turn ran, which the server runs at the turn's end. */
+/** The chat's queued compaction, which the server runs at a turn's end. */
 interface CompactSlot {
   /** A turn runs now, so it waits for this turn's end rather than the next one's. */
   readonly running: boolean;

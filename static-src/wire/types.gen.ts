@@ -2407,9 +2407,9 @@ export interface PctRange {
   step: number;
 }
 
-/** PendingCompaction is a compaction the reader asked for while a turn ran. */
+/** PendingCompaction is a compaction queued for a turn's end. */
 export interface PendingCompaction {
-  /** RequestedAt is when it was asked for, in Unix ms. */
+  /** RequestedAt is when it was queued, in Unix ms. */
   requested_at: number;
 }
 

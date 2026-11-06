@@ -55,7 +55,7 @@ func AutoCompactPctRange() marotte.PctRange {
 	return marotte.PctRange{Min: AutoCompactPctMin, Max: AutoCompactPctMax, Step: AutoCompactPctStep}
 }
 
-// errAutoCompactPctRange is the one sentence for a pct outside the range, logged and answered to a PATCH.
+// errAutoCompactPctRange is the one sentence for a pct outside the range, answered to a PATCH.
 var errAutoCompactPctRange = fmt.Errorf("%s must be a whole number from %d to %d in steps of %d",
 	KeyAutoCompactPct, AutoCompactPctMin, AutoCompactPctMax, AutoCompactPctStep)
 
@@ -148,9 +148,9 @@ func DebugLogs(ctx context.Context, configDir string) bool {
 }
 
 // EffectiveFrom resolves the stored document into the client's view: EffectiveDefaults with
-// every stored value that FITS ITS TYPE overlaid, plus the keys that did not fit, sorted and also served as
-// RejectedKeys. Value
-// validity is the client's (theme "purple" passes). A nil or empty map yields the defaults.
+// every stored value that FITS ITS TYPE overlaid, plus the keys that did not fit, sorted and also
+// served as RejectedKeys. Value validity is the client's (theme "purple" passes). A nil or empty
+// map yields the defaults.
 func EffectiveFrom(stored map[string]json.RawMessage) (effective marotte.EffectiveSettings, rejected []string) {
 	out := EffectiveDefaults()
 	for key, set := range effectiveSetters(&out) {

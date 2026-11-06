@@ -651,7 +651,8 @@ type compactRequester interface {
 	// RequestCompact compacts the chat now, or queues the compaction for the running turn's close. An error is the
 	// engine call's.
 	RequestCompact(ctx context.Context, chatID marotte.ChatID) (CompactOutcome, error)
-	// CancelCompact drops a queued compaction; none queued is success. A running one is not stopped.
+	// CancelCompact drops a queued compaction; none queued is success. A running call is not stopped, but is never
+	// queued again.
 	CancelCompact(ctx context.Context, chatID marotte.ChatID) error
 }
 
