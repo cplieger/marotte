@@ -74,6 +74,25 @@ func TestEveryAttemptWriteGoesThroughStep(t *testing.T) {
 	h.poll()
 	_ = changeRule(t, tc.Confirmer, r.ID, 0, moveRepo)
 
+	tc.setStatus(r.ID, func(st *launchrule.Status) {
+		st.LastRunID, st.LastStatus = "wf_0", launchrule.StatusStarted
+		st.Gaps = []launchrule.Gap{{Cause: launchrule.GapOutage}}
+	})
+	tc.RecordEnding(r.ID, "wf_0", launchrule.Outcome{Status: launchrule.StatusFailed})
+	if _, st := tc.memory(r.ID); st.LastStatus != launchrule.StatusFailed {
+		t.Errorf("status after RecordEnding = %q, want failed", st.LastStatus)
+	}
+	tc.RecordOutcome(r.ID, "wf_0", launchrule.Outcome{Status: launchrule.StatusUnknown})
+	if _, st := tc.memory(r.ID); st.LastStatus != launchrule.StatusUnknown {
+		t.Errorf("status after RecordOutcome = %q, want unknown", st.LastStatus)
+	}
+	if err := tc.DismissGap(r.ID); err != nil {
+		t.Errorf("DismissGap = %v", err)
+	}
+	if _, st := tc.memory(r.ID); len(st.Gaps) != 0 {
+		t.Errorf("gaps after DismissGap = %+v, want none", st.Gaps)
+	}
+
 	_ = tc.NameAttempt(r.ID, "k1", "wf_1")
 	tc.ConfirmEvent(r.ID, "k1", "wf_1")
 	tc.PruneAbandoned(r.ID, map[string]marotte.RunStatus{"wf_1": marotte.RunStatusAborted})

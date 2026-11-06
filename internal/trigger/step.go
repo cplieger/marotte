@@ -113,13 +113,13 @@ func encodeAttempts(records []*record) (json.RawMessage, error) {
 
 // stepResult is what one step decided.
 type stepResult struct {
-	// err is NameAttempt's, Retried's or DismissGap's answer.
-	err     error
+	// err is NameAttempt's or Retried's answer.
+	err error
+	// retry is Retried's answer.
+	retry   RetryAnswer
 	effects []attemptEffect
 	// write is set by a row whose change the state file must carry.
 	write bool
-	// handedBack is Retried's answer.
-	handedBack bool
 }
 
 // errImpossibleTransition answers a call whose cell no row of the attempt table names.
@@ -132,7 +132,9 @@ type stepper struct {
 	rv  *ruleValue
 	// nameRec is the record A1 named, which W1 abandons when its write fails.
 	nameRec *record
-	ruleID  string
+	// handBack is the record A33 dropped, which a failed write restores.
+	handBack *record
+	ruleID   string
 	// def is the rule's definition; held is false once launch-rules.json no longer holds it.
 	def  launchrule.Rule
 	res  stepResult

@@ -655,14 +655,14 @@ func (rs *Runs) retry(
 	if refused := rs.refuseClosedLauncher(workflowID, launchers); refused != nil {
 		return out, refused
 	}
-	own, err := rs.ownForRetry(cctx, workflowID)
+	own, event, err := rs.ownForRetry(cctx, workflowID)
 	if err != nil {
 		return out, err
 	}
 	defer own()
 	// The lease before the verb, since retry's `run_start` can beat the reply, and before the host session's load,
 	// which reads its presets from it.
-	minted := rs.leaseForRetry(cctx, workflowID, &origin, holders, aff)
+	minted := rs.leaseForRetry(cctx, workflowID, &origin, holders, aff, event)
 	rs.markRunAlive(cctx, workflowID, holders)
 	host, err := rs.ensureResident(cctx, workflowID)
 	if err != nil {
@@ -698,22 +698,27 @@ func (rs *Runs) retry(
 }
 
 // ownForRetry makes the retry the run's owner (runOwners), then hands an abandoned run back to the person
-// (handBackAbandoned). release is nil exactly when err is not.
-func (rs *Runs) ownForRetry(ctx context.Context, workflowID string) (release func(), err error) {
+// (handBackAbandoned), answering a live attempt's event. release is nil exactly when err is not.
+func (rs *Runs) ownForRetry(
+	ctx context.Context, workflowID string,
+) (release func(), event *trigger.RetriedEvent, err error) {
 	release, err = rs.owners.hold(ctx, workflowID)
 	if err != nil {
-		return nil, command.StatusError(http.StatusConflict, errRetryRunOwned)
+		return nil, nil, command.StatusError(http.StatusConflict, errRetryRunOwned)
 	}
-	if err := rs.handBackAbandoned(ctx, workflowID); err != nil {
+	event, err = rs.handBackAbandoned(ctx, workflowID)
+	if err != nil {
 		release()
-		return nil, err
+		return nil, nil, err
 	}
-	return release, nil
+	return release, event, nil
 }
 
-// leaseForRetry renews the run's lease for the retry, or grants one from origin, reporting whether it minted one.
+// leaseForRetry renews the run's lease for the retry, or grants one, reporting whether it minted one: a live
+// attempt's run (event) is re-leased as that event's, so its run_start confirms the event, and any other from origin.
 func (rs *Runs) leaseForRetry(
 	ctx context.Context, workflowID string, origin *runOrigin, holders []marotte.ChatID, aff *runAffordance,
+	event *trigger.RetriedEvent,
 ) (minted bool) {
 	if l, held := rs.lease(workflowID); held && (l.ScheduleID != "" || l.RuleID != "") {
 		rs.settleMissedEnd(ctx, &l, aff.status)
@@ -723,6 +728,10 @@ func (rs *Runs) leaseForRetry(
 		rs.restartLife(ctx, workflowID)
 		rs.recordKeepChats(ctx, &l, holders)
 		return false
+	}
+	if event != nil {
+		rs.grantEventRetryLease(ctx, workflowID, origin, holders, event)
+		return true
 	}
 	rs.grantRetryLease(ctx, workflowID, origin, holders)
 	return true

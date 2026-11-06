@@ -1645,6 +1645,12 @@ func TestInvokeErrorAfterConfirmKeepsRun(t *testing.T) {
 // triggeredRetryHub is a runtime whose failed run wf_1 holds rule-1's triggered lease on a lease store in dir.
 func triggeredRetryHub(t *testing.T, fc *fakeConfirmer, dir string) (*Runtime, *fakeBridge) {
 	t.Helper()
+	return triggeredRetryHubOn(t, fc, dir, eventLaunch())
+}
+
+// triggeredRetryHubOn is triggeredRetryHub over confirmer c, wf_1 leased as o.
+func triggeredRetryHubOn(t *testing.T, c TriggerConfirmer, dir string, o launchOrigin) (*Runtime, *fakeBridge) {
+	t.Helper()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowRetry: json.RawMessage(`{}`),
@@ -1657,9 +1663,9 @@ func triggeredRetryHub(t *testing.T, fc *fakeConfirmer, dir string) (*Runtime, *
 	}
 	h.runs.mu.Lock()
 	h.runs.leases = st
-	h.runs.confirmer = fc
+	h.runs.confirmer = c
 	h.runs.mu.Unlock()
-	h.runs.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec())
+	h.runs.grantLease(t.Context(), "wf_1", "publish", o, hostSec())
 	h.runs.recordParentSession(t.Context(), "wf_1", testLaunchSession)
 	return h, br
 }
@@ -1769,11 +1775,106 @@ func TestRetryOfAbandonedRunTakesRetryLease(t *testing.T) {
 			t.Errorf("lease = %+v, want none minted for a refused retry", l)
 		}
 	})
+	t.Run("handed back by the confirmer", func(t *testing.T) {
+		cr := abandonedOnRig(t)
+		h, br := triggeredRetryHubOn(t, cr.Confirmer, t.TempDir(), cr.launch())
+
+		if err := retryFailed(t, h); err != nil {
+			t.Fatalf("retry: %v", err)
+		}
+		if !br.called(methodKiroWorkflowRetry) {
+			t.Error("the retry verb was not sent")
+		}
+		if l, held := h.runs.lease("wf_1"); !held || l.Origin != runlease.OriginManual || l.RuleID != "" {
+			t.Errorf("lease = %+v held %v, want a manual lease naming no rule", l, held)
+		}
+		if got := cr.attempts(t); len(got) != 0 {
+			t.Errorf("attempts on disk = %q, want the abandoned record gone", got)
+		}
+	})
+	t.Run("hand-back refused by the confirmer's failed write", func(t *testing.T) {
+		cr := abandonedOnRig(t)
+		h, br := triggeredRetryHubOn(t, cr.Confirmer, t.TempDir(), cr.launch())
+		errWrite := errors.New("no space left on device")
+		cr.w.fail(errWrite)
+
+		if err := retryFailed(t, h); !errors.Is(err, errWrite) {
+			t.Errorf("retry err = %v, want the state write's error", err)
+		}
+		if br.called(methodKiroWorkflowRetry) {
+			t.Error("the retry verb was sent after the hand-back failed")
+		}
+		if l, held := h.runs.lease("wf_1"); !held || l.Origin != runlease.OriginTriggered || l.RuleID != cr.rule.ID {
+			t.Errorf("lease = %+v held %v, want the triggered lease untouched", l, held)
+		}
+		if got := cr.attempts(t); !slices.Equal(got, []string{"wf_1"}) {
+			t.Errorf("attempts on disk = %q, want wf_1 still abandoned", got)
+		}
+	})
+}
+
+// abandonedOnRig is a confirmer rig whose rule abandoned wf_1: named for a key no longer queued.
+func abandonedOnRig(t *testing.T) *confirmerRig {
+	t.Helper()
+	cr := newConfirmerRig(t)
+	if err := cr.NameAttempt(cr.rule.ID, "github.com/o/r/run/8/success", "wf_1"); err == nil {
+		t.Fatal("Setup: NameAttempt for an unqueued key = nil, want the attempt abandoned")
+	}
+	if got := cr.attempts(t); !slices.Equal(got, []string{"wf_1"}) {
+		t.Fatalf("Setup: attempts = %q, want wf_1 abandoned", got)
+	}
+	return cr
 }
 
 // A retry of a run whose attempt is still live keeps the triggered lease and starts a new life, so the retried run's
 // run_start reaches the confirmer again.
 func TestRetryOfLiveTriggeredRunRestartsBound(t *testing.T) {
+	t.Run("fake confirmer", retryLiveOnFake)
+	t.Run("the confirmer, the triggered lease held", func(t *testing.T) {
+		cr := newConfirmerRig(t)
+		cr.named(t, "wf_1")
+		h, br := triggeredRetryHubOn(t, cr.Confirmer, t.TempDir(), cr.launch())
+
+		if err := retryFailed(t, h); err != nil {
+			t.Fatalf("retry: %v", err)
+		}
+		if !br.called(methodKiroWorkflowRetry) {
+			t.Error("the retry verb was not sent")
+		}
+		if l, held := h.runs.lease("wf_1"); !held || l.Origin != runlease.OriginTriggered || l.RuleID != cr.rule.ID {
+			t.Errorf("lease = %+v held %v, want the triggered lease kept", l, held)
+		}
+		h.runs.observeStart(t.Context(), runChatID("wf_1"), runNotif(methodWFRunStart, map[string]any{
+			"workflowId": "wf_1", "workflowName": "publish",
+		}))
+		cr.confirmedBy(t, "wf_1")
+	})
+	t.Run("the confirmer, no lease held", func(t *testing.T) {
+		cr := newConfirmerRig(t)
+		cr.named(t, "wf_1")
+		h, br := triggeredRetryHubOn(t, cr.Confirmer, t.TempDir(), cr.launch())
+		// The run's run_start never reached marotte and its terminal frame released the lease.
+		h.runs.releaseLease(t.Context(), "wf_1")
+
+		if err := retryFailed(t, h); err != nil {
+			t.Fatalf("retry: %v", err)
+		}
+		if !br.called(methodKiroWorkflowRetry) {
+			t.Error("the retry verb was not sent")
+		}
+		l, held := h.runs.lease("wf_1")
+		if !held || l.Origin != runlease.OriginTriggered || l.RuleID != cr.rule.ID || l.EventKey != testEventKey ||
+			l.CoalesceKey != testEventCoalesce || !l.Unattended {
+			t.Errorf("lease = %+v held %v, want the event's triggered lease re-granted", l, held)
+		}
+		h.runs.observeStart(t.Context(), runChatID("wf_1"), runNotif(methodWFRunStart, map[string]any{
+			"workflowId": "wf_1", "workflowName": "publish",
+		}))
+		cr.confirmedBy(t, "wf_1")
+	})
+}
+
+func retryLiveOnFake(t *testing.T) {
 	fc := &fakeConfirmer{}
 	h, br := triggeredRetryHub(t, fc, t.TempDir())
 	start := func() {

@@ -192,32 +192,65 @@ func (c *Confirmer) RuleChanged(ruleID string, change launchrule.Change) {
 	c.deliver(ruleID, &attemptEvent{kind: kind})
 }
 
-// Retried is a person's retry of the run: true means the rule abandoned it and handed it to the person, an error
-// refuses the retry. A run no rule holds a record of answers false, nil.
-func (c *Confirmer) Retried(workflowID string) (bool, error) {
+// RetryAnswer is Retried's answer.
+type RetryAnswer struct {
+	// Event is set for a run that is still its event's live attempt: a retry finding no lease held re-leases the
+	// run as this event's, so its run_start confirms the event.
+	Event *RetriedEvent
+	// HandedBack means the rule abandoned the run and handed it to the person's retry.
+	HandedBack bool
+}
+
+// RetriedEvent is the event a live attempt's run was launched for.
+type RetriedEvent struct {
+	RuleID      string
+	EventKey    string
+	CoalesceKey string
+	Label       string
+}
+
+// Retried is a person's retry of the run; an error refuses the retry. A run no rule holds a record of answers the
+// zero RetryAnswer.
+func (c *Confirmer) Retried(workflowID string) (RetryAnswer, error) {
 	for id, rv := range c.loaded() {
 		rv.mu.Lock()
 		held := rv.find(workflowID) != nil
 		rv.mu.Unlock()
 		if held {
 			res := c.deliver(id, &attemptEvent{kind: evRetried, workflowID: workflowID})
-			return res.handedBack, res.err
+			return res.retry, res.err
 		}
 	}
-	return false, nil
+	return RetryAnswer{}, nil
 }
 
-// RecordOutcome writes the run's outcome on its rule's row.
-func (c *Confirmer) RecordOutcome(ruleID, _ string, _ launchrule.Outcome) {
-	c.deliver(ruleID, &attemptEvent{kind: evWriteRetry})
+// RecordOutcome writes the run's outcome on its rule's row, only while the row names the run as its last.
+func (c *Confirmer) RecordOutcome(ruleID, workflowID string, o launchrule.Outcome) {
+	c.update(ruleID, func(es *eventState) bool { return setOutcome(&es.raw.Status, workflowID, o, false) })
 }
 
-// RecordEnding is RecordOutcome for how the run ended on its own.
-func (c *Confirmer) RecordEnding(ruleID, _ string, _ launchrule.Outcome) {
-	c.deliver(ruleID, &attemptEvent{kind: evWriteRetry})
+// RecordEnding is RecordOutcome for how the run ended on its own, landing only while the row still reads it started.
+func (c *Confirmer) RecordEnding(ruleID, workflowID string, o launchrule.Outcome) {
+	c.update(ruleID, func(es *eventState) bool { return setOutcome(&es.raw.Status, workflowID, o, true) })
 }
 
-// DismissGap clears the rule's catch-up gap segment.
+func setOutcome(st *launchrule.Status, workflowID string, o launchrule.Outcome, ending bool) bool {
+	if st.LastRunID != workflowID || (ending && st.LastStatus != launchrule.StatusStarted) {
+		return false
+	}
+	st.LastStatus, st.LastReason = o.Status, o.Reason
+	return true
+}
+
+// DismissGap clears the rule's catch-up gap segment. launchrule.ErrNotFound when no event rule has the id.
 func (c *Confirmer) DismissGap(ruleID string) error {
-	return c.deliver(ruleID, &attemptEvent{kind: evWriteRetry}).err
+	if def, ok := c.store.Get(ruleID); !ok || def.When.Event == nil {
+		return launchrule.ErrNotFound
+	}
+	c.update(ruleID, func(es *eventState) bool {
+		had := len(es.raw.Status.Gaps) > 0
+		es.raw.Status.Gaps = nil
+		return had
+	})
+	return nil
 }

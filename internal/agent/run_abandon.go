@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/trigger"
 )
 
 // abandonedHold is where marotte's hold on a run an event rule abandoned stands. Zero is a run no rule abandoned in
@@ -193,20 +194,20 @@ func (rs *Runs) ReleaseTriggered(ctx context.Context, workflowID string) {
 
 // handBackAbandoned reports every retry to the confirmer, whatever lease is held: an abandoned record outlives the
 // triggered lease once its cancel lands (ReleaseTriggered), and left behind it would read the person's retry as the
-// rule's unfinished cancel. true ends the rule's hold and drops the triggered lease and its bounds, so the retry is
-// leased as the person's and a restart cancels nothing; an error refuses the retry with the lease untouched. The
-// caller owns the run.
-func (rs *Runs) handBackAbandoned(ctx context.Context, workflowID string) error {
+// rule's unfinished cancel. A hand-back ends the rule's hold and drops the triggered lease and its bounds, so the
+// retry is leased as the person's and a restart cancels nothing; a live attempt's event comes back for
+// leaseForRetry; an error refuses the retry with the lease untouched. The caller owns the run.
+func (rs *Runs) handBackAbandoned(ctx context.Context, workflowID string) (*trigger.RetriedEvent, error) {
 	if rs.confirmer == nil {
-		return nil
+		return nil, nil
 	}
-	abandoned, err := rs.confirmer.Retried(workflowID)
+	ans, err := rs.confirmer.Retried(workflowID)
 	if err != nil {
-		return fmt.Errorf("workflow retry: %w", err)
+		return nil, fmt.Errorf("workflow retry: %w", err)
 	}
-	if abandoned {
+	if ans.HandedBack {
 		rs.owners.set(workflowID, holdReleased)
 		rs.forgetBounds(ctx, workflowID)
 	}
-	return nil
+	return ans.Event, nil
 }

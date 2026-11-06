@@ -39,6 +39,8 @@ func (s *stepper) live(rec *record, ev *attemptEvent) bool {
 		s.bootBoundReached(rec)
 	case ev.kind == evBoundReached:
 		s.boundReached(rec)
+	case ev.kind == evRetried:
+		s.retriedLive(rec)
 	case ev.kind == evCancelOK || ev.kind == evCancelError:
 		// A26: the bound decides a live record.
 	default:
@@ -63,6 +65,8 @@ func (s *stepper) abandoned(rec *record, ev *attemptEvent) bool {
 		s.settle(rec)
 	case evRunStart, evBoundReached:
 		// A22: a late run_start or a stale timer changes nothing.
+	case evRetried:
+		s.handOver(rec)
 	default:
 		return false
 	}
@@ -75,7 +79,8 @@ func (s *stepper) none(ev *attemptEvent) bool {
 	case evNamed:
 		s.named(ev)
 		return true
-	case evRunStart, evInvokeOK, evInvokeError, evInvokeReplyLost, evBoundReached, evCancelOK, evCancelError:
+	case evRunStart, evInvokeOK, evInvokeError, evInvokeReplyLost, evBoundReached, evCancelOK, evCancelError,
+		evRetried:
 		return true // A23
 	case evBusy:
 		return ev.launchingRule != "" && ev.launchingRule != s.ruleID // A23; the launching rule's own busy is A24
@@ -150,6 +155,29 @@ func (s *stepper) invokeRefused(rec *record, err error) {
 	}
 	s.failedAttempt(rec, text)
 	s.wakeLauncher()
+}
+
+// retriedLive is A35: the retried run re-runs the event under its lease, so it gets a full bound from the retry. A
+// boot-held record A7 has not armed yet, the one live record with no bound, keeps waiting for A7.
+func (s *stepper) retriedLive(rec *record) {
+	if rec.bound != nil {
+		rec.bound.Stop()
+		s.arm(rec)
+	}
+	s.res.retry.Event = &RetriedEvent{
+		RuleID: s.ruleID, EventKey: rec.key, CoalesceKey: rec.coalesceKey, Label: EventLabel(rec.inputs),
+	}
+}
+
+// handOver is A33: the person's retry takes the abandoned run, committed only once the record's removal is written
+// (commit restores it on a failed write).
+func (s *stepper) handOver(rec *record) {
+	s.rv.records = slices.DeleteFunc(s.rv.records, func(r *record) bool { return r == rec })
+	s.res.retry.HandedBack = true
+	if !rec.unpersisted {
+		s.handBack = rec
+		s.res.write = true
+	}
 }
 
 // boundReached is A6: no run_start within the bound abandons the attempt, and two such abandons block the rule.

@@ -20,6 +20,7 @@ import (
 	"github.com/cplieger/marotte/internal/notice"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
+	"github.com/cplieger/marotte/internal/trigger"
 )
 
 // A struct because the scheduled fields only make sense together.
@@ -75,6 +76,17 @@ func (rs *Runs) grantRetryLease(ctx context.Context, workflowID string, o *runOr
 		host = hostSecurityOf(rs.doorSettings(ctx).Presets)
 	}
 	lo := retryLaunch(o)
+	rs.grantKeeping(ctx, workflowID, o.recipe, &lo, host, &leaseKeep{chats: chatIDs(holders)})
+	rs.recordParentSession(ctx, workflowID, o.parent.session)
+}
+
+// grantEventRetryLease leases a live attempt's run as its event's, for a retry that found no lease held: the retry
+// re-runs the event's inputs, so its run_start confirms the event.
+func (rs *Runs) grantEventRetryLease(
+	ctx context.Context, workflowID string, o *runOrigin, holders []marotte.ChatID, ev *trigger.RetriedEvent,
+) {
+	lo := triggeredLaunch(ev.RuleID, ev.EventKey, ev.CoalesceKey, ev.Label)
+	host := hostSecurityOf(rs.doorSettings(ctx).Presets)
 	rs.grantKeeping(ctx, workflowID, o.recipe, &lo, host, &leaseKeep{chats: chatIDs(holders)})
 	rs.recordParentSession(ctx, workflowID, o.parent.session)
 }

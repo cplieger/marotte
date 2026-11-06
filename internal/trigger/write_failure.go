@@ -30,8 +30,13 @@ func (s *stepper) commit() {
 
 // writeFailed blocks the rule until a write of its whole value lands, retried at each poll interval. The row's
 // next state stays in memory (W2), except A1's record, which W1 abandons instead: a run its rule never recorded
-// must not be invoked, since after a restart nothing would name it.
+// must not be invoked, since after a restart nothing would name it; and A33's, which stays the rule's, since a
+// restart would load it from the file and cancel the person's retry.
 func (s *stepper) writeFailed(err error) {
+	if rec := s.handBack; rec != nil {
+		s.rv.records = append(s.rv.records, rec)
+		s.res.retry.HandedBack, s.res.err = false, fmt.Errorf("%w: %w", ErrAttemptNotWritten, err)
+	}
 	if rec := s.nameRec; rec != nil {
 		rec.inFlight = false
 		s.abandon(rec, causeNameFailed)

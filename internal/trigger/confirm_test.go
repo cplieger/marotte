@@ -911,3 +911,34 @@ func TestPollWriteAfterFailedConfirmKeepsKey(t *testing.T) {
 		}
 	})
 }
+
+// An outcome lands on the rule's row only for the run that confirmed its last event, and an ending only while the
+// row still reads it started: an abandoned attempt's run, or an ending after a stop's outcome, changes nothing.
+func TestOutcomeLandsOnlyForLastRun(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		tc.enqueue(r.ID, held("k1", "c1"))
+		tc.name(r.ID, "k1", "wf_1")
+		tc.ConfirmEvent(r.ID, "k1", "wf_1")
+		tc.written()
+
+		tc.RecordOutcome(r.ID, "wf_2", launchrule.Outcome{Status: launchrule.StatusFailed, Reason: "denied"})
+		tc.RecordEnding(r.ID, "wf_2", launchrule.Outcome{Status: launchrule.StatusCompleted})
+		if n := tc.written(); n != 0 {
+			t.Errorf("another run's outcome and ending: %d writes, want none", n)
+		}
+		if es, _ := tc.file(r.ID); es.raw.Status.LastStatus != launchrule.StatusStarted {
+			t.Errorf("file status after another run's outcome = %q, want started", es.raw.Status.LastStatus)
+		}
+
+		tc.RecordOutcome(r.ID, "wf_1", launchrule.Outcome{Status: launchrule.StatusFailed, Reason: "denied"})
+		tc.RecordEnding(r.ID, "wf_1", launchrule.Outcome{Status: launchrule.StatusCompleted})
+		if n := tc.written(); n != 1 {
+			t.Errorf("the last run's outcome and ending: %d writes, want the outcome's one", n)
+		}
+		es, _ := tc.file(r.ID)
+		if st := es.raw.Status; st.LastStatus != launchrule.StatusFailed || st.LastReason != "denied" {
+			t.Errorf("file status = %q %q, want the outcome, not the later ending", st.LastStatus, st.LastReason)
+		}
+	})
+}
