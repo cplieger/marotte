@@ -63,28 +63,50 @@ function hostSend(bytes: Uint8Array): void {
   handle?.send(bytes);
 }
 
-/** `firstFrame` settles once the terminal has drawn a screen frame. */
-let settleFirstFrame: () => void = () => undefined;
-const firstFrame = new Promise<void>((resolve) => {
-  settleFirstFrame = resolve;
-});
+/** `drawn` settles once the live session has drawn a screen frame that carries rows, so its modes
+ *  frame has landed; a restart replaces the gate. The terminal holds input until the PTY is sized. */
+interface DrawnGate {
+  readonly drawn: Promise<void>;
+  readonly settle: () => void;
+}
+function newDrawnGate(): DrawnGate {
+  let settle: () => void = () => undefined;
+  const drawn = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  return { drawn, settle };
+}
+let sessionGate = newDrawnGate();
 
-/** The terminal's live mode readers, kept by `firstFrameGate`; null until the terminal exists. */
+/** Between a confirmed restart and its reattach every frame is the doomed session's, and so is
+ *  every byte: the server kills that PTY with whatever it was sent. */
+let restartPending = false;
+
+/** Run `fn` once the session that is live when it runs has drawn. */
+function afterSessionDrawn(fn: () => void): void {
+  const gate = sessionGate;
+  void gate.drawn.then(() => {
+    if (gate === sessionGate) {
+      fn();
+    } else {
+      afterSessionDrawn(fn);
+    }
+  });
+}
+
+/** The terminal's live mode readers, kept by `sessionDrawnGate`; null until the terminal exists. */
 let paneModes: ModeReaders | null = null;
 
-/** Resolve `firstFrame` on the first screen frame that carries rows. Bytes sent before the
- *  resume is served are lost or doubled: on a fresh session the engine's ledger-lost drop
- *  empties the outbox, and a send between socket open and the resumeAck is replayed by the
- *  outbox retransmit. */
-function firstFrameGate(): TerminalFeature {
+/** A rows-less frame is the pre-ack scrollback-clear forward, which proves nothing drew. */
+function sessionDrawnGate(): TerminalFeature {
   return {
-    name: "firstFrameGate",
+    name: "sessionDrawnGate",
     setup(ctx) {
       paneModes = ctx.modes;
       return {
         teardown: ctx.on("wire:screen", (msg) => {
-          if (msg.rows.length > 0) {
-            settleFirstFrame();
+          if (msg.rows.length > 0 && !restartPending) {
+            sessionGate.settle();
           }
         }),
       };
@@ -146,6 +168,7 @@ function scheduleReattach(reason: "ended" | "restart"): void {
 }
 
 function reattachShell(): void {
+  restartPending = false;
   reattachedAt = Date.now();
   reattachSeq++;
   handle?.reattach();
@@ -163,7 +186,20 @@ async function hostRestart(): Promise<void> {
     return;
   }
   const seq = reattachSeq;
+  // No terminal: nothing can write to the doomed PTY, and the first open attaches to its successor.
+  const liveGate = sessionGate;
+  if (handle !== null) {
+    sessionGate = newDrawnGate();
+    restartPending = true;
+  }
   if ((await restartShell.dispatch()) === null) {
+    if (sessionGate !== liveGate) {
+      // The old session lives on: its gate comes back, and the waiters move onto it.
+      const armed = sessionGate;
+      sessionGate = liveGate;
+      restartPending = false;
+      armed.settle();
+    }
     return; // the action framework toasts the failure
   }
   if (reattachSeq === seq) {
@@ -271,7 +307,7 @@ export function initShellPanel(): void {
       setShellOpen(true, { focus: false });
     }
     // Read after the gate: the server's modes frame lands with the session's first frames.
-    void firstFrame.then(() => {
+    afterSessionDrawn(() => {
       hostSend(encoder.encode(runInput(cmd, paneModes?.isBracketedPaste() === true)));
     });
   });
@@ -360,7 +396,7 @@ function ensureTerminal(): void {
   handle = createTerminal($.shellTerminal, {
     features: () => {
       keys = mobileToolbar({ externalToggle: true });
-      return [...presetSingle(), firstFrameGate(), keys];
+      return [...presetSingle(), sessionDrawnGate(), keys];
     },
     layout: "container",
     wsPath: SHELL_WS_PATH,

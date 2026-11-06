@@ -533,7 +533,7 @@ describe("shell.ts: host-driven actions", () => {
   });
 
   // The reader is in the transcript, so the open must not take focus. The first open is also what
-  // connects, which is what `firstFrameGate` has to wait for.
+  // connects, which is what `sessionDrawnGate` has to wait for.
   it("opens a closed panel without focusing it and sends once the first frame lands", async () => {
     const h = await setup();
     h.mod.initShellPanel();
@@ -556,7 +556,7 @@ describe("shell.ts: host-driven actions", () => {
     expect(h.termFocus).not.toHaveBeenCalled();
   });
 
-  // A rows-less frame is the pre-ack ED3 forward, which `firstFrameGate` excludes.
+  // A rows-less frame is the pre-ack ED3 forward, which `sessionDrawnGate` excludes.
   it("does not release the command on a rows-less signal frame", async () => {
     const h = await setup();
     h.mod.initShellPanel();
@@ -617,6 +617,61 @@ describe("shell.ts: host-driven actions", () => {
 
     expect(h.sendSpy).toHaveBeenCalledTimes(1);
     expect(h.sendSpy).toHaveBeenCalledWith(new TextEncoder().encode("cd /tmp\rls -la\r"));
+  });
+
+  // The server kills the old PTY with whatever it was sent, so a Run between the confirm and the
+  // reattach belongs to the replacement, and the old session's last frames prove nothing.
+  it("holds a Run made during a restart until the replacement session draws", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    h.screenFrame(24);
+    let releaseDispatch: (value: { ok: boolean }) => void = () => undefined;
+    h.restartDispatch.mockImplementationOnce(
+      () =>
+        new Promise<{ ok: boolean }>((resolve) => {
+          releaseDispatch = resolve;
+        }),
+    );
+    h.shellRestartBtn.click();
+    await new Promise((r) => setTimeout(r, 0)); // confirm resolves, POST in flight
+
+    h.getRunCb()?.("echo hi");
+    h.screenFrame(24); // the doomed session still drawing
+    await Promise.resolve();
+    expect(h.sendSpy).not.toHaveBeenCalled();
+
+    releaseDispatch({ ok: true });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.reattachSpy).toHaveBeenCalledTimes(1);
+    expect(h.sendSpy).not.toHaveBeenCalled();
+
+    h.screenFrame(24);
+    await Promise.resolve();
+    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
+  });
+
+  it("sends a Run held by a failed restart to the session that is still live", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    h.screenFrame(24);
+    let releaseDispatch: (value: null) => void = () => undefined;
+    h.restartDispatch.mockImplementationOnce(
+      () =>
+        new Promise<null>((resolve) => {
+          releaseDispatch = resolve;
+        }),
+    );
+    h.shellRestartBtn.click();
+    await new Promise((r) => setTimeout(r, 0));
+    h.getRunCb()?.("echo hi");
+
+    releaseDispatch(null);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.reattachSpy).not.toHaveBeenCalled();
+    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
   });
 
   // Reopening reuses the terminal, which has already drawn, so nothing waits.
