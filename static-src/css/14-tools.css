@@ -244,11 +244,20 @@
   font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
 
+  /* The same first-line offsets as the header's own glyph and count: the glyph's box stays its
+     drawing size on every tier, and only the offset grows with the touch row. */
   & > .tool-group-hooks-icon,
   & > .tool-group-hooks-n {
     display: inline-flex;
     align-items: center;
-    block-size: var(--row-first-line);
+  }
+
+  & > .tool-group-hooks-icon {
+    margin-block-start: calc((var(--row-first-line) - var(--icon-ui)) / 2);
+  }
+
+  & > .tool-group-hooks-n {
+    padding-block: calc((var(--row-first-line) - 1lh) / 2);
   }
 
   & svg {
