@@ -621,6 +621,19 @@ describe("Show hook status off", () => {
     expect(r.body.querySelector(".tool-group-hooks")).toBeNull();
   });
 
+  it("hides an unresolved-trigger hook a refused group kept as a row once the switch turns off", () => {
+    const r = render((t) => [
+      hook(t, 1, "prompt check", { hook_trigger: "UserPromptSubmit" }),
+      call(t, 2, { id: "cmd-x", title: "rm -rf /", status: "failed" }),
+      untriggered(hook(t, 3, "mystery")),
+    ]);
+    expect(shownHookRows(r.body).map((c) => c.dataset["title"])).toEqual(["Hook fired: mystery"]);
+    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("1 hook ran");
+    setHookStatusShown(false);
+    expect(shownHookRows(r.body)).toHaveLength(0);
+    expect(r.body.querySelector(".tool-group-hooks")).toBeNull();
+  });
+
   it("draws nothing for a wake turn holding only quiet stop hooks", () => {
     setHookStatusShown(false);
     const t = "t-wake";
