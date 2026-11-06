@@ -150,33 +150,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Geometry only: the box, fill, ink and hover are the footer's shared control box
-   (61-mcp-tools.css). `justify-content: center` keeps the glyph centred in the
-   icon-only square below. */
-.turn-rewind {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--sp-1);
-  padding-inline: var(--sp-2);
-  font-size: inherit;
-}
-
-/* The word drops at the width the footer's own actions collapse behind their `…`
-   overflow (61-mcp-tools.css `.turn-actions-more`). Nothing but their equality couples
-   the two numbers, so `turn-rewind-css.test.ts` asserts they stay equal. Icon-only, it
-   is the same square as the action buttons. */
-@media (width <= 40rem) {
-  .turn-rewind-label {
-    display: none;
-  }
-
-  .turn-rewind {
-    width: var(--ctl-h-sm);
-    padding-inline: 0;
-  }
-}
-
 /* KAS refuses a revert on a live session, so the control is unavailable rather than
    offering an error. Kept visible so the row does not reflow when a turn starts. */
 .turn-rewind:disabled:hover {
@@ -462,7 +435,7 @@
 }
 
 /* THE NEWEST TURN HAS NO REWIND TARGET, so this track collapses and the actions slide
-   right by the button's width (80px at 1440, ~52 CSS px on a phone). RESERVING IT IS
+   right by the button's square and its margin. RESERVING IT IS
    REFUSED: a hidden element carrying the button's own children left the row above
    PERMANENTLY skipped by `content-visibility: auto`, pruning it from the find walker's
    scope, and a CSS-only `minmax()` floor needs the button's width at three tiers. */

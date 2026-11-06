@@ -2193,11 +2193,9 @@ function mountRewind(card: HTMLElement, t: Turn): void {
       {
         className: "turn-rewind",
         type: "button",
-        "aria-label": "Rewind to this point",
+        "aria-label": "Rewind",
       },
       svgTemplate(ICON_REWIND)(),
-      // Desktop only; the `aria-label` names the button once the word is dropped.
-      el("span", { className: "turn-rewind-label" }, "Rewind"),
     ) as HTMLButtonElement;
     footer.appendChild(btn);
   }
@@ -2211,12 +2209,10 @@ function mountRewind(card: HTMLElement, t: Turn): void {
   const session = getActive();
   const busy = session !== undefined && sessionBusy(session);
   btn.disabled = busy;
-  // The consequence, in a channel separate from the name. `data-tooltip`, not `title`, reaches a disabled button.
+  // `data-tooltip`, not `title`: only it reaches a disabled button.
   btn.setAttribute(
     "data-tooltip",
-    busy
-      ? "Cannot rewind while the agent is running. Cancel the turn first"
-      : "Rewind to right after this turn, discarding everything that follows",
+    busy ? "Cannot rewind while the agent is running. Cancel the turn first" : "Rewind",
   );
 }
 

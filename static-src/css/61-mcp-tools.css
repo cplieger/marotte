@@ -160,6 +160,7 @@
    The glyph inherits the row's ink (4.771 / 4.719) and hover keeps its own ink
    and fill lift, which is the whole affordance. */
 .turn-action-btn,
+.turn-rewind,
 .code-act-btn {
   display: inline-flex;
   align-items: center;
@@ -200,9 +201,8 @@
  * three-way split further down this file.
  *
  * The QUERY is what gets duplicated rather than the number named once, because a
- * media query cannot read a custom property (`turn-rewind-css.test.ts` states
- * this) and no style container query exists anywhere in this stylesheet set. So
- * `56rem` cannot be a token the way `--hit-floor` is, and a source assertion in
+ * media query cannot read a custom property and no style container query exists
+ * anywhere in this stylesheet set. So `56rem` cannot be a token the way `--hit-floor` is, and a source assertion in
  * `turn-actions-overflow.test.ts` pins the two bodies equal instead.
  *
  * TWO arms, not three: `coarse` is a subset of `not(fine)`, so the second arm IS
@@ -347,11 +347,6 @@
    70-selection.css. The rule that used to sit here carried `opacity: 1` and
    nothing else — it existed only to cancel the row's resting dim, and that dim
    is gone. */
-
-/* The .checkpoint-line dashed separator and its .checkpoint-rewind button are
- * GONE. A turn no longer needs a rule drawn between itself and its neighbour —
- * it is a bordered card — and Rewind moved into the card header's action slot
- * as .turn-rewind (29-turns.css), beside the turn number it acts on. */
 
 /* Prompt suggestions: follow-up pills below the turn summary */
 .prompt-suggestions {

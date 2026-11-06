@@ -186,10 +186,13 @@ describe("the two ends of the footer share one press box", () => {
   it("leaves the ledger's and Rewind's own rules holding geometry only", () => {
     // 29-turns.css owns the band's height and the card's ink gutter; every fill, ink and
     // transition is the shared rule's, so a copy here would silently overlap it.
-    for (const control of [".turn-ledger-summary", ".turn-rewind"]) {
-      const geometry = ruleContaining(turns, control, "top");
+    for (const [control, own] of [
+      [".turn-ledger-summary", ".turn-ledger-summary"],
+      [".turn-rewind", ".turn-footer > .turn-rewind"],
+    ] as const) {
+      const geometry = ruleContaining(turns, own, "top");
       for (const decl of ["background", "border", "color", "cursor", "transition"]) {
-        expect(geometry.body, `${control}: ${decl} belongs to the shared rule`).not.toContain(
+        expect(geometry.body, `${own}: ${decl} belongs to the shared rule`).not.toContain(
           `${decl}:`,
         );
       }
