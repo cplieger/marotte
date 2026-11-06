@@ -360,7 +360,7 @@ function nodeInFlight(status: ClassifiedRunNodeStatus): boolean {
 }
 
 /** A signal per run rather than one version counter so a card re-renders for its OWN run only: a
- *  workspace running four scheduled workflows would otherwise repaint every card on every frame of
+ *  workspace running four unattended workflows would otherwise repaint every card on every frame of
  *  any of them. */
 const cells = new Map<string, Signal<RunState | undefined>>();
 

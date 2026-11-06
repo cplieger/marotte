@@ -281,7 +281,7 @@ func writeUIGuide(b *strings.Builder, workDir, configDir string) {
 	b.WriteString("(\"Connect integration\", per-server status, OAuth)\n")
 	b.WriteString("- Settings → Permissions: \"Security profile\" (guarded, read-only, trusted, unrestricted, ")
 	b.WriteString("custom; \"Customize\"), \"Active policy\" with \"Add a rule\" and \"Test a decision (why?)\", ")
-	b.WriteString("\"Supervised mode (default for new chats)\", \"Scheduled runs\" (auto-approve for unattended ")
+	b.WriteString("\"Supervised mode (default for new chats)\", \"Unattended runs\" (auto-approve for scheduled and triggered ")
 	b.WriteString("runs), \"Agent ignore files\"\n")
 	b.WriteString("- Settings → Custom instructions: \"Global instructions\" (the textarea IS `custom.md`, ")
 	b.WriteString("autosaved) and \"Knowledge bases\"\n")

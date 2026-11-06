@@ -1087,17 +1087,17 @@
 
             <div class="page-section">
               <div class="section-title-status-row">
-                <h2 class="section-title">Scheduled runs</h2>
+                <h2 class="section-title">Unattended runs</h2>
                 <span class="settings-save-status hidden" data-save-status="scheduled_auto_approve" aria-live="polite"></span>
               </div>
-              <p class="section-hint">Scheduled workflows run with nobody watching, so by default a request that needs approval is refused after 3 minutes and the run stops instead of waiting forever. Turn this on to approve those requests automatically, one at a time and never saved as rules. A request your organization requires a person to approve, or that Kiro's safety check handed to a person, is still refused.</p>
+              <p class="section-hint">Scheduled and triggered workflows run with nobody watching, so by default a request that needs approval is refused after 3 minutes and the run stops instead of waiting forever. Turn this on to approve those requests automatically, one at a time and never saved as rules. A triggered run can read text other people wrote, such as an issue body, and with this on a request that text leads it to make is approved too. A request your organization requires a person to approve, or that Kiro's safety check handed to a person, is still refused.</p>
               <div class="section-option">
                 <label class="toggle">
-                  <input type="checkbox" id="scheduled-auto-approve-checkbox" aria-label="Approve tool requests in scheduled runs instead of refusing them">
+                  <input type="checkbox" id="scheduled-auto-approve-checkbox" aria-label="Approve tool requests in scheduled and triggered runs instead of refusing them">
                   <span class="toggle-slider"></span>
                 </label>
                 <div>
-                  <span class="section-option-label">Approve tool requests in scheduled runs instead of refusing them</span>
+                  <span class="section-option-label">Approve tool requests in scheduled and triggered runs instead of refusing them</span>
                 </div>
               </div>
             </div>

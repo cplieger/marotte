@@ -31,11 +31,11 @@ import { dropRunRequests, dropTurnDecisions } from "../decision-dock.js";
 import { applyRunAsks, runAskPosition } from "../run-asks.js";
 import { closeRunAsksExcept } from "../notify.js";
 
-// Toasts at each end of a run. A START only for a SCHEDULED run (manual and agent launches already
-// have attention); a COMPLETION for any run. `scheduled` must come from the server: a manual launch
-// is parentless too.
+// Toasts at each end of a run. A START only for an unattended (scheduled or triggered) run: manual
+// and agent launches already have attention. A COMPLETION for any run. `unattended` must come from
+// the server: a manual launch is parentless too.
 
-/** `run_start` re-fires on every resume, so without this a scheduled run produces duplicate toasts.
+/** `run_start` re-fires on every resume, so without this an unattended run produces duplicate toasts.
  *  Cleared when the run reports finished. */
 const announcedStarts = new Set<string>();
 
@@ -45,6 +45,18 @@ function runLabel(workflowID: string, name: string | undefined): string {
     return label;
   }
   return name !== undefined && name !== "" ? name : "Workflow run";
+}
+
+/** The start toast's noun for the lease origin the server sent; undefined for an attended run. */
+function startKind(origin: string | undefined): string | undefined {
+  switch (origin) {
+    case "scheduled":
+      return "Scheduled";
+    case "triggered":
+      return "Triggered";
+    default:
+      return undefined;
+  }
 }
 
 /** Raise a run's end toast, with the jump `runEndJump` picks. */
@@ -95,9 +107,10 @@ onSSE("run_started", (chatID, p) => {
   noteRunLive(p.workflow_id, chatID, true);
   invalidateRun(p.workflow_id);
   emitBus(BUS_RUNS_CHANGED);
-  if (p.scheduled === true && !announcedStarts.has(p.workflow_id)) {
+  const kind = startKind(p.unattended);
+  if (kind !== undefined && !announcedStarts.has(p.workflow_id)) {
     announcedStarts.add(p.workflow_id);
-    info(`Scheduled run started: ${runLabel(p.workflow_id, p.name)}`);
+    info(`${kind} run started: ${runLabel(p.workflow_id, p.name)}`);
   }
 });
 

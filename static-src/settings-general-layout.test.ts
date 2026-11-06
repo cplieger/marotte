@@ -110,3 +110,20 @@ describe("the Settings booleans", () => {
     expect(input!.closest(".section-option")).not.toBeNull();
   });
 });
+
+describe("the unattended runs section", () => {
+  it("names scheduled and triggered runs on the auto-approve toggle", () => {
+    const input = page.querySelector<HTMLInputElement>("#scheduled-auto-approve-checkbox");
+    const section = input?.closest(".page-section");
+    const label = input?.closest(".section-option")?.querySelector(".section-option-label");
+    const want = "Approve tool requests in scheduled and triggered runs instead of refusing them";
+    expect(section?.querySelector(".section-title")?.textContent).toBe("Unattended runs");
+    expect(label?.textContent).toBe(want);
+    expect(input?.getAttribute("aria-label")).toBe(want);
+    const hint = section?.querySelector(".section-hint")?.textContent ?? "";
+    expect(hint).toContain("Scheduled and triggered workflows run with nobody watching");
+    expect(hint).toContain(
+      "A triggered run can read text other people wrote, such as an issue body",
+    );
+  });
+});
