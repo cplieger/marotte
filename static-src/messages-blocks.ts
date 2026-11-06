@@ -1631,7 +1631,7 @@ function subagentOpenerFor(st: TurnRender, subtask: string): { open?: SubagentOp
             void openSubagentView(chatID, subtask);
           })
           .catch(() => {
-            /* noop: the link degrades to its href on the next click */
+            /* noop: a failed chunk load opens nothing and leaves the chat as it was */
           });
       },
     },
@@ -1704,7 +1704,7 @@ function runCardFor(st: TurnRender, workflowID: string, name: string, owner = fa
           void openRunView(id, label, chatID, focusNode ?? "");
         })
         .catch(() => {
-          /* noop: the link degrades to its href on the next click */
+          /* noop: a failed chunk load opens nothing and leaves the chat as it was */
         });
     },
     st.detached ? undefined : runDisclosure(st, workflowID),
