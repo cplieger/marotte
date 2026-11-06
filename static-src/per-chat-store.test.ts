@@ -1,8 +1,8 @@
-// The per-chat localStorage map two viewer-owned stores sit on (fold overrides, banner dismissals).
+// The per-chat localStorage maps three viewer-owned stores sit on (fold overrides, banner
+// dismissals, web preview widths).
 import { describe, it, expect, beforeEach, onTestFinished, vi } from "vitest";
 
-import * as store from "./per-chat-store.js";
-import { readPerChat, writePerChat, MAX_CHATS } from "./per-chat-store.js";
+import { readPerChat, updatePerChat, onPerChatChange, MAX_CHATS } from "./per-chat-store.js";
 
 const KEY = "marotte.test-per-chat";
 
@@ -20,7 +20,7 @@ function read(): Record<string, string[]> {
 }
 
 function write(chatID: string, value: string[] | undefined): void {
-  writePerChat(KEY, read(), chatID, value);
+  updatePerChat(KEY, chatID, validCodes, () => value);
 }
 
 beforeEach(() => {
@@ -127,9 +127,9 @@ describe("the bound", () => {
 
 describe("updating one chat", () => {
   it("updatePerChat changes the stored document, not a caller's copy", () => {
-    store.updatePerChat(KEY, "c1", validCodes, () => ["x"]);
+    updatePerChat(KEY, "c1", validCodes, () => ["x"]);
     localStorage.setItem(KEY, JSON.stringify({ c1: ["x"], c2: ["y"] }));
-    store.updatePerChat(KEY, "c1", validCodes, () => ["z"]);
+    updatePerChat(KEY, "c1", validCodes, () => ["z"]);
     expect(read()).toEqual({ c2: ["y"], c1: ["z"] });
   });
 
@@ -137,13 +137,13 @@ describe("updating one chat", () => {
   it("updatePerChat writes nothing when the update returns the stored value itself", () => {
     localStorage.setItem(KEY, JSON.stringify({ c1: ["x"], c2: ["y"] }));
     const before = localStorage.getItem(KEY);
-    expect(store.updatePerChat(KEY, "c1", validCodes, (prev) => prev)).toBe(true);
+    expect(updatePerChat(KEY, "c1", validCodes, (prev) => prev)).toBe(true);
     expect(localStorage.getItem(KEY)).toBe(before);
   });
 
   it("updatePerChat hands the update the stored value and says storage holds it", () => {
     localStorage.setItem(KEY, JSON.stringify({ c1: ["x"] }));
-    expect(store.updatePerChat(KEY, "c1", validCodes, (prev) => [...(prev ?? []), "y"])).toBe(true);
+    expect(updatePerChat(KEY, "c1", validCodes, (prev) => [...(prev ?? []), "y"])).toBe(true);
     expect(read()).toEqual({ c1: ["x", "y"] });
   });
 
@@ -158,11 +158,11 @@ describe("updating one chat", () => {
       key: (): null => null,
       length: 0,
     });
-    expect(store.updatePerChat(KEY, "c1", validCodes, () => ["x"])).toBe(false);
+    expect(updatePerChat(KEY, "c1", validCodes, () => ["x"])).toBe(false);
   });
 
   it("updatePerChat writes nothing for an empty chat id", () => {
-    expect(store.updatePerChat(KEY, "", validCodes, () => ["x"])).toBe(false);
+    expect(updatePerChat(KEY, "", validCodes, () => ["x"])).toBe(false);
     expect(localStorage.getItem(KEY)).toBeNull();
   });
 });
@@ -172,8 +172,8 @@ describe("other windows' changes", () => {
     let sent: string | null = "";
     const seenA: (string | null)[] = [];
     const seenB: (string | null)[] = [];
-    onTestFinished(store.onPerChatChange("marotte.test-a", () => seenA.push(sent)));
-    onTestFinished(store.onPerChatChange("marotte.test-b", () => seenB.push(sent)));
+    onTestFinished(onPerChatChange("marotte.test-a", () => seenA.push(sent)));
+    onTestFinished(onPerChatChange("marotte.test-b", () => seenB.push(sent)));
     for (const key of ["marotte.test-a", "marotte.test-b", null]) {
       sent = key;
       window.dispatchEvent(new StorageEvent("storage", { key, storageArea: localStorage }));
