@@ -144,10 +144,10 @@ function mountChat(height: number): { dock: HTMLElement; bar: HTMLElement; compo
   fold.append(toggle);
   const runBar = root.querySelector<HTMLElement>("#run-bar")!;
   runBar.classList.remove("hidden");
+  runBar.toggleAttribute("data-folded", true);
   for (let i = 0; i < 7; i++) {
     const row = document.createElement("li");
     row.className = "run-bar-row";
-    row.hidden = true;
     runBar.append(row);
   }
   return {

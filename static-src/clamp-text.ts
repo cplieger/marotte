@@ -356,7 +356,7 @@ function writeExpanded(text: HTMLElement, s: ClampState, on: boolean, motion = f
     (open) => {
       text.toggleAttribute("data-clamped", !open);
     },
-    motion,
+    { motion },
   );
   if (s.more !== undefined) {
     s.more.textContent = on ? LABEL_LESS : LABEL_MORE;

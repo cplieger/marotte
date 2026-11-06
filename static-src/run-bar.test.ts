@@ -1,19 +1,26 @@
 // The composer band's run bar: one line per live workflow run the ACTIVE chat launched.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 // The graph reaches the shared DOM registry, which throws on a missing element. Every id has to
 // exist before the imports below are evaluated.
+// The fold row and the list sit in their host as `index.html` has them, so the shipped stylesheet lays them out.
+const runHost = document.createElement("div");
+runHost.className = "run-bar-host";
+runHost.append(
+  Object.assign(document.createElement("div"), { id: "run-bar-fold", className: "run-bar-fold" }),
+  Object.assign(document.createElement("ul"), { id: "run-bar", className: "run-bar hidden" }),
+);
+document.body.appendChild(runHost);
 for (const id of [
-  "run-bar-fold",
-  "run-bar",
   "messages",
   "messages-wrap",
   "messages-wrap-outer",
   "chat-view",
   "scroll-bottom",
 ]) {
-  const el = document.createElement(id === "run-bar" ? "ul" : "div");
+  const el = document.createElement("div");
   el.id = id;
   document.body.appendChild(el);
 }
@@ -122,6 +129,17 @@ function rowStates(): string[] {
 
 function rowText(sel: string): string[] {
   return [...bar.querySelectorAll(sel)].map((n) => n.textContent ?? "");
+}
+
+/** Run the list's own fold slide to its end, then let the settle it resolves run. */
+async function finishSlides(): Promise<void> {
+  await Promise.all(
+    bar.getAnimations().map((a) => {
+      a.finish();
+      return a.finished;
+    }),
+  );
+  await Promise.resolve();
 }
 
 /** A parked step's question as the run-asks store holds it, keyed to the launching chat. */
@@ -246,17 +264,19 @@ describe("the run bar", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(toggle.querySelector<HTMLElement>(".run-bar-glyph")?.dataset["status"]).toBe("input");
     const rows = (): HTMLElement[] => [...bar.querySelectorAll<HTMLElement>("li.run-bar-row")];
-    expect(rows().every((r) => r.hidden)).toBe(true);
+    expect(bar.hasAttribute("data-folded")).toBe(true);
     expect(rows()[0]?.querySelector(".ev-sum-label")?.textContent).toBe(ids[2]);
 
     toggle.click();
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(rows().some((r) => r.hidden)).toBe(false);
+    expect(bar.hasAttribute("data-folded")).toBe(false);
     expect(JSON.parse(localStorage.getItem("marotte.ui-state") ?? "{}")).toMatchObject({
       run_bar_open: true,
     });
     toggle.click();
-    expect(rows().every((r) => r.hidden)).toBe(true);
+    await finishSlides();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(bar.hasAttribute("data-folded")).toBe(true);
 
     const range = document.createRange();
     range.selectNodeContents(toggle.querySelector(".run-bar-count")!);
@@ -266,6 +286,7 @@ describe("the run bar", () => {
       toggle.getAttribute("aria-expanded"),
       "a click ending a selection leaves the list shut",
     ).toBe("false");
+    expect(bar.hasAttribute("data-folded")).toBe(true);
     document.getSelection()?.removeAllRanges();
     localStorage.removeItem("marotte.ui-state");
   });
@@ -280,10 +301,8 @@ describe("the run bar", () => {
     }
     await activate(c);
     expect(fold.hidden).toBe(true);
-    expect([...bar.querySelectorAll<HTMLElement>("li.run-bar-row")].map((r) => r.hidden)).toEqual([
-      false,
-      false,
-    ]);
+    expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(2);
+    expect(bar.hasAttribute("data-folded")).toBe(false);
   });
 
   it("shows the alert in place of the summary, and the summary again once it clears", async () => {
@@ -819,5 +838,233 @@ describe("a render patches its rows rather than rebuilding them", () => {
     expect(bar.querySelector(".run-bar-open")).toBe(btn);
     btn?.click();
     expect(openRunView).toHaveBeenCalledWith(id, "nightly sweep", c);
+  });
+});
+
+// The fold opens and shuts with the transcript's one disclosure slide (`disclosure-row.ts` `slideBox`), on the
+// shipped stylesheet so the list has heights to slide between.
+describe("the run bar's fold motion", () => {
+  let style: HTMLStyleElement;
+
+  beforeEach(() => {
+    localStorage.removeItem("marotte.ui-state");
+    style = mountAppCSS();
+  });
+
+  afterEach(() => {
+    style.remove();
+    vi.unstubAllGlobals();
+    localStorage.removeItem("marotte.ui-state");
+  });
+
+  function heightSlides(): Animation[] {
+    return bar.getAnimations().filter((a) => {
+      const fx = a.effect;
+      return fx instanceof KeyframeEffect && fx.getKeyframes().some((k) => "blockSize" in k);
+    });
+  }
+
+  async function folded(n: number): Promise<{ chat: string; toggle: HTMLElement }> {
+    const chat = chatID();
+    chats.push(chat);
+    for (let i = 0; i < n; i++) {
+      const id = runID(`m${String(i)}`);
+      inspect.set(id, state({ display_name: id }));
+      live(id, chat);
+    }
+    await activate(chat);
+    const toggle = fold.querySelector<HTMLElement>(".run-bar-toggle");
+    if (toggle === null) {
+      throw new Error("no fold row");
+    }
+    return { chat, toggle };
+  }
+
+  it("slides the list open and shut at the disclosure tokens, fading as it goes", async () => {
+    const { toggle } = await folded(3);
+    toggle.click();
+    const [open] = heightSlides();
+    expect(open, "an open slide").toBeDefined();
+    const timing = open?.effect?.getTiming();
+    const root = getComputedStyle(document.documentElement);
+    expect(Number(timing?.duration)).toBe(
+      parseFloat(root.getPropertyValue("--uip-disclosure-duration")) * 1000,
+    );
+    expect(timing?.easing).toBe(root.getPropertyValue("--uip-disclosure-easing").trim());
+    const frames = (open?.effect as KeyframeEffect).getKeyframes();
+    expect(frames[0]?.["opacity"]).toBe("0");
+    expect(frames.at(-1)?.["opacity"]).toBe("1");
+    await finishSlides();
+
+    toggle.click();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    const [shut] = heightSlides();
+    expect(shut, "a close slide").toBeDefined();
+    const back = (shut?.effect as KeyframeEffect).getKeyframes();
+    expect(parseFloat(String(back.at(-1)?.["blockSize"]))).toBe(0);
+    expect(back.at(-1)?.["opacity"]).toBe("0");
+    // The rows stay rendered until the slide ends.
+    expect(bar.hasAttribute("data-folded")).toBe(false);
+    await finishSlides();
+    expect(bar.hasAttribute("data-folded")).toBe(true);
+  });
+
+  it("never lays the folded list out before a close's slide ends", async () => {
+    // A layout of the shut list grows the transcript's scroller, which clamps a reader at its end off the live edge.
+    const { toggle } = await folded(3);
+    toggle.click();
+    await finishSlides();
+    const flips: boolean[] = [];
+    const watch = new MutationObserver(() => {
+      flips.push(bar.hasAttribute("data-folded"));
+    });
+    watch.observe(bar, { attributes: true, attributeFilter: ["data-folded"] });
+    toggle.click();
+    await Promise.resolve();
+    expect(flips).toEqual([]);
+    expect(heightSlides()).toHaveLength(1);
+    await finishSlides();
+    await Promise.resolve();
+    watch.disconnect();
+    expect(flips).toEqual([true]);
+  });
+
+  it("flips at once under reduced motion", async () => {
+    vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.includes("reduce") }));
+    const { toggle } = await folded(3);
+    toggle.click();
+    expect(bar.hasAttribute("data-folded")).toBe(false);
+    expect(heightSlides()).toHaveLength(0);
+    toggle.click();
+    expect(bar.hasAttribute("data-folded")).toBe(true);
+    expect(heightSlides()).toHaveLength(0);
+  });
+
+  it("starts no slide when a row changes, arrives or leaves while the list is open", async () => {
+    const { chat, toggle } = await folded(3);
+    toggle.click();
+    await finishSlides();
+    const first = bar.querySelector<HTMLElement>("li.run-bar-row");
+    const id = runs.at(-1) ?? "";
+
+    inspect.set(id, state({ display_name: id, status: "paused" }));
+    invalidateRun(id);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(heightSlides(), "a repaint").toHaveLength(0);
+
+    const late = runID("late");
+    inspect.set(late, state({ display_name: late }));
+    live(late, chat);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(4);
+    expect(heightSlides(), "an arrival").toHaveLength(0);
+
+    noteRunSettled(late);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(3);
+    expect(heightSlides(), "a departure").toHaveLength(0);
+    // The paused run moved to the front, so the row first in line is checked by identity, not position.
+    expect(first?.isConnected).toBe(true);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("keeps a scrolled list's offset through a close and a reopen", async () => {
+    const { toggle } = await folded(12);
+    // The fold row's gap transition runs beside the slide and sets the list's room, so it ends first.
+    const settle = async (): Promise<void> => {
+      for (const a of fold.getAnimations()) {
+        a.finish();
+      }
+      await finishSlides();
+    };
+    toggle.click();
+    await settle();
+    // A row's entry rise (`translateY(4px)`) widens the scroll range until it ends.
+    for (const row of bar.querySelectorAll(".run-bar-open")) {
+      for (const a of row.getAnimations()) {
+        a.finish();
+      }
+    }
+    expect(getComputedStyle(fold).marginBlockEnd, "the open gap").not.toBe("0px");
+    expect(bar.scrollHeight, "the list overflows its cap").toBeGreaterThan(bar.clientHeight);
+    bar.scrollTop = bar.scrollHeight;
+    const top = bar.scrollTop;
+    expect(top).toBeGreaterThan(0);
+    const midway = (): void => {
+      const [slide] = heightSlides();
+      if (slide === undefined) {
+        throw new Error("no slide");
+      }
+      slide.pause();
+      slide.currentTime = Number(slide.effect?.getTiming().duration) / 2;
+    };
+
+    toggle.click();
+    midway();
+    expect(bar.scrollTop, "mid-close").toBe(top);
+    // The slide reaches its end with the fold row's gap already shut, and a layout runs before the fold: `finish()`
+    // would resolve the fold first.
+    for (const a of fold.getAnimations()) {
+      a.finish();
+    }
+    const [closing] = heightSlides();
+    closing?.play();
+    if (closing !== undefined) {
+      closing.currentTime = Number(closing.effect?.getTiming().duration);
+    }
+    expect(bar.getBoundingClientRect().height, "the slide's end").toBe(0);
+    expect(bar.scrollTop, "the slide's end").toBe(top);
+    await closing?.finished;
+    await new Promise((r) => requestAnimationFrame(r));
+    expect(bar.hasAttribute("data-folded"), "closed").toBe(true);
+    expect(bar.scrollTop, "closed").toBe(top);
+    await settle();
+    toggle.click();
+    midway();
+    expect(bar.scrollTop, "mid-reopen").toBe(top);
+    await settle();
+    expect(bar.scrollTop, "reopened").toBe(top);
+  });
+
+  it("retargets an open under way when a run arrives, so it ends at the list's height", async () => {
+    const { chat, toggle } = await folded(3);
+    toggle.click();
+    heightSlides()[0]?.pause();
+    const late = runID("late");
+    inspect.set(late, state({ display_name: late }));
+    live(late, chat);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(4);
+    const [slide] = heightSlides();
+    const end = (slide?.effect as KeyframeEffect | undefined)?.getKeyframes().at(-1)?.["blockSize"];
+    await finishSlides();
+    expect(parseFloat(String(end))).toBe(bar.getBoundingClientRect().height);
+  });
+
+  it("cuts a close under way when the fold row leaves, and shows the runs left", async () => {
+    const { toggle } = await folded(3);
+    toggle.click();
+    await finishSlides();
+    toggle.click();
+    heightSlides()[0]?.pause();
+    noteRunSettled(runs.at(-1) ?? "");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(2);
+    expect(fold.hidden).toBe(true);
+    expect(heightSlides()).toHaveLength(0);
+    expect(bar.hasAttribute("data-folded")).toBe(false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bar.hasAttribute("data-folded")).toBe(false);
+  });
+
+  it("opens with no slide when the fold row first appears with the list already open", async () => {
+    localStorage.setItem("marotte.ui-state", JSON.stringify({ run_bar_open: true }));
+    const { toggle } = await folded(3);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(bar.hasAttribute("data-folded")).toBe(false);
+    expect(heightSlides()).toHaveLength(0);
   });
 });

@@ -388,6 +388,146 @@ describe("slideBox", () => {
     expect(heightSlides(box)).toHaveLength(0);
   });
 
+  it("fades with the slide, and a reversal fades on from where the cut slide stood", async () => {
+    const box = mount(document.createElement("div"));
+    const apply = (o: boolean): void => {
+      box.style.blockSize = o ? "80px" : "20px";
+    };
+    apply(false);
+    slideBox(box, true, apply, { fade: true });
+    const [opening] = heightSlides(box);
+    const ends = (a: Animation | undefined): unknown[] =>
+      ((a?.effect as KeyframeEffect | undefined)?.getKeyframes() ?? []).map((k) => k["opacity"]);
+    expect(ends(opening)).toEqual(["0", "1"]);
+    if (opening === undefined) {
+      throw new Error("no open slide");
+    }
+    opening.pause();
+    opening.currentTime = Number(opening.effect?.getTiming().duration) / 2;
+    const mid = getComputedStyle(box).opacity;
+    expect(Number(mid)).toBeGreaterThan(0);
+    expect(Number(mid)).toBeLessThan(1);
+    slideBox(box, false, apply, { fade: true });
+    const [closing] = heightSlides(box);
+    expect(ends(closing)).toEqual([mid, "0"]);
+    await finish(box);
+    expect(heightSlides(box)).toHaveLength(0);
+  });
+
+  it("closes to a known height without laying the shut box out, so a scroller beside it stays put", async () => {
+    const column = mount(document.createElement("div"));
+    column.style.cssText = "display: flex; flex-direction: column; block-size: 300px";
+    // The transcript's shape: the scroller fills a flex item, as `#messages-wrap` fills `#messages-wrap-outer`. With
+    // native anchoring off, as a scroll owner that pins by script sets it, Chromium clamps the offset on the layout read.
+    const outer = document.createElement("div");
+    outer.style.cssText = "flex: 1; min-block-size: 0; position: relative";
+    const scroller = document.createElement("div");
+    scroller.style.cssText =
+      "position: absolute; inset: 0; overflow-y: auto; overflow-anchor: none";
+    const content = document.createElement("div");
+    content.style.blockSize = "1000px";
+    scroller.append(content);
+    outer.append(scroller);
+    const box = document.createElement("div");
+    box.style.flexShrink = "0";
+    column.append(outer, box);
+    const applied: boolean[] = [];
+    const apply = (o: boolean): void => {
+      applied.push(o);
+      box.style.blockSize = o ? "80px" : "0px";
+    };
+    const atEnd = (): void => {
+      apply(true);
+      applied.length = 0;
+      scroller.scrollTop = scroller.scrollHeight;
+    };
+
+    // The premise: a measured close lays the shut box out, and the grown scroller clamps its offset.
+    atEnd();
+    const pinned = scroller.scrollTop;
+    slideBox(box, false, apply);
+    expect(applied).toEqual([false, true]);
+    expect(scroller.scrollTop).toBeLessThan(pinned);
+    await finish(box);
+
+    atEnd();
+    const before = scroller.scrollTop;
+    slideBox(box, false, apply, { closedHeight: 0 });
+    expect(applied).toEqual([]);
+    expect(scroller.scrollTop).toBe(before);
+    const frames = (heightSlides(box)[0]?.effect as KeyframeEffect).getKeyframes();
+    expect(frames.map((k) => k["blockSize"])).toEqual(["80px", "0px"]);
+    await finish(box);
+    expect(applied).toEqual([false]);
+  });
+
+  it("keeps a scroller scrolled mid-slide, and clips a plain box without making it one", async () => {
+    const scroller = mount(document.createElement("div"));
+    scroller.style.overflowY = "auto";
+    const content = document.createElement("div");
+    content.style.blockSize = "400px";
+    scroller.append(content);
+    const plain = mount(document.createElement("div"));
+    const apply =
+      (box: HTMLElement) =>
+      (o: boolean): void => {
+        box.style.blockSize = o ? "100px" : "0px";
+      };
+    apply(scroller)(true);
+    apply(plain)(true);
+    scroller.scrollTop = 150;
+
+    slideBox(scroller, false, apply(scroller));
+    slideBox(plain, false, apply(plain));
+    for (const slide of [...heightSlides(scroller), ...heightSlides(plain)]) {
+      slide.pause();
+      slide.currentTime = Number(slide.effect?.getTiming().duration) / 2;
+    }
+    expect(scroller.scrollTop).toBe(150);
+    expect(getComputedStyle(plain).overflowY).toBe("clip");
+    await finish(scroller);
+    await finish(plain);
+  });
+
+  it("holds a scroller's offset through the open layout it measures, clamping only where the slide's height does", async () => {
+    const box = mount(document.createElement("div"));
+    box.style.overflowY = "auto";
+    const content = document.createElement("div");
+    content.style.blockSize = "400px";
+    box.append(content);
+    const apply = (o: boolean): void => {
+      box.style.blockSize = o ? "300px" : "0px";
+    };
+    apply(false);
+    box.scrollTop = 150;
+    expect(box.scrollTop, "a shut scroller keeps its offset").toBe(150);
+
+    slideBox(box, true, apply);
+    const [slide] = heightSlides(box);
+    if (slide === undefined) {
+      throw new Error("no slide");
+    }
+    slide.pause();
+    slide.currentTime = Number(slide.effect?.getTiming().duration) / 5;
+    expect(box.getBoundingClientRect().height, "room for the offset mid-slide").toBeLessThanOrEqual(
+      250,
+    );
+    expect(box.scrollTop).toBe(150);
+    await finish(box);
+    expect(box.scrollTop, "the open height's own limit").toBe(100);
+  });
+
+  it("slides with no fade unless asked", () => {
+    const box = mount(document.createElement("div"));
+    const apply = (o: boolean): void => {
+      box.style.blockSize = o ? "80px" : "20px";
+    };
+    apply(false);
+    slideBox(box, true, apply);
+    const frames = (heightSlides(box)[0]?.effect as KeyframeEffect).getKeyframes();
+    expect(frames.some((k) => "opacity" in k)).toBe(false);
+  });
+
   it("flips an unrendered box at once", () => {
     const box = document.createElement("div");
     const applied: boolean[] = [];

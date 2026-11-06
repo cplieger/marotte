@@ -1159,6 +1159,10 @@
 .run-bar-fold {
   flex-shrink: 0;
 
+  /* The gap moves with the list's slide, so the box neither steps before an open nor after a
+     close. */
+  transition: margin-block-end var(--uip-disclosure-duration) var(--uip-disclosure-easing);
+
   &:has(> [aria-expanded="true"]) {
     margin-block-end: var(--run-row-gap);
   }
@@ -1305,8 +1309,12 @@
   outline-offset: var(--focus-offset-inset);
 }
 
-.run-bar-row[hidden] {
-  display: none;
+/* Folded, the rows stay rendered: a row leaving `display: none` would replay its entry rise.
+   `visibility` takes them out of the tab order and the accessibility tree. `run-bar.ts` slides
+   between this and the open height. */
+.run-bar[data-folded] {
+  block-size: 0;
+  visibility: hidden;
 }
 
 /* From `FOLD_AT` runs the fold row heads the box, one line: a chevron, the mark and the
