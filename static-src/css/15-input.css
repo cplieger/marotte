@@ -254,22 +254,11 @@
     background var(--dur-micro) var(--ease-standard),
     border-color var(--dur-micro) var(--ease-standard);
 
-  /* THE TRAILING RUNG IS THE ×'s OWN WELL WHENEVER THERE IS A ×, which is `.tab`'s
-     asymmetric-inline-padding rule (10-shell-app.css) applied to this chip. `--sp-2`
-     is authored for TEXT at both ends; the trailing child here is a button that paints
-     a box on hover and on press, so its distance from the border is a visible
-     relationship and it wants the same well it has above and below. The well is the
-     block inset `align-items: center` already produces, so this is that arithmetic and
-     not a second number: `(content height - box) / 2`, 5px on both
-     tiers. Measured at 1440 fine before it, the border sat 9px from the leading
-     emoji's ink and 15px from the ×'s, which is the reported defect.
-
-     GATED ON THE BUTTON EXISTING, and that is forced rather than tidy:
-     `buildAttachmentPill` builds no × for a read-only pill (a sent turn's header,
-     `onRemove` omitted), where the trailing child is the ELLIPSISED LABEL — text, which
-     is what `--sp-2` is the rung for. Verified unmoved at 9px both ends.
-
-     The 2px is this chip's two borders. */
+  /* The × paints a box on hover and press, so its inline well matches the block well
+     `align-items: center` gives it: `(content height - box) / 2`, the 2px being the
+     chip's borders (`.tab`'s asymmetric padding, 10-shell-app.css). Gated on the ×
+     existing: a read-only chip (a sent turn's header) ends in its label, which keeps
+     `--sp-2`, the rung for text. */
   &:has(> .attachment-close) {
     padding-inline-end: calc((var(--btn-h) - 2px - var(--close-box)) / 2);
   }
@@ -296,8 +285,8 @@
   cursor: pointer;
   border-radius: var(--r-sm);
 
-  /* No floor of its own, so the chip above sets the height; `min-width: 0` lets the
-     name ellipsise. */
+  /* Drops the shared paint floor (61-mcp-tools.css) so the button is its text's height
+     inside the chip's `block-size`; `min-width: 0` lets the name ellipsise. */
   min-height: 0;
   position: relative;
 }
@@ -1976,14 +1965,12 @@
   }
 }
 
-/* THE MODEL AND MODE PILLS GO ICON-ONLY WHERE THE FULLEST LABELLED ROW STOPS FITTING:
-   mid-turn with the task list, at `--btn-h`, with "claude opus 5.5 · High" and "Default
-   V2". Measured content widths: 551px (mouse) and 575px (touch) where the tier and Send's
-   word show, 438px and 462px where they are hidden; each threshold adds about 8px for
-   font metrics (`button-size.test.ts` sweeps it). The fullest row decides, so
-   the text does not come and go as a turn starts. A container query cannot read
-   `--pill-gap`, so the tier is a selector. The names stay in each pill's aria-label and
-   tooltip (`status.ts`, `role-picker.ts`). */
+/* The model and mode pills go icon-only where the fullest labelled row (mid-turn, task
+   list shown) stops fitting with "claude opus 5.5 · High" and "Default V2": 551px mouse,
+   575px touch with the tier and Send's word, 438px and 462px without; each threshold adds
+   9 to 10px (`button-size.test.ts` sweeps it). A longer name ellipsises within its cap
+   above a threshold. A container query cannot read `--pill-gap`, so the tier is a
+   selector. The names stay in aria-label and the tooltip (`status.ts`, `role-picker.ts`). */
 @media (width > 48rem) and (height > 30rem) {
   @container pill-row (width < 35rem) {
     .pill-model > :is([id="ctx-model-pill"], .pill-model-effort),
