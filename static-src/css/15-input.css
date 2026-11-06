@@ -1980,7 +1980,7 @@
    mid-turn with the task list, at `--btn-h`, with "claude opus 5.5 · High" and "Default
    V2". Measured content widths: 551px (mouse) and 575px (touch) where the tier and Send's
    word show, 438px and 462px where they are hidden; each threshold adds about 8px for
-   font metrics (`composer-touch-size.test.ts` sweeps it). The fullest row decides, so
+   font metrics (`button-size.test.ts` sweeps it). The fullest row decides, so
    the text does not come and go as a turn starts. A container query cannot read
    `--pill-gap`, so the tier is a selector. The names stay in each pill's aria-label and
    tooltip (`status.ts`, `role-picker.ts`). */
