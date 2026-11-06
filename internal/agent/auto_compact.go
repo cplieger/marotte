@@ -452,8 +452,8 @@ func (a *autoCompactor) call(ctx context.Context, chatID marotte.ChatID, b *shar
 // settle ends c in the queue's section, once: a later settle finds c done and does nothing, and done closes there,
 // so a joiner returns after it. An accepted call satisfies the request queued during it; one KAS refused under a turn
 // it opened is queued for that turn's end unless the reader cancelled it; any other end drops the queue, with a toast
-// for a request queued during the call, and for c's own shown run when report is set (the press that made an idle
-// call hears its own refusal).
+// for a request queued during the call, and for c's own shown run when report is set (an idle press passes false: its
+// reply carries its refusal).
 func (a *autoCompactor) settle(ctx context.Context, chatID marotte.ChatID, c *compactCall, report bool) {
 	toast, requeued := false, false
 	err := a.queue.section(context.WithoutCancel(ctx), chatID, func(t queueTurn, row func(bool) error) error {
