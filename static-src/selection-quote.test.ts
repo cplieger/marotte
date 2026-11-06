@@ -1,15 +1,44 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { page } from "vitest/browser";
+import type * as Chat from "./chat.js";
+import type * as Dom from "./dom.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { QUOTE_ATTRIBUTION } from "./message-quote.js";
-import { initSelectionQuote } from "./selection-quote.js";
 import { setActive, setSessions } from "./store.js";
+import type { Session } from "./types.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { makeSession, makeTurn } from "./__test-helpers__/model.js";
 
 const { openTangentChat } = vi.hoisted(() => ({
   openTangentChat: vi.fn<(parentChatID: string) => Promise<string>>(),
 }));
-vi.mock("./chat.js", () => ({ openTangentChat }));
+vi.mock("./chat.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Chat>()),
+  openTangentChat,
+}));
+// The real chat.js graph runs effects against the whole app shell; an element this file does not build is a
+// detached stub, so only the shell below is real.
+vi.mock("./dom.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof Dom>();
+  const stubs = new Map<string, HTMLElement>();
+  const stub = (key: string): HTMLElement => {
+    const made = stubs.get(key) ?? document.createElement("div");
+    stubs.set(key, made);
+    return made;
+  };
+  const orStub = (key: string, read: () => unknown): unknown => {
+    try {
+      return read();
+    } catch {
+      return stub(key);
+    }
+  };
+  return {
+    ...actual,
+    $: new Proxy(actual.$, { get: (t, k: string) => orStub(k, () => Reflect.get(t, k)) }),
+    byId: (id: string) => orStub(id, () => actual.byId(id)),
+  };
+});
 
 // The app shell this module reads through `$`, built once because the listeners bind at init.
 const wrap = document.createElement("div");
@@ -25,23 +54,23 @@ const runBar = document.createElement("ul");
 runBar.id = "run-bar";
 const sidebar = document.createElement("nav");
 sidebar.id = "sidebar";
+document.body.append(sidebar, wrap, runBarFold, runBar, input);
 
-type Session = Parameters<typeof setSessions>[0][number];
+// Imported after the shell exists, so the chat.js graph's load-time reads find the real `#messages`.
+const { initSelectionQuote } = await import("./selection-quote.js");
 
 /** A chat as the store holds it: `turns` above zero is a conversation a tangent can inherit. */
 function chat(id: string, turns: number): Session {
-  return {
+  return makeSession({
     id,
     name: id,
-    turn_count: turns,
-    turn_order: Array.from({ length: turns }, (_, i) => `t${String(i)}`),
-  } as unknown as Session;
+    turns: Array.from({ length: turns }, (_, i) => makeTurn({ id: `t${String(i)}`, n: i + 1 })),
+  });
 }
 
 const NO_TANGENT = "Send a message first, then start a tangent from it";
 
 beforeAll(() => {
-  document.body.append(sidebar, wrap, runBarFold, runBar, input);
   initSelectionQuote();
 });
 
