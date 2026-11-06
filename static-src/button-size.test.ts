@@ -36,12 +36,13 @@ const TOOLBAR = [
 /** Icon-only by construction, so square at the reference; the context pie carries its percentage. */
 const SQUARE = ["chat-options-btn", "task-list-pill", "midturn-send-btn", "scroll-bottom"];
 
-/** The longest names the rig's chats carry, so a fit decided on them holds for the common case. */
-const MODEL_ID = "claude-opus-5.5";
-const MODEL = "claude opus 5.5";
-const EFFORT = "High";
-const MODE_ID = "default-v2";
-const MODE = "Default V2";
+/** The widest pills kiro-cli's catalog renders: its widest model with its widest tier label, and its widest built-in
+ *  mode. The fit thresholds in `15-input.css` are decided on them. */
+const MODEL_ID = "claude-sonnet-5.5";
+const MODEL = "claude sonnet 5.5";
+const EFFORT = "medium";
+const MODE_ID = "semantic_reviewer";
+const MODE = "Semantic Reviewer";
 
 /** The production writers of the model and mode pills, loaded once a page is mounted: their module graph
  *  resolves page elements at import, and `initRolePicker` installs a lasting effect, so it runs once. */
