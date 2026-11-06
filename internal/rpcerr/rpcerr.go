@@ -100,7 +100,7 @@ type Mapped struct {
 // The KAS class names and retry types marotte keys a remedy on.
 const (
 	RetryThrottling                = "THROTTLING"
-	ContextWindowExceededError     = "ContextWindowExceededError"
+	contextWindowExceededError     = "ContextWindowExceededError"
 	genericValidationError         = "GenericValidationError"
 	modelRegistryUnavailableError  = "ModelRegistryUnavailableError"
 	mappedProseCap                 = 1024
@@ -125,7 +125,7 @@ const (
 // TestModelCallClassesAreKnown), and the ones measured on real session logs. Any
 // other errorType is an unmapped error whose class name the bundle minified.
 var knownClasses = map[string]struct{}{
-	ContextWindowExceededError:          {},
+	contextWindowExceededError:          {},
 	modelRegistryUnavailableError:       {},
 	"ModelRegistryUnauthenticatedError": {},
 	"ModelRegistryAccessDeniedError":    {},
@@ -211,7 +211,7 @@ var kasRequestIDRe = regexp.MustCompile(`\(Request ID: ([^()\s]+)\)\s*$`)
 // request id.
 func Account(m Mapped, message string) (text string, contextLimit bool) {
 	switch {
-	case m.ErrorType == ContextWindowExceededError:
+	case m.ErrorType == contextWindowExceededError:
 		// KAS's own sentence names a setting the reader cannot reach.
 		return withRequestID(contextLimitSentence, requestIDOf(m, message)), true
 	case m.ErrorType == genericValidationError && requestSizeRe.MatchString(strings.TrimSpace(message)):

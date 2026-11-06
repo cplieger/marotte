@@ -41,13 +41,12 @@ const lazySignInTTL = 300 * time.Second
 const maxConsentAnchors = 8
 
 // signInAnchor is a consent URL KAS opened, identified by its state. Only relayed changes after it is created, so
-// authURL is read without the lock. attempt is the Sign in it was attributed to, 0 when none; server and flowID are
-// what KAS named it by, flowID set only on a mid-session re-auth.
+// authURL is read without the lock. attempt is the Sign in it was attributed to, 0 when none; flowID is KAS's id
+// for a mid-session re-auth, "" otherwise.
 type signInAnchor struct {
 	expires time.Time
 	state   string
 	authURL string
-	server  string
 	flowID  string
 	attempt uint64
 	// relayed is the anchor's single-use relay latch (mcp_oauth_relay.go), set on reservation and kept on
@@ -693,7 +692,7 @@ func (reg *mcpRegistry) anchorConsentURL(ctx context.Context, req consentRequest
 	standing := reg.standingSignInLocked(req.Server, now)
 	if state != "" && standing.attempt != 0 && reg.attemptAnchorLocked(standing.attempt) == nil {
 		reg.addAnchorLocked(&signInAnchor{
-			expires: standing.deadline, state: state, authURL: authURL, server: req.Server, flowID: req.FlowID, attempt: standing.attempt,
+			expires: standing.deadline, state: state, authURL: authURL, flowID: req.FlowID, attempt: standing.attempt,
 		})
 		d := reg.deriveLocked(configured)
 		reg.mu.Unlock()
@@ -707,7 +706,7 @@ func (reg *mcpRegistry) anchorConsentURL(ctx context.Context, req consentRequest
 	}
 	expires := now.Add(lazySignInTTL)
 	if state != "" {
-		reg.addAnchorLocked(&signInAnchor{expires: expires, state: state, authURL: authURL, server: req.Server, flowID: req.FlowID})
+		reg.addAnchorLocked(&signInAnchor{expires: expires, state: state, authURL: authURL, flowID: req.FlowID})
 	}
 	reg.mu.Unlock()
 	reg.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventOpenExternalURL, "", marotte.OpenExternalURLPayload{

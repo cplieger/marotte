@@ -312,28 +312,22 @@ func TestSignIn_IdCStoresTheProfileAndTheClass(t *testing.T) {
 	}
 }
 
-// switchCase signs in as alice, optionally signs out, then signs in as bob through bobParams.
-func switchCase(t *testing.T, aliceParams, bobParams signin.FlowParams, aliceProfiles, bobProfiles scripted, signOutBetween bool) (*vaultHarness, answer) {
+// switchCase signs in as alice, then as bob through bobParams.
+func switchCase(t *testing.T, aliceParams, bobParams signin.FlowParams, aliceProfiles, bobProfiles scripted) *vaultHarness {
 	t.Helper()
 	h := newVaultHarness(t, "alice")
 	h.signIn("alice", aliceParams, aliceProfiles)
-	before, ok := h.answer()
-	if !ok {
+	if _, ok := h.answer(); !ok {
 		t.Fatal("alice was not answered")
-	}
-	if signOutBetween {
-		if err := h.v.SignOut(ID); err != nil {
-			t.Fatal(err)
-		}
 	}
 	if st := h.signIn("bob", bobParams, bobProfiles); st.Kind != signin.StatusSignedIn {
 		t.Fatalf("bob's sign-in = %+v", st)
 	}
-	return h, before
+	return h
 }
 
 func TestSignIn_BuilderIDSwitchNeverRestarts(t *testing.T) {
-	h, _ := switchCase(t, builderID(), builderID(), profilesOf("alice"), noProfiles, false)
+	h := switchCase(t, builderID(), builderID(), profilesOf("alice"), noProfiles)
 	if h.v.AccountPending(ID) {
 		t.Error("AccountPending after a Builder ID to Builder ID switch")
 	}
@@ -343,7 +337,7 @@ func TestSignIn_BuilderIDSwitchNeverRestarts(t *testing.T) {
 }
 
 func TestSignIn_SameClassSwitchWithArnNeverRestarts(t *testing.T) {
-	h, _ := switchCase(t, idcParams, idcParams, profilesOf("alice"), profilesOf("bob"), false)
+	h := switchCase(t, idcParams, idcParams, profilesOf("alice"), profilesOf("bob"))
 	if h.v.AccountPending(ID) {
 		t.Error("AccountPending after a same-class switch with an ARN")
 	}
@@ -353,7 +347,7 @@ func TestSignIn_SameClassSwitchWithArnNeverRestarts(t *testing.T) {
 }
 
 func TestSignIn_ClassChangeMakesRestartPendingAndKeepsTheOldProvider(t *testing.T) {
-	h, _ := switchCase(t, builderID(), idcParams, profilesOf("alice"), profilesOf("bob"), false)
+	h := switchCase(t, builderID(), idcParams, profilesOf("alice"), profilesOf("bob"))
 	if !h.v.AccountPending(ID) {
 		t.Error("AccountPending = false after Builder ID to IAM Identity Center")
 	}

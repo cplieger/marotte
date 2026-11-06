@@ -75,7 +75,7 @@ func logOriginRefusal(r *http.Request, gate, reason string) {
 		"gate", gate,
 		"reason", reason,
 		"host", logsafe.Field(r.Host),
-		"origin", originBase(r.Header.Get("Origin")),
+		"origin", logsafe.Field(originBase(r.Header.Get("Origin"))),
 		"sec_fetch_site", logsafe.Field(r.Header.Get("Sec-Fetch-Site")),
 		"request_id", httpserver.RequestIDFromContext(r.Context()))
 }

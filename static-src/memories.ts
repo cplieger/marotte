@@ -31,7 +31,6 @@ interface MemorySync {
   readonly state: string;
   readonly reason: string;
   readonly pending: number;
-  readonly enabled: boolean;
   readonly account: boolean;
   readonly device: boolean;
   /** The layer's name when a lock fixes the choice, "" otherwise. */
@@ -95,7 +94,6 @@ function decodeMemorySync(v: unknown): MemorySync {
     state: reqStr(status, "state"),
     reason: optStr(status, "reason") ?? "",
     pending: typeof status["pending"] === "number" ? status["pending"] : 0,
-    enabled: choice["enabled"] === true,
     account: choice["account"] === true,
     device: choice["device"] === true,
     lockedBy: lock === undefined ? "" : (optStr(lock, "name") ?? optStr(lock, "layer") ?? ""),

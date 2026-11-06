@@ -231,7 +231,7 @@ func TestSignIn_ConsentURLForAnotherServerIsNotTakenByTheStandingSignIn(t *testi
 	awaitResets(t, lane, 1)
 	joinInflight(t, h)
 
-	req := consentRequest{URL: "https://p.example/a?state=s", Server: "github", Completion: "notification", FlowID: "f1"}
+	req := consentRequest{URL: "https://p.example/a?state=s", Server: "github", FlowID: "f1"}
 	if shown := h.mcpRegistry.anchorConsentURL(t.Context(), req, true); shown.how != consentBanner {
 		t.Errorf("github's consent URL = %+v, want a banner", shown)
 	}

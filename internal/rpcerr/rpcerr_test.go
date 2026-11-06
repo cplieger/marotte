@@ -197,14 +197,14 @@ func TestAccount(t *testing.T) {
 	}{
 		{
 			"a context overflow names the compact remedy",
-			Mapped{ErrorType: ContextWindowExceededError, RequestID: "r1"},
+			Mapped{ErrorType: contextWindowExceededError, RequestID: "r1"},
 			"Context limit exceeded unexpectedly. Please try again.",
 			"This chat reached the model's context limit. Compact the context, then send the prompt again. (request r1)",
 			true,
 		},
 		{
 			"context limit keeps the request id from the message",
-			Mapped{ErrorType: ContextWindowExceededError},
+			Mapped{ErrorType: contextWindowExceededError},
 			"Context limit exceeded unexpectedly. Please try again. (Request ID: 7f3a-b2)",
 			"This chat reached the model's context limit. Compact the context, then send the prompt again. (request 7f3a-b2)",
 			true,
