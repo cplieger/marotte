@@ -252,24 +252,20 @@ func TestPromptFailure_TheFailureReasonIsSanitizedAndBounded(t *testing.T) {
 
 // TestWireTurnEnd_TruncationCompletesRatherThanFails pins that a turn cut at its token bound finished its allowed work.
 func TestWireTurnEnd_TruncationCompletesRatherThanFails(t *testing.T) {
-	for _, stop := range []marotte.StopReason{marotte.StopReasonMaxTokens} {
-		t.Run(string(stop), func(t *testing.T) {
-			h, cs, _ := newTestHub()
-			streamingPromptTurn(t, h, "c1", "half an answer")
+	h, cs, _ := newTestHub()
+	streamingPromptTurn(t, h, "c1", "half an answer")
 
-			h.coord.WireTurnEnd(t.Context(), "c1", stop)
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonMaxTokens)
 
-			closes := closesOf(t, logOf(t, cs, "c1"))
-			if len(closes) != 1 {
-				t.Fatalf("turn_close entries = %d, want exactly one", len(closes))
-			}
-			if closes[0].Outcome != marotte.TurnOutcomeCompleted || !closes[0].Truncated {
-				t.Errorf("turn_close = outcome %q truncated %v, want completed + truncated", closes[0].Outcome, closes[0].Truncated)
-			}
-			if closes[0].StopReasonRaw != string(stop) {
-				t.Errorf("stop_reason_raw = %q, want %q", closes[0].StopReasonRaw, stop)
-			}
-		})
+	closes := closesOf(t, logOf(t, cs, "c1"))
+	if len(closes) != 1 {
+		t.Fatalf("turn_close entries = %d, want exactly one", len(closes))
+	}
+	if closes[0].Outcome != marotte.TurnOutcomeCompleted || !closes[0].Truncated {
+		t.Errorf("turn_close = outcome %q truncated %v, want completed + truncated", closes[0].Outcome, closes[0].Truncated)
+	}
+	if closes[0].StopReasonRaw != string(marotte.StopReasonMaxTokens) {
+		t.Errorf("stop_reason_raw = %q, want %q", closes[0].StopReasonRaw, marotte.StopReasonMaxTokens)
 	}
 }
 

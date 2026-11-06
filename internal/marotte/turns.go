@@ -101,11 +101,12 @@ func DefaultFailureReason(o TurnOutcome) string {
 }
 
 // ModelCallLimitTurnReason and ModelCallLimitStepReason are what a FailureKindModelCallLimit
-// close says, for a chat turn and a workflow step. 300 is KAS's per-turn agent iteration
-// limit (the chat graph's agentIterationLimit in kiro-cli 3.1.0's acp-server.js); the stop carries no count.
+// close says, for a chat turn and a workflow step. They name no count: KAS's agentIterationLimit
+// is per graph (300 for chat, custom and plan, 1000 for spec generation in kiro-cli 3.1.0's
+// acp-server.js), and the stop carries neither the count nor the graph.
 const (
-	ModelCallLimitTurnReason = "kiro-cli stopped this turn after 300 model calls, so its work may be unfinished. Type \"continue\" to carry on, or split the work into smaller prompts."
-	ModelCallLimitStepReason = "kiro-cli stopped this step after 300 model calls in one turn, so its work may be unfinished. Rerun the step, or split its work into smaller steps."
+	ModelCallLimitTurnReason = "kiro-cli stopped this turn at its model-call limit, so its work may be unfinished. Type \"continue\" to carry on, or split the work into smaller prompts."
+	ModelCallLimitStepReason = "kiro-cli stopped this step at its model-call limit for one turn, so its work may be unfinished. Rerun the step, or split its work into smaller steps."
 )
 
 // UnobservedRunReason is what a prompt turn says when kiro-cli answered it end_turn without bracketing its run or
