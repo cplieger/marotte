@@ -9,7 +9,7 @@ import { page } from "vitest/browser";
 import indexHtml from "../static/index.html?raw";
 import { buildAttachmentPill } from "./attachment-pill.js";
 import { iconEl } from "./icon-el.js";
-import { ICON_CANCEL, ICON_HOURGLASS, ICON_MODEL, ICON_SEND } from "./icons.js";
+import { ICON_CANCEL, ICON_CLOSE, ICON_HOURGLASS, ICON_MODEL, ICON_SEND } from "./icons.js";
 import { setActive, setSessions } from "./store.js";
 import type { updateContextBar as updateContextBarFn } from "./status.js";
 import { makeSession } from "./__test-helpers__/model.js";
@@ -727,19 +727,39 @@ async function mountSidebar(
   }
   const tab = document.createElement("div");
   tab.className = "tab";
-  tab.setAttribute("role", "tab");
+  tab.dataset["tabId"] = "c1";
   tab.dataset["kind"] = "chat";
+  tab.setAttribute("role", "tab");
   const name = document.createElement("span");
   name.className = "tab-name";
   name.textContent = "Rebuild the timeline rail";
   const close = document.createElement("span");
   close.className = "tab-close";
   close.setAttribute("aria-hidden", "true");
-  close.appendChild(iconEl(ICON_CANCEL));
+  close.appendChild(iconEl(ICON_CLOSE));
   tab.append(name, close);
   byId("tab-list").replaceChildren(tab);
   expect(shown(tab) && onScreen(tab), "the tab row is on screen").toBe(true);
   return tab;
+}
+
+/** Runs `check` over the held controls of each surface, then of the opened sidebar alone: a phone's drawer is
+ *  off screen on the other surfaces, and open it is a layer over the chat, not its neighbour. */
+async function eachSurface(
+  viewport: readonly [number, number],
+  pointer: Pointer,
+  check: (controls: { el: HTMLElement; family: Family }[], where: string) => void,
+): Promise<void> {
+  for (const surface of SURFACES) {
+    await mountSurface(viewport, pointer, surface);
+    check(held(), surface);
+  }
+  await mountSidebar(viewport, pointer);
+  const sidebar = byId("sidebar");
+  check(
+    held().filter(({ el }) => sidebar.contains(el)),
+    "sidebar",
+  );
 }
 
 describe("the button census", () => {
@@ -760,8 +780,7 @@ describe("the button census", () => {
       const at = `${preset} ${pointer}`;
 
       it(`paints every held control at the toolbar's --btn-h, ${at}`, async () => {
-        for (const surface of SURFACES) {
-          await mountSurface(viewport, pointer, surface);
+        await eachSurface(viewport, pointer, (controls, surface) => {
           const btn = tokenPx("--btn-h");
           const ref = byId("settings-btn").getBoundingClientRect();
           expect([ref.width, ref.height], `${surface}: the toolbar paints --btn-h`).toEqual([
@@ -769,7 +788,7 @@ describe("the button census", () => {
             btn,
           ]);
           const off: string[] = [];
-          for (const { el, family } of held()) {
+          for (const { el, family } of controls) {
             if (family.kind !== "toolbar" || excepted(el, family, at)) {
               continue;
             }
@@ -782,16 +801,15 @@ describe("the button census", () => {
             }
           }
           expect(off, `${surface}: painted at --btn-h (${String(btn)}px)`).toEqual([]);
-        }
+        });
       });
 
       it(`gives every held control a target at the floor, ${at}`, async () => {
-        for (const surface of SURFACES) {
-          await mountSurface(viewport, pointer, surface);
+        await eachSurface(viewport, pointer, (controls, surface) => {
           const floor = floorPx();
           expect(floor, "the tier's floor").toBe(pointer === "coarse" ? 44 : 24);
           const off: string[] = [];
-          for (const { el, family } of held()) {
+          for (const { el, family } of controls) {
             const hit = hitRect(el);
             // The probe reaches the declared target's edges: a press 1px inside each one answers to the control.
             const t = targetRect(el);
@@ -815,13 +833,12 @@ describe("the button census", () => {
             }
           }
           expect(off, `${surface}: every target clears ${String(floor)}px`).toEqual([]);
-        }
+        });
       });
 
       it(`lets no two held targets overlap, ${at}`, async () => {
-        for (const surface of SURFACES) {
-          await mountSurface(viewport, pointer, surface);
-          const all = held().map(({ el }) => el);
+        await eachSurface(viewport, pointer, (controls, surface) => {
+          const all = controls.map(({ el }) => el);
           const crossed: string[] = [];
           for (const [i, a] of all.entries()) {
             const ta = targetRect(a);
@@ -838,7 +855,7 @@ describe("the button census", () => {
             }
           }
           expect(crossed, `${surface}: no two targets overlap`).toEqual([]);
-        }
+        });
       });
 
       it(`paints every held tab-row control at the sidebar tab's height, ${at}`, async () => {
