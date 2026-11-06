@@ -179,8 +179,9 @@ a.run-step-head:focus-visible,
  *     (`.turn-ledger-summary` with no files to list, `.send-btn`) declares
  *     `opacity: 1`, or this rule would dim information nobody is being refused.
  *
- * `aria-disabled` is deliberately NOT matched: nothing in the app sets it, and a
- * selector for a state that cannot occur is a claim no reader can check.
+ * `aria-disabled` is deliberately NOT matched: the controls that set it (the tab
+ * context menu, the slash menu, the selection popover) keep hover and focus for a
+ * reason or a keyboard path, and each styles that face at its own rule.
  *
  * A switch's input is invisible, so its slider carries the face (a switch an
  * organization pins is the one disabled switch). */

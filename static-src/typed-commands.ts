@@ -6,6 +6,7 @@ import { compactChat } from "./actions/chat.js";
 import { dropTurnLocally, get, isBusy, isEmptyChat } from "./store.js";
 import { chatNotice } from "./notice-subject.js";
 import { loadSettings } from "./persist.js";
+import { tangentRefusal } from "./tangent-refusal.js";
 import type { Session } from "./types.js";
 
 /** Returns true when it consumed the input, so the caller must NOT also send it as a prompt. */
@@ -52,8 +53,9 @@ const HANDLERS: Readonly<Record<string, Verb>> = {
   tangent: {
     description: "Start a tangent from this conversation",
     run: (chatID) => {
-      if (isEmptyChat(get(chatID))) {
-        chatNotice(chatID, "Send a message first, then start a tangent from it.");
+      const refusal = tangentRefusal(get(chatID));
+      if (refusal !== null) {
+        chatNotice(chatID, refusal);
         return true;
       }
       // Lazy: chat.ts imports submit.ts, which imports this module.

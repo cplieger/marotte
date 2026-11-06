@@ -1425,9 +1425,10 @@ button.turn-wake-row-run:focus-visible {
   line-height: 1.4;
 }
 
-/* "Quote in reply" beside a selection of transcript content (selection-quote.ts). A gesture-summoned
- * overlay, so it takes the context menu's panel and shadow (12-tabs.css `.tab-context-menu`);
- * `.uip-popover` supplies the fixed position and the z-index. */
+/* "Quote in reply" and "Ask in a tangent" beside a selection of transcript content
+ * (selection-quote.ts). A gesture-summoned overlay, so it takes the context menu's panel and
+ * shadow (12-tabs.css `.tab-context-menu`); `.uip-popover` supplies the fixed position and the
+ * z-index. */
 .selection-quote {
   padding: var(--sp-1);
   border: 1px solid var(--c-border);
@@ -1462,10 +1463,16 @@ button.turn-wake-row-run:focus-visible {
   &.is-pressed {
     box-shadow: inset 0 0 0 100vmax var(--c-press);
   }
+
+  /* `aria-disabled`, not `disabled`, so the tooltip naming the reason still gets hover and focus. */
+  &[aria-disabled="true"] {
+    color: var(--c-text-tertiary);
+    cursor: default;
+  }
 }
 
 @media (any-hover: hover) {
-  .selection-quote-btn:hover {
+  .selection-quote-btn:not([aria-disabled="true"]):hover {
     background: var(--c-hover);
   }
 }

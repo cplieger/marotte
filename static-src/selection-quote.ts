@@ -1,13 +1,17 @@
-// "Quote in reply": a button beside a text selection inside one source of transcript content, which appends the
-// selected text to the composer as a quote naming that source. The button follows the selection: it shows while one
-// qualifies and goes when it stops.
+// "Quote in reply" and "Ask in a tangent": buttons beside a text selection inside one source of transcript content.
+// The first appends the selected text to the composer as a quote naming that source; the second starts a tangent with
+// that quote in the tangent's composer. The buttons follow the selection: they show while one qualifies and go when it
+// stops.
 
-import { el } from "@cplieger/ui";
+import { el, effect } from "@cplieger/ui";
 import { createPopover, type PopoverController } from "@cplieger/ui/popover";
+import { openTangentChat } from "./chat.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { setComposerValue } from "./composer-value.js";
 import { $ } from "./dom.js";
 import { appendQuote, codeSpan, quoteSelection } from "./message-quote.js";
+import { activeSession } from "./store.js";
+import { tangentRefusal } from "./tangent-refusal.js";
 
 /** A control: its text is a UI label, never quoted. */
 const CONTROL = [
@@ -192,17 +196,44 @@ function endRect(range: Range): DOMRect {
   return new DOMRect(last.right, last.bottom, 0, 0);
 }
 
+/** Append `block` to whatever chat the composer holds now, focused with the caret at the end. */
+function writeQuote(block: string): void {
+  const input = $.promptInput;
+  setComposerValue(appendQuote(input.value, block));
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
+/** A popover button that presses without moving focus or collapsing the selection it quotes. */
+function quoteButton(label: string): HTMLElement {
+  const btn = el("button", { type: "button", className: "selection-quote-btn" }, label);
+  btn.addEventListener("pointerdown", (ev) => {
+    ev.preventDefault();
+    if (btn.getAttribute("aria-disabled") !== "true") {
+      btn.classList.add("is-pressed");
+    }
+  });
+  for (const type of ["pointerup", "pointercancel", "pointerleave"] as const) {
+    btn.addEventListener(type, () => {
+      btn.classList.remove("is-pressed");
+    });
+  }
+  return btn;
+}
+
 let wired = false;
 
-/** Watch the document's selection and offer "Quote in reply" for one inside one transcript source. Idempotent. */
+/** Watch the document's selection and offer "Quote in reply" and "Ask in a tangent" for one inside one transcript
+ *  source. Idempotent. */
 export function initSelectionQuote(): void {
   if (wired) {
     return;
   }
   wired = true;
   let range: Range | null = null;
-  const btn = el("button", { type: "button", className: "selection-quote-btn" }, "Quote in reply");
-  const panel = el("div", { className: "selection-quote" }, btn);
+  const btn = quoteButton("Quote in reply");
+  const askBtn = quoteButton("Ask in a tangent");
+  const panel = el("div", { className: "selection-quote" }, btn, askBtn);
   const pop: PopoverController = createPopover(
     { getBoundingClientRect: () => (range === null ? new DOMRect() : endRect(range)) },
     panel,
@@ -256,27 +287,55 @@ export function initSelectionQuote(): void {
     { passive: true },
   );
 
-  // Pressing the button must not move focus or collapse the selection it quotes.
-  btn.addEventListener("pointerdown", (ev) => {
-    ev.preventDefault();
-    btn.classList.add("is-pressed");
-  });
-  for (const type of ["pointerup", "pointercancel", "pointerleave"] as const) {
-    btn.addEventListener(type, () => {
-      btn.classList.remove("is-pressed");
-    });
-  }
-  btn.addEventListener("click", () => {
+  /** The qualifying selection's quote, the popover dismissed and the selection cleared; null when it stopped
+   *  qualifying. */
+  const takeQuote = (): string | null => {
     const found = selectedQuote();
     pop.hide();
     range = null;
     if (found === null) {
+      return null;
+    }
+    document.getSelection()?.removeAllRanges();
+    return found.block;
+  };
+
+  btn.addEventListener("click", () => {
+    const block = takeQuote();
+    if (block !== null) {
+      writeQuote(block);
+    }
+  });
+
+  // `aria-disabled` rather than `disabled`: a disabled button takes no hover or focus, so its tooltip could not say why.
+  effect(() => {
+    const refusal = tangentRefusal(activeSession.value);
+    if ((askBtn.dataset["tooltip"] ?? null) === refusal) {
       return;
     }
-    const input = $.promptInput;
-    setComposerValue(appendQuote(input.value, found.block));
-    document.getSelection()?.removeAllRanges();
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
+    if (refusal === null) {
+      askBtn.removeAttribute("aria-disabled");
+      delete askBtn.dataset["tooltip"];
+    } else {
+      askBtn.setAttribute("aria-disabled", "true");
+      askBtn.dataset["tooltip"] = refusal;
+    }
+  });
+  askBtn.addEventListener("click", () => {
+    // Re-read at click time, as the Chat options row does: the popover outlives a chat switch.
+    const session = activeSession.peek();
+    if (session === undefined || tangentRefusal(session) !== null) {
+      return;
+    }
+    const block = takeQuote();
+    if (block === null) {
+      return;
+    }
+    // "" when the fork failed or the reader moved elsewhere first: the quote has no tangent composer to land in.
+    void openTangentChat(session.id).then((id) => {
+      if (id !== "") {
+        writeQuote(block);
+      }
+    });
   });
 }
