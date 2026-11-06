@@ -60,12 +60,11 @@ describe("the model pill's pending badge", () => {
     await paint(session("c-pending", { pending_model: "claude-sonnet-5" }));
 
     expect($.switchModelBtn.classList.contains("pending")).toBe(true);
-    expect($.switchModelBtn.getAttribute("data-tooltip")).toBe(
-      "Switch to claude sonnet 5 after current turn",
-    );
-    expect($.switchModelBtn.getAttribute("aria-label")).toBe(
-      "Switch model, currently claude opus 5, switching to claude sonnet 5 after this turn",
-    );
+    // The tooltip is the accessible name, because an icon-only pill shows no model name to hover for.
+    const name =
+      "Switch model, currently claude opus 5, switching to claude sonnet 5 after this turn";
+    expect($.switchModelBtn.getAttribute("data-tooltip")).toBe(name);
+    expect($.switchModelBtn.getAttribute("aria-label")).toBe(name);
   });
 
   it("clears the badge when a header arrives with the field empty", async () => {
@@ -75,7 +74,9 @@ describe("the model pill's pending badge", () => {
     await paint(session("c-applied", { model: "claude-sonnet-5", pending_model: "" }));
 
     expect($.switchModelBtn.classList.contains("pending")).toBe(false);
-    expect($.switchModelBtn.getAttribute("data-tooltip")).toBe("Switch model");
+    expect($.switchModelBtn.getAttribute("data-tooltip")).toBe(
+      "Switch model, currently claude sonnet 5",
+    );
     expect($.switchModelBtn.getAttribute("aria-label")).toBe(
       "Switch model, currently claude sonnet 5",
     );
@@ -85,6 +86,8 @@ describe("the model pill's pending badge", () => {
     await paint(session("c-none"));
 
     expect($.switchModelBtn.classList.contains("pending")).toBe(false);
-    expect($.switchModelBtn.getAttribute("data-tooltip")).toBe("Switch model");
+    expect($.switchModelBtn.getAttribute("data-tooltip")).toBe(
+      "Switch model, currently claude opus 5",
+    );
   });
 });

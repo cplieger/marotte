@@ -41,7 +41,7 @@ function stageAttachments(): void {
   }
 }
 
-/** Paren-balanced, because `--composer-ctl-h` is a `max()` over a token and `[^)]+` stops at the first inner `)`. */
+/** Paren-balanced, because a declaration can be a `max()` over a token and `[^)]+` stops at the first inner `)`. */
 function declaration(body: string, property: string): string | null {
   const at = body.indexOf(`${property}:`);
   if (at === -1) {
@@ -69,28 +69,24 @@ function members(selector: string): string[] {
 describe("the height's declarations, read from source", () => {
   const css = loadCSS("15-input.css");
 
-  it("declares one control height for the box, the same on every tier", () => {
-    const form = ruleContaining(css, '[id="prompt-form"]', "top");
-    // The painted box is 32 under a mouse and a finger; the target grows, never the box.
-    expect(form.body).toMatch(/--composer-ctl-h:\s*2rem;/);
-    // The floor must not be read here, or the painted box takes the 44px target's measure ("grown buttons look empty").
-    expect(form.body).not.toMatch(/--composer-ctl-h:[^;]*--hit-floor/);
-    // One declaration, so no second selector re-decides the tier.
+  it("declares no control height of its own, so the box cannot drift from the toolbar's buttons", () => {
+    // The toolbar's `--btn-h` is the one button size; a composer copy of it is how the row painted 32 beside 36.
     const writers = allRules(css)
       .filter((r) => /--composer-ctl-h:/.test(r.body))
       .map((r) => r.selector);
-    expect(writers.map(members)).toEqual([['[id="prompt-form"]', '[id="run-composer"]']]);
+    expect(writers).toEqual([]);
+    expect(css).not.toMatch(/var\(--composer-ctl-h/);
   });
 
   it("derives the textarea's resting band from that height and the row's own inset", () => {
     const input = ruleContaining(css, '[id="prompt-input"]', "top");
     // The row's padding pays for the expander's block reach (`--composer-pill-pad`, floored at `--pill-inset`).
     expect(input.body).toMatch(
-      /--composer-rest-h:\s*calc\(var\(--composer-ctl-h\)\s*\+\s*2\s*\*\s*var\(--composer-pill-pad\)\)/,
+      /--composer-rest-h:\s*calc\(var\(--btn-h\)\s*\+\s*2\s*\*\s*var\(--composer-pill-pad\)\)/,
     );
   });
 
-  it("gives the two controls that height instead of a literal", () => {
+  it("gives the two controls the toolbar's height instead of a literal", () => {
     for (const selector of [".pill", ".send-btn"]) {
       const rule = ruleContaining(css, selector, "top");
       // Cut at the first nested block: both rules carry a nested `& svg` glyph sizing.
@@ -98,30 +94,29 @@ describe("the height's declarations, read from source", () => {
       const own = brace === -1 ? rule.body : rule.body.slice(0, brace);
       // Either spelling (`height` on `.pill`, `block-size` on `.send-btn`). Only the block axis is shared.
       expect(own, `${selector} reads the shared height`).toMatch(
-        /(?:block-size|height):\s*var\(--composer-ctl-h\)/,
+        /(?:block-size|height):\s*var\(--btn-h\)/,
       );
       // A literal here is what let the row disagree with the textarea above it.
       expect(own, `${selector} declares no literal height`).not.toMatch(/(^|[^-])height:\s*\d/);
     }
   });
 
-  it("takes Send's width from ONE mechanism, so it cannot drift from the height", () => {
-    // Send's width comes from the same padding `.pill` takes, declared once per tier, so there is no second literal to
-    // drift (the original 42x32 vs 44x44 mismatch).
+  it("takes Send's square from the toolbar's token, so it cannot drift from the height", () => {
+    // Where its word is hidden Send is the toolbar's square; with the word, the box grows from that minimum.
     const rule = ruleContaining(css, ".send-btn", "top");
     const brace = rule.body.indexOf("{");
     const own = brace === -1 ? rule.body : rule.body.slice(0, brace);
-    expect(own).toMatch(/block-size:\s*var\(--composer-ctl-h\)/);
-    expect(own, "no literal inline size").not.toMatch(/inline-size:\s*\d/);
-    expect(own, "no aspect-ratio re-squaring it").not.toMatch(/aspect-ratio/);
-    // Both icon-only controls derive inline padding from one token; Send adds half its glyph deficit on top.
-    expect(own, "Send derives its padding from the row's token").toMatch(
-      /padding-inline:\s*max\(\s*var\(--pill-pad-inline\)/,
+    expect(own).toMatch(/block-size:\s*var\(--btn-h\)/);
+    expect(own).toMatch(/min-inline-size:\s*var\(--btn-h\)/);
+    expect(own, "no literal inline size").not.toMatch(/(^|[^-])inline-size:\s*\d/);
+    expect(own, "Send pads like the pill beside it").toMatch(
+      /padding-inline:\s*var\(--pill-pad-inline\)/,
     );
     const pill = ruleContaining(css, ".pill", "top");
-    expect(pill.body, ".pill spends the same token").toMatch(
+    expect(pill.body, ".pill spends the same tokens").toMatch(
       /padding:\s*0\s+var\(--pill-pad-inline\)/,
     );
+    expect(pill.body).toMatch(/min-inline-size:\s*var\(--btn-h\)/);
     // No rule may re-pad either with a literal: a phone override on `.pill` alone made Send 32 wide beside a 46px sibling.
     const rePadders = allRules(css)
       .filter((r) =>
@@ -133,10 +128,6 @@ describe("the height's declarations, read from source", () => {
       .filter((r) => /padding(-inline)?:[^;]*var\(--sp-/.test(r.body))
       .map((r) => r.selector);
     expect(rePadders, "no rule re-pads either control off a spacing token").toEqual([]);
-    const widthWriters = allRules(css)
-      .filter((r) => /\.send-btn/.test(r.selector) && /min-width:\s*var\(--btn-h\)/.test(r.body))
-      .map((r) => r.selector);
-    expect(widthWriters).toEqual([]);
   });
 
   it("lets no rule override the resting band, least of all a width query", () => {
@@ -261,16 +252,16 @@ describe("the composer, measured at real viewport sizes", () => {
   it("matches the two rows on a touch DESKTOP, which is the case a width query cannot reach", async () => {
     // Wide coarse: a width query cannot see the tier, so the textarea could sit over a taller pill row.
     const { textarea, band, control } = await bandsAt(1440, 900, "coarse");
-    expect(control, "the mouse's box, the 44px living in the target").toBe(32);
+    expect(control, "the toolbar's box, the 44px living in the target").toBe(36);
     expect(textarea).toBe(44);
     expect(band).toBe(44);
   });
 
-  it("matches them on a mouse desktop, at the size that did not change", async () => {
+  it("matches them on a mouse desktop, at the toolbar's button size", async () => {
     const { textarea, band, control } = await bandsAt(1440, 900, "fine");
-    expect(control).toBe(32);
-    expect(textarea).toBe(40);
-    expect(band).toBe(40);
+    expect(control).toBe(36);
+    expect(textarea).toBe(44);
+    expect(band).toBe(44);
   });
 
   it("matches them on a phone", async () => {
@@ -398,31 +389,6 @@ describe("the composer, measured at real viewport sizes", () => {
     }
   });
 
-  it("keeps Send wider than tall on every tier and width", async () => {
-    // Send is not square: a square read as a different size class. Only the height is compared to the sibling (box-identical
-    // cost 6px of a row with 4px of slack); the surplus width is free touch area, so the direction is asserted.
-    for (const [w, h, tier] of [
-      [320, 568, "coarse"],
-      [390, 844, "coarse"],
-      [430, 932, "coarse"],
-      [844, 390, "coarse"],
-      [1440, 900, "fine"],
-      [390, 844, "fine"],
-    ] as const) {
-      await bandsAt(w, h, tier);
-      const send = withSendGlyph();
-      const sibling = document.getElementById("chat-options-btn");
-      if (sibling === null) {
-        throw new Error("the composer subtree did not mount");
-      }
-      const s = send.getBoundingClientRect();
-      const o = sibling.getBoundingClientRect();
-      const at = `${String(w)}x${String(h)} ${tier}`;
-      expect(s.height, `${at}: Send's height is the row's`).toBe(o.height);
-      expect(s.width, `${at}: wider than tall, which is the touch area`).toBeGreaterThan(s.height);
-    }
-  });
-
   it("sizes Send's glyph box with the same token as the control beside it", async () => {
     // Send swaps faces, so no per-path ink correction can live on it: every face takes `--icon-ui`.
     await bandsAt(390, 844, "coarse");
@@ -443,8 +409,8 @@ describe("the composer, measured at real viewport sizes", () => {
   it("matches them on a wide viewport with no pointer tier resolved yet", async () => {
     // The no-JS fallback is width-gated, so a wide window keeps mouse sizing until `pointer-tier.ts` classifies it.
     const { textarea, band } = await bandsAt(1440, 900, null);
-    expect(textarea).toBe(40);
-    expect(band).toBe(40);
+    expect(textarea).toBe(44);
+    expect(band).toBe(44);
   });
 
   it("centres the composer on its own divider, which is what the match buys", async () => {
@@ -485,25 +451,13 @@ describe("the composer, measured at real viewport sizes", () => {
 describe("the attachment chip's declarations, read from source", () => {
   const css = loadCSS("15-input.css");
 
-  it("gives the chip the box's control height, with the second home's fallback", () => {
+  it("gives the chip the toolbar's button height, in the composer and in a sent turn's header alike", () => {
     const rule = ruleContaining(css, ".attachment-pill", "top");
     const brace = rule.body.indexOf("{");
     const own = brace === -1 ? rule.body : rule.body.slice(0, brace);
-    expect(declaration(own, "block-size")).toMatch(/^var\(--composer-ctl-h,/);
+    expect(declaration(own, "block-size")).toBe("var(--btn-h)");
     expect(declaration(own, "padding-block")).toBe("0");
     expect(own, "no literal height beside the derived one").not.toMatch(/(^|[^-])height:\s*\d/);
-  });
-
-  it("keeps that fallback the same EXPRESSION the box declares, not the same number", () => {
-    // Expression, not value: the chip's other home is a sent turn's header, outside `#prompt-form`, where
-    // `--composer-ctl-h` does not resolve; a `var()` with nothing behind it invalidates the declaration.
-    const form = ruleContaining(css, '[id="prompt-form"]', "top");
-    const declared = declaration(form.body, "--composer-ctl-h");
-    const chip = ruleContaining(css, ".attachment-pill", "top");
-    const size = declaration(chip.body, "block-size") ?? "";
-    const fallback = /^var\(--composer-ctl-h,\s*(.*)\)$/s.exec(size)?.[1]?.trim();
-    expect(declared, "the box declares a control height").not.toBeNull();
-    expect(fallback).toBe(declared);
   });
 
   it("pays for the chips' target reach out of the row's own padding", () => {
@@ -600,19 +554,19 @@ describe("the attachment chip, measured at real viewport sizes", () => {
   it("matches the chip to the pill row's controls on a phone, which is the reported defect", async () => {
     const { chip, control, floor } = await chipsAt(390, 844, "coarse");
     expect(floor, "the coarse floor, in px").toBe(44);
-    expect(chip, "a 50.78px chip before the fix").toBe(32);
+    expect(chip, "a 50.78px chip before the fix").toBe(36);
     expect(chip).toBe(control);
   });
 
   it("matches it on a touch DESKTOP, the tier a width query cannot see", async () => {
     const { chip, control } = await chipsAt(1440, 900, "coarse");
-    expect(chip).toBe(32);
+    expect(chip).toBe(36);
     expect(chip).toBe(control);
   });
 
-  it("matches it on a mouse, where the chip was 30.78 against a 32px row", async () => {
+  it("matches it on a mouse, at the toolbar's button height", async () => {
     const { chip, control } = await chipsAt(1440, 900, "fine");
-    expect(chip).toBe(32);
+    expect(chip).toBe(36);
     expect(chip).toBe(control);
   });
 
