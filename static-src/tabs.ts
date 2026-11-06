@@ -54,8 +54,8 @@ import { join as joinKey } from "@cplieger/keyenc";
 import { ICON_CLOSE, ICON_PIN_FILLED, ICON_TAB_SUBTAB } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { activeView, setActiveView } from "./device-view.js";
-import { $, queryAll, queryEl } from "./dom.js";
-import { swapViews } from "./view-swap.js";
+import { $, queryEl } from "./dom.js";
+import { showOnlyView } from "./view-swap.js";
 import { signal, effect, el } from "@cplieger/ui";
 import {
   attachDrag,
@@ -1735,8 +1735,6 @@ function registerModuleSubscribers(): void {
 
 // --- View / route (subscriber) ---
 
-const ALL_VIEWS_SELECTOR = "[data-tab-view]";
-
 /** Icon buttons that should show `.active` when their singleton tab is active.
  *  Non-singleton kinds (chat, editor, run) are never in this map. */
 const ACTIVE_BTN: Readonly<Partial<Record<TabKind, () => HTMLButtonElement>>> = {
@@ -1757,22 +1755,8 @@ function syncSidebarButtons(activeKind: TabKind | null): void {
 }
 
 function showView(row: TabRow): void {
-  // Swap the view ONLY when it is not already the right one: this re-runs on every projection
-  // mutation, and a re-swap replays the entry fade. Read from the DOM, not a cached selector, so a
-  // second writer of these classes can never leave a view hidden.
-  const target = queryEl(row.spec.view);
-  const shown = [...queryAll(ALL_VIEWS_SELECTOR)].filter(
-    (n) => !(n as HTMLElement).classList.contains("hidden"),
-  );
-  if (shown.length !== 1 || shown[0] !== target) {
-    swapViews(() => {
-      for (const node of queryAll(ALL_VIEWS_SELECTOR)) {
-        (node as HTMLElement).classList.add("hidden");
-      }
-      target?.classList.remove("hidden");
-      return target as HTMLElement | null;
-    });
-  }
+  // Read from the DOM, not a cached selector, so a second writer of these classes can never leave a view hidden.
+  showOnlyView(queryEl<HTMLElement>(row.spec.view));
 
   // The tab's name IS the page title; the kind lets the heading recover a subtitle (page-title.ts).
   setPageTitle(row.name, row.subject.kind);
@@ -1789,22 +1773,7 @@ function showView(row: TabRow): void {
  *  HIDES the other views without disposing anything, so a rollback finds state intact. No
  *  pushRoute: the settlement's own activation corrects the URL. */
 function showEmptySurface(): void {
-  const target = queryEl(TAB_VIEWS.chat);
-  const shown = [...queryAll(ALL_VIEWS_SELECTOR)].filter(
-    (n) => !(n as HTMLElement).classList.contains("hidden"),
-  );
-  // Same swap guard as showView: this effect re-runs on every projection
-  // mutation, and re-animating a view already on screen would fade content
-  // that never left.
-  if (shown.length !== 1 || shown[0] !== target) {
-    swapViews(() => {
-      for (const node of queryAll(ALL_VIEWS_SELECTOR)) {
-        (node as HTMLElement).classList.add("hidden");
-      }
-      target?.classList.remove("hidden");
-      return target as HTMLElement | null;
-    });
-  }
+  showOnlyView(queryEl<HTMLElement>(TAB_VIEWS.chat));
   clearPageTitle();
   syncSidebarButtons(null);
 }

@@ -83,7 +83,8 @@ import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
 import { classify, emptyNote, scanNote } from "./textsearch/copy.js";
 import type { Nouns } from "./textsearch/copy.js";
-import { createDialog, type DialogController } from "@cplieger/ui/dialog";
+import type { DialogController } from "@cplieger/ui/dialog";
+import { createParkedDialog } from "./modals.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui/disclosure";
 import { skeletonTiming } from "@cplieger/ui/skeleton";
 import { gitRepoSkeleton, paintPlaceholder } from "./skeleton.js";
@@ -1977,7 +1978,7 @@ function cloneGroup(dir: string): RepoGroup | undefined {
 // re-openable form, so backdrop and Escape dismissal are on.
 let prDialogCtl: DialogController | null = null;
 function prDialogController(dlg: HTMLDialogElement): DialogController {
-  prDialogCtl ??= createDialog(dlg, { closeOnBackdrop: true, closeOnEscape: true });
+  prDialogCtl ??= createParkedDialog(dlg, { closeOnBackdrop: true, closeOnEscape: true });
   return prDialogCtl;
 }
 

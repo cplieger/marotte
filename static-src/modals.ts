@@ -2,10 +2,11 @@
 // Each `[data-modal]` content element is pre-authored in index.html; createModal
 // wraps it in a <dialog> and owns focus, Escape, backdrop dismiss and scroll-lock.
 
+import { createDialog, type DialogController, type DialogOptions } from "@cplieger/ui/dialog";
 import { createModal, type ModalController } from "@cplieger/ui/modal";
 import { el } from "@cplieger/ui";
 import { pollUntil, registerCleanup } from "./actions/index.js";
-import { $, byId, queryAll } from "./dom.js";
+import { $, byId, park, queryAll, unpark } from "./dom.js";
 import { apiGetTyped, apiPostTypedOrError } from "./api-client.js";
 import {
   decodeLoginOptions,
@@ -53,6 +54,7 @@ function ensureModal(content: HTMLElement): ModalController {
   const ctrl = createModal(content, {
     onClose: () => {
       handleModalClosed(content);
+      park(ctrl.el);
     },
   });
   // Authored `.hidden` so it cannot flash in <body> before createModal wraps it;
@@ -60,6 +62,7 @@ function ensureModal(content: HTMLElement): ModalController {
   content.classList.remove("hidden");
   controllers.set(content, ctrl);
   wireCloseButtons(content, ctrl);
+  park(ctrl.el);
   return ctrl;
 }
 
@@ -71,11 +74,43 @@ function wireCloseButtons(content: HTMLElement, ctrl: ModalController): void {
   }
 }
 
-/** Auto-wire every `[data-modal]` element. Optional: openModal initialises lazily. */
+/** Auto-wire every `[data-modal]` element and park every `dialog[data-parked]` (createParkedDialog). Optional:
+ *  openModal initialises lazily. */
 export function initAllModals(): void {
   for (const content of queryAll<HTMLElement>("[data-modal]")) {
     ensureModal(content);
   }
+  for (const dlg of queryAll<HTMLDialogElement>("dialog[data-parked]")) {
+    if (!dlg.open) {
+      park(dlg);
+    }
+  }
+}
+
+/** `createDialog` for a page-authored <dialog> kept parked while closed (dom.ts `park`). Its `open` puts the dialog
+ *  back first, since `showModal` refuses one outside the page. */
+export function createParkedDialog(dlg: HTMLDialogElement, opts: DialogOptions): DialogController {
+  const ctl = createDialog(dlg, {
+    ...opts,
+    onClose: () => {
+      opts.onClose?.();
+      park(dlg);
+    },
+  });
+  return {
+    el: ctl.el,
+    open: () => {
+      unpark(dlg, () => {
+        ctl.open();
+      });
+    },
+    close: () => {
+      ctl.close();
+    },
+    dispose: () => {
+      ctl.dispose();
+    },
+  };
 }
 
 const EXPAND_HINT =
@@ -133,7 +168,9 @@ export function openModal(modal: HTMLDivElement): void {
   if (!openStack.includes(modal)) {
     openStack.push(modal);
   }
-  ctrl.open();
+  unpark(ctrl.el, () => {
+    ctrl.open();
+  });
 }
 
 /** Close a modal by its content element. No-op if it was never opened. */
