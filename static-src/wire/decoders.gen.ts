@@ -3660,8 +3660,8 @@ export const decodeRunStartedPayload: Decoder<RunStartedPayload> = (v) => {
     if ($v !== undefined && $v !== null) out.initiator_reason = reqStr(o, "initiator_reason", "$.run_started_payload");
   }
   {
-    const $v = own(o, "scheduled");
-    if ($v !== undefined && $v !== null) out.scheduled = reqBool(o, "scheduled", "$.run_started_payload");
+    const $v = own(o, "unattended");
+    if ($v !== undefined && $v !== null) out.unattended = reqStr(o, "unattended", "$.run_started_payload");
   }
   return out;
 };

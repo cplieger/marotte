@@ -8,18 +8,30 @@ import (
 	"github.com/cplieger/marotte/internal/translate"
 )
 
-// IsScheduled reports whether a schedule launched the run, from its lease, granted before the first lifecycle frame.
-func (rs *Runs) IsScheduled(workflowID string) bool {
+// UnattendedOrigin is the origin of a run a schedule or a trigger launched, from its lease, granted before the first
+// lifecycle frame; "" for any other run.
+func (rs *Runs) UnattendedOrigin(workflowID string) string {
 	l, ok := rs.lease(workflowID)
-	return ok && l.Origin == runlease.OriginScheduled
+	if !ok || (l.Origin != runlease.OriginScheduled && l.Origin != runlease.OriginTriggered) {
+		return ""
+	}
+	return string(l.Origin)
 }
 
-// RunLabel is the label the launch sent KAS, rebuilt from the lease; run_start
-// carries none of its own.
+// RunLabel is the label the launch sent KAS, from the lease; run_start carries none of its own.
 func (rs *Runs) RunLabel(workflowID string) string {
 	l, ok := rs.lease(workflowID)
 	if !ok {
 		return ""
+	}
+	return leaseRunLabel(&l)
+}
+
+// leaseRunLabel is the label l's launch sent KAS. A lease written before leases kept the label rebuilds it from
+// its origin and recipe, which cannot reproduce an event's.
+func leaseRunLabel(l *runlease.Lease) string {
+	if l.RunLabel != "" {
+		return l.RunLabel
 	}
 	return launchOrigin{origin: l.Origin}.runLabel(l.Recipe)
 }

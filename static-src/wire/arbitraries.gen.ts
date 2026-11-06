@@ -2243,7 +2243,7 @@ const arbModel = fc.letrec<{
       name: fc.string(),
       initiator: fc.string(),
       initiator_reason: fc.string(),
-      scheduled: fc.boolean(),
+      unattended: fc.string(),
     },
     { requiredKeys: ["workflow_id"] },
   ),

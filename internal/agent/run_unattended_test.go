@@ -28,33 +28,33 @@ func TestUnattendedBudget_MatchesTheDisclaimer(t *testing.T) {
 	}
 }
 
-// TestIsScheduledRun_ReadsTheLeasesOrigin pins the `scheduled` flag's source: only the launch path can tell a
-// scheduled parentless run from a manual one, and the lease records it.
-func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
+// TestUnattendedOrigin_ReadsTheLeasesOrigin pins the `unattended` field's source: only the launch path can tell a
+// scheduled or triggered parentless run from a manual one, and the lease records it.
+func TestUnattendedOrigin_ReadsTheLeasesOrigin(t *testing.T) {
 	h := &Runs{chats: newTestChatStore()}
 
-	if h.IsScheduled("wf_1") {
-		t.Error("an unknown run reported scheduled; a manual launch must never be marked")
+	if got := h.UnattendedOrigin("wf_1"); got != "" {
+		t.Errorf("an unknown run reported %q; a manual launch must never be marked", got)
 	}
 	h.grantLease(t.Context(), "wf_manual", "publish", manualLaunch(), hostSec())
-	if h.IsScheduled("wf_manual") {
-		t.Error("a manual run reported scheduled")
+	if got := h.UnattendedOrigin("wf_manual"); got != "" {
+		t.Errorf("a manual run reported %q", got)
 	}
 	h.grantLease(t.Context(), "wf_1", "publish", scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Time{}), hostSec())
-	if !h.IsScheduled("wf_1") {
-		t.Error("a scheduled run did not report scheduled")
+	if got := h.UnattendedOrigin("wf_1"); got != "scheduled" {
+		t.Errorf("a scheduled run reported %q, want scheduled", got)
 	}
-	if h.IsScheduled("wf_2") {
-		t.Error("the origin leaked to another run")
+	if got := h.UnattendedOrigin("wf_2"); got != "" {
+		t.Errorf("the origin leaked to another run: %q", got)
 	}
-	// Released with the terminal frame, and the flag with it.
+	// Released with the terminal frame, and the origin with it.
 	h.releaseLease(t.Context(), "wf_1")
-	if h.IsScheduled("wf_1") {
-		t.Error("a released run still reported scheduled")
+	if got := h.UnattendedOrigin("wf_1"); got != "" {
+		t.Errorf("a released run still reported %q", got)
 	}
 	// An empty id is not a run.
-	if h.IsScheduled("") {
-		t.Error("the empty workflow id reported scheduled")
+	if got := h.UnattendedOrigin(""); got != "" {
+		t.Errorf("the empty workflow id reported %q", got)
 	}
 }
 
@@ -101,7 +101,7 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 	if l.ScheduleID != "sched-1" {
 		t.Errorf("ScheduleID = %q; the denial could not be attributed to a row", l.ScheduleID)
 	}
-	if !after.IsScheduled("wf_1") {
+	if after.UnattendedOrigin("wf_1") != "scheduled" {
 		t.Error("the origin did not survive")
 	}
 }
@@ -665,4 +665,132 @@ func jsonString(s string) string {
 		panic(err)
 	}
 	return string(b)
+}
+
+// answerTriggered runs the floor's answer for an ask of a triggered run, rule-1's wf_trig, with
+// scheduled_auto_approve set to autoApprove, and returns the answer and the confirmer that saw the row writes.
+func answerTriggered(t *testing.T, autoApprove bool, params string) (*marotte.PermissionOutcome, *fakeConfirmer) {
+	t.Helper()
+	dir := t.TempDir()
+	body, err := json.Marshal(map[string]any{settings.KeyScheduledAutoApprove: autoApprove})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
+	fc := &fakeConfirmer{}
+	h.runs.confirmer = fc
+	chatID := runChatID("wf_trig")
+	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
+	h.runs.grantLease(t.Context(), "wf_trig", "triage", eventLaunch(), hostSec())
+	l, held := h.runs.lease("wf_trig")
+	if !held || !l.Unattended {
+		t.Fatalf("triggered lease = %+v, %v; want it held and unattended, or the floor never arms", l, held)
+	}
+
+	id := int64(5150)
+	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+		marotte.PermissionNeededPayload{RequestID: id}), br)
+	h.runs.answerUnattended(chatID, br, id, ruleRun(&l), askName{tool: "execute_bash"}, []byte(params))
+
+	select {
+	case <-br.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the floor answered nothing for a triggered run")
+	}
+	br.respMu.Lock()
+	got := br.response
+	br.respMu.Unlock()
+	outcome, ok := got.result.(*marotte.PermissionOutcome)
+	if !ok {
+		t.Fatalf("answered with %T (%v), want a permission outcome", got.result, got.result)
+	}
+	return outcome, fc
+}
+
+const triggeredAskOptions = `"options":[{"optionId":"accept","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}]`
+
+// scheduled_auto_approve covers triggered runs: on, the ask is approved once; off, it is refused and the refusal
+// reaches the rule's row through the confirmer.
+func TestTriggeredRunAutoApprovedWhenOn(t *testing.T) {
+	t.Run("on", func(t *testing.T) {
+		outcome, fc := answerTriggered(t, true, `{`+triggeredAskOptions+`}`)
+		if outcome.Outcome.OptionID != "accept" {
+			t.Errorf("optionId = %q, want accept with auto-approve on", outcome.Outcome.OptionID)
+		}
+		if got := fc.count("RecordOutcome"); got != 0 {
+			t.Errorf("an approval wrote the row: %q", fc.recorded())
+		}
+	})
+	t.Run("off", func(t *testing.T) {
+		outcome, fc := answerTriggered(t, false, `{`+triggeredAskOptions+`}`)
+		if outcome.Outcome.OptionID != "reject" {
+			t.Errorf("optionId = %q, want reject with auto-approve off", outcome.Outcome.OptionID)
+		}
+		want := "RecordOutcome rule-1 wf_trig failed needed approval for execute_bash with nobody watching"
+		if got := fc.count(want); got != 1 {
+			t.Errorf("confirmer calls %q, want one starting %q", fc.recorded(), want)
+		}
+	})
+}
+
+// An administrator ask needs a person, for a triggered run as for a scheduled one.
+func TestTriggeredAdminAskStillRefused(t *testing.T) {
+	outcome, _ := answerTriggered(t, true, `{`+triggeredAskOptions+`,"_meta":{"kiro":{"consent":{"scope":"administration"}}}}`)
+	if outcome.Outcome.OptionID != "reject" {
+		t.Errorf("optionId = %q, want reject: an administrator ask was auto-approved in a triggered run",
+			outcome.Outcome.OptionID)
+	}
+}
+
+// The deny note is read by the step's agent, which a triggered run has as well: it must not call the run scheduled.
+func TestTriggeredDenyNoteNamesNoSchedule(t *testing.T) {
+	outcome, _ := answerTriggered(t, false, `{`+triggeredAskOptions+`}`)
+	var note string
+	if outcome.Meta != nil {
+		note = outcome.Meta.Kiro.RejectionReason
+	}
+	if note == "" || strings.Contains(strings.ToLower(note), "schedule") {
+		t.Errorf("deny note = %q, want one that names no schedule", note)
+	}
+}
+
+// A triggered run paused with nobody to resume it is ended like a scheduled one, and the line the alert keys on
+// says which origin and rule it was.
+func TestTriggeredPauseEndsUnattended(t *testing.T) {
+	logs := captureLogs(t)
+	fastUnattendedPause(t)
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
+		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stepQuestionReason),
+	}
+	fc := &fakeConfirmer{}
+	h.runs.confirmer = fc
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	h.runs.grantLease(t.Context(), "wf_1", "triage", eventLaunch(), hostSec())
+	h.runs.armDeadline(t.Context(), "wf_1")
+
+	pauseRun(t, h, "wf_1", stepQuestionReason)
+
+	if got := waitForEndReason(h, "wf_1", 5*time.Second); got != runEndUnattended {
+		t.Fatalf("a triggered run paused with nobody to resume it recorded %q, want %q; calls were %v",
+			got, runEndUnattended, br.callLog())
+	}
+	lines := unattendedEndLines(logs)
+	if len(lines) != 1 {
+		t.Fatalf("%d %q lines, want 1: %s", len(lines), logMsgRunPausedUnattended, logs.String())
+	}
+	if lines[0]["origin"] != "triggered" || lines[0]["rule_id"] != "rule-1" {
+		t.Errorf("the line carries origin=%v rule_id=%v, want triggered and rule-1", lines[0]["origin"], lines[0]["rule_id"])
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for fc.count("RecordOutcome rule-1 wf_1 failed paused with nobody watching") == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if fc.count("RecordOutcome rule-1 wf_1 failed paused with nobody watching") != 1 {
+		t.Errorf("confirmer calls %q, want the pause's reason sent to the rule's row", fc.recorded())
+	}
 }

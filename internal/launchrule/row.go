@@ -55,6 +55,9 @@ type Run struct {
 	// StartedAt is when the run was created, which RecordStart writes as LastRunAt; zero leaves LastRunAt as it was.
 	StartedAt  time.Time
 	ScheduleID string
+	// RuleID is an event rule's run, whose outcome the trigger confirmer writes; the store's row writers take
+	// ScheduleID only.
+	RuleID     string
 	WorkflowID string
 }
 

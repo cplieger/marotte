@@ -83,14 +83,10 @@ func (rs *Runs) grantRetryLease(ctx context.Context, workflowID string, o *runOr
 // person retries it: a scheduled lease is that one run's, and the retry is the person's (manual, attended, no row).
 // A triggered lease is kept: the retry re-runs the event under it, and its run_start confirms the event.
 func (rs *Runs) settleMissedEnd(ctx context.Context, l *runlease.Lease, status marotte.RunStatus) {
-	if l.RuleID != "" {
-		if rs.confirmer != nil {
-			rs.confirmer.RecordOutcome(l.RuleID, l.WorkflowID, runEnding(status, ""))
-		}
-		return
+	rs.recordScheduleEnding(ctx, ruleRun(l), status, "")
+	if l.RuleID == "" {
+		rs.forgetBounds(ctx, l.WorkflowID)
 	}
-	rs.recordScheduleEnding(ctx, scheduleRun(l), status, "")
-	rs.forgetBounds(ctx, l.WorkflowID)
 }
 
 // scheduledLaunch carries the schedule row for outcomes and the slot the run may not outlive.
@@ -245,7 +241,7 @@ func (rs *Runs) grantKeeping(
 	rs.beginLife(workflowID)
 	// A triggered run's row start is its run_start's confirmation, not the grant.
 	if o.origin != runlease.OriginTriggered {
-		run := scheduleRun(&l)
+		run := ruleRun(&l)
 		rs.writeSchedule(run, func() error { return rs.launchRules.RecordStart(ctx, run) })
 	}
 	// Named from the grant on, so every pending_snapshot names every run marotte answers for.

@@ -7,12 +7,15 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
 )
 
 // kasRuns builds a workflow/list reply, defaulting `workflowName` to `name` as the wire always carries both.
@@ -1047,4 +1050,148 @@ func autoResumable(t *testing.T, rs *Runs, workflowID string) (resume, read bool
 	t.Helper()
 	r := rs.readPauseState(t.Context(), workflowID)
 	return runTransitions[healResume][r.seen] == actHeal, r.seen != seenUnreadable
+}
+
+// orphanHub is a hub whose KAS lists every given run paused by a dead process, answers each inspect for the run it
+// names and records which runs were cancelled; each run holds a triggered lease of rule-1.
+func orphanHub(t *testing.T, fc *fakeConfirmer, ids ...string) (h *Runtime, br *fakeBridge, cancelled func() []string) {
+	t.Helper()
+	h, _, br = newTestHub()
+	h.runs.confirmer = fc
+	rows := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		rows = append(rows, map[string]any{"workflowId": id, "name": "triage", "status": marotte.RunStatusPaused})
+		if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
+			WorkflowID: id, Recipe: "triage", Origin: runlease.OriginTriggered, Unattended: true,
+			RuleID: "rule-1", EventKey: "github.com/o/r/issue/1/opened",
+		}); err != nil {
+			t.Fatalf("Put %s: %v", id, err)
+		}
+	}
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList:   kasRuns(t, rows...),
+		methodKiroWorkflowCancel: json.RawMessage(`{}`),
+	}
+	var mu sync.Mutex
+	var gone []string
+	br.setOnCall(func(method string, p map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		id, _ := p["workflowId"].(string)
+		switch method {
+		case methodKiroWorkflowInspect:
+			return inspectPaused(t, id, stalePauseReason), nil, true
+		case methodKiroWorkflowCancel:
+			mu.Lock()
+			gone = append(gone, id)
+			mu.Unlock()
+		}
+		return nil, nil, false
+	})
+	return h, br, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(gone)
+	}
+}
+
+// A restart-paused triggered run is swept like a scheduled one, with the trigger's own row reason and log fields; a
+// boot-held one is left to its launch bound by the sweep and the admission backstop alike.
+func TestOrphanSweepCancelsTriggeredRunWithTriggerReason(t *testing.T) {
+	t.Run("confirmed, not boot-held: cancelled", func(t *testing.T) {
+		rec := capture.Default(t)
+		fc := &fakeConfirmer{}
+		h, _, cancelled := orphanHub(t, fc, "wf_1")
+
+		h.runs.sweepOrphaned(t.Context())
+
+		if got := cancelled(); !slices.Equal(got, []string{"wf_1"}) {
+			t.Fatalf("cancelled %q, want [wf_1]", got)
+		}
+		want := "RecordOutcome rule-1 wf_1 failed " + reasonOrphanedTriggered
+		if got := fc.count(want); got != 1 {
+			t.Errorf("confirmer calls %q, want one %q", fc.recorded(), want)
+		}
+		if got, _ := rec.AttrValueExact(logMsgRunOrphaned, "rule_id"); got != "rule-1" {
+			t.Errorf("orphan line rule_id = %q, want rule-1", got)
+		}
+		if got, _ := rec.AttrValueExact(logMsgRunOrphaned, "origin"); got != "triggered" {
+			t.Errorf("orphan line origin = %q, want triggered", got)
+		}
+		if _, held := h.runs.lease("wf_1"); held {
+			t.Error("the swept run kept its lease")
+		}
+	})
+	t.Run("boot-held: left alone by the sweep and the backstop", func(t *testing.T) {
+		fc := &fakeConfirmer{bootHeld: map[string]bool{"wf_1": true}}
+		h, _, cancelled := orphanHub(t, fc, "wf_1")
+
+		h.runs.sweepOrphaned(t.Context())
+		if h.runs.clearBlockingOrphan(t.Context(), "wf_1", marotte.RunStatusPaused) {
+			t.Error("clearBlockingOrphan cleared a boot-held run")
+		}
+
+		if got := cancelled(); len(got) != 0 {
+			t.Errorf("cancelled %q, want none: the launch bound decides a boot-held run", got)
+		}
+		if _, held := h.runs.lease("wf_1"); !held {
+			t.Error("the boot-held run lost its lease")
+		}
+	})
+	t.Run("confirmed during the bound, later restart-paused: the backstop clears it", func(t *testing.T) {
+		fc := &fakeConfirmer{bootHeld: map[string]bool{"wf_1": true}}
+		h, _, cancelled := orphanHub(t, fc, "wf_1")
+		h.runs.sweepOrphaned(t.Context())
+		fc.mu.Lock()
+		delete(fc.bootHeld, "wf_1")
+		fc.mu.Unlock()
+
+		if !h.runs.clearBlockingOrphan(t.Context(), "wf_1", marotte.RunStatusPaused) {
+			t.Error("clearBlockingOrphan left a run that is no longer boot-held")
+		}
+		if got := cancelled(); !slices.Equal(got, []string{"wf_1"}) {
+			t.Errorf("cancelled %q, want [wf_1]", got)
+		}
+	})
+	t.Run("a pass that read the set while the id was held still skips it", func(t *testing.T) {
+		fc := &fakeConfirmer{bootHeld: map[string]bool{"wf_b": true}}
+		h, br, cancelled := orphanHub(t, fc, "wf_a", "wf_b")
+		inner := br.onCall
+		// wf_b's resume confirms while the pass reads wf_a, so it leaves the set mid-pass.
+		br.setOnCall(func(method string, p map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+			if method == methodKiroWorkflowInspect && p["workflowId"] == "wf_a" {
+				fc.mu.Lock()
+				delete(fc.bootHeld, "wf_b")
+				fc.mu.Unlock()
+			}
+			return inner(method, p)
+		})
+
+		h.runs.sweepOrphaned(t.Context())
+
+		if got := cancelled(); !slices.Equal(got, []string{"wf_a"}) {
+			t.Errorf("cancelled %q, want [wf_a]: wf_b was boot-held when the pass began", got)
+		}
+	})
+}
+
+// An attempt the rule abandoned at its bound whose cancel was refused leaves its run restart-paused under the
+// triggered lease; once the confirmer drops it from the boot-held set, the next launch of the recipe clears it.
+func TestBootHeldReleasedOnAbandonClearedByBackstop(t *testing.T) {
+	fc := &fakeConfirmer{bootHeld: map[string]bool{"wf_old": true}}
+	h, _, cancelled := orphanHub(t, fc, "wf_old")
+	if err := h.runs.recipeIdle(t.Context(), "triage", ""); !errors.As(err, new(*schedule.BusyError)) {
+		t.Fatalf("a manual launch over a boot-held run = %v, want BusyError", err)
+	}
+	fc.mu.Lock()
+	delete(fc.bootHeld, "wf_old")
+	fc.mu.Unlock()
+
+	if err := h.runs.recipeIdle(t.Context(), "triage", ""); err != nil {
+		t.Fatalf("a manual launch over the abandoned run's orphan = %v, want it to proceed", err)
+	}
+	if got := cancelled(); !slices.Equal(got, []string{"wf_old"}) {
+		t.Errorf("cancelled %q, want [wf_old]", got)
+	}
+	if _, held := h.runs.lease("wf_old"); held {
+		t.Error("the cleared run kept its triggered lease")
+	}
 }

@@ -586,7 +586,7 @@ func TestRetrySettlesTriggeredMissedEnd(t *testing.T) {
 			t.Fatalf("retry: %v", err)
 		}
 
-		want := "RecordOutcome rule-1 wf_1 " + string(launchrule.StatusFailed)
+		want := "RecordEnding rule-1 wf_1 " + string(launchrule.StatusFailed)
 		if n := fc.count(want); n != 1 {
 			t.Errorf("calls = %q, want one %q", fc.recorded(), want)
 		}
@@ -602,7 +602,7 @@ func TestRetrySettlesTriggeredMissedEnd(t *testing.T) {
 			t.Fatalf("retry: %v", err)
 		}
 
-		if n := fc.count("RecordOutcome"); n != 0 {
+		if n := fc.count("RecordOutcome") + fc.count("RecordEnding"); n != 0 {
 			t.Errorf("calls = %q, want no outcome for a run its rule abandoned", fc.recorded())
 		}
 	})

@@ -31,10 +31,11 @@ const (
 // chat. Name is its display label, carried because a client that has never
 // fetched this run has nothing to label the row with.
 //
-// Scheduled marks a run the SCHEDULER launched, and it travels because only the
+// Unattended names the launch origin of a run that began with nobody looking,
+// "scheduled" or "triggered", and is empty for any other. It travels because only the
 // launch path knows: a manual launch is parentless too, so events cannot separate
-// the two. It drives the client's start signal — a manual launch already has the
-// user's attention, a scheduled one began with nobody looking.
+// them. It drives the client's start signal; a manual launch already has the user's
+// attention.
 //
 // Initiator and InitiatorReason are KAS's attribution on the `run_start` a resume emits, verbatim;
 // a launch carries neither.
@@ -43,7 +44,7 @@ type RunStartedPayload struct {
 	Name            string `json:"name,omitempty"`
 	Initiator       string `json:"initiator,omitempty"`
 	InitiatorReason string `json:"initiator_reason,omitempty"`
-	Scheduled       bool   `json:"scheduled,omitempty"`
+	Unattended      string `json:"unattended,omitempty"`
 }
 
 // RunProgressPayload is the payload for type="run_progress": an INVALIDATION

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/go/slogx/capture"
@@ -211,26 +212,26 @@ func TestRunStart_AResumeCarriesKASsAttributionVerbatim(t *testing.T) {
 	}
 }
 
-// TestRunStart_CarriesTheScheduledMark pins a flag only the launch path knows, keyed on
+// TestRunStart_CarriesTheScheduledMark pins a mark only the launch path knows, keyed on
 // the WORKFLOW id (chatID is "" for exactly these runs).
 func TestRunStart_CarriesTheScheduledMark(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name      string
-		scheduled map[string]bool
-		wantFlag  bool
+		unattended map[string]string
+		name       string
+		want       string
 	}{
-		{"a scheduled run is marked", map[string]bool{"wf_1": true}, true},
-		{"a manual run is not", nil, false},
+		{name: "a scheduled run is marked", unattended: map[string]string{"wf_1": "scheduled"}, want: "scheduled"},
+		{name: "a manual run is not"},
 		// The mark belongs to one run, so another run's mark must not reach this one.
-		{"another run's mark does not leak", map[string]bool{"wf_other": true}, false},
+		{name: "another run's mark does not leak", unattended: map[string]string{"wf_other": "scheduled"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			var events []marotte.ServerEvent
 			deps := capturing(&events)
-			deps.scheduledRuns = c.scheduled
+			deps.unattendedRuns = c.unattended
 			tr := New(rolesOf(deps))
 
 			// The real shape: dispatch passes "" for a parentless run's lifecycle frames.
@@ -241,13 +242,41 @@ func TestRunStart_CarriesTheScheduledMark(t *testing.T) {
 			if !ok {
 				t.Fatalf("payload type %T, want RunStartedPayload", events[0].Payload)
 			}
-			if p.Scheduled != c.wantFlag {
-				t.Errorf("scheduled = %v, want %v", p.Scheduled, c.wantFlag)
+			if p.Unattended != c.want {
+				t.Errorf("unattended = %q, want %q", p.Unattended, c.want)
 			}
 			if p.WorkflowID != "wf_1" || p.Name != "nightly" {
 				t.Errorf("payload = %+v, want the run's id and name intact", p)
 			}
 		})
+	}
+}
+
+// TestTriggeredRunAnnouncesStart pins that a run a trigger launched reaches the client marked triggered, so its
+// start is announced as a scheduled one's is.
+func TestTriggeredRunAnnouncesStart(t *testing.T) {
+	t.Parallel()
+	var events []marotte.ServerEvent
+	deps := capturing(&events)
+	deps.unattendedRuns = map[string]string{"wf_1": "triggered"}
+	tr := New(rolesOf(deps))
+
+	tr.HandleRunStart(t.Context(), "",
+		notif("_kiro/workflow/run_start", map[string]any{"workflowId": "wf_1", "workflowName": "triage"}))
+
+	p, ok := events[0].Payload.(marotte.RunStartedPayload)
+	if !ok {
+		t.Fatalf("payload type %T, want RunStartedPayload", events[0].Payload)
+	}
+	if p.Unattended != "triggered" {
+		t.Errorf("unattended = %q, want triggered", p.Unattended)
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"unattended":"triggered"`) {
+		t.Errorf("wire form %s carries no unattended: triggered", raw)
 	}
 }
 

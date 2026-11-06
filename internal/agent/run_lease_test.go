@@ -650,3 +650,48 @@ func TestTriggeredGrantWritesNoRowStart(t *testing.T) {
 		}
 	})
 }
+
+// A triggered run is named after its event, which the lease alone carries: RunLabel and the run's display name read
+// the label the launch sent KAS.
+func TestTriggeredRunLabel(t *testing.T) {
+	h := &Runs{chats: newTestChatStore()}
+	h.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec())
+
+	if got := h.RunLabel("wf_1"); got != "publish · run 7" {
+		t.Errorf("RunLabel(triggered) = %q, want %q", got, "publish · run 7")
+	}
+	l, _ := h.lease("wf_1")
+	if got := leaseRunLabel(&l); got != "publish · run 7" {
+		t.Errorf("leaseRunLabel = %q, want the label the launch sent", got)
+	}
+}
+
+// After a restart the label comes from the persisted lease, since nothing else can rebuild an event's label; a lease
+// written before leases kept the label still rebuilds a scheduled run's.
+func TestTriggeredRunLabelSurvivesRestart(t *testing.T) {
+	dir := t.TempDir()
+	st, err := runlease.NewStore(dir)
+	if err != nil {
+		t.Fatalf("runlease.NewStore: %v", err)
+	}
+	h := &Runs{chats: newTestChatStore(), leases: st}
+	h.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec())
+	if err := st.Put(t.Context(), &runlease.Lease{
+		WorkflowID: "wf_old", Recipe: "nightly", Origin: runlease.OriginScheduled, ScheduleID: "sched-1",
+		Unattended: true, StartedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("Put the pre-label lease: %v", err)
+	}
+
+	reopened, err := runlease.NewStore(dir)
+	if err != nil {
+		t.Fatalf("reopen runlease.NewStore: %v", err)
+	}
+	after := &Runs{chats: newTestChatStore(), leases: reopened}
+	if got := after.RunLabel("wf_1"); got != "publish · run 7" {
+		t.Errorf("RunLabel after restart = %q, want %q", got, "publish · run 7")
+	}
+	if got := after.RunLabel("wf_old"); got != "nightly · scheduled" {
+		t.Errorf("RunLabel of a lease with no stored label = %q, want the rebuilt %q", got, "nightly · scheduled")
+	}
+}

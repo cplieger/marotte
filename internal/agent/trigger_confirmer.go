@@ -24,6 +24,9 @@ type TriggerConfirmer interface {
 	Retried(workflowID string) (bool, error)
 	// RecordOutcome writes the run's outcome on its rule's row, only for the run that confirmed the rule's event.
 	RecordOutcome(ruleID, workflowID string, outcome launchrule.Outcome)
+	// RecordEnding is RecordOutcome for how the run ended on its own, landing only while the row still reads it
+	// started: an outcome RecordOutcome wrote first (a denial, a bound stop) names the cause, and an ending says less.
+	RecordEnding(ruleID, workflowID string, outcome launchrule.Outcome)
 	// DismissGap clears the rule's catch-up gap segment.
 	DismissGap(ruleID string) error
 }

@@ -103,7 +103,11 @@ func (f *fakeConfirmer) Retried(workflowID string) (bool, error) {
 }
 
 func (f *fakeConfirmer) RecordOutcome(ruleID, workflowID string, outcome launchrule.Outcome) {
-	f.record("RecordOutcome %s %s %s", ruleID, workflowID, outcome.Status)
+	f.record("RecordOutcome %s %s %s %s", ruleID, workflowID, outcome.Status, outcome.Reason)
+}
+
+func (f *fakeConfirmer) RecordEnding(ruleID, workflowID string, outcome launchrule.Outcome) {
+	f.record("RecordEnding %s %s %s %s", ruleID, workflowID, outcome.Status, outcome.Reason)
 }
 
 func (f *fakeConfirmer) DismissGap(ruleID string) error {

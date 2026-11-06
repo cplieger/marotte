@@ -33,9 +33,9 @@ type baseDeps struct {
 	withdrawn []string
 	// notices records each Notify call, in order.
 	notices []marotte.NotificationPayload
-	// scheduledRuns are the workflow ids IsScheduled answers true for, so a
-	// test can stage a scheduled run without a runtime or a scheduler.
-	scheduledRuns map[string]bool
+	// unattendedRuns are the origins UnattendedOrigin answers, keyed by workflow id,
+	// so a test can stage a scheduled or triggered run without a runtime.
+	unattendedRuns map[string]string
 	// runLabels are the labels RunLabel answers, keyed by workflow id.
 	runLabels map[string]string
 	// runReads are the runs ReadRun was asked to read, in call order, and readDone each read's done.
@@ -664,8 +664,8 @@ func (d *baseDeps) ChatForACPSession(sessionID string) (marotte.ChatID, bool) {
 	return c, ok
 }
 
-func (d *baseDeps) IsScheduled(workflowID string) bool {
-	return d.scheduledRuns[workflowID]
+func (d *baseDeps) UnattendedOrigin(workflowID string) string {
+	return d.unattendedRuns[workflowID]
 }
 func (d *baseDeps) RunLabel(workflowID string) string { return d.runLabels[workflowID] }
 func (d *baseDeps) ReadRun(workflowID string, done func()) {
