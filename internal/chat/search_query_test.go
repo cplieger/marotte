@@ -36,6 +36,36 @@ func TestSearchAllTermsInOneItem(t *testing.T) {
 	}
 }
 
+// A bubble is its entries' texts laid end to end (messages-blocks.ts proseText), so a word or phrase the stream split
+// across two entries is one word or phrase.
+func TestSearchAcrossEntriesOfOneMessage(t *testing.T) {
+	entries, drawn := chatOf(openTurn("t-1", 1, nil).
+		text("s1#0", "a dead").
+		text("s1#1", "set security failure, and the security ").
+		text("s1#2", "failure was bad"))
+	for _, q := range []string{"deadset security failure", `"security failure was"`} {
+		hits := search(entries, drawn, q, false).Matches
+		if len(hits) != 1 || hits[0].EntryID != "s1#0" || hits[0].Kind != itemMessage {
+			t.Errorf("search(%s) = %+v, want the one message whose entries split the words", q, hits)
+		}
+	}
+}
+
+// A steer acknowledgement is its own bubble: its words are found there, and in no neighbouring message.
+func TestSearchSteerAckIsAMessage(t *testing.T) {
+	entries, drawn := chatOf(openTurn("t-1", 1, nil).
+		text("s1", "working on it").
+		add("", "st1:ack", marotte.EntryKindSteerAck, marotte.EntrySteerAck{SteerID: "st1", Text: "noted, deadset security failure first"}).
+		text("s2", "moving on"))
+	res := search(entries, drawn, "deadset security failure", false)
+	if len(res.Matches) != 1 || res.Matches[0].EntryID != "st1:ack" || res.Matches[0].Kind != itemMessage || res.Spread {
+		t.Fatalf("hits = %+v (spread %v), want the ack's own message", res.Matches, res.Spread)
+	}
+	if joined := search(entries, drawn, "working noted", false); !joined.Spread {
+		t.Errorf("hits = %+v, want only the turn fallback: no message joins the ack to the text before it", joined.Matches)
+	}
+}
+
 func TestSearchPhraseInOrder(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
 		text("a1", "a security\n  failure in order").

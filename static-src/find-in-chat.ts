@@ -8,7 +8,7 @@ import { join } from "@cplieger/keyenc";
 import { createPopup } from "@cplieger/ui/popup";
 import type { PopupController } from "@cplieger/ui/popup";
 import { $, byId } from "./dom.js";
-import { jumpTo, onTranscriptMutate } from "./scroll.js";
+import { jumpTo, onTranscriptMutate, shiftScroll } from "./scroll.js";
 import {
   CHAT_SEARCH_DEBOUNCE_MS,
   runServerSearch,
@@ -505,44 +505,99 @@ function landInPlace(hit: Hit): boolean {
   // Through `updateCounter`, the one writer, so a landing cannot disagree with the next repaint.
   updateCounter(shell.value);
   revealCurrent();
-  void recentreWhenSettled(item, hit);
+  holdWhereLanded(item, hit);
   return true;
 }
 
-/** Ceiling on the wait for a container's open or fold animation, past the longest one the stylesheet runs. */
-const SETTLE_CEILING_MS = 800;
+/** How long a landing holds the hit where it put it on screen: past the longest open or fold animation the
+ *  stylesheet runs, and the frames a box near the scrollport takes to lay out (`[data-near]`). */
+const HOLD_MS = 800;
 
-/** Resolves once every animation under `el` has finished, or at the ceiling; true when any was running. */
-function animationsSettled(el: HTMLElement): Promise<boolean> {
-  const running = el.getAnimations({ subtree: true });
-  if (running.length === 0) {
-    return Promise.resolve(false);
-  }
-  return new Promise((resolve) => {
-    const ceiling = setTimeout(() => {
-      resolve(true);
-    }, SETTLE_CEILING_MS);
-    void Promise.allSettled(running.map((a) => a.finished)).then(() => {
-      clearTimeout(ceiling);
-      resolve(true);
-    });
-  });
-}
+/** Frames with no layout change that end a hold early, once no animation runs in the transcript. */
+const HOLD_STILL_FRAMES = 3;
+
+/** The landing whose hit is being held, stopped by the next landing. */
+let holdStop: (() => void) | null = null;
 
 /**
- * Opening the chain animates its containers (and the fold of the turn left behind), which can carry the hit out of
- * view after the jump: once they settle, jump again if it is no longer in view. Detached, so Enter is never dropped
- * while it waits.
+ * Keep the hit where the landing put it on screen while the layout around it settles: the chain's containers and the
+ * previous hit's turn animate, and boxes that just came near the scrollport take their real size a frame later. Only
+ * a move of the hit inside the content is undone, through `shiftScroll`, and only between scrolls: a jump's flight or a
+ * hold the controller already made moves the scroller, and a layout move during a flight is undone once it lands. The
+ * reader's wheel, touch or press ends the hold.
  */
-async function recentreWhenSettled(unit: HTMLElement, hit: Hit): Promise<void> {
-  const card = unit.closest<HTMLElement>(".turn") ?? unit;
-  if (!(await animationsSettled(card)) || !owns(hit)) {
+function holdWhereLanded(unit: HTMLElement, hit: Hit): void {
+  holdStop?.();
+  const scroller = document.getElementById("messages-wrap");
+  if (scroller === null) {
     return;
   }
-  const target = engine?.currentMark() ?? unit;
-  const view = document.getElementById("messages-wrap")?.getBoundingClientRect();
+  const target = (): HTMLElement => engine?.currentMark() ?? unit;
+  const offset = (el: HTMLElement): number =>
+    el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+  let el = target();
+  let lastOffset = offset(el);
+  let lastScroll = scroller.scrollTop;
+  let owed = 0;
+  let still = 0;
+  let frame = 0;
+  const deadline = performance.now() + HOLD_MS;
+  const stop = (): void => {
+    cancelAnimationFrame(frame);
+    for (const type of ["wheel", "touchstart", "pointerdown"]) {
+      scroller.removeEventListener(type, stop);
+    }
+    if (holdStop === stop) {
+      holdStop = null;
+    }
+  };
+  const tick = (): void => {
+    const now = target();
+    if (!owns(hit) || !now.isConnected) {
+      stop();
+      return;
+    }
+    if (performance.now() > deadline) {
+      stop();
+      recentreIfOutOfView(scroller, now);
+      return;
+    }
+    if (now !== el) {
+      el = now;
+      lastOffset = offset(el);
+    }
+    const moved = offset(el) - lastOffset;
+    const scrolled = scroller.scrollTop - lastScroll;
+    // A layout move the scroller followed by as much was held already (the controller, native anchoring).
+    if (Math.abs(moved) >= 1 && Math.abs(moved - scrolled) >= 1) {
+      owed += moved;
+    }
+    if (owed !== 0 && Math.abs(scrolled) < 1) {
+      shiftScroll(owed);
+      owed = 0;
+    }
+    still = Math.abs(moved) < 1 && Math.abs(scrolled) < 1 ? still + 1 : 0;
+    lastOffset = offset(el);
+    lastScroll = scroller.scrollTop;
+    if (still >= HOLD_STILL_FRAMES && scroller.getAnimations({ subtree: true }).length === 0) {
+      stop();
+      recentreIfOutOfView(scroller, el);
+      return;
+    }
+    frame = requestAnimationFrame(tick);
+  };
+  for (const type of ["wheel", "touchstart", "pointerdown"]) {
+    scroller.addEventListener(type, stop, { passive: true });
+  }
+  holdStop = stop;
+  frame = requestAnimationFrame(tick);
+}
+
+/** A held hit the layout still carried out of the scroller (a flight aimed before it settled) is jumped to again. */
+function recentreIfOutOfView(scroller: HTMLElement, target: HTMLElement): void {
+  const view = scroller.getBoundingClientRect();
   const at = target.getBoundingClientRect();
-  if (view !== undefined && at.top >= view.top && at.bottom <= view.bottom) {
+  if (at.top >= view.top && at.bottom <= view.bottom) {
     return;
   }
   jumpTo(target, {
@@ -662,7 +717,7 @@ async function navigateToHit(hit: Hit): Promise<void> {
   if (item.classList.contains("tool-group-hooks")) {
     selectContainer(item);
     showHitNotice(HOOK_BADGE_NOTICE);
-    void recentreWhenSettled(item, hit);
+    holdWhereLanded(item, hit);
     return;
   }
   // A preview-less diff card loads its diff on open, so the text does not exist until the bulk lands.
@@ -712,12 +767,12 @@ async function landOrNotice(unit: HTMLElement, hit: Hit): Promise<void> {
     // The words are in the raw text and not the rendered one (markdown syntax), or not rendered at all.
     selectContainer(unit);
     showHitNotice(missNotice(unit, hit, rendered));
-    void recentreWhenSettled(unit, hit);
+    holdWhereLanded(unit, hit);
     return;
   }
   updateCounter(shell.value);
   revealCurrent();
-  void recentreWhenSettled(unit, hit);
+  holdWhereLanded(unit, hit);
 }
 
 /** Re-walk, so marks exist inside content that only just opened, and make `unit`'s step current. */

@@ -444,6 +444,67 @@
       ]
     },
     {
+      "name": "a steer acknowledgement is a message of its own",
+      "body": [
+        {
+          "id": "say-a#0",
+          "kind": "text",
+          "payload": {
+            "text": "before"
+          }
+        },
+        {
+          "id": "st1:ack",
+          "kind": "steer_ack",
+          "payload": {
+            "steer_id": "st1",
+            "text": "noted"
+          }
+        },
+        {
+          "id": "say-a#1",
+          "kind": "text",
+          "payload": {
+            "text": "after"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a#0",
+          "entries": [
+            "say-a#0"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "st1:ack",
+          "entries": [
+            "st1:ack"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a#1",
+          "entries": [
+            "say-a#1"
+          ]
+        }
+      ]
+    },
+    {
       "name": "every plan update folds into the first plan's card",
       "body": [
         {

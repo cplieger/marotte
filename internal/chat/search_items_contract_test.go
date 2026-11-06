@@ -119,6 +119,11 @@ func searchItemsCases() []searchItemsCase {
 			itemsEntry("ms1", marotte.EntryKindModeSwitched, "", marotte.EntryModeSwitched{From: "vibe", To: "plan"}),
 			itemsText("say-a#1", "after"),
 		}},
+		{Name: "a steer acknowledgement is a message of its own", Body: []searchItemsEntry{
+			itemsText("say-a#0", "before"),
+			itemsEntry("st1:ack", marotte.EntryKindSteerAck, "", marotte.EntrySteerAck{SteerID: "st1", Text: "noted"}),
+			itemsText("say-a#1", "after"),
+		}},
 		{Name: "every plan update folds into the first plan's card", Body: []searchItemsEntry{
 			itemsEntry("p1", marotte.EntryKindPlan, "", plan("draft the fix")),
 			itemsText("say-a#0", "working"),

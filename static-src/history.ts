@@ -33,6 +33,7 @@ import { openPreviousSession, openChatTab } from "./chat.js";
 import { searchChats } from "./actions/chat-search.js";
 import { openChatFindAt } from "./find-in-chat.js";
 import { CHAT_SEARCH_DEBOUNCE_MS } from "./chat-search.js";
+import { parseChatQuery } from "./chat-query.js";
 import { classify, emptyNote, scanNote } from "./textsearch/copy.js";
 import type { Nouns } from "./textsearch/copy.js";
 import type { CloseImpact, Match, RunStandingKind } from "./wire/types.gen.js";
@@ -330,6 +331,16 @@ const RUN_NOUNS: Nouns = {
  *  then reads every chat. Enter searches any length. */
 const SEARCH_MIN_RUNES = 3;
 
+/** Whether typing alone leaves `q` to Enter: no filter, and no word long enough to give the server's prefilter a
+ *  trigram (each word counts on its own, as `queryTrigrams` reads them). */
+function underFloor(q: string): boolean {
+  const pq = parseChatQuery(q);
+  if (pq.file !== "" || pq.tool !== "" || pq.turn > 0) {
+    return false;
+  }
+  return !pq.terms.some((t) => t.words.some((w) => Array.from(w).length >= SEARCH_MIN_RUNES));
+}
+
 /** The note while the typed text is under the floor. */
 const UNDER_FLOOR_NOTE = "Type 3 characters, or press Enter to search";
 
@@ -377,8 +388,7 @@ class HistoryController {
     debounceMs: CHAT_SEARCH_DEBOUNCE_MS,
     host: () => document.getElementById("history-view"),
     query: (q, ctx) => {
-      const short =
-        !ctx.submitted && q.trim() !== "" && Array.from(q.trim()).length < SEARCH_MIN_RUNES;
+      const short = !ctx.submitted && q.trim() !== "" && underFloor(q);
       this.underFloor = short;
       this.query = short ? "" : q;
       return null;

@@ -195,21 +195,25 @@ function currentUnit(): HTMLElement | null {
   );
 }
 
-async function load(chat: string): Promise<void> {
+async function load(chat: string, turns = chatTurns()): Promise<void> {
+  const order = [...turns.keys()];
   setSessions([
     {
       ...makeSession({ id: chat, name: chat }),
-      turns: chatTurns(),
-      turn_order: ["t1", "t2", "t3"],
-      turn_count: 3,
+      turns,
+      turn_order: order,
+      turn_count: order.length,
     },
   ]);
   setActive(chat);
   bumpMessages(chat, "load");
   await vi.waitFor(() => {
-    entryEl("t3-e6");
-    expect(folded("t1")).toBe(true);
-    expect(folded("t2")).toBe(true);
+    // Every turn but the newest folds, and the newest's last entry is mounted.
+    const last = turns.get(order.at(-1) ?? "")?.entries.at(-2);
+    entryEl(last?.id ?? "");
+    for (const turn of order.slice(0, -1)) {
+      expect(folded(turn)).toBe(true);
+    }
   });
   // The reader at the live edge, where a chat opens.
   await pinAtLiveEdge(scrollerEl, 20, () => {
@@ -420,6 +424,59 @@ describe("find in chat reveals the current hit only", () => {
     }
     expect(folded("t1")).toBe(true);
     expect(Math.max(...drift)).toBeLessThanOrEqual(1);
+  });
+
+  it("holds the current hit in place while a tool group above it in the same turn closes", async () => {
+    // One open turn: a tool group holding a hit, then a tall message holding the next.
+    const t = "t1";
+    const turns = new Map<string, TurnState>([
+      [
+        t,
+        {
+          entries: [
+            at(t, 0, "turn_open", { prompt: { id: "t1-p", text: "only" }, source: "prompt", n: 1 }),
+            ...tool(t, 1, "Read notes", "nothing here"),
+            ...tool(t, 3, "Run checks", "the deadset run logged a security failure"),
+            at(t, 5, "text", { text: `${FILLER}\n\n${FILLER}\n\nsecurity failure in deadset` }),
+            at(t, 6, "turn_close", { outcome: "completed" }),
+          ],
+          openEntries: new Map(),
+        },
+      ],
+    ]);
+    await load("c-q-anchor-group", turns);
+    stageServerHits([
+      hitOn(t, 1, "t1-e3", "tool", ["tool_output"]),
+      hitOn(t, 1, "t1-e5", "message", ["content"]),
+    ]);
+    await searchAndLand("deadset security failure", t);
+    expect(currentUnit()).toBe(entryEl("t1-e5"));
+    press();
+    await vi.waitFor(() => {
+      expect(currentUnit()).toBe(entryEl("t1-e3"));
+    });
+    // With motion, so the group's close tweens after the jump to the next hit.
+    await emulateA11yMedia({ reducedMotion: "no-preference" });
+    try {
+      press();
+      await vi.waitFor(() => {
+        expect(currentUnit()).toBe(entryEl("t1-e5"));
+      });
+      const top = (): number =>
+        messagesEl.querySelector("mark.find-hit-current")?.getBoundingClientRect().top ??
+        Number.NaN;
+      const before = top();
+      const drift: number[] = [];
+      const start = performance.now();
+      while (performance.now() - start < 600) {
+        await new Promise((r) => requestAnimationFrame(r));
+        drift.push(Math.abs(top() - before));
+      }
+      expect(groupOf("t1-e3").classList.contains("tool-group-collapsed")).toBe(true);
+      expect(Math.max(...drift)).toBeLessThanOrEqual(1);
+    } finally {
+      await emulateA11yMedia({ reducedMotion: "reduce" });
+    }
   });
 });
 

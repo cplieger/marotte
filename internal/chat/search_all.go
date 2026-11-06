@@ -132,7 +132,8 @@ func (s *Store) searchOneChat(ctx context.Context, ce chatEntry, query string, w
 	// Always case-insensitive: the question is asked from memory.
 	sc := searchEntries(s.searchView(entries), drawn, query, false)
 	res := sc.res
-	// A title naming the subject is a result even if the body never repeats it.
+	// A title naming the subject is a result even if the body never repeats it, and a one-place match even when the
+	// body only spreads the words.
 	title := titleAll(c.Name, query)
 	if res.Matched == 0 && title == 0 {
 		return chatScan{}
@@ -141,7 +142,7 @@ func (s *Store) searchOneChat(ctx context.Context, ce chatEntry, query string, w
 		Name:      c.Name,
 		ID:        marotte.ChatID(c.ID),
 		Hits:      res.Matched,
-		Spread:    res.Spread,
+		Spread:    res.Spread && title == 0,
 		Score:     scoreChat(res.Matched, title, sc.chars),
 		UpdatedAt: c.UpdatedAt,
 	}

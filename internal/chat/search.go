@@ -291,13 +291,14 @@ func sentBy(segs []segment, c *marotte.Caller) []segment {
 	return segs
 }
 
-// entrySegments lists an entry's searchable spans in rendered order: text; tool_call title and input; tool_result
-// claim, diff, denial and output; steer text; plan entries; compaction_failed or safety_blocked text; model_routed's
-// message; model_fallback's models and codes; turn_close failure reason; turn_open prompt and attachment names;
-// turn_wake label and messages, its runs named from names. Empty spans add nothing.
+// entrySegments lists an entry's searchable spans in rendered order: text and steer_ack text; tool_call title and
+// input; tool_result claim, diff, denial and output; steer text; plan entries; compaction_failed or safety_blocked
+// text; model_routed's message; model_fallback's models and codes; turn_close failure reason; turn_open prompt and
+// attachment names; turn_wake label and messages, its runs named from names. Empty spans add nothing.
 func entrySegments(e *marotte.Entry, t *searchTurn, names map[string]string) []segment {
 	switch e.Kind {
-	case marotte.EntryKindText:
+	case marotte.EntryKindText, marotte.EntryKindSteerAck:
+		// A steer_ack's words are its `text`, as a text entry's are.
 		var p marotte.EntryText
 		return oneSegment(segmentContent, decodeText(e.Payload, &p, func() string { return p.Text }))
 	case marotte.EntryKindThinking:
@@ -333,11 +334,10 @@ func entrySegments(e *marotte.Entry, t *searchTurn, names map[string]string) []s
 		return turnOpenSegments(e.Payload)
 	case marotte.EntryKindTurnWake:
 		return turnWakeSegments(e.Payload, names)
-	case marotte.EntryKindTurnBind, marotte.EntryKindSteerAck, marotte.EntryKindCompaction,
+	case marotte.EntryKindTurnBind, marotte.EntryKindCompaction,
 		marotte.EntryKindModelSwitched, marotte.EntryKindModeSwitched, marotte.EntryKindSteerDelivered,
 		marotte.EntryKindSteerCleared, marotte.EntryKindRunNamed, marotte.EntryKindContextReset:
-		// A compaction summary restates history searchable at its source; bind, switch and reset render no text. An ack's words
-		// are the one rendered prose left out of the index.
+		// A compaction summary restates history searchable at its source; bind, switch and reset render no text.
 		return nil
 	}
 	return nil

@@ -8,6 +8,7 @@ export const FIND_UNIT_SELECTOR = "[data-find-unit]";
 /** The unit an entry's own element is, for the kinds the server searches; absent for the rest. */
 const ENTRY_UNIT: Partial<Record<EntryKind, ItemKind>> = {
   text: "message",
+  steer_ack: "message",
   thinking: "reasoning",
   tool_call: "tool",
   steer: "steer",

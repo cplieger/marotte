@@ -17,7 +17,8 @@ type ItemKind string
 const (
 	// itemHeader is the turn header: the prompt and its attachment names, or a wake's header text.
 	itemHeader ItemKind = "header"
-	// itemMessage is one prose bubble: consecutive text entries of one lane (block-window.ts runBounds).
+	// itemMessage is one prose bubble: consecutive text entries of one lane (block-window.ts runBounds), or a
+	// steer_ack.
 	itemMessage   ItemKind = "message"
 	itemReasoning ItemKind = "reasoning"
 	// itemTool is one tool card: a tool_call and its tool_result.
@@ -109,6 +110,10 @@ func (b *itemBuilder) observe(i int, e *marotte.Entry, t *searchTurn) {
 	switch e.Kind {
 	case marotte.EntryKindText:
 		b.joinProse(i, e, k, t)
+	case marotte.EntryKindSteerAck:
+		// Its own bubble (placeEntry), so it ends the open message and joins none.
+		b.flush(k)
+		b.add(b.item(itemMessage, i, e, t, e.Lane), entrySegments(e, t, b.names))
 	case marotte.EntryKindTurnOpen, marotte.EntryKindTurnWake:
 		b.addHeader(i, e, t)
 	case marotte.EntryKindTurnClose:
@@ -151,7 +156,7 @@ func (b *itemBuilder) observeRow(i int, e *marotte.Entry, k toolRunKey, t *searc
 		// Drawn nowhere of their own (a result joins its call's card), so they end nothing.
 		return
 	default:
-		// A drawn row with no searched text (steer_ack, compaction, a switch, a reset; entrySegments says why) ends a
+		// A drawn row with no searched text (compaction, a switch, a reset; entrySegments says why) ends a
 		// message, as entryRenders' default does for a kind it does not name.
 		b.flush(k)
 		return
@@ -190,7 +195,15 @@ func (b *itemBuilder) joinProse(i int, e *marotte.Entry, k toolRunKey, t *search
 	if run.say == "" {
 		run.say = say
 	}
-	run.item.segs = append(run.item.segs, entrySegments(e, t, b.names)...)
+	// One segment, the members' texts with no separator, as proseText draws the bubble: a word the stream split
+	// across two entries is one word.
+	for _, sg := range entrySegments(e, t, b.names) {
+		if len(run.item.segs) == 0 {
+			run.item.segs = []segment{sg}
+		} else {
+			run.item.segs[0].text += sg.text
+		}
+	}
 }
 
 func (b *itemBuilder) flush(k toolRunKey) {

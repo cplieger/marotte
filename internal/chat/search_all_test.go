@@ -518,6 +518,19 @@ func TestSearchAllSpreadRanksLast(t *testing.T) {
 	}
 }
 
+// A title holding every word ranks with the one-message matches, even when the body only spreads them.
+func TestSearchAllTitleMatchIsNotSpread(t *testing.T) {
+	s, _ := newTestStore(t)
+	entries, _ := chatOf(openTurn("c-aaaaaaaa-t1", 1, prompt("m-1", "deadset")).
+		text("a1", "security").text("a2", "failure"))
+	seedChatDir(t, s, &marotte.Chat{ID: "c-aaaaaaaa", Name: "Deadset security failure", TurnCount: 1}, entries, time.Now())
+
+	got := s.searchAll(t.Context(), "deadset security failure")
+	if len(got.Matches) != 1 || got.Matches[0].Spread {
+		t.Errorf("SearchAll = %+v, want the titled chat as a one-place match, not a spread one", got.Matches)
+	}
+}
+
 // History and Find in chat apply one rule: a chat matches iff its own search has hits, and Best is one of them.
 func TestSearchAllAgreesWithChatSearch(t *testing.T) {
 	s, _ := newTestStore(t)

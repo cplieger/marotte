@@ -2024,6 +2024,13 @@ describe("history: when the cross-chat search runs", () => {
     expect(searchDispatch).toHaveBeenCalledExactlyOnceWith("ab");
   });
 
+  it("counts no space toward the three characters", async () => {
+    const input = await openBox();
+    type(input, "a b");
+    vi.advanceTimersByTime(1000);
+    expect(searchDispatch).not.toHaveBeenCalled();
+  });
+
   it("labels a row whose words no single message holds", async () => {
     const input = await openBox();
     searchDispatch.mockResolvedValue({ ...ANSWER, matches: [match({ spread: true })] } as never);
