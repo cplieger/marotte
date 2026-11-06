@@ -44,6 +44,7 @@ import (
 	"github.com/cplieger/marotte/internal/steering"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/trigger"
 	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/toolbelt/v3"
 )
@@ -76,6 +77,8 @@ type App struct {
 	stopForgeSteering func()
 	// stopScheduleRunner stops the schedule runner and waits for its goroutine.
 	stopScheduleRunner func()
+	// stopTriggerConfirmer stops the trigger confirmer's cancels and releases and waits for them.
+	stopTriggerConfirmer func()
 	// stopKASHeal stops the KAS MCP file heal loop and waits for its goroutine.
 	stopKASHeal func()
 	// stopToolsSteering waits for the boot's environment.md regeneration, which reads the tools engine.
@@ -161,6 +164,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	launchRules := openLaunchRuleStore(cfg.ConfigDir)
 	leaseStore := openRunLeaseStore(cfg.ConfigDir)
+	confirmer := openTriggerConfirmer(launchRules)
 
 	presence := push.NewPresence()
 	pushSvc := push.New(appCtx, cfg.ConfigDir, cfg.VapidSub, push.WithPresence(presence))
@@ -186,6 +190,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		agent.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs),
 		agent.WithSessionSweepGate(listenerBound),
 		agent.WithLaunchRules(launchRules),
+		withTriggerConfirmer(confirmer),
 		agent.WithRunLeases(leaseStore),
 		agent.WithTabs(tabStore),
 		agent.WithSpecApprovals(approvalStore),
@@ -204,6 +209,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	stopOrphanSweep := startOrphanSweep(appCtx, h.Runs().BootSweep, h.EngineReady())
 
 	stopScheduleRunner := startScheduleRunner(appCtx, launchRules, h.Runs())
+	stopTriggerConfirmer := startTriggerConfirmer(appCtx, confirmer, h.EngineReady(), h.Runs())
 
 	mcpRegistry := mcp.NewRegistryProxy()
 	mcpPrewarm := prewarm.NewRunner(appCtx, mcpStore)
@@ -341,27 +347,28 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	built = true
 	return &App{
-		Runtime:            h,
-		Server:             srv,
-		purgeScheduler:     purgeScheduler,
-		mcpPrewarm:         mcpPrewarm,
-		tools:              tools,
-		stopKiro:           kiro.stop,
-		stopOrphanSweep:    stopOrphanSweep,
-		stopKiroSeed:       stopKiroSeed,
-		stopPRPoller:       stopPRPoller,
-		stopForgeKeeper:    stopForgeKeeper,
-		stopForges:         func() { shutdownWithin("forge reads", forgesManager.Shutdown) },
-		stopGitScans:       func() { shutdownWithin("git status scans", gitHandler.Shutdown) },
-		stopMCPCallbacks:   func() { shutdownWithin("mcp change callbacks", mcpStore.Shutdown) },
-		stopForgeSteering:  forgeSteer.close,
-		stopScheduleRunner: stopScheduleRunner,
-		stopKASHeal:        stopKASHeal,
-		stopToolsSteering:  stopToolsSteering,
-		stopKeepState:      stopKeepState,
-		stopApp:            stopApp,
-		waitSignIn:         vault.Wait,
-		roots:              roots,
+		Runtime:              h,
+		Server:               srv,
+		purgeScheduler:       purgeScheduler,
+		mcpPrewarm:           mcpPrewarm,
+		tools:                tools,
+		stopKiro:             kiro.stop,
+		stopOrphanSweep:      stopOrphanSweep,
+		stopKiroSeed:         stopKiroSeed,
+		stopPRPoller:         stopPRPoller,
+		stopForgeKeeper:      stopForgeKeeper,
+		stopForges:           func() { shutdownWithin("forge reads", forgesManager.Shutdown) },
+		stopGitScans:         func() { shutdownWithin("git status scans", gitHandler.Shutdown) },
+		stopMCPCallbacks:     func() { shutdownWithin("mcp change callbacks", mcpStore.Shutdown) },
+		stopForgeSteering:    forgeSteer.close,
+		stopScheduleRunner:   stopScheduleRunner,
+		stopTriggerConfirmer: stopTriggerConfirmer,
+		stopKASHeal:          stopKASHeal,
+		stopToolsSteering:    stopToolsSteering,
+		stopKeepState:        stopKeepState,
+		stopApp:              stopApp,
+		waitSignIn:           vault.Wait,
+		roots:                roots,
 	}, nil
 }
 
@@ -391,6 +398,8 @@ func (a *App) Shutdown() {
 	callIfSet(a.stopKASHeal)
 	// Before the runtime's teardown: a sweep in flight launches its run through the runtime.
 	callIfSet(a.stopScheduleRunner)
+	// Before the runtime's teardown: a cancel in flight reaches the engine through the runtime.
+	callIfSet(a.stopTriggerConfirmer)
 	// Before stopKiro because this stop WAITS: a sweep reaches KAS over the agent engine the
 	// runtime teardown is about to stop, so the reverse order leaves one mid-inspect.
 	callIfSet(a.stopOrphanSweep)
@@ -865,6 +874,34 @@ func openLaunchRuleStore(dir string) *launchrule.Store {
 		return nil
 	}
 	return st
+}
+
+// openTriggerConfirmer builds the event rules' confirmer over the launch-rule store, nil when there is none.
+func openTriggerConfirmer(st *launchrule.Store) *trigger.Confirmer {
+	if st == nil {
+		return nil
+	}
+	return trigger.NewConfirmer(st, st)
+}
+
+// withTriggerConfirmer hands c to the runtime, or nothing for a nil c: a nil *trigger.Confirmer inside the
+// interface would read as wired.
+func withTriggerConfirmer(c *trigger.Confirmer) agent.Option {
+	if c == nil {
+		return func(*agent.Runtime) {}
+	}
+	return agent.WithTriggerConfirmer(c)
+}
+
+// startTriggerConfirmer runs the confirmer's cancels and releases through fx once the engine is ready. A nil c
+// starts nothing and returns a nil stop.
+func startTriggerConfirmer(ctx context.Context, c *trigger.Confirmer, engineReady <-chan struct{},
+	fx trigger.Effects,
+) (stop func()) {
+	if c == nil {
+		return nil
+	}
+	return runBackground(ctx, "trigger confirmer", func(bctx context.Context) { c.Run(bctx, engineReady, fx) })
 }
 
 // ensureUploadDir creates the composer's upload target so the file handler can mount it, warning

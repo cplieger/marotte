@@ -204,6 +204,15 @@ func (s *Store) State(ruleID string) (State, error) {
 	return rs.state.clone(), nil
 }
 
+// StateWriter is the raw write and removal of a rule's state file, which the trigger confirmer persists event
+// rules through.
+type StateWriter interface {
+	WriteState(ctx context.Context, ruleID string, in *State) error
+	RemoveState(ruleID string) error
+}
+
+var _ StateWriter = (*Store)(nil)
+
 // WriteState replaces the rule's state file with in, touching no other file. ErrNotFound for no such rule; a
 // blocked rule refuses with what State answers, so its file is never overwritten.
 //

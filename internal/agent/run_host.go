@@ -111,6 +111,29 @@ func (rs *Runs) LaunchScheduled(
 	return id, name, err
 }
 
+var _ trigger.Effects = (*Runs)(nil)
+
+// LaunchTriggered launches an unattended run of an event rule's queued event. Once workflow/new created the run it
+// returns the run's id with whatever error followed, so the rule can name, keep or cancel that one run; an error
+// before it (a refused or uncheckable pick, a drain, a busy recipe) returns no id.
+func (rs *Runs) LaunchTriggered(
+	ctx context.Context, source, ruleID, eventKey, coalesceKey string, inputs map[string]string,
+	defaults marotte.RunDefaults,
+) (workflowID string, err error) {
+	// The trigger runner outlives Shutdown, so a launch is held on inflight and refused once draining.
+	release, ok := rs.lifecycle.enterUnlessDraining()
+	if !ok {
+		return "", errRuntimeDraining
+	}
+	defer release()
+	if err := rs.checkRunDefaults(ctx, defaults); err != nil {
+		return "", err
+	}
+	o := triggeredLaunch(ruleID, eventKey, coalesceKey, trigger.EventLabel(inputs))
+	workflowID, _, err = rs.launchAs(ctx, source, inputs, defaults, o)
+	return workflowID, err
+}
+
 func (rs *Runs) launchAs(
 	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults, o launchOrigin,
 ) (id, name string, err error) {
@@ -138,8 +161,10 @@ func (rs *Runs) launchAs(
 	}
 	defer unlock()
 	var dropped []string
-	if o.origin == runlease.OriginScheduled {
+	if o.origin == runlease.OriginScheduled || o.origin == runlease.OriginTriggered {
 		inputs, dropped = declaredInputs(inputs, recipe.Inputs)
+	}
+	if o.origin == runlease.OriginScheduled {
 		// Before the door: KAS's reset reconnects unconditionally, so a reset after the host's acquire began a fresh
 		// connect would connect twice and close the good one.
 		rs.resetFailedMCP(cctx)
