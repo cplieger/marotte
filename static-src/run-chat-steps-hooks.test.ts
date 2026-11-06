@@ -2,6 +2,7 @@
 // (`createRunStepStream` over the real dispatcher), so a rule the chat applies and the run tab skips fails here.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { userEvent } from "vitest/browser";
 import type { Turn } from "./turns.js";
 import type { Entry, EntryToolCall } from "./wire/types.gen.js";
 import type { RunStepStream } from "./run-chat-steps.js";
@@ -135,15 +136,23 @@ afterEach(() => {
 });
 
 describe("a step's hooks in the run pane", () => {
-  it("folds a passing tool-trigger hook into its group's badge, hidden from find and listed by name", () => {
+  it("folds a passing tool-trigger hook into its group's badge, hidden from find and listed by name", async () => {
     const root = paintStep((t) => [call(t, 1, { id: "cmd-a" }), hook(t, 2, "seat guard")]);
     expect(shownHookTitles(root)).toEqual([]);
     expect(badgeText(root)).toContain("1");
     const folded = root.querySelector<HTMLElement>('.tool-call[data-kind="hook"]');
     expect(folded?.hidden).toBe(true);
     expect(folded?.hasAttribute("data-hook-folded")).toBe(true);
-    const item = root.querySelector<HTMLElement>(".tool-hook-list > li");
-    expect(item?.textContent).toContain("Hook fired: seat guard");
+    const badge = root.querySelector<HTMLButtonElement>(".tool-group > .tool-group-hooks");
+    expect(badge).not.toBeNull();
+    await userEvent.click(badge as HTMLButtonElement);
+    await expect
+      .poll(() =>
+        [...document.querySelectorAll(".tool-hook-popover .tool-hook-item .tool-title")].map(
+          (t) => t.textContent,
+        ),
+      )
+      .toEqual(["seat guard"]);
   });
 
   it("keeps a failed hook and a hook that printed as rows", () => {
