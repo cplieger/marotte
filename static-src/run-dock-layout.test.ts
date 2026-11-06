@@ -590,6 +590,33 @@ describe("the run dock head beside its verbs", () => {
       );
     });
 
+    // One verb: between two, the row's tap gap is spacing the touch rule grows on purpose.
+    it(`keeps the clock and the end verb where a mouse puts them in touch mode at ${String(w)}px`, async () => {
+      await browser.viewport(w, h);
+      style = mountAppCSS();
+      const { byId } = mountRunView(h);
+      const row = verbs(false, ["Cancel"]);
+      mountPage(byId, row).render({
+        label: "subflux-build-lanes-relaunch",
+        state: "running",
+        nodes: lanes(false),
+        live: true,
+      });
+      const head = byId("run-exec-dock").querySelector<HTMLElement>(".ev-dock-head")!;
+      const xs = (): number[] => {
+        const clock = box(head.querySelector(".ev-sum-clock"));
+        const verb = box(row.firstElementChild);
+        return [clock.left, clock.right, verb.left, verb.right];
+      };
+      document.documentElement.setAttribute("data-pointer", "fine");
+      const fine = xs();
+      document.documentElement.setAttribute("data-pointer", "coarse");
+      const coarse = xs();
+      coarse.forEach((x, i) => {
+        expect(x, `edge ${String(i)} at ${String(w)}`).toBeCloseTo(fine[i]!, 1);
+      });
+    });
+
     it(`puts a pause in the progress and bar's place, on one line, at ${String(w)}px`, async () => {
       await browser.viewport(w, h);
       style = mountAppCSS();

@@ -1060,11 +1060,12 @@
 /* The head is the run's identity row in every state, never washed or wrapped, and
    the panel's hit target (`disclosure-row.ts` `wireRowToggle`), forwarding to the
    chevron that keeps `aria-expanded`; its controls are their own. The verbs end on
-   its corner, so its end inset is theirs (`--head-act-in`, 2px fine, 6px coarse, which
-   keeps their expanders inside the dock's clip); the chevron is flush with its start
-   edge and takes that corner. */
+   its corner, so its end inset is theirs (`--head-act-in`, half of what a 44px expander
+   adds to a dense verb, so it stays inside the dock's clip). One value on both tiers:
+   the clock and the alert line before the verbs keep their x; the chevron is flush with
+   its start edge and takes that corner. */
 .ev-dock-head {
-  --head-act-in: calc((var(--row-tap) - var(--ctl-h-dense)) / 2);
+  --head-act-in: calc((2.75rem - var(--ctl-h-dense)) / 2);
 
   position: relative;
   display: flex;
