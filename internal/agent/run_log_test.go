@@ -314,24 +314,32 @@ func TestRunLog_StepEndsGradesEachPathsNewestCloseUnderKAS(t *testing.T) {
 		closeStep(t, w, rerun, marotte.StopReasonToolUse, "completed")
 		closeStep(t, w, rerun, marotte.StopReasonEndTurn, "completed")
 
-		got, err := newRunLog(dir).stepEnds(t.Context(), "wf1", kas)
+		got, _, err := newRunLog(dir).stepEnds(t.Context(), "wf1", kas)
 		if err != nil {
 			t.Fatalf("StepEnds: %v", err)
 		}
-		want := map[string]marotte.RunStepEnd{capped: limit}
+		// KAS completed the handoff on its success signal, so its recorded grade reads completed.
+		want := map[string]marotte.RunStepEnd{capped: limit, handoff: {Outcome: marotte.TurnOutcomeCompleted}}
 		if !maps.Equal(got, want) {
 			t.Errorf("StepEnds = %+v, want %+v", got, want)
+		}
+		again, _, err := newRunLog(dir).stepEnds(t.Context(), "wf1", nil)
+		if err != nil {
+			t.Fatalf("StepEnds after a restart: %v", err)
+		}
+		if !maps.Equal(again, want) {
+			t.Errorf("StepEnds after a restart with KAS's record unread = %+v, want the recorded %+v", again, want)
 		}
 	})
 	t.Run("a close after the first read keeps the answer current", func(t *testing.T) {
 		r := newRunLog(t.TempDir())
 		closeStep(t, r, clean, marotte.StopReasonEndTurn, "completed")
-		if got, err := r.stepEnds(t.Context(), "wf1", kas); err != nil || len(got) != 0 {
+		if got, _, err := r.stepEnds(t.Context(), "wf1", kas); err != nil || len(got) != 0 {
 			t.Fatalf("StepEnds before any broken close = %+v, %v, want none", got, err)
 		}
 		closeStep(t, r, capped, marotte.StopReasonToolUse, "completed")
 
-		got, err := r.stepEnds(t.Context(), "wf1", kas)
+		got, _, err := r.stepEnds(t.Context(), "wf1", kas)
 		if err != nil {
 			t.Fatalf("StepEnds: %v", err)
 		}
@@ -342,12 +350,12 @@ func TestRunLog_StepEndsGradesEachPathsNewestCloseUnderKAS(t *testing.T) {
 	t.Run("with KAS's record unread a tool_use stop names nothing", func(t *testing.T) {
 		r := newRunLog(t.TempDir())
 		closeStep(t, r, capped, marotte.StopReasonToolUse, "completed")
-		if got, err := r.stepEnds(t.Context(), "wf1", nil); err != nil || len(got) != 0 {
+		if got, _, err := r.stepEnds(t.Context(), "wf1", nil); err != nil || len(got) != 0 {
 			t.Errorf("StepEnds with no KAS record = %+v, %v, want none", got, err)
 		}
 	})
 	t.Run("a run with no log answers nothing", func(t *testing.T) {
-		got, err := newRunLog(t.TempDir()).stepEnds(t.Context(), "wf1", kas)
+		got, _, err := newRunLog(t.TempDir()).stepEnds(t.Context(), "wf1", kas)
 		if err != nil || got != nil {
 			t.Errorf("StepEnds with no log = %+v, %v, want nil, nil", got, err)
 		}
@@ -370,7 +378,7 @@ func TestRunLog_StepEndsReadsAnEngineEndAsInterruptedAndItsResume(t *testing.T) 
 	}
 	ends := func(t *testing.T, r *runLog, kas map[string]workflow.StepRecord) map[string]marotte.RunStepEnd {
 		t.Helper()
-		got, err := r.stepEnds(t.Context(), "wf1", kas)
+		got, _, err := r.stepEnds(t.Context(), "wf1", kas)
 		if err != nil {
 			t.Fatalf("StepEnds: %v", err)
 		}
@@ -532,7 +540,7 @@ func TestRunLog_StepStartsKeepsAnAttemptAcrossAResume(t *testing.T) {
 			t.Fatal(err)
 		}
 		r := newRunLog(dir)
-		if _, err := r.stepEnds(t.Context(), "wf1", nil); err != nil {
+		if _, _, err := r.stepEnds(t.Context(), "wf1", nil); err != nil {
 			t.Fatalf("StepEnds: %v", err)
 		}
 		assertStarts(t, r, step, startOf(first, true))

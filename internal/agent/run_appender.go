@@ -58,7 +58,7 @@ func (rs *Runs) RunNodeComplete(ctx context.Context, runID string, path []string
 		slog.Debug("run log: node_complete for a path with no open turn", "run", runID, "node_path", nodePath)
 	}
 	translate.PublishSealed(ctx, rs.bus, "", runID, sealed)
-	rs.noteStepEnded(runID, path, sealed)
+	rs.gradeStepEnd(runID, nodePath, sealed, status)
 	if closed {
 		rs.quietEdge()
 	}
@@ -77,51 +77,96 @@ func stepNoteID(workflowID, cause, nodePath string) string {
 	return "notify-" + workflowID + ":" + cause + ":" + nodePath
 }
 
-// A step KAS graded completed that did not finish: declined, stopped at kiro-cli's model-call limit, or ended by its
-// own turn saying nothing.
-// It reaches the human reading the chat, not the agent (recordSteer never calls _session/steer).
-// Only CloseNode's close gets here. The grade needs KAS's record of the node, an engine read, so it runs off the
-// frame's goroutine.
-func (rs *Runs) noteStepEnded(workflowID string, path []string, sealed []turnlog.Sealed) {
-	tc, ok := turnCloseOf(sealed)
-	if !ok {
+// gradeStepEnd leaves what a step's node_complete calls for. Under a status other than completed the sealed close is
+// the step's end (stepClose.graded is the identity there), so its note needs no read of KAS's record. Under completed
+// the close is graded off the frame's goroutine, an engine read, and noted only from the grade recorded.
+// A note reaches the human reading the chat, not the agent (recordSteer never calls _session/steer).
+func (rs *Runs) gradeStepEnd(workflowID, nodePath string, sealed []turnlog.Sealed, status string) {
+	if rs.lifecycle == nil {
 		return
 	}
-	c := stepCloseOf(&tc)
-	if !c.mayNote() || rs.lifecycle == nil {
-		return
-	}
+	// Read here: run_complete's forgetBounds releases the lease right after a run's last node_complete.
 	l, held := rs.lease(workflowID)
-	if !held || l.ChatID == "" || rs.coord == nil {
+	if marotte.RunStatus(status) != marotte.RunStatusCompleted {
+		tc, ok := turnCloseOf(sealed)
+		if !ok {
+			return
+		}
+		c := stepCloseOf(&tc, "")
+		if !c.mayNote() || !held || l.ChatID == "" || rs.coord == nil {
+			return
+		}
+		rs.lifecycle.goUnlessDraining(func() {
+			ctx, cancel := rs.lifecycle.derivedContext()
+			defer cancel()
+			rs.noteGradedStepEnd(ctx, &l, nodePath, &c, "")
+		})
 		return
 	}
-	nodePath := workflow.PathKey(path)
 	rs.lifecycle.goUnlessDraining(func() {
 		ctx, cancel := rs.lifecycle.derivedContext()
 		defer cancel()
-		kas, known := rs.kasStep(ctx, workflowID, nodePath)
-		g := c.graded(kas, known)
-		rs.noteGradedStepEnd(ctx, &l, path, &g, kas.SessionID)
+		if g := rs.gradeStep(ctx, workflowID, nodePath); g != nil {
+			rs.recordGrade(ctx, workflowID, g, l, held)
+		}
 	})
+}
+
+// gradeStep records the path's due grade (runLog.gradeStep), reading KAS's record only for a close due one.
+func (rs *Runs) gradeStep(ctx context.Context, workflowID, nodePath string) *stepGrade {
+	g, err := rs.log.gradeStep(ctx, workflowID, nodePath, func() (workflow.StepRecord, bool) {
+		return rs.kasStep(ctx, workflowID, nodePath)
+	})
+	if err != nil {
+		slog.Warn("run log: record a step's grade", "run", workflowID, "node_path", nodePath, "error", err)
+	}
+	return g
+}
+
+// recordGrade announces a step's grade and leaves the launching chat the note it calls for. Every trigger of a grade
+// calls it, so a close is noted once, by the trigger that recorded its grade. l and held are the caller's lease read.
+func (rs *Runs) recordGrade(ctx context.Context, workflowID string, g *stepGrade, l runlease.Lease, held bool) {
+	translate.PublishAppended(ctx, rs.bus, "", workflowID, g.entry)
+	if !g.mayNote || rs.coord == nil || rs.lifecycle == nil || !held || l.ChatID == "" {
+		return
+	}
+	// Off the caller's context: a run read's request ending must not cut the note's write.
+	rs.lifecycle.goUnlessDraining(func() {
+		nctx, cancel := rs.lifecycle.derivedContext()
+		defer cancel()
+		rs.noteGradedStepEnd(nctx, &l, g.nodePath, &g.grade, g.sessionID)
+	})
+}
+
+// stepEnds is runLog.stepEnds, announcing and noting each grade it recorded.
+func (rs *Runs) stepEnds(ctx context.Context, workflowID string, kas map[string]workflow.StepRecord) (map[string]marotte.RunStepEnd, error) {
+	ends, graded, err := rs.log.stepEnds(ctx, workflowID, kas)
+	if len(graded) > 0 {
+		l, held := rs.lease(workflowID)
+		for _, g := range graded {
+			rs.recordGrade(ctx, workflowID, g, l, held)
+		}
+	}
+	return ends, err
 }
 
 // noteGradedStepEnd leaves the note a graded step end calls for, if any. sessionID is the step's session, "" when
 // KAS's record was not read.
-func (rs *Runs) noteGradedStepEnd(ctx context.Context, l *runlease.Lease, path []string, c *stepClose, sessionID string) {
+func (rs *Runs) noteGradedStepEnd(ctx context.Context, l *runlease.Lease, nodePath string, c *stepClose, sessionID string) {
 	name := cmp.Or(rs.leasedRunName(l), "Workflow run")
 	var cause, text string
 	switch {
 	case c.outcome == marotte.TurnOutcomeRefused:
-		cause, text = stepNoteRefused, stepRefusalNoteText(name, path, c.refusal)
+		cause, text = stepNoteRefused, stepRefusalNoteText(name, nodePath, c.refusal)
 	case c.kind == marotte.FailureKindModelCallLimit:
-		cause, text = stepNoteModelCallLimit, stepModelCallLimitNoteText(name, path)
+		cause, text = stepNoteModelCallLimit, stepModelCallLimitNoteText(name, nodePath)
 	case c.kind == marotte.FailureKindEmptyAnswer:
-		cause, text = stepNoteEmptyAnswer, stepEmptyAnswerNoteText(name, path, sessionID)
+		cause, text = stepNoteEmptyAnswer, stepEmptyAnswerNoteText(name, nodePath, sessionID)
 	default:
 		return
 	}
 	workflowID := l.WorkflowID
-	rs.coord.recordSteer(ctx, marotte.ChatID(l.ChatID), stepNoteID(workflowID, cause, workflow.PathKey(path)), &marotte.EntrySteer{
+	rs.coord.recordSteer(ctx, marotte.ChatID(l.ChatID), stepNoteID(workflowID, cause, nodePath), &marotte.EntrySteer{
 		Text:       text,
 		Origin:     marotte.SteerOriginAgent,
 		State:      marotte.SteerStateRead,
@@ -146,28 +191,28 @@ func turnCloseOf(sealed []turnlog.Sealed) (marotte.EntryTurnClose, bool) {
 	return marotte.EntryTurnClose{}, false
 }
 
-// stepModelCallLimitNoteText names the step by workflow.PathKey, as an included node's id holds a '/'.
-func stepModelCallLimitNoteText(run string, path []string) string {
-	return run + " step " + workflow.PathKey(path) + " stopped early. " + marotte.ModelCallLimitStepReason
+// stepModelCallLimitNoteText names the step by its workflow.PathKey, as an included node's id holds a '/'.
+func stepModelCallLimitNoteText(run, nodePath string) string {
+	return run + " step " + nodePath + " stopped early. " + marotte.ModelCallLimitStepReason
 }
 
 // stepEmptyAnswerNoteText names the step and its session, which holds the empty answer.
-func stepEmptyAnswerNoteText(run string, path []string, sessionID string) string {
+func stepEmptyAnswerNoteText(run, nodePath, sessionID string) string {
 	session := ""
 	if sessionID != "" {
 		session = " (session " + sessionID + ")"
 	}
-	return run + " step " + workflow.PathKey(path) + session + " ended with no answer and no signal. " +
+	return run + " step " + nodePath + session + " ended with no answer and no signal. " +
 		marotte.EmptyAnswerStepReason
 }
 
 // stepRefusalNoteText names the step and does not invite a re-run: a refusal is deterministic.
 // Category and explanation are optional. The total length is unbounded, accepted as in noteRunEnd.
-func stepRefusalNoteText(run string, path []string, r *marotte.RefusalInfo) string {
+func stepRefusalNoteText(run, nodePath string, r *marotte.RefusalInfo) string {
 	var b strings.Builder
 	b.WriteString(run)
 	b.WriteString(" step ")
-	b.WriteString(workflow.PathKey(path))
+	b.WriteString(nodePath)
 	b.WriteString(" was declined by the model")
 	if r != nil && r.Category != "" {
 		b.WriteString(" (")

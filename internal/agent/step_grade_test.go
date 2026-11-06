@@ -161,15 +161,6 @@ func stepEndsOf(t *testing.T, h *Runtime, workflowID string) map[string]marotte.
 	return reply.StepEnds
 }
 
-func newestCloseOf(t *testing.T, h *Runtime, workflowID, nodePath string) marotte.EntryTurnClose {
-	t.Helper()
-	out, err := h.runs.stepTranscript(t.Context(), workflowID, nodePath)
-	if err != nil {
-		t.Fatalf("step transcript: %v", err)
-	}
-	return newestClose(t, out.Entries)
-}
-
 func newestClose(t *testing.T, entries []marotte.Entry) marotte.EntryTurnClose {
 	t.Helper()
 	for _, e := range slices.Backward(entries) {
@@ -179,6 +170,31 @@ func newestClose(t *testing.T, entries []marotte.Entry) marotte.EntryTurnClose {
 	}
 	t.Fatalf("the step transcript holds no turn_close: %+v", entries)
 	return marotte.EntryTurnClose{}
+}
+
+// newestGradeOf is the newest step_graded payload in a step's entries; false when they hold none.
+func newestGradeOf(t *testing.T, entries []marotte.Entry) (marotte.EntryStepGraded, bool) {
+	t.Helper()
+	for _, e := range slices.Backward(entries) {
+		if e.Kind != marotte.EntryKindStepGraded {
+			continue
+		}
+		var g marotte.EntryStepGraded
+		if err := json.Unmarshal(e.Payload, &g); err != nil {
+			t.Fatalf("decode step_graded %s: %v", e.ID, err)
+		}
+		return g, true
+	}
+	return marotte.EntryStepGraded{}, false
+}
+
+func transcriptOf(t *testing.T, h *Runtime, workflowID, nodePath string) []marotte.Entry {
+	t.Helper()
+	out, err := h.runs.stepTranscript(t.Context(), workflowID, nodePath)
+	if err != nil {
+		t.Fatalf("step transcript: %v", err)
+	}
+	return out.Entries
 }
 
 // runRecordedStep drives one step turn as the frames recorded it: node_start, the session's turn_end, then
@@ -211,15 +227,15 @@ func TestStepEnd_AKiroCLI232HandoffStepReadsCompleted(t *testing.T) {
 
 	runRecordedStep(t, h, id, nodePath, path, recordedStop(t, "creator_232_session_tail.jsonl"))
 
-	t.Run("the run read names no step end", func(t *testing.T) {
-		if ends := stepEndsOf(t, h, id); len(ends) != 0 {
-			t.Errorf("step_ends = %+v, want none", ends)
+	t.Run("the run read names the step's recorded completed end", func(t *testing.T) {
+		if ends, want := stepEndsOf(t, h, id), (marotte.RunStepEnd{Outcome: marotte.TurnOutcomeCompleted}); len(ends) != 1 || ends[nodePath] != want {
+			t.Errorf("step_ends = %+v, want only %s = %+v", ends, nodePath, want)
 		}
 	})
 	t.Run("the step's turn reads completed", func(t *testing.T) {
-		c := newestCloseOf(t, h, id, nodePath)
-		if c.Outcome != marotte.TurnOutcomeCompleted || c.FailureKind != "" || c.FailureReason != "" {
-			t.Errorf("turn_close = {%s %q %q}, want {completed \"\" \"\"}", c.Outcome, c.FailureKind, c.FailureReason)
+		g, ok := newestGradeOf(t, transcriptOf(t, h, id, nodePath))
+		if want := (marotte.EntryStepGraded{Outcome: marotte.TurnOutcomeCompleted}); !ok || g != want {
+			t.Errorf("step_graded = %+v (found %v), want %+v", g, ok, want)
 		}
 	})
 	t.Run("the launching chat gets no note", func(t *testing.T) {
@@ -258,10 +274,10 @@ func TestStepEnd_AStepKASCompletedWithNoSignalAfterAToolUseStopIsTheModelCallLim
 		}
 	})
 	t.Run("the step's turn reads the limit", func(t *testing.T) {
-		c := newestCloseOf(t, h, id, nodePath)
-		if c.Outcome != limit.Outcome || c.FailureKind != limit.FailureKind || c.FailureReason != limit.FailureReason {
-			t.Errorf("turn_close = {%s %q %q}, want {%s %q %q}",
-				c.Outcome, c.FailureKind, c.FailureReason, limit.Outcome, limit.FailureKind, limit.FailureReason)
+		g, ok := newestGradeOf(t, transcriptOf(t, h, id, nodePath))
+		want := marotte.EntryStepGraded{Outcome: limit.Outcome, FailureKind: limit.FailureKind, FailureReason: limit.FailureReason}
+		if !ok || g != want {
+			t.Errorf("step_graded = %+v (found %v), want %+v", g, ok, want)
 		}
 	})
 	t.Run("the launching chat gets the note", func(t *testing.T) {
@@ -270,7 +286,7 @@ func TestStepEnd_AStepKASCompletedWithNoSignalAfterAToolUseStopIsTheModelCallLim
 			t.Fatalf("the launching chat got %d notes, want one: %+v", len(steers), steers)
 		}
 		// The run read learned the name from the inspect fixture's workflowName, which outranks the lease.
-		if want := stepModelCallLimitNoteText("one-engine-build", path); steers[0].Text != want {
+		if want := stepModelCallLimitNoteText("one-engine-build", nodePath); steers[0].Text != want {
 			t.Errorf("note text = %q, want %q", steers[0].Text, want)
 		}
 	})
@@ -358,16 +374,19 @@ func TestStepEnd_AStoredModelCallLimitFailureOfAStepKASCompletedOnSuccessReadsCo
 	}
 	h.runs.log = newRunLog(dir)
 
-	t.Run("the run read names no step end", func(t *testing.T) {
-		if ends := stepEndsOf(t, h, id); len(ends) != 0 {
-			t.Errorf("step_ends = %+v, want none", ends)
+	t.Run("the run read names the step's recorded completed end", func(t *testing.T) {
+		if ends, want := stepEndsOf(t, h, id), (marotte.RunStepEnd{Outcome: marotte.TurnOutcomeCompleted}); len(ends) != 1 || ends[nodePath] != want {
+			t.Errorf("step_ends = %+v, want only %s = %+v", ends, nodePath, want)
 		}
 	})
 	t.Run("the step's turn reads completed", func(t *testing.T) {
-		c := newestCloseOf(t, h, id, nodePath)
-		if c.Outcome != marotte.TurnOutcomeCompleted || c.FailureKind != "" || c.FailureReason != "" || c.StopReasonRaw != "tool_use" {
-			t.Errorf("turn_close = {%s %q %q %s}, want {completed \"\" \"\" tool_use}",
-				c.Outcome, c.FailureKind, c.FailureReason, c.StopReasonRaw)
+		entries := transcriptOf(t, h, id, nodePath)
+		if c := newestClose(t, entries); c.FailureKind != marotte.FailureKindModelCallLimit || c.StopReasonRaw != "tool_use" {
+			t.Errorf("turn_close = {%s %q %s}, want the stored {failed model_call_limit tool_use}", c.Outcome, c.FailureKind, c.StopReasonRaw)
+		}
+		g, ok := newestGradeOf(t, entries)
+		if want := (marotte.EntryStepGraded{Outcome: marotte.TurnOutcomeCompleted}); !ok || g != want {
+			t.Errorf("step_graded = %+v (found %v), want %+v", g, ok, want)
 		}
 	})
 }
@@ -432,16 +451,40 @@ func TestStepEnd_AStepKASCompletedWithNoSignalAfterAnEmptyAnswerReadsFailed(t *t
 			h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
 			joinInflight(t, h)
 
+			// A close that said nothing is due a grade: the empty answer, or completed under a success signal.
+			var grade *marotte.EntryStepGraded
+			switch {
+			case tc.failed:
+				grade = &marotte.EntryStepGraded{
+					Outcome: marotte.TurnOutcomeFailed, FailureKind: marotte.FailureKindEmptyAnswer,
+					FailureReason: marotte.EmptyAnswerStepReason,
+				}
+			case tc.signal == "success":
+				grade = &marotte.EntryStepGraded{Outcome: marotte.TurnOutcomeCompleted}
+			}
 			t.Run("the run read", func(t *testing.T) {
 				end, named := stepEndsOf(t, h, id)[nodePath]
-				if named != tc.failed || (named && (end.Outcome != marotte.TurnOutcomeFailed || end.FailureKind != "empty_answer")) {
-					t.Errorf("step_ends[%s] = %+v (named %v), want failed with empty_answer: %v", nodePath, end, named, tc.failed)
+				switch {
+				case grade == nil && named:
+					t.Errorf("step_ends[%s] = %+v, want no row", nodePath, end)
+				case grade != nil && (!named || end != marotte.RunStepEnd{Outcome: grade.Outcome, FailureKind: grade.FailureKind, FailureReason: grade.FailureReason}):
+					t.Errorf("step_ends[%s] = %+v (named %v), want %+v", nodePath, end, named, *grade)
 				}
 			})
 			t.Run("the step's turn", func(t *testing.T) {
-				c := newestCloseOf(t, h, id, nodePath)
-				if got := c.Outcome == marotte.TurnOutcomeFailed && c.FailureKind == "empty_answer"; got != tc.failed {
-					t.Errorf("turn_close = {%s %q %q}, want failed with empty_answer: %v", c.Outcome, c.FailureKind, c.FailureReason, tc.failed)
+				entries := transcriptOf(t, h, id, nodePath)
+				g, ok := newestGradeOf(t, entries)
+				if grade != nil {
+					if !ok || g != *grade {
+						t.Errorf("step_graded = %+v (found %v), want %+v", g, ok, *grade)
+					}
+					return
+				}
+				if ok {
+					t.Errorf("step_graded = %+v, want none", g)
+				}
+				if c := newestClose(t, entries); c.Outcome != marotte.TurnOutcomeCompleted || c.FailureKind != "" {
+					t.Errorf("turn_close = {%s %q}, want the sealed {completed \"\"}", c.Outcome, c.FailureKind)
 				}
 			})
 			t.Run("the launching chat's note", func(t *testing.T) {
@@ -682,9 +725,19 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 				}
 			})
 			t.Run("the step's turn", func(t *testing.T) {
-				c := newestCloseOf(t, h, id, nodePath)
-				if got := c.FailureKind == marotte.FailureKindEmptyAnswer; got != tc.empty {
-					t.Errorf("turn_close = {%s %q}, want empty_answer: %v", c.Outcome, c.FailureKind, tc.empty)
+				entries := transcriptOf(t, h, id, nodePath)
+				g, ok := newestGradeOf(t, entries)
+				if tc.empty {
+					if !ok || g.FailureKind != marotte.FailureKindEmptyAnswer {
+						t.Errorf("step_graded = %+v (found %v), want the empty answer", g, ok)
+					}
+					return
+				}
+				if ok {
+					t.Errorf("step_graded = %+v, want none", g)
+				}
+				if c := newestClose(t, entries); c.FailureKind == marotte.FailureKindEmptyAnswer {
+					t.Errorf("turn_close = {%s %q}, want its sealed end", c.Outcome, c.FailureKind)
 				}
 			})
 			t.Run("the launching chat's note", func(t *testing.T) {

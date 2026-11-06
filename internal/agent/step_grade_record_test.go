@@ -38,7 +38,7 @@ func gradesIn(t *testing.T, entries []marotte.Entry) []recordedGrade {
 	t.Helper()
 	var out []recordedGrade
 	for _, e := range entries {
-		if e.Kind != "step_graded" {
+		if e.Kind != marotte.EntryKindStepGraded {
 			continue
 		}
 		g := recordedGrade{Turn: e.Turn}
@@ -97,7 +97,7 @@ func gradedAppends(t *testing.T, h *Runtime, before uint64) int {
 	t.Helper()
 	n := 0
 	for _, p := range payloadsOfType[marotte.EntryAppendedPayload](t, bufferedSince(h, before), marotte.EventEntryAppended) {
-		if p.Entry.Kind == "step_graded" {
+		if p.Entry.Kind == marotte.EntryKindStepGraded {
 			n++
 		}
 	}
@@ -177,7 +177,7 @@ func TestStepGrade_TheModelCallLimitIsRecordedOnTheStepsTurn(t *testing.T) {
 		if c.Outcome != marotte.TurnOutcomeCompleted || c.StopReasonRaw != string(marotte.StopReasonToolUse) {
 			t.Errorf("turn_close = {%s %q}, want the sealed {completed tool_use}", c.Outcome, c.StopReasonRaw)
 		}
-		if n := len(out.Entries); n == 0 || out.Entries[n-1].Kind != "step_graded" {
+		if n := len(out.Entries); n == 0 || out.Entries[n-1].Kind != marotte.EntryKindStepGraded {
 			t.Fatalf("the transcript's last entry is not the step's grade: %v", kinds(out.Entries))
 		}
 		if got := gradesIn(t, out.Entries); len(got) != 1 || got[0] != limit {
@@ -199,7 +199,7 @@ func TestStepGrade_ARecordedGradeOutlivesARestartAndAnUnreadableRecord(t *testin
 	h.runs.log = newRunLog(dir)
 	br.setCallErr(methodKiroWorkflowInspect, errors.New("the engine is gone"))
 
-	ends, err := h.runs.log.stepEnds(t.Context(), id, nil)
+	ends, _, err := h.runs.log.stepEnds(t.Context(), id, nil)
 	if err != nil {
 		t.Fatalf("stepEnds: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestStepGrade_TheRunReadRecordsAGradeTheNodeCompleteMissed(t *testing.T) {
 			t.Fatalf("launching chat notes = %v, want only %s", ids, wantID)
 		}
 		// The inspect fixture's workflowName outranks the lease's name.
-		if text, want := chatSteers(t, cs, chatID)[0].Text, stepModelCallLimitNoteText("one-engine-build", path); text != want {
+		if text, want := chatSteers(t, cs, chatID)[0].Text, stepModelCallLimitNoteText("one-engine-build", nodePath); text != want {
 			t.Errorf("note text = %q, want %q", text, want)
 		}
 	}
@@ -338,7 +338,7 @@ func TestHandleTurnRange_ServesTheStepsRecordedGrade(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode the reply: %v", err)
 	}
-	if n := len(got.Entries); n == 0 || got.Entries[n-1].Kind != "step_graded" {
+	if n := len(got.Entries); n == 0 || got.Entries[n-1].Kind != marotte.EntryKindStepGraded {
 		t.Fatalf("the turn's entries end %v, want its step_graded last", kinds(got.Entries))
 	}
 	want := recordedGrade{Turn: turn, Outcome: string(marotte.TurnOutcomeCompleted)}
@@ -408,21 +408,28 @@ func TestStepGrade_AnEarlierAttemptIsNotGradedWhileTheNextIsOpen(t *testing.T) {
 			}
 		}
 	})
-	t.Run("a turn the log holds open that this process never reopened", func(t *testing.T) {
+	t.Run("a retry a restart left open is the one graded", func(t *testing.T) {
 		h, _, br := runLoggingHub(t)
 		dir := t.TempDir()
 		h.runs.log = newRunLog(dir)
 		h.runs.RunNodeStart(t.Context(), step, "")
 		h.runs.RunNodeComplete(t.Context(), id, path, "failed", "")
 		joinInflight(t, h)
+		first := closeTurnOf(t, h, id)
 		h.runs.RunNodeStart(t.Context(), step, "")
 		h.runs.log = newRunLog(dir)
 		br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, id, "build", "completed", "success"))
 
 		stepEndsOf(t, h, id)
 		joinInflight(t, h)
-		if got := gradesOf(t, h, id); len(got) != 0 {
-			t.Errorf("step_graded entries while the log holds the retry open = %+v, want none", got)
+		// Opening the log closes the retry unterminated, so the retry is the newest close KAS's record describes.
+		retry := closeTurnOf(t, h, id)
+		if retry == first {
+			t.Fatalf("the newest close is the earlier attempt %s, want the retry's unterminated close", first)
+		}
+		want := recordedGrade{Turn: retry, Outcome: string(marotte.TurnOutcomeCompleted)}
+		if got := gradesOf(t, h, id); len(got) != 1 || got[0] != want {
+			t.Errorf("step_graded entries = %+v, want only %+v", got, want)
 		}
 	})
 }

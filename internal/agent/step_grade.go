@@ -17,8 +17,21 @@ type stepClose struct {
 	reason  string
 	kind    marotte.FailureKind
 	rawStop marotte.StopReason
+	// turn is the closed turn's id, which a step_graded names.
+	turn string
 	// unanswered is the close's EntryTurnClose.Unanswered.
 	unanswered bool
+	// hasGrade is whether a step_graded for turn is folded in.
+	hasGrade bool
+}
+
+// stepGrade is one step_graded gradeLocked appended, and what the launching chat's note reads from it.
+type stepGrade struct {
+	entry     *marotte.Entry
+	nodePath  string
+	grade     stepClose // the close under the grade (withGrade)
+	sessionID string    // KAS's record's step session, named by the empty-answer note
+	mayNote   bool      // the close before its grade mayNote()
 }
 
 // kasNoAnswerText opens the text KAS records in place of a model answer that came back empty (kiro-cli 3.0.0).
@@ -59,7 +72,7 @@ func (a *answerFold) silent() bool {
 	return !a.signalled && (t == "" || strings.HasPrefix(strings.TrimPrefix(t, "("), kasNoAnswerText))
 }
 
-func stepCloseOf(c *marotte.EntryTurnClose) stepClose {
+func stepCloseOf(c *marotte.EntryTurnClose, turn string) stepClose {
 	return stepClose{
 		refusal:    c.Refusal,
 		outcome:    c.Outcome,
@@ -67,7 +80,19 @@ func stepCloseOf(c *marotte.EntryTurnClose) stepClose {
 		kind:       c.FailureKind,
 		rawStop:    marotte.StopReason(c.StopReasonRaw),
 		unanswered: c.Unanswered,
+		turn:       turn,
 	}
+}
+
+// withGrade is c under its step_graded entry: the grade's outcome, kind and reason, the close's refusal only while
+// the grade is refused.
+func (c *stepClose) withGrade(g *marotte.EntryStepGraded) stepClose {
+	out := *c
+	out.outcome, out.kind, out.reason, out.hasGrade = g.Outcome, g.FailureKind, g.FailureReason, true
+	if g.Outcome != marotte.TurnOutcomeRefused {
+		out.refusal = nil
+	}
+	return out
 }
 
 // stoppedAtCallLimit is the turn-level tell of kiro-cli's model-call limit (a tool_use or max_turn_requests stop). It
@@ -82,7 +107,7 @@ func (c *stepClose) answeredNothing() bool {
 	return c.unanswered && (c.outcome == marotte.TurnOutcomeCompleted || c.outcome == marotte.TurnOutcomeEmpty)
 }
 
-// mayBeBroken is whether KAS's record could change or confirm this close's grade, so a reader needs it.
+// mayBeBroken is whether KAS's record could change or confirm this close's grade, so it is due one.
 func (c *stepClose) mayBeBroken() bool {
 	return marotte.SeverityOf(c.outcome) == marotte.TurnSeverityBroken || c.stoppedAtCallLimit() || c.answeredNothing()
 }
@@ -121,8 +146,9 @@ func (c *stepClose) graded(kas workflow.StepRecord, known bool) stepClose {
 	return g
 }
 
+// end is the close's step_ends row: one for a recorded grade, a completed one included, or a broken close.
 func (c *stepClose) end() (marotte.RunStepEnd, bool) {
-	if marotte.SeverityOf(c.outcome) != marotte.TurnSeverityBroken {
+	if !c.hasGrade && marotte.SeverityOf(c.outcome) != marotte.TurnSeverityBroken {
 		return marotte.RunStepEnd{}, false
 	}
 	return marotte.RunStepEnd{Outcome: c.outcome, FailureReason: c.reason, FailureKind: c.kind}, true
@@ -154,8 +180,9 @@ func kasStepIn(workflowID string, raw json.RawMessage, nodePath string) (workflo
 	return st, ok
 }
 
-// gradeNewestClose regrades the newest turn_close in a step's entries under KAS's record, rewriting its payload in
-// place when the grade moves. read answers KAS's record, and is called only for a close KAS's record could move.
+// gradeNewestClose regrades the newest turn_close of a replayed step, one the run log holds no turn for, under KAS's
+// record, rewriting its payload in place when the grade moves. read answers KAS's record, and is called only for a
+// close KAS's record could move. A step the run log holds reads its recorded grade (runLog.gradeLocked) instead.
 func gradeNewestClose(entries []marotte.Entry, read func() (workflow.StepRecord, bool)) {
 	for i := len(entries) - 1; i >= 0; i-- {
 		if entries[i].Kind != marotte.EntryKindTurnClose {
@@ -165,7 +192,7 @@ func gradeNewestClose(entries []marotte.Entry, read func() (workflow.StepRecord,
 		if json.Unmarshal(entries[i].Payload, &tc) != nil {
 			return
 		}
-		c := stepCloseOf(&tc)
+		c := stepCloseOf(&tc, entries[i].Turn)
 		if !c.mayBeBroken() {
 			return
 		}

@@ -909,7 +909,8 @@ func drawnBy(e *marotte.Entry, plans int) bool {
 	switch e.Kind {
 	case marotte.EntryKindTurnOpen, marotte.EntryKindTurnBind, marotte.EntryKindTurnWake, marotte.EntryKindRunNamed,
 		marotte.EntryKindToolResult, marotte.EntryKindTurnClose,
-		marotte.EntryKindReconciled, marotte.EntryKindSteerCleared, marotte.EntryKindSteerDelivered:
+		marotte.EntryKindReconciled, marotte.EntryKindSteerCleared, marotte.EntryKindSteerDelivered,
+		marotte.EntryKindStepGraded:
 		return false
 	case marotte.EntryKindPlan:
 		return plans == 0

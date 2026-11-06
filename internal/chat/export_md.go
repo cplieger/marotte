@@ -234,9 +234,10 @@ func (r *turnRender) writeEntry(b *strings.Builder, e *marotte.Entry) {
 	case marotte.EntryKindTurnClose:
 		writeTurnCloseEntry(b, e)
 	case marotte.EntryKindTurnBind, marotte.EntryKindReconciled, marotte.EntryKindSteerDelivered,
-		marotte.EntryKindSteerCleared, marotte.EntryKindRunNamed:
+		marotte.EntryKindSteerCleared, marotte.EntryKindRunNamed, marotte.EntryKindStepGraded:
 		// None renders: turn_bind is bookkeeping, reconciled a fact about the record, steer_delivered a time on its
-		// message's row, steer_cleared an epoch's end, and run_named a name its wakes show.
+		// message's row, steer_cleared an epoch's end, run_named a name its wakes show, and step_graded a run-log
+		// step's grade, which the run's step_ends shows.
 	}
 }
 
