@@ -655,8 +655,7 @@
   /* THE BADGE FILLS THE HEIGHT ITS ROW ALREADY HAS (`--tool-badge-h`), so no row can grow
      from it; `tool-group-height.test.ts` pins the lone-card case at both tiers. The
      TARGET is the shared expander (61-mcp-tools.css), so there is no `overflow: hidden`
-     here: the TEXT owns the clip. PHYSICAL `min-height`, because the floor sets
-     `min-height` and a logical property would not override it. */
+     here: the TEXT owns the clip. `min-height: 0` lifts the shared floor. */
   block-size: var(--tool-badge-h);
   min-height: 0;
   transition:

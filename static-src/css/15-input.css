@@ -167,24 +167,9 @@
      air below it down to the divider the pill row draws are equal at every line
      count. `1lh` is this element's own line-height, so the derivation follows
      the type scale instead of restating it.
-     It was `var(--sp-3) var(--sp-4) var(--sp-1)`: 12px above the text and 4px
-     below it. `min-height` hid most of that at rest, because a single line is
-     shorter than the box and the slack lands UNDER the text — measured 12.00px
-     above against 8.40px below, close enough to read as intentional. At two
-     lines the slack is gone and the ratio is 12.00 against 3.99, which is the
-     reported defect: the second line sits on the divider.
-     `min-height` is now what the padding is derived FROM rather than a floor
-     fighting it, so the natural single-line height IS the pill row's band and the
-     resting box did not change size.
-
-     DERIVED from the pill row rather than declared, so this row and the one under
-     it are the same band on every pointer tier: the row is one control plus its
-     two --pill-inset edges. Its 1px divider is deliberately NOT in the sum — the
-     hairline is the boundary between the two bands, so counting it here would
-     make this row 1px taller than the pill band and put the box 0.5px out of
-     vertical symmetry about it. */
-  /* The pill ROW's band, restated: its controls plus the padding that row actually
-     carries, which is the expander's reach, not `--pill-inset`. */
+     The pill row's band (one control plus its two `--composer-pill-pad` edges), so
+     the two rows match on every tier. The 1px divider between them is not in the
+     sum: counting it would put the box 0.5px out of symmetry about it. */
   --composer-rest-h: calc(var(--btn-h) + 2 * var(--composer-pill-pad));
 
   padding: calc((var(--composer-rest-h) - 1lh) / 2) var(--sp-4);
@@ -311,10 +296,8 @@
   cursor: pointer;
   border-radius: var(--r-sm);
 
-  /* PHYSICAL, and the pair is what lets the chip above declare its own height: a
-     logical `min-block-size` is a DIFFERENT property from the floor's `min-height`,
-     resolved against it by source order rather than by specificity, and
-     61-mcp-tools.css sorts later. `min-width` was already here for the ellipsis. */
+  /* No floor of its own, so the chip above sets the height; `min-width: 0` lets the
+     name ellipsise. */
   min-height: 0;
   position: relative;
 }
@@ -1422,9 +1405,9 @@
     margin-block-end: calc(-1 * var(--account-reach));
   }
 
-  /* A row, so its box is the target: `--hit-floor`, PHYSICAL as `.code-refs-link`
-     declares it, so it survives a later move inside an `<li>`, whose prose exemption
-     (61-mcp-tools.css) zeroes the floor. */
+  /* A row, so its box is the target: `--hit-floor` at class specificity, as
+     `.code-refs-link` restates it, so it survives a later move inside an `<li>`,
+     whose prose exemption (61-mcp-tools.css) zeroes the zero-specificity floor. */
   min-height: var(--hit-floor);
   justify-content: space-between;
 

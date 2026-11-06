@@ -241,7 +241,7 @@
 /* The pill is the composer's component verbatim (`.attachment-pill`, 15-input.css) so the
    two homes cannot drift apart; only the ROW's own padding is overridden, because this row
    sits inside a header that already has a gutter. Dropping the composer's target padding
-   is deliberate: the 6px a chip's coarse target reaches lands in this header's fold region. */
+   is deliberate: the reach a chip's coarse target adds lands in this header's fold region. */
 .turn-req-attachments {
   padding: 0;
   margin: 0;
@@ -1294,7 +1294,7 @@
   inline-size: var(--rail-w);
   block-size: var(--ctl-h-sm);
 
-  /* Physical, to beat the universal floor's `min-height` (61-mcp-tools.css). */
+  /* Over the universal floor (61-mcp-tools.css), which scores zero. */
   min-height: var(--rail-hit);
   padding: 0;
   border: 0;

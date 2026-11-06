@@ -1358,10 +1358,8 @@
 /* THE RESUME CONTROL, one component for the chat (`#scroll-bottom`) and the run tab
    (`#run-scroll-bottom`): a square glyph button in the reading area's end corner, each
    view placing it. NO DROP SHADOW: the opaque fill separates it from the text under it.
-
-   The painted box is the toolbar's `--btn-h` square (the label hidden), and the TARGET
-   is the shared expander (61-mcp-tools.css), as on the toolbar. The minimums are
-   PHYSICAL so they cascade with the expander host's by specificity. */
+   It paints at least the toolbar's `--btn-h` and takes the shared expander
+   (61-mcp-tools.css) as its target; the rules below shape the labelled and docked forms. */
 .scroll-resume {
   z-index: 10;
   display: flex;

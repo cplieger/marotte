@@ -460,9 +460,9 @@
  * the `::after` expander, which `--hit-inset` grows only on an axis the box is short.
  * `isolation` makes the host a stacking context, so the `z-index: -1` expander sits
  * under the host's content and never covers a control nested inside it. `:where()`
- * scores zero, so a class's own `min-*`, `position` or `::after` wins; the `min-*` stay
- * PHYSICAL because a logical one would cascade by order instead. Split only for
- * stylelint's `selector-max-attribute`; edit the arms together. */
+ * scores zero, so a class's own `min-*` (physical or logical: the pairs cascade as
+ * one), `position` or `::after` wins. Split only for stylelint's
+ * `selector-max-attribute`; edit the arms together. */
 :where(a[href], button, summary, [role="button"]),
 :where([tabindex]:not([tabindex="-1"])) {
   position: relative;

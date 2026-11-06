@@ -106,9 +106,8 @@
      (15-input.css) and floored at the house gap: the composer's last control is not
      its own last row, so a full inset renders as card material under the buttons,
      and an uncapped one as a tall band of page below. The other bottom bars honour
-     the full inset in the shared rule. PHYSICAL `padding-bottom`: 19-files.css resets
-     it at (0,4,0) when the terminal is open, and a logical twin would win that
-     contest on cascade ORDER (this file sorts later), not specificity. */
+     the full inset in the shared rule. 19-files.css resets this `padding-bottom` at
+     (0,4,0) when the terminal is open, and wins on specificity. */
   [id="prompt-form"].bottom-bar {
     padding-bottom: max(
       var(--sp-3),

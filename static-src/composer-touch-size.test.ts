@@ -476,6 +476,7 @@ describe("the model and mode pills, by the room the row has", () => {
     const box = (): HTMLElement => byId("prompt-box");
     for (const [viewport, pointer] of [
       [[768, 1024], "coarse"],
+      [[768, 1024], "fine"],
       [IPAD, "coarse"],
       [IPAD, "fine"],
     ] as const) {

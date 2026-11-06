@@ -471,7 +471,7 @@ describe("the attachment chip's declarations, read from source", () => {
     expect(writers, "one padding writer, on no width axis").toEqual([".attachment-row"]);
   });
 
-  it("opts the chip's open button out of the floor PHYSICALLY and grows their targets instead", () => {
+  it("opts the chip's open button out of the floor and grows their targets instead", () => {
     // The × declares a 24px square, the paint floor itself, so only the open button needs the opt-out.
     const close = ruleContaining(css, ".attachment-close", "top");
     expect(declaration(close.body, "inline-size"), "the × is a declared square").toBe(
@@ -485,8 +485,6 @@ describe("the attachment chip's declarations, read from source", () => {
       const rule = ruleContaining(css, selector, "top");
       const brace = rule.body.indexOf("{");
       const own = brace === -1 ? rule.body : rule.body.slice(0, brace);
-      // Physical, or the floor's `min-height` wins by source order (61-mcp-tools sorts later; a logical property is a
-      // different property to it).
       expect(declaration(own, "min-height"), `${selector} drops the floor's min-height`).toBe("0");
       expect(declaration(own, "min-width"), `${selector} drops the floor's min-width`).toBe("0");
       expect(declaration(own, "position"), `${selector} is the expander's containing block`).toBe(
