@@ -645,6 +645,43 @@ func TestOpenExternalURL_ClaimedBySignInRecordsTheAnchor(t *testing.T) {
 	}
 }
 
+// A status ending the Sign in ends its row's signing_in, not its consent URL: KAS's listener may still be waiting, so
+// the URL stays relayable, single use, until the Sign in's own deadline.
+func TestSignIn_AnAnchorOutlivesTheSignInThatTookIt(t *testing.T) {
+	lA := newCallbackListener(t, http.StatusOK)
+	h, _, lane := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	h.mcpRegistry.mu.Lock()
+	h.mcpRegistry.now = clock.now
+	h.mcpRegistry.mu.Unlock()
+	reportMCP(t, h, sessionOf("linear"), awaitingSignIn("linear", marotte.MCPSource{}))
+	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "linear"); err != nil {
+		t.Fatalf("claimSignIn(linear) = %v", err)
+	}
+	if _, err := openURL(t, h, lane, 1, authURLFor(t, lA.srv.URL, "st-a")); err != nil {
+		t.Fatalf("A's answer = %v, want success", err)
+	}
+
+	reportMCP(t, h, sessionOf("linear"), failedMCP("linear", marotte.MCPSource{}, "timed out"))
+
+	if got := standingSignIn(h); got != "" {
+		t.Fatalf("standing sign-in = %q after the failed status, want none", got)
+	}
+	pasted := pastedFor(t, lA.srv.URL, "ca", "st-a")
+	if rec := postRelay(t, h, "linear", pasted); rec.Code != http.StatusOK || lA.gotCode != "ca" {
+		t.Errorf("A's paste = %d %s, listener saw %q; want 200 delivering ca", rec.Code, rec.Body.String(), lA.gotCode)
+	}
+	if rec := postRelay(t, h, "linear", pasted); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), errRelayAlreadyDone.Error()) {
+		t.Errorf("the second paste = %d %s, want 409 already delivered", rec.Code, rec.Body.String())
+	}
+	clock.advance(signInTTL)
+	if rec := postRelay(t, h, "linear", pastedFor(t, lA.srv.URL, "fresh", "st-a")); rec.Code != http.StatusConflict ||
+		!strings.Contains(rec.Body.String(), errRelayNoFlow.Error()) {
+		t.Errorf("a paste past A's deadline = %d %s, want 409 press Sign in first", rec.Code, rec.Body.String())
+	}
+}
+
 func awaitLaneAnswer(t *testing.T, lane *fakeBridge, id int64) fakeResponse {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

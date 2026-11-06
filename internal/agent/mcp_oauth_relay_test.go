@@ -455,6 +455,81 @@ func TestAnchorSignInURL_KeepsNoURLWithoutAState(t *testing.T) {
 	}
 }
 
+// Two overlapping sign-ins both complete: a later consent URL leaves the standing Sign in's anchor and row alone, and
+// each paste reaches the listener its own URL named.
+func TestOAuthRelay_ALaterConsentURLLeavesTheStandingSignInsAnchor(t *testing.T) {
+	lA := newCallbackListener(t, http.StatusOK)
+	lB := newCallbackListener(t, http.StatusOK)
+	h, lane := signingInOnLane(t)
+	connectPage(t, h)
+	urlA := authURLFor(t, lA.srv.URL, "st-a")
+	if _, err := openURL(t, h, lane, 1, urlA); err != nil {
+		t.Fatalf("A's answer = %v, want success", err)
+	}
+	if _, err := openURL(t, h, lane, 2, authURLFor(t, lB.srv.URL, "st-b")); err != nil {
+		t.Fatalf("B's answer = %v, want success", err)
+	}
+
+	if row := rowOf(t, h, "linear"); row.OAuthURL != urlA {
+		t.Errorf("row link = %q, want A %q", row.OAuthURL, urlA)
+	}
+	if rec := postRelay(t, h, "linear", pastedFor(t, lA.srv.URL, "ca", "st-a")); rec.Code != http.StatusOK || lA.gotCode != "ca" {
+		t.Errorf("A's paste = %d %s, listener A saw %q; want 200 delivering ca", rec.Code, rec.Body.String(), lA.gotCode)
+	}
+	if rec := postRelay(t, h, "", pastedFor(t, lB.srv.URL, "cb", "st-b")); rec.Code != http.StatusOK || lB.gotCode != "cb" {
+		t.Errorf("B's paste = %d %s, listener B saw %q; want 200 delivering cb", rec.Code, rec.Body.String(), lB.gotCode)
+	}
+}
+
+// The paste's state picks its anchor; the server it was pasted under picks nothing.
+func TestOAuthRelay_APasteIsRelayedByItsStateWhicheverServerItNames(t *testing.T) {
+	lL := newCallbackListener(t, http.StatusOK)
+	lA := newCallbackListener(t, http.StatusOK)
+	h, _, lane := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	connectPage(t, h)
+	if _, err := openURL(t, h, lane, 1, authURLFor(t, lL.srv.URL, "st-l")); err != nil {
+		t.Fatalf("L's answer = %v, want success", err)
+	}
+	reportMCP(t, h, sessionOf("linear"), awaitingSignIn("linear", marotte.MCPSource{}))
+	if _, err := h.mcpRegistry.claimSignIn(t.Context(), "linear"); err != nil {
+		t.Fatalf("claimSignIn(linear) = %v", err)
+	}
+	if _, err := openURL(t, h, lane, 2, authURLFor(t, lA.srv.URL, "st-a")); err != nil {
+		t.Fatalf("A's answer = %v, want success", err)
+	}
+
+	if rec := postRelay(t, h, "linear", pastedFor(t, lL.srv.URL, "cl", "st-l")); rec.Code != http.StatusOK || lL.gotCode != "cl" {
+		t.Errorf("L's paste under linear = %d %s, listener L saw %q; want 200 delivering cl", rec.Code, rec.Body.String(), lL.gotCode)
+	}
+	if rec := postRelay(t, h, "linear", pastedFor(t, lA.srv.URL, "ca", "st-a")); rec.Code != http.StatusOK || lA.gotCode != "ca" {
+		t.Errorf("A's paste under linear = %d %s, listener A saw %q; want 200 delivering ca", rec.Code, rec.Body.String(), lA.gotCode)
+	}
+}
+
+// The anchor cap evicts the oldest anchor, never the standing Sign in's.
+func TestOAuthRelay_LaterURLsNeverEvictTheStandingSignInsAnchor(t *testing.T) {
+	lA := newCallbackListener(t, http.StatusOK)
+	h, lane := signingInOnLane(t)
+	connectPage(t, h)
+	urlA := authURLFor(t, lA.srv.URL, "st-a")
+	if _, err := openURL(t, h, lane, 1, urlA); err != nil {
+		t.Fatalf("A's answer = %v, want success", err)
+	}
+	for i := range 8 {
+		if _, err := openURL(t, h, lane, int64(2+i), authURLFor(t, lA.srv.URL, "st-later-"+strconv.Itoa(i))); err != nil {
+			t.Fatalf("later URL %d's answer = %v, want success", i, err)
+		}
+	}
+
+	if row := rowOf(t, h, "linear"); row.OAuthURL != urlA {
+		t.Errorf("row link = %q, want A %q", row.OAuthURL, urlA)
+	}
+	if rec := postRelay(t, h, "linear", pastedFor(t, lA.srv.URL, "ca", "st-a")); rec.Code != http.StatusOK || lA.gotCode != "ca" {
+		t.Errorf("A's paste = %d %s, listener saw %q; want 200 delivering ca", rec.Code, rec.Body.String(), lA.gotCode)
+	}
+}
+
 // A listener refusing the callback leaves the attempt retryable: a 4xx is usually KAS's own state check.
 func TestOAuthRelay_ARefusedCallbackStaysRetryable(t *testing.T) {
 	l := newCallbackListener(t, http.StatusBadRequest)
