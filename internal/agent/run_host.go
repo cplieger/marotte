@@ -124,12 +124,9 @@ func (rs *Runs) launchAs(
 	cctx, cancel := rs.engine.stallAware(ctx, launchTimeout)
 	defer cancel()
 
-	recipe, err := rs.launchRecipe(cctx, source, inputs)
+	recipe, err := rs.launchCheckedRecipe(ctx, cctx, source, inputs, defaults)
 	if err != nil {
-		return "", "", unanswered(ctx, err)
-	}
-	if pErr := rs.checkRecipePins(cctx, recipe.Plan, defaults); pErr != nil {
-		return "", "", pErr
+		return "", "", err
 	}
 	if o.origin == runlease.OriginManual && !isAgentSource(source) {
 		// A manual run yields to its recipe's next slot.
@@ -1014,6 +1011,21 @@ const agentSourcePrefix = "agent://"
 var agentNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 func isAgentSource(source string) bool { return strings.HasPrefix(source, agentSourcePrefix) }
+
+// launchCheckedRecipe is launchRecipe's recipe once its step pins passed checkRecipePins. ctx is the caller's, which
+// unanswered reads; cctx is the launch's budget.
+func (rs *Runs) launchCheckedRecipe(
+	ctx, cctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults,
+) (marotte.Recipe, error) {
+	recipe, err := rs.launchRecipe(cctx, source, inputs)
+	if err != nil {
+		return marotte.Recipe{}, unanswered(ctx, err)
+	}
+	if err := rs.checkRecipePins(cctx, recipe.Plan, defaults); err != nil {
+		return marotte.Recipe{}, err
+	}
+	return recipe, nil
+}
 
 // launchRecipe resolves a listed recipe or an agent:// source. An agent run needs a prompt, and its
 // recipe name is KAS's `agent-<name>`, so one live run per agent. KAS refuses an unregistered agent.

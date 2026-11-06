@@ -145,8 +145,10 @@ func TestStoreBound_OversizeRevisedInputIsBounded(t *testing.T) {
 		t.Fatalf("Setup: marshal input: %v", err)
 	}
 	_, got := persistedTool(t,
-		marotte.EntryToolCall{ID: "tc1", Title: "Append", Kind: marotte.ToolKindEdit, Status: marotte.ToolInProgress,
-			Input: json.RawMessage(`{"path":"notes.txt"}`)},
+		marotte.EntryToolCall{
+			ID: "tc1", Title: "Append", Kind: marotte.ToolKindEdit, Status: marotte.ToolInProgress,
+			Input: json.RawMessage(`{"path":"notes.txt"}`),
+		},
 		marotte.EntryToolResult{Status: marotte.ToolCompleted, Input: in})
 
 	var kept map[string]any

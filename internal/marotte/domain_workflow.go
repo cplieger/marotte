@@ -73,15 +73,15 @@ type RunProgressPayload struct {
 	// SessionID is the step session a `node_start` announces (KAS sends it on
 	// the second of a step's two), the execution identity a client shares with
 	// the run read. Empty on every other frame.
-	SessionID string `json:"session_id,omitempty"`
-	// Credits is the step session's whole credit-unit total KAS recorded at the step's end, on
-	// node_complete only; zero when KAS recorded none.
-	Credits float64         `json:"credits,omitempty"`
-	Kind    RunProgressKind `json:"kind"`
+	SessionID string          `json:"session_id,omitempty"`
+	Kind      RunProgressKind `json:"kind"`
 	// NodePath addresses ONE execution of a node by its path segments, spelling
 	// an iteration container `iter-<n>`. Empty on the run-level and
 	// shape-changing kinds, which is what tells the client to refetch instead.
 	NodePath []string `json:"node_path,omitempty"`
+	// Credits is the step session's whole credit-unit total KAS recorded at the step's end, on
+	// node_complete only; zero when KAS recorded none.
+	Credits float64 `json:"credits,omitempty"`
 }
 
 // RunPlanOutcome is where a queued plan revision stands, in KAS's `steps_queued` words. Open on

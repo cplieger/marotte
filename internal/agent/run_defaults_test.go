@@ -348,7 +348,8 @@ func TestCheckRecipePins_WalksNestedChildren(t *testing.T) {
 // pinnedRecipe makes the launchable recipe's plan pin one step.
 func pinnedRecipe(br *fakeBridge, step string) {
 	br.setCallResult(methodKiroWorkflowListRecipes, json.RawMessage(
-		`{"recipes":[{"name":"publish","source":"bundled://publish","plan":[`+step+`]}]}`))
+		`{"recipes":[{"name":"publish","source":"bundled://publish","plan":[`+step+`]}]}`,
+	))
 }
 
 // The refusal comes before the run's host session opens or any run is created.

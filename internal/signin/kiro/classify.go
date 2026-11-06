@@ -42,6 +42,12 @@ func canonicalStartURL(raw string) (string, error) {
 	return "https://" + strings.ToLower(u.Host) + path, nil
 }
 
+// CheckStartURL refuses a start URL a sign-in through it would refuse, for a caller that only pre-fills one.
+func CheckStartURL(raw string) error {
+	_, err := canonicalStartURL(raw)
+	return err
+}
+
 func shapeError(why string) error {
 	return &signin.FailureError{Text: textStartURLShape, Err: fmt.Errorf("%w: %s", signin.ErrInvalidParams, why)}
 }

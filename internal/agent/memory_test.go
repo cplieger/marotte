@@ -205,7 +205,8 @@ func TestMemoryChangedNotification_BroadcastsRefetch(t *testing.T) {
 	before := len(eventsOfType(h, marotte.EventMemoriesChanged))
 
 	h.engineNotification(&marotte.RPCResponse{Method: methodKiroMemoryChanged, Params: json.RawMessage(
-		`{"total":2,"counts":{"byType":{"SEMANTIC":2},"byScope":{"Global":2}}}`)})
+		`{"total":2,"counts":{"byType":{"SEMANTIC":2},"byScope":{"Global":2}}}`,
+	)})
 
 	awaitEventCount(t, h, marotte.EventMemoriesChanged, before+1)
 }

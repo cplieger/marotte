@@ -60,7 +60,7 @@ function pickTypedModel(chatID: string, id: string): boolean {
   );
   // Lazy, as for each pill opener: the pills' modules reach chat.ts, which imports this one.
   void import("./model-switcher.js").then(({ pickModel }) => {
-    pickModel(modelID);
+    pickModel(modelID, chatID);
   });
   return true;
 }

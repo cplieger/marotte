@@ -34,20 +34,20 @@ const memoryNotEnabledCode = "not_enabled"
 
 // kasMemory is one record as KAS projects it; createdAt and updatedAt pass through as sent.
 type kasMemory struct {
-	ID         string          `json:"id"`
-	MemoryType string          `json:"memoryType"`
-	Title      string          `json:"title"`
-	Summary    string          `json:"summary"`
-	Content    *string         `json:"content"`
-	CreatedAt  json.RawMessage `json:"createdAt"`
-	UpdatedAt  json.RawMessage `json:"updatedAt"`
-	Scopes     []string        `json:"scopes"`
+	Content    *string `json:"content"`
+	ID         string  `json:"id"`
+	MemoryType string  `json:"memoryType"`
+	Title      string  `json:"title"`
+	Summary    string  `json:"summary"`
 	// Meta carries cloudState on a synced store: pending until the cloud took the record.
 	Meta struct {
 		Kiro struct {
 			CloudState string `json:"cloudState"`
 		} `json:"kiro"`
 	} `json:"_meta"`
+	CreatedAt json.RawMessage `json:"createdAt"`
+	UpdatedAt json.RawMessage `json:"updatedAt"`
+	Scopes    []string        `json:"scopes"`
 }
 
 // memoryRow is one record on the wire; Content is set only by GET /api/memory/{id}.

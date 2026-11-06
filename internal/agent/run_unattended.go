@@ -413,12 +413,12 @@ func safetyCheckUncleared(params json.RawMessage, delegated bool) bool {
 	var p struct {
 		Meta struct {
 			Kiro struct {
-				TrustClassifier json.RawMessage `json:"trustClassifier"`
-				ToolID          string          `json:"toolId"`
-				Consent         struct {
+				Consent struct {
 					AskType    string `json:"askType"`
 					Capability string `json:"capability"`
 				} `json:"consent"`
+				ToolID          string          `json:"toolId"`
+				TrustClassifier json.RawMessage `json:"trustClassifier"`
 			} `json:"kiro"`
 		} `json:"_meta"`
 	}

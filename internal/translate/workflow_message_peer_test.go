@@ -7,10 +7,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-const (
-	peerChat    marotte.ChatID = "c2"
-	peerSession                = "sess_peer"
-)
+const peerChat marotte.ChatID = "c2"
+
+const peerSession = "sess_peer"
 
 // peerDeps is messageDeps with a second resident chat, peerChat on peerSession.
 func peerDeps(t *testing.T) (*baseDeps, *Translator) {

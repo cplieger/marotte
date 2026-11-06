@@ -45,7 +45,7 @@
       "sites": [
         "internal/chat/entrylog.go:1088",
         "internal/translate/projection_entries.go:719",
-        "internal/translate/streaming_tools.go:479",
+        "internal/translate/streaming_tools.go:482",
         "internal/translate/wire_enums.go:35",
         "internal/turnlog/turnlog.go:669"
       ]
@@ -183,37 +183,37 @@
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:454",
+      "site": "internal/translate/streaming_tools.go:457",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:478",
+      "site": "internal/translate/streaming_tools.go:481",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:479",
+      "site": "internal/translate/streaming_tools.go:482",
       "form": "status_assign",
       "status": "aborted"
     },
     {
-      "site": "internal/translate/streaming_tools.go:501",
+      "site": "internal/translate/streaming_tools.go:504",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:515",
+      "site": "internal/translate/streaming_tools.go:518",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:515",
+      "site": "internal/translate/streaming_tools.go:518",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/translate/streaming_tools.go:537",
+      "site": "internal/translate/streaming_tools.go:540",
       "form": "compare",
       "status": "completed"
     },

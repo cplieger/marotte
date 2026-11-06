@@ -55,16 +55,16 @@ func (rt *Runtime) engineFrame(h engineHandle, msg *marotte.RPCResponse) {
 // notify and that turn's frames reach the engine lane. hostPeerTarget makes the target's chat resident and replays
 // on its lane what the hold kept meanwhile.
 type peerHolds struct {
-	mu sync.Mutex
 	by map[marotte.SessionID]*peerHold
+	mu sync.Mutex
 }
 
 // peerHold is one target session's frames, oldest first. chat and origin are set once the chat is resident, after
 // which a frame still queued on the engine lane goes straight to it.
 type peerHold struct {
-	frames []*marotte.RPCResponse
-	chat   marotte.ChatID
 	origin acpResponder
+	chat   marotte.ChatID
+	frames []*marotte.RPCResponse
 }
 
 // peerHoldCap bounds one hold; a frame past it takes the engine lane's own answer, as with no hold.

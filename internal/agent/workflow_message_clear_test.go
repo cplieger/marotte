@@ -61,7 +61,6 @@ func clearCausesOf(t *testing.T, cs *testChatStore) []marotte.SteerClearCause {
 	return out
 }
 
-
 // settlementsOf is every steer_delivered in c1's log.
 func settlementsOf(t *testing.T, cs *testChatStore) []marotte.EntrySteerDelivered {
 	t.Helper()

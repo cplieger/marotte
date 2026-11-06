@@ -398,12 +398,12 @@ func (t *Translator) handleWireTurnEnd(ctx context.Context, chatID marotte.ChatI
 	return true
 }
 
-// The `_meta.kiro.kind` values a REPLAY projection switches on, spelled once here: the
-// live cascade dispatches on the sub-block present, not on the kind.
 // InfoKindSessionUsage is the session's running credit total. KAS stamps its load-time frame replay,
 // yet it is current state, so the agent's replay gate lets it through to the live handler.
 const InfoKindSessionUsage = "session_usage"
 
+// The `_meta.kiro.kind` values a REPLAY projection switches on, spelled once here: the
+// live cascade dispatches on the sub-block present, not on the kind.
 const (
 	infoKindTurnStart      = "turn_start"
 	infoKindTurnCompletion = "turn_completion"

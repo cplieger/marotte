@@ -166,22 +166,22 @@ func (t *Translator) workflowMessageWoke(ctx context.Context, chatID marotte.Cha
 		return
 	}
 	sc := frameSteerScope(chatID, attr)
-	if ids := t.wakes.rewoken(t.bufferSession(sc)); len(ids) > 0 {
-		t.settleRows(ctx, sc, ids, marotte.EntrySteerDelivered{ReadTs: time.Now().UnixMilli()})
+	if rowIDs := t.wakes.rewoken(t.bufferSession(sc)); len(rowIDs) > 0 {
+		t.settleRows(ctx, sc, rowIDs, marotte.EntrySteerDelivered{ReadTs: time.Now().UnixMilli()})
 	}
 	if reason == reasonSendMessageWake {
 		t.settleWaker(ctx, sc, wakeOpen)
 	}
 }
 
-// settleRows files d for each of sc's unsettled rows ids names.
-func (t *Translator) settleRows(ctx context.Context, sc steerScope, ids []string, d marotte.EntrySteerDelivered) {
+// settleRows files d for each of sc's unsettled rows rowIDs names.
+func (t *Translator) settleRows(ctx context.Context, sc steerScope, rowIDs []string, d marotte.EntrySteerDelivered) {
 	epoch, ok := t.epochMessages(ctx, sc, t.bufferSession(sc))
 	if !ok {
 		return
 	}
 	for i := range epoch {
-		if slices.Contains(ids, epoch[i].ID) {
+		if slices.Contains(rowIDs, epoch[i].ID) {
 			d.SteerID = epoch[i].ID
 			t.settleMessage(ctx, sc, &epoch[i], d)
 		}
@@ -252,14 +252,14 @@ type sessionWakes struct {
 	// these can have woken a resume.
 	pausedFiled map[string]struct{}
 	filed       []string
-	before      int
-	state       wakeState
+	// rewaking is the rows the rewake cancel named by id, which the re-wake turn delivers;
+	// rewakeTurn is set once a turn started after it, so the next turn_start expires them.
+	rewaking []string
+	before   int
+	state    wakeState
 	// rewake is a reader's cancel that cleared a workflow message: KAS may re-deliver it by a
 	// send-message-wake with no new notify (rewakeWithInfo), whose waker no row names.
-	rewake bool
-	// rewaking is the rows that cancel named by id, which the re-wake turn delivers; rewakeTurn is
-	// set once a turn started after it, so the next turn_start expires them.
-	rewaking   []string
+	rewake     bool
 	rewakeTurn bool
 	// A step session's resume is the wake no frame names: KAS wakes a paused step with a parent's
 	// message and stamps no reason on the step's frames (kiro-cli 2.37.1 driveExecution), so the
@@ -367,10 +367,10 @@ func (w *wakeLedger) rewoken(session string) []string {
 	if !ok || !s.rewakeTurn {
 		return nil
 	}
-	ids := s.rewaking
+	rowIDs := s.rewaking
 	s.rewaking, s.rewakeTurn = nil, false
 	w.forgetIdle(session, s)
-	return ids
+	return rowIDs
 }
 
 // cleared ends session's epoch: every row filed to it is settled, or left in rewaking for the

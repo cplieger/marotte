@@ -464,7 +464,7 @@ class ModelSwitchController {
     if (isEmpty) {
       // Local apply PLUS the command: every header echo carries the record, so a
       // local-only pick would be clobbered.
-      this.applyLocalChoice(modelID);
+      this.applyLocalChoice(modelID, session.id);
       this.fire(session.id, modelID, effort);
       return;
     }
@@ -472,8 +472,8 @@ class ModelSwitchController {
     this.fire(session.id, modelID, effort);
   }
 
-  private applyLocalChoice(modelID: string): void {
-    applyLocalModel(modelID);
+  private applyLocalChoice(modelID: string, chatID?: string): void {
+    applyLocalModel(modelID, chatID);
   }
 
   private fire(chatID: string, modelID: string, effort: string | undefined): void {
@@ -496,9 +496,9 @@ export function openModelCard(): void {
   controller.openCard();
 }
 
-function applyLocalModel(modelID: string): void {
+function applyLocalModel(modelID: string, chatID?: string): void {
   setLastModel(modelID);
-  const session = getActive();
+  const session = chatID === undefined ? getActive() : get(chatID);
   if (session !== undefined) {
     // setModel replaces the session object; chat.ts's effect repaints from the new one.
     setModel(session.id, modelID);
@@ -507,7 +507,8 @@ function applyLocalModel(modelID: string): void {
 }
 
 /** The one door for a model pick from ANY surface, so an empty-chat pick
- *  persists on the record. */
-export function pickModel(modelID: string): void {
-  controller.requestModelSwitch(modelID);
+ *  persists on the record. `chatID` names the chat the pick was made on, defaulting to the
+ *  active one. */
+export function pickModel(modelID: string, chatID?: string): void {
+  controller.requestModelSwitch(modelID, undefined, chatID);
 }

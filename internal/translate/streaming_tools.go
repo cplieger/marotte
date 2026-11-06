@@ -423,16 +423,19 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID marotte.Cha
 
 // delegateGrade is a sub-agent result's status and stop, shared by the live fold and the replay so a
 // reloaded card paints what the live one did. held is the stop already adopted ("" before any).
-func delegateGrade(status marotte.ToolStatus, raw, held string) (marotte.ToolStatus, string) {
+func delegateGrade(status marotte.ToolStatus, raw, held string) (graded marotte.ToolStatus, stop string) {
 	if raw == "" {
 		return status, held
 	}
-	stop := textsafe.SanitizeSingleLineBounded(raw, maxDelegateStopBytes)
+	stop = textsafe.SanitizeSingleLineBounded(raw, maxDelegateStopBytes)
 	if !marotte.ConcludeStopReason(marotte.StopReason(stop)).Known && census.claimValue("delegateStopReason="+stop) {
 		slog.Warn("wire census: UNKNOWN sub-agent stop reason, graded as stopped", "stop_reason", stop)
 	}
 	return marotte.DelegateStatus(status, marotte.StopReason(stop)), stop
 }
+
+// jsonNull is JSON's null literal, as a raw value spells it.
+const jsonNull = "null"
 
 // maxDelegateStopBytes bounds a stop reason: KAS's values are short identifiers.
 const maxDelegateStopBytes = 64
@@ -441,7 +444,7 @@ const maxDelegateStopBytes = 64
 // path sends the streamed args, which are {} for a call aborted before they landed.
 func inputRevision(raw json.RawMessage) bool {
 	switch string(bytes.TrimSpace(raw)) {
-	case "", "null", "{}":
+	case "", jsonNull, "{}":
 		return false
 	}
 	return true

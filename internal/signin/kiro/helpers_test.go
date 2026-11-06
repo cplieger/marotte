@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -135,9 +136,7 @@ func (f *fakeAWS) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	for k, v := range answer.header {
-		w.Header()[k] = v
-	}
+	maps.Copy(w.Header(), answer.header)
 	w.WriteHeader(answer.status)
 	_, _ = io.WriteString(w, answer.body)
 }

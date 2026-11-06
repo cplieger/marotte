@@ -11,7 +11,7 @@ import (
 )
 
 // memorySyncView is a connection getState answer whose memorySync row has value and the contributions given.
-func memorySyncView(value, compose string, contributions, assertions string) json.RawMessage {
+func memorySyncView(value, compose, contributions, assertions string) json.RawMessage {
 	return json.RawMessage(`{"view":{"observer":"connection"},"layers":[{"id":"organization","name":"Your organization"},` +
 		`{"id":"user-synced","name":"Account"},{"id":"user-local","name":"This device"}],"settings":[` +
 		`{"krn":"krn:::setting/other","value":"on","compose":"replace","assertions":[],"contributions":[]},` +
@@ -114,7 +114,7 @@ func TestMemorySyncGet_AnswersStatusAndChoice(t *testing.T) {
 	if p := br.paramsFor(methodKiroConfigurationGet); p["observer"] != "connection" {
 		t.Errorf("getState params = %v, want the connection's view", p)
 	}
-	const want = `{"status":{"state":"synced","last_sync_at":"2026-11-06T10:00:00.000Z","pending":0},"choice":{"enabled":true,"account":true,"device":false}}`
+	const want = `{"status":{"pending":0,"state":"synced","last_sync_at":"2026-11-06T10:00:00.000Z"},"choice":{"enabled":true,"account":true,"device":false}}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
@@ -135,7 +135,8 @@ func TestMemorySyncPutSendsLayer(t *testing.T) {
 			h, _, br := newTestHub()
 			t.Cleanup(func() { shutdownHub(t, h) })
 			br.setCallResult(methodKiroConfigurationSet, json.RawMessage(
-				`{"setting":{"krn":"krn:::setting/memorySync","value":"`+tc.value+`","compose":"replace","assertions":[],"contributions":[]}}`))
+				`{"setting":{"krn":"krn:::setting/memorySync","value":"`+tc.value+`","compose":"replace","assertions":[],"contributions":[]}}`,
+			))
 			before := len(eventsOfType(h, marotte.EventMemorySyncChanged))
 
 			if rec := putMemorySync(h, tc.body); rec.Code != http.StatusOK {
@@ -147,6 +148,23 @@ func TestMemorySyncPutSendsLayer(t *testing.T) {
 			}
 			awaitEventCount(t, h, marotte.EventMemorySyncChanged, before+1)
 		})
+	}
+}
+
+// A PUT answering a locked choice names the lock from the connection's view, as the GET does.
+func TestMemorySyncPutNamesLock(t *testing.T) {
+	h, _, br := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.setCallResult(methodKiroConfigurationSet, json.RawMessage(
+		`{"setting":{"krn":"krn:::setting/memorySync","value":"off","compose":"locked","assertions":[{"layer":"organization"}],"contributions":[]}}`,
+	))
+	br.setCallResult(methodKiroConfigurationGet, memorySyncView("off", "locked", `[]`, `[{"layer":"organization","compose":"locked"}]`))
+
+	rec := putMemorySync(h, `{"scope":"account","on":false}`)
+
+	const want = `{"lock":{"layer":"organization","name":"Your organization"},"enabled":false,"account":false,"device":false}`
+	if got := strings.TrimSpace(rec.Body.String()); rec.Code != http.StatusOK || got != want {
+		t.Errorf("PUT = %d %s, want 200 %s", rec.Code, got, want)
 	}
 }
 
@@ -172,6 +190,11 @@ func TestMemorySyncPutRefusals(t *testing.T) {
 			body:     `{"scope":"device","on":true}`,
 			wantCode: http.StatusBadRequest, wantKey: "may not set",
 		},
+		"locked by a layer id carrying a control character": {
+			err:      &marotte.RPCError{Code: -32602, Message: "locked", Data: json.RawMessage(`{"reason":"locked","layer":"org\u001b[31m"}`)},
+			body:     `{"scope":"account","on":true}`,
+			wantCode: http.StatusConflict, wantKey: `"code":"locked"`,
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -183,6 +206,9 @@ func TestMemorySyncPutRefusals(t *testing.T) {
 
 			if rec.Code != tc.wantCode || !strings.Contains(rec.Body.String(), tc.wantKey) {
 				t.Errorf("PUT = %d %s, want %d carrying %s", rec.Code, rec.Body.String(), tc.wantCode, tc.wantKey)
+			}
+			if strings.Contains(rec.Body.String(), `\u001b`) {
+				t.Errorf("PUT body %s relays a control character", rec.Body.String())
 			}
 		})
 	}

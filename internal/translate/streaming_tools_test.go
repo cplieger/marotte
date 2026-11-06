@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1878,7 +1879,7 @@ func openCall(t *testing.T, frame map[string]any) (*Translator, *lineDeps, *[]ma
 // lastProgress is the newest tool_progress payload in the stream.
 func lastProgress(t *testing.T, events *[]marotte.ServerEvent) marotte.ToolProgressPayload {
 	t.Helper()
-	for i := len(*events) - 1; i >= 0; i-- {
+	for i := range slices.Backward(*events) {
 		if p, ok := (*events)[i].Payload.(marotte.ToolProgressPayload); ok {
 			return p
 		}
@@ -1890,7 +1891,7 @@ func lastProgress(t *testing.T, events *[]marotte.ServerEvent) marotte.ToolProgr
 // lastResult is the newest tool_result entry in the stream.
 func lastResult(t *testing.T, events *[]marotte.ServerEvent) marotte.EntryToolResult {
 	t.Helper()
-	for i := len(*events) - 1; i >= 0; i-- {
+	for i := range slices.Backward(*events) {
 		if p, ok := (*events)[i].Payload.(marotte.EntryAppendedPayload); ok && p.Entry.Kind == marotte.EntryKindToolResult {
 			return decodePayload[marotte.EntryToolResult](t, &p.Entry)
 		}

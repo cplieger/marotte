@@ -11,6 +11,7 @@ import (
 	"slices"
 
 	"github.com/cplieger/go/httpserver"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -27,6 +28,9 @@ const (
 // memorySyncUnknown stands for a state or reason this build has no wording for.
 const memorySyncUnknown = "unknown"
 
+// maxMemorySyncTextBytes bounds each engine string (a layer id or name, a refusal message) relayed to the client.
+const maxMemorySyncTextBytes = 256
+
 // memorySyncReasons is each sync state KAS reports with the reasons it may carry (kiro-cli 3.1.0's syncStatus
 // schema); a state with no reason maps to nil.
 var memorySyncReasons = map[string][]string{
@@ -41,10 +45,10 @@ var memorySyncReasons = map[string][]string{
 }
 
 type memorySyncStatus struct {
+	Pending    *int   `json:"pending,omitempty"`
 	State      string `json:"state"`
 	Reason     string `json:"reason,omitempty"`
 	LastSyncAt string `json:"last_sync_at,omitempty"`
-	Pending    *int   `json:"pending,omitempty"`
 }
 
 // memorySyncLock is the layer whose lock fixes the choice, with its display name.
@@ -126,8 +130,8 @@ func memorySyncChoiceOf(s *kasSetting, names map[string]string) memorySyncChoice
 		}
 	}
 	if s.Compose == "locked" && len(s.Assertions) > 0 {
-		layer := s.Assertions[len(s.Assertions)-1].Layer
-		name := names[layer]
+		raw := s.Assertions[len(s.Assertions)-1].Layer
+		layer, name := memorySyncText(raw), memorySyncText(names[raw])
 		if name == "" {
 			name = layer
 		}
@@ -136,30 +140,41 @@ func memorySyncChoiceOf(s *kasSetting, names map[string]string) memorySyncChoice
 	return c
 }
 
+func memorySyncText(s string) string {
+	return textsafe.SanitizeSingleLineBounded(s, maxMemorySyncTextBytes)
+}
+
 func settingOn(raw json.RawMessage) bool {
 	var v string
 	return json.Unmarshal(raw, &v) == nil && v == "on"
 }
 
+// kasView is a getState answer: its layers' display names and its composed settings.
+type kasView struct {
+	Layers []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"layers"`
+	Settings []kasSetting `json:"settings"`
+}
+
+func (v *kasView) layerNames() map[string]string {
+	names := make(map[string]string, len(v.Layers))
+	for _, l := range v.Layers {
+		names[l.ID] = l.Name
+	}
+	return names
+}
+
 // decodeMemorySyncChoice reads the memorySync row out of a getState answer; a view stating none reads off.
 func decodeMemorySyncChoice(raw json.RawMessage) (memorySyncChoice, error) {
-	var view struct {
-		Layers []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"layers"`
-		Settings []kasSetting `json:"settings"`
-	}
+	var view kasView
 	if err := json.Unmarshal(raw, &view); err != nil {
 		return memorySyncChoice{}, err
 	}
-	names := make(map[string]string, len(view.Layers))
-	for _, l := range view.Layers {
-		names[l.ID] = l.Name
-	}
 	for i := range view.Settings {
 		if view.Settings[i].KRN == memorySyncKRN {
-			return memorySyncChoiceOf(&view.Settings[i], names), nil
+			return memorySyncChoiceOf(&view.Settings[i], view.layerNames()), nil
 		}
 	}
 	return memorySyncChoice{}, nil
@@ -228,8 +243,22 @@ func (st *Settings) setMemorySync(ctx context.Context, value, layer string) engi
 	if err := json.Unmarshal(raw, &res); err != nil {
 		return engineReply{err: err, write: func(w http.ResponseWriter) { writeMemoryErr(w, err) }, applied: true}
 	}
-	choice := memorySyncChoiceOf(&res.Setting, nil)
+	choice := memorySyncChoiceOf(&res.Setting, st.memorySyncLayerNames(cctx))
 	return engineReply{write: func(w http.ResponseWriter) { httpserver.WriteJSON(w, choice) }, applied: true}
+}
+
+// memorySyncLayerNames reads the layers' display names from the connection's view, as the GET does, so a PUT names
+// a lock the same way; a failed read leaves the lock named by its layer id.
+func (st *Settings) memorySyncLayerNames(ctx context.Context) map[string]string {
+	raw, err := st.engine.connectionConfigurationRaw(ctx)
+	if err != nil {
+		return nil
+	}
+	var view kasView
+	if json.Unmarshal(raw, &view) != nil {
+		return nil
+	}
+	return view.layerNames()
 }
 
 // writeMemorySyncErr answers KAS's refusal of the write by its reason (ConfigurationSetRefusedError's data, whose
@@ -245,14 +274,16 @@ func writeMemorySyncErr(w http.ResponseWriter, err error) {
 		switch data.Reason {
 		case "locked":
 			httpserver.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(
-				"Memory sync is locked by the "+data.Layer+" layer.", "locked"))
+				"Memory sync is locked by the "+memorySyncText(data.Layer)+" layer.", "locked",
+			))
 			return
 		case "unavailable":
 			httpserver.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSONWithCode(
-				"kiro-cli cannot change memory sync now. Sign in to Kiro, then try again.", "unavailable"))
+				"kiro-cli cannot change memory sync now. Sign in to Kiro, then try again.", "unavailable",
+			))
 			return
 		case "notGranted":
-			httpreply.BadRequest(w, rpc.Message)
+			httpreply.BadRequest(w, memorySyncText(rpc.Message))
 			return
 		}
 	}

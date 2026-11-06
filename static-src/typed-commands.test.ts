@@ -559,7 +559,7 @@ describe("handleTypedCommand inspect verbs", () => {
   it("picks a listed model on /model <id>, matching the id in any case", async () => {
     expect(handleTypedCommand("c1", "/model  Claude-Sonnet-4.5 ")).toBe(true);
     await vi.waitFor(() => {
-      expect(owners.pickModel).toHaveBeenCalledWith("claude-sonnet-4.5");
+      expect(owners.pickModel).toHaveBeenCalledWith("claude-sonnet-4.5", "c1");
     });
     expect(owners.openModelCard).not.toHaveBeenCalled();
     expect(toasts).toEqual(["Model set to claude-sonnet-4.5."]);
@@ -569,7 +569,7 @@ describe("handleTypedCommand inspect verbs", () => {
     seed(true);
     expect(handleTypedCommand("c1", "/model auto")).toBe(true);
     await vi.waitFor(() => {
-      expect(owners.pickModel).toHaveBeenCalledWith("auto");
+      expect(owners.pickModel).toHaveBeenCalledWith("auto", "c1");
     });
     expect(toasts).toEqual(["The model switches to auto when this turn ends."]);
   });
