@@ -2,6 +2,9 @@ package kascap
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"slices"
 	"strconv"
@@ -88,9 +91,92 @@ func TestSessionKeysSentElsewhereAreSent(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
 		}
-		if !strings.Contains(string(raw), strconv.Quote(key)) {
-			t.Errorf("%s no longer holds %q; drop the sessionKeysSentElsewhere row or point it at the sender", path, key)
+		writes, err := writesMapKey(raw, key)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
 		}
+		if !writes {
+			t.Errorf("%s writes no map entry %q; drop the sessionKeysSentElsewhere row or point it at the sender", path, key)
+		}
+	}
+}
+
+// writesMapKey reports whether the Go source writes key into a map, as a composite-literal key or an assignment's
+// index, spelled as the string literal or as a constant bound to it. A comment, a log attribute or a struct tag
+// naming the key is no write.
+func writesMapKey(src []byte, key string) (bool, error) {
+	f, err := parser.ParseFile(token.NewFileSet(), "", src, 0)
+	if err != nil {
+		return false, err
+	}
+	bound := map[string]bool{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		if spec, ok := n.(*ast.ValueSpec); ok {
+			for i, v := range spec.Values {
+				if lit, ok := v.(*ast.BasicLit); ok && i < len(spec.Names) && lit.Value == strconv.Quote(key) {
+					bound[spec.Names[i].Name] = true
+				}
+			}
+		}
+		return true
+	})
+	isKey := func(e ast.Expr) bool {
+		switch e := e.(type) {
+		case *ast.BasicLit:
+			return e.Value == strconv.Quote(key)
+		case *ast.Ident:
+			return bound[e.Name]
+		}
+		return false
+	}
+	writes := false
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.CompositeLit:
+			if _, ok := n.Type.(*ast.MapType); ok {
+				for _, elt := range n.Elts {
+					if kv, ok := elt.(*ast.KeyValueExpr); ok && isKey(kv.Key) {
+						writes = true
+					}
+				}
+			}
+		case *ast.AssignStmt:
+			for _, lhs := range n.Lhs {
+				if ix, ok := lhs.(*ast.IndexExpr); ok && isKey(ix.Index) {
+					writes = true
+				}
+			}
+		}
+		return !writes
+	})
+	return writes, nil
+}
+
+func TestWritesMapKey(t *testing.T) {
+	cases := map[string]struct {
+		src  string
+		want bool
+	}{
+		"map literal key":            {`var m = map[string]any{"modelId": 1}`, true},
+		"index through a constant":   {`const k = "modelId"; func f(m map[string]any) { m[k] = 1 }`, true},
+		"index with the literal":     {`func f(m map[string]any) { m["modelId"] = 1 }`, true},
+		"comment only":               {`// sends "modelId": the model` + "\nvar x = 1", false},
+		"log attribute":              {`func f() { slog.Info("x", "modelId", 1) }`, false},
+		"struct tag":                 {"type T struct { M string `json:\"modelId\"` }", false},
+		"decode by index":            {`func f(m map[string]any) any { return m["modelId"] }`, false},
+		"another key's map literal":  {`var m = map[string]any{"modeId": 1}`, false},
+		"constant bound, never used": {`const k = "modelId"`, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, err := writesMapKey([]byte("package p\n"+tc.src), "modelId")
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("writesMapKey = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
