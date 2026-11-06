@@ -75,15 +75,16 @@ const (
 	// same outcome as StopReasonRefusal; both are the model declining rather than
 	// anything malfunctioning.
 	StopReasonContentFiltered StopReason = "content_filtered"
-	// StopReasonMaxTokens and StopReasonMaxTurnRequests are a turn stopped at a
-	// bound. The work that was allowed COMPLETED, and the answer is cut off, which
-	// is what TurnConclusion.Truncated carries.
-	StopReasonMaxTokens       StopReason = "max_tokens"
+	// StopReasonMaxTokens is a turn stopped at the output bound. The work that was
+	// allowed COMPLETED, and the answer is cut off, which TurnConclusion.Truncated carries.
+	StopReasonMaxTokens StopReason = "max_tokens"
+	// StopReasonMaxTurnRequests is a turn KAS's iteration limit ended on a path that marks the
+	// execution (resolveTurnStopReason, kiro-cli 3.1.0); the other limit paths end on tool_use.
 	StopReasonMaxTurnRequests StopReason = "max_turn_requests"
 	// StopReasonToolUse is the model's last stop on a turn KAS ended while the model was asking
-	// for a tool: at the per-turn model-call limit (KAS never sends max_turn_requests for it), or,
-	// since kiro-cli 2.32.0, after a tool that ends the turn (update_workflow's handoff). Only
-	// KAS's node record tells a workflow step's two cases apart.
+	// for a tool: at the per-turn model-call limit, or, since kiro-cli 2.32.0, after a tool that
+	// ends the turn (update_workflow's handoff). Only KAS's node record tells a workflow step's
+	// two cases apart.
 	StopReasonToolUse StopReason = "tool_use"
 	// StopReasonUnterminated is marotte's OWN value, never KAS's: the store-open closer and the
 	// merge's synthesized closer stamp it on a turn nobody closed. An enum member, not a literal,

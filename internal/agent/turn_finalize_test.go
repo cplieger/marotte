@@ -250,9 +250,9 @@ func TestPromptFailure_TheFailureReasonIsSanitizedAndBounded(t *testing.T) {
 	}
 }
 
-// TestWireTurnEnd_TruncationCompletesRatherThanFails pins that a bounded turn finished its allowed work.
+// TestWireTurnEnd_TruncationCompletesRatherThanFails pins that a turn cut at its token bound finished its allowed work.
 func TestWireTurnEnd_TruncationCompletesRatherThanFails(t *testing.T) {
-	for _, stop := range []marotte.StopReason{marotte.StopReasonMaxTokens, marotte.StopReasonMaxTurnRequests} {
+	for _, stop := range []marotte.StopReason{marotte.StopReasonMaxTokens} {
 		t.Run(string(stop), func(t *testing.T) {
 			h, cs, _ := newTestHub()
 			streamingPromptTurn(t, h, "c1", "half an answer")
@@ -275,22 +275,28 @@ func TestWireTurnEnd_TruncationCompletesRatherThanFails(t *testing.T) {
 
 // TestWireTurnEnd_AToolUseStopNamesTheModelCallLimit pins that a chat turn kiro-cli cut at its model-call limit
 // keeps the stop's own kind and remedy rather than the generic failure sentence.
+// kiro-cli 3.1.0 ends a turn its iteration limit stopped with max_turn_requests (resolveTurnStopReason); a limit path
+// that does not mark the execution still ends on the model's tool_use.
 func TestWireTurnEnd_AToolUseStopNamesTheModelCallLimit(t *testing.T) {
-	h, cs, _ := newTestHub()
-	streamingPromptTurn(t, h, "c1", "half an answer")
+	for _, stop := range []marotte.StopReason{marotte.StopReasonToolUse, marotte.StopReasonMaxTurnRequests} {
+		t.Run(string(stop), func(t *testing.T) {
+			h, cs, _ := newTestHub()
+			streamingPromptTurn(t, h, "c1", "half an answer")
 
-	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonToolUse)
+			h.coord.WireTurnEnd(t.Context(), "c1", stop)
 
-	closes := closesOf(t, logOf(t, cs, "c1"))
-	if len(closes) != 1 {
-		t.Fatalf("turn_close entries = %d, want exactly one", len(closes))
-	}
-	got := closes[0]
-	if got.Outcome != marotte.TurnOutcomeFailed || got.FailureKind != marotte.FailureKindModelCallLimit ||
-		got.FailureReason != marotte.ModelCallLimitTurnReason || got.StopReasonRaw != "tool_use" {
-		t.Errorf("WireTurnEnd(tool_use) wrote turn_close {%s %q %q %s}, want {failed %q %q tool_use}",
-			got.Outcome, got.FailureKind, got.FailureReason, got.StopReasonRaw,
-			marotte.FailureKindModelCallLimit, marotte.ModelCallLimitTurnReason)
+			closes := closesOf(t, logOf(t, cs, "c1"))
+			if len(closes) != 1 {
+				t.Fatalf("turn_close entries = %d, want exactly one", len(closes))
+			}
+			got := closes[0]
+			if got.Outcome != marotte.TurnOutcomeFailed || got.FailureKind != marotte.FailureKindModelCallLimit ||
+				got.FailureReason != marotte.ModelCallLimitTurnReason || got.StopReasonRaw != string(stop) || got.Truncated {
+				t.Errorf("WireTurnEnd(%s) wrote turn_close {%s %q %q %s truncated=%v}, want {failed %q %q %s truncated=false}",
+					stop, got.Outcome, got.FailureKind, got.FailureReason, got.StopReasonRaw, got.Truncated,
+					marotte.FailureKindModelCallLimit, marotte.ModelCallLimitTurnReason, stop)
+			}
+		})
 	}
 }
 

@@ -87,15 +87,6 @@ describe("a turn stopped at a bound", () => {
     expect(n?.nextElementSibling?.classList.contains("turn-footer")).toBe(true);
   });
 
-  it("names the request limit", async () => {
-    const card = await paint("c-max-requests", {
-      outcome: "completed",
-      stop_reason_raw: "max_turn_requests",
-      truncated: true,
-    });
-    expect(notice(card)?.textContent).toBe("The turn stopped at its request limit.");
-  });
-
   it("shows no notice on a clean turn", async () => {
     const card = await paint("c-clean", { outcome: "completed", stop_reason_raw: "end_turn" });
     expect(notice(card)).toBeNull();

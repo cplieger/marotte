@@ -988,12 +988,6 @@ describe("turnBoundText", () => {
     );
   });
 
-  it("names the request limit on a turn stopped at max_turn_requests", () => {
-    expect(
-      textOf({ outcome: "completed", stop_reason_raw: "max_turn_requests", truncated: true }),
-    ).toBe("The turn stopped at its request limit.");
-  });
-
   it("still speaks for a truncated turn whose bound it cannot name", () => {
     // The stop reason is an OPEN vocabulary, so truncation alone must not fall silent.
     expect(textOf({ outcome: "completed", stop_reason_raw: "constructor", truncated: true })).toBe(

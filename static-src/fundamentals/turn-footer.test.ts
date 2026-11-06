@@ -652,18 +652,16 @@ describe("the info panel", () => {
   it("states them on a completed turn the model stopped at a bound", () => {
     // The server grades a bounded turn completed and truncated, so the grade alone would hide
     // that the answer was cut off.
-    for (const bound of ["max_tokens", "max_turn_requests"]) {
-      const el = buildTurnFooter({
-        outcome: "completed",
-        elapsedMs: 1000,
-        stopReasonRaw: bound,
-        truncated: true,
-      });
-      expect(sectionRows(el, "Diagnostics"), bound).toEqual([
-        ["Stop reason", bound],
-        ["Truncated", "yes"],
-      ]);
-    }
+    const el = buildTurnFooter({
+      outcome: "completed",
+      elapsedMs: 1000,
+      stopReasonRaw: "max_tokens",
+      truncated: true,
+    });
+    expect(sectionRows(el, "Diagnostics")).toEqual([
+      ["Stop reason", "max_tokens"],
+      ["Truncated", "yes"],
+    ]);
   });
 
   it("withholds Diagnostics on a clean turn and on one still running", () => {

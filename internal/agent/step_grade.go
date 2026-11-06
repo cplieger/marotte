@@ -28,9 +28,9 @@ func stepCloseOf(c *marotte.EntryTurnClose) stepClose {
 	}
 }
 
-// stoppedOnToolUse is the turn-level tell of kiro-cli's model-call limit. It is not proof on its own: kiro-cli also
-// ends a turn whose last tool asked for it with the model's tool_use stop (update_workflow's handoff_ends_turn,
-// kiro-cli 2.32.0), and only KAS's node record tells the two apart.
+// stoppedOnToolUse is the turn-level tell of kiro-cli's model-call limit (a tool_use or max_turn_requests stop). It is
+// not proof on its own: kiro-cli also ends a turn whose last tool asked for it with the model's tool_use stop
+// (update_workflow's handoff_ends_turn, kiro-cli 2.32.0), and only KAS's node record tells the two apart.
 func (c stepClose) stoppedOnToolUse() bool {
 	return marotte.ConcludeStopReason(c.rawStop).FailureKind == marotte.FailureKindModelCallLimit
 }

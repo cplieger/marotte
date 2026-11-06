@@ -505,12 +505,11 @@ export function turnFailureText(t: Turn): string {
 
 const BOUND_TEXT = new Map<string, string>([
   ["max_tokens", "The answer was cut off at the output limit."],
-  ["max_turn_requests", "The turn stopped at its request limit."],
 ]);
 
 /** What a turn the model stopped at a bound SAYS beside its clean grade; "" for any other turn.
- *  `truncated` decides and the raw stop reason only names the bound, so a reason outside the two
- *  known bounds still speaks. */
+ *  `truncated` decides and the raw stop reason only names the bound, so a reason outside the
+ *  known bound still speaks. */
 export function turnBoundText(t: Turn): string {
   const close = closeOfBody(t.body);
   if (close?.truncated !== true) {
