@@ -24,26 +24,41 @@ type compactRig struct {
 	calls     int
 	marks     int
 	opened    int
-	pct       int
-	enabled   bool
-	live      bool
-	refuse    bool
-	queued    bool
-	mu        sync.Mutex
+	// finished is the id of the turn that finished last, "" before any.
+	finished string
+	pct      int
+	enabled  bool
+	live     bool
+	refuse   bool
+	queued   bool
+	mu       sync.Mutex
 }
 
-// rigQueue is the record's request as a flag: marked only while the rig's turn is live.
+// rigQueue is the record's request as a flag: marked only while the rig's turn is live. r.mu is its section, as the
+// lifecycle is the record queue's.
 type rigQueue struct{ r *compactRig }
 
-func (q rigQueue) markIfLive(context.Context, marotte.ChatID) (bool, error) {
+// markIfLive counts each admitted mark, a request already there included.
+func (q rigQueue) markIfLive(_ context.Context, _ marotte.ChatID, admit func(turn string) bool) (bool, error) {
 	q.r.mu.Lock()
 	defer q.r.mu.Unlock()
 	if !q.r.live {
 		return false, nil
 	}
+	if admit != nil && !admit(q.r.turnIDLocked()) {
+		return q.r.queued, nil
+	}
 	q.r.queued = true
 	q.r.marks++
 	return true, nil
+}
+
+func (q rigQueue) withdraw(_ context.Context, _ marotte.ChatID, decline func(turn string)) error {
+	q.r.mu.Lock()
+	defer q.r.mu.Unlock()
+	decline(q.r.turnIDLocked())
+	q.r.queued = false
+	return nil
 }
 
 func (q rigQueue) pending(context.Context, marotte.ChatID) bool {
@@ -131,13 +146,17 @@ func newCompactRig(pct int) *compactRig {
 func (r *compactRig) setLive(live bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if live && !r.live {
+	switch {
+	case live && !r.live:
 		r.opened++
+	case !live && r.live:
+		r.finished = r.turnIDLocked()
 	}
 	r.live = live
 }
 
-// turnIDLocked is the live turn's id, else the last finished one's; "" before any turn. r.mu must be held.
+// turnIDLocked is the newest opened turn's id, which is the live one while a turn is live and the finished one
+// otherwise; "" before any turn. r.mu must be held.
 func (r *compactRig) turnIDLocked() string {
 	if r.opened == 0 {
 		return ""
@@ -145,11 +164,12 @@ func (r *compactRig) turnIDLocked() string {
 	return "t" + strconv.Itoa(r.opened)
 }
 
-// lastTurn is the id turnEnd hands the compactor: the turn that finished last.
+// lastTurn is the id turnEnd hands the compactor, as closeFacts does: the turn that finished last, even when the next
+// one is already live.
 func (r *compactRig) lastTurn() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.turnIDLocked()
+	return r.finished
 }
 
 func (r *compactRig) setRefuse(refuse bool) {
