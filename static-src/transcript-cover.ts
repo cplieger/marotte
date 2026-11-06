@@ -46,14 +46,23 @@ export function moveFocusOffTranscript(): void {
 }
 
 /** Cover the transcript for `chatID`, or hand an existing cover to it without re-creating or
- *  re-animating it. The transcript under it is `inert` and `aria-busy` until a release. */
+ *  re-animating it. The transcript under it is `aria-busy` until a release; `inertUnderCover`
+ *  makes it `inert`. */
 export function holdCover(chatID: string): void {
   const node = ensureCover();
   holder = chatID;
   node.hidden = false;
   delete node.dataset["state"];
-  $.messagesWrap.inert = true;
   setBusy($.messagesWrap, true);
+}
+
+/** Make the transcript under a held cover `inert` until a release; a no-op with no cover. Apart
+ *  from `holdCover` because `inert` restyles every resident turn, which in a gesture's frame held
+ *  WebKit's first paint past 100 ms; until it runs, the opaque cover takes the pointer. */
+export function inertUnderCover(): void {
+  if (holder !== "") {
+    $.messagesWrap.inert = true;
+  }
 }
 
 /** Lift the cover when `chatID` is the chat it stands for; a release for any other chat is a

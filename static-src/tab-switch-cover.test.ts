@@ -106,6 +106,8 @@ describe("the cover is released by the paint that shows content", () => {
     store.setActive("cv-b");
     coverModule.holdCover("cv-b");
     expect(wrap().getAttribute("aria-busy")).toBe("true");
+    expect(wrap().inert, "holding the cover alone restyles nothing").toBe(false);
+    coverModule.inertUnderCover();
     expect(wrap().inert).toBe(true);
     setPainted("cv-b");
     await flushed();

@@ -62,6 +62,7 @@ import {
 import {
   dropCover,
   holdCover,
+  inertUnderCover,
   moveFocusOffTranscript,
   releaseCoverExceptFor,
 } from "./transcript-cover.js";
@@ -807,6 +808,8 @@ function runActivation(gen: number): void {
   }
   pushRoute(row.spec.route);
   watchRefresh(record, row);
+  // The task's last write, after every read, so it forces no style recalc of its own.
+  inertUnderCover();
   // Last, so a caller awaiting `done` resumes after a refresh that already resolved has settled.
   record.resolveDone();
 }

@@ -105,10 +105,13 @@ describe("a switch paints the target tab at once", () => {
     expect(cover()?.querySelector(".skeleton-rows")).not.toBeNull();
     const wrap = document.getElementById("messages-wrap");
     expect(wrap?.getAttribute("aria-busy")).toBe("true");
-    expect(wrap?.inert).toBe(true);
+    expect(wrap?.inert, "inert restyles every turn, so the gesture's frame must not carry it").toBe(
+      false,
+    );
     expect(document.activeElement?.id, "focus left the covered transcript").toBe("prompt-input");
 
     await activationRan();
+    expect(wrap?.inert, "the activation task leaves the covered transcript inert").toBe(true);
     expect(fx.chat.show).toHaveBeenCalledTimes(1);
     expect(fx.chat.show).toHaveBeenCalledWith("b");
     expect(fx.chat.refresh).toHaveBeenCalledTimes(1);

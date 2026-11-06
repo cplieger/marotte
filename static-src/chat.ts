@@ -58,7 +58,12 @@ import {
   disposeChatView,
   parkPaintedView,
 } from "./messages.js";
-import { dropCover, holdCover, moveFocusOffTranscript } from "./transcript-cover.js";
+import {
+  dropCover,
+  holdCover,
+  inertUnderCover,
+  moveFocusOffTranscript,
+} from "./transcript-cover.js";
 import {
   addAttachment,
   addAttachmentTo,
@@ -192,7 +197,9 @@ async function retryChatLoad(chatID: string): Promise<void> {
   clearChatLoadError();
   markWindowStale(chatID);
   if ((get(chatID)?.turn_order.length ?? 0) === 0) {
+    // No resident turns to restyle, so `inert` costs this click's frame nothing.
     holdCover(chatID);
+    inertUnderCover();
   }
   try {
     await refreshChatView(chatID, AbortSignal.timeout(SWITCH_LOAD_MS));
