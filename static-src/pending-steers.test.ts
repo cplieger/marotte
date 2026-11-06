@@ -1096,10 +1096,11 @@ describe("the steer stack", () => {
     expect(actions(rowAt(1))).toEqual(["Cancel the queued compaction"]);
   });
 
-  it("waits for the next turn when none runs", () => {
+  it("reads as pending when no turn runs, whether the close is running it or left it for the next turn", () => {
     withCompact([], false);
 
-    expect(rows().map(labelOf)).toEqual(["After the next turn"]);
+    expect(rows().map(labelOf)).toEqual(["Pending"]);
+    expect(firstRow().getAttribute("aria-label")).toBe("Pending: Compact the context");
   });
 
   it("cancels the chat's queued compaction from its row", async () => {

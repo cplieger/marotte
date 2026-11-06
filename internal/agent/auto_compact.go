@@ -24,8 +24,10 @@ const queuedCompactFailed = "The queued compaction did not run: the agent was bu
 
 // compactRun is one compaction call; accepted and err are written before done closes.
 type compactRun struct {
-	done     chan struct{}
-	err      error
+	done chan struct{}
+	err  error
+	// cancels is the chat's cancel count when the run was claimed; a higher count means the reader withdrew it.
+	cancels  uint64
 	accepted bool
 }
 
@@ -36,6 +38,8 @@ type autoCompactState struct {
 	// declined is the turn whose queued compaction the reader cancelled, so that turn's end compacts nothing unasked.
 	// Keyed by turn id, so no lifecycle edge has to reset it: the next turn has another id.
 	declined string
+	// cancels counts the reader's cancels, whatever turn each named, so a run tells a cancel made during it.
+	cancels uint64
 }
 
 type autoCompactor struct {
@@ -245,12 +249,13 @@ func (a *autoCompactor) runOnce(ctx context.Context, chatID marotte.ChatID, b *s
 }
 
 // settle ends a turn end's compaction: queued again when a turn opened under it (KAS aborts a compaction a starting
-// turn meets) unless the reader cancelled it meanwhile, else the request cleared, a press made during the run
-// included, with a toast when it did not run.
+// turn meets) unless the reader cancelled since the run was claimed, else the request cleared, a press made during the
+// run included, with a toast when it did not run. A press after the cancel is a row already there, which the re-queue
+// keeps. A run is claimed only on an idle chat, so any cancel naming a turn opened under it counts as one since.
 func (a *autoCompactor) settle(ctx context.Context, chatID marotte.ChatID, run *compactRun) {
 	if !run.accepted && run.err == nil && a.live(chatID) {
-		notDeclined := func(turn string) bool { return !a.declined(chatID, turn) }
-		if requeued, err := a.queue.markIfLive(ctx, chatID, notDeclined); err == nil && requeued {
+		admit := func(string) bool { return a.uncancelled(chatID, run) }
+		if requeued, err := a.queue.markIfLive(ctx, chatID, admit); err == nil && requeued {
 			slog.Info("compaction refused under a starting turn; it runs at that turn's end", "chat_id", chatID)
 			return
 		}
@@ -283,7 +288,7 @@ func (a *autoCompactor) awaitRunning(ctx context.Context, chatID marotte.ChatID)
 }
 
 // request is the reader's compaction: queued on the record while a turn runs, else run now, joining a running one.
-// A run KAS refused because a turn opened meanwhile is queued behind that turn.
+// A run KAS refused because a turn opened meanwhile is queued behind that turn, unless the reader cancelled since.
 func (a *autoCompactor) request(ctx context.Context, chatID marotte.ChatID) (command.CompactOutcome, error) {
 	if queued, err := a.queue.markIfLive(ctx, chatID, nil); err != nil || queued {
 		return command.CompactQueued, err
@@ -315,23 +320,34 @@ func (a *autoCompactor) request(ctx context.Context, chatID marotte.ChatID) (com
 		}
 		return command.CompactAccepted, nil
 	}
-	if queued, err := a.queue.markIfLive(ctx, chatID, nil); err != nil || queued {
+	uncancelled := func(string) bool { return a.uncancelled(chatID, run) }
+	if queued, err := a.queue.markIfLive(ctx, chatID, uncancelled); err != nil || queued {
 		return command.CompactQueued, err
 	}
 	return command.CompactRefused, nil
 }
 
 // cancel drops the queued compaction; the turn it belongs to (the open one, else the one whose close may still be
-// running its end) then compacts nothing unasked, and no other turn is touched. A later press still runs.
+// running its end) then compacts nothing unasked, a run in flight is not queued again, and no other turn is touched.
+// A later press still runs.
 func (a *autoCompactor) cancel(ctx context.Context, chatID marotte.ChatID) error {
 	return a.queue.withdraw(ctx, chatID, func(turn string) {
-		if turn == "" {
-			return
-		}
 		a.mu.Lock()
 		defer a.mu.Unlock()
-		a.stateLocked(chatID).declined = turn
+		st := a.stateLocked(chatID)
+		st.cancels++
+		if turn != "" {
+			st.declined = turn
+		}
 	})
+}
+
+// uncancelled reports that the reader made no cancel since the run was claimed. A run whose state forget dropped
+// meets a fresh count and is treated as cancelled unless none was ever made.
+func (a *autoCompactor) uncancelled(chatID marotte.ChatID, run *compactRun) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.stateLocked(chatID).cancels == run.cancels
 }
 
 // claimLocked marks a compaction in flight and returns its handle, nil while one runs. a.mu must be held.
@@ -339,7 +355,7 @@ func (st *autoCompactState) claimLocked() *compactRun {
 	if st.inflight != nil {
 		return nil
 	}
-	st.inflight = &compactRun{done: make(chan struct{})}
+	st.inflight = &compactRun{done: make(chan struct{}), cancels: st.cancels}
 	return st.inflight
 }
 

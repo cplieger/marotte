@@ -9,8 +9,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// hookQueue runs a step just before a queue write or a queue read reaches the queue, where another caller's step can
-// land between a decision and the queue's own section.
+// hookQueue runs a step just before a queue write or a queue read, so another caller's step finishes before that
+// call's section begins.
 type hookQueue struct {
 	compactQueue
 	beforeMark    func()
@@ -126,6 +126,100 @@ func TestAutoCompact_ACancelDuringARefusedTurnEndRunHolds(t *testing.T) {
 	if r.isQueued() || r.count() != 1 || len(r.failures) != 0 {
 		t.Errorf("a cancel during the refused run: queued %v, calls %d, failures %v; want not queued, 1 call, no failure",
 			r.isQueued(), r.count(), r.failures)
+	}
+}
+
+// The reader cancels while the turn end's compaction runs, and only then KAS opens its own next turn and refuses the
+// call: the cancel still holds, so the new turn's end below the point compacts nothing.
+func TestAutoCompact_ACancelBeforeKASOpensTheNextTurnDuringARefusedRunHolds(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 92)
+	r.setRefuse(true)
+	cancel := cancelOnce(t, r.ac.cancel)
+	r.onCompact = func() {
+		cancel()
+		r.kasOpensTheNextTurn()
+	}
+	r.closeTurn(t, false)
+	if r.isQueued() || r.count() != 1 || len(r.failures) != 0 {
+		t.Errorf("a cancel before KAS opened its turn: queued %v, calls %d, failures %v; want not queued, 1 call, no failure",
+			r.isQueued(), r.count(), r.failures)
+	}
+	r.setRefuse(false)
+	r.onCompact = nil
+	r.reading(40)
+	r.closeTurn(t, false)
+	if r.isQueued() || r.count() != 1 {
+		t.Errorf("the new turn's end at 40%%: queued %v, calls %d; want no row and no further call", r.isQueued(), r.count())
+	}
+}
+
+// KAS opens and finishes a turn of its own during the refused run, the reader cancels, and KAS opens another: the
+// cancel binds to the run it lands during, so neither later turn runs the cancelled compaction.
+func TestAutoCompact_ACancelBetweenTwoKASTurnsDuringARefusedRunHolds(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 92)
+	r.setRefuse(true)
+	cancel := cancelOnce(t, r.ac.cancel)
+	r.onCompact = func() {
+		r.kasOpensTheNextTurn()
+		r.finishTurn()
+		cancel()
+		r.setLive(true)
+	}
+	r.closeTurn(t, false)
+	if r.isQueued() || r.count() != 1 || len(r.failures) != 0 {
+		t.Errorf("a cancel between KAS's turns: queued %v, calls %d, failures %v; want not queued, 1 call, no failure",
+			r.isQueued(), r.count(), r.failures)
+	}
+}
+
+// The reader's press runs at once on the idle chat; KAS opens a turn during the call, that turn crosses the point and
+// the reader cancels its row, and KAS refuses the call: the press is not queued again behind that turn.
+func TestAutoCompact_ACancelDuringARefusedPressHolds(t *testing.T) {
+	r := newCompactRig(90)
+	r.setRefuse(true)
+	r.onCompact = func() {
+		r.setLive(true)
+		r.reading(92)
+		r.ac.noteUsage(t.Context(), "c1", 92)
+		if err := r.ac.cancel(t.Context(), "c1"); err != nil {
+			t.Errorf("cancel: %v", err)
+		}
+	}
+	if out, err := r.ac.request(t.Context(), "c1"); err != nil || out != command.CompactRefused || r.isQueued() {
+		t.Errorf("a press refused after the cancel = (%v, %v), queued %v; want refused and no row", out, err, r.isQueued())
+	}
+	r.setRefuse(false)
+	r.onCompact = nil
+	r.closeTurn(t, false)
+	if r.count() != 1 {
+		t.Errorf("the declined turn's end: calls %d; want only the refused press", r.count())
+	}
+}
+
+// A cancel in one turn binds to the runs it lands during: the next turn's context-limit end compaction, refused under
+// KAS's own turn with no row behind it, is still queued for that turn's end and runs there.
+func TestAutoCompact_AnEarlierCancelLeavesALaterRefusedRunQueued(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 92)
+	if err := r.ac.cancel(t.Context(), "c1"); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	r.closeTurn(t, false)
+	r.turn(t, 50)
+	r.setRefuse(true)
+	r.onCompact = r.kasOpensTheNextTurn
+	r.closeTurn(t, true)
+	if !r.isQueued() || r.count() != 1 || len(r.failures) != 0 {
+		t.Fatalf("the next turn's refused end: queued %v, calls %d, failures %v; want queued again, 1 call, no failure",
+			r.isQueued(), r.count(), r.failures)
+	}
+	r.setRefuse(false)
+	r.onCompact = nil
+	r.closeTurn(t, false)
+	if r.isQueued() || r.count() != 2 {
+		t.Errorf("KAS's turn's end: queued %v, calls %d; want the row gone and 2 calls", r.isQueued(), r.count())
 	}
 }
 

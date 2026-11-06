@@ -641,8 +641,10 @@ const chatSource: SteerStackSource = {
 
 const COMPACT_TEXT = "Compact the context";
 
+/** With no turn running the row is either the close's compaction in progress or left for the next turn's end, which
+ *  the page cannot tell apart, so it says only that the compaction is still to come. */
 function compactWord(slot: CompactSlot): string {
-  return `After ${turnsPhrase(1, slot.running)}`;
+  return slot.running ? `After ${turnsPhrase(1, true)}` : "Pending";
 }
 
 /** The queued compaction's row: its wait, what it does, and Cancel, the one control (it has no words to edit and
