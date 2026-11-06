@@ -390,18 +390,12 @@ var table = []decl{
 		send:        true,
 	},
 	{
+		// KAS's own compaction threshold; withheld because disableAutoCompaction turns KAS's compaction off on every
+		// chat session, marotte's compactor running at a turn's end instead.
 		key:      "compaction",
 		door:     doorSession,
 		resolver: resolverSettingObject,
-		// KAS reads the threshold from the load request only, so both doors carry it; a value outside 0..80 fails
-		// the door with -32602, and one without enabled: true reads as KAS's default.
-		sessionGate: func(s *SessionSpawn) (any, bool) {
-			if s.AutoCompactionThreshold <= 0 {
-				return nil, false
-			}
-			return map[string]any{enabledMember: true, "autoCompactionThreshold": s.AutoCompactionThreshold}, true
-		},
-		send: true,
+		send:     false,
 	},
 	{
 		key:      "memory",

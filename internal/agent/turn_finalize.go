@@ -138,6 +138,7 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 	result, outcome := bc.closeTurn(ctx, t, stop, reason, kind, tc.Closer)
 	cf := bc.closeFactsOf(t, tc.Closer, outcome)
 	cf.answerWait = answerWait
+	cf.contextLimit = kind == marotte.FailureKindContextLimit
 	bc.turns.finish(t, result)
 	bc.publishClose(t, cf)
 	return true
@@ -206,6 +207,8 @@ type closeFacts struct {
 	fence      command.TurnFence
 	answerWait time.Duration
 	unattended bool
+	// contextLimit is a turn the model refused for the context's size, which the turn's end compacts.
+	contextLimit bool
 }
 
 // afterTurnClose runs the between-turns follow-ups in order: the wait for KAS to go idle (every later step is a
@@ -257,13 +260,15 @@ func (bc *bridgeCoordinator) resolveCloseEnds(ctx context.Context, lc *chatLifec
 	return bc.resolveEnds(ctx, lc.chatID, cf.fence)
 }
 
-// betweenTurns waits for KAS to go idle, then for an abandoned prompt's answer, runs atIdle once and applies a parked
-// model, then releases the close's KAS hold if it started one (claimTurn), so a waiting prompt cannot reach the
-// session before them; a release refused because KAS reported a run meanwhile repeats the wait. It answers the rows
+// betweenTurns waits for KAS to go idle, then for an abandoned prompt's answer, runs atIdle and the turn end's
+// compaction once and applies a parked model, then releases the close's KAS hold if it started one (claimTurn), so a
+// waiting prompt cannot reach the session before them; a release refused because KAS reported a run meanwhile repeats
+// the wait. After the release it takes a compaction requested under the hold (afterRelease). It answers the rows
 // queued under the hold, false when a wait stood down (a turn opened, a teardown, shutdown), which ends the hold with
 // no drain and skips atIdle.
 func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, lc *chatLifecycle, cf closeFacts, atIdle func()) ([]string, bool) {
 	chatID := lc.chatID
+	compacted, turnEnded := false, false
 	for {
 		if !lc.awaitKASIdle(ctx, cf.fence) ||
 			cf.answerWait > 0 && !bc.awaitAbandonedAnswer(ctx, chatID, cf.fence, cf.answerWait) {
@@ -277,10 +282,27 @@ func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, lc *chatLifecycle
 		if bc.applyPendingModel != nil && !lc.endedNow() {
 			bc.applyPendingModel(ctx, chatID)
 		}
-		if drain, rows := lc.kasStep(kasReleaseOwn, cf.fence.Seq); drain {
+		if !turnEnded {
+			compacted, turnEnded = bc.compactAtTurnEnd(ctx, lc, cf.contextLimit), true
+		}
+		if rows, drain := bc.releaseHold(ctx, lc, cf.fence.Seq, compacted); drain {
 			return rows, true
 		}
 	}
+}
+
+// compactAtTurnEnd runs the closed turn's one compaction, reporting whether one ran.
+func (bc *bridgeCoordinator) compactAtTurnEnd(ctx context.Context, lc *chatLifecycle, contextLimit bool) bool {
+	return !lc.endedNow() && bc.autoCompact.afterTurn(ctx, lc.chatID, contextLimit)
+}
+
+// releaseHold releases the close's KAS hold; on a drain it first takes a compaction requested under the hold.
+func (bc *bridgeCoordinator) releaseHold(ctx context.Context, lc *chatLifecycle, seq uint64, compacted bool) ([]string, bool) {
+	drain, rows := lc.kasStep(kasReleaseOwn, seq)
+	if drain && !lc.endedNow() {
+		bc.autoCompact.afterRelease(ctx, lc.chatID, compacted)
+	}
+	return rows, drain
 }
 
 // errAbandonedAnswerLate ends the wait for a cancelled prompt's answer: KAS owes none, so the chat must not wedge.

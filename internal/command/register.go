@@ -47,7 +47,8 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	var chats chatStore = r.Chats
 	d.register(marotte.CmdCreateChat, bind1(mem, cmdCreateChat))
 	d.register(marotte.CmdResumeSession, bind2(mem, r.StepSessions, cmdResumeSession))
-	d.RegisterChange(marotte.CmdCompact, bind2(r.Bridges, readLoopAwaiter(r.SteerQueue), cmdCompact))
+	d.RegisterChange(marotte.CmdCompact, bind1[compactRequester](r.Compactor, cmdCompact))
+	d.register(marotte.CmdCancelCompact, bind1[compactRequester](r.Compactor, cmdCancelCompact))
 
 	d.register(marotte.CmdOpenTab, bind1(mem, cmdOpenTab))
 	d.register(marotte.CmdCloseTab, bind1(mem, cmdCloseTab))
@@ -93,6 +94,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		queue:       r.SteerQueue,
 		jobs:        r.SteerJobs,
 		followups:   r.Queue,
+		compactor:   r.Compactor,
 		sendGate:    r.SendGate,
 		auth:        r.AuthReadiness,
 		signIn:      r.SignIn,

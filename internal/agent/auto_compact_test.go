@@ -1,0 +1,708 @@
+package agent
+
+import (
+	"context"
+	"slices"
+	"sync"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/marotte"
+)
+
+type compactRig struct {
+	ac     *autoCompactor
+	bridge *fakeBridge
+	block  chan struct{}
+	// onCompact runs inside each compact call, before it answers.
+	onCompact func()
+	failures  []string
+	usage     marotte.Usage
+	calls     int
+	marks     int
+	pct       int
+	enabled   bool
+	live      bool
+	refuse    bool
+	queued    bool
+	mu        sync.Mutex
+}
+
+// rigQueue is the record's request as a flag: marked only while the rig's turn is live.
+type rigQueue struct{ r *compactRig }
+
+func (q rigQueue) markIfLive(context.Context, marotte.ChatID) (bool, error) {
+	q.r.mu.Lock()
+	defer q.r.mu.Unlock()
+	if !q.r.live {
+		return false, nil
+	}
+	q.r.queued = true
+	q.r.marks++
+	return true, nil
+}
+
+func (q rigQueue) pending(context.Context, marotte.ChatID) bool {
+	q.r.mu.Lock()
+	defer q.r.mu.Unlock()
+	return q.r.queued
+}
+
+func (q rigQueue) clear(context.Context, marotte.ChatID) error {
+	q.r.mu.Lock()
+	defer q.r.mu.Unlock()
+	q.r.queued = false
+	return nil
+}
+
+func (q rigQueue) clearIfIdle(context.Context, marotte.ChatID) error {
+	q.r.mu.Lock()
+	defer q.r.mu.Unlock()
+	if !q.r.live {
+		q.r.queued = false
+	}
+	return nil
+}
+
+func newCompactRig(pct int) *compactRig {
+	r := &compactRig{enabled: true, pct: pct, bridge: newFakeBridge()}
+	entry := testBridge(r.bridge, bridgeIdle)
+	r.ac = &autoCompactor{
+		chats: map[marotte.ChatID]*autoCompactState{},
+		live: func(marotte.ChatID) bool {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			return r.live
+		},
+		bridgeOf: func(marotte.ChatID) *sharedBridge { return entry },
+		usage: func(context.Context, marotte.ChatID) marotte.Usage {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			return r.usage
+		},
+		policy: func(context.Context) (bool, int) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			return r.enabled, r.pct
+		},
+		compact: func(ctx context.Context, _ command.CompactBridge) (bool, uint64, error) {
+			r.mu.Lock()
+			r.calls++
+			block, onCompact := r.block, r.onCompact
+			r.mu.Unlock()
+			if onCompact != nil {
+				onCompact()
+			}
+			if block != nil {
+				select {
+				case <-block:
+				case <-ctx.Done():
+					return false, 0, ctx.Err()
+				}
+			}
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			if !r.refuse {
+				// The translator clears the stored reading when the summary lands.
+				r.usage = marotte.Usage{}
+			}
+			return !r.refuse, 0, nil
+		},
+		failed: func(_ context.Context, _ marotte.ChatID, detail string) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.failures = append(r.failures, detail)
+		},
+	}
+	r.ac.queue = rigQueue{r: r}
+	return r
+}
+
+func (r *compactRig) setLive(live bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.live = live
+}
+
+func (r *compactRig) setRefuse(refuse bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.refuse = refuse
+}
+
+func (r *compactRig) reading(pct float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.usage = marotte.Usage{ContextPct: pct, HasRealData: true}
+}
+
+func (r *compactRig) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
+}
+
+func (r *compactRig) markCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.marks
+}
+
+func (r *compactRig) isQueued() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.queued
+}
+
+// markRow writes the record's request the way a press under a close's KAS hold does, with no turn live.
+func (r *compactRig) markRow() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.queued = true
+}
+
+// turn models one turn in which KAS reports each reading in order; the turn stays live until closed.
+func (r *compactRig) turn(t *testing.T, readings ...float64) {
+	t.Helper()
+	r.setLive(true)
+	for _, pct := range readings {
+		r.reading(pct)
+		r.ac.noteUsage(t.Context(), "c1", pct)
+	}
+}
+
+// closeTurn ends the live turn: the turn-end trigger runs on the now idle chat.
+func (r *compactRig) closeTurn(t *testing.T, contextLimit bool) {
+	t.Helper()
+	r.setLive(false)
+	r.ac.afterTurn(t.Context(), "c1", contextLimit)
+}
+
+func TestAutoCompact_CrossingThePointMidTurnQueuesOne(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 60, 89.9)
+	if r.isQueued() {
+		t.Fatal("a reading below the point queued a compaction")
+	}
+	r.turn(t, 90.2, 94, 97)
+	if !r.isQueued() || r.markCount() != 1 || r.count() != 0 {
+		t.Fatalf("after crossing 90 mid-turn: queued %v, marks %d, calls %d; want queued once, no call yet",
+			r.isQueued(), r.markCount(), r.count())
+	}
+	r.closeTurn(t, false)
+	if r.count() != 1 || r.isQueued() {
+		t.Errorf("at the turn's end: calls %d, queued %v; want 1 call and the row gone", r.count(), r.isQueued())
+	}
+}
+
+// The production sequence of chat c-d7eb... (REPORT.md Q1), at pct 90: turn 72 reaches 91.7311; turn 73, 4.6 hours
+// long, grows the context back from the summary to 93.5573, and KAS starts turn 74 on its own while that close's
+// compaction runs; turn 74 reaches the limit. Each crossing queues, whatever the last compaction freed.
+func TestAutoCompact_TheProductionSequenceQueuesAgainAfterRegrowth(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 88, 91.7311)
+	r.closeTurn(t, false)
+	if r.count() != 1 || r.isQueued() {
+		t.Fatalf("turn 72: calls %d, queued %v; want its compaction run", r.count(), r.isQueued())
+	}
+	r.turn(t, 40, 75, 93.5573)
+	if !r.isQueued() {
+		t.Fatal("turn 73 crossed 90 again after a compaction and queued nothing")
+	}
+	r.setRefuse(true)
+	r.onCompact = func() { r.setLive(true) }
+	r.closeTurn(t, false)
+	if r.count() != 2 || !r.isQueued() || len(r.failures) != 0 {
+		t.Fatalf("turn 73's end, aborted by KAS's own turn: calls %d, queued %v, failures %v; want 2 calls and still queued",
+			r.count(), r.isQueued(), r.failures)
+	}
+	r.setRefuse(false)
+	r.onCompact = nil
+	r.turn(t, 100)
+	r.closeTurn(t, true)
+	if r.count() != 3 || r.isQueued() {
+		t.Errorf("turn 74's end: calls %d, queued %v; want 3 calls and the row gone", r.count(), r.isQueued())
+	}
+}
+
+// A compaction that leaves the context above the point never disables the next: the next turn's crossing queues.
+func TestAutoCompact_ACompactionThatFreedLittleNeverDisablesTheNext(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 91)
+	r.closeTurn(t, false)
+	r.turn(t, 89, 91)
+	r.closeTurn(t, false)
+	r.turn(t, 92)
+	r.closeTurn(t, false)
+	if got := r.count(); got != 3 {
+		t.Errorf("three turns crossing 90 made %d compact calls, want 3", got)
+	}
+}
+
+// One run per turn end, whatever queued it: a crossing, the reader's request and a context-limit close together.
+func TestAutoCompact_OneRunPerTurnEnd(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 95)
+	if out, _ := r.ac.request(t.Context(), "c1"); out != command.CompactQueued {
+		t.Fatalf("the reader's request during the turn = %v, want queued", out)
+	}
+	r.closeTurn(t, true)
+	if got := r.count(); got != 1 {
+		t.Errorf("one turn end made %d compact calls, want 1", got)
+	}
+}
+
+// The turn's last reading can fold after its close, so the end compacts at the point even with nothing queued.
+func TestAutoCompact_TheTurnEndCompactsAtThePointWithNothingQueued(t *testing.T) {
+	r := newCompactRig(90)
+	r.reading(93)
+	r.closeTurn(t, false)
+	r.reading(80)
+	r.closeTurn(t, false)
+	if got := r.count(); got != 1 {
+		t.Errorf("closes at 93 then 80 with pct 90 made %d compact calls, want 1", got)
+	}
+}
+
+func TestAutoCompact_AContextLimitTurnEndCompactsWhateverTheReading(t *testing.T) {
+	r := newCompactRig(90)
+	r.reading(50)
+	r.closeTurn(t, true)
+	if got := r.count(); got != 1 {
+		t.Errorf("a context-limit close with a stale reading of 50 made %d compact calls, want 1", got)
+	}
+}
+
+func TestAutoCompact_TheSwitchOffCompactsOnlyWhatTheReaderAsks(t *testing.T) {
+	r := newCompactRig(90)
+	r.enabled = false
+	r.turn(t, 99)
+	r.closeTurn(t, true)
+	if r.count() != 0 || r.markCount() != 0 {
+		t.Fatalf("switch off: calls %d, marks %d; want none", r.count(), r.markCount())
+	}
+	r.turn(t)
+	if out, _ := r.ac.request(t.Context(), "c1"); out != command.CompactQueued {
+		t.Fatalf("the reader's request = %v, want queued", out)
+	}
+	r.closeTurn(t, false)
+	if got := r.count(); got != 1 {
+		t.Errorf("the reader's queued compaction with the switch off made %d calls, want 1", got)
+	}
+}
+
+// The reader's cancel holds for the turn it was made in: no later reading re-queues it and its end compacts nothing.
+// The next turn's crossing queues again.
+func TestAutoCompact_ACancelFromTheHoldingAreaHoldsForTheTurn(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 92)
+	if err := r.ac.cancel(t.Context(), "c1"); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if r.isQueued() {
+		t.Fatal("the cancelled compaction is still queued")
+	}
+	r.turn(t, 95, 97)
+	r.closeTurn(t, false)
+	if r.count() != 0 || r.isQueued() {
+		t.Fatalf("after a cancel: calls %d, queued %v; want neither for this turn", r.count(), r.isQueued())
+	}
+	r.turn(t, 98)
+	if !r.isQueued() {
+		t.Fatal("the next turn's crossing queued nothing after a cancel")
+	}
+	r.closeTurn(t, false)
+	if got := r.count(); got != 1 {
+		t.Errorf("the next turn's end made %d compact calls, want 1", got)
+	}
+}
+
+func TestAutoCompact_AQueuedRunKASRefusesIsDroppedAndReported(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 92)
+	r.setRefuse(true)
+	r.closeTurn(t, false)
+	if r.isQueued() || len(r.failures) != 1 {
+		t.Errorf("a queued run refused with no turn: queued %v, failures %v; want dropped and one failure", r.isQueued(), r.failures)
+	}
+}
+
+// A reading outside a turn (KAS reports the pre-compaction usage as a compaction starts) queues nothing.
+func TestAutoCompact_AReadingOutsideATurnQueuesNothing(t *testing.T) {
+	r := newCompactRig(90)
+	r.ac.noteUsage(t.Context(), "c1", 95)
+	if r.markCount() != 0 {
+		t.Errorf("an idle reading of 95 made %d marks, want none", r.markCount())
+	}
+}
+
+func TestAutoCompact_TurnEndSkipsALiveChat(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 95)
+	r.ac.afterTurn(t.Context(), "c1", false)
+	if got := r.count(); got != 0 {
+		t.Errorf("a live chat got %d compact calls at turn end, want 0", got)
+	}
+}
+
+// KAS sends no reading after a summary lands, so a turn that ends before its first reading finds no reading at all,
+// and compacts nothing.
+func TestAutoCompact_AReadingLessTurnAfterACompactionCompactsNothing(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 93)
+	r.closeTurn(t, false)
+	r.turn(t)
+	r.closeTurn(t, false)
+	if got := r.count(); got != 1 {
+		t.Errorf("a reading-less turn right after a compaction made %d compact calls in total, want 1", got)
+	}
+}
+
+// A close that finds no session still ends the turn's state: the next turn's crossing queues again.
+func TestAutoCompact_ACloseWithNoSessionStillEndsTheTurn(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 92)
+	withSession := r.ac.bridgeOf
+	r.ac.bridgeOf = func(marotte.ChatID) *sharedBridge { return nil }
+	r.closeTurn(t, false)
+	r.ac.bridgeOf = withSession
+	r.turn(t, 95)
+	if got := r.markCount(); got != 2 {
+		t.Fatalf("the next turn's crossing of 90 after a sessionless close made %d marks in total, want 2", got)
+	}
+	r.closeTurn(t, false)
+	if r.count() != 1 || r.isQueued() {
+		t.Errorf("the next turn's end: calls %d, queued %v; want 1 call and the row gone", r.count(), r.isQueued())
+	}
+}
+
+// The reader's compaction on an idle chat stands for a row left on the record, so no later turn end runs it again.
+func TestCompactRequest_AnIdleRunTakesTheQueuedRow(t *testing.T) {
+	r := newCompactRig(90)
+	r.markRow()
+	if out, err := r.ac.request(t.Context(), "c1"); out != command.CompactAccepted || err != nil {
+		t.Fatalf("request on an idle chat = %v, %v; want accepted", out, err)
+	}
+	if r.isQueued() {
+		t.Error("the row stayed on the record after the reader's compaction ran")
+	}
+	r.turn(t, 31)
+	r.closeTurn(t, false)
+	if got := r.count(); got != 1 {
+		t.Errorf("a manual compaction then a turn ending at 31%% made %d compact calls, want 1", got)
+	}
+}
+
+// A press while the turn end's compaction runs (under the close's KAS hold) is satisfied by that compaction.
+func TestAutoCompact_APressDuringTheTurnEndsRunIsSatisfiedByIt(t *testing.T) {
+	r := newCompactRig(90)
+	r.reading(93)
+	r.onCompact = r.markRow
+	ran := r.ac.afterTurn(t.Context(), "c1", false)
+	r.onCompact = nil
+	if !ran || r.isQueued() {
+		t.Fatalf("a press during the turn end's run: ran %v, queued %v; want ran and the row taken by it", ran, r.isQueued())
+	}
+	r.ac.afterRelease(t.Context(), "c1", ran)
+	if got := r.count(); got != 1 {
+		t.Errorf("the close made %d compact calls, want 1", got)
+	}
+}
+
+// A press under the close's KAS hold after the turn end ran nothing runs once the hold is released, before the drain.
+func TestAutoCompact_ARowWrittenUnderTheHoldRunsAtTheRelease(t *testing.T) {
+	r := newCompactRig(90)
+	r.turn(t, 50)
+	r.setLive(false)
+	ran := r.ac.afterTurn(t.Context(), "c1", false)
+	if ran {
+		t.Fatal("a turn end at 50 with pct 90 and nothing queued reported a compaction")
+	}
+	r.markRow()
+	r.ac.afterRelease(t.Context(), "c1", ran)
+	if r.count() != 1 || r.isQueued() {
+		t.Errorf("the row written under the hold: calls %d, queued %v; want 1 call and the row gone", r.count(), r.isQueued())
+	}
+}
+
+// After the release the row belongs to a turn that opened meanwhile, whose end runs it.
+func TestAutoCompact_ARowUnderANewTurnWaitsForThatTurnsEnd(t *testing.T) {
+	for _, ran := range []bool{false, true} {
+		r := newCompactRig(90)
+		r.markRow()
+		r.setLive(true)
+		r.ac.afterRelease(t.Context(), "c1", ran)
+		if r.count() != 0 || !r.isQueued() {
+			t.Errorf("close ran %v, a turn live at the release: calls %d, queued %v; want no call and the row kept",
+				ran, r.count(), r.isQueued())
+		}
+	}
+}
+
+func TestAwaitCompaction_HoldsAPromptUntilTheRunningCompactionReturns(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newCompactRig(90)
+		r.block = make(chan struct{})
+		r.reading(95)
+		closed := make(chan struct{})
+		go func() {
+			r.ac.afterTurn(context.Background(), "c1", false)
+			close(closed)
+		}()
+		synctest.Wait()
+		sent := make(chan struct{})
+		go func() {
+			r.ac.awaitRunning(context.Background(), "c1")
+			close(sent)
+		}()
+		synctest.Wait()
+		select {
+		case <-sent:
+			t.Fatal("the prompt went ahead while the turn-end compaction was still running")
+		default:
+		}
+		close(r.block)
+		<-sent
+		<-closed
+		if got := r.count(); got != 1 {
+			t.Errorf("compact calls = %d, want 1: a prompt waits and never compacts", got)
+		}
+	})
+}
+
+func TestAwaitCompaction_ACompactionThatNeverAnswersIsBounded(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newCompactRig(90)
+		r.block = make(chan struct{})
+		r.reading(95)
+		go r.ac.afterTurn(context.Background(), "c1", false)
+		synctest.Wait()
+		start := time.Now()
+		r.ac.awaitRunning(context.Background(), "c1")
+		if waited := time.Since(start); waited != compactCallBudget {
+			t.Errorf("the prompt waited %s, want the %s budget", waited, compactCallBudget)
+		}
+		close(r.block)
+		synctest.Wait()
+	})
+}
+
+func TestAwaitCompaction_NoCompactionRunningSendsAtOnce(t *testing.T) {
+	r := newCompactRig(90)
+	r.reading(99)
+	r.ac.awaitRunning(t.Context(), "c1")
+	if got := r.count(); got != 0 {
+		t.Errorf("a prompt with nothing running made %d compact calls, want 0", got)
+	}
+}
+
+// TestAutoCompact_TurnEndCallsCompact pins that a real closer reaches the trigger through afterTurnClose.
+func TestAutoCompact_TurnEndCallsCompact(t *testing.T) {
+	h, _, _ := newTestHub()
+	r := newCompactRig(85)
+	r.reading(88)
+	h.coord.autoCompact = r.ac
+	id, _ := h.stagePromptTurn(t, "c1")
+	h.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "the pipe died", "", 0)
+	waitFor(t, func() bool { return r.count() == 1 })
+}
+
+// TestAutoCompact_AContextLimitCloseReachesTheTrigger pins that a turn the model refused for its size reaches the
+// compactor as a context-limit close, whatever the stored reading.
+func TestAutoCompact_AContextLimitCloseReachesTheTrigger(t *testing.T) {
+	h, _, _ := newTestHub()
+	r := newCompactRig(90)
+	r.reading(50)
+	h.coord.autoCompact = r.ac
+	id, _ := h.stagePromptTurn(t, "c1")
+	h.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "too long", marotte.FailureKindContextLimit, 0)
+	waitFor(t, func() bool { return r.count() == 1 })
+}
+
+// The wire half: a reading KAS reports during a live turn reaches the record as the queued compaction every page's
+// holding area shows, and the turn's close runs it and takes it off.
+func TestAutoCompact_AReadingFromTheWireQueuesOnTheRecord(t *testing.T) {
+	h, cs, _ := newTestHub()
+	r := newCompactRig(90)
+	r.ac.queue = recordCompactQueue{bc: h.coord}
+	r.ac.live = h.coord.turns.live
+	h.coord.autoCompact = r.ac
+	id, _ := h.stagePromptTurn(t, "c1")
+
+	h.coord.ObserveContextUsage(t.Context(), "c1", 91)
+	if c, _ := cs.Get(t.Context(), "c1"); c.CompactPending == nil || c.Header().CompactPending == nil {
+		t.Fatal("a reading of 91 during the turn did not queue the compaction on the record and its header")
+	}
+	h.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "the pipe died", "", 0)
+	waitFor(t, func() bool {
+		c, _ := cs.Get(t.Context(), "c1")
+		return r.count() == 1 && c.CompactPending == nil
+	})
+}
+
+// marotte's own compaction follows the last readable config.json.
+func TestUnreadableConfig_MarottesCompactorKeepsTheLastReadablePolicy(t *testing.T) {
+	dir := writeSettings(t, `{"auto_compaction_enabled":false,"auto_compact_pct":90}`)
+	h := reopenFixtureIn(t, dir, nil)
+	settleBoot(t, h)
+	rewriteConfigByHand(t, dir, `{"auto_compaction_enabled":`)
+
+	if on, pct := h.coord.autoCompact.policy(t.Context()); on || pct != 90 {
+		t.Errorf("compaction policy over an unreadable config.json = (%v, %d), want the last readable (false, 90)", on, pct)
+	}
+}
+
+// The reader's compaction on an idle chat runs now, whatever the policy says.
+func TestCompactRequest_AnIdleChatCompactsNow(t *testing.T) {
+	r := newCompactRig(60)
+	r.enabled = false
+	r.reading(10)
+	out, err := r.ac.request(t.Context(), "c1")
+	if err != nil || out != command.CompactAccepted {
+		t.Fatalf("request on an idle chat = (%v, %v), want accepted", out, err)
+	}
+	if got := r.count(); got != 1 {
+		t.Errorf("compact calls = %d, want 1", got)
+	}
+}
+
+func TestCompactRequest_WhileATurnRunsIsQueuedForItsEnd(t *testing.T) {
+	r := newCompactRig(90)
+	r.reading(10)
+	r.turn(t)
+	out, err := r.ac.request(t.Context(), "c1")
+	if err != nil || out != command.CompactQueued {
+		t.Fatalf("request during a turn = (%v, %v), want queued", out, err)
+	}
+	if again, _ := r.ac.request(t.Context(), "c1"); again != command.CompactQueued || r.count() != 0 {
+		t.Fatalf("a second press = %v with %d calls, want queued and none", again, r.count())
+	}
+	r.closeTurn(t, false)
+	if r.count() != 1 || r.isQueued() {
+		t.Errorf("at the end: calls %d, queued %v; want 1 call and the row gone", r.count(), r.isQueued())
+	}
+}
+
+// A request that meets a running compaction answers that compaction's outcome instead of a second call.
+func TestCompactRequest_JoinsARunningCompaction(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newCompactRig(90)
+		r.block = make(chan struct{})
+		r.reading(95)
+		go r.ac.afterTurn(context.Background(), "c1", false)
+		synctest.Wait()
+		answered := make(chan command.CompactOutcome, 1)
+		go func() {
+			out, _ := r.ac.request(context.Background(), "c1")
+			answered <- out
+		}()
+		synctest.Wait()
+		close(r.block)
+		if out := <-answered; out != command.CompactAccepted {
+			t.Errorf("the joined request = %v, want accepted", out)
+		}
+		synctest.Wait()
+		if got := r.count(); got != 1 {
+			t.Errorf("compact calls = %d, want 1", got)
+		}
+	})
+}
+
+// A close that finds the queued compaction already running (the reader's own, started on an idle chat) waits for it
+// and settles the request with it, instead of compacting twice.
+func TestCompactRequest_ATurnEndJoinsTheRunningCompaction(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newCompactRig(90)
+		r.block = make(chan struct{})
+		go func() { _, _ = r.ac.request(context.Background(), "c1") }()
+		synctest.Wait()
+		r.mu.Lock()
+		r.queued = true
+		r.mu.Unlock()
+		closed := make(chan struct{})
+		go func() {
+			r.ac.afterTurn(context.Background(), "c1", false)
+			close(closed)
+		}()
+		synctest.Wait()
+		select {
+		case <-closed:
+			t.Fatal("the turn's end settled the queued compaction while its run was still going")
+		default:
+		}
+		close(r.block)
+		<-closed
+		if got := r.count(); got != 1 || r.isQueued() {
+			t.Errorf("calls %d, queued %v; want 1 call and the request settled", got, r.isQueued())
+		}
+	})
+}
+
+// A run refused because a turn opened between the idle check and the call is queued behind that turn.
+func TestCompactRequest_RefusedUnderAnOpeningTurnIsQueued(t *testing.T) {
+	r := newCompactRig(90)
+	r.setRefuse(true)
+	r.onCompact = func() { r.setLive(true) }
+	out, err := r.ac.request(t.Context(), "c1")
+	if err != nil || out != command.CompactQueued || !r.isQueued() {
+		t.Errorf("request refused under an opening turn = (%v, %v), queued %v; want queued", out, err, r.isQueued())
+	}
+}
+
+func TestCompactRequest_RefusedOnAnIdleChatIsRefused(t *testing.T) {
+	r := newCompactRig(90)
+	r.setRefuse(true)
+	if out, err := r.ac.request(t.Context(), "c1"); err != nil || out != command.CompactRefused {
+		t.Errorf("request KAS refused on an idle chat = (%v, %v), want refused", out, err)
+	}
+}
+
+func TestCompactRequest_NoSessionCompactsNothing(t *testing.T) {
+	r := newCompactRig(90)
+	r.ac.bridgeOf = func(marotte.ChatID) *sharedBridge { return nil }
+	if out, err := r.ac.request(t.Context(), "c1"); err != nil || out != command.CompactNoSession || r.count() != 0 {
+		t.Errorf("request with no session = (%v, %v), %d calls; want no session, 0 calls", out, err, r.count())
+	}
+}
+
+// The record half of the button: a request during a live turn is on the header, and a cancel takes it off.
+func TestCompactRequest_TheRecordCarriesTheQueuedRequest(t *testing.T) {
+	h, cs, _ := newTestHub()
+	r := newCompactRig(90)
+	r.ac.queue = recordCompactQueue{bc: h.coord}
+	r.ac.live = h.coord.turns.live
+	h.coord.autoCompact = r.ac
+	h.stagePromptTurn(t, "c1")
+
+	if out, err := h.RequestCompact(t.Context(), "c1"); err != nil || out != command.CompactQueued {
+		t.Fatalf("RequestCompact during a turn = (%v, %v), want queued", out, err)
+	}
+	if c, _ := cs.Get(t.Context(), "c1"); c.CompactPending == nil {
+		t.Fatal("the queued compaction is not on the chat record")
+	}
+	if err := h.CancelCompact(t.Context(), "c1"); err != nil {
+		t.Fatalf("CancelCompact: %v", err)
+	}
+	if c, _ := cs.Get(t.Context(), "c1"); c.CompactPending != nil {
+		t.Error("the cancelled compaction is still on the record")
+	}
+}
+
+// A compaction waits for the frames before KAS's reply, the summary among them, so the next prompt opens after it.
+func TestCompactRequest_WaitsForTheFramesBeforeTheReply(t *testing.T) {
+	r := newCompactRig(90)
+	r.ac.compact = func(context.Context, command.CompactBridge) (bool, uint64, error) { return true, 7, nil }
+	var waited []uint64
+	r.ac.folded = func(_ context.Context, _ marotte.ChatID, seq uint64) bool {
+		waited = append(waited, seq)
+		return true
+	}
+	if out, _ := r.ac.request(t.Context(), "c1"); out != command.CompactAccepted {
+		t.Fatalf("request = %v, want accepted", out)
+	}
+	if !slices.Equal(waited, []uint64{7}) {
+		t.Errorf("read loop waits = %v, want one at the reply's position 7", waited)
+	}
+}

@@ -40,6 +40,9 @@ const mocks = vi.hoisted(() => {
       Promise.resolve("sent"),
     ),
     restoreFailedSendMock: vi.fn((_chatID: string, _text: string) => undefined),
+    cancelCompactDispatch: vi.fn((_args: { chatID: string }) => ({
+      outcome: Promise.resolve<RemoveOutcome>({ status: "success" }),
+    })),
   };
 });
 
@@ -58,6 +61,7 @@ vi.mock("./actions/chat.js", () => ({
   removeSteer: { dispatch: mocks.removeDispatch },
   unqueuePrompt: { dispatch: mocks.unqueueDispatch },
   sendQueuedNow: { dispatch: mocks.sendQueuedNowDispatch },
+  cancelCompact: { dispatch: mocks.cancelCompactDispatch },
   queuePrompt: { dispatch: mocks.queueDispatch },
 }));
 vi.mock("./submit.js", () => ({
@@ -116,6 +120,7 @@ const {
   queueDispatch,
   submitPromptMock,
   restoreFailedSendMock,
+  cancelCompactDispatch,
 } = mocks;
 
 import {
@@ -1067,6 +1072,53 @@ describe("the steer stack", () => {
     expect(textOf(row)).toBe("From Kiro's reply: quotedreply");
     expect(row.getAttribute("aria-label")).toBe("After this turn: From Kiro's reply: quoted reply");
     expect(row.dataset["tooltip"]).toBe("From Kiro's reply: quoted\n\nreply");
+  });
+
+  // THE QUEUED COMPACTION. A compaction asked for during a turn runs at its end, before the server sends the next
+  // follow-up, so it sits below the steers and above the follow-ups, whose waits it does not lengthen.
+  function withCompact(queued: QueuedPrompt[], turnOpen = true): void {
+    setSessions([{ ...makeSession("chat-1"), queued, compact_queued: true, turn_open: turnOpen }]);
+    setActive("chat-1");
+  }
+
+  it("shows the queued compaction after this turn, ahead of the follow-ups", () => {
+    withCompact(three.slice(0, 2));
+    recordSteerQueued("chat-1", { id: "steer-1", text: "in this turn", origin: "user" });
+
+    expect(rows().map(textOf)).toEqual(["in this turn", "Compact the context", "first", "second"]);
+    expect(rows().map(labelOf)).toEqual([
+      "Sent",
+      "After this turn",
+      "After this turn",
+      "After 2 turns",
+    ]);
+    expect(rowAt(1).getAttribute("aria-label")).toBe("After this turn: Compact the context");
+    expect(actions(rowAt(1))).toEqual(["Cancel the queued compaction"]);
+  });
+
+  it("waits for the next turn when none runs", () => {
+    withCompact([], false);
+
+    expect(rows().map(labelOf)).toEqual(["After the next turn"]);
+  });
+
+  it("cancels the chat's queued compaction from its row", async () => {
+    withCompact([]);
+
+    clickAction(firstRow(), "Cancel the queued compaction");
+
+    await vi.waitFor(() => {
+      expect(cancelCompactDispatch).toHaveBeenCalledExactlyOnceWith({ chatID: "chat-1" });
+    });
+  });
+
+  it("drops the row when the header no longer carries the compaction, keeping the follow-ups' rows", () => {
+    withCompact(three.slice(0, 1));
+    const followUp = rowAt(1);
+
+    withQueued(three.slice(0, 1));
+
+    expectSameNodes(rows(), [followUp]);
   });
 
   it("gives a held row no turn, so the follow-ups around it skip it", () => {

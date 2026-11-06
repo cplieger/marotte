@@ -640,6 +640,27 @@ type signInReach interface {
 	ProviderUnreachable() (reason string, ok bool)
 }
 
+// compactionAwaiter holds a prompt until the chat's running compaction returns, so its session/prompt does not abort
+// the compaction; it never refuses the send.
+type compactionAwaiter interface {
+	AwaitCompaction(ctx context.Context, chatID marotte.ChatID)
+}
+
+// compactRequester takes the reader's compaction requests.
+type compactRequester interface {
+	// RequestCompact compacts the chat now, or queues the compaction for the running turn's close. An error is the
+	// engine call's.
+	RequestCompact(ctx context.Context, chatID marotte.ChatID) (CompactOutcome, error)
+	// CancelCompact drops a queued compaction; none queued is success. A running one is not stopped.
+	CancelCompact(ctx context.Context, chatID marotte.ChatID) error
+}
+
+// chatCompactor is every compaction role, one owner for all of a chat's compactions.
+type chatCompactor interface {
+	compactionAwaiter
+	compactRequester
+}
+
 // SteerRecorder is what the steer commands need of the steer ledger: record that
 // THIS server sent a steer under an id before the RPC, which is the only ordering
 // that beats KAS's own notification (see cmdSteer).
@@ -906,6 +927,9 @@ type Roles struct {
 	Status chatStatus
 	// AuthReadiness carries prompt authentication outcomes to readiness.
 	AuthReadiness *AuthReadiness
+	// Compactor owns every compaction: the reader's requests, and the wait a prompt makes for a running one. Nil
+	// sends with no wait.
+	Compactor chatCompactor
 	// SignIn tells an unreachable identity provider apart from a refused credential. Nil reads every
 	// credential failure as one a sign-in fixes.
 	SignIn signInReach
@@ -945,6 +969,7 @@ type promptRoles struct {
 	queue       SteerQueue
 	jobs        SteerJobs
 	followups   QueueAccess
+	compactor   compactionAwaiter
 	sendGate    promptSendGate
 	auth        *AuthReadiness
 	signIn      signInReach

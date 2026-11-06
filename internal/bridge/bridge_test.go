@@ -2223,23 +2223,6 @@ func TestSessionDoorCarriesDisableAutoCompaction(t *testing.T) {
 	}
 }
 
-// TestSessionDoorCarriesCompactionThreshold pins SessionOpts.AutoCompactionThreshold on both verbs: KAS reads it
-// from the load request alone, so a load door without it resumes the session at 80.
-func TestSessionDoorCarriesCompactionThreshold(t *testing.T) {
-	for _, method := range []string{"session/new", "session/load"} {
-		opts := &marotte.SessionOpts{Model: "m", AutoCompactionThreshold: 60}
-		if method == "session/load" {
-			opts.SessionID = "sess_resume_door"
-		}
-		settings := metaKiroSettings(t, captureRequest(t, method, opts))
-		got, ok := settings["compaction"].(map[string]any)
-		if !ok || got["enabled"] != true || got["autoCompactionThreshold"] != float64(60) {
-			t.Errorf("%s with AutoCompactionThreshold=60 sent compaction=%v, want {\"autoCompactionThreshold\":60,\"enabled\":true}",
-				method, settings["compaction"])
-		}
-	}
-}
-
 // TestSessionDoorWorkflowsFollowsTheSetting pins the Workflows setting on both verbs; off is sent as
 // {"enabled":false}, since on load an absent key keeps the persisted value.
 func TestSessionDoorWorkflowsFollowsTheSetting(t *testing.T) {
@@ -2472,58 +2455,6 @@ func TestApplySessionResult_TakesFlatMetaTitle(t *testing.T) {
 			b.mu.Unlock()
 			if got := b.SessionTitle(); got != tc.want {
 				t.Errorf("SessionTitle() = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-// TestSessionLoad_WarnsOnAThresholdKASDidNotTake pins the echo check: KAS answers a threshold it did not take with a
-// silent 80, so a load result disagreeing with the door's threshold logs. Only flat `_meta.contextUsage` is the wire
-// shape, and a door that sent none has nothing to compare.
-func TestSessionLoad_WarnsOnAThresholdKASDidNotTake(t *testing.T) {
-	for name, tc := range map[string]struct {
-		sent     int
-		result   string
-		wantWarn bool
-	}{
-		"80 after a door that sent 60": {
-			sent:     60,
-			result:   `{"sessionId":"s","_meta":{"contextUsage":{"summarizationThreshold":80,"truncationThreshold":95}}}`,
-			wantWarn: true,
-		},
-		"a matching 60 is silent": {
-			sent:     60,
-			result:   `{"sessionId":"s","_meta":{"contextUsage":{"summarizationThreshold":60,"truncationThreshold":95}}}`,
-			wantWarn: false,
-		},
-		"nested _meta.kiro.contextUsage is not the wire shape": {
-			sent:     60,
-			result:   `{"sessionId":"s","_meta":{"kiro":{"contextUsage":{"summarizationThreshold":80}}}}`,
-			wantWarn: false,
-		},
-		"an absent threshold is not a disagreement": {
-			sent:     60,
-			result:   `{"sessionId":"s","_meta":{"contextUsage":{"truncationThreshold":95}}}`,
-			wantWarn: false,
-		},
-		"a door that sent no threshold compares nothing": {
-			sent:     0,
-			result:   `{"sessionId":"s","_meta":{"contextUsage":{"summarizationThreshold":80}}}`,
-			wantWarn: false,
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			c := capture.Default(t)
-			b := NewEngine("/nonexistent", "/work")
-			if _, _, err := runLoadSessionOpts(t, b,
-				&marotte.SessionOpts{SessionID: "acp-session-xyz", AutoCompactionThreshold: tc.sent},
-				&marotte.RPCResponse{Result: json.RawMessage(tc.result)}); err != nil {
-				t.Fatalf("loadSession returned error: %v", err)
-			}
-			got := c.CountExact("session resolved a compaction threshold other than the one marotte sent; "+
-				"the chat compacts at a point its setting did not choose") > 0
-			if got != tc.wantWarn {
-				t.Errorf("warn logged = %v, want %v", got, tc.wantWarn)
 			}
 		})
 	}

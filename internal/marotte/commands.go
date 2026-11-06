@@ -25,6 +25,7 @@ const (
 	CmdUserInputResponse   CommandType = "user_input_response"
 	CmdRewindChat          CommandType = "rewind_chat"
 	CmdCompact             CommandType = "compact"
+	CmdCancelCompact       CommandType = "cancel_compact"
 	CmdSetEffort           CommandType = "set_effort"
 	CmdSetThinking         CommandType = "set_thinking"
 	CmdSetDraft            CommandType = "set_draft"

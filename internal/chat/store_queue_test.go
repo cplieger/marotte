@@ -43,6 +43,37 @@ func TestQueue_OpenPrunesSentAndHoldsRest(t *testing.T) {
 	}
 }
 
+// A compaction a previous process queued has no close of this process to run it, so the first open drops it, and
+// the writing process keeps its own.
+func TestQueue_OpenDropsAPreviousProcesssQueuedCompaction(t *testing.T) {
+	dir := t.TempDir()
+	first, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	openPromptTurn(t, first, "c1", "m-sent")
+	if _, err := first.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.CompactPending = &marotte.PendingCompaction{RequestedAt: 1}
+		return true
+	}); err != nil {
+		t.Fatalf("seed the request: %v", err)
+	}
+	if c, _ := first.Get(t.Context(), "c1"); c.CompactPending == nil {
+		t.Fatal("the writing process lost its own queued compaction")
+	}
+
+	second, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore (restart): %v", err)
+	}
+	if _, err := second.All(t.Context(), "c1"); err != nil {
+		t.Fatalf("All: %v", err)
+	}
+	if c, _ := second.Get(t.Context(), "c1"); c.CompactPending != nil {
+		t.Errorf("queued compaction after a restart = %+v, want none", c.CompactPending)
+	}
+}
+
 // Dequeue takes the row off the header and records it opened, so an unqueue racing
 // the send answers sending rather than a discard.
 func TestDequeue_RemovesTheRowAndRecordsItOpened(t *testing.T) {

@@ -119,11 +119,8 @@ type SessionSpawn struct {
 	WorkValidation string
 	// Presets are the KAS policy-preset ids of the active security profile (policyfile.Profile). EMPTY means the
 	// Custom profile, so the key is withheld. KAS persists neither door's ids, so both doors resolve from this field.
-	Presets []string
-	// AutoCompactionThreshold is the usage percentage at which KAS compacts the session; 0 withholds the row, so
-	// KAS's own default applies.
-	AutoCompactionThreshold int
-	MemoryReflection        bool
+	Presets          []string
+	MemoryReflection bool
 	// DisableAutoCompaction turns KAS's own compaction off for this session; the row is value-gated, so false is
 	// sent too.
 	DisableAutoCompaction bool

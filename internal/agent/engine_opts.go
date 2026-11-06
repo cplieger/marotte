@@ -76,7 +76,7 @@ type sessionDocument struct {
 	dirEntries []string
 	features   marotte.SessionFeatures // before any administrator lock
 	memory     marotte.MemoryPreference
-	// autoCompactPct and autoCompactEnabled are autoCompactionPolicy's answer, read by the door.
+	// autoCompactPct and autoCompactEnabled are autoCompactionPolicy's answer, read by marotte's compactor.
 	autoCompactPct     int
 	dirsInvalid        bool // additional_directories is present and does not decode: the door grants nothing
 	autoCompactEnabled bool
@@ -141,12 +141,10 @@ func (rt *Runtime) terminalTimeout(ctx context.Context) int {
 // sessionSettings are a chat session door's inputs; a move reloads resident chat sessions at their next idle open.
 // Live settings (ignore files, the shell timeout, content collection) are pushed instead.
 type sessionSettings struct {
-	Presets                 []string                 `json:"presets"`
-	AdditionalDirectories   []string                 `json:"additional_directories"`
-	Memory                  marotte.MemoryPreference `json:"memory"`
-	Features                marotte.SessionFeatures  `json:"features"`
-	AutoCompactionThreshold int                      `json:"auto_compaction_threshold"`
-	DisableAutoCompaction   bool                     `json:"disable_auto_compaction"`
+	Presets               []string                 `json:"presets"`
+	AdditionalDirectories []string                 `json:"additional_directories"`
+	Memory                marotte.MemoryPreference `json:"memory"`
+	Features              marotte.SessionFeatures  `json:"features"`
 }
 
 // readSessionSettings is every session door's inputs, from the configDoc owner with the administrator locks applied
@@ -160,17 +158,11 @@ func (rt *Runtime) readSessionSettings(ctx context.Context) sessionSettings {
 	if !features.Workflows {
 		features.WorkflowLaunch = ""
 	}
-	threshold := 0
-	if s.autoCompactEnabled {
-		threshold = s.autoCompactPct
-	}
 	return sessionSettings{
-		Presets:                 securityPresets(s.profile),
-		AdditionalDirectories:   rt.lifecycle.sessionDirs(s.dirEntries, src == fromDefaults || s.dirsInvalid),
-		Memory:                  s.memory,
-		Features:                features,
-		AutoCompactionThreshold: threshold,
-		DisableAutoCompaction:   !s.autoCompactEnabled,
+		Presets:               securityPresets(s.profile),
+		AdditionalDirectories: rt.lifecycle.sessionDirs(s.dirEntries, src == fromDefaults || s.dirsInvalid),
+		Memory:                s.memory,
+		Features:              features,
 	}
 }
 
@@ -188,18 +180,18 @@ func (rt *Runtime) sessionFingerprint(ctx context.Context) (string, bool) {
 func (rt *Runtime) chatSessionOpts(ctx context.Context, rec *marotte.Chat, ask *sessionAsk, steering []marotte.ClientSteeringDoc) *marotte.SessionOpts {
 	s := rt.readSessionSettings(ctx)
 	return &marotte.SessionOpts{
-		Role:                    marotte.SessionRoleChat,
-		Model:                   ask.model,
-		Effort:                  ask.effort,
-		Mode:                    rec.CurrentModeID,
-		Thinking:                ask.thinking,
-		Presets:                 s.Presets,
-		AdditionalDirectories:   s.AdditionalDirectories,
-		Steering:                steering,
-		Memory:                  s.Memory,
-		Features:                s.Features,
-		Supervised:              rec.SupervisedMode,
-		DisableAutoCompaction:   s.DisableAutoCompaction,
-		AutoCompactionThreshold: s.AutoCompactionThreshold,
+		Role:                  marotte.SessionRoleChat,
+		Model:                 ask.model,
+		Effort:                ask.effort,
+		Mode:                  rec.CurrentModeID,
+		Thinking:              ask.thinking,
+		Presets:               s.Presets,
+		AdditionalDirectories: s.AdditionalDirectories,
+		Steering:              steering,
+		Memory:                s.Memory,
+		Features:              s.Features,
+		Supervised:            rec.SupervisedMode,
+		// marotte's autoCompactor is a chat's one compactor, at a turn's end.
+		DisableAutoCompaction: true,
 	}
 }

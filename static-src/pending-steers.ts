@@ -3,8 +3,9 @@ import { join } from "@cplieger/keyenc";
 import { announce } from "@cplieger/ui/announce";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
-import { activeSession, getActiveId, hasMessage, hasQueued, isBusy } from "./store.js";
+import { activeSession, getActiveId, hasMessage, hasQueued, isBusy, sessionBusy } from "./store.js";
 import {
+  cancelCompact,
   cancelTurn,
   clearSteers,
   queuePrompt,
@@ -17,7 +18,7 @@ import { composerDraft, restoreFailedSend, restoreRefusedEdit } from "./composer
 import { addAttachmentTo, removeAttachmentFrom } from "./attachments.js";
 import { confirm } from "./confirm.js";
 import { chatNotice, subjectName } from "./notice-subject.js";
-import { ICON_ARROW_UP, ICON_HOURGLASS, ICON_EDIT, ICON_QUEUE, ICON_TRASH } from "./icons.js";
+import { ICON_ARROW_UP, ICON_COMPACT, ICON_HOURGLASS, ICON_EDIT, ICON_QUEUE, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { sentBy } from "./sent-by.js";
 import { wireSignature } from "./paint-sig.js";
@@ -28,13 +29,27 @@ import type { PendingSteer, QueuedPrompt } from "./types.js";
 import { readQuoted, splitLeadingQuote } from "./message-quote.js";
 import { buildQuoteBand } from "./quote-band.js";
 
-/** One dock row: a steer the agent has not read, or a follow-up the server holds. */
-type DockRow = { kind: "steer"; steer: PendingSteer } | { kind: "queued"; slot: QueuedSlot };
+/** A compaction the reader asked for while a turn ran, which the server runs at the turn's end. */
+interface CompactSlot {
+  /** A turn runs now, so it waits for this turn's end rather than the next one's. */
+  readonly running: boolean;
+}
+
+/** One dock row: a steer the agent has not read, the queued compaction, or a follow-up the server holds. */
+type DockRow =
+  | { kind: "steer"; steer: PendingSteer }
+  | { kind: "compact"; slot: CompactSlot }
+  | { kind: "queued"; slot: QueuedSlot };
 
 export interface SteerStackSource {
   /** What the dock is about (a chat id, or a run step's key) and its rows. Reactive: the stack's
-   *  render subscribes through it. */
-  read(): { id: string; steers: readonly PendingSteer[]; queued: readonly QueuedSlot[] };
+   *  render subscribes through it. Only a chat has a queued compaction. */
+  read(): {
+    id: string;
+    steers: readonly PendingSteer[];
+    queued: readonly QueuedSlot[];
+    compact?: CompactSlot;
+  };
   /** Stop the turn and send this row first; absent where no turn is the reader's to stop. */
   sendNow?: (steerID: string) => Promise<void>;
   /** Take the row out of the turn and hold it as a follow-up; absent where there is no follow-up
@@ -75,7 +90,13 @@ export function mountSteerStack(stack: HTMLUListElement, src: SteerStackSource):
   const announced = { waiting: 0, id: "" };
   const sig = computed(() => {
     const s = src.read();
-    return join(s.id, join(...s.steers.map(steerSig)), join(...s.queued.map(wireSignature)));
+    const compact = s.compact === undefined ? "" : s.compact.running ? "running" : "idle";
+    return join(
+      s.id,
+      join(...s.steers.map(steerSig)),
+      compact,
+      join(...s.queued.map(wireSignature)),
+    );
   });
   effect(() => {
     touch(sig);
@@ -106,7 +127,7 @@ function render(
   src: SteerStackSource,
   announced: { waiting: number; id: string },
 ): void {
-  const { id, steers, queued } = untracked(() => src.read());
+  const { id, steers, queued, compact } = untracked(() => src.read());
   const state: StackState = {
     waiting: steers.filter((e) => e.pending !== true).length,
     perRow: steers.every((e) => e.origin === "user"),
@@ -116,7 +137,8 @@ function render(
   const waiting = state.waiting;
   const rows: DockRow[] = [
     ...steers.map((steer): DockRow => ({ kind: "steer", steer })),
-    // Below the steers: a steer is read inside this turn, a follow-up after it.
+    // Below the steers: a steer is read inside this turn, then the turn's end compacts before it sends a follow-up.
+    ...(compact === undefined ? [] : [{ kind: "compact", slot: compact } satisfies DockRow]),
     ...queued.map((slot): DockRow => ({ kind: "queued", slot })),
   ];
 
@@ -157,14 +179,37 @@ function render(
  *  in. The spec is built per render because `state` is stack-wide. */
 function rowSpec(state: StackState): ReconcileSpec<DockRow> {
   return {
-    // Prefixed by kind so the two id spaces cannot meet in one keyed list.
-    key: (r) => (r.kind === "steer" ? `s:${r.steer.id}` : `q:${r.slot.row.id}`),
-    mount: (r) => (r.kind === "steer" ? buildRow(r.steer, state) : buildQueuedRow(r.slot)),
+    // Prefixed by kind so the id spaces cannot meet in one keyed list; a chat holds one compaction at most.
+    key: (r) => {
+      switch (r.kind) {
+        case "steer":
+          return `s:${r.steer.id}`;
+        case "compact":
+          return "c:";
+        case "queued":
+          return `q:${r.slot.row.id}`;
+      }
+    },
+    mount: (r) => {
+      switch (r.kind) {
+        case "steer":
+          return buildRow(r.steer, state);
+        case "compact":
+          return buildCompactRow(r.slot);
+        case "queued":
+          return buildQueuedRow(r.slot);
+      }
+    },
     update: (el, r) => {
-      if (r.kind === "steer") {
-        updateRow(el, r.steer, state);
-      } else {
-        updateQueuedRow(el, r.slot);
+      switch (r.kind) {
+        case "steer":
+          updateRow(el, r.steer, state);
+          return;
+        case "compact":
+          updateCompactRow(el, r.slot);
+          return;
+        case "queued":
+          updateQueuedRow(el, r.slot);
       }
     },
   };
@@ -578,7 +623,12 @@ const chatSource: SteerStackSource = {
     if (s === undefined) {
       return { id: "", steers: [], queued: [] };
     }
-    return { id: s.id, steers: s.steers ?? [], queued: sessionDrain(s).rows };
+    return {
+      id: s.id,
+      steers: s.steers ?? [],
+      queued: sessionDrain(s).rows,
+      ...(s.compact_queued === true && { compact: { running: sessionBusy(s) } }),
+    };
   },
   sendNow: sendSteerNow,
   queueInstead: queueSteerInstead,
@@ -588,6 +638,66 @@ const chatSource: SteerStackSource = {
   discard: discardSteers,
   waitingFor: "the agent",
 };
+
+const COMPACT_TEXT = "Compact the context";
+
+function compactWord(slot: CompactSlot): string {
+  return `After ${turnsPhrase(1, slot.running)}`;
+}
+
+/** The queued compaction's row: its wait, what it does, and Cancel, the one control (it has no words to edit and
+ *  never stops a turn). */
+function buildCompactRow(slot: CompactSlot): HTMLElement {
+  const li = el(
+    "li",
+    {
+      className: "steer-row",
+      "data-state": "queued",
+      "data-kind": "compact",
+      "data-tooltip": COMPACT_TEXT,
+    },
+    el(
+      "span",
+      { className: "steer-state" },
+      el("span", { className: "steer-state-icon", "aria-hidden": "true" }, iconEl(ICON_COMPACT)),
+      el("span", { className: "steer-state-label" }),
+    ),
+    el("span", { className: "steer-text" }, COMPACT_TEXT),
+    el(
+      "span",
+      { className: "steer-actions" },
+      actionButton(
+        ICON_TRASH,
+        "Cancel the queued compaction",
+        "The context stays as it is",
+        () => {
+          void cancelQueuedCompaction();
+        },
+        "steer-act-danger",
+      ),
+    ),
+  );
+  updateCompactRow(li, slot);
+  return li;
+}
+
+function updateCompactRow(li: HTMLElement, slot: CompactSlot): void {
+  const word = compactWord(slot);
+  li.setAttribute("aria-label", `${word}: ${COMPACT_TEXT}`);
+  const label = li.querySelector(".steer-state-label");
+  if (label !== null) {
+    label.textContent = word;
+  }
+}
+
+async function cancelQueuedCompaction(): Promise<void> {
+  const chatID = getActiveId();
+  if (chatID === "") {
+    return;
+  }
+  announce("Cancelling the queued compaction");
+  await cancelCompact.dispatch({ chatID }).outcome;
+}
 
 /** A queued row's state in words, and the ONE spelling of it, led by who sent the row when an API
  *  caller did, as stateWord leads a steer's. */

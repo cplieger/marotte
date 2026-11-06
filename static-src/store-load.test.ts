@@ -465,6 +465,14 @@ describe("loadList rebuilds each row from the header", () => {
     expect(fresh.queued?.map((q) => q.id)).toEqual(["m-q1"]);
   });
 
+  it("replaces the queued compaction, an absent one reading as none", async () => {
+    seedSession("c1", { compact_queued: true });
+    expect((await rebuild(header("c1"))).compact_queued).toBe(false);
+    expect(
+      (await rebuild(header("c1", { compact_pending: { requested_at: 1 } }))).compact_queued,
+    ).toBe(true);
+  });
+
   it("replaces updated_at, which is required on the wire", async () => {
     seedSession("c1", { updated_at: 1 });
     expect((await rebuild(header("c1", { updated_at: 999 }))).updated_at).toBe(999);

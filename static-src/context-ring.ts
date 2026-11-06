@@ -34,7 +34,7 @@ export interface CompactionPoint {
 }
 
 /**
- * The effective compaction point: the slider's value, which every session door sends as KAS's threshold. Switched off:
+ * The effective compaction point: the slider's value, where marotte queues a compaction for the turn's end. Switched off:
  * no band, and the ramp keys on the window's end.
  */
 export function compactionPoint(policy: CompactionPolicy): CompactionPoint {

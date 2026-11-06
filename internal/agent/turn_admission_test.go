@@ -731,9 +731,11 @@ func TestReserveTurnForPrompt_BesideAWireTurn(t *testing.T) {
 		},
 		{
 			name: "a bracketed wire turn that ended admits",
-			open: func(_ *testing.T, h *Runtime) {
+			open: func(t *testing.T, h *Runtime) {
 				h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg())
 				h.translateACPEvent("c1", h.originOf("c1"), newTurnEndMsg("end_turn"))
+				// The end's close lands off this goroutine, and a prompt beside a live turn answers busy at once.
+				waitFor(t, func() bool { return !h.coord.turns.live("c1") })
 			},
 			want: command.AdmissionAcquired,
 		},

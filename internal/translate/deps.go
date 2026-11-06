@@ -216,6 +216,8 @@ type Roles struct {
 	TurnInterrupt turnInterruptAccess
 	// Metering is the per-turn accounting a turn_completion frame writes.
 	Metering turnMetering
+	// Usage hears every context reading, which queues the compaction at the point.
+	Usage usageObserver
 	// WorkDir is the workspace root. Last for fieldalignment.
 	WorkDir string
 }
@@ -319,6 +321,7 @@ type Translator struct {
 	runBounds      runBoundsAccess
 	turnInterrupt  turnInterruptAccess
 	metering       turnMetering
+	usage          usageObserver
 	// steps maps a workflow step's ACP session id to its run and node, fed from the
 	// wire (node_start) and from an inspect read.
 	steps     *stepRegistry
@@ -358,6 +361,7 @@ func New(r *Roles, opts ...Option) *Translator {
 		runBounds:      r.RunBounds,
 		turnInterrupt:  r.TurnInterrupt,
 		metering:       r.Metering,
+		usage:          r.Usage,
 		steps:          newStepRegistry(),
 		read:           newReadSteers(),
 		wakes:          newWakeLedger(),
@@ -414,6 +418,11 @@ type runBoundsAccess interface {
 type turnInterruptAccess interface {
 	// CompactionFailed reports a failure recorded in turnID; the host decides whether that turn is bounded.
 	CompactionFailed(chatID marotte.ChatID, turnID, detail string)
+}
+
+// usageObserver hears each context reading KAS reports for a chat, whether or not it moved the stored one.
+type usageObserver interface {
+	ObserveContextUsage(ctx context.Context, chatID marotte.ChatID, pct float64)
 }
 
 // turnMetering is the per-turn accounting a turn_completion frame writes, split

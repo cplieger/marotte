@@ -30,10 +30,11 @@ func TestEffectiveSettings_EveryFieldIsSettable(t *testing.T) {
 	for _, k := range effectiveKeys() {
 		settable[k] = struct{}{}
 	}
-	// Resolved per GET, never stored: from kiro-cli's own view (the server's fillKiroDefaults)
-	// and from the filesystem (AgentDirs.Assess).
+	// Resolved per GET, never stored: from kiro-cli's own view (the server's fillKiroDefaults), from the
+	// filesystem (AgentDirs.Assess), from the stored document's misfits and from the range constants.
 	resolved := map[string]struct{}{
 		"kiro_defaults": {}, "additional_directories_refused": {}, "hook_status_shown": {},
+		"rejected_keys": {}, "auto_compact_pct_range": {},
 	}
 	rt := reflect.TypeFor[marotte.EffectiveSettings]()
 	for f := range rt.Fields() {
@@ -105,8 +106,9 @@ func TestEffective_AutoCompactionDefaultsAndInvalidPctReadsAsDefault(t *testing.
 		{stored: `50`, want: 50},
 		{stored: `65`, want: 65},
 		{stored: `80`, want: 80},
-		{stored: `85`, want: 80, reject: true},
-		{stored: `90`, want: 80, reject: true},
+		{stored: `85`, want: 85},
+		{stored: `90`, want: 90},
+		{stored: `95`, want: 80, reject: true},
 		{stored: `47`, want: 80, reject: true},
 		{stored: `92`, want: 80, reject: true},
 		{stored: `83`, want: 80, reject: true},
@@ -128,7 +130,28 @@ func TestEffective_AutoCompactionDefaultsAndInvalidPctReadsAsDefault(t *testing.
 			if gotReject := slices.Contains(rejected, KeyAutoCompactPct); gotReject != tc.reject {
 				t.Errorf("EffectiveFrom(auto_compact_pct %s) rejected = %v, want rejected %v", tc.stored, rejected, tc.reject)
 			}
+			if served := slices.Contains(got.RejectedKeys, KeyAutoCompactPct); served != tc.reject {
+				t.Errorf("EffectiveFrom(auto_compact_pct %s).RejectedKeys = %v, want it listed %v", tc.stored, got.RejectedKeys, tc.reject)
+			}
 		})
+	}
+}
+
+// The slider's range is served with the settings, from the constants the validator reads, and a pct the page
+// cannot produce is refused there too.
+func TestEffective_ServesTheAutoCompactPctRange(t *testing.T) {
+	want := marotte.PctRange{Min: 50, Max: 90, Step: 5}
+	if got := EffectiveDefaults().AutoCompactPctRange; got != want {
+		t.Errorf("EffectiveDefaults().AutoCompactPctRange = %+v, want %+v", got, want)
+	}
+	if got := EffectiveDefaults().RejectedKeys; got == nil || len(got) != 0 {
+		t.Errorf("EffectiveDefaults().RejectedKeys = %#v, want an empty list (null is not a list)", got)
+	}
+	for pct := want.Min - want.Step; pct <= want.Max+want.Step; pct++ {
+		inRange := pct >= want.Min && pct <= want.Max && (pct-want.Min)%want.Step == 0
+		if got := ValidAutoCompactPct(pct); got != inRange {
+			t.Errorf("ValidAutoCompactPct(%d) = %v, want %v", pct, got, inRange)
+		}
 	}
 }
 
@@ -140,8 +163,9 @@ func TestValidateCompactionPatch(t *testing.T) {
 	}{
 		{name: "neither key", patch: map[string]json.RawMessage{KeyTheme: json.RawMessage(`"dark"`)}},
 		{name: "valid pct", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`75`)}},
-		{name: "pct 85", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`85`)}, wantErr: true},
-		{name: "pct 90", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`90`)}, wantErr: true},
+		{name: "pct 85", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`85`)}},
+		{name: "pct 90", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`90`)}},
+		{name: "pct 45", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`45`)}, wantErr: true},
 		{name: "valid switch", patch: map[string]json.RawMessage{KeyAutoCompactionEnabled: json.RawMessage(`false`)}},
 		{name: "pct 95", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`95`)}, wantErr: true},
 		{name: "pct 83", patch: map[string]json.RawMessage{KeyAutoCompactPct: json.RawMessage(`83`)}, wantErr: true},

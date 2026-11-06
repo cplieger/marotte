@@ -635,11 +635,10 @@ describe("compact the context", () => {
     expect(collapseAll).toHaveBeenCalled();
   });
 
-  // The two refusals the client sees before sending; disabled like the tangent row.
+  // The one refusal the client sees before sending; disabled like the tangent row.
   it.each([
     ["a brand-new chat with no messages", "c-active", 0, false],
     ["no active chat at all", "", 3, false],
-    ["a turn in flight", "c-active", 3, true],
   ])("disables the row on %s", async (_desc, id, count, busy) => {
     activeID = id;
     messageCount = count;
@@ -653,11 +652,21 @@ describe("compact the context", () => {
     expect(rowButton(card, "Compact the context").disabled).toBe(false);
   });
 
-  // Two distinct hints for two distinct refusals: the action to take differs, so a
-  // shared sentence would be wrong for one of them.
+  // The server queues a compaction asked for mid-turn, so a running turn is no refusal.
+  it("keeps the row enabled during a turn and dispatches the compaction", async () => {
+    thinking = true;
+    const { card } = await mountMenu();
+    const btn = rowButton(card, "Compact the context");
+    expect(btn.disabled).toBe(false);
+    clickRow(card, "Compact the context");
+    expect(compactDispatch).toHaveBeenCalledExactlyOnceWith({ chatID: "c-active" });
+    expect(chatNotice).not.toHaveBeenCalled();
+  });
+
+  // The empty chat's refusal, and the running turn's wait: the row says when the compaction runs.
   it.each([
     ["Send a message first", "", 0, false],
-    ["Wait for this turn to finish", "c-active", 3, true],
+    ["once this turn ends", "c-active", 3, true],
   ])("swaps the hint to name %s", async (fragment, id, count, busy) => {
     activeID = id === "" ? "c-active" : id;
     messageCount = count;
@@ -677,20 +686,20 @@ describe("compact the context", () => {
     expect(chatNotice).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["with no conversation", 0, false],
-    ["mid-turn", 3, true],
-  ])("refuses in the handler as well when a stale row is enabled %s", async (_d, count, busy) => {
-    const { card } = await mountMenu();
-    messageCount = count;
-    thinking = busy;
-    const btn = rowButton(card, "Compact the context");
-    btn.disabled = false;
-    btn.click();
-    expect(compactDispatch).not.toHaveBeenCalled();
-    expect(chatNotice).toHaveBeenCalledTimes(1);
-    expect(chatNotice).toHaveBeenCalledWith("c-active", expect.any(String), "error");
-  });
+  it.each([["with no conversation", 0, false]])(
+    "refuses in the handler as well when a stale row is enabled %s",
+    async (_d, count, busy) => {
+      const { card } = await mountMenu();
+      messageCount = count;
+      thinking = busy;
+      const btn = rowButton(card, "Compact the context");
+      btn.disabled = false;
+      btn.click();
+      expect(compactDispatch).not.toHaveBeenCalled();
+      expect(chatNotice).toHaveBeenCalledTimes(1);
+      expect(chatNotice).toHaveBeenCalledWith("c-active", expect.any(String), "error");
+    },
+  );
 
   // The card is built once at init and outlives every chat switch.
   it("compacts the chat that is active at click time", async () => {

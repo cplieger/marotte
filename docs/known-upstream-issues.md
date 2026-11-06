@@ -18,7 +18,7 @@ Reported as [kirodotdev/Kiro#11957](https://github.com/kirodotdev/Kiro/issues/11
 
 ### A reply hangs after a failed compaction
 
-When an automatic compaction fails, the reply can stay open with nothing more arriving.
+When kiro-cli's own automatic compaction fails, the reply can stay open with nothing more arriving. marotte turns kiro-cli's automatic compaction off in every chat and compacts at the end of a reply instead, so this applies only where kiro-cli still compacts by itself, which no marotte chat does.
 
 Reported in the Kiro Crew tracker as [kirodotdev/KiroCrew#3583](https://github.com/kirodotdev/KiroCrew/issues/3583), closed after Kiro Crew added a time limit in its own client. kiro-cli itself still leaves the reply open. After a failed compaction, marotte ends a reply that shows no new activity for 60 seconds and marks it interrupted.
 

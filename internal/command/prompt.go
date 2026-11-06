@@ -557,6 +557,11 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, res 
 	defer cancelPrompt(nil)
 	turn := TurnRef{Chat: chatID, Turn: turnID}
 
+	// Before StartTurn so the wait is not timed as the turn. Not on the empty-turn retry,
+	// which reaches StartTurn on its own path: this prompt just waited.
+	if roles.compactor != nil {
+		roles.compactor.AwaitCompaction(callCtx, chatID)
+	}
 	// At bridge-ready, so the model and credit baseline are captured with the bridge live and the
 	// session open is not timed.
 	if !roles.turnOutcome.StartTurn(callCtx, turn, cancelPrompt) {
