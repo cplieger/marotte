@@ -5,6 +5,7 @@
 
 import { el } from "@cplieger/ui";
 import { attachClamp } from "../clamp-text.js";
+import { selectableButton } from "../disclosure-row.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_SEND, ICON_TAB_RUN, workflowIcon } from "../icons.js";
 import { absoluteTime } from "../relative-time.js";
@@ -179,13 +180,9 @@ function runLabelEl(runLabel: string, open: (() => void) | undefined): HTMLEleme
   if (open === undefined) {
     return el("span", { className: "steer-note-run" }, runLabel);
   }
-  const btn = el("button", {
-    type: "button",
-    className: "steer-note-run",
-    "data-tooltip": "Open the workflow run",
-  });
+  const btn = selectableButton("span", "steer-note-run", open);
+  btn.dataset["tooltip"] = "Open the workflow run";
   btn.textContent = runLabel;
-  btn.addEventListener("click", open);
   return btn;
 }
 

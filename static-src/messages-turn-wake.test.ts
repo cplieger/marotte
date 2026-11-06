@@ -274,8 +274,8 @@ describe("a step's message that woke the chat", () => {
 
   it("names its run as its wake does, and the name opens the run", async () => {
     load("wake-name", [before(), woken()]);
-    const btn = (): HTMLButtonElement | null =>
-      card("t2").querySelector<HTMLButtonElement>(".turn-wake button.turn-wake-run");
+    const btn = (): HTMLElement | null =>
+      card("t2").querySelector<HTMLElement>(".turn-wake .turn-wake-run[role=button]");
     await vi.waitFor(() => {
       expect(btn()?.textContent).toBe("publish-docs");
     });
@@ -398,8 +398,8 @@ describe("a re-delivery after a stop", () => {
     );
     expect(notes()).toEqual([]);
 
-    const buttons = card("t2").querySelectorAll<HTMLButtonElement>(
-      ".turn-req-text button.turn-wake-row-run",
+    const buttons = card("t2").querySelectorAll<HTMLElement>(
+      ".turn-req-text .turn-wake-row-run[role=button]",
     );
     buttons[1]?.click();
     await vi.waitFor(() => {
@@ -412,8 +412,8 @@ describe("a re-delivery after a stop", () => {
     sealed("t3", 1, "text", { text: "ok" }, "t3-say"),
     sealed("t3", 2, "turn_close", { outcome: "completed" }),
   ];
-  const rowRuns = (): HTMLButtonElement[] => [
-    ...card("t2").querySelectorAll<HTMLButtonElement>(".turn-req-text button.turn-wake-row-run"),
+  const rowRuns = (): HTMLElement[] => [
+    ...card("t2").querySelectorAll<HTMLElement>(".turn-req-text .turn-wake-row-run[role=button]"),
   ];
   const clipOf = (): DOMRect =>
     card("t2").querySelector<HTMLElement>(".turn-req-text")!.getBoundingClientRect();
@@ -432,7 +432,7 @@ describe("a re-delivery after a stop", () => {
     const [first, second] = rowRuns();
     expect(first!.getBoundingClientRect().bottom).toBeLessThanOrEqual(clipOf().bottom);
     expect(second!.getBoundingClientRect().top).toBeGreaterThanOrEqual(clipOf().bottom);
-    expect(card("t2").querySelector(".turn-wake button.turn-wake-run")).toBeNull();
+    expect(card("t2").querySelector(".turn-wake .turn-wake-run[role=button]")).toBeNull();
 
     await userEvent.click(first!);
     expect(openRunView).toHaveBeenCalledWith(RUN, "publish-docs", "wake-rewake-fold");
@@ -511,7 +511,7 @@ describe("a woken turn whose run's name arrives after it is drawn", () => {
       expect(header("t2").label).toBe(PLACEHOLDER);
       expect(railLink()?.getAttribute("aria-label")).toContain(PLACEHOLDER);
     });
-    expect(card("t2").querySelector(".turn-wake button.turn-wake-run")?.textContent).toBe(
+    expect(card("t2").querySelector(".turn-wake .turn-wake-run[role=button]")?.textContent).toBe(
       "A workflow",
     );
     expect(railLink()?.dataset["tooltip"]).toContain(PLACEHOLDER);
@@ -526,7 +526,7 @@ describe("a woken turn whose run's name arrives after it is drawn", () => {
     });
     expect(railLink()?.dataset["tooltip"]).toContain(LABEL);
     expect(copyText("t2")).toBe(`${LABEL}\n${MESSAGE}\n\n${REPLY}`);
-    expect(card("t2").querySelector(".turn-wake button.turn-wake-run")?.textContent).toBe(
+    expect(card("t2").querySelector(".turn-wake .turn-wake-run[role=button]")?.textContent).toBe(
       "publish-docs",
     );
   });

@@ -22,7 +22,7 @@ import { compactText, counters, progressPhrase, type ExecRun } from "./exec-view
 import { buildExecSummary, type ExecSummaryView } from "./exec-view/summary.js";
 import { wantsReader } from "./exec-view/alert.js";
 import { chevronEl } from "./chevron.js";
-import { hasSelectionIn } from "./disclosure-row.js";
+import { selectableButton } from "./disclosure-row.js";
 import { runBarOpen, setRunBarOpen } from "./device-view.js";
 import { holdRunClock, releaseRunClock, type RunClockHolder } from "./messages-blocks.js";
 import { openRunView } from "./run-view.js";
@@ -177,28 +177,9 @@ function render(bar: HTMLUListElement): void {
   prevChatID = chatID;
 }
 
-/** A `role="button"` element, not a `<button>`: WebKit selects no text inside a button, and the
- *  row's words must be selectable to quote. Click, Enter and Space call `activate`; a click that
- *  ends a selection in the row does not. */
-function rowControl(className: string, activate: () => void): HTMLElement {
-  const btn = el("div", { className, role: "button", tabindex: "0" });
-  btn.addEventListener("click", () => {
-    if (!hasSelectionIn(btn)) {
-      activate();
-    }
-  });
-  btn.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.target === btn && (e.key === "Enter" || e.key === " ")) {
-      e.preventDefault();
-      activate();
-    }
-  });
-  return btn;
-}
-
 /** The fold row: how many runs and how many need the reader, opening the list in place. */
 function buildSummary(bar: HTMLUListElement): HTMLElement {
-  const btn = rowControl("run-bar-open run-bar-toggle", () => {
+  const btn = selectableButton("div", "run-bar-open run-bar-toggle", () => {
     setRunBarOpen(!runBarOpen());
     render(bar);
   });
@@ -238,7 +219,7 @@ function buildRow(id: string, chatID: string): HTMLElement {
   // The NAME is resolved at activation rather than captured here, because this row outlives its
   // first paint: a run whose label arrives with its first fetch would otherwise open a tab called
   // "Workflow run" for the rest of the session.
-  const btn = rowControl("run-bar-open", () => {
+  const btn = selectableButton("div", "run-bar-open", () => {
     void openRunView(id, runLabelOf(id) || FALLBACK_NAME, chatID);
   });
   const summary = buildExecSummary({ alertHost: btn });

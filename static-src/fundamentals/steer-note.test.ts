@@ -362,7 +362,7 @@ describe("the run label", () => {
       onOpenRun: open,
     });
 
-    const run = n.querySelector<HTMLButtonElement>("button.steer-note-run");
+    const run = n.querySelector<HTMLElement>(".steer-note-run[role=button]");
     expect(run?.textContent).toBe("forge-f2-build");
     expect(n.querySelector(".steer-note-head")?.textContent).toBe("forge-f2-build\u00b7review");
 
@@ -370,10 +370,46 @@ describe("the run label", () => {
     expect(open).toHaveBeenCalledOnce();
   });
 
+  // A `role="button"` name, so its words stay selectable; the keys a `<button>` takes still work.
+  it("opens the run from its name with Enter or Space, as a focusable button", () => {
+    const open = vi.fn();
+    const n = note({ origin: "step", run: "wf_1", runLabel: "forge-f2-build", onOpenRun: open });
+    const run = n.querySelector<HTMLElement>(".steer-note-run")!;
+    expect(run.tagName).not.toBe("BUTTON");
+    expect(run.tabIndex).toBe(0);
+    for (const key of ["Enter", " "]) {
+      open.mockClear();
+      const press = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      run.dispatchEvent(press);
+      expect(open).toHaveBeenCalledOnce();
+      expect(press.defaultPrevented, `${key} does not also scroll or type`).toBe(true);
+    }
+    open.mockClear();
+    run.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("does not open the run on the click that ends a selection in its name", () => {
+    const open = vi.fn();
+    const n = note({ origin: "step", run: "wf_1", runLabel: "forge-f2-build", onOpenRun: open });
+    document.body.append(n);
+    const run = n.querySelector<HTMLElement>(".steer-note-run")!;
+    const range = document.createRange();
+    range.selectNodeContents(run);
+    document.getSelection()?.removeAllRanges();
+    document.getSelection()?.addRange(range);
+    run.click();
+    expect(open).not.toHaveBeenCalled();
+    document.getSelection()?.removeAllRanges();
+    run.click();
+    expect(open).toHaveBeenCalledOnce();
+    n.remove();
+  });
+
   it("is plain text when the caller cannot open the run", () => {
     const n = note({ origin: "step", step: "review", run: "wf_1", runLabel: "forge-f2-build" });
 
-    expect(n.querySelector("button.steer-note-run")).toBeNull();
+    expect(n.querySelector(".steer-note-run[role=button]")).toBeNull();
     expect(textOf(n, ".steer-note-run")).toBe("forge-f2-build");
   });
 

@@ -1277,7 +1277,7 @@ const SURFACES: readonly Surface[] = [
     name: "a run card",
     sizes: TWO,
     setup: plantRun,
-    controls: ["a.run-open", "button.steer-note-run"],
+    controls: ["a.run-open", ".steer-note-run[role=button]"],
     rows: [".run-head", ".run-step-head"],
   },
   {

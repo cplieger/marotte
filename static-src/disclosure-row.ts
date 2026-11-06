@@ -286,3 +286,31 @@ export function hasSelectionIn(row: HTMLElement): boolean {
   const anchor = sel.getRangeAt(0).commonAncestorContainer;
   return row.contains(anchor) || anchor.contains(row);
 }
+
+/**
+ * A `role="button"` element, not a `<button>`, for a control whose words are content (a run's name): neither
+ * Chromium nor WebKit selects text inside a `<button>`, and those words must stay selectable to quote. Click, Enter
+ * and Space call `activate`; a click that ends a selection in it does not.
+ */
+export function selectableButton(
+  tag: "div" | "span",
+  className: string,
+  activate: () => void,
+): HTMLElement {
+  const btn: HTMLElement = document.createElement(tag);
+  btn.className = className;
+  btn.setAttribute("role", "button");
+  btn.tabIndex = 0;
+  btn.addEventListener("click", () => {
+    if (!hasSelectionIn(btn)) {
+      activate();
+    }
+  });
+  btn.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.target === btn && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      activate();
+    }
+  });
+  return btn;
+}

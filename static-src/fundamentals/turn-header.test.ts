@@ -377,14 +377,58 @@ describe("a woken turn's header", () => {
   it("opens the run from its name, and the name is plain text with no opener", () => {
     const opened: string[] = [];
     const h = buildTurnHeader(wakeData(stepWake("warning"), (id) => opened.push(id)));
-    const btn = h.querySelector<HTMLButtonElement>(".turn-wake > button.turn-wake-run");
+    const btn = h.querySelector<HTMLElement>(".turn-wake > .turn-wake-run[role=button]");
     expect(btn?.textContent).toBe("publish-docs");
     expect(btn?.dataset["runId"]).toBe(RUN);
     btn?.click();
     expect(opened).toEqual([RUN]);
 
     const plain = buildTurnHeader(wakeData(stepWake("warning")));
-    expect(plain.querySelector(".turn-wake-run")?.tagName).toBe("SPAN");
+    expect(plain.querySelector(".turn-wake-run")?.hasAttribute("role")).toBe(false);
+  });
+
+  // `role="button"` names, so their words stay selectable; the keys a `<button>` takes still work.
+  it("opens the run from a wake's or a re-delivery row's name with Enter or Space", () => {
+    const opened: string[] = [];
+    const step = buildTurnHeader(wakeData(stepWake("warning"), (id) => opened.push(id)));
+    const rows = buildTurnHeader(
+      wakeData(
+        { reason: "rewake", steers: [{ id: "q", run: OTHER, step: "draft", text: "Which?" }] },
+        (id) => opened.push(id),
+      ),
+    );
+    const names = [
+      step.querySelector<HTMLElement>(".turn-wake-run")!,
+      rows.querySelector<HTMLElement>(".turn-wake-row-run")!,
+    ];
+    for (const name of names) {
+      expect(name.tagName).not.toBe("BUTTON");
+      expect(name.tabIndex).toBe(0);
+      for (const key of ["Enter", " "]) {
+        const press = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+        name.dispatchEvent(press);
+        expect(press.defaultPrevented, `${key} does not also scroll or type`).toBe(true);
+      }
+      name.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+    }
+    expect(opened).toEqual([RUN, RUN, OTHER, OTHER]);
+  });
+
+  it("does not open the run on the click that ends a selection in its name", () => {
+    const opened: string[] = [];
+    const h = buildTurnHeader(wakeData(stepWake("warning"), (id) => opened.push(id)));
+    document.body.append(h);
+    const name = h.querySelector<HTMLElement>(".turn-wake-run")!;
+    const range = document.createRange();
+    range.selectNodeContents(name);
+    document.getSelection()?.removeAllRanges();
+    document.getSelection()?.addRange(range);
+    name.click();
+    expect(opened).toEqual([]);
+    document.getSelection()?.removeAllRanges();
+    name.click();
+    expect(opened).toEqual([RUN]);
+    h.remove();
   });
 
   it("draws a finished run's label alone, with no empty message under it", () => {
@@ -458,7 +502,7 @@ describe("a woken turn's header", () => {
     expect(text(h).textContent).toBe(
       "publish-docs \u00b7 draft: Which branch?\nnightly-report \u00b7 collect: Leg 1 is done.",
     );
-    const buttons = [...text(h).querySelectorAll<HTMLButtonElement>("button.turn-wake-row-run")];
+    const buttons = [...text(h).querySelectorAll<HTMLElement>(".turn-wake-row-run[role=button]")];
     expect(buttons.map((b) => b.textContent)).toEqual(["publish-docs", "nightly-report"]);
     for (const b of buttons) {
       b.click();

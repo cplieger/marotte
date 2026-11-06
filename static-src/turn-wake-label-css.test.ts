@@ -74,7 +74,7 @@ const STEP: EntryTurnWake = {
 describe("a woken turn's label under a finger", () => {
   it("is one line of text tall with the run's name a button on it", () => {
     const line = mountLabel(300, STEP);
-    const run = line.querySelector<HTMLElement>("button.turn-wake-run")!;
+    const run = line.querySelector<HTMLElement>(".turn-wake-run[role=button]")!;
     const rest = line.querySelector<HTMLElement>(".turn-wake-rest")!;
     const lh = parseFloat(getComputedStyle(line).lineHeight);
 
@@ -118,7 +118,7 @@ describe("a re-delivery's run names under a finger", () => {
     const text = line.parentElement!.querySelector<HTMLElement>(".turn-req-text")!;
     const lh = parseFloat(getComputedStyle(text).lineHeight);
 
-    expect(text.querySelectorAll("button.turn-wake-row-run")).toHaveLength(2);
+    expect(text.querySelectorAll(".turn-wake-row-run[role=button]")).toHaveLength(2);
     expect(text.getBoundingClientRect().height).toBe(2 * lh);
   });
 });

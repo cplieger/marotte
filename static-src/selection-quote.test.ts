@@ -1,12 +1,16 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
-import { page } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import type * as Chat from "./chat.js";
 import type * as Dom from "./dom.js";
 import type * as NoticeSubject from "./notice-subject.js";
 import type * as Toast from "./toast.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { QUOTE_ATTRIBUTION } from "./message-quote.js";
+import { buildSteerNote } from "./fundamentals/steer-note.js";
 import { buildTurnHeader } from "./fundamentals/turn-header.js";
+import { wakeLine } from "./turn-wake.js";
+import { namedWake } from "./turns.js";
+import type { EntryTurnWake } from "./wire/types.gen.js";
 import { setActive, setSessions } from "./store.js";
 import type { Session } from "./types.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -723,6 +727,80 @@ describe("what a quote can come from", () => {
     turnWith([], [callout]);
     selectAll(callout);
     expect(await sourceLine()).toBe("> From the transcript:");
+  });
+});
+
+// A double-click selects as a reader does: neither Chromium nor WebKit selects a word inside a `<button>`. The app's
+// CSS lays the names out, which decides where a word ends.
+describe("a run's name the reader can open", () => {
+  const RUN = "wf_5e1f0c2a9b7d4e36";
+  let style: HTMLStyleElement | undefined;
+  beforeEach(() => {
+    style = mountAppCSS();
+    // The app lays the empty sidebar over the transcript, where it would take the double-click.
+    sidebar.style.setProperty("display", "none", "important");
+  });
+  // The pointer outlives the file: left on the page's middle, it hovers whatever a later file draws there.
+  afterEach(async () => {
+    await userEvent.hover(document.body, { position: { x: 0, y: 0 }, force: true });
+    style?.remove();
+    sidebar.style.removeProperty("display");
+  });
+
+  it("quotes a step note's run name selected on its own", async () => {
+    const note = buildSteerNote({
+      text: "all steps passed",
+      origin: "agent",
+      dropped: false,
+      step: "review",
+      run: RUN,
+      runLabel: "nightly",
+      onOpenRun: vi.fn(),
+    });
+    turnWith([div("steer-group", note)]);
+    await userEvent.dblClick(note.querySelector(".steer-note-run")!);
+    expect(document.getSelection()?.toString()).toBe("nightly");
+    expect(await sourceLine()).toBe("> From a workflow result:");
+  });
+
+  it("quotes a woken turn's run name selected on its own", async () => {
+    const wake: EntryTurnWake = {
+      reason: "step_message",
+      steers: [{ id: "wfmsg-1", run: RUN, step: "check-links", severity: "info", text: "done" }],
+    };
+    const header = buildTurnHeader({
+      n: 2,
+      outcome: "completed",
+      ts: 0,
+      request: undefined,
+      attachments: [],
+      wake: wakeLine(namedWake(wake, new Map([[RUN, "nightly"]]))),
+      onOpenRun: vi.fn(),
+    });
+    messages.append(div("turn", header));
+    await userEvent.dblClick(header.querySelector(".turn-wake-run")!);
+    expect(document.getSelection()?.toString()).toBe("nightly");
+    expect(await sourceLine()).toBe("> From the turn header:");
+  });
+
+  it("quotes a re-delivery row's run name selected on its own", async () => {
+    const wake: EntryTurnWake = {
+      reason: "rewake",
+      steers: [{ id: "q", run: RUN, step: "draft", text: "Which branch?" }],
+    };
+    const header = buildTurnHeader({
+      n: 2,
+      outcome: "completed",
+      ts: 0,
+      request: undefined,
+      attachments: [],
+      wake: wakeLine(namedWake(wake, new Map([[RUN, "nightly"]]))),
+      onOpenRun: vi.fn(),
+    });
+    messages.append(div("turn", header));
+    await userEvent.dblClick(header.querySelector(".turn-wake-row-run")!);
+    expect(document.getSelection()?.toString()).toBe("nightly");
+    expect(await sourceLine()).toBe("> From the turn header:");
   });
 });
 

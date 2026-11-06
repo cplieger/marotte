@@ -7,6 +7,7 @@
 import { join } from "@cplieger/keyenc";
 import { el } from "@cplieger/ui";
 import { chevronEl } from "../chevron.js";
+import { selectableButton } from "../disclosure-row.js";
 import { iconEl } from "../icon-el.js";
 import { workflowIcon } from "../icons.js";
 import { watchCut } from "../clamp-text.js";
@@ -308,14 +309,12 @@ function wakeRunEl(
   if (open === undefined) {
     return el("span", attrs, run.name);
   }
-  const btn = el(
-    "button",
-    { ...attrs, type: "button", "data-tooltip": "Open the workflow run" },
-    run.name,
-  );
-  btn.addEventListener("click", () => {
+  const btn = selectableButton("span", className, () => {
     open(run);
   });
+  btn.dataset["runId"] = run.id;
+  btn.dataset["tooltip"] = "Open the workflow run";
+  btn.textContent = run.name;
   return btn;
 }
 
@@ -331,19 +330,18 @@ export function syncWakeRowRuns(header: HTMLElement): void {
   }
   const clip = text.getBoundingClientRect();
   const folded = text.closest(".turn[data-folded]") !== null;
-  const buttons = text.querySelectorAll<HTMLButtonElement>("button.turn-wake-row-run");
+  const buttons = text.querySelectorAll<HTMLElement>('.turn-wake-row-run[role="button"]');
   buttons.forEach((btn, i) => {
     if (clip.height <= 0) {
       btn.inert = folded && i > 0;
       return;
     }
     const box = btn.getBoundingClientRect();
-    // `inert`, not `disabled`: a disabled button dims (40-a11y.css), and a shown row stays at full ink.
     btn.inert = box.top < clip.top - CLIP_EPSILON || box.bottom > clip.bottom + CLIP_EPSILON;
   });
 }
 
-/** Sub-pixel slack (px) for a button whose box rounds onto the clip edge. */
+/** Sub-pixel slack (px) for a run name whose box rounds onto the clip edge. */
 const CLIP_EPSILON = 0.5;
 
 /** The passage a prompt opened with (`message-quote.ts`), drawn as one band before the text, led by the line naming

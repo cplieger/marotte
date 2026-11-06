@@ -1702,21 +1702,18 @@
   white-space: nowrap;
 }
 
-button.steer-note-run {
-  background: none;
-  border: 0;
-  padding: 0;
+.steer-note-run[role="button"] {
   cursor: pointer;
   text-underline-offset: 2px;
 }
 
-button.steer-note-run:focus-visible {
+.steer-note-run[role="button"]:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
 }
 
 @media (any-hover: hover) {
-  button.steer-note-run:hover {
+  .steer-note-run[role="button"]:hover {
     color: var(--c-accent);
     text-decoration: underline;
   }
