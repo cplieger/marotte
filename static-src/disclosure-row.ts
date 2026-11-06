@@ -41,15 +41,26 @@ const slides = new WeakMap<HTMLElement, { anim: Animation; open: boolean }>();
  * `createDisclosure` tween's tokens, in every engine. A CSS `block-size: auto` transition needs `interpolate-size`,
  * which only Chromium ships (https://webkit.org/b/295132, https://bugzil.la/1945962). A close keeps the content
  * applied until the slide ends; reduced motion, an unrendered box and `motion: false` flip at once, cancelling a
- * slide still running.
+ * slide still running. `fade` carries the box's opacity from 0 or to 0 in the same tween. `closedHeight`, when the
+ * caller knows it, spares a close its measuring layout of the shut box, which would clamp a scroller the box resizes.
  */
 export function slideBox(
   box: HTMLElement,
   open: boolean,
   apply: (open: boolean) => void,
-  motion = true,
+  {
+    motion = true,
+    fade = false,
+    closedHeight,
+  }: { readonly motion?: boolean; readonly fade?: boolean; readonly closedHeight?: number } = {},
 ): void {
   const from = box.getBoundingClientRect().height;
+  const scrollTop = box.scrollTop;
+  let fromOpacity: string | undefined;
+  if (fade) {
+    // A reversed slide fades on from where the one it replaces stood, not from an end.
+    fromOpacity = slides.has(box) ? getComputedStyle(box).opacity : open ? "0" : "1";
+  }
   slides.get(box)?.anim.cancel();
   slides.delete(box);
   if (
@@ -60,28 +71,48 @@ export function slideBox(
     apply(open);
     return;
   }
-  apply(open);
-  const to = box.getBoundingClientRect().height;
-  if (from === to) {
-    return;
-  }
-  if (!open) {
-    apply(true);
+  let to: number;
+  if (!open && closedHeight !== undefined) {
+    to = closedHeight;
+    if (from === to) {
+      apply(false);
+      return;
+    }
+  } else {
+    apply(open);
+    to = box.getBoundingClientRect().height;
+    if (from === to) {
+      return;
+    }
+    if (!open) {
+      apply(true);
+    }
   }
   const style = getComputedStyle(box);
+  // `clip` is no scroll container (CSS Overflow 3), so a scroller under it would read and paint offset 0 mid-slide.
+  const clip = style.overflowY === "visible" || style.overflowY === "clip" ? "clip" : "hidden";
+  const frames: PropertyIndexedKeyframes = {
+    blockSize: [`${String(from)}px`, `${String(to)}px`],
+    overflow: [clip, clip],
+    ...(fromOpacity !== undefined ? { opacity: [fromOpacity, open ? "1" : "0"] } : {}),
+  };
   let anim: Animation;
   try {
-    anim = box.animate(
-      { blockSize: [`${String(from)}px`, `${String(to)}px`], overflow: ["clip", "clip"] },
-      {
-        duration: durationMs(style.getPropertyValue("--uip-disclosure-duration")),
-        easing: style.getPropertyValue("--uip-disclosure-easing").trim() || "ease",
-      },
-    );
+    anim = box.animate(frames, {
+      duration: durationMs(style.getPropertyValue("--uip-disclosure-duration")),
+      easing: style.getPropertyValue("--uip-disclosure-easing").trim() || "ease",
+      // A close holds its end until `apply(false)`: an unfilled last frame lays the box out open, which clamps a
+      // scroller to that layout. An open's fill would pin the measured height over later growth.
+      fill: open ? "none" : "forwards",
+    });
   } catch {
     // WAAPI throws a TypeError on an easing the engine cannot parse; the state still flips.
     apply(open);
     return;
+  }
+  // The layouts read above (a cancel, the open measure) can clamp a scroller's offset at a height the slide is not at.
+  if (scrollTop !== 0) {
+    box.scrollTop = scrollTop;
   }
   slides.set(box, { anim, open });
   // A cancelled slide rejects `finished`: the slide that replaced it owns the state.
@@ -90,6 +121,7 @@ export function slideBox(
       slides.delete(box);
       if (!open) {
         apply(false);
+        anim.cancel();
       }
     },
     () => undefined,

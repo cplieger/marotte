@@ -52,7 +52,7 @@ interface Mounted {
 }
 
 /** The chat's band as the page builds it: the fold row above the list from three runs, the rows in
- *  the list, every row hidden while the fold is closed. */
+ *  the list, the list folded (`data-folded`) while the fold is closed. */
 function mount(count: number, open: boolean, width: number): Mounted {
   host = document.createElement("div");
   host.style.cssText = `inline-size:${String(width)}px;padding-block:48px`;
@@ -68,6 +68,7 @@ function mount(count: number, open: boolean, width: number): Mounted {
 
   const folded = count >= 3;
   fold.hidden = !folded;
+  bar.toggleAttribute("data-folded", folded && !open);
   let toggle: HTMLElement | null = null;
   if (folded) {
     toggle = document.createElement("div");
@@ -91,7 +92,6 @@ function mount(count: number, open: boolean, width: number): Mounted {
   const rows = Array.from({ length: count }, (_, i) => {
     const li = document.createElement("li");
     li.className = "run-bar-row";
-    li.hidden = folded && !open;
     const btn = document.createElement("div");
     btn.setAttribute("role", "button");
     btn.tabIndex = 0;
@@ -259,6 +259,8 @@ describe("the run bar box's vertical balance", () => {
         document.documentElement.setAttribute("data-pointer", "coarse");
         const { box } = mount(4, false, w - 16);
         await settle();
+        const list = box.querySelector(".run-bar")?.getBoundingClientRect();
+        expect(list?.height, "the list is folded away").toBe(0);
         const ink = await readInk(box);
         expect(Math.abs(ink.top - ink.bottom)).toBeLessThanOrEqual(TOLERANCE_PX);
       });
