@@ -1500,8 +1500,8 @@ export async function closeTab(id: string, impact?: CloseImpact): Promise<void> 
     }
     return;
   }
-  // No verdict: CLOSE_CONFIRM_MS elapsed, the request was lost, the dispatch was aborted or a retry found the
-  // first attempt still running. The machine verifies rather than guessing in either direction.
+  // No verdict: the transport's deadline elapsed, the request was lost, the dispatch was aborted or a retry found
+  // the first attempt still running. The machine verifies rather than guessing in either direction.
   opTimedOut(opID);
 }
 

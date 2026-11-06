@@ -274,6 +274,39 @@ describe("a refused close", () => {
   });
 });
 
+describe("an unanswered close of the active tab", () => {
+  it("puts the row back active once the re-list still holds it, with no answer ever arriving", async () => {
+    const ids = await closing();
+    const c = ids["c"] ?? "";
+    await frame();
+    const before = rowIDs();
+    const notices: unknown[][] = [];
+    registerTabNotice((...args) => {
+      notices.push(args);
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    tabServer.setMode("manual");
+    tabServer.holdResponses();
+    tabServer.failNext("close_tab", 500);
+    try {
+      void closeTab(c);
+      await frame();
+      expect(rowIDs()).not.toContain(c);
+
+      await vi.advanceTimersByTimeAsync(5_000 + 1_000);
+      await settleTabs();
+      await activationRan();
+
+      expect(rowIDs()).toEqual(before);
+      expect(getActiveTabId()).toBe(c);
+      expect(notices).toEqual([["c", "c", "Close not confirmed, so the tab was restored.", "info"]]);
+    } finally {
+      vi.useRealTimers();
+      tabServer.releaseResponses();
+    }
+  });
+});
+
 describe("a pending close's view", () => {
   // `app.ts` wires this reader into the renderer's eviction exemption, so a refused close can
   // unpark the view it closed with its scroll and reading state.

@@ -24,6 +24,7 @@ import type { TabKind, TabSubject } from "../types.js";
 import { decodeTabSubject } from "../wire/decoders.gen.js";
 import type { CloseImpact } from "../wire/types.gen.js";
 import { impactRefusal } from "./close-impact.js";
+import { CLOSE_CONFIRM_MS } from "../tabs-sync.js";
 
 /** What `open_tab` needs about the thing being opened. `ref` is empty for a
  *  singleton, whose identity is its kind. */
@@ -112,10 +113,6 @@ interface CloseTabArgs {
    *  close or a singleton toggle sends none and is unchecked. */
   impact?: CloseImpact;
 }
-
-/** How long a close may stay unanswered before the pending-op machine VERIFIES by re-listing
- *  (the removal stays applied). */
-const CLOSE_CONFIRM_MS = 5000;
 
 /** What the server committed for a close: a list (a parent and children close together); empty
  *  is normal, since two devices can close one tab. */

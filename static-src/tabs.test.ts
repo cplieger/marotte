@@ -3142,8 +3142,8 @@ describe("optimistic close: the reversible gesture", () => {
 });
 
 describe("optimistic close: timeout, verifying, and authoritative settlement", () => {
-  // The 5s deadline (CLOSE_CONFIRM_MS) is an AbortSignal.timeout, which fake timers do not advance, so a
-  // cancellation stands in for it and lands on opTimedOut too; the next block covers the timeout itself.
+  // A cancellation ends the dispatch with no answer and lands on opTimedOut before the op's own deadline; the last
+  // case here covers that deadline, and the next block the transport's AbortSignal.timeout.
 
   /** A close whose dispatch ends with NO answer: response held, then the
    *  in-flight dispatch canceled. The op lands in `verifying`. */
@@ -3190,6 +3190,31 @@ describe("optimistic close: timeout, verifying, and authoritative settlement", (
     // so the ordinary failure toast stays silent.
     expect(vi.mocked(toastInfo)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(toastErrorFn)).not.toHaveBeenCalled();
+  });
+
+  it("verifies and restores a close whose dispatch never settles, on the op's own clock", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    await openChats("a", "keep");
+    const doomedTab = chatID("a");
+    tabServer.setMode("manual");
+    tabServer.holdResponses();
+    try {
+      void closeTab(doomedTab);
+      const held = tabServer
+        .subjects()
+        .map((s) => ({ ...s }))
+        .concat([{ id: doomedTab, kind: "chat", ref: "a", parent: "", pinned: false, owns: true }]);
+      tabServer.queueList({ tabs: held, version: tabServer.version() + 1 });
+      const listsBefore = tabServer.listCalls();
+
+      await vi.advanceTimersByTimeAsync(5_000 + 1_000);
+
+      expect(tabServer.listCalls(), "the verifying re-list went out").toBeGreaterThan(listsBefore);
+      expect(hasTab("chat", "a")).toBe(true);
+      expect(vi.mocked(toastInfo)).toHaveBeenCalledTimes(1);
+    } finally {
+      tabServer.releaseResponses();
+    }
   });
 });
 
