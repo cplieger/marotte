@@ -145,7 +145,10 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 }
 
 func (bc *bridgeCoordinator) closeFactsOf(t *activeTurn, closer turnCloser, outcome marotte.TurnOutcome) closeFacts {
-	cf := closeFacts{outcome: outcome, fence: fenceOf(t), unattended: closer == closerKASIdle || closer == closerPromptHandoff}
+	cf := closeFacts{
+		outcome: outcome, fence: fenceOf(t), turnID: t.ID,
+		unattended: closer == closerKASIdle || closer == closerPromptHandoff,
+	}
 	if closer == closerBridgeDeath {
 		cf.exit = bc.turns.forwardExit(t.Chat)
 	}
@@ -198,12 +201,14 @@ func engineAccount(t *activeTurn, stop marotte.StopReason) (string, marotte.Fail
 	return text, ""
 }
 
-// closeFacts is what a won close hands its pipeline: the outcome, the fence naming the turn, a death's forwarder
-// exit, whether no one asked for the stop (command.CloseFacts.Unattended), and, when the cancel grace gave up on the
-// turn's prompt call, how long to wait for the answer KAS may still send (awaitAbandonedAnswer; zero waits for none).
+// closeFacts is what a won close hands its pipeline: the outcome, the closed turn's id and the fence naming it, a
+// death's forwarder exit, whether no one asked for the stop (command.CloseFacts.Unattended), and, when the cancel grace
+// gave up on the turn's prompt call, how long to wait for the answer KAS may still send (awaitAbandonedAnswer; zero
+// waits for none).
 type closeFacts struct {
 	exit       <-chan struct{}
 	outcome    marotte.TurnOutcome
+	turnID     string
 	fence      command.TurnFence
 	answerWait time.Duration
 	unattended bool
@@ -283,7 +288,7 @@ func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, lc *chatLifecycle
 			bc.applyPendingModel(ctx, chatID)
 		}
 		if !turnEnded {
-			compacted, turnEnded = bc.compactAtTurnEnd(ctx, lc, cf.contextLimit), true
+			compacted, turnEnded = bc.compactAtTurnEnd(ctx, lc, cf), true
 		}
 		if rows, drain := bc.releaseHold(ctx, lc, cf.fence.Seq, compacted); drain {
 			return rows, true
@@ -292,8 +297,8 @@ func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, lc *chatLifecycle
 }
 
 // compactAtTurnEnd runs the closed turn's one compaction, reporting whether one ran.
-func (bc *bridgeCoordinator) compactAtTurnEnd(ctx context.Context, lc *chatLifecycle, contextLimit bool) bool {
-	return !lc.endedNow() && bc.autoCompact.afterTurn(ctx, lc.chatID, contextLimit)
+func (bc *bridgeCoordinator) compactAtTurnEnd(ctx context.Context, lc *chatLifecycle, cf closeFacts) bool {
+	return !lc.endedNow() && bc.autoCompact.afterTurn(ctx, lc.chatID, cf.turnID, cf.contextLimit)
 }
 
 // releaseHold releases the close's KAS hold; on a drain it first takes a compaction requested under the hold.
