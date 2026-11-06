@@ -41,6 +41,8 @@ export interface BuildToolCardOpts {
   classifierNote?: string;
   /** The workspace-relative file a hook card's hook is defined in. */
   sourcePath?: string;
+  /** The document ids a steering box loaded, in its title's order. */
+  steeringDocs?: readonly string[];
   /** `input`, `output` and `diffs` are a PREVIEW of `GET /api/chats/{id}/tools/{id}`;
    *  set only by the transcript read path. */
   hasFull?: boolean;
@@ -116,6 +118,9 @@ export function toolCardOptsFor(tc: ToolCall, live: boolean, chatID = ""): Build
   }
   if (tc.source_path !== undefined && tc.source_path !== "") {
     opts.sourcePath = tc.source_path;
+  }
+  if (tc.steering_docs !== undefined && tc.steering_docs.length > 0) {
+    opts.steeringDocs = tc.steering_docs;
   }
   return opts;
 }

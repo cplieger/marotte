@@ -76,6 +76,10 @@ func TestSteeringDocName(t *testing.T) {
 		"file:///w/.kiro/steering/my%20notes.md": "my notes.md",
 		"kiro-default-steering":                  "kiro-default-steering",
 		"file:///":                               "file:///",
+		"file://elsewhere/w/go.md":               "file://elsewhere/w/go.md",
+		"file://localhost/w/go.md":               "go.md",
+		"file:/w/go.md":                          "file:/w/go.md",
+		"file:///w/.kiro/steering/":              "steering",
 	}
 	for id, want := range cases {
 		if got := steeringDocName(id); got != want {

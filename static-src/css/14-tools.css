@@ -681,6 +681,25 @@
   }
 }
 
+/* A steering box's names are links inside its title's text run, so they read as text: a chip
+   would break the title's single ellipsised line. */
+.tool-title > .steering-doc.tool-file-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  block-size: auto;
+  max-width: none;
+  text-decoration: underline dotted;
+
+  &:hover {
+    background: none;
+    color: var(--c-text-primary);
+  }
+}
+
 /* The clip is on the TEXT: the inline-flex chip has no inline content for
    `text-overflow`, and a chip `overflow` would clip its hit-target expander. */
 .tool-file-name {

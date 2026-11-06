@@ -1185,6 +1185,32 @@ describe("a delegate card's status follows its invocation CALL", () => {
   });
 });
 
+describe("a delegate card's footer", () => {
+  it("counts the delegate's tool calls in its footer but not a steering box it loaded", () => {
+    const r = render([
+      invocation("t", 1, "sub-A"),
+      callEntry("t", 2, toolCall("tool-r", { kind: "read", title: "Read File" }), {
+        lane: "sub-A",
+      }),
+      callEntry(
+        "t",
+        3,
+        toolCall("steering-1", {
+          kind: "steering",
+          title: "Steering loaded: a.md",
+          steering_docs: ["file:///w/.kiro/steering/a.md"],
+        }),
+        { lane: "sub-A" },
+      ),
+    ]);
+    const foot =
+      (r.body.querySelector(".subagent-block") as HTMLElement).querySelector(".subagent-foot")
+        ?.textContent ?? "";
+    expect(foot).toContain("1 read");
+    expect(foot).not.toMatch(/steering/i);
+  });
+});
+
 describe("an empty bubble's row is marked is-empty", () => {
   it("marks a settled entry that carries no text", () => {
     const r = render([text("t", 1, "")]);

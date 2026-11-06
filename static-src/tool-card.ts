@@ -10,6 +10,7 @@ import { chevronEl } from "./chevron.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { openChange, openAtLine, openCallDiff, openSpec } from "./navigate.js";
 import { specDirOf } from "./spec-path.js";
+import { STEERING_TITLE_PREFIX, docName, docTarget } from "./steering-docs.js";
 import { lineDiff, windowHunks, stats as diffStats } from "./diff.js";
 import { renderDiffPane } from "./diff-pane.js";
 import { setUserScrolledUp } from "./scroll.js";
@@ -321,8 +322,10 @@ function buildHeader(
   const iconSpan = el("span", { className: "tool-icon" }, iconEl(toolIcon(info)));
   header.appendChild(iconSpan);
 
-  const titleSpan = el("span", { className: "tool-title" }, displayTitle);
-  header.appendChild(titleSpan);
+  header.appendChild(
+    (info.kind === "steering" ? steeringTitle(displayTitle, opts.steeringDocs ?? []) : null) ??
+      el("span", { className: "tool-title" }, displayTitle),
+  );
 
   if (info.mcp !== null) {
     const badge = el(
@@ -403,6 +406,45 @@ function buildHeader(
   }
 
   return header;
+}
+
+/** A steering box's title with each document's name a link into the editor where it can open one.
+ *  Null when the server's title is not the prefix plus these names, so the title's text, which
+ *  find-in-chat offsets count over, is always the server's. */
+function steeringTitle(title: string, docs: readonly string[]): HTMLElement | null {
+  const names = docs.map(docName);
+  if (docs.length === 0 || title !== STEERING_TITLE_PREFIX + names.join(", ")) {
+    return null;
+  }
+  const span = el("span", { className: "tool-title" }, STEERING_TITLE_PREFIX);
+  docs.forEach((id, i) => {
+    const name = names[i] ?? id;
+    if (i > 0) {
+      span.append(", ");
+    }
+    const path = docTarget(id);
+    if (path === null) {
+      span.appendChild(el("span", { className: "steering-doc" }, name));
+      return;
+    }
+    const link = el(
+      "button",
+      {
+        type: "button",
+        className: "steering-doc tool-file-link",
+        "data-path": path,
+        "data-tooltip": path,
+        "aria-label": `Open ${name}`,
+      },
+      name,
+    );
+    link.addEventListener("click", (e: Event) => {
+      e.stopPropagation();
+      openAtLine(path);
+    });
+    span.appendChild(link);
+  });
+  return span;
 }
 
 /** What a caller may state; the History page states a run's verdict through the same

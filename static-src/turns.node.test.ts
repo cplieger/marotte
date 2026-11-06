@@ -819,6 +819,25 @@ describe("turnLedger", () => {
       expect(led.kindCounts).toEqual({ execute: 1, read: 2, edit: 1 });
     });
 
+    it("counts no steering box as tool work, and keeps the footer's steering list", () => {
+      // KAS loaded the documents; nobody called a tool. The list is the close's, untouched.
+      const docs = ["file:///w/.kiro/steering/a.md"];
+      const led = turnLedger(
+        oneTurn([
+          callEntry("t1", 1, "c1", { kind: "read" }),
+          callEntry("t1", 2, "steering-1", {
+            kind: "steering",
+            title: "Steering loaded: a.md",
+            steering_docs: docs,
+          }),
+          closeEntry("t1", 3, { steering: docs }),
+        ]),
+      );
+      expect(led.kindCounts).toEqual({ read: 1 });
+      expect(led.delegateCount).toBe(0);
+      expect(led.steering).toEqual(docs);
+    });
+
     it("sums tool time off the RESULTS, and counts an unstamped one as nothing", () => {
       // ZERO MEANS NOBODY STAMPED ONE, so a result that never settled a duration must
       // not read as a third measurement of zero.
