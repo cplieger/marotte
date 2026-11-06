@@ -1,6 +1,7 @@
 // The transcript cover is released only by the paint that puts the painted chat's turns or empty
-// page on screen, and lifts in that paint's task unless the browser reports input waiting. Only a
-// switch request raises or holds it. Real store, renderer and scroll controller.
+// page on screen, and lifts in that paint's task unless the browser reports input waiting. Only an
+// activation or the failure box's Retry raises or holds it. Real store, renderer and scroll
+// controller.
 import { describe, it, expect, beforeEach } from "vitest";
 import type { Session } from "./types.js";
 import { makeSession } from "./__test-helpers__/model.js";
