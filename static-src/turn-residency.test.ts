@@ -79,6 +79,7 @@ const { invalidateRun } = await import("./run-store.js");
 const { loadTurnRail, resetTurnRail } = await import("./turn-rail.js");
 const { scrollMock } = await import("./__test-helpers__/scroll-mock.js");
 const { KEY_ATTR } = await import("./reconcile.js");
+const { LS_TURN_FOLDS_KEY } = await import("./ls-keys.js");
 
 const messagesEl = document.getElementById("messages") as HTMLElement;
 
@@ -628,6 +629,20 @@ describe("the fold policy over residency", () => {
     // And nowhere else on the card either: the in-body card lives in `.turn-body`,
     // which a turn this far back does not have.
     expect(card("u1").querySelector(".run-card")).toBeNull();
+  });
+
+  it("opens a folded turn when another window opens it", async () => {
+    const id = chatID();
+    activate(id, toolTurns(4));
+    expect(isFolded("u1")).toBe(true);
+    // What another window's fold leaves in this window's storage, and the browser's word for it.
+    localStorage.setItem(LS_TURN_FOLDS_KEY, JSON.stringify({ [id]: { u1: true } }));
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: LS_TURN_FOLDS_KEY, storageArea: localStorage }),
+    );
+    await vi.waitFor(() => {
+      expect(isFolded("u1")).toBe(false);
+    });
   });
 
   it("the NEWEST turn ignores a recorded collapse — it cannot be folded", () => {

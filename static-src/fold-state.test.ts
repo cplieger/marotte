@@ -1,6 +1,7 @@
 // Which turns are open: three overriding layers, and their order is the design.
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, onTestFinished, vi } from "vitest";
 
+import * as bus from "./bus.js";
 import {
   isTurnOpen,
   setTurnOpen,
@@ -8,6 +9,8 @@ import {
   clearSearchOpened,
   resetFoldState,
 } from "./fold-state.js";
+import { LS_TURN_FOLDS_KEY } from "./ls-keys.js";
+import { MAX_CHATS } from "./per-chat-store.js";
 import type { Turn, TurnOutcome } from "./turns.js";
 
 function turn(id: string, outcome: TurnOutcome = "completed"): Turn {
@@ -171,5 +174,116 @@ describe("search reveal", () => {
     const list = turns(6);
     openForSearch("c1", list[0]!.id);
     expect(JSON.stringify(localStorage)).not.toContain(list[0]!.id);
+  });
+});
+
+// Another window shares this storage: its write lands here with no call into this module, and the
+// browser tells this window with a `storage` event.
+describe("across windows", () => {
+  const t0 = turn("t0");
+  const t1 = turn("t1");
+
+  function stored(): Record<string, Record<string, boolean>> {
+    return JSON.parse(localStorage.getItem(LS_TURN_FOLDS_KEY) ?? "{}") as Record<
+      string,
+      Record<string, boolean>
+    >;
+  }
+
+  function otherWindowWrites(doc: Record<string, Record<string, boolean>>): void {
+    localStorage.setItem(LS_TURN_FOLDS_KEY, JSON.stringify(doc));
+  }
+
+  function tellThisWindow(key: string | null = LS_TURN_FOLDS_KEY, area = localStorage): void {
+    window.dispatchEvent(new StorageEvent("storage", { key, storageArea: area }));
+  }
+
+  it("keeps a fold another window saved for a different chat", () => {
+    setTurnOpen("c1", "t1", true);
+    otherWindowWrites({ c1: { t1: true }, c2: { t1: true } });
+    setTurnOpen("c1", "t0", true);
+    expect(stored()["c2"]).toEqual({ t1: true });
+  });
+
+  it("keeps another window's fold of the same chat's other turn", () => {
+    expect(isTurnOpen("c1", t0, 0, 6)).toBe(false);
+    otherWindowWrites({ c1: { t1: false } });
+    setTurnOpen("c1", "t0", true);
+    expect(stored()["c1"]).toEqual({ t0: true, t1: false });
+  });
+
+  it("shows a fold another window made once storage says so", () => {
+    expect(isTurnOpen("c1", t0, 0, 6)).toBe(false);
+    otherWindowWrites({ c1: { t0: true } });
+    tellThisWindow();
+    expect(isTurnOpen("c1", t0, 0, 6)).toBe(true);
+  });
+
+  it("forgets folds another window's sign-out cleared", () => {
+    setTurnOpen("c1", "t0", true);
+    expect(isTurnOpen("c1", t0, 0, 6)).toBe(true);
+    localStorage.removeItem(LS_TURN_FOLDS_KEY);
+    tellThisWindow();
+    expect(isTurnOpen("c1", t0, 0, 6)).toBe(false);
+  });
+
+  it("evicts by every window's touches, not this window's stale order", () => {
+    const doc: Record<string, Record<string, boolean>> = {};
+    for (let i = 0; i < MAX_CHATS; i++) {
+      doc[`c${String(i)}`] = { t0: true };
+    }
+    otherWindowWrites(doc);
+    expect(isTurnOpen("c5", t0, 0, 6)).toBe(true);
+    // c0 moves to the end: the other window just touched it.
+    const { c0, ...rest } = doc;
+    otherWindowWrites({ ...rest, c0: c0! });
+    setTurnOpen("fresh", "t0", true);
+    const kept = stored();
+    expect(kept["c0"]).toEqual({ t0: true });
+    expect(kept["c1"]).toBeUndefined();
+  });
+
+  it("stops showing a chat its own write evicted", () => {
+    for (let i = 0; i < MAX_CHATS; i++) {
+      setTurnOpen(`c${String(i)}`, "t1", true);
+    }
+    setTurnOpen("extra", "t1", true);
+    expect(stored()["c0"]).toBeUndefined();
+    expect(isTurnOpen("c0", t1, 0, 6)).toBe(false);
+  });
+
+  it("tells the transcript once the cache has dropped", () => {
+    expect(isTurnOpen("c1", t0, 0, 6)).toBe(false);
+    const seen: boolean[] = [];
+    const off = bus.onBus(bus.BUS_FOLDS_CHANGED, () => {
+      seen.push(isTurnOpen("c1", t0, 0, 6));
+    });
+    onTestFinished(off);
+    otherWindowWrites({ c1: { t0: true } });
+    tellThisWindow();
+    expect(seen).toEqual([true]);
+  });
+
+  it("ignores a storage event from session storage", () => {
+    setTurnOpen("c1", "t0", true);
+    expect(isTurnOpen("c1", t0, 0, 6)).toBe(true);
+    otherWindowWrites({});
+    tellThisWindow(null, sessionStorage);
+    expect(isTurnOpen("c1", t0, 0, 6)).toBe(true);
+  });
+
+  it("keeps a fold for the page when storage refuses the write", () => {
+    vi.stubGlobal("localStorage", {
+      getItem: (): null => null,
+      setItem: (): never => {
+        throw new DOMException("full", "QuotaExceededError");
+      },
+      removeItem: (): void => undefined,
+      clear: (): void => undefined,
+      key: (): null => null,
+      length: 0,
+    });
+    setTurnOpen("c1", "t0", true);
+    expect(isTurnOpen("c1", t0, 0, 6)).toBe(true);
   });
 });
