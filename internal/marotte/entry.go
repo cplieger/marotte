@@ -505,6 +505,9 @@ type EntryTurnClose struct {
 	// Carrier marks the close of a turn the log minted to hold a record, which no agent ran. A turn's
 	// source cannot say so: a replayed `event` turn can be one KAS ran.
 	Carrier bool `json:"carrier,omitempty"`
+	// Unanswered marks a workflow step's close that its own turn ended with no answer text and no
+	// signal call after its last tool call; the run grades it against KAS's record of the step.
+	Unanswered bool `json:"unanswered,omitempty"`
 }
 
 // ContextBreakdown is what one model request carried, in characters as KAS measures them (the
@@ -577,6 +580,10 @@ const FailureKindContextLimit FailureKind = "context_limit"
 // FailureKindModelCallLimit is a turn kiro-cli stopped at its per-turn model-call
 // limit: the work may be unfinished, and the remedy is running it again or splitting it.
 const FailureKindModelCallLimit FailureKind = "model_call_limit"
+
+// FailureKindEmptyAnswer is a step KAS completed with no signal after its model's final answer came back
+// empty: the steps after it ran without its work, and the remedy is running it again.
+const FailureKindEmptyAnswer FailureKind = "empty_answer"
 
 // SaySegmentID is the id of the k-th segment of a say a seal split: `<say>#k`.
 func SaySegmentID(say string, k int) string {

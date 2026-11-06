@@ -109,6 +109,9 @@ const (
 	ModelCallLimitStepReason = "kiro-cli stopped this step at its model-call limit for one turn, so its work may be unfinished. Rerun the step, or split its work into smaller steps."
 )
 
+// EmptyAnswerStepReason is what a FailureKindEmptyAnswer close says.
+const EmptyAnswerStepReason = "The model's last answer in this step came back empty and the step sent no signal, yet Kiro counted it as completed, so its work may be unfinished. Rerun the step."
+
 // UnobservedRunReason is what a prompt turn says when kiro-cli answered it end_turn without bracketing its run or
 // sending any of it: kiro-cli ran the prompt in an execution its session did not stream.
 const UnobservedRunReason = "kiro-cli finished this prompt without sending any of its work, so marotte has no record of what the agent did or said."
@@ -136,6 +139,8 @@ type TurnConclusion struct {
 	// EmptyIfSilent is the chat closer's ask to grade an end_turn that emitted nothing
 	// `empty`; a run node's completed keeps its status whatever the step said.
 	EmptyIfSilent bool
+	// Unanswered is persisted as turn_close.unanswered.
+	Unanswered bool
 }
 
 // ConcludeStopReason maps a wire stop reason onto the turn's outcome.

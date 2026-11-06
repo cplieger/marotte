@@ -13,7 +13,7 @@ const DENIAL_BASISS = ["unparseable", "cedar-unavailable", "not-loaded", "permis
 const ENGINE_STATES = ["starting", "ready", "restarting", "down"] as const;
 const ENTRY_KINDS = ["turn_open", "turn_bind", "turn_wake", "run_named", "text", "thinking", "tool_call", "tool_result", "steer", "steer_ack", "steer_delivered", "steer_cleared", "plan", "compaction", "compaction_failed", "safety_blocked", "model_switched", "model_routed", "model_fallback", "mode_switched", "turn_revert", "context_reset", "reconciled", "turn_close"] as const;
 const ERROR_CODES = ["recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "switch_failed", "compaction_failed", "mode_not_applied", "supervised_not_applied", "model_not_served", "auth_token_unavailable", "tangent_merge_failed"] as const;
-const FAILURE_KINDS = ["context_limit", "model_call_limit"] as const;
+const FAILURE_KINDS = ["context_limit", "model_call_limit", "empty_answer"] as const;
 const FILE_MATCH_KINDS = ["content", "name", "dir"] as const;
 const FORGE_STATUSS = ["connected", "retrying", "refused", "reconnect", "unusable"] as const;
 const INTERRUPT_MODES = ["steer", "queue"] as const;
@@ -1577,6 +1577,10 @@ export const decodeEntryTurnClose: Decoder<EntryTurnClose> = (v) => {
   {
     const $v = own(o, "carrier");
     if ($v !== undefined && $v !== null) out.carrier = reqBool(o, "carrier", "$.entry_turn_close");
+  }
+  {
+    const $v = own(o, "unanswered");
+    if ($v !== undefined && $v !== null) out.unanswered = reqBool(o, "unanswered", "$.entry_turn_close");
   }
   return out;
 };

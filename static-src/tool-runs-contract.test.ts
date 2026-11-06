@@ -1,6 +1,7 @@
 // The client half of the tool-run boundary oracle (internal/chat/testdata/tool_runs.json; the server half is
 // TestToolRunsContract_ServerHalf, through toolCardRuns). Read off the groups the production dispatcher mounts, in
-// the transcript and on each delegate's page, so a boundary indexGroups draws and find's filter does not fails here.
+// the transcript, on each delegate's page and in a workflow run's step pane, so a boundary indexGroups draws and find's
+// filter does not fails here.
 
 import { describe, it, expect, afterEach } from "vitest";
 import fixtureRaw from "../internal/chat/testdata/tool_runs.json?raw";
@@ -26,6 +27,7 @@ const { buildAssistantBody, buildDetachedBody, resetBlockRenders, initBlockRende
   await import("./messages-blocks.js");
 const { markWakingRows } = await import("./turn-wake.js");
 const { setActive } = await import("./store.js");
+const { createRunStepStream } = await import("./run-chat-steps.js");
 
 const CHAT_ID = "c-tool-runs";
 setActive(CHAT_ID);
@@ -89,11 +91,8 @@ function mountHost(): HTMLElement {
   return host;
 }
 
-/**
- * The tool-card runs as mounted, keyed by lane: the chat lane's from the transcript (`""`), and each delegate lane
- * holding a tool call from that delegate's own page.
- */
-function renderedRuns(c: RunsCase): Record<string, string[][]> {
+/** The case as one held turn under a fresh id, its wakes marked, as the store hands it to a render. */
+function caseTurn(c: RunsCase): Turn {
   turnSeq += 1;
   const turnID = `t-runs-${String(turnSeq)}`;
   const open: Entry = {
@@ -132,7 +131,7 @@ function renderedRuns(c: RunsCase): Record<string, string[][]> {
     });
   }
   markWakingRows(held);
-  const turn: Turn = {
+  return {
     id: turnID,
     n: 1,
     trigger: { id: `${turnID}-p`, text: "go" },
@@ -143,6 +142,15 @@ function renderedRuns(c: RunsCase): Record<string, string[][]> {
     rewindTo: undefined,
     branchFrom: undefined,
   };
+}
+
+/**
+ * The tool-card runs as mounted, keyed by lane: the chat lane's from the transcript (`""`), and each delegate lane
+ * holding a tool call from that delegate's own page.
+ */
+function renderedRuns(c: RunsCase): Record<string, string[][]> {
+  const turn = caseTurn(c);
+  const body = turn.body;
   const chat = mountHost();
   buildAssistantBody(chat, turn, CHAT_ID, false);
   const out: Record<string, string[][]> = { "": groupsIn(chat) };
@@ -157,6 +165,17 @@ function renderedRuns(c: RunsCase): Record<string, string[][]> {
   return out;
 }
 
+/** The tool-card runs a workflow run's tab mounts for the case as one step turn, through the pane's own stream. */
+function runPaneRuns(c: RunsCase): string[][] {
+  const turn = caseTurn(c);
+  const pane = mountHost();
+  const stream = createRunStepStream(() => pane);
+  stream.apply(new Map([["step", [{ turn, live: false }]]]));
+  const runs = groupsIn(pane);
+  stream.dispose();
+  return runs;
+}
+
 describe("tool-card run boundaries shared with the Go implementation", () => {
   const cases = loadCases();
 
@@ -167,6 +186,14 @@ describe("tool-card run boundaries shared with the Go implementation", () => {
   for (const c of cases) {
     it(c.name, () => {
       expect(renderedRuns(c)).toEqual({ "": c.runs, ...c.lane_runs });
+    });
+  }
+});
+
+describe("a workflow run's tab draws the same tool-card runs as the chat", () => {
+  for (const c of loadCases()) {
+    it(c.name, () => {
+      expect(runPaneRuns(c)).toEqual(c.runs);
     });
   }
 });

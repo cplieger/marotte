@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/translate"
 )
 
@@ -76,7 +76,7 @@ func TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline(t *testing.T) {
 			const id = "wf_1"
 			o := manualLaunch()
 			if tc.slotIn != 0 {
-				o = scheduledLaunch(schedule.Row{ID: "sched-1"}, time.Now().Add(tc.slotIn))
+				o = scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Now().Add(tc.slotIn))
 			}
 			h.grantLease(t.Context(), id, "publish", o, hostSec())
 			if tc.spent != 0 {
@@ -284,13 +284,13 @@ func TestCancelExpiredRun_LogsAScheduleDeletedDuringItsRunAtInfo(t *testing.T) {
 	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 
 	// An EMPTY schedule store: the lease names a schedule that is no longer there.
-	st, err := schedule.NewStore(t.TempDir())
+	st, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("schedule.NewStore: %v", err)
+		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	h.runs.schedules = st
+	h.runs.launchRules = st
 
-	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch(schedule.Row{ID: "sched-gone"}, time.Now().Add(30*time.Second)), hostSec())
+	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch(launchrule.Row{ID: "sched-gone"}, time.Now().Add(30*time.Second)), hostSec())
 	h.runs.armDeadline(t.Context(), id)
 	l, _ := h.runs.lease(id)
 
@@ -300,7 +300,7 @@ func TestCancelExpiredRun_LogsAScheduleDeletedDuringItsRunAtInfo(t *testing.T) {
 		t.Errorf("endReason = %q, want %q; the run is cancelled whatever the row does", got, runEndOverran)
 	}
 	out := logs.String()
-	const wantLine = `"level":"INFO","msg":"schedule outcome not recorded: the schedule was deleted or recreated during its run","schedule_id":"sched-gone"`
+	const wantLine = `"level":"INFO","msg":"schedule outcome not recorded: the schedule was deleted during its run","schedule_id":"sched-gone"`
 	if !strings.Contains(out, wantLine) {
 		t.Errorf("the deleted schedule's row was not written and no INFO line named it; want %s. Got: %s",
 			wantLine, out)
@@ -504,18 +504,12 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
 
-	st, err := schedule.NewStore(t.TempDir())
+	st, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("schedule.NewStore: %v", err)
+		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	entry := schedule.Entry{
-		Source: "bundled://nightly", Enabled: true,
-		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
-	}
-	if pErr := st.Put(t.Context(), &entry); pErr != nil {
-		t.Fatalf("Put schedule: %v", pErr)
-	}
-	h.runs.schedules = st
+	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	h.runs.launchRules = st
 
 	// A slot INSIDE the floor, so the armed deadline lands later than SlotAt.
 	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch(entry.Row(), time.Now().Add(30*time.Second)), hostSec())
@@ -541,11 +535,11 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 			"bound: %s", out)
 	}
 	// The row, which is the half a reader actually sees.
-	rows := st.List()
+	rows := st.Clocks()
 	if len(rows) != 1 {
 		t.Fatalf("the schedule store holds %d rows", len(rows))
 	}
-	if rows[0].LastStatus != schedule.StatusFailed || rows[0].LastReason != reasonOverran {
+	if rows[0].LastStatus != launchrule.StatusFailed || rows[0].LastReason != reasonOverran {
 		t.Errorf("the schedule row reads (%q, %q), want the overran failure; without it the row still "+
 			"says `started` while the schedule has silently stopped producing", rows[0].LastStatus, rows[0].LastReason)
 	}
@@ -559,23 +553,17 @@ func TestCancelExpiredRun_ARefusedSlotCancelLeavesTheScheduleRowUntouched(t *tes
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner pid 979344 is live")}
 	h.bridge.mgr.insert(runChatID(id), testBridge(br, bridgeIdle))
 
-	st, err := schedule.NewStore(t.TempDir())
+	st, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("schedule.NewStore: %v", err)
+		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	entry := schedule.Entry{
-		Source: "bundled://nightly", Enabled: true,
-		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
-	}
-	if pErr := st.Put(t.Context(), &entry); pErr != nil {
-		t.Fatalf("Put schedule: %v", pErr)
-	}
-	h.runs.schedules = st
+	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	h.runs.launchRules = st
 
 	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch(entry.Row(), time.Now().Add(30*time.Second)), hostSec())
 	h.runs.armDeadline(t.Context(), id)
 	l, _ := h.runs.lease(id)
-	before := st.List()
+	before := st.Clocks()
 	if len(before) != 1 || before[0].LastRunID != id {
 		t.Fatalf("the lease grant did not record the run's start on its row: %+v", before)
 	}
@@ -588,7 +576,7 @@ func TestCancelExpiredRun_ARefusedSlotCancelLeavesTheScheduleRowUntouched(t *tes
 	if got := h.runs.endReason(id); got != "" {
 		t.Errorf("endReason = %q after a REFUSED cancel, want \"\"", got)
 	}
-	rows := st.List()
+	rows := st.Clocks()
 	if len(rows) != 1 {
 		t.Fatalf("the schedule store holds %d rows", len(rows))
 	}

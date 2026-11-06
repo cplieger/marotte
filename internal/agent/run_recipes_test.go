@@ -61,14 +61,14 @@ func TestLaunch_ReadsTheRecipeNameLiveOverAHold(t *testing.T) {
 	}
 }
 
-// A launch or a schedule save of a source the held catalog still names, but the live listing no longer does, is
+// A launch or a launch rule save of a source the held catalog still names, but the live listing no longer does, is
 // refused as unknown.
 func TestRecipeRoutes_RefuseASourceGoneSinceTheHold(t *testing.T) {
 	routes := []struct{ name, target, body string }{
 		{"a launch", "/api/runs", `{"source":"bundled://publish"}`},
 		{
-			"a schedule save", "/api/schedules",
-			`{"source":"bundled://publish","spec":{"freq":"daily","hour":2,"minute":0},"enabled":true}`,
+			"a launch rule save", "/api/launch-rules",
+			`{"source":"bundled://publish","when":{"clock":{"freq":"daily","hour":2,"minute":0}},"enabled":true}`,
 		},
 	}
 	for _, rt := range routes {
@@ -236,8 +236,8 @@ func TestRecipeRoutes_AnUnansweredListingAnswers503WithARetryHint(t *testing.T) 
 		{"the recipe list", http.MethodGet, "/api/recipes", ""},
 		{"a launch", http.MethodPost, "/api/runs", `{"source":"bundled://publish"}`},
 		{
-			"a schedule save", http.MethodPost, "/api/schedules",
-			`{"source":"bundled://publish","spec":{"freq":"daily","hour":2,"minute":0},"enabled":true}`,
+			"a launch rule save", http.MethodPost, "/api/launch-rules",
+			`{"source":"bundled://publish","when":{"clock":{"freq":"daily","hour":2,"minute":0}},"enabled":true}`,
 		},
 	}
 	for _, rt := range routes {
@@ -327,14 +327,14 @@ func TestRecipeLookup_FindsARecipeAddedSinceTheCatalogWasHeld(t *testing.T) {
 			t.Errorf("launch made %d listRecipes calls, want 1", n)
 		}
 	})
-	t.Run("a schedule save", func(t *testing.T) {
+	t.Run("a launch rule save", func(t *testing.T) {
 		h, br, mux := runDefaultsHub(t)
 		holdCatalog(t, h)
 		addedRecipe(br)
-		rec := postRoute(t, mux, "/api/schedules",
-			`{"source":"bundled://added","spec":{"freq":"daily","hour":2,"minute":0},"enabled":true}`)
+		rec := postRoute(t, mux, "/api/launch-rules",
+			`{"source":"bundled://added","when":{"clock":{"freq":"daily","hour":2,"minute":0}},"enabled":true}`)
 		if rec.Code != http.StatusOK {
-			t.Errorf("POST /api/schedules = %d %s, want 200", rec.Code, rec.Body.String())
+			t.Errorf("POST /api/launch-rules = %d %s, want 200", rec.Code, rec.Body.String())
 		}
 	})
 }
@@ -408,12 +408,12 @@ func TestRecipesRoute_AnswersTheHeldCatalogWhenAListingGoesUnanswered(t *testing
 	}
 }
 
-// A schedule save tells a source the catalog lacks (400) from a catalog it could not read (500).
-func TestScheduleSave_TellsAnUnknownSourceFromAnUnreadableCatalog(t *testing.T) {
+// A launch rule save tells a source the catalog lacks (400) from a catalog it could not read (500).
+func TestLaunchRuleSave_TellsAnUnknownSourceFromAnUnreadableCatalog(t *testing.T) {
 	t.Run("unknown source", func(t *testing.T) {
 		_, _, mux := runDefaultsHub(t)
-		rec := postRoute(t, mux, "/api/schedules",
-			`{"source":"/etc/passwd","spec":{"freq":"daily","hour":2,"minute":0},"enabled":true}`)
+		rec := postRoute(t, mux, "/api/launch-rules",
+			`{"source":"/etc/passwd","when":{"clock":{"freq":"daily","hour":2,"minute":0}},"enabled":true}`)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("status = %d %s, want 400", rec.Code, rec.Body.String())
 		}
@@ -421,8 +421,8 @@ func TestScheduleSave_TellsAnUnknownSourceFromAnUnreadableCatalog(t *testing.T) 
 	t.Run("unreadable catalog", func(t *testing.T) {
 		_, br, mux := runDefaultsHub(t)
 		br.callErrs = map[string]error{methodKiroWorkflowListRecipes: errors.New("engine gone")}
-		rec := postRoute(t, mux, "/api/schedules",
-			`{"source":"bundled://publish","spec":{"freq":"daily","hour":2,"minute":0},"enabled":true}`)
+		rec := postRoute(t, mux, "/api/launch-rules",
+			`{"source":"bundled://publish","when":{"clock":{"freq":"daily","hour":2,"minute":0}},"enabled":true}`)
 		if rec.Code != http.StatusInternalServerError {
 			t.Errorf("status = %d %s, want 500", rec.Code, rec.Body.String())
 		}

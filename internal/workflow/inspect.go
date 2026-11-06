@@ -60,7 +60,9 @@ const (
 	statusPaused      = "paused"
 	statusCompleted   = "completed"
 	signalSuccess     = "success"
+	signalError       = "error"
 	attentionQuestion = "question"
+	nodeTypeStep      = "step"
 )
 
 // visit is one node of a state tree with its wire path.
@@ -95,6 +97,7 @@ type StepRecord struct {
 	Status string
 	// CompletionSignal is "" when the step signalled nothing.
 	CompletionSignal string
+	SessionID        string
 }
 
 // Succeeded reports whether KAS completed the step on a success signal: a send_message success, or
@@ -116,8 +119,8 @@ func StepRecords(s *State) map[string]StepRecord {
 	}
 	out := make(map[string]StepRecord)
 	for _, v := range all {
-		if v.n.Type == "step" {
-			out[PathKey(v.path)] = StepRecord{Status: v.n.Status, CompletionSignal: v.n.CompletionSignal}
+		if v.n.Type == nodeTypeStep {
+			out[PathKey(v.path)] = StepRecord{Status: v.n.Status, CompletionSignal: v.n.CompletionSignal, SessionID: v.n.SessionID}
 		}
 	}
 	return out

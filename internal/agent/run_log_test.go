@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -271,9 +272,11 @@ func TestRunLog_ACloseKeepsKASsStatusOverAToolUseStop(t *testing.T) {
 // closeStep runs one step turn through its turn_end and node_complete.
 func closeStep(t *testing.T, r *runLog, path string, raw marotte.StopReason, status string) {
 	t.Helper()
-	if _, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: path}, "c-1"); err != nil {
+	step := &translate.RunStep{RunID: "wf1", NodePath: path}
+	if _, _, err := r.open(t.Context(), step, "c-1"); err != nil {
 		t.Fatal(err)
 	}
+	answerStep(t, r, step)
 	if !r.stopReason("wf1", path, raw) {
 		t.Fatalf("StopReason(%q) refused on the open turn %s", raw, path)
 	}
@@ -411,6 +414,18 @@ func TestRunLog_StepEndsReadsAnEngineEndAsInterruptedAndItsResume(t *testing.T) 
 			t.Errorf("StepEnds after the resumed turn completed = %+v, want none", got)
 		}
 	})
+}
+
+// answerStep writes an answer into the step's open turn, so its close is not an empty answer.
+func answerStep(t *testing.T, r *runLog, step *translate.RunStep) {
+	t.Helper()
+	turn := r.turn(step.RunID, step.NodePath)
+	if turn == nil {
+		t.Fatalf("Setup: %s has no open turn", step.NodePath)
+	}
+	if _, err := turn.TextDelta(t.Context(), "", "say-answer", "Done."); err != nil {
+		t.Fatalf("Setup: answer: %v", err)
+	}
 }
 
 // openStepTurn opens the step's turn and answers its turn_open, which must be a new one.
@@ -929,5 +944,51 @@ func TestLastWords_TakesTheTrailingProseRunAcrossAnAppliedFallback(t *testing.T)
 				t.Errorf("lastWords = %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// A step's hook_update on a parentless run's host session lands in entries.jsonl as the chat's
+// hook card, and survives the step's turn closing.
+func TestRunLog_RecordsAStepsHook(t *testing.T) {
+	h, _ := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
+	update, _ := json.Marshal(map[string]any{
+		"sessionUpdate": "session_info_update",
+		"_meta": map[string]any{"kiro": map[string]any{
+			"kind": "hook_update",
+			"hook": map[string]any{
+				"hookId": "h1", "operationId": "op-1", "name": "lint", "status": "completed",
+				"output": map[string]any{"result": map[string]any{"output": "2 errors\n", "exitCode": 1}},
+			},
+			"workflow": map[string]any{
+				"workflowId": "wf_1", "nodeId": "review", "nodePath": []any{"root", "review"}, "type": "step",
+			},
+		}},
+	})
+	params, _ := json.Marshal(map[string]any{"sessionId": "sess_step", "update": json.RawMessage(update)})
+	h.handleRunStepFrame(t.Context(), runChatID("wf_1"), &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params})
+	h.runs.RunNodeComplete(t.Context(), "wf_1", reviewSegments, "completed", "")
+
+	var hooks []marotte.EntryToolCall
+	for _, e := range runLogEntries(t, h.runs.log, "wf_1") {
+		if e.Kind != marotte.EntryKindToolCall {
+			continue
+		}
+		var c marotte.EntryToolCall
+		if err := json.Unmarshal(e.Payload, &c); err != nil {
+			t.Fatalf("decode tool_call %s: %v", e.Payload, err)
+		}
+		hooks = append(hooks, c)
+	}
+	if len(hooks) != 1 {
+		t.Fatalf("run log tool_call entries = %+v, want the step's one hook card", hooks)
+	}
+	got := hooks[0]
+	if got.ID != "hook-op-1" || got.Kind != marotte.ToolKindHook || got.Title != "Hook fired: lint" ||
+		got.Status != marotte.ToolFailed || got.Output != "2 errors\n" {
+		t.Errorf("run log hook card = %+v, want hook-op-1, kind hook, Hook fired: lint, failed, its output", got)
+	}
+	kinds, _ := runTurnsAt(t, h, reviewPath)
+	if len(kinds) != 1 || !slices.Contains(kinds[0], marotte.EntryKindToolCall) {
+		t.Errorf("review step turns = %v, want the hook card inside its one turn", kinds)
 	}
 }

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/translate"
 )
@@ -40,7 +40,7 @@ func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
 	if h.IsScheduled("wf_manual") {
 		t.Error("a manual run reported scheduled")
 	}
-	h.grantLease(t.Context(), "wf_1", "publish", scheduledLaunch(schedule.Row{ID: "sched-1"}, time.Time{}), hostSec())
+	h.grantLease(t.Context(), "wf_1", "publish", scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Time{}), hostSec())
 	if !h.IsScheduled("wf_1") {
 		t.Error("a scheduled run did not report scheduled")
 	}
@@ -61,7 +61,7 @@ func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
 func TestRunLabel_RebuildsTheLaunchLabelFromTheLease(t *testing.T) {
 	h := &Runs{chats: newTestChatStore()}
 	h.grantLease(t.Context(), "wf_manual", "publish", manualLaunch(), hostSec())
-	h.grantLease(t.Context(), "wf_sched", "publish", scheduledLaunch(schedule.Row{ID: "sched-1"}, time.Time{}), hostSec())
+	h.grantLease(t.Context(), "wf_sched", "publish", scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Time{}), hostSec())
 	if got := h.RunLabel("wf_sched"); got != "publish · scheduled" {
 		t.Errorf("RunLabel(scheduled) = %q, want %q", got, "publish · scheduled")
 	}
@@ -82,7 +82,7 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	h := &Runs{chats: newTestChatStore(), leases: store}
-	h.grantLease(t.Context(), "wf_1", "nightly", scheduledLaunch(schedule.Row{ID: "sched-1"}, time.Time{}), hostSec())
+	h.grantLease(t.Context(), "wf_1", "nightly", scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Time{}), hostSec())
 
 	// The restart: a new store over the same directory, a runtime that launched nothing.
 	reopened, err := runlease.NewStore(dir)
@@ -111,7 +111,7 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 func TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk(t *testing.T) {
 	rs := &Runs{chats: newTestChatStore()}
 	rs.grantLease(t.Context(), "wf_1", "nightly",
-		scheduledLaunch(schedule.Row{ID: "sched-1"}, time.Now().Add(30*time.Second)), hostSec())
+		scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Now().Add(30*time.Second)), hostSec())
 	if l, held := rs.lease("wf_1"); !held || !l.Unattended {
 		t.Fatal("the fixture did not produce the unattended lease the floor reaches through")
 	}
@@ -386,7 +386,7 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 			h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 				marotte.PermissionNeededPayload{RequestID: id}), br)
 
-			h.runs.answerUnattended(chatID, br, id, schedule.Run{ScheduleID: "sched-1", WorkflowID: "wf_1"}, askName{tool: "execute_bash"},
+			h.runs.answerUnattended(chatID, br, id, launchrule.Run{ScheduleID: "sched-1", WorkflowID: "wf_1"}, askName{tool: "execute_bash"},
 				[]byte(`{"options":`+tc.options+tc.meta+`}`))
 
 			select {
@@ -442,7 +442,7 @@ func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing
 	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 
-	h.runs.answerUnattended(chatID, br, id, schedule.Run{ScheduleID: "sched-1", WorkflowID: "wf_1"}, askName{tool: "execute_bash"}, []byte(`{
+	h.runs.answerUnattended(chatID, br, id, launchrule.Run{ScheduleID: "sched-1", WorkflowID: "wf_1"}, askName{tool: "execute_bash"}, []byte(`{
 		"options":[{"optionId":"accept","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}],
 		"_meta":{"kiro":{"consent":{"scope":"administration"}}}}`))
 
@@ -485,16 +485,13 @@ func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
 			h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
 			chatID := runChatID("wf_classifier")
 			h.bridge.mgr.insert(chatID, testBridge(br, bridgeIdle))
-			st, err := schedule.NewStore(t.TempDir())
+			st, err := launchrule.NewStore(t.TempDir())
 			if err != nil {
-				t.Fatalf("schedule.NewStore: %v", err)
+				t.Fatalf("launchrule.NewStore: %v", err)
 			}
-			entry := schedule.Entry{Source: "bundled://nightly", Enabled: true, Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2}}
-			if pErr := st.Put(t.Context(), &entry); pErr != nil {
-				t.Fatalf("Put schedule: %v", pErr)
-			}
-			h.runs.schedules = st
-			run := schedule.Run{ScheduleID: entry.ID(), ScheduleLife: entry.Life, WorkflowID: "wf_classifier"}
+			entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+			h.runs.launchRules = st
+			run := launchrule.Run{ScheduleID: entry.ID, WorkflowID: "wf_classifier"}
 			if rErr := st.RecordStart(t.Context(), run); rErr != nil {
 				t.Fatalf("RecordStart: %v", rErr)
 			}
@@ -524,10 +521,10 @@ func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
 			if tc.wantOption != "reject" {
 				return
 			}
-			rows := st.List()
+			rows := st.Clocks()
 			const wantReason = "Kiro's safety check asked a person to approve fs_write with nobody watching. " +
 				"Approve it in a chat, or add a permission rule to allow it"
-			if len(rows) != 1 || rows[0].LastStatus != schedule.StatusFailed || rows[0].LastReason != wantReason {
+			if len(rows) != 1 || rows[0].LastStatus != launchrule.StatusFailed || rows[0].LastReason != wantReason {
 				t.Errorf("schedule rows = %+v, want one failed row reading %q", rows, wantReason)
 			}
 		})
@@ -540,20 +537,14 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	chatID := runChatID("wf_deny")
 	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
-	st, err := schedule.NewStore(t.TempDir())
+	st, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("schedule.NewStore: %v", err)
+		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	entry := schedule.Entry{
-		Source: "bundled://nightly", Enabled: true,
-		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
-	}
-	if pErr := st.Put(t.Context(), &entry); pErr != nil {
-		t.Fatalf("Put schedule: %v", pErr)
-	}
-	h.runs.schedules = st
+	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	h.runs.launchRules = st
 	// The row tracks the run its fire launched; only that run's outcome lands on it.
-	run := schedule.Run{ScheduleID: entry.ID(), ScheduleLife: entry.Life, WorkflowID: "wf_deny"}
+	run := launchrule.Run{ScheduleID: entry.ID, WorkflowID: "wf_deny"}
 	if rErr := st.RecordStart(t.Context(), run); rErr != nil {
 		t.Fatalf("RecordStart: %v", rErr)
 	}
@@ -566,14 +557,14 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	h.runs.answerUnattended(chatID, br, id, run, askName{tool: "execute_bash"},
 		[]byte(`{"options":[{"optionId":"reject","kind":"reject_once"}]}`))
 
-	rows := st.List()
+	rows := st.Clocks()
 	if len(rows) != 1 {
 		t.Fatalf("the schedule store holds %d rows, want 1", len(rows))
 	}
 	const wantReason = "needed approval for execute_bash with nobody watching. Add a permission rule to allow it"
-	if rows[0].LastStatus != schedule.StatusFailed || rows[0].LastReason != wantReason {
+	if rows[0].LastStatus != launchrule.StatusFailed || rows[0].LastReason != wantReason {
 		t.Errorf("answerUnattended(deny) row = (%q, %q), want (%q, %q)",
-			rows[0].LastStatus, rows[0].LastReason, schedule.StatusFailed, wantReason)
+			rows[0].LastStatus, rows[0].LastReason, launchrule.StatusFailed, wantReason)
 	}
 	// The alert rule's signal: the fixed message carrying the refused outcome.
 	if got := logs.String(); !strings.Contains(got, `"msg":"`+logMsgUnattendedPermission+`"`) ||
@@ -589,20 +580,14 @@ func TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow(t *testing
 	chatID := runChatID("wf_deny")
 	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
-	st, err := schedule.NewStore(t.TempDir())
+	st, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("schedule.NewStore: %v", err)
+		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	entry := schedule.Entry{
-		Source: "bundled://nightly", Enabled: true,
-		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
-	}
-	if pErr := st.Put(t.Context(), &entry); pErr != nil {
-		t.Fatalf("Put schedule: %v", pErr)
-	}
-	h.runs.schedules = st
+	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	h.runs.launchRules = st
 	// The row tracks the run its fire launched; only that run's outcome lands on it.
-	run := schedule.Run{ScheduleID: entry.ID(), ScheduleLife: entry.Life, WorkflowID: "wf_deny"}
+	run := launchrule.Run{ScheduleID: entry.ID, WorkflowID: "wf_deny"}
 	if rErr := st.RecordStart(t.Context(), run); rErr != nil {
 		t.Fatalf("RecordStart: %v", rErr)
 	}
@@ -616,7 +601,7 @@ func TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow(t *testing
 		"consent":{"capability":"power","resource":"github/github/create_pr"}}}}`)
 	h.runs.answerUnattended(chatID, br, id, run, permissionAskName(params), params)
 
-	rows := st.List()
+	rows := st.Clocks()
 	if len(rows) != 1 {
 		t.Fatalf("the schedule store holds %d rows, want 1", len(rows))
 	}
@@ -640,20 +625,14 @@ func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *
 	br.during = func() { h.bus.endAsksOf(br) }
 	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
-	st, err := schedule.NewStore(t.TempDir())
+	st, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("schedule.NewStore: %v", err)
+		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	entry := schedule.Entry{
-		Source: "bundled://nightly", Enabled: true,
-		Spec: schedule.Spec{Freq: schedule.FreqDaily, Hour: 2},
-	}
-	if pErr := st.Put(t.Context(), &entry); pErr != nil {
-		t.Fatalf("Put schedule: %v", pErr)
-	}
-	h.runs.schedules = st
+	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	h.runs.launchRules = st
 	// The row tracks the run its fire launched; only that run's outcome lands on it.
-	run := schedule.Run{ScheduleID: entry.ID(), ScheduleLife: entry.Life, WorkflowID: "wf_deny"}
+	run := launchrule.Run{ScheduleID: entry.ID, WorkflowID: "wf_deny"}
 	if rErr := st.RecordStart(t.Context(), run); rErr != nil {
 		t.Fatalf("RecordStart: %v", rErr)
 	}
@@ -666,7 +645,7 @@ func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *
 	h.runs.answerUnattended(chatID, br, id, run, askName{tool: "execute_bash"},
 		[]byte(`{"options":[{"optionId":"reject","kind":"reject_once"}]}`))
 
-	rows := st.List()
+	rows := st.Clocks()
 	if len(rows) != 1 {
 		t.Fatalf("the schedule store holds %d rows, want 1", len(rows))
 	}

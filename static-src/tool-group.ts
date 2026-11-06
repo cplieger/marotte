@@ -12,7 +12,8 @@ import { chevronEl } from "./chevron.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { iconEl } from "./icon-el.js";
 import { outcomeIcon } from "./icons.js";
-import { foldGroupHooks, onHookVisibility, syncHookBadge, syncHookList } from "./hook-fold.js";
+import { foldGroupHooks, onHookVisibility } from "./hook-fold.js";
+import { syncHookBadge } from "./hook-badge.js";
 import { setUserScrolledUp } from "./scroll.js";
 import { kindNoun } from "./tool-kind-noun.js";
 import type { ToolKind } from "./tool-schema.js";
@@ -102,7 +103,7 @@ export function refreshGroupHeader(group: HTMLElement): void {
   const members = [
     ...group.querySelectorAll(":scope > .tool-group-body > .tool-call"),
   ] as HTMLElement[];
-  // Every count below reads the rows alone: a folded hook is counted on the badge.
+  // The summary reads the rows alone: the hooks badge counts every folded hook, and a hook is no operation.
   const { rows, folded } = foldGroupHooks(members);
   // The ONE writer of the bare class. Above the summary-span guard, which would otherwise exempt a
   // shell without a count span.
@@ -111,11 +112,7 @@ export function refreshGroupHeader(group: HTMLElement): void {
   // Deliberately ABOVE the summary-span guard too, and for the same reason: a shell carrying no
   // count span would otherwise never get its region. This is the ONE creation site.
   ensureGroupDisclosure(group, members);
-  syncHookList(groupBody(group), folded);
-  const headerRow = group.querySelector<HTMLElement>(":scope > .tool-group-header");
-  if (headerRow !== null) {
-    syncHookBadge(headerRow, folded.length);
-  }
+  syncHookBadge(group, folded);
   const header = group.querySelector(".tool-group-header .tool-group-count");
   if (header === null) {
     return;
@@ -124,7 +121,7 @@ export function refreshGroupHeader(group: HTMLElement): void {
   // The summary states the aggregate FACT and names every non-clean population in
   // it, so a COLLAPSED group still says what happened. It never counts cards:
   // "Read 5 files" is right, "5 tool calls" is a bug.
-  const summary = summarize(rows) + namedCounts(counts);
+  const summary = summarizeOperations(rows) + namedCounts(counts);
   // No "(collapsed)" suffix: the group is one box whose chevron and
   // aria-expanded already carry the state, so the word restated the chrome.
   header.textContent = summary;
@@ -247,6 +244,13 @@ function paintGroupOutcome(group: HTMLElement, calls: HTMLElement[], counts: Gro
 }
 
 // --- Summarizers (pure, no state dependency) ---
+
+/** The summary of a group's rows, hooks left out. A group of nothing but hook rows has no other operation to name,
+ *  so it summarizes those. */
+function summarizeOperations(rows: HTMLElement[]): string {
+  const operations = rows.filter((c) => c.dataset["kind"] !== "hook");
+  return summarize(operations.length > 0 ? operations : rows);
+}
 
 export interface CallInfo {
   kind: ToolKind;

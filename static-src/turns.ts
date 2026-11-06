@@ -5,6 +5,7 @@
 import { callIDOfToolResult } from "./entry-ids.js";
 import { askBucket, type AskBucket } from "./interaction.js";
 import { defaultFailureReason, severityOf } from "./turn-severity.js";
+import { hookCounted, hookStatusShown } from "./hook-fold.js";
 import { isWakingRow } from "./waking-rows.js";
 import type {
   AnyEntry,
@@ -454,6 +455,9 @@ export function turnLedger(t: Turn): TurnLedger {
 }
 
 function countCall(led: TurnLedger, call: EntryToolCall): void {
+  if (call.kind === "hook" && !hookCounted(call, hookStatusShown())) {
+    return;
+  }
   led.kindCounts[call.kind] = (led.kindCounts[call.kind] ?? 0) + 1;
   if ((call.agent_subtask_id ?? "") !== "") {
     led.delegateCount++;

@@ -11,9 +11,9 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -213,7 +213,7 @@ func (rs *Runs) observeAbsentLease(ctx context.Context, l *runlease.Lease, now t
 
 	slog.Warn("run stayed absent past the lease budget; no terminal signal was ever seen",
 		"workflow_id", l.WorkflowID, "recipe", l.Recipe, "first_absent_at", l.FirstAbsentAt)
-	rs.recordScheduleOutcome(ctx, scheduleRun(l), schedule.Outcome{Status: schedule.StatusUnknown, Reason: reasonLeaseAbsent})
+	rs.recordScheduleOutcome(ctx, scheduleRun(l), launchrule.Outcome{Status: launchrule.StatusUnknown, Reason: reasonLeaseAbsent})
 	rs.releaseLease(ctx, l.WorkflowID)
 }
 
@@ -269,7 +269,7 @@ func (rs *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease) bool {
 	slog.Error(logMsgRunOrphaned, "workflow_id", l.WorkflowID, "recipe", l.Recipe,
 		"origin", string(l.Origin), "schedule_id", l.ScheduleID)
 	// The schedule's row too, or every later slot is refused as an overlap.
-	rs.recordScheduleOutcome(ctx, scheduleRun(l), schedule.Outcome{Status: schedule.StatusFailed, Reason: reasonOrphaned})
+	rs.recordScheduleOutcome(ctx, scheduleRun(l), launchrule.Outcome{Status: launchrule.StatusFailed, Reason: reasonOrphaned})
 	rs.releaseLease(ctx, l.WorkflowID)
 	return true
 }
@@ -359,6 +359,7 @@ func (rs *Runs) rawInspect(ctx context.Context, workflowID string) (json.RawMess
 	var res workflow.InspectResult
 	if json.Unmarshal(raw, &res) == nil && res.State != nil {
 		rs.seedRouterSteps(workflowID, res.State)
+		rs.signals.observe(workflowID, res.State)
 	}
 	return raw, nil
 }

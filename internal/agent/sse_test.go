@@ -17,10 +17,10 @@ import (
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/go/sse"
 	"github.com/cplieger/go/sse/ssetest"
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/liveness"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/subject"
 )
 
@@ -322,8 +322,9 @@ func TestRegisterRoutes_DrainingGate(t *testing.T) {
 		{"run launch", http.MethodPost, "/api/runs", `{}`},
 		{"run step verb", http.MethodPost, "/api/runs/wf_1/steps/a/cancel", ""},
 		{"run delete", http.MethodDelete, "/api/runs/wf_1", ""},
-		{"schedule put", http.MethodPost, "/api/schedules", `{}`},
-		{"schedule delete", http.MethodDelete, "/api/schedules/s1", ""},
+		{"launch rule create", http.MethodPost, "/api/launch-rules", `{}`},
+		{"launch rule replace", http.MethodPut, "/api/launch-rules/r1", `{}`},
+		{"launch rule delete", http.MethodDelete, "/api/launch-rules/r1", ""},
 		{"engine restart", http.MethodPost, "/api/engine/restart", ""},
 		{"merge status", http.MethodGet, "/api/chats/c1/merges/op1", ""},
 	} {
@@ -359,7 +360,7 @@ func TestRegisterRoutes_DrainingGate(t *testing.T) {
 		h.RegisterRoutes(mux)
 		h.lifecycle.draining.Store(true)
 
-		for _, path := range []string{"/api/config-template", "/api/runs/live", "/api/schedules", "/api/engine"} {
+		for _, path := range []string{"/api/config-template", "/api/runs/live", "/api/launch-rules", "/api/engine"} {
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 			if rec.Code == http.StatusServiceUnavailable {
@@ -369,15 +370,15 @@ func TestRegisterRoutes_DrainingGate(t *testing.T) {
 	})
 }
 
-// newDrainGateHub carries a schedule store, so the schedule routes are registered at all.
+// newDrainGateHub carries a launch-rule store, so the launch-rule routes are registered at all.
 func newDrainGateHub(t *testing.T) *Runtime {
 	t.Helper()
 	h, _, _ := newTestHub()
-	st, err := schedule.NewStore(t.TempDir())
+	st, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("schedule.NewStore: %v", err)
+		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	h.runs.schedules = st
+	h.runs.launchRules = st
 	return h
 }
 

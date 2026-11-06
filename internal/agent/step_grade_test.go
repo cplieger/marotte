@@ -7,11 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/turnlog"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -47,6 +50,7 @@ func TestStepClose_GradedUnderKASsRecord(t *testing.T) {
 		outcome: marotte.TurnOutcomeRefused, rawStop: marotte.StopReasonRefusal,
 		refusal: &marotte.RefusalInfo{Category: "policy"},
 	}
+	silent := stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: marotte.StopReasonEndTurn, unanswered: true}
 	succeeded := workflow.StepRecord{Status: "completed", CompletionSignal: "success"}
 	unsignalled := workflow.StepRecord{Status: "completed"}
 	for _, tc := range []struct {
@@ -87,6 +91,17 @@ func TestStepClose_GradedUnderKASsRecord(t *testing.T) {
 			kas:   unsignalled, known: true,
 			want: stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: marotte.StopReasonEndTurn},
 		},
+		{
+			desc: "no signal on a completed step after an empty answer names the empty answer", close: silent,
+			kas: unsignalled, known: true,
+			want: stepClose{
+				outcome: marotte.TurnOutcomeFailed, kind: marotte.FailureKindEmptyAnswer,
+				reason: marotte.EmptyAnswerStepReason, rawStop: marotte.StopReasonEndTurn,
+			},
+		},
+		{desc: "a success signal outranks an empty answer", close: silent, kas: succeeded, known: true, want: silent},
+		{desc: "KAS's own failure keeps an empty answer's close", close: silent, kas: workflow.StepRecord{Status: "failed"}, known: true, want: silent},
+		{desc: "an unread record keeps an empty answer's close", close: silent, want: silent},
 		{desc: "an unread record keeps the close", close: toolUse, want: toolUse},
 		{desc: "an unread record keeps a refusal", close: refused, want: refused},
 	} {
@@ -355,4 +370,334 @@ func TestStepEnd_AStoredModelCallLimitFailureOfAStepKASCompletedOnSuccessReadsCo
 				c.Outcome, c.FailureKind, c.FailureReason, c.StopReasonRaw)
 		}
 	})
+}
+
+// TestStepEnd_AStepKASCompletedWithNoSignalAfterAnEmptyAnswerReadsFailed replays kiro-cli 3.0.0's empty end_turn
+// after a tool result: KAS records the step completed with no signal, and its session holds no answer or KAS's
+// "No assistant response was recorded" stand-in.
+func TestStepEnd_AStepKASCompletedWithNoSignalAfterAnEmptyAnswerReadsFailed(t *testing.T) {
+	const (
+		id      = "wf_aabb60d3e105b178"
+		chatID  = marotte.ChatID("c1")
+		session = "step-session-1"
+		stand   = "(No assistant response was recorded for the preceding turn. This placeholder was inserted automatically to preserve message alternation.)"
+	)
+	path := []string{id, "review-grok"}
+	nodePath := workflow.PathKey(path)
+	for _, tc := range []struct {
+		desc, before, after, signal string
+		failed                      bool
+	}{
+		{desc: "KAS's stand-in after the tool result", before: "Reading the diff.", after: stand, failed: true},
+		{desc: "nothing after the tool result", before: "Reading the diff.", failed: true},
+		{desc: "a blank answer after the tool result", after: " \n", failed: true},
+		{desc: "an answer after the tool result", after: "Two findings, written to the review file."},
+		{
+			desc:  "an answer opening with the stand-in's first words",
+			after: "No assistant response was recorded in the log, so I wrote the findings to the review file.",
+		},
+		{desc: "a success signal", after: "", signal: "success"},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			h, cs, br := runLoggingHub(t)
+			br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, id, "review-grok", "completed", tc.signal))
+			seedChat(t, cs, chatID)
+			h.runs.grantLease(t.Context(), id, "review",
+				launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
+			step := &translate.RunStep{RunID: id, NodePath: nodePath, SessionID: session}
+			h.runs.RunNodeStart(t.Context(), step, "")
+			turn, ok := h.runs.RunFoldTarget(t.Context(), step, "")
+			if !ok {
+				t.Fatal("Setup: the step has no open turn")
+			}
+			if tc.before != "" {
+				if _, err := turn.TextDelta(t.Context(), "", "say-1", tc.before); err != nil {
+					t.Fatalf("Setup: text: %v", err)
+				}
+			}
+			if _, err := turn.ToolCall(t.Context(), "", &marotte.EntryToolCall{ID: "call-1", Title: "rg", Kind: marotte.ToolKindOther}); err != nil {
+				t.Fatalf("Setup: tool call: %v", err)
+			}
+			if _, err := turn.ToolResult(t.Context(), "", "call-1", &marotte.EntryToolResult{Status: marotte.ToolCompleted}); err != nil {
+				t.Fatalf("Setup: tool result: %v", err)
+			}
+			if tc.after != "" {
+				if _, err := turn.TextDelta(t.Context(), "", "say-2", tc.after); err != nil {
+					t.Fatalf("Setup: text: %v", err)
+				}
+			}
+			if !h.runs.RunStopReason(id, nodePath, marotte.StopReasonEndTurn) {
+				t.Fatal("Setup: RunStopReason refused on the open turn")
+			}
+			h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
+			joinInflight(t, h)
+
+			t.Run("the run read", func(t *testing.T) {
+				end, named := stepEndsOf(t, h, id)[nodePath]
+				if named != tc.failed || (named && (end.Outcome != marotte.TurnOutcomeFailed || end.FailureKind != "empty_answer")) {
+					t.Errorf("step_ends[%s] = %+v (named %v), want failed with empty_answer: %v", nodePath, end, named, tc.failed)
+				}
+			})
+			t.Run("the step's turn", func(t *testing.T) {
+				c := newestCloseOf(t, h, id, nodePath)
+				if got := c.Outcome == marotte.TurnOutcomeFailed && c.FailureKind == "empty_answer"; got != tc.failed {
+					t.Errorf("turn_close = {%s %q %q}, want failed with empty_answer: %v", c.Outcome, c.FailureKind, c.FailureReason, tc.failed)
+				}
+			})
+			t.Run("the launching chat's note", func(t *testing.T) {
+				steers := chatSteers(t, cs, chatID)
+				if !tc.failed {
+					if len(steers) != 0 {
+						t.Errorf("the launching chat got %d notes, want none: %+v", len(steers), steers)
+					}
+					return
+				}
+				if len(steers) != 1 {
+					t.Fatalf("the launching chat got %d notes, want one: %+v", len(steers), steers)
+				}
+				for _, want := range []string{nodePath, session, "ended with no answer and no signal"} {
+					if !strings.Contains(steers[0].Text, want) {
+						t.Errorf("note text = %q, want it to name %q", steers[0].Text, want)
+					}
+				}
+			})
+		})
+	}
+}
+
+// stepEnding drives one step's frames through the run, as marotte receives them.
+type stepEnding struct {
+	t        *testing.T
+	h        *Runtime
+	id       string
+	path     []string
+	nodePath string
+	session  string
+	n        int
+}
+
+func (s *stepEnding) turn() *turnlog.Turn {
+	s.t.Helper()
+	turn, ok := s.h.runs.RunFoldTarget(s.t.Context(), &translate.RunStep{RunID: s.id, NodePath: s.nodePath, SessionID: s.session}, "")
+	if !ok {
+		s.t.Fatal("Setup: the step has no open turn")
+	}
+	return turn
+}
+
+func (s *stepEnding) say(text string) {
+	s.t.Helper()
+	s.n++
+	if _, err := s.turn().TextDelta(s.t.Context(), "", "say-"+strconv.Itoa(s.n), text); err != nil {
+		s.t.Fatalf("Setup: text: %v", err)
+	}
+}
+
+// call runs one tool call to its result, named as KAS titles a built-in.
+func (s *stepEnding) call(toolName string) {
+	s.t.Helper()
+	s.n++
+	id := "call-" + strconv.Itoa(s.n)
+	turn := s.turn()
+	if _, err := turn.ToolCall(s.t.Context(), "", &marotte.EntryToolCall{ID: id, Title: toolName, ToolName: toolName, Kind: marotte.ToolKindOther}); err != nil {
+		s.t.Fatalf("Setup: tool call: %v", err)
+	}
+	if _, err := turn.ToolResult(s.t.Context(), "", id, &marotte.EntryToolResult{Status: marotte.ToolCompleted}); err != nil {
+		s.t.Fatalf("Setup: tool result: %v", err)
+	}
+}
+
+// edge delivers a step session's turn bracket through the run host's session_info_update door.
+func (s *stepEnding) edge(kiro map[string]any) {
+	s.t.Helper()
+	update := mustJSON(s.t, map[string]any{"sessionUpdate": "session_info_update", "_meta": map[string]any{"kiro": kiro}})
+	s.h.translator.HandleStepInfoUpdate(s.t.Context(), runChatID(s.id), update,
+		translate.FrameAttribution{SessionID: s.session, RunID: s.id, NodePath: s.nodePath, Step: true})
+}
+
+func (s *stepEnding) turnStart() { s.edge(map[string]any{"kind": "turn_start", "turnStart": true}) }
+
+func (s *stepEnding) turnEnd() {
+	s.edge(map[string]any{"kind": "turn_end", "turnEnd": map[string]any{"stopReason": "end_turn"}})
+}
+
+func (s *stepEnding) paused() { s.h.runs.RunNodePaused(s.t.Context(), s.id, s.path) }
+
+func (s *stepEnding) complete(status string) {
+	s.h.runs.RunNodeComplete(s.t.Context(), s.id, s.path, status, "")
+}
+
+// TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer walks every way a step ends. The empty-answer
+// grade judges a step its own turn ended with no answer text and no send_message (kiro-cli 3.0.0's empty end_turn,
+// which KAS completes at once). KAS also records completed with no signal when something else ends the step: Mark step
+// done and the parent's update_status clear the signal (applyPausedStepFinish), and a run's end closes what is open.
+func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *testing.T) {
+	const (
+		id      = "wf_aabb60d3e105b178"
+		chatID  = marotte.ChatID("c1")
+		session = "step-session-1"
+	)
+	path := []string{id, "review-grok"}
+	for _, tc := range []struct {
+		desc, status, signal string
+		drive                func(s *stepEnding)
+		empty                bool
+	}{
+		{
+			desc: "its own turn ends with an answer", status: "completed",
+			drive: func(s *stepEnding) {
+				s.turnStart()
+				s.call("rg")
+				s.say("Two findings, written to the review file.")
+				s.turnEnd()
+				s.complete("completed")
+			},
+		},
+		{
+			desc: "its own turn ends with nothing said", status: "completed", empty: true,
+			drive: func(s *stepEnding) {
+				s.turnStart()
+				s.say("Reading the diff.")
+				s.call("rg")
+				s.turnEnd()
+				s.complete("completed")
+			},
+		},
+		{
+			desc: "its own turn ends on a send_message", status: "completed",
+			drive: func(s *stepEnding) {
+				s.turnStart()
+				s.call("rg")
+				s.call("send_message")
+				s.turnEnd()
+				s.complete("completed")
+			},
+		},
+		{
+			desc: "Mark step done after its warning parked it", status: "completed",
+			drive: func(s *stepEnding) {
+				s.turnStart()
+				s.call("rg")
+				s.call("send_message")
+				s.turnEnd()
+				s.paused()
+				s.complete("completed")
+			},
+		},
+		{
+			desc: "Mark step done after its success signal parked it behind a sibling", status: "completed",
+			drive: func(s *stepEnding) {
+				s.turnStart()
+				s.call("send_message")
+				s.turnEnd()
+				s.paused()
+				s.complete("completed")
+			},
+		},
+		{
+			desc: "the parent's update_status completes it after a silent wake turn re-parked it", status: "completed",
+			drive: func(s *stepEnding) {
+				s.turnStart()
+				s.call("send_message")
+				s.turnEnd()
+				s.paused()
+				s.turnStart()
+				s.call("rg")
+				s.turnEnd()
+				s.paused()
+				s.complete("completed")
+			},
+		},
+		{
+			desc: "the parent's update_status fails it after a park", status: "failed",
+			drive: func(s *stepEnding) {
+				s.turnStart()
+				s.call("rg")
+				s.turnEnd()
+				s.paused()
+				s.complete("failed")
+			},
+		},
+		{
+			desc: "the parent's update_status completes it inside its first turn", status: "completed",
+			drive: func(s *stepEnding) {
+				s.turnStart()
+				s.call("rg")
+				s.complete("completed")
+			},
+		},
+		{
+			desc: "the parent's update_status completes it inside a later turn", status: "completed",
+			drive: func(s *stepEnding) {
+				s.turnStart()
+				s.say("Reading the diff.")
+				s.turnEnd()
+				s.turnStart()
+				s.call("rg")
+				s.complete("completed")
+			},
+		},
+		{
+			desc: "a cancel", status: "cancelled",
+			drive: func(s *stepEnding) {
+				s.turnStart()
+				s.call("rg")
+				s.turnEnd()
+				s.complete("cancelled")
+			},
+		},
+		{
+			desc: "the run aborts", status: "running",
+			drive: func(s *stepEnding) {
+				s.turnStart()
+				s.call("rg")
+				s.h.runs.closeRun(s.t.Context(), s.id, "aborted")
+			},
+		},
+		{
+			desc: "the run completes with its turn open", status: "completed",
+			drive: func(s *stepEnding) {
+				s.turnStart()
+				s.call("rg")
+				s.turnEnd()
+				s.h.runs.closeRun(s.t.Context(), s.id, "completed")
+			},
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			h, cs, br := runLoggingHub(t)
+			br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, id, "review-grok", tc.status, tc.signal))
+			seedChat(t, cs, chatID)
+			h.runs.grantLease(t.Context(), id, "review",
+				launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
+			nodePath := workflow.PathKey(path)
+			h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: id, NodePath: nodePath, SessionID: session}, "")
+			tc.drive(&stepEnding{t: t, h: h, id: id, path: path, nodePath: nodePath, session: session})
+			joinInflight(t, h)
+
+			t.Run("the run read", func(t *testing.T) {
+				end := stepEndsOf(t, h, id)[nodePath]
+				if got := end.FailureKind == marotte.FailureKindEmptyAnswer; got != tc.empty {
+					t.Errorf("step_ends[%s] = %+v, want empty_answer: %v", nodePath, end, tc.empty)
+				}
+			})
+			t.Run("the step's turn", func(t *testing.T) {
+				c := newestCloseOf(t, h, id, nodePath)
+				if got := c.FailureKind == marotte.FailureKindEmptyAnswer; got != tc.empty {
+					t.Errorf("turn_close = {%s %q}, want empty_answer: %v", c.Outcome, c.FailureKind, tc.empty)
+				}
+			})
+			t.Run("the launching chat's note", func(t *testing.T) {
+				var notes int
+				for _, s := range chatSteers(t, cs, chatID) {
+					if strings.Contains(s.Text, "ended with no answer and no signal") {
+						notes++
+					}
+				}
+				if want := map[bool]int{true: 1}[tc.empty]; notes != want {
+					t.Errorf("the launching chat got %d empty-answer notes, want %d", notes, want)
+				}
+			})
+		})
+	}
 }

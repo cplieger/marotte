@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/go/keyenc"
@@ -379,10 +380,11 @@ func TestStepsAt_SiblingsRunningCountsOnlyOtherExecutions(t *testing.T) {
 // waits_on_run, and the same step with that sibling finished is busy.
 func TestMessageStep_APausedStepBesideARunningSiblingWaitsOnTheRun(t *testing.T) {
 	for _, tc := range []struct {
-		sibling, want string
+		sibling, want, words string
 	}{
-		{sibling: "running", want: string(marotte.RunStepWaitsOnRun)},
-		{sibling: "completed", want: string(marotte.RunStepBusy)},
+		{sibling: "running", want: string(marotte.RunStepWaitsOnRun), words: "Mark step done ends this step now; " +
+			"its lane moves on when the run's other steps finish, or at once if you pause and resume the run, which interrupts them"},
+		{sibling: "completed", want: string(marotte.RunStepBusy), words: "this step cannot take a message right now"},
 	} {
 		t.Run(tc.sibling, func(t *testing.T) {
 			h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusPaused)
@@ -396,6 +398,9 @@ func TestMessageStep_APausedStepBesideARunningSiblingWaitsOnTheRun(t *testing.T)
 			h.runRoutes.writeStepErr(rec, "message", "wf_1", reviewPath, err)
 			if rec.Code != http.StatusConflict || reasonOf(t, rec.Body.Bytes()) != tc.want {
 				t.Errorf("reply = %d %s, want 409 with reason %s", rec.Code, rec.Body.String(), tc.want)
+			}
+			if !strings.Contains(rec.Body.String(), tc.words) {
+				t.Errorf("reply = %s, want the words %q", rec.Body.String(), tc.words)
 			}
 			if calls := br.callLog(); slices.Contains(calls, marotte.MethodPrompt) || slices.Contains(calls, marotte.MethodSessionSteer) {
 				t.Errorf("calls = %v, want nothing sent to a step KAS would not admit", calls)

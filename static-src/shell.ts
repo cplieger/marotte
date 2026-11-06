@@ -7,7 +7,7 @@ import { createTerminal, localScrollbackStorage } from "@cplieger/web-terminal-u
 import { presetSingle } from "@cplieger/web-terminal-ui/presets/single";
 import { mobileToolbar } from "@cplieger/web-terminal-ui/features/mobile-toolbar";
 import type { MobileToolbarApi } from "@cplieger/web-terminal-ui/features/mobile-toolbar";
-import type { TerminalFeature, TerminalHandle } from "@cplieger/web-terminal-ui";
+import type { ModeReaders, TerminalFeature, TerminalHandle } from "@cplieger/web-terminal-ui";
 import { $ } from "./dom.js";
 import { getScrollEl } from "./messages.js";
 import { shiftScroll } from "./scroll.js";
@@ -69,6 +69,9 @@ const firstFrame = new Promise<void>((resolve) => {
   settleFirstFrame = resolve;
 });
 
+/** The terminal's live mode readers, kept by `firstFrameGate`; null until the terminal exists. */
+let paneModes: ModeReaders | null = null;
+
 /** Resolve `firstFrame` on the first screen frame that carries rows. Bytes sent before the
  *  resume is served are lost or doubled: on a fresh session the engine's ledger-lost drop
  *  empties the outbox, and a send between socket open and the resumeAck is replayed by the
@@ -77,6 +80,7 @@ function firstFrameGate(): TerminalFeature {
   return {
     name: "firstFrameGate",
     setup(ctx) {
+      paneModes = ctx.modes;
       return {
         teardown: ctx.on("wire:screen", (msg) => {
           if (msg.rows.length > 0) {
@@ -262,18 +266,29 @@ export function initShellPanel(): void {
 
   wireFullscreenToggle();
 
-  // The command and its "\r" ride ONE buffer: the sticky Ctrl transform rewrites a one-character
-  // payload, so a separate CR send becomes a CSI-u sequence.
   setShellRunCallback((cmd: string) => {
     if (!shellOpen) {
       setShellOpen(true, { focus: false });
     }
+    // Read after the gate: the server's modes frame lands with the session's first frames.
     void firstFrame.then(() => {
-      hostSend(encoder.encode(`${cmd}\r`));
+      hostSend(encoder.encode(runInput(cmd, paneModes?.isBracketedPaste() === true)));
     });
   });
 
   initShellResize();
+}
+
+/**
+ * The keys one Run sends, ending in the one CR that submits it, all in ONE buffer: the sticky Ctrl
+ * transform rewrites a one-character payload, so a separate CR send becomes a CSI-u sequence. Line ends
+ * go as CR, as the engine's own paste sends them. Under DEC mode 2004 (xterm ctlseqs "Bracketed Paste
+ * Mode") a block rides inside ESC [200~ ... ESC [201~ so the program takes it as one input; with the mode
+ * off the markers would be typed as text, so the lines go bare.
+ */
+function runInput(cmd: string, bracketedPaste: boolean): string {
+  const body = cmd.replaceAll("\n", "\r");
+  return bracketedPaste && body !== cmd ? `\x1b[200~${body}\x1b[201~\r` : `${body}\r`;
 }
 
 /** Keyboard resize step (2rem) per ArrowUp/ArrowDown on the handle. */

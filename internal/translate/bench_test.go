@@ -446,6 +446,12 @@ func (d *baseDeps) RunStopReason(runID, nodePath string, raw marotte.StopReason)
 	return ok && !d.turns.closed(t)
 }
 
+func (d *baseDeps) RunTurnStart(runID, nodePath string) bool {
+	d.runCalls = append(d.runCalls, runCall{kind: "turn_start", runID: runID, nodePath: nodePath})
+	t, ok := d.turns.runs[runPathKey(runID, nodePath)]
+	return ok && !d.turns.closed(t)
+}
+
 func (d *baseDeps) RunNodePaused(_ context.Context, runID string, path []string) {
 	d.runCalls = append(d.runCalls, runCall{kind: "node_paused", runID: runID, nodePath: workflow.PathKey(path)})
 }

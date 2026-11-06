@@ -1118,6 +1118,59 @@ describe("server-hit navigation", () => {
     expect(groupBody(group).inert).toBe(false);
   });
 
+  it("lands a hit on a folded hook's name on its group's hooks badge, opening the folded group", async () => {
+    stageChat(["u1"]);
+    const row = mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row"></div>`,
+    ).querySelector(".msg-row") as HTMLElement;
+    const group = buildToolGroupShell();
+    row.appendChild(group);
+    const members: Record<string, string>[] = [
+      { entryId: "e1", kind: "execute", title: "go vet" },
+      {
+        entryId: "e2",
+        kind: "hook",
+        title: "Hook fired: Destructive command guard",
+        filePath: ".kiro/hooks/destructive-guard.json",
+        filename: "destructive-guard.json",
+      },
+    ];
+    for (const m of members) {
+      const card = document.createElement("div");
+      card.className = "tool-call";
+      card.dataset["outcome"] = "ok";
+      Object.assign(card.dataset, m);
+      if (m["kind"] === "hook") {
+        card.setAttribute("data-hook-gates", "");
+      }
+      groupBody(group).appendChild(card);
+    }
+    refreshGroupHeader(group);
+    autoCollapseGroup(group);
+    const head = group.querySelector(":scope > .tool-group-header");
+    expect(head?.getAttribute("aria-expanded")).toBe("false");
+    stageHits([
+      serverHit({
+        entry_id: "e2",
+        excerpt: "Hook fired: Destructive command guard",
+        segment_kind: "tool_title",
+        offset: 12,
+        segment_len: 37,
+      }),
+    ]);
+
+    await openAndSearch("Destructive");
+    typeAndEnter("Destructive");
+    await vi.waitFor(() => {
+      expect(countText()).toBe("1 of 1 \u00b7 listed under the hooks badge");
+    });
+    expect(head?.getAttribute("aria-expanded")).toBe("true");
+    expect(group.querySelector(":scope > .tool-group-hooks")?.classList).toContain(
+      "find-target-flash",
+    );
+  });
+
   // tool_diff: the card is the target, the mini-diff the walk, and the notice has three states.
 
   function previewHTML(row: string): string {

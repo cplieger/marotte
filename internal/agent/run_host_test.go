@@ -18,9 +18,9 @@ import (
 
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/translate"
 )
 
@@ -1102,7 +1102,7 @@ func TestScheduledLaunchDropsUndeclaredInputs(t *testing.T) {
 	declaringRecipe(br)
 	rec := capture.Default(t)
 	inputs := map[string]string{"lane": "fast", "stray": "x", "other": "y"}
-	if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"}, inputs,
+	if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"}, inputs,
 		marotte.RunDefaults{}, time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("LaunchScheduled: %v", err)
 	}
@@ -1121,7 +1121,7 @@ func TestScheduledLaunchSendsDeclaredInputs(t *testing.T) {
 	h, _, br := newTestHub()
 	declaringRecipe(br)
 	rec := capture.Default(t)
-	if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", schedule.Row{ID: "sched-1"},
+	if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", launchrule.Row{ID: "sched-1"},
 		map[string]string{"lane": "fast", "cap": "3"}, marotte.RunDefaults{}, time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("LaunchScheduled: %v", err)
 	}

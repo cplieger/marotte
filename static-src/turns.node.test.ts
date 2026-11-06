@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import { toolResultID } from "./entry-ids.js";
+import { setHookStatusShown } from "./hook-fold.js";
 import {
   COMMAND_KINDS,
   closeOfBody,
@@ -644,6 +645,50 @@ describe("projectTurn", () => {
 // --- The ledger -------------------------------------------------------------
 
 describe("turnLedger", () => {
+  describe("hook runs", () => {
+    const body = (): Entry[] => [
+      callEntry("t1", 1, "cmd"),
+      callEntry("t1", 2, "h1", {
+        kind: "hook",
+        title: "Hook fired: a",
+        hook_trigger: "PreToolUse",
+      }),
+      callEntry("t1", 3, "h2", {
+        kind: "hook",
+        title: "Hook fired: a",
+        hook_trigger: "PreToolUse",
+      }),
+      callEntry("t1", 4, "h3", { kind: "hook", title: "Hook fired: b", status: "failed" }),
+      callEntry("t1", 5, "h4", { kind: "hook", title: "Hook fired: c", output: "2 warnings" }),
+    ];
+
+    it("counts every run while Show hook status is on", () => {
+      setHookStatusShown(true);
+      expect(turnLedger(oneTurn(body())).kindCounts["hook"]).toBe(4);
+    });
+
+    it("counts only the runs that keep a row while it is off", () => {
+      setHookStatusShown(false);
+      try {
+        const led = turnLedger(oneTurn(body()));
+        expect(led.kindCounts["hook"]).toBe(2);
+        expect(led.kindCounts["execute"]).toBe(1);
+      } finally {
+        setHookStatusShown(true);
+      }
+    });
+
+    it("leaves no hook count at all when every run is quiet and the switch is off", () => {
+      setHookStatusShown(false);
+      try {
+        const led = turnLedger(oneTurn(body().slice(0, 3)));
+        expect(led.kindCounts["hook"]).toBeUndefined();
+      } finally {
+        setHookStatusShown(true);
+      }
+    });
+  });
+
   it("takes the aggregate off the one close entry and SUMS nothing", () => {
     // One turn has one close carrying the whole aggregate, so there is no second
     // carrier to add to and no split to read through.

@@ -76,7 +76,7 @@ Reported as [kirodotdev/Kiro#11369](https://github.com/kirodotdev/Kiro/issues/11
 
 ### A hook shows on its tool group, not on the call it checked
 
-A hook that checks a tool call, such as a guard that runs before every command, shows as a count on its tool group's header rather than on the command it ran for. Opening the group lists those hooks. When a call in the group is refused or fails, every hook in the group stays a row, because marotte cannot tell which hook refused it.
+A hook that checks a tool call, such as a guard that runs before every command, shows as a count on its tool group's header rather than on the command it ran for. Selecting the count opens a list of those hooks, each with how often it ran and when it fires. When a call in the group is refused or fails, every hook in the group stays a row, because marotte cannot tell which hook refused it.
 
 Reported as [kirodotdev/Kiro#12284](https://github.com/kirodotdev/Kiro/issues/12284), open. kiro-cli's report of a hook names neither the tool call it ran for nor whether it blocked that call. marotte will show each hook on its own call once kiro-cli names the call.
 
@@ -126,6 +126,12 @@ kiro-cli accepts a request to pause a workflow run only on behalf of the user, a
 
 Reported as [kirodotdev/Kiro#12274](https://github.com/kirodotdev/Kiro/issues/12274), open. When marotte stops resuming a run after repeated throttling, it sends no pause and records the stop itself: the run's tab reads "marotte stopped resuming this run after repeated model throttling" beside **Resume**, a **Workflow runs** notification says so, and the agent that started the run reads it on its next turn. While your Kiro sign-in cannot be answered, marotte still pauses running runs, and that pause must name you, since kiro-cli accepts nothing else. The run's tab shows marotte's sign-in reason for it instead of saying you paused it.
 
+### A step that finished inside a parallel group holds up the steps after it
+
+When a paused step that runs beside other steps finishes, because it reported that it is done or failed or because you chose **Mark step done** or **Mark step failed**, the steps after it in its group wait until every other step of the run stops. A step you mark done or failed shows as finished or failed at once and its group as paused. A step that reported it is done or failed stays paused until the other steps stop.
+
+Reported as [kirodotdev/Kiro#12281](https://github.com/kirodotdev/Kiro/issues/12281), open, on kiro-cli 2.37.1, 3.0.0 and 3.1.0. It follows [kirodotdev/Kiro#11733](https://github.com/kirodotdev/Kiro/issues/11733), closed, whose fix in kiro-cli 2.32.0 finishes the step once the other steps stop but still holds its group until then. marotte labels a step that reported its end "Done, applies when the run's other steps finish" or "Failed, applies when the run's other steps finish". While the run keeps running, it labels the group of a step you marked "Done, moves on when the run's other steps finish" or "Failed, applies when the run's other steps finish". It also turns off **Send** for the step while another step of the run is running. To move the group on at once, pause and resume the run, which interrupts the other steps.
+
 ## Agent terminals
 
 ### Stopping a reply does not stop its command
@@ -133,11 +139,3 @@ Reported as [kirodotdev/Kiro#12274](https://github.com/kirodotdev/Kiro/issues/12
 When you stop a reply while the agent runs a command, kiro-cli ends the reply. The command carries on until its timeout, which can be up to 30 minutes.
 
 Reported as [kirodotdev/Kiro#11819](https://github.com/kirodotdev/Kiro/issues/11819), open. When you stop a reply, marotte also stops the commands that reply started.
-
-## Fixed upstream, workaround still in marotte
-
-### An answered step inside a parallel group keeps showing as waiting
-
-kiro-cli 2.37.0 finishes a step that runs beside other steps as soon as the step reports that it is done, while the other steps keep running. Earlier releases kept such a step showing as paused until every other step in its group stopped.
-
-Reported as [kirodotdev/Kiro#11733](https://github.com/kirodotdev/Kiro/issues/11733), closed. marotte still turns off **Send** on the run's tab while another step of the run is running.
