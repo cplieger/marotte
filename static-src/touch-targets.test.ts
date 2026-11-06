@@ -1177,7 +1177,7 @@ const SURFACES: readonly Surface[] = [
     rows: ["#tab-list .tab"],
     rowStep: {
       row: "#tab-list .tab",
-      controls: ["#new-chat", "#history-btn", "#account-btn", "#logout-btn"],
+      controls: ["#new-chat", "#history-btn"],
     },
   },
   {

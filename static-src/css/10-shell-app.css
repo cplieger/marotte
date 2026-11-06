@@ -9,30 +9,14 @@
      child, so a term there would be charged twice. */
   padding-bottom: env(safe-area-inset-bottom, 0);
 
-  /* THIS PANEL'S TWO ENDS ARE ONE BAND, and the value is the app's chrome band.
-     Both ends are the same shape — `flex` plus `align-items: center`, a leading
-     identity element, trailing `.icon-btn`s, `flex-shrink: 0` — at opposite ends of
-     one panel, so a reader reads them as a pair.
-
-     `--titlebar-h` rather than a value of the sidebar's own, because the HEADER is
-     already in that token's declared population: it is one of the bars that meet at
-     the top of the app, and 01-tokens.css states the reason there (their bottom
-     hairlines have to line up, which is why the header adds the top inset as
-     padding while the token itself folds none in). The header spelled the token's
-     value as a literal, and the footer declared a bare `height: 3.4375rem` (55px) —
-     a single-user literal, unchanged since the first commit, derived from nothing
-     measurable and 3px off both this panel's other end and that token. Measured
-     before: the footer's slack around the same 32px `.icon-btn` was 11.5px against
-     the header's 9.5px, so the two ends were within 2px of each other by accident
-     rather than by declaration. */
+  /* The panel's two ends are one band, the app's chrome band: the header is one of the bars that
+     meet at the top of the app, whose hairlines line up (01-tokens.css `--titlebar-h`). */
   --sidebar-band-h: var(--titlebar-h);
 
-  /* A tab's mouse height (its 1.5rem ×, its block padding, its reserved 1px border) and what touch
-     adds to it. The panel's row-like buttons grow by that same step, so a tier changes the
-     column's rows alike (`touch-targets.test.ts`, the sidebar). */
-  --tab-h: calc(1.5rem + 2 * var(--sp-2) + 2px);
-  --sidebar-row-grow: max(0px, calc(var(--row-tap) - var(--tab-h)));
-  --sidebar-btn-h: calc(var(--btn-h) + var(--sidebar-row-grow));
+  /* A tab's mouse height (its ×, its block padding, its reserved 1px border), and the row
+     height at the tier: New chat and History stand in the tabs' column, so they read it too. */
+  --tab-h: calc(var(--ctl-h-sm) + 2 * var(--sp-2) + 2px);
+  --tab-row-h: max(var(--tab-h), var(--row-tap));
 
   /* BOTH INLINE EDGES, and the bare `env()` rather than the `max()` shape the bar
      above uses: this element declares no inline padding of its own, so there is no
@@ -163,8 +147,15 @@ body.sidebar-resizing {
 .sidebar-header-actions {
   display: flex;
   align-items: center;
-  gap: max(var(--sp-1), var(--tap-gap-dense));
+  gap: max(var(--sp-1), var(--tap-gap));
   margin-inline-end: -0.5rem;
+}
+
+/* The sidebar's standalone icon buttons, the header's and Log out, paint at the toolbar's size. */
+.sidebar-header-actions > .icon-btn,
+.sidebar-footer-actions > .icon-btn {
+  min-inline-size: var(--btn-h);
+  min-block-size: var(--btn-h);
 }
 
 /* settings-btn svg rules moved to end of file (specificity ordering) */
@@ -204,7 +195,7 @@ body.sidebar-resizing {
   font-size: var(--fs-sm);
   cursor: pointer;
   white-space: nowrap;
-  min-height: var(--sidebar-btn-h);
+  min-height: var(--tab-row-h);
   transition: background var(--dur-micro);
   position: relative;
 
@@ -233,8 +224,8 @@ body.sidebar-resizing {
 
 .sidebar-history-btn {
   flex: none;
-  inline-size: var(--sidebar-btn-h);
-  min-block-size: var(--sidebar-btn-h);
+  inline-size: var(--tab-row-h);
+  min-block-size: var(--tab-row-h);
   padding: 0;
 }
 
@@ -293,7 +284,7 @@ body.sidebar-resizing {
   cursor: pointer;
   font-size: var(--fs-sm);
   color: var(--c-text-primary);
-  min-height: var(--row-tap);
+  min-height: var(--tab-row-h);
   transition:
     background var(--dur-micro),
     border-color var(--dur-micro),
@@ -596,16 +587,11 @@ body.sidebar-resizing {
     inset: var(--hit-inset);
   }
 
-  /* The ladder's rung for a 16-24px box is --r-sm, and this is 24px. It shipped
-     --r (6px), which is the TAB's own radius, so the close button's arc was
-     identical to the row containing it — the one relationship a nested corner may
-     never have. It is centred in a 36px row rather than sitting in the tab's
-     corner, so the concentric rule does not bind here (that rule is for a
-     corner-ADJACENT child) and the rung is the whole answer. */
+  /* The 16-24px rung, not the tab's own `--r`: the × is centred in the row, not in its corner. */
   border-radius: var(--r-sm);
   line-height: 0;
-  width: 1.5rem;
-  height: 1.5rem;
+  width: var(--ctl-h-sm);
+  height: var(--ctl-h-sm);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -653,7 +639,7 @@ body.sidebar-resizing {
 
 /* Sidebar footer, the panel's other end band (`--sidebar-band-h` above).
    `min-height` rather than the `height` this declared, so the band is a FLOOR the
-   way the header's is: nothing here exceeds it today (the two controls paint 32px and
+   way the header's is: nothing here exceeds it today (the two controls paint 36px and
    their 44px targets fit the 52px band), and a fixed height is the one shape
    that could not grow if one ever did. No `env()` term — the panel pays the bottom
    inset for it. */
@@ -664,11 +650,6 @@ body.sidebar-resizing {
   align-items: center;
   gap: var(--sp-3);
   min-height: var(--sidebar-band-h);
-
-  /* The row's one control height, read by both controls: an `.icon-btn`'s glyph plus its
-     padding, plus the panel's touch row step. `account-btn-css.test.ts` measures the two
-     boxes equal at every tier. */
-  --footer-ctl-h: calc(var(--icon-ui) + 2 * var(--sp-2) + var(--sidebar-row-grow));
 
   /* THE BOUNDARY BETWEEN THE TAB LIST AND THE FOOTER: with many tabs the strip runs
      into the footer and the two read as one column. Solid `--hairline` in
@@ -683,7 +664,7 @@ body.sidebar-resizing {
    button, the status popup's trigger. Its state channels are `.icon-btn`'s, not
    the row-hover `--c-hover`, because the footer's two controls are a PAIR that
    answer the pointer alike (`account-btn-css.test.ts` fails when they diverge),
-   and its box is `--footer-ctl-h`, the logout button's pill, not the band. Chrome
+   and its box is `--btn-h`, the logout button's height, not the band. Chrome
    is stripped by NAMED declarations, not `all: unset`, which would reset
    `min-width`/`min-height` and hide the control from the app-wide hit floor. */
 .account-btn {
@@ -708,21 +689,20 @@ body.sidebar-resizing {
   /* Opts out of the floor's INLINE axis, the way `.send-btn` does: this box is the
      band's whole width, so a 44px inline floor would be describing nothing. */
   min-width: 0;
-  min-block-size: var(--footer-ctl-h);
+  min-block-size: var(--btn-h);
 
   /* THE WASH BLEEDS `--sp-2` PAST THE CONTENT ON BOTH INLINE EDGES AND NOTHING ON
      SCREEN MOVES: the negative margins below add what this padding takes back, so the
      mark and the address keep their x. That holds only while the `.sr-only` subject
      span stays `position: absolute` (40-a11y.css), leaving this box two flex items.
-     The trailing bleed leaves 4px (6px coarse, below) before the actions cluster.
+     The trailing bleed leaves 4px before the actions cluster.
      Both axes are spelled: 02-reset.css never resets Chromium's UA `padding-block:
      1px`, which a `padding-inline` shorthand would keep. */
   padding: 0 var(--sp-2);
   /* The trailing bleed gives way under a finger so Log out's expander, which reaches
-     `--tap-gap-dense / 2` past its box, stops at this box's edge across the footer's
+     `--tap-gap / 2` past its box, stops at this box's edge across the footer's
      `--sp-3` gap. */
-  margin-inline: calc(-1 * var(--sp-2))
-    calc(max(var(--sp-1), var(--tap-gap-dense) / 2) - var(--sp-3));
+  margin-inline: calc(-1 * var(--sp-2)) calc(max(var(--sp-1), var(--tap-gap) / 2) - var(--sp-3));
   border-radius: var(--r);
 
   /* `background` and `color` only, character for character with `.icon-btn`,
@@ -803,11 +783,6 @@ body.sidebar-resizing {
   gap: 0.125rem;
   margin-inline-start: auto;
   flex-shrink: 0;
-
-  & > .icon-btn {
-    min-inline-size: var(--footer-ctl-h);
-    min-block-size: var(--footer-ctl-h);
-  }
 }
 
 /* THE CONNECTION MARK, a decorative disc inside `.account-btn`, which owns the target, the
@@ -894,9 +869,7 @@ body.sidebar-resizing {
    the trigger is shorter than the band, and a card anchored to it alone crosses the
    hairline by the slack. */
 .sidebar-footer .pill-status-content {
-  bottom: calc(
-    100% + var(--sp-1) + (var(--sidebar-band-h) + var(--hairline) - var(--footer-ctl-h)) / 2
-  );
+  bottom: calc(100% + var(--sp-1) + (var(--sidebar-band-h) + var(--hairline) - var(--btn-h)) / 2);
 }
 
 .icon-btn {
@@ -940,20 +913,9 @@ body.sidebar-resizing {
   }
 }
 
+/* An `.icon-btn` shown in the phone drawer only (50-mobile.css). */
 .sidebar-close-only {
   display: none;
-  background: none;
-  border: none;
-  color: var(--c-text-primary);
-  cursor: pointer;
-  padding: var(--sp-2);
-  border-radius: var(--r);
-  line-height: 0;
-  transition: background var(--dur-micro) var(--ease-standard);
-}
-
-.sidebar-close-only:hover {
-  background: var(--c-bg-tertiary);
 }
 
 /* THE ICON-SWAP SLIDE, shared by the theme cycle, the touch/mouse toggle and the
