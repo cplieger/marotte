@@ -31,6 +31,10 @@ const SKIPPABLE = ".msg-row, .tool-call, .subagent-block, .plan-message, .run-ca
  *  pixels: the spec resolves a rootMargin percentage against the root's WIDTH
  *  (https://w3c.github.io/IntersectionObserver/#intersectionobserver-root-intersection-rectangle). */
 const NEAR_LEAD = 1.5;
+/** A move past which the owner marks the near band itself, in scrollport heights: Gecko's own lead is half the
+ *  viewport (`layout.css.content-visibility-relevant-content-margin`), so a move under one scrollport keeps every box
+ *  it can reach marked first, and half leaves room for a viewport taller than the scrollport. */
+const NEAR_JUMP = 0.5;
 /** Consecutive frames a settle or a press window must see nothing to do before it lets go. */
 const RESTORE_HOLD_FRAMES = 2;
 /** The frames a settle or a press window may spend before it gives up. */
@@ -173,6 +177,9 @@ export class ScrollController {
   private nearObserver: IntersectionObserver | null = null;
   private nearTargets = new Set<Element>();
   private nearMargin = -1;
+  /** The scroll position the near band was last known to match (NaN = none). */
+  private nearTop = Number.NaN;
+  private nearQueued = false;
   private observedChildren = new Set<Element>();
 
   private topSentinel: HTMLElement | null = null;
@@ -305,6 +312,7 @@ export class ScrollController {
     const prev = this.lastT;
     this.lastT = t;
     this.dispatchViewportChange();
+    this.queueNearJump();
     const slack = edgeSlack();
     if (this.ownWrite !== null && Math.abs(t - this.ownWrite) <= slack) {
       this.ownWrite = null;
@@ -511,6 +519,7 @@ export class ScrollController {
 
   /** Record the landing of a move the owner made, so the scroll event it produces is not read as the reader. */
   private noteOwnWrite(): void {
+    this.queueNearJump();
     this.ownWrite = this.clampedTop();
     this.lastT = this.ownWrite;
     this.rest = this.ownWrite;
@@ -1170,6 +1179,7 @@ export class ScrollController {
     this.observedChildren.clear();
     this.nearObserver?.disconnect();
     this.nearTargets.clear();
+    this.nearTop = Number.NaN;
   }
 
   /** Build the near observer for the scrollport's current height, if its lead changed: a rootMargin is fixed for an
@@ -1197,6 +1207,7 @@ export class ScrollController {
   /** The `[data-near]` toggle changes sizes in this task, after the previous paint and before the next frame's
    *  animation-frame callbacks, so it is corrected here, with the floor raised before the write. */
   private onNear(entries: readonly IntersectionObserverEntry[]): void {
+    this.nearTop = this.scrollEl.scrollTop;
     for (const entry of entries) {
       entry.target.toggleAttribute("data-near", entry.isIntersecting);
       if (!entry.isIntersecting) {
@@ -1206,6 +1217,50 @@ export class ScrollController {
     this.holdFloor();
     this.correct();
     this.floorAfter(true);
+  }
+
+  /** In a microtask, so the marks' layout lands after the write's own measurements and before the frame's resize loop. */
+  private queueNearJump(): void {
+    if (this.nearQueued) {
+      return;
+    }
+    this.nearQueued = true;
+    queueMicrotask(() => {
+      this.nearQueued = false;
+      this.markNearJump();
+    });
+  }
+
+  /** After a move past `NEAR_JUMP`, mark the boxes now inside the near band in this task, then re-observe each so the
+   *  observer's next notification confirms or clears the mark. Gecko re-determines `content-visibility: auto` proximity
+   *  inside the resize loop and any layout read applies it (`DetermineProximityToViewport`, `DoFlushPendingNotifications`
+   *  in https://github.com/mozilla-firefox/firefox/blob/main/layout/base/PresShell.cpp), so a box the observer has not
+   *  marked yet lays out mid-loop and resizes a turn already delivered. Never inside the content delivery, whose loop
+   *  the marks' layout would be. */
+  private markNearJump(): void {
+    const t = this.scrollEl.scrollTop;
+    if (this.delivering || Math.abs(t - this.nearTop) <= this.scrollEl.clientHeight * NEAR_JUMP) {
+      return;
+    }
+    this.nearTop = t;
+    const observer = this.nearObserver;
+    if (observer === null) {
+      return;
+    }
+    const port = this.scrollEl.getBoundingClientRect();
+    const top = port.top - this.nearMargin;
+    const bottom = port.bottom + this.nearMargin;
+    for (const box of this.nearTargets) {
+      if (box.hasAttribute("data-near")) {
+        continue;
+      }
+      const r = box.getBoundingClientRect();
+      if (r.bottom >= top && r.top <= bottom) {
+        box.setAttribute("data-near", "");
+        observer.unobserve(box);
+        observer.observe(box);
+      }
+    }
   }
 
   private fitTopObserver(margin: number): void {

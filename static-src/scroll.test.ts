@@ -2820,6 +2820,49 @@ describe("laying out what is near the scrollport", () => {
     });
   });
 
+  // Gecko lays out a box whose proximity changed at any layout read inside the resize loop, so a box first marked by
+  // the observer, which runs after that loop, resizes a turn the loop already delivered.
+  it("marks the boxes an owner jump lands on before the frame's resize loop", async () => {
+    // 400px scrollport parked at the top: the near span ends at 1000, and the end shows 2100 to 2500.
+    const wrap = realScroller();
+    block(2200);
+    const box = skippable(messagesEl, 100);
+    block(200);
+    await land();
+    await park(wrap);
+    const before = box.hasAttribute("data-near");
+    scroll.scrollToBottom();
+    await Promise.resolve();
+
+    expect({ before, landed: wrap.scrollTop, after: box.hasAttribute("data-near") }).toEqual({
+      before: false,
+      landed: 2100,
+      after: true,
+    });
+  });
+
+  it("marks the boxes a reader's jump lands on in the jump's scroll event", async () => {
+    const wrap = realScroller();
+    block(2200);
+    const box = skippable(messagesEl, 100);
+    block(200);
+    await land();
+    await park(wrap);
+    const before = box.hasAttribute("data-near");
+    const atEvent = new Promise<boolean>((resolve) => {
+      wrap.addEventListener(
+        "scroll",
+        () => {
+          resolve(box.hasAttribute("data-near"));
+        },
+        { once: true },
+      );
+    });
+    readerScrollTo(wrap, 2000);
+
+    expect({ before, atEvent: await atEvent }).toEqual({ before: false, atEvent: true });
+  });
+
   it("delivers nothing to a box once its view is detached", async () => {
     realScroller();
     const box = skippable(messagesEl, 100);
