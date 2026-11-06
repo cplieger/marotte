@@ -5,6 +5,8 @@
 import { describe, it, expect } from "vitest";
 import { toolResultID } from "./entry-ids.js";
 import { setHookStatusShown } from "./hook-fold.js";
+import { touchTurn } from "./turn-revision.js";
+import { turnFoldHides, turnLastMessage } from "./turn-face.js";
 import {
   COMMAND_KINDS,
   closeOfBody,
@@ -1063,5 +1065,47 @@ describe("turnBoundText", () => {
     expect(textOf({ outcome: "completed", stop_reason_raw: "end_turn" })).toBe("");
     expect(textOf({ outcome: "completed", stop_reason_raw: "max_tokens" })).toBe("");
     expect(turnBoundText(oneTurn([textEntry("t1", 1)]))).toBe("");
+  });
+});
+
+describe("a projected turn's body across passes", () => {
+  function held(): { source: TurnSource; st: TurnState } {
+    const st = state([turnOpen("t1", 1, { prompt: "m-1" }), textEntry("t1", 1, "answer")]);
+    return { source: src(["t1", st]), st };
+  }
+
+  function bodyNow(source: TurnSource): readonly Entry[] {
+    const t = projectTurns(source)[0];
+    if (t === undefined) {
+      throw new Error("the fixture produced no turn");
+    }
+    return t.body;
+  }
+
+  it("is the same array while the turn's entries hold", () => {
+    const { source } = held();
+    expect(bodyNow(source)).toBe(bodyNow(source));
+  });
+
+  it("is a new array with the new entry after an append", () => {
+    const { source, st } = held();
+    const before = bodyNow(source);
+    st.entries.push(callEntry("t1", 2, "c-1"));
+
+    const after = bodyNow(source);
+    expect(after).not.toBe(before);
+    expect(after.map((e) => e.id)).toEqual(["t1-e1", "c-1"]);
+    expect(turnFoldHides(projectTurns(source)[0]!), "a tool call is hidden by a fold").toBe(true);
+  });
+
+  it("is a new array after an entry changed in place", () => {
+    const { source, st } = held();
+    const before = bodyNow(source);
+    expect(turnLastMessage(projectTurns(source)[0]!)).toEqual(["answer"]);
+    st.entries[1] = textEntry("t1", 1, "rewritten");
+    touchTurn(st);
+
+    expect(bodyNow(source)).not.toBe(before);
+    expect(turnLastMessage(projectTurns(source)[0]!)).toEqual(["rewritten"]);
   });
 });

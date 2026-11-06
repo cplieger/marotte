@@ -8,7 +8,9 @@ import {
   turnSpan,
   type EntryRange,
 } from "./block-window.js";
+import { bodyMemo } from "./body-memo.js";
 import { namedSay } from "./entry-ids.js";
+import { hookStatusShown } from "./hook-fold.js";
 import { appliedFallback, isSubagentFallback, payloadOf, type Turn } from "./turns.js";
 import type { Entry } from "./types.js";
 
@@ -20,11 +22,16 @@ import type { Entry } from "./types.js";
  * that draws nothing (`tool_result`, `steer_delivered`) never ends it, nor does an applied `model_fallback`: KAS
  * continues the refused text on the fallback model. Delegate prose is never in it.
  */
-export function turnLastMessage(t: Turn): string[] {
-  return lastMessageItems(t)
-    .map((r) => itemText(t, r).trim())
-    .filter((s) => s !== "");
+export function turnLastMessage(t: Turn): readonly string[] {
+  // `entryRenders` reads `hookStatusShown`.
+  return lastMessages(t.body, String(hookStatusShown()), () =>
+    lastMessageItems(t)
+      .map((r) => itemText(t, r).trim())
+      .filter((s) => s !== ""),
+  );
 }
+
+const lastMessages = bodyMemo<readonly string[]>();
 
 /** The last message's bubbles as `seq` ranges, in order: prose runs, and one entry each for a `steer_ack`. */
 function lastMessageItems(t: Turn): EntryRange[] {
@@ -108,6 +115,12 @@ function itemText(t: Turn, item: EntryRange): string {
  *  and a failed turn's error row; a turn with nothing else folds to an identical face, so no
  *  fold is offered. A revert's boundary row is not counted, so it stays on screen. */
 export function turnFoldHides(t: Turn): boolean {
+  return foldHides(t.body, String(hookStatusShown()), () => deriveFoldHides(t));
+}
+
+const foldHides = bodyMemo<boolean>();
+
+function deriveFoldHides(t: Turn): boolean {
   for (const e of t.body) {
     if ((e.lane ?? "") !== "") {
       return true;

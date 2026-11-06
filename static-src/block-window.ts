@@ -2,6 +2,7 @@
 // grown around the reader's position. Pure and DOM-free; which turns is the caller's policy.
 
 import { MessageRun, callIDOfToolResult, toolResultID } from "./entry-ids.js";
+import { bodyMemo } from "./body-memo.js";
 import { hookRenders, hookStatusShown } from "./hook-fold.js";
 import { isInternalToolTitle } from "./tool-schema.js";
 import { isWakingRow } from "./waking-rows.js";
@@ -150,9 +151,14 @@ export interface TurnFolds {
   readonly hookResults: ReadonlyMap<string, EntryToolResult>;
 }
 
-/** `entries`' folds per lane. Hoisted ONCE per turn per pass, since a long turn holds several
- *  plans; takes a `TurnState`'s entries or a `Turn`'s body alike. */
-export function foldsByLane(entries: readonly Entry[]): Map<string, TurnFolds> {
+/** A turn body's folds per lane, derived once per body array (`bodyMemo`). */
+export function foldsByLane(body: readonly Entry[]): ReadonlyMap<string, TurnFolds> {
+  return lanes(body, "", () => deriveLanes(body));
+}
+
+const lanes = bodyMemo<ReadonlyMap<string, TurnFolds>>();
+
+function deriveLanes(entries: readonly Entry[]): ReadonlyMap<string, TurnFolds> {
   const readDrop = readDrops(entries);
   const hookResults = hookResultsOf(entries);
   const out = new Map<
@@ -270,22 +276,27 @@ export function turnFolds(t: Turn, lane: string): TurnFolds {
   return foldsByLane(t.body).get(lane) ?? NO_FOLDS;
 }
 
-/**
- * The turn's workflow-bearing `tool_result` entries, keyed by their own id, built ONCE per
- * pass for `effectiveRunID` (a per-call scan is quadratic).
- */
+/** The turn's workflow-bearing `tool_result` entries, keyed by their own id, for `effectiveRunID`. */
 export function runResults(t: Turn): RunResults {
-  const out = new Map<string, string>();
-  for (const e of t.body) {
-    if (e.kind !== "tool_result") {
-      continue;
+  return resultsOfBody(t.body);
+}
+
+const results = bodyMemo<RunResults>();
+
+function resultsOfBody(body: readonly Entry[]): RunResults {
+  return results(body, "", () => {
+    const out = new Map<string, string>();
+    for (const e of body) {
+      if (e.kind !== "tool_result") {
+        continue;
+      }
+      const runID = payloadOf(e, "tool_result")?.workflow_id ?? "";
+      if (runID !== "") {
+        out.set(e.id, runID);
+      }
     }
-    const runID = payloadOf(e, "tool_result")?.workflow_id ?? "";
-    if (runID !== "") {
-      out.set(e.id, runID);
-    }
-  }
-  return out;
+    return out;
+  });
 }
 
 /**
@@ -314,16 +325,29 @@ export type RunCardOwners = ReadonlyMap<string, RunCardOwner>;
 export function runCardOwners(turns: readonly Turn[], lane = ""): RunCardOwners {
   const out = new Map<string, RunCardOwner>();
   for (const t of turns) {
-    const results = runResults(t);
-    for (const e of t.body) {
-      const call = (e.lane ?? "") === lane ? payloadOf(e, "tool_call") : undefined;
-      if (call === undefined || isInternalToolTitle(call.title)) {
-        continue;
+    for (const [runID, entry] of runMentions(t.body, lane, () => runMentionsOf(t.body, lane))) {
+      if (!out.has(runID)) {
+        out.set(runID, { turn: t.id, entry });
       }
-      const runID = effectiveRunID(e, results);
-      if (runID !== "" && !out.has(runID)) {
-        out.set(runID, { turn: t.id, entry: e.id });
-      }
+    }
+  }
+  return out;
+}
+
+const runMentions = bodyMemo<ReadonlyMap<string, string>>();
+
+/** run id → the first `tool_call` in `lane` naming it, in `seq` order. */
+function runMentionsOf(body: readonly Entry[], lane: string): ReadonlyMap<string, string> {
+  const results = resultsOfBody(body);
+  const out = new Map<string, string>();
+  for (const e of body) {
+    const call = (e.lane ?? "") === lane ? payloadOf(e, "tool_call") : undefined;
+    if (call === undefined || isInternalToolTitle(call.title)) {
+      continue;
+    }
+    const runID = effectiveRunID(e, results);
+    if (runID !== "" && !out.has(runID)) {
+      out.set(runID, e.id);
     }
   }
   return out;
@@ -334,11 +358,20 @@ export function runCardOwners(turns: readonly Turn[], lane = ""): RunCardOwners 
  * the first drawn entry. The lane's first `plan` is resolved on arrival, in `seq` order.
  */
 export function rendersNothing(t: Turn, lane = ""): boolean {
+  // `entryRenders` reads `hookStatusShown`.
+  return drawsNothing(t.body, `${String(hookStatusShown())}|${lane}`, () =>
+    deriveDrawsNothing(t.body, lane),
+  );
+}
+
+const drawsNothing = bodyMemo<boolean>();
+
+function deriveDrawsNothing(body: readonly Entry[], lane: string): boolean {
   // The whole body is read only for a dropped agent note or a hook call, whose answers turn on entries anywhere in it.
   let readDrop: ReadonlySet<string> | undefined;
   let hookResults: ReadonlyMap<string, EntryToolResult> | undefined;
   let plan = -1;
-  for (const e of t.body) {
+  for (const e of body) {
     if (plan < 0 && e.kind === "plan" && (e.lane ?? "") === lane) {
       plan = e.seq;
     }
@@ -351,11 +384,11 @@ export function rendersNothing(t: Turn, lane = ""): boolean {
             plan,
             revert: -1,
             readDrop:
-              payloadOf(e, "steer")?.state === "dropped" ? (readDrop ??= readDrops(t.body)) : NONE,
+              payloadOf(e, "steer")?.state === "dropped" ? (readDrop ??= readDrops(body)) : NONE,
             fellBack: NO_SEQS,
             hookResults:
               payloadOf(e, "tool_call")?.kind === "hook"
-                ? (hookResults ??= hookResultsOf(t.body))
+                ? (hookResults ??= hookResultsOf(body))
                 : NO_RESULTS,
           });
     if (renders) {

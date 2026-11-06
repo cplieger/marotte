@@ -19,7 +19,8 @@ import {
 } from "./store.js";
 import { clearTurnSigs } from "./store-signals.js";
 import { BUS_FOLDS_CHANGED, onBus } from "./bus.js";
-import { onHookVisibility } from "./hook-fold.js";
+import { hookStatusShown, onHookVisibility } from "./hook-fold.js";
+import { bodyMemo } from "./body-memo.js";
 import { buildEvent } from "./messages-events.js";
 import { releaseClampsIn } from "./clamp-text.js";
 import { releaseScrollableTablesIn } from "./table-scroll.js";
@@ -613,15 +614,16 @@ export function mountChatView(): void {
 function entryCount(turns: readonly Turn[]): number {
   let n = 0;
   for (const t of turns) {
-    const folds = turnFolds(t, "");
-    for (const e of t.body) {
-      if (entryRenders(e, "", folds)) {
-        n++;
-      }
-    }
+    // `entryRenders` reads `hookStatusShown`.
+    n += reachable(t.body, String(hookStatusShown()), () => {
+      const folds = turnFolds(t, "");
+      return t.body.filter((e) => entryRenders(e, "", folds)).length;
+    });
   }
   return n;
 }
+
+const reachable = bodyMemo<number>();
 
 /** Reachable entries present when the reader last entered Reading. */
 let followBaseline = 0;
