@@ -9,4 +9,5 @@ const (
 	logMsgCatchUpGap    = "trigger catch-up gap"
 	logMsgPoll          = "trigger poll"
 	logMsgLabelsCut     = "trigger labels cut"
+	logMsgNotWritten    = "launch rules not written"
 )
