@@ -1,11 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type * as Toast from "./toast.js";
 
-vi.mock("./toast.js", () => ({
-  info: vi.fn(),
-  success: vi.fn(),
-  error: vi.fn(),
-  errorWithAction: vi.fn(),
-  showToast: vi.fn(),
+vi.mock("./toast.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Toast>()),
+  ...(await import("./__test-helpers__/toast-mock.js")).toastMock(),
 }));
 
 import {

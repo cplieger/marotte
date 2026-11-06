@@ -66,10 +66,8 @@ export interface SchedulesResponse {
 
 /** A launch rule's row; mirrors internal/launchrule.Status. */
 interface LaunchRuleStatus {
-  anchor?: string;
   last_run_at?: string;
   waiting_for?: string;
-  last_run_id?: string;
   last_status?: ScheduleView["last_status"];
   last_reason?: string;
 }
@@ -88,7 +86,6 @@ export interface LaunchRuleView {
   /** Absent, with `error` set, when the rule's state file would not load. */
   status?: LaunchRuleStatus;
   error?: string;
-  held: number;
 }
 
 export interface LaunchRulesResponse {

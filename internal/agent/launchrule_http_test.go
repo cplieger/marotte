@@ -137,8 +137,7 @@ type ruleListView struct {
 		NextRunAt *time.Time         `json:"next_run_at"`
 		Status    *launchrule.Status `json:"status"`
 		launchrule.Rule
-		Error string `json:"error"`
-		Held  int    `json:"held"`
+		Held int `json:"held"`
 	} `json:"rules"`
 }
 

@@ -180,6 +180,7 @@ func (s *Store) State(ruleID string) (State, error) {
 	return rs.state.clone(), nil
 }
 
+// deadset:ignore DS1102 -- test seam until the forge event runner writes state through it
 // WriteState replaces the rule's state file with in, touching no other file. ErrNotFound for no such rule; a
 // blocked rule refuses with what State answers, so its file is never overwritten.
 func (s *Store) WriteState(ctx context.Context, ruleID string, in *State) error {
