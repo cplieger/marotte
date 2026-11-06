@@ -74,7 +74,7 @@ func newRuleHub(t *testing.T, forge *fakeEventRuleChecker, listing string) *rule
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	rh.conf = &changeRecorder{Confirmer: trigger.NewConfirmer(rh.st, rh.w)}
+	rh.conf = &changeRecorder{Confirmer: trigger.NewConfirmer(rh.st, rh.w, nil)}
 	h.runs.launchRules = rh.st
 	h.runs.confirmer = rh.conf
 	h.SetEventRuleChecker(forge)

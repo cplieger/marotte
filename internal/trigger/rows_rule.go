@@ -40,6 +40,8 @@ func (s *stepper) ruleRow(ev *attemptEvent) bool {
 		s.dropAbandoned(s.aged) // E6
 	case evWriteRetry:
 		s.res.write, s.wakeOnWrite = true, true // E10
+	case evBoot:
+		s.boot(ev.boot)
 	default:
 		return false
 	}

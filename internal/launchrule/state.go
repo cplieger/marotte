@@ -135,8 +135,7 @@ func (s *Store) statePath(ruleID string) string {
 	return filepath.Join(s.dir, stateDirName, ruleID+".json")
 }
 
-// loadStates reads every rule's state file, blocks each rule refused names, and removes the files whose rule is
-// gone, which a Delete whose removal failed leaves behind.
+// loadStates reads every rule's state file and blocks each rule refused names.
 func (s *Store) loadStates(refused map[string]error) {
 	s.states = make(map[string]*ruleState, len(s.rules))
 	for i := range s.rules {
@@ -145,20 +144,35 @@ func (s *Store) loadStates(refused map[string]error) {
 		rs.refused = refused[r.ID]
 		s.states[r.ID] = rs
 	}
+}
+
+// Orphans reads the state files whose rule the definitions do not hold, by rule id: a Delete whose removal failed
+// leaves one. The store leaves them on disk, since such a file can name runs still to cancel; its removal is the
+// StateWriter holder's. A file that does not parse reads as an empty State.
+func (s *Store) Orphans() map[string]State {
 	entries, err := os.ReadDir(filepath.Join(s.dir, stateDirName))
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			slog.Warn("launch rules: could not list the state files", "error", err)
 		}
-		return
+		return nil
 	}
+	out := map[string]State{}
 	for _, e := range entries {
 		id, ok := strings.CutSuffix(e.Name(), ".json")
-		if !ok || e.IsDir() || s.states[id] != nil {
+		if !ok || e.IsDir() {
 			continue
 		}
-		s.removeState(id)
+		if _, err := s.ruleState(id); err == nil {
+			continue
+		}
+		var st State
+		if data, err := os.ReadFile(s.statePath(id)); err == nil {
+			st, _ = parseState(data)
+		}
+		out[id] = st
 	}
+	return out
 }
 
 func (s *Store) readState(r *Rule) *ruleState {
@@ -261,8 +275,8 @@ func (s *Store) removeStateFile(ruleID string) error {
 	return nil
 }
 
-// removeState is removeStateFile for a rule already out of the definitions: a failure is logged, and the next load,
-// finding the file's rule gone, removes it again.
+// removeState is removeStateFile for a rule already out of the definitions: a failure is logged, and the next load
+// reports the file among Orphans.
 func (s *Store) removeState(ruleID string) {
 	if err := s.removeStateFile(ruleID); err != nil {
 		slog.Warn("launch rules: a deleted rule's state file stays until the next start", "rule", ruleID, "error", err)

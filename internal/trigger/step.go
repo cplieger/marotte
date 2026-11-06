@@ -150,6 +150,9 @@ func (c *Confirmer) step(ruleID string, ev *attemptEvent) stepResult {
 	var named bool
 	if ev.kind.isRecord() {
 		rec = rv.find(ev.workflowID)
+		if ev.kind == evEngineReady && (rec == nil || rec.state != stateBootHeld) {
+			return s.res // engine ready is delivered only to a boot-held record
+		}
 		named = s.apply(rec, ev)
 	} else {
 		named = s.ruleRow(ev)

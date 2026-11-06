@@ -11,6 +11,7 @@ import (
 
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/launchrule"
+	"github.com/cplieger/marotte/internal/runlease"
 )
 
 // testConfirmer is a Confirmer over a real launch-rule store in a temporary config dir, its log captured. Its
@@ -23,6 +24,8 @@ type testConfirmer struct {
 	log    *capture.Recorder
 	fx     *recordingEffects
 	writes *countingWriter
+	// leases is the lease store as the disk holds it, read by every boot load.
+	leases *runlease.Store
 	ready  chan struct{}
 	dir    string
 	a0     bool
@@ -55,9 +58,10 @@ func newTestConfirmer(t *testing.T, opts ...testConfirmerOption) *testConfirmer 
 		w = cfg.writer(w)
 	}
 	counted := &countingWriter{StateWriter: w}
+	leases := runlease.NewMemory()
 	tc := &testConfirmer{
-		Confirmer: NewConfirmer(st, counted), t: t, store: st, log: rec, fx: &recordingEffects{},
-		ready: make(chan struct{}), dir: dir, writes: counted,
+		Confirmer: NewConfirmer(st, counted, leases), t: t, store: st, log: rec, fx: &recordingEffects{},
+		ready: make(chan struct{}), dir: dir, writes: counted, leases: leases,
 	}
 	t.Cleanup(func() {
 		if n := rec.CountExact(logMsgImpossible); n > 0 && !tc.a0 {
@@ -67,9 +71,11 @@ func newTestConfirmer(t *testing.T, opts ...testConfirmerOption) *testConfirmer 
 	return tc
 }
 
-// countingWriter counts the state file writes and removals that landed.
+// countingWriter counts the state file writes and removals that landed; a removal fails with removeErr while it is
+// set.
 type countingWriter struct {
 	launchrule.StateWriter
+	removeErr        error
 	writes, removals int
 	mu               sync.Mutex
 }
@@ -85,6 +91,12 @@ func (w *countingWriter) WriteState(ctx context.Context, ruleID string, st *laun
 }
 
 func (w *countingWriter) RemoveState(ruleID string) error {
+	w.mu.Lock()
+	failed := w.removeErr
+	w.mu.Unlock()
+	if failed != nil {
+		return failed
+	}
 	err := w.StateWriter.RemoveState(ruleID)
 	if err == nil {
 		w.mu.Lock()
@@ -101,6 +113,44 @@ func (tc *testConfirmer) written() int {
 	n := tc.writes.writes
 	tc.writes.writes = 0
 	return n
+}
+
+// restart stops the Confirmer as a process exit would, its bound timers with it, and loads a new one from the files
+// and tc.leases, as the next boot does. It runs before tc.run.
+func (tc *testConfirmer) restart() {
+	tc.t.Helper()
+	for _, rv := range tc.loaded() {
+		rv.mu.Lock()
+		for _, r := range rv.records {
+			if r.bound != nil {
+				r.bound.Stop()
+			}
+		}
+		rv.mu.Unlock()
+	}
+	st, w, err := launchrule.NewStore(tc.dir)
+	if err != nil {
+		tc.t.Fatalf("Setup: NewStore at restart: %v", err)
+	}
+	tc.store, tc.writes = st, &countingWriter{StateWriter: w}
+	tc.Confirmer = NewConfirmer(st, tc.writes, tc.leases)
+}
+
+// lease puts a triggered lease for the rule's event key on wf, as the launch's grant does.
+func (tc *testConfirmer) lease(ruleID, key, wf string) {
+	tc.t.Helper()
+	l := runlease.Lease{
+		WorkflowID: wf, Recipe: "weekly", Origin: runlease.OriginTriggered, RuleID: ruleID, EventKey: key,
+		StartedAt: time.Now(), Unattended: true,
+	}
+	if err := tc.leases.Put(tc.t.Context(), &l); err != nil {
+		tc.t.Fatalf("Setup: lease %s: %v", wf, err)
+	}
+}
+
+// persist writes the rule's in-memory value through E10, as a poll's change is written.
+func (tc *testConfirmer) persist(ruleID string) {
+	tc.deliver(ruleID, &attemptEvent{kind: evWriteRetry})
 }
 
 // expectA0 lets the test end with ERROR logMsgImpossible lines.

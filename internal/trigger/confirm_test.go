@@ -409,7 +409,26 @@ func TestTwoBoundAbandonsBlockRule(t *testing.T) {
 			}
 		})
 	})
-	t.Run("a boot expiry neither adds nor resets", func(t *testing.T) { t.Skip("needs 5.5") })
+	t.Run("a boot expiry neither adds nor resets", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			tc.abandonAtBound(r.ID, "k1", "wf_1")
+			tc.name(r.ID, "k1", "wf_2")
+			tc.LaunchReturned(r.ID, "wf_2", nil)
+			tc.lease(r.ID, "k1", "wf_2")
+			tc.restart()
+			tc.run()
+			tc.engineReady()
+			advance(launchConfirmBound + time.Second)
+			if rec := tc.recordOf(r.ID, "wf_2"); rec == nil || !rec.state.abandoned() {
+				t.Fatalf("record = %+v, want wf_2 abandoned at its boot-held bound", rec)
+			}
+			if _, st := tc.memory(r.ID); st.BoundAbandons != 1 || st.Blocked != "" {
+				t.Errorf("count %d, blocked %q; want 1 and no block", st.BoundAbandons, st.Blocked)
+			}
+		})
+	})
 }
 
 // launchHead names and confirms the rule's queue head as wf, answering the event_id its record and its launched
@@ -522,7 +541,24 @@ func TestEventIDStableAcrossRulesAndRestart(t *testing.T) {
 			}
 		})
 	})
-	t.Run("a restart passes the same id", func(t *testing.T) { t.Skip("needs 5.5") })
+	t.Run("a restart passes the same id", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			tc.abandonAtBound(r.ID, "k1", "wf_1")
+			tc.name(r.ID, "k1", "wf_2")
+			tc.ConfirmEvent(r.ID, "k1", "wf_2")
+			tc.restart()
+			es, _ := tc.file(r.ID)
+			if len(es.launched) != 1 || es.launched[0].WorkflowID != "wf_2" || es.launched[0].Inputs["event_id"] != "id/k1" {
+				t.Errorf("reloaded launched = %+v, want k1 under wf_2 with event_id id/k1", es.launched)
+			}
+			snap, err := tc.snapshot(r.ID)
+			if err != nil || len(snap.launched) != 1 || snap.launched[0].Inputs["event_id"] != "id/k1" {
+				t.Errorf("loaded launched = %+v (%v), want event_id id/k1", snap.launched, err)
+			}
+		})
+	})
 	t.Run("retries pass the same id", func(t *testing.T) { t.Skip("needs 5.9") })
 }
 

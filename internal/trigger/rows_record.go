@@ -18,19 +18,27 @@ func (s *stepper) apply(rec *record, ev *attemptEvent) bool {
 	if rec == nil {
 		return s.none(ev)
 	}
-	if rec.state.live() && ev.kind == evRunStart {
-		s.confirm(rec)
-		return true
+	if rec.state.abandoned() {
+		return s.abandoned(rec, ev)
 	}
+	return s.live(rec, ev)
+}
+
+// live runs the rows of a live record.
+func (s *stepper) live(rec *record, ev *attemptEvent) bool {
 	switch {
+	case ev.kind == evRunStart:
+		s.confirm(rec)
 	case rec.state == stateInvoking && (ev.kind == evInvokeOK || ev.kind == evInvokeReplyLost):
 		rec.state, rec.inFlight = stateInvokedUnconfirmed, false // A4: the bound decides
 	case rec.state == stateInvoking && ev.kind == evInvokeError:
 		s.invokeRefused(rec, ev.err)
-	case (rec.state == stateInvoking || rec.state == stateInvokedUnconfirmed) && ev.kind == evBoundReached:
+	case rec.state == stateBootHeld && ev.kind == evEngineReady:
+		s.arm(rec) // A7
+	case rec.state == stateBootHeld && ev.kind == evBoundReached:
+		s.bootBoundReached(rec)
+	case ev.kind == evBoundReached:
 		s.boundReached(rec)
-	case rec.state.abandoned():
-		return s.abandoned(rec, ev)
 	case ev.kind == evCancelOK || ev.kind == evCancelError:
 		// A26: the bound decides a live record.
 	default:
@@ -154,8 +162,7 @@ func (s *stepper) boundReached(rec *record) {
 		st.RowText = twiceUnreported(rec.workflowID)
 		s.block(rec, st.RowText)
 	} else {
-		st.RowText = fmt.Sprintf("run %s was not confirmed within 5 minutes; cancelled it and launching the event again",
-			rec.workflowID)
+		st.RowText = notConfirmedText(rec.workflowID)
 	}
 	s.failedAttempt(rec, st.RowText)
 	s.wakeLauncher()
@@ -167,6 +174,11 @@ const maxBoundAbandons = 2
 
 // codeInvalidParams is JSON-RPC's invalid params, which KAS answers with its own sentence.
 const codeInvalidParams = -32602
+
+func notConfirmedText(workflowID string) string {
+	return fmt.Sprintf("run %s was not confirmed within 5 minutes; cancelled it and launching the event again",
+		workflowID)
+}
 
 func twiceUnreported(workflowID string) string {
 	return fmt.Sprintf("run %s did not report its start twice; marotte stopped retrying this event. "+

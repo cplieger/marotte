@@ -164,7 +164,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	launchRules, ruleStates := openLaunchRuleStore(cfg.ConfigDir)
 	leaseStore := openRunLeaseStore(cfg.ConfigDir)
-	confirmer := openTriggerConfirmer(launchRules, ruleStates)
+	confirmer := openTriggerConfirmer(launchRules, ruleStates, leaseStore)
 
 	presence := push.NewPresence()
 	pushSvc := push.New(appCtx, cfg.ConfigDir, cfg.VapidSub, push.WithPresence(presence))
@@ -876,13 +876,14 @@ func openLaunchRuleStore(dir string) (*launchrule.Store, launchrule.StateWriter)
 	return st, w
 }
 
-// openTriggerConfirmer builds the event rules' confirmer over the launch-rule store, nil when there is none. The
-// confirmer is the only holder of w, so every event rule's state write is its own.
-func openTriggerConfirmer(st *launchrule.Store, w launchrule.StateWriter) *trigger.Confirmer {
+// openTriggerConfirmer builds the event rules' confirmer over the launch-rule store, nil when there is none, its
+// boot load read against leases. The confirmer is the only holder of w, so every event rule's state write is its
+// own.
+func openTriggerConfirmer(st *launchrule.Store, w launchrule.StateWriter, leases *runlease.Store) *trigger.Confirmer {
 	if st == nil {
 		return nil
 	}
-	return trigger.NewConfirmer(st, w)
+	return trigger.NewConfirmer(st, w, leases)
 }
 
 // withTriggerConfirmer hands c to the runtime, or nothing for a nil c: a nil *trigger.Confirmer inside the

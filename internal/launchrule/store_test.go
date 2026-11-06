@@ -619,7 +619,9 @@ func TestStateWriteTouchesOnlyItsRuleFile(t *testing.T) {
 	})
 }
 
-func TestOrphanStateFileRemoved(t *testing.T) {
+// A state file whose rule is gone can name runs still to cancel, so the store reports it and leaves its removal to
+// the writer's holder.
+func TestOrphanStateFileReportedNotRemoved(t *testing.T) {
 	dir := t.TempDir()
 	st := openStore(t, dir)
 	r, err := st.Create(t.Context(), clockRule("bundled://a"))
@@ -633,12 +635,16 @@ func TestOrphanStateFileRemoved(t *testing.T) {
 	if err := os.WriteFile(orphan, []byte(`{"status":{}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	openStore(t, dir)
-	if _, err := os.Stat(orphan); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("the orphan state file survived a load: %v", err)
+	reopened := openStore(t, dir)
+	if _, err := os.Stat(orphan); err != nil {
+		t.Errorf("the orphan state file after a load: %v, want it left on disk", err)
 	}
 	if _, err := os.Stat(statePath(dir, r.ID)); err != nil {
 		t.Errorf("the live rule's state file is gone: %v", err)
+	}
+	got := reopened.Orphans()
+	if _, ok := got["AAAAAAAAAAAAAAAAAAAAAA"]; !ok || len(got) != 1 {
+		t.Errorf("Orphans() = %v, want the orphan alone", got)
 	}
 }
 
@@ -698,7 +704,7 @@ func TestClockRuleDeleteRemovesStateFile(t *testing.T) {
 			t.Errorf("state file after Delete: %v", err)
 		}
 	})
-	t.Run("a failed removal is retried at the next load", func(t *testing.T) {
+	t.Run("a failed removal is reported at the next load", func(t *testing.T) {
 		r2, err := st.Create(t.Context(), clockRule("bundled://b"))
 		if err != nil {
 			t.Fatal(err)
@@ -719,9 +725,8 @@ func TestClockRuleDeleteRemovesStateFile(t *testing.T) {
 			t.Fatalf("the injected failure left no file to retry: %v", err)
 		}
 		removeFile = prev
-		openStore(t, dir)
-		if _, err := os.Stat(statePath(dir, r2.ID)); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("the next load left the deleted rule's state file: %v", err)
+		if _, ok := openStore(t, dir).Orphans()[r2.ID]; !ok {
+			t.Errorf("the next load's Orphans() does not report the deleted rule's state file")
 		}
 	})
 }

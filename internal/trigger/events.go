@@ -73,7 +73,9 @@ type attemptEvent struct {
 	// err is a launch's, a cancel's or a launch ending's error.
 	err error
 	// statuses is run gone's run list.
-	statuses   map[string]marotte.RunStatus
+	statuses map[string]marotte.RunStatus
+	// boot is the boot load's view of the disk.
+	boot       *bootLoad
 	workflowID string
 	// key is the event key named, or whose launch ended.
 	key string

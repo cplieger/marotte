@@ -13,28 +13,25 @@ import (
 // Confirmer owns every event rule's in-memory state and decides every launch attempt through step, the only writer
 // of an event rule's state file. It implements agent.TriggerConfirmer.
 type Confirmer struct {
-	store    *launchrule.Store
-	writer   launchrule.StateWriter
-	rules    map[string]*ruleValue
-	bootHeld map[string]bool
+	store  *launchrule.Store
+	writer launchrule.StateWriter
+	rules  map[string]*ruleValue
+	// bootHeld is each boot-held run's rule, by workflow id.
+	bootHeld map[string]string
 	effects  *effectQueue
 	// wake is the launcher's coalescing signal.
 	wake chan struct{}
 	mu   sync.Mutex
 }
 
-// NewConfirmer returns a Confirmer over the rules in store, persisting their state through writer.
-func NewConfirmer(store *launchrule.Store, writer launchrule.StateWriter) *Confirmer {
+// NewConfirmer returns a Confirmer over the rules in store, persisting their state through writer, with every
+// state file loaded against the leases on disk (row E7). The cancels the load owes wait for Run.
+func NewConfirmer(store *launchrule.Store, writer launchrule.StateWriter, leases Leases) *Confirmer {
 	c := &Confirmer{
-		store: store, writer: writer, rules: map[string]*ruleValue{}, bootHeld: map[string]bool{},
+		store: store, writer: writer, rules: map[string]*ruleValue{}, bootHeld: map[string]string{},
 		effects: newEffectQueue(), wake: make(chan struct{}, 1),
 	}
-	// Loaded now, while each value still has its rule's hold policy: E1 compares an edit's policy with it.
-	for _, r := range store.List() {
-		if r.When.Event != nil {
-			c.rule(r.ID)
-		}
-	}
+	c.load(leases)
 	return c
 }
 
@@ -153,7 +150,8 @@ func launchReturnKind(err error) eventKind {
 func (c *Confirmer) BootHeld(workflowID string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.bootHeld[workflowID]
+	_, ok := c.bootHeld[workflowID]
+	return ok
 }
 
 func (c *Confirmer) releaseBootHeld(workflowID string) {

@@ -230,8 +230,8 @@ func (s *Store) dropStaleWaitLocked(ctx context.Context, r *Rule) {
 }
 
 // Delete removes the rule id names and returns it; ErrNotFound when no rule has it. A clock rule's state file goes
-// with it; an event rule's is left to the delete's reader. A state file that will not go is logged and removed at
-// the next load, so the rule's deletion still stands.
+// with it; an event rule's is left to the delete's reader. A state file that will not go is logged and reported
+// among Orphans at the next load, so the rule's deletion still stands.
 func (s *Store) Delete(ctx context.Context, id string) (Rule, error) {
 	r, err := s.deleteRule(ctx, id)
 	if err != nil {

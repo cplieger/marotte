@@ -65,13 +65,14 @@ func (q *effectQueue) take() []queuedEffect {
 
 // Run runs the queued cancels and releases through fx, one at a time and outside every lock, handing each cancel's
 // answer back to step, and the hourly TTL ticker, until ctx ends. Nothing runs before engineReady closes; what is
-// queued before then waits.
+// queued before then waits, and the boot-held records' bounds start then.
 func (c *Confirmer) Run(ctx context.Context, engineReady <-chan struct{}, fx Effects) {
 	select {
 	case <-engineReady:
 	case <-ctx.Done():
 		return
 	}
+	c.armBootHeld()
 	ttl := time.NewTicker(ttlInterval)
 	defer ttl.Stop()
 	for {

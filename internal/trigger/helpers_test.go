@@ -27,8 +27,10 @@ type harness struct {
 	c     *Confirmer
 	src   *fakeSource
 	marks *launchMarks
-	now   time.Time
-	dir   string
+	// leases is what each reopen's boot load reads; nil reads none.
+	leases Leases
+	now    time.Time
+	dir    string
 }
 
 func newHarness(t *testing.T) *harness {
@@ -45,7 +47,7 @@ func (h *harness) reopen() {
 	if err != nil {
 		h.t.Fatalf("Setup: NewStore: %v", err)
 	}
-	h.store, h.c = st, NewConfirmer(st, w)
+	h.store, h.c = st, NewConfirmer(st, w, h.leases)
 }
 
 func (h *harness) create(ev *launchrule.EventSpec) launchrule.Rule {
