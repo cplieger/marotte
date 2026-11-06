@@ -21,6 +21,7 @@ const TOOL_DEPTH1: Readonly<Record<ToolKind, ToolDepth1>> = {
   // `delete_file` takes ONE targetFile, which the claim already names.
   delete: "none",
   hook: "none",
+  steering: "none",
   think: "none",
   switch_mode: "none",
 
@@ -92,10 +93,12 @@ const KIND_FALLBACK: ReadonlyMap<string, ToolProfile> = new Map<string, ToolProf
   ["move", { kind: "move", writesFile: false }],
   ["search", { kind: "search", writesFile: false }],
   ["execute", { kind: "execute", writesFile: false }],
-  // KAS never emits shell, but older chats carry it. hook is minted server-side for the
-  // `Hook fired` card; KAS's own hook ASK arrives as kind:"other".
+  // KAS never emits shell, but older chats carry it. hook and steering are minted
+  // server-side for the `Hook fired` and `Steering loaded` cards; KAS's own hook ASK
+  // arrives as kind:"other".
   ["shell", { kind: "shell", writesFile: false }],
   ["hook", { kind: "hook", writesFile: false }],
+  ["steering", { kind: "steering", writesFile: false }],
   ["command", { kind: "command", writesFile: false }],
   ["browser", { kind: "browser", writesFile: false }],
   ["fetch", { kind: "fetch", writesFile: false }],

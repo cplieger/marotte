@@ -44,11 +44,14 @@ const store = await import("./store.js");
 const messages = await import("./messages.js");
 const { initSelectionQuote } = await import("./selection-quote.js");
 const { toolResultID } = await import("./entry-ids.js");
+// Beneath this root the steering box draws its document as a link.
+const { setWorkspaceRoot } = await import("./workspace.js");
 
 mountAppCSS();
 messages.mountChatView();
 
 beforeAll(() => {
+  setWorkspaceRoot("/workspace");
   initSelectionQuote();
 });
 
@@ -109,6 +112,20 @@ function everyKind(turn: string): Entry[] {
         origin_run: "wf_contract",
         step: "verify",
         produced_ts: 1,
+      },
+    ],
+    [
+      "tool_call",
+      {
+        id: `${turn}-steering`,
+        title: "Steering loaded: git-commits.md, global.md",
+        kind: "steering",
+        status: "completed",
+        ts: 1,
+        steering_docs: [
+          "file:///workspace/.kiro/steering/git-commits.md",
+          "file:///home/u/.kiro/steering/global.md",
+        ],
       },
     ],
     ["text", { text: "Done for now." }],
@@ -210,6 +227,8 @@ const REACHED = [
   ".reasoning-block",
   ".message.assistant:not(.compaction-body)",
   ".tool-call .tool-output",
+  '.tool-call[data-kind="steering"] .tool-file-link',
+  '.tool-call[data-kind="steering"] span.steering-doc',
   ".plan-message",
   ".boundary",
   ".compaction-body",

@@ -2645,7 +2645,8 @@ function subagentSummary(st: TurnRender, subtask: string, invocation: ToolCall):
     // Both arms: a delegate's calls sit in its lane, while the invocation carries the stamp in the issuer's lane.
     if (
       (held.lane !== subtask && (tc.agent_subtask_id ?? "") !== subtask) ||
-      tc.id === invocation.id
+      tc.id === invocation.id ||
+      tc.kind === "steering"
     ) {
       continue;
     }

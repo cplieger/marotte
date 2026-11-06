@@ -11,8 +11,8 @@
     "with a tool call is always listed. later_wake, when present, is a turn_wake payload recorded in a",
     "later turn of the same chat.",
     "",
-    "Every tool call here is a plain command, so the cases measure boundaries alone; which hooks a",
-    "boundary hides is hook_visibility_test.go's."
+    "Every tool call here is a plain command, a read or a steering box, none of which ends a run, so",
+    "the cases measure boundaries alone; which hooks a boundary hides is hook_visibility_test.go's."
   ],
   "cases": [
     {
@@ -223,6 +223,36 @@
       ],
       "runs": [],
       "lane_runs": { "sub-1": [["d1", "d2"], ["d3"]] }
+    },
+    {
+      "name": "a steering box after the read that triggered it joins the read's run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "Read go.mod", "kind": "read", "status": "in_progress" } },
+        { "id": "c1:result", "kind": "tool_result", "payload": { "status": "completed" } },
+        { "id": "g1", "kind": "tool_call", "payload": { "id": "steering-1", "title": "Steering loaded: go.md", "kind": "steering", "status": "completed", "steering_docs": ["file:///w/.kiro/steering/go.md"] } }
+      ],
+      "runs": [["c1", "g1"]]
+    },
+    {
+      "name": "a steering box after prose opens its own run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "Read go.mod", "kind": "read", "status": "completed" } },
+        { "id": "x1", "kind": "text", "payload": { "text": "Now the steering." } },
+        { "id": "g1", "kind": "tool_call", "payload": { "id": "steering-1", "title": "Steering loaded: go.md", "kind": "steering", "status": "completed", "steering_docs": ["file:///w/.kiro/steering/go.md"] } }
+      ],
+      "runs": [["c1"], ["g1"]]
+    },
+    {
+      "name": "a delegate's steering box joins the delegate's run and not the chat's",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "d1", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "t-d1", "title": "Read go.mod", "kind": "read", "status": "completed" } },
+        { "id": "g1", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "steering-1", "title": "Steering loaded: go.md", "kind": "steering", "status": "completed", "steering_docs": ["file:///w/.kiro/steering/go.md"] } },
+        { "id": "x1", "kind": "text", "payload": { "text": "The delegate is reading." } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c1"], ["c2"]],
+      "lane_runs": { "sub-1": [["d1", "g1"]] }
     }
   ]
 }

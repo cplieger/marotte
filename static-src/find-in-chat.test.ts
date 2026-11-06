@@ -541,6 +541,8 @@ import {
   groupBody,
   refreshGroupHeader,
 } from "./tool-group.js";
+import { buildToolCard } from "./tool-card.js";
+import { setWorkspaceRoot, _resetForTest as resetWorkspaceRoot } from "./workspace.js";
 import type { Session } from "./types.js";
 import { makeSession } from "./__test-helpers__/model.js";
 import type { Tally } from "./textsearch/copy.js";
@@ -1068,6 +1070,51 @@ describe("server-hit navigation", () => {
       expect(card?.querySelector("mark.find-hit-current")).not.toBeNull();
     });
     expect(countText()).toBe("1 of 1");
+  });
+
+  it("marks a steering box's document name inside its title, across the linked name", async () => {
+    // The server counts the offset over the whole title; the name sits inside a link button.
+    setWorkspaceRoot("/workspace");
+    stageChat(["u1"]);
+    const row = mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row"></div>`,
+    ).querySelector(".msg-row") as HTMLElement;
+    const title = "Steering loaded: testing.md, global.md";
+    const card = buildToolCard({
+      id: "steering-1",
+      title,
+      kind: "steering",
+      status: "completed",
+      live: false,
+      steeringDocs: [
+        "file:///workspace/.kiro/steering/testing.md",
+        "file:///config/home/.kiro/steering/global.md",
+      ],
+    });
+    card.dataset["entryId"] = "e1";
+    row.appendChild(card);
+    stageHits([
+      serverHit({
+        entry_id: "e1",
+        excerpt: title,
+        segment_kind: "tool_title",
+        offset: title.indexOf("testing"),
+        segment_len: title.length,
+      }),
+    ]);
+
+    try {
+      await openAndAdopt("testing");
+      typeAndEnter("testing");
+      await vi.waitFor(() => {
+        expect(
+          document.querySelector("button.steering-doc mark.find-hit-current")?.textContent,
+        ).toBe("testing");
+      });
+    } finally {
+      resetWorkspaceRoot();
+    }
   });
 
   it("opens the tool group the transcript folded to reach a hit inside it", async () => {

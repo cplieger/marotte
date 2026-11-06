@@ -432,6 +432,28 @@ func (t *Turn) toolCall(ctx context.Context, key string, call *marotte.EntryTool
 	return sealed, err
 }
 
+// SteeringLoaded appends a steering box in lane key under a minted steering id. It is neither
+// content nor a call in flight: Emitted stays false, so a turn that only loaded steering still
+// reads as empty, and it is never tracked, so the reap and the close's abort skip it.
+func (t *Turn) SteeringLoaded(ctx context.Context, key string, call *marotte.EntryToolCall) ([]Sealed, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed {
+		return nil, ErrClosed
+	}
+	sealed, err := t.sealLane(ctx, key)
+	if err != nil {
+		return sealed, err
+	}
+	box := *call
+	box.ID = marotte.SteeringCallIDPrefix + t.mintID()
+	s, err := t.append(ctx, key, marotte.EntryKindToolCall, box.ID, box, "")
+	if err != nil {
+		return sealed, err
+	}
+	return append(sealed, s), nil
+}
+
 // Invocation appends a subagent invocation's tool_call in the ISSUER's lane, sealing the
 // issuer's open text like an ordinary card; delegateID, the lane it OPENS, goes into the
 // payload as the merge's pairing key. issuerLane is the caller's: the frame names the delegate.

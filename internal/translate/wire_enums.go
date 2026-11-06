@@ -15,6 +15,7 @@ var knownToolKinds = map[marotte.ToolKind]struct{}{
 	marotte.ToolKindEdit:       {},
 	marotte.ToolKindThink:      {},
 	marotte.ToolKindHook:       {},
+	marotte.ToolKindSteering:   {},
 	marotte.ToolKindWrite:      {},
 	marotte.ToolKindDelete:     {},
 	marotte.ToolKindMove:       {},

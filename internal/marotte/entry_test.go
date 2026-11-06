@@ -1,6 +1,9 @@
 package marotte
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // TestCompactionEntryID pins the derivation both sides of the replay merge mint
 // from: a fixed summary gives a fixed id, two summaries differ, and an empty
@@ -80,5 +83,37 @@ func TestTurnOpenSource_NameIsTotal(t *testing.T) {
 	}
 	if got := count.Name(); got != "" {
 		t.Errorf("TurnOpenSource(%d).Name() = %q, want empty for an out-of-range value", count, got)
+	}
+}
+
+// TestToolCallConverters_KeepSteeringDocs pins that a steering card's document ids
+// survive the tool_call payload round trip the live card and the log both take.
+func TestToolCallConverters_KeepSteeringDocs(t *testing.T) {
+	docs := []string{"file:///w/.kiro/steering/go.md", "inline-doc"}
+	call := ToolCall{ID: SteeringCallIDPrefix + "1", Kind: ToolKindSteering, Status: ToolCompleted, SteeringDocs: docs}
+	entry := EntryToolCallOf(&call)
+	if !slices.Equal(entry.SteeringDocs, docs) {
+		t.Errorf("EntryToolCallOf SteeringDocs = %q, want %q", entry.SteeringDocs, docs)
+	}
+	back := ToolCallOfEntry(&entry)
+	if !slices.Equal(back.SteeringDocs, docs) {
+		t.Errorf("ToolCallOfEntry SteeringDocs = %q, want %q", back.SteeringDocs, docs)
+	}
+}
+
+func TestIsSteeringCallID(t *testing.T) {
+	cases := []struct {
+		id   string
+		want bool
+	}{
+		{SteeringCallIDPrefix + "abc", true},
+		{"steering", false},
+		{"hook-steering-1", false},
+		{"tc-1", false},
+	}
+	for _, tc := range cases {
+		if got := IsSteeringCallID(tc.id); got != tc.want {
+			t.Errorf("IsSteeringCallID(%q) = %v, want %v", tc.id, got, tc.want)
+		}
 	}
 }

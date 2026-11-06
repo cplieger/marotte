@@ -43,6 +43,10 @@ function textOf(root: Element, selector: string): string {
 }
 
 function toolLabel(card: Element, inner: Element): string {
+  // A steering box's title is its content, so naming it would repeat the quote.
+  if (card.getAttribute("data-kind") === "steering") {
+    return "From the steering box";
+  }
   const title = textOf(card, ".tool-title");
   if (title === "") {
     return card.getAttribute("data-kind") === "hook" ? "From a hook" : "From a tool call";

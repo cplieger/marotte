@@ -106,7 +106,7 @@ export type StopReason = "end_turn" | "cancelled" | "interrupted" | "refusal" | 
 
 export type TabKind = "chat" | "editor" | "run" | "subagent" | "settings" | "git" | "files" | "history" | "docs" | "spec" | "web";
 
-export type ToolKind = "execute" | "shell" | "read" | "search" | "fetch" | "edit" | "think" | "hook" | "write" | "delete" | "move" | "command" | "browser" | "switch_mode" | "mcp" | "other";
+export type ToolKind = "execute" | "shell" | "read" | "search" | "fetch" | "edit" | "think" | "hook" | "steering" | "write" | "delete" | "move" | "command" | "browser" | "switch_mode" | "mcp" | "other";
 
 export type ToolStatus = "pending" | "in_progress" | "completed" | "failed" | "aborted";
 
@@ -1309,6 +1309,7 @@ export interface EntryToolCall {
   truncated?: ToolTruncation;
   input?: unknown;
   locations?: ToolLocation[];
+  steering_docs?: string[];
   diffs?: ToolDiff[];
   output_spans?: TextSpan[];
   ts: number;
@@ -4069,6 +4070,11 @@ export interface ToolCall {
   input?: unknown;
   locations?: ToolLocation[];
   diffs?: ToolDiff[];
+  /**
+ * SteeringDocs are the document ids (a file URI for an on-disk doc) a steering card
+ * announces, as KAS's steering_inclusion sent them.
+ */
+  steering_docs?: string[];
   /**
  * OutputSpans styles ranges of Output, parsed server-side so Output stays plain
  * text and the client never builds HTML from agent-controlled bytes.

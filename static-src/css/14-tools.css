@@ -681,6 +681,31 @@
   }
 }
 
+/* A steering title wraps: a button is an atomic inline even at `display: inline`, so an ellipsis
+   would drop every name that does not fit whole, all of them on a phone. */
+.tool-call[data-kind="steering"] .tool-title {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* The names are links inside the title's text run, so they read as text, not chips. */
+.tool-title > .steering-doc.tool-file-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  block-size: auto;
+  max-width: none;
+  text-decoration: underline dotted;
+
+  &:hover {
+    background: none;
+    color: var(--c-text-primary);
+  }
+}
+
 /* The clip is on the TEXT: the inline-flex chip has no inline content for
    `text-overflow`, and a chip `overflow` would clip its hit-target expander. */
 .tool-file-name {

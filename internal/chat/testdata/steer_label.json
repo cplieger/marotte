@@ -51,7 +51,7 @@
       "label": "Workflow result not delivered · the session restarted",
       "sites": [
         "internal/agent/bridge_coord.go:1761",
-        "internal/agent/entry_merge.go:605",
+        "internal/agent/entry_merge.go:609",
         "internal/agent/runtime.go:794"
       ]
     },
@@ -74,7 +74,7 @@
       "reason": "",
       "label": "Workflow result",
       "sites": [
-        "internal/translate/projection_entries.go:233",
+        "internal/translate/projection_entries.go:239",
         "internal/translate/workflow_message.go:41"
       ]
     },
@@ -93,7 +93,7 @@
       "reason": "restart",
       "label": "Message from the main agent not delivered · the session restarted",
       "sites": [
-        "internal/agent/entry_merge.go:605"
+        "internal/agent/entry_merge.go:609"
       ]
     },
     {
@@ -112,7 +112,7 @@
       "reason": "",
       "label": "Message from the main agent",
       "sites": [
-        "internal/translate/projection_entries.go:233",
+        "internal/translate/projection_entries.go:239",
         "internal/translate/workflow_message.go:41"
       ]
     },
@@ -131,7 +131,7 @@
       "reason": "restart",
       "label": "Message to the main agent not delivered · the session restarted",
       "sites": [
-        "internal/agent/entry_merge.go:605"
+        "internal/agent/entry_merge.go:609"
       ]
     },
     {
@@ -150,7 +150,7 @@
       "reason": "",
       "label": "Message to the main agent",
       "sites": [
-        "internal/translate/projection_entries.go:233",
+        "internal/translate/projection_entries.go:239",
         "internal/translate/workflow_message.go:41"
       ]
     },
@@ -171,7 +171,7 @@
       "reason": "restart",
       "label": "Not read · the session restarted",
       "sites": [
-        "internal/agent/entry_merge.go:605",
+        "internal/agent/entry_merge.go:609",
         "internal/agent/runtime.go:788"
       ]
     },
@@ -193,7 +193,7 @@
       "reason": "",
       "label": "Mid-turn message",
       "sites": [
-        "internal/translate/projection_entries.go:233",
+        "internal/translate/projection_entries.go:239",
         "internal/translate/workflow_message.go:41"
       ]
     }
@@ -214,7 +214,7 @@
       "reason": "boundary"
     },
     {
-      "site": "internal/agent/entry_merge.go:605",
+      "site": "internal/agent/entry_merge.go:609",
       "form": "mutation",
       "origin": "",
       "state": "dropped",
@@ -277,7 +277,7 @@
       "reason": "boundary"
     },
     {
-      "site": "internal/translate/projection_entries.go:233",
+      "site": "internal/translate/projection_entries.go:239",
       "form": "literal",
       "origin": "",
       "state": "",

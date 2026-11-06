@@ -5,7 +5,7 @@
 import type { ToolKind } from "./types.js";
 
 /** Singular and plural per kind, spelled out rather than derived. `other` is "call", the honest
- *  word for a kind named by the absence of one; the rest match `TOOL_KIND_LABELS`. */
+ *  word for a kind named by the absence of one. */
 const KIND_NOUNS: Readonly<Record<ToolKind, { one: string; many: string }>> = {
   read: { one: "read", many: "reads" },
   edit: { one: "edit", many: "edits" },
@@ -16,6 +16,7 @@ const KIND_NOUNS: Readonly<Record<ToolKind, { one: string; many: string }>> = {
   execute: { one: "command", many: "commands" },
   shell: { one: "shell command", many: "shell commands" },
   hook: { one: "hook", many: "hooks" },
+  steering: { one: "steering set", many: "steering sets" },
   fetch: { one: "fetch", many: "fetches" },
   think: { one: "thinking step", many: "thinking steps" },
   switch_mode: { one: "mode switch", many: "mode switches" },
