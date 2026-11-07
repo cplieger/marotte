@@ -40,24 +40,24 @@ const (
 // marotte.EffectiveSettings.AutoCompactPctRange) read. The top stays below 95, where a compaction's own call overflows
 // and KAS falls back to summarizing a truncated transcript.
 const (
-	AutoCompactPctMin  = 50
-	AutoCompactPctMax  = 90
-	AutoCompactPctStep = 5
+	autoCompactPctMin  = 50
+	autoCompactPctMax  = 90
+	autoCompactPctStep = 5
 )
 
 // ValidAutoCompactPct reports whether pct is a value the slider can produce.
 func ValidAutoCompactPct(pct int) bool {
-	return pct >= AutoCompactPctMin && pct <= AutoCompactPctMax && pct%AutoCompactPctStep == 0
+	return pct >= autoCompactPctMin && pct <= autoCompactPctMax && pct%autoCompactPctStep == 0
 }
 
 // AutoCompactPctRange is the range the settings page draws its slider from.
 func AutoCompactPctRange() marotte.PctRange {
-	return marotte.PctRange{Min: AutoCompactPctMin, Max: AutoCompactPctMax, Step: AutoCompactPctStep}
+	return marotte.PctRange{Min: autoCompactPctMin, Max: autoCompactPctMax, Step: autoCompactPctStep}
 }
 
 // errAutoCompactPctRange is the one sentence for a pct outside the range, answered to a PATCH.
 var errAutoCompactPctRange = fmt.Errorf("%s must be a whole number from %d to %d in steps of %d",
-	KeyAutoCompactPct, AutoCompactPctMin, AutoCompactPctMax, AutoCompactPctStep)
+	KeyAutoCompactPct, autoCompactPctMin, autoCompactPctMax, autoCompactPctStep)
 
 // DefaultNotifyPRStatus is OFF while its siblings are ON: a PR's CI verdict is already on the
 // forge, where the other two report unobserved work.
