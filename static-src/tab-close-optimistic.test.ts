@@ -66,9 +66,11 @@ vi.mock("./api-client.js", async (importOriginal) => ({
 
 import {
   activateTab,
+  claimNavigation,
   closeTab,
   getActiveTabId,
   hasTab,
+  navigationHeld,
   registerTabNotice,
   setTabPinned,
 } from "./tabs.js";
@@ -600,6 +602,32 @@ describe("an unanswered close of the active tab", () => {
       expect(getActiveTabId()).toBe(solo);
       expect(pointers.active, "Send acts for the restored chat").toBe("solo");
       expect(vi.mocked(restoreFailedSend)).toHaveBeenCalledWith("solo", "half a thought");
+    } finally {
+      vi.useRealTimers();
+      tabServer.releaseResponses();
+    }
+  });
+  it("binds the only tab again while a chat opened from the empty strip is still on its way", async () => {
+    const ids = await strip("solo");
+    const solo = ids["solo"] ?? "";
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    tabServer.setMode("manual");
+    tabServer.holdResponses();
+    tabServer.failNext("close_tab", 500);
+    try {
+      void closeTab(solo);
+      // A Send from the empty composer claims the view for the chat it creates.
+      const create = claimNavigation();
+
+      await vi.advanceTimersByTimeAsync(5_000 + 1_000);
+      await settleTabs();
+      await activationRan();
+
+      expect(getActiveTabId()).toBe(solo);
+      expect(pointers.active, "the shown tab acts for its chat").toBe("solo");
+      expect(navigationHeld(create), "the created chat still takes the view when it lands").toBe(
+        true,
+      );
     } finally {
       vi.useRealTimers();
       tabServer.releaseResponses();

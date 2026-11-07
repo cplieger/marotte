@@ -865,6 +865,9 @@ export function navigationHeld(ticket: number): boolean {
   return ticket === navigationSeq;
 }
 
+/** Advanced by every close of the active tab, which hands the view on as the reader's act. */
+let activeCloses = 0;
+
 /** Activate an existing tab, and reveal it: this is the reader picking a destination. Every gesture
  *  door lands here: a row tap, Enter on a focused row, and `openTab`. Resolves once the activation
  *  half has run (or was superseded); the tab already active starts nothing and resolves with its
@@ -1202,19 +1205,26 @@ export async function openTab(args: OpenTabArgs): Promise<OpenTabOutcome> {
  *  along — and the projection retains nothing else about a departed tab. */
 interface CapturedClose {
   rows: TabRow[];
-  /** The parent's index in the projection at capture, so a rollback restores
-   *  the subtree in place rather than at the end. */
+  /** The id of the row ahead of the parent at capture ("" = the head): a rollback puts the subtree
+   *  back behind it, so a row restored or closed meanwhile does not shift it. */
+  after: string;
+  /** The parent's index at capture, the fallback when `after` has closed since. */
   at: number;
   overrides: Map<string, string>;
   /** The MRU entries the gesture's forgetRow dropped, each ANCHORED on the id ahead of it
    *  (`""` = the head) and ordered by original slot, so a removed anchor is back before its
    *  follower. Exact behind a SURVIVING anchor; a vanished one appends, understating recency. */
   history: { id: string; after: string }[];
-  /** The active tab, when it was inside the subtree; "" otherwise. What a
-   *  rollback re-activates, unless the reader has left `successorID` since. */
+  /** The active tab, when it was inside the subtree; "" otherwise. A rollback re-activates it only
+   *  while the reader has not moved to another tab or opened one since the close: `navigation` is
+   *  still held and no later close handed the view on (`handoff` is still `activeCloses`). */
   activeTabID: string;
-  /** The tab the gesture handed the view to; "" when it closed no active tab or emptied the strip. */
-  successorID: string;
+  /** `navigationSeq` at the gesture, read without claiming. */
+  navigation: number;
+  /** This close's `activeCloses` value; 0 for a close of a background tab. */
+  handoff: number;
+  /** The close emptied the strip, so text typed meanwhile is the restored chat's draft. */
+  emptied: boolean;
   /** The store's active chat at gesture time, when it was a chat this close took out; ""
    *  otherwise. Its draft owner when the strip emptied, and the sign that the rollback re-selects. */
   storeActive: string;
@@ -1337,13 +1347,17 @@ function captureClose(row: TabRow): CapturedClose {
   }
   const storeActive = getActiveId();
   const list = $.tabList;
+  const at = state.tabs.findIndex((t) => t.subject.id === row.subject.id);
   return {
     rows,
-    at: state.tabs.findIndex((t) => t.subject.id === row.subject.id),
+    after: state.tabs[at - 1]?.subject.id ?? "",
+    at,
     overrides,
     history,
     activeTabID: ids.has(state.active) ? state.active : "",
-    successorID: "",
+    navigation: navigationSeq,
+    handoff: 0,
+    emptied: false,
     storeActive: rows.some((r) => r.subject.kind === "chat" && r.subject.ref === storeActive)
       ? storeActive
       : "",
@@ -1364,9 +1378,10 @@ function applyGestureRemoval(c: CapturedClose): void {
     forgetRow(r);
   }
   if (c.activeTabID !== "") {
+    c.handoff = ++activeCloses;
     // scheduleEmpty defers itself while this remove is pending.
     activateSuccessor(true);
-    c.successorID = state.active;
+    c.emptied = state.active === "";
   }
   // The store row survives to onConfirm, and a reader acting for the user must never act for a
   // chat whose tab is gone: a non-chat tab was shown, or the strip emptied.
@@ -1401,7 +1416,7 @@ function rollbackClose(c: CapturedClose): void {
     (r) => !hasRow(r.subject.id) && tabIdFor(r.subject.kind, r.subject.ref) === "",
   );
   if (restorable.length > 0) {
-    state.tabs.splice(Math.min(Math.max(c.at, 0), state.tabs.length), 0, ...restorable);
+    state.tabs.splice(restoreIndex(c), 0, ...restorable);
     internal.everOpened = true;
     applyPinOrder();
   }
@@ -1418,7 +1433,7 @@ function rollbackClose(c: CapturedClose): void {
   const restoredChat =
     c.rows.find((r) => r.subject.id === c.activeTabID && r.subject.kind === "chat")?.subject.ref ??
     c.storeActive;
-  if (restoredChat !== "" && state.active === "" && getActiveId() === "") {
+  if (restoredChat !== "" && c.emptied && getActiveId() === "") {
     const typed = $.promptInput.value;
     if (typed !== "") {
       restoreFailedSend(restoredChat, typed);
@@ -1428,15 +1443,38 @@ function rollbackClose(c: CapturedClose): void {
     internal.stripRestore = c.stripScroll;
   }
   emit();
-  const readerStayed = state.active === "" || state.active === c.successorID;
-  if (c.activeTabID !== "" && hasRow(c.activeTabID) && readerStayed) {
-    beginActivation(c.activeTabID, { quiet: true, now: true });
+  // reset's boot branch points `state.active` at a restored row with no activation; the shown tab
+  // must be bound, or Send acts for no chat.
+  const unbound = c.rows.some((r) => r.subject.id === state.active);
+  let target = unbound ? state.active : "";
+  if (
+    c.activeTabID !== "" &&
+    hasRow(c.activeTabID) &&
+    navigationHeld(c.navigation) &&
+    c.handoff === activeCloses
+  ) {
+    target = c.activeTabID;
+  }
+  if (target !== "") {
+    if (unbound) {
+      state.active = "";
+    }
+    beginActivation(target, { quiet: true, now: true });
   } else if (c.storeActive !== "" && getActiveTabKind() !== "chat") {
     reselectPaintedChat();
   }
   if (!c.refused) {
     notifyAboutRow(c.rows[0], "Close not confirmed, so the tab was restored.", "info");
   }
+}
+
+/** Where a rollback splices its subtree back: behind its captured anchor while that row is open. */
+function restoreIndex(c: CapturedClose): number {
+  if (c.after === "") {
+    return 0;
+  }
+  const anchor = state.tabs.findIndex((t) => t.subject.id === c.after);
+  return anchor >= 0 ? anchor + 1 : Math.min(Math.max(c.at, 0), state.tabs.length);
 }
 
 const CLOSE_PUT_BACK = "Could not close that tab, so it was put back.";
@@ -3005,6 +3043,7 @@ export function _resetForTest(): void {
   nameOverrides.clear();
   activationHistory.length = 0;
   navigationSeq = 0;
+  activeCloses = 0;
   currentActivation = null;
   settledActive = "";
   shownChat = "";
