@@ -1838,7 +1838,8 @@
 
 .steer-note[data-state="dropped"] .tool-icon,
 .steer-note[data-state="dropped"] .steer-note-label,
-.steer-note[data-state="dropped"] .steer-note-text {
+.steer-note[data-state="dropped"] .steer-note-text,
+.steer-note[data-state="dropped"] .turn-req-quote {
   color: var(--c-text-aside);
 }
 

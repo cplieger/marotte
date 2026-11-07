@@ -25,6 +25,8 @@ import { sessionDrain, turnsPhrase, type QueuedSlot } from "./queue-slots.js";
 import { truncate } from "./strings.js";
 import { newMessageID } from "./transport.js";
 import type { PendingSteer, QueuedPrompt } from "./types.js";
+import { readQuoted, splitLeadingQuote } from "./message-quote.js";
+import { buildQuoteBand } from "./quote-band.js";
 
 /** One dock row: a steer the agent has not read, or a follow-up the server holds. */
 type DockRow = { kind: "steer"; steer: PendingSteer } | { kind: "queued"; slot: QueuedSlot };
@@ -184,7 +186,7 @@ function updateRow(row: HTMLElement, steer: PendingSteer, state: StackState): vo
   if (steer.compacted === true) {
     row.dataset["compacted"] = "";
   }
-  row.dataset["tooltip"] = steer.text;
+  row.dataset["tooltip"] = readQuoted(steer.text);
   row.setAttribute("aria-label", accessibleName(steer));
 
   const label = row.querySelector(".steer-state-label");
@@ -200,14 +202,25 @@ function updateRow(row: HTMLElement, steer: PendingSteer, state: StackState): vo
  *  TOTAL over the item rather than a live case. */
 function syncText(row: HTMLElement, text: string): void {
   const textEl = row.querySelector<HTMLElement>(".steer-text");
-  if (textEl === null) {
+  if (textEl !== null) {
+    fillText(textEl, text);
+  }
+}
+
+const shownText = new WeakMap<HTMLElement, string>();
+
+/** A leading quote as the band a sent prompt draws, then the rest on one line; rebuilt only when the
+ *  text changes, so a focused path link in the band survives a repaint. */
+function fillText(textEl: HTMLElement, text: string): void {
+  if (shownText.get(textEl) === text) {
     return;
   }
-  const body = oneLine(text);
-  if (textEl.textContent === body) {
-    return;
-  }
-  textEl.textContent = body;
+  shownText.set(textEl, text);
+  const quoted = splitLeadingQuote(text.trim());
+  textEl.replaceChildren(
+    ...(quoted === null ? [] : [buildQuoteBand(quoted)]),
+    oneLine(quoted?.rest ?? text),
+  );
 }
 
 const actionSig = new WeakMap<HTMLElement, string>();
@@ -243,9 +256,11 @@ function buildRow(steer: PendingSteer, state: StackState): HTMLElement {
     el("span", { className: "steer-state-label" }, stateWord(steer)),
   );
 
-  // Collapsed to one line and clipped to four in CSS, never truncated here: the whole message stays
-  // in the DOM, and it stays reachable through the row's tooltip, its accessible name and Edit.
-  const text = el("span", { className: "steer-text" }, oneLine(steer.text));
+  // Collapsed to one line and clipped to four lines in CSS, the quote band counting as one, never
+  // truncated here: the whole message stays in the DOM, and it stays reachable through the row's
+  // tooltip, its accessible name and Edit.
+  const text = el("div", { className: "steer-text" });
+  fillText(text, steer.text);
 
   // Built empty and kept for the row's life: it is what reserves the height a control needs, so the
   // confirmation reveals buttons into a box that was always there rather than growing the row under
@@ -257,8 +272,8 @@ function buildRow(steer: PendingSteer, state: StackState): HTMLElement {
     {
       className: "steer-row",
       "data-state": rowState(steer),
-      // The RAW text, not the clamped one: the visible row is clamped by layout.
-      "data-tooltip": steer.text,
+      // The WHOLE text, not the clamped one: the visible row is clamped by layout.
+      "data-tooltip": readQuoted(steer.text),
       // The state is carried by the glyph AND the label, both visual, so it has to be in the
       // accessible name too.
       "aria-label": accessibleName(steer),
@@ -606,7 +621,7 @@ function queuedName(slot: QueuedSlot): string {
 }
 
 function queuedShown(row: QueuedPrompt): string {
-  return oneLine(row.label ?? row.text);
+  return oneLine(row.label ?? readQuoted(row.text));
 }
 
 /** What Discard does to this row, which differs by kind: a carried row was already sent once as
@@ -632,7 +647,7 @@ function buildQueuedRow(slot: QueuedSlot): HTMLElement {
       el("span", { className: "steer-state-icon", "aria-hidden": "true" }, iconEl(ICON_HOURGLASS)),
       el("span", { className: "steer-state-label" }),
     ),
-    el("span", { className: "steer-text" }),
+    el("div", { className: "steer-text" }),
     el(
       "span",
       { className: "steer-actions" },
@@ -664,7 +679,7 @@ function buildQueuedRow(slot: QueuedSlot): HTMLElement {
 function updateQueuedRow(li: HTMLElement, slot: QueuedSlot): void {
   const { row } = slot;
   queuedRowOf.set(li, row);
-  li.dataset["tooltip"] = row.text;
+  li.dataset["tooltip"] = readQuoted(row.text);
   li.setAttribute("aria-label", queuedName(slot));
   if (row.held === true) {
     li.dataset["held"] = "";
@@ -675,9 +690,9 @@ function updateQueuedRow(li: HTMLElement, slot: QueuedSlot): void {
   if (label !== null) {
     label.textContent = queuedWord(slot);
   }
-  const text = li.querySelector(".steer-text");
+  const text = li.querySelector<HTMLElement>(".steer-text");
   if (text !== null) {
-    text.textContent = queuedShown(row);
+    fillText(text, row.label ?? row.text);
   }
   syncQueuedArrow(li, slot);
 }
@@ -779,7 +794,7 @@ async function sendQueuedRowNow(messageID: string): Promise<void> {
 // WHOLE message collapsed to one line: the visible row clamps to fit and a reader who cannot see it
 // is not subject to that.
 function accessibleName(steer: PendingSteer): string {
-  const steerText = oneLine(steer.text);
+  const steerText = oneLine(readQuoted(steer.text));
   if (steer.pending === true) {
     return `Sending, not in the agent's buffer yet: ${steerText}`;
   }
@@ -819,5 +834,5 @@ function oneLine(text: string): string {
 const PREVIEW_CHARS = 40;
 
 function preview(text: string): string {
-  return truncate(oneLine(text), PREVIEW_CHARS);
+  return truncate(oneLine(readQuoted(text)), PREVIEW_CHARS);
 }
