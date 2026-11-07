@@ -6,7 +6,8 @@
   "sseFixtureTags": "marotte_test",
   "scripts": {
     "pretest": "rm -rf node_modules/.vite",
-    "test": "vitest --run --reporter=default --reporter=json --outputFile.json=.vitest/duration-report.json && node scripts/check-suite-duration.ts .vitest/duration-report.json",
+    "test": "vitest --run --reporter=default --reporter=json --outputFile.json=.vitest/duration-report.json",
+    "posttest": "node scripts/check-suite-duration.ts .vitest/duration-report.json",
     "test:watch": "vitest",
     "test:coverage": "vitest --run --coverage",
     "typecheck": "tsc -project tsconfig.json && tsc -project tsconfig.sw.json && tsc -project tsconfig.node.json",
