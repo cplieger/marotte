@@ -892,17 +892,65 @@ describe("the automatic-compaction switch and slider", () => {
       <input type="checkbox" id="flag-auto-compaction">
       <div id="auto-compact-row">
         <output id="auto-compact-pct-value"></output>
-        <input type="range" id="auto-compact-pct" min="50" max="80" step="5">
+        <input type="range" id="auto-compact-pct" min="1" max="2" step="1">
+        <p id="auto-compact-rejected" class="hidden"></p>
       </div>`;
   });
 
-  it("ships a slider that stops at KAS's maximum threshold, 80", async () => {
+  it("ships a fallback slider matching the server's range and a hint saying when compaction runs", async () => {
     const { default: page } = await import("../static/index.html?raw");
     const doc = new DOMParser().parseFromString(page, "text/html");
     const shipped = doc.getElementById("auto-compact-pct");
-    expect(shipped?.getAttribute("max")).toBe("80");
-    expect(shipped?.hasAttribute("aria-describedby")).toBe(false);
-    expect(doc.getElementById("auto-compact-warning")).toBeNull();
+    expect([
+      shipped?.getAttribute("min"),
+      shipped?.getAttribute("max"),
+      shipped?.getAttribute("step"),
+    ]).toEqual(["50", "90", "5"]);
+    expect(shipped?.getAttribute("aria-describedby")?.split(" ")).toEqual([
+      "auto-compact-hint",
+      "auto-compact-rejected",
+    ]);
+    expect(doc.getElementById("auto-compact-hint")?.textContent).toContain(
+      "runs as soon as the turn ends",
+    );
+    expect(doc.getElementById("auto-compact-rejected")?.classList.contains("hidden")).toBe(true);
+  });
+
+  it("takes the slider's range from the server", () => {
+    applyGeneralPanel(
+      settingsPayload({
+        auto_compact_pct: 90,
+        auto_compact_pct_range: { min: 50, max: 90, step: 5 },
+      }),
+    );
+    expect([range().min, range().max, range().step, range().value]).toEqual([
+      "50",
+      "90",
+      "5",
+      "90",
+    ]);
+  });
+
+  it("names a stored value the server refused beside the slider, and clears it once a value fits", () => {
+    const rejected = (): HTMLElement =>
+      document.getElementById("auto-compact-rejected") as HTMLElement;
+    applyGeneralPanel(
+      settingsPayload({ auto_compact_pct: 80, rejected_keys: ["auto_compact_pct"] }),
+    );
+    expect(rejected().classList.contains("hidden")).toBe(false);
+    expect(rejected().textContent).toBe(
+      "The saved value is outside 50–90%, so 80% is used until you pick one.",
+    );
+    applyGeneralPanel(settingsPayload({ auto_compact_pct: 85, rejected_keys: [] }));
+    expect(rejected().classList.contains("hidden")).toBe(true);
+    expect(rejected().textContent).toBe("");
+  });
+
+  it("leaves the slider's message alone for another key's misfit", () => {
+    const rejected = (): HTMLElement =>
+      document.getElementById("auto-compact-rejected") as HTMLElement;
+    applyGeneralPanel(settingsPayload({ rejected_keys: ["theme"] }));
+    expect(rejected().classList.contains("hidden")).toBe(true);
   });
 
   it("hides the slider while the switch is off and publishes the policy", async () => {

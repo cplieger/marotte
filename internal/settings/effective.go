@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -35,11 +36,28 @@ const (
 	DefaultAutoCompactPct        = 80
 )
 
-// ValidAutoCompactPct reports whether pct is a value the slider can produce:
-// 50..80 in steps of 5. KAS fails a session door whose threshold is above 80.
+// The auto_compact_pct range, the one statement the validator, the PATCH check and the slider (served as
+// marotte.EffectiveSettings.AutoCompactPctRange) read. The top stays below 95, where a compaction's own call overflows
+// and KAS falls back to summarizing a truncated transcript.
+const (
+	autoCompactPctMin  = 50
+	autoCompactPctMax  = 90
+	autoCompactPctStep = 5
+)
+
+// ValidAutoCompactPct reports whether pct is a value the slider can produce.
 func ValidAutoCompactPct(pct int) bool {
-	return pct >= 50 && pct <= 80 && pct%5 == 0
+	return pct >= autoCompactPctMin && pct <= autoCompactPctMax && pct%autoCompactPctStep == 0
 }
+
+// AutoCompactPctRange is the range the settings page draws its slider from.
+func AutoCompactPctRange() marotte.PctRange {
+	return marotte.PctRange{Min: autoCompactPctMin, Max: autoCompactPctMax, Step: autoCompactPctStep}
+}
+
+// errAutoCompactPctRange is the one sentence for a pct outside the range, answered to a PATCH.
+var errAutoCompactPctRange = fmt.Errorf("%s must be a whole number from %d to %d in steps of %d",
+	KeyAutoCompactPct, autoCompactPctMin, autoCompactPctMax, autoCompactPctStep)
 
 // DefaultNotifyPRStatus is OFF while its siblings are ON: a PR's CI verdict is already on the
 // forge, where the other two report unobserved work.
@@ -61,6 +79,8 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		AdditionalDirectories: defaultAdditionalDirectories(),
 		AutoCompactionEnabled: DefaultAutoCompactionEnabled,
 		AutoCompactPct:        DefaultAutoCompactPct,
+		AutoCompactPctRange:   AutoCompactPctRange(),
+		RejectedKeys:          []string{},
 		ChatRetentionDays:     DefaultChatRetentionDays,
 		GuardPayloadLinks:     defaultGuardPayloadLinks,
 		HighThroughput:        defaultHighThroughput,
@@ -128,8 +148,9 @@ func DebugLogs(ctx context.Context, configDir string) bool {
 }
 
 // EffectiveFrom resolves the stored document into the client's view: EffectiveDefaults with
-// every stored value that FITS ITS TYPE overlaid, plus the keys that did not fit. Value
-// validity is the client's (theme "purple" passes). A nil or empty map yields the defaults.
+// every stored value that FITS ITS TYPE overlaid, plus the keys that did not fit, sorted and also
+// served as RejectedKeys. Value validity is the client's (theme "purple" passes). A nil or empty
+// map yields the defaults.
 func EffectiveFrom(stored map[string]json.RawMessage) (effective marotte.EffectiveSettings, rejected []string) {
 	out := EffectiveDefaults()
 	for key, set := range effectiveSetters(&out) {
@@ -140,6 +161,10 @@ func EffectiveFrom(stored map[string]json.RawMessage) (effective marotte.Effecti
 		if err := set(raw); err != nil {
 			rejected = append(rejected, key)
 		}
+	}
+	slices.Sort(rejected)
+	if len(rejected) > 0 {
+		out.RejectedKeys = rejected
 	}
 	return out, rejected
 }
@@ -215,7 +240,7 @@ func decodeAutoCompactPct(dst *int, raw json.RawMessage) error {
 		return err
 	}
 	if !ValidAutoCompactPct(pct) {
-		return fmt.Errorf("settings: %s %d is not 50..80 in steps of 5", KeyAutoCompactPct, pct)
+		return errAutoCompactPctRange
 	}
 	*dst = pct
 	return nil

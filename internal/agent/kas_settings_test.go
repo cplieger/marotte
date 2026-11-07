@@ -231,28 +231,25 @@ func TestAutoCompactionPolicy_ReadsTheSettingAndFailsToTheDefault(t *testing.T) 
 	if enabled, pct := policy(dir); enabled || pct != 60 {
 		t.Errorf("autoCompactionPolicy(stored false, 60) = (%v, %d), want (false, 60)", enabled, pct)
 	}
-	// KAS refuses a threshold above 80, so a stored 85 or 90 reads as the default.
-	for _, stored := range []int{83, 85, 90} {
-		writeCompactionSetting(t, dir, true, stored)
-		if _, pct := policy(dir); pct != 80 {
-			t.Errorf("autoCompactionPolicy(stored %d) pct = %d, want 80", stored, pct)
+	for _, tc := range []struct{ stored, want int }{{85, 85}, {90, 90}, {83, 80}, {95, 80}, {45, 80}} {
+		dir := t.TempDir()
+		writeCompactionSetting(t, dir, true, tc.stored)
+		if _, pct := policy(dir); pct != tc.want {
+			t.Errorf("autoCompactionPolicy(stored %d) pct = %d, want %d", tc.stored, pct, tc.want)
 		}
 	}
 }
 
-// TestChatDoor_SendsTheCompactionPolicyAndAnObserverDoorDoesNot pins that a chat's door carries the policy's threshold
-// and an observer pass keeps KAS's defaults.
-func TestChatDoor_SendsTheCompactionPolicyAndAnObserverDoorDoesNot(t *testing.T) {
+// TestChatDoor_TurnsKASsCompactionOffAndAnObserverDoorDoesNot pins that every chat door turns KAS's own compaction
+// off, whatever the policy, since marotte compacts at a turn's end, and that an observer pass keeps KAS's defaults.
+func TestChatDoor_TurnsKASsCompactionOffAndAnObserverDoorDoesNot(t *testing.T) {
 	for _, tc := range []struct {
-		enabled       bool
-		wantThreshold int
-	}{
-		{enabled: true, wantThreshold: 60},
-		{enabled: false, wantThreshold: 0},
-	} {
-		t.Run(fmt.Sprintf("auto_compaction_enabled=%v", tc.enabled), func(t *testing.T) {
+		enabled bool
+		pct     int
+	}{{enabled: true, pct: 60}, {enabled: false, pct: 60}, {enabled: true, pct: 90}} {
+		t.Run(fmt.Sprintf("auto_compaction_enabled=%v pct=%d", tc.enabled, tc.pct), func(t *testing.T) {
 			dir := t.TempDir()
-			writeCompactionSetting(t, dir, tc.enabled, 60)
+			writeCompactionSetting(t, dir, tc.enabled, tc.pct)
 			var mu sync.Mutex
 			var doors []*recordingStartBridge
 			record := func() engineSession {
@@ -283,15 +280,13 @@ func TestChatDoor_SendsTheCompactionPolicyAndAnObserverDoorDoesNot(t *testing.T)
 			for _, rb := range doors {
 				switch o := rb.startOpts(); o.Role {
 				case marotte.SessionRoleChat:
-					if o.AutoCompactionThreshold != tc.wantThreshold || o.DisableAutoCompaction == tc.enabled {
-						t.Errorf("the chat's door sent threshold %d, disableAutoCompaction %v; want %d, %v",
-							o.AutoCompactionThreshold, o.DisableAutoCompaction, tc.wantThreshold, !tc.enabled)
+					if !o.DisableAutoCompaction {
+						t.Error("the chat's door left KAS's own compaction on")
 					}
 					chat++
 				case marotte.SessionRoleObserver:
-					if o.AutoCompactionThreshold != 0 || o.DisableAutoCompaction {
-						t.Errorf("an observer door sent threshold %d, disableAutoCompaction %v; want 0, false",
-							o.AutoCompactionThreshold, o.DisableAutoCompaction)
+					if o.DisableAutoCompaction {
+						t.Error("an observer door turned KAS's compaction off")
 					}
 					observer++
 				}

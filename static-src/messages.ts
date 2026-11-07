@@ -1712,7 +1712,8 @@ function syncTurnNotice(card: HTMLElement, t: Turn): void {
 
 /**
  * Whether the notice offers to compact: the turn overflowed the window, is still the newest, and no compaction
- * has landed since.
+ * has landed since. Whatever the auto compaction switch says: the page cannot see whether the reader cancelled the
+ * turn's compaction, which stops its end's.
  */
 function offersCompact(t: Turn): boolean {
   if (closeOfBody(t.body)?.failure_kind !== "context_limit") {

@@ -9,6 +9,13 @@ type KiroDefault struct {
 	LayerName string `json:"layer_name"`
 }
 
+// PctRange is a percentage slider's bounds and step.
+type PctRange struct {
+	Min  int `json:"min"`
+	Max  int `json:"max"`
+	Step int `json:"step"`
+}
+
 // EffectiveSettings is what GET /api/settings answers: every marotte-owned preference the client
 // renders, resolved against config.json rather than echoed from it. The PATCH body is its partial.
 // NO FIELD CARRIES omitempty: wiregen then emits a REQUIRED TypeScript field, so the client cannot
@@ -69,13 +76,17 @@ type EffectiveSettings struct {
 	// may read and write, default EMPTY. An entry that settings.AgentDirs.Assess refuses stays
 	// listed, grants nothing, and is a key of AdditionalDirectoriesRefused.
 	AdditionalDirectories []string `json:"additional_directories"`
+	// RejectedKeys are the stored keys whose value did not fit, each served as its default; never stored.
+	RejectedKeys []string `json:"rejected_keys"`
 	// ChatRetentionDays is -1 (keep forever), 0 (delete on close) or a day count.
 	// Zero is the most destructive value in the document, so absent must never
 	// resolve to it.
 	ChatRetentionDays int `json:"chat_retention_days"`
-	// AutoCompactPct is 50..80 in steps of 5; any other stored value reads as
-	// settings.DefaultAutoCompactPct (80).
+	// AutoCompactPct is inside AutoCompactPctRange; a stored value outside it reads as
+	// settings.DefaultAutoCompactPct and is listed in RejectedKeys.
 	AutoCompactPct int `json:"auto_compact_pct"`
+	// AutoCompactPctRange is settings.AutoCompactPctRange; never stored.
+	AutoCompactPctRange PctRange `json:"auto_compact_pct_range"`
 	// TerminalCommandTimeoutMs is the shell tool's default timeout in ms; 0 is
 	// unset (kiro-cli's 120 s).
 	TerminalCommandTimeoutMs int `json:"terminal_command_timeout_ms"`

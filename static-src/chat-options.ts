@@ -277,16 +277,16 @@ function mergeRow(): HTMLElement {
   return row;
 }
 
-/** The compact row's hints: two disabled variants for `CmdCompact`'s two different 409s. */
+/** The compact row's hints: the empty chat's is the one disabled variant, and the busy one says the compaction waits. */
 const COMPACT_HINT = "Summarize the history so far to free up context";
 const COMPACT_HINT_EMPTY = "Send a message first. There is no session to compact yet";
-const COMPACT_HINT_BUSY = "Wait for this turn to finish, or cancel it, then compact";
+const COMPACT_HINT_BUSY =
+  "Summarize the history once this turn ends; it waits above the message box";
 
 /**
- * Compact this chat's context (the action `/compact` dispatches). Disabled for the two
- * refusals the client can see, no conversation yet and a turn in flight; the server's 409
- * covers the rest. Reports no completion: the server broadcasts `compaction_started` and
- * persists a `compacted` row.
+ * Compact this chat's context (the action `/compact` dispatches). Disabled only with no conversation yet; during a turn
+ * the server queues it for the turn's end, and its 409 covers the rest. Reports no completion: the server broadcasts
+ * `compaction_started` and persists a `compacted` row.
  */
 function compactRow(): HTMLElement {
   const { row, btn, hint } = actionRow({
@@ -320,7 +320,7 @@ function compactRow(): HTMLElement {
     if (hint.textContent === nextHint) {
       return;
     }
-    btn.disabled = empty || busy;
+    btn.disabled = empty;
     hint.textContent = nextHint;
   });
 

@@ -978,15 +978,26 @@ function autoCompactionEls(): {
   row: HTMLElement;
   range: HTMLInputElement;
   value: HTMLOutputElement;
+  rejected: HTMLElement;
 } | null {
   const toggle = document.getElementById("flag-auto-compaction") as HTMLInputElement | null;
   const row = document.getElementById("auto-compact-row");
   const range = document.getElementById("auto-compact-pct") as HTMLInputElement | null;
   const value = document.getElementById("auto-compact-pct-value") as HTMLOutputElement | null;
-  if (toggle === null || row === null || range === null || value === null) {
+  const rejected = document.getElementById("auto-compact-rejected");
+  if (toggle === null || row === null || range === null || value === null || rejected === null) {
     return null;
   }
-  return { toggle, row, range, value };
+  return { toggle, row, range, value, rejected };
+}
+
+/** The sentence for a stored point the server refused (EffectiveSettings.rejected_keys), "" when it took it. */
+function rejectedPctText(s: EffectiveSettings): string {
+  if (!s.rejected_keys.includes("auto_compact_pct")) {
+    return "";
+  }
+  const { min, max } = s.auto_compact_pct_range;
+  return `The saved value is outside ${String(min)}–${String(max)}%, so ${String(s.auto_compact_pct)}% is used until you pick one.`;
 }
 
 /** Show the slider row only while the switch is on, and the value beside the range. `.hidden`
@@ -1003,6 +1014,14 @@ function paintAutoCompaction(enabled: boolean, pct: number): void {
 function applyAutoCompaction(s: EffectiveSettings): void {
   const els = autoCompactionEls();
   if (els !== null) {
+    // The range is the server's (settings.AutoCompactPctRange), set before the value so the value is not clamped.
+    const { min, max, step } = s.auto_compact_pct_range;
+    els.range.min = String(min);
+    els.range.max = String(max);
+    els.range.step = String(step);
+    const rejected = rejectedPctText(s);
+    els.rejected.textContent = rejected;
+    els.rejected.classList.toggle("hidden", rejected === "");
     els.toggle.checked = s.auto_compaction_enabled;
     // Not while the reader is dragging it: a remote change to another key re-seeds the whole panel.
     if (document.activeElement !== els.range) {

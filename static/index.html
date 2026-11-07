@@ -671,7 +671,9 @@
                     <output id="auto-compact-pct-value" for="auto-compact-pct">80%</output>
                     <span class="settings-save-status hidden" data-save-status="auto_compact_pct" aria-live="polite"></span>
                   </div>
-                  <input type="range" id="auto-compact-pct" min="50" max="80" step="5" value="80">
+                  <input type="range" id="auto-compact-pct" min="50" max="90" step="5" value="80" aria-describedby="auto-compact-hint auto-compact-rejected">
+                  <p class="section-hint" id="auto-compact-hint">When a turn reaches this point, a compaction waits above the message box and runs as soon as the turn ends, before any queued message. Nothing compacts during a turn, so one very long turn can still reach the context limit.</p>
+                  <p class="section-hint field-error hidden" id="auto-compact-rejected" role="alert"></p>
                 </div>
               </div>
               <div class="section-option section-option-fixed">

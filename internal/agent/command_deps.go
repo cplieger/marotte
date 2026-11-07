@@ -220,6 +220,21 @@ func (rt *Runtime) AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpe
 	return rt.coord.AdmissionHolderSource(chatID)
 }
 
+// AwaitCompaction holds a prompt until the chat's running compaction returns.
+func (rt *Runtime) AwaitCompaction(ctx context.Context, chatID marotte.ChatID) {
+	rt.coord.autoCompact.awaitRunning(ctx, chatID)
+}
+
+// RequestCompact is the reader's compaction, owned by the chat's compactor.
+func (rt *Runtime) RequestCompact(ctx context.Context, chatID marotte.ChatID) (command.CompactOutcome, error) {
+	return rt.coord.autoCompact.request(ctx, chatID)
+}
+
+// CancelCompact drops the chat's queued compaction.
+func (rt *Runtime) CancelCompact(ctx context.Context, chatID marotte.ChatID) error {
+	return rt.coord.autoCompact.cancel(ctx, chatID)
+}
+
 // AbandonInFlightTurn finalizes a turn that failed before it could end.
 func (rt *Runtime) AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatID, turnID string, stop marotte.StopReason, reason string, kind marotte.FailureKind, seq uint64) {
 	rt.coord.AbandonInFlightTurn(ctx, chatID, turnID, stop, reason, kind, seq)

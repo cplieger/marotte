@@ -732,10 +732,18 @@ func TestAfterTurnClose_Order(t *testing.T) {
 		defer mu.Unlock()
 		order = append(order, step)
 	}
+	r := newCompactRig(85)
+	r.reading(90)
+	inner := r.ac.compact
+	r.ac.compact = func(ctx context.Context, b command.CompactBridge) (bool, uint64, error) {
+		record("compact")
+		return inner(ctx, b)
+	}
 	bc := &bridgeCoordinator{
 		turns:             newTurnRegistry(nopTurnRecords{}),
 		lifecycle:         &lifetime{shutdownCtx: t.Context()},
 		applyPendingModel: func(context.Context, marotte.ChatID) { record("model") },
+		autoCompact:       r.ac,
 		resolveEnds: func(context.Context, marotte.ChatID, command.TurnFence) command.EndFacts {
 			record("resolve")
 			return command.EndFacts{}
@@ -743,9 +751,46 @@ func TestAfterTurnClose_Order(t *testing.T) {
 		drainAfterClose: func(context.Context, marotte.ChatID, command.CloseFacts, command.EndFacts) { record("drain") },
 	}
 	bc.afterTurnClose(t.Context(), bc.turns.testLifecycle("c1"), closeFacts{outcome: marotte.TurnOutcomeCompleted})
-	if want := []string{"resolve", "model", "drain"}; !slices.Equal(order, want) {
+	if want := []string{"resolve", "model", "compact", "drain"}; !slices.Equal(order, want) {
 		t.Errorf("afterTurnClose order = %v, want %v", order, want)
 	}
+}
+
+// KAS reporting a run of its own while the close compacts refuses the release, and the close waits again: the
+// context-limit compaction that already ran is not repeated.
+func TestAfterTurnClose_ARefusedReleaseCompactsOnce(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newCompactRig(90)
+		r.reading(50)
+		turns := newTurnRegistry(nopTurnRecords{})
+		lc := turns.testLifecycle("c1")
+		inner := r.ac.compact
+		var once sync.Once
+		r.ac.compact = func(ctx context.Context, b command.CompactBridge) (bool, uint64, error) {
+			once.Do(func() {
+				lc.kasStep(kasReportActive, 0)
+				go func() {
+					time.Sleep(time.Second)
+					lc.kasStep(kasReportIdle, 0)
+				}()
+			})
+			return inner(ctx, b)
+		}
+		drained := false
+		bc := &bridgeCoordinator{
+			turns:           turns,
+			lifecycle:       &lifetime{shutdownCtx: t.Context()},
+			autoCompact:     r.ac,
+			drainAfterClose: func(context.Context, marotte.ChatID, command.CloseFacts, command.EndFacts) { drained = true },
+		}
+		bc.afterTurnClose(t.Context(), lc, closeFacts{outcome: marotte.TurnOutcomeFailed, contextLimit: true})
+		if !drained {
+			t.Fatal("the close never drained after KAS went idle")
+		}
+		if got := r.count(); got != 1 {
+			t.Errorf("a context-limit close whose release KAS refused once made %d compact calls, want 1", got)
+		}
+	})
 }
 
 // Each grace close owns its own hold: the first close's wait, ended by KAS's own turn opening, must not lift the hold

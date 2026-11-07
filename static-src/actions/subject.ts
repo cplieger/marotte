@@ -42,13 +42,13 @@ export function errorAbout<A>(
   return spec;
 }
 
-export function successAbout<A>(
+export function successAbout<A, R = unknown>(
   subjectOf: (args: A) => string,
-  message: string,
-): (args: A) => string {
-  const spec = (args: A): string => {
+  message: string | ((result: R) => string),
+): (args: A, result: R) => string {
+  const spec = (args: A, result: R): string => {
     stage(subjectOf(args), args);
-    return message;
+    return typeof message === "string" ? message : message(result);
   };
   subjectOfSpec.set(spec, subjectOf);
   return spec;

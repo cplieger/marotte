@@ -74,12 +74,8 @@ type sessionCreated struct {
 	Meta          struct {
 		// WorkflowsEnabled is KAS's resolved settings.workflows. A pointer because absent differs from false, and the
 		// failure is silent: the agent loses workflowChatTools with no error.
-		WorkflowsEnabled *bool `json:"workflowsEnabled"`
-		// ContextUsage carries the summarization threshold KAS resolved, read only to check it against the door's.
-		ContextUsage *struct {
-			SummarizationThreshold *float64 `json:"summarizationThreshold"`
-		} `json:"contextUsage"`
-		Title string `json:"title"`
+		WorkflowsEnabled *bool  `json:"workflowsEnabled"`
+		Title            string `json:"title"`
 		// PolicyErrors are the rules KAS skipped or failed to load; absent when there are none.
 		PolicyErrors []marotte.PolicyErrorItem `json:"policyErrors"`
 		// TitleSetByUser is KAS's latch that the title is the user's and agent titles stop.
@@ -95,16 +91,15 @@ func validIdent(s string) bool { return ids.ValidIdent(s) }
 // sessionSpawnOf is o's session door input.
 func sessionSpawnOf(o *marotte.SessionOpts) kascap.SessionSpawn {
 	return kascap.SessionSpawn{
-		MemoryMode:              o.Memory.Mode,
-		MemoryReflection:        o.Memory.Reflection,
-		SpecPlan:                o.Features.SpecPlan,
-		SpecAskClarification:    o.Features.SpecAskClarification,
-		WorkValidation:          o.Features.WorkValidation,
-		Workflows:               o.Features.Workflows,
-		Presets:                 slices.Clone(o.Presets),
-		DisableAutoCompaction:   o.DisableAutoCompaction,
-		AutoCompactionThreshold: o.AutoCompactionThreshold,
-		ProfileAgentTurns:       o.Role == marotte.SessionRoleChat,
+		MemoryMode:            o.Memory.Mode,
+		MemoryReflection:      o.Memory.Reflection,
+		SpecPlan:              o.Features.SpecPlan,
+		SpecAskClarification:  o.Features.SpecAskClarification,
+		WorkValidation:        o.Features.WorkValidation,
+		Workflows:             o.Features.Workflows,
+		Presets:               slices.Clone(o.Presets),
+		DisableAutoCompaction: o.DisableAutoCompaction,
+		ProfileAgentTurns:     o.Role == marotte.SessionRoleChat,
 	}
 }
 
@@ -677,29 +672,11 @@ func (s *Session) applySessionResultLocked(r *sessionCreated, fallbackModel stri
 	s.sessionTitle = r.Meta.Title
 	s.titleSetByUser = r.Meta.TitleSetByUser
 	s.policyErrors = r.Meta.PolicyErrors
-	s.reportThresholdDisagreement(r)
 	s.reportWorkflowsDisagreement(r.Meta.WorkflowsEnabled)
 	s.applyModelConfigOptionLocked(r.ConfigOptions)
 	if s.modelID == "" {
 		s.modelID = marotte.ModelID(fallbackModel)
 	}
-}
-
-// reportThresholdDisagreement logs when the session's summarization threshold differs from the one the door sent.
-// KAS answers a threshold it did not take (no enabled: true, a renamed member) with a silent 80, so this log is the
-// only runtime signal.
-func (s *Session) reportThresholdDisagreement(r *sessionCreated) {
-	sent := s.spawn.AutoCompactionThreshold
-	if sent <= 0 || r.Meta.ContextUsage == nil || r.Meta.ContextUsage.SummarizationThreshold == nil {
-		return
-	}
-	resolved := *r.Meta.ContextUsage.SummarizationThreshold
-	if resolved == float64(sent) {
-		return
-	}
-	slog.Warn("session resolved a compaction threshold other than the one marotte sent; "+
-		"the chat compacts at a point its setting did not choose",
-		"sent", sent, "resolved", resolved)
 }
 
 // reportWorkflowsDisagreement logs when the session resolved settings.workflows differently from the door's

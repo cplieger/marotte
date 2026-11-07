@@ -532,6 +532,9 @@ type Chat struct {
 	// QueuedPrompts are follow-ups held for the running turn's end, oldest first,
 	// carried rows ahead of user rows. drainAfterClose owns which row a close sends.
 	QueuedPrompts []QueuedPrompt `json:"queued_prompts,omitempty"`
+	// CompactPending is the queued compaction (the reader's, or a turn's that reached the point), run at a close; one
+	// at most. A process start drops a previous process's, since no turn of this one was asked to run it.
+	CompactPending *PendingCompaction `json:"compact_pending,omitempty"`
 	// TangentMerges are this tangent's merge operations; internal/command owns their lifecycle.
 	TangentMerges []TangentMerge `json:"tangent_merges,omitempty"`
 	// Keep holds every fact that keeps this chat out of the retention purge, by holder key. Server-internal:
@@ -623,6 +626,12 @@ const (
 // Valid reports whether m is a member of the vocabulary; empty is not.
 func (m InterruptMode) Valid() bool {
 	return m == InterruptSteer || m == InterruptQueue
+}
+
+// PendingCompaction is a compaction queued for a turn's end.
+type PendingCompaction struct {
+	// RequestedAt is when it was queued, in Unix ms.
+	RequestedAt int64 `json:"requested_at"`
 }
 
 // MaxQueuedPrompts caps Chat.QueuedPrompts, which the header carries to every device. A
@@ -746,6 +755,7 @@ func (c *Chat) Header() ChatHeader {
 		CompactionWatermark: c.CompactionWatermark,
 		InterruptMode:       c.InterruptMode,
 		QueuedPrompts:       c.QueuedPrompts,
+		CompactPending:      c.CompactPending,
 		Tangent:             c.Tangent,
 	}
 }
@@ -821,12 +831,13 @@ type ChatHeader struct {
 	CompactionWatermark string `json:"compaction_watermark,omitempty"`
 	// PriorACPSessionIDs mirrors Chat's: the retention sweep reads headers only.
 	PriorACPSessionIDs []string `json:"prior_acp_session_ids,omitempty"`
-	// InterruptMode and QueuedPrompts mirror Chat's for the composer and the dock.
-	InterruptMode InterruptMode  `json:"interrupt_mode,omitempty"`
-	QueuedPrompts []QueuedPrompt `json:"queued_prompts,omitempty"`
-	Usage         Usage          `json:"usage"`
-	CreatedAt     int64          `json:"created_at"`
-	UpdatedAt     int64          `json:"updated_at"`
+	// InterruptMode, QueuedPrompts and CompactPending mirror Chat's for the composer and the dock.
+	InterruptMode  InterruptMode      `json:"interrupt_mode,omitempty"`
+	QueuedPrompts  []QueuedPrompt     `json:"queued_prompts,omitempty"`
+	CompactPending *PendingCompaction `json:"compact_pending,omitempty"`
+	Usage          Usage              `json:"usage"`
+	CreatedAt      int64              `json:"created_at"`
+	UpdatedAt      int64              `json:"updated_at"`
 	// ReadPosition is wire-only: EntryLog.ReadPosition of the opened log, 0 when the log is not
 	// open. chat.Store fills it; Chat.Header does not.
 	ReadPosition   uint64 `json:"read_position,omitempty"`

@@ -851,6 +851,7 @@ export function upsertHeader(h: ChatHeader): void {
         // Both are header-authoritative: an absent field is steer and no follow-ups.
         interrupt_mode: h.interrupt_mode ?? "steer",
         queued: h.queued_prompts ?? [],
+        compact_queued: h.compact_pending !== undefined,
         tangent: h.tangent ?? false,
       };
       if (h.compaction_watermark !== undefined) {
@@ -890,6 +891,7 @@ export function upsertHeader(h: ChatHeader): void {
     pending_effort: h.pending_effort ?? "",
     interrupt_mode: h.interrupt_mode ?? "steer",
     queued: h.queued_prompts ?? [],
+    compact_queued: h.compact_pending !== undefined,
     tangent: h.tangent ?? false,
     turns: new Map(),
     turn_order: [],

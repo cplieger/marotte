@@ -503,9 +503,10 @@ degrade — every chat refusing to start, which is why VALID_PRESET_IDS is worth
 watching at a bump. And this key is in neither the isSettingEnabled nor the
 isFeatureEnabled population, so the census cannot see it and will not list it in
 unclaimed.txt: this row is the only record it exists.`,
-	"setting.disableAutoCompaction": `SENT, value-gated, on the session door only. The chat's compaction
-policy (auto_compaction_enabled) sets it true when the switch is off; every other
-session sends false.
+	"setting.disableAutoCompaction": `SENT on the session door only. Every chat session sends true,
+whatever the compaction switch and point: marotte is the one compactor, queueing a
+compaction when a turn's reading reaches the point (50..90) and running it at the
+turn's end. Every other session sends false.
 
 resolveDisableAutoCompaction reads three inputs, the session call's own _meta, the
 initialize _meta and KAS's persisted session metadata, and freezes the answer per
@@ -520,19 +521,15 @@ context-overflow recovery go with it, so an overflow fails the turn with
 ContextWindowExceededError (-32000) and internal/command names the Compact button.
 In-chat subagents share the parent's session services, so they run without
 compaction too; nothing marotte can call compacts a subagent.`,
-	"setting-object.compaction": `SENT on both session doors while the compaction switch is on, as
-{enabled: true, autoCompactionThreshold: auto_compact_pct}; withheld (KAS's default,
-80) while it is off, where disableAutoCompaction already short-circuits KAS's
-summarization node, so a slider move then reloads no chat. KAS reads it through its
-own resolver, not isSettingEnabled: without enabled === true the threshold reads as
-the default, silently. A cold load resolves the threshold from the load request
-alone (the session record stores none), so a load that omits the row resumes at 80. Its
-validator throws -32602 on a value outside 0..80 (initialize advertises
-autoCompactionThreshold {min, max, default}), so a narrowed range fails every chat
-door: the slider stays at 50..80. excludePercent and excludeMessages, the object's
-other members, are declared in KAS's schema with no reader and stay unsent; marotte
-once shipped Settings controls writing them and a context-ring wedge drawn from one,
-and both are gone.
+	"setting-object.compaction": `WITHHELD on every chat session; table.go owns the row. Every chat
+door sends disableAutoCompaction true, which short-circuits KAS's summarization node,
+so a threshold would have no reader, and a slider move reloads no chat. KAS reads the
+object through its own resolver, not isSettingEnabled: without enabled === true the
+threshold reads as the default (80), silently. Its validator throws -32602 on a
+value outside 0..80 (initialize advertises autoCompactionThreshold {min, max,
+default}), so sending marotte's 50..90 point here would fail a chat door above 80.
+excludePercent and excludeMessages, the object's other members, are declared in
+KAS's schema with no reader and stay unsent.
 
 thinking, tangentMode, checkpoint, _subagent and _delegate are declared in KAS's
 schema with zero readers, so this table has no row for them.`,

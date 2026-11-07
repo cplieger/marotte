@@ -394,6 +394,9 @@ export interface Session {
   /** The server-held follow-ups (`ChatHeader.queued_prompts`), drained one per clean
    *  turn end. A header read replaces it, so an absent list is a clear. */
   queued?: QueuedPrompt[];
+  /** A compaction queued for a turn's end (`ChatHeader.compact_pending`). A header read replaces it, so absent is
+   *  none. */
+  compact_queued?: boolean;
   /** `ChatHeader.tangent`. */
   tangent?: boolean;
   /** Reasoning-effort level ("low".."max", "" = engine default): a per-chat composer setting. */

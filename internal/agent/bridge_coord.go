@@ -81,6 +81,8 @@ type bridgeCoordinator struct {
 	onTurnClosed func(marotte.ChatID, string)
 	// applyPendingModel is the pending_model idle arm, dispatched by every closer on its own goroutine. Nil in tests.
 	applyPendingModel func(context.Context, marotte.ChatID) `wiring:"optional"`
+	// autoCompact owns every compaction of a chat: the policy's triggers and the reader's requests.
+	autoCompact *autoCompactor `wiring:"optional"`
 	// resolveEnds and drainAfterClose are first and last in afterTurnClose; the drain is last so a
 	// queued prompt cannot reach the session before betweenTurns' idle work.
 	resolveEnds     func(context.Context, marotte.ChatID, command.TurnFence) command.EndFacts   `wiring:"optional"`

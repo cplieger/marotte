@@ -90,6 +90,7 @@ type hostDouble interface {
 	runBoundsAccess
 	turnInterruptAccess
 	turnMetering
+	usageObserver
 	chatRecords
 	turnAccess
 	RunAppender
@@ -126,5 +127,6 @@ func rolesOf(d hostDouble) *Roles {
 		RunBounds:     d,
 		TurnInterrupt: d,
 		Metering:      d,
+		Usage:         d,
 	}
 }

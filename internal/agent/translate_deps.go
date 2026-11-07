@@ -95,6 +95,7 @@ func (rt *Runtime) translateRoles() *translate.Roles {
 		// The coordinator: ending a turn needs the chat's bridge and its prompt cancel.
 		TurnInterrupt: rt.coord,
 		Metering:      rt.coord,
+		Usage:         rt.coord,
 		Bracket:       rt.coord,
 	})
 }

@@ -229,15 +229,10 @@ async function openMemories(chatID: string): Promise<void> {
   await applyRoute({ kind: "docs", tab: "memories" });
 }
 
-/** The two compact refusals the client sees before sending; KAS's own arrive as the server's error. */
+/** The compact refusal the client sees before sending: a chat with nothing to compact. A running turn is none, since
+ *  the server queues the compaction for its end; KAS's own refusals arrive as the server's error. */
 export function compactRefusal(s: Session | undefined): string | null {
-  if (isEmptyChat(s)) {
-    return "Send a message first, then compact the conversation";
-  }
-  if (s !== undefined && isBusy(s.id)) {
-    return "Wait for this turn to finish, then compact the conversation";
-  }
-  return null;
+  return isEmptyChat(s) ? "Send a message first, then compact the conversation" : null;
 }
 
 /** `/rewind` and the composer's Ctrl/Cmd+Up: the newest prompt turn, through the footer's own confirm. */

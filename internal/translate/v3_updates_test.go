@@ -338,6 +338,23 @@ func TestHandleSessionInfoUpdate_ActivityReachesTheTurnLifecycle(t *testing.T) {
 	}
 }
 
+// The compactor judges a compaction by the lowest reading after it, so it hears every reading, a sub-point move the
+// stored usage drops included, from both usage channels.
+func TestPersistUsage_EveryReadingReachesTheObserver(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+
+	tr.HandleUsageUpdate(t.Context(), "c1", mustJSON(t, map[string]any{"size": 100, "used": 50}))
+	tr.HandleUsageUpdate(t.Context(), "c1", mustJSON(t, map[string]any{"size": 1000, "used": 504}))
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", mustJSON(t, map[string]any{"_meta": map[string]any{"kiro": map[string]any{
+		"kind": "context_usage", "contextUsage": map[string]any{"usagePercentage": 40.0},
+	}}}), FrameAttribution{})
+
+	if want := []float64{50, 50.4, 40}; !slices.Equal(deps.usageReadings, want) {
+		t.Errorf("observed readings = %v, want %v", deps.usageReadings, want)
+	}
+}
+
 // TestMaterialPctDelta pins the gate on a context-percentage rewrite: a sub-point move is
 // dropped wherever it lands (the ring cannot render it), a one-point move is kept.
 func TestMaterialPctDelta(t *testing.T) {

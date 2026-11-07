@@ -21,6 +21,8 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     memory_mode: "off",
     auto_compaction_enabled: true,
     auto_compact_pct: 80,
+    auto_compact_pct_range: { min: 50, max: 90, step: 5 },
+    rejected_keys: [],
     spec_planning: "off",
     spec_planning_ask_first: false,
     steering_reminders_enabled: false,
