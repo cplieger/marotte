@@ -9,6 +9,7 @@ vi.mock("./toast.js", async (importOriginal) => ({
 import { join as joinKey } from "@cplieger/keyenc";
 import { buildEventForm, buildRuleList, eventState, ruleLine } from "./run-when.js";
 import { buildRunDefaultsPicker } from "./run-defaults-picker.js";
+import { formatStamp } from "./schedule-picker.js";
 import { dismissGap } from "./actions/launch-rules.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import type { EventSpec, LaunchRuleStatus, LaunchRuleView } from "./launch-rule-types.js";
@@ -208,14 +209,16 @@ describe("eventState", () => {
       {},
       {
         gaps: [
-          { from: local(2, 10), to: local(9, 0), cause: "outage" },
+          { from: local(2, 10), to: local(9, 0), cause: "outage", created_before: local(1, 0) },
           { from: local(2, 10), to: local(9, 0), cause: "aged_out", run_id: 41414016210 },
           { from: local(9, 0), to: local(9, 5), cause: "result_window", omitted_at_least: 45 },
         ],
       },
     );
     const line = ruleLine(v, { autoApprove: false, declared: ["event_id"] });
-    expect(line).toContain(" · gap: no complete check between ");
+    expect(line).toContain(
+      ` · gap: no complete check between ${formatStamp(local(2, 10))} and ${formatStamp(local(9, 0))}; runs created before ${formatStamp(local(1, 0))} that ended in that time were not checked · `,
+    );
     expect(line).toContain(
       " · run 41414016210 was still running at its last check and was not seen to end",
     );

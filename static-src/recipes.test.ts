@@ -781,8 +781,8 @@ describe("the Run when… popup", () => {
     };
   }
 
-  async function openPopup(): Promise<HTMLButtonElement> {
-    recipesReply = { recipes: [recipe("nightly")] };
+  async function openPopup(inputs?: Record<string, string>): Promise<HTMLButtonElement> {
+    recipesReply = { recipes: [recipe("nightly", inputs)] };
     const panel = await render();
     await vi.waitFor(() => {
       expect(vi.mocked(loadLaunchRules.dispatch)).toHaveBeenCalled();
@@ -900,7 +900,7 @@ describe("the Run when… popup", () => {
 
   it("sends no id for a new rule, and the stored rule's id and inputs on an edit", async () => {
     rulesReply = { rules: [clockRule("r-nightly", { inputs: { tag: "v1" } })] };
-    await openPopup();
+    await openPopup({ tag: "string" });
     popupButton("On a schedule").click();
     popupButton("Save").click();
     await vi.waitFor(() => {
@@ -909,7 +909,7 @@ describe("the Run when… popup", () => {
     expect(vi.mocked(saveLaunchRule.dispatch).mock.calls[0]?.[0]).not.toHaveProperty("id");
 
     document.body.replaceChildren();
-    await openPopup();
+    await openPopup({ tag: "string" });
     popupButton("Edit").click();
     popupButton("Save").click();
     await vi.waitFor(() => {
@@ -964,7 +964,7 @@ describe("the Run when… popup", () => {
 
   it("pauses a rule from its switch, keeping the rest of it", async () => {
     rulesReply = { rules: [clockRule("c1", { inputs: { tag: "v1" }, model: "opus" })] };
-    await openPopup();
+    await openPopup({ tag: "string" });
     const box = document.querySelector<HTMLInputElement>(".rw-rule input[type=checkbox]");
     box!.checked = false;
     box!.dispatchEvent(new Event("change"));
@@ -1007,6 +1007,94 @@ describe("the Run when… popup", () => {
       expect(vi.mocked(deleteLaunchRule.dispatch)).toHaveBeenCalledWith("c1");
     });
     expect(vi.mocked(confirm)).not.toHaveBeenCalled();
+  });
+
+  it("drops a stored input the recipe no longer declares when a switch saves the rule", async () => {
+    rulesReply = { rules: [clockRule("c1", { inputs: { tag: "v1", gone: "x" } })] };
+    await openPopup({ tag: "string" });
+    const box = document.querySelector<HTMLInputElement>(".rw-rule input[type=checkbox]");
+    box!.checked = false;
+    box!.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => {
+      expect(vi.mocked(saveLaunchRule.dispatch)).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(saveLaunchRule.dispatch).mock.calls[0]?.[0]).toMatchObject({
+      id: "c1",
+      enabled: false,
+      inputs: { tag: "v1" },
+    });
+    expect(vi.mocked(saveLaunchRule.dispatch).mock.calls[0]?.[0].inputs).not.toHaveProperty("gone");
+  });
+
+  describe("an edit that drops held events", () => {
+    const github = {
+      id: "github:github.com",
+      kind: "github",
+      host: "github.com",
+      account: "a",
+      status: "connected",
+    } as const;
+
+    function refuseWith409Once(): void {
+      vi.mocked(saveLaunchRule.dispatch).mockImplementationOnce(((
+        _args: unknown,
+        opts?: { onError?: (e: { message: string; status: number }) => void },
+      ) => {
+        opts?.onError?.({
+          message: "This change drops 3 held events. Send it again with `confirm_drop: 3`",
+          status: 409,
+        });
+        return Promise.resolve(null);
+      }) as unknown as typeof saveLaunchRule.dispatch);
+    }
+
+    async function editAndSave(): Promise<HTMLButtonElement> {
+      forgesReply = { forges: [github], kinds: ["github"] };
+      rulesReply = { rules: [eventRule("e1", { held: 3 })] };
+      const btn = await openPopup();
+      popupButton("Edit").click();
+      await vi.waitFor(() => {
+        expect(document.querySelector(".rw-form .rw-repo")).not.toBeNull();
+      });
+      const repo = document.querySelector<HTMLInputElement>(".rw-form .rw-repo")!;
+      repo.value = "o/other";
+      repo.dispatchEvent(new Event("input"));
+      popupButton("Save").click();
+      return btn;
+    }
+
+    it("resends the save with the held count once the confirm is accepted", async () => {
+      refuseWith409Once();
+      vi.mocked(saveLaunchRule.dispatch).mockImplementationOnce((async () =>
+        eventRule("e1")) as unknown as typeof saveLaunchRule.dispatch);
+      await editAndSave();
+      await vi.waitFor(() => {
+        expect(vi.mocked(saveLaunchRule.dispatch)).toHaveBeenCalledTimes(2);
+      });
+      expect(vi.mocked(confirm).mock.calls[0]?.[0].body).toContain("3 events");
+      expect(vi.mocked(saveLaunchRule.dispatch).mock.calls[0]?.[0]).not.toHaveProperty(
+        "confirm_drop",
+      );
+      expect(vi.mocked(saveLaunchRule.dispatch).mock.calls[1]?.[0]).toMatchObject({
+        id: "e1",
+        confirm_drop: 3,
+        when: { event: { repo: "o/other" } },
+      });
+    });
+
+    it("keeps the form open with no error when the confirm is cancelled", async () => {
+      refuseWith409Once();
+      vi.mocked(confirm).mockResolvedValueOnce(false);
+      const btn = await editAndSave();
+      await vi.waitFor(() => {
+        expect(vi.mocked(confirm)).toHaveBeenCalledTimes(1);
+      });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(vi.mocked(saveLaunchRule.dispatch)).toHaveBeenCalledTimes(1);
+      expect(btn.getAttribute("aria-expanded")).toBe("true");
+      expect(document.querySelector(".rw-form")).not.toBeNull();
+      expect(document.querySelector(".rw-error")?.classList.contains("hidden")).toBe(true);
+    });
   });
 
   it("keeps the event form open with the server's sentence on a refusal", async () => {

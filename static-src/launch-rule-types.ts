@@ -98,10 +98,14 @@ export interface Gap {
   run_id?: number;
   omitted_at_least?: number;
   queue_full?: boolean;
+  /** An outage's read horizon: runs created before it that ended in the gap were not checked. */
+  created_before?: string;
 }
 
 /** A launch rule's row; mirrors internal/launchrule.Status. */
 export interface LaunchRuleStatus {
+  /** A clock rule's next-run origin: its creation, then its last fire or skip. */
+  anchor?: string;
   last_run_at?: string;
   waiting_for?: string;
   last_run_id?: string;

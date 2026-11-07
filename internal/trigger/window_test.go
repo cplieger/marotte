@@ -84,6 +84,9 @@ func TestDowntimePastWindowRecordsGap(t *testing.T) {
 	if len(g) != 1 || g[0].Cause != launchrule.GapOutage || !g[0].From.Equal(last) || !g[0].To.Equal(back) {
 		t.Fatalf("gaps = %+v, want one outage from the last complete check to the return", g)
 	}
+	if !g[0].CreatedBefore.Equal(horizon(back)) {
+		t.Errorf("outage created_before = %v, want the walk's horizon %v", g[0].CreatedBefore, horizon(back))
+	}
 	if calls := h.src.recorded(); !calls[len(calls)-2].since.Equal(horizon(back)) {
 		t.Errorf("the walk after the outage sent since %v, want the horizon %v", calls[len(calls)-2].since, horizon(back))
 	}

@@ -60,10 +60,12 @@ export function buildRuleInputs(opts: RuleInputsOptions): RuleInputs {
   return {
     el: block,
     value: () => {
-      // A stored value whose name the recipe no longer declares is kept: the save replaces the rule whole.
-      const out: Record<string, string> = Object.fromEntries(
-        Object.entries(opts.initial ?? {}).filter(([n]) => !names.includes(n) && !setBy.has(n)),
-      );
+      // Until the recipe list answers, a stored value has no field and is kept; once it has, a
+      // name the recipe dropped goes, since a save naming an undeclared input is refused.
+      const out: Record<string, string> =
+        opts.declared === undefined
+          ? Object.fromEntries(Object.entries(opts.initial ?? {}).filter(([n]) => !setBy.has(n)))
+          : {};
       for (const [name, f] of fields) {
         if (f.value !== "") {
           out[name] = f.value;

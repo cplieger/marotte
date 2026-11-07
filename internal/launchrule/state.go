@@ -83,9 +83,11 @@ const (
 // window reaches (outage), a run that reached the read horizon before it was seen to end or launched (aged_out),
 // or more runs created in one second than the forge lists (result_window).
 type Gap struct {
-	From  time.Time `json:"from"`
-	To    time.Time `json:"to"`
-	Cause string    `json:"cause"`
+	From time.Time `json:"from"`
+	To   time.Time `json:"to"`
+	// CreatedBefore is an outage's read horizon: a run created before it that ended in the gap was not checked.
+	CreatedBefore time.Time `json:"created_before,omitzero"`
+	Cause         string    `json:"cause"`
 	// RunID names the aged_out run.
 	RunID int64 `json:"run_id,omitempty"`
 	// OmittedAtLeast is a result_window's lower bound on the runs the forge did not list.

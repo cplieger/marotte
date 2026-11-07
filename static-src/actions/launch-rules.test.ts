@@ -45,6 +45,28 @@ describe("saveLaunchRule", () => {
     held: 0,
   };
 
+  it("sends confirm_drop on an edit only", async () => {
+    answer(view);
+    await saveLaunchRule.dispatch({
+      id: "r1",
+      source: "bundled://nightly",
+      when: { clock: daily },
+      enabled: true,
+      confirm_drop: 3,
+    });
+    answer(view);
+    await saveLaunchRule.dispatch({
+      source: "bundled://nightly",
+      when: { clock: daily },
+      enabled: true,
+      confirm_drop: 3,
+    });
+    expect(calls().map((c) => c.body)).toEqual([
+      { source: "bundled://nightly", enabled: true, when: { clock: daily }, confirm_drop: 3 },
+      { source: "bundled://nightly", enabled: true, when: { clock: daily } },
+    ]);
+  });
+
   it("saveLaunchRule sends PUT by id and POST without", async () => {
     answer(view);
     await saveLaunchRule.dispatch({

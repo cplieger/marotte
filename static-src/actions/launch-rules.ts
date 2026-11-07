@@ -27,6 +27,8 @@ export type LaunchRuleBody = {
   enabled: boolean;
   when: LaunchRuleView["when"];
   inputs?: Record<string, string>;
+  /** On an edit, the held-event count the operator agreed to drop; sent only when set. */
+  confirm_drop?: number;
 } & RunDefaults;
 
 /** Create a rule, or replace the one `id` names, answering the stored rule. A refusal's error is
@@ -46,9 +48,15 @@ export const saveLaunchRule = apiAction<LaunchRuleBody, LaunchRuleView>({
       ...(a.effort === undefined ? {} : { effort: a.effort }),
       ...(a.inputs === undefined ? {} : { inputs: a.inputs }),
       when: a.when,
+      ...(a.id === undefined || a.confirm_drop === undefined
+        ? {}
+        : { confirm_drop: a.confirm_drop }),
     },
   }),
-  error: (_args, err) => serverSentence(err) ?? "Could not save the rule",
+  error: (_args, err) =>
+    err.status === 409
+      ? "This change drops held events, so it needs a confirm"
+      : (serverSentence(err) ?? "Could not save the rule"),
 });
 
 /** Remove a rule by its minted id; an event rule's held events go with it. */

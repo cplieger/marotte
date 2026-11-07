@@ -37,7 +37,7 @@ const labeled = (k: EventKind): boolean => k === "issue_labeled" || k === "pr_la
 const opened = (k: EventKind): boolean => k === "issue_opened" || k === "pr_opened";
 const onPR = (k: EventKind): boolean => k === "pr_labeled" || k === "pr_opened";
 
-/** The inputs a kind's event sets; internal/trigger's launch inputs own the list. */
+/** The inputs a kind's event sets; internal/launchrule's Kind.eventInputs owns the list. */
 function eventInputsOf(kind: EventKind): string[] {
   const common = ["repo", "forge", "trigger_kind", "trigger_rule", "trigger_key", "event_id"];
   if (kind === "run_concluded") {
@@ -65,7 +65,6 @@ function eventRef(key: string): string {
   return part === "issue" || part === "pr" ? `#${id}` : "";
 }
 
-/** What starts the run, as the line's first segment. */
 function describeEvent(ev: EventSpec): string {
   const f = ev.filter;
   const thing = onPR(ev.kind) ? "a pull request" : "an issue";
@@ -84,8 +83,14 @@ function describeEvent(ev: EventSpec): string {
 /** One gap of an event rule, kept on its line until the operator dismisses it. */
 function gapText(g: Gap): string {
   switch (g.cause) {
-    case "outage":
-      return `gap: no complete check between ${formatStamp(g.from)} and ${formatStamp(g.to)}`;
+    case "outage": {
+      const before = formatStamp(g.created_before);
+      const unchecked =
+        before === ""
+          ? ""
+          : `; runs created before ${before} that ended in that time were not checked`;
+      return `gap: no complete check between ${formatStamp(g.from)} and ${formatStamp(g.to)}${unchecked}`;
+    }
     case "aged_out":
       return g.queue_full === true
         ? `run ${String(g.run_id ?? "")} ended while the queue was full and was not launched`
@@ -311,7 +316,7 @@ export interface EventFormOptions {
   autoApprove: boolean;
   picks: RunDefaultsPicker;
   /** Resolves null once saved, which the caller answers by closing the form, or the refusal's
-   *  sentence, which the form shows while it stays open. */
+   *  sentence, which the form shows while it stays open; "" keeps it open with none. */
   onSave: (draft: EventRuleDraft, defaults: RunDefaults) => Promise<string | null>;
   onClose: () => void;
   onOpenPermissions: () => void;
@@ -611,7 +616,7 @@ export function buildEventForm(opts: EventFormOptions): HTMLElement {
     void opts.onSave(draft(), opts.picks.value()).then((refusal) => {
       save.disabled = false;
       error.textContent = refusal ?? "";
-      error.classList.toggle("hidden", refusal === null);
+      error.classList.toggle("hidden", refusal === null || refusal === "");
     });
   });
 

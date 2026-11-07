@@ -249,14 +249,34 @@ function forgetRule(v: LaunchRuleView): void {
   paint();
 }
 
+/** The stored inputs a save can send back: a save naming an input the recipe no longer declares
+ *  is refused, so those go once the recipe is known. */
+function keptInputs(v: LaunchRuleView): Record<string, string> | undefined {
+  const r = recipes.find((x) => x.source === v.source);
+  if (v.inputs === undefined || r === undefined) {
+    return v.inputs;
+  }
+  const declared = r.inputs ?? {};
+  const kept = Object.fromEntries(
+    Object.entries(v.inputs).filter(([n]) => Object.hasOwn(declared, n)),
+  );
+  return Object.keys(kept).length === 0 ? undefined : kept;
+}
+
+/** A recipe's declared inputs, {} when it declares none; undefined only while it is unknown. */
+function declaredOf(r: Recipe | undefined): Record<string, string> | undefined {
+  return r === undefined ? undefined : (r.inputs ?? {});
+}
+
 /** A save of `v` with every field kept but those `over` names. */
 function bodyOf(v: LaunchRuleView, over: Partial<LaunchRuleBody> = {}): LaunchRuleBody {
+  const inputs = keptInputs(v);
   return {
     id: v.id,
     source: v.source,
     enabled: v.enabled,
     when: v.when,
-    ...(v.inputs === undefined ? {} : { inputs: v.inputs }),
+    ...(inputs === undefined ? {} : { inputs }),
     ...(v.model === undefined ? {} : { model: v.model }),
     ...(v.effort === undefined ? {} : { effort: v.effort }),
     ...over,
@@ -273,13 +293,51 @@ async function toggleRule(v: LaunchRuleView, enabled: boolean): Promise<void> {
   storeRule(saved);
 }
 
+/** A 409 is a held-event count the save did not confirm; the server's sentence names an API field. */
+const HELD_MOVED = "The number of held events changed. Save again to confirm the new count.";
+
+/** One save, with the refusal's sentence and status for a form that stays open. */
+async function sendRule(
+  body: LaunchRuleBody,
+): Promise<{ saved: LaunchRuleView | null; refusal: string; status: number }> {
+  let refusal = "Could not save the rule";
+  let status = 0;
+  const saved = await saveLaunchRule.dispatch(body, {
+    onError: (err) => {
+      status = err.status ?? 0;
+      refusal = status === 409 ? HELD_MOVED : (serverSentence(err) ?? refusal);
+    },
+  });
+  return { saved, refusal, status };
+}
+
+function heldNoun(held: number): string {
+  return held === 1 ? "1 event" : `${String(held)} events`;
+}
+
+/** The rule's held count as the server now has it: the one the form opened with may have moved,
+ *  and a confirm_drop that does not match it is refused again. */
+async function heldNow(v: LaunchRuleView): Promise<number> {
+  await refreshRules();
+  return (rules.get(v.source) ?? []).find((x) => x.id === v.id)?.held ?? v.held;
+}
+
+/** The confirm an edit that drops held events shows; the count is the rule's, never the 409's prose. */
+function confirmDrop(held: number): Promise<boolean> {
+  return confirm({
+    title: "Save this change?",
+    body: `It drops ${heldNoun(held)} waiting to launch.`,
+    confirmLabel: "Save",
+    variant: "destructive",
+  });
+}
+
 /** Delete a rule, after a confirm naming the events it holds when it holds any. */
 async function removeRule(v: LaunchRuleView): Promise<void> {
   if (v.held > 0) {
-    const n = v.held === 1 ? "1 event" : `${String(v.held)} events`;
     const ok = await confirm({
       title: "Delete this rule?",
-      body: `It holds ${n} waiting to launch, which are dropped with it.`,
+      body: `It holds ${heldNoun(v.held)} waiting to launch, which are dropped with it.`,
       confirmLabel: "Delete",
       variant: "destructive",
     });
@@ -374,11 +432,11 @@ function wireRulesPopup(btn: HTMLButtonElement, source: string): void {
           exists: v !== undefined,
           autoApprove,
           picks: picksFor(v),
-          declared: recipe()?.inputs,
+          declared: declaredOf(recipe()),
           inputs: v?.inputs,
           onOpenPermissions: openPermissions,
-          // Closed only once saved: a refused pick leaves the reader's edits on the form beside
-          // the server's sentence.
+          // Closed only once saved: a refused pick keeps the edits open, and the server's
+          // sentence shows in the action's error toast.
           onSave: (spec, enabled, defaults, inputs) => {
             void (async () => {
               const s = await saveLaunchRule.dispatch({
@@ -423,32 +481,32 @@ function wireRulesPopup(btn: HTMLButtonElement, source: string): void {
           buildEventForm({
             ...(v === undefined ? {} : { rule: v }),
             forges: d.forges,
-            declared: recipe()?.inputs,
+            declared: declaredOf(recipe()),
             autoApprove,
             picks: picksFor(v),
             onOpenPermissions: openPermissions,
             onClose: close,
             onSave: async (draft, defaults) => {
-              let refusal = "Could not save the rule";
-              const s = await saveLaunchRule.dispatch(
-                {
-                  ...idOf(v),
-                  source,
-                  enabled: draft.enabled,
-                  when: { event: draft.event },
-                  ...(draft.inputs === undefined ? {} : { inputs: draft.inputs }),
-                  ...defaults,
-                },
-                {
-                  onError: (err) => {
-                    refusal = serverSentence(err) ?? refusal;
-                  },
-                },
-              );
-              if (s === null) {
-                return refusal;
+              const body: LaunchRuleBody = {
+                ...idOf(v),
+                source,
+                enabled: draft.enabled,
+                when: { event: draft.event },
+                ...(draft.inputs === undefined ? {} : { inputs: draft.inputs }),
+                ...defaults,
+              };
+              let res = await sendRule(body);
+              if (res.status === 409 && v !== undefined) {
+                const held = await heldNow(v);
+                if (held > 0 && !(await confirmDrop(held))) {
+                  return "";
+                }
+                res = await sendRule(held > 0 ? { ...body, confirm_drop: held } : body);
               }
-              await saved(s);
+              if (res.saved === null) {
+                return res.refusal;
+              }
+              await saved(res.saved);
               return null;
             },
           }),
