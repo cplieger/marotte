@@ -1,6 +1,6 @@
 // The merged identity control: the sidebar footer's mark and address are ONE
 // `<button id="account-btn">`, the status popup's trigger. Pinned at every pointer tier:
-// its box matches the REAL logout button's (never `--footer-ctl-h`'s arithmetic), it
+// its box matches the REAL logout button's (never a token's arithmetic), it
 // reaches the hit floor as a target because chrome is stripped by named declarations rather than
 // `all: unset`, nothing moved on the inline axis, and its hover is `.icon-btn`'s value
 // gated on `any-hover`. The pointer tiers are a `data-pointer` attribute, so forcing it
@@ -184,8 +184,7 @@ describe("the merged control's box", () => {
   });
 
   it("paints both controls at one height under the floor on the coarse tier, in a 52px band", () => {
-    // The finger's 44px lives in the target, not the box (Apple HIG: the hit region); the pair
-    // grows only by the sidebar's row step, which touch-targets.test.ts holds to the tabs'.
+    // The finger's 44px lives in the target, not the box (Apple HIG: the hit region).
     document.documentElement.dataset["pointer"] = "coarse";
     const { footer, btn, logout } = mountFooter();
     const [l, b] = [logout, btn].map((e) => e.getBoundingClientRect().height);
@@ -302,8 +301,8 @@ describe("the state channels, read out of the sheet", () => {
     expect(btnBody, "all: unset would make the floor unreachable").not.toMatch(/all:\s*unset/u);
     // Both sides, because a stretch left standing beside the `min-block-size` wins the
     // cross axis and silently restores the full-band fill.
-    expect(btnBody, "the box reads the footer's control height").toMatch(
-      /min-block-size:\s*var\(--footer-ctl-h\)/u,
+    expect(btnBody, "the box reads the toolbar's button height").toMatch(
+      /min-block-size:\s*var\(--btn-h\)/u,
     );
     expect(btnBody, "and nothing stretches it back into the band").not.toMatch(
       /align-self:\s*stretch/u,

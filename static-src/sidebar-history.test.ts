@@ -222,9 +222,8 @@ describe("the sidebar's History button", () => {
       document.documentElement.dataset["pointer"] = tier;
       const chat = el("new-chat").getBoundingClientRect();
       const history = el("history-btn").getBoundingClientRect();
-      // The mouse's square under a finger too, grown only by the tab rows' step: the coarse
-      // 44px is its target, not its box.
-      expect(history.height).toBe(tier === "fine" ? 36 : 38);
+      // The sidebar tab row's height on each tier, 42px on a mouse and 44px under a finger.
+      expect(history.height).toBe(tier === "fine" ? 42 : 44);
       expect(history.height).toBe(chat.height);
       expect(history.width).toBe(history.height);
       expect(history.top).toBe(chat.top);

@@ -1,5 +1,5 @@
-// On a phone a chat tab is a 44px row and the New chat button above it a 36px control on the same
-// edges. A child painting its own `--btn-h` box STACKS on `.tab`'s min-height, padding and border
+// On a phone a chat tab is a 44px row and the New chat button above it a control of that height on
+// the same edges. A child painting its own `--btn-h` box STACKS on `.tab`'s min-height, padding and border
 // (rows reached 62px), so the × grows its TARGET through an `::after`. Two claims that pull apart: the ROW must not grow and
 // the × must stay finger-reachable. Real layout in an IFRAME (the page viewport is pinned), with
 // `data-pointer="coarse"` stated explicitly.
@@ -104,12 +104,23 @@ describe("a chat tab against the New chat button", () => {
     );
   });
 
-  it("paints the tab at the floor and grows the button by the tab's own step", () => {
-    // The tab IS its target, so its fill grows from its 42px mouse box to the finger's 44px; the
-    // button above grows by those same 2px from its 36, its 44px target invisible around it.
+  it("paints the tab at the floor and the button at the tab's height", () => {
+    // The tab IS its target, so its fill grows from its 42px mouse box to the finger's 44px, and
+    // the button above stands in the tabs' column at the same height.
     const { btn, tab } = mountSidebar();
     expect(tab.getBoundingClientRect().height).toBeCloseTo(44, 0);
-    expect(btn.getBoundingClientRect().height).toBeCloseTo(38, 0);
+    expect(btn.getBoundingClientRect().height).toBeCloseTo(44, 0);
+  });
+
+  it("lifts a drag ghost at the row's height", () => {
+    // tabs-drag.ts clones the row into `body`, outside the sidebar, and the clone keeps `.tab`.
+    const { tab } = mountSidebar();
+    const ghost = tab.cloneNode(true) as HTMLElement;
+    ghost.classList.add("tab-drag-ghost");
+    ghost.style.width = `${String(tab.getBoundingClientRect().width)}px`;
+    doc.body.appendChild(ghost);
+    // The layout height: the ghost's bob rotates it, which widens its bounding rect.
+    expect(ghost.offsetHeight).toBe(44);
   });
 
   it("measures the same WIDTH, on the same left and right edges", () => {
