@@ -72,7 +72,7 @@ var attemptCases = []attemptCase{
 			}
 			es, attempts := tc.file(r.ID)
 			want := attemptEntry{WorkflowID: "wf_1", Key: "k1", State: persistedPending, At: rec.at}
-			if len(attempts) != 1 || attempts[0] != want {
+			if len(attempts) != 1 || !sameAttempt(attempts[0], want) {
 				t.Errorf("file attempts = %+v, want one pending record %+v written before NameAttempt returned", attempts, want)
 			}
 			if len(es.queue) != 1 || es.queue[0].Live != "wf_1" {
@@ -651,4 +651,12 @@ func assertNoStateFile(t *testing.T, tc *testConfirmer, ruleID string) {
 	if _, err := os.Stat(statePath(tc, ruleID)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("state file stat = %v, want no file written", err)
 	}
+}
+
+// sameAttempt compares At with Equal: a decoded time carries another location than time.Now's,
+// so == depends on the host's Local zone.
+func sameAttempt(got, want attemptEntry) bool {
+	at := got.At.Equal(want.At) && got.CancelLandedAt.Equal(want.CancelLandedAt)
+	got.At, got.CancelLandedAt, want.At, want.CancelLandedAt = time.Time{}, time.Time{}, time.Time{}, time.Time{}
+	return at && got == want
 }
