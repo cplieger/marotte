@@ -25,6 +25,7 @@ initBlockRenderer({
   disposeEntryEffects: (): void => undefined,
   makeRow: () => document.createElement("div"),
   makeEvent: () => document.createElement("div"),
+  liveAnchorChanged: (): void => undefined,
 });
 
 // A reasoning trace sealed while it is mounted into a parked or detached view has no slide to

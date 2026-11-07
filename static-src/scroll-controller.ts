@@ -1368,7 +1368,10 @@ export class ScrollController {
     if (edge?.isConnected !== true || edge.getClientRects().length === 0) {
       return false;
     }
-    return edge.getBoundingClientRect().top >= this.scrollEl.getBoundingClientRect().top - this.nearMargin;
+    return (
+      edge.getBoundingClientRect().top >=
+      this.scrollEl.getBoundingClientRect().top - this.nearMargin
+    );
   }
 
   private pokeTop(): void {

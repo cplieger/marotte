@@ -1246,10 +1246,11 @@ function paint(): void {
   paintSyncEntries = PAINT_SYNC_ENTRIES;
   const root = paintRoot();
   beginCardPass(session);
+  // One walk builds the card list the rail, the fold pass and the cover release share.
+  let cards: HTMLElement[] = [];
   heldMutation(() => {
     reconcile(root, turns, turnSpec);
-    // One walk builds the card list the rail and the fold pass share.
-    const cards = turnCards(root);
+    cards = turnCards(root);
     // Re-run per full pass: the set changes as pages load and turns arrive.
     setResidentTurns(cards);
     applyFoldPass(session.id, turns, cards, false);
