@@ -992,7 +992,8 @@ func (o *engineOwner) isReady() bool {
 	return o.state == marotte.EngineReady
 }
 
-// status is the engine's state as GET /api/engine and engine_status carry it.
+// status is the engine's state as GET /api/engine and engine_status carry it, and it sets marotte_engine_up from that
+// state: statusMu orders the gauge's writes as it orders the snapshots, so the last write is the newest state.
 func (o *engineOwner) status() marotte.EngineStatus {
 	o.statusMu.Lock()
 	defer o.statusMu.Unlock()
@@ -1000,6 +1001,7 @@ func (o *engineOwner) status() marotte.EngineStatus {
 	held := o.configHeld()
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	obs.EngineUp(o.state == marotte.EngineReady)
 	o.statusSeq++
 	st := marotte.EngineStatus{
 		Version: marotte.EngineStatusVersion{BootMS: o.boot, Seq: o.statusSeq},
@@ -1024,12 +1026,14 @@ func (o *engineOwner) status() marotte.EngineStatus {
 	return st
 }
 
+// publish takes a status snapshot even with no publish hook, because the snapshot is what moves marotte_engine_up.
 func (o *engineOwner) publish() {
-	if o.hooks.publish != nil {
-		st := o.status()
-		o.mu.Lock()
-		o.heldPublished = st.Restart.ConfigUnreadable
-		o.mu.Unlock()
-		o.hooks.publish(&st)
+	st := o.status()
+	if o.hooks.publish == nil {
+		return
 	}
+	o.mu.Lock()
+	o.heldPublished = st.Restart.ConfigUnreadable
+	o.mu.Unlock()
+	o.hooks.publish(&st)
 }

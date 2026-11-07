@@ -38,19 +38,28 @@ func PresetLabelValues(family, label string) []string {
 
 // MetricValue scrapes marotte's metrics page and returns one series' sample. series is written as the page writes
 // it, the family name followed by any label set, such as `marotte_prompt_failures_total{class="auth"}`. It fails tb
-// when the page lacks the series. The series are process-wide, so a test reads a delta, never an absolute, and does
-// not run in parallel with another test that moves the same series.
+// when the page lacks the series. The series are process-wide, so a counter test reads a delta, never an absolute, and
+// no test runs in parallel with another test that moves the same series.
 func MetricValue(tb testing.TB, series string) float64 {
 	tb.Helper()
+	v, ok := MetricSample(tb, series)
+	if !ok {
+		tb.Fatalf("the metrics page has no series %s", series)
+	}
+	return v
+}
+
+// MetricSample is MetricValue for a series that may be absent: ok is false when the page lacks it.
+func MetricSample(tb testing.TB, series string) (v float64, ok bool) {
+	tb.Helper()
 	for line := range strings.Lines(metricsPage(tb.Context())) {
-		if v, ok := strings.CutPrefix(line, series+" "); ok {
-			f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if raw, found := strings.CutPrefix(line, series+" "); found {
+			f, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 			if err != nil {
-				tb.Fatalf("series %s has the sample %q: %v", series, v, err)
+				tb.Fatalf("series %s has the sample %q: %v", series, raw, err)
 			}
-			return f
+			return f, true
 		}
 	}
-	tb.Fatalf("the metrics page has no series %s", series)
-	return 0
+	return 0, false
 }

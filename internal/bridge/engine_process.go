@@ -225,6 +225,7 @@ func (e *Engine) fail(reason exitReason) {
 func (e *Engine) teardown() {
 	e.stopOnce.Do(func() {
 		close(e.stopping)
+		e.dropMemoryGauges()
 		started := e.cmd != nil && e.cmd.Process != nil
 		endedItself := started && e.endedOnItsOwn()
 		if p := e.stdin.Load(); p != nil {
