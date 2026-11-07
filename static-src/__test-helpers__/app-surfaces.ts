@@ -77,6 +77,7 @@ const { renderDiffPane } = await import("../diff-pane.js");
 const { renderConnectionTarget } = await import("../forge-auth-connection.js");
 const { setWorkspaceRoot, _resetForTest: resetWorkspaceRoot } = await import("../workspace.js");
 const { openBranchSwitcher } = await import("../git-branch-switcher.js");
+const { initDiagnostics } = await import("../settings.js");
 document.body.replaceChildren();
 
 const teardown: (() => void)[] = [];
@@ -1616,6 +1617,19 @@ export const SURFACES: readonly Surface[] = [
       "#chat-retention-days",
       "#auto-compact-pct",
     ],
+  },
+  {
+    name: "Settings, General, a report ready",
+    sizes: TWO,
+    setup: () => {
+      show("settings-view");
+      initDiagnostics();
+      // The slot after a report, as `showCopy(true)` (settings.ts) leaves it.
+      q("#diagnostics-run").classList.add("hidden");
+      q(".diagnostics-copy").classList.remove("hidden");
+    },
+    controls: [".diagnostics-copy"],
+    rows: [],
   },
   {
     name: "Settings, Tools",

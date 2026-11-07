@@ -91,7 +91,7 @@
   margin-block: var(--sp-2);
 
   /* The hint beside a button wraps, never the button's label. */
-  & > .btn {
+  & > :is(.btn, .btn-small) {
     flex-shrink: 0;
   }
 }

@@ -800,6 +800,7 @@ const MOUNTED: Readonly<Record<string, readonly string[]>> = {
   "the shell panel's header": [".shell-header-btn"],
   "the sign-in dialog": ["#modal-sso-submit"],
   "Settings, General": ["#diagnostics-run"],
+  "Settings, General, a report ready": [".diagnostics-copy"],
   "Settings, Tools": ["#tool-add-btn", ".list-row-btn"],
   "Settings, Permissions": [".native-rule-remove", ".chip-remove"],
   "Settings, MCP servers": [".mcp-row-actions .icon-btn"],
