@@ -168,6 +168,8 @@ func TestSweep_PushesNothingForASlotThatIsNotTheFirstToStartNoRun(t *testing.T) 
 			r.sweep(t.Context())
 		}},
 		{name: "a failed launch whose rule is deleted meanwhile", drive: func(t *testing.T, _ string, st *launchrule.Store, l *fakeLauncher, r *Runner) {
+			// Two guards hold this: the ErrNotFound arm, and the zero row recordFire returns when UpdateClock never ran
+			// its callback.
 			l.failWith(errors.New("workflow new: no such recipe"))
 			l.during = func(string) {
 				if _, err := st.Delete(t.Context(), st.Clocks()[0].ID); err != nil {
