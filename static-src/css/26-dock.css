@@ -1197,6 +1197,9 @@
    The list takes what the host's cap leaves under the fold row and scrolls inside itself
    past it. */
 .run-bar {
+  /* What the batch button's shared expander adds on each side to reach the hit floor, 0 on a mouse. */
+  --all-reach: max(0px, (var(--hit-floor) - var(--btn-h)) / 2);
+
   display: grid;
   grid-template-columns:
     [glyph] auto [title] fit-content(18rem) [state] auto [progress] auto
@@ -1233,6 +1236,14 @@
     display: grid;
     grid-column: 1 / -1;
     grid-template-columns: subgrid;
+  }
+
+  /* The one run's row ends with the batch button, out of the line's flow: the row pads its end by the button and
+     its reach, so the run's line never meets the target, and is never shorter than the button. */
+  & > li:has(> .run-bar-all:not([hidden])) {
+    position: relative;
+    min-block-size: var(--btn-h);
+    padding-inline-end: calc(var(--btn-h) + 2 * var(--all-reach));
   }
 }
 
@@ -1352,8 +1363,8 @@
   visibility: hidden;
 }
 
-/* Pause all or Resume all, the box's top-right control at the end of the fold row. It paints at the stand-alone
-   control height and takes the shared expander. */
+/* Pause all or Resume all at the end of the fold row, or Pause or Resume at the end of the one run's row
+   (`run-bar.ts` `paintBatch`). It paints at the stand-alone control height and takes the shared expander. */
 .run-bar-all {
   inline-size: var(--btn-h);
   block-size: var(--btn-h);
@@ -1362,6 +1373,15 @@
 
   &[hidden] {
     display: none;
+  }
+
+  /* In the one run's row it takes the row's end, centred on the row, inset by its reach so the list's clip
+     leaves the whole target (`.run-bar > li:has(> .run-bar-all)` keeps the room). */
+  .run-bar > li > & {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-end: var(--all-reach);
+    margin-block: auto;
   }
 
   /* On the fold row it reaches up into the box's padding and the stack gap, short of the member above, and down

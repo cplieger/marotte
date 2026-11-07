@@ -10,6 +10,8 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { until } from "./__test-helpers__/until.js";
 import { buildExecSummary } from "./exec-view/summary.js";
 import { chevronEl } from "./chevron.js";
+import { iconEl } from "./icon-el.js";
+import { ICON_PAUSE } from "./icons.js";
 import type { ExecNode, ExecRun } from "./exec-view/model.js";
 
 /** What counts as equal: a pixel of rounding in the ink scan or in a font's line box. */
@@ -51,8 +53,8 @@ interface Mounted {
   rows: HTMLElement[];
 }
 
-/** The chat's band as the page builds it: the fold row above the list from two runs, the rows in
- *  the list, the list folded (`data-folded`) while the fold is closed. */
+/** The chat's band as the page builds it: the fold row above the list from two runs, else the batch button at the
+ *  one run's row end, the rows in the list, the list folded (`data-folded`) while the fold is closed. */
 function mount(count: number, open: boolean, width: number): Mounted {
   host = document.createElement("div");
   host.style.cssText = `inline-size:${String(width)}px;padding-block:48px`;
@@ -103,6 +105,14 @@ function mount(count: number, open: boolean, width: number): Mounted {
     btn.append(glyph, summary.root);
     summary.paint(runOf(`nightly-sweep-${String(i)}`, 1 + (i % 3), 4 + 2 * (i % 4)));
     li.append(btn);
+    if (count === 1) {
+      const all = document.createElement("button");
+      all.type = "button";
+      all.className = "icon-btn run-bar-all";
+      all.setAttribute("aria-label", "Pause");
+      all.append(iconEl(ICON_PAUSE));
+      li.append(all);
+    }
     bar.append(li);
     return li;
   });
@@ -267,7 +277,7 @@ describe("the run bar box's vertical balance", () => {
         });
       }
 
-      it("balances the box of 1 run, which has no fold row", async () => {
+      it("balances the box of 1 run, which has no fold row and ends its row with the button", async () => {
         await browser.viewport(w, h);
         style = mountAppCSS();
         document.documentElement.setAttribute("data-pointer", "coarse");

@@ -733,6 +733,12 @@ function plantRunBar(names: readonly string[] = ["deadset-ci", "land", "app-revi
   plantRunRows(names);
 }
 
+/** One run: no header, the batch button at the end of the run's own row. */
+function plantSoloRun(): void {
+  plantRunRows(["deadset-ci"]);
+  q("#run-bar > li").appendChild(iconButton("icon-btn run-bar-all", "Pause"));
+}
+
 function plantRunRows(names: readonly string[]): void {
   const bar = q("#run-bar");
   bar.classList.remove("hidden");
@@ -1275,6 +1281,13 @@ export const SURFACES: readonly Surface[] = [
     },
     controls: ["#run-bar-fold .run-bar-all"],
     rows: ["#run-bar-fold .run-bar-toggle", "#run-bar .run-bar-open"],
+  },
+  {
+    name: "the run bar at one run",
+    sizes: TWO,
+    setup: plantSoloRun,
+    controls: ["#run-bar > li > .run-bar-all"],
+    rows: ["#run-bar .run-bar-open"],
   },
   {
     name: "the run bar at two runs",

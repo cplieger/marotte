@@ -278,7 +278,7 @@ describe("the run bar's box", () => {
   });
 
   /** The chat's band with real summary rows, and the fold row first when `fold` is set. `all` adds the batch button
-   *  at the fold row's end, where `run-bar.ts` seats it. */
+   *  where `run-bar.ts` seats it: the fold row's end, or the one run's row end with no fold row. */
   function mountRows(
     runs: readonly ExecRun[],
     fold: boolean,
@@ -324,6 +324,9 @@ describe("the run bar's box", () => {
       summary.paint(r);
       summaries.push(summary);
       li.append(btn);
+      if (all && !fold && runs.length === 1) {
+        li.append(batchButton());
+      }
       bar.append(li);
     }
     barHost.append(bar);
@@ -357,7 +360,7 @@ describe("the run bar's box", () => {
     [3, true],
   ] as const) {
     it(`draws ${String(count)} run${count > 1 ? "s" : ""} as lines of one bordered box`, () => {
-      const bar = mountRows(RUNS.slice(0, count), fold);
+      const bar = mountRows(RUNS.slice(0, count), fold, 1000, true);
       const box = bar.parentElement!;
       expect(getComputedStyle(box).borderTopWidth).toBe("1px");
       for (const btn of bar.querySelectorAll<HTMLElement>(".run-bar-open")) {
