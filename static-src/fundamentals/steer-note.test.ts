@@ -285,12 +285,6 @@ describe("a steer that opens with a quoted passage", () => {
     expect(n.getAttribute("aria-label")).toBe("Mid-turn message: From Kiro's reply: quoted reply");
   });
 
-  it("hides the text of a steer that is only a quote", () => {
-    const n = note({ text: quoteSelection("quoted", "From Kiro's reply") });
-    expect(bandOf(n)?.textContent).toBe("From Kiro's reply: quoted");
-    expect(n.querySelector<HTMLElement>(".steer-note-text")?.hidden).toBe(true);
-  });
-
   it("leaves a hand-typed blockquote as the reader's own text, as a prompt does", () => {
     const n = note({ text: "> quoted\n\nreply" });
     expect(bandOf(n)).toBeNull();
@@ -419,6 +413,38 @@ describe("the clamp measured on the page", () => {
       expect(n.querySelector(".disclosure-chevron")).toBeNull();
     });
   }
+
+  it("draws a steer that is only a quote as the band alone, with no text box or opener", async () => {
+    const n = mount({ text: quoteSelection("quoted", "From Kiro's reply") });
+    await observerRuns();
+    const band = n.querySelector<HTMLElement>("blockquote.turn-req-quote");
+    const body = n.querySelector<HTMLElement>(".steer-note-body");
+    expect(band?.textContent).toBe("From Kiro's reply: quoted");
+    expect(n.querySelector(".steer-note-text")).toBeNull();
+    expect(n.querySelector(".steer-note-more")).toBeNull();
+    const pad = getComputedStyle(body!);
+    const content =
+      body!.getBoundingClientRect().height -
+      parseFloat(pad.paddingTop) -
+      parseFloat(pad.paddingBottom);
+    expect(content).toBeCloseTo(band!.getBoundingClientRect().height, 1);
+  });
+
+  // The aside ink resolves to the band's own secondary ink in both themes, so it is set apart here
+  // to see which rule paints the band.
+  it("dims a dropped steer's quote band to the ink of its text", () => {
+    const root = document.documentElement;
+    root.style.setProperty("--c-text-aside", "rgb(1, 2, 3)");
+    try {
+      const steer = `${appendQuote("", quoteSelection("quoted", "From Kiro's reply"))}reply`;
+      const n = mount({ text: steer, dropped: true });
+      const band = n.querySelector<HTMLElement>("blockquote.turn-req-quote")!;
+      expect(getComputedStyle(textEl(n)).color).toBe("rgb(1, 2, 3)");
+      expect(getComputedStyle(band).color).toBe("rgb(1, 2, 3)");
+    } finally {
+      root.style.removeProperty("--c-text-aside");
+    }
+  });
 });
 
 describe("the run label", () => {

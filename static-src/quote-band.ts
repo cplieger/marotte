@@ -1,5 +1,4 @@
-// The band a message opening with a `quoteSelection` block draws in place of its `>` lines, wherever the
-// message is shown: a sent prompt's header, a steer note, a waiting row above the composer.
+// The band a message opening with a `quoteSelection` block draws in place of its `>` lines.
 
 import { el } from "@cplieger/ui";
 import { linkifyPaths } from "./linkify.js";

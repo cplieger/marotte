@@ -256,8 +256,9 @@ function buildRow(steer: PendingSteer, state: StackState): HTMLElement {
     el("span", { className: "steer-state-label" }, stateWord(steer)),
   );
 
-  // Collapsed to one line and clipped to four in CSS, never truncated here: the whole message stays
-  // in the DOM, and it stays reachable through the row's tooltip, its accessible name and Edit.
+  // Collapsed to one line and clipped to four lines in CSS, the quote band counting as one, never
+  // truncated here: the whole message stays in the DOM, and it stays reachable through the row's
+  // tooltip, its accessible name and Edit.
   const text = el("div", { className: "steer-text" });
   fillText(text, steer.text);
 

@@ -180,11 +180,13 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
   if (quoted !== null) {
     body.appendChild(buildQuoteBand(quoted));
   }
+  root.appendChild(body);
+  if (quoted?.rest === "") {
+    return root;
+  }
   // NOT collapsed to one line: the message keeps the shape it was typed in (`white-space: pre-wrap`).
   const text = el("div", { className: "steer-note-text" }, quoted?.rest ?? d.text);
-  text.hidden = quoted?.rest === "";
   body.appendChild(text);
-  root.appendChild(body);
   // A workflow's message is the news itself and shows in full; only the reader's own words clamp.
   if (d.origin !== "user") {
     return root;
