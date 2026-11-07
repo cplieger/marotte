@@ -28,6 +28,7 @@ interface Live {
   confirmMock: (...args: unknown[]) => Promise<boolean>;
   toastError: (...args: unknown[]) => void;
   touchCapable: () => boolean;
+  shellFontSettled: () => Promise<void>;
   els: Record<string, HTMLElement>;
 }
 let live: Live;
@@ -58,6 +59,9 @@ vi.mock("./device-view.js", () => ({
   shellHeight: (): number => live.shellHeight(),
   setShellHeight: (px: number): void => live.setShellHeight(px),
   setShellOpen: (open: boolean): void => live.recordShellOpen(open),
+}));
+vi.mock("./shell-font.js", () => ({
+  shellFontSettled: (): Promise<void> => live.shellFontSettled(),
 }));
 vi.mock("./pointer-tier.js", () => ({
   touchCapable: (): boolean => live.touchCapable(),
@@ -109,9 +113,10 @@ interface Harness {
   getRunCb: () => ((cmd: string) => void) | null;
   endSession: () => void;
   /** Deliver a screen frame on the feature bus, as the kernel does on every frame it renders;
-   *  `rows` is the row count the frame carries. Unless `paint` is false it also fades the loading
-   *  element, as the kernel does on its first frame once the font has settled. */
-  screenFrame: (rows: number, opts?: { paint?: boolean }) => void;
+   *  `rows` is the row count the frame carries. */
+  screenFrame: (rows: number) => void;
+  /** Settle the library's font wait, held when `setup` was given `fontHeld`. */
+  settleFont: () => void;
   /** Report a connection state on the feature bus, as the kernel does. */
   connectionState: (state: string) => void;
   /** The pane's `announceSize`, which puts the grid size on the socket. */
@@ -164,6 +169,7 @@ function ptr(
 async function setup(
   uiStateData: { shell_h?: number; shell_open?: boolean } = {},
   device: { touchCapable?: boolean } = {},
+  library: { fontHeld?: boolean } = {},
 ): Promise<Harness> {
   vi.resetModules();
   bootSeq++;
@@ -207,7 +213,12 @@ async function setup(
   const stateListeners: ((state: unknown) => void)[] = [];
   // The engine's ModeState starts with bracketed paste on, before the server's first modes frame.
   let bracketedPaste = true;
-  let loadingEl: HTMLElement | null = null;
+  let settleFont: () => void = () => undefined;
+  const fontSettled = library.fontHeld
+    ? new Promise<void>((resolve) => {
+        settleFont = resolve;
+      })
+    : Promise.resolve();
   const announceSize = vi.fn();
   const surface = document.createElement("div");
   shellTerminal.append(surface);
@@ -261,7 +272,6 @@ async function setup(
   const createTerminal = vi.fn(
     (_root: HTMLElement, opts: CreateTerminalOptions): TerminalHandle => {
       endedCb = opts.onSessionEnded ?? null;
-      loadingEl = opts.loading ?? null;
       // The kernel resolves the features thunk inside its own try, and the panel mints its key-grid
       // feature there, so a mock that never calls it leaves that feature unbuilt and every trigger
       // assertion vacuous.
@@ -329,6 +339,7 @@ async function setup(
     confirmMock,
     toastError,
     touchCapable: () => device.touchCapable ?? false,
+    shellFontSettled: () => fontSettled,
     els: {
       shellBtn,
       shellToggleBtn,
@@ -382,10 +393,10 @@ async function setup(
     announceSize,
     surface,
     remeasure,
-    screenFrame: (rows: number, opts: { paint?: boolean } = {}) => {
-      if (opts.paint !== false) {
-        loadingEl?.classList.add("fade");
-      }
+    settleFont: () => {
+      settleFont();
+    },
+    screenFrame: (rows: number) => {
       // A frame carries every visible row, so a row count is what separates a drawn screen from the
       // rows-less signal frame; a row is a run list and an empty one is still a row.
       const msg = { rows: Array.from({ length: rows }, () => []) };
@@ -600,8 +611,8 @@ describe("shell.ts: host-driven actions", () => {
   });
 
   // The reader is in the transcript, so the open must not take focus. The first open is also what
-  // connects, so `admit` holds the Run until the session draws (here with paint, a current
-  // `--char-w` and no open slide already in place).
+  // connects, so `admit` holds the Run until the session draws (here with the font settled, a
+  // current `--char-w` and no open slide already in place).
   it("opens a closed panel without focusing it and sends once the session draws", async () => {
     const h = await setup();
     h.mod.initShellPanel();
@@ -641,19 +652,43 @@ describe("shell.ts: host-driven actions", () => {
 
   // A frame can land while the font is still loading, and until it settles announceSize sends
   // nothing, so the server would start the PTY at its default size on the Run bytes.
-  it("holds a Run until the first paint, then puts the size on the socket before the bytes", async () => {
-    const h = await setup();
+  it("holds a Run until the font settles, then puts the size on the socket before the bytes", async () => {
+    const h = await setup({}, {}, { fontHeld: true });
     h.mod.initShellPanel();
 
     h.getRunCb()?.("echo hi");
-    h.screenFrame(30, { paint: false });
+    h.screenFrame(30);
     await Promise.resolve();
     expect(h.sendSpy).not.toHaveBeenCalled();
+    expect(h.announceSize).not.toHaveBeenCalled();
 
-    h.screenFrame(30);
+    h.settleFont();
     await Promise.resolve();
     expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
     expect(h.announceSize).toHaveBeenCalledTimes(1);
+    expect(h.announceSize.mock.invocationCallOrder[0]).toBeLessThan(
+      h.sendSpy.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  // The library lowers its loading state when the process exits, font or not, and its replacement
+  // session draws before the font settles too; the size announce still waits for the font.
+  it("holds a Run across a session that ends before the font settles", async () => {
+    const h = await setup({}, {}, { fontHeld: true });
+    h.mod.initShellPanel();
+
+    h.getRunCb()?.("echo hi");
+    h.screenFrame(30);
+    h.endSession();
+    expect(h.reattachSpy).toHaveBeenCalledTimes(1);
+    h.screenFrame(30);
+    await Promise.resolve();
+    expect(h.sendSpy).not.toHaveBeenCalled();
+    expect(h.announceSize).not.toHaveBeenCalled();
+
+    h.settleFont();
+    await Promise.resolve();
+    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
     expect(h.announceSize.mock.invocationCallOrder[0]).toBeLessThan(
       h.sendSpy.mock.invocationCallOrder[0] ?? 0,
     );
@@ -715,18 +750,19 @@ describe("shell.ts: host-driven actions", () => {
   });
 
   // The server starts a fresh PTY at its default size on the first bytes it gets, keys included.
-  it("holds keys typed before the first paint, then sends them after the size and ahead of a Run", async () => {
-    const h = await setup();
+  it("holds keys typed before the font settles, then sends them after the size and ahead of a Run", async () => {
+    const h = await setup({}, {}, { fontHeld: true });
     h.mod.initShellPanel();
     h.shellBtn.click();
-    h.screenFrame(30, { paint: false });
+    h.screenFrame(30);
 
     h.type("l");
     h.getRunCb()?.("echo hi");
     h.type("s");
+    await Promise.resolve();
     expect(h.sendSpy).not.toHaveBeenCalled();
 
-    h.screenFrame(30);
+    h.settleFont();
     await Promise.resolve();
     const enc = new TextEncoder();
     expect(h.sendSpy.mock.calls).toEqual([

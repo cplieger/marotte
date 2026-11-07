@@ -95,6 +95,8 @@ export class FakeShellSocket extends EventTarget {
   readyState = 0;
   binaryType = "blob";
   readonly frames: ClientFrame[] = [];
+  /** True once the default-sized screen answering the resume was delivered. */
+  drawn = false;
 
   constructor(readonly url: string) {
     super();
@@ -118,12 +120,24 @@ export class FakeShellSocket extends EventTarget {
       setTimeout(() => {
         this.deliver(resumeAck());
         this.deliver(screen(30));
+        this.drawn = true;
       }, 0);
     }
   }
 
   close(): void {
     this.readyState = 3;
+  }
+
+  /** Close as the engine's server does when the shell process exits (4001). */
+  end(): void {
+    this.readyState = 3;
+    this.dispatchEvent(new CloseEvent("close", { code: 4001, wasClean: true }));
+  }
+
+  /** Whether any input frame reached this socket. */
+  hasInput(): boolean {
+    return this.frames.some((f) => f.kind === "input");
   }
 
   /** Whether the input frames this socket received, in order, spell `text`. */
@@ -235,9 +249,12 @@ export function holdWebFont(): { fontLands: () => HTMLStyleElement } {
   };
 }
 
-/** The socket the terminal opened, once it has sent its resume. */
-export async function resumedSocket(): Promise<FakeShellSocket> {
-  const sock = await vi.waitUntil(() => FakeShellSocket.last, { timeout: 2000 });
+/** The socket the terminal opened after `prev` (any, by default), once it has sent its resume. */
+export async function resumedSocket(prev: FakeShellSocket | null = null): Promise<FakeShellSocket> {
+  const sock = await vi.waitUntil(
+    () => (FakeShellSocket.last !== prev ? FakeShellSocket.last : null),
+    { timeout: 2000 },
+  );
   await vi.waitUntil(
     () => sock.frames.some((f) => f.kind === "control" && f.msg["type"] === "resume"),
     { timeout: 2000 },

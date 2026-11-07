@@ -24,7 +24,7 @@ export function trackShellPresses(): void {
  *  hardware keyboard seen on a touch device (an iPad), web-terminal-ui releases focus to the body
  *  on a tap in the terminal and types the next key itself when the last press was inside it (its
  *  kernel's `pressedInsideShell`), so a page-wide type-ahead must leave that key alone. A closed
- *  panel's terminal cannot take focus, so the library drops the key. */
+ *  panel's terminal cannot take focus and would drop the key, so the key stays with the page then. */
 export function shellTakesBodyKeys(): boolean {
   return (
     pressedInTerminal &&

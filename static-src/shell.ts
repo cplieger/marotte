@@ -36,6 +36,7 @@ import { refreshGitStatus } from "./git-status-store.js";
 import { attachSplitter, type Splitter } from "./splitter.js";
 import { touchCapable } from "./pointer-tier.js";
 import { trackShellPresses } from "./shell-keys.js";
+import { shellFontSettled } from "./shell-font.js";
 
 const SHELL_WS_PATH = "/api/shell/ws";
 // Awaited before the first server resize so the PTY is sized on real cell metrics. ONE family — the
@@ -75,10 +76,8 @@ const pendingRuns: string[] = [];
  *  for, so a reattach drops it; a held Run instead goes to whichever session draws next. */
 const heldInput: Uint8Array[] = [];
 
-/** True once the library faded `firstPaintSignal`'s element. It does so on the first frame drawn
- *  after the font settled, from which `PaneHandle.announceSize()` sends; it also does so when the
- *  process exits or the wire is incompatible before that frame. */
-let painted = false;
+/** True once the library's font wait has settled, from which `PaneHandle.announceSize()` sends. */
+let fontSettled = false;
 /** True once the attached session has drawn a frame with rows on a connected socket, so its modes
  *  frame has landed. Kept through a restart's POST, whose failure leaves that same session live. */
 let sessionDrawn = false;
@@ -127,7 +126,7 @@ function admit(): boolean {
     return true;
   }
   if (
-    !painted ||
+    !fontSettled ||
     !sessionDrawn ||
     panelSliding() ||
     paneSurface === null ||
@@ -167,21 +166,6 @@ function releaseHeld(): void {
 function sessionChanged(): void {
   sessionDrawn = false;
   sessionSized = false;
-}
-
-/** The library fades its `loading` element on first paint and exposes no other signal of its font
- *  gate; this one is never attached, so nothing shows. */
-function firstPaintSignal(): HTMLElement {
-  const el = document.createElement("div");
-  const observer = new MutationObserver(() => {
-    if (el.classList.contains("fade")) {
-      observer.disconnect();
-      painted = true;
-      releaseHeld();
-    }
-  });
-  observer.observe(el, { attributes: true, attributeFilter: ["class"] });
-  return el;
 }
 
 const NOTHING = new Uint8Array(0);
@@ -512,7 +496,6 @@ function ensureTerminal(): void {
     wsPath: SHELL_WS_PATH,
     fontReady: SHELL_FONT_READY,
     theme: SHELL_THEME,
-    loading: firstPaintSignal(),
     // On this server that is recoverable (the next connect gets a fresh PTY), so typing `exit` or
     // wedging a child ends with a new prompt rather than a dead panel.
     onSessionEnded: () => {
@@ -520,6 +503,10 @@ function ensureTerminal(): void {
     },
     // Restore the shell's scrollback from this device rather than pulling it back over the wire.
     persistScrollback: shellScrollback,
+  });
+  void shellFontSettled(SHELL_FONT_READY).then(() => {
+    fontSettled = true;
+    releaseHeld();
   });
 }
 
