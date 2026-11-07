@@ -57,6 +57,11 @@ type Status struct {
 	Blocked string `json:"blocked,omitempty"`
 	// RowText is an event rule's launch state as its row reads it, which the trigger confirmer writes.
 	RowText string `json:"row_text,omitempty"`
+	// LastEvent is the key of an event rule's last confirmed event, which its row names by number or run id.
+	LastEvent string `json:"last_event,omitempty"`
+	// CheckedAt is the start of an event rule's last applied poll; the trigger confirmer's View sets it and no write
+	// persists it.
+	CheckedAt time.Time `json:"checked_at,omitzero"`
 	// Paused is why an event rule's reads wait for a forge or trigger budget, and until when; empty while they run.
 	Paused string `json:"paused,omitempty"`
 	// Gaps are an event rule's stretches in which runs may have been missed, kept until the operator dismisses them.

@@ -4,7 +4,10 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
+	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/marotte/internal/launchrule"
 )
 
@@ -38,6 +41,29 @@ func TestViewShowsUnwrittenState(t *testing.T) {
 				t.Errorf("View holds %d events, want the one queued in memory", st.Held())
 			}
 		})
+	})
+}
+
+func TestViewShowsTheLastAppliedPoll(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(labeledSpec())
+		if st, err := tc.View(r.ID); err != nil || !st.Status.CheckedAt.IsZero() {
+			t.Fatalf("Setup: View before a poll = checked_at %v, %v; want zero", st.Status.CheckedAt, err)
+		}
+		start := time.Now().UTC()
+		tc.startRunner(&fakeSource{issues: []forgeapi.Page[forgeapi.Issue]{{Items: []forgeapi.Issue{issue(7, "alice")}}}}, nil)
+		synctest.Wait()
+		st, err := tc.View(r.ID)
+		if err != nil || !st.Status.CheckedAt.Equal(start) {
+			t.Errorf("View = checked_at %v, %v; want the poll's start %v", st.Status.CheckedAt, err, start)
+		}
+		if file, _ := tc.file(r.ID); !file.raw.Status.CheckedAt.IsZero() {
+			t.Errorf("file checked_at = %v, want none written", file.raw.Status.CheckedAt)
+		}
+		edit(tc, &r, 0, moveRepo)
+		if st, _ := tc.View(r.ID); !st.Status.CheckedAt.IsZero() {
+			t.Errorf("View after a rebaseline edit = checked_at %v, want zero until the next poll", st.Status.CheckedAt)
+		}
 	})
 }
 

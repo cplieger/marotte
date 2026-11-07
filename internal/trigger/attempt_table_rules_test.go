@@ -380,6 +380,7 @@ var ruleRowCases = slices.Concat(liveCases(), abandonedCases(), []attemptCase{
 				es.launched = []launchedEntry{{Key: "k0", WorkflowID: "wf_0"}}
 				es.superseded = []supersededEntry{{Key: "k-1", By: "k0"}}
 				es.raw.Status.LastMinted, es.raw.Status.LastRunID, es.raw.Status.BoundAbandons = minted, "wf_0", 1
+				es.raw.Status.LastEvent = "k0"
 				return true
 			})
 		},
@@ -396,6 +397,9 @@ var ruleRowCases = slices.Concat(liveCases(), abandonedCases(), []attemptCase{
 			st := es.raw.Status
 			if st.BoundAbandons != 0 || st.LastRunID != "wf_0" || !st.LastMinted.Equal(time.Now().Add(-time.Hour)) {
 				t.Errorf("status = %+v, want count 0, last_run_id and last_minted kept", st)
+			}
+			if st.LastEvent != "k0" {
+				t.Errorf("last_event = %q, want k0 kept with last_run_id", st.LastEvent)
 			}
 			def, _ := tc.store.Get(r.ID)
 			if es.raw.Population != launchrule.Population(&def) || es.raw.Population == "" {

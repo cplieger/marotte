@@ -212,6 +212,8 @@ func (pr *pollRule) applyTo(es *eventState, rd *reads) bool {
 	pr.st.raw.Status.Paused = ""
 	if bo := rd.paused[listOf(pr.ev.Kind)]; bo != nil {
 		pr.st.raw.Status.Paused = bo.rowText()
+	} else {
+		pr.st.checkedAt = pr.start
 	}
 	*es = pr.st
 	after, aerr := stateJSON(es)

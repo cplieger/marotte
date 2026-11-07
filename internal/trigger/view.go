@@ -31,6 +31,7 @@ func (c *Confirmer) View(ruleID string) (launchrule.State, error) {
 		return launchrule.State{}, err
 	}
 	st.Status.Gaps = slices.Clone(st.Status.Gaps)
+	st.Status.CheckedAt = rv.es.checkedAt
 	if rv.writeBlocked != "" {
 		st.Status.Blocked = rv.writeBlocked
 	}

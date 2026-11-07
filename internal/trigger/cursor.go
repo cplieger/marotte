@@ -86,6 +86,8 @@ type cursor map[string]*repoCursor
 
 // eventState is an event rule's state with its event parts typed; the rest of the file is carried as read.
 type eventState struct {
+	// checkedAt is the last applied poll's start, kept in memory only: a write per poll would buy nothing.
+	checkedAt  time.Time
 	cursor     cursor
 	queue      []queueEntry
 	launched   []launchedEntry
