@@ -879,7 +879,7 @@ func (*runLog) gradeLocked(ctx context.Context, rec *runRecord, path string, kas
 		return nil, err
 	}
 	rec.closes[path] = graded
-	g := &stepGrade{entry: e, nodePath: path, grade: graded, sessionID: kas.SessionID, mayNote: c.mayNote()}
+	g := &stepGrade{entry: e, nodePath: path, grade: graded, sessionID: kas.SessionID}
 	if n, held := rec.noteLeases[path]; held {
 		delete(rec.noteLeases, path)
 		if n.turn == c.turn {
@@ -889,15 +889,16 @@ func (*runLog) gradeLocked(ctx context.Context, rec *runRecord, path string, kas
 	return g, nil
 }
 
-// gradeStep records the grade of the path's newest close when it is due one, reading KAS's record through read only
-// then, and answers it; nil when it recorded none. No lock is held across read.
-func (r *runLog) gradeStep(ctx context.Context, workflowID, nodePath string, read func() (workflow.StepRecord, bool)) (*stepGrade, error) {
+// gradeRun records the grade of every path's newest close that is due one, reading KAS's record of the run's steps
+// through read only when one is, and answers what it recorded. No lock is held across read, so a close that changed
+// meanwhile is left to the next grade.
+func (r *runLog) gradeRun(ctx context.Context, workflowID string, read func() (map[string]workflow.StepRecord, bool)) ([]*stepGrade, error) {
 	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
 		return nil, err
 	}
-	turn, err := r.dueTurn(workflowID, nodePath, l)
-	if err != nil || turn == "" {
+	due, err := r.dueTurns(workflowID, l)
+	if err != nil || len(due) == 0 {
 		return nil, err
 	}
 	kas, known := read()
@@ -907,29 +908,36 @@ func (r *runLog) gradeStep(ctx context.Context, workflowID, nodePath string, rea
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
-	// The close read changed, or the run was deleted, while KAS's record was read.
-	if !ok || rec.removed || rec.closes[nodePath].turn != turn {
+	if !ok || rec.removed {
 		return nil, nil
 	}
-	return r.gradeLocked(ctx, rec, nodePath, kas)
+	fresh := make(map[string]workflow.StepRecord, len(due))
+	for path, turn := range due {
+		if st, has := kas[path]; has && rec.closes[path].turn == turn {
+			fresh[path] = st
+		}
+	}
+	return r.gradeDueLocked(ctx, rec, fresh)
 }
 
-// dueTurn is the turn of the path's newest close when it is due a grade, "" otherwise.
-func (r *runLog) dueTurn(workflowID, nodePath string, l *chat.EntryLog) (string, error) {
+// dueTurns is, by path, the turn of each newest close due a grade.
+func (r *runLog) dueTurns(workflowID string, l *chat.EntryLog) (map[string]string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
 	if !ok || rec.removed {
-		return "", nil
+		return nil, nil
 	}
 	if err := scanStepFactsLocked(rec, l); err != nil {
-		return "", err
+		return nil, err
 	}
-	c, ok := rec.closes[nodePath]
-	if !ok || !dueGradeLocked(rec, nodePath, &c) {
-		return "", nil
+	due := make(map[string]string)
+	for path, c := range rec.closes {
+		if dueGradeLocked(rec, path, &c) {
+			due[path] = c.turn
+		}
 	}
-	return c.turn, nil
+	return due, nil
 }
 
 // noteLease is the lease node_complete read for the close of turn (holdNoteLocked).

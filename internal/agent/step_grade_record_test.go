@@ -316,6 +316,64 @@ func TestStepGrade_TheRunReadRecordsAGradeTheNodeCompleteMissed(t *testing.T) {
 	})
 }
 
+// A grade node_complete's KAS read missed is recorded at the run's next lifecycle frame, with no reader: another
+// step's node_complete or the run's run_complete. It is recorded and noted once, and a run read after adds neither.
+func TestStepGrade_TheRunsNextFrameRecordsAGradeTheNodeCompleteMissed(t *testing.T) {
+	const (
+		id     = "wf_42066808f4c28538"
+		chatID = marotte.ChatID("c1")
+	)
+	path := []string{id, "p2-loop", "iter-0", "p2-build"}
+	nodePath := workflow.PathKey(path)
+	retry := func(t *testing.T, frame func(h *Runtime)) {
+		t.Helper()
+		h, cs, br := runLoggingHub(t)
+		leaseToChat(t, h, cs, id, chatID)
+		br.setCallErr(methodKiroWorkflowInspect, errors.New("the engine is gone"))
+		runRecordedStep(t, h, id, nodePath, path, recordedStop(t, "limit_231_session_tail.jsonl"))
+		if got := gradesOf(t, h, id); len(got) != 0 {
+			t.Fatalf("step_graded entries under an unread record = %+v, want none", got)
+		}
+		turn := closeTurnOf(t, h, id)
+
+		br.clearCallErr(methodKiroWorkflowInspect)
+		br.setCallResult(methodKiroWorkflowInspect, fixtureFile(t, "limit_231_inspect.json"))
+		frame(h)
+		joinInflight(t, h)
+
+		want := recordedGrade{
+			Turn: turn, Outcome: string(marotte.TurnOutcomeFailed),
+			FailureKind: string(marotte.FailureKindModelCallLimit), FailureReason: marotte.ModelCallLimitStepReason,
+		}
+		wantNote := stepNoteID(id, stepNoteModelCallLimit, nodePath)
+		check := func(when string) {
+			t.Helper()
+			if got := gradesOf(t, h, id); len(got) != 1 || got[0] != want {
+				t.Errorf("%s: step_graded entries = %+v, want only %+v", when, got, want)
+			}
+			if ids := steerIDs(t, cs, chatID); len(ids) != 1 || ids[0] != wantNote {
+				t.Errorf("%s: launching chat notes = %v, want only %s", when, ids, wantNote)
+			}
+		}
+		check("after the frame")
+		stepEndsOf(t, h, id)
+		joinInflight(t, h)
+		check("after a run read")
+	}
+	t.Run("another step's node_complete", func(t *testing.T) {
+		retry(t, func(h *Runtime) {
+			next := []string{id, "p2-review"}
+			runRecordedStep(t, h, id, workflow.PathKey(next), next, marotte.StopReasonEndTurn)
+		})
+	})
+	t.Run("a terminal run_complete", func(t *testing.T) {
+		retry(t, func(h *Runtime) { h.runs.observeComplete(t.Context(), "", runComplete(id, "completed")) })
+	})
+	t.Run("a paused run_complete", func(t *testing.T) {
+		retry(t, func(h *Runtime) { h.runs.observeComplete(t.Context(), "", runComplete(id, "paused")) })
+	})
+}
+
 func TestHandleTurnRange_ServesTheStepsRecordedGrade(t *testing.T) {
 	const id = "wf_04b7a7ba1affa505"
 	path := []string{id, "create-workflow"}
