@@ -5,6 +5,7 @@ import { createBus } from "@cplieger/ui";
 
 import type {
   EngineStatus,
+  MCPPrewarmPayload,
   MCPSignInClosedPayload,
   MCPSignInOpenPayload,
   NotificationPayload,
@@ -121,7 +122,7 @@ export interface SSEPayloads {
   readonly mcp_sign_in_closed: MCPSignInClosedPayload;
   readonly mcp_failed: MCPFailedPayload;
   readonly mcp_disconnected: MCPDisconnectedPayload;
-  readonly mcp_prewarm: { readonly package: string; readonly state: string };
+  readonly mcp_prewarm: MCPPrewarmPayload;
   readonly mode_changed: { readonly mode_id: string };
   readonly safety_status: SafetyStatusPayload;
   readonly safety_properties: SafetyPropertiesPayload;

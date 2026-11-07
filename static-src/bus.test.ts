@@ -356,7 +356,7 @@ describe("decodeEnvelope", () => {
   });
 
   it("passes a payload with no generated decoder through untyped", () => {
-    const evt = decodeEnvelope({ type: "mcp_prewarm", payload: { anything: true } });
+    const evt = decodeEnvelope({ type: "mode_changed", payload: { anything: true } });
     expect(evt.payload).toEqual({ anything: true });
   });
 
