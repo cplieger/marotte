@@ -26,6 +26,9 @@ const (
 	classCounted
 )
 
+// codeInvalidParams is JSON-RPC's invalid params, which KAS answers with its own sentence.
+const codeInvalidParams = -32602
+
 // classify is the error table, matched through every wrap. internal/agent marks its own errors with
 // ErrLaunchRetryable or ErrLaunchBlocked, since this package cannot read them.
 func classify(err error) launchClass {
@@ -40,7 +43,6 @@ func classify(err error) launchClass {
 	}
 	for _, retryable := range []error{
 		ErrLaunchRetryable, workflow.ErrJustClaimed, schedule.ErrNoRunCanStart, context.DeadlineExceeded,
-		ErrLeaseNotGranted,
 	} {
 		if errors.Is(err, retryable) {
 			return classRetryable

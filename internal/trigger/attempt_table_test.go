@@ -3,6 +3,7 @@ package trigger
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -157,6 +158,9 @@ var attemptCases = []attemptCase{
 			}
 			if got := tc.cancels(); !slices.Equal(got, []string{"wf_1"}) || rec.cancelsOut != 1 {
 				t.Errorf("cancels = %v (out %d), want exactly one, from the effect", got, rec.cancelsOut)
+			}
+			if _, st := tc.memory(r.ID); st.FailingSince.IsZero() {
+				t.Error("status.failing_since not set, want the failed attempt on the 24-hour clock")
 			}
 		},
 	},
@@ -357,6 +361,45 @@ var attemptCases = []attemptCase{
 			}
 			if _, file := tc.file(r.ID); len(file) != 1 || file[0].State != persistedAbandoned {
 				t.Errorf("file attempts = %+v, want the abandoned record in A5's write", file)
+			}
+		},
+	},
+	{
+		name:  "75b invoking, invoke error *marotte.RPCError -32602: A5 blocks without starting the 24-hour clock",
+		setup: invoking,
+		deliver: func(tc *testConfirmer, r *launchrule.Rule) {
+			tc.LaunchReturned(r.ID, "wf_1", fmt.Errorf("workflow invoke: %w", invalidParams))
+		},
+		check: func(t *testing.T, tc *testConfirmer, r *launchrule.Rule) {
+			_, st := tc.memory(r.ID)
+			if st.Blocked != "inputs.run_id: Required" || !st.FailingSince.IsZero() {
+				t.Errorf("status %+v, want blocked with KAS's sentence and the 24-hour clock not started", st)
+			}
+		},
+	},
+	{
+		name:  "N4 invoking, invoke error wrapping workflow.ErrJustClaimed: A5, one cancel, Q, nothing counted",
+		setup: invoking,
+		deliver: func(tc *testConfirmer, r *launchrule.Rule) {
+			tc.LaunchReturned(r.ID, "wf_1", fmt.Errorf("workflow invoke: %w", justClaimed))
+		},
+		check: func(t *testing.T, tc *testConfirmer, r *launchrule.Rule) {
+			rec := tc.recordOf(r.ID, "wf_1")
+			if rec == nil || rec.state != stateAbandonedCancelling || rec.cause != causeInvokeError {
+				t.Fatalf("record = %+v, want abandoned-cancelling with cause invoke_error", rec)
+			}
+			if got := tc.cancels(); !slices.Equal(got, []string{"wf_1"}) {
+				t.Errorf("cancels = %v, want one", got)
+			}
+			es, st := tc.memory(r.ID)
+			if len(es.queue) != 1 || es.queue[0].Key != "k1" || es.queue[0].Live != "" {
+				t.Errorf("queue = %+v, want k1 kept in its place with no live record (Q)", es.queue)
+			}
+			if !st.FailingSince.IsZero() || st.Blocked != "" || st.BoundAbandons != 0 {
+				t.Errorf("status %+v, want the 24-hour clock not started, no block, the bound count unchanged", st)
+			}
+			if got := tc.classes(); !slices.Equal(got, []string{"retryable"}) {
+				t.Errorf("WARN classes %v, want one retryable", got)
 			}
 		},
 	},

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/launchrule"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // apply runs the record row of rec's state and ev, answering false for a cell no row names (A0).
@@ -159,7 +158,8 @@ func (s *stepper) confirm(rec *record) {
 	s.res.write = true
 }
 
-// invokeRefused is A5: an error proving KAS did not take the invoke abandons the attempt at once.
+// invokeRefused is A5: an error proving KAS did not take the invoke abandons the attempt at once, and the error
+// table's class decides what else it costs the rule, as for E9.
 func (s *stepper) invokeRefused(rec *record, err error) {
 	rec.inFlight = false
 	cause := causeInvokeError
@@ -170,14 +170,16 @@ func (s *stepper) invokeRefused(rec *record, err error) {
 	s.requeue(rec.key)
 	s.backOff()
 	text := reasonText(err)
-	if rpc, ok := errors.AsType[*marotte.RPCError](err); ok && rpc.Code == codeInvalidParams {
+	switch classify(err) {
+	case classBlocked:
 		s.status().RowText = fmt.Sprintf("the launch of run %s failed: %s", rec.workflowID, text)
 		s.block(rec.workflowID, text)
-	} else {
-		s.status().RowText = fmt.Sprintf("the launch of run %s failed: %s; retrying at %s", rec.workflowID, text,
-			s.rv.retryAt.Local().Format("15:04"))
+	case classCounted:
+		s.status().RowText = retryingText(rec.workflowID, text, s.rv.retryAt)
+		s.failedAttempt(rec.workflowID, text)
+	case classRetryable:
+		s.status().RowText = retryingText(rec.workflowID, text, s.rv.retryAt)
 	}
-	s.failedAttempt(rec.workflowID, text)
 	if s.status().Blocked == "" {
 		warnRetryable(s.ruleID, rec.workflowID, text)
 	}
@@ -229,8 +231,10 @@ func (s *stepper) boundReached(rec *record) {
 // costs at most two cancelled runs, whatever the events.
 const maxBoundAbandons = 2
 
-// codeInvalidParams is JSON-RPC's invalid params, which KAS answers with its own sentence.
-const codeInvalidParams = -32602
+func retryingText(workflowID, text string, retryAt time.Time) string {
+	return fmt.Sprintf("the launch of run %s failed: %s; retrying at %s", workflowID, text,
+		retryAt.Local().Format("15:04"))
+}
 
 func notConfirmedText(workflowID string) string {
 	return fmt.Sprintf("run %s was not confirmed within 5 minutes; cancelled it and launching the event again",

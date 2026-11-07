@@ -2,6 +2,7 @@ package trigger
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -23,6 +24,11 @@ var (
 		fmt.Errorf("%w: %w", schedule.ErrNoRunCanStart, errors.New("sign in to start runs")))
 	errUnknownRecipe = Classed(ErrLaunchBlocked, errors.New(`unknown recipe source "bundled://gone"`))
 	invalidParams    = &marotte.RPCError{Code: -32602, Message: "inputs.run_id: Required"}
+	// justClaimed is KAS's run-claim refusal as workflow.Classify marks it.
+	justClaimed = workflow.Classify(&marotte.RPCError{
+		Code: -32603, Message: "Internal error",
+		Data: json.RawMessage(`{"details":"run wf_1 was just claimed by another process"}`),
+	})
 )
 
 // failBefore answers every call with err and no run, as LaunchTriggered does for an error before workflow/new.
@@ -397,7 +403,35 @@ func TestEngineSlowRetries(t *testing.T) {
 }
 
 func TestJustClaimedRetries(t *testing.T) {
-	retriedWithoutCount(t, fmt.Errorf("workflow new: %w", workflow.ErrJustClaimed), "the launch failed: ")
+	t.Run("refused before workflow/new", func(t *testing.T) {
+		retriedWithoutCount(t, fmt.Errorf("workflow new: %w", workflow.ErrJustClaimed), "the launch failed: ")
+	})
+	t.Run("the invoke refused", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			f := tc.startLauncher(refusing(tc, fmt.Errorf("workflow invoke: %w", justClaimed)))
+			tc.letLaunch(nil)
+			_, st := tc.memory(r.ID)
+			if !st.FailingSince.IsZero() || st.Blocked != "" || !tc.relaunchable(r.ID, "k1") {
+				t.Errorf("status %+v, k1 launchable %v; want nothing counted and k1 still queued", st,
+					tc.relaunchable(r.ID, "k1"))
+			}
+			if want := "the launch of run wf_1 failed: "; !strings.HasPrefix(st.RowText, want) {
+				t.Errorf("row text = %q, want it to start %q", st.RowText, want)
+			}
+			if got := tc.classes(); !slices.Equal(got, []string{"retryable"}) {
+				t.Errorf("WARN classes %v, want one retryable", got)
+			}
+			if ran, _ := tc.fx.calls(); !slices.Equal(ran, []string{"wf_1"}) {
+				t.Errorf("cancels run = %v, want one for wf_1", ran)
+			}
+			advance(launchBackoff[0])
+			if n := len(f.taken()); n != 2 {
+				t.Errorf("%d calls, want k1 again after the backoff's first step", n)
+			}
+		})
+	})
 }
 
 // blockedAtOnce checks a blocked launch error: the rule is blocked at the first failure with sentence, and

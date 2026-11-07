@@ -32,7 +32,7 @@ func TestClassifyTable(t *testing.T) {
 		{name: "a busy recipe", err: wrap(&schedule.BusyError{WorkflowID: "wf_9"}), want: classRetryable},
 		{name: "no run can start", err: wrap(schedule.ErrNoRunCanStart), want: classRetryable},
 		{name: "a deadline", err: wrap(context.DeadlineExceeded), want: classRetryable},
-		{name: "a lease not granted", err: wrap(ErrLeaseNotGranted), want: classRetryable},
+		{name: "a lease not granted", err: wrap(ErrLeaseNotGranted), want: classCounted},
 		{name: "an unmarked error", err: errors.New("something new"), want: classCounted},
 	} {
 		t.Run(c.name, func(t *testing.T) {
