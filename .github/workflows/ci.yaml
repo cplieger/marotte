@@ -30,4 +30,4 @@ jobs:
     permissions:
       contents: read
       security-events: write
-    uses: cplieger/ci/.github/workflows/ci.yaml@d5b39acf7a5808fbf69644711920638c844048c7 # v3
+    uses: cplieger/ci/.github/workflows/ci.yaml@b7f9487a6a54b15070fb28afa1c8bdeefc50c8f4 # v3
