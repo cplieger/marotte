@@ -69,13 +69,14 @@ function slotsOf(chatID: string, toolID: string): ToolSlot[] {
 
 /**
  * Remove one slot, running its effect; the last slot for a key takes the signal, terminal links and parked buffer
- * with it. Idempotent by card identity, since a render's disposer and the view sweep can both reach it.
+ * with it unless `forRebuild`, whose caller releases what the remount did not claim. Idempotent by card identity,
+ * since a render's disposer and the view sweep can both reach it.
  */
 function removeSlot(
   chatID: string,
   toolID: string,
   card: HTMLDivElement,
-  keepTerminals = false,
+  forRebuild = false,
 ): void {
   const key = toolCallSigKey(chatID, toolID);
   const slots = toolSlots.get(key);
@@ -92,10 +93,10 @@ function removeSlot(
     return;
   }
   toolSlots.delete(key);
-  toolCallSigs.clear(toolCallSigKey(chatID, toolID));
-  if (keepTerminals) {
+  if (forRebuild) {
     return;
   }
+  toolCallSigs.clear(key);
   for (const [termID, link] of [...termToTool]) {
     if (link.chatID === chatID && link.toolID === toolID) {
       termToTool.delete(termID);
@@ -267,8 +268,9 @@ export function disposeToolEffectsForChat(chatID: string, withinEl?: HTMLElement
 }
 
 /**
- * The rebuild's sweep: cards go, but terminal owners, parked tails and live text survive for the remount. Call the
- * returned function after the remount to move the text and release unclaimed terminals.
+ * The rebuild's sweep: cards go, but call signals, terminal owners, parked tails and live text survive for the
+ * remount, which builds from the entry and so needs the signal for progress the entry lacks. Call the returned
+ * function after the remount to move the text and release what no remounted card claimed.
  */
 export function detachToolEffectsForRebuild(chatID: string, withinEl: HTMLElement): () => void {
   const linked = new Set<string>();
@@ -278,11 +280,13 @@ export function detachToolEffectsForRebuild(chatID: string, withinEl: HTMLElemen
     }
   }
   const kept = new Map<string, HTMLPreElement>();
+  const swept = new Set<string>();
   for (const slots of [...toolSlots.values()]) {
     for (const slot of [...slots]) {
       if (slot.chatID !== chatID || !withinEl.contains(slot.card)) {
         continue;
       }
+      swept.add(slot.toolID);
       const pre = slot.card.querySelector<HTMLPreElement>(".tool-output pre");
       if (linked.has(slot.toolID) && pre !== null && !kept.has(slot.toolID)) {
         kept.set(slot.toolID, pre);
@@ -291,6 +295,11 @@ export function detachToolEffectsForRebuild(chatID: string, withinEl: HTMLElemen
     }
   }
   return () => {
+    for (const toolID of swept) {
+      if (slotsOf(chatID, toolID).length === 0) {
+        toolCallSigs.clear(toolCallSigKey(chatID, toolID));
+      }
+    }
     for (const [toolID, pre] of kept) {
       const slot = slotsOf(chatID, toolID).find((s) => withinEl.contains(s.card));
       const out = slot?.card.querySelector(".tool-output") ?? null;

@@ -559,6 +559,63 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
     expect(writes).toEqual([]);
   });
 
+  it("shows a running tool card's progress that arrived while the chat was parked", async () => {
+    const a = freshID("c-prog");
+    const b = freshID("c-prog");
+    const t = `${a}-t1`;
+    const s = session(a, { thinking: true });
+    s.turns.set(t, {
+      entries: [turnOpen(t, 1), toolCall(t, 1, "t-prog", { title: "before park" })],
+      openEntries: new Map(),
+    });
+    s.turn_order.push(t);
+    s.turn_count = 1;
+    seed(s, oneTurn(b, "x"));
+    const card = (): HTMLElement | null =>
+      viewOf(a).querySelector<HTMLElement>('[data-tool-id="t-prog"]');
+    await vi.waitFor(() => {
+      expect(card()?.textContent ?? "").toContain("before park");
+    });
+    switchTo(b);
+    await flushed();
+
+    // One frame for a call that then goes quiet, so no later frame repaints the card.
+    store.applyToolProgress(a, t, { turn: t, tool_call_id: "t-prog", title: "while parked" });
+    await flushed();
+
+    switchTo(a);
+    await flushed();
+    await settledFrames();
+    expect(card()?.textContent ?? "").toContain("while parked");
+  });
+
+  it("shows progress that arrived while parked on a call in a closed turn", async () => {
+    const a = freshID("c-prog");
+    const b = freshID("c-prog");
+    const t = `${a}-t1`;
+    seed(
+      settled(a, [
+        [turnOpen(t, 1), toolCall(t, 1, "t-late", { title: "before park" }), turnClose(t, 2)],
+      ]),
+      oneTurn(b, "x"),
+    );
+    const card = (): HTMLElement | null =>
+      viewOf(a).querySelector<HTMLElement>('[data-tool-id="t-late"]');
+    await vi.waitFor(() => {
+      expect(card()?.textContent ?? "").toContain("before park");
+    });
+    switchTo(b);
+    await flushed();
+
+    store.applyToolProgress(a, t, { turn: t, tool_call_id: "t-late", title: "while parked" });
+    await flushed();
+
+    switchTo(a);
+    await flushed();
+    await settledFrames();
+    expect(card()?.textContent ?? "").toContain("while parked");
+  });
+
   it("holds the reading position through a park/unpark over a turn that GREW", async () => {
     // The reader is Reading, so `deferWhileReading` holds the unpark paint; this reads the window the park left over a
     // grown turn.
