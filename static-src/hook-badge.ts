@@ -225,7 +225,7 @@ function fitList(panel: HTMLElement, badge: HTMLElement): void {
     return;
   }
   const room = badge.getBoundingClientRect().right - group.getBoundingClientRect().left;
-  panel.style.setProperty(ROOM_VAR, `${String(Math.max(0, room))}px`);
+  panel.style.setProperty(ROOM_VAR, `${String(room)}px`);
 }
 
 /** Open the badge's list without moving focus, for find-in-chat landing on a folded hook while the reader types.

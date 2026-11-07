@@ -1,5 +1,5 @@
-// The hooks badge is a button the size of its glyph's one-line box, whatever height its group's header grows to: a
-// header that wraps to several lines must not stretch the badge's hover fill and click area down beside it.
+// The hooks badge is a button the size of its glyph's one-line box, whatever height its group's header grows to: it
+// keeps that box on the header's first line when the header wraps to several lines.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -44,7 +44,7 @@ function footerButton(): HTMLElement {
 }
 
 describe("the hooks badge", () => {
-  it("keeps its one-line size and place beside a header that wraps", () => {
+  it("keeps its one-line box on the first line of a header that wraps", () => {
     const one = group("cmd a", "cmd b");
     const many = group(LONG, LONG, LONG);
     const h1 = one.badge.getBoundingClientRect();

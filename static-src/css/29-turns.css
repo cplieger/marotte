@@ -1404,24 +1404,12 @@
 }
 
 /* "Quote in reply" and "Ask in a tangent" beside a selection of transcript content
- * (selection-quote.ts). A gesture-summoned overlay, so it takes the context menu's panel and
- * shadow (12-tabs.css `.tab-context-menu`); `.uip-popover` supplies the fixed position and the
- * z-index. */
-.selection-quote {
-  padding: var(--sp-1);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-lg);
-  background: var(--c-bg-secondary);
-  box-shadow:
-    var(--shadow-ambient),
-    0 4px 12px oklch(0% 0 none / 25%);
-}
-
+ * (selection-quote.ts), on the anchored menu surface (12-tabs.css). */
 .selection-quote-btn {
   min-block-size: var(--ctl-h-dense);
   padding: 0 var(--sp-3);
   border: none;
-  border-radius: calc(var(--r-lg) - 1px - var(--sp-1));
+  border-radius: var(--menu-radius);
   background: none;
   color: var(--c-text-primary);
   font-size: var(--fs-sm);

@@ -657,7 +657,7 @@ describe("the ring is painted inside the card that clips it", () => {
     expectRingInside("tool group header", head, clipper);
   });
 
-  it("on a tool group's hooks badge, in the header row's last column", async () => {
+  it("on a tool group's hooks badge, laid over its header's corner", async () => {
     const { clipper, hooks } = toolGroup();
     await focusByTab(hooks);
     expectRingInside("tool group hooks badge", hooks, clipper);
