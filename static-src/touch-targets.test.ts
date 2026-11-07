@@ -722,16 +722,28 @@ function plantRunBar(): void {
   fold.hidden = false;
   const toggle = roleButton("run-bar-open run-bar-toggle", "3 workflows running");
   toggle.setAttribute("aria-expanded", "true");
-  fold.appendChild(toggle);
+  fold.append(toggle, iconButton("icon-btn run-bar-all", "Pause all"));
+  plantRunRows(["deadset-ci", "land", "app-review"]);
+}
+
+/** Two runs: no fold row, and the batch button ends the first run's line. */
+function plantRunBarUnfolded(): void {
+  const bar = plantRunRows(["deadset-ci", "land"]);
+  bar.setAttribute("data-all", "");
+  bar.querySelector("li")?.appendChild(iconButton("icon-btn run-bar-all", "Pause all"));
+}
+
+function plantRunRows(names: readonly string[]): HTMLElement {
   const bar = q("#run-bar");
   bar.classList.remove("hidden");
-  for (const name of ["deadset-ci", "land", "app-review"]) {
+  for (const name of names) {
     const open = roleButton("run-bar-open", name);
     open.prepend(make("span", "run-bar-glyph", { "aria-hidden": "true" }));
     const row = make("li", "run-bar-row");
     row.appendChild(open);
     bar.appendChild(row);
   }
+  return bar;
 }
 
 function plantFindBar(): void {
@@ -1260,8 +1272,15 @@ const SURFACES: readonly Surface[] = [
     name: "the run bar",
     sizes: TWO,
     setup: plantRunBar,
-    controls: [],
+    controls: ["#run-bar-fold .run-bar-all"],
     rows: ["#run-bar-fold .run-bar-toggle", "#run-bar .run-bar-open"],
+  },
+  {
+    name: "the run bar under three runs",
+    sizes: TWO,
+    setup: plantRunBarUnfolded,
+    controls: ["#run-bar .run-bar-all"],
+    rows: ["#run-bar .run-bar-open"],
   },
   {
     name: "a turn",
@@ -1854,6 +1873,8 @@ const SHAPED = new Set([
   "#fb-list .fb-check",
   "#fb-list .fb-git-clickable",
   "#run-bar-fold .run-bar-toggle",
+  "#run-bar-fold .run-bar-all",
+  "#run-bar .run-bar-all",
   "a.git-pr-row-title",
   ".ev-box-toggle",
 ]);

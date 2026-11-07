@@ -150,7 +150,7 @@ describe("pausePendingSentence", () => {
   it("names a pause the run has not reached yet", () => {
     expect(
       pausePendingSentence(state({ status: "running", pausePending: { initiator: "user" } })),
-    ).toBe("Pausing after the current step");
+    ).toBe("Pausing: stopping the current turn");
   });
 
   it("is silent once the pause has landed or none was asked for", () => {

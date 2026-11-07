@@ -68,7 +68,7 @@ const (
 	seenUnreadable runSeen = iota
 	seenGone
 	seenRunning
-	// seenPausing is running with a pause asked, which lands at the step's next boundary.
+	// seenPausing is running with a pause asked, while KAS cancels the in-flight turn.
 	seenPausing
 	// seenGatePaused is the gate's own landed pause.
 	seenGatePaused

@@ -544,7 +544,7 @@ func (rs *Runs) teardownDeleted(ctx context.Context, workflowID string) {
 	slog.Info("workflow run deleted", "workflow_id", workflowID)
 }
 
-// pause is caller's ask that a run stop at its next node boundary; the reply confirms the ask. runTransitions
+// pause is caller's ask that a run stop, cancelling its in-flight turn; the reply confirms the ask. runTransitions
 // decides it as a person's.
 func (rs *Runs) pause(ctx context.Context, workflowID string, caller controlCaller) error {
 	_, err := rs.transition(ctx, workflowID, &runRequest{want: personPause, verb: verbPause, caller: caller})

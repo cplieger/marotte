@@ -141,7 +141,7 @@ func (f *runFacts) refusal(verb string) string {
 	return ""
 }
 
-const pausePendingRefusal = "A pause is already requested; the run stops at the end of its current step."
+const pausePendingRefusal = "A pause is already requested; the run's current turn is being stopped."
 
 // runHead is the part of an inspect state the verbs are decided from. KAS's `workflow/list` row derives
 // its pausePending, pauseKind and pauseNodeId from these same fields, and costs a read of every run.
