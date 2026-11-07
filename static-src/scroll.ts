@@ -49,6 +49,10 @@ export function jumpTo(target: HTMLElement, opts?: ScrollIntoViewOptions): void 
 export function shiftScroll(px: number): void {
   getInstance().shiftBy(px);
 }
+/** A smooth jump has not landed yet; it re-lands on its target's current position when it does. */
+export function jumpInFlight(): boolean {
+  return getInstance().jumpInFlight();
+}
 /** The element the scroll owner holds on the reading line, or null when it holds none (Following, a press window,
  *  a jump in flight). */
 export function readerAt(): Element | null {

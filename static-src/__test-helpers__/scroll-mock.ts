@@ -13,6 +13,8 @@ export const scrollMock = {
   pressHold: vi.fn(),
   jumpTo: vi.fn(),
   shiftScroll: vi.fn(),
+  // No jump in flight: a landing's hold corrects at once.
+  jumpInFlight: vi.fn(() => false),
   // `jumpToOffset` moves nothing here; a suite asserting a landing drives the scroller itself.
   jumpToOffset: vi.fn((): Promise<boolean> => Promise.resolve(true)),
   // Holds nothing, as the owner while Following: residency falls back to its own top-edge reading.

@@ -903,6 +903,10 @@ export class ScrollController {
     }
   }
 
+  jumpInFlight(): boolean {
+    return this.flight !== null;
+  }
+
   /** Reduced motion is the owner's decision: a requested smooth jump lands instantly under it. */
   private behaviorFor(requested: ScrollBehavior | undefined): "instant" | "smooth" {
     if (requested === "instant" || requested === "auto") {

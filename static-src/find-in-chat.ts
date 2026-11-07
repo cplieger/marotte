@@ -8,7 +8,7 @@ import { join } from "@cplieger/keyenc";
 import { createPopup } from "@cplieger/ui/popup";
 import type { PopupController } from "@cplieger/ui/popup";
 import { $, byId } from "./dom.js";
-import { jumpTo, onTranscriptMutate, shiftScroll } from "./scroll.js";
+import { jumpInFlight, jumpTo, onTranscriptMutate, shiftScroll } from "./scroll.js";
 import {
   CHAT_SEARCH_DEBOUNCE_MS,
   runServerSearch,
@@ -566,7 +566,8 @@ function holdWhereLanded(unit: HTMLElement, hit: Hit): void {
       recentreIfOutOfView(scroller, now);
       return;
     }
-    const scrolling = Math.abs(scroller.scrollTop - lastScroll) >= 1;
+    // A flight's first frame has not moved it yet, and a write now would abort it.
+    const scrolling = jumpInFlight() || Math.abs(scroller.scrollTop - lastScroll) >= 1;
     let corrected = false;
     if (!scrolling) {
       const off = middle(now.getBoundingClientRect()) - middle(scroller.getBoundingClientRect());
