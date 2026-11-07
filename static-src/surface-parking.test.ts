@@ -8,7 +8,7 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { byId, park, queryAll, unpark } from "./dom.js";
 import { closeModal, createParkedDialog, initAllModals, openModal } from "./modals.js";
 import { showOnlyView } from "./view-swap.js";
-import { initClockToggle } from "./clock-toggle.js";
+import { initClockSetting } from "./clock-setting.js";
 import { adoptLinkGuard, formPayloadLink, installLinkGuard, linkAnchor } from "./link-guard.js";
 import type { EffectiveSettings } from "./wire/types.gen.js";
 
@@ -323,7 +323,7 @@ describe("a page-wide redraw", () => {
   };
 
   it("reaches a clock on a parked surface", () => {
-    initClockToggle();
+    initClockSetting();
     const host = parkedHost();
     const t = document.createElement("time");
     t.dateTime = "2026-01-02T15:04:05Z";
@@ -331,7 +331,9 @@ describe("a page-wide redraw", () => {
     t.textContent = "stale";
     host.append(t);
     park(host);
-    byId("clock-btn").click();
+    const select = byId<HTMLSelectElement>("clock-choice");
+    select.value = select.value === "h12" ? "h23" : "h12";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
     expect(t.textContent).not.toBe("stale");
     unpark(host, () => undefined);
     host.remove();
