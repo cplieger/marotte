@@ -111,6 +111,33 @@ func (cb *connBudget) floorPools(conn, list string) []string {
 	return []string{poolAPI}
 }
 
+// waitKey is what the forge's refusal or deferral of list's read holds: the list on GitLab, whose governor defers
+// each throttle apart (forgeapi internal/transport governor.go admit), and the cap pool elsewhere, since GitHub's
+// core serves issues and runs alike.
+func waitKey(conn, list string) string {
+	if family, _ := connectionParts(conn); family == kindGitLab {
+		return keyenc.Join(poolAPI, list)
+	}
+	return capPool(conn, list)
+}
+
+// refused is list's rate_limited back-off until until, naming the floor pool with the fewest requests left, or the
+// first floor pool (the cap pool when none is known) while no response reported one.
+func (cb *connBudget) refused(conn, list string, until time.Time) *backoff {
+	bo := &backoff{pool: capPool(conn, list), reason: reasonRateLimited, until: until}
+	names := cb.floorPools(conn, list)
+	if len(names) > 0 {
+		bo.pool = names[0]
+	}
+	seen := false
+	for _, name := range names {
+		if ps := cb.pools[name]; ps != nil && (!seen || ps.remaining < bo.remaining) {
+			bo.pool, bo.remaining, seen = name, ps.remaining, true
+		}
+	}
+	return bo
+}
+
 func feedListKey(f Feed, list string) string { return keyenc.Join(f.key(), list) }
 
 // hold answers why f's read of list must wait, nil when it may run, logging a feed pool's first skip and its end:
@@ -137,6 +164,22 @@ func (b *Budget) hold(f Feed, list string) *backoff {
 	return bo
 }
 
+// forget drops the back-off of f's list that no rule reads any more, logging its pool's end when no other list of f
+// is skipped for it; without it the stale entry keeps feedHolds true and silences the feed's lines for that pool.
+func (b *Budget) forget(f Feed, list string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	key := feedListKey(f, list)
+	held, ok := b.backedOff[key]
+	if !ok {
+		return
+	}
+	delete(b.backedOff, key)
+	if !b.feedHolds(f, held) {
+		slog.Info(logMsgResumed, "connection", f.Connection, "repo", f.Selector, "pool", held)
+	}
+}
+
 // feedHolds reports whether a list of f is skipped for pool.
 func (b *Budget) feedHolds(f Feed, pool string) bool {
 	for _, list := range []string{listIssues, listPRs, listRuns} {
@@ -151,12 +194,8 @@ func (b *Budget) check(conn, list string) *backoff {
 	now := b.now()
 	cb := b.conn(conn)
 	pool := capPool(conn, list)
-	if until := cb.waits[pool]; now.Before(until) {
-		bo := &backoff{pool: pool, reason: reasonRateLimited, until: until}
-		if ps := cb.pools[pool]; ps != nil {
-			bo.remaining = ps.remaining
-		}
-		return bo
+	if until := cb.waits[waitKey(conn, list)]; now.Before(until) {
+		return cb.refused(conn, list, until)
 	}
 	if spent := cb.spentIn(pool, now); spent >= budgetCap {
 		return &backoff{pool: pool, reason: reasonTriggerBudget, spent: spent, until: cb.capFreesAt(pool, spent)}
@@ -174,7 +213,7 @@ func (b *Budget) check(conn, list string) *backoff {
 }
 
 // walked records what a read of f's list ended with: its page count when it was whole, and the forge's refusal or
-// its governor's deferral, which hold the list's pool until the wait the forge named or the pool's reset.
+// its governor's deferral, which hold the list's waitKey until the wait the forge named or its floor pools' reset.
 func (b *Budget) walked(f Feed, list string, pages int, complete bool, err error, partial *forgeapi.Partial) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -182,7 +221,6 @@ func (b *Budget) walked(f Feed, list string, pages int, complete bool, err error
 		b.pages[feedListKey(f, list)] = max(pages, 1)
 	}
 	cb := b.conn(f.Connection)
-	pool := capPool(f.Connection, list)
 	var reset time.Time
 	for _, name := range cb.floorPools(f.Connection, list) {
 		if ps := cb.pools[name]; ps != nil && ps.reset.After(reset) {
@@ -198,7 +236,7 @@ func (b *Budget) walked(f Feed, list string, pages int, complete bool, err error
 		until = reset
 	}
 	if until.After(b.now()) {
-		cb.waits[pool] = until
+		cb.waits[waitKey(f.Connection, list)] = until
 	}
 }
 

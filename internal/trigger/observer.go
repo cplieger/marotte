@@ -24,7 +24,8 @@ const (
 	poolAPI     = "api"
 )
 
-// readTag marks a request as the trigger poller's read of one list; pages counts the attempts it answered.
+// readTag marks a request as the trigger poller's read of one list; pages counts its responses below 500, so a
+// retried 5xx is not an extra page.
 type readTag struct {
 	list  string
 	pages atomic.Int32
@@ -66,7 +67,7 @@ type connBudget struct {
 	pools map[string]*poolState
 	// listPools is, on GitLab, the pools the last response to each list named: its throttle and that throttle's parent.
 	listPools map[string][]string
-	// waits is when each pool may be read again after the forge refused or deferred a read.
+	// waits is, per waitKey, when a read may run again after the forge refused or deferred one.
 	waits map[string]time.Time
 }
 

@@ -400,6 +400,62 @@ func TestRateLimitedWaitsRetryAfter(t *testing.T) {
 	if n := callsOf(g.src, listIssues); n != 2 {
 		t.Errorf("%d GitLab issue reads after the reset, want 2", n)
 	}
+
+	two := budgetHarness(t)
+	logs := captureLogs(t)
+	issueEv, runEv := labeledSpec(), runSpec("success")
+	issueEv.Connection, runEv.Connection = gitlabConn, gitlabConn
+	runEv.Filter = launchrule.Filter{Branch: "main", Result: []string{"success"}}
+	two.create(issueEv)
+	two.create(runEv)
+	send(t, two.budget, gitlabConn, listIssues, http.MethodGet, "/projects/1/issues",
+		&answerWith{status: http.StatusOK, header: gitlabHeader("burst_traffic_per_user_free_plan", 100, 50, reset)})
+	send(t, two.budget, gitlabConn, listRuns, http.MethodGet, "/projects/1/pipelines",
+		&answerWith{status: http.StatusOK, header: gitlabHeader("throttle_authenticated_api", 2000, 1900, reset)})
+	two.src.issues = []forgeapi.Page[forgeapi.Issue]{{Partial: &forgeapi.Partial{Reason: forgeapi.PartialRateLimited}}}
+	two.poll()
+	if n := callsOf(two.src, listRuns); n != 1 {
+		t.Errorf("%d GitLab run reads in the poll whose issue read was deferred, want 1", n)
+	}
+	two.poll()
+	if n := callsOf(two.src, listIssues); n != 1 {
+		t.Errorf("%d GitLab issue reads after a deferred read and before the reset, want 1", n)
+	}
+	if n := callsOf(two.src, listRuns); n != 2 {
+		t.Errorf("%d GitLab run reads on a healthy throttle before the issues' reset, want 2", n)
+	}
+	for _, want := range []string{"pool=burst_traffic_per_user_free_plan", "reason=rate_limited", "remaining=50"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("the backed-off line lacks %s:\n%s", want, logs)
+		}
+	}
+}
+
+func TestDroppedListReleasesItsBackoff(t *testing.T) {
+	h := budgetHarness(t)
+	logs := captureLogs(t)
+	h.create(labeledSpec())
+	runs := h.create(runSpec("success"))
+	reset := pollStart.Add(12 * time.Minute)
+	send(t, h.budget, testConn, "", http.MethodGet, "/user", &answerWith{status: http.StatusOK, header: githubHeader(poolCore, 5000, 999, reset)})
+	h.poll()
+	if _, err := h.store.Delete(t.Context(), runs.ID); err != nil {
+		t.Fatalf("Setup: Delete: %v", err)
+	}
+	h.poll()
+	h.now = reset
+	h.poll()
+	if n := callsOf(h.src, listIssues); n != 1 {
+		t.Fatalf("Setup: %d issue reads at the reset, want 1", n)
+	}
+	if n := strings.Count(logs.String(), logMsgResumed); n != 1 {
+		t.Errorf("%d %q lines once core recovered after the run rule went, want 1:\n%s", n, logMsgResumed, logs)
+	}
+	send(t, h.budget, testConn, "", http.MethodGet, "/user", &answerWith{status: http.StatusOK, header: githubHeader(poolCore, 5000, 10, h.now.Add(time.Hour))})
+	h.poll()
+	if n := strings.Count(logs.String(), logMsgBackedOff); n != 2 {
+		t.Errorf("%d %q lines over two core back-offs, want 2:\n%s", n, logMsgBackedOff, logs)
+	}
 }
 
 func TestBackoffPastWindowRecordsGap(t *testing.T) {

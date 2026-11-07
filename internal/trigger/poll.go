@@ -129,6 +129,11 @@ func (p *poller) read(ctx context.Context, f Feed, rules []*pollRule, start time
 	for _, pr := range rules {
 		need[listOf(pr.ev.Kind)] = true
 	}
+	for _, list := range []string{listIssues, listPRs, listRuns} {
+		if !need[list] {
+			p.budget.forget(f, list)
+		}
+	}
 	if need[listIssues] {
 		rd.issues = readList(ctx, p, f, listIssues, &rd, func(ctx context.Context) listWalk[forgeapi.Issue] {
 			return walkIssues(ctx, p.src, f)

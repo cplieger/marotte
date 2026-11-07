@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -82,8 +81,8 @@ func TestEmit_TopicCarriesChatID(t *testing.T) {
 // TestEmit_AStampedFrameOverTheCapBecomesSubjectChanged pins that an entry_appended past sse.MaxFrameBytes becomes one
 // subject_changed carrying its stamp, with a Warn; a frame under the cap publishes intact.
 func TestEmit_AStampedFrameOverTheCapBecomesSubjectChanged(t *testing.T) {
-	var logs bytes.Buffer
-	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	logs := &logCapture{}
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	h, _, _ := newTestHub()
 	base := len(h.bus.fanout.Snapshot())
 
@@ -132,8 +131,8 @@ func textEntry(t *testing.T, turn string, seq uint64, text string) marotte.Entry
 
 // TestEmit_AnUnstampedFrameOverTheCapIsDroppedWithAnError pins that no subject, no fetch to substitute.
 func TestEmit_AnUnstampedFrameOverTheCapIsDroppedWithAnError(t *testing.T) {
-	var logs bytes.Buffer
-	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&logs, nil)))
+	logs := &logCapture{}
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(logs, nil)))
 	h, _, _ := newTestHub()
 	base := len(h.bus.fanout.Snapshot())
 
