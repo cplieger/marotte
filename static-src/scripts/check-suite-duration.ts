@@ -90,8 +90,8 @@ console.error(
       .map(([name, ms]) => `  ${seconds(ms).padStart(8)}  ${name}`)
       .join("\n") +
     "\n\nDo not raise the bound. Check the flag is still in the launch args, then fix\n" +
-    "the frame waits or add a shard (the shard count is in cplieger/ci's ci.yaml,\n" +
-    "detect step).",
+    "the frame waits or add a shard (the `vitest-shards` input on the `web` job in\n" +
+    "cplieger/ci's ci.yaml).",
 );
 
 if (process.env["CI"] === undefined) {
