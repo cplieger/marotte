@@ -800,11 +800,19 @@ describe("the button census", () => {
     expect(wrong, "every control is classified once").toEqual([]);
   });
 
+  it("names the paint token of every held dense family", () => {
+    // The paint case skips a family with no token, so a held one without it would pass unmeasured.
+    const unpainted = CENSUS.filter(
+      (f) => f.kind === "dense" && f.pending === undefined && f.paint === undefined,
+    ).map((f) => f.name);
+    expect(unpainted).toEqual([]);
+  });
+
   for (const [preset, viewport] of PRESETS) {
     for (const pointer of TIERS) {
       const at = `${preset} ${pointer}`;
 
-      it(`paints every held control at its family's token, the toolbar's --btn-h, ${at}`, async () => {
+      it(`paints every held control at its family's token (--btn-h for the toolbar), ${at}`, async () => {
         await eachSurface(viewport, pointer, (controls, surface) => {
           const btn = tokenPx("--btn-h");
           const ref = byId("settings-btn").getBoundingClientRect();

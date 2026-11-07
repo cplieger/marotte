@@ -184,8 +184,7 @@ describe("the merged control's box", () => {
   });
 
   it("paints both controls at one height under the floor on the coarse tier, in a 52px band", () => {
-    // The finger's 44px lives in the target, not the box (Apple HIG: the hit region); the pair
-    // grows only by the sidebar's row step, which touch-targets.test.ts holds to the tabs'.
+    // The finger's 44px lives in the target, not the box (Apple HIG: the hit region).
     document.documentElement.dataset["pointer"] = "coarse";
     const { footer, btn, logout } = mountFooter();
     const [l, b] = [logout, btn].map((e) => e.getBoundingClientRect().height);

@@ -691,13 +691,12 @@ body.sidebar-resizing {
      SCREEN MOVES: the negative margins below add what this padding takes back, so the
      mark and the address keep their x. That holds only while the `.sr-only` subject
      span stays `position: absolute` (40-a11y.css), leaving this box two flex items.
-     The trailing bleed leaves 4px before the actions cluster.
      Both axes are spelled: 02-reset.css never resets Chromium's UA `padding-block:
      1px`, which a `padding-inline` shorthand would keep. */
   padding: 0 var(--sp-2);
   /* The trailing bleed gives way under a finger so Log out's expander, which reaches
      `--tap-gap / 2` past its box, stops at this box's edge across the footer's
-     `--sp-3` gap. */
+     `--sp-3` gap; the phone footer's wider `--sp-4` gap leaves it short. */
   margin-inline: calc(-1 * var(--sp-2)) calc(max(var(--sp-1), var(--tap-gap) / 2) - var(--sp-3));
   border-radius: var(--r);
 
