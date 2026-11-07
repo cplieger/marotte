@@ -7,7 +7,12 @@ import { createTerminal, localScrollbackStorage } from "@cplieger/web-terminal-u
 import { presetSingle } from "@cplieger/web-terminal-ui/presets/single";
 import { mobileToolbar } from "@cplieger/web-terminal-ui/features/mobile-toolbar";
 import type { MobileToolbarApi } from "@cplieger/web-terminal-ui/features/mobile-toolbar";
-import type { ModeReaders, TerminalFeature, TerminalHandle } from "@cplieger/web-terminal-ui";
+import type {
+  ModeReaders,
+  ShellContext,
+  TerminalFeature,
+  TerminalHandle,
+} from "@cplieger/web-terminal-ui";
 import { $ } from "./dom.js";
 import { getScrollEl } from "./messages.js";
 import { shiftScroll } from "./scroll.js";
@@ -63,50 +68,113 @@ function hostSend(bytes: Uint8Array): void {
   handle?.send(bytes);
 }
 
-/** `drawn` settles once the live session has drawn a screen frame that carries rows, so its modes
- *  frame has landed; a restart replaces the gate. The terminal holds input until the PTY is sized. */
-interface DrawnGate {
-  readonly drawn: Promise<void>;
-  readonly settle: () => void;
-}
-function newDrawnGate(): DrawnGate {
-  let settle: () => void = () => undefined;
-  const drawn = new Promise<void>((resolve) => {
-    settle = resolve;
-  });
-  return { drawn, settle };
-}
-let sessionGate = newDrawnGate();
+/** Runs clicked before the gate below opened, oldest first. */
+const pendingRuns: string[] = [];
 
-/** Between a confirmed restart and its reattach every frame is the doomed session's, and so is
- *  every byte: the server kills that PTY with whatever it was sent. */
-let restartPending = false;
+/** True once the terminal's first paint faded `firstPaintSignal`'s element: its font has settled,
+ *  the only state in which `PaneHandle.announceSize()` sends anything. */
+let painted = false;
+/** True once the attached session has drawn a frame with rows on a connected socket, so its modes
+ *  frame has landed. Kept through a restart's POST, whose failure leaves that same session live;
+ *  cleared by a reattach or a drop. */
+let sessionDrawn = false;
+/** Restart POSTs in flight: the server kills the PTY with whatever it was sent meanwhile. */
+let restartsInFlight = 0;
+/** A restart succeeded and its reattach has not run, so every frame is still the dead session's. */
+let awaitingReattach = false;
 
-/** Run `fn` once the session that is live when it runs has drawn. */
-function afterSessionDrawn(fn: () => void): void {
-  const gate = sessionGate;
-  void gate.drawn.then(() => {
-    if (gate === sessionGate) {
-      fn();
-    } else {
-      afterSessionDrawn(fn);
+/** The terminal's live mode readers, shell and `.term`, kept by `runGate`; null until it exists. */
+let paneModes: ModeReaders | null = null;
+let paneShell: ShellContext | null = null;
+let paneSurface: HTMLElement | null = null;
+/** Watches `.term`'s children: the engine's cell measure adds and removes a span there. */
+let surfaceObserver: MutationObserver | null = null;
+
+/** Whether the cell width the engine last measured (`--char-w`) is the one the font gives now.
+ *  `announceSize()` sends the grid computed on that width, and the engine measures again only once
+ *  the panel's open slide settles, so a width taken before the web font landed sends too many
+ *  columns. Measured as the engine does (web-terminal-engine render.ts measureCellWidth). */
+function cellWidthCurrent(term: HTMLElement): boolean {
+  const span = document.createElement("span");
+  span.style.visibility = "hidden";
+  span.style.position = "absolute";
+  span.style.whiteSpace = "pre";
+  span.textContent = "MMMMMMMMMM";
+  term.append(span);
+  const cell = Math.round(span.getBoundingClientRect().width / 10);
+  span.remove();
+  surfaceObserver?.takeRecords(); // this measure is not the engine's
+  return term.style.getPropertyValue("--char-w") === `${String(cell)}px`;
+}
+
+/** The panel's open slide is running: the grid measured now has the rows of a part-open panel. */
+function panelSliding(): boolean {
+  return $.shellPanel.getAnimations().some((a) => a instanceof CSSTransition);
+}
+
+/** Send every held Run once the PTY can take it at this panel's size. `announceSize()` puts the
+ *  grid size on the socket ahead of the bytes, so the server starts or resizes the PTY first. */
+function releaseRuns(): void {
+  if (
+    pendingRuns.length === 0 ||
+    !painted ||
+    !sessionDrawn ||
+    restartsInFlight > 0 ||
+    awaitingReattach ||
+    panelSliding() ||
+    paneSurface === null ||
+    !cellWidthCurrent(paneSurface)
+  ) {
+    return;
+  }
+  paneShell?.pane(paneShell.selected())?.announceSize();
+  const bracketed = paneModes?.isBracketedPaste() === true;
+  for (const cmd of pendingRuns.splice(0)) {
+    hostSend(encoder.encode(runInput(cmd, bracketed)));
+  }
+}
+
+/** The library fades its `loading` element on first paint (font settled and a frame drawn), and
+ *  exposes no other signal of the font gate; this one is never attached, so nothing shows. */
+function firstPaintSignal(): HTMLElement {
+  const el = document.createElement("div");
+  const observer = new MutationObserver(() => {
+    if (el.classList.contains("fade")) {
+      observer.disconnect();
+      painted = true;
+      releaseRuns();
     }
   });
+  observer.observe(el, { attributes: true, attributeFilter: ["class"] });
+  return el;
 }
 
-/** The terminal's live mode readers, kept by `sessionDrawnGate`; null until the terminal exists. */
-let paneModes: ModeReaders | null = null;
-
 /** A rows-less frame is the pre-ack scrollback-clear forward, which proves nothing drew. */
-function sessionDrawnGate(): TerminalFeature {
+function runGate(): TerminalFeature {
   return {
-    name: "sessionDrawnGate",
+    name: "runGate",
     setup(ctx) {
       paneModes = ctx.modes;
+      paneShell = ctx.shell;
+      paneSurface = ctx.surface();
+      const observer = new MutationObserver(releaseRuns);
+      observer.observe(paneSurface, { childList: true });
+      surfaceObserver = observer;
+      ctx.defer(() => {
+        observer.disconnect();
+      });
+      // An announce on a socket that is not connected sends nothing, so a drop waits for the
+      // reconnected session's first frame.
+      ctx.on("connection:state", (state) => {
+        if (state !== "open") {
+          sessionDrawn = false;
+        }
+      });
       return {
         teardown: ctx.on("wire:screen", (msg) => {
-          if (msg.rows.length > 0 && !restartPending) {
-            sessionGate.settle();
+          if (msg.rows.length > 0) {
+            sessionDrawn = true;
+            releaseRuns();
           }
         }),
       };
@@ -168,7 +236,8 @@ function scheduleReattach(reason: "ended" | "restart"): void {
 }
 
 function reattachShell(): void {
-  restartPending = false;
+  awaitingReattach = false;
+  sessionDrawn = false;
   reattachedAt = Date.now();
   reattachSeq++;
   handle?.reattach();
@@ -186,25 +255,15 @@ async function hostRestart(): Promise<void> {
     return;
   }
   const seq = reattachSeq;
-  // No terminal: nothing can write to the doomed PTY, and the first open attaches to its successor.
-  const liveGate = sessionGate;
-  if (handle !== null) {
-    sessionGate = newDrawnGate();
-    restartPending = true;
-  }
-  if ((await restartShell.dispatch()) === null) {
-    if (sessionGate !== liveGate) {
-      // The old session lives on: its gate comes back, and the waiters move onto it.
-      const armed = sessionGate;
-      sessionGate = liveGate;
-      restartPending = false;
-      armed.settle();
-    }
-    return; // the action framework toasts the failure
-  }
-  if (reattachSeq === seq) {
+  restartsInFlight++;
+  const restarted = (await restartShell.dispatch()) !== null;
+  restartsInFlight--;
+  // No terminal: the first open attaches to the successor, so there is nothing to reattach.
+  if (restarted && reattachSeq === seq && handle !== null) {
+    awaitingReattach = true;
     scheduleReattach("restart");
   }
+  releaseRuns(); // a failure is toasted by the action framework
 }
 
 let handle: TerminalHandle | null = null;
@@ -302,14 +361,19 @@ export function initShellPanel(): void {
 
   wireFullscreenToggle();
 
+  for (const type of ["transitionend", "transitioncancel"]) {
+    $.shellPanel.addEventListener(type, (ev) => {
+      if (ev.target === $.shellPanel) {
+        releaseRuns();
+      }
+    });
+  }
   setShellRunCallback((cmd: string) => {
     if (!shellOpen) {
       setShellOpen(true, { focus: false });
     }
-    // Read after the gate: the server's modes frame lands with the session's first frames.
-    afterSessionDrawn(() => {
-      hostSend(encoder.encode(runInput(cmd, paneModes?.isBracketedPaste() === true)));
-    });
+    pendingRuns.push(cmd);
+    releaseRuns();
   });
 
   initShellResize();
@@ -396,12 +460,13 @@ function ensureTerminal(): void {
   handle = createTerminal($.shellTerminal, {
     features: () => {
       keys = mobileToolbar({ externalToggle: true });
-      return [...presetSingle(), sessionDrawnGate(), keys];
+      return [...presetSingle(), runGate(), keys];
     },
     layout: "container",
     wsPath: SHELL_WS_PATH,
     fontReady: SHELL_FONT_READY,
     theme: SHELL_THEME,
+    loading: firstPaintSignal(),
     // On this server that is recoverable (the next connect gets a fresh PTY), so typing `exit` or
     // wedging a child ends with a new prompt rather than a dead panel.
     onSessionEnded: () => {

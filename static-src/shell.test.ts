@@ -109,8 +109,17 @@ interface Harness {
   getRunCb: () => ((cmd: string) => void) | null;
   endSession: () => void;
   /** Deliver a screen frame on the feature bus, as the kernel does on every frame it renders;
-   *  `rows` is the row count the frame carries. */
-  screenFrame: (rows: number) => void;
+   *  `rows` is the row count the frame carries. Unless `paint` is false it also fades the loading
+   *  element, as the kernel does on its first frame once the font has settled. */
+  screenFrame: (rows: number, opts?: { paint?: boolean }) => void;
+  /** Report a connection state on the feature bus, as the kernel does. */
+  connectionState: (state: string) => void;
+  /** The pane's `announceSize`, which puts the grid size on the socket. */
+  announceSize: ReturnType<typeof vi.fn>;
+  /** The pane's `.term`, whose `--char-w` starts at the width its font measures. */
+  surface: HTMLElement;
+  /** Re-measure the cell as the engine does: publish the width and add and remove its span. */
+  remeasure: () => void;
   /** Set what the engine reports for DEC mode 2004, as its modes frame does. */
   setBracketedPaste: (on: boolean) => void;
 }
@@ -193,13 +202,35 @@ async function setup(
   // every feature's setup with the real context; here the fake records the `wire:screen` listeners
   // so a test can deliver a frame.
   let screenListeners: ((msg: unknown) => void)[] = [];
+  const stateListeners: ((state: unknown) => void)[] = [];
   // The engine's ModeState starts with bracketed paste on, before the server's first modes frame.
   let bracketedPaste = true;
+  let loadingEl: HTMLElement | null = null;
+  const announceSize = vi.fn();
+  const surface = document.createElement("div");
+  shellTerminal.append(surface);
+  const remeasure = (): void => {
+    const span = document.createElement("span");
+    span.style.position = "absolute";
+    span.style.whiteSpace = "pre";
+    span.textContent = "MMMMMMMMMM";
+    surface.append(span);
+    const cell = Math.round(span.getBoundingClientRect().width / 10);
+    span.remove();
+    surface.style.setProperty("--char-w", `${String(cell)}px`);
+  };
+  remeasure();
   const fakeCtx = {
+    surface: () => surface,
+    defer: (): void => undefined,
     modes: { isBracketedPaste: () => bracketedPaste },
+    shell: { selected: () => "left", pane: () => ({ announceSize }) },
     on: (event: string, fn: (msg: unknown) => void): (() => void) => {
       if (event === "wire:screen") {
         screenListeners.push(fn);
+      }
+      if (event === "connection:state") {
+        stateListeners.push(fn);
       }
       return () => {
         screenListeners = screenListeners.filter((f) => f !== fn);
@@ -209,6 +240,7 @@ async function setup(
   const createTerminal = vi.fn(
     (_root: HTMLElement, opts: CreateTerminalOptions): TerminalHandle => {
       endedCb = opts.onSessionEnded ?? null;
+      loadingEl = opts.loading ?? null;
       // The kernel resolves the features thunk inside its own try, and the panel mints its key-grid
       // feature there, so a mock that never calls it leaves that feature unbuilt and every trigger
       // assertion vacuous.
@@ -318,7 +350,18 @@ async function setup(
       }
       endedCb();
     },
-    screenFrame: (rows: number) => {
+    connectionState: (state: string) => {
+      for (const fn of stateListeners) {
+        fn(state);
+      }
+    },
+    announceSize,
+    surface,
+    remeasure,
+    screenFrame: (rows: number, opts: { paint?: boolean } = {}) => {
+      if (opts.paint !== false) {
+        loadingEl?.classList.add("fade");
+      }
       // A frame carries every visible row, so a row count is what separates a drawn screen from the
       // rows-less signal frame; a row is a run list and an empty one is still a row.
       const msg = { rows: Array.from({ length: rows }, () => []) };
@@ -533,7 +576,7 @@ describe("shell.ts: host-driven actions", () => {
   });
 
   // The reader is in the transcript, so the open must not take focus. The first open is also what
-  // connects, which is what `sessionDrawnGate` has to wait for.
+  // connects, which is what `runGate` has to wait for.
   it("opens a closed panel without focusing it and sends once the first frame lands", async () => {
     const h = await setup();
     h.mod.initShellPanel();
@@ -556,7 +599,7 @@ describe("shell.ts: host-driven actions", () => {
     expect(h.termFocus).not.toHaveBeenCalled();
   });
 
-  // A rows-less frame is the pre-ack ED3 forward, which `sessionDrawnGate` excludes.
+  // A rows-less frame is the pre-ack ED3 forward, which `runGate` excludes.
   it("does not release the command on a rows-less signal frame", async () => {
     const h = await setup();
     h.mod.initShellPanel();
@@ -569,6 +612,81 @@ describe("shell.ts: host-driven actions", () => {
     h.screenFrame(24);
     await Promise.resolve();
     expect(h.sendSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // A frame can land while the font is still loading, and until it settles announceSize sends
+  // nothing, so the server would start the PTY at its default size on the Run bytes.
+  it("holds a Run until the first paint, then puts the size on the socket before the bytes", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+
+    h.getRunCb()?.("echo hi");
+    h.screenFrame(30, { paint: false });
+    await Promise.resolve();
+    expect(h.sendSpy).not.toHaveBeenCalled();
+
+    h.screenFrame(30);
+    await Promise.resolve();
+    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
+    expect(h.announceSize).toHaveBeenCalledTimes(1);
+    expect(h.announceSize.mock.invocationCallOrder[0]).toBeLessThan(
+      h.sendSpy.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  // The engine measures its cell at build, often on the fallback font, and again only once the
+  // panel's open slide settles; a size announced on the build width has the wrong columns.
+  it("holds a Run while the published cell width is stale, until the engine re-measures", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.surface.style.setProperty("--char-w", "1px");
+
+    h.getRunCb()?.("echo hi");
+    h.screenFrame(24);
+    await Promise.resolve();
+    expect(h.sendSpy).not.toHaveBeenCalled();
+    expect(h.announceSize).not.toHaveBeenCalled();
+
+    h.remeasure();
+    await Promise.resolve();
+    expect(h.announceSize).toHaveBeenCalledTimes(1);
+    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
+  });
+
+  // The size announce goes nowhere while the socket is down, so the Run waits for the reconnect.
+  it("holds a Run after a drop until the reconnected session draws", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    h.screenFrame(24);
+    h.connectionState("reconnecting");
+
+    h.getRunCb()?.("echo hi");
+    await Promise.resolve();
+    expect(h.sendSpy).not.toHaveBeenCalled();
+
+    h.connectionState("open");
+    h.screenFrame(24);
+    await Promise.resolve();
+    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
+  });
+
+  // Measured mid-slide, the grid has the rows of a part-open panel.
+  it("holds a Run until the panel's open transition ends", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    h.screenFrame(24);
+    let running: Animation[] = [Object.create(CSSTransition.prototype) as CSSTransition];
+    h.shellPanel.getAnimations = () => running;
+
+    h.getRunCb()?.("echo hi");
+    await Promise.resolve();
+    expect(h.sendSpy).not.toHaveBeenCalled();
+
+    running = [];
+    h.shellPanel.dispatchEvent(new Event("transitionend"));
+    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
   });
 
   // DEC mode 2004 (xterm ctlseqs "Bracketed Paste Mode"): ESC [200~ opens the paste and ESC [201~
@@ -671,6 +789,72 @@ describe("shell.ts: host-driven actions", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(h.reattachSpy).not.toHaveBeenCalled();
+    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
+  });
+
+  // The session that outlives a failed restart may have drawn only while the POST was in flight.
+  it("sends a Run held by a failed restart when the live session first drew during it", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    let releaseDispatch: (value: null) => void = () => undefined;
+    h.restartDispatch.mockImplementationOnce(
+      () =>
+        new Promise<null>((resolve) => {
+          releaseDispatch = resolve;
+        }),
+    );
+    h.shellRestartBtn.click();
+    await new Promise((r) => setTimeout(r, 0));
+    h.getRunCb()?.("echo hi");
+    h.screenFrame(24);
+    await Promise.resolve();
+    expect(h.sendSpy).not.toHaveBeenCalled();
+
+    releaseDispatch(null);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.reattachSpy).not.toHaveBeenCalled();
+    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
+  });
+
+  it("keeps a Run held while a second restart is in flight after the first one fails", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    h.screenFrame(24);
+    let failFirst: (value: null) => void = () => undefined;
+    let finishSecond: (value: { ok: boolean }) => void = () => undefined;
+    h.restartDispatch
+      .mockImplementationOnce(
+        () =>
+          new Promise<null>((resolve) => {
+            failFirst = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ ok: boolean }>((resolve) => {
+            finishSecond = resolve;
+          }),
+      );
+    h.shellRestartBtn.click();
+    await new Promise((r) => setTimeout(r, 0));
+    h.shellRestartBtn.click();
+    await new Promise((r) => setTimeout(r, 0));
+    h.getRunCb()?.("echo hi");
+
+    failFirst(null);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.sendSpy).not.toHaveBeenCalled();
+
+    finishSecond({ ok: true });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.reattachSpy).toHaveBeenCalledTimes(1);
+    expect(h.sendSpy).not.toHaveBeenCalled();
+
+    h.screenFrame(24);
+    await Promise.resolve();
     expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
   });
 

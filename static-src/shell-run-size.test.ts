@@ -217,8 +217,8 @@ function buildPanel(): void {
   };
 }
 
-/** The columns the panel's grid holds, from the box the library measures and the cell width it
- *  publishes on it. */
+/** The columns the panel's grid holds: the `.term` content box over the cell its font draws now,
+ *  measured here rather than read from the `--char-w` the library publishes, which can be stale. */
 function panelCols(): number {
   const term = live.els["shellTerminal"]?.querySelector<HTMLElement>(".term");
   if (!term) {
@@ -226,12 +226,38 @@ function panelCols(): number {
   }
   const cs = getComputedStyle(term);
   const contentW = term.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-  return Math.floor(contentW / parseFloat(term.style.getPropertyValue("--char-w")));
+  const span = document.createElement("span");
+  span.style.cssText = "position:absolute;visibility:hidden;white-space:pre";
+  span.textContent = "MMMMMMMMMM";
+  term.append(span);
+  const cell = Math.round(span.getBoundingClientRect().width / 10);
+  span.remove();
+  return Math.floor(contentW / cell);
+}
+
+/** The rows the panel's grid holds once open: the `.term` content box over its line height. */
+function panelRows(): number {
+  const term = live.els["shellTerminal"]?.querySelector<HTMLElement>(".term");
+  if (!term) {
+    throw new Error("no terminal surface");
+  }
+  const cs = getComputedStyle(term);
+  const contentH = term.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  return Math.floor(contentH / parseFloat(cs.lineHeight));
 }
 
 describe("Run from a closed shell panel", () => {
   it("reaches the PTY after a resize to the panel's own columns", async () => {
     vi.stubGlobal("WebSocket", FakeShellSocket);
+    // The web font lands after the socket has drawn, with a wider cell than the fallback the
+    // terminal measured at build, as Monaspace does over the browser's default monospace.
+    let fontLands: () => void = () => undefined;
+    const landed = new Promise<FontFace[]>((resolve) => {
+      fontLands = () => {
+        resolve([]);
+      };
+    });
+    vi.spyOn(document.fonts, "load").mockReturnValue(landed);
     buildPanel();
     const shell = await import("./shell.js");
     shell.initShellPanel();
@@ -239,6 +265,17 @@ describe("Run from a closed shell panel", () => {
     live.runCb?.("echo hello");
 
     const sock = await vi.waitUntil(() => FakeShellSocket.last, { timeout: 2000 });
+    await vi.waitUntil(
+      () => sock.frames.some((f) => f.kind === "control" && f.msg["type"] === "resume"),
+      {
+        timeout: 2000,
+      },
+    );
+    const wideFont = document.createElement("style");
+    wideFont.textContent = ".shell-terminal .term { font-size: 18px !important; }";
+    document.head.appendChild(wideFont);
+    styles.push(wideFont);
+    fontLands();
     const runAt = await vi.waitUntil(
       () => {
         const i = sock.frames.findIndex((f) => f.kind === "input" && f.text.includes("echo hello"));
@@ -247,12 +284,16 @@ describe("Run from a closed shell panel", () => {
       { timeout: 5000 },
     );
     // Settled: the library has announced the grid the panel now holds.
-    await vi.waitUntil(() => sock.frames.filter(isResize).at(-1)?.msg["cols"] === panelCols(), {
-      timeout: 5000,
-    });
+    await vi.waitUntil(
+      () => {
+        const last = sock.frames.filter(isResize).at(-1);
+        return last?.msg["cols"] === panelCols() && last.msg["rows"] === panelRows();
+      },
+      { timeout: 5000 },
+    );
 
     const sizedBefore = sock.frames.slice(0, runAt).filter(isResize);
     expect(sizedBefore.length, "a resize precedes the Run bytes").toBeGreaterThan(0);
-    expect(sizedBefore.at(-1)?.msg["cols"]).toBe(panelCols());
+    expect(sizedBefore.at(-1)?.msg).toMatchObject({ cols: panelCols(), rows: panelRows() });
   });
 });
