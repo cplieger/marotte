@@ -73,3 +73,21 @@ func TestHeadSHAOmittedWhenMalformed(t *testing.T) {
 		t.Errorf("head_sha = %q, want it omitted", v)
 	}
 }
+
+func TestEventLabel(t *testing.T) {
+	for name, tc := range map[string]struct {
+		inputs map[string]string
+		want   string
+	}{
+		"a run":                 {inputs: map[string]string{"run_id": "1234567", "event_id": "x"}, want: "run 1234567"},
+		"a pull request":        {inputs: map[string]string{"pr_number": "17"}, want: "pr 17"},
+		"an issue":              {inputs: map[string]string{"issue_number": "42"}, want: "issue 42"},
+		"no item or run inputs": {inputs: map[string]string{"lane": "fast"}, want: "triggered"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := EventLabel(tc.inputs); got != tc.want {
+				t.Errorf("EventLabel(%v) = %q, want %q", tc.inputs, got, tc.want)
+			}
+		})
+	}
+}

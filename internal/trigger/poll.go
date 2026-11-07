@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -11,24 +12,16 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 )
 
-// StateStore is the rule state a poll reads and writes, one rule's file per write.
-type StateStore interface {
-	State(ruleID string) (launchrule.State, error)
-	WriteState(ctx context.Context, ruleID string, st *launchrule.State) error
-}
-
-// FeedRules is one feed and the enabled event rules that share it, in creation order.
-type FeedRules struct {
+// feedRules is one feed and the enabled event rules that share it, in creation order.
+type feedRules struct {
 	Feed  Feed
 	Rules []launchrule.Rule
 }
 
-// Feeds groups the enabled event rules of rules, given in creation order, by feed. A feed reads the selector of
+// groupFeeds groups the enabled event rules of rules, given in creation order, by feed. A feed reads the selector of
 // its earliest-created rule.
-//
-//deadset:ignore DS1102 -- the trigger runner groups its rules through it; until that lands only the tests do
-func Feeds(rules []launchrule.Rule) []FeedRules {
-	var out []FeedRules
+func groupFeeds(rules []launchrule.Rule) []feedRules {
+	var out []feedRules
 	index := map[string]int{}
 	for i := range rules {
 		ev := rules[i].When.Event
@@ -36,46 +29,56 @@ func Feeds(rules []launchrule.Rule) []FeedRules {
 			continue
 		}
 		f := Feed{Connection: ev.Connection, Selector: ev.Repo}
-		if j, ok := index[f.Key()]; ok {
+		if j, ok := index[f.key()]; ok {
 			out[j].Rules = append(out[j].Rules, rules[i])
 			continue
 		}
-		index[f.Key()] = len(out)
-		out = append(out, FeedRules{Feed: f, Rules: []launchrule.Rule{rules[i]}})
+		index[f.key()] = len(out)
+		out = append(out, feedRules{Feed: f, Rules: []launchrule.Rule{rules[i]}})
 	}
 	return out
 }
 
-// Poller reads feeds and queues what matched, one state write per rule and poll.
-type Poller struct {
-	src   FeedSource
-	store StateStore
-	now   func() time.Time
-	marks *launchMarks
+// poller reads feeds and queues what matched, applying each rule's part through the Confirmer, which writes it.
+type poller struct {
+	src FeedSource
+	c   *Confirmer
+	now func() time.Time
 }
 
-// NewPoller returns a Poller reading through src and keeping rule state in store.
-//
-//deadset:ignore DS1101 -- the trigger runner polls through it; until that lands only the tests do
-func NewPoller(src FeedSource, store StateStore) *Poller {
-	return &Poller{src: src, store: store, now: time.Now, marks: newLaunchMarks()}
+// newPoller returns a poller reading through src and keeping rule state in c.
+func newPoller(src FeedSource, c *Confirmer) *poller {
+	return &poller{src: src, c: c, now: time.Now}
 }
 
 // reads is what one poll read of a feed, each list walked at most once whatever its rules.
 type reads struct {
-	issues *Walk[forgeapi.Issue]
-	prs    *Walk[forgeapi.PullRequest]
-	runs   *Walk[forgeapi.Run]
+	issues *listWalk[forgeapi.Issue]
+	prs    *listWalk[forgeapi.PullRequest]
+	runs   *listWalk[forgeapi.Run]
 	// since and horizon are the run walk's bound and H, both fixed when it starts.
 	since   time.Time
 	horizon time.Time
 }
 
-// Poll reads fr's lists once and applies them to every rule on it. A rule whose state cannot be read is skipped,
+// poll reads fr's lists once and applies them to every rule on it. A rule whose state cannot be read is skipped,
 // and its file left as it is.
-//
-//deadset:ignore DS1102 -- the trigger runner calls it on each feed's timer; until that lands only the tests do
-func (p *Poller) Poll(ctx context.Context, fr FeedRules) {
+func (p *poller) poll(ctx context.Context, fr feedRules) {
+	if run := p.begin(ctx, fr); run != nil {
+		p.apply(run)
+	}
+}
+
+// pollRun is one poll of a feed whose reads are back and not yet applied.
+type pollRun struct {
+	rd    reads
+	start time.Time
+	feed  Feed
+	rules []*pollRule
+}
+
+// begin plans each rule's part on a snapshot of its state and reads the feed; nil when no rule is left to poll.
+func (p *poller) begin(ctx context.Context, fr feedRules) *pollRun {
 	start := p.now().UTC()
 	rules := make([]*pollRule, 0, len(fr.Rules))
 	for i := range fr.Rules {
@@ -84,38 +87,40 @@ func (p *Poller) Poll(ctx context.Context, fr FeedRules) {
 		}
 	}
 	if len(rules) == 0 {
-		return
+		return nil
 	}
-	rd := p.read(ctx, fr.Feed, rules, start)
-	for _, pr := range rules {
-		pr.apply(&rd)
-		pr.logFull()
-		p.write(ctx, pr)
-	}
-	slog.Debug(logMsgPoll, "connection", fr.Feed.Connection, "repo", fr.Feed.Selector,
-		"reads", rd.calls(), "since", rd.since, "took", p.now().Sub(start))
+	return &pollRun{start: start, feed: fr.Feed, rules: rules, rd: p.read(ctx, fr.Feed, rules, start)}
 }
 
-func (p *Poller) load(r *launchrule.Rule, f Feed, start time.Time) *pollRule {
-	st, err := p.store.State(r.ID)
-	if err != nil {
+// apply hands each rule its part of the reads, dropped for a rule edited since its snapshot.
+func (p *poller) apply(run *pollRun) {
+	for _, pr := range run.rules {
+		p.c.update(pr.rule.ID, pr.gen, func(es *eventState) bool { return pr.applyTo(es, &run.rd) })
+	}
+	slog.Debug(logMsgPoll, "connection", run.feed.Connection, "repo", run.feed.Selector,
+		"reads", run.rd.calls(), "since", run.rd.since, "took", p.now().Sub(run.start))
+}
+
+// load plans the rule's part of the poll on a copy of its state; the poll's changes are applied to the rule's
+// current value, under its mutex, once the reads are back.
+func (p *poller) load(r *launchrule.Rule, f Feed, start time.Time) *pollRule {
+	if _, err := p.c.store.State(r.ID); err != nil {
 		slog.Debug(logMsgRuleSkipped, "rule_id", r.ID, "error", err)
 		return nil
 	}
-	es, err := decodeState(&st)
+	es, gen, err := p.c.snapshot(r.ID)
+	if errors.Is(err, errRuleUnreadable) {
+		slog.Debug(logMsgRuleSkipped, "rule_id", r.ID, "error", err)
+		return nil
+	}
 	if err != nil {
 		slog.Error(logMsgStateBad, "rule_id", r.ID, "error", err)
 		return nil
 	}
-	before, err := json.Marshal(&st)
-	if err != nil {
-		slog.Error(logMsgRuleSkipped, "rule_id", r.ID, "error", err)
-		return nil
-	}
-	return &pollRule{rule: r, ev: r.When.Event, feed: f, start: start, st: es, before: before, marks: p.marks}
+	return &pollRule{rule: r, ev: r.When.Event, feed: f, start: start, st: es, gen: gen, marks: p.c.marks}
 }
 
-func (p *Poller) read(ctx context.Context, f Feed, rules []*pollRule, start time.Time) reads {
+func (p *poller) read(ctx context.Context, f Feed, rules []*pollRule, start time.Time) reads {
 	var rd reads
 	var needIssues, needPRs, needRuns bool
 	for _, pr := range rules {
@@ -138,11 +143,6 @@ func (p *Poller) read(ctx context.Context, f Feed, rules []*pollRule, start time
 	}
 	if needRuns {
 		rd.horizon = horizon(start)
-		for _, pr := range rules {
-			if pr.ev.Kind == launchrule.KindRunConcluded {
-				pr.ageOut(rd.horizon)
-			}
-		}
 		rd.since = runBound(rules, start, rd.horizon)
 		w := walkRuns(ctx, p.src, f, rd.since)
 		rd.runs = &w
@@ -164,24 +164,6 @@ func (rd *reads) calls() int {
 	return n
 }
 
-// write stores pr's state when the poll changed it.
-func (p *Poller) write(ctx context.Context, pr *pollRule) {
-	st, err := pr.st.encode()
-	if err == nil {
-		var after []byte
-		if after, err = json.Marshal(&st); err == nil && bytes.Equal(after, pr.before) {
-			return
-		}
-	}
-	if err == nil {
-		err = p.store.WriteState(ctx, pr.rule.ID, &st)
-	}
-	if err != nil {
-		slog.Error(logMsgNotWritten, "file", "launch-state/"+pr.rule.ID+".json", "op", "write",
-			"rule_id", pr.rule.ID, "error", err)
-	}
-}
-
 // pollRule is one rule's part of one poll.
 type pollRule struct {
 	rule  *launchrule.Rule
@@ -192,11 +174,33 @@ type pollRule struct {
 	// gain is this poll's minted label-gain instant, zero until its first gain.
 	gain time.Time
 	feed Feed
-	// before is the state as loaded, so a poll that changed nothing writes nothing.
-	before []byte
-	st     eventState
+	st   eventState
+	// gen is the rule's generation when the poll took its snapshot.
+	gen int
 	// full is set once the poll left a match unqueued.
 	full bool
+}
+
+// applyTo applies the poll's reads to the rule's current state es, answering whether they changed it.
+func (pr *pollRule) applyTo(es *eventState, rd *reads) bool {
+	before, err := stateJSON(es)
+	pr.st = *es
+	if pr.ev.Kind == launchrule.KindRunConcluded {
+		pr.ageOut(rd.horizon)
+	}
+	pr.apply(rd)
+	pr.logFull()
+	*es = pr.st
+	after, aerr := stateJSON(es)
+	return err != nil || aerr != nil || !bytes.Equal(before, after)
+}
+
+func stateJSON(es *eventState) ([]byte, error) {
+	st, err := es.encode()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(&st)
 }
 
 func (pr *pollRule) labeled() bool {
@@ -205,7 +209,7 @@ func (pr *pollRule) labeled() bool {
 
 // repoCursor answers the feed repository's part of the rule's cursor, created empty.
 func (pr *pollRule) repoCursor() *repoCursor {
-	id := pr.feed.RepoID()
+	id := pr.feed.repoID()
 	rc := pr.st.cursor[id]
 	if rc == nil {
 		rc = &repoCursor{}
@@ -224,10 +228,10 @@ func (pr *pollRule) apply(rd *reads) {
 		pr.applyRuns(rd.runs, rd.since, rd.horizon)
 	case itemPart(pr.ev.Kind) == partIssue:
 		items := issueItems(rd.issues.Items)
-		pr.applyItems(items, rd.issues.Complete())
+		pr.applyItems(items, rd.issues.complete())
 	default:
 		kind, _ := connectionParts(pr.feed.Connection)
-		pr.applyItems(prItems(rd.prs, kind == "gitlab"), rd.prs.Complete())
+		pr.applyItems(prItems(rd.prs, kind == "gitlab"), rd.prs.complete())
 	}
 }
 
@@ -265,7 +269,7 @@ func issueItems(in []forgeapi.Issue) []item {
 // whose page is PartialGraphQLPartial, whose document answered data with errors forgeapi could not place on a row.
 // Every other row is whole, whatever its own marker: on GitHub and Gitea a row's PartialPaginationCap is the
 // check fold, and its labels are the whole set.
-func prItems(w *Walk[forgeapi.PullRequest], gitlab bool) []item {
+func prItems(w *listWalk[forgeapi.PullRequest], gitlab bool) []item {
 	pageCut := w.Partial != nil && w.Partial.Reason == forgeapi.PartialGraphQLPartial
 	out := make([]item, 0, len(w.Items))
 	for i := range w.Items {

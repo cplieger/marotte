@@ -24,15 +24,18 @@ const (
 type harness struct {
 	t     *testing.T
 	store *launchrule.Store
+	c     *Confirmer
 	src   *fakeSource
 	marks *launchMarks
-	now   time.Time
-	dir   string
+	// leases is what each reopen's boot load reads; nil reads none.
+	leases Leases
+	now    time.Time
+	dir    string
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	h := &harness{t: t, dir: t.TempDir(), src: &fakeSource{}, marks: newLaunchMarks(), now: pollStart}
+	h := &harness{t: t, dir: t.TempDir(), src: &fakeSource{}, now: pollStart}
 	h.reopen()
 	return h
 }
@@ -40,11 +43,12 @@ func newHarness(t *testing.T) *harness {
 // reopen loads the store again from disk, as a restart does.
 func (h *harness) reopen() {
 	h.t.Helper()
-	st, err := launchrule.NewStore(h.dir)
+	st, w, err := launchrule.NewStore(h.dir)
 	if err != nil {
 		h.t.Fatalf("Setup: NewStore: %v", err)
 	}
-	h.store = st
+	h.store, h.c = st, NewConfirmer(st, w, h.leases)
+	h.marks = h.c.marks
 }
 
 func (h *harness) create(ev *launchrule.EventSpec) launchrule.Rule {
@@ -61,9 +65,9 @@ func (h *harness) create(ev *launchrule.EventSpec) launchrule.Rule {
 // poll runs one poll of every feed at h.now, then moves h.now on by five minutes.
 func (h *harness) poll() {
 	h.t.Helper()
-	p := &Poller{src: h.src, store: h.store, now: func() time.Time { return h.now }, marks: h.marks}
-	for _, fr := range Feeds(h.store.List()) {
-		p.Poll(h.t.Context(), fr)
+	p := &poller{src: h.src, c: h.c, now: func() time.Time { return h.now }}
+	for _, fr := range groupFeeds(h.store.List()) {
+		p.poll(h.t.Context(), fr)
 	}
 	h.now = h.now.Add(5 * time.Minute)
 }
@@ -81,16 +85,13 @@ func (h *harness) state(ruleID string) eventState {
 	return es
 }
 
-// seed writes es as the rule's state file.
+// seed makes es the rule's state, written through the Confirmer as a poll's change is.
 func (h *harness) seed(ruleID string, es *eventState) {
 	h.t.Helper()
-	st, err := es.encode()
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	if err := h.store.WriteState(h.t.Context(), ruleID, &st); err != nil {
-		h.t.Fatalf("Setup: WriteState: %v", err)
-	}
+	h.c.update(ruleID, anyGeneration, func(cur *eventState) bool {
+		*cur = *es
+		return true
+	})
 }
 
 func (h *harness) queued(ruleID string) []queueEntry {
@@ -100,7 +101,7 @@ func (h *harness) queued(ruleID string) []queueEntry {
 
 func (h *harness) cursorOf(ruleID string) *repoCursor {
 	h.t.Helper()
-	return h.state(ruleID).cursor[Feed{Selector: testRepo}.RepoID()]
+	return h.state(ruleID).cursor[Feed{Selector: testRepo}.repoID()]
 }
 
 // The pages below are each one complete call of their list, served in order across polls.

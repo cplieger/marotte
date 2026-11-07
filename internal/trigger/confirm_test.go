@@ -1,0 +1,1034 @@
+package trigger
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"maps"
+	"slices"
+	"strings"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/marotte/internal/launchrule"
+	"github.com/cplieger/marotte/internal/marotte"
+)
+
+// inBubble runs f with a fresh testConfirmer inside a synctest bubble, so the bound's timers run on its clock.
+func inBubble(t *testing.T, f func(t *testing.T, tc *testConfirmer)) {
+	t.Helper()
+	synctest.Test(t, func(t *testing.T) {
+		f(t, newTestConfirmer(t))
+	})
+}
+
+// relaunchable reports whether the launcher may start key again: queued, with no live record and not superseded.
+func (tc *testConfirmer) relaunchable(ruleID, key string) bool {
+	rv := tc.rule(ruleID)
+	rv.mu.Lock()
+	defer rv.mu.Unlock()
+	i := slices.IndexFunc(rv.es.queue, func(e queueEntry) bool { return e.Key == key })
+	if i < 0 || rv.es.queue[i].Live != "" {
+		return false
+	}
+	if slices.ContainsFunc(rv.es.superseded, func(e supersededEntry) bool { return e.Key == key }) {
+		return false
+	}
+	return !slices.ContainsFunc(rv.records, func(r *record) bool { return r.key == key && r.state.live() })
+}
+
+// pollerOn is a poll harness over tc's store and Confirmer.
+func (tc *testConfirmer) pollerOn() *harness {
+	return &harness{
+		t: tc.t, store: tc.store, c: tc.Confirmer, src: &fakeSource{}, marks: tc.marks, now: pollStart,
+		dir: tc.dir,
+	}
+}
+
+// refusal is an in-band invoke refusal KAS words in its data, as a -32603 does.
+var refusal = &marotte.RPCError{Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"details":"session not idle"}`)}
+
+func TestInBandInvokeRefusalAbandonsAtOnce(t *testing.T) {
+	refuse := func(tc *testConfirmer) string {
+		r := tc.createRule(runSpec("success"))
+		tc.enqueue(r.ID, held("k1", "c1"))
+		tc.setStatus(r.ID, func(st *launchrule.Status) { st.BoundAbandons = 1 })
+		tc.name(r.ID, "k1", "wf_1")
+		tc.LaunchReturned(r.ID, "wf_1", refusal)
+		return r.ID
+	}
+	t.Run("the attempt is abandoned, cancelled and counted on the 24-hour clock", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			id := refuse(tc)
+			rec := tc.recordOf(id, "wf_1")
+			if rec == nil || rec.state != stateAbandonedCancelling || rec.cause != causeInvokeError {
+				t.Fatalf("record = %+v, want abandoned-cancelling with cause invoke_error", rec)
+			}
+			if got := tc.cancels(); !slices.Equal(got, []string{"wf_1"}) {
+				t.Errorf("cancels = %v, want one for wf_1", got)
+			}
+			if !tc.relaunchable(id, "k1") || !tc.woken() {
+				t.Error("k1 is not launchable again with the launcher woken, want it queued with no live record")
+			}
+			_, st := tc.memory(id)
+			if !st.FailingSince.Equal(time.Now()) || st.BoundAbandons != 1 || st.Blocked != "" {
+				t.Errorf("failing since %v, count %d, blocked %q; want the clock started now, the count unchanged at 1, no block",
+					st.FailingSince, st.BoundAbandons, st.Blocked)
+			}
+			if want := "the launch of run wf_1 failed: session not idle; retrying"; !strings.HasPrefix(st.RowText, want) {
+				t.Errorf("row text = %q, want it to start %q", st.RowText, want)
+			}
+			if got, _ := tc.log.AttrValueExact(logMsgLaunchAbandoned, "cause"); got != causeInvokeError {
+				t.Errorf("INFO %q cause = %q, want invoke_error", logMsgLaunchAbandoned, got)
+			}
+		})
+	})
+	t.Run("the event launches again after the backoff's first step", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			f := tc.startLauncher(refusing(tc, refusal))
+			tc.letLaunch(nil)
+			advance(launchBackoff[0] - time.Second)
+			if n := len(f.taken()); n != 1 {
+				t.Errorf("%d calls inside the backoff's first step, want 1", n)
+			}
+			advance(time.Second)
+			if calls := f.taken(); len(calls) != 2 || calls[1].key != "k1" {
+				t.Errorf("calls = %+v, want k1 again after a minute", calls)
+			}
+		})
+	})
+	t.Run("a refusal 24 hours into the clock blocks the rule", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			since := time.Now().Add(-24 * time.Hour)
+			tc.setStatus(r.ID, func(st *launchrule.Status) { st.FailingSince = since })
+			tc.enqueue(r.ID, held("k1", "c1"))
+			tc.name(r.ID, "k1", "wf_1")
+			tc.LaunchReturned(r.ID, "wf_1", refusal)
+			_, st := tc.memory(r.ID)
+			if st.Blocked != "session not idle" || !st.FailingSince.Equal(since) {
+				t.Errorf("blocked %q, failing since %v; want the last error as the block and the clock's start kept", st.Blocked, st.FailingSince)
+			}
+			if got, _ := tc.log.AttrValueExact(logMsgRunNotStarted, "class"); got != "blocked" {
+				t.Errorf("WARN %q class = %q, want blocked", logMsgRunNotStarted, got)
+			}
+		})
+	})
+}
+
+func TestDeadlineInvokeErrorWaitsForBound(t *testing.T) {
+	for name, lost := range map[string]error{"deadline": context.DeadlineExceeded, "bridge exited": marotte.ErrBridgeExited} {
+		t.Run(name+" then a run_start 2 s later confirms", func(t *testing.T) {
+			inBubble(t, func(t *testing.T, tc *testConfirmer) {
+				r := tc.createRule(runSpec("success"))
+				tc.enqueue(r.ID, held("k1", "c1"))
+				tc.name(r.ID, "k1", "wf_1")
+				tc.LaunchReturned(r.ID, "wf_1", lost)
+				advance(2 * time.Second)
+				tc.ConfirmEvent(r.ID, "k1", "wf_1")
+				advance(launchConfirmBound)
+				es, _ := tc.memory(r.ID)
+				if got := tc.cancels(); len(got) != 0 || len(es.queue) != 0 || len(es.launched) != 1 || tc.woken() {
+					t.Errorf("cancels %v, queue %v, launched %+v; want no cancel, k1 launched once and nothing to launch again",
+						got, keysOf(es.queue), es.launched)
+				}
+			})
+		})
+		t.Run(name+" and no run_start: abandoned at the bound, blocked at the second", func(t *testing.T) {
+			inBubble(t, func(t *testing.T, tc *testConfirmer) {
+				r := tc.createRule(runSpec("success"))
+				tc.enqueue(r.ID, held("k1", "c1"))
+				tc.name(r.ID, "k1", "wf_1")
+				tc.LaunchReturned(r.ID, "wf_1", lost)
+				advance(launchConfirmBound - time.Second)
+				if got := tc.cancels(); len(got) != 0 {
+					t.Fatalf("cancels before 5 minutes = %v, want none", got)
+				}
+				advance(2 * time.Second)
+				if rec := tc.recordOf(r.ID, "wf_1"); rec == nil || rec.cause != causeBound {
+					t.Fatalf("record at the bound = %+v, want a cause=bound abandon", rec)
+				}
+				tc.name(r.ID, "k1", "wf_2")
+				tc.LaunchReturned(r.ID, "wf_2", lost)
+				advance(launchConfirmBound + time.Second)
+				_, st := tc.memory(r.ID)
+				if st.Blocked == "" || st.BoundAbandons != 2 {
+					t.Errorf("blocked %q, count %d; want the second expiry to block the rule", st.Blocked, st.BoundAbandons)
+				}
+			})
+		})
+	}
+}
+
+func TestInvokeErrorAfterConfirmNotCounted(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		tc.enqueue(r.ID, held("k1", "c1"))
+		tc.name(r.ID, "k1", "wf_1")
+		tc.ConfirmEvent(r.ID, "k1", "wf_1")
+		tc.LaunchReturned(r.ID, "wf_1", refusal)
+		es, st := tc.memory(r.ID)
+		if !st.FailingSince.IsZero() || st.Blocked != "" || len(tc.cancels()) != 0 {
+			t.Errorf("failing since %v, blocked %q, cancels %v; want nothing counted or cancelled", st.FailingSince, st.Blocked, tc.cancels())
+		}
+		if len(es.launched) != 1 || es.launched[0].WorkflowID != "wf_1" {
+			t.Errorf("launched = %+v, want k1 kept under wf_1", es.launched)
+		}
+	})
+}
+
+func TestUnconfirmedAttemptAbandonedAtBound(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		tc.enqueue(r.ID, held("k1", "c1"))
+		tc.name(r.ID, "k1", "wf_1")
+		tc.LaunchReturned(r.ID, "wf_1", nil)
+		advance(launchConfirmBound + time.Second)
+		if got := tc.cancels(); !slices.Equal(got, []string{"wf_1"}) {
+			t.Errorf("cancels = %v, want wf_1 once", got)
+		}
+		_, st := tc.memory(r.ID)
+		if want := "run wf_1 was not confirmed within 5 minutes; cancelled it and launching the event again"; st.RowText != want {
+			t.Errorf("row text = %q, want %q", st.RowText, want)
+		}
+		if got, _ := tc.log.AttrValueExact(logMsgLaunchAbandoned, "cause"); got != causeBound {
+			t.Errorf("INFO %q cause = %q, want bound", logMsgLaunchAbandoned, got)
+		}
+		if !tc.relaunchable(r.ID, "k1") || !tc.woken() {
+			t.Error("k1 is not launchable again with the launcher woken")
+		}
+	})
+}
+
+func TestRunStartBeforeReturnConfirms(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		tc.enqueue(r.ID, held("k1", "c1"))
+		tc.name(r.ID, "k1", "wf_1")
+		tc.ConfirmEvent(r.ID, "k1", "wf_1")
+		tc.LaunchReturned(r.ID, "wf_1", nil)
+		es, _ := tc.memory(r.ID)
+		if len(es.queue) != 0 || len(es.launched) != 1 || es.launched[0].WorkflowID != "wf_1" || tc.woken() {
+			t.Errorf("queue %v, launched %+v; want k1 confirmed under wf_1 and the launcher not woken", keysOf(es.queue), es.launched)
+		}
+	})
+}
+
+func TestBoundExpiryLosesToConfirm(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		tc.enqueue(r.ID, held("k1", "c1"))
+		tc.name(r.ID, "k1", "wf_1")
+		tc.LaunchReturned(r.ID, "wf_1", nil)
+		advance(launchConfirmBound - time.Millisecond)
+		tc.ConfirmEvent(r.ID, "k1", "wf_1")
+		// The timer that lost the mutex delivers after the confirmation.
+		tc.deliver(r.ID, &attemptEvent{kind: evBoundReached, workflowID: "wf_1"})
+		advance(time.Second)
+		es, st := tc.memory(r.ID)
+		if got := tc.cancels(); len(got) != 0 || len(es.queue) != 0 || len(es.launched) != 1 || st.BoundAbandons != 0 || tc.woken() {
+			t.Errorf("cancels %v, queue %v, launched %d, count %d; want no cancel, no relaunch, k1 launched once",
+				got, keysOf(es.queue), len(es.launched), st.BoundAbandons)
+		}
+	})
+}
+
+func TestLateRunStartAfterAbandonDoesNotConfirm(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		tc.enqueue(r.ID, held("k1", "c1"))
+		tc.abandonAtBound(r.ID, "k1", "wf_1")
+		tc.ConfirmEvent(r.ID, "k1", "wf_1")
+		es, _ := tc.memory(r.ID)
+		if len(es.launched) != 0 || !tc.relaunchable(r.ID, "k1") {
+			t.Errorf("launched %+v, k1 launchable %v; want nothing confirmed and k1 still queued", es.launched, tc.relaunchable(r.ID, "k1"))
+		}
+		if got := tc.cancels(); !slices.Equal(got, []string{"wf_1"}) {
+			t.Errorf("cancels = %v, want wf_1 once", got)
+		}
+		if rec := tc.recordOf(r.ID, "wf_1"); rec == nil || rec.state != stateAbandonedCancelling {
+			t.Errorf("record = %+v, want wf_1 still abandoned-cancelling", rec)
+		}
+	})
+}
+
+func TestAbandonedRunStartDuringNextLaunchIgnored(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		tc.enqueue(r.ID, held("k1", "c1"))
+		tc.abandonAtBound(r.ID, "k1", "wf_1")
+		tc.name(r.ID, "k1", "wf_2")
+		tc.ConfirmEvent(r.ID, "k1", "wf_1")
+		es, _ := tc.memory(r.ID)
+		if rec := tc.recordOf(r.ID, "wf_2"); rec == nil || rec.state != stateInvoking || len(es.launched) != 0 ||
+			len(es.queue) != 1 || es.queue[0].Live != "wf_2" {
+			t.Fatalf("after the old run's run_start: wf_2 %+v, queue %+v, launched %+v; want wf_2 still the live attempt of k1",
+				rec, es.queue, es.launched)
+		}
+		tc.ConfirmEvent(r.ID, "k1", "wf_2")
+		es, _ = tc.memory(r.ID)
+		if len(es.queue) != 0 || len(es.launched) != 1 || es.launched[0].WorkflowID != "wf_2" {
+			t.Errorf("queue %v, launched %+v; want k1 confirmed under wf_2", keysOf(es.queue), es.launched)
+		}
+		if rec := tc.recordOf(r.ID, "wf_1"); rec == nil || rec.state != stateAbandonedCancelling {
+			t.Errorf("wf_1 = %+v, want its abandoned record kept until its cancel answers", rec)
+		}
+		if got := tc.cancels(); !slices.Equal(got, []string{"wf_1"}) {
+			t.Errorf("cancels = %v, want wf_1 once", got)
+		}
+	})
+}
+
+// abandonAtBound names key as wf, returns the call nil and lets the bound expire.
+func (tc *testConfirmer) abandonAtBound(ruleID, key, wf string) {
+	tc.t.Helper()
+	tc.name(ruleID, key, wf)
+	tc.LaunchReturned(ruleID, wf, nil)
+	advance(launchConfirmBound + time.Second)
+}
+
+func TestTwoBoundAbandonsBlockRule(t *testing.T) {
+	t.Run("two bound abandons of one key block the rule", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			tc.abandonAtBound(r.ID, "k1", "wf_1")
+			if _, st := tc.memory(r.ID); st.BoundAbandons != 1 || st.Blocked != "" {
+				t.Fatalf("after one abandon: count %d, blocked %q; want 1 and no block", st.BoundAbandons, st.Blocked)
+			}
+			tc.abandonAtBound(r.ID, "k1", "wf_2")
+			_, st := tc.memory(r.ID)
+			want := "run wf_2 did not report its start twice; marotte stopped retrying this event. Check the engine, then resume the rule"
+			if st.BoundAbandons != 2 || st.Blocked != want || st.RowText != want {
+				t.Errorf("count %d, blocked %q, row %q; want 2 and the rule blocked with %q", st.BoundAbandons, st.Blocked, st.RowText, want)
+			}
+			if n := tc.log.CountExact(logMsgRunNotStarted); n != 1 {
+				t.Errorf("%d WARN %q lines, want 1", n, logMsgRunNotStarted)
+			}
+		})
+	})
+	t.Run("on a newest rule the count survives the supersede", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(newest())
+			tc.enqueue(r.ID, held("k1", "c1"), held("k2", "c1"))
+			tc.abandonAtBound(r.ID, "k1", "wf_1")
+			if tc.relaunchable(r.ID, "k1") {
+				t.Fatal("k1 is launchable after the abandon, want it superseded by k2")
+			}
+			tc.abandonAtBound(r.ID, "k2", "wf_2")
+			if _, st := tc.memory(r.ID); st.BoundAbandons != 2 || st.Blocked == "" {
+				t.Errorf("count %d, blocked %q; want 2 across the supersede and the rule blocked", st.BoundAbandons, st.Blocked)
+			}
+		})
+	})
+	t.Run("a confirmation resets the count", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			tc.abandonAtBound(r.ID, "k1", "wf_1")
+			tc.name(r.ID, "k1", "wf_2")
+			tc.ConfirmEvent(r.ID, "k1", "wf_2")
+			if _, st := tc.memory(r.ID); st.BoundAbandons != 0 {
+				t.Errorf("count = %d after a confirmation, want 0", st.BoundAbandons)
+			}
+		})
+	})
+	t.Run("an abandon of another cause neither adds nor resets", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			tc.abandonAtBound(r.ID, "k1", "wf_1")
+			tc.name(r.ID, "k1", "wf_2")
+			tc.LaunchReturned(r.ID, "wf_2", refusal)
+			if _, st := tc.memory(r.ID); st.BoundAbandons != 1 {
+				t.Errorf("count = %d after an invoke refusal, want 1", st.BoundAbandons)
+			}
+		})
+	})
+	t.Run("the operator's resume resets the count", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			tc.abandonAtBound(r.ID, "k1", "wf_1")
+			tc.abandonAtBound(r.ID, "k1", "wf_2")
+			edit(tc, &r, 0, func(r *launchrule.Rule) { r.Enabled = false })
+			edit(tc, &r, 0, func(r *launchrule.Rule) { r.Enabled = true })
+			if _, st := tc.memory(r.ID); st.BoundAbandons != 0 || st.Blocked != "" {
+				t.Errorf("count %d, blocked %q after the resume; want 0 and no block", st.BoundAbandons, st.Blocked)
+			}
+		})
+	})
+	t.Run("an edit resets the count", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			tc.abandonAtBound(r.ID, "k1", "wf_1")
+			edit(tc, &r, 0, widenFilter)
+			if _, st := tc.memory(r.ID); st.BoundAbandons != 0 {
+				t.Errorf("count = %d after the edit, want 0", st.BoundAbandons)
+			}
+		})
+	})
+	t.Run("an abandon after a rebaseline leaves the rule unblocked at 1", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			minted := time.Now().Add(-time.Hour)
+			tc.setStatus(r.ID, func(st *launchrule.Status) { st.LastMinted = minted })
+			tc.enqueue(r.ID, held("k1", "c1"))
+			tc.abandonAtBound(r.ID, "k1", "wf_1")
+			edit(tc, &r, 1, moveRepo)
+			tc.enqueue(r.ID, held("k2", "c2"))
+			tc.abandonAtBound(r.ID, "k2", "wf_2")
+			_, st := tc.memory(r.ID)
+			if st.BoundAbandons != 1 || st.Blocked != "" || !st.LastMinted.Equal(minted) {
+				t.Errorf("count %d, blocked %q, last_minted %v; want 1, no block and %v kept",
+					st.BoundAbandons, st.Blocked, st.LastMinted, minted)
+			}
+		})
+	})
+	t.Run("a filter.label change with an attempt in flight keeps it", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(labeledSpec())
+			baselineNewLabel(tc, r.ID)
+			tc.enqueue(r.ID, held("k1", "c1"))
+			tc.abandonAtBound(r.ID, "k1", "wf_1")
+			tc.name(r.ID, "k1", "wf_2")
+			edit(tc, &r, 0, relabel)
+			pollSeesNoGain(t, tc, r.ID)
+			if _, st := tc.memory(r.ID); st.BoundAbandons != 0 {
+				t.Errorf("count = %d, want 0", st.BoundAbandons)
+			}
+			if rec := tc.recordOf(r.ID, "wf_2"); rec == nil || rec.state != stateInvoking {
+				t.Errorf("record = %+v, want the attempt in flight kept", rec)
+			}
+			if got := tc.cancels(); !slices.Equal(got, []string{"wf_1"}) {
+				t.Errorf("cancels = %v, want only the first abandon's", got)
+			}
+		})
+	})
+	t.Run("a filter.label change after the second abandon lifts the block", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(labeledSpec())
+			baselineNewLabel(tc, r.ID)
+			tc.enqueue(r.ID, held("k1", "c1"))
+			tc.abandonAtBound(r.ID, "k1", "wf_1")
+			tc.abandonAtBound(r.ID, "k1", "wf_2")
+			edit(tc, &r, 0, relabel)
+			pollSeesNoGain(t, tc, r.ID)
+			if _, st := tc.memory(r.ID); st.BoundAbandons != 0 || st.Blocked != "" {
+				t.Errorf("count %d, blocked %q; want 0 and the block lifted", st.BoundAbandons, st.Blocked)
+			}
+			if got := tc.cancels(); !slices.Equal(got, []string{"wf_1", "wf_2"}) {
+				t.Errorf("cancels = %v, want the two abandons' and no more", got)
+			}
+		})
+	})
+	t.Run("a boot expiry neither adds nor resets", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			tc.abandonAtBound(r.ID, "k1", "wf_1")
+			tc.name(r.ID, "k1", "wf_2")
+			tc.LaunchReturned(r.ID, "wf_2", nil)
+			tc.lease(r.ID, "k1", "wf_2")
+			tc.restart()
+			tc.run()
+			tc.engineReady()
+			advance(launchConfirmBound + time.Second)
+			if rec := tc.recordOf(r.ID, "wf_2"); rec == nil || !rec.state.abandoned() {
+				t.Fatalf("record = %+v, want wf_2 abandoned at its boot-held bound", rec)
+			}
+			if _, st := tc.memory(r.ID); st.BoundAbandons != 1 || st.Blocked != "" {
+				t.Errorf("count %d, blocked %q; want 1 and no block", st.BoundAbandons, st.Blocked)
+			}
+		})
+	})
+}
+
+// launchHead names and confirms the rule's queue head as wf, answering the event_id its record and its launched
+// entry carry.
+func (tc *testConfirmer) launchHead(ruleID, wf string) (onRecord, onLaunched string) {
+	tc.t.Helper()
+	es, _ := tc.memory(ruleID)
+	if len(es.queue) == 0 {
+		tc.t.Fatalf("rule %s queued nothing", ruleID)
+	}
+	key := es.queue[0].Key
+	tc.name(ruleID, key, wf)
+	if rec := tc.recordOf(ruleID, wf); rec != nil {
+		onRecord = rec.inputs["event_id"]
+	}
+	tc.ConfirmEvent(ruleID, key, wf)
+	es, _ = tc.memory(ruleID)
+	for i := range es.launched {
+		if es.launched[i].WorkflowID == wf {
+			onLaunched = es.launched[i].Inputs["event_id"]
+		}
+	}
+	return onRecord, onLaunched
+}
+
+func TestEventIDStableAcrossRulesAndRestart(t *testing.T) {
+	t.Run("two rules on one run event pass one id", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			h := tc.pollerOn()
+			a, b := h.create(runSpec("success")), h.create(runSpec("success"))
+			h.runPage()
+			h.poll()
+			h.runPage(run(41, forgeapi.CheckPassing, pollStart.Add(time.Minute)))
+			h.poll()
+			want := "github.com/cplieger/animap/run/41/success"
+			for _, id := range []string{a.ID, b.ID} {
+				if rec, launched := tc.launchHead(id, "wf_"+id); rec != want || launched != want {
+					t.Errorf("rule %s: record event_id %q, launched %q; want %q on both", id, rec, launched, want)
+				}
+			}
+		})
+	})
+	t.Run("two rules on one connection pass one id for one opened item", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			h := tc.pollerOn()
+			a, b := h.create(openedSpec("alice")), h.create(openedSpec("alice"))
+			h.issuePage(issue(10, "alice"))
+			h.poll()
+			h.issuePage(issue(10, "alice"), issue(11, "alice"))
+			h.poll()
+			want := "github.com/cplieger/animap/issue/11/opened"
+			for _, id := range []string{a.ID, b.ID} {
+				if rec, _ := tc.launchHead(id, "wf_"+id); rec != want {
+					t.Errorf("rule %s: record event_id %q, want %q", id, rec, want)
+				}
+			}
+		})
+	})
+	t.Run("a failure rule and a success rule on one run pass different ids", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			h := tc.pollerOn()
+			fail, ok := h.create(runSpec("failure")), h.create(runSpec("success"))
+			h.runPage()
+			h.poll()
+			created := pollStart.Add(time.Minute)
+			h.runPage(run(41, forgeapi.CheckFailing, created))
+			h.poll()
+			h.runPage(run(41, forgeapi.CheckPassing, created))
+			h.poll()
+			gotFail, _ := tc.launchHead(fail.ID, "wf_f")
+			gotOK, _ := tc.launchHead(ok.ID, "wf_s")
+			if gotFail != "github.com/cplieger/animap/run/41/failure" || gotOK != "github.com/cplieger/animap/run/41/success" {
+				t.Errorf("event ids %q and %q, want run 41 ending in failure and in success", gotFail, gotOK)
+			}
+		})
+	})
+	t.Run("one selector on two hosts passes different ids", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			h := tc.pollerOn()
+			other := runSpec("success")
+			other.Connection = "github:ghe.example.com"
+			a, b := h.create(runSpec("success")), h.create(other)
+			h.runPage()
+			h.runPage()
+			h.poll()
+			r41 := run(41, forgeapi.CheckPassing, pollStart.Add(time.Minute))
+			h.runPage(r41)
+			h.runPage(r41)
+			h.poll()
+			gotA, _ := tc.launchHead(a.ID, "wf_a")
+			gotB, _ := tc.launchHead(b.ID, "wf_b")
+			if gotA != "github.com/cplieger/animap/run/41/success" || gotB != "ghe.example.com/cplieger/animap/run/41/success" {
+				t.Errorf("event ids %q and %q, want each naming its own host", gotA, gotB)
+			}
+		})
+	})
+	t.Run("a duplicate attempt after a bound abandon passes the same id", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			tc.abandonAtBound(r.ID, "k1", "wf_1")
+			abandoned := tc.recordOf(r.ID, "wf_1")
+			es, _ := tc.memory(r.ID)
+			if abandoned == nil || len(es.queue) != 1 || es.queue[0].Inputs["event_id"] != abandoned.inputs["event_id"] {
+				t.Fatalf("requeued %+v, abandoned record %+v; want the entry's event_id equal to the record's", es.queue, abandoned)
+			}
+			tc.name(r.ID, "k1", "wf_2")
+			if dup := tc.recordOf(r.ID, "wf_2"); dup == nil || dup.inputs["event_id"] != abandoned.inputs["event_id"] {
+				t.Errorf("duplicate attempt %+v, want the abandoned record's event_id %q", dup, abandoned.inputs["event_id"])
+			}
+		})
+	})
+	t.Run("a restart passes the same id", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			tc.abandonAtBound(r.ID, "k1", "wf_1")
+			tc.name(r.ID, "k1", "wf_2")
+			tc.ConfirmEvent(r.ID, "k1", "wf_2")
+			tc.restart()
+			es, _ := tc.file(r.ID)
+			if len(es.launched) != 1 || es.launched[0].WorkflowID != "wf_2" || es.launched[0].Inputs["event_id"] != "id/k1" {
+				t.Errorf("reloaded launched = %+v, want k1 under wf_2 with event_id id/k1", es.launched)
+			}
+			snap, _, err := tc.snapshot(r.ID)
+			if err != nil || len(snap.launched) != 1 || snap.launched[0].Inputs["event_id"] != "id/k1" {
+				t.Errorf("loaded launched = %+v (%v), want event_id id/k1", snap.launched, err)
+			}
+		})
+	})
+	t.Run("retries pass the same id", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			f := tc.startLauncher(refusing(tc, refusal))
+			tc.letLaunch(nil)
+			advance(3 * time.Minute)
+			calls := f.taken()
+			if len(calls) != 3 {
+				t.Fatalf("%d calls, want three attempts of k1", len(calls))
+			}
+			for i, c := range calls {
+				if c.inputs["event_id"] != "id/k1" {
+					t.Errorf("attempt %d event_id = %q, want id/k1", i+1, c.inputs["event_id"])
+				}
+			}
+		})
+	})
+}
+
+func TestLabeledEventIDDiffersAcrossRules(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		h := tc.pollerOn()
+		a, b := h.create(labeledSpec()), h.create(labeledSpec())
+		h.issuePage(issue(12, "alice"))
+		h.poll()
+		h.issuePage(issue(12, "alice", testLabel))
+		h.poll()
+		idA, _ := tc.launchHead(a.ID, "wf_a")
+		idB, _ := tc.launchHead(b.ID, "wf_b")
+		if idA == idB || !strings.Contains(idA, "/"+a.ID+"/") || !strings.Contains(idB, "/"+b.ID+"/") {
+			t.Errorf("event ids %q and %q, want two different ids, each carrying its rule id", idA, idB)
+		}
+	})
+}
+
+func TestDuplicateAfterLostRunStartCarriesSameEventID(t *testing.T) {
+	t.Run("after a bound abandon the queued entry keeps its inputs", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			entry := held("k1", "c1")
+			entry.Inputs["run_id"] = "41"
+			tc.enqueue(r.ID, entry)
+			tc.abandonAtBound(r.ID, "k1", "wf_1")
+			es, _ := tc.memory(r.ID)
+			if len(es.queue) != 1 || !maps.Equal(es.queue[0].Inputs, entry.Inputs) {
+				t.Errorf("queue = %+v, want k1 still queued with inputs %v", es.queue, entry.Inputs)
+			}
+		})
+	})
+	t.Run("the relaunch carries the same event_id", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			f := tc.startLauncher(nil)
+			tc.letLaunch(nil)
+			advance(launchConfirmBound)
+			if n := len(f.taken()); n != 1 {
+				t.Errorf("%d calls at the bound abandon, want the first alone until the backoff's first step", n)
+			}
+			advance(launchBackoff[0])
+			calls := f.taken()
+			if len(calls) != 2 || calls[1].key != "k1" {
+				t.Fatalf("calls = %+v, want k1 launched again after its bound abandon and the backoff", calls)
+			}
+			if a, b := calls[0].inputs["event_id"], calls[1].inputs["event_id"]; a != "id/k1" || b != a {
+				t.Errorf("event_id %q then %q, want id/k1 both times", a, b)
+			}
+		})
+	})
+}
+
+func TestSupersededGainsWorkflowIDOnConfirm(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(newest())
+		tc.enqueue(r.ID, held("k1", "c1"), held("k2", "c1"))
+		tc.abandonAtBound(r.ID, "k1", "wf_1")
+		tc.name(r.ID, "k2", "wf_2")
+		tc.ConfirmEvent(r.ID, "k2", "wf_2")
+		es, _ := tc.file(r.ID)
+		if want := []supersededEntry{{Key: "k1", By: "k2", WorkflowID: "wf_2"}}; !slices.Equal(es.superseded, want) {
+			t.Errorf("superseded = %+v, want %+v", es.superseded, want)
+		}
+	})
+}
+
+func TestConfirmWritesCoalesceKeyOnLaunched(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		entry := held("k1", "c1")
+		tc.enqueue(r.ID, entry)
+		tc.name(r.ID, "k1", "wf_1")
+		tc.ConfirmEvent(r.ID, "k1", "wf_1")
+		es, _ := tc.file(r.ID)
+		if len(es.launched) != 1 || es.launched[0].CoalesceKey != "c1" || !maps.Equal(es.launched[0].Inputs, entry.Inputs) {
+			t.Errorf("launched = %+v, want k1 with coalesce key c1 and its inputs", es.launched)
+		}
+	})
+}
+
+// A23: every record event for a run the rule holds no record of changes nothing and counts nothing.
+func TestUnheldRunEventsChangeNothing(t *testing.T) {
+	for _, ev := range []attemptEvent{
+		{kind: evRunStart},
+		{kind: evInvokeOK},
+		{kind: evInvokeError, err: refusal},
+		{kind: evInvokeReplyLost, err: context.DeadlineExceeded},
+		{kind: evBoundReached},
+		{kind: evCancelOK},
+		{kind: evCancelError, err: errors.New("refused")},
+		{kind: evBusy, launchingRule: "another rule"},
+	} {
+		t.Run(ev.kind.String(), func(t *testing.T) {
+			inBubble(t, func(t *testing.T, tc *testConfirmer) {
+				r := tc.createRule(runSpec("success"))
+				tc.enqueue(r.ID, held("k1", "c1"))
+				ev.workflowID = "wf_9"
+				tc.deliver(r.ID, &ev)
+				_, st := tc.memory(r.ID)
+				if tc.recordOf(r.ID, "wf_9") != nil || len(tc.cancels()) != 0 || tc.woken() ||
+					!st.FailingSince.IsZero() || st.RowText != "" || !tc.relaunchable(r.ID, "k1") {
+					t.Errorf("status %+v, cancels %v; want no record, no cancel, nothing counted and k1 untouched", st, tc.cancels())
+				}
+				assertNoStateFile(t, tc, r.ID)
+			})
+		})
+	}
+}
+
+func TestPauseKeepsAttempt(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		tc.enqueue(r.ID, held("k1", "c1"))
+		tc.setStatus(r.ID, func(st *launchrule.Status) { st.BoundAbandons = 1 })
+		tc.name(r.ID, "k1", "wf_1")
+		if n := edit(tc, &r, 0, func(r *launchrule.Rule) { r.Enabled = false }); n != 0 {
+			t.Errorf("the pause wrote %d times, want none", n)
+		}
+		if _, st := tc.memory(r.ID); st.BoundAbandons != 1 {
+			t.Errorf("count after the pause = %d, want 1 kept", st.BoundAbandons)
+		}
+		tc.ConfirmEvent(r.ID, "k1", "wf_1")
+		if es, _ := tc.file(r.ID); len(es.launched) != 1 || es.launched[0].WorkflowID != "wf_1" {
+			t.Errorf("launched = %+v, want the paused rule's attempt confirmed under wf_1", es.launched)
+		}
+	})
+}
+
+func TestRunGoneKeepsRecordOwingRelease(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		owingRelease(tc, &r)
+		tc.written()
+		tc.PruneAbandoned(r.ID, map[string]marotte.RunStatus{})
+		if rec := tc.recordOf(r.ID, "wf_1"); rec == nil || !rec.owesRelease {
+			t.Fatalf("record = %+v, want it kept owing its release", rec)
+		}
+		if n := tc.written(); n != 0 {
+			t.Errorf("run gone wrote %d times, want none", n)
+		}
+		tc.answerCancels(nil)
+		if _, releases := tc.fx.calls(); !slices.Equal(releases, []string{"wf_1"}) {
+			t.Errorf("releases = %v, want wf_1's lease released once its cancel landed", releases)
+		}
+	})
+}
+
+// inFlightThenEdit names wf_1 for k1 and, before its call returns, applies change: a rebaseline, or a delete when
+// change is nil.
+func inFlightThenEdit(tc *testConfirmer, change func(*launchrule.Rule)) launchrule.Rule {
+	tc.t.Helper()
+	r := tc.createRule(runSpec("success"))
+	tc.run()
+	tc.enqueue(r.ID, held("k1", "c1"))
+	tc.name(r.ID, "k1", "wf_1")
+	if change == nil {
+		deleteRule(tc.t, tc.Confirmer, r.ID)
+	} else {
+		edit(tc, &r, 1, change)
+	}
+	return r
+}
+
+func TestEditAbandonsAttemptInFlight(t *testing.T) {
+	for name, lost := range map[string]error{"an in-band refusal": refusal, "an invoke deadline": context.DeadlineExceeded} {
+		t.Run("the edit's cancel lands, then "+name+": R releases", func(t *testing.T) {
+			inBubble(t, func(t *testing.T, tc *testConfirmer) {
+				r := inFlightThenEdit(tc, moveRepo)
+				tc.answerCancels(nil)
+				if _, releases := tc.fx.calls(); len(releases) != 0 {
+					t.Fatalf("released %v while the call was in flight, want nothing yet", releases)
+				}
+				tc.LaunchReturned(r.ID, "wf_1", lost)
+				synctest.Wait()
+				if cancels, releases := tc.fx.calls(); !slices.Equal(cancels, []string{"wf_1"}) ||
+					!slices.Equal(releases, []string{"wf_1"}) {
+					t.Errorf("cancels %v, releases %v; want one of each", cancels, releases)
+				}
+			})
+		})
+	}
+	t.Run("after a delete, the deadline releases and a later run_start confirms nothing", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := inFlightThenEdit(tc, nil)
+			tc.answerCancels(nil)
+			tc.LaunchReturned(r.ID, "wf_1", context.DeadlineExceeded)
+			synctest.Wait()
+			advance(2 * time.Second)
+			tc.ConfirmEvent(r.ID, "k1", "wf_1")
+			if _, releases := tc.fx.calls(); !slices.Equal(releases, []string{"wf_1"}) {
+				t.Errorf("releases = %v, want one at the error", releases)
+			}
+			if n := tc.log.CountExact(logMsgRunStarted); n != 0 || tc.woken() {
+				t.Errorf("%d confirmations, launcher woken %v; want none and no second launch", n, tc.woken())
+			}
+			assertNoStateFile(t, tc, r.ID)
+		})
+	})
+	t.Run("a run confirmed then rebaselined keeps its lease when its invoke times out", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.run()
+			tc.enqueue(r.ID, held("k1", "c1"))
+			tc.name(r.ID, "k1", "wf_1")
+			tc.ConfirmEvent(r.ID, "k1", "wf_1")
+			edit(tc, &r, 0, moveRepo)
+			tc.LaunchReturned(r.ID, "wf_1", context.DeadlineExceeded)
+			tc.answerCancels(nil)
+			if cancels, releases := tc.fx.calls(); len(cancels) != 0 || len(releases) != 0 {
+				t.Errorf("cancels %v, releases %v; want none", cancels, releases)
+			}
+		})
+	})
+	t.Run("the edit's cancel answering 1 s after an in-band refusal releases at that answer", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := inFlightThenEdit(tc, moveRepo)
+			tc.LaunchReturned(r.ID, "wf_1", refusal)
+			advance(time.Second)
+			if _, releases := tc.fx.calls(); len(releases) != 0 {
+				t.Fatalf("released %v before the cancel answered, want nothing yet", releases)
+			}
+			tc.answerCancels(nil)
+			if _, releases := tc.fx.calls(); !slices.Equal(releases, []string{"wf_1"}) {
+				t.Errorf("releases = %v, want one at the cancel's answer", releases)
+			}
+		})
+	})
+}
+
+func TestNameAttemptFailureRecordedAbandoned(t *testing.T) {
+	t.Run("after an edit reset", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.update(r.ID, anyGeneration, func(es *eventState) bool { es.queue = []queueEntry{held("k1", "c1")}; return true })
+			edit(tc, &r, 1, moveRepo)
+			if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, errAttemptGone) {
+				t.Fatalf("NameAttempt = %v, want errAttemptGone", err)
+			}
+			if _, file := tc.file(r.ID); len(file) != 1 || file[0].State != persistedAbandoned ||
+				file[0].Cause != causeNameFailed {
+				t.Errorf("file attempts = %+v, want wf_1 abandoned with cause name_failed", file)
+			}
+			if _, st := tc.memory(r.ID); st.RowText != "" || !st.FailingSince.IsZero() {
+				t.Errorf("row %q, failing since %v; want no row text and the clock not started", st.RowText, st.FailingSince)
+			}
+			tc.run()
+			tc.answerCancels(nil)
+			if cancels, _ := tc.fx.calls(); !slices.Equal(cancels, []string{"wf_1"}) {
+				t.Errorf("cancels = %v, want one, from the effect goroutine", cancels)
+			}
+		})
+	})
+	t.Run("after a delete", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			deleteRule(t, tc.Confirmer, r.ID)
+			if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, errAttemptGone) {
+				t.Fatalf("NameAttempt = %v, want errAttemptGone", err)
+			}
+			assertNoStateFile(t, tc, r.ID)
+			tc.run()
+			tc.answerCancels(nil)
+			if cancels, _ := tc.fx.calls(); !slices.Equal(cancels, []string{"wf_1"}) {
+				t.Errorf("cancels = %v, want one", cancels)
+			}
+		})
+	})
+	t.Run("after a failed write", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.update(r.ID, anyGeneration, func(es *eventState) bool { es.queue = []queueEntry{held("k1", "c1")}; return true })
+			tc.failWrites(errDiskFull)
+			if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, errAttemptNotWritten) {
+				t.Fatalf("NameAttempt = %v, want errAttemptNotWritten", err)
+			}
+			if es, file := tc.file(r.ID); len(file) != 0 || len(es.queue) != 1 || es.queue[0].Live != "" {
+				t.Errorf("file attempts %+v, queue %+v; want no record and k1 naming none before a write lands",
+					file, es.queue)
+			}
+			tc.failWrites(nil)
+			tc.persist(r.ID)
+			es, file := tc.file(r.ID)
+			if len(file) != 1 || file[0].WorkflowID != "wf_1" || file[0].State != persistedAbandoned ||
+				file[0].Cause != causeNameFailed {
+				t.Errorf("file attempts = %+v, want wf_1 abandoned with cause name_failed", file)
+			}
+			if len(es.queue) != 1 || es.queue[0].Live != "" || !tc.relaunchable(r.ID, "k1") {
+				t.Errorf("file queue = %+v, want k1 queued with no live record", es.queue)
+			}
+			tc.run()
+			tc.answerCancels(nil)
+			advance(launchConfirmBound + time.Second)
+			if cancels, _ := tc.fx.calls(); !slices.Equal(cancels, []string{"wf_1"}) {
+				t.Errorf("cancels = %v, want one, from the effect goroutine, and no bound for the cancelled run", cancels)
+			}
+		})
+	})
+	t.Run("the next launch uses a new workflow id", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.update(r.ID, anyGeneration, func(es *eventState) bool { es.queue = []queueEntry{held("k1", "c1")}; return true })
+			tc.failWrites(errDiskFull)
+			f := tc.startLauncher(nil)
+			tc.letLaunch(nil)
+			tc.failWrites(nil)
+			advance(writeTick)
+			calls := f.taken()
+			if len(calls) != 2 || calls[1].key != "k1" {
+				t.Fatalf("calls = %+v, want k1 launched again once the write landed", calls)
+			}
+			if rec := tc.recordOf(r.ID, "wf_2"); rec == nil || rec.key != "k1" || !rec.state.live() {
+				t.Errorf("record of wf_2 = %+v, want k1's attempt under a new workflow id", rec)
+			}
+		})
+	})
+}
+
+func TestStoreWriteFailureBlocksRule(t *testing.T) {
+	t.Run("a failed poll write blocks the rule and logs the ERROR line", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.failWrites(errDiskFull)
+			h := tc.pollerOn()
+			h.runPage()
+			h.poll()
+			if got := tc.writeBlock(r.ID); got != writeBlockedText(&r) {
+				t.Errorf("write block = %q, want %q", got, writeBlockedText(&r))
+			}
+			for attr, want := range map[string]string{
+				"file": "launch-state/" + r.ID + ".json", "op": "write", "rule_id": r.ID, "error": errDiskFull.Error(),
+			} {
+				if got, _ := tc.log.AttrValueExact(logMsgNotWritten, attr); got != want {
+					t.Errorf("ERROR %q %s = %q, want %q", logMsgNotWritten, attr, got, want)
+				}
+			}
+		})
+	})
+	t.Run("the tick retries at the rule's poll interval, and the landed write lifts the block", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			spec := runSpec("success")
+			spec.IntervalMin = 10
+			r := tc.createRule(spec)
+			writeBlocked(tc, &r)
+			tc.failWrites(nil)
+			tc.woken()
+			advance(10*time.Minute - time.Second)
+			if n := tc.written(); n != 0 || tc.writeBlock(r.ID) == "" {
+				t.Fatalf("%d writes before the rule's interval, block %q; want none and the block kept", n,
+					tc.writeBlock(r.ID))
+			}
+			advance(time.Second)
+			if n := tc.written(); n != 1 {
+				t.Errorf("%d writes at the rule's interval, want the tick's one", n)
+			}
+			if got := tc.writeBlock(r.ID); got != "" {
+				t.Errorf("write block = %q, want it lifted", got)
+			}
+			if !tc.woken() {
+				t.Error("the launcher was not woken")
+			}
+			advance(30 * time.Minute)
+			if n := tc.written(); n != 0 {
+				t.Errorf("%d writes after the block lifted, want the tick stopped", n)
+			}
+		})
+	})
+	t.Run("a landed write lifts only the write-failure block", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.setStatus(r.ID, func(st *launchrule.Status) { st.Blocked = "session not idle" })
+			writeBlocked(tc, &r)
+			tc.failWrites(nil)
+			tc.persist(r.ID)
+			if got := tc.writeBlock(r.ID); got != "" {
+				t.Errorf("write block = %q, want it lifted", got)
+			}
+			if es, _ := tc.file(r.ID); es.raw.Status.Blocked != "session not idle" {
+				t.Errorf("file blocked = %q, want the other block kept", es.raw.Status.Blocked)
+			}
+		})
+	})
+}
+
+func TestPollWriteAfterFailedConfirmKeepsKey(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		unconfirmed(tc, &r)
+		tc.failWrites(errDiskFull)
+		tc.ConfirmEvent(r.ID, "k1", "wf_1")
+		tc.failWrites(nil)
+		h := tc.pollerOn()
+		h.runPage()
+		h.poll()
+		es, attempts := tc.file(r.ID)
+		if len(es.queue) != 0 || len(es.launched) != 1 || es.launched[0].Key != "k1" ||
+			es.launched[0].WorkflowID != "wf_1" {
+			t.Errorf("file queue %v, launched %+v; want k1 in launched under wf_1", keysOf(es.queue), es.launched)
+		}
+		if len(attempts) != 0 {
+			t.Errorf("file attempts = %+v, want none: the confirmed attempt has no record", attempts)
+		}
+	})
+}
+
+// An outcome lands on the rule's row only for the run that confirmed its last event, and an ending only while the
+// row still reads it started: an abandoned attempt's run, or an ending after a stop's outcome, changes nothing.
+func TestOutcomeLandsOnlyForLastRun(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		tc.enqueue(r.ID, held("k1", "c1"))
+		tc.name(r.ID, "k1", "wf_1")
+		tc.ConfirmEvent(r.ID, "k1", "wf_1")
+		tc.written()
+
+		tc.RecordOutcome(r.ID, "wf_2", launchrule.Outcome{Status: launchrule.StatusFailed, Reason: "denied"})
+		tc.RecordEnding(r.ID, "wf_2", launchrule.Outcome{Status: launchrule.StatusCompleted})
+		if n := tc.written(); n != 0 {
+			t.Errorf("another run's outcome and ending: %d writes, want none", n)
+		}
+		if es, _ := tc.file(r.ID); es.raw.Status.LastStatus != launchrule.StatusStarted {
+			t.Errorf("file status after another run's outcome = %q, want started", es.raw.Status.LastStatus)
+		}
+
+		tc.RecordOutcome(r.ID, "wf_1", launchrule.Outcome{Status: launchrule.StatusFailed, Reason: "denied"})
+		tc.RecordEnding(r.ID, "wf_1", launchrule.Outcome{Status: launchrule.StatusCompleted})
+		if n := tc.written(); n != 1 {
+			t.Errorf("the last run's outcome and ending: %d writes, want the outcome's one", n)
+		}
+		es, _ := tc.file(r.ID)
+		if st := es.raw.Status; st.LastStatus != launchrule.StatusFailed || st.LastReason != "denied" {
+			t.Errorf("file status = %q %q, want the outcome, not the later ending", st.LastStatus, st.LastReason)
+		}
+	})
+}

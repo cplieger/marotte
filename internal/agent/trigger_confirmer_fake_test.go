@@ -8,6 +8,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/trigger"
 )
 
 // fakeConfirmer records every TriggerConfirmer call as one line, in order, and answers from its fields. live maps an
@@ -18,13 +19,15 @@ type fakeConfirmer struct {
 	// onName runs inside NameAttempt, before it returns.
 	onName     func()
 	retriedErr error
-	bootHeld   map[string]bool
-	live       map[string]string
-	pruned     []map[string]marotte.RunStatus
-	calls      []string
-	launched   []string
-	mu         sync.Mutex
-	retried    bool
+	// retriedEvent is Retried's live attempt event.
+	retriedEvent *trigger.RetriedEvent
+	bootHeld     map[string]bool
+	live         map[string]string
+	pruned       []map[string]marotte.RunStatus
+	calls        []string
+	launched     []string
+	mu           sync.Mutex
+	retried      bool
 }
 
 var _ TriggerConfirmer = (*fakeConfirmer)(nil)
@@ -102,9 +105,9 @@ func (f *fakeConfirmer) RuleChanged(ruleID string, change launchrule.Change) {
 	f.record("RuleChanged %s %s", ruleID, change)
 }
 
-func (f *fakeConfirmer) Retried(workflowID string) (bool, error) {
+func (f *fakeConfirmer) Retried(workflowID string) (trigger.RetryAnswer, error) {
 	f.record("Retried %s", workflowID)
-	return f.retried, f.retriedErr
+	return trigger.RetryAnswer{HandedBack: f.retried, Event: f.retriedEvent}, f.retriedErr
 }
 
 func (f *fakeConfirmer) RecordOutcome(ruleID, workflowID string, outcome launchrule.Outcome) {
@@ -119,3 +122,5 @@ func (f *fakeConfirmer) DismissGap(ruleID string) error {
 	f.record("DismissGap %s", ruleID)
 	return nil
 }
+
+func (*fakeConfirmer) View(string) (launchrule.State, error) { return launchrule.State{}, nil }

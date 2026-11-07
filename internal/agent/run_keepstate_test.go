@@ -176,19 +176,34 @@ func triggeredMarkRig(t *testing.T, fc *fakeConfirmer) *Runtime {
 
 // The run's first run_start confirms its event once; a resume's run_start of the same life confirms nothing more.
 func TestRunStartConfirmsTriggeredEvent(t *testing.T) {
-	fc := &fakeConfirmer{live: map[string]string{testEventKey: "wf_1"}}
-	h := triggeredMarkRig(t, fc)
+	t.Run("fake confirmer", func(t *testing.T) {
+		fc := &fakeConfirmer{live: map[string]string{testEventKey: "wf_1"}}
+		h := triggeredMarkRig(t, fc)
 
-	startRun(t, h, "", "wf_1", "sess_launcher")
-	startRun(t, h, "", "wf_1", "sess_launcher")
+		startRun(t, h, "", "wf_1", "sess_launcher")
+		startRun(t, h, "", "wf_1", "sess_launcher")
 
-	want := "ConfirmEvent rule-1 " + testEventKey + " wf_1"
-	if got := fc.recorded(); !slices.Equal(got, []string{want}) {
-		t.Errorf("confirmer calls = %q, want exactly [%q]", got, want)
-	}
-	if got := fc.launchedKeys(); !slices.Equal(got, []string{testEventKey}) {
-		t.Errorf("launched = %q, want the event's key", got)
-	}
+		want := "ConfirmEvent rule-1 " + testEventKey + " wf_1"
+		if got := fc.recorded(); !slices.Equal(got, []string{want}) {
+			t.Errorf("confirmer calls = %q, want exactly [%q]", got, want)
+		}
+		if got := fc.launchedKeys(); !slices.Equal(got, []string{testEventKey}) {
+			t.Errorf("launched = %q, want the event's key", got)
+		}
+	})
+	t.Run("the confirmer", func(t *testing.T) {
+		cr := newConfirmerRig(t)
+		h, _ := newMarkRig(t, nil)
+		h.runs.launchRules, h.runs.confirmer = cr.st, cr.Confirmer
+		cr.named(t, "wf_1")
+		h.runs.grantLease(t.Context(), "wf_1", "publish", cr.launch(), hostSec())
+
+		startRun(t, h, "", "wf_1", "sess_launcher")
+		cr.confirmedBy(t, "wf_1")
+		startRun(t, h, "", "wf_1", "sess_launcher")
+
+		cr.confirmedBy(t, "wf_1")
+	})
 }
 
 // Only a triggered lease names an event: every other origin's run_start reaches no confirmer. A retry under the kept
@@ -241,13 +256,43 @@ func TestRunStartWithoutRuleConfirmsNothing(t *testing.T) {
 
 // A run_start and an outcome of a run whose rule was deleted write no state file for the rule.
 func TestConfirmForDeletedRuleWritesNothing(t *testing.T) {
+	t.Run("fake confirmer", confirmForDeletedClockRule)
+	t.Run("the confirmer", func(t *testing.T) {
+		cr := newConfirmerRig(t)
+		h, _ := newMarkRig(t, nil)
+		h.runs.launchRules, h.runs.confirmer = cr.st, cr.Confirmer
+		cr.named(t, "wf_1")
+		h.runs.grantLease(t.Context(), "wf_1", "publish", cr.launch(), hostSec())
+		if _, err := cr.st.Delete(t.Context(), cr.rule.ID); err != nil {
+			t.Fatalf("Setup: Delete: %v", err)
+		}
+		cr.RuleChanged(cr.rule.ID, launchrule.ChangeDelete)
+		if _, err := cr.st.State(cr.rule.ID); err == nil {
+			t.Fatal("Setup: the deleted rule's state file is still readable")
+		}
+
+		startRun(t, h, "", "wf_1", "sess_launcher")
+		h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
+			"workflowId": "wf_1", "status": "failed",
+		}))
+
+		if orphans := cr.st.Orphans(); len(orphans) != 0 {
+			t.Errorf("state files of rules the store does not hold = %v, want none: the run recreated one", orphans)
+		}
+		if _, ok := cr.st.Get(cr.rule.ID); ok {
+			t.Error("the deleted rule came back")
+		}
+	})
+}
+
+func confirmForDeletedClockRule(t *testing.T) {
 	dir := t.TempDir()
-	st, err := launchrule.NewStore(dir)
+	st, _, err := launchrule.NewStore(dir)
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
 	rule := putClockRule(t, st, "bundled://publish", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
-	if err := st.Delete(t.Context(), rule.ID); err != nil {
+	if _, err := st.Delete(t.Context(), rule.ID); err != nil {
 		t.Fatalf("Setup: Delete: %v", err)
 	}
 	stateFile := filepath.Join(dir, "launch-state", rule.ID+".json")

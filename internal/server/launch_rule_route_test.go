@@ -23,7 +23,7 @@ func TestLaunchRuleDelete_ThroughTheRequestPathGuard(t *testing.T) {
 		"dotted segments":  "/workspace/../workspace/./x.workflow.json",
 	} {
 		t.Run(name, func(t *testing.T) {
-			st, err := launchrule.NewStore(t.TempDir())
+			st, _, err := launchrule.NewStore(t.TempDir())
 			if err != nil {
 				t.Fatalf("launchrule.NewStore: %v", err)
 			}

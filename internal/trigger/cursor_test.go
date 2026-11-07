@@ -38,7 +38,7 @@ func TestStateRoundTripsThroughTheStore(t *testing.T) {
 	before := h.state(r.ID)
 	h.reopen()
 	after := h.state(r.ID)
-	if !eq(keysOf(after.queue), keysOf(before.queue)) || after.cursor[Feed{Selector: testRepo}.RepoID()].Opened.PendingFloor != 11 {
+	if !eq(keysOf(after.queue), keysOf(before.queue)) || after.cursor[Feed{Selector: testRepo}.repoID()].Opened.PendingFloor != 11 {
 		t.Errorf("after a reload: queue %v, cursor %+v; want %v and pending_floor 11",
 			keysOf(after.queue), after.cursor, keysOf(before.queue))
 	}
@@ -49,7 +49,7 @@ func TestFailedRunReadKeepsLastComplete(t *testing.T) {
 	r := h.create(runSpec("success"))
 	h.runPage()
 	h.poll()
-	first := h.state(r.ID).cursor[Feed{Selector: testRepo}.RepoID()].Runs.LastComplete
+	first := h.state(r.ID).cursor[Feed{Selector: testRepo}.repoID()].Runs.LastComplete
 	h.src.errs = map[string]error{"runs": errFake}
 	h.poll()
 	if got := h.cursorOf(r.ID).Runs.LastComplete; !got.Equal(first) {

@@ -98,7 +98,7 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_manual")
 
-	st, err := launchrule.NewStore(t.TempDir())
+	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()
 			launchableRecipe(br, "wf_manual")
-			st, err := launchrule.NewStore(t.TempDir())
+			st, _, err := launchrule.NewStore(t.TempDir())
 			if err != nil {
 				t.Fatalf("launchrule.NewStore: %v", err)
 			}
@@ -264,7 +264,7 @@ func TestLaunchScheduled_ACallerCancelOnceTheRunExistsKeepsTheLaunchDeadline(t *
 	t.Cleanup(func() { launchTimeout = saved })
 	h, br, _, nightly := nightlyLaunch(t)
 	dir := t.TempDir()
-	st, err := launchrule.NewStore(dir)
+	st, _, err := launchrule.NewStore(dir)
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
@@ -308,7 +308,7 @@ func TestLaunchScheduled_ACallerCancelOnceTheRunExistsKeepsTheLaunchDeadline(t *
 	if !h.runs.bounded("wf_1") {
 		t.Error("the run's deadline was not armed, so nothing bounds a run KAS may have started")
 	}
-	reopened, err := launchrule.NewStore(dir)
+	reopened, _, err := launchrule.NewStore(dir)
 	if err != nil {
 		t.Fatalf("reopen launchrule.NewStore: %v", err)
 	}
@@ -549,7 +549,7 @@ func TestLaunchScheduled_ARunOfARecreatedScheduleLeavesTheNewRowAlone(t *testing
 	h, br, st, entry := nightlyLaunch(t)
 	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		if method == methodKiroWorkflowNew {
-			if err := st.Delete(t.Context(), entry.ID); err != nil {
+			if _, err := st.Delete(t.Context(), entry.ID); err != nil {
 				t.Errorf("Delete: %v", err)
 			}
 			putClockRule(t, st, entry.Source, launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 5}, true)

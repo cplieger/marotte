@@ -27,7 +27,7 @@ func runDefaultsHub(t *testing.T) (*Runtime, *fakeBridge, *http.ServeMux) {
 		{ID: "haiku", Name: "Haiku", EffortTiers: []string{"low"}},
 		{ID: "auto", Name: "Auto"},
 	})
-	st, err := launchrule.NewStore(t.TempDir())
+	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}

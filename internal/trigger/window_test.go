@@ -102,12 +102,12 @@ func TestRunWalkKeepsBoundAcrossHour(t *testing.T) {
 	h.src.runs[0].Next, h.src.runs[0].Partial = "c1", capped
 	h.runPage(run(42, forgeapi.CheckPassing, pollStart.Add(-time.Hour)))
 	clock := pollStart.Add(50 * time.Minute)
-	p := &Poller{src: h.src, store: h.store, marks: h.marks, now: func() time.Time {
+	p := &poller{src: h.src, c: h.c, now: func() time.Time {
 		t := clock
 		clock = clock.Add(20 * time.Minute)
 		return t
 	}}
-	p.Poll(t.Context(), Feeds(h.store.List())[0])
+	p.poll(t.Context(), groupFeeds(h.store.List())[0])
 
 	calls := h.src.recorded()[1:]
 	if len(calls) != 2 || calls[1].after != "c1" || !calls[0].since.Equal(calls[1].since) {
@@ -177,7 +177,7 @@ func TestOverflowedRunAgingOutRecordsGap(t *testing.T) {
 	h, id, _ := overForge(t, runSpec("success"))
 	created := pollStart.Add(time.Hour)
 	es := h.state(id)
-	es.cursor[Feed{Selector: testRepo}.RepoID()].Runs.Runs = map[int64]*runEntry{
+	es.cursor[Feed{Selector: testRepo}.repoID()].Runs.Runs = map[int64]*runEntry{
 		41: {CreatedAt: created, State: "passing", Hold: holdAtForge},
 	}
 	h.seed(id, &es)
@@ -310,7 +310,7 @@ func TestFiredKeptUntilFlooredHorizon(t *testing.T) {
 	start := pollStart.Add(100*time.Hour + 15*time.Minute)
 	fired := start.Add(-runHorizon - 10*time.Minute)
 	es := h.state(r.ID)
-	es.cursor[Feed{Selector: testRepo}.RepoID()].Runs.Fired = map[int64]time.Time{41: fired}
+	es.cursor[Feed{Selector: testRepo}.repoID()].Runs.Fired = map[int64]time.Time{41: fired}
 	h.seed(r.ID, &es)
 	early := horizon(start).Add(-5 * time.Minute)
 	h.runPage(run(41, forgeapi.CheckPassing, fired), run(40, forgeapi.CheckPassing, early))

@@ -44,7 +44,7 @@ func (pr *pollRule) pruneLabeled(lc *labeledCursor, open int) {
 
 // blocked is why the rule may launch nothing now from what the poller saw, empty when nothing holds it.
 func (pr *pollRule) blocked() string {
-	if rc := pr.st.cursor[pr.feed.RepoID()]; rc != nil && rc.Labeled != nil && rc.Labeled.TooMany {
+	if rc := pr.st.cursor[pr.feed.repoID()]; rc != nil && rc.Labeled != nil && rc.Labeled.TooMany {
 		return tooManyOpen
 	}
 	return ""

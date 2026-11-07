@@ -35,6 +35,8 @@ export function settingsPayload(overrides: Partial<EffectiveSettings> = {}): Eff
     workflow_launch: "when-asked",
     terminal_command_timeout_ms: 0,
     engine_heap_mib: 0,
+    trigger_max_live_runs: 3,
+    trigger_max_launches_per_hour: 6,
     mcp_wait_for_ready: false,
     notifications_enabled: false,
     notify_agent_finished: true,

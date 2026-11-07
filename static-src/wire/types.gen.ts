@@ -798,6 +798,12 @@ export interface EffectiveSettings {
   /** EngineHeapMiB is the agent engine's JavaScript heap limit in MiB; 0 is kiro-cli's default. */
   engine_heap_mib: number;
   /**
+ * TriggerMaxLiveRuns and TriggerMaxLaunchesPerHour are the fleet caps on triggered runs, 1 to 100, default 3
+ * and 6 (settings.TriggerCaps).
+ */
+  trigger_max_live_runs: number;
+  trigger_max_launches_per_hour: number;
+  /**
  * SettingsEpoch and SettingsRevision are config.json's version (settings.KeySettingsEpoch and
  * KeySettingsRevision), both 0 before the first write and compared epoch first. A deleted or
  * restored config.json serves a lower version, which a page holding a higher one refuses until
