@@ -5,6 +5,7 @@ import { LAST_DAY, INTERVAL_BOUNDS } from "./launch-rule-types.js";
 import type { ScheduleFreq, ScheduleSpec, ScheduleView } from "./launch-rule-types.js";
 import type { RunDefaults, RunDefaultsPicker } from "./run-defaults-picker.js";
 import { formatClock, formatWeekdayStamp } from "./locale-time.js";
+import { buildRuleInputs } from "./rule-inputs.js";
 
 const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 const WEEKDAY_NAMES = [
@@ -178,6 +179,7 @@ export function summaryLine(view: ScheduleView | undefined): string {
 export function buildUnattendedNote(
   autoApprove: boolean,
   onOpenPermissions: () => void,
+  triggered = false,
 ): HTMLElement {
   const outcome = autoApprove
     ? `the ask is approved automatically after ${UNATTENDED_BUDGET_MINUTES} minutes, except one your organization or Kiro's safety check sends to a person`
@@ -198,12 +200,12 @@ export function buildUnattendedNote(
     el(
       "div",
       { className: "sched-note-body" },
-      `Nobody is watching a scheduled run. If the workflow asks for a permission the active policy does not already allow, ${outcome}. If the run pauses and nobody resumes it within ${UNATTENDED_BUDGET_MINUTES} minutes, it is cancelled.`,
+      `Nobody is watching a ${triggered ? "triggered" : "scheduled"} run. If the workflow asks for a permission the active policy does not already allow, ${outcome}. If the run pauses and nobody resumes it within ${UNATTENDED_BUDGET_MINUTES} minutes, it is cancelled.`,
     ),
     el(
       "div",
       { className: "sched-note-state" },
-      `Auto-approve is ${autoApprove ? "on" : "off"} for every scheduled run, not only this one.`,
+      `Auto-approve is ${autoApprove ? "on" : "off"} for every ${triggered ? "scheduled and triggered" : "scheduled"} run, not only this one.`,
     ),
     link,
   );
@@ -226,20 +228,20 @@ interface PickerOptions {
   /** The Model and Effort selects, opened on the stored pick. The caller builds them so it can hand
    *  them a newer catalog while the form is open. */
   picks: RunDefaultsPicker;
-  onSave: (spec: ScheduleSpec, enabled: boolean, defaults: RunDefaults) => void;
+  /** The recipe's declared inputs, name to placeholder, and the rule's stored fixed values. */
+  declared?: Readonly<Record<string, string>> | undefined;
+  inputs?: Readonly<Record<string, string>> | undefined;
+  onSave: (
+    spec: ScheduleSpec,
+    enabled: boolean,
+    defaults: RunDefaults,
+    inputs: Record<string, string> | undefined,
+  ) => void;
   onRemove: () => void;
   onClose: () => void;
   /** Injected rather than imported: it keeps this module out of the tab/router graph, which is what
    *  lets it be unit-tested as a form instead of as an app. */
   onOpenPermissions: () => void;
-}
-
-/** Each picker's way to add its Remove button once the caller learns its rule exists. */
-const removeOffers = new WeakMap<HTMLElement, () => void>();
-
-/** Add Remove to a picker built before its rule was known; a no-op when it already has one. */
-export function offerScheduleRemove(picker: HTMLElement): void {
-  removeOffers.get(picker)?.();
 }
 
 /** buildSchedulePicker returns the picker body. The caller anchors it (a popup on the Schedule
@@ -426,37 +428,35 @@ export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
     el("span", {}, "Run on this schedule"),
   );
 
+  const inputs = buildRuleInputs({
+    declared: opts.declared,
+    setByEvent: null,
+    initial: opts.inputs,
+  });
   const save = el("button", { type: "button", className: "btn-small btn-primary" }, "Save");
   const picks = opts.picks;
   save.addEventListener("click", () => {
-    opts.onSave(spec, enabled, picks.value());
+    opts.onSave(spec, enabled, picks.value(), inputs.value());
   });
   const cancel = el("button", { type: "button", className: "btn-small" }, "Cancel");
   cancel.addEventListener("click", opts.onClose);
 
   const actions = el("div", { className: "sched-actions" }, save, cancel);
-  let removeOffered = false;
-  const offerRemove = (): void => {
-    if (removeOffered) {
-      return;
-    }
-    removeOffered = true;
+  if (opts.exists) {
     const remove = el("button", { type: "button", className: "btn-small btn-danger" }, "Remove");
     remove.addEventListener("click", opts.onRemove);
     actions.appendChild(remove);
-  };
-  if (opts.exists) {
-    offerRemove();
   }
 
   renderDetail();
   paint();
-  const picker = el(
+  return el(
     "div",
     { className: "sched-picker" },
     el("div", { className: "sched-row" }, freqSel),
     el("div", { className: "sched-row" }, detail),
     summary,
+    inputs.el,
     el("div", { className: "sched-row" }, picks.el),
     enabledRow,
     // Below the rule and above the actions: it is what the user should have read before pressing
@@ -464,6 +464,4 @@ export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
     buildUnattendedNote(opts.autoApprove, opts.onOpenPermissions),
     actions,
   );
-  removeOffers.set(picker, offerRemove);
-  return picker;
 }

@@ -18,7 +18,7 @@ import {
   buildUnattendedNote,
 } from "./schedule-picker.js";
 import { buildRunDefaultsPicker } from "./run-defaults-picker.js";
-import { saveSchedule, deleteSchedule } from "./actions/launch-rules.js";
+import { saveLaunchRule, deleteLaunchRule } from "./actions/launch-rules.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { LAST_DAY, INTERVAL_BOUNDS } from "./launch-rule-types.js";
 import type { ScheduleFreq, ScheduleSpec, ScheduleView } from "./launch-rule-types.js";
@@ -694,17 +694,17 @@ describe("saving from the form", () => {
       autoApprove: false,
       picks: buildRunDefaultsPicker({ models: [], initial: {} }),
       onSave: (spec, enabled, defaults) => {
-        void saveSchedule.dispatch({
+        void saveLaunchRule.dispatch({
           ...(id === undefined ? {} : { id }),
           source: SOURCE,
-          spec,
+          when: { clock: spec },
           enabled,
           ...defaults,
         });
       },
       onRemove: () => {
         if (id !== undefined) {
-          void deleteSchedule.dispatch(id);
+          void deleteLaunchRule.dispatch(id);
         }
       },
       onClose: vi.fn(),
@@ -752,5 +752,37 @@ describe("saving from the form", () => {
       expect(mockFetch).toHaveBeenCalledTimes(3);
     });
     expect(sent(2)).toMatchObject({ url: "/api/launch-rules/r1", method: "DELETE" });
+  });
+});
+
+describe("the clock form's inputs", () => {
+  it("clock form sends fixed inputs", () => {
+    let sent: Record<string, string> | undefined | null = null;
+    const body = buildSchedulePicker({
+      spec: { freq: "daily", hour: 2, minute: 0 },
+      enabled: true,
+      exists: true,
+      autoApprove: false,
+      picks: buildRunDefaultsPicker({ models: [], initial: {} }),
+      declared: { tag: "string", run_id: "string" },
+      inputs: { tag: "v1" },
+      onSave: (_s, _e, _d, inputs) => {
+        sent = inputs;
+      },
+      onRemove: vi.fn(),
+      onClose: vi.fn(),
+      onOpenPermissions: vi.fn(),
+    });
+    const fields = [...body.querySelectorAll<HTMLInputElement>(".rw-inputs input")];
+    expect(fields.map((f) => [f.getAttribute("aria-label"), f.value])).toEqual([
+      ["Input tag", "v1"],
+      ["Input run_id", ""],
+    ]);
+    expect(body.querySelector(".rw-event-inputs, .rw-no-event-id")).toBeNull();
+    const [tag, runID] = fields;
+    tag!.value = "v2";
+    runID!.value = "41";
+    body.querySelector<HTMLButtonElement>(".btn-primary")?.click();
+    expect(sent).toEqual({ tag: "v2", run_id: "41" });
   });
 });

@@ -2,75 +2,38 @@
 // and every event rule's row state.
 
 import { join as joinKey } from "@cplieger/keyenc";
-import { ActionError, apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
-import type {
-  LaunchRulesResponse,
-  LaunchRuleView,
-  ScheduleSpec,
-  SchedulesResponse,
-  ScheduleView,
-} from "../launch-rule-types.js";
+import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import type { LaunchRulesResponse, LaunchRuleView } from "../launch-rule-types.js";
 import type { RunDefaults } from "../run-defaults-picker.js";
 import { serverSentence } from "./server-sentence.js";
 
-/** The schedule form's view of a clock rule; null for an event rule. */
-function scheduleViewOf(r: LaunchRuleView): ScheduleView | null {
-  const spec = r.when.clock;
-  if (spec === undefined) {
-    return null;
-  }
-  const st = r.status;
-  const status = r.error === undefined ? st?.last_status : "failed";
-  const reason = r.error ?? st?.last_reason;
-  return {
-    id: r.id,
-    source: r.source,
-    enabled: r.enabled,
-    spec,
-    ...(r.name === undefined ? {} : { name: r.name }),
-    ...(r.model === undefined ? {} : { model: r.model }),
-    ...(r.effort === undefined ? {} : { effort: r.effort }),
-    ...(r.inputs === undefined ? {} : { inputs: r.inputs }),
-    ...(r.next_run_at === undefined ? {} : { next_run_at: r.next_run_at }),
-    ...(st?.last_run_at === undefined ? {} : { last_run_at: st.last_run_at }),
-    ...(status === undefined ? {} : { last_status: status }),
-    ...(reason === undefined ? {} : { last_reason: reason }),
-    ...(st?.waiting_for === undefined ? {} : { waiting_for: st.waiting_for }),
-  };
-}
-
-export const loadSchedules = apiAction<
+export const loadLaunchRules = apiAction<
   // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
   void,
-  SchedulesResponse
+  LaunchRulesResponse
 >({
-  name: "schedules.list",
+  name: "launch-rules.list",
   dedupe: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   request: () => ({ method: "GET", path: "/api/launch-rules" }),
-  decode: (data) => ({
-    schedules: (data as LaunchRulesResponse).rules
-      .map(scheduleViewOf)
-      .filter((v): v is ScheduleView => v !== null),
-  }),
-  error: "Could not load schedules",
+  error: "Could not load the launch rules",
 });
 
-/** Create a recipe's clock rule, or replace the one `id` names, answering the stored rule. A
- *  refused model pick shows the server's sentence. A create while one for the same recipe is in
- *  flight joins it, because a second POST would mint a second rule the form never shows. */
-export const saveSchedule = apiAction<
-  {
-    id?: string;
-    source: string;
-    spec: ScheduleSpec;
-    enabled: boolean;
-    inputs?: Record<string, string>;
-  } & RunDefaults,
-  ScheduleView
->({
-  name: "schedules.save",
+/** One rule as a save sends it; the server stores the rule whole, so every field is sent each time. */
+export type LaunchRuleBody = {
+  id?: string;
+  source: string;
+  enabled: boolean;
+  when: LaunchRuleView["when"];
+  inputs?: Record<string, string>;
+} & RunDefaults;
+
+/** Create a rule, or replace the one `id` names, answering the stored rule. A refusal's error is
+ *  the server's sentence, for the form to show beside its fields. A create joins one for the same
+ *  recipe still in flight, because a second POST would mint a second rule the form never shows. */
+export const saveLaunchRule = apiAction<LaunchRuleBody, LaunchRuleView>({
+  name: "launch-rules.save",
   dedupe: (a) => (a.id === undefined ? joinKey("new", a.source) : joinKey("rule", a.id)),
   request: (a) => ({
     method: a.id === undefined ? "POST" : "PUT",
@@ -82,22 +45,25 @@ export const saveSchedule = apiAction<
       ...(a.model === undefined ? {} : { model: a.model }),
       ...(a.effort === undefined ? {} : { effort: a.effort }),
       ...(a.inputs === undefined ? {} : { inputs: a.inputs }),
-      when: { clock: a.spec },
+      when: a.when,
     },
   }),
-  decode: (data) => {
-    const v = scheduleViewOf(data as LaunchRuleView);
-    if (v === null) {
-      throw new ActionError("the server answered a rule with no clock");
-    }
-    return v;
-  },
-  error: (_args, err) => serverSentence(err) ?? "Could not save the schedule",
+  error: (_args, err) => serverSentence(err) ?? "Could not save the rule",
 });
 
-/** Remove a recipe's clock rule by its minted id. */
-export const deleteSchedule = apiAction<string, { ok: boolean }>({
-  name: "schedules.delete",
+/** Remove a rule by its minted id; an event rule's held events go with it. */
+export const deleteLaunchRule = apiAction<string, { ok: boolean }>({
+  name: "launch-rules.delete",
   request: (id) => ({ method: "DELETE", path: `/api/launch-rules/${encodeURIComponent(id)}` }),
-  error: "Could not remove the schedule",
+  error: "Could not remove the rule",
+});
+
+/** Clear an event rule's gap segments, answering the rule as it now reads. */
+export const dismissGap = apiAction<string, LaunchRuleView>({
+  name: "launch-rules.dismiss-gap",
+  request: (id) => ({
+    method: "POST",
+    path: `/api/launch-rules/${encodeURIComponent(id)}/dismiss-gap`,
+  }),
+  error: (_args, err) => serverSentence(err) ?? "Could not dismiss the gap",
 });

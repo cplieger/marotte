@@ -6,20 +6,25 @@ import { join as joinKey } from "@cplieger/keyenc";
 import { onBus, onSSE, BUS_CATALOG_MODELS, BUS_RUNS_CHANGED } from "./bus.js";
 import { reconcile } from "./reconcile.js";
 import { loadRecipes, loadRuns, launchRun, cancelRun } from "./actions/runs.js";
-import { loadSchedules, saveSchedule, deleteSchedule } from "./actions/launch-rules.js";
 import {
-  buildSchedulePicker,
-  defaultSpec,
-  offerScheduleRemove,
-  summaryLine,
-} from "./schedule-picker.js";
+  deleteLaunchRule,
+  dismissGap,
+  loadLaunchRules,
+  saveLaunchRule,
+  type LaunchRuleBody,
+} from "./actions/launch-rules.js";
+import { listForges } from "./actions/forge-list.js";
+import { serverSentence } from "./actions/server-sentence.js";
+import { confirm } from "./confirm.js";
+import { buildSchedulePicker, defaultSpec } from "./schedule-picker.js";
+import { buildEventForm, buildRuleList, ruleError, ruleLine } from "./run-when.js";
 import {
   buildRunDefaultsPicker,
   type RunDefaults,
   type RunDefaultsPicker,
 } from "./run-defaults-picker.js";
 import { getCachedModels } from "./picker.js";
-import type { ScheduleSpec, ScheduleView } from "./launch-rule-types.js";
+import type { LaunchRuleView } from "./launch-rule-types.js";
 import { createPopup } from "@cplieger/ui/popup";
 import { openRunView } from "./run-view.js";
 import { loadSettings, refreshSettings } from "./persist.js";
@@ -38,12 +43,12 @@ import { workNodes } from "./exec-view/model.js";
 /** Last fetched recipe list, kept so a repaint needs no refetch. */
 let recipes: Recipe[] = [];
 
-/** Whether the latest recipe fetch answered. A schedule is called orphaned only against a current
+/** Whether the latest recipe fetch answered. A rule is called orphaned only against a current
  *  list: a failed refetch keeps the old rows on screen, but absence from them proves nothing. */
 let recipesCurrent = false;
 
 /** MODULE state, not a render parameter, and that distinction is load-bearing: this panel repaints
- *  itself on its own schedule (the run poll, the schedules fetch, the settings SSE), and a parameter
+ *  itself on its own schedule (the run poll, the rules fetch, the settings SSE), and a parameter
  *  threaded only through the render call would be dropped by the next one — so the filter would
  *  silently lift seconds after it was typed. */
 let filterText = "";
@@ -85,18 +90,18 @@ function visibleRecipes(): Recipe[] {
   return recipes.filter((r) => filterHaystack(r).includes(filterText));
 }
 
-/** Schedules whose recipe is not in the current list: no recipe row carries them, so they get their
+/** Rules whose recipe is not in the current list: no recipe row carries them, so they get their
  *  own, or they could never be deleted. */
-function orphanedSchedules(): ScheduleView[] {
+function orphanedRules(): LaunchRuleView[] {
   if (!recipesCurrent) {
     return [];
   }
   const known = new Set(recipes.map((r) => r.source));
-  return [...schedules.values()].filter((v) => !known.has(v.source));
+  return [...rules.values()].flat().filter((v) => !known.has(v.source));
 }
 
-function visibleOrphans(): ScheduleView[] {
-  return orphanedSchedules().filter(
+function visibleOrphans(): LaunchRuleView[] {
+  return orphanedRules().filter(
     (v) =>
       filterText === "" ||
       [v.name ?? "", v.source, "orphaned"].join("\n").toLowerCase().includes(filterText),
@@ -122,7 +127,7 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
         void refreshRuns();
       }
     });
-    // The schedule form's unattended note reads the auto-approve setting, and that setting is
+    // The rule forms' unattended note and event lines read the auto-approve setting, and that setting is
     // changed on another page. Without this the note would be correct as of whenever this tab last
     // rendered, which is the boilerplate a live read-out exists to avoid.
     onSSE("settings_updated", () => {
@@ -135,7 +140,7 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
         void refreshRecipes();
       }
     });
-    // An open Run or Schedule form holds the catalog it opened with, which can be empty when it
+    // An open Run or rule form holds the catalog it opened with, which can be empty when it
     // opened before the boot fetch landed.
     onBus(BUS_CATALOG_MODELS, () => {
       const models = getCachedModels();
@@ -143,7 +148,7 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
       if (detail !== null) {
         formPicks.get(detail)?.setModels(models);
       }
-      schedulePicks?.setModels(models);
+      rulePicks?.setModels(models);
     });
   }
   if (recipes.length === 0) {
@@ -162,8 +167,8 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
     }
     paint();
     // Decoration, deliberately off the critical path: the workflow list must still render when the
-    // schedule endpoint is unavailable.
-    void refreshSchedules();
+    // launch-rule endpoint is unavailable.
+    void refreshRules();
     void refreshAutoApprove(loadSettings);
   })();
 }
@@ -198,54 +203,131 @@ async function refreshAutoApprove(read: () => Promise<EffectiveSettings | null>)
   // A failed read leaves the last known value rather than resetting to false: false is the SERVER's
   // default for an absent key, which the payload now states outright, so re-deriving it here on a
   // network failure would be this module guessing at a value it can just be told.
-  if (s !== null) {
+  if (s !== null && s.scheduled_auto_approve !== autoApprove) {
     autoApprove = s.scheduled_auto_approve;
+    // An event rule's line names auto-approve while it is on.
+    paint();
   }
 }
 
-/** Clock rules by recipe source; the schedule form edits a recipe's first one. */
-let schedules = new Map<string, ScheduleView>();
+/** Launch rules by recipe source, in the server's order. */
+let rules = new Map<string, LaunchRuleView[]>();
 
-async function refreshSchedules(): Promise<void> {
-  const d = await loadSchedules.dispatch(undefined);
+/** The open popup's rule list, repainted when a fetch lands; null while it shows a form. */
+let popupList: { readonly source: string; readonly repaint: () => void } | null = null;
+
+async function refreshRules(): Promise<void> {
+  const d = await loadLaunchRules.dispatch(undefined);
   if (d === null) {
     return;
   }
-  const next = new Map<string, ScheduleView>();
-  for (const v of d.schedules) {
-    if (!next.has(v.source)) {
-      next.set(v.source, v);
-    }
+  const next = new Map<string, LaunchRuleView[]>();
+  for (const v of d.rules) {
+    next.set(v.source, [...(next.get(v.source) ?? []), v]);
   }
-  schedules = next;
-  if (scheduleForm !== null && schedules.has(scheduleForm.source)) {
-    offerScheduleRemove(scheduleForm.picker);
-  }
+  rules = next;
+  popupList?.repaint();
   paint();
 }
 
-/** Reflect a recipe's schedule onto its row's second line and its button. */
-function syncSchedule(row: HTMLElement, r: Recipe): void {
-  const line = scheduleLineOf(row);
+/** Put a rule the server just answered in place, before a refresh confirms it: a failed list read
+ *  would otherwise leave no id, and the next save would mint a second rule. */
+function storeRule(v: LaunchRuleView): void {
+  const list = rules.get(v.source) ?? [];
+  const i = list.findIndex((x) => x.id === v.id);
+  rules.set(v.source, i < 0 ? [...list, v] : list.map((x, j) => (j === i ? v : x)));
+  popupList?.repaint();
+  paint();
+}
+
+function forgetRule(v: LaunchRuleView): void {
+  rules.set(
+    v.source,
+    (rules.get(v.source) ?? []).filter((x) => x.id !== v.id),
+  );
+  popupList?.repaint();
+  paint();
+}
+
+/** A save of `v` with every field kept but those `over` names. */
+function bodyOf(v: LaunchRuleView, over: Partial<LaunchRuleBody> = {}): LaunchRuleBody {
+  return {
+    id: v.id,
+    source: v.source,
+    enabled: v.enabled,
+    when: v.when,
+    ...(v.inputs === undefined ? {} : { inputs: v.inputs }),
+    ...(v.model === undefined ? {} : { model: v.model }),
+    ...(v.effort === undefined ? {} : { effort: v.effort }),
+    ...over,
+  };
+}
+
+async function toggleRule(v: LaunchRuleView, enabled: boolean): Promise<void> {
+  const saved = await saveLaunchRule.dispatch(bodyOf(v, { enabled }));
+  if (saved === null) {
+    // Puts the switch back where the stored rule has it.
+    popupList?.repaint();
+    return;
+  }
+  storeRule(saved);
+}
+
+/** Delete a rule, after a confirm naming the events it holds when it holds any. */
+async function removeRule(v: LaunchRuleView): Promise<void> {
+  if (v.held > 0) {
+    const n = v.held === 1 ? "1 event" : `${String(v.held)} events`;
+    const ok = await confirm({
+      title: "Delete this rule?",
+      body: `It holds ${n} waiting to launch, which are dropped with it.`,
+      confirmLabel: "Delete",
+      variant: "destructive",
+    });
+    if (!ok) {
+      return;
+    }
+  }
+  if ((await deleteLaunchRule.dispatch(v.id)) === null) {
+    return;
+  }
+  forgetRule(v);
+  await refreshRules();
+}
+
+/** Reflect a recipe's rules onto its row's second line and its button. */
+function syncRules(row: HTMLElement, r: Recipe): void {
+  const line = rulesLineOf(row);
   if (line === null) {
     return;
   }
-  const view = schedules.get(r.source);
-  line.textContent = scheduleLine(r);
-  line.classList.toggle("is-scheduled", view?.enabled === true);
+  const list = rules.get(r.source) ?? [];
+  const enabled = list.filter((v) => v.enabled).length;
+  const failing = list.some((v) => ruleError(v) !== "");
+  line.textContent = rulesLine(r);
+  line.classList.toggle("is-scheduled", enabled > 0 && !failing);
+  line.classList.toggle("entry-sub-error", failing);
   const btn = row.querySelector<HTMLButtonElement>(".recipe-sched-btn");
   if (btn !== null) {
-    btn.classList.toggle("on", view?.enabled === true);
+    btn.classList.toggle("on", enabled > 0);
+    btn.textContent = enabled > 1 ? `Run when… ${String(enabled)}` : "Run when…";
   }
 }
 
-/** The open schedule form's Model and Effort selects; one popup of the group is open at a time. */
-let schedulePicks: RunDefaultsPicker | null = null;
+/** The open rule form's Model and Effort selects; one popup of the group is open at a time. */
+let rulePicks: RunDefaultsPicker | null = null;
 
-/** The open schedule form, so a list that lands after it opened can offer its Remove. */
-let scheduleForm: { readonly source: string; readonly picker: HTMLElement } | null = null;
+function picksFor(v: LaunchRuleView | undefined): RunDefaultsPicker {
+  rulePicks = buildRunDefaultsPicker({
+    models: getCachedModels(),
+    initial: {
+      ...(v?.model === undefined ? {} : { model: v.model }),
+      ...(v?.effort === undefined ? {} : { effort: v.effort }),
+    },
+  });
+  return rulePicks;
+}
 
-function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
+function wireRulesPopup(btn: HTMLButtonElement, source: string): void {
   let popup: ReturnType<typeof createPopup> | null = null;
   let open = false;
 
@@ -256,73 +338,166 @@ function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
       open = false;
       return;
     }
-    const view = schedules.get(source);
     const body = el("div", { className: "sched-popup" });
-    // Rebuilt per open rather than cached: the picker renders the CURRENT schedule, and a cached
-    // body would show whatever the set looked like the first time the button was pressed.
+    // Rebuilt per open rather than cached: the popup renders the CURRENT rules.
     popup?.hide();
     popup = createPopup(body, { trigger: btn, group: "recipe-schedule" });
     const close = (): void => {
       popup?.hide();
       open = false;
+      if (popupList?.source === source) {
+        popupList = null;
+      }
     };
-    const picks = buildRunDefaultsPicker({
-      models: getCachedModels(),
-      initial: {
-        ...(view?.model === undefined ? {} : { model: view.model }),
-        ...(view?.effort === undefined ? {} : { effort: view.effort }),
-      },
-    });
-    schedulePicks = picks;
-    const picker = buildSchedulePicker({
-      spec: view?.spec ?? defaultSpec(),
-      enabled: view?.enabled ?? false,
-      exists: view !== undefined,
-      autoApprove,
-      picks,
-      onOpenPermissions: () => {
-        close();
-        void openSettingsView("permissions");
-      },
-      // Closed only once saved: a refused pick leaves the reader's edits on the form beside the
-      // server's sentence. The rule is looked up at save, not at open: a list that lands while
-      // the form is open names the rule to replace, and a POST then would add a second one.
-      onSave: (spec: ScheduleSpec, enabled: boolean, defaults: RunDefaults) => {
-        void (async () => {
-          const current = schedules.get(source);
-          const saved = await saveSchedule.dispatch({
-            ...(current === undefined ? {} : { id: current.id }),
-            ...(current?.inputs === undefined ? {} : { inputs: current.inputs }),
-            source,
-            spec,
-            enabled,
-            ...defaults,
-          });
-          if (saved === null) {
-            return;
-          }
-          close();
-          // Kept before the refresh: a failed list read would otherwise leave no id, and the next
-          // Save would mint a second rule.
-          schedules.set(source, saved);
-          paint();
-          await refreshSchedules();
-        })();
-      },
-      onRemove: () => {
-        close();
-        void (async () => {
-          const current = schedules.get(source);
-          if (current !== undefined) {
-            await deleteSchedule.dispatch(current.id);
-          }
-          await refreshSchedules();
-        })();
-      },
-      onClose: close,
-    });
-    scheduleForm = { source, picker };
-    body.appendChild(picker);
+    const view = (node: HTMLElement): void => {
+      body.replaceChildren(node);
+    };
+    const recipe = (): Recipe | undefined => recipes.find((x) => x.source === source);
+    const openPermissions = (): void => {
+      close();
+      void openSettingsView("permissions");
+    };
+    const saved = async (v: LaunchRuleView): Promise<void> => {
+      close();
+      storeRule(v);
+      await refreshRules();
+    };
+    const idOf = (v: LaunchRuleView | undefined): { id?: string } =>
+      v === undefined ? {} : { id: v.id };
+
+    const showClock = (v?: LaunchRuleView): void => {
+      popupList = null;
+      view(
+        buildSchedulePicker({
+          spec: v?.when.clock ?? defaultSpec(),
+          enabled: v?.enabled ?? true,
+          exists: v !== undefined,
+          autoApprove,
+          picks: picksFor(v),
+          declared: recipe()?.inputs,
+          inputs: v?.inputs,
+          onOpenPermissions: openPermissions,
+          // Closed only once saved: a refused pick leaves the reader's edits on the form beside
+          // the server's sentence.
+          onSave: (spec, enabled, defaults, inputs) => {
+            void (async () => {
+              const s = await saveLaunchRule.dispatch({
+                ...idOf(v),
+                source,
+                enabled,
+                when: { clock: spec },
+                ...(inputs === undefined ? {} : { inputs }),
+                ...defaults,
+              });
+              if (s !== null) {
+                await saved(s);
+              }
+            })();
+          },
+          onRemove: () => {
+            if (v !== undefined) {
+              close();
+              void removeRule(v);
+            }
+          },
+          onClose: close,
+        }),
+      );
+    };
+
+    const showEvent = (v?: LaunchRuleView): void => {
+      popupList = null;
+      const loading = el("div", { className: "sched-hint" }, "Reading your connections…");
+      view(loading);
+      void listForges.dispatch(undefined).then((d) => {
+        if (!body.contains(loading)) {
+          return;
+        }
+        if (d === null) {
+          view(
+            el("div", { className: "sched-hint" }, "Could not read the connections in Sources."),
+          );
+          return;
+        }
+        view(
+          buildEventForm({
+            ...(v === undefined ? {} : { rule: v }),
+            forges: d.forges,
+            declared: recipe()?.inputs,
+            autoApprove,
+            picks: picksFor(v),
+            onOpenPermissions: openPermissions,
+            onClose: close,
+            onSave: async (draft, defaults) => {
+              let refusal = "Could not save the rule";
+              const s = await saveLaunchRule.dispatch(
+                {
+                  ...idOf(v),
+                  source,
+                  enabled: draft.enabled,
+                  when: { event: draft.event },
+                  ...(draft.inputs === undefined ? {} : { inputs: draft.inputs }),
+                  ...defaults,
+                },
+                {
+                  onError: (err) => {
+                    refusal = serverSentence(err) ?? refusal;
+                  },
+                },
+              );
+              if (s === null) {
+                return refusal;
+              }
+              await saved(s);
+              return null;
+            },
+          }),
+        );
+      });
+    };
+
+    const showList = (): void => {
+      const repaint = (): void => {
+        const r = recipe();
+        view(
+          buildRuleList({
+            rules: rules.get(source) ?? [],
+            autoApprove,
+            declared: r === undefined ? undefined : Object.keys(r.inputs ?? {}),
+            onToggle: (v, enabled) => {
+              void toggleRule(v, enabled);
+            },
+            onEdit: (v) => {
+              if (v.when.clock === undefined) {
+                showEvent(v);
+              } else {
+                showClock(v);
+              }
+            },
+            onDelete: (v) => {
+              void removeRule(v);
+            },
+            onDismissGap: async (v) => {
+              const next = await dismissGap.dispatch(v.id);
+              if (next !== null) {
+                storeRule(next);
+              }
+              return next;
+            },
+            onAddClock: () => {
+              showClock();
+            },
+            onAddEvent: () => {
+              showEvent();
+            },
+          }),
+        );
+      };
+      popupList = { source, repaint };
+      repaint();
+    };
+
+    showList();
     popup.show();
     open = true;
   });
@@ -358,7 +533,7 @@ async function refreshRuns(): Promise<void> {
 type RecipeEntry =
   | { readonly kind: "row"; readonly recipe: Recipe }
   | { readonly kind: "detail"; readonly recipe: Recipe }
-  | { readonly kind: "orphan"; readonly schedule: ScheduleView };
+  | { readonly kind: "orphan"; readonly rule: LaunchRuleView };
 
 /** The recipe whose input form is open, by source; at most one, like a `<details>` group. */
 let openForm: string | null = null;
@@ -380,7 +555,7 @@ function paint(): void {
       el(
         "div",
         { className: "list-empty" },
-        recipes.length === 0 && orphanedSchedules().length === 0
+        recipes.length === 0 && orphanedRules().length === 0
           ? "No workflows available."
           : "No workflows match the filter.",
       ),
@@ -399,14 +574,13 @@ function paint(): void {
       entries.push({ kind: "detail", recipe });
     }
   }
-  for (const schedule of orphans) {
-    entries.push({ kind: "orphan", schedule });
+  for (const rule of orphans) {
+    entries.push({ kind: "orphan", rule });
   }
   // Keyed on `source`, which is stable across a filter change — so a keystroke removes and re-adds
   // the rows that left and arrived rather than rebuilding the list.
   reconcile(list, entries, {
-    key: (e: RecipeEntry) =>
-      joinKey(e.kind, e.kind === "orphan" ? e.schedule.source : e.recipe.source),
+    key: (e: RecipeEntry) => joinKey(e.kind, e.kind === "orphan" ? e.rule.id : e.recipe.source),
     mount: (e: RecipeEntry) => {
       switch (e.kind) {
         case "row":
@@ -414,14 +588,14 @@ function paint(): void {
         case "detail":
           return inputForm(e.recipe);
         case "orphan":
-          return orphanRow(e.schedule);
+          return orphanRow(e.rule);
       }
     },
     update: (node: HTMLElement, e: RecipeEntry) => {
       switch (e.kind) {
         case "row":
           syncButton(node, e.recipe);
-          syncSchedule(node, e.recipe);
+          syncRules(node, e.recipe);
           syncStanding(node, e.recipe);
           break;
         case "detail":
@@ -466,10 +640,10 @@ function recipeRow(r: Recipe): HTMLElement {
   const schedBtn = el("button", {
     type: "button",
     className: "btn-small recipe-sched-btn",
-    "aria-label": `Schedule ${r.name}`,
+    "aria-label": `Launch rules of ${r.name}`,
   }) as HTMLButtonElement;
-  schedBtn.textContent = "Schedule";
-  wireSchedulePopup(schedBtn, r.source);
+  schedBtn.textContent = "Run when…";
+  wireRulesPopup(schedBtn, r.source);
 
   // A slot, so a standing change updates a kept row; only a file-backed recipe has a file to join.
   const standingSlot =
@@ -485,46 +659,43 @@ function recipeRow(r: Recipe): HTMLElement {
     ],
     sub: {
       kind: "lines",
-      lines: [{ text: r.description ?? "" }, { text: scheduleLine(r) }],
+      lines: [{ text: r.description ?? "" }, { text: rulesLine(r) }],
     },
     actions: [schedBtn, btn],
     data: { "data-recipe": r.source },
   });
   syncButton(row, r);
-  syncSchedule(row, r);
+  syncRules(row, r);
   syncStanding(row, r);
   return row;
 }
 
-/** A schedule whose recipe file is gone: it cannot run or be edited, so Delete is its one control. */
-function orphanRow(v: ScheduleView): HTMLElement {
+/** A rule whose recipe file is gone: it cannot run or be edited, so Delete is its one control. */
+function orphanRow(v: LaunchRuleView): HTMLElement {
   const title = v.name ?? v.source;
   const del = el("button", {
     type: "button",
     className: "btn-small recipe-sched-delete-btn",
-    "aria-label": `Delete the schedule of ${title}`,
+    "aria-label": `Delete the rule of ${title}`,
   }) as HTMLButtonElement;
-  del.textContent = "Delete schedule";
+  del.textContent = "Delete rule";
   del.addEventListener("click", (e: MouseEvent) => {
     e.stopPropagation();
-    void (async () => {
-      await deleteSchedule.dispatch(v.id);
-      await refreshSchedules();
-    })();
+    void removeRule(v);
   });
   return entryRow({
-    key: v.source,
+    key: v.id,
     title,
     badges: [el("span", { className: "docs-badge" }, "orphaned")],
     sub: {
       kind: "lines",
       lines: [
         { text: v.source, mono: true },
-        { text: "Its workflow file is gone, so this schedule cannot run.", error: true },
+        { text: "Its workflow file is gone, so this rule cannot run.", error: true },
       ],
     },
     actions: [del],
-    data: { "data-orphan-schedule": v.id },
+    data: { "data-orphan-rule": v.id },
   });
 }
 
@@ -580,15 +751,26 @@ function toggleTooltip(btn: HTMLElement, text: string): void {
   }
 }
 
-/** The row's second line: the schedule's state, then the declared inputs. */
-function scheduleLine(r: Recipe): string {
-  const inputs = Object.keys(r.inputs ?? {});
-  const sched = summaryLine(schedules.get(r.source));
-  return inputs.length === 0 ? sched : `${sched} · Inputs: ${inputs.join(", ")}`;
+/** The row's second line: the first error any of the recipe's rules shows, else its first
+ *  enabled rule's line and how many more there are; then the declared inputs. */
+function rulesLine(r: Recipe): string {
+  const list = rules.get(r.source) ?? [];
+  const declared = Object.keys(r.inputs ?? {});
+  let line = list.map(ruleError).find((e) => e !== "");
+  if (line === undefined) {
+    const on = list.filter((v) => v.enabled);
+    const [first] = on;
+    line = first === undefined ? "Not scheduled" : ruleLine(first, { autoApprove, declared });
+    const more = on.length - 1;
+    if (more > 0) {
+      line += ` \u00b7 +${String(more)} more rule${more === 1 ? "" : "s"}`;
+    }
+  }
+  return declared.length === 0 ? line : `${line} \u00b7 Inputs: ${declared.join(", ")}`;
 }
 
-/** The line `scheduleLine` fills: the second of the row's two subtitle lines. */
-function scheduleLineOf(row: HTMLElement): HTMLElement | null {
+/** The line `rulesLine` fills: the second of the row's two subtitle lines. */
+function rulesLineOf(row: HTMLElement): HTMLElement | null {
   return row.querySelector<HTMLElement>(".entry-lines > .entry-sub:nth-child(2)");
 }
 

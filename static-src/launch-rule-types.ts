@@ -60,12 +60,9 @@ export interface ScheduleView {
   inputs?: Record<string, string>;
 }
 
-export interface SchedulesResponse {
-  schedules: ScheduleView[];
-}
-
 /** The forge event an event rule watches for; mirrors internal/launchrule.Kind. */
-export type EventKind = "issue_labeled" | "pr_labeled" | "issue_opened" | "pr_opened" | "run_concluded";
+export type EventKind =
+  "issue_labeled" | "pr_labeled" | "issue_opened" | "pr_opened" | "run_concluded";
 
 /** What an event rule holds while its recipe cannot launch; mirrors internal/launchrule.Hold. */
 export interface Hold {
@@ -114,13 +111,17 @@ export interface LaunchRuleStatus {
   blocked?: string;
   /** An event rule's launch state as its row reads it. */
   row_text?: string;
+  /** The key of an event rule's last confirmed event. */
+  last_event?: string;
+  /** RFC3339 start of an event rule's last applied poll. */
+  checked_at?: string;
   /** Why an event rule's reads wait for a forge or trigger budget, and until when. */
   paused?: string;
   gaps?: Gap[];
 }
 
 /** An event rule's cursor as counts and sentences; mirrors internal/trigger.CursorSummary. */
-export interface CursorSummary {
+interface CursorSummary {
   blocked?: string;
   notes?: string[];
   items?: number;
@@ -151,4 +152,31 @@ export interface LaunchRuleView {
 
 export interface LaunchRulesResponse {
   rules: LaunchRuleView[];
+}
+
+/** The schedule form's view of a clock rule; null for an event rule. A rule whose state file would
+ *  not load reads as failed, with the load error as its reason. */
+export function scheduleViewOf(r: LaunchRuleView): ScheduleView | null {
+  const spec = r.when.clock;
+  if (spec === undefined) {
+    return null;
+  }
+  const st = r.status;
+  const status = r.error === undefined ? st?.last_status : "failed";
+  const reason = r.error ?? st?.last_reason;
+  return {
+    id: r.id,
+    source: r.source,
+    enabled: r.enabled,
+    spec,
+    ...(r.name === undefined ? {} : { name: r.name }),
+    ...(r.model === undefined ? {} : { model: r.model }),
+    ...(r.effort === undefined ? {} : { effort: r.effort }),
+    ...(r.inputs === undefined ? {} : { inputs: r.inputs }),
+    ...(r.next_run_at === undefined ? {} : { next_run_at: r.next_run_at }),
+    ...(st?.last_run_at === undefined ? {} : { last_run_at: st.last_run_at }),
+    ...(status === undefined ? {} : { last_status: status }),
+    ...(reason === undefined ? {} : { last_reason: reason }),
+    ...(st?.waiting_for === undefined ? {} : { waiting_for: st.waiting_for }),
+  };
 }

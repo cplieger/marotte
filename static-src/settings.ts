@@ -814,7 +814,7 @@ const TRIGGER_CAP_MAX = 100;
 
 /** The cap a typed number asks for, clamped into 1..100; null for an empty or unreadable entry,
  *  which sends nothing because the setting has no unset value. */
-export function triggerCap(raw: string): number | null {
+function triggerCap(raw: string): number | null {
   const n = Math.round(Number(raw.trim()));
   if (raw.trim() === "" || !Number.isFinite(n)) {
     return null;

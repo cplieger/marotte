@@ -6,9 +6,10 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
 import { patchSettings } from "./persist.js";
 import { applyGeneralPanel, initGeneralPanelControls } from "./settings.js";
+import type * as Persist from "./persist.js";
 
 vi.mock("./persist.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./persist.js")>()),
+  ...(await importOriginal<typeof Persist>()),
   patchSettings: vi.fn(() => Promise.resolve({ outcome: "saved" })),
 }));
 
