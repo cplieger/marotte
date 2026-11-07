@@ -161,11 +161,13 @@ describe("a close shows at once", () => {
   });
 });
 
-/** A strip three 20 px rows tall in a 24 px box, so it scrolls; removed after each case. */
+/** A strip three 20 px rows tall in a 24 px box, so it scrolls; removed after each case. Scroll
+ *  anchoring is off: it moves the offset back by a row put back above the visible ones, which
+ *  would hide a missing restore. */
 function scrollableStrip(): { list: HTMLElement; dispose: () => void } {
   const style = document.createElement("style");
   style.textContent =
-    "#tab-list{display:block;height:24px;overflow:auto} #tab-list .tab{display:block;height:20px}";
+    "#tab-list{display:block;height:24px;overflow:auto;overflow-anchor:none} #tab-list .tab{display:block;height:20px}";
   document.head.appendChild(style);
   const list = document.getElementById("tab-list");
   if (list === null) {
@@ -631,6 +633,171 @@ describe("an unanswered close of the active tab", () => {
     } finally {
       vi.useRealTimers();
       tabServer.releaseResponses();
+    }
+  });
+});
+
+type CloseOutcome = "refused" | "unanswered" | "deadline";
+
+/** Queue the next close's outcome; none commits, so the re-list a verify runs still holds the row. */
+function arrangeClose(outcome: CloseOutcome): void {
+  tabServer.failNext("close_tab", 500);
+  const answers = {
+    refused: { afterMs: 2_000, result: { ok: false, status: 500, error: "nope" } },
+    // Never inside the close's 5 s deadline, which cuts it off.
+    unanswered: { afterMs: 60_000, result: { ok: false, status: 500, error: "nope" } },
+    deadline: {
+      afterMs: 1_000,
+      result: { ok: false, status: 0, error: "Request timed out", code: "timeout" },
+    },
+  };
+  tabServer.answerAfterNext("close_tab", answers[outcome].afterMs, answers[outcome].result);
+}
+
+/** Time out C's two retries too. Queued after every close is dispatched: the fake server answers
+ *  by command type, so an earlier queue would answer another tab's close. */
+function arrangeCRetries(outcome: CloseOutcome): void {
+  if (outcome !== "deadline") {
+    return;
+  }
+  arrangeClose(outcome);
+  arrangeClose(outcome);
+}
+
+/** A strip of `refs`, each activated in turn, so the last is active and first in MRU order. */
+async function activeLast(...refs: string[]): Promise<Record<string, string>> {
+  const ids = await strip(...refs);
+  for (const r of refs) {
+    activateTab(ids[r] ?? "");
+    await activationRan();
+  }
+  const last = refs.at(-1) ?? "";
+  pointers.active = last;
+  pointers.painted = last;
+  for (const r of refs) {
+    resident.add(r);
+  }
+  vi.mocked(getSessions).mockReturnValue(
+    refs.map((id) => ({ id, name: id }) as unknown as Session),
+  );
+  vi.clearAllMocks();
+  return ids;
+}
+
+/** Close sequences with C active at the start and every close but C's confirmed. `shown` is the
+ *  tab the reader sees once C is back: C while the reader has not moved since C's close (no later
+ *  close handed the view to another tab and no navigation was asked for), else the tab shown
+ *  then, else C, the only row. */
+const sequences = [
+  { refs: ["c"], order: ["c"], rows: ["c"], still: "c", moved: "c" },
+  { refs: ["a", "c"], order: ["c", "a"], rows: ["c"], still: "c", moved: "c" },
+  { refs: ["a", "c"], order: ["a", "c"], rows: ["c"], still: "c", moved: "c" },
+  { refs: ["b", "a", "c"], order: ["c", "a"], rows: ["b", "c"], still: "b", moved: "b" },
+  { refs: ["b", "a", "c"], order: ["a", "c"], rows: ["b", "c"], still: "c", moved: "b" },
+];
+const outcomes: CloseOutcome[] = ["refused", "unanswered", "deadline"];
+const closeCases = sequences.flatMap((s) =>
+  outcomes.flatMap((c) =>
+    [false, true].flatMap((nav) =>
+      (s.order.includes("a") ? [0, 3_000] : [0]).map((aMs) => ({
+        ...s,
+        c,
+        nav,
+        aMs,
+        shown: nav ? s.moved : s.still,
+        name: `${s.refs.join("")}: close ${s.order.join(" then ")}, C ${c}, A answers after ${String(aMs)} ms, ${nav ? "a navigation asked for" : "no navigation"}`,
+      })),
+    ),
+  ),
+);
+
+describe("after any close outcome the strip shows a bound tab whenever it has one", () => {
+  it.each(closeCases)("$name", async (k) => {
+    const ids = await activeLast(...k.refs);
+    const id = (ref: string): string => ids[ref] ?? "";
+    await frame();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    try {
+      const closes: Promise<void>[] = [];
+      for (const ref of k.order) {
+        if (ref === "c") {
+          arrangeClose(k.c);
+        } else if (k.aMs > 0) {
+          tabServer.answerAfterNext("close_tab", k.aMs, { ok: true } as never);
+        }
+        closes.push(closeTab(id(ref)));
+        await activationRan();
+      }
+      arrangeCRetries(k.c);
+      // A Send from an empty composer, or an open on its way, claims the view after the closes.
+      const ticket = k.nav ? claimNavigation() : 0;
+
+      await vi.advanceTimersByTimeAsync(9_000);
+      await Promise.all(closes);
+      await settleTabs();
+      await activationRan();
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(rowIDs()).toEqual(k.rows.map(id));
+      expect(getActiveTabId(), "a strip with rows shows one of them").not.toBe("");
+      expect(getActiveTabId(), "the tab the reader is shown").toBe(id(k.shown));
+      expect(pointers.active, "Send acts for the shown tab").toBe(k.shown);
+      expect(navigationHeld(ticket), "a navigation asked for still takes the view").toBe(k.nav);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("files the text typed on the emptied strip as the restored chat's draft", async () => {
+    const ids = await activeLast("a", "c");
+    await frame();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    try {
+      arrangeClose("refused");
+      const closedC = closeTab(ids["c"] ?? "");
+      await activationRan();
+      const closedA = closeTab(ids["a"] ?? "");
+      await activationRan();
+      expect(getActiveTabId(), "the strip emptied").toBe("");
+      $.promptInput.value = "half a thought";
+
+      await vi.advanceTimersByTimeAsync(4_000);
+      await Promise.all([closedC, closedA]);
+      await settleTabs();
+      await activationRan();
+
+      expect(getActiveTabId()).toBe(ids["c"]);
+      expect(vi.mocked(restoreFailedSend)).toHaveBeenCalledWith("c", "half a thought");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("restores the strip's scroll offset after an unanswered close of a background tab", async () => {
+    const ids = await closing();
+    const { list, dispose } = scrollableStrip();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    try {
+      await frame();
+      list.scrollTop = list.scrollHeight;
+      const bottom = list.scrollTop;
+      expect(bottom).toBeGreaterThan(20);
+      arrangeClose("unanswered");
+
+      const done = closeTab(ids["b"] ?? "");
+      await frame();
+      endExits();
+      expect(list.scrollTop, "the removal clamped the strip").toBeLessThan(bottom);
+      await vi.advanceTimersByTimeAsync(9_000);
+      await done;
+      await settleTabs();
+      await frame();
+
+      expect(rowIDs()).toContain(ids["b"]);
+      expect(list.scrollTop, "the strip's scroll offset").toBe(bottom);
+    } finally {
+      vi.useRealTimers();
+      dispose();
     }
   });
 });
