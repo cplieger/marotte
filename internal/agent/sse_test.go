@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/go/slogx/capture"
@@ -180,45 +181,49 @@ func TestHandleSSE_KeepaliveIsANamedIDLessFrameOutsideTheRing(t *testing.T) {
 	prev := keepaliveInterval
 	keepaliveInterval = 10 * time.Millisecond
 	t.Cleanup(func() { keepaliveInterval = prev })
-	h, _, _ := newTestHub()
-	t.Cleanup(func() { shutdownHub(t, h) })
-	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
-	headBefore := h.bus.fanout.Position().Head
+	// The 120 ms window is bubble time, which moves only while the stream waits, so a slow connect cannot spend it
+	// before the first beat.
+	synctest.Test(t, func(t *testing.T) {
+		h, _, _ := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+		headBefore := h.bus.fanout.Position().Head
 
-	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Millisecond)
-	defer cancel()
-	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
-	rec := httptest.NewRecorder()
+		ctx, cancel := context.WithTimeout(t.Context(), 120*time.Millisecond)
+		defer cancel()
+		req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
+		rec := httptest.NewRecorder()
 
-	h.handleSSE(rec, req)
+		h.handleSSE(rec, req)
 
-	body := rec.Body.String()
-	var beats []string
-	for frame := range strings.SplitSeq(body, "\n\n") {
-		if strings.Contains(frame, "event: heartbeat") {
-			beats = append(beats, frame)
-		}
-	}
-	if len(beats) == 0 {
-		t.Fatalf("handleSSE body carries no event: heartbeat frame, want at least one: %q", body)
-	}
-	for _, frame := range beats {
-		hasData := false
-		for line := range strings.SplitSeq(frame, "\n") {
-			if strings.HasPrefix(line, "id:") {
-				t.Errorf("handleSSE keepalive frame %q carries an id: line, want none", frame)
-			}
-			if strings.HasPrefix(line, "data: ") {
-				hasData = true
+		body := rec.Body.String()
+		var beats []string
+		for frame := range strings.SplitSeq(body, "\n\n") {
+			if strings.Contains(frame, "event: heartbeat") {
+				beats = append(beats, frame)
 			}
 		}
-		if !hasData {
-			t.Errorf("handleSSE keepalive frame %q carries no data: line, want one so the browser dispatches it", frame)
+		if len(beats) == 0 {
+			t.Fatalf("handleSSE body carries no event: heartbeat frame, want at least one: %q", body)
 		}
-	}
-	if headAfter := h.bus.fanout.Position().Head; headAfter != headBefore {
-		t.Errorf("handleSSE ring head after keepalives = %d, want %d (a keepalive must not enter the replay ring)", headAfter, headBefore)
-	}
+		for _, frame := range beats {
+			hasData := false
+			for line := range strings.SplitSeq(frame, "\n") {
+				if strings.HasPrefix(line, "id:") {
+					t.Errorf("handleSSE keepalive frame %q carries an id: line, want none", frame)
+				}
+				if strings.HasPrefix(line, "data: ") {
+					hasData = true
+				}
+			}
+			if !hasData {
+				t.Errorf("handleSSE keepalive frame %q carries no data: line, want one so the browser dispatches it", frame)
+			}
+		}
+		if headAfter := h.bus.fanout.Position().Head; headAfter != headBefore {
+			t.Errorf("handleSSE ring head after keepalives = %d, want %d (a keepalive must not enter the replay ring)", headAfter, headBefore)
+		}
+	})
 }
 
 // ringSince is the replay ring after offset base, the head a test read before it emitted.
