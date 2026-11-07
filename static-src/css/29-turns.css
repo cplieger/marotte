@@ -438,7 +438,7 @@
    right by the button's square and its margin. RESERVING IT IS
    REFUSED: a hidden element carrying the button's own children left the row above
    PERMANENTLY skipped by `content-visibility: auto`, pruning it from the find walker's
-   scope, and a CSS-only `minmax()` floor needs the button's width at three tiers. */
+   scope. */
 .turn-footer > .turn-rewind {
   grid-column: 4;
   grid-row: 1;
