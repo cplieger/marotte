@@ -109,12 +109,13 @@ describe("handleTypedCommand", () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses /compact mid-turn with the menu row's notice and dispatches nothing", () => {
+  // The server queues a compaction asked for mid-turn and runs it at the turn's end.
+  it("dispatches /compact mid-turn and refuses nothing", () => {
     seedConversation();
     store.setThinking("c1", true);
     expect(handleTypedCommand("c1", "/compact")).toBe(true);
-    expect(dispatch).not.toHaveBeenCalled();
-    expect(toasts).toEqual(["Wait for this turn to finish, then compact the conversation"]);
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith({ chatID: "c1" });
+    expect(toasts).toEqual([]);
   });
 
   it("refuses /compact on a chat with no conversation", () => {

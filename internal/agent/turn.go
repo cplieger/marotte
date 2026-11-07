@@ -857,6 +857,32 @@ func (lc *chatLifecycle) kasStepLocked(in kasInput, seq uint64) (drain bool, row
 	return drain, rows
 }
 
+// compactTurn is compactTurnLocked's turn with live's answer.
+func (r *turnRegistry) compactTurn(chatID marotte.ChatID) (string, bool) {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return "", false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.compactTurnLocked(), lc.liveLockedState()
+}
+
+// compactTurnLocked names the turn a queued compaction belongs to: the open turn (own, else pending), else the newest
+// finished one, whose close may still be running its end. A held reservation has no turn of its own until it opens, so
+// it gets the finished one's. "" when no turn opened in this life. Caller holds mu.
+func (lc *chatLifecycle) compactTurnLocked() string {
+	switch {
+	case lc.own != nil:
+		return lc.own.ID
+	case lc.pending != nil:
+		return lc.pending.ID
+	case lc.closedAt == 0:
+		return ""
+	}
+	return lc.closedIDs[(lc.closedAt-1)%recentCloses]
+}
+
 // liveLockedState is live's predicate, spelled once. Caller holds mu.
 func (lc *chatLifecycle) liveLockedState() bool {
 	return lc.own != nil || lc.pending != nil || lc.reserved

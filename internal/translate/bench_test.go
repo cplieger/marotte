@@ -61,6 +61,8 @@ type baseDeps struct {
 	prompts map[marotte.ChatID]*turnlog.Turn
 	// compactionFailures records failed-compaction facts sent to the host.
 	compactionFailures []compactionFailure
+	// usageReadings records every context reading ObserveContextUsage heard, in order.
+	usageReadings []float64
 	// catalogModels is the last model list SetModels was handed.
 	catalogModels []marotte.SessionModel
 	// parent is returned by ParentACPSession; "" means parent unknown.
@@ -713,6 +715,10 @@ type compactionFailure struct {
 
 func (d *baseDeps) CompactionFailed(chatID marotte.ChatID, turnID, detail string) {
 	d.compactionFailures = append(d.compactionFailures, compactionFailure{chatID: chatID, turnID: turnID, detail: detail})
+}
+
+func (d *baseDeps) ObserveContextUsage(_ context.Context, _ marotte.ChatID, pct float64) {
+	d.usageReadings = append(d.usageReadings, pct)
 }
 
 // AccumulateSpend and StageConversationTurnSummary stand in for the host's per-turn

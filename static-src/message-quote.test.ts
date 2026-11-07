@@ -7,6 +7,7 @@ import {
   blockquote,
   codeSpan,
   quoteSelection,
+  readQuoted,
   splitLeadingQuote,
 } from "./message-quote.js";
 
@@ -163,5 +164,23 @@ describe("splitLeadingQuote", () => {
   it("ignores an attribution with nothing quoted above it", () => {
     expect(splitLeadingQuote(`>\n> ${QUOTE_ATTRIBUTION}\n\nq`)).toBeNull();
     expect(splitLeadingQuote(`> ${QUOTE_ATTRIBUTION}\n\nq`)).toBeNull();
+  });
+});
+
+describe("readQuoted", () => {
+  it("reads a leading quote as its band does, then the rest after a blank line", () => {
+    expect(readQuoted(`${appendQuote("", quoteSelection("the\npassage", SRC))}why?`)).toBe(
+      `${SRC}: the\npassage\n\nwhy?`,
+    );
+  });
+
+  it("reads a quote with nothing after it, or one that names no source, as the passage alone", () => {
+    expect(readQuoted(quoteSelection("x", SRC))).toBe(`${SRC}: x`);
+    expect(readQuoted(`> old words\n>\n> ${QUOTE_ATTRIBUTION}\n\nq`)).toBe("old words\n\nq");
+  });
+
+  it("leaves any other text as it was, a hand-typed blockquote included", () => {
+    expect(readQuoted("> quoted\n\nreply")).toBe("> quoted\n\nreply");
+    expect(readQuoted("  plain  ")).toBe("  plain  ");
   });
 });

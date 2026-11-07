@@ -47,7 +47,7 @@ describe("tokensUsed", () => {
 });
 
 describe("compactionPoint", () => {
-  it("is the slider's value, which the session door sends as KAS's threshold", () => {
+  it("is the slider's value, where a turn queues its compaction", () => {
     expect(compactionPoint({ enabled: true, pct: 60 })).toEqual({ band: 60, t: 60 });
     expect(compactionPoint({ enabled: true, pct: 80 })).toEqual({ band: 80, t: 80 });
   });

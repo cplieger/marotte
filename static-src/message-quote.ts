@@ -103,3 +103,15 @@ export function splitLeadingQuote(
     rest: lines.slice(end).join("\n").trim(),
   };
 }
+
+/** `text` as its quote band reads: a leading `quoteSelection` block as `source: quote` without the `>` marks or the
+ *  attribution, a blank line, then the rest. Any other text unchanged. For the surfaces that carry a message as one
+ *  string (accessible names, button labels). */
+export function readQuoted(text: string): string {
+  const q = splitLeadingQuote(text.trim());
+  if (q === null) {
+    return text;
+  }
+  const head = q.source === null ? q.quote : `${q.source}: ${q.quote}`;
+  return q.rest === "" ? head : `${head}\n\n${q.rest}`;
+}

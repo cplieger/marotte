@@ -4,7 +4,12 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mountAppCSS } from "../__test-helpers__/css-rules.js";
 import { glyphMarkup, registryMarkup } from "../__test-helpers__/glyph.js";
 import { workflowIcon } from "../icons.js";
-import { buildTurnHeader, updateTurnHeader, type TurnHeaderData } from "./turn-header.js";
+import {
+  buildRequestHeader,
+  buildTurnHeader,
+  updateTurnHeader,
+  type TurnHeaderData,
+} from "./turn-header.js";
 import { initAttachmentPillCallbacks } from "../attachment-pill.js";
 import { wakeLine } from "../turn-wake.js";
 import { namedWake } from "../turns.js";
@@ -658,6 +663,15 @@ describe("a request that opens with a quoted reply passage", () => {
     updateTurnHeader(h, data({ request: quoted }));
     updateTurnHeader(h, data({ request: undefined }));
     expect(band(h)).toBeNull();
+  });
+
+  it("draws the same band over a run step's request, below its Sent-by line", () => {
+    const h = buildRequestHeader(quoted, { label: "Agent Mail" });
+    expect(band(h)?.innerHTML).toBe(band(buildTurnHeader(data({ request: quoted })))?.innerHTML);
+    expect(h.querySelector(".turn-req")?.firstElementChild?.className).toBe("turn-sent-by");
+    expect(band(h)?.nextElementSibling).toBe(text(h));
+    expect(text(h).textContent).toBe("why that?");
+    expect(band(buildRequestHeader("> something I typed\n\nmy question"))).toBeNull();
   });
 
   it("holds the band to one line, open or folded", () => {

@@ -3885,7 +3885,7 @@
       }
     }
   },
-  "footer > button.turn-rewind[Rewind to this point]": {
+  "footer > button.turn-rewind[Rewind]": {
     "where": {
       "by": "rewind",
       "in": "enabled, disabled"
@@ -4003,7 +4003,6 @@
           "light": "oklch(0.337 0.02 273.9)"
         }
       },
-      "column-gap": "4px",
       "column-rule-color": {
         "by": "theme",
         "is": {
@@ -4014,7 +4013,6 @@
       "cursor": "pointer",
       "display": "flex",
       "font-family": "system-ui, sans-serif",
-      "font-size": "12px",
       "grid-column-start": "4",
       "grid-row-start": "1",
       "inset-block-end": "0px",
@@ -4060,41 +4058,12 @@
       "padding-block-end": "0px",
       "padding-block-start": "0px",
       "padding-bottom": "0px",
-      "padding-inline-end": {
-        "by": "width",
-        "is": {
-          "320": "0px",
-          "390": "0px",
-          "1280": "8px"
-        }
-      },
-      "padding-inline-start": {
-        "by": "width",
-        "is": {
-          "320": "0px",
-          "390": "0px",
-          "1280": "8px"
-        }
-      },
-      "padding-left": {
-        "by": "width",
-        "is": {
-          "320": "0px",
-          "390": "0px",
-          "1280": "8px"
-        }
-      },
-      "padding-right": {
-        "by": "width",
-        "is": {
-          "320": "0px",
-          "390": "0px",
-          "1280": "8px"
-        }
-      },
+      "padding-inline-end": "0px",
+      "padding-inline-start": "0px",
+      "padding-left": "0px",
+      "padding-right": "0px",
       "padding-top": "0px",
       "position": "relative",
-      "row-gap": "4px",
       "row-rule-color": {
         "by": "theme",
         "is": {
@@ -4126,7 +4095,7 @@
       "transition-timing-function": "cubic-bezier(0.2, 0, 0, 1), cubic-bezier(0.2, 0, 0, 1), cubic-bezier(0.2, 0, 0, 1)"
     }
   },
-  "footer > button.turn-rewind[Rewind to this point]::after": {
+  "footer > button.turn-rewind[Rewind]::after": {
     "where": {
       "by": "rewind",
       "in": "enabled, disabled"
@@ -4236,7 +4205,6 @@
       "cursor": "pointer",
       "display": "block",
       "font-family": "system-ui, sans-serif",
-      "font-size": "12px",
       "inset-block-end": {
         "by": "width",
         "is": {
@@ -4309,7 +4277,7 @@
       "z-index": "-1"
     }
   },
-  "footer > button.turn-rewind[Rewind to this point] > svg.ic-ui": {
+  "footer > button.turn-rewind[Rewind] > svg.ic-ui": {
     "where": {
       "by": "rewind",
       "in": "enabled, disabled"
@@ -4330,61 +4298,40 @@
       "stroke-linejoin": "round"
     }
   },
-  "footer > button.turn-rewind[Rewind to this point] > svg.ic-ui > path": {
+  "footer > button.turn-rewind[Rewind] > svg.ic-ui > path": {
     "where": {
       "by": "rewind",
       "in": "enabled, disabled"
     },
     "style": {
       "box-sizing": "border-box",
-      "d": "path(\"M 11 18 L 5 12 L 11 6 M 19 18 L 13 12 L 19 6\")",
+      "d": "path(\"M 3 12 A 9 9 0 1 0 12 3 A 9.75 9.75 0 0 0 5.26 5.74 L 3 8\")",
       "scrollbar-width": "thin",
       "vector-effect": "non-scaling-stroke"
     }
   },
-  "footer > button.turn-rewind[Rewind to this point] > span.turn-rewind-label": {
+  "footer > button.turn-rewind[Rewind] > svg.ic-ui > path:2": {
     "where": {
       "by": "rewind",
       "in": "enabled, disabled"
     },
     "style": {
       "box-sizing": "border-box",
-      "display": {
-        "by": "width",
-        "is": {
-          "320": "none",
-          "390": "none"
-        }
-      },
-      "min-block-size": {
-        "by": "width",
-        "is": {
-          "320": "0px",
-          "390": "0px"
-        }
-      },
-      "min-height": {
-        "by": "width",
-        "is": {
-          "320": "0px",
-          "390": "0px"
-        }
-      },
-      "min-inline-size": {
-        "by": "width",
-        "is": {
-          "320": "0px",
-          "390": "0px"
-        }
-      },
-      "min-width": {
-        "by": "width",
-        "is": {
-          "320": "0px",
-          "390": "0px"
-        }
-      },
-      "scrollbar-width": "thin"
+      "d": "path(\"M 3 3 V 8 H 8\")",
+      "scrollbar-width": "thin",
+      "vector-effect": "non-scaling-stroke"
+    }
+  },
+  "footer > button.turn-rewind[Rewind] > svg.ic-ui > path:3": {
+    "where": {
+      "by": "rewind",
+      "in": "enabled, disabled"
+    },
+    "style": {
+      "box-sizing": "border-box",
+      "d": "path(\"M 12 7 V 12 L 16 14\")",
+      "scrollbar-width": "thin",
+      "vector-effect": "non-scaling-stroke"
     }
   },
   "footer > button.turn-ledger-summary > span.turn-ledger-glyph::before": {

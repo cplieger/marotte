@@ -1737,6 +1737,10 @@ select.native-rule-effect:focus-visible {
   padding: 0;
 }
 
+.section-hint.field-error {
+  color: var(--c-red);
+}
+
 .native-explain-summary {
   cursor: pointer;
 }

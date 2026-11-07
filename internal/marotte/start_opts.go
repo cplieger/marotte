@@ -130,12 +130,9 @@ type SessionOpts struct {
 	Features SessionFeatures
 	// Supervised sets `autopilot` FALSE after the door, requesting KAS's turn-approval gate.
 	Supervised bool
-	// DisableAutoCompaction turns KAS's own compaction off for this session (the chat policy's
-	// switch off). KAS freezes it per session, so it takes effect at the next door.
+	// DisableAutoCompaction turns KAS's own compaction off for this session; every chat door sets
+	// it. KAS freezes it per session, so it takes effect at the next door.
 	DisableAutoCompaction bool
-	// AutoCompactionThreshold is the usage percentage KAS compacts the session at, sent on both
-	// doors; 0 leaves KAS's default.
-	AutoCompactionThreshold int
 }
 
 // SessionFeatures are the Agent-capabilities settings KAS reads per session. WorkValidation is

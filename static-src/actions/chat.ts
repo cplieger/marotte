@@ -337,20 +337,55 @@ export const setAttachments = transportAction<{ chatID: string; paths: string[] 
   error: false,
 });
 
-/** Summarizes through KAS's native `compact` verb (typed `/compact` reaches the model as prose).
- *  `idempotencyKey`: a double compact summarizes a summary. Success claims ACCEPTANCE, not
- *  completion (`internal/command/compact.go`). */
-export const compactChat = transportAction<{ chatID: string }>({
+/** Summarizes through KAS's native `compact` verb (typed `/compact` reaches the model as prose): at once on an idle
+ *  chat, else at the running turn's end, which the dock shows. `idempotencyKey`: a double compact summarizes a
+ *  summary. Success claims ACCEPTANCE, not completion (`internal/command/compact.go`). Resolves true when the server
+ *  queued it. */
+export const compactChat = defineAction<{ chatID: string }, boolean>({
   name: "chat.compact",
   networkMode: "always",
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
-  command: ({ chatID }) => ({
-    type: "compact",
-    chat_id: chatID,
-  }),
-  success: successAbout(onChat, "Compacting the conversation…"),
+  run: async ({ chatID }, signal, ctx) => {
+    const r = await transportSend(
+      {
+        type: "compact",
+        chat_id: chatID,
+        ...(ctx?.idempotencyKey === undefined
+          ? {}
+          : { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }),
+      },
+      { signal, reportSendState: false },
+    );
+    if (!r.ok) {
+      throw refusalOf(r, `compact failed with status ${String(r.status)}`);
+    }
+    return compactQueued(r);
+  },
+  success: successAbout(onChat, (queued: boolean) =>
+    queued ? "Compaction queued for the end of this turn" : "Compacting the conversation…",
+  ),
   error: errorAbout(onChat, stillOr("starting the compaction", "Compact failed", "chat")),
+});
+
+/** Whether a compact's answer says the server queued it (`{"queued": true}`). */
+function compactQueued(r: SendResult): boolean {
+  const body = r.body;
+  return (
+    typeof body === "object" && body !== null && (body as { queued?: unknown }).queued === true
+  );
+}
+
+/** Drops the chat's queued compaction; none queued is success. A compaction already running goes on. */
+export const cancelCompact = transportAction<{ chatID: string }>({
+  name: "chat.cancel_compact",
+  networkMode: "always",
+  scope: ({ chatID }) => `cancel-compact:${chatID}`,
+  command: ({ chatID }) => ({ type: "cancel_compact", chat_id: chatID }),
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  success: false,
+  error: errorAbout(onChat, "Could not cancel the queued compaction"),
 });
 
 /** A refused send as the ActionError a custom runner throws: the envelope's `reason` is its code,

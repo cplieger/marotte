@@ -85,6 +85,23 @@ func TestSettingsWrite_AnswersTheStoredSettingsAtItsVersion(t *testing.T) {
 	}
 }
 
+// A stored value outside its range is never served as if it were the choice: the page reads which key fell back to
+// its default, and the slider's range, from the GET.
+func TestSettingsGet_NamesAStoredValueOutsideItsRange(t *testing.T) {
+	dir := seedConfig(t, `{"auto_compact_pct":95}`)
+	got := getEffective(t, dir)
+	if got.AutoCompactPct != settings.DefaultAutoCompactPct || !slices.Equal(got.RejectedKeys, []string{settings.KeyAutoCompactPct}) {
+		t.Errorf("GET over a stored 95 = pct %d, rejected %v; want the default and [%s]",
+			got.AutoCompactPct, got.RejectedKeys, settings.KeyAutoCompactPct)
+	}
+	if got.AutoCompactPctRange != settings.AutoCompactPctRange() {
+		t.Errorf("GET range = %+v, want %+v", got.AutoCompactPctRange, settings.AutoCompactPctRange())
+	}
+	if got := getEffective(t, seedConfig(t, `{"auto_compact_pct":90}`)); got.AutoCompactPct != 90 || len(got.RejectedKeys) != 0 {
+		t.Errorf("GET over a stored 90 = pct %d, rejected %v; want 90 and none", got.AutoCompactPct, got.RejectedKeys)
+	}
+}
+
 // announceHook runs onEvent as each event leaves, before the fake records it.
 type announceHook struct {
 	*fakeEngine

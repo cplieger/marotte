@@ -916,7 +916,8 @@
 }
 
 .steer-row:is([data-state="sending"], [data-state="delivering"]) .steer-state,
-.steer-row:is([data-state="sending"], [data-state="delivering"]) .steer-text {
+.steer-row:is([data-state="sending"], [data-state="delivering"]) .steer-text,
+.steer-row:is([data-state="sending"], [data-state="delivering"]) .turn-req-quote {
   color: var(--c-text-aside);
 }
 
@@ -982,6 +983,13 @@
   color: var(--c-text-primary);
   line-height: 1.35;
   transition: color var(--dur-micro) var(--ease-standard);
+}
+
+/* The quote band clips its own overflow, so the line clamp does not count it: the band takes
+   one of the four lines here. */
+.steer-text:has(> .turn-req-quote) {
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
 }
 
 /* --- Actions column ----------------------------------------------------- */

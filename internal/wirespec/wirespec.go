@@ -76,6 +76,7 @@ var wireTypes = []wiregen.WireType{
 	// Registered so the pre-session catalog fetch reads a generated decoder, not a cast.
 	wiregen.TypeRef[marotte.ConfigTemplateResponse](),
 	wiregen.TypeRef[marotte.QueuedPrompt](),
+	wiregen.TypeRef[marotte.PendingCompaction](),
 	wiregen.TypeRef[marotte.ChatHeader](),
 	wiregen.TypeRef[marotte.PermissionOption](),
 	wiregen.TypeRef[marotte.ApprovalFile](),
@@ -240,6 +241,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.ConfigStandingResponse](),
 	// GET /api/settings. No omitempty, so the client holds no defaults of its own.
 	wiregen.TypeRef[marotte.KiroDefault](),
+	wiregen.TypeRef[marotte.PctRange](),
 	wiregen.TypeRef[marotte.EffectiveSettings](),
 	wiregen.TypeRef[forges.ForgeError](),
 	wiregen.TypeRef[forges.ConfiguredForge](),

@@ -1059,6 +1059,16 @@ describe("upsertHeader re-syncs an existing row", () => {
     expect(get("a")?.interrupt_mode).toBe("steer");
     expect(get("a")?.queued).toEqual([]);
   });
+
+  // The queued compaction is header-authoritative too: its run or its cancel arrives as a header without it.
+  it("takes the queued compaction in both directions", () => {
+    resetStore("a");
+    upsertHeader({ ...headerFor("a"), compact_pending: { requested_at: 1 } });
+    expect(get("a")?.compact_queued).toBe(true);
+
+    upsertHeader(headerFor("a"));
+    expect(get("a")?.compact_queued).toBe(false);
+  });
 });
 
 describe("upsertHeader seeds a brand-new row", () => {
@@ -1081,6 +1091,12 @@ describe("upsertHeader seeds a brand-new row", () => {
     });
     expect(get("a")?.interrupt_mode).toBe("queue");
     expect(get("a")?.queued?.[0]?.held).toBe(true);
+  });
+
+  it("seeds the queued compaction from the header", () => {
+    setSessions([]);
+    upsertHeader({ ...headerFor("a"), compact_pending: { requested_at: 1 } });
+    expect(get("a")?.compact_queued).toBe(true);
   });
 
   it("derives has_more from the record's count, because a header carries no window", () => {

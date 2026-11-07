@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import type { Entry, Session, TurnState } from "./types.js";
 import { makeSession } from "./__test-helpers__/model.js";
+import { appendQuote, quoteSelection } from "./message-quote.js";
 
 // The graph reads the DOM registry at module scope and `byId` throws on a missing element.
 for (const id of [
@@ -220,6 +221,23 @@ describe("a persisted steer the agent read", () => {
 
 // A correction the agent never read must not render like a delivered one: that is a false claim about the
 // reader's message.
+describe("a persisted steer that quoted the transcript", () => {
+  it("draws the quote as a sent prompt's band after a reload, acknowledged or not", async () => {
+    const c = freshID("c-steer-quote");
+    const t = `${c}-t1`;
+    const text = `${appendQuote("", quoteSelection("quoted", "From Kiro's reply"))}reply`;
+    const s = steer(t, 1, text);
+    const view = await paint(c, t, [turnOpen(t), s, steerAck(t, 2, s.id), turnClose(t, 3)]);
+
+    const note = notes(view)[0];
+    expect(note?.dataset["acknowledged"]).toBe("true");
+    expect(note?.querySelector(".steer-note-body > blockquote.turn-req-quote")?.textContent).toBe(
+      "From Kiro's reply: quoted",
+    );
+    expect(note?.querySelector(".steer-note-text")?.textContent).toBe("reply");
+  });
+});
+
 describe("a persisted UNDELIVERED steer says so", () => {
   it("mounts data-state=dropped with the not-read label", async () => {
     const c = freshID("c-steer-dropped");

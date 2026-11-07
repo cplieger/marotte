@@ -62,8 +62,9 @@ func (s *Store) logFor(ctx context.Context, chatID marotte.ChatID) (*EntryLog, e
 // log's first open in this one and after the store-open closer. A row whose id a
 // turn_open already carries was sent and only lost its removal, so it goes; every
 // other row is marked Held, shown and never sent automatically, because nothing in
-// this process saw it queued. It answers the header, nil for a chat with no header,
-// which has nothing to settle, and whether it saved one, which it does not announce.
+// this process saw it queued. A queued compaction is dropped: no close of this process
+// owes it. It answers the header, nil for a chat with no header, which has nothing to
+// settle, and whether it saved one, which it does not announce.
 // Caller holds the chat's mutex.
 func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *EntryLog) (*marotte.Chat, bool, error) {
 	c, err := s.load(ctx, chatID)
@@ -72,7 +73,7 @@ func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *
 		return nil, false, nil
 	case err != nil:
 		return nil, false, err
-	case !slices.ContainsFunc(c.QueuedPrompts, func(q marotte.QueuedPrompt) bool { return !q.Held }):
+	case c.CompactPending == nil && !slices.ContainsFunc(c.QueuedPrompts, func(q marotte.QueuedPrompt) bool { return !q.Held }):
 		return c, false, nil
 	}
 	entries, err := l.All()
@@ -93,6 +94,7 @@ func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *
 		for i := range c.QueuedPrompts {
 			c.QueuedPrompts[i].Held = true
 		}
+		c.CompactPending = nil
 		return true
 	})
 	if err != nil {

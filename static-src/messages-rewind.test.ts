@@ -175,6 +175,20 @@ beforeEach(() => {
   composer().blur();
 });
 
+describe("the footer's Rewind control", () => {
+  it("is an icon-only button named Rewind, like the turn's other actions", async () => {
+    await paintChat(2);
+    const btn = rewindButtonOf(cards()[0]);
+
+    expect(btn.getAttribute("aria-label")).toBe("Rewind");
+    expect(btn.textContent.trim(), "no visible word").toBe("");
+    expect([...btn.children].map((c) => c.getAttribute("class"))).toEqual(["ic-ui"]);
+    expect(btn.getAttribute("data-tooltip"), "its tooltip is its name, as theirs are").toBe(
+      "Rewind",
+    );
+  });
+});
+
 describe("a confirmed rewind", () => {
   it("puts the rewound prompt's text in an empty composer, focused with the caret at the end", async () => {
     await paintChat(3);

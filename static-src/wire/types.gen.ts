@@ -357,9 +357,10 @@ export interface ChatHeader {
   compaction_watermark?: string;
   /** PriorACPSessionIDs mirrors Chat's: the retention sweep reads headers only. */
   prior_acp_session_ids?: string[];
-  /** InterruptMode and QueuedPrompts mirror Chat's for the composer and the dock. */
+  /** InterruptMode, QueuedPrompts and CompactPending mirror Chat's for the composer and the dock. */
   interrupt_mode?: InterruptMode;
   queued_prompts?: QueuedPrompt[];
+  compact_pending?: PendingCompaction;
   usage: Usage;
   created_at: number;
   updated_at: number;
@@ -772,6 +773,8 @@ export interface EffectiveSettings {
  * listed, grants nothing, and is a key of AdditionalDirectoriesRefused.
  */
   additional_directories: string[];
+  /** RejectedKeys are the stored keys whose value did not fit, each served as its default; never stored. */
+  rejected_keys: string[];
   /**
  * ChatRetentionDays is -1 (keep forever), 0 (delete on close) or a day count.
  * Zero is the most destructive value in the document, so absent must never
@@ -779,10 +782,12 @@ export interface EffectiveSettings {
  */
   chat_retention_days: number;
   /**
- * AutoCompactPct is 50..80 in steps of 5; any other stored value reads as
- * settings.DefaultAutoCompactPct (80).
+ * AutoCompactPct is inside AutoCompactPctRange; a stored value outside it reads as
+ * settings.DefaultAutoCompactPct and is listed in RejectedKeys.
  */
   auto_compact_pct: number;
+  /** AutoCompactPctRange is settings.AutoCompactPctRange; never stored. */
+  auto_compact_pct_range: PctRange;
   /**
  * TerminalCommandTimeoutMs is the shell tool's default timeout in ms; 0 is
  * unset (kiro-cli's 120 s).
@@ -2404,6 +2409,19 @@ export interface PartialResult {
   reason: string;
   fetched: number;
   omitted_at_least: number;
+}
+
+/** PctRange is a percentage slider's bounds and step. */
+export interface PctRange {
+  min: number;
+  max: number;
+  step: number;
+}
+
+/** PendingCompaction is a compaction queued for a turn's end. */
+export interface PendingCompaction {
+  /** RequestedAt is when it was queued, in Unix ms. */
+  requested_at: number;
 }
 
 /**

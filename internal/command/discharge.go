@@ -57,6 +57,7 @@ var commandDischarges = map[marotte.CommandType]dischargeVerdict{
 	marotte.CmdRewindChat: dischargeNo,
 	marotte.CmdCompact:    dischargeNo,
 
+	marotte.CmdCancelCompact:     dischargeNo,
 	marotte.CmdCreateChat:        dischargeNo,
 	marotte.CmdResumeSession:     dischargeNo,
 	marotte.CmdForkChat:          dischargeNo,

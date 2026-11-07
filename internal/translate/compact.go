@@ -44,6 +44,8 @@ func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID marot
 			return false
 		}
 		c.CompactionWatermark = id
+		// KAS reports no reading after a summary, so the stored one would stand for the context before it.
+		c.Usage.ContextPct, c.Usage.HasRealData = 0, false
 		return true
 	})
 	if errors.Is(err, chat.ErrTombstoned) {

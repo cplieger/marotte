@@ -81,8 +81,8 @@ func Update(ctx context.Context, configDir string, fn func(doc map[string]json.R
 }
 
 // ValidateCompactionPatch refuses a patch whose compaction keys the UI cannot
-// produce: auto_compaction_enabled must be a bool and auto_compact_pct an
-// integer in 50..80 in steps of 5. A patch that carries neither key passes.
+// produce: auto_compaction_enabled must be a bool and auto_compact_pct a
+// ValidAutoCompactPct integer. A patch that carries neither key passes.
 func ValidateCompactionPatch(patch map[string]json.RawMessage) error {
 	if raw, ok := patch[KeyAutoCompactionEnabled]; ok {
 		var b bool
@@ -93,7 +93,7 @@ func ValidateCompactionPatch(patch map[string]json.RawMessage) error {
 	if raw, ok := patch[KeyAutoCompactPct]; ok {
 		var pct int
 		if decodeAutoCompactPct(&pct, raw) != nil {
-			return fmt.Errorf("%s must be a whole number from 50 to 80 in steps of 5", KeyAutoCompactPct)
+			return errAutoCompactPctRange
 		}
 	}
 	return nil

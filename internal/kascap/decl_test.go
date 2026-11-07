@@ -370,7 +370,7 @@ var (
 			Presets:           []string{"read-workspace"},
 			SpecPlan:          "full", SpecAskClarification: true, WorkValidation: "on",
 			MemoryMode: "read_write", MemoryReflection: true,
-			Workflows: true, DisableAutoCompaction: true, AutoCompactionThreshold: 60, ProfileAgentTurns: true,
+			Workflows: true, DisableAutoCompaction: true, ProfileAgentTurns: true,
 		}},
 		{"with every choice off", SessionSpawn{WorkValidation: "off"}},
 	}

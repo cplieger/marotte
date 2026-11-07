@@ -355,14 +355,6 @@ function box(e: Element, footer: Element, want: Box): Box {
   return got;
 }
 
-/** Rewind's width less its word: padding, glyph and gap, or the whole glyph-only square. */
-function rewindChrome(rewind: Element): number {
-  const range = rewind.ownerDocument.createRange();
-  range.selectNodeContents(rewind.querySelector(".turn-rewind-label") as Element);
-  const label = range.getBoundingClientRect().width;
-  return Math.round((rewind.getBoundingClientRect().width - label) * 100) / 100;
-}
-
 /** The space between each shown box and the next. */
 function gaps(boxes: readonly Element[]): number[] {
   return boxes.slice(1).map((c, i) => {
@@ -371,11 +363,11 @@ function gaps(boxes: readonly Element[]): number[] {
   });
 }
 
-// Measured on the row before the redesign: the inline actions and the worded Rewind on a
-// mouse, the `…` overflow and the glyph-only Rewind on a phone. `system-ui` resolves through the
-// host's fonts, so nothing here depends on a glyph's metrics: the ledger's parts are held by the
-// `i` and the outcome mark, their spacing and their centres, the worded Rewind by its width less
-// the word, the trailing controls by their spacing and the last one's distance from the end.
+// The inline actions on a mouse, the `…` overflow on a phone, and Rewind's icon-only square on
+// both. `system-ui` resolves through the host's fonts, so nothing here depends on a glyph's
+// metrics: the ledger's parts are held by the `i` and the outcome mark, their spacing and their
+// centres, the trailing controls by their boxes, their spacing and the last one's distance from
+// the end.
 const FINE = {
   band: 32,
   ledger: { x: 8, y: 4, h: 24 },
@@ -390,10 +382,9 @@ const FINE = {
   ],
   branch: [["Branch from here", { y: 4, w: 24, h: 24 }]],
   actionGaps: [2, 2, 2],
-  rewind: ["Rewind to this point", { y: 4, h: 24 }],
+  rewind: ["Rewind", { y: 4, w: 24, h: 24 }],
   rewindGap: 8,
   end: 8,
-  rewindChrome: 36,
   glyphs: { actions: 4, branch: 1, size: 16 },
 } as const;
 // On a phone the controls paint at the mouse's 24px, centred in the 44px band their targets fill
@@ -408,10 +399,9 @@ const COARSE = {
   actions: [["More turn actions", { y: 10, w: 24, h: 24 }]],
   branch: [["More turn actions", { y: 10, w: 24, h: 24 }]],
   actionGaps: [],
-  rewind: ["Rewind to this point", { y: 10, w: 24, h: 24 }],
+  rewind: ["Rewind", { y: 10, w: 24, h: 24 }],
   rewindGap: 20,
   end: 8,
-  rewindChrome: 24,
   glyphs: { actions: 0, branch: 0, size: 16 },
 } as const;
 const PIN = { 1280: FINE, 390: COARSE, 320: COARSE } as const;
@@ -838,10 +828,6 @@ describe("the closed footer row", () => {
           between.forEach((g, i) => {
             expect(g, `the space after control ${String(i)}`).toBeCloseTo(pinned[i] as number, 1);
           });
-          expect(
-            rewind === null ? null : Math.round(rewindChrome(rewind) * 10) / 10,
-            "Rewind less its word",
-          ).toBe(rewinds ? pin.rewindChrome : null);
           const glyphs = [...footer.querySelectorAll("svg")].filter((g) => g.checkVisibility());
           expect(glyphs.length, "the row's shown glyphs: the `i`, the actions', Rewind's").toBe(
             1 + (slot === undefined ? 0 : pin.glyphs[slot]) + (rewinds ? 1 : 0),

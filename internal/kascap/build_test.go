@@ -62,7 +62,6 @@ var sessionMatrix = []struct {
 	{"memory read write", SessionSpawn{MemoryMode: "read_write"}},
 	{"memory learn", SessionSpawn{MemoryMode: "read_write", MemoryReflection: true}},
 	{"auto compaction off", SessionSpawn{DisableAutoCompaction: true}},
-	{"compaction at 60", SessionSpawn{AutoCompactionThreshold: 60}},
 	{"spec planning quick", SessionSpawn{SpecPlan: "quick"}},
 	{"spec planning full, ask first", SessionSpawn{SpecPlan: "full", SpecAskClarification: true}},
 	{"work validation on", SessionSpawn{WorkValidation: "on"}},
@@ -74,7 +73,7 @@ var sessionMatrix = []struct {
 		Presets:           []string{"read-workspace"},
 		MemoryMode:        "read_write", MemoryReflection: true,
 		DisableAutoCompaction: true, SpecPlan: "full", SpecAskClarification: true,
-		WorkValidation: "on", Workflows: true, AutoCompactionThreshold: 60, ProfileAgentTurns: true,
+		WorkValidation: "on", Workflows: true, ProfileAgentTurns: true,
 	}},
 }
 
@@ -441,23 +440,19 @@ func TestDisableAutoCompaction_ValueGatedOnSessionDoorOnly(t *testing.T) {
 	}
 }
 
-// TestCompactionThreshold_OnTheSessionDoorOnly pins the threshold row: KAS reads the threshold
-// only beside enabled: true, a zero value withholds the row (a sent 0 would compact before every
-// model call), and initialize never carries it.
-func TestCompactionThreshold_OnTheSessionDoorOnly(t *testing.T) {
-	settings, _ := SessionMeta(&SessionSpawn{AutoCompactionThreshold: 60})[settingsKey].(map[string]any)
-	want := map[string]any{enabledMember: true, "autoCompactionThreshold": 60}
-	if got := settings["compaction"]; !reflect.DeepEqual(got, want) {
-		t.Errorf("SessionMeta(AutoCompactionThreshold=60) compaction = %#v, want %#v", got, want)
-	}
-	zero, _ := SessionMeta(&SessionSpawn{})[settingsKey].(map[string]any)
-	if got, present := zero["compaction"]; present {
-		t.Errorf("SessionMeta(AutoCompactionThreshold=0) compaction = %#v, want the key withheld", got)
+// TestCompactionThreshold_NeverSent pins the threshold row withheld on both doors: every chat session turns KAS's
+// own compaction off, and a threshold beside it would only be KAS's to misread.
+func TestCompactionThreshold_NeverSent(t *testing.T) {
+	for _, tc := range sessionMatrix {
+		settings, _ := SessionMeta(&tc.spawn)[settingsKey].(map[string]any)
+		if got, present := settings["compaction"]; present {
+			t.Errorf("%s: SessionMeta carries compaction %#v; want it withheld", tc.name, got)
+		}
 	}
 	for _, tc := range engineMatrix {
 		connection, _ := Capabilities(&tc.spawn)[settingsKey].(map[string]any)
 		if _, present := connection["compaction"]; present {
-			t.Errorf("%s: Capabilities carries compaction; want it on the session door only", tc.name)
+			t.Errorf("%s: Capabilities carries compaction; want it withheld", tc.name)
 		}
 	}
 }

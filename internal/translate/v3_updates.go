@@ -528,6 +528,7 @@ func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID marotte.ChatI
 // into the chat's usage. The percentage gate is a MATERIAL delta: each Mutate rewrites the whole chat
 // file and KAS emits the percentage several times per response.
 func (t *Translator) persistUsage(ctx context.Context, chatID marotte.ChatID, pct float64, size int) {
+	t.usage.ObserveContextUsage(ctx, chatID, pct)
 	_, err := t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
