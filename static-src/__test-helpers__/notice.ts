@@ -19,6 +19,8 @@ export function noticeFor(
       return { subject: `runask:${target.position}`, kind, title, body };
     case "pr":
       return { subject: `pr:${target.identity}`, kind, title, body };
+    case "rule":
+      return { subject: `rule:${target.ruleID}`, kind, title, body };
     case "workspace":
       return { kind, title, body };
   }

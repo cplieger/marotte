@@ -58,6 +58,8 @@ type Launcher interface {
 		ctx context.Context, source string, row launchrule.Row, inputs map[string]string, defaults marotte.RunDefaults,
 		slotAt time.Time,
 	) (id, name string, err error)
+	// NotifyNotStarted tells the user that a slot of rule started no run; reason is the text its row records.
+	NotifyNotStarted(ctx context.Context, rule *launchrule.Rule, reason string)
 }
 
 // Runner fires the due slots of clock rules. Construct with NewRunner and call Run in a
@@ -314,6 +316,8 @@ func (r *Runner) settle(ctx context.Context, e *launchrule.Clock, t *slotTurn) e
 	id, row := e.ID, e.Row()
 	wctx := context.WithoutCancel(ctx)
 	var err error
+	// missed is the row as a slot that started no run left it, zero for any other slot.
+	var missed launchrule.Status
 	switch t.event {
 	case slotBackingOff:
 		return nil
@@ -334,12 +338,12 @@ func (r *Runner) settle(ctx context.Context, e *launchrule.Clock, t *slotTurn) e
 			err = r.setWaiting(wctx, row, time.Time{})
 		}
 	case slotGraceExpired:
-		err = r.miss(wctx, row, t.due, t.at)
+		missed, err = r.miss(wctx, row, t.due, t.at)
 	case slotOvertaken:
 		delete(r.retry, row)
 		slog.Warn("schedule slot skipped: the agent engine did not answer before the next slot", "id", id, "due", t.due)
 		obs.ScheduleSlotNotStarted(obs.SlotEngineBusy)
-		err = r.skipBusy(wctx, row, t.due)
+		missed, err = r.skipBusy(wctx, row, t.due)
 	case slotBoundBusy:
 		r.forget(row)
 		// The live run is cancelled at this slot by its bound, which writes the row; the refusal would hide that outcome.
@@ -351,12 +355,12 @@ func (r *Runner) settle(ctx context.Context, e *launchrule.Clock, t *slotTurn) e
 		r.forget(row)
 		slog.Warn("scheduled run did not start", "id", id, "source", e.Source, "error", t.err)
 		obs.ScheduleSlotNotStarted(obs.SlotLaunchFailed)
-		_, err = r.recordFire(wctx, row, t.due, "", launchrule.Outcome{
+		missed, err = r.recordFire(wctx, row, t.due, "", launchrule.Outcome{
 			Status: launchrule.StatusFailed, Reason: launchrule.ReasonText(t.err.Error()),
 		})
 	case slotLaunched:
 		r.forget(row)
-		err = r.settleLaunched(wctx, e, t)
+		missed, err = r.settleLaunched(wctx, e, t)
 	}
 	switch {
 	case errors.Is(err, launchrule.ErrNotFound):
@@ -364,12 +368,23 @@ func (r *Runner) settle(ctx context.Context, e *launchrule.Clock, t *slotTurn) e
 			"id", id, "due", t.due, "run_id", t.runID)
 	case err != nil:
 		slog.Error("schedule record failed", "id", id, "error", err)
+	default:
+		r.notifyFirstMiss(wctx, e, &missed)
 	}
 	return err
 }
 
-// settleLaunched records the run the launch of t's slot created, failed when the launch also returned an error.
-func (r *Runner) settleLaunched(ctx context.Context, e *launchrule.Clock, t *slotTurn) error {
+// notifyFirstMiss tells the user about a slot that started no run only when it begins a streak: settleSlot adds one
+// to FailedSlots for each new failed slot, so a count of 1 after the slot's write means it went from 0 to 1.
+func (r *Runner) notifyFirstMiss(ctx context.Context, e *launchrule.Clock, missed *launchrule.Status) {
+	if missed.FailedSlots == 1 {
+		r.launcher.NotifyNotStarted(ctx, &e.Rule, missed.LastReason)
+	}
+}
+
+// settleLaunched records the run the launch of t's slot created, failed when the launch also returned an error. It
+// returns the row as it landed when the slot is one that started no run, zero otherwise.
+func (r *Runner) settleLaunched(ctx context.Context, e *launchrule.Clock, t *slotTurn) (launchrule.Status, error) {
 	o := launchrule.Outcome{Status: launchrule.StatusStarted}
 	if t.err != nil {
 		o = launchrule.Outcome{Status: launchrule.StatusFailed, Reason: launchrule.ReasonText(t.err.Error())}
@@ -380,10 +395,11 @@ func (r *Runner) settleLaunched(ctx context.Context, e *launchrule.Clock, t *slo
 	landed, err := r.recordFire(ctx, e.Row(), t.due, t.runID, o)
 	// A launch error the run's own record contradicts, a cancel after the host recorded the run started, is not a
 	// slot that produced no run.
-	if t.err != nil && landed == launchrule.StatusFailed {
-		obs.ScheduleSlotNotStarted(obs.SlotLaunchFailed)
+	if t.err == nil || landed.LastStatus != launchrule.StatusFailed {
+		return launchrule.Status{}, err
 	}
-	return err
+	obs.ScheduleSlotNotStarted(obs.SlotLaunchFailed)
+	return landed, err
 }
 
 // forget drops the runner's memory of the schedule's slot once its launch had an answer that ends it.
@@ -415,8 +431,9 @@ func (r *Runner) hold(row launchrule.Row, due time.Time, why error) {
 	r.held[row] = missedSlot{due: due, why: launchrule.ReasonText(why.Error())}
 }
 
-// miss skips a slot past its grace. A held slot is recorded failed with its last refusal; an offline miss records nothing.
-func (r *Runner) miss(ctx context.Context, row launchrule.Row, due, now time.Time) error {
+// miss skips a slot past its grace. A held slot is recorded failed with its last refusal, and the row as it landed is
+// returned; an offline miss records nothing and returns a zero row.
+func (r *Runner) miss(ctx context.Context, row launchrule.Row, due, now time.Time) (launchrule.Status, error) {
 	lateBy := now.Sub(due).Round(time.Second)
 	if held, ok := r.held[row]; ok && held.due.Equal(due) {
 		delete(r.held, row)
@@ -425,7 +442,7 @@ func (r *Runner) miss(ctx context.Context, row launchrule.Row, due, now time.Tim
 		return r.skipFailed(ctx, row, now, held)
 	}
 	slog.Info("schedule slot missed while offline, skipping", "id", row.ID, "due", due, "late_by", lateBy)
-	return r.skipTo(ctx, row, now)
+	return launchrule.Status{}, r.skipTo(ctx, row, now)
 }
 
 // reasonEngineBusy is the reason of a slot the agent engine never answered before the schedule's next slot.
@@ -433,12 +450,12 @@ const reasonEngineBusy = "engine busy"
 
 // recordFire advances a rule's anchor after a fire or a skip, to the DUE time rather than now, so the schedule
 // cannot drift by the tick's latency. runID is the run the fire launched, "" for none; a row already tracking it
-// keeps its outcome, since a fast run can end (RecordEnding) before its launch returns. It returns the outcome the row
-// holds afterwards.
+// keeps its outcome, since a fast run can end (RecordEnding) before its launch returns. It returns the row as it
+// landed.
 func (r *Runner) recordFire(
 	ctx context.Context, row launchrule.Row, due time.Time, runID string, o launchrule.Outcome,
-) (launchrule.OutcomeStatus, error) {
-	var landed launchrule.OutcomeStatus
+) (launchrule.Status, error) {
+	var landed launchrule.Status
 	err := r.store.UpdateClock(ctx, row, func(st *launchrule.Status) bool {
 		st.Anchor = due
 		st.LastRunAt = due
@@ -446,7 +463,7 @@ func (r *Runner) recordFire(
 		if runID == "" || st.LastRunID != runID {
 			st.BeginSlot(runID, o)
 		}
-		landed = st.LastStatus
+		landed = *st
 		return true
 	})
 	return landed, err
@@ -469,23 +486,29 @@ type missedSlot struct {
 
 // skipFailed advances the anchor like skipTo and records the missed slot as failed. It detaches the row's run,
 // so a late outcome of the previous slot's run cannot replace this slot's failure.
-func (r *Runner) skipFailed(ctx context.Context, row launchrule.Row, to time.Time, m missedSlot) error {
+func (r *Runner) skipFailed(ctx context.Context, row launchrule.Row, to time.Time, m missedSlot) (launchrule.Status, error) {
 	return r.skipRecorded(ctx, row, to, m.due, launchrule.Outcome{Status: launchrule.StatusFailed, Reason: m.why})
 }
 
 // skipBusy records the slot due as skipped because the engine never answered, anchored at due so the schedule's
 // next slot, the one that ended the wait, still fires.
-func (r *Runner) skipBusy(ctx context.Context, row launchrule.Row, due time.Time) error {
+func (r *Runner) skipBusy(ctx context.Context, row launchrule.Row, due time.Time) (launchrule.Status, error) {
 	return r.skipRecorded(ctx, row, due, due, launchrule.Outcome{Status: launchrule.StatusSkipped, Reason: reasonEngineBusy})
 }
 
-// skipRecorded advances the anchor to `to` and records o as the slot due's outcome, detaching the row's run.
-func (r *Runner) skipRecorded(ctx context.Context, row launchrule.Row, to, due time.Time, o launchrule.Outcome) error {
-	return r.store.UpdateClock(ctx, row, func(st *launchrule.Status) bool {
+// skipRecorded advances the anchor to `to` and records o as the slot due's outcome, detaching the row's run. It
+// returns the row as it landed.
+func (r *Runner) skipRecorded(
+	ctx context.Context, row launchrule.Row, to, due time.Time, o launchrule.Outcome,
+) (launchrule.Status, error) {
+	var landed launchrule.Status
+	err := r.store.UpdateClock(ctx, row, func(st *launchrule.Status) bool {
 		st.Anchor, st.LastRunAt, st.WaitingFor = to, due, time.Time{}
 		st.BeginSlot("", o)
+		landed = *st
 		return true
 	})
+	return landed, err
 }
 
 // setWaiting marks (a non-zero due) or clears (zero) the slot the row waits on the engine for, leaving the anchor

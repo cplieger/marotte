@@ -20,6 +20,7 @@ const tsCopies: Record<string, string> = {
 const prefixes = [
   { goConst: "PRSubjectPrefix", tsConst: "PR_SUBJECT_PREFIX" },
   { goConst: "RunSubjectPrefix", tsConst: "RUN_SUBJECT_PREFIX" },
+  { goConst: "ruleSubjectPrefix", tsConst: "RULE_SUBJECT_PREFIX" },
 ];
 
 describe("subject prefixes", () => {

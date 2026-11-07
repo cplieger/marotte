@@ -26,11 +26,16 @@ describe("parsePushTarget", () => {
       kind: "run",
       workflowID: "wf_1",
     });
+    expect(parsePushTarget({ chatId: "", subject: "rule:r1" })).toEqual({
+      kind: "rule",
+      ruleID: "r1",
+    });
     expect(parsePushTarget({ chatId: "c1", subject: "" })).toEqual({ kind: "chat", chatID: "c1" });
     // A bare prefix is reachable only from a malformed envelope, and it resolves to the workspace
     // rather than to /git or /run/.
     expect(parsePushTarget({ chatId: "", subject: "pr:" })).toEqual({ kind: "workspace" });
     expect(parsePushTarget({ chatId: "", subject: "run:" })).toEqual({ kind: "workspace" });
+    expect(parsePushTarget({ chatId: "", subject: "rule:" })).toEqual({ kind: "workspace" });
     expect(parsePushTarget({ chatId: "", subject: "" })).toEqual({ kind: "workspace" });
   });
 
@@ -54,6 +59,11 @@ describe("pushTargetRoute", () => {
       kind: "run",
       id: "wf_1",
     });
+    // A launch rule's row lives on the Workflows panel.
+    expect(pushTargetRoute({ kind: "rule", ruleID: "r1" })).toEqual({
+      kind: "docs",
+      tab: "workflows",
+    });
     // The default chat route: "/" is what the worker opens when no page is up.
     expect(pushTargetRoute({ kind: "workspace" })).toEqual({ kind: "chat", id: "" });
   });
@@ -65,6 +75,7 @@ describe("pushTargetTag", () => {
       "marotte:pr:gh:github.com:a/b#1",
     );
     expect(pushTargetTag({ kind: "run", workflowID: "wf_1" })).toBe("marotte:run:wf_1");
+    expect(pushTargetTag({ kind: "rule", ruleID: "r1" })).toBe("marotte:rule:r1");
     expect(pushTargetTag({ kind: "chat", chatID: "c1" })).toBe("marotte:c1");
     expect(pushTargetTag({ kind: "workspace" })).toBe("marotte");
   });
