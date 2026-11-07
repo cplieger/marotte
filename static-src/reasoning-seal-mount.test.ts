@@ -61,7 +61,7 @@ describe("a motionless flip reads no geometry", () => {
       (o) => {
         box.open = o;
       },
-      false,
+      { motion: false },
     );
     expect(box.open).toBe(true);
     expect(reads.n(), "geometry reads for a motionless flip").toBe(0);
@@ -107,6 +107,7 @@ describe("mounting a settled turn", () => {
       id: turnID,
       n: 1,
       trigger: { id: `${turnID}-p`, text: "go" },
+      branchFrom: undefined,
       body: [
         entry(1, "thinking", "weighing it up", `${turnID}-e1`),
         entry(2, "text", "answer", `${turnID}-say#2`),

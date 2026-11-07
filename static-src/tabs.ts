@@ -23,7 +23,7 @@ import { materializeTab, subagentRef, subjectForRoute } from "./tab-materialize.
 import { viewStale } from "./view-freshness.js";
 // A PATH-SPACE normaliser rather than a feature behaviour. router.ts refuses the same
 // import because a route table sits UNDER the feature line and this file does not.
-// Acyclic: files-shared.ts imports only @cplieger/ui.
+// Acyclic: files-shared.ts imports only @cplieger/ui and locale-time.ts.
 import { normalizeDirPath } from "./files-shared.js";
 import {
   registerTabsTarget,

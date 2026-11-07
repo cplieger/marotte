@@ -615,7 +615,7 @@ export function mountChatView(): void {
   onContentResize(queueCoverPass);
   onLiveEdgeRequest(mountLiveEdge);
   onBus(BUS_FOLDS_CHANGED, () => {
-    const id = getActiveId();
+    const id = getPaintedId();
     if (id !== "") {
       bumpMessages(id, "shape");
     }
@@ -1958,7 +1958,7 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
  * pass defers a fold while the reader reads, and find's reader is always reading.
  */
 function foldReleasedTurn(chatID: string, turnID: string): void {
-  if (chatID !== getActiveId()) {
+  if (chatID !== getPaintedId()) {
     return;
   }
   const t = turnByID.get(turnID);

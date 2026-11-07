@@ -19,7 +19,7 @@ import { parseChatQuery } from "./chat-query.js";
 import { FIND_UNIT_SELECTOR } from "./find-unit.js";
 import { releaseChain, revealChain, revealTurnOnly } from "./search-reveal.js";
 import { prepareMatcher, type Matcher } from "./textsearch/query.js";
-import { getPainted, getActiveId } from "./store.js";
+import { getPainted, getPaintedId, getActiveId } from "./store.js";
 import { loadOlderTurns } from "./store-load.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 import { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
@@ -496,7 +496,7 @@ function landInPlace(hit: Hit): boolean {
   if (engine === null || shell === null || (hit.lane ?? "") !== "" || hit.kind === "turn") {
     return false;
   }
-  const chatID = getActiveId();
+  const chatID = getPaintedId();
   const card = turnCardEl(hit.turn_id);
   const item = itemElement(hit);
   if (card === null || card.hasAttribute("data-folded") || item === null || diffOwed(item, hit)) {
