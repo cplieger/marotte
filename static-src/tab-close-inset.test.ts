@@ -17,8 +17,8 @@ let entry: { readonly width: number; readonly height: number };
 beforeAll(() => {
   entry = { width: window.innerWidth, height: window.innerHeight };
   style = mountAppCSS();
-  // The sidebar, open, where `tabs.ts` puts every tab: it declares the row's height. A sidebar-width
-  // column, so the name is long enough to be the row's flexible child.
+  // The sidebar, open, where `tabs.ts` renders the tab list. A sidebar-width column, so the name is
+  // long enough to be the row's flexible child.
   host = document.createElement("nav");
   host.id = "sidebar";
   host.className = "open";

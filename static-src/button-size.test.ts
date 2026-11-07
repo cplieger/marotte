@@ -654,7 +654,8 @@ function familiesOf(el: Element): Family[] {
 /** The kinds the cases measure; a family of another kind is listed, not yet held. */
 const MEASURED: ReadonlySet<Family["kind"]> = new Set(["toolbar", "tab-row", "own-size", "dense"]);
 
-/** The token a family's painted box must equal, or undefined where its size is its own. */
+/** The token the paint case holds a family to: `--btn-h` for a toolbar family, a dense family's
+ *  `paint` field, undefined otherwise (the tab-row case and an own size measure their own way). */
 function paintToken(family: Family): string | undefined {
   if (family.kind === "toolbar") {
     return "--btn-h";
@@ -719,7 +720,7 @@ async function mountSurface(
   expect(missing, `${surface}: the held controls are on screen`).toEqual([]);
 }
 
-/** The sidebar controls the checks must reach at every preset; the phone drawer adds its close button. */
+/** The sidebar controls the checks must reach at every preset. */
 const SIDEBAR_COVERS = [
   "#new-chat",
   "#history-btn",

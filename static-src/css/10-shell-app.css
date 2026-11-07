@@ -13,11 +13,6 @@
      meet at the top of the app, whose hairlines line up (01-tokens.css `--titlebar-h`). */
   --sidebar-band-h: var(--titlebar-h);
 
-  /* A tab's mouse height (its ×, its block padding, its reserved 1px border), and the row
-     height at the tier: New chat and History stand in the tabs' column, so they read it too. */
-  --tab-h: calc(var(--ctl-h-sm) + 2 * var(--sp-2) + 2px);
-  --tab-row-h: max(var(--tab-h), var(--row-tap));
-
   /* BOTH INLINE EDGES, and the bare `env()` rather than the `max()` shape the bar
      above uses: this element declares no inline padding of its own, so there is no
      house value to take the larger of. On a phone it becomes a full-width
@@ -151,7 +146,8 @@ body.sidebar-resizing {
   margin-inline-end: -0.5rem;
 }
 
-/* The sidebar's standalone icon buttons, the header's and Log out, paint at the toolbar's size. */
+/* Scoped here, not on `.icon-btn`: a root `--btn-h` would also resize dense row actions and dialog
+   closes whose sizes are not decided yet. */
 .sidebar-header-actions > .icon-btn,
 .sidebar-footer-actions > .icon-btn {
   min-inline-size: var(--btn-h);

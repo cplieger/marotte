@@ -112,6 +112,17 @@ describe("a chat tab against the New chat button", () => {
     expect(btn.getBoundingClientRect().height).toBeCloseTo(44, 0);
   });
 
+  it("lifts a drag ghost at the row's height", () => {
+    // tabs-drag.ts clones the row into `body`, outside the sidebar, and the clone keeps `.tab`.
+    const { tab } = mountSidebar();
+    const ghost = tab.cloneNode(true) as HTMLElement;
+    ghost.classList.add("tab-drag-ghost");
+    ghost.style.width = `${String(tab.getBoundingClientRect().width)}px`;
+    doc.body.appendChild(ghost);
+    // The layout height: the ghost's bob rotates it, which widens its bounding rect.
+    expect(ghost.offsetHeight).toBe(44);
+  });
+
   it("measures the same WIDTH, on the same left and right edges", () => {
     // `#tab-list`'s inline padding and `.sidebar-actions`' margin are the SAME value
     // (`--sp-2`), which is what makes these two boxes one box rather than a button
