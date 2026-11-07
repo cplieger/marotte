@@ -1,10 +1,10 @@
-// The exec view's detail pane: one node's facts, failure, interruption, and the transcript host it
+// The exec view's detail pane: one node's facts, failure, interruption, hand end, and the transcript host it
 // hands OUT (`bodyFor`). No capture: the page's per-step results region renders that.
 
 import { el } from "@cplieger/ui";
 import { formatElapsed } from "../strings.js";
 import { elapsed, type ExecNode } from "./model.js";
-import { STATE_WORD } from "./status.js";
+import { ENDED_BY_HAND, STATE_WORD } from "./status.js";
 import { paintLabel } from "./label.js";
 
 export interface ExecDetailView {
@@ -48,6 +48,7 @@ export function buildExecDetail(
   const facts = el("dl", { className: "ev-d-facts" });
   const failure = el("div", { className: "ev-d-fail", role: "status" });
   const interruption = el("div", { className: "ev-d-interrupted", role: "status" });
+  const byHand = el("div", { className: "ev-d-by-hand", role: "status" }, ENDED_BY_HAND);
   const bodies = el("div", { className: "ev-d-bodies" });
   const empty = el("div", { className: "ev-d-empty" });
   const emptyAct = el("div", { className: "ev-d-empty-action", hidden: true });
@@ -58,6 +59,7 @@ export function buildExecDetail(
     facts,
     failure,
     interruption,
+    byHand,
     bodies,
     empty,
     emptyAct,
@@ -78,6 +80,7 @@ export function buildExecDetail(
       facts.hidden = true;
       failure.hidden = true;
       interruption.hidden = true;
+      byHand.hidden = true;
       bodies.hidden = true;
       empty.hidden = false;
       empty.textContent = "Pick a step to see what it did.";
@@ -112,6 +115,7 @@ export function buildExecDetail(
     failure.textContent = node.failure ?? "";
     interruption.hidden = node.interruption === undefined;
     interruption.textContent = node.interruption ?? "";
+    byHand.hidden = node.endedByHand !== true;
 
     // Only ONE node's transcript is on screen; the rest stay in the DOM since
     // their live content cannot be replayed.

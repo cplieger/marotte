@@ -1301,6 +1301,11 @@ export interface EntryStepGraded {
   outcome: TurnOutcome;
   failure_reason?: string;
   failure_kind?: FailureKind;
+  /**
+ * EndedByHand marks a step KAS completed with no completion signal after something other than its own turn
+ * ended it: Mark step done, or a parent's update_status.
+ */
+  ended_by_hand?: boolean;
 }
 
 /** EntryText is the text payload. */
@@ -1445,6 +1450,11 @@ export interface EntryTurnClose {
  * signal call after its last tool call; the run grades it against KAS's record of the step.
  */
   unanswered?: boolean;
+  /**
+ * EndedOffTurn marks a workflow step's close that its own turn did not end: KAS had parked the node,
+ * or its turn had not ended, when node_complete came.
+ */
+  ended_off_turn?: boolean;
 }
 
 /**
@@ -3240,6 +3250,8 @@ export interface RunStepEnd {
   outcome: TurnOutcome;
   failure_reason?: string;
   failure_kind?: FailureKind;
+  /** EndedByHand is the grade's EntryStepGraded.EndedByHand. */
+  ended_by_hand?: boolean;
   /**
  * Resumed is set on an `interrupted` end the step moved past: the run's log holds a later turn on the step,
  * or KAS's record shows it completed.

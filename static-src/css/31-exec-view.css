@@ -770,8 +770,9 @@
   display: none;
 }
 
-/* Neutral: an engine end interrupted the step, which is not the step's failure. */
-.ev-d-interrupted {
+/* Neutral: an engine end interrupted the step, or a person or its parent ended it; neither is the step's failure. */
+.ev-d-interrupted,
+.ev-d-by-hand {
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r);
   background: color-mix(in srgb, var(--c-text-primary) 8%, transparent);
@@ -780,7 +781,8 @@
   overflow-wrap: anywhere;
 }
 
-.ev-d-interrupted[hidden] {
+.ev-d-interrupted[hidden],
+.ev-d-by-hand[hidden] {
   display: none;
 }
 

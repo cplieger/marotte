@@ -54,6 +54,9 @@ type runTurn struct {
 	answer answerFold
 	// ownEnd is whether the step's newest edge is its own turn's turn_end, with no turn_start or node_paused after.
 	ownEnd bool
+	// parked is whether KAS paused the node with no node_start since: a turn a steer runs on a parked node does not
+	// resume it, so its end is not the step's.
+	parked bool
 	// seq is the newest seq the sink assigned, written on the dispatch goroutine and read by the digest.
 	seq atomic.Uint64
 }
@@ -466,7 +469,8 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 		rec.host = hostFor(workflowID, chatID)
 	}
 	if t := rec.open[nodePath]; t != nil {
-		// KAS sends node_start twice per step; the second continues this turn.
+		// KAS sends node_start twice per step, and again when it resumes a parked one; each continues this turn.
+		t.parked = false
 		if t.top == "" {
 			t.top = topStepOf(step)
 		}
@@ -603,15 +607,20 @@ func (r *runLog) paused(workflowID, nodePath string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if t := r.openLocked(workflowID, nodePath); t != nil {
-		t.ownEnd = false
+		t.ownEnd, t.parked = false, true
 	}
 }
 
-// unanswered is whether the step's own turn ended it having said nothing. KAS completes a step at its turn's end
-// only when nothing else ended it; Mark step done or a parent's update_status lands after a node_paused or inside a
+// endedOffTurn is whether something other than the step's own turn ended it. KAS completes a step at its turn's end
+// only when nothing else ended it; Mark step done or a parent's update_status lands on a parked node or inside a
 // turn, and KAS clears the step's signal on that path too (applyPausedStepFinish), so only this tells them apart.
+func (t *runTurn) endedOffTurn() bool {
+	return !t.ownEnd || t.parked
+}
+
+// unanswered is whether the step's own turn ended it having said nothing.
 func (t *runTurn) unanswered() bool {
-	return t.ownEnd && t.answer.silent()
+	return !t.endedOffTurn() && t.answer.silent()
 }
 
 func (r *runLog) openLocked(workflowID, nodePath string) *runTurn {
@@ -657,6 +666,7 @@ func (r *runLog) closeNode(
 	// The fold reads sealed entries, and the answer is still coalescing until a seal.
 	sealed, err = t.turn.SealOpen(ctx)
 	c.Unanswered = err == nil && t.unanswered()
+	c.EndedOffTurn = t.endedOffTurn()
 	closing, cerr := r.closeLocked(ctx, rec, t, c)
 	sc := sealedClose(closing, t.turn.ID(), &c)
 	holdNoteLocked(rec, nodePath, &sc, status, note)
@@ -803,7 +813,7 @@ func sealedClose(sealed []turnlog.Sealed, turn string, c *marotte.TurnConclusion
 	}
 	return stepClose{
 		outcome: c.Outcome, reason: c.Reason, kind: c.FailureKind, rawStop: c.RawStop, unanswered: c.Unanswered,
-		turn: turn,
+		offTurn: c.EndedOffTurn, turn: turn,
 	}
 }
 
