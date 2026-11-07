@@ -247,6 +247,36 @@ describe("a refused close", () => {
     expect(coverUp(), "C's paint lifts the cover").toBe(false);
   });
 
+  it("puts the row back without taking the reader off a tab chosen since the close", async () => {
+    const ids = await closing();
+    const c = ids["c"] ?? "";
+    const b = ids["b"] ?? "";
+    await frame();
+    const before = rowIDs();
+    const notices: unknown[][] = [];
+    registerTabNotice((...args) => {
+      notices.push(args);
+    });
+    tabServer.holdResponses();
+    tabServer.failNext("close_tab", 500);
+
+    const done = closeTab(c);
+    await activationRan();
+    activateTab(b);
+    await activationRan();
+    fx.chat.show.mockClear();
+    tabServer.releaseResponses();
+    await done;
+    await settleTabs();
+    await activationRan();
+
+    expect(rowIDs(), "the closed row is back at its index").toEqual(before);
+    expect(getActiveTabId()).toBe(b);
+    expect(pointers.active, "the composer still acts for the chosen chat").toBe("b");
+    expect(fx.chat.show, "the restored chat was shown over the chosen one").not.toHaveBeenCalled();
+    expect(notices).toEqual([["c", "c", "Could not close that tab, so it was put back.", "error"]]);
+  });
+
   it("keeps a row whose refusal lands during its exit", async () => {
     const ids = await closing();
     const c = ids["c"] ?? "";
@@ -348,6 +378,47 @@ describe("an unanswered close of the active tab", () => {
 
       expect(rowIDs()).toEqual(before);
       expect(getActiveTabId()).toBe(c);
+      expect(notices).toEqual([
+        ["c", "c", "Close not confirmed, so the tab was restored.", "info"],
+      ]);
+    } finally {
+      vi.useRealTimers();
+      tabServer.releaseResponses();
+    }
+  });
+
+  it("puts the row back without taking the reader off a tab chosen since the close", async () => {
+    const ids = await closing();
+    const c = ids["c"] ?? "";
+    const b = ids["b"] ?? "";
+    await frame();
+    const before = rowIDs();
+    const notices: unknown[][] = [];
+    registerTabNotice((...args) => {
+      notices.push(args);
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    tabServer.setMode("manual");
+    tabServer.holdResponses();
+    tabServer.failNext("close_tab", 500);
+    try {
+      void closeTab(c);
+      await activationRan();
+      activateTab(b);
+      await activationRan();
+      fx.chat.show.mockClear();
+
+      await vi.advanceTimersByTimeAsync(5_000 + 1_000);
+      await settleTabs();
+      await activationRan();
+
+      expect(rowIDs(), "the closed row is back at its index").toEqual(before);
+      expect(getActiveTabId()).toBe(b);
+      expect(pointers.active, "the composer still acts for the chosen chat").toBe("b");
+      expect(
+        fx.chat.show,
+        "the restored chat was shown over the chosen one",
+      ).not.toHaveBeenCalled();
       expect(notices).toEqual([
         ["c", "c", "Close not confirmed, so the tab was restored.", "info"],
       ]);
