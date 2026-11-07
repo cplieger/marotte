@@ -7,7 +7,7 @@ import type * as Scroll from "./scroll.js";
 
 vi.mock("./scroll.js", async (importOriginal) => ({
   ...(await importOriginal<typeof Scroll>()),
-  setUserScrolledUp: (): void => {
+  pressHold: (): void => {
     /* noop */
   },
 }));

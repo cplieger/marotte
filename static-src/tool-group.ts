@@ -14,7 +14,7 @@ import { iconEl } from "./icon-el.js";
 import { outcomeIcon } from "./icons.js";
 import { foldGroupHooks, onHookVisibility } from "./hook-fold.js";
 import { syncHookBadge } from "./hook-badge.js";
-import { setUserScrolledUp } from "./scroll.js";
+import { pressHold } from "./scroll.js";
 import { STEERING_TITLE_PREFIX } from "./steering-docs.js";
 import { kindNoun } from "./tool-kind-noun.js";
 import type { ToolKind } from "./tool-schema.js";
@@ -418,7 +418,7 @@ function onHeaderClick(group: HTMLDivElement, header: HTMLDivElement): void {
   header.setAttribute("aria-expanded", collapsedNow ? "false" : "true");
   refreshGroupHeader(group);
   if (!collapsedNow) {
-    setUserScrolledUp(true);
+    pressHold();
   }
 }
 

@@ -6,8 +6,9 @@ vi.mock("./scroll.js", () => ({
   jumpTo: vi.fn(),
   // A landing's hold corrects the view through it once the layout settles.
   shiftScroll: vi.fn(),
+  jumpInFlight: vi.fn(() => false),
   // A tool group's header parks the reader when it opens.
-  setUserScrolledUp: vi.fn(),
+  pressHold: vi.fn(),
   // Inert: these tests drive re-runs through the module's own paths.
   onTranscriptMutate: vi.fn(() => () => undefined),
 }));

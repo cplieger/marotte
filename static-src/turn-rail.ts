@@ -4,17 +4,16 @@ import { apiGet } from "./api-client.js";
 import { ICON_STEP_NEXT, ICON_STEP_PREV } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import {
-  atLiveEdgeNow,
-  beginSelfScroll,
-  endSelfScroll,
   getScrollEl,
+  jumpToOffset,
   onAttach,
   onContentResize,
   onReaderGesture,
   onTranscriptMutate,
+  readerGestureOpen,
   readingLineOffset,
+  readingState,
   scrollableBy,
-  scrollToOffset,
 } from "./scroll.js";
 import { binLabel, markerLabel } from "./rail-labels.js";
 import { buildPath } from "./route-path.js";
@@ -29,8 +28,7 @@ import { activeTurnAt, buildOffsets, markerSlotFor, turnsInView } from "./rail-a
 import type { CardTop, TurnOffsets } from "./rail-activation.js";
 
 /** How far the transcript must scroll before the map appears: a threshold, not `> 0`, so a few
- *  pixels of settling overflow do not flicker it. Equal to `BOTTOM_TOLERANCE_PX` by coincidence;
- *  do not collapse the two. */
+ *  pixels of settling overflow do not flicker it. */
 const MIN_SCROLL_PX = 100;
 
 /** Wall-clock bound on one jump's paging loop, so a store that keeps reporting more
@@ -44,8 +42,8 @@ const PAGE_BUDGET_MS = 4000;
  *  an engine without it rather than belt-and-braces. */
 const PICK_SETTLE_MS = 1200;
 
-/** At most this many `behavior: "auto"` corrections per jump — never a second smooth
- *  animation, so exactly one is ever in flight. */
+/** At most this many instant corrections after the jump's own flight; a correction that moves
+ *  nothing ends the loop sooner (`correctLanding`). */
 const MAX_CORRECTIONS = 6;
 
 /** How far the target's top may sit from the reading line and still count as landed. */
@@ -183,7 +181,10 @@ export function mountTurnRail(host: HTMLElement): void {
   // A READER GESTURE revokes the pick; nothing else does. That covers both ways the
   // reader states a position — a scroll, and a request for the live edge, which
   // scrolls through the controller and so fires no reader scroll event.
-  onReaderGesture(clearSelection);
+  onReaderGesture(() => {
+    readerGestures++;
+    clearSelection();
+  });
   // Mount, unmount, the pagination prepend and `content-visibility` re-estimates all move tops with no
   // scroll; an unpark restores against re-measured cards.
   onTranscriptMutate(repick);
@@ -392,7 +393,7 @@ function pick(): void {
     ? ""
     : activeTurnAt(scroller.scrollTop, table, readingLineOffset(), {
         clientHeight: scroller.clientHeight,
-        atLiveEdge: atLiveEdgeNow(),
+        atLiveEdge: readingState() === "following",
       });
   const moved = next !== "" && next !== activeID;
   if (moved) {
@@ -980,6 +981,9 @@ export function initTurnRailCallbacks(cbs: {
  *  edge mid-flight. */
 let jumpGeneration = 0;
 
+/** Reader gestures published so far: a jump whose count moved hands the position back. */
+let readerGestures = 0;
+
 function ownsJump(gen: number): boolean {
   return gen === jumpGeneration;
 }
@@ -1013,7 +1017,10 @@ function releaseIntent(): void {
 /** Jump to a turn: page it in if needed, build its body, scroll once, then correct until its top
  *  sits on the reading line. ONE branch point (paging); the body build runs on both paths first, since
  *  a body landing mid-animation would move the target under the flight. */
-async function navigateToTurn(s: TurnSummary, behavior = jumpBehavior()): Promise<void> {
+async function navigateToTurn(
+  s: TurnSummary,
+  behavior: "instant" | "smooth" = "smooth",
+): Promise<void> {
   // A second click on a turn that is already paging IS that jump, not another one:
   // claiming a generation here would supersede the operation this click is waiting
   // on, so the page would land and nothing would scroll to it.
@@ -1021,6 +1028,7 @@ async function navigateToTurn(s: TurnSummary, behavior = jumpBehavior()): Promis
     return;
   }
   const gen = ++jumpGeneration;
+  const gestures = readerGestures;
   try {
     if (turnCard(s.id) === null && !(await pageIn(s))) {
       return;
@@ -1041,25 +1049,18 @@ async function navigateToTurn(s: TurnSummary, behavior = jumpBehavior()): Promis
     if (card === null) {
       return;
     }
-    // The epoch opens HERE rather than at the paging step, so its own backstop can
-    // never expire inside `PAGE_BUDGET_MS` and leave the scroll, the corrections and
-    // the release running with no epoch at all.
-    beginSelfScroll();
     const landing = landingFor(card);
     if (landing === null) {
       return;
     }
-    scrollToOffset(landing, behavior);
+    const landed = jumpToOffset(landing, behavior);
     markRailTarget(card);
-    await correctLanding(card, gen);
+    await correctLanding(card, gen, gestures, landed);
   } finally {
     // Per id and unconditional: a superseded jump still owns the pending mark it
-    // set. The epoch and the pick belong to whoever owns the scroller, and the
-    // epoch closes from here because one left open suspends pagination and silences
-    // every reader gesture indefinitely.
+    // set. The pick belongs to whoever owns the scroller.
     pending.delete(s.id);
     if (ownsJump(gen)) {
-      endSelfScroll();
       releaseIntent();
       render();
       schedulePick();
@@ -1112,23 +1113,39 @@ async function loadUntilResident(s: TurnSummary, deadline: number): Promise<bool
   }
 }
 
-/** Re-measure after each settle and jump the remainder. Never a second smooth
- *  animation: a correction closes the gap the first one could not see, because the
- *  page load and the body build moved the target after it was aimed at. */
-async function correctLanding(card: HTMLElement, gen: number): Promise<void> {
+/** Re-measure once the jump has landed and after each correction settles, and jump the remainder instantly: a
+ *  correction closes the gap the first jump could not see, because the page load and the body build moved the target
+ *  after it was aimed at. A correction that moves nothing ends the loop: the landing is past the scroller's reach.
+ *  Reader input since the jump began (`gestures` is the count then) ends it too: an instant correction drops an open
+ *  gesture, so it would override the reader. */
+async function correctLanding(
+  card: HTMLElement,
+  gen: number,
+  gestures: number,
+  landed: Promise<boolean>,
+): Promise<void> {
+  // The reader's own input ended the flight: the position is theirs.
+  if (!(await landed)) {
+    return;
+  }
   for (let i = 0; i < MAX_CORRECTIONS; i++) {
-    await settled();
-    if (!ownsJump(gen)) {
+    if (i > 0) {
+      await settled();
+    }
+    if (!ownsJump(gen) || readerGestureOpen() || readerGestures !== gestures) {
       return;
     }
     const landing = landingFor(card);
     if (landing === null) {
       return;
     }
-    if (Math.abs(getScrollEl().scrollTop - landing) <= LANDING_TOLERANCE_PX) {
+    const before = getScrollEl().scrollTop;
+    if (Math.abs(before - landing) <= LANDING_TOLERANCE_PX) {
       return;
     }
-    scrollToOffset(landing, "auto");
+    if (!(await jumpToOffset(landing, "instant")) || getScrollEl().scrollTop === before) {
+      return;
+    }
   }
   console.warn("turn map: the landing did not settle within the correction budget");
 }
@@ -1149,12 +1166,6 @@ function settled(): Promise<void> {
     timer = window.setTimeout(finish, PICK_SETTLE_MS);
     scroller.addEventListener("scrollend", finish, { once: true });
   });
-}
-
-function jumpBehavior(): ScrollBehavior {
-  const reduced =
-    typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-  return reduced ? "auto" : "smooth";
 }
 
 /** The mounted card for the turn whose opening message is `id`, or null when it is

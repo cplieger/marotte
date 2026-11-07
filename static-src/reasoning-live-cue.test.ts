@@ -5,7 +5,7 @@ import fc from "fast-check";
 import { allRules, loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 
 vi.mock("./scroll.js", () => ({
-  setUserScrolledUp: vi.fn(),
+  pressHold: vi.fn(),
 }));
 
 import { buildReasoning } from "./fundamentals/reasoning.js";

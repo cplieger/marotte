@@ -44,6 +44,7 @@ beforeAll(async () => {
   ({ buildAssistantBody, resetBlockRenders, initBlockRenderer } =
     await import("./messages-blocks.js"));
   initBlockRenderer({
+    liveAnchorChanged: () => undefined,
     pushEntryEffect: () => {
       /* same */
     },

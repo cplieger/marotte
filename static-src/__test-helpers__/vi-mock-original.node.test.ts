@@ -211,7 +211,7 @@ describe("the vi.mock ratchet", () => {
     const deferredSpread = [
       `vi.doMock("./scroll.js", async (importOriginal) => ({`,
       `  ...(await importOriginal<typeof Scroll>()),`,
-      `  setUserScrolledUp: noop,`,
+      `  pressHold: noop,`,
       `}));`,
     ].join("\n");
     // `vi.doUnmock` takes no factory and must not be read as a governed verb.

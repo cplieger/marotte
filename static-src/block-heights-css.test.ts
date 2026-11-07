@@ -4,7 +4,7 @@
 // padding + border)`, a function of the CSS alone, read off the LAST instance's rect (the
 // containment ROOT's rect is the rendered-skipped box). The premise: the last instance is
 // skipped and the first is not. `thinking` and `steerNote` have no reserve and are
-// measured as real heights on the opposite premise. 9 cases per tier, through one `tierCases`
+// measured as real heights on the opposite premise, as is a collapsed `toolGroup`. 10 cases per tier, through one `tierCases`
 // helper.
 
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
@@ -21,6 +21,12 @@ import { buildRunCard } from "./fundamentals/run-card.js";
 import { buildReasoning } from "./fundamentals/reasoning.js";
 import { buildSteerNote } from "./fundamentals/steer-note.js";
 import { planElement } from "./messages-plan.js";
+import {
+  buildToolGroupShell,
+  groupBody,
+  refreshGroupHeader,
+  setGroupSuperseded,
+} from "./tool-group.js";
 
 /** Enough instances that the last is far past the scrollport: 120 x 38px against 400px. */
 const INSTANCES = 120;
@@ -119,6 +125,17 @@ function runCard(i: number): HTMLElement {
 /** A plan card with ONE entry: the reserve counts one entry row. */
 function planCard(i: number): HTMLElement {
   return planElement([{ content: `step ${String(i)}`, priority: "medium", status: "pending" }]);
+}
+
+/** A collapsed group of sixteen calls from its real shell, closed at creation as a superseded run is. */
+function collapsedGroup(): HTMLElement {
+  const group = buildToolGroupShell();
+  setGroupSuperseded(group, true);
+  for (let i = 0; i < 16; i++) {
+    groupBody(group).appendChild(toolCard());
+  }
+  refreshGroupHeader(group);
+  return group;
 }
 
 /**
@@ -325,6 +342,23 @@ function tierCases(name: "fine" | "coarse", enter: () => Promise<void>): void {
       expect(
         Math.abs(r.box - est().thinking),
         `thinking: the collapsed summary row measured ${String(r.box)}px against an estimate of ${String(est().thinking)}px`,
+      ).toBeLessThanOrEqual(FONT_SLACK_PX);
+    },
+    LOADED_BUDGET_MS,
+  );
+
+  it(
+    "prices `toolGroup` at a collapsed group's REAL height, there being no reserve",
+    async () => {
+      await enter();
+      const r = await read(collapsedGroup);
+      expect(
+        { contentVisibility: r.terms.contentVisibility, bothReal: r.box === r.realBox },
+        "a group is never skipped, so its price is a measured height",
+      ).toEqual({ contentVisibility: "visible", bothReal: true });
+      expect(
+        Math.abs(r.box - est().toolGroup),
+        `toolGroup: a collapsed group measured ${String(r.box)}px against an estimate of ${String(est().toolGroup)}px`,
       ).toBeLessThanOrEqual(FONT_SLACK_PX);
     },
     LOADED_BUDGET_MS,

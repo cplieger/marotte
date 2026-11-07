@@ -29,8 +29,9 @@ export function scrollableBy(): number {
   return getInstance().scrollableBy();
 }
 
-export function setUserScrolledUp(v: boolean): void {
-  getInstance().setUserScrolledUp(v);
+/** A collapse or expand the reader pressed: park on the content above it until the press's layout settles. */
+export function pressHold(): void {
+  getInstance().pressHold();
 }
 /** Hand the scroller to a transcript view (unpark / fresh view). */
 export function attach(handle: ViewAttachHandle): void {
@@ -48,27 +49,31 @@ export function jumpTo(target: HTMLElement, opts?: ScrollIntoViewOptions): void 
 export function shiftScroll(px: number): void {
   getInstance().shiftBy(px);
 }
-/** Open a self-scroll epoch: every scroll event until it closes is the controller's own
- *  animation rather than a reader gesture. */
-export function beginSelfScroll(): void {
-  getInstance().beginSelfScroll();
+/** A smooth jump has not landed yet; it re-lands on its target's current position when it does. */
+export function jumpInFlight(): boolean {
+  return getInstance().jumpInFlight();
 }
-/** Close the open epoch. */
-export function endSelfScroll(): void {
-  getInstance().endSelfScroll();
+/** The element the scroll owner holds on the reading line, or null when it holds none (Following, a press window,
+ *  a jump in flight). */
+export function readerAt(): Element | null {
+  return getInstance().readerAt();
 }
-/** Scroll to an absolute offset inside the open epoch, parking the reader unless the landing is
- *  at the live edge. */
-export function scrollToOffset(px: number, behavior: ScrollBehavior): void {
-  getInstance().scrollToOffset(px, behavior);
+/** Run a residency DOM change as one hold of the reader's text, in this task. */
+export function heldMutation(fn: () => void): void {
+  getInstance().heldMutation(fn);
+}
+/** Jump to an absolute offset, parking the reader unless it lands on the end. Resolves true once it landed, false
+ *  when the reader or another jump took the scroller first. A smooth jump lands instantly under reduced motion. */
+export function jumpToOffset(px: number, behavior: "instant" | "smooth"): Promise<boolean> {
+  return getInstance().jumpToOffset(px, behavior);
+}
+/** The live anchor may have changed: while Following, the next frame lands on its new position. */
+export function followTargetChanged(): void {
+  getInstance().followTargetChanged();
 }
 /** Px from the scrollport's top to the reading line. */
 export function readingLineOffset(): number {
   return getInstance().readingLineOffset();
-}
-/** The published live-edge verdict, aim-aware. */
-export function atLiveEdgeNow(): boolean {
-  return getInstance().atLiveEdgeNow();
 }
 /** Register `cb` for a size change in one of the view's own cards; returns the unregister. */
 export function onContentResize(cb: () => void): () => void {
@@ -88,12 +93,6 @@ export function setLoadMore(fn: (() => void) | null, hasMore: boolean): void {
 // deadset:ignore DS1102 -- test seam: the history edge's published position
 export function noteHistoryEdge(near: boolean): void {
   getInstance().noteHistoryEdge(near);
-}
-/** Re-measure the older-page pass in flight where the reader stands now; a no-op once the page has landed. A writer
- *  that may land the page calls it just before writing, because the browser can move the scroller before that move's
- *  `scroll` event runs. */
-export function rebaseLoadMore(): void {
-  getInstance().rebaseLoadMore();
 }
 export function resetScrollState(): void {
   getInstance().resetScrollState();
@@ -128,6 +127,10 @@ export function deferWhileReading(mutate: () => void): void {
 }
 export function fillViewport(): void {
   getInstance().fillViewport();
+}
+/** Whether a reader gesture is open on the chat's scroller. */
+export function readerGestureOpen(): boolean {
+  return getInstance().gestureOpen();
 }
 // Init on load.
 if (document.readyState === "loading") {

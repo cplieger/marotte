@@ -1204,7 +1204,7 @@ describe("navigation onto a stub", () => {
     // scrolls: that build's completion applies a scroller write, and taking it
     // mid-animation is what the ordering exists to prevent.
     await vi.waitFor(() => {
-      expect(scrollMock.scrollToOffset).toHaveBeenCalled();
+      expect(scrollMock.jumpToOffset).toHaveBeenCalled();
     });
   });
 

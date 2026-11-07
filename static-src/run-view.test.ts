@@ -3046,9 +3046,9 @@ describe("the page's scroll position", () => {
     expect(scroller().scrollTop).toBe(bottom());
   });
 
-  // A shrink that brings the end to the reader returns them to Following with no scroll event, so
-  // the state a run parks with has to come from the follower, not from the last scroll.
-  it("keeps a run that shrank back to Following across a run switch", async () => {
+  // No size change moves a reader between Reading and Following: a shrink that brings the end near a reader who
+  // scrolled up leaves them Reading, and the run parks and restores that state.
+  it("keeps a reader the shrink brought near the end Reading across a run switch", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     onTestFinished(() => {
       vi.useRealTimers();
@@ -3063,53 +3063,36 @@ describe("the page's scroll position", () => {
     spacer.style.height = "250px";
     body.appendChild(spacer);
     await frames();
-    // Past the open's pin window on the follower's `Date.now()` clock.
     vi.advanceTimersByTime(800);
     await frames();
-    // Inside the live-edge band once the spacer goes, outside it while the spacer stands.
     const parkedAt = bottom() - 300;
     readerScrollTo(parkedAt);
     await frames();
-    const resume = document.getElementById("run-scroll-bottom");
-    expect(resume?.classList.contains("hidden")).toBe(false);
-    // Past the reader's own control window, so the layout may release them.
     vi.advanceTimersByTime(350);
-    let scrolls = 0;
-    const count = (): void => {
-      scrolls++;
-    };
-    scroller().addEventListener("scroll", count);
+    await frames();
+    const resume = document.getElementById("run-scroll-bottom");
+    expect(resume?.classList.contains("hidden"), "the premise: Reading").toBe(false);
     spacer.remove();
     await frames();
     await frames();
-    scroller().removeEventListener("scroll", count);
-    // The premise: Following again, reached without moving or scrolling the box.
-    expect([scroller().scrollTop, scrolls, resume?.classList.contains("hidden")]).toEqual([
-      parkedAt,
-      0,
-      true,
-    ]);
+    expect([scroller().scrollTop, resume?.classList.contains("hidden")]).toEqual([parkedAt, false]);
 
     await activate("wf_shrink_b");
     await frames();
-    // Every state the control passes through, since a stale Reading shows it before a later
-    // mutation can release it again.
-    const shown: boolean[] = [];
-    const watch = new MutationObserver(() => {
-      shown.push(resume?.classList.contains("hidden") === false);
-    });
-    if (resume !== null) {
-      watch.observe(resume, { attributes: true, attributeFilter: ["class"] });
-    }
     await activate("wf_shrink_a");
     await frames();
-    watch.disconnect();
-    expect(shown).not.toContain(true);
-    // Following: new output carries the view to the end.
+    const back = scroller().scrollTop;
     const more = document.createElement("div");
     more.style.height = "400px";
     body.appendChild(more);
     await frames();
-    expect(scroller().scrollTop).toBe(bottom());
+
+    expect({
+      shown: resume?.classList.contains("hidden") === false,
+      kept: scroller().scrollTop === back,
+    }).toEqual({
+      shown: true,
+      kept: true,
+    });
   });
 });

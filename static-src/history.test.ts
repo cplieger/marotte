@@ -142,7 +142,7 @@ vi.mock("./navigate.js", () => ({
   openSpec: noop,
 }));
 vi.mock("./scroll.js", () => ({
-  setUserScrolledUp: noop,
+  pressHold: noop,
   preserveReadingPosition: (fn: () => void) => {
     fn();
   },

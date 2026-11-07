@@ -41,8 +41,7 @@ const { setSessions, setActive, bumpMessages, appendEntry, getActive, applyToolP
   await import("./store.js");
 const { mountChatView, teardownAll } = await import("./messages.js");
 const { scrollToBottom, readingState } = await import("./scroll.js");
-const { setPinSettleMs, READER_CONTROL_MS } = await import("./scroll-controller.js");
-const { pinAtLiveEdge } = await import("./__test-helpers__/scroll-rest.js");
+const { restAtLiveEdge } = await import("./__test-helpers__/scroll-rest.js");
 const { resetFoldState } = await import("./fold-state.js");
 const { KEY_ATTR } = await import("./reconcile.js");
 const { forgetHeights } = await import("./block-heights.js");
@@ -285,13 +284,8 @@ async function loadAtLiveEdge(chat: string, live: boolean, matchAbove = false): 
   await vi.waitFor(() => {
     expect(messagesEl.querySelectorAll("[data-entry-seq]").length).toBeGreaterThan(ENTRIES / 4);
   });
-  await pinAtLiveEdge(scrollerEl, 20, () => {
-    const real = setPinSettleMs(20);
-    try {
-      scrollToBottom();
-    } finally {
-      setPinSettleMs(real);
-    }
+  await restAtLiveEdge(scrollerEl, () => {
+    scrollToBottom();
   });
   stageServerHits(matchAbove ? [aboveHit(), hit()] : [hit()]);
 }
@@ -309,7 +303,6 @@ function closeAfterFirstJump(): void {
     this: Element,
     arg?: boolean | ScrollIntoViewOptions,
   ) {
-    jumpedAt = Date.now();
     real.call(this, arg);
     queueMicrotask(closeChatFind);
   });
@@ -320,8 +313,6 @@ function atLiveEdge(): boolean {
     scrollerEl.scrollTop + scrollerEl.clientHeight >= scrollerEl.scrollHeight - VIEWPORT_PX / 4
   );
 }
-
-let jumpedAt = Number.NaN;
 
 /** Frames until `scrollTop` has held for three and `also()` holds, then until no frame callback is
  *  queued: a smooth flight never stands still mid-way, and a follow write lands in a frame the
@@ -347,10 +338,6 @@ async function scrollerAtRest(also: () => boolean = () => true): Promise<void> {
 async function staysParkedThroughStream(chat: string): Promise<void> {
   await vi.waitFor(() => {
     expect(_isChatFindOpen()).toBe(false);
-  });
-  // Past the jump's quiet period, so the chunk's follow write is licensed and only Reading holds it.
-  await until(() => Date.now() > jumpedAt + READER_CONTROL_MS, "the jump's quiet period to close", {
-    detail: () => `${String(Date.now() - jumpedAt)}ms since the jump`,
   });
   streamChunk(chat);
   await scrollerAtRest();

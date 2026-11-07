@@ -47,8 +47,7 @@ const { openEntry, applyDelta, appendEntry } = await import("./store.js");
 const { mountChatView, mountTurnBody, activeTranscriptView, teardownAll } =
   await import("./messages.js");
 const { scrollToBottom, readingState } = await import("./scroll.js");
-const { setPinSettleMs } = await import("./scroll-controller.js");
-const { pinAtLiveEdge } = await import("./__test-helpers__/scroll-rest.js");
+const { restAtLiveEdge } = await import("./__test-helpers__/scroll-rest.js");
 const { until } = await import("./__test-helpers__/until.js");
 const { setTurnOpen, resetFoldState } = await import("./fold-state.js");
 const { KEY_ATTR } = await import("./reconcile.js");
@@ -130,6 +129,41 @@ function toolTurn(turnID: string, count: number): Entry[] {
     );
   }
   out.push(turnClose(turnID, count + 1));
+  return out;
+}
+
+/**
+ * FIXTURE (2b): `groups` runs of sixteen settled tool calls, each after a `thinking` entry, then a trace and one lone
+ * call, so every run mounts as a group collapsed by position and every trace sealed.
+ */
+function groupsTurn(turnID: string, groups: number): Entry[] {
+  const out: Entry[] = [turnOpen(turnID)];
+  let at = 1;
+  for (let g = 0; g < groups; g++) {
+    out.push(sealed(turnID, at++, "thinking", { text: `step ${String(g)}` }));
+    for (let c = 0; c < 16; c++) {
+      out.push(
+        sealed(turnID, at++, "tool_call", {
+          id: `${turnID}-tc${String(at)}`,
+          title: "Run Command",
+          kind: "execute",
+          status: "completed",
+          ts: at,
+        }),
+      );
+    }
+  }
+  out.push(sealed(turnID, at++, "thinking", { text: "done" }));
+  out.push(
+    sealed(turnID, at++, "tool_call", {
+      id: `${turnID}-tc${String(at)}`,
+      title: "Run Command",
+      kind: "execute",
+      status: "completed",
+      ts: at,
+    }),
+  );
+  out.push(turnClose(turnID, at));
   return out;
 }
 
@@ -486,25 +520,16 @@ describe("scrolling moves the window", () => {
     });
   }
 
-  /**
-   * Put the reader back on the live edge and wait out the bottom pin's settle window, which
-   * would undo a gesture inside it.
-   */
+  /** Put the reader back on the live edge, with the rows near it settled. */
   async function atLiveEdge(): Promise<void> {
-    await pinAtLiveEdge(scroller(), 20, () => {
-      const real = setPinSettleMs(20);
-      try {
-        scrollToBottom();
-      } finally {
-        setPinSettleMs(real);
-      }
+    await restAtLiveEdge(scroller(), () => {
+      scrollToBottom();
     });
   }
 
   /**
-   * Drag the scrollbar to `top` and report how far the reader moved. The wheel's DIRECTION
-   * matters: Reading is entered from the input's aim. `behavior: "instant"`, because the
-   * scroller is `scroll-behavior: smooth`. Measured before any anchoring.
+   * Drag the scrollbar to `top` and report how far the reader moved: the wheel opens the gesture
+   * the move belongs to. Measured before the owner's holds.
    */
   async function dragTo(top: number): Promise<number> {
     const scrollEl = scroller();
@@ -795,8 +820,8 @@ describe("scrolling moves the window", () => {
 
     const first = mountedSeqs("big").join(",");
     const landed = scroller().scrollTop;
-    // Eight idle frames: anchoring's own scroll must not re-arm the window, thanks to
-    // the re-entrancy latch and the plan-equality exit.
+    // Eight idle frames: the owner's holds must not re-arm the window, thanks to the
+    // re-entrancy latch and the plan-equality exit.
     for (let i = 0; i < 8; i++) {
       await frame();
     }
@@ -991,8 +1016,7 @@ describe("scrolling moves the window", () => {
     await vi.waitFor(() => {
       expect(toggle()).toBeNull();
     });
-    // Out through the live edge's own settle window, or the drag back is a gesture
-    // inside the bottom pin's hold and gets undone before any pass sees it.
+    // At rest on the live edge first, so the drag up starts from the end.
     await atLiveEdge();
     await dragUpAWindow("open");
     await vi.waitFor(() => {
@@ -1040,7 +1064,7 @@ describe("scrolling moves the window", () => {
     await settled("t3");
     await atLiveEdge();
     // Aimed twice: from the live edge t2's rows are skipped placeholders, and as the first drag
-    // brings them near they take their real height, which native anchoring adds to the offset,
+    // brings them near they take their real height, which the owner's hold adds to the offset,
     // so the first landing can sit within a row of t2's end. The second aims at the settled middle.
     const middleOfT2 = (): number => card("t2").offsetTop + Math.floor(card("t2").offsetHeight / 2);
     await dragTo(middleOfT2());
@@ -1192,5 +1216,35 @@ describe("unmounted ordinals hold the height their rows occupied", () => {
     expect(spacerHeight(t as Turn, { from: 0, to: 0 }, "tail", "")).toBe(
       measured + boxes.length * gap,
     );
+  });
+
+  it("prices a run of collapsed tool groups at the boxes they mount as", async () => {
+    const id = chatID();
+    const groups = 5;
+    const entries = groupsTurn("groups", groups);
+    forgetHeights(["groups"]);
+    activate(id, [entries]);
+    await vi.waitFor(() => {
+      expect(mountedSeqs("groups")).toHaveLength(groups * 17 + 2);
+    });
+    const body = bodyOf("groups");
+    expect(
+      body.querySelectorAll(":scope > .tool-group.tool-group-collapsed"),
+      "the premise",
+    ).toHaveLength(groups);
+    const boxes = [...body.children].filter((c) => !c.classList.contains("turn-space"));
+    const measured = boxes.reduce((px, b) => px + (b as HTMLElement).offsetHeight, 0);
+    const gap = Number.parseFloat(getComputedStyle(body).rowGap);
+    const t = projectTurns({
+      turns: new Map<string, TurnState>([["groups", { entries, openEntries: new Map() }]]),
+      turn_order: ["groups"],
+    }).find((x: Turn) => x.id === "groups");
+    expect(t).not.toBeUndefined();
+    const priced = spacerHeight(t as Turn, { from: 0, to: 0 }, "tail", "");
+    // Two px a group: a header's or a trace's line box moves with the font stack.
+    expect(
+      Math.abs(priced - (measured + boxes.length * gap)),
+      `priced ${String(priced)}px`,
+    ).toBeLessThanOrEqual(2 * groups);
   });
 });

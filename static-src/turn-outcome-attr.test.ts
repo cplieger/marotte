@@ -21,10 +21,9 @@ const { scrollable } = vi.hoisted(() => ({
 vi.mock("./scroll.js", () => ({
   scrollableBy: () => scrollable.by,
   readingLineOffset: () => 0,
-  atLiveEdgeNow: () => false,
-  beginSelfScroll: vi.fn(),
-  endSelfScroll: vi.fn(),
-  scrollToOffset: vi.fn(),
+  readingState: () => "reading",
+  jumpToOffset: vi.fn(() => Promise.resolve(true)),
+  readerGestureOpen: () => false,
   onReaderGesture: () => () => {
     /* no reader in this suite */
   },

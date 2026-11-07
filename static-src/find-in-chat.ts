@@ -8,7 +8,7 @@ import { join } from "@cplieger/keyenc";
 import { createPopup } from "@cplieger/ui/popup";
 import type { PopupController } from "@cplieger/ui/popup";
 import { $, byId } from "./dom.js";
-import { jumpTo, onTranscriptMutate, shiftScroll } from "./scroll.js";
+import { jumpInFlight, jumpTo, onTranscriptMutate, shiftScroll } from "./scroll.js";
 import {
   CHAT_SEARCH_DEBOUNCE_MS,
   runServerSearch,
@@ -128,13 +128,6 @@ function hitKey(hit: Hit): string {
 /** Open state lives on the popup and nowhere else, so every close path tears down fully. */
 function isOpen(): boolean {
   return popup?.isOpen === true;
-}
-
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
 }
 
 /** SVG glyphs, so `align-items: center` centres the ink (see search-shell.ts's searchIconButton). */
@@ -418,7 +411,7 @@ function revealCurrent(): void {
   jumpTo(mark, {
     block: "center",
     inline: "nearest",
-    behavior: prefersReducedMotion() ? "auto" : "smooth",
+    behavior: "smooth",
   });
 }
 
@@ -573,7 +566,8 @@ function holdWhereLanded(unit: HTMLElement, hit: Hit): void {
       recentreIfOutOfView(scroller, now);
       return;
     }
-    const scrolling = Math.abs(scroller.scrollTop - lastScroll) >= 1;
+    // A flight's first frame has not moved it yet, and a write now would abort it.
+    const scrolling = jumpInFlight() || Math.abs(scroller.scrollTop - lastScroll) >= 1;
     let corrected = false;
     if (!scrolling) {
       const off = middle(now.getBoundingClientRect()) - middle(scroller.getBoundingClientRect());
@@ -609,7 +603,7 @@ function recentreIfOutOfView(scroller: HTMLElement, target: HTMLElement): void {
   jumpTo(target, {
     block: "center",
     inline: "nearest",
-    behavior: prefersReducedMotion() ? "auto" : "smooth",
+    behavior: "smooth",
   });
 }
 
@@ -980,7 +974,7 @@ function selectContainer(target: HTMLElement): void {
   jumpTo(target, {
     block: "center",
     inline: "nearest",
-    behavior: prefersReducedMotion() ? "auto" : "smooth",
+    behavior: "smooth",
   });
 }
 

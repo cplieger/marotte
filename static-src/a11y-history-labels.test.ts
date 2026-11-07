@@ -68,7 +68,7 @@ vi.mock("./navigate.js", () => ({
   openSpec: noop,
 }));
 vi.mock("./scroll.js", () => ({
-  setUserScrolledUp: noop,
+  pressHold: noop,
 }));
 import { loadHistoryView, refreshHistoryView } from "./history.js";
 

@@ -51,7 +51,7 @@ import {
   toolCallSigKey,
   toolCallSigs,
 } from "./store-signals.js";
-import { recordEntryHeight, recordRowHeight } from "./block-heights.js";
+import { recordEntryHeight, recordGroupHeight, recordRowHeight } from "./block-heights.js";
 import { lineDelta } from "./diff.js";
 import { isInternalToolTitle, isSubagentInvocation, isToolActive } from "./tool-schema.js";
 import type { TurnSummaryData } from "./fundamentals/turn-footer.js";
@@ -79,6 +79,7 @@ import { planElement, updatePlanElement } from "./messages-plan.js";
 import {
   buildToolGroupShell,
   groupBody,
+  groupIsBare,
   refreshGroupHeader,
   autoCollapseGroup,
   setGroupSuperseded,
@@ -114,6 +115,8 @@ interface BlockCbs {
    * break at every rendering entry's `seq` and a null would price a break against nothing.
    */
   makeEvent(entry: EventEntry): HTMLElement;
+  /** The element `getLiveAnchor` answers changed; the scroller re-reads its follow position. */
+  liveAnchorChanged(): void;
 }
 
 let cbs: BlockCbs = {
@@ -125,6 +128,9 @@ let cbs: BlockCbs = {
   },
   makeRow: () => el("div") as HTMLDivElement,
   makeEvent: () => el("div"),
+  liveAnchorChanged: () => {
+    /* until init */
+  },
 };
 
 /** Install the callbacks wholesale; the type keeps every caller supplying every member. */
@@ -137,25 +143,36 @@ export function initBlockRenderer(c: BlockCbs): void {
 
 let liveAnchor: { renderID: string; el: HTMLElement } | null = null;
 
+/** The one writer of `liveAnchor`: a seal changes only a class, so the follower hears of a new pin from here. */
+function setLiveAnchor(next: { renderID: string; el: HTMLElement } | null): void {
+  const changed = liveAnchor?.el !== next?.el;
+  liveAnchor = next;
+  if (changed) {
+    cbs.liveAnchorChanged();
+  }
+}
+
 /**
  * The element Following pins to, or null for the document bottom. Self-healing: a mid-turn rebuild can leave the
  * slot on a detached element, so it re-derives from the render map.
  */
 export function getLiveAnchor(): HTMLElement | null {
   if (liveAnchor !== null && renders.get(liveAnchor.renderID)?.topLiveEl !== liveAnchor.el) {
-    liveAnchor = null;
-    rescanLiveAnchor();
+    setLiveAnchor(scanLiveAnchor());
   }
   return liveAnchor?.el ?? null;
 }
 
-function rescanLiveAnchor(): void {
+/** The newest live render of the active chat, last writer wins. */
+function scanLiveAnchor(): { renderID: string; el: HTMLElement } | null {
   const activeChat = getActiveId();
+  let found: { renderID: string; el: HTMLElement } | null = null;
   for (const [id, st] of renders) {
     if (!st.detached && st.chatID === activeChat && st.topLiveEl !== null) {
-      liveAnchor = { renderID: id, el: st.topLiveEl };
+      found = { renderID: id, el: st.topLiveEl };
     }
   }
+  return found;
 }
 
 /** Only the active chat's renders are rescanned. */
@@ -163,8 +180,7 @@ function clearLiveAnchor(el: HTMLElement): void {
   if (liveAnchor?.el !== el) {
     return;
   }
-  liveAnchor = null;
-  rescanLiveAnchor();
+  setLiveAnchor(scanLiveAnchor());
 }
 
 // Run id to the `tool_call` entry hosting its card, derived per pass by `runCardOwners`. Derived, not a live
@@ -849,7 +865,7 @@ export function resumeAssistantBody(renderID: string): void {
 }
 
 export function resetBlockRenders(): void {
-  liveAnchor = null;
+  setLiveAnchor(null);
   for (const st of renders.values()) {
     for (const b of st.bubbles) {
       b.finishNow();
@@ -1267,8 +1283,25 @@ function recordOutgoingHeight(st: TurnRender, seq: number): void {
   const view = head === seq ? st.proseRuns.get(seq) : undefined;
   if (view === undefined) {
     recordEntryHeight(st.turnID, seq, px);
+    recordToolGroupHeight(st, el);
   } else {
     recordRowHeight(st.turnID, { from: seq, to: (view.seqs[view.seqs.length - 1] ?? seq) + 1 }, px);
+  }
+}
+
+/** Record the group `card` sits in, against the members it holds, so a spacer standing for the whole run prices
+ *  its real box; a bare shell is the card itself, which `recordEntryHeight` has. */
+function recordToolGroupHeight(st: TurnRender, card: HTMLElement): void {
+  const group = card.parentElement?.closest<HTMLElement>(".tool-group") ?? null;
+  if (group?.parentElement !== st.bodyEl || groupIsBare(group)) {
+    return;
+  }
+  const seqs = [...groupBody(group).querySelectorAll<HTMLElement>(":scope > [data-entry-seq]")].map(
+    (m) => Number(m.dataset["entrySeq"]),
+  );
+  const px = group.offsetHeight;
+  if (seqs.length > 0 && px > 0) {
+    recordGroupHeight(st.turnID, { from: Math.min(...seqs), to: Math.max(...seqs) + 1 }, px);
   }
 }
 
@@ -2094,7 +2127,7 @@ function buildProseRun(
   }
   if (topLive) {
     st.topLiveEl = bubble.root;
-    liveAnchor = { renderID: st.renderID, el: bubble.root };
+    setLiveAnchor({ renderID: st.renderID, el: bubble.root });
   }
   const view: ProseRun = { head, row, bubble, seqs: [], openID: null };
   row.appendChild(bubble.root);

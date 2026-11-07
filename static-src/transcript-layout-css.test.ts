@@ -1,6 +1,6 @@
-// The transcript's LAYOUT declarations: what is contained, what is outside its layout, and what the
-// live-edge marker costs. Containment is a source fact, read from the CSS (`contain` computes to
-// itself whether or not it does anything); the marker's cost is measured. One open turn measured
+// The transcript's LAYOUT declarations: what is contained, what is outside its layout, and the air
+// under the last turn. Containment is a source fact, read from the CSS (`contain` computes to
+// itself whether or not it does anything); the air is measured. One open turn measured
 // 353 tool cards, and the composer's `field-sizing: content` textarea shares a layout pass with the
 // transcript unless contained.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -133,16 +133,10 @@ describe("against real layout", () => {
     stage.remove();
   });
 
-  /** A transcript view of `n` 100px turns, optionally with scroll.ts's live-edge marker placed FIRST
-   *  (where reconcile leaves unkeyed furniture), so flex order must put it last. */
-  function view(withEdge: boolean, n = 2): HTMLElement {
+  /** A transcript view of `n` 100px turns. */
+  function view(n = 2): HTMLElement {
     const v = document.createElement("div");
     v.className = "transcript-view is-active";
-    if (withEdge) {
-      const edge = document.createElement("div");
-      edge.className = "transcript-edge";
-      v.appendChild(edge);
-    }
     for (let i = 0; i < n; i++) {
       const turn = document.createElement("div");
       turn.className = "turn";
@@ -152,10 +146,10 @@ describe("against real layout", () => {
     return v;
   }
 
-  /** The multiplexer inside index.html's REAL ancestor chain, overflowing: `#messages-wrap` is what
-   *  scroll.ts scrolls and observes. `parked` adds a switched-away view. The outer wrap gets an
-   *  explicit height in place of production's `flex: 1`. */
-  function scroller(n: number, parked = 0): { scrollEl: HTMLElement; edge: HTMLElement } {
+  /** The multiplexer inside index.html's REAL ancestor chain, overflowing: `#messages-wrap` is what scroll.ts
+   *  scrolls. `parked` adds a switched-away view. The outer wrap gets an explicit height in place of production's
+   *  `flex: 1`. Returns the active view's last turn. */
+  function scroller(n: number, parked = 0): { scrollEl: HTMLElement; last: HTMLElement } {
     const outer = document.createElement("div");
     outer.id = "messages-wrap-outer";
     outer.style.blockSize = "200px";
@@ -163,22 +157,20 @@ describe("against real layout", () => {
     wrap.id = "messages-wrap";
     const messages = document.createElement("div");
     messages.id = "messages";
-    const v = view(true, n);
+    const v = view(n);
     messages.appendChild(v);
     for (let i = 0; i < parked; i++) {
-      const p = view(true, n);
+      const p = view(n);
       p.classList.remove("is-active");
       messages.appendChild(p);
     }
     wrap.appendChild(messages);
     outer.appendChild(wrap);
     stage.appendChild(outer);
-    const edge = v.querySelector<HTMLElement>(".transcript-edge");
-    expect(edge, "the fixture mounted the marker").not.toBeNull();
     expect(wrap.scrollHeight, "the fixture overflows its scroller").toBeGreaterThan(
       wrap.clientHeight,
     );
-    return { scrollEl: wrap, edge: edge as HTMLElement };
+    return { scrollEl: wrap, last: v.lastElementChild as HTMLElement };
   }
 
   it("lays a skippable box out once it is marked near, with the containment `auto` applies", () => {
@@ -201,47 +193,19 @@ describe("against real layout", () => {
     );
   });
 
-  /** How far the marker's bottom sits above the scroller's content bottom, which is
-   *  the figure `isAtBottom()` and the edge observer have to agree on. */
-  function offsetFromContentBottom(scrollEl: HTMLElement, edge: HTMLElement): number {
-    const markerBottom =
-      edge.getBoundingClientRect().bottom -
-      scrollEl.getBoundingClientRect().top +
-      scrollEl.scrollTop;
-    return scrollEl.scrollHeight - markerBottom;
-  }
-
-  it("the live-edge marker sits ON the SCROLLER's content bottom", () => {
-    // The marker's top margin: scroll.ts's observer (rooted on `#messages-wrap`, BOTTOM_TOLERANCE_PX)
-    // and `isAtBottom` agree only at zero offset from its content bottom. Measured, only
-    // `.transcript-view`'s `padding-block-end` reopens the 16px; ancestors move both together.
-    const { scrollEl, edge } = scroller(3);
-    expect(offsetFromContentBottom(scrollEl, edge)).toBe(0);
-  });
-
-  it("a parked view adds nothing below the marker", () => {
-    // A parked view sharing the scroll box stacks height under the active marker; `content-visibility:
-    // hidden` skips only contents, so zeroed `min-height` and `padding-block` keep the marker honest.
-    const { scrollEl, edge } = scroller(3, 1);
-    expect(offsetFromContentBottom(scrollEl, edge)).toBe(0);
-  });
-
-  it("the marker's margin carries the block-end air and adds nothing of its own", () => {
-    // A zero-height flex item still earns the `gap`, so the margin is `--sp-4 - --sp-3`; any other value
-    // lifts the `flex-end` column. 244 = two 100px turns, two 12px gaps, 4px margin, 16px of air.
-    const v = view(true);
-    stage.appendChild(v);
-    const edge = v.querySelector<HTMLElement>(".transcript-edge");
-    const turns = v.querySelectorAll<HTMLElement>(".turn");
-    const last = turns[turns.length - 1];
-    expect(v.getBoundingClientRect().height).toBe(244);
-    expect(v.getBoundingClientRect().bottom - last!.getBoundingClientRect().bottom).toBe(16);
-    // `order: 1` is why it lands last: in the DOM this marker is the FIRST child.
-    expect(edge?.previousElementSibling).toBeNull();
-    expect(edge!.getBoundingClientRect().top).toBeGreaterThanOrEqual(
-      last!.getBoundingClientRect().bottom,
-    );
-  });
+  it.each([0, 1])(
+    "leaves 16px between the last turn and the scroller's content bottom with %i parked views",
+    (parked) => {
+      // The scroll owner lands the end on the content bottom, so that air is the view's own end padding; a parked
+      // view sharing the scroll box adds nothing under it.
+      const { scrollEl, last } = scroller(3, parked);
+      const lastBottom =
+        last.getBoundingClientRect().bottom -
+        scrollEl.getBoundingClientRect().top +
+        scrollEl.scrollTop;
+      expect(scrollEl.scrollHeight - lastBottom).toBe(16);
+    },
+  );
 
   // No rect case for containment CLIPPING a pill card: paint containment leaves geometry reads
   // unchanged, so it would pass under `contain: paint` too (measured). Pinned as a declaration above.

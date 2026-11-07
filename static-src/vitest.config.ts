@@ -7,6 +7,7 @@
 // browser, not headless-shell: `npx playwright install --with-deps chromium`.
 import { configDefaults, defineConfig, type TestProjectInlineConfiguration } from "vitest/config";
 import { playwright } from "@vitest/browser-playwright";
+import type { CDPSession } from "playwright";
 import { msw } from "msw/vite";
 
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
@@ -29,6 +30,8 @@ const sharedExclude = [
 //   then open .vitest/index.html
 // Off by default: the snapshots cost time on every browser file and CI has nowhere to publish them.
 const traceView = process.env["VITEST_TRACE"] === "1";
+
+const dprSessions = new WeakMap<object, CDPSession>();
 
 // A test needing a coarse pointer is `*.touch.test.ts` and runs in `browser-touch`, whose pages are
 // touch devices from creation: touch emulation switched off inside a page leaves headless Chromium
@@ -88,11 +91,51 @@ function browserProject(
           ) {
             await page.emulateMedia(features);
           },
+          /** Set the page's device pixel ratio (null clears the override). Chromium only, CI's engine. The override is
+           *  page-wide and outlives the test that set it, so a suite that sets one clears it in `afterEach`. */
+          async setDeviceScaleFactor({ page }, dpr: number | null) {
+            // An Emulation override lasts as long as the CDP session that set it, so the session is kept per page.
+            let cdp = dprSessions.get(page);
+            if (cdp === undefined) {
+              cdp = await page.context().newCDPSession(page);
+              dprSessions.set(page, cdp);
+            }
+            if (dpr === null) {
+              await cdp.send("Emulation.clearDeviceMetricsOverride");
+              return;
+            }
+            const size = page.viewportSize() ?? { width: 1280, height: 720 };
+            await cdp.send("Emulation.setDeviceMetricsOverride", {
+              width: size.width,
+              height: size.height,
+              deviceScaleFactor: dpr,
+              mobile: false,
+            });
+          },
         },
       },
     },
   };
 }
+
+/** The scroll suite in the engines CI does not run, at the widths and pixel ratios of a desktop and a phone. Opt-in
+ *  (`SCROLL_ENGINES=1`): it needs `npx playwright install firefox webkit`. */
+const engineFiles = ["scroll.visual.test.ts", "scroll.platform.test.ts"];
+const engineInstances = (
+  [
+    { browser: "firefox", width: 1440, height: 900, dpr: 1, touch: false },
+    { browser: "firefox", width: 1440, height: 900, dpr: 1.5, touch: false },
+    { browser: "firefox", width: 390, height: 844, dpr: 3, touch: true },
+    { browser: "webkit", width: 1440, height: 900, dpr: 1.5, touch: true },
+    { browser: "webkit", width: 390, height: 844, dpr: 2, touch: true },
+    { browser: "webkit", width: 390, height: 844, dpr: 3, touch: true },
+  ] as const
+).map(({ browser, width, height, dpr, touch }) => ({
+  browser,
+  name: `${browser}-${String(width)}-dpr${String(dpr)}`,
+  viewport: { width, height },
+  provider: playwright({ contextOptions: { deviceScaleFactor: dpr, hasTouch: touch } }),
+}));
 
 export default defineConfig({
   // Serves the MSW worker script from the package for the browser tests that mock the network;
@@ -168,6 +211,26 @@ export default defineConfig({
       // sees otherwise. Moving the pointer out of the viewport does not turn it off.
       browserProject("browser-pointer", ["**/*.pointer.test.ts"], sharedExclude),
       browserProject("browser-touch", ["**/*.touch.test.ts"], sharedExclude, true),
+      ...(process.env["SCROLL_ENGINES"] === "1"
+        ? [
+            {
+              extends: true,
+              test: {
+                name: "browser-engines",
+                include: engineFiles,
+                exclude: sharedExclude,
+                setupFiles: ["./ro-loop-gate.ts", "./storage-reset-setup.ts"],
+                browser: {
+                  enabled: true,
+                  headless: true,
+                  screenshotFailures: false,
+                  provider: playwright(),
+                  instances: engineInstances,
+                },
+              },
+            } satisfies TestProjectInlineConfiguration,
+          ]
+        : []),
     ],
 
     // Two workers, so two Chromium pages at once: CI's runner has 4 vCPUs, and each page's renderer
