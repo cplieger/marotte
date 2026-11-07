@@ -13,11 +13,11 @@ import (
 	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// OpenTurn appends the turn_open, creates its registry record and returns the turn id. A dead ctx refuses before the
+// openTurn appends the turn_open, creates its registry record and returns the turn id. A dead ctx refuses before the
 // append; a held slot answers errTurnSlotHeld; a broken fence answers command.ErrTurnSuperseded, and a stop after
 // the turn it replaces command.ErrTurnStopped. The turn_count rewrite runs after both locks are released, so racing
-// opens both write the higher value. The caller holds one completion handle until ReleaseTurn.
-func (bc *bridgeCoordinator) OpenTurn(ctx context.Context, chatID marotte.ChatID, open command.TurnOpen) (string, error) {
+// opens both write the higher value. The caller holds one completion handle until releaseTurn.
+func (bc *bridgeCoordinator) openTurn(ctx context.Context, chatID marotte.ChatID, open command.TurnOpen) (string, error) {
 	if bc.turns.openHook != nil {
 		bc.turns.openHook()
 	}
@@ -154,11 +154,11 @@ func (bc *bridgeCoordinator) announceTurnOpened(ctx context.Context, chatID maro
 	})
 }
 
-// StartTurn stamps the model and the credit baseline onto the named turn just before the call that drives it, and
+// startTurn stamps the model and the credit baseline onto the named turn just before the call that drives it, and
 // makes it own when own is nil. cancel is that call's, which a compaction reap and a stop's grace trip until
-// EndPromptCall. False for a dead ctx or a turn the registry no longer holds; the caller then runs the turn end rule
+// endPromptCall. False for a dead ctx or a turn the registry no longer holds; the caller then runs the turn end rule
 // itself.
-func (bc *bridgeCoordinator) StartTurn(ctx context.Context, turn command.TurnRef, cancel context.CancelCauseFunc) bool {
+func (bc *bridgeCoordinator) startTurn(ctx context.Context, turn command.TurnRef, cancel context.CancelCauseFunc) bool {
 	if ctx.Err() != nil {
 		return false
 	}
@@ -189,29 +189,29 @@ func (bc *bridgeCoordinator) StartTurn(ctx context.Context, turn command.TurnRef
 	return true
 }
 
-// AwaitTurn blocks until the named turn has finalized and reports what it did. It runs on the caller's goroutine:
+// awaitTurn blocks until the named turn has finalized and reports what it did. It runs on the caller's goroutine:
 // deciding inside the finalizer deadlocks against the close it awaits.
-func (bc *bridgeCoordinator) AwaitTurn(ctx context.Context, chatID marotte.ChatID, turnID string) (marotte.TurnResult, error) {
+func (bc *bridgeCoordinator) awaitTurn(ctx context.Context, chatID marotte.ChatID, turnID string) (marotte.TurnResult, error) {
 	return bc.turns.await(ctx, chatID, turnID)
 }
 
-// AwaitTurnBound blocks until KAS binds the named turn's prompt (true) or the turn finalizes unbound (false).
-func (bc *bridgeCoordinator) AwaitTurnBound(ctx context.Context, chatID marotte.ChatID, turnID string) (bool, error) {
+// awaitTurnBound blocks until KAS binds the named turn's prompt (true) or the turn finalizes unbound (false).
+func (bc *bridgeCoordinator) awaitTurnBound(ctx context.Context, chatID marotte.ChatID, turnID string) (bool, error) {
 	return bc.turns.awaitBound(ctx, chatID, turnID)
 }
 
-// ReleaseTurn gives up the completion handle OpenTurn issued; the finalized record is dropped with the last handle.
-func (bc *bridgeCoordinator) ReleaseTurn(chatID marotte.ChatID, turnID string) {
+// releaseTurn gives up the completion handle openTurn issued; the finalized record is dropped with the last handle.
+func (bc *bridgeCoordinator) releaseTurn(chatID marotte.ChatID, turnID string) {
 	bc.turns.release(chatID, turnID)
 }
 
-// TurnOpenedAfter reports whether any own turn opened after the named one (the empty-turn gate's structural half).
-func (bc *bridgeCoordinator) TurnOpenedAfter(chatID marotte.ChatID, turnID string) bool {
+// turnOpenedAfter reports whether any own turn opened after the named one (the empty-turn gate's structural half).
+func (bc *bridgeCoordinator) turnOpenedAfter(chatID marotte.ChatID, turnID string) bool {
 	return bc.turns.openedAfter(chatID, turnID)
 }
 
-// StopRequestedAfter reports whether a stop was requested after the named turn opened.
-func (bc *bridgeCoordinator) StopRequestedAfter(chatID marotte.ChatID, turnID string) bool {
+// stopRequestedAfter reports whether a stop was requested after the named turn opened.
+func (bc *bridgeCoordinator) stopRequestedAfter(chatID marotte.ChatID, turnID string) bool {
 	return bc.turns.stoppedAfter(chatID, turnID)
 }
 

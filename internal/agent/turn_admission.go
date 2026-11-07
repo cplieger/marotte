@@ -1,7 +1,7 @@
 package agent
 
 // The per-chat admission slot, reserved synchronously before any bridge exists, so a prompt is admitted or refused
-// before its turn_open. OpenTurn then makes the Turn and StartTurn stamps model and baseline. A wire turn holds no reservation.
+// before its turn_open. openTurn then makes the Turn and startTurn stamps model and baseline. A wire turn holds no reservation.
 
 import (
 	"cmp"

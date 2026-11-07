@@ -52,6 +52,7 @@ func closeModel(t *testing.T, cs *testChatStore, chatID marotte.ChatID) string {
 
 func TestTurnModel_StampedOnThePersistedCloseAndOnTheSSE(t *testing.T) {
 	h, cs, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "sonnet-4"
@@ -76,6 +77,7 @@ func TestTurnModel_StampedOnThePersistedCloseAndOnTheSSE(t *testing.T) {
 
 func TestTurnModel_AbsentWhenTheChatNamesNoModel(t *testing.T) {
 	h, cs, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A" // no Model: the session took the backend default
 		return true
@@ -100,6 +102,7 @@ func TestTurnModel_AbsentWhenTheChatNamesNoModel(t *testing.T) {
 // current when it finished.
 func TestTurnModel_LatchedAtTurnStartNotAtTurnEnd(t *testing.T) {
 	h, cs, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "sonnet-4"

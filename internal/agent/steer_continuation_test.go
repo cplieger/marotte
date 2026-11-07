@@ -29,7 +29,7 @@ func turnEndedBesideASteer(t *testing.T) (*steerHarness, *testChatStore, *fakeBr
 	send(t, s.h, newPromptTurnStartMsg(id), newActivityMsg(true))
 	s.steer("steer-a", "keep building")
 	send(t, s.h, newTurnEndMsg("end_turn"))
-	s.h.coord.ReleaseTurn("c1", id)
+	s.h.coord.releaseTurn("c1", id)
 	synctest.Wait()
 	return s, cs, br
 }
@@ -238,7 +238,7 @@ func TestSteerTurnEnd_ANoticeOnlyContinuationKeepsItsNoticeUntilItReadsIt(t *tes
 		send(t, s.h, newPromptTurnStartMsg(id), newActivityMsg(true))
 		s.recs.SteerWaiting("c1", &marotte.SteerQueuedPayload{SteerID: "notify-1", Text: "a run finished", Origin: marotte.SteerOriginAgent})
 		send(t, s.h, newTurnEndMsg("end_turn"))
-		s.h.coord.ReleaseTurn("c1", id)
+		s.h.coord.releaseTurn("c1", id)
 		synctest.Wait()
 		send(t, s.h, newTurnStartMsg())
 		synctest.Wait()
@@ -279,7 +279,7 @@ func turnEndedWithNothingUnread(t *testing.T) (*steerHarness, *fakeBridge) {
 	id, _ := s.h.stagePromptTurn(t, "c1")
 	send(t, s.h, newPromptTurnStartMsg(id), newActivityMsg(true))
 	send(t, s.h, newTurnEndMsg("end_turn"))
-	s.h.coord.ReleaseTurn("c1", id)
+	s.h.coord.releaseTurn("c1", id)
 	synctest.Wait()
 	return s, br
 }

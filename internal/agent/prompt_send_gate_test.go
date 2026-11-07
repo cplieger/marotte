@@ -115,7 +115,7 @@ func (s sendGateStep) apply(t *testing.T, h *Runtime, release func(), folded *st
 		if !ok {
 			t.Fatal("no prompt turn to close")
 		}
-		h.coord.AbandonInFlightTurn(t.Context(), "c1", log.ID(), marotte.StopReasonInterrupted, "closed while waiting", "", 0)
+		h.coord.abandonInFlightTurn(t.Context(), "c1", log.ID(), marotte.StopReasonInterrupted, "closed while waiting", "", 0)
 	}
 }
 

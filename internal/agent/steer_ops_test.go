@@ -268,7 +268,7 @@ func wireEndUnderTheClear(stop string) func(t *testing.T, s *steerHarness, br *f
 			}
 			s.h.translateACPEvent("c1", s.h.originOf("c1"), clearedMsg("steer-a", "steer-b"))
 			s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnEndMsg(stop))
-			s.h.coord.ReleaseTurn("c1", id)
+			s.h.coord.releaseTurn("c1", id)
 			return clearReply(nil), nil, true
 		}
 	}
@@ -316,7 +316,7 @@ func TestCmdCancel_TheSendNowRowOpensTheNextTurnWithNoNotReadNote(t *testing.T) 
 	}
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), clearedMsg("steer-a", "steer-b"))
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnEndMsg("cancelled"))
-	s.h.coord.ReleaseTurn("c1", id)
+	s.h.coord.releaseTurn("c1", id)
 
 	if p := resendPrompt(t, cs); p == nil || p.Text != "second\n\nfirst" || !slices.Equal(p.Resends, []string{"steer-b", "steer-a"}) {
 		t.Errorf("next prompt = %+v, want the lead then the other row, naming both", p)
@@ -349,7 +349,7 @@ func TestCmdCancel_ALeadWhoseResendOpenedBeforeTheStopIsNotCancelled(t *testing.
 	br.mu.Unlock()
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), clearedMsg("steer-a", "steer-b"))
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnEndMsg("end_turn"))
-	s.h.coord.ReleaseTurn("c1", id)
+	s.h.coord.releaseTurn("c1", id)
 	if p := resendPrompt(t, cs); p == nil || !slices.Contains(p.Resends, "steer-b") {
 		t.Fatalf("Setup: resend prompt = %+v, want the close to send steer-b", p)
 	}
@@ -371,7 +371,7 @@ func TestCmdCancel_ALeadWhoseResendOpenedBeforeTheStopIsNotCancelled(t *testing.
 		if e.Kind == marotte.EntryKindTurnOpen {
 			decodePayload(t, e, &open)
 		}
-		if open.Prompt != nil && len(open.Prompt.Resends) > 0 && s.h.coord.StopRequestedAfter("c1", e.Turn) {
+		if open.Prompt != nil && len(open.Prompt.Resends) > 0 && s.h.coord.stopRequestedAfter("c1", e.Turn) {
 			t.Errorf("the resend's turn %s is marked stopped, want it free to send and retry", e.Turn)
 		}
 	}
@@ -746,7 +746,7 @@ func TestSendQueuedNow_StopsTheTurnAndItsCloseSendsThatRowFirst(t *testing.T) {
 	}
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), clearedMsg("steer-a"))
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnEndMsg("cancelled"))
-	s.h.coord.ReleaseTurn("c1", id)
+	s.h.coord.releaseTurn("c1", id)
 
 	resend := resendPrompt(t, cs)
 	if resend == nil || resend.Text != "use tabs" {
@@ -796,7 +796,7 @@ func TestSendQueuedNow_TheUnreadSteerRidesIntoTheMarkedRowsTurn(t *testing.T) {
 	}
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), clearedMsg("steer-a"))
 	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnEndMsg("cancelled"))
-	s.h.coord.ReleaseTurn("c1", id)
+	s.h.coord.releaseTurn("c1", id)
 	select {
 	case <-hooked:
 	case <-time.After(2 * time.Second):

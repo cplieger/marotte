@@ -122,6 +122,7 @@ func TestResolveDigest_ChatWhoseHeaderIsUnstattableIsNotGone(t *testing.T) {
 
 func TestResolveDigest_LiveTurnFollowsTheTurnRegistry(t *testing.T) {
 	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
 	states, err := h.resolveDigest(t.Context(), []sse.Held{held(subject.KindLiveTurn, "t-never-opened")})
 	if err != nil {
 		t.Fatalf("resolveDigest: %v", err)
