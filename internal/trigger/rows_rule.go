@@ -35,7 +35,7 @@ func (s *stepper) ruleRow(ev *attemptEvent) bool {
 	case evPause:
 		// E8, A25 per record: the count, the block and the clock are kept.
 	case evRunGone:
-		s.dropAbandoned(func(r *record) bool { return !listedActive(ev.statuses, r.workflowID) && s.aged(r) }) // E5
+		s.dropAbandoned(func(r *record) bool { return !r.waitedOn() && !listedActive(ev.statuses, r.workflowID) }) // E5
 		s.clearGoneBlocker(ev.statuses)
 	case evTTL:
 		s.dropAbandoned(s.aged) // E6
@@ -128,12 +128,15 @@ func (s *stepper) resetFailures() {
 	}
 }
 
-// aged is A18's and A19's shared condition: nothing waits on the record and its cancel landed abandonedTTL ago. A
-// record whose cancel never landed is kept, since it is what names a live run nothing else does (A37).
+// aged is A19: nothing waits on the record and its cancel landed abandonedTTL ago. A record whose cancel never
+// landed is never dropped by age, since it is what names a live run nothing else does; only a run list showing
+// that run gone drops it (A18).
 func (s *stepper) aged(r *record) bool {
-	return r.state == stateAbandonedCancelled && !r.inFlight && !r.owesRelease &&
-		s.now.Sub(r.cancelLandedAt) > abandonedTTL
+	return r.state == stateAbandonedCancelled && !r.waitedOn() && s.now.Sub(r.cancelLandedAt) > abandonedTTL
 }
+
+// waitedOn reports a call or a lease release still owed on the record, which keeps it on E5 and E6 alike (A37).
+func (r *record) waitedOn() bool { return r.inFlight || r.owesRelease }
 
 // dropAbandoned drops each abandoned record gone answers true for (A18, A19) and keeps the rest (A26, A37), writing
 // only when it dropped one.

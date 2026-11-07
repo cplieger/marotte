@@ -279,7 +279,30 @@ func TestUnleasedAbandonedRunCancelRetried(t *testing.T) {
 		})
 	})
 	t.Run("a gone record whose cancel never landed is dropped by E5's A18", func(t *testing.T) {
-		t.Skip("needs 5.14")
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			nameFailedCancelling(tc, &r)
+			tc.answerCancels(errCancelRefused)
+			advance(abandonedTTL + time.Hour)
+			tc.written()
+			tc.deliver(r.ID, &attemptEvent{kind: evTTL})
+			if rec := tc.recordOf(r.ID, "wf_1"); rec == nil || rec.state != stateAbandonedCancelling {
+				t.Fatalf("after ttl: record = %+v, want it kept: its cancel never landed", rec)
+			}
+			if n := tc.written(); n != 0 {
+				t.Errorf("ttl wrote %d times, want none", n)
+			}
+			tc.PruneAbandoned(r.ID, map[string]marotte.RunStatus{})
+			if rec := tc.recordOf(r.ID, "wf_1"); rec != nil {
+				t.Errorf("after run gone: record = %+v, want it dropped", rec)
+			}
+			if n := tc.written(); n != 1 {
+				t.Errorf("run gone wrote %d times, want one", n)
+			}
+			if _, file := tc.file(r.ID); len(file) != 0 {
+				t.Errorf("file attempts = %+v, want none", file)
+			}
+		})
 	})
 }
 

@@ -725,6 +725,25 @@ func TestPauseKeepsAttempt(t *testing.T) {
 	})
 }
 
+func TestRunGoneKeepsRecordOwingRelease(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		owingRelease(tc, &r)
+		tc.written()
+		tc.PruneAbandoned(r.ID, map[string]marotte.RunStatus{})
+		if rec := tc.recordOf(r.ID, "wf_1"); rec == nil || !rec.owesRelease {
+			t.Fatalf("record = %+v, want it kept owing its release", rec)
+		}
+		if n := tc.written(); n != 0 {
+			t.Errorf("run gone wrote %d times, want none", n)
+		}
+		tc.answerCancels(nil)
+		if _, releases := tc.fx.calls(); !slices.Equal(releases, []string{"wf_1"}) {
+			t.Errorf("releases = %v, want wf_1's lease released once its cancel landed", releases)
+		}
+	})
+}
+
 // inFlightThenEdit names wf_1 for k1 and, before its call returns, applies change: a rebaseline, or a delete when
 // change is nil.
 func inFlightThenEdit(tc *testConfirmer, change func(*launchrule.Rule)) launchrule.Rule {

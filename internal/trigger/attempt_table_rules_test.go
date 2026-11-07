@@ -231,7 +231,7 @@ var ruleRowCases = slices.Concat(liveCases(), abandonedCases(), []attemptCase{
 		},
 	},
 	{
-		name: "32 21 abandoned records gone and 1 active, run gone: E5 with A18 and A37",
+		name: "32 22 abandoned records gone, one never cancelled, and 1 active, run gone: E5 with A18 and A37",
 		setup: func(tc *testConfirmer, r *launchrule.Rule) {
 			landed := time.Now().Add(-abandonedTTL - time.Hour)
 			for i := range 22 {
@@ -240,6 +240,10 @@ var ruleRowCases = slices.Concat(liveCases(), abandonedCases(), []attemptCase{
 					cause: causeBound, at: landed, cancelLandedAt: landed,
 				})
 			}
+			tc.seedRecord(r.ID, &record{
+				workflowID: "wf_22", key: "k22", state: stateAbandonedCancelling,
+				cause: causeBound, at: time.Now().Add(-time.Minute),
+			})
 		},
 		deliver: func(tc *testConfirmer, r *launchrule.Rule) {
 			statuses := map[string]marotte.RunStatus{"wf_21": marotte.RunStatusRunning}
