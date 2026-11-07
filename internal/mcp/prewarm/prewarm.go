@@ -334,7 +334,7 @@ func (p *Runner) finish(pkg string, state marotte.MCPPrewarmState) {
 // install runs npm into a per-install THROWAWAY tree with --ignore-scripts and reports Done or
 // Failed: concurrent installs into one node_modules would race, while the shared cache underneath
 // is built for it.
-func (p *Runner) install(ctx context.Context, npmBin, pkg string) marotte.MCPPrewarmState {
+func (*Runner) install(ctx context.Context, npmBin, pkg string) marotte.MCPPrewarmState {
 	installCtx, installCancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer installCancel()
 
