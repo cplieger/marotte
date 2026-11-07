@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cplieger/forgeapi/v2"
@@ -54,11 +56,29 @@ func (bo *backoff) rowText() string {
 	at := bo.until.Local().Format("15:04")
 	switch bo.reason {
 	case reasonTriggerBudget:
-		return fmt.Sprintf("paused: the trigger budget for %s is spent (%d this hour), resumes %s", bo.pool, bo.spent, at)
+		return fmt.Sprintf("paused: the trigger budget for %s is spent (%s this hour), resumes %s", bo.pool, grouped(bo.spent), at)
 	case reasonForgeBudget:
-		return fmt.Sprintf("paused for the forge budget: %s has %d %s left, resumes %s", bo.pool, bo.remaining, unitOf(bo.pool), at)
+		return fmt.Sprintf("paused for the forge budget: %s has %s %s left, resumes %s", bo.pool, grouped(bo.remaining), unitOf(bo.pool), at)
 	}
 	return fmt.Sprintf("paused: the forge is rate limiting %s, resumes %s", bo.pool, at)
+}
+
+// grouped writes n with a comma between groups of three digits, the way the sentences a user reads write counts.
+func grouped(n int) string {
+	s := strconv.Itoa(n)
+	sign := ""
+	if n < 0 {
+		sign, s = "-", s[1:]
+	}
+	var out strings.Builder
+	out.WriteString(sign)
+	for i := range len(s) {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out.WriteByte(',')
+		}
+		out.WriteByte(s[i])
+	}
+	return out.String()
 }
 
 func unitOf(pool string) string {
@@ -93,26 +113,38 @@ func (cb *connBudget) floorPools(conn, list string) []string {
 
 func feedListKey(f Feed, list string) string { return keyenc.Join(f.key(), list) }
 
-// hold answers why f's read of list must wait, nil when it may run, logging a back-off's first skip and its end.
+// hold answers why f's read of list must wait, nil when it may run, logging a feed pool's first skip and its end:
+// the lists of a feed sharing a pool log one back-off between them.
 func (b *Budget) hold(f Feed, list string) *backoff {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	bo := b.check(f.Connection, list)
-	pool := capPool(f.Connection, list)
-	if bo != nil {
-		pool = bo.pool
-	}
-	key := keyenc.Join(f.key(), pool)
-	switch {
-	case bo != nil && !b.backedOff[key]:
-		b.backedOff[key] = true
-		slog.Warn(logMsgBackedOff, "connection", f.Connection, "repo", f.Selector, "pool", bo.pool,
-			"reason", bo.reason, "remaining", bo.remaining, "resumes_at", bo.until)
-	case bo == nil && b.backedOff[key]:
+	key := feedListKey(f, list)
+	held, wasHeld := b.backedOff[key]
+	if wasHeld && (bo == nil || bo.pool != held) {
 		delete(b.backedOff, key)
-		slog.Info(logMsgResumed, "connection", f.Connection, "repo", f.Selector, "pool", pool)
+		if !b.feedHolds(f, held) {
+			slog.Info(logMsgResumed, "connection", f.Connection, "repo", f.Selector, "pool", held)
+		}
+	}
+	if bo != nil && (!wasHeld || bo.pool != held) {
+		if !b.feedHolds(f, bo.pool) {
+			slog.Warn(logMsgBackedOff, "connection", f.Connection, "repo", f.Selector, "pool", bo.pool,
+				"reason", bo.reason, "remaining", bo.remaining, "resumes_at", bo.until)
+		}
+		b.backedOff[key] = bo.pool
 	}
 	return bo
+}
+
+// feedHolds reports whether a list of f is skipped for pool.
+func (b *Budget) feedHolds(f Feed, pool string) bool {
+	for _, list := range []string{listIssues, listPRs, listRuns} {
+		if held, ok := b.backedOff[feedListKey(f, list)]; ok && held == pool {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *Budget) check(conn, list string) *backoff {
@@ -152,8 +184,10 @@ func (b *Budget) walked(f Feed, list string, pages int, complete bool, err error
 	cb := b.conn(f.Connection)
 	pool := capPool(f.Connection, list)
 	var reset time.Time
-	if ps := cb.pools[pool]; ps != nil {
-		reset = ps.reset
+	for _, name := range cb.floorPools(f.Connection, list) {
+		if ps := cb.pools[name]; ps != nil && ps.reset.After(reset) {
+			reset = ps.reset
+		}
 	}
 	var until time.Time
 	fe, isForge := errors.AsType[*forgeapi.Error](err)
@@ -211,8 +245,8 @@ func (b *Budget) Estimate(rules []launchrule.Rule, cand *launchrule.Rule, replac
 			continue
 		}
 		_, host := connectionParts(ev.Connection)
-		text := fmt.Sprintf("These rules could spend %d %s %s an hour on %s; the trigger budget is %d.",
-			int(math.Ceil(with[pool])), pool, unitOf(pool), host, budgetCap)
+		text := fmt.Sprintf("These rules could spend %s %s %s an hour on %s; the trigger budget is %s.",
+			grouped(int(math.Ceil(with[pool]))), pool, unitOf(pool), host, grouped(budgetCap))
 		if fit := b.fittingInterval(others, cand, pool); fit > 0 {
 			return &EstimateError{Text: fmt.Sprintf("%s Set this one to %d minutes or more.", text, fit)}
 		}

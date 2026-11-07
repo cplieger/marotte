@@ -50,14 +50,15 @@ type Budget struct {
 	conns map[string]*connBudget
 	// pages is each feed list's page count on its last complete walk, keyed by feedListKey.
 	pages map[string]int
-	// backedOff holds the feed pools whose reads are being skipped, so each back-off logs once at each end.
-	backedOff map[string]bool
+	// backedOff is, per feed list being skipped (feedListKey), the pool its back-off line named, so the resume line
+	// names the same pool even when the list's cap pool differs from it.
+	backedOff map[string]string
 	mu        sync.Mutex
 }
 
 // NewBudget returns an empty budget.
 func NewBudget() *Budget {
-	return &Budget{now: time.Now, conns: map[string]*connBudget{}, pages: map[string]int{}, backedOff: map[string]bool{}}
+	return &Budget{now: time.Now, conns: map[string]*connBudget{}, pages: map[string]int{}, backedOff: map[string]string{}}
 }
 
 type connBudget struct {
@@ -93,7 +94,7 @@ func (b *Budget) conn(id string) *connBudget {
 }
 
 // Observe is connection conn's forgeapi attempt observer. It reads only the request and the response headers, since
-// forgeapi sends a read a hook changes around its cache (forgeapi options.go, WithRequestObserver).
+// forgeapi sends a read a hook changes around its cache (forgeapi options.go, WithAttemptObserver).
 func (b *Budget) Observe(conn string) func(next http.RoundTripper) http.RoundTripper {
 	return func(next http.RoundTripper) http.RoundTripper {
 		return roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -117,7 +118,8 @@ func (b *Budget) observe(conn string, req *http.Request, resp *http.Response) {
 	defer b.mu.Unlock()
 	now := b.now()
 	cb := b.conn(conn)
-	if tag != nil {
+	// A 5xx is retried for the same page, so it is charged below but not counted as a page.
+	if tag != nil && resp.StatusCode < http.StatusInternalServerError {
 		tag.pages.Add(1)
 	}
 	switch family {

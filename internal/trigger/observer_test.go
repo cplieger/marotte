@@ -93,7 +93,7 @@ func TestObserverCountsRetriedAttempts(t *testing.T) {
 	now := pollStart
 	b := budgetAt(&now)
 	wire := &answerWith{status: http.StatusBadGateway, header: http.Header{}}
-	ctx, _ := withRead(context.Background(), listRuns)
+	ctx, tag := withRead(t.Context(), listRuns)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.example.org/repos/o/r/actions/runs", http.NoBody)
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -108,6 +108,15 @@ func TestObserverCountsRetriedAttempts(t *testing.T) {
 	}
 	if got := b.spent(testConn, poolCore, now); got != 3 {
 		t.Errorf("core spent = %d after one request tried three times, want 3", got)
+	}
+	wire.status = http.StatusOK
+	resp, err := rt.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	_ = resp.Body.Close()
+	if got := tag.pages.Load(); got != 1 {
+		t.Errorf("pages = %d after three 502s and a 200 for one page, want 1", got)
 	}
 }
 
@@ -227,6 +236,7 @@ func TestFloorIgnoresOtherCallersLastPool(t *testing.T) {
 
 func TestGitLabFloorFromRateLimitHeaders(t *testing.T) {
 	h := budgetHarness(t)
+	logs := captureLogs(t)
 	spec := func(kind launchrule.Kind) *launchrule.EventSpec {
 		ev := &launchrule.EventSpec{Connection: gitlabConn, Repo: testRepo, Kind: kind}
 		if kind == launchrule.KindRunConcluded {
@@ -261,6 +271,23 @@ func TestGitLabFloorFromRateLimitHeaders(t *testing.T) {
 	want := "paused for the forge budget: burst_traffic_per_user_free_plan has 10 requests left, resumes " + clockOf(reset)
 	if got := h.status(issues.ID).Paused; got != want {
 		t.Errorf("issue rule Paused = %q, want %q", got, want)
+	}
+
+	h.poll()
+	if n := callsOf(h.src, listIssues); n != 1 {
+		t.Errorf("%d issue reads past the burst pool's reset, want 1", n)
+	}
+	if n := strings.Count(logs.String(), logMsgResumed); n != 1 {
+		t.Errorf("%d %q lines past the reset, want 1:\n%s", n, logMsgResumed, logs)
+	}
+	if !strings.Contains(logs.String(), "pool=burst_traffic_per_user_free_plan") {
+		t.Errorf("no line names the burst pool:\n%s", logs)
+	}
+	send(t, h.budget, gitlabConn, listIssues, http.MethodGet, "/projects/1/issues",
+		&answerWith{status: http.StatusOK, header: gitlabHeader("burst_traffic_per_user_free_plan", 100, 5, h.now.Add(time.Minute))})
+	h.poll()
+	if n := strings.Count(logs.String(), logMsgBackedOff); n != 2 {
+		t.Errorf("%d %q lines over two back-offs, want 2:\n%s", n, logMsgBackedOff, logs)
 	}
 }
 
@@ -356,6 +383,23 @@ func TestRateLimitedWaitsRetryAfter(t *testing.T) {
 	if n := callsOf(p.src, listIssues); n != 2 {
 		t.Errorf("%d issue reads after the reset, want 2", n)
 	}
+
+	g := budgetHarness(t)
+	gev := labeledSpec()
+	gev.Connection = gitlabConn
+	g.create(gev)
+	send(t, g.budget, gitlabConn, listIssues, http.MethodGet, "/projects/1/issues",
+		&answerWith{status: http.StatusOK, header: gitlabHeader("throttle_authenticated_api", 2000, 1900, reset)})
+	g.src.issues = []forgeapi.Page[forgeapi.Issue]{{Partial: &forgeapi.Partial{Reason: forgeapi.PartialRateLimited}}}
+	g.poll()
+	g.poll()
+	if n := callsOf(g.src, listIssues); n != 1 {
+		t.Errorf("%d GitLab issue reads after a deferred read and before the reset, want 1", n)
+	}
+	g.poll()
+	if n := callsOf(g.src, listIssues); n != 2 {
+		t.Errorf("%d GitLab issue reads after the reset, want 2", n)
+	}
 }
 
 func TestBackoffPastWindowRecordsGap(t *testing.T) {
@@ -435,6 +479,16 @@ func TestEstimatePricesFeedsPerPool(t *testing.T) {
 	}
 	if err := b.Estimate(rules[:15], &cand, ""); err != nil {
 		t.Errorf("Estimate of 16 rules = %v, want nil", err)
+	}
+	var many []launchrule.Rule
+	for i := range 27 {
+		ev := runSpec("success")
+		ev.Repo, ev.IntervalMin = "o/m"+strconv.Itoa(i), 5
+		many = append(many, launchrule.Rule{ID: "m" + strconv.Itoa(i), Enabled: true, When: launchrule.When{Event: ev}})
+	}
+	want = "These rules could spend 1,008 core requests an hour on github.com; the trigger budget is 600. Slow or disable another rule on this connection first."
+	if err := b.Estimate(many, &cand, ""); err == nil || err.Error() != want {
+		t.Errorf("Estimate over 27 rules = %v, want %q", err, want)
 	}
 	if err := b.Estimate(rules, &rules[3], "r3"); err != nil {
 		t.Errorf("Estimate of an unchanged rule = %v, want nil", err)
