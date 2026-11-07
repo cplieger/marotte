@@ -809,6 +809,53 @@ export function shellTimeoutMs(raw: string): number {
   return Math.min(s, SHELL_TIMEOUT_MAX_S) * 1000;
 }
 
+/** The triggered-run caps' bounds, mirroring settings.ValidateTriggerCapsPatch. */
+const TRIGGER_CAP_MAX = 100;
+
+/** The cap a typed number asks for, clamped into 1..100; null for an empty or unreadable entry,
+ *  which sends nothing because the setting has no unset value. */
+export function triggerCap(raw: string): number | null {
+  const n = Math.round(Number(raw.trim()));
+  if (raw.trim() === "" || !Number.isFinite(n)) {
+    return null;
+  }
+  return Math.min(Math.max(n, 1), TRIGGER_CAP_MAX);
+}
+
+const triggerCapInputs = [
+  { inputID: "trigger-max-live-runs", key: "trigger_max_live_runs" },
+  { inputID: "trigger-max-launches-per-hour", key: "trigger_max_launches_per_hour" },
+] as const;
+
+function paintTriggerCaps(s: EffectiveSettings): void {
+  for (const cap of triggerCapInputs) {
+    const input = maybeEl<HTMLInputElement>(cap.inputID);
+    if (input !== null && document.activeElement !== input) {
+      input.value = String(s[cap.key]);
+    }
+  }
+}
+
+function initTriggerCapControls(): void {
+  for (const cap of triggerCapInputs) {
+    const input = maybeEl<HTMLInputElement>(cap.inputID);
+    input?.addEventListener("change", () => {
+      const n = triggerCap(input.value);
+      if (n === null) {
+        const shown = settingsAsShown();
+        if (shown !== null) {
+          input.value = String(shown[cap.key]);
+        }
+        return;
+      }
+      input.value = String(n);
+      saveControl(input, { [cap.key]: n }, (shown) => {
+        input.value = String(shown[cap.key]);
+      });
+    });
+  }
+}
+
 /** The ask-first switch only means something while spec planning is on. */
 function paintSpecPlanning(mode: string): void {
   maybeEl("spec-planning-ask-row")?.classList.toggle("hidden", mode === "off");
@@ -854,6 +901,7 @@ function applyAgentCapabilities(s: EffectiveSettings): void {
   if (timeout !== null && document.activeElement !== timeout) {
     paintShellTimeout(timeout, s);
   }
+  paintTriggerCaps(s);
   applyAutoCompaction(s);
   paintSettingLocks();
   paintWorkflowLaunchRow();
@@ -962,6 +1010,7 @@ function initAgentCapabilityControls(): void {
       paintShellTimeout(timeout, shown);
     });
   });
+  initTriggerCapControls();
   initAutoCompactionControls();
 }
 
