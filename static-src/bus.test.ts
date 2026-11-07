@@ -339,6 +339,15 @@ describe("decodeEnvelope", () => {
     );
   });
 
+  it("refuses an mcp_prewarm frame whose state is not a prewarm state", () => {
+    expect(() =>
+      decodeEnvelope({
+        type: "mcp_prewarm",
+        payload: { package: "p", server_ids: [], state: "nope" },
+      }),
+    ).toThrow();
+  });
+
   it("finds no decoder under an inherited property name", () => {
     expect(lookupSSEDecoder("constructor")).toBeUndefined();
     expect(lookupSSEDecoder("toString")).toBeUndefined();

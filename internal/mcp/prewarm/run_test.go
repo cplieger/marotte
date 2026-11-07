@@ -12,9 +12,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // fakeLister is a ServerLister that returns a fixed set, standing in
@@ -374,5 +377,348 @@ func TestStop_WaitsForAnInstallInFlight(t *testing.T) {
 	defer p.mu.Unlock()
 	if len(p.running) != 0 {
 		t.Errorf("a pass after Stop reserved %v", p.running)
+	}
+}
+
+// frame is one OnStatus call as the bus would receive it.
+type frame struct {
+	pkg   string
+	ids   []string
+	state marotte.MCPPrewarmState
+}
+
+func (f frame) equal(o frame) bool {
+	return f.pkg == o.pkg && f.state == o.state && slices.Equal(f.ids, o.ids)
+}
+
+// recorder is an OnStatus that keeps every frame and signals each terminal frame for watch.
+type recorder struct {
+	terminal chan struct{}
+	watch    string
+	frames   []frame
+	mu       sync.Mutex
+}
+
+func record(p *Runner, watch string) *recorder {
+	r := &recorder{watch: watch, terminal: make(chan struct{}, 16)}
+	p.OnStatus = func(pkg string, ids []string, state marotte.MCPPrewarmState) {
+		r.mu.Lock()
+		r.frames = append(r.frames, frame{pkg: pkg, ids: slices.Clone(ids), state: state})
+		r.mu.Unlock()
+		if pkg == r.watch && state != marotte.MCPPrewarmInstalling {
+			select {
+			case r.terminal <- struct{}{}:
+			default:
+			}
+		}
+	}
+	return r
+}
+
+func (r *recorder) got() []frame {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.frames)
+}
+
+// waitTerminal blocks until watch's install reports done or failed; Stop before that cancels it.
+func (r *recorder) waitTerminal(t *testing.T) {
+	t.Helper()
+	select {
+	case <-r.terminal:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("no terminal frame for %q within 10s; frames so far: %v", r.watch, r.got())
+	}
+}
+
+func assertFrames(t *testing.T, got, want []frame) {
+	t.Helper()
+	if !slices.EqualFunc(got, want, frame.equal) {
+		t.Errorf("frames = %v, want %v", got, want)
+	}
+}
+
+// seed stores a reservation as Run would leave it, started or still waiting for a slot.
+func seed(p *Runner, pkg string, started bool, ids ...string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.reservations[pkg] = &reservation{ids: append([]string{}, ids...), started: started}
+}
+
+// reservedIDs reports the ids scopedPkg's reservation holds, and whether it exists.
+func reservedIDs(p *Runner, pkg string) ([]string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	r, ok := p.reservations[pkg]
+	if !ok {
+		return nil, false
+	}
+	return slices.Clone(r.ids), true
+}
+
+func npxFor(id, pkg string) ServerInfo {
+	return ServerInfo{
+		ID: id, Transport: "stdio", Command: "npx",
+		Args: []string{"-y", pkg}, Enabled: true, Prewarm: true,
+	}
+}
+
+// withoutNpm leaves Run unable to queue an install, so only joins and leaves are observable.
+func withoutNpm(t *testing.T) { t.Setenv("PATH", t.TempDir()) }
+
+func withSucceedingNpm(t *testing.T) {
+	npm := writeFakeNpm(t, "exit 0\n")
+	t.Setenv("PATH", filepath.Dir(npm))
+}
+
+const scopedPkg = "@scope/pkg"
+
+func TestRun_NamesEveryServerAPackageIsInstalledFor(t *testing.T) {
+	withSucceedingNpm(t)
+	unticked := npxFor("c", scopedPkg)
+	unticked.Prewarm = false
+	disabled := npxFor("d", scopedPkg)
+	disabled.Enabled = false
+	p := NewRunner(t.Context(), fakeLister{servers: []ServerInfo{
+		npxFor("a", scopedPkg), npxFor("b", scopedPkg), unticked, disabled,
+	}})
+	rec := record(p, scopedPkg)
+
+	p.Run(t.Context())
+	rec.waitTerminal(t)
+	p.Stop()
+
+	assertFrames(t, rec.got(), []frame{
+		{scopedPkg, []string{"a", "b"}, marotte.MCPPrewarmInstalling},
+		{scopedPkg, []string{"a", "b"}, marotte.MCPPrewarmDone},
+	})
+}
+
+func TestRun_JoinsAServerToAnInstallInFlight(t *testing.T) {
+	withoutNpm(t)
+	p := NewRunner(t.Context(), fakeLister{servers: []ServerInfo{npxFor("a", scopedPkg), npxFor("b", scopedPkg)}})
+	rec := record(p, scopedPkg)
+	seed(p, scopedPkg, true, "a")
+
+	p.Run(t.Context())
+
+	assertFrames(t, rec.got(), []frame{{scopedPkg, []string{"a", "b"}, marotte.MCPPrewarmInstalling}})
+	if ids, _ := reservedIDs(p, scopedPkg); !slices.Equal(ids, []string{"a", "b"}) {
+		t.Errorf("reservation ids = %v, want [a b]", ids)
+	}
+	p.mu.Lock()
+	n := len(p.reservations)
+	p.mu.Unlock()
+	if n != 1 {
+		t.Errorf("reservations = %d, want 1: a join must not queue a second install", n)
+	}
+
+	p.finish(scopedPkg, marotte.MCPPrewarmDone)
+
+	assertFrames(t, rec.got()[1:], []frame{{scopedPkg, []string{"a", "b"}, marotte.MCPPrewarmDone}})
+	if _, ok := reservedIDs(p, scopedPkg); ok {
+		t.Error("finish left the reservation in place, so the next pass never retries the package")
+	}
+}
+
+func TestRun_AWaitingReservationJoinsSilently(t *testing.T) {
+	withoutNpm(t)
+	p := NewRunner(t.Context(), fakeLister{servers: []ServerInfo{npxFor("a", scopedPkg), npxFor("b", scopedPkg)}})
+	rec := record(p, scopedPkg)
+	seed(p, scopedPkg, false, "a")
+
+	p.Run(t.Context())
+	if got := rec.got(); len(got) != 0 {
+		t.Fatalf("a join to an install not yet started emitted %v, want nothing", got)
+	}
+
+	p.start(scopedPkg)
+
+	assertFrames(t, rec.got(), []frame{{scopedPkg, []string{"a", "b"}, marotte.MCPPrewarmInstalling}})
+}
+
+func TestRun_AServerEditedOntoAnotherPackageLeavesItsOldInstall(t *testing.T) {
+	withSucceedingNpm(t)
+	p := NewRunner(t.Context(), fakeLister{servers: []ServerInfo{npxFor("a", "pkg-y"), npxFor("b", "pkg-x")}})
+	rec := record(p, "pkg-y")
+	seed(p, "pkg-x", true, "a", "b")
+
+	p.Run(t.Context())
+	rec.waitTerminal(t)
+
+	got := rec.got()
+	left := slices.IndexFunc(got, frame{"pkg-x", []string{"a"}, marotte.MCPPrewarmDone}.equal)
+	joined := slices.IndexFunc(got, frame{"pkg-y", []string{"a"}, marotte.MCPPrewarmInstalling}.equal)
+	if left < 0 || joined < 0 || left > joined {
+		t.Errorf("frames = %v, want (scopedPkg-x [a] done) before (scopedPkg-y [a] installing)", got)
+	}
+	if ids, _ := reservedIDs(p, "pkg-x"); !slices.Equal(ids, []string{"b"}) {
+		t.Errorf("pkg-x reservation ids = %v, want [b]", ids)
+	}
+
+	p.finish("pkg-x", marotte.MCPPrewarmFailed)
+	p.Stop()
+
+	if last := rec.got()[len(rec.got())-1]; !last.equal(frame{"pkg-x", []string{"b"}, marotte.MCPPrewarmFailed}) {
+		t.Errorf("pkg-x's result = %v, want it to name only b", last)
+	}
+}
+
+func TestRun_AServerThatStopsAskingLeavesItsInstall(t *testing.T) {
+	cases := []struct {
+		stop func(*ServerInfo)
+		name string
+	}{
+		{name: "prewarm unticked", stop: func(s *ServerInfo) { s.Prewarm = false }},
+		{name: "disabled", stop: func(s *ServerInfo) { s.Enabled = false }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withoutNpm(t)
+			a := npxFor("a", scopedPkg)
+			tc.stop(&a)
+			p := NewRunner(t.Context(), fakeLister{servers: []ServerInfo{a, npxFor("b", scopedPkg)}})
+			rec := record(p, scopedPkg)
+			seed(p, scopedPkg, true, "a", "b")
+
+			p.Run(t.Context())
+
+			assertFrames(t, rec.got(), []frame{{scopedPkg, []string{"a"}, marotte.MCPPrewarmDone}})
+			if ids, _ := reservedIDs(p, scopedPkg); !slices.Equal(ids, []string{"b"}) {
+				t.Errorf("reservation ids = %v, want [b]", ids)
+			}
+		})
+	}
+}
+
+// A pass whose ctx died reads an empty store, which must not read as every server leaving.
+func TestRun_ADeadPassPrunesNothing(t *testing.T) {
+	withoutNpm(t)
+	p := NewRunner(t.Context(), fakeLister{})
+	rec := record(p, scopedPkg)
+	seed(p, scopedPkg, true, "a")
+	dead, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	p.Run(dead)
+
+	if got := rec.got(); len(got) != 0 {
+		t.Errorf("a dead pass emitted %v, want nothing", got)
+	}
+	if ids, _ := reservedIDs(p, scopedPkg); !slices.Equal(ids, []string{"a"}) {
+		t.Errorf("reservation ids after a dead pass = %v, want [a]", ids)
+	}
+
+	// A live pass after the dead one still runs, so the dead one released every lock.
+	p.Lister = fakeLister{servers: []ServerInfo{npxFor("a", scopedPkg), npxFor("b", scopedPkg)}}
+	ran := make(chan struct{})
+	go func() {
+		p.Run(t.Context())
+		close(ran)
+	}()
+	select {
+	case <-ran:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a live pass after a dead one never returned: the dead pass kept a lock")
+	}
+	assertFrames(t, rec.got(), []frame{{scopedPkg, []string{"a", "b"}, marotte.MCPPrewarmInstalling}})
+}
+
+// gatedLister holds its first read until gate closes, then answers with the store as it was.
+type gatedLister struct {
+	entered chan struct{}
+	gate    chan struct{}
+	first   []ServerInfo
+	later   []ServerInfo
+	calls   atomic.Int32
+}
+
+func (g *gatedLister) EnabledServers(context.Context) []ServerInfo {
+	if g.calls.Add(1) == 1 {
+		close(g.entered)
+		<-g.gate
+		return g.first
+	}
+	return g.later
+}
+
+func TestRun_PassesReconcileInTheOrderTheyReadTheStore(t *testing.T) {
+	withoutNpm(t)
+	unticked := npxFor("a", scopedPkg)
+	unticked.Prewarm = false
+	lister := &gatedLister{
+		entered: make(chan struct{}), gate: make(chan struct{}),
+		first: []ServerInfo{npxFor("a", scopedPkg)}, later: []ServerInfo{unticked},
+	}
+	p := NewRunner(t.Context(), lister)
+	rec := record(p, scopedPkg)
+	seed(p, scopedPkg, true, "a")
+
+	pass1, pass2 := make(chan struct{}), make(chan struct{})
+	go func() { p.Run(t.Context()); close(pass1) }()
+	<-lister.entered
+	go func() { p.Run(t.Context()); close(pass2) }()
+	// The later read must not reconcile ahead of the earlier one; give it the chance to.
+	select {
+	case <-pass2:
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(lister.gate)
+	for _, done := range []chan struct{}{pass1, pass2} {
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("a pass never returned")
+		}
+	}
+
+	got := rec.got()
+	var lastA *frame
+	for i := len(got) - 1; i >= 0; i-- {
+		if slices.Contains(got[i].ids, "a") {
+			lastA = &got[i]
+			break
+		}
+	}
+	if lastA == nil || lastA.state != marotte.MCPPrewarmDone {
+		t.Errorf("frames = %v, want the last frame naming a to be done (a unticked after the earlier read)", got)
+	}
+	if ids, _ := reservedIDs(p, scopedPkg); slices.Contains(ids, "a") {
+		t.Errorf("reservation ids = %v, want no a: the store's latest read has it unticked", ids)
+	}
+}
+
+func TestFinish_AJoinNeverReachesTheBusAfterTheTerminalFrame(t *testing.T) {
+	withoutNpm(t)
+	for range 50 {
+		p := NewRunner(t.Context(), fakeLister{servers: []ServerInfo{npxFor("a", scopedPkg), npxFor("b", scopedPkg)}})
+		var mu sync.Mutex
+		var frames []frame
+		p.OnStatus = func(name string, ids []string, state marotte.MCPPrewarmState) {
+			if state == marotte.MCPPrewarmInstalling {
+				time.Sleep(time.Millisecond) // a slow bus write, so a late join would land last
+			}
+			mu.Lock()
+			frames = append(frames, frame{name, slices.Clone(ids), state})
+			mu.Unlock()
+		}
+		seed(p, scopedPkg, true, "a")
+
+		var wg sync.WaitGroup
+		wg.Go(func() { p.Run(t.Context()) })
+		wg.Go(func() { p.finish(scopedPkg, marotte.MCPPrewarmDone) })
+		wg.Wait()
+
+		last := map[string]marotte.MCPPrewarmState{}
+		for _, f := range frames {
+			for _, id := range f.ids {
+				last[id] = f.state
+			}
+		}
+		for id, state := range last {
+			if state == marotte.MCPPrewarmInstalling {
+				t.Fatalf("frames = %v: %s's last frame is installing, so its badge never clears", frames, id)
+			}
+		}
 	}
 }
