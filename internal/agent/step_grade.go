@@ -24,6 +24,10 @@ type stepClose struct {
 	misses int
 	// unanswered is the close's EntryTurnClose.Unanswered.
 	unanswered bool
+	// offTurn is the close's EntryTurnClose.EndedOffTurn.
+	offTurn bool
+	// byHand is the grade's EntryStepGraded.EndedByHand.
+	byHand bool
 	// hasGrade is whether a step_graded for turn is folded in.
 	hasGrade bool
 	// settled is whether no read of KAS's record is spent on the close's grade again (runLog.gradeLocked); in
@@ -54,9 +58,14 @@ type answerFold struct {
 func (a *answerFold) see(e *marotte.Entry) {
 	switch e.Kind {
 	case marotte.EntryKindToolCall:
-		a.text.Reset()
 		var c marotte.EntryToolCall
-		a.signalled = json.Unmarshal(e.Payload, &c) == nil && (c.ToolName == "send_message" || c.ToolName == "update_workflow")
+		ok := json.Unmarshal(e.Payload, &c) == nil
+		// marotte's own cards are no model call: kiro-cli fires a Stop hook after the model's answer.
+		if ok && (c.Kind == marotte.ToolKindHook || c.Kind == marotte.ToolKindSteering) {
+			return
+		}
+		a.text.Reset()
+		a.signalled = ok && (c.ToolName == "send_message" || c.ToolName == "update_workflow")
 	case marotte.EntryKindToolResult:
 		a.text.Reset()
 	case marotte.EntryKindText:
@@ -87,6 +96,7 @@ func stepCloseOf(c *marotte.EntryTurnClose, turn string) stepClose {
 		kind:       c.FailureKind,
 		rawStop:    marotte.StopReason(c.StopReasonRaw),
 		unanswered: c.Unanswered,
+		offTurn:    c.EndedOffTurn,
 		turn:       turn,
 	}
 }
@@ -95,7 +105,7 @@ func stepCloseOf(c *marotte.EntryTurnClose, turn string) stepClose {
 // the grade is refused.
 func (c *stepClose) withGrade(g *marotte.EntryStepGraded) stepClose {
 	out := *c
-	out.outcome, out.kind, out.reason, out.hasGrade = g.Outcome, g.FailureKind, g.FailureReason, true
+	out.outcome, out.kind, out.reason, out.byHand, out.hasGrade = g.Outcome, g.FailureKind, g.FailureReason, g.EndedByHand, true
 	if g.Outcome != marotte.TurnOutcomeRefused {
 		out.refusal = nil
 	}
@@ -116,7 +126,8 @@ func (c *stepClose) answeredNothing() bool {
 
 // mayBeBroken is whether KAS's record could change or confirm this close's grade.
 func (c *stepClose) mayBeBroken() bool {
-	return marotte.SeverityOf(c.outcome) == marotte.TurnSeverityBroken || c.stoppedAtCallLimit() || c.answeredNothing()
+	return marotte.SeverityOf(c.outcome) == marotte.TurnSeverityBroken || c.stoppedAtCallLimit() || c.answeredNothing() ||
+		c.offTurn
 }
 
 // mayNote is whether this close's grade could call for a step note: graded never makes a close refused, and the only
@@ -130,15 +141,17 @@ func (c *stepClose) mayNote() bool {
 // The run log's grade and a replay's both fold through it, so a grade reads one way wherever it is served.
 func (c *stepClose) recordedGrade(kas workflow.StepRecord) (marotte.EntryStepGraded, stepClose) {
 	g := c.graded(kas)
-	p := marotte.EntryStepGraded{Outcome: g.outcome, FailureReason: g.reason, FailureKind: g.kind}
+	p := marotte.EntryStepGraded{Outcome: g.outcome, FailureReason: g.reason, FailureKind: g.kind, EndedByHand: g.byHand}
 	under := c.withGrade(&p)
 	return p, under
 }
 
-// graded is the step's end under KAS's record of the node, the authority. A step KAS completed on a success signal
-// ended completed whatever its turn's stop. A step KAS completed with no signal is the model-call limit when its turn
-// stopped on tool_use or max_turn_requests, and an empty answer when its own turn ended it saying nothing: KAS
-// retries an empty answer only when the model sent no stop reason, so one ending end_turn completes the step.
+// graded is the step's end under KAS's record of the node, the authority, and the one rule every surface's colour
+// reads; a turn that failed before the step's last says nothing here. A step KAS completed on a success signal ended
+// completed whatever its turn's stop. A step KAS completed with no signal ended completed by hand when its own turn
+// did not end it, unless it refused; else it is the model-call limit when its turn stopped on tool_use or
+// max_turn_requests, and an empty answer when its turn said nothing: KAS retries an empty answer only when the model
+// sent no stop reason, so one ending end_turn completes the step.
 func (c *stepClose) graded(kas workflow.StepRecord) stepClose {
 	g := *c
 	switch {
@@ -147,6 +160,8 @@ func (c *stepClose) graded(kas workflow.StepRecord) stepClose {
 			return stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: g.rawStop}
 		}
 		return g
+	case kas.Completed() && kas.CompletionSignal == "" && g.offTurn && g.outcome != marotte.TurnOutcomeRefused:
+		g.outcome, g.kind, g.reason, g.byHand = marotte.TurnOutcomeCompleted, "", "", true
 	case kas.Completed() && g.stoppedAtCallLimit():
 		g.outcome = marotte.TurnOutcomeFailed
 		g.kind = marotte.FailureKindModelCallLimit
@@ -164,7 +179,7 @@ func (c *stepClose) end() (marotte.RunStepEnd, bool) {
 	if !c.hasGrade && marotte.SeverityOf(c.outcome) != marotte.TurnSeverityBroken {
 		return marotte.RunStepEnd{}, false
 	}
-	return marotte.RunStepEnd{Outcome: c.outcome, FailureReason: c.reason, FailureKind: c.kind}, true
+	return marotte.RunStepEnd{Outcome: c.outcome, FailureReason: c.reason, FailureKind: c.kind, EndedByHand: c.byHand}, true
 }
 
 func kasSteps(in workflow.Inspect) map[string]workflow.StepRecord {

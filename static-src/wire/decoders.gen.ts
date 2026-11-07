@@ -1318,6 +1318,10 @@ export const decodeEntryStepGraded: Decoder<EntryStepGraded> = (v) => {
     const $v = own(o, "failure_kind");
     if ($v !== undefined && $v !== null) out.failure_kind = reqOneOf(o, "failure_kind", FAILURE_KINDS, "$.entry_step_graded");
   }
+  {
+    const $v = own(o, "ended_by_hand");
+    if ($v !== undefined && $v !== null) out.ended_by_hand = reqBool(o, "ended_by_hand", "$.entry_step_graded");
+  }
   return out;
 };
 
@@ -1622,6 +1626,10 @@ export const decodeEntryTurnClose: Decoder<EntryTurnClose> = (v) => {
   {
     const $v = own(o, "unanswered");
     if ($v !== undefined && $v !== null) out.unanswered = reqBool(o, "unanswered", "$.entry_turn_close");
+  }
+  {
+    const $v = own(o, "ended_off_turn");
+    if ($v !== undefined && $v !== null) out.ended_off_turn = reqBool(o, "ended_off_turn", "$.entry_turn_close");
   }
   return out;
 };
@@ -3759,6 +3767,10 @@ export const decodeRunStepEnd: Decoder<RunStepEnd> = (v) => {
   {
     const $v = own(o, "failure_kind");
     if ($v !== undefined && $v !== null) out.failure_kind = reqOneOf(o, "failure_kind", FAILURE_KINDS, "$.run_step_end");
+  }
+  {
+    const $v = own(o, "ended_by_hand");
+    if ($v !== undefined && $v !== null) out.ended_by_hand = reqBool(o, "ended_by_hand", "$.run_step_end");
   }
   {
     const $v = own(o, "resumed");

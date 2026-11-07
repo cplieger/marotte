@@ -193,11 +193,29 @@ function rollUp(own: ExecState, kids: readonly ExecNode[]): ExecState {
   return own;
 }
 
-/** A step KAS graded `completed` reads failed when its newest turn closed broken: the model refused, or kiro-cli
- *  stopped it at its model-call limit with its work unfinished. An engine end's interruption is not the step's
- *  failure (`interruptionText`). Any other KAS grade is KAS's own account. */
-function endedState(own: ExecState, end: RunStepEnd | undefined): ExecState {
-  return own === "ok" && end?.outcome !== "interrupted" && isBroken(end?.outcome) ? "fail" : own;
+/** A work node under its `step_ends` row, the server's grade: one KAS graded `completed` reads failed when the grade
+ *  is broken (the model refused, or kiro-cli stopped it at its model-call limit with its work unfinished), and ended by
+ *  hand when the grade says so. An engine end's interruption is not the step's failure (`interruptionText`). Any
+ *  other KAS grade is KAS's own account. */
+function stepEndView(
+  own: ExecState,
+  end: RunStepEnd | undefined,
+): { state: ExecState; failure?: string; interruption?: string; endedByHand: boolean } {
+  if (end === undefined) {
+    return { state: own, endedByHand: false };
+  }
+  if (end.outcome === "interrupted") {
+    return { state: own, interruption: interruptionText(end), endedByHand: false };
+  }
+  if (own === "ok" && isBroken(end.outcome)) {
+    const reason = (end.failure_reason ?? "").trim();
+    return {
+      state: "fail",
+      failure: reason !== "" ? reason : defaultFailureReason(end.outcome),
+      endedByHand: false,
+    };
+  }
+  return { state: own, endedByHand: own === "ok" && end.ended_by_hand === true };
 }
 
 function interruptionText(end: RunStepEnd): string {
@@ -546,8 +564,8 @@ function toNode(
   const children = kids.map((k) => toNode(k, path, ctx, node, inner));
   const own = withAsk(stateOf(node.status), ctx.asked.waiting.has(node));
   const work = isWork({ kind });
-  const end = work ? ctx.ends.get(address) : undefined;
-  const state = work ? endedState(own, end) : rollUp(own, currentMembers({ kind, children }));
+  const view = work ? stepEndView(own, ctx.ends.get(address)) : undefined;
+  const state = view?.state ?? rollUp(own, currentMembers({ kind, children }));
   // A repeat's child is a PASS; KAS names a pass container `<repeatId>#<n>`, which is its id
   // and not something a reader can read.
   const pass =
@@ -613,14 +631,15 @@ function toNode(
     out.facts = facts;
   }
   const kasReason = (node.failureReason ?? "").trim();
-  if (kasReason !== "") {
-    out.failure = kasReason;
-  } else if (state !== own && end !== undefined) {
-    const logReason = (end.failure_reason ?? "").trim();
-    out.failure = logReason !== "" ? logReason : defaultFailureReason(end.outcome);
+  const failure = kasReason !== "" ? kasReason : view?.failure;
+  if (failure !== undefined) {
+    out.failure = failure;
   }
-  if (end?.outcome === "interrupted") {
-    out.interruption = interruptionText(end);
+  if (view?.interruption !== undefined) {
+    out.interruption = view.interruption;
+  }
+  if (view?.endedByHand === true) {
+    out.endedByHand = true;
   }
   // An idle-timeout record says only what the subtitle already does, so it shows no Output box.
   if (watch?.kind === "process") {

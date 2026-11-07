@@ -3,7 +3,7 @@
 // held by nobody, and the wire shape of nothing.
 
 import { join } from "@cplieger/keyenc";
-import { STATE_WORD, inFlight, type ExecState } from "./status.js";
+import { ENDED_BY_HAND, STATE_WORD, inFlight, type ExecState } from "./status.js";
 import type { RunStepEndStatus, RunStepMessageVerb } from "../wire/types.gen.js";
 
 /** What KIND of node this is. `group` is the catch-all, so an unseen source has a legal value. */
@@ -48,6 +48,8 @@ export interface ExecNode {
   /** What an engine end did to the step's newest turn: "Interrupted, resumed", or "Interrupted: <reason>" while
    *  nothing has resumed it. Never a failure. */
   interruption?: string;
+  /** Set on a step that finished because a person or its parent ended it, not its own turn: it reads succeeded. */
+  endedByHand?: true;
   /** What the node produced, as markdown. */
   output?: string;
   /** The card's result text: the capture verbatim, or a decoded watch's last output line (its
@@ -435,7 +437,7 @@ export function miniBar(run: Pick<ExecRun, "nodes">): MiniSeg[] {
   return currentWork(run.nodes).map((n) => ({
     key: n.path,
     state: n.state,
-    tip: `${n.label}, ${STATE_WORD[n.state]}`,
+    tip: `${n.label}, ${STATE_WORD[n.state]}${n.endedByHand === true ? `, ${ENDED_BY_HAND.toLowerCase()}` : ""}`,
     branch: splits.has(n),
   }));
 }

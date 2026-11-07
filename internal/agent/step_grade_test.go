@@ -51,6 +51,8 @@ func TestStepClose_GradedUnderKASsRecord(t *testing.T) {
 		refusal: &marotte.RefusalInfo{Category: "policy"},
 	}
 	silent := stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: marotte.StopReasonEndTurn, unanswered: true}
+	offTurn := stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: marotte.StopReasonEndTurn, offTurn: true}
+	byHand := stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: marotte.StopReasonEndTurn, byHand: true}
 	succeeded := workflow.StepRecord{Status: "completed", CompletionSignal: "success"}
 	unsignalled := workflow.StepRecord{Status: "completed"}
 	for _, tc := range []struct {
@@ -100,11 +102,29 @@ func TestStepClose_GradedUnderKASsRecord(t *testing.T) {
 		},
 		{desc: "a success signal outranks an empty answer", close: silent, kas: succeeded, want: silent},
 		{desc: "KAS's own failure keeps an empty answer's close", close: silent, kas: workflow.StepRecord{Status: "failed"}, want: silent},
+		{desc: "no signal on a step its own turn did not end reads ended by hand", close: offTurn, kas: unsignalled, want: byHand},
+		{
+			desc: "a hand end outranks a tool_use stop", kas: unsignalled,
+			close: stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: marotte.StopReasonToolUse, offTurn: true},
+			want:  stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: marotte.StopReasonToolUse, byHand: true},
+		},
+		{
+			desc: "a hand end outranks an empty answer stored before it was told apart", kas: unsignalled,
+			close: stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: marotte.StopReasonEndTurn, unanswered: true, offTurn: true},
+			want:  byHand,
+		},
+		{
+			desc: "a refusal ended by hand stays refused", kas: unsignalled,
+			close: stepClose{outcome: marotte.TurnOutcomeRefused, rawStop: marotte.StopReasonRefusal, refusal: refused.refusal, offTurn: true},
+			want:  refused,
+		},
+		{desc: "a success signal on a step its own turn did not end is no hand end", close: offTurn, kas: succeeded, want: offTurn},
+		{desc: "KAS's own failure keeps a close its own turn did not end", close: offTurn, kas: workflow.StepRecord{Status: "failed"}, want: offTurn},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
 			got := tc.close.graded(tc.kas)
 			if got.outcome != tc.want.outcome || got.kind != tc.want.kind || got.reason != tc.want.reason ||
-				got.rawStop != tc.want.rawStop || got.refusal != tc.want.refusal {
+				got.rawStop != tc.want.rawStop || got.refusal != tc.want.refusal || got.byHand != tc.want.byHand {
 				t.Errorf("graded = %+v, want %+v", got, tc.want)
 			}
 		})
@@ -401,9 +421,14 @@ func TestStepEnd_AStepKASCompletedWithNoSignalAfterAnEmptyAnswerReadsFailed(t *t
 	nodePath := workflow.PathKey(path)
 	for _, tc := range []struct {
 		desc, before, after, signal string
-		failed                      bool
+		// card is a marotte card filed after the answer: kiro-cli fires a Stop hook after the model's last word.
+		card   marotte.ToolKind
+		failed bool
 	}{
 		{desc: "KAS's stand-in after the tool result", before: "Reading the diff.", after: stand, failed: true},
+		{desc: "an answer, then a Stop hook's card", after: "Two findings, written to the review file.", card: marotte.ToolKindHook},
+		{desc: "an answer, then a steering box", after: "Two findings, written to the review file.", card: marotte.ToolKindSteering},
+		{desc: "nothing after the tool result but a Stop hook's card", before: "Reading the diff.", card: marotte.ToolKindHook, failed: true},
 		{desc: "nothing after the tool result", before: "Reading the diff.", failed: true},
 		{desc: "a blank answer after the tool result", after: " \n", failed: true},
 		{desc: "an answer after the tool result", after: "Two findings, written to the review file."},
@@ -439,6 +464,11 @@ func TestStepEnd_AStepKASCompletedWithNoSignalAfterAnEmptyAnswerReadsFailed(t *t
 			if tc.after != "" {
 				if _, err := turn.TextDelta(t.Context(), "", "say-2", tc.after); err != nil {
 					t.Fatalf("Setup: text: %v", err)
+				}
+			}
+			if tc.card != "" {
+				if _, err := turn.ToolCall(t.Context(), "", &marotte.EntryToolCall{ID: "card-1", Title: "Hook fired: news", Kind: tc.card}); err != nil {
+					t.Fatalf("Setup: card: %v", err)
 				}
 			}
 			if !h.runs.RunStopReason(id, nodePath, marotte.StopReasonEndTurn) {
@@ -562,6 +592,11 @@ func (s *stepEnding) turnEnd() {
 
 func (s *stepEnding) paused() { s.h.runs.RunNodePaused(s.t.Context(), s.id, s.path) }
 
+// resume delivers the node_start KAS sends when it resumes a parked step.
+func (s *stepEnding) resume() {
+	s.h.runs.RunNodeStart(s.t.Context(), &translate.RunStep{RunID: s.id, NodePath: s.nodePath, SessionID: s.session}, "")
+}
+
 func (s *stepEnding) complete(status string) {
 	s.h.runs.RunNodeComplete(s.t.Context(), s.id, s.path, status, "")
 }
@@ -570,6 +605,7 @@ func (s *stepEnding) complete(status string) {
 // grade judges a step its own turn ended with no answer text and no send_message (kiro-cli 3.0.0's empty end_turn,
 // which KAS completes at once). KAS also records completed with no signal when something else ends the step: Mark step
 // done and the parent's update_status clear the signal (applyPausedStepFinish), and a run's end closes what is open.
+// Mark step done and update_status read completed, ended by hand.
 func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *testing.T) {
 	const (
 		id      = "wf_aabb60d3e105b178"
@@ -580,7 +616,7 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 	for _, tc := range []struct {
 		desc, status, signal string
 		drive                func(s *stepEnding)
-		empty                bool
+		empty, byHand        bool
 	}{
 		{
 			desc: "its own turn ends with an answer", status: "completed",
@@ -613,7 +649,7 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 			},
 		},
 		{
-			desc: "Mark step done after its warning parked it", status: "completed",
+			desc: "Mark step done after its warning parked it", status: "completed", byHand: true,
 			drive: func(s *stepEnding) {
 				s.turnStart()
 				s.call("rg")
@@ -624,7 +660,7 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 			},
 		},
 		{
-			desc: "Mark step done after its success signal parked it behind a sibling", status: "completed",
+			desc: "Mark step done after its success signal parked it behind a sibling", status: "completed", byHand: true,
 			drive: func(s *stepEnding) {
 				s.turnStart()
 				s.call("send_message")
@@ -634,7 +670,7 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 			},
 		},
 		{
-			desc: "the parent's update_status completes it after a silent wake turn re-parked it", status: "completed",
+			desc: "the parent's update_status completes it after a silent wake turn re-parked it", status: "completed", byHand: true,
 			drive: func(s *stepEnding) {
 				s.turnStart()
 				s.call("send_message")
@@ -644,6 +680,35 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 				s.call("rg")
 				s.turnEnd()
 				s.paused()
+				s.complete("completed")
+			},
+		},
+		{
+			desc: "its own turn ends with nothing said after an answered warning resumed it", status: "completed", empty: true,
+			drive: func(s *stepEnding) {
+				s.turnStart()
+				s.call("send_message")
+				s.turnEnd()
+				s.paused()
+				s.resume()
+				s.turnStart()
+				s.call("rg")
+				s.turnEnd()
+				s.complete("completed")
+			},
+		},
+		{
+			desc: "its own turn ends with an answer after an answered warning resumed it", status: "completed",
+			drive: func(s *stepEnding) {
+				s.turnStart()
+				s.call("send_message")
+				s.turnEnd()
+				s.paused()
+				s.resume()
+				s.turnStart()
+				s.call("rg")
+				s.say("Done.")
+				s.turnEnd()
 				s.complete("completed")
 			},
 		},
@@ -658,7 +723,7 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 			},
 		},
 		{
-			desc: "the parent's update_status completes it inside its first turn", status: "completed",
+			desc: "the parent's update_status completes it inside its first turn", status: "completed", byHand: true,
 			drive: func(s *stepEnding) {
 				s.turnStart()
 				s.call("rg")
@@ -666,7 +731,7 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 			},
 		},
 		{
-			desc: "the parent's update_status completes it inside a later turn", status: "completed",
+			desc: "the parent's update_status completes it inside a later turn", status: "completed", byHand: true,
 			drive: func(s *stepEnding) {
 				s.turnStart()
 				s.say("Reading the diff.")
@@ -719,6 +784,9 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 				if got := end.FailureKind == marotte.FailureKindEmptyAnswer; got != tc.empty {
 					t.Errorf("step_ends[%s] = %+v, want empty_answer: %v", nodePath, end, tc.empty)
 				}
+				if end.EndedByHand != tc.byHand || (tc.byHand && end.Outcome != marotte.TurnOutcomeCompleted) {
+					t.Errorf("step_ends[%s] = %+v, want ended by hand: %v", nodePath, end, tc.byHand)
+				}
 			})
 			t.Run("the step's turn", func(t *testing.T) {
 				entries := transcriptOf(t, h, id, nodePath)
@@ -726,6 +794,12 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 				if tc.empty {
 					if !ok || g.FailureKind != marotte.FailureKindEmptyAnswer {
 						t.Errorf("step_graded = %+v (found %v), want the empty answer", g, ok)
+					}
+					return
+				}
+				if tc.byHand {
+					if want := (marotte.EntryStepGraded{Outcome: marotte.TurnOutcomeCompleted, EndedByHand: true}); !ok || g != want {
+						t.Errorf("step_graded = %+v (found %v), want %+v", g, ok, want)
 					}
 					return
 				}
