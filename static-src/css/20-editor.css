@@ -537,6 +537,7 @@
 .editor-find-input {
   flex: 1 1 8rem;
   min-inline-size: 0;
+  min-block-size: var(--field-h);
   padding: var(--sp-1) var(--sp-2);
   color: var(--c-text-primary);
   background: var(--c-bg-primary);

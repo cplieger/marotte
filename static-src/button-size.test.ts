@@ -795,6 +795,7 @@ const MOUNTED: Readonly<Record<string, readonly string[]>> = {
   "a notice band": [".banner-dismiss"],
   "the file browser's toolbar": ["#fb-back", "#fb-upload", "#fb-delete"],
   "the editor": ["#editor-edit-btn", ".conflict-hunk-row .btn-small"],
+  "the editor's go-to bar": [".editor-goto-submit", "#editor-goto-close"],
   "the web preview's bar": ["#web-reload-btn"],
   "a run card": ["a.run-open"],
   "the shell panel's header": [".shell-header-btn"],

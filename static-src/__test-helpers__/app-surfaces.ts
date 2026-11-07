@@ -1478,6 +1478,16 @@ export const SURFACES: readonly Surface[] = [
     controls: ["#editor-diff-btn", "#editor-edit-btn", ".conflict-hunk-row .btn-small"],
   },
   {
+    name: "the editor's go-to bar",
+    sizes: TWO,
+    setup: () => {
+      show("editor-view");
+      q("#editor-goto").classList.remove("hidden");
+    },
+    controls: [".editor-goto-submit", "#editor-goto-close"],
+    rows: ["#editor-goto-input"],
+  },
+  {
     name: "the web preview's bar",
     sizes: TWO,
     setup: () => {
