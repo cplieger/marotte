@@ -56,13 +56,14 @@ import {
 import {
   discoverySignalFor,
   mcpState,
+  prewarmSignalFor,
   servers,
   statusSignalFor,
   unconfiguredNames,
 } from "./mcp-state.js";
 import type { RuntimeStatus, Server } from "./mcp-state.js";
 import { configStanding, refreshConfigStanding } from "./config-standing.js";
-import type { MCPOrigin } from "./wire/types.gen.js";
+import type { MCPOrigin, MCPPrewarmState } from "./wire/types.gen.js";
 
 function status(over: Partial<RuntimeStatus> = {}): RuntimeStatus {
   return { name: "s", origin: "power", state: "connected", ...over } as RuntimeStatus;
@@ -675,5 +676,68 @@ describe("a server another layer switched off", () => {
     await standing();
     expect(own.querySelector(".docs-badge-standing")).toBeNull();
     expect(theirs.querySelector(".docs-badge-standing")).toBeNull();
+  });
+});
+
+describe("mcp_prewarm", () => {
+  beforeEach(async () => {
+    const section = document.createElement("div");
+    section.id = "mcp-section";
+    const modal = document.createElement("div");
+    modal.id = "mcp-modal";
+    document.body.replaceChildren(section, modal);
+    initMCP();
+    // initMCP's own server fetch answers empty; let it land before seeding.
+    await settle();
+  });
+
+  // Each case uses its own ids: the badge signals outlive a case.
+  function npx(id: string, pkg: string, prewarm: boolean): Server {
+    return { ...configured(id), id, command: "npx", args: ["-y", pkg], prewarm };
+  }
+  function namedLike(id: string, pkg: string): Server {
+    return { ...configured(pkg), id, command: "node", args: ["server.js"], prewarm: true };
+  }
+  function prewarmFrame(ids: string[], state: MCPPrewarmState): ServerEvent {
+    return { type: "mcp_prewarm", payload: { package: "@scope/pkg", server_ids: ids, state } };
+  }
+
+  it("badges every server the frame names and no other", () => {
+    servers.setAll([
+      npx("p1-c", "@scope/pkg", false),
+      npx("p1-a", "@scope/pkg", true),
+      npx("p1-b", "@scope/pkg", true),
+      namedLike("p1-d", "@scope/pkg"),
+    ]);
+
+    dispatch(prewarmFrame(["p1-a", "p1-b"], "installing"));
+
+    expect(prewarmSignalFor("p1-a").value).toBe("installing");
+    expect(prewarmSignalFor("p1-b").value).toBe("installing");
+    expect(prewarmSignalFor("p1-c").value).toBe("none");
+    expect(prewarmSignalFor("p1-d").value).toBe("none");
+  });
+
+  it("never badges a server only because its name is the package", () => {
+    servers.setAll([namedLike("p2-d", "@scope/pkg"), npx("p2-a", "@scope/pkg", true)]);
+
+    dispatch(prewarmFrame(["p2-a"], "installing"));
+
+    expect(prewarmSignalFor("p2-d").value).toBe("none");
+    expect(prewarmSignalFor("p2-a").value).toBe("installing");
+  });
+
+  it("clears every named badge on done and marks every one on failed", () => {
+    servers.setAll([npx("p3-a", "@scope/pkg", true), npx("p3-b", "@scope/pkg", true)]);
+    dispatch(prewarmFrame(["p3-a", "p3-b"], "installing"));
+
+    dispatch(prewarmFrame(["p3-a", "p3-b"], "done"));
+    expect(prewarmSignalFor("p3-a").value).toBe("none");
+    expect(prewarmSignalFor("p3-b").value).toBe("none");
+
+    dispatch(prewarmFrame(["p3-a", "p3-b"], "installing"));
+    dispatch(prewarmFrame(["p3-b"], "failed"));
+    expect(prewarmSignalFor("p3-a").value).toBe("installing");
+    expect(prewarmSignalFor("p3-b").value).toBe("failed");
   });
 });

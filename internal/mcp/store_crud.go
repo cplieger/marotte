@@ -428,6 +428,7 @@ func (s *Store) EnabledServers(ctx context.Context) []prewarm.ServerInfo {
 	out := make([]prewarm.ServerInfo, len(servers))
 	for i, srv := range servers {
 		out[i] = prewarm.ServerInfo{
+			ID:        string(srv.ID),
 			Prewarm:   srv.Prewarm,
 			Enabled:   srv.Enabled,
 			Transport: string(srv.Transport),

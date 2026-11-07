@@ -18,15 +18,16 @@ import (
 // the store satisfies prewarm.ServerLister, drops disabled records, and
 // carries transport/command/args through unchanged (those three are what
 // ExtractNpxPackage gates on, so a dropped field silently disables
-// pre-warming).
+// pre-warming), plus the id every prewarm frame names.
 func TestEnabledServers_FeedsPrewarmLister(t *testing.T) {
 	store := newTestStore(t)
 	ctx := t.Context()
 
-	if _, err := store.Create(ctx, &Server{
+	on, err := store.Create(ctx, &Server{
 		Transport: TransportStdio, Name: "on", Command: "npx",
 		Args: []string{"-y", "@scope/pkg"}, Enabled: true, Prewarm: true,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("Create on: %v", err)
 	}
 	if _, err := store.Create(ctx, &Server{
@@ -44,17 +45,17 @@ func TestEnabledServers_FeedsPrewarmLister(t *testing.T) {
 		t.Fatalf("EnabledServers returned %d entries, want 1 (disabled must be filtered): %+v", len(got), got)
 	}
 	want := prewarm.ServerInfo{
-		Transport: string(TransportStdio), Command: "npx",
+		ID: string(on.ID), Transport: string(TransportStdio), Command: "npx",
 		Args: []string{"-y", "@scope/pkg"}, Enabled: true, Prewarm: true,
 	}
-	if got[0].Transport != want.Transport || got[0].Command != want.Command ||
+	if got[0].ID != want.ID || got[0].Transport != want.Transport || got[0].Command != want.Command ||
 		got[0].Enabled != want.Enabled || got[0].Prewarm != want.Prewarm ||
 		!slices.Equal(got[0].Args, want.Args) {
 		t.Errorf("EnabledServers()[0] = %+v, want %+v", got[0], want)
 	}
 
 	// And the projection is what prewarm actually keys on.
-	if pkg := prewarm.ExtractNpxPackage(got[0]); pkg != "@scope/pkg" {
+	if pkg := prewarm.ExtractNpxPackage(&got[0]); pkg != "@scope/pkg" {
 		t.Errorf("ExtractNpxPackage(projection) = %q, want %q", pkg, "@scope/pkg")
 	}
 }

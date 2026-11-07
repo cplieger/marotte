@@ -136,6 +136,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.MCPSignInClosedPayload](),
 	wiregen.TypeRef[marotte.MCPFailedPayload](),
 	wiregen.TypeRef[marotte.MCPDisconnectedPayload](),
+	wiregen.TypeRef[marotte.MCPPrewarmPayload](),
 	wiregen.TypeRef[marotte.ChatDeletedPayload](),
 	wiregen.TypeRef[marotte.DraftChangedPayload](),
 	wiregen.TypeRef[marotte.ElicitationPropertySchema](),
@@ -405,6 +406,8 @@ var wireEnums = []wiregen.EnumRef{
 	// "marotte could not ask" must render a retry, not a sign-in prompt.
 	wiregen.StringEnum[auth.WhoamiState](),
 	wiregen.StringEnum[mcp.Transport](),
+	// The badge shows any state but installing as a failed install, so an unknown one is refused.
+	wiregen.StringEnum[marotte.MCPPrewarmState](),
 	// The engine banner and the Settings restart control branch on it.
 	wiregen.StringEnum[marotte.EngineState](),
 	// Each kind resolves to a different rendered surface; the decoder is strict.
@@ -460,6 +463,7 @@ var wireEvents = []wiregen.Event{
 	{Name: "mcp_connected", Data: wiregen.TypeRef[marotte.MCPConnectedPayload]()},
 	{Name: "mcp_disconnected", Data: wiregen.TypeRef[marotte.MCPDisconnectedPayload]()},
 	{Name: "mcp_failed", Data: wiregen.TypeRef[marotte.MCPFailedPayload]()},
+	{Name: "mcp_prewarm", Data: wiregen.TypeRef[marotte.MCPPrewarmPayload]()},
 	{Name: "mcp_oauth_needed", Data: wiregen.TypeRef[marotte.MCPOAuthPayload]()},
 	{Name: "mcp_sign_in_open", Data: wiregen.TypeRef[marotte.MCPSignInOpenPayload]()},
 	{Name: "mcp_sign_in_closed", Data: wiregen.TypeRef[marotte.MCPSignInClosedPayload]()},

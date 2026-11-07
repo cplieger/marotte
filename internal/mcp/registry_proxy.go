@@ -24,6 +24,7 @@ import (
 	"github.com/cplieger/go/keyenc"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/mcp/prewarm"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -507,15 +508,9 @@ type RegistryHeader struct {
 	Secret      bool   `json:"secret,omitempty"`
 }
 
-// Only npm is supported (via npx -y). This is the single source of truth for install-capability
-// gating: both normaliseRegistryResponse (which filters registry search results for the UI) and
-// extractNpxPackage in prewarm.go (which decides what to pre-install) reference this map.
+// The registries a search result may install from: only npm, run via npx -y. Which transports
+// marotte can install is prewarm.SupportsTransport's.
 var supportedPackageRegistries = map[string]bool{"npm": true}
-
-// Empty string means "default stdio". Shared with prewarm.go's extractNpxPackage: a server is only
-// prewarm-eligible if its transport is in this set, ensuring the invariant "prewarm only targets
-// packages the registry would surface".
-var supportedPackageTransports = map[string]bool{"stdio": true, "": true}
 
 // Only these remote types are surfaced to the UI.
 var supportedRemoteTypes = map[string]Transport{
@@ -681,7 +676,7 @@ func convertRegistryPackage(pkg *registryWirePackage) (RegistryPackage, bool) {
 	if !supportedPackageRegistries[pkg.RegistryType] {
 		return RegistryPackage{}, false
 	}
-	if !supportedPackageTransports[pkg.Transport.Type] {
+	if !prewarm.SupportsTransport(pkg.Transport.Type) {
 		return RegistryPackage{}, false
 	}
 	pe := RegistryPackage{

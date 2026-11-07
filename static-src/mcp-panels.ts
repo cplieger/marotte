@@ -463,9 +463,9 @@ const NPM_PKG_SPEC =
   /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(?:@[A-Za-z0-9^~><=.+_-][A-Za-z0-9^~><=.+_-]*)?$/;
 
 /**
- * The npm package a stdio server runs through `npx`, or "". Transcribed from `internal/mcp/prewarm`'s
- * ExtractNpxPackage so both halves agree: the command must be npx, a flag past the package refuses, and the spec
- * must match NpmPkgSpecRe.
+ * The npm package a stdio server runs through `npx`, or "": the npm form prefills from it and `editModeFor` offers
+ * the npm form only when it is set. The command must be npx, a flag past the package refuses, and the spec must
+ * match NPM_PKG_SPEC.
  */
 export function extractNpxPackage(s: Server): string {
   if (s.transport !== "stdio" || (s.command ?? "").trim() !== NPX_COMMAND) {

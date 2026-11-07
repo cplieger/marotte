@@ -35,7 +35,7 @@ import {
 } from "./mcp-state.js";
 import { setEditing, initModal, cleanupModal } from "./mcp-panels.js";
 import type { MCPOrigin } from "./wire/types.gen.js";
-import { editModeFor, extractNpxPackage } from "./mcp-panels.js";
+import { editModeFor } from "./mcp-panels.js";
 import {
   toggleServer,
   deleteServer,
@@ -1206,7 +1206,9 @@ export function initMCP(): void {
     mcpState.deleteStatus(p.server);
   });
   onSSE("mcp_prewarm", (_chat, p) => {
-    updatePrewarmStatus(p.package, p.state as "installing" | "done" | "failed");
+    for (const id of p.server_ids) {
+      setPrewarm(id, p.state);
+    }
   });
 
   // Fires immediately if governance is known, then on every change.
@@ -1215,17 +1217,6 @@ export function initMCP(): void {
   mcpState.refetchServers();
   mcpState.refetchStatus();
   refreshConfigStanding();
-}
-
-function updatePrewarmStatus(pkg: string, state: "installing" | "done" | "failed"): void {
-  for (const server of configuredServers()) {
-    const serverPkg = extractNpxPackage(server);
-    if (serverPkg !== pkg && server.name !== pkg) {
-      continue;
-    }
-    setPrewarm(server.id, state);
-    return;
-  }
 }
 
 // A toast when a server turns out to be broken, with no proactive probing: the failure is the one kiro-cli reported.

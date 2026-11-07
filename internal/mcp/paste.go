@@ -283,7 +283,7 @@ func transportFor(spec *pasteServer) (Transport, error) {
 
 // prewarmFor mirrors the npm form's default: an npx server pays an install cost
 // on the first chat after a container start unless it is pre-installed, and
-// nothing else is prewarm-eligible (see prewarm.extractNpxPackage). An explicit
+// nothing else is prewarm-eligible (see prewarm.ExtractNpxPackage). An explicit
 // flag in the block wins.
 func prewarmFor(spec *pasteServer, command string) bool {
 	if spec.Prewarm != nil {

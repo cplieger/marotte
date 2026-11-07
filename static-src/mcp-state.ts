@@ -207,7 +207,7 @@ const decodeMCPServersResponseLocal: Decoder<{ servers: Server[]; unreadable: nu
 
 // SSE is the legacy HTTP+SSE remote transport, a first-class stored value sharing the url/headers form with http.
 export type { Transport } from "./wire/types.gen.js";
-import type { MCPOrigin, Transport } from "./wire/types.gen.js";
+import type { MCPOrigin, MCPPrewarmState, Transport } from "./wire/types.gen.js";
 
 /** KAS's per-server `versionNegotiation` enum. */
 type VersionNegotiation = "auto" | "legacy";
@@ -426,7 +426,7 @@ export function prewarmSignalFor(id: string): ReadonlySignal<PrewarmState> {
 }
 
 /** Set a server's prewarm state ("done" clears the badge -> "none"). */
-export function setPrewarm(id: string, state: "installing" | "done" | "failed"): void {
+export function setPrewarm(id: string, state: MCPPrewarmState): void {
   prewarmMap.ensure(id, "none").value = state === "done" ? "none" : state;
 }
 

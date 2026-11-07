@@ -38,6 +38,8 @@ export type KnowledgeIndexingStatus = "success" | "failed";
 
 export type MCPOrigin = "user" | "workspace" | "power" | "bundled" | "unknown";
 
+export type MCPPrewarmState = "installing" | "done" | "failed";
+
 export type ModeSwitchSource = "user" | "agent";
 
 export type ModelSwitchReason = "unavailable";
@@ -2170,6 +2172,17 @@ export interface MCPOAuthPayload {
   server: string;
   /** Error is why kiro-cli refused the last Sign in, absent when none was refused. */
   error?: string;
+}
+
+/**
+ * MCPPrewarmPayload is the payload for type="mcp_prewarm", emitted when a prewarm install starts,
+ * succeeds or fails, and when a server joins or leaves one in flight. State applies to exactly the
+ * servers ServerIDs names.
+ */
+export interface MCPPrewarmPayload {
+  package: string;
+  state: MCPPrewarmState;
+  server_ids: string[];
 }
 
 /**

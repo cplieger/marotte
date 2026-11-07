@@ -49,7 +49,6 @@ var emptySignalPayloads = []string{
 // is the fix; growing it requires a reason.
 var unboundDataPayloads = []string{
 	"ChatStatusPayload",
-	"MCPPrewarmPayload",
 	"ModeChangedPayload",
 	"WorkingLabelPayload",
 }
