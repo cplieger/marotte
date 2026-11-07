@@ -462,8 +462,7 @@ function nearestHitIndex(): number {
   if (localCount === 0) {
     return -1;
   }
-  const bottom =
-    maybeEl("messages-wrap")?.getBoundingClientRect().bottom ?? window.innerHeight;
+  const bottom = maybeEl("messages-wrap")?.getBoundingClientRect().bottom ?? window.innerHeight;
   let nearest = 0;
   for (let i = 0; i < localCount; i++) {
     const hit = stepOrder[i];

@@ -657,9 +657,7 @@ let togglesGen = 0;
 let togglesAC: AbortController | null = null;
 
 export function initExperimentalToggles(): void {
-  const inputs = experimentalFlags.map(
-    (flag) => maybeEl<HTMLInputElement>(flag.inputID),
-  );
+  const inputs = experimentalFlags.map((flag) => maybeEl<HTMLInputElement>(flag.inputID));
   const wanted = experimentalFlags.map((flag) => flag.key).join(",");
   const gen = ++togglesGen;
   togglesAC?.abort();
@@ -819,8 +817,7 @@ function paintSpecPlanning(mode: string): void {
 /** Workflow use only means something while the Workflows switch shows on, a lock's value included. */
 function paintWorkflowLaunchRow(): void {
   const workflows = maybeEl<HTMLInputElement>("flag-workflows");
-  maybeEl("workflow-launch-row")
-    ?.classList.toggle("hidden", workflows?.checked !== true);
+  maybeEl("workflow-launch-row")?.classList.toggle("hidden", workflows?.checked !== true);
 }
 
 /** The Memory dropdown's values, mirroring settings.MemoryOff and its siblings. */

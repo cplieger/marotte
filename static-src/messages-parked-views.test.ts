@@ -525,13 +525,14 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
     switchTo(b);
     await flushed();
 
+    // `data-near` is the scroll controller's lay-out-ahead mark, which an attach re-derives from layout.
     const writes: string[] = [];
     const mo = new MutationObserver((records) => {
       for (const r of records) {
         const owner = (r.target instanceof Element ? r.target : r.target.parentElement)?.closest(
           ".tool-call",
         );
-        if (owner !== null && owner !== undefined) {
+        if (owner !== null && owner !== undefined && r.attributeName !== "data-near") {
           writes.push(`${r.type} ${r.attributeName ?? ""}`);
         }
       }
@@ -549,7 +550,7 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
       const owner = (r.target instanceof Element ? r.target : r.target.parentElement)?.closest(
         ".tool-call",
       );
-      if (owner !== null && owner !== undefined) {
+      if (owner !== null && owner !== undefined && r.attributeName !== "data-near") {
         writes.push(`${r.type} ${r.attributeName ?? ""}`);
       }
     }
