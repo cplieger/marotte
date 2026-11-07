@@ -318,21 +318,11 @@
   white-space: nowrap;
 }
 
-/* DENSITY AND THE RECEDE. The skin is `icon-btn` (10-shell-app.css), from
- * attachment-pill.ts; the fifteen declarations this replaced were a hand-rolled copy
- * of it, four of them there only because the mark was a `×` CHARACTER (the `font-size`,
- * the `line-height: 1` against `icon-btn`'s SVG-authored `line-height: 0`, and the 1rem
- * box that clamped it). The mark is `ICON_CLOSE` now.
- *
- * `icon-btn` sets a `--btn-h` minimum; `min-*-size: var(--close-box)` below keeps the
- * chip's x at 24px.
- *
- * THE RECEDE STAYS AND IS NOT THE ANTI-PATTERN `.banner-dismiss` rejected. That one was
- * an `opacity` on a control whose ink had no other channel; this is progressive
- * disclosure — the × is quiet until the pointer is on its pill, which is what
- * `.attachment-pill:hover` below is for. MEASURED at rest against `--c-bg-secondary`:
- * 4.818:1 dark and 3.233:1 light, both clearing the 3:1 a graphical object needs, so it
- * costs no contrast rule. `icon-btn` sets no opacity in any state, so the two compose. */
+/* The skin is `icon-btn` (10-shell-app.css): its `--btn-h` minimum is overridden by
+ * `min-*-size: var(--close-box)` below, which keeps the chip's x at 24px. The x stays
+ * quiet until the pointer is on its pill (`.attachment-pill:hover`); at rest against
+ * `--c-bg-secondary` it measures 4.818:1 dark and 3.233:1 light, clearing the 3:1 a
+ * graphical object needs. */
 .attachment-close {
   padding: 0;
 

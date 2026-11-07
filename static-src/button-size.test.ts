@@ -607,7 +607,7 @@ const CENSUS: readonly Family[] = [
     selector: ".tool-diff-more",
     kind: "own-size",
     documented:
-      "60-mcp.css `.tool-diff-more`: a text control under a diff preview, painted as its label at `--paint-floor`",
+      "60-mcp.css `.tool-diff-more`: a text control under a diff preview, painted as its label; the preview's end padding pays its reach",
   },
   {
     name: "switch",
