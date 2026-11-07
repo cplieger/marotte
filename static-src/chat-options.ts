@@ -285,8 +285,8 @@ const COMPACT_HINT_BUSY =
 
 /**
  * Compact this chat's context (the action `/compact` dispatches). Disabled only with no conversation yet; during a turn
- * the server queues it for the turn's end, and its 409 covers the rest. Reports no completion: the server broadcasts
- * `compaction_started` and persists a `compacted` row.
+ * the server queues it for the turn's end, and its 409 covers the rest. Reports no completion: the dock shows it
+ * running, and the transcript's `compaction` entry marks where it landed.
  */
 function compactRow(): HTMLElement {
   const { row, btn, hint } = actionRow({

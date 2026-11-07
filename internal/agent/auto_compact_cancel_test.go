@@ -19,7 +19,7 @@ type hookQueue struct {
 	after  func()
 }
 
-func (q hookQueue) section(ctx context.Context, chatID marotte.ChatID, fn func(t queueTurn, row func(bool) error) error) error {
+func (q hookQueue) section(ctx context.Context, chatID marotte.ChatID, fn func(t queueTurn, row func(compactRow) error) error) error {
 	if q.before != nil {
 		q.before()
 	}
@@ -282,20 +282,22 @@ func TestAutoCompact_ARepressAfterACancelDuringARefusedTurnEndRunRunsAtTheReleas
 }
 
 // The record queue's section names the open turn, then the finished one, with whether a turn is live; its row writer
-// sets and clears the record's row and is idempotent; a chat with no lifecycle gets no turn and a plain writer.
+// moves the record's row through its stages, keeping when it was queued, and is idempotent; a chat with no lifecycle
+// gets no turn and a plain writer.
 func TestRecordCompactQueue_SectionNamesTheRequestsTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	q := recordCompactQueue{bc: h.coord}
-	row := func() bool {
+	pending := func() *marotte.PendingCompaction {
 		c, _ := cs.Get(t.Context(), "c1")
-		return c.CompactPending != nil
+		return c.CompactPending
 	}
-	in := func(chatID marotte.ChatID, set ...bool) queueTurn {
+	row := func() bool { return pending() != nil }
+	in := func(chatID marotte.ChatID, set ...compactRow) queueTurn {
 		var got queueTurn
-		err := q.section(t.Context(), chatID, func(turn queueTurn, write func(bool) error) error {
+		err := q.section(t.Context(), chatID, func(turn queueTurn, write func(compactRow) error) error {
 			got = turn
-			for _, on := range set {
-				if err := write(on); err != nil {
+			for _, want := range set {
+				if err := write(want); err != nil {
 					return err
 				}
 			}
@@ -308,10 +310,14 @@ func TestRecordCompactQueue_SectionNamesTheRequestsTurn(t *testing.T) {
 	}
 	id, _ := h.stagePromptTurn(t, "c1")
 
-	if got := in("c1", true, true); got.id != id || !got.live || !got.open || !got.queueable() || !row() {
-		t.Errorf("during the turn: %+v, row %v; want turn %q, live, open, queueable, and the row on", got, row(), id)
+	if got := in("c1", compactRowQueued, compactRowQueued); got.id != id || !got.live || !got.open || !got.queueable() || !row() || pending().Running {
+		t.Errorf("during the turn: %+v, row %+v; want turn %q, live, open, queueable, and the row queued", got, pending(), id)
 	}
-	if in("c1", false); row() {
+	queuedAt := pending().RequestedAt
+	if in("c1", compactRowRunning); !row() || !pending().Running || pending().RequestedAt != queuedAt {
+		t.Errorf("running row = %+v; want running, still requested at %d", pending(), queuedAt)
+	}
+	if in("c1", compactRowOff); row() {
 		t.Error("the writer's clear left the row on")
 	}
 	h.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "the pipe died", "", 0)
@@ -319,7 +325,7 @@ func TestRecordCompactQueue_SectionNamesTheRequestsTurn(t *testing.T) {
 	if got := in("c1"); got.id != id || got.live {
 		t.Errorf("after the close: %+v; want the finished turn %q, not live", got, id)
 	}
-	if got := in("c-none", true, false); got != (queueTurn{}) {
+	if got := in("c-none", compactRowQueued, compactRowOff); got != (queueTurn{}) {
 		t.Errorf("with no lifecycle: %+v; want no turn", got)
 	}
 }

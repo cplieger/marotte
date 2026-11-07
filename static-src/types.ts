@@ -399,6 +399,8 @@ export interface Session {
   /** A compaction queued for a turn's end (`ChatHeader.compact_pending`). A header read replaces it, so absent is
    *  none. */
   compact_queued?: boolean;
+  /** That compaction's call is in flight (`ChatHeader.compact_pending.running`). A header read replaces it. */
+  compact_running?: boolean;
   /** `ChatHeader.tangent`. */
   tangent?: boolean;
   /** Reasoning-effort level ("low".."max", "" = engine default): a per-chat composer setting. */

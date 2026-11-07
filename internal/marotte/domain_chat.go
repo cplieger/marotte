@@ -532,8 +532,8 @@ type Chat struct {
 	// QueuedPrompts are follow-ups held for the running turn's end, oldest first,
 	// carried rows ahead of user rows. drainAfterClose owns which row a close sends.
 	QueuedPrompts []QueuedPrompt `json:"queued_prompts,omitempty"`
-	// CompactPending is the queued compaction (the reader's, or a turn's that reached the point), run at a close; one
-	// at most. A process start drops a previous process's, since no turn of this one was asked to run it.
+	// CompactPending is the queued compaction (the reader's, or a turn's that reached the point), run at a close, or
+	// the one running; one at most. A process start drops a previous process's, since no turn of this one was asked to run it.
 	CompactPending *PendingCompaction `json:"compact_pending,omitempty"`
 	// TangentMerges are this tangent's merge operations; internal/command owns their lifecycle.
 	TangentMerges []TangentMerge `json:"tangent_merges,omitempty"`
@@ -628,10 +628,12 @@ func (m InterruptMode) Valid() bool {
 	return m == InterruptSteer || m == InterruptQueue
 }
 
-// PendingCompaction is a compaction queued for a turn's end.
+// PendingCompaction is a compaction queued for a turn's end, or one whose call is in flight.
 type PendingCompaction struct {
-	// RequestedAt is when it was queued, in Unix ms.
+	// RequestedAt is when it was queued or, for one never queued, claimed, in Unix ms.
 	RequestedAt int64 `json:"requested_at"`
+	// Running is set once the compaction is claimed and its call made; the row goes when the call ends.
+	Running bool `json:"running,omitempty"`
 }
 
 // MaxQueuedPrompts caps Chat.QueuedPrompts, which the header carries to every device. A

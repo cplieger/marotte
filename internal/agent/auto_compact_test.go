@@ -33,24 +33,40 @@ type compactRig struct {
 	hold   bool
 	refuse bool
 	queued bool
-	mu     sync.Mutex
+	// rows is each stage the record's row moved to, in order.
+	rows []compactRow
+	mu   sync.Mutex
 }
 
-// rigQueue is the record's row as a flag. r.mu is its section, as the lifecycle is the record queue's; marks counts
-// each time the row goes on.
+// rigQueue is the record's row. r.mu is its section, as the lifecycle is the record queue's; queued is the row being
+// on in either stage, and marks counts each time it goes on.
 type rigQueue struct{ r *compactRig }
 
-func (q rigQueue) section(_ context.Context, _ marotte.ChatID, fn func(t queueTurn, row func(bool) error) error) error {
+func (q rigQueue) section(_ context.Context, _ marotte.ChatID, fn func(t queueTurn, row func(compactRow) error) error) error {
 	q.r.mu.Lock()
 	defer q.r.mu.Unlock()
 	t := queueTurn{id: q.r.turnIDLocked(), live: q.r.live, holds: q.r.hold, open: true}
-	return fn(t, func(on bool) error {
+	return fn(t, func(want compactRow) error {
+		on := want != compactRowOff
 		if on && !q.r.queued {
 			q.r.marks++
 		}
 		q.r.queued = on
+		last := compactRowOff
+		if n := len(q.r.rows); n > 0 {
+			last = q.r.rows[n-1]
+		}
+		if want != last {
+			q.r.rows = append(q.r.rows, want)
+		}
 		return nil
 	})
+}
+
+func (r *compactRig) rowLog() []compactRow {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.rows)
 }
 
 func newCompactRig(pct int) *compactRig {
@@ -530,16 +546,17 @@ func TestAutoCompact_ARowWrittenUnderTheHoldRunsAtTheRelease(t *testing.T) {
 	}
 }
 
-// The turn end's compaction is refused with no turn live and the reader presses under the close's hold: the refused
-// call satisfies nothing, so the press runs at the release; refused again there, it is dropped and reported.
+// The turn end's compaction is refused with no turn live, which the pages are told since the dock showed it running,
+// and the reader presses under the close's hold: the refused call satisfies nothing, so the press runs at the release;
+// refused again there, it is dropped and reported too.
 func TestAutoCompact_APressAfterARefusedTurnEndRunRunsAtTheRelease(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		refuseAgain  bool
 		wantFailures int
 	}{
-		{name: "accepted at the release"},
-		{name: "refused again at the release", refuseAgain: true, wantFailures: 1},
+		{name: "accepted at the release", wantFailures: 1},
+		{name: "refused again at the release", refuseAgain: true, wantFailures: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newCompactRig(90)
@@ -967,5 +984,69 @@ func TestCompactRequest_WaitsForTheFramesBeforeTheReply(t *testing.T) {
 	}
 	if !slices.Equal(waited, []uint64{7}) {
 		t.Errorf("read loop waits = %v, want one at the reply's position 7", waited)
+	}
+}
+
+// The row every page's dock reads moves to running as the turn end claims the queued compaction, before its call
+// answers, and goes when the call ends.
+func TestQueuedCompaction_ClaimAtTurnEndShowsRunning(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newCompactRig(90)
+		r.block = make(chan struct{})
+		r.turn(t, 92)
+		r.finishTurn()
+		closed := make(chan struct{})
+		go func() {
+			r.ac.afterTurn(context.Background(), "c1", r.lastTurn(), false)
+			close(closed)
+		}()
+		synctest.Wait()
+		if got := r.rowLog(); !slices.Equal(got, []compactRow{compactRowQueued, compactRowRunning}) {
+			t.Errorf("rows while the turn end's call runs = %v, want [queued running]", got)
+		}
+		close(r.block)
+		<-closed
+		if got := r.rowLog(); !slices.Equal(got, []compactRow{compactRowQueued, compactRowRunning, compactRowOff}) {
+			t.Errorf("rows after the call was accepted = %v, want [queued running off]", got)
+		}
+	})
+}
+
+// The reader's compaction on an idle chat shows as running for the whole call, then goes.
+func TestIdleCompactRequest_ShowsRunningThenClears(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newCompactRig(90)
+		r.block = make(chan struct{})
+		answered := make(chan command.CompactOutcome, 1)
+		go func() {
+			out, _ := r.ac.request(context.Background(), "c1")
+			answered <- out
+		}()
+		synctest.Wait()
+		if got := r.rowLog(); !slices.Equal(got, []compactRow{compactRowRunning}) {
+			t.Errorf("rows while the idle press's call runs = %v, want [running]", got)
+		}
+		close(r.block)
+		if out := <-answered; out != command.CompactAccepted {
+			t.Errorf("the idle press = %v, want accepted", out)
+		}
+		if got := r.rowLog(); !slices.Equal(got, []compactRow{compactRowRunning, compactRowOff}) {
+			t.Errorf("rows after the call = %v, want [running off]", got)
+		}
+	})
+}
+
+// The turn end's own compaction at the point, with nothing queued, shows running too; refused, it goes and the pages
+// are told.
+func TestTurnEndPolicyCompactionRefused_ClearsAndToasts(t *testing.T) {
+	r := newCompactRig(90)
+	r.reading(93)
+	r.setRefuse(true)
+	r.closeTurn(t, false)
+	if got := r.rowLog(); !slices.Equal(got, []compactRow{compactRowRunning, compactRowOff}) {
+		t.Errorf("rows around the refused turn-end call = %v, want [running off]", got)
+	}
+	if !slices.Equal(r.failures, []string{queuedCompactFailed}) {
+		t.Errorf("failures = %v, want one %q", r.failures, queuedCompactFailed)
 	}
 }

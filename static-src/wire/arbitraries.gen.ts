@@ -1799,6 +1799,7 @@ const arbModel = fc.letrec<{
   PendingCompaction: fc.record(
     {
       requested_at: fc.double({ noNaN: true, noDefaultInfinity: true }),
+      running: fc.boolean(),
     },
     { requiredKeys: ["requested_at"] },
   ),

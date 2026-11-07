@@ -1069,6 +1069,20 @@ describe("upsertHeader re-syncs an existing row", () => {
     upsertHeader(headerFor("a"));
     expect(get("a")?.compact_queued).toBe(false);
   });
+
+  it("takes the running compaction from the header, and drops it with the header's row", () => {
+    resetStore("a");
+    upsertHeader({ ...headerFor("a"), compact_pending: { requested_at: 1 } });
+    expect(get("a")?.compact_running).toBe(false);
+
+    upsertHeader({ ...headerFor("a"), compact_pending: { requested_at: 1, running: true } });
+    expect(get("a")?.compact_queued).toBe(true);
+    expect(get("a")?.compact_running).toBe(true);
+
+    upsertHeader(headerFor("a"));
+    expect(get("a")?.compact_queued).toBe(false);
+    expect(get("a")?.compact_running).toBe(false);
+  });
 });
 
 describe("upsertHeader seeds a brand-new row", () => {
@@ -1097,6 +1111,12 @@ describe("upsertHeader seeds a brand-new row", () => {
     setSessions([]);
     upsertHeader({ ...headerFor("a"), compact_pending: { requested_at: 1 } });
     expect(get("a")?.compact_queued).toBe(true);
+  });
+
+  it("seeds a compaction already running from the header", () => {
+    setSessions([]);
+    upsertHeader({ ...headerFor("a"), compact_pending: { requested_at: 1, running: true } });
+    expect(get("a")?.compact_running).toBe(true);
   });
 
   it("derives has_more from the record's count, because a header carries no window", () => {
