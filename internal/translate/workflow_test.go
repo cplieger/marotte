@@ -658,6 +658,77 @@ func TestSessionInfoUpdate_AStepsTurnStartMarksItsRunTurn(t *testing.T) {
 	}
 }
 
+// TestStepFrame_ADisplayErrorReachesTheRunTurn pins that a step's model error reaches its run turn through both
+// doors a step's frames arrive by, and never from the chat's own frame: the throttled-ask heal reads the class.
+func TestStepFrame_ADisplayErrorReachesTheRunTurn(t *testing.T) {
+	t.Parallel()
+	frame := func(t *testing.T, errorType, retryErrorType string) json.RawMessage {
+		t.Helper()
+		raw, err := json.Marshal(map[string]any{"_meta": map[string]any{"kiro": map[string]any{
+			"kind": "display_error",
+			"displayError": map[string]any{
+				"message":        "You're sending requests faster than your rate limit allows (Request ID: 41949065)",
+				"errorType":      errorType,
+				"retryErrorType": retryErrorType,
+			},
+		}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	const runID, nodePath = "wf_1", "wf_1/build"
+	attr := FrameAttribution{Step: true, RunID: runID, NodePath: nodePath}
+	want := runCall{
+		kind: "step_error", runID: runID, nodePath: nodePath,
+		engine: marotte.EngineError{ErrorType: "ClientThrottleError", RetryErrorType: "THROTTLING"},
+	}
+	stepErrors := func(d *baseDeps) []runCall {
+		var out []runCall
+		for _, rc := range d.runCalls {
+			if rc.kind == "step_error" {
+				out = append(out, rc)
+			}
+		}
+		return out
+	}
+	t.Run("a chat-parented step", func(t *testing.T) {
+		t.Parallel()
+		deps := newBaseDeps()
+		deps.turns.runTurn(runID, nodePath)
+		New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), testChat, frame(t, "ClientThrottleError", "THROTTLING"), attr)
+		if got := stepErrors(deps); len(got) != 1 || got[0] != want {
+			t.Errorf("step error calls = %+v, want [%+v]", got, want)
+		}
+	})
+	t.Run("a parentless step", func(t *testing.T) {
+		t.Parallel()
+		deps := newBaseDeps()
+		deps.turns.runTurn(runID, nodePath)
+		New(rolesOf(deps)).HandleStepInfoUpdate(t.Context(), "run:"+runID, frame(t, "ClientThrottleError", "THROTTLING"), attr)
+		if got := stepErrors(deps); len(got) != 1 || got[0] != want {
+			t.Errorf("step error calls = %+v, want [%+v]", got, want)
+		}
+	})
+	t.Run("the chat's own frame", func(t *testing.T) {
+		t.Parallel()
+		deps := newBaseDeps()
+		New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), testChat, frame(t, "ClientThrottleError", "THROTTLING"), FrameAttribution{})
+		if got := stepErrors(deps); len(got) != 0 {
+			t.Errorf("step error calls = %+v, want none", got)
+		}
+	})
+	t.Run("an MCP connect failure", func(t *testing.T) {
+		t.Parallel()
+		deps := newBaseDeps()
+		deps.turns.runTurn(runID, nodePath)
+		New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), testChat, frame(t, "mcp_connection_error", ""), attr)
+		if got := stepErrors(deps); len(got) != 0 {
+			t.Errorf("step error calls = %+v, want none", got)
+		}
+	})
+}
+
 // TestSessionInfoUpdate_StepFramesWithoutMeteringStayDropped pins that a step's focus,
 // compaction and context-usage frames never reach the chat.
 func TestSessionInfoUpdate_StepFramesWithoutMeteringStayDropped(t *testing.T) {

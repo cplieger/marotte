@@ -448,6 +448,12 @@ func (d *baseDeps) RunStopReason(runID, nodePath string, raw marotte.StopReason)
 	return ok && !d.turns.closed(t)
 }
 
+func (d *baseDeps) RunStepError(runID, nodePath string, e marotte.EngineError) bool {
+	d.runCalls = append(d.runCalls, runCall{kind: "step_error", runID: runID, nodePath: nodePath, engine: e})
+	t, ok := d.turns.runs[runPathKey(runID, nodePath)]
+	return ok && !d.turns.closed(t)
+}
+
 func (d *baseDeps) RunTurnStart(runID, nodePath string) bool {
 	d.runCalls = append(d.runCalls, runCall{kind: "turn_start", runID: runID, nodePath: nodePath})
 	t, ok := d.turns.runs[runPathKey(runID, nodePath)]
@@ -517,6 +523,7 @@ type runCall struct {
 	steerID   string
 	chat      marotte.ChatID
 	stop      marotte.StopReason
+	engine    marotte.EngineError
 	credits   float64
 	elapsedMs float64
 }

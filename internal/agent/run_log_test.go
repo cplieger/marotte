@@ -609,6 +609,58 @@ func TestRunLog_MeteringFoldsIntoTheOpenTurnAndDropsOtherwise(t *testing.T) {
 	}
 }
 
+// TestRunLog_ATurnThatFailsOnAThrottleIsRemembered pins the step turn fact the throttled-ask heal reads: the KAS turn
+// ended `error` after a transient model error, and nothing has started a new turn since. KAS's node_paused follows
+// the failing turn_end, so it must not erase the fact.
+func TestRunLog_ATurnThatFailsOnAThrottleIsRemembered(t *testing.T) {
+	throttle := marotte.EngineError{Message: "You're sending requests faster than your rate limit allows", ErrorType: "ClientThrottleError", RetryErrorType: "THROTTLING"}
+	displayError := func(e marotte.EngineError) func(*runLog) {
+		return func(r *runLog) { r.stepError("wf1", "s", e) }
+	}
+	stop := func(raw marotte.StopReason) func(*runLog) {
+		return func(r *runLog) { r.stopReason("wf1", "s", raw) }
+	}
+	turnStart := func(r *runLog) { r.turnStarted("wf1", "s") }
+	nodePaused := func(r *runLog) { r.paused("wf1", "s") }
+	cases := []struct {
+		name   string
+		frames []func(*runLog)
+		want   string
+	}{
+		{"throttle then error stop", []func(*runLog){displayError(throttle), stop(marotte.StopReasonError)}, "ClientThrottleError"},
+		{"throttle then node_paused keeps it", []func(*runLog){displayError(throttle), stop(marotte.StopReasonError), nodePaused}, "ClientThrottleError"},
+		{"turn_start clears it", []func(*runLog){displayError(throttle), stop(marotte.StopReasonError), nodePaused, turnStart}, ""},
+		{"error stop with no display error", []func(*runLog){stop(marotte.StopReasonError)}, ""},
+		{"end_turn after a throttle display error", []func(*runLog){displayError(throttle), stop(marotte.StopReasonEndTurn)}, ""},
+		{"a throttle in an earlier turn", []func(*runLog){displayError(throttle), turnStart, stop(marotte.StopReasonError)}, ""},
+		{"auth error", []func(*runLog){displayError(marotte.EngineError{ErrorType: "TokenExpiredError", RetryErrorType: "CLIENT_ERROR"}), stop(marotte.StopReasonError)}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRunLog(t.TempDir())
+			if _, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1"); err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range tc.frames {
+				f(r)
+			}
+			code, ok := r.transientFailure("wf1", "s")
+			if code != tc.want || ok != (tc.want != "") {
+				t.Errorf("transientFailure() = (%q, %v), want (%q, %v)", code, ok, tc.want, tc.want != "")
+			}
+		})
+	}
+	t.Run("no open turn", func(t *testing.T) {
+		r := newRunLog(t.TempDir())
+		if r.stepError("wf1", "s", throttle) {
+			t.Error("stepError() landed on a run with no open turn")
+		}
+		if code, ok := r.transientFailure("wf1", "s"); ok {
+			t.Errorf("transientFailure() = (%q, true) with no open turn, want not ok", code)
+		}
+	})
+}
+
 func TestRunLog_AnUnmappedStatusKeepsTheStatusAsTheRawStop(t *testing.T) {
 	r := newRunLog(t.TempDir())
 	ctx := t.Context()

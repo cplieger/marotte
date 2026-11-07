@@ -169,6 +169,26 @@ var knownClasses = map[string]struct{}{
 	"UsageLimitReachedError":            {},
 }
 
+// transientClasses are the model-call classes KAS's step error classifier retries or pauses as transient (a
+// throttle, a stalled stream, a network or service fault), not the ones it fails a step on (acp-server.js Elr,
+// @kiro/agent 0.66.91).
+var transientClasses = map[string]struct{}{
+	"ClientThrottleError":        {},
+	"ModelThrottleError":         {},
+	"ServiceThrottleError":       {},
+	"StreamIdleTimeoutError":     {},
+	"InternalServerException":    {},
+	"ServerConnectionResetError": {},
+	"ConnectionResetError":       {},
+	"ClientNetworkError":         {},
+}
+
+// Transient reports whether the envelope names a model error that a retry of the same request can clear.
+func (m Mapped) Transient() bool {
+	_, ok := transientClasses[m.ErrorType]
+	return ok || m.RetryErrorType == RetryThrottling
+}
+
 // KnownClass reports whether name is a KAS error class a reader can be shown.
 func KnownClass(name string) bool {
 	_, ok := knownClasses[name]

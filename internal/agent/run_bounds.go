@@ -508,7 +508,7 @@ func (rs *Runs) noteRunEnd(ctx context.Context, l *runlease.Lease, reason string
 		Text:       cmp.Or(rs.leasedRunName(l), "Workflow run") + " " + text,
 		Origin:     marotte.SteerOriginAgent,
 		State:      marotte.SteerStateRead,
-		Severity:   "warning",
+		Severity:   steerSeverityWarning,
 		OriginRun:  workflowID,
 		ProducedTs: producedTs,
 	})

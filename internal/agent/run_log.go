@@ -23,6 +23,7 @@ import (
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/translate"
@@ -44,6 +45,10 @@ var errRunNoClosedTurn = errors.New("run log: the step path has no closed turn")
 // runTurn is one open step turn: its accumulator and its newest sealed seq for a `run_turn` stamp.
 type runTurn struct {
 	turn *turnlog.Turn
+	// endWait is closed at the current KAS turn's turn_end, made only when a heal waits for it (runLog.askTurnEnd).
+	endWait chan struct{}
+	// lastError is the newest model error KAS displayed in the step's current KAS turn, zero when none.
+	lastError marotte.EngineError
 	// rawStop is the last turn_end's stop reason, carried by the close.
 	rawStop marotte.StopReason
 	path    string
@@ -57,6 +62,14 @@ type runTurn struct {
 	// parked is whether KAS paused the node with no node_start since: a turn a steer runs on a parked node does not
 	// resume it, so its end is not the step's.
 	parked bool
+	// errStop is whether the step's current KAS turn ended `error`. Unlike ownEnd it outlives the node_paused that
+	// follows the failing turn_end, which the throttled-ask heal reads (runLog.transientFailure).
+	errStop bool
+	// asked is whether the step sent a warning in its current KAS turn, and answered whether a message reached the
+	// step after it in that turn (runLog.answeredAsk).
+	asked, answered bool
+	// ended is whether the current KAS turn's turn_end arrived; unlike ownEnd it outlives node_paused.
+	ended bool
 	// seq is the newest seq the sink assigned, written on the dispatch goroutine and read by the digest.
 	seq atomic.Uint64
 }
@@ -381,6 +394,54 @@ func stepEntries(all []marotte.Entry, nodePath string) (entries []marotte.Entry,
 	return entries, newest
 }
 
+// steerSeverityWarning is the send_message severity that parks a run, on a steer row.
+const steerSeverityWarning = "warning"
+
+// steerTurn is turn, recording steer on the open turn it answers for runTurn.asked and runTurn.answered.
+func (r *runLog) steerTurn(workflowID, nodePath string, steer *marotte.EntrySteer) *turnlog.Turn {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t := r.openLocked(workflowID, nodePath)
+	if t == nil {
+		return nil
+	}
+	switch {
+	case steer.Origin == marotte.SteerOriginStep && steer.Severity == steerSeverityWarning:
+		t.asked, t.answered = true, false
+	case steer.Origin != marotte.SteerOriginStep && t.asked:
+		t.answered = true
+	}
+	return t.turn
+}
+
+// answeredAsk is whether the step's current KAS turn sent a warning that a message then reached.
+func (r *runLog) answeredAsk(workflowID, nodePath string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t := r.openLocked(workflowID, nodePath)
+	return t != nil && t.asked && t.answered
+}
+
+// askTurnEnd answers a channel closed at the turn_end of an open step turn of the run that asked in its current KAS
+// turn and has not ended it; nil when there is none.
+func (r *runLog) askTurnEnd(workflowID string) <-chan struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok {
+		return nil
+	}
+	for _, path := range slices.Sorted(maps.Keys(rec.open)) {
+		if t := rec.open[path]; t.asked && !t.ended {
+			if t.endWait == nil {
+				t.endWait = make(chan struct{})
+			}
+			return t.endWait
+		}
+	}
+	return nil
+}
+
 // turn answers the open turn for a step, or nil.
 func (r *runLog) turn(workflowID, nodePath string) *turnlog.Turn {
 	r.mu.Lock()
@@ -586,7 +647,77 @@ func (r *runLog) stopReason(workflowID, nodePath string, raw marotte.StopReason)
 	}
 	t.rawStop = raw
 	t.ownEnd = true
+	t.errStop = raw == marotte.StopReasonError
+	t.ended = true
+	if t.endWait != nil {
+		close(t.endWait)
+		t.endWait = nil
+	}
 	return true
+}
+
+// stepError records a model error KAS displayed for a step on its open turn; false with no open turn.
+func (r *runLog) stepError(workflowID, nodePath string, e marotte.EngineError) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t := r.openLocked(workflowID, nodePath)
+	if t == nil {
+		return false
+	}
+	t.lastError = e
+	return true
+}
+
+// transientFailure answers the error class when the step's current KAS turn ended `error` on a model error a retry
+// can clear (rpcerr.Mapped.Transient); ok is false otherwise or with no open turn.
+func (r *runLog) transientFailure(workflowID, nodePath string) (code string, ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t := r.openLocked(workflowID, nodePath)
+	if t == nil {
+		return "", false
+	}
+	return t.transientFailure()
+}
+
+// stepFailure is an open step turn whose current KAS turn ended `error`: its path, its error class, and whether that
+// class is transient (runTurn.transientFailure).
+type stepFailure struct {
+	path, code string
+	transient  bool
+}
+
+// failedStep answers the run's open step turn, first in path order, whose KAS turn ended `error`, a transient failure
+// before any other; the zero value with none.
+func (r *runLog) failedStep(workflowID string) stepFailure {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok {
+		return stepFailure{}
+	}
+	var out stepFailure
+	for _, path := range slices.Sorted(maps.Keys(rec.open)) {
+		t := rec.open[path]
+		if !t.errStop {
+			continue
+		}
+		if code, transient := t.transientFailure(); transient {
+			return stepFailure{path: path, code: code, transient: true}
+		}
+		if out.path == "" {
+			out = stepFailure{path: path, code: t.lastError.ErrorType}
+		}
+	}
+	return out
+}
+
+func (t *runTurn) transientFailure() (code string, ok bool) {
+	m := rpcerr.Mapped{ErrorType: t.lastError.ErrorType, RetryErrorType: t.lastError.RetryErrorType}
+	if !t.errStop || !m.Transient() {
+		return "", false
+	}
+	return t.lastError.ErrorType, true
 }
 
 // turnStarted records a step's turn_start on its open turn; false with no open turn.
@@ -598,6 +729,10 @@ func (r *runLog) turnStarted(workflowID, nodePath string) bool {
 		return false
 	}
 	t.ownEnd = false
+	t.errStop = false
+	t.ended = false
+	t.asked, t.answered = false, false
+	t.lastError = marotte.EngineError{}
 	t.answer.reset()
 	return true
 }

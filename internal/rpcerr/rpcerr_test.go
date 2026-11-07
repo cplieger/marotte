@@ -186,6 +186,40 @@ func TestMappedOf(t *testing.T) {
 	}
 }
 
+// TestMappedTransient pins the classes KAS's own step error classifier treats as a throttle, a stall, a network
+// fault or a service fault (acp-server.js Elr, @kiro/agent 0.66.91), against the ones it fails a step on.
+func TestMappedTransient(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		m    Mapped
+		want bool
+	}{
+		{"a client throttle", Mapped{ErrorType: "ClientThrottleError", RetryErrorType: RetryThrottling}, true},
+		{"a model throttle", Mapped{ErrorType: "ModelThrottleError"}, true},
+		{"a service throttle", Mapped{ErrorType: "ServiceThrottleError"}, true},
+		{"a minified class the backend throttled", Mapped{ErrorType: "ge", RetryErrorType: RetryThrottling}, true},
+		{"a stream idle timeout", Mapped{ErrorType: "StreamIdleTimeoutError"}, true},
+		{"a service 5xx", Mapped{ErrorType: "InternalServerException", RetryErrorType: "SERVER_ERROR"}, true},
+		{"a reset connection", Mapped{ErrorType: "ConnectionResetError"}, true},
+		{"a reset server connection", Mapped{ErrorType: "ServerConnectionResetError"}, true},
+		{"a client network fault", Mapped{ErrorType: "ClientNetworkError"}, true},
+		{"an expired token", Mapped{ErrorType: "TokenExpiredError", RetryErrorType: "CLIENT_ERROR"}, false},
+		{"a context overflow", Mapped{ErrorType: contextWindowExceededError}, false},
+		{"a usage limit", Mapped{ErrorType: "UsageLimitReachedError"}, false},
+		{"a validation error", Mapped{ErrorType: genericValidationError, RetryErrorType: "CLIENT_ERROR"}, false},
+		{"no class at all", Mapped{}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := c.m.Transient(); got != c.want {
+				t.Errorf("%+v.Transient() = %v, want %v", c.m, got, c.want)
+			}
+		})
+	}
+}
+
 func TestAccount(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

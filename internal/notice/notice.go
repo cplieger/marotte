@@ -184,6 +184,12 @@ func RunNotStarted(t Target, reason string) marotte.NotificationPayload {
 	return build(marotte.PushKindRunOutcome, t, "Workflow did not start", reason)
 }
 
+// StepEmptyAnswer is a run's step that KAS counted completed after it ended with an empty model turn and no
+// completion signal; step is its path.
+func StepEmptyAnswer(t Target, step string) marotte.NotificationPayload {
+	return build(marotte.PushKindRunOutcome, t, "Step failed", stepped(step, "ended with an empty model turn and no completion signal"))
+}
+
 // PRStatus is a pull request's CI verdict settling green or red.
 func PRStatus(subject marotte.PushSubject, repo string, number int, prTitle string, passed bool) marotte.NotificationPayload {
 	phrase := phraseChecksFailed

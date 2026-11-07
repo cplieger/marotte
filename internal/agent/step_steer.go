@@ -233,7 +233,7 @@ func (rs *Runs) RunSteer(ctx context.Context, runID, nodePath, steerID string, s
 		return
 	}
 	ctx = durable.Context(ctx)
-	if t := rs.log.turn(runID, nodePath); t != nil {
+	if t := rs.log.steerTurn(runID, nodePath, steer); t != nil {
 		sealed, err := t.Steer(ctx, steerID, steer)
 		translate.PublishSealed(ctx, rs.bus, "", runID, sealed)
 		if err != nil {

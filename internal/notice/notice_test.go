@@ -65,6 +65,10 @@ func TestBuilders_titleIsTheTabAndBodyIsPhraseThenDetail(t *testing.T) {
 			PushSubject: marotte.RuleSubject("r1"), Kind: marotte.PushKindRunOutcome,
 			Title: "nightly", Body: "Workflow did not start · engine busy",
 		}},
+		{"a step that ended on an empty model turn", StepEmptyAnswer(run, "wf1:seat-grok"), marotte.NotificationPayload{
+			PushSubject: marotte.RunSubject("wf1"), Kind: marotte.PushKindRunOutcome,
+			Title: "nightly · scheduled", Body: "Step failed · wf1:seat-grok: ended with an empty model turn and no completion signal",
+		}},
 		{"pr flip", PRStatus(marotte.PRSubject("github:github.com", "r1", 7), "acme/web", 7, "Add login", true), marotte.NotificationPayload{
 			PushSubject: marotte.PRSubject("github:github.com", "r1", 7), Kind: marotte.PushKindPRStatus,
 			Title: "acme/web #7", Body: "Checks passed · Add login",

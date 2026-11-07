@@ -128,7 +128,7 @@ const (
 )
 
 // EmptyAnswerStepReason is what a FailureKindEmptyAnswer close says.
-const EmptyAnswerStepReason = "The model's last answer in this step came back empty and the step sent no signal, yet Kiro counted it as completed, so its work may be unfinished. Rerun the step."
+const EmptyAnswerStepReason = "The step ended with an empty model turn and no completion signal, so its work may be unfinished. Kiro counted it as completed and the run went on."
 
 // UnobservedRunReason is what a prompt turn says when kiro-cli answered it end_turn without bracketing its run or
 // sending any of it: kiro-cli ran the prompt in an execution its session did not stream.
