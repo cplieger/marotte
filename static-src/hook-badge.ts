@@ -50,6 +50,15 @@ interface HookEntry {
   runs: number;
 }
 
+/** The list row a folded hook card is counted in: its name, hook file and trigger. */
+function hookKey(card: HTMLElement): string {
+  return join(
+    card.dataset["title"] ?? "",
+    card.dataset["filePath"] ?? "",
+    card.dataset["hookTrigger"] ?? "",
+  );
+}
+
 /** The folded hooks grouped by name, hook file and trigger, in order of first appearance. */
 function hookEntries(folded: readonly HTMLElement[]): HookEntry[] {
   const entries = new Map<string, HookEntry>();
@@ -57,7 +66,7 @@ function hookEntries(folded: readonly HTMLElement[]): HookEntry[] {
     const title = card.dataset["title"] ?? "";
     const path = card.dataset["filePath"] ?? "";
     const trigger = card.dataset["hookTrigger"] ?? "";
-    const key = join(title, path, trigger);
+    const key = hookKey(card);
     const seen = entries.get(key);
     if (seen !== undefined) {
       seen.runs++;
@@ -193,6 +202,21 @@ export function showHookPopover(badge: HTMLElement): boolean {
   return true;
 }
 
+/** The open list's row counting the folded hook `card`, null while the list is closed. Every show rebuilds the
+ *  list, so a mark find-in-chat puts in a row never outlives the list's close. */
+export function hookRowOf(badge: HTMLElement, card: HTMLElement): HTMLElement | null {
+  const state = popovers.get(badge);
+  if (state?.ctl.isOpen !== true) {
+    return null;
+  }
+  const key = hookKey(card);
+  return (
+    [...state.panel.querySelectorAll<HTMLElement>(".tool-hook-item")].find(
+      (row) => row.dataset["hookKey"] === key,
+    ) ?? null
+  );
+}
+
 /** Close the badge's list; a list `showHookPopover` opened moved no focus, so none moves back. */
 export function hideHookPopover(badge: HTMLElement): void {
   const state = popovers.get(badge);
@@ -228,7 +252,7 @@ function renderHookList(state: HookPopover): void {
 function hookItem(entry: HookEntry, close: () => void): HTMLElement {
   const item = el(
     "li",
-    { className: "tool-hook-item" },
+    { className: "tool-hook-item", "data-hook-key": entry.key },
     el("span", { className: "tool-hook-count" }, `${String(entry.runs)}\u00d7`),
     el(
       "span",

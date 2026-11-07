@@ -69,11 +69,36 @@ func TestSearchSteerAckIsAMessage(t *testing.T) {
 
 func TestSearchPhraseInOrder(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
-		text("a1", "a security\n  failure in order").
+		text("a1", "a security \t failure in order").
 		text("a2", "the failure was not security"))
 	hits := search(entries, drawn, `"security failure"`, false).Matches
 	if len(hits) != 1 || hits[0].EntryID != "a1" {
 		t.Fatalf("hits = %+v, want only a1, where the phrase is in order", hits)
+	}
+}
+
+// The renderer draws a message's line break as a new line or block, which the find engine's runs never cross, so a
+// phrase across one is no hit, while the words still match the bubble in any order. Tool output keeps its line
+// breaks in one run, so a phrase crosses them there.
+func TestSearchPhraseStopsAtAMessagesLineBreak(t *testing.T) {
+	for _, text := range []string{"a security\nfailure", "a security\n\nfailure", "a security \n  failure"} {
+		entries, drawn := chatOf(openTurn("t-1", 1, nil).text("a1", text))
+		if hits := search(entries, drawn, `"security failure"`, false).Matches; len(hits) != 0 {
+			t.Errorf("search(%q) phrase hits = %+v, want none: the phrase crosses a line break", text, hits)
+		}
+		if hits := search(entries, drawn, "failure security", false).Matches; len(hits) != 1 || hits[0].EntryID != "a1" {
+			t.Errorf("search(%q) word hits = %+v, want the one message", text, hits)
+		}
+	}
+	entries, drawn := chatOf(openTurn("t-1", 1, nil).
+		add("", "st1:ack", marotte.EntryKindSteerAck, marotte.EntrySteerAck{SteerID: "st1", Text: "a security\nfailure"}))
+	if hits := search(entries, drawn, `"security failure"`, false).Matches; len(hits) != 0 {
+		t.Errorf("steer ack phrase hits = %+v, want none: an acknowledgement is drawn as a message", hits)
+	}
+	entries, drawn = oneTool(marotte.EntryToolCall{ID: "c1", Title: "go vet", Kind: marotte.ToolKindExecute, Status: marotte.ToolCompleted},
+		&marotte.EntryToolResult{Status: marotte.ToolCompleted, Output: "a security\nfailure"})
+	if hits := search(entries, drawn, `"security failure"`, false).Matches; len(hits) != 1 {
+		t.Errorf("tool output phrase hits = %+v, want the card: its output keeps its line breaks in one run", hits)
 	}
 }
 

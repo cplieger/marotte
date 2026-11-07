@@ -115,7 +115,9 @@ func (b *itemBuilder) observe(i int, e *marotte.Entry, t *searchTurn) {
 	case marotte.EntryKindSteerAck:
 		// Its own bubble (placeEntry), so it ends the open message and joins none.
 		b.flush(k)
-		b.add(b.item(itemMessage, i, e, t, e.Lane), entrySegments(e, t, b.names))
+		var text strings.Builder
+		appendProse(&text, entrySegments(e, t, b.names))
+		b.add(b.item(itemMessage, i, e, t, e.Lane), proseLines(text.String()))
 	case marotte.EntryKindTurnOpen, marotte.EntryKindTurnWake:
 		b.addHeader(i, e, t)
 	case marotte.EntryKindTurnClose:
@@ -212,8 +214,21 @@ func appendProse(text *strings.Builder, segs []segment) {
 func (b *itemBuilder) flush(k toolRunKey) {
 	if run := b.runs[k]; run != nil {
 		delete(b.runs, k)
-		b.add(&run.item, oneSegment(segmentContent, run.text.String()))
+		b.add(&run.item, proseLines(run.text.String()))
 	}
+}
+
+// proseLines is a message's text as the find engine reads its bubble: the markdown renderer draws each line break as
+// a <br> or a new block, which a run (and so a phrase) never crosses, and drops a line's leading whitespace.
+func proseLines(text string) []segment {
+	var out []segment
+	for line := range strings.Lines(text) {
+		line = strings.TrimLeft(strings.TrimRight(line, "\r\n"), " \t")
+		if strings.TrimSpace(line) != "" {
+			out = append(out, segment{kind: segmentContent, text: line})
+		}
+	}
+	return out
 }
 
 // addHeader folds a turn_open's prompt and a turn_wake's text into the turn's one header item, anchored on the

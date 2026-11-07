@@ -164,6 +164,20 @@ func searchItemsCases() []searchItemsCase {
 				Steers: []marotte.WakeSteer{{ID: "wfmsg-q", Run: wakeRunID, Step: "draft", Severity: "warning", Text: "Rewrite the links?"}},
 			}),
 		},
+		{Name: "a message's paragraphs and lines are runs of their own", Body: []searchItemsEntry{
+			itemsText("say-a#0", "the security\n"), itemsText("say-a#1", "\nfailure was bad \n then fixed\nfor good"),
+		}},
+		{Name: "a steer acknowledgement's lines are runs of their own", Body: []searchItemsEntry{
+			itemsEntry("st1:ack", marotte.EntryKindSteerAck, "", marotte.EntrySteerAck{SteerID: "st1", Text: "noted\nthe security\n\nfailure"}),
+		}},
+		{Name: "reasoning, a steer, a plan, a notice and tool output keep their line breaks", Body: []searchItemsEntry{
+			itemsEntry("th1", marotte.EntryKindThinking, "", marotte.EntryThinking{Text: "weighing\nthe security\n\nfailure"}),
+			itemsText("say-a", "the answer"),
+			itemsEntry("st1", marotte.EntryKindSteer, "", marotte.EntrySteer{Text: "also\nthe security\n\nfailure", Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead}),
+			itemsEntry("p1", marotte.EntryKindPlan, "", plan("draft\nthe fix")),
+			itemsEntry("cf1", marotte.EntryKindCompactionFailed, "", marotte.EntryCompactionFailed{Reason: "too\nlarge"}),
+			itemsCall("c1", "go vet", marotte.ToolKindExecute), itemsResult("c1", "the security\nfailure"),
+		}},
 		{Name: "a turn's header and failure are items", Body: []searchItemsEntry{
 			itemsText("say-a", "partial"),
 			itemsEntry(searchItemsTurn+":close", marotte.EntryKindTurnClose, "", marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeFailed, FailureReason: "budget ran out"}),

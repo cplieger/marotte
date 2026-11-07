@@ -1,20 +1,23 @@
 package chat
 
 import (
+	"fmt"
+	"math"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // A full filter admits everything, so an oversized chat is read for every query, never skipped.
 func TestChatFilter_SaturatedAdmitsEveryQuery(t *testing.T) {
-	f := new(chatFilter)
+	f := newChatFilter()
 	for i := range f.words {
 		f.words[i] = ^uint64(0)
 	}
@@ -32,7 +35,7 @@ func TestChatFilter_ATrigramSetsAndDemandsThreePositions(t *testing.T) {
 	rng := rand.New(rand.NewPCG(3, 5))
 	for range 200 {
 		key := trigramKey(rune(rng.IntN(0x110000)), rune(rng.IntN(0x110000)), rune(rng.IntN(0x110000)))
-		f := new(chatFilter)
+		f := newChatFilter()
 		f.add(key)
 		var set []int
 		for w, word := range f.words {
@@ -60,7 +63,7 @@ func TestChatFilter_ATrigramSetsAndDemandsThreePositions(t *testing.T) {
 
 // Distinct trigrams never share a key: a filter rejects each single-rune variant.
 func TestChatFilter_DistinctTrigramsAreDistinctKeys(t *testing.T) {
-	f := new(chatFilter)
+	f := newChatFilter()
 	f.addText("abc")
 	for _, variant := range []string{"xbc", "axc", "abx", "cba", "bca"} {
 		if f.holdsAll(trigramsOf(variant)) {
@@ -401,11 +404,8 @@ func TestChatFilter_HoldsWordsSplitAcrossAMessagesEntries(t *testing.T) {
 	}
 }
 
-// The index costs 64 KiB of bits per chat, a power of two so a position is a mask.
-func TestChatFilter_MemoryIsSixtyFourKiBPerChat(t *testing.T) {
-	if got := unsafe.Sizeof(chatFilter{}.words); got != 64<<10 {
-		t.Errorf("sizeof(chatFilter.words) = %d, want %d", got, 64<<10)
-	}
+// The index holds one filter per chat it searched, its bits a power of two so a position is a mask.
+func TestSearchIndex_HoldsOneFilterPerChat(t *testing.T) {
 	if filterBits != filterBytes*8 || filterBits&(filterBits-1) != 0 {
 		t.Errorf("filterBits = %d, want %d and a power of two", filterBits, filterBytes*8)
 	}
@@ -419,7 +419,64 @@ func TestChatFilter_MemoryIsSixtyFourKiBPerChat(t *testing.T) {
 	s.index.mu.Lock()
 	held := len(s.index.filters)
 	s.index.mu.Unlock()
-	if got, want := uintptr(held)*unsafe.Sizeof(chatFilter{}.words), uintptr(len(ids))*64<<10; got != want {
-		t.Errorf("index over %d chats holds %d bytes of filters, want %d", len(ids), got, want)
+	if held != len(ids) {
+		t.Errorf("index over %d chats holds %d filters, want one per chat", len(ids), held)
 	}
+}
+
+// A 500-turn chat of 8 KiB replies costs its filter 64 KiB of bits and under 1 KiB more, whether the filter was
+// built over the log or extended entry by entry: a closed turn leaves nothing behind, and the open turn's tail is
+// its last runes, not its reply.
+func TestChatFilter_HoldsSixtyFourKiBForAFiveHundredTurnChat(t *testing.T) {
+	const turns, reply = 500, 8 << 10
+	half := strings.Repeat("deadset security failure ", reply/2/len("deadset security failure "))
+	var fixtures []*turnFixture
+	for n := range turns {
+		id := fmt.Sprintf("t-%d", n+1)
+		tf := openTurn(id, uint64(n+1), prompt(id+":p", "why did it fail")).
+			text(id+"#0", half).
+			text(id+"#1", half)
+		if n < turns-1 {
+			tf.close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted})
+		}
+		fixtures = append(fixtures, tf)
+	}
+	entries, _ := chatOf(fixtures...)
+	const bound = filterBytes + 1<<10
+	for _, over := range []int{len(entries), len(entries) / 2, 0} {
+		held := retainedBytes(func() any {
+			f := buildChatFilter("Notes", entries[:over])
+			for i := over; i < len(entries); i++ {
+				f.addEntry(&entries[i])
+			}
+			return f
+		})
+		if held > bound {
+			t.Errorf("filter built over %d of %d entries holds %d bytes, want at most %d", over, len(entries), held, bound)
+		}
+	}
+	runtime.KeepAlive(entries)
+}
+
+// retainedBytes is the least live heap that build's result holds over three runs; the least, so another goroutine's
+// allocation during one run cannot fail the bound. Two collections each side, since a sync.Pool's victim survives one.
+func retainedBytes(build func() any) uint64 {
+	least := uint64(math.MaxUint64)
+	for range 3 {
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		v := build()
+		runtime.GC()
+		runtime.GC()
+		runtime.ReadMemStats(&after)
+		runtime.KeepAlive(v)
+		held := uint64(0)
+		if after.HeapAlloc > before.HeapAlloc {
+			held = after.HeapAlloc - before.HeapAlloc
+		}
+		least = min(least, held)
+	}
+	return least
 }

@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("./scroll.js", () => ({
   jumpTo: vi.fn(),
+  // A landing's hold corrects the view through it once the layout settles.
+  shiftScroll: vi.fn(),
   // A tool group's header parks the reader when it opens.
   setUserScrolledUp: vi.fn(),
   // Inert: these tests drive re-runs through the module's own paths.
@@ -1199,33 +1201,110 @@ describe("server-hit navigation", () => {
       await vi.waitFor(() => {
         expect(countText()).toBe("1 of 1 \u00b7 listed under the hooks badge");
       });
-      // The step is the badge: no mark elsewhere reads as current.
-      expect(document.querySelector("mark.find-hit")).not.toBeNull();
-      expect(document.querySelector("mark.find-hit-current")).toBeNull();
+      const transcript = document.getElementById("messages") as HTMLElement;
+      // The step is the badge: no mark elsewhere in the transcript reads as current.
+      expect(transcript.querySelector("mark.find-hit")).not.toBeNull();
+      expect(transcript.querySelector("mark.find-hit-current")).toBeNull();
       // Nor after the re-walk a transcript change schedules.
       vi.mocked(scroll.onTranscriptMutate).mock.calls.at(-1)?.[0]();
       await new Promise((resolve) => {
         setTimeout(resolve, 200);
       });
-      expect(document.querySelector("mark.find-hit")).not.toBeNull();
-      expect(document.querySelector("mark.find-hit-current")).toBeNull();
+      expect(transcript.querySelector("mark.find-hit")).not.toBeNull();
+      expect(transcript.querySelector("mark.find-hit-current")).toBeNull();
+      // The re-walk's repaint keeps the notice saying where the hit is.
+      expect(countText()).toBe("1 of 1 \u00b7 listed under the hooks badge");
       expect(head?.getAttribute("aria-expanded")).toBe("true");
       expect(group.querySelector(":scope > .tool-group-hooks")?.classList).toContain(
         "find-target-flash",
       );
-      // The badge's list is open, and the reader is still typing in the box.
-      expect(document.querySelector(".tool-hook-popover .tool-hook-item")?.textContent).toContain(
-        "Destructive command guard",
-      );
+      // The badge's list is open with the hook's row showing the word as the current hit, and the reader is still
+      // typing in the box.
+      const item = document.querySelector(".tool-hook-popover .tool-hook-item");
+      expect(item?.textContent).toContain("Destructive command guard");
+      expect(
+        [...(item?.querySelectorAll("mark.find-hit.find-hit-current") ?? [])].map(
+          (m) => m.textContent,
+        ),
+      ).toEqual(["Destructive", "destructive"]); // the name, then the hook file's chip
       expect(document.activeElement).toBe(document.getElementById("chat-find-input"));
 
-      // Closing find closes the list with the rest of the chain.
+      // Closing find closes the list with the rest of the chain, and its marks with it.
       closeFind();
       await vi.waitFor(() => {
         expect(document.querySelector(".tool-hook-popover.is-open")).toBeNull();
       });
+      expect(document.querySelector(".tool-hook-popover mark.find-hit")).toBeNull();
     },
   );
+
+  it("marks only the current folded hook's row when two hooks of one group are hits", async () => {
+    stageChat(["u1"]);
+    const row = mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row"></div>`,
+    ).querySelector(".msg-row") as HTMLElement;
+    const group = buildToolGroupShell();
+    row.appendChild(group);
+    const members: Record<string, string>[] = [
+      { entryId: "e1", kind: "execute", title: "go vet" },
+      { entryId: "e2", kind: "hook", title: "Hook fired: lint guard", hookTrigger: "PreToolUse" },
+      {
+        entryId: "e3",
+        kind: "hook",
+        title: "Hook fired: format guard",
+        hookTrigger: "PostToolUse",
+      },
+    ];
+    for (const m of members) {
+      const card = document.createElement("div");
+      card.className = "tool-call";
+      card.dataset["outcome"] = "ok";
+      Object.assign(card.dataset, m);
+      if (m["kind"] === "hook") {
+        card.setAttribute("data-hook-gates", "");
+      }
+      groupBody(group).appendChild(card);
+    }
+    refreshGroupHeader(group);
+    autoCollapseGroup(group);
+    stageHits([
+      serverHit({
+        entry_id: "e2",
+        excerpt: "Hook fired: lint guard",
+        kind: "tool",
+        segments: ["tool_title"],
+      }),
+      serverHit({
+        entry_id: "e3",
+        excerpt: "Hook fired: format guard",
+        kind: "tool",
+        segments: ["tool_title"],
+      }),
+    ]);
+    const currentRows = (): string[] =>
+      [...document.querySelectorAll(".tool-hook-popover .tool-hook-item")]
+        .filter((li) => li.querySelector("mark.find-hit-current") !== null)
+        .map((li) => li.querySelector(".tool-title")?.textContent ?? "");
+
+    const rowOf: Record<string, string> = { "1": "lint guard", "2": "format guard" };
+    const landed = (): string => rowOf[/^(\d) of 2/.exec(countText())?.[1] ?? ""] ?? "";
+
+    // Both hits stand on one badge, so the answer lands on either; each landing marks its own row only.
+    await openAndSearch("guard");
+    expect(countText()).toMatch(/^\d of 2 \u00b7 listed under the hooks badge$/);
+    const first = landed();
+    expect(currentRows()).toEqual([first]);
+
+    typeAndEnter("guard");
+    await vi.waitFor(() => {
+      expect(landed()).not.toBe(first);
+    });
+    expect(currentRows()).toEqual([landed()]);
+    expect(document.querySelectorAll(".tool-hook-popover mark.find-hit")).toHaveLength(1);
+    expect(countText()).toMatch(/ \u00b7 listed under the hooks badge$/);
+    closeFind();
+  });
 
   // tool_diff: the card is the target, the mini-diff the walk, and the notice has three states.
 

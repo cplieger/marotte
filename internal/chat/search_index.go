@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"maps"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,7 +17,7 @@ import (
 // and a rewind, rewrite, run_named, header write or remove drops it.
 
 const (
-	// filterBytes is one chat's filter, and so the index's cost per chat.
+	// filterBytes is one chat's bits, and with its open turns' tails (a few bytes per lane) the index's cost per chat.
 	filterBytes = 64 << 10
 	filterWords = filterBytes / 8
 	filterBits  = filterBytes * 8
@@ -29,16 +30,21 @@ const (
 // Bits are set by atomic OR and read by atomic load, and only ever added, so a query before an append's OR sees the
 // pre-append log.
 type chatFilter struct {
-	// tails is each (turn, lane)'s last message text runes a trigram across the next text entry takes (indexEntry).
-	// Written only under the chat's lock, never read by a query.
+	// tails is each open (turn, lane)'s last message text runes a trigram across the next text entry takes
+	// (indexEntry). Written only under the chat's lock, never read by a query.
 	tails map[toolRunKey]string
-	words [filterWords]uint64
+	// words is its own allocation: beside the map it would round the filter up to the next 8 KiB page.
+	words *[filterWords]uint64
+}
+
+func newChatFilter() *chatFilter {
+	return &chatFilter{words: new([filterWords]uint64)}
 }
 
 // buildChatFilter indexes one chat's title and every entry, folded as the scan folds. Undrawn turns are indexed too:
 // drawn flips later, and the filter must stay a superset.
 func buildChatFilter(name string, entries []marotte.Entry) *chatFilter {
-	f := new(chatFilter)
+	f := newChatFilter()
 	f.addText(name)
 	turns := indexSearchTurns(entries, nil)
 	names := wakeFactsOf(entries).names
@@ -65,6 +71,10 @@ func (f *chatFilter) indexEntry(e *marotte.Entry, t *searchTurn, names map[strin
 		for _, seg := range segs {
 			f.addText(seg.text)
 		}
+		if e.Kind == marotte.EntryKindTurnClose {
+			// No text follows its turn's close (only lane-less between-turns kinds do), so its tails are dead.
+			maps.DeleteFunc(f.tails, func(k toolRunKey, _ string) bool { return k.turn == e.Turn })
+		}
 		return
 	}
 	if f.tails == nil {
@@ -76,7 +86,8 @@ func (f *chatFilter) indexEntry(e *marotte.Entry, t *searchTurn, names map[strin
 	appendProse(&b, segs)
 	text := b.String()
 	f.addText(text)
-	f.tails[k] = trigramTail(text)
+	// A clone: the slice would keep the whole joined text alive.
+	f.tails[k] = strings.Clone(trigramTail(text))
 }
 
 // trigramTail is the runes of s a trigram can still take from it: the last trigramRunes-1, or s when it has fewer.

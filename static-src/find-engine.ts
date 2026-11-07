@@ -357,6 +357,15 @@ export class FindEngine {
     return this.walk(unitWalk(key, matcher, scope), null);
   }
 
+  /** Unit mode where a unit holding any one term is a step: for a stand-in that names a hit in other words than the
+   *  hit's own text (a folded hook's row in its badge list), so the words it shares still show. */
+  searchAnyTerm(key: string, matcher: Matcher, scope: UnitScope): number {
+    return this.walk(
+      { ...unitWalk(key, matcher, scope), terms: Math.min(1, matcher.terms.length) },
+      null,
+    );
+  }
+
   /**
    * Re-highlight `query` keeping the current step: found again by where it starts, not its index, and walked even
    * while its `content-visibility: auto` box is skipped, so the step and its highlight outlast any scroll. Where it

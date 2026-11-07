@@ -647,6 +647,18 @@ describe("unit mode", () => {
     expect(marks(host).map((m) => m.closest("[data-find-unit]")?.id)).toEqual(["u2"]);
   });
 
+  it("marks a unit holding any one term in any-term mode, and only there", () => {
+    const html = `<div data-find-unit="tool" id="a">lint guard</div><div data-find-unit="tool" id="b">format</div>`;
+    const host = mount(html);
+    const eng = new FindEngine(host);
+    expect(eng.searchUnits("q", matcherOf("guard deadset"), UNITS)).toBe(0);
+    expect(eng.searchAnyTerm("q", matcherOf("guard deadset"), UNITS)).toBe(1);
+    expect(marks(host).map((m) => [m.textContent, m.closest("[data-find-unit]")?.id])).toEqual([
+      ["guard", "a"],
+    ]);
+    expect(eng.currentMark()?.classList).toContain("find-hit-current");
+  });
+
   it("folds accents and matches a phrase across a line break", () => {
     const host = mount(`<div data-find-unit="message"><p>La Sécurité\n   failure</p></div>`);
     const eng = new FindEngine(host);

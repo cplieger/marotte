@@ -156,9 +156,9 @@ func TestSearchAll(t *testing.T) {
 	}
 }
 
-// Hits and score count every matching item, not the capped hit list: 250 mentions read "250". The best hit is in
-// the capped list.
-func TestSearchAll_HitsCountEveryOccurrencePastTheHitCap(t *testing.T) {
+// Hits and score count every matching item, not the capped hit list: 250 matching replies read "250". The best
+// hit is in the capped list.
+func TestSearchAll_HitsCountEveryItemPastTheHitCap(t *testing.T) {
 	s, _ := newTestStore(t)
 	seedMentions := func(id marotte.ChatID, n int) {
 		replies := make([]string, n)

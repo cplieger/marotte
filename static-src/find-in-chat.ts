@@ -2,7 +2,7 @@
 // a header, ...) holding every word of the query. A local DOM pass marks what is rendered; the server's answer is the
 // honest count and the step list, and landing on a hit opens only that hit's containers (`search-reveal.ts`).
 
-import { foldedHookBadge } from "./hook-badge.js";
+import { foldedHookBadge, hookRowOf } from "./hook-badge.js";
 import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { createPopup } from "@cplieger/ui/popup";
@@ -86,10 +86,15 @@ let localCount = 0;
 let announcedBoundary = false;
 /** Position in `stepOrder` while stepping drives navigation; -1 = none. */
 let hitCursor = -1;
+/** What the landing on `hitCursor` said about it (`paintHitPosition`), kept through every repaint until the cursor
+ *  moves, so a re-run cannot erase why the step has no mark. */
+let stepNotice = "";
 /** The current step landed on an element with no mark (`selectContainer`), so a re-walk makes no mark current. */
 let marklessStep = false;
 /** One navigation at a time: paging spans awaits, and a second Enter would race the first's reveal. */
 let navBusy = false;
+/** The marks in the badge list row of the folded hook the current step landed on (`markHookRow`). */
+let hookRowEngine: FindEngine | null = null;
 /** This client caused the coming tab change; written just before the lazy import, since the switch tears the overlay down. */
 let crossTabJump = false;
 /** The hit the reader left on, as a keyenc identity (the chat may grow while away, so not an index). */
@@ -211,6 +216,7 @@ function ensureBuilt(): void {
         serverSpread = result.spread;
         stepOrder = buildStepOrder(result.matches);
         hitCursor = resumeIndex();
+        stepNotice = "";
         land = landOnResume;
         landOnResume = false;
         serverHitsQuery = query;
@@ -331,10 +337,12 @@ function teardown(): void {
   serverHitsQuery = "";
   searchedQuery = "";
   hitCursor = -1;
+  stepNotice = "";
   marklessStep = false;
   // Cleared here: a handoff arms it after the switch's own close, so this cannot delete it early.
   landOnResume = false;
   // The containers first, while their turns still render; then every turn search opened folds again.
+  clearHookRow();
   releaseChain();
   resetServerSearch();
   shell?.setNote("");
@@ -386,7 +394,7 @@ function updateCounter(query: string): void {
   const owned = serverHitsQuery === query;
   // Two grammars, one owner: a session-list position while stepping, else the DOM position with the session figure.
   if (stepsOwnedList(query)) {
-    countEl.textContent = steppedCounter();
+    countEl.textContent = [steppedCounter(), stepNotice].filter((s) => s !== "").join(" \u00b7 ");
     overlayEl?.classList.remove("chat-find-no-results");
     return;
   }
@@ -479,6 +487,8 @@ function nearestHitIndex(): number {
 
 /** Synchronous landing first: `navBusy` drops Enters while the async pipeline runs. */
 function landOnHit(hit: Hit): void {
+  clearHookRow();
+  stepNotice = "";
   if (landInPlace(hit)) {
     return;
   }
@@ -650,6 +660,7 @@ function paintHitPosition(...suffixes: (string | (() => string))[]): void {
   }
   // Thunks are produced after the gate, so `takeBoundaryNotice()` does not spend its latch on a gated-off paint.
   const parts = suffixes.map((s) => (typeof s === "function" ? s() : s)).filter((s) => s !== "");
+  stepNotice = parts.join(" \u00b7 ");
   countEl.textContent = [steppedCounter(), ...parts].join(" \u00b7 ");
 }
 
@@ -712,6 +723,7 @@ async function navigateToHit(hit: Hit): Promise<void> {
   revealChain(chatID, hit, item);
   if (item.classList.contains("tool-group-hooks")) {
     selectContainer(item);
+    markHookRow(item, hit);
     showHitNotice(HOOK_BADGE_NOTICE);
     holdWhereLanded(item, hit);
     return;
@@ -923,6 +935,30 @@ function waitForDiffPreview(card: HTMLElement): Promise<void> {
     }, DEFERRED_DIFF_WAIT_MS);
     obs.observe(card, { childList: true, subtree: true });
   });
+}
+
+/** Mark the query's words in the badge list row standing for the folded hook `hit` is on, as the current hit: the
+ *  row names the hook in its own words, so a unit holding any term is marked. */
+function markHookRow(badge: HTMLElement, hit: Hit): void {
+  const card = turnCardEl(hit.turn_id)?.querySelector<HTMLElement>(
+    `[data-entry-id="${CSS.escape(hit.entry_id)}"]`,
+  );
+  const row = card === null || card === undefined ? null : hookRowOf(badge, card);
+  if (row === null) {
+    return;
+  }
+  // Rooted at the list: a unit is found below the engine's root, never as it.
+  hookRowEngine = new FindEngine(row.parentElement ?? row);
+  hookRowEngine.searchAnyTerm(
+    serverHitsQuery,
+    walkOf(serverHitsQuery, shell?.caseSensitive ?? false).matcher,
+    { units: [row] },
+  );
+}
+
+function clearHookRow(): void {
+  hookRowEngine?.clear();
+  hookRowEngine = null;
 }
 
 /** The class comes off on animationend, with a timer as the reduced-motion backstop. */
