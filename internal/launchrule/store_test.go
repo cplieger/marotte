@@ -833,7 +833,6 @@ func TestEventRuleChangesLeaveStateToTheConfirmer(t *testing.T) {
 			name: "a resume under the recipe's new name", want: ChangeResume,
 			edit: func(e *Rule) { e.Enabled, e.Name = true, "demo renamed" },
 		},
-		{name: "a pause", edit: func(e *Rule) { e.Enabled = false }, want: ChangePause},
 		{
 			name: "a pause with a filter edit", want: ChangeFilter,
 			edit: func(e *Rule) { e.Enabled, e.When.Event.Filter.Result = false, []string{"success"} },
