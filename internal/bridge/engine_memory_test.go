@@ -12,6 +12,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/kasnode"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/workspace"
 )
 
@@ -70,8 +71,37 @@ func TestReadProcMemory(t *testing.T) {
 
 func sampleMiB(rss, hwm int64) procMemory { return procMemory{rssKiB: rss << 10, hwmKiB: hwm << 10} }
 
+const (
+	rssSeries   = "marotte_engine_resident_memory_bytes"
+	limitSeries = "marotte_engine_heap_limit_bytes"
+)
+
+// gaugeMiB is a memory gauge's sample in MiB, and whether the page has the series at all.
+func gaugeMiB(t *testing.T, series string) (float64, bool) {
+	t.Helper()
+	v, ok := testsupport.MetricSample(t, series)
+	return v / (1 << 20), ok
+}
+
+// wantGaugeMiB fails unless series is on the page at want MiB.
+func wantGaugeMiB(t *testing.T, series string, want float64, when string) {
+	t.Helper()
+	if got, ok := gaugeMiB(t, series); !ok || got != want {
+		t.Errorf("%s: %s = %v MiB (on the page %v), want %v MiB", when, series, got, ok, want)
+	}
+}
+
+// wantNoSeries fails if the page has series.
+func wantNoSeries(t *testing.T, series, when string) {
+	t.Helper()
+	if got, ok := gaugeMiB(t, series); ok {
+		t.Errorf("%s: the page has %s at %v MiB, want no series", when, series, got)
+	}
+}
+
 // The high line fires at the first sample reaching 80% of the limit, once per generation (one Engine, one memWatch),
-// and the exit record carries the generation's peak and its limit. Not parallel: it swaps the slog default.
+// and the exit record carries the generation's peak and its limit. The gauges read every sample, the line or not. Not
+// parallel: it swaps the slog default and writes the process-wide gauges.
 func TestRecordMemory_WarnsOncePerGenerationAtTheThreshold(t *testing.T) {
 	logs := captureLogs(t)
 	first := NewEngine("/nonexistent", "/work", WithGeneration(1))
@@ -82,8 +112,12 @@ func TestRecordMemory_WarnsOncePerGenerationAtTheThreshold(t *testing.T) {
 	}
 	first.recordMemory(&w, 7, sampleMiB(800, 1200))
 	first.recordMemory(&w, 7, sampleMiB(950, 950))
+	wantGaugeMiB(t, rssSeries, 950, "generation 1's last sample")
+	wantGaugeMiB(t, limitSeries, 1000, "generation 1's last sample")
 	second := NewEngine("/nonexistent", "/work", WithGeneration(2))
 	second.recordMemory(&memWatch{limitMiB: 1000}, 8, sampleMiB(850, 850))
+	wantGaugeMiB(t, rssSeries, 850, "generation 2's sample")
+	wantGaugeMiB(t, limitSeries, 1000, "generation 2's sample")
 
 	var high []string
 	for line := range strings.Lines(logs.String()) {
@@ -102,14 +136,43 @@ func TestRecordMemory_WarnsOncePerGenerationAtTheThreshold(t *testing.T) {
 	}
 }
 
-// With no known limit there is no threshold, so no sample is high.
-func TestRecordMemory_AnUnknownLimitNeverWarns(t *testing.T) {
+// With no known limit there is no threshold, so no sample is high, and the page has no limit for a ratio to divide by,
+// not even the one an earlier generation knew. Not parallel: it swaps the slog default and writes the process-wide
+// gauges.
+func TestRecordMemory_AnUnknownLimitNeverWarnsAndExportsNoLimit(t *testing.T) {
 	logs := captureLogs(t)
-	e := NewEngine("/nonexistent", "/work")
-	e.recordMemory(&memWatch{}, 7, sampleMiB(1<<20, 1<<20))
+	NewEngine("/nonexistent", "/work", WithGeneration(1)).recordMemory(&memWatch{limitMiB: 1000}, 7, sampleMiB(100, 100))
+	wantGaugeMiB(t, limitSeries, 1000, "Setup: a generation with a known limit")
+	e := NewEngine("/nonexistent", "/work", WithGeneration(2))
+	e.recordMemory(&memWatch{}, 8, sampleMiB(1<<20, 1<<20))
 	if strings.Contains(logs.String(), "engine memory high") {
 		t.Errorf("a sample with no heap limit logged the high line:\n%s", logs)
 	}
+	wantNoSeries(t, limitSeries, "a sample with no heap limit")
+	wantGaugeMiB(t, rssSeries, 1<<20, "a sample with no heap limit")
+}
+
+// A stopped generation's gauges leave the page, so a dead engine's last memory is not exported, and a generation
+// stopping late never takes the next one's gauges with it. Not parallel: it writes the process-wide gauges.
+func TestRecordMemory_TheGaugesLeaveWithTheirGeneration(t *testing.T) {
+	first := NewEngine("/nonexistent", "/work", WithGeneration(1))
+	first.recordMemory(&memWatch{limitMiB: 1000}, 7, sampleMiB(300, 300))
+	first.Stop()
+	wantNoSeries(t, rssSeries, "after generation 1 stopped")
+	wantNoSeries(t, limitSeries, "after generation 1 stopped")
+
+	first.recordMemory(&memWatch{limitMiB: 1000}, 7, sampleMiB(310, 310))
+	wantNoSeries(t, rssSeries, "a sample generation 1 took after its stop")
+
+	second := NewEngine("/nonexistent", "/work", WithGeneration(2))
+	third := NewEngine("/nonexistent", "/work", WithGeneration(3))
+	second.recordMemory(&memWatch{limitMiB: 1000}, 8, sampleMiB(400, 400))
+	third.recordMemory(&memWatch{limitMiB: 2000}, 9, sampleMiB(500, 500))
+	second.Stop()
+	wantGaugeMiB(t, rssSeries, 500, "generation 2 stopping after generation 3 sampled")
+	wantGaugeMiB(t, limitSeries, 2000, "generation 2 stopping after generation 3 sampled")
+	third.Stop()
+	wantNoSeries(t, rssSeries, "after generation 3 stopped")
 }
 
 // memLeaderFake is a kiro-cli that forks one child leading its own group, as the node engine does, and answers
@@ -136,7 +199,8 @@ done
 }
 
 // A started engine samples its own child group's leader: the exit record carries the configured limit once a sample
-// landed, which needs the leader found and its status read.
+// landed, which needs the leader found and its status read. The gauges carry the sample until the engine stops. Not
+// parallel: it writes the process-wide gauges.
 func TestWatchMemory_SamplesTheSidecarsGroupLeader(t *testing.T) {
 	dir := t.TempDir()
 	e := NewEngine(memLeaderFake(t, dir), dir)
@@ -154,6 +218,13 @@ func TestWatchMemory_SamplesTheSidecarsGroupLeader(t *testing.T) {
 	if got := e.Exit().RSSPeakMiB; got <= 0 {
 		t.Errorf("RSSPeakMiB = %d after a sample, want the leader's VmHWM, above 0", got)
 	}
+	wantGaugeMiB(t, limitSeries, 4096, "a running engine with a 4096 MiB limit")
+	if got, ok := gaugeMiB(t, rssSeries); !ok || got <= 0 {
+		t.Errorf("%s = %v MiB (on the page %v) after a sample, want the leader's resident set, above 0", rssSeries, got, ok)
+	}
+	e.Stop()
+	wantNoSeries(t, rssSeries, "after the engine stopped")
+	wantNoSeries(t, limitSeries, "after the engine stopped")
 }
 
 // kasNode is the node binary kiro-cli unpacks for KAS, or "" when it is not installed here.

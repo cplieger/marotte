@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cplieger/marotte/internal/obs"
 )
 
 // memSampleEvery is the engine memory sampler's period.
@@ -127,6 +129,37 @@ func (e *Engine) recordMemory(w *memWatch, pid int, m procMemory) {
 	if w.crossedHigh(rss) {
 		slog.Warn("engine memory high", "generation", e.generation, "pid", pid,
 			"rss_mib", rss, "heap_limit_mib", w.limitMiB, "threshold_pct", memHighPct)
+	}
+	e.exportMemory(m.rssKiB, w.limitMiB)
+}
+
+// memGauges hands the process-wide engine memory gauges to one engine at a time: the last to sample owns them. A
+// generation that stops late must neither sample into them nor remove the next generation's series.
+var memGauges struct {
+	owner *Engine
+	sync.Mutex
+}
+
+// exportMemory sets the memory gauges from one sample, unless e's teardown has started.
+func (e *Engine) exportMemory(rssKiB int64, limitMiB int) {
+	memGauges.Lock()
+	defer memGauges.Unlock()
+	select {
+	case <-e.stopping:
+		return
+	default:
+	}
+	memGauges.owner = e
+	obs.EngineMemory(rssKiB<<10, int64(limitMiB)<<20)
+}
+
+// dropMemoryGauges removes the memory series while e owns them; teardown calls it after closing stopping.
+func (e *Engine) dropMemoryGauges() {
+	memGauges.Lock()
+	defer memGauges.Unlock()
+	if memGauges.owner == e {
+		memGauges.owner = nil
+		obs.EngineMemoryGone()
 	}
 }
 
