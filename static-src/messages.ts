@@ -21,6 +21,7 @@ import { clearTurnSigs } from "./store-signals.js";
 import { BUS_FOLDS_CHANGED, onBus } from "./bus.js";
 import { hookStatusShown, onHookVisibility } from "./hook-fold.js";
 import { bodyMemo } from "./body-memo.js";
+import { workspaceRoot } from "./workspace.js";
 import { buildEvent } from "./messages-events.js";
 import { releaseClampsIn } from "./clamp-text.js";
 import { releaseScrollableTablesIn } from "./table-scroll.js";
@@ -1479,7 +1480,8 @@ function beginCardPass(session: Session): void {
   // Once per pass: `sessionBusy` walks every held turn.
   passBusy = sessionBusy(session);
   const tier = document.documentElement.getAttribute("data-pointer") ?? "";
-  passKey = `${session.id}|${String(passBusy)}|${newestTurnID(session) ?? ""}|${tier}`;
+  // The footer's counts and the face read `hookStatusShown`; the footer's file links read the root.
+  passKey = `${session.id}|${String(passBusy)}|${newestTurnID(session) ?? ""}|${tier}|${String(hookStatusShown())}|${workspaceRoot()}`;
 }
 
 /** turn id → the runs whose card that turn hosts, as `run=entry;` pairs; `computeFoldPlan` rebuilds it. */
@@ -1506,10 +1508,7 @@ function hasTurnBody(card: HTMLElement): boolean {
   return false;
 }
 
-/**
- * Every input `updateTurn` reads for one card, compared element by element: a card whose inputs all match its last
- * update is left alone. An input missing here leaves that card stale until something listed moves.
- */
+/** The inputs compared to skip an unchanged card; an input missing here leaves that card stale. */
 const cardInputs = new WeakMap<HTMLElement, readonly unknown[]>();
 
 function cardInputsOf(card: HTMLElement, t: Turn): readonly unknown[] {

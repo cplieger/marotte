@@ -33,9 +33,12 @@ for (const id of [
 }
 
 vi.mock("./fundamentals/turn-header.js", { spy: true });
+vi.mock("./fundamentals/turn-footer.js", { spy: true });
 
 const store = await import("./store.js");
 const header = await import("./fundamentals/turn-header.js");
+const footerMod = await import("./fundamentals/turn-footer.js");
+const hookFold = await import("./hook-fold.js");
 const messages = await import("./messages.js");
 const folds = await import("./fold-state.js");
 
@@ -206,6 +209,53 @@ describe("a full pass updates only the cards whose inputs changed", () => {
     await flushed();
 
     expect(runCard(mention), "the first mention left hosts the card").not.toBeNull();
+  });
+
+  it("a hook visibility change reaches the counts of a card holding a quiet hook", async () => {
+    const id = `c-hooks-${String(++seq)}`;
+    const s = longChat(id, CARDS);
+    const t = s.turn_order[0]!;
+    const held = s.turns.get(t)!;
+    held.entries.splice(2, 0, {
+      id: `${t}-hook`,
+      turn: t,
+      kind: "tool_call",
+      seq: 2,
+      ts: 3,
+      payload: { id: `${t}-hook-call`, title: "lint", status: "completed", kind: "hook", ts: 3 },
+    });
+    held.entries[3] = { ...held.entries[3]!, seq: 3 };
+    held.closeAt = 3;
+    seed(s);
+    await flushed();
+    const footer = messages
+      .transcriptViewFor(id)
+      ?.querySelector(`.turn[${KEY_ATTR}="${t}"] > .turn-footer`);
+    // The data the footer was last drawn from, by its builder or its updater.
+    const hookCount = (): number | undefined => {
+      const built = vi.mocked(footerMod.buildTurnFooter).mock;
+      const updated = vi.mocked(footerMod.updateTurnFooter).mock;
+      const draws = [
+        ...built.calls.flatMap(([d], i) =>
+          built.results[i]?.value === footer ? [{ d, at: built.invocationCallOrder[i]! }] : [],
+        ),
+        ...updated.calls.flatMap(([f, d], i) =>
+          f === footer ? [{ d, at: updated.invocationCallOrder[i]! }] : [],
+        ),
+      ].sort((a, b) => a.at - b.at);
+      return draws.at(-1)?.d.kindCounts?.hook;
+    };
+    expect(footer, "the hook card earned a footer").not.toBeNull();
+    expect(hookCount(), "a quiet hook is counted with the switch on").toBe(1);
+
+    hookFold.setHookStatusShown(false);
+    await flushed();
+    const hidden = hookCount();
+    hookFold.setHookStatusShown(true);
+    await flushed();
+
+    expect(hidden, "and not counted with it off").toBeUndefined();
+    expect(hookCount(), "and counted again with it on").toBe(1);
   });
 
   it("a busy flip still reaches every card's Rewind", async () => {
