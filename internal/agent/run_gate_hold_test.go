@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/go/slogx/capture"
@@ -3321,7 +3322,9 @@ const holdCellsAtOnce = 48
 
 // Every cell of the hold matrix, each through the real entry points, held, persisted and resumed as holdModel says.
 // The cells run side by side, each on its own runtime, its logs routed by its run's, chat's and session's names;
-// serial with every other test, since it swaps the global logger.
+// serial with every other test, since it swaps the global logger. Each cell runs in its own synctest bubble, so its
+// quiet windows and wait caps are bubble time, which moves only once all of the cell's goroutines block: a loaded
+// host cannot stretch a cell's work past them.
 func TestGateHold_EveryCell(t *testing.T) {
 	fastGateRetries(t)
 	prevDelay := orphanResumeDelay
@@ -3349,8 +3352,10 @@ func TestGateHold_EveryCell(t *testing.T) {
 				wg.Go(func() {
 					defer func() { <-sem }()
 					t.Run(c.name(), func(t *testing.T) {
-						steps, _ := holdModel(c)
-						newHoldCell(t, router, c).run(t, steps)
+						synctest.Test(t, func(t *testing.T) {
+							steps, _ := holdModel(c)
+							newHoldCell(t, router, c).run(t, steps)
+						})
 					})
 				})
 			}

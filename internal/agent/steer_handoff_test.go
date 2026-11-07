@@ -324,10 +324,17 @@ func TestTryReserveTurnFenced_ANewerTurnRefusesTheOldClose(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
 	fence := fenceNow(h, "c1")
+	drained := make(chan struct{})
+	drain := h.coord.drainAfterClose
+	h.coord.drainAfterClose = func(ctx context.Context, chatID marotte.ChatID, cl command.CloseFacts, ends command.EndFacts) {
+		drain(ctx, chatID, cl, ends)
+		close(drained)
+	}
 	id, _ := h.stagePromptTurn(t, "c1")
 	endTurn(t, h, "c1", id)
 	h.coord.releaseTurn("c1", id)
-	waitFor(t, func() bool { return !h.coord.turns.live("c1") })
+	// The close's drain runs off this goroutine and holds the slot as a prompt while it looks for a queued row.
+	awaitClosed(t, drained, "the close's drain")
 
 	if h.coord.tryReserveFencedNow("c1", marotte.TurnSourcePrompt, fence) {
 		t.Error("an older close's drain reserved a chat a newer turn opened on")

@@ -166,9 +166,11 @@ type fakeEngine struct {
 	gen      uint64
 	seq      uint64
 	ended    bool
-	sendMu   sync.RWMutex
-	stopOnce sync.Once
-	mu       sync.Mutex
+	// sessionsEnded is set when end takes its session snapshot; open refuses a session that arrives after it.
+	sessionsEnded bool
+	sendMu        sync.RWMutex
+	stopOnce      sync.Once
+	mu            sync.Mutex
 }
 
 func (e *fakeEngine) Start(ctx context.Context, o *marotte.EngineOpts) error {
@@ -243,6 +245,7 @@ func (e *fakeEngine) end(info bridge.ExitInfo) {
 		e.mu.Lock()
 		e.exit = info
 		sessions := slices.Clone(e.sessions)
+		e.sessionsEnded = true
 		e.mu.Unlock()
 		for _, s := range sessions {
 			if f, ok := s.(interface{ end() }); ok {
@@ -372,6 +375,15 @@ func (e *fakeEngine) open(ctx context.Context, o *marotte.SessionOpts, attach fu
 	}
 	e.assertAtDoor(ctx, s, eo)
 	e.mu.Lock()
+	if e.sessionsEnded {
+		e.mu.Unlock()
+		// The real door's write is refused once the read loop exited, and its failed door closes the lane
+		// (bridge.Session.failDoor), so the attached forward ends.
+		if f, ok := s.(interface{ end() }); ok {
+			f.end()
+		}
+		return nil, marotte.ErrBridgeExited
+	}
 	e.sessions = append(e.sessions, s)
 	e.mu.Unlock()
 	return s, nil
