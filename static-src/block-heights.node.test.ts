@@ -221,14 +221,14 @@ describe("what one entry is worth", () => {
 
 describe("what a tool call MOUNTS AS", () => {
   it("prices a WORKFLOW LAUNCH at the run card its own payload names", () => {
-    expect(stood(turn("t", [call(1, { run: "wf-1" })]))).toBe(71 + GAP_PX);
+    expect(stood(turn("t", [call(1, { run: "wf-1" })]))).toBe(75 + GAP_PX);
   });
 
   it("prices a call whose RESULT carries the run id at the run card too", () => {
     // The wire carries no `workflow_id` on the call, so the result's id is the join; otherwise
     // a run is reserved a tool row and mounts a card.
     const t = turn("t", [call(1, { id: "c1" }), result(2, "c1", { run: "wf-1" })]);
-    expect(stood(t)).toBe(71 + GAP_PX);
+    expect(stood(t)).toBe(75 + GAP_PX);
   });
 
   it("prices a DELEGATE INVOCATION at the subagent card, not at the tool row", () => {

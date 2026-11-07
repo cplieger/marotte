@@ -70,8 +70,6 @@ function mountFooter(email = "someone@example.invalid"): Footer {
   logout.type = "button";
   logout.id = "logout-btn";
   logout.className = "icon-btn";
-  // `.icon-btn` declares no height, so without a glyph the box is the bare hit floor and
-  // every height comparison would measure a box the app never renders.
   const glyph = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   glyph.setAttribute("class", "ic-ui");
   glyph.setAttribute("viewBox", "0 0 24 24");

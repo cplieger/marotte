@@ -1360,6 +1360,7 @@
   justify-content: center;
   min-inline-size: var(--ctl-h-dense);
   block-size: var(--ctl-h-dense);
+  min-block-size: var(--ctl-h-dense);
   padding: 0;
   color: var(--c-text-control);
   font-size: var(--fs-sm);

@@ -47,13 +47,15 @@ describe("a control that must stay visually small opts out of the box floor", ()
     );
 
     const header = ruleContaining(shell, ".shell-header", "top");
-    expect(header.body, "the header is one content row").toMatch(/height:\s*2rem/u);
+    expect(header.body, "the header is one row of buttons and their own targets").toMatch(
+      /height:\s*calc\(max\(var\(--btn-h\), var\(--hit-floor\)\) \+ var\(--hairline\)\)/u,
+    );
     expect(header.body, "with no block padding to hold a target").toMatch(
       /padding-inline:\s*var\(--sp-3\)/u,
     );
     expect(
-      header.body.includes("--hit-floor") || header.body.includes("--shell-bar-h"),
-      "the header restates no part of the target's arithmetic",
+      header.body.includes("--shell-bar-h"),
+      "the header restates none of the bar's reach",
     ).toBe(false);
 
     // The half that makes all of the above safe, declared on the control that has
@@ -457,11 +459,11 @@ describe("the shell resize bar's real target", () => {
   });
 
   it.each([
-    ["fine", 32],
+    ["fine", 37],
     ["coarse", 45],
   ] as const)("stays one content row tall on %s (%ipx)", (t, expected) => {
-    // (iv) The reader-visible half: hardcoded heights, so re-deriving the header from the floor fails.
-    // 45 is 44 plus the 1px border `box-sizing: border-box` charges.
+    // (iv) The reader-visible half: hardcoded heights. 37 is the 36px button and 45 its 44px target,
+    // each plus the 1px border `box-sizing: border-box` charges.
     tier(t);
     const { bar } = mountPanel();
     const head = bar.parentElement?.querySelector(".shell-header");

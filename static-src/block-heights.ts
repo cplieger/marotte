@@ -30,7 +30,7 @@ export const ENTRY_ESTIMATE_PX: Readonly<Record<PointerTier, EntryEstimates>> = 
     text: 48, // 13-messages.css `.msg-row` — `auto 3rem`, no padding or border
     emptyText: 0, // `.msg-row.is-empty` — `display: none`
     thinking: 25, // NO reserve: a sealed trace's own `<summary>` row
-    runCard: 71, // 27-run-card.css `.run-card` — `auto var(--run-card-content)` + 2px
+    runCard: 75, // 27-run-card.css `.run-card` — `auto var(--run-card-content)` + 2px
     toolCard: 38, // 14-tools.css `.tool-call` — `auto var(--btn-h)` + 2px
     toolGroup: 38, // NO reserve: a collapsed `.tool-group`, its `--row-tap` header + 2px
     subagentCard: 71, // `.subagent-block` — a delegate's card

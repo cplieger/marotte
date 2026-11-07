@@ -60,10 +60,10 @@ describe("a 24px icon button takes the ladder's small rung", () => {
   // holding it.
   it.each([
     "tab-close",
-    "shell-header-btn",
     "turn-action-btn",
     "native-rule-remove",
     "attachment-close",
+    "list-row-btn",
   ])("%s is 4px, not 6px", (cls) => {
     const b = document.createElement("button");
     b.className = cls;

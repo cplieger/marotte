@@ -454,15 +454,10 @@ describe("a finger's targets in touch mode", () => {
   });
 
   it.each([WIDE_PX, NARROW_PX])(
-    "gives the step buttons 44 by 44 and the resume control a 44px target in a %ipx chat area",
+    "gives the step buttons and the resume control a 44px target in a %ipx chat area",
     (width) => {
       document.documentElement.dataset["pointer"] = "coarse";
       const m = buildMap({ turns: 5, width });
-      for (const b of m.buttons) {
-        const r = b.getBoundingClientRect();
-        near(r.width, TOUCH_TARGET_PX, "width");
-        near(r.height, TOUCH_TARGET_PX, "height");
-      }
       for (const b of [...m.buttons, m.resume]) {
         expect(targetCovers(b, TOUCH_TARGET_PX), "the whole 44px square presses it").toBe(true);
       }

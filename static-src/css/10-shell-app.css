@@ -146,14 +146,6 @@ body.sidebar-resizing {
   margin-inline-end: -0.5rem;
 }
 
-/* Scoped here, not on `.icon-btn`: a root `--btn-h` would also resize dense row actions and dialog
-   closes whose sizes are not decided yet. */
-.sidebar-header-actions > .icon-btn,
-.sidebar-footer-actions > .icon-btn {
-  min-inline-size: var(--btn-h);
-  min-block-size: var(--btn-h);
-}
-
 /* settings-btn svg rules moved to end of file (specificity ordering) */
 
 /* A PURE LAYOUT ROW: the CHROME lives on the buttons, so the row's outer edges are a
@@ -867,7 +859,10 @@ body.sidebar-resizing {
   bottom: calc(100% + var(--sp-1) + (var(--sidebar-band-h) + var(--hairline) - var(--btn-h)) / 2);
 }
 
+/* Every icon button is the toolbar's size (`button-size.test.ts`); a row action names its dense token. */
 .icon-btn {
+  min-inline-size: var(--btn-h);
+  min-block-size: var(--btn-h);
   background: none;
   border: none;
   color: var(--c-text-primary);

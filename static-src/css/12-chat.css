@@ -135,17 +135,10 @@
   border-block-end: 1px solid var(--c-border);
 
   & .icon-btn {
-    min-width: var(--btn-h);
-    min-height: var(--btn-h);
     display: flex;
     align-items: center;
     justify-content: center;
-    /* A FLAT rung now, not a derivation. The bar is square and full-bleed, so
-       there is no parent corner to nest inside — the old
-       `calc(var(--r) - 1px - 0.125rem)` subtracted a radius and a padding that
-       no longer exist, and below 48rem it had already been subtracting a radius
-       the mobile rule zeroed. `--r-sm` is the rung for a control under 28px on
-       the fine tier; see 01-tokens.css's ladder. */
+    /* A flat rung: the bar is square and full-bleed, so there is no parent corner to nest inside. */
     border-radius: var(--r-sm);
   }
 

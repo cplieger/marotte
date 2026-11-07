@@ -96,16 +96,16 @@ const w = (el: HTMLElement): number => px(el.getBoundingClientRect().width);
 const PAINTED: Record<Tier, Record<string, [number, number]>> = {
   fine: {
     segBar: [-1, 40],
-    iconBtn: [32, 32],
-    shellBtn: [24, 24],
+    iconBtn: [36, 36],
+    shellBtn: [36, 36],
     steerAct: [24, 24],
     tabClose: [24, 24],
   },
   // A finger's 44px is each control's target, never its box: the coarse tier paints the mouse's.
   coarse: {
     segBar: [-1, 40],
-    iconBtn: [32, 32],
-    shellBtn: [24, 24],
+    iconBtn: [36, 36],
+    shellBtn: [36, 36],
     steerAct: [24, 24],
     tabClose: [24, 24],
   },

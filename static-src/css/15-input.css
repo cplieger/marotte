@@ -318,24 +318,11 @@
   white-space: nowrap;
 }
 
-/* DENSITY AND THE RECEDE. The skin is `icon-btn` (10-shell-app.css), from
- * attachment-pill.ts; the fifteen declarations this replaced were a hand-rolled copy
- * of it, four of them there only because the mark was a `×` CHARACTER (the `font-size`,
- * the `line-height: 1` against `icon-btn`'s SVG-authored `line-height: 0`, and the 1rem
- * box that clamped it). The mark is `ICON_CLOSE` now.
- *
- * `padding: 0` IS a real override rather than leftover skin: `icon-btn`'s standalone
- * `--sp-2` around a 12px glyph is a 28px box, which is wider than a chip this dense
- * has room for beside its label. `.mcp-pair-del` (60-mcp.css) makes the same override
- * for the same reason, so a dense host repadding a shared icon button is the
- * established shape.
- *
- * THE RECEDE STAYS AND IS NOT THE ANTI-PATTERN `.banner-dismiss` rejected. That one was
- * an `opacity` on a control whose ink had no other channel; this is progressive
- * disclosure — the × is quiet until the pointer is on its pill, which is what
- * `.attachment-pill:hover` below is for. MEASURED at rest against `--c-bg-secondary`:
- * 4.818:1 dark and 3.233:1 light, both clearing the 3:1 a graphical object needs, so it
- * costs no contrast rule. `icon-btn` sets no opacity in any state, so the two compose. */
+/* The skin is `icon-btn` (10-shell-app.css): its `--btn-h` minimum is overridden by
+ * `min-*-size: var(--close-box)` below, which keeps the chip's x at 24px. The x stays
+ * quiet until the pointer is on its pill (`.attachment-pill:hover`); at rest against
+ * `--c-bg-secondary` it measures 4.818:1 dark and 3.233:1 light, clearing the 3:1 a
+ * graphical object needs. */
 .attachment-close {
   padding: 0;
 
@@ -343,13 +330,15 @@
      12px box, and 24px is the rung below's size and WCAG 2.5.8's minimum. */
   inline-size: var(--close-box);
   block-size: var(--close-box);
+  min-inline-size: var(--close-box);
+  min-block-size: var(--close-box);
   position: relative;
 
   /* The well this box sits in is the PILL's (`.attachment-pill:has()` above); nothing
      about the inset is stated here, because the pill is what knows its own height. */
 
   /* THE LADDER'S RUNG, character for character with every other close button
-     (`.tab-close`, `.shell-header-btn`, `.turn-action-btn`, `.native-rule-remove`:
+     (`.tab-close`, `.list-row-btn`, `.turn-action-btn`, `.native-rule-remove`:
      `--r-sm` on a 24px box; `radius-nesting.test.ts` holds the population). A
      circle would be the app's only circular control. The concentric radius (the
      chip's corner - 1px - gap) is not a rung at either tier, so this corner is

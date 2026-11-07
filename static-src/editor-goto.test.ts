@@ -118,6 +118,16 @@ describe("the Go to line control", () => {
     expect(byId("editor-goto-status").textContent).toBe("Line 7 is past the end; showing line 3.");
   });
 
+  it("stands its field as tall as the buttons beside it with a mouse", () => {
+    byId("editor-goto").classList.remove("hidden");
+    const field = byId("editor-goto-input").getBoundingClientRect().height;
+    const go = (host.querySelector(".editor-goto-submit") as HTMLElement).getBoundingClientRect();
+    const close = byId("editor-goto-close").getBoundingClientRect();
+    expect(go.height, "premise: the toolbar's 36px").toBe(36);
+    expect(close.height).toBe(go.height);
+    expect(field).toBe(go.height);
+  });
+
   it("closes when another file becomes active", () => {
     activeText("/workspace/a.txt");
     showRead("a\nb\nc");

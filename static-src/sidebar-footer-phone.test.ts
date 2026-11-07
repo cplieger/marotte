@@ -74,9 +74,6 @@ function mountFooter(email = "someone@example.invalid"): Footer {
   logout.type = "button";
   logout.id = "logout-btn";
   logout.className = "icon-btn";
-  // The glyph is load-bearing: `.icon-btn` declares no height, so an empty one is the bare hit
-  // floor where production is glyph plus padding, and `assertFooter` compares the trigger's height
-  // against this box.
   const glyph = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   glyph.setAttribute("class", "ic-ui");
   glyph.setAttribute("viewBox", "0 0 24 24");

@@ -428,14 +428,6 @@
   cursor: pointer;
 }
 
-/* No per-row add-to-chat control. `.fb-add-to-chat` styled one as an inline
-   button revealed on `.fb-row:hover`, with a `[data-pointer="coarse"]` reveal
-   beside it, and nothing in `static-src/` ever emitted that CLASS — the only
-   survivor is the TOOLBAR button `#fb-add-to-chat` (dom.ts, files.ts), which is
-   an `.icon-btn` and takes none of it. Deleted 2026-09; adding a per-row control
-   back means restoring the coarse-pointer reveal too, because neither `:hover`
-   nor `:focus-visible` is reachable by a finger. */
-
 .fb-name-edit {
   flex: 1;
   min-block-size: var(--field-h-dense);
@@ -552,15 +544,6 @@
   max-width: var(--content-max-w);
   margin: 0 auto;
   width: 100%;
-}
-
-/* Size floor only. `display`, `align-items` and `justify-content` are already
-   `.icon-btn`'s (10-shell-app.css) and restating them here at (0,2,0) outranked
-   the phone-only `.fb-new-trigger` hide below, which rendered its trigger on
-   desktop. */
-.view-toolbar-inner .icon-btn {
-  min-width: var(--btn-h);
-  min-height: var(--btn-h);
 }
 
 .fb-path {
