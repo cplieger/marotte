@@ -61,7 +61,7 @@ const (
 )
 
 // logMsgRunYieldedToSlot is logged at INFO when a manual run yields to its recipe's next slot: the
-// bound working, kept off logMsgRunOverran's alert.
+// bound working, kept apart from logMsgRunOverran, which reports a schedule failing.
 const logMsgRunYieldedToSlot = "manual run reached its recipe's next scheduled slot; " +
 	"cancelling so the schedule can run"
 

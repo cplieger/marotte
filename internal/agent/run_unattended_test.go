@@ -644,7 +644,7 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 		t.Errorf("answerUnattended(deny) row = (%q, %q), want (%q, %q)",
 			rows[0].LastStatus, rows[0].LastReason, launchrule.StatusFailed, wantReason)
 	}
-	// The alert rule's signal: the fixed message carrying the refused outcome.
+	// The reader's record of the refusal: the one message, with the refused outcome.
 	if got := logs.String(); !strings.Contains(got, `"msg":"`+logMsgUnattendedPermission+`"`) ||
 		!strings.Contains(got, `"outcome":"refused"`) {
 		t.Errorf("answerUnattended(deny) logged %s, want %q with outcome=refused", got, logMsgUnattendedPermission)
@@ -730,7 +730,7 @@ func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *
 	if rows[0].LastStatus != "started" || rows[0].LastReason != "" {
 		t.Errorf("answerUnattended(deny, withdrawn) row = (%q, %q), want it untouched (started)", rows[0].LastStatus, rows[0].LastReason)
 	}
-	// An alert rule keys on this message: a refusal that reached nobody must not page as one.
+	// A refusal that reached nobody answered nothing, so no line may say it did.
 	if got := logs.String(); strings.Contains(got, logMsgUnattendedPermission) {
 		t.Errorf("answerUnattended(deny, withdrawn) logged %s, want no %q line", got, logMsgUnattendedPermission)
 	}
@@ -835,8 +835,8 @@ func TestTriggeredDenyNoteNamesNoSchedule(t *testing.T) {
 	}
 }
 
-// A triggered run paused with nobody to resume it is ended like a scheduled one, and the line the alert keys on
-// says which origin and rule it was.
+// A triggered run paused with nobody to resume it is ended like a scheduled one, and its line says which origin and
+// rule it was.
 func TestTriggeredPauseEndsUnattended(t *testing.T) {
 	logs := captureLogs(t)
 	fastUnattendedPause(t)

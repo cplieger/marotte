@@ -353,7 +353,8 @@ func TestRunBackstop_MeasuresExecutingTimeNotWallTime(t *testing.T) {
 	})
 }
 
-// TestCancelExpiredRun_TellsAStallFromASpentBackstop pins that two messages for opposite failures; logMsgRunStalled is the one worth an alert rule.
+// TestCancelExpiredRun_TellsAStallFromASpentBackstop pins two messages for opposite failures: a stalled run stopped
+// producing, a spent backstop worked its whole budget.
 func TestCancelExpiredRun_TellsAStallFromASpentBackstop(t *testing.T) {
 	// The backstop case carries the rest of its budget in an open stretch, where its deadline fires.
 	const openStretch = 10 * time.Minute

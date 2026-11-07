@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 func fileMode(t *testing.T, path string) os.FileMode {
@@ -838,9 +839,31 @@ func TestPersist_AnIdleJobSharingARenewalsWakeStillSavesIt(t *testing.T) {
 	})
 }
 
+// saveFailures is the sign-in save failure counter's sample for backend and reason.
+func saveFailures(t *testing.T, backend, reason string) float64 {
+	t.Helper()
+	return testsupport.MetricValue(t, `marotte_signin_save_failures_total{backend="`+backend+`",reason="`+reason+`"}`)
+}
+
+// TestSignIn_AFailedSaveCountsOnce: a sign-in whose write fails is one ERROR line and one count under write_failed.
+func TestSignIn_AFailedSaveCountsOnce(t *testing.T) {
+	rec := capture.Default(t)
+	fb := newFake(nil, "cb", "_test/auth/token")
+	h := newTimedHarness(t, time.Hour, 5*time.Second, fb)
+	before := saveFailures(t, "cb", "write_failed")
+	leaveStagedCopy(h, fb, 1_000_000)
+	if got := saveFailures(t, "cb", "write_failed") - before; got != 1 {
+		t.Errorf("signin_save_failures_total{reason=write_failed} moved by %v, want 1", got)
+	}
+	if n := rec.CountLevel(slog.LevelError, "sign-in: the sign-in could not be saved"); n != 1 {
+		t.Errorf("ERROR records of the failed save = %d, want 1", n)
+	}
+}
+
 // TestSignIn_AStagedCopyLeftRefusesTheSaveAndLogsItsPath: while a failed save's staged copy cannot
-// be removed, a sign-in is refused rather than staging another copy, the log names the copy, and
-// the sign-in is saved once the copy is gone, by the cleanup retry or by hand.
+// be removed, a sign-in is refused rather than staging another copy, the one line names the copy and
+// the remedy, the refusal counts under staged_copy_left, and the sign-in is saved once the copy is
+// gone, by the cleanup retry or by hand.
 func TestSignIn_AStagedCopyLeftRefusesTheSaveAndLogsItsPath(t *testing.T) {
 	for _, tc := range []struct {
 		remove    func(h *harness, copyPath string)
@@ -866,6 +889,7 @@ func TestSignIn_AStagedCopyLeftRefusesTheSaveAndLogsItsPath(t *testing.T) {
 			leaveStagedCopy(h, fb, 1_000_000)
 			copies := stagedCopies(h)
 			copyPath := filepath.Join(h.dir, copies[0])
+			refusals, errorLines := saveFailures(t, "cb", "staged_copy_left"), len(rec.Records())
 			st := h.signIn(fb, approval{cred: credOf(t, h.account("bob"))})
 			if st.SignIn.State != AttemptFailed || st.SignIn.Error != textSaveFailed || st.Label.Email != "alice@example.com" {
 				t.Errorf("Status = %+v, want alice kept and the attempt failed with %q", st, textSaveFailed)
@@ -876,8 +900,20 @@ func TestSignIn_AStagedCopyLeftRefusesTheSaveAndLogsItsPath(t *testing.T) {
 			if got := rec.AttrValuesExact(msgStagedCopyLeft, "path"); !slices.Equal(got, []string{copyPath}) {
 				t.Errorf("%q paths = %v, want [%s]", msgStagedCopyLeft, got, copyPath)
 			}
-			if n := rec.CountLevel(slog.LevelError, msgStagedCopyLeft); n != 1 {
-				t.Errorf("ERROR records of the refusal = %d, want 1", n)
+			var errs []string
+			for _, r := range rec.Records()[errorLines:] {
+				if r.Level >= slog.LevelError {
+					errs = append(errs, r.Message)
+				}
+			}
+			if !slices.Equal(errs, []string{msgStagedCopyLeft}) {
+				t.Errorf("the refusal logged the ERROR lines %q, want only %q", errs, msgStagedCopyLeft)
+			}
+			if hint, _ := rec.AttrValueExact(msgStagedCopyLeft, "hint"); hint == "" {
+				t.Errorf("%q carries no hint naming the remedy", msgStagedCopyLeft)
+			}
+			if got := saveFailures(t, "cb", "staged_copy_left") - refusals; got != 1 {
+				t.Errorf("signin_save_failures_total{reason=staged_copy_left} moved by %v, want 1", got)
 			}
 			tc.remove(h, copyPath)
 			if st := h.signIn(fb, approval{cred: credOf(t, h.account("bob"))}); st.SignIn.State != AttemptSignedIn {
@@ -1206,6 +1242,60 @@ func TestRefresh_SaveFailureStillAnswersAndRetriesTheWrite(t *testing.T) {
 	h.reopen()
 	if a := h.mustAnswer("cb"); a.Token != "rotated" {
 		t.Errorf("after reopen answered %q, want the rotated token saved by the retry", a.Token)
+	}
+}
+
+// TestRefresh_EachFailedRenewalWriteCountsAsWriteFailed: a renewal's save goes through the retry
+// loop, not a job, and each of its failed writes counts once under write_failed.
+func TestRefresh_EachFailedRenewalWriteCountsAsWriteFailed(t *testing.T) {
+	fb := newFake(nil, "cb", "_test/auth/token")
+	h := newHarness(t, fb)
+	h.signIn(fb, approval{cred: credOf(t, staleAccount(h, "alice"))})
+	rotate(h, fb, "rotated")
+	before := saveFailures(t, "cb", "write_failed")
+	h.disk.set(func(d *faultDisk) { d.writeFails = 2 })
+	h.mustAnswer("cb")
+	eventually(t, "the retry to land", func() bool { return h.disk.writeCount() >= 4 && !h.v.anyDirty() })
+	if got := saveFailures(t, "cb", "write_failed") - before; got != 2 {
+		t.Errorf("signin_save_failures_total{reason=write_failed} moved by %v, want 2, one per failed write", got)
+	}
+}
+
+// TestRefresh_ARenewalAStagedCopyHoldsBackIsLoggedAndCountedOncePerHold: the retry loop refuses
+// the renewal's save on every pass while the copy stays, but each hold is one line and one count,
+// and a hold that follows a tried write is a new one.
+func TestRefresh_ARenewalAStagedCopyHoldsBackIsLoggedAndCountedOncePerHold(t *testing.T) {
+	rec := capture.Default(t)
+	fb := newFake(nil, "cb", "_test/auth/token")
+	h := newHarness(t, fb)
+	h.signIn(fb, approval{cred: credOf(t, staleAccount(h, "alice"))})
+	rotate(h, fb, "rotated")
+	refusals, writes := saveFailures(t, "cb", "staged_copy_left"), saveFailures(t, "cb", "write_failed")
+	h.disk.set(func(d *faultDisk) { d.commitErr, d.discardFails = syscall.EIO, 1_000_000 })
+	h.mustAnswer("cb")
+	eventually(t, "several retries of the removal", func() bool { return h.disk.discardCount() >= 5 })
+	if got := saveFailures(t, "cb", "staged_copy_left") - refusals; got != 1 {
+		t.Errorf("signin_save_failures_total{reason=staged_copy_left} moved by %v, want 1 for the whole hold", got)
+	}
+	if got := saveFailures(t, "cb", "write_failed") - writes; got != 1 {
+		t.Errorf("signin_save_failures_total{reason=write_failed} moved by %v, want 1, the write that left the copy", got)
+	}
+	copies := stagedCopies(h)
+	if got := rec.AttrValuesExact(msgStagedCopyLeft, "path"); len(copies) != 1 || !slices.Equal(got, []string{filepath.Join(h.dir, copies[0])}) {
+		t.Errorf("%q paths = %v, want one line naming the one staged copy %v", msgStagedCopyLeft, got, copies)
+	}
+
+	h.disk.set(func(d *faultDisk) { d.commitErr, d.discardFails = nil, 0 })
+	eventually(t, "the renewal to be saved", func() bool { return !h.v.anyDirty() })
+	rotate(h, fb, "rotated-again")
+	h.clk.advance(time.Hour)
+	h.disk.set(func(d *faultDisk) { d.commitErr, d.discardFails = syscall.EIO, 1_000_000 })
+	h.mustAnswer("cb")
+	eventually(t, "the second renewal to be held back", func() bool {
+		return saveFailures(t, "cb", "staged_copy_left")-refusals >= 2
+	})
+	if got := rec.AttrValuesExact(msgStagedCopyLeft, "backend"); !slices.Equal(got, []string{"cb", "cb"}) {
+		t.Errorf("%q backends = %v, want one line per hold", msgStagedCopyLeft, got)
 	}
 }
 

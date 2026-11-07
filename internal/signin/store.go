@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/filemode"
+	"github.com/cplieger/marotte/internal/obs"
 )
 
 const (
@@ -29,8 +30,10 @@ const (
 
 var errStagedCopyLeft = errors.New("a staged copy of an earlier save is still on disk")
 
-const msgStagedCopyLeft = "sign-in: a staged copy of an earlier save is still on disk, so the change was not saved; " +
-	"sign-in works again once the cleanup retry or a manual removal deletes it"
+const (
+	msgStagedCopyLeft  = "sign-in save refused: staged copy still on disk"
+	hintStagedCopyLeft = "sign-in works again once marotte's cleanup retry removes the file at path, or you remove it by hand"
+)
 
 // fileShape is signin.json. Lapsed is the vault's own mark: the backend's grant was rejected.
 type fileShape struct {
@@ -224,9 +227,10 @@ func (v *Vault) apply(j *job) (wrote bool, err error) {
 	}
 	snap := v.snapshot(map[BackendID]*record{id: j.rec})
 	if lo := v.stagedCopyLeft(); lo != nil && stages(snap) {
-		slog.Error(msgStagedCopyLeft, "backend", id, "path", lo.Name())
+		slog.Error(msgStagedCopyLeft, "backend", id, "path", lo.Name(), "hint", hintStagedCopyLeft)
+		obs.SignInSaveFailed(string(id), obs.SignInStagedCopyLeft)
 		err = fmt.Errorf("%w: %s", errStagedCopyLeft, lo.Name())
-		publishFailure(j, err)
+		answerFailure(j, err)
 		return false, err
 	}
 	err = v.write(v.lifetime, snap)
@@ -289,17 +293,29 @@ func (v *Vault) publishChange(j *job, unsynced bool) {
 	j.answer(nil)
 }
 
+// publishFailure logs and counts j's failed write, then answers it.
 func publishFailure(j *job, err error) {
-	s, id := j.s, j.s.decl.Backend
+	id := j.s.decl.Backend
+	obs.SignInSaveFailed(string(id), obs.SignInWriteFailed)
 	if j.rec == nil {
 		slog.Error("sign-in: the saved sign-in could not be removed", "backend", id, "error", err)
+	} else {
+		slog.Error("sign-in: the sign-in could not be saved", "backend", id, "error", err)
+	}
+	answerFailure(j, err)
+}
+
+// answerFailure answers j with a save that did not land: a sign-out's caller gets the error, a
+// sign-in's attempt fails.
+func answerFailure(j *job, err error) {
+	if j.rec == nil {
 		j.answer(fmt.Errorf("%w: %w", errNotSaved, err))
 		return
 	}
+	s := j.s
 	s.mu.Lock()
 	s.endAttemptLocked(j.attempt, AttemptFailed, textSaveFailed)
 	s.mu.Unlock()
-	slog.Error("sign-in: the sign-in could not be saved", "backend", id, "error", err)
 }
 
 // readBack reads the file after a write that may not be durable and reports whether it holds r for
@@ -355,6 +371,7 @@ func (v *Vault) fileHolds(id BackendID, r *record) (bool, error) {
 // snap holds no record. An error matching filemode.ErrNotDurable means the file holds snap but may
 // not survive a power loss; any other error means the file still holds what it held.
 func (v *Vault) write(ctx context.Context, snap map[BackendID]*record) error {
+	clear(v.heldBack)
 	f := fileShape{Backends: map[BackendID]fileEntry{}}
 	for id, r := range snap {
 		if r != nil {
@@ -465,21 +482,54 @@ func (v *Vault) flushOnStop() {
 	}
 }
 
+// dirtyBackends are the backends whose desired record the file may not hold.
+func (v *Vault) dirtyBackends() []BackendID {
+	var ids []BackendID
+	for id, s := range v.slots {
+		s.mu.Lock()
+		if s.dirty {
+			ids = append(ids, id)
+		}
+		s.mu.Unlock()
+	}
+	return ids
+}
+
 // saveDirty writes the desired map when any backend is dirty, under stagedCopyLeft's rule. The
 // last attempt at shutdown is the exception that adds at most one copy rather than losing a
 // rotated refresh token.
 func (v *Vault) saveDirty(ctx context.Context, last bool) error {
 	left := v.stagedCopyLeft()
-	if !v.anyDirty() {
+	dirty := v.dirtyBackends()
+	if len(dirty) == 0 {
 		return nil
 	}
 	snap := v.snapshot(nil)
 	if !last && left != nil && stages(snap) {
+		v.holdBack(dirty, left)
 		return nil
 	}
 	err := v.write(ctx, snap)
-	if err == nil {
+	switch {
+	case err == nil:
 		v.settle(snap, "")
+	case !errors.Is(err, filemode.ErrNotDurable):
+		for _, id := range dirty {
+			obs.SignInSaveFailed(string(id), obs.SignInWriteFailed)
+		}
 	}
 	return err
+}
+
+// holdBack logs and counts the refusal of each dirty backend's save while left is on disk, once
+// per backend until a write is tried again: the retry loop refuses the same save on every pass.
+func (v *Vault) holdBack(dirty []BackendID, left *filemode.LeftoverError) {
+	for _, id := range dirty {
+		if v.heldBack[id] {
+			continue
+		}
+		v.heldBack[id] = true
+		slog.Error(msgStagedCopyLeft, "backend", id, "path", left.Name(), "hint", hintStagedCopyLeft)
+		obs.SignInSaveFailed(string(id), obs.SignInStagedCopyLeft)
+	}
 }

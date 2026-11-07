@@ -44,7 +44,7 @@ func waitForEndReason(h *Runtime, workflowID string, within time.Duration) strin
 }
 
 // TestScheduledRun_APausedRunIsCancelledAtItsNextSlot pins that a pause does not disarm a scheduled run's slot:
-// otherwise the paused run holds its recipe and every later slot is refused as an overlap, with no alert.
+// otherwise the paused run holds its recipe and every later slot is refused as an overlap.
 func TestScheduledRun_APausedRunIsCancelledAtItsNextSlot(t *testing.T) {
 	logs := captureLogs(t)
 	h, br, st, entry := scheduledHub(t)
@@ -64,7 +64,7 @@ func TestScheduledRun_APausedRunIsCancelledAtItsNextSlot(t *testing.T) {
 		t.Errorf("no cancel went out for the run paused past its slot: %v", br.callLog())
 	}
 	if out := logs.String(); !strings.Contains(out, logMsgRunOverran) {
-		t.Errorf("the slot's cancel did not log %q, which the overran alert keys on: %s", logMsgRunOverran, out)
+		t.Errorf("the slot's cancel did not log %q: %s", logMsgRunOverran, out)
 	}
 	if row := awaitEndedRow(t, st); row.LastStatus != launchrule.StatusFailed || row.LastReason != reasonOverran {
 		t.Errorf("the row reads (%q, %q), want the overran failure", row.LastStatus, row.LastReason)

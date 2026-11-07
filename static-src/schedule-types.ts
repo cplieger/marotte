@@ -12,7 +12,7 @@ export const LAST_DAY = -1;
  *  reason this table exists at all: "every minute" is what a user types when they mean "often",
  *  and the server refuses it because four mechanisms misbehave there (the once-a-minute runner
  *  tick, the 3-minute miss grace, the one-live-run-per-recipe rule, and the run's own
- *  interval-derived deadline, which logs at ERROR for an alert rule). */
+ *  interval-derived deadline, which cancels a run still going when its next slot comes due). */
 export const INTERVAL_BOUNDS = {
   minutely: { min: 5, max: 59 },
   hourly: { min: 1, max: 24 },

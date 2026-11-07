@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // surfaceDeps records the two durable surfaces a failure can reach — the error
@@ -624,9 +626,28 @@ func logLines(buf *bytes.Buffer, sub string) []string {
 	return out
 }
 
-// A prompt the engine's exit killed is a casualty of the one "engine exited" record, so neither
-// failure site may log "prompt failed" for it, and the surfaces the user sees stay as they are.
-func TestReportPromptFailure_EngineExitIsNotAPromptFailure(t *testing.T) {
+// promptFailures is the prompt failure counter's sample for class.
+func promptFailures(t *testing.T, class string) float64 {
+	t.Helper()
+	return testsupport.MetricValue(t, `marotte_prompt_failures_total{class="`+class+`"}`)
+}
+
+// presetPromptFailureClasses are the prompt failure classes the page carries before any test counts a failure.
+var presetPromptFailureClasses = testsupport.PresetLabelValues("marotte_prompt_failures_total", "class")
+
+// allPromptFailures is the prompt failure counter's sample summed over every class.
+func allPromptFailures(t *testing.T) float64 {
+	t.Helper()
+	var n float64
+	for _, class := range presetPromptFailureClasses {
+		n += promptFailures(t, class)
+	}
+	return n
+}
+
+// A prompt the engine's exit killed is a casualty of the one "engine exited" record: it counts under
+// class="pipe_death" and logs one WARN that points at that record, and the surfaces the user sees stay as they are.
+func TestReportPromptFailure_AnEngineExitCasualtyCountsAsPipeDeath(t *testing.T) {
 	exited := &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true}
 	cases := []struct {
 		name     string
@@ -653,10 +674,14 @@ func TestReportPromptFailure_EngineExitIsNotAPromptFailure(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			logs := captureLogs(t)
 			deps := newSurfaceDeps()
+			deaths, all := promptFailures(t, "pipe_death"), allPromptFailures(t)
 			tc.run(t.Context(), promptRolesOf(deps), deps)
 
-			if got := logLines(logs, "prompt failed"); len(got) != 0 {
-				t.Errorf("logged %q, want no line containing \"prompt failed\" for an engine-exit casualty", got)
+			if got := promptFailures(t, "pipe_death") - deaths; got != 1 {
+				t.Errorf("prompt_failures_total{class=pipe_death} moved by %v, want 1", got)
+			}
+			if got := allPromptFailures(t) - all; got != 1 {
+				t.Errorf("prompt_failures_total moved by %v over every class, want 1: the casualty counts once", got)
 			}
 			warns := logLines(logs, "msg="+strconv.Quote(logMsgPromptEngineEnded))
 			if len(warns) != 1 {
@@ -673,27 +698,64 @@ func TestReportPromptFailure_EngineExitIsNotAPromptFailure(t *testing.T) {
 	}
 }
 
-// Every failure that is not an engine-exit casualty is still the "prompt failed" Error line the
-// alert counts: only ErrBridgeExited is exempt, not every retryable transport error.
+// Every failure that is not an engine-exit casualty is one "prompt failed" Error line and one count under its class:
+// only ErrBridgeExited is a casualty, not every retryable transport error.
 func TestReportPromptFailure_OtherFailuresStillCountAsPromptFailed(t *testing.T) {
-	cases := map[string]error{
-		"a reset connection":        errors.New("connection reset"),
-		"a refused credential":      rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{"details": "not logged in"}),
-		"a retryable write failure": &marotte.TransportError{Err: errors.New("write to ACP: broken pipe"), Retryable: true},
+	cases := map[string]struct {
+		err   error
+		class string
+	}{
+		"a reset connection":        {err: errors.New("connection reset"), class: "fatal"},
+		"a refused credential":      {err: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{"details": "not logged in"}), class: "auth"},
+		"a retryable write failure": {err: &marotte.TransportError{Err: errors.New("write to ACP: broken pipe"), Retryable: true}, class: "transient"},
 	}
-	for name, err := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			logs := captureLogs(t)
-			reportPromptFailure(t.Context(), promptRolesOf(newSurfaceDeps()), "c1", "t-7", err, 0, time.Second, false)
+			before := promptFailures(t, tc.class)
+			reportPromptFailure(t.Context(), promptRolesOf(newSurfaceDeps()), "c1", "t-7", tc.err, 0, time.Second, false)
 
 			got := logLines(logs, `msg="prompt failed"`)
-			if len(got) != 1 || !strings.Contains(got[0], "level=ERROR") {
-				t.Errorf("prompt-failed lines = %q, want exactly one at level=ERROR:\n%s", got, logs)
+			if len(got) != 1 || !strings.Contains(got[0], "level=ERROR") || !strings.Contains(got[0], "class="+tc.class) {
+				t.Errorf("prompt-failed lines = %q, want exactly one at level=ERROR with class=%s:\n%s", got, tc.class, logs)
+			}
+			if n := promptFailures(t, tc.class) - before; n != 1 {
+				t.Errorf("prompt_failures_total{class=%s} moved by %v, want 1", tc.class, n)
 			}
 			if warns := logLines(logs, logMsgPromptEngineEnded); len(warns) != 0 {
 				t.Errorf("logged %q, want no engine-exit line for a failure the engine's exit did not cause", warns)
 			}
 		})
+	}
+}
+
+// A failed empty-turn retry is a failed turn, so it counts like the prompt's own failure.
+func TestRetryEmptyTurnPrompt_AFailedRetryCountsAsAPromptFailure(t *testing.T) {
+	logs := captureLogs(t)
+	deps := newSurfaceDeps()
+	deps.callErr = errors.New("connection reset")
+	before := promptFailures(t, "fatal")
+	retryEmptyTurnPrompt(t.Context(), promptRolesOf(deps), testReservation("c1", true), "t-empty", &marotte.PromptCommand{Text: "hi", MessageID: "m1"}, map[string]any{})
+
+	if got := promptFailures(t, "fatal") - before; got != 1 {
+		t.Errorf("prompt_failures_total{class=fatal} moved by %v, want 1", got)
+	}
+	if got := logLines(logs, `msg="retry prompt failed"`); len(got) != 1 {
+		t.Errorf("retry-failed lines = %q, want exactly one:\n%s", got, logs)
+	}
+}
+
+// The class names are the counter's class values, in both directions, so every class is pre-set before its first
+// failure and no pre-set class is one no failure can have.
+func TestPromptFailureClass_NamesExactlyTheCountedClasses(t *testing.T) {
+	var got []string
+	for c := classFatal; c <= classAuth; c++ {
+		got = append(got, c.String())
+	}
+	slices.Sort(got)
+	want := slices.Sorted(slices.Values(presetPromptFailureClasses))
+	if !slices.Equal(got, want) {
+		t.Errorf("promptFailureClass names %v, want exactly the pre-set classes %v", got, want)
 	}
 }
 
@@ -749,7 +811,11 @@ func TestPromptFailure_AClosedChatsPromptSendsNoFailureFrame(t *testing.T) {
 				logs := captureLogs(t)
 				deps := newSurfaceDeps()
 				path.arrange(deps, end)
+				before := allPromptFailures(t)
 				path.run(t.Context(), promptRolesOf(deps), &marotte.PromptCommand{Text: "hi", MessageID: "m1"})
+				if got := allPromptFailures(t) - before; got != 0 {
+					t.Errorf("prompt_failures_total moved by %v, want 0 for the close's casualty", got)
+				}
 
 				deps.mu.Lock()
 				defer deps.mu.Unlock()

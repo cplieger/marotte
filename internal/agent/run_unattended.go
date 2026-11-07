@@ -51,16 +51,14 @@ const (
 	optionKindRejectOnce = "reject_once"
 )
 
-// logMsgUnattendedPermission is a constant because an external alert rule keys on it; change both together.
 const logMsgUnattendedPermission = "unattended permission answered with no user present"
 
-// The log's `outcome` values; an alert rule matches outcomeRefused.
+// The log's `outcome` values.
 const (
 	outcomeRefused  = "refused"
 	outcomeApproved = "approved"
 )
 
-// logMsgRunOverran is a constant an alert rule matches: the one signal a schedule stopped producing. Change both together.
 const logMsgRunOverran = "scheduled run still going when its next slot came due; cancelling"
 
 // reasonOverran is the schedule row's failure text, written for the person: what happened and what to do.
@@ -84,7 +82,6 @@ var reasonCancelRefused = "reached a limit that stops it, but kiro-cli refused t
 // (endUnattended): an unattended ask's budget, which also outlasts the three heals' backoff. A var for tests.
 var unattendedPauseBudget = unattendedApprovalBudget
 
-// logMsgRunPausedUnattended is a constant an alert rule matches. Change both together.
 const logMsgRunPausedUnattended = "scheduled run paused with nobody to resume it; cancelling"
 
 // The row's text for endUnattended, by the pause it found and what it waited out.
@@ -191,7 +188,7 @@ func (rs *Runs) answerUnattended(
 		slog.Error("unattended permission answer failed", "chat_id", chatID, "error", err)
 		return
 	}
-	// A fixed message with the outcome as a field, so alert rules can match it.
+	// One message for both answers, the outcome a field, so one search finds every answer given with nobody there.
 	slog.Warn(logMsgUnattendedPermission,
 		"outcome", verb, "chat_id", chatID, "tool", name.tool, "subject", name.subject,
 		"budget", unattendedApprovalBudget, "schedule_id", run.ScheduleID, "rule_id", run.RuleID)

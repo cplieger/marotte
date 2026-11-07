@@ -18,8 +18,8 @@ import (
 // memSampleEvery is the engine memory sampler's period.
 const memSampleEvery = 60 * time.Second
 
-// memHighPct is the share of the effective heap limit at which RSS logs "engine memory high"; the Loki
-// MarotteEngineMemoryHigh alert matches that message verbatim.
+// memHighPct is the share of the effective heap limit at which RSS logs "engine memory high", early enough for a
+// reader to act before the engine runs out of heap.
 const memHighPct = 80
 
 // procRoot is /proc; a var for fixtures.

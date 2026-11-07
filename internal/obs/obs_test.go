@@ -33,6 +33,31 @@ func TestHandler_ServesClientGolangsDefaultFamilies(t *testing.T) {
 	}
 }
 
+// TestCounters_EveryKnownValueIsOnThePageBeforeItsFirstEvent: increase() over a series born at its first event misses
+// that event, so every cause, class and reason a rule reads is on the page from the start.
+func TestCounters_EveryKnownValueIsOnThePageBeforeItsFirstEvent(t *testing.T) {
+	SignInBackend("obs-test")
+	body := scrape().Body.String()
+	var want []string
+	for _, cause := range []string{
+		"restart_confirmed", "restart_auto", "shutdown", "stopped", "stdin_stalled", "parse_breaker",
+		"lane_overflow", "external_stop", "crash",
+	} {
+		want = append(want, `marotte_engine_exits_total{cause="`+cause+`"} `)
+	}
+	for _, class := range []string{"fatal", "pipe_death", "busy", "transient", "throttled", "rejected", "auth"} {
+		want = append(want, `marotte_prompt_failures_total{class="`+class+`"} `)
+	}
+	for _, reason := range []string{"staged_copy_left", "write_failed"} {
+		want = append(want, `marotte_signin_save_failures_total{backend="obs-test",reason="`+reason+`"} `)
+	}
+	for _, series := range want {
+		if !strings.Contains(body, "\n"+series) {
+			t.Errorf("the page lacks %q before any event", series)
+		}
+	}
+}
+
 // TestHandler_DeclaresEachFamilyOnce guards the page as a whole: a repeated
 // TYPE line, from a second writer of the process families for example, makes
 // Prometheus reject the entire scrape.
