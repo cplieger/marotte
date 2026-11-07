@@ -42,10 +42,16 @@ var (
 			"pipe_death is a prompt the engine's own exit ended.", []string{"class"})
 	signInSaveFailures = measure.NewLabeledCounter("signin_save_failures_total",
 		"Sign-in changes the sign-in file could not take, by backend and reason.", []string{"backend", "reason"})
+	engineUp = measure.NewGauge("engine_up", "1 while the agent engine is ready to take prompts, else 0.")
+	// The memory gauges carry no label; a labeled gauge is what lets Delete take a series off the page.
+	engineResident = measure.NewLabeledGauge("engine_resident_memory_bytes",
+		"Resident memory of the running agent engine's node process at its last sample.", nil)
+	engineHeapLimit = measure.NewLabeledGauge("engine_heap_limit_bytes",
+		"JavaScript heap limit of the running agent engine; absent while the limit is unknown.", nil)
 )
 
 func init() {
-	registry.MustRegister(engineExits, promptFailures, signInSaveFailures)
+	registry.MustRegister(engineExits, promptFailures, signInSaveFailures, engineUp, engineResident, engineHeapLimit)
 	for _, c := range engineExitCauses {
 		engineExits.Add(0, c)
 	}
@@ -78,3 +84,29 @@ func SignInBackend(backend string) {
 // SignInSaveFailed counts one failed sign-in save of backend under reason, SignInStagedCopyLeft or
 // SignInWriteFailed.
 func SignInSaveFailed(backend, reason string) { signInSaveFailures.Inc(backend, reason) }
+
+// EngineUp sets marotte_engine_up: 1 when the engine is ready, else 0.
+func EngineUp(ready bool) {
+	v := 0.0
+	if ready {
+		v = 1
+	}
+	engineUp.Set(v)
+}
+
+// EngineMemory records the running engine's last memory sample. A heapLimitBytes of 0 or less is an unknown limit and
+// removes the limit series, so a ratio over it has nothing to divide by.
+func EngineMemory(residentBytes, heapLimitBytes int64) {
+	engineResident.Set(float64(residentBytes))
+	if heapLimitBytes <= 0 {
+		engineHeapLimit.Delete()
+		return
+	}
+	engineHeapLimit.Set(float64(heapLimitBytes))
+}
+
+// EngineMemoryGone removes both engine memory series, for an engine that is no longer running.
+func EngineMemoryGone() {
+	engineResident.Delete()
+	engineHeapLimit.Delete()
+}
