@@ -197,16 +197,21 @@ async function settled(): Promise<void> {
 }
 
 /** The spec's controls: elements that act or take input, and UI chrome. A run's or a file's name drawn as a control
- *  is content. */
-const ACTS = `button, [role="button"], summary, input, textarea, select, [contenteditable="true"], [role^="menu"], [${CHROME_ATTR}]`;
+ *  is content, also inside chrome that does not act (a steer note's head). */
+const WIDGETS = `button, [role="button"], summary, input, textarea, select, [contenteditable="true"], [role^="menu"]`;
+const CHROME = `[${CHROME_ATTR}]`;
 const NAMES =
   ".run-bar-open, .run-head, .run-step-head, .turn-wake-run, .turn-wake-row-run, .tool-file-link, .steer-note-run";
 
 function inControl(t: Text): boolean {
+  let named = false;
   for (let e = t.parentElement; e !== null; e = e.parentElement) {
-    if (e.matches(ACTS) && (!e.matches(NAMES) || e.matches(`[${CHROME_ATTR}]`))) {
+    const control = e.matches(WIDGETS) || e.matches(CHROME);
+    const bareChrome = e.matches(CHROME) && !e.matches(WIDGETS);
+    if (control && (!e.matches(NAMES) || e.matches(CHROME)) && !(named && bareChrome)) {
       return true;
     }
+    named ||= e.matches(NAMES);
   }
   return false;
 }

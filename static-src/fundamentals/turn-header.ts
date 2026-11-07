@@ -76,7 +76,7 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
   row.appendChild(el("span", { className: "turn-hit-count" }));
   header.appendChild(row);
 
-  const req = el("div", { className: "turn-req" });
+  const req = el("div", { className: "turn-req", "data-find-unit": "header" });
   const text = el("div", { className: "turn-req-text" });
   req.appendChild(text);
   // Sibling of `.turn-req-text`, so the clamp cannot hide the attachments.
@@ -107,7 +107,7 @@ export function buildRequestHeader(request: string, caller?: Caller): HTMLElemen
   const header = el(
     "div",
     { className: "turn-header", "data-trigger": caller === undefined ? "user" : "caller" },
-    el("div", { className: "turn-req" }, text),
+    el("div", { className: "turn-req", "data-find-unit": "header" }, text),
   );
   syncQuote(header, quoted ?? undefined);
   syncSentBy(header, caller);

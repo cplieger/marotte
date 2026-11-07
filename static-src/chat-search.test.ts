@@ -7,9 +7,9 @@ const apiGetTyped = vi.fn<(url: string, decode: (v: unknown) => unknown) => Prom
 const openForSearch = vi.fn();
 // The chat id is declared because fold-state.ts's clearSearchOpened takes one and
 // the wrapper below forwards it; a nullary mock types its own call log as empty.
-const clearSearchOpened = vi.fn((_chatID: string) => true);
-// Both arguments captured: the reveal and the re-fold declare their render
-// cause explicitly (`shape`), and the assertion needs to see it.
+const clearSearchOpened = vi.fn((_chatID: string): string[] => ["u2"]);
+// Both arguments captured: the answer, the reveal and the re-fold declare their render
+// cause explicitly, and the assertion needs to see it.
 const bumpMessages = vi.fn((_chatID: string, _cause?: string) => undefined);
 
 vi.mock("./api-client.js", () => ({
@@ -30,22 +30,22 @@ const {
   runServerSearch,
   resetServerSearch,
   revealHitTurn,
+  refoldAfterReveal,
   searchHitTurns,
   searchHitCount,
   initSearchRevealBuilder,
 } = await import("./chat-search.js");
 
-/** A hit, keyed by `[turn_id, entry_id, segment_kind, offset]`. `turn` is
- *  the turn's own `turn_open.n`, which is what the rail and the folded rows read. */
+/** A hit, one item keyed by `[turn_id, entry_id, kind]`. `turn` is the turn's own `turn_open.n`, which is
+ *  what the rail and the folded rows read. */
 function hit(over: Partial<Hit> = {}): Hit {
   return {
     turn_id: "u1",
     entry_id: "e1",
+    kind: "message",
     excerpt: "…retry…",
-    segment_kind: "content",
+    segments: ["content"],
     turn: 2,
-    offset: 0,
-    segment_len: 24,
     ...over,
   };
 }
@@ -53,7 +53,14 @@ function hit(over: Partial<Hit> = {}): Hit {
 /** `matched` defaults to the list's own length, which is the uncut answer; a case staging a cut sets
  *  it higher. */
 function reply(hits: Hit[], over: Partial<SearchResult> = {}): SearchResult {
-  return { matches: hits, scanned: 4, matched: hits.length, truncated: false, ...over };
+  return {
+    matches: hits,
+    spread: false,
+    scanned: 4,
+    matched: hits.length,
+    truncated: false,
+    ...over,
+  };
 }
 
 /** Stage what the fetch answers, through the caller's OWN decoder; `null` is the failed fetch. */
@@ -63,20 +70,17 @@ function answer(body: SearchResult | null): void {
   );
 }
 
-/**
- * The three injected surfaces, declared once because they are MODULE state; `mockReset`
- * restores them before every test.
- */
+/** The injected build and fold, declared once because they are MODULE state. */
 const reveal = vi.fn((_chatID: string, _turnID: string, _entryID?: string) => Promise.resolve());
-const forWalk = vi.fn((_chatID: string, _turnID: string) => Promise.resolve());
-const endWalk = vi.fn((_chatID: string) => undefined);
+const fold = vi.fn((_chatID: string, _turnID: string) => undefined);
 
 beforeEach(() => {
   apiGetTyped.mockReset();
   answer(reply([]));
-  initSearchRevealBuilder(reveal, forWalk, endWalk);
+  initSearchRevealBuilder(reveal, fold);
   resetServerSearch();
-  endWalk.mockClear();
+  openForSearch.mockClear();
+  reveal.mockClear();
 });
 
 describe("runServerSearch: the request", () => {
@@ -108,47 +112,15 @@ describe("runServerSearch: the request", () => {
   });
 });
 
-describe("runServerSearch: the reveal", () => {
-  it("opens each hit's turn by the turn id the hit carries", async () => {
+describe("runServerSearch: the answer", () => {
+  it("opens and builds no hit's turn: only the hit find lands on is revealed", async () => {
     answer(reply([hit({ turn_id: "u1" }), hit({ turn_id: "u3", entry_id: "e2" })]));
+    bumpMessages.mockClear();
     await runServerSearch("c1", "retry");
-    expect(openForSearch).toHaveBeenCalledWith("c1", "u1");
-    expect(openForSearch).toHaveBeenCalledWith("c1", "u3");
-    // The renderer has to see the reveal before the DOM walker runs, and a
-    // reveal changes which turns are open and mounted: a stated shape change.
-    expect(bumpMessages).toHaveBeenCalledWith("c1", "shape");
-  });
-
-  it("builds each revealed turn's body once, before the repaint", async () => {
-    // The build runs per TURN, and every build lands before the bump the walker re-runs on.
-    answer(
-      reply([
-        hit({ turn_id: "u1" }),
-        hit({ turn_id: "u1", entry_id: "e2" }),
-        hit({ turn_id: "u3", entry_id: "e3" }),
-      ]),
-    );
-    const order: string[] = [];
-    forWalk.mockImplementation((_chatID: string, turnID: string) => {
-      order.push(`build:${turnID}`);
-      return Promise.resolve();
-    });
-    bumpMessages.mockImplementation(() => {
-      order.push("bump");
-    });
-    await runServerSearch("c1", "retry");
-    expect(order).toEqual(["build:u1", "build:u3", "bump"]);
-    expect(forWalk).toHaveBeenCalledWith("c1", "u1");
-    expect(forWalk).toHaveBeenCalledWith("c1", "u3");
-    // Through the WALK's entry point, not the navigation one: one pin slot cannot
-    // serve a loop over N turns, so the loop would do N builds to keep one.
+    expect(openForSearch).not.toHaveBeenCalled();
     expect(reveal).not.toHaveBeenCalled();
-  });
-
-  it("does not build for a hit that names no turn", async () => {
-    answer(reply([hit({ turn_id: "" })]));
-    await runServerSearch("c1", "retry");
-    expect(forWalk).not.toHaveBeenCalled();
+    // The folded rows' counts and the turn map repaint; nothing opened, so no shape changed.
+    expect(bumpMessages).toHaveBeenCalledExactlyOnceWith("c1", "fact");
   });
 
   it("records the hit turns and their counts for the rail and the folded rows", async () => {
@@ -177,6 +149,7 @@ describe("runServerSearch: the reveal", () => {
     answer(reply([hit(), hit({ entry_id: "e2" })], { scanned: 24, matched: 347 }));
     expect(await runServerSearch("c1", "retry")).toEqual({
       matches: [hit(), hit({ entry_id: "e2" })],
+      spread: false,
       scanned: 24,
       matched: 347,
       truncated: false,
@@ -191,7 +164,7 @@ describe("runServerSearch: the reveal", () => {
 
   it("answers an empty envelope for an empty question, because that IS an answer", async () => {
     // No chat or a blank query asked nothing, so the empty answer is the truth.
-    const nothing = { matches: [], scanned: 0, matched: 0, truncated: false };
+    const nothing = { matches: [], spread: false, scanned: 0, matched: 0, truncated: false };
     expect(await runServerSearch("", "retry")).toEqual(nothing);
     expect(await runServerSearch("c1", "   ")).toEqual(nothing);
     expect(apiGetTyped).not.toHaveBeenCalled();
@@ -200,8 +173,15 @@ describe("runServerSearch: the reveal", () => {
   it("drops the reveal and the counts on reset, declaring the re-fold's shape", async () => {
     answer(reply([hit({ turn: 2 })]));
     await runServerSearch("c1", "retry");
+    clearSearchOpened.mockReturnValue(["u2", "u5"]);
     bumpMessages.mockClear();
+    fold.mockClear();
     resetServerSearch();
+    // At once, each turn search opened: a fold pass would wait for the reader to stop reading.
+    expect(fold.mock.calls).toEqual([
+      ["c1", "u2"],
+      ["c1", "u5"],
+    ]);
     expect([...searchHitTurns()]).toEqual([]);
     expect(searchHitCount(2)).toBe(0);
     expect(clearSearchOpened).toHaveBeenCalledWith("c1");
@@ -210,36 +190,27 @@ describe("runServerSearch: the reveal", () => {
     expect(bumpMessages).toHaveBeenCalledWith("c1", "shape");
   });
 
-  it("releases the walk's grants on reset even when nothing was left to re-fold", async () => {
-    // The reveal's END ends the grants unconditionally: `clearSearchOpened` returns false on an
-    // empty set.
+  it("repaints the counts away on reset when no turn was left to re-fold", async () => {
     answer(reply([hit({ turn: 2 })]));
     await runServerSearch("c1", "retry");
-    clearSearchOpened.mockReturnValue(false);
-    endWalk.mockClear();
+    clearSearchOpened.mockReturnValue([]);
+    bumpMessages.mockClear();
     resetServerSearch();
-    expect(endWalk).toHaveBeenCalledExactlyOnceWith("c1");
+    expect(bumpMessages).toHaveBeenCalledExactlyOnceWith("c1", "fact");
+    clearSearchOpened.mockReturnValue(["u2"]);
   });
 
   it("undoes the reveal in the chat the SEARCH ran in, whatever is active at close", async () => {
-    // All THREE effects name the chat the search ran in, not the active one.
+    // Both effects name the chat the search ran in, not the active one.
     answer(reply([hit({ turn: 2 })]));
     await runServerSearch("c1", "retry");
-    endWalk.mockClear();
     clearSearchOpened.mockClear();
     bumpMessages.mockClear();
 
     resetServerSearch();
 
-    expect(endWalk).toHaveBeenCalledExactlyOnceWith("c1");
     expect(clearSearchOpened).toHaveBeenCalledExactlyOnceWith("c1");
     expect(bumpMessages).toHaveBeenCalledWith("c1", "shape");
-  });
-
-  it("skips a hit that names no turn", async () => {
-    answer(reply([hit({ turn_id: "" })]));
-    await runServerSearch("c1", "retry");
-    expect(openForSearch).not.toHaveBeenCalled();
   });
 });
 
@@ -257,8 +228,7 @@ describe("revealHitTurn: the per-hit reveal navigation runs before selecting", (
       order.push("bump");
     });
     await revealHitTurn("c1", hit({ turn_id: "u7" }));
-    // Same ordering contract as the search-wide reveal: the body must exist
-    // before the repaint that unfolds it, and the bump is the stated `shape`.
+    // The body must exist before the repaint that unfolds it, and the bump is the stated `shape`.
     expect(order).toEqual(["open:u7", "build:u7", "bump"]);
     expect(bumpMessages).toHaveBeenCalledWith("c1", "shape");
   });
@@ -269,15 +239,14 @@ describe("revealHitTurn: the per-hit reveal navigation runs before selecting", (
     expect(reveal).toHaveBeenCalledExactlyOnceWith("c1", "u7", "e311");
   });
 
-  it("names the entry for an entry-kind hit too, so the kind cannot move the build", async () => {
+  it("names the entry for a header hit too, so the kind cannot move the build", async () => {
     // The kind decides what navigation does, never which element is built.
-    await revealHitTurn("c1", hit({ turn_id: "u7", entry_id: "e4", segment_kind: "entry" }));
+    await revealHitTurn("c1", hit({ turn_id: "u7", entry_id: "e4", kind: "header" }));
     expect(reveal).toHaveBeenCalledExactlyOnceWith("c1", "u7", "e4");
   });
 
   it("does nothing for a hit that names no turn", async () => {
-    // The beforeEach reset already bumped once; this test asserts the CALL
-    // BELOW adds nothing.
+    // This test asserts the CALL BELOW adds nothing.
     bumpMessages.mockClear();
     await revealHitTurn("c1", hit({ turn_id: "" }));
     expect(openForSearch).not.toHaveBeenCalled();
@@ -291,5 +260,20 @@ describe("revealHitTurn: the per-hit reveal navigation runs before selecting", (
     expect(openForSearch).not.toHaveBeenCalled();
     expect(reveal).not.toHaveBeenCalled();
     expect(bumpMessages).not.toHaveBeenCalled();
+  });
+});
+
+describe("refoldAfterReveal: the reveal moved off a turn", () => {
+  it("folds that turn at once, then declares the shape change", () => {
+    const order: string[] = [];
+    fold.mockImplementation((_chatID: string, turnID: string) => {
+      order.push(`fold:${turnID}`);
+    });
+    bumpMessages.mockImplementation(() => {
+      order.push("bump");
+    });
+    refoldAfterReveal("c1", "u4");
+    expect(order).toEqual(["fold:u4", "bump"]);
+    expect(bumpMessages).toHaveBeenCalledWith("c1", "shape");
   });
 });

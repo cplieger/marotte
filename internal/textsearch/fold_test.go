@@ -47,3 +47,35 @@ func TestFold_LowercasesLengthChangingRunes(t *testing.T) {
 		}
 	}
 }
+
+func TestFoldText_PreservesRuneCount(t *testing.T) {
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if utf8.RuneLen(r) < 0 {
+			continue
+		}
+		if got := utf8.RuneCountInString(FoldText(string(r))); got != 1 {
+			t.Fatalf("FoldText(U+%04X) has %d runes, want 1", r, got)
+		}
+	}
+}
+
+func TestFoldText_FoldsCaseAndAccents(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+	}{
+		{"french", "Sécurité ÉCOLE garçon", "securite ecole garcon"},
+		{"stacked marks", "ǕǖǗ", "uuu"},
+		{"greek tonos", "Άλφα", "αλφα"},
+		{"no canonical decomposition stays", "øßł", "øßł"},
+		{"a decomposed accent keeps its mark", "e\u0301", "e\u0301"},
+		{"kelvin sign", "\u212A", "k"},
+		{"invalid byte", "a\xffé", "a\uFFFDe"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := FoldText(c.in); got != c.want {
+				t.Errorf("FoldText(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}

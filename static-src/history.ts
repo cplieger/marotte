@@ -32,6 +32,8 @@ import { actionNotice } from "./notice-subject.js";
 import { openPreviousSession, openChatTab } from "./chat.js";
 import { searchChats } from "./actions/chat-search.js";
 import { openChatFindAt } from "./find-in-chat.js";
+import { CHAT_SEARCH_DEBOUNCE_MS } from "./chat-search.js";
+import { parseChatQuery } from "./chat-query.js";
 import { classify, emptyNote, scanNote } from "./textsearch/copy.js";
 import type { Nouns } from "./textsearch/copy.js";
 import type { CloseImpact, Match, RunStandingKind } from "./wire/types.gen.js";
@@ -325,7 +327,22 @@ const RUN_NOUNS: Nouns = {
   scanned: { one: "run", many: "runs" },
 };
 
-const SEARCH_DEBOUNCE_MS = 250;
+/** Search-as-you-type waits for this many characters: under three the trigram filter cannot narrow the scan, which
+ *  then reads every chat. Enter searches any length. */
+const SEARCH_MIN_RUNES = 3;
+
+/** Whether typing alone leaves `q` to Enter: no filter, and no word long enough to give the server's prefilter a
+ *  trigram (each word counts on its own, as `queryTrigrams` reads them). */
+function underFloor(q: string): boolean {
+  const pq = parseChatQuery(q);
+  if (pq.file !== "" || pq.tool !== "" || pq.turn > 0) {
+    return false;
+  }
+  return !pq.terms.some((t) => t.words.some((w) => Array.from(w).length >= SEARCH_MIN_RUNES));
+}
+
+/** The note while the typed text is under the floor. */
+const UNDER_FLOOR_NOTE = "Type 3 characters, or press Enter to search";
 
 // Deduped, like git-tabs.ts: re-selecting the active pane does not re-swap panels.
 const activeTab = signal<HistoryTab>("chats");
@@ -367,11 +384,13 @@ class HistoryController {
     label: "Search conversations",
     placeholder: "Search conversations\u2026",
     note: true,
-    // The scan can read every chat file, so the pause is longer than the shell's default.
-    debounceMs: SEARCH_DEBOUNCE_MS,
+    // Find in chat's pause: the same words find the same chat on both surfaces, typed the same way.
+    debounceMs: CHAT_SEARCH_DEBOUNCE_MS,
     host: () => document.getElementById("history-view"),
-    query: (q) => {
-      this.query = q;
+    query: (q, ctx) => {
+      const short = !ctx.submitted && q.trim() !== "" && underFloor(q);
+      this.underFloor = short;
+      this.query = short ? "" : q;
       return null;
     },
     render: () => {
@@ -379,6 +398,8 @@ class HistoryController {
     },
   });
   private query = "";
+  /** The typed text is under `SEARCH_MIN_RUNES` and the pause, not Enter, ran it: the list shows, with the hint. */
+  private underFloor = false;
 
   /** A search by name and recipe over the loaded runs. History has one find kind on both panes, so the
    *  toolbar button keeps its glyph and its name when the pane switches. */
@@ -436,6 +457,7 @@ class HistoryController {
     this.verdict.value = null;
     // reset(), not close(): close's clear would repaint, a fetch no reader needs.
     this.query = "";
+    this.underFloor = false;
     this.search.reset();
     this.runQuery = "";
     this.runsFind.reset();
@@ -444,7 +466,7 @@ class HistoryController {
   /** The Chats pane shows the list or search, by the box; the Runs pane is the list either way. */
   async refresh(): Promise<void> {
     if (this.query === "") {
-      this.setNote("");
+      this.setNote(this.underFloor ? UNDER_FLOOR_NOTE : "");
       await this.load();
       return;
     }
@@ -831,12 +853,14 @@ async function openMatch(match: Match, query: string): Promise<void> {
 function buildMatchRow(m: Match, query: string): HTMLElement {
   // A title-only match has no hit: say why it matched. Words another program sent say so before the excerpt.
   const best = m.best;
-  const detail =
+  const line =
     best === undefined
       ? "matches the conversation name"
       : best.caller === undefined
         ? best.excerpt
         : `${sentBy(best.caller)}: ${best.excerpt}`;
+  // No one message holds every word: the row says so before the line from one of them.
+  const detail = m.spread ? `Words spread across messages: ${line}` : line;
   const more = m.hits > 1 ? `${String(m.hits)} matches` : m.hits === 1 ? "1 match" : "";
   return entryRow({
     key: `m:${m.id}`,

@@ -164,6 +164,9 @@ export function wireSearchKeys(
 interface SearchQueryContext {
   caseSensitive: boolean;
   signal: AbortSignal;
+  /** True for a run the reader asked for (Enter, the case toggle, an open: `run()`), false for one the typing pause
+   *  started, so a box can wait for more text before a costly search. */
+  submitted: boolean;
 }
 
 interface SearchShellParts {
@@ -311,6 +314,10 @@ export function createSearchShell<R>(spec: SearchShellSpec<R>): SearchShell {
   }
 
   function run(): void {
+    start(true);
+  }
+
+  function start(submitted: boolean): void {
     if (timer !== undefined) {
       clearTimeout(timer);
       timer = undefined;
@@ -319,7 +326,7 @@ export function createSearchShell<R>(spec: SearchShellSpec<R>): SearchShell {
     const ctrl = new AbortController();
     inFlight = ctrl;
     const issued = input.value;
-    const result = spec.query(issued, { caseSensitive, signal: ctrl.signal });
+    const result = spec.query(issued, { caseSensitive, signal: ctrl.signal, submitted });
     if (!isThenable<R>(result)) {
       // Rendered in this tick: a resolved promise here would let a keystroke land between the run
       // and its own result.
@@ -349,7 +356,7 @@ export function createSearchShell<R>(spec: SearchShellSpec<R>): SearchShell {
     }
     timer = setTimeout(() => {
       timer = undefined;
-      run();
+      start(false);
     }, spec.debounceMs ?? SEARCH_DEBOUNCE_MS);
   }
 

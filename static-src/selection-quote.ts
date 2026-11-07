@@ -15,8 +15,8 @@ import { chatNotice } from "./notice-subject.js";
 import { NO_CONVERSATION_TANGENT, tangentRefusal } from "./tangent-refusal.js";
 import * as toast from "./toast.js";
 
-/** A control or chrome: its text is a UI label, never quoted. */
-const CONTROL = [
+/** A control: its text is a UI label, never quoted. */
+const WIDGET = [
   "button",
   '[role="button"]',
   "summary",
@@ -26,16 +26,31 @@ const CONTROL = [
   '[contenteditable]:not([contenteditable="false"])',
   '[role^="menu"]',
   ".uip-popover",
-  `[${CHROME_ATTR}]`,
 ].join(",");
 
-/** Controls whose text is content, a run's or a file's name, so they quote as the source around them does. Chrome
- *  inside one is still chrome. */
+const CHROME = `[${CHROME_ATTR}]`;
+
+/** A control or chrome: its text is a UI label, never quoted. */
+const CONTROL = `${WIDGET},${CHROME}`;
+
+/** Controls whose text is content, a run's or a file's name, so they quote as the source around them does, even
+ *  inside chrome that is no widget (a steer note's head). Chrome inside one is still chrome. */
 const NAMING_CONTROL =
   ".run-bar-open, .run-head, .run-step-head, .turn-wake-run, .turn-wake-row-run, .tool-file-link, .steer-note-run";
 
 function isControl(e: Element): boolean {
-  return e.matches(CONTROL) && (!e.matches(NAMING_CONTROL) || e.matches(`[${CHROME_ATTR}]`));
+  return e.matches(CONTROL) && (!e.matches(NAMING_CONTROL) || e.matches(CHROME));
+}
+
+/** Chrome that is no widget: it owns its text except a naming control's inside it. */
+function isBareChrome(e: Element): boolean {
+  return e.matches(CHROME) && !e.matches(WIDGET);
+}
+
+/** Whether `node` is text of a naming control inside `chrome`, which the chrome does not own. */
+function inNamingControl(node: Node, chrome: Element): boolean {
+  const named = node.parentElement?.closest(NAMING_CONTROL);
+  return named !== null && named !== undefined && chrome.contains(named) && !named.matches(CHROME);
 }
 
 function textOf(root: Element, selector: string): string {
@@ -145,10 +160,12 @@ function sourceOf(node: Node): Element | null {
   if (inner === null || region === undefined) {
     return null;
   }
+  let named = false;
   for (let e: Element | null = inner; e !== null && region.contains(e); e = e.parentElement) {
-    if (isControl(e)) {
+    if (isControl(e) && !(named && isBareChrome(e))) {
       return null;
     }
+    named ||= e.matches(NAMING_CONTROL);
   }
   const labelled = inner.closest(LABELLED_ROOTS);
   return labelled !== null && region.contains(labelled) ? labelled : rowOf(inner, region);
@@ -164,7 +181,7 @@ function coversNoText(a: [Node, number], b: [Node, number]): boolean {
 
 /** Whether `range` covers text of `e`. Touching it without covering its text, as a range ending at its start
  *  does, is not. */
-function coversTextOf(range: Range, e: Element): boolean {
+function coversTextOf(range: Range, e: Node): boolean {
   // Clipping to a range that misses `e` collapses `part`, so it reads "".
   const part = document.createRange();
   part.selectNodeContents(e);
@@ -181,7 +198,21 @@ function coversTextOf(range: Range, e: Element): boolean {
  *  or a labelled kind's nested inside it, which is a second source. */
 function coversForeignText(range: Range, source: Element): boolean {
   for (const e of source.querySelectorAll(`${CONTROL},${LABELLED_ROOTS}`)) {
-    if ((isControl(e) || e.matches(LABELLED_ROOTS)) && coversTextOf(range, e)) {
+    const foreign = isBareChrome(e)
+      ? coversChromeText(range, e)
+      : (isControl(e) || e.matches(LABELLED_ROOTS)) && coversTextOf(range, e);
+    if (foreign) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Whether `range` covers text `chrome` owns, which leaves out a naming control's inside it. */
+function coversChromeText(range: Range, chrome: Element): boolean {
+  const walker = document.createTreeWalker(chrome, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n !== null; n = walker.nextNode()) {
+    if (!inNamingControl(n, chrome) && coversTextOf(range, n)) {
       return true;
     }
   }

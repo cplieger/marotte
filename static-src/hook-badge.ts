@@ -50,6 +50,15 @@ interface HookEntry {
   runs: number;
 }
 
+/** The list row a folded hook card is counted in: its name, hook file and trigger. */
+function hookKey(card: HTMLElement): string {
+  return join(
+    card.dataset["title"] ?? "",
+    card.dataset["filePath"] ?? "",
+    card.dataset["hookTrigger"] ?? "",
+  );
+}
+
 /** The folded hooks grouped by name, hook file and trigger, in order of first appearance. */
 function hookEntries(folded: readonly HTMLElement[]): HookEntry[] {
   const entries = new Map<string, HookEntry>();
@@ -57,7 +66,7 @@ function hookEntries(folded: readonly HTMLElement[]): HookEntry[] {
     const title = card.dataset["title"] ?? "";
     const path = card.dataset["filePath"] ?? "";
     const trigger = card.dataset["hookTrigger"] ?? "";
-    const key = join(title, path, trigger);
+    const key = hookKey(card);
     const seen = entries.get(key);
     if (seen !== undefined) {
       seen.runs++;
@@ -154,7 +163,7 @@ function mountBadge(group: HTMLElement): HTMLElement {
   const state: HookPopover = { folded: [], panel, ctl };
   popovers.set(badge, state);
   badge.addEventListener("click", () => {
-    toggleHookPopover(state);
+    toggleHookPopover(state, badge);
   });
   const header = group.querySelector(":scope > .tool-group-header");
   if (header === null) {
@@ -165,14 +174,55 @@ function mountBadge(group: HTMLElement): HTMLElement {
   return badge;
 }
 
-function toggleHookPopover(state: HookPopover): void {
+function toggleHookPopover(state: HookPopover, badge: HTMLElement): void {
   if (state.ctl.isOpen) {
     state.ctl.hide();
     return;
   }
+  // A reader's open moves focus into the list and back; set on every show, since find's open sets none.
+  state.ctl.setOptions({ initialFocus: state.panel, returnFocus: badge });
+  showList(state);
+}
+
+function showList(state: HookPopover): void {
   delete state.panel.dataset["keys"];
   renderHookList(state);
   state.ctl.show();
+}
+
+/** Open the badge's list without moving focus, for find-in-chat landing on a folded hook while the reader types.
+ *  False when `badge` is no hooks badge or the list is already open. */
+export function showHookPopover(badge: HTMLElement): boolean {
+  const state = popovers.get(badge);
+  if (state === undefined || state.ctl.isOpen) {
+    return false;
+  }
+  state.ctl.setOptions({ initialFocus: null, returnFocus: false });
+  showList(state);
+  return true;
+}
+
+/** The open list's row counting the folded hook `card`, null while the list is closed. Every show rebuilds the
+ *  list, so a mark find-in-chat puts in a row never outlives the list's close. */
+export function hookRowOf(badge: HTMLElement, card: HTMLElement): HTMLElement | null {
+  const state = popovers.get(badge);
+  if (state?.ctl.isOpen !== true) {
+    return null;
+  }
+  const key = hookKey(card);
+  return (
+    [...state.panel.querySelectorAll<HTMLElement>(".tool-hook-item")].find(
+      (row) => row.dataset["hookKey"] === key,
+    ) ?? null
+  );
+}
+
+/** Close the badge's list; a list `showHookPopover` opened moved no focus, so none moves back. */
+export function hideHookPopover(badge: HTMLElement): void {
+  const state = popovers.get(badge);
+  if (state?.ctl.isOpen === true) {
+    state.ctl.hide();
+  }
 }
 
 /** Rebuilt only when the entries change, so a focused chip keeps its focus. */
@@ -202,7 +252,7 @@ function renderHookList(state: HookPopover): void {
 function hookItem(entry: HookEntry, close: () => void): HTMLElement {
   const item = el(
     "li",
-    { className: "tool-hook-item" },
+    { className: "tool-hook-item", "data-hook-key": entry.key },
     el("span", { className: "tool-hook-count" }, `${String(entry.runs)}\u00d7`),
     el(
       "span",

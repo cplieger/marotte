@@ -158,25 +158,23 @@ function foldToggle(turn: string): HTMLButtonElement {
   return btn;
 }
 
-function hitIn(at: number, text: string, excerpt: string): Hit {
+function hitIn(at: number, excerpt: string): Hit {
   return {
     turn_id: "big",
     entry_id: `big-e${String(at)}`,
     excerpt,
-    role: "assistant",
-    segment_kind: "content",
+    kind: "message",
+    segments: ["content"],
     turn: 1,
-    offset: text.indexOf(NEEDLE),
-    segment_len: text.length,
-  } as unknown as Hit;
+  };
 }
 
 function hit(): Hit {
-  return hitIn(HIT_AT, hitText(), `the ${NEEDLE} lives at the very end`);
+  return hitIn(HIT_AT, `the ${NEEDLE} lives at the very end`);
 }
 
 function aboveHit(): Hit {
-  return hitIn(ABOVE_AT, ABOVE_TEXT, ABOVE_TEXT);
+  return hitIn(ABOVE_AT, ABOVE_TEXT);
 }
 
 function entryEl(at: number): HTMLElement {
@@ -229,7 +227,13 @@ function stageServerHits(hits: Hit[]): void {
   vi.mocked(api.apiGetTyped).mockImplementation(((path: string, decode: (v: unknown) => unknown) =>
     Promise.resolve(
       path.includes("/search?q=")
-        ? decode({ matches: hits, scanned: 1, matched: hits.length, truncated: false })
+        ? decode({
+            matches: hits,
+            spread: false,
+            scanned: 1,
+            matched: hits.length,
+            truncated: false,
+          })
         : null,
     )) as typeof api.apiGetTyped);
 }
@@ -238,10 +242,13 @@ function countText(): string {
   return document.getElementById("chat-find-count")?.textContent ?? "";
 }
 
+/** Search `query`, which lands on the hit nearest the reader, then press Enter (or Shift+Enter) once more unless
+ *  `step` is false. */
 async function findAndStep(
   query: string,
   beforeStep: () => void = () => undefined,
   back = false,
+  step = true,
 ): Promise<void> {
   handleFindHotkey(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, cancelable: true }));
   const input = document.getElementById("chat-find-input") as HTMLInputElement;
@@ -252,15 +259,17 @@ async function findAndStep(
     );
   };
   enter(false);
+  // The answer's own landing paints the stepped counter last.
   await vi.waitFor(() => {
-    expect(countText()).toMatch(/in chat|matched, not shown here/);
+    expect(countText()).toMatch(/^\d+ of \d+/);
   });
-  // The shell's render, which records the navigable hits, lands a few microtask hops after the counter.
   await new Promise((resolve) => {
     setTimeout(resolve, 0);
   });
   beforeStep();
-  enter(back);
+  if (step) {
+    enter(back);
+  }
 }
 
 async function loadAtLiveEdge(chat: string, live: boolean, matchAbove = false): Promise<void> {
@@ -443,7 +452,8 @@ describe("find-in-chat's reveal under reduced motion", () => {
   it("keeps the current hit when the transcript streams while the reader is away from it", async () => {
     try {
       await loadAtLiveEdge("c-away-reduced", true, true);
-      await findAndStep(NEEDLE, undefined, true);
+      // The answer lands on the hit nearest the live edge, the lower one.
+      await findAndStep(NEEDLE, undefined, false, false);
       await vi.waitFor(() => {
         expect(currentHitEntry()).toBe(`big-e${String(HIT_AT)}`);
       });
@@ -498,7 +508,8 @@ describe("find-in-chat's reveal under reduced motion", () => {
       handleFindHotkey(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, cancelable: true }));
       const input = document.getElementById("chat-find-input") as HTMLInputElement;
       input.value = FOLD_NEEDLE;
-      for (const counter of ["1 of 5", "2 of 5", "3 of 5"]) {
+      // One step per message holding the word, however often it holds it.
+      for (const counter of ["1 of 3", "2 of 3"]) {
         input.dispatchEvent(
           new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
         );
@@ -516,7 +527,7 @@ describe("find-in-chat's reveal under reduced motion", () => {
       });
       streamChunk(chat, "f3");
       await vi.waitFor(() => {
-        expect(countText()).toBe("2 of 3");
+        expect(countText()).toBe("2 of 2");
       });
       expect(messagesEl.querySelector("mark.find-hit-current")).toBe(
         entryById("f3-e1").querySelector("mark.find-hit"),
@@ -526,7 +537,7 @@ describe("find-in-chat's reveal under reduced motion", () => {
     }
   });
 
-  it("keeps the current hit in a running command's output when its next frame lands", async () => {
+  it("keeps every line of a running command's output marked current when its next frame lands", async () => {
     const chat = "c-command-reduced";
     const output = ["one", "two", "three"].map((n) => `${COMMAND_NEEDLE} ${n}`).join("\n");
     const entries = [
@@ -569,14 +580,13 @@ describe("find-in-chat's reveal under reduced motion", () => {
       handleFindHotkey(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, cancelable: true }));
       const input = document.getElementById("chat-find-input") as HTMLInputElement;
       input.value = COMMAND_NEEDLE;
-      for (const counter of ["1 of 3", "2 of 3", "3 of 3"]) {
-        input.dispatchEvent(
-          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
-        );
-        await vi.waitFor(() => {
-          expect(countText()).toBe(counter);
-        });
-      }
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+      );
+      // The card is one step, its three lines its marks.
+      await vi.waitFor(() => {
+        expect(countText()).toBe("1 of 1");
+      });
 
       applyToolProgress(chat, "cmd", {
         turn: "cmd",
@@ -590,10 +600,10 @@ describe("find-in-chat's reveal under reduced motion", () => {
       });
       expect({
         counter: countText(),
-        current: [...(pre?.querySelectorAll("mark.find-hit") ?? [])].findIndex((m) =>
+        current: [...(pre?.querySelectorAll("mark.find-hit") ?? [])].map((m) =>
           m.classList.contains("find-hit-current"),
         ),
-      }).toEqual({ counter: "3 of 3", current: 2 });
+      }).toEqual({ counter: "1 of 1", current: [true, true, true] });
     } finally {
       toggleChatFind();
     }
@@ -675,7 +685,7 @@ describe("find-in-chat's reveal with motion", () => {
     }
   });
 
-  it("marks a match added beside the hit during the reveal's flight once the flight lands", async () => {
+  it("marks a match added beside the hit during the reveal's flight as part of its message", async () => {
     // Beside the hit, because the walker prunes skipped rows: a chunk streamed at the live edge is skipped, so not
     // walkable, while the reader is at this hit.
     const addOnHighlight = new MutationObserver(() => {
@@ -700,7 +710,7 @@ describe("find-in-chat's reveal with motion", () => {
           })),
         ).toEqual([
           { hit: "0", current: true },
-          { hit: "1", current: false },
+          { hit: "0", current: true },
         ]);
       });
     } finally {

@@ -279,6 +279,21 @@ describe("createSearchShell: the query lifecycle", () => {
     expect(query, "the superseded debounce must not fire a second run").toHaveBeenCalledTimes(1);
   });
 
+  it("tells a run the reader asked for from one the typing pause started", async () => {
+    const seen: boolean[] = [];
+    const { shell } = harness({
+      query: (_q: string, ctx: { submitted: boolean }) => {
+        seen.push(ctx.submitted);
+        return null;
+      },
+    });
+    shell.input.value = "a";
+    shell.input.dispatchEvent(new Event("input"));
+    await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
+    shell.run();
+    expect(seen).toEqual([false, true]);
+  });
+
   it("aborts the in-flight query when a newer one starts", () => {
     const seen: AbortSignal[] = [];
     const { shell } = harness({

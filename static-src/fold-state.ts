@@ -126,15 +126,18 @@ export function openForSearch(chatID: string, turnID: string): void {
   set.add(turnID);
 }
 
-/** Drop every search-opened turn. Returns true when something changed, so the
- *  caller can skip a repaint that would do nothing. */
-export function clearSearchOpened(chatID: string): boolean {
+/** Drop one search-opened turn, when the search's reveal moves off it. Returns true when something changed. A turn
+ *  the reader toggled by hand keeps its override, which outranks this set in `isTurnOpen`. */
+export function closeForSearch(chatID: string, turnID: string): boolean {
+  return searchOpened.get(chatID)?.delete(turnID) === true;
+}
+
+/** Drop every search-opened turn, answering their ids, so the caller folds them and skips a repaint when there
+ *  are none. */
+export function clearSearchOpened(chatID: string): string[] {
   const set = searchOpened.get(chatID);
-  if (set === undefined || set.size === 0) {
-    return false;
-  }
   searchOpened.delete(chatID);
-  return true;
+  return set === undefined ? [] : [...set];
 }
 
 /**
