@@ -27,7 +27,7 @@ type stepClose struct {
 	// hasGrade is whether a step_graded for turn is folded in.
 	hasGrade bool
 	// settled is whether no read of KAS's record is spent on the close's grade again (runLog.gradeLocked); in
-	// memory only, so a restart reads once more.
+	// memory only, so a restart starts the count again.
 	settled bool
 }
 
