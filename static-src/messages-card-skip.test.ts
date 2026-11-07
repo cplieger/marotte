@@ -225,3 +225,47 @@ describe("a full pass updates only the cards whose inputs changed", () => {
     ).toBe(true);
   });
 });
+
+// A geometry read after a DOM write forces a synchronous layout, so a pass reading once per card lays the whole
+// transcript out once per card: the 1.7 s freezes a long chat showed while it streamed.
+describe("a full pass reads no geometry per card", () => {
+  function geometryReads(): { count: () => number; stop: () => void } {
+    const rect = vi.spyOn(Element.prototype, "getBoundingClientRect");
+    const rects = vi.spyOn(Element.prototype, "getClientRects");
+    return {
+      count: () => rect.mock.calls.length + rects.mock.calls.length,
+      stop: () => {
+        rect.mockRestore();
+        rects.mockRestore();
+      },
+    };
+  }
+
+  it("for a fact no card shows", async () => {
+    const id = `c-geo-label-${String(++seq)}`;
+    seed(longChat(id, CARDS));
+    await flushed();
+    const reads = geometryReads();
+    store.setWorkingLabel(id, "Reading files");
+    await flushed();
+    const n = reads.count();
+    reads.stop();
+    expect(n).toBe(0);
+  });
+
+  it("for a fact every card shows", async () => {
+    const id = `c-geo-busy-${String(++seq)}`;
+    seed(longChat(id, CARDS));
+    await flushed();
+    const reads = geometryReads();
+    store.setThinking(id, true);
+    await flushed();
+    const n = reads.count();
+    reads.stop();
+    expect(
+      rewindButtons(id).every((b) => b.disabled),
+      "the pass reached every card",
+    ).toBe(true);
+    expect(n, "geometry reads in a pass over every card").toBeLessThan(CARDS);
+  });
+});
