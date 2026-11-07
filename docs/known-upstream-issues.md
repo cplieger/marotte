@@ -74,6 +74,12 @@ A hook that checks a tool call, such as a guard that runs before every command, 
 
 Reported as [kirodotdev/Kiro#12284](https://github.com/kirodotdev/Kiro/issues/12284), open. kiro-cli's report of a hook names neither the tool call it ran for nor whether it blocked that call. marotte will show each hook on its own call once kiro-cli names the call.
 
+### A message from another service reads to the agent as yours
+
+A message another service sends through the [notify route](configuration.md#waking-a-chat-from-another-service-marotte_notify_token) reaches the agent as a message from you. kiro-cli presents a message steered into a running reply as a new message from the user, and a new message as one the user typed, so the agent can follow it as your instruction.
+
+Reported as [kirodotdev/Kiro#12325](https://github.com/kirodotdev/Kiro/issues/12325), open. kiro-cli offers no way to name a message's sender. The chat shows "Sent by" and the caller's `source` on the message, but the agent does not read the `source`. Until kiro-cli supports a sender label, start the message's text by naming the service that sent it.
+
 ## Skills
 
 ### A skill with a long description or an underscore in its name never loads
