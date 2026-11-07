@@ -195,8 +195,11 @@ func (rs *Runs) reconcileLeasePresence(ctx context.Context, status map[string]ma
 
 		if inspectAbsent {
 			if ending, gone := rs.inspectGone(ctx, l.WorkflowID); gone {
-				slog.Info("boot: releasing the lease of a run inspect confirmed is over",
-					"workflow_id", l.WorkflowID, "recipe", l.Recipe)
+				msg := "boot: releasing the lease of a run inspect confirmed is over"
+				if ending.Status == launchrule.StatusUnknown {
+					msg = "boot: releasing the lease of a run the engine no longer knows"
+				}
+				slog.Info(msg, "workflow_id", l.WorkflowID, "recipe", l.Recipe)
 				rs.recordSlotEnding(ctx, ruleRun(l), ending)
 				rs.forgetBounds(ctx, l.WorkflowID)
 				continue

@@ -147,7 +147,7 @@ func (rs *Runs) recordScheduleEnding(ctx context.Context, run launchrule.Run, st
 	rs.recordSlotEnding(ctx, run, runEnding(status, stopReason))
 }
 
-// recordSlotEnding is recordScheduleEnding for an ending with no terminal status to word it.
+// recordSlotEnding fills run's ending, already worded as an Outcome, on a row still reading started (launchrule.Store.RecordEnding).
 func (rs *Runs) recordSlotEnding(ctx context.Context, run launchrule.Run, outcome launchrule.Outcome) {
 	if run.RuleID != "" {
 		if rs.confirmer != nil {
