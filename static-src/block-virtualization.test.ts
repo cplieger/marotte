@@ -1229,7 +1229,7 @@ describe("unmounted ordinals hold the height their rows occupied", () => {
     });
     const body = bodyOf("groups");
     expect(
-      body.querySelectorAll(":scope > .tool-group.tool-group-auto-collapsed"),
+      body.querySelectorAll(":scope > .tool-group.tool-group-collapsed"),
       "the premise",
     ).toHaveLength(groups);
     const boxes = [...body.children].filter((c) => !c.classList.contains("turn-space"));

@@ -16,8 +16,6 @@ import {
 import { edgeSlack, GestureTracker, type Aim } from "./scroll-gesture.js";
 import { loadMoreSkeleton } from "./skeleton.js";
 
-export type { ReadingAnchor } from "./reading-anchor.js";
-
 /** Air under the live block's bottom when Following pins it above the scrollport's bottom edge. */
 const LIVE_ANCHOR_AIR_PX = 50;
 /** How long the owner's own smooth jump may fly with no `scrollend`: one animation and its settle. */
@@ -58,7 +56,7 @@ export type ReadingState = "following" | "reading";
 
 /** A hold's write decision. `none` keeps the anchor and its remainder; `clamped` means the clamp left no room, so
  *  the caller re-takes; `write` moves to `top`, re-taking after it when `clamped`. */
-export type HoldTarget =
+type HoldTarget =
   { kind: "none" } | { kind: "clamped" } | { kind: "write"; top: number; clamped: boolean };
 
 /** Where a hold of `drift` px from `before` should land on a scroller whose end is `max`. Engines land a write on a

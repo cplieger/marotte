@@ -277,13 +277,12 @@ async function parkAt(d: number): Promise<void> {
   await idle(2);
 }
 
-function growLast(px: number): HTMLElement {
+function growLast(px: number): void {
   const last = [...scrollerEl.querySelectorAll(".turn")].at(-1)!;
   const g = document.createElement("div");
   g.className = "v-grow";
   g.style.cssText = `height:${String(px)}px;margin:0;padding:0`;
   last.appendChild(g);
-  return g;
 }
 
 /** Back on the end, Following, with nothing moving. */

@@ -30,7 +30,7 @@ export function domProxy(): object {
 }
 
 /** One owner write: where it asked to go, and how far it moved the scroller. */
-export interface Write {
+interface Write {
   readonly top: number | null;
   readonly delta: number;
 }
