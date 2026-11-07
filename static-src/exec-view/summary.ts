@@ -54,7 +54,7 @@ export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
   const root = el("span", { className: "ev-sum" }, label, state, progress.root, mini, clock);
   let described = "";
   const shows = opts.shows ?? (() => true);
-  const figure = opts.figure ?? creditFigure;
+  const onScreen = opts.figure ?? creditFigure;
   const shown = (alert: ExecRun["alert"]): alert is ExecAlert => wantsReader(alert) && shows(alert);
 
   const paintAlert = (run: ExecRun | undefined): void => {
@@ -105,7 +105,7 @@ export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
       setText(clock, win === undefined ? "" : formatElapsed(win.span));
       const billed = run.credits !== undefined && run.credits > 0 ? run.credits : undefined;
       const spent = billed === undefined ? "" : creditFigure(billed);
-      paintCredits(billed === undefined ? "" : figure(billed));
+      paintCredits(billed === undefined ? "" : onScreen(billed));
       paintAlert(run);
       described =
         opts.alertHost !== undefined && shown(run.alert)
