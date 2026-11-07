@@ -12,17 +12,19 @@ const wtuiSheets = import.meta.glob<string>("../node_modules/@cplieger/web-termi
   eager: true,
 });
 
-export type ClientFrame =
+type ClientFrame =
   { kind: "input"; text: string } | { kind: "control"; msg: Record<string, unknown> };
 
-const decoder = new TextDecoder();
-const encoder = new TextEncoder();
+const decoder = new TextDecoder(); // deadset:ignore DS1002 -- used by FakeShellSocket.send, which the terminal library calls on the stubbed WebSocket
+const encoder = new TextEncoder(); // deadset:ignore DS1002 -- used by FakeShellSocket.send, which the terminal library calls on the stubbed WebSocket
 
+// deadset:ignore DS1002 -- used by FakeShellSocket.send, which the terminal library calls on the stubbed WebSocket
 function u64(view: DataView, off: number, v: number): void {
   view.setBigUint64(off, BigInt(v), true);
 }
 
 /** A resumeAck carrying the received count and a server epoch (the engine's binary layout). */
+// deadset:ignore DS1002 -- used by FakeShellSocket.send, which the terminal library calls on the stubbed WebSocket
 function resumeAck(): ArrayBuffer {
   const buf = new ArrayBuffer(17);
   const view = new DataView(buf);
@@ -34,6 +36,7 @@ function resumeAck(): ArrayBuffer {
 
 /** A full screen frame of `height` rows with a prompt on the first, as an attach sends at the
  *  server's default size before any resize. */
+// deadset:ignore DS1002 -- used by FakeShellSocket.send, which the terminal library calls on the stubbed WebSocket
 function screen(height: number): ArrayBuffer {
   const text = encoder.encode("$ ");
   const parts: number[] = [];
@@ -66,6 +69,7 @@ function screen(height: number): ArrayBuffer {
   return new Uint8Array(parts).buffer;
 }
 
+// deadset:ignore DS1002 -- used by FakeShellSocket.send, which the terminal library calls on the stubbed WebSocket
 function classify(text: boolean, bytes: Uint8Array): ClientFrame {
   const json = text
     ? decoder.decode(bytes)
