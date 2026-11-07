@@ -61,6 +61,12 @@ export function queryAll<T extends Element = Element>(selector: string): T[] {
   return found;
 }
 
+/** The roots a page-wide walk covers: the document, then the parked surfaces. */
+export function pageRoots(): ParentNode[] {
+  const off = parked();
+  return off === null ? [document] : [document, off];
+}
+
 /** Park a hidden surface, keeping its place for `unpark`. A no-op for one already parked or off the page, and for
  *  one holding playing media, which leaving the document would pause (HTML "media element removed"). Reads the
  *  offsets of what scrolled inside it, so call it before the writes that hide it. */

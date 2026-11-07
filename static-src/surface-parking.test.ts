@@ -8,6 +8,9 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { byId, park, queryAll, unpark } from "./dom.js";
 import { closeModal, createParkedDialog, initAllModals, openModal } from "./modals.js";
 import { showOnlyView } from "./view-swap.js";
+import { initClockToggle } from "./clock-toggle.js";
+import { adoptLinkGuard, formPayloadLink, installLinkGuard, linkAnchor } from "./link-guard.js";
+import type { EffectiveSettings } from "./wire/types.gen.js";
 
 const frame = (): Promise<void> =>
   new Promise((r) => {
@@ -309,5 +312,44 @@ describe("park", () => {
     before.remove();
     surface.remove();
     after.remove();
+  });
+});
+
+describe("a page-wide redraw", () => {
+  const parkedHost = (): HTMLElement => {
+    const host = document.createElement("section");
+    document.body.append(host);
+    return host;
+  };
+
+  it("reaches a clock on a parked surface", () => {
+    initClockToggle();
+    const host = parkedHost();
+    const t = document.createElement("time");
+    t.dateTime = "2026-01-02T15:04:05Z";
+    t.setAttribute("data-clock", "short");
+    t.textContent = "stale";
+    host.append(t);
+    park(host);
+    byId("clock-btn").click();
+    expect(t.textContent).not.toBe("stale");
+    unpark(host, () => undefined);
+    host.remove();
+  });
+
+  it("re-forms a guarded link on a parked surface", async () => {
+    const stop = installLinkGuard();
+    adoptLinkGuard({ guard_payload_links: true } as EffectiveSettings);
+    const host = parkedHost();
+    const anchor = linkAnchor();
+    anchor.textContent = "link";
+    host.append(anchor);
+    formPayloadLink(anchor, "https://example.com/?d=aGVsbG8gd29ybGQ");
+    park(host);
+    adoptLinkGuard({ guard_payload_links: false } as EffectiveSettings);
+    await expect.poll(() => host.querySelector("a[href]")?.textContent).toBe("link");
+    stop();
+    unpark(host, () => undefined);
+    host.remove();
   });
 });

@@ -41,6 +41,12 @@ export default [
             "MemberExpression[object.name='document'][property.name=/^(getElementById|querySelector|querySelectorAll)$/]",
           message: "Look elements up through dom.ts (byId, maybeEl, queryEl, queryAll).",
         },
+        {
+          selector:
+            "CallExpression > Identifier.arguments[name='document'], LogicalExpression > Identifier[name='document']",
+          message:
+            "Walk the page through dom.ts pageRoots(), which covers the parked surfaces too.",
+        },
       ],
     },
   },

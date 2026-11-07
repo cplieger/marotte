@@ -25,7 +25,7 @@ import { binTurns } from "./rail-select.js";
 import type { TurnBin, TurnMapLayout } from "./rail-select.js";
 import { activeTurnAt, buildOffsets, markerSlotFor, turnsInView } from "./rail-activation.js";
 import type { CardTop, TurnOffsets } from "./rail-activation.js";
-import { setAttr, setStyleVar } from "./dom.js";
+import { queryEl, setAttr, setStyleVar } from "./dom.js";
 
 /** How far the transcript must scroll before the map appears: a threshold, not `> 0`, so a few
  *  pixels of settling overflow do not flicker it. */
@@ -1173,14 +1173,14 @@ function settled(): Promise<void> {
 /** The mounted card for the turn whose opening message is `id`, or null when it is
  *  not resident. Scoped to the ACTIVE transcript view, because the reconcile key
  *  repeats once per resident view and a document-wide query answers in document
- *  order. The document fallback keeps the map fixtures working unscoped. */
+ *  order. The page-wide fallback keeps the map fixtures working unscoped. */
 function turnCard(id: string): HTMLElement | null {
   if (id === "") {
     return null;
   }
   const selector = `[data-reconcile-key="${CSS.escape(id)}"]`;
   const view = activeView();
-  return (view ?? document).querySelector<HTMLElement>(selector);
+  return view === null ? queryEl<HTMLElement>(selector) : view.querySelector<HTMLElement>(selector);
 }
 
 /** How long the landing card wears its ring. Long enough to be seen, short enough
