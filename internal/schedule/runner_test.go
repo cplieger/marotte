@@ -22,11 +22,7 @@ import (
 
 func mustStore(t *testing.T) *launchrule.Store {
 	t.Helper()
-	s, _, err := launchrule.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewStore: %v", err)
-	}
-	return s
+	return mustStoreIn(t, t.TempDir())
 }
 
 // fakeLauncher records launches and can be made to fail. It carries its own mutex because

@@ -25,6 +25,8 @@ const leaseAbsenceBudget = 6 * time.Hour
 
 const reasonLeaseAbsent = "no terminal signal was seen and the run stayed absent for 6 hours"
 
+const reasonRunNotFound = "the run was gone after the server restarted, so how it ended is unknown"
+
 // reasonOrphaned is the schedule row's reason for a run swept after its process died; the next slot is the recovery.
 const reasonOrphaned = "stopped because the server restarted while it was running. Run it again, or wait for the next slot"
 
@@ -191,27 +193,34 @@ func (rs *Runs) reconcileLeasePresence(ctx context.Context, status map[string]ma
 			continue
 		}
 
-		if inspectAbsent && rs.inspectConfirmsGone(ctx, l.WorkflowID) {
-			slog.Info("boot: releasing the lease of a run inspect confirmed is over",
-				"workflow_id", l.WorkflowID, "recipe", l.Recipe)
-			rs.forgetBounds(ctx, l.WorkflowID)
-			continue
+		if inspectAbsent {
+			if ending, gone := rs.inspectGone(ctx, l.WorkflowID); gone {
+				slog.Info("boot: releasing the lease of a run inspect confirmed is over",
+					"workflow_id", l.WorkflowID, "recipe", l.Recipe)
+				rs.recordSlotEnding(ctx, ruleRun(l), ending)
+				rs.forgetBounds(ctx, l.WorkflowID)
+				continue
+			}
 		}
 		rs.observeAbsentLease(ctx, l, now)
 	}
 }
 
-// inspectConfirmsGone asks KAS about one absent run; any failure but workflowNotFound leaves the lease.
-func (rs *Runs) inspectConfirmsGone(ctx context.Context, workflowID string) bool {
+// inspectGone asks KAS about one absent run and reports whether it is over, with its slot's ending: a terminal
+// reply's, or unknown when KAS no longer knows the run. Any other failure leaves the lease.
+func (rs *Runs) inspectGone(ctx context.Context, workflowID string) (launchrule.Outcome, bool) {
 	raw, err := rs.rawInspect(ctx, workflowID)
 	if err != nil {
-		return workflowNotFound(err)
+		if workflowNotFound(err) {
+			return launchrule.Outcome{Status: launchrule.StatusUnknown, Reason: reasonRunNotFound}, true
+		}
+		return launchrule.Outcome{}, false
 	}
 	var res inspectRunState
-	if json.Unmarshal(raw, &res) != nil {
-		return false
+	if json.Unmarshal(raw, &res) != nil || res.WorkflowID != workflowID || !res.State.Status.Terminal() {
+		return launchrule.Outcome{}, false
 	}
-	return res.WorkflowID == workflowID && res.State.Status.Terminal()
+	return runEnding(res.State.Status, res.State.StopReason), true
 }
 
 // workflowNotFound reports KAS's WorkflowNotFoundError from a search that covered every session (kiro-cli 2.37.0

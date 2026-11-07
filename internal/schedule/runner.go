@@ -72,6 +72,8 @@ type Runner struct {
 	retry map[launchrule.Row]engineRetry
 	// published is every rule whose schedule series the metrics page carries.
 	published map[string]bool
+	// blockedSince is when publish first saw each enabled rule blocked, the slot its next-due series reads.
+	blockedSince map[string]time.Time
 	// lastStart and lastEnd bound the previous sweep, for lateness.
 	lastStart time.Time
 	lastEnd   time.Time
@@ -127,16 +129,27 @@ func (r *Runner) sweep(ctx context.Context) {
 	r.publish(r.store.Clocks())
 }
 
-// publish exports each enabled, readable clock rule's failed-slot count and next due slot, and removes the series of
-// every rule disabled, blocked or deleted since the last publish.
+// publish exports each enabled clock rule's failed-slot count and next due slot, and removes the series of every rule
+// disabled or deleted since the last publish. A blocked rule never fires, so it reads due since publish first saw it
+// blocked, with no count.
 func (r *Runner) publish(list []launchrule.Clock) {
 	live := make(map[string]bool, len(list))
+	blocked := make(map[string]time.Time)
 	for i := range list {
 		c := &list[i]
-		if !c.Enabled || c.Err != nil {
+		if !c.Enabled {
 			continue
 		}
 		live[c.ID] = true
+		if c.Err != nil {
+			since, ok := r.blockedSince[c.ID]
+			if !ok {
+				since = r.now()
+			}
+			blocked[c.ID] = since
+			obs.ScheduleBlocked(c.ID, since)
+			continue
+		}
 		due, err := NextRunFrom(*c.When.Clock, c.Anchor, time.Time{})
 		if err != nil {
 			due = time.Time{}
@@ -148,7 +161,7 @@ func (r *Runner) publish(list []launchrule.Clock) {
 			obs.ScheduleGone(id)
 		}
 	}
-	r.published = live
+	r.published, r.blockedSince = live, blocked
 }
 
 // slotEvent is what happened to a schedule's due slot when a sweep reached it; settle alone records it.

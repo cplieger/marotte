@@ -175,7 +175,8 @@ func UnattendedApproved(origin string) { unattendedApprovals.Inc(origin) }
 func ScheduleSlotNotStarted(event string) { slotsNotStarted.Inc(event) }
 
 // Schedule exports schedule ruleID's consecutive failed slots and its next due slot. A zero nextDue, a slot nobody
-// can name, removes the next-due series, since a 0 would read as a slot long overdue.
+// can name, removes the next-due series, since a 0 would read as a slot long overdue. nextDue is past while a slot
+// waits on the engine and for up to a tick after a start, so a rule over it needs a for: longer than a minute.
 func Schedule(ruleID string, failedSlots int, nextDue time.Time) {
 	scheduleFailedSlots.Set(float64(failedSlots), ruleID)
 	if nextDue.IsZero() {
@@ -185,7 +186,14 @@ func Schedule(ruleID string, failedSlots int, nextDue time.Time) {
 	scheduleNextDue.Set(float64(nextDue.Unix()), ruleID)
 }
 
-// ScheduleGone removes schedule ruleID's series, for a schedule disabled, blocked or deleted. It deletes the one
+// ScheduleBlocked exports schedule ruleID, which cannot fire, as due at since and removes its failed-slot count,
+// which nobody can read.
+func ScheduleBlocked(ruleID string, since time.Time) {
+	scheduleFailedSlots.Delete(ruleID)
+	scheduleNextDue.Set(float64(since.Unix()), ruleID)
+}
+
+// ScheduleGone removes schedule ruleID's series, for a schedule disabled or deleted. It deletes the one
 // rule's series, never resets the family, so a scrape never finds another schedule's series missing.
 func ScheduleGone(ruleID string) {
 	scheduleFailedSlots.Delete(ruleID)
