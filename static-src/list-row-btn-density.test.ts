@@ -39,18 +39,6 @@ function rowWithAction(): { row: HTMLElement; btn: HTMLElement } {
   return { row, btn };
 }
 
-/** The Add modal's close button, the height every control on that surface agrees on. */
-function modalIconButton(): HTMLElement {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "icon-btn";
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("class", "ic-ui");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  btn.append(svg);
-  return track(btn);
-}
-
 /** The negative control: nothing scopes it to a row, so it keeps the full tier. */
 function standaloneButton(): HTMLElement {
   const bar = document.createElement("div");
@@ -85,13 +73,9 @@ afterAll(() => {
 });
 
 describe("a .btn-small inside a .list-row", () => {
-  it("takes the dense tier, agreeing with the modal's own icon button", () => {
+  it("takes the dense tier", () => {
     const { btn } = rowWithAction();
     expect(h(btn), "an action inside a dense row is --ctl-h-dense").toBeCloseTo(DENSE_PX, 0);
-    expect(h(btn), "and so it agrees with every other control on that surface").toBeCloseTo(
-      h(modalIconButton()),
-      0,
-    );
   });
 
   it("keeps its row off the coarse tier", () => {

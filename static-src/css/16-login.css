@@ -48,6 +48,14 @@
   }
 }
 
+/* A one-line action (Connect) is a button standing alone, the toolbar's height; a choice with
+   its providers under its name is a row of the list. */
+.modal-btn:not(:has(> .modal-btn-sub)) {
+  min-block-size: var(--btn-h);
+  padding-block: 0;
+  justify-content: center;
+}
+
 .modal-btn-sub {
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);

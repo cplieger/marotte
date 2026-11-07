@@ -1578,6 +1578,8 @@ select.native-rule-effect:focus-visible {
  * the box at 24px beside `.tab-close` and `.turn-action-btn`, which is what earns
  * `--r-sm`. The shared expander (61-mcp-tools.css) gives it the 44px target. */
 .native-rule-remove {
+  min-inline-size: var(--ctl-h-sm);
+  min-block-size: var(--ctl-h-sm);
   margin-inline-start: auto;
   padding: var(--sp-1);
   border-radius: var(--r-sm);

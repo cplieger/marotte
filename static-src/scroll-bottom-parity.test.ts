@@ -234,13 +234,12 @@ describe("the docked control reads as one of the map's step buttons", () => {
 });
 
 describe("icon-only at rest, the label on hover", () => {
-  it("is the map's own column wide at rest, with no label in the box", () => {
-    // Compared against the MAP, which is `--rail-w` wide by declaration, rather than against a
-    // probe reading that token: it is declared on `#messages-wrap-outer`, so a probe mounted
-    // anywhere else resolves nothing and stretches (measured).
+  it("is the timeline's column wide at rest, with no label in the box", () => {
+    // The token is declared on `#messages-wrap-outer`, so it is read inside the map: a probe
+    // mounted anywhere else resolves nothing and stretches (measured).
     const { resume, label, map } = build(LABEL_PX);
     expect(getComputedStyle(label).display).toBe("none");
-    expect(resume.getBoundingClientRect().width).toBe(map.getBoundingClientRect().width);
+    expect(resume.getBoundingClientRect().width).toBe(tokenPx(map, "--rail-col-w"));
   });
 
   it("shows the label on a real hover, and grows only to the RIGHT", async () => {
@@ -272,11 +271,7 @@ describe("icon-only at rest, the label on hover", () => {
     // computed basis is what tells the two declarations apart.
     expect(getComputedStyle(svg).flexBasis).toBe("auto");
     const borders = 2;
-    near(
-      svg.getBoundingClientRect().width,
-      map.getBoundingClientRect().width - borders,
-      "svg width",
-    );
+    near(svg.getBoundingClientRect().width, tokenPx(map, "--rail-col-w") - borders, "svg width");
 
     label.textContent = "12 new blocks";
     await userEvent.hover(resume);

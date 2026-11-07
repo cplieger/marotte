@@ -10,11 +10,10 @@
   /* The COLLAPSED card's content height — head, foot row, foot hairline — which is
      the smallest real card, since only the body is inside the disclosure. Reads the
      tokens the head and `.run-open` read so it moves with the pointer tier; a
-     literal here under-stated a coarse card by 20px once. Equal to
-     `--subagent-content` (14-tools.css), the same shape. Under-stating an OPEN card
+     literal here under-stated a coarse card by 20px once. Under-stating an OPEN card
      is the right error: the container grows rather than shrinking under a reader.
      `block-heights.ts` shadows the resolved values. */
-  --run-card-content: calc(var(--row-tap) + max(var(--hit-floor), var(--ctl-h-dense)) + 1px);
+  --run-card-content: calc(var(--row-tap) + max(var(--hit-floor), var(--btn-h)) + 1px);
 
   content-visibility: auto;
   contain-intrinsic-size: auto var(--run-card-content);
@@ -571,7 +570,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-3);
-  padding-block: max(0px, calc(var(--tap-gap-dense) / 2));
+  padding-block: max(0px, calc(var(--tap-gap) / 2));
   padding-inline: var(--sp-3);
   border-block-start: 1px solid var(--c-border);
   font-size: var(--fs-xs);
@@ -599,7 +598,7 @@
      padding, so its hover wash lands flush in the card's bottom trailing corner,
      which the card's own clip rounds: a child flush inside a clipping parent takes no
      radius of its own. */
-  min-height: var(--ctl-h-dense);
+  min-height: var(--btn-h);
   padding-inline: var(--sp-1);
   border-radius: var(--r-sm);
   transition:

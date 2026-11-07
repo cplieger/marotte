@@ -238,6 +238,12 @@ function owns(el: Element, x: number, y: number): boolean {
   return hit !== null && (hit === el || el.contains(hit));
 }
 
+/** The element a press at a point lands on, named for a failure message. */
+function answering(x: number, y: number): string {
+  const hit = document.elementFromPoint(x, y);
+  return hit instanceof HTMLElement ? nameOf(hit) : String(hit?.nodeName ?? "nothing");
+}
+
 /** What a press reaches: from the centre outward on each axis until a point stops answering to `el`. */
 function hitRect(el: HTMLElement): Box {
   const r = el.getBoundingClientRect();
@@ -935,8 +941,9 @@ function check(
       [cx, t.top + 1],
       [cx, t.bottom - 1],
     ] as const;
-    if (!edges.every(([x, y]) => owns(el, x, y))) {
-      out.floor.add(`${where}: ${nameOf(el)}'s target edge answers to another element`);
+    const missed = edges.find(([x, y]) => !owns(el, x, y));
+    if (missed !== undefined) {
+      out.floor.add(`${where}: ${nameOf(el)}'s target edge answers to ${answering(...missed)}`);
     }
     if (height(hit) < floor - 2 * STEP) {
       out.floor.add(`${where}: ${nameOf(el)} reaches ${String(height(hit))}px tall`);
@@ -1213,6 +1220,8 @@ describe("the turn map's buttons on desktop", () => {
       document.documentElement.dataset["pointer"] = pointer;
       await nextFrame();
       await nextFrame();
+      // A tier flip resizes the track, and the renderer, holding no turns, hides the map again.
+      nav.toggleAttribute("data-shown", true);
       // The timeline the reader sees is the rows' bar, drawn in a column of the map's box.
       const link = document.querySelector<HTMLElement>(".turn-map .turn-pill-link");
       const track = document.querySelector<HTMLElement>(".turn-map-track");
@@ -1255,8 +1264,9 @@ describe("the turn map's buttons on desktop", () => {
           [cx, t.top + 1],
           [cx, t.bottom - 1],
         ] as const;
-        if (!edges.every(([x, y]) => owns(b, x, y))) {
-          off.push(`${at}'s target edge answers to another element`);
+        const missed = edges.find(([x, y]) => !owns(b, x, y));
+        if (missed !== undefined) {
+          off.push(`${at}'s target edge answers to ${answering(...missed)}`);
         }
         if (width(t) < floor - 0.5 || height(t) < floor - 0.5) {
           off.push(`${at} reaches ${String(width(t))}x${String(height(t))}px`);

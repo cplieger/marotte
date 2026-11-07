@@ -343,6 +343,8 @@
      12px box, and 24px is the rung below's size and WCAG 2.5.8's minimum. */
   inline-size: var(--close-box);
   block-size: var(--close-box);
+  min-inline-size: var(--close-box);
+  min-block-size: var(--close-box);
   position: relative;
 
   /* The well this box sits in is the PILL's (`.attachment-pill:has()` above); nothing

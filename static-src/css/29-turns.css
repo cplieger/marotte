@@ -1031,7 +1031,9 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--sp-1);
+
+  /* A step's target reaches past its box on touch; the gap pays that reach, so it stays off the rows. */
+  gap: max(var(--sp-1), var(--tap-gap-sm) / 2);
 }
 
 /* Hidden only on a phone-shaped screen, narrow or short (15-input.css's query), never by pointer
@@ -1133,9 +1135,9 @@
 .turn-pill-link::before {
   content: "";
   position: absolute;
-  inset-inline-start: 4px;
+  inset-inline-start: var(--rail-col-start);
   top: round(down, (var(--pill-pitch) - var(--pill-bar)) / 2, 1px);
-  inline-size: 1.5rem;
+  inline-size: var(--rail-col-w);
   block-size: var(--pill-bar);
   border-radius: var(--r-pill);
   background: var(--pill-ink);
@@ -1260,15 +1262,16 @@
   background: var(--c-accent);
 }
 
+/* The timeline column's square on its centre line (13-messages.css); the shared expander
+ * (61-mcp-tools.css) carries the target. */
 .turn-map-step {
   flex: none;
   display: grid;
   place-items: center;
-  inline-size: var(--rail-w);
+  align-self: flex-start;
+  margin-inline-start: var(--rail-col-start);
+  inline-size: var(--rail-col-w);
   block-size: var(--ctl-h-sm);
-
-  /* Over the universal floor (61-mcp-tools.css), which scores zero. */
-  min-height: var(--rail-hit);
   padding: 0;
   border: 0;
   border-radius: var(--r-sm);

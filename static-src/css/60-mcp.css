@@ -681,6 +681,12 @@
   flex-shrink: 0;
 }
 
+/* A row action at the dense height the gap above is for. */
+.mcp-row-actions > .icon-btn {
+  min-inline-size: var(--ctl-h-dense);
+  min-block-size: var(--ctl-h-dense);
+}
+
 /* REQUIRED: `.icon-btn` declares `display: flex`, which beats the UA sheet's
    `[hidden] { display: none }` on specificity, so without this a row's hidden
    Reconnect still renders. Reconnect is hidden on a row with no live report. */
@@ -1041,6 +1047,7 @@
 }
 
 .mcp-pair-del {
+  min-inline-size: var(--ctl-h-sm);
   min-block-size: var(--ctl-h-dense);
   padding: var(--sp-1);
 
@@ -1069,6 +1076,10 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
+
+  /* The sticky search row's cover ends at the first card, and an install button's target reaches
+     past that card's padding and border by what is left here. */
+  padding-block-start: max(0px, calc(var(--tap-gap-dense) / 2 - var(--sp-1) - var(--hairline)));
 }
 
 /* The disclosure takes the measure; the install buttons sit beside it and stay on

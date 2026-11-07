@@ -124,22 +124,15 @@
   background: var(--c-accent);
 }
 
-/* The header is its own content band and nothing else: one 2rem row of title plus
-   controls.
-
-   IT USED TO PAY FOR THE RESIZE BAR'S TARGET, in `padding-block-start` AND in
-   `height` — the second because `box-sizing: border-box` is global (02-reset.css),
-   so padding alone takes the room out of the content box and crushes the buttons
-   instead of moving them. Both declarations went together with the reason for
-   them: the buttons out-stack the expander now, so there is nothing to move out of
-   its way. The content band was 2rem before and is 2rem now; what left is the dead
-   strip above it, which was the whole hit floor. */
+/* The header is its own content band: one row of title plus controls, as tall as a button
+   or its target, whichever is taller, plus the border it declares (`box-sizing: border-box`
+   is global, 02-reset.css), so each button's target stays inside it. */
 .shell-header {
   display: flex;
   align-items: center;
-  gap: max(var(--sp-2), var(--tap-gap-sm));
+  gap: max(var(--sp-2), var(--tap-gap));
   padding-inline: var(--sp-3);
-  height: 2rem;
+  height: calc(max(var(--btn-h), var(--hit-floor)) + var(--hairline));
   border-block-end: 1px solid var(--c-border);
   flex-shrink: 0;
 }
@@ -179,11 +172,10 @@
   cursor: pointer;
   padding: 0;
 
-  /* 24px on every tier; the shared expander (61-mcp-tools.css) holds the target. */
-  width: 1.5rem;
-  height: 1.5rem;
-  /* --r-sm is the ladder's rung for a 16-24px box; this is 24px. */
-  border-radius: var(--r-sm);
+  /* The toolbar's size on every tier; the shared expander (61-mcp-tools.css) holds the target. */
+  width: var(--btn-h);
+  height: var(--btn-h);
+  border-radius: var(--r);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -273,18 +265,6 @@
 @keyframes term-blink-anim {
   50% {
     opacity: 0;
-  }
-}
-
-/* Touch sizing is keyed on the observed tier (pointer-tier.ts), never on the
-   viewport width or a `pointer` media query, which answers for the primary input
-   only (crbug 398065927; iPadOS reports coarse with a trackpad). `:where()` keeps
-   every selector below at the specificity it has outside the block. */
-:where([data-pointer="coarse"]) {
-  .shell-header {
-    /* One 44px band plus the border it declares (`box-sizing: border-box` is global,
-       02-reset.css), so each 24px button's 44px target stays inside the header. */
-    height: calc(2.75rem + 1px);
   }
 }
 

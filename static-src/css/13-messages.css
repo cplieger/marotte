@@ -16,8 +16,10 @@
    * both insets, the resume control's dock and both measured container thresholds. */
   --rail-w: 2.75rem;
 
-  /* The turn map's step buttons' height. */
-  --rail-hit: var(--hit-floor);
+  /* THE TIMELINE'S COLUMN inside it: the rows' bar, the step buttons and the docked resume
+   * control share its width and its centre line. */
+  --rail-col-start: var(--sp-1);
+  --rail-col-w: var(--ctl-h-sm);
   --rail-inset-end: calc(50% - var(--content-max-w) / 2 - var(--rail-w) - var(--sp-2));
   --rail-inset-start: calc(100% - var(--rail-inset-end) - var(--rail-w));
 
@@ -30,15 +32,13 @@
 }
 
 /* A FINGER'S RAIL, on a touch device or in touch mode: the resume control does not dock, so the
- * foot is bare. A touch device in mouse mode keeps the finger's 44px step buttons, which its own
- * `--hit-floor` would not give. A selector cannot OR an attribute with a media query. */
+ * foot is bare. A selector cannot OR an attribute with a media query. */
 :root[data-pointer="coarse"] [id="messages-wrap-outer"] {
   --rail-foot: var(--sp-3);
 }
 
 @media (any-pointer: coarse) {
   [id="messages-wrap-outer"] {
-    --rail-hit: 2.75rem;
     --rail-foot: var(--sp-3);
   }
 }
@@ -1175,7 +1175,9 @@
    * On `.banner` and not on `.banner-stack`, because each ROW is what the reader
    * compares against the menu. A `min-` floor, so a wrapped message still grows. */
   min-block-size: var(--chat-toolbar-h);
-  padding: var(--sp-2) var(--sp-3);
+
+  /* Less the border, so a row holding a `--btn-h` control (Dismiss, a link) is the bar's height. */
+  padding: calc(var(--sp-2) - var(--hairline)) var(--sp-3);
 
   /* The toolbar's own border, because the band is an OVERLAY: its fill is the
    * canvas colour, so over the lighter turn cards an unbordered rectangle reads as
@@ -1429,12 +1431,12 @@
 @container chat-area (width >= 57.5rem) {
   @media (height > 30rem) and (not (any-pointer: coarse)) {
     :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] {
-      left: var(--rail-inset-start);
+      left: calc(var(--rail-inset-start) + var(--rail-col-start));
       transform: none;
-      min-inline-size: var(--rail-w);
+      min-inline-size: var(--rail-col-w);
       max-inline-size: max(
-        var(--rail-w),
-        calc(var(--rail-inset-end) + var(--rail-w) - var(--sp-3))
+        var(--rail-col-w),
+        calc(var(--rail-inset-end) + var(--rail-w) - var(--rail-col-start) - var(--sp-3))
       );
 
       /* THE MAP'S STEP-BUTTON VOCABULARY (`.turn-map-step`, 29-turns.css), because it is
@@ -1457,14 +1459,14 @@
       color: var(--c-text-primary);
     }
 
-    /* The glyph takes the map's own column, so it sits under the stack whether or not
+    /* The glyph takes the timeline's column, so it sits under the stack whether or not
      * the label is showing. `- 2px` is this button's two borders, which the column
      * width does not include. A WIDTH, not a flex-basis: Gecko sizes this shrink-to-fit
      * box from each item's width, so a basis wider than `.ic-ui`'s 16px clipped the
      * revealed label by the difference in Firefox. */
     :where(html:not([data-pointer="coarse"])) [id="scroll-bottom"] > svg {
       flex: none;
-      inline-size: calc(var(--rail-w) - 2px);
+      inline-size: calc(var(--rail-col-w) - 2px);
     }
 
     /* HIDDEN, not truncated, at a width the gutter cannot hold: `setResumeLabel`
