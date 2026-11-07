@@ -556,3 +556,10 @@ func TestEstimatePricesFeedsPerPool(t *testing.T) {
 		t.Errorf("Estimate of a PR rule beside full core = %v, want nil: it spends graphql", err)
 	}
 }
+
+// spent is conn's trigger spend in pool over the hour before now.
+func (b *Budget) spent(conn, pool string, now time.Time) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.conn(conn).spentIn(pool, now)
+}

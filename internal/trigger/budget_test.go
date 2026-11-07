@@ -11,7 +11,6 @@ type prListCostFixture struct {
 	First int `json:"first"`
 	Repos []struct {
 		Repo string `json:"repo"`
-		Rows int    `json:"rows"`
 		Cost int    `json:"cost"`
 	} `json:"repos"`
 }

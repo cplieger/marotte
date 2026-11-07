@@ -248,20 +248,13 @@ func (b *Budget) pagesOf(f Feed, list string) int {
 	return unreadPages[list]
 }
 
-// spent is conn's trigger spend in pool over the hour before now.
-func (b *Budget) spent(conn, pool string, now time.Time) int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.conn(conn).spentIn(pool, now)
-}
+// estimateError is Estimate's refusal; Text is the sentence the saving user reads.
+type estimateError struct{ Text string }
 
-// EstimateError is Estimate's refusal; Text is the sentence the saving user reads.
-type EstimateError struct{ Text string }
-
-func (e *EstimateError) Error() string { return e.Text }
+func (e *estimateError) Error() string { return e.Text }
 
 // Estimate refuses cand when, saved over the rule replaces names (empty for a new rule) beside the other enabled event
-// rules, its connection's worst-case hour would pass the trigger budget in a pool cand adds to, with an *EstimateError
+// rules, its connection's worst-case hour would pass the trigger budget in a pool cand adds to, with an *estimateError
 // naming the pool, the hour's spend and the interval that would fit.
 func (b *Budget) Estimate(rules []launchrule.Rule, cand *launchrule.Rule, replaces string) error {
 	ev := cand.When.Event
@@ -286,9 +279,9 @@ func (b *Budget) Estimate(rules []launchrule.Rule, cand *launchrule.Rule, replac
 		text := fmt.Sprintf("These rules could spend %s %s %s an hour on %s; the trigger budget is %s.",
 			grouped(int(math.Ceil(with[pool]))), pool, unitOf(pool), host, grouped(budgetCap))
 		if fit := b.fittingInterval(others, cand, pool); fit > 0 {
-			return &EstimateError{Text: fmt.Sprintf("%s Set this one to %d minutes or more.", text, fit)}
+			return &estimateError{Text: fmt.Sprintf("%s Set this one to %d minutes or more.", text, fit)}
 		}
-		return &EstimateError{Text: text + " Slow or disable another rule on this connection first."}
+		return &estimateError{Text: text + " Slow or disable another rule on this connection first."}
 	}
 	return nil
 }
