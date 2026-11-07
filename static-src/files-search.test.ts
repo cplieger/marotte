@@ -1037,11 +1037,14 @@ describe("type-to-search", () => {
   // On a touch device with a hardware keyboard, a tap in the terminal leaves focus on the body and
   // the terminal types the next key itself.
   it("leaves a key to the terminal after a press inside it, and opens after a press elsewhere", () => {
+    const panel = document.createElement("div");
+    panel.id = "shell-panel";
     const terminal = document.createElement("div");
     terminal.id = "shell-terminal";
     const row = document.createElement("div");
     terminal.append(row);
-    document.body.append(terminal);
+    panel.append(terminal);
+    document.body.append(panel);
     trackShellPresses();
     (document.activeElement as HTMLElement | null)?.blur();
 
@@ -1052,7 +1055,7 @@ describe("type-to-search", () => {
     document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
     typeAhead("b");
     expect(_isFilesSearchOpen(), "after a press outside it").toBe(true);
-    terminal.remove();
+    panel.remove();
   });
 
   it("does not open on a tab that is not the file browser", () => {

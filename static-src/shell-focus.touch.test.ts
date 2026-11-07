@@ -144,4 +144,25 @@ describe("a hardware keyboard on a touch device, after the composer had focus", 
     );
     expect(composer.value).toBe("q");
   });
+
+  // Ctrl+/ closes the panel through a click on the toolbar button, which sends no pointerdown, so
+  // the last press is still the one in the terminal.
+  it("leaves keys to the composer once the shell is closed after a press in the terminal", async () => {
+    composer.value = "";
+    composer.focus();
+    await tapContent(terminal());
+    expect(document.activeElement, "the tap released focus to the page").toBe(document.body);
+
+    live.els["shellBtn"]?.click();
+    await vi.waitUntil(
+      () =>
+        live.els["shellPanel"]?.classList.contains("shell-closed") === true &&
+        live.els["shellPanel"].getAnimations().length === 0,
+      { timeout: 2000 },
+    );
+    await userEvent.keyboard("q");
+
+    expect(document.activeElement, "the composer has focus").toBe(composer);
+    expect(composer.value).toBe("q");
+  });
 });

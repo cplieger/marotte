@@ -600,8 +600,9 @@ describe("shell.ts: host-driven actions", () => {
   });
 
   // The reader is in the transcript, so the open must not take focus. The first open is also what
-  // connects, which is what `runGate` has to wait for.
-  it("opens a closed panel without focusing it and sends once the first frame lands", async () => {
+  // connects, so `admit` holds the Run until the session draws (here with paint, a current
+  // `--char-w` and no open slide already in place).
+  it("opens a closed panel without focusing it and sends once the session draws", async () => {
     const h = await setup();
     h.mod.initShellPanel();
     expect(h.createTerminal).not.toHaveBeenCalled();
@@ -623,7 +624,7 @@ describe("shell.ts: host-driven actions", () => {
     expect(h.termFocus).not.toHaveBeenCalled();
   });
 
-  // A rows-less frame is the pre-ack ED3 forward, which `runGate` excludes.
+  // A rows-less frame is the pre-ack ED3 forward, which `inputGate` does not count as drawn.
   it("does not release the command on a rows-less signal frame", async () => {
     const h = await setup();
     h.mod.initShellPanel();
