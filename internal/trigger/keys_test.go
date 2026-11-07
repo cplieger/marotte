@@ -17,7 +17,7 @@ func TestMixedCaseSelectorsShareFeedAndKey(t *testing.T) {
 	lower.Repo = "cplieger/animap-source"
 	a, b := h.create(upper), h.create(lower)
 
-	feeds := Feeds(h.store.List())
+	feeds := groupFeeds(h.store.List())
 	if len(feeds) != 1 || len(feeds[0].Rules) != 2 || feeds[0].Feed.Selector != "cplieger/Animap-Source" {
 		t.Fatalf("feeds = %+v, want one feed of both rules reading the earliest rule's selector", feeds)
 	}
@@ -54,7 +54,7 @@ func TestFeedsSkipPausedRules(t *testing.T) {
 	if err := changeRule(t, h.c, paused.ID, 0, func(r *launchrule.Rule) { *r = paused }); err != nil {
 		t.Fatal(err)
 	}
-	feeds := Feeds(h.store.List())
+	feeds := groupFeeds(h.store.List())
 	if len(feeds) != 1 || len(feeds[0].Rules) != 1 || feeds[0].Rules[0].ID == paused.ID {
 		t.Errorf("feeds = %+v, want the enabled run rule alone", feeds)
 	}

@@ -116,7 +116,7 @@ func (s *stepper) named(ev *attemptEvent) {
 		rec := &record{workflowID: ev.workflowID, key: ev.key, unpersisted: !s.held || s.rv.unreadable != ""}
 		s.rv.records = append(s.rv.records, rec)
 		s.abandon(rec, causeNameFailed)
-		s.res.err = ErrAttemptGone
+		s.res.err = errAttemptGone
 		return
 	}
 	e := &es.queue[i]

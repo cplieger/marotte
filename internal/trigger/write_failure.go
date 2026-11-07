@@ -36,7 +36,7 @@ func (s *stepper) commit() {
 func (s *stepper) writeFailed(err error) {
 	if rec := s.handBack; rec != nil {
 		s.rv.records = append(s.rv.records, rec)
-		s.res.retry.HandedBack, s.res.err = false, fmt.Errorf("%w: %w", ErrAttemptNotWritten, err)
+		s.res.retry.HandedBack, s.res.err = false, fmt.Errorf("%w: %w", errAttemptNotWritten, err)
 	}
 	if rec := s.nameRec; rec != nil {
 		rec.inFlight = false
@@ -44,7 +44,7 @@ func (s *stepper) writeFailed(err error) {
 		s.requeue(rec.key)
 		s.backOff()
 		s.status().RowText = ""
-		s.res.err = fmt.Errorf("%w: %w", ErrAttemptNotWritten, err)
+		s.res.err = fmt.Errorf("%w: %w", errAttemptNotWritten, err)
 	}
 	s.rv.writeBlocked = fmt.Sprintf("could not write %s: %v", stateFile(s.ruleID), err)
 	if s.rv.writeRetry == nil {

@@ -103,6 +103,8 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 		AutoDelegation:            defaultAutoDelegation,
 		OutputStyle:               defaultOutputStyle,
 		TerminalCommandTimeoutMs:  defaultTerminalCommandTimeoutMs,
+		TriggerMaxLiveRuns:        defaultTriggerMaxLiveRuns,
+		TriggerMaxLaunchesPerHour: defaultTriggerMaxLaunchesPerHour,
 		// Empty objects, not nil: nil marshals as null and no field here is optional.
 		LastEffortByModel: map[string]string{},
 		KiroDefaults:      map[string]marotte.KiroDefault{},
@@ -223,6 +225,12 @@ func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMe
 		},
 		KeyTerminalCommandTimeoutMs: func(r json.RawMessage) error {
 			return decodeChecked(&out.TerminalCommandTimeoutMs, r, KeyTerminalCommandTimeoutMs, ValidTerminalCommandTimeoutMs)
+		},
+		keyTriggerMaxLiveRuns: func(r json.RawMessage) error {
+			return decodeChecked(&out.TriggerMaxLiveRuns, r, keyTriggerMaxLiveRuns, validTriggerCap)
+		},
+		keyTriggerMaxLaunchesPerHour: func(r json.RawMessage) error {
+			return decodeChecked(&out.TriggerMaxLaunchesPerHour, r, keyTriggerMaxLaunchesPerHour, validTriggerCap)
 		},
 		KeyEngineHeapMiB:    func(r json.RawMessage) error { return decodeInto(&out.EngineHeapMiB, r) },
 		KeyHighThroughput:   func(r json.RawMessage) error { return decodeInto(&out.HighThroughput, r) },

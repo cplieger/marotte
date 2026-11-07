@@ -226,3 +226,29 @@ func TestSettingsWrite_AStoredRefusedEntryBlocksNoWrite(t *testing.T) {
 		}
 	})
 }
+
+// A fleet cap outside 1 to 100 answers 400 and leaves config.json as it was; one inside is stored.
+func TestSettingsWrite_TriggerCaps(t *testing.T) {
+	patch := func(t *testing.T, s *Server, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPatch, "/api/settings", strings.NewReader(body)).WithContext(t.Context())
+		rec := httptest.NewRecorder()
+		s.handleSettingsWrite(rec, req)
+		return rec
+	}
+	config := t.TempDir()
+	s := &Server{agent: &fakeEngine{}, push: &testPush{}, configDir: config, workDir: t.TempDir()}
+	if rec := patch(t, s, `{"trigger_max_live_runs": 2, "trigger_max_launches_per_hour": 4}`); rec.Code != http.StatusOK {
+		t.Fatalf("PATCH caps 2 and 4 = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	for _, body := range []string{
+		`{"trigger_max_live_runs": 0}`, `{"trigger_max_launches_per_hour": 101}`, `{"trigger_max_live_runs": "3"}`,
+	} {
+		if rec := patch(t, s, body); rec.Code != http.StatusBadRequest {
+			t.Errorf("PATCH %s = %d %s, want 400", body, rec.Code, rec.Body)
+		}
+	}
+	if live, hourly := settings.TriggerCaps(t.Context(), config); live != 2 || hourly != 4 {
+		t.Errorf("stored caps (%d, %d) after the refused PATCHes, want the accepted (2, 4)", live, hourly)
+	}
+}

@@ -375,7 +375,7 @@ var ruleRowCases = slices.Concat(liveCases(), abandonedCases(), []attemptCase{
 		setup: func(tc *testConfirmer, r *launchrule.Rule) {
 			minted := time.Now().Add(-time.Hour)
 			tc.update(r.ID, anyGeneration, func(es *eventState) bool {
-				es.cursor[Feed{Selector: testRepo}.RepoID()] = &repoCursor{Runs: &runCursor{BaselineAt: minted}}
+				es.cursor[Feed{Selector: testRepo}.repoID()] = &repoCursor{Runs: &runCursor{BaselineAt: minted}}
 				es.queue = []queueEntry{held("k1", "c1"), held("k2", "c2"), held("k3", "c3")}
 				es.launched = []launchedEntry{{Key: "k0", WorkflowID: "wf_0"}}
 				es.superseded = []supersededEntry{{Key: "k-1", By: "k0"}}

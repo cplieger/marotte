@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"maps"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -304,6 +306,66 @@ func TestWarnUnknownKeys_LogsOnlyWhenUnknownPresent(t *testing.T) {
 func effectiveKeys() []string {
 	var out marotte.EffectiveSettings
 	return slices.Sorted(maps.Keys(effectiveSetters(&out)))
+}
+
+// The fleet caps on triggered runs default to 3 live and 6 an hour, and a stored value the setting cannot hold
+// keeps its default in the effective view, in TriggerCaps and at the PATCH.
+func TestTriggerCaps_DefaultsAndBounds(t *testing.T) {
+	if d := EffectiveDefaults(); d.TriggerMaxLiveRuns != 3 || d.TriggerMaxLaunchesPerHour != 6 {
+		t.Errorf("EffectiveDefaults() caps = (%d, %d), want (3, 6)", d.TriggerMaxLiveRuns, d.TriggerMaxLaunchesPerHour)
+	}
+	tests := []struct {
+		stored     string
+		wantLive   int
+		wantHourly int
+		reject     bool
+	}{
+		{stored: `1`, wantLive: 1, wantHourly: 1},
+		{stored: `100`, wantLive: 100, wantHourly: 100},
+		{stored: `0`, wantLive: 3, wantHourly: 6, reject: true},
+		{stored: `101`, wantLive: 3, wantHourly: 6, reject: true},
+		{stored: `-2`, wantLive: 3, wantHourly: 6, reject: true},
+		{stored: `2.5`, wantLive: 3, wantHourly: 6, reject: true},
+		{stored: `"4"`, wantLive: 3, wantHourly: 6, reject: true},
+		{stored: `null`, wantLive: 3, wantHourly: 6, reject: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.stored, func(t *testing.T) {
+			doc := map[string]json.RawMessage{
+				keyTriggerMaxLiveRuns: json.RawMessage(tc.stored), keyTriggerMaxLaunchesPerHour: json.RawMessage(tc.stored),
+			}
+			got, rejected := EffectiveFrom(doc)
+			if got.TriggerMaxLiveRuns != tc.wantLive || got.TriggerMaxLaunchesPerHour != tc.wantHourly {
+				t.Errorf("EffectiveFrom(%s) caps = (%d, %d), want (%d, %d)", tc.stored,
+					got.TriggerMaxLiveRuns, got.TriggerMaxLaunchesPerHour, tc.wantLive, tc.wantHourly)
+			}
+			if gotReject := len(rejected) == 2; gotReject != tc.reject {
+				t.Errorf("EffectiveFrom(%s) rejected = %v, want both rejected %v", tc.stored, rejected, tc.reject)
+			}
+			dir := t.TempDir()
+			body, err := json.Marshal(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, Filename), body, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if live, hourly := TriggerCaps(t.Context(), dir); live != tc.wantLive || hourly != tc.wantHourly {
+				t.Errorf("TriggerCaps over %s = (%d, %d), want (%d, %d)", tc.stored, live, hourly, tc.wantLive, tc.wantHourly)
+			}
+			if err := ValidateTriggerCapsPatch(doc); (err != nil) != tc.reject {
+				t.Errorf("ValidateTriggerCapsPatch(%s) = %v, want error %v", tc.stored, err, tc.reject)
+			}
+		})
+	}
+	t.Run("absent keys and no file", func(t *testing.T) {
+		if live, hourly := TriggerCaps(t.Context(), t.TempDir()); live != 3 || hourly != 6 {
+			t.Errorf("TriggerCaps with no config.json = (%d, %d), want (3, 6)", live, hourly)
+		}
+		if err := ValidateTriggerCapsPatch(map[string]json.RawMessage{KeyTheme: json.RawMessage(`"dark"`)}); err != nil {
+			t.Errorf("ValidateTriggerCapsPatch(no cap key) = %v, want nil", err)
+		}
+	})
 }
 
 // The file browser keeps no workspace-wide folder: a closed browser's folder is forgotten on every device, so a

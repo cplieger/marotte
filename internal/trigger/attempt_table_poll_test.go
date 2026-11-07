@@ -26,7 +26,7 @@ var pollCases = []attemptCase{
 		},
 		check: func(t *testing.T, tc *testConfirmer, r *launchrule.Rule) {
 			es := tc.memoryState(r.ID)
-			if rc := es.cursor[Feed{Selector: testRepo}.RepoID()]; rc != nil {
+			if rc := es.cursor[Feed{Selector: testRepo}.repoID()]; rc != nil {
 				t.Errorf("cursor entry for %s = %+v, want none: the poll read the old repository", testRepo, rc)
 			}
 			if len(es.queue) != 0 {
@@ -44,7 +44,7 @@ var pollCases = []attemptCase{
 		setup: func(tc *testConfirmer, r *launchrule.Rule) {
 			src := issueSource(issue(7, "alice"))
 			beginPoll(tc.t, tc.Confirmer, r.ID, src)()
-			if rc := tc.memoryState(r.ID).cursor[Feed{Selector: testRepo}.RepoID()]; rc == nil || rc.Labeled == nil {
+			if rc := tc.memoryState(r.ID).cursor[Feed{Selector: testRepo}.repoID()]; rc == nil || rc.Labeled == nil {
 				tc.t.Fatalf("Setup: cursor entry = %+v, want the labeled baseline", rc)
 			}
 		},
@@ -107,7 +107,7 @@ func pollSeesNoGain(t *testing.T, tc *testConfirmer, ruleID string) {
 }
 
 func labelEntryOf(es eventState, number int) *labelEntry {
-	rc := es.cursor[Feed{Selector: testRepo}.RepoID()]
+	rc := es.cursor[Feed{Selector: testRepo}.repoID()]
 	if rc == nil || rc.Labeled == nil {
 		return nil
 	}

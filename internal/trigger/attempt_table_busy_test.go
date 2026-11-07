@@ -136,8 +136,8 @@ func refusedEveryTime(name string, setup func(*testConfirmer, *launchrule.Rule))
 // goroutine running.
 func nameFailedCancelling(tc *testConfirmer, r *launchrule.Rule) {
 	tc.run()
-	if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, ErrAttemptGone) {
-		tc.t.Fatalf("Setup: NameAttempt = %v, want ErrAttemptGone", err)
+	if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, errAttemptGone) {
+		tc.t.Fatalf("Setup: NameAttempt = %v, want errAttemptGone", err)
 	}
 }
 

@@ -16,15 +16,15 @@ type Feed struct {
 	Selector string
 }
 
-// RepoID is the feed's repository identity, RepoRef.Encode() of its selector, which folds ASCII case.
-func (f Feed) RepoID() string {
+// repoID is the feed's repository identity, RepoRef.Encode() of its selector, which folds ASCII case.
+func (f Feed) repoID() string {
 	return forgeapi.RepoRef{Selector: f.Selector}.Encode()
 }
 
-// Key groups rules onto one feed: the connection and the repository identity, so two spellings of one
+// key groups rules onto one feed: the connection and the repository identity, so two spellings of one
 // repository differing only in case share a feed.
-func (f Feed) Key() string {
-	return keyenc.Join(f.Connection, f.RepoID())
+func (f Feed) key() string {
+	return keyenc.Join(f.Connection, f.repoID())
 }
 
 // FeedSource makes one list call of a feed, resuming from after (empty for the first page). A call may answer
@@ -37,8 +37,8 @@ type FeedSource interface {
 	Runs(ctx context.Context, f Feed, since time.Time, after forgeapi.Cursor) (forgeapi.Page[forgeapi.Run], error)
 }
 
-// Walk is one list walked inside one poll.
-type Walk[T any] struct {
+// listWalk is one list walked inside one poll.
+type listWalk[T any] struct {
 	// Err is the call error that ended the walk, nil otherwise.
 	Err error
 	// Partial is the marker of the page the walk stopped on, nil when it read the list to its end.
@@ -51,16 +51,16 @@ type Walk[T any] struct {
 	lastFrom int
 }
 
-// Complete reports whether the walk read the whole list: no error and no partial page.
-func (w *Walk[T]) Complete() bool {
+// complete reports whether the walk read the whole list: no error and no partial page.
+func (w *listWalk[T]) complete() bool {
 	return w.Err == nil && w.Partial == nil
 }
 
 // walk calls call until the list ends. Only a page cap with a continuation is followed, so no cursor outlives
 // the poll that minted it; any other partial reason, an error or a continuation that does not move ends the
 // walk partial, and the next poll starts again from the first page.
-func walk[T any](call func(after forgeapi.Cursor) (forgeapi.Page[T], error)) Walk[T] {
-	var w Walk[T]
+func walk[T any](call func(after forgeapi.Cursor) (forgeapi.Page[T], error)) listWalk[T] {
+	var w listWalk[T]
 	var after forgeapi.Cursor
 	for {
 		page, err := call(after)
@@ -83,21 +83,21 @@ func walk[T any](call func(after forgeapi.Cursor) (forgeapi.Page[T], error)) Wal
 }
 
 // walkIssues walks f's open issues.
-func walkIssues(ctx context.Context, src FeedSource, f Feed) Walk[forgeapi.Issue] {
+func walkIssues(ctx context.Context, src FeedSource, f Feed) listWalk[forgeapi.Issue] {
 	return walk(func(after forgeapi.Cursor) (forgeapi.Page[forgeapi.Issue], error) {
 		return src.OpenIssues(ctx, f, after)
 	})
 }
 
 // walkPRs walks f's open pull requests.
-func walkPRs(ctx context.Context, src FeedSource, f Feed) Walk[forgeapi.PullRequest] {
+func walkPRs(ctx context.Context, src FeedSource, f Feed) listWalk[forgeapi.PullRequest] {
 	return walk(func(after forgeapi.Cursor) (forgeapi.Page[forgeapi.PullRequest], error) {
 		return src.OpenPRs(ctx, f, after)
 	})
 }
 
 // walkRuns walks f's runs created at or after since.
-func walkRuns(ctx context.Context, src FeedSource, f Feed, since time.Time) Walk[forgeapi.Run] {
+func walkRuns(ctx context.Context, src FeedSource, f Feed, since time.Time) listWalk[forgeapi.Run] {
 	return walk(func(after forgeapi.Cursor) (forgeapi.Page[forgeapi.Run], error) {
 		return src.Runs(ctx, f, since, after)
 	})

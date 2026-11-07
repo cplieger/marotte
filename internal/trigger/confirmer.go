@@ -166,7 +166,7 @@ func launchReturnKind(err error) eventKind {
 	switch {
 	case err == nil:
 		return evInvokeOK
-	case errors.Is(err, ErrLeaseNotGranted), errors.Is(err, ErrAttemptGone), errors.Is(err, ErrAttemptNotWritten):
+	case errors.Is(err, ErrLeaseNotGranted), errors.Is(err, errAttemptGone), errors.Is(err, errAttemptNotWritten):
 		return evInvokeError
 	}
 	if _, ok := errors.AsType[*marotte.RPCError](err); ok {

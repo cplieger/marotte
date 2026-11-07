@@ -65,9 +65,9 @@ func (h *harness) create(ev *launchrule.EventSpec) launchrule.Rule {
 // poll runs one poll of every feed at h.now, then moves h.now on by five minutes.
 func (h *harness) poll() {
 	h.t.Helper()
-	p := &Poller{src: h.src, c: h.c, now: func() time.Time { return h.now }}
-	for _, fr := range Feeds(h.store.List()) {
-		p.Poll(h.t.Context(), fr)
+	p := &poller{src: h.src, c: h.c, now: func() time.Time { return h.now }}
+	for _, fr := range groupFeeds(h.store.List()) {
+		p.poll(h.t.Context(), fr)
 	}
 	h.now = h.now.Add(5 * time.Minute)
 }
@@ -101,7 +101,7 @@ func (h *harness) queued(ruleID string) []queueEntry {
 
 func (h *harness) cursorOf(ruleID string) *repoCursor {
 	h.t.Helper()
-	return h.state(ruleID).cursor[Feed{Selector: testRepo}.RepoID()]
+	return h.state(ruleID).cursor[Feed{Selector: testRepo}.repoID()]
 }
 
 // The pages below are each one complete call of their list, served in order across polls.

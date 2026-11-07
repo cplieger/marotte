@@ -12,7 +12,7 @@ import (
 // applyRuns matches one run walk read under bound. A run enters the rule's map only when it passes the static
 // filters, so only its result is left to decide; a run is keyed on its id, never its attempt, so it fires once,
 // when one of its attempts first concludes with a result in the filter.
-func (pr *pollRule) applyRuns(w *Walk[forgeapi.Run], bound, h time.Time) {
+func (pr *pollRule) applyRuns(w *listWalk[forgeapi.Run], bound, h time.Time) {
 	rc := pr.repoCursor()
 	complete := runWalkComplete(w)
 	if rc.Runs == nil {
@@ -123,7 +123,7 @@ func (pr *pollRule) enqueueRun(r *forgeapi.Run, result string) bool {
 	key := runKey(pr.rule.ID, repo, r.Ref.ID)
 	in := pr.eventInputs(key, runEventID(host, repo, r.Ref.ID, result))
 	return pr.hold(&queueEntry{
-		Key: key, CoalesceKey: runCoalesceKey(pr.feed.RepoID(), r.WorkflowPath, r.Branch), ObservedAt: pr.start,
+		Key: key, CoalesceKey: runCoalesceKey(pr.feed.repoID(), r.WorkflowPath, r.Branch), ObservedAt: pr.start,
 		Inputs: pr.runInputs(in, r, result),
 	})
 }

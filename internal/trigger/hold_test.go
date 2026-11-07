@@ -36,7 +36,7 @@ func (h *harness) eligible(ruleID string) []string {
 	if !ok {
 		h.t.Fatalf("no rule %s", ruleID)
 	}
-	p := &Poller{c: h.c, now: func() time.Time { return h.now }}
+	p := &poller{c: h.c, now: func() time.Time { return h.now }}
 	pr := p.load(&r, Feed{Connection: r.When.Event.Connection, Selector: r.When.Event.Repo}, h.now)
 	if pr == nil {
 		h.t.Fatalf("rule %s did not load", ruleID)
@@ -202,7 +202,7 @@ func TestPruneKeepsOpenItems(t *testing.T) {
 		if len(lc.Items) != 5001 || !lc.TooMany {
 			t.Errorf("entries %d, too many %v; want every open item kept and the rule blocked", len(lc.Items), lc.TooMany)
 		}
-		pr := (&Poller{c: h.c}).load(&r, Feed{Connection: testConn, Selector: testRepo}, h.now)
+		pr := (&poller{c: h.c}).load(&r, Feed{Connection: testConn, Selector: testRepo}, h.now)
 		if got := pr.blocked(); got != "more than 5,000 open items" {
 			t.Errorf("blocked = %q, want more than 5,000 open items", got)
 		}
@@ -392,7 +392,7 @@ func TestQueueFullLeavesEventsAtForge(t *testing.T) {
 		if _, fired := c.Fired[43]; fired {
 			t.Error("run 43 is in fired, want it matched again later")
 		}
-		if got := runBound([]*pollRule{(&Poller{c: h.c}).load(&r, Feed{Connection: testConn, Selector: testRepo}, h.now)}, h.now, horizon(h.now)); got.After(created) {
+		if got := runBound([]*pollRule{(&poller{c: h.c}).load(&r, Feed{Connection: testConn, Selector: testRepo}, h.now)}, h.now, horizon(h.now)); got.After(created) {
 			t.Errorf("bound = %v, want it held back to run 43's creation", got)
 		}
 		h.dequeue(r.ID)

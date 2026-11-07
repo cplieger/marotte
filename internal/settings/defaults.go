@@ -46,6 +46,11 @@ const (
 	// keeps its name so a saved value keeps working.
 	KeyScheduledAutoApprove = "scheduled_auto_approve"
 
+	// keyTriggerMaxLiveRuns and keyTriggerMaxLaunchesPerHour cap every event rule's triggered runs together: the
+	// runs live at once and the runs started in any rolling hour (TriggerCaps). Over a cap, events wait queued.
+	keyTriggerMaxLiveRuns        = "trigger_max_live_runs"
+	keyTriggerMaxLaunchesPerHour = "trigger_max_launches_per_hour"
+
 	// KeyKnowledgeEnabled reaches the agent per spawn under _meta.kiro.settings; it defaults TRUE.
 	KeyKnowledgeEnabled  = "knowledge_enabled"
 	KeyGuardPayloadLinks = "guard_payload_links"
@@ -179,6 +184,9 @@ var KnownKeys = map[string]struct{}{
 	KeySettingsEpoch:            {},
 	KeySettingsRevision:         {},
 	KeyTheme:                    {},
+
+	keyTriggerMaxLiveRuns:        {},
+	keyTriggerMaxLaunchesPerHour: {},
 }
 
 // WarnUnknownKeys logs a warning for each key in keys outside KnownKeys and returns them

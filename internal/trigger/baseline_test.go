@@ -163,7 +163,7 @@ func TestChangeRepoRebaselines(t *testing.T) {
 	if q := h.queued(r.ID); len(q) != 0 {
 		t.Errorf("the new repository's first poll queued %v, want a baseline that fires nothing", keysOf(q))
 	}
-	other := Feed{Selector: "cplieger/other"}.RepoID()
+	other := Feed{Selector: "cplieger/other"}.repoID()
 	if rc := h.state(r.ID).cursor[other]; rc == nil || rc.Labeled == nil || rc.Labeled.Items[3].HasLabel != labelYes {
 		t.Errorf("the new repository's cursor = %+v, want its baseline", rc)
 	}

@@ -81,6 +81,8 @@ type App struct {
 	stopTriggerConfirmer func()
 	// stopTriggerLauncher stops the trigger launcher and waits for its launch in flight.
 	stopTriggerLauncher func()
+	// stopTriggerRunner stops the trigger runner's polls and waits for those in flight.
+	stopTriggerRunner func()
 	// stopKASHeal stops the KAS MCP file heal loop and waits for its goroutine.
 	stopKASHeal func()
 	// stopToolsSteering waits for the boot's environment.md regeneration, which reads the tools engine.
@@ -213,7 +215,6 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	stopScheduleRunner := startScheduleRunner(appCtx, launchRules, h.Runs())
 	stopTriggerConfirmer := startTriggerConfirmer(appCtx, confirmer, h.EngineReady(), h.Runs())
 	triggerLauncher := newTriggerLauncher(confirmer, h.Runs())
-	stopTriggerLauncher := startTriggerLauncher(appCtx, triggerLauncher, h.EngineReady())
 
 	mcpRegistry := mcp.NewRegistryProxy()
 	mcpPrewarm := prewarm.NewRunner(appCtx, mcpStore)
@@ -249,6 +250,10 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	forgesManager := forges.NewManager(cfg.ConfigDir, forgeNotify.notify)
 	forgesManager.Load(ctx)
 	h.SetEventRuleChecker(forgesManager)
+	triggerRunner := newTriggerRunner(confirmer, triggerLauncher, forges.NewFeedSource(forgesManager), cfg.ConfigDir)
+	// After the runner installed the fleet caps, so no launch passes uncapped.
+	stopTriggerLauncher := startTriggerLauncher(appCtx, triggerLauncher, h.EngineReady())
+	stopTriggerRunner := startTriggerRunner(appCtx, triggerRunner)
 
 	tools, err := wireToolsEngine(cfg, h, githubTokenFor(forgesManager))
 	if err != nil {
@@ -368,6 +373,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		stopScheduleRunner:   stopScheduleRunner,
 		stopTriggerConfirmer: stopTriggerConfirmer,
 		stopTriggerLauncher:  stopTriggerLauncher,
+		stopTriggerRunner:    stopTriggerRunner,
 		stopKASHeal:          stopKASHeal,
 		stopToolsSteering:    stopToolsSteering,
 		stopKeepState:        stopKeepState,
@@ -395,6 +401,8 @@ func (a *App) Run() error {
 // position is load-bearing. Every member is treated as optional: a panic on a service never
 // started would abort the teardown of the rest.
 func (a *App) Shutdown() {
+	// Before stopForges: a poll in flight reads through the forge connections.
+	callIfSet(a.stopTriggerRunner)
 	callIfSet(a.stopPRPoller)
 	callIfSet(a.stopForgeKeeper)
 	// Before the runtime's teardown: a fill that stores a repository page notifies the hub.
@@ -928,7 +936,30 @@ func startTriggerLauncher(ctx context.Context, ll *trigger.LaunchLoop, engineRea
 	if ll == nil {
 		return nil
 	}
-	return runBackground(ctx, "trigger launcher", func(bctx context.Context) { ll.Run(bctx, engineReady) })
+	return runBackground(ctx, "trigger launcher", func(bctx context.Context) {
+		if err := ll.Run(bctx, engineReady); err != nil {
+			slog.Error("trigger launcher", "error", err)
+		}
+	})
+}
+
+// newTriggerRunner builds the poll runner of c's rules over src, installing on ll the fleet caps configDir's
+// config.json sets; nil when there is no confirmer.
+func newTriggerRunner(c *trigger.Confirmer, ll *trigger.LaunchLoop, src trigger.FeedSource, configDir string,
+) *trigger.Runner {
+	if c == nil {
+		return nil
+	}
+	return trigger.NewRunner(c, ll, src, configDir)
+}
+
+// startTriggerRunner runs r's polls until ctx ends, with no presence gate: triggers exist for the hours nobody is
+// present. A nil r starts nothing and returns a nil stop.
+func startTriggerRunner(ctx context.Context, r *trigger.Runner) (stop func()) {
+	if r == nil {
+		return nil
+	}
+	return runBackground(ctx, "trigger runner", r.Run)
 }
 
 // ensureUploadDir creates the composer's upload target so the file handler can mount it, warning

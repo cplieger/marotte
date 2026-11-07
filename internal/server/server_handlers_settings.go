@@ -312,6 +312,10 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, err.Error())
 		return
 	}
+	if err := settings.ValidateTriggerCapsPatch(patch); err != nil {
+		httpreply.BadRequest(w, err.Error())
+		return
+	}
 	if r.Context().Err() != nil {
 		return
 	}

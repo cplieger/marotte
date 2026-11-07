@@ -28,8 +28,8 @@ func namedUnwritten(tc *testConfirmer, r *launchrule.Rule) {
 	tc.enqueue(r.ID, held("k1", "c1"), held("k2", "c1"))
 	tc.failWrites(errDiskFull)
 	err := tc.NameAttempt(r.ID, "k1", "wf_1")
-	if !errors.Is(err, ErrAttemptNotWritten) || !errors.Is(err, errDiskFull) {
-		tc.t.Errorf("NameAttempt = %v, want ErrAttemptNotWritten wrapping the write's error", err)
+	if !errors.Is(err, errAttemptNotWritten) || !errors.Is(err, errDiskFull) {
+		tc.t.Errorf("NameAttempt = %v, want errAttemptNotWritten wrapping the write's error", err)
 	}
 }
 
@@ -139,7 +139,7 @@ var writeCases = []attemptCase{
 		},
 		check: func(t *testing.T, tc *testConfirmer, r *launchrule.Rule) {
 			es, _ := tc.file(r.ID)
-			if es.cursor[Feed{Selector: testRepo}.RepoID()] == nil {
+			if es.cursor[Feed{Selector: testRepo}.repoID()] == nil {
 				t.Errorf("file cursor = %+v, want the baseline", es.cursor)
 			}
 			if got, want := es.raw.Population, launchrule.Population(r); got != want {

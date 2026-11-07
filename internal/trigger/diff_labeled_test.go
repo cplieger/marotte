@@ -123,7 +123,7 @@ func TestLabeledGainAfter30DayDropQueued(t *testing.T) {
 	old := es.queue[0]
 	es.launched = []launchedEntry{{Key: old.Key, CoalesceKey: old.CoalesceKey, Inputs: old.Inputs, WorkflowID: "wf-1"}}
 	es.queue = nil
-	delete(es.cursor[Feed{Selector: testRepo}.RepoID()].Labeled.Items, 12)
+	delete(es.cursor[Feed{Selector: testRepo}.repoID()].Labeled.Items, 12)
 	h.seed(r.ID, &es)
 
 	h.now = pollStart.Add(31 * 24 * time.Hour)

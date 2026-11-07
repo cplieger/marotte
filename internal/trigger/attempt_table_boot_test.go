@@ -354,7 +354,7 @@ var bootCases = []attemptCase{
 		name: "59 a completed baseline whose population is the rule's, boot: E7 with no E2",
 		setup: func(tc *testConfirmer, r *launchrule.Rule) {
 			tc.update(r.ID, anyGeneration, func(es *eventState) bool {
-				es.cursor[Feed{Selector: testRepo}.RepoID()] = &repoCursor{Runs: &runCursor{BaselineAt: time.Now()}}
+				es.cursor[Feed{Selector: testRepo}.repoID()] = &repoCursor{Runs: &runCursor{BaselineAt: time.Now()}}
 				return true
 			})
 		},
@@ -370,7 +370,7 @@ var bootCases = []attemptCase{
 				t.Errorf("%d writes, cancels %v; want neither", n, tc.cancels())
 			}
 			snap, _, err := tc.snapshot(r.ID)
-			if err != nil || snap.cursor[Feed{Selector: testRepo}.RepoID()] == nil {
+			if err != nil || snap.cursor[Feed{Selector: testRepo}.repoID()] == nil {
 				t.Errorf("loaded cursor = %+v (%v), want the baseline kept", snap.cursor, err)
 			}
 		},
@@ -380,7 +380,7 @@ var bootCases = []attemptCase{
 		setup: func(tc *testConfirmer, r *launchrule.Rule) {
 			tc.enqueue(r.ID, held("k1", "c1"))
 			tc.update(r.ID, anyGeneration, func(es *eventState) bool {
-				es.cursor[Feed{Selector: testRepo}.RepoID()] = &repoCursor{Runs: &runCursor{BaselineAt: time.Now()}}
+				es.cursor[Feed{Selector: testRepo}.repoID()] = &repoCursor{Runs: &runCursor{BaselineAt: time.Now()}}
 				return true
 			})
 			st, err := tc.store.State(r.ID)
@@ -398,7 +398,7 @@ var bootCases = []attemptCase{
 				t.Errorf("%d writes at the boot, want none", n)
 			}
 			snap, _, err := tc.snapshot(r.ID)
-			if err != nil || snap.cursor[Feed{Selector: testRepo}.RepoID()] == nil || !slices.Equal(keysOf(snap.queue), []string{"k1"}) {
+			if err != nil || snap.cursor[Feed{Selector: testRepo}.repoID()] == nil || !slices.Equal(keysOf(snap.queue), []string{"k1"}) {
 				t.Errorf("loaded cursor %+v, queue %v (%v); want both kept", snap.cursor, keysOf(snap.queue), err)
 			}
 			tc.persist(r.ID)

@@ -83,8 +83,8 @@ var attemptCases = []attemptCase{
 	{
 		name: "2 none, named with the key reset by an edit: A2",
 		deliver: func(tc *testConfirmer, r *launchrule.Rule) {
-			if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, ErrAttemptGone) {
-				tc.t.Errorf("NameAttempt = %v, want ErrAttemptGone", err)
+			if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, errAttemptGone) {
+				tc.t.Errorf("NameAttempt = %v, want errAttemptGone", err)
 			}
 		},
 		check: func(t *testing.T, tc *testConfirmer, r *launchrule.Rule) {
@@ -417,8 +417,8 @@ func deletedRuleNamed(name string, cancelErr error) attemptCase {
 			deleteRule(tc.t, tc.Confirmer, r.ID)
 		},
 		deliver: func(tc *testConfirmer, r *launchrule.Rule) {
-			if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, ErrAttemptGone) {
-				tc.t.Errorf("NameAttempt = %v, want ErrAttemptGone", err)
+			if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, errAttemptGone) {
+				tc.t.Errorf("NameAttempt = %v, want errAttemptGone", err)
 			}
 			if rec := tc.recordOf(r.ID, "wf_1"); rec == nil || !rec.unpersisted || rec.cancelsOut != 1 {
 				tc.t.Fatalf("record before the answer = %+v, want an unpersisted abandon with its cancel out", rec)
@@ -632,8 +632,8 @@ func beginPoll(t *testing.T, c *Confirmer, ruleID string, src FeedSource) (apply
 	if !ok || r.When.Event == nil {
 		t.Fatalf("Setup: no event rule %s", ruleID)
 	}
-	fr := FeedRules{Feed: Feed{Connection: r.When.Event.Connection, Selector: r.When.Event.Repo}, Rules: []launchrule.Rule{r}}
-	p := NewPoller(src, c)
+	fr := feedRules{Feed: Feed{Connection: r.When.Event.Connection, Selector: r.When.Event.Repo}, Rules: []launchrule.Rule{r}}
+	p := newPoller(src, c)
 	run := p.begin(t.Context(), fr)
 	if run == nil {
 		t.Fatalf("Setup: the poll skipped rule %s", ruleID)

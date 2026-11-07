@@ -12,18 +12,16 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 )
 
-// FeedRules is one feed and the enabled event rules that share it, in creation order.
-type FeedRules struct {
+// feedRules is one feed and the enabled event rules that share it, in creation order.
+type feedRules struct {
 	Feed  Feed
 	Rules []launchrule.Rule
 }
 
-// Feeds groups the enabled event rules of rules, given in creation order, by feed. A feed reads the selector of
+// groupFeeds groups the enabled event rules of rules, given in creation order, by feed. A feed reads the selector of
 // its earliest-created rule.
-//
-//deadset:ignore DS1102 -- the trigger runner groups its rules through it; until that lands only the tests do
-func Feeds(rules []launchrule.Rule) []FeedRules {
-	var out []FeedRules
+func groupFeeds(rules []launchrule.Rule) []feedRules {
+	var out []feedRules
 	index := map[string]int{}
 	for i := range rules {
 		ev := rules[i].When.Event
@@ -31,45 +29,41 @@ func Feeds(rules []launchrule.Rule) []FeedRules {
 			continue
 		}
 		f := Feed{Connection: ev.Connection, Selector: ev.Repo}
-		if j, ok := index[f.Key()]; ok {
+		if j, ok := index[f.key()]; ok {
 			out[j].Rules = append(out[j].Rules, rules[i])
 			continue
 		}
-		index[f.Key()] = len(out)
-		out = append(out, FeedRules{Feed: f, Rules: []launchrule.Rule{rules[i]}})
+		index[f.key()] = len(out)
+		out = append(out, feedRules{Feed: f, Rules: []launchrule.Rule{rules[i]}})
 	}
 	return out
 }
 
-// Poller reads feeds and queues what matched, applying each rule's part through the Confirmer, which writes it.
-type Poller struct {
+// poller reads feeds and queues what matched, applying each rule's part through the Confirmer, which writes it.
+type poller struct {
 	src FeedSource
 	c   *Confirmer
 	now func() time.Time
 }
 
-// NewPoller returns a Poller reading through src and keeping rule state in c.
-//
-//deadset:ignore DS1101 -- the trigger runner polls through it; until that lands only the tests do
-func NewPoller(src FeedSource, c *Confirmer) *Poller {
-	return &Poller{src: src, c: c, now: time.Now}
+// newPoller returns a poller reading through src and keeping rule state in c.
+func newPoller(src FeedSource, c *Confirmer) *poller {
+	return &poller{src: src, c: c, now: time.Now}
 }
 
 // reads is what one poll read of a feed, each list walked at most once whatever its rules.
 type reads struct {
-	issues *Walk[forgeapi.Issue]
-	prs    *Walk[forgeapi.PullRequest]
-	runs   *Walk[forgeapi.Run]
+	issues *listWalk[forgeapi.Issue]
+	prs    *listWalk[forgeapi.PullRequest]
+	runs   *listWalk[forgeapi.Run]
 	// since and horizon are the run walk's bound and H, both fixed when it starts.
 	since   time.Time
 	horizon time.Time
 }
 
-// Poll reads fr's lists once and applies them to every rule on it. A rule whose state cannot be read is skipped,
+// poll reads fr's lists once and applies them to every rule on it. A rule whose state cannot be read is skipped,
 // and its file left as it is.
-//
-//deadset:ignore DS1102 -- the trigger runner calls it on each feed's timer; until that lands only the tests do
-func (p *Poller) Poll(ctx context.Context, fr FeedRules) {
+func (p *poller) poll(ctx context.Context, fr feedRules) {
 	if run := p.begin(ctx, fr); run != nil {
 		p.apply(run)
 	}
@@ -84,7 +78,7 @@ type pollRun struct {
 }
 
 // begin plans each rule's part on a snapshot of its state and reads the feed; nil when no rule is left to poll.
-func (p *Poller) begin(ctx context.Context, fr FeedRules) *pollRun {
+func (p *poller) begin(ctx context.Context, fr feedRules) *pollRun {
 	start := p.now().UTC()
 	rules := make([]*pollRule, 0, len(fr.Rules))
 	for i := range fr.Rules {
@@ -99,7 +93,7 @@ func (p *Poller) begin(ctx context.Context, fr FeedRules) *pollRun {
 }
 
 // apply hands each rule its part of the reads, dropped for a rule edited since its snapshot.
-func (p *Poller) apply(run *pollRun) {
+func (p *poller) apply(run *pollRun) {
 	for _, pr := range run.rules {
 		p.c.update(pr.rule.ID, pr.gen, func(es *eventState) bool { return pr.applyTo(es, &run.rd) })
 	}
@@ -109,7 +103,7 @@ func (p *Poller) apply(run *pollRun) {
 
 // load plans the rule's part of the poll on a copy of its state; the poll's changes are applied to the rule's
 // current value, under its mutex, once the reads are back.
-func (p *Poller) load(r *launchrule.Rule, f Feed, start time.Time) *pollRule {
+func (p *poller) load(r *launchrule.Rule, f Feed, start time.Time) *pollRule {
 	if _, err := p.c.store.State(r.ID); err != nil {
 		slog.Debug(logMsgRuleSkipped, "rule_id", r.ID, "error", err)
 		return nil
@@ -126,7 +120,7 @@ func (p *Poller) load(r *launchrule.Rule, f Feed, start time.Time) *pollRule {
 	return &pollRule{rule: r, ev: r.When.Event, feed: f, start: start, st: es, gen: gen, marks: p.c.marks}
 }
 
-func (p *Poller) read(ctx context.Context, f Feed, rules []*pollRule, start time.Time) reads {
+func (p *poller) read(ctx context.Context, f Feed, rules []*pollRule, start time.Time) reads {
 	var rd reads
 	var needIssues, needPRs, needRuns bool
 	for _, pr := range rules {
@@ -215,7 +209,7 @@ func (pr *pollRule) labeled() bool {
 
 // repoCursor answers the feed repository's part of the rule's cursor, created empty.
 func (pr *pollRule) repoCursor() *repoCursor {
-	id := pr.feed.RepoID()
+	id := pr.feed.repoID()
 	rc := pr.st.cursor[id]
 	if rc == nil {
 		rc = &repoCursor{}
@@ -234,10 +228,10 @@ func (pr *pollRule) apply(rd *reads) {
 		pr.applyRuns(rd.runs, rd.since, rd.horizon)
 	case itemPart(pr.ev.Kind) == partIssue:
 		items := issueItems(rd.issues.Items)
-		pr.applyItems(items, rd.issues.Complete())
+		pr.applyItems(items, rd.issues.complete())
 	default:
 		kind, _ := connectionParts(pr.feed.Connection)
-		pr.applyItems(prItems(rd.prs, kind == "gitlab"), rd.prs.Complete())
+		pr.applyItems(prItems(rd.prs, kind == "gitlab"), rd.prs.complete())
 	}
 }
 
@@ -275,7 +269,7 @@ func issueItems(in []forgeapi.Issue) []item {
 // whose page is PartialGraphQLPartial, whose document answered data with errors forgeapi could not place on a row.
 // Every other row is whole, whatever its own marker: on GitHub and Gitea a row's PartialPaginationCap is the
 // check fold, and its labels are the whole set.
-func prItems(w *Walk[forgeapi.PullRequest], gitlab bool) []item {
+func prItems(w *listWalk[forgeapi.PullRequest], gitlab bool) []item {
 	pageCut := w.Partial != nil && w.Partial.Reason == forgeapi.PartialGraphQLPartial
 	out := make([]item, 0, len(w.Items))
 	for i := range w.Items {

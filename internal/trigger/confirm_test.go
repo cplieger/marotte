@@ -832,8 +832,8 @@ func TestNameAttemptFailureRecordedAbandoned(t *testing.T) {
 			r := tc.createRule(runSpec("success"))
 			tc.update(r.ID, anyGeneration, func(es *eventState) bool { es.queue = []queueEntry{held("k1", "c1")}; return true })
 			edit(tc, &r, 1, moveRepo)
-			if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, ErrAttemptGone) {
-				t.Fatalf("NameAttempt = %v, want ErrAttemptGone", err)
+			if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, errAttemptGone) {
+				t.Fatalf("NameAttempt = %v, want errAttemptGone", err)
 			}
 			if _, file := tc.file(r.ID); len(file) != 1 || file[0].State != persistedAbandoned ||
 				file[0].Cause != causeNameFailed {
@@ -854,8 +854,8 @@ func TestNameAttemptFailureRecordedAbandoned(t *testing.T) {
 			r := tc.createRule(runSpec("success"))
 			tc.enqueue(r.ID, held("k1", "c1"))
 			deleteRule(t, tc.Confirmer, r.ID)
-			if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, ErrAttemptGone) {
-				t.Fatalf("NameAttempt = %v, want ErrAttemptGone", err)
+			if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, errAttemptGone) {
+				t.Fatalf("NameAttempt = %v, want errAttemptGone", err)
 			}
 			assertNoStateFile(t, tc, r.ID)
 			tc.run()
@@ -870,8 +870,8 @@ func TestNameAttemptFailureRecordedAbandoned(t *testing.T) {
 			r := tc.createRule(runSpec("success"))
 			tc.update(r.ID, anyGeneration, func(es *eventState) bool { es.queue = []queueEntry{held("k1", "c1")}; return true })
 			tc.failWrites(errDiskFull)
-			if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, ErrAttemptNotWritten) {
-				t.Fatalf("NameAttempt = %v, want ErrAttemptNotWritten", err)
+			if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, errAttemptNotWritten) {
+				t.Fatalf("NameAttempt = %v, want errAttemptNotWritten", err)
 			}
 			if es, file := tc.file(r.ID); len(file) != 0 || len(es.queue) != 1 || es.queue[0].Live != "" {
 				t.Errorf("file attempts %+v, queue %+v; want no record and k1 naming none before a write lands",

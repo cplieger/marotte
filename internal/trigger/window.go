@@ -52,7 +52,7 @@ func minTime(a, b time.Time) time.Time {
 // runBound is the rule's own bound: runReach before its last complete walk, extended to every admitted run still
 // pending or held at the forge, and never before the horizon or its baseline.
 func (pr *pollRule) runBound(start, h time.Time) time.Time {
-	rc := pr.st.cursor[pr.feed.RepoID()]
+	rc := pr.st.cursor[pr.feed.repoID()]
 	if rc == nil || rc.Runs == nil {
 		return floorHour(start)
 	}
@@ -75,7 +75,7 @@ func (pr *pollRule) runBound(start, h time.Time) time.Time {
 // ageOut prunes, at a walk's start, every run created before the horizon: from fired and the outside runs
 // silently, and a pending or held run with a gap naming it, since it was never seen to end or never launched.
 func (pr *pollRule) ageOut(h time.Time) {
-	rc := pr.st.cursor[pr.feed.RepoID()]
+	rc := pr.st.cursor[pr.feed.repoID()]
 	if rc == nil || rc.Runs == nil {
 		return
 	}
@@ -110,13 +110,13 @@ func (pr *pollRule) recordGap(g *launchrule.Gap) {
 
 // runWalkComplete counts a walk the route's result window ended as complete: it carries no continuation, and the
 // same read would answer the same.
-func runWalkComplete(w *Walk[forgeapi.Run]) bool {
-	return w.Complete() || (w.Err == nil && w.Partial.Reason == forgeapi.PartialResultWindow)
+func runWalkComplete(w *listWalk[forgeapi.Run]) bool {
+	return w.complete() || (w.Err == nil && w.Partial.Reason == forgeapi.PartialResultWindow)
 }
 
 // noteRunWalk records what a complete walk says about the rule's runs: a long outage, a result window, and each
 // pending run the walk's bound reached and the forge no longer listed.
-func (pr *pollRule) noteRunWalk(c *runCursor, w *Walk[forgeapi.Run], bound, h time.Time, listed map[int64]bool) {
+func (pr *pollRule) noteRunWalk(c *runCursor, w *listWalk[forgeapi.Run], bound, h time.Time, listed map[int64]bool) {
 	if c.LastComplete.Add(-runReach).Before(h) {
 		pr.recordGap(&launchrule.Gap{Cause: launchrule.GapOutage, From: c.LastComplete, To: pr.start})
 	}

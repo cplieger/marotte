@@ -2,6 +2,7 @@ package trigger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 )
 
@@ -23,6 +25,8 @@ type launchCall struct {
 	ruleID   string
 	key      string
 	coalesce string
+	// n numbers the call from 1.
+	n int
 }
 
 // fakeLauncher stands in for the agent's LaunchTriggered: by default it names a new run wf_<n> through the
@@ -44,8 +48,9 @@ func (f *fakeLauncher) LaunchTriggered(
 		at: time.Now(), ruleID: ruleID, key: eventKey, coalesce: coalesceKey, inputs: maps.Clone(inputs),
 	}
 	f.mu.Lock()
+	call.n = len(f.calls) + 1
 	f.calls = append(f.calls, call)
-	n, answer := len(f.calls), f.answer
+	n, answer := call.n, f.answer
 	f.mu.Unlock()
 	if answer != nil {
 		return answer(n, call)
@@ -75,7 +80,7 @@ func (tc *testConfirmer) startLauncher(answer func(n int, call launchCall) (stri
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		ll.Run(ctx, tc.ready)
+		_ = ll.Run(ctx, tc.ready)
 	}()
 	tc.t.Cleanup(func() { cancel(); <-done })
 	return f
@@ -464,4 +469,67 @@ func launchAfterBootCancel() attemptCase {
 			}
 		},
 	}
+}
+
+func TestFleetLiveCapUnderConcurrentRules(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		tc.queuedRules(5)
+		var mu sync.Mutex
+		most := 0
+		f := tc.startCapped(t.TempDir(), func(n int, call launchCall) (string, error) {
+			live := 0
+			for _, l := range tc.leases.List() {
+				if l.Origin == runlease.OriginTriggered {
+					live++
+				}
+			}
+			mu.Lock()
+			most = max(most, live+1)
+			mu.Unlock()
+			return tc.startsRuns(n, call)
+		})
+		tc.letLaunch(nil)
+		advance(time.Hour)
+		if n := len(f.taken()); n != 3 {
+			t.Errorf("%d LaunchTriggered calls with five rules ready against a live cap of 3, want 3", n)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if most > 3 {
+			t.Errorf("a call took the live triggered runs to %d, want never more than 3", most)
+		}
+	})
+}
+
+func TestLauncherRunRefusesSecondStart(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		tc.enqueue(r.ID, held("k1", "c1"))
+		f := &fakeLauncher{tc: tc}
+		tc.run()
+		ll := NewLauncher(tc.Confirmer, f)
+		ctx, cancel := context.WithCancel(context.WithoutCancel(t.Context()))
+		first := make(chan error, 1)
+		go func() { first <- ll.Run(ctx, tc.ready) }()
+		synctest.Wait()
+		second := make(chan error, 1)
+		go func() { second <- ll.Run(ctx, tc.ready) }()
+		synctest.Wait()
+		select {
+		case err := <-second:
+			if !errors.Is(err, errLauncherRunning) {
+				t.Errorf("a second Run returned %v, want errLauncherRunning", err)
+			}
+		default:
+			t.Error("a second Run is still running, want it refused at once")
+		}
+		tc.letLaunch(nil)
+		if calls := f.taken(); len(calls) != 1 {
+			t.Errorf("%d calls after the wake for one queued entry, want 1", len(calls))
+		}
+		cancel()
+		if err := <-first; err != nil {
+			t.Errorf("the first Run returned %v at its context's end, want nil", err)
+		}
+	})
 }

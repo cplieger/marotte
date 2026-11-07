@@ -705,6 +705,8 @@ export const decodeEffectiveSettings: Decoder<EffectiveSettings> = (v) => {
     auto_compact_pct_range: decodePctRange(own(o, "auto_compact_pct_range")),
     terminal_command_timeout_ms: reqNum(o, "terminal_command_timeout_ms", "$.effective_settings"),
     engine_heap_mib: reqNum(o, "engine_heap_mib", "$.effective_settings"),
+    trigger_max_live_runs: reqNum(o, "trigger_max_live_runs", "$.effective_settings"),
+    trigger_max_launches_per_hour: reqNum(o, "trigger_max_launches_per_hour", "$.effective_settings"),
     settings_epoch: reqNum(o, "settings_epoch", "$.effective_settings"),
     settings_revision: reqNum(o, "settings_revision", "$.effective_settings"),
     auto_compaction_enabled: reqBool(o, "auto_compaction_enabled", "$.effective_settings"),

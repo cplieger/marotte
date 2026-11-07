@@ -9,9 +9,12 @@ import (
 	"go/token"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
+	"time"
 
+	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
@@ -107,7 +110,36 @@ func TestConfirmerBeforeAgentAndRunnerAfterForges(t *testing.T) {
 		}
 	})
 	t.Run("the trigger runner is built after the forges manager", func(t *testing.T) {
-		t.Skip("needs 5.16")
+		manager, runner := bc.first(t, "forges.NewManager"), bc.first(t, "newTriggerRunner")
+		if manager >= runner {
+			t.Errorf("newTriggerRunner at %d, want it after forges.NewManager at %d", runner, manager)
+		}
+		args := bc.args["newTriggerRunner"][0]
+		if len(args) != 4 {
+			t.Fatalf("newTriggerRunner takes %d arguments, want the confirmer, the launcher, the feeds and the config dir",
+				len(args))
+		}
+		if call, ok := args[2].(*ast.CallExpr); !ok || calleeName(call.Fun) != "forges.NewFeedSource" {
+			t.Error("newTriggerRunner's feeds are not forges.NewFeedSource")
+		}
+		run := bc.first(t, "startTriggerLauncher")
+		if run <= runner {
+			t.Errorf("startTriggerLauncher at %d, want it after newTriggerRunner at %d installed the caps", run, runner)
+		}
+		launcher, ok := args[1].(*ast.Ident)
+		started, _ := bc.args["startTriggerLauncher"][0][1].(*ast.Ident)
+		if !ok || started == nil || launcher.Name != started.Name {
+			t.Error("newTriggerRunner is not given the launcher composition starts")
+		}
+		start := bc.first(t, "startTriggerRunner")
+		if start <= runner {
+			t.Errorf("startTriggerRunner at %d, want it after newTriggerRunner at %d", start, runner)
+		}
+		for _, arg := range bc.args["startTriggerRunner"][0] {
+			if call, ok := arg.(*ast.CallExpr); ok && calleeName(call.Fun) == "prPollGate" {
+				t.Error("the trigger runner is gated on presence, want it polling with nobody present")
+			}
+		}
 	})
 }
 
@@ -192,5 +224,77 @@ func TestLauncherStartsAfterEngineReady(t *testing.T) {
 			stopLaunch()
 			stopConf()
 		})
+	})
+}
+
+// emptyFeeds answers every list with an empty, complete page, counting the calls.
+type emptyFeeds struct{ calls atomic.Int32 }
+
+func (f *emptyFeeds) OpenIssues(context.Context, trigger.Feed, forgeapi.Cursor) (forgeapi.Page[forgeapi.Issue], error) {
+	f.calls.Add(1)
+	return forgeapi.Page[forgeapi.Issue]{}, nil
+}
+
+func (f *emptyFeeds) OpenPRs(context.Context, trigger.Feed, forgeapi.Cursor) (forgeapi.Page[forgeapi.PullRequest], error) {
+	f.calls.Add(1)
+	return forgeapi.Page[forgeapi.PullRequest]{}, nil
+}
+
+func (f *emptyFeeds) Runs(context.Context, trigger.Feed, time.Time, forgeapi.Cursor) (forgeapi.Page[forgeapi.Run], error) {
+	f.calls.Add(1)
+	return forgeapi.Page[forgeapi.Run]{}, nil
+}
+
+func TestTriggerRunnerRunsWithNobodyPresent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store, w, err := launchrule.NewStore(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := store.Create(t.Context(), &launchrule.Rule{
+			Source: "bundled://weekly", Name: "weekly", Enabled: true, When: launchrule.When{Event: &launchrule.EventSpec{
+				Connection: "github:github.com", Repo: "cplieger/animap", Kind: launchrule.KindRunConcluded,
+				Filter: launchrule.Filter{Workflow: ".github/workflows/weekly.yaml", Branch: "main", Result: []string{"success"}},
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry, _ := json.Marshal(map[string]any{"key": "k1", "coalesce_key": "c1", "inputs": map[string]string{}})
+		if err := w.WriteState(t.Context(), r.ID, &launchrule.State{Queue: []json.RawMessage{entry}}); err != nil {
+			t.Fatal(err)
+		}
+		conf := trigger.NewConfirmer(store, w, runlease.NewMemory())
+		ready := make(chan struct{})
+		close(ready)
+		l := &countingLauncher{}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		stopConf := startTriggerConfirmer(ctx, conf, ready, noEffects{})
+		ll := newTriggerLauncher(conf, l)
+		feeds := &emptyFeeds{}
+		stopRunner := startTriggerRunner(ctx, newTriggerRunner(conf, ll, feeds, t.TempDir()))
+		stopLaunch := startTriggerLauncher(ctx, ll, ready)
+		synctest.Wait()
+		second := make(chan error, 1)
+		go func() { second <- ll.Run(ctx, ready) }()
+		synctest.Wait()
+		select {
+		case err := <-second:
+			if err == nil {
+				t.Error("a second Run of composition's launcher returned nil, want it refused while composition's runs")
+			}
+		default:
+			t.Error("a second Run of composition's launcher is running, want composition's start the only one")
+		}
+		if n := l.count(); n != 1 {
+			t.Errorf("%d LaunchTriggered calls for the one queued entry, with no browser session, want one", n)
+		}
+		if n := feeds.calls.Load(); n != 1 {
+			t.Errorf("%d feed reads, with no browser session, want the rule's first poll", n)
+		}
+		stopLaunch()
+		stopRunner()
+		stopConf()
 	})
 }
