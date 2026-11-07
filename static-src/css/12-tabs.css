@@ -933,6 +933,11 @@
 .tab-context-menu {
   position: fixed;
   z-index: 999;
+}
+
+/* THE ANCHORED MENU SURFACE, the tab menu's and the tool group hooks list's (14-tools.css). */
+.tab-context-menu,
+.tool-hook-popover {
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: var(--r-lg);

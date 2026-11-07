@@ -153,7 +153,16 @@ function meet(a: Probe, b: Probe): void {
   }
 }
 
-const nested = (a: Probe, b: Probe): boolean => a.el.contains(b.el) || b.el.contains(a.el);
+const within = (inner: Box, outer: Box): boolean =>
+  inner.left >= outer.left &&
+  inner.right <= outer.right &&
+  inner.top >= outer.top &&
+  inner.bottom <= outer.bottom;
+
+/** A control inside another, or laid over it (the tool group's hooks badge on its header's corner): the inner one
+ *  takes its own box out of the outer's target rather than meeting it at an edge. */
+const nested = (a: Probe, b: Probe): boolean =>
+  a.el.contains(b.el) || b.el.contains(a.el) || within(a.box, b.box) || within(b.box, a.box);
 
 function probesFor(s: Surface, which: "all" | "controls" = "all"): Probe[] {
   const sels =
@@ -182,6 +191,11 @@ function probesFor(s: Surface, which: "all" | "controls" = "all"): Probe[] {
 function reaches(p: Probe, x: number, y: number): string | null {
   const hit = document.elementFromPoint(x, y);
   if (hit !== null && p.el.contains(hit)) {
+    return null;
+  }
+  // A control laid over `p` owns its own target there, as one nested inside it would.
+  const over = hit?.closest<HTMLElement>("button, [role='button'], a[href], summary");
+  if (over !== null && over !== undefined && within(boxOf(over), boxOf(p.el))) {
     return null;
   }
   const owner = hit?.closest("[id], [class]");
