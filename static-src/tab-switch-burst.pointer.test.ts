@@ -1,7 +1,8 @@
 // A burst of real clicks, each pressed while the previous target's view is still being shown and
 // released after it. No uncovered frame shows a tab other than the active one, and once a click is
-// sent the tab it leaves shows uncovered for no more than input latency, even while that tab's
-// stream repaints it. Real tabs.ts and transcript-cover.ts against the fake tab server.
+// sent the tab it leaves shows uncovered for no more than `STALE_MS`, even while that tab's stream
+// repaints it. That bound is Chromium's, with its real `isInputPending`: the browser project runs
+// only Chromium. Real tabs.ts and transcript-cover.ts against the fake tab server.
 import { describe, it, expect, vi } from "vitest";
 import type * as TabsDrag from "./tabs-drag.js";
 
@@ -79,7 +80,7 @@ const SHOW_MS = 300;
 const GAP_MS = 200;
 const HOLD_MS = 200;
 /** A sent click dispatches in the task after the paint that freed the main thread, and the frame
- *  after it is covered: about a frame of input latency. Main-thread work while the tab it leaves
+ *  after it is covered: a few frames of input latency. Main-thread work while the tab it leaves
  *  shows uncovered, such as a view's show, runs past it. */
 const STALE_MS = 100;
 
