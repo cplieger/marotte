@@ -63,7 +63,6 @@ const SHAPED = new Set([
   "#fb-list .fb-git-clickable",
   "#run-bar-fold .run-bar-toggle",
   "#run-bar-fold .run-bar-all",
-  "#run-bar .run-bar-all",
   "a.git-pr-row-title",
   ".ev-box-toggle",
 ]);

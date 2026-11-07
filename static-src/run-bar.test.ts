@@ -297,17 +297,15 @@ describe("the run bar", () => {
     localStorage.removeItem("marotte.ui-state");
   });
 
-  it("lists two runs without a summary row", async () => {
+  it("lists one run without a summary row", async () => {
     const c = chatID();
     chats.push(c);
-    for (const n of ["p1", "p2"]) {
-      const id = runID(n);
-      inspect.set(id, state({ display_name: id }));
-      live(id, c);
-    }
+    const id = runID("p1");
+    inspect.set(id, state({ display_name: id }));
+    live(id, c);
     await activate(c);
     expect(fold.hidden).toBe(true);
-    expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(2);
+    expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(1);
     expect(bar.hasAttribute("data-folded")).toBe(false);
   });
 
@@ -1084,15 +1082,15 @@ describe("the run bar's fold motion", () => {
     expect(parseFloat(String(end))).toBe(bar.getBoundingClientRect().height);
   });
 
-  it("cuts a close under way when the fold row leaves, and shows the runs left", async () => {
-    const { toggle } = await folded(3);
+  it("cuts a close under way when the fold row leaves, and shows the run left", async () => {
+    const { toggle } = await folded(2);
     toggle.click();
     await finishSlides();
     toggle.click();
     heightSlides()[0]?.pause();
     noteRunSettled(runs.at(-1) ?? "");
     await new Promise((r) => setTimeout(r, 0));
-    expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(2);
+    expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(1);
     expect(fold.hidden).toBe(true);
     expect(heightSlides()).toHaveLength(0);
     expect(bar.hasAttribute("data-folded")).toBe(false);
@@ -1196,29 +1194,34 @@ describe("Pause all and Resume all", () => {
   it("offers Pause all, with a tooltip, while a listed run is running", async () => {
     const c = chatID();
     chats.push(c);
-    await mount(c, { [runID("one")]: running("one") });
+    await mount(c, { [runID("one")]: running("one"), [runID("two")]: running("two") });
     const btn = batchButton();
     expect(btn?.getAttribute("aria-label")).toBe("Pause all");
     expect(btn?.dataset["tooltip"] ?? "").not.toBe("");
   });
 
-  it("puts the button on the first run's line below the fold, and on the fold row from three runs", async () => {
+  it("drops the header and the button when a second run leaves, and brings them back when one arrives", async () => {
     localStorage.removeItem("marotte.ui-state");
     const c = chatID();
     chats.push(c);
-    const [a, b, d] = [runID("a"), runID("b"), runID("d")];
+    const [a, b] = [runID("a"), runID("b")];
     await mount(c, { [a]: running("a"), [b]: running("b") });
-    const rows = (): HTMLElement[] => [...bar.querySelectorAll<HTMLElement>("li.run-bar-row")];
-    expect(rows()[0]?.contains(batchButton())).toBe(true);
-    expect(rows()[1]?.querySelector(".run-bar-all")).toBeNull();
+    expect(fold.hidden).toBe(false);
+    expect(fold.contains(batchButton())).toBe(true);
+    expect(bar.querySelector(".run-bar-all")).toBeNull();
 
-    inspect.set(d, running("d"));
-    live(d, c);
+    noteRunSettled(b);
+    await vi.waitFor(() => {
+      expect(fold.hidden).toBe(true);
+    });
+    expect(batchButton()).toBeNull();
+
+    inspect.set(b, running("b"));
+    live(b, c);
     await vi.waitFor(() => {
       expect(fold.hidden).toBe(false);
     });
     expect(fold.contains(batchButton())).toBe(true);
-    expect(bar.querySelector(".run-bar-all")).toBeNull();
     localStorage.removeItem("marotte.ui-state");
   });
 
@@ -1369,7 +1372,10 @@ describe("Pause all and Resume all", () => {
   it("offers Resume all when only a rate-limited run is paused", async () => {
     const c = chatID();
     chats.push(c);
-    await mount(c, { [runID("limited")]: throttled("limited") });
+    await mount(c, {
+      [runID("limited")]: throttled("limited"),
+      [runID("limited-2")]: throttled("limited-2"),
+    });
     expect(batchButton()?.getAttribute("aria-label")).toBe("Resume all");
   });
 
@@ -1377,12 +1383,11 @@ describe("Pause all and Resume all", () => {
   it("offers Resume all for a self-paused run whose detail names an empty class", async () => {
     const c = chatID();
     chats.push(c);
-    await mount(c, {
-      [runID("blank")]: {
-        ...throttled("blank"),
-        pauseDetail: { class: "", code: "ServiceUnavailable" },
-      },
+    const blank = (name: string): Record<string, unknown> => ({
+      ...throttled(name),
+      pauseDetail: { class: "", code: "ServiceUnavailable" },
     });
+    await mount(c, { [runID("blank")]: blank("blank"), [runID("blank-2")]: blank("blank-2") });
     expect(batchButton()?.getAttribute("aria-label")).toBe("Resume all");
   });
 
@@ -1445,20 +1450,19 @@ describe("Pause all and Resume all", () => {
     const c = chatID();
     chats.push(c);
     const id = runID("ends-pause");
-    await mount(c, { [id]: running("x") });
-    expect(batchButton()).not.toBeNull();
-    inspect.set(
-      id,
+    const stuck = (name: string): Record<string, unknown> =>
       state({
-        display_name: "x",
+        display_name: name,
         status: "paused",
         root: pausedRoot,
         controls: { verbs: ["cancel"] },
-      }),
-    );
+      });
+    await mount(c, { [id]: running("x"), [runID("ends-held")]: stuck("y") });
+    expect(batchButton()).not.toBeNull();
+    inspect.set(id, stuck("x"));
     invalidateRun(id);
     await vi.waitFor(() => {
-      expect(rowStates()).toEqual(["waiting"]);
+      expect(rowStates()).toEqual(["waiting", "waiting"]);
     });
     expect(batchButton()).toBeNull();
   });
@@ -1487,7 +1491,10 @@ describe("Pause all and Resume all", () => {
         return { ...st, root: { ...root, credits: [{ usage: 1.25, unit: "credit" }] } };
       };
 
-    async function mountN(n: number, make: (name: string) => Record<string, unknown>): Promise<void> {
+    async function mountN(
+      n: number,
+      make: (name: string) => Record<string, unknown>,
+    ): Promise<void> {
       const c = chatID();
       chats.push(c);
       const set: Record<string, Record<string, unknown>> = {};
@@ -1517,10 +1524,15 @@ describe("Pause all and Resume all", () => {
       expect(r.left, "right of the recap").toBeGreaterThanOrEqual(t.right - 0.5);
       expect(mid, "on the recap's line").toBeGreaterThanOrEqual(t.top - 0.5);
       expect(mid, "on the recap's line").toBeLessThanOrEqual(t.bottom + 0.5);
-      expect(runHost.getBoundingClientRect().right - r.right, "at the box's end inset").toBeLessThan(12);
+      expect(
+        runHost.getBoundingClientRect().right - r.right,
+        "at the box's end inset",
+      ).toBeLessThan(12);
       for (const row of bar.querySelectorAll<HTMLElement>("li.run-bar-row")) {
         if (row.checkVisibility()) {
-          expect(row.getBoundingClientRect().top, "below the header").toBeGreaterThanOrEqual(r.bottom - 0.5);
+          expect(row.getBoundingClientRect().top, "below the header").toBeGreaterThanOrEqual(
+            r.bottom - 0.5,
+          );
         }
       }
     }
@@ -1545,7 +1557,9 @@ describe("Pause all and Resume all", () => {
       it(`heads ${String(n)} runs with the recap, its toggle and Pause all at its right`, async () => {
         await mountN(n, billed(running));
         const t = toggleEl();
-        expect(t.querySelector(".run-bar-count")?.textContent).toBe(`${String(n)} workflows running`);
+        expect(t.querySelector(".run-bar-count")?.textContent).toBe(
+          `${String(n)} workflows running`,
+        );
         expect(t.getAttribute("aria-expanded")).toBe("false");
         const btn = batchButton();
         expect(btn?.getAttribute("aria-label")).toBe("Pause all");
@@ -1564,9 +1578,9 @@ describe("Pause all and Resume all", () => {
       expect(t.getAttribute("aria-expanded")).toBe("true");
       await finishSlides();
       expect(bar.hasAttribute("data-folded")).toBe(false);
-      expect([...bar.querySelectorAll<HTMLElement>("li.run-bar-row")].every((r) => r.checkVisibility())).toBe(
-        true,
-      );
+      expect(
+        [...bar.querySelectorAll<HTMLElement>("li.run-bar-row")].every((r) => r.checkVisibility()),
+      ).toBe(true);
       t.click();
       expect(t.getAttribute("aria-expanded")).toBe("false");
       await finishSlides();
