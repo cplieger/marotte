@@ -153,7 +153,28 @@ function meet(a: Probe, b: Probe): void {
   }
 }
 
-const nested = (a: Probe, b: Probe): boolean => a.el.contains(b.el) || b.el.contains(a.el);
+const within = (inner: Box, outer: Box): boolean =>
+  inner.left >= outer.left &&
+  inner.right <= outer.right &&
+  inner.top >= outer.top &&
+  inner.bottom <= outer.bottom;
+
+/** Controls laid over another control's box, each as [over, base]. Only these may overlap a sibling's box; any other
+ *  overlap is a target covering another. */
+const OVERLAYS: readonly (readonly [over: string, base: string])[] = [
+  [".tool-group-hooks", ".tool-group-header"],
+];
+
+const overlays = (over: HTMLElement, base: HTMLElement): boolean =>
+  OVERLAYS.some(([o, b]) => over.matches(o) && base.matches(b));
+
+/** A control inside another, or a declared overlay on it: the inner one takes its own box out of the outer's target
+ *  rather than meeting it at an edge. */
+const nested = (a: Probe, b: Probe): boolean =>
+  a.el.contains(b.el) ||
+  b.el.contains(a.el) ||
+  (within(a.box, b.box) && overlays(a.el, b.el)) ||
+  (within(b.box, a.box) && overlays(b.el, a.el));
 
 function probesFor(s: Surface, which: "all" | "controls" = "all"): Probe[] {
   const sels =
@@ -182,6 +203,16 @@ function probesFor(s: Surface, which: "all" | "controls" = "all"): Probe[] {
 function reaches(p: Probe, x: number, y: number): string | null {
   const hit = document.elementFromPoint(x, y);
   if (hit !== null && p.el.contains(hit)) {
+    return null;
+  }
+  // A declared overlay on `p` owns its own target there, as a control nested inside it would.
+  const over = hit?.closest<HTMLElement>("button, [role='button'], a[href], summary");
+  if (
+    over !== null &&
+    over !== undefined &&
+    overlays(over, p.el) &&
+    within(boxOf(over), boxOf(p.el))
+  ) {
     return null;
   }
   const owner = hit?.closest("[id], [class]");

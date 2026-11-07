@@ -9,8 +9,14 @@ import { iconEl } from "./icon-el.js";
 import { fileIcon, toolIcon } from "./icons.js";
 import { kindNoun } from "./tool-kind-noun.js";
 
-/** Set on a group that carries a hooks badge, which `14-tools.css` gives a column beside the header. */
+/** Set on a group that carries a hooks badge, which `14-tools.css` lays over the header's top-right corner. */
 const CLS_HAS_HOOKS = "tool-group-has-hooks";
+
+/** The badge count's digit count, from which `14-tools.css` sizes the badge and the header's reserved padding. */
+const DIGITS_VAR = "--hooks-digits";
+
+/** The open list's widest fit, which `14-tools.css` caps the panel at. */
+const ROOM_VAR = "--hook-pop-room";
 
 /** The server titles a hook card "Hook fired: <name>" (internal/translate hookToolCall). */
 const HOOK_TITLE_PREFIX = "Hook fired: ";
@@ -90,6 +96,8 @@ interface HookPopover {
   folded: readonly HTMLElement[];
   readonly panel: HTMLElement;
   readonly ctl: PopoverController;
+  /** Watches the open list's group: a resize refits the list, and a group leaving the page closes it. */
+  readonly watch: ResizeObserver;
 }
 
 const popovers = new WeakMap<HTMLElement, HookPopover>();
@@ -102,11 +110,13 @@ export function syncHookBadge(group: HTMLElement, folded: readonly HTMLElement[]
   if (folded.length === 0) {
     if (badge !== null) {
       const state = popovers.get(badge);
+      state?.watch.disconnect();
       state?.ctl.dispose();
       state?.panel.remove();
       badge.remove();
     }
     group.classList.remove(CLS_HAS_HOOKS);
+    group.style.removeProperty(DIGITS_VAR);
     return;
   }
   badge ??= mountBadge(group);
@@ -117,6 +127,7 @@ export function syncHookBadge(group: HTMLElement, folded: readonly HTMLElement[]
   }
   state.folded = folded;
   const count = String(folded.length);
+  group.style.setProperty(DIGITS_VAR, String(count.length));
   const visible = badge.querySelector(".tool-group-hooks-n");
   if (visible !== null && visible.textContent !== count) {
     visible.textContent = count;
@@ -150,17 +161,32 @@ function mountBadge(group: HTMLElement): HTMLElement {
     "aria-label": "Hooks that ran",
     tabindex: "-1",
   });
+  const watch = new ResizeObserver(() => {
+    if (!badge.isConnected) {
+      ctl.hide();
+      return;
+    }
+    fitList(panel, badge);
+    ctl.reposition();
+  });
   const ctl = createPopover(badge, panel, {
     placement: "bottom",
     align: "end",
     haspopup: "dialog",
     initialFocus: panel,
     returnFocus: badge,
+    onOpen: () => {
+      const g = badge.closest(".tool-group");
+      if (g !== null) {
+        watch.observe(g);
+      }
+    },
     onClose: () => {
+      watch.disconnect();
       panel.remove();
     },
   });
-  const state: HookPopover = { folded: [], panel, ctl };
+  const state: HookPopover = { folded: [], panel, ctl, watch };
   popovers.set(badge, state);
   badge.addEventListener("click", () => {
     toggleHookPopover(state, badge);
@@ -181,13 +207,25 @@ function toggleHookPopover(state: HookPopover, badge: HTMLElement): void {
   }
   // A reader's open moves focus into the list and back; set on every show, since find's open sets none.
   state.ctl.setOptions({ initialFocus: state.panel, returnFocus: badge });
-  showList(state);
+  showList(state, badge);
 }
 
-function showList(state: HookPopover): void {
+function showList(state: HookPopover, badge: HTMLElement): void {
   delete state.panel.dataset["keys"];
   renderHookList(state);
+  fitList(state.panel, badge);
   state.ctl.show();
+}
+
+/** Cap the list at the room between its group's start edge and the badge's end edge, the span an end-aligned list
+ *  can take without leaving the turn card. Measured, since the panel is fixed to the viewport. */
+function fitList(panel: HTMLElement, badge: HTMLElement): void {
+  const group = badge.closest(".tool-group");
+  if (group === null) {
+    return;
+  }
+  const room = badge.getBoundingClientRect().right - group.getBoundingClientRect().left;
+  panel.style.setProperty(ROOM_VAR, `${String(room)}px`);
 }
 
 /** Open the badge's list without moving focus, for find-in-chat landing on a folded hook while the reader types.
@@ -198,7 +236,7 @@ export function showHookPopover(badge: HTMLElement): boolean {
     return false;
   }
   state.ctl.setOptions({ initialFocus: null, returnFocus: false });
-  showList(state);
+  showList(state, badge);
   return true;
 }
 
@@ -257,7 +295,7 @@ function hookItem(entry: HookEntry, close: () => void): HTMLElement {
     el(
       "span",
       { className: "tool-hook-text" },
-      el("span", { className: "tool-title" }, entry.name),
+      el("span", { className: "tool-title", "data-tooltip": entry.name }, entry.name),
       el("span", { className: "tool-hook-trigger" }, hookTriggerLabel(entry.trigger)),
     ),
   );

@@ -100,14 +100,19 @@
   border-radius: var(--r);
   overflow: hidden;
 
-  /* The hooks badge is a button, so it cannot sit inside the header's `role="button"`: it takes a column of its own
-     beside the header, and the body spans both. Before `[hidden]` below, which must win the tie. */
+  /* The hooks badge's box: its glyph, gap and count digits (`--hooks-digits`, hook-badge.ts) in the badge's own mono
+     font, floored at the row's tap size. The header reserves it as padding, so it reads in the header's font too. */
   &.tool-group-has-hooks {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    --hooks-w: max(
+      var(--row-tap),
+      calc(2 * var(--sp-2) + var(--icon-ui) + var(--sp-1) + var(--hooks-digits, 1) * 1ch)
+    );
 
-    & > .tool-group-body {
-      grid-column: 1 / -1;
+    position: relative;
+    isolation: isolate;
+
+    & > .tool-group-header {
+      padding-inline-end: calc(var(--hooks-w) + 2 * var(--sp-2));
     }
   }
 
@@ -227,17 +232,19 @@
   padding-block: calc((var(--row-first-line) - 1lh) / 2);
 }
 
-/* The hooks folded out of the rows: the fish-hook glyph and their count, in the header row's last column. A button
-   that opens the list of those hooks. It takes the turn footer's control box (61-mcp-tools.css), so its paint, hover
-   and press are the footer buttons'; the shared expander holds the target. `align-self: start` keeps it on the
-   header's first line, centred in that line's box, when the header wraps, where the grid would stretch it. Its width
-   is floored at the row's tap size, so the expander never grows sideways into the header's own target. */
+/* The hooks folded out of the rows: the fish-hook glyph and their count, a button that opens the list of those hooks.
+   A button cannot sit inside the header's `role="button"`, so it is the header's sibling, laid over the header's
+   top-right corner and centred in its first line: the header's own surface, and so its highlight, spans the card.
+   It takes the turn footer's control box (61-mcp-tools.css), so its paint, hover and press are the footer buttons';
+   the shared expander holds the target. Its width is floored at the row's tap size, so the expander never grows
+   sideways over the header. */
 .tool-group-hooks {
-  align-self: start;
+  position: absolute;
+  z-index: 1;
+  inset-block-start: calc((var(--row-tap) - var(--ctl-h-sm)) / 2);
+  inset-inline-end: var(--sp-2);
   justify-content: center;
-  min-inline-size: var(--row-tap);
-  margin-block-start: calc((var(--row-tap) - var(--ctl-h-sm)) / 2);
-  margin-inline-end: var(--sp-2);
+  inline-size: var(--hooks-w);
   appearance: none;
   display: inline-flex;
   align-items: center;
@@ -260,25 +267,20 @@
   }
 }
 
-/* The footer row's ink, which the footer buttons inherit: the badge sits outside the header, so the shared box's
+/* The footer row's ink, which the footer buttons inherit: the badge is no child of the header, so the shared box's
    `color: inherit` would give it the box's primary ink and leave hover no lift. (0,2,0), under the shared hover. */
 .tool-group > .tool-group-hooks {
   color: var(--c-text-secondary);
 }
 
-/* The list the hooks badge opens: one row per hook, its run count, its name and its hook file's chip. */
+/* The list the hooks badge opens: one row per hook, its run count, its name and its hook file's chip. The menu
+   surface is the tab menu's (12-tabs.css). `--hook-pop-room` (hook-badge.ts) is the span from the group's start edge
+   to the badge's end edge, so an end-aligned list stays inside the turn card. */
 .tool-hook-popover {
-  min-inline-size: 16rem;
-  max-inline-size: min(28rem, calc(100vw - 1rem));
+  min-inline-size: min(16rem, var(--hook-pop-room, 16rem));
+  max-inline-size: min(28rem, var(--hook-pop-room, 100vw - 1rem));
   max-block-size: 60dvh;
   overflow-y: auto;
-  padding: var(--sp-1);
-  background: var(--c-bg-primary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  box-shadow:
-    var(--shadow-ambient),
-    0 8px 24px oklch(0% 0 none / 30%);
   font-size: var(--fs-sm);
 
   /* Focus lands on the panel itself so Escape and Tab work from the first key; it is no control. */
@@ -301,7 +303,7 @@
   padding-block: var(--sp-1);
   padding-inline: 0.75rem;
   min-width: 0;
-  color: var(--c-text-secondary);
+  color: var(--c-text-primary);
 
   /* Read by `.tool-file-link`, which `.tool-header` otherwise declares it for. */
   --tool-chev-box: 1.5rem;
@@ -326,6 +328,11 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    /* A menu row's ink, not a tool card's accent. */
+    & > .tool-title {
+      color: inherit;
     }
 
     & > .tool-hook-trigger {

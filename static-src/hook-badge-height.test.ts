@@ -1,8 +1,10 @@
-// The hooks badge is a button the size of its glyph's one-line box, whatever height its group's header grows to: a
-// header that wraps to several lines must not stretch the badge's hover fill and click area down beside it.
+// The hooks badge is a button the size of its glyph's one-line box, whatever height its group's header grows to: it
+// keeps that box on the header's first line when the header wraps to several lines.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+
+const { mountHookGroup, unmountHookGroups } = await import("./__test-helpers__/hook-group.js");
 
 let style: HTMLStyleElement | undefined;
 const hosts: HTMLElement[] = [];
@@ -14,39 +16,18 @@ afterAll(() => {
   style?.remove();
 });
 afterEach(() => {
+  unmountHookGroups();
   for (const h of hosts.splice(0)) {
     h.remove();
   }
 });
 
-/** A group with the badge, its header holding `lines` forced lines of summary text. */
-function group(lines: number): { header: HTMLElement; badge: HTMLElement } {
-  const host = document.createElement("div");
-  host.style.inlineSize = "360px";
-  const g = document.createElement("div");
-  g.className = "tool-group tool-group-has-hooks";
-  const header = document.createElement("div");
-  header.className = "tool-group-header";
-  header.append(
-    ...Array.from({ length: lines }, (_, i) => {
-      const line = document.createElement("div");
-      line.textContent = `Ran a command ${String(i + 1)}`;
-      return line;
-    }),
-  );
-  const badge = document.createElement("button");
-  badge.type = "button";
-  badge.className = "tool-group-hooks";
-  badge.innerHTML =
-    '<span class="tool-group-hooks-icon"><svg viewBox="0 0 24 24"></svg></span><span class="tool-group-hooks-n">4</span>';
-  const body = document.createElement("div");
-  body.className = "tool-group-body";
-  g.append(header, badge, body);
-  host.append(g);
-  document.body.append(host);
-  hosts.push(host);
-  return { header, badge };
+/** A group with the badge in a 360px card, its header summarising `commands`. */
+function group(...commands: string[]): { header: HTMLElement; badge: HTMLElement } {
+  return mountHookGroup({ commands, hooks: ["guard"], width: "360px" });
 }
+
+const LONG = "Check what deadset-spec dev.40 to dev.41 brings and what the analyzers must change";
 
 /** A turn footer action button in its footer row, the badge's styling reference. */
 function footerButton(): HTMLElement {
@@ -63,9 +44,9 @@ function footerButton(): HTMLElement {
 }
 
 describe("the hooks badge", () => {
-  it("keeps its one-line size and place beside a header that wraps", () => {
-    const one = group(1);
-    const many = group(4);
+  it("keeps its one-line box on the first line of a header that wraps", () => {
+    const one = group("cmd a", "cmd b");
+    const many = group(LONG, LONG, LONG);
     const h1 = one.badge.getBoundingClientRect();
     const h4 = many.badge.getBoundingClientRect();
     expect(many.header.getBoundingClientRect().height).toBeGreaterThan(h1.height * 2);
@@ -76,7 +57,7 @@ describe("the hooks badge", () => {
   });
 
   it("paints as a turn footer button: same height, corner, fill and ink", () => {
-    const { badge } = group(1);
+    const { badge } = group("cmd a", "cmd b");
     const ref = getComputedStyle(footerButton());
     const got = getComputedStyle(badge);
     for (const prop of [
