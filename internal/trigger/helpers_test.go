@@ -35,7 +35,7 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	h := &harness{t: t, dir: t.TempDir(), src: &fakeSource{}, marks: newLaunchMarks(), now: pollStart}
+	h := &harness{t: t, dir: t.TempDir(), src: &fakeSource{}, now: pollStart}
 	h.reopen()
 	return h
 }
@@ -48,6 +48,7 @@ func (h *harness) reopen() {
 		h.t.Fatalf("Setup: NewStore: %v", err)
 	}
 	h.store, h.c = st, NewConfirmer(st, w, h.leases)
+	h.marks = h.c.marks
 }
 
 func (h *harness) create(ev *launchrule.EventSpec) launchrule.Rule {
@@ -64,7 +65,7 @@ func (h *harness) create(ev *launchrule.EventSpec) launchrule.Rule {
 // poll runs one poll of every feed at h.now, then moves h.now on by five minutes.
 func (h *harness) poll() {
 	h.t.Helper()
-	p := &Poller{src: h.src, c: h.c, now: func() time.Time { return h.now }, marks: h.marks}
+	p := &Poller{src: h.src, c: h.c, now: func() time.Time { return h.now }}
 	for _, fr := range Feeds(h.store.List()) {
 		p.Poll(h.t.Context(), fr)
 	}

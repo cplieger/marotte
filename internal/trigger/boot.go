@@ -10,9 +10,10 @@ import (
 	"github.com/cplieger/marotte/internal/runlease"
 )
 
-// Leases is the run-lease store the boot load reads. *runlease.Store implements it.
+// Leases is the run-lease store the boot load and a busy read. *runlease.Store implements it.
 type Leases interface {
 	List() []runlease.Lease
+	Get(workflowID string) (runlease.Lease, bool)
 }
 
 var _ Leases = (*runlease.Store)(nil)
@@ -96,8 +97,7 @@ func (s *stepper) bootRecord(rec *record, leases map[string]runlease.Lease) {
 	switch {
 	case rec.state.abandoned():
 		if rec.cancelLandedAt.IsZero() { // A29: the cancel is still owed
-			rec.cancelsOut++
-			s.res.effects = append(s.res.effects, attemptEffect{kind: effectCancel, workflowID: rec.workflowID})
+			s.cancel(rec)
 		} // A30: KAS took the cancel
 	case hasLease(leases, rec.workflowID): // A27: the run may report on a resume; A7 arms its bound
 		s.c.holdAtBoot(rec.workflowID, s.ruleID)

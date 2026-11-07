@@ -81,5 +81,9 @@ type attemptEvent struct {
 	key string
 	// launchingRule is a busy's rule whose launch the run blocked, when the step runs on the rule holding the run.
 	launchingRule string
-	kind          eventKind
+	// heldBy names the other rule whose record holds a busy's run, for the launching rule's row; heldLive is
+	// whether that record is live.
+	heldBy   string
+	kind     eventKind
+	heldLive bool
 }

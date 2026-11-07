@@ -559,7 +559,7 @@ func confirmed(t *testing.T, tc *testConfirmer, r *launchrule.Rule) {
 }
 
 func TestAttemptTable(t *testing.T) {
-	for _, c := range slices.Concat(attemptCases, ruleRowCases, bootCases, writeCases, retryCases) {
+	for _, c := range slices.Concat(attemptCases, ruleRowCases, bootCases, writeCases, retryCases, busyCases, launcherCases) {
 		t.Run(c.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				tc := newTestConfirmer(t)

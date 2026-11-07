@@ -26,26 +26,42 @@ func (s *stepper) apply(rec *record, ev *attemptEvent) bool {
 
 // live runs the rows of a live record.
 func (s *stepper) live(rec *record, ev *attemptEvent) bool {
-	switch {
-	case ev.kind == evRunStart:
+	switch ev.kind {
+	case evRunStart:
 		s.confirm(rec)
-	case rec.state == stateInvoking && (ev.kind == evInvokeOK || ev.kind == evInvokeReplyLost):
-		rec.state, rec.inFlight = stateInvokedUnconfirmed, false // A4: the bound decides
-	case rec.state == stateInvoking && ev.kind == evInvokeError:
-		s.invokeRefused(rec, ev.err)
-	case rec.state == stateBootHeld && ev.kind == evEngineReady:
+	case evInvokeOK, evInvokeReplyLost, evInvokeError:
+		return s.invokeReturned(rec, ev)
+	case evEngineReady:
+		if rec.state != stateBootHeld {
+			return false
+		}
 		s.arm(rec) // A7
-	case rec.state == stateBootHeld && ev.kind == evBoundReached:
-		s.bootBoundReached(rec)
-	case ev.kind == evBoundReached:
-		s.boundReached(rec)
-	case ev.kind == evRetried:
+	case evBoundReached:
+		if rec.state == stateBootHeld {
+			s.bootBoundReached(rec)
+		} else {
+			s.boundReached(rec)
+		}
+	case evRetried:
 		s.retriedLive(rec)
-	case ev.kind == evCancelOK || ev.kind == evCancelError:
-		// A26: the bound decides a live record.
+	case evCancelOK, evCancelError, evBusy:
+		// A26 and A12: the bound decides a live record.
 	default:
 		return false
 	}
+	return true
+}
+
+// invokeReturned is A4 and A5, the return of an invoking record's call.
+func (s *stepper) invokeReturned(rec *record, ev *attemptEvent) bool {
+	if rec.state != stateInvoking {
+		return false
+	}
+	if ev.kind == evInvokeError {
+		s.invokeRefused(rec, ev.err)
+		return true
+	}
+	rec.state, rec.inFlight = stateInvokedUnconfirmed, false // A4: the bound decides
 	return true
 }
 
@@ -67,6 +83,8 @@ func (s *stepper) abandoned(rec *record, ev *attemptEvent) bool {
 		// A22: a late run_start or a stale timer changes nothing.
 	case evRetried:
 		s.handOver(rec)
+	case evBusy:
+		s.busyAbandoned(rec)
 	default:
 		return false
 	}
@@ -83,7 +101,11 @@ func (s *stepper) none(ev *attemptEvent) bool {
 		evRetried:
 		return true // A23
 	case evBusy:
-		return ev.launchingRule != "" && ev.launchingRule != s.ruleID // A23; the launching rule's own busy is A24
+		if ev.launchingRule != "" {
+			return ev.launchingRule != s.ruleID // A23: the record left between the lookup and this call
+		}
+		s.busyUnheld(ev)
+		return true
 	}
 	return false
 }
@@ -221,11 +243,16 @@ func (s *stepper) abandon(rec *record, cause string) {
 	}
 	rec.state, rec.cause, rec.at = stateAbandonedCancelling, cause, s.now
 	slog.Info(logMsgLaunchAbandoned, "workflow_id", rec.workflowID, "rule_id", s.ruleID, "key", rec.key, "cause", cause)
-	rec.cancelsOut++
-	s.res.effects = append(s.res.effects, attemptEffect{kind: effectCancel, workflowID: rec.workflowID})
+	s.cancel(rec)
 	if !rec.unpersisted {
 		s.res.write = true
 	}
+}
+
+// cancel queues a cancel of rec's run for the effect goroutine.
+func (s *stepper) cancel(rec *record) {
+	rec.cancelsOut++
+	s.res.effects = append(s.res.effects, attemptEffect{kind: effectCancel, workflowID: rec.workflowID})
 }
 
 // drop removes a confirmed record: a confirmed attempt has no record.

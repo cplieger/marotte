@@ -17,20 +17,27 @@ type Confirmer struct {
 	store  *launchrule.Store
 	writer launchrule.StateWriter
 	rules  map[string]*ruleValue
+	// leases is the run-lease store, read by a busy naming a run no rule holds a record of (A24).
+	leases Leases
 	// bootHeld is each boot-held run's rule, by workflow id.
 	bootHeld map[string]string
 	effects  *effectQueue
+	// marks are the queue entries a launch is in flight for, shared by the poller and the launcher.
+	marks *launchMarks
 	// wake is the launcher's coalescing signal.
 	wake chan struct{}
-	mu   sync.Mutex
+	// bootSettled closes once Run has answered every cancel queued before the engine was ready.
+	bootSettled chan struct{}
+	mu          sync.Mutex
 }
 
 // NewConfirmer returns a Confirmer over the rules in store, persisting their state through writer, with every
 // state file loaded against the leases on disk (row E7). The cancels the load owes wait for Run.
 func NewConfirmer(store *launchrule.Store, writer launchrule.StateWriter, leases Leases) *Confirmer {
 	c := &Confirmer{
-		store: store, writer: writer, rules: map[string]*ruleValue{}, bootHeld: map[string]string{},
-		effects: newEffectQueue(), wake: make(chan struct{}, 1),
+		store: store, writer: writer, leases: leases, rules: map[string]*ruleValue{}, bootHeld: map[string]string{},
+		effects: newEffectQueue(), marks: newLaunchMarks(), wake: make(chan struct{}, 1),
+		bootSettled: make(chan struct{}),
 	}
 	c.load(leases)
 	return c
@@ -44,8 +51,11 @@ type ruleValue struct {
 	// persist it is the one failing, and lifts when any write of the rule's whole value lands.
 	writeBlocked string
 	records      []*record
-	es           eventState
-	mu           sync.Mutex
+	// blocker is the last run to answer busy that no record, no lease and not the row's last run names; it lives
+	// in memory only.
+	blocker blocker
+	es      eventState
+	mu      sync.Mutex
 	// dropped is set when the Confirmer forgets the value; a step that waited for mu takes the rule's current one.
 	dropped bool
 	// newest is the hold policy E1 last saw, so it runs Q only on a change to newest.
@@ -130,8 +140,6 @@ func (c *Confirmer) ConfirmEvent(ruleID, eventKey, workflowID string) {
 
 // LaunchReturned is the return of the LaunchTriggered call that created workflowID, with the error it returned.
 // It is delivered only for a call that created a run.
-//
-//deadset:ignore DS1102 -- the launcher delivers each call's return through it; until that lands only the tests do
 func (c *Confirmer) LaunchReturned(ruleID, workflowID string, err error) {
 	c.deliver(ruleID, &attemptEvent{kind: launchReturnKind(err), workflowID: workflowID, err: err})
 }

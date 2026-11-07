@@ -75,17 +75,23 @@ func (c *Confirmer) Run(ctx context.Context, engineReady <-chan struct{}, fx Eff
 	c.armBootHeld()
 	ttl := time.NewTicker(ttlInterval)
 	defer ttl.Stop()
+	c.runQueued(ctx, fx)
+	close(c.bootSettled)
 	for {
-		for _, e := range c.effects.take() {
-			c.runEffect(ctx, fx, e)
-		}
 		select {
 		case <-c.effects.signal:
+			c.runQueued(ctx, fx)
 		case <-ttl.C:
 			c.expireAbandoned()
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+func (c *Confirmer) runQueued(ctx context.Context, fx Effects) {
+	for _, e := range c.effects.take() {
+		c.runEffect(ctx, fx, e)
 	}
 }
 

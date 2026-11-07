@@ -36,10 +36,13 @@ func (s *stepper) ruleRow(ev *attemptEvent) bool {
 		// E8, A25 per record: the count, the block and the clock are kept.
 	case evRunGone:
 		s.dropAbandoned(func(r *record) bool { return !listedActive(ev.statuses, r.workflowID) && s.aged(r) }) // E5
+		s.clearGoneBlocker(ev.statuses)
 	case evTTL:
 		s.dropAbandoned(s.aged) // E6
 	case evWriteRetry:
 		s.res.write, s.wakeOnWrite = true, true // E10
+	case evLaunchEnded:
+		s.launchEnded(ev.key)
 	case evBoot:
 		s.boot(ev.boot)
 	default:
@@ -90,8 +93,7 @@ func (s *stepper) deleteRule() {
 			s.abandon(r, causeDelete)
 		case r.state == stateAbandonedCancelling:
 			r.unpersisted = true
-			r.cancelsOut++
-			s.res.effects = append(s.res.effects, attemptEffect{kind: effectCancel, workflowID: r.workflowID})
+			s.cancel(r)
 		case r.inFlight || r.owesRelease || r.cancelsOut > 0:
 			r.unpersisted = true
 		default:

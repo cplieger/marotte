@@ -79,6 +79,8 @@ type App struct {
 	stopScheduleRunner func()
 	// stopTriggerConfirmer stops the trigger confirmer's cancels and releases and waits for them.
 	stopTriggerConfirmer func()
+	// stopTriggerLauncher stops the trigger launcher and waits for its launch in flight.
+	stopTriggerLauncher func()
 	// stopKASHeal stops the KAS MCP file heal loop and waits for its goroutine.
 	stopKASHeal func()
 	// stopToolsSteering waits for the boot's environment.md regeneration, which reads the tools engine.
@@ -210,6 +212,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	stopScheduleRunner := startScheduleRunner(appCtx, launchRules, h.Runs())
 	stopTriggerConfirmer := startTriggerConfirmer(appCtx, confirmer, h.EngineReady(), h.Runs())
+	triggerLauncher := newTriggerLauncher(confirmer, h.Runs())
+	stopTriggerLauncher := startTriggerLauncher(appCtx, triggerLauncher, h.EngineReady())
 
 	mcpRegistry := mcp.NewRegistryProxy()
 	mcpPrewarm := prewarm.NewRunner(appCtx, mcpStore)
@@ -363,6 +367,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		stopForgeSteering:    forgeSteer.close,
 		stopScheduleRunner:   stopScheduleRunner,
 		stopTriggerConfirmer: stopTriggerConfirmer,
+		stopTriggerLauncher:  stopTriggerLauncher,
 		stopKASHeal:          stopKASHeal,
 		stopToolsSteering:    stopToolsSteering,
 		stopKeepState:        stopKeepState,
@@ -398,6 +403,9 @@ func (a *App) Shutdown() {
 	callIfSet(a.stopKASHeal)
 	// Before the runtime's teardown: a sweep in flight launches its run through the runtime.
 	callIfSet(a.stopScheduleRunner)
+	// Before the runtime's teardown: a launch in flight runs through the runtime, and its cancels go to the
+	// confirmer, so the launcher stops first.
+	callIfSet(a.stopTriggerLauncher)
 	// Before the runtime's teardown: a cancel in flight reaches the engine through the runtime.
 	callIfSet(a.stopTriggerConfirmer)
 	// Before stopKiro because this stop WAITS: a sweep reaches KAS over the agent engine the
@@ -904,6 +912,23 @@ func startTriggerConfirmer(ctx context.Context, c *trigger.Confirmer, engineRead
 		return nil
 	}
 	return runBackground(ctx, "trigger confirmer", func(bctx context.Context) { c.Run(bctx, engineReady, fx) })
+}
+
+// newTriggerLauncher builds the one launcher of c's rules over l, nil when there is no confirmer.
+func newTriggerLauncher(c *trigger.Confirmer, l trigger.Launcher) *trigger.LaunchLoop {
+	if c == nil {
+		return nil
+	}
+	return trigger.NewLauncher(c, l)
+}
+
+// startTriggerLauncher runs ll until ctx ends; its first launch waits for engineReady. A nil ll starts nothing and
+// returns a nil stop.
+func startTriggerLauncher(ctx context.Context, ll *trigger.LaunchLoop, engineReady <-chan struct{}) (stop func()) {
+	if ll == nil {
+		return nil
+	}
+	return runBackground(ctx, "trigger launcher", func(bctx context.Context) { ll.Run(bctx, engineReady) })
 }
 
 // ensureUploadDir creates the composer's upload target so the file handler can mount it, warning

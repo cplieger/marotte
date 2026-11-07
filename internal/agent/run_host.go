@@ -111,7 +111,10 @@ func (rs *Runs) LaunchScheduled(
 	return id, name, err
 }
 
-var _ trigger.Effects = (*Runs)(nil)
+var (
+	_ trigger.Effects  = (*Runs)(nil)
+	_ trigger.Launcher = (*Runs)(nil)
+)
 
 // LaunchTriggered launches an unattended run of an event rule's queued event. Once workflow/new created the run it
 // returns the run's id with whatever error followed, so the rule can name, keep or cancel that one run; an error

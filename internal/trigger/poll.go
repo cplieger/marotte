@@ -42,17 +42,16 @@ func Feeds(rules []launchrule.Rule) []FeedRules {
 
 // Poller reads feeds and queues what matched, applying each rule's part through the Confirmer, which writes it.
 type Poller struct {
-	src   FeedSource
-	c     *Confirmer
-	now   func() time.Time
-	marks *launchMarks
+	src FeedSource
+	c   *Confirmer
+	now func() time.Time
 }
 
 // NewPoller returns a Poller reading through src and keeping rule state in c.
 //
 //deadset:ignore DS1101 -- the trigger runner polls through it; until that lands only the tests do
 func NewPoller(src FeedSource, c *Confirmer) *Poller {
-	return &Poller{src: src, c: c, now: time.Now, marks: newLaunchMarks()}
+	return &Poller{src: src, c: c, now: time.Now}
 }
 
 // reads is what one poll read of a feed, each list walked at most once whatever its rules.
@@ -100,7 +99,7 @@ func (p *Poller) load(r *launchrule.Rule, f Feed, start time.Time) *pollRule {
 		slog.Error(logMsgStateBad, "rule_id", r.ID, "error", err)
 		return nil
 	}
-	return &pollRule{rule: r, ev: r.When.Event, feed: f, start: start, st: es, marks: p.marks}
+	return &pollRule{rule: r, ev: r.When.Event, feed: f, start: start, st: es, marks: p.c.marks}
 }
 
 func (p *Poller) read(ctx context.Context, f Feed, rules []*pollRule, start time.Time) reads {

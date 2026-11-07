@@ -22,8 +22,6 @@ type launchMarks struct {
 func newLaunchMarks() *launchMarks { return &launchMarks{keys: map[string]struct{}{}} }
 
 // mark marks the rule's entry key launching until the returned done runs.
-//
-//deadset:ignore DS1102 -- the launcher marks each entry it starts; until that lands only the tests do
 func (m *launchMarks) mark(ruleID, key string) (done func()) {
 	k := keyenc.Join(ruleID, key)
 	m.mu.Lock()
@@ -92,8 +90,6 @@ func (pr *pollRule) logFull() {
 // eligible answers the keys of the rule's queue the launcher may start now: none while the rule is blocked or any
 // entry is in flight, since a recipe runs one run at a time; else a fifo rule's head alone, so a later entry never
 // launches ahead of it, and every entry of a newest rule.
-//
-//deadset:ignore DS1102 -- the launcher picks its next entry through it; until that lands only the tests do
 func (pr *pollRule) eligible() []string {
 	es := &pr.st
 	if len(es.queue) == 0 || pr.blocked() != "" || slices.ContainsFunc(es.queue, func(e queueEntry) bool {

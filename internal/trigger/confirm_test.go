@@ -42,7 +42,7 @@ func (tc *testConfirmer) relaunchable(ruleID, key string) bool {
 // pollerOn is a poll harness over tc's store and Confirmer.
 func (tc *testConfirmer) pollerOn() *harness {
 	return &harness{
-		t: tc.t, store: tc.store, c: tc.Confirmer, src: &fakeSource{}, marks: newLaunchMarks(), now: pollStart,
+		t: tc.t, store: tc.store, c: tc.Confirmer, src: &fakeSource{}, marks: tc.marks, now: pollStart,
 		dir: tc.dir,
 	}
 }
@@ -592,7 +592,22 @@ func TestDuplicateAfterLostRunStartCarriesSameEventID(t *testing.T) {
 			}
 		})
 	})
-	t.Run("the relaunch carries the same event_id", func(t *testing.T) { t.Skip("needs 5.8") })
+	t.Run("the relaunch carries the same event_id", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			f := tc.startLauncher(nil)
+			tc.letLaunch(nil)
+			advance(launchConfirmBound)
+			calls := f.taken()
+			if len(calls) != 2 || calls[1].key != "k1" {
+				t.Fatalf("calls = %+v, want k1 launched again after its bound abandon", calls)
+			}
+			if a, b := calls[0].inputs["event_id"], calls[1].inputs["event_id"]; a != "id/k1" || b != a {
+				t.Errorf("event_id %q then %q, want id/k1 both times", a, b)
+			}
+		})
+	})
 }
 
 func TestSupersededGainsWorkflowIDOnConfirm(t *testing.T) {
@@ -822,7 +837,24 @@ func TestNameAttemptFailureRecordedAbandoned(t *testing.T) {
 			}
 		})
 	})
-	t.Run("the next launch uses a new workflow id", func(t *testing.T) { t.Skip("needs 5.8") })
+	t.Run("the next launch uses a new workflow id", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.update(r.ID, func(es *eventState) bool { es.queue = []queueEntry{held("k1", "c1")}; return true })
+			tc.failWrites(errDiskFull)
+			f := tc.startLauncher(nil)
+			tc.letLaunch(nil)
+			tc.failWrites(nil)
+			advance(writeTick)
+			calls := f.taken()
+			if len(calls) != 2 || calls[1].key != "k1" {
+				t.Fatalf("calls = %+v, want k1 launched again once the write landed", calls)
+			}
+			if rec := tc.recordOf(r.ID, "wf_2"); rec == nil || rec.key != "k1" || !rec.state.live() {
+				t.Errorf("record of wf_2 = %+v, want k1's attempt under a new workflow id", rec)
+			}
+		})
+	})
 }
 
 func TestStoreWriteFailureBlocksRule(t *testing.T) {
