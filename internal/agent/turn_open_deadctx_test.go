@@ -58,10 +58,10 @@ func TestStartTurn_RefusesADeadContextAfterTheOpen(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if h.coord.startTurn(ctx, command.TurnRef{Chat: "c1", Turn: id}, nil) {
-		t.Errorf("StartTurn(cancelled ctx, %q) = true, want false", id)
+		t.Errorf("startTurn(cancelled ctx, %q) = true, want false", id)
 	}
 	if h.coord.startTurn(t.Context(), command.TurnRef{Chat: "c1", Turn: "t-never-opened"}, nil) {
-		t.Error("StartTurn(live ctx, unknown id) = true, want false: the registry holds no such turn")
+		t.Error("startTurn(live ctx, unknown id) = true, want false: the registry holds no such turn")
 	}
 	if got := h.coord.turns.openTurnIDs("c1"); len(got) != 1 || got[0].ID != id {
 		t.Errorf("open turns after the refused start = %v, want the opened turn %q alone", got, id)

@@ -347,7 +347,7 @@ func (rt *Runtime) stagePromptTurnCalling(tb testing.TB, chatID marotte.ChatID, 
 		tb.Fatalf("OpenTurn(%q) failed: %v", chatID, err)
 	}
 	if !rt.coord.startTurn(tb.Context(), command.TurnRef{Chat: chatID, Turn: id}, cancel) {
-		tb.Fatalf("StartTurn(%q, %q) refused, so there is no turn to stage", chatID, id)
+		tb.Fatalf("startTurn(%q, %q) refused, so there is no turn to stage", chatID, id)
 	}
 	// The staged prompt counts as sent, so the turn_start a test delivers next is its own.
 	if _, err := rt.coord.AwaitPromptSend(tb.Context(), chatID, id); err != nil {
@@ -355,7 +355,7 @@ func (rt *Runtime) stagePromptTurnCalling(tb testing.TB, chatID marotte.ChatID, 
 	}
 	log, ok := rt.coord.OwnTurn(chatID)
 	if !ok {
-		tb.Fatalf("OwnTurn(%q) holds nothing after StartTurn", chatID)
+		tb.Fatalf("OwnTurn(%q) holds nothing after startTurn", chatID)
 	}
 	return id, log
 }

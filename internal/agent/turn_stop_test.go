@@ -395,7 +395,7 @@ func startAdmitted(t *testing.T, h *Runtime) string {
 	}
 	t.Cleanup(func() { h.ReleaseTurn("c1", id) })
 	if !h.coord.startTurn(t.Context(), command.TurnRef{Chat: "c1", Turn: id}, nil) {
-		t.Fatal("StartTurn refused the admitted prompt's turn")
+		t.Fatal("startTurn refused the admitted prompt's turn")
 	}
 	return id
 }

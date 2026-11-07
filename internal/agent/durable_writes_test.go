@@ -24,7 +24,7 @@ var storeWriteNames = []string{
 	"closeRunTurns", "swapMerged", "dropUnreadSteers", "appendLaneless", "appendBetweenTurns",
 }
 
-// A walk that finds nothing must fail. 44 measured; the slack covers a site moving, not a dropped callee class.
+// A walk that finds nothing must fail. The floor sits below the measured count; the slack covers a site moving, not a dropped callee class.
 const storeWriteFloor = 35
 
 type durableSite struct {
