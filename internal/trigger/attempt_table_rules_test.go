@@ -370,7 +370,7 @@ var ruleRowCases = slices.Concat(liveCases(), abandonedCases(), []attemptCase{
 		name: "44 no record, three queued keys, edit (rebaseline): E2",
 		setup: func(tc *testConfirmer, r *launchrule.Rule) {
 			minted := time.Now().Add(-time.Hour)
-			tc.update(r.ID, func(es *eventState) bool {
+			tc.update(r.ID, anyGeneration, func(es *eventState) bool {
 				es.cursor[Feed{Selector: testRepo}.RepoID()] = &repoCursor{Runs: &runCursor{BaselineAt: minted}}
 				es.queue = []queueEntry{held("k1", "c1"), held("k2", "c2"), held("k3", "c3")}
 				es.launched = []launchedEntry{{Key: "k0", WorkflowID: "wf_0"}}
@@ -425,7 +425,7 @@ var ruleRowCases = slices.Concat(liveCases(), abandonedCases(), []attemptCase{
 	{
 		name: "47 no record, delete: E3",
 		setup: func(tc *testConfirmer, r *launchrule.Rule) {
-			tc.update(r.ID, func(es *eventState) bool { es.queue = []queueEntry{held("k1", "c1")}; return true })
+			tc.update(r.ID, anyGeneration, func(es *eventState) bool { es.queue = []queueEntry{held("k1", "c1")}; return true })
 			if _, err := os.Stat(statePath(tc, r.ID)); err != nil {
 				tc.t.Fatalf("Setup: no state file: %v", err)
 			}

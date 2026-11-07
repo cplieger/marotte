@@ -69,6 +69,21 @@ type reads struct {
 //
 //deadset:ignore DS1102 -- the trigger runner calls it on each feed's timer; until that lands only the tests do
 func (p *Poller) Poll(ctx context.Context, fr FeedRules) {
+	if run := p.begin(ctx, fr); run != nil {
+		p.apply(run)
+	}
+}
+
+// pollRun is one poll of a feed whose reads are back and not yet applied.
+type pollRun struct {
+	rd    reads
+	start time.Time
+	feed  Feed
+	rules []*pollRule
+}
+
+// begin plans each rule's part on a snapshot of its state and reads the feed; nil when no rule is left to poll.
+func (p *Poller) begin(ctx context.Context, fr FeedRules) *pollRun {
 	start := p.now().UTC()
 	rules := make([]*pollRule, 0, len(fr.Rules))
 	for i := range fr.Rules {
@@ -77,14 +92,18 @@ func (p *Poller) Poll(ctx context.Context, fr FeedRules) {
 		}
 	}
 	if len(rules) == 0 {
-		return
+		return nil
 	}
-	rd := p.read(ctx, fr.Feed, rules, start)
-	for _, pr := range rules {
-		p.c.update(pr.rule.ID, func(es *eventState) bool { return pr.applyTo(es, &rd) })
+	return &pollRun{start: start, feed: fr.Feed, rules: rules, rd: p.read(ctx, fr.Feed, rules, start)}
+}
+
+// apply hands each rule its part of the reads, dropped for a rule edited since its snapshot.
+func (p *Poller) apply(run *pollRun) {
+	for _, pr := range run.rules {
+		p.c.update(pr.rule.ID, pr.gen, func(es *eventState) bool { return pr.applyTo(es, &run.rd) })
 	}
-	slog.Debug(logMsgPoll, "connection", fr.Feed.Connection, "repo", fr.Feed.Selector,
-		"reads", rd.calls(), "since", rd.since, "took", p.now().Sub(start))
+	slog.Debug(logMsgPoll, "connection", run.feed.Connection, "repo", run.feed.Selector,
+		"reads", run.rd.calls(), "since", run.rd.since, "took", p.now().Sub(run.start))
 }
 
 // load plans the rule's part of the poll on a copy of its state; the poll's changes are applied to the rule's
@@ -94,12 +113,12 @@ func (p *Poller) load(r *launchrule.Rule, f Feed, start time.Time) *pollRule {
 		slog.Debug(logMsgRuleSkipped, "rule_id", r.ID, "error", err)
 		return nil
 	}
-	es, err := p.c.snapshot(r.ID)
+	es, gen, err := p.c.snapshot(r.ID)
 	if err != nil {
 		slog.Error(logMsgStateBad, "rule_id", r.ID, "error", err)
 		return nil
 	}
-	return &pollRule{rule: r, ev: r.When.Event, feed: f, start: start, st: es, marks: p.c.marks}
+	return &pollRule{rule: r, ev: r.When.Event, feed: f, start: start, st: es, gen: gen, marks: p.c.marks}
 }
 
 func (p *Poller) read(ctx context.Context, f Feed, rules []*pollRule, start time.Time) reads {
@@ -157,6 +176,8 @@ type pollRule struct {
 	gain time.Time
 	feed Feed
 	st   eventState
+	// gen is the rule's generation when the poll took its snapshot.
+	gen int
 	// full is set once the poll left a match unqueued.
 	full bool
 }

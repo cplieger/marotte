@@ -568,7 +568,7 @@ func TestEventIDStableAcrossRulesAndRestart(t *testing.T) {
 			if len(es.launched) != 1 || es.launched[0].WorkflowID != "wf_2" || es.launched[0].Inputs["event_id"] != "id/k1" {
 				t.Errorf("reloaded launched = %+v, want k1 under wf_2 with event_id id/k1", es.launched)
 			}
-			snap, err := tc.snapshot(r.ID)
+			snap, _, err := tc.snapshot(r.ID)
 			if err != nil || len(snap.launched) != 1 || snap.launched[0].Inputs["event_id"] != "id/k1" {
 				t.Errorf("loaded launched = %+v (%v), want event_id id/k1", snap.launched, err)
 			}
@@ -808,7 +808,7 @@ func TestNameAttemptFailureRecordedAbandoned(t *testing.T) {
 	t.Run("after an edit reset", func(t *testing.T) {
 		inBubble(t, func(t *testing.T, tc *testConfirmer) {
 			r := tc.createRule(runSpec("success"))
-			tc.update(r.ID, func(es *eventState) bool { es.queue = []queueEntry{held("k1", "c1")}; return true })
+			tc.update(r.ID, anyGeneration, func(es *eventState) bool { es.queue = []queueEntry{held("k1", "c1")}; return true })
 			edit(tc, &r, 1, moveRepo)
 			if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, ErrAttemptGone) {
 				t.Fatalf("NameAttempt = %v, want ErrAttemptGone", err)
@@ -846,7 +846,7 @@ func TestNameAttemptFailureRecordedAbandoned(t *testing.T) {
 	t.Run("after a failed write", func(t *testing.T) {
 		inBubble(t, func(t *testing.T, tc *testConfirmer) {
 			r := tc.createRule(runSpec("success"))
-			tc.update(r.ID, func(es *eventState) bool { es.queue = []queueEntry{held("k1", "c1")}; return true })
+			tc.update(r.ID, anyGeneration, func(es *eventState) bool { es.queue = []queueEntry{held("k1", "c1")}; return true })
 			tc.failWrites(errDiskFull)
 			if err := tc.NameAttempt(r.ID, "k1", "wf_1"); !errors.Is(err, ErrAttemptNotWritten) {
 				t.Fatalf("NameAttempt = %v, want ErrAttemptNotWritten", err)
@@ -876,7 +876,7 @@ func TestNameAttemptFailureRecordedAbandoned(t *testing.T) {
 	t.Run("the next launch uses a new workflow id", func(t *testing.T) {
 		inBubble(t, func(t *testing.T, tc *testConfirmer) {
 			r := tc.createRule(runSpec("success"))
-			tc.update(r.ID, func(es *eventState) bool { es.queue = []queueEntry{held("k1", "c1")}; return true })
+			tc.update(r.ID, anyGeneration, func(es *eventState) bool { es.queue = []queueEntry{held("k1", "c1")}; return true })
 			tc.failWrites(errDiskFull)
 			f := tc.startLauncher(nil)
 			tc.letLaunch(nil)

@@ -52,9 +52,12 @@ type ruleValue struct {
 	records      []*record
 	es           eventState
 	retries      int
-	mu           sync.Mutex
-	dropped      bool
-	newest       bool
+	// generation counts the edits that change what a poll reads (E1, E2); a poll that read under an older one
+	// applies nothing.
+	generation int
+	mu         sync.Mutex
+	dropped    bool
+	newest     bool
 }
 
 func (rv *ruleValue) find(workflowID string) *record {
@@ -229,12 +232,12 @@ func (c *Confirmer) Retried(workflowID string) (RetryAnswer, error) {
 
 // RecordOutcome writes the run's outcome on its rule's row, only while the row names the run as its last.
 func (c *Confirmer) RecordOutcome(ruleID, workflowID string, o launchrule.Outcome) {
-	c.update(ruleID, func(es *eventState) bool { return setOutcome(&es.raw.Status, workflowID, o, false) })
+	c.update(ruleID, anyGeneration, func(es *eventState) bool { return setOutcome(&es.raw.Status, workflowID, o, false) })
 }
 
 // RecordEnding is RecordOutcome for how the run ended on its own, landing only while the row still reads it started.
 func (c *Confirmer) RecordEnding(ruleID, workflowID string, o launchrule.Outcome) {
-	c.update(ruleID, func(es *eventState) bool { return setOutcome(&es.raw.Status, workflowID, o, true) })
+	c.update(ruleID, anyGeneration, func(es *eventState) bool { return setOutcome(&es.raw.Status, workflowID, o, true) })
 }
 
 func setOutcome(st *launchrule.Status, workflowID string, o launchrule.Outcome, ending bool) bool {
@@ -250,7 +253,7 @@ func (c *Confirmer) DismissGap(ruleID string) error {
 	if def, ok := c.store.Get(ruleID); !ok || def.When.Event == nil {
 		return launchrule.ErrNotFound
 	}
-	c.update(ruleID, func(es *eventState) bool {
+	c.update(ruleID, anyGeneration, func(es *eventState) bool {
 		had := len(es.raw.Status.Gaps) > 0
 		es.raw.Status.Gaps = nil
 		return had

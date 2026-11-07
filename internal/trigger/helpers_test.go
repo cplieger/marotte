@@ -88,7 +88,7 @@ func (h *harness) state(ruleID string) eventState {
 // seed makes es the rule's state, written through the Confirmer as a poll's change is.
 func (h *harness) seed(ruleID string, es *eventState) {
 	h.t.Helper()
-	h.c.update(ruleID, func(cur *eventState) bool {
+	h.c.update(ruleID, anyGeneration, func(cur *eventState) bool {
 		*cur = *es
 		return true
 	})

@@ -559,7 +559,7 @@ func confirmed(t *testing.T, tc *testConfirmer, r *launchrule.Rule) {
 }
 
 func TestAttemptTable(t *testing.T) {
-	for _, c := range slices.Concat(attemptCases, ruleRowCases, bootCases, writeCases, retryCases, busyCases, launcherCases, launchErrorCases) {
+	for _, c := range slices.Concat(attemptCases, ruleRowCases, bootCases, writeCases, retryCases, busyCases, launcherCases, launchErrorCases, pollCases) {
 		t.Run(c.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				tc := newTestConfirmer(t)
@@ -579,6 +579,23 @@ func TestAttemptTable(t *testing.T) {
 			})
 		})
 	}
+}
+
+// beginPoll starts one poll of the rule's feed over src: its reads happen now, and the step it returns applies them,
+// as the poll does once its reads are back.
+func beginPoll(t *testing.T, c *Confirmer, ruleID string, src FeedSource) (apply func()) {
+	t.Helper()
+	r, ok := c.store.Get(ruleID)
+	if !ok || r.When.Event == nil {
+		t.Fatalf("Setup: no event rule %s", ruleID)
+	}
+	fr := FeedRules{Feed: Feed{Connection: r.When.Event.Connection, Selector: r.When.Event.Repo}, Rules: []launchrule.Rule{r}}
+	p := NewPoller(src, c)
+	run := p.begin(t.Context(), fr)
+	if run == nil {
+		t.Fatalf("Setup: the poll skipped rule %s", ruleID)
+	}
+	return func() { p.apply(run) }
 }
 
 func statePath(tc *testConfirmer, ruleID string) string {

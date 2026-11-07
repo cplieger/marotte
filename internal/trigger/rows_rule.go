@@ -53,6 +53,7 @@ func (s *stepper) ruleRow(ev *attemptEvent) bool {
 
 // editFilter is E1: live records keep their bound (A11), abandoned ones stay (A20).
 func (s *stepper) editFilter() {
+	s.rv.generation++
 	s.resetFailures()
 	if newest := isNewest(&s.def); newest && !s.rv.newest {
 		for _, e := range slices.Clone(s.rv.es.queue) {
@@ -75,6 +76,7 @@ func (s *stepper) rebaseline() {
 			s.abandon(r, causeEdit)
 		}
 	}
+	s.rv.generation++
 	es := &s.rv.es
 	es.cursor, es.queue, es.launched, es.superseded = cursor{}, nil, nil, nil
 	s.resetFailures()
