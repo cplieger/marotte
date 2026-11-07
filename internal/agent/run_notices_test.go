@@ -240,7 +240,7 @@ func TestTurnClosed_TheNoticeClearsDropIsCarriedByTheSameClose(t *testing.T) {
 		s.steer("steer-a", "keep building")
 		// A cancel: KAS skips its own boundary clear and leaves both unread.
 		send(t, s.h, newTurnEndMsg("cancelled"))
-		s.h.coord.ReleaseTurn("c1", id)
+		s.h.coord.releaseTurn("c1", id)
 		synctest.Wait()
 		if n := countCalls(br, marotte.MethodSessionSteerClear); n != 0 {
 			t.Fatalf("_session/steer/clear calls = %d while KAS still reported the session busy, want 0", n)

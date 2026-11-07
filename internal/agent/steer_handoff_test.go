@@ -325,7 +325,7 @@ func TestTryReserveTurnFenced_ANewerTurnRefusesTheOldClose(t *testing.T) {
 	fence := fenceNow(h, "c1")
 	id, _ := h.stagePromptTurn(t, "c1")
 	endTurn(t, h, "c1", id)
-	h.coord.ReleaseTurn("c1", id)
+	h.coord.releaseTurn("c1", id)
 	waitFor(t, func() bool { return !h.coord.turns.live("c1") })
 
 	if h.coord.tryReserveFencedNow("c1", marotte.TurnSourcePrompt, fence) {

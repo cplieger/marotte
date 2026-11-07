@@ -93,12 +93,12 @@ func (bc *bridgeCoordinator) switchedOK(ctx context.Context, chatID marotte.Chat
 	return bc.applyModelSwitch(ctx, chatID, mv) == nil
 }
 
-// openTurnNow is OpenTurn on a chat whose life a test creates first, as a reservation does in production.
+// openTurnNow is openTurn on a chat whose life a test creates first, as a reservation does in production.
 func (bc *bridgeCoordinator) openTurnNow(ctx context.Context, chatID marotte.ChatID, open command.TurnOpen) (string, error) {
 	if _, ok := bc.turns.lookup(chatID); !ok {
 		bc.turns.testLifecycle(chatID)
 	}
-	return bc.OpenTurn(ctx, chatID, open)
+	return bc.openTurn(ctx, chatID, open)
 }
 
 // foldTargetNow is TurnFoldTarget on a chat whose life a test creates first, as a forward's attach does.

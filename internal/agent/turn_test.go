@@ -276,7 +276,7 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 	t.Run("a prompt turn is busy", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		id, _ := h.stagePromptTurn(t, "c1")
-		t.Cleanup(func() { h.coord.ReleaseTurn("c1", id) })
+		t.Cleanup(func() { h.coord.releaseTurn("c1", id) })
 		if !busySet(t, h.coord.turns)["c1"] {
 			t.Error("a chat running its own prompt turn is absent from busy_chats, so a " +
 				"reconnect would retract `thinking` under a live turn")
@@ -332,14 +332,14 @@ func TestTurnRegistry_StoppedAfterIsKeyedOnTheOpenSequence(t *testing.T) {
 	h.coord.ReleaseStop(h.coord.RequestStop("c1", marotte.TurnStopReader))
 	endTurn(t, h, "c1", a)
 
-	if !h.coord.StopRequestedAfter("c1", a) {
+	if !h.coord.stopRequestedAfter("c1", a) {
 		t.Error("StopRequestedAfter(a) = false after a stop and a finalize with its handle held, want true")
 	}
 	b, _ := h.stagePromptTurn(t, "c1")
-	if h.coord.StopRequestedAfter("c1", b) {
+	if h.coord.stopRequestedAfter("c1", b) {
 		t.Error("StopRequestedAfter(b) = true for a turn opened after the stop, want false")
 	}
-	if !h.coord.StopRequestedAfter("c1", a) {
+	if !h.coord.stopRequestedAfter("c1", a) {
 		t.Error("StopRequestedAfter(a) = false once a later turn opened, want true")
 	}
 

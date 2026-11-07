@@ -13,7 +13,7 @@ import type { TabList } from "../wire/types.gen.js";
 
 /** Handed in, not imported: the `api-client.js` mock's factory imports THIS module, so a static
  *  `../tabs-sync.js` import deadlocks the mocker silently and the run never starts. */
-export interface SyncSeam {
+interface SyncSeam {
   ingest: (frame: TabsChangedPayload) => void;
   /** `unknown`, so the real `listTabs` (which reports whether it adopted) is accepted. */
   list: () => Promise<unknown>;
@@ -34,7 +34,7 @@ function ingest(frame: TabsChangedPayload): void {
   sync.ingest(frame);
 }
 
-export type Interleaving = "event-first" | "response-first" | "manual";
+type Interleaving = "event-first" | "response-first" | "manual";
 
 interface Sent {
   type: string;
@@ -260,7 +260,7 @@ export const tabServer = {
   },
 };
 
-export interface SeedSpec {
+interface SeedSpec {
   kind: TabKind;
   ref?: string;
   parent?: string;

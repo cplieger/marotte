@@ -14,7 +14,7 @@ declare module "vitest/internal/browser" {
   }
 }
 
-export interface A11yMediaFeatures {
+interface A11yMediaFeatures {
   reducedMotion?: "reduce" | "no-preference";
   forcedColors?: "active" | "none";
 }

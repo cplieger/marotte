@@ -148,7 +148,7 @@ var abandonableWriteSites = []durableSite{{
 	because: "the new session's id and facts — no conversational record; a record that did not take them fails the generation, which reaps the session, and the next open runs again",
 }, {
 	file:    "internal/agent/turn_open.go",
-	fn:      "OpenTurn",
+	fn:      "openTurn",
 	calls:   []string{"OpenTurn", "WriteCounters"},
 	because: "a prompt's turn_open on the request's context: a request that died before its turn opened has no turn to record, and the caller answers the request's error",
 }, {
@@ -253,11 +253,6 @@ var inheritedWriteSites = []durableSite{{
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "AppendBetweenTurns",
 	calls:   []string{"AppendBetweenTurns"},
-	because: "a forwarder for the command path; the command decides",
-}, {
-	file:    "internal/agent/command_deps.go",
-	fn:      "OpenTurn",
-	calls:   []string{"OpenTurn"},
 	because: "a forwarder for the command path; the command decides",
 }, {
 	file:    "internal/agent/bridge_coord.go",

@@ -191,8 +191,8 @@ func TestFinalizeTurn_ALostClaimAmendsNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	id, _ := streamingPromptTurn(t, h, "c1", "half an answer")
 
-	h.coord.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "the first closer's account", "", 0)
-	h.coord.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonCancelled, "the loser's account", "", 0)
+	h.coord.abandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "the first closer's account", "", 0)
+	h.coord.abandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonCancelled, "the loser's account", "", 0)
 
 	closes := closesOf(t, logOf(t, cs, "c1"))
 	if len(closes) != 1 {
@@ -232,7 +232,7 @@ func TestPromptFailure_TheFailureReasonIsSanitizedAndBounded(t *testing.T) {
 	// A literal: a bound derived from maxReasonBytes cannot see the constant move.
 	details := strings.Repeat("x", 3000) + "\n\x1b[31mred"
 
-	h.coord.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, details, "", 0)
+	h.coord.abandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, details, "", 0)
 
 	closes := closesOf(t, logOf(t, cs, "c1"))
 	if len(closes) != 1 {
@@ -301,10 +301,10 @@ func TestFinalizeTurn_ATurnWithNoContentReportsEmittedNothing(t *testing.T) {
 	h, _, _ := newTestHub()
 	id, _ := h.stagePromptTurn(t, "c1")
 
-	h.coord.SettleTurnOnResponse(t.Context(), "c1", id, 0,
+	h.coord.settleTurnOnResponse(t.Context(), "c1", id, 0,
 		&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
 
-	result, err := h.coord.AwaitTurn(t.Context(), "c1", id)
+	result, err := h.coord.awaitTurn(t.Context(), "c1", id)
 	if err != nil {
 		t.Fatalf("AwaitTurn: %v", err)
 	}
@@ -324,10 +324,10 @@ func TestFinalizeTurn_MeasuresEmittedAfterReleasingTheCarry(t *testing.T) {
 	const reply = "see the note in ["
 	log.SetSteerCarry("", "say-1", reply)
 
-	h.coord.SettleTurnOnResponse(t.Context(), "c1", id, 0,
+	h.coord.settleTurnOnResponse(t.Context(), "c1", id, 0,
 		&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
 
-	result, err := h.coord.AwaitTurn(t.Context(), "c1", id)
+	result, err := h.coord.awaitTurn(t.Context(), "c1", id)
 	if err != nil {
 		t.Fatalf("AwaitTurn: %v", err)
 	}
@@ -346,7 +346,7 @@ func TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease(t *testing.T) {
 
 	endTurn(t, h, "c1", id)
 
-	result, err := h.coord.AwaitTurn(t.Context(), "c1", id)
+	result, err := h.coord.awaitTurn(t.Context(), "c1", id)
 	if err != nil {
 		t.Fatalf("AwaitTurn on a held handle: %v", err)
 	}
@@ -357,8 +357,8 @@ func TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease(t *testing.T) {
 		t.Errorf("result Turn = %q, want %q", result.Turn, id)
 	}
 
-	h.coord.ReleaseTurn("c1", id)
-	if _, err := h.coord.AwaitTurn(t.Context(), "c1", id); !errors.Is(err, marotte.ErrNoSuchTurn) {
+	h.coord.releaseTurn("c1", id)
+	if _, err := h.coord.awaitTurn(t.Context(), "c1", id); !errors.Is(err, marotte.ErrNoSuchTurn) {
 		t.Errorf("after the last handle was released, AwaitTurn error = %v, want ErrNoSuchTurn", err)
 	}
 }
@@ -366,7 +366,7 @@ func TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease(t *testing.T) {
 // TestAwaitTurn_UnknownTurnReportsNoSuchTurn pins that only an id the chat never held answers ErrNoSuchTurn.
 func TestAwaitTurn_UnknownTurnReportsNoSuchTurn(t *testing.T) {
 	h, _, _ := newTestHub()
-	if _, err := h.coord.AwaitTurn(t.Context(), "c1", "t-never-opened"); !errors.Is(err, marotte.ErrNoSuchTurn) {
+	if _, err := h.coord.awaitTurn(t.Context(), "c1", "t-never-opened"); !errors.Is(err, marotte.ErrNoSuchTurn) {
 		t.Errorf("AwaitTurn on an unknown turn = %v, want ErrNoSuchTurn", err)
 	}
 }
@@ -375,9 +375,9 @@ func TestAwaitTurn_UnknownTurnReportsNoSuchTurn(t *testing.T) {
 func TestAwaitTurn_DeadContextReturnsRatherThanParking(t *testing.T) {
 	h, cs, _ := newTestHub()
 	id, _ := h.stagePromptTurn(t, "c1")
-	defer h.coord.ReleaseTurn("c1", id)
+	defer h.coord.releaseTurn("c1", id)
 
-	if _, err := h.coord.AwaitTurn(deadContext(t), "c1", id); !errors.Is(err, context.Canceled) {
+	if _, err := h.coord.awaitTurn(deadContext(t), "c1", id); !errors.Is(err, context.Canceled) {
 		t.Errorf("AwaitTurn with a dead context = %v, want context.Canceled", err)
 	}
 
@@ -387,7 +387,7 @@ func TestAwaitTurn_DeadContextReturnsRatherThanParking(t *testing.T) {
 	}
 }
 
-// An id-scoped closer handed an empty id closes nothing: OpenTurn's refusal is empty too, and taking whatever is open
+// An id-scoped closer handed an empty id closes nothing: openTurn's refusal is empty too, and taking whatever is open
 // let a failed prompt close an agent turn. Own spells that intent.
 func TestAbandonInFlightTurn_WithNoTurnIDClosesNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
@@ -401,7 +401,7 @@ func TestAbandonInFlightTurn_WithNoTurnIDClosesNothing(t *testing.T) {
 		t.Fatalf("TextDelta: %v", err)
 	}
 
-	h.coord.AbandonInFlightTurn(t.Context(), "c1", "", marotte.StopReasonInterrupted, "The turn was cancelled before the agent answered.", "", 0)
+	h.coord.abandonInFlightTurn(t.Context(), "c1", "", marotte.StopReasonInterrupted, "The turn was cancelled before the agent answered.", "", 0)
 
 	if own, ok := h.coord.OwnTurn("c1"); !ok || own != engine {
 		t.Errorf("own turn = (%p, %v), want the engine's turn %p still open: a prompt failure "+
@@ -420,7 +420,7 @@ func TestAbandonInFlightTurn_AnUnsetStopNormalizesToInterrupted(t *testing.T) {
 	h, cs, _ := newTestHub()
 	id, _ := h.stagePromptTurn(t, "c1")
 
-	h.coord.AbandonInFlightTurn(t.Context(), "c1", id, "", "a reason", "", 0)
+	h.coord.abandonInFlightTurn(t.Context(), "c1", id, "", "a reason", "", 0)
 
 	closes := closesOf(t, logOf(t, cs, "c1"))
 	if len(closes) != 1 {
@@ -462,7 +462,7 @@ func TestCloseTurn_ConcurrentFoldDoesNotRaceTheSeal(t *testing.T) {
 	// The folder must loop before the closer starts, or nothing overlaps.
 	<-running
 
-	h.coord.SettleTurnOnResponse(t.Context(), "c1", id, 0,
+	h.coord.settleTurnOnResponse(t.Context(), "c1", id, 0,
 		&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
 
 	close(stop)

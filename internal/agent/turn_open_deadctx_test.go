@@ -13,7 +13,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// OpenTurn refuses a dead context before it appends, so the log is untouched and the registry holds nothing.
+// openTurn refuses a dead context before it appends, so the log is untouched and the registry holds nothing.
 func TestOpenTurn_RefusesAnAlreadyDeadContext(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -44,7 +44,7 @@ func TestOpenTurn_RefusesAnAlreadyDeadContext(t *testing.T) {
 	}
 }
 
-// StartTurn answers false for a dead ctx after a successful OpenTurn and the turn stays open for the caller's
+// startTurn answers false for a dead ctx after a successful openTurn and the turn stays open for the caller's
 // turn end rule.
 func TestStartTurn_RefusesADeadContextAfterTheOpen(t *testing.T) {
 	h, cs, _ := newTestHub()
@@ -57,10 +57,10 @@ func TestStartTurn_RefusesADeadContextAfterTheOpen(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if h.coord.StartTurn(ctx, command.TurnRef{Chat: "c1", Turn: id}, nil) {
+	if h.coord.startTurn(ctx, command.TurnRef{Chat: "c1", Turn: id}, nil) {
 		t.Errorf("StartTurn(cancelled ctx, %q) = true, want false", id)
 	}
-	if h.coord.StartTurn(t.Context(), command.TurnRef{Chat: "c1", Turn: "t-never-opened"}, nil) {
+	if h.coord.startTurn(t.Context(), command.TurnRef{Chat: "c1", Turn: "t-never-opened"}, nil) {
 		t.Error("StartTurn(live ctx, unknown id) = true, want false: the registry holds no such turn")
 	}
 	if got := h.coord.turns.openTurnIDs("c1"); len(got) != 1 || got[0].ID != id {

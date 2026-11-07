@@ -68,12 +68,12 @@ func TestArmStopGrace_CancelsAnUnansweredCallAtTheGrace(t *testing.T) {
 	})
 }
 
-// A call that returned inside the grace keeps its context: EndPromptCall disarms the budget.
+// A call that returned inside the grace keeps its context: endPromptCall disarms the budget.
 func TestArmStopGrace_AnAnsweredCallIsLeftAlone(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h, turn, callCtx := stagedCall(t)
 		h.coord.ArmStopGrace(stopNow(h), stopGrace)
-		h.coord.EndPromptCall(turn)
+		h.coord.endPromptCall(turn)
 
 		time.Sleep(4 * stopGrace)
 		if callCtx.Err() != nil {
@@ -87,7 +87,7 @@ func TestArmStopGrace_ALaterPromptsCallIsNeverReached(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h, first, _ := stagedCall(t)
 		stop := stopNow(h)
-		h.coord.EndPromptCall(first)
+		h.coord.endPromptCall(first)
 		endTurn(t, h, "c1", first.Turn)
 		nextCtx, cancel := context.WithCancelCause(context.Background())
 		defer cancel(nil)
@@ -394,7 +394,7 @@ func startAdmitted(t *testing.T, h *Runtime) string {
 		t.Fatalf("OpenTurn: %v", err)
 	}
 	t.Cleanup(func() { h.ReleaseTurn("c1", id) })
-	if !h.coord.StartTurn(t.Context(), command.TurnRef{Chat: "c1", Turn: id}, nil) {
+	if !h.coord.startTurn(t.Context(), command.TurnRef{Chat: "c1", Turn: id}, nil) {
 		t.Fatal("StartTurn refused the admitted prompt's turn")
 	}
 	return id

@@ -41,7 +41,7 @@ type steerRecord struct {
 	// opEnd is the turn end that skipped the in-flight op's rows: the first one,
 	// unless a close end follows a stale one (opEndStale), which it replaces.
 	opEnd *command.SteerTurnEnd
-	// starting is a turn StartTurn began whose bracket has not bound the channel:
+	// starting is a turn startTurn began whose bracket has not bound the channel:
 	// its execution may already be reading the buffer.
 	starting string
 	// absorbing is a prompt's turn that opened and has not reached its start delivery
@@ -646,7 +646,7 @@ func (r *steerRecords) takeAgentRows(chatID marotte.ChatID) []string {
 	return out
 }
 
-// turnStarted records the turn StartTurn began. It runs under the turn registry's
+// turnStarted records the turn startTurn began. It runs under the turn registry's
 // lock, so it must not wait on a publication.
 func (r *steerRecords) turnStarted(chatID marotte.ChatID, turnID string) {
 	r.mu.Lock()
