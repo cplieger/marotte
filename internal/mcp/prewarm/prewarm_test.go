@@ -370,7 +370,7 @@ echo $! > `+shellQuote(pidFile)+`
 sleep 30
 `)
 	var states []marotte.MCPPrewarmState
-	p := NewRunner(t.Context(), fakeLister{})
+	p := NewRunner(t.Context(), fakeLister{servers: []ServerInfo{npxFor("a", "@scope/pkg")}})
 	p.OnStatus = func(_ string, _ []string, s marotte.MCPPrewarmState) { states = append(states, s) }
 	seed(p, "@scope/pkg", false, "a")
 	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)

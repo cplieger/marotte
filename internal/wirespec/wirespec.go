@@ -406,7 +406,7 @@ var wireEnums = []wiregen.EnumRef{
 	// "marotte could not ask" must render a retry, not a sign-in prompt.
 	wiregen.StringEnum[auth.WhoamiState](),
 	wiregen.StringEnum[mcp.Transport](),
-	// The prewarm badge switches over it, so the switch must be total.
+	// The badge shows any state but installing as a failed install, so an unknown one is refused.
 	wiregen.StringEnum[marotte.MCPPrewarmState](),
 	// The engine banner and the Settings restart control branch on it.
 	wiregen.StringEnum[marotte.EngineState](),

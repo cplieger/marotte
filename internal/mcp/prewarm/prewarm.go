@@ -56,7 +56,7 @@ var supportedPackageTransports = map[string]bool{"stdio": true, "": true}
 func SupportsTransport(t string) bool { return supportedPackageTransports[t] }
 
 // reservation is one package's install, queued or running, and the servers it is for. ids is
-// sorted, duplicate-free and non-nil, and is replaced on change, never edited in place, so a
+// sorted and duplicate-free, and is replaced on change, never edited in place, so a
 // frame may hold it after mu is released.
 type reservation struct {
 	ids     []string
@@ -83,8 +83,8 @@ type Runner struct {
 	OnStatus     func(pkg string, serverIDs []string, state marotte.MCPPrewarmState)
 	reservations map[string]*reservation
 	installs     sync.WaitGroup
-	// Lock order runMu, emitMu, mu. runMu holds a pass's store read and its reconcile together,
-	// so the last reconcile read the store last. emitMu is held from a frame's snapshot until
+	// Lock order runMu, emitMu, mu. runMu holds a store read and the reservation change it decides
+	// together (a pass's reconcile, finish's split), so the last change read the store last. emitMu is held from a frame's snapshot until
 	// OnStatus returns, so frames reach the bus in the order they were decided; OnStatus never
 	// runs under mu. mu also orders each installs.Go before Stop's cancel, so none is added once
 	// Wait may run.
@@ -197,9 +197,6 @@ func (p *Runner) reconcile(want map[string][]string) (leaves, joins []status) {
 	for _, pkg := range slices.Sorted(maps.Keys(p.reservations)) {
 		r := p.reservations[pkg]
 		ids := want[pkg]
-		if ids == nil {
-			ids = []string{}
-		}
 		left, joined := missing(r.ids, ids), missing(ids, r.ids)
 		r.ids = ids
 		if !r.started {
@@ -299,10 +296,22 @@ func (p *Runner) start(pkg string) {
 	p.emit(status{pkg: pkg, ids: ids, state: marotte.MCPPrewarmInstalling})
 }
 
-// finish drops pkg's reservation and reports state to the servers it held. The snapshot and the
-// delete share one critical section: a pass that joins after it finds no reservation and queues
-// a fresh install, so no server is left on Installing.
+// finish drops pkg's reservation and reports state to the servers it held that the store still
+// has asking for pkg; one that stopped asking before the store read gets Done, as a leave does.
+// The snapshot and the delete share one critical section: a pass that joins after it finds no
+// reservation and queues a fresh install, so no server is left on Installing.
 func (p *Runner) finish(pkg string, state marotte.MCPPrewarmState) {
+	p.runMu.Lock()
+	defer p.runMu.Unlock()
+	var want map[string][]string
+	if p.lifetime.Err() == nil {
+		candidates := p.Lister.EnabledServers(p.lifetime)
+		// A dead lifetime reads an empty store; after Stop every holder gets state.
+		if p.lifetime.Err() == nil {
+			_, want = wanted(candidates)
+		}
+	}
+
 	p.emitMu.Lock()
 	defer p.emitMu.Unlock()
 	p.mu.Lock()
@@ -312,7 +321,14 @@ func (p *Runner) finish(pkg string, state marotte.MCPPrewarmState) {
 		delete(p.reservations, pkg)
 	}
 	p.mu.Unlock()
-	p.emit(status{pkg: pkg, ids: ids, state: state})
+	var left []string
+	if want != nil {
+		left = missing(ids, want[pkg])
+	}
+	p.emit(
+		status{pkg: pkg, ids: left, state: marotte.MCPPrewarmDone},
+		status{pkg: pkg, ids: missing(ids, left), state: state},
+	)
 }
 
 // install runs npm into a per-install THROWAWAY tree with --ignore-scripts and reports Done or

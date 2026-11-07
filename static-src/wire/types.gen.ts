@@ -2177,7 +2177,7 @@ export interface MCPOAuthPayload {
 /**
  * MCPPrewarmPayload is the payload for type="mcp_prewarm", emitted when a prewarm install starts,
  * succeeds or fails, and when a server joins or leaves one in flight. State applies to exactly the
- * servers ServerIDs names, and the MCP panel badges exactly those.
+ * servers ServerIDs names.
  */
 export interface MCPPrewarmPayload {
   package: string;

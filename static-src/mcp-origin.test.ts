@@ -63,7 +63,7 @@ import {
 } from "./mcp-state.js";
 import type { RuntimeStatus, Server } from "./mcp-state.js";
 import { configStanding, refreshConfigStanding } from "./config-standing.js";
-import type { MCPOrigin } from "./wire/types.gen.js";
+import type { MCPOrigin, MCPPrewarmState } from "./wire/types.gen.js";
 
 function status(over: Partial<RuntimeStatus> = {}): RuntimeStatus {
   return { name: "s", origin: "power", state: "connected", ...over } as RuntimeStatus;
@@ -698,11 +698,8 @@ describe("mcp_prewarm", () => {
   function namedLike(id: string, pkg: string): Server {
     return { ...configured(pkg), id, command: "node", args: ["server.js"], prewarm: true };
   }
-  function prewarmFrame(ids: string[], state: string): ServerEvent {
-    return {
-      type: "mcp_prewarm",
-      payload: { package: "@scope/pkg", server_ids: ids, state },
-    } as unknown as ServerEvent;
+  function prewarmFrame(ids: string[], state: MCPPrewarmState): ServerEvent {
+    return { type: "mcp_prewarm", payload: { package: "@scope/pkg", server_ids: ids, state } };
   }
 
   it("badges every server the frame names and no other", () => {

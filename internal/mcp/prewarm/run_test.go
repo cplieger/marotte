@@ -206,7 +206,7 @@ printf 'MANIFEST=%s\n' "$(cat package.json 2>/dev/null)" >> `+shellQuote(log)+`
 `)
 
 	var states []marotte.MCPPrewarmState
-	p := NewRunner(t.Context(), fakeLister{})
+	p := NewRunner(t.Context(), fakeLister{servers: []ServerInfo{npxFor("a", "@scope/pkg")}})
 	p.OnStatus = func(_ string, _ []string, s marotte.MCPPrewarmState) { states = append(states, s) }
 	seed(p, "@scope/pkg", false, "a")
 	p.installOne(t.Context(), npm, "@scope/pkg")
@@ -258,7 +258,7 @@ exit 1
 `)
 
 	var states []marotte.MCPPrewarmState
-	p := NewRunner(t.Context(), fakeLister{})
+	p := NewRunner(t.Context(), fakeLister{servers: []ServerInfo{npxFor("a", "bad-pkg")}})
 	p.OnStatus = func(_ string, _ []string, s marotte.MCPPrewarmState) { states = append(states, s) }
 	seed(p, "bad-pkg", false, "a")
 	p.installOne(t.Context(), npm, "bad-pkg")
@@ -494,6 +494,74 @@ func TestRun_AWaitingReservationJoinsSilently(t *testing.T) {
 	p.start(scopedPkg)
 
 	assertFrames(t, rec.got(), []frame{{scopedPkg, []string{"a", "b"}, marotte.MCPPrewarmInstalling}})
+
+	// Once start has run, a join is announced.
+	p.Lister = fakeLister{servers: []ServerInfo{
+		npxFor("a", scopedPkg), npxFor("b", scopedPkg), npxFor("c", scopedPkg),
+	}}
+	p.Run(t.Context())
+
+	got := rec.got()
+	if want := (frame{scopedPkg, []string{"a", "b", "c"}, marotte.MCPPrewarmInstalling}); len(got) == 0 || !got[len(got)-1].equal(want) {
+		t.Errorf("frames = %v, want the last to be %v", got, want)
+	}
+}
+
+func TestRun_AMovedServerLeavesBeforeItJoins(t *testing.T) {
+	withoutNpm(t)
+	p := NewRunner(t.Context(), fakeLister{servers: []ServerInfo{
+		npxFor("a", "pkg-y"), npxFor("b", "pkg-x"), npxFor("c", "pkg-y"),
+	}})
+	rec := record(p, "pkg-y")
+	seed(p, "pkg-x", true, "a", "b")
+	seed(p, "pkg-y", true, "c")
+
+	p.Run(t.Context())
+
+	assertFrames(t, rec.got(), []frame{
+		{"pkg-x", []string{"a"}, marotte.MCPPrewarmDone},
+		{"pkg-y", []string{"a", "c"}, marotte.MCPPrewarmInstalling},
+	})
+}
+
+// A reservation every server left emits nothing at start or finish: a frame names at least one.
+func TestRun_AnInstallNoServerAsksForSendsNoFrame(t *testing.T) {
+	withoutNpm(t)
+	a := npxFor("a", scopedPkg)
+	a.Prewarm = false
+	p := NewRunner(t.Context(), fakeLister{servers: []ServerInfo{a}})
+	rec := record(p, scopedPkg)
+	seed(p, scopedPkg, false, "a")
+
+	p.Run(t.Context())
+	p.start(scopedPkg)
+	p.finish(scopedPkg, marotte.MCPPrewarmDone)
+
+	if got := rec.got(); len(got) != 0 {
+		t.Errorf("frames = %v, want none", got)
+	}
+}
+
+// The store stops asking between the save and its pass's reconcile, and npm exits in that gap.
+func TestFinish_AServerThatStoppedAskingGetsDoneNotTheResult(t *testing.T) {
+	withoutNpm(t)
+	p := NewRunner(t.Context(), fakeLister{servers: []ServerInfo{npxFor("b", scopedPkg)}})
+	rec := record(p, scopedPkg)
+	seed(p, scopedPkg, true, "a", "b")
+
+	p.finish(scopedPkg, marotte.MCPPrewarmFailed)
+	p.Run(t.Context())
+
+	got := rec.got()
+	assertFrames(t, got, []frame{
+		{scopedPkg, []string{"a"}, marotte.MCPPrewarmDone},
+		{scopedPkg, []string{"b"}, marotte.MCPPrewarmFailed},
+	})
+	if slices.ContainsFunc(got, func(f frame) bool {
+		return f.state == marotte.MCPPrewarmFailed && slices.Contains(f.ids, "a")
+	}) {
+		t.Errorf("frames = %v: a, which stopped asking, was told the install failed", got)
+	}
 }
 
 func TestRun_AServerEditedOntoAnotherPackageLeavesItsOldInstall(t *testing.T) {
