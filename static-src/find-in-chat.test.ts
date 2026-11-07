@@ -1057,7 +1057,7 @@ describe("server-hit navigation", () => {
   });
 
   it("marks a steering box's document name inside its title, across the linked name", async () => {
-    // The server counts the offset over the whole title; the name sits inside a link button.
+    // The server names the title segment; the walk finds the name inside its link button.
     setWorkspaceRoot("/workspace");
     stageChat(["u1"]);
     const row = mountTurnCard(
@@ -1082,9 +1082,8 @@ describe("server-hit navigation", () => {
       serverHit({
         entry_id: "e1",
         excerpt: title,
-        segment_kind: "tool_title",
-        offset: title.indexOf("testing"),
-        segment_len: title.length,
+        kind: "tool",
+        segments: ["tool_title"],
       }),
     ]);
 
