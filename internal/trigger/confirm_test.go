@@ -390,14 +390,15 @@ func TestTwoBoundAbandonsBlockRule(t *testing.T) {
 			}
 		})
 	})
-	relabel := func(r *launchrule.Rule) { r.When.Event.Filter.Label = "report:slow" }
 	t.Run("a filter.label change with an attempt in flight keeps it", func(t *testing.T) {
 		inBubble(t, func(t *testing.T, tc *testConfirmer) {
 			r := tc.createRule(labeledSpec())
+			baselineNewLabel(tc, r.ID)
 			tc.enqueue(r.ID, held("k1", "c1"))
 			tc.abandonAtBound(r.ID, "k1", "wf_1")
 			tc.name(r.ID, "k1", "wf_2")
 			edit(tc, &r, 0, relabel)
+			pollSeesNoGain(t, tc, r.ID)
 			if _, st := tc.memory(r.ID); st.BoundAbandons != 0 {
 				t.Errorf("count = %d, want 0", st.BoundAbandons)
 			}
@@ -412,10 +413,12 @@ func TestTwoBoundAbandonsBlockRule(t *testing.T) {
 	t.Run("a filter.label change after the second abandon lifts the block", func(t *testing.T) {
 		inBubble(t, func(t *testing.T, tc *testConfirmer) {
 			r := tc.createRule(labeledSpec())
+			baselineNewLabel(tc, r.ID)
 			tc.enqueue(r.ID, held("k1", "c1"))
 			tc.abandonAtBound(r.ID, "k1", "wf_1")
 			tc.abandonAtBound(r.ID, "k1", "wf_2")
 			edit(tc, &r, 0, relabel)
+			pollSeesNoGain(t, tc, r.ID)
 			if _, st := tc.memory(r.ID); st.BoundAbandons != 0 || st.Blocked != "" {
 				t.Errorf("count %d, blocked %q; want 0 and the block lifted", st.BoundAbandons, st.Blocked)
 			}

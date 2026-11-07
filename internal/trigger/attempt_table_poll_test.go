@@ -2,6 +2,7 @@ package trigger
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/cplieger/forgeapi/v2"
@@ -50,7 +51,7 @@ var pollCases = []attemptCase{
 		deliver: func(tc *testConfirmer, r *launchrule.Rule) {
 			src := issueSource(issue(7, "alice", testLabel))
 			apply := beginPoll(tc.t, tc.Confirmer, r.ID, src)
-			edit(tc, r, 0, func(r *launchrule.Rule) { r.When.Event.Filter.Label = "report:slow" })
+			edit(tc, r, 0, relabel)
 			before := cursorJSON(tc.t, tc.memoryState(r.ID))
 			apply()
 			if n := tc.written(); n != 0 {
@@ -66,6 +67,51 @@ var pollCases = []attemptCase{
 			}
 		},
 	},
+	{
+		name:    "N3 a labeled rule's open item already carrying the new label, edit (filter) changing filter.label, then a poll: no event",
+		spec:    labeledSpec,
+		setup:   func(tc *testConfirmer, r *launchrule.Rule) { baselineNewLabel(tc, r.ID) },
+		deliver: func(tc *testConfirmer, r *launchrule.Rule) { edit(tc, r, 0, relabel) },
+		check:   func(t *testing.T, tc *testConfirmer, r *launchrule.Rule) { pollSeesNoGain(t, tc, r.ID) },
+	},
+}
+
+// newLabel is the label relabel moves a labeled rule to.
+const newLabel = "report:slow"
+
+func relabel(r *launchrule.Rule) { r.When.Event.Filter.Label = newLabel }
+
+// baselineNewLabel takes the labeled rule's baseline over issue 7, which already carries newLabel and not the
+// rule's own.
+func baselineNewLabel(tc *testConfirmer, ruleID string) {
+	tc.t.Helper()
+	beginPoll(tc.t, tc.Confirmer, ruleID, issueSource(issue(7, "alice", newLabel)))()
+	if e := labelEntryOf(tc.memoryState(ruleID), 7); e == nil || e.HasLabel != labelNo {
+		tc.t.Fatalf("Setup: baseline entry for #7 = %+v, want has_label false", e)
+	}
+}
+
+// pollSeesNoGain polls issue 7, still carrying newLabel, after the rule moved to newLabel: the label it carried
+// before the edit is no event, and its entry reads it.
+func pollSeesNoGain(t *testing.T, tc *testConfirmer, ruleID string) {
+	t.Helper()
+	before := keysOf(tc.memoryState(ruleID).queue)
+	beginPoll(t, tc.Confirmer, ruleID, issueSource(issue(7, "alice", newLabel)))()
+	es := tc.memoryState(ruleID)
+	if got := keysOf(es.queue); !slices.Equal(got, before) {
+		t.Errorf("queue after the poll = %v, want %v: #7 had the new label before the edit", got, before)
+	}
+	if e := labelEntryOf(es, 7); e == nil || e.HasLabel != labelYes {
+		t.Errorf("entry for #7 = %+v, want has_label true", e)
+	}
+}
+
+func labelEntryOf(es eventState, number int) *labelEntry {
+	rc := es.cursor[Feed{Selector: testRepo}.RepoID()]
+	if rc == nil || rc.Labeled == nil {
+		return nil
+	}
+	return rc.Labeled.Items[number]
 }
 
 // issueSource is a source whose open issues are items, in one complete page.

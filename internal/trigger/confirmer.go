@@ -45,7 +45,9 @@ func NewConfirmer(store *launchrule.Store, writer launchrule.StateWriter, leases
 
 // ruleValue is one event rule's in-memory state; mu covers all of it and every write of the rule's state file.
 type ruleValue struct {
-	retryAt      time.Time
+	retryAt time.Time
+	// label is the filter.label the labeled cursor was built for.
+	label        string
 	writeRetry   *time.Timer
 	writeBlocked string
 	blocker      blocker
@@ -78,7 +80,7 @@ func (c *Confirmer) rule(ruleID string) *ruleValue {
 	}
 	rv := &ruleValue{}
 	if def, ok := c.store.Get(ruleID); ok {
-		rv.newest = isNewest(&def)
+		rv.newest, rv.label = isNewest(&def), labelOf(&def)
 	}
 	if st, err := c.store.State(ruleID); err == nil {
 		if es, derr := decodeState(&st); derr == nil {

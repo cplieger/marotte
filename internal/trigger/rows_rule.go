@@ -51,9 +51,19 @@ func (s *stepper) ruleRow(ev *attemptEvent) bool {
 	return true
 }
 
-// editFilter is E1: live records keep their bound (A11), abandoned ones stay (A20).
+// editFilter is E1: live records keep their bound (A11), abandoned ones stay (A20). A filter.label change resets
+// the labeled cursor, so the next poll takes a baseline under the new label instead of reading every item that
+// already carries it as a gain.
 func (s *stepper) editFilter() {
 	s.rv.generation++
+	if label := labelOf(&s.def); label != s.rv.label {
+		for _, rc := range s.rv.es.cursor {
+			if rc != nil {
+				rc.Labeled = nil
+			}
+		}
+		s.rv.label = label
+	}
 	s.resetFailures()
 	if newest := isNewest(&s.def); newest && !s.rv.newest {
 		for _, e := range slices.Clone(s.rv.es.queue) {
@@ -81,7 +91,7 @@ func (s *stepper) rebaseline() {
 	es.cursor, es.queue, es.launched, es.superseded = cursor{}, nil, nil, nil
 	s.resetFailures()
 	es.raw.Population = launchrule.Population(&s.def)
-	s.rv.newest = isNewest(&s.def)
+	s.rv.newest, s.rv.label = isNewest(&s.def), labelOf(&s.def)
 	s.res.write = true
 }
 
@@ -144,6 +154,13 @@ func (s *stepper) removeRecord(rec *record) {
 func listedActive(statuses map[string]marotte.RunStatus, workflowID string) bool {
 	st, ok := statuses[workflowID]
 	return ok && st.Active()
+}
+
+func labelOf(r *launchrule.Rule) string {
+	if ev := r.When.Event; ev != nil {
+		return ev.Filter.Label
+	}
+	return ""
 }
 
 func isNewest(r *launchrule.Rule) bool {
