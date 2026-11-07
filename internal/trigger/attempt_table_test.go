@@ -633,7 +633,7 @@ func beginPoll(t *testing.T, c *Confirmer, ruleID string, src FeedSource) (apply
 		t.Fatalf("Setup: no event rule %s", ruleID)
 	}
 	fr := feedRules{Feed: Feed{Connection: r.When.Event.Connection, Selector: r.When.Event.Repo}, Rules: []launchrule.Rule{r}}
-	p := newPoller(src, c)
+	p := newPoller(src, c, NewBudget())
 	run := p.begin(t.Context(), fr)
 	if run == nil {
 		t.Fatalf("Setup: the poll skipped rule %s", ruleID)

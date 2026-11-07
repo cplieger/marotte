@@ -41,14 +41,15 @@ func groupFeeds(rules []launchrule.Rule) []feedRules {
 
 // poller reads feeds and queues what matched, applying each rule's part through the Confirmer, which writes it.
 type poller struct {
-	src FeedSource
-	c   *Confirmer
-	now func() time.Time
+	src    FeedSource
+	c      *Confirmer
+	budget *Budget
+	now    func() time.Time
 }
 
-// newPoller returns a poller reading through src and keeping rule state in c.
-func newPoller(src FeedSource, c *Confirmer) *poller {
-	return &poller{src: src, c: c, now: time.Now}
+// newPoller returns a poller reading through src within b and keeping rule state in c.
+func newPoller(src FeedSource, c *Confirmer, b *Budget) *poller {
+	return &poller{src: src, c: c, budget: b, now: time.Now}
 }
 
 // reads is what one poll read of a feed, each list walked at most once whatever its rules.
@@ -56,6 +57,8 @@ type reads struct {
 	issues *listWalk[forgeapi.Issue]
 	prs    *listWalk[forgeapi.PullRequest]
 	runs   *listWalk[forgeapi.Run]
+	// paused is each list the budget skipped, and why.
+	paused map[string]*backoff
 	// since and horizon are the run walk's bound and H, both fixed when it starts.
 	since   time.Time
 	horizon time.Time
@@ -121,33 +124,44 @@ func (p *poller) load(r *launchrule.Rule, f Feed, start time.Time) *pollRule {
 }
 
 func (p *poller) read(ctx context.Context, f Feed, rules []*pollRule, start time.Time) reads {
-	var rd reads
-	var needIssues, needPRs, needRuns bool
+	rd := reads{paused: map[string]*backoff{}}
+	need := map[string]bool{}
 	for _, pr := range rules {
-		switch {
-		case pr.ev.Kind == launchrule.KindRunConcluded:
-			needRuns = true
-		case itemPart(pr.ev.Kind) == partIssue:
-			needIssues = true
-		default:
-			needPRs = true
-		}
+		need[listOf(pr.ev.Kind)] = true
 	}
-	if needIssues {
-		w := walkIssues(ctx, p.src, f)
-		rd.issues = &w
+	if need[listIssues] {
+		rd.issues = readList(ctx, p, f, listIssues, &rd, func(ctx context.Context) listWalk[forgeapi.Issue] {
+			return walkIssues(ctx, p.src, f)
+		})
 	}
-	if needPRs {
-		w := walkPRs(ctx, p.src, f)
-		rd.prs = &w
+	if need[listPRs] {
+		rd.prs = readList(ctx, p, f, listPRs, &rd, func(ctx context.Context) listWalk[forgeapi.PullRequest] {
+			return walkPRs(ctx, p.src, f)
+		})
 	}
-	if needRuns {
+	if need[listRuns] {
 		rd.horizon = horizon(start)
 		rd.since = runBound(rules, start, rd.horizon)
-		w := walkRuns(ctx, p.src, f, rd.since)
-		rd.runs = &w
+		rd.runs = readList(ctx, p, f, listRuns, &rd, func(ctx context.Context) listWalk[forgeapi.Run] {
+			return walkRuns(ctx, p.src, f, rd.since)
+		})
 	}
 	return rd
+}
+
+// readList walks f's list unless the budget holds it, in which case the walk is partial and reads nothing.
+func readList[T any](ctx context.Context, p *poller, f Feed, list string, rd *reads,
+	walkList func(context.Context) listWalk[T],
+) *listWalk[T] {
+	if bo := p.budget.hold(f, list); bo != nil {
+		rd.paused[list] = bo
+		return &listWalk[T]{Err: errBackedOff}
+	}
+	lctx, tag := withRead(ctx, list)
+	w := walkList(lctx)
+	complete := w.complete() || (w.Err == nil && w.Partial.Reason == forgeapi.PartialResultWindow)
+	p.budget.walked(f, list, max(int(tag.pages.Load()), w.Calls), complete, w.Err, w.Partial)
+	return &w
 }
 
 func (rd *reads) calls() int {
@@ -190,6 +204,10 @@ func (pr *pollRule) applyTo(es *eventState, rd *reads) bool {
 	}
 	pr.apply(rd)
 	pr.logFull()
+	pr.st.raw.Status.Paused = ""
+	if bo := rd.paused[listOf(pr.ev.Kind)]; bo != nil {
+		pr.st.raw.Status.Paused = bo.rowText()
+	}
 	*es = pr.st
 	after, aerr := stateJSON(es)
 	return err != nil || aerr != nil || !bytes.Equal(before, after)
@@ -231,7 +249,7 @@ func (pr *pollRule) apply(rd *reads) {
 		pr.applyItems(items, rd.issues.complete())
 	default:
 		kind, _ := connectionParts(pr.feed.Connection)
-		pr.applyItems(prItems(rd.prs, kind == "gitlab"), rd.prs.complete())
+		pr.applyItems(prItems(rd.prs, kind == kindGitLab), rd.prs.complete())
 	}
 }
 

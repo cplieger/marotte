@@ -32,6 +32,7 @@ import (
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/trigger"
 )
 
 // The client watchdog is three of them and liveness.AliveWindow two. A var only for tests.
@@ -648,6 +649,9 @@ func (rt *Runtime) SetPreSessionOpen(fn func(context.Context)) { rt.coord.preSes
 // SetEventRuleChecker installs the save-time forge reads of an event rule; unset, an event rule save is refused.
 // It is set after construction because the forge connections are built from the runtime, and before the routes serve.
 func (rt *Runtime) SetEventRuleChecker(c eventRuleChecker) { rt.runs.eventRules = c }
+
+// SetTriggerBudget installs the budget an enabled event rule's save is priced against, before the routes serve.
+func (rt *Runtime) SetTriggerBudget(b *trigger.Budget) { rt.runs.triggerBudget = b }
 
 // SetChatSteering installs the chat-only steering renderer, on the coordinator for SetPreSessionOpen's reason.
 func (rt *Runtime) SetChatSteering(fn func(context.Context) []marotte.ClientSteeringDoc) {

@@ -17,4 +17,6 @@ const (
 	logMsgRunStarted      = "triggered run started"
 	logMsgRunNotStarted   = "triggered run did not start"
 	logMsgLaunchAbandoned = "triggered launch abandoned"
+	logMsgBackedOff       = "trigger poll backed off"
+	logMsgResumed         = "trigger poll resumed"
 )

@@ -57,6 +57,8 @@ type Status struct {
 	Blocked string `json:"blocked,omitempty"`
 	// RowText is an event rule's launch state as its row reads it, which the trigger confirmer writes.
 	RowText string `json:"row_text,omitempty"`
+	// Paused is why an event rule's reads wait for a forge or trigger budget, and until when; empty while they run.
+	Paused string `json:"paused,omitempty"`
 	// Gaps are an event rule's stretches in which runs may have been missed, kept until the operator dismisses them.
 	Gaps          []Gap `json:"gaps,omitempty"`
 	BoundAbandons int   `json:"bound_abandons,omitempty"`

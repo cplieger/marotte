@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"reflect"
 	"slices"
 	"sync"
@@ -43,8 +44,10 @@ type Manager struct {
 	notify     func(context.Context, Change)
 	executable func() (string, error)
 	newCore    coreFactory
-	conns      map[string]*connection
-	lists      *listCaches
+	// attempts is the attempt observer each opened connection gets, by id; nil installs none.
+	attempts func(conn string) func(http.RoundTripper) http.RoundTripper
+	conns    map[string]*connection
+	lists    *listCaches
 	// store is nil exactly while health names why it could not be opened.
 	store   creds.Store
 	records recordsFile
@@ -134,6 +137,20 @@ func NewManager(configDir string, notify func(context.Context, Change)) *Manager
 		m.notify(ctx, Change{ID: key.conn, ReposListed: true})
 	}
 	return m
+}
+
+// ObserveAttempts installs observe's hook on every connection opened after it, as forgeapi.WithAttemptObserver.
+// Call it before Load.
+func (m *Manager) ObserveAttempts(observe func(conn string) func(http.RoundTripper) http.RoundTripper) {
+	m.attempts = observe
+}
+
+// connOpts is the options a loaded or signed-in connection's client takes beyond openConn's own.
+func (m *Manager) connOpts(spec *connectionSpec) []forgeapi.Option {
+	if m.attempts == nil {
+		return m.extraOpts
+	}
+	return slices.Concat(m.extraOpts, []forgeapi.Option{forgeapi.WithAttemptObserver(m.attempts(spec.ID))})
 }
 
 // Shutdown cancels every forge read m started behind a caller (a cache fill or
@@ -491,7 +508,7 @@ func (m *Manager) open(store creds.Store, recs []connectionRecord) (map[string]*
 			c.status = reconnectStatus(emptySlotReason)
 			continue
 		}
-		core, src, st, err := openConn(store, &c.spec, m.newCore, m.extraOpts)
+		core, src, st, err := openConn(store, &c.spec, m.newCore, m.connOpts(&c.spec))
 		if err != nil {
 			slog.Warn("forges: a connection cannot be opened with its saved settings", "connection", rec.ID, "error", err)
 			c.status = reconnectStatus(fmt.Sprintf("marotte cannot open this connection with its saved settings (%s). "+

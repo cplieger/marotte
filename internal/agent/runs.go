@@ -16,6 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/trigger"
 )
 
 // Runs owns the workflow-run surface: launch, cancel, retry, the durable lease, the deadline and turn-cap
@@ -28,7 +29,9 @@ type Runs struct {
 	launchRules *launchrule.Store `wiring:"optional"`
 	leases      *runlease.Store   `wiring:"optional"`
 	eventRules  eventRuleChecker  `wiring:"optional"`
-	confirmer   TriggerConfirmer  `wiring:"optional"`
+	// triggerBudget prices an event rule's save against the trigger poller's hourly budget; nil prices nothing.
+	triggerBudget *trigger.Budget  `wiring:"optional"`
+	confirmer     TriggerConfirmer `wiring:"optional"`
 	// launchLocks serializes, per recipe name, a launch's single-run check through its lease grant (launchAs).
 	launchLocks *keylock.Set[string]
 	// log is the run record: one entry log per run under <configDir>/runs, its open step turns and hosts.

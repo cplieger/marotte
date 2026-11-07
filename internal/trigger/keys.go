@@ -40,6 +40,12 @@ func itemPart(k launchrule.Kind) string {
 }
 
 // connectionParts splits a forges.MakeID connection id into its kind and host.
+// The connection kinds whose reads the trigger poller treats apart; forges.Kind owns the full set.
+const (
+	kindGitHub = "github"
+	kindGitLab = "gitlab"
+)
+
 func connectionParts(id string) (kind, host string) {
 	parts, err := keyenc.Split(id)
 	if err != nil || len(parts) != 2 {

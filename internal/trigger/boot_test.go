@@ -276,7 +276,7 @@ func TestUnreadableStateFileSurvivesPollAndTick(t *testing.T) {
 		r := tc.createRule(openedSpec("alice"))
 		bootUnreadable(tc, &r)
 		fr := feedRules{Feed: Feed{Connection: testConn, Selector: testRepo}, Rules: []launchrule.Rule{r}}
-		newPoller(issueSource(issue(5, "alice")), tc.Confirmer).poll(t.Context(), fr)
+		newPoller(issueSource(issue(5, "alice")), tc.Confirmer, NewBudget()).poll(t.Context(), fr)
 		tc.update(r.ID, anyGeneration, func(es *eventState) bool {
 			es.queue = append(es.queue, held("k1", "c1"))
 			return true
@@ -308,7 +308,7 @@ func TestUndecodableStateFileIsUnreadable(t *testing.T) {
 				tc.persist(r.ID)
 				r, _ = tc.store.Get(r.ID)
 				fr := feedRules{Feed: Feed{Connection: testConn, Selector: testRepo}, Rules: []launchrule.Rule{r}}
-				newPoller(issueSource(issue(5, "bob")), tc.Confirmer).poll(t.Context(), fr)
+				newPoller(issueSource(issue(5, "bob")), tc.Confirmer, NewBudget()).poll(t.Context(), fr)
 				if n := tc.log.CountExact(logMsgStateBad); n != 0 {
 					t.Errorf("%d ERROR %q lines at the poll, want none: the load reported the file", n, logMsgStateBad)
 				}

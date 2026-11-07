@@ -43,7 +43,7 @@ func (tc *testConfirmer) relaunchable(ruleID, key string) bool {
 func (tc *testConfirmer) pollerOn() *harness {
 	return &harness{
 		t: tc.t, store: tc.store, c: tc.Confirmer, src: &fakeSource{}, marks: tc.marks, now: pollStart,
-		dir: tc.dir,
+		dir: tc.dir, budget: NewBudget(),
 	}
 }
 
