@@ -6,8 +6,9 @@ import (
 	"testing"
 )
 
-// zodObjectRe matches `<name>=<zod>.object({<members>})<tail>;`, tail being an optional `.method()`.
-var zodObjectRe = regexp.MustCompile(`[\w$]+=[\w$]+\.object\(\{([^;]*?)\}\)(\.\w+\(\))?;`)
+// zodObjectRe matches `<name>=<zod>.object({<members>})<tail>` up to the declaration's own `,` or `;`, tail being
+// an optional `.method()`, so a match never runs on into the next declaration of the same var statement.
+var zodObjectRe = regexp.MustCompile(`[\w$]+=[\w$]+\.object\(\{([^;]*?)\}\)(\.\w+\(\))?[,;]`)
 
 // TestPromptMetaSchemaStillPassesUnknownKeys pins the premise of the callerLabel row: KAS parses session/prompt's
 // _meta.kiro with a .passthrough() schema, so a key it does not name is kept on the user row. A .strip() would drop
