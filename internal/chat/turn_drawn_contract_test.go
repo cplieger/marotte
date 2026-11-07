@@ -129,6 +129,8 @@ func drawnPayload(t *testing.T, turn string, kind marotte.EntryKind, subtask str
 		return marotte.EntryPlan{}
 	case marotte.EntryKindTurnClose:
 		return marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted}
+	case marotte.EntryKindStepGraded:
+		return marotte.EntryStepGraded{Outcome: marotte.TurnOutcomeCompleted}
 	}
 	t.Fatalf("fixture kind %q has no payload here: add it beside the others", kind)
 	return nil

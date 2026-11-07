@@ -305,6 +305,11 @@ var inheritedWriteSites = []durableSite{{
 	calls:   []string{"Append"},
 	because: "the run appender's frame context",
 }, {
+	file:    "internal/agent/run_log.go",
+	fn:      "gradeLocked",
+	calls:   []string{"Append"},
+	because: "its trigger's context: node_complete's derived lifecycle context or a run read's request; a lost grade is recorded by the next read",
+}, {
 	file:    "internal/agent/run_appender.go",
 	fn:      "closeRun",
 	calls:   []string{"closeRunTurns"},

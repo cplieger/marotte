@@ -23,6 +23,7 @@ import (
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/turnlog"
@@ -84,7 +85,10 @@ type runRecord struct {
 	closes map[string]stepClose
 	// starts is each path's current attempt, nil until a read scans the log; every open and close then keeps it current.
 	starts map[string]stepAttempt
-	host   marotte.ChatID
+	// noteLeases is, per path, the lease node_complete read for the close it sealed, until a trigger records that
+	// close's grade: closeNode is the only writer, gradeLocked the only reader.
+	noteLeases map[string]noteLease
+	host       marotte.ChatID
 	// removed is the tombstone: a frame arriving after Delete opens nothing.
 	removed bool
 }
@@ -618,8 +622,12 @@ func (r *runLog) openLocked(workflowID, nodePath string) *runTurn {
 }
 
 // closeNode closes the step's turn with KAS's node_complete status, answering everything it sealed; closed
-// is false with no open turn.
-func (r *runLog) closeNode(ctx context.Context, workflowID, nodePath, status, reason string) (sealed []turnlog.Sealed, closed bool, err error) {
+// is false with no open turn. note, the run's lease when it names a chat, is held for the close in the same hold
+// of runLog.mu that makes the close gradable, so whichever trigger records its grade notes under it (holdNoteLocked).
+// A node_complete that closes nothing holds none: no other closer's close can call for a note (stepClose.mayNote).
+func (r *runLog) closeNode(
+	ctx context.Context, workflowID, nodePath, status, reason string, note *runlease.Lease,
+) (sealed []turnlog.Sealed, closed bool, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
@@ -628,13 +636,16 @@ func (r *runLog) closeNode(ctx context.Context, workflowID, nodePath, status, re
 	}
 	t := rec.open[nodePath]
 	if t == nil {
+		if marotte.RunStatus(status) == marotte.RunStatusCompleted {
+			reopenGradeLocked(rec, nodePath)
+		}
 		return nil, false, nil
 	}
 	c := runOutcome(status)
 	c.Reason = reason
 	// KAS grades a refused step `completed`; at close time the step's last turn_end outranks that status. A tool_use
 	// stop does not: only KAS's node record, which node_complete does not carry, says whether it was the model-call
-	// limit. stepClose.graded owns the read-time grade of both.
+	// limit. runLog.gradeLocked owns the grade under KAS's record.
 	if stop := marotte.ConcludeStopReason(t.rawStop); stop.Outcome == marotte.TurnOutcomeRefused {
 		c = stop
 		c.Reason = reason
@@ -647,7 +658,33 @@ func (r *runLog) closeNode(ctx context.Context, workflowID, nodePath, status, re
 	sealed, err = t.turn.SealOpen(ctx)
 	c.Unanswered = err == nil && t.unanswered()
 	closing, cerr := r.closeLocked(ctx, rec, t, c)
+	sc := sealedClose(closing, t.turn.ID(), &c)
+	holdNoteLocked(rec, nodePath, &sc, status, note)
 	return append(sealed, closing...), true, errors.Join(err, cerr)
+}
+
+// holdNoteLocked files note as the note lease of c, the path's newest close, when KAS completed its node and c may
+// call for a note: only a completed node's close is ever graded. Any older close's lease on the path goes. Caller
+// holds runLog.mu.
+func holdNoteLocked(rec *runRecord, path string, c *stepClose, status string, note *runlease.Lease) {
+	delete(rec.noteLeases, path)
+	if note == nil || marotte.RunStatus(status) != marotte.RunStatusCompleted || !c.mayNote() {
+		return
+	}
+	if rec.noteLeases == nil {
+		rec.noteLeases = make(map[string]noteLease)
+	}
+	rec.noteLeases[path] = noteLease{lease: *note, turn: c.turn}
+}
+
+// reopenGradeLocked makes the path's newest close due a grade again after gradeLocked settled it: a completed
+// node_complete that closes no turn is KAS completing the node that close ran, since the reads that settled it.
+// Caller holds runLog.mu.
+func reopenGradeLocked(rec *runRecord, path string) {
+	if c, ok := rec.closes[path]; ok {
+		c.misses, c.settled = 0, false
+		rec.closes[path] = c
+	}
 }
 
 // closeRunTurns closes every open turn of a run with one outcome and, when terminal, drops the host.
@@ -706,6 +743,7 @@ func (r *runLog) delete(ctx context.Context, workflowID string) ([]turnlog.Seale
 	rec.open = nil
 	rec.closed = nil
 	rec.staged = nil
+	rec.noteLeases = nil
 	rec.host = ""
 	rec.removed = true
 	if rec.log != nil {
@@ -749,9 +787,7 @@ func (*runLog) closeLocked(ctx context.Context, rec *runRecord, t *runTurn, c ma
 	delete(rec.open, t.path)
 	rec.closed[t.path] = t.turn.ID()
 	if rec.closes != nil {
-		rec.closes[t.path] = stepClose{
-			outcome: c.Outcome, reason: c.Reason, kind: c.FailureKind, rawStop: c.RawStop, unanswered: c.Unanswered,
-		}
+		rec.closes[t.path] = sealedClose(sealed, t.turn.ID(), &c)
 	}
 	if rec.starts != nil {
 		noteAttemptClose(rec.starts, t.path, c.Outcome)
@@ -759,14 +795,172 @@ func (*runLog) closeLocked(ctx context.Context, rec *runRecord, t *runTurn, c ma
 	return sealed, err
 }
 
-// stepEnds answers the run's broken step ends by node path, each path's newest close graded under kas, KAS's record
-// of the run's steps by PathKey (nil when it was not read). It scans the log on the first read of the process; nil
-// with no log.
-func (r *runLog) stepEnds(ctx context.Context, workflowID string, kas map[string]workflow.StepRecord) (map[string]marotte.RunStepEnd, error) {
+// sealedClose is the close a closer sealed, through the scan's constructor so a live close and a scanned one cannot
+// differ: the conclusion, the fallback when the turn_close does not decode, has no refusal.
+func sealedClose(sealed []turnlog.Sealed, turn string, c *marotte.TurnConclusion) stepClose {
+	if tc, ok := turnCloseOf(sealed); ok {
+		return stepCloseOf(&tc, turn)
+	}
+	return stepClose{
+		outcome: c.Outcome, reason: c.Reason, kind: c.FailureKind, rawStop: c.RawStop, unanswered: c.Unanswered,
+		turn: turn,
+	}
+}
+
+// stepEnds answers the run's step ends by node path (stepClose.end), first recording the grade of each path's newest
+// close that kas, KAS's record of the run's steps by PathKey (nil when it was not read), makes due; graded is what it
+// recorded. It scans the log on the first read of the process; nil with no log.
+func (r *runLog) stepEnds(ctx context.Context, workflowID string, kas map[string]workflow.StepRecord) (ends map[string]marotte.RunStepEnd, graded []*stepGrade, err error) {
+	l, err := r.log(ctx, workflowID)
+	if err != nil || l == nil {
+		return nil, nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok || rec.removed {
+		return nil, nil, nil
+	}
+	if scanErr := scanStepFactsLocked(rec, l); scanErr != nil {
+		return nil, nil, scanErr
+	}
+	if kas != nil {
+		graded, err = r.gradeDueLocked(ctx, rec, slices.Sorted(maps.Keys(rec.closes)), kasRead{steps: kas, ok: true})
+	}
+	return stepEndsLocked(rec, kas), graded, err
+}
+
+// kasRead is one read of KAS's record of a run's steps by PathKey, as gradeLocked weighs it: ok is false when the read
+// failed, and last marks the run's terminal run_complete, the final read any close of the run is due.
+type kasRead struct {
+	steps map[string]workflow.StepRecord
+	ok    bool
+	last  bool
+}
+
+// gradeReadAttempts bounds the reads of KAS's record one close is due that each leave it ungraded (a failed read, a
+// node still running, a refused write): a transient fault clears within a trigger or two, and a node KAS later
+// completes reopens the close (reopenGradeLocked).
+const gradeReadAttempts = 3
+
+// gradeDueLocked grades each of paths' newest close under k (gradeLocked), in order. Caller holds runLog.mu and has
+// scanned the record's step facts.
+func (r *runLog) gradeDueLocked(ctx context.Context, rec *runRecord, paths []string, k kasRead) ([]*stepGrade, error) {
+	var graded []*stepGrade
+	var errs []error
+	for _, path := range paths {
+		g, err := r.gradeLocked(ctx, rec, path, k)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		if g != nil {
+			graded = append(graded, g)
+		}
+	}
+	return graded, errors.Join(errs...)
+}
+
+// stepEndsLocked answers each path's step end from its newest close (stepClose.end). Caller holds runLog.mu.
+func stepEndsLocked(rec *runRecord, kas map[string]workflow.StepRecord) map[string]marotte.RunStepEnd {
+	ends := make(map[string]marotte.RunStepEnd)
+	for path, c := range rec.closes {
+		end, ok := c.end()
+		if !ok {
+			continue
+		}
+		if end.Outcome == marotte.TurnOutcomeInterrupted {
+			st, known := kas[path]
+			// A grade is recorded only under a completed record, so a graded interruption was resumed.
+			end.Resumed = rec.starts[path].open || c.hasGrade || (known && st.Completed())
+		}
+		ends[path] = end
+	}
+	return ends
+}
+
+// dueGradeLocked is whether the path's newest close c needs a grade under KAS's record and a read may still be spent
+// on it (stepClose.settled). A turn open on the path is a newer execution KAS's record already describes, so a grade
+// filed then would paint c with its result. A turn a crash left open is closed unterminated when the log opens, so
+// only rec.open can hold one.
+func dueGradeLocked(rec *runRecord, path string, c *stepClose) bool {
+	return c.turn != "" && !c.hasGrade && !c.settled && c.mayBeBroken() && rec.open[path] == nil
+}
+
+// gradeLocked records the grade of the path's newest close, when due, under KAS's completed record of its node in k,
+// and answers it. Otherwise it answers nil and the close stays due, or is settled: at once when k holds no node at
+// the path or one KAS ended without completing, at the run's last read, or at its gradeReadAttempts-th ungraded read.
+// It is the only grader of a close the run log holds and the only one to settle it (reopenGradeLocked undoes that).
+// Caller holds runLog.mu and has scanned the record's step facts.
+func (*runLog) gradeLocked(ctx context.Context, rec *runRecord, path string, k kasRead) (*stepGrade, error) {
+	c, ok := rec.closes[path]
+	if !ok || !dueGradeLocked(rec, path, &c) {
+		return nil, nil
+	}
+	kas, found := k.steps[path]
+	if !kas.Completed() {
+		c.missed(k.last || (k.ok && (!found || kas.Ended())))
+		rec.closes[path] = c
+		return nil, nil
+	}
+	p, graded := c.recordedGrade(kas)
+	payload, err := json.Marshal(&p)
+	if err != nil {
+		return nil, err
+	}
+	e := &marotte.Entry{Turn: c.turn, Kind: marotte.EntryKindStepGraded, Payload: payload}
+	if err := rec.log.Append(ctx, e); err != nil {
+		c.missed(k.last)
+		rec.closes[path] = c
+		return nil, err
+	}
+	rec.closes[path] = graded
+	g := &stepGrade{entry: e, nodePath: path, grade: graded, sessionID: kas.SessionID}
+	if n, held := rec.noteLeases[path]; held {
+		delete(rec.noteLeases, path)
+		if n.turn == c.turn {
+			g.note = &n.lease
+		}
+	}
+	return g, nil
+}
+
+// missed counts one read of KAS's record that left c ungraded, settling c when final or at gradeReadAttempts.
+func (c *stepClose) missed(final bool) {
+	c.misses++
+	c.settled = final || c.misses >= gradeReadAttempts
+}
+
+// gradeRun records the grade of every path's newest close that is due one, reading KAS's record of the run's steps
+// through read only when one is, and answers what it recorded; last marks the run's terminal run_complete (kasRead).
+// No lock is held across read, so a close that changed meanwhile is left to the next grade.
+func (r *runLog) gradeRun(ctx context.Context, workflowID string, read func() (map[string]workflow.StepRecord, bool), last bool) ([]*stepGrade, error) {
 	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
 		return nil, err
 	}
+	due, err := r.dueTurns(workflowID, l)
+	if err != nil || len(due) == 0 {
+		return nil, err
+	}
+	kas, known := read()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.runs[workflowID]
+	if !ok || rec.removed {
+		return nil, nil
+	}
+	paths := make([]string, 0, len(due))
+	for path, turn := range due {
+		if rec.closes[path].turn == turn {
+			paths = append(paths, path)
+		}
+	}
+	slices.Sort(paths)
+	return r.gradeDueLocked(ctx, rec, paths, kasRead{steps: kas, ok: known, last: last})
+}
+
+// dueTurns is, by path, the turn of each newest close due a grade.
+func (r *runLog) dueTurns(workflowID string, l *chat.EntryLog) (map[string]string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
@@ -776,20 +970,19 @@ func (r *runLog) stepEnds(ctx context.Context, workflowID string, kas map[string
 	if err := scanStepFactsLocked(rec, l); err != nil {
 		return nil, err
 	}
-	ends := make(map[string]marotte.RunStepEnd)
+	due := make(map[string]string)
 	for path, c := range rec.closes {
-		st, known := kas[path]
-		g := c.graded(st, known)
-		end, broken := g.end()
-		if !broken {
-			continue
+		if dueGradeLocked(rec, path, &c) {
+			due[path] = c.turn
 		}
-		if end.Outcome == marotte.TurnOutcomeInterrupted {
-			end.Resumed = rec.starts[path].open || (known && st.Completed())
-		}
-		ends[path] = end
 	}
-	return ends, nil
+	return due, nil
+}
+
+// noteLease is the lease node_complete read for the close of turn (holdNoteLocked).
+type noteLease struct {
+	turn  string
+	lease runlease.Lease
 }
 
 // scanStepFactsLocked fills the record's step closes and attempt starts from its log once per process, both in one
@@ -806,8 +999,8 @@ func scanStepFactsLocked(rec *runRecord, l *chat.EntryLog) error {
 	return nil
 }
 
-// scanStepFacts folds a log's turn_open paths and turn_close entries in file order into each path's newest close and
-// its current attempt.
+// scanStepFacts folds a log's turn_open paths, turn_close and step_graded entries in file order into each path's
+// newest close, under its grade, and its current attempt.
 func scanStepFacts(all []marotte.Entry) (closes map[string]stepClose, starts map[string]stepAttempt) {
 	closes = make(map[string]stepClose)
 	starts = make(map[string]stepAttempt)
@@ -824,8 +1017,14 @@ func scanStepFacts(all []marotte.Entry) (closes map[string]stepClose, starts map
 		case marotte.EntryKindTurnClose:
 			var tc marotte.EntryTurnClose
 			if path, ok := paths[e.Turn]; ok && json.Unmarshal(e.Payload, &tc) == nil {
-				closes[path] = stepCloseOf(&tc)
+				closes[path] = stepCloseOf(&tc, e.Turn)
 				noteAttemptClose(starts, path, tc.Outcome)
+			}
+		case marotte.EntryKindStepGraded:
+			var g marotte.EntryStepGraded
+			path, ok := paths[e.Turn]
+			if c, has := closes[path]; ok && has && c.turn == e.Turn && json.Unmarshal(e.Payload, &g) == nil {
+				closes[path] = c.withGrade(&g)
 			}
 		}
 	}

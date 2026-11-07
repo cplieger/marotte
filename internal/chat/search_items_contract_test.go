@@ -101,6 +101,11 @@ func searchItemsCases() []searchItemsCase {
 			itemsCall("c1", "go vet", marotte.ToolKindExecute), itemsText("s1#0", "first half"), itemsResult("c1", "ok"),
 			itemsText("s1#1", "second half"),
 		}},
+		{Name: "a step grade renders nothing, so a message runs across it", Body: []searchItemsEntry{
+			itemsText("say-a#0", "first half"),
+			itemsEntry("g1", marotte.EntryKindStepGraded, "", marotte.EntryStepGraded{Outcome: marotte.TurnOutcomeCompleted}),
+			itemsText("say-a#1", "second half"),
+		}},
 		{Name: "a word split across a message's entries is one word", Body: []searchItemsEntry{
 			itemsText("say-a#0", "a dead"), itemsText("say-a#1", "set security fai"), itemsText("say-a#2", "lure"),
 		}},

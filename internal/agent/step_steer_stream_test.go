@@ -36,7 +36,7 @@ func TestRunSteer_MidStreamLeavesTheStepsSayWhole(t *testing.T) {
 	if _, err := turn.ThinkingDelta(ctx, "", "b2c1-say", " right"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := r.closeNode(ctx, "wf1", "s", "completed", ""); err != nil {
+	if _, _, err := r.closeNode(ctx, "wf1", "s", "completed", "", nil); err != nil {
 		t.Fatal(err)
 	}
 

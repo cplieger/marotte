@@ -43,7 +43,7 @@
       "page_word": "stopped",
       "terminal": true,
       "sites": [
-        "internal/chat/entrylog.go:1088",
+        "internal/chat/entrylog.go:1089",
         "internal/translate/projection_entries.go:726",
         "internal/translate/streaming_tools.go:482",
         "internal/translate/wire_enums.go:36",
@@ -124,22 +124,22 @@
       "status": "completed"
     },
     {
-      "site": "internal/chat/entrylog.go:1088",
+      "site": "internal/chat/entrylog.go:1089",
       "form": "status_field",
       "status": "aborted"
     },
     {
-      "site": "internal/chat/hook_visibility.go:245",
+      "site": "internal/chat/hook_visibility.go:246",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/chat/hook_visibility.go:259",
+      "site": "internal/chat/hook_visibility.go:260",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/chat/hook_visibility.go:261",
+      "site": "internal/chat/hook_visibility.go:262",
       "form": "compare",
       "status": "failed"
     },

@@ -80,6 +80,16 @@
       ]
     },
     {
+      "name": "a step's grade filed after its close draws nothing",
+      "owner": "both",
+      "drawn": false,
+      "open": { "source": "wire_turn_start" },
+      "body": [
+        { "kind": "turn_close", "lane": "" },
+        { "kind": "step_graded", "lane": "" }
+      ]
+    },
+    {
       "name": "a bind renders at no position of its own",
       "owner": "both",
       "drawn": false,

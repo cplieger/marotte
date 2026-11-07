@@ -8,6 +8,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -17,8 +18,27 @@ type stepClose struct {
 	reason  string
 	kind    marotte.FailureKind
 	rawStop marotte.StopReason
+	// turn is the closed turn's id, which a step_graded names.
+	turn string
+	// misses counts the reads of KAS's record that left the close due (runLog.gradeLocked); in memory only.
+	misses int
 	// unanswered is the close's EntryTurnClose.Unanswered.
 	unanswered bool
+	// hasGrade is whether a step_graded for turn is folded in.
+	hasGrade bool
+	// settled is whether no read of KAS's record is spent on the close's grade again (runLog.gradeLocked); in
+	// memory only, so a restart starts the count again.
+	settled bool
+}
+
+// stepGrade is one step_graded gradeLocked appended, and what the launching chat's note reads from it.
+type stepGrade struct {
+	entry *marotte.Entry
+	// note is the lease node_complete held for the close (runRecord.noteLeases), nil when it held none.
+	note      *runlease.Lease
+	nodePath  string
+	sessionID string    // KAS's record's step session, named by the empty-answer note
+	grade     stepClose // the close under the grade (withGrade)
 }
 
 // kasNoAnswerText opens the text KAS records in place of a model answer that came back empty (kiro-cli 3.0.0).
@@ -59,7 +79,7 @@ func (a *answerFold) silent() bool {
 	return !a.signalled && (t == "" || strings.HasPrefix(strings.TrimPrefix(t, "("), kasNoAnswerText))
 }
 
-func stepCloseOf(c *marotte.EntryTurnClose) stepClose {
+func stepCloseOf(c *marotte.EntryTurnClose, turn string) stepClose {
 	return stepClose{
 		refusal:    c.Refusal,
 		outcome:    c.Outcome,
@@ -67,7 +87,19 @@ func stepCloseOf(c *marotte.EntryTurnClose) stepClose {
 		kind:       c.FailureKind,
 		rawStop:    marotte.StopReason(c.StopReasonRaw),
 		unanswered: c.Unanswered,
+		turn:       turn,
 	}
+}
+
+// withGrade is c under its step_graded entry: the grade's outcome, kind and reason, the close's refusal only while
+// the grade is refused.
+func (c *stepClose) withGrade(g *marotte.EntryStepGraded) stepClose {
+	out := *c
+	out.outcome, out.kind, out.reason, out.hasGrade = g.Outcome, g.FailureKind, g.FailureReason, true
+	if g.Outcome != marotte.TurnOutcomeRefused {
+		out.refusal = nil
+	}
+	return out
 }
 
 // stoppedAtCallLimit is the turn-level tell of kiro-cli's model-call limit (a tool_use or max_turn_requests stop). It
@@ -82,7 +114,7 @@ func (c *stepClose) answeredNothing() bool {
 	return c.unanswered && (c.outcome == marotte.TurnOutcomeCompleted || c.outcome == marotte.TurnOutcomeEmpty)
 }
 
-// mayBeBroken is whether KAS's record could change or confirm this close's grade, so a reader needs it.
+// mayBeBroken is whether KAS's record could change or confirm this close's grade.
 func (c *stepClose) mayBeBroken() bool {
 	return marotte.SeverityOf(c.outcome) == marotte.TurnSeverityBroken || c.stoppedAtCallLimit() || c.answeredNothing()
 }
@@ -94,16 +126,22 @@ func (c *stepClose) mayNote() bool {
 		c.stoppedAtCallLimit() || c.answeredNothing()
 }
 
-// graded is the step's end under KAS's record of the node, the authority (known is false when KAS's record was not
-// read). A step KAS completed on a success signal ended completed whatever its turn's stop. A step KAS completed with
-// no signal is the model-call limit when its turn stopped on tool_use or max_turn_requests, and an empty answer when
-// its own turn ended it saying nothing: KAS retries an empty answer only when the model sent no stop reason, so one
-// ending end_turn completes the step.
-func (c *stepClose) graded(kas workflow.StepRecord, known bool) stepClose {
+// recordedGrade is c's step_graded entry under kas, KAS's record of a node it completed, and c under that entry.
+// The run log's grade and a replay's both fold through it, so a grade reads one way wherever it is served.
+func (c *stepClose) recordedGrade(kas workflow.StepRecord) (marotte.EntryStepGraded, stepClose) {
+	g := c.graded(kas)
+	p := marotte.EntryStepGraded{Outcome: g.outcome, FailureReason: g.reason, FailureKind: g.kind}
+	under := c.withGrade(&p)
+	return p, under
+}
+
+// graded is the step's end under KAS's record of the node, the authority. A step KAS completed on a success signal
+// ended completed whatever its turn's stop. A step KAS completed with no signal is the model-call limit when its turn
+// stopped on tool_use or max_turn_requests, and an empty answer when its own turn ended it saying nothing: KAS
+// retries an empty answer only when the model sent no stop reason, so one ending end_turn completes the step.
+func (c *stepClose) graded(kas workflow.StepRecord) stepClose {
 	g := *c
 	switch {
-	case !known:
-		return g
 	case kas.Succeeded():
 		if marotte.SeverityOf(g.outcome) == marotte.TurnSeverityBroken {
 			return stepClose{outcome: marotte.TurnOutcomeCompleted, rawStop: g.rawStop}
@@ -121,8 +159,9 @@ func (c *stepClose) graded(kas workflow.StepRecord, known bool) stepClose {
 	return g
 }
 
+// end is the close's step_ends row: one for a recorded grade, a completed one included, or a broken close.
 func (c *stepClose) end() (marotte.RunStepEnd, bool) {
-	if marotte.SeverityOf(c.outcome) != marotte.TurnSeverityBroken {
+	if !c.hasGrade && marotte.SeverityOf(c.outcome) != marotte.TurnSeverityBroken {
 		return marotte.RunStepEnd{}, false
 	}
 	return marotte.RunStepEnd{Outcome: c.outcome, FailureReason: c.reason, FailureKind: c.kind}, true
@@ -135,14 +174,19 @@ func kasSteps(in workflow.Inspect) map[string]workflow.StepRecord {
 	return workflow.StepRecords(in.State)
 }
 
-func (rs *Runs) kasStep(ctx context.Context, workflowID, nodePath string) (workflow.StepRecord, bool) {
+// kasRunSteps is KAS's record of the run's steps by PathKey; false when it could not be read.
+func (rs *Runs) kasRunSteps(ctx context.Context, workflowID string) (map[string]workflow.StepRecord, bool) {
 	raw, err := rs.rawInspect(ctx, workflowID)
+	var in workflow.Inspect
+	if err == nil {
+		in, err = workflow.DecodeInspect(workflowID, raw)
+	}
 	if err != nil {
 		slog.Warn("a step's end could not be checked against the run's state", "workflow_id", logsafe.Field(workflowID),
-			"node_path", logsafe.Field(nodePath), "error", err)
-		return workflow.StepRecord{}, false
+			"error", err)
+		return nil, false
 	}
-	return kasStepIn(workflowID, raw, nodePath)
+	return kasSteps(in), true
 }
 
 func kasStepIn(workflowID string, raw json.RawMessage, nodePath string) (workflow.StepRecord, bool) {
@@ -154,8 +198,9 @@ func kasStepIn(workflowID string, raw json.RawMessage, nodePath string) (workflo
 	return st, ok
 }
 
-// gradeNewestClose regrades the newest turn_close in a step's entries under KAS's record, rewriting its payload in
-// place when the grade moves. read answers KAS's record, and is called only for a close KAS's record could move.
+// gradeNewestClose regrades the newest turn_close of a replayed step, one the run log holds no turn for, under KAS's
+// record, rewriting its payload in place when the grade moves. read answers KAS's record, and is called only for a
+// close KAS's record could move. A step the run log holds reads its recorded grade (runLog.gradeLocked) instead.
 func gradeNewestClose(entries []marotte.Entry, read func() (workflow.StepRecord, bool)) {
 	for i := len(entries) - 1; i >= 0; i-- {
 		if entries[i].Kind != marotte.EntryKindTurnClose {
@@ -165,12 +210,16 @@ func gradeNewestClose(entries []marotte.Entry, read func() (workflow.StepRecord,
 		if json.Unmarshal(entries[i].Payload, &tc) != nil {
 			return
 		}
-		c := stepCloseOf(&tc)
+		c := stepCloseOf(&tc, entries[i].Turn)
 		if !c.mayBeBroken() {
 			return
 		}
-		g := c.graded(read())
-		if g.outcome == c.outcome && g.kind == c.kind && g.reason == c.reason {
+		kas, known := read()
+		if !known || !kas.Completed() {
+			return
+		}
+		_, g := c.recordedGrade(kas)
+		if g.outcome == c.outcome && g.kind == c.kind && g.reason == c.reason && g.refusal == c.refusal {
 			return
 		}
 		tc.Outcome, tc.FailureKind, tc.FailureReason, tc.Refusal = g.outcome, g.kind, g.reason, g.refusal

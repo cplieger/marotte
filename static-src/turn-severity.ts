@@ -2,7 +2,7 @@
 // + `DefaultFailureReason` (internal/marotte/turns.go), both pinned to testdata/turn_severity.json.
 // Pure and DOM-free, so the fold rule, store latch, favicon cue and renderer can all import it.
 
-import type { EntryTurnClose, StopReason, TurnOutcome, TurnSeverity } from "./wire/types.gen.js";
+import type { TurnOutcome, TurnSeverity } from "./wire/types.gen.js";
 
 /** How badly a turn ended, re-exported from the generated wire types: the rule is implemented in
  *  both languages, so a hand-written union would be a second spelling. */
@@ -42,25 +42,6 @@ export function severityOf(outcome: TurnOutcome | undefined): TurnSeverity {
  *  the same way. */
 export function isBroken(outcome: TurnOutcome | undefined): boolean {
   return severityOf(outcome) === "broken";
-}
-
-const CALL_LIMIT_STOPS: ReadonlySet<string> = new Set<StopReason>([
-  "tool_use",
-  "max_turn_requests",
-]);
-
-/** Could the server regrade this workflow step's close under KAS's record of the step (broken
- *  already, a model-call-limit stop, or a completed or empty close that answered nothing)? The TS
- *  twin of `stepClose.mayBeBroken` (internal/agent/step_grade.go): change both together. */
-export function mayGradeBroken(close: EntryTurnClose | undefined): boolean {
-  if (close === undefined) {
-    return false;
-  }
-  return (
-    isBroken(close.outcome) ||
-    CALL_LIMIT_STOPS.has(close.stop_reason_raw ?? "") ||
-    (close.unanswered === true && (close.outcome === "completed" || close.outcome === "empty"))
-  );
 }
 
 /** The outcome as ONE WORD, for an accessible NAME read on every focus. Total over `TurnOutcome`.

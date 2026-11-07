@@ -179,6 +179,57 @@
       ]
     },
     {
+      "name": "a step grade renders nothing, so a message runs across it",
+      "body": [
+        {
+          "id": "say-a#0",
+          "kind": "text",
+          "payload": {
+            "text": "first half"
+          }
+        },
+        {
+          "id": "g1",
+          "kind": "step_graded",
+          "payload": {
+            "outcome": "completed"
+          }
+        },
+        {
+          "id": "say-a#1",
+          "kind": "text",
+          "payload": {
+            "text": "second half"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a#0",
+          "entries": [
+            "say-a#0",
+            "say-a#1"
+          ],
+          "texts": [
+            "first halfsecond half"
+          ]
+        }
+      ]
+    },
+    {
       "name": "a word split across a message's entries is one word",
       "body": [
         {

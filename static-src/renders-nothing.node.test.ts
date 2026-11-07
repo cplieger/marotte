@@ -33,6 +33,7 @@ const KIND_SET: Record<EntryKind, true> = {
   turn_revert: true,
   reconciled: true,
   turn_close: true,
+  step_graded: true,
 };
 
 const KINDS = Object.keys(KIND_SET) as readonly EntryKind[];

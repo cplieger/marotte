@@ -16,7 +16,7 @@ export type DenialBasis = "unparseable" | "cedar-unavailable" | "not-loaded" | "
 
 export type EngineState = "starting" | "ready" | "restarting" | "down";
 
-export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "context_reset" | "reconciled" | "turn_close";
+export type EntryKind = "turn_open" | "turn_bind" | "turn_wake" | "run_named" | "text" | "thinking" | "tool_call" | "tool_result" | "steer" | "steer_ack" | "steer_delivered" | "steer_cleared" | "plan" | "compaction" | "compaction_failed" | "safety_blocked" | "model_switched" | "model_routed" | "model_fallback" | "mode_switched" | "turn_revert" | "context_reset" | "reconciled" | "turn_close" | "step_graded";
 
 export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "supervised_not_applied" | "model_not_served" | "auth_token_unavailable" | "tangent_merge_failed";
 
@@ -1284,6 +1284,17 @@ export interface EntrySteerDelivered {
   read_ts: number;
   cleared?: boolean;
   dropped?: boolean;
+}
+
+/**
+ * EntryStepGraded is the step_graded payload: a run-log step turn's end under KAS's record of the node, filed after
+ * the turn's turn_close. It replaces the close's outcome, failure kind and reason; the close's refusal stands only
+ * while the grade is refused.
+ */
+export interface EntryStepGraded {
+  outcome: TurnOutcome;
+  failure_reason?: string;
+  failure_kind?: FailureKind;
 }
 
 /** EntryText is the text payload. */
@@ -3215,8 +3226,9 @@ export interface RunStartedPayload {
 
 /**
  * RunStepEnd is how a step's newest turn in the run's own log ended, under `step_ends` in GET /api/runs/{id}
- * keyed by node path, for a step whose turn closed broken. KAS grades a refused step, and one its iteration limit
- * stopped, `completed`, so its node status cannot say this; a step KAS completed on a success signal has no row.
+ * keyed by node path: its recorded grade under KAS's record (step_graded) when it has one, else its close when that
+ * is broken. KAS grades a refused step, and one its model-call limit stopped, completed, so its node status cannot
+ * say this.
  */
 export interface RunStepEnd {
   outcome: TurnOutcome;

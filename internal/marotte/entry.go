@@ -38,6 +38,7 @@ const (
 	EntryKindContextReset     EntryKind = "context_reset"
 	EntryKindReconciled       EntryKind = "reconciled"
 	EntryKindTurnClose        EntryKind = "turn_close"
+	EntryKindStepGraded       EntryKind = "step_graded"
 )
 
 // Entry is one sealed row of a turn's log. Every field but Payload is the
@@ -516,6 +517,15 @@ type EntryTurnClose struct {
 	// Unanswered marks a workflow step's close that its own turn ended with no answer text and no
 	// signal call after its last tool call; the run grades it against KAS's record of the step.
 	Unanswered bool `json:"unanswered,omitempty"`
+}
+
+// EntryStepGraded is the step_graded payload: a run-log step turn's end under KAS's record of the node, filed after
+// the turn's turn_close. It replaces the close's outcome, failure kind and reason; the close's refusal stands only
+// while the grade is refused.
+type EntryStepGraded struct {
+	Outcome       TurnOutcome `json:"outcome"`
+	FailureReason string      `json:"failure_reason,omitempty"`
+	FailureKind   FailureKind `json:"failure_kind,omitempty"`
 }
 
 // ContextBreakdown is what one model request carried, in characters as KAS measures them (the

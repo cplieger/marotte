@@ -179,7 +179,7 @@ func TestResolveDigest_RunTurnFollowsTheRunRegistry(t *testing.T) {
 		t.Errorf("open step turn: %+v, want current at %q", st, turnVersion(turn.ID(), 0))
 	}
 
-	if _, _, err := h.runs.log.closeNode(t.Context(), "wf-1", "wf-1/step", "completed", ""); err != nil {
+	if _, _, err := h.runs.log.closeNode(t.Context(), "wf-1", "wf-1/step", "completed", "", nil); err != nil {
 		t.Fatalf("CloseNode: %v", err)
 	}
 	states, err = h.resolveDigest(t.Context(), []sse.Held{held(subject.KindRunTurn, ref)})

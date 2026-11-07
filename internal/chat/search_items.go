@@ -154,7 +154,8 @@ func (b *itemBuilder) observeRow(i int, e *marotte.Entry, k toolRunKey, t *searc
 		}
 		return
 	case marotte.EntryKindTurnBind, marotte.EntryKindRunNamed, marotte.EntryKindToolResult,
-		marotte.EntryKindReconciled, marotte.EntryKindSteerDelivered, marotte.EntryKindSteerCleared:
+		marotte.EntryKindReconciled, marotte.EntryKindSteerDelivered, marotte.EntryKindSteerCleared,
+		marotte.EntryKindStepGraded:
 		// Drawn nowhere of their own (a result joins its call's card), so they end nothing.
 		return
 	default:

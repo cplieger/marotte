@@ -38,7 +38,7 @@ func TestCancelExpired_NoOpenStepTurnIsAStall(t *testing.T) {
 		"no step ever opened": func(*testing.T, *Runtime) {},
 		"every step closed": func(t *testing.T, h *Runtime) {
 			openStep(t, h, "wf_1", []string{"root", "a"}, "step-session-a")
-			if _, _, err := h.runs.log.closeNode(t.Context(), "wf_1", workflow.PathKey([]string{"root", "a"}), "completed", ""); err != nil {
+			if _, _, err := h.runs.log.closeNode(t.Context(), "wf_1", workflow.PathKey([]string{"root", "a"}), "completed", "", nil); err != nil {
 				t.Fatalf("close the step: %v", err)
 			}
 		},
