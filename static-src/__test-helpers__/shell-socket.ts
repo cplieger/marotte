@@ -263,13 +263,17 @@ export async function resumedSocket(prev: FakeShellSocket | null = null): Promis
 }
 
 /** Index of the first input frame carrying `text`. */
-export async function inputAt(sock: FakeShellSocket, text: string): Promise<number> {
+export async function inputAt(
+  sock: FakeShellSocket,
+  text: string,
+  timeout = 5000,
+): Promise<number> {
   return vi.waitUntil(
     () => {
       const i = sock.frames.findIndex((f) => f.kind === "input" && f.text.includes(text));
       return i >= 0 ? i : false;
     },
-    { timeout: 5000 },
+    { timeout },
   );
 }
 

@@ -1,7 +1,8 @@
 // When @cplieger/web-terminal-ui's font gate has opened, for a host that must not act before it.
 
-/** web-terminal-ui's FONT_READY_TIMEOUT_MS (src/kernel/pane.ts), the bound on its font wait. */
-const LIBRARY_FONT_DEADLINE_MS = 3000;
+/** web-terminal-ui's FONT_READY_TIMEOUT_MS (src/kernel/pane.ts), the bound on its font wait;
+ *  shell-font.test.ts fails when the installed library's value differs. */
+export const LIBRARY_FONT_DEADLINE_MS = 3000;
 
 /**
  * Resolves once the library has settled `fontReady` for a pane built before this call, so its
