@@ -29,7 +29,7 @@ require (
 	github.com/cplieger/go/sse v1.5.0-dev.9
 	github.com/cplieger/go/ssrf v1.0.0-dev.2
 	github.com/cplieger/go/textsafe v1.0.0-dev.1
-	github.com/cplieger/go/wiregen v1.0.0-dev.3
+	github.com/cplieger/go/wiregen v1.0.0-dev.4
 	github.com/cplieger/go/yamlenv v1.0.0-dev.2
 	github.com/cplieger/toolbelt/v3 v3.15.0-dev.16
 	github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.5
