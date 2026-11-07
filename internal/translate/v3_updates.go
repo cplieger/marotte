@@ -324,6 +324,13 @@ func (t *Translator) stepMetering(_ context.Context, attr FrameAttribution, k *s
 				"workflow_id", attr.RunID, "node_path", attr.NodePath)
 		}
 		return 0, false
+	case k.DisplayError != nil:
+		if d := k.DisplayError; d.ErrorType != displayErrorMCPConnection &&
+			!t.runs.RunStepError(attr.RunID, attr.NodePath, marotte.EngineError{ErrorType: d.ErrorType, RetryErrorType: d.RetryErrorType}) {
+			slog.Debug("run log: display_error for a step path with no open turn, dropped",
+				"workflow_id", attr.RunID, "node_path", attr.NodePath)
+		}
+		return 0, false
 	case k.Credits != nil:
 		// A step's spend is billed per turn_completion; its session total adds nothing.
 		return 0, false

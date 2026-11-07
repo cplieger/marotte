@@ -413,7 +413,6 @@ func TestStepEnd_AStoredModelCallLimitFailureOfAStepKASCompletedOnSuccessReadsCo
 func TestStepEnd_AStepKASCompletedWithNoSignalAfterAnEmptyAnswerReadsFailed(t *testing.T) {
 	const (
 		id      = "wf_aabb60d3e105b178"
-		chatID  = marotte.ChatID("c1")
 		session = "step-session-1"
 		stand   = "(No assistant response was recorded for the preceding turn. This placeholder was inserted automatically to preserve message alternation.)"
 	)
@@ -439,11 +438,8 @@ func TestStepEnd_AStepKASCompletedWithNoSignalAfterAnEmptyAnswerReadsFailed(t *t
 		{desc: "a success signal", after: "", signal: "success"},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
-			h, cs, br := runLoggingHub(t)
-			br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, id, "review-grok", "completed", tc.signal))
-			seedChat(t, cs, chatID)
-			h.runs.grantLease(t.Context(), id, "review",
-				launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
+			g := newWakeRig(t, id, inspectWithStep(t, id, "review-grok", "completed", tc.signal))
+			h := g.h
 			step := &translate.RunStep{RunID: id, NodePath: nodePath, SessionID: session}
 			h.runs.RunNodeStart(t.Context(), step, "")
 			turn, ok := h.runs.RunFoldTarget(t.Context(), step, "")
@@ -513,20 +509,22 @@ func TestStepEnd_AStepKASCompletedWithNoSignalAfterAnEmptyAnswerReadsFailed(t *t
 					t.Errorf("turn_close = {%s %q}, want the sealed {completed \"\"}", c.Outcome, c.FailureKind)
 				}
 			})
-			t.Run("the launching chat's note", func(t *testing.T) {
-				steers := chatSteers(t, cs, chatID)
+			t.Run("the launching agent's wake", func(t *testing.T) {
+				waitUntil(t, "the launching agent's wake", func() bool { return !tc.failed || len(g.wakes()) > 0 })
+				joinInflight(t, h)
+				wakes := g.wakes()
 				if !tc.failed {
-					if len(steers) != 0 {
-						t.Errorf("the launching chat got %d notes, want none: %+v", len(steers), steers)
+					if len(wakes) != 0 {
+						t.Errorf("the launching agent got %d wakes, want none: %q", len(wakes), wakes)
 					}
 					return
 				}
-				if len(steers) != 1 {
-					t.Fatalf("the launching chat got %d notes, want one: %+v", len(steers), steers)
+				if len(wakes) != 1 {
+					t.Fatalf("the launching agent got %d wakes, want one: %q", len(wakes), wakes)
 				}
-				for _, want := range []string{nodePath, session, "ended with no answer and no signal"} {
-					if !strings.Contains(steers[0].Text, want) {
-						t.Errorf("note text = %q, want it to name %q", steers[0].Text, want)
+				for _, want := range []string{nodePath, session, "ended with an empty model turn and no completion signal"} {
+					if !strings.Contains(wakes[0], want) {
+						t.Errorf("wake text = %q, want it to name %q", wakes[0], want)
 					}
 				}
 			})
@@ -609,7 +607,6 @@ func (s *stepEnding) complete(status string) {
 func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *testing.T) {
 	const (
 		id      = "wf_aabb60d3e105b178"
-		chatID  = marotte.ChatID("c1")
 		session = "step-session-1"
 	)
 	path := []string{id, "review-grok"}
@@ -769,11 +766,8 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
-			h, cs, br := runLoggingHub(t)
-			br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, id, "review-grok", tc.status, tc.signal))
-			seedChat(t, cs, chatID)
-			h.runs.grantLease(t.Context(), id, "review",
-				launchOrigin{origin: runlease.OriginAgent, chatID: string(chatID)}, hostSec())
+			g := newWakeRig(t, id, inspectWithStep(t, id, "review-grok", tc.status, tc.signal))
+			h := g.h
 			nodePath := workflow.PathKey(path)
 			h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: id, NodePath: nodePath, SessionID: session}, "")
 			tc.drive(&stepEnding{t: t, h: h, id: id, path: path, nodePath: nodePath, session: session})
@@ -810,15 +804,17 @@ func TestStepEnd_OnlyAStepsOwnTurnEndingWithNothingSaidReadsAnEmptyAnswer(t *tes
 					t.Errorf("turn_close = {%s %q}, want its sealed end", c.Outcome, c.FailureKind)
 				}
 			})
-			t.Run("the launching chat's note", func(t *testing.T) {
-				var notes int
-				for _, s := range chatSteers(t, cs, chatID) {
-					if strings.Contains(s.Text, "ended with no answer and no signal") {
-						notes++
+			t.Run("the launching agent's wake", func(t *testing.T) {
+				waitUntil(t, "the launching agent's wake", func() bool { return !tc.empty || len(g.wakes()) > 0 })
+				joinInflight(t, h)
+				var wakes int
+				for _, w := range g.wakes() {
+					if strings.Contains(w, "ended with an empty model turn and no completion signal") {
+						wakes++
 					}
 				}
-				if want := map[bool]int{true: 1}[tc.empty]; notes != want {
-					t.Errorf("the launching chat got %d empty-answer notes, want %d", notes, want)
+				if want := map[bool]int{true: 1}[tc.empty]; wakes != want {
+					t.Errorf("the launching agent got %d empty-answer wakes, want %d", wakes, want)
 				}
 			})
 		})

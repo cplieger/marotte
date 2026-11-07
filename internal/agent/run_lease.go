@@ -356,7 +356,7 @@ func (rs *Runs) notifyAutoResumeStop(ctx context.Context, workflowID string, thr
 	rs.lifecycle.goUnlessDraining(func() {
 		nctx, cancel := rs.lifecycle.derivedContext()
 		defer cancel()
-		rs.tellLaunchingAgent(nctx, workflowID, chat, text)
+		rs.tellLaunchingAgent(nctx, workflowID, chat, "marotte stopped resuming it", text)
 	})
 }
 
@@ -374,18 +374,19 @@ func autoResumeStopNoteText(workflowID, name string, throttled bool) string {
 		" with no progress between resumes. It stays paused until it is resumed (update_workflow resume) or ended."
 }
 
-// tellLaunchingAgent files text in the run's launching session; command.SteerWarningNotice owns how it is read.
-func (rs *Runs) tellLaunchingAgent(ctx context.Context, workflowID string, chat marotte.ChatID, text string) {
+// tellLaunchingAgent files text in the run's launching session; command.SteerWarningNotice owns how it is read. about
+// names what it tells, for the log.
+func (rs *Runs) tellLaunchingAgent(ctx context.Context, workflowID string, chat marotte.ChatID, about, text string) {
 	host, err := rs.ensureResident(ctx, workflowID)
 	if err == nil {
 		err = command.SteerWarningNotice(ctx, host.sb, text)
 	}
 	if err != nil {
-		slog.Warn("marotte stopped resuming a run, but its launching agent could not be told",
+		slog.Warn("a run's launching agent could not be told", "about", about,
 			"workflow_id", workflowID, "chat_id", chat, "error", err)
 		return
 	}
-	slog.Info("told a run's launching agent that marotte stopped resuming it", "workflow_id", workflowID, "chat_id", chat)
+	slog.Info("told a run's launching agent", "about", about, "workflow_id", workflowID, "chat_id", chat)
 }
 
 // endAutoResumeStop drops a run's stop and the spent heal budget behind it, reporting whether it had one: the run

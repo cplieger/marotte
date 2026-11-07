@@ -30,7 +30,11 @@ type throttleRig struct {
 	steers []map[string]any
 	// resumes counts a resume once the run reads running again, so a later throttle cannot be overwritten by it.
 	resumes atomic.Int32
-	mu      sync.Mutex
+	// answers counts, as resumes does, the prompts marotte wrote to the review step's session.
+	answers atomic.Int32
+	// inspects counts the run reads marotte made.
+	inspects atomic.Int32
+	mu       sync.Mutex
 }
 
 func newThrottleRig(t *testing.T, leases *runlease.Store, opts ...Option) *throttleRig {
@@ -53,6 +57,8 @@ func newThrottleRig(t *testing.T, leases *runlease.Store, opts ...Option) *throt
 	defer br.mu.Unlock()
 	br.onCall = func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
 		switch method {
+		case methodKiroWorkflowInspect:
+			g.inspects.Add(1)
 		case methodKiroWorkflowPause:
 			g.mu.Lock()
 			g.pauses = append(g.pauses, params)
@@ -67,6 +73,11 @@ func newThrottleRig(t *testing.T, leases *runlease.Store, opts ...Option) *throt
 			g.steers = append(g.steers, params)
 			g.mu.Unlock()
 			return json.RawMessage(`{"queued":true}`), nil, true
+		case marotte.MethodPrompt:
+			if params[marotte.KeySessionID] == "step-session-a" {
+				br.setCallResult(methodKiroWorkflowInspect, running)
+				g.answers.Add(1)
+			}
 		}
 		return nil, nil, false
 	}
@@ -84,6 +95,62 @@ func (g *throttleRig) throttled(t *testing.T) {
 		"pauseDetail": map[string]any{"class": transientErrorClass, "code": throttleCode},
 	}))
 }
+
+// throttledAsk is KAS pausing the run on the review step's stale question after a throttle failed the step's new
+// turn (when failed), else after the turn ended end_turn, and the question's paused frame, with no pauseDetail,
+// reaching the heal.
+func (g *throttleRig) throttledAsk(t *testing.T, a askTurn) {
+	t.Helper()
+	// A step's next turn starts only after an earlier answer landed, which settles that answer's delivery.
+	waitUntil(t, "an earlier answer's delivery settled", func() bool {
+		c := g.h.runs.cellFor(gateRunID)
+		if c == nil {
+			return true
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.pending == nil
+	})
+	if !g.h.runs.RunTurnStart(gateRunID, gateReviewPath) {
+		t.Fatal("Setup: the turn_start found no open turn")
+	}
+	stop := marotte.StopReasonEndTurn
+	if a.failed {
+		stop = marotte.StopReasonError
+	}
+	g.br.setCallResult(methodKiroWorkflowInspect, throttledAskInspect(t))
+	reviewAsks(t, g.h, a.answered)
+	heal := g.h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
+	pause := func() {
+		heal(t.Context(), parkChat, runNotif(methodWFPaused, map[string]any{
+			"workflowId": gateRunID, "pauseReason": stepQuestionReason,
+		}))
+	}
+	if a.pauseFirst {
+		before := g.inspects.Load()
+		pause()
+		// The turn end lands only once a heal that reads the run on the frame alone has read it.
+		for deadline := time.Now().Add(pauseFirstWindow); g.inspects.Load() == before && time.Now().Before(deadline); {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	reviewTurnEnds(t, g.h, clientThrottle, stop)
+	if !a.pauseFirst {
+		pause()
+	}
+}
+
+// pauseFirstWindow is how long throttledAsk holds the step's turn end back after a pause frame that leads it.
+const pauseFirstWindow = 100 * time.Millisecond
+
+// askTurn is one turn of the review step that sent a warning: whether the parent answered it while the turn ran,
+// whether a throttle then failed the turn, and whether the parent session's pause frame beat the step's turn end.
+type askTurn struct {
+	answered, failed, pauseFirst bool
+}
+
+// throttledAnsweredAsk is the observed turn: an answered warning, then a throttle.
+var throttledAnsweredAsk = askTurn{answered: true, failed: true}
 
 // stepFrame is a frame of the run's step session reaching the chat, as KAS streams it.
 func (g *throttleRig) stepFrame(t *testing.T, update map[string]any) {
@@ -194,6 +261,123 @@ func TestHealBudget_ThrottlesWithNoProgressStopAutoResumeWithNoPause(t *testing.
 	if !slices.Contains(read.Controls.Verbs, runVerbResume.name) {
 		t.Errorf("the stopped run offers verbs %v, want %q among them", read.Controls.Verbs, runVerbResume.name)
 	}
+}
+
+// awaitStepAnswers is awaitResumes for the rig's answers to the review step.
+func awaitStepAnswers(t *testing.T, g *throttleRig, want int32) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); g.answers.Load() < want && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(quietWindow)
+	if got := g.answers.Load(); got != want {
+		t.Errorf("answers written to the review step = %d, want %d", got, want)
+	}
+}
+
+// KAS's frame of a throttled turn's stale question names only the question (KAS 3.1.0), so the heal is scheduled
+// from the run log's record that the step's turn failed on the throttle, and answers the question.
+func TestHealPaused_AThrottleReportedAsAQuestionIsResumed(t *testing.T) {
+	t.Run("after a throttled turn", func(t *testing.T) {
+		g := newThrottleRig(t, nil)
+		g.throttledAsk(t, throttledAnsweredAsk)
+		waitUntil(t, "the automatic answer", func() bool { return g.answers.Load() == 1 })
+		awaitResumes(t, &g.resumes, 0)
+		if n := g.answers.Load(); n != 1 {
+			t.Errorf("answers written = %d, want 1", n)
+		}
+	})
+	t.Run("after a turn that ended asking", func(t *testing.T) {
+		g := newThrottleRig(t, nil)
+		g.throttledAsk(t, askTurn{answered: true})
+		joinInflight(t, g.h)
+		awaitStepAnswers(t, g, 0)
+		if n := g.h.runs.healsSpent(gateRunID); n != 0 {
+			t.Errorf("heals spent = %d, want none for an open question", n)
+		}
+	})
+	t.Run("after a throttled turn whose question nobody answered", func(t *testing.T) {
+		g := newThrottleRig(t, nil)
+		g.throttledAsk(t, askTurn{failed: true})
+		joinInflight(t, g.h)
+		awaitStepAnswers(t, g, 0)
+		awaitResumes(t, &g.resumes, 0)
+		if n := g.h.runs.healsSpent(gateRunID); n != 0 {
+			t.Errorf("heals spent = %d, want none for an unanswered question", n)
+		}
+	})
+	// The step's frames and the parent's pause frame travel on different sessions, so either can land first.
+	t.Run("a pause frame ahead of the throttled turn's end", func(t *testing.T) {
+		g := newThrottleRig(t, nil)
+		g.throttledAsk(t, askTurn{answered: true, failed: true, pauseFirst: true})
+		waitUntil(t, "the automatic answer", func() bool { return g.answers.Load() == 1 })
+		awaitResumes(t, &g.resumes, 0)
+	})
+	t.Run("a pause frame ahead of a turn that ended asking", func(t *testing.T) {
+		g := newThrottleRig(t, nil)
+		healBaseDelay = 50 * time.Millisecond
+		g.throttledAsk(t, askTurn{answered: true, pauseFirst: true})
+		time.Sleep(4 * healBaseDelay)
+		joinInflight(t, g.h)
+		awaitStepAnswers(t, g, 0)
+		if n := g.h.runs.healsSpent(gateRunID); n != 0 {
+			t.Errorf("heals spent = %d, want none for an open question", n)
+		}
+	})
+}
+
+// Throttled questions with no progress between them spend the heal budget like any throttle, and the stop says the
+// run kept pausing on model throttling.
+// The step's frames and the parent's pause frame travel on different sessions, so the last one's turn end can land
+// after its pause frame.
+func TestHealBudget_ThrottledAsksWithNoProgressStopWithTheThrottleRecord(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		last askTurn
+	}{
+		{name: "the last turn end ahead of its pause frame", last: throttledAnsweredAsk},
+		{name: "the last pause frame ahead of its turn end", last: askTurn{answered: true, failed: true, pauseFirst: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newThrottleRig(t, nil)
+			for i := range int32(maxAutoHeals) {
+				g.throttledAsk(t, throttledAnsweredAsk)
+				waitUntil(t, "the automatic answer", func() bool { return g.answers.Load() == i+1 })
+			}
+			g.throttledAsk(t, tc.last)
+			waitUntil(t, "the run's stop recorded", func() bool { return autoResumeStoppedAt(t, g.h) != "" })
+			waitUntil(t, "the parent's notice", func() bool { return len(g.stopNotices()) > 0 })
+			awaitStepAnswers(t, g, maxAutoHeals)
+			msg, _ := g.stopNotices()[0]["message"].(string)
+			if !strings.Contains(msg, "for model throttling") {
+				t.Errorf("the parent's notice %q does not say the run kept pausing for model throttling", msg)
+			}
+			if p := g.pauseParams(); len(p) != 0 {
+				t.Errorf("stopping the automatic answers wrote pauses %v", p)
+			}
+		})
+	}
+}
+
+// A question pause whose step's turn end never arrives is still read once healRecheckWait passes.
+func TestHealPaused_AQuestionPauseWithNoTurnEndIsReadAfterTheWait(t *testing.T) {
+	g := newThrottleRig(t, nil)
+	prev := healRecheckWait
+	healRecheckWait = 20 * time.Millisecond
+	t.Cleanup(func() { healRecheckWait = prev })
+	if !g.h.runs.RunTurnStart(gateRunID, gateReviewPath) {
+		t.Fatal("Setup: the turn_start found no open turn")
+	}
+	g.br.setCallResult(methodKiroWorkflowInspect, throttledAskInspect(t))
+	reviewAsks(t, g.h, true)
+	before := g.inspects.Load()
+	heal := g.h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
+	heal(t.Context(), parkChat, runNotif(methodWFPaused, map[string]any{
+		"workflowId": gateRunID, "pauseReason": stepQuestionReason,
+	}))
+	waitUntil(t, "the run read after the wait", func() bool { return g.inspects.Load() > before })
+	joinInflight(t, g.h)
+	awaitStepAnswers(t, g, 0)
 }
 
 // A budget spent by marotte's own failed resume writes, not by the run pausing again, stops the resumes with an

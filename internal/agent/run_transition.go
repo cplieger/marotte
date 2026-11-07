@@ -8,9 +8,11 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"strings"
 	"sync/atomic"
 
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workflow"
 )
@@ -79,6 +81,9 @@ const (
 	// seenAskPaused is paused, by nobody marotte names, on steps that each wait on a person (workflow.PausedOnAsks),
 	// which KAS's resume parks again at once.
 	seenAskPaused
+	// seenThrottledAsk is seenAskPaused where the run log records each asking step's own turn failing on a transient
+	// model error since it asked (Runs.throttledAsks): the question is stale, and only an answer continues the step.
+	seenThrottledAsk
 	// seenInvoluntary is paused for another cause marotte resumes unasked (resumablePause).
 	seenInvoluntary
 	// seenAutoStopped is a pause an automatic resume would take (healResume's row) on a run marotte stopped resuming
@@ -121,28 +126,31 @@ const (
 var runTransitions = map[runWant]map[runSeen]runAction{
 	personPause: {
 		seenRunning: actPause, seenPausing: actPause, seenGatePaused: actPause,
-		seenRestartPaused: actPause, seenInvoluntary: actPause, seenAutoStopped: actPause,
+		seenRestartPaused: actPause, seenThrottledAsk: actPause, seenInvoluntary: actPause, seenAutoStopped: actPause,
 	},
 	personResume: {
 		seenGatePaused: actResume, seenPersonPaused: actResume, seenRestartPaused: actResume,
-		seenInvoluntary: actResume, seenAutoStopped: actResume, seenOtherPause: actResume,
+		seenThrottledAsk: actResume, seenInvoluntary: actResume, seenAutoStopped: actResume, seenOtherPause: actResume,
 	},
 	personFinish: {
 		seenGatePaused: actFinish, seenPersonPaused: actFinish, seenRestartPaused: actFinish,
-		seenAskPaused: actFinish, seenInvoluntary: actFinish, seenAutoStopped: actFinish, seenOtherPause: actFinish,
+		seenAskPaused: actFinish, seenThrottledAsk: actFinish, seenInvoluntary: actFinish, seenAutoStopped: actFinish,
+		seenOtherPause: actFinish,
 	},
 	personEnd: {
 		seenRunning: actEndStep, seenPausing: actEndStep, seenGatePaused: actEndStep, seenPersonPaused: actEndStep,
-		seenRestartPaused: actEndStep, seenAskPaused: actEndStep, seenInvoluntary: actEndStep, seenAutoStopped: actEndStep,
-		seenOtherPause: actEndStep,
+		seenRestartPaused: actEndStep, seenAskPaused: actEndStep, seenThrottledAsk: actEndStep, seenInvoluntary: actEndStep,
+		seenAutoStopped: actEndStep, seenOtherPause: actEndStep,
 	},
-	gatePause:    {seenRunning: actHoldPause},
-	gateFind:     {seenGatePaused: actKeepHold},
-	healResume:   {seenGatePaused: actHeal, seenRestartPaused: actHeal, seenInvoluntary: actHeal},
+	gatePause: {seenRunning: actHoldPause},
+	gateFind:  {seenGatePaused: actKeepHold},
+	healResume: {
+		seenGatePaused: actHeal, seenRestartPaused: actHeal, seenThrottledAsk: actHeal, seenInvoluntary: actHeal,
+	},
 	orphanCancel: {seenRestartPaused: actCancelOrphan},
 	pauseExpiry: {
-		seenRestartPaused: actEndUnattended, seenInvoluntary: actEndUnattended, seenAutoStopped: actEndUnattended,
-		seenOtherPause: actEndUnattended,
+		seenRestartPaused: actEndUnattended, seenThrottledAsk: actEndUnattended, seenInvoluntary: actEndUnattended,
+		seenAutoStopped: actEndUnattended, seenOtherPause: actEndUnattended,
 	},
 }
 
@@ -244,6 +252,10 @@ func (rs *Runs) carryOut(ctx context.Context, workflowID string, req *runRequest
 		}
 		return nil
 	case actResume:
+		if len(r.throttled) > 0 {
+			_, err := rs.answerThrottled(ctx, workflowID, r.throttled, req.caller.words())
+			return rs.endAutoResumeStopAfter(ctx, workflowID, err)
+		}
 		return rs.endAutoResumeStopAfter(ctx, workflowID, rs.resumeAsked(ctx, workflowID, req.resumeParams()))
 	case actHoldPause:
 		return rs.holdPause(ctx, workflowID)
@@ -304,7 +316,11 @@ type pauseRead struct {
 	err  error
 	res  inspectRunState
 	tree workflow.Inspect
-	seen runSeen
+	// transientCode is the first asking step's error class of a seenThrottledAsk read, and throttled the asking
+	// steps' paths; both are kept when seenAutoStopped overrides it.
+	transientCode string
+	throttled     []string
+	seen          runSeen
 }
 
 func (rs *Runs) readPauseState(ctx context.Context, workflowID string) pauseRead {
@@ -320,6 +336,11 @@ func (rs *Runs) readPauseState(ctx context.Context, workflowID string) pauseRead
 	}
 	tree, dErr := workflow.DecodeInspect(workflowID, raw)
 	r := pauseRead{tree: tree, res: res, seen: res.seen(asksOf(tree))}
+	if r.seen == seenAskPaused {
+		if r.throttled, r.transientCode = rs.throttledAsks(workflowID, tree); r.throttled != nil {
+			r.seen = seenThrottledAsk
+		}
+	}
 	if _, heals := runTransitions[healResume][r.seen]; heals && rs.autoResumeStopped(workflowID) {
 		r.seen = seenAutoStopped
 	}
@@ -327,6 +348,31 @@ func (rs *Runs) readPauseState(ctx context.Context, workflowID string) pauseRead
 		r.err = dErr
 	}
 	return r
+}
+
+// throttledAsks answers the paths of tree's asking steps, and the first one's error class, when the run log records
+// each one's turn failing on a transient model error after its question was answered in that turn; nil otherwise.
+// KAS 3.1.0 pauses such a failure on the answered question, with no pauseDetail and none of its in-step retries
+// (acp-server.js executeNode, withTransientRetry). An unanswered question stays the step's to have answered.
+func (rs *Runs) throttledAsks(workflowID string, tree workflow.Inspect) (paths []string, code string) {
+	if rs.log == nil {
+		return nil, ""
+	}
+	for _, st := range workflow.ParkedSteps(tree) {
+		path := workflow.PathKey(st.Path)
+		c, ok := rs.log.transientFailure(workflowID, path)
+		if !ok {
+			return nil, ""
+		}
+		if !rs.log.answeredAsk(workflowID, path) {
+			slog.Info("a step's turn failed on a model error before its question was answered, so the run waits for the answer",
+				"workflow_id", scrubLog(workflowID), "node_path", scrubLog(path), "failed_code", scrubLog(c))
+			return nil, ""
+		}
+		paths = append(paths, path)
+		code = cmp.Or(code, c)
+	}
+	return paths, code
 }
 
 // seen classifies the read; asks is the ask state of the same reply, consulted only for a pause that is not the
@@ -442,7 +488,13 @@ func (rs *Runs) heal(ctx context.Context, workflowID string, req *runRequest, r 
 		}
 		claimed = true
 	}
-	wrote, wErr := rs.writeHealResume(ctx, a, req.chatID, workflowID)
+	var wrote bool
+	var wErr error
+	if len(r.throttled) > 0 {
+		wrote, wErr = rs.writeHealAnswer(ctx, a, req.chatID, workflowID, r.throttled)
+	} else {
+		wrote, wErr = rs.writeHealResume(ctx, a, req.chatID, workflowID)
+	}
 	if claimed && !wrote {
 		rs.refundHeal(workflowID)
 		claimed = false
@@ -481,7 +533,8 @@ func (rs *Runs) healSpent(
 		slog.Warn("a run keeps pausing for a cause nobody chose; marotte stopped resuming it, so it waits for a resume by hand",
 			"workflow_id", workflowID, "chat_id", req.chatID, "attempts", attempts)
 	}
-	if err := rs.stopAutoResume(ctx, workflowID, throttledPause(r.res.State.PauseDetail)); err != nil {
+	throttled := throttledPause(r.res.State.PauseDetail) || strings.Contains(strings.ToLower(r.transientCode), "throttl")
+	if err := rs.stopAutoResume(ctx, workflowID, throttled); err != nil {
 		// On a failed write the store keeps the stamp in memory, so only a restart loses it. With no lease, the spent
 		// budget alone stops this process's resumes.
 		slog.Warn("a run marotte stopped resuming could not be recorded as such",
@@ -524,4 +577,45 @@ func (rs *Runs) writeHealResume(ctx context.Context, a runAdmission, chatID maro
 	rs.armDeadline(ctx, workflowID)
 	slog.Info("rehydrate: resumed restart-paused run", "workflow_id", workflowID, "chat_id", chatID)
 	return true, nil
+}
+
+// healContinueText is KAS's own continuation of a step whose turn was interrupted (acp-server.js zlr, KAS 3.1.0),
+// sent as the answer that continues a step paused on a stale question.
+const healContinueText = `Continue - your previous turn was interrupted before it finished. Pick up where you left off. ` +
+	`When the step's assigned work is complete, call send_message with sessionId "parent" and severity "success"; ` +
+	`if you need user input, "warning"; if the work has failed, "error".`
+
+// healCaller is who an automatic answer's words are from, in the step's transcript.
+var healCaller = &marotte.Caller{Label: "marotte"}
+
+// writeHealAnswer is writeHealResume for a seenThrottledAsk read: KAS continues a step paused on a question only when
+// a message resumes it (acp-server.js executeNode, KAS 3.1.0), and a plain resume parks it again. It answers each
+// question at paths and settles a, reporting whether an answer may have reached KAS and the failure, logged here.
+func (rs *Runs) writeHealAnswer(
+	ctx context.Context, a runAdmission, chatID marotte.ChatID, workflowID string, paths []string,
+) (wrote bool, err error) {
+	defer a.settle(workflowID)
+	wrote, err = rs.answerThrottled(ctx, workflowID, paths, healCaller)
+	if err != nil {
+		slog.Warn("rehydrate: the question of a step a model error stopped could not be answered",
+			"workflow_id", workflowID, "chat_id", chatID, "error", err)
+		return wrote, err
+	}
+	slog.Info("rehydrate: answered the stale question of a step a model error stopped, which continues it",
+		"workflow_id", workflowID, "chat_id", chatID)
+	return true, nil
+}
+
+// answerThrottled answers the question at each path with healContinueText, from from (nil for the user's own), through
+// the step message path; wrote is whether any answer may have reached KAS.
+func (rs *Runs) answerThrottled(ctx context.Context, workflowID string, paths []string, from *marotte.Caller) (wrote bool, err error) {
+	var errs []error
+	for _, path := range paths {
+		_, sErr := rs.messageStep(ctx, workflowID, path, healContinueText, ids.NewMessageID(), "", from)
+		wrote = wrote || sErr == nil || errors.Is(sErr, errStepUnconfirmed)
+		if sErr != nil {
+			errs = append(errs, sErr)
+		}
+	}
+	return wrote, errors.Join(errs...)
 }

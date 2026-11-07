@@ -16,12 +16,15 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
+	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // transitionState is one state a transition's read of the run can find, as KAS answers inspect.
 type transitionState struct {
-	set  func(t *testing.T, br *fakeBridge)
+	set func(t *testing.T, br *fakeBridge)
+	// log, when set, feeds the run's step frames to marotte's run log before the request.
+	log  func(t *testing.T, h *Runtime)
 	name string
 	seen runSeen
 	// stopped is marotte's record that it stopped resuming the run (Runs.stopAutoResume).
@@ -128,6 +131,15 @@ var transitionStates = []transitionState{
 	{name: "a step's ask", seen: seenAskPaused, set: inspectAs(func(t *testing.T) json.RawMessage {
 		return askPausedInspect(t, "Step requested user input via send_message.")
 	})},
+	{
+		name: "a step's answered ask whose turn then failed on a throttle", seen: seenThrottledAsk,
+		set: inspectAs(func(t *testing.T) json.RawMessage { return askPausedInspect(t, stepQuestionReason) }),
+		log: func(t *testing.T, h *Runtime) {
+			h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: gateRunID, NodePath: askPath, SessionID: "sess_step"}, parkChat)
+			stepAsks(t, h, askPath, true)
+			stepTurnEnds(t, h, []string{"root", "ask"}, clientThrottle, marotte.StopReasonError)
+		},
+	},
 	{name: "a step's ask with an interruption's reason", seen: seenAskPaused, set: inspectAs(func(t *testing.T) json.RawMessage {
 		return askPausedInspect(t, interruptedReason)
 	})},
@@ -181,6 +193,7 @@ func healAnswer(o resumeOutcome) string {
 var (
 	pauseWrote  = transitionWant{wrote: methodKiroWorkflowPause, answer: "done"}
 	resumeWrote = transitionWant{wrote: methodKiroWorkflowResume, answer: "done"}
+	answerWrote = transitionWant{wrote: marotte.MethodPrompt, answer: "done"}
 	// personRefusals are a person's answers for the states no person's request changes.
 	personRefusals = map[runSeen]transitionWant{
 		seenUnreadable: {answer: "503"}, seenGone: {answer: "404"}, seenEnded: {answer: "409"},
@@ -189,7 +202,7 @@ var (
 		seenRunning: {answer: "already_running"}, seenPausing: {answer: "already_running"},
 		seenGatePaused: resumeWrote, seenPersonPaused: resumeWrote, seenRestartPaused: resumeWrote,
 		seenInvoluntary: resumeWrote, seenAutoStopped: resumeWrote, seenOtherPause: resumeWrote,
-		seenAskPaused: {answer: "awaiting_answer"},
+		seenAskPaused: {answer: "awaiting_answer"}, seenThrottledAsk: answerWrote,
 	})
 	finishWrote = transitionWant{wrote: methodKiroWorkflowUpdate, answer: "done"}
 )
@@ -220,7 +233,7 @@ var transitionAsks = []transitionAsk{
 			seenRunning: pauseWrote, seenPausing: pauseWrote, seenGatePaused: pauseWrote,
 			seenRestartPaused: pauseWrote, seenInvoluntary: pauseWrote, seenAutoStopped: pauseWrote,
 			seenPersonPaused: {answer: "already_paused"}, seenOtherPause: {answer: "already_paused"},
-			seenAskPaused: {answer: "already_paused"},
+			seenAskPaused: {answer: "already_paused"}, seenThrottledAsk: pauseWrote,
 		}),
 	},
 	{
@@ -246,7 +259,7 @@ var transitionAsks = []transitionAsk{
 			seenRunning: {answer: "already_running"}, seenPausing: {answer: "already_running"},
 			seenGatePaused: finishWrote, seenPersonPaused: finishWrote, seenRestartPaused: finishWrote,
 			seenInvoluntary: finishWrote, seenAutoStopped: finishWrote, seenOtherPause: finishWrote,
-			seenAskPaused: finishWrote,
+			seenAskPaused: finishWrote, seenThrottledAsk: finishWrote,
 		}),
 	},
 	{
@@ -293,6 +306,7 @@ var transitionAsks = []transitionAsk{
 			seenGatePaused:    {wrote: methodKiroWorkflowResume, answer: "written"},
 			seenRestartPaused: {wrote: methodKiroWorkflowResume, answer: "written"},
 			seenInvoluntary:   {wrote: methodKiroWorkflowResume, answer: "written"},
+			seenThrottledAsk:  {wrote: marotte.MethodPrompt, answer: "written"},
 		}),
 	},
 	{
@@ -313,11 +327,12 @@ var transitionAsks = []transitionAsk{
 	},
 }
 
-// stateWrites lists the pause, resume, finish and cancel writes in calls.
+// stateWrites lists the pause, resume, finish and cancel writes in calls, and the prompts that answer a step.
 func stateWrites(calls []string) []string {
 	return slices.DeleteFunc(slices.Clone(calls), func(m string) bool {
 		switch m {
-		case methodKiroWorkflowPause, methodKiroWorkflowResume, methodKiroWorkflowUpdate, methodKiroWorkflowCancel:
+		case methodKiroWorkflowPause, methodKiroWorkflowResume, methodKiroWorkflowUpdate, methodKiroWorkflowCancel,
+			marotte.MethodPrompt:
 			return false
 		}
 		return true
@@ -374,6 +389,9 @@ func TestRunTransitions_EveryRequestInEveryState(t *testing.T) {
 				br.setCallResult(methodKiroWorkflowResume, json.RawMessage(`{}`))
 				br.setCallResult(methodKiroWorkflowUpdate, json.RawMessage(`{"updated":true}`))
 				st.set(t, br)
+				if st.log != nil {
+					st.log(t, h)
+				}
 				if st.stopped {
 					if err := h.runs.stopAutoResume(t.Context(), gateRunID, true); err != nil {
 						t.Fatalf("Setup: recording the stop: %v", err)
@@ -571,13 +589,13 @@ var (
 		"methodKiroWorkflowUpdate": "Runs.updateNodeStatus", strconv.Quote(methodKiroWorkflowUpdate): "Runs.updateNodeStatus",
 	}
 	transitionActions = []string{
-		"writePause", "sendResume", "resumeAsked", "holdPause", "heal", "writeHealResume", "finishAsked",
-		"keepHold", "endStepAsked", "updateNodeStatus",
+		"writePause", "sendResume", "resumeAsked", "holdPause", "heal", "writeHealResume", "writeHealAnswer",
+		"answerThrottled", "finishAsked", "keepHold", "endStepAsked", "updateNodeStatus",
 	}
 	transitionOwned = []string{
 		"Runs.transition", "Runs.carryOut", "Runs.writePause", "Runs.sendResume", "Runs.resumeAsked", "Runs.holdPause",
-		"Runs.heal", "Runs.healSpent", "Runs.writeHealResume", "Runs.finishAsked", "Runs.keepHold",
-		"Runs.endStepAsked",
+		"Runs.heal", "Runs.healSpent", "Runs.writeHealResume", "Runs.writeHealAnswer", "Runs.finishAsked",
+		"Runs.keepHold", "Runs.endStepAsked",
 	}
 	holdWriters = map[string][]string{
 		"heldHeals":   {"runGate.admitOrHold", "runGate.dropHold", "runGate.refreshLocked"},
@@ -663,5 +681,181 @@ func checkTransitionRoute(t *testing.T, fset *token.FileSet, fn *ast.FuncDecl) {
 			}
 		}
 		return true
+	})
+}
+
+// gateReviewPath is the step agentRunOnChat opens a run turn for, under the run's root.
+var gateReviewPath = workflow.PathKey([]string{gateRunID, "review"})
+
+// clientThrottle is the display_error KAS sent a step before its turn failed on the account's rate limit (HTTP 429).
+var clientThrottle = marotte.EngineError{
+	Message:        "You're sending requests faster than your rate limit allows (Request ID: 41949065-45a5-411d-9426-cb421dc41fe1)",
+	ErrorType:      throttleCode,
+	RetryErrorType: "THROTTLING",
+}
+
+// throttledAskInspect is the run KAS paused on the review step's question after a throttle failed the step's turn:
+// the question's reason and attention entry, and no pauseDetail (acp-server.js executeNode, KAS 3.1.0).
+func throttledAskInspect(t *testing.T) json.RawMessage {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal(inspectAsk(t, gateRunID, marotte.RunStatusPaused, parkedStep("review", "step-session-a")), &doc); err != nil {
+		t.Fatalf("Setup: decoding the inspect reply: %v", err)
+	}
+	st := doc["state"].(map[string]any)
+	st["pauseReason"] = stepQuestionReason
+	st["root"].(map[string]any)["nodeId"] = gateRunID
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("Setup: marshalling the inspect reply: %v", err)
+	}
+	return raw
+}
+
+// reviewTurnEnds is stepTurnEnds of the review step agentRunOnChat opened.
+func reviewTurnEnds(t *testing.T, h *Runtime, e marotte.EngineError, stop marotte.StopReason) {
+	t.Helper()
+	stepTurnEnds(t, h, []string{gateRunID, "review"}, e, stop)
+}
+
+// reviewAsks is stepAsks of the review step agentRunOnChat opened.
+func reviewAsks(t *testing.T, h *Runtime, answered bool) {
+	t.Helper()
+	stepAsks(t, h, gateReviewPath, answered)
+}
+
+// stepAsks files the step's warning in its open turn at nodePath, as KAS's notify frame records it, and, when
+// answered, the parent's answer delivered while that turn still runs.
+func stepAsks(t *testing.T, h *Runtime, nodePath string, answered bool) {
+	t.Helper()
+	h.runs.RunSteer(t.Context(), gateRunID, nodePath, "wfm-ask", &marotte.EntrySteer{
+		Text: "Which option?", Origin: marotte.SteerOriginStep, Severity: "warning",
+	})
+	if answered {
+		h.runs.RunSteer(t.Context(), gateRunID, nodePath, "wfm-answer", &marotte.EntrySteer{
+			Text: "(a) Keep waiting.", Origin: marotte.SteerOriginParent, Severity: "info",
+		})
+	}
+}
+
+// stepTurnEnds feeds the open step turn at path its end as KAS sends it: the display_error, when e names a class,
+// then the turn_end and the node_paused.
+func stepTurnEnds(t *testing.T, h *Runtime, path []string, e marotte.EngineError, stop marotte.StopReason) {
+	t.Helper()
+	nodePath := workflow.PathKey(path)
+	if e.ErrorType != "" && !h.runs.RunStepError(gateRunID, nodePath, e) {
+		t.Fatal("Setup: the display_error found no open turn")
+	}
+	if !h.runs.RunStopReason(gateRunID, nodePath, stop) {
+		t.Fatal("Setup: the turn_end found no open turn")
+	}
+	h.runs.RunNodePaused(t.Context(), gateRunID, path)
+}
+
+// TestRunTransitions_AThrottledTurnWhoseAskWasAnsweredMidTurnIsHealed replays wf_21c4c7533f79f52d pf-build and
+// wf_cf06f8bc97924fc8 build (2026-11-07): the parent answered a step's warning while the step's turn ran, a throttle
+// then failed that turn, and KAS paused the run on the stale question. KAS continues such a step only when a message
+// resumes it (acp-server.js executeNode, KAS 3.1.0), so marotte answers the question instead of resuming the run.
+func TestRunTransitions_AThrottledTurnWhoseAskWasAnsweredMidTurnIsHealed(t *testing.T) {
+	answered := func(t *testing.T, br *fakeBridge) {
+		t.Helper()
+		if got := stateWrites(br.callLog()); !slices.Equal(got, []string{marotte.MethodPrompt}) {
+			t.Fatalf("writes = %v, want one session/prompt", got)
+		}
+		params := br.paramsFor(marotte.MethodPrompt)
+		if params[marotte.KeySessionID] != "step-session-a" {
+			t.Errorf("session/prompt sessionId = %v, want the asking step's step-session-a", params[marotte.KeySessionID])
+		}
+		if got := kasReplayedUserText(t, params); got != healContinueText {
+			t.Errorf("session/prompt text = %q, want %q", got, healContinueText)
+		}
+	}
+	t.Run("the stale question of a throttled turn", func(t *testing.T) {
+		h, br := pausedRunOnChat(t)
+		br.setCallResult(methodKiroWorkflowInspect, throttledAskInspect(t))
+		reviewAsks(t, h, true)
+		reviewTurnEnds(t, h, clientThrottle, marotte.StopReasonError)
+		if got := healAnswer(h.runs.resumeIfInterrupted(t.Context(), parkChat, gateRunID)); got != "written" {
+			t.Errorf("automatic resume = %q, want written", got)
+		}
+		answered(t, br)
+		if n := h.runs.healsSpent(gateRunID); n != 1 {
+			t.Errorf("heals spent = %d, want the answer charged as one heal", n)
+		}
+	})
+	t.Run("a step that sent a warning in an earlier turn", func(t *testing.T) {
+		h, br := pausedRunOnChat(t)
+		reviewTurnEnds(t, h, marotte.EngineError{}, marotte.StopReasonEndTurn)
+		if !h.runs.RunTurnStart(gateRunID, gateReviewPath) {
+			t.Fatal("Setup: the turn_start found no open turn")
+		}
+		br.setCallResult(methodKiroWorkflowInspect, inspectPausedWithDetail(t, gateRunID, modelServiceReason,
+			pauseDetail{Class: transientErrorClass, Code: throttleCode}))
+		reviewTurnEnds(t, h, clientThrottle, marotte.StopReasonError)
+		if got := healAnswer(h.runs.resumeIfInterrupted(t.Context(), parkChat, gateRunID)); got != "written" {
+			t.Errorf("automatic resume = %q, want written", got)
+		}
+		if got := stateWrites(br.callLog()); !slices.Equal(got, []string{methodKiroWorkflowResume}) {
+			t.Errorf("writes = %v, want one plain resume", got)
+		}
+	})
+	t.Run("a throttled turn whose question nobody answered", func(t *testing.T) {
+		h, br := pausedRunOnChat(t)
+		br.setCallResult(methodKiroWorkflowInspect, throttledAskInspect(t))
+		reviewAsks(t, h, false)
+		reviewTurnEnds(t, h, clientThrottle, marotte.StopReasonError)
+		if got := healAnswer(h.runs.resumeIfInterrupted(t.Context(), parkChat, gateRunID)); got != "skipped" {
+			t.Errorf("automatic resume = %q, want skipped: the question is still open", got)
+		}
+		if got := stateWrites(br.callLog()); len(got) != 0 {
+			t.Errorf("writes = %v, want none", got)
+		}
+		if n := h.runs.healsSpent(gateRunID); n != 0 {
+			t.Errorf("heals spent = %d, want none", n)
+		}
+	})
+	t.Run("an open question whose turn ended end_turn", func(t *testing.T) {
+		h, br := pausedRunOnChat(t)
+		br.setCallResult(methodKiroWorkflowInspect, throttledAskInspect(t))
+		reviewAsks(t, h, true)
+		reviewTurnEnds(t, h, clientThrottle, marotte.StopReasonEndTurn)
+		if got := healAnswer(h.runs.resumeIfInterrupted(t.Context(), parkChat, gateRunID)); got != "skipped" {
+			t.Errorf("automatic resume = %q, want skipped", got)
+		}
+		if got := stateWrites(br.callLog()); len(got) != 0 {
+			t.Errorf("writes = %v, want none: the question is open", got)
+		}
+		if n := h.runs.healsSpent(gateRunID); n != 0 {
+			t.Errorf("heals spent = %d, want none", n)
+		}
+	})
+	t.Run("a person's resume of a throttled question", func(t *testing.T) {
+		h, br := pausedRunOnChat(t)
+		br.setCallResult(methodKiroWorkflowInspect, throttledAskInspect(t))
+		reviewAsks(t, h, true)
+		reviewTurnEnds(t, h, clientThrottle, marotte.StopReasonError)
+		if got := personAnswer(h.runs.resume(t.Context(), gateRunID, callerPage)); got != "done" {
+			t.Errorf("resume = %q, want done", got)
+		}
+		answered(t, br)
+		if n := h.runs.healsSpent(gateRunID); n != 0 {
+			t.Errorf("heals spent = %d, want a person's resume charged none", n)
+		}
+	})
+	t.Run("a person's resume after marotte stopped resuming it", func(t *testing.T) {
+		h, br := pausedRunOnChat(t)
+		br.setCallResult(methodKiroWorkflowInspect, throttledAskInspect(t))
+		reviewAsks(t, h, true)
+		reviewTurnEnds(t, h, clientThrottle, marotte.StopReasonError)
+		if err := h.runs.stopAutoResume(t.Context(), gateRunID, true); err != nil {
+			t.Fatalf("Setup: recording the stop: %v", err)
+		}
+		if got := personAnswer(h.runs.resume(t.Context(), gateRunID, callerPage)); got != "done" {
+			t.Errorf("resume = %q, want done", got)
+		}
+		answered(t, br)
+		if h.runs.autoResumeStopped(gateRunID) {
+			t.Error("the person's resume left marotte's stop standing")
+		}
 	})
 }

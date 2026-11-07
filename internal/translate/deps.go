@@ -69,6 +69,8 @@ type RunAppender interface {
 	// RunStopReason records a step's last turn_end stop reason on its open turn;
 	// false when the path has no open turn.
 	RunStopReason(runID, nodePath string, raw marotte.StopReason) bool
+	// RunStepError records a model error KAS displayed for a step on its open turn; false with none.
+	RunStepError(runID, nodePath string, e marotte.EngineError) bool
 	// RunTurnStart records a step's turn_start on its open turn; false with none.
 	RunTurnStart(runID, nodePath string) bool
 	// RunNodePaused ends the step's steering turn at its node_paused: the execution reading the

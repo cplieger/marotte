@@ -401,6 +401,15 @@ func (c controlCaller) stop() runStop {
 	return userStop("")
 }
 
+// words is who a person's words on a run are from: nil for the page's, which are the user's own, else an unnamed API
+// caller.
+func (c controlCaller) words() *marotte.Caller {
+	if c == callerAPI {
+		return &marotte.Caller{}
+	}
+	return nil
+}
+
 // cancel stops a run on caller's behalf. A lost termination claim returns nil; a refused RPC is
 // returned, and retryTermination retries it.
 func (rs *Runs) cancel(ctx context.Context, workflowID string, caller controlCaller) error {
@@ -1392,6 +1401,10 @@ const maxAutoHeals = 3
 // can land first. A var for tests.
 var healBaseDelay = 5 * time.Second
 
+// healRecheckWait bounds how long a question pause's heal waits for its step's turn end, which KAS streams on the
+// step's session and so can land after the pause frame. A var for tests.
+var healRecheckWait = 3 * time.Second
+
 // healPaused resumes a run KAS just parked for a reason nobody chose, and finds the gate's own landed pause
 // (findHolds), off the `_kiro/workflow/paused` frame. After `next`, so the client renders the pause first.
 func (rs *Runs) healPaused(
@@ -1414,37 +1427,123 @@ func (rs *Runs) healPaused(
 		if chatID == "" {
 			return
 		}
-		if !resumablePause(f.PauseReason, f.PauseDetail) {
-			// Without this a decline is silent; Debug because deliberate pauses land here too.
-			slog.Debug("a paused run was left alone: its pause is not one marotte resumes unasked",
-				"workflow_id", scrubLog(f.WorkflowID), "chat_id", chatID,
-				"pause_reason", scrubLog(f.PauseReason),
-				"pause_class", scrubLog(pauseClassOf(f.PauseDetail)),
-				"pause_code", scrubLog(pauseCodeOf(f.PauseDetail)))
+		plan := rs.healsPause(ctx, chatID, &f)
+		if plan == healNone {
 			return
 		}
-		// The resume claims the heal (resumeIfInterrupted); the count here spaces the attempts and stops them at the
-		// budget.
-		spent := rs.healsSpent(f.WorkflowID)
-		if spent >= maxAutoHeals {
-			// At once: past the budget there is no delay to space.
-			rs.lifecycle.goUnlessDraining(func() {
-				hctx, cancel := rs.lifecycle.derivedContext()
-				defer cancel()
-				rs.resumeIfInterrupted(hctx, chatID, f.WorkflowID)
-			})
+		if plan == healRecheck {
+			rs.recheckAfterAskTurnEnds(ctx, chatID, &f)
 			return
 		}
-		delay := healBaseDelay * time.Duration(1<<spent)
-		slog.Info("scheduling the automatic resume of an involuntarily paused run",
-			"workflow_id", scrubLog(f.WorkflowID), "chat_id", chatID,
-			"pause_reason", scrubLog(f.PauseReason), "delay", delay)
-		rs.lifecycle.afterUnlessDraining(delay, func() {
+		rs.scheduleHeal(ctx, chatID, &f, plan)
+	}
+}
+
+// recheckAfterAskTurnEnds is scheduleHeal for a question pause, once its asking step's turn ended (awaitAskTurnEnds).
+func (rs *Runs) recheckAfterAskTurnEnds(ctx context.Context, chatID marotte.ChatID, f *pauseFrame) {
+	if rs.log == nil || rs.log.askTurnEnd(f.WorkflowID) == nil {
+		rs.scheduleHeal(ctx, chatID, f, healRecheck)
+		return
+	}
+	rs.lifecycle.goUnlessDraining(func() {
+		hctx, cancel := rs.lifecycle.derivedContext()
+		defer cancel()
+		if rs.awaitAskTurnEnds(hctx, f.WorkflowID) {
+			rs.scheduleHeal(hctx, chatID, f, healRecheck)
+		}
+	})
+}
+
+// scheduleHeal reads the paused run f names again through resumeIfInterrupted, after a delay that doubles with each
+// heal spent, or at once past the budget, where a read that would heal records marotte's stop instead.
+func (rs *Runs) scheduleHeal(ctx context.Context, chatID marotte.ChatID, f *pauseFrame, plan healPlan) {
+	workflowID := f.WorkflowID
+	// The resume claims the heal (resumeIfInterrupted); the count here spaces the attempts and stops them at the
+	// budget.
+	spent := rs.healsSpent(workflowID)
+	if spent >= maxAutoHeals {
+		rs.lifecycle.goUnlessDraining(func() {
 			hctx, cancel := rs.lifecycle.derivedContext()
 			defer cancel()
-			rs.resumeIfInterrupted(hctx, chatID, f.WorkflowID)
+			rs.resumeIfInterrupted(hctx, chatID, workflowID)
 		})
+		return
 	}
+	delay := healBaseDelay * time.Duration(1<<spent)
+	level, what := slog.LevelInfo, "scheduling the automatic resume of an involuntarily paused run"
+	if plan == healRecheck {
+		level, what = slog.LevelDebug, "scheduling a re-read of a step's question pause, which a throttle may have caused"
+	}
+	slog.Log(ctx, level, what, "workflow_id", scrubLog(workflowID), "chat_id", chatID,
+		"pause_reason", scrubLog(f.PauseReason), "delay", delay)
+	rs.lifecycle.afterUnlessDraining(delay, func() {
+		hctx, cancel := rs.lifecycle.derivedContext()
+		defer cancel()
+		rs.resumeIfInterrupted(hctx, chatID, workflowID)
+	})
+}
+
+// awaitAskTurnEnds waits until every open step turn of the run that asked has ended (runLog.askTurnEnd), or
+// healRecheckWait passes; false when ctx ends first. A turn_end, not a display_error, settles it: the throttle is
+// read off the turn's `error` stop (runTurn.transientFailure).
+func (rs *Runs) awaitAskTurnEnds(ctx context.Context, workflowID string) bool {
+	timer := time.NewTimer(healRecheckWait)
+	defer timer.Stop()
+	for end := rs.log.askTurnEnd(workflowID); end != nil; end = rs.log.askTurnEnd(workflowID) {
+		select {
+		case <-end:
+		case <-timer.C:
+			slog.Info("a step's question pause is read without its turn end, which did not arrive in time",
+				"workflow_id", scrubLog(workflowID), "wait", healRecheckWait)
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+	return true
+}
+
+// healPlan is what healPaused schedules for a pause frame.
+type healPlan int
+
+const (
+	healNone healPlan = iota
+	// healResumes is a pause marotte resumes unasked.
+	healResumes
+	// healRecheck is a step's question pause, re-read once its step's turn ended (readPauseState decides).
+	healRecheck
+)
+
+// askPauseReason is KAS 3.1.0's pauseReason for a step's warning, which it also gives a throttle that fails the
+// turn after that warning was answered (Runs.throttledAsks).
+const askPauseReason = "Step requested user input via send_message."
+
+// healsPause plans the frame's heal: a resume for resumablePause or a step turn of the run that failed on a transient
+// model error, a re-read for a question pause whose step's turn end may land after this frame (it streams on the
+// step's session), none otherwise.
+func (rs *Runs) healsPause(ctx context.Context, chatID marotte.ChatID, f *pauseFrame) healPlan {
+	var failed stepFailure
+	if rs.log != nil {
+		failed = rs.log.failedStep(f.WorkflowID)
+	}
+	if resumablePause(f.PauseReason, f.PauseDetail) || failed.transient {
+		return healResumes
+	}
+	if f.PauseReason == askPauseReason && f.PauseDetail == nil {
+		return healRecheck
+	}
+	// Without this a decline is silent; Debug because deliberate pauses land here too, Info after a failed turn.
+	level := slog.LevelDebug
+	if failed.path != "" {
+		level = slog.LevelInfo
+	}
+	slog.Log(ctx, level, "a paused run was left alone: its pause is not one marotte resumes unasked",
+		"workflow_id", scrubLog(f.WorkflowID), "chat_id", chatID,
+		"pause_reason", scrubLog(f.PauseReason),
+		"pause_class", scrubLog(pauseClassOf(f.PauseDetail)),
+		"pause_code", scrubLog(pauseCodeOf(f.PauseDetail)),
+		"failed_step", scrubLog(failed.path), "failed_code", scrubLog(failed.code))
+	return healNone
 }
 
 // parentlessRunChat is the chat id a parentless run's heal is addressed by, as resumeParentless addresses it; "" for

@@ -661,7 +661,7 @@ func TestRunNodeComplete_ALastStepIsNotedThoughARunReadRecordsItsGradeBeforeTheS
 		t.Fatalf("grade as the run read: %v", err)
 	}
 	for _, g := range graded {
-		h.runs.recordGrade(t.Context(), id, g)
+		h.runs.recordGrade(t.Context(), id, g, false)
 	}
 	joinInflight(t, h)
 
