@@ -1,6 +1,7 @@
 // Typing anywhere on the chat view lands in the composer.
 
 import { $ } from "./dom.js";
+import { shellTakesBodyKeys } from "./shell-keys.js";
 
 /**
  * Redirect a bare printable keystroke with no modifier to the composer, unless focus
@@ -12,7 +13,7 @@ export function focusComposerOnTyping(e: KeyboardEvent): void {
   }
   // `key.length === 1` excludes Enter, Escape, Tab, the arrows and the F-keys without
   // enumerating them.
-  if (e.key.length !== 1) {
+  if (e.key.length !== 1 || shellTakesBodyKeys()) {
     return;
   }
   const active = document.activeElement;

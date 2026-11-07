@@ -35,6 +35,7 @@ import { restartShell } from "./actions/shell.js";
 import { refreshGitStatus } from "./git-status-store.js";
 import { attachSplitter, type Splitter } from "./splitter.js";
 import { touchCapable } from "./pointer-tier.js";
+import { trackShellPresses } from "./shell-keys.js";
 
 const SHELL_WS_PATH = "/api/shell/ws";
 // Awaited before the first server resize so the PTY is sized on real cell metrics. ONE family — the
@@ -68,22 +69,25 @@ function hostSend(bytes: Uint8Array): void {
   handle?.send(bytes);
 }
 
-/** Runs clicked before the gate below opened, oldest first. */
+/** Runs clicked before `admit` let input through, oldest first. */
 const pendingRuns: string[] = [];
+/** Raw input typed or pasted before `admit` let it through. It belongs to the session it was typed
+ *  for, so a reattach drops it; a held Run instead goes to whichever session draws next. */
+const heldInput: Uint8Array[] = [];
 
-/** True once the terminal's first paint faded `firstPaintSignal`'s element: its font has settled,
- *  the only state in which `PaneHandle.announceSize()` sends anything. */
+/** True once the library faded `firstPaintSignal`'s element. It does so on the first frame drawn
+ *  after the font settled, from which `PaneHandle.announceSize()` sends; it also does so when the
+ *  process exits or the wire is incompatible before that frame. */
 let painted = false;
 /** True once the attached session has drawn a frame with rows on a connected socket, so its modes
- *  frame has landed. Kept through a restart's POST, whose failure leaves that same session live;
- *  cleared by a reattach or a drop. */
+ *  frame has landed. Kept through a restart's POST, whose failure leaves that same session live. */
 let sessionDrawn = false;
+/** True once this client announced its grid to the attached session, so input goes straight on. */
+let sessionSized = false;
 /** Restart POSTs in flight: the server kills the PTY with whatever it was sent meanwhile. */
 let restartsInFlight = 0;
-/** A restart succeeded and its reattach has not run, so every frame is still the dead session's. */
-let awaitingReattach = false;
 
-/** The terminal's live mode readers, shell and `.term`, kept by `runGate`; null until it exists. */
+/** The terminal's live mode readers, shell and `.term`, kept by `inputGate`; null until it exists. */
 let paneModes: ModeReaders | null = null;
 let paneShell: ShellContext | null = null;
 let paneSurface: HTMLElement | null = null;
@@ -112,69 +116,112 @@ function panelSliding(): boolean {
   return $.shellPanel.getAnimations().some((a) => a instanceof CSSTransition);
 }
 
-/** Send every held Run once the PTY can take it at this panel's size. `announceSize()` puts the
- *  grid size on the socket ahead of the bytes, so the server starts or resizes the PTY first. */
-function releaseRuns(): void {
+/** Whether input may reach the PTY now. The server starts a fresh PTY at its default size on the
+ *  first frame it gets, and a live one keeps the last client's size, so the first input to a
+ *  session waits until this panel's grid can be measured and is put on the socket ahead of it. */
+function admit(): boolean {
+  if (restartsInFlight > 0) {
+    return false;
+  }
+  if (sessionSized) {
+    return true;
+  }
   if (
-    pendingRuns.length === 0 ||
     !painted ||
     !sessionDrawn ||
-    restartsInFlight > 0 ||
-    awaitingReattach ||
     panelSliding() ||
     paneSurface === null ||
     !cellWidthCurrent(paneSurface)
   ) {
-    return;
+    return false;
   }
   paneShell?.pane(paneShell.selected())?.announceSize();
-  const bracketed = paneModes?.isBracketedPaste() === true;
-  for (const cmd of pendingRuns.splice(0)) {
-    hostSend(encoder.encode(runInput(cmd, bracketed)));
+  sessionSized = true;
+  return true;
+}
+
+/** True while `releaseHeld` sends: its bytes pass back through `inputGate`'s transform, which
+ *  would otherwise release the Runs ahead of the keys still held. */
+let releasing = false;
+
+/** Send what was held, typed input first, once `admit` lets it through. */
+function releaseHeld(): void {
+  if (releasing || (pendingRuns.length === 0 && heldInput.length === 0) || !admit()) {
+    return;
+  }
+  releasing = true;
+  try {
+    for (const bytes of heldInput.splice(0)) {
+      hostSend(bytes);
+    }
+    const bracketed = paneModes?.isBracketedPaste() === true;
+    for (const cmd of pendingRuns.splice(0)) {
+      hostSend(encoder.encode(runInput(cmd, bracketed)));
+    }
+  } finally {
+    releasing = false;
   }
 }
 
-/** The library fades its `loading` element on first paint (font settled and a frame drawn), and
- *  exposes no other signal of the font gate; this one is never attached, so nothing shows. */
+/** The attached session is no longer the one this client sized: a reattach or a reported drop. */
+function sessionChanged(): void {
+  sessionDrawn = false;
+  sessionSized = false;
+}
+
+/** The library fades its `loading` element on first paint and exposes no other signal of its font
+ *  gate; this one is never attached, so nothing shows. */
 function firstPaintSignal(): HTMLElement {
   const el = document.createElement("div");
   const observer = new MutationObserver(() => {
     if (el.classList.contains("fade")) {
       observer.disconnect();
       painted = true;
-      releaseRuns();
+      releaseHeld();
     }
   });
   observer.observe(el, { attributes: true, attributeFilter: ["class"] });
   return el;
 }
 
-/** A rows-less frame is the pre-ack scrollback-clear forward, which proves nothing drew. */
-function runGate(): TerminalFeature {
+const NOTHING = new Uint8Array(0);
+
+/** Holds input until `admit`. Listed first among the features, so its transform sees the raw bytes
+ *  and the later transforms (sticky Ctrl, predictive echo) run once, when the bytes are released. */
+function inputGate(): TerminalFeature {
   return {
-    name: "runGate",
+    name: "inputGate",
     setup(ctx) {
       paneModes = ctx.modes;
       paneShell = ctx.shell;
       paneSurface = ctx.surface();
-      const observer = new MutationObserver(releaseRuns);
+      const observer = new MutationObserver(releaseHeld);
       observer.observe(paneSurface, { childList: true });
       surfaceObserver = observer;
       ctx.defer(() => {
         observer.disconnect();
       });
-      // An announce on a socket that is not connected sends nothing, so a drop waits for the
-      // reconnected session's first frame.
+      ctx.registerInputTransform((bytes) => {
+        if (!admit()) {
+          heldInput.push(bytes.slice());
+          return NOTHING;
+        }
+        releaseHeld(); // anything held goes ahead of these bytes
+        return bytes;
+      });
+      // An announce on a socket that is not connected sends nothing. A drop inside the library's
+      // reporting grace is never reported, and its resume carries the size itself.
       ctx.on("connection:state", (state) => {
         if (state !== "open") {
-          sessionDrawn = false;
+          sessionChanged();
         }
       });
       return {
         teardown: ctx.on("wire:screen", (msg) => {
+          // A rows-less frame is the pre-ack scrollback-clear forward, which proves nothing drew.
           if (msg.rows.length > 0) {
             sessionDrawn = true;
-            releaseRuns();
+            releaseHeld();
           }
         }),
       };
@@ -236,8 +283,8 @@ function scheduleReattach(reason: "ended" | "restart"): void {
 }
 
 function reattachShell(): void {
-  awaitingReattach = false;
-  sessionDrawn = false;
+  sessionChanged();
+  heldInput.length = 0;
   reattachedAt = Date.now();
   reattachSeq++;
   handle?.reattach();
@@ -258,12 +305,10 @@ async function hostRestart(): Promise<void> {
   restartsInFlight++;
   const restarted = (await restartShell.dispatch()) !== null;
   restartsInFlight--;
-  // No terminal: the first open attaches to the successor, so there is nothing to reattach.
-  if (restarted && reattachSeq === seq && handle !== null) {
-    awaitingReattach = true;
+  if (restarted && reattachSeq === seq) {
     scheduleReattach("restart");
   }
-  releaseRuns(); // a failure is toasted by the action framework
+  releaseHeld(); // a failed restart leaves the same session live, and nothing else wakes the hold
 }
 
 let handle: TerminalHandle | null = null;
@@ -341,6 +386,7 @@ export function initShellPanel(): void {
     return;
   }
   initialized = true;
+  trackShellPresses();
 
   // Toolbar button opens/toggles the panel; the header X closes it.
   $.shellBtn.addEventListener("click", () => {
@@ -364,7 +410,7 @@ export function initShellPanel(): void {
   for (const type of ["transitionend", "transitioncancel"]) {
     $.shellPanel.addEventListener(type, (ev) => {
       if (ev.target === $.shellPanel) {
-        releaseRuns();
+        releaseHeld();
       }
     });
   }
@@ -373,7 +419,7 @@ export function initShellPanel(): void {
       setShellOpen(true, { focus: false });
     }
     pendingRuns.push(cmd);
-    releaseRuns();
+    releaseHeld();
   });
 
   initShellResize();
@@ -460,7 +506,7 @@ function ensureTerminal(): void {
   handle = createTerminal($.shellTerminal, {
     features: () => {
       keys = mobileToolbar({ externalToggle: true });
-      return [...presetSingle(), runGate(), keys];
+      return [inputGate(), ...presetSingle(), keys];
     },
     layout: "container",
     wsPath: SHELL_WS_PATH,

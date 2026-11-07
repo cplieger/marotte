@@ -120,6 +120,8 @@ interface Harness {
   surface: HTMLElement;
   /** Re-measure the cell as the engine does: publish the width and add and remove its span. */
   remeasure: () => void;
+  /** Type `text` into the terminal: the kernel sends it through the same input funnel. */
+  type: (text: string) => void;
   /** Set what the engine reports for DEC mode 2004, as its modes frame does. */
   setBracketedPaste: (on: boolean) => void;
 }
@@ -220,7 +222,26 @@ async function setup(
     surface.style.setProperty("--char-w", `${String(cell)}px`);
   };
   remeasure();
+  // The kernel's input funnel: every send runs the registered transforms in order, and one that
+  // returns no bytes drops the input.
+  let transforms: ((bytes: Uint8Array) => Uint8Array)[] = [];
+  const funnel = (bytes: Uint8Array): void => {
+    let out = bytes;
+    for (const t of transforms) {
+      out = t(out);
+      if (out.length === 0) {
+        return;
+      }
+    }
+    sendSpy(out);
+  };
   const fakeCtx = {
+    registerInputTransform: (fn: (bytes: Uint8Array) => Uint8Array): (() => void) => {
+      transforms.push(fn);
+      return () => {
+        transforms = transforms.filter((t) => t !== fn);
+      };
+    },
     surface: () => surface,
     defer: (): void => undefined,
     modes: { isBracketedPaste: () => bracketedPaste },
@@ -252,7 +273,7 @@ async function setup(
       }
       return {
         focus: termFocus,
-        send: sendSpy,
+        send: funnel,
         reset: resetSpy,
         reattach: reattachSpy,
         destroy: vi.fn(),
@@ -344,6 +365,9 @@ async function setup(
     restartDispatch,
     confirmMock,
     getRunCb: () => runCb,
+    type: (text: string) => {
+      funnel(new TextEncoder().encode(text));
+    },
     endSession: () => {
       if (endedCb === null) {
         throw new Error("no onSessionEnded handler; open the panel first");
@@ -686,6 +710,74 @@ describe("shell.ts: host-driven actions", () => {
 
     running = [];
     h.shellPanel.dispatchEvent(new Event("transitionend"));
+    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
+  });
+
+  // The server starts a fresh PTY at its default size on the first bytes it gets, keys included.
+  it("holds keys typed before the first paint, then sends them after the size and ahead of a Run", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    h.screenFrame(30, { paint: false });
+
+    h.type("l");
+    h.getRunCb()?.("echo hi");
+    h.type("s");
+    expect(h.sendSpy).not.toHaveBeenCalled();
+
+    h.screenFrame(30);
+    await Promise.resolve();
+    const enc = new TextEncoder();
+    expect(h.sendSpy.mock.calls).toEqual([
+      [enc.encode("l")],
+      [enc.encode("s")],
+      [enc.encode("echo hi\r")],
+    ]);
+    expect(h.announceSize.mock.invocationCallOrder[0]).toBeLessThan(
+      h.sendSpy.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("sends keys straight on once the session has this panel's size", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    h.screenFrame(24);
+    h.getRunCb()?.("true");
+    await Promise.resolve();
+    expect(h.sendSpy).toHaveBeenCalledTimes(1);
+    h.sendSpy.mockClear();
+
+    h.type("x");
+
+    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("x"));
+    expect(h.announceSize).toHaveBeenCalledTimes(1);
+  });
+
+  // Keys typed for the session a restart kills are not the replacement's; a Run is a request to run
+  // the command in whichever shell is there.
+  it("drops keys held across a restart's reattach, and sends the held Run to the replacement", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    h.screenFrame(24);
+    let releaseDispatch: (value: { ok: boolean }) => void = () => undefined;
+    h.restartDispatch.mockImplementationOnce(
+      () =>
+        new Promise<{ ok: boolean }>((resolve) => {
+          releaseDispatch = resolve;
+        }),
+    );
+    h.shellRestartBtn.click();
+    await new Promise((r) => setTimeout(r, 0));
+    h.type("rm");
+    h.getRunCb()?.("echo hi");
+
+    releaseDispatch({ ok: true });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.reattachSpy).toHaveBeenCalledTimes(1);
+    h.screenFrame(24);
+
     expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
   });
 
