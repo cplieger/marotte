@@ -1,5 +1,5 @@
-// Workflow-schedule actions over the clock rules of /api/launch-rules. The server owns the
-// recurrence math and next_run_at.
+// Launch-rule actions over /api/launch-rules. The server owns the recurrence math, next_run_at
+// and every event rule's row state.
 
 import { join as joinKey } from "@cplieger/keyenc";
 import { ActionError, apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
@@ -9,7 +9,7 @@ import type {
   ScheduleSpec,
   SchedulesResponse,
   ScheduleView,
-} from "../schedule-types.js";
+} from "../launch-rule-types.js";
 import type { RunDefaults } from "../run-defaults-picker.js";
 import { serverSentence } from "./server-sentence.js";
 

@@ -6,7 +6,7 @@ import { join as joinKey } from "@cplieger/keyenc";
 import { onBus, onSSE, BUS_CATALOG_MODELS, BUS_RUNS_CHANGED } from "./bus.js";
 import { reconcile } from "./reconcile.js";
 import { loadRecipes, loadRuns, launchRun, cancelRun } from "./actions/runs.js";
-import { loadSchedules, saveSchedule, deleteSchedule } from "./actions/schedules.js";
+import { loadSchedules, saveSchedule, deleteSchedule } from "./actions/launch-rules.js";
 import {
   buildSchedulePicker,
   defaultSpec,
@@ -19,7 +19,7 @@ import {
   type RunDefaultsPicker,
 } from "./run-defaults-picker.js";
 import { getCachedModels } from "./picker.js";
-import type { ScheduleSpec, ScheduleView } from "./schedule-types.js";
+import type { ScheduleSpec, ScheduleView } from "./launch-rule-types.js";
 import { createPopup } from "@cplieger/ui/popup";
 import { openRunView } from "./run-view.js";
 import { loadSettings, refreshSettings } from "./persist.js";

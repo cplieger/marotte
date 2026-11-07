@@ -18,10 +18,10 @@ import {
   buildUnattendedNote,
 } from "./schedule-picker.js";
 import { buildRunDefaultsPicker } from "./run-defaults-picker.js";
-import { saveSchedule, deleteSchedule } from "./actions/schedules.js";
+import { saveSchedule, deleteSchedule } from "./actions/launch-rules.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
-import { LAST_DAY, INTERVAL_BOUNDS } from "./schedule-types.js";
-import type { ScheduleFreq, ScheduleSpec, ScheduleView } from "./schedule-types.js";
+import { LAST_DAY, INTERVAL_BOUNDS } from "./launch-rule-types.js";
+import type { ScheduleFreq, ScheduleSpec, ScheduleView } from "./launch-rule-types.js";
 import {
   restoreBrowserLanguages,
   setBrowserLanguages,

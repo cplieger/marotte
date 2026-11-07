@@ -1,8 +1,8 @@
 // The recurrence picker behind the Schedule button on /docs/workflows.
 
 import { el } from "@cplieger/ui";
-import { LAST_DAY, INTERVAL_BOUNDS } from "./schedule-types.js";
-import type { ScheduleFreq, ScheduleSpec, ScheduleView } from "./schedule-types.js";
+import { LAST_DAY, INTERVAL_BOUNDS } from "./launch-rule-types.js";
+import type { ScheduleFreq, ScheduleSpec, ScheduleView } from "./launch-rule-types.js";
 import type { RunDefaults, RunDefaultsPicker } from "./run-defaults-picker.js";
 import { formatClock, formatWeekdayStamp } from "./locale-time.js";
 

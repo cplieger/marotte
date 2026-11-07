@@ -7,7 +7,7 @@ vi.mock("../toast.js", async (importOriginal) => ({
 }));
 
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
-import { loadSchedules, saveSchedule } from "./schedules.js";
+import { loadSchedules, saveSchedule } from "./launch-rules.js";
 
 const mockFetch = vi.fn();
 

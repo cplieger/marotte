@@ -55,7 +55,7 @@ vi.mock("./persist.js", () => ({
 
 // The Schedule button's actions: unmocked they reach the network, and a row's summary line is
 // decoration this suite does not assert on.
-vi.mock("./actions/schedules.js", () => ({
+vi.mock("./actions/launch-rules.js", () => ({
   loadSchedules: { dispatch: vi.fn(async () => schedulesReply) },
   saveSchedule: { dispatch: vi.fn(async () => null) },
   deleteSchedule: { dispatch: vi.fn(async () => null) },
@@ -73,12 +73,12 @@ vi.mock("./config-standing.js", async (importOriginal) => {
 
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
 import { BUS_CATALOG_MODELS, dispatch, emitBus } from "./bus.js";
-import { deleteSchedule, loadSchedules, saveSchedule } from "./actions/schedules.js";
+import { deleteSchedule, loadSchedules, saveSchedule } from "./actions/launch-rules.js";
 import { openRunView } from "./run-view.js";
 import { launchRun, cancelRun, loadRecipes } from "./actions/runs.js";
 import type { ModelInfo, RecipesResponse, WorkflowRun, ResumableSession } from "./types.js";
 import type { ConfigStanding, RunStatus } from "./wire/types.gen.js";
-import type { SchedulesResponse, ScheduleView } from "./schedule-types.js";
+import type { SchedulesResponse, ScheduleView } from "./launch-rule-types.js";
 import type * as ConfigStandingModule from "./config-standing.js";
 
 let recipesReply: RecipesResponse = { recipes: [] };
