@@ -113,27 +113,36 @@ func (rs *Runs) gradeStepEnd(workflowID, nodePath string, sealed []turnlog.Seale
 		})
 		return
 	}
-	rs.goGradeRun(workflowID)
+	rs.goGradeRun(workflowID, gradeMidRun)
 }
 
+// gradeTrigger says whether a run's grade is its terminal run_complete's, the last read any close of the run is due
+// (kasRead.last).
+type gradeTrigger bool
+
+const (
+	gradeMidRun   gradeTrigger = false
+	gradeAtRunEnd gradeTrigger = true
+)
+
 // goGradeRun runs gradeRun off the caller's goroutine: it may read KAS's record.
-func (rs *Runs) goGradeRun(workflowID string) {
+func (rs *Runs) goGradeRun(workflowID string, at gradeTrigger) {
 	if rs.log == nil || rs.lifecycle == nil {
 		return
 	}
 	rs.lifecycle.goUnlessDraining(func() {
 		ctx, cancel := rs.lifecycle.derivedContext()
 		defer cancel()
-		rs.gradeRun(ctx, workflowID)
+		rs.gradeRun(ctx, workflowID, at)
 	})
 }
 
 // gradeRun records the run's due grades (runLog.gradeRun), reading KAS's record only when one is due, and announces
 // and notes each (recordGrade).
-func (rs *Runs) gradeRun(ctx context.Context, workflowID string) {
+func (rs *Runs) gradeRun(ctx context.Context, workflowID string, at gradeTrigger) {
 	graded, err := rs.log.gradeRun(ctx, workflowID, func() (map[string]workflow.StepRecord, bool) {
 		return rs.kasRunSteps(ctx, workflowID)
-	})
+	}, at == gradeAtRunEnd)
 	if err != nil {
 		slog.Warn("run log: record a step's grade", "run", workflowID, "error", err)
 	}

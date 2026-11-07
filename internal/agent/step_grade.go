@@ -20,10 +20,15 @@ type stepClose struct {
 	rawStop marotte.StopReason
 	// turn is the closed turn's id, which a step_graded names.
 	turn string
+	// misses counts the reads of KAS's record that left the close due (runLog.gradeLocked); in memory only.
+	misses int
 	// unanswered is the close's EntryTurnClose.Unanswered.
 	unanswered bool
 	// hasGrade is whether a step_graded for turn is folded in.
 	hasGrade bool
+	// settled is whether no read of KAS's record is spent on the close's grade again (runLog.gradeLocked); in
+	// memory only, so a restart reads once more.
+	settled bool
 }
 
 // stepGrade is one step_graded gradeLocked appended, and what the launching chat's note reads from it.

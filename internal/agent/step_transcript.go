@@ -41,7 +41,7 @@ func (rs *Runs) stepTranscript(ctx context.Context, workflowID, nodePath string)
 		Source:      marotte.RunStepTranscriptSourceReplay,
 	}
 	if rs.log != nil {
-		rs.gradeRun(ctx, workflowID)
+		rs.gradeRun(ctx, workflowID, gradeMidRun)
 		if rs.fromRunLog(ctx, &out) {
 			return out, nil
 		}

@@ -914,7 +914,8 @@ func (rs *Runs) observeStart(ctx context.Context, chatID marotte.ChatID, msg *ma
 
 // observeComplete drops a terminal run's bounds and step registry, closing open step turns, then
 // translates. A non-terminal run_complete (an onMaxIterations pause) keeps the arm. Either records the run's due
-// step grades (goGradeRun), so one a failed read left at node_complete is not left to a reader.
+// step grades (goGradeRun), so one a failed read left at node_complete is not left to a reader; the terminal one is
+// the last read any of them is due.
 func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	f := decodeLifecycleFrame(msg)
 	if f.WorkflowID != "" && (f.Status.Terminal() || f.Status == marotte.RunStatusPaused) {
@@ -923,7 +924,7 @@ func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg 
 	if f.WorkflowID != "" && f.Status.Terminal() {
 		// Before HandleRunComplete: the client repaints on its `run_finished` invalidation.
 		rs.closeRun(ctx, f.WorkflowID, string(f.Status))
-		rs.goGradeRun(f.WorkflowID)
+		rs.goGradeRun(f.WorkflowID, gradeAtRunEnd)
 		rs.recordRunNotice(chatID, f.WorkflowID, cmp.Or(f.FinalState.RunLabel, f.FinalState.WorkflowName, f.WorkflowID))
 		// Before forgetBounds, which releases the lease the label, the parent and the schedule come from.
 		rs.notifyRunOutcome(ctx, chatID, &f)
@@ -936,7 +937,7 @@ func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg 
 			defer rs.runEnded()
 		}
 	} else if f.WorkflowID != "" && f.Status == marotte.RunStatusPaused {
-		rs.goGradeRun(f.WorkflowID)
+		rs.goGradeRun(f.WorkflowID, gradeMidRun)
 		rs.notifyRunOutcome(ctx, chatID, &f)
 	}
 	rs.translate.HandleRunComplete(ctx, chatID, msg)

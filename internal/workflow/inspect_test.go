@@ -75,3 +75,25 @@ func TestStateUpdatedAt_FollowsKASsListDerivation(t *testing.T) {
 		})
 	}
 }
+
+// TestStepRecord_Ended pins which node statuses are final: a running, paused or pending node can still complete.
+func TestStepRecord_Ended(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		status string
+		ended  bool
+	}{
+		{"", false},
+		{"running", false},
+		{"paused", false},
+		{"pending", false},
+		{"completed", true},
+		{"failed", true},
+		{"cancelled", true},
+		{"aborted", true},
+	} {
+		if got := (StepRecord{Status: tc.status}).Ended(); got != tc.ended {
+			t.Errorf("StepRecord{Status: %q}.Ended() = %v, want %v", tc.status, got, tc.ended)
+		}
+	}
+}

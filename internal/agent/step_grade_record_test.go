@@ -654,7 +654,8 @@ func TestRunNodeComplete_ALastStepIsNotedThoughARunReadRecordsItsGradeBeforeTheS
 		h.runs.log.mu.Unlock()
 		t.Fatalf("scan the run log: %v", err)
 	}
-	graded, err := h.runs.log.gradeDueLocked(t.Context(), r, map[string]workflow.StepRecord{nodePath: st})
+	graded, err := h.runs.log.gradeDueLocked(t.Context(), r, []string{nodePath},
+		kasRead{steps: map[string]workflow.StepRecord{nodePath: st}, ok: true})
 	h.runs.log.mu.Unlock()
 	if err != nil {
 		t.Fatalf("grade as the run read: %v", err)
@@ -743,5 +744,221 @@ func TestStepGrade_AGradeRecordedAfterARestartLeavesNoNote(t *testing.T) {
 	}
 	if ids := steerIDs(t, cs, chatID); len(ids) != 0 {
 		t.Errorf("launching chat notes = %v, want none", ids)
+	}
+}
+
+// inspectWithSteps is an inspect reply whose tree holds, under the run's root sequence, one unsignalled step per
+// {nodeID, status} pair, at path [workflowID, nodeID].
+func inspectWithSteps(t *testing.T, workflowID string, steps ...[2]string) json.RawMessage {
+	t.Helper()
+	children := make([]any, 0, len(steps))
+	for _, s := range steps {
+		children = append(children, map[string]any{"nodeId": s[0], "type": "step", "status": s[1], "sessionId": "step-session-1"})
+	}
+	raw, err := json.Marshal(map[string]any{
+		"workflowId": workflowID,
+		"state": map[string]any{
+			"workflowId": workflowID, "status": "running",
+			"root": map[string]any{"nodeId": workflowID, "type": "sequence", "status": "running", "children": children},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal inspect: %v", err)
+	}
+	return raw
+}
+
+// completeStep runs one step KAS completes whose turn its own stop did not end, so its close is not due a grade.
+func completeStep(t *testing.T, h *Runtime, workflowID string, path []string) {
+	t.Helper()
+	h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: workflowID, NodePath: workflow.PathKey(path), SessionID: "step-session-1"}, "")
+	h.runs.RunNodeComplete(t.Context(), workflowID, path, "completed", "")
+	joinInflight(t, h)
+}
+
+// A close KAS's record ended without completing can never be graded, so the read that finds it so is its last: no
+// later step end, run_complete or transcript open asks KAS about it again.
+func TestStepGrade_ACloseKASEndedWithoutCompletingIsReadOnce(t *testing.T) {
+	const id = "wf_1"
+	build, review, ship := []string{id, "build"}, []string{id, "review"}, []string{id, "ship"}
+	h, _, br := runLoggingHub(t)
+	br.setCallResult(methodKiroWorkflowInspect,
+		inspectWithSteps(t, id, [2]string{"build", "failed"}, [2]string{"review", "completed"}, [2]string{"ship", "completed"}))
+	h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: id, NodePath: workflow.PathKey(build), SessionID: "step-session-1"}, "")
+	h.runs.RunNodeComplete(t.Context(), id, build, "failed", "")
+	joinInflight(t, h)
+	br.forgetCalls()
+
+	completeStep(t, h, id, review)
+	if n := countCalls(br, methodKiroWorkflowInspect); n != 1 {
+		t.Fatalf("the step end after the failed step read KAS's record %d times, want once", n)
+	}
+	br.forgetCalls()
+	completeStep(t, h, id, ship)
+	h.runs.observeComplete(t.Context(), "", runComplete(id, "failed"))
+	joinInflight(t, h)
+	transcriptOf(t, h, id, workflow.PathKey(build))
+	transcriptOf(t, h, id, workflow.PathKey(review))
+
+	if n := countCalls(br, methodKiroWorkflowInspect); n != 0 {
+		t.Errorf("a step end, a run_complete and two transcript opens read KAS's record %d times, want none: calls %v",
+			n, br.callLog())
+	}
+	if got := gradesOf(t, h, id); len(got) != 0 {
+		t.Errorf("step_graded entries = %+v, want none", got)
+	}
+}
+
+// The run's terminal run_complete closes an open turn failed under a failed record: its own read settles the close,
+// and opening the step's transcript after asks KAS nothing.
+func TestStepGrade_ATurnTheRunsEndFailedIsReadOnce(t *testing.T) {
+	const id = "wf_1"
+	build := []string{id, "build"}
+	h, _, br := runLoggingHub(t)
+	br.setCallResult(methodKiroWorkflowInspect, inspectWithSteps(t, id, [2]string{"build", "failed"}))
+	h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: id, NodePath: workflow.PathKey(build), SessionID: "step-session-1"}, "")
+	br.forgetCalls()
+
+	h.runs.observeComplete(t.Context(), "", runComplete(id, "failed"))
+	joinInflight(t, h)
+	if n := countCalls(br, methodKiroWorkflowInspect); n != 1 {
+		t.Fatalf("the terminal run_complete read KAS's record %d times, want once", n)
+	}
+	br.forgetCalls()
+	transcriptOf(t, h, id, workflow.PathKey(build))
+	transcriptOf(t, h, id, workflow.PathKey(build))
+	if n := countCalls(br, methodKiroWorkflowInspect); n != 0 {
+		t.Errorf("two transcript opens read KAS's record %d times, want none: calls %v", n, br.callLog())
+	}
+}
+
+// KAS's record holds no node at the close's path, so nothing can grade it: the first read settles it.
+func TestStepGrade_ACloseKASHoldsNoRecordOfIsReadOnce(t *testing.T) {
+	const id = "wf_1"
+	build := []string{id, "build"}
+	h, _, br := runLoggingHub(t)
+	br.setCallResult(methodKiroWorkflowInspect, inspectWithSteps(t, id, [2]string{"review", "completed"}))
+	refuseStep(t, h.runs, id, build, &marotte.RefusalInfo{Category: "policy"})
+	br.forgetCalls()
+
+	h.runs.RunNodeComplete(t.Context(), id, build, "completed", "")
+	joinInflight(t, h)
+	transcriptOf(t, h, id, workflow.PathKey(build))
+	transcriptOf(t, h, id, workflow.PathKey(build))
+
+	if n := countCalls(br, methodKiroWorkflowInspect); n != 1 {
+		t.Errorf("node_complete and two transcript opens read KAS's record %d times, want once: calls %v", n, br.callLog())
+	}
+}
+
+// A read that fails is retried at the run's next triggers up to gradeReadAttempts reads in all; then the close is
+// settled ungraded, and the step's transcript still opens.
+func TestStepGrade_AnUnreadableRecordIsAskedAtMostTheBound(t *testing.T) {
+	const id = "wf_1"
+	build, review := []string{id, "build"}, []string{id, "review"}
+	h, _, br := runLoggingHub(t)
+	br.setCallErr(methodKiroWorkflowInspect, errors.New("the engine is gone"))
+	refuseStep(t, h.runs, id, build, &marotte.RefusalInfo{Category: "policy"})
+	br.forgetCalls()
+
+	h.runs.RunNodeComplete(t.Context(), id, build, "completed", "")
+	joinInflight(t, h)
+	completeStep(t, h, id, review)
+	transcriptOf(t, h, id, workflow.PathKey(build))
+	transcriptOf(t, h, id, workflow.PathKey(review))
+	h.runs.observeComplete(t.Context(), "", runComplete(id, "paused"))
+	joinInflight(t, h)
+	entries := transcriptOf(t, h, id, workflow.PathKey(build))
+
+	if n := countCalls(br, methodKiroWorkflowInspect); n != gradeReadAttempts {
+		t.Errorf("node_complete and five later triggers read KAS's record %d times, want %d: calls %v",
+			n, gradeReadAttempts, br.callLog())
+	}
+	if c := newestClose(t, entries); c.Outcome != marotte.TurnOutcomeRefused {
+		t.Errorf("the settled step's transcript closes %s, want its sealed refused", c.Outcome)
+	}
+	if got := gradesIn(t, entries); len(got) != 0 {
+		t.Errorf("the settled step's transcript holds step_graded %+v, want none", got)
+	}
+}
+
+// Whatever the bound has left, the run's terminal run_complete is the last read: a close it cannot grade is settled.
+func TestStepGrade_TheRunsEndSettlesACloseItCannotRead(t *testing.T) {
+	const id = "wf_1"
+	build := []string{id, "build"}
+	h, _, br := runLoggingHub(t)
+	br.setCallErr(methodKiroWorkflowInspect, errors.New("the engine is gone"))
+	refuseStep(t, h.runs, id, build, &marotte.RefusalInfo{Category: "policy"})
+	h.runs.RunNodeComplete(t.Context(), id, build, "completed", "")
+	joinInflight(t, h)
+	br.forgetCalls()
+
+	h.runs.observeComplete(t.Context(), "", runComplete(id, "completed"))
+	joinInflight(t, h)
+	transcriptOf(t, h, id, workflow.PathKey(build))
+
+	if n := countCalls(br, methodKiroWorkflowInspect); n != 1 {
+		t.Errorf("run_complete and a transcript open read KAS's record %d times, want once: calls %v", n, br.callLog())
+	}
+}
+
+// A completed node_complete for a settled close's path is KAS saying the node moved, so the close is graded again:
+// on resume KAS completes a step the death closer closed interrupted, with a node_complete that closes nothing.
+func TestStepGrade_ASettledCloseIsGradedWhenKASCompletesItsNode(t *testing.T) {
+	const id = "wf_1"
+	path := []string{id, "build"}
+	nodePath := workflow.PathKey(path)
+	h, _, br := runLoggingHub(t)
+	h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: id, NodePath: nodePath, SessionID: "step-session-1"}, "")
+	if _, err := h.runs.log.closeHost(t.Context(), runChatID(id), marotte.ConcludeStopReason(marotte.StopReasonInterrupted)); err != nil {
+		t.Fatalf("closeHost: %v", err)
+	}
+	interrupted := closeTurnOf(t, h, id)
+	br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, id, "build", "running", ""))
+	br.forgetCalls()
+	for range gradeReadAttempts + 1 {
+		transcriptOf(t, h, id, nodePath)
+	}
+	if n := countCalls(br, methodKiroWorkflowInspect); n != gradeReadAttempts {
+		t.Fatalf("%d transcript opens of a running step read KAS's record %d times, want %d",
+			gradeReadAttempts+1, n, gradeReadAttempts)
+	}
+
+	br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, id, "build", "completed", "success"))
+	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
+	joinInflight(t, h)
+	want := recordedGrade{Turn: interrupted, Outcome: string(marotte.TurnOutcomeCompleted)}
+	if got := gradesOf(t, h, id); len(got) != 1 || got[0] != want {
+		t.Errorf("step_graded entries = %+v, want only %+v", got, want)
+	}
+}
+
+// A grade the run log refuses to write counts against the same bound as a failed read: a log that refuses every
+// write is not asked KAS about forever.
+func TestStepGrade_ARefusedGradeWriteIsRetriedAtMostTheBound(t *testing.T) {
+	const id = "wf_1"
+	build := []string{id, "build"}
+	h, _, br := runLoggingHub(t)
+	br.setCallErr(methodKiroWorkflowInspect, errors.New("the engine is gone"))
+	refuseStep(t, h.runs, id, build, &marotte.RefusalInfo{Category: "policy"})
+	br.forgetCalls()
+	h.runs.RunNodeComplete(t.Context(), id, build, "completed", "")
+	joinInflight(t, h)
+	l, err := h.runs.log.log(t.Context(), id)
+	if err != nil || l == nil {
+		t.Fatalf("the run log of %s = %v, %v", id, l, err)
+	}
+	if err := l.Remove(); err != nil {
+		t.Fatalf("tombstone the run log: %v", err)
+	}
+	br.clearCallErr(methodKiroWorkflowInspect)
+	br.setCallResult(methodKiroWorkflowInspect, inspectWithStep(t, id, "build", "completed", ""))
+
+	for range gradeReadAttempts {
+		transcriptOf(t, h, id, workflow.PathKey(build))
+	}
+	if n := countCalls(br, methodKiroWorkflowInspect); n != gradeReadAttempts {
+		t.Errorf("node_complete and %d transcript opens read KAS's record %d times, want %d: calls %v",
+			gradeReadAttempts, n, gradeReadAttempts, br.callLog())
 	}
 }
