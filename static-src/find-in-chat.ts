@@ -602,7 +602,7 @@ function recentreIfOutOfView(scroller: HTMLElement, target: HTMLElement): void {
   jumpTo(target, {
     block: "center",
     inline: "nearest",
-    behavior: prefersReducedMotion() ? "auto" : "smooth",
+    behavior: "smooth",
   });
 }
 

@@ -39,8 +39,7 @@ scrollerEl.appendChild(messagesEl);
 const { setSessions, setActive, bumpMessages } = await import("./store.js");
 const { mountChatView, teardownAll } = await import("./messages.js");
 const { scrollToBottom, readingState } = await import("./scroll.js");
-const { setPinSettleMs } = await import("./scroll-controller.js");
-const { pinAtLiveEdge } = await import("./__test-helpers__/scroll-rest.js");
+const { restAtLiveEdge } = await import("./__test-helpers__/scroll-rest.js");
 const { resetFoldState } = await import("./fold-state.js");
 const { KEY_ATTR } = await import("./reconcile.js");
 const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
@@ -216,13 +215,8 @@ async function load(chat: string, turns = chatTurns()): Promise<void> {
     }
   });
   // The reader at the live edge, where a chat opens.
-  await pinAtLiveEdge(scrollerEl, 20, () => {
-    const real = setPinSettleMs(20);
-    try {
-      scrollToBottom();
-    } finally {
-      setPinSettleMs(real);
-    }
+  await restAtLiveEdge(scrollerEl, () => {
+    scrollToBottom();
   });
 }
 

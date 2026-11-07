@@ -107,17 +107,19 @@ function statesPast(wrap: HTMLElement, from: number): { states: string[]; off: (
   return { states, off: () => wrap.removeEventListener("scroll", on) };
 }
 
-/** A platform smooth scroll standing in for an engine's own tick animation or momentum: asserts it passed through
- *  at least three positions with no `scrollend` before the last. */
+/** A platform smooth scroll standing in for an engine's own tick animation or momentum: asserts it moved again after
+ *  the input window closed, with no `scrollend` before its last position. */
 async function platformGlide(wrap: HTMLElement, to: number): Promise<void> {
   const log = scrollLog(wrap);
   // Past the 300ms input window of a timer-based owner once the animation is under way, as an engine's own tick
   // outlives it: stepped once the scroller has left the end's slack, because unthrottled test frames can outrun an
   // animation's slow start.
   const from = wrap.scrollTop;
+  let steppedAt = -1;
   const step = (): void => {
     if (Math.abs(wrap.scrollTop - from) > 2) {
       wrap.removeEventListener("scroll", step);
+      steppedAt = log.tops.length;
       vi.advanceTimersByTime(350);
     }
   };
@@ -125,10 +127,14 @@ async function platformGlide(wrap: HTMLElement, to: number): Promise<void> {
   platformScroll(wrap, to, "smooth");
   await scrollEnds(wrap);
   log.off();
+  // The frame count of a short glide varies with runner load; the scene needs only a move after the window.
   expect(
-    { moves: log.tops.length >= 3, earlyEnd: log.ends.some((at) => at < log.tops.length) },
-    "the premise: one animated platform scroll",
-  ).toEqual({ moves: true, earlyEnd: false });
+    {
+      movesPastWindow: steppedAt > 0 && log.tops.length > steppedAt,
+      earlyEnd: log.ends.some((at) => at < log.tops.length),
+    },
+    "the premise: one animated platform scroll that outlives the input window",
+  ).toEqual({ movesPastWindow: true, earlyEnd: false });
 }
 
 /** A `ResizeObserver` created after the owner's, on `target`: its callback runs at the end of the owner's delivery,
