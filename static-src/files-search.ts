@@ -25,6 +25,7 @@ import { classify, emptyNote, scanNote } from "./textsearch/copy.js";
 import type { Nouns } from "./textsearch/copy.js";
 import type { FileMatch, FileSearchResult, MatchRange } from "./wire/types.gen.js";
 import { decodeFileSearchResult } from "./wire/decoders.gen.js";
+import { shellTakesBodyKeys } from "./shell-keys.js";
 
 type SearchMode = "names" | "contents";
 
@@ -588,7 +589,7 @@ export function handleFilesTypeAhead(e: KeyboardEvent): void {
     return;
   }
   // `length === 1` excludes named keys; Space activates a focused control.
-  if (e.key.length !== 1 || e.key === " ") {
+  if (e.key.length !== 1 || e.key === " " || shellTakesBodyKeys()) {
     return;
   }
   const active = document.activeElement;

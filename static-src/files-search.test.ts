@@ -92,6 +92,7 @@ let activeTabKind: string | null = "files";
 const mod = await import("./files-search.js");
 const { initKeyboardShortcuts } = await import("./keys.js");
 const bus = await import("./bus.js");
+const { trackShellPresses } = await import("./shell-keys.js");
 const {
   searchURL,
   hitLabel,
@@ -1031,6 +1032,30 @@ describe("type-to-search", () => {
       expect(_isFilesSearchOpen(), html).toBe(false);
       host.remove();
     }
+  });
+
+  // On a touch device with a hardware keyboard, a tap in the terminal leaves focus on the body and
+  // the terminal types the next key itself.
+  it("leaves a key to the terminal after a press inside it, and opens after a press elsewhere", () => {
+    const panel = document.createElement("div");
+    panel.id = "shell-panel";
+    const terminal = document.createElement("div");
+    terminal.id = "shell-terminal";
+    const row = document.createElement("div");
+    terminal.append(row);
+    panel.append(terminal);
+    document.body.append(panel);
+    trackShellPresses();
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    typeAhead("b");
+    expect(_isFilesSearchOpen(), "after a press in the terminal").toBe(false);
+
+    document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    typeAhead("b");
+    expect(_isFilesSearchOpen(), "after a press outside it").toBe(true);
+    panel.remove();
   });
 
   it("does not open on a tab that is not the file browser", () => {
