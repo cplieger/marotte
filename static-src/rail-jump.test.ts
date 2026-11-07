@@ -425,6 +425,9 @@ describe("what releases the jump", { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
     await residentChat(6);
     markerFor(4).click();
     await until(() => probe.landings.length > 0, "the jump's own scroll to start");
+    const from = wrap.scrollTop;
+    // Under way, so the wheel ends the flight rather than landing ahead of it.
+    await until(() => wrap.scrollTop !== from, "the jump's own scroll to move");
 
     // Counted from here: a scroll event an earlier reset left queued can publish one under load.
     const before = probe.gestures;
@@ -432,9 +435,47 @@ describe("what releases the jump", { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
     wrap.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
     wrap.scrollTop = 40;
 
-    // The DOM cannot tell the pick from the scroll offset here, because the correction re-lands
-    // turn 4; the map's own subscription is what the wiring owes.
     await until(() => probe.gestures > before, "the reader's gesture to reach the map");
-    expect(document.querySelectorAll(".turn-map [data-current]")).toHaveLength(1);
+    await released();
+    await quiet();
+    expect({
+      scrollTop: wrap.scrollTop,
+      landings: probe.landings.length,
+      current: document.querySelectorAll(".turn-map [data-current]").length,
+    }).toEqual({ scrollTop: 40, landings: 1, current: 1 });
+  });
+
+  it("hands the position back when the reader wheels between two corrections", async () => {
+    // Height above the target lands the flight short, so a correction follows; the reader wheels
+    // right after it, and the next correction would re-land turn 4 over them.
+    await residentChat(6);
+    let settle = (): void => undefined;
+    const wheeled = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    probe.onAim = () => {
+      (messagesEl.firstElementChild as HTMLElement).style.blockSize = "400px";
+      probe.onAim = () => {
+        // The scrollend the loop's settle waits on before it measures again.
+        wrap.addEventListener(
+          "scrollend",
+          () => {
+            settle();
+          },
+          { once: true },
+        );
+        wrap.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
+        wrap.scrollTop = 40;
+      };
+    };
+
+    markerFor(4).click();
+    await wheeled;
+    await quiet();
+
+    expect({
+      behaviors: probe.landings.map((l) => l.behavior),
+      scrollTop: wrap.scrollTop,
+    }).toEqual({ behaviors: ["smooth", "instant"], scrollTop: 40 });
   });
 });

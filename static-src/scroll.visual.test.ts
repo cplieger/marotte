@@ -1,5 +1,5 @@
 // What a reader sees of the chat transcript near its end, frame by frame: the real chat view under the app's
-// stylesheet and live icons, the reader's inputs as a device delivers them, and the engine's own motion. CI runs it in
+// stylesheet, the reader's inputs as a device delivers them, and the engine's own motion. CI runs it in
 // Chromium at three device pixel ratios; `SCROLL_ENGINES=1 npx vitest --run --project browser-engines` runs it in
 // Firefox and WebKit at the ratios and widths of the user's devices (`vitest.config.ts`).
 
@@ -32,9 +32,9 @@ scrollerEl.appendChild(messagesEl);
 
 const { setSessions, setActive, bumpMessages } = await import("./store.js");
 const { mountChatView } = await import("./messages.js");
-const { scrollToBottom, readingState, readerGestureOpen } = await import("./scroll.js");
+const { scrollToBottom, readingState, readerGestureOpen, readingLineOffset } =
+  await import("./scroll.js");
 const { setTurnOpen, resetFoldState } = await import("./fold-state.js");
-const { initIconCrisp } = await import("./icon-crisp.js");
 const { edgeSlack } = await import("./scroll-gesture.js");
 const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
 
@@ -121,19 +121,15 @@ interface Sample {
   readonly st: number;
   readonly state: string;
   readonly texts: readonly (number | null)[];
-  readonly icons: readonly (number | null)[];
 }
 
-/** One scenario's record: a sample per frame, the owner's writes, and the icon pass's style writes. */
+/** One scenario's record: a sample per frame and the owner's writes. */
 class Recording {
   readonly samples: Sample[] = [];
   readonly writes: number[] = [];
-  iconWrites = 0;
   idleFrom = 0;
   private on = true;
   private readonly texts: Element[];
-  private readonly icons: { ic: Element; host: Element }[];
-  private readonly icObs: MutationObserver;
   private clockAt = 0;
 
   constructor() {
@@ -142,25 +138,6 @@ class Recording {
       .map((f) => document.elementFromPoint(box.left + box.width / 2, box.top + box.height * f))
       .map((e) => e?.closest("p, .tool-call, .turn-footer, .turn-header, .turn") ?? null)
       .filter((e): e is Element => e !== null && scrollerEl.contains(e));
-    this.icons = [...scrollerEl.querySelectorAll("svg.ic-ui")]
-      .filter((ic) => {
-        const r = ic.getBoundingClientRect();
-        return r.width > 0 && r.bottom > box.top && r.top < box.bottom;
-      })
-      .slice(0, 24)
-      .map((ic) => ({
-        ic,
-        host:
-          ic.closest(".tool-call, .turn-footer, .turn-header, button, summary") ??
-          ic.parentElement ??
-          ic,
-      }));
-    // Only icons in view: the owner snaps a row's icons as the row nears the viewport, before anyone sees them.
-    const tracked = new Set<Node>(this.icons.map(({ ic }) => ic));
-    this.icObs = new MutationObserver((recs) => {
-      this.iconWrites += recs.filter((r) => tracked.has(r.target)).length;
-    });
-    this.icObs.observe(scrollerEl, { subtree: true, attributes: true, attributeFilter: ["style"] });
     scrollerEl.scrollTo = ((arg?: number | ScrollToOptions, y?: number): void => {
       const top = typeof arg === "number" ? (y ?? 0) : (arg?.top ?? scrollerEl.scrollTop);
       this.writes.push(top);
@@ -190,11 +167,6 @@ class Recording {
       st: scrollerEl.scrollTop,
       state: readingState(),
       texts: this.texts.map((e) => (e.isConnected ? e.getBoundingClientRect().top : null)),
-      icons: this.icons.map(({ ic, host }) =>
-        ic.isConnected && host.isConnected
-          ? ic.getBoundingClientRect().top - host.getBoundingClientRect().top
-          : null,
-      ),
     });
   }
 
@@ -204,7 +176,6 @@ class Recording {
 
   stop(): void {
     this.on = false;
-    this.icObs.disconnect();
     Reflect.deleteProperty(scrollerEl, "scrollTo");
     Reflect.deleteProperty(scrollerEl, "scrollBy");
   }
@@ -230,36 +201,6 @@ class Recording {
   /** Per tracked text, how far its content-space position (screen top plus `scrollTop`) ranged while idle. */
   textRange(): number[] {
     return this.texts.map((_, k) => range(this.idleSamples.map((s) => s.texts[k]! + s.st)));
-  }
-
-  /** Per tracked icon, how far its offset inside its host ranged over the whole scenario. */
-  iconRange(): number[] {
-    return this.icons.map((_, k) =>
-      range(this.samples.map((s) => s.icons[k]).filter((v): v is number => v !== null)),
-    );
-  }
-
-  /** The tracked icons whose offset inside their host moved, named by host. */
-  iconsMoved(): string[] {
-    return this.iconRange().flatMap((r, k) => {
-      const o = this.icons[k]!;
-      return r > 0.01
-        ? [
-            `${o.host.className.toString().split(" ")[0] ?? ""} ${o.ic.getAttribute("class") ?? ""} ${r.toFixed(3)}`,
-          ]
-        : [];
-    });
-  }
-
-  plantIconShift(): () => void {
-    const ic = this.icons[0]?.ic as SVGSVGElement | undefined;
-    expect(ic, "the premise: an icon is in view").toBeDefined();
-    const was = ic!.style.translate;
-    const [x = 0, y = 0] = was.split(" ").map((v) => parseFloat(v) || 0);
-    ic!.style.translate = `${String(x)}px ${String(y + 1)}px`;
-    return () => {
-      ic!.style.translate = was;
-    };
   }
 }
 
@@ -352,21 +293,14 @@ async function atEnd(): Promise<void> {
   }
   outerEl.style.height = `${String(viewportPx())}px`;
   scrollToBottom();
-  // The icon pass settles too: a ratio change or a resize re-snaps every icon once.
-  let iconWrites = 0;
-  const icons = new MutationObserver((recs) => {
-    iconWrites += recs.filter((r) => r.target instanceof SVGSVGElement).length;
-  });
-  icons.observe(scrollerEl, { subtree: true, attributes: true, attributeFilter: ["style"] });
   let still = 0;
   let last = "";
   while (still < 20) {
     await frame();
-    const now = `${String(scrollerEl.scrollTop)}|${String(scrollerEl.scrollHeight)}|${readingState()}|${String(iconWrites)}`;
+    const now = `${String(scrollerEl.scrollTop)}|${String(scrollerEl.scrollHeight)}|${readingState()}`;
     still = now === last && !readerGestureOpen() ? still + 1 : 0;
     last = now;
   }
-  icons.disconnect();
   expect(readingState(), "the premise: Following at the end").toBe("following");
   expect(gap(), "the premise: on the end").toBeLessThanOrEqual(edgeSlack());
 }
@@ -387,15 +321,12 @@ async function scenario(
   return rec;
 }
 
-/** The checks every scenario owes: no icon moved inside its host, no style write from the icon pass, and the text in
- *  view held still in content space once input stopped. */
+/** The checks every scenario owes: the text in view held still in content space once input stopped. */
 function stillAtRest(rec: Recording): void {
   expect({
-    iconsMoved: rec.iconsMoved(),
-    iconWrites: rec.iconWrites,
     textMoved: rec.textRange().filter((r) => r > 0.01),
     idleMoves: rec.idleMoves(),
-  }).toEqual({ iconsMoved: [], iconWrites: 0, textMoved: [], idleMoves: 0 });
+  }).toEqual({ textMoved: [], idleMoves: 0 });
 }
 
 const engine = server.browser;
@@ -440,8 +371,7 @@ beforeAll(async () => {
     setTurnOpen(chat, `t${String(i)}`, true);
   }
   bumpMessages(chat, "shape");
-  initIconCrisp();
-  // Web fonts swapping in move icons inside their hosts once, before any scenario.
+  // Web fonts swap in and move the text once, before any scenario.
   await document.fonts.ready;
   await atEnd();
   await idle(60);
@@ -449,10 +379,6 @@ beforeAll(async () => {
   expect(end(), "the premise: the transcript overflows several scrollports").toBeGreaterThan(
     3 * viewportPx(),
   );
-  expect(
-    scrollerEl.querySelectorAll("svg.ic-ui").length,
-    "the premise: icons render",
-  ).toBeGreaterThan(0);
 }, 60000);
 
 afterAll(async () => {
@@ -627,32 +553,36 @@ describe("the transcript near its end", { timeout: 60000 }, () => {
       stillAtRest(rec);
     });
 
-    it.each([1, 3])("rewrites no icon while the reader steps up %spx at a time", async (px) => {
-      // From a Reading position: steps inside the slack at the end are not a reader leaving it.
+    it.each([1, 3])("moves the text by each %spx step a Reading reader takes up", async (px) => {
+      // From a Reading position: steps inside the slack at the end are not a reader leaving it. A box above the line
+      // may still lay out as the steps bring it near, and the owner's hold keeps the text then, so the oracle is the
+      // reading-line text's own motion rather than a count of writes.
+      const steps: number[] = [];
       const rec = await scenario(async () => {
         await parkAt(100);
+        const box = scrollerEl.getBoundingClientRect();
+        // The innermost box on the line: a container reaching above it moves by any hold made below its top.
+        const text = document.elementFromPoint(
+          box.left + box.width / 2,
+          box.top + readingLineOffset() + 1,
+        );
+        expect(text, "the premise: text on the reading line").toBeTruthy();
+        let was = text!.getBoundingClientRect().top;
         for (let i = 0; i < 8; i++) {
           wheelTick(-3);
           protoScrollTo.call(scrollerEl, { top: scrollerEl.scrollTop - px, behavior: "instant" });
           await idle(12);
+          const now = text!.getBoundingClientRect().top;
+          steps.push(now - was);
+          was = now;
         }
       }, 240);
 
-      expect(rec.writes).toEqual([]);
+      // A hold lands on whole CSS pixels, so a growth's fraction stays (scroll-controller.ts `holdTarget`).
+      expect(steps.filter((d) => Math.abs(d - px) > 0.5)).toEqual([]);
+      expect(steps).toHaveLength(8);
+      expect(readingState()).toBe("reading");
       stillAtRest(rec);
-    });
-
-    it("reports a planted 1px icon shift", async () => {
-      const rec = await scenario(async (r) => {
-        const undo = r.plantIconShift();
-        await idle(6);
-        undo();
-      }, 30);
-
-      // An engine paints the move on its device grid: at DPR 1.5, 1 or 2 device pixels.
-      expect(Math.max(...rec.iconRange()), "the detector caught the plant").toBeGreaterThanOrEqual(
-        0.6,
-      );
     });
 
     it("keeps a Following reader's end on the bottom edge in every frame when a notice shrinks the scrollport", async () => {

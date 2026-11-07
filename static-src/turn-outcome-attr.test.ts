@@ -23,6 +23,7 @@ vi.mock("./scroll.js", () => ({
   readingLineOffset: () => 0,
   readingState: () => "reading",
   jumpToOffset: vi.fn(() => Promise.resolve(true)),
+  readerGestureOpen: () => false,
   onReaderGesture: () => () => {
     /* no reader in this suite */
   },

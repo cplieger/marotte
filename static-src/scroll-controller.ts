@@ -994,7 +994,14 @@ export class ScrollController {
   shiftBy(px: number): void {
     this.attributePending();
     this.endSettle();
+    const before = viewOffset(this.scope);
     this.writeTop(this.scrollEl.scrollTop + px);
+    if (this.read !== null) {
+      this.read.base += viewOffset(this.scope) - before;
+    }
+    // The instant write aborted a smooth flight, which fires no `scrollend` of its own (CSSOM View "perform a
+    // scroll"), and the write's own falls inside its record.
+    this.endFlight(true);
     this.retake();
   }
 
@@ -1236,7 +1243,8 @@ export class ScrollController {
    *  inside the resize loop and any layout read applies it (`DetermineProximityToViewport`, `DoFlushPendingNotifications`
    *  in https://github.com/mozilla-firefox/firefox/blob/main/layout/base/PresShell.cpp), so a box the observer has not
    *  marked yet lays out mid-loop and resizes a turn already delivered. Never inside the content delivery, whose loop
-   *  the marks' layout would be. */
+   *  the marks' layout would be, nor in a microtask after it, which still runs inside that loop: a write the delivery
+   *  makes is marked at its scroll event, before the next frame's loop. */
   private markNearJump(): void {
     const t = this.scrollEl.scrollTop;
     if (this.delivering || Math.abs(t - this.nearTop) <= this.scrollEl.clientHeight * NEAR_JUMP) {
@@ -1617,8 +1625,6 @@ export interface FollowScroller {
   attach(handle: ViewAttachHandle): void;
   /** Take the scroller from the current view and return the state to park it with. */
   detach(): ViewScrollState;
-  /** Whether a reader gesture is open on the scroller. */
-  gestureOpen(): boolean;
 }
 
 /** Build a follower over `view` inside `scroller`. It never publishes `--scrollbar-w`, which the chat owns. */
@@ -1634,6 +1640,5 @@ export function createFollowScroller(
       c.attach(handle);
     },
     detach: () => c.detach(),
-    gestureOpen: () => c.gestureOpen(),
   };
 }

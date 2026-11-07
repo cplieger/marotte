@@ -97,12 +97,13 @@
 }
 
 /* NO HALF-VIEWPORT RESERVE WHILE STREAMING — third attempt at one, so do not add
- * a fourth. Where the live edge lands is `scroll.ts`'s to decide, and a CSS
- * reserve cannot see its pin. On a short chat the box below is
- * `min-height: 100%` + border-box + `flex-end`, so bottom padding LIFTS the card
+ * a fourth. Where the live edge lands is the scroll owner's to decide
+ * (scroll-controller.ts `followTarget`), and a CSS reserve cannot see its pin.
+ * On a short chat the box below is `min-height: 100%` + border-box +
+ * `flex-end`, so bottom padding LIFTS the card
  * rather than adding room under it, with `scrollHeight === clientHeight` so no
  * correction is possible; on a tall one `scrollToBottom()` stops on the padding.
- * More air for the live edge belongs in `anchorTop`. */
+ * More air for the live edge belongs in `LIVE_ANCHOR_AIR_PX`. */
 [id="messages"] {
   /* The MULTIPLEXER: one `.transcript-view` child per resident chat view, the
    * active one carrying `.is-active`. It must hand the scroller's definite height
@@ -128,7 +129,7 @@
   justify-content: flex-end;
 }
 
-/* THE HISTORY EDGE, the live edge's twin at the other end (scroll-controller.ts `topSentinel`). `order: -1` seats it
+/* THE HISTORY EDGE (scroll-controller.ts `topSentinel`). `order: -1` seats it
  * above every card whatever the DOM order, and the negative margin cancels the column `gap` flex draws below a
  * zero-height first item, so the first turn sits where it would with no marker. */
 .transcript-top {

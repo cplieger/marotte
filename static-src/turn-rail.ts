@@ -10,6 +10,7 @@ import {
   onContentResize,
   onReaderGesture,
   onTranscriptMutate,
+  readerGestureOpen,
   readingLineOffset,
   readingState,
   scrollableBy,
@@ -41,8 +42,8 @@ const PAGE_BUDGET_MS = 4000;
  *  an engine without it rather than belt-and-braces. */
 const PICK_SETTLE_MS = 1200;
 
-/** At most this many `behavior: "auto"` corrections per jump — never a second smooth
- *  animation, so exactly one is ever in flight. */
+/** At most this many instant corrections after the jump's own flight; a correction that moves
+ *  nothing ends the loop sooner (`correctLanding`). */
 const MAX_CORRECTIONS = 6;
 
 /** How far the target's top may sit from the reading line and still count as landed. */
@@ -180,7 +181,10 @@ export function mountTurnRail(host: HTMLElement): void {
   // A READER GESTURE revokes the pick; nothing else does. That covers both ways the
   // reader states a position — a scroll, and a request for the live edge, which
   // scrolls through the controller and so fires no reader scroll event.
-  onReaderGesture(clearSelection);
+  onReaderGesture(() => {
+    readerGestures++;
+    clearSelection();
+  });
   // Mount, unmount, the pagination prepend and `content-visibility` re-estimates all move tops with no
   // scroll; an unpark restores against re-measured cards.
   onTranscriptMutate(repick);
@@ -977,6 +981,9 @@ export function initTurnRailCallbacks(cbs: {
  *  edge mid-flight. */
 let jumpGeneration = 0;
 
+/** Reader gestures published so far: a jump whose count moved hands the position back. */
+let readerGestures = 0;
+
 function ownsJump(gen: number): boolean {
   return gen === jumpGeneration;
 }
@@ -1021,6 +1028,7 @@ async function navigateToTurn(
     return;
   }
   const gen = ++jumpGeneration;
+  const gestures = readerGestures;
   try {
     if (turnCard(s.id) === null && !(await pageIn(s))) {
       return;
@@ -1047,7 +1055,7 @@ async function navigateToTurn(
     }
     const landed = jumpToOffset(landing, behavior);
     markRailTarget(card);
-    await correctLanding(card, gen, landed);
+    await correctLanding(card, gen, gestures, landed);
   } finally {
     // Per id and unconditional: a superseded jump still owns the pending mark it
     // set. The pick belongs to whoever owns the scroller.
@@ -1107,10 +1115,13 @@ async function loadUntilResident(s: TurnSummary, deadline: number): Promise<bool
 
 /** Re-measure once the jump has landed and after each correction settles, and jump the remainder instantly: a
  *  correction closes the gap the first jump could not see, because the page load and the body build moved the target
- *  after it was aimed at. A correction that moves nothing ends the loop: the landing is past the scroller's reach. */
+ *  after it was aimed at. A correction that moves nothing ends the loop: the landing is past the scroller's reach.
+ *  Reader input since the jump began (`gestures` is the count then) ends it too: an instant correction drops an open
+ *  gesture, so it would override the reader. */
 async function correctLanding(
   card: HTMLElement,
   gen: number,
+  gestures: number,
   landed: Promise<boolean>,
 ): Promise<void> {
   // The reader's own input ended the flight: the position is theirs.
@@ -1121,7 +1132,7 @@ async function correctLanding(
     if (i > 0) {
       await settled();
     }
-    if (!ownsJump(gen)) {
+    if (!ownsJump(gen) || readerGestureOpen() || readerGestures !== gestures) {
       return;
     }
     const landing = landingFor(card);

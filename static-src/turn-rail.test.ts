@@ -66,6 +66,7 @@ vi.mock("./scroll.js", () => ({
   readingLineOffset: () => scrollable.line,
   readingState: () => (scrollable.atLiveEdge ? "following" : "reading"),
   getScrollEl: () => scrollable.el,
+  readerGestureOpen: () => false,
   jumpToOffset: (px: number, behavior: string): Promise<boolean> => {
     scrollable.landings.push({ px, behavior });
     scrollable.el.scrollTop = px;

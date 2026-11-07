@@ -124,8 +124,7 @@ export function deferWhileReading(mutate: () => void): void {
 export function fillViewport(): void {
   getInstance().fillViewport();
 }
-/** @internal Test seam: whether a reader gesture is open on the chat's scroller. */
-// deadset:ignore DS1004 -- test seam: the gesture tracker's open gesture
+/** Whether a reader gesture is open on the chat's scroller. */
 export function readerGestureOpen(): boolean {
   return getInstance().gestureOpen();
 }

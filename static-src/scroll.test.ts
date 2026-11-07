@@ -1373,8 +1373,6 @@ describe("a deliberate upward gesture that lands near the end", () => {
 
     await wheelUp(wrap, 100, 2);
 
-    // 2500 against a 2600 maximum: `isAtBottom` still answers true here, which is correct for
-    // auto-follow and must not decide this.
     expect(landing(wrap)).toEqual({ scrollTop: 2500, state: "reading", hidden: false });
   });
 
@@ -1764,8 +1762,8 @@ describe("the resume's settle", () => {
 
   /** The reachable shape: a live text block with tall evidence BELOW it, so the anchor's pin
    *  sits far above the document bottom. Same geometry as "keeps Following when the pin lands
-   *  far from the document bottom" — anchorTop is 1500 + 200 - 400 + 50 = 1350 against a maximum
-   *  of 2200. */
+   *  far from the document bottom" — the follow position is 1500 + 200 - 400 + 50 = 1350
+   *  against a maximum of 2200. */
   function pinScene(): { wrap: HTMLElement; streaming: HTMLElement } {
     const wrap = realScroller();
     block(1500);
@@ -3939,6 +3937,21 @@ describe("the owner's own flight", () => {
     expect({ during, after: load.mock.calls.length }).toEqual({ during: 0, after: 1 });
   });
 
+  it("lands a flight a shift aborts in the shift's own task", async () => {
+    // An instant write aborts a smooth scroll, and the aborted scroll fires no scrollend of its own.
+    const { landed } = await flightFromTheEnd();
+    let result: boolean | null = null;
+    void landed.then((r) => {
+      result = r;
+    });
+
+    scroll.shiftScroll(100);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(result).toBe(true);
+  });
+
   it("ends a flight whose scroll never ends at its bound", async () => {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
     try {
@@ -3961,5 +3974,37 @@ describe("the owner's own flight", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       Reflect.deleteProperty(scroll.getScrollEl(), "scrollTo");
     }
+  });
+});
+
+// A shift is a layout compensation: it moves the reader without being their move.
+describe("a shift during a gesture", () => {
+  beforeEach(realLayoutReset);
+
+  it("does not read a shift inside a Following gesture as the reader moving up", async () => {
+    const wrap = realScroller();
+    block(4000);
+    // An earlier suite may leave another view attached; the shift is measured on this one.
+    scroll.attach({ el: messagesEl, scrollTop: 0, readingState: "following" });
+    await land();
+    scroll.scrollToBottom();
+    await land();
+    expect(wrap.scrollTop, "the premise: at the end").toBe(3600);
+    wrap.dispatchEvent(new WheelEvent("wheel", { deltaY: -3, deltaMode: 1 }));
+
+    scroll.shiftScroll(-200);
+    // The reader's own move is 10px down from where the shift put them.
+    wrap.scrollTop = 3410;
+    await new Promise<void>((resolve) => {
+      wrap.addEventListener(
+        "scroll",
+        () => {
+          resolve();
+        },
+        { once: true },
+      );
+    });
+
+    expect(scroll.readingState()).toBe("following");
   });
 });
