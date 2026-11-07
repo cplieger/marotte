@@ -116,6 +116,7 @@ function withRun(s: Session, runID: string, at = 0): Session {
 function seed(s: Session): void {
   store.setSessions([s]);
   store.setActive(s.id);
+  store.setPainted(s.id);
   store.bumpMessages(s.id, "load");
 }
 
@@ -136,6 +137,7 @@ beforeEach(() => {
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
+  store.setPainted("");
 });
 
 describe("a full pass updates only the cards whose inputs changed", () => {
@@ -175,14 +177,17 @@ describe("a full pass updates only the cards whose inputs changed", () => {
     const second = withRun(longChat(`c-switch-b-${String(seq)}`, CARDS), "wf-b");
     store.setSessions([first, second]);
     store.setActive(first.id);
+    store.setPainted(first.id);
     store.bumpMessages(first.id, "load");
     await flushed();
     store.setActive(second.id);
+    store.setPainted(second.id);
     store.bumpMessages(second.id, "load");
     await flushed();
     const before = headerUpdates();
 
     store.setActive(first.id);
+    store.setPainted(first.id);
     await flushed();
 
     expect(messages.transcriptViewFor(first.id)?.querySelectorAll(".turn")).toHaveLength(CARDS);
