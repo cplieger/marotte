@@ -415,6 +415,8 @@ func TestRunLog_StepEndsReadsAnEngineEndAsInterruptedAndItsResume(t *testing.T) 
 		w := newRunLog(dir)
 		interrupt(t, w)
 		openStepTurn(t, w, step)
+		answerStep(t, w, &translate.RunStep{RunID: "wf1", NodePath: step})
+		w.stopReason("wf1", step, marotte.StopReasonEndTurn)
 		if _, _, err := w.closeNode(t.Context(), "wf1", step, "completed", "", nil); err != nil {
 			t.Fatal(err)
 		}

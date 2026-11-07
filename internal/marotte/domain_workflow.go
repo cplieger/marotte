@@ -275,6 +275,8 @@ type RunStepEnd struct {
 	Outcome       TurnOutcome `json:"outcome"`
 	FailureReason string      `json:"failure_reason,omitempty"`
 	FailureKind   FailureKind `json:"failure_kind,omitempty"`
+	// EndedByHand is the grade's EntryStepGraded.EndedByHand.
+	EndedByHand bool `json:"ended_by_hand,omitempty"`
 	// Resumed is set on an `interrupted` end the step moved past: the run's log holds a later turn on the step,
 	// or KAS's record shows it completed.
 	Resumed bool `json:"resumed,omitempty"`

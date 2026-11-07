@@ -137,3 +137,26 @@ describe("the detail header's state", () => {
     }
   });
 });
+
+describe("the detail's hand end", () => {
+  it("says a step ended by hand, and says nothing for one that ended itself", () => {
+    const style = mountAppCSS();
+    const detail = buildExecDetail(() => "");
+    document.body.append(detail.root);
+    const shown = (): string[] =>
+      [...detail.root.querySelectorAll<HTMLElement>("[role=status]")]
+        .filter((n) => getComputedStyle(n).display !== "none")
+        .map((n) => n.textContent ?? "");
+    try {
+      detail.render({ ...node("a"), state: "ok", endedByHand: true });
+      expect(shown()).toEqual(["Ended by hand"]);
+      detail.render({ ...node("a"), state: "ok" });
+      expect(shown()).toEqual([]);
+      detail.render(undefined);
+      expect(shown()).toEqual([]);
+    } finally {
+      detail.root.remove();
+      style.remove();
+    }
+  });
+});

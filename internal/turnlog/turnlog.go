@@ -710,6 +710,7 @@ func (t *Turn) Close(ctx context.Context, c marotte.TurnConclusion) ([]Sealed, e
 		ElapsedMs:      t.agg.elapsed,
 		Truncated:      c.Truncated,
 		Unanswered:     c.Unanswered,
+		EndedOffTurn:   c.EndedOffTurn,
 	}
 	t.agg.facts.Stamp(&footer)
 	if e := t.agg.engine; e != nil {

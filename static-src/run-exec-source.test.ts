@@ -3,12 +3,13 @@
 import { describe, it, expect } from "vitest";
 import { runToExec, indexPlan, planToExec } from "./run-exec-source.js";
 import { nodePathKey } from "./run-node-key.js";
-import { flatten, workNodes, counters, type ExecNode } from "./exec-view/model.js";
+import { flatten, workNodes, counters, miniBar, type ExecNode } from "./exec-view/model.js";
 import extendedLoopRaw from "./testdata/run-extended-loop.json?raw";
 import stepEndCasesRaw from "../internal/agent/testdata/step_end_cases.json?raw";
 import { makeRunState } from "./__test-helpers__/model.js";
 import type { RunNode, RunState } from "./run-store.js";
 import type { RunAsks } from "./run-asks.js";
+import type { RunStepEnd } from "./wire/types.gen.js";
 
 const NO_ASKS: RunAsks = { count: 0, asked: [], label: "" };
 
@@ -1421,6 +1422,42 @@ describe("runToExec reads the run log's step ends", () => {
       expect(run.nodes[0]?.interruption).toBe(
         "Interrupted: The turn was interrupted before the agent finished.",
       );
+    });
+  });
+
+  describe("a step's final grade, whatever turn failed before it", () => {
+    const build = nodePathKey(["wf_1", "build"]);
+    const graded = (status: string, end: RunStepEnd): ExecNode | undefined =>
+      runToExec(tree(step("build", status)), undefined, NO_ASKS, "", new Map([[build, end]]))
+        .nodes[0];
+
+    it("reads a step completed by hand succeeded, its dock tip saying ended by hand", () => {
+      const node = graded("completed", { outcome: "completed", ended_by_hand: true });
+      expect(node?.state).toBe("ok");
+      expect(node?.failure).toBeUndefined();
+      expect(node?.endedByHand).toBe(true);
+      expect(miniBar({ nodes: node === undefined ? [] : [node] })[0]?.tip).toBe(
+        "build, succeeded, ended by hand",
+      );
+    });
+
+    it("reads a step completed on its own signal plain succeeded", () => {
+      const node = graded("completed", { outcome: "completed" });
+      expect(node?.state).toBe("ok");
+      expect(node?.endedByHand).toBeUndefined();
+      expect(miniBar({ nodes: node === undefined ? [] : [node] })[0]?.tip).toBe("build, succeeded");
+    });
+
+    it("keeps an empty answer's grade failed", () => {
+      const node = graded("completed", { outcome: "failed", failure_kind: "empty_answer" });
+      expect(node?.state).toBe("fail");
+      expect(node?.endedByHand).toBeUndefined();
+    });
+
+    it("keeps a step KAS failed failed", () => {
+      const node = graded("failed", { outcome: "failed" });
+      expect(node?.state).toBe("fail");
+      expect(node?.endedByHand).toBeUndefined();
     });
   });
 

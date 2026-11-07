@@ -48,6 +48,9 @@ export function paintStateMark(slot: HTMLElement, state: ExecState): void {
   }
 }
 
+/** The note on a step a person or its parent ended (`ExecNode.endedByHand`). */
+export const ENDED_BY_HAND = "Ended by hand";
+
 /** The word an accessible name uses. Not the wire enum: "aborted"/"failed" read as
  *  one thing to a listener, and "pending" reads better as "not started". */
 export const STATE_WORD: Readonly<Record<ExecState, string>> = {

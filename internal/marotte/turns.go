@@ -159,6 +159,8 @@ type TurnConclusion struct {
 	EmptyIfSilent bool
 	// Unanswered is persisted as turn_close.unanswered.
 	Unanswered bool
+	// EndedOffTurn is persisted as turn_close.ended_off_turn.
+	EndedOffTurn bool
 }
 
 // ConcludeStopReason maps a wire stop reason onto the turn's outcome.
