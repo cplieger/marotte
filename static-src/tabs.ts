@@ -1211,8 +1211,10 @@ interface CapturedClose {
    *  follower. Exact behind a SURVIVING anchor; a vanished one appends, understating recency. */
   history: { id: string; after: string }[];
   /** The active tab, when it was inside the subtree; "" otherwise. What a
-   *  rollback re-activates. */
+   *  rollback re-activates, unless the reader has left `successorID` since. */
   activeTabID: string;
+  /** The tab the gesture handed the view to; "" when it closed no active tab or emptied the strip. */
+  successorID: string;
   /** The store's active chat at gesture time, when it was a chat this close took out; ""
    *  otherwise. Its draft owner when the strip emptied, and the sign that the rollback re-selects. */
   storeActive: string;
@@ -1341,6 +1343,7 @@ function captureClose(row: TabRow): CapturedClose {
     overrides,
     history,
     activeTabID: ids.has(state.active) ? state.active : "",
+    successorID: "",
     storeActive: rows.some((r) => r.subject.kind === "chat" && r.subject.ref === storeActive)
       ? storeActive
       : "",
@@ -1363,6 +1366,7 @@ function applyGestureRemoval(c: CapturedClose): void {
   if (c.activeTabID !== "") {
     // scheduleEmpty defers itself while this remove is pending.
     activateSuccessor(true);
+    c.successorID = state.active;
   }
   // The store row survives to onConfirm, and a reader acting for the user must never act for a
   // chat whose tab is gone: a non-chat tab was shown, or the strip emptied.
@@ -1424,7 +1428,8 @@ function rollbackClose(c: CapturedClose): void {
     internal.stripRestore = c.stripScroll;
   }
   emit();
-  if (c.activeTabID !== "" && hasRow(c.activeTabID)) {
+  const readerStayed = state.active === "" || state.active === c.successorID;
+  if (c.activeTabID !== "" && hasRow(c.activeTabID) && readerStayed) {
     beginActivation(c.activeTabID, { quiet: true, now: true });
   } else if (c.storeActive !== "" && getActiveTabKind() !== "chat") {
     reselectPaintedChat();
