@@ -502,7 +502,7 @@ func (*engineOwner) recordExit(
 		attrs = append(attrs, "container_oom_kills", oomKills)
 	}
 	level := slog.LevelInfo
-	if info.EndedItself() {
+	if !obs.RequestedStop(cause) {
 		level = slog.LevelWarn
 	}
 	slog.Log(context.Background(), level, "engine exited", attrs...)

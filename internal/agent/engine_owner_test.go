@@ -17,6 +17,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/obs"
 	"github.com/cplieger/marotte/internal/signin"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
@@ -349,6 +350,50 @@ func TestExitCause_NamesExactlyTheCountedCauses(t *testing.T) {
 	}
 	if !maps.Equal(got, want) {
 		t.Errorf("exitCause returns %v, want exactly the pre-set causes %v", slices.Sorted(maps.Keys(got)), presetExitCauses)
+	}
+}
+
+// The causes obs calls requested stops are exactly the names a stop marotte asked for gets, so a crash rule that
+// leaves them out stays quiet on every requested restart and on nothing else.
+func TestExitCause_RequestedStopsAreExactlyTheStopsMarotteSent(t *testing.T) {
+	stops, others := map[string]bool{}, map[string]bool{}
+	for _, end := range []bridge.ExitInfo{
+		{Reason: bridge.ExitEnded},
+		{Reason: bridge.ExitStdinStalled},
+		{Reason: bridge.ExitParseBreaker},
+		{Reason: bridge.ExitLaneOverflow},
+		{Reason: bridge.ExitStopped},
+	} {
+		for _, restart := range []*restartCause{nil, {Kind: restartAuto}, {Kind: restartConfirmed}} {
+			for _, sig := range []syscall.Signal{0, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGSEGV} {
+				for _, draining := range []bool{false, true} {
+					for _, oomClear := range []bool{false, true} {
+						info := end
+						info.SidecarSignal = sig
+						cause := exitCause(&info, restart, draining, oomClear)
+						if info.Reason == bridge.ExitStopped {
+							stops[cause] = true
+						} else {
+							others[cause] = true
+						}
+					}
+				}
+			}
+		}
+	}
+	var want []string
+	for _, c := range presetExitCauses {
+		if obs.RequestedStop(c) {
+			want = append(want, c)
+		}
+	}
+	if got := slices.Sorted(maps.Keys(stops)); !slices.Equal(got, slices.Sorted(slices.Values(want))) {
+		t.Errorf("a requested stop is named %v, want exactly the causes obs.RequestedStop accepts %v", got, want)
+	}
+	for cause := range others {
+		if obs.RequestedStop(cause) {
+			t.Errorf("an engine that ended by itself is named %s, which obs.RequestedStop accepts", cause)
+		}
 	}
 }
 

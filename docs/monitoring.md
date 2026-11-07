@@ -32,7 +32,7 @@ Labels carry fixed values only, with one exception. `rule_id` is the random id m
 | `marotte_prompt_failures_total` | counter | `class` | Failed prompts, by `fatal`, `pipe_death`, `busy`, `transient`, `throttled`, `rejected` or `auth`. `pipe_death` is a prompt the engine's own exit ended |
 | `marotte_signin_save_failures_total` | counter | `backend`, `reason` | Sign-in changes marotte could not save, by `staged_copy_left` or `write_failed` |
 | `marotte_schedule_failed_slots` | gauge | `rule_id` | Consecutive slots of an enabled schedule that ended without a completed run. A completed run resets it to 0 |
-| `marotte_schedule_next_due_timestamp_seconds` | gauge | `rule_id` | When an enabled schedule's next slot falls due, in Unix seconds |
+| `marotte_schedule_next_due_timestamp_seconds` | gauge | `rule_id` | When an enabled schedule's next slot falls due, in Unix seconds. A slot waiting on a busy agent engine reads the end of its wait, the schedule's next slot |
 | `marotte_schedule_slots_not_started_total` | counter | `event` | Schedule slots that started no run, by `launch_failed`, `signin_held` or `engine_busy` |
 | `marotte_unattended_run_failures_total` | counter | `origin`, `reason` | Scheduled and triggered runs that failed with nobody watching. `origin` is `scheduled` or `triggered`. `reason` is `needs_approval`, `overran`, `backstop`, `stalled`, `paused`, `orphaned` or `cancel_given_up` |
 | `marotte_unattended_approvals_total` | counter | `origin` | Tool requests of scheduled and triggered runs approved with nobody watching |
@@ -49,7 +49,7 @@ The page also carries the Go runtime and process families (`go_*`, `process_*`) 
 
 ## Logs
 
-marotte writes logfmt lines to the container's output at INFO, or at DEBUG when **Debug logs** on the **General** tab in **Settings** is on. No alert rule reads the log. Each alert's description names the log line that says more.
+marotte writes logfmt lines to the container's output at INFO, or at DEBUG when **Debug logs** on the **General** tab in **Settings** is on. No alert rule reads the log. The engine, prompt and sign-in alerts name the log line that says more.
 
 ## Alerting
 

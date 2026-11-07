@@ -130,8 +130,8 @@ func (r *Runner) sweep(ctx context.Context) {
 }
 
 // publish exports each enabled clock rule's failed-slot count and next due slot, and removes the series of every rule
-// disabled or deleted since the last publish. A blocked rule never fires, so it reads due since publish first saw it
-// blocked, with no count.
+// disabled or deleted since the last publish. A slot waiting on the engine reads due at the end of its wait. A blocked
+// rule never fires, so it reads due since publish first saw it blocked, with no count.
 func (r *Runner) publish(list []launchrule.Clock) {
 	live := make(map[string]bool, len(list))
 	blocked := make(map[string]time.Time)
@@ -151,8 +151,11 @@ func (r *Runner) publish(list []launchrule.Clock) {
 			continue
 		}
 		due, err := NextRunFrom(*c.When.Clock, c.Anchor, time.Time{})
-		if err != nil {
+		switch {
+		case err != nil:
 			due = time.Time{}
+		case c.WaitingFor.Equal(due):
+			due = r.waitBound(*c.When.Clock, due)
 		}
 		obs.Schedule(c.ID, c.FailedSlots, due)
 	}

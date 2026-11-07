@@ -82,6 +82,10 @@ tests:
         values: "0x2 1x30"
       - series: 'marotte_engine_exits_total{job="marotte",instance="c:9847",cause="shutdown"}'
         values: "0x2 1x30"
+      - series: 'marotte_engine_exits_total{job="marotte",instance="c:9847",cause="stopped"}'
+        values: "0x2 1x30"
+      - series: 'marotte_engine_exits_total{job="marotte",instance="d:9847",cause="lane_overflow"}'
+        values: "0x2 1x30"
     alert_rule_test:
       - eval_time: 2m
         alertname: MarotteEngineCrashed
@@ -98,6 +102,8 @@ tests:
                 names the cause and the container's memory kills.
           - exp_labels: {severity: warning, job: marotte, instance: "b:9847"}
             exp_annotations: *crashed
+          - exp_labels: {severity: warning, job: marotte, instance: "d:9847"}
+            exp_annotations: *crashed
       # The exit has left the 15-minute window.
       - eval_time: 19m
         alertname: MarotteEngineCrashed
@@ -112,6 +118,8 @@ tests:
         values: "0 0 0 0 0 0 1 1 1 1 1 1"
       # Requested restarts never count.
       - series: 'marotte_engine_exits_total{job="marotte",instance="b:9847",cause="restart_auto"}'
+        values: "0 1 2 3 4 5 6 7 8 9 10 11"
+      - series: 'marotte_engine_exits_total{job="marotte",instance="b:9847",cause="stopped"}'
         values: "0 1 2 3 4 5 6 7 8 9 10 11"
     alert_rule_test:
       - eval_time: 5m
@@ -270,9 +278,8 @@ tests:
               summary: "A marotte schedule has a slot overdue by over 10 minutes"
               description: >
                 A schedule slot fell due over 10 minutes ago and marotte has not
-                started or skipped it. The engine may have been busy all that time,
-                the schedule runner may be stuck, or the schedule's saved state
-                cannot be read.
+                started or skipped it. The schedule runner may be stuck, or the
+                schedule's saved state cannot be read.
 
   - name: MarotteScheduleSlotNotStarted fires for a day after a slot starts no run
     interval: 1h
@@ -322,6 +329,12 @@ tests:
   - name: MarotteUnattendedRunStopped covers the five stop reasons and leaves the others to their rules
     interval: 1m
     input_series:
+      - series: 'marotte_unattended_run_failures_total{job="marotte",instance="a:9847",origin="scheduled",reason="backstop"}'
+        values: "0 1x10"
+      - series: 'marotte_unattended_run_failures_total{job="marotte",instance="a:9847",origin="triggered",reason="stalled"}'
+        values: "0 1x10"
+      - series: 'marotte_unattended_run_failures_total{job="marotte",instance="a:9847",origin="scheduled",reason="paused"}'
+        values: "0 1x10"
       - series: 'marotte_unattended_run_failures_total{job="marotte",instance="a:9847",origin="scheduled",reason="overran"}'
         values: "0 1x10"
       - series: 'marotte_unattended_run_failures_total{job="marotte",instance="a:9847",origin="triggered",reason="orphaned"}'
@@ -347,6 +360,30 @@ tests:
               summary: "marotte stopped an unattended run"
               description: >
                 A triggered run ended as orphaned. overran
+                outlived its slot, backstop spent its time budget, stalled stopped
+                making progress, paused had nobody to resume it, and orphaned was
+                cut off by a restart.
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847", origin: scheduled, reason: backstop}
+            exp_annotations:
+              summary: "marotte stopped an unattended run"
+              description: >
+                A scheduled run ended as backstop. overran
+                outlived its slot, backstop spent its time budget, stalled stopped
+                making progress, paused had nobody to resume it, and orphaned was
+                cut off by a restart.
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847", origin: triggered, reason: stalled}
+            exp_annotations:
+              summary: "marotte stopped an unattended run"
+              description: >
+                A triggered run ended as stalled. overran
+                outlived its slot, backstop spent its time budget, stalled stopped
+                making progress, paused had nobody to resume it, and orphaned was
+                cut off by a restart.
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847", origin: scheduled, reason: paused}
+            exp_annotations:
+              summary: "marotte stopped an unattended run"
+              description: >
+                A scheduled run ended as paused. overran
                 outlived its slot, backstop spent its time budget, stalled stopped
                 making progress, paused had nobody to resume it, and orphaned was
                 cut off by a restart.

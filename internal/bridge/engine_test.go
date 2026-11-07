@@ -163,7 +163,7 @@ func TestEngineExit_ClosesEveryLaneAndFailsEveryPending(t *testing.T) {
 		drain(s.NotifCh(), 2*time.Second)
 	}
 	drain(k.e.EngineNotifCh(), 2*time.Second)
-	if got := k.e.Exit(); got.Reason != ExitEnded || !got.EndedItself() {
+	if got := k.e.Exit(); got.Reason != ExitEnded {
 		t.Errorf("Exit() = %+v, want an engine that ended itself", got)
 	}
 }
@@ -273,7 +273,7 @@ func TestSidecarExitOf_NamesTheCodeOrTheSignal(t *testing.T) {
 func TestEngineStop_RecordsAStopNotAnEnd(t *testing.T) {
 	k := newFakeKAS(t)
 	k.e.Stop()
-	if got := k.e.Exit(); got.Reason != ExitStopped || got.EndedItself() {
-		t.Errorf("Exit() after Stop = %+v, want reason stopped and not ended itself", got)
+	if got := k.e.Exit(); got.Reason != ExitStopped {
+		t.Errorf("Exit() after Stop = %+v, want reason stopped", got)
 	}
 }

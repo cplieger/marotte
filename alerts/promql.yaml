@@ -2,7 +2,8 @@
 # marotte ships no log rules: every alert it recommends is in this file.
 # Scrape marotte's /metrics on port 9847 as job "marotte"; MarotteDown reads
 # that job name. The scraper must call marotte by a name in ALLOWED_HOSTS.
-# The other rules carry no job matcher, so add one if you run several marottes.
+# Each alert carries the scrape's job and instance labels, so several marottes
+# alert separately.
 # Thresholds, for: windows and severity labels are starting points.
 # docs/monitoring.md explains each rule.
 groups:
@@ -139,8 +140,10 @@ groups:
             run. The schedule's row on the Workflows panel shows the last
             reason.
 
-      # The next-due time is in the past for up to a minute after each slot
-      # and while a slot waits on a busy engine, hence the 10-minute margin.
+      # The next-due time is in the past for up to a minute after each slot.
+      # A slot waiting on a busy engine reads the end of its wait, the
+      # schedule's next slot, so a slot 10 minutes overdue means the runner
+      # stopped judging it.
       - alert: MarotteScheduleStalled
         expr: time() > marotte_schedule_next_due_timestamp_seconds + 600
         for: 5m
@@ -150,9 +153,8 @@ groups:
           summary: "A marotte schedule has a slot overdue by over 10 minutes"
           description: >
             A schedule slot fell due over 10 minutes ago and marotte has not
-            started or skipped it. The engine may have been busy all that time,
-            the schedule runner may be stuck, or the schedule's saved state
-            cannot be read.
+            started or skipped it. The schedule runner may be stuck, or the
+            schedule's saved state cannot be read.
 
       - alert: MarotteScheduleSlotNotStarted
         expr: increase(marotte_schedule_slots_not_started_total[24h]) >= 1

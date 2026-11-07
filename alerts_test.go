@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/obs"
+	"github.com/cplieger/marotte/internal/testsupport"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -38,7 +39,6 @@ var shippedAlerts = map[string]string{
 
 type ruleFile struct {
 	Groups []struct {
-		Name  string `yaml:"name"`
 		Rules []struct {
 			Alert string `yaml:"alert"`
 			Expr  string `yaml:"expr"`
@@ -87,6 +87,41 @@ func TestAlerts_everyMatchedLabelValueIsOneThePageServes(t *testing.T) {
 						}
 					}
 				}
+			}
+		})
+	}
+}
+
+// The crash rules leave out exactly the stops marotte asked for, so a new requested-stop cause cannot page as a
+// crash, and an outside stop, which has its own rule.
+func TestAlerts_theCrashRulesLeaveOutExactlyTheRequestedAndOutsideStops(t *testing.T) {
+	rules := readRules(t)
+	var want []string
+	for _, c := range testsupport.PresetLabelValues("marotte_engine_exits_total", "cause") {
+		if obs.RequestedStop(c) {
+			want = append(want, c)
+		}
+	}
+	slices.Sort(want)
+	for _, alert := range []string{"MarotteEngineCrashed", "MarotteEngineCrashLoop"} {
+		t.Run(alert, func(t *testing.T) {
+			var excluded []string
+			outside := false
+			for _, m := range promMatcher.FindAllStringSubmatch(rules[alert], -1) {
+				switch label, op, value := m[1], m[2], m[3]; {
+				case label == "cause" && op == "!~":
+					excluded = append(excluded, strings.Split(value, "|")...)
+				case label == "cause" && op == "!=" && value == "external_stop":
+					outside = true
+				case label == "cause":
+					t.Errorf("unexpected matcher cause%s%q", op, value)
+				}
+			}
+			if got := slices.Sorted(slices.Values(excluded)); !slices.Equal(got, want) {
+				t.Errorf("cause!~ leaves out %v, want exactly the causes obs.RequestedStop accepts %v", got, want)
+			}
+			if !outside {
+				t.Error(`no cause!="external_stop" matcher`)
 			}
 		})
 	}
@@ -147,17 +182,20 @@ func servedPage(t *testing.T) map[string]map[string]map[string]bool {
 		if line = strings.TrimSpace(line); line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		name, rest, _ := strings.Cut(line, " ")
-		name, set, _ := strings.Cut(name, "{")
-		if strings.Contains(name, "{") || strings.HasSuffix(rest, "}") {
-			t.Fatalf("label value with a space in %q", line)
+		series := line[:max(strings.LastIndexByte(line, ' '), 0)]
+		name, set, labeled := strings.Cut(series, "{")
+		if labeled {
+			var ok bool
+			if set, ok = strings.CutSuffix(set, "}"); !ok {
+				t.Fatalf("unparsable series in %q", line)
+			}
 		}
 		labels := out[name]
 		if labels == nil {
 			labels = map[string]map[string]bool{}
 			out[name] = labels
 		}
-		for pair := range strings.SplitSeq(strings.TrimSuffix(set, "}"), ",") {
+		for pair := range strings.SplitSeq(set, ",") {
 			k, v, ok := strings.Cut(pair, "=")
 			if !ok {
 				continue
