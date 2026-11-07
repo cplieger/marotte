@@ -89,6 +89,7 @@ func (s *stepper) rebaseline() {
 	s.rv.generation++
 	es := &s.rv.es
 	es.cursor, es.queue, es.launched, es.superseded = cursor{}, nil, nil, nil
+	s.rv.unreadable = ""
 	s.resetFailures()
 	es.raw.Population = launchrule.Population(&s.def)
 	s.rv.newest, s.rv.label = isNewest(&s.def), labelOf(&s.def)
@@ -118,12 +119,13 @@ func (s *stepper) deleteRule() {
 	}
 }
 
-// resetFailures sets the rule's failure counts to zero and lifts its block, with the row text the block wrote.
+// resetFailures sets the rule's failure counts to zero and lifts its block, with the row text the block wrote,
+// unless the block is an unreadable state file's.
 func (s *stepper) resetFailures() {
 	st := s.status()
 	st.BoundAbandons, st.FailingSince = 0, time.Time{}
 	s.rv.retries, s.rv.retryAt = 0, time.Time{}
-	if st.Blocked != "" {
+	if st.Blocked != "" && s.rv.unreadable == "" {
 		st.Blocked, st.RowText = "", ""
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -114,6 +115,10 @@ func (p *Poller) load(r *launchrule.Rule, f Feed, start time.Time) *pollRule {
 		return nil
 	}
 	es, gen, err := p.c.snapshot(r.ID)
+	if errors.Is(err, errRuleUnreadable) {
+		slog.Debug(logMsgRuleSkipped, "rule_id", r.ID, "error", err)
+		return nil
+	}
 	if err != nil {
 		slog.Error(logMsgStateBad, "rule_id", r.ID, "error", err)
 		return nil

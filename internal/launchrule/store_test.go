@@ -648,35 +648,68 @@ func TestOrphanStateFileReportedNotRemoved(t *testing.T) {
 	}
 }
 
-func TestUnreadableStateFileBlocksRule(t *testing.T) {
-	dir := t.TempDir()
-	st := openStore(t, dir)
-	r, err := st.Create(t.Context(), eventRule("bundled://a", runSpec()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(dir, stateDirName), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for name, body := range map[string]string{
-		"not json":                  `{"status":`,
-		"a queue entry with no key": `{"queue":[{"observed_at":"x"}]}`,
-	} {
+// unreadableBodies are state files that do not parse.
+var unreadableBodies = map[string]string{
+	"not json":                  `{"status":`,
+	"a queue entry with no key": `{"queue":[{"observed_at":"x"}]}`,
+}
+
+// An event rule's unparseable state file is reported to the store's caller, the trigger confirmer, which decides
+// when it is written over; the store's own edits leave it as it is.
+func TestUnreadableEventStateFileReported(t *testing.T) {
+	for name, body := range unreadableBodies {
 		t.Run(name, func(t *testing.T) {
-			path := statePath(dir, r.ID)
-			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			dir := t.TempDir()
+			r, err := openStore(t, dir).Create(t.Context(), eventRule("bundled://a", runSpec()))
+			if err != nil {
 				t.Fatal(err)
 			}
+			path := writeUnreadable(t, dir, r.ID, body)
 			reloaded := openStore(t, dir)
-			_, err := reloaded.State(r.ID)
+			_, err = reloaded.State(r.ID)
 			want := "could not read launch-state/" + r.ID + ".json: "
 			if err == nil || !strings.HasPrefix(err.Error(), want) {
 				t.Errorf("State error = %v, want it to start %q", err, want)
 			}
-			if err := writerOf(reloaded).WriteState(t.Context(), r.ID, &State{}); err == nil {
-				t.Errorf("WriteState overwrote an unreadable state file")
-			}
 			if _, _, err := reloaded.Replace(t.Context(), r.ID, eventRule("bundled://a", runSpec()), 0); err != nil {
+				t.Errorf("Replace of the rule: %v", err)
+			}
+			if got := readFile(t, path); string(got) != body {
+				t.Errorf("Replace changed the unreadable file to %s", got)
+			}
+			fresh := State{Population: "fresh"}
+			if err := writerOf(reloaded).WriteState(t.Context(), r.ID, &fresh); err != nil {
+				t.Fatalf("WriteState over the unreadable file: %v, want it written", err)
+			}
+			if got, err := reloaded.State(r.ID); err != nil || got.Population != "fresh" {
+				t.Errorf("State after the write = %+v, %v; want the written state", got, err)
+			}
+		})
+	}
+}
+
+// A clock rule has no reader above the store, so the store itself blocks one whose state file does not parse.
+func TestUnreadableClockStateFileBlocksRule(t *testing.T) {
+	for name, body := range unreadableBodies {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			r, err := openStore(t, dir).Create(t.Context(), clockRule("bundled://a"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := writeUnreadable(t, dir, r.ID, body)
+			reloaded := openStore(t, dir)
+			want := "could not read launch-state/" + r.ID + ".json: "
+			if _, err := reloaded.State(r.ID); err == nil || !strings.HasPrefix(err.Error(), want) {
+				t.Errorf("State error = %v, want it to start %q", err, want)
+			}
+			if err := writerOf(reloaded).WriteState(t.Context(), r.ID, &State{}); err == nil {
+				t.Errorf("WriteState overwrote an unreadable clock rule's state file")
+			}
+			if err := reloaded.UpdateClock(t.Context(), Row{ID: r.ID}, func(*Status) bool { return true }); err == nil {
+				t.Errorf("UpdateClock wrote an unreadable clock rule's row")
+			}
+			if _, _, err := reloaded.Replace(t.Context(), r.ID, clockRule("bundled://a"), 0); err != nil {
 				t.Errorf("Replace of a blocked rule: %v", err)
 			}
 			if got := readFile(t, path); string(got) != body {
@@ -684,6 +717,18 @@ func TestUnreadableStateFileBlocksRule(t *testing.T) {
 			}
 		})
 	}
+}
+
+func writeUnreadable(t *testing.T, dir, ruleID, body string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, stateDirName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := statePath(dir, ruleID)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestClockRuleDeleteRemovesStateFile(t *testing.T) {

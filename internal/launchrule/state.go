@@ -1,6 +1,7 @@
 package launchrule
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -86,8 +87,9 @@ type Gap struct {
 // Held is the number of events the rule holds.
 func (st *State) Held() int { return len(st.Queue) }
 
-// UnreadableStateError is a rule's state file that would not read or parse at load. The rule stays blocked, and
-// its file untouched, rather than starting over and dropping what the file held.
+// UnreadableStateError is a rule's state file that would not read or parse at load. Its file stays untouched
+// rather than starting over and dropping what it held: the store blocks a clock rule, and reports an event rule's
+// to the trigger confirmer, which blocks it and decides when a write replaces the file.
 type UnreadableStateError struct {
 	Err    error
 	RuleID string
@@ -101,6 +103,7 @@ func (e *UnreadableStateError) Unwrap() error { return e.Err }
 
 // ruleState is one rule's state and the mutex its file's writes run under.
 type ruleState struct {
+	// unreadable is the load error of a state file that would not parse, cleared once a write replaces the file.
 	unreadable error
 	// refused is the load-time refusal of the rule's definition, cleared by a Replace that stores a valid one.
 	refused error
@@ -108,13 +111,17 @@ type ruleState struct {
 	mu      sync.Mutex
 	// gone is set, under mu, once the rule is out of the definitions, so no write after it recreates the file
 	// Delete removes.
-	gone bool
+	gone  bool
+	event bool
 }
 
-// blocked is why the rule may neither fire nor have its state read or written, nil when it may; rs.mu is held.
+// blocked is why the rule may neither fire nor have its state written, nil when it may; rs.mu is held.
 func (rs *ruleState) blocked() error {
 	if rs.refused != nil {
 		return rs.refused
+	}
+	if rs.event {
+		return nil
 	}
 	return rs.unreadable
 }
@@ -176,7 +183,7 @@ func (s *Store) Orphans() map[string]State {
 }
 
 func (s *Store) readState(r *Rule) *ruleState {
-	rs := &ruleState{state: State{Population: Population(r)}}
+	rs := &ruleState{state: State{Population: Population(r)}, event: r.When.Event != nil}
 	data, err := os.ReadFile(s.statePath(r.ID))
 	if errors.Is(err, os.ErrNotExist) {
 		return rs
@@ -208,7 +215,7 @@ func parseState(data []byte) (State, error) {
 }
 
 // State returns a copy of the rule's state: ErrNotFound for no such rule, the refusal of a rule this build
-// refused at load, an *UnreadableStateError for a rule whose file would not load.
+// refused at load, an *UnreadableStateError for a rule whose file would not load until a write replaces it.
 func (s *Store) State(ruleID string) (State, error) {
 	rs, err := s.ruleState(ruleID)
 	if err != nil {
@@ -216,7 +223,7 @@ func (s *Store) State(ruleID string) (State, error) {
 	}
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	if err := rs.blocked(); err != nil {
+	if err := cmp.Or(rs.blocked(), rs.unreadable); err != nil {
 		return State{}, err
 	}
 	return rs.state.clone(), nil
@@ -232,7 +239,8 @@ type StateWriter interface {
 type stateWriter struct{ s *Store }
 
 // WriteState replaces the rule's state file with in, touching no other file. ErrNotFound for no such rule; a
-// blocked rule refuses with what State answers, so its file is never overwritten.
+// refused rule, or a clock rule whose file is unreadable, refuses with what State answers. An event rule's
+// unreadable file is replaced: the caller is the one that decided to.
 func (w stateWriter) WriteState(ctx context.Context, ruleID string, in *State) error {
 	s := w.s
 	rs, err := s.ruleState(ruleID)
@@ -264,7 +272,7 @@ func (s *Store) writeStateLocked(ctx context.Context, ruleID string, rs *ruleSta
 		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700)); err != nil {
 		return fmt.Errorf("write the state of launch rule %s: %w", ruleID, err)
 	}
-	rs.state = *st
+	rs.state, rs.unreadable = *st, nil
 	return nil
 }
 

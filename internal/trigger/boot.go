@@ -56,7 +56,8 @@ func (c *Confirmer) load(leases Leases) {
 
 // boot is E7. A rule launch-rules.json no longer holds is E3 over its file's records. Otherwise each record on disk
 // takes its boot row (A27 to A30) and each triggered lease naming the rule with no record its own (A31, A36);
-// then Q for every queued key with no live record; then E2 when the stored population is the old when's.
+// then Q for every queued key with no live record; then E2 when the stored population is the old when's. A file
+// that would not load leaves the rule blocked and holding nothing.
 func (s *stepper) boot(in *bootLoad) {
 	if !s.held {
 		if in.orphan != nil {
@@ -66,7 +67,14 @@ func (s *stepper) boot(in *bootLoad) {
 		return
 	}
 	es := &s.rv.es
-	s.rv.records = s.loadRecords(es.raw.Attempts)
+	if s.rv.unreadable == "" {
+		s.rv.records = s.loadRecords(es.raw.Attempts)
+	}
+	if s.rv.unreadable != "" {
+		s.rv.es = eventState{cursor: cursor{}}
+		s.status().Blocked = s.rv.unreadable
+		return
+	}
 	for i := range es.queue {
 		es.queue[i].Live = ""
 	}
@@ -142,14 +150,14 @@ func hasLease(leases map[string]runlease.Lease, workflowID string) bool {
 }
 
 // loadRecords is the file's attempts as records: a pending one boot-held until its boot row decides it, an
-// abandoned one cancelled once its cancel landed. A list that does not decode blocks the rule and loads none.
+// abandoned one cancelled once its cancel landed. A list that does not decode makes the rule unreadable.
 func (s *stepper) loadRecords(raw json.RawMessage) []*record {
 	if len(raw) == 0 {
 		return nil
 	}
 	var entries []attemptEntry
 	if err := json.Unmarshal(raw, &entries); err != nil {
-		s.status().Blocked = fmt.Sprintf("could not read launch-state/%s.json: attempts: %v", s.ruleID, err)
+		s.rv.markUnreadable(s.ruleID, fmt.Errorf("attempts: %w", err))
 		return nil
 	}
 	out := make([]*record, 0, len(entries))

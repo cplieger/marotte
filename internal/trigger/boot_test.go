@@ -266,3 +266,55 @@ func TestOrphanStateFileCancelsItsRuns(t *testing.T) {
 		}
 	})
 }
+
+// A rule booted over an unparseable state file holds nothing a poll, an update or the write-failure tick could
+// write over the file.
+func TestUnreadableStateFileSurvivesPollAndTick(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(openedSpec("alice"))
+		bootUnreadable(tc, &r)
+		fr := FeedRules{Feed: Feed{Connection: testConn, Selector: testRepo}, Rules: []launchrule.Rule{r}}
+		NewPoller(issueSource(issue(5, "alice")), tc.Confirmer).Poll(t.Context(), fr)
+		tc.update(r.ID, anyGeneration, func(es *eventState) bool {
+			es.queue = append(es.queue, held("k1", "c1"))
+			return true
+		})
+		tc.writeTick(r.ID)
+		if es := tc.memoryState(r.ID); len(es.cursor) != 0 || len(es.queue) != 0 {
+			t.Errorf("in memory: cursor %d repositories, queue %v; want neither", len(es.cursor), keysOf(es.queue))
+		}
+		assertUnreadable(t, tc, r.ID, unparseable)
+	})
+}
+
+// A file the store parses but whose cursor or attempts do not decode is as unreadable: an edit, which lifts every
+// other block, must not write the rule's empty value over the runs the file names, and a poll skips the rule.
+func TestUndecodableStateFileIsUnreadable(t *testing.T) {
+	for name, body := range map[string]string{
+		"a cursor that does not decode":         `{"cursor":"x","status":{}}`,
+		"an attempts list that does not decode": `{"queue":[{"key":"k1"}],"attempts":{"workflow_id":"wf_1"},"status":{}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			inBubble(t, func(t *testing.T, tc *testConfirmer) {
+				r := tc.createRule(openedSpec("alice"))
+				writeStateBytes(tc, r.ID, body)
+				tc.restart()
+				if n := tc.log.CountExact(logMsgStateUnreadable); n != 1 {
+					t.Errorf("%d ERROR %q lines at the load, want one", n, logMsgStateUnreadable)
+				}
+				edit(tc, &r, 0, func(r *launchrule.Rule) { r.When.Event.Filter.Authors = []string{"bob"} })
+				tc.persist(r.ID)
+				r, _ = tc.store.Get(r.ID)
+				fr := FeedRules{Feed: Feed{Connection: testConn, Selector: testRepo}, Rules: []launchrule.Rule{r}}
+				NewPoller(issueSource(issue(5, "bob")), tc.Confirmer).Poll(t.Context(), fr)
+				if n := tc.log.CountExact(logMsgStateBad); n != 0 {
+					t.Errorf("%d ERROR %q lines at the poll, want none: the load reported the file", n, logMsgStateBad)
+				}
+				if es := tc.memoryState(r.ID); len(es.cursor) != 0 || len(es.queue) != 0 {
+					t.Errorf("in memory: cursor %d repositories, queue %v; want neither", len(es.cursor), keysOf(es.queue))
+				}
+				assertUnreadable(t, tc, r.ID, body)
+			})
+		})
+	}
+}

@@ -113,7 +113,7 @@ func (s *stepper) named(ev *attemptEvent) {
 	es := &s.rv.es
 	i := slices.IndexFunc(es.queue, func(e queueEntry) bool { return e.Key == ev.key })
 	if i < 0 || slices.ContainsFunc(s.rv.records, func(r *record) bool { return r.key == ev.key && r.state.live() }) {
-		rec := &record{workflowID: ev.workflowID, key: ev.key, unpersisted: !s.held}
+		rec := &record{workflowID: ev.workflowID, key: ev.key, unpersisted: !s.held || s.rv.unreadable != ""}
 		s.rv.records = append(s.rv.records, rec)
 		s.abandon(rec, causeNameFailed)
 		s.res.err = ErrAttemptGone

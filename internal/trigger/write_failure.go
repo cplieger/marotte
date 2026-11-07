@@ -8,10 +8,11 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 )
 
-// commit writes the rule's whole value when the row asked for a write and launch-rules.json holds the rule. A
-// failed write is W1 for A1's record, else W2; a landed one lifts the write-failure block and wakes the launcher.
+// commit writes the rule's whole value when the row asked for a write, launch-rules.json holds the rule and its
+// state file is not unreadable. A failed write is W1 for A1's record, else W2; a landed one lifts the write-failure
+// block and wakes the launcher.
 func (s *stepper) commit() {
-	if !s.res.write || !s.held {
+	if !s.res.write || !s.held || s.rv.unreadable != "" {
 		return
 	}
 	if err := s.c.writeLocked(s.ruleID, s.rv); err != nil {

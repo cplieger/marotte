@@ -12,6 +12,7 @@ const (
 	logMsgNotWritten      = "launch rules not written"
 	logMsgRuleSkipped     = "trigger poll skipped a rule"
 	logMsgStateBad        = "trigger poll skipped a rule: its state does not decode"
+	logMsgStateUnreadable = "launch rule blocked: its state file is unreadable"
 	logMsgImpossible      = "attempt table: impossible transition"
 	logMsgRunStarted      = "triggered run started"
 	logMsgRunNotStarted   = "triggered run did not start"
