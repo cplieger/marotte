@@ -1206,11 +1206,15 @@ func TestRefresh_AnUnsyncedSaveIsWrittenAgain(t *testing.T) {
 	h := newHarness(t, fb)
 	h.signIn(fb, approval{cred: credOf(t, staleAccount(h, "alice"))})
 	rotate(h, fb, "rotated")
+	before := saveFailures(t, "cb", "write_failed")
 	h.disk.set(func(d *faultDisk) { d.unsynced = 1 })
 	if a := h.mustAnswer("cb"); a.Token != "rotated" {
 		t.Errorf("answered %q, want the renewal", a.Token)
 	}
 	eventually(t, "a second, durable save", func() bool { return h.disk.writeCount() >= 3 && !h.v.anyDirty() })
+	if got := saveFailures(t, "cb", "write_failed") - before; got != 0 {
+		t.Errorf("write_failed moved by %v, want 0: an unsynced write wrote the file", got)
+	}
 	h.reopen()
 	if a := h.mustAnswer("cb"); a.Token != "rotated" {
 		t.Errorf("after reopen answered %q, want the rotated token", a.Token)
