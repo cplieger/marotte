@@ -98,7 +98,7 @@ func (rt *Runtime) DischargeWaiting(ctx context.Context, chatID marotte.ChatID) 
 // OpenTurn appends the turn_open and creates the registry record together; an answering source
 // discharges the waiting claim.
 func (rt *Runtime) OpenTurn(ctx context.Context, chatID marotte.ChatID, open command.TurnOpen) (string, error) {
-	id, err := rt.coord.OpenTurn(ctx, chatID, open)
+	id, err := rt.coord.openTurn(ctx, chatID, open)
 	if err == nil && open.UserAnswered() {
 		rt.DischargeWaiting(ctx, chatID)
 	}
@@ -107,12 +107,12 @@ func (rt *Runtime) OpenTurn(ctx context.Context, chatID marotte.ChatID, open com
 
 // StartTurn stamps the model and credit baseline onto the turn, with the bridge live, just before the call.
 func (rt *Runtime) StartTurn(ctx context.Context, turn command.TurnRef, cancel context.CancelCauseFunc) bool {
-	return rt.coord.StartTurn(ctx, turn, cancel)
+	return rt.coord.startTurn(ctx, turn, cancel)
 }
 
 // EndPromptCall forgets the turn's call once it returned.
 func (rt *Runtime) EndPromptCall(turn command.TurnRef) {
-	rt.coord.EndPromptCall(turn)
+	rt.coord.endPromptCall(turn)
 }
 
 // LifeStamp is the life gate's position now.
@@ -167,27 +167,27 @@ func (rt *Runtime) ReleaseTurnReservation(res command.Reservation) {
 
 // AwaitTurn blocks until the named turn has finalized and reports what it did.
 func (rt *Runtime) AwaitTurn(ctx context.Context, chatID marotte.ChatID, turnID string) (marotte.TurnResult, error) {
-	return rt.coord.AwaitTurn(ctx, chatID, turnID)
+	return rt.coord.awaitTurn(ctx, chatID, turnID)
 }
 
 // AwaitTurnBound blocks until KAS binds the named turn's prompt or the turn finalizes unbound.
 func (rt *Runtime) AwaitTurnBound(ctx context.Context, chatID marotte.ChatID, turnID string) (bool, error) {
-	return rt.coord.AwaitTurnBound(ctx, chatID, turnID)
+	return rt.coord.awaitTurnBound(ctx, chatID, turnID)
 }
 
 // ReleaseTurn gives up the completion handle OpenTurn issued.
 func (rt *Runtime) ReleaseTurn(chatID marotte.ChatID, turnID string) {
-	rt.coord.ReleaseTurn(chatID, turnID)
+	rt.coord.releaseTurn(chatID, turnID)
 }
 
 // SettleTurnOnResponse closes the turn on its settling response once the queue behind it is consumed, unless turn_end got there first.
 func (rt *Runtime) SettleTurnOnResponse(ctx context.Context, chatID marotte.ChatID, turnID string, seq uint64, resp *marotte.RPCResponse) {
-	rt.coord.SettleTurnOnResponse(ctx, chatID, turnID, seq, resp)
+	rt.coord.settleTurnOnResponse(ctx, chatID, turnID, seq, resp)
 }
 
 // TurnOpenedAfter reports whether any own turn on the chat opened after turnID.
 func (rt *Runtime) TurnOpenedAfter(chatID marotte.ChatID, turnID string) bool {
-	return rt.coord.TurnOpenedAfter(chatID, turnID)
+	return rt.coord.turnOpenedAfter(chatID, turnID)
 }
 
 // TurnIsOpen reports whether turnID is an open, non-finalizing turn of the chat's live lifecycle.
@@ -197,7 +197,7 @@ func (rt *Runtime) TurnIsOpen(chatID marotte.ChatID, turnID string) bool {
 
 // StopRequestedAfter reports whether a stop was requested after turnID opened.
 func (rt *Runtime) StopRequestedAfter(chatID marotte.ChatID, turnID string) bool {
-	return rt.coord.StopRequestedAfter(chatID, turnID)
+	return rt.coord.stopRequestedAfter(chatID, turnID)
 }
 
 // RequestStop records a stop for cause and captures the turns it targets.
@@ -237,7 +237,7 @@ func (rt *Runtime) CancelCompact(ctx context.Context, chatID marotte.ChatID) err
 
 // AbandonInFlightTurn finalizes a turn that failed before it could end.
 func (rt *Runtime) AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatID, turnID string, stop marotte.StopReason, reason string, kind marotte.FailureKind, seq uint64) {
-	rt.coord.AbandonInFlightTurn(ctx, chatID, turnID, stop, reason, kind, seq)
+	rt.coord.abandonInFlightTurn(ctx, chatID, turnID, stop, reason, kind, seq)
 }
 
 // ProviderUnreachable returns the vault's reason while the identity provider gives the engine's account no usable

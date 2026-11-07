@@ -260,7 +260,7 @@ func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 		defer close(settled)
 		h.SettleTurnOnResponse(ctx, chatID, preOpen, 4,
 			&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
-		openedAfterAtSettle = h.coord.TurnOpenedAfter(chatID, preOpen)
+		openedAfterAtSettle = h.coord.turnOpenedAfter(chatID, preOpen)
 	}()
 	waitForParkedSettle(t, h.coord.turns, chatID, preOpen, 4)
 

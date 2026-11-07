@@ -519,8 +519,11 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 		t.Fatalf("the fixture did not produce a floor-adjusted deadline: slot %v, deadline %v",
 			l.SlotAt, l.Deadline)
 	}
+	before := failureCounts(t)
 
 	h.runs.cancelExpired(id, l.Deadline)
+
+	wantFailureDeltas(t, before, map[string]float64{"scheduled/overran": 1})
 
 	if got := h.runs.endReason(id); got != runEndOverran {
 		t.Errorf("endReason = %q, want %q", got, runEndOverran)
@@ -567,8 +570,12 @@ func TestCancelExpiredRun_ARefusedSlotCancelLeavesTheScheduleRowUntouched(t *tes
 	if len(before) != 1 || before[0].LastRunID != id {
 		t.Fatalf("the lease grant did not record the run's start on its row: %+v", before)
 	}
+	counted := failureCounts(t)
 
 	h.runs.cancelExpired(id, l.Deadline)
+
+	// The run still executes, so nothing has failed yet.
+	wantFailureDeltas(t, counted, nil)
 
 	if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
 		t.Fatal("the slot's cancel was never attempted, so the fixture cannot show a refusal")
@@ -601,8 +608,12 @@ func TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure(t *test
 		launchOrigin{origin: runlease.OriginManual, slotAt: time.Now().Add(10 * time.Minute)}, hostSec())
 	h.runs.armDeadline(t.Context(), id)
 	l, _ := h.runs.lease(id)
+	before := failureCounts(t)
 
 	h.runs.cancelExpired(id, l.Deadline)
+
+	// Someone launched it, so it is no unattended failure.
+	wantFailureDeltas(t, before, nil)
 
 	if got := h.runs.endReason(id); got != runEndOverran {
 		t.Errorf("endReason = %q, want %q; the run did run past its bound", got, runEndOverran)

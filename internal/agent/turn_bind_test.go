@@ -51,11 +51,11 @@ func TestWireTurnStart_TheEchoedTagBindsThePrompt(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	id, _ := h.stagePromptTurn(t, chatID)
-	defer h.coord.ReleaseTurn(chatID, id)
+	defer h.coord.releaseTurn(chatID, id)
 
 	h.translateACPEvent(chatID, h.originOf(chatID), newPromptTurnStartMsg(id))
 
-	if h.coord.TurnOpenedAfter(chatID, id) {
+	if h.coord.turnOpenedAfter(chatID, id) {
 		t.Error("the bracket opened a SECOND turn instead of binding to the prompt's")
 	}
 	if own, _ := ownID(h, chatID); own != id {
@@ -106,7 +106,7 @@ func TestWireTurnStart_ABracketWithoutThePromptsTagOpensTheAgentsTurn(t *testing
 			h, cs, _ := newTestHub()
 			const chatID marotte.ChatID = "c1"
 			prompt, _ := h.stagePromptTurn(t, chatID)
-			defer h.coord.ReleaseTurn(chatID, prompt)
+			defer h.coord.releaseTurn(chatID, prompt)
 
 			h.translateACPEvent(chatID, h.originOf(chatID), start)
 			h.translateACPEvent(chatID, h.originOf(chatID), newChunkMsg("the agent woke itself"))
@@ -133,7 +133,7 @@ func TestWireTurnStart_ABracketWithoutThePromptsTagOpensTheAgentsTurn(t *testing
 			}
 
 			h.translateACPEvent(chatID, h.originOf(chatID), newTurnEndMsg("end_turn"))
-			result, err := h.coord.AwaitTurn(t.Context(), chatID, prompt)
+			result, err := h.coord.awaitTurn(t.Context(), chatID, prompt)
 			if err != nil {
 				t.Fatalf("AwaitTurn(prompt): %v", err)
 			}
@@ -153,7 +153,7 @@ func TestWireTurnStart_AnAgentRunAbortedBeforeContentLeavesThePromptOpen(t *test
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	prompt, _ := h.stagePromptTurn(t, chatID)
-	defer h.coord.ReleaseTurn(chatID, prompt)
+	defer h.coord.releaseTurn(chatID, prompt)
 
 	h.translateACPEvent(chatID, h.originOf(chatID), newTurnStartMsg())
 	h.translateACPEvent(chatID, h.originOf(chatID), newTurnEndMsg("cancelled"))
@@ -165,7 +165,7 @@ func TestWireTurnStart_AnAgentRunAbortedBeforeContentLeavesThePromptOpen(t *test
 	h.translateACPEvent(chatID, h.originOf(chatID), newChunkMsg("the answer to the prompt"))
 	h.translateACPEvent(chatID, h.originOf(chatID), newTurnEndMsg("end_turn"))
 
-	result, err := h.coord.AwaitTurn(t.Context(), chatID, prompt)
+	result, err := h.coord.awaitTurn(t.Context(), chatID, prompt)
 	if err != nil {
 		t.Fatalf("AwaitTurn(prompt): %v", err)
 	}
@@ -186,8 +186,8 @@ func TestPreOpen_IsRetiredWhenItFinalizes(t *testing.T) {
 	h, _, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
 	failed, _ := h.stagePromptTurn(t, chatID)
-	h.coord.AbandonInFlightTurn(t.Context(), chatID, failed, marotte.StopReasonInterrupted, "the pipe died", "", 0)
-	h.coord.ReleaseTurn(chatID, failed)
+	h.coord.abandonInFlightTurn(t.Context(), chatID, failed, marotte.StopReasonInterrupted, "the pipe died", "", 0)
+	h.coord.releaseTurn(chatID, failed)
 
 	if _, ok := pendingID(h, chatID); ok {
 		t.Fatal("a finalized prompt turn is still the binding candidate, so the NEXT prompt's bracket would acknowledge a dead turn")
@@ -195,12 +195,12 @@ func TestPreOpen_IsRetiredWhenItFinalizes(t *testing.T) {
 
 	// The next prompt gets its own bracket and outcome.
 	next, _ := h.stagePromptTurn(t, chatID)
-	defer h.coord.ReleaseTurn(chatID, next)
+	defer h.coord.releaseTurn(chatID, next)
 	h.translateACPEvent(chatID, h.originOf(chatID), newPromptTurnStartMsg(next))
 	h.translateACPEvent(chatID, h.originOf(chatID), newChunkMsg("the second answer"))
 	h.translateACPEvent(chatID, h.originOf(chatID), newTurnEndMsg("refusal"))
 
-	result, err := h.coord.AwaitTurn(t.Context(), chatID, next)
+	result, err := h.coord.awaitTurn(t.Context(), chatID, next)
 	if err != nil {
 		t.Fatalf("AwaitTurn: %v", err)
 	}

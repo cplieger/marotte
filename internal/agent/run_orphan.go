@@ -13,6 +13,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/obs"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/workflow"
 )
@@ -23,6 +24,8 @@ const orphanSweepBudget = 2 * time.Minute
 const leaseAbsenceBudget = 6 * time.Hour
 
 const reasonLeaseAbsent = "no terminal signal was seen and the run stayed absent for 6 hours"
+
+const reasonRunNotFound = "the run was gone after the server restarted, so how it ended is unknown"
 
 // reasonOrphaned is the schedule row's reason for a run swept after its process died; the next slot is the recovery.
 const reasonOrphaned = "stopped because the server restarted while it was running. Run it again, or wait for the next slot"
@@ -190,27 +193,42 @@ func (rs *Runs) reconcileLeasePresence(ctx context.Context, status map[string]ma
 			continue
 		}
 
-		if inspectAbsent && rs.inspectConfirmsGone(ctx, l.WorkflowID) {
-			slog.Info("boot: releasing the lease of a run inspect confirmed is over",
-				"workflow_id", l.WorkflowID, "recipe", l.Recipe)
-			rs.forgetBounds(ctx, l.WorkflowID)
-			continue
+		if inspectAbsent {
+			if ending, gone := rs.inspectGone(ctx, l.WorkflowID); gone {
+				slog.Info(goneLeaseMessage(ending), "workflow_id", l.WorkflowID, "recipe", l.Recipe)
+				rs.recordSlotEnding(ctx, ruleRun(l), ending)
+				rs.forgetBounds(ctx, l.WorkflowID)
+				continue
+			}
 		}
 		rs.observeAbsentLease(ctx, l, now)
 	}
 }
 
-// inspectConfirmsGone asks KAS about one absent run; any failure but workflowNotFound leaves the lease.
-func (rs *Runs) inspectConfirmsGone(ctx context.Context, workflowID string) bool {
+// goneLeaseMessage words the boot line for releasing an absent run's lease: a terminal reply confirmed the run is
+// over, while an unknown ending means the engine no longer knows the run.
+func goneLeaseMessage(ending launchrule.Outcome) string {
+	if ending.Status == launchrule.StatusUnknown {
+		return "boot: releasing the lease of a run the engine no longer knows"
+	}
+	return "boot: releasing the lease of a run inspect confirmed is over"
+}
+
+// inspectGone asks KAS about one absent run and reports whether it is over, with its slot's ending: a terminal
+// reply's, or unknown when KAS no longer knows the run. Any other failure leaves the lease.
+func (rs *Runs) inspectGone(ctx context.Context, workflowID string) (launchrule.Outcome, bool) {
 	raw, err := rs.rawInspect(ctx, workflowID)
 	if err != nil {
-		return workflowNotFound(err)
+		if workflowNotFound(err) {
+			return launchrule.Outcome{Status: launchrule.StatusUnknown, Reason: reasonRunNotFound}, true
+		}
+		return launchrule.Outcome{}, false
 	}
 	var res inspectRunState
-	if json.Unmarshal(raw, &res) != nil {
-		return false
+	if json.Unmarshal(raw, &res) != nil || res.WorkflowID != workflowID || !res.State.Status.Terminal() {
+		return launchrule.Outcome{}, false
 	}
-	return res.WorkflowID == workflowID && res.State.Status.Terminal()
+	return runEnding(res.State.Status, res.State.StopReason), true
 }
 
 // workflowNotFound reports KAS's WorkflowNotFoundError from a search that covered every session (kiro-cli 2.37.0
@@ -294,6 +312,7 @@ func (rs *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease) bool {
 	// ERROR: the restart lost a run someone asked for.
 	slog.Error(logMsgRunOrphaned, "workflow_id", l.WorkflowID, "recipe", l.Recipe,
 		"origin", string(l.Origin), "schedule_id", l.ScheduleID, "rule_id", l.RuleID)
+	countUnattendedFailure(l, obs.RunOrphaned)
 	// The schedule's row too, or every later slot is refused as an overlap.
 	rs.recordScheduleOutcome(ctx, ruleRun(l), launchrule.Outcome{Status: launchrule.StatusFailed, Reason: orphanedReason(l)})
 	rs.forgetBounds(ctx, l.WorkflowID)

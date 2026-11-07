@@ -253,7 +253,7 @@ func TestSessionLoad_ABlankLoadUnderAPromptSendsThePromptToTheNewSession(t *test
 	if err != nil {
 		t.Fatalf("OpenTurn: %v", err)
 	}
-	t.Cleanup(func() { h.coord.ReleaseTurn(chatID, turnID) })
+	t.Cleanup(func() { h.coord.releaseTurn(chatID, turnID) })
 
 	if _, err := h.coord.openBridge(t.Context(), chatID, ""); err != nil {
 		t.Fatalf("openBridge: %v", err)

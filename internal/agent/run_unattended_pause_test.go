@@ -56,6 +56,7 @@ func TestScheduledRun_APauseNobodyResumesEndsTheRun(t *testing.T) {
 			fastUnattendedPause(t)
 			h, br, st, entry := scheduledHub(t)
 			br.callResults[methodKiroWorkflowInspect] = tc.inspect(t)
+			before := failureCounts(t)
 			leaseScheduledWithSlot(t, h, br, &entry, gateRunID, time.Hour)
 			h.runs.armDeadline(t.Context(), gateRunID)
 
@@ -72,6 +73,8 @@ func TestScheduledRun_APauseNobodyResumesEndsTheRun(t *testing.T) {
 				t.Errorf("the end did not log %q: %s", logMsgRunPausedUnattended, out)
 			}
 			row := awaitEndedRow(t, st)
+			awaitFailureDelta(t, before, "scheduled/paused", 1)
+			wantFailureDeltas(t, before, map[string]float64{"scheduled/paused": 1})
 			if tc.wantQuoted == "" {
 				if row.LastStatus != launchrule.StatusFailed || row.LastReason != reasonPausedFault {
 					t.Errorf("the row reads (%q, %q), want (failed, %q)", row.LastStatus, row.LastReason, reasonPausedFault)

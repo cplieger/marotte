@@ -60,6 +60,9 @@ type Status struct {
 	// Gaps are an event rule's stretches in which runs may have been missed, kept until the operator dismisses them.
 	Gaps          []Gap `json:"gaps,omitempty"`
 	BoundAbandons int   `json:"bound_abandons,omitempty"`
+	// FailedSlots is a clock rule's count of consecutive slots that ended other than completed; a completed slot sets
+	// it back to 0. A slot missed while marotte was down records no outcome, so it does not count.
+	FailedSlots int `json:"failed_slots,omitempty"`
 }
 
 // The causes of a Gap.

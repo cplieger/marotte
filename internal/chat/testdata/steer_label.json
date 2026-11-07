@@ -63,7 +63,7 @@
       "label": "Workflow result",
       "sites": [
         "internal/agent/run_appender.go:197",
-        "internal/agent/run_bounds.go:506",
+        "internal/agent/run_bounds.go:507",
         "internal/agent/run_plan.go:116",
         "internal/translate/steering.go:130",
         "internal/translate/steering.go:272"
@@ -274,7 +274,7 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/run_bounds.go:506",
+      "site": "internal/agent/run_bounds.go:507",
       "form": "literal",
       "origin": "agent",
       "state": "read",

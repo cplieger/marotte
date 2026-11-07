@@ -64,9 +64,9 @@ type Spec struct {
 	Minute int `json:"minute"`
 }
 
-// Validate reports whether the spec is well-formed. The store calls it on every write so the
+// validate reports whether the spec is well-formed. The store calls it on every write so the
 // clock runner can trust a stored spec.
-func (s Spec) Validate() error {
+func (s Spec) validate() error {
 	if s.Minute < 0 || s.Minute > 59 {
 		return fmt.Errorf("minute %d out of range 0-59", s.Minute)
 	}
@@ -124,7 +124,7 @@ func (s Spec) validateHour() error {
 // scans forward a day at a time, so all calendar arithmetic (month lengths, leap years,
 // DST) is delegated to time.Date.
 func NextRun(s Spec, after time.Time) (time.Time, error) {
-	if err := s.Validate(); err != nil {
+	if err := s.validate(); err != nil {
 		return time.Time{}, err
 	}
 	day := startOfDay(after)

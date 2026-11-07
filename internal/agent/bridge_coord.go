@@ -1303,10 +1303,10 @@ func (bc *bridgeCoordinator) reportNoSubscribers(kind marotte.PushKind, subj mar
 		"chat_id", subj.ChatID, "subject", subj.Key, "kind", string(kind))
 }
 
-// SettleTurnOnResponse closes turnID's turn on its settling response once the folder has
+// settleTurnOnResponse closes turnID's turn on its settling response once the folder has
 // consumed everything queued before it, unless the wire's turn_end got there first. seq
 // is the response's read-loop position; zero skips the wait.
-func (bc *bridgeCoordinator) SettleTurnOnResponse(ctx context.Context, chatID marotte.ChatID, turnID string, seq uint64, resp *marotte.RPCResponse) {
+func (bc *bridgeCoordinator) settleTurnOnResponse(ctx context.Context, chatID marotte.ChatID, turnID string, seq uint64, resp *marotte.RPCResponse) {
 	bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerPromptResponse, Resp: resp, Turn: turnID, Seq: seq})
 }
 
@@ -1647,10 +1647,10 @@ func (bc *bridgeCoordinator) persistModelPick(ctx context.Context, chatID marott
 	bc.rememberPick(ctx, &mv)
 }
 
-// AbandonInFlightTurn closes a turn its prompt call could not finish. It waits for no
+// abandonInFlightTurn closes a turn its prompt call could not finish. It waits for no
 // read-loop position: no bracket is coming. Only `interrupted` or `cancelled` are legal
 // stops; anything else becomes `interrupted` with a Warn.
-func (bc *bridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatID, turnID string, stop marotte.StopReason, reason string, kind marotte.FailureKind, seq uint64) {
+func (bc *bridgeCoordinator) abandonInFlightTurn(ctx context.Context, chatID marotte.ChatID, turnID string, stop marotte.StopReason, reason string, kind marotte.FailureKind, seq uint64) {
 	if stop != marotte.StopReasonInterrupted && stop != marotte.StopReasonCancelled {
 		slog.Warn("a prompt failure named a stop this close cannot conclude, so it concludes interrupted",
 			"chat_id", chatID, "turn", turnID, "stop", stop)
