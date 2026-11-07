@@ -18,7 +18,14 @@ import { composerDraft, restoreFailedSend, restoreRefusedEdit } from "./composer
 import { addAttachmentTo, removeAttachmentFrom } from "./attachments.js";
 import { confirm } from "./confirm.js";
 import { chatNotice, subjectName } from "./notice-subject.js";
-import { ICON_ARROW_UP, ICON_COMPACT, ICON_HOURGLASS, ICON_EDIT, ICON_QUEUE, ICON_TRASH } from "./icons.js";
+import {
+  ICON_ARROW_UP,
+  ICON_COMPACT,
+  ICON_HOURGLASS,
+  ICON_EDIT,
+  ICON_QUEUE,
+  ICON_TRASH,
+} from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { sentBy } from "./sent-by.js";
 import { wireSignature } from "./paint-sig.js";
