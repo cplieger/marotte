@@ -1,6 +1,7 @@
 // The composer band's run bar: one line per live workflow run the ACTIVE chat launched.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { page } from "vitest/browser";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 // The graph reaches the shared DOM registry, which throws on a missing element. Every id has to
@@ -135,6 +136,31 @@ function rowStates(): string[] {
 
 function rowText(sel: string): string[] {
   return [...bar.querySelectorAll(sel)].map((n) => n.textContent ?? "");
+}
+
+/** A CSS length resolved to pixels inside the run bar's box. */
+function lengthPx(expr: string): number {
+  const probe = document.createElement("div");
+  probe.style.inlineSize = expr;
+  runHost.appendChild(probe);
+  const px = probe.getBoundingClientRect().width;
+  probe.remove();
+  return px;
+}
+
+/** A control's press target: its padding box grown by its `::after` expander's used insets. */
+function hitBox(el: HTMLElement): DOMRect {
+  const cs = getComputedStyle(el, "::after");
+  const out = (v: string): number => Math.max(0, -(parseFloat(v) || 0));
+  const b = el.getBoundingClientRect();
+  const left = b.left + el.clientLeft - out(cs.left);
+  const top = b.top + el.clientTop - out(cs.top);
+  return new DOMRect(
+    left,
+    top,
+    el.clientWidth + out(cs.left) + out(cs.right),
+    el.clientHeight + out(cs.top) + out(cs.bottom),
+  );
 }
 
 /** Run the list's own fold slide to its end, then let the settle it resolves run. */
@@ -297,17 +323,15 @@ describe("the run bar", () => {
     localStorage.removeItem("marotte.ui-state");
   });
 
-  it("lists two runs without a summary row", async () => {
+  it("lists one run without a summary row", async () => {
     const c = chatID();
     chats.push(c);
-    for (const n of ["p1", "p2"]) {
-      const id = runID(n);
-      inspect.set(id, state({ display_name: id }));
-      live(id, c);
-    }
+    const id = runID("p1");
+    inspect.set(id, state({ display_name: id }));
+    live(id, c);
     await activate(c);
     expect(fold.hidden).toBe(true);
-    expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(2);
+    expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(1);
     expect(bar.hasAttribute("data-folded")).toBe(false);
   });
 
@@ -1084,15 +1108,14 @@ describe("the run bar's fold motion", () => {
     expect(parseFloat(String(end))).toBe(bar.getBoundingClientRect().height);
   });
 
-  it("cuts a close under way when the fold row leaves, and shows the runs left", async () => {
-    const { toggle } = await folded(3);
-    toggle.click();
-    await finishSlides();
+  it("cuts a close under way when the fold row leaves, and shows the run left", async () => {
+    const { toggle } = await folded(2);
+    expect(toggle.getAttribute("aria-expanded"), "two runs start open").toBe("true");
     toggle.click();
     heightSlides()[0]?.pause();
     noteRunSettled(runs.at(-1) ?? "");
     await new Promise((r) => setTimeout(r, 0));
-    expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(2);
+    expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(1);
     expect(fold.hidden).toBe(true);
     expect(heightSlides()).toHaveLength(0);
     expect(bar.hasAttribute("data-folded")).toBe(false);
@@ -1196,31 +1219,152 @@ describe("Pause all and Resume all", () => {
   it("offers Pause all, with a tooltip, while a listed run is running", async () => {
     const c = chatID();
     chats.push(c);
-    await mount(c, { [runID("one")]: running("one") });
+    await mount(c, { [runID("one")]: running("one"), [runID("two")]: running("two") });
     const btn = batchButton();
     expect(btn?.getAttribute("aria-label")).toBe("Pause all");
     expect(btn?.dataset["tooltip"] ?? "").not.toBe("");
   });
 
-  it("puts the button on the first run's line below the fold, and on the fold row from three runs", async () => {
+  it("moves the button from the header to the run left when a second run leaves, and back when one arrives", async () => {
     localStorage.removeItem("marotte.ui-state");
     const c = chatID();
     chats.push(c);
-    const [a, b, d] = [runID("a"), runID("b"), runID("d")];
+    const [a, b] = [runID("a"), runID("b")];
     await mount(c, { [a]: running("a"), [b]: running("b") });
-    const rows = (): HTMLElement[] => [...bar.querySelectorAll<HTMLElement>("li.run-bar-row")];
-    expect(rows()[0]?.contains(batchButton())).toBe(true);
-    expect(rows()[1]?.querySelector(".run-bar-all")).toBeNull();
+    const btn = batchButton();
+    expect(fold.hidden).toBe(false);
+    expect(fold.contains(btn)).toBe(true);
+    expect(bar.querySelector(".run-bar-all")).toBeNull();
 
-    inspect.set(d, running("d"));
-    live(d, c);
+    noteRunSettled(b);
+    await vi.waitFor(() => {
+      expect(fold.hidden).toBe(true);
+    });
+    expect(batchButton(), "the same button").toBe(btn);
+    expect(bar.querySelector("li.run-bar-row")?.contains(btn)).toBe(true);
+    expect(btn?.getAttribute("aria-label")).toBe("Pause");
+
+    inspect.set(b, running("b"));
+    live(b, c);
     await vi.waitFor(() => {
       expect(fold.hidden).toBe(false);
     });
     expect(fold.contains(batchButton())).toBe(true);
-    expect(bar.querySelector(".run-bar-all")).toBeNull();
+    expect(batchButton()?.getAttribute("aria-label")).toBe("Pause all");
     localStorage.removeItem("marotte.ui-state");
   });
+
+  it("hands the keyboard from the header's toggle to the run left when the header goes", async () => {
+    localStorage.removeItem("marotte.ui-state");
+    const c = chatID();
+    chats.push(c);
+    const [a, b] = [runID("fa"), runID("fb")];
+    await mount(c, { [a]: running("a"), [b]: running("b") });
+    const toggle = fold.querySelector<HTMLElement>(".run-bar-toggle");
+    toggle?.focus();
+    expect(document.activeElement, "focused on the header").toBe(toggle);
+
+    noteRunSettled(b);
+    await vi.waitFor(() => {
+      expect(fold.hidden).toBe(true);
+    });
+    expect(document.activeElement).toBe(bar.querySelector(".run-bar-open"));
+    localStorage.removeItem("marotte.ui-state");
+  });
+
+  it("keeps the keyboard on the batch button as it moves between the header and the run's row", async () => {
+    localStorage.removeItem("marotte.ui-state");
+    const c = chatID();
+    chats.push(c);
+    const [a, b] = [runID("ka"), runID("kb")];
+    await mount(c, { [a]: running("a"), [b]: running("b") });
+    const btn = batchButton();
+    btn?.focus();
+    expect(document.activeElement, "focused on the header").toBe(btn);
+
+    noteRunSettled(b);
+    await vi.waitFor(() => {
+      expect(fold.hidden).toBe(true);
+    });
+    expect(bar.contains(btn)).toBe(true);
+    expect(document.activeElement, "on the button in the run's row").toBe(btn);
+
+    inspect.set(b, running("b"));
+    live(b, c);
+    await vi.waitFor(() => {
+      expect(fold.hidden).toBe(false);
+    });
+    expect(fold.contains(btn)).toBe(true);
+    expect(document.activeElement, "on the button in the header").toBe(btn);
+    localStorage.removeItem("marotte.ui-state");
+  });
+
+  it("pauses the one run from the button at its row's right, without opening its tab", async () => {
+    const c = chatID();
+    chats.push(c);
+    const id = runID("solo");
+    await mount(c, { [id]: running("solo") });
+    after.set(id, pausedBy("solo"));
+    const btn = batchButton();
+    expect(fold.hidden, "no header").toBe(true);
+    expect(bar.querySelector("li.run-bar-row")?.contains(btn)).toBe(true);
+    expect(btn?.getAttribute("aria-label")).toBe("Pause");
+
+    btn?.click();
+    await vi.waitFor(() => {
+      expect(batchButton()?.getAttribute("aria-label")).toBe("Resume");
+    });
+    expect(posts).toEqual([`${id} pause`]);
+    expect(rowStates()).toEqual(["waiting"]);
+    expect(openRunView).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  // The one run's button resumes exactly what Resume all would.
+  for (const [name, make] of [
+    ["paused by the reader", (n: string) => pausedBy(n)],
+    ["paused by the parent", (n: string) => pausedBy(n, PARENT_PAUSE)],
+    ["paused after rate-limit retries", (n: string) => throttled(n)],
+  ] as const) {
+    it(`resumes the one run ${name}`, async () => {
+      const c = chatID();
+      chats.push(c);
+      const id = runID("solo-parked");
+      await mount(c, { [id]: make("solo") });
+      after.set(id, running("solo"));
+      const btn = batchButton();
+      expect(btn?.getAttribute("aria-label")).toBe("Resume");
+      btn?.click();
+      await vi.waitFor(() => {
+        expect(batchButton()?.getAttribute("aria-label")).toBe("Pause");
+      });
+      expect(posts).toEqual([`${id} resume`]);
+    });
+  }
+
+  for (const [name, make] of [
+    [
+      "paused while its step waits for an answer",
+      (n: string) => ({ ...pausedBy(n), controls: { verbs: ["cancel"] } }),
+    ],
+    [
+      "at a loop's pass limit",
+      (n: string) => ({
+        ...pausedBy(n),
+        pause: { kind: "maxIterations", nodeId: "loop", maxIterations: 4, iterationsRun: 4 },
+        controls: { verbs: ["extend", "finish_loop", "cancel"], pause_node_id: "loop" },
+      }),
+    ],
+  ] as const) {
+    it(`offers no resume on the one run ${name}`, async () => {
+      const c = chatID();
+      chats.push(c);
+      const id = runID("solo-stuck");
+      await mount(c, { [id]: make("solo") });
+      expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(1);
+      expect(batchButton()).toBeNull();
+    });
+  }
 
   it("pauses every running listed run at once, and no other run", async () => {
     const c = chatID();
@@ -1369,7 +1513,10 @@ describe("Pause all and Resume all", () => {
   it("offers Resume all when only a rate-limited run is paused", async () => {
     const c = chatID();
     chats.push(c);
-    await mount(c, { [runID("limited")]: throttled("limited") });
+    await mount(c, {
+      [runID("limited")]: throttled("limited"),
+      [runID("limited-2")]: throttled("limited-2"),
+    });
     expect(batchButton()?.getAttribute("aria-label")).toBe("Resume all");
   });
 
@@ -1377,12 +1524,11 @@ describe("Pause all and Resume all", () => {
   it("offers Resume all for a self-paused run whose detail names an empty class", async () => {
     const c = chatID();
     chats.push(c);
-    await mount(c, {
-      [runID("blank")]: {
-        ...throttled("blank"),
-        pauseDetail: { class: "", code: "ServiceUnavailable" },
-      },
+    const blank = (name: string): Record<string, unknown> => ({
+      ...throttled(name),
+      pauseDetail: { class: "", code: "ServiceUnavailable" },
     });
+    await mount(c, { [runID("blank")]: blank("blank"), [runID("blank-2")]: blank("blank-2") });
     expect(batchButton()?.getAttribute("aria-label")).toBe("Resume all");
   });
 
@@ -1445,21 +1591,217 @@ describe("Pause all and Resume all", () => {
     const c = chatID();
     chats.push(c);
     const id = runID("ends-pause");
-    await mount(c, { [id]: running("x") });
-    expect(batchButton()).not.toBeNull();
-    inspect.set(
-      id,
+    const stuck = (name: string): Record<string, unknown> =>
       state({
-        display_name: "x",
+        display_name: name,
         status: "paused",
         root: pausedRoot,
         controls: { verbs: ["cancel"] },
-      }),
-    );
+      });
+    await mount(c, { [id]: running("x"), [runID("ends-held")]: stuck("y") });
+    expect(batchButton()).not.toBeNull();
+    inspect.set(id, stuck("x"));
     invalidateRun(id);
     await vi.waitFor(() => {
-      expect(rowStates()).toEqual(["waiting"]);
+      expect(rowStates()).toEqual(["waiting", "waiting"]);
     });
     expect(batchButton()).toBeNull();
+  });
+
+  // One run needs no recap and no batch control. From two runs the header row shows the recap, the fold toggle and the
+  // batch button at its right end.
+  describe("the header row", () => {
+    let style: HTMLStyleElement;
+
+    beforeEach(() => {
+      localStorage.removeItem("marotte.ui-state");
+      style = mountAppCSS();
+    });
+
+    afterEach(() => {
+      style.remove();
+      localStorage.removeItem("marotte.ui-state");
+    });
+
+    // A live run reports credits, which gives the rows their credits column.
+    const billed =
+      (base: (name: string) => Record<string, unknown>) =>
+      (name: string): Record<string, unknown> => {
+        const st = base(name);
+        const root = st["root"] as Record<string, unknown>;
+        return { ...st, root: { ...root, credits: [{ usage: 1.25, unit: "credit" }] } };
+      };
+
+    async function mountN(
+      n: number,
+      make: (name: string) => Record<string, unknown>,
+    ): Promise<void> {
+      const c = chatID();
+      chats.push(c);
+      const set: Record<string, Record<string, unknown>> = {};
+      for (let i = 0; i < n; i++) {
+        set[runID(`h${String(i)}`)] = make(`header-run-${String(i)}`);
+      }
+      await mount(c, set);
+    }
+
+    function toggleEl(): HTMLElement {
+      const t = fold.querySelector<HTMLElement>(".run-bar-toggle");
+      if (t === null || fold.hidden) {
+        throw new Error("no header row");
+      }
+      return t;
+    }
+
+    /** The batch button sits on the header's line, right of the recap, at the box's top right, above every run. */
+    function expectOnHeader(btn: HTMLButtonElement | null): void {
+      if (btn === null) {
+        throw new Error("no batch button");
+      }
+      expect(fold.contains(btn), "inside the header row").toBe(true);
+      const t = toggleEl().getBoundingClientRect();
+      const r = btn.getBoundingClientRect();
+      const mid = (r.top + r.bottom) / 2;
+      expect(r.left, "right of the recap").toBeGreaterThanOrEqual(t.right - 0.5);
+      expect(mid, "on the recap's line").toBeGreaterThanOrEqual(t.top - 0.5);
+      expect(mid, "on the recap's line").toBeLessThanOrEqual(t.bottom + 0.5);
+      expect(
+        runHost.getBoundingClientRect().right - r.right,
+        "at the box's end inset",
+      ).toBeLessThan(12);
+      for (const row of bar.querySelectorAll<HTMLElement>("li.run-bar-row")) {
+        if (row.checkVisibility()) {
+          expect(row.getBoundingClientRect().top, "below the header").toBeGreaterThanOrEqual(
+            r.bottom - 0.5,
+          );
+        }
+      }
+    }
+
+    for (const [pointer, width] of [
+      ["fine", 1280],
+      ["coarse", 1280],
+      ["coarse", 390],
+    ] as const) {
+      it(`renders 1 run with no header, and a Pause/Resume button at the right of its row, ${pointer} at ${String(width)}px`, async () => {
+        await page.viewport(width, 844);
+        document.documentElement.setAttribute("data-pointer", pointer);
+        try {
+          for (const [make, label] of [
+            [billed(running), "Pause"],
+            [billed(pausedBy), "Resume"],
+          ] as const) {
+            await mountN(1, make);
+            const rows = bar.querySelectorAll<HTMLElement>("li.run-bar-row");
+            expect(rows).toHaveLength(1);
+            expect(fold.checkVisibility(), "no header row").toBe(false);
+            const btn = batchButton();
+            expect(btn?.getAttribute("aria-label")).toBe(label);
+            expect(btn?.checkVisibility(), label).toBe(true);
+            const row = rows[0]!;
+            expect(row.contains(btn), "in the run's own row").toBe(true);
+            const r = btn!.getBoundingClientRect();
+            const li = row.getBoundingClientRect();
+            const open = row.querySelector<HTMLElement>(".run-bar-open")!.getBoundingClientRect();
+            expect(r.height, "painted at --btn-h").toBeCloseTo(lengthPx("var(--btn-h)"), 0);
+            expect(r.left, "right of the run's line").toBeGreaterThanOrEqual(open.right - 0.5);
+            expect(li.right - r.right, "at the row's right end").toBeLessThan(5);
+            expect(r.top, "on the run's line").toBeGreaterThanOrEqual(li.top - 0.5);
+            expect(r.bottom, "on the run's line").toBeLessThanOrEqual(li.bottom + 0.5);
+            expect(
+              Math.abs((r.top + r.bottom) / 2 - (li.top + li.bottom) / 2),
+              "centred in the row",
+            ).toBeLessThanOrEqual(0.5);
+            const hit = hitBox(btn!);
+            const floor = lengthPx("var(--hit-floor)");
+            expect(hit.width, "target width").toBeGreaterThanOrEqual(floor - 0.5);
+            expect(hit.height, "target height").toBeGreaterThanOrEqual(floor - 0.5);
+            // The list clips at its edges, so the whole target must sit inside it to be pressable.
+            const list = bar.getBoundingClientRect();
+            expect(hit.right).toBeLessThanOrEqual(list.right + 0.5);
+            expect(hit.top).toBeGreaterThanOrEqual(list.top - 0.5);
+            expect(hit.bottom).toBeLessThanOrEqual(list.bottom + 0.5);
+            expect(hit.left, "clear of the run's line").toBeGreaterThanOrEqual(open.right - 0.5);
+            for (const id of runs.splice(0)) {
+              noteRunSettled(id);
+            }
+            await new Promise((r) => setTimeout(r, 0));
+          }
+        } finally {
+          document.documentElement.removeAttribute("data-pointer");
+          await page.viewport(1280, 720);
+        }
+      });
+    }
+
+    for (const n of [2, 3]) {
+      it(`heads ${String(n)} runs with the recap, its toggle and Pause all at its right`, async () => {
+        await mountN(n, billed(running));
+        const t = toggleEl();
+        expect(t.querySelector(".run-bar-count")?.textContent).toBe(
+          `${String(n)} workflows running`,
+        );
+        expect(t.getAttribute("aria-expanded"), "open below three runs").toBe(String(n < 3));
+        const btn = batchButton();
+        expect(btn?.getAttribute("aria-label")).toBe("Pause all");
+        expectOnHeader(btn);
+        t.click();
+        await finishSlides();
+        expectOnHeader(batchButton());
+      });
+    }
+
+    const rowsShown = (): boolean =>
+      [...bar.querySelectorAll<HTMLElement>("li.run-bar-row")].every((r) => r.checkVisibility());
+
+    it("lists two runs open under the header when this screen never chose", async () => {
+      await mountN(2, billed(running));
+      const t = toggleEl();
+      expect(t.getAttribute("aria-expanded")).toBe("true");
+      expect(bar.hasAttribute("data-folded")).toBe(false);
+      expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(2);
+      expect(rowsShown(), "both rows visible").toBe(true);
+      expectOnHeader(batchButton());
+    });
+
+    it("folds and opens two runs from the header's toggle, and keeps the fold", async () => {
+      await mountN(2, billed(running));
+      const t = toggleEl();
+      t.click();
+      expect(t.getAttribute("aria-expanded")).toBe("false");
+      await finishSlides();
+      expect(bar.hasAttribute("data-folded")).toBe(true);
+      expect(bar.getBoundingClientRect().height).toBe(0);
+      expect(JSON.parse(localStorage.getItem("marotte.ui-state") ?? "{}")).toMatchObject({
+        run_bar_open: false,
+      });
+      t.click();
+      expect(t.getAttribute("aria-expanded")).toBe("true");
+      await finishSlides();
+      expect(bar.hasAttribute("data-folded")).toBe(false);
+      expect(rowsShown()).toBe(true);
+    });
+
+    it("keeps two runs folded when the reader last folded the list", async () => {
+      localStorage.setItem("marotte.ui-state", JSON.stringify({ run_bar_open: false }));
+      await mountN(2, billed(running));
+      expect(toggleEl().getAttribute("aria-expanded")).toBe("false");
+      expect(bar.hasAttribute("data-folded")).toBe(true);
+      expectOnHeader(batchButton());
+    });
+
+    it("folds three runs when this screen never chose", async () => {
+      await mountN(3, billed(running));
+      expect(toggleEl().getAttribute("aria-expanded")).toBe("false");
+      expect(bar.hasAttribute("data-folded")).toBe(true);
+      expect(bar.getBoundingClientRect().height).toBe(0);
+    });
+
+    it("offers Resume all on the header when every run is paused by hand", async () => {
+      await mountN(2, billed(pausedBy));
+      const btn = batchButton();
+      expect(btn?.getAttribute("aria-label")).toBe("Resume all");
+      expectOnHeader(btn);
+    });
   });
 });

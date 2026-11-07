@@ -1,7 +1,7 @@
 // The run bar: one box holding a line per LIVE workflow run the active chat launched, in the bottom
-// bar between the interaction dock and the steer stack. From `FOLD_AT` runs a fold row heads the
-// list, outside the list's clip so its touch target can reach past the row. One batch button sits
-// at the box's top right: on the fold row, else at the end of the first run's line.
+// bar between the interaction dock and the steer stack. From `HEADER_AT` runs a header row heads the
+// list, outside the list's clip so its touch target can reach past the row, and ends with the batch
+// button at the box's top right; one run has no header and carries the button at its row's end.
 
 import { el, computed, effect, touch, untracked } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
@@ -42,8 +42,12 @@ import type { TabRunDotStatus } from "./tabs.js";
  *  no name at all is unclickable in practice. */
 const FALLBACK_NAME = "Workflow run";
 
-/** From this many live runs the bar folds them behind one summary row, so a fan-out cannot push
- *  the transcript and the composer off a phone. */
+/** From this many live runs a header row heads the list with the recap, its fold toggle and the batch button. One run
+ *  gets no header: the batch button, as Pause or Resume, ends that run's row. */
+const HEADER_AT = 2;
+
+/** From this many live runs the list starts folded behind the header until the reader chooses, so a fan-out cannot
+ *  push the transcript and the composer off a phone. */
 const FOLD_AT = 3;
 
 /** One bar row's painted parts, kept so a repaint and the clock patch them in place. */
@@ -64,8 +68,10 @@ let prevCount = 0;
 let prevChatID = "";
 const holds = new Map<string, Hold>();
 const rowViews = new WeakMap<HTMLElement, RowView>();
-/** The batch button, built once by `initRunBar` and moved between its two seats. */
+/** The batch button, built once by `initRunBar`: on the header row, or at the end of the one run's row. */
 let batchBtn: HTMLButtonElement | null = null;
+/** The run whose row holds the batch button, or `null` while it sits on the header row. */
+let batchRun: string | null = null;
 /** The render effect's disposer, held only so `_resetRunBarForTest` can stop it. Production
  *  never tears the bar down — it lives as long as the page. */
 let stopRender: (() => void) | null = null;
@@ -78,6 +84,8 @@ export function initRunBar(): void {
   bound = true;
   const bar = $.runBar;
   batchBtn = buildBatchButton();
+  // After the toggle, which `buildSummary` prepends, so the button ends the header row.
+  $.runBarFold.append(batchBtn);
   const sig = computed(() => key());
   stopRender = effect(() => {
     touch(sig);
@@ -145,7 +153,14 @@ function batchOf(ids: readonly string[]): Batch | null {
   return parked.length === 0 ? null : { verb: "resume", targets: parked };
 }
 
-const BATCH_VIEW: Record<Batch["verb"], { label: string; icon: string; tip: string }> = {
+interface BatchView {
+  readonly label: string;
+  readonly icon: string;
+  readonly tip: string;
+}
+
+/** The button's face on the header row, addressing every listed run. */
+const BATCH_VIEW: Record<Batch["verb"], BatchView> = {
   pause: {
     label: "Pause all",
     icon: ICON_PAUSE,
@@ -159,6 +174,22 @@ const BATCH_VIEW: Record<Batch["verb"], { label: string; icon: string; tip: stri
 };
 
 const PAUSING_TIP = "Every running run here is already pausing";
+
+/** The button's face on the one run's row. */
+const SOLO_VIEW: Record<Batch["verb"], BatchView> = {
+  pause: {
+    label: "Pause",
+    icon: ICON_PAUSE,
+    tip: "Pause this run. Its current turn is cancelled, and the run picks up from there when resumed",
+  },
+  resume: {
+    label: "Resume",
+    icon: ICON_RESUME,
+    tip: "Resume this run",
+  },
+};
+
+const SOLO_PAUSING_TIP = "This run is already pausing";
 
 /** The runs the batch addresses at click time, named as the reader sees them. */
 function batchRefs(targets: readonly string[]): RunRef[] {
@@ -186,32 +217,37 @@ function buildBatchButton(): HTMLButtonElement {
   return btn;
 }
 
-/** Seat and paint the batch button: on the fold row while it shows, else at the end of the first run's line, the
- *  column every row reserves while `.run-bar[data-all]` (26-dock.css). Parked hidden on the fold with nothing to do,
- *  so it stays connected and its loading binding lives. */
-function paintBatch(bar: HTMLUListElement, ids: readonly string[], folds: boolean): void {
+/** Put the batch button back on the header row before the row holding it leaves: the loading binding dies with a
+ *  detached button. */
+function parkBatch(ids: readonly string[]): void {
+  if (batchBtn !== null && batchRun !== null && !(ids.length === 1 && ids[0] === batchRun)) {
+    $.runBarFold.append(batchBtn);
+    batchRun = null;
+  }
+}
+
+/** Seat and paint the batch button: at the header row's end with a header, else at the end of the one run's row
+ *  (`.run-bar > li > .run-bar-all`, 26-dock.css). Hidden, never detached, with nothing to do, so its loading binding
+ *  lives. `focused` hands it the keyboard back after a move. */
+function paintBatch(bar: HTMLUListElement, ids: readonly string[], focused: boolean): void {
   const btn = batchBtn;
   if (btn === null) {
     return;
   }
-  const batch = ids.length === 0 ? null : batchOf(ids);
-  const first = bar.querySelector<HTMLElement>(":scope > li.run-bar-row");
-  const seat = batch === null || folds || first === null ? $.runBarFold : first;
-  bar.toggleAttribute("data-all", batch !== null && !folds);
+  const solo = ids.length === 1 ? ids[0] : undefined;
+  const row = solo === undefined ? null : bar.querySelector<HTMLElement>(":scope > li.run-bar-row");
+  const seat = row ?? $.runBarFold;
   if (btn.parentElement !== seat) {
-    const focused = document.activeElement === btn;
     seat.append(btn);
-    if (focused) {
-      btn.focus({ preventScroll: true });
-    }
+    batchRun = row === null ? null : (solo ?? null);
   }
+  const batch = ids.length === 0 ? null : batchOf(ids);
   btn.hidden = batch === null;
   if (batch === null) {
     return;
   }
-  const view = BATCH_VIEW[batch.verb];
-  if (btn.dataset["verb"] !== batch.verb) {
-    btn.dataset["verb"] = batch.verb;
+  const view = (row === null ? BATCH_VIEW : SOLO_VIEW)[batch.verb];
+  if (btn.getAttribute("aria-label") !== view.label) {
     btn.replaceChildren(iconEl(view.icon));
     btn.setAttribute("aria-label", view.label);
   }
@@ -220,7 +256,10 @@ function paintBatch(bar: HTMLUListElement, ids: readonly string[], folds: boolea
   if (idle) {
     btn.disabled = none;
   }
-  btn.dataset["tooltip"] = none ? PAUSING_TIP : view.tip;
+  btn.dataset["tooltip"] = none ? (row === null ? PAUSING_TIP : SOLO_PAUSING_TIP) : view.tip;
+  if (focused && document.activeElement !== btn && !btn.disabled) {
+    btn.focus({ preventScroll: true });
+  }
 }
 
 /** The runs this bar shows for a chat: the live inventory minus anything the store can PROVE has
@@ -244,8 +283,8 @@ function render(bar: HTMLUListElement): void {
   const live = rows(chatID);
   const waiting = live.filter(needsYou);
   const ids = [...waiting, ...live.filter((id) => !waiting.includes(id))];
-  const folds = ids.length >= FOLD_AT;
-  const open = !folds || runBarOpen();
+  const headed = ids.length >= HEADER_AT;
+  const open = listOpen(ids.length);
 
   bar.classList.toggle("hidden", ids.length === 0);
   // BEFORE the rows, not after: `buildRow` points this run's hold at its row, so a hold created
@@ -255,6 +294,10 @@ function render(bar: HTMLUListElement): void {
   // moved node loses focus, so the focused row button is handed it back.
   const focused = document.activeElement;
   const held = focused instanceof HTMLElement && bar.contains(focused) ? focused : null;
+  const fold = $.runBarFold;
+  const batchHadFocus = focused !== null && focused === batchBtn;
+  const foldHadFocus = fold.contains(focused);
+  parkBatch(ids);
   const before = bar.childElementCount;
   // KEYED BY RUN ID, and each surviving row is PATCHED rather than rebuilt. Both halves are needed.
   reconcile(bar, ids, {
@@ -266,15 +309,22 @@ function render(bar: HTMLUListElement): void {
   if (held !== null && held.isConnected && document.activeElement !== held) {
     held.focus({ preventScroll: true });
   }
-  const fold = $.runBarFold;
-  setAttr(fold, "hidden", folds ? null : "");
-  if (folds) {
+  setAttr(fold, "hidden", headed ? null : "");
+  if (headed) {
     if (fold.querySelector(".run-bar-toggle") === null) {
       fold.prepend(buildSummary(bar));
     }
     paintSummary(fold, ids.length, waiting.length, open);
   }
-  paintBatch(bar, ids, folds);
+  paintBatch(bar, ids, batchHadFocus);
+  // Hiding the header, or the button, under the keyboard would drop focus to the body, so it moves to the run left.
+  const active = document.activeElement;
+  if (
+    (foldHadFocus || batchHadFocus) &&
+    !(active instanceof HTMLElement && active !== document.body && active.checkVisibility())
+  ) {
+    bar.querySelector<HTMLElement>(".run-bar-open")?.focus({ preventScroll: true });
+  }
   if (ids.length === 0) {
     // Reset the announce baseline so arriving at a chat that already has runs reads them out fresh,
     // while the empty case stays silent.
@@ -299,7 +349,7 @@ function render(bar: HTMLUListElement): void {
 /** The fold row: how many runs and how many need the reader, opening the list in place. */
 function buildSummary(bar: HTMLUListElement): HTMLElement {
   const btn = selectableButton("div", "run-bar-open run-bar-toggle", () => {
-    const open = !runBarOpen();
+    const open = !listOpen(rows(watchActiveId()).length);
     setRunBarOpen(open);
     // 0 is `.run-bar[data-folded]`'s `block-size` (26-dock.css).
     slideBox(bar, open, applyOpen(bar), { fade: true, closedHeight: 0 });
@@ -312,6 +362,12 @@ function buildSummary(bar: HTMLUListElement): HTMLElement {
     el("span", { className: "run-bar-count" }),
   );
   return btn;
+}
+
+/** Whether the list shows its rows for `count` runs: always with no header, else as the reader last chose, else open
+ *  below `FOLD_AT`. */
+function listOpen(count: number): boolean {
+  return count < HEADER_AT || (runBarOpen() ?? count < FOLD_AT);
 }
 
 /** The `apply` of the list's `slideBox`: folded is `.run-bar[data-folded]` (26-dock.css). */
@@ -482,6 +538,7 @@ export function _resetRunBarForTest(): void {
   holds.clear();
   batchBtn?.remove();
   batchBtn = null;
+  batchRun = null;
   bound = false;
   prevCount = 0;
   prevChatID = "";

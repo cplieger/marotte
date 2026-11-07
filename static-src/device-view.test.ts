@@ -14,9 +14,11 @@ import {
   loadDeviceView,
   markCoarseSeen,
   pointerModeChoice,
+  runBarOpen,
   setActiveView,
   setClockChoice,
   setPointerModeChoice,
+  setRunBarOpen,
   setShellHeight,
   setShellOpen,
   setSidebarWidth,
@@ -54,8 +56,18 @@ describe("the layout fields this screen keeps to itself", () => {
       shell_open: false,
       shell_h: 0,
       sidebar_w: 0,
-      run_bar_open: false,
+      run_bar_open: null,
     });
+  });
+
+  it("tells a run bar choice apart from no choice, and reads a non-boolean as none", () => {
+    expect(runBarOpen()).toBeNull();
+    setRunBarOpen(false);
+    expect(runBarOpen()).toBe(false);
+    setRunBarOpen(true);
+    expect(runBarOpen()).toBe(true);
+    localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ run_bar_open: "yes" }));
+    expect(runBarOpen()).toBeNull();
   });
 
   it("keeps a valid field when a sibling is the wrong type", () => {
@@ -70,7 +82,7 @@ describe("the layout fields this screen keeps to itself", () => {
       shell_open: false,
       shell_h: 0,
       sidebar_w: 0,
-      run_bar_open: false,
+      run_bar_open: null,
     });
   });
 
@@ -102,7 +114,7 @@ describe("the layout fields this screen keeps to itself", () => {
       shell_open: false,
       shell_h: 0,
       sidebar_w: 0,
-      run_bar_open: false,
+      run_bar_open: null,
     };
     localStorage.setItem(LS_UI_STATE_KEY, '"a string"');
     expect(loadDeviceView()).toEqual(defaults);
@@ -246,7 +258,7 @@ describe("one owner of the key", () => {
       shell_open: true,
       shell_h: 420,
       sidebar_w: 380,
-      run_bar_open: false,
+      run_bar_open: null,
     });
   });
 
@@ -275,7 +287,7 @@ describe("one owner of the key", () => {
       shell_open: true,
       shell_h: 420,
       sidebar_w: 380,
-      run_bar_open: false,
+      run_bar_open: null,
     });
   });
 
@@ -299,7 +311,7 @@ describe("one owner of the key", () => {
       shell_open: true,
       shell_h: 420,
       sidebar_w: 380,
-      run_bar_open: false,
+      run_bar_open: null,
     });
   });
 

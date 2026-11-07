@@ -721,23 +721,25 @@ function plantFileRows(): void {
   }
 }
 
-function plantRunBar(): void {
+function plantRunBar(names: readonly string[] = ["deadset-ci", "land", "app-review"]): void {
   const fold = q("#run-bar-fold");
   fold.hidden = false;
-  const toggle = roleButton("run-bar-open run-bar-toggle", "3 workflows running");
+  const toggle = roleButton(
+    "run-bar-open run-bar-toggle",
+    `${String(names.length)} workflows running`,
+  );
   toggle.setAttribute("aria-expanded", "true");
   fold.append(toggle, iconButton("icon-btn run-bar-all", "Pause all"));
-  plantRunRows(["deadset-ci", "land", "app-review"]);
+  plantRunRows(names);
 }
 
-/** Two runs: no fold row, and the batch button ends the first run's line. */
-function plantRunBarUnfolded(): void {
-  const bar = plantRunRows(["deadset-ci", "land"]);
-  bar.setAttribute("data-all", "");
-  bar.querySelector("li")?.appendChild(iconButton("icon-btn run-bar-all", "Pause all"));
+/** One run: no header, the batch button at the end of the run's own row. */
+function plantSoloRun(): void {
+  plantRunRows(["deadset-ci"]);
+  q("#run-bar > li").appendChild(iconButton("icon-btn run-bar-all", "Pause"));
 }
 
-function plantRunRows(names: readonly string[]): HTMLElement {
+function plantRunRows(names: readonly string[]): void {
   const bar = q("#run-bar");
   bar.classList.remove("hidden");
   for (const name of names) {
@@ -747,7 +749,6 @@ function plantRunRows(names: readonly string[]): HTMLElement {
     row.appendChild(open);
     bar.appendChild(row);
   }
-  return bar;
 }
 
 function plantFindBar(): void {
@@ -1275,16 +1276,27 @@ export const SURFACES: readonly Surface[] = [
   {
     name: "the run bar",
     sizes: TWO,
-    setup: plantRunBar,
+    setup: () => {
+      plantRunBar();
+    },
     controls: ["#run-bar-fold .run-bar-all"],
     rows: ["#run-bar-fold .run-bar-toggle", "#run-bar .run-bar-open"],
   },
   {
-    name: "the run bar under three runs",
+    name: "the run bar at one run",
     sizes: TWO,
-    setup: plantRunBarUnfolded,
-    controls: ["#run-bar .run-bar-all"],
+    setup: plantSoloRun,
+    controls: ["#run-bar > li > .run-bar-all"],
     rows: ["#run-bar .run-bar-open"],
+  },
+  {
+    name: "the run bar at two runs",
+    sizes: TWO,
+    setup: () => {
+      plantRunBar(["deadset-ci", "land"]);
+    },
+    controls: ["#run-bar-fold .run-bar-all"],
+    rows: ["#run-bar-fold .run-bar-toggle", "#run-bar .run-bar-open"],
   },
   {
     name: "a turn",

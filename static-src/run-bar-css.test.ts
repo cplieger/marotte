@@ -278,7 +278,7 @@ describe("the run bar's box", () => {
   });
 
   /** The chat's band with real summary rows, and the fold row first when `fold` is set. `all` adds the batch button
-   *  where `run-bar.ts` seats it: on the fold row, else at the end of the first run's line. */
+   *  where `run-bar.ts` seats it: the fold row's end, or the one run's row end with no fold row. */
   function mountRows(
     runs: readonly ExecRun[],
     fold: boolean,
@@ -324,11 +324,10 @@ describe("the run bar's box", () => {
       summary.paint(r);
       summaries.push(summary);
       li.append(btn);
+      if (all && !fold && runs.length === 1) {
+        li.append(batchButton());
+      }
       bar.append(li);
-    }
-    if (all && !fold) {
-      bar.setAttribute("data-all", "");
-      bar.querySelector("li")?.append(batchButton());
     }
     barHost.append(bar);
     form.append(barHost);
@@ -357,11 +356,11 @@ describe("the run bar's box", () => {
 
   for (const [count, fold] of [
     [1, false],
-    [2, false],
+    [2, true],
     [3, true],
   ] as const) {
     it(`draws ${String(count)} run${count > 1 ? "s" : ""} as lines of one bordered box`, () => {
-      const bar = mountRows(RUNS.slice(0, count), fold);
+      const bar = mountRows(RUNS.slice(0, count), fold, 1000, true);
       const box = bar.parentElement!;
       expect(getComputedStyle(box).borderTopWidth).toBe("1px");
       for (const btn of bar.querySelectorAll<HTMLElement>(".run-bar-open")) {
@@ -380,29 +379,19 @@ describe("the run bar's box", () => {
       it(`paints at the top bar's control height at the box's top right, ${pointer}`, () => {
         document.documentElement.setAttribute("data-pointer", pointer);
         try {
-          for (const fold of [false, true]) {
-            const bar = mountRows(RUNS.slice(0, fold ? 3 : 2), fold, 1000, true);
+          for (const count of [2, 3]) {
+            const bar = mountRows(RUNS.slice(0, count), true, 1000, true);
             const box = bar.parentElement!.getBoundingClientRect();
             const btn = bar.parentElement!.querySelector<HTMLElement>(".run-bar-all")!;
             const r = btn.getBoundingClientRect();
             const h = lengthPx(host, "var(--btn-h)");
-            expect(r.height, `fold ${String(fold)}`).toBeCloseTo(h, 0);
-            expect(r.width, `fold ${String(fold)}`).toBeCloseTo(h, 0);
+            expect(r.height, `${String(count)} runs`).toBeCloseTo(h, 0);
+            expect(r.width, `${String(count)} runs`).toBeCloseTo(h, 0);
             // Its line is the box's first: nothing in the box sits above it.
             const head = bar.parentElement!.firstElementChild!.getBoundingClientRect();
             expect(r.top).toBeGreaterThanOrEqual(head.top - 0.5);
             expect(r.bottom).toBeLessThanOrEqual(head.bottom + 0.5);
             expect(box.right - r.right, "ends at the box's end inset").toBeLessThan(12);
-            // From three runs it heads the box, and the runs' lines keep the whole width under it.
-            if (fold) {
-              host.remove();
-              continue;
-            }
-            for (const other of bar.parentElement!.querySelectorAll<HTMLElement>(
-              ".run-bar-open:not(.run-bar-toggle)",
-            )) {
-              expect(other.getBoundingClientRect().right).toBeLessThanOrEqual(r.left + 0.5);
-            }
             host.remove();
           }
         } finally {
@@ -411,22 +400,12 @@ describe("the run bar's box", () => {
       });
     }
 
-    it("keeps every row's bar ending at one x while the first line carries it", () => {
-      const bar = mountRows(RUNS.slice(0, 2), false, 1000, true);
-      const minis = [...bar.querySelectorAll<HTMLElement>(".ev-mini")].map((m) =>
-        m.getBoundingClientRect(),
-      );
-      expect(new Set(minis.map((r) => Math.round(r.right))).size).toBe(1);
-      expect(new Set(minis.map((r) => Math.round(r.left))).size).toBe(1);
-      host.remove();
-    });
-
     it("leaves a phone row a cut title and a usable bar", async () => {
       await browser.viewport(390, 844);
       document.documentElement.setAttribute("data-pointer", "coarse");
       try {
         const long = runOf("a-workflow-title-that-is-far-longer-than-a-phone-row", 1, 4);
-        const bar = mountRows([long, RUNS[0]!], false, 374, true);
+        const bar = mountRows([long, RUNS[0]!], true, 374, true);
         const row = bar.querySelector<HTMLElement>(".run-bar-open")!;
         const title = row.querySelector<HTMLElement>(".ev-sum-label")!;
         expect(title.scrollWidth).toBeGreaterThan(title.clientWidth);
