@@ -3,6 +3,8 @@ package schedule
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,7 +14,13 @@ import (
 // newNamedFixture is newFixture with the rule saved under a recipe name, which the push names.
 func newNamedFixture(t *testing.T, now time.Time) (*launchrule.Store, *fakeLauncher, *Runner) {
 	t.Helper()
-	st := mustStore(t)
+	return newNamedFixtureIn(t, t.TempDir(), now)
+}
+
+// newNamedFixtureIn is newNamedFixture with the store in dir.
+func newNamedFixtureIn(t *testing.T, dir string, now time.Time) (*launchrule.Store, *fakeLauncher, *Runner) {
+	t.Helper()
+	st := mustStoreIn(t, dir)
 	rule := dailyAt2("bundled://demo")
 	rule.Name = "nightly"
 	e, err := st.Create(t.Context(), rule)
@@ -113,14 +121,14 @@ func TestSweep_EachSlotThatStartedNoRunPushes(t *testing.T) {
 }
 
 // A slot ends the way no push follows: the streak already started, the run's own bound refused it, marotte was down,
-// or the slot is still inside its grace or its wait on the engine.
+// the slot is still inside its grace or its wait on the engine, or its row was never written.
 func TestSweep_PushesNothingForASlotThatIsNotTheFirstToStartNoRun(t *testing.T) {
 	due := at(2026, time.August, 4, 2, 0)
 	for _, tc := range []struct {
-		drive func(t *testing.T, st *launchrule.Store, l *fakeLauncher, r *Runner)
+		drive func(t *testing.T, dir string, st *launchrule.Store, l *fakeLauncher, r *Runner)
 		name  string
 	}{
-		{name: "the previous slot's run failed", drive: func(t *testing.T, st *launchrule.Store, l *fakeLauncher, r *Runner) {
+		{name: "the previous slot's run failed", drive: func(t *testing.T, _ string, st *launchrule.Store, l *fakeLauncher, r *Runner) {
 			row := st.Clocks()[0].Row()
 			prev := launchrule.Run{ScheduleID: row.ID, WorkflowID: "wf-old"}
 			if err := st.RecordStart(t.Context(), prev); err != nil {
@@ -132,7 +140,7 @@ func TestSweep_PushesNothingForASlotThatIsNotTheFirstToStartNoRun(t *testing.T) 
 			l.failWith(errors.New("workflow new: no such recipe"))
 			r.sweep(t.Context())
 		}},
-		{name: "a slot whose run starts after a failed one", drive: func(t *testing.T, st *launchrule.Store, _ *fakeLauncher, r *Runner) {
+		{name: "a slot whose run starts after a failed one", drive: func(t *testing.T, _ string, st *launchrule.Store, _ *fakeLauncher, r *Runner) {
 			row := st.Clocks()[0].Row()
 			prev := launchrule.Run{ScheduleID: row.ID, WorkflowID: "wf-old"}
 			if err := st.RecordStart(t.Context(), prev); err != nil {
@@ -143,26 +151,53 @@ func TestSweep_PushesNothingForASlotThatIsNotTheFirstToStartNoRun(t *testing.T) 
 			}
 			r.sweep(t.Context())
 		}},
-		{name: "the row's own run is bounded at this slot", drive: func(t *testing.T, st *launchrule.Store, l *fakeLauncher, r *Runner) {
+		{name: "the row's own run is bounded at this slot", drive: func(t *testing.T, _ string, st *launchrule.Store, l *fakeLauncher, r *Runner) {
 			l.failWith(&BusyError{WorkflowID: "wf-live", ScheduleID: st.Clocks()[0].ID, SlotAt: due})
 			r.sweep(t.Context())
 		}},
-		{name: "a slot missed while offline", drive: func(t *testing.T, _ *launchrule.Store, _ *fakeLauncher, r *Runner) {
+		{name: "a slot missed while offline", drive: func(t *testing.T, _ string, _ *launchrule.Store, _ *fakeLauncher, r *Runner) {
 			r.now = func() time.Time { return due.Add(2 * time.Hour) }
 			r.sweep(t.Context())
 		}},
-		{name: "a sign-in hold inside the grace", drive: func(t *testing.T, _ *launchrule.Store, l *fakeLauncher, r *Runner) {
+		{name: "a sign-in hold inside the grace", drive: func(t *testing.T, _ string, _ *launchrule.Store, l *fakeLauncher, r *Runner) {
 			l.failWith(fmt.Errorf("%w: %w", ErrNoRunCanStart, errors.New("sign in to Kiro first")))
 			r.sweep(t.Context())
 		}},
-		{name: "a wait on the engine before the next slot", drive: func(t *testing.T, _ *launchrule.Store, l *fakeLauncher, r *Runner) {
+		{name: "a wait on the engine before the next slot", drive: func(t *testing.T, _ string, _ *launchrule.Store, l *fakeLauncher, r *Runner) {
 			l.failWith(fmt.Errorf("%w: %w", ErrEngineBusy, errors.New("workflow list call: context deadline exceeded")))
 			r.sweep(t.Context())
 		}},
+		{name: "a failed launch whose rule is deleted meanwhile", drive: func(t *testing.T, _ string, st *launchrule.Store, l *fakeLauncher, r *Runner) {
+			l.failWith(errors.New("workflow new: no such recipe"))
+			l.during = func(string) {
+				if _, err := st.Delete(t.Context(), st.Clocks()[0].ID); err != nil {
+					t.Errorf("Delete: %v", err)
+				}
+			}
+			r.sweep(t.Context())
+		}},
+		{name: "a failed launch whose row write fails", drive: func(t *testing.T, dir string, st *launchrule.Store, l *fakeLauncher, r *Runner) {
+			// A directory where the state file goes fails the write, even as root.
+			path := filepath.Join(dir, "launch-state", st.Clocks()[0].ID+".json")
+			l.failWith(errors.New("workflow new: no such recipe"))
+			l.during = func(string) {
+				if err := os.Remove(path); err != nil {
+					t.Errorf("Remove: %v", err)
+				}
+				if err := os.Mkdir(path, 0o700); err != nil {
+					t.Errorf("Mkdir: %v", err)
+				}
+			}
+			r.sweep(t.Context())
+			if got := st.Clocks()[0].FailedSlots; got != 0 {
+				t.Fatalf("FailedSlots = %d after a write that failed, want 0", got)
+			}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			st, l, r := newNamedFixture(t, due.Add(30*time.Second))
-			tc.drive(t, st, l, r)
+			dir := t.TempDir()
+			st, l, r := newNamedFixtureIn(t, dir, due.Add(30*time.Second))
+			tc.drive(t, dir, st, l, r)
 			if got := l.notices(); len(got) != 0 {
 				t.Errorf("pushes = %+v, want none", got)
 			}
