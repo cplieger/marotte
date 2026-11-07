@@ -935,7 +935,7 @@ func TestCompactRequest_APressQueuedDuringARefusedIdlePressIsReported(t *testing
 	if out, err := r.ac.request(t.Context(), "c1"); err != nil || out != command.CompactRefused {
 		t.Errorf("the idle press = (%v, %v), want refused", out, err)
 	}
-	if r.count() != 1 || r.isQueued() || !slices.Equal(r.failures, []string{queuedCompactFailed}) {
+	if r.count() != 1 || r.isQueued() || !slices.Equal(r.failures, []string{compactFailed}) {
 		t.Errorf("after the refusal: calls %d, queued %v, failures %v; want 1 call, the row gone, one failure",
 			r.count(), r.isQueued(), r.failures)
 	}
@@ -970,13 +970,18 @@ func TestCompactRequest_TheRecordCarriesTheQueuedRequest(t *testing.T) {
 	}
 }
 
-// A compaction waits for the frames before KAS's reply, the summary among them, so the next prompt opens after it.
+// A compaction waits for the frames before KAS's reply, the summary among them, so the next prompt opens after it,
+// and the running row clears only after them, so the dock never empties before the compacted mark is in the chat.
 func TestCompactRequest_WaitsForTheFramesBeforeTheReply(t *testing.T) {
 	r := newCompactRig(90)
 	r.ac.compact = func(context.Context, command.CompactBridge) (bool, uint64, error) { return true, 7, nil }
-	var waited []uint64
+	var (
+		waited    []uint64
+		rowAtFold []compactRow
+	)
 	r.ac.folded = func(_ context.Context, _ marotte.ChatID, seq uint64) bool {
 		waited = append(waited, seq)
+		rowAtFold = r.rowLog()
 		return true
 	}
 	if out, _ := r.ac.request(t.Context(), "c1"); out != command.CompactAccepted {
@@ -984,6 +989,12 @@ func TestCompactRequest_WaitsForTheFramesBeforeTheReply(t *testing.T) {
 	}
 	if !slices.Equal(waited, []uint64{7}) {
 		t.Errorf("read loop waits = %v, want one at the reply's position 7", waited)
+	}
+	if !slices.Equal(rowAtFold, []compactRow{compactRowRunning}) {
+		t.Errorf("rows when the frames folded = %v, want [running]: the row cleared before the entry", rowAtFold)
+	}
+	if got := r.rowLog(); !slices.Equal(got, []compactRow{compactRowRunning, compactRowOff}) {
+		t.Errorf("rows after the reply = %v, want [running off]", got)
 	}
 }
 
@@ -1046,7 +1057,7 @@ func TestTurnEndPolicyCompactionRefused_ClearsAndToasts(t *testing.T) {
 	if got := r.rowLog(); !slices.Equal(got, []compactRow{compactRowRunning, compactRowOff}) {
 		t.Errorf("rows around the refused turn-end call = %v, want [running off]", got)
 	}
-	if !slices.Equal(r.failures, []string{queuedCompactFailed}) {
-		t.Errorf("failures = %v, want one %q", r.failures, queuedCompactFailed)
+	if !slices.Equal(r.failures, []string{compactFailed}) {
+		t.Errorf("failures = %v, want one %q", r.failures, compactFailed)
 	}
 }

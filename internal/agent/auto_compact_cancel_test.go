@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -461,5 +462,41 @@ func TestAutoCompact_ACancelAfterARefusalHolds(t *testing.T) {
 	if r.isQueued() || r.count() != 1 {
 		t.Errorf("KAS's turn's end after the cancel: queued %v, calls %d; want no row and only the refused call",
 			r.isQueued(), r.count())
+	}
+}
+
+// A cancel that lands after the turn end claimed the queued compaction does not stop the call, so the row stays
+// running until the call ends, and then goes off with no toast whatever KAS answered.
+func TestAutoCompact_ACancelAfterTheClaimKeepsTheRowRunningUntilTheCallEnds(t *testing.T) {
+	for _, refuse := range []bool{false, true} {
+		t.Run(map[bool]string{false: "accepted", true: "refused"}[refuse], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				r := newCompactRig(90)
+				r.turn(t, 92)
+				r.finishTurn()
+				r.setRefuse(refuse)
+				r.block = make(chan struct{})
+				ended := make(chan struct{})
+				go func() {
+					r.turnEnd(t, false)
+					close(ended)
+				}()
+				synctest.Wait()
+				if err := r.ac.cancel(t.Context(), "c1"); err != nil {
+					t.Fatalf("cancel: %v", err)
+				}
+				want := []compactRow{compactRowQueued, compactRowRunning}
+				if got := r.rowLog(); !slices.Equal(got, want) {
+					t.Errorf("rows after a cancel mid-call = %v, want %v: the call still runs", got, want)
+				}
+				close(r.block)
+				<-ended
+				want = append(want, compactRowOff)
+				if got := r.rowLog(); !slices.Equal(got, want) || len(r.failures) != 0 || r.count() != 1 {
+					t.Errorf("after the call: rows %v, failures %v, calls %d; want rows %v, no failure, 1 call",
+						got, r.failures, r.count(), want)
+				}
+			})
+		})
 	}
 }

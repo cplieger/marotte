@@ -19,8 +19,8 @@ import (
 // wedged bridge. A var for tests.
 var compactCallBudget = 310 * time.Second
 
-// queuedCompactFailed is the toast for a queued compaction KAS refused or that failed.
-const queuedCompactFailed = "The queued compaction did not run: the agent was busy, or the summary failed or the chat changed before it finished"
+// compactFailed is the toast for a compaction the dock showed that KAS refused or that failed.
+const compactFailed = "The compaction did not run: the agent was busy, or the summary failed or the chat changed before it finished"
 
 // compactPhase is where a compaction run is; a run ends in exactly one of the last three, or goes back to queued
 // when KAS refused it under a turn it opened and the reader did not cancel it.
@@ -39,8 +39,6 @@ type compactRun struct {
 	// call is the run's latest call, nil until its first claim.
 	call  *compactCall
 	phase compactPhase
-	// shown is true for a run the holding area showed, queued or claimed: its refusal is reported.
-	shown bool
 }
 
 // compactCall is one call made for run. Its outcome is written before done closes and never after, so a joiner reads
@@ -79,7 +77,7 @@ type autoCompactor struct {
 	budget func(context.Context, time.Duration) (context.Context, context.CancelFunc)
 	folded func(ctx context.Context, chatID marotte.ChatID, seq uint64) bool
 	queue  compactQueue
-	// failed tells the chat's pages that a queued compaction did not run.
+	// failed tells the chat's pages that a compaction the dock showed did not run.
 	failed func(ctx context.Context, chatID marotte.ChatID, detail string)
 	mu     sync.Mutex
 }
@@ -165,11 +163,12 @@ func (a *autoCompactor) within(ctx context.Context, chatID marotte.ChatID, fn fu
 	})
 }
 
-// rowLocked is the stage the holding area shows. Running wins over a request queued during the call, since the
-// call's end settles that request (endLocked).
+// rowLocked is the stage the holding area shows. A call in flight shows running even once cancelled, since a cancel
+// does not stop it and it still holds every prompt (awaitRunning). Running wins over a request queued during the
+// call, since the call's end settles that request (endLocked).
 func (st *autoCompactState) rowLocked() compactRow {
 	switch {
-	case st.running != nil && st.running.shown && st.running.phase == compactRunning:
+	case st.running != nil:
 		return compactRowRunning
 	case st.queued != nil:
 		return compactRowQueued
@@ -185,7 +184,7 @@ func (st *autoCompactState) enqueueLocked(row func(compactRow) error) error {
 	if err := row(max(st.rowLocked(), compactRowQueued)); err != nil {
 		return err
 	}
-	st.queued = &compactRun{phase: compactQueued, shown: true}
+	st.queued = &compactRun{phase: compactQueued}
 	return nil
 }
 
@@ -199,7 +198,7 @@ func (st *autoCompactState) claimLocked(chatID marotte.ChatID, run *compactRun, 
 	if st.queued == run {
 		st.queued = nil
 	}
-	run.phase, run.shown, run.call = compactRunning, true, &compactCall{run: run, done: make(chan struct{})}
+	run.phase, run.call = compactRunning, &compactCall{run: run, done: make(chan struct{})}
 	st.running = run
 	if err := row(st.rowLocked()); err != nil {
 		slog.Warn("compaction: the running row could not be written", "chat_id", chatID, "error", err)
@@ -334,7 +333,7 @@ func (a *autoCompactor) afterRelease(ctx context.Context, chatID marotte.ChatID,
 	a.runOrJoin(ctx, chatID, b, c, mine, a.usage(ctx, chatID).ContextPct, "queued")
 }
 
-// runOrJoin makes a claimed call (a shown request's refusal is reported) or waits for the one it joined, reporting
+// runOrJoin makes a claimed call (its refusal is reported) or waits for the one it joined, reporting
 // whether that call was accepted: false with no call or when the wait ended first.
 func (a *autoCompactor) runOrJoin(ctx context.Context, chatID marotte.ChatID, b *sharedBridge, c *compactCall, mine bool, atPct float64, trigger string) bool {
 	switch {
@@ -407,9 +406,10 @@ func (a *autoCompactor) request(ctx context.Context, chatID marotte.ChatID) (com
 	return command.CompactRefused, nil
 }
 
-// cancel withdraws the queued compaction and the call in flight: neither runs nor comes back, and the turn the request
-// belongs to (the open one, else the one whose close may still run its end) compacts nothing unasked. A later press
-// is a new request.
+// cancel withdraws the queued compaction, which does not run, and stops the call in flight from coming back queued
+// or toasting; that call is not stopped, and its row stays running until it ends. The turn the request belongs to
+// (the open one, else the one whose close may still run its end) compacts nothing unasked. A later press is a new
+// request.
 func (a *autoCompactor) cancel(ctx context.Context, chatID marotte.ChatID) error {
 	return a.within(ctx, chatID, func(t queueTurn, st *autoCompactState, row func(compactRow) error) error {
 		if t.id != "" {
@@ -438,7 +438,7 @@ func (*autoCompactor) await(ctx context.Context, chatID marotte.ChatID, c *compa
 	}
 }
 
-// call makes c and settles it; report toasts c's own shown run when it did not run. An accepted call waits for the frames
+// call makes c and settles it; report toasts c's own run when it did not run. An accepted call waits for the frames
 // before its reply, so a prompt sent next opens after the summary.
 func (a *autoCompactor) call(ctx context.Context, chatID marotte.ChatID, b *sharedBridge, c *compactCall, atPct float64, trigger string, report bool) {
 	callCtx, cancel := a.callContext(ctx)
@@ -473,7 +473,7 @@ func (a *autoCompactor) call(ctx context.Context, chatID marotte.ChatID, b *shar
 // settle ends c in the queue's section, once: a later settle finds c done and does nothing, and done closes there,
 // so a joiner returns after it. An accepted call satisfies the request queued during it; one KAS refused under a turn
 // it opened is queued for that turn's end unless the reader cancelled it; any other end drops the queue, with a toast
-// for a request queued during the call, and for c's own shown run when report is set (an idle press passes false: its
+// for a request queued during the call, and for c's own run when report is set (an idle press passes false: its
 // reply carries its refusal).
 func (a *autoCompactor) settle(ctx context.Context, chatID marotte.ChatID, c *compactCall, report bool) {
 	toast, requeued := false, false
@@ -491,8 +491,8 @@ func (a *autoCompactor) settle(ctx context.Context, chatID marotte.ChatID, c *co
 			return nil
 		}
 		st.running = nil
-		shown, dropped := st.endLocked(c, t.open && t.live)
-		toast = shown && report || dropped
+		own, dropped := st.endLocked(c, t.open && t.live)
+		toast = own && report || dropped
 		requeued = c.requeued
 		return row(st.rowLocked())
 	})
@@ -503,13 +503,13 @@ func (a *autoCompactor) settle(ctx context.Context, chatID marotte.ChatID, c *co
 		slog.Info("compaction refused under a starting turn; it runs at that turn's end", "chat_id", chatID)
 	}
 	if toast && a.failed != nil {
-		a.failed(ctx, chatID, queuedCompactFailed)
+		a.failed(ctx, chatID, compactFailed)
 	}
 }
 
-// endLocked moves c's run to where c's outcome leaves it, reporting whether c's own shown run (shown) and another
-// request queued during the call (dropped) each ended without running. A chat that closed reports neither.
-func (st *autoCompactState) endLocked(c *compactCall, turnLive bool) (shown, dropped bool) {
+// endLocked moves c's run to where c's outcome leaves it, reporting whether c's own run (own) and another request
+// queued during the call (dropped) each ended without running. A chat that closed reports neither.
+func (st *autoCompactState) endLocked(c *compactCall, turnLive bool) (own, dropped bool) {
 	run := c.run
 	switch {
 	case c.accepted:
@@ -523,7 +523,7 @@ func (st *autoCompactState) endLocked(c *compactCall, turnLive bool) (shown, dro
 	case c.err == nil && turnLive:
 		c.requeued = true
 		if st.queued == nil {
-			run.phase, run.shown, st.queued = compactQueued, true, run
+			run.phase, st.queued = compactQueued, run
 		} else {
 			run.phase = compactRefused
 		}
@@ -536,7 +536,7 @@ func (st *autoCompactState) endLocked(c *compactCall, turnLive bool) (shown, dro
 		if errors.Is(c.err, marotte.ErrChatClosedDuringCall) {
 			return false, false
 		}
-		return run.shown, dropped
+		return true, dropped
 	}
 	return false, false
 }
