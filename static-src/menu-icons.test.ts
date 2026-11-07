@@ -104,8 +104,8 @@ describe("hand-authored glyphs in static/index.html", () => {
     expect(at, "static/index.html has no sidebar-header-actions").toBeGreaterThan(-1);
     const bar = indexHtml.slice(at, indexHtml.indexOf("</div>", at));
     const glyphs = [...bar.matchAll(/<svg\b[\s\S]*?<\/svg>/g)].map((m) => inner(m[0]));
-    // Moon, sun, system half-disc, mouse, hand, watch, 24, 12, close.
-    expect(glyphs).toHaveLength(9);
+    // Moon, sun, system half-disc, mouse, hand, close.
+    expect(glyphs).toHaveLength(6);
     expect(new Set(glyphs).size, "sidebar-header glyphs sharing one mark").toBe(glyphs.length);
   });
 

@@ -720,8 +720,8 @@ function excepted(el: HTMLElement, family: Family, at: string): boolean {
 }
 
 /** Wholly on screen, so a press at each of its target's edges can land. */
-function onScreen(el: Element): boolean {
-  const r = el.getBoundingClientRect();
+function onScreen(el: HTMLElement): boolean {
+  const r = targetRect(el);
   return (
     r.left >= 0 && r.top >= 0 && r.right <= window.innerWidth && r.bottom <= window.innerHeight
   );
@@ -873,7 +873,6 @@ const SIDEBAR_COVERS = [
   "#new-chat",
   "#history-btn",
   "#theme-btn",
-  "#clock-btn",
   "#account-btn",
   "#logout-btn",
   ".tab-close",
