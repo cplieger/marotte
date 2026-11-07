@@ -239,9 +239,6 @@ export function turnIsDrawn(t: TurnState): boolean {
   return false;
 }
 
-/** The `Turn` one source turn projects to. `rewindTo` and `summarized` are the CALLER's, because
- *  the two projections resolve them from different things: the whole pass reads the list it is
- *  building, a keyed read walks the source from the turn's own index. */
 const bodies = new WeakMap<TurnState, { rev: number; len: number; body: readonly Entry[] }>();
 
 /**
@@ -260,6 +257,9 @@ export function bodyOf(state: TurnState): readonly Entry[] {
   return body;
 }
 
+/** The `Turn` one source turn projects to. `rewindTo` and `summarized` are the CALLER's, because
+ *  the two projections resolve them from different things: the whole pass reads the list it is
+ *  building, a keyed read walks the source from the turn's own index. */
 function turnOf(
   id: string,
   state: TurnState,

@@ -1,5 +1,4 @@
-// A stamp per held turn that moves when its entries change in place (a payload replaced, a waking mark
-// flipped), which neither its entry count nor its open lanes show. A new `TurnState` object reads a new stamp.
+// A stamp per held turn that moves only when `touchTurn` is called. A new `TurnState` object reads a new stamp.
 
 import type { TurnState } from "./types.js";
 
