@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 )
@@ -365,14 +366,18 @@ func TestCancelExpiredRun_TellsAStallFromASpentBackstop(t *testing.T) {
 		unwant     string
 		wantKey    string
 		wantReason string
+		// counted is the failure series the stop moves, the bound that came due.
+		counted string
 	}{
 		"a run that stopped producing is a stall": {
 			banked: 0, stretchAge: 0,
 			want: logMsgRunStalled, unwant: logMsgRunBackstop, wantKey: "idle_window", wantReason: runEndStalled,
+			counted: "scheduled/stalled",
 		},
 		"a run that spent its whole budget is not": {
 			banked: runBackstop - openStretch, stretchAge: openStretch,
 			want: logMsgRunBackstop, unwant: logMsgRunStalled, wantKey: "backstop", wantReason: runEndOverran,
+			counted: "scheduled/backstop",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -381,7 +386,8 @@ func TestCancelExpiredRun_TellsAStallFromASpentBackstop(t *testing.T) {
 			const id = "wf_1"
 			br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 			h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
-			leased(t, h.runs, id)
+			h.runs.grantLease(t.Context(), id, "publish", scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Time{}), hostSec())
+			h.runs.recordParentSession(t.Context(), id, testLaunchSession)
 			h.runs.armDeadline(t.Context(), id)
 			if tc.banked != 0 || tc.stretchAge != 0 {
 				h.runs.mu.Lock()
@@ -390,9 +396,11 @@ func TestCancelExpiredRun_TellsAStallFromASpentBackstop(t *testing.T) {
 				h.runs.mu.Unlock()
 			}
 			l, _ := h.runs.lease(id)
+			before := failureCounts(t)
 
 			h.runs.cancelExpired(id, l.Deadline)
 
+			wantFailureDeltas(t, before, map[string]float64{tc.counted: 1})
 			out := logs.String()
 			if !strings.Contains(out, tc.want) {
 				t.Errorf("the expiry did not log %q: %s", tc.want, out)

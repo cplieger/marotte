@@ -19,6 +19,7 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/notice"
+	"github.com/cplieger/marotte/internal/obs"
 	"github.com/cplieger/marotte/internal/runlease"
 )
 
@@ -556,6 +557,7 @@ func (rs *Runs) retryTermination(ctx context.Context, workflowID, reason string,
 			"attempts", attempt, "reason", reason)
 		// Only a stop marotte decided reports on the row: a person's cancel (reason "") failed in front of them.
 		if l, held := rs.lease(workflowID); held && reason != "" {
+			countUnattendedFailure(&l, obs.RunCancelGivenUp)
 			rs.recordScheduleOutcome(ctx, ruleRun(&l),
 				launchrule.Outcome{Status: launchrule.StatusFailed, Reason: reasonCancelRefused})
 		}
@@ -747,7 +749,7 @@ func (rs *Runs) cancelExpired(workflowID string, armedFor time.Time) {
 	if !rs.claimExpiredDeadline(workflowID, armedFor) {
 		return
 	}
-	reason, rowReason := runEndOverran, reasonOverran
+	reason, rowReason, counted := runEndOverran, reasonOverran, obs.RunOverran
 	switch {
 	case slotRanOut && l.ScheduleID != "":
 		slog.Error(logMsgRunOverran, "workflow_id", workflowID, "schedule_id", l.ScheduleID,
@@ -756,17 +758,18 @@ func (rs *Runs) cancelExpired(workflowID string, armedFor time.Time) {
 		slog.Info(logMsgRunYieldedToSlot, "workflow_id", workflowID, "recipe", l.Recipe,
 			"slot_at", l.SlotAt)
 	case backstopSpent:
-		rowReason = reasonBackstop
+		rowReason, counted = reasonBackstop, obs.RunBackstop
 		slog.Error(logMsgRunBackstop, "workflow_id", workflowID,
 			"backstop", runBackstop.String(), "recipe", l.Recipe)
 	default:
-		reason, rowReason = runEndStalled, reasonStalled
+		reason, rowReason, counted = runEndStalled, reasonStalled, obs.RunStalled
 		slog.Error(logMsgRunStalled, "workflow_id", workflowID,
 			"idle_window", runIdleWindow.String(), "recipe", l.Recipe)
 	}
 	if rs.cancelBounded(workflowID, reason, armedFor) != nil {
 		return
 	}
+	countUnattendedFailure(&l, counted)
 	// Overwrites the cancel's own terminal frame, which may land first and names no bound.
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()

@@ -27,6 +27,7 @@ func TestSweep_SettlesEachSlotTransition(t *testing.T) {
 		anchor, lastRunAt, waitingFor time.Time
 		status                        launchrule.OutcomeStatus
 		reason, runID                 string
+		failedSlots                   int
 	}
 	cases := []struct {
 		clock  time.Time
@@ -37,11 +38,13 @@ func TestSweep_SettlesEachSlotTransition(t *testing.T) {
 		// at 02:00:30); "held, then waiting" (refused at 02:00:30, busy at 02:01:30); "started" (a launch at 02:00:30
 		// recorded wf-2 on the row and nothing recorded the slot); "ended" (that, then wf-2 completed); "previous
 		// run" (wf-0, started at yesterday's anchor).
-		from     string
-		failID   string
-		launches int
-		cancel   bool // the runner's context ends during the launch
-		started  bool // the launch records wf-2 on the row before it answers, as the host's lease grant does
+		from   string
+		failID string
+		// notStarted is the slot event the sweep counts as a slot that produced no run, "" for none.
+		notStarted string
+		launches   int
+		cancel     bool // the runner's context ends during the launch
+		started    bool // the launch records wf-2 on the row before it answers, as the host's lease grant does
 	}{
 		{
 			name: "due, launch ok: launched", from: "due", clock: due.Add(30 * time.Second),
@@ -53,12 +56,17 @@ func TestSweep_SettlesEachSlotTransition(t *testing.T) {
 		},
 		{
 			name: "due, launch error: failed", from: "due", clock: due.Add(30 * time.Second), launch: failure,
-			launches: 1, want: row{anchor: due, lastRunAt: due, status: launchrule.StatusFailed, reason: failure.Error()},
+			launches: 1, notStarted: "launch_failed", want: row{
+				anchor: due, lastRunAt: due, status: launchrule.StatusFailed, reason: failure.Error(), failedSlots: 1,
+			},
 		},
 		{
 			name: "due, a run created but not started: failed with that run", from: "due",
-			clock: due.Add(30 * time.Second), launch: notInvoked, failID: "wf-2", launches: 1,
-			want: row{anchor: due, lastRunAt: due, status: launchrule.StatusFailed, reason: notInvoked.Error(), runID: "wf-2"},
+			clock: due.Add(30 * time.Second), launch: notInvoked, failID: "wf-2", launches: 1, notStarted: "launch_failed",
+			want: row{
+				anchor: due, lastRunAt: due, status: launchrule.StatusFailed, reason: notInvoked.Error(), runID: "wf-2",
+				failedSlots: 1,
+			},
 		},
 		{
 			name: "due, refused by its own run bounded at this slot: skipped, outcome kept", from: "due",
@@ -116,12 +124,18 @@ func TestSweep_SettlesEachSlotTransition(t *testing.T) {
 		},
 		{
 			name: "held, grace expired: failed with the refusal", from: "held", clock: due.Add(4 * time.Minute),
-			want: row{anchor: due.Add(4 * time.Minute), lastRunAt: due, status: launchrule.StatusFailed, reason: refused.Error()},
+			notStarted: "signin_held", want: row{
+				anchor: due.Add(4 * time.Minute), lastRunAt: due, status: launchrule.StatusFailed, reason: refused.Error(),
+				failedSlots: 1,
+			},
 		},
 		{
 			name: "held, then waiting, overtaken with the next slot busy: skipped for the engine, not the refusal",
 			from: "held, then waiting", clock: next.Add(30 * time.Second), launch: busy, launches: 1,
-			want: row{anchor: due, lastRunAt: due, status: launchrule.StatusSkipped, reason: "engine busy", waitingFor: next},
+			notStarted: "engine_busy", want: row{
+				anchor: due, lastRunAt: due, status: launchrule.StatusSkipped, reason: "engine busy", waitingFor: next,
+				failedSlots: 1,
+			},
 		},
 		{
 			name: "waiting, tick before its retry: still waiting", from: "waiting", clock: due.Add(time.Minute),
@@ -137,7 +151,9 @@ func TestSweep_SettlesEachSlotTransition(t *testing.T) {
 		},
 		{
 			name: "waiting, launch error: failed", from: "waiting", clock: due.Add(2 * time.Hour), launch: failure,
-			launches: 1, want: row{anchor: due, lastRunAt: due, status: launchrule.StatusFailed, reason: failure.Error()},
+			launches: 1, notStarted: "launch_failed", want: row{
+				anchor: due, lastRunAt: due, status: launchrule.StatusFailed, reason: failure.Error(), failedSlots: 1,
+			},
 		},
 		{
 			name: "waiting, sign-in refusal: held, no longer waiting", from: "waiting", clock: due.Add(2 * time.Hour),
@@ -149,17 +165,25 @@ func TestSweep_SettlesEachSlotTransition(t *testing.T) {
 		},
 		{
 			name: "waiting, overtaken: the next slot launched", from: "waiting", clock: next.Add(30 * time.Second),
-			launches: 1, want: row{anchor: next, lastRunAt: next, status: launchrule.StatusStarted, runID: "wf-1"},
+			launches: 1, notStarted: "engine_busy", want: row{
+				anchor: next, lastRunAt: next, status: launchrule.StatusStarted, runID: "wf-1", failedSlots: 1,
+			},
 		},
 		{
 			name: "waiting, overtaken, the next slot busy too: skipped, the next slot waiting", from: "waiting",
-			clock: next.Add(30 * time.Second), launch: busy, launches: 1,
-			want: row{anchor: due, lastRunAt: due, status: launchrule.StatusSkipped, reason: "engine busy", waitingFor: next},
+			clock: next.Add(30 * time.Second), launch: busy, launches: 1, notStarted: "engine_busy",
+			want: row{
+				anchor: due, lastRunAt: due, status: launchrule.StatusSkipped, reason: "engine busy", waitingFor: next,
+				failedSlots: 1,
+			},
 		},
 		{
 			name: "waiting, overtaken past the next slot's grace: skipped, the next slot missed", from: "waiting",
-			clock: next.Add(4 * time.Minute),
-			want:  row{anchor: next.Add(4 * time.Minute), lastRunAt: due, status: launchrule.StatusSkipped, reason: "engine busy"},
+			clock: next.Add(4 * time.Minute), notStarted: "engine_busy",
+			want: row{
+				anchor: next.Add(4 * time.Minute), lastRunAt: due, status: launchrule.StatusSkipped, reason: "engine busy",
+				failedSlots: 1,
+			},
 		},
 	}
 	for _, tc := range cases {
@@ -220,7 +244,18 @@ func TestSweep_SettlesEachSlotTransition(t *testing.T) {
 			l.failWith(launch)
 			l.failID = tc.failID
 			r.now = func() time.Time { return tc.clock }
+			counted := slotsNotStarted(t)
 			r.sweep(ctx)
+
+			for event, n := range slotsNotStarted(t) {
+				want := 0.0
+				if event == tc.notStarted {
+					want = 1
+				}
+				if d := n - counted[event]; d != want {
+					t.Errorf("%s slots not started moved by %v, want %v", event, d, want)
+				}
+			}
 
 			if n := l.launched() - before; n != tc.launches {
 				t.Errorf("launches = %d, want %d", n, tc.launches)
@@ -233,11 +268,12 @@ func TestSweep_SettlesEachSlotTransition(t *testing.T) {
 			for where, e := range map[string]launchrule.Clock{"held": st.Clocks()[0], "persisted": again.Clocks()[0]} {
 				got := row{
 					anchor: e.Anchor, lastRunAt: e.LastRunAt, waitingFor: e.WaitingFor, status: e.LastStatus,
-					reason: e.LastReason, runID: e.LastRunID,
+					reason: e.LastReason, runID: e.LastRunID, failedSlots: e.FailedSlots,
 				}
 				if !got.anchor.Equal(tc.want.anchor) || !got.lastRunAt.Equal(tc.want.lastRunAt) ||
 					!got.waitingFor.Equal(tc.want.waitingFor) || got.status != tc.want.status ||
-					got.reason != tc.want.reason || got.runID != tc.want.runID {
+					got.reason != tc.want.reason || got.runID != tc.want.runID ||
+					got.failedSlots != tc.want.failedSlots {
 					t.Errorf("%s row = %+v\nwant %+v", where, got, tc.want)
 				}
 			}
