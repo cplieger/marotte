@@ -32,7 +32,7 @@ document.body.appendChild(roots);
 
 const { buildAssistantBody, initBlockRenderer } = await import("./messages-blocks.js");
 const { setActive } = await import("./store.js");
-const { setUserScrolledUp } = await import("./scroll.js");
+const { pressHold } = await import("./scroll.js");
 const { dispatchTouch, frames } = await import("./__test-helpers__/turn-rail-dom.js");
 
 const CHAT_ID = "c-group-tap";
@@ -40,6 +40,7 @@ setActive(CHAT_ID);
 initBlockRenderer({
   pushEntryEffect: (): void => undefined,
   disposeEntryEffects: (): void => undefined,
+  liveAnchorChanged: () => undefined,
   makeRow: () => {
     const row = document.createElement("div");
     row.className = "msg-row";
@@ -153,7 +154,7 @@ describe("a tap on a folded tool group's header", () => {
     await vi.waitFor(() => {
       expect(body?.getBoundingClientRect().height).toBeGreaterThan(0);
     });
-    expect(vi.mocked(setUserScrolledUp).mock.calls).toEqual([[true]]);
+    expect(vi.mocked(pressHold).mock.calls).toEqual([[]]);
 
     await tap(header as HTMLElement);
     expect(shown(group), "the next tap closes").toEqual({ expanded: "false", inert: true });

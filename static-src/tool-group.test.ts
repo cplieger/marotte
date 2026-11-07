@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
-import { setUserScrolledUp } from "./scroll.js";
+import { pressHold } from "./scroll.js";
 import {
   buildToolGroupShell,
   groupBody,
@@ -506,11 +506,11 @@ describe("one header click flips what the reader sees", () => {
     const g = groupWith(card("read", "ok"), card("read", "ok"));
     autoCollapseGroup(g);
     header(g).click();
-    expect(vi.mocked(setUserScrolledUp).mock.calls).toEqual([[true]]);
+    expect(vi.mocked(pressHold).mock.calls).toEqual([[]]);
     header(g).click();
-    expect(vi.mocked(setUserScrolledUp).mock.calls).toEqual([[true]]);
+    expect(vi.mocked(pressHold).mock.calls).toEqual([[]]);
     header(g).click();
-    expect(vi.mocked(setUserScrolledUp).mock.calls).toEqual([[true], [true]]);
+    expect(vi.mocked(pressHold).mock.calls).toEqual([[], []]);
   });
 
   it("closes an open group on the first click", () => {

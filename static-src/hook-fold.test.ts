@@ -43,6 +43,7 @@ initBlockRenderer({
   disposeEntryEffects: (): void => {
     /* noop */
   },
+  liveAnchorChanged: () => undefined,
   makeRow: () => {
     const row = document.createElement("div");
     row.className = "msg-row";
