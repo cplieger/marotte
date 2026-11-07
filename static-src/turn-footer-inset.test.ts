@@ -90,10 +90,7 @@ function mountFooter(doc: Document, trailing: Trailing): Mounted {
     btn.className = "turn-rewind";
     const glyph = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
     glyph.setAttribute("class", "ic-ui");
-    const label = doc.createElement("span");
-    label.className = "turn-rewind-label";
-    label.textContent = "Rewind";
-    btn.append(glyph, label);
+    btn.append(glyph);
     footer.appendChild(btn);
     last = btn;
   }

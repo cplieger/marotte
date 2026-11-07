@@ -1,6 +1,6 @@
 // The footer's fact slot: one fact inside the ledger trigger, clipped not wrapped, and gated on no
 // pointer state (a hover gate would hide it from touch). Narrow cases run in an IFRAME: the `…`
-// collapse and Rewind's word live behind `width <= 40rem`.
+// collapse lives behind `width <= 40rem`.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
@@ -85,10 +85,7 @@ function mountCard(
     rewind.className = "turn-rewind";
     const rewindGlyph = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
     rewindGlyph.setAttribute("class", "ic-ui");
-    const label = doc.createElement("span");
-    label.className = "turn-rewind-label";
-    label.textContent = "Rewind";
-    rewind.append(rewindGlyph, label);
+    rewind.append(rewindGlyph);
     footer.appendChild(rewind);
   }
 

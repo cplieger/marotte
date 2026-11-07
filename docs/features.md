@@ -81,7 +81,7 @@ Signing in to GitHub Enterprise or a self-managed GitLab uses an OAuth applicati
 
 ## Reviewing the agent's edits
 
-- Rewind sends the conversation back to an earlier message of yours. The agent's file edits roll back with it, from snapshots kiro-cli takes separately from git. If the message box is empty, that message's text comes back to it to edit and send again. Its attachments do not come back. Ctrl+Up, or Cmd+Up on a Mac, in an empty message box rewinds to your last message after you confirm.
+- **Rewind**, the clock icon with a backward arrow at the end of a turn's footer, sends the conversation back to the message of yours that follows that turn. The agent's file edits roll back with it, from snapshots kiro-cli takes separately from git. If the message box is empty, that message's text comes back to it to edit and send again. Its attachments do not come back. Ctrl+Up, or Cmd+Up on a Mac, in an empty message box rewinds to your last message after you confirm.
 - Supervised mode holds a whole turn for review instead of asking for each write. One approval lists every file the turn touched, renames and deletes included, and you keep or discard each one.
 - The permissions page has a policy editor that sets allow, deny or ask for each capability, with path rules, and a box that explains what the policy would decide. One policy governs every tool call, shell commands included.
 

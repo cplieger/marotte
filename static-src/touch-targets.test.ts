@@ -284,8 +284,7 @@ function plantTurn(): void {
   }
   more.append(summary, actionGroup);
   actions.appendChild(more);
-  const rewind = iconButton("turn-rewind", "Rewind to this point");
-  rewind.appendChild(text("span", "turn-rewind-label", "Rewind"));
+  const rewind = iconButton("turn-rewind", "Rewind");
   footer.append(button("turn-ledger-summary", "Completed"), actions, rewind);
   t.appendChild(footer);
 }
