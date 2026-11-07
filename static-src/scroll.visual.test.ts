@@ -306,7 +306,7 @@ async function atEnd(): Promise<void> {
 
 async function scenario(
   act: (rec: Recording) => Promise<void>,
-  idleFrames = 150,
+  idleFrames = 90,
 ): Promise<Recording> {
   await atEnd();
   const rec = new Recording();
