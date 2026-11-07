@@ -56,8 +56,9 @@ vi.mock("./icons.js", () => ({
   ICON_SPINNER: "",
   ICON_HOURGLASS: "",
 }));
-// Type-only, for the `importOriginal` below.
+// Type-only, for the `importOriginal`s below.
 import type * as TabsDrag from "./tabs-drag.js";
+import type * as Dom from "./dom.js";
 // `exceedsSlop` stays real: `tabs.ts` reads it, so a partial factory would fail
 // this whole file at link time.
 vi.mock("./tabs-drag.js", async (importOriginal) => ({
@@ -169,7 +170,8 @@ vi.mock("./actions/editor.js", () => ({
 // One registry serving both modules: tabs.ts needs a document-attached #tab-list
 // for its render walk, the editor needs its own paint surface, and every other
 // getter is a throwaway.
-vi.mock("./dom.js", () => ({
+vi.mock("./dom.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Dom>()),
   $: new Proxy(
     {},
     {
@@ -187,13 +189,8 @@ vi.mock("./dom.js", () => ({
       },
     },
   ),
-  // `byId` is reached through this graph by page-title.ts. ESM links for real, so
-  // a name any module in the graph imports must exist on the mock or the whole
-  // FILE fails at link time, naming the export rather than the test. Inlined
-  // rather than shared because a `vi.mock` factory is hoisted above every
-  // top-level import, so it cannot reach a helper module. Resolve-or-create,
-  // because the real `byId` throws and a suite mocking `dom.js` stages only what
-  // its own subject needs.
+  // Resolve-or-create, because the real `byId` throws and this suite stages only
+  // the elements its own subject needs.
   byId: (id: string): HTMLElement => {
     let el = document.getElementById(id);
     if (el === null) {
@@ -202,17 +199,6 @@ vi.mock("./dom.js", () => ({
       document.body.appendChild(el);
     }
     return el;
-  },
-  // Same real-ESM-linking reason as `byId` above: `skeleton.ts` in this graph
-  // imports the name, so an absent export fails the whole FILE at collection.
-  // `setBusy`'s own body rather than `undefined`, because the open path reaches an
-  // admitted `paintPlaceholder`, which marks its host busy through it.
-  setBusy: (el: Element, busy: boolean) => {
-    if (busy) {
-      el.setAttribute("aria-busy", "true");
-    } else {
-      el.removeAttribute("aria-busy");
-    }
   },
 }));
 
