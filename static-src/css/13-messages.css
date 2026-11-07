@@ -1663,7 +1663,11 @@
   white-space: nowrap;
 }
 
+/* The shared paint floor makes this box taller than its one line, which would sit at the top, off
+ * the head's centre line. The floor stays: the phone head's top padding is sized for it, so the
+ * expander clears the card's clip. */
 .steer-note-run[role="button"] {
+  align-content: center;
   cursor: pointer;
   text-underline-offset: 2px;
 }
