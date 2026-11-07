@@ -768,10 +768,21 @@ func inspectWithSteps(t *testing.T, workflowID string, steps ...[2]string) json.
 	return raw
 }
 
-// completeStep runs one step KAS completes whose turn its own stop did not end, so its close is not due a grade.
+// completeStep runs one step KAS completes whose own turn ended it with an answer, so its close is not due a grade.
 func completeStep(t *testing.T, h *Runtime, workflowID string, path []string) {
 	t.Helper()
-	h.runs.RunNodeStart(t.Context(), &translate.RunStep{RunID: workflowID, NodePath: workflow.PathKey(path), SessionID: "step-session-1"}, "")
+	step := &translate.RunStep{RunID: workflowID, NodePath: workflow.PathKey(path), SessionID: "step-session-1"}
+	h.runs.RunNodeStart(t.Context(), step, "")
+	turn, ok := h.runs.RunFoldTarget(t.Context(), step, "")
+	if !ok {
+		t.Fatal("Setup: the step has no open turn")
+	}
+	if _, err := turn.TextDelta(t.Context(), "", "say-done", "Done."); err != nil {
+		t.Fatalf("Setup: answer: %v", err)
+	}
+	if !h.runs.RunStopReason(workflowID, step.NodePath, marotte.StopReasonEndTurn) {
+		t.Fatal("Setup: RunStopReason refused on the open turn")
+	}
 	h.runs.RunNodeComplete(t.Context(), workflowID, path, "completed", "")
 	joinInflight(t, h)
 }
