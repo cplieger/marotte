@@ -43,7 +43,7 @@ import type { TabRunDotStatus } from "./tabs.js";
 const FALLBACK_NAME = "Workflow run";
 
 /** From this many live runs a header row heads the list with the recap, its fold toggle and the batch button. One run
- *  gets neither: its row opens the run's tab, whose dock carries Pause and Resume. */
+ *  gets none of them: its row opens the run's tab, whose dock carries Pause and Resume. */
 const HEADER_AT = 2;
 
 /** From this many live runs the list starts folded behind the header until the reader chooses, so a fan-out cannot
