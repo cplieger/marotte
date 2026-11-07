@@ -1462,4 +1462,123 @@ describe("Pause all and Resume all", () => {
     });
     expect(batchButton()).toBeNull();
   });
+
+  // One run needs no recap and no batch control, its row's own controls cover it. From two runs the header row shows
+  // the recap, the fold toggle and the batch button at its right end.
+  describe("the header row", () => {
+    let style: HTMLStyleElement;
+
+    beforeEach(() => {
+      localStorage.removeItem("marotte.ui-state");
+      style = mountAppCSS();
+    });
+
+    afterEach(() => {
+      style.remove();
+      localStorage.removeItem("marotte.ui-state");
+    });
+
+    // A live run reports credits, which gives the rows their credits column.
+    const billed =
+      (base: (name: string) => Record<string, unknown>) =>
+      (name: string): Record<string, unknown> => {
+        const st = base(name);
+        const root = st["root"] as Record<string, unknown>;
+        return { ...st, root: { ...root, credits: [{ usage: 1.25, unit: "credit" }] } };
+      };
+
+    async function mountN(n: number, make: (name: string) => Record<string, unknown>): Promise<void> {
+      const c = chatID();
+      chats.push(c);
+      const set: Record<string, Record<string, unknown>> = {};
+      for (let i = 0; i < n; i++) {
+        set[runID(`h${String(i)}`)] = make(`header-run-${String(i)}`);
+      }
+      await mount(c, set);
+    }
+
+    function toggleEl(): HTMLElement {
+      const t = fold.querySelector<HTMLElement>(".run-bar-toggle");
+      if (t === null || fold.hidden) {
+        throw new Error("no header row");
+      }
+      return t;
+    }
+
+    /** The batch button sits on the header's line, right of the recap, at the box's top right, above every run. */
+    function expectOnHeader(btn: HTMLButtonElement | null): void {
+      if (btn === null) {
+        throw new Error("no batch button");
+      }
+      expect(fold.contains(btn), "inside the header row").toBe(true);
+      const t = toggleEl().getBoundingClientRect();
+      const r = btn.getBoundingClientRect();
+      const mid = (r.top + r.bottom) / 2;
+      expect(r.left, "right of the recap").toBeGreaterThanOrEqual(t.right - 0.5);
+      expect(mid, "on the recap's line").toBeGreaterThanOrEqual(t.top - 0.5);
+      expect(mid, "on the recap's line").toBeLessThanOrEqual(t.bottom + 0.5);
+      expect(runHost.getBoundingClientRect().right - r.right, "at the box's end inset").toBeLessThan(12);
+      for (const row of bar.querySelectorAll<HTMLElement>("li.run-bar-row")) {
+        if (row.checkVisibility()) {
+          expect(row.getBoundingClientRect().top, "below the header").toBeGreaterThanOrEqual(r.bottom - 0.5);
+        }
+      }
+    }
+
+    it("shows one run with no header row and no batch button, running or paused", async () => {
+      for (const make of [billed(running), billed(pausedBy)]) {
+        await mountN(1, make);
+        expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(1);
+        expect(fold.checkVisibility(), "no header row").toBe(false);
+        const shown = [...document.querySelectorAll<HTMLElement>(".run-bar-all")].filter((b) =>
+          b.checkVisibility(),
+        );
+        expect(shown, "no batch button").toEqual([]);
+        for (const id of runs.splice(0)) {
+          noteRunSettled(id);
+        }
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    });
+
+    for (const n of [2, 3]) {
+      it(`heads ${String(n)} runs with the recap, its toggle and Pause all at its right`, async () => {
+        await mountN(n, billed(running));
+        const t = toggleEl();
+        expect(t.querySelector(".run-bar-count")?.textContent).toBe(`${String(n)} workflows running`);
+        expect(t.getAttribute("aria-expanded")).toBe("false");
+        const btn = batchButton();
+        expect(btn?.getAttribute("aria-label")).toBe("Pause all");
+        expectOnHeader(btn);
+        t.click();
+        await finishSlides();
+        expectOnHeader(batchButton());
+      });
+    }
+
+    it("folds and opens two runs from the header's toggle", async () => {
+      await mountN(2, billed(running));
+      const t = toggleEl();
+      expect(bar.hasAttribute("data-folded"), "folded by default").toBe(true);
+      t.click();
+      expect(t.getAttribute("aria-expanded")).toBe("true");
+      await finishSlides();
+      expect(bar.hasAttribute("data-folded")).toBe(false);
+      expect([...bar.querySelectorAll<HTMLElement>("li.run-bar-row")].every((r) => r.checkVisibility())).toBe(
+        true,
+      );
+      t.click();
+      expect(t.getAttribute("aria-expanded")).toBe("false");
+      await finishSlides();
+      expect(bar.hasAttribute("data-folded")).toBe(true);
+      expect(bar.getBoundingClientRect().height).toBe(0);
+    });
+
+    it("offers Resume all on the header when every run is paused by hand", async () => {
+      await mountN(2, billed(pausedBy));
+      const btn = batchButton();
+      expect(btn?.getAttribute("aria-label")).toBe("Resume all");
+      expectOnHeader(btn);
+    });
+  });
 });
