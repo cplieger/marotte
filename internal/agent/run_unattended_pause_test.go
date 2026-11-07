@@ -69,7 +69,7 @@ func TestScheduledRun_APauseNobodyResumesEndsTheRun(t *testing.T) {
 				t.Errorf("no cancel went out for the run: %v", br.callLog())
 			}
 			if out := logs.String(); !strings.Contains(out, logMsgRunPausedUnattended) {
-				t.Errorf("the end did not log %q, which its alert keys on: %s", logMsgRunPausedUnattended, out)
+				t.Errorf("the end did not log %q: %s", logMsgRunPausedUnattended, out)
 			}
 			row := awaitEndedRow(t, st)
 			if tc.wantQuoted == "" {

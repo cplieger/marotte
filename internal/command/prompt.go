@@ -16,6 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/kascap"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/obs"
 	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/settings"
 )
@@ -683,18 +684,20 @@ func historyInlineImages(ctx context.Context, chats chatStore, chatID marotte.Ch
 	return count
 }
 
-// logMsgPromptEngineEnded must not contain "prompt failed": the engine end is logged once as
-// "engine exited", and the alert rule keyed on "prompt failed" must not count each prompt it killed.
 const logMsgPromptEngineEnded = "prompt ended because the agent engine exited"
 
-// logPromptFailure logs a failed prompt at Error under msg, except an engine-exit casualty, which
-// is a Warn under logMsgPromptEngineEnded.
+// logPromptFailure logs a failed prompt and counts it under its class. It logs at Error under msg,
+// except an engine-exit casualty: the engine's one exit line is that failure, so the casualty is a
+// Warn under logMsgPromptEngineEnded.
 func logPromptFailure(msg string, chatID marotte.ChatID, err error, attrs ...any) {
-	if class := classifyPromptFailure(err); class == classPipeDeath {
-		slog.Warn(logMsgPromptEngineEnded, append([]any{"chat_id", chatID, "class", class.String(), keyError, err}, attrs...)...)
+	class := classifyPromptFailure(err)
+	obs.PromptFailed(class.String())
+	attrs = append([]any{"chat_id", chatID, "class", class.String(), keyError, err}, attrs...)
+	if class == classPipeDeath {
+		slog.Warn(logMsgPromptEngineEnded, attrs...)
 		return
 	}
-	slog.Error(msg, append([]any{"chat_id", chatID, keyError, err}, attrs...)...)
+	slog.Error(msg, attrs...)
 }
 
 // reportPromptFailure finalizes a turn whose prompt Call failed and broadcasts the failure, the

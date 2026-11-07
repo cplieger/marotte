@@ -26,7 +26,7 @@ const (
 	PurgePurged
 )
 
-// The reasons a chat past retention is kept, one field each on the pass's count line. The fact kinds match
+// The reasons a chat past retention is kept, each a kept_by field on the pass's line. The fact kinds match
 // marotte.KeepKind's answers.
 const (
 	KeptByTab          = marotte.KeepKindTab

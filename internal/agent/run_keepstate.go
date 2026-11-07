@@ -186,7 +186,6 @@ func chatIDs(holders []marotte.ChatID) []string {
 	return out
 }
 
-// logMsgRunUnattributed is fixed text: an alert rule keys on it.
 const logMsgRunUnattributed = "run start: the launching chat could not be named; purging nothing until it is"
 
 // startRunMarks writes a run_start's keep marks, then grants its lease or records the holders on the held one. The

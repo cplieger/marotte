@@ -153,29 +153,37 @@ func TestPurge_PassSummaryReportsWhatThePassDid(t *testing.T) {
 			t.Errorf("purge summary = %q, want it to contain %q (one stale chat, one fresh one)", got, want)
 		}
 	}
-	if strings.Contains(got, "with errors") {
-		t.Errorf("purge summary = %q, want no error summary: nothing failed in this pass", got)
+	if lines := passLines(buf); len(lines) != 1 || !strings.Contains(lines[0], "level=INFO") {
+		t.Errorf("pass lines = %q, want exactly one at INFO: nothing failed in this pass", lines)
 	}
 }
 
-// TestPurge_CountLineNamesEveryKindOnEveryPass: the count line is the series an alert reads, so a pass logs every kind,
-// zeros included, and counts each chat past retention under the reason that kept it.
-func TestPurge_CountLineNamesEveryKindOnEveryPass(t *testing.T) {
-	const line = `msg="chat purge: chats past retention kept by a keep fact"`
-	t.Run("zeros", func(t *testing.T) {
+// passLines are the captured records of the pass's line, one per element.
+func passLines(buf *bytes.Buffer) []string {
+	var out []string
+	for line := range strings.Lines(buf.String()) {
+		if strings.Contains(line, `msg="chat purge: pass complete"`) {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// TestPurge_OnePassLineCarriesOnlyTheReasonsThatKeptAChat: a pass is one line, and its kept_by fields name each
+// reason that kept a chat past retention, with no field for a reason that kept none.
+func TestPurge_OnePassLineCarriesOnlyTheReasonsThatKeptAChat(t *testing.T) {
+	t.Run("none_kept", func(t *testing.T) {
 		svc, _ := newPurgeTestService(t, nil)
 		buf := capturePurgeLogs(t)
 
 		svc.Purge(t.Context(), 24*time.Hour)
 
-		got := buf.String()
-		if !strings.Contains(got, line) {
-			t.Fatalf("logs = %q, want the count line", got)
+		lines := passLines(buf)
+		if len(lines) != 1 || strings.Count(buf.String(), "chat purge:") != 1 {
+			t.Fatalf("logs = %q, want exactly one chat purge line, the pass line", buf.String())
 		}
-		for _, k := range []string{"tab", "run", "runtab", "turn", "unknown", "pending", "unreconciled", "unattributed", "words"} {
-			if !strings.Contains(got, " "+k+"=0") {
-				t.Errorf("count line lacks %s=0: %q", k, got)
-			}
+		if !strings.Contains(lines[0], "level=INFO") || strings.Contains(lines[0], "kept_by") {
+			t.Errorf("pass line = %q, want INFO with no kept_by field", lines[0])
 		}
 	})
 	t.Run("one_each", func(t *testing.T) {
@@ -188,13 +196,34 @@ func TestPurge_CountLineNamesEveryKindOnEveryPass(t *testing.T) {
 
 		svc.Purge(t.Context(), 24*time.Hour)
 
-		got := buf.String()
-		for _, want := range []string{" run=1", " words=1", " tab=0"} {
-			if !strings.Contains(got, want) {
-				t.Errorf("count line lacks %q (a chat inside the window is not counted): %q", want, got)
+		lines := passLines(buf)
+		if len(lines) != 1 {
+			t.Fatalf("pass lines = %q, want exactly one", lines)
+		}
+		for _, want := range []string{" kept_by.run=1", " kept_by.words=1"} {
+			if !strings.Contains(lines[0], want) {
+				t.Errorf("pass line lacks %q: %q", want, lines[0])
 			}
 		}
+		if strings.Contains(lines[0], "kept_by.tab") {
+			t.Errorf("pass line = %q, want no kept_by.tab: a chat inside the window is not kept by its tab", lines[0])
+		}
 	})
+}
+
+// TestPurge_APassWithErrorsIsOneWarn: a chat the pass could not read is kept, and the pass's one line says so at
+// WARN.
+func TestPurge_APassWithErrorsIsOneWarn(t *testing.T) {
+	svc, store := newPurgeTestService(t, nil)
+	store.set(t, "bad", fakeChat{lastUse: time.Now().Add(-72 * time.Hour), err: errors.New("unreadable header")})
+	buf := capturePurgeLogs(t)
+
+	svc.Purge(t.Context(), 24*time.Hour)
+
+	lines := passLines(buf)
+	if len(lines) != 1 || !strings.Contains(lines[0], "level=WARN") || !strings.Contains(lines[0], "errors=1") {
+		t.Errorf("pass lines = %q, want exactly one, at WARN with errors=1", lines)
+	}
 }
 
 // TestPurgeScheduler_InitialEvaluationPurges verifies Start runs an initial purge evaluation that removes an

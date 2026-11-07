@@ -368,7 +368,7 @@ func editRecord(t *testing.T, root, id string, edit func(doc map[string]any)) {
 
 const (
 	seamPassLine      = "chat purge scheduled"
-	seamChatPassLine  = "chat purge: chats past retention kept by a keep fact"
+	seamChatPassLine  = "chat purge: pass complete"
 	seamReconcileLine = "keep-state reconcile finished"
 	seamRetentionDays = 7
 )

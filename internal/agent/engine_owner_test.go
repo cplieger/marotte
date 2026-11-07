@@ -18,6 +18,7 @@ import (
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/signin"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // ownerClock is a settable now.
@@ -283,18 +284,71 @@ func exitFixture(t *testing.T, info *bridge.ExitInfo, oom func() (uint64, bool))
 	return exitLine(t, logs)
 }
 
+// exitCount is the engine exit counter's sample for cause.
+func exitCount(t *testing.T, cause string) float64 {
+	t.Helper()
+	return testsupport.MetricValue(t, `marotte_engine_exits_total{cause="`+cause+`"}`)
+}
+
+// An engine that ended itself is a WARN, a stop marotte asked for an INFO, and each exit counts once under its cause.
 func TestEngineExit_LogsOneLineWithTheSidecarStatus(t *testing.T) {
+	crashes := exitCount(t, "crash")
 	line := exitFixture(t, &bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarExit: "exit_code=1"}, nil)
-	if line["sidecar_exit"] != "exit_code=1" || line["ended_itself"] != true || line["level"] != "WARN" {
-		t.Errorf("exit line = %v, want sidecar_exit=exit_code=1 ended_itself=true at WARN", line)
+	if line["sidecar_exit"] != "exit_code=1" || line["cause"] != "crash" || line["level"] != "WARN" {
+		t.Errorf("exit line = %v, want sidecar_exit=exit_code=1 cause=crash at WARN", line)
 	}
 	if line["sessions"] != float64(2) {
 		t.Errorf("exit line sessions = %v, want 2: one line per death, whatever the session count", line["sessions"])
 	}
+	if v, ok := line["ended_itself"]; ok {
+		t.Errorf("exit line carries ended_itself=%v, a second key for what cause already says", v)
+	}
+	if got := exitCount(t, "crash") - crashes; got != 1 {
+		t.Errorf("engine_exits_total{cause=crash} moved by %v, want 1", got)
+	}
 
+	stops := exitCount(t, "stopped")
 	clean := exitFixture(t, nil, nil)
-	if clean["ended_itself"] != false {
-		t.Errorf("a stop's exit line = %v, want ended_itself=false", clean)
+	if clean["cause"] != "stopped" || clean["level"] != "INFO" {
+		t.Errorf("a stop's exit line = %v, want cause=stopped at INFO", clean)
+	}
+	if got := exitCount(t, "stopped") - stops; got != 1 {
+		t.Errorf("engine_exits_total{cause=stopped} moved by %v, want 1", got)
+	}
+}
+
+// presetExitCauses are the engine exit causes the page carries before any test counts an exit.
+var presetExitCauses = testsupport.PresetLabelValues("marotte_engine_exits_total", "cause")
+
+// exitCause's names are the counter's cause values, in both directions: a name the counter does not pre-set is
+// missed by increase() at its first exit, and a pre-set name exitCause never returns is a series no exit moves.
+func TestExitCause_NamesExactlyTheCountedCauses(t *testing.T) {
+	got := map[string]bool{}
+	for _, reason := range []bridge.ExitInfo{
+		{Reason: bridge.ExitEnded},
+		{Reason: bridge.ExitStdinStalled},
+		{Reason: bridge.ExitParseBreaker},
+		{Reason: bridge.ExitLaneOverflow},
+		{Reason: bridge.ExitStopped},
+	} {
+		for _, restart := range []*restartCause{nil, {Kind: restartAuto}, {Kind: restartConfirmed}} {
+			for _, sig := range []syscall.Signal{0, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGSEGV} {
+				for _, draining := range []bool{false, true} {
+					for _, oomClear := range []bool{false, true} {
+						info := reason
+						info.SidecarSignal = sig
+						got[exitCause(&info, restart, draining, oomClear)] = true
+					}
+				}
+			}
+		}
+	}
+	want := map[string]bool{}
+	for _, c := range presetExitCauses {
+		want[c] = true
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("exitCause returns %v, want exactly the pre-set causes %v", slices.Sorted(maps.Keys(got)), presetExitCauses)
 	}
 }
 
@@ -319,9 +373,13 @@ func TestEngineExit_ACauseForAStopMarotteDidNotSend(t *testing.T) {
 		"a non-zero exit":            {info: bridge.ExitInfo{Reason: bridge.ExitEnded, SidecarExit: "exit_code=1"}, want: "crash"},
 	} {
 		t.Run(name, func(t *testing.T) {
+			before := exitCount(t, tc.want)
 			line := exitFixture(t, &tc.info, tc.oom)
-			if line["cause"] != tc.want || line["ended_itself"] != true {
-				t.Errorf("exit line = %v, want cause=%s ended_itself=true", line, tc.want)
+			if line["cause"] != tc.want || line["level"] != "WARN" {
+				t.Errorf("exit line = %v, want cause=%s at WARN", line, tc.want)
+			}
+			if got := exitCount(t, tc.want) - before; got != 1 {
+				t.Errorf("engine_exits_total{cause=%s} moved by %v, want 1", tc.want, got)
 			}
 		})
 	}

@@ -291,7 +291,7 @@ func (rs *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease) bool {
 		return false
 	}
 	rs.recordEnd(l.WorkflowID, runEndOrphaned)
-	// ERROR: an alert rule keys on logMsgRunOrphaned.
+	// ERROR: the restart lost a run someone asked for.
 	slog.Error(logMsgRunOrphaned, "workflow_id", l.WorkflowID, "recipe", l.Recipe,
 		"origin", string(l.Origin), "schedule_id", l.ScheduleID, "rule_id", l.RuleID)
 	// The schedule's row too, or every later slot is refused as an overlap.

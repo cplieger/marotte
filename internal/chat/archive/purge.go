@@ -72,7 +72,7 @@ func (s *Service) Purge(ctx context.Context, maxAge time.Duration) PurgeResult {
 			res.NextDeadline = d
 		}
 	}
-	logPurgeResult(res, maxAge)
+	logPurgeResult(ctx, res, maxAge)
 	return res
 }
 
@@ -112,23 +112,22 @@ func (s *Service) purgeOne(ctx context.Context, chatID marotte.ChatID, cutoff ti
 	return purgeOneResult{outcome: purgeSkipped}
 }
 
-// logPurgeResult logs the pass and its count line. The count line is logged on every pass, zeros included, because it
-// is the series an alert rule reads.
-func logPurgeResult(res PurgeResult, maxAge time.Duration) {
-	counts := make([]any, 0, 2*len(keptByKinds))
+// logPurgeResult writes the pass's one line, a WARN when a chat could not be read and was kept unjudged. kept_by
+// names only the reasons that kept a chat past retention.
+func logPurgeResult(ctx context.Context, res PurgeResult, maxAge time.Duration) {
+	var keptBy []any
 	for _, k := range keptByKinds {
-		counts = append(counts, k, res.KeptBy[k])
+		if n := res.KeptBy[k]; n > 0 {
+			keptBy = append(keptBy, k, n)
+		}
 	}
-	slog.Info("chat purge: chats past retention kept by a keep fact", counts...)
+	level := slog.LevelInfo
 	if res.Errors > 0 {
-		slog.Warn("chat purge: pass complete with errors",
-			"purged", res.Purged, "kept", res.Kept, "errors", res.Errors,
-			"max_age", maxAge)
-		return
+		level = slog.LevelWarn
 	}
-	slog.Info("chat purge: pass complete",
-		"purged", res.Purged, "kept", res.Kept,
-		"max_age", maxAge)
+	slog.Log(ctx, level, "chat purge: pass complete",
+		"purged", res.Purged, "kept", res.Kept, "errors", res.Errors, "max_age", maxAge,
+		slog.Group("kept_by", keptBy...))
 }
 
 // PurgeScheduler owns the retention-purge lifecycle: one goroutine with a

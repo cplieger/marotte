@@ -14,6 +14,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/obs"
 )
 
 const (
@@ -155,7 +156,10 @@ type Vault struct {
 	now        func() time.Time
 	slots      map[BackendID]*slot
 	byCallback map[string]BackendID
-	wake       chan struct{}
+	// heldBack are the dirty backends whose save a staged copy refused since the last write was
+	// tried; only the worker touches it.
+	heldBack map[BackendID]bool
+	wake     chan struct{}
 	// stopped is closed when the persistence worker has returned.
 	stopped    chan struct{}
 	notifyCond *sync.Cond
@@ -215,6 +219,7 @@ func open(lifetime context.Context, configDir string, cfg config, backends ...Ba
 		path:         filepath.Join(configDir, fileName),
 		slots:        make(map[BackendID]*slot, len(backends)),
 		byCallback:   map[string]BackendID{},
+		heldBack:     map[BackendID]bool{},
 		wake:         make(chan struct{}, 1),
 		stopped:      make(chan struct{}),
 		retryBase:    cfg.retryBase,
@@ -237,6 +242,7 @@ func open(lifetime context.Context, configDir string, cfg config, backends ...Ba
 			v.byCallback[d.HostCallback] = d.Backend
 		}
 		v.slots[d.Backend] = &slot{b: b, decl: d}
+		obs.SignInBackend(string(d.Backend))
 	}
 	v.load()
 	for _, s := range v.slots {
