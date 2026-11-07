@@ -122,7 +122,7 @@ func (r *Rule) Normalize() error {
 		return invalid("when must hold exactly one of clock and event")
 	}
 	if r.When.Clock != nil {
-		if err := r.When.Clock.Validate(); err != nil {
+		if err := r.When.Clock.validate(); err != nil {
 			return invalid("when.clock: %v", err)
 		}
 		return checkInputs(r.Inputs, nil)

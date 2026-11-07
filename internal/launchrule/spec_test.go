@@ -356,7 +356,7 @@ func TestSpecValidate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.spec.Validate()
+			err := tt.spec.validate()
 			if tt.ok && err != nil {
 				t.Errorf("expected valid, got %v", err)
 			}
@@ -405,7 +405,7 @@ func FuzzNextRun(f *testing.F) {
 			MonthDay: monthDay,
 			Weekdays: wd,
 		}
-		if s.Validate() != nil {
+		if s.validate() != nil {
 			t.Skip("spec does not validate")
 		}
 		base := at(2026, time.August, 4, 12, 0)
