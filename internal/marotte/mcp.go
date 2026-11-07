@@ -59,12 +59,23 @@ type MCPConnectedPayload struct {
 	Server string `json:"server"`
 }
 
-// MCPPrewarmPayload is the payload for type="mcp_prewarm", emitted
-// when a prewarm install starts, succeeds, or fails. The UI uses this
-// to show "Installing..." next to the server name in the MCP panel.
+// MCPPrewarmState is the phase of a prewarm install, for the servers one frame names.
+type MCPPrewarmState string
+
+// The phases of a prewarm install. A server that leaves an install in flight gets Done.
+const (
+	MCPPrewarmInstalling MCPPrewarmState = "installing"
+	MCPPrewarmDone       MCPPrewarmState = "done"
+	MCPPrewarmFailed     MCPPrewarmState = "failed"
+)
+
+// MCPPrewarmPayload is the payload for type="mcp_prewarm", emitted when a prewarm install starts,
+// succeeds or fails, and when a server joins or leaves one in flight. State applies to exactly the
+// servers ServerIDs names, and the MCP panel badges exactly those.
 type MCPPrewarmPayload struct {
-	Package string `json:"package"`
-	State   string `json:"state"` // "installing", "done", "failed"
+	Package   string          `json:"package"`
+	State     MCPPrewarmState `json:"state"`
+	ServerIDs []string        `json:"server_ids"`
 }
 
 // MCPOAuthPayload is the payload for type="mcp_oauth_needed", emitted when kiro-cli reports a server failed for

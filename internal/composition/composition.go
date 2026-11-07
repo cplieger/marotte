@@ -218,10 +218,11 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	mcpRegistry := mcp.NewRegistryProxy()
 	mcpPrewarm := prewarm.NewRunner(appCtx, mcpStore)
-	mcpPrewarm.OnStatus = func(pkg string, state prewarm.State) {
+	mcpPrewarm.OnStatus = func(pkg string, serverIDs []string, state marotte.MCPPrewarmState) {
 		h.Broadcast(ctx, marotte.NewEvent(marotte.EventMCPPrewarm, "", marotte.MCPPrewarmPayload{
-			Package: pkg,
-			State:   string(state),
+			Package:   pkg,
+			ServerIDs: serverIDs,
+			State:     state,
 		}))
 	}
 	mcpStore.SetOnChange(func(ctx context.Context) {

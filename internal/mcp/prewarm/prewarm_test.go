@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"pgregory.net/rapid"
 )
 
@@ -122,7 +123,7 @@ func TestExtractNpxPackage(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := ExtractNpxPackage(tc.srv); got != tc.want {
+			if got := ExtractNpxPackage(&tc.srv); got != tc.want {
 				t.Errorf("ExtractNpxPackage() = %q, want %q", got, tc.want)
 			}
 		})
@@ -151,7 +152,7 @@ func FuzzExtractNpxPackage(f *testing.F) {
 			Prewarm:   true,
 			Enabled:   true,
 		}
-		got := ExtractNpxPackage(s)
+		got := ExtractNpxPackage(&s)
 		if got == "" {
 			return
 		}
@@ -201,7 +202,7 @@ func TestExtractNpxPackage_RejectsUnsafePackageSpecs(t *testing.T) {
 				Args:    []string{"-y", tc.arg},
 				Enabled: true, Prewarm: true,
 			}
-			if got := ExtractNpxPackage(s); got != "" {
+			if got := ExtractNpxPackage(&s); got != "" {
 				t.Errorf("ExtractNpxPackage(%q) = %q, want empty (unsafe spec must be rejected)",
 					tc.arg, got)
 			}
@@ -225,7 +226,7 @@ func TestExtractNpxPackage_AcceptsSafePackageSpecs(t *testing.T) {
 				Args:    []string{"-y", arg},
 				Enabled: true, Prewarm: true,
 			}
-			if got := ExtractNpxPackage(s); got != arg {
+			if got := ExtractNpxPackage(&s); got != arg {
 				t.Errorf("ExtractNpxPackage(%q) = %q, want %q",
 					arg, got, arg)
 			}
@@ -352,7 +353,7 @@ func TestExtractNpxPackage_NoPackageAfterYes_returnsEmpty(t *testing.T) {
 				Transport: "stdio", Command: "npx", Args: tc.args,
 				Enabled: true, Prewarm: true,
 			}
-			if got := ExtractNpxPackage(s); got != "" {
+			if got := ExtractNpxPackage(&s); got != "" {
 				t.Errorf("ExtractNpxPackage(args=%v) = %q, want empty",
 					tc.args, got)
 			}
@@ -368,10 +369,10 @@ func TestInstallOne_ACancelledInstallDoesNotWaitOnAPipeHoldingChild(t *testing.T
 echo $! > `+shellQuote(pidFile)+`
 sleep 30
 `)
-	var states []State
+	var states []marotte.MCPPrewarmState
 	p := NewRunner(t.Context(), fakeLister{})
-	p.OnStatus = func(_ string, s State) { states = append(states, s) }
-	p.reserve("@scope/pkg")
+	p.OnStatus = func(_ string, _ []string, s marotte.MCPPrewarmState) { states = append(states, s) }
+	seed(p, "@scope/pkg", false, "a")
 	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel()
 
@@ -391,7 +392,7 @@ sleep 30
 	if elapsed > installWaitDelay {
 		t.Errorf("installOne returned %s after a 200ms cancel, want under the %s wait delay: the child held the pipe", elapsed, installWaitDelay)
 	}
-	if want := []State{installing, failed}; !slices.Equal(states, want) {
+	if want := []marotte.MCPPrewarmState{marotte.MCPPrewarmInstalling, marotte.MCPPrewarmFailed}; !slices.Equal(states, want) {
 		t.Errorf("states = %v, want %v", states, want)
 	}
 }

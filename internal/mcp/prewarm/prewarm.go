@@ -2,30 +2,35 @@
 // container start and when such a server is added or toggled, so the first chat does not pay the
 // 5-15s install.
 // The cache is the whole mechanism: `npx -y <pkg>` always installs into `<cache>/_npx/<hash>` and
-// never runs an installed copy (npm 11.16). So installOne runs --ignore-scripts into a throwaway
+// never runs an installed copy (npm 11.16). So install runs --ignore-scripts into a throwaway
 // tree it deletes: a boot-time install would otherwise run every dependency's lifecycle scripts
 // unattended, as the server. The package's own scripts still run at spawn, with a user present.
+// One install runs per package, for every server that asks for it; each pass reconciles that set
+// with the store, and every status frame names the servers it applies to.
 package prewarm
 
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/procgroup"
 	"golang.org/x/sync/semaphore"
 )
 
 // ServerInfo is the narrow view of an MCP server that prewarm needs.
 type ServerInfo struct {
+	ID        string
 	Transport string
 	Command   string
 	Args      []string
@@ -46,31 +51,46 @@ const tailLogBytes = buffer.DefaultOutputCap
 
 var supportedPackageTransports = map[string]bool{"stdio": true, "": true}
 
-// State describes the phase of a prewarm install for UI surfacing.
-type State string
+// SupportsTransport reports whether marotte can install a package for a server on transport t;
+// "" is the default, stdio.
+func SupportsTransport(t string) bool { return supportedPackageTransports[t] }
 
-// installing and the following constants define the valid State values for a prewarm install lifecycle.
-const (
-	installing State = "installing"
-	done       State = "done"
-	failed     State = "failed"
-)
+// reservation is one package's install, queued or running, and the servers it is for. ids is
+// sorted, duplicate-free and non-nil, and is replaced on change, never edited in place, so a
+// frame may hold it after mu is released.
+type reservation struct {
+	ids     []string
+	started bool
+}
+
+// status is one OnStatus call.
+type status struct {
+	pkg   string
+	state marotte.MCPPrewarmState
+	ids   []string
+}
 
 // Runner owns the lifecycle of npx pre-installs.
 type Runner struct {
-	Lister  ServerLister
-	running map[string]struct{}
-	sem     *semaphore.Weighted
+	Lister ServerLister
 	// lifetime is the RUNNER's own context, which Stop cancels, distinct from a pass's ctx: an
 	// install in flight must die with either. queue composes both.
 	lifetime context.Context
+	sem      *semaphore.Weighted
 	cancel   context.CancelFunc
-	OnStatus func(pkg string, state State)
-	// installs is every queue goroutine; mu orders each Add before Stop's cancel, so
-	// none is added once Wait may run.
-	installs sync.WaitGroup
-	mu       sync.Mutex
-	Disabled atomic.Bool
+	// OnStatus receives every frame: the package, the ids of the servers state applies to (sorted,
+	// never empty) and the state. Frames arrive in the order the runner decided them.
+	OnStatus     func(pkg string, serverIDs []string, state marotte.MCPPrewarmState)
+	reservations map[string]*reservation
+	installs     sync.WaitGroup
+	// Lock order runMu, emitMu, mu. runMu holds a pass's store read and its reconcile together,
+	// so the last reconcile read the store last. emitMu is held from a frame's snapshot until
+	// OnStatus returns, so frames reach the bus in the order they were decided; OnStatus never
+	// runs under mu. mu also orders each installs.Go before Stop's cancel, so none is added once
+	// Wait may run.
+	runMu  sync.Mutex
+	emitMu sync.Mutex
+	mu     sync.Mutex
 }
 
 // NewRunner returns a runner. Call Run to kick an initial pass at
@@ -82,11 +102,11 @@ type Runner struct {
 func NewRunner(ctx context.Context, lister ServerLister) *Runner {
 	ctx, cancel := context.WithCancel(ctx)
 	return &Runner{
-		Lister:   lister,
-		running:  make(map[string]struct{}),
-		sem:      semaphore.NewWeighted(maxConcurrentInstalls),
-		lifetime: ctx,
-		cancel:   cancel,
+		Lister:       lister,
+		reservations: make(map[string]*reservation),
+		sem:          semaphore.NewWeighted(maxConcurrentInstalls),
+		lifetime:     ctx,
+		cancel:       cancel,
 	}
 }
 
@@ -99,8 +119,9 @@ func (p *Runner) Stop() {
 	p.installs.Wait()
 }
 
-// Run enumerates enabled prewarm-flagged npx servers and kicks off a
-// background install for each.
+// Run reconciles the in-flight installs with the store: each install is for exactly the servers
+// that now ask for its package, a server that stopped asking leaves with a Done frame, one that
+// starts asking joins, and a package no install holds is queued.
 //
 // ctx bounds THIS pass. The runner's own lifetime is separate and both are
 // honoured: see the field and installOne.
@@ -108,45 +129,110 @@ func (p *Runner) Run(ctx context.Context) {
 	if p.lifetime.Err() != nil {
 		return
 	}
-	if p.Disabled.Load() {
+	p.runMu.Lock()
+	defer p.runMu.Unlock()
+	candidates := p.Lister.EnabledServers(ctx)
+	// A dead ctx reads an empty store, which would otherwise make every server leave.
+	if ctx.Err() != nil {
 		return
 	}
-	// The probe's ANSWER is threaded to installOne as argv[0] instead of being
-	// discarded and the bare name re-resolved per package: one pass resolves once,
-	// and the file that was probed is the file that runs.
-	//
-	// It does NOT confine. npm is installed by the toolbelt engine into its
-	// bin/ directory, which an agent can write, so an absolute pin names an
-	// agent-writable file either way. Confining it is custody on the toolbelt
-	// bin tree — toolbelt's question, not this file's.
+	order, want := wanted(candidates)
+
+	// The probe's ANSWER is threaded to installOne as argv[0], so the file that was probed is
+	// the file that runs. It does not confine: npm lives in the toolbelt's agent-writable bin
+	// tree, whose custody is the toolbelt's. npm is opt-in (runtimes.node) and may arrive later
+	// in the process, so a miss only skips new installs this pass; joins and leaves still apply.
 	npmBin, err := exec.LookPath("npm")
 	if err != nil {
-		// npm is opt-in (runtimes.node). It may be installed later in
-		// the same process lifetime via the tools UI, so DON'T latch
-		// Disabled here — just skip this run. The next Run re-probes
-		// and prewarm comes alive once node is enabled.
-		slog.Debug("mcp: prewarm skipped this run: npm not on PATH yet", "error", err)
-		return
+		slog.Debug("mcp: prewarm installs nothing this run: npm not on PATH yet", "error", err)
 	}
 
-	candidates := p.Lister.EnabledServers(ctx)
+	p.emitMu.Lock()
+	defer p.emitMu.Unlock()
+	p.mu.Lock()
+	leaves, joins := p.reconcile(want)
 	queued := 0
+	if err == nil && p.lifetime.Err() == nil {
+		for _, pkg := range order {
+			if _, ok := p.reservations[pkg]; ok {
+				continue
+			}
+			p.reservations[pkg] = &reservation{ids: want[pkg]}
+			p.installs.Go(func() { p.queue(ctx, npmBin, pkg) })
+			queued++
+			slog.Debug("mcp: prewarm queued", "package", pkg, "position", queued)
+		}
+	}
+	p.mu.Unlock()
+	p.emit(leaves...)
+	p.emit(joins...)
+	slog.Info("mcp: prewarm pass", "candidates", len(candidates), "queued", queued)
+}
+
+// wanted maps each package the candidates ask to prewarm to the sorted ids asking, with the
+// packages in first-seen order.
+func wanted(candidates []ServerInfo) (order []string, want map[string][]string) {
+	want = make(map[string][]string)
 	for i := range candidates {
-		pkg := ExtractNpxPackage(candidates[i])
+		pkg := ExtractNpxPackage(&candidates[i])
 		if pkg == "" {
 			continue
 		}
-		if !p.reserve(pkg) {
+		if _, ok := want[pkg]; !ok {
+			order = append(order, pkg)
+		}
+		want[pkg] = append(want[pkg], candidates[i].ID)
+	}
+	for pkg, ids := range want {
+		slices.Sort(ids)
+		want[pkg] = slices.Compact(ids)
+	}
+	return order, want
+}
+
+// reconcile sets every reservation's ids to want's and returns the frames a started install owes:
+// leavers get Done, and a join re-sends Installing for the whole set. A waiting reservation
+// changes silently, since start names whoever holds it then. The caller holds mu.
+func (p *Runner) reconcile(want map[string][]string) (leaves, joins []status) {
+	for _, pkg := range slices.Sorted(maps.Keys(p.reservations)) {
+		r := p.reservations[pkg]
+		ids := want[pkg]
+		if ids == nil {
+			ids = []string{}
+		}
+		left, joined := missing(r.ids, ids), missing(ids, r.ids)
+		r.ids = ids
+		if !r.started {
 			continue
 		}
-		if !p.goQueue(ctx, npmBin, pkg) {
-			p.release(pkg)
-			break
+		if len(left) > 0 {
+			leaves = append(leaves, status{pkg: pkg, ids: left, state: marotte.MCPPrewarmDone})
 		}
-		queued++
-		slog.Debug("mcp: prewarm queued", "package", pkg, "position", queued)
+		if len(joined) > 0 {
+			joins = append(joins, status{pkg: pkg, ids: ids, state: marotte.MCPPrewarmInstalling})
+		}
 	}
-	slog.Info("mcp: prewarm pass", "candidates", len(candidates), "queued", queued)
+	return leaves, joins
+}
+
+// missing returns the ids of sorted a that sorted b lacks.
+func missing(a, b []string) []string {
+	return slices.DeleteFunc(slices.Clone(a), func(id string) bool {
+		_, found := slices.BinarySearch(b, id)
+		return found
+	})
+}
+
+// emit hands each frame naming at least one server to OnStatus. The caller holds emitMu, not mu.
+func (p *Runner) emit(frames ...status) {
+	if p.OnStatus == nil {
+		return
+	}
+	for _, f := range frames {
+		if len(f.ids) > 0 {
+			p.OnStatus(f.pkg, f.ids, f.state)
+		}
+	}
 }
 
 // queue waits for one of the maxConcurrentInstalls slots and installs pkg, handing the reservation
@@ -167,32 +253,12 @@ func (p *Runner) queue(ctx context.Context, npmBin, pkg string) {
 	p.installOne(workCtx, npmBin, pkg)
 }
 
-// goQueue runs queue on installs unless Stop has begun, reporting whether it did.
-func (p *Runner) goQueue(ctx context.Context, npmBin, pkg string) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.lifetime.Err() != nil {
-		return false
-	}
-	p.installs.Go(func() { p.queue(ctx, npmBin, pkg) })
-	return true
-}
-
-func (p *Runner) reserve(pkg string) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if _, ok := p.running[pkg]; ok {
-		return false
-	}
-	p.running[pkg] = struct{}{}
-	return true
-}
-
-// release drops pkg from the in-flight set, so the next pass may retry it.
+// release drops an install that never started, so the next pass may retry it. Nothing was
+// badged for it, so it emits nothing.
 func (p *Runner) release(pkg string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	delete(p.running, pkg)
+	delete(p.reservations, pkg)
 }
 
 // ringBuffer keeps the last Cap bytes of a stream.
@@ -212,35 +278,64 @@ func (r *ringBuffer) Write(p []byte) (int, error) {
 // Bytes returns the buffered content, up to Cap bytes (the most recent tail).
 func (r *ringBuffer) Bytes() []byte { return r.buf }
 
-// ctx must already carry both the pass and the runner lifetime (queue merges them). The install
-// goes into a per-install THROWAWAY tree with --ignore-scripts: concurrent installs into one
-// node_modules would race, while the shared cache underneath is built for it.
+// installOne runs pkg's install between its start and finish frames. ctx must already carry both
+// the pass and the runner lifetime (queue merges them).
 func (p *Runner) installOne(ctx context.Context, npmBin, pkg string) {
-	defer p.release(pkg)
+	p.start(pkg)
+	p.finish(pkg, p.install(ctx, npmBin, pkg))
+}
 
+// start marks pkg's install as running and names its servers.
+func (p *Runner) start(pkg string) {
+	p.emitMu.Lock()
+	defer p.emitMu.Unlock()
+	p.mu.Lock()
+	var ids []string
+	if r, ok := p.reservations[pkg]; ok {
+		r.started = true
+		ids = r.ids
+	}
+	p.mu.Unlock()
+	p.emit(status{pkg: pkg, ids: ids, state: marotte.MCPPrewarmInstalling})
+}
+
+// finish drops pkg's reservation and reports state to the servers it held. The snapshot and the
+// delete share one critical section: a pass that joins after it finds no reservation and queues
+// a fresh install, so no server is left on Installing.
+func (p *Runner) finish(pkg string, state marotte.MCPPrewarmState) {
+	p.emitMu.Lock()
+	defer p.emitMu.Unlock()
+	p.mu.Lock()
+	var ids []string
+	if r, ok := p.reservations[pkg]; ok {
+		ids = r.ids
+		delete(p.reservations, pkg)
+	}
+	p.mu.Unlock()
+	p.emit(status{pkg: pkg, ids: ids, state: state})
+}
+
+// install runs npm into a per-install THROWAWAY tree with --ignore-scripts and reports Done or
+// Failed: concurrent installs into one node_modules would race, while the shared cache underneath
+// is built for it.
+func (p *Runner) install(ctx context.Context, npmBin, pkg string) marotte.MCPPrewarmState {
 	installCtx, installCancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer installCancel()
 
 	start := time.Now()
 	slog.Info("mcp: prewarm install", "package", pkg)
-	if p.OnStatus != nil {
-		p.OnStatus(pkg, installing)
-	}
-	fail := func(err error, out []byte) {
+	fail := func(err error, out []byte) marotte.MCPPrewarmState {
 		slog.Warn("mcp: prewarm failed",
 			"package", pkg,
 			"error", err,
 			"duration_ms", time.Since(start).Milliseconds(),
 			"output", tailOutput(out, 1024))
-		if p.OnStatus != nil {
-			p.OnStatus(pkg, failed)
-		}
+		return marotte.MCPPrewarmFailed
 	}
 
 	tree, err := stageTree()
 	if err != nil {
-		fail(err, nil)
-		return
+		return fail(err, nil)
 	}
 	defer removeTree(tree)
 
@@ -256,14 +351,11 @@ func (p *Runner) installOne(ctx context.Context, npmBin, pkg string) {
 	cmd.Stdout = ring
 	cmd.Stderr = ring
 	if err := cmd.Run(); err != nil {
-		fail(err, ring.Bytes())
-		return
+		return fail(err, ring.Bytes())
 	}
 	slog.Info("mcp: prewarm done",
 		"package", pkg, "duration_ms", time.Since(start).Milliseconds())
-	if p.OnStatus != nil {
-		p.OnStatus(pkg, done)
-	}
+	return marotte.MCPPrewarmDone
 }
 
 // installWaitDelay bounds an install's Wait after its cancel or timeout kills the group.
@@ -304,11 +396,11 @@ var npmPkgSpecRe = regexp.MustCompile(
 
 // ExtractNpxPackage returns the npm identifier a stdio server will run
 // via `npx -y <pkg>`, or "" if the server's command isn't an npx run.
-func ExtractNpxPackage(s ServerInfo) string {
+func ExtractNpxPackage(s *ServerInfo) string {
 	if !s.Prewarm || !s.Enabled {
 		return ""
 	}
-	if !supportedPackageTransports[s.Transport] {
+	if !SupportsTransport(s.Transport) {
 		return ""
 	}
 	if strings.TrimSpace(s.Command) != npxCommand {

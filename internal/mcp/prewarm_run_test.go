@@ -55,7 +55,7 @@ func TestEnabledServers_FeedsPrewarmLister(t *testing.T) {
 	}
 
 	// And the projection is what prewarm actually keys on.
-	if pkg := prewarm.ExtractNpxPackage(got[0]); pkg != "@scope/pkg" {
+	if pkg := prewarm.ExtractNpxPackage(&got[0]); pkg != "@scope/pkg" {
 		t.Errorf("ExtractNpxPackage(projection) = %q, want %q", pkg, "@scope/pkg")
 	}
 }
