@@ -195,11 +195,7 @@ func (rs *Runs) reconcileLeasePresence(ctx context.Context, status map[string]ma
 
 		if inspectAbsent {
 			if ending, gone := rs.inspectGone(ctx, l.WorkflowID); gone {
-				msg := "boot: releasing the lease of a run inspect confirmed is over"
-				if ending.Status == launchrule.StatusUnknown {
-					msg = "boot: releasing the lease of a run the engine no longer knows"
-				}
-				slog.Info(msg, "workflow_id", l.WorkflowID, "recipe", l.Recipe)
+				slog.Info(goneLeaseMessage(ending), "workflow_id", l.WorkflowID, "recipe", l.Recipe)
 				rs.recordSlotEnding(ctx, ruleRun(l), ending)
 				rs.forgetBounds(ctx, l.WorkflowID)
 				continue
@@ -207,6 +203,15 @@ func (rs *Runs) reconcileLeasePresence(ctx context.Context, status map[string]ma
 		}
 		rs.observeAbsentLease(ctx, l, now)
 	}
+}
+
+// goneLeaseMessage words the boot line for releasing an absent run's lease: a terminal reply confirmed the run is
+// over, while an unknown ending means the engine no longer knows the run.
+func goneLeaseMessage(ending launchrule.Outcome) string {
+	if ending.Status == launchrule.StatusUnknown {
+		return "boot: releasing the lease of a run the engine no longer knows"
+	}
+	return "boot: releasing the lease of a run inspect confirmed is over"
 }
 
 // inspectGone asks KAS about one absent run and reports whether it is over, with its slot's ending: a terminal
