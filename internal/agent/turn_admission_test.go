@@ -732,10 +732,17 @@ func TestReserveTurnForPrompt_BesideAWireTurn(t *testing.T) {
 		{
 			name: "a bracketed wire turn that ended admits",
 			open: func(t *testing.T, h *Runtime) {
+				drained := make(chan struct{})
+				drain := h.coord.drainAfterClose
+				h.coord.drainAfterClose = func(ctx context.Context, chatID marotte.ChatID, cl command.CloseFacts, ends command.EndFacts) {
+					drain(ctx, chatID, cl, ends)
+					close(drained)
+				}
 				h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg())
 				h.translateACPEvent("c1", h.originOf("c1"), newTurnEndMsg("end_turn"))
-				// The end's close lands off this goroutine, and a prompt beside a live turn answers busy at once.
-				waitFor(t, func() bool { return !h.coord.turns.live("c1") })
+				// The close's tail runs off this goroutine, and its drain holds the slot as a prompt while it looks for a
+				// queued row: a prompt beside that holder answers busy at once.
+				awaitClosed(t, drained, "the close's drain")
 			},
 			want: command.AdmissionAcquired,
 		},
