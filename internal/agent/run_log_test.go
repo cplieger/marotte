@@ -150,7 +150,7 @@ func TestRunLog_NodeCompleteMapsKASStatusOntoTheOutcome(t *testing.T) {
 			if _, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1"); err != nil {
 				t.Fatal(err)
 			}
-			sealed, closed, err := r.closeNode(ctx, "wf1", "s", tc.status, "why")
+			sealed, closed, err := r.closeNode(ctx, "wf1", "s", tc.status, "why", nil)
 			if err != nil || !closed {
 				t.Fatalf("CloseNode(%q) = %v, %v, %v", tc.status, len(sealed), closed, err)
 			}
@@ -206,7 +206,7 @@ func TestRunLog_ARecordedRefusalOutranksTheNodeCompleteStatus(t *testing.T) {
 			if tc.raw != "" && !r.stopReason("wf1", "s", tc.raw) {
 				t.Fatalf("%s: StopReason(%q) refused on an open turn", tc.desc, tc.raw)
 			}
-			if _, closed, err := r.closeNode(ctx, "wf1", "s", tc.status, "why"); err != nil || !closed {
+			if _, closed, err := r.closeNode(ctx, "wf1", "s", tc.status, "why", nil); err != nil || !closed {
 				t.Fatalf("%s: CloseNode(%q) = %v, %v", tc.desc, tc.status, closed, err)
 			}
 			entries := runLogEntries(t, r, "wf1")
@@ -256,7 +256,7 @@ func TestRunLog_ACloseKeepsKASsStatusOverAToolUseStop(t *testing.T) {
 			if !r.stopReason("wf1", "s", marotte.StopReasonToolUse) {
 				t.Fatal("StopReason(tool_use) refused on an open turn")
 			}
-			if _, closed, err := r.closeNode(ctx, "wf1", "s", tc.status, tc.reason); err != nil || !closed {
+			if _, closed, err := r.closeNode(ctx, "wf1", "s", tc.status, tc.reason, nil); err != nil || !closed {
 				t.Fatalf("CloseNode(%q) = %v, %v", tc.status, closed, err)
 			}
 			entries := runLogEntries(t, r, "wf1")
@@ -280,7 +280,7 @@ func closeStep(t *testing.T, r *runLog, path string, raw marotte.StopReason, sta
 	if !r.stopReason("wf1", path, raw) {
 		t.Fatalf("StopReason(%q) refused on the open turn %s", raw, path)
 	}
-	if _, closed, err := r.closeNode(t.Context(), "wf1", path, status, ""); err != nil || !closed {
+	if _, closed, err := r.closeNode(t.Context(), "wf1", path, status, "", nil); err != nil || !closed {
 		t.Fatalf("CloseNode(%s, %q) = %v, %v", path, status, closed, err)
 	}
 }
@@ -415,7 +415,7 @@ func TestRunLog_StepEndsReadsAnEngineEndAsInterruptedAndItsResume(t *testing.T) 
 		w := newRunLog(dir)
 		interrupt(t, w)
 		openStepTurn(t, w, step)
-		if _, _, err := w.closeNode(t.Context(), "wf1", step, "completed", ""); err != nil {
+		if _, _, err := w.closeNode(t.Context(), "wf1", step, "completed", "", nil); err != nil {
 			t.Fatal(err)
 		}
 		if got := ends(t, newRunLog(dir), map[string]workflow.StepRecord{step: {Status: "completed"}}); len(got) != 0 {
@@ -518,14 +518,14 @@ func TestRunLog_StepStartsKeepsAnAttemptAcrossAResume(t *testing.T) {
 			r := newRunLog(t.TempDir())
 			first := openStepTurn(t, r, step)
 			assertStarts(t, r, step, startOf(first, false))
-			if _, _, err := r.closeNode(t.Context(), "wf1", step, "failed", ""); err != nil {
+			if _, _, err := r.closeNode(t.Context(), "wf1", step, "failed", "", nil); err != nil {
 				t.Fatal(err)
 			}
 			assertStarts(t, r, step, startOf(first, true))
 			time.Sleep(time.Minute)
 			retry := openStepTurn(t, r, step)
 			assertStarts(t, r, step, startOf(retry, false))
-			if _, _, err := r.closeNode(t.Context(), "wf1", step, "completed", ""); err != nil {
+			if _, _, err := r.closeNode(t.Context(), "wf1", step, "completed", "", nil); err != nil {
 				t.Fatal(err)
 			}
 			assertStarts(t, r, step, startOf(retry, true))
@@ -536,7 +536,7 @@ func TestRunLog_StepStartsKeepsAnAttemptAcrossAResume(t *testing.T) {
 		dir := t.TempDir()
 		w := newRunLog(dir)
 		first := openStepTurn(t, w, step)
-		if _, _, err := w.closeNode(t.Context(), "wf1", step, "completed", ""); err != nil {
+		if _, _, err := w.closeNode(t.Context(), "wf1", step, "completed", "", nil); err != nil {
 			t.Fatal(err)
 		}
 		r := newRunLog(dir)
@@ -559,15 +559,15 @@ func TestRunLog_ANodeCompleteForAClosedPathClosesNothing(t *testing.T) {
 	if _, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "s"}, "c-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, closed, err := r.closeNode(ctx, "wf1", "s", "completed", ""); err != nil || !closed {
+	if _, closed, err := r.closeNode(ctx, "wf1", "s", "completed", "", nil); err != nil || !closed {
 		t.Fatal(err)
 	}
 	before := len(runLogEntries(t, r, "wf1"))
-	sealed, closed, err := r.closeNode(ctx, "wf1", "s", "completed", "")
+	sealed, closed, err := r.closeNode(ctx, "wf1", "s", "completed", "", nil)
 	if err != nil || closed || len(sealed) != 0 {
 		t.Fatalf("second CloseNode = %v, %v, %v; want nothing closed", len(sealed), closed, err)
 	}
-	if _, closed, _ := r.closeNode(ctx, "wf-unknown", "s", "completed", ""); closed {
+	if _, closed, _ := r.closeNode(ctx, "wf-unknown", "s", "completed", "", nil); closed {
 		t.Fatal("an unknown run closed a turn")
 	}
 	if after := len(runLogEntries(t, r, "wf1")); after != before {
@@ -591,7 +591,7 @@ func TestRunLog_MeteringFoldsIntoTheOpenTurnAndDropsOtherwise(t *testing.T) {
 	if !r.stopReason("wf1", "s", "max_tokens") || !r.stopReason("wf1", "s", "end_turn") {
 		t.Fatal("stop reason refused on an open turn")
 	}
-	if _, _, err := r.closeNode(ctx, "wf1", "s", "completed", ""); err != nil {
+	if _, _, err := r.closeNode(ctx, "wf1", "s", "completed", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	entries := runLogEntries(t, r, "wf1")
@@ -614,7 +614,7 @@ func TestRunLog_AnUnmappedStatusKeepsTheStatusAsTheRawStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.stopReason("wf1", "s", "end_turn")
-	if _, _, err := r.closeNode(ctx, "wf1", "s", "aborted", ""); err != nil {
+	if _, _, err := r.closeNode(ctx, "wf1", "s", "aborted", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	entries := runLogEntries(t, r, "wf1")
@@ -640,7 +640,7 @@ func TestRunLog_ABetweenTurnsAppendLandsAfterThePathsNewestClosedTurn(t *testing
 	if _, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "b"}, "c-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := r.closeNode(ctx, "wf1", "a", "completed", ""); err != nil {
+	if _, _, err := r.closeNode(ctx, "wf1", "a", "completed", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	// The late frame for path a lands after a's close, not the open b's.
@@ -793,7 +793,7 @@ func TestRunLog_LogReadsAnExistingDirectoryAndCreatesNone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := r.closeNode(ctx, "wf1", "s", "completed", ""); err != nil {
+	if _, _, err := r.closeNode(ctx, "wf1", "s", "completed", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	// A second registry over the same root, as the next process.

@@ -1,11 +1,14 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -540,5 +543,147 @@ func TestRunNodeComplete_ALastStepIsNotedThoughARunReadRecordsItsGradeAfterTheRu
 	}
 	if ids, want := steerIDs(t, cs, chatID), stepNoteID(id, stepNoteRefused, nodePath); len(ids) != 1 || ids[0] != want {
 		t.Errorf("launching chat notes = %v, want only %s", ids, want)
+	}
+}
+
+// turnClosedHook runs fn on the publisher's goroutine at the first turn_closed the run bus carries: after the close
+// released runLog.mu and before node_complete's grade goroutine is spawned.
+type turnClosedHook struct {
+	next runBroadcaster
+	fn   func()
+	once sync.Once
+}
+
+func (b *turnClosedHook) Broadcast(ctx context.Context, evt marotte.ServerEvent) {
+	if evt.Type == marotte.EventTurnClosed {
+		b.once.Do(b.fn)
+	}
+	b.next.Broadcast(ctx, evt)
+}
+
+// A run read waiting on runLog.mu when node_complete's close releases it can record the grade before node_complete's
+// goroutine takes the lock, after run_complete released the lease; the note still reaches the chat the lease named
+// at node_complete, once. The test holds runLog.mu from the close's publish to stand in for that read.
+func TestRunNodeComplete_ALastStepIsNotedThoughARunReadRecordsItsGradeBeforeTheStepEndDoes(t *testing.T) {
+	const (
+		id     = "wf_1"
+		chatID = marotte.ChatID("c1")
+	)
+	path := []string{id, "build"}
+	nodePath := workflow.PathKey(path)
+	h, cs, br := runLoggingHub(t)
+	leaseToChat(t, h, cs, id, chatID)
+	rec := inspectWithStep(t, id, "build", "completed", "")
+	br.setCallResult(methodKiroWorkflowInspect, rec)
+	st, ok := kasStepIn(id, rec, nodePath)
+	if !ok {
+		t.Fatal("the inspect reply holds no record of the step")
+	}
+	refuseStep(t, h.runs, id, path, &marotte.RefusalInfo{Category: "policy"})
+	locked := false
+	h.runs.bus = &turnClosedHook{next: h.runs.bus, fn: func() {
+		h.runs.log.mu.Lock()
+		locked = true
+	}}
+
+	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
+	if !locked {
+		t.Fatal("node_complete published no turn_closed")
+	}
+	h.runs.releaseLease(t.Context(), id)
+	r := h.runs.log.runs[id]
+	if err := scanStepFactsLocked(r, r.log); err != nil {
+		h.runs.log.mu.Unlock()
+		t.Fatalf("scan the run log: %v", err)
+	}
+	graded, err := h.runs.log.gradeDueLocked(t.Context(), r, map[string]workflow.StepRecord{nodePath: st})
+	h.runs.log.mu.Unlock()
+	if err != nil {
+		t.Fatalf("grade as the run read: %v", err)
+	}
+	for _, g := range graded {
+		h.runs.recordGrade(t.Context(), id, g)
+	}
+	joinInflight(t, h)
+
+	if got := gradesOf(t, h, id); len(got) != 1 || got[0].Outcome != string(marotte.TurnOutcomeRefused) {
+		t.Errorf("step_graded entries = %+v, want one refused", got)
+	}
+	if ids, want := steerIDs(t, cs, chatID), stepNoteID(id, stepNoteRefused, nodePath); len(ids) != 1 || ids[0] != want {
+		t.Errorf("launching chat notes = %v, want only %s", ids, want)
+	}
+}
+
+// node_complete's own grade notes the close; a run read before and after run_complete finds it graded and leaves no
+// second note.
+func TestRunNodeComplete_AStepEndThatRecordsTheGradeNotesItOnce(t *testing.T) {
+	const (
+		id     = "wf_1"
+		chatID = marotte.ChatID("c1")
+	)
+	path := []string{id, "build"}
+	nodePath := workflow.PathKey(path)
+	h, cs, br := runLoggingHub(t)
+	leaseToChat(t, h, cs, id, chatID)
+	rec := inspectWithStep(t, id, "build", "completed", "")
+	br.setCallResult(methodKiroWorkflowInspect, rec)
+	st, ok := kasStepIn(id, rec, nodePath)
+	if !ok {
+		t.Fatal("the inspect reply holds no record of the step")
+	}
+	refuseStep(t, h.runs, id, path, &marotte.RefusalInfo{Category: "policy"})
+
+	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
+	joinInflight(t, h)
+	kas := map[string]workflow.StepRecord{nodePath: st}
+	if _, err := h.runs.stepEnds(t.Context(), id, kas); err != nil {
+		t.Fatalf("stepEnds: %v", err)
+	}
+	h.runs.releaseLease(t.Context(), id)
+	if _, err := h.runs.stepEnds(t.Context(), id, kas); err != nil {
+		t.Fatalf("stepEnds: %v", err)
+	}
+	joinInflight(t, h)
+
+	if got := gradesOf(t, h, id); len(got) != 1 || got[0].Outcome != string(marotte.TurnOutcomeRefused) {
+		t.Errorf("step_graded entries = %+v, want one refused", got)
+	}
+	if ids, want := steerIDs(t, cs, chatID), stepNoteID(id, stepNoteRefused, nodePath); len(ids) != 1 || ids[0] != want {
+		t.Errorf("launching chat notes = %v, want only %s", ids, want)
+	}
+}
+
+// Only the lease node_complete captured, in process memory, decides a close's note: a grade a run read records after
+// a restart leaves none, though the run's lease is still held.
+func TestStepGrade_AGradeRecordedAfterARestartLeavesNoNote(t *testing.T) {
+	const (
+		id     = "wf_1"
+		chatID = marotte.ChatID("c1")
+	)
+	path := []string{id, "build"}
+	nodePath := workflow.PathKey(path)
+	h, cs, br := runLoggingHub(t)
+	leaseToChat(t, h, cs, id, chatID)
+	br.setCallErr(methodKiroWorkflowInspect, errors.New("the engine is gone"))
+	refuseStep(t, h.runs, id, path, &marotte.RefusalInfo{Category: "policy"})
+	h.runs.RunNodeComplete(t.Context(), id, path, "completed", "")
+	joinInflight(t, h)
+
+	h.runs.log = newRunLog(filepath.Dir(h.runs.log.root))
+	rec := inspectWithStep(t, id, "build", "completed", "")
+	st, ok := kasStepIn(id, rec, nodePath)
+	if !ok {
+		t.Fatal("the inspect reply holds no record of the step")
+	}
+	if _, err := h.runs.stepEnds(t.Context(), id, map[string]workflow.StepRecord{nodePath: st}); err != nil {
+		t.Fatalf("stepEnds: %v", err)
+	}
+	joinInflight(t, h)
+
+	if got := gradesOf(t, h, id); len(got) != 1 || got[0].Outcome != string(marotte.TurnOutcomeRefused) {
+		t.Errorf("step_graded entries = %+v, want one refused", got)
+	}
+	if ids := steerIDs(t, cs, chatID); len(ids) != 0 {
+		t.Errorf("launching chat notes = %v, want none", ids)
 	}
 }

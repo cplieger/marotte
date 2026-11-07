@@ -29,7 +29,7 @@ type stepClose struct {
 // stepGrade is one step_graded gradeLocked appended, and what the launching chat's note reads from it.
 type stepGrade struct {
 	entry *marotte.Entry
-	// note is the lease node_complete read for the close (runRecord.noteLeases), nil when it held none.
+	// note is the lease node_complete held for the close (runRecord.noteLeases), nil when it held none.
 	note      *runlease.Lease
 	nodePath  string
 	sessionID string    // KAS's record's step session, named by the empty-answer note

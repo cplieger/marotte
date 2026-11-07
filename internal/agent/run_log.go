@@ -85,9 +85,8 @@ type runRecord struct {
 	closes map[string]stepClose
 	// starts is each path's current attempt, nil until a read scans the log; every open and close then keeps it current.
 	starts map[string]stepAttempt
-	// noteLeases is, per path, the lease node_complete read for its close, until a trigger records that close's
-	// grade: run_complete releases the lease right after a run's last node_complete, so a run read recording the
-	// grade afterwards still notes the chat it named.
+	// noteLeases is, per path, the lease node_complete read for the close it sealed, until a trigger records that
+	// close's grade: closeNode is the only writer, gradeLocked the only reader.
 	noteLeases map[string]noteLease
 	host       marotte.ChatID
 	// removed is the tombstone: a frame arriving after Delete opens nothing.
@@ -623,8 +622,12 @@ func (r *runLog) openLocked(workflowID, nodePath string) *runTurn {
 }
 
 // closeNode closes the step's turn with KAS's node_complete status, answering everything it sealed; closed
-// is false with no open turn.
-func (r *runLog) closeNode(ctx context.Context, workflowID, nodePath, status, reason string) (sealed []turnlog.Sealed, closed bool, err error) {
+// is false with no open turn. note, the run's lease when it names a chat, is held for the close in the same hold
+// of runLog.mu that makes the close gradable, so whichever trigger records its grade notes under it (holdNoteLocked).
+// A node_complete that closes nothing holds none: no other closer's close can call for a note (stepClose.mayNote).
+func (r *runLog) closeNode(
+	ctx context.Context, workflowID, nodePath, status, reason string, note *runlease.Lease,
+) (sealed []turnlog.Sealed, closed bool, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
@@ -652,7 +655,23 @@ func (r *runLog) closeNode(ctx context.Context, workflowID, nodePath, status, re
 	sealed, err = t.turn.SealOpen(ctx)
 	c.Unanswered = err == nil && t.unanswered()
 	closing, cerr := r.closeLocked(ctx, rec, t, c)
+	sc := sealedClose(closing, t.turn.ID(), &c)
+	holdNoteLocked(rec, nodePath, &sc, status, note)
 	return append(sealed, closing...), true, errors.Join(err, cerr)
+}
+
+// holdNoteLocked files note as the note lease of c, the path's newest close, when KAS completed its node and c may
+// call for a note: only a completed node's close is ever graded. Any older close's lease on the path goes. Caller
+// holds runLog.mu.
+func holdNoteLocked(rec *runRecord, path string, c *stepClose, status string, note *runlease.Lease) {
+	delete(rec.noteLeases, path)
+	if note == nil || marotte.RunStatus(status) != marotte.RunStatusCompleted || !c.mayNote() {
+		return
+	}
+	if rec.noteLeases == nil {
+		rec.noteLeases = make(map[string]noteLease)
+	}
+	rec.noteLeases[path] = noteLease{lease: *note, turn: c.turn}
 }
 
 // closeRunTurns closes every open turn of a run with one outcome and, when terminal, drops the host.
@@ -711,6 +730,7 @@ func (r *runLog) delete(ctx context.Context, workflowID string) ([]turnlog.Seale
 	rec.open = nil
 	rec.closed = nil
 	rec.staged = nil
+	rec.noteLeases = nil
 	rec.host = ""
 	rec.removed = true
 	if rec.log != nil {
@@ -754,20 +774,24 @@ func (*runLog) closeLocked(ctx context.Context, rec *runRecord, t *runTurn, c ma
 	delete(rec.open, t.path)
 	rec.closed[t.path] = t.turn.ID()
 	if rec.closes != nil {
-		// The scan's constructor, so a live close and a scanned one cannot differ: the conclusion has no refusal.
-		if tc, ok := turnCloseOf(sealed); ok {
-			rec.closes[t.path] = stepCloseOf(&tc, t.turn.ID())
-		} else {
-			rec.closes[t.path] = stepClose{
-				outcome: c.Outcome, reason: c.Reason, kind: c.FailureKind, rawStop: c.RawStop, unanswered: c.Unanswered,
-				turn: t.turn.ID(),
-			}
-		}
+		rec.closes[t.path] = sealedClose(sealed, t.turn.ID(), &c)
 	}
 	if rec.starts != nil {
 		noteAttemptClose(rec.starts, t.path, c.Outcome)
 	}
 	return sealed, err
+}
+
+// sealedClose is the close a closer sealed, through the scan's constructor so a live close and a scanned one cannot
+// differ: the conclusion, the fallback when the turn_close does not decode, has no refusal.
+func sealedClose(sealed []turnlog.Sealed, turn string, c *marotte.TurnConclusion) stepClose {
+	if tc, ok := turnCloseOf(sealed); ok {
+		return stepCloseOf(&tc, turn)
+	}
+	return stepClose{
+		outcome: c.Outcome, reason: c.Reason, kind: c.FailureKind, rawStop: c.RawStop, unanswered: c.Unanswered,
+		turn: turn,
+	}
 }
 
 // stepEnds answers the run's step ends by node path (stepClose.end), first recording the grade of each path's newest
@@ -866,16 +890,13 @@ func (*runLog) gradeLocked(ctx context.Context, rec *runRecord, path string, kas
 }
 
 // gradeStep records the grade of the path's newest close when it is due one, reading KAS's record through read only
-// then, and answers it; nil when it recorded none. No lock is held across read. note, node_complete's lease read
-// (nil from any other trigger), is the close's note lease whichever trigger records its grade (stepGrade.note).
-func (r *runLog) gradeStep(
-	ctx context.Context, workflowID, nodePath string, note *runlease.Lease, read func() (workflow.StepRecord, bool),
-) (*stepGrade, error) {
+// then, and answers it; nil when it recorded none. No lock is held across read.
+func (r *runLog) gradeStep(ctx context.Context, workflowID, nodePath string, read func() (workflow.StepRecord, bool)) (*stepGrade, error) {
 	l, err := r.log(ctx, workflowID)
 	if err != nil || l == nil {
 		return nil, err
 	}
-	turn, err := r.dueTurn(workflowID, nodePath, l, note)
+	turn, err := r.dueTurn(workflowID, nodePath, l)
 	if err != nil || turn == "" {
 		return nil, err
 	}
@@ -893,9 +914,8 @@ func (r *runLog) gradeStep(
 	return r.gradeLocked(ctx, rec, nodePath, kas)
 }
 
-// dueTurn is the turn of the path's newest close when it is due a grade, "" otherwise, holding note, when not nil,
-// as that close's note lease.
-func (r *runLog) dueTurn(workflowID, nodePath string, l *chat.EntryLog, note *runlease.Lease) (string, error) {
+// dueTurn is the turn of the path's newest close when it is due a grade, "" otherwise.
+func (r *runLog) dueTurn(workflowID, nodePath string, l *chat.EntryLog) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.runs[workflowID]
@@ -909,16 +929,10 @@ func (r *runLog) dueTurn(workflowID, nodePath string, l *chat.EntryLog, note *ru
 	if !ok || !dueGradeLocked(rec, nodePath, &c) {
 		return "", nil
 	}
-	if note != nil {
-		if rec.noteLeases == nil {
-			rec.noteLeases = make(map[string]noteLease)
-		}
-		rec.noteLeases[nodePath] = noteLease{lease: *note, turn: c.turn}
-	}
 	return c.turn, nil
 }
 
-// noteLease is the lease node_complete read for the close of turn.
+// noteLease is the lease node_complete read for the close of turn (holdNoteLocked).
 type noteLease struct {
 	turn  string
 	lease runlease.Lease

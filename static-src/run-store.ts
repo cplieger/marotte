@@ -1438,8 +1438,8 @@ export function appendRunEntry(workflowID: string, entry: Entry): void {
   }
   if (entry.kind === "turn_close") {
     state.closeAt = entry.seq;
-    // The step's turn is settled, so its ref no longer exists: dropping the stamp is what stops the
-    // digest naming a turn nothing will append to again.
+    // The run_turn stamp names an open turn as the digest's subject; a step_graded filed after the
+    // close does not reopen it (stampRunTurn), and the run re-read on that frame carries the grade.
     forgetSubject("run_turn", runTurnRef(workflowID, entry.turn));
   } else {
     stampRunTurn(workflowID, entry.turn, state);

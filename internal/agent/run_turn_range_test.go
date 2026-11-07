@@ -58,7 +58,7 @@ func TestRunTurnRange_AnswersTheTailAboveAfterAndStampsTheSeqItServed(t *testing
 // the tail with its turn_close and an empty subject so the client stops treating the step as live.
 func TestRunTurnRange_ServesAClosedTurnsTailWithNoStamp(t *testing.T) {
 	r, turn := runTurnRangeFixture(t)
-	if _, closed, err := r.closeNode(t.Context(), "wf1", "root/step", "completed", ""); err != nil || !closed {
+	if _, closed, err := r.closeNode(t.Context(), "wf1", "root/step", "completed", "", nil); err != nil || !closed {
 		t.Fatalf("CloseNode = closed %v, err %v; want the step's turn closed", closed, err)
 	}
 
