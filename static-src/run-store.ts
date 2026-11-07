@@ -91,7 +91,7 @@ export interface RunState {
   pause?: { kind?: string; nodeId?: string; maxIterations?: number; iterationsRun?: number };
   stopInitiator?: string;
   stopReason?: string;
-  /** A pause asked for that lands at the end of the current step. */
+  /** A pause asked for that has not landed: KAS is cancelling the in-flight turn. */
   pausePending?: { initiator?: string; reason?: string; requestedAt?: string };
   parentSessionId?: string;
   /** marotte's, from the reply's `plan_update`: the run's newest queued plan revision. */
@@ -166,6 +166,29 @@ function attributedSentence(
   return reason === "" ? `${lead} by you` : `${lead} by you: ${reason}`;
 }
 
+/** Whether a paused run was parked by a person, an agent or its parent chat, and not by marotte's sign-in hold, which
+ *  marotte resumes itself. It says nothing of whether a resume would hold: `runControls` does. */
+export function runPausedByPerson(state: RunState): boolean {
+  return (
+    state.status === "paused" &&
+    state.stopInitiator === "user" &&
+    !MAROTTE_PAUSE_REASONS.has(state.stopReason ?? "")
+  );
+}
+
+/** Whether KAS paused the run itself on a transient fault (a rate limit, a 5xx, a dropped connection): no initiator, a
+ *  transient-error class. */
+export function runPausedByTransientError(state: RunState): boolean {
+  const detail = state.pauseDetail;
+  return (
+    state.status === "paused" &&
+    (state.stopInitiator ?? "") === "" &&
+    detail?.code !== undefined &&
+    detail.code !== "" &&
+    (detail.class === undefined || detail.class === "" || detail.class === "transient-error")
+  );
+}
+
 /** The alert an attributed stop or pause reads, or undefined when KAS names no initiator. */
 export function stopSentence(state: RunState): string | undefined {
   const verb: ControlVerb =
@@ -207,7 +230,7 @@ export function resumeSentence(state: RunState): string | undefined {
 /** The alert for a pause that has been asked for and not landed yet. */
 export function pausePendingSentence(state: RunState): string | undefined {
   return state.pausePending !== undefined && state.status === "running"
-    ? "Pausing after the current step"
+    ? "Pausing: stopping the current turn"
     : undefined;
 }
 

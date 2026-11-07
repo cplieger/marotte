@@ -52,6 +52,8 @@ type Server struct {
 	tabs tabReader
 	// preview serves /preview/ and its grant and stamp endpoints; nil leaves them unmounted.
 	preview routeHandler
+	// metrics serves GET /metrics; nil leaves the route unmounted.
+	metrics http.Handler
 	// specApprovals is the spec-phase approval record; nil (no config dir) means
 	// the spec GET carries no approvals.
 	specApprovals specApprovalReader
@@ -127,6 +129,10 @@ func WithMCPRegistry(r routeHandler) Option { return func(s *Server) { s.mcpRegi
 
 // WithPreview sets the sandboxed web-preview routes.
 func WithPreview(r routeHandler) Option { return func(s *Server) { s.preview = r } }
+
+// WithMetrics sets the Prometheus exposition GET /metrics serves. It sits behind the same
+// ALLOWED_HOSTS gate as every route and has no login of its own.
+func WithMetrics(h http.Handler) Option { return func(s *Server) { s.metrics = h } }
 
 // WithForges sets the route handler for forge (GitHub/GitLab/Gitea) HTTP endpoints.
 func WithForges(r routeHandler) Option { return func(s *Server) { s.forges = r } }
@@ -291,6 +297,10 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("/api/kiro-settings", s.handleKiroSettings)
 	s.chats.RegisterRoutes(mux)
 	mux.HandleFunc("/api/health", s.handleHealth)
+	// Registered explicitly, or the "/" single-page app answers a scrape with its HTML.
+	if s.metrics != nil {
+		mux.Handle(metricsPath, requireGET(s.metrics))
+	}
 	// Only when this server owns the install, so the route is absent rather than a misleading 503.
 	if s.kiroRescan != nil {
 		mux.Handle(kiroRescanPath, loopbackOnly(kiroRescanSurface, http.HandlerFunc(s.handleKiroRescan)))
@@ -404,6 +414,16 @@ func (s *Server) clientIP(r *http.Request) string {
 
 const msgUnknownAPIEndpoint = "unknown endpoint"
 
+const metricsPath = "/metrics"
+
+func requireGET(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if httpreply.RequireMethod(w, r, http.MethodGet) {
+			next.ServeHTTP(w, r)
+		}
+	})
+}
+
 // registerAPIFallback puts a 404 under the /api/ subtree, so an unmatched API path is not
 // answered 200 with index.html by "/". Both spellings, or GET /api draws a 301.
 func registerAPIFallback(mux *http.ServeMux) {
@@ -424,9 +444,9 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []htt
 			httpserver.WithSkipPaths("/api/events"),
 			// The shell PTY is silenced by RESPONSE, not path, so every handshake refusal keeps its line.
 			httpserver.WithSkipUpgrades(true),
-			// /api/health is probed every 30s, so a healthy probe logs at Debug and only
-			// a failing one is surfaced.
-			httpserver.ProbeLogLevel("/api/health"),
+			// A prober and a scraper call these every 15 to 60s, so a served request logs at
+			// Debug and only a refused or failing one is surfaced.
+			httpserver.ProbeLogLevel("/api/health", metricsPath),
 			httpserver.WithClientIPFunc(s.clientIP),
 			// A preview path carries a 12h bearer token, so it logs as the route template.
 			httpserver.WithTemplatePathsUnder(preview.PathPrefix),

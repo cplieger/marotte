@@ -56,11 +56,11 @@ vi.mock("./api-client.js", async () => ({
       // CLONED per call, because the real read parses fresh JSON: handing the same object back
       // twice makes the run cell's signal dedupe by identity, and the refetch cases below would
       // then pass with no re-render to protect. `display_name` is the server's key beside KAS's state.
-      const { display_name: displayName, ...state } = structuredClone(fixture);
+      const { display_name: displayName, controls, ...state } = structuredClone(fixture);
       return Promise.resolve({
         ok: true,
         status: 200,
-        data: { workflowId: id, display_name: displayName, state },
+        data: { workflowId: id, display_name: displayName, controls, state },
         error: "",
       });
     }
@@ -68,7 +68,13 @@ vi.mock("./api-client.js", async () => ({
   }),
 }));
 
+// Called through, so the one toast a batch raises is countable.
+vi.mock("./toast.js", { spy: true });
+
 const { initRunBar, _resetRunBarForTest } = await import("./run-bar.js");
+const { initActions } = await import("./actions/boot.js");
+const { configureApi } = await import("@cplieger/ui/actions");
+const toast = await import("./toast.js");
 const { noteRunLive, noteRunSettled, invalidateRun } = await import("./run-store.js");
 const { setSessions, setActive } = await import("./store.js");
 const { dropDecisions } = await import("./decision-dock.js");
@@ -1066,5 +1072,360 @@ describe("the run bar's fold motion", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(bar.hasAttribute("data-folded")).toBe(false);
     expect(heightSlides()).toHaveLength(0);
+  });
+});
+
+// The box's one batch control: Pause all while a listed run runs, Resume all once none runs and one is a plain pause.
+// Each run goes through its own pause or resume route.
+describe("Pause all and Resume all", () => {
+  const PAUSABLE = { verbs: ["pause", "cancel"] };
+  const RESUMABLE = { verbs: ["resume", "cancel"] };
+  // KAS's reason on the owning parent's pause (pinned by internal/kascap's census fixture).
+  const PARENT_PAUSE = "Pause requested by owning parent/orchestrator; human intent not verified.";
+  // marotte's sign-in gate pause (internal/agent/testdata/pause_reasons.json).
+  const SIGN_IN_HOLD = "sign in to Kiro to continue; marotte resumes the run when you do";
+
+  const pausedRoot = { nodeId: "n1", type: "step", status: "paused" };
+  const running = (name: string): Record<string, unknown> =>
+    state({ display_name: name, controls: PAUSABLE });
+  const pausedBy = (name: string, reason = ""): Record<string, unknown> =>
+    state({
+      display_name: name,
+      status: "paused",
+      stopInitiator: "user",
+      stopReason: reason,
+      root: pausedRoot,
+      controls: RESUMABLE,
+    });
+
+  /** Every POST the batch sent, as `<id> <verb>`, in send order. */
+  let posts: string[] = [];
+  /** Runs whose POST the server refuses. */
+  let refuse = new Set<string>();
+  /** The state a run reads once its POST lands. */
+  let after = new Map<string, Record<string, unknown>>();
+  /** Holds every POST's answer until opened, so a test can see which were sent together. */
+  let gate: Promise<void> = Promise.resolve();
+
+  beforeEach(() => {
+    posts = [];
+    refuse = new Set();
+    after = new Map();
+    gate = Promise.resolve();
+    initActions();
+    vi.mocked(toast.error).mockClear();
+    configureApi({
+      fetchFn: async (input) => {
+        const url = typeof input === "string" ? input : (input as Request).url;
+        const hit = /\/api\/runs\/([^/]+)\/(pause|resume)$/.exec(url);
+        if (hit === null) {
+          return new Response("{}", { status: 404 });
+        }
+        const id = decodeURIComponent(hit[1] ?? "");
+        posts.push(`${id} ${hit[2] ?? ""}`);
+        await gate;
+        if (refuse.has(id)) {
+          return new Response(JSON.stringify({ error: "refused" }), {
+            status: 409,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        const next = after.get(id);
+        if (next !== undefined) {
+          inspect.set(id, next);
+        }
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+  });
+
+  /** The batch button on screen, asserting there is never more than one. */
+  function batchButton(): HTMLButtonElement | null {
+    const shown = [...document.querySelectorAll<HTMLButtonElement>(".run-bar-all")].filter(
+      (b) => b.isConnected && !b.hidden,
+    );
+    expect(shown.length, "one batch button at most").toBeLessThanOrEqual(1);
+    return shown[0] ?? null;
+  }
+
+  async function mount(chat: string, runs: Record<string, Record<string, unknown>>): Promise<void> {
+    for (const [id, st] of Object.entries(runs)) {
+      inspect.set(id, st);
+      live(id, chat);
+    }
+    await activate(chat);
+  }
+
+  it("offers Pause all, with a tooltip, while a listed run is running", async () => {
+    const c = chatID();
+    chats.push(c);
+    await mount(c, { [runID("one")]: running("one") });
+    const btn = batchButton();
+    expect(btn?.getAttribute("aria-label")).toBe("Pause all");
+    expect(btn?.dataset["tooltip"] ?? "").not.toBe("");
+  });
+
+  it("puts the button on the first run's line below the fold, and on the fold row from three runs", async () => {
+    localStorage.removeItem("marotte.ui-state");
+    const c = chatID();
+    chats.push(c);
+    const [a, b, d] = [runID("a"), runID("b"), runID("d")];
+    await mount(c, { [a]: running("a"), [b]: running("b") });
+    const rows = (): HTMLElement[] => [...bar.querySelectorAll<HTMLElement>("li.run-bar-row")];
+    expect(rows()[0]?.contains(batchButton())).toBe(true);
+    expect(rows()[1]?.querySelector(".run-bar-all")).toBeNull();
+
+    inspect.set(d, running("d"));
+    live(d, c);
+    await vi.waitFor(() => {
+      expect(fold.hidden).toBe(false);
+    });
+    expect(fold.contains(batchButton())).toBe(true);
+    expect(bar.querySelector(".run-bar-all")).toBeNull();
+    localStorage.removeItem("marotte.ui-state");
+  });
+
+  it("pauses every running listed run at once, and no other run", async () => {
+    const c = chatID();
+    const other = chatID();
+    chats.push(c, other);
+    const [r1, r2, pending, parked, theirs] = [
+      runID("r1"),
+      runID("r2"),
+      runID("pending"),
+      runID("parked"),
+      runID("theirs"),
+    ];
+    inspect.set(theirs, running("theirs"));
+    live(theirs, other);
+    // A run whose pause is already asked for: the server withholds a second one.
+    const pausing = state({
+      display_name: "pausing",
+      pausePending: { initiator: "user" },
+      controls: { verbs: ["cancel"] },
+    });
+    await mount(c, {
+      [r1]: running("r1"),
+      [r2]: running("r2"),
+      [pending]: pausing,
+      [parked]: pausedBy("parked"),
+    });
+    after.set(r1, pausedBy("r1"));
+    after.set(r2, pausedBy("r2"));
+    let open = (): void => undefined;
+    gate = new Promise((r) => {
+      open = r;
+    });
+
+    batchButton()?.click();
+    await vi.waitFor(() => {
+      expect(posts.length).toBe(2);
+    });
+    expect(posts.toSorted(), "sent together, before either answered").toEqual(
+      [`${r1} pause`, `${r2} pause`].toSorted(),
+    );
+    open();
+    // The real states after the reread: only the run already pausing still runs, and it offers no pause.
+    await vi.waitFor(() => {
+      expect(rowStates().filter((s) => s === "running")).toEqual(["running"]);
+    });
+    expect(batchButton()?.getAttribute("aria-label")).toBe("Pause all");
+    expect(batchButton()?.disabled).toBe(true);
+    // Its pause lands, and nothing runs.
+    inspect.set(pending, pausedBy("pausing"));
+    invalidateRun(pending);
+    await vi.waitFor(() => {
+      expect(batchButton()?.getAttribute("aria-label")).toBe("Resume all");
+    });
+    expect(batchButton()?.disabled).toBe(false);
+    expect(posts.some((p) => p.startsWith(theirs))).toBe(false);
+    expect(posts.some((p) => p.startsWith(parked))).toBe(false);
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("resumes only the runs a person or the parent chat paused", async () => {
+    const c = chatID();
+    const other = chatID();
+    chats.push(c, other);
+    const [mine, parents, asking, capped, held, theirs] = [
+      runID("mine"),
+      runID("parents"),
+      runID("asking"),
+      runID("capped"),
+      runID("held"),
+      runID("theirs"),
+    ];
+    inspect.set(theirs, pausedBy("theirs"));
+    live(theirs, other);
+    await mount(c, {
+      [mine]: pausedBy("mine"),
+      [parents]: pausedBy("parents", PARENT_PAUSE),
+      // Paused by the reader while its step waits for an answer: the server offers no resume.
+      [asking]: { ...pausedBy("asking"), controls: { verbs: ["cancel"] } },
+      // A loop at its cap: only extend or finish moves it.
+      [capped]: {
+        ...pausedBy("capped"),
+        pause: { kind: "maxIterations", nodeId: "loop", maxIterations: 4, iterationsRun: 4 },
+        controls: { verbs: ["extend", "finish_loop", "cancel"], pause_node_id: "loop" },
+      },
+      // marotte's own sign-in hold, which marotte resumes itself.
+      [held]: pausedBy("held", SIGN_IN_HOLD),
+    });
+    pushRunAsk(c, asking);
+    after.set(mine, running("mine"));
+    after.set(parents, running("parents"));
+    const btn = batchButton();
+    expect(btn?.getAttribute("aria-label")).toBe("Resume all");
+
+    btn?.click();
+    await vi.waitFor(() => {
+      expect(batchButton()?.getAttribute("aria-label")).toBe("Pause all");
+    });
+    expect(posts.toSorted()).toEqual([`${mine} resume`, `${parents} resume`].toSorted());
+  });
+
+  // A rate limit is why the button exists: KAS pauses a run itself once its retries run out, names
+  // no initiator, and marotte may have stopped resuming it. That is a plain pause.
+  const throttled = (name: string): Record<string, unknown> =>
+    state({
+      display_name: name,
+      status: "paused",
+      pauseDetail: { class: "transient-error", code: "ThrottlingException" },
+      autoResumeStoppedAt: "2026-11-06T20:00:00Z",
+      root: pausedRoot,
+      controls: RESUMABLE,
+    });
+
+  it("resumes the runs KAS paused itself after rate-limit retries", async () => {
+    const c = chatID();
+    chats.push(c);
+    const [limited, mine, exhausted, asking] = [
+      runID("limited"),
+      runID("mine"),
+      runID("exhausted"),
+      runID("asking"),
+    ];
+    await mount(c, {
+      [limited]: throttled("limited"),
+      [mine]: pausedBy("mine"),
+      // KAS's other self-pause class is no rate limit, so it stays out.
+      [exhausted]: {
+        ...throttled("exhausted"),
+        pauseDetail: { class: "continuation-exhausted", code: "ContinuationExhausted" },
+      },
+      // A rate-limited run whose step waits for an answer: the server offers no resume.
+      [asking]: { ...throttled("asking"), controls: { verbs: ["cancel"] } },
+    });
+    pushRunAsk(c, asking);
+    after.set(limited, running("limited"));
+    after.set(mine, running("mine"));
+    const btn = batchButton();
+    expect(btn?.getAttribute("aria-label")).toBe("Resume all");
+
+    btn?.click();
+    await vi.waitFor(() => {
+      expect(batchButton()?.getAttribute("aria-label")).toBe("Pause all");
+    });
+    expect(posts.toSorted()).toEqual([`${limited} resume`, `${mine} resume`].toSorted());
+  });
+
+  it("offers Resume all when only a rate-limited run is paused", async () => {
+    const c = chatID();
+    chats.push(c);
+    await mount(c, { [runID("limited")]: throttled("limited") });
+    expect(batchButton()?.getAttribute("aria-label")).toBe("Resume all");
+  });
+
+  // An empty class is read as a transient error, as the pause's own detail line reads it.
+  it("offers Resume all for a self-paused run whose detail names an empty class", async () => {
+    const c = chatID();
+    chats.push(c);
+    await mount(c, {
+      [runID("blank")]: {
+        ...throttled("blank"),
+        pauseDetail: { class: "", code: "ServiceUnavailable" },
+      },
+    });
+    expect(batchButton()?.getAttribute("aria-label")).toBe("Resume all");
+  });
+
+  it("raises one toast naming the runs that failed, and keeps to the real states", async () => {
+    const c = chatID();
+    chats.push(c);
+    const [a, b, d] = [runID("a"), runID("b"), runID("d")];
+    await mount(c, { [a]: running("alpha"), [b]: running("beta"), [d]: running("gamma") });
+    refuse = new Set([a, b]);
+    after.set(d, pausedBy("gamma"));
+
+    batchButton()?.click();
+    await vi.waitFor(() => {
+      expect(toast.error).toHaveBeenCalledTimes(1);
+    });
+    const message = String(vi.mocked(toast.error).mock.calls[0]?.[0]);
+    expect(message).toContain("alpha");
+    expect(message).toContain("beta");
+    expect(message).not.toContain("gamma");
+    // Two runs still run, so the button still pauses; the one that paused reads paused.
+    await vi.waitFor(() => {
+      expect(rowStates().toSorted()).toEqual(["running", "running", "waiting"]);
+    });
+    expect(batchButton()?.getAttribute("aria-label")).toBe("Pause all");
+  });
+
+  it("shows no button when no listed run runs and none is a plain pause", async () => {
+    const c = chatID();
+    chats.push(c);
+    const [asking, capped, held] = [runID("asking"), runID("capped"), runID("held")];
+    await mount(c, {
+      [asking]: state({
+        display_name: "asking",
+        status: "paused",
+        root: pausedRoot,
+        controls: { verbs: ["cancel"] },
+      }),
+      [capped]: state({
+        display_name: "capped",
+        status: "paused",
+        root: pausedRoot,
+        pause: { kind: "maxIterations", nodeId: "loop", maxIterations: 4, iterationsRun: 4 },
+        controls: { verbs: ["extend", "finish_loop", "cancel"], pause_node_id: "loop" },
+      }),
+      [held]: pausedBy("held", SIGN_IN_HOLD),
+    });
+    pushRunAsk(c, asking);
+    expect(bar.classList.contains("hidden")).toBe(false);
+    expect(batchButton()).toBeNull();
+  });
+
+  it("prefers Pause all while any listed run runs, even beside a paused one", async () => {
+    const c = chatID();
+    chats.push(c);
+    await mount(c, { [runID("p")]: pausedBy("p"), [runID("r")]: running("r") });
+    expect(batchButton()?.getAttribute("aria-label")).toBe("Pause all");
+  });
+
+  it("drops the button once the last run stops running and none is a plain pause", async () => {
+    const c = chatID();
+    chats.push(c);
+    const id = runID("ends-pause");
+    await mount(c, { [id]: running("x") });
+    expect(batchButton()).not.toBeNull();
+    inspect.set(
+      id,
+      state({
+        display_name: "x",
+        status: "paused",
+        root: pausedRoot,
+        controls: { verbs: ["cancel"] },
+      }),
+    );
+    invalidateRun(id);
+    await vi.waitFor(() => {
+      expect(rowStates()).toEqual(["waiting"]);
+    });
+    expect(batchButton()).toBeNull();
   });
 });

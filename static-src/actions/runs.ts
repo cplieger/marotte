@@ -1,7 +1,8 @@
 // Workflow-run actions. Cancel, pause and resume are KAS's own verbs; cancel doubles as the
 // tab-close gesture for a launcher-owned run tab.
 
-import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import { ActionError, apiAction, defineAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import type { RequestSpec } from "@cplieger/ui/actions";
 import { retryOutcomeNotice } from "../run-controls.js";
 import { invalidateRun } from "../run-store.js";
 import { errorAbout, noticeAbout } from "./subject.js";
@@ -89,14 +90,18 @@ export const cancelRun = apiAction<string, { ok: boolean }>({
   },
 });
 
-/** One run-control verb: POST to a sub-path, no body, `{ok:true}` back. */
+/** A run-control verb's request: POST to a sub-path, no body, `{ok:true}` back. */
+function controlRequest(verb: string): (workflowID: string) => RequestSpec {
+  return (workflowID) => ({
+    method: "POST",
+    path: `/api/runs/${encodeURIComponent(workflowID)}/${verb}`,
+  });
+}
+
 function runControl(verb: string, errorText: string) {
   return apiAction<string, { ok: boolean }>({
     name: `runs.${verb}`,
-    request: (workflowID) => ({
-      method: "POST",
-      path: `/api/runs/${encodeURIComponent(workflowID)}/${verb}`,
-    }),
+    request: controlRequest(verb),
     error: errorAbout(onRun, errorText),
     onSuccess: (_res, workflowID) => {
       rereadAfterVerb(workflowID);
@@ -104,9 +109,46 @@ function runControl(verb: string, errorText: string) {
   });
 }
 
-/** Stop a run at its next node boundary, keeping it resumable. The reply confirms the ASK; the
- *  paused state arrives as a run_progress invalidation. */
+/** One run a batch addresses, named as the reader saw it when the batch began. */
+export interface RunRef {
+  readonly id: string;
+  readonly name: string;
+}
+
+/** A verb sent to many runs at once through each run's own route, every POST in flight together. Each run is re-read
+ *  after its answer, refused or not, so a surface shows what the runs did; one toast names every run that refused. */
+function runBatch(verb: "pause" | "resume", errorLead: string) {
+  const one = apiAction<string, { ok: boolean }>({
+    name: `runs.${verb}_one`,
+    request: controlRequest(verb),
+    error: false,
+    onSettled: rereadAfterVerb,
+  });
+  return defineAction<readonly RunRef[], undefined>({
+    name: `runs.${verb}_all`,
+    run: async (runs) => {
+      const outcomes = await Promise.all(runs.map((r) => one.dispatch(r.id).outcome));
+      const failed = runs.filter((_, i) => outcomes[i]?.status === "error");
+      if (failed.length > 0) {
+        const count = failed.length === 1 ? "1 run" : `${String(failed.length)} runs`;
+        throw new ActionError(`${errorLead} ${count}: ${failed.map((r) => r.name).join(", ")}`, {
+          code: "partial",
+        });
+      }
+    },
+    error: (_runs, err) => err.message,
+  });
+}
+
+/** Stop a run, keeping it resumable: KAS cancels its in-flight turn, and a resume picks up from there. The reply
+ *  confirms the ASK; the paused state arrives as a run_progress invalidation. */
 export const pauseRun = runControl("pause", "Could not pause the run");
+
+/** `pauseRun` for every run given. */
+export const pauseRuns = runBatch("pause", "Could not pause");
+
+/** `resumeRun` for every run given. */
+export const resumeRuns = runBatch("resume", "Could not resume");
 
 /** Reset a failed run's failed and aborted steps (plus ancestors) and re-drive it, keeping every
  *  completed step. Not a `runControl`: it decodes the OUTCOME (which nodes were reset), reports a

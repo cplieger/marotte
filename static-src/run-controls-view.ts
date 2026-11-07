@@ -67,7 +67,8 @@ const ICON: Record<RunVerb, string> = {
 
 /** What each verb says on hover; a button shows its icon alone, its name in `aria-label`. */
 const TIP: Record<RunVerb, string> = {
-  pause: "Pause the run at the end of its current step",
+  pause:
+    "Pause the run. Its current turn is cancelled, and the run picks up from there when resumed",
   resume: "Resume the run",
   extend: "Add passes to the paused loop",
   finish_loop: "End the paused loop and go on",
@@ -165,8 +166,8 @@ function render(workflowID: string, answer: RunControlsResponse): HTMLElement | 
       continue;
     }
     const action = RUN_ACTION[verb];
-    // No optimistic flip: every verb settles at a node boundary, so the run still reads `running`
-    // when the reply lands, and the `run_progress` invalidation repaints the row.
+    // No optimistic flip: a verb's reply confirms the ask before the run's status moves, so the row still
+    // reads its old status when the reply lands, and the `run_progress` invalidation repaints it.
     const btn = button(verb, () => void action.dispatch(workflowID));
     // A retry loads the run's session and can take tens of seconds; unbound, the button looks dead
     // and can be clicked again meanwhile.

@@ -530,13 +530,13 @@ describe("run view controls", () => {
       controls: {
         verbs: [],
         refused: {
-          pause: "A pause is already requested; the run stops at the end of its current step.",
+          pause: "A pause is already requested; the run's current turn is being stopped.",
         },
       },
     });
     expect(stuck.labels).toEqual([]);
     expect(stuck.refusals).toEqual([
-      "A pause is already requested; the run stops at the end of its current step.",
+      "A pause is already requested; the run's current turn is being stopped.",
     ]);
   });
 
@@ -892,7 +892,7 @@ describe("the run dock", () => {
     expect(names("#run-exec-dock")).toEqual(["Pause", "Cancel"]);
     expect(names("#run-body")).toEqual([]);
     expect(verb("Pause").getAttribute("data-tooltip")).toBe(
-      "Pause the run at the end of its current step",
+      "Pause the run. Its current turn is cancelled, and the run picks up from there when resumed",
     );
   });
 
@@ -1046,13 +1046,13 @@ describe("the run dock", () => {
         controls: {
           verbs: [],
           refused: {
-            pause: "A pause is already requested; the run stops at the end of its current step.",
+            pause: "A pause is already requested; the run's current turn is being stopped.",
           },
         },
       });
       expect(
         [...document.querySelectorAll("#run-exec-dock .ev-dock-note")].map((n) => n.textContent),
-      ).toEqual(["A pause is already requested; the run stops at the end of its current step."]);
+      ).toEqual(["A pause is already requested; the run's current turn is being stopped."]);
       expect(names("#run-exec-dock")).toEqual([]);
     });
   });

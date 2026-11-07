@@ -125,7 +125,7 @@ const RETRY_ONLY = { verbs: ["retry"], refused: {} };
  *  the verb under test the same one. */
 const RETRY_PLUS_REFUSAL = {
   verbs: ["retry"],
-  refused: { pause: "A pause is already requested; the run stops at the end of its current step." },
+  refused: { pause: "A pause is already requested; the run's current turn is being stopped." },
 };
 
 /** Open the run, whose only verb is retry, and let its first paint settle. */
