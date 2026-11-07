@@ -37,6 +37,9 @@ interface SummaryOpts {
   /** Which alerts the summary shows, every one that wants the reader by default; the consumer
    *  shows the rest. */
   readonly shows?: (alert: ExecAlert) => boolean;
+  /** The on-screen credit figure, `creditFigure` by default; `describe()` always states
+   *  `creditFigure`'s, so the accessible name keeps the cents. */
+  readonly figure?: (credits: number) => string;
 }
 
 export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
@@ -51,6 +54,7 @@ export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
   const root = el("span", { className: "ev-sum" }, label, state, progress.root, mini, clock);
   let described = "";
   const shows = opts.shows ?? (() => true);
+  const figure = opts.figure ?? creditFigure;
   const shown = (alert: ExecRun["alert"]): alert is ExecAlert => wantsReader(alert) && shows(alert);
 
   const paintAlert = (run: ExecRun | undefined): void => {
@@ -99,8 +103,9 @@ export function buildExecSummary(opts: SummaryOpts = {}): ExecSummaryView {
       paintMini(mini, miniBar(run));
       const win = execWindow(run.nodes, run.live);
       setText(clock, win === undefined ? "" : formatElapsed(win.span));
-      const spent = run.credits !== undefined && run.credits > 0 ? creditFigure(run.credits) : "";
-      paintCredits(spent);
+      const billed = run.credits !== undefined && run.credits > 0 ? run.credits : undefined;
+      const spent = billed === undefined ? "" : creditFigure(billed);
+      paintCredits(billed === undefined ? "" : figure(billed));
       paintAlert(run);
       described =
         opts.alertHost !== undefined && shown(run.alert)

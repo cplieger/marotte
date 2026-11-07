@@ -35,6 +35,7 @@ import { bindLoadingState } from "./actions/index.js";
 import { pauseRuns, resumeRuns, type RunRef } from "./actions/runs.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_PAUSE, ICON_RESUME } from "./icons.js";
+import { wholeCreditFigure } from "./strings.js";
 import type { ExecState } from "./exec-view/status.js";
 import type { TabRunDotStatus } from "./tabs.js";
 
@@ -417,7 +418,7 @@ function buildRow(id: string, chatID: string): HTMLElement {
   const btn = selectableButton("div", "run-bar-open", () => {
     void openRunView(id, runLabelOf(id) || FALLBACK_NAME, chatID);
   });
-  const summary = buildExecSummary({ alertHost: btn });
+  const summary = buildExecSummary({ alertHost: btn, figure: wholeCreditFigure });
   btn.append(glyph, summary.root);
 
   const row = el("li", { className: "run-bar-row" }, btn);
