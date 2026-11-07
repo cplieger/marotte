@@ -188,23 +188,36 @@ func TestGroupOf(t *testing.T) {
 	}
 }
 
+const helperEnv = "GO_PROCGROUP_HELPER"
+
+// TestHelperSleep is the child process of the parenthesised-name readStat test, not a test.
+func TestHelperSleep(t *testing.T) {
+	if os.Getenv(helperEnv) != "1" {
+		t.Skip("helper process, run only as a child")
+	}
+	time.Sleep(time.Minute)
+}
+
 // readStat counts its fields from the last ')' because field 2 is the executable name
 // in parentheses and may itself contain spaces and parens. A whitespace split puts state
 // and pgrp at the wrong index, and the symptom is a group that never reports gone.
 func TestReadStat_ReadsPastAnExecutableNameWithSpacesAndParens(t *testing.T) {
 	// comm is the basename of the path handed to execve(2), so executing a link whose
 	// name carries parens puts them in comm and leaves them there; a script that execs
-	// another binary would change comm again under the read.
-	sleepBin, lookErr := exec.LookPath("sleep")
-	if lookErr != nil {
-		t.Fatalf("Setup: find sleep: %v", lookErr)
+	// another binary would change comm again under the read. The link targets this test
+	// binary, not sleep: a multi-call sleep (uutils coreutils) dispatches on argv[0] and
+	// exits at once on an unknown name.
+	self, exeErr := os.Executable()
+	if exeErr != nil {
+		t.Fatalf("Setup: find the test binary: %v", exeErr)
 	}
 	name := "s (p) x"
 	link := t.TempDir() + "/" + name
-	if err := os.Symlink(sleepBin, link); err != nil {
-		t.Fatalf("Setup: link %q -> %s: %v", name, sleepBin, err)
+	if err := os.Symlink(self, link); err != nil {
+		t.Fatalf("Setup: link %q -> %s: %v", name, self, err)
 	}
-	cmd := exec.Command(link, "60")
+	cmd := exec.Command(link, "-test.run=^TestHelperSleep$")
+	cmd.Env = append(os.Environ(), helperEnv+"=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Setup: start %q: %v", name, err)
