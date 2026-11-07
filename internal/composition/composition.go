@@ -845,7 +845,7 @@ func warnIfGitHubRateLimited(j *toolbelt.Job) {
 }
 
 // logRootIntegrityRefusal reports a refusal one line per offending path, then the consequence. It
-// does not touch /api/health: only the tools subsystem is off, and the Tools tab says why.
+// does not touch /healthz: only the tools subsystem is off, and the Tools tab says why.
 func logRootIntegrityRefusal(err error) {
 	refusal, ok := errors.AsType[*toolbelt.RootIntegrityError](err)
 	if !ok {

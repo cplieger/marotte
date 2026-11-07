@@ -38,7 +38,7 @@ function freePort(): Promise<number> {
   });
 }
 
-/** Polls the test route until it answers JSON. Not /api/health, which reports 503 until
+/** Polls the test route until it answers JSON. Not /healthz, which reports 503 until
  *  kiro-cli is installed. A 200 that is not JSON is the SPA shell: the binary was built
  *  without the tag and mounts no /api/test/ route. */
 async function waitForReady(url: string, child: ChildProcess): Promise<void> {

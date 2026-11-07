@@ -9,7 +9,7 @@ marotte serves a Prometheus metrics page and ships metric alert rules in [`alert
 | Prometheus, Mimir or VictoriaMetrics, with Alertmanager | Every alert below, `up` for a dead container, and graphs of every series | A scrape job named `marotte` on port 9847, a scraper name in `ALLOWED_HOSTS`, and `alerts/promql.yaml` in your ruler |
 | Loki and Alertmanager, no metric store | No alerts: marotte's rules need a metric store | Push notifications, below |
 | Grafana-managed alerting only | The same alerts, imported into Grafana | A Prometheus data source that scrapes marotte, and the rules imported from `alerts/promql.yaml` |
-| Docker or Unraid only | Push notifications for finished turns and workflow runs and for permission requests, and Docker health | An uptime prober on `/api/health`, or something that watches Docker health |
+| Docker or Unraid only | Push notifications for finished turns and workflow runs and for permission requests, and Docker health | An uptime prober on `/healthz`, or something that watches Docker health |
 
 Push notifications need marotte installed as an app over HTTPS, as [Features](features.md#notifications) describes.
 
@@ -81,19 +81,19 @@ A requested engine restart is back within seconds, and a first start can spend u
 
 | Route | Method | Port | Login | Answers |
 | --- | --- | --- | --- | --- |
-| `/api/health` | any | 9847 | none. `ALLOWED_HOSTS` applies, and requests from inside the container are always allowed | `200 {"status":"ok"}`, or `503 {"status":"unready","reason":"..."}` |
+| `/healthz` | `GET` or `HEAD` | 9847 | none. `ALLOWED_HOSTS` applies, and requests from inside the container are always allowed | `200 {"status":"ok"}`, or `503 {"status":"unhealthy","reasons":["..."]}`. Any other method gets `405` |
 | `/metrics` | `GET` | 9847 | none. Keep the port on your network | Prometheus text format |
 
 **What healthy means.** The server is up and not shutting down, the pinned kiro-cli is installed at its exact version with its self-update off, and marotte is signed in to Kiro. [Health and repair](how-it-works.md#health-and-repair) lists each reason. The agent engine's state is not part of it, so `MarotteEngineDown` covers an engine that stays down.
 
-**Docker health.** The image checks itself every 30 seconds with `curl -sf http://127.0.0.1:9847/api/health`. Docker marks the container unhealthy after 3 failures, and allows 5 minutes after a start for the kiro-cli download. Docker's health status notifies nobody on its own, and Docker does not restart an unhealthy container. The example `compose.yaml` restarts a container that exits.
+**Docker health.** The image checks itself every 30 seconds with `curl -sf http://127.0.0.1:9847/healthz`. Docker marks the container unhealthy after 3 failures, and allows 5 minutes after a start for the kiro-cli download. Docker's health status notifies nobody on its own, and Docker does not restart an unhealthy container. The example `compose.yaml` restarts a container that exits.
 
 **Who is told.**
 
 | You run | A dead app | A wedged app |
 | --- | --- | --- |
 | Prometheus with this app's rules | `MarotteDown` | `MarotteEngineDown` for the engine, `MarotteScheduleStalled` for the schedule runner |
-| Loki only | an uptime prober on `/api/health` | the same prober, which sees a broken kiro-cli install but not a wedged engine |
-| Docker or Unraid only | an uptime prober on `/api/health`, or something that watches Docker health | the same |
+| Loki only | an uptime prober on `/healthz` | the same prober, which sees a broken kiro-cli install but not a wedged engine |
+| Docker or Unraid only | an uptime prober on `/healthz`, or something that watches Docker health | the same |
 
-**Probing from outside.** Check `GET http://<host>:9847/api/health` and pass on status 200 only. Do not match the body. Use a 5-second timeout, check every 60 seconds, alert after 3 failures, and wait 5 minutes after a first start. When `ALLOWED_HOSTS` is set, address marotte by a name in the list, or it answers `403`. A Kubernetes liveness probe that must ignore readiness uses a `tcpSocket` probe on port 9847.
+**Probing from outside.** Check `GET http://<host>:9847/healthz` and pass on status 200 only. Do not match the body. Use a 5-second timeout, check every 60 seconds, alert after 3 failures, and wait 5 minutes after a first start. When `ALLOWED_HOSTS` is set, address marotte by a name in the list, or it answers `403`. A Kubernetes liveness probe that must ignore readiness uses a `tcpSocket` probe on port 9847.

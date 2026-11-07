@@ -502,7 +502,7 @@ function setupInput(): void {
 
   initContextCard();
   // Lazily on open (usage changes slowly and may be rate-limited); the agent-runtime line
-  // re-probes /api/health too. `haspopup: "dialog"`: a status panel with one link, not a menu.
+  // re-probes /healthz too. `haspopup: "dialog"`: a status panel with one link, not a menu.
   makeExpandable($.accountBtn, $.statusCard, {
     haspopup: "dialog",
     onExpand: () => {

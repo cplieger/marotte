@@ -99,7 +99,7 @@ func TestStart_ExpiresOnAnUnansweredInitialize(t *testing.T) {
 	if elapsed > 10*time.Second {
 		t.Errorf("Start took %v to give up, want about %v", elapsed, budgetProbe)
 	}
-	for _, want := range []string{"agent engine start", "Send again", "/api/health"} {
+	for _, want := range []string{"agent engine start", "Send again", "/healthz"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Start error %q does not mention %q", err, want)
 		}
@@ -141,7 +141,7 @@ func TestSessionDoor_ExpiresOnAnUnansweredHandshake(t *testing.T) {
 			if elapsed > 10*time.Second {
 				t.Errorf("the door took %v to give up, want about %v", elapsed, budgetProbe)
 			}
-			for _, want := range []string{tc.wantPhase, "Send again", "/api/health"} {
+			for _, want := range []string{tc.wantPhase, "Send again", "/healthz"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("door error %q does not mention %q", err, want)
 				}

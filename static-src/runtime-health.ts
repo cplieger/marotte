@@ -57,9 +57,10 @@ const FALLBACK: RuntimeState = {
   level: "error",
 };
 
-/** Shape of /api/health's JSON envelope (both 200 and 503 bodies). */
+/** Shape of /healthz's JSON body (both 200 and 503). The server lists the kiro-cli install
+ *  before sign-in, so reasons[0] is the fault to banner. */
 interface HealthBody {
-  reason?: string;
+  reasons?: unknown;
 }
 
 // The sidebar status card reads connection / agent runtime / account, and the middle line had no
@@ -89,9 +90,9 @@ export function runtimeStatusLine(): string {
 
 function reasonOf(body: unknown): string {
   if (typeof body === "object" && body !== null) {
-    const r = (body as HealthBody).reason;
-    if (typeof r === "string") {
-      return r;
+    const reasons = (body as HealthBody).reasons;
+    if (Array.isArray(reasons) && typeof reasons[0] === "string") {
+      return reasons[0];
     }
   }
   return "";
@@ -111,7 +112,7 @@ const UNREADY_POLL_MS = 10_000;
 
 /** The steady-state interval the re-probe backs off to, and the reason there is one: an install
  *  converges in minutes, while a page left open against a stopped server never does — at a flat
- *  10s that tab issues one /api/health every 10s for as long as it is open. */
+ *  10s that tab issues one /healthz every 10s for as long as it is open. */
 const UNREADY_POLL_MAX_MS = 120_000;
 
 /** A single slot rather than a repeating interval, so a slow probe can never overlap the next one
@@ -142,9 +143,9 @@ function armUnreadyPoll(unready: boolean): void {
   }, delay);
 }
 
-/** Probe /api/health once and reconcile the degraded banner. */
+/** Probe /healthz once and reconcile the degraded banner. */
 export async function checkRuntimeHealth(): Promise<void> {
-  const res = await apiGetOrError<HealthBody>("/api/health");
+  const res = await apiGetOrError<HealthBody>("/healthz");
   // Re-armed before the branching, because every non-ok answer wants another look: the two named
   // families below AND a startup/shutdown 503, which raises no banner and is exactly the window an
   // install begins in.

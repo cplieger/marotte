@@ -33,8 +33,7 @@ const (
 )
 
 // kiroReasonText renders the install manager's typed reason as the reason
-// /api/health and the repair hook serve. ReasonReady maps to "", which the
-// health envelope omits.
+// /healthz and the repair hook serve. ReasonReady maps to "".
 func kiroReasonText(why pin.Reason) string {
 	switch why {
 	case pin.ReasonReady:
@@ -51,6 +50,12 @@ func kiroReasonText(why pin.Reason) string {
 	return reasonUnavailable
 }
 
+// rescanBody is the repair hook's answer. A struct, not a map, so the key order is fixed.
+type rescanBody struct {
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
+}
+
 // handleKiroRescan re-derives the active kiro-cli version from disk (downloading nothing) and
 // reports readiness: 200 when a version is active, else 503 with the manager's reason.
 func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +67,7 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	ok, err := s.kiroRescan(r.Context())
 	if ok {
-		httpserver.WriteJSON(w, healthBody{Status: "ok"})
+		httpserver.WriteJSON(w, rescanBody{Status: "ok"})
 		return
 	}
 	// Report the VERDICT, not err (which can name a volume path); the manager logged the fault.
@@ -77,7 +82,7 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 		errText = logsafe.Field(err.Error())
 	}
 	slog.Warn("kiro-cli rescan found no usable version", "reason", reason, "error", errText)
-	httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
+	httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, rescanBody{
 		Status: "unready",
 		Reason: reason,
 	})

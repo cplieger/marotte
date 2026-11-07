@@ -3,7 +3,7 @@ package command
 import "sync/atomic"
 
 // AuthReadiness holds the outcome of a credential the backend rejected, never
-// its reason, because unauthenticated /api/health must not expose internal paths.
+// its reason, because unauthenticated /healthz must not expose internal paths.
 // Each Record replaces the previous outcome, so a successful turn clears it.
 type AuthReadiness struct {
 	unavailable atomic.Bool

@@ -26,17 +26,18 @@ On every start, marotte runs the installed kiro-cli to confirm it is the expecte
 
 ## Health and repair
 
-`GET /api/health` reports healthy once the server is up and the pinned kiro-cli is installed, runs at that exact version, and has its self-update switched off. Anything short of that answers `503` with a reason:
+`GET /healthz` reports healthy once the server is up and the pinned kiro-cli is installed, runs at that exact version, and has its self-update switched off. Anything short of that answers `503` with `reasons`, a list of every reason that holds, in the order of this table:
 
 | Reason | Meaning |
 | --- | --- |
+| `starting up or shutting down` | The server is not serving yet, or is stopping. |
 | `kiro-cli installing` | The download or install is running. |
 | `kiro-cli install retrying` | An attempt failed and the next one is waiting. |
 | `kiro-cli unavailable` | Four attempts failed. A container restart starts again. |
 | `kiro-cli required settings not enforced` | marotte could not switch off kiro-cli's self-update. |
 | `sign-in required` | A chat's last turn failed because marotte is not signed in to Kiro, or Kiro refused the sign-in. The next turn that succeeds clears it. |
 
-Attempts wait 30 seconds, then double each time up to 10 minutes. The page shows a banner in every one of these states and only chats wait. The `sign-in required` banner has a **Sign in** button.
+Attempts wait 30 seconds, then double each time up to 10 minutes. The page shows a banner for the first kiro-cli or sign-in reason in the list, and only chats wait. The `sign-in required` banner has a **Sign in** button.
 
 To repair an install by hand, fix `kiro-cli-versions` in the tools folder (by default `/config/tools`) inside the container, then run `curl -X POST localhost:9847/api/kiro-cli/rescan` from inside the container. marotte picks it up without a container restart. When the rescan activates another version, the agent engine moves to it at its next restart. The command works only from inside the container.
 

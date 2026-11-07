@@ -72,7 +72,7 @@ interface ApiResult<T> {
   data: T | null;
   error: string;
   /** Parsed body of a FAILED response whose detail sits outside the "error"
-   *  key (/api/health's 503 `reason`). Undefined on success and on a non-JSON
+   *  key (/healthz's 503 `reasons`). Undefined on success and on a non-JSON
    *  body. Server-controlled, at `error`'s trust level. */
   body?: unknown;
   /** A failure's machine code: the server's "code" field, or the transport's own
@@ -182,7 +182,7 @@ export async function apiPostTypedOrError<T>(
 }
 
 /** GET variant for a caller to whom a non-2xx body is itself meaningful —
- *  /api/health's 503 `reason` is the canonical consumer. */
+ *  /healthz's 503 `reasons` is the canonical consumer. */
 export async function apiGetOrError<T>(path: string, signal?: AbortSignal): Promise<ApiResult<T>> {
   // Unlogged: that consumer polls health, where a 503 is an expected state.
   return toApiResult(await fx.apiGetRaw<T>(path, reqOpts({}, signal)));

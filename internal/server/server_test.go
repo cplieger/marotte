@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -291,54 +292,56 @@ func findSubstring(s, sub string) bool {
 	return false
 }
 
-// TestHandleHealth_envelopeMatchesTheLibrary pins the two wire properties shared with
-// httpserver.ReadinessHandler: key order (a struct, since encoding/json sorts map keys) and
-// no-store (RFC 9111 would heuristically cache a 200).
-func TestHandleHealth_envelopeMatchesTheLibrary(t *testing.T) {
+// healthReply is the health body.
+type healthReply struct {
+	Status  string   `json:"status"`
+	Reasons []string `json:"reasons"`
+}
+
+func probeHealth(t *testing.T, s *Server) (*httptest.ResponseRecorder, healthReply) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	s.handleHealth(rec, httptest.NewRequest(http.MethodGet, healthzPath, nil))
+	var got healthReply
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body not JSON: %v; body=%s", err, rec.Body.String())
+	}
+	return rec, got
+}
+
+// TestHandleHealth_body pins the health body byte for byte and its three headers.
+func TestHandleHealth_body(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		ready bool
+		code  int
 		want  string
 	}{
-		{"unready", false, `{"status":"unready","reason":"starting up or shutting down"}`},
-		{"ready", true, `{"status":"ok"}`},
+		{"unhealthy", false, http.StatusServiceUnavailable, `{"status":"unhealthy","reasons":["starting up or shutting down"]}`},
+		{"ok", true, http.StatusOK, `{"status":"ok"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Server{}
 			s.ready.Store(tc.ready)
 			rec := httptest.NewRecorder()
-			s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+			s.handleHealth(rec, httptest.NewRequest(http.MethodGet, healthzPath, nil))
 
-			if got := strings.TrimSpace(rec.Body.String()); got != tc.want {
-				t.Errorf("raw health body = %q, want %q (byte-exact: the key ORDER is the shared contract)", got, tc.want)
+			if rec.Code != tc.code {
+				t.Errorf("status = %d, want %d", rec.Code, tc.code)
 			}
-			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
-				t.Errorf("Cache-Control = %q, want no-store: a cached readiness verdict defeats the gate", got)
+			if got := strings.TrimSpace(rec.Body.String()); got != tc.want {
+				t.Errorf("raw health body = %q, want %q", got, tc.want)
+			}
+			for header, want := range map[string]string{
+				"Content-Type":           "application/json",
+				"Cache-Control":          "no-store",
+				"X-Content-Type-Options": "nosniff",
+			} {
+				if got := rec.Header().Get(header); got != want {
+					t.Errorf("%s = %q, want %q", header, got, want)
+				}
 			}
 		})
-	}
-}
-
-func TestHandleHealth_returns_ok(t *testing.T) {
-	s := &Server{}
-	s.ready.Store(true)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-	rec := httptest.NewRecorder()
-	s.handleHealth(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", rec.Code)
-	}
-	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		t.Errorf("Content-Type = %q, want application/json prefix", ct)
-	}
-	var got map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("body not JSON: %v; body=%s", err, rec.Body.String())
-	}
-	if got["status"] != "ok" {
-		t.Errorf("status = %q, want ok", got["status"])
 	}
 }
 
@@ -350,23 +353,19 @@ func TestHandleHealth_DegradedWhenKiroUnready(t *testing.T) {
 		pin.ReasonRetrying:    reasonRetrying,
 		pin.ReasonUnavailable: reasonUnavailable,
 		pin.ReasonAssertion:   reasonSettings,
+		pin.Reason(200):       reasonUnavailable,
 	} {
 		t.Run(want, func(t *testing.T) {
 			s := &Server{kiroReady: func() (bool, pin.Reason) { return false, why }}
 			s.ready.Store(true)
 
-			rec := httptest.NewRecorder()
-			s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+			rec, got := probeHealth(t, s)
 
 			if rec.Code != http.StatusServiceUnavailable {
 				t.Fatalf("status = %d, want 503", rec.Code)
 			}
-			var got map[string]string
-			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-				t.Fatalf("body not JSON: %v; body=%s", err, rec.Body.String())
-			}
-			if got["status"] != "unready" || got["reason"] != want {
-				t.Errorf("body = %v, want unready/%q", got, want)
+			if got.Status != "unhealthy" || len(got.Reasons) != 1 || got.Reasons[0] != want {
+				t.Errorf("body = %+v, want unhealthy with the one reason %q", got, want)
 			}
 		})
 	}
@@ -378,20 +377,16 @@ func TestHandleHealth_OKWhenKiroReady(t *testing.T) {
 	t.Run("manager reports ready", func(t *testing.T) {
 		s := &Server{kiroReady: func() (bool, pin.Reason) { return true, pin.ReasonReady }}
 		s.ready.Store(true)
-		rec := httptest.NewRecorder()
-		s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
-		if rec.Code != http.StatusOK {
-			t.Errorf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		if rec, got := probeHealth(t, s); rec.Code != http.StatusOK || got.Status != "ok" {
+			t.Errorf("status = %d, body = %+v, want 200 ok", rec.Code, got)
 		}
 	})
 
 	t.Run("no manager leaves readiness pure-listener", func(t *testing.T) {
 		s := &Server{}
 		s.ready.Store(true)
-		rec := httptest.NewRecorder()
-		s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
-		if rec.Code != http.StatusOK {
-			t.Errorf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		if rec, got := probeHealth(t, s); rec.Code != http.StatusOK || got.Status != "ok" {
+			t.Errorf("status = %d, body = %+v, want 200 ok", rec.Code, got)
 		}
 	})
 
@@ -399,39 +394,43 @@ func TestHandleHealth_OKWhenKiroReady(t *testing.T) {
 		ready := false
 		s := &Server{kiroReady: func() (bool, pin.Reason) { return ready, pin.ReasonInstalling }}
 		s.ready.Store(true)
-		rec := httptest.NewRecorder()
-		s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
-		if rec.Code != http.StatusServiceUnavailable {
+		if rec, _ := probeHealth(t, s); rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("status = %d, want 503 while installing", rec.Code)
 		}
 		ready = true
-		rec = httptest.NewRecorder()
-		s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
-		if rec.Code != http.StatusOK {
-			t.Errorf("status = %d, want 200 once the install completed; body=%s", rec.Code, rec.Body.String())
+		if rec, got := probeHealth(t, s); rec.Code != http.StatusOK {
+			t.Errorf("status = %d, body = %+v, want 200 once the install completed", rec.Code, got)
 		}
 	})
 }
 
-func TestHandleHealth_unready(t *testing.T) {
-	s := &Server{} // ready defaults to false (zero value)
+// TestHandleHealth_reasonsKeepThePriorityOrder pins the order of a fault list: not serving,
+// then kiro-cli, then sign-in. runtime-health.ts reads only reasons[0].
+func TestHandleHealth_reasonsKeepThePriorityOrder(t *testing.T) {
+	s := &Server{
+		kiroReady:       func() (bool, pin.Reason) { return false, pin.ReasonRetrying },
+		authUnavailable: func() bool { return true },
+	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	_, got := probeHealth(t, s)
+
+	want := []string{"starting up or shutting down", "kiro-cli install retrying", "sign-in required"}
+	if !slices.Equal(got.Reasons, want) {
+		t.Errorf("reasons = %q, want %q", got.Reasons, want)
+	}
+}
+
+func TestHandleHealth_RefusesAWriteMethod(t *testing.T) {
+	s := &Server{}
+	s.ready.Store(true)
 	rec := httptest.NewRecorder()
-	s.handleHealth(rec, req)
+	s.handleHealth(rec, httptest.NewRequest(http.MethodPost, healthzPath, nil))
 
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", rec.Code)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", rec.Code)
 	}
-	var got map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("body not JSON: %v; body=%s", err, rec.Body.String())
-	}
-	if got["status"] != "unready" {
-		t.Errorf("status = %q, want unready (canonical wire shape)", got["status"])
-	}
-	if got["reason"] == "" {
-		t.Errorf("unready response missing reason field")
+	if got := rec.Header().Get("Allow"); got != "GET, HEAD" {
+		t.Errorf("Allow = %q, want %q", got, "GET, HEAD")
 	}
 }
 

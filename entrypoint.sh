@@ -198,6 +198,6 @@ if [ "$dpkg_audit_rc" -ne 0 ] || [ -n "$dpkg_audit_out" ] \
 fi
 
 # The server owns the rest of kiro-cli (download, verify, install, select, prune)
-# and binds its listener first, so a first-boot download shows as /api/health
-# unready with a reason.
+# and binds its listener first, so a first-boot download shows as /healthz
+# unhealthy with a reason.
 exec /app/marotte
