@@ -473,6 +473,41 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
     expect(scroll.readingState()).toBe("following");
   });
 
+  it("moves no card when the reader switches back to a parked chat", async () => {
+    const a = freshID("c-move");
+    const b = freshID("c-move");
+    seed(longChat(a), oneTurn(b, "x"));
+    await flushed();
+    await settledFrames();
+    const cards = [...viewOf(a).querySelectorAll(".turn")];
+    expect(cards.length).toBe(10);
+    switchTo(b);
+    await flushed();
+
+    // A moved node is a removal plus an insertion, so a card's record names it among the removed nodes.
+    const moved = new Set<Node>();
+    const mo = new MutationObserver((records) => {
+      for (const r of records) {
+        for (const n of r.removedNodes) {
+          moved.add(n);
+        }
+      }
+    });
+    mo.observe(viewOf(a), { childList: true });
+    switchTo(a);
+    await flushed();
+    await settledFrames();
+    for (const r of mo.takeRecords()) {
+      for (const n of r.removedNodes) {
+        moved.add(n);
+      }
+    }
+    mo.disconnect();
+
+    expect(cards.filter((c) => moved.has(c))).toEqual([]);
+    expect([...viewOf(a).querySelectorAll(".turn")]).toEqual(cards);
+  });
+
   it("holds the reading position through a park/unpark over a turn that GREW", async () => {
     // The reader is Reading, so `deferWhileReading` holds the unpark paint; this reads the window the park left over a
     // grown turn.
