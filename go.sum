@@ -2,8 +2,8 @@ github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNUA=
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
-github.com/cplieger/forgeapi/v2 v2.0.0-dev.3 h1:XRtLAdQY2UE0oWAucr/GlJIye6YPHYUdTFm8L3ngok8=
-github.com/cplieger/forgeapi/v2 v2.0.0-dev.3/go.mod h1:wKnT4odmdtXjIYJg7IyKOL25xZURw2YdFDFJLHmQtaM=
+github.com/cplieger/forgeapi/v2 v2.0.0-dev.4 h1:Zkc4YrzrIaHLtMrESBSURcXthjCtnbwSy2AtUMDVNEg=
+github.com/cplieger/forgeapi/v2 v2.0.0-dev.4/go.mod h1:JLcplp543IqYANM2BgHbHu1Docj9L4UoC9k+zX+HmPo=
 github.com/cplieger/go/envx v1.0.0-dev.1 h1:1EAU/2CHQJa1hG1pzkrs2p5ZwwTqhrmHLoj9OtSuEHc=
 github.com/cplieger/go/envx v1.0.0-dev.1/go.mod h1:VBXyb3Y1VcaOMKyzj+fN2F1ZHRzZgoZuEOafwdg1fkM=
 github.com/cplieger/go/filesafe v1.0.0-dev.4 h1:05SeUM+hKRzdu4qROsLC3edb06CK44VEm+9L2Gs34xM=
@@ -34,8 +34,8 @@ github.com/cplieger/go/textsafe v1.0.0-dev.1 h1:NqiLs9uk4eOoXXkTQo0O8lMtYddo3XZu
 github.com/cplieger/go/textsafe v1.0.0-dev.1/go.mod h1:5IH0ZWTC+U864nzWGtcwGkp+PtA5hrlcfY2zLY/TexM=
 github.com/cplieger/go/urlform v1.0.0-dev.1 h1:tJo35Y4xIwM2IzGxK7DXcbVGb3y9lF8l7griM1VF8a4=
 github.com/cplieger/go/urlform v1.0.0-dev.1/go.mod h1:za2vxWNMT4+X50qgurZEDBsrxhMlkntfh6XJnfxzYH8=
-github.com/cplieger/go/wiregen v1.0.0-dev.2 h1:s8Wirm+gkmIgj8ouyH+XrW3oDVrLponkbqERApYuaXw=
-github.com/cplieger/go/wiregen v1.0.0-dev.2/go.mod h1:1eLsetyVU8ri70yrVpk2xim8M2m+Eky9aEPJP1BMEKI=
+github.com/cplieger/go/wiregen v1.0.0-dev.3 h1:w/Lzv5UUwzfzovNpDNWm5U0oB2abfJ1Ggk4gWMJM9RM=
+github.com/cplieger/go/wiregen v1.0.0-dev.3/go.mod h1:S4I2b9uEN13wzIn5hse76rkNEwKySO9jGqeBUpLvy5U=
 github.com/cplieger/go/yamlenv v1.0.0-dev.2 h1:YZriaF+FfG6ulLQx7fAyPZI7QvgsuML7KkB7lFwxEQ8=
 github.com/cplieger/go/yamlenv v1.0.0-dev.2/go.mod h1:bYTrNFzQ0qSpy0u51Bouc9yTNXuj0FfGppio02PiJBw=
 github.com/cplieger/toolbelt/v3 v3.15.0-dev.16 h1:zaLynZGKWCTMlsuR4se5gMQ9mIwCYxFdzbTKVw7hTU0=
