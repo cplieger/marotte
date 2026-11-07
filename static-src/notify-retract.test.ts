@@ -140,8 +140,13 @@ describe("closeNotificationsExcept", () => {
     expect(closed).toEqual(["marotte:c1", "marotte:run:wf_1"]);
   });
 
-  it("leaves a pull request's banner and the constant-tag cue alone", async () => {
-    const { reg, closed } = fakeRegistration(["marotte:pr:github:x#1", "marotte", "marotte:c1"]);
+  it("leaves a pull request's and a launch rule's banner and the constant-tag cue alone", async () => {
+    const { reg, closed } = fakeRegistration([
+      "marotte:pr:github:x#1",
+      "marotte:rule:r1",
+      "marotte",
+      "marotte:c1",
+    ]);
     notify._setRegistrationForTest(() => Promise.resolve(reg));
 
     await notify.closeNotificationsExcept(new Set());

@@ -39,11 +39,32 @@ type fakeLauncher struct {
 	// defaults records the model and effort each launch carried.
 	defaults []marotte.RunDefaults
 	inputs   []map[string]string
-	err      error
+	// notStarted records each NotifyNotStarted call.
+	notStarted []notStartedCall
+	err        error
 	// during runs inside each launch, so a test can move the runner's clock while the launch holds the sweep.
 	during func(source string)
 	// failID is the run id a failing launch returns: a run it created but did not start.
 	failID string
+}
+
+// notStartedCall is one NotifyNotStarted call: the rule it named and the reason it carried.
+type notStartedCall struct {
+	ruleID string
+	name   string
+	reason string
+}
+
+func (f *fakeLauncher) NotifyNotStarted(_ context.Context, rule *launchrule.Rule, reason string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.notStarted = append(f.notStarted, notStartedCall{ruleID: rule.ID, name: rule.Name, reason: reason})
+}
+
+func (f *fakeLauncher) notices() []notStartedCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.notStarted)
 }
 
 func (f *fakeLauncher) LaunchScheduled(

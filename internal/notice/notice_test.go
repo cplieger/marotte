@@ -11,6 +11,7 @@ import (
 func TestBuilders_titleIsTheTabAndBodyIsPhraseThenDetail(t *testing.T) {
 	chat := ChatTarget("c1", "Fix the login bug")
 	run := RunTarget("wf1", "nightly · scheduled")
+	rule := RuleTarget("r1", "nightly")
 	tests := []struct {
 		name string
 		got  marotte.NotificationPayload
@@ -60,6 +61,10 @@ func TestBuilders_titleIsTheTabAndBodyIsPhraseThenDetail(t *testing.T) {
 			PushSubject: marotte.RunSubject("wf1"), Kind: marotte.PushKindRunOutcome,
 			Title: "nightly · scheduled", Body: "Workflow paused · marotte stopped resuming it after repeated pauses",
 		}},
+		{"a launch rule's slot started no run", RunNotStarted(rule, "engine busy"), marotte.NotificationPayload{
+			PushSubject: marotte.RuleSubject("r1"), Kind: marotte.PushKindRunOutcome,
+			Title: "nightly", Body: "Workflow did not start · engine busy",
+		}},
 		{"pr flip", PRStatus(marotte.PRSubject("github:github.com", "r1", 7), "acme/web", 7, "Add login", true), marotte.NotificationPayload{
 			PushSubject: marotte.PRSubject("github:github.com", "r1", 7), Kind: marotte.PushKindPRStatus,
 			Title: "acme/web #7", Body: "Checks passed · Add login",
@@ -77,6 +82,9 @@ func TestBuilders_titleIsTheTabAndBodyIsPhraseThenDetail(t *testing.T) {
 func TestTargets_unnamedTabsReadAsTheirDefaultLabels(t *testing.T) {
 	if got := ChatTarget("c1", "").Name; got != marotte.DefaultChatName {
 		t.Errorf("ChatTarget(c1, \"\").Name = %q, want %q", got, marotte.DefaultChatName)
+	}
+	if got := RuleTarget("r1", " ").Name; got != fallbackRunName {
+		t.Errorf("RuleTarget(r1, \" \").Name = %q, want %q", got, fallbackRunName)
 	}
 	for _, tc := range []struct{ id, want string }{
 		{"wf_0123456789abcdef", "wf_01234567"},

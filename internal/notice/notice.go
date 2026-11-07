@@ -65,6 +65,14 @@ func RunTarget(workflowID, label string) Target {
 	return Target{Subject: marotte.RunSubject(workflowID), Name: label}
 }
 
+// RuleTarget is one launch rule's row on the Workflows panel, named by its recipe; an unnamed rule reads as a run.
+func RuleTarget(ruleID, name string) Target {
+	if strings.TrimSpace(name) == "" {
+		name = fallbackRunName
+	}
+	return Target{Subject: marotte.RuleSubject(ruleID), Name: name}
+}
+
 func shortRunID(workflowID string) string {
 	if workflowID == "" {
 		return fallbackRunName
@@ -169,6 +177,11 @@ func AutoResumeStopped(t Target, throttled bool) marotte.NotificationPayload {
 		cause = "model throttling"
 	}
 	return build(marotte.PushKindRunOutcome, t, "Workflow paused", "marotte stopped resuming it after repeated "+cause)
+}
+
+// RunNotStarted is a launch rule's slot or event that started no run, with the reason its row records.
+func RunNotStarted(t Target, reason string) marotte.NotificationPayload {
+	return build(marotte.PushKindRunOutcome, t, "Workflow did not start", reason)
 }
 
 // PRStatus is a pull request's CI verdict settling green or red.

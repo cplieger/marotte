@@ -13,6 +13,7 @@ function tabOf(target: PushTarget): string {
     case "run_ask":
       return tabIdFor("run", target.workflowID);
     case "pr":
+    case "rule":
     case "workspace":
       return "";
   }

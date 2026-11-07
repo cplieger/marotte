@@ -120,6 +120,16 @@ func RunSubject(workflowID string) PushSubject {
 	return PushSubject{Key: RunSubjectPrefix + workflowID}
 }
 
+// ruleSubjectPrefix marks a subject key naming a launch rule (a schedule or an event trigger). Declared here for
+// PRSubjectPrefix's reason.
+const ruleSubjectPrefix = "rule:"
+
+// RuleSubject is the subject of a notification about one launch rule, a slot or an event that started no run. A
+// rule id is unique per rule, so two rules failing inside one debounce window still occupy their own tray slots.
+func RuleSubject(ruleID string) PushSubject {
+	return PushSubject{Key: ruleSubjectPrefix + ruleID}
+}
+
 // runAskSubjectPrefix marks a subject key naming one step's wait in a run. Declared here for
 // PRSubjectPrefix's reason.
 const runAskSubjectPrefix = "runask:"

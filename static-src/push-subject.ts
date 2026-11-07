@@ -10,6 +10,9 @@ const PR_SUBJECT_PREFIX = "pr:";
 /** marotte.RunSubjectPrefix. The ONLY TypeScript copy. */
 const RUN_SUBJECT_PREFIX = "run:";
 
+/** marotte.ruleSubjectPrefix. The ONLY TypeScript copy. */
+const RULE_SUBJECT_PREFIX = "rule:";
+
 /** marotte.runAskSubjectPrefix. The ONLY TypeScript copy. */
 const RUN_ASK_SUBJECT_PREFIX = "runask:";
 
@@ -29,7 +32,7 @@ export interface PushPageMessage {
   type: "push";
   reason: "clicked" | "arrived" | "subscription_changed";
   chatId: string;
-  /** The notification's subject when it has no chat behind it: a run or a pull request,
+  /** The notification's subject when it has no chat behind it: a run, a launch rule or a pull request,
    *  kind-prefixed so the route is keyed on what the subject IS. */
   subject?: string;
   /** The notification's kind on an arrival, "" otherwise. */
@@ -47,6 +50,8 @@ export type PushTarget =
   /** One step's wait in a run: `position` is the ask's id without its turn marker
    *  (`run-asks.ts` `runAskPosition`), `workflowID` its first component, "" when it is hashed. */
   | { readonly kind: "run_ask"; readonly workflowID: string; readonly position: string }
+  /** A launch rule (a schedule or an event trigger) whose slot or event started no run. */
+  | { readonly kind: "rule"; readonly ruleID: string }
   | { readonly kind: "workspace" };
 
 export function parsePushTarget(wire: PushWire): PushTarget {
@@ -59,6 +64,10 @@ export function parsePushTarget(wire: PushWire): PushTarget {
   }
   if (wire.subject.startsWith(RUN_ASK_SUBJECT_PREFIX)) {
     return runAskTarget(wire.subject.slice(RUN_ASK_SUBJECT_PREFIX.length));
+  }
+  if (wire.subject.startsWith(RULE_SUBJECT_PREFIX)) {
+    const ruleID = wire.subject.slice(RULE_SUBJECT_PREFIX.length);
+    return ruleID === "" ? { kind: "workspace" } : { kind: "rule", ruleID };
   }
   return chatTarget(wire.chatId);
 }
@@ -77,6 +86,8 @@ export function pushTargetRoute(target: PushTarget): Route {
       return target.workflowID === ""
         ? { kind: "chat", id: "" }
         : { kind: "run", id: target.workflowID };
+    case "rule":
+      return { kind: "docs", tab: "workflows" };
     case "workspace":
       return { kind: "chat", id: "" };
   }
@@ -94,6 +105,8 @@ export function pushTargetTag(target: PushTarget): string {
       return `${TAG_PREFIX}${RUN_SUBJECT_PREFIX}${target.workflowID}`;
     case "run_ask":
       return `${TAG_PREFIX}${RUN_ASK_SUBJECT_PREFIX}${target.position}`;
+    case "rule":
+      return `${TAG_PREFIX}${RULE_SUBJECT_PREFIX}${target.ruleID}`;
     case "workspace":
       return "marotte";
   }
@@ -106,10 +119,14 @@ export function runAskOfTag(tag: string): (PushTarget & { kind: "run_ask" }) | u
 }
 
 /** Whether a tag names a chat, a run or a step's wait, the targets a pending set speaks for. A pull
- *  request's banner has no ask to be settled by and is never retracted, and the constant tag is
- *  the cue this page showed for no one chat. */
+ *  request's or a launch rule's banner has no ask to be settled by and is never retracted, and the
+ *  constant tag is the cue this page showed for no one chat. */
 export function settleableTag(tag: string): boolean {
-  return tag.startsWith(TAG_PREFIX) && !tag.startsWith(`${TAG_PREFIX}${PR_SUBJECT_PREFIX}`);
+  return (
+    tag.startsWith(TAG_PREFIX) &&
+    !tag.startsWith(`${TAG_PREFIX}${PR_SUBJECT_PREFIX}`) &&
+    !tag.startsWith(`${TAG_PREFIX}${RULE_SUBJECT_PREFIX}`)
+  );
 }
 
 /** A pull request's identity as both halves of the app spell it: the subject key minus its
