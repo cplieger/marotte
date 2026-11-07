@@ -317,8 +317,9 @@
 }
 
 /* ---- Inline mini-diff in tool-call cards ---- */
+/* The card clips its children, so the end padding holds "+N more hunks"'s touch reach. */
 .tool-diff-preview {
-  padding: var(--sp-1) var(--sp-2) var(--sp-2);
+  padding: var(--sp-1) var(--sp-2) max(var(--sp-2), var(--hit-grow) / 2);
   border-top: 1px solid var(--c-border);
   display: flex;
   flex-direction: column;

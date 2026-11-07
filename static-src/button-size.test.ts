@@ -562,7 +562,7 @@ const CENSUS: readonly Family[] = [
   {
     name: "text button",
     selector:
-      ":is(.btn, .btn-small, .btn-save, .action-pill, .uip-ask-ok, .uip-ask-cancel):not(.add-form > .btn, .list-row .btn-small, .conflict-hunk-row > .btn-small, .mcp-install-btn)",
+      ":is(.btn, .btn-small, .btn-save, .action-pill, .tool-output-reveal, .uip-ask-ok, .uip-ask-cancel):not(.add-form > .btn, .list-row .btn-small, .conflict-hunk-row > .btn-small, .mcp-install-btn, .git-pr-row-actions .btn-small, .git-repo-section-header-row > .btn-small)",
     kind: "toolbar",
   },
   {
@@ -603,6 +603,20 @@ const CENSUS: readonly Family[] = [
     documented: "19-files.css `.fb-git-clickable`: a shaped target inside its file row",
   },
   {
+    name: "more hunks",
+    selector: ".tool-diff-more",
+    kind: "own-size",
+    documented:
+      "60-mcp.css `.tool-diff-more`: a text control under a diff preview, painted as its label at `--paint-floor`",
+  },
+  {
+    name: "switch",
+    selector: "label.toggle",
+    kind: "own-size",
+    documented:
+      "18-pages.css `--toggle-w`/`--toggle-h`: a switch track at the platform shape, its target the label",
+  },
+  {
     name: "segment",
     selector: ".seg",
     kind: "own-size",
@@ -611,7 +625,7 @@ const CENSUS: readonly Family[] = [
   {
     name: "disclosure and list rows",
     selector:
-      ".chat-opt-btn, .chat-opt-strip-btn, .run-bar-open, .run-bar-toggle, .tool-group-header, .reasoning-summary, .run-head, .run-step-head, .subagent-header, .tool-diff-stats, .native-explain-summary, .turn-file-row, .turn-info-dbtn, .turn-info-link, .turn-review-all, .entry, .entry-open, .fb-row, .ev-dock-row, .ev-tl-lane, .ev-dock-more, .ev-dock-ask-more, .dock-ask-more, .user-input-option, .pill-role-item, .tab-context-item, .git-branch-popover-row, .git-repo-section-header, .git-file-path, .git-pr-row-title, .git-recent-commits-summary, .code-refs-summary, .forge-options-summary, .mcp-result-summary",
+      ".chat-opt-btn, .chat-opt-strip-btn, .run-bar-open, .run-bar-toggle, .tool-group-header, .reasoning-summary, .run-head, .run-step-head, .subagent-header, .tool-diff-stats, .native-explain-summary, .turn-file-row, .turn-info-dbtn, .turn-info-link, .turn-review-all, .entry, .entry-open, .fb-row, .ev-dock-row, .ev-tl-lane, .ev-dock-more, .ev-dock-ask-more, .dock-ask-more, .user-input-option, .pill-role-item, .tab-context-item, .git-branch-popover-row, .git-repo-section-header, .git-file-path, .git-pr-row-title, .git-recent-commits-summary, .code-refs-summary, .forge-options-summary, .mcp-result-summary, .always-choice-option, .compaction-head, .mcp-discovery-summary, .forge-account-repos-summary, .git-repo-section-header-toggle",
     kind: "row",
     documented: "each family's `--row-tap*` rule: a row, its own target",
   },
@@ -657,12 +671,12 @@ const CENSUS: readonly Family[] = [
   {
     name: "list row actions",
     selector:
-      ".entry-actions > *, .list-row .btn-small, .conflict-hunk-row > .btn-small, .mcp-install-btn, .mcp-pair-del, .mcp-row-actions .icon-btn",
+      ".entry-actions > :not(label.toggle), .list-row .btn-small, .conflict-hunk-row > .btn-small, .mcp-install-btn, .mcp-pair-del, .mcp-row-actions .icon-btn, .git-pr-row-actions .btn-small, .git-repo-section-header-row > .btn-small, .selection-quote-btn",
     kind: "dense",
     paint: "--ctl-h-dense",
     square: false,
     documented:
-      "each family's `--ctl-h-dense` rule: an action in a list row, its width its glyph and padding",
+      "each family's `--ctl-h-dense` rule: an action in a list row or a selection's popover, its width its glyph or label and padding",
   },
   {
     name: "turn map steps",
@@ -673,8 +687,9 @@ const CENSUS: readonly Family[] = [
   },
 ];
 
-/** Every pressable control; the tab's × is a span because a `role="tab"` row's children are presentational. */
-const CONTROL = "button, summary, [role='button'], a[href], .tab-close";
+/** Every pressable control; the tab's × is a span because a `role="tab"` row's children are presentational,
+ *  and a switch's label is its target because its checkbox is hidden. */
+const CONTROL = "button, summary, [role='button'], a[href], .tab-close, label.toggle";
 
 /** The painted size of a length token, measured rather than parsed. */
 function tokenPx(token: string): number {
@@ -802,7 +817,7 @@ const MOUNTED: Readonly<Record<string, readonly string[]>> = {
   "the sign-in dialog": ["#modal-sso-submit"],
   "Settings, General": ["#diagnostics-run"],
   "Settings, General, a report ready": [".diagnostics-copy"],
-  "Settings, Tools": ["#tool-add-btn", ".list-row-btn"],
+  "Settings, Tools": ["#tool-add-btn", ".list-row-btn", "label.toggle"],
   "Settings, Permissions": [".native-rule-remove", ".chip-remove"],
   "Settings, MCP servers": [".mcp-row-actions .icon-btn"],
   "the MCP dialog": ["#mcp-modal-close"],
@@ -812,6 +827,7 @@ const MOUNTED: Readonly<Record<string, readonly string[]>> = {
   "the pull request form": ["[data-pr-close]"],
   "a diagram's full view": [".mermaid-overlay-actions .icon-btn"],
   "a turn": [".turn-action-btn", ".tool-disclosure", ".turn-fold-toggle"],
+  "a long edit's diff": [".tool-diff-more"],
   "the find bar": [".chat-find-btn"],
   "a page's find popup": [".page-find-btn"],
   "the run bar": [".run-bar-all"],
@@ -826,6 +842,7 @@ const MOUNTED: Readonly<Record<string, readonly string[]>> = {
   "the run tab": [".run-icon-btn"],
   "the History page": [".entry-delete"],
   "the git page": ["#git-pull-all-btn"],
+  "the git page's pull requests": [".git-pr-row-actions .btn-small"],
 };
 
 /** The catalogue size a census preset mounts a surface at, or none where the surface has no such form. */

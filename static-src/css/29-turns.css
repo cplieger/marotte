@@ -1298,7 +1298,7 @@
 
 /* A TOUCH DEVICE IN MOUSE MODE keeps a finger's target on the steps, which its own `--hit-floor`
  * would not give; the paint stays the column's. `--hit-inset` is redeclared because the root's
- * resolved its `--hit-floor` there. A selector cannot OR an attribute with a media query. */
+ * resolved its `--hit-floor` there. */
 @media (any-pointer: coarse) {
   .turn-map {
     gap: max(var(--sp-1), (var(--hit-floor-touch) - var(--ctl-h-sm)) / 2);

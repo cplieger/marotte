@@ -324,11 +324,8 @@
  * the `line-height: 1` against `icon-btn`'s SVG-authored `line-height: 0`, and the 1rem
  * box that clamped it). The mark is `ICON_CLOSE` now.
  *
- * `padding: 0` IS a real override rather than leftover skin: `icon-btn`'s standalone
- * `--sp-2` around a 12px glyph is a 28px box, which is wider than a chip this dense
- * has room for beside its label. `.mcp-pair-del` (60-mcp.css) makes the same override
- * for the same reason, so a dense host repadding a shared icon button is the
- * established shape.
+ * `icon-btn` sets a `--btn-h` minimum; `min-*-size: var(--close-box)` below keeps the
+ * chip's x at 24px.
  *
  * THE RECEDE STAYS AND IS NOT THE ANTI-PATTERN `.banner-dismiss` rejected. That one was
  * an `opacity` on a control whose ink had no other channel; this is progressive

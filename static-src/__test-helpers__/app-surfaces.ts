@@ -267,6 +267,33 @@ function plantTurn(): void {
   t.appendChild(footer);
 }
 
+/** Sixty lines with every tenth one edited: more hunks than the diff preview's rows show. */
+const LONG_EDIT = ((): { oldStr: string; newStr: string } => {
+  const lines = Array.from({ length: 60 }, (_, i) => `line ${String(i)}`);
+  return {
+    oldStr: lines.join("\n"),
+    newStr: lines.map((l, i) => (i % 10 === 0 ? `${l} edited` : l)).join("\n"),
+  };
+})();
+
+/** An edit whose diff preview omits hunks, so it shows the "more hunks" control. */
+function plantLongEdit(): void {
+  const shell = buildToolGroupShell();
+  groupBody(shell).appendChild(
+    buildToolCard({
+      id: "long-edit",
+      title: "Edit File",
+      kind: "edit",
+      status: "completed",
+      live: false,
+      input: { path: "README.md", ...LONG_EDIT },
+      output: "Applied 1 edit.",
+    }),
+  );
+  turn(shell);
+  refreshGroupHeader(shell);
+}
+
 /** A running workflow's card with three steps, and a step's note naming the run. */
 function plantRun(): void {
   const view = buildRunCard("wf", "deadset-ci", () => undefined);
@@ -1278,6 +1305,13 @@ export const SURFACES: readonly Surface[] = [
       ".tool-diff-stats",
       ".tool-group-hooks",
     ],
+  },
+  {
+    name: "a long edit's diff",
+    sizes: TWO,
+    setup: plantLongEdit,
+    controls: [".tool-diff-more"],
+    rows: [".tool-diff-stats"],
   },
   {
     name: "a turn's More menu",
