@@ -4,6 +4,7 @@
 // REAL (rows via `open_tab` and `createTabEl`); the run store and dock are signal-backed
 // mocks.
 
+import type * as Dom from "./dom.js";
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { signal } from "@cplieger/ui";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -128,9 +129,10 @@ vi.mock("./toast.js", () =>
 );
 
 /** The tab strip's real render target, so renderDOM runs for real. */
-vi.mock("./dom.js", () => {
+vi.mock("./dom.js", async (importOriginal) => {
   const cache = new Map<string, HTMLElement>();
   return {
+    ...(await importOriginal<typeof Dom>()),
     $: new Proxy(
       {},
       {

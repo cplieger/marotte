@@ -1,6 +1,6 @@
 // Typing anywhere on the chat view lands in the composer.
 
-import { $ } from "./dom.js";
+import { $, maybeEl } from "./dom.js";
 import { shellTakesBodyKeys } from "./shell-keys.js";
 
 /**
@@ -30,7 +30,7 @@ export function focusComposerOnTyping(e: KeyboardEvent): void {
   }
   // Only when a transcript is on screen; typing on Settings or the file browser must not
   // yank focus into a composer the user cannot see.
-  const chatView = document.getElementById("chat-view");
+  const chatView = maybeEl("chat-view");
   if (chatView === null || chatView.classList.contains("hidden")) {
     return;
   }

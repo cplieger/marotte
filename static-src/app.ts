@@ -126,7 +126,6 @@ import { installLinkGuard, setLinkCopyCallback } from "./link-guard.js";
 import { registerCleanup, subscribeToActions } from "./actions/index.js";
 import { initActions } from "./actions/boot.js";
 import { initBeatPhase } from "./beat-phase.js";
-import { initIconCrisp } from "./icon-crisp.js";
 
 // Init
 
@@ -150,10 +149,6 @@ function init(): void {
   initPageTitleFit();
 
   initActions();
-
-  // Pixel-snap the icon boxes so a 1px stroke paints one pixel, on EVERY boot (login
-  // included). `icon-crisp.ts` carries the measurement.
-  initIconCrisp();
 
   // Before anything can paint a dot: the listener has to be up when the first
   // `vk-dot-beat` starts, or that dot keeps the 0ms fallback and beats out of step.

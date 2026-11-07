@@ -1,6 +1,7 @@
 // The spec tab as a SUB-TAB: nesting, the close cascade, the per-generation indent, and the one
 // mutation that reassigns a parent.
 
+import type * as Dom from "./dom.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Mock } from "vitest";
 
@@ -48,7 +49,8 @@ vi.mock("./device-view.js", () => {
     }),
   };
 });
-vi.mock("./dom.js", () => ({
+vi.mock("./dom.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Dom>()),
   $: new Proxy(
     {},
     {

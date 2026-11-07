@@ -25,7 +25,7 @@ import { initKnowledge, loadKnowledge } from "./knowledge.js";
 import { apiGet } from "./api-client.js";
 import { loadVersions, getVersions } from "./versions.js";
 import { openConfigFile } from "./editor-openers.js";
-import { $ } from "./dom.js";
+import { $, maybeEl } from "./dom.js";
 import { el } from "@cplieger/ui";
 import { initNotificationToggles } from "./settings-notifications.js";
 
@@ -221,7 +221,7 @@ export function initGeneralPanelControls(): void {
   initAgentCapabilityControls();
   initPanelSwitchControls();
   initEngineHeapControl();
-  document.getElementById("settings-open-config")?.addEventListener("click", () => {
+  maybeEl("settings-open-config")?.addEventListener("click", () => {
     void openConfigFile("config.json");
   });
 }
@@ -240,12 +240,12 @@ function retentionEls(): {
   daysRow: HTMLElement | null;
   foreverInput: HTMLInputElement;
 } | null {
-  const daysInput = document.getElementById("chat-retention-days") as HTMLInputElement | null;
-  const foreverInput = document.getElementById("chat-retention-forever") as HTMLInputElement | null;
+  const daysInput = maybeEl<HTMLInputElement>("chat-retention-days");
+  const foreverInput = maybeEl<HTMLInputElement>("chat-retention-forever");
   if (daysInput === null || foreverInput === null) {
     return null;
   }
-  return { daysInput, daysRow: document.getElementById("chat-retention-days-row"), foreverInput };
+  return { daysInput, daysRow: maybeEl("chat-retention-days-row"), foreverInput };
 }
 
 function applyChatRetention(s: EffectiveSettings): void {
@@ -371,8 +371,8 @@ function initLogoutButton(): void {
 async function loadAbout(): Promise<void> {
   await loadVersions();
   const v = getVersions();
-  const marotteEl = document.getElementById("about-marotte");
-  const kiroEl = document.getElementById("about-kirocli");
+  const marotteEl = maybeEl("about-marotte");
+  const kiroEl = maybeEl("about-kirocli");
   if (marotteEl !== null) {
     marotteEl.textContent = v.marotte === "" ? "—" : v.marotte;
   }
@@ -443,8 +443,8 @@ const COPY_SLOT_MS = 15 * 60 * 1000;
  *  report can be large and the clipboard is unreachable on non-HTTPS self-hosts, so a truncated
  *  ephemeral string is never the only surface. */
 export function initDiagnostics(): void {
-  const btn = document.getElementById("diagnostics-run") as HTMLButtonElement | null;
-  const status = document.getElementById("diagnostics-status") as HTMLParagraphElement | null;
+  const btn = maybeEl<HTMLButtonElement>("diagnostics-run");
+  const status = maybeEl<HTMLParagraphElement>("diagnostics-status");
   if (btn === null || status === null) {
     return;
   }
@@ -657,9 +657,7 @@ let togglesGen = 0;
 let togglesAC: AbortController | null = null;
 
 export function initExperimentalToggles(): void {
-  const inputs = experimentalFlags.map(
-    (flag) => document.getElementById(flag.inputID) as HTMLInputElement | null,
-  );
+  const inputs = experimentalFlags.map((flag) => maybeEl<HTMLInputElement>(flag.inputID));
   const wanted = experimentalFlags.map((flag) => flag.key).join(",");
   const gen = ++togglesGen;
   togglesAC?.abort();
@@ -778,7 +776,7 @@ function paintFeatureChoice(
   choice: (typeof agentFeatureChoices)[number],
   s: EffectiveSettings,
 ): void {
-  const select = document.getElementById(choice.selectID) as HTMLSelectElement | null;
+  const select = maybeEl<HTMLSelectElement>(choice.selectID);
   const value = s[choice.key];
   if (select !== null && (FEATURE_CHOICES as readonly string[]).includes(value)) {
     select.value = value;
@@ -786,7 +784,7 @@ function paintFeatureChoice(
   if (choice.defaultID === undefined) {
     return;
   }
-  const line = document.getElementById(choice.defaultID);
+  const line = maybeEl(choice.defaultID);
   const resolved = value === "" ? s.kiro_defaults[choice.key] : undefined;
   if (line !== null) {
     line.textContent = resolved === undefined ? "" : kiroDefaultLine(resolved);
@@ -813,33 +811,31 @@ export function shellTimeoutMs(raw: string): number {
 
 /** The ask-first switch only means something while spec planning is on. */
 function paintSpecPlanning(mode: string): void {
-  document.getElementById("spec-planning-ask-row")?.classList.toggle("hidden", mode === "off");
+  maybeEl("spec-planning-ask-row")?.classList.toggle("hidden", mode === "off");
 }
 
 /** Workflow use only means something while the Workflows switch shows on, a lock's value included. */
 function paintWorkflowLaunchRow(): void {
-  const workflows = document.getElementById("flag-workflows") as HTMLInputElement | null;
-  document
-    .getElementById("workflow-launch-row")
-    ?.classList.toggle("hidden", workflows?.checked !== true);
+  const workflows = maybeEl<HTMLInputElement>("flag-workflows");
+  maybeEl("workflow-launch-row")?.classList.toggle("hidden", workflows?.checked !== true);
 }
 
 /** The Memory dropdown's values, mirroring settings.MemoryOff and its siblings. */
 const MEMORY_MODES = ["off", "read_only", "read_write", "learn"] as const;
 
 function memorySelect(): HTMLSelectElement | null {
-  return document.getElementById("memory-mode") as HTMLSelectElement | null;
+  return maybeEl<HTMLSelectElement>("memory-mode");
 }
 
 function applyAgentCapabilities(s: EffectiveSettings): void {
   for (const cap of agentCapabilities) {
-    const input = document.getElementById(cap.inputID) as HTMLInputElement | null;
+    const input = maybeEl<HTMLInputElement>(cap.inputID);
     if (input !== null) {
       writeSwitch(input, s[cap.key]);
     }
   }
   for (const sw of agentFeatureSwitches) {
-    const input = document.getElementById(sw.inputID) as HTMLInputElement | null;
+    const input = maybeEl<HTMLInputElement>(sw.inputID);
     if (input !== null) {
       input.checked = s[sw.key] === "on";
     }
@@ -873,14 +869,14 @@ function paintMemory(s: EffectiveSettings): void {
 }
 
 function paintAgentChoice(choice: (typeof agentChoices)[number], s: EffectiveSettings): void {
-  const select = document.getElementById(choice.selectID) as HTMLSelectElement | null;
+  const select = maybeEl<HTMLSelectElement>(choice.selectID);
   if (select !== null && choice.values.includes(s[choice.key])) {
     select.value = s[choice.key];
   }
 }
 
 function shellTimeoutInput(): HTMLInputElement | null {
-  return document.getElementById("shell-command-timeout") as HTMLInputElement | null;
+  return maybeEl<HTMLInputElement>("shell-command-timeout");
 }
 
 function paintShellTimeout(timeout: HTMLInputElement, s: EffectiveSettings): void {
@@ -907,7 +903,7 @@ function saveControl(
 
 function initAgentCapabilityControls(): void {
   for (const cap of agentCapabilities) {
-    const input = document.getElementById(cap.inputID) as HTMLInputElement | null;
+    const input = maybeEl<HTMLInputElement>(cap.inputID);
     if (input === null) {
       continue;
     }
@@ -921,7 +917,7 @@ function initAgentCapabilityControls(): void {
   }
   onGovernanceChange(paintWorkflowLaunchRow);
   for (const sw of agentFeatureSwitches) {
-    const input = document.getElementById(sw.inputID) as HTMLInputElement | null;
+    const input = maybeEl<HTMLInputElement>(sw.inputID);
     input?.addEventListener("change", () => {
       void patchSettings(
         { [sw.key]: input.checked ? "on" : "off" },
@@ -930,7 +926,7 @@ function initAgentCapabilityControls(): void {
     });
   }
   for (const choice of agentFeatureChoices) {
-    const select = document.getElementById(choice.selectID) as HTMLSelectElement | null;
+    const select = maybeEl<HTMLSelectElement>(choice.selectID);
     select?.addEventListener("change", () => {
       saveControl(select, { [choice.key]: select.value }, (shown) => {
         paintFeatureChoice(choice, shown);
@@ -942,7 +938,7 @@ function initAgentCapabilityControls(): void {
     saveControl(memory, { memory_mode: memory.value }, paintMemory);
   });
   for (const choice of agentChoices) {
-    const select = document.getElementById(choice.selectID) as HTMLSelectElement | null;
+    const select = maybeEl<HTMLSelectElement>(choice.selectID);
     select?.addEventListener("change", () => {
       paintSpecPlanning(select.value);
       saveControl(select, { [choice.key]: select.value }, (shown) => {
@@ -951,7 +947,7 @@ function initAgentCapabilityControls(): void {
       });
     });
   }
-  const style = document.getElementById("output-style") as HTMLSelectElement | null;
+  const style = maybeEl<HTMLSelectElement>("output-style");
   style?.addEventListener("change", () => {
     paintOutputStyleHint(style.value);
     saveControl(style, { output_style: style.value }, (shown) => {
@@ -980,11 +976,11 @@ function autoCompactionEls(): {
   value: HTMLOutputElement;
   rejected: HTMLElement;
 } | null {
-  const toggle = document.getElementById("flag-auto-compaction") as HTMLInputElement | null;
-  const row = document.getElementById("auto-compact-row");
-  const range = document.getElementById("auto-compact-pct") as HTMLInputElement | null;
-  const value = document.getElementById("auto-compact-pct-value") as HTMLOutputElement | null;
-  const rejected = document.getElementById("auto-compact-rejected");
+  const toggle = maybeEl<HTMLInputElement>("flag-auto-compaction");
+  const row = maybeEl("auto-compact-row");
+  const range = maybeEl<HTMLInputElement>("auto-compact-pct");
+  const value = maybeEl<HTMLOutputElement>("auto-compact-pct-value");
+  const rejected = maybeEl("auto-compact-rejected");
   if (toggle === null || row === null || range === null || value === null || rejected === null) {
     return null;
   }
@@ -1074,7 +1070,7 @@ const panelSwitches: readonly {
 
 function applyPanelSwitches(s: EffectiveSettings): void {
   for (const sw of panelSwitches) {
-    const input = document.getElementById(sw.inputID) as HTMLInputElement | null;
+    const input = maybeEl<HTMLInputElement>(sw.inputID);
     if (input !== null) {
       input.checked = s[sw.key];
     }
@@ -1083,7 +1079,7 @@ function applyPanelSwitches(s: EffectiveSettings): void {
 
 function initPanelSwitchControls(): void {
   for (const sw of panelSwitches) {
-    const input = document.getElementById(sw.inputID) as HTMLInputElement | null;
+    const input = maybeEl<HTMLInputElement>(sw.inputID);
     if (input === null) {
       continue;
     }
@@ -1110,7 +1106,7 @@ let heapEdit: { readonly gen: number; readonly mib: number } | null = null;
 let heapEdits = 0;
 
 function engineHeapInput(): HTMLInputElement | null {
-  return document.getElementById("engine-heap-mib") as HTMLInputElement | null;
+  return maybeEl<HTMLInputElement>("engine-heap-mib");
 }
 
 function paintEngineHeap(input: HTMLInputElement, mib: number): void {

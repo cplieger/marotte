@@ -2,6 +2,7 @@
 // Neither side alone answers "which turns exist" — the index cannot see the turn running now, the
 // window cannot see the turns paged out. Pure and DOM-free, like `turns.ts` beside it.
 
+import { bodyMemo } from "./body-memo.js";
 import { OUTCOME_LABEL } from "./turn-severity.js";
 import { wakeLine } from "./turn-wake.js";
 import { turnLedger } from "./turns.js";
@@ -145,7 +146,17 @@ export function mergeTurnSets(
   return [...byN.values()].sort((a, b) => a.n - b.n);
 }
 
-function residentRow(t: Turn): TurnSummary {
+/** One object per unchanged turn, so a caller can tell an unchanged set by identity. */
+const residentRows = bodyMemo<TurnSummary>();
+
+export function residentRow(t: Turn): TurnSummary {
+  const text = t.trigger?.text ?? wakeRailText(t);
+  // A body is one held turn's, whose `turn_open` fixes id, `n` and `ts`; the body fixes the outcome and the ledger.
+  const key = (t.trigger === undefined ? "w" : "p") + text;
+  return residentRows(t.body, key, () => buildResidentRow(t, text));
+}
+
+function buildResidentRow(t: Turn, text: string): TurnSummary {
   const out: TurnSummary = {
     id: t.id,
     n: t.n,
@@ -153,7 +164,7 @@ function residentRow(t: Turn): TurnSummary {
     outcome: t.outcome,
     agent_initiated: t.trigger === undefined,
   };
-  const line = firstLine(t.trigger?.text ?? wakeRailText(t));
+  const line = firstLine(text);
   if (line !== "") {
     out.first_line = line;
   }

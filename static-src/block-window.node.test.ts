@@ -369,15 +369,15 @@ describe("runCardOwners", () => {
       call(1, { id: "launch", run: "w-1" }),
       call(2, { id: "inspect", run: "w-1" }),
     ]);
-    expect(runCardOwners([t])).toEqual(new Map([["w-1", "launch"]]));
+    expect(runCardOwners([t])).toEqual(new Map([["w-1", { turn: "t1", entry: "launch" }]]));
   });
 
   it("resolves both calls of one turn, in seq order", () => {
     const t = turn("t1", [call(1, { id: "a", run: "w-1" }), call(2, { id: "b", run: "w-2" })]);
     expect(runCardOwners([t])).toEqual(
       new Map([
-        ["w-1", "a"],
-        ["w-2", "b"],
+        ["w-1", { turn: "t1", entry: "a" }],
+        ["w-2", { turn: "t1", entry: "b" }],
       ]),
     );
   });
@@ -385,7 +385,9 @@ describe("runCardOwners", () => {
   it("names one owner per run across several turns, oldest first", () => {
     const older = turn("t1", [call(1, { id: "first", run: "w-1" })]);
     const newer = turn("t2", [call(1, { id: "second", run: "w-1" })]);
-    expect(runCardOwners([older, newer])).toEqual(new Map([["w-1", "first"]]));
+    expect(runCardOwners([older, newer])).toEqual(
+      new Map([["w-1", { turn: "t1", entry: "first" }]]),
+    );
   });
 
   it("skips an entry this view does not render, so no owner names an undrawn call", () => {
@@ -393,7 +395,7 @@ describe("runCardOwners", () => {
       call(1, { id: "delegate", run: "w-1", lane: "sub-A" }),
       call(2, { id: "own", run: "w-1" }),
     ]);
-    expect(runCardOwners([t])).toEqual(new Map([["w-1", "own"]]));
+    expect(runCardOwners([t])).toEqual(new Map([["w-1", { turn: "t1", entry: "own" }]]));
   });
 
   it("skips an internal-titled call, matching the dispatcher's own early return", () => {
@@ -401,7 +403,7 @@ describe("runCardOwners", () => {
       call(1, { id: "internal", run: "w-1", title: "Fetching your cloud config" }),
       call(2, { id: "real", run: "w-1" }),
     ]);
-    expect(runCardOwners([t])).toEqual(new Map([["w-1", "real"]]));
+    expect(runCardOwners([t])).toEqual(new Map([["w-1", { turn: "t1", entry: "real" }]]));
   });
 
   it("names nothing for a turn whose calls carry no run", () => {
@@ -413,7 +415,9 @@ describe("runCardOwners", () => {
       call(1, { id: "own", run: "w-1" }),
       call(2, { id: "delegate", run: "w-2", lane: "sub-A" }),
     ]);
-    expect(runCardOwners([t], "sub-A")).toEqual(new Map([["w-2", "delegate"]]));
+    expect(runCardOwners([t], "sub-A")).toEqual(
+      new Map([["w-2", { turn: "t1", entry: "delegate" }]]),
+    );
   });
 });
 

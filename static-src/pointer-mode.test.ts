@@ -19,7 +19,7 @@ import indexHtml from "../static/index.html?raw";
 import { initPointerModeToggle, revealPointerModeToggle } from "./pointer-mode.js";
 import { initPointerTier, currentTier } from "./pointer-tier.js";
 import { markCoarseSeen, pointerModeChoice, setPointerModeChoice } from "./device-view.js";
-import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { useSteppableClock } from "./__test-helpers__/fake-clock.js";
 
 function markupFor(anchor: string): string {
@@ -187,23 +187,6 @@ describe("the toggle's click", () => {
     await vi.runAllTimersAsync();
     expect(hiddenGlyphs(btn)).toEqual(["coarse"]);
     expect(btn.getAttribute("aria-pressed")).toBe("false");
-  });
-
-  it("rides `transform`, leaving the `translate` property to icon-crisp", () => {
-    // A cross-module coupling no rendering test would name: this slide and `icon-crisp.ts` must
-    // not both write the `translate` property on the same element.
-    const sheet = loadCSS("10-shell-app.css");
-    const SLIDE = ".icon-swap svg";
-    const base = ruleBody(sheet, SLIDE);
-    expect(base, "the slide transitions `transform`").toMatch(/transition:[^;]*\btransform\b/);
-    expect(base, "and NOT `translate`, which icon-crisp owns").not.toMatch(
-      /transition:[^;]*\btranslate\b/,
-    );
-    for (const state of ["icon-setting", "icon-rising"]) {
-      const body = ruleBody(sheet, `${SLIDE}.${state}`);
-      expect(body, `${state} offsets with transform`).toMatch(/transform:\s*translateY\(/);
-      expect(body, `${state} sets no \`translate\` property`).not.toMatch(/(^|[;\s])translate:/);
-    }
   });
 
   it("flips aria-pressed and the tooltip while the accessible name stays put", () => {

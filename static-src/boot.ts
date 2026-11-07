@@ -7,7 +7,7 @@
 import { subscribeByName } from "./actions/index.js";
 import { logout } from "./actions/settings.js";
 import { GLOBAL_BANNER, showBanner } from "./banner-stack.js";
-import { $ } from "./dom.js";
+import { $, maybeEl } from "./dom.js";
 import { bootMode, clearReloadGuard, noteBootAlive, reloadCount } from "./reload-guard.js";
 import { abortReadsForRevert, loadList, requestTurnRange } from "./store-load.js";
 import {
@@ -340,7 +340,7 @@ function announceReloadLoop(): void {
 
 /** Drop the tab strip's authored placeholder by id; `tabs.ts` owns the rows. Idempotent. */
 function clearTabStripSkeleton(): void {
-  document.getElementById("tab-strip-skeleton")?.remove();
+  maybeEl("tab-strip-skeleton")?.remove();
 }
 
 // Everything that must not fire on the login screen, behind ONE door guarded once,

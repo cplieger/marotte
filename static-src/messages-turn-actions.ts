@@ -16,6 +16,7 @@ import { chatNotice } from "./notice-subject.js";
 import { copyClipboard } from "./actions/messages.js";
 import { buildPath } from "./route-path.js";
 import { el } from "@cplieger/ui";
+import { queryAll } from "./dom.js";
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -38,7 +39,7 @@ let dismissalWired = false;
  * and it lets an open menu's trigger still close it.
  */
 function closeOverflowMenus(inside: Node | null): void {
-  for (const menu of document.querySelectorAll<HTMLDetailsElement>(".turn-actions-more[open]")) {
+  for (const menu of queryAll<HTMLDetailsElement>(".turn-actions-more[open]")) {
     if (inside !== null && menu.contains(inside)) {
       continue;
     }

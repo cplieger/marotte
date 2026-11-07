@@ -7,6 +7,7 @@ import { askBucket, type AskBucket } from "./interaction.js";
 import { defaultFailureReason, severityOf } from "./turn-severity.js";
 import { hookCounted, hookStatusShown } from "./hook-fold.js";
 import { isWakingRow } from "./waking-rows.js";
+import { turnRevision } from "./turn-revision.js";
 import type {
   AnyEntry,
   Entry,
@@ -123,7 +124,7 @@ export interface Turn {
   trigger: EntryPrompt | undefined;
   /** Everything the trigger caused: the turn's entries after `turn_open` in `seq`
    *  order, with `turn_close` among them as an ordinary entry. */
-  body: Entry[];
+  body: readonly Entry[];
   /** Each lane's OPEN entry, verbatim from the store. It never reaches the log (no `seq`, no
    *  position), so it sits beside `body` and renders at its lane's tail. Empty on settled turns. */
   openEntries: ReadonlyMap<string, OpenEntry>;
@@ -238,6 +239,24 @@ export function turnIsDrawn(t: TurnState): boolean {
   return false;
 }
 
+const bodies = new WeakMap<TurnState, { rev: number; len: number; body: readonly Entry[] }>();
+
+/**
+ * `state`'s entries after `turn_open`, as ONE array for as long as they hold: the same count and no `touchTurn`
+ * between two reads. A `bodyMemo` value is then current exactly while its array is the one projected.
+ */
+export function bodyOf(state: TurnState): readonly Entry[] {
+  const rev = turnRevision(state);
+  const len = state.entries.length;
+  const held = bodies.get(state);
+  if (held?.rev === rev && held.len === len) {
+    return held.body;
+  }
+  const body = state.entries.slice(1);
+  bodies.set(state, { rev, len, body });
+  return body;
+}
+
 /** The `Turn` one source turn projects to. `rewindTo` and `summarized` are the CALLER's, because
  *  the two projections resolve them from different things: the whole pass reads the list it is
  *  building, a keyed read walks the source from the turn's own index. */
@@ -249,7 +268,7 @@ function turnOf(
   summarized: boolean,
   names: () => ReadonlyMap<string, string>,
 ): Turn {
-  const body = state.entries.slice(1);
+  const body = bodyOf(state);
   const wake = rawWakeOf(state, open);
   return {
     wake: wake === undefined ? undefined : namedWake(wake, names()),

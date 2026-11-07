@@ -1,5 +1,4 @@
 import { el, KEY_ATTR, reconcile } from "@cplieger/ui";
-import { join } from "@cplieger/keyenc";
 import { apiGet } from "./api-client.js";
 import { ICON_STEP_NEXT, ICON_STEP_PREV } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -20,12 +19,13 @@ import { buildPath } from "./route-path.js";
 import { projectTurns } from "./turns.js";
 import { searchHitTurns } from "./chat-search.js";
 import { get } from "./store.js";
-import { mergeTurnSets, validateTurnIndex } from "./rail-merge.js";
+import { mergeTurnSets, residentRow, validateTurnIndex } from "./rail-merge.js";
 import type { TurnSummary } from "./rail-merge.js";
 import { binTurns } from "./rail-select.js";
 import type { TurnBin, TurnMapLayout } from "./rail-select.js";
 import { activeTurnAt, buildOffsets, markerSlotFor, turnsInView } from "./rail-activation.js";
 import type { CardTop, TurnOffsets } from "./rail-activation.js";
+import { queryEl, setAttr, setStyleVar } from "./dom.js";
 
 /** How far the transcript must scroll before the map appears: a threshold, not `> 0`, so a few
  *  pixels of settling overflow do not flicker it. */
@@ -141,7 +141,7 @@ let navigable = false;
 /** Everything the map's rows were built FROM, so a render that would redraw the same map writes
  *  nothing: `render()` runs on every transcript paint. It must name EVERY input the map's nodes
  *  read (`renderSignature`, the one list), or the map goes stale. */
-let renderedSig = "";
+let renderedSig: readonly unknown[] = [];
 
 /** The track's height, from its ResizeObserver entry: `render()` reads no layout. 0 wherever CSS
  *  does not draw the map (the phone layout), so `binTurns` lays no rows there; an unshown map stays
@@ -161,12 +161,31 @@ let shownSlots = 0;
 function setTurns(): void {
   const session = get(chatID);
   const resident = session === undefined ? [] : projectTurns(session);
+  const inputs: readonly unknown[] = [
+    indexed,
+    ...(session?.turn_order ?? []),
+    "",
+    ...resident.map(residentRow),
+  ];
+  if (sameParts(inputs, mergedFrom)) {
+    return;
+  }
+  mergedFrom = inputs;
   summaries = mergeTurnSets(resident, indexed, new Set(session?.turn_order));
   summaryByID = new Map(summaries.map((s) => [s.id, s]));
   residentN = new Map(resident.map((t) => [t.id, t.n]));
   if (selectedID !== undefined && !summaryByID.has(selectedID)) {
     selectedID = undefined;
   }
+}
+
+/** What `summaries` was merged from: the index, the held order, then each resident row (`residentRow` answers one
+ *  object per unchanged turn), so a paint that changed none of them merges nothing. */
+let mergedFrom: readonly unknown[] = [];
+
+/** Element-wise identity, for the inputs a cached result was built from. */
+function sameParts(a: readonly unknown[], b: readonly unknown[]): boolean {
+  return a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
 }
 
 /** Mount the map into the transcript's positioned outer wrapper. Idempotent. */
@@ -247,6 +266,7 @@ export function pointTurnRail(id: string): void {
   inView = new Set();
   rovingKey = undefined;
   residentN = new Map();
+  mergedFrom = [];
   residentCards = [];
   setTurns();
   render();
@@ -300,6 +320,7 @@ export function resetTurnRail(): void {
   summaries = [];
   summaryByID = new Map();
   residentN = new Map();
+  mergedFrom = [];
   activeID = "";
   heldN = undefined;
   selectedID = undefined;
@@ -468,9 +489,7 @@ function render(): void {
     return;
   }
   const visible = summaries.length > 0 && navigable;
-  const layout: TurnMapLayout = visible
-    ? binTurns(summaries, trackPx)
-    : { total: 0, slots: 0, bins: [] };
+  const layout = visible ? layoutOf(summaries, trackPx) : NO_LAYOUT;
   const n = markedN();
   const current =
     n === undefined
@@ -489,14 +508,25 @@ function render(): void {
     current: i === current,
     roving: i === roving,
   }));
+  shown = layout.bins;
+  shownSlots = layout.slots;
   const sig = renderSignature(rows, layout, visible, n);
-  if (sig === renderedSig) {
+  if (sameParts(sig, renderedSig)) {
     return;
   }
   renderedSig = sig;
-  shown = layout.bins;
-  shownSlots = layout.slots;
   paintMap(root, rows, layout, visible, current);
+}
+
+const NO_LAYOUT: TurnMapLayout = { total: 0, slots: 0, bins: [] };
+let laidOut: { from: readonly TurnSummary[]; trackPx: number; layout: TurnMapLayout } | undefined;
+
+/** `binTurns`, kept while the set and the track hold: `render()` runs on every transcript paint. */
+function layoutOf(turns: readonly TurnSummary[], px: number): TurnMapLayout {
+  if (laidOut?.from !== turns || laidOut.trackPx !== px) {
+    laidOut = { from: turns, trackPx: px, layout: binTurns(turns, px) };
+  }
+  return laidOut.layout;
 }
 
 /** The row holding the single tab stop: the keyboard reader's while they hold one, else the
@@ -512,51 +542,33 @@ function rovingIndex(bins: readonly TurnBin[], current: number): number {
   return bins.length === 0 ? -1 : Math.max(0, current);
 }
 
-/** Every value the rendered nodes read, in one string (see `renderedSig`). Joined with `keyenc`:
- *  a turn id is server text, and a collision freezes the map. */
+/** Every value the rendered nodes read (see `renderedSig`). A member is compared by identity: `mergeTurnSets` hands an
+ *  unchanged turn the same row object, and the paint reads only a bin's first, last and target member. */
 function renderSignature(
   rows: readonly PillView[],
   layout: TurnMapLayout,
   visible: boolean,
   marked: number | undefined,
-): string {
-  const parts: string[] = [
-    String(layout.total),
-    String(layout.slots),
-    flag(visible),
-    String(marked ?? -1),
-    chatID,
-    flag(pending.size > 0),
-  ];
+): readonly unknown[] {
+  const parts: unknown[] = [layout.total, layout.slots, visible, marked, chatID, pending.size > 0];
   for (const r of rows) {
+    const { bin } = r;
     parts.push(
-      String(r.bin.members.length),
-      r.bin.key,
-      String(r.bin.at),
-      r.bin.severity,
-      r.bin.target.id,
-      flag(r.hit),
-      flag(r.pending),
-      flag(r.inView),
-      flag(r.current),
-      flag(r.roving),
+      bin.members.length,
+      bin.key,
+      bin.at,
+      bin.severity,
+      bin.first,
+      bin.last,
+      bin.target,
+      r.hit,
+      r.pending,
+      r.inView,
+      r.current,
+      r.roving,
     );
-    for (const m of r.bin.members) {
-      parts.push(
-        m.id,
-        String(m.n),
-        m.outcome,
-        flag(m.agent_initiated === true),
-        m.first_line ?? "",
-        String(m.elapsed_ms ?? 0),
-      );
-    }
   }
-  return join(...parts);
-}
-
-function flag(b: boolean): string {
-  return b ? "1" : "0";
+  return parts;
 }
 
 function paintMap(
@@ -568,7 +580,7 @@ function paintMap(
 ): void {
   m.nav.toggleAttribute("data-shown", visible);
   setAttr(m.nav, "aria-busy", pending.size > 0 ? "true" : null);
-  m.stack.style.setProperty("--turn-map-slots", String(Math.max(1, layout.slots)));
+  setStyleVar(m.stack, "--turn-map-slots", String(Math.max(1, layout.slots)));
   dropScrubbedRow(m, rows);
   reconcile(m.stack, rows, { key: (r) => r.bin.key, mount: mountPill, update: paintPill });
   if (scrubPointer !== undefined) {
@@ -589,7 +601,7 @@ function mountPill(r: PillView): HTMLElement {
 function paintPill(li: HTMLElement, r: PillView): void {
   const { bin } = r;
   const single = bin.members.length === 1;
-  li.style.setProperty("--rail-at", String(bin.at));
+  setStyleVar(li, "--rail-at", String(bin.at));
   setAttr(li, "data-severity", bin.severity);
   setAttr(li, "data-trigger", single && bin.first.agent_initiated === true ? "system" : null);
   setAttr(li, "data-in-view", r.inView ? "" : null);
@@ -614,16 +626,6 @@ function paintPill(li: HTMLElement, r: PillView): void {
 
 function turnHref(s: TurnSummary): string {
   return buildPath({ kind: "chat", id: chatID, turn: s.n });
-}
-
-function setAttr(node: Element, name: string, value: string | null): void {
-  if (value === null) {
-    if (node.hasAttribute(name)) {
-      node.removeAttribute(name);
-    }
-  } else if (node.getAttribute(name) !== value) {
-    node.setAttribute(name, value);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1171,14 +1173,14 @@ function settled(): Promise<void> {
 /** The mounted card for the turn whose opening message is `id`, or null when it is
  *  not resident. Scoped to the ACTIVE transcript view, because the reconcile key
  *  repeats once per resident view and a document-wide query answers in document
- *  order. The document fallback keeps the map fixtures working unscoped. */
+ *  order. The page-wide fallback keeps the map fixtures working unscoped. */
 function turnCard(id: string): HTMLElement | null {
   if (id === "") {
     return null;
   }
   const selector = `[data-reconcile-key="${CSS.escape(id)}"]`;
   const view = activeView();
-  return (view ?? document).querySelector<HTMLElement>(selector);
+  return view === null ? queryEl<HTMLElement>(selector) : view.querySelector<HTMLElement>(selector);
 }
 
 /** How long the landing card wears its ring. Long enough to be seen, short enough

@@ -1,4 +1,5 @@
 import { effect, el, signal, touch } from "@cplieger/ui";
+import { pageRoots } from "./dom.js";
 import { cutAt } from "./strings.js";
 import { exfilShaped, isHttpMailtoOrRelativeURL } from "./utils-url.js";
 import type { EffectiveSettings } from "./wire/types.gen.js";
@@ -119,7 +120,7 @@ export function reformPayloadLinks(root: ParentNode): void {
   }
 }
 
-/** Re-form the document's guarded links whenever the switch changes; the first run
+/** Re-form the page's guarded links, parked surfaces included, whenever the switch changes; the first run
  *  changes nothing. */
 export function installLinkGuard(): () => void {
   let first = true;
@@ -129,6 +130,8 @@ export function installLinkGuard(): () => void {
       first = false;
       return;
     }
-    reformPayloadLinks(document);
+    for (const root of pageRoots()) {
+      reformPayloadLinks(root);
+    }
   });
 }

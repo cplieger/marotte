@@ -1306,7 +1306,7 @@
       </div>
 
       <!-- PR creation modal: two-stage form (edit → review + submit). -->
-      <dialog id="pr-create-dialog" class="pr-dialog" aria-label="Open a pull request">
+      <dialog id="pr-create-dialog" class="pr-dialog" data-parked aria-label="Open a pull request">
         <header class="pr-dialog-header">
           <h3 class="pr-dialog-title">New pull request</h3>
           <button type="button" class="icon-btn" data-pr-close aria-label="Close">
@@ -1346,7 +1346,7 @@
       </dialog>
 
       <!-- PR merge modal: the repository's own merge methods (merge-dialog.ts fills them) + confirm. -->
-      <dialog id="pr-merge-dialog" class="pr-dialog pr-merge-dialog" aria-label="Merge pull request">
+      <dialog id="pr-merge-dialog" class="pr-dialog pr-merge-dialog" data-parked aria-label="Merge pull request">
         <header class="pr-dialog-header">
           <h3 class="pr-dialog-title" id="pr-merge-title">Merge pull request</h3>
           <button type="button" class="icon-btn" data-pr-merge-close aria-label="Close">

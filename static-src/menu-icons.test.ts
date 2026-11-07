@@ -118,7 +118,7 @@ describe("hand-authored glyphs in static/index.html", () => {
     expect(inner(ICON_TOOL_TERMINAL), "the tool glyph stays bare").not.toContain("<rect");
   });
 
-  // `icon-crisp.ts` owns the pixel phase, so the artwork keeps its structural strokes in one phase class: multiples of 3.
+  // At 16px a 3-unit step is 2 CSS px, so strokes on multiples of 3 share one pixel phase.
   it("keeps the shell box's strokes on the 3-unit grid", () => {
     const rect = /<rect\b[^>]*>/.exec(glyphOf('id="shell-btn"'))?.[0] ?? "";
     const num = (attr: string): number =>

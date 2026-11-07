@@ -6,6 +6,7 @@
 //     `vk-dot-wave` leaves an opaque band on the disc, which `content: none` prevents.
 // The CSS half reads SOURCE: the test page loads no app stylesheet.
 
+import type * as Dom from "./dom.js";
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import cssContrastScript from "../scripts/css-contrast.py?raw";
 import chatSrc from "./chat.ts?raw";
@@ -323,9 +324,10 @@ vi.mock("./editor-openers.js", () => ({
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 
 /** The tab strip's real render target, so renderDOM runs for real. */
-vi.mock("./dom.js", () => {
+vi.mock("./dom.js", async (importOriginal) => {
   const cache = new Map<string, HTMLElement>();
   return {
+    ...(await importOriginal<typeof Dom>()),
     $: new Proxy(
       {},
       {
@@ -1268,6 +1270,27 @@ describe("the ring is painted at the size of the disc beside it", () => {
       dot?.getBoundingClientRect().width ?? 0,
       2,
     );
+  });
+
+  it("writes nothing to the row when the workflow mark is set to the state it shows", async () => {
+    const { setTabRunStatus } = await import("./tabs.js");
+    const id = await openSubject("chat", "c1");
+    await paint();
+    const tally = { total: 2, working: 1, waiting: 1, input: 0 };
+    setTabRunStatus(id, "waiting", tally);
+    const row = document.querySelector<HTMLElement>(`[data-tab-id="${id}"]`);
+    expect(row?.querySelector(".tab-run-dot")?.getAttribute("data-status")).toBe("waiting");
+    const mo = new MutationObserver(() => undefined);
+    mo.observe(row as HTMLElement, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      characterData: true,
+    });
+    setTabRunStatus(id, "waiting", { ...tally });
+    const records = mo.takeRecords();
+    mo.disconnect();
+    expect(records.map((r) => `${r.type} ${r.attributeName ?? ""}`)).toEqual([]);
   });
 
   it("paints a square where the dot paints a circle, resolved not transcribed", async () => {

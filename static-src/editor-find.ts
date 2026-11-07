@@ -6,7 +6,7 @@
 // lands); one that could not be read answers "File not read".
 
 import { el } from "@cplieger/ui";
-import { $ } from "./dom.js";
+import { $, maybeEl } from "./dom.js";
 import { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
 import { fileStates, getActiveFilePath } from "./editor-types.js";
 import type { FileState } from "./editor-types.js";
@@ -160,7 +160,7 @@ function surfaceEngine(): SurfaceEngine | null {
  *  cannot disagree with it. */
 function domRoot(): HTMLElement | null {
   for (const id of ["editor-diff-pane", "editor-markdown"]) {
-    const host = document.getElementById(id);
+    const host = maybeEl(id);
     if (host !== null && !host.classList.contains("hidden")) {
       return host;
     }

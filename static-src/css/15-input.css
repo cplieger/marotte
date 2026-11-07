@@ -1818,10 +1818,7 @@
 
   /* The TOKEN, not a literal: a hard `1rem` at (0,1,0) beats `.ic-ui`'s
      zero-specificity rule (03-base.css), so a retuned `--icon-ui` would leave Send behind.
-     Every face takes it — a per-path size cannot live on a control that swaps paths.
-     Do NOT express a per-face size as `transform: scale()`: `icon-crisp.ts` re-arms
-     its settle whenever an element's rect disagrees with its computed `inlineSize`,
-     so a static scale on an `.ic-*` glyph spins that loop for the element's life. */
+     Every face takes it — a per-path size cannot live on a control that swaps paths. */
   & svg {
     width: var(--icon-ui);
     height: var(--icon-ui);

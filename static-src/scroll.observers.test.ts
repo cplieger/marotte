@@ -1,4 +1,5 @@
 // The observers `init()` wires, and the module-scope boot.
+import type * as Dom from "./dom.js";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import type { MockInstance } from "vitest";
 import type * as ScrollModule from "./scroll.js";
@@ -10,7 +11,8 @@ let bootSeq = 0;
 // The module builds its singleton against $.messages / $.messagesWrap at import and reads
 // $.scrollBottom in init; ids are created on demand so a cleared body yields a fresh element set
 // for the next import.
-vi.mock("./dom.js", () => ({
+vi.mock("./dom.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Dom>()),
   $: new Proxy(
     {},
     {

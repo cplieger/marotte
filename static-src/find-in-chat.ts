@@ -7,7 +7,7 @@ import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { createPopup } from "@cplieger/ui/popup";
 import type { PopupController } from "@cplieger/ui/popup";
-import { $, byId } from "./dom.js";
+import { $, byId, maybeEl } from "./dom.js";
 import { jumpInFlight, jumpTo, onTranscriptMutate, shiftScroll } from "./scroll.js";
 import {
   CHAT_SEARCH_DEBOUNCE_MS,
@@ -270,7 +270,7 @@ function ensureBuilt(): void {
 
   // The popup owns dismissal, Escape, ARIA, single-open and the is-open/is-leaving animation pair.
   popup = createPopup(built.region, {
-    trigger: document.getElementById("find-btn"),
+    trigger: maybeEl("find-btn"),
     group: "app-search",
     isolateEscape: false,
     haspopup: "dialog",
@@ -284,13 +284,13 @@ function ensureBuilt(): void {
       }
       startObserving();
       // aria-pressed: find is a toggle, and `.active` means "this singleton tab is active" (tabs.ts).
-      document.getElementById("find-btn")?.setAttribute("aria-pressed", "true");
+      maybeEl("find-btn")?.setAttribute("aria-pressed", "true");
       built.focus();
       built.run();
     },
     onClose: () => {
       teardown();
-      document.getElementById("find-btn")?.setAttribute("aria-pressed", "false");
+      maybeEl("find-btn")?.setAttribute("aria-pressed", "false");
       const target = lastFocus;
       lastFocus = null;
       if (target?.isConnected === true) {
@@ -462,8 +462,7 @@ function nearestHitIndex(): number {
   if (localCount === 0) {
     return -1;
   }
-  const bottom =
-    document.getElementById("messages-wrap")?.getBoundingClientRect().bottom ?? window.innerHeight;
+  const bottom = maybeEl("messages-wrap")?.getBoundingClientRect().bottom ?? window.innerHeight;
   let nearest = 0;
   for (let i = 0; i < localCount; i++) {
     const hit = stepOrder[i];
@@ -536,7 +535,7 @@ let holdStop: (() => void) | null = null;
  */
 function holdWhereLanded(unit: HTMLElement, hit: Hit): void {
   holdStop?.();
-  const scroller = document.getElementById("messages-wrap");
+  const scroller = maybeEl("messages-wrap");
   if (scroller === null) {
     return;
   }
@@ -1099,7 +1098,7 @@ export function toggleChatFind(): void {
  *  visible and focus is not inside the shell terminal panel. When false, the
  *  browser's native find is left untouched. */
 function chatFindActiveContext(): boolean {
-  const chatView = document.getElementById("chat-view");
+  const chatView = maybeEl("chat-view");
   if (chatView === null || chatView.classList.contains("hidden")) {
     return false;
   }

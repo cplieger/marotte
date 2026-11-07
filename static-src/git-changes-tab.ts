@@ -60,6 +60,7 @@ import {
   isPullHeld,
   pullHeldWord,
 } from "./git-types.js";
+import { maybeEl, queryEl } from "./dom.js";
 
 interface StatusAllResponse {
   repos: RepoStatus[];
@@ -125,7 +126,7 @@ export const changesFind: SearchPopup = createSearchPopup<null>({
   kind: "filter",
   label: "Filter changes by path",
   placeholder: "Filter by path\u2026",
-  host: () => document.getElementById("git-view"),
+  host: () => maybeEl("git-view"),
   query: (q) => {
     filterText = q.toLowerCase();
     return null;
@@ -142,7 +143,7 @@ export function initChangesTab(): void {
   }
   inited = true;
   // Fires the deferred paint when the commit box loses focus; focusout bubbles to the mount.
-  const changesMount = document.getElementById("git-changes-mount");
+  const changesMount = maybeEl("git-changes-mount");
   changesMount?.addEventListener(
     "focusout",
     (e) => {
@@ -157,7 +158,7 @@ export function initChangesTab(): void {
     { passive: true },
   );
 
-  const refreshBtn = document.getElementById("git-refresh-all-btn") as HTMLButtonElement | null;
+  const refreshBtn = maybeEl<HTMLButtonElement>("git-refresh-all-btn");
   if (refreshBtn !== null) {
     refreshBtn.innerHTML = ICON_REFRESH;
     refreshBtn.addEventListener("click", () => {
@@ -170,7 +171,7 @@ export function initChangesTab(): void {
     });
   }
 
-  const pullAllBtn = document.getElementById("git-pull-all-btn") as HTMLButtonElement | null;
+  const pullAllBtn = maybeEl<HTMLButtonElement>("git-pull-all-btn");
   if (pullAllBtn !== null) {
     pullAllBtn.innerHTML = ICON_GIT_DOWN_ARROW;
     const status = el("span", { className: "page-toolbar-error", role: "status" });
@@ -254,7 +255,7 @@ export async function refreshChanges(
 
 function gitChangesSkeleton(): () => void {
   // No `label`: this tab issues one request.
-  return paintPlaceholder(document.getElementById("git-changes-mount"), () =>
+  return paintPlaceholder(maybeEl("git-changes-mount"), () =>
     gitRepoSkeleton({ widths: ["38%", "52%", "30%"] }),
   );
 }
@@ -285,9 +286,7 @@ function files(n: number): string {
 }
 
 function pressedSection(repo: string): HTMLElement | null {
-  return document.querySelector<HTMLElement>(
-    `#git-changes-mount section[data-repo="${CSS.escape(repo)}"]`,
-  );
+  return queryEl<HTMLElement>(`#git-changes-mount section[data-repo="${CSS.escape(repo)}"]`);
 }
 
 /** Disabled, and marked so the release gives it back. */
@@ -395,7 +394,7 @@ function paint(): void {
 }
 
 function paintInner(): void {
-  const root = document.getElementById("git-changes-mount");
+  const root = maybeEl("git-changes-mount");
   if (root === null) {
     return;
   }
@@ -509,7 +508,7 @@ function renderEmptyState(opts: { icon: string; title: string; hint: string }): 
 }
 
 function paintError(msg: string): void {
-  const root = document.getElementById("git-changes-mount");
+  const root = maybeEl("git-changes-mount");
   if (root === null) {
     return;
   }

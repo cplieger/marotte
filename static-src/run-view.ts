@@ -62,6 +62,7 @@ import { refreshRunDots, trackRun } from "./run-dots.js";
 import { buildPath } from "./route-path.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_EXTERNAL } from "./icons.js";
+import { maybeEl, queryEl } from "./dom.js";
 
 /** The run the one view effect paints, and the run the step reads and the decision dock address. */
 let shownRun = "";
@@ -98,7 +99,7 @@ export function showRun(workflowID: string): void {
   // describe THIS tab and so cannot mislead about another one. Reset per show, or the previous
   // run's verdict would answer for this one.
   shownRunChatParented = false;
-  const dock = document.getElementById("run-dock");
+  const dock = maybeEl("run-dock");
   if (dock !== null) {
     mountRunDecisionDock(dock, () => shownRun);
   }
@@ -207,7 +208,7 @@ function parkPage(): void {
 }
 
 function attachFollower(workflowID: string): void {
-  const body = document.getElementById("run-body");
+  const body = maybeEl("run-body");
   if (follower === undefined || body === null) {
     return;
   }
@@ -232,10 +233,10 @@ function mountBottomBar(): void {
   if (barMounted) {
     return;
   }
-  const form = document.getElementById("run-composer");
-  const input = document.getElementById("run-composer-input");
-  const send = document.getElementById("run-send-btn");
-  const stack = document.getElementById("run-steer-stack");
+  const form = maybeEl("run-composer");
+  const input = maybeEl("run-composer-input");
+  const send = maybeEl("run-send-btn");
+  const stack = maybeEl("run-steer-stack");
   if (
     !(form instanceof HTMLFormElement) ||
     !(input instanceof HTMLTextAreaElement) ||
@@ -253,9 +254,9 @@ function mountFollower(): void {
   if (follower !== undefined) {
     return;
   }
-  const scroller = document.querySelector<HTMLElement>("[id='run-view'] > .page-content");
-  const body = document.getElementById("run-body");
-  const resume = document.getElementById("run-scroll-bottom");
+  const scroller = queryEl<HTMLElement>("[id='run-view'] > .page-content");
+  const body = maybeEl("run-body");
+  const resume = maybeEl("run-scroll-bottom");
   if (scroller === null || body === null || resume === null) {
     return;
   }
@@ -858,8 +859,8 @@ function paint(
   state: RunState | undefined,
   turns: readonly [string, TurnState][],
 ): void {
-  const container = document.getElementById("run-body");
-  const dockHost = document.getElementById("run-exec-dock");
+  const container = maybeEl("run-body");
+  const dockHost = maybeEl("run-exec-dock");
   if (container === null || dockHost === null) {
     return;
   }

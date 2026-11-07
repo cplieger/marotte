@@ -1,19 +1,152 @@
 // DOM element registry, queried lazily and failing fast on a missing id. Modal-local ids stay in their own modules.
 
+// A hidden surface (a background tab's view, a closed modal) is PARKED in a windowless document: off the page, so a
+// page-wide walk does not pay for it (a password manager's form scan reads every field's `labels`, and Gecko
+// populates each by walking the whole document), yet still connected, so a binding that ends when its element
+// leaves the document keeps running. Every lookup below searches the parked surfaces too.
+let hold: Document | null = null;
+const places = new WeakMap<Element, Comment>();
+/** Elements that scrolled since their surface last parked; their offsets are read only when it parks. */
+const scrolled = new Set<Element>();
+const parkedScroll = new WeakMap<Element, readonly (readonly [Element, number, number])[]>();
+let watchingScroll = false;
+
+/** The parked surfaces still owed a place on the page; one whose placeholder left with its container is dropped. */
+function parked(): Document | null {
+  if (hold !== null) {
+    for (const surface of [...hold.body.children]) {
+      if (places.get(surface)?.isConnected !== true) {
+        surface.remove();
+      }
+    }
+  }
+  return hold;
+}
+
+function noteScroll(e: Event): void {
+  if (e.target instanceof Element) {
+    scrolled.add(e.target);
+  }
+}
+
 /** Look up an element by id; throws if missing. */
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- caller uses T for inference: el<HTMLInputElement>("id")
 export function byId<T extends HTMLElement>(id: string): T {
-  const e = document.getElementById(id);
+  const e = maybeEl<T>(id);
   if (e === null) {
     throw new Error(`Missing element: #${id}`);
   }
-  return e as T;
+  return e;
 }
 
 /** Like byId, but null when absent. T is the call-site contract for the element subclass. */
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- T is the call-site contract for the returned element subclass
 export function maybeEl<T extends HTMLElement>(id: string): T | null {
-  return document.getElementById(id) as T | null;
+  return (document.getElementById(id) ?? parked()?.getElementById(id) ?? null) as T | null;
+}
+
+/** The page's first element matching `selector`, or null. T is the call-site contract for the subclass. */
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- T is the call-site contract for the returned element subclass
+export function queryEl<T extends Element = Element>(selector: string): T | null {
+  return document.querySelector<T>(selector) ?? parked()?.querySelector<T>(selector) ?? null;
+}
+
+/** Every element of the page matching `selector`: the shown page in document order, then the parked surfaces. */
+export function queryAll<T extends Element = Element>(selector: string): T[] {
+  const found = [...document.querySelectorAll<T>(selector)];
+  const off = parked();
+  if (off !== null) {
+    found.push(...off.querySelectorAll<T>(selector));
+  }
+  return found;
+}
+
+/** The roots a page-wide walk covers: the document, then the parked surfaces. */
+export function pageRoots(): ParentNode[] {
+  const off = parked();
+  return off === null ? [document] : [document, off];
+}
+
+/** Park a hidden surface, keeping its place for `unpark`. A no-op for one already parked or off the page, and for
+ *  one holding playing media, which leaving the document would pause (HTML "media element removed"). Reads the
+ *  offsets of what scrolled inside it, so call it before the writes that hide it. */
+export function park(surface: HTMLElement): void {
+  if (surface.ownerDocument !== document || !surface.isConnected || playsMedia(surface)) {
+    return;
+  }
+  if (!watchingScroll) {
+    watchingScroll = true;
+    document.addEventListener("scroll", noteScroll, { capture: true, passive: true });
+  }
+  const offsets: (readonly [Element, number, number])[] = [];
+  for (const t of scrolled) {
+    if (!t.isConnected || t.ownerDocument !== document) {
+      scrolled.delete(t);
+    } else if (surface.contains(t)) {
+      scrolled.delete(t);
+      if (t.scrollTop !== 0 || t.scrollLeft !== 0) {
+        offsets.push([t, t.scrollTop, t.scrollLeft]);
+      }
+    }
+  }
+  parkedScroll.set(surface, offsets);
+  const place = document.createComment(surface.id);
+  places.get(surface)?.remove();
+  places.set(surface, place);
+  surface.replaceWith(place);
+  hold ??= document.implementation.createHTMLDocument("");
+  hold.body.append(surface);
+}
+
+/** Put a parked surface back in its place, run `show`, then restore its scroll offsets, which a hidden box cannot
+ *  take. Runs `show` alone for a surface that is not parked. */
+export function unpark(surface: HTMLElement, show: () => void): void {
+  const place = places.get(surface);
+  if (place !== undefined) {
+    places.delete(surface);
+    if (surface.ownerDocument === document) {
+      place.remove();
+    } else {
+      place.replaceWith(surface);
+    }
+  }
+  show();
+  for (const [t, top, left] of parkedScroll.get(surface) ?? []) {
+    t.scrollTop = top;
+    t.scrollLeft = left;
+  }
+  parkedScroll.delete(surface);
+}
+
+function playsMedia(surface: HTMLElement): boolean {
+  return [...surface.querySelectorAll<HTMLMediaElement>("audio, video")].some((m) => !m.paused);
+}
+
+/** Set `name` to `value`, or remove it for null, writing nothing when it already holds that: a same-value write still
+ *  queues mutation records and, for a selector-read attribute, a restyle. */
+export function setAttr(node: Element, name: string, value: string | null): void {
+  if (value === null) {
+    if (node.hasAttribute(name)) {
+      node.removeAttribute(name);
+    }
+  } else if (node.getAttribute(name) !== value) {
+    node.setAttribute(name, value);
+  }
+}
+
+/** Set the custom property `name` on `node`'s inline style, writing nothing when it already holds `value`. */
+export function setStyleVar(node: HTMLElement, name: string, value: string): void {
+  if (node.style.getPropertyValue(name) !== value) {
+    node.style.setProperty(name, value);
+  }
+}
+
+/** Set `node`'s text, writing nothing when it already reads that: assigning `textContent` replaces the text node. A null
+ *  node writes nothing. */
+export function setText(node: Node | null, text: string): void {
+  if (node !== null && node.textContent !== text) {
+    node.textContent = text;
+  }
 }
 
 /**

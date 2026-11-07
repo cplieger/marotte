@@ -2,6 +2,8 @@
 // Transitions Level 1 §4.2 makes captured content non-hittable while one runs, blocking clicks.
 // The swap is a plain DOM update; the fade is WAAPI opacity on the incoming view.
 
+import { park, queryAll, unpark } from "./dom.js";
+
 /** Entry-fade duration. Mirrors --dur-enter (css/01-tokens.css: 0.25s). */
 export const DUR_ENTER_MS = 250;
 
@@ -60,4 +62,39 @@ export function _resetForTest(): void {
   entry?.cancel();
   entry = null;
   bootDone = false;
+}
+
+const VIEWS_SELECTOR = "[data-tab-view]";
+
+/** Views that stay in the page while hidden: the chat view, whose transcript the residency window bounds, and the
+ *  web view, whose iframes would lose their page on leaving the document (HTML: removing an iframe destroys its
+ *  navigable). */
+const KEPT_IN_PAGE: ReadonlySet<string> = new Set(["chat-view", "web-view"]);
+
+/** Show `target` alone among the `[data-tab-view]` views, parking the hidden ones (dom.ts `park`). Swaps, with the
+ *  entry fade, only when `target` is not already the one shown: callers re-run this on every projection change. */
+export function showOnlyView(target: HTMLElement | null): void {
+  const views = queryAll<HTMLElement>(VIEWS_SELECTOR);
+  const shown = views.filter((v) => !v.classList.contains("hidden"));
+  const swap = shown.length !== 1 || shown[0] !== target || !document.contains(target);
+  // Before the swap's writes: park reads the outgoing view's scroll offsets.
+  for (const v of views) {
+    if (v !== target && !KEPT_IN_PAGE.has(v.id)) {
+      park(v);
+    }
+  }
+  if (!swap) {
+    return;
+  }
+  swapViews(() => {
+    for (const v of views) {
+      v.classList.add("hidden");
+    }
+    if (target !== null) {
+      unpark(target, () => {
+        target.classList.remove("hidden");
+      });
+    }
+    return target;
+  });
 }

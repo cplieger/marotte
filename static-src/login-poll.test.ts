@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { http, HttpResponse } from "msw";
 import { setupWorker } from "msw/browser";
 
+import { maybeEl, queryAll } from "./dom.js";
 import { closeModal, initLoginModal, loginPollVerdict, openModal } from "./modals.js";
 import type { WhoamiResponse } from "./wire/types.gen.js";
 
@@ -67,16 +68,16 @@ afterEach(() => {
 });
 
 function status(): HTMLDivElement {
-  return document.getElementById("modal-status") as HTMLDivElement;
+  return maybeEl("modal-status") as HTMLDivElement;
 }
 
 function doors(): HTMLButtonElement[] {
-  return [...document.querySelectorAll<HTMLButtonElement>("#login-modal .modal-btn")];
+  return [...queryAll<HTMLButtonElement>("#login-modal .modal-btn")];
 }
 
 /** Starts a Builder ID sign-in and waits until the device code is on screen. */
 async function startSignIn(): Promise<void> {
-  (document.getElementById("modal-login-free") as HTMLButtonElement).click();
+  (maybeEl("modal-login-free") as HTMLButtonElement).click();
   await vi.waitFor(() => {
     expect(status().textContent).toContain("Code: ABCD-EFGH");
   });
@@ -169,7 +170,7 @@ describe("the login poll", () => {
         HttpResponse.json({ error: "login in progress" }, { status: 409 }),
       ),
     );
-    (document.getElementById("modal-login-free") as HTMLButtonElement).click();
+    (maybeEl("modal-login-free") as HTMLButtonElement).click();
     await vi.waitFor(() => {
       expect(status().textContent).toBe("login in progress");
     });
@@ -201,7 +202,7 @@ describe("the start URL", () => {
 
 describe("the sign-in start", () => {
   function modal(): HTMLDivElement {
-    return document.getElementById("login-modal") as HTMLDivElement;
+    return maybeEl("login-modal") as HTMLDivElement;
   }
 
   /** POST /api/login's first answer waits for `release`; later ones answer at once with this test's attempt 2. */
@@ -238,7 +239,7 @@ describe("the sign-in start", () => {
     whoami = [{ state: "signed_in", loginAttempt: 1, loginState: "signed_in" }];
     const start = holdFirstStart();
     openModal(modal());
-    (document.getElementById("modal-login-free") as HTMLButtonElement).click();
+    (maybeEl("modal-login-free") as HTMLButtonElement).click();
     await vi.waitFor(() => {
       expect(start.posted()).toBe(1);
     });
@@ -257,7 +258,7 @@ describe("the sign-in start", () => {
     whoami = [{ state: "signed_in", loginAttempt: 2, loginState: "signed_in" }];
     const start = holdFirstStart();
     openModal(modal());
-    (document.getElementById("modal-login-free") as HTMLButtonElement).click();
+    (maybeEl("modal-login-free") as HTMLButtonElement).click();
     await vi.waitFor(() => {
       expect(start.posted()).toBe(1);
     });

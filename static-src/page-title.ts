@@ -2,7 +2,7 @@
 // REMEMBERED per view kind here rather than passed, because a view switch and a sub-tab switch are
 // separate events with no fixed order.
 
-import { byId } from "./dom.js";
+import { byId, maybeEl } from "./dom.js";
 
 /** Keyed by `TabKind` as a plain string so this module stays a leaf; every caller already holds one. */
 const subtitles = new Map<string, string>();
@@ -41,8 +41,8 @@ function actionsWrapped(heading: HTMLElement): boolean {
 function fitHeading(): void {
   // Null-tolerant, unlike the WRITE below: a title with no element to land in is a bug and `byId`
   // should say so, while a fit over a bar that is not there is not an error.
-  const heading = document.getElementById("titlebar-heading");
-  const title = document.getElementById("titlebar-title");
+  const heading = maybeEl("titlebar-heading");
+  const title = maybeEl("titlebar-title");
   if (heading === null || title === null) {
     return;
   }

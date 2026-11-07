@@ -3,7 +3,7 @@
 
 import { el, bindList, effect, signal } from "@cplieger/ui";
 
-import { $, setControlBusy } from "./dom.js";
+import { $, maybeEl, setControlBusy } from "./dom.js";
 import { reconcile } from "./reconcile.js";
 import { sigChanged, wireSignature } from "./paint-sig.js";
 import { isHttpURL } from "./url-safety.js";
@@ -68,7 +68,7 @@ registerCleanup(() => {
 });
 
 function buildSectionScaffold(): void {
-  const section = document.getElementById("mcp-section");
+  const section = maybeEl("mcp-section");
   if (section === null) {
     return;
   }

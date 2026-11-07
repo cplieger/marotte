@@ -463,7 +463,7 @@ describe("only the entry that started a run hosts its card", () => {
     ].map((e) => ({ ...e, turn: secondID }));
     const second = turnOf(secondID, body);
     // The owner names an entry of a turn this body does not hold.
-    setRunCardOwners(new Map([["wf-1", `${first.id}-c1`]]));
+    setRunCardOwners(new Map([["wf-1", { turn: first.id, entry: `${first.id}-c1` }]]));
     const host = bodyHost();
     buildAssistantBody(host, second, CHAT_ID, false);
     expect(shape(host)).toEqual(["group(1)"]);
@@ -483,7 +483,7 @@ describe("only the entry that started a run hosts its card", () => {
     body[1] = { ...body[1]!, lane: "sub-A" };
     body[2] = { ...body[2]!, lane: "sub-A" };
     const turn = turnOf(turnID, body);
-    setRunCardOwners(new Map([["wf-1", "some-other-entry"]]));
+    setRunCardOwners(new Map([["wf-1", { turn: "some-other-turn", entry: "some-other-entry" }]]));
     const host = bodyHost();
     buildDetachedBody(host, turn, CHAT_ID, "sub-A", false);
     expect(shape(host)).toEqual(["run(wf-1)"]);

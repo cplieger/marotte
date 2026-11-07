@@ -4,6 +4,7 @@
 import { el } from "@cplieger/ui";
 import { ICON_SAVE_OK, ICON_SAVE_FAIL } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { queryAll } from "./dom.js";
 
 /** The slot token for the global-instructions textarea. Not an AppSettings key — that content is
  *  its own PUT /api/steering — so it is named here. */
@@ -57,7 +58,7 @@ function slotsFor(keys: SaveKeys): HTMLElement[] {
     return [];
   }
   const out: HTMLElement[] = [];
-  for (const target of document.querySelectorAll<HTMLElement>("[data-save-status]")) {
+  for (const target of queryAll<HTMLElement>("[data-save-status]")) {
     const tokens = (target.dataset["saveStatus"] ?? "").split(/\s+/);
     if (tokens.some((t) => want.has(t))) {
       out.push(target);

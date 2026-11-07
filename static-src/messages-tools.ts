@@ -41,8 +41,24 @@ interface ToolSlot {
   chatID: string;
   toolID: string;
   card: HTMLDivElement;
+  /** The snapshot the card shows, kept across a suspend so a resume writes only what changed meanwhile. */
+  applied: ToolCall;
   /** The live effect's disposer, or null while suspended (view parked). */
   cleanup: (() => void) | null;
+}
+
+/** Subscribe `slot`'s card to its call's signal, writing a snapshot only when it is not the one the card shows. */
+function armSlot(slot: ToolSlot, sig: ReturnType<typeof ensureToolCallSig>): void {
+  slot.cleanup = effect(() => {
+    const next = sig.value;
+    // Before the early return: the effect must subscribe to the silence ticker, since a quiet call sends no frame.
+    syncSilenceMarker(slot.card, slot.chatID, slot.toolID);
+    if (next === slot.applied) {
+      return;
+    }
+    applyToolCallUpdate(slot.card, next, slot.chatID);
+    slot.applied = next;
+  });
 }
 const toolSlots = new Map<string, ToolSlot[]>();
 
@@ -53,13 +69,14 @@ function slotsOf(chatID: string, toolID: string): ToolSlot[] {
 
 /**
  * Remove one slot, running its effect; the last slot for a key takes the signal, terminal links and parked buffer
- * with it. Idempotent by card identity, since a render's disposer and the view sweep can both reach it.
+ * with it unless `forRebuild`, whose caller releases what the remount did not claim. Idempotent by card identity,
+ * since a render's disposer and the view sweep can both reach it.
  */
 function removeSlot(
   chatID: string,
   toolID: string,
   card: HTMLDivElement,
-  keepTerminals = false,
+  forRebuild = false,
 ): void {
   const key = toolCallSigKey(chatID, toolID);
   const slots = toolSlots.get(key);
@@ -76,10 +93,10 @@ function removeSlot(
     return;
   }
   toolSlots.delete(key);
-  toolCallSigs.clear(toolCallSigKey(chatID, toolID));
-  if (keepTerminals) {
+  if (forRebuild) {
     return;
   }
+  toolCallSigs.clear(key);
   for (const [termID, link] of [...termToTool]) {
     if (link.chatID === chatID && link.toolID === toolID) {
       termToTool.delete(termID);
@@ -251,8 +268,9 @@ export function disposeToolEffectsForChat(chatID: string, withinEl?: HTMLElement
 }
 
 /**
- * The rebuild's sweep: cards go, but terminal owners, parked tails and live text survive for the remount. Call the
- * returned function after the remount to move the text and release unclaimed terminals.
+ * The rebuild's sweep: cards go, but call signals, terminal owners, parked tails and live text survive for the
+ * remount, which builds from the entry and so needs the signal for progress the entry lacks. Call the returned
+ * function after the remount to move the text and release what no remounted card claimed.
  */
 export function detachToolEffectsForRebuild(chatID: string, withinEl: HTMLElement): () => void {
   const linked = new Set<string>();
@@ -262,11 +280,13 @@ export function detachToolEffectsForRebuild(chatID: string, withinEl: HTMLElemen
     }
   }
   const kept = new Map<string, HTMLPreElement>();
+  const swept = new Set<string>();
   for (const slots of [...toolSlots.values()]) {
     for (const slot of [...slots]) {
       if (slot.chatID !== chatID || !withinEl.contains(slot.card)) {
         continue;
       }
+      swept.add(slot.toolID);
       const pre = slot.card.querySelector<HTMLPreElement>(".tool-output pre");
       if (linked.has(slot.toolID) && pre !== null && !kept.has(slot.toolID)) {
         kept.set(slot.toolID, pre);
@@ -275,6 +295,11 @@ export function detachToolEffectsForRebuild(chatID: string, withinEl: HTMLElemen
     }
   }
   return () => {
+    for (const toolID of swept) {
+      if (slotsOf(chatID, toolID).length === 0) {
+        toolCallSigs.clear(toolCallSigKey(chatID, toolID));
+      }
+    }
     for (const [toolID, pre] of kept) {
       const slot = slotsOf(chatID, toolID).find((s) => withinEl.contains(s.card));
       const out = slot?.card.querySelector(".tool-output") ?? null;
@@ -318,10 +343,8 @@ export function suspendToolEffectsFor(
   }
 }
 
-/**
- * Re-arm suspended effects: apply the current snapshot in one write, then subscribe. Already-live slots are left
- * alone, so a resume is idempotent.
- */
+/** Re-arm suspended effects, which write only what changed while parked. Already-live slots are left alone, so a
+ *  resume is idempotent. */
 export function resumeToolEffectsFor(
   chatID: string,
   toolCalls: readonly ToolCall[],
@@ -332,18 +355,7 @@ export function resumeToolEffectsFor(
       if (slot.cleanup !== null || !withinEl.contains(slot.card)) {
         continue; // already live, or another surface's slot
       }
-      const card = slot.card;
-      const sig = ensureToolCallSig(chatID, tc.id, tc);
-      let lastApplied = sig.peek();
-      applyToolCallUpdate(card, lastApplied, chatID);
-      slot.cleanup = effect(() => {
-        const next = sig.value;
-        if (next === lastApplied) {
-          return;
-        }
-        applyToolCallUpdate(card, next, chatID);
-        lastApplied = next;
-      });
+      armSlot(slot, ensureToolCallSig(chatID, tc.id, tc));
     }
   }
 }
@@ -559,24 +571,13 @@ export function mountToolCallCard(
   const key = toolCallSigKey(chatID, tc.id);
   const slots = toolSlots.get(key) ?? [];
   toolSlots.set(key, slots);
-  const slot: ToolSlot = { chatID, toolID: tc.id, card, cleanup: null };
+  const slot: ToolSlot = { chatID, toolID: tc.id, card, applied: tc, cleanup: null };
   slots.push(slot);
   // After the build and the slot registration: a held chunk is appended to the slots' cards, and whether it
   // flushes depends on the output this build rendered.
   linkTerminal(chatID, tc);
 
-  const sig = ensureToolCallSig(chatID, tc.id, tc);
-  let lastApplied = tc;
-  slot.cleanup = effect(() => {
-    const next = sig.value;
-    // Before the early return: the effect must subscribe to the silence ticker, since a quiet call sends no frame.
-    syncSilenceMarker(card, chatID, tc.id);
-    if (next === lastApplied) {
-      return;
-    }
-    applyToolCallUpdate(card, next, chatID);
-    lastApplied = next;
-  });
+  armSlot(slot, ensureToolCallSig(chatID, tc.id, tc));
   return card;
 }
 

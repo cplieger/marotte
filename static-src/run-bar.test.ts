@@ -808,6 +808,40 @@ describe("a render patches its rows rather than rebuilding them", () => {
   // A patch is not licence to go stale: the mark is written from the run's state on every pass, on
   // the SAME element, so the row that keeps its glyph still tells the truth about what the run is
   // doing.
+  it("writes nothing to the bar when the shared clock repaints an unchanged run", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const c = chatID();
+    chats.push(c);
+    const id = runID("still");
+    inspect.set(id, state());
+    live(id, c);
+    await activate(c);
+    expect(bar.querySelector(".run-bar-glyph")?.getAttribute("data-status")).toBe("working");
+
+    const writes: string[] = [];
+    const mo = new MutationObserver((records) => {
+      for (const r of records) {
+        const at = r.target instanceof Element ? r.target : r.target.parentElement;
+        // The elapsed clock moves with time, not with the run.
+        if (at?.closest(".ev-sum-clock") === null) {
+          writes.push(`${r.type} ${at.className} ${r.attributeName ?? ""}`);
+        }
+      }
+    });
+    mo.observe(bar, { subtree: true, childList: true, attributes: true, characterData: true });
+    vi.advanceTimersByTime(1000);
+    for (const r of mo.takeRecords()) {
+      const at = r.target instanceof Element ? r.target : r.target.parentElement;
+      if (at?.closest(".ev-sum-clock") === null) {
+        writes.push(`${r.type} ${at.className} ${r.attributeName ?? ""}`);
+      }
+    }
+    mo.disconnect();
+    vi.useRealTimers();
+
+    expect(writes).toEqual([]);
+  });
+
   it("rewrites the mark on the element it kept", async () => {
     const c = chatID();
     chats.push(c);

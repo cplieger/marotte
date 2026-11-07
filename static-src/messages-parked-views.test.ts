@@ -473,6 +473,149 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
     expect(scroll.readingState()).toBe("following");
   });
 
+  it("moves no card when the reader switches back to a parked chat", async () => {
+    const a = freshID("c-move");
+    const b = freshID("c-move");
+    seed(longChat(a), oneTurn(b, "x"));
+    await flushed();
+    await settledFrames();
+    const cards = [...viewOf(a).querySelectorAll(".turn")];
+    expect(cards.length).toBe(10);
+    switchTo(b);
+    await flushed();
+
+    // A moved node is a removal plus an insertion, so a card's record names it among the removed nodes.
+    const moved = new Set<Node>();
+    const mo = new MutationObserver((records) => {
+      for (const r of records) {
+        for (const n of r.removedNodes) {
+          moved.add(n);
+        }
+      }
+    });
+    mo.observe(viewOf(a), { childList: true });
+    switchTo(a);
+    await flushed();
+    await settledFrames();
+    for (const r of mo.takeRecords()) {
+      for (const n of r.removedNodes) {
+        moved.add(n);
+      }
+    }
+    mo.disconnect();
+
+    expect(cards.filter((c) => moved.has(c))).toEqual([]);
+    expect([...viewOf(a).querySelectorAll(".turn")]).toEqual(cards);
+  });
+
+  it("rewrites no settled tool card when the reader switches back", async () => {
+    const a = freshID("c-tools");
+    const b = freshID("c-tools");
+    const t = `${a}-t1`;
+    const calls: Entry[] = [];
+    for (let i = 0; i < 4; i++) {
+      const id = `${t}-call${String(i)}`;
+      calls.push(toolCall(t, 1 + 2 * i, id, { status: "completed" }), toolResult(t, 2 + 2 * i, id));
+    }
+    seed(settled(a, [[turnOpen(t, 1), ...calls, turnClose(t, 9)]]), oneTurn(b, "x"));
+    await flushed();
+    await settledFrames();
+    const cards = [...viewOf(a).querySelectorAll(".tool-call")];
+    expect(cards.length).toBe(4);
+    switchTo(b);
+    await flushed();
+
+    // `data-near` is the scroll controller's lay-out-ahead mark, which an attach re-derives from layout.
+    const writes: string[] = [];
+    const mo = new MutationObserver((records) => {
+      for (const r of records) {
+        const owner = (r.target instanceof Element ? r.target : r.target.parentElement)?.closest(
+          ".tool-call",
+        );
+        if (owner !== null && owner !== undefined && r.attributeName !== "data-near") {
+          writes.push(`${r.type} ${r.attributeName ?? ""}`);
+        }
+      }
+    });
+    mo.observe(viewOf(a), {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      characterData: true,
+    });
+    switchTo(a);
+    await flushed();
+    await settledFrames();
+    for (const r of mo.takeRecords()) {
+      const owner = (r.target instanceof Element ? r.target : r.target.parentElement)?.closest(
+        ".tool-call",
+      );
+      if (owner !== null && owner !== undefined && r.attributeName !== "data-near") {
+        writes.push(`${r.type} ${r.attributeName ?? ""}`);
+      }
+    }
+    mo.disconnect();
+
+    expect(writes).toEqual([]);
+  });
+
+  it("shows a running tool card's progress that arrived while the chat was parked", async () => {
+    const a = freshID("c-prog");
+    const b = freshID("c-prog");
+    const t = `${a}-t1`;
+    const s = session(a, { thinking: true });
+    s.turns.set(t, {
+      entries: [turnOpen(t, 1), toolCall(t, 1, "t-prog", { title: "before park" })],
+      openEntries: new Map(),
+    });
+    s.turn_order.push(t);
+    s.turn_count = 1;
+    seed(s, oneTurn(b, "x"));
+    const card = (): HTMLElement | null =>
+      viewOf(a).querySelector<HTMLElement>('[data-tool-id="t-prog"]');
+    await vi.waitFor(() => {
+      expect(card()?.textContent ?? "").toContain("before park");
+    });
+    switchTo(b);
+    await flushed();
+
+    // One frame for a call that then goes quiet, so no later frame repaints the card.
+    store.applyToolProgress(a, t, { turn: t, tool_call_id: "t-prog", title: "while parked" });
+    await flushed();
+
+    switchTo(a);
+    await flushed();
+    await settledFrames();
+    expect(card()?.textContent ?? "").toContain("while parked");
+  });
+
+  it("shows progress that arrived while parked on a call in a closed turn", async () => {
+    const a = freshID("c-prog");
+    const b = freshID("c-prog");
+    const t = `${a}-t1`;
+    seed(
+      settled(a, [
+        [turnOpen(t, 1), toolCall(t, 1, "t-late", { title: "before park" }), turnClose(t, 2)],
+      ]),
+      oneTurn(b, "x"),
+    );
+    const card = (): HTMLElement | null =>
+      viewOf(a).querySelector<HTMLElement>('[data-tool-id="t-late"]');
+    await vi.waitFor(() => {
+      expect(card()?.textContent ?? "").toContain("before park");
+    });
+    switchTo(b);
+    await flushed();
+
+    store.applyToolProgress(a, t, { turn: t, tool_call_id: "t-late", title: "while parked" });
+    await flushed();
+
+    switchTo(a);
+    await flushed();
+    await settledFrames();
+    expect(card()?.textContent ?? "").toContain("while parked");
+  });
+
   it("holds the reading position through a park/unpark over a turn that GREW", async () => {
     // The reader is Reading, so `deferWhileReading` holds the unpark paint; this reads the window the park left over a
     // grown turn.

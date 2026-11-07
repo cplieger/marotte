@@ -4,6 +4,7 @@
 // ORIGINAL href; the visible-rows rule is geometric (scrolled list, translated drawer);
 // and the recompute funnel covers both the tab SET and every dot write, via the real store.
 
+import type * as Dom from "./dom.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
@@ -137,7 +138,8 @@ vi.mock("./tabs-drag.js", async (importOriginal) => ({
 }));
 // The sidebar and tab list are the SAME document-attached elements production looks up,
 // because the rule under test is geometric.
-vi.mock("./dom.js", () => ({
+vi.mock("./dom.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Dom>()),
   $: new Proxy(
     {},
     {

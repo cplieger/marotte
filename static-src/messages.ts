@@ -3,6 +3,7 @@
 
 import type { EntryPrompt, Session } from "./types.js";
 import { stampFindUnit } from "./find-unit.js";
+import { turnRevision } from "./turn-revision.js";
 import {
   get,
   getActive,
@@ -18,14 +19,16 @@ import {
 } from "./store.js";
 import { clearTurnSigs } from "./store-signals.js";
 import { BUS_FOLDS_CHANGED, onBus } from "./bus.js";
-import { onHookVisibility } from "./hook-fold.js";
+import { hookStatusShown, onHookVisibility } from "./hook-fold.js";
+import { bodyMemo } from "./body-memo.js";
+import { workspaceRoot } from "./workspace.js";
 import { buildEvent } from "./messages-events.js";
 import { releaseClampsIn } from "./clamp-text.js";
 import { releaseScrollableTablesIn } from "./table-scroll.js";
 import { effect, el, touch } from "@cplieger/ui";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { CHAT_SKELETON_ID } from "./skeleton.js";
-import { $ } from "./dom.js";
+import { $, maybeEl } from "./dom.js";
 import {
   followTargetChanged,
   getScrollEl,
@@ -93,7 +96,7 @@ import {
   type EntryRange,
   type ResidencyAnchor,
 } from "./block-window.js";
-import { forgetHeights, spacerHeight, spacerOrdinalAt } from "./block-heights.js";
+import { forgetHeights, heightsRevision, spacerHeight, spacerOrdinalAt } from "./block-heights.js";
 import { slideTurnFolds, wireRowToggle, type TurnFold } from "./disclosure-row.js";
 import { initSearchRevealBuilder, searchHitCount } from "./chat-search.js";
 import {
@@ -612,15 +615,16 @@ export function mountChatView(): void {
 function entryCount(turns: readonly Turn[]): number {
   let n = 0;
   for (const t of turns) {
-    const folds = turnFolds(t, "");
-    for (const e of t.body) {
-      if (entryRenders(e, "", folds)) {
-        n++;
-      }
-    }
+    // `entryRenders` reads `hookStatusShown`.
+    n += reachable(t.body, String(hookStatusShown()), () => {
+      const folds = turnFolds(t, "");
+      return t.body.filter((e) => entryRenders(e, "", folds)).length;
+    });
   }
   return n;
 }
+
+const reachable = bodyMemo<number>();
 
 /** Reachable entries present when the reader last entered Reading. */
 let followBaseline = 0;
@@ -848,7 +852,12 @@ function computeFoldPlan(
   turnByID.clear();
   wantedWindow.clear();
   // The dispatcher's one turn-scope input: a render holds one turn and cannot see its neighbours' runs.
-  setRunCardOwners(runCardOwners(turns));
+  const owners = runCardOwners(turns);
+  setRunCardOwners(owners);
+  ownedRuns.clear();
+  for (const [run, owner] of owners) {
+    ownedRuns.set(owner.turn, `${ownedRuns.get(owner.turn) ?? ""}${run}=${owner.entry};`);
+  }
   // The transcript's root lane; `planResidency` takes no default.
   const window = planResidency(openable, anchor, "");
   const band = anchor === undefined ? undefined : readerBand();
@@ -1163,11 +1172,12 @@ function paint(): void {
   // The placeholder never coexists with content, so it is dropped where content lands, scoped to this view. An empty
   // turn list is a chat still loading; the load-more furniture mounts beside real turns.
   if (turns.length > 0) {
-    const skel = document.getElementById(CHAT_SKELETON_ID);
+    const skel = maybeEl(CHAT_SKELETON_ID);
     if (skel !== null && root.contains(skel)) {
       skel.remove();
     }
   }
+  beginCardPass(session);
   heldMutation(() => {
     reconcile(root, turns, turnSpec);
     // One walk builds the card list the rail and the fold pass share.
@@ -1460,6 +1470,81 @@ export function teardownAll(): void {
 // Two keyed levels: turns by id, then each card's `.turn-body` over its entries. Safe because reconcile considers
 // only keyed children, so a card's header and footer are invisible to the inner pass.
 
+/** What the current full pass reads for every card alike; `beginCardPass` sets it before the reconcile. */
+let passSession: Session | undefined;
+let passBusy = false;
+let passKey = "";
+
+function beginCardPass(session: Session): void {
+  passSession = session;
+  // Once per pass: `sessionBusy` walks every held turn.
+  passBusy = sessionBusy(session);
+  const tier = document.documentElement.getAttribute("data-pointer") ?? "";
+  // The footer's counts and the face read `hookStatusShown`; the footer's file links read the root.
+  passKey = `${session.id}|${String(passBusy)}|${newestTurnID(session) ?? ""}|${tier}|${String(hookStatusShown())}|${workspaceRoot()}`;
+}
+
+/** turn id → the runs whose card that turn hosts, as `run=entry;` pairs; `computeFoldPlan` rebuilds it. */
+const ownedRuns = new Map<string, string>();
+
+/** The names `namedWake` filled in: the rest of the wake is its held entry, which the turn's stamp covers. */
+function wakeNames(w: Turn["wake"]): string {
+  if (w === undefined) {
+    return "";
+  }
+  let out = w.run_name ?? "";
+  for (const s of w.steers ?? []) {
+    out += `|${s.run_name ?? ""}`;
+  }
+  return out;
+}
+
+function hasTurnBody(card: HTMLElement): boolean {
+  for (const child of card.children) {
+    if (child.classList.contains("turn-body")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The inputs compared to skip an unchanged card; an input missing here leaves that card stale. */
+const cardInputs = new WeakMap<HTMLElement, readonly unknown[]>();
+
+function cardInputsOf(card: HTMLElement, t: Turn): readonly unknown[] {
+  const state = passSession?.turns.get(t.id);
+  const plan = wantedWindow.get(t.id);
+  const have = mountedWindow(t.id);
+  let lanes = "";
+  for (const o of t.openEntries.values()) {
+    lanes += `${o.lane ?? ""}:${o.id}:${String(o.n)};`;
+  }
+  const chatID = passSession?.id ?? "";
+  return [
+    passKey,
+    state,
+    state === undefined ? 0 : turnRevision(state),
+    t.body.length,
+    lanes,
+    t.outcome,
+    t.trigger,
+    t.rewindTo,
+    t.branchFrom,
+    wakeNames(t.wake),
+    ownedRuns.get(t.id) ?? "",
+    plan?.from,
+    plan?.to,
+    have?.from,
+    have?.to,
+    hasPendingBuild(t.id),
+    heightsRevision(t.id),
+    card.hasAttribute("data-folded"),
+    hasTurnBody(card),
+    liveRefusalFor(chatID, t.id),
+    codeReferencesFor(chatID, t.id),
+  ];
+}
+
 const turnSpec: ReconcileSpec<Turn> = {
   key: (t) => t.id,
   mount: (t) => {
@@ -1468,9 +1553,18 @@ const turnSpec: ReconcileSpec<Turn> = {
     if (appendNewIds.has(t.id)) {
       card.setAttribute("data-chat-entry", "");
     }
+    cardInputs.set(card, cardInputsOf(card, t));
     return card;
   },
-  update: updateTurn,
+  update: (card, t) => {
+    const inputs = cardInputsOf(card, t);
+    const prev = cardInputs.get(card);
+    if (prev?.every((v, i) => Object.is(v, inputs[i])) === true) {
+      return;
+    }
+    updateTurn(card, t);
+    cardInputs.set(card, cardInputsOf(card, t));
+  },
   onRemove: (card, key) => {
     // The face holds only prose and leaves with the card. The body is never asked for again, so dispose it here.
     disposeTurnBody(key);
@@ -1500,7 +1594,9 @@ type SpacerSide = "head" | "tail";
  * edge, a scroll-anchor candidate, holds still while the head moves; the tail is the body's next sibling, since the
  * renderer appends streamed entries to the body.
  */
-function syncSpacers(body: HTMLElement, t: Turn, range: EntryRange): void {
+function syncSpacers(body: HTMLElement, t: Turn, want: EntryRange): void {
+  // What is mounted, never what a caller asked for: a slice inside a wider mounted window would price phantom rows.
+  const range = mountedWindow(t.id) ?? want;
   // `seq` space: a rendered count reads short and withdraws a tail spacer the window still owes.
   const span = turnSpan(t);
   placeSpacer(body, "head", range.from > 0 ? spacerPx(t, range, "head") : 0);
@@ -2407,8 +2503,7 @@ function mountRewind(card: HTMLElement, t: Turn): void {
     });
   };
   // Disabled mid-turn: KAS refuses a revert on a session with a live abortController.
-  const session = getActive();
-  const busy = session !== undefined && sessionBusy(session);
+  const busy = passBusy;
   btn.disabled = busy;
   // `data-tooltip`, not `title`: only it reaches a disabled button.
   btn.setAttribute(

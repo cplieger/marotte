@@ -29,6 +29,7 @@ import { subagentToExec } from "./subagent-exec-source.js";
 import { parseSubagentRef, subagentRef } from "./tab-materialize.js";
 import type { TurnState } from "./types.js";
 import { SharedScroll } from "./view-scroll.js";
+import { maybeEl, queryEl } from "./dom.js";
 
 /** A detached render is addressed `(turn, lane)`, `messages-blocks.ts`'s render key; the
  *  transcript holds the same turn under the EMPTY lane, so the two cannot clobber each other. */
@@ -75,7 +76,7 @@ let mounted: MountedPage | undefined;
 /** `.page-content` is shared by every subagent tab, so each TAB keeps its own offset, keyed by
  *  the tab's ref. */
 const pageScroll = new SharedScroll(
-  () => document.querySelector<HTMLElement>("[id='subagent-view'] > .page-content"),
+  () => queryEl<HTMLElement>("[id='subagent-view'] > .page-content"),
   () => (mounted === undefined ? "" : shownRef()),
 );
 
@@ -180,8 +181,8 @@ function installEffects(): void {
 }
 
 function paint(chatID: string, subtaskID: string, slice: SubagentSlice | undefined): void {
-  const host = document.getElementById("subagent-body");
-  const dockHost = document.getElementById("subagent-exec-dock");
+  const host = maybeEl("subagent-body");
+  const dockHost = maybeEl("subagent-exec-dock");
   if (host === null || dockHost === null) {
     return;
   }

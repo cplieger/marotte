@@ -7,7 +7,7 @@ import { el, computed, effect, touch, untracked } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { reconcile } from "./reconcile.js";
 import { announce } from "@cplieger/ui/announce";
-import { $ } from "./dom.js";
+import { $, setAttr, setText } from "./dom.js";
 import { watchActiveId } from "./store.js";
 import {
   liveRunIDsForChat,
@@ -267,7 +267,7 @@ function render(bar: HTMLUListElement): void {
     held.focus({ preventScroll: true });
   }
   const fold = $.runBarFold;
-  fold.hidden = !folds;
+  setAttr(fold, "hidden", folds ? null : "");
   if (folds) {
     if (fold.querySelector(".run-bar-toggle") === null) {
       fold.prepend(buildSummary(bar));
@@ -343,14 +343,11 @@ function paintSummary(fold: HTMLElement, total: number, waiting: number, open: b
     waiting === 0
       ? `${String(total)} workflows running`
       : `${String(total)} workflows, ${String(waiting)} ${waiting === 1 ? "needs" : "need"} you`;
-  const count = btn.querySelector<HTMLElement>(".run-bar-count");
-  if (count !== null && count.textContent !== text) {
-    count.textContent = text;
-  }
-  btn.setAttribute("aria-expanded", String(open));
-  const glyph = btn.querySelector<HTMLElement>(".run-bar-glyph");
+  setText(btn.querySelector(".run-bar-count"), text);
+  setAttr(btn, "aria-expanded", String(open));
+  const glyph = btn.querySelector(".run-bar-glyph");
   if (glyph !== null) {
-    glyph.dataset["status"] = waiting > 0 ? "input" : "working";
+    setAttr(glyph, "data-status", waiting > 0 ? "input" : "working");
   }
 }
 
@@ -386,7 +383,7 @@ function paintRow(row: HTMLElement, id: string): void {
     return;
   }
   const state = paintView(view, id);
-  row.dataset["state"] = state;
+  setAttr(row, "data-state", state);
 }
 
 /** Paint a row's mark and summary from the run's model, IN PLACE; answers the row's state. */
@@ -403,12 +400,8 @@ function paintView(view: RowView, id: string): ExecState | "unknown" {
   const mark = runMarkStatus(state);
   // A run with no fetched state writes NO attribute, which is how the shared rule says "reserved
   // box, nothing to show".
-  if (mark === "") {
-    delete view.glyph.dataset["status"];
-  } else {
-    view.glyph.dataset["status"] = mark;
-  }
-  view.btn.setAttribute("aria-label", `Open workflow run ${view.summary.describe()}`);
+  setAttr(view.glyph, "data-status", mark === "" ? null : mark);
+  setAttr(view.btn, "aria-label", `Open workflow run ${view.summary.describe()}`);
   return state;
 }
 

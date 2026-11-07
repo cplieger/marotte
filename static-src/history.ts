@@ -4,7 +4,7 @@
 
 import { el, signal, subscribe, effect } from "@cplieger/ui";
 import { skeletonTiming } from "@cplieger/ui/skeleton";
-import { $ } from "./dom.js";
+import { $, maybeEl, queryAll } from "./dom.js";
 import {
   activeChatRef,
   descendantChatsOf,
@@ -366,11 +366,11 @@ function selectTab(tab: HistoryTab): void {
 }
 
 function chatsContainer(): HTMLElement | null {
-  return document.getElementById("history-table");
+  return maybeEl("history-table");
 }
 
 function runsContainer(): HTMLElement | null {
-  return document.getElementById("history-runs");
+  return maybeEl("history-runs");
 }
 
 class HistoryController {
@@ -386,7 +386,7 @@ class HistoryController {
     note: true,
     // Find in chat's pause: the same words find the same chat on both surfaces, typed the same way.
     debounceMs: CHAT_SEARCH_DEBOUNCE_MS,
-    host: () => document.getElementById("history-view"),
+    host: () => maybeEl("history-view"),
     query: (q, ctx) => {
       const short = !ctx.submitted && q.trim() !== "" && underFloor(q);
       this.underFloor = short;
@@ -409,7 +409,7 @@ class HistoryController {
     label: "Search workflow runs",
     placeholder: "Search runs by name or recipe\u2026",
     note: true,
-    host: () => document.getElementById("history-view"),
+    host: () => maybeEl("history-view"),
     query: (q) => {
       this.runQuery = q.toLowerCase();
       return null;
@@ -927,7 +927,7 @@ function initHistoryView(): void {
     swapViews(() => {
       let active: HTMLElement | null = null;
       // The panel half of the pairing the controller's `aria-controls` writes.
-      for (const panel of document.querySelectorAll<HTMLDivElement>("[data-history-panel]")) {
+      for (const panel of queryAll<HTMLDivElement>("[data-history-panel]")) {
         const panelTab = panel.dataset["historyPanel"] ?? "";
         const isActive = panelTab === tab;
         panel.classList.toggle("hidden", !isActive);
@@ -965,7 +965,7 @@ export function teardownHistoryView(): void {
 
 // A run starting or finishing changes the Runs pane. Gated on the view being on screen.
 onBus(BUS_RUNS_CHANGED, () => {
-  const view = document.getElementById("history-view");
+  const view = maybeEl("history-view");
   if (view !== null && view.offsetParent !== null) {
     void historyCtrl.load();
   }

@@ -7,10 +7,11 @@ import { effect, el } from "@cplieger/ui";
 import { reconcile } from "./reconcile.js";
 import { paintStatus } from "./fundamentals/work-status.js";
 import { makeExpandable } from "./pill-expand.js";
+import { maybeEl } from "./dom.js";
 
 export function initTaskListPill(): void {
-  const pill = document.getElementById("task-list-pill");
-  const popover = document.getElementById("task-list-popover");
+  const pill = maybeEl("task-list-pill");
+  const popover = maybeEl("task-list-popover");
   if (pill !== null && popover !== null) {
     makeExpandable(pill, popover);
   }
@@ -45,9 +46,9 @@ function latestPlan(s: Session): PlanEntry[] {
 }
 
 function refreshTaskList(): void {
-  const pill = document.getElementById("task-list-pill");
-  const badge = document.getElementById("task-list-badge");
-  const items = document.getElementById("task-list-items");
+  const pill = maybeEl("task-list-pill");
+  const badge = maybeEl("task-list-badge");
+  const items = maybeEl("task-list-items");
   if (pill === null || badge === null || items === null) {
     return;
   }

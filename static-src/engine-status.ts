@@ -8,6 +8,7 @@ import { confirm } from "./confirm.js";
 import { restartEngine } from "./actions/settings.js";
 import { decodeEngineStatus } from "./wire/decoders.gen.js";
 import type { EngineBusy, EngineStatus } from "./wire/types.gen.js";
+import { maybeEl } from "./dom.js";
 
 /** The last status the server reported; null until the first answer. */
 const engineStatus = signal<EngineStatus | null>(null);
@@ -210,8 +211,8 @@ export function paintEngineRows(s: EngineStatus | null): void {
   const pending = s?.restart.pending === true && s.state === "ready" ? s.restart.reasons : [];
   for (const [key, row] of ENGINE_ROWS) {
     const hintID = `${row.controlID}-engine-hint`;
-    let hint = document.getElementById(hintID);
-    const control = document.getElementById(row.controlID);
+    let hint = maybeEl(hintID);
+    const control = maybeEl(row.controlID);
     if (hint === null && control !== null) {
       const hints = [
         ...(control.closest(".section-option")?.querySelectorAll(".section-hint") ?? []),
@@ -247,7 +248,7 @@ export function paintEngineRows(s: EngineStatus | null): void {
 /** The Settings section's Restart now is offered in every state but a restart already under way: in `down` it wakes
  *  the server's respawn backoff at once. */
 function paintSettingsControl(s: EngineStatus | null): void {
-  const btn = document.getElementById("engine-restart") as HTMLButtonElement | null;
+  const btn = maybeEl<HTMLButtonElement>("engine-restart");
   if (btn !== null) {
     btn.disabled = s?.state === "restarting";
   }
@@ -313,7 +314,7 @@ export async function reconcileEngineStatus(signal: AbortSignal): Promise<void> 
 /** Paint the rows' hints, wire the Settings control and read the status. Once, after sign-in. */
 export function initEngineStatus(): void {
   paintEngineRows(engineStatus.peek());
-  document.getElementById("engine-restart")?.addEventListener("click", () => {
+  maybeEl("engine-restart")?.addEventListener("click", () => {
     void requestRestart();
   });
   void readEngineStatus();

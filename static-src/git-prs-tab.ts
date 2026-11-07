@@ -5,7 +5,7 @@ import { join, split } from "@cplieger/keyenc";
 
 import { apiGet, apiGetTyped } from "./api-client.js";
 import { BUS_RECONCILE, onBus, onSSE } from "./bus.js";
-import { setBusy } from "./dom.js";
+import { maybeEl, setBusy } from "./dom.js";
 import { isHttpURL } from "./url-safety.js";
 import { presentedTag } from "./sse-adapter.js";
 import { observeStamp } from "./subject-versions.js";
@@ -83,7 +83,8 @@ import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
 import { classify, emptyNote, scanNote } from "./textsearch/copy.js";
 import type { Nouns } from "./textsearch/copy.js";
-import { createDialog, type DialogController } from "@cplieger/ui/dialog";
+import type { DialogController } from "@cplieger/ui/dialog";
+import { createParkedDialog } from "./modals.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui/disclosure";
 import { skeletonTiming } from "@cplieger/ui/skeleton";
 import { gitRepoSkeleton, paintPlaceholder } from "./skeleton.js";
@@ -126,7 +127,7 @@ export const prsFind: SearchPopup = createSearchPopup<null>({
   label: "Filter pull requests",
   placeholder: "Filter pull requests\u2026",
   note: true,
-  host: () => document.getElementById("git-view"),
+  host: () => maybeEl("git-view"),
   query: (q) => {
     filterText = q.toLowerCase();
     return null;
@@ -306,7 +307,7 @@ function attemptFocus(): void {
   if (pendingFocus === "") {
     return;
   }
-  const root = document.getElementById("git-prs-mount");
+  const root = maybeEl("git-prs-mount");
   if (root === null) {
     return;
   }
@@ -337,7 +338,7 @@ export function initPRsTab(): void {
   prsInited = true;
   bindPRPaint(paint);
 
-  const refreshBtn = document.getElementById("git-refresh-prs-btn") as HTMLButtonElement | null;
+  const refreshBtn = maybeEl<HTMLButtonElement>("git-refresh-prs-btn");
   if (refreshBtn !== null) {
     refreshBtn.innerHTML = ICON_REFRESH;
     const status = el("span", { className: "page-toolbar-error", role: "status" });
@@ -510,7 +511,7 @@ async function readAndPaintPRs(
   }
 
   // The 150ms show delay keeps a warm read from flashing placeholders; the signal suppresses it for a superseded refresh.
-  const root = document.getElementById("git-prs-mount");
+  const root = maybeEl("git-prs-mount");
   const skeleton = inventoryHeld() ? null : skeletonTiming(() => showPRSkeleton(root), { signal });
 
   try {
@@ -765,7 +766,7 @@ function paint(): void {
 }
 
 function paintInner(): void {
-  const root = document.getElementById("git-prs-mount");
+  const root = maybeEl("git-prs-mount");
   // Before the first read there is nothing to paint over the placeholder.
   if (root === null || !inventoryHeld()) {
     return;
@@ -1702,9 +1703,7 @@ function sendClosesOnUnload(): void {
 }
 
 function focusRowButton(id: string, label: string): void {
-  const row = document
-    .getElementById("git-prs-mount")
-    ?.querySelector(`[data-pr="${CSS.escape(id)}"]`);
+  const row = maybeEl("git-prs-mount")?.querySelector(`[data-pr="${CSS.escape(id)}"]`);
   [...(row?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
     .find((b) => b.textContent.trim() === label)
     ?.focus();
@@ -1932,7 +1931,7 @@ export async function openNewPRForRepo(repoName: string, sourceBranch: string): 
   const group = cloneGroup(repoName) ?? getPRGroups().find((g) => g.name === repoName);
   if (group === undefined) {
     // Not in any forge group: an inline error in the mount.
-    const root = document.getElementById("git-prs-mount");
+    const root = maybeEl("git-prs-mount");
     if (root !== null) {
       root.replaceChildren(
         el(
@@ -1979,7 +1978,7 @@ function cloneGroup(dir: string): RepoGroup | undefined {
 // re-openable form, so backdrop and Escape dismissal are on.
 let prDialogCtl: DialogController | null = null;
 function prDialogController(dlg: HTMLDialogElement): DialogController {
-  prDialogCtl ??= createDialog(dlg, { closeOnBackdrop: true, closeOnEscape: true });
+  prDialogCtl ??= createParkedDialog(dlg, { closeOnBackdrop: true, closeOnEscape: true });
   return prDialogCtl;
 }
 
@@ -2013,19 +2012,19 @@ function commitListBody(subjects: readonly string[]): string {
 }
 
 function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
-  const dlg = document.getElementById("pr-create-dialog") as HTMLDialogElement | null;
+  const dlg = maybeEl<HTMLDialogElement>("pr-create-dialog");
   if (dlg === null) {
     return;
   }
   const dialogCtl = prDialogController(dlg);
 
-  const baseInput = document.getElementById("pr-base") as HTMLInputElement | null;
-  const headInput = document.getElementById("pr-head") as HTMLInputElement | null;
-  const titleInput = document.getElementById("pr-title") as HTMLInputElement | null;
-  const bodyInput = document.getElementById("pr-body") as HTMLTextAreaElement | null;
-  const draftInput = document.getElementById("pr-draft") as HTMLInputElement | null;
-  const status = document.getElementById("pr-dialog-status");
-  const submitBtn = document.getElementById("pr-submit-btn") as HTMLButtonElement | null;
+  const baseInput = maybeEl<HTMLInputElement>("pr-base");
+  const headInput = maybeEl<HTMLInputElement>("pr-head");
+  const titleInput = maybeEl<HTMLInputElement>("pr-title");
+  const bodyInput = maybeEl<HTMLTextAreaElement>("pr-body");
+  const draftInput = maybeEl<HTMLInputElement>("pr-draft");
+  const status = maybeEl("pr-dialog-status");
+  const submitBtn = maybeEl<HTMLButtonElement>("pr-submit-btn");
 
   if (!baseInput || !headInput || !titleInput || !bodyInput || !draftInput || !submitBtn) {
     console.error("PR dialog missing required elements");

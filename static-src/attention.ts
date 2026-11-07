@@ -8,7 +8,7 @@
 import { ackTabCommand } from "./actions/tabs.js";
 import { cueCandidates, getActiveTabId, openTabSubjects, subscribeTabCues } from "./tabs.js";
 import { BUS_PAGE_RESUMED, BUS_RECONCILE, BUS_TAB_CHANGED, onBus, onSSE } from "./bus.js";
-import { $ } from "./dom.js";
+import { $, queryAll } from "./dom.js";
 import { closeNotificationsFor } from "./notify.js";
 import { chatTarget, runTarget } from "./push-subject.js";
 import { runState } from "./run-store.js";
@@ -474,7 +474,7 @@ export function browserAttentionEnv(): AttentionEnv {
 
   // EVERY icon link: browsers pick different ones. apple-touch-icon is NOT matched; the OS
   // caches it at install.
-  const links = [...document.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]')];
+  const links = [...queryAll<HTMLLinkElement>('link[rel~="icon"]')];
   // Each original captured once, and every variant computed from the ORIGINAL
   // rather than from the current value, so repeated swaps cannot compound.
   const originals = new Map<HTMLLinkElement, string>();

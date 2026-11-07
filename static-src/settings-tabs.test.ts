@@ -1,3 +1,4 @@
+import type * as Dom from "./dom.js";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TABS, TAB_LABELS } from "./settings-tabs.js";
 import type * as ModSettingsTabs from "./settings-tabs.js";
@@ -27,7 +28,7 @@ vi.mock("./tabs.js", async () => ({
 // Mock ./dom.js so `$` resolves against the test-built DOM. The registry resolves the tab bar /
 // select lazily from the live DOM, mirroring the real lazy getters in dom.ts so initSettingsTabs()
 // works against whatever was built in beforeEach.
-vi.mock("./dom.js", () => {
+vi.mock("./dom.js", async (importOriginal) => {
   const idFor: Record<string, string> = {
     settingsTabBar: "settings-tab-bar",
   };
@@ -39,6 +40,7 @@ vi.mock("./dom.js", () => {
     return e;
   };
   return {
+    ...(await importOriginal<typeof Dom>()),
     $: new Proxy(
       {},
       {

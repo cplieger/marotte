@@ -53,9 +53,9 @@ function hasNoBox(el: Element): boolean {
 }
 
 /** The nearest ancestor whose transform is not a pure TRANSLATION, or null. Under a rotation a
- *  rect is the tilted box's AABB, so geometry judgements refuse to measure (as `icon-crisp.ts`
- *  does). The individual `scale`/`rotate`/`translate` properties are read separately: Chromium
- *  does NOT fold them into the computed `transform`. */
+ *  rect is the tilted box's AABB, so geometry judgements refuse to measure. The individual
+ *  `scale`/`rotate`/`translate` properties are read separately: Chromium does NOT fold them into
+ *  the computed `transform`. */
 function distortedUnder(el: Element): Element | null {
   const flatMatrix = (v: string): boolean => {
     if (v === "" || v === "none") {

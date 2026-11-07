@@ -8,7 +8,7 @@ import { defineAction, ActionError, retryNetwork, registerCleanup } from "./acti
 import { setHookEnabled } from "./actions/hooks.js";
 import { asObject, decodeArray, optStr, reqBool, reqStr } from "./wire/validators.gen.js";
 import { onSSE } from "./bus.js";
-import { $, byId } from "./dom.js";
+import { $, byId, maybeEl, queryAll, queryEl } from "./dom.js";
 import { swapViews } from "./view-swap.js";
 import { el } from "@cplieger/ui";
 import { iconEl } from "./icon-el.js";
@@ -475,7 +475,7 @@ function syncTabChrome(tab: DocsTab, paint: (tab: DocsTab) => void): void {
   paint(tab);
   swapViews(() => {
     let active: HTMLElement | null = null;
-    for (const panel of document.querySelectorAll<HTMLDivElement>("[data-docs-panel]")) {
+    for (const panel of queryAll<HTMLDivElement>("[data-docs-panel]")) {
       const panelTab = panel.dataset["docsPanel"] ?? "";
       const isActive = panelTab === tab;
       panel.classList.toggle("hidden", !isActive);
@@ -492,7 +492,7 @@ function syncTabChrome(tab: DocsTab, paint: (tab: DocsTab) => void): void {
 }
 
 function panelFor(tab: DocsTab): HTMLDivElement | null {
-  return document.querySelector<HTMLDivElement>(`[data-docs-panel="${tab}"]`);
+  return queryEl<HTMLDivElement>(`[data-docs-panel="${tab}"]`);
 }
 
 /** The note for the shown tab: silent with no filter unless the server truncated; an emptied tab names where matches went. */
@@ -569,7 +569,7 @@ const docsFilter: SearchPopup = createSearchPopup<null>({
   // Metadata only: a body is the file browser's grep.
   placeholder: "Filter by name, description or trigger\u2026",
   note: true,
-  host: () => document.getElementById("docs-view"),
+  host: () => maybeEl("docs-view"),
   // Applied in renderActive, the one place deciding which records a tab shows.
   query: (query) => {
     filterText = query.toLowerCase();

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type * as Dom from "./dom.js";
 
 import routeApplySrc from "./route-apply.ts?raw";
 import navigateSrc from "./navigate.ts?raw";
@@ -154,7 +155,8 @@ vi.mock("./device-view.js", () => {
     }),
   };
 });
-vi.mock("./dom.js", () => ({
+vi.mock("./dom.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Dom>()),
   $: new Proxy(
     {},
     {

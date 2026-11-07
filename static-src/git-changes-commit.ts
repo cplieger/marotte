@@ -4,6 +4,7 @@ import type { ActionOutcome } from "./actions/index.js";
 import { el } from "@cplieger/ui";
 import { isHttpURL } from "./url-safety.js";
 import type { GitRepoStatus } from "./git-types.js";
+import { queryEl } from "./dom.js";
 
 type RepoStatus = GitRepoStatus;
 
@@ -84,9 +85,7 @@ export function refusalOf(o: ActionOutcome<unknown>, could: string): Refusal | n
 
 /** The box on screen for `repo`: a repaint during a press replaces the one the press was built with. */
 function liveBox(repo: string): HTMLTextAreaElement | null {
-  return document.querySelector<HTMLTextAreaElement>(
-    `.git-commit-input[data-repo="${CSS.escape(repo)}"]`,
-  );
+  return queryEl<HTMLTextAreaElement>(`.git-commit-input[data-repo="${CSS.escape(repo)}"]`);
 }
 
 /** Render the recent-commits collapsible section for a repo. */

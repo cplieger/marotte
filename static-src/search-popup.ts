@@ -9,6 +9,7 @@ import type { SearchShell, SearchShellSpec } from "./search-shell.js";
 import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import type { FindKind, PageFind } from "./find-registry.js";
+import { maybeEl } from "./dom.js";
 
 /** One button, one popup group, so opening a page's search closes whatever else was open — including
  *  the transcript's, which shares this group. */
@@ -66,7 +67,7 @@ export function createSearchPopup<R>(spec: SearchPopupSpec<R>): SearchPopup {
   let lastFocus: HTMLElement | null = null;
 
   function trigger(): HTMLElement | null {
-    return document.getElementById(TRIGGER_ID);
+    return maybeEl(TRIGGER_ID);
   }
 
   function close(): void {

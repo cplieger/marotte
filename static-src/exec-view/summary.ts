@@ -17,6 +17,7 @@ import {
 import { STATE_WORD } from "./status.js";
 import { buildAlertLine, wantsReader, type ExecAlert } from "./alert.js";
 import { kindGlyph } from "./tree.js";
+import { setText } from "../dom.js";
 
 export interface ExecSummaryView {
   /** `.ev-sum`. */
@@ -209,12 +210,5 @@ function setLabel(label: HTMLElement, name: string): void {
   setText(label, name);
   if (label.getAttribute("data-tooltip") !== name) {
     label.setAttribute("data-tooltip", name);
-  }
-}
-
-/** A text write that skips an unchanged value, so a repaint announces nothing it did not change. */
-function setText(target: HTMLElement, text: string): void {
-  if (target.textContent !== text) {
-    target.textContent = text;
   }
 }

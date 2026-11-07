@@ -3,6 +3,7 @@
 // standalone app a transiently short containing block on a cold launch.
 
 import { isStandalone } from "./platform.js";
+import { queryEl } from "./dom.js";
 
 export const SHORTFALL_PROP = "--shell-shortfall";
 /** A home-indicator band plus window chrome; a larger reading is a broken one. */
@@ -97,7 +98,7 @@ function mountDebug(standalone: boolean): DebugOverlay {
   document.body.append(probe, out);
 
   const bottomOf = (sel: string): string => {
-    const el = document.querySelector(sel);
+    const el = queryEl(sel);
     return el === null ? "n/a" : el.getBoundingClientRect().bottom.toFixed(1);
   };
 

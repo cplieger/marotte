@@ -23,6 +23,7 @@ import type { RefusalInfo, TurnOutcome } from "./wire/types.gen.js";
 import type { ClassifiedRunStatus } from "./run-status.js";
 // turns.ts is a pure leaf that reaches nothing here, so this edge is one-way.
 import { payloadOf } from "./turns.js";
+import { touchTurn } from "./turn-revision.js";
 import {
   foldSteerFrame,
   pendingSteerRow,
@@ -1633,6 +1634,10 @@ function sameDiffs(a: ToolCall["diffs"], b: ToolCall["diffs"]): boolean {
  *  that can show it. Shared by the live progress path and the fetched window so the two cannot
  *  disagree about which pass a tool update needs. */
 function republishToolCall(chatID: string, turnID: string, call: ToolCall): void {
+  const state = get(chatID)?.turns.get(turnID);
+  if (state !== undefined) {
+    touchTurn(state);
+  }
   const sig = toolCallSigs.get(toolCallSigKey(chatID, call.id));
   if (sig !== undefined) {
     sig.value = call;

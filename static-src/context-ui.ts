@@ -1,12 +1,60 @@
 // Context bar update, from chat.ts's active-session effect: only the active session (and switches) refresh it.
 
-import type { Session, MeteringItem } from "./types.js";
+import type { Entry, Session, MeteringItem } from "./types.js";
 import { updateContextBar } from "./status.js";
 import { effortPillLabel } from "./effort.js";
 import { getCachedModels } from "./picker.js";
 import { getLastEffortFor } from "./session-context.js";
 import { compactionPoint, compactionPolicy } from "./context-ring.js";
 import { entryRenders, foldsByLane, NO_FOLDS } from "./block-window.js";
+import { bodyMemo } from "./body-memo.js";
+import { hookStatusShown } from "./hook-fold.js";
+import { bodyOf } from "./turns.js";
+
+interface BodyCounts {
+  readonly entries: number;
+  readonly tools: number;
+}
+
+const counts = bodyMemo<BodyCounts>();
+
+/** `body`'s rows the reader can reach, per entry's own lane (`entryRenders`, delegates included). */
+function bodyCounts(body: readonly Entry[]): BodyCounts {
+  // `entryRenders` reads `hookStatusShown`.
+  return counts(body, String(hookStatusShown()), () => {
+    const folds = foldsByLane(body);
+    let entries = 0;
+    let tools = 0;
+    for (const e of body) {
+      const lane = e.lane ?? "";
+      if (entryRenders(e, lane, folds.get(lane) ?? NO_FOLDS)) {
+        entries++;
+        tools += e.kind === "tool_call" ? 1 : 0;
+      }
+    }
+    return { entries, tools };
+  });
+}
+
+const throughMark = bodyMemo<number>();
+
+/** `body`'s reachable rows up to and including the entry `watermark`, or -1 when no entry is it. */
+function countThrough(body: readonly Entry[], watermark: string): number {
+  return throughMark(body, `${String(hookStatusShown())}|${watermark}`, () => {
+    const folds = foldsByLane(body);
+    let seen = 0;
+    for (const e of body) {
+      const lane = e.lane ?? "";
+      if (entryRenders(e, lane, folds.get(lane) ?? NO_FOLDS)) {
+        seen++;
+      }
+      if (e.id === watermark) {
+        return seen;
+      }
+    }
+    return -1;
+  });
+}
 
 /**
  * Reachable entries the watermark covers, or undefined when this window cannot say. Counted over `entryRenders`' set
@@ -24,16 +72,15 @@ function summarizedCount(s: Session): number | undefined {
     if (t === undefined) {
       continue;
     }
-    const folds = foldsByLane(t.entries);
-    for (const e of t.entries) {
-      const lane = e.lane ?? "";
-      if (entryRenders(e, lane, folds.get(lane) ?? NO_FOLDS)) {
-        seen++;
-      }
-      if (e.id === watermark) {
-        return seen;
-      }
+    if (t.entries[0]?.id === watermark) {
+      return seen;
     }
+    const body = bodyOf(t);
+    const through = countThrough(body, watermark);
+    if (through >= 0) {
+      return seen + through;
+    }
+    seen += bodyCounts(body).entries;
   }
   return undefined;
 }
@@ -41,24 +88,14 @@ function summarizedCount(s: Session): number | undefined {
 export function refreshContextUI(s: Session): void {
   const u = s.usage;
   const metering: MeteringItem[] = u.metering_items ?? [];
-  // Rows the reader can reach, per entry's own lane (`entryRenders`, delegates included).
   let entryCount = 0;
   let toolCount = 0;
   for (const turnID of s.turn_order) {
     const t = s.turns.get(turnID);
-    if (t === undefined) {
-      continue;
-    }
-    const folds = foldsByLane(t.entries);
-    for (const e of t.entries) {
-      const lane = e.lane ?? "";
-      if (!entryRenders(e, lane, folds.get(lane) ?? NO_FOLDS)) {
-        continue;
-      }
-      entryCount++;
-      if (e.kind === "tool_call") {
-        toolCount++;
-      }
+    if (t !== undefined) {
+      const c = bodyCounts(bodyOf(t));
+      entryCount += c.entries;
+      toolCount += c.tools;
     }
   }
   const summarized = summarizedCount(s);

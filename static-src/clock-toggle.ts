@@ -3,7 +3,7 @@
 
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
 import type { ClockChoice } from "./device-view.js";
-import { $, forceReflow } from "./dom.js";
+import { $, forceReflow, pageRoots } from "./dom.js";
 import { clock, redrawClocks, reloadClock, resolvedClock, setClock } from "./locale-time.js";
 
 const NEXT: Record<ClockChoice, ClockChoice> = { auto: "h23", h23: "h12", h12: "auto" };
@@ -68,6 +68,12 @@ function paint(choice: ClockChoice): void {
   btn.setAttribute("aria-label", label);
 }
 
+function redrawAll(): void {
+  for (const root of pageRoots()) {
+    redrawClocks(root);
+  }
+}
+
 /** Wire the toggle and paint the stored choice. A click, or another tab's write, redraws the
  *  `time[data-clock]` and `time[data-clock-tip]` elements on the page (`redrawClocks`). */
 export function initClockToggle(): void {
@@ -80,7 +86,7 @@ export function initClockToggle(): void {
     () => {
       setClock(NEXT[clock()]);
       paint(clock());
-      redrawClocks(document);
+      redrawAll();
     },
     { signal: bound.signal },
   );
@@ -94,7 +100,7 @@ export function initClockToggle(): void {
       reloadClock();
       if (clock() !== before) {
         paint(clock());
-        redrawClocks(document);
+        redrawAll();
       }
     },
     { signal: bound.signal },

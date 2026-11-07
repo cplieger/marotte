@@ -3,6 +3,7 @@
 // the projection). Ids are opaque, addressed by `tabIdFor`. Mostly "event-first"; ordering is
 // `tabs-projection.test.ts`'s subject.
 
+import type * as Dom from "./dom.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { CloseImpact } from "./wire/types.gen.js";
 import type { Mock } from "vitest";
@@ -56,7 +57,8 @@ vi.mock("./device-view.js", () => {
     }),
   };
 });
-vi.mock("./dom.js", () => ({
+vi.mock("./dom.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Dom>()),
   $: new Proxy(
     {},
     {

@@ -1,8 +1,10 @@
 // replaceChildren on any descendant of #git-view resets its scrollTop to 0, so tab repaints run through this.
 
+import { maybeEl } from "./dom.js";
+
 /** Run `paint` while preserving #git-view's scroll position; without the element, `paint` runs unchanged. */
 export function preserveGitScroll(paint: () => void): void {
-  const view = document.getElementById("git-view");
+  const view = maybeEl("git-view");
   if (view === null) {
     paint();
     return;

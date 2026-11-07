@@ -5,6 +5,7 @@
 //   - EVENT-FIRST: the adoption finds the row and upserts idempotently.
 // Driven for each kind a door opens, including an owned run and a review (same `(kind, ref)`).
 
+import type * as Dom from "./dom.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
@@ -50,7 +51,8 @@ vi.mock("./device-view.js", () => {
     }),
   };
 });
-vi.mock("./dom.js", () => ({
+vi.mock("./dom.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Dom>()),
   $: new Proxy(
     {},
     {
