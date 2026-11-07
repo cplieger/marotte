@@ -9,7 +9,8 @@ import { buildSteerNote } from "./fundamentals/steer-note.js";
 
 const SENT = Date.UTC(2026, 9, 9, 12, 0, 5);
 const READ = SENT + 14_000;
-const KINDS = ["notify", "success", "warning", "error", "info"] as const;
+// Step names only: the note renders the step name as label text and has no per-severity style.
+const STEPS = ["notify", "success", "warning", "error", "info"] as const;
 const STAMPS = [
   ["sent and delivered", true],
   ["sent only", false],
@@ -110,10 +111,10 @@ function spread(c: Record<string, number>): number {
   return Math.max(...v) - Math.min(...v);
 }
 
-describe.each(KINDS)("a %s workflow message's head", (kind) => {
+describe.each(STEPS)("the head of a workflow message from step %s", (step) => {
   describe.each(STAMPS)("stamped %s", (_stamp, delivered) => {
     it("puts the glyph, run name, dot, label and times on one centre at desktop width", () => {
-      const c = centres(mount(900, kind, RUN, delivered), [
+      const c = centres(mount(900, step, RUN, delivered), [
         "icon",
         "name",
         "dot",
@@ -124,7 +125,7 @@ describe.each(KINDS)("a %s workflow message's head", (kind) => {
     });
 
     it("puts the glyph and run name on one centre, and the label and times on another, on a phone", () => {
-      const note = mount(375, kind, RUN, delivered);
+      const note = mount(375, step, RUN, delivered);
       const top = centres(note, ["icon", "name"]);
       const under = centres(note, ["label", "times"]);
       expect(spread(top), JSON.stringify(top)).toBeLessThanOrEqual(1);
