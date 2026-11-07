@@ -184,6 +184,7 @@ var promptMatrix = []struct {
 	{"concise", Prompt{OutputStyle: "concise", Tag: "t-0000000000000002"}},
 	{"step message", Prompt{StepMessage: "continue with the plan"}},
 	{"labelled chat prompt", Prompt{Label: "Merging findings from a tangent", Tag: "t-0000000000000003"}},
+	{"caller-sent chat prompt", Prompt{Caller: "grelot", Tag: "t-0000000000000004"}},
 }
 
 // TestPromptDoorDeclaresExactly pins the _meta.kiro payload session/prompt carries for every

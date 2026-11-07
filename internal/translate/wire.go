@@ -175,9 +175,10 @@ func (b *acpKiroBlock) UnmarshalJSON(data []byte) error {
 	// `agentMode` rides only replayed frames; the chat's mode comes from its configuration state.
 	// `steeringClearedIds` lists read steers too, so it cannot mark a steer unread.
 	// `elicitation` repeats the _kiro/mcp/elicitation request that follows its tool_call_update.
+	// `callerLabel` is marotte's own prompt key echoed back; the turn's sender is PromptCommand.Caller.
 	censusMeta("_meta.kiro", data, reflect.TypeFor[acpKiroBlockShadow](),
 		"preview", "replay", "executionId", "turnId", "toolOrigin", "agentMode", "steeringClearedIds",
-		"elicitation")
+		"elicitation", "callerLabel")
 	return nil
 }
 

@@ -851,6 +851,11 @@ step message. KAS stores it verbatim on the user row and on the turn_start that 
 (extractUserMessageTag; 1 to 256 characters) and echoes it on that turn_start live and on replay, so
 the bracket names the turn it opens: a turn_start with another tag or none is an agent run and
 never binds the waiting prompt, and the replay merge pairs a turn on the tag it echoes.`,
+	"text.callerLabel": `SENT on a prompt a program sent through marotte's API (/api/command or a notify) with
+a name, carrying that name. KAS 3.1.0 has no sender field: session/prompt's _meta.kiro schema is
+passthrough, so runAdmittedPrompt keeps the key on the user row it persists and replays, where any
+client reading the session's transcript sees who sent the prompt. The model reads only the prompt
+blocks, so the key frames nothing for the agent. The user's prompt and an unnamed caller send none.`,
 	"enum.outputStyle": `SENT on a prompt when the user picked a non-default output style (output_style).
 KAS maps the id to a style instruction for THAT turn only (an unknown id reads as default, and a
 continuation or agent-initiated prompt gets none), so it rides every user prompt rather than a

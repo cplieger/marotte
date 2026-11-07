@@ -798,7 +798,11 @@ func promptFacts(ctx context.Context, configDir string, p *marotte.PromptCommand
 	if !read || !settings.ValidOutputStyle(style) || style == settings.OutputStyleDefault {
 		style = ""
 	}
-	return &kascap.Prompt{OutputStyle: style, Label: p.DisplayText, Tag: turnID}
+	var caller string
+	if p.Caller != nil {
+		caller = p.Caller.Label
+	}
+	return &kascap.Prompt{OutputStyle: style, Label: p.DisplayText, Tag: turnID, Caller: caller}
 }
 
 func promptParamsInlineImage(params map[string]any) bool {
