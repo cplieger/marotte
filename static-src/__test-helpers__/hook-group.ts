@@ -176,8 +176,8 @@ function badgeTarget(badge: HTMLElement): DOMRect {
 }
 
 /** Points on the header's row across the group's whole inner width, outside the badge's target: its corners (in from
- *  the group's rounded clip), its middle, the strip past the badge's end edge, and the strips above and below the badge
- *  in its column. */
+ *  the group's rounded clip), its middle, the strip past the badge's end edge, and the strips above and below the badge,
+ *  on its horizontal centre. */
 export function headerPointsOutsideBadge(header: HTMLElement, badge: HTMLElement): Point[] {
   const group = header.parentElement ?? header;
   const g = group.getBoundingClientRect();
