@@ -1,0 +1,223 @@
+# Recommended PromQL alert rules for marotte, for Prometheus, Mimir or vmalert.
+# marotte ships no log rules: every alert it recommends is in this file.
+# Scrape marotte's /metrics on port 9847 as job "marotte"; MarotteDown reads
+# that job name. The scraper must call marotte by a name in ALLOWED_HOSTS.
+# The other rules carry no job matcher, so add one if you run several marottes.
+# Thresholds, for: windows and severity labels are starting points.
+# docs/monitoring.md explains each rule.
+groups:
+  - name: marotte
+    rules:
+      # Two arms, because `up == 0` cannot match a target that no longer
+      # exists and `absent()` cannot see one that is failing.
+      - alert: MarotteDown
+        expr: up{job="marotte"} == 0 or absent(up{job="marotte"})
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "marotte is down or no longer scraped"
+          description: >
+            No successful scrape of marotte for 5m, so every other rule here is
+            blind. Check the container, the port, ALLOWED_HOSTS and that the
+            scrape job is named marotte.
+
+      # The engine is not ready while marotte downloads kiro-cli on a first
+      # start, and the image allows 5 minutes for that. A requested restart is
+      # back within seconds, so 10 minutes covers both.
+      - alert: MarotteEngineDown
+        expr: marotte_engine_up == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "marotte's agent engine has not been ready for 10 minutes"
+          description: >
+            No chat or workflow can run. If /api/health reports a kiro-cli
+            install problem, fix that first. Otherwise the engine keeps failing
+            to start, and the engine start failed log lines say why.
+
+      # The first matcher drops the stops marotte asked for. A stop from
+      # outside has its own rule, MarotteEngineStoppedExternally.
+      - alert: MarotteEngineCrashed
+        expr: |
+          sum without (cause) (increase(marotte_engine_exits_total{
+            cause!~"restart_confirmed|restart_auto|shutdown|stopped",
+            cause!="external_stop"}[15m])) >= 1
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "marotte's agent engine crashed and restarted"
+          description: >
+            The engine ended by itself, so every running reply stopped and was
+            marked interrupted. marotte restarts it. The engine exited log line
+            names the cause and the container's memory kills.
+
+      - alert: MarotteEngineCrashLoop
+        expr: |
+          sum without (cause) (increase(marotte_engine_exits_total{
+            cause!~"restart_confirmed|restart_auto|shutdown|stopped",
+            cause!="external_stop"}[15m])) >= 3
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "marotte's agent engine keeps crashing"
+          description: >
+            The engine ended by itself 3 or more times in 15 minutes, so chats
+            and workflows keep stopping. Check the engine exited log lines, the
+            engine memory limit in Settings and the container's memory.
+
+      - alert: MarotteEngineStoppedExternally
+        expr: increase(marotte_engine_exits_total{cause="external_stop"}[15m]) >= 1
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "marotte's agent engine was stopped by another process"
+          description: >
+            A signal from outside marotte, such as a kill command, ended the
+            engine, so running replies stopped. marotte restarts it. Find what
+            sent the signal. A crash raises MarotteEngineCrashed instead.
+
+      # marotte samples the engine's memory every 60 seconds. The limit series
+      # is absent while the limit is unknown, so the ratio is too.
+      - alert: MarotteEngineMemoryHigh
+        expr: marotte_engine_resident_memory_bytes / marotte_engine_heap_limit_bytes > 0.8
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "marotte's agent engine is close to its memory limit"
+          description: >
+            The engine's resident memory is above 80% of its JavaScript heap
+            limit. Past the limit the engine crashes and every running reply
+            stops. Raise Agent engine memory limit in Settings if the container
+            has memory to spare.
+
+      # pipe_death is a prompt the engine's own exit ended, which the engine
+      # rules already cover.
+      - alert: MarottePromptFailures
+        expr: |
+          sum without (class) (increase(marotte_prompt_failures_total{class!="pipe_death"}[15m])) >= 5
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "marotte prompts keep failing"
+          description: >
+            5 or more prompts failed in 15 minutes. Common causes are an
+            expired Kiro sign-in, a model the account cannot use and
+            throttling. The prompt failed log lines carry each failure's class.
+
+      - alert: MarotteSignInStagedCopyLeft
+        expr: increase(marotte_signin_save_failures_total{reason="staged_copy_left"}[15m]) >= 1
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "marotte refused to save a sign-in"
+          description: >
+            A file an earlier sign-in save left is still on disk, so every
+            sign-in change fails until it goes. marotte retries the cleanup.
+            The log line names the file, which you can delete inside the
+            container.
+
+      # A slot missed while marotte was not running is skipped and does not
+      # count. rule_id is the schedule's id.
+      - alert: MarotteScheduleFailing
+        expr: marotte_schedule_failed_slots >= 2
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A marotte schedule keeps ending without a completed run"
+          description: >
+            A schedule's last 2 or more slots ended without a completed run,
+            from a failed launch, a held sign-in, a busy engine or a failed
+            run. The schedule's row on the Workflows panel shows the last
+            reason.
+
+      # The next-due time is in the past for up to a minute after each slot
+      # and while a slot waits on a busy engine, hence the 10-minute margin.
+      - alert: MarotteScheduleStalled
+        expr: time() > marotte_schedule_next_due_timestamp_seconds + 600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A marotte schedule has a slot overdue by over 10 minutes"
+          description: >
+            A schedule slot fell due over 10 minutes ago and marotte has not
+            started or skipped it. The engine may have been busy all that time,
+            the schedule runner may be stuck, or the schedule's saved state
+            cannot be read.
+
+      - alert: MarotteScheduleSlotNotStarted
+        expr: increase(marotte_schedule_slots_not_started_total[24h]) >= 1
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A marotte schedule slot started no run"
+          description: >
+            In the last 24 hours a schedule slot started no run. The event
+            label says why: launch_failed is a launch error, signin_held a
+            sign-in held past its grace, engine_busy an engine busy until the
+            next slot.
+
+      - alert: MarotteUnattendedRunNeedsApproval
+        expr: increase(marotte_unattended_run_failures_total{reason="needs_approval"}[24h]) >= 1
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "An unattended marotte run failed on a permission request"
+          description: >
+            A {{ $labels.origin }} run asked to approve a tool with nobody
+            watching, was refused and failed. Add a permission rule for that
+            tool, or turn on approval under Unattended runs in Settings.
+
+      - alert: MarotteUnattendedRunStopped
+        expr: |
+          increase(marotte_unattended_run_failures_total{
+            reason=~"overran|backstop|stalled|paused|orphaned"}[24h]) >= 1
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "marotte stopped an unattended run"
+          description: >
+            A {{ $labels.origin }} run ended as {{ $labels.reason }}. overran
+            outlived its slot, backstop spent its time budget, stalled stopped
+            making progress, paused had nobody to resume it, and orphaned was
+            cut off by a restart.
+
+      - alert: MarotteUnattendedRunCancelFailed
+        expr: increase(marotte_unattended_run_failures_total{reason="cancel_given_up"}[24h]) >= 1
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "marotte could not cancel an unattended run"
+          description: >
+            marotte decided to stop a {{ $labels.origin }} run, but kiro-cli
+            refused every cancel, so the run may still be using tools with
+            nobody watching. Cancel it from its tab, or use Restart now under
+            Agent engine in Settings.
+
+      # Not a fault: the user turned the setting on. The alert records that a
+      # tool ran on a schedule's or a trigger's authority alone.
+      - alert: MarotteUnattendedRunSelfApproved
+        expr: increase(marotte_unattended_approvals_total[24h]) >= 1
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "marotte approved a tool for an unattended run"
+          description: >
+            A {{ $labels.origin }} run had a tool request approved with nobody
+            watching, because approval under Unattended runs in Settings is
+            on. A triggered run can act on text other people wrote. Turn the
+            setting off to refuse instead.

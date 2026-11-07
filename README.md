@@ -92,11 +92,13 @@ Every setting, with what each one checks, is in [Configuration](docs/configurati
 
 | Port | Description |
 | --- | --- |
-| `9847` | The web page, its live updates and the terminal |
+| `9847` | The web page, its live updates, the terminal and the [metrics page](docs/monitoring.md#metrics) at `/metrics` |
 
 ## Security
 
 marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and reads and writes files under `/workspace` and any [additional directory](docs/configuration.md#folders-the-agent-can-use-beyond-workspace) you add. They can also use the Kiro sign-in in `/config`. Keep the port on your private network, or put marotte behind a [reverse proxy](https://github.com/cplieger/docs/blob/main/docs/reverse-proxy.md) that asks for a login, such as Caddy forward-auth, oauth2-proxy or Authentik. Signing in on the page gives the agent your Kiro account. It does not protect marotte itself.
+
+`/metrics` has no login either, so exempt it at a login proxy or scrape it only from a network you trust with the agent.
 
 Set `ALLOWED_HOSTS` on any server that stays up. marotte then answers only at the addresses you list, so another website cannot use your browser to reach it.
 
@@ -116,14 +118,19 @@ Docker checks `/api/health` every 30 seconds. The container shows healthy once m
 - The container restarts in a loop with `another marotte instance holds this folder`. Two marotte containers share a volume, a `KIRO_HOME` or a tools folder. The log line names the folder. Give each container its own, or stop the other one.
 - A tool installed from **Settings** answers `command not found` in the **Shell** panel. Either the container runs as a user other than root, as the quick start does, or the log warns that marotte could not write `/etc/profile.d/10-marotte-path.sh`. Then the Shell panel's login shell may not search the tools folder. Run the tool by its full path, `/config/tools/bin/<tool>` (`bin/` under `MAROTTE_TOOLS_DIR` if you moved it), or see [How kiro-cli is installed](docs/how-it-works.md#how-kiro-cli-is-installed).
 
+## Monitoring
+
+marotte serves Prometheus metrics at `/metrics` on port 9847, and alert rules for Prometheus ship in [`alerts/promql.yaml`](alerts/promql.yaml). Add your scraper's name to `ALLOWED_HOSTS`. [Monitoring and alerts](docs/monitoring.md) lists the series and the alerts and says who tells you when the container stops.
+
 ## Documentation
 
 - [Features](docs/features.md) describes every part of the page, knowledge bases included.
 - [Configuration](docs/configuration.md) lists every setting and what it checks.
 - [Security](docs/hardening.md) covers tool installs, the image and the kiro-cli install.
+- [Monitoring and alerts](docs/monitoring.md) covers metrics and alerts.
 - [How marotte works](docs/how-it-works.md) explains syncing across devices, the agent engine, and how kiro-cli is installed and repaired.
 - [Launch flags](docs/launch-flags.md) and [OS packages](docs/os-packages.md) cover two less common setups.
-- [Known upstream issues](docs/known-upstream-issues.md) lists the upstream issues that affect marotte, with links to their reports and what marotte does about each.
+- [Known upstream issues](docs/known-upstream-issues.md) lists the upstream issues that affect marotte and what marotte does about each.
 
 ## Credits
 

@@ -31,6 +31,8 @@ Set it to the exact hostnames and IPs you open marotte at, for example `ALLOWED_
 
 Set it on any server that stays up. It blocks DNS rebinding, where a website you visit points its own hostname at your marotte address. The browser then treats your marotte as that website, so the usual same-origin check passes. The attack runs through your own browser, so it also reaches a marotte that only listens on your network. Requests from inside the container are always allowed, so the image's healthcheck keeps working. Left unset, marotte accepts every `Host` and logs a warning at startup.
 
+A metrics scraper or an uptime prober outside the container must call marotte by a name in the list too, or it gets `403`. A Docker network name such as `marotte` works once you add it. [Monitoring and alerts](monitoring.md) covers both.
+
 ## Behind a reverse proxy (`TRUSTED_PROXIES`)
 
 The access log and the sign-in and sign-out logs record a `client_ip`. Leave `TRUSTED_PROXIES` unset when nothing sits in front of marotte. The address is then the connecting socket's, which a client cannot fake, and any `X-Forwarded-For` header is ignored.

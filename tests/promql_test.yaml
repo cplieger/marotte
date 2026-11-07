@@ -1,0 +1,390 @@
+# Unit tests for alerts/promql.yaml: promtool test rules tests/promql_test.yaml
+rule_files:
+  - ../alerts/promql.yaml
+evaluation_interval: 1m
+tests:
+  - name: MarotteDown fires for a failing target and stays quiet for a healthy one
+    interval: 1m
+    input_series:
+      - series: 'up{job="marotte",instance="a:9847"}'
+        values: "0x10"
+      - series: 'up{job="marotte",instance="b:9847"}'
+        values: "1x10"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: MarotteDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: MarotteDown
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847"}
+            exp_annotations:
+              summary: "marotte is down or no longer scraped"
+              description: >
+                No successful scrape of marotte for 5m, so every other rule here is
+                blind. Check the container, the port, ALLOWED_HOSTS and that the
+                scrape job is named marotte.
+
+  - name: MarotteDown fires when the target is gone
+    interval: 1m
+    input_series:
+      - series: 'up{job="other",instance="c:9100"}'
+        values: "1x10"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: MarotteDown
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte}
+            exp_annotations:
+              summary: "marotte is down or no longer scraped"
+              description: >
+                No successful scrape of marotte for 5m, so every other rule here is
+                blind. Check the container, the port, ALLOWED_HOSTS and that the
+                scrape job is named marotte.
+
+  - name: MarotteEngineDown waits out a first start's download and fires after 10 minutes down
+    interval: 1m
+    input_series:
+      # A first start: kiro-cli downloads for 6 minutes, then the engine is ready.
+      - series: 'marotte_engine_up{job="marotte",instance="a:9847"}'
+        values: "0x5 1x20"
+      # A requested restart: down for one sample.
+      - series: 'marotte_engine_up{job="marotte",instance="b:9847"}'
+        values: "1x5 0 1x20"
+      # An engine that never starts.
+      - series: 'marotte_engine_up{job="marotte",instance="c:9847"}'
+        values: "0x25"
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: MarotteEngineDown
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: MarotteEngineDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: marotte, instance: "c:9847"}
+            exp_annotations:
+              summary: "marotte's agent engine has not been ready for 10 minutes"
+              description: >
+                No chat or workflow can run. If /api/health reports a kiro-cli
+                install problem, fix that first. Otherwise the engine keeps failing
+                to start, and the engine start failed log lines say why.
+
+  - name: MarotteEngineCrashed counts every cause the engine ended by itself and no requested or outside stop
+    interval: 1m
+    input_series:
+      - series: 'marotte_engine_exits_total{job="marotte",instance="a:9847",cause="crash"}'
+        values: "0x2 1x30"
+      - series: 'marotte_engine_exits_total{job="marotte",instance="b:9847",cause="stdin_stalled"}'
+        values: "0x2 1x30"
+      - series: 'marotte_engine_exits_total{job="marotte",instance="c:9847",cause="external_stop"}'
+        values: "0x2 1x30"
+      - series: 'marotte_engine_exits_total{job="marotte",instance="c:9847",cause="restart_confirmed"}'
+        values: "0x2 1x30"
+      - series: 'marotte_engine_exits_total{job="marotte",instance="c:9847",cause="shutdown"}'
+        values: "0x2 1x30"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: MarotteEngineCrashed
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: MarotteEngineCrashed
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847"}
+            exp_annotations: &crashed
+              summary: "marotte's agent engine crashed and restarted"
+              description: >
+                The engine ended by itself, so every running reply stopped and was
+                marked interrupted. marotte restarts it. The engine exited log line
+                names the cause and the container's memory kills.
+          - exp_labels: {severity: warning, job: marotte, instance: "b:9847"}
+            exp_annotations: *crashed
+      # The exit has left the 15-minute window.
+      - eval_time: 19m
+        alertname: MarotteEngineCrashed
+        exp_alerts: []
+
+  - name: MarotteEngineCrashLoop fires at the third crash in 15 minutes
+    interval: 1m
+    input_series:
+      - series: 'marotte_engine_exits_total{job="marotte",instance="a:9847",cause="crash"}'
+        values: "0 1 1 1 2 2 2 2 2 2 2 2"
+      - series: 'marotte_engine_exits_total{job="marotte",instance="a:9847",cause="parse_breaker"}'
+        values: "0 0 0 0 0 0 1 1 1 1 1 1"
+      # Requested restarts never count.
+      - series: 'marotte_engine_exits_total{job="marotte",instance="b:9847",cause="restart_auto"}'
+        values: "0 1 2 3 4 5 6 7 8 9 10 11"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: MarotteEngineCrashLoop
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: MarotteEngineCrashLoop
+        exp_alerts:
+          - exp_labels: {severity: critical, job: marotte, instance: "a:9847"}
+            exp_annotations:
+              summary: "marotte's agent engine keeps crashing"
+              description: >
+                The engine ended by itself 3 or more times in 15 minutes, so chats
+                and workflows keep stopping. Check the engine exited log lines, the
+                engine memory limit in Settings and the container's memory.
+
+  - name: MarotteEngineStoppedExternally fires for an outside stop only
+    interval: 1m
+    input_series:
+      - series: 'marotte_engine_exits_total{job="marotte",instance="a:9847",cause="external_stop"}'
+        values: "0x2 1x30"
+      - series: 'marotte_engine_exits_total{job="marotte",instance="b:9847",cause="crash"}'
+        values: "0x2 1x30"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: MarotteEngineStoppedExternally
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847", cause: external_stop}
+            exp_annotations:
+              summary: "marotte's agent engine was stopped by another process"
+              description: >
+                A signal from outside marotte, such as a kill command, ended the
+                engine, so running replies stopped. marotte restarts it. Find what
+                sent the signal. A crash raises MarotteEngineCrashed instead.
+
+  - name: MarotteEngineMemoryHigh fires above 80 percent of a known limit
+    interval: 1m
+    input_series:
+      - series: 'marotte_engine_resident_memory_bytes{job="marotte",instance="a:9847"}'
+        values: "3000 3300x10"
+      - series: 'marotte_engine_heap_limit_bytes{job="marotte",instance="a:9847"}'
+        values: "4000x10"
+      # Below the threshold.
+      - series: 'marotte_engine_resident_memory_bytes{job="marotte",instance="b:9847"}'
+        values: "3000x10"
+      - series: 'marotte_engine_heap_limit_bytes{job="marotte",instance="b:9847"}'
+        values: "4000x10"
+      # An unknown limit exports no limit series, so no ratio.
+      - series: 'marotte_engine_resident_memory_bytes{job="marotte",instance="c:9847"}'
+        values: "9000x10"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: MarotteEngineMemoryHigh
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: MarotteEngineMemoryHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847"}
+            exp_annotations:
+              summary: "marotte's agent engine is close to its memory limit"
+              description: >
+                The engine's resident memory is above 80% of its JavaScript heap
+                limit. Past the limit the engine crashes and every running reply
+                stops. Raise Agent engine memory limit in Settings if the container
+                has memory to spare.
+
+  - name: MarottePromptFailures fires at 5 failures across classes and leaves pipe deaths out
+    interval: 1m
+    input_series:
+      - series: 'marotte_prompt_failures_total{job="marotte",instance="a:9847",class="auth"}'
+        values: "0 1 2 3 3x20"
+      - series: 'marotte_prompt_failures_total{job="marotte",instance="a:9847",class="throttled"}'
+        values: "0 0 0 0 1 2x20"
+      - series: 'marotte_prompt_failures_total{job="marotte",instance="b:9847",class="pipe_death"}'
+        values: "0 2 4 6 8 10x20"
+      - series: 'marotte_prompt_failures_total{job="marotte",instance="b:9847",class="fatal"}'
+        values: "0 1 1 1 1 1x20"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: MarottePromptFailures
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: MarottePromptFailures
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847"}
+            exp_annotations:
+              summary: "marotte prompts keep failing"
+              description: >
+                5 or more prompts failed in 15 minutes. Common causes are an
+                expired Kiro sign-in, a model the account cannot use and
+                throttling. The prompt failed log lines carry each failure's class.
+
+  - name: MarotteSignInStagedCopyLeft fires for a refused save and not for a failed write
+    interval: 1m
+    input_series:
+      - series: 'marotte_signin_save_failures_total{job="marotte",instance="a:9847",backend="kiro",reason="staged_copy_left"}'
+        values: "0 0 1x20"
+      - series: 'marotte_signin_save_failures_total{job="marotte",instance="a:9847",backend="kiro",reason="write_failed"}'
+        values: "0 0 1x20"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: MarotteSignInStagedCopyLeft
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847", backend: kiro, reason: staged_copy_left}
+            exp_annotations:
+              summary: "marotte refused to save a sign-in"
+              description: >
+                A file an earlier sign-in save left is still on disk, so every
+                sign-in change fails until it goes. marotte retries the cleanup.
+                The log line names the file, which you can delete inside the
+                container.
+
+  - name: MarotteScheduleFailing fires at the second failed slot in a row and clears on a success
+    interval: 1m
+    input_series:
+      - series: 'marotte_schedule_failed_slots{job="marotte",instance="a:9847",rule_id="r1"}'
+        values: "0 1 2 3 0"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: MarotteScheduleFailing
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: MarotteScheduleFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847", rule_id: r1}
+            exp_annotations:
+              summary: "A marotte schedule keeps ending without a completed run"
+              description: >
+                A schedule's last 2 or more slots ended without a completed run,
+                from a failed launch, a held sign-in, a busy engine or a failed
+                run. The schedule's row on the Workflows panel shows the last
+                reason.
+      - eval_time: 4m
+        alertname: MarotteScheduleFailing
+        exp_alerts: []
+
+  - name: MarotteScheduleStalled fires once a slot is 10 minutes overdue for 5 minutes
+    interval: 1m
+    input_series:
+      # Due at 60s and never judged.
+      - series: 'marotte_schedule_next_due_timestamp_seconds{job="marotte",instance="a:9847",rule_id="r1"}'
+        values: "60x30"
+      # Judged on time each minute, so its next slot is always ahead.
+      - series: 'marotte_schedule_next_due_timestamp_seconds{job="marotte",instance="a:9847",rule_id="r2"}'
+        values: "60+60x30"
+    alert_rule_test:
+      # Overdue by more than 600s from 12m, so pending until 17m.
+      - eval_time: 16m
+        alertname: MarotteScheduleStalled
+        exp_alerts: []
+      - eval_time: 17m
+        alertname: MarotteScheduleStalled
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847", rule_id: r1}
+            exp_annotations:
+              summary: "A marotte schedule has a slot overdue by over 10 minutes"
+              description: >
+                A schedule slot fell due over 10 minutes ago and marotte has not
+                started or skipped it. The engine may have been busy all that time,
+                the schedule runner may be stuck, or the schedule's saved state
+                cannot be read.
+
+  - name: MarotteScheduleSlotNotStarted fires for a day after a slot starts no run
+    interval: 1h
+    input_series:
+      - series: 'marotte_schedule_slots_not_started_total{job="marotte",instance="a:9847",event="signin_held"}'
+        values: "0 0 1x30"
+      - series: 'marotte_schedule_slots_not_started_total{job="marotte",instance="a:9847",event="launch_failed"}'
+        values: "0x30"
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: MarotteScheduleSlotNotStarted
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: MarotteScheduleSlotNotStarted
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847", event: signin_held}
+            exp_annotations:
+              summary: "A marotte schedule slot started no run"
+              description: >
+                In the last 24 hours a schedule slot started no run. The event
+                label says why: launch_failed is a launch error, signin_held a
+                sign-in held past its grace, engine_busy an engine busy until the
+                next slot.
+      - eval_time: 26h
+        alertname: MarotteScheduleSlotNotStarted
+        exp_alerts: []
+
+  - name: MarotteUnattendedRunNeedsApproval names the run's origin
+    interval: 1m
+    input_series:
+      - series: 'marotte_unattended_run_failures_total{job="marotte",instance="a:9847",origin="triggered",reason="needs_approval"}'
+        values: "0 1x10"
+      - series: 'marotte_unattended_run_failures_total{job="marotte",instance="a:9847",origin="scheduled",reason="overran"}'
+        values: "0 1x10"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: MarotteUnattendedRunNeedsApproval
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847", origin: triggered, reason: needs_approval}
+            exp_annotations:
+              summary: "An unattended marotte run failed on a permission request"
+              description: >
+                A triggered run asked to approve a tool with nobody
+                watching, was refused and failed. Add a permission rule for that
+                tool, or turn on approval under Unattended runs in Settings.
+
+  - name: MarotteUnattendedRunStopped covers the five stop reasons and leaves the others to their rules
+    interval: 1m
+    input_series:
+      - series: 'marotte_unattended_run_failures_total{job="marotte",instance="a:9847",origin="scheduled",reason="overran"}'
+        values: "0 1x10"
+      - series: 'marotte_unattended_run_failures_total{job="marotte",instance="a:9847",origin="triggered",reason="orphaned"}'
+        values: "0 1x10"
+      - series: 'marotte_unattended_run_failures_total{job="marotte",instance="a:9847",origin="scheduled",reason="needs_approval"}'
+        values: "0 1x10"
+      - series: 'marotte_unattended_run_failures_total{job="marotte",instance="a:9847",origin="scheduled",reason="cancel_given_up"}'
+        values: "0 1x10"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: MarotteUnattendedRunStopped
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847", origin: scheduled, reason: overran}
+            exp_annotations:
+              summary: "marotte stopped an unattended run"
+              description: >
+                A scheduled run ended as overran. overran
+                outlived its slot, backstop spent its time budget, stalled stopped
+                making progress, paused had nobody to resume it, and orphaned was
+                cut off by a restart.
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847", origin: triggered, reason: orphaned}
+            exp_annotations:
+              summary: "marotte stopped an unattended run"
+              description: >
+                A triggered run ended as orphaned. overran
+                outlived its slot, backstop spent its time budget, stalled stopped
+                making progress, paused had nobody to resume it, and orphaned was
+                cut off by a restart.
+
+  - name: MarotteUnattendedRunCancelFailed fires when every cancel was refused
+    interval: 1m
+    input_series:
+      - series: 'marotte_unattended_run_failures_total{job="marotte",instance="a:9847",origin="scheduled",reason="cancel_given_up"}'
+        values: "0 1x10"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: MarotteUnattendedRunCancelFailed
+        exp_alerts:
+          - exp_labels: {severity: critical, job: marotte, instance: "a:9847", origin: scheduled, reason: cancel_given_up}
+            exp_annotations:
+              summary: "marotte could not cancel an unattended run"
+              description: >
+                marotte decided to stop a scheduled run, but kiro-cli
+                refused every cancel, so the run may still be using tools with
+                nobody watching. Cancel it from its tab, or use Restart now under
+                Agent engine in Settings.
+
+  - name: MarotteUnattendedRunSelfApproved fires per origin
+    interval: 1m
+    input_series:
+      - series: 'marotte_unattended_approvals_total{job="marotte",instance="a:9847",origin="triggered"}'
+        values: "0 2x10"
+      - series: 'marotte_unattended_approvals_total{job="marotte",instance="a:9847",origin="scheduled"}'
+        values: "0x10"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: MarotteUnattendedRunSelfApproved
+        exp_alerts:
+          - exp_labels: {severity: warning, job: marotte, instance: "a:9847", origin: triggered}
+            exp_annotations:
+              summary: "marotte approved a tool for an unattended run"
+              description: >
+                A triggered run had a tool request approved with nobody
+                watching, because approval under Unattended runs in Settings is
+                on. A triggered run can act on text other people wrote. Turn the
+                setting off to refuse instead.
