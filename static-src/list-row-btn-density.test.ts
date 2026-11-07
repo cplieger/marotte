@@ -15,10 +15,9 @@ let style: HTMLStyleElement;
 let pointerWas: string | null;
 const hosts: HTMLElement[] = [];
 
-function track<T extends HTMLElement>(el: T): T {
+function track(el: HTMLElement): void {
   document.body.append(el);
   hosts.push(el);
-  return el;
 }
 
 function rowWithAction(): { row: HTMLElement; btn: HTMLElement } {
