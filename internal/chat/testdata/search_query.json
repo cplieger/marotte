@@ -1,0 +1,272 @@
+{
+  "_comment": [
+    "The chat search's query parse, as parseSearchQuery (internal/chat/search.go) reports it.",
+    "",
+    "Go PRODUCES this file (TestSearchQueryFixture) and static-src/chat-query.node.test.ts CONSUMES it",
+    "through parseChatQuery. file and tool are lowercased, turn is -1 when absent, the last filter of a",
+    "name wins, and anything the rule refuses stays a term.",
+    "",
+    "Regenerate with: UPDATE_GOLDEN=1 go test ./internal/chat/ -run TestSearchQueryFixture",
+    "then, from static-src/: npx vitest --run --project node chat-query.node.test.ts"
+  ],
+  "rows": [
+    {
+      "raw": "deadset security failure",
+      "terms": [
+        {
+          "words": [
+            "deadset"
+          ]
+        },
+        {
+          "words": [
+            "security"
+          ]
+        },
+        {
+          "words": [
+            "failure"
+          ]
+        }
+      ],
+      "filters": {
+        "file": "",
+        "tool": "",
+        "turn": -1
+      }
+    },
+    {
+      "raw": "\"security failure\" deadset",
+      "terms": [
+        {
+          "words": [
+            "security",
+            "failure"
+          ]
+        },
+        {
+          "words": [
+            "deadset"
+          ]
+        }
+      ],
+      "filters": {
+        "file": "",
+        "tool": "",
+        "turn": -1
+      }
+    },
+    {
+      "raw": "file:Main.go retry",
+      "terms": [
+        {
+          "words": [
+            "retry"
+          ]
+        }
+      ],
+      "filters": {
+        "file": "main.go",
+        "tool": "",
+        "turn": -1
+      }
+    },
+    {
+      "raw": "tool:ReadFile turn:3",
+      "terms": [],
+      "filters": {
+        "file": "",
+        "tool": "readfile",
+        "turn": 3
+      }
+    },
+    {
+      "raw": "turn:0",
+      "terms": [
+        {
+          "words": [
+            "turn:0"
+          ]
+        }
+      ],
+      "filters": {
+        "file": "",
+        "tool": "",
+        "turn": -1
+      }
+    },
+    {
+      "raw": "turn:abc",
+      "terms": [
+        {
+          "words": [
+            "turn:abc"
+          ]
+        }
+      ],
+      "filters": {
+        "file": "",
+        "tool": "",
+        "turn": -1
+      }
+    },
+    {
+      "raw": "turn:-1",
+      "terms": [
+        {
+          "words": [
+            "turn:-1"
+          ]
+        }
+      ],
+      "filters": {
+        "file": "",
+        "tool": "",
+        "turn": -1
+      }
+    },
+    {
+      "raw": "turn:+2",
+      "terms": [],
+      "filters": {
+        "file": "",
+        "tool": "",
+        "turn": 2
+      }
+    },
+    {
+      "raw": "turn:99999999999999999999",
+      "terms": [
+        {
+          "words": [
+            "turn:99999999999999999999"
+          ]
+        }
+      ],
+      "filters": {
+        "file": "",
+        "tool": "",
+        "turn": -1
+      }
+    },
+    {
+      "raw": "http://x",
+      "terms": [
+        {
+          "words": [
+            "http://x"
+          ]
+        }
+      ],
+      "filters": {
+        "file": "",
+        "tool": "",
+        "turn": -1
+      }
+    },
+    {
+      "raw": "file:\"a b\"",
+      "terms": [
+        {
+          "words": [
+            "file:"
+          ]
+        },
+        {
+          "words": [
+            "a",
+            "b"
+          ]
+        }
+      ],
+      "filters": {
+        "file": "",
+        "tool": "",
+        "turn": -1
+      }
+    },
+    {
+      "raw": "file:a.go file:b.go",
+      "terms": [],
+      "filters": {
+        "file": "b.go",
+        "tool": "",
+        "turn": -1
+      }
+    },
+    {
+      "raw": "FILE:A.go Tool:Edit",
+      "terms": [],
+      "filters": {
+        "file": "a.go",
+        "tool": "edit",
+        "turn": -1
+      }
+    },
+    {
+      "raw": "\"file:a.go\"",
+      "terms": [
+        {
+          "words": [
+            "file:a.go"
+          ]
+        }
+      ],
+      "filters": {
+        "file": "",
+        "tool": "",
+        "turn": -1
+      }
+    },
+    {
+      "raw": "role:user",
+      "terms": [
+        {
+          "words": [
+            "role:user"
+          ]
+        }
+      ],
+      "filters": {
+        "file": "",
+        "tool": "",
+        "turn": -1
+      }
+    },
+    {
+      "raw": "file:",
+      "terms": [
+        {
+          "words": [
+            "file:"
+          ]
+        }
+      ],
+      "filters": {
+        "file": "",
+        "tool": "",
+        "turn": -1
+      }
+    },
+    {
+      "raw": "-v --force",
+      "terms": [
+        {
+          "words": [
+            "-v"
+          ]
+        },
+        {
+          "words": [
+            "--force"
+          ]
+        }
+      ],
+      "filters": {
+        "file": "",
+        "tool": "",
+        "turn": -1
+      }
+    }
+  ]
+}

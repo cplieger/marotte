@@ -409,6 +409,8 @@ var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[marotte.EngineState](),
 	// Each kind resolves to a different rendered surface; the decoder is strict.
 	wiregen.StringEnum[chat.SegmentKind](),
+	// A hit's item kind picks the element find-in-chat lands on; the decoder is strict.
+	wiregen.StringEnum[chat.ItemKind](),
 	// The client branches on it to say "wait" or "narrow the query".
 	wiregen.StringEnum[mcp.RegistryFailureReason](),
 	// Directory, name and content rows open differently; the decoder is strict.

@@ -12,6 +12,7 @@ import type {
   ToolStatus,
   FileChange,
 } from "./types.js";
+import { entryUnit, stampFindUnit } from "./find-unit.js";
 import type { Turn, TurnOutcome } from "./turns.js";
 import { closeOfBody, entryUnion, payloadOf } from "./turns.js";
 import type { EventEntry } from "./messages-events.js";
@@ -24,7 +25,6 @@ import {
   continuesRun,
   proseRunAt,
   runResults,
-  turnOrdinalOf,
   turnSpan,
   type EntryRange,
   type RunResults,
@@ -646,49 +646,6 @@ export function mountedToolCalls(turnID: string): ToolCall[] {
  */
 export function blockElement(turnID: string, seq: number): HTMLElement | undefined {
   return renders.get(turnID)?.entryEls.get(seq);
-}
-
-/**
- * Where `entryID`'s words start inside their prose run and the run's whole length, in runes to match the
- * server. Here because the run's source is this module's; undefined for an entry no run holds.
- */
-export function runOffsetOf(
-  turnID: string,
-  entryID: string,
-): { offset: number; total: number } | undefined {
-  const st = renders.get(turnID);
-  if (st === undefined) {
-    return undefined;
-  }
-  const view = runHolding(st, entryID);
-  if (view === undefined) {
-    return undefined;
-  }
-  let offset = 0;
-  for (const seq of view.seqs) {
-    if (entryAt(st.turn, seq)?.id === entryID) {
-      return { offset, total: runeLen(runText(st, view)) };
-    }
-    offset += runeLen(entryTextAt(st, seq));
-  }
-  // The open tail has no `seq`, so its text starts where the sealed members end.
-  return view.openID === entryID ? { offset, total: runeLen(runText(st, view)) } : undefined;
-}
-
-/** The run holding `entryID`, whether it holds it as a sealed member or as its open tail. */
-function runHolding(st: TurnRender, entryID: string): ProseRun | undefined {
-  const seq = turnOrdinalOf(st.turn, entryID);
-  const head = seq === undefined ? undefined : st.runHead.get(seq);
-  if (head !== undefined) {
-    return st.proseRuns.get(head);
-  }
-  const tail = st.openTail;
-  return tail?.kind === "text" && tail.id === entryID ? tail.run : undefined;
-}
-
-/** Runes, not UTF-16 units, matching Go's count; not `Intl.Segmenter`, whose grapheme clusters disagree with it. */
-function runeLen(s: string): number {
-  return Array.from(s).length;
 }
 
 /**
@@ -2017,6 +1974,7 @@ function stampEntry(st: TurnRender, el: HTMLElement, seq: number): void {
   if (e !== undefined) {
     el.dataset["entryId"] = e.id;
   }
+  stampFindUnit(el, e === undefined ? undefined : entryUnit(e.kind));
   delete el.dataset["openTurn"];
   delete el.dataset["openId"];
   st.entryEls.set(seq, el);

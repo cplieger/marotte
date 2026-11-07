@@ -9,6 +9,7 @@ import type {
   TurnRevertCause,
 } from "./types.js";
 import { el } from "@cplieger/ui";
+import { CHROME_ATTR } from "./chrome-attr.js";
 import { chevronEl } from "./chevron.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_ALERT, ICON_COMPACT, ICON_REWIND, ICON_SHIELD, ICON_TOOL_SWITCH } from "./icons.js";
@@ -59,11 +60,11 @@ export function buildEvent(e: EventEntry): HTMLElement {
       return boundary(
         "switched",
         ICON_TOOL_SWITCH,
-        message === "" ? "Auto moved to a stronger model" : message,
+        message === "" ? worded("Auto moved to a stronger model") : message,
       );
     }
     case "model_fallback": {
-      return boundary("switched", ICON_TOOL_SWITCH, fallbackLabel(e.payload));
+      return boundary("switched", ICON_TOOL_SWITCH, ...fallbackLabel(e.payload));
     }
     case "mode_switched": {
       // One boundary row for both switches, so a reader learns one shape whichever thing moved.
@@ -87,23 +88,17 @@ export function buildEvent(e: EventEntry): HTMLElement {
     case "compaction_failed": {
       // The compaction's own reason, never the turn's: `turnFailureText` owns that account and this row never repeats it.
       const reason = e.payload.reason;
-      return boundary(
-        "failed",
-        ICON_ALERT,
-        reason === "" ? "Compaction failed" : `Compaction failed: ${reason}`,
-      );
+      return reason === ""
+        ? boundary("failed", ICON_ALERT, worded("Compaction failed"))
+        : boundary("failed", ICON_ALERT, worded("Compaction failed: "), reason);
     }
     case "safety_blocked": {
       // KAS blocked the write or shell call upstream in enforce mode, so nothing ran; this is the durable record of the
       // safety banner. Chat-scoped because KAS's toolId there is a tool name.
       const props = e.payload.properties.join(", ");
-      return boundary(
-        "blocked",
-        ICON_SHIELD,
-        props === ""
-          ? "Infrastructure Safety blocked a change"
-          : `Infrastructure Safety blocked: ${props}`,
-      );
+      return props === ""
+        ? boundary("blocked", ICON_SHIELD, worded("Infrastructure Safety blocked a change"))
+        : boundary("blocked", ICON_SHIELD, worded("Infrastructure Safety blocked: "), props);
     }
   }
 }
@@ -138,19 +133,20 @@ const SWITCH_REASONS: Record<
  * holds) or the model the turn moved to, which a `session` scope keeps for the rest of the session; a retry on the
  * same model (KAS re-asking Auto) names no target. Model ids stay raw, as `switchedLabel` shows them.
  */
-function fallbackLabel(p: EntryModelFallback): string {
-  const cause = `${p.from} ${fallbackCause(p.trigger)}`;
+function fallbackLabel(p: EntryModelFallback): LabelPart[] {
+  const cause: LabelPart[] = [p.from, worded(` ${fallbackCause(p.trigger)}`)];
   const reason = p.reason ?? "";
   if (reason !== "") {
     const why = DECLINE_REASONS.get(reason) ?? reason;
-    return `${cause}, no fallback model available \u00b7 ${why}`;
+    return [...cause, worded(`, no fallback model available \u00b7 ${why}`)];
   }
   const to = p.to ?? "";
   if (to === "") {
     return cause;
   }
-  const retried = to === p.from ? `${cause}, retried` : `${cause}, retried on ${to}`;
-  return p.scope === "session" ? `${retried}, which now serves this session` : retried;
+  const retried: LabelPart[] =
+    to === p.from ? [...cause, worded(", retried")] : [...cause, worded(", retried on "), to];
+  return p.scope === "session" ? [...retried, worded(", which now serves this session")] : retried;
 }
 
 /** KAS's `trigger` is open: a value it adds later reads as an unknown cause. */
@@ -209,11 +205,20 @@ function modeSwitchedLabel(p: {
   return p.source === "agent" ? `${row}, switched by the agent` : row;
 }
 
+/** One piece of a row's label: the entry's own text, or wording the row composes (`worded`). */
+type LabelPart = string | HTMLElement;
+
+/** Wording the row composes around the entry's text: chrome, so find matches what the server searches, the entry's
+ *  text alone (internal/chat entrySegments). */
+function worded(text: string): HTMLElement {
+  return el("span", { [CHROME_ATTR]: "" }, text);
+}
+
 /** `icon` is a registry glyph, hidden from assistive tech: the label carries the row's meaning. */
-function boundary(kind: BoundaryKind, icon: string, label: string): HTMLElement {
+function boundary(kind: BoundaryKind, icon: string, ...label: LabelPart[]): HTMLElement {
   const node = el("div", { className: `boundary boundary-${kind}` });
   node.appendChild(el("span", { className: "boundary-icon", "aria-hidden": "true" }, iconEl(icon)));
-  node.appendChild(el("span", { className: "boundary-label" }, label));
+  node.appendChild(el("span", { className: "boundary-label" }, ...label));
   return node;
 }
 

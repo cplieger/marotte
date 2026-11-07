@@ -2,6 +2,7 @@
 // live and the parked ones frozen. Assistant bodies are composed by messages-blocks.ts.
 
 import type { EntryPrompt, Session } from "./types.js";
+import { stampFindUnit } from "./find-unit.js";
 import {
   get,
   getActive,
@@ -554,14 +555,10 @@ export function mountChatView(): void {
   // Both stub-landing surfaces call this module's on-demand build; injected because a static import back would cycle.
   initTurnRailCallbacks({ mountTurnBody, activeView: activeTranscriptView });
   // The ordinal is resolved in this projection, the one the grant is clamped against.
-  initSearchRevealBuilder(
-    (chatID, turnID, entryID) => {
-      const t = turnByID.get(turnID);
-      return mountTurnBody(chatID, turnID, t === undefined ? undefined : turnOrdinalOf(t, entryID));
-    },
-    mountTurnBodyForWalk,
-    endWalkReveal,
-  );
+  initSearchRevealBuilder((chatID, turnID, entryID) => {
+    const t = turnByID.get(turnID);
+    return mountTurnBody(chatID, turnID, t === undefined ? undefined : turnOrdinalOf(t, entryID));
+  }, foldReleasedTurn);
   // Scrolling re-windows, not repaints. Two hooks: the gesture says the reader moved, and the viewport change is the
   // frame to measure in. `onViewportChange` alone also fires for the anchoring a pass's own mutations cause.
   onReaderGesture(noteReaderMoved);
@@ -801,12 +798,8 @@ const PIN_GOAL_MS = 2000;
  */
 let demandPin: { chatID: string; turnID: string; at: number; until: number } | undefined;
 
-/** The turns a search-wide reveal built for the DOM walker, held until `chat-search.ts` ends the reveal. */
-let demandWalk: { chatID: string; turnIDs: Set<string> } | undefined;
-
 /**
- * The ordinals explicitly asked for in `t`: the live pin, else the walk, one overscan each side. The pin outranks
- * the walk.
+ * The ordinals explicitly asked for in `t`: the live pin, one overscan each side.
  */
 function demandRange(chatID: string, t: Turn): EntryRange | undefined {
   // `turnSpan`, not a rendered count: a grant is `seq` space.
@@ -824,9 +817,6 @@ function demandRange(chatID: string, t: Turn): EntryRange | undefined {
       from: Math.max(0, at - OVERSCAN_ENTRIES),
       to: Math.min(span, at + OVERSCAN_ENTRIES),
     };
-  }
-  if (demandWalk?.chatID === chatID && demandWalk.turnIDs.has(t.id)) {
-    return { from: 0, to: Math.min(span, 2 * OVERSCAN_ENTRIES) };
   }
   return undefined;
 }
@@ -1596,6 +1586,27 @@ function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void 
   wireRowToggle(header, btn);
 }
 
+/**
+ * Fold `turnID` now if search's reveal released it and nothing else holds it open, as a hand toggle folds: the fold
+ * pass defers a fold while the reader reads, and find's reader is always reading.
+ */
+function foldReleasedTurn(chatID: string, turnID: string): void {
+  if (chatID !== getActiveId()) {
+    return;
+  }
+  const t = turnByID.get(turnID);
+  const card = paintRoot().querySelector<HTMLElement>(`.turn[${KEY_ATTR}="${CSS.escape(turnID)}"]`);
+  const at = lastTurns.findIndex((x) => x.id === turnID);
+  if (t === undefined || card === null || card.hasAttribute("data-folded") || at < 0) {
+    return;
+  }
+  if (card.hasAttribute("data-no-fold") || isTurnOpen(chatID, t, at, lastTurns.length)) {
+    return;
+  }
+  setCardFolded(card, true);
+  syncTurnFace(card, t);
+}
+
 function turnBodyID(card: HTMLElement): string {
   return `${card.id}-body`;
 }
@@ -1760,15 +1771,19 @@ function syncNoticeText(card: HTMLElement, t: Turn): void {
   }
   // A bound's line rides a `clean` grade, so it takes the stop ink: the base ink is the failure red.
   const severity = failure === "" ? "stopped" : severityOf(t.outcome);
+  // Only a failure reason is searched (turn_close's), so only it is a search unit.
+  const unit = failure === "" ? undefined : "turn_failure";
   if (existing !== null) {
     if (existing.textContent !== text) {
       existing.textContent = text;
     }
     existing.dataset["severity"] = severity;
     existing.dataset["outcome"] = t.outcome;
+    stampFindUnit(existing, unit);
     return;
   }
   const notice = el("div", { className: "turn-notice" }, text);
+  stampFindUnit(notice, unit);
   notice.dataset["severity"] = severity;
   // The outcome beside the severity for the stated hue exception: `unknown` keeps a neutral ink, and severity alone
   // cannot tell it from `cancelled`.
@@ -2037,25 +2052,6 @@ export function mountTurnBody(chatID: string, turnID: string, at?: number): Prom
   // Ordinal 0 is the head, so the pin always carries a number.
   demandPin = { chatID, turnID, at: at ?? 0, until: Date.now() + PIN_GOAL_MS };
   return startDemandBuild(chatID, turnID);
-}
-
-/**
- * Build `turnID`'s body for the search walker under the walk's demand set, not the single navigation pin, which
- * a loop over many hit turns would keep overwriting.
- */
-export function mountTurnBodyForWalk(chatID: string, turnID: string): Promise<void> {
-  if (demandWalk?.chatID !== chatID) {
-    demandWalk = { chatID, turnIDs: new Set() };
-  }
-  demandWalk.turnIDs.add(turnID);
-  return startDemandBuild(chatID, turnID);
-}
-
-/** Release the walk's grants: the reveal has ended. */
-export function endWalkReveal(chatID: string): void {
-  if (demandWalk?.chatID === chatID) {
-    demandWalk = undefined;
-  }
 }
 
 function startDemandBuild(chatID: string, turnID: string): Promise<void> {

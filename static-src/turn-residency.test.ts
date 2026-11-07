@@ -66,8 +66,7 @@ vi.mock("./api-client.js", async () => ({
   }),
 }));
 
-const { mountChatView, mountTurnBody, mountTurnBodyForWalk, endWalkReveal, activeTranscriptView } =
-  await import("./messages.js");
+const { mountChatView, mountTurnBody, activeTranscriptView } = await import("./messages.js");
 const { setSessions, setActive, bumpMessages } = await import("./store.js");
 const { setTurnOpen, openForSearch, clearSearchOpened, resetFoldState } =
   await import("./fold-state.js");
@@ -1069,62 +1068,28 @@ describe("the cold build", () => {
 
   it("stops taking slices on the frame once the pass has spent its entry allowance", async () => {
     const id = chatID();
-    // Twelve WALK-granted turns: grants sit outside the budget, so only they can sum past one window.
-    // Granted before activation, so the creating paint bodies them.
-    const turnEntries: Entry[][] = [];
-    const grants: Promise<void>[] = [];
-    for (let n = 1; n <= 12; n++) {
-      const turnID = `h${String(n)}`;
-      grants.push(mountTurnBodyForWalk(id, turnID));
-      turnEntries.push(heavyTurn(turnID, 40, n));
-    }
-    await Promise.all(grants);
-    activate(id, turnEntries);
-
-    // A slice is 32 SEQ wide and the pass may mount 320, so exactly ten bodies get
-    // one; the last two are born empty. 31 rather than 32 ordinals, because seq 0 is
-    // the `turn_open` the HEADER draws rather than a body row.
-    const started = [];
-    for (let n = 1; n <= 12; n++) {
-      const ordinals = ordinalsIn(`h${String(n)}`);
-      expect(hasBody(`h${String(n)}`), `h${String(n)} resident`).toBe(true);
-      expect([0, 31]).toContain(ordinals);
-      if (ordinals > 0) {
-        started.push(n);
-      }
-    }
-    expect(started).toHaveLength(10);
-
-    // Nothing is lost: the drain finishes all twelve off the frame.
-    await vi.waitFor(() => {
-      for (let n = 1; n <= 12; n++) {
-        // 39 of 40 ordinals: the walk's grant is `2 * OVERSCAN_ENTRIES`, count-capped, in SEQ space (seq 0
-        // is the header). The point is every body reaching its whole grant.
-        expect(ordinalsIn(`h${String(n)}`), `h${String(n)} complete`).toBeGreaterThan(38);
-      }
+    // Eleven failed turns stay open (a broken turn never auto-folds), so the window fills its whole budget with
+    // first slices; a pin's grant sits outside that budget, so the pinned old turn sums the pass past it. Pinned
+    // before activation, so the creating paint bodies it.
+    void mountTurnBody(id, "h0");
+    const broken = Array.from({ length: 11 }, (_, i) => {
+      const t = heavyTurn(`b${String(i + 1)}`, 30, i + 2);
+      t[t.length - 1] = turnClose(`b${String(i + 1)}`, 31, "failed");
+      return t;
     });
-    // h12 is the NEWEST turn, so the plan's own window covers it whole and outranks
-    // the walk's narrower grant: 40 against the 39 every earlier turn lands.
-    expect(ordinalsIn("h12")).toBe(40);
-    endWalkReveal(id);
-  });
+    activate(id, [heavyTurn("h0", 40, 1), ...broken]);
 
-  it("holds a walk-revealed turn across the repaint the reveal itself asks for", async () => {
-    const id = chatID();
-    activate(id, [toolTurn("u1"), heavyTurn("big", RESIDENT_ENTRIES + 64, 2)]);
-    expect(hasBody("u1")).toBe(false);
+    const synced = (): number =>
+      ordinalsIn("h0") + broken.reduce((sum, _, i) => sum + ordinalsIn(`b${String(i + 1)}`), 0);
+    expect(hasBody("h0")).toBe(true);
+    expect(synced()).toBeLessThanOrEqual(RESIDENT_ENTRIES);
 
-    // The search-wide loop builds every hit turn and THEN repaints, so grants must survive that pass;
-    // one pin slot cannot serve the loop, hence the walk's own scope.
-    await mountTurnBodyForWalk(id, "u1");
-    expect(hasBody("u1")).toBe(true);
-    bumpMessages(id, "shape");
-    expect(hasBody("u1")).toBe(true);
-
-    // And it ends with the reveal rather than with a clock.
-    endWalkReveal(id);
-    bumpMessages(id, "shape");
-    expect(hasBody("u1")).toBe(false);
+    // Nothing is lost: the drain finishes off the frame, the pin's whole grant (one overscan past its head; seq 0
+    // is the header) and the window's whole budget.
+    await vi.waitFor(() => {
+      expect(ordinalsIn("h0"), "h0 complete").toBe(OVERSCAN_ENTRIES - 1);
+      expect(synced(), "every grant complete").toBe(OVERSCAN_ENTRIES - 1 + RESIDENT_ENTRIES);
+    });
   });
 
   it("clamps an ordinal past the turn's span into it, rather than granting nothing", async () => {
@@ -1140,20 +1105,6 @@ describe("the cold build", () => {
     expect(mountedSeqs("u-heavy")[0]).toBeGreaterThan(96 - GRANT);
     expect(mountedSeqs("u-heavy").at(-1)).toBeGreaterThanOrEqual(96 - OVERSCAN_ENTRIES);
     expect(spacersIn("u-heavy")).toContain("head");
-  });
-
-  it("gives the PIN's range to a turn the walk also named", async () => {
-    const id = chatID();
-    activate(id, [heavyTurn("u-heavy", 96), heavyTurn("big", RESIDENT_ENTRIES + 64, 2)]);
-    // Every hit turn is in the walk's set, so navigating onto one is the common path; the pin names the
-    // ordinal the walk's head range would leave unmounted.
-    await mountTurnBodyForWalk(id, "u-heavy");
-    expect(spacersIn("u-heavy")).toEqual(["tail"]);
-
-    await mountTurnBody(id, "u-heavy", GRANT);
-    bumpMessages(id, "shape");
-    expect(spacersIn("u-heavy")).toContain("head");
-    endWalkReveal(id);
   });
 
   it("takes an evicted turn's owed slices with it instead of rebuilding the body", async () => {

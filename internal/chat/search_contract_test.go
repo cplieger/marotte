@@ -31,17 +31,17 @@ var searchFixtureComment = []string{
 	"decoders are generated from them; this file is what keeps the ENCODER honest against",
 	"that decoder. TestSearchWireContract (Go) asserts the scan marshals to exactly these",
 	"bytes, and chat-search.node.test.ts (TypeScript) decodes every reply through the",
-	"generated decodeSearchResult and pins the field-level invariants (segment-relative",
-	"RUNE offsets, the entry-kind zero contract, the tally beside the hits).",
+	"generated decodeSearchResult and pins the field-level invariants (one hit per item,",
+	"segments only on a free-text hit, a spread reply's turn hits, the tally beside the hits).",
 	"",
 	"Regenerate with: UPDATE_GOLDEN=1 go test ./internal/chat/ -run TestSearchWireContract",
 	"then re-run the TS half: npx vitest --run chat-search.node.test.ts (from static-src/).",
 }
 
-// searchContractEntries is the fixture's log: turn 1 covers every free-text segment kind (the prompt twice, the second
-// after a multibyte word, its attachment name, thinking, text, a delegate lane, one tool pair per settled kind, steer,
-// plan, failed close); turn 2 is `turn:2`'s target, with entry hits and no prose behind one, and the workflow message
-// turn 3's wake draws in its header, which only the wake's hit names. Every declared kind must occur here.
+// searchContractEntries is the fixture's log: turn 1 covers every free-text segment and item kind (the prompt after
+// a multibyte word, its attachment name, thinking, text, a delegate lane, one tool pair per settled kind, steer, a
+// notice, plan, failed close); turn 2 is `turn:2`'s target, with a tool item and no prose behind it, and the workflow
+// message turn 3's wake draws in its header, which only the wake's hit names. Every declared kind must occur here.
 func searchContractEntries() ([]marotte.Entry, map[string]struct{}) {
 	return chatOf(
 		openTurn("t-1", 1, &marotte.EntryPrompt{
@@ -80,6 +80,7 @@ func searchContractEntries() ([]marotte.Entry, map[string]struct{}) {
 			add("", "steer-1", marotte.EntryKindSteer, marotte.EntrySteer{
 				Text: "also cap the retry count", Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead,
 			}).
+			add("", "cf-1", marotte.EntryKindCompactionFailed, marotte.EntryCompactionFailed{Reason: "the retry summary was too large"}).
 			add("", "plan-1", marotte.EntryKindPlan, marotte.EntryPlan{Entries: []marotte.PlanEntry{
 				{Content: "Trace the retry path", Status: marotte.PlanCompleted},
 			}}).
@@ -103,11 +104,13 @@ func TestSearchWireContract(t *testing.T) {
 	fx := searchFixture{
 		Comment: searchFixtureComment,
 		Queries: []searchQueryCase{
-			{Name: "free text hits every segment kind", Query: "retry"},
-			{Name: "filter only lists matching entries", Query: "turn:2"},
+			{Name: "free text hits every segment and item kind", Query: "retry"},
+			{Name: "filter only lists matching items", Query: "turn:2"},
+			{Name: "words only spread across one turn's items", Query: "semantics budget"},
 		},
 	}
 	kinds := make(map[SegmentKind]int)
+	items := make(map[ItemKind]int)
 	for i := range fx.Queries {
 		q := &fx.Queries[i]
 		q.Result = search(entries, drawn, q.Query, q.CaseSensitive)
@@ -115,12 +118,20 @@ func TestSearchWireContract(t *testing.T) {
 			t.Fatalf("Search(%q) found nothing; an empty fixture would pin nothing", q.Query)
 		}
 		for _, h := range q.Result.Matches {
-			kinds[h.SegmentKind]++
+			items[h.Kind]++
+			for _, k := range h.Segments {
+				kinds[k]++
+			}
 		}
 	}
-	// segmentKinds, not a second literal.
+	// segmentKinds and itemKinds, not a second literal.
 	for _, want := range segmentKinds {
 		if kinds[want] == 0 {
+			t.Errorf("fixture carries no %q segment; the TS side cannot pin a kind that never occurs", want)
+		}
+	}
+	for _, want := range itemKinds {
+		if items[want] == 0 {
 			t.Errorf("fixture carries no %q hit; the TS side cannot pin a kind that never occurs", want)
 		}
 	}
@@ -149,7 +160,7 @@ var searchAllFixtureComment = []string{
 }
 
 // TestSearchAllWireContract pins the cross-chat reply's shape with three rows: title and body, body-only with
-// several hits (a multibyte word keeps rune offsets honest), and title-only. Directories are written directly to fix
+// several hits, and title-only. Directories are written directly to fix
 // UpdatedAt and mtime order.
 func TestSearchAllWireContract(t *testing.T) {
 	s, err := NewStore(t.TempDir())

@@ -3,7 +3,8 @@ package chat
 // Cross-chat search for the History page: which conversation was it in, so it returns chats ranked by match quality,
 // each with its best line. Each chat goes through the in-chat scan, so a hit here is one Ctrl-F would find; the
 // candidate index (search_index.go) skips chats that cannot hold the query. This file owns the fan-out, the per-chat
-// verdict (chatScan) and the ranking: every occurrence divided by the byte volume the same walk read.
+// verdict (chatScan) and the ranking: matching items divided by the byte volume the same walk read, spread chats
+// last.
 
 import (
 	"cmp"
@@ -23,7 +24,8 @@ import (
 // The result cap and title boost are KiroCrew's `search_sessions(limit=50)` and `_TITLE_BOOST`, values included.
 const (
 	maxChatResults = 50
-	// titleBoost multiplies title hits: titles are short and intentional, stronger evidence than a body mention.
+	// titleBoost weighs a title holding every term: titles are short and intentional, stronger evidence than a body
+	// mention.
 	titleBoost = 10.0
 )
 
@@ -32,12 +34,15 @@ const searchWorkers = 8
 
 // Match is one chat that matched, with the evidence for showing it.
 type Match struct {
-	// Best is the earliest hit (bestHit), the row's line and jump target; absent on a title-only match.
+	// Best is the hit whose terms sit closest together (the tightest window, earliest on a tie), the row's line and
+	// jump target; absent on a title-only match.
 	Best *Hit           `json:"best,omitempty"`
 	Name string         `json:"name"`
 	ID   marotte.ChatID `json:"id"`
-	// Hits is every occurrence the chat holds, so a row can say "and 11 more".
+	// Hits is every matching item (or spread turn) the chat holds, so a row can say "and 11 more".
 	Hits int `json:"hits"`
+	// Spread is true when no item of the chat holds every term, only a turn between its items.
+	Spread bool `json:"spread"`
 	// Score ranks the row (scoreChat).
 	Score float64 `json:"score"`
 	// UpdatedAt breaks ties toward the more recent conversation.
@@ -61,8 +66,8 @@ func (s *Store) searchAll(ctx context.Context, query string) SearchAllResult {
 		return SearchAllResult{Matches: []Match{}, Truncated: truncated}
 	}
 
-	// Ask the filters about the free text the needle scans; a filter-only query has none, so every chat is a candidate.
-	want := queryTrigrams(parseSearchQuery(query, false).text)
+	// Ask the filters about the words the matcher scans; a filter-only query has none, so every chat is a candidate.
+	want := queryTrigrams(parseSearchQuery(query, false).terms)
 	found := make([]chatScan, len(entries))
 	ran := parallel.Bounded(ctx, entries, searchWorkers, func(idx int, ce chatEntry) {
 		found[idx] = s.searchOneChat(ctx, ce, query, want)
@@ -80,6 +85,7 @@ func (s *Store) searchAll(ctx context.Context, query string) SearchAllResult {
 	}
 	slices.SortStableFunc(matches, func(a, b Match) int {
 		return cmp.Or(
+			compareBool(a.Spread, b.Spread),
 			cmp.Compare(b.Score, a.Score),
 			cmp.Compare(b.UpdatedAt, a.UpdatedAt),
 		)
@@ -124,23 +130,25 @@ func (s *Store) searchOneChat(ctx context.Context, ce chatEntry, query string, w
 		return chatScan{unread: true}
 	}
 	// Always case-insensitive: the question is asked from memory.
-	res, chars := searchEntries(s.searchView(entries), drawn, query, false)
-	// A title naming the subject is a result even if the body never repeats it.
-	titles := titleHits(c.Name, query)
-	if res.Matched == 0 && titles == 0 {
+	sc := searchEntries(s.searchView(entries), drawn, query, false)
+	res := sc.res
+	// A title naming the subject is a result even if the body never repeats it, and a one-place match even when the
+	// body only spreads the words.
+	title := titleAll(c.Name, query)
+	if res.Matched == 0 && title == 0 {
 		return chatScan{}
 	}
 	m := Match{
 		Name:      c.Name,
 		ID:        marotte.ChatID(c.ID),
 		Hits:      res.Matched,
-		Score:     scoreChat(res.Matched, titles, chars),
+		Spread:    res.Spread && title == 0,
+		Score:     scoreChat(res.Matched, title, sc.chars),
 		UpdatedAt: c.UpdatedAt,
 	}
-	// A title-only match has no line; the row shows the name. The capped list is in log order, so the earliest hit is in
-	// it.
-	if len(res.Matches) > 0 {
-		best := bestHit(res.Matches)
+	// A title-only match has no line; the row shows the name.
+	if sc.best >= 0 {
+		best := res.Matches[sc.best]
 		m.Best = &best
 	}
 	return chatScan{match: m}
@@ -191,29 +199,41 @@ func (s *Store) chatEntries(ctx context.Context) (entries []chatEntry, truncated
 	return entries, len(skipped) > 0
 }
 
-// bestHit picks the row's hit: the earliest, where the conversation first touches the subject.
-func bestHit(hits []Hit) Hit {
-	best := hits[0]
-	for i := range hits {
-		if hits[i].Turn < best.Turn {
-			best = hits[i]
-		}
+// compareBool orders false before true.
+func compareBool(a, b bool) int {
+	switch {
+	case a == b:
+		return 0
+	case a:
+		return 1
 	}
-	return best
+	return -1
 }
 
 // scoreChat ranks a matching chat with KiroCrew's formula:
 //
-//	score = title_hits*titleBoost + content_hits/sqrt(1 + docChars/1024)
+//	score = title_all*titleBoost + items/sqrt(1 + docChars/1024)
 //
-// docChars is the byte volume the scan read; the `1 +` keeps a tiny chat from dividing by nearly zero.
-func scoreChat(contentHits, titleHitCount, docChars int) float64 {
+// items counts matching items (or spread turns), title_all is 1 when the title holds every term, and docChars is the
+// byte volume the scan read; the `1 +` keeps a tiny chat from dividing by nearly zero.
+func scoreChat(items, title, docChars int) float64 {
 	lengthNorm := math.Sqrt(1 + float64(docChars)/1024)
-	return float64(titleHitCount)*titleBoost + float64(contentHits)/lengthNorm
+	return float64(title)*titleBoost + float64(items)/lengthNorm
 }
 
-// titleHits counts the query's free text in the chat name, through parseSearchQuery so a filter-only query has an
-// empty needle that matches nothing.
-func titleHits(name, query string) int {
-	return parseSearchQuery(query, false).needle.Count(name)
+// titleAll is 1 when the chat name holds every term of the query's free text, else 0. Through parseSearchQuery, so
+// a filter-only query has no terms and matches no title.
+func titleAll(name, query string) int {
+	q := parseSearchQuery(query, false)
+	if q.matcher.Terms() == 0 {
+		return 0
+	}
+	seen := make(map[int]bool)
+	for _, sp := range q.matcher.Spans(name) {
+		seen[sp.Term] = true
+	}
+	if len(seen) < q.matcher.Terms() {
+		return 0
+	}
+	return 1
 }

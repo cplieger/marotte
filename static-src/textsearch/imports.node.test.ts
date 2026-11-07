@@ -45,8 +45,14 @@ function specifiers(fileName: string, source: string): string[] {
 }
 
 describe("static-src/textsearch is a leaf", () => {
-  it("holds exactly the three leaf modules", () => {
-    expect(leafModules()).toEqual(["copy.ts", "fold.ts", "scan.ts"]);
+  it("holds exactly the five leaf modules", () => {
+    expect(leafModules()).toEqual([
+      "copy.ts",
+      "fold-table.gen.ts",
+      "fold.ts",
+      "query.ts",
+      "scan.ts",
+    ]);
   });
 
   it("imports nothing outside its own directory", () => {
@@ -61,11 +67,17 @@ describe("static-src/textsearch is a leaf", () => {
     expect(outside, "a leaf that reaches into marotte cannot be extracted").toEqual([]);
   });
 
-  it("imports exactly the declared edge list: scan reaches fold, nothing else reaches anything", () => {
+  it("imports exactly the declared edge list: scan and query reach fold, fold its table", () => {
     const edges = leafModules().map(
       (file) => `${file} -> ${specifiers(file, readFileSync(join(LEAF, file), "utf8")).join(",")}`,
     );
-    expect(edges).toEqual(["copy.ts -> ", "fold.ts -> ", "scan.ts -> ./fold.js"]);
+    expect(edges).toEqual([
+      "copy.ts -> ",
+      "fold-table.gen.ts -> ",
+      "fold.ts -> ./fold-table.gen.js",
+      "query.ts -> ./fold.js",
+      "scan.ts -> ./fold.js",
+    ]);
   });
 
   it("would report an import that reaches out, so the empty list above means something", () => {

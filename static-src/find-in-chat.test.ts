@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("./scroll.js", () => ({
   jumpTo: vi.fn(),
+  // A landing's hold corrects the view through it once the layout settles.
+  shiftScroll: vi.fn(),
   // A tool group's header parks the reader when it opens.
   setUserScrolledUp: vi.fn(),
   // Inert: these tests drive re-runs through the module's own paths.
@@ -18,13 +20,6 @@ vi.mock("./store-load.js", { spy: true });
 vi.mock("./run-view.js", () => ({ openRunView: vi.fn() }));
 // Same for the delegate tab.
 vi.mock("./subagent-view.js", () => ({ openSubagentView: vi.fn() }));
-// The renderer's prose-run offset table, the one export reached: elements resolve from the card's own stamps.
-const { runOffsetOf } = vi.hoisted(() => ({
-  runOffsetOf: vi.fn<
-    (turnID: string, entryID: string) => { offset: number; total: number } | undefined
-  >(() => undefined),
-}));
-vi.mock("./messages-blocks.js", () => ({ runOffsetOf }));
 
 import { FindEngine } from "./find-engine.js";
 import type * as ModFindInChat from "./find-in-chat.js";
@@ -251,8 +246,9 @@ describe("Ctrl-F overlay", () => {
         <div id="messages-wrap-outer">
           <div id="messages-wrap">
             <div id="messages">
-              <div class="message assistant">first TODO here</div>
-              <div class="message assistant">second TODO and TODO again</div>
+              <div class="message assistant" data-find-unit="message">first TODO here</div>
+              <div class="message assistant" data-find-unit="message">second TODO</div>
+              <div class="message assistant" data-find-unit="message">and TODO again</div>
             </div>
           </div>
         </div>
@@ -617,16 +613,15 @@ describe("server-hit navigation", () => {
     return document.getElementById("chat-find-note")?.textContent ?? "";
   }
 
-  /** A hit keyed `[turn_id, entry_id, segment_kind, offset]`; no lane means the chat's own agent. */
+  /** A hit, one item keyed `[turn_id, entry_id, kind]`; no lane means the chat's own agent. */
   function serverHit(over: Partial<Hit> = {}): Hit {
     return {
       turn_id: "u1",
       entry_id: "e1",
       excerpt: "…retry…",
-      segment_kind: "content",
+      kind: "message",
+      segments: ["content"],
       turn: 1,
-      offset: 0,
-      segment_len: 24,
       ...over,
     };
   }
@@ -654,6 +649,7 @@ describe("server-hit navigation", () => {
   function stageHits(hits: Hit[], tally: Partial<Tally> = {}): void {
     vi.mocked(chatSearch.runServerSearch).mockResolvedValue({
       matches: hits,
+      spread: false,
       scanned: 1,
       matched: hits.length,
       truncated: false,
@@ -675,8 +671,39 @@ describe("server-hit navigation", () => {
       body.innerHTML = bodyHTML;
       card.appendChild(body);
     }
+    stampUnits(card);
     document.getElementById("messages")?.appendChild(card);
     return card;
+  }
+
+  /** Stamp every card a test built, `insertAdjacentHTML` additions included. */
+  function stampAll(): void {
+    const messages = document.getElementById("messages");
+    if (messages !== null) {
+      stampUnits(messages);
+    }
+  }
+
+  /** The `data-find-unit` stamps the renderer writes (`find-unit.ts`), by the fixture element's own shape. */
+  function stampUnits(card: HTMLElement): void {
+    for (const el of card.querySelectorAll<HTMLElement>(
+      "[data-entry-id], .turn-req, .turn-notice",
+    )) {
+      if (el.dataset["findUnit"] !== undefined) {
+        continue;
+      }
+      el.dataset["findUnit"] = el.classList.contains("turn-req")
+        ? "header"
+        : el.classList.contains("turn-notice")
+          ? "turn_failure"
+          : el.classList.contains("tool-call")
+            ? "tool"
+            : el.classList.contains("reasoning-block")
+              ? "reasoning"
+              : el.classList.contains("plan")
+                ? "plan"
+                : "message";
+    }
   }
 
   /** Through the real disclosure, so the collapsed region carries the `aria-hidden` + `inert` the walker prunes. */
@@ -698,21 +725,24 @@ describe("server-hit navigation", () => {
 
   /** Waits on adoption, not counter text, for fixtures whose figures agree. */
   async function openAndAdopt(query: string): Promise<void> {
+    stampAll();
     onHotkey(ctrlF());
     typeAndEnter(query);
     await settle();
   }
 
+  /** Search, and wait for the answer's own landing on the hit nearest the reader to finish, so the next Enter
+   *  steps from it rather than being dropped while it runs. */
   async function openAndSearch(query: string): Promise<void> {
+    stampAll();
     onHotkey(ctrlF());
     typeAndEnter(query);
     await vi.waitFor(() => {
-      expect(countText()).toMatch(/in chat|matched, not shown here/);
+      expect(countText()).toMatch(/^\d+ of \d+/);
     });
-    // The counter paints synchronously; the recorded hits land a few microtasks later.
-    await new Promise((resolve) => {
-      setTimeout(resolve, 0);
-    });
+    for (let i = 0; i < 3; i++) {
+      await settle();
+    }
   }
 
   // The cut is reported twice: the counter carries the whole-chat count, the note the sentence.
@@ -721,7 +751,8 @@ describe("server-hit navigation", () => {
     stageChat(["u1"]);
     stageHits([serverHit()], { scanned: 24, matched: 347 });
     await openAndSearch("retry");
-    expect(countText()).toBe("347 matched, not shown here");
+    // The answer lands on its one listed hit, whose turn is not mounted here.
+    expect(countText()).toBe("1 of 1 \u00b7 347 in chat \u00b7 could not be shown");
     expect(noteText()).toBe("1 of 347 matches shown; 24 messages scanned");
   });
 
@@ -730,7 +761,7 @@ describe("server-hit navigation", () => {
     stageChat(["u1"]);
     stageHits([serverHit()], { scanned: 24 });
     await openAndSearch("retry");
-    expect(countText()).toBe("1 matched, not shown here");
+    expect(countText()).toBe("1 of 1 \u00b7 could not be shown");
     expect(noteText()).toBe("");
   });
 
@@ -793,18 +824,14 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: want,
-        segment_kind: "reasoning",
+        kind: "reasoning",
+        segments: ["reasoning"],
         entry_id: "e4",
-        offset: want.indexOf("retry"),
-        segment_len: want.length,
       }),
     ]);
 
+    // Every trace is a closed <details>, so only the answer's landing opens one and marks it.
     await openAndSearch("retry");
-    // Every trace is a closed <details>, so only server-hit navigation resolves an element.
-    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
-
-    typeAndEnter("retry");
     await vi.waitFor(() => {
       expect(document.querySelector("mark.find-hit-current")).not.toBeNull();
     });
@@ -823,13 +850,11 @@ describe("server-hit navigation", () => {
            <div class="message assistant">see the retry backoff here</div>
          </div>
        </div>`,
-      // The bubble, not the row: `entryElement` answers with the `.message` inside.
-    ).querySelector('[data-entry-id="e1"] > .message') as HTMLElement;
+      // The stamped element: the item's unit.
+    ).querySelector('[data-entry-id="e1"]') as HTMLElement;
     stageHits([
       serverHit({
         excerpt: "see the retry backoff here",
-        offset: 8,
-        segment_len: 26,
       }),
     ]);
     await openAndSearch("retry");
@@ -855,13 +880,14 @@ describe("server-hit navigation", () => {
        </div>`,
     );
     stageHits([
-      serverHit({ excerpt: "the retry backoff", offset: 4, segment_len: 17 }),
-      serverHit({ excerpt: "retry again", entry_id: "e2", offset: 0, segment_len: 11 }),
+      serverHit({ excerpt: "the retry backoff" }),
+      serverHit({ excerpt: "retry again", entry_id: "e2" }),
     ]);
 
     await openAndSearch("retry");
     expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
-    expect(countText()).toBe("2 matched, not shown here");
+    // The answer lands on the hit nearest the reader, the last, which is not mounted.
+    expect(countText()).toBe("2 of 2 \u00b7 could not be shown");
     expect(document.getElementById("chat-find")?.classList.contains("chat-find-no-results")).toBe(
       false,
     );
@@ -881,15 +907,12 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: "see [docs](https://retry.example) for more",
-        offset: 19,
-        segment_len: 43,
       }),
     ]);
 
     await openAndSearch("retry");
-    typeAndEnter("retry");
 
-    const bubble = document.querySelector(".message.assistant");
+    const bubble = document.querySelector('[data-entry-id="e1"]');
     await vi.waitFor(() => {
       expect(bubble?.classList.contains("find-target-flash")).toBe(true);
     });
@@ -898,7 +921,7 @@ describe("server-hit navigation", () => {
     expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
   });
 
-  it("resolves a hit on a prose RUN's later entry through the run's data-entries stamp", async () => {
+  it("resolves a hit on a prose RUN's later entry through the run's data-entries stamp, marking the run", async () => {
     // A prose run carries two stamps: `data-entry-id` (first member) and `data-entries` (all).
     stageChat(["u1"]);
     mountTurnCard(
@@ -909,50 +932,20 @@ describe("server-hit navigation", () => {
            </div>
        </div>`,
     );
-    stageHits([
-      serverHit({ entry_id: "e3", excerpt: "then the retry backoff.", offset: 9, segment_len: 23 }),
-    ]);
+    stageHits([serverHit({ entry_id: "e3", excerpt: "then the retry backoff." })]);
 
     // The marks are resident, so the figures agree and no "in chat" clause is printed.
     await openAndAdopt("retry");
     typeAndEnter("retry");
 
-    // Two occurrences, the hit naming the second: `FindEngine.search` makes the first current on its own.
+    // The run is one item: both occurrences are its marks, and both are current.
     const bubble = document.querySelector(".message.assistant") as HTMLElement;
     await vi.waitFor(() => {
-      expect(marks(bubble)[1]?.classList.contains("find-hit-current")).toBe(true);
+      expect(marks(bubble).map((m) => m.classList.contains("find-hit-current"))).toEqual([
+        true,
+        true,
+      ]);
     });
-    expect(marks(bubble)[0]?.classList.contains("find-hit-current")).toBe(false);
-    expect(countText()).toBe("1 of 1");
-  });
-
-  it("ranks a hit inside a prose RUN through the run's own offset table, not its segment", async () => {
-    // A run member's offset is re-based by `runOffsetOf` over the whole run.
-    stageChat(["u1"]);
-    mountTurnCard(
-      "u1",
-      `<div data-reconcile-key="a1" class="msg-row">
-           <div class="msg-row" data-entry-id="e1" data-entries="e1 e2">
-             <div class="message assistant">retry once. retry twice.</div>
-           </div>
-       </div>`,
-    );
-    // The table's answer for the run's second member.
-    runOffsetOf.mockImplementation((_turnID, entryID) =>
-      entryID === "e2" ? { offset: 12, total: 24 } : undefined,
-    );
-    stageHits([serverHit({ entry_id: "e2", excerpt: "retry twice.", offset: 0, segment_len: 12 })]);
-
-    await openAndAdopt("retry");
-    typeAndEnter("retry");
-
-    const bubble = document.querySelector(".message.assistant") as HTMLElement;
-    await vi.waitFor(() => {
-      expect(marks(bubble)[1]?.classList.contains("find-hit-current")).toBe(true);
-    });
-    // Fails with the run arm gone: fraction 0 re-selects mark 0.
-    expect(marks(bubble)[0]?.classList.contains("find-hit-current")).toBe(false);
-    expect(runOffsetOf).toHaveBeenCalledWith("u1", "e2");
     expect(countText()).toBe("1 of 1");
   });
 
@@ -975,8 +968,6 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: "see the retry backoff here",
-        offset: 8,
-        segment_len: 26,
       }),
     ]);
     // Relevancy is decided in a rendering update, so the premise holds once laid out.
@@ -989,7 +980,6 @@ describe("server-hit navigation", () => {
     });
 
     await openAndSearch("retry");
-    typeAndEnter("retry");
 
     await vi.waitFor(() => {
       expect(document.querySelector(".message.assistant mark.find-hit-current")).not.toBeNull();
@@ -1012,8 +1002,6 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: "see the retry backoff here",
-        offset: 8,
-        segment_len: 26,
       }),
     ]);
     await openAndSearch("retry");
@@ -1055,17 +1043,13 @@ describe("server-hit navigation", () => {
       serverHit({
         entry_id: "e2",
         excerpt: "bump the retry backoff to 30s",
-        segment_kind: "tool_output",
-        offset: 9,
-        segment_len: 29,
+        kind: "tool",
+        segments: ["tool_output"],
       }),
     ]);
 
     // Behind the card's own disclosure, so navigation is the only path.
     await openAndSearch("retry");
-    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
-
-    typeAndEnter("retry");
     await vi.waitFor(() => {
       expect(card?.querySelector("mark.find-hit-current")).not.toBeNull();
     });
@@ -1073,7 +1057,7 @@ describe("server-hit navigation", () => {
   });
 
   it("marks a steering box's document name inside its title, across the linked name", async () => {
-    // The server counts the offset over the whole title; the name sits inside a link button.
+    // The server names the title segment; the walk finds the name inside its link button.
     setWorkspaceRoot("/workspace");
     stageChat(["u1"]);
     const row = mountTurnCard(
@@ -1098,9 +1082,8 @@ describe("server-hit navigation", () => {
       serverHit({
         entry_id: "e1",
         excerpt: title,
-        segment_kind: "tool_title",
-        offset: title.indexOf("testing"),
-        segment_len: title.length,
+        kind: "tool",
+        segments: ["tool_title"],
       }),
     ]);
 
@@ -1148,16 +1131,12 @@ describe("server-hit navigation", () => {
       serverHit({
         entry_id: "e1",
         excerpt: "bump the retry backoff to 30s",
-        segment_kind: "tool_output",
-        offset: 9,
-        segment_len: 29,
+        kind: "tool",
+        segments: ["tool_output"],
       }),
     ]);
 
     await openAndSearch("retry");
-    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
-
-    typeAndEnter("retry");
     await vi.waitFor(() => {
       expect(group.querySelector("mark.find-hit-current")).not.toBeNull();
     });
@@ -1206,23 +1185,125 @@ describe("server-hit navigation", () => {
         serverHit({
           entry_id: "e2",
           excerpt: "Hook fired: Destructive command guard",
-          segment_kind: "tool_title",
-          offset: 12,
-          segment_len: 37,
+          kind: "tool",
+          segments: ["tool_title"],
         }),
       ]);
 
+      // A message the answer does not list also holds the word, so the walk marks it.
+      row.insertAdjacentHTML(
+        "afterend",
+        `<div class="msg-row" data-entry-id="e9"><div class="message assistant">Destructive guard notes</div></div>`,
+      );
+
       await openAndSearch("Destructive");
-      typeAndEnter("Destructive");
       await vi.waitFor(() => {
         expect(countText()).toBe("1 of 1 \u00b7 listed under the hooks badge");
       });
+      const transcript = document.getElementById("messages") as HTMLElement;
+      // The step is the badge: no mark elsewhere in the transcript reads as current.
+      expect(transcript.querySelector("mark.find-hit")).not.toBeNull();
+      expect(transcript.querySelector("mark.find-hit-current")).toBeNull();
+      // Nor after the re-walk a transcript change schedules.
+      vi.mocked(scroll.onTranscriptMutate).mock.calls.at(-1)?.[0]();
+      await new Promise((resolve) => {
+        setTimeout(resolve, 200);
+      });
+      expect(transcript.querySelector("mark.find-hit")).not.toBeNull();
+      expect(transcript.querySelector("mark.find-hit-current")).toBeNull();
+      // The re-walk's repaint keeps the notice saying where the hit is.
+      expect(countText()).toBe("1 of 1 \u00b7 listed under the hooks badge");
       expect(head?.getAttribute("aria-expanded")).toBe("true");
       expect(group.querySelector(":scope > .tool-group-hooks")?.classList).toContain(
         "find-target-flash",
       );
+      // The badge's list is open with the hook's row showing the word as the current hit, and the reader is still
+      // typing in the box.
+      const item = document.querySelector(".tool-hook-popover .tool-hook-item");
+      expect(item?.textContent).toContain("Destructive command guard");
+      expect(
+        [...(item?.querySelectorAll("mark.find-hit.find-hit-current") ?? [])].map(
+          (m) => m.textContent,
+        ),
+      ).toEqual(["Destructive", "destructive"]); // the name, then the hook file's chip
+      expect(document.activeElement).toBe(document.getElementById("chat-find-input"));
+
+      // Closing find closes the list with the rest of the chain, and its marks with it.
+      closeFind();
+      await vi.waitFor(() => {
+        expect(document.querySelector(".tool-hook-popover.is-open")).toBeNull();
+      });
+      expect(document.querySelector(".tool-hook-popover mark.find-hit")).toBeNull();
     },
   );
+
+  it("marks only the current folded hook's row when two hooks of one group are hits", async () => {
+    stageChat(["u1"]);
+    const row = mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row"></div>`,
+    ).querySelector(".msg-row") as HTMLElement;
+    const group = buildToolGroupShell();
+    row.appendChild(group);
+    const members: Record<string, string>[] = [
+      { entryId: "e1", kind: "execute", title: "go vet" },
+      { entryId: "e2", kind: "hook", title: "Hook fired: lint guard", hookTrigger: "PreToolUse" },
+      {
+        entryId: "e3",
+        kind: "hook",
+        title: "Hook fired: format guard",
+        hookTrigger: "PostToolUse",
+      },
+    ];
+    for (const m of members) {
+      const card = document.createElement("div");
+      card.className = "tool-call";
+      card.dataset["outcome"] = "ok";
+      Object.assign(card.dataset, m);
+      if (m["kind"] === "hook") {
+        card.setAttribute("data-hook-gates", "");
+      }
+      groupBody(group).appendChild(card);
+    }
+    refreshGroupHeader(group);
+    autoCollapseGroup(group);
+    stageHits([
+      serverHit({
+        entry_id: "e2",
+        excerpt: "Hook fired: lint guard",
+        kind: "tool",
+        segments: ["tool_title"],
+      }),
+      serverHit({
+        entry_id: "e3",
+        excerpt: "Hook fired: format guard",
+        kind: "tool",
+        segments: ["tool_title"],
+      }),
+    ]);
+    const currentRows = (): string[] =>
+      [...document.querySelectorAll(".tool-hook-popover .tool-hook-item")]
+        .filter((li) => li.querySelector("mark.find-hit-current") !== null)
+        .map((li) => li.querySelector(".tool-title")?.textContent ?? "");
+
+    const rowOf: Record<string, string> = { "1": "lint guard", "2": "format guard" };
+    const landed = (): string => rowOf[/^(\d) of 2/.exec(countText())?.[1] ?? ""] ?? "";
+
+    // Both hits stand on one badge, so the answer lands on either; each landing marks its own row only.
+    await openAndSearch("guard");
+    expect(countText()).toMatch(/^\d of 2 \u00b7 listed under the hooks badge$/);
+    const first = landed();
+    expect(currentRows()).toEqual([first]);
+
+    typeAndEnter("guard");
+    await vi.waitFor(() => {
+      expect(landed()).not.toBe(first);
+    });
+    expect(currentRows()).toEqual([landed()]);
+    expect(document.querySelectorAll(".tool-hook-popover mark.find-hit")).toHaveLength(1);
+    expect(countText()).toMatch(/ \u00b7 listed under the hooks badge$/);
+    closeFind();
+  });
 
   // tool_diff: the card is the target, the mini-diff the walk, and the notice has three states.
 
@@ -1318,9 +1399,8 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: DIFF_ROW,
-        segment_kind: "tool_diff",
-        offset: DIFF_ROW.indexOf("retry"),
-        segment_len: DIFF_ROW.length,
+        kind: "tool",
+        segments: ["tool_diff"],
       }),
     ]);
     await vi.waitFor(() => {
@@ -1332,9 +1412,6 @@ describe("server-hit navigation", () => {
     });
 
     await openAndSearch("retry");
-    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
-
-    typeAndEnter("retry");
     await vi.waitFor(() => {
       expect(document.querySelector(".tool-diff-preview mark.find-hit-current")).not.toBeNull();
     });
@@ -1351,16 +1428,12 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: DIFF_ROW,
-        segment_kind: "tool_diff",
-        offset: DIFF_ROW.indexOf("retry"),
-        segment_len: DIFF_ROW.length,
+        kind: "tool",
+        segments: ["tool_diff"],
       }),
     ]);
 
     await openAndSearch("retry");
-    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
-
-    typeAndEnter("retry");
     await vi.waitFor(() => {
       expect(document.querySelector(".tool-diff-preview mark.find-hit-current")).not.toBeNull();
     });
@@ -1377,21 +1450,19 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: DIFF_ROW,
-        segment_kind: "tool_diff",
-        offset: DIFF_ROW.indexOf("retry"),
-        segment_len: 4096,
+        kind: "tool",
+        segments: ["tool_diff"],
       }),
     ]);
 
     await openAndSearch("retry");
-    typeAndEnter("retry");
 
-    const preview = document.querySelector(".tool-diff-preview");
+    const card = document.querySelector(".tool-call");
     await vi.waitFor(() => {
-      expect(preview?.classList.contains("find-target-flash")).toBe(true);
+      expect(card?.classList.contains("find-target-flash")).toBe(true);
     });
-    // The narrowed region is what the flash and jump land on.
-    expect(vi.mocked(scroll.jumpTo)).toHaveBeenLastCalledWith(preview, expect.anything());
+    // The item, the card, is what the flash and jump land on.
+    expect(vi.mocked(scroll.jumpTo)).toHaveBeenLastCalledWith(card, expect.anything());
     expect(countText()).toBe("1 of 1 \u00b7 not in the shown hunks, so open the diff");
   });
 
@@ -1403,14 +1474,12 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: DIFF_ROW,
-        segment_kind: "tool_diff",
-        offset: DIFF_ROW.indexOf("retry"),
-        segment_len: 4096,
+        kind: "tool",
+        segments: ["tool_diff"],
       }),
     ]);
 
     await openAndSearch("retry");
-    typeAndEnter("retry");
 
     await vi.waitFor(() => {
       expect(countText()).toBe("1 of 1 \u00b7 not in the shown hunks, so open the diff");
@@ -1428,14 +1497,12 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: DIFF_ROW,
-        segment_kind: "tool_diff",
-        offset: DIFF_ROW.indexOf("retry"),
-        segment_len: 4096,
+        kind: "tool",
+        segments: ["tool_diff"],
       }),
     ]);
 
     await openAndSearch("retry");
-    typeAndEnter("retry");
 
     await vi.waitFor(
       () => {
@@ -1449,16 +1516,9 @@ describe("server-hit navigation", () => {
     expect(card.querySelector(".tool-diff-preview")).toBeNull();
   });
 
-  /** A second Enter is a second visit to the same card, not a wrap. */
+  /** One item, so a second Enter wraps back onto the same card: a second visit. */
   function deadDiffHits(): Hit[] {
-    return [0, 40].map((offset) =>
-      serverHit({
-        excerpt: DIFF_ROW,
-        segment_kind: "tool_diff",
-        offset,
-        segment_len: 4096,
-      }),
-    );
+    return [serverHit({ excerpt: DIFF_ROW, kind: "tool", segments: ["tool_diff"] })];
   }
 
   it("answers a second visit to a dead diff hit AT ONCE rather than waiting again", async () => {
@@ -1469,19 +1529,23 @@ describe("server-hit navigation", () => {
     stageHits(deadDiffHits());
 
     await openAndSearch("retry");
-    typeAndEnter("retry");
     await vi.waitFor(
       () => {
-        expect(countText()).toBe("1 of 2 \u00b7 only in this call's diff, which did not load");
+        expect(countText()).toBe("1 of 1 \u00b7 only in this call's diff, which did not load");
       },
       { timeout: 4000 },
     );
 
+    // Blanked, so the second visit's own paint is what the wait sees.
+    const counter = document.getElementById("chat-find-count");
+    if (counter !== null) {
+      counter.textContent = "";
+    }
     const started = performance.now();
     typeAndEnter("retry");
     await vi.waitFor(
       () => {
-        expect(countText()).toBe("2 of 2 \u00b7 only in this call's diff, which did not load");
+        expect(countText()).toBe("1 of 1 \u00b7 only in this call's diff, which did not load");
       },
       { timeout: 4000 },
     );
@@ -1494,11 +1558,15 @@ describe("server-hit navigation", () => {
     stageEditChat();
     const card = mountEditCard(null);
     const bulk = wireDeferredDiff(card, DIFF_ROW, true);
-    stageHits(deadDiffHits().slice(0, 1));
+    stageHits(deadDiffHits());
 
-    await openAndSearch("retry");
-    const before = countText();
+    // The answer's landing opens the card and waits on its bulk; the reader retypes under that wait.
+    onHotkey(ctrlF());
     typeAndEnter("retry");
+    await vi.waitFor(() => {
+      expect(bulk.requests()).toBe(1);
+    });
+    const before = countText();
     const box = document.getElementById("chat-find-input") as HTMLInputElement;
     box.value = "budget";
 
@@ -1517,10 +1585,16 @@ describe("server-hit navigation", () => {
     stageEditChat();
     const card = mountEditCard(null);
     const bulk = wireDeferredDiff(card, DIFF_ROW, true);
-    stageHits(deadDiffHits().slice(0, 1));
+    stageHits(deadDiffHits());
 
-    await openAndSearch("retry");
+    // The answer's landing opens the card and waits on its bulk; a newer answer, with nothing to land on, lands
+    // under that wait.
+    onHotkey(ctrlF());
     typeAndEnter("retry");
+    await vi.waitFor(() => {
+      expect(bulk.requests()).toBe(1);
+    });
+    stageHits([]);
     // Enter on a changed box runs the query rather than stepping.
     typeAndEnter("budget");
     await settle();
@@ -1546,9 +1620,8 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: DIFF_ROW,
-        segment_kind: "tool_diff",
-        offset: DIFF_ROW.indexOf("retry"),
-        segment_len: DIFF_ROW.length,
+        kind: "tool",
+        segments: ["tool_diff"],
       }),
     ]);
 
@@ -1573,9 +1646,8 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: DIFF_ROW,
-        segment_kind: "tool_diff",
-        offset: DIFF_ROW.indexOf("retry"),
-        segment_len: 4096,
+        kind: "tool",
+        segments: ["tool_diff"],
       }),
     ]);
     await openAndSearch("retry");
@@ -1629,16 +1701,12 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: leaves,
-        segment_kind: "tool_input",
-        offset: leaves.indexOf("Retry"),
-        segment_len: leaves.length,
+        kind: "tool",
+        segments: ["tool_input"],
       }),
     ]);
 
     await openAndSearch("retry");
-    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
-
-    typeAndEnter("retry");
     await vi.waitFor(() => {
       expect(document.querySelector(".tool-input mark.find-hit-current")).not.toBeNull();
     });
@@ -1657,14 +1725,12 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: leaves,
-        segment_kind: "tool_input",
-        offset: leaves.indexOf("retry"),
-        segment_len: leaves.length,
+        kind: "tool",
+        segments: ["tool_input"],
       }),
     ]);
 
     await openAndSearch("retry");
-    typeAndEnter("retry");
 
     await vi.waitFor(() => {
       expect(document.querySelector("mark.find-hit-current")).not.toBeNull();
@@ -1694,9 +1760,8 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: reason,
-        segment_kind: "turn_failure",
-        offset: reason.indexOf("retry"),
-        segment_len: reason.length,
+        kind: "turn_failure",
+        segments: ["turn_failure"],
       }),
     ]);
 
@@ -1722,9 +1787,8 @@ describe("server-hit navigation", () => {
           turn_id: "u2",
           entry_id: "u2-wake",
           excerpt: needle,
-          segment_kind: "wake",
-          offset: where === "message" ? message.indexOf(needle) : rest.indexOf(needle) - 1,
-          segment_len: where === "message" ? message.length : rest.length - 1,
+          kind: "header",
+          segments: ["wake"],
         }),
       ]);
       // Mounted once the hit's turn is revealed, so the hit is the server's alone, as for a paged-out turn.
@@ -1739,7 +1803,7 @@ describe("server-hit navigation", () => {
             .querySelector<HTMLElement>(".turn-header")
             ?.insertAdjacentHTML(
               "beforeend",
-              `<div class="turn-req"><div class="turn-wake"><span class="turn-wake-run">publish-docs</span><span class="turn-wake-rest">${rest}</span></div><div class="turn-req-text">${message}</div></div>`,
+              `<div class="turn-req" data-find-unit="header"><div class="turn-wake"><span class="turn-wake-run">publish-docs</span><span class="turn-wake-rest">${rest}</span></div><div class="turn-req-text">${message}</div></div>`,
             );
         }
         return Promise.resolve();
@@ -1748,8 +1812,13 @@ describe("server-hit navigation", () => {
       await openAndSearch(needle);
       typeAndEnter(needle);
 
+      // Every word of the query is a mark of the header's unit, all of them current.
       await vi.waitFor(() => {
-        expect(document.querySelector(".turn-req mark.find-hit-current")?.textContent).toBe(needle);
+        expect(
+          [...document.querySelectorAll(".turn-req mark.find-hit-current")]
+            .map((m) => m.textContent)
+            .join(" "),
+        ).toBe(needle);
       });
     });
   }
@@ -1772,9 +1841,8 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: name,
-        segment_kind: "attachment",
-        offset: 0,
-        segment_len: name.length,
+        kind: "header",
+        segments: ["attachment"],
       }),
     ]);
 
@@ -1798,9 +1866,8 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: reason,
-        segment_kind: "turn_failure",
-        offset: reason.indexOf("retry"),
-        segment_len: reason.length,
+        kind: "turn_failure",
+        segments: ["turn_failure"],
       }),
     ]);
 
@@ -1826,9 +1893,8 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: reason,
-        segment_kind: "turn_failure",
-        offset: reason.indexOf("retry"),
-        segment_len: reason.length,
+        kind: "turn_failure",
+        segments: ["turn_failure"],
       }),
     ]);
 
@@ -1860,9 +1926,8 @@ describe("server-hit navigation", () => {
       serverHit({
         entry_id: "e2",
         excerpt: entry,
-        segment_kind: "plan",
-        offset: entry.indexOf("retry"),
-        segment_len: entry.length,
+        kind: "plan",
+        segments: ["plan"],
       }),
     ]);
 
@@ -1892,16 +1957,12 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: resource,
-        segment_kind: "tool_denial",
-        offset: resource.indexOf("retry"),
-        segment_len: resource.length,
+        kind: "tool",
+        segments: ["tool_denial"],
       }),
     ]);
 
     await openAndSearch("retry");
-    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
-
-    typeAndEnter("retry");
     await vi.waitFor(() => {
       expect(document.querySelector(".tool-denial mark.find-hit-current")).not.toBeNull();
     });
@@ -1920,14 +1981,11 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({
         excerpt: "List files a.go b.go",
-        segment_kind: "entry",
-        offset: 0,
-        segment_len: 0,
+        segments: [],
       }),
     ]);
 
-    await openAndSearch("role:assistant");
-    typeAndEnter("role:assistant");
+    await openAndSearch("turn:1");
 
     const row = document.querySelector('[data-entry-id="e1"]');
     await vi.waitFor(() => {
@@ -1938,129 +1996,13 @@ describe("server-hit navigation", () => {
     expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
   });
 
-  // The trace is longer than rendered and the needle occurs twice; the excerpt discriminates.
-  const TRACE =
-    "Enable retry on the uploader so flaky links recover without operator " +
-    "attention and keep the queue draining smoothly overnight. When the " +
-    "budget empties the retry gives up and files an alert instead.";
-
-  it("nearest-match picks the occurrence whose context matches the excerpt", async () => {
-    stageChat(["u1"]);
-    const card = mountTurnCard(
-      "u1",
-      `<div data-reconcile-key="a1" class="msg-row">
-           <details class="reasoning-block msg-reasoning" data-entry-id="e1">
-             <summary class="reasoning-summary">Reasoning</summary>
-             <blockquote class="reasoning-body"></blockquote>
-           </details>
-       </div>`,
-    );
-    // Set programmatically so the fixture cannot drift from the trace the coordinates use.
-    const quote = card.querySelector(".reasoning-body");
-    if (quote !== null) {
-      quote.textContent = TRACE;
-    }
-    const secondAt = TRACE.lastIndexOf("retry");
-    stageHits([
-      serverHit({
-        excerpt: "When the budget empties the retry gives up and files an alert instead.",
-        segment_kind: "reasoning",
-        offset: secondAt,
-        segment_len: TRACE.length,
-      }),
-    ]);
-
-    await openAndSearch("retry");
-    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
-
-    typeAndEnter("retry");
-    await vi.waitFor(() => {
-      expect(document.querySelectorAll("mark.find-hit")).toHaveLength(2);
-    });
-    expect(document.querySelector<HTMLDetailsElement>("details.reasoning-block")?.open).toBe(true);
-    const marks = [...document.querySelectorAll("mark.find-hit")];
-    expect(marks[1]?.classList.contains("find-hit-current")).toBe(true);
-    expect(marks[0]?.classList.contains("find-hit-current")).toBe(false);
-    // The marks pin the ranking; the counter reports the one-hit session list.
-    expect(countText()).toBe("1 of 1");
-  });
-
-  it("falls back to relative position when the excerpt cannot discriminate", async () => {
-    // A shared excerpt ties similarity, so offset and length decide.
-    const short = "retry then retry";
-    stageChat(["u1"]);
-    const card = mountTurnCard(
-      "u1",
-      `<div data-reconcile-key="a1" class="msg-row">
-           <details class="reasoning-block msg-reasoning" data-entry-id="e1">
-             <summary class="reasoning-summary">Reasoning</summary>
-             <blockquote class="reasoning-body"></blockquote>
-           </details>
-       </div>`,
-    );
-    const quote = card.querySelector(".reasoning-body");
-    if (quote !== null) {
-      quote.textContent = short;
-    }
-    stageHits([
-      serverHit({
-        excerpt: short,
-        segment_kind: "reasoning",
-        offset: 11,
-        segment_len: short.length,
-      }),
-    ]);
-
-    await openAndSearch("retry");
-    typeAndEnter("retry");
-    await vi.waitFor(() => {
-      expect(document.querySelectorAll("mark.find-hit")).toHaveLength(2);
-    });
-    const marks = [...document.querySelectorAll("mark.find-hit")];
-    expect(marks[1]?.classList.contains("find-hit-current")).toBe(true);
-  });
-
-  it("declines a mark below the similarity floor: block selection, stated", async () => {
-    // A stale hit: nothing around the needle matches the excerpt.
-    stageChat(["u1"]);
-    mountTurnCard(
-      "u1",
-      `<div data-reconcile-key="a1" class="msg-row">
-           <details class="reasoning-block msg-reasoning" data-entry-id="e1">
-             <summary class="reasoning-summary">Reasoning</summary>
-             <blockquote class="reasoning-body">the retry lives here in this trace</blockquote>
-           </details>
-       </div>`,
-    );
-    stageHits([
-      serverHit({
-        excerpt: "completely unrelated words sharing nothing with that trace",
-        segment_kind: "reasoning",
-        offset: 4,
-        segment_len: 34,
-      }),
-    ]);
-
-    await openAndSearch("retry");
-    typeAndEnter("retry");
-
-    const details = document.querySelector("details.reasoning-block");
-    await vi.waitFor(() => {
-      expect(details?.classList.contains("find-target-flash")).toBe(true);
-    });
-    expect(countText()).toBe("1 of 1 \u00b7 not in rendered text");
-    expect(vi.mocked(scroll.jumpTo)).toHaveBeenLastCalledWith(details, expect.anything());
-  });
-
   it("pages older history in until the hit's TURN is resident", async () => {
     // Residency is `turns.has(hit.turn_id)`; the cursor is the oldest resident turn id.
     const session = stageChat(["u9"], true);
     stageHits([
       serverHit({
         excerpt: "the old answer",
-        segment_kind: "entry",
-        offset: 0,
-        segment_len: 0,
+        segments: [],
       }),
     ]);
     vi.mocked(storeLoad.loadOlderTurns).mockImplementation(() => {
@@ -2075,8 +2017,7 @@ describe("server-hit navigation", () => {
       return Promise.resolve();
     });
 
-    await openAndSearch("role:assistant");
-    typeAndEnter("role:assistant");
+    await openAndSearch("turn:1");
 
     await vi.waitFor(() => {
       expect(
@@ -2089,10 +2030,9 @@ describe("server-hit navigation", () => {
 
   it("states it when the hit's page cannot be loaded", async () => {
     stageChat(["u9"], false);
-    stageHits([serverHit({ segment_kind: "entry", offset: 0, segment_len: 0 })]);
+    stageHits([serverHit({ segments: [] })]);
 
-    await openAndSearch("role:assistant");
-    typeAndEnter("role:assistant");
+    await openAndSearch("turn:1");
 
     await vi.waitFor(() => {
       expect(countText()).toBe("1 of 1 \u00b7 could not be loaded");
@@ -2104,10 +2044,9 @@ describe("server-hit navigation", () => {
     // The window no longer holds the entry after the reveal, and stepping must say so.
     stageChat(["u1"]);
     mountTurnCard("u1", null);
-    stageHits([serverHit({ segment_kind: "entry", offset: 0, segment_len: 0 })]);
+    stageHits([serverHit({ segments: [] })]);
 
-    await openAndSearch("role:assistant");
-    typeAndEnter("role:assistant");
+    await openAndSearch("turn:1");
 
     await vi.waitFor(() => {
       expect(countText()).toBe("1 of 1 \u00b7 could not be shown");
@@ -2122,14 +2061,14 @@ describe("server-hit navigation", () => {
       serverHit({
         entry_id: "e2",
         excerpt: "delegate found the retry backoff",
-        segment_kind: "content",
+        kind: "message",
+        segments: ["content"],
         lane: "sub-9",
-        offset: 19,
-        segment_len: 32,
       }),
     ]);
 
-    await openAndSearch("retry");
+    // A delegate's hit alone: the answer lands nothing in place, and Enter opens its page.
+    await openAndAdopt("retry");
     typeAndEnter("retry");
 
     await vi.waitFor(() => {
@@ -2153,8 +2092,6 @@ describe("server-hit navigation", () => {
     );
     const resident = serverHit({
       excerpt: "retry retry",
-      offset: 0,
-      segment_len: 11,
     });
     const elsewhere = serverHit({ turn_id: "u9", entry_id: "e9" });
     stageHits([resident, elsewhere]);
@@ -2164,10 +2101,14 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(document.querySelectorAll("mark.find-hit")).toHaveLength(2);
     });
+    // The answer lands on the hit nearest the reader: the one in an unmounted turn, which is placed above.
+    await vi.waitFor(() => {
+      expect(countText()).toBe("2 of 2 \u00b7 could not be shown");
+    });
     await settle();
     vi.mocked(chatSearch.revealHitTurn).mockClear();
 
-    // The first press lands on the resident mark synchronously.
+    // The next press wraps to the resident item, synchronously.
     typeAndEnter("retry");
     expect(countText()).toBe("1 of 2");
     expect(vi.mocked(chatSearch.revealHitTurn)).not.toHaveBeenCalled();
@@ -2187,39 +2128,40 @@ describe("server-hit navigation", () => {
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
            <div class="msg-row" data-entry-id="e1">
-             <div class="message assistant">retry and retry</div>
+             <div class="message assistant">retry once</div>
+           </div>
+           <div class="msg-row" data-entry-id="e2">
+             <div class="message assistant">retry twice</div>
            </div>
        </div>`,
     );
     stageHits([
-      serverHit({ excerpt: "retry and retry", offset: 0, segment_len: 15 }),
-      serverHit({ excerpt: "retry and retry", offset: 10, segment_len: 15 }),
+      serverHit({ excerpt: "retry once" }),
+      serverHit({ entry_id: "e2", excerpt: "retry twice" }),
     ]);
 
     await openAndAdopt("retry");
     typeAndEnter("retry");
+    expect(countText()).toBe("1 of 2");
     typeAndEnter("retry");
     expect(countText()).toBe("2 of 2");
     expect(vi.mocked(chatSearch.revealHitTurn)).not.toHaveBeenCalled();
   });
 
-  it("walks all 38 hits behind one resident mark without ever going dead", async () => {
-    // One mark on screen, dozens of server matches.
+  it("walks all 38 resident hits without ever going dead", async () => {
     const HITS = 38;
     stageChat(["u1"]);
+    const ids = Array.from({ length: HITS }, (_, i) => `e${String(i + 1)}`);
     mountTurnCard(
       "u1",
-      `<div data-reconcile-key="a1" class="msg-row">
-           <div class="msg-row" data-entry-id="e1">
-             <div class="message assistant">retry</div>
-           </div>
-       </div>`,
+      `<div data-reconcile-key="a1" class="msg-row">${ids
+        .map(
+          (id) =>
+            `<div class="msg-row" data-entry-id="${id}"><div class="message assistant">retry</div></div>`,
+        )
+        .join("")}</div>`,
     );
-    stageHits(
-      Array.from({ length: HITS }, (_, i) =>
-        serverHit({ excerpt: "retry", offset: i, segment_len: HITS + 8 }),
-      ),
-    );
+    stageHits(ids.map((id) => serverHit({ entry_id: id, excerpt: "retry" })));
 
     await openAndAdopt("retry");
     const seen: string[] = [];
@@ -2245,8 +2187,9 @@ describe("server-hit navigation", () => {
            </div>
        </div>`,
     );
-    stageHits([serverHit({ entry_id: "e2", lane: "sub-9", offset: 9 })]);
-    await openAndSearch("retry");
+    stageHits([serverHit({ entry_id: "e2", lane: "sub-9" })]);
+    // A delegate's hit alone: nothing lands in place on the answer.
+    await openAndAdopt("retry");
 
     vi.mocked(chatSearch.runServerSearch).mockReturnValue(new Promise(() => undefined));
     typeAndEnter("budget");
@@ -2279,7 +2222,7 @@ describe("server-hit navigation", () => {
     stageHits([
       serverHit({ entry_id: "e1", excerpt: "first retry" }),
       serverHit({ entry_id: "e2", excerpt: "second retry" }),
-      serverHit({ entry_id: "e3", excerpt: "third retry", offset: 6, segment_len: 11 }),
+      serverHit({ entry_id: "e3", excerpt: "third retry" }),
     ]);
 
     await openAndSearch("retry");
@@ -2310,15 +2253,12 @@ describe("server-hit navigation", () => {
     );
     stageHits([
       serverHit({ entry_id: "e1", lane: "sub-1", excerpt: "delegate retried" }),
-      serverHit({ entry_id: "e2", excerpt: "local retry", offset: 6 }),
+      serverHit({ entry_id: "e2", excerpt: "local retry" }),
     ]);
 
+    // The answer lands on the local hit, never on another view's.
     await openAndSearch("retry");
-
-    typeAndEnter("retry");
-    await vi.waitFor(() => {
-      expect(countText()).toBe("1 of 2");
-    });
+    expect(countText()).toBe("1 of 2");
     expect(vi.mocked(subagentView.openSubagentView)).not.toHaveBeenCalled();
 
     typeAndEnter("retry");
@@ -2362,17 +2302,15 @@ describe("server-hit navigation", () => {
       serverHit({
         entry_id: "e1",
         lane: "sub-1",
-        segment_kind: "tool_title",
+        kind: "tool",
+        segments: ["tool_title"],
         excerpt: "Sub-agent: retry-sweeper",
-        offset: 11,
-        segment_len: 24,
       }),
-      serverHit({ entry_id: "e2", excerpt: "local retry", offset: 6 }),
+      serverHit({ entry_id: "e2", excerpt: "local retry" }),
     ]);
 
     await openAndAdopt("retry");
-
-    typeAndEnter("retry");
+    // The answer lands on the local hit; the mounted invocation's hit routes to its page all the same.
     await vi.waitFor(() => {
       expect(countText()).toBe("1 of 2");
     });
@@ -2399,13 +2337,12 @@ describe("server-hit navigation", () => {
        </div>`,
     );
     stageHits([
-      serverHit({ entry_id: "e1", excerpt: "local retry", offset: 6 }),
+      serverHit({ entry_id: "e1", excerpt: "local retry" }),
       serverHit({ entry_id: "e2", lane: "sub-1", excerpt: "first delegate retry" }),
       serverHit({ entry_id: "e3", lane: "sub-2", excerpt: "second delegate retry" }),
     ]);
 
     await openAndSearch("retry");
-    typeAndEnter("retry");
     await vi.waitFor(() => {
       expect(countText()).toBe("1 of 3");
     });
@@ -2435,21 +2372,17 @@ describe("server-hit navigation", () => {
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
            <div class="msg-row" data-entry-id="e1">
-             <div class="message assistant">retry and retry</div>
+             <div class="message assistant">retry once</div>
+           </div>
+           <div class="msg-row" data-entry-id="e2">
+             <div class="message assistant">retry twice</div>
            </div>
        </div>`,
     );
-    const first = serverHit({
-      excerpt: "retry and retry",
-      offset: 0,
-      segment_len: 15,
-    });
-    const second = serverHit({
-      excerpt: "retry and retry",
-      offset: 10,
-      segment_len: 15,
-    });
+    const first = serverHit({ excerpt: "retry once" });
+    const second = serverHit({ entry_id: "e2", excerpt: "retry twice" });
     stageHits([first, second]);
+    stampAll();
 
     openAt("retry", second);
     const input = document.getElementById("chat-find-input") as HTMLInputElement;
@@ -2461,7 +2394,7 @@ describe("server-hit navigation", () => {
     expect(hits).toHaveLength(2);
     expect(hits[1]?.classList.contains("find-hit-current")).toBe(true);
     expect(hits[0]?.classList.contains("find-hit-current")).toBe(false);
-    // One scroll: the open's own reveal is withheld while a landing is pending.
+    // One scroll: the landing's.
     expect(vi.mocked(scroll.jumpTo)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(scroll.jumpTo)).toHaveBeenCalledWith(hits[1], expect.anything());
   });
@@ -2477,9 +2410,10 @@ describe("server-hit navigation", () => {
            </div>
        </div>`,
     );
-    stageHits([serverHit({ excerpt: "retry once", offset: 0, segment_len: 10 })]);
+    stageHits([serverHit({ excerpt: "retry once" })]);
+    stampAll();
 
-    openAt("retry", serverHit({ turn_id: "u9", excerpt: "a retry that is gone", offset: 2 }));
+    openAt("retry", serverHit({ turn_id: "u9", excerpt: "a retry that is gone" }));
     await settle();
     expect(countText()).toBe("1 of 1");
     const hits = [...document.querySelectorAll<HTMLElement>("mark.find-hit")];
@@ -2496,20 +2430,16 @@ describe("server-hit navigation", () => {
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
            <div class="msg-row" data-entry-id="e1">
-             <div class="message assistant">retry and retry</div>
+             <div class="message assistant">retry once</div>
+           </div>
+           <div class="msg-row" data-entry-id="e2">
+             <div class="message assistant">retry twice</div>
            </div>
        </div>`,
     );
-    const first = serverHit({
-      excerpt: "retry and retry",
-      offset: 0,
-      segment_len: 15,
-    });
-    const second = serverHit({
-      excerpt: "retry and retry",
-      offset: 10,
-      segment_len: 15,
-    });
+    const first = serverHit({ excerpt: "retry once" });
+    const second = serverHit({ entry_id: "e2", excerpt: "retry twice" });
+    stampAll();
     vi.mocked(chatSearch.runServerSearch).mockReturnValue(new Promise(() => undefined));
     openAt("retry", second);
     closeFind();
@@ -2519,10 +2449,8 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(countText()).toBe("2 of 2");
     });
-    const hits = [...document.querySelectorAll<HTMLElement>("mark.find-hit")];
-    expect(hits[0]?.classList.contains("find-hit-current")).toBe(true);
-    expect(vi.mocked(scroll.jumpTo)).toHaveBeenCalledWith(hits[0], expect.anything());
-    expect(vi.mocked(scroll.jumpTo)).not.toHaveBeenCalledWith(hits[1], expect.anything());
+    // The cursor is where the walk was left, and nothing moved the reader.
+    expect(vi.mocked(scroll.jumpTo)).not.toHaveBeenCalled();
   });
 
   it("steps the marks when there is no server list to walk", async () => {
@@ -2531,7 +2459,8 @@ describe("server-hit navigation", () => {
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-           <div class="message assistant">workflow and workflow</div>
+           <div class="msg-row" data-entry-id="e1"><div class="message assistant">a workflow</div></div>
+           <div class="msg-row" data-entry-id="e2"><div class="message assistant">another workflow</div></div>
        </div>`,
     );
     stageHits([]);
@@ -2564,8 +2493,8 @@ describe("server-hit navigation", () => {
     );
     stageHits(
       [
-        serverHit({ entry_id: "e1", excerpt: "retry once", offset: 0 }),
-        serverHit({ entry_id: "e2", excerpt: "retry twice", offset: 0 }),
+        serverHit({ entry_id: "e1", excerpt: "retry once" }),
+        serverHit({ entry_id: "e2", excerpt: "retry twice" }),
       ],
       { scanned: 3, matched: 3 },
     );
@@ -2622,7 +2551,7 @@ describe("server-hit navigation", () => {
     expect(countText()).toBe("No matches");
     expect(skinOn()).toBe(false);
 
-    answer({ matches: [], scanned: 1, matched: 0, truncated: false });
+    answer({ matches: [], spread: false, scanned: 1, matched: 0, truncated: false });
     await vi.waitFor(() => {
       expect(skinOn()).toBe(true);
     });
@@ -2639,13 +2568,15 @@ describe("server-hit navigation", () => {
            </div>
        </div>`,
     );
-    stageHits([serverHit({ excerpt: "retry", offset: 0, segment_len: 5 })]);
+    stageHits([serverHit({ excerpt: "retry" })]);
     await openAndAdopt("retry");
     expect(document.querySelectorAll("mark.find-hit")).toHaveLength(1);
 
-    // A turn sealing after the answer: the walker can mark it, the answer does not hold it.
+    // An item sealing after the answer: the walker can mark it, the answer does not hold it.
     const sealed = document.createElement("div");
     sealed.className = "message assistant";
+    sealed.dataset["entryId"] = "e2";
+    sealed.dataset["findUnit"] = "message";
     sealed.textContent = "retry again";
     card.querySelector(".msg-row")?.appendChild(sealed);
 
@@ -2655,14 +2586,19 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(document.querySelectorAll("mark.find-hit")).toHaveLength(2);
     });
-    expect(countText()).toBe("1 of 2");
+    // The counter is the answer's, which the landing stepped onto.
+    expect(countText()).toBe("1 of 1");
 
     // Stepping walks the answer, so the new mark is never visited.
-    const first = document.querySelectorAll<HTMLElement>("mark.find-hit")[0];
     for (let i = 0; i < 3; i++) {
       typeAndEnter("retry");
       expect(countText()).toBe("1 of 1");
-      expect(document.querySelector("mark.find-hit-current")).toBe(first);
+      expect(
+        document
+          .querySelector("mark.find-hit-current")
+          ?.closest("[data-entry-id]")
+          ?.getAttribute("data-entry-id"),
+      ).toBe("e1");
     }
   });
 });

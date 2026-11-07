@@ -68,15 +68,6 @@ func (n Needle) scan(hay, text string, yield func(Hit) bool) {
 	}
 }
 
-// Count reports how many hits Occurrences would yield, without building them.
-func (n Needle) Count(text string) int {
-	c := 0
-	for range n.Occurrences(text) {
-		c++
-	}
-	return c
-}
-
 func advanceRunes(s string, from, n int) int {
 	for range n {
 		_, w := utf8.DecodeRuneInString(s[from:])

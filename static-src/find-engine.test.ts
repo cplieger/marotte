@@ -2,6 +2,7 @@
 // and streamed adjacent text nodes.
 import { describe, it, expect, afterEach } from "vitest";
 import { FindEngine } from "./find-engine.js";
+import { parseQuery, prepareMatcher } from "./textsearch/query.js";
 import { lineDiff } from "./diff.js";
 import { renderDiffPane } from "./diff-pane.js";
 
@@ -179,6 +180,14 @@ describe("UI chrome", () => {
     expect(new FindEngine(host).search("rm -rf")).toBe(1);
     expect(marks(host)[0]?.closest(".tool-denial")).not.toBeNull();
     expect(new FindEngine(host).search("more lines")).toBe(0);
+  });
+
+  it("does not join the text either side of a label it skips", () => {
+    const host = mount(
+      `<div class="boundary-label">opus-5<span data-vk-chrome> retried on </span>sonnet-5</div>`,
+    );
+    expect(new FindEngine(host).search("5sonnet")).toBe(0);
+    expect(new FindEngine(host).search("sonnet-5")).toBe(1);
   });
 
   it("marks the MCP server name in the badge", () => {
@@ -557,5 +566,112 @@ describe("a drawn diagram", () => {
     expect(new FindEngine(host).search("alpha")).toBe(1);
     expect(host.querySelector("svg mark")).toBeNull();
     expect(host.querySelector("svg text")?.textContent).toBe("alpha in a label");
+  });
+});
+
+function matcherOf(raw: string, caseSensitive = false): ReturnType<typeof prepareMatcher> {
+  return prepareMatcher(parseQuery(raw).terms, caseSensitive);
+}
+
+const UNITS = { selector: "[data-find-unit]" };
+
+/** The unit holding the current step's first mark. */
+function currentUnitOf(host: HTMLElement): string | undefined {
+  return host.querySelector("mark.find-hit-current")?.closest("[data-find-unit]")?.id;
+}
+
+describe("unit mode", () => {
+  function units(): HTMLElement {
+    return mount(`
+      <div data-find-unit="message" id="u1"><p>A security failure</p><p>hit deadset.</p></div>
+      <div data-find-unit="message" id="u2"><p>deadset security notes</p></div>
+      <p>outside every unit: deadset security failure</p>
+      <div data-find-unit="tool" id="u3"><div>failure</div><pre>security deadset</pre></div>`);
+  }
+
+  it("steps through the units holding every term, across their blocks, and marks each term only there", () => {
+    const host = units();
+    const eng = new FindEngine(host);
+    expect(eng.searchUnits(matcherOf("deadset security failure"), UNITS)).toBe(2);
+    expect(currentUnitOf(host)).toBe("u1");
+    expect(marks(host).map((m) => [m.closest("[data-find-unit]")?.id, m.textContent])).toEqual([
+      ["u1", "security"],
+      ["u1", "failure"],
+      ["u1", "deadset"],
+      ["u3", "failure"],
+      ["u3", "security"],
+      ["u3", "deadset"],
+    ]);
+  });
+
+  it("gives every mark of the current unit the current style, and moves by unit", () => {
+    const host = units();
+    const eng = new FindEngine(host);
+    eng.searchUnits(matcherOf("deadset security failure"), UNITS);
+    const current = (): (string | null)[] =>
+      [...host.querySelectorAll("mark.find-hit-current")].map(
+        (m) => m.closest("[data-find-unit]")?.id ?? null,
+      );
+    expect(current()).toEqual(["u1", "u1", "u1"]);
+    eng.next();
+    expect(current()).toEqual(["u3", "u3", "u3"]);
+    eng.next();
+    expect(current()).toEqual(["u1", "u1", "u1"]);
+    eng.prev();
+    expect(eng.currentIndex).toBe(1);
+  });
+
+  it("makes a named unit current, and refuses one that holds no step", () => {
+    const host = units();
+    const eng = new FindEngine(host);
+    eng.searchUnits(matcherOf("deadset security failure"), UNITS);
+    expect(eng.setCurrentUnit(host.querySelector("#u3") as Element)).toBe(true);
+    expect(currentUnitOf(host)).toBe("u3");
+    expect(eng.setCurrentUnit(host.querySelector("#u2") as Element)).toBe(false);
+    expect(currentUnitOf(host)).toBe("u3");
+  });
+
+  it("marks the union of overlapping terms once", () => {
+    const host = mount(`<div data-find-unit="message"><p>deadset-go</p></div>`);
+    const eng = new FindEngine(host);
+    eng.searchUnits(matcherOf("deadset set-go"), UNITS);
+    expect(marks(host).map((m) => m.textContent)).toEqual(["deadset-go"]);
+  });
+
+  it("scopes to the given units when it has no selector", () => {
+    const host = units();
+    const eng = new FindEngine(host);
+    const u2 = host.querySelector("#u2") as Element;
+    expect(eng.searchUnits(matcherOf("deadset"), { units: [u2] })).toBe(1);
+    expect(marks(host).map((m) => m.closest("[data-find-unit]")?.id)).toEqual(["u2"]);
+  });
+
+  it("marks a unit holding any one term in any-term mode, and only there", () => {
+    const html = `<div data-find-unit="tool" id="a">lint guard</div><div data-find-unit="tool" id="b">format</div>`;
+    const host = mount(html);
+    const eng = new FindEngine(host);
+    expect(eng.searchUnits(matcherOf("guard deadset"), UNITS)).toBe(0);
+    expect(eng.searchAnyTerm(matcherOf("guard deadset"), UNITS)).toBe(1);
+    expect(marks(host).map((m) => [m.textContent, m.closest("[data-find-unit]")?.id])).toEqual([
+      ["guard", "a"],
+    ]);
+    expect(eng.currentMark()?.classList).toContain("find-hit-current");
+  });
+
+  it("folds accents and matches a phrase across a line break", () => {
+    const host = mount(`<div data-find-unit="message"><p>La Sécurité\n   failure</p></div>`);
+    const eng = new FindEngine(host);
+    expect(eng.searchUnits(matcherOf('"securite failure"'), UNITS)).toBe(1);
+    expect(marks(host).map((m) => m.textContent)).toEqual(["Sécurité\n   failure"]);
+  });
+
+  it("keeps the current unit through a refresh", () => {
+    const host = units();
+    const eng = new FindEngine(host);
+    const m = matcherOf("deadset security failure");
+    eng.searchUnits(m, UNITS);
+    eng.next();
+    expect(eng.refreshUnits(m, UNITS)).toBe(2);
+    expect(currentUnitOf(host)).toBe("u3");
   });
 });

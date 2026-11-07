@@ -1,0 +1,1381 @@
+{
+  "_comment": [
+    "What one search hit is: the items internal/chat's searchItems finds in a turn, in order.",
+    "",
+    "Go PRODUCES this file (TestSearchItemsFixture) and static-src/search-items-contract.test.ts",
+    "CONSUMES it, rendering body as turn t-1 (its turn_open first) and reading each",
+    "[data-find-unit] element: its kind, its anchor (data-entry-id) and, for a message, every member",
+    "(data-entries), and its text as the find engine reads it with its containers open (texts, one per",
+    "segment, the renderer's own wording drawn as chrome). Bodies are plain text: markdown the renderer",
+    "turns into other text lands with a notice instead. A tool card and the plan card list their folded",
+    "members here only. A folded hook's text is behind its hooks badge, so it is not compared. Header and",
+    "turn_failure items are the turn card's, outside the body the TS side renders, so it skips them.",
+    "hooks_hidden runs a case with hooks.showStatus off. later_wake is a turn_wake in a later turn.",
+    "",
+    "Regenerate with: UPDATE_GOLDEN=1 go test ./internal/chat/ -run TestSearchItemsFixture",
+    "then, from static-src/: npx vitest --run search-items-contract.test.ts"
+  ],
+  "cases": [
+    {
+      "name": "a tool card breaks a message",
+      "body": [
+        {
+          "id": "s1#0",
+          "kind": "text",
+          "payload": {
+            "text": "first half"
+          }
+        },
+        {
+          "id": "c1",
+          "kind": "tool_call",
+          "payload": {
+            "id": "t-c1",
+            "title": "go vet",
+            "kind": "execute",
+            "status": "completed",
+            "ts": 0
+          }
+        },
+        {
+          "id": "c1:result",
+          "kind": "tool_result",
+          "payload": {
+            "status": "completed",
+            "output": "ok"
+          }
+        },
+        {
+          "id": "s1#1",
+          "kind": "text",
+          "payload": {
+            "text": "second half"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "s1#0",
+          "entries": [
+            "s1#0"
+          ],
+          "texts": [
+            "first half"
+          ]
+        },
+        {
+          "kind": "tool",
+          "lane": "",
+          "anchor": "c1",
+          "entries": [
+            "c1",
+            "c1:result"
+          ],
+          "texts": [
+            "go vet",
+            "ok"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "s1#1",
+          "entries": [
+            "s1#1"
+          ],
+          "texts": [
+            "second half"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a result renders nothing, so a message runs across it",
+      "body": [
+        {
+          "id": "c1",
+          "kind": "tool_call",
+          "payload": {
+            "id": "t-c1",
+            "title": "go vet",
+            "kind": "execute",
+            "status": "completed",
+            "ts": 0
+          }
+        },
+        {
+          "id": "s1#0",
+          "kind": "text",
+          "payload": {
+            "text": "first half"
+          }
+        },
+        {
+          "id": "c1:result",
+          "kind": "tool_result",
+          "payload": {
+            "status": "completed",
+            "output": "ok"
+          }
+        },
+        {
+          "id": "s1#1",
+          "kind": "text",
+          "payload": {
+            "text": "second half"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "tool",
+          "lane": "",
+          "anchor": "c1",
+          "entries": [
+            "c1",
+            "c1:result"
+          ],
+          "texts": [
+            "go vet",
+            "ok"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "s1#0",
+          "entries": [
+            "s1#0",
+            "s1#1"
+          ],
+          "texts": [
+            "first halfsecond half"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a step grade renders nothing, so a message runs across it",
+      "body": [
+        {
+          "id": "say-a#0",
+          "kind": "text",
+          "payload": {
+            "text": "first half"
+          }
+        },
+        {
+          "id": "g1",
+          "kind": "step_graded",
+          "payload": {
+            "outcome": "completed"
+          }
+        },
+        {
+          "id": "say-a#1",
+          "kind": "text",
+          "payload": {
+            "text": "second half"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a#0",
+          "entries": [
+            "say-a#0",
+            "say-a#1"
+          ],
+          "texts": [
+            "first halfsecond half"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a word split across a message's entries is one word",
+      "body": [
+        {
+          "id": "say-a#0",
+          "kind": "text",
+          "payload": {
+            "text": "a dead"
+          }
+        },
+        {
+          "id": "say-a#1",
+          "kind": "text",
+          "payload": {
+            "text": "set security fai"
+          }
+        },
+        {
+          "id": "say-a#2",
+          "kind": "text",
+          "payload": {
+            "text": "lure"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a#0",
+          "entries": [
+            "say-a#0",
+            "say-a#1",
+            "say-a#2"
+          ],
+          "texts": [
+            "a deadset security failure"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "two named says are two messages",
+      "body": [
+        {
+          "id": "say-a",
+          "kind": "text",
+          "payload": {
+            "text": "one message"
+          }
+        },
+        {
+          "id": "say-b",
+          "kind": "text",
+          "payload": {
+            "text": "another message"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a",
+          "entries": [
+            "say-a"
+          ],
+          "texts": [
+            "one message"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-b",
+          "entries": [
+            "say-b"
+          ],
+          "texts": [
+            "another message"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a minted say rides the message it follows",
+      "body": [
+        {
+          "id": "say-a#0",
+          "kind": "text",
+          "payload": {
+            "text": "one message"
+          }
+        },
+        {
+          "id": "t-1:e4",
+          "kind": "text",
+          "payload": {
+            "text": " continued"
+          }
+        },
+        {
+          "id": "say-a#1",
+          "kind": "text",
+          "payload": {
+            "text": " and done"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a#0",
+          "entries": [
+            "say-a#0",
+            "t-1:e4",
+            "say-a#1"
+          ],
+          "texts": [
+            "one message continued and done"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a delegate's text is its lane's message",
+      "body": [
+        {
+          "id": "say-a",
+          "kind": "text",
+          "payload": {
+            "text": "the chat's words"
+          }
+        },
+        {
+          "id": "d1",
+          "kind": "text",
+          "lane": "sub-1",
+          "payload": {
+            "text": "the delegate's words"
+          }
+        },
+        {
+          "id": "say-a#1",
+          "kind": "text",
+          "payload": {
+            "text": " go on"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a",
+          "entries": [
+            "say-a",
+            "say-a#1"
+          ],
+          "texts": [
+            "the chat's words go on"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "sub-1",
+          "anchor": "d1",
+          "entries": [
+            "d1"
+          ],
+          "texts": [
+            "the delegate's words"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "reasoning, a steer and notices are items of their own",
+      "body": [
+        {
+          "id": "th1",
+          "kind": "thinking",
+          "payload": {
+            "text": "weighing it"
+          }
+        },
+        {
+          "id": "say-a",
+          "kind": "text",
+          "payload": {
+            "text": "the answer"
+          }
+        },
+        {
+          "id": "st1",
+          "kind": "steer",
+          "payload": {
+            "text": "also this",
+            "origin": "user",
+            "state": "read"
+          }
+        },
+        {
+          "id": "cf1",
+          "kind": "compaction_failed",
+          "payload": {
+            "reason": "too large"
+          }
+        },
+        {
+          "id": "mr1",
+          "kind": "model_routed",
+          "payload": {
+            "message": "routed to a smaller model"
+          }
+        },
+        {
+          "id": "sb1",
+          "kind": "safety_blocked",
+          "payload": {
+            "properties": [
+              "bucket policy",
+              "public access"
+            ]
+          }
+        },
+        {
+          "id": "mf1",
+          "kind": "model_fallback",
+          "payload": {
+            "from": "opus-5",
+            "to": "sonnet-5",
+            "trigger": "refusal"
+          }
+        },
+        {
+          "id": "mf2",
+          "kind": "model_fallback",
+          "payload": {
+            "from": "opus-5",
+            "to": "sonnet-5",
+            "trigger": "availability",
+            "reason": "chainExhausted"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "reasoning",
+          "lane": "",
+          "anchor": "th1",
+          "entries": [
+            "th1"
+          ],
+          "texts": [
+            "weighing it"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a",
+          "entries": [
+            "say-a"
+          ],
+          "texts": [
+            "the answer"
+          ]
+        },
+        {
+          "kind": "steer",
+          "lane": "",
+          "anchor": "st1",
+          "entries": [
+            "st1"
+          ],
+          "texts": [
+            "also this"
+          ]
+        },
+        {
+          "kind": "notice",
+          "lane": "",
+          "anchor": "cf1",
+          "entries": [
+            "cf1"
+          ],
+          "texts": [
+            "too large"
+          ]
+        },
+        {
+          "kind": "notice",
+          "lane": "",
+          "anchor": "mr1",
+          "entries": [
+            "mr1"
+          ],
+          "texts": [
+            "routed to a smaller model"
+          ]
+        },
+        {
+          "kind": "notice",
+          "lane": "",
+          "anchor": "sb1",
+          "entries": [
+            "sb1"
+          ],
+          "texts": [
+            "bucket policy, public access"
+          ]
+        },
+        {
+          "kind": "notice",
+          "lane": "",
+          "anchor": "mf1",
+          "entries": [
+            "mf1"
+          ],
+          "texts": [
+            "opus-5",
+            "sonnet-5"
+          ]
+        },
+        {
+          "kind": "notice",
+          "lane": "",
+          "anchor": "mf2",
+          "entries": [
+            "mf2"
+          ],
+          "texts": [
+            "opus-5"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a plan entry's status and priority are the card's wording",
+      "body": [
+        {
+          "id": "p1",
+          "kind": "plan",
+          "payload": {
+            "entries": [
+              {
+                "content": "draft the fix",
+                "priority": "high",
+                "status": "completed"
+              },
+              {
+                "content": "land the fix",
+                "priority": "",
+                "status": "in_progress"
+              }
+            ]
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "plan",
+          "lane": "",
+          "anchor": "p1",
+          "entries": [
+            "p1"
+          ],
+          "texts": [
+            "draft the fix",
+            "land the fix"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a drawn row with no searched text ends a message and is no item",
+      "body": [
+        {
+          "id": "say-a#0",
+          "kind": "text",
+          "payload": {
+            "text": "before"
+          }
+        },
+        {
+          "id": "ms1",
+          "kind": "mode_switched",
+          "payload": {
+            "from": "vibe",
+            "to": "plan",
+            "source": ""
+          }
+        },
+        {
+          "id": "say-a#1",
+          "kind": "text",
+          "payload": {
+            "text": "after"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a#0",
+          "entries": [
+            "say-a#0"
+          ],
+          "texts": [
+            "before"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a#1",
+          "entries": [
+            "say-a#1"
+          ],
+          "texts": [
+            "after"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a steer acknowledgement is a message of its own",
+      "body": [
+        {
+          "id": "say-a#0",
+          "kind": "text",
+          "payload": {
+            "text": "before"
+          }
+        },
+        {
+          "id": "st1:ack",
+          "kind": "steer_ack",
+          "payload": {
+            "steer_id": "st1",
+            "text": "noted"
+          }
+        },
+        {
+          "id": "say-a#1",
+          "kind": "text",
+          "payload": {
+            "text": "after"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a#0",
+          "entries": [
+            "say-a#0"
+          ],
+          "texts": [
+            "before"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "st1:ack",
+          "entries": [
+            "st1:ack"
+          ],
+          "texts": [
+            "noted"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a#1",
+          "entries": [
+            "say-a#1"
+          ],
+          "texts": [
+            "after"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "every plan update folds into the first plan's card",
+      "body": [
+        {
+          "id": "p1",
+          "kind": "plan",
+          "payload": {
+            "entries": [
+              {
+                "content": "draft the fix",
+                "priority": "",
+                "status": "pending"
+              }
+            ]
+          }
+        },
+        {
+          "id": "say-a#0",
+          "kind": "text",
+          "payload": {
+            "text": "working"
+          }
+        },
+        {
+          "id": "p2",
+          "kind": "plan",
+          "payload": {
+            "entries": [
+              {
+                "content": "land the fix",
+                "priority": "",
+                "status": "pending"
+              }
+            ]
+          }
+        },
+        {
+          "id": "say-a#1",
+          "kind": "text",
+          "payload": {
+            "text": " still working"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "plan",
+          "lane": "",
+          "anchor": "p1",
+          "entries": [
+            "p1",
+            "p2"
+          ],
+          "texts": [
+            "land the fix"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a#0",
+          "entries": [
+            "say-a#0",
+            "say-a#1"
+          ],
+          "texts": [
+            "working still working"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a folded hook is its own tool item",
+      "body": [
+        {
+          "id": "h1",
+          "kind": "tool_call",
+          "payload": {
+            "id": "t-h1",
+            "title": "Hook fired: guard",
+            "kind": "hook",
+            "status": "completed",
+            "hook_trigger": "PreToolUse",
+            "ts": 0
+          }
+        },
+        {
+          "id": "c1",
+          "kind": "tool_call",
+          "payload": {
+            "id": "t-c1",
+            "title": "go vet",
+            "kind": "execute",
+            "status": "completed",
+            "ts": 0
+          }
+        },
+        {
+          "id": "say-a",
+          "kind": "text",
+          "payload": {
+            "text": "done"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "tool",
+          "lane": "",
+          "anchor": "h1",
+          "entries": [
+            "h1"
+          ],
+          "texts": [
+            "Hook fired: guard"
+          ]
+        },
+        {
+          "kind": "tool",
+          "lane": "",
+          "anchor": "c1",
+          "entries": [
+            "c1"
+          ],
+          "texts": [
+            "go vet"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a",
+          "entries": [
+            "say-a"
+          ],
+          "texts": [
+            "done"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a hidden hook is no item and ends nothing",
+      "hooks_hidden": true,
+      "body": [
+        {
+          "id": "say-a#0",
+          "kind": "text",
+          "payload": {
+            "text": "before"
+          }
+        },
+        {
+          "id": "h1",
+          "kind": "tool_call",
+          "payload": {
+            "id": "t-h1",
+            "title": "Hook fired: guard",
+            "kind": "hook",
+            "status": "completed",
+            "hook_trigger": "SessionStart",
+            "ts": 0
+          }
+        },
+        {
+          "id": "say-a#1",
+          "kind": "text",
+          "payload": {
+            "text": "after"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a#0",
+          "entries": [
+            "say-a#0",
+            "say-a#1"
+          ],
+          "texts": [
+            "beforeafter"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a row a wake draws is no item where it was filed",
+      "body": [
+        {
+          "id": "say-a",
+          "kind": "text",
+          "payload": {
+            "text": "launched"
+          }
+        },
+        {
+          "id": "wfmsg-q",
+          "kind": "steer",
+          "payload": {
+            "text": "Rewrite the links?",
+            "origin": "step",
+            "severity": "warning",
+            "to_session": "sess_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+            "origin_run": "wf_5e1f0c2a9b7d4e36",
+            "step": "build/check-links",
+            "produced_ts": 1792349041432
+          }
+        }
+      ],
+      "later_wake": {
+        "reason": "step_message",
+        "steers": [
+          {
+            "id": "wfmsg-q",
+            "run": "wf_5e1f0c2a9b7d4e36",
+            "step": "draft",
+            "severity": "warning",
+            "text": "Rewrite the links?"
+          }
+        ]
+      },
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a",
+          "entries": [
+            "say-a"
+          ],
+          "texts": [
+            "launched"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a message's paragraphs and lines are runs of their own",
+      "body": [
+        {
+          "id": "say-a#0",
+          "kind": "text",
+          "payload": {
+            "text": "the security\n"
+          }
+        },
+        {
+          "id": "say-a#1",
+          "kind": "text",
+          "payload": {
+            "text": "\nfailure was bad \n then fixed\nfor good"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a#0",
+          "entries": [
+            "say-a#0",
+            "say-a#1"
+          ],
+          "texts": [
+            "the security",
+            "failure was bad ",
+            "then fixed",
+            "for good"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a steer acknowledgement's lines are runs of their own",
+      "body": [
+        {
+          "id": "st1:ack",
+          "kind": "steer_ack",
+          "payload": {
+            "steer_id": "st1",
+            "text": "noted\nthe security\n\nfailure"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "st1:ack",
+          "entries": [
+            "st1:ack"
+          ],
+          "texts": [
+            "noted",
+            "the security",
+            "failure"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "reasoning, a steer, a plan, a notice and tool output keep their line breaks",
+      "body": [
+        {
+          "id": "th1",
+          "kind": "thinking",
+          "payload": {
+            "text": "weighing\nthe security\n\nfailure"
+          }
+        },
+        {
+          "id": "say-a",
+          "kind": "text",
+          "payload": {
+            "text": "the answer"
+          }
+        },
+        {
+          "id": "st1",
+          "kind": "steer",
+          "payload": {
+            "text": "also\nthe security\n\nfailure",
+            "origin": "user",
+            "state": "read"
+          }
+        },
+        {
+          "id": "p1",
+          "kind": "plan",
+          "payload": {
+            "entries": [
+              {
+                "content": "draft\nthe fix",
+                "priority": "",
+                "status": "pending"
+              }
+            ]
+          }
+        },
+        {
+          "id": "cf1",
+          "kind": "compaction_failed",
+          "payload": {
+            "reason": "too\nlarge"
+          }
+        },
+        {
+          "id": "c1",
+          "kind": "tool_call",
+          "payload": {
+            "id": "t-c1",
+            "title": "go vet",
+            "kind": "execute",
+            "status": "completed",
+            "ts": 0
+          }
+        },
+        {
+          "id": "c1:result",
+          "kind": "tool_result",
+          "payload": {
+            "status": "completed",
+            "output": "the security\nfailure"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "reasoning",
+          "lane": "",
+          "anchor": "th1",
+          "entries": [
+            "th1"
+          ],
+          "texts": [
+            "weighing\nthe security\n\nfailure"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a",
+          "entries": [
+            "say-a"
+          ],
+          "texts": [
+            "the answer"
+          ]
+        },
+        {
+          "kind": "steer",
+          "lane": "",
+          "anchor": "st1",
+          "entries": [
+            "st1"
+          ],
+          "texts": [
+            "also\nthe security\n\nfailure"
+          ]
+        },
+        {
+          "kind": "plan",
+          "lane": "",
+          "anchor": "p1",
+          "entries": [
+            "p1"
+          ],
+          "texts": [
+            "draft\nthe fix"
+          ]
+        },
+        {
+          "kind": "notice",
+          "lane": "",
+          "anchor": "cf1",
+          "entries": [
+            "cf1"
+          ],
+          "texts": [
+            "too\nlarge"
+          ]
+        },
+        {
+          "kind": "tool",
+          "lane": "",
+          "anchor": "c1",
+          "entries": [
+            "c1",
+            "c1:result"
+          ],
+          "texts": [
+            "go vet",
+            "the security\nfailure"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a turn's header and failure are items",
+      "body": [
+        {
+          "id": "say-a",
+          "kind": "text",
+          "payload": {
+            "text": "partial"
+          }
+        },
+        {
+          "id": "t-1:close",
+          "kind": "turn_close",
+          "payload": {
+            "outcome": "failed",
+            "failure_reason": "budget ran out"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a",
+          "entries": [
+            "say-a"
+          ],
+          "texts": [
+            "partial"
+          ]
+        },
+        {
+          "kind": "turn_failure",
+          "lane": "",
+          "anchor": "t-1:close",
+          "entries": [
+            "t-1:close"
+          ],
+          "texts": [
+            "budget ran out"
+          ]
+        }
+      ]
+    }
+  ]
+}

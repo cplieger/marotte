@@ -6,15 +6,15 @@
     "decoders are generated from them; this file is what keeps the ENCODER honest against",
     "that decoder. TestSearchWireContract (Go) asserts the scan marshals to exactly these",
     "bytes, and chat-search.node.test.ts (TypeScript) decodes every reply through the",
-    "generated decodeSearchResult and pins the field-level invariants (segment-relative",
-    "RUNE offsets, the entry-kind zero contract, the tally beside the hits).",
+    "generated decodeSearchResult and pins the field-level invariants (one hit per item,",
+    "segments only on a free-text hit, a spread reply's turn hits, the tally beside the hits).",
     "",
     "Regenerate with: UPDATE_GOLDEN=1 go test ./internal/chat/ -run TestSearchWireContract",
     "then re-run the TS half: npx vitest --run chat-search.node.test.ts (from static-src/)."
   ],
   "queries": [
     {
-      "name": "free text hits every segment kind",
+      "name": "free text hits every segment and item kind",
       "query": "retry",
       "case_sensitive": false,
       "result": {
@@ -22,165 +22,146 @@
           {
             "turn_id": "t-1",
             "entry_id": "t-1",
+            "kind": "header",
             "excerpt": "Where does the retry backoff live? The naïve loop calls retry twice.",
-            "segment_kind": "prompt",
-            "turn": 1,
-            "offset": 15,
-            "segment_len": 68
-          },
-          {
-            "turn_id": "t-1",
-            "entry_id": "t-1",
-            "excerpt": "Where does the retry backoff live? The naïve loop calls retry twice.",
-            "segment_kind": "prompt",
-            "turn": 1,
-            "offset": 56,
-            "segment_len": 68
-          },
-          {
-            "turn_id": "t-1",
-            "entry_id": "t-1",
-            "excerpt": "retry-notes.md",
-            "segment_kind": "attachment",
-            "turn": 1,
-            "offset": 0,
-            "segment_len": 14
+            "segments": [
+              "prompt",
+              "attachment"
+            ],
+            "turn": 1
           },
           {
             "turn_id": "t-1",
             "entry_id": "th1",
+            "kind": "reasoning",
             "excerpt": "The retry semantics differ per client.",
-            "segment_kind": "reasoning",
-            "turn": 1,
-            "offset": 4,
-            "segment_len": 38
+            "segments": [
+              "reasoning"
+            ],
+            "turn": 1
           },
           {
             "turn_id": "t-1",
             "entry_id": "a1",
+            "kind": "message",
             "excerpt": "The **retry** helper lives in fetch.go; wrap the call in retry(ctx).",
-            "segment_kind": "content",
-            "turn": 1,
-            "offset": 6,
-            "segment_len": 68
-          },
-          {
-            "turn_id": "t-1",
-            "entry_id": "a1",
-            "excerpt": "The **retry** helper lives in fetch.go; wrap the call in retry(ctx).",
-            "segment_kind": "content",
-            "turn": 1,
-            "offset": 57,
-            "segment_len": 68
+            "segments": [
+              "content"
+            ],
+            "turn": 1
           },
           {
             "turn_id": "t-1",
             "entry_id": "tc1",
+            "kind": "tool",
             "excerpt": "Read retry.go",
-            "segment_kind": "tool_title",
-            "turn": 1,
-            "offset": 5,
-            "segment_len": 13
-          },
-          {
-            "turn_id": "t-1",
-            "entry_id": "tc1:result",
-            "excerpt": "func retry(ctx context.Context) error",
-            "segment_kind": "tool_output",
-            "turn": 1,
-            "offset": 5,
-            "segment_len": 37
+            "segments": [
+              "tool_title",
+              "tool_output"
+            ],
+            "turn": 1
           },
           {
             "turn_id": "t-1",
             "entry_id": "a2",
-            "excerpt": "The delegate traced the retry path end to end.",
-            "segment_kind": "content",
             "lane": "sub-1",
-            "turn": 1,
-            "offset": 24,
-            "segment_len": 46
+            "kind": "message",
+            "excerpt": "The delegate traced the retry path end to end.",
+            "segments": [
+              "content"
+            ],
+            "turn": 1
           },
           {
             "turn_id": "t-1",
             "entry_id": "tc3",
+            "kind": "tool",
             "excerpt": "fetch.go return retry(ctx, fetchOnce)",
-            "segment_kind": "tool_input",
-            "turn": 1,
-            "offset": 16,
-            "segment_len": 37
+            "segments": [
+              "tool_input",
+              "tool_diff"
+            ],
+            "turn": 1
           },
           {
             "turn_id": "t-1",
-            "entry_id": "tc3:result",
-            "excerpt": "func fetch(ctx context.Context) error { return retry(ctx, fetchOnce) }",
-            "segment_kind": "tool_diff",
-            "turn": 1,
-            "offset": 48,
-            "segment_len": 71
-          },
-          {
-            "turn_id": "t-1",
-            "entry_id": "tc4:result",
+            "entry_id": "tc4",
+            "kind": "tool",
             "excerpt": "retry-budget",
-            "segment_kind": "tool_disclosed",
-            "turn": 1,
-            "offset": 0,
-            "segment_len": 12
+            "segments": [
+              "tool_disclosed"
+            ],
+            "turn": 1
           },
           {
             "turn_id": "t-1",
-            "entry_id": "tc5:result",
+            "entry_id": "tc5",
+            "kind": "tool",
             "excerpt": "rm -rf /config/retry",
-            "segment_kind": "tool_denial",
-            "turn": 1,
-            "offset": 15,
-            "segment_len": 20
+            "segments": [
+              "tool_denial"
+            ],
+            "turn": 1
           },
           {
             "turn_id": "t-1",
             "entry_id": "steer-1",
+            "kind": "steer",
             "excerpt": "also cap the retry count",
-            "segment_kind": "steer",
-            "turn": 1,
-            "offset": 13,
-            "segment_len": 24
+            "segments": [
+              "steer"
+            ],
+            "turn": 1
+          },
+          {
+            "turn_id": "t-1",
+            "entry_id": "cf-1",
+            "kind": "notice",
+            "excerpt": "the retry summary was too large",
+            "segments": [
+              "content"
+            ],
+            "turn": 1
           },
           {
             "turn_id": "t-1",
             "entry_id": "plan-1",
+            "kind": "plan",
             "excerpt": "Trace the retry path",
-            "segment_kind": "plan",
-            "turn": 1,
-            "offset": 10,
-            "segment_len": 20
+            "segments": [
+              "plan"
+            ],
+            "turn": 1
           },
           {
             "turn_id": "t-1",
             "entry_id": "t-1:close",
+            "kind": "turn_failure",
             "excerpt": "the retry budget ran out",
-            "segment_kind": "turn_failure",
-            "turn": 1,
-            "offset": 4,
-            "segment_len": 24
+            "segments": [
+              "turn_failure"
+            ],
+            "turn": 1
           },
           {
             "turn_id": "t-3",
-            "entry_id": "t-3:wake",
+            "entry_id": "t-3",
+            "kind": "header",
             "excerpt": "Should the retry cap be 3 or 5?",
-            "segment_kind": "wake",
-            "turn": 3,
-            "offset": 11,
-            "segment_len": 31
+            "segments": [
+              "wake"
+            ],
+            "turn": 3
           }
         ],
-        "scanned": 23,
-        "matched": 17,
+        "spread": false,
+        "scanned": 24,
+        "matched": 13,
         "truncated": false
       }
     },
     {
-      "name": "filter only lists matching entries",
+      "name": "filter only lists matching items",
       "query": "turn:2",
       "case_sensitive": false,
       "result": {
@@ -188,42 +169,48 @@
           {
             "turn_id": "t-2",
             "entry_id": "t-2",
+            "kind": "header",
             "excerpt": "Anything left?",
-            "segment_kind": "entry",
-            "turn": 2,
-            "offset": 0,
-            "segment_len": 0
+            "segments": [],
+            "turn": 2
           },
           {
             "turn_id": "t-2",
             "entry_id": "tc2",
+            "kind": "tool",
             "excerpt": "List files",
-            "segment_kind": "entry",
-            "turn": 2,
-            "offset": 0,
-            "segment_len": 0
-          },
-          {
-            "turn_id": "t-2",
-            "entry_id": "tc2:result",
-            "excerpt": "a.go b.go",
-            "segment_kind": "entry",
-            "turn": 2,
-            "offset": 0,
-            "segment_len": 0
-          },
-          {
-            "turn_id": "t-2",
-            "entry_id": "t-2:close",
-            "excerpt": "",
-            "segment_kind": "entry",
-            "turn": 2,
-            "offset": 0,
-            "segment_len": 0
+            "segments": [],
+            "turn": 2
           }
         ],
-        "scanned": 23,
-        "matched": 4,
+        "spread": false,
+        "scanned": 24,
+        "matched": 2,
+        "truncated": false
+      }
+    },
+    {
+      "name": "words only spread across one turn's items",
+      "query": "semantics budget",
+      "case_sensitive": false,
+      "result": {
+        "matches": [
+          {
+            "turn_id": "t-1",
+            "entry_id": "th1",
+            "kind": "turn",
+            "excerpt": "The retry semantics differ per client.",
+            "segments": [
+              "reasoning",
+              "tool_disclosed",
+              "turn_failure"
+            ],
+            "turn": 1
+          }
+        ],
+        "spread": true,
+        "scanned": 24,
+        "matched": 1,
         "truncated": false
       }
     }

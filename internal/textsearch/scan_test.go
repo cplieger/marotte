@@ -89,10 +89,10 @@ func TestOccurrences_DoNotOverlap(t *testing.T) {
 }
 
 func TestOccurrences_SimpleMappingMatchesTheMedialSigma(t *testing.T) {
-	if got := NewNeedle("σ", false).Count("ΟΔΟΣ"); got != 1 {
+	if got := count(NewNeedle("σ", false), "ΟΔΟΣ"); got != 1 {
 		t.Errorf("Count(%q) with needle σ = %d, want 1", "ΟΔΟΣ", got)
 	}
-	if got := NewNeedle("ς", false).Count("ΟΔΟΣ"); got != 0 {
+	if got := count(NewNeedle("ς", false), "ΟΔΟΣ"); got != 0 {
 		t.Errorf("Count(%q) with needle ς = %d, want 0", "ΟΔΟΣ", got)
 	}
 }
@@ -168,7 +168,7 @@ func TestCount_AgreesWithOccurrences(t *testing.T) {
 	}
 	for _, tc := range cases {
 		n := NewNeedle(tc.needle, false)
-		if got := n.Count(tc.text); got != tc.want {
+		if got := count(n, tc.text); got != tc.want {
 			t.Errorf("Count(%q) with needle %q = %d, want %d", tc.text, tc.needle, got, tc.want)
 		}
 	}
@@ -200,4 +200,13 @@ func TestOccurrences_PositionsIndexTheOriginal(t *testing.T) {
 			}
 		})
 	}
+}
+
+// count is how many hits n.Occurrences yields in text.
+func count(n Needle, text string) int {
+	c := 0
+	for range n.Occurrences(text) {
+		c++
+	}
+	return c
 }

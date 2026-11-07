@@ -1,20 +1,23 @@
 package chat
 
 import (
+	"fmt"
+	"math"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // A full filter admits everything, so an oversized chat is read for every query, never skipped.
 func TestChatFilter_SaturatedAdmitsEveryQuery(t *testing.T) {
-	f := new(chatFilter)
+	f := newChatFilter()
 	for i := range f.words {
 		f.words[i] = ^uint64(0)
 	}
@@ -32,7 +35,7 @@ func TestChatFilter_ATrigramSetsAndDemandsThreePositions(t *testing.T) {
 	rng := rand.New(rand.NewPCG(3, 5))
 	for range 200 {
 		key := trigramKey(rune(rng.IntN(0x110000)), rune(rng.IntN(0x110000)), rune(rng.IntN(0x110000)))
-		f := new(chatFilter)
+		f := newChatFilter()
 		f.add(key)
 		var set []int
 		for w, word := range f.words {
@@ -60,10 +63,10 @@ func TestChatFilter_ATrigramSetsAndDemandsThreePositions(t *testing.T) {
 
 // Distinct trigrams never share a key: a filter rejects each single-rune variant.
 func TestChatFilter_DistinctTrigramsAreDistinctKeys(t *testing.T) {
-	f := new(chatFilter)
+	f := newChatFilter()
 	f.addText("abc")
 	for _, variant := range []string{"xbc", "axc", "abx", "cba", "bca"} {
-		if f.holdsAll(queryTrigrams(variant)) {
+		if f.holdsAll(trigramsOf(variant)) {
 			t.Errorf("a filter over %q holds %q", "abc", variant)
 		}
 	}
@@ -80,8 +83,11 @@ func TestChatFilter_DistinctTrigramsAreDistinctKeys(t *testing.T) {
 	}
 }
 
-// Under three runes nothing is demanded; at three, one trigram of runes, case-folded. Invalid bytes collapse per run
-// as NewNeedle does.
+// trigramsOf is queryTrigrams over raw parsed as the chat search parses it.
+func trigramsOf(raw string) []uint64 { return queryTrigrams(parseSearchQuery(raw, false).terms) }
+
+// Under three runes a word demands nothing; at three, one trigram of runes, folded as the matcher folds. Invalid
+// bytes collapse per run as ParseQuery does.
 func TestQueryTrigrams_UnderThreeRunesDemandsNothing(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -95,18 +101,20 @@ func TestQueryTrigrams_UnderThreeRunesDemandsNothing(t *testing.T) {
 		{name: "three_runes", text: "abc", wantN: 1},
 		{name: "three_multibyte_runes", text: "é✓ß", wantN: 1},
 		{name: "four_runes", text: "abcd", wantN: 2},
+		{name: "each_word_on_its_own", text: "abcd ef ghi", wantN: 3},
+		{name: "a_phrase_word_by_word", text: `"abcd ghi"`, wantN: 3},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := len(queryTrigrams(tc.text)); got != tc.wantN {
+			if got := len(trigramsOf(tc.text)); got != tc.wantN {
 				t.Errorf("queryTrigrams(%q) has %d keys, want %d", tc.text, got, tc.wantN)
 			}
 		})
 	}
-	if a, b := queryTrigrams("AbC"), queryTrigrams("abc"); !slices.Equal(a, b) {
-		t.Errorf("queryTrigrams(%q) = %v, want the folded %v", "AbC", a, b)
+	if a, b := trigramsOf("ÀbC"), trigramsOf("abc"); !slices.Equal(a, b) {
+		t.Errorf("queryTrigrams(%q) = %v, want the folded %v", "ÀbC", a, b)
 	}
-	if a, b := queryTrigrams("a\xff\xfeb"), queryTrigrams("a\uFFFDb"); !slices.Equal(a, b) {
+	if a, b := trigramsOf("a\xff\xfeb"), trigramsOf("a\uFFFDb"); !slices.Equal(a, b) {
 		t.Errorf("queryTrigrams(%q) = %v, want one U+FFFD per invalid run, %v", "a\xff\xfeb", a, b)
 	}
 }
@@ -374,11 +382,30 @@ func TestSearchAll_AsksTheIndexAboutTheFreeTextOnly(t *testing.T) {
 	}
 }
 
-// The index costs 64 KiB per chat, a power of two so a position is a mask.
-func TestChatFilter_MemoryIsSixtyFourKiBPerChat(t *testing.T) {
-	if got := unsafe.Sizeof(chatFilter{}); got != 64<<10 {
-		t.Errorf("sizeof(chatFilter) = %d, want %d", got, 64<<10)
+// A word or phrase a message's entries split is in the filter, whether it was built over the whole log or over a
+// prefix and extended entry by entry, and whatever another lane wrote between the halves.
+func TestChatFilter_HoldsWordsSplitAcrossAMessagesEntries(t *testing.T) {
+	entries, _ := chatOf(openTurn("t-1", 1, nil).
+		text("s1#0", "a dead").
+		laneText("sub-1", "d1", "unrelated words").
+		text("s1#1", "set security failure, and the security ").
+		text("s1#2", "failure was bad"))
+	for _, q := range []string{"deadset security failure", `"security failure was"`} {
+		want := queryTrigrams(parseSearchQuery(q, false).terms)
+		for over := range len(entries) + 1 {
+			f := buildChatFilter("", entries[:over])
+			for i := over; i < len(entries); i++ {
+				f.addEntry(&entries[i])
+			}
+			if !f.holdsAll(want) {
+				t.Errorf("filter built over %d entries and extended with the rest rejects %s", over, q)
+			}
+		}
 	}
+}
+
+// The index holds one filter per chat it searched, its bits a power of two so a position is a mask.
+func TestSearchIndex_HoldsOneFilterPerChat(t *testing.T) {
 	if filterBits != filterBytes*8 || filterBits&(filterBits-1) != 0 {
 		t.Errorf("filterBits = %d, want %d and a power of two", filterBits, filterBytes*8)
 	}
@@ -392,7 +419,64 @@ func TestChatFilter_MemoryIsSixtyFourKiBPerChat(t *testing.T) {
 	s.index.mu.Lock()
 	held := len(s.index.filters)
 	s.index.mu.Unlock()
-	if got, want := uintptr(held)*unsafe.Sizeof(chatFilter{}), uintptr(len(ids))*64<<10; got != want {
-		t.Errorf("index over %d chats holds %d bytes of filters, want %d", len(ids), got, want)
+	if held != len(ids) {
+		t.Errorf("index over %d chats holds %d filters, want one per chat", len(ids), held)
 	}
+}
+
+// A 500-turn chat of 8 KiB replies costs its filter 64 KiB of bits and under 1 KiB more, whether the filter was
+// built over the log or extended entry by entry: a closed turn leaves nothing behind, and the open turn's tail is
+// its last runes, not its reply.
+func TestChatFilter_HoldsSixtyFourKiBForAFiveHundredTurnChat(t *testing.T) {
+	const turns, reply = 500, 8 << 10
+	half := strings.Repeat("deadset security failure ", reply/2/len("deadset security failure "))
+	var fixtures []*turnFixture
+	for n := range turns {
+		id := fmt.Sprintf("t-%d", n+1)
+		tf := openTurn(id, uint64(n+1), prompt(id+":p", "why did it fail")).
+			text(id+"#0", half).
+			text(id+"#1", half)
+		if n < turns-1 {
+			tf.close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted})
+		}
+		fixtures = append(fixtures, tf)
+	}
+	entries, _ := chatOf(fixtures...)
+	const bound = filterBytes + 1<<10
+	for _, over := range []int{len(entries), len(entries) / 2, 0} {
+		held := retainedBytes(func() any {
+			f := buildChatFilter("Notes", entries[:over])
+			for i := over; i < len(entries); i++ {
+				f.addEntry(&entries[i])
+			}
+			return f
+		})
+		if held > bound {
+			t.Errorf("filter built over %d of %d entries holds %d bytes, want at most %d", over, len(entries), held, bound)
+		}
+	}
+	runtime.KeepAlive(entries)
+}
+
+// retainedBytes is the least live heap that build's result holds over three runs; the least, so another goroutine's
+// allocation during one run cannot fail the bound. Two collections each side, since a sync.Pool's victim survives one.
+func retainedBytes(build func() any) uint64 {
+	least := uint64(math.MaxUint64)
+	for range 3 {
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		v := build()
+		runtime.GC()
+		runtime.GC()
+		runtime.ReadMemStats(&after)
+		runtime.KeepAlive(v)
+		held := uint64(0)
+		if after.HeapAlloc > before.HeapAlloc {
+			held = after.HeapAlloc - before.HeapAlloc
+		}
+		least = min(least, held)
+	}
+	return least
 }

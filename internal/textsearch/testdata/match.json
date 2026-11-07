@@ -1,0 +1,611 @@
+{
+  "_comment": [
+    "Query grammar and spans, as the Go kernel reports them.",
+    "",
+    "Go PRODUCES this file from textsearch.ParseQuery and Matcher.Spans (TestMatchFixture) and the",
+    "TypeScript twin in static-src/textsearch (query.ts) CONSUMES it, asserting each row's terms, filters,",
+    "spans and whether every term matched. The filter rule here accepts the name `file` only.",
+    "Positions index the ORIGINAL text: rune and byte as Go counts, utf16 and utf16_len in code units.",
+    "",
+    "Regenerate with: UPDATE_GOLDEN=1 go test ./internal/textsearch/ -run TestMatchFixture",
+    "then, from static-src/: npx vitest --run --project node textsearch/match.node.test.ts"
+  ],
+  "rows": [
+    {
+      "name": "all_terms_in_another_order",
+      "text": "the failure in deadset was a security bug",
+      "query": "deadset security failure",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "deadset"
+          ]
+        },
+        {
+          "words": [
+            "security"
+          ]
+        },
+        {
+          "words": [
+            "failure"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [
+        {
+          "term": 2,
+          "rune": 4,
+          "byte": 4,
+          "utf16": 4,
+          "runes": 7,
+          "utf16_len": 7
+        },
+        {
+          "term": 0,
+          "rune": 15,
+          "byte": 15,
+          "utf16": 15,
+          "runes": 7,
+          "utf16_len": 7
+        },
+        {
+          "term": 1,
+          "rune": 29,
+          "byte": 29,
+          "utf16": 29,
+          "runes": 8,
+          "utf16_len": 8
+        }
+      ],
+      "all": true
+    },
+    {
+      "name": "two_of_three_terms",
+      "text": "deadset security notes",
+      "query": "deadset security failure",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "deadset"
+          ]
+        },
+        {
+          "words": [
+            "security"
+          ]
+        },
+        {
+          "words": [
+            "failure"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [
+        {
+          "term": 0,
+          "rune": 0,
+          "byte": 0,
+          "utf16": 0,
+          "runes": 7,
+          "utf16_len": 7
+        },
+        {
+          "term": 1,
+          "rune": 8,
+          "byte": 8,
+          "utf16": 8,
+          "runes": 8,
+          "utf16_len": 8
+        }
+      ],
+      "all": false
+    },
+    {
+      "name": "phrase_in_order",
+      "text": "a security failure",
+      "query": "\"security failure\"",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "security",
+            "failure"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [
+        {
+          "term": 0,
+          "rune": 2,
+          "byte": 2,
+          "utf16": 2,
+          "runes": 16,
+          "utf16_len": 16
+        }
+      ],
+      "all": true
+    },
+    {
+      "name": "phrase_out_of_order",
+      "text": "failure security",
+      "query": "\"security failure\"",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "security",
+            "failure"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [],
+      "all": false
+    },
+    {
+      "name": "phrase_across_a_newline",
+      "text": "security\nfailure",
+      "query": "\"security failure\"",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "security",
+            "failure"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [
+        {
+          "term": 0,
+          "rune": 0,
+          "byte": 0,
+          "utf16": 0,
+          "runes": 16,
+          "utf16_len": 16
+        }
+      ],
+      "all": true
+    },
+    {
+      "name": "phrase_across_two_spaces",
+      "text": "security  failure",
+      "query": "\"security failure\"",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "security",
+            "failure"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [
+        {
+          "term": 0,
+          "rune": 0,
+          "byte": 0,
+          "utf16": 0,
+          "runes": 17,
+          "utf16_len": 17
+        }
+      ],
+      "all": true
+    },
+    {
+      "name": "phrase_needs_whitespace",
+      "text": "securityfailure",
+      "query": "\"security failure\"",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "security",
+            "failure"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [],
+      "all": false
+    },
+    {
+      "name": "unclosed_quote_runs_to_the_end",
+      "text": "deadset security failure",
+      "query": "deadset \"security fail",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "deadset"
+          ]
+        },
+        {
+          "words": [
+            "security",
+            "fail"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [
+        {
+          "term": 0,
+          "rune": 0,
+          "byte": 0,
+          "utf16": 0,
+          "runes": 7,
+          "utf16_len": 7
+        },
+        {
+          "term": 1,
+          "rune": 8,
+          "byte": 8,
+          "utf16": 8,
+          "runes": 13,
+          "utf16_len": 13
+        }
+      ],
+      "all": true
+    },
+    {
+      "name": "quoted_filter_stays_text",
+      "text": "see file:a.go",
+      "query": "\"file:a.go\"",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "file:a.go"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [
+        {
+          "term": 0,
+          "rune": 4,
+          "byte": 4,
+          "utf16": 4,
+          "runes": 9,
+          "utf16_len": 9
+        }
+      ],
+      "all": true
+    },
+    {
+      "name": "unquoted_filter_is_lifted",
+      "text": "a.go retry",
+      "query": "file:a.go retry",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "retry"
+          ]
+        }
+      ],
+      "filters": [
+        {
+          "name": "file",
+          "value": "a.go"
+        }
+      ],
+      "spans": [
+        {
+          "term": 0,
+          "rune": 5,
+          "byte": 5,
+          "utf16": 5,
+          "runes": 5,
+          "utf16_len": 5
+        }
+      ],
+      "all": true
+    },
+    {
+      "name": "refused_filter_stays_text",
+      "text": "http://x",
+      "query": "http://x",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "http://x"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [
+        {
+          "term": 0,
+          "rune": 0,
+          "byte": 0,
+          "utf16": 0,
+          "runes": 8,
+          "utf16_len": 8
+        }
+      ],
+      "all": true
+    },
+    {
+      "name": "minus_is_text",
+      "text": "go test -v ./...",
+      "query": "-v",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "-v"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [
+        {
+          "term": 0,
+          "rune": 8,
+          "byte": 8,
+          "utf16": 8,
+          "runes": 2,
+          "utf16_len": 2
+        }
+      ],
+      "all": true
+    },
+    {
+      "name": "accent_in_the_text",
+      "text": "La Sécurité",
+      "query": "securite",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "securite"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [
+        {
+          "term": 0,
+          "rune": 3,
+          "byte": 3,
+          "utf16": 3,
+          "runes": 8,
+          "utf16_len": 8
+        }
+      ],
+      "all": true
+    },
+    {
+      "name": "accent_in_the_query",
+      "text": "securite",
+      "query": "Sécurité",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "Sécurité"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [
+        {
+          "term": 0,
+          "rune": 0,
+          "byte": 0,
+          "utf16": 0,
+          "runes": 8,
+          "utf16_len": 8
+        }
+      ],
+      "all": true
+    },
+    {
+      "name": "uppercase_accent",
+      "text": "ÉCOLE",
+      "query": "ecole",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "ecole"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [
+        {
+          "term": 0,
+          "rune": 0,
+          "byte": 0,
+          "utf16": 0,
+          "runes": 5,
+          "utf16_len": 5
+        }
+      ],
+      "all": true
+    },
+    {
+      "name": "decomposed_accent_in_the_text",
+      "text": "école",
+      "query": "école",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "école"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [],
+      "all": false
+    },
+    {
+      "name": "astral_rune_before_the_match",
+      "text": "😀😀 deadset",
+      "query": "deadset",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "deadset"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [
+        {
+          "term": 0,
+          "rune": 3,
+          "byte": 9,
+          "utf16": 5,
+          "runes": 7,
+          "utf16_len": 7
+        }
+      ],
+      "all": true
+    },
+    {
+      "name": "kelvin_sign",
+      "text": "Kelvin",
+      "query": "kelvin",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "kelvin"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [
+        {
+          "term": 0,
+          "rune": 0,
+          "byte": 0,
+          "utf16": 0,
+          "runes": 6,
+          "utf16_len": 6
+        }
+      ],
+      "all": true
+    },
+    {
+      "name": "final_sigma",
+      "text": "ΟΔΟΣ",
+      "query": "οδος",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "οδος"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [],
+      "all": false
+    },
+    {
+      "name": "case_sensitive_accent_is_literal",
+      "text": "Sécurité",
+      "query": "securite",
+      "case_sensitive": true,
+      "terms": [
+        {
+          "words": [
+            "securite"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [],
+      "all": false
+    },
+    {
+      "name": "case_sensitive_match",
+      "text": "Retry retry",
+      "query": "retry",
+      "case_sensitive": true,
+      "terms": [
+        {
+          "words": [
+            "retry"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [
+        {
+          "term": 0,
+          "rune": 6,
+          "byte": 6,
+          "utf16": 6,
+          "runes": 5,
+          "utf16_len": 5
+        }
+      ],
+      "all": true
+    },
+    {
+      "name": "overlapping_terms",
+      "text": "deadset-go",
+      "query": "deadset set-go",
+      "case_sensitive": false,
+      "terms": [
+        {
+          "words": [
+            "deadset"
+          ]
+        },
+        {
+          "words": [
+            "set-go"
+          ]
+        }
+      ],
+      "filters": [],
+      "spans": [
+        {
+          "term": 0,
+          "rune": 0,
+          "byte": 0,
+          "utf16": 0,
+          "runes": 7,
+          "utf16_len": 7
+        },
+        {
+          "term": 1,
+          "rune": 4,
+          "byte": 4,
+          "utf16": 4,
+          "runes": 6,
+          "utf16_len": 6
+        }
+      ],
+      "all": true
+    },
+    {
+      "name": "empty_query",
+      "text": "anything",
+      "query": "\"\"",
+      "case_sensitive": false,
+      "terms": [],
+      "filters": [],
+      "spans": [],
+      "all": false
+    }
+  ]
+}

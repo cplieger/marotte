@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -66,15 +70,6 @@ func TestScoreChat_TitleBeatsVolume(t *testing.T) {
 	}
 }
 
-// Naming the subject twice counts twice.
-func TestScoreChat_TitleHitsMultiply(t *testing.T) {
-	once := scoreChat(0, 1, 1000)
-	twice := scoreChat(0, 2, 1000)
-	if twice <= once {
-		t.Errorf("two title hits (%v) must score above one (%v)", twice, once)
-	}
-}
-
 // The normaliser reads characters, not entries: the same hits in more text are weaker.
 func TestScoreChat_LengthNormalisesByChars(t *testing.T) {
 	short := scoreChat(3, 0, 500)
@@ -93,33 +88,44 @@ func TestScoreChat_TinyChatIsNotDividedByZero(t *testing.T) {
 // The formula at exact values, which a NaN-returning formula cannot pass; 3 KiB gives sqrt(1+3) = 2.
 func TestScoreChat_MatchesTheDocumentedFormula(t *testing.T) {
 	tests := []struct {
-		name        string
-		contentHits int
-		titleHits   int
-		docChars    int
-		want        float64
+		name     string
+		items    int
+		title    int
+		docChars int
+		want     float64
 	}{
-		{name: "content_hits_divided_by_the_normaliser", contentHits: 2, titleHits: 0, docChars: 3 * 1024, want: 1},
-		{name: "title_hits_multiplied_by_the_boost", contentHits: 0, titleHits: 3, docChars: 0, want: 30},
-		{name: "both_terms_added", contentHits: 2, titleHits: 1, docChars: 3 * 1024, want: 11},
-		{name: "no_hits_at_all", contentHits: 0, titleHits: 0, docChars: 3 * 1024, want: 0},
+		{name: "items_divided_by_the_normaliser", items: 2, title: 0, docChars: 3 * 1024, want: 1},
+		{name: "a_title_weighed_by_the_boost", items: 0, title: 1, docChars: 0, want: 10},
+		{name: "both_terms_added", items: 2, title: 1, docChars: 3 * 1024, want: 11},
+		{name: "no_hits_at_all", items: 0, title: 0, docChars: 3 * 1024, want: 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := scoreChat(tc.contentHits, tc.titleHits, tc.docChars); got != tc.want {
-				t.Errorf("scoreChat(%d, %d, %d) = %v, want %v", tc.contentHits, tc.titleHits, tc.docChars, got, tc.want)
+			if got := scoreChat(tc.items, tc.title, tc.docChars); got != tc.want {
+				t.Errorf("scoreChat(%d, %d, %d) = %v, want %v", tc.items, tc.title, tc.docChars, got, tc.want)
 			}
 		})
 	}
 }
 
-// `file:x` names no title text, so it must not boost names containing "file".
-func TestTitleHits_IgnoresFilterOnlyQueries(t *testing.T) {
-	if n := titleHits("my file notes", "file:main.go"); n != 0 {
-		t.Errorf("a filter-only query must not match a title, got %d", n)
+// A title counts when it holds every term in any order; `file:x` names no title text.
+func TestTitleAll(t *testing.T) {
+	cases := []struct {
+		name, title, query string
+		want               int
+	}{
+		{"a filter-only query matches no title", "my file notes", "file:main.go", 0},
+		{"free text beside a filter still matches", "Redis migration", "redis file:main.go", 1},
+		{"every term in any order", "Redis migration", "migration redis", 1},
+		{"one term missing", "Redis migration", "redis cache", 0},
+		{"accents fold", "Sécurité deadset", "securite", 1},
 	}
-	if n := titleHits("Redis migration", "redis file:main.go"); n != 1 {
-		t.Errorf("free text alongside a filter must still match, got %d", n)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := titleAll(c.title, c.query); got != c.want {
+				t.Errorf("titleAll(%q, %q) = %d, want %d", c.title, c.query, got, c.want)
+			}
+		})
 	}
 }
 
@@ -150,9 +156,9 @@ func TestSearchAll(t *testing.T) {
 	}
 }
 
-// Hits and score count every occurrence, not the capped hit list: 250 mentions read "250". The best hit is in the
-// log-ordered list.
-func TestSearchAll_HitsCountEveryOccurrencePastTheHitCap(t *testing.T) {
+// Hits and score count every matching item, not the capped hit list: 250 matching replies read "250". The best
+// hit is in the capped list.
+func TestSearchAll_HitsCountEveryItemPastTheHitCap(t *testing.T) {
 	s, _ := newTestStore(t)
 	seedMentions := func(id marotte.ChatID, n int) {
 		replies := make([]string, n)
@@ -175,13 +181,13 @@ func TestSearchAll_HitsCountEveryOccurrencePastTheHitCap(t *testing.T) {
 			busier, maxSearchHits, first.ID, first.Score, second.Score)
 	}
 	if first.Hits != busier {
-		t.Errorf("Hits = %d, want %d (every occurrence, not the %d-hit list)", first.Hits, busier, maxSearchHits)
+		t.Errorf("Hits = %d, want %d (every item, not the %d-hit list)", first.Hits, busier, maxSearchHits)
 	}
 	if second.Hits != maxSearchHits {
 		t.Errorf("Hits = %d, want %d", second.Hits, maxSearchHits)
 	}
 	if first.Best == nil || first.Best.Turn != 1 {
-		t.Errorf("Best = %+v, want the hit in turn 1, the earliest", first.Best)
+		t.Errorf("Best = %+v, want a hit in turn 1", first.Best)
 	}
 }
 
@@ -269,7 +275,7 @@ func TestSearchAll_AnUnreadChatIsNotScanned(t *testing.T) {
 	}
 }
 
-// A name-only match carries no best hit: a zero hit would claim segment kind "", which the decoder refuses.
+// A name-only match carries no best hit: a zero hit would claim item kind "", which the decoder refuses.
 func TestSearchAll_TitleOnlyMatchCarriesNoBestHit(t *testing.T) {
 	s, _ := newTestStore(t)
 	seedChatEntries(t, s, "c-aaaaaaaa", "Redis migration", "we moved the cache today")
@@ -384,7 +390,7 @@ func TestSearchAll_RanksTitleMatchFirst(t *testing.T) {
 	}
 }
 
-// Cross-chat search ignores case, in the body scan and in titleHits, which folds independently.
+// Cross-chat search ignores case, in the body scan and in titleAll, which folds independently.
 func TestSearchAll_IsAlwaysCaseInsensitive(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -432,30 +438,19 @@ func TestSearchAll_TakesNoCaseArgument(t *testing.T) {
 // searchAllSignature is what handleSearchAll forwards to: a context and a query, no case flag.
 type searchAllSignature func(context.Context, string) SearchAllResult
 
-// The earliest hit shows; a tie within a turn keeps the first, so the excerpt is stable.
-func TestBestHit_PicksTheEarliestTurnAndKeepsTheFirstOfATie(t *testing.T) {
-	tests := []struct {
-		name string
-		hits []Hit
-		want string
-	}{
-		{
-			name: "lowest_turn_wins_whatever_the_order",
-			hits: []Hit{{EntryID: "c", Turn: 3}, {EntryID: "a", Turn: 1}, {EntryID: "b", Turn: 2}},
-			want: "a",
-		},
-		{
-			name: "a_tie_keeps_the_first",
-			hits: []Hit{{EntryID: "first", Turn: 2}, {EntryID: "second", Turn: 2}},
-			want: "first",
-		},
+// The row shows the item whose terms sit closest together; a tie keeps the earliest, so the line is stable.
+func TestSearchAll_BestIsTheTightestItem(t *testing.T) {
+	s, _ := newTestStore(t)
+	seedChatEntries(t, s, "c-aaaaaaaa", "seeded",
+		"deadset "+strings.Repeat("filler words ", 20)+"security failure",
+		"the deadset security failure",
+		"deadset security failure again")
+	got := s.searchAll(t.Context(), "deadset security failure")
+	if len(got.Matches) != 1 || got.Matches[0].Best == nil {
+		t.Fatalf("SearchAll = %+v, want one match with a best hit", got.Matches)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := bestHit(tc.hits).EntryID; got != tc.want {
-				t.Errorf("bestHit(%+v).EntryID = %q, want %q", tc.hits, got, tc.want)
-			}
-		})
+	if ex := got.Matches[0].Best.Excerpt; ex != "the deadset security failure" {
+		t.Errorf("Best excerpt = %q, want the tightest item, the earlier of the two tied ones", ex)
 	}
 }
 
@@ -484,5 +479,129 @@ func TestSearchAll_ReadsEveryChatHoweverMany(t *testing.T) {
 	}
 	if got.Truncated {
 		t.Errorf("SearchAll(stalewordxyz) over %d chats: Truncated = true, want false: every chat was read", chats)
+	}
+}
+
+// History finds the chat the user's words describe, in any order inside one message, and shows that message.
+func TestSearchAllAnyOrder(t *testing.T) {
+	s, _ := newTestStore(t)
+	seedChatEntries(t, s, "c-aaaaaaaa", "Weekly review", "unrelated", "a security failure hit deadset last night")
+	seedChatEntries(t, s, "c-bbbbbbbb", "Notes", "deadset security notes")
+
+	got := s.searchAll(t.Context(), "deadset security failure")
+	if len(got.Matches) != 1 || got.Matches[0].ID != "c-aaaaaaaa" {
+		t.Fatalf("SearchAll = %+v, want only the chat holding all three words in one message", got.Matches)
+	}
+	m := got.Matches[0]
+	if m.Spread || m.Hits != 1 || m.Best == nil || !strings.Contains(m.Best.Excerpt, "deadset") {
+		t.Errorf("match = %+v (best %+v), want one item hit whose excerpt shows the message", m, m.Best)
+	}
+}
+
+// A chat holding the words only across messages ranks below every chat holding them in one, whatever the scores.
+func TestSearchAllSpreadRanksLast(t *testing.T) {
+	s, _ := newTestStore(t)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	padding := strings.Repeat("context and discussion that surrounds the mention. ", 400)
+	item, itemEntries := oneTurnChat("c-aaaaaaaa", "Long chat", "deadset security failure. "+padding, base.UnixMilli())
+	spreadEntries, _ := chatOf(openTurn("c-bbbbbbbb-t1", 1, prompt("m-1", "deadset")).
+		text("a1", "security").text("a2", "failure"))
+	spread := &marotte.Chat{ID: "c-bbbbbbbb", Name: "Short chat", UpdatedAt: base.Add(time.Hour).UnixMilli(), TurnCount: 1}
+	seedChatDir(t, s, item, itemEntries, base)
+	seedChatDir(t, s, spread, spreadEntries, base.Add(time.Hour))
+
+	got := s.searchAll(t.Context(), "deadset security failure")
+	if len(got.Matches) != 2 {
+		t.Fatalf("SearchAll = %+v, want both chats", got.Matches)
+	}
+	if got.Matches[0].ID != "c-aaaaaaaa" || got.Matches[1].ID != "c-bbbbbbbb" || !got.Matches[1].Spread || got.Matches[0].Spread {
+		t.Errorf("order = %s (spread %v), %s (spread %v); want the one-message chat first and the spread chat last",
+			got.Matches[0].ID, got.Matches[0].Spread, got.Matches[1].ID, got.Matches[1].Spread)
+	}
+}
+
+// A title holding every word ranks with the one-message matches, even when the body only spreads them.
+func TestSearchAllTitleMatchIsNotSpread(t *testing.T) {
+	s, _ := newTestStore(t)
+	entries, _ := chatOf(openTurn("c-aaaaaaaa-t1", 1, prompt("m-1", "deadset")).
+		text("a1", "security").text("a2", "failure"))
+	seedChatDir(t, s, &marotte.Chat{ID: "c-aaaaaaaa", Name: "Deadset security failure", TurnCount: 1}, entries, time.Now())
+
+	got := s.searchAll(t.Context(), "deadset security failure")
+	if len(got.Matches) != 1 || got.Matches[0].Spread {
+		t.Errorf("SearchAll = %+v, want the titled chat as a one-place match, not a spread one", got.Matches)
+	}
+}
+
+// History and Find in chat apply one rule: a chat matches iff its own search has hits, and Best is one of them.
+func TestSearchAllAgreesWithChatSearch(t *testing.T) {
+	s, _ := newTestStore(t)
+	bodies := map[marotte.ChatID][]string{
+		"c-aaaaaaaa": {"security failure in deadset"},
+		"c-bbbbbbbb": {"deadset", "security failure"},
+		"c-cccccccc": {"deadset security"},
+		"c-dddddddd": {"La Sécurité de deadset: failure"},
+	}
+	for id, replies := range bodies {
+		seedChatEntries(t, s, id, "seeded", replies...)
+	}
+	// One message the stream wrote in three entries, splitting a word and a phrase.
+	const split marotte.ChatID = "c-eeeeeeee"
+	seedSplitMessage(t, s, split, "a dead", "set security ", "failure here")
+	ids := append(slices.Collect(maps.Keys(bodies)), split)
+	for _, q := range []string{"deadset security failure", `"security failure"`, "securite deadset", "failure"} {
+		t.Run(q, func(t *testing.T) {
+			// The first pass reads every chat and records its filter; the second is answered through the filters.
+			for pass := range 2 {
+				assertHistoryAgrees(t, s, ids, q, pass)
+			}
+		})
+	}
+}
+
+// seedSplitMessage writes one turn whose reply is one message, its text split over the given entries.
+func seedSplitMessage(t *testing.T, s *Store, id marotte.ChatID, parts ...string) {
+	t.Helper()
+	opened, err := s.OpenTurn(t.Context(), id, &TurnSpec{
+		Source: marotte.TurnOpenNamePrompt,
+		Prompt: &marotte.EntryPrompt{ID: "m-" + string(id), Text: "seed"},
+	}, func(c *marotte.Chat) { c.Name = "seeded" })
+	if err != nil {
+		t.Fatalf("OpenTurn(%s): %v", id, err)
+	}
+	for i, part := range parts {
+		e := entryOf(opened.Turn, "", opened.Turn+"-say#"+strconv.Itoa(i), marotte.EntryKindText, marotte.EntryText{Text: part})
+		if err := s.Append(t.Context(), id, e); err != nil {
+			t.Fatalf("Append(text %d): %v", i, err)
+		}
+	}
+	closeTurn(t, s, id, opened.Turn, marotte.TurnOutcomeCompleted)
+}
+
+func assertHistoryAgrees(t *testing.T, s *Store, ids []marotte.ChatID, q string, pass int) {
+	t.Helper()
+	got := s.searchAll(t.Context(), q)
+	byID := make(map[marotte.ChatID]Match, len(got.Matches))
+	for _, m := range got.Matches {
+		byID[m.ID] = m
+	}
+	for _, id := range ids {
+		own := searchVia(t, s, id, "?q="+url.QueryEscape(q))
+		m, listed := byID[id]
+		if listed != (len(own.Matches) > 0) {
+			t.Errorf("pass %d, %s: History lists it %v, its own search has %d hits", pass, id, listed, len(own.Matches))
+			continue
+		}
+		if !listed {
+			continue
+		}
+		if m.Hits != own.Matched || m.Spread != own.Spread {
+			t.Errorf("pass %d, %s: History hits %d spread %v, own search matched %d spread %v", pass, id, m.Hits, m.Spread, own.Matched, own.Spread)
+		}
+		if m.Best == nil || !slices.ContainsFunc(own.Matches, func(h Hit) bool {
+			return h.EntryID == m.Best.EntryID && h.Kind == m.Best.Kind
+		}) {
+			t.Errorf("pass %d, %s: Best %+v is not one of its own hits %+v", pass, id, m.Best, own.Matches)
+		}
 	}
 }
