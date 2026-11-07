@@ -472,6 +472,8 @@ type Family =
       readonly selector: string;
       readonly kind: "own-size" | "row" | "inline" | "dense" | "turn-map";
       readonly documented: string;
+      /** The token a held `dense` family paints at, an icon-only one as its square. */
+      readonly paint?: string;
       readonly pending?: "sidebar" | "rest";
     };
 
@@ -500,16 +502,11 @@ const CENSUS: readonly Family[] = [
     documented:
       "15-input.css `.attachment-open::after, .attachment-close::after`: a block-only reach keeps the destructive x off the filename",
   },
-  { name: "new chat", selector: "#new-chat", kind: "tab-row", pending: "sidebar" },
-  { name: "history", selector: "#history-btn", kind: "tab-row", pending: "sidebar" },
-  {
-    name: "sidebar header",
-    selector: ".sidebar-header-actions .icon-btn",
-    kind: "toolbar",
-    pending: "sidebar",
-  },
-  { name: "account", selector: "#account-btn", kind: "toolbar", pending: "sidebar" },
-  { name: "log out", selector: "#logout-btn", kind: "toolbar", pending: "sidebar" },
+  { name: "new chat", selector: "#new-chat", kind: "tab-row" },
+  { name: "history", selector: "#history-btn", kind: "tab-row" },
+  { name: "sidebar header", selector: ".sidebar-header-actions .icon-btn", kind: "toolbar" },
+  { name: "account", selector: "#account-btn", kind: "toolbar" },
+  { name: "log out", selector: "#logout-btn", kind: "toolbar" },
   {
     name: "account card link",
     selector: ".pill-account",
@@ -520,14 +517,14 @@ const CENSUS: readonly Family[] = [
     name: "tab row",
     selector: "#tab-list .tab",
     kind: "row",
-    documented: "10-shell-app.css `.tab`: `--row-tap`",
+    documented: "10-shell-app.css `.tab`: `--tab-row-h`",
   },
   {
     name: "tab close",
     selector: ".tab-close",
     kind: "dense",
+    paint: "--ctl-h-sm",
     documented: "10-shell-app.css `.tab-close`: a row action",
-    pending: "sidebar",
   },
   {
     name: "dialog close",
@@ -614,7 +611,8 @@ const CENSUS: readonly Family[] = [
   },
 ];
 
-const CONTROL = "button, summary, [role='button'], a[href]";
+/** Every pressable control; the tab's × is a span because a `role="tab"` row's children are presentational. */
+const CONTROL = "button, summary, [role='button'], a[href], .tab-close";
 
 /** The painted size of a length token, measured rather than parsed. */
 function tokenPx(token: string): number {
@@ -654,7 +652,16 @@ function familiesOf(el: Element): Family[] {
 }
 
 /** The kinds the cases measure; a family of another kind is listed, not yet held. */
-const MEASURED: ReadonlySet<Family["kind"]> = new Set(["toolbar", "tab-row", "own-size"]);
+const MEASURED: ReadonlySet<Family["kind"]> = new Set(["toolbar", "tab-row", "own-size", "dense"]);
+
+/** The token the paint case holds a family to: `--btn-h` for a toolbar family, a dense family's
+ *  `paint` field, undefined otherwise (the tab-row case and an own size measure their own way). */
+function paintToken(family: Family): string | undefined {
+  if (family.kind === "toolbar") {
+    return "--btn-h";
+  }
+  return family.kind === "dense" ? family.paint : undefined;
+}
 
 /** The on-screen controls of the mounted surface that a held family covers. */
 function held(): { el: HTMLElement; family: Family }[] {
@@ -713,6 +720,17 @@ async function mountSurface(
   expect(missing, `${surface}: the held controls are on screen`).toEqual([]);
 }
 
+/** The sidebar controls the checks must reach at every preset. */
+const SIDEBAR_COVERS = [
+  "#new-chat",
+  "#history-btn",
+  "#theme-btn",
+  "#clock-btn",
+  "#account-btn",
+  "#logout-btn",
+  ".tab-close",
+];
+
 /** The sidebar with its drawer open (a phone's closed drawer is off screen) and one chat tab in the
  *  child order `tabs.ts` builds, the row New chat and History are held to. */
 async function mountSidebar(
@@ -740,7 +758,13 @@ async function mountSidebar(
   close.appendChild(iconEl(ICON_CLOSE));
   tab.append(name, close);
   byId("tab-list").replaceChildren(tab);
+  // `pointer-mode.ts` shows the Touch mode toggle on a touch-capable device; `settings.ts` writes the address.
+  byId("pointer-mode-btn").classList.remove("hidden");
+  byId("user-email").textContent = "reader@example.com";
   expect(shown(tab) && onScreen(tab), "the tab row is on screen").toBe(true);
+  const reached = held().map(({ el }) => el);
+  const missing = SIDEBAR_COVERS.filter((sel) => !reached.some((el) => el.matches(sel)));
+  expect(missing, "the sidebar's held controls are on screen").toEqual([]);
   return tab;
 }
 
@@ -776,11 +800,19 @@ describe("the button census", () => {
     expect(wrong, "every control is classified once").toEqual([]);
   });
 
+  it("names the paint token of every held dense family", () => {
+    // The paint case skips a family with no token, so a held one without it would pass unmeasured.
+    const unpainted = CENSUS.filter(
+      (f) => f.kind === "dense" && f.pending === undefined && f.paint === undefined,
+    ).map((f) => f.name);
+    expect(unpainted).toEqual([]);
+  });
+
   for (const [preset, viewport] of PRESETS) {
     for (const pointer of TIERS) {
       const at = `${preset} ${pointer}`;
 
-      it(`paints every held control at the toolbar's --btn-h, ${at}`, async () => {
+      it(`paints every held control at its family's token (--btn-h for the toolbar), ${at}`, async () => {
         await eachSurface(viewport, pointer, (controls, surface) => {
           const btn = tokenPx("--btn-h");
           const ref = byId("settings-btn").getBoundingClientRect();
@@ -790,18 +822,20 @@ describe("the button census", () => {
           ]);
           const off: string[] = [];
           for (const { el, family } of controls) {
-            if (family.kind !== "toolbar" || excepted(el, family, at)) {
+            const token = paintToken(family);
+            if (token === undefined || excepted(el, family, at)) {
               continue;
             }
+            const px = tokenPx(token);
             const r = painted(el);
-            if (r.height !== btn) {
-              off.push(`${nameOf(el)} is ${String(r.height)}px tall`);
+            if (r.height !== px) {
+              off.push(`${nameOf(el)} is ${String(r.height)}px tall, ${token} is ${String(px)}px`);
             }
-            if (iconOnly(el) && r.width !== btn) {
+            if (iconOnly(el) && r.width !== px) {
               off.push(`${nameOf(el)} is icon-only and ${String(r.width)}px wide`);
             }
           }
-          expect(off, `${surface}: painted at --btn-h (${String(btn)}px)`).toEqual([]);
+          expect(off, `${surface}: each paints its family's token`).toEqual([]);
         });
       });
 
@@ -829,7 +863,7 @@ describe("the button census", () => {
               off.push(`${nameOf(el)} reaches ${String(height(hit))}px tall`);
             }
             // The chip's x keeps a block-only reach (its family's documented size).
-            if (family.kind === "toolbar" && width(hit) < floor - 2 * STEP) {
+            if (family.kind !== "own-size" && width(hit) < floor - 2 * STEP) {
               off.push(`${nameOf(el)} reaches ${String(width(hit))}px wide`);
             }
           }

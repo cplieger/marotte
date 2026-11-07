@@ -587,8 +587,8 @@ func TestCancelExpiredRun_ARefusedSlotCancelLeavesTheScheduleRowUntouched(t *tes
 	}
 }
 
-// TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure pins that an alert rule reads logMsgRunOverran
-// as a schedule failing, so a manual run yielding must not log it.
+// TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure pins that logMsgRunOverran reports a schedule
+// failing, so a manual run yielding must not log it.
 func TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure(t *testing.T) {
 	logs := captureLogs(t)
 	h, _, br := newTestHub()
@@ -612,8 +612,7 @@ func TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure(t *test
 		t.Errorf("the manual run's cancellation was not reported as yielding to its slot: %s", out)
 	}
 	if strings.Contains(out, logMsgRunOverran) {
-		t.Errorf("a manual run yielding to a slot logged the schedule-failure message, which a "+
-			"deployment alert rule keys on: %s", out)
+		t.Errorf("a manual run yielding to a slot logged the schedule-failure message: %s", out)
 	}
 	if strings.Contains(out, logMsgRunStalled) {
 		t.Errorf("the stall message was logged for a run cancelled at its slot: %s", out)

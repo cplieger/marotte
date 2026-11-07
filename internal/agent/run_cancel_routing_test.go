@@ -395,14 +395,14 @@ func TestResumeIfInterrupted_DoesNotArmARefusedResume(t *testing.T) {
 	}
 }
 
-// TestCancelUnretriedMessage_IsGreppable pins the one line an operator must act on, a constant so an
-// alert can key on it. It claims nothing unverified: any non-nil cancel error reaches it.
+// TestCancelUnretriedMessage_IsGreppable pins the one line an operator must act on, a constant so one
+// search finds it. It claims nothing unverified: any non-nil cancel error reaches it.
 func TestCancelUnretriedMessage_IsGreppable(t *testing.T) {
 	for _, unverified := range []string{"still executing", "holds its recipe"} {
 		if strings.Contains(logMsgCancelUnretried, unverified) {
 			t.Errorf("logMsgCancelUnretried = %q, want no claim about the run's own state: "+
 				"%q is unverified for a transport fault or an unknown workflow id, and this "+
-				"is the line an alert would key on", logMsgCancelUnretried, unverified)
+				"is the line an operator acts on", logMsgCancelUnretried, unverified)
 		}
 	}
 	for _, other := range []string{

@@ -16,6 +16,7 @@ import (
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/memlimit"
+	"github.com/cplieger/marotte/internal/obs"
 )
 
 // errEngineUnavailable is the readiness answer while no kiro-cli is installed.
@@ -421,7 +422,7 @@ func (o *engineOwner) exited(h engineHandle, gen uint64) (restarted bool) {
 		o.restartWait = nil
 	}
 	o.mu.Unlock()
-	o.logExit(&info, gen, cause, oomKills, oomKnown, &busy, logsafe.Field(h.KASLogDir()))
+	o.recordExit(&info, gen, cause, oomKills, oomKnown, &busy, logsafe.Field(h.KASLogDir()))
 	if o.hooks.ended != nil {
 		o.hooks.ended(gen)
 	}
@@ -439,9 +440,9 @@ type oomBaseline struct {
 // fault.
 var externalStopSignals = []syscall.Signal{syscall.SIGHUP, syscall.SIGINT, syscall.SIGKILL, syscall.SIGTERM}
 
-// exitCause names an engine's end for the exit line and /api/engine. A SIGKILL is an external stop only when the
-// container's OOM count is known and unchanged (oomClear): the OOM killer sends SIGKILL, so an unknown count stays a
-// crash.
+// exitCause names an engine's end for the exit line, its counter and /api/engine. A SIGKILL is an external stop only
+// when the container's OOM count is known and unchanged (oomClear): the OOM killer sends SIGKILL, so an unknown count
+// stays a crash.
 func exitCause(info *bridge.ExitInfo, restart *restartCause, draining, oomClear bool) string {
 	switch info.Reason {
 	case bridge.ExitStopped:
@@ -476,14 +477,14 @@ func (o *engineOwner) oomKillsSince(base oomBaseline) (uint64, bool) {
 	return now - base.count, true
 }
 
-// logExit writes the one engine exited line per generation; the Loki engine-crash alerts match its message and
-// ended_itself verbatim. container_oom_kills counts every process in the container the kernel killed for memory
-// during the engine's life, so it is coincident evidence, not proof the engine was the victim.
-func (*engineOwner) logExit(
+// recordExit writes the one engine exited line per generation and counts the exit under its cause; the line is a WARN
+// when the engine ended itself. container_oom_kills counts every process in the container the kernel killed for
+// memory during the engine's life, so it is coincident evidence, not proof the engine was the victim.
+func (*engineOwner) recordExit(
 	info *bridge.ExitInfo, gen uint64, cause string, oomKills uint64, oomKnown bool, busy *engineBusy, logDir any,
 ) {
+	obs.EngineExited(cause)
 	attrs := []any{
-		"ended_itself", info.EndedItself(),
 		"uptime_s", int64(info.Uptime.Seconds()),
 		"generation", gen,
 		"sessions", busy.sessions,

@@ -430,6 +430,11 @@
     --row-tap: max(var(--ctl-h), var(--hit-floor));
     --row-tap-dense: max(var(--ctl-h-dense), var(--hit-floor));
     --row-tap-sm: max(var(--ctl-h-sm), var(--hit-floor));
+    /* A sidebar tab's mouse height (its ×, its block padding, its reserved 1px border) and its row
+     * at the tier, which New chat and History match. Here, not on the sidebar: the drag ghost
+     * (tabs-drag.ts) clones a tab into `body`. */
+    --tab-h: calc(var(--ctl-h-sm) + 2 * var(--sp-2) + 2px);
+    --tab-row-h: max(var(--tab-h), var(--row-tap));
     /* A checkbox or switch label on a line of its own: its text height on a mouse, where
      * the box's own expander is the target, and the floor on touch. */
     --row-tap-line: auto;
