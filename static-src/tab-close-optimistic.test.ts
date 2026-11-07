@@ -73,6 +73,8 @@ import {
   setTabPinned,
 } from "./tabs.js";
 import { getSessions } from "./store.js";
+import { restoreFailedSend } from "./composer-state.js";
+import { $ } from "./dom.js";
 import { removePendingFor } from "./tabs-sync.js";
 import { releaseCover } from "./transcript-cover.js";
 import { tabServer, settleTabs } from "./__test-helpers__/tabs-server.js";
@@ -277,6 +279,122 @@ describe("a refused close", () => {
     expect(notices).toEqual([["c", "c", "Could not close that tab, so it was put back.", "error"]]);
   });
 
+  it("keeps the successor a reader left and came back to", async () => {
+    const ids = await closing();
+    const c = ids["c"] ?? "";
+    const a = ids["a"] ?? "";
+    await frame();
+    const before = rowIDs();
+    const notices: unknown[][] = [];
+    registerTabNotice((...args) => {
+      notices.push(args);
+    });
+    tabServer.holdResponses();
+    tabServer.failNext("close_tab", 500);
+
+    const done = closeTab(c);
+    await activationRan();
+    activateTab(ids["b"] ?? "");
+    await activationRan();
+    activateTab(a);
+    await activationRan();
+    fx.chat.show.mockClear();
+    tabServer.releaseResponses();
+    await done;
+    await settleTabs();
+    await activationRan();
+
+    expect(rowIDs(), "the closed row is back at its index").toEqual(before);
+    expect(getActiveTabId(), "the tab the reader last chose").toBe(a);
+    expect(pointers.active).toBe("a");
+    expect(fx.chat.show, "the restored chat was shown over the chosen one").not.toHaveBeenCalled();
+    expect(notices).toEqual([["c", "c", "Could not close that tab, so it was put back.", "error"]]);
+  });
+
+  it("shows the closed tab again when the reader stayed on its successor", async () => {
+    const ids = await closing();
+    const c = ids["c"] ?? "";
+    await frame();
+    tabServer.holdResponses();
+    tabServer.failNext("close_tab", 500);
+
+    const done = closeTab(c);
+    await activationRan();
+    expect(pointers.painted, "the successor showed before the refusal").toBe("a");
+    fx.chat.show.mockClear();
+    tabServer.releaseResponses();
+    await done;
+    await settleTabs();
+    await activationRan();
+
+    expect(getActiveTabId()).toBe(c);
+    expect(pointers).toEqual({ active: "c", painted: "c" });
+    expect(fx.chat.show.mock.calls).toEqual([["c"]]);
+  });
+
+  it("puts a background tab back in place and leaves the shown tab alone", async () => {
+    const ids = await closing();
+    const c = ids["c"] ?? "";
+    const b = ids["b"] ?? "";
+    await frame();
+    const before = rowIDs();
+    const notices: unknown[][] = [];
+    registerTabNotice((...args) => {
+      notices.push(args);
+    });
+    tabServer.failNext("close_tab", 500);
+
+    const done = closeTab(b);
+    expect(getActiveTabId(), "a background close moves no view").toBe(c);
+    await done;
+    await settleTabs();
+    await activationRan();
+
+    expect(rowIDs()).toEqual(before);
+    expect(getActiveTabId()).toBe(c);
+    expect(pointers).toEqual({ active: "c", painted: "c" });
+    expect(fx.chat.show).not.toHaveBeenCalled();
+    expect(notices).toEqual([["b", "b", "Could not close that tab, so it was put back.", "error"]]);
+  });
+
+  it.each([
+    { first: "A's", cMs: 4_000, aMs: 2_000 },
+    { first: "C's", cMs: 2_000, aMs: 4_000 },
+  ])(
+    "ends two refused closes on the tab closed last, with $first refusal landing first",
+    async ({ cMs, aMs }) => {
+      const ids = await closing();
+      const c = ids["c"] ?? "";
+      const a = ids["a"] ?? "";
+      await frame();
+      const before = rowIDs();
+      const refusal = { ok: false, status: 500, error: "nope" };
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+      try {
+        tabServer.failNext("close_tab", 500);
+        tabServer.answerAfterNext("close_tab", cMs, refusal);
+        const closedC = closeTab(c);
+        await activationRan();
+        expect(getActiveTabId(), "C's successor").toBe(a);
+        tabServer.failNext("close_tab", 500);
+        tabServer.answerAfterNext("close_tab", aMs, refusal);
+        const closedA = closeTab(a);
+        await activationRan();
+
+        await vi.advanceTimersByTimeAsync(4_100);
+        await Promise.all([closedC, closedA]);
+        await settleTabs();
+        await activationRan();
+
+        expect(rowIDs()).toEqual(before);
+        expect(getActiveTabId(), "A, the tab the reader was on when it last closed one").toBe(a);
+        expect(pointers.active).toBe("a");
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("keeps a row whose refusal lands during its exit", async () => {
     const ids = await closing();
     const c = ids["c"] ?? "";
@@ -422,6 +540,66 @@ describe("an unanswered close of the active tab", () => {
       expect(notices).toEqual([
         ["c", "c", "Close not confirmed, so the tab was restored.", "info"],
       ]);
+    } finally {
+      vi.useRealTimers();
+      tabServer.releaseResponses();
+    }
+  });
+
+  it("keeps the successor a reader left and came back to", async () => {
+    const ids = await closing();
+    const c = ids["c"] ?? "";
+    const a = ids["a"] ?? "";
+    await frame();
+    const before = rowIDs();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    tabServer.setMode("manual");
+    tabServer.holdResponses();
+    tabServer.failNext("close_tab", 500);
+    try {
+      void closeTab(c);
+      await activationRan();
+      activateTab(ids["b"] ?? "");
+      await activationRan();
+      activateTab(a);
+      await activationRan();
+      fx.chat.show.mockClear();
+
+      await vi.advanceTimersByTimeAsync(5_000 + 1_000);
+      await settleTabs();
+      await activationRan();
+
+      expect(rowIDs(), "the closed row is back at its index").toEqual(before);
+      expect(getActiveTabId(), "the tab the reader last chose").toBe(a);
+      expect(pointers.active).toBe("a");
+      expect(fx.chat.show).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      tabServer.releaseResponses();
+    }
+  });
+
+  it("binds the only tab again, with the text typed meanwhile as its draft", async () => {
+    const ids = await strip("solo");
+    const solo = ids["solo"] ?? "";
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    tabServer.setMode("manual");
+    tabServer.holdResponses();
+    tabServer.failNext("close_tab", 500);
+    try {
+      void closeTab(solo);
+      expect(getActiveTabId(), "the strip emptied").toBe("");
+      expect(pointers.active, "Send creates a fresh chat while the strip is empty").toBe("");
+      $.promptInput.value = "half a thought";
+
+      await vi.advanceTimersByTimeAsync(5_000 + 1_000);
+      await settleTabs();
+      await activationRan();
+
+      expect(rowIDs()).toEqual([solo]);
+      expect(getActiveTabId()).toBe(solo);
+      expect(pointers.active, "Send acts for the restored chat").toBe("solo");
+      expect(vi.mocked(restoreFailedSend)).toHaveBeenCalledWith("solo", "half a thought");
     } finally {
       vi.useRealTimers();
       tabServer.releaseResponses();
