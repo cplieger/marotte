@@ -1,7 +1,7 @@
 // The surfaces the touch contract mounts: the production `#app` markup and modals, opened by the
 // production openers, with what scripts add built by its exported builder where one builds without app
 // state and planted by hand in that module's shape where none does. `touch-targets.test.ts` walks them
-// on the coarse tier.
+// on the coarse tier and `button-size.test.ts` classifies every control on them.
 import { expect } from "vitest";
 import { _resetForTest as resetAsk } from "@cplieger/ui/ask";
 import { _resetForTest as resetScrollLock } from "@cplieger/ui/modal";
