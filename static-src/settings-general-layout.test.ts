@@ -28,6 +28,7 @@ afterAll(() => {
 });
 
 const VALUE_CONTROLS = [
+  "clock-choice",
   "chat-retention-days",
   "memory-mode",
   "auto-compact-pct",
@@ -72,7 +73,13 @@ describe("Settings > General value rows at desktop width", () => {
   });
 
   it("puts each row's hint on its own line below the control", () => {
-    for (const id of ["memory-mode", "spec-planning", "output-style", "shell-command-timeout"]) {
+    for (const id of [
+      "clock-choice",
+      "memory-mode",
+      "spec-planning",
+      "output-style",
+      "shell-command-timeout",
+    ]) {
       const hint = control(id).closest(".section-field")?.querySelector(".section-hint");
       expect(hint, `#${id} has a hint`).not.toBeNull();
       expect(hint!.getBoundingClientRect().top).toBeGreaterThanOrEqual(

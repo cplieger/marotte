@@ -908,11 +908,11 @@ body.sidebar-resizing {
   display: none;
 }
 
-/* THE ICON-SWAP SLIDE, shared by the theme cycle, the touch/mouse toggle and the
- * Clock toggle (driven by theme.ts, pointer-mode.ts and clock-toggle.ts). Every
- * glyph stays in the DOM and `.hidden` picks the visible one; on a change the
- * outgoing icon slides down (`.icon-setting`), then the incoming one slides up from
- * below (removal of `.icon-rising`). The GLOW below is the theme's alone.
+/* THE ICON-SWAP SLIDE, shared by the theme cycle and the touch/mouse toggle (driven
+ * by theme.ts and pointer-mode.ts). Every glyph stays in the DOM and `.hidden` picks
+ * the visible one; on a change the outgoing icon slides down (`.icon-setting`), then
+ * the incoming one slides up from below (removal of `.icon-rising`). The GLOW below
+ * is the theme's alone.
  * The clip of the +/-2rem travel is on this wrapper, the button's size, never on the
  * button: a clip there would cut its hit expander (61-mcp-tools.css). */
 .icon-swap {
