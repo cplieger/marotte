@@ -142,8 +142,8 @@ groups:
 
       # The next-due time is in the past for up to a minute after each slot.
       # A slot waiting on a busy engine reads the end of its wait, the
-      # schedule's next slot, so a slot 10 minutes overdue means the runner
-      # stopped judging it.
+      # schedule's next slot, so a slot 10 minutes overdue was not judged:
+      # the runner stopped, or the schedule's saved state cannot be read.
       - alert: MarotteScheduleStalled
         expr: time() > marotte_schedule_next_due_timestamp_seconds + 600
         for: 5m
