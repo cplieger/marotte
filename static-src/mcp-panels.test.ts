@@ -114,7 +114,7 @@ describe("extractNpxPackage", () => {
     { label: "empty args", args: [], expected: "" },
     { label: "only flags", args: ["-y", "--yes"], expected: "" },
     { label: "whitespace-only arg then package", args: ["  ", "-y", "pkg"], expected: "pkg" },
-    // The three refusals prewarm's extractor makes, so both halves answer "what does this run" alike.
+    // No npm package the npm form could prefill, so `editModeFor` opens the raw panel for these records.
     { label: "an unknown flag past the package", args: ["-y", "--force", "pkg"], expected: "" },
     { label: "a path where a package spec belongs", args: ["-y", "./local/dir"], expected: "" },
     { label: "an uppercase package name", args: ["-y", "MyPkg"], expected: "" },
