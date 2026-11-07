@@ -1072,7 +1072,7 @@
    ========================================================================== */
 
 /* ONE BOX FOR EVERY RUN COUNT, the bottom stack's card, drawn by the host. Its content is a
-   column: the fold row (from `FOLD_AT` runs) pinned on top, and the list below it as the
+   column: the fold row (from `HEADER_AT` (2) runs) pinned on top, and the list below it as the
    scroller. With no fold row the list is flush to the box's padding edge; with one, a row
    scrolled under the cap is clipped at the list's top edge, under the fold row, in the middle
    of the box.
@@ -1388,7 +1388,7 @@
   }
 }
 
-/* From `FOLD_AT` runs the fold row heads the box, one line: a chevron, the mark and the
+/* From `HEADER_AT` (2) runs the fold row heads the box, one line: a chevron, the mark and the
    count. */
 .run-bar-toggle {
   display: flex;

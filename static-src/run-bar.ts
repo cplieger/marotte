@@ -194,12 +194,12 @@ function buildBatchButton(): HTMLButtonElement {
 
 /** Paint the batch button at the header row's end. Hidden, never detached, with nothing to do or no header, so its
  *  loading binding lives. */
-function paintBatch(ids: readonly string[], folds: boolean): void {
+function paintBatch(ids: readonly string[], headed: boolean): void {
   const btn = batchBtn;
   if (btn === null) {
     return;
   }
-  const batch = folds ? batchOf(ids) : null;
+  const batch = headed ? batchOf(ids) : null;
   btn.hidden = batch === null;
   if (batch === null) {
     return;
@@ -239,7 +239,7 @@ function render(bar: HTMLUListElement): void {
   const live = rows(chatID);
   const waiting = live.filter(needsYou);
   const ids = [...waiting, ...live.filter((id) => !waiting.includes(id))];
-  const folds = ids.length >= HEADER_AT;
+  const headed = ids.length >= HEADER_AT;
   const open = listOpen(ids.length);
 
   bar.classList.toggle("hidden", ids.length === 0);
@@ -263,18 +263,18 @@ function render(bar: HTMLUListElement): void {
   }
   const fold = $.runBarFold;
   // Hiding the header under the keyboard would drop focus to the body, so it moves to the run left.
-  const foldHadFocus = !folds && fold.contains(document.activeElement);
-  setAttr(fold, "hidden", folds ? null : "");
+  const foldHadFocus = !headed && fold.contains(document.activeElement);
+  setAttr(fold, "hidden", headed ? null : "");
   if (foldHadFocus) {
     bar.querySelector<HTMLElement>(".run-bar-open")?.focus({ preventScroll: true });
   }
-  if (folds) {
+  if (headed) {
     if (fold.querySelector(".run-bar-toggle") === null) {
       fold.prepend(buildSummary(bar));
     }
     paintSummary(fold, ids.length, waiting.length, open);
   }
-  paintBatch(ids, folds);
+  paintBatch(ids, headed);
   if (ids.length === 0) {
     // Reset the announce baseline so arriving at a chat that already has runs reads them out fresh,
     // while the empty case stays silent.
