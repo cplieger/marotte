@@ -916,7 +916,8 @@
 }
 
 .steer-row:is([data-state="sending"], [data-state="delivering"]) .steer-state,
-.steer-row:is([data-state="sending"], [data-state="delivering"]) .steer-text {
+.steer-row:is([data-state="sending"], [data-state="delivering"]) .steer-text,
+.steer-row:is([data-state="sending"], [data-state="delivering"]) .turn-req-quote {
   color: var(--c-text-aside);
 }
 

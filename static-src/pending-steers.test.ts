@@ -1665,6 +1665,39 @@ describe("the row's clamp", () => {
     );
     expect(actions(row)).toContain('Delete "From Kiro\'s reply: word word word word …"');
   });
+
+  // The aside ink resolves to the band's own secondary ink in both themes, so it is set apart here
+  // to see which rule paints the band.
+  const quoted = `${appendQuote("", quoteSelection("quoted", "From Kiro's reply"))}reply`;
+  const subordinate: [string, () => void][] = [
+    ["sending", () => recordSteerSent("chat-1", "m-1", quoted)],
+    [
+      "delivering",
+      () =>
+        recordSteerQueued("chat-1", {
+          id: "steer-1",
+          text: quoted,
+          origin: "user",
+          state: "delivering",
+        }),
+    ],
+  ];
+  for (const [state, record] of subordinate) {
+    it(`dims a ${state} row's quote band to the ink of its text`, () => {
+      const root = document.documentElement;
+      root.style.setProperty("--c-text-aside", "rgb(1, 2, 3)");
+      try {
+        record();
+        const row = firstRow();
+        expect(row.dataset["state"]).toBe(state);
+        const band = textEl(row).querySelector<HTMLElement>(":scope > blockquote.turn-req-quote")!;
+        expect(getComputedStyle(textEl(row)).color).toBe("rgb(1, 2, 3)");
+        expect(getComputedStyle(band).color).toBe("rgb(1, 2, 3)");
+      } finally {
+        root.style.removeProperty("--c-text-aside");
+      }
+    });
+  }
 });
 
 // The run tab mounts the same stack over a step's rows, with the chat's Edit and Delete and no
