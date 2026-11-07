@@ -311,13 +311,25 @@ describe("the press band", () => {
 });
 
 describe("a touch device in mouse mode", () => {
-  it("keeps the finger's step buttons, their glyphs shown at rest", () => {
+  it("keeps the finger's 44px targets on the step buttons, their glyphs shown at rest", () => {
     expect(matchMedia("(any-pointer: coarse)").matches, "premise: a touchscreen").toBe(true);
     document.documentElement.dataset["pointer"] = "fine";
-    for (const b of document.querySelectorAll<HTMLElement>(".turn-map-step")) {
+    const steps = document.querySelectorAll<HTMLElement>(".turn-map-step");
+    expect(steps.length, "premise: the step buttons").toBe(2);
+    for (const b of steps) {
       const r = b.getBoundingClientRect();
-      expect(r.width).toBeGreaterThanOrEqual(44 - 0.5);
-      expect(r.height).toBeGreaterThanOrEqual(44 - 0.5);
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const reach = 44 / 2 - 0.5;
+      for (const [x, y] of [
+        [cx - reach, cy],
+        [cx + reach, cy],
+        [cx, cy - reach],
+        [cx, cy + reach],
+      ] as const) {
+        const hit = document.elementFromPoint(x, y);
+        expect(hit !== null && b.contains(hit), `a press at ${x},${y} reaches the step`).toBe(true);
+      }
       const glyph = b.querySelector("svg");
       expect(glyph === null ? "" : getComputedStyle(glyph).opacity).toBe("1");
     }

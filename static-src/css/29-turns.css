@@ -1296,6 +1296,19 @@
   outline-offset: var(--focus-offset);
 }
 
+/* A TOUCH DEVICE IN MOUSE MODE keeps a finger's target on the steps, which its own `--hit-floor`
+ * would not give; the paint stays the column's. `--hit-inset` is redeclared because the root's
+ * resolved its `--hit-floor` there. A selector cannot OR an attribute with a media query. */
+@media (any-pointer: coarse) {
+  .turn-map {
+    gap: max(var(--sp-1), (var(--hit-floor-touch) - var(--ctl-h-sm)) / 2);
+  }
+
+  .turn-map-step {
+    --hit-inset: min(0px, calc((100% - var(--hit-floor-touch)) / 2));
+  }
+}
+
 /* The step buttons rest invisible where a mouse can hover, with their boxes reserved so the stack
  * never moves; a keyboard reader's focus reveals them too. A touch device or touch mode always
  * shows them: a finger has no hover to reveal them with. The GLYPH fades, so the button's own
