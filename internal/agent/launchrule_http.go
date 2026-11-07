@@ -257,10 +257,30 @@ func (rr *runRoutes) prepareRule(ctx context.Context, w http.ResponseWriter, rul
 		return false
 	}
 	rule.Source, rule.Name, rule.Model, rule.Effort = recipe.Source, recipe.Name, defaults.Model, defaults.Effort
+	if !rr.withinTriggerBudget(w, rule, prev) {
+		return false
+	}
 	if rule.When.Event == nil || (prev != nil && reflect.DeepEqual(prev.When, rule.When)) {
 		return true
 	}
 	return rr.checkForge(ctx, w, rule.When.Event)
+}
+
+// withinTriggerBudget refuses with a 400 a save that would raise its connection's worst-case hour over the trigger
+// budget in a pool; trigger.Budget.Estimate owns the pricing.
+func (rr *runRoutes) withinTriggerBudget(w http.ResponseWriter, rule, prev *launchrule.Rule) bool {
+	if rr.runs.triggerBudget == nil {
+		return true
+	}
+	replaces := ""
+	if prev != nil {
+		replaces = prev.ID
+	}
+	if err := rr.runs.triggerBudget.Estimate(rr.runs.launchRules.List(), rule, replaces); err != nil {
+		httpreply.BadRequest(w, err.Error())
+		return false
+	}
+	return true
 }
 
 func (rr *runRoutes) checkForge(ctx context.Context, w http.ResponseWriter, ev *launchrule.EventSpec) bool {

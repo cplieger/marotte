@@ -1,0 +1,20 @@
+{
+  "_meta": {
+    "date": "2026-11-07",
+    "recorded": "live",
+    "regenerate": "MAROTTE_LIVE_GITHUB_TOKEN=\u003ctoken\u003e go test ./internal/trigger/ -run TestProbePRListCost -prlist-cost-probe"
+  },
+  "first": 50,
+  "repos": [
+    {
+      "repo": "cplieger/animap",
+      "rows": 0,
+      "cost": 2
+    },
+    {
+      "repo": "cplieger/marotte",
+      "rows": 7,
+      "cost": 2
+    }
+  ]
+}

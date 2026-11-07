@@ -102,7 +102,7 @@ func TestRunWalkKeepsBoundAcrossHour(t *testing.T) {
 	h.src.runs[0].Next, h.src.runs[0].Partial = "c1", capped
 	h.runPage(run(42, forgeapi.CheckPassing, pollStart.Add(-time.Hour)))
 	clock := pollStart.Add(50 * time.Minute)
-	p := &poller{src: h.src, c: h.c, now: func() time.Time {
+	p := &poller{src: h.src, c: h.c, budget: h.budget, now: func() time.Time {
 		t := clock
 		clock = clock.Add(20 * time.Minute)
 		return t

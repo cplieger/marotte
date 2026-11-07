@@ -104,7 +104,7 @@ func (pr *pollRule) admitsRun(r *forgeapi.Run) bool {
 // and a refs/ path on others (forgeapi's ListRuns contract): refs/heads/ is stripped, and any other refs/ path is
 // no branch.
 func (pr *pollRule) runBranch(branch string) string {
-	if kind, _ := connectionParts(pr.feed.Connection); kind != "gitlab" {
+	if kind, _ := connectionParts(pr.feed.Connection); kind != kindGitLab {
 		return branch
 	}
 	if b, ok := strings.CutPrefix(branch, "refs/heads/"); ok {

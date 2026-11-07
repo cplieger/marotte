@@ -20,7 +20,7 @@ func (tc *testConfirmer) startRunner(src FeedSource, answer func(n int, call lau
 	f := &fakeLauncher{tc: tc, answer: answer}
 	tc.run()
 	ll := NewLauncher(tc.Confirmer, f)
-	rn := NewRunner(tc.Confirmer, ll, src, tc.dir)
+	rn := NewRunner(tc.Confirmer, ll, src, NewBudget(), tc.dir)
 	ctx, cancel := context.WithCancel(context.WithoutCancel(tc.t.Context()))
 	var wg sync.WaitGroup
 	wg.Go(func() { _ = ll.Run(ctx, tc.ready) })

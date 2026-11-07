@@ -115,12 +115,24 @@ func TestConfirmerBeforeAgentAndRunnerAfterForges(t *testing.T) {
 			t.Errorf("newTriggerRunner at %d, want it after forges.NewManager at %d", runner, manager)
 		}
 		args := bc.args["newTriggerRunner"][0]
-		if len(args) != 4 {
-			t.Fatalf("newTriggerRunner takes %d arguments, want the confirmer, the launcher, the feeds and the config dir",
-				len(args))
+		if len(args) != 5 {
+			t.Fatalf("newTriggerRunner takes %d arguments, want the confirmer, the launcher, the feeds, the budget and "+
+				"the config dir", len(args))
 		}
 		if call, ok := args[2].(*ast.CallExpr); !ok || calleeName(call.Fun) != "forges.NewFeedSource" {
 			t.Error("newTriggerRunner's feeds are not forges.NewFeedSource")
+		}
+		budget, _ := args[3].(*ast.Ident)
+		observed, _ := bc.args["forgesManager.ObserveAttempts"][0][0].(*ast.SelectorExpr)
+		if budget == nil || observed == nil || calleeName(observed) != budget.Name+".Observe" {
+			t.Error("the forge connections' attempt observer is not the runner's budget's Observe")
+		}
+		if obs, load := bc.first(t, "forgesManager.ObserveAttempts"), bc.first(t, "forgesManager.Load"); obs >= load {
+			t.Errorf("ObserveAttempts at %d, want it before forgesManager.Load at %d opens the connections", obs, load)
+		}
+		priced, _ := bc.args["h.SetTriggerBudget"][0][0].(*ast.Ident)
+		if budget == nil || priced == nil || priced.Name != budget.Name {
+			t.Error("the save estimate does not price against the runner's budget")
 		}
 		run := bc.first(t, "startTriggerLauncher")
 		if run <= runner {
@@ -273,7 +285,7 @@ func TestTriggerRunnerRunsWithNobodyPresent(t *testing.T) {
 		stopConf := startTriggerConfirmer(ctx, conf, ready, noEffects{})
 		ll := newTriggerLauncher(conf, l)
 		feeds := &emptyFeeds{}
-		stopRunner := startTriggerRunner(ctx, newTriggerRunner(conf, ll, feeds, t.TempDir()))
+		stopRunner := startTriggerRunner(ctx, newTriggerRunner(conf, ll, feeds, trigger.NewBudget(), t.TempDir()))
 		stopLaunch := startTriggerLauncher(ctx, ll, ready)
 		synctest.Wait()
 		second := make(chan error, 1)

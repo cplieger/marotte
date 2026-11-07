@@ -87,8 +87,9 @@ type EventSpec struct {
 const (
 	defaultIntervalMin = 5
 	minIntervalMin     = 2
-	maxIntervalMin     = 60
-	maxHoldCap         = 50
+	// MaxIntervalMin is the longest poll interval an event rule may set.
+	MaxIntervalMin = 60
+	maxHoldCap     = 50
 	// maxLabelBytes is GitHub's own label-name limit.
 	maxLabelBytes = 50
 	maxAuthors    = 50
@@ -137,7 +138,7 @@ func (e *EventSpec) normalizeCadence() error {
 	if e.IntervalMin == 0 {
 		e.IntervalMin = defaultIntervalMin
 	}
-	if e.IntervalMin < minIntervalMin || e.IntervalMin > maxIntervalMin {
+	if e.IntervalMin < minIntervalMin || e.IntervalMin > MaxIntervalMin {
 		return invalid("interval_min must be 2 to 60")
 	}
 	if e.Hold == nil {

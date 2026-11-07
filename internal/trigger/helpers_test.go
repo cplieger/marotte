@@ -29,13 +29,14 @@ type harness struct {
 	marks *launchMarks
 	// leases is what each reopen's boot load reads; nil reads none.
 	leases Leases
+	budget *Budget
 	now    time.Time
 	dir    string
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	h := &harness{t: t, dir: t.TempDir(), src: &fakeSource{}, now: pollStart}
+	h := &harness{t: t, dir: t.TempDir(), src: &fakeSource{}, now: pollStart, budget: NewBudget()}
 	h.reopen()
 	return h
 }
@@ -65,7 +66,7 @@ func (h *harness) create(ev *launchrule.EventSpec) launchrule.Rule {
 // poll runs one poll of every feed at h.now, then moves h.now on by five minutes.
 func (h *harness) poll() {
 	h.t.Helper()
-	p := &poller{src: h.src, c: h.c, now: func() time.Time { return h.now }}
+	p := &poller{src: h.src, c: h.c, budget: h.budget, now: func() time.Time { return h.now }}
 	for _, fr := range groupFeeds(h.store.List()) {
 		p.poll(h.t.Context(), fr)
 	}

@@ -1,6 +1,7 @@
 package forges
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -146,4 +147,42 @@ func TestFeedSourceReadsIssuesPRsRuns(t *testing.T) {
 			t.Errorf("the unknown connection sent %q", got[before:])
 		}
 	})
+}
+
+type probeKey struct{}
+
+// TestAttemptObserverSeesFeedReads pins that a connection signed in after ObserveAttempts reports each attempt of a
+// feed read under its id, with the caller's context values, which is how the trigger budget tells its reads apart.
+func TestAttemptObserverSeesFeedReads(t *testing.T) {
+	wire := &feedWire{bodies: map[string]string{
+		"/user":                         `{"login":"alice"}`,
+		"/user/repos":                   `[]`,
+		"/repos/cplieger/animap/issues": feedIssuesBody,
+	}}
+	h := newConnectHarness(t, wire)
+	var mu sync.Mutex
+	var seen []string
+	h.m.ObserveAttempts(func(conn string) func(http.RoundTripper) http.RoundTripper {
+		return func(next http.RoundTripper) http.RoundTripper {
+			return roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if v, _ := r.Context().Value(probeKey{}).(string); v != "" {
+					mu.Lock()
+					seen = append(seen, conn+" "+v+" "+r.URL.Path)
+					mu.Unlock()
+				}
+				return next.RoundTrip(r)
+			})
+		}
+	})
+	id := h.signedIn(t, KindGitHub, "", "feed-secret", "")
+	ctx := context.WithValue(t.Context(), probeKey{}, "trigger")
+	if _, err := NewFeedSource(h.m).OpenIssues(ctx, trigger.Feed{Connection: id, Selector: "cplieger/animap"}, ""); err != nil {
+		t.Fatalf("OpenIssues = %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	want := id + " trigger /repos/cplieger/animap/issues"
+	if len(seen) != 1 || seen[0] != want {
+		t.Errorf("observed %q, want [%q]", seen, want)
+	}
 }

@@ -129,7 +129,7 @@ func (m *Manager) signIn(base context.Context, deadline time.Time, spec *connect
 	if serr := store.Save(key, cred); serr != nil {
 		return "", fmt.Errorf("forges: save the credential for %s: %w", id, serr)
 	}
-	core, src, st, err := openConn(store, &next.spec, m.newCore, m.extraOpts)
+	core, src, st, err := openConn(store, &next.spec, m.newCore, m.connOpts(&next.spec))
 	if err != nil {
 		deleteKey(store, key)
 		return "", err

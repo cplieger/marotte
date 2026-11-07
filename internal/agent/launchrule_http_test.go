@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -875,4 +876,65 @@ func putClockRule(t *testing.T, st *launchrule.Store, source string, spec launch
 		t.Fatalf("Create(%s): %v", source, err)
 	}
 	return r
+}
+
+// runRuleFor is runRuleBody's rule on repo, polled every interval minutes.
+func runRuleFor(repo string, interval int) string {
+	return `{"source":"bundled://publish","enabled":true,"when":{"event":{"connection":"github:github.com",` +
+		`"repo":"` + repo + `","kind":"run_concluded","interval_min":` + strconv.Itoa(interval) +
+		`,"filter":{"result":["success"]}}}}`
+}
+
+func budgetedRuleHub(t *testing.T) *ruleHub {
+	t.Helper()
+	rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
+	rh.runs.triggerBudget = trigger.NewBudget()
+	return rh
+}
+
+func TestSaveEstimateRefusesOverCap(t *testing.T) {
+	rh := budgetedRuleHub(t)
+	for i := range 16 {
+		if rec := sendRoute(t, rh.mux, http.MethodPost, "/api/launch-rules", runRuleFor("o/r"+strconv.Itoa(i), 5)); rec.Code != http.StatusOK {
+			t.Fatalf("Setup: POST %d = %d %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	rec := sendRoute(t, rh.mux, http.MethodPost, "/api/launch-rules", runRuleFor("o/next", 5))
+	want := "These rules could spend 612 core requests an hour on github.com; the trigger budget is 600. Set this one to 8 minutes or more."
+	if rec.Code != http.StatusBadRequest || errorText(t, rec) != want {
+		t.Errorf("17th POST = %d %s, want 400 with %q", rec.Code, rec.Body.String(), want)
+	}
+	if n := len(rh.st.List()); n != 16 {
+		t.Errorf("%d rules stored after the refusal, want 16", n)
+	}
+	if rec := sendRoute(t, rh.mux, http.MethodPost, "/api/launch-rules", runRuleFor("o/next", 8)); rec.Code != http.StatusOK {
+		t.Errorf("POST at the fitting interval = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSaveEstimatePricesUnreadRunFeedAtThreePages(t *testing.T) {
+	rh := budgetedRuleHub(t)
+	for i := range 3 {
+		if rec := sendRoute(t, rh.mux, http.MethodPost, "/api/launch-rules", runRuleFor("o/r"+strconv.Itoa(i), 2)); rec.Code != http.StatusOK {
+			t.Fatalf("Setup: POST %d = %d %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	rec := sendRoute(t, rh.mux, http.MethodPost, "/api/launch-rules", runRuleFor("o/r3", 2))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("4th POST at 2 minutes = %d %s, want 200: four unread run feeds price at 4 × 30 × 3 = 360", rec.Code, rec.Body.String())
+	}
+	for i := 4; i < 6; i++ {
+		if rec := sendRoute(t, rh.mux, http.MethodPost, "/api/launch-rules", runRuleFor("o/r"+strconv.Itoa(i), 2)); rec.Code != http.StatusOK {
+			t.Fatalf("POST %d = %d %s, want 200 up to 540", i, rec.Code, rec.Body.String())
+		}
+	}
+	rec = sendRoute(t, rh.mux, http.MethodPost, "/api/launch-rules", runRuleFor("o/r6", 2))
+	want := "These rules could spend 630 core requests an hour on github.com; the trigger budget is 600. Set this one to 3 minutes or more."
+	if rec.Code != http.StatusBadRequest || errorText(t, rec) != want {
+		t.Errorf("7th POST = %d %s, want 400 with %q", rec.Code, rec.Body.String(), want)
+	}
+	paused := strings.Replace(runRuleFor("o/r6", 2), `"enabled":true`, `"enabled":false`, 1)
+	if rec := sendRoute(t, rh.mux, http.MethodPost, "/api/launch-rules", paused); rec.Code != http.StatusOK {
+		t.Errorf("POST of a disabled rule = %d %s, want 200: it polls nothing", rec.Code, rec.Body.String())
+	}
 }

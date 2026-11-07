@@ -249,9 +249,13 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// is read, all after forgeNotify is wired below; forgeNotifier.notify logs a call that comes earlier.
 	forgeNotify := &forgeNotifier{hub: h}
 	forgesManager := forges.NewManager(cfg.ConfigDir, forgeNotify.notify)
+	triggerBudget := trigger.NewBudget()
+	forgesManager.ObserveAttempts(triggerBudget.Observe)
 	forgesManager.Load(ctx)
 	h.SetEventRuleChecker(forgesManager)
-	triggerRunner := newTriggerRunner(confirmer, triggerLauncher, forges.NewFeedSource(forgesManager), cfg.ConfigDir)
+	h.SetTriggerBudget(triggerBudget)
+	triggerRunner := newTriggerRunner(confirmer, triggerLauncher, forges.NewFeedSource(forgesManager), triggerBudget,
+		cfg.ConfigDir)
 	// After the runner installed the fleet caps, so no launch passes uncapped.
 	stopTriggerLauncher := startTriggerLauncher(appCtx, triggerLauncher, h.EngineReady())
 	stopTriggerRunner := startTriggerRunner(appCtx, triggerRunner)
@@ -946,12 +950,13 @@ func startTriggerLauncher(ctx context.Context, ll *trigger.LaunchLoop, engineRea
 
 // newTriggerRunner builds the poll runner of c's rules over src, installing on ll the fleet caps configDir's
 // config.json sets; nil when there is no confirmer.
-func newTriggerRunner(c *trigger.Confirmer, ll *trigger.LaunchLoop, src trigger.FeedSource, configDir string,
+func newTriggerRunner(c *trigger.Confirmer, ll *trigger.LaunchLoop, src trigger.FeedSource, b *trigger.Budget,
+	configDir string,
 ) *trigger.Runner {
 	if c == nil {
 		return nil
 	}
-	return trigger.NewRunner(c, ll, src, configDir)
+	return trigger.NewRunner(c, ll, src, b, configDir)
 }
 
 // startTriggerRunner runs r's polls until ctx ends, with no presence gate: triggers exist for the hours nobody is

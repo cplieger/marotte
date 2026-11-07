@@ -15,14 +15,15 @@ type Runner struct {
 	now    func() time.Time
 }
 
-// NewRunner returns the runner of c's rules, reading feeds through src. It installs on ll, the launcher of c's
+// NewRunner returns the runner of c's rules, reading feeds through src within b, the budget the connections'
+// attempt observers report to. It installs on ll, the launcher of c's
 // rules, the fleet caps read from configDir's config.json at each launch; ll runs on its own, never through the
 // runner.
-func NewRunner(c *Confirmer, ll *LaunchLoop, src FeedSource, configDir string) *Runner {
+func NewRunner(c *Confirmer, ll *LaunchLoop, src FeedSource, b *Budget, configDir string) *Runner {
 	ll.setCaps(&fleetCaps{leases: c.leases, limits: func(ctx context.Context) (int, int) {
 		return settings.TriggerCaps(ctx, configDir)
 	}})
-	return &Runner{poller: newPoller(src, c), c: c, now: time.Now}
+	return &Runner{poller: newPoller(src, c, b), c: c, now: time.Now}
 }
 
 // Run polls until ctx ends, then returns once every poll in flight returned. A feed polls at the shortest

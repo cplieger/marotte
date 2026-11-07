@@ -21,7 +21,7 @@ func (tc *testConfirmer) startCapped(configDir string, answer func(n int, call l
 	f := &fakeLauncher{tc: tc, answer: answer}
 	tc.run()
 	ll := NewLauncher(tc.Confirmer, f)
-	NewRunner(tc.Confirmer, ll, &fakeSource{}, configDir)
+	NewRunner(tc.Confirmer, ll, &fakeSource{}, NewBudget(), configDir)
 	ctx, cancel := context.WithCancel(context.WithoutCancel(tc.t.Context()))
 	done := make(chan struct{})
 	go func() {
