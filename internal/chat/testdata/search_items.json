@@ -5,7 +5,10 @@
     "Go PRODUCES this file (TestSearchItemsFixture) and static-src/search-items-contract.test.ts",
     "CONSUMES it, rendering body as turn t-1 (its turn_open first) and reading each",
     "[data-find-unit] element: its kind, its anchor (data-entry-id) and, for a message, every member",
-    "(data-entries). A tool card and the plan card list their folded members here only. Header and",
+    "(data-entries), and its text as the find engine reads it with its containers open (texts, one per",
+    "segment, the renderer's own wording drawn as chrome). Bodies are plain text: markdown the renderer",
+    "turns into other text lands with a notice instead. A tool card and the plan card list their folded",
+    "members here only. A folded hook's text is behind its hooks badge, so it is not compared. Header and",
     "turn_failure items are the turn card's, outside the body the TS side renders, so it skips them.",
     "hooks_hidden runs a case with hooks.showStatus off. later_wake is a turn_wake in a later turn.",
     "",
@@ -57,6 +60,9 @@
           "anchor": "t-1",
           "entries": [
             "t-1"
+          ],
+          "texts": [
+            "go"
           ]
         },
         {
@@ -65,6 +71,9 @@
           "anchor": "s1#0",
           "entries": [
             "s1#0"
+          ],
+          "texts": [
+            "first half"
           ]
         },
         {
@@ -74,6 +83,10 @@
           "entries": [
             "c1",
             "c1:result"
+          ],
+          "texts": [
+            "go vet",
+            "ok"
           ]
         },
         {
@@ -82,6 +95,9 @@
           "anchor": "s1#1",
           "entries": [
             "s1#1"
+          ],
+          "texts": [
+            "second half"
           ]
         }
       ]
@@ -130,6 +146,9 @@
           "anchor": "t-1",
           "entries": [
             "t-1"
+          ],
+          "texts": [
+            "go"
           ]
         },
         {
@@ -139,6 +158,10 @@
           "entries": [
             "c1",
             "c1:result"
+          ],
+          "texts": [
+            "go vet",
+            "ok"
           ]
         },
         {
@@ -148,6 +171,61 @@
           "entries": [
             "s1#0",
             "s1#1"
+          ],
+          "texts": [
+            "first halfsecond half"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a word split across a message's entries is one word",
+      "body": [
+        {
+          "id": "say-a#0",
+          "kind": "text",
+          "payload": {
+            "text": "a dead"
+          }
+        },
+        {
+          "id": "say-a#1",
+          "kind": "text",
+          "payload": {
+            "text": "set security fai"
+          }
+        },
+        {
+          "id": "say-a#2",
+          "kind": "text",
+          "payload": {
+            "text": "lure"
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "message",
+          "lane": "",
+          "anchor": "say-a#0",
+          "entries": [
+            "say-a#0",
+            "say-a#1",
+            "say-a#2"
+          ],
+          "texts": [
+            "a deadset security failure"
           ]
         }
       ]
@@ -177,6 +255,9 @@
           "anchor": "t-1",
           "entries": [
             "t-1"
+          ],
+          "texts": [
+            "go"
           ]
         },
         {
@@ -185,6 +266,9 @@
           "anchor": "say-a",
           "entries": [
             "say-a"
+          ],
+          "texts": [
+            "one message"
           ]
         },
         {
@@ -193,6 +277,9 @@
           "anchor": "say-b",
           "entries": [
             "say-b"
+          ],
+          "texts": [
+            "another message"
           ]
         }
       ]
@@ -229,6 +316,9 @@
           "anchor": "t-1",
           "entries": [
             "t-1"
+          ],
+          "texts": [
+            "go"
           ]
         },
         {
@@ -239,6 +329,9 @@
             "say-a#0",
             "t-1:e4",
             "say-a#1"
+          ],
+          "texts": [
+            "one message continued and done"
           ]
         }
       ]
@@ -276,6 +369,9 @@
           "anchor": "t-1",
           "entries": [
             "t-1"
+          ],
+          "texts": [
+            "go"
           ]
         },
         {
@@ -285,6 +381,9 @@
           "entries": [
             "say-a",
             "say-a#1"
+          ],
+          "texts": [
+            "the chat's words go on"
           ]
         },
         {
@@ -293,6 +392,9 @@
           "anchor": "d1",
           "entries": [
             "d1"
+          ],
+          "texts": [
+            "the delegate's words"
           ]
         }
       ]
@@ -336,6 +438,35 @@
           "payload": {
             "message": "routed to a smaller model"
           }
+        },
+        {
+          "id": "sb1",
+          "kind": "safety_blocked",
+          "payload": {
+            "properties": [
+              "bucket policy",
+              "public access"
+            ]
+          }
+        },
+        {
+          "id": "mf1",
+          "kind": "model_fallback",
+          "payload": {
+            "from": "opus-5",
+            "to": "sonnet-5",
+            "trigger": "refusal"
+          }
+        },
+        {
+          "id": "mf2",
+          "kind": "model_fallback",
+          "payload": {
+            "from": "opus-5",
+            "to": "sonnet-5",
+            "trigger": "availability",
+            "reason": "chainExhausted"
+          }
         }
       ],
       "items": [
@@ -345,6 +476,9 @@
           "anchor": "t-1",
           "entries": [
             "t-1"
+          ],
+          "texts": [
+            "go"
           ]
         },
         {
@@ -353,6 +487,9 @@
           "anchor": "th1",
           "entries": [
             "th1"
+          ],
+          "texts": [
+            "weighing it"
           ]
         },
         {
@@ -361,6 +498,9 @@
           "anchor": "say-a",
           "entries": [
             "say-a"
+          ],
+          "texts": [
+            "the answer"
           ]
         },
         {
@@ -369,6 +509,9 @@
           "anchor": "st1",
           "entries": [
             "st1"
+          ],
+          "texts": [
+            "also this"
           ]
         },
         {
@@ -377,6 +520,9 @@
           "anchor": "cf1",
           "entries": [
             "cf1"
+          ],
+          "texts": [
+            "too large"
           ]
         },
         {
@@ -385,6 +531,91 @@
           "anchor": "mr1",
           "entries": [
             "mr1"
+          ],
+          "texts": [
+            "routed to a smaller model"
+          ]
+        },
+        {
+          "kind": "notice",
+          "lane": "",
+          "anchor": "sb1",
+          "entries": [
+            "sb1"
+          ],
+          "texts": [
+            "bucket policy, public access"
+          ]
+        },
+        {
+          "kind": "notice",
+          "lane": "",
+          "anchor": "mf1",
+          "entries": [
+            "mf1"
+          ],
+          "texts": [
+            "opus-5",
+            "sonnet-5"
+          ]
+        },
+        {
+          "kind": "notice",
+          "lane": "",
+          "anchor": "mf2",
+          "entries": [
+            "mf2"
+          ],
+          "texts": [
+            "opus-5"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a plan entry's status and priority are the card's wording",
+      "body": [
+        {
+          "id": "p1",
+          "kind": "plan",
+          "payload": {
+            "entries": [
+              {
+                "content": "draft the fix",
+                "priority": "high",
+                "status": "completed"
+              },
+              {
+                "content": "land the fix",
+                "priority": "",
+                "status": "in_progress"
+              }
+            ]
+          }
+        }
+      ],
+      "items": [
+        {
+          "kind": "header",
+          "lane": "",
+          "anchor": "t-1",
+          "entries": [
+            "t-1"
+          ],
+          "texts": [
+            "go"
+          ]
+        },
+        {
+          "kind": "plan",
+          "lane": "",
+          "anchor": "p1",
+          "entries": [
+            "p1"
+          ],
+          "texts": [
+            "draft the fix",
+            "land the fix"
           ]
         }
       ]
@@ -423,6 +654,9 @@
           "anchor": "t-1",
           "entries": [
             "t-1"
+          ],
+          "texts": [
+            "go"
           ]
         },
         {
@@ -431,6 +665,9 @@
           "anchor": "say-a#0",
           "entries": [
             "say-a#0"
+          ],
+          "texts": [
+            "before"
           ]
         },
         {
@@ -439,6 +676,9 @@
           "anchor": "say-a#1",
           "entries": [
             "say-a#1"
+          ],
+          "texts": [
+            "after"
           ]
         }
       ]
@@ -476,6 +716,9 @@
           "anchor": "t-1",
           "entries": [
             "t-1"
+          ],
+          "texts": [
+            "go"
           ]
         },
         {
@@ -484,6 +727,9 @@
           "anchor": "say-a#0",
           "entries": [
             "say-a#0"
+          ],
+          "texts": [
+            "before"
           ]
         },
         {
@@ -492,6 +738,9 @@
           "anchor": "st1:ack",
           "entries": [
             "st1:ack"
+          ],
+          "texts": [
+            "noted"
           ]
         },
         {
@@ -500,6 +749,9 @@
           "anchor": "say-a#1",
           "entries": [
             "say-a#1"
+          ],
+          "texts": [
+            "after"
           ]
         }
       ]
@@ -555,6 +807,9 @@
           "anchor": "t-1",
           "entries": [
             "t-1"
+          ],
+          "texts": [
+            "go"
           ]
         },
         {
@@ -564,6 +819,9 @@
           "entries": [
             "p1",
             "p2"
+          ],
+          "texts": [
+            "land the fix"
           ]
         },
         {
@@ -573,6 +831,9 @@
           "entries": [
             "say-a#0",
             "say-a#1"
+          ],
+          "texts": [
+            "working still working"
           ]
         }
       ]
@@ -618,6 +879,9 @@
           "anchor": "t-1",
           "entries": [
             "t-1"
+          ],
+          "texts": [
+            "go"
           ]
         },
         {
@@ -626,6 +890,9 @@
           "anchor": "h1",
           "entries": [
             "h1"
+          ],
+          "texts": [
+            "Hook fired: guard"
           ]
         },
         {
@@ -634,6 +901,9 @@
           "anchor": "c1",
           "entries": [
             "c1"
+          ],
+          "texts": [
+            "go vet"
           ]
         },
         {
@@ -642,6 +912,9 @@
           "anchor": "say-a",
           "entries": [
             "say-a"
+          ],
+          "texts": [
+            "done"
           ]
         }
       ]
@@ -684,6 +957,9 @@
           "anchor": "t-1",
           "entries": [
             "t-1"
+          ],
+          "texts": [
+            "go"
           ]
         },
         {
@@ -693,6 +969,9 @@
           "entries": [
             "say-a#0",
             "say-a#1"
+          ],
+          "texts": [
+            "beforeafter"
           ]
         }
       ]
@@ -740,6 +1019,9 @@
           "anchor": "t-1",
           "entries": [
             "t-1"
+          ],
+          "texts": [
+            "go"
           ]
         },
         {
@@ -748,6 +1030,9 @@
           "anchor": "say-a",
           "entries": [
             "say-a"
+          ],
+          "texts": [
+            "launched"
           ]
         }
       ]
@@ -778,6 +1063,9 @@
           "anchor": "t-1",
           "entries": [
             "t-1"
+          ],
+          "texts": [
+            "go"
           ]
         },
         {
@@ -786,6 +1074,9 @@
           "anchor": "say-a",
           "entries": [
             "say-a"
+          ],
+          "texts": [
+            "partial"
           ]
         },
         {
@@ -794,6 +1085,9 @@
           "anchor": "t-1:close",
           "entries": [
             "t-1:close"
+          ],
+          "texts": [
+            "budget ran out"
           ]
         }
       ]

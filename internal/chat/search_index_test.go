@@ -379,10 +379,32 @@ func TestSearchAll_AsksTheIndexAboutTheFreeTextOnly(t *testing.T) {
 	}
 }
 
-// The index costs 64 KiB per chat, a power of two so a position is a mask.
+// A word or phrase a message's entries split is in the filter, whether it was built over the whole log or over a
+// prefix and extended entry by entry, and whatever another lane wrote between the halves.
+func TestChatFilter_HoldsWordsSplitAcrossAMessagesEntries(t *testing.T) {
+	entries, _ := chatOf(openTurn("t-1", 1, nil).
+		text("s1#0", "a dead").
+		laneText("sub-1", "d1", "unrelated words").
+		text("s1#1", "set security failure, and the security ").
+		text("s1#2", "failure was bad"))
+	for _, q := range []string{"deadset security failure", `"security failure was"`} {
+		want := queryTrigrams(parseSearchQuery(q, false).terms)
+		for over := range len(entries) + 1 {
+			f := buildChatFilter("", entries[:over])
+			for i := over; i < len(entries); i++ {
+				f.addEntry(&entries[i])
+			}
+			if !f.holdsAll(want) {
+				t.Errorf("filter built over %d entries and extended with the rest rejects %s", over, q)
+			}
+		}
+	}
+}
+
+// The index costs 64 KiB of bits per chat, a power of two so a position is a mask.
 func TestChatFilter_MemoryIsSixtyFourKiBPerChat(t *testing.T) {
-	if got := unsafe.Sizeof(chatFilter{}); got != 64<<10 {
-		t.Errorf("sizeof(chatFilter) = %d, want %d", got, 64<<10)
+	if got := unsafe.Sizeof(chatFilter{}.words); got != 64<<10 {
+		t.Errorf("sizeof(chatFilter.words) = %d, want %d", got, 64<<10)
 	}
 	if filterBits != filterBytes*8 || filterBits&(filterBits-1) != 0 {
 		t.Errorf("filterBits = %d, want %d and a power of two", filterBits, filterBytes*8)
@@ -397,7 +419,7 @@ func TestChatFilter_MemoryIsSixtyFourKiBPerChat(t *testing.T) {
 	s.index.mu.Lock()
 	held := len(s.index.filters)
 	s.index.mu.Unlock()
-	if got, want := uintptr(held)*unsafe.Sizeof(chatFilter{}), uintptr(len(ids))*64<<10; got != want {
+	if got, want := uintptr(held)*unsafe.Sizeof(chatFilter{}.words), uintptr(len(ids))*64<<10; got != want {
 		t.Errorf("index over %d chats holds %d bytes of filters, want %d", len(ids), got, want)
 	}
 }

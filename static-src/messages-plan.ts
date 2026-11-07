@@ -1,12 +1,14 @@
 import type { PlanEntry } from "./types.js";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { el } from "@cplieger/ui";
+import { CHROME_ATTR } from "./chrome-attr.js";
 
 /** Build the plan card shell and reconcile entries into it. */
 export function planElement(entries: readonly PlanEntry[]): HTMLDivElement {
   const card = el("div", { className: "plan-message" }) as HTMLDivElement;
 
-  const header = el("div", { className: "plan-header" }, "Plan");
+  // The card's wording is chrome: find searches each entry's content, the server's plan segments.
+  const header = el("div", { className: "plan-header", [CHROME_ATTR]: "" }, "Plan");
   card.appendChild(header);
 
   const list = el("div", { className: "plan-entries" }) as HTMLDivElement;
@@ -45,8 +47,11 @@ export function buildPlanRow(e: PlanEntry): HTMLDivElement {
 function updatePlanRow(row: HTMLDivElement, e: PlanEntry): void {
   const icon = e.status === "completed" ? "✅" : e.status === "in_progress" ? "🔄" : "⬜";
   row.replaceChildren(
-    `${icon} ${e.content}`,
-    ...(e.priority === "high" ? [" ", el("span", { className: "plan-hi" }, "[high]")] : []),
+    el("span", { [CHROME_ATTR]: "" }, `${icon} `),
+    e.content,
+    ...(e.priority === "high"
+      ? [el("span", { [CHROME_ATTR]: "" }, " ", el("span", { className: "plan-hi" }, "[high]"))]
+      : []),
   );
   row.dataset["status"] = e.status;
 }

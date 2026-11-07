@@ -12,7 +12,8 @@ const CURRENT_CLASS = "find-hit-current";
 const TEXT_NODE = 3;
 const ELEMENT_NODE = 1;
 
-/** A run ends on entering and leaving these, so a phrase never crosses a block boundary. */
+/** A run ends on entering and leaving these and chrome, so a phrase never crosses a block boundary or joins the text
+ *  either side of a label the walk skips. */
 const BLOCK_TAGS = new Set([
   "P",
   "DIV",
@@ -408,23 +409,10 @@ export class FindEngine {
     return steps.length;
   }
 
-  /** Group runs by unit, and mark the units whose runs hold every term between them. */
+  /** Mark the units whose runs hold every term between them. */
   private markUnits(runs: readonly Text[][], w: Walk, steps: Step[]): void {
-    const byUnit = new Map<Element, { run: Text[]; found: readonly Found[] }[]>();
-    const unitOf = this.unitFinder(w.scope);
-    for (const run of runs) {
-      const unit = unitOf(run[0]?.parentElement ?? null);
-      if (unit === null) {
-        continue;
-      }
-      let list = byUnit.get(unit);
-      if (list === undefined) {
-        list = [];
-        byUnit.set(unit, list);
-      }
-      list.push({ run, found: w.find(runText(run).text) });
-    }
-    for (const [unit, list] of byUnit) {
+    for (const [unit, unitRuns] of this.groupUnits(runs, w.scope)) {
+      const list = unitRuns.map((run) => ({ run, found: w.find(runText(run).text) }));
       const terms = new Set(list.flatMap((r) => r.found.map((sp) => sp.term)));
       if (terms.size < w.terms) {
         continue;
@@ -434,6 +422,40 @@ export class FindEngine {
         markRun(run, mergeSpans(found, steps.length - 1), steps);
       }
     }
+  }
+
+  /**
+   * The text unit mode matches in each unit of `scope`, one string per run (a phrase never crosses two), in document
+   * order: what internal/chat/testdata/search_items.json's `texts` pins against the server's items.
+   */
+  // deadset:ignore DS1004 -- test seam: the unit text search-items-contract.test.ts compares with the server's
+  unitTexts(scope: UnitScope): Map<Element, string[]> {
+    const out = new Map<Element, string[]>();
+    for (const [unit, runs] of this.groupUnits(this.collectRuns(null), scope)) {
+      out.set(
+        unit,
+        runs.map((run) => runText(run).text),
+      );
+    }
+    return out;
+  }
+
+  private groupUnits(runs: readonly Text[][], scope: UnitScope | null): Map<Element, Text[][]> {
+    const byUnit = new Map<Element, Text[][]>();
+    const unitOf = this.unitFinder(scope);
+    for (const run of runs) {
+      const unit = unitOf(run[0]?.parentElement ?? null);
+      if (unit === null) {
+        continue;
+      }
+      const list = byUnit.get(unit);
+      if (list === undefined) {
+        byUnit.set(unit, [run]);
+      } else {
+        list.push(run);
+      }
+    }
+    return byUnit;
   }
 
   private unitFinder(scope: UnitScope | null): (from: Element | null) => Element | null {
@@ -586,7 +608,7 @@ export class FindEngine {
     this.held = this.holdOf(mark, this.anchor);
   }
 
-  /** Runs of searchable text nodes. A block tag ends the run whether or not its subtree is searched. */
+  /** Runs of searchable text nodes. A block tag or chrome ends the run whether or not its subtree is searched. */
   private collectRuns(keep: Element | null): Text[][] {
     const runs: Text[][] = [];
     let run: Text[] = [];
@@ -607,7 +629,7 @@ export class FindEngine {
         return;
       }
       const elem = node as Element;
-      const bounds = BLOCK_TAGS.has(elem.tagName);
+      const bounds = BLOCK_TAGS.has(elem.tagName) || elem.matches(CHROME_SELECTOR);
       if (bounds) {
         flush();
       }

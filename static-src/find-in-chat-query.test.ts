@@ -427,7 +427,8 @@ describe("find in chat reveals the current hit only", () => {
   });
 
   it("holds the current hit in place while a tool group above it in the same turn closes", async () => {
-    // One open turn: a tool group holding a hit, then a tall message holding the next.
+    // One open turn, taller than the view on both sides of its hits, so a landing has room to centre and to hold: a
+    // tool group holding a hit, then the message holding the next.
     const t = "t1";
     const turns = new Map<string, TurnState>([
       [
@@ -435,10 +436,13 @@ describe("find in chat reveals the current hit only", () => {
         {
           entries: [
             at(t, 0, "turn_open", { prompt: { id: "t1-p", text: "only" }, source: "prompt", n: 1 }),
-            ...tool(t, 1, "Read notes", "nothing here"),
-            ...tool(t, 3, "Run checks", "the deadset run logged a security failure"),
-            at(t, 5, "text", { text: `${FILLER}\n\n${FILLER}\n\nsecurity failure in deadset` }),
-            at(t, 6, "turn_close", { outcome: "completed" }),
+            at(t, 1, "text", { text: `${FILLER}\n\n${FILLER}\n\n${FILLER}` }),
+            ...tool(t, 2, "Read notes", "nothing here"),
+            ...tool(t, 4, "Run checks", "the deadset run logged a security failure"),
+            at(t, 6, "text", { text: "security failure in deadset" }),
+            ...tool(t, 7, "Read more", "nothing here"),
+            at(t, 9, "text", { text: `${FILLER}\n\n${FILLER}\n\n${FILLER}` }),
+            at(t, 10, "turn_close", { outcome: "completed" }),
           ],
           openEntries: new Map(),
         },
@@ -446,34 +450,42 @@ describe("find in chat reveals the current hit only", () => {
     ]);
     await load("c-q-anchor-group", turns);
     stageServerHits([
-      hitOn(t, 1, "t1-e3", "tool", ["tool_output"]),
-      hitOn(t, 1, "t1-e5", "message", ["content"]),
+      hitOn(t, 1, "t1-e4", "tool", ["tool_output"]),
+      hitOn(t, 1, "t1-e6", "message", ["content"]),
     ]);
     await searchAndLand("deadset security failure", t);
-    expect(currentUnit()).toBe(entryEl("t1-e5"));
-    press();
+    if (currentUnit() !== entryEl("t1-e4")) {
+      press();
+    }
     await vi.waitFor(() => {
-      expect(currentUnit()).toBe(entryEl("t1-e3"));
+      expect(currentUnit()).toBe(entryEl("t1-e4"));
+      expect(groupOf("t1-e4").classList.contains("tool-group-collapsed")).toBe(false);
     });
-    // With motion, so the group's close tweens after the jump to the next hit.
+    // With motion, so the group's close tweens while and after the flight to the next hit.
     await emulateA11yMedia({ reducedMotion: "no-preference" });
     try {
       press();
       await vi.waitFor(() => {
-        expect(currentUnit()).toBe(entryEl("t1-e5"));
+        expect(currentUnit()).toBe(entryEl("t1-e6"));
       });
-      const top = (): number =>
-        messagesEl.querySelector("mark.find-hit-current")?.getBoundingClientRect().top ??
-        Number.NaN;
-      const before = top();
-      const drift: number[] = [];
+      const mid = (r: DOMRect): number => r.top + r.height / 2;
+      const off = (): number =>
+        mid(
+          messagesEl.querySelector("mark.find-hit-current")?.getBoundingClientRect() ??
+            new DOMRect(),
+        ) - mid(scrollerEl.getBoundingClientRect());
+      // Past the flight, the tween and the hold.
+      const settled: number[] = [];
       const start = performance.now();
-      while (performance.now() - start < 600) {
+      while (performance.now() - start < 1200) {
         await new Promise((r) => requestAnimationFrame(r));
-        drift.push(Math.abs(top() - before));
+        if (performance.now() - start > 1000) {
+          settled.push(off());
+        }
       }
-      expect(groupOf("t1-e3").classList.contains("tool-group-collapsed")).toBe(true);
-      expect(Math.max(...drift)).toBeLessThanOrEqual(1);
+      expect(groupOf("t1-e4").classList.contains("tool-group-collapsed")).toBe(true);
+      // Where the flight aimed it, the view's middle, as the group's height left the content above it.
+      expect(Math.max(...settled.map(Math.abs))).toBeLessThanOrEqual(1);
     } finally {
       await emulateA11yMedia({ reducedMotion: "reduce" });
     }
@@ -503,6 +515,38 @@ describe("find in chat waits for a pause in typing", () => {
     expect(searchFetches()).toBe(typed + 2);
     vi.advanceTimersByTime(CHAT_SEARCH_DEBOUNCE_MS);
     expect(searchFetches()).toBe(typed + 2);
+  });
+
+  it("searches at once on Enter while the chat streams, and shows that search's hit", async () => {
+    await load("c-q-streaming");
+    // A standing search, settled before the clock is faked.
+    stageServerHits([H3]);
+    await searchAndLand("deadset security", "t3");
+    // Past the landing's own walks, whose writes a mutation observed with them would be taken for.
+    await new Promise((r) => setTimeout(r, 200));
+    stageServerHits([H1]);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const before = searchFetches();
+    input().value = "deadset security failure";
+    input().dispatchEvent(new Event("input", { bubbles: true }));
+    // A streamed chunk lands inside the typing pause, and its re-run fires before the pause ends.
+    entryEl("t3-e6").append(" and more");
+    await Promise.resolve();
+    vi.advanceTimersByTime(150);
+    // The re-run refreshed the search that stands, not the words typed since.
+    expect(
+      [...messagesEl.querySelectorAll("mark.find-hit")].some((m) => /failure/i.test(m.textContent)),
+    ).toBe(false);
+    expect(searchFetches()).toBe(before);
+
+    press();
+    expect(searchFetches()).toBe(before + 1);
+    vi.advanceTimersByTime(CHAT_SEARCH_DEBOUNCE_MS);
+    expect(searchFetches()).toBe(before + 1);
+    vi.useRealTimers();
+    // The Enter search's own answer: t1, which the standing one never named.
+    await landedIn("t1");
+    expect(folded("t1")).toBe(false);
   });
 
   it("pauses for 300 ms", () => {

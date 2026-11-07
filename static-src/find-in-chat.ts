@@ -73,6 +73,9 @@ let serverTally: Tally = NO_ANSWER;
 let serverSpread = false;
 /** The query whose answer stands, written only in `render` and read by `step`, `updateCounter` and the note. */
 let serverHitsQuery = "";
+/** The box value the shell last ran, the search that stands until the next run: a re-run refreshes it, and Enter on
+ *  any other value runs the shell, whatever a walk marked meanwhile. */
+let searchedQuery = "";
 /** `[...local, ...crossTab]`, each in wire order, so in-place hits come before those opening another view. */
 let stepOrder: Hit[] = [];
 /** `stepOrder[localCount]` is the first cross-tab hit, so the cursor reaching it
@@ -193,6 +196,7 @@ function ensureBuilt(): void {
       if (engine === null) {
         return null;
       }
+      searchedQuery = query;
       // The local pass marks what is rendered at once; the server's answer, which names every hit, picks where to land.
       searchNow(query, ctx.caseSensitive);
       updateCounter(query);
@@ -325,6 +329,7 @@ function teardown(): void {
   localCount = 0;
   announcedBoundary = false;
   serverHitsQuery = "";
+  searchedQuery = "";
   hitCursor = -1;
   marklessStep = false;
   // Cleared here: a handoff arms it after the switch's own close, so this cannot delete it early.
@@ -353,7 +358,7 @@ function step(dir: 1 | -1): void {
     return;
   }
   // A changed query searches first, landing on the first match like native find.
-  if (engine.query !== shell.value) {
+  if (searchedQuery !== shell.value) {
     shell.run();
     return;
   }
@@ -520,11 +525,11 @@ const HOLD_STILL_FRAMES = 3;
 let holdStop: (() => void) | null = null;
 
 /**
- * Keep the hit where the landing put it on screen while the layout around it settles: the chain's containers and the
- * previous hit's turn animate, and boxes that just came near the scrollport take their real size a frame later. Only
- * a move of the hit inside the content is undone, through `shiftScroll`, and only between scrolls: a jump's flight or a
- * hold the controller already made moves the scroller, and a layout move during a flight is undone once it lands. The
- * reader's wheel, touch or press ends the hold.
+ * Keep the hit where the landing aimed it, the middle of the scroller (`revealCurrent`, `selectContainer`), while the
+ * layout around it settles: the chain's containers and the previous hit's turn animate, and boxes that just came near
+ * the scrollport take their real size a frame later. Corrected through `shiftScroll`, and only between scrolls, since a
+ * flight or the controller's own hold is still moving the view; a flight aimed before the layout moved is corrected
+ * once it lands. The reader's wheel, touch or press ends the hold.
  */
 function holdWhereLanded(unit: HTMLElement, hit: Hit): void {
   holdStop?.();
@@ -533,12 +538,8 @@ function holdWhereLanded(unit: HTMLElement, hit: Hit): void {
     return;
   }
   const target = (): HTMLElement => engine?.currentMark() ?? unit;
-  const offset = (el: HTMLElement): number =>
-    el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
-  let el = target();
-  let lastOffset = offset(el);
+  const middle = (r: DOMRect): number => r.top + r.height / 2;
   let lastScroll = scroller.scrollTop;
-  let owed = 0;
   let still = 0;
   let frame = 0;
   const deadline = performance.now() + HOLD_MS;
@@ -562,26 +563,21 @@ function holdWhereLanded(unit: HTMLElement, hit: Hit): void {
       recentreIfOutOfView(scroller, now);
       return;
     }
-    if (now !== el) {
-      el = now;
-      lastOffset = offset(el);
+    const scrolling = Math.abs(scroller.scrollTop - lastScroll) >= 1;
+    let corrected = false;
+    if (!scrolling) {
+      const off = middle(now.getBoundingClientRect()) - middle(scroller.getBoundingClientRect());
+      const at = scroller.scrollTop;
+      if (Math.abs(off) >= 1) {
+        shiftScroll(off);
+      }
+      // A content edge clamps the write: what it cannot move is where the landing could put the hit.
+      corrected = Math.abs(scroller.scrollTop - at) >= 1;
     }
-    const moved = offset(el) - lastOffset;
-    const scrolled = scroller.scrollTop - lastScroll;
-    // A layout move the scroller followed by as much was held already (the controller, native anchoring).
-    if (Math.abs(moved) >= 1 && Math.abs(moved - scrolled) >= 1) {
-      owed += moved;
-    }
-    if (owed !== 0 && Math.abs(scrolled) < 1) {
-      shiftScroll(owed);
-      owed = 0;
-    }
-    still = Math.abs(moved) < 1 && Math.abs(scrolled) < 1 ? still + 1 : 0;
-    lastOffset = offset(el);
+    still = scrolling || corrected ? 0 : still + 1;
     lastScroll = scroller.scrollTop;
     if (still >= HOLD_STILL_FRAMES && scroller.getAnimations({ subtree: true }).length === 0) {
       stop();
-      recentreIfOutOfView(scroller, el);
       return;
     }
     frame = requestAnimationFrame(tick);
@@ -1012,7 +1008,8 @@ function rerun(): void {
   if (!isOpen() || engine === null || shell === null) {
     return;
   }
-  const query = shell.value;
+  // The standing search, not the box: words typed since are walked when the pause or Enter runs them.
+  const query = searchedQuery;
   const { matcher, scope } = walkOf(query, shell.caseSensitive);
   applyEngine(() => {
     engine?.refreshUnits(query, matcher, scope);

@@ -841,13 +841,24 @@ func TestSearch_CompactionFailedAndSafetyBlockedAreNotices(t *testing.T) {
 	})
 }
 
-// A model fallback's models and KAS's codes are one notice, so find-in-chat lands on its row.
+// A model fallback is a notice found by the model ids its row draws; KAS's codes the row words are not searched.
 func TestSearch_ModelFallbackIsANotice(t *testing.T) {
 	entries, drawn := chatOf(openTurn("t-1", 1, nil).
-		add("", "fb-1", marotte.EntryKindModelFallback, marotte.EntryModelFallback{From: "opus-5", Trigger: "availability", Reason: "chainExhausted"}))
-	assertHits(t, searchHits(entries, drawn, "exhausted"), []wantHit{
+		add("", "fb-1", marotte.EntryKindModelFallback, marotte.EntryModelFallback{From: "opus-5", To: "sonnet-5", Trigger: "availability", Reason: "chainExhausted"}).
+		add("", "fb-2", marotte.EntryKindModelFallback, marotte.EntryModelFallback{From: "opus-5", To: "sonnet-5", Trigger: "refusal"}))
+	assertHits(t, searchHits(entries, drawn, "opus"), []wantHit{
 		{entry: "fb-1", kind: itemNotice, segs: []SegmentKind{segmentContent}},
+		{entry: "fb-2", kind: itemNotice, segs: []SegmentKind{segmentContent}},
 	})
+	// A decline names no target, so only the retry's row holds the model it moved to.
+	assertHits(t, searchHits(entries, drawn, "sonnet"), []wantHit{
+		{entry: "fb-2", kind: itemNotice, segs: []SegmentKind{segmentContent}},
+	})
+	for _, q := range []string{"exhausted", "refusal", "availability"} {
+		if hits := searchHits(entries, drawn, q); len(hits) != 0 {
+			t.Errorf("search(%s) = %+v, want none: the row words the code", q, hits)
+		}
+	}
 }
 
 // Attachments are searched by name, not by the path in the pill's `title` attribute; both directions asserted.

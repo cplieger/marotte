@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -543,32 +545,63 @@ func TestSearchAllAgreesWithChatSearch(t *testing.T) {
 	for id, replies := range bodies {
 		seedChatEntries(t, s, id, "seeded", replies...)
 	}
+	// One message the stream wrote in three entries, splitting a word and a phrase.
+	const split marotte.ChatID = "c-eeeeeeee"
+	seedSplitMessage(t, s, split, "a dead", "set security ", "failure here")
+	ids := append(slices.Collect(maps.Keys(bodies)), split)
 	for _, q := range []string{"deadset security failure", `"security failure"`, "securite deadset", "failure"} {
 		t.Run(q, func(t *testing.T) {
-			got := s.searchAll(t.Context(), q)
-			byID := make(map[marotte.ChatID]Match, len(got.Matches))
-			for _, m := range got.Matches {
-				byID[m.ID] = m
-			}
-			for id := range bodies {
-				own := searchVia(t, s, id, "?q="+url.QueryEscape(q))
-				m, listed := byID[id]
-				if listed != (len(own.Matches) > 0) {
-					t.Errorf("%s: History lists it %v, its own search has %d hits", id, listed, len(own.Matches))
-					continue
-				}
-				if !listed {
-					continue
-				}
-				if m.Hits != own.Matched || m.Spread != own.Spread {
-					t.Errorf("%s: History hits %d spread %v, own search matched %d spread %v", id, m.Hits, m.Spread, own.Matched, own.Spread)
-				}
-				if m.Best == nil || !slices.ContainsFunc(own.Matches, func(h Hit) bool {
-					return h.EntryID == m.Best.EntryID && h.Kind == m.Best.Kind
-				}) {
-					t.Errorf("%s: Best %+v is not one of its own hits %+v", id, m.Best, own.Matches)
-				}
+			// The first pass reads every chat and records its filter; the second is answered through the filters.
+			for pass := range 2 {
+				assertHistoryAgrees(t, s, ids, q, pass)
 			}
 		})
+	}
+}
+
+// seedSplitMessage writes one turn whose reply is one message, its text split over the given entries.
+func seedSplitMessage(t *testing.T, s *Store, id marotte.ChatID, parts ...string) {
+	t.Helper()
+	opened, err := s.OpenTurn(t.Context(), id, &TurnSpec{
+		Source: marotte.TurnOpenNamePrompt,
+		Prompt: &marotte.EntryPrompt{ID: "m-" + string(id), Text: "seed"},
+	}, func(c *marotte.Chat) { c.Name = "seeded" })
+	if err != nil {
+		t.Fatalf("OpenTurn(%s): %v", id, err)
+	}
+	for i, part := range parts {
+		e := entryOf(opened.Turn, "", opened.Turn+"-say#"+strconv.Itoa(i), marotte.EntryKindText, marotte.EntryText{Text: part})
+		if err := s.Append(t.Context(), id, e); err != nil {
+			t.Fatalf("Append(text %d): %v", i, err)
+		}
+	}
+	closeTurn(t, s, id, opened.Turn, marotte.TurnOutcomeCompleted)
+}
+
+func assertHistoryAgrees(t *testing.T, s *Store, ids []marotte.ChatID, q string, pass int) {
+	t.Helper()
+	got := s.searchAll(t.Context(), q)
+	byID := make(map[marotte.ChatID]Match, len(got.Matches))
+	for _, m := range got.Matches {
+		byID[m.ID] = m
+	}
+	for _, id := range ids {
+		own := searchVia(t, s, id, "?q="+url.QueryEscape(q))
+		m, listed := byID[id]
+		if listed != (len(own.Matches) > 0) {
+			t.Errorf("pass %d, %s: History lists it %v, its own search has %d hits", pass, id, listed, len(own.Matches))
+			continue
+		}
+		if !listed {
+			continue
+		}
+		if m.Hits != own.Matched || m.Spread != own.Spread {
+			t.Errorf("pass %d, %s: History hits %d spread %v, own search matched %d spread %v", pass, id, m.Hits, m.Spread, own.Matched, own.Spread)
+		}
+		if m.Best == nil || !slices.ContainsFunc(own.Matches, func(h Hit) bool {
+			return h.EntryID == m.Best.EntryID && h.Kind == m.Best.Kind
+		}) {
+			t.Errorf("pass %d, %s: Best %+v is not one of its own hits %+v", pass, id, m.Best, own.Matches)
+		}
 	}
 }

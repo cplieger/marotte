@@ -4,6 +4,7 @@
 // position, marked here by an attribute plus a label clause.
 
 import { el } from "@cplieger/ui";
+import { CHROME_ATTR } from "../chrome-attr.js";
 import { attachClamp } from "../clamp-text.js";
 import { selectableButton } from "../disclosure-row.js";
 import { iconEl } from "../icon-el.js";
@@ -150,9 +151,10 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
   if (d.run !== undefined && d.run !== "") {
     root.dataset["run"] = d.run;
   }
+  // Chrome: find searches the reader's words, the server's steer segment, never the note's wording.
   const head = el(
     "div",
-    { className: "steer-note-head" },
+    { className: "steer-note-head", [CHROME_ATTR]: "" },
     el("span", { className: "tool-icon", "aria-hidden": "true" }, iconEl(GLYPHS[d.origin])),
   );
   if (d.run !== undefined && d.run !== "" && d.runLabel !== undefined && d.runLabel !== "") {
@@ -194,6 +196,7 @@ export function buildSteerNote(d: SteerNoteData): HTMLElement {
   const more = el("button", {
     className: "steer-note-more",
     type: "button",
+    [CHROME_ATTR]: "",
   }) as HTMLButtonElement;
   // OUTSIDE the clamped element, or the clamp hides its own opener.
   body.appendChild(more);

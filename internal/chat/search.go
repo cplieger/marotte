@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -293,7 +292,7 @@ func sentBy(segs []segment, c *marotte.Caller) []segment {
 
 // entrySegments lists an entry's searchable spans in rendered order: text and steer_ack text; tool_call title and
 // input; tool_result claim, diff, denial and output; steer text; plan entries; compaction_failed or safety_blocked
-// text; model_routed's message; model_fallback's models and codes; turn_close failure reason; turn_open prompt and
+// text; model_routed's message; model_fallback's drawn models; turn_close failure reason; turn_open prompt and
 // attachment names; turn_wake label and messages, its runs named from names. Empty spans add nothing.
 func entrySegments(e *marotte.Entry, t *searchTurn, names map[string]string) []segment {
 	switch e.Kind {
@@ -317,16 +316,14 @@ func entrySegments(e *marotte.Entry, t *searchTurn, names map[string]string) []s
 		var p marotte.EntryCompactionFailed
 		return oneSegment(segmentContent, decodeText(e.Payload, &p, func() string { return p.Reason }))
 	case marotte.EntryKindSafetyBlocked:
+		// Joined as the row joins them (messages-events.ts), so a phrase spans two properties in neither.
 		var p marotte.EntrySafetyBlocked
-		return oneSegment(segmentContent, decodeText(e.Payload, &p, func() string { return strings.Join(p.Properties, "\n") }))
+		return oneSegment(segmentContent, decodeText(e.Payload, &p, func() string { return strings.Join(p.Properties, ", ") }))
 	case marotte.EntryKindModelRouted:
 		var p marotte.EntryModelRouted
 		return oneSegment(segmentContent, decodeText(e.Payload, &p, func() string { return p.Message }))
 	case marotte.EntryKindModelFallback:
-		var p marotte.EntryModelFallback
-		return oneSegment(segmentContent, decodeText(e.Payload, &p, func() string {
-			return strings.Join(slices.DeleteFunc([]string{p.From, p.To, p.Trigger, p.Reason}, func(s string) bool { return s == "" }), " ")
-		}))
+		return modelFallbackSegments(e.Payload)
 	case marotte.EntryKindTurnClose:
 		var p marotte.EntryTurnClose
 		return oneSegment(segmentTurnFailure, decodeText(e.Payload, &p, func() string { return p.FailureReason }))
@@ -357,6 +354,20 @@ func toolResultPayloadSegments(payload json.RawMessage) []segment {
 		return nil
 	}
 	return toolResultSegments(&res)
+}
+
+// modelFallbackSegments is the model ids the row draws (messages-events.ts fallbackLabel): the model that stopped,
+// then the one the turn moved to, which a decline or a retry on the same model does not name. The row words the rest.
+func modelFallbackSegments(payload json.RawMessage) []segment {
+	var p marotte.EntryModelFallback
+	if json.Unmarshal(payload, &p) != nil {
+		return nil
+	}
+	segs := oneSegment(segmentContent, p.From)
+	if p.Reason == "" && p.To != p.From {
+		segs = append(segs, oneSegment(segmentContent, p.To)...)
+	}
+	return segs
 }
 
 func planSegments(payload json.RawMessage) []segment {

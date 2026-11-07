@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -104,4 +105,25 @@ func TestSearchAccentFold(t *testing.T) {
 	if hits := search(entries, drawn, "securite", true).Matches; len(hits) != 0 {
 		t.Errorf("case-sensitive hits = %+v, want none: Aa makes matching literal", hits)
 	}
+}
+
+// A window holds every span it starts from, so a phrase holding one of the query's words is measured to the phrase's
+// end, not the word's.
+func TestSearchTightestWindowEndsAtTheFurthestSpan(t *testing.T) {
+	t.Run("width", func(t *testing.T) {
+		q := parseSearchQuery(`"a b c" b`, false)
+		it := searchItem{segs: []segment{{kind: segmentContent, text: "a b c"}}}
+		sp := spansOfItem(&it, &q.matcher)
+		if _, width, ok := sp.tightest(q.matcher.Terms()); !ok || width != 5 {
+			t.Errorf("tightest = %d (ok %v), want 5: the phrase runs to the c", width, ok)
+		}
+	})
+	t.Run("excerpt", func(t *testing.T) {
+		const phrase = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november"
+		entries, drawn := oneText(phrase + " " + strings.Repeat("filler ", 40))
+		hits := search(entries, drawn, `"`+phrase+`" bravo`, false).Matches
+		if len(hits) != 1 || !strings.HasPrefix(hits[0].Excerpt, phrase) {
+			t.Fatalf("hits = %+v, want one excerpt opening with the whole phrase", hits)
+		}
+	})
 }

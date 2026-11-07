@@ -1,10 +1,11 @@
 // The client half of the search item oracle (internal/chat/testdata/search_items.json; the server half is
 // TestSearchItemsFixture, through searchItems). Read off the `data-find-unit` stamps the production dispatcher
-// writes, in the transcript and on each delegate's page, so a unit the renderer draws and the server does not
-// count fails here.
+// writes, in the transcript and on each delegate's page, and each unit's text as the find engine matches it, so a
+// unit the renderer draws and the server does not count, or text the two read differently, fails here.
 
 import { describe, it, expect, afterEach } from "vitest";
 import fixtureRaw from "../internal/chat/testdata/search_items.json?raw";
+import { FindEngine } from "./find-engine.js";
 import { FIND_UNIT_SELECTOR } from "./find-unit.js";
 import type { Turn } from "./turns.js";
 import type { TurnState } from "./types.js";
@@ -29,6 +30,7 @@ const { buildAssistantBody, buildDetachedBody, resetBlockRenders, initBlockRende
 const { markWakingRows } = await import("./turn-wake.js");
 const { setActive } = await import("./store.js");
 const { setHookStatusShown } = await import("./hook-fold.js");
+const { buildEvent } = await import("./messages-events.js");
 
 const CHAT_ID = "c-search-items";
 setActive(CHAT_ID);
@@ -45,11 +47,7 @@ initBlockRenderer({
     row.className = "msg-row";
     return row;
   },
-  makeEvent: (e: Entry) => {
-    const row = document.createElement("div");
-    row.className = `event event-${e.kind}`;
-    return row;
-  },
+  makeEvent: buildEvent,
 });
 
 interface ItemsCase {
@@ -57,7 +55,7 @@ interface ItemsCase {
   hooks_hidden?: boolean;
   body: { id: string; kind: EntryKind; lane?: string; payload: unknown }[];
   later_wake?: unknown;
-  items: { kind: ItemKind; lane: string; anchor: string; entries: string[] }[];
+  items: { kind: ItemKind; lane: string; anchor: string; entries: string[]; texts: string[] }[];
 }
 
 /** What the turn card draws outside the body this test renders. */
@@ -124,8 +122,26 @@ function caseTurn(c: ItemsCase): Turn {
   };
 }
 
+/** Open what a landing opens around a hit (search-reveal.ts): every collapsed tool group, every closed `<details>`
+ *  and every tool card's disclosure. */
+function openContainers(host: HTMLElement): void {
+  for (const group of host.querySelectorAll(".tool-group-collapsed")) {
+    group.querySelector<HTMLElement>(":scope > .tool-group-header")?.click();
+  }
+  for (const d of host.querySelectorAll("details")) {
+    d.open = true;
+  }
+  for (const toggle of host.querySelectorAll<HTMLElement>(
+    '.tool-disclosure[aria-expanded="false"]',
+  )) {
+    toggle.click();
+  }
+}
+
 /** One stamped unit as the fixture lists it; members only where the element carries them (a prose run). */
 function unitsIn(host: HTMLElement, lane: string): ItemsCase["items"] {
+  openContainers(host);
+  const texts = new FindEngine(host).unitTexts({ selector: FIND_UNIT_SELECTOR });
   return [...host.querySelectorAll<HTMLElement>(FIND_UNIT_SELECTOR)].map((el) => {
     const anchor = el.dataset["entryId"] ?? "";
     const members = el.dataset["entries"];
@@ -134,15 +150,23 @@ function unitsIn(host: HTMLElement, lane: string): ItemsCase["items"] {
       lane,
       anchor,
       entries: members === undefined ? [anchor] : members.split(" "),
+      // A folded hook's card is hidden behind its hooks badge, whose list names the hook instead of drawing the card:
+      // a landing there shows a notice (find-in-chat.ts HOOK_BADGE_NOTICE), so no text of it is compared.
+      texts: el.hasAttribute("data-hook-folded") ? BADGE_TEXT : (texts.get(el) ?? []),
     };
   });
 }
 
-/** The fixture's body items, a tool card's and the plan card's folded members reduced to the anchor. */
-function wanted(c: ItemsCase): ItemsCase["items"] {
+/** Stands in for a folded hook's text on both sides. */
+const BADGE_TEXT = ["(hooks badge)"];
+
+/** The fixture's body items, a tool card's and the plan card's folded members reduced to the anchor, and each item
+ *  the client folds behind a hooks badge given the stand-in text. */
+function wanted(c: ItemsCase, got: ItemsCase["items"]): ItemsCase["items"] {
   return c.items
     .filter((it) => !CARD_KINDS.has(it.kind))
-    .map((it) => (it.kind === "message" ? it : { ...it, entries: [it.anchor] }));
+    .map((it) => (it.kind === "message" ? it : { ...it, entries: [it.anchor] }))
+    .map((it, i) => (got[i]?.texts === BADGE_TEXT ? { ...it, texts: BADGE_TEXT } : it));
 }
 
 function rendered(c: ItemsCase): ItemsCase["items"] {
@@ -167,7 +191,8 @@ describe("search items shared with the Go implementation", () => {
 
   for (const c of loadCases()) {
     it(c.name, () => {
-      expect(rendered(c)).toEqual(wanted(c));
+      const got = rendered(c);
+      expect(got).toEqual(wanted(c, got));
     });
   }
 });

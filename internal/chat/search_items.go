@@ -99,9 +99,11 @@ type itemBuilder struct {
 	items   []searchItem
 }
 
-// proseRun is one lane's open message: the item so far and the named say it belongs to (entry-ids.ts MessageRun).
+// proseRun is one lane's open message: the item so far, its text so far and the named say it belongs to
+// (entry-ids.ts MessageRun).
 type proseRun struct {
 	say  string
+	text strings.Builder
 	item searchItem
 }
 
@@ -195,21 +197,22 @@ func (b *itemBuilder) joinProse(i int, e *marotte.Entry, k toolRunKey, t *search
 	if run.say == "" {
 		run.say = say
 	}
-	// One segment, the members' texts with no separator, as proseText draws the bubble: a word the stream split
-	// across two entries is one word.
-	for _, sg := range entrySegments(e, t, b.names) {
-		if len(run.item.segs) == 0 {
-			run.item.segs = []segment{sg}
-		} else {
-			run.item.segs[0].text += sg.text
-		}
+	appendProse(&run.text, entrySegments(e, t, b.names))
+}
+
+// appendProse joins a text entry's segments to its message's text: its entries' texts with no separator, as
+// messages-blocks.ts proseText draws the bubble, so a word the stream split across two entries is one word. The
+// cross-chat filter indexes through it too (chatFilter.indexEntry), so a filter holds every word a message holds.
+func appendProse(text *strings.Builder, segs []segment) {
+	for _, sg := range segs {
+		text.WriteString(sg.text)
 	}
 }
 
 func (b *itemBuilder) flush(k toolRunKey) {
 	if run := b.runs[k]; run != nil {
 		delete(b.runs, k)
-		b.add(&run.item, run.item.segs)
+		b.add(&run.item, oneSegment(segmentContent, run.text.String()))
 	}
 }
 
@@ -309,7 +312,7 @@ func spansOfItem(it *searchItem, m *textsearch.Matcher) itemSpans {
 	return out
 }
 
-// tightest is the shortest window, from a span's start to a later span's end over the spans in item order, that
+// tightest is the shortest window, from a span's start to the furthest end of the spans after it in item order, that
 // holds one span of every term; ties go to the earliest. ok is false when a term has no span.
 func (s *itemSpans) tightest(terms int) (first itemSpan, width int, ok bool) {
 	if terms == 0 || s.terms < terms {
@@ -318,24 +321,50 @@ func (s *itemSpans) tightest(terms int) (first itemSpan, width int, ok bool) {
 	count := make(map[int]int, terms)
 	have, lo := 0, 0
 	width = -1
-	for _, sp := range s.spans {
+	var ends furthestEnds
+	for i, sp := range s.spans {
 		if count[sp.Term] == 0 {
 			have++
 		}
 		count[sp.Term]++
+		ends.push(i, sp.at+sp.Runes)
 		for have == terms {
 			l := s.spans[lo]
-			if w := sp.at + sp.Runes - l.at; width < 0 || w < width {
+			if w := ends.furthest() - l.at; width < 0 || w < width {
 				first, width = l, w
 			}
 			count[l.Term]--
 			if count[l.Term] == 0 {
 				have--
 			}
+			ends.drop(lo)
 			lo++
 		}
 	}
 	return first, width, true
+}
+
+// furthestEnds is a sliding window's span ends, kept falling from front to back so the front is the furthest: spans
+// are ordered by start, and an earlier phrase can end past a later word.
+type furthestEnds struct {
+	at  []int
+	end []int
+}
+
+func (f *furthestEnds) push(i, end int) {
+	for n := len(f.end); n > 0 && f.end[n-1] <= end; n = len(f.end) {
+		f.at, f.end = f.at[:n-1], f.end[:n-1]
+	}
+	f.at, f.end = append(f.at, i), append(f.end, end)
+}
+
+func (f *furthestEnds) furthest() int { return f.end[0] }
+
+// drop leaves the window's first span, i, out.
+func (f *furthestEnds) drop(i int) {
+	if f.at[0] == i {
+		f.at, f.end = f.at[1:], f.end[1:]
+	}
 }
 
 // matchItems keeps the items the filters admit and every term matches, or, when terms match no item, the turns

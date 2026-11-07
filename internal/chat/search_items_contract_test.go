@@ -37,6 +37,8 @@ type searchItemsWant struct {
 	Lane    string   `json:"lane"`
 	Anchor  string   `json:"anchor"`
 	Entries []string `json:"entries"`
+	// Texts are the item's segments, the text the matcher reads: one string per run a phrase cannot cross.
+	Texts []string `json:"texts"`
 }
 
 // searchItemsTurn is every case's turn id: a minted say is `<turn>:e<k>`, so both readers must use this id.
@@ -48,7 +50,10 @@ var searchItemsComment = []string{
 	"Go PRODUCES this file (TestSearchItemsFixture) and static-src/search-items-contract.test.ts",
 	"CONSUMES it, rendering body as turn " + searchItemsTurn + " (its turn_open first) and reading each",
 	"[data-find-unit] element: its kind, its anchor (data-entry-id) and, for a message, every member",
-	"(data-entries). A tool card and the plan card list their folded members here only. Header and",
+	"(data-entries), and its text as the find engine reads it with its containers open (texts, one per",
+	"segment, the renderer's own wording drawn as chrome). Bodies are plain text: markdown the renderer",
+	"turns into other text lands with a notice instead. A tool card and the plan card list their folded",
+	"members here only. A folded hook's text is behind its hooks badge, so it is not compared. Header and",
 	"turn_failure items are the turn card's, outside the body the TS side renders, so it skips them.",
 	"hooks_hidden runs a case with hooks.showStatus off. later_wake is a turn_wake in a later turn.",
 	"",
@@ -96,6 +101,9 @@ func searchItemsCases() []searchItemsCase {
 			itemsCall("c1", "go vet", marotte.ToolKindExecute), itemsText("s1#0", "first half"), itemsResult("c1", "ok"),
 			itemsText("s1#1", "second half"),
 		}},
+		{Name: "a word split across a message's entries is one word", Body: []searchItemsEntry{
+			itemsText("say-a#0", "a dead"), itemsText("say-a#1", "set security fai"), itemsText("say-a#2", "lure"),
+		}},
 		{Name: "two named says are two messages", Body: []searchItemsEntry{
 			itemsText("say-a", "one message"), itemsText("say-b", "another message"),
 		}},
@@ -113,6 +121,15 @@ func searchItemsCases() []searchItemsCase {
 			itemsEntry("st1", marotte.EntryKindSteer, "", marotte.EntrySteer{Text: "also this", Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead}),
 			itemsEntry("cf1", marotte.EntryKindCompactionFailed, "", marotte.EntryCompactionFailed{Reason: "too large"}),
 			itemsEntry("mr1", marotte.EntryKindModelRouted, "", marotte.EntryModelRouted{Message: "routed to a smaller model"}),
+			itemsEntry("sb1", marotte.EntryKindSafetyBlocked, "", marotte.EntrySafetyBlocked{Properties: []string{"bucket policy", "public access"}}),
+			itemsEntry("mf1", marotte.EntryKindModelFallback, "", marotte.EntryModelFallback{From: "opus-5", To: "sonnet-5", Trigger: "refusal"}),
+			itemsEntry("mf2", marotte.EntryKindModelFallback, "", marotte.EntryModelFallback{From: "opus-5", To: "sonnet-5", Trigger: "availability", Reason: "chainExhausted"}),
+		}},
+		{Name: "a plan entry's status and priority are the card's wording", Body: []searchItemsEntry{
+			itemsEntry("p1", marotte.EntryKindPlan, "", marotte.EntryPlan{Entries: []marotte.PlanEntry{
+				{Content: "draft the fix", Status: marotte.PlanCompleted, Priority: "high"},
+				{Content: "land the fix", Status: marotte.PlanInProgress},
+			}}),
 		}},
 		{Name: "a drawn row with no searched text ends a message and is no item", Body: []searchItemsEntry{
 			itemsText("say-a#0", "before"),
@@ -181,7 +198,11 @@ func TestSearchItemsFixture(t *testing.T) {
 		turns := indexSearchTurns(view, map[string]struct{}{searchItemsTurn: {}})
 		c.Items = []searchItemsWant{}
 		for _, it := range searchItems(view, turns) {
-			c.Items = append(c.Items, searchItemsWant{Kind: it.kind, Lane: it.lane, Anchor: it.entries[0], Entries: it.entries})
+			texts := make([]string, 0, len(it.segs))
+			for _, sg := range it.segs {
+				texts = append(texts, sg.text)
+			}
+			c.Items = append(c.Items, searchItemsWant{Kind: it.kind, Lane: it.lane, Anchor: it.entries[0], Entries: it.entries, Texts: texts})
 		}
 	}
 	pinGolden(t, "testdata/search_items.json", fx, "TestSearchItemsFixture", "search-items-contract.test.ts")

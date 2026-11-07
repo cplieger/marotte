@@ -1,16 +1,18 @@
 package chat
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/textsearch"
 )
 
-// The cross-chat candidate index: one Bloom filter per chat over the rune trigrams of what the scan searches
-// (entrySegments spans plus the title, via textsearch.FoldText). It prunes, never decides: no false negatives, and a
-// saturated filter admits all. In memory: the first reading query builds it, appends extend it under the chat lock,
+// The cross-chat candidate index: one Bloom filter per chat over the rune trigrams of what the scan searches (the
+// title, every entry's entrySegments and each message's text as appendProse joins it, via textsearch.FoldText). It prunes, never decides:
+// no false negatives, and a saturated filter admits all. In memory: the first reading query builds it, appends extend it under the chat lock,
 // and a rewind, rewrite, run_named, header write or remove drops it.
 
 const (
@@ -27,32 +29,67 @@ const (
 // Bits are set by atomic OR and read by atomic load, and only ever added, so a query before an append's OR sees the
 // pre-append log.
 type chatFilter struct {
+	// tails is each (turn, lane)'s last message text runes a trigram across the next text entry takes (indexEntry).
+	// Written only under the chat's lock, never read by a query.
+	tails map[toolRunKey]string
 	words [filterWords]uint64
 }
 
-// buildChatFilter indexes one chat's title and every span of every turn, folded as the scan folds. Undrawn turns are
-// indexed too: drawn flips later, and the filter must stay a superset. No trigram straddles two spans.
+// buildChatFilter indexes one chat's title and every entry, folded as the scan folds. Undrawn turns are indexed too:
+// drawn flips later, and the filter must stay a superset.
 func buildChatFilter(name string, entries []marotte.Entry) *chatFilter {
 	f := new(chatFilter)
 	f.addText(name)
 	turns := indexSearchTurns(entries, nil)
 	names := wakeFactsOf(entries).names
 	for i := range entries {
-		for _, seg := range entrySegments(&entries[i], turns[entries[i].Turn], names) {
-			f.addText(seg.text)
-		}
+		f.indexEntry(&entries[i], turns[entries[i].Turn], names)
 	}
 	return f
 }
 
-// addEntry records one appended entry's segments, read as its own turn, so a tool_call's input is indexed whole
-// before any diff drops a leaf at query time. A filter may hold more than the scan reads, never less.
+// addEntry records one appended entry, read as its own turn, so a tool_call's input is indexed whole before any diff
+// drops a leaf at query time. A filter may hold more than the scan reads, never less.
 func (f *chatFilter) addEntry(e *marotte.Entry) {
 	t := newSearchTurn(false)
 	t.observe(e)
-	for _, seg := range entrySegments(e, t, nil) {
-		f.addText(seg.text)
+	f.indexEntry(e, t, nil)
+}
+
+// indexEntry adds an entry's entrySegments, a text entry's through appendProse after its lane's tail, whatever a view
+// drops between the two: every trigram across a message's join is held, and a few across a break the scan never
+// joins, which a superset allows.
+func (f *chatFilter) indexEntry(e *marotte.Entry, t *searchTurn, names map[string]string) {
+	segs := entrySegments(e, t, names)
+	if e.Kind != marotte.EntryKindText {
+		for _, seg := range segs {
+			f.addText(seg.text)
+		}
+		return
 	}
+	if f.tails == nil {
+		f.tails = make(map[toolRunKey]string)
+	}
+	k := toolRunKey{turn: e.Turn, lane: e.Lane}
+	var b strings.Builder
+	b.WriteString(f.tails[k])
+	appendProse(&b, segs)
+	text := b.String()
+	f.addText(text)
+	f.tails[k] = trigramTail(text)
+}
+
+// trigramTail is the runes of s a trigram can still take from it: the last trigramRunes-1, or s when it has fewer.
+func trigramTail(s string) string {
+	at := len(s)
+	for range trigramRunes - 1 {
+		if at == 0 {
+			break
+		}
+		_, size := utf8.DecodeLastRuneInString(s[:at])
+		at -= size
+	}
+	return s[at:]
 }
 
 func (f *chatFilter) addText(s string) {
