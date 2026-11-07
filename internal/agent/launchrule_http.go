@@ -73,6 +73,9 @@ func (rr *runRoutes) registerLaunchRules(mux *http.ServeMux, write func(string, 
 	write("POST /api/launch-rules", rr.handleLaunchRuleCreate)
 	write("PUT /api/launch-rules/{id}", rr.handleLaunchRuleReplace)
 	write("DELETE /api/launch-rules/{id}", rr.handleLaunchRuleDelete)
+	if rr.runs.confirmer != nil {
+		write("POST /api/launch-rules/{id}/dismiss-gap", rr.handleLaunchRuleDismissGap)
+	}
 }
 
 func (rr *runRoutes) handleLaunchRuleList(w http.ResponseWriter, _ *http.Request) {
@@ -152,6 +155,28 @@ func (rr *runRoutes) handleLaunchRuleDelete(w http.ResponseWriter, r *http.Reque
 	}
 	slog.Info("launch rule deleted", "id", logsafe.Field(id))
 	httpserver.WriteJSON(w, map[string]any{"ok": true})
+}
+
+// handleLaunchRuleDismissGap serves POST /api/launch-rules/{id}/dismiss-gap, answering the rule as it now reads; only
+// an event rule has gaps, so any other id answers 404.
+func (rr *runRoutes) handleLaunchRuleDismissGap(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	switch err := rr.runs.confirmer.DismissGap(id); {
+	case errors.Is(err, launchrule.ErrNotFound):
+		httpreply.NotFound(w, "no such event rule")
+		return
+	case err != nil:
+		httpreply.ServerError(w, "could not dismiss the gap", err)
+		return
+	}
+	rule, found := rr.runs.launchRules.Get(id)
+	if !found {
+		httpreply.NotFound(w, "no such event rule")
+		return
+	}
+	state, stateErr := rr.runs.launchRules.State(id)
+	slog.Info("launch rule gaps dismissed", "id", logsafe.Field(id))
+	httpserver.WriteJSON(w, launchRuleViewOf(&rule, &state, stateErr))
 }
 
 // readRuleBody decodes a client's rule, refusing server-written and unknown fields with a 400. withConfirm takes

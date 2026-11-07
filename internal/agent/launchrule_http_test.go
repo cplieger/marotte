@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -55,11 +56,25 @@ func launchRuleHubListing(t *testing.T, forge *fakeEventRuleChecker, listing str
 // ruleHub is launchRuleHub's runtime with the real trigger confirmer over its store, every RuleChanged recorded.
 type ruleHub struct {
 	st   *launchrule.Store
-	w    launchrule.StateWriter
+	w    *countingStateWriter
 	conf *changeRecorder
+	runs *Runs
 	mux  *http.ServeMux
 	dir  string
 }
+
+// countingStateWriter is the store's state writer, counting the state files written through it.
+type countingStateWriter struct {
+	launchrule.StateWriter
+	n atomic.Int32
+}
+
+func (c *countingStateWriter) WriteState(ctx context.Context, ruleID string, in *launchrule.State) error {
+	c.n.Add(1)
+	return c.StateWriter.WriteState(ctx, ruleID, in)
+}
+
+func (c *countingStateWriter) writes() int { return int(c.n.Load()) }
 
 func newRuleHub(t *testing.T, forge *fakeEventRuleChecker, listing string) *ruleHub {
 	t.Helper()
@@ -68,12 +83,12 @@ func newRuleHub(t *testing.T, forge *fakeEventRuleChecker, listing string) *rule
 	if listing != "" {
 		br.setCallResult(methodKiroWorkflowListRecipes, json.RawMessage(listing))
 	}
-	rh := &ruleHub{dir: t.TempDir(), mux: http.NewServeMux()}
-	var err error
-	rh.st, rh.w, err = launchrule.NewStore(rh.dir)
+	rh := &ruleHub{dir: t.TempDir(), mux: http.NewServeMux(), runs: h.runs}
+	st, w, err := launchrule.NewStore(rh.dir)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
+	rh.st, rh.w = st, &countingStateWriter{StateWriter: w}
 	rh.conf = &changeRecorder{Confirmer: trigger.NewConfirmer(rh.st, rh.w, nil)}
 	h.runs.launchRules = rh.st
 	h.runs.confirmer = rh.conf
@@ -265,15 +280,17 @@ func TestLaunchRulesRoute(t *testing.T) {
 func TestLaunchRuleWritesNeedWriteGuard(t *testing.T) {
 	h := newDrainGateHub(t)
 	h.SetEventRuleChecker(&fakeEventRuleChecker{})
+	h.runs.confirmer = trigger.NewConfirmer(h.runs.launchRules, nil, nil)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	h.lifecycle.draining.Store(true)
-	for _, tc := range []struct{ method, path, body string }{
-		{http.MethodPost, "/api/launch-rules", runRuleBody},
-		{http.MethodPut, "/api/launch-rules/r1", runRuleBody},
-		{http.MethodDelete, "/api/launch-rules/r1", ""},
+	for _, tc := range []struct{ name, method, path, body string }{
+		{"create", http.MethodPost, "/api/launch-rules", runRuleBody},
+		{"replace", http.MethodPut, "/api/launch-rules/r1", runRuleBody},
+		{"delete", http.MethodDelete, "/api/launch-rules/r1", ""},
+		{"dismiss gap", http.MethodPost, "/api/launch-rules/r1/dismiss-gap", ""},
 	} {
-		t.Run(tc.method, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			rec := sendRoute(t, mux, tc.method, tc.path, tc.body)
 			if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "shutting down") {
 				t.Errorf("%s %s while draining = %d %s, want the drain gate's 503", tc.method, tc.path, rec.Code, rec.Body.String())
@@ -283,6 +300,88 @@ func TestLaunchRuleWritesNeedWriteGuard(t *testing.T) {
 	t.Run("the list still answers", func(t *testing.T) {
 		if rec := sendRoute(t, mux, http.MethodGet, "/api/launch-rules", ""); rec.Code != http.StatusOK {
 			t.Errorf("GET /api/launch-rules while draining = %d, want 200", rec.Code)
+		}
+	})
+}
+
+func TestDismissGapClearsSegment(t *testing.T) {
+	rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
+	r, err := rh.st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	seeded, err := rh.st.State(r.ID)
+	if err != nil {
+		t.Fatalf("State: %v", err)
+	}
+	seeded.Status.Gaps = []launchrule.Gap{{
+		From: time.Date(2026, time.November, 7, 2, 10, 0, 0, time.UTC), To: time.Date(2026, time.November, 10, 9, 0, 0, 0, time.UTC),
+		Cause: launchrule.GapOutage,
+	}}
+	if err := rh.w.WriteState(t.Context(), r.ID, &seeded); err != nil {
+		t.Fatalf("WriteState: %v", err)
+	}
+	dismiss := "/api/launch-rules/" + r.ID + "/dismiss-gap"
+	hasGap := func() bool { return bytes.Contains(ruleState(t, rh.dir, r.ID), []byte(`"gaps"`)) }
+
+	t.Run("refused while draining", func(t *testing.T) {
+		rh.runs.lifecycle.draining.Store(true)
+		rec := sendRoute(t, rh.mux, http.MethodPost, dismiss, "")
+		rh.runs.lifecycle.draining.Store(false)
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "shutting down") {
+			t.Errorf("POST while draining = %d %s, want the drain gate's 503", rec.Code, rec.Body.String())
+		}
+		if !hasGap() {
+			t.Errorf("a refused dismiss cleared the gap from the state file")
+		}
+	})
+	t.Run("a post clears the segment and writes it", func(t *testing.T) {
+		before := rh.w.writes()
+		rec := sendRoute(t, rh.mux, http.MethodPost, dismiss, "")
+		var view struct {
+			Status *launchrule.Status `json:"status"`
+			ID     string             `json:"id"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil || rec.Code != http.StatusOK {
+			t.Fatalf("POST = %d %s, want 200 with the rule", rec.Code, rec.Body.String())
+		}
+		if view.ID != r.ID || view.Status == nil || len(view.Status.Gaps) != 0 {
+			t.Errorf("answered rule %q status %+v, want %q with no gaps", view.ID, view.Status, r.ID)
+		}
+		if hasGap() {
+			t.Errorf("state file %s still holds the gap", ruleState(t, rh.dir, r.ID))
+		}
+		if got := rh.w.writes() - before; got != 1 {
+			t.Errorf("state writes = %d, want 1", got)
+		}
+	})
+	t.Run("a second post changes nothing and writes nothing", func(t *testing.T) {
+		before, writes := ruleState(t, rh.dir, r.ID), rh.w.writes()
+		if rec := sendRoute(t, rh.mux, http.MethodPost, dismiss, ""); rec.Code != http.StatusOK {
+			t.Errorf("second POST = %d %s, want 200", rec.Code, rec.Body.String())
+		}
+		if got := rh.w.writes() - writes; got != 0 {
+			t.Errorf("state writes = %d, want 0", got)
+		}
+		if !bytes.Equal(before, ruleState(t, rh.dir, r.ID)) {
+			t.Errorf("the second dismiss rewrote the state file")
+		}
+	})
+	t.Run("an unknown id answers 404", func(t *testing.T) {
+		if rec := sendRoute(t, rh.mux, http.MethodPost, "/api/launch-rules/missing/dismiss-gap", ""); rec.Code != http.StatusNotFound {
+			t.Errorf("POST missing = %d %s, want 404", rec.Code, rec.Body.String())
+		}
+	})
+	t.Run("a clock rule has no gaps to dismiss", func(t *testing.T) {
+		clock, err := rh.st.Create(t.Context(), &launchrule.Rule{Source: "bundled://publish", When: launchrule.When{
+			Clock: &launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2},
+		}})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		rec := sendRoute(t, rh.mux, http.MethodPost, "/api/launch-rules/"+clock.ID+"/dismiss-gap", "")
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("POST for a clock rule = %d %s, want 404", rec.Code, rec.Body.String())
 		}
 	})
 }
