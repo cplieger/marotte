@@ -1,5 +1,5 @@
 // The run bar: one box holding a line per LIVE workflow run the active chat launched, in the bottom
-// bar between the interaction dock and the steer stack. From `FOLD_AT` runs a header row heads the
+// bar between the interaction dock and the steer stack. From `HEADER_AT` runs a header row heads the
 // list, outside the list's clip so its touch target can reach past the row, and ends with the batch
 // button at the box's top right.
 
@@ -42,9 +42,13 @@ import type { TabRunDotStatus } from "./tabs.js";
  *  no name at all is unclickable in practice. */
 const FALLBACK_NAME = "Workflow run";
 
-/** From this many live runs the bar folds them behind one header row, which also carries the batch button, so a
- *  fan-out cannot push the transcript and the composer off a phone. One run's own row and controls cover it. */
-const FOLD_AT = 2;
+/** From this many live runs a header row heads the list with the recap, its fold toggle and the batch button. One run
+ *  gets neither: its row opens the run's tab, whose dock carries Pause and Resume. */
+const HEADER_AT = 2;
+
+/** From this many live runs the list starts folded behind the header until the reader chooses, so a fan-out cannot
+ *  push the transcript and the composer off a phone. */
+const FOLD_AT = 3;
 
 /** One bar row's painted parts, kept so a repaint and the clock patch them in place. */
 interface RowView {
@@ -78,6 +82,8 @@ export function initRunBar(): void {
   bound = true;
   const bar = $.runBar;
   batchBtn = buildBatchButton();
+  // After the toggle, which `buildSummary` prepends, so the button ends the header row.
+  $.runBarFold.append(batchBtn);
   const sig = computed(() => key());
   stopRender = effect(() => {
     touch(sig);
@@ -194,9 +200,6 @@ function paintBatch(ids: readonly string[], folds: boolean): void {
     return;
   }
   const batch = folds ? batchOf(ids) : null;
-  if (btn.parentElement !== $.runBarFold) {
-    $.runBarFold.append(btn);
-  }
   btn.hidden = batch === null;
   if (batch === null) {
     return;
@@ -236,8 +239,8 @@ function render(bar: HTMLUListElement): void {
   const live = rows(chatID);
   const waiting = live.filter(needsYou);
   const ids = [...waiting, ...live.filter((id) => !waiting.includes(id))];
-  const folds = ids.length >= FOLD_AT;
-  const open = !folds || runBarOpen();
+  const folds = ids.length >= HEADER_AT;
+  const open = listOpen(ids.length);
 
   bar.classList.toggle("hidden", ids.length === 0);
   // BEFORE the rows, not after: `buildRow` points this run's hold at its row, so a hold created
@@ -259,7 +262,12 @@ function render(bar: HTMLUListElement): void {
     held.focus({ preventScroll: true });
   }
   const fold = $.runBarFold;
+  // Hiding the header under the keyboard would drop focus to the body, so it moves to the run left.
+  const foldHadFocus = !folds && fold.contains(document.activeElement);
   setAttr(fold, "hidden", folds ? null : "");
+  if (foldHadFocus) {
+    bar.querySelector<HTMLElement>(".run-bar-open")?.focus({ preventScroll: true });
+  }
   if (folds) {
     if (fold.querySelector(".run-bar-toggle") === null) {
       fold.prepend(buildSummary(bar));
@@ -291,7 +299,7 @@ function render(bar: HTMLUListElement): void {
 /** The fold row: how many runs and how many need the reader, opening the list in place. */
 function buildSummary(bar: HTMLUListElement): HTMLElement {
   const btn = selectableButton("div", "run-bar-open run-bar-toggle", () => {
-    const open = !runBarOpen();
+    const open = !listOpen(rows(watchActiveId()).length);
     setRunBarOpen(open);
     // 0 is `.run-bar[data-folded]`'s `block-size` (26-dock.css).
     slideBox(bar, open, applyOpen(bar), { fade: true, closedHeight: 0 });
@@ -304,6 +312,12 @@ function buildSummary(bar: HTMLUListElement): HTMLElement {
     el("span", { className: "run-bar-count" }),
   );
   return btn;
+}
+
+/** Whether the list shows its rows for `count` runs: always with no header, else as the reader last chose, else open
+ *  below `FOLD_AT`. */
+function listOpen(count: number): boolean {
+  return count < HEADER_AT || (runBarOpen() ?? count < FOLD_AT);
 }
 
 /** The `apply` of the list's `slideBox`: folded is `.run-bar[data-folded]` (26-dock.css). */

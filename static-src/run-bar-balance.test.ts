@@ -51,7 +51,7 @@ interface Mounted {
   rows: HTMLElement[];
 }
 
-/** The chat's band as the page builds it: the fold row above the list from three runs, the rows in
+/** The chat's band as the page builds it: the fold row above the list from two runs, the rows in
  *  the list, the list folded (`data-folded`) while the fold is closed. */
 function mount(count: number, open: boolean, width: number): Mounted {
   host = document.createElement("div");
@@ -66,7 +66,7 @@ function mount(count: number, open: boolean, width: number): Mounted {
   const bar = document.createElement("ul");
   bar.className = "run-bar";
 
-  const folded = count >= 3;
+  const folded = count >= 2;
   fold.hidden = !folded;
   bar.toggleAttribute("data-folded", folded && !open);
   let toggle: HTMLElement | null = null;
@@ -226,47 +226,8 @@ const PHONES = [
 describe("the run bar box's vertical balance", () => {
   for (const [w, h] of PHONES) {
     describe(`on a ${String(w)}px phone`, () => {
-      it("keeps the gap above the fold row equal to the gap below the last bar", async () => {
-        await browser.viewport(w, h);
-        style = mountAppCSS();
-        document.documentElement.setAttribute("data-pointer", "coarse");
-        const { box } = mount(4, true, w - 16);
-        await settle();
-        const ink = await readInk(box);
-        expect(Math.abs(ink.top - ink.bottom)).toBeLessThanOrEqual(TOLERANCE_PX);
-      });
-
-      it("keeps the fold row as far from the first run as two runs are from each other", async () => {
-        await browser.viewport(w, h);
-        style = mountAppCSS();
-        document.documentElement.setAttribute("data-pointer", "coarse");
-        const { box, toggle } = mount(4, true, w - 16);
-        await settle();
-        const ink = await readInk(box);
-        const head = bandOf(ink, box, toggle?.querySelector(".run-bar-count"));
-        const titles = [...box.querySelectorAll(".ev-sum-label")];
-        const firstTitle = bandOf(ink, box, titles[0]);
-        const secondTitle = bandOf(ink, box, titles[1]);
-        const firstBar = bandOf(ink, box, box.querySelector(".ev-mini"));
-        const headToRow = firstTitle[0] - head[1] - 1;
-        const rowToRow = secondTitle[0] - firstBar[1] - 1;
-        expect(Math.abs(headToRow - rowToRow)).toBeLessThanOrEqual(TOLERANCE_PX);
-      });
-
-      it("centres the fold row when the list is closed", async () => {
-        await browser.viewport(w, h);
-        style = mountAppCSS();
-        document.documentElement.setAttribute("data-pointer", "coarse");
-        const { box } = mount(4, false, w - 16);
-        await settle();
-        const list = box.querySelector(".run-bar")?.getBoundingClientRect();
-        expect(list?.height, "the list is folded away").toBe(0);
-        const ink = await readInk(box);
-        expect(Math.abs(ink.top - ink.bottom)).toBeLessThanOrEqual(TOLERANCE_PX);
-      });
-
-      for (const runs of [1, 2]) {
-        it(`balances the box of ${String(runs)} run${runs === 1 ? "" : "s"}, which has no fold row`, async () => {
+      for (const runs of [2, 4]) {
+        it(`keeps the gap above the fold row equal to the gap below the last bar, ${String(runs)} runs`, async () => {
           await browser.viewport(w, h);
           style = mountAppCSS();
           document.documentElement.setAttribute("data-pointer", "coarse");
@@ -275,7 +236,46 @@ describe("the run bar box's vertical balance", () => {
           const ink = await readInk(box);
           expect(Math.abs(ink.top - ink.bottom)).toBeLessThanOrEqual(TOLERANCE_PX);
         });
+
+        it(`keeps the fold row as far from the first run as two runs are from each other, ${String(runs)} runs`, async () => {
+          await browser.viewport(w, h);
+          style = mountAppCSS();
+          document.documentElement.setAttribute("data-pointer", "coarse");
+          const { box, toggle } = mount(runs, true, w - 16);
+          await settle();
+          const ink = await readInk(box);
+          const head = bandOf(ink, box, toggle?.querySelector(".run-bar-count"));
+          const titles = [...box.querySelectorAll(".ev-sum-label")];
+          const firstTitle = bandOf(ink, box, titles[0]);
+          const secondTitle = bandOf(ink, box, titles[1]);
+          const firstBar = bandOf(ink, box, box.querySelector(".ev-mini"));
+          const headToRow = firstTitle[0] - head[1] - 1;
+          const rowToRow = secondTitle[0] - firstBar[1] - 1;
+          expect(Math.abs(headToRow - rowToRow)).toBeLessThanOrEqual(TOLERANCE_PX);
+        });
+
+        it(`centres the fold row when the list of ${String(runs)} runs is closed`, async () => {
+          await browser.viewport(w, h);
+          style = mountAppCSS();
+          document.documentElement.setAttribute("data-pointer", "coarse");
+          const { box } = mount(runs, false, w - 16);
+          await settle();
+          const list = box.querySelector(".run-bar")?.getBoundingClientRect();
+          expect(list?.height, "the list is folded away").toBe(0);
+          const ink = await readInk(box);
+          expect(Math.abs(ink.top - ink.bottom)).toBeLessThanOrEqual(TOLERANCE_PX);
+        });
       }
+
+      it("balances the box of 1 run, which has no fold row", async () => {
+        await browser.viewport(w, h);
+        style = mountAppCSS();
+        document.documentElement.setAttribute("data-pointer", "coarse");
+        const { box } = mount(1, true, w - 16);
+        await settle();
+        const ink = await readInk(box);
+        expect(Math.abs(ink.top - ink.bottom)).toBeLessThanOrEqual(TOLERANCE_PX);
+      });
     });
   }
 
@@ -526,7 +526,7 @@ describe("the run bar box's cap", () => {
       "the bottom corners stay concentric",
     ).toBeGreaterThan(0);
     host?.remove();
-    const lone = mount(2, true, 1000);
+    const lone = mount(1, true, 1000);
     expect(
       parseFloat(getComputedStyle(lone.box.querySelector(".run-bar")!).borderTopLeftRadius),
     ).toBeGreaterThan(0);

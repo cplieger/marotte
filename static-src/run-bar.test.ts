@@ -1084,8 +1084,7 @@ describe("the run bar's fold motion", () => {
 
   it("cuts a close under way when the fold row leaves, and shows the run left", async () => {
     const { toggle } = await folded(2);
-    toggle.click();
-    await finishSlides();
+    expect(toggle.getAttribute("aria-expanded"), "two runs start open").toBe("true");
     toggle.click();
     heightSlides()[0]?.pause();
     noteRunSettled(runs.at(-1) ?? "");
@@ -1224,6 +1223,26 @@ describe("Pause all and Resume all", () => {
     expect(fold.contains(batchButton())).toBe(true);
     localStorage.removeItem("marotte.ui-state");
   });
+
+  for (const target of [".run-bar-all", ".run-bar-toggle"]) {
+    it(`hands the keyboard from the header's ${target} to the run left when the header goes`, async () => {
+      localStorage.removeItem("marotte.ui-state");
+      const c = chatID();
+      chats.push(c);
+      const [a, b] = [runID("fa"), runID("fb")];
+      await mount(c, { [a]: running("a"), [b]: running("b") });
+      const header = fold.querySelector<HTMLElement>(target);
+      header?.focus();
+      expect(document.activeElement, "focused on the header").toBe(header);
+
+      noteRunSettled(b);
+      await vi.waitFor(() => {
+        expect(fold.hidden).toBe(true);
+      });
+      expect(document.activeElement).toBe(bar.querySelector(".run-bar-open"));
+      localStorage.removeItem("marotte.ui-state");
+    });
+  }
 
   it("pauses every running listed run at once, and no other run", async () => {
     const c = chatID();
@@ -1467,8 +1486,8 @@ describe("Pause all and Resume all", () => {
     expect(batchButton()).toBeNull();
   });
 
-  // One run needs no recap and no batch control, its row's own controls cover it. From two runs the header row shows
-  // the recap, the fold toggle and the batch button at its right end.
+  // One run needs no recap and no batch control. From two runs the header row shows the recap, the fold toggle and the
+  // batch button at its right end.
   describe("the header row", () => {
     let style: HTMLStyleElement;
 
@@ -1560,7 +1579,7 @@ describe("Pause all and Resume all", () => {
         expect(t.querySelector(".run-bar-count")?.textContent).toBe(
           `${String(n)} workflows running`,
         );
-        expect(t.getAttribute("aria-expanded")).toBe("false");
+        expect(t.getAttribute("aria-expanded"), "open below three runs").toBe(String(n < 3));
         const btn = batchButton();
         expect(btn?.getAttribute("aria-label")).toBe("Pause all");
         expectOnHeader(btn);
@@ -1570,20 +1589,48 @@ describe("Pause all and Resume all", () => {
       });
     }
 
-    it("folds and opens two runs from the header's toggle", async () => {
+    const rowsShown = (): boolean =>
+      [...bar.querySelectorAll<HTMLElement>("li.run-bar-row")].every((r) => r.checkVisibility());
+
+    it("lists two runs open under the header when this screen never chose", async () => {
       await mountN(2, billed(running));
       const t = toggleEl();
-      expect(bar.hasAttribute("data-folded"), "folded by default").toBe(true);
+      expect(t.getAttribute("aria-expanded")).toBe("true");
+      expect(bar.hasAttribute("data-folded")).toBe(false);
+      expect(bar.querySelectorAll("li.run-bar-row")).toHaveLength(2);
+      expect(rowsShown(), "both rows visible").toBe(true);
+      expectOnHeader(batchButton());
+    });
+
+    it("folds and opens two runs from the header's toggle, and keeps the fold", async () => {
+      await mountN(2, billed(running));
+      const t = toggleEl();
+      t.click();
+      expect(t.getAttribute("aria-expanded")).toBe("false");
+      await finishSlides();
+      expect(bar.hasAttribute("data-folded")).toBe(true);
+      expect(bar.getBoundingClientRect().height).toBe(0);
+      expect(JSON.parse(localStorage.getItem("marotte.ui-state") ?? "{}")).toMatchObject({
+        run_bar_open: false,
+      });
       t.click();
       expect(t.getAttribute("aria-expanded")).toBe("true");
       await finishSlides();
       expect(bar.hasAttribute("data-folded")).toBe(false);
-      expect(
-        [...bar.querySelectorAll<HTMLElement>("li.run-bar-row")].every((r) => r.checkVisibility()),
-      ).toBe(true);
-      t.click();
-      expect(t.getAttribute("aria-expanded")).toBe("false");
-      await finishSlides();
+      expect(rowsShown()).toBe(true);
+    });
+
+    it("keeps two runs folded when the reader last folded the list", async () => {
+      localStorage.setItem("marotte.ui-state", JSON.stringify({ run_bar_open: false }));
+      await mountN(2, billed(running));
+      expect(toggleEl().getAttribute("aria-expanded")).toBe("false");
+      expect(bar.hasAttribute("data-folded")).toBe(true);
+      expectOnHeader(batchButton());
+    });
+
+    it("folds three runs when this screen never chose", async () => {
+      await mountN(3, billed(running));
+      expect(toggleEl().getAttribute("aria-expanded")).toBe("false");
       expect(bar.hasAttribute("data-folded")).toBe(true);
       expect(bar.getBoundingClientRect().height).toBe(0);
     });

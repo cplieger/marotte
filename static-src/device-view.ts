@@ -17,11 +17,11 @@ interface DeviceView {
   shell_open: boolean;
   shell_h: number;
   sidebar_w: number;
-  run_bar_open: boolean;
+  run_bar_open: boolean | null;
 }
 
 function empty(): DeviceView {
-  return { active_view: "", shell_open: false, shell_h: 0, sidebar_w: 0, run_bar_open: false };
+  return { active_view: "", shell_open: false, shell_h: 0, sidebar_w: 0, run_bar_open: null };
 }
 
 function validLength(v: unknown): number | null {
@@ -100,8 +100,8 @@ export function setSidebarWidth(px: number): void {
   writeBlob({ sidebar_w: px });
 }
 
-/** Whether the chat's run bar lists every run rather than its one summary row. */
-export function runBarOpen(): boolean {
+/** Whether the reader last opened (true) or folded (false) the chat's run bar list; null when this screen never chose. */
+export function runBarOpen(): boolean | null {
   return loadDeviceView().run_bar_open;
 }
 
