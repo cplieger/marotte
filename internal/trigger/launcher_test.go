@@ -18,6 +18,7 @@ import (
 
 // launchCall is one LaunchTriggered call the fake launcher took.
 type launchCall struct {
+	at       time.Time
 	inputs   map[string]string
 	ruleID   string
 	key      string
@@ -39,7 +40,9 @@ var _ Launcher = (*fakeLauncher)(nil)
 func (f *fakeLauncher) LaunchTriggered(
 	_ context.Context, _, ruleID, eventKey, coalesceKey string, inputs map[string]string, _ marotte.RunDefaults,
 ) (string, error) {
-	call := launchCall{ruleID: ruleID, key: eventKey, coalesce: coalesceKey, inputs: maps.Clone(inputs)}
+	call := launchCall{
+		at: time.Now(), ruleID: ruleID, key: eventKey, coalesce: coalesceKey, inputs: maps.Clone(inputs),
+	}
 	f.mu.Lock()
 	f.calls = append(f.calls, call)
 	n, answer := len(f.calls), f.answer
@@ -110,7 +113,7 @@ func TestBusyErrorNamingAbandonedRunCounts(t *testing.T) {
 		f := tc.startLauncher(nil)
 		tc.letLaunch(errCancelRefused)
 		f.answerWith(busyWith("wf_1"))
-		advance(launchConfirmBound)
+		advance(launchConfirmBound + launchBackoff[0])
 		for range 2 {
 			advance(pollTick)
 		}
@@ -215,7 +218,26 @@ func TestBusyErrorDeliversNoLaunchReturned(t *testing.T) {
 			}
 		})
 	})
-	t.Run("the error from before workflow/new is classed", func(t *testing.T) { t.Skip("needs 5.9") })
+	t.Run("the error from before workflow/new is classed", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			tc.manualLease("wf_9")
+			f := tc.startLauncher(busyWith("wf_9"))
+			tc.letLaunch(nil)
+			if _, st := tc.memory(r.ID); !st.FailingSince.IsZero() || st.Blocked != "" {
+				t.Errorf("status %+v, want E9 to count nothing for a busy recipe", st)
+			}
+			advance(launchBackoff[0])
+			if n := len(f.taken()); n != 1 {
+				t.Errorf("%d calls at the backoff's first step, want 1: a busy recipe waits for the poll interval", n)
+			}
+			advance(pollTick - launchBackoff[0])
+			if n := len(f.taken()); n != 2 {
+				t.Errorf("%d calls at the poll interval, want 2", n)
+			}
+		})
+	})
 }
 
 func TestBusyErrorOnOwnAttemptNotCancelled(t *testing.T) {
@@ -400,6 +422,7 @@ func launchAfterBootCancel() attemptCase {
 				tc.t.Errorf("calls before engine ready = %+v, want none", calls)
 			}
 			tc.letLaunch(nil)
+			advance(launchBackoff[0])
 		},
 		check: func(t *testing.T, tc *testConfirmer, r *launchrule.Rule) {
 			if ran, _ := tc.fx.calls(); !slices.Equal(ran, []string{"wf_1"}) {

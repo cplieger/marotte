@@ -1,6 +1,7 @@
 package trigger
 
 import (
+	"fmt"
 	"os"
 	"slices"
 	"testing"
@@ -151,7 +152,25 @@ func TestBootUnleasedAttemptCancelled(t *testing.T) {
 			}
 		})
 	})
-	t.Run("the event launches again after the backoff", func(t *testing.T) { t.Skip("needs 5.9") })
+	t.Run("the event launches again after the backoff", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			invoking(tc, &r)
+			tc.restart()
+			f := tc.startLauncher(func(n int, call launchCall) (string, error) {
+				wf := fmt.Sprintf("wf_after_boot_%d", n)
+				return wf, tc.NameAttempt(call.ruleID, call.key, wf)
+			})
+			tc.letLaunch(nil)
+			if n := len(f.taken()); n != 0 {
+				t.Errorf("%d calls at the boot load, want none before the backoff's first step", n)
+			}
+			advance(launchBackoff[0])
+			if calls := f.taken(); len(calls) != 1 || calls[0].key != "k1" {
+				t.Errorf("calls = %+v, want k1 launched once on the backoff", calls)
+			}
+		})
+	})
 }
 
 func TestBootBoundStartsAtEngineReady(t *testing.T) {

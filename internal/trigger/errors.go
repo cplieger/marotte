@@ -14,3 +14,23 @@ var ErrAttemptGone = errors.New("the event this run was created for is no longer
 // ErrAttemptNotWritten wraps the state file write that failed to record a named run: the run is recorded abandoned
 // in memory, its cancel queued, and it must not be invoked.
 var ErrAttemptNotWritten = errors.New("the launch attempt could not be recorded")
+
+// ErrLaunchRetryable marks a launch error the event waits out: it stays queued and launches again on the backoff,
+// counting nothing on the rule's 24-hour clock.
+var ErrLaunchRetryable = errors.New("the launch can be retried")
+
+// ErrLaunchBlocked marks a launch error no retry can fix: the rule is blocked until the operator edits or resumes
+// it.
+var ErrLaunchBlocked = errors.New("the launch cannot succeed until the rule is edited")
+
+// Classed marks err with class, ErrLaunchRetryable or ErrLaunchBlocked, for errors.Is. Its text stays err's, so a
+// rule's row shows the refusal's own sentence.
+func Classed(class, err error) error { return &classedError{class: class, err: err} }
+
+type classedError struct {
+	class error
+	err   error
+}
+
+func (e *classedError) Error() string   { return e.err.Error() }
+func (e *classedError) Unwrap() []error { return []error{e.class, e.err} }

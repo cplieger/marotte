@@ -85,7 +85,22 @@ func TestInBandInvokeRefusalAbandonsAtOnce(t *testing.T) {
 			}
 		})
 	})
-	t.Run("the event launches again after the backoff's first step", func(t *testing.T) { t.Skip("needs 5.9") })
+	t.Run("the event launches again after the backoff's first step", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			f := tc.startLauncher(refusing(tc, refusal))
+			tc.letLaunch(nil)
+			advance(launchBackoff[0] - time.Second)
+			if n := len(f.taken()); n != 1 {
+				t.Errorf("%d calls inside the backoff's first step, want 1", n)
+			}
+			advance(time.Second)
+			if calls := f.taken(); len(calls) != 2 || calls[1].key != "k1" {
+				t.Errorf("calls = %+v, want k1 again after a minute", calls)
+			}
+		})
+	})
 	t.Run("a refusal 24 hours into the clock blocks the rule", func(t *testing.T) {
 		inBubble(t, func(t *testing.T, tc *testConfirmer) {
 			r := tc.createRule(runSpec("success"))
@@ -559,7 +574,24 @@ func TestEventIDStableAcrossRulesAndRestart(t *testing.T) {
 			}
 		})
 	})
-	t.Run("retries pass the same id", func(t *testing.T) { t.Skip("needs 5.9") })
+	t.Run("retries pass the same id", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			r := tc.createRule(runSpec("success"))
+			tc.enqueue(r.ID, held("k1", "c1"))
+			f := tc.startLauncher(refusing(tc, refusal))
+			tc.letLaunch(nil)
+			advance(3 * time.Minute)
+			calls := f.taken()
+			if len(calls) != 3 {
+				t.Fatalf("%d calls, want three attempts of k1", len(calls))
+			}
+			for i, c := range calls {
+				if c.inputs["event_id"] != "id/k1" {
+					t.Errorf("attempt %d event_id = %q, want id/k1", i+1, c.inputs["event_id"])
+				}
+			}
+		})
+	})
 }
 
 func TestLabeledEventIDDiffersAcrossRules(t *testing.T) {
@@ -599,9 +631,13 @@ func TestDuplicateAfterLostRunStartCarriesSameEventID(t *testing.T) {
 			f := tc.startLauncher(nil)
 			tc.letLaunch(nil)
 			advance(launchConfirmBound)
+			if n := len(f.taken()); n != 1 {
+				t.Errorf("%d calls at the bound abandon, want the first alone until the backoff's first step", n)
+			}
+			advance(launchBackoff[0])
 			calls := f.taken()
 			if len(calls) != 2 || calls[1].key != "k1" {
-				t.Fatalf("calls = %+v, want k1 launched again after its bound abandon", calls)
+				t.Fatalf("calls = %+v, want k1 launched again after its bound abandon and the backoff", calls)
 			}
 			if a, b := calls[0].inputs["event_id"], calls[1].inputs["event_id"]; a != "id/k1" || b != a {
 				t.Errorf("event_id %q then %q, want id/k1 both times", a, b)

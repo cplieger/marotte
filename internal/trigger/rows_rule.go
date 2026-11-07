@@ -42,7 +42,7 @@ func (s *stepper) ruleRow(ev *attemptEvent) bool {
 	case evWriteRetry:
 		s.res.write, s.wakeOnWrite = true, true // E10
 	case evLaunchEnded:
-		s.launchEnded(ev.key)
+		s.launchEnded(ev.key, ev.err)
 	case evBoot:
 		s.boot(ev.boot)
 	default:
@@ -110,6 +110,7 @@ func (s *stepper) deleteRule() {
 func (s *stepper) resetFailures() {
 	st := s.status()
 	st.BoundAbandons, st.FailingSince = 0, time.Time{}
+	s.rv.retries, s.rv.retryAt = 0, time.Time{}
 	if st.Blocked != "" {
 		st.Blocked, st.RowText = "", ""
 	}

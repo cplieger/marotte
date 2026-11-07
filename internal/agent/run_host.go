@@ -118,7 +118,7 @@ var (
 
 // LaunchTriggered launches an unattended run of an event rule's queued event. Once workflow/new created the run it
 // returns the run's id with whatever error followed, so the rule can name, keep or cancel that one run; an error
-// before it (a refused or uncheckable pick, a drain, a busy recipe) returns no id.
+// before it (a refused or uncheckable pick, a drain, a busy recipe) returns no id, marked with its class (classLaunch).
 func (rs *Runs) LaunchTriggered(
 	ctx context.Context, source, ruleID, eventKey, coalesceKey string, inputs map[string]string,
 	defaults marotte.RunDefaults,
@@ -126,14 +126,17 @@ func (rs *Runs) LaunchTriggered(
 	// The trigger runner outlives Shutdown, so a launch is held on inflight and refused once draining.
 	release, ok := rs.lifecycle.enterUnlessDraining()
 	if !ok {
-		return "", errRuntimeDraining
+		return "", classLaunch(errRuntimeDraining)
 	}
 	defer release()
 	if dErr := rs.checkRunDefaults(ctx, defaults); dErr != nil {
-		return "", dErr
+		return "", classLaunch(dErr)
 	}
 	o := triggeredLaunch(ruleID, eventKey, coalesceKey, trigger.EventLabel(inputs))
 	workflowID, _, err = rs.launchAs(ctx, source, inputs, defaults, o)
+	if workflowID == "" {
+		err = classLaunch(err)
+	}
 	return workflowID, err
 }
 
@@ -207,7 +210,7 @@ func (rs *Runs) launchAs(
 	}
 	if !rs.bridges.insert(runChatID(wfID), sb) {
 		sb.closeOwned(rs.bridges.closeSession)
-		return "", "", fmt.Errorf("workflow %s already has a host session", wfID)
+		return "", "", fmt.Errorf("workflow %s %w", wfID, errHostSessionTaken)
 	}
 	// The run exists: a caller that stops waiting now must not leave it half launched, its row naming a run that
 	// nothing tracks, so the rest keeps the launch's budget and drops the caller's cancel. A stall-aware context's
@@ -1102,6 +1105,12 @@ func (rs *Runs) recipeBySource(ctx context.Context, source string) (marotte.Reci
 	return marotte.Recipe{}, fmt.Errorf("%w %q", errUnknownRecipe, source)
 }
 
+// errRunListUnavailable is a launch refused because KAS's run list could not be read.
+var errRunListUnavailable = errors.New("run list unavailable")
+
+// errHostSessionTaken is a created run whose id already has a host session, which the launch then does not own.
+var errHostSessionTaken = errors.New("already has a host session")
+
 // recipeIdle enforces the single-run rule (one live run per recipe, globally) against KAS's run list, the only source that sees runs
 // marotte did not launch. The leases explain a blocking row as marotte's own orphan.
 // ruleID names the event rule of a triggered launch, which is handed the run list's statuses; empty for any other.
@@ -1109,7 +1118,7 @@ func (rs *Runs) recipeIdle(ctx context.Context, name, ruleID string) error {
 	runs, err := rs.list(ctx, nil)
 	if err != nil {
 		// Launching blind could allow a second live run.
-		return fmt.Errorf("run list unavailable: %w", err)
+		return fmt.Errorf("%w: %w", errRunListUnavailable, err)
 	}
 	status := make(map[string]marotte.RunStatus, len(runs))
 	for i := range runs {

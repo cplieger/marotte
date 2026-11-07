@@ -1,6 +1,7 @@
 package trigger
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"maps"
@@ -27,16 +28,13 @@ type Launcher interface {
 type LaunchLoop struct {
 	c *Confirmer
 	l Launcher
-	// heldUntil is each rule whose last call failed or was refused, with the time it may launch again. Only Run's
-	// goroutine reads or writes it.
-	heldUntil map[string]time.Time
 	// mu is the launch mutex, held across each LaunchTriggered call.
 	mu sync.Mutex
 }
 
 // NewLauncher returns the launcher of c's rules, starting their runs through l.
 func NewLauncher(c *Confirmer, l Launcher) *LaunchLoop {
-	return &LaunchLoop{c: c, l: l, heldUntil: map[string]time.Time{}}
+	return &LaunchLoop{c: c, l: l}
 }
 
 // Run launches until ctx ends, scanning every rule at its start and again at each wake of the Confirmer. Its first
@@ -76,7 +74,7 @@ func (ll *LaunchLoop) scan(ctx context.Context) (time.Duration, bool) {
 			if ctx.Err() != nil {
 				return 0, false
 			}
-			if r.When.Event == nil || !r.Enabled || ll.held(r.ID) {
+			if r.When.Event == nil || !r.Enabled {
 				continue
 			}
 			if e, done, ok := ll.c.claim(&r); ok {
@@ -85,14 +83,13 @@ func (ll *LaunchLoop) scan(ctx context.Context) (time.Duration, bool) {
 			}
 		}
 		if !launched {
-			return ll.nextDue()
+			return ll.c.nextRetry()
 		}
 	}
 }
 
 // launch makes one call for the rule's entry and delivers what its return calls for, then clears the entry's
-// launching mark and delivers launch ended (E9). A call that failed or was refused holds the rule for its poll
-// interval, at which a launch held by a busy recipe is attempted again.
+// launching mark and delivers launch ended (E9), which classes an error from before workflow/new.
 func (ll *LaunchLoop) launch(ctx context.Context, r *launchrule.Rule, e *queueEntry, done func()) {
 	ll.mu.Lock()
 	wf, err := ll.l.LaunchTriggered(ctx, r.Source, r.ID, e.Key, e.CoalesceKey, launchInputs(r, e),
@@ -103,32 +100,33 @@ func (ll *LaunchLoop) launch(ctx context.Context, r *launchrule.Rule, e *queueEn
 	} else if busy, ok := errors.AsType[*schedule.BusyError](err); ok && busy.WorkflowID != "" {
 		ll.c.busy(r.ID, busy.WorkflowID)
 	}
-	if err != nil || wf == "" {
-		ll.heldUntil[r.ID] = time.Now().Add(pollInterval(r))
-	}
 	done()
 	var ended error
 	if wf == "" {
-		ended = err
+		ended = cmp.Or(err, errNoRun)
 	}
 	ll.c.launchEnded(r.ID, e.Key, ended)
 }
 
-func (ll *LaunchLoop) held(ruleID string) bool {
-	until, ok := ll.heldUntil[ruleID]
-	if ok && !time.Now().Before(until) {
-		delete(ll.heldUntil, ruleID)
-		return false
-	}
-	return ok
-}
+// errNoRun is a LaunchTriggered that returned neither a run nor an error, which the error table counts.
+var errNoRun = errors.New("the launch returned no run")
 
-func (ll *LaunchLoop) nextDue() (time.Duration, bool) {
-	if len(ll.heldUntil) == 0 {
+// nextRetry is how long until the first rule held by a failed, refused or abandoned launch may launch again.
+func (c *Confirmer) nextRetry() (time.Duration, bool) {
+	now := time.Now()
+	var first time.Time
+	for _, rv := range c.loaded() {
+		rv.mu.Lock()
+		at := rv.retryAt
+		rv.mu.Unlock()
+		if at.After(now) && (first.IsZero() || at.Before(first)) {
+			first = at
+		}
+	}
+	if first.IsZero() {
 		return 0, false
 	}
-	first := slices.MinFunc(slices.Collect(maps.Values(ll.heldUntil)), time.Time.Compare)
-	return max(time.Until(first), 0), true
+	return first.Sub(now), true
 }
 
 // launchInputs are the rule's fixed inputs with the event's over them: an operator's value never stands in for
@@ -143,11 +141,11 @@ func launchInputs(r *launchrule.Rule, e *queueEntry) map[string]string {
 }
 
 // claim is the rule's next launchable entry, marked launching under the rule's mutex so no poll supersedes it
-// between the pick and the call. A rule blocked, write-blocked or holding an entry in flight has none.
+// between the pick and the call. A rule blocked, write-blocked, backing off or holding an entry in flight has none.
 func (c *Confirmer) claim(r *launchrule.Rule) (queueEntry, func(), bool) {
 	rv := c.lock(r.ID)
 	defer rv.mu.Unlock()
-	if rv.writeBlocked != "" || rv.es.raw.Status.Blocked != "" {
+	if rv.writeBlocked != "" || rv.es.raw.Status.Blocked != "" || time.Now().Before(rv.retryAt) {
 		return queueEntry{}, nil, false
 	}
 	pr := pollRule{rule: r, ev: r.When.Event, feed: ruleFeed(r), st: rv.es, marks: c.marks}

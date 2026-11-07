@@ -105,6 +105,7 @@ func (s *stepper) bootRecord(rec *record, leases map[string]runlease.Lease) {
 	default: // A28: marotte stopped before the lease write, so the invoke was never written
 		s.abandon(rec, causeBootUnleased)
 		s.requeue(rec.key)
+		s.backOff()
 	}
 }
 
@@ -192,8 +193,9 @@ func (c *Confirmer) armBootHeld() {
 func (s *stepper) bootBoundReached(rec *record) {
 	s.abandon(rec, causeBound)
 	s.requeue(rec.key)
+	s.backOff()
 	st := s.status()
 	st.RowText = notConfirmedText(rec.workflowID)
-	s.failedAttempt(rec, st.RowText)
+	s.failedAttempt(rec.workflowID, st.RowText)
 	s.wakeLauncher()
 }

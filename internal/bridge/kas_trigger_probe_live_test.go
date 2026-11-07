@@ -65,6 +65,14 @@ func TestProbeReleaseOrder(t *testing.T) {
 	p.c.shutdown()
 }
 
+// TestProbeMissingInput records KAS's answer to a workflow/new that leaves a declared input out: marotte cannot see
+// which inputs a recipe requires, so this answer decides how a triggered launch of such a rule is classed.
+func TestProbeMissingInput(t *testing.T) {
+	p, ctx := newProbe(t)
+	p.missingInput(ctx)
+	p.c.shutdown()
+}
+
 func newProbe(t *testing.T) (*probe, context.Context) {
 	t.Helper()
 	bin := os.Getenv("MAROTTE_LIVE_KIRO_CLI")
@@ -545,6 +553,46 @@ func (p *probe) autoResume(ctx context.Context) {
 	if _, err := p.cancelEngineLane(ctx, id); err != nil {
 		p.t.Logf("cancel %s: %v", id, err)
 	}
+}
+
+func (p *probe) missingInput(ctx context.Context) {
+	s := p.host(ctx)
+	defer func() { _ = s.Close(ctx) }()
+	resp, err := s.Call(ctx, "_kiro/workflow/new", map[string]any{
+		"workflowPath":    p.source,
+		"workspacePaths":  []string{p.c.work},
+		"inputs":          map[string]any{"wait": "off"},
+		"parentSessionId": string(s.SessionID()),
+	})
+	out := map[string]any{
+		"probe":     "workflow/new of a recipe declaring run_id and wait, with only wait given",
+		"criterion": "how a triggered launch is classed: a -32602 *marotte.RPCError blocks the rule, another error counts on the 24-hour clock, an accepted run launches",
+	}
+	switch {
+	case err != nil:
+		out["transport_error"] = err.Error()
+	case resp.Error != nil:
+		out["error"] = resp.Error
+		out["invalid_params"] = resp.Error.Code == -32602
+	default:
+		var res struct {
+			WorkflowID string `json:"workflowId"`
+		}
+		if json.Unmarshal(resp.Result, &res) != nil || res.WorkflowID == "" {
+			out["result"] = resp.Result
+			break
+		}
+		out["created"] = true
+		from := p.mark()
+		if _, iErr := invokeRun(ctx, s, res.WorkflowID); iErr != nil {
+			out["invoke_error"] = iErr.Error()
+		} else {
+			_, started := p.await(from, "_kiro/workflow/run_start", res.WorkflowID, probeFrameMax)
+			out["invoke_ok"], out["run_start"] = true, started
+		}
+		_, _ = p.cancelEngineLane(ctx, res.WorkflowID)
+	}
+	p.write("missing-input", out)
 }
 
 func (p *probe) write(name string, body map[string]any) {

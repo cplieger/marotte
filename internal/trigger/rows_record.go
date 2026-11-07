@@ -10,7 +10,6 @@ import (
 
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
-	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
 // apply runs the record row of rec's state and ev, answering false for a cell no row names (A0).
@@ -155,6 +154,7 @@ func (s *stepper) confirm(rec *record) {
 	st := s.status()
 	st.LastRunID, st.LastStatus, st.LastReason, st.LastRunAt = rec.workflowID, launchrule.StatusStarted, "", s.now
 	st.BoundAbandons, st.FailingSince, st.RowText = 0, time.Time{}, ""
+	s.rv.retries, s.rv.retryAt = 0, time.Time{}
 	slog.Info(logMsgRunStarted, "rule_id", s.ruleID, "workflow_id", rec.workflowID, "key", rec.key)
 	s.res.write = true
 }
@@ -168,14 +168,19 @@ func (s *stepper) invokeRefused(rec *record, err error) {
 	}
 	s.abandon(rec, cause)
 	s.requeue(rec.key)
-	text := launchrule.ReasonText(rpcerr.Text(err))
+	s.backOff()
+	text := reasonText(err)
 	if rpc, ok := errors.AsType[*marotte.RPCError](err); ok && rpc.Code == codeInvalidParams {
 		s.status().RowText = fmt.Sprintf("the launch of run %s failed: %s", rec.workflowID, text)
-		s.block(rec, text)
+		s.block(rec.workflowID, text)
 	} else {
-		s.status().RowText = fmt.Sprintf("the launch of run %s failed: %s; retrying", rec.workflowID, text)
+		s.status().RowText = fmt.Sprintf("the launch of run %s failed: %s; retrying at %s", rec.workflowID, text,
+			s.rv.retryAt.Local().Format("15:04"))
 	}
-	s.failedAttempt(rec, text)
+	s.failedAttempt(rec.workflowID, text)
+	if s.status().Blocked == "" {
+		warnRetryable(s.ruleID, rec.workflowID, text)
+	}
 	s.wakeLauncher()
 }
 
@@ -207,15 +212,16 @@ func (s *stepper) boundReached(rec *record) {
 	rec.owesRelease = rec.inFlight
 	s.abandon(rec, causeBound)
 	s.requeue(rec.key)
+	s.backOff()
 	st := s.status()
 	st.BoundAbandons++
 	if st.BoundAbandons >= maxBoundAbandons {
 		st.RowText = twiceUnreported(rec.workflowID)
-		s.block(rec, st.RowText)
+		s.block(rec.workflowID, st.RowText)
 	} else {
 		st.RowText = notConfirmedText(rec.workflowID)
 	}
-	s.failedAttempt(rec, st.RowText)
+	s.failedAttempt(rec.workflowID, st.RowText)
 	s.wakeLauncher()
 }
 

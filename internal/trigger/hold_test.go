@@ -129,7 +129,7 @@ func TestNewestDoesNotSupersedeLaunchingEntry(t *testing.T) {
 	t.Run("an abandon supersedes the older key", func(t *testing.T) {
 		inBubble(t, func(t *testing.T, tc *testConfirmer) {
 			h, id, k41, k42 := launchedThenNewer(t, tc, nil)
-			advance(launchConfirmBound)
+			advance(launchConfirmBound + launchBackoff[0])
 			es := h.state(id)
 			if !eq(es.superseded, []supersededEntry{{Key: k41, By: k42}}) {
 				t.Errorf("superseded %+v, want 41 superseded by 42", es.superseded)

@@ -41,6 +41,7 @@ func (s *stepper) writeFailed(err error) {
 		rec.inFlight = false
 		s.abandon(rec, causeNameFailed)
 		s.requeue(rec.key)
+		s.backOff()
 		s.status().RowText = ""
 		s.res.err = fmt.Errorf("%w: %w", ErrAttemptNotWritten, err)
 	}

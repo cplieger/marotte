@@ -89,7 +89,7 @@ func (s *stepper) busyAbandoned(rec *record) {
 	} else {
 		st.RowText = fmt.Sprintf("run %s was cancelled by this rule and has not ended yet", rec.workflowID)
 	}
-	s.failedAttempt(rec, st.RowText)
+	s.failedAttempt(rec.workflowID, st.RowText)
 }
 
 // busyUnheld is A38 for a run another rule's record holds, else A24. Neither counts, and neither ever cancels: a run
@@ -143,9 +143,13 @@ func (s *stepper) clearGoneBlocker(statuses map[string]marotte.RunStatus) {
 	s.rv.blocker = blocker{}
 }
 
-// launchEnded is E9: a flight that ended with its key still queued and no live record takes Q, which a newest rule
-// may resolve by superseding it; otherwise the entry stays launchable and the launcher is woken.
-func (s *stepper) launchEnded(key string) {
+// launchEnded is E9: an error from before workflow/new is classed, and a flight that ended with its key still
+// queued and no live record takes Q, which a newest rule may resolve by superseding it; otherwise the entry stays
+// launchable and the launcher is woken.
+func (s *stepper) launchEnded(key string, err error) {
+	if err != nil {
+		s.launchFailed(err)
+	}
 	es := &s.rv.es
 	i := slices.IndexFunc(es.queue, func(e queueEntry) bool { return e.Key == key })
 	if i < 0 || es.queue[i].Live != "" {
