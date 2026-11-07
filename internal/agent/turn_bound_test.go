@@ -18,6 +18,7 @@ func TestAwaitTurnBound_AnswersWhetherKASBoundThePrompt(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			h, _, _ := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
 			id, log := h.stagePromptTurn(t, "c1")
 			defer h.coord.releaseTurn("c1", id)
 			if tc.bind {

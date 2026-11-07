@@ -321,6 +321,7 @@ func TestDrain_ATurnOpeningBetweenThePickAndTheOpenSupersedesIt(t *testing.T) {
 // A close's fence refuses its drain's reservation once a newer turn has opened.
 func TestTryReserveTurnFenced_ANewerTurnRefusesTheOldClose(t *testing.T) {
 	h, cs, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
 	fence := fenceNow(h, "c1")
 	id, _ := h.stagePromptTurn(t, "c1")

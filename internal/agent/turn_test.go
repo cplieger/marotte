@@ -327,6 +327,7 @@ func TestBusyChatIDs_NamesARewindHoldingTheSlot(t *testing.T) {
 // outlives the finalize while a handle is held.
 func TestTurnRegistry_StoppedAfterIsKeyedOnTheOpenSequence(t *testing.T) {
 	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
 	a, _ := h.stagePromptTurn(t, "c1")
 
 	h.coord.ReleaseStop(h.coord.RequestStop("c1", marotte.TurnStopReader))
@@ -354,6 +355,7 @@ func TestTurnRegistry_StoppedAfterIsKeyedOnTheOpenSequence(t *testing.T) {
 // its own.
 func TestTurnRegistry_AStopCauseIsTheIssuersAndATeardownsHoldsForItsTurns(t *testing.T) {
 	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
 	a, _ := h.stagePromptTurn(t, "c1")
 	if got := h.coord.StopCauseAfter("c1", a); got != marotte.TurnStopNone {
 		t.Fatalf("StopCauseAfter(a) before any stop = %v, want none", got)

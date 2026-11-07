@@ -342,6 +342,7 @@ func TestFinalizeTurn_MeasuresEmittedAfterReleasingTheCarry(t *testing.T) {
 // TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease pins retention by handle.
 func TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease(t *testing.T) {
 	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
 	id, _ := h.stagePromptTurn(t, "c1")
 
 	endTurn(t, h, "c1", id)
@@ -374,6 +375,7 @@ func TestAwaitTurn_UnknownTurnReportsNoSuchTurn(t *testing.T) {
 // TestAwaitTurn_DeadContextReturnsRatherThanParking, leaving the lifecycle usable.
 func TestAwaitTurn_DeadContextReturnsRatherThanParking(t *testing.T) {
 	h, cs, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
 	id, _ := h.stagePromptTurn(t, "c1")
 	defer h.coord.releaseTurn("c1", id)
 
