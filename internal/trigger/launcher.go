@@ -152,8 +152,8 @@ func (ll *LaunchLoop) launchNext(ctx context.Context, r *launchrule.Rule) (bool,
 }
 
 // launch makes one call for the rule's entry and delivers what its return calls for, then clears the entry's
-// launching mark and delivers launch ended (E9), which classes an error from before workflow/new. ll.mu is held,
-// and released once the call returned.
+// launching mark and delivers launch ended (E9), which classes an error from before workflow/new; a call the
+// launcher's own shutdown ended is no failed launch. ll.mu is held, and released once the call returned.
 func (ll *LaunchLoop) launch(ctx context.Context, r *launchrule.Rule, e *queueEntry, done func()) {
 	wf, err := ll.l.LaunchTriggered(ctx, r.Source, r.ID, e.Key, e.CoalesceKey, launchInputs(r, e),
 		marotte.RunDefaults{Model: r.Model, Effort: r.Effort})
@@ -168,7 +168,7 @@ func (ll *LaunchLoop) launch(ctx context.Context, r *launchrule.Rule, e *queueEn
 	}
 	done()
 	var ended error
-	if wf == "" {
+	if wf == "" && ctx.Err() == nil {
 		ended = cmp.Or(err, errNoRun)
 	}
 	ll.c.launchEnded(r.ID, e.Key, ended)

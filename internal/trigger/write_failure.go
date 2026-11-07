@@ -12,7 +12,7 @@ import (
 // state file is not unreadable. A failed write is W1 for A1's record, else W2; a landed one lifts the write-failure
 // block and wakes the launcher.
 func (s *stepper) commit() {
-	if !s.res.write || !s.held || s.rv.unreadable != "" {
+	if !s.res.write || !s.held || s.rv.unreadable != nil {
 		return
 	}
 	if err := s.c.writeLocked(s.ruleID, s.rv); err != nil {

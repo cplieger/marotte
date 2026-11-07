@@ -14,7 +14,7 @@ func (c *Confirmer) update(ruleID string, gen int, fn func(es *eventState) bool)
 		return
 	}
 	rv := c.lock(ruleID)
-	if rv.unreadable != "" || (gen != anyGeneration && gen != rv.generation) {
+	if rv.unreadable != nil || (gen != anyGeneration && gen != rv.generation) {
 		rv.mu.Unlock()
 		return
 	}
@@ -32,7 +32,7 @@ var errRuleUnreadable = errors.New("the rule's state file is unreadable")
 // rule's mutex.
 func (c *Confirmer) snapshot(ruleID string) (es eventState, gen int, err error) {
 	rv := c.lock(ruleID)
-	if rv.unreadable != "" {
+	if rv.unreadable != nil {
 		rv.mu.Unlock()
 		return eventState{}, 0, errRuleUnreadable
 	}

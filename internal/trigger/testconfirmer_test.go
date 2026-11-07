@@ -15,8 +15,7 @@ import (
 )
 
 // testConfirmer is a Confirmer over a real launch-rule store in a temporary config dir, its log captured. Its
-// cleanup fails the test on any ERROR logMsgImpossible line unless the test called expectA0, so a cell that reaches
-// a row no task has built yet fails loudly instead of passing for the wrong reason.
+// cleanup fails the test on any ERROR logMsgImpossible line unless the test called expectA0.
 type testConfirmer struct {
 	*Confirmer
 	t      *testing.T

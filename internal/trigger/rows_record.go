@@ -22,7 +22,6 @@ func (s *stepper) apply(rec *record, ev *attemptEvent) bool {
 	return s.live(rec, ev)
 }
 
-// live runs the rows of a live record.
 func (s *stepper) live(rec *record, ev *attemptEvent) bool {
 	switch ev.kind {
 	case evRunStart:
@@ -89,7 +88,6 @@ func (s *stepper) abandoned(rec *record, ev *attemptEvent) bool {
 	return true
 }
 
-// none runs the rows of an id the rule holds no record for.
 func (s *stepper) none(ev *attemptEvent) bool {
 	switch ev.kind {
 	case evNamed:
@@ -113,7 +111,7 @@ func (s *stepper) named(ev *attemptEvent) {
 	es := &s.rv.es
 	i := slices.IndexFunc(es.queue, func(e queueEntry) bool { return e.Key == ev.key })
 	if i < 0 || slices.ContainsFunc(s.rv.records, func(r *record) bool { return r.key == ev.key && r.state.live() }) {
-		rec := &record{workflowID: ev.workflowID, key: ev.key, unpersisted: !s.held || s.rv.unreadable != ""}
+		rec := &record{workflowID: ev.workflowID, key: ev.key, unpersisted: !s.held || s.rv.unreadable != nil}
 		s.rv.records = append(s.rv.records, rec)
 		s.abandon(rec, causeNameFailed)
 		s.res.err = errAttemptGone

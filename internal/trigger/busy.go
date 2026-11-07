@@ -61,6 +61,7 @@ func (c *Confirmer) holding(holder, workflowID string) (name string, live bool) 
 	rv := c.rule(holder)
 	rv.mu.Lock()
 	rec := rv.find(workflowID)
+	live = rec != nil && rec.state.live()
 	rv.mu.Unlock()
 	if rec == nil {
 		return "", false
@@ -70,7 +71,7 @@ func (c *Confirmer) holding(holder, workflowID string) (name string, live bool) 
 	if name == "" {
 		name = holder
 	}
-	return name, rec.state.live()
+	return name, live
 }
 
 // launchEnded is the launcher clearing the key's launching mark; err is the call's when it created no run.

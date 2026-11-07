@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,8 @@ import (
 
 	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/marotte/internal/launchrule"
+	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/trigger"
 )
 
@@ -63,18 +66,25 @@ type ruleHub struct {
 	dir  string
 }
 
-// countingStateWriter is the store's state writer, counting the state files written through it.
+// countingStateWriter is the store's state writer, counting the state files written through it; while fail holds
+// an error, every write fails with it.
 type countingStateWriter struct {
 	launchrule.StateWriter
-	n atomic.Int32
+	failWith atomic.Pointer[error]
+	n        atomic.Int32
 }
 
 func (c *countingStateWriter) WriteState(ctx context.Context, ruleID string, in *launchrule.State) error {
+	if err := c.failWith.Load(); err != nil && *err != nil {
+		return *err
+	}
 	c.n.Add(1)
 	return c.StateWriter.WriteState(ctx, ruleID, in)
 }
 
 func (c *countingStateWriter) writes() int { return int(c.n.Load()) }
+
+func (c *countingStateWriter) fail(err error) { c.failWith.Store(&err) }
 
 func newRuleHub(t *testing.T, forge *fakeEventRuleChecker, listing string) *ruleHub {
 	t.Helper()
@@ -384,6 +394,119 @@ func TestDismissGapClearsSegment(t *testing.T) {
 			t.Errorf("POST for a clock rule = %d %s, want 404", rec.Code, rec.Body.String())
 		}
 	})
+}
+
+// listedStatus is the rule's status as GET /api/launch-rules answers it.
+func listedStatus(t *testing.T, mux *http.ServeMux, id string) launchrule.Status {
+	t.Helper()
+	rec := sendRoute(t, mux, http.MethodGet, "/api/launch-rules", "")
+	var body struct {
+		Rules []struct {
+			Status *launchrule.Status `json:"status"`
+			ID     string             `json:"id"`
+			Error  string             `json:"error"`
+		} `json:"rules"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("GET = %d %s: %v", rec.Code, rec.Body.String(), err)
+	}
+	for _, r := range body.Rules {
+		if r.ID == id && r.Status != nil {
+			return *r.Status
+		}
+	}
+	t.Fatalf("GET = %s, want rule %s with a status", rec.Body.String(), id)
+	return launchrule.Status{}
+}
+
+// busyLauncher refuses every triggered launch as a recipe that run wf holds does.
+type busyLauncher struct {
+	wf    string
+	calls atomic.Int32
+}
+
+func (b *busyLauncher) LaunchTriggered(
+	context.Context, string, string, string, string, map[string]string, marotte.RunDefaults,
+) (string, error) {
+	b.calls.Add(1)
+	return "", &schedule.BusyError{WorkflowID: b.wf}
+}
+
+// idleEffects answers every cancel and release at once.
+type idleEffects struct{}
+
+func (idleEffects) CancelAbandoned(context.Context, string) error { return nil }
+func (idleEffects) ReleaseTriggered(context.Context, string)      {}
+
+// A row text the confirmer sets without a state write, as a recipe held by a run nothing names, is what the list
+// shows.
+func TestLaunchRuleListShowsUnwrittenRowText(t *testing.T) {
+	rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
+	r, err := rh.st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	seed := &launchrule.State{Population: launchrule.Population(&r), Queue: []json.RawMessage{
+		json.RawMessage(`{"key":"k1","coalesce_key":"c","observed_at":"2026-11-05T10:00:00Z","inputs":{}}`),
+	}}
+	if err := rh.w.WriteState(t.Context(), r.ID, seed); err != nil {
+		t.Fatalf("WriteState: %v", err)
+	}
+	writes := rh.w.writes()
+	ready := make(chan struct{})
+	close(ready)
+	ctx, cancel := context.WithCancel(t.Context())
+	var wg sync.WaitGroup
+	t.Cleanup(func() { cancel(); wg.Wait() })
+	l := &busyLauncher{wf: "wf_blocker"}
+	wg.Go(func() { rh.conf.Run(ctx, ready, idleEffects{}) })
+	wg.Go(func() { _ = trigger.NewLauncher(rh.conf.Confirmer, l).Run(ctx, ready) })
+	waitFor(t, func() bool { return l.calls.Load() > 0 })
+	want := "waiting for run wf_blocker to finish"
+	var got launchrule.Status
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		if got = listedStatus(t, rh.mux, r.ID); got.RowText == want {
+			break
+		}
+	}
+	if got.RowText != want {
+		t.Errorf("listed row text = %q, want %q", got.RowText, want)
+	}
+	if n := rh.w.writes() - writes; n != 0 {
+		t.Errorf("state writes = %d, want none: the busy row writes nothing", n)
+	}
+}
+
+// A rule whose state write failed launches nothing until a write lands, and no file can say so: the list and the
+// answer to the write's request do.
+func TestLaunchRuleListShowsWriteFailureBlock(t *testing.T) {
+	rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
+	r, err := rh.st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	seeded := launchrule.State{Population: launchrule.Population(&r), Status: launchrule.Status{Gaps: []launchrule.Gap{{
+		From: time.Date(2026, time.November, 7, 2, 10, 0, 0, time.UTC), To: time.Date(2026, time.November, 10, 9, 0, 0, 0, time.UTC),
+		Cause: launchrule.GapOutage,
+	}}}}
+	if err := rh.w.WriteState(t.Context(), r.ID, &seeded); err != nil {
+		t.Fatalf("WriteState: %v", err)
+	}
+	rh.w.fail(errors.New("disk full"))
+	want := "could not write launch-state/" + r.ID + ".json: disk full"
+	rec := sendRoute(t, rh.mux, http.MethodPost, "/api/launch-rules/"+r.ID+"/dismiss-gap", "")
+	var view struct {
+		Status *launchrule.Status `json:"status"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("POST = %d %s, want 200 with the rule", rec.Code, rec.Body.String())
+	}
+	if view.Status == nil || view.Status.Blocked != want {
+		t.Errorf("answered status %+v, want blocked %q", view.Status, want)
+	}
+	if got := listedStatus(t, rh.mux, r.ID); got.Blocked != want {
+		t.Errorf("listed blocked = %q, want %q", got.Blocked, want)
+	}
 }
 
 func TestLaunchRuleRouteRefusesInvalidSpec(t *testing.T) {

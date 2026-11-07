@@ -83,13 +83,22 @@ func (rr *runRoutes) handleLaunchRuleList(w http.ResponseWriter, _ *http.Request
 	rules := st.List()
 	out := make([]launchRuleView, 0, len(rules))
 	for i := range rules {
-		state, err := st.State(rules[i].ID)
+		state, err := rr.ruleState(&rules[i])
 		if errors.Is(err, launchrule.ErrNotFound) {
 			continue
 		}
 		out = append(out, launchRuleViewOf(&rules[i], &state, err))
 	}
 	httpserver.WriteJSON(w, map[string]any{"rules": out})
+}
+
+// ruleState is the state a rule's view shows: an event rule's as the confirmer holds it, since a row text or a
+// write-failure block may be in no file.
+func (rr *runRoutes) ruleState(r *launchrule.Rule) (launchrule.State, error) {
+	if r.When.Event != nil && rr.runs.confirmer != nil {
+		return rr.runs.confirmer.View(r.ID)
+	}
+	return rr.runs.launchRules.State(r.ID)
 }
 
 func (rr *runRoutes) handleLaunchRuleCreate(w http.ResponseWriter, r *http.Request) {
@@ -174,7 +183,7 @@ func (rr *runRoutes) handleLaunchRuleDismissGap(w http.ResponseWriter, r *http.R
 		httpreply.NotFound(w, "no such event rule")
 		return
 	}
-	state, stateErr := rr.runs.launchRules.State(id)
+	state, stateErr := rr.ruleState(&rule)
 	slog.Info("launch rule gaps dismissed", "id", logsafe.Field(id))
 	httpserver.WriteJSON(w, launchRuleViewOf(&rule, &state, stateErr))
 }
@@ -280,7 +289,7 @@ func (rr *runRoutes) answerSave(w http.ResponseWriter, saved *launchrule.Rule, e
 		writeSaveErr(w, err)
 		return
 	}
-	state, stateErr := rr.runs.launchRules.State(saved.ID)
+	state, stateErr := rr.ruleState(saved)
 	slog.Info("launch rule saved", "id", saved.ID, "recipe", logsafe.Field(saved.Name), "enabled", saved.Enabled)
 	httpserver.WriteJSON(w, launchRuleViewOf(saved, &state, stateErr))
 }

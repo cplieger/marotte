@@ -1,4 +1,6 @@
-// Package trigger launches recipes on forge events, at least once per event.
+// Package trigger launches recipes on forge events, at least once per event. Every launch attempt follows the
+// attempt table in internal/trigger/attempt-table.md, whose row ids (A0 to A38, W1, W2, E1 to E10, R, Q) the
+// package's comments and tests cite.
 package trigger
 
 import "errors"

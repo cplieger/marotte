@@ -533,3 +533,37 @@ func TestLauncherRunRefusesSecondStart(t *testing.T) {
 		}
 	})
 }
+
+// A shutdown that ends a launch before workflow/new created a run is no failed launch: nothing is counted, logged
+// or written on the row, and the event stays queued for the next start.
+func TestShutdownBeforeWorkflowNewCountsNothing(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		tc.enqueue(r.ID, held("k1", "c1"))
+		ctx, cancel := context.WithCancel(context.WithoutCancel(t.Context()))
+		f := &fakeLauncher{tc: tc, answer: func(int, launchCall) (string, error) {
+			cancel()
+			return "", ctx.Err()
+		}}
+		tc.run()
+		done := make(chan error, 1)
+		go func() { done <- NewLauncher(tc.Confirmer, f).Run(ctx, tc.ready) }()
+		tc.letLaunch(nil)
+		if err := <-done; err != nil {
+			t.Errorf("Run = %v at its context's end, want nil", err)
+		}
+		if n := len(f.taken()); n != 1 {
+			t.Fatalf("%d calls, want the one the shutdown ended", n)
+		}
+		_, st := tc.memory(r.ID)
+		if !st.FailingSince.IsZero() || st.RowText != "" || st.Blocked != "" {
+			t.Errorf("status %+v, want nothing counted and no row text", st)
+		}
+		if got := tc.classes(); len(got) != 0 {
+			t.Errorf("WARN classes %v, want none", got)
+		}
+		if !tc.relaunchable(r.ID, "k1") {
+			t.Error("k1 is not launchable after the shutdown, want it still queued")
+		}
+	})
+}

@@ -31,6 +31,9 @@ type TriggerConfirmer interface {
 	RecordEnding(ruleID, workflowID string, outcome launchrule.Outcome)
 	// DismissGap clears the rule's catch-up gap segment.
 	DismissGap(ruleID string) error
+	// View is the event rule's state as its row shows it, with what no write persisted; it answers what
+	// launchrule.Store.State does for a rule it cannot show.
+	View(ruleID string) (launchrule.State, error)
 }
 
 // WithTriggerConfirmer wires the event rules' confirmer; without it no launch is triggered.

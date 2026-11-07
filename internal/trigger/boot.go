@@ -67,12 +67,12 @@ func (s *stepper) boot(in *bootLoad) {
 		return
 	}
 	es := &s.rv.es
-	if s.rv.unreadable == "" {
+	if s.rv.unreadable == nil {
 		s.rv.records = s.loadRecords(es.raw.Attempts)
 	}
-	if s.rv.unreadable != "" {
+	if s.rv.unreadable != nil {
 		s.rv.es = eventState{cursor: cursor{}}
-		s.status().Blocked = s.rv.unreadable
+		s.status().Blocked = s.rv.unreadable.Error()
 		return
 	}
 	for i := range es.queue {

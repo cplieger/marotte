@@ -122,3 +122,5 @@ func (f *fakeConfirmer) DismissGap(ruleID string) error {
 	f.record("DismissGap %s", ruleID)
 	return nil
 }
+
+func (*fakeConfirmer) View(string) (launchrule.State, error) { return launchrule.State{}, nil }

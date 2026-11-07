@@ -2,7 +2,6 @@ package trigger
 
 import (
 	"errors"
-	"fmt"
 	"log/slog"
 	"maps"
 	"sync"
@@ -51,9 +50,9 @@ type ruleValue struct {
 	label        string
 	writeRetry   *time.Timer
 	writeBlocked string
-	// unreadable is the block of a state file that would not load. The value holds nothing from the file, and
+	// unreadable is the load error of a state file that would not load. The value holds nothing from the file, and
 	// nothing writes over it until E2 replaces it or E3 removes it.
-	unreadable string
+	unreadable *launchrule.UnreadableStateError
 	blocker    blocker
 	records    []*record
 	es         eventState
@@ -68,8 +67,8 @@ type ruleValue struct {
 
 // markUnreadable blocks the rule on a state file the store read but whose content does not decode.
 func (rv *ruleValue) markUnreadable(ruleID string, err error) {
-	rv.unreadable = fmt.Sprintf("could not read %s: %v", stateFile(ruleID), err)
-	slog.Error(logMsgStateUnreadable, "rule_id", ruleID, "error", rv.unreadable)
+	rv.unreadable = &launchrule.UnreadableStateError{RuleID: ruleID, Err: err}
+	slog.Error(logMsgStateUnreadable, "rule_id", ruleID, "error", rv.unreadable.Error())
 }
 
 func (rv *ruleValue) find(workflowID string) *record {
@@ -94,7 +93,7 @@ func (c *Confirmer) rule(ruleID string) *ruleValue {
 	}
 	st, err := c.store.LoadedState(ruleID)
 	if ue, ok := errors.AsType[*launchrule.UnreadableStateError](err); ok {
-		rv.unreadable = ue.Error()
+		rv.unreadable = ue
 	} else if err == nil {
 		if es, derr := decodeState(&st); derr != nil {
 			rv.markUnreadable(ruleID, derr)

@@ -3,6 +3,7 @@
 package launchrule
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -12,7 +13,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -116,7 +116,7 @@ func (s *Store) Create(ctx context.Context, in *Rule) (Rule, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r.ID = s.mintIDLocked()
-	rs := &ruleState{state: State{Population: Population(&r)}}
+	rs := &ruleState{state: State{Population: Population(&r)}, event: r.When.Event != nil}
 	if r.When.Clock != nil {
 		// Written before the rule, so no load finds the rule without its anchor.
 		st := State{Status: Status{Anchor: s.now()}}
@@ -189,15 +189,23 @@ func classifyChange(prev, next *Rule) Change {
 	case Population(prev) != Population(next):
 		return ChangeRebaseline
 	}
+	// Name is the recipe's, rewritten at each save, and the encoding reads empty inputs as none.
 	same := prev.clone()
-	same.Enabled = next.Enabled
+	same.Enabled, same.Name = next.Enabled, next.Name
 	switch {
-	case prev.Enabled == next.Enabled || !reflect.DeepEqual(same, *next):
+	case prev.Enabled == next.Enabled || !sameEncoding(&same, next):
 		return ChangeFilter
 	case next.Enabled:
 		return ChangeResume
 	}
 	return ChangePause
+}
+
+// sameEncoding reports two rules that encode alike. A rule that does not encode is never the same as another.
+func sameEncoding(a, b *Rule) bool {
+	ja, errA := json.Marshal(a)
+	jb, errB := json.Marshal(b)
+	return errA == nil && errB == nil && bytes.Equal(ja, jb)
 }
 
 func heldOf(rs *ruleState) int {
