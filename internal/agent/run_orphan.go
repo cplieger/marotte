@@ -13,6 +13,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/obs"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/workflow"
 )
@@ -294,6 +295,7 @@ func (rs *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease) bool {
 	// ERROR: the restart lost a run someone asked for.
 	slog.Error(logMsgRunOrphaned, "workflow_id", l.WorkflowID, "recipe", l.Recipe,
 		"origin", string(l.Origin), "schedule_id", l.ScheduleID, "rule_id", l.RuleID)
+	countUnattendedFailure(l, obs.RunOrphaned)
 	// The schedule's row too, or every later slot is refused as an overlap.
 	rs.recordScheduleOutcome(ctx, ruleRun(l), launchrule.Outcome{Status: launchrule.StatusFailed, Reason: orphanedReason(l)})
 	rs.forgetBounds(ctx, l.WorkflowID)

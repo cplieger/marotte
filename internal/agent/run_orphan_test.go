@@ -1104,8 +1104,11 @@ func TestOrphanSweepCancelsTriggeredRunWithTriggerReason(t *testing.T) {
 		rec := capture.Default(t)
 		fc := &fakeConfirmer{}
 		h, _, cancelled := orphanHub(t, fc, "wf_1")
+		before := failureCounts(t)
 
 		h.runs.sweepOrphaned(t.Context())
+
+		wantFailureDeltas(t, before, map[string]float64{"triggered/orphaned": 1})
 
 		if got := cancelled(); !slices.Equal(got, []string{"wf_1"}) {
 			t.Fatalf("cancelled %q, want [wf_1]", got)

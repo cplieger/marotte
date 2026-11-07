@@ -1032,6 +1032,57 @@ func TestRecordEndingFillsOnlyItsOwnStartedRun(t *testing.T) {
 	})
 }
 
+// A slot counts once however many outcomes its run reports, the count survives a reopen, and a completed slot sets it
+// back to 0.
+func TestFailedSlots_CountsEachSlotOnceAndASuccessClearsIt(t *testing.T) {
+	dir := t.TempDir()
+	st := openStore(t, dir)
+	r, err := st.Create(t.Context(), clockRule("bundled://x"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	denial := Outcome{Status: StatusFailed, Reason: "needed approval for Write with nobody watching"}
+	stop := Outcome{Status: StatusFailed, Reason: "still running when its next slot came due"}
+	for i, wf := range []string{"wf-1", "wf-2"} {
+		run := Run{ScheduleID: r.ID, WorkflowID: wf}
+		if err := st.RecordStart(t.Context(), run); err != nil {
+			t.Fatalf("RecordStart(%s): %v", wf, err)
+		}
+		// A denial, then the bound's stop and the cancel's own ending: one slot that failed.
+		for _, o := range []Outcome{denial, stop} {
+			if err := st.RecordOutcome(t.Context(), run, o); err != nil {
+				t.Fatalf("RecordOutcome(%s): %v", wf, err)
+			}
+		}
+		if err := st.RecordEnding(t.Context(), run, Outcome{Status: StatusFailed, Reason: "the run was cancelled"}); err != nil {
+			t.Fatalf("RecordEnding(%s): %v", wf, err)
+		}
+		if got := onlyClock(t, openStore(t, dir)).FailedSlots; got != i+1 {
+			t.Errorf("after %d failed slots, reopened, FailedSlots = %d, want %d", i+1, got, i+1)
+		}
+	}
+	run := Run{ScheduleID: r.ID, WorkflowID: "wf-3"}
+	if err := st.RecordStart(t.Context(), run); err != nil {
+		t.Fatalf("RecordStart(wf-3): %v", err)
+	}
+	if got := onlyClock(t, st).FailedSlots; got != 2 {
+		t.Errorf("FailedSlots while the third slot's run is going = %d, want 2 kept", got)
+	}
+	if err := st.RecordEnding(t.Context(), run, Outcome{Status: StatusCompleted}); err != nil {
+		t.Fatalf("RecordEnding(wf-3): %v", err)
+	}
+	if got := onlyClock(t, openStore(t, dir)).FailedSlots; got != 0 {
+		t.Errorf("FailedSlots after a completed slot, reopened = %d, want 0", got)
+	}
+	// A stop that lands after the run's own completion turns the slot into a failure: one, not one more than before.
+	if err := st.RecordOutcome(t.Context(), run, stop); err != nil {
+		t.Fatalf("RecordOutcome(wf-3): %v", err)
+	}
+	if got := onlyClock(t, st); got.FailedSlots != 1 || got.LastStatus != StatusFailed {
+		t.Errorf("row after a stop overwrote a completion = (%d, %q), want (1, failed)", got.FailedSlots, got.LastStatus)
+	}
+}
+
 // A late outcome of a superseded run (a lease absent for hours, a sweep at boot) never lands on the row a
 // newer fire owns.
 func TestRecordOutcomeIgnoresASupersededRun(t *testing.T) {

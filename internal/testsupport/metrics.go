@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,15 +19,22 @@ func metricsPage(ctx context.Context) string {
 	return rec.Body.String()
 }
 
-// PresetLabelValues returns the label values on the page of family, a family with the one label label, in page
-// order. Assigned to a package-level var it runs after obs's init and before any test moves a series, so it reads
-// the values obs pre-sets and nothing a test added. It panics when the page has no series of family.
+// PresetLabelValues returns the values label takes on the page's series of family, each once, in page order.
+// Assigned to a package-level var it runs after obs's init and before any test moves a series, so it reads the
+// values obs pre-sets and nothing a test added. It panics when the page has no series of family by label.
 func PresetLabelValues(family, label string) []string {
 	var out []string
 	for line := range strings.Lines(metricsPage(context.Background())) {
-		if rest, ok := strings.CutPrefix(line, family+"{"+label+`="`); ok {
-			if v, _, ok := strings.Cut(rest, `"} `); ok {
-				out = append(out, v)
+		set, ok := strings.CutPrefix(line, family+"{")
+		if !ok {
+			continue
+		}
+		set, _, _ = strings.Cut(set, "} ")
+		for pair := range strings.SplitSeq(set, ",") {
+			if v, ok := strings.CutPrefix(pair, label+`="`); ok {
+				if v = strings.TrimSuffix(v, `"`); !slices.Contains(out, v) {
+					out = append(out, v)
+				}
 			}
 		}
 	}

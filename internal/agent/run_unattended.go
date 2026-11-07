@@ -19,7 +19,9 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/obs"
 	"github.com/cplieger/marotte/internal/policyfile"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/translate"
 )
@@ -115,7 +117,6 @@ func (rs *Runs) permissionWithUnattendedFloor(inner askHandler) askHandler {
 		if !held || !l.Unattended || msg.ID == nil {
 			return
 		}
-		run := ruleRun(&l)
 		// A lease with no recorded presets cannot show the safety check was off, so it counts as delegated.
 		delegated := l.Host == nil || policyfile.DelegatesToSafetyCheck(l.Host.Presets)
 		acpID := *msg.ID
@@ -123,16 +124,18 @@ func (rs *Runs) permissionWithUnattendedFloor(inner askHandler) askHandler {
 		// A timer parks no goroutine and is a no-op once answered: both paths claim from the tracker.
 		params := msg.Params
 		rs.lifecycle.afterUnlessDraining(unattendedAskBudget, func() {
-			rs.answerUnattended(chatID, origin, acpID, run, delegated, name, params)
+			rs.answerUnattended(chatID, origin, acpID, &l, delegated, name, params)
 		})
 	}
 }
 
-// answerUnattended settles a still-pending request for an absent user: refuse, or approve when opted in.
-// delegated says the run's session hands unsettled requests to Kiro's safety check.
+// answerUnattended settles a still-pending request of l's unattended run for an absent user: refuse, or approve when
+// opted in. delegated says the run's session hands unsettled requests to Kiro's safety check.
 func (rs *Runs) answerUnattended(
-	chatID marotte.ChatID, origin acpResponder, acpID int64, run launchrule.Run, delegated bool, name askName, msgParams json.RawMessage,
+	chatID marotte.ChatID, origin acpResponder, acpID int64, l *runlease.Lease, delegated bool, name askName,
+	msgParams json.RawMessage,
 ) {
+	run := ruleRun(l)
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
 
@@ -194,12 +197,22 @@ func (rs *Runs) answerUnattended(
 		"budget", unattendedApprovalBudget, "schedule_id", run.ScheduleID, "rule_id", run.RuleID)
 	if verb == outcomeApproved {
 		// An approval is not a failure.
+		obs.UnattendedApproved(string(l.Origin))
 		return
 	}
 
+	countUnattendedFailure(l, obs.RunNeedsApproval)
 	// Surface it on the schedule row, or the run fails silently every night.
 	reason := unattendedRefusalReason(name.label(), adminAsk, classifierAsk)
 	rs.recordScheduleOutcome(ctx, run, launchrule.Outcome{Status: launchrule.StatusFailed, Reason: reason})
+}
+
+// countUnattendedFailure counts the failure of l's run under reason, one of obs's Run reasons; a run someone launched
+// and watches counts nothing.
+func countUnattendedFailure(l *runlease.Lease, reason string) {
+	if l.Unattended {
+		obs.UnattendedRunFailed(string(l.Origin), reason)
+	}
 }
 
 // unattendedRefusalReason is the schedule row's reason for a refused ask on label (empty when the ask names
@@ -279,6 +292,7 @@ func (rs *Runs) endUnattended(ctx context.Context, workflowID string, req *runRe
 	if err := rs.finishTermination(ctx, workflowID, runEndUnattended, runStop{}, again); err != nil {
 		return err
 	}
+	countUnattendedFailure(&l, obs.RunPaused)
 	// Overwrites the cancel's own ending, which may land first and names no pause.
 	rs.recordScheduleOutcome(ctx, ruleRun(&l), launchrule.Outcome{Status: launchrule.StatusFailed, Reason: reason})
 	return nil

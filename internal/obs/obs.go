@@ -9,6 +9,7 @@ package obs
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/cplieger/go/measure"
 )
@@ -34,6 +35,43 @@ const (
 
 var signInSaveReasons = []string{SignInStagedCopyLeft, SignInWriteFailed}
 
+// unattendedOrigins are the runlease origins internal/agent leases as unattended.
+var unattendedOrigins = []string{"scheduled", "triggered"}
+
+// The reasons an unattended run fails.
+const (
+	// RunNeedsApproval is a permission ask refused because nobody was there to approve it.
+	RunNeedsApproval = "needs_approval"
+	// RunOverran is a scheduled run still going when its next slot came due.
+	RunOverran = "overran"
+	// RunBackstop is a run that spent its absolute executing-time budget.
+	RunBackstop = "backstop"
+	// RunStalled is a run that made no progress inside its idle window.
+	RunStalled = "stalled"
+	// RunPaused is a run left paused with nobody to resume it.
+	RunPaused = "paused"
+	// RunOrphaned is a run a restart orphaned.
+	RunOrphaned = "orphaned"
+	// RunCancelGivenUp is a stop marotte decided whose every cancel kiro-cli refused.
+	RunCancelGivenUp = "cancel_given_up"
+)
+
+var unattendedRunFailureReasons = []string{
+	RunNeedsApproval, RunOverran, RunBackstop, RunStalled, RunPaused, RunOrphaned, RunCancelGivenUp,
+}
+
+// The events that leave a schedule slot with no run.
+const (
+	// SlotLaunchFailed is a launch that returned an error.
+	SlotLaunchFailed = "launch_failed"
+	// SlotSignInHeld is a slot the sign-in gate held until its grace ran out.
+	SlotSignInHeld = "signin_held"
+	// SlotEngineBusy is a slot the agent engine did not answer before the schedule's next slot.
+	SlotEngineBusy = "engine_busy"
+)
+
+var slotNotStartedEvents = []string{SlotLaunchFailed, SlotSignInHeld, SlotEngineBusy}
+
 var (
 	engineExits = measure.NewLabeledCounter("engine_exits_total",
 		"Agent engine exits, by the cause the exit line names.", []string{"cause"})
@@ -48,15 +86,36 @@ var (
 		"Resident memory of the running agent engine's node process at its last sample.", nil)
 	engineHeapLimit = measure.NewLabeledGauge("engine_heap_limit_bytes",
 		"JavaScript heap limit of the running agent engine; absent while the limit is unknown.", nil)
+	unattendedRunFailures = measure.NewLabeledCounter("unattended_run_failures_total",
+		"Scheduled and triggered runs that failed with nobody watching, by origin and reason.",
+		[]string{"origin", "reason"})
+	unattendedApprovals = measure.NewLabeledCounter("unattended_approvals_total",
+		"Permission asks of scheduled and triggered runs approved automatically, by origin.", []string{"origin"})
+	slotsNotStarted = measure.NewLabeledCounter("schedule_slots_not_started_total",
+		"Schedule slots that produced no run, by what stopped them.", []string{"event"})
+	scheduleFailedSlots = measure.NewLabeledGauge("schedule_failed_slots",
+		"Consecutive slots of an enabled schedule that ended without a completed run.", []string{"rule_id"})
+	scheduleNextDue = measure.NewLabeledGauge("schedule_next_due_timestamp_seconds",
+		"When an enabled schedule's next slot not yet judged falls due, in Unix seconds.", []string{"rule_id"})
 )
 
 func init() {
-	registry.MustRegister(engineExits, promptFailures, signInSaveFailures, engineUp, engineResident, engineHeapLimit)
+	registry.MustRegister(engineExits, promptFailures, signInSaveFailures, engineUp, engineResident, engineHeapLimit,
+		unattendedRunFailures, unattendedApprovals, slotsNotStarted, scheduleFailedSlots, scheduleNextDue)
 	for _, c := range engineExitCauses {
 		engineExits.Add(0, c)
 	}
 	for _, c := range promptFailureClasses {
 		promptFailures.Add(0, c)
+	}
+	for _, o := range unattendedOrigins {
+		for _, r := range unattendedRunFailureReasons {
+			unattendedRunFailures.Add(0, o, r)
+		}
+		unattendedApprovals.Add(0, o)
+	}
+	for _, e := range slotNotStartedEvents {
+		slotsNotStarted.Add(0, e)
 	}
 }
 
@@ -103,6 +162,34 @@ func EngineMemory(residentBytes, heapLimitBytes int64) {
 		return
 	}
 	engineHeapLimit.Set(float64(heapLimitBytes))
+}
+
+// UnattendedRunFailed counts one failure of an unattended run of origin, one of unattendedOrigins, under reason, one
+// of the Run reasons above.
+func UnattendedRunFailed(origin, reason string) { unattendedRunFailures.Inc(origin, reason) }
+
+// UnattendedApproved counts one permission ask of an unattended run of origin approved with nobody watching.
+func UnattendedApproved(origin string) { unattendedApprovals.Inc(origin) }
+
+// ScheduleSlotNotStarted counts one schedule slot that produced no run, under event, one of the Slot events above.
+func ScheduleSlotNotStarted(event string) { slotsNotStarted.Inc(event) }
+
+// Schedule exports schedule ruleID's consecutive failed slots and its next due slot. A zero nextDue, a slot nobody
+// can name, removes the next-due series, since a 0 would read as a slot long overdue.
+func Schedule(ruleID string, failedSlots int, nextDue time.Time) {
+	scheduleFailedSlots.Set(float64(failedSlots), ruleID)
+	if nextDue.IsZero() {
+		scheduleNextDue.Delete(ruleID)
+		return
+	}
+	scheduleNextDue.Set(float64(nextDue.Unix()), ruleID)
+}
+
+// ScheduleGone removes schedule ruleID's series, for a schedule disabled, blocked or deleted. It deletes the one
+// rule's series, never resets the family, so a scrape never finds another schedule's series missing.
+func ScheduleGone(ruleID string) {
+	scheduleFailedSlots.Delete(ruleID)
+	scheduleNextDue.Delete(ruleID)
 }
 
 // EngineMemoryGone removes both engine memory series, for an engine that is no longer running.

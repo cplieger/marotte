@@ -41,6 +41,27 @@ type Outcome struct {
 	Reason string
 }
 
+// BeginSlot records a new slot of the row, its run runID ("" for none) and its first outcome o.
+func (st *Status) BeginSlot(runID string, o Outcome) {
+	st.LastRunID, st.LastStatus = runID, StatusStarted
+	st.settleSlot(o)
+}
+
+// settleSlot records o as the outcome of the row's current slot. The slot counts toward FailedSlots once: a
+// completed slot sets it to 0 and any other ending adds one, unless the slot already ended in a failure; a started
+// slot has no ending yet.
+func (st *Status) settleSlot(o Outcome) {
+	failedAlready := st.LastStatus != StatusStarted && st.LastStatus != StatusCompleted
+	st.LastStatus, st.LastReason = o.Status, o.Reason
+	switch {
+	case o.Status == StatusStarted:
+	case o.Status == StatusCompleted:
+		st.FailedSlots = 0
+	case !failedAlready:
+		st.FailedSlots++
+	}
+}
+
 // Row addresses one clock rule's row. A minted id never names a second rule, so a writer holding the Row of a
 // deleted rule changes nothing.
 type Row struct {
@@ -140,7 +161,7 @@ func (s *Store) UpdateClock(ctx context.Context, row Row, set func(st *Status) b
 // whenever it comes.
 func (s *Store) RecordStart(ctx context.Context, run Run) error {
 	return s.UpdateClock(ctx, Row{ID: run.ScheduleID}, func(st *Status) bool {
-		st.LastRunID, st.LastStatus, st.LastReason = run.WorkflowID, StatusStarted, ""
+		st.BeginSlot(run.WorkflowID, Outcome{Status: StatusStarted})
 		if !run.StartedAt.IsZero() {
 			st.LastRunAt = run.StartedAt
 		}
@@ -157,7 +178,7 @@ func (s *Store) RecordOutcome(ctx context.Context, run Run, o Outcome) error {
 		if st.LastRunID != run.WorkflowID {
 			return false
 		}
-		st.LastStatus, st.LastReason = o.Status, o.Reason
+		st.settleSlot(o)
 		return true
 	})
 }
@@ -169,7 +190,7 @@ func (s *Store) RecordEnding(ctx context.Context, run Run, o Outcome) error {
 		if st.LastRunID != run.WorkflowID || st.LastStatus != StatusStarted {
 			return false
 		}
-		st.LastStatus, st.LastReason = o.Status, o.Reason
+		st.settleSlot(o)
 		return true
 	})
 }

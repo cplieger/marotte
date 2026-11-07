@@ -402,10 +402,17 @@ func TestSweep_HoldsASlotWhileNoRunCanStart(t *testing.T) {
 		st, l, r := newFixture(t, due.Add(30*time.Second))
 		l.failWith(refused)
 		logs := captureLogs(t)
+		counted := slotsNotStarted(t)
 		r.sweep(t.Context())
 		if got := logs.String(); !strings.Contains(got, "schedule slot held until a run can start") ||
 			!strings.Contains(got, "sign in to Kiro first") || strings.Contains(got, "scheduled run did not start") {
 			t.Errorf("logs = %q, want the hold and its reason, not a launch failure", got)
+		}
+		// A held slot may still fire inside its grace, so it is no slot that produced no run yet.
+		for event, n := range slotsNotStarted(t) {
+			if n != counted[event] {
+				t.Errorf("a held slot moved the %s slots by %v, want 0", event, n-counted[event])
+			}
 		}
 		if got := st.Clocks()[0]; !got.Anchor.Equal(anchor) || got.LastStatus != "" {
 			t.Errorf("entry = %+v, want the anchor and outcome untouched", got)
@@ -598,7 +605,8 @@ func TestRecordOutcome_DoesNotMoveTheAnchor(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	due := at(2026, time.August, 4, 2, 0)
-	if err := NewRunner(st, nil).recordFire(ctx, e.Row(), due, "wf-1", launchrule.Outcome{Status: launchrule.StatusStarted}); err != nil {
+	if _, err := NewRunner(st, nil).recordFire(ctx, e.Row(), due, "wf-1",
+		launchrule.Outcome{Status: launchrule.StatusStarted}); err != nil {
 		t.Fatalf("recordFire: %v", err)
 	}
 
@@ -757,7 +765,8 @@ func TestRecordFireKeepsAnEndingItsRunRecordedFirst(t *testing.T) {
 		t.Fatalf("RecordEnding: %v", err)
 	}
 	due := at(2026, time.August, 4, 2, 0)
-	if err := NewRunner(st, nil).recordFire(t.Context(), e.Row(), due, "wf-1", launchrule.Outcome{Status: launchrule.StatusStarted}); err != nil {
+	if _, err := NewRunner(st, nil).recordFire(t.Context(), e.Row(), due, "wf-1",
+		launchrule.Outcome{Status: launchrule.StatusStarted}); err != nil {
 		t.Fatalf("recordFire: %v", err)
 	}
 	got := st.Clocks()[0]

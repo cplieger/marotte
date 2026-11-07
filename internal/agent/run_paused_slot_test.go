@@ -49,6 +49,7 @@ func TestScheduledRun_APausedRunIsCancelledAtItsNextSlot(t *testing.T) {
 	logs := captureLogs(t)
 	h, br, st, entry := scheduledHub(t)
 	const id = "wf_1"
+	before := failureCounts(t)
 	leaseScheduledWithSlot(t, h, br, &entry, id, 150*time.Millisecond)
 	h.runs.armDeadline(t.Context(), id)
 
@@ -69,6 +70,8 @@ func TestScheduledRun_APausedRunIsCancelledAtItsNextSlot(t *testing.T) {
 	if row := awaitEndedRow(t, st); row.LastStatus != launchrule.StatusFailed || row.LastReason != reasonOverran {
 		t.Errorf("the row reads (%q, %q), want the overran failure", row.LastStatus, row.LastReason)
 	}
+	awaitFailureDelta(t, before, "scheduled/overran", 1)
+	wantFailureDeltas(t, before, map[string]float64{"scheduled/overran": 1})
 }
 
 // TestScheduledRun_AResumeTakesTheSlotWatchBack pins that a resume's arm owns the run's clock again: the floor
