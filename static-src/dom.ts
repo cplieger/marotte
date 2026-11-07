@@ -116,6 +116,33 @@ function playsMedia(surface: HTMLElement): boolean {
   return [...surface.querySelectorAll<HTMLMediaElement>("audio, video")].some((m) => !m.paused);
 }
 
+/** Set `name` to `value`, or remove it for null, writing nothing when it already holds that: a same-value write still
+ *  queues mutation records and, for a selector-read attribute, a restyle. */
+export function setAttr(node: Element, name: string, value: string | null): void {
+  if (value === null) {
+    if (node.hasAttribute(name)) {
+      node.removeAttribute(name);
+    }
+  } else if (node.getAttribute(name) !== value) {
+    node.setAttribute(name, value);
+  }
+}
+
+/** Set the custom property `name` on `node`'s inline style, writing nothing when it already holds `value`. */
+export function setStyleVar(node: HTMLElement, name: string, value: string): void {
+  if (node.style.getPropertyValue(name) !== value) {
+    node.style.setProperty(name, value);
+  }
+}
+
+/** Set `node`'s text, writing nothing when it already reads that: assigning `textContent` replaces the text node. A null
+ *  node writes nothing. */
+export function setText(node: Node | null, text: string): void {
+  if (node !== null && node.textContent !== text) {
+    node.textContent = text;
+  }
+}
+
 /**
  * Force a synchronous style and layout flush for `el`, so removing and re-adding a class in one task restarts an
  * animation. Returns the value read.

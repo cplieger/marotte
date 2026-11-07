@@ -1272,6 +1272,27 @@ describe("the ring is painted at the size of the disc beside it", () => {
     );
   });
 
+  it("writes nothing to the row when the workflow mark is set to the state it shows", async () => {
+    const { setTabRunStatus } = await import("./tabs.js");
+    const id = await openSubject("chat", "c1");
+    await paint();
+    const tally = { total: 2, working: 1, waiting: 1, input: 0 };
+    setTabRunStatus(id, "waiting", tally);
+    const row = document.querySelector<HTMLElement>(`[data-tab-id="${id}"]`);
+    expect(row?.querySelector(".tab-run-dot")?.getAttribute("data-status")).toBe("waiting");
+    const mo = new MutationObserver(() => undefined);
+    mo.observe(row as HTMLElement, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      characterData: true,
+    });
+    setTabRunStatus(id, "waiting", { ...tally });
+    const records = mo.takeRecords();
+    mo.disconnect();
+    expect(records.map((r) => `${r.type} ${r.attributeName ?? ""}`)).toEqual([]);
+  });
+
   it("paints a square where the dot paints a circle, resolved not transcribed", async () => {
     // Measured through the cascade: the radius is a calc over --dot-size. Half the diameter is a circle.
     const { setTabRunStatus } = await import("./tabs.js");

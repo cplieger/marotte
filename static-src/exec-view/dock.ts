@@ -30,6 +30,7 @@ import { STATE_WORD, inFlight, paintStateMark } from "./status.js";
 import { paintLabel } from "./label.js";
 import { kindGlyph, nodeAt } from "./tree.js";
 import { buildExecSummary } from "./summary.js";
+import { setAttr, setText } from "../dom.js";
 
 export interface ExecDockView {
   /** Paint the run, its shown step and the consumer's own notes. Safe on every tick. */
@@ -467,17 +468,5 @@ function seat(host: HTMLElement, child: HTMLElement | null): void {
     host.replaceChildren();
   } else if (host.firstChild !== child || host.childNodes.length !== 1) {
     host.replaceChildren(child);
-  }
-}
-
-function setText(target: HTMLElement, text: string): void {
-  if (target.textContent !== text) {
-    target.textContent = text;
-  }
-}
-
-function setAttr(target: HTMLElement, name: string, value: string): void {
-  if (target.getAttribute(name) !== value) {
-    target.setAttribute(name, value);
   }
 }

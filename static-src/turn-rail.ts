@@ -25,6 +25,7 @@ import { binTurns } from "./rail-select.js";
 import type { TurnBin, TurnMapLayout } from "./rail-select.js";
 import { activeTurnAt, buildOffsets, markerSlotFor, turnsInView } from "./rail-activation.js";
 import type { CardTop, TurnOffsets } from "./rail-activation.js";
+import { setAttr, setStyleVar } from "./dom.js";
 
 /** How far the transcript must scroll before the map appears: a threshold, not `> 0`, so a few
  *  pixels of settling overflow do not flicker it. */
@@ -579,7 +580,7 @@ function paintMap(
 ): void {
   m.nav.toggleAttribute("data-shown", visible);
   setAttr(m.nav, "aria-busy", pending.size > 0 ? "true" : null);
-  m.stack.style.setProperty("--turn-map-slots", String(Math.max(1, layout.slots)));
+  setStyleVar(m.stack, "--turn-map-slots", String(Math.max(1, layout.slots)));
   dropScrubbedRow(m, rows);
   reconcile(m.stack, rows, { key: (r) => r.bin.key, mount: mountPill, update: paintPill });
   if (scrubPointer !== undefined) {
@@ -600,7 +601,7 @@ function mountPill(r: PillView): HTMLElement {
 function paintPill(li: HTMLElement, r: PillView): void {
   const { bin } = r;
   const single = bin.members.length === 1;
-  li.style.setProperty("--rail-at", String(bin.at));
+  setStyleVar(li, "--rail-at", String(bin.at));
   setAttr(li, "data-severity", bin.severity);
   setAttr(li, "data-trigger", single && bin.first.agent_initiated === true ? "system" : null);
   setAttr(li, "data-in-view", r.inView ? "" : null);
@@ -625,16 +626,6 @@ function paintPill(li: HTMLElement, r: PillView): void {
 
 function turnHref(s: TurnSummary): string {
   return buildPath({ kind: "chat", id: chatID, turn: s.n });
-}
-
-function setAttr(node: Element, name: string, value: string | null): void {
-  if (value === null) {
-    if (node.hasAttribute(name)) {
-      node.removeAttribute(name);
-    }
-  } else if (node.getAttribute(name) !== value) {
-    node.setAttribute(name, value);
-  }
 }
 
 // ---------------------------------------------------------------------------

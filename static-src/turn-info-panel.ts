@@ -8,6 +8,7 @@ import { chevronEl } from "./chevron.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_ARROW_RIGHT } from "./icons.js";
 import { formatClock } from "./locale-time.js";
+import { setText } from "./dom.js";
 
 /** One entry of a disclosure's list. It keeps its node while its key holds; its parts are
  *  reconciled inside it. */
@@ -142,12 +143,6 @@ function updateRow(li: HTMLElement, r: PanelRow, open: Set<string>): void {
         `Review all changes (${String(r.count)} files)`,
       );
       return;
-  }
-}
-
-function setText(node: Element | null, text: string): void {
-  if (node !== null && node.textContent !== text) {
-    node.textContent = text;
   }
 }
 

@@ -54,7 +54,7 @@ import { join as joinKey } from "@cplieger/keyenc";
 import { ICON_CLOSE, ICON_PIN_FILLED, ICON_TAB_SUBTAB } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { activeView, setActiveView } from "./device-view.js";
-import { $, queryEl } from "./dom.js";
+import { $, queryEl, setAttr, setText } from "./dom.js";
 import { showOnlyView } from "./view-swap.js";
 import { signal, effect, el } from "@cplieger/ui";
 import {
@@ -1372,16 +1372,10 @@ function paintRunDot(node: HTMLElement, status: TabRunDotStatus | "", tally: Tab
   if (mark === null || sr === null) {
     return;
   }
-  if (status === "") {
-    mark.removeAttribute("data-status");
-    mark.removeAttribute("data-tooltip");
-    sr.textContent = "";
-    return;
-  }
-  const phrase = runDotPhrase(status, tally);
-  mark.dataset["status"] = status;
-  mark.dataset["tooltip"] = phrase;
-  sr.textContent = `, ${phrase}`;
+  const phrase = status === "" ? null : runDotPhrase(status, tally);
+  setAttr(mark, "data-status", status === "" ? null : status);
+  setAttr(mark, "data-tooltip", phrase);
+  setText(sr, phrase === null ? "" : `, ${phrase}`);
 }
 
 /** Set a chat tab's WORKFLOW mark; `chat-run-dots.ts` derives the fold. `tally` rides beside

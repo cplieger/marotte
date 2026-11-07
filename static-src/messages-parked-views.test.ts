@@ -508,6 +508,56 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
     expect([...viewOf(a).querySelectorAll(".turn")]).toEqual(cards);
   });
 
+  it("rewrites no settled tool card when the reader switches back", async () => {
+    const a = freshID("c-tools");
+    const b = freshID("c-tools");
+    const t = `${a}-t1`;
+    const calls: Entry[] = [];
+    for (let i = 0; i < 4; i++) {
+      const id = `${t}-call${String(i)}`;
+      calls.push(toolCall(t, 1 + 2 * i, id, { status: "completed" }), toolResult(t, 2 + 2 * i, id));
+    }
+    seed(settled(a, [[turnOpen(t, 1), ...calls, turnClose(t, 9)]]), oneTurn(b, "x"));
+    await flushed();
+    await settledFrames();
+    const cards = [...viewOf(a).querySelectorAll(".tool-call")];
+    expect(cards.length).toBe(4);
+    switchTo(b);
+    await flushed();
+
+    const writes: string[] = [];
+    const mo = new MutationObserver((records) => {
+      for (const r of records) {
+        const owner = (r.target instanceof Element ? r.target : r.target.parentElement)?.closest(
+          ".tool-call",
+        );
+        if (owner !== null && owner !== undefined) {
+          writes.push(`${r.type} ${r.attributeName ?? ""}`);
+        }
+      }
+    });
+    mo.observe(viewOf(a), {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      characterData: true,
+    });
+    switchTo(a);
+    await flushed();
+    await settledFrames();
+    for (const r of mo.takeRecords()) {
+      const owner = (r.target instanceof Element ? r.target : r.target.parentElement)?.closest(
+        ".tool-call",
+      );
+      if (owner !== null && owner !== undefined) {
+        writes.push(`${r.type} ${r.attributeName ?? ""}`);
+      }
+    }
+    mo.disconnect();
+
+    expect(writes).toEqual([]);
+  });
+
   it("holds the reading position through a park/unpark over a turn that GREW", async () => {
     // The reader is Reading, so `deferWhileReading` holds the unpark paint; this reads the window the park left over a
     // grown turn.

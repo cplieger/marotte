@@ -41,8 +41,24 @@ interface ToolSlot {
   chatID: string;
   toolID: string;
   card: HTMLDivElement;
+  /** The snapshot the card shows, kept across a suspend so a resume writes only what changed meanwhile. */
+  applied: ToolCall;
   /** The live effect's disposer, or null while suspended (view parked). */
   cleanup: (() => void) | null;
+}
+
+/** Subscribe `slot`'s card to its call's signal, writing a snapshot only when it is not the one the card shows. */
+function armSlot(slot: ToolSlot, sig: ReturnType<typeof ensureToolCallSig>): void {
+  slot.cleanup = effect(() => {
+    const next = sig.value;
+    // Before the early return: the effect must subscribe to the silence ticker, since a quiet call sends no frame.
+    syncSilenceMarker(slot.card, slot.chatID, slot.toolID);
+    if (next === slot.applied) {
+      return;
+    }
+    applyToolCallUpdate(slot.card, next, slot.chatID);
+    slot.applied = next;
+  });
 }
 const toolSlots = new Map<string, ToolSlot[]>();
 
@@ -318,10 +334,8 @@ export function suspendToolEffectsFor(
   }
 }
 
-/**
- * Re-arm suspended effects: apply the current snapshot in one write, then subscribe. Already-live slots are left
- * alone, so a resume is idempotent.
- */
+/** Re-arm suspended effects, which write only what changed while parked. Already-live slots are left alone, so a
+ *  resume is idempotent. */
 export function resumeToolEffectsFor(
   chatID: string,
   toolCalls: readonly ToolCall[],
@@ -332,18 +346,7 @@ export function resumeToolEffectsFor(
       if (slot.cleanup !== null || !withinEl.contains(slot.card)) {
         continue; // already live, or another surface's slot
       }
-      const card = slot.card;
-      const sig = ensureToolCallSig(chatID, tc.id, tc);
-      let lastApplied = sig.peek();
-      applyToolCallUpdate(card, lastApplied, chatID);
-      slot.cleanup = effect(() => {
-        const next = sig.value;
-        if (next === lastApplied) {
-          return;
-        }
-        applyToolCallUpdate(card, next, chatID);
-        lastApplied = next;
-      });
+      armSlot(slot, ensureToolCallSig(chatID, tc.id, tc));
     }
   }
 }
@@ -559,24 +562,13 @@ export function mountToolCallCard(
   const key = toolCallSigKey(chatID, tc.id);
   const slots = toolSlots.get(key) ?? [];
   toolSlots.set(key, slots);
-  const slot: ToolSlot = { chatID, toolID: tc.id, card, cleanup: null };
+  const slot: ToolSlot = { chatID, toolID: tc.id, card, applied: tc, cleanup: null };
   slots.push(slot);
   // After the build and the slot registration: a held chunk is appended to the slots' cards, and whether it
   // flushes depends on the output this build rendered.
   linkTerminal(chatID, tc);
 
-  const sig = ensureToolCallSig(chatID, tc.id, tc);
-  let lastApplied = tc;
-  slot.cleanup = effect(() => {
-    const next = sig.value;
-    // Before the early return: the effect must subscribe to the silence ticker, since a quiet call sends no frame.
-    syncSilenceMarker(card, chatID, tc.id);
-    if (next === lastApplied) {
-      return;
-    }
-    applyToolCallUpdate(card, next, chatID);
-    lastApplied = next;
-  });
+  armSlot(slot, ensureToolCallSig(chatID, tc.id, tc));
   return card;
 }
 
