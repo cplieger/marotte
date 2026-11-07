@@ -517,6 +517,7 @@ func TestSwitchModel_ARefusedSwapClearsThePickAndReportsIt(t *testing.T) {
 // A busy chat's pick is parked and applied by the close that idles it.
 func TestSwitchModel_ABusyChatParksThePickUntilTheClose(t *testing.T) {
 	h, cs, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
@@ -580,6 +581,7 @@ func TestSwitchModel_AKASHeldChatParksThePickUntilKASGoesIdle(t *testing.T) {
 // KAS lists Auto as a model, so picking it from a concrete model is a switch like any other, not "keep the current".
 func TestSwitchModel_ACatalogListedAutoIsAPick(t *testing.T) {
 	h, cs, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"

@@ -43,7 +43,7 @@ func stepTurnsInRunLog(t *testing.T, h *Runtime, n int) {
 	for i := range n {
 		openStepTurnOf(t, h, "s"+string(rune('a'+i)))
 		path := workflow.PathKey([]string{"wf_1", "s" + string(rune('a'+i))})
-		if _, _, err := h.runs.log.closeNode(t.Context(), "wf_1", path, "completed", ""); err != nil {
+		if _, _, err := h.runs.log.closeNode(t.Context(), "wf_1", path, "completed", "", nil); err != nil {
 			t.Fatalf("Setup: closeNode: %v", err)
 		}
 	}

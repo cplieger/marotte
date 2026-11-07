@@ -4,17 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/marotte/internal/launchrule"
+	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/schedule"
+	"github.com/cplieger/marotte/internal/trigger"
 )
 
 // fakeEventRuleChecker answers every save-time forge check with err, counting the checks.
@@ -47,21 +52,79 @@ func launchRuleHub(t *testing.T, forge *fakeEventRuleChecker) (dir string, st *l
 // launchRuleHubListing is launchRuleHub with the recipe listing replaced by listing when it is not empty.
 func launchRuleHubListing(t *testing.T, forge *fakeEventRuleChecker, listing string) (dir string, st *launchrule.Store, mux *http.ServeMux) {
 	t.Helper()
+	rh := newRuleHub(t, forge, listing)
+	return rh.dir, rh.st, rh.mux
+}
+
+// ruleHub is launchRuleHub's runtime with the real trigger confirmer over its store, every RuleChanged recorded.
+type ruleHub struct {
+	st   *launchrule.Store
+	w    *countingStateWriter
+	conf *changeRecorder
+	runs *Runs
+	mux  *http.ServeMux
+	dir  string
+}
+
+// countingStateWriter is the store's state writer, counting the state files written through it; while fail holds
+// an error, every write fails with it.
+type countingStateWriter struct {
+	launchrule.StateWriter
+	failWith atomic.Pointer[error]
+	n        atomic.Int32
+}
+
+func (c *countingStateWriter) WriteState(ctx context.Context, ruleID string, in *launchrule.State) error {
+	if err := c.failWith.Load(); err != nil && *err != nil {
+		return *err
+	}
+	c.n.Add(1)
+	return c.StateWriter.WriteState(ctx, ruleID, in)
+}
+
+func (c *countingStateWriter) writes() int { return int(c.n.Load()) }
+
+func (c *countingStateWriter) fail(err error) { c.failWith.Store(&err) }
+
+func newRuleHub(t *testing.T, forge *fakeEventRuleChecker, listing string) *ruleHub {
+	t.Helper()
 	h, _, br := newTestHub()
 	launchableRecipe(br, "wf_rule")
 	if listing != "" {
 		br.setCallResult(methodKiroWorkflowListRecipes, json.RawMessage(listing))
 	}
-	dir = t.TempDir()
-	st, err := launchrule.NewStore(dir)
+	rh := &ruleHub{dir: t.TempDir(), mux: http.NewServeMux(), runs: h.runs}
+	st, w, err := launchrule.NewStore(rh.dir)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	h.runs.launchRules = st
+	rh.st, rh.w = st, &countingStateWriter{StateWriter: w}
+	rh.conf = &changeRecorder{Confirmer: trigger.NewConfirmer(rh.st, rh.w, nil)}
+	h.runs.launchRules = rh.st
+	h.runs.confirmer = rh.conf
 	h.SetEventRuleChecker(forge)
-	mux = http.NewServeMux()
-	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(mux)
-	return dir, st, mux
+	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(rh.mux)
+	return rh
+}
+
+// changeRecorder is the real confirmer, recording each change the routes hand it.
+type changeRecorder struct {
+	*trigger.Confirmer
+	changes []launchrule.Change
+	mu      sync.Mutex
+}
+
+func (c *changeRecorder) RuleChanged(ruleID string, change launchrule.Change) {
+	c.mu.Lock()
+	c.changes = append(c.changes, change)
+	c.mu.Unlock()
+	c.Confirmer.RuleChanged(ruleID, change)
+}
+
+func (c *changeRecorder) delivered() []launchrule.Change {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]launchrule.Change(nil), c.changes...)
 }
 
 func sendRoute(t *testing.T, mux *http.ServeMux, method, target, body string) *httptest.ResponseRecorder {
@@ -108,7 +171,7 @@ func eventRuleOf(repo string) *launchrule.Rule {
 // panic; with one, skipping them would 404 a working feature.
 func TestRegisterLaunchRules_MountsTheSurfaceOnlyWithAStoreBehindIt(t *testing.T) {
 	t.Run("a configured store gets the routes", func(t *testing.T) {
-		st, err := launchrule.NewStore(t.TempDir())
+		st, _, err := launchrule.NewStore(t.TempDir())
 		if err != nil {
 			t.Fatalf("launchrule.NewStore: %v", err)
 		}
@@ -227,15 +290,17 @@ func TestLaunchRulesRoute(t *testing.T) {
 func TestLaunchRuleWritesNeedWriteGuard(t *testing.T) {
 	h := newDrainGateHub(t)
 	h.SetEventRuleChecker(&fakeEventRuleChecker{})
+	h.runs.confirmer = trigger.NewConfirmer(h.runs.launchRules, nil, nil)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	h.lifecycle.draining.Store(true)
-	for _, tc := range []struct{ method, path, body string }{
-		{http.MethodPost, "/api/launch-rules", runRuleBody},
-		{http.MethodPut, "/api/launch-rules/r1", runRuleBody},
-		{http.MethodDelete, "/api/launch-rules/r1", ""},
+	for _, tc := range []struct{ name, method, path, body string }{
+		{"create", http.MethodPost, "/api/launch-rules", runRuleBody},
+		{"replace", http.MethodPut, "/api/launch-rules/r1", runRuleBody},
+		{"delete", http.MethodDelete, "/api/launch-rules/r1", ""},
+		{"dismiss gap", http.MethodPost, "/api/launch-rules/r1/dismiss-gap", ""},
 	} {
-		t.Run(tc.method, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			rec := sendRoute(t, mux, tc.method, tc.path, tc.body)
 			if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "shutting down") {
 				t.Errorf("%s %s while draining = %d %s, want the drain gate's 503", tc.method, tc.path, rec.Code, rec.Body.String())
@@ -247,6 +312,201 @@ func TestLaunchRuleWritesNeedWriteGuard(t *testing.T) {
 			t.Errorf("GET /api/launch-rules while draining = %d, want 200", rec.Code)
 		}
 	})
+}
+
+func TestDismissGapClearsSegment(t *testing.T) {
+	rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
+	r, err := rh.st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	seeded, err := rh.st.State(r.ID)
+	if err != nil {
+		t.Fatalf("State: %v", err)
+	}
+	seeded.Status.Gaps = []launchrule.Gap{{
+		From: time.Date(2026, time.November, 7, 2, 10, 0, 0, time.UTC), To: time.Date(2026, time.November, 10, 9, 0, 0, 0, time.UTC),
+		Cause: launchrule.GapOutage,
+	}}
+	if err := rh.w.WriteState(t.Context(), r.ID, &seeded); err != nil {
+		t.Fatalf("WriteState: %v", err)
+	}
+	dismiss := "/api/launch-rules/" + r.ID + "/dismiss-gap"
+	hasGap := func() bool { return bytes.Contains(ruleState(t, rh.dir, r.ID), []byte(`"gaps"`)) }
+
+	t.Run("refused while draining", func(t *testing.T) {
+		rh.runs.lifecycle.draining.Store(true)
+		rec := sendRoute(t, rh.mux, http.MethodPost, dismiss, "")
+		rh.runs.lifecycle.draining.Store(false)
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "shutting down") {
+			t.Errorf("POST while draining = %d %s, want the drain gate's 503", rec.Code, rec.Body.String())
+		}
+		if !hasGap() {
+			t.Errorf("a refused dismiss cleared the gap from the state file")
+		}
+	})
+	t.Run("a post clears the segment and writes it", func(t *testing.T) {
+		before := rh.w.writes()
+		rec := sendRoute(t, rh.mux, http.MethodPost, dismiss, "")
+		var view struct {
+			Status *launchrule.Status `json:"status"`
+			ID     string             `json:"id"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil || rec.Code != http.StatusOK {
+			t.Fatalf("POST = %d %s, want 200 with the rule", rec.Code, rec.Body.String())
+		}
+		if view.ID != r.ID || view.Status == nil || len(view.Status.Gaps) != 0 {
+			t.Errorf("answered rule %q status %+v, want %q with no gaps", view.ID, view.Status, r.ID)
+		}
+		if hasGap() {
+			t.Errorf("state file %s still holds the gap", ruleState(t, rh.dir, r.ID))
+		}
+		if got := rh.w.writes() - before; got != 1 {
+			t.Errorf("state writes = %d, want 1", got)
+		}
+	})
+	t.Run("a second post changes nothing and writes nothing", func(t *testing.T) {
+		before, writes := ruleState(t, rh.dir, r.ID), rh.w.writes()
+		if rec := sendRoute(t, rh.mux, http.MethodPost, dismiss, ""); rec.Code != http.StatusOK {
+			t.Errorf("second POST = %d %s, want 200", rec.Code, rec.Body.String())
+		}
+		if got := rh.w.writes() - writes; got != 0 {
+			t.Errorf("state writes = %d, want 0", got)
+		}
+		if !bytes.Equal(before, ruleState(t, rh.dir, r.ID)) {
+			t.Errorf("the second dismiss rewrote the state file")
+		}
+	})
+	t.Run("an unknown id answers 404", func(t *testing.T) {
+		if rec := sendRoute(t, rh.mux, http.MethodPost, "/api/launch-rules/missing/dismiss-gap", ""); rec.Code != http.StatusNotFound {
+			t.Errorf("POST missing = %d %s, want 404", rec.Code, rec.Body.String())
+		}
+	})
+	t.Run("a clock rule has no gaps to dismiss", func(t *testing.T) {
+		clock, err := rh.st.Create(t.Context(), &launchrule.Rule{Source: "bundled://publish", When: launchrule.When{
+			Clock: &launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2},
+		}})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		rec := sendRoute(t, rh.mux, http.MethodPost, "/api/launch-rules/"+clock.ID+"/dismiss-gap", "")
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("POST for a clock rule = %d %s, want 404", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// listedStatus is the rule's status as GET /api/launch-rules answers it.
+func listedStatus(t *testing.T, mux *http.ServeMux, id string) launchrule.Status {
+	t.Helper()
+	rec := sendRoute(t, mux, http.MethodGet, "/api/launch-rules", "")
+	var body struct {
+		Rules []struct {
+			Status *launchrule.Status `json:"status"`
+			ID     string             `json:"id"`
+			Error  string             `json:"error"`
+		} `json:"rules"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("GET = %d %s: %v", rec.Code, rec.Body.String(), err)
+	}
+	for _, r := range body.Rules {
+		if r.ID == id && r.Status != nil {
+			return *r.Status
+		}
+	}
+	t.Fatalf("GET = %s, want rule %s with a status", rec.Body.String(), id)
+	return launchrule.Status{}
+}
+
+// busyLauncher refuses every triggered launch as a recipe that run wf holds does.
+type busyLauncher struct {
+	wf    string
+	calls atomic.Int32
+}
+
+func (b *busyLauncher) LaunchTriggered(
+	context.Context, string, string, string, string, map[string]string, marotte.RunDefaults,
+) (string, error) {
+	b.calls.Add(1)
+	return "", &schedule.BusyError{WorkflowID: b.wf}
+}
+
+// idleEffects answers every cancel and release at once.
+type idleEffects struct{}
+
+func (idleEffects) CancelAbandoned(context.Context, string) error { return nil }
+func (idleEffects) ReleaseTriggered(context.Context, string)      {}
+
+// A row text the confirmer sets without a state write, as a recipe held by a run nothing names, is what the list
+// shows.
+func TestLaunchRuleListShowsUnwrittenRowText(t *testing.T) {
+	rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
+	r, err := rh.st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	seed := &launchrule.State{Population: launchrule.Population(&r), Queue: []json.RawMessage{
+		json.RawMessage(`{"key":"k1","coalesce_key":"c","observed_at":"2026-11-05T10:00:00Z","inputs":{}}`),
+	}}
+	if err := rh.w.WriteState(t.Context(), r.ID, seed); err != nil {
+		t.Fatalf("WriteState: %v", err)
+	}
+	writes := rh.w.writes()
+	ready := make(chan struct{})
+	close(ready)
+	ctx, cancel := context.WithCancel(t.Context())
+	var wg sync.WaitGroup
+	t.Cleanup(func() { cancel(); wg.Wait() })
+	l := &busyLauncher{wf: "wf_blocker"}
+	wg.Go(func() { rh.conf.Run(ctx, ready, idleEffects{}) })
+	wg.Go(func() { _ = trigger.NewLauncher(rh.conf.Confirmer, l).Run(ctx, ready) })
+	waitFor(t, func() bool { return l.calls.Load() > 0 })
+	want := "waiting for run wf_blocker to finish"
+	var got launchrule.Status
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		if got = listedStatus(t, rh.mux, r.ID); got.RowText == want {
+			break
+		}
+	}
+	if got.RowText != want {
+		t.Errorf("listed row text = %q, want %q", got.RowText, want)
+	}
+	if n := rh.w.writes() - writes; n != 0 {
+		t.Errorf("state writes = %d, want none: the busy row writes nothing", n)
+	}
+}
+
+// A rule whose state write failed launches nothing until a write lands, and no file can say so: the list and the
+// answer to the write's request do.
+func TestLaunchRuleListShowsWriteFailureBlock(t *testing.T) {
+	rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
+	r, err := rh.st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	seeded := launchrule.State{Population: launchrule.Population(&r), Status: launchrule.Status{Gaps: []launchrule.Gap{{
+		From: time.Date(2026, time.November, 7, 2, 10, 0, 0, time.UTC), To: time.Date(2026, time.November, 10, 9, 0, 0, 0, time.UTC),
+		Cause: launchrule.GapOutage,
+	}}}}
+	if err := rh.w.WriteState(t.Context(), r.ID, &seeded); err != nil {
+		t.Fatalf("WriteState: %v", err)
+	}
+	rh.w.fail(errors.New("disk full"))
+	want := "could not write launch-state/" + r.ID + ".json: disk full"
+	rec := sendRoute(t, rh.mux, http.MethodPost, "/api/launch-rules/"+r.ID+"/dismiss-gap", "")
+	var view struct {
+		Status *launchrule.Status `json:"status"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("POST = %d %s, want 200 with the rule", rec.Code, rec.Body.String())
+	}
+	if view.Status == nil || view.Status.Blocked != want {
+		t.Errorf("answered status %+v, want blocked %q", view.Status, want)
+	}
+	if got := listedStatus(t, rh.mux, r.ID); got.Blocked != want {
+		t.Errorf("listed blocked = %q, want %q", got.Blocked, want)
+	}
 }
 
 func TestLaunchRuleRouteRefusesInvalidSpec(t *testing.T) {
@@ -374,7 +634,8 @@ func TestEventRuleSaveAnswersTheForgeCheck(t *testing.T) {
 }
 
 func TestLaunchRuleListShowsHeldEventsAndCursor(t *testing.T) {
-	_, st, mux := launchRuleHub(t, &fakeEventRuleChecker{})
+	rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
+	st, mux := rh.st, rh.mux
 	r, err := st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))
 	if err != nil {
 		t.Fatal(err)
@@ -389,7 +650,7 @@ func TestLaunchRuleListShowsHeldEventsAndCursor(t *testing.T) {
 			json.RawMessage(`{"key":"k1","coalesce_key":"c","observed_at":"2026-11-05T10:00:00Z","inputs":{"run_id":"5"}}`),
 		},
 	}
-	if err := st.WriteState(t.Context(), r.ID, state); err != nil {
+	if err := rh.w.WriteState(t.Context(), r.ID, state); err != nil {
 		t.Fatal(err)
 	}
 	rec := sendRoute(t, mux, http.MethodGet, "/api/launch-rules", "")
@@ -440,7 +701,7 @@ func TestSaveRefusesUndatedRuns(t *testing.T) {
 func heldQueue(n int) *launchrule.State {
 	st := &launchrule.State{
 		Status:     launchrule.Status{LastRunID: "wf_confirmed", LastMinted: time.Date(2026, time.November, 2, 9, 0, 0, 0, time.UTC)},
-		Cursor:     json.RawMessage(`{"baseline_at":"2026-11-01T00:00:00Z"}`),
+		Cursor:     json.RawMessage(`{"r":{"runs":{"baseline_at":"2026-11-01T00:00:00Z","last_complete":"2026-11-01T00:00:00Z"}}}`),
 		Launched:   json.RawMessage(`[{"key":"run:1"}]`),
 		Superseded: json.RawMessage(`[{"key":"run:0"}]`),
 	}
@@ -451,7 +712,8 @@ func heldQueue(n int) *launchrule.State {
 }
 
 func TestRebaselineEditDropsHeldEvents(t *testing.T) {
-	dir, st, mux := launchRuleHub(t, &fakeEventRuleChecker{})
+	rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
+	dir, st, mux := rh.dir, rh.st, rh.mux
 	r, err := st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -462,7 +724,7 @@ func TestRebaselineEditDropsHeldEvents(t *testing.T) {
 	}
 	held := heldQueue(3)
 	held.Population = fresh.Population
-	if err := st.WriteState(t.Context(), r.ID, held); err != nil {
+	if err := rh.w.WriteState(t.Context(), r.ID, held); err != nil {
 		t.Fatalf("WriteState: %v", err)
 	}
 	moved := strings.Replace(runRuleBody, "cplieger/animap-source", "cplieger/animap", 1)
@@ -500,7 +762,7 @@ func TestRebaselineEditDropsHeldEvents(t *testing.T) {
 		if rec := sendRoute(t, mux, http.MethodPut, "/api/launch-rules/"+r.ID, body); rec.Code != http.StatusOK {
 			t.Fatalf("PUT with confirm_drop 3 = %d %s, want 200", rec.Code, rec.Body.String())
 		}
-		reloaded, err := launchrule.NewStore(dir)
+		reloaded, _, err := launchrule.NewStore(dir)
 		if err != nil {
 			t.Fatalf("reload: %v", err)
 		}
@@ -519,7 +781,40 @@ func TestRebaselineEditDropsHeldEvents(t *testing.T) {
 		}
 	})
 	t.Run("the attempt in flight is abandoned with cause=edit", func(t *testing.T) {
-		t.Skip("needs 5.4")
+		rh := newRuleHub(t, &fakeEventRuleChecker{}, "")
+		r, err := rh.st.Create(t.Context(), eventRuleOf("cplieger/animap-source"))
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		fresh, _ := rh.st.State(r.ID)
+		held := heldQueue(1)
+		held.Population = fresh.Population
+		if err := rh.w.WriteState(t.Context(), r.ID, held); err != nil {
+			t.Fatalf("WriteState: %v", err)
+		}
+		if err := rh.conf.NameAttempt(r.ID, "run:a", "wf_flight"); err != nil {
+			t.Fatalf("Setup: NameAttempt: %v", err)
+		}
+		body := strings.TrimSuffix(moved, "}") + `,"confirm_drop":1}`
+		if rec := sendRoute(t, rh.mux, http.MethodPut, "/api/launch-rules/"+r.ID, body); rec.Code != http.StatusOK {
+			t.Fatalf("PUT with confirm_drop 1 = %d %s, want 200", rec.Code, rec.Body.String())
+		}
+		s, err := rh.st.State(r.ID)
+		if err != nil {
+			t.Fatalf("State: %v", err)
+		}
+		var attempts []struct {
+			WorkflowID string `json:"workflow_id"`
+			State      string `json:"state"`
+			Cause      string `json:"cause"`
+		}
+		if err := json.Unmarshal(s.Attempts, &attempts); err != nil || len(attempts) != 1 ||
+			attempts[0].WorkflowID != "wf_flight" || attempts[0].State != "abandoned" || attempts[0].Cause != "edit" {
+			t.Errorf("attempts = %s (%v), want wf_flight abandoned with cause edit", s.Attempts, err)
+		}
+		if s.Held() != 0 {
+			t.Errorf("held = %d after the rebaseline, want 0", s.Held())
+		}
 	})
 }
 
@@ -537,7 +832,8 @@ func TestPutRefusesWhenBranchSwitch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			forge := &fakeEventRuleChecker{}
-			dir, st, mux := launchRuleHub(t, forge)
+			rh := newRuleHub(t, forge, "")
+			dir, st, mux := rh.dir, rh.st, rh.mux
 			r, err := st.Create(t.Context(), tc.seed)
 			if err != nil {
 				t.Fatalf("Create: %v", err)
@@ -555,7 +851,9 @@ func TestPutRefusesWhenBranchSwitch(t *testing.T) {
 				t.Errorf("a refused switch read the forge %d times", forge.count())
 			}
 			t.Run("no RuleChanged is delivered", func(t *testing.T) {
-				t.Skip("needs 5.4")
+				if got := rh.conf.delivered(); len(got) != 0 {
+					t.Errorf("RuleChanged delivered %v for a refused switch, want none", got)
+				}
 			})
 		})
 	}

@@ -310,7 +310,7 @@ func TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow(t *testing.T) {
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stalePauseReason),
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
 	}
-	st, err := launchrule.NewStore(t.TempDir())
+	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t 
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
 	br.callErrs = map[string]error{methodKiroWorkflowInspect: errHoldFault}
 
-	st, err := launchrule.NewStore(t.TempDir())
+	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
@@ -491,6 +491,81 @@ func TestSweepOrphanedRuns_InspectUnknownReleasesImmediately(t *testing.T) {
 
 	if _, held := h.runs.lease("wf_1"); held {
 		t.Error("inspect confirmed an unknown workflow, but its lease survived")
+	}
+}
+
+// scheduleAfterAFailedSlot is a daily schedule whose previous slot failed and whose current slot's run, wf_1, is
+// started under a scheduled lease, wired as the hub's launch-rule store.
+func scheduleAfterAFailedSlot(t *testing.T, h *Runtime) (*launchrule.Store, string) {
+	t.Helper()
+	st, _, err := launchrule.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("launchrule.NewStore: %v", err)
+	}
+	entry := putClockRule(t, st, "bundled://publish", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	prev := launchrule.Run{ScheduleID: entry.ID, WorkflowID: "wf_0"}
+	if err := st.RecordStart(t.Context(), prev); err != nil {
+		t.Fatalf("RecordStart(wf_0): %v", err)
+	}
+	if err := st.RecordOutcome(t.Context(), prev, launchrule.Outcome{Status: launchrule.StatusFailed, Reason: "x"}); err != nil {
+		t.Fatalf("RecordOutcome(wf_0): %v", err)
+	}
+	if err := st.RecordStart(t.Context(), launchrule.Run{ScheduleID: entry.ID, WorkflowID: "wf_1"}); err != nil {
+		t.Fatalf("RecordStart(wf_1): %v", err)
+	}
+	h.runs.launchRules = st
+	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
+		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginScheduled, ScheduleID: entry.ID,
+	}); err != nil {
+		t.Fatalf("Put lease: %v", err)
+	}
+	return st, entry.ID
+}
+
+// A run the boot list omits but inspect reads as over writes its slot's ending before its lease goes, so the
+// schedule's failed-slot count follows that slot.
+func TestSweepOrphanedRuns_AnAbsentRunInspectReadsOverRecordsItsSlot(t *testing.T) {
+	for name, tc := range map[string]struct {
+		inspect     func(br *fakeBridge)
+		wantStatus  launchrule.OutcomeStatus
+		wantFailed  int
+		description string
+	}{
+		"completed": {
+			inspect: func(br *fakeBridge) {
+				br.callResults[methodKiroWorkflowInspect] = inspectReply(t, "wf_1", marotte.RunStatusCompleted, "")
+			},
+			wantStatus: launchrule.StatusCompleted, wantFailed: 0,
+			description: "a completed slot sets the count to 0",
+		},
+		"not found": {
+			inspect: func(br *fakeBridge) {
+				br.callRPCErrs = map[string]*marotte.RPCError{methodKiroWorkflowInspect: workflowNotFoundErr()}
+			},
+			wantStatus: launchrule.StatusUnknown, wantFailed: 2,
+			description: "a slot whose run nobody knows any more adds one",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, _, br := newTestHub()
+			br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
+			tc.inspect(br)
+			st, id := scheduleAfterAFailedSlot(t, h)
+
+			h.runs.sweepOrphaned(t.Context())
+
+			if _, held := h.runs.lease("wf_1"); held {
+				t.Error("inspect confirmed the run is over, but its lease survived")
+			}
+			row, ok := st.Clock(id)
+			if !ok {
+				t.Fatalf("Clock(%s) missing", id)
+			}
+			if row.LastStatus != tc.wantStatus || row.FailedSlots != tc.wantFailed {
+				t.Errorf("row = (%q, failed slots %d), want (%q, %d): %s",
+					row.LastStatus, row.FailedSlots, tc.wantStatus, tc.wantFailed, tc.description)
+			}
+		})
 	}
 }
 
@@ -1104,8 +1179,11 @@ func TestOrphanSweepCancelsTriggeredRunWithTriggerReason(t *testing.T) {
 		rec := capture.Default(t)
 		fc := &fakeConfirmer{}
 		h, _, cancelled := orphanHub(t, fc, "wf_1")
+		before := failureCounts(t)
 
 		h.runs.sweepOrphaned(t.Context())
+
+		wantFailureDeltas(t, before, map[string]float64{"triggered/orphaned": 1})
 
 		if got := cancelled(); !slices.Equal(got, []string{"wf_1"}) {
 			t.Fatalf("cancelled %q, want [wf_1]", got)

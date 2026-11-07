@@ -24,7 +24,7 @@ var storeWriteNames = []string{
 	"closeRunTurns", "swapMerged", "dropUnreadSteers", "appendLaneless", "appendBetweenTurns",
 }
 
-// A walk that finds nothing must fail. 44 measured; the slack covers a site moving, not a dropped callee class.
+// A walk that finds nothing must fail. The floor sits below the measured count; the slack covers a site moving, not a dropped callee class.
 const storeWriteFloor = 35
 
 type durableSite struct {
@@ -148,7 +148,7 @@ var abandonableWriteSites = []durableSite{{
 	because: "the new session's id and facts — no conversational record; a record that did not take them fails the generation, which reaps the session, and the next open runs again",
 }, {
 	file:    "internal/agent/turn_open.go",
-	fn:      "OpenTurn",
+	fn:      "openTurn",
 	calls:   []string{"OpenTurn", "WriteCounters"},
 	because: "a prompt's turn_open on the request's context: a request that died before its turn opened has no turn to record, and the caller answers the request's error",
 }, {
@@ -255,11 +255,6 @@ var inheritedWriteSites = []durableSite{{
 	calls:   []string{"AppendBetweenTurns"},
 	because: "a forwarder for the command path; the command decides",
 }, {
-	file:    "internal/agent/command_deps.go",
-	fn:      "OpenTurn",
-	calls:   []string{"OpenTurn"},
-	because: "a forwarder for the command path; the command decides",
-}, {
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "persistModelPick",
 	calls:   []string{"Mutate"},
@@ -304,6 +299,11 @@ var inheritedWriteSites = []durableSite{{
 	fn:      "appendAfterClosed",
 	calls:   []string{"Append"},
 	because: "the run appender's frame context",
+}, {
+	file:    "internal/agent/run_log.go",
+	fn:      "gradeLocked",
+	calls:   []string{"Append"},
+	because: "its trigger's context: node_complete's derived lifecycle context or a run read's request; a lost grade is recorded by the next read",
 }, {
 	file:    "internal/agent/run_appender.go",
 	fn:      "closeRun",

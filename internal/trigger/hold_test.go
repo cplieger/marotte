@@ -2,9 +2,12 @@ package trigger
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/forgeapi/v2"
@@ -33,7 +36,7 @@ func (h *harness) eligible(ruleID string) []string {
 	if !ok {
 		h.t.Fatalf("no rule %s", ruleID)
 	}
-	p := &Poller{store: h.store, marks: h.marks, now: func() time.Time { return h.now }}
+	p := &poller{c: h.c, now: func() time.Time { return h.now }}
 	pr := p.load(&r, Feed{Connection: r.When.Event.Connection, Selector: r.When.Event.Repo}, h.now)
 	if pr == nil {
 		h.t.Fatalf("rule %s did not load", ruleID)
@@ -97,10 +100,87 @@ func TestNewestDoesNotSupersedeLaunchingEntry(t *testing.T) {
 	}
 	done()
 
-	t.Run("an entry holding a live record", func(t *testing.T) { t.Skip("needs 5.8") })
-	t.Run("the launching entry's confirmation leaves the newer one queued", func(t *testing.T) { t.Skip("needs 5.8") })
-	t.Run("an abandon supersedes the older key", func(t *testing.T) { t.Skip("needs 5.8") })
-	t.Run("the mark clearing with no attempt supersedes the older key", func(t *testing.T) { t.Skip("needs 5.8") })
+	t.Run("an entry holding a live record", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			h, id, k41, k42 := launchedThenNewer(t, tc, nil)
+			es := h.state(id)
+			if !eq(keysOf(es.queue), []string{k41, k42}) || len(es.superseded) != 0 {
+				t.Errorf("queue %v, superseded %+v; want 42 queued beside 41's live attempt", keysOf(es.queue), es.superseded)
+			}
+			if got := h.eligible(id); len(got) != 0 {
+				t.Errorf("eligible while 41's attempt is live = %v, want nothing", got)
+			}
+		})
+	})
+	t.Run("the launching entry's confirmation leaves the newer one queued", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			h, id, k41, k42 := launchedThenNewer(t, tc, nil)
+			tc.ConfirmEvent(id, k41, "wf_1")
+			synctest.Wait()
+			es := h.state(id)
+			if len(es.superseded) != 0 || len(es.launched) != 1 || es.launched[0].Key != k41 {
+				t.Errorf("superseded %+v, launched %+v; want 41 launched and nothing superseded", es.superseded, es.launched)
+			}
+			if got := h.eligible(id); !eq(got, []string{k42}) {
+				t.Errorf("eligible = %v, want 42 alone", got)
+			}
+		})
+	})
+	t.Run("an abandon supersedes the older key", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			h, id, k41, k42 := launchedThenNewer(t, tc, nil)
+			advance(launchConfirmBound + launchBackoff[0])
+			es := h.state(id)
+			if !eq(es.superseded, []supersededEntry{{Key: k41, By: k42}}) {
+				t.Errorf("superseded %+v, want 41 superseded by 42", es.superseded)
+			}
+			if rec := tc.recordOf(id, "wf_2"); rec == nil || rec.key != k42 {
+				t.Errorf("record of wf_2 = %+v, want 42 launched", rec)
+			}
+		})
+	})
+	t.Run("the mark clearing with no attempt supersedes the older key", func(t *testing.T) {
+		inBubble(t, func(t *testing.T, tc *testConfirmer) {
+			h, id, k41, k42 := launchedThenNewer(t, tc, errListTimedOut)
+			es := h.state(id)
+			if !eq(keysOf(es.queue), []string{k42}) || !eq(es.superseded, []supersededEntry{{Key: k41, By: k42}}) {
+				t.Errorf("queue %v, superseded %+v; want 41 superseded by 42 once its launch ended", keysOf(es.queue), es.superseded)
+			}
+		})
+	})
+}
+
+// errListTimedOut is a launch that failed before workflow/new.
+var errListTimedOut = errors.New("listRecipes timed out")
+
+// launchedThenNewer queues run 41 on a newest rule and launches it, run 42 matching while the call is out. A nil
+// failBefore names wf_1 for 41; otherwise the call fails with it before any run exists.
+func launchedThenNewer(t *testing.T, tc *testConfirmer, failBefore error) (h *harness, id, k41, k42 string) {
+	t.Helper()
+	h = tc.pollerOn()
+	id = h.create(runSpec("success")).ID
+	h.runPage()
+	h.poll()
+	created := pollStart.Add(time.Minute)
+	h.runPage(run(41, forgeapi.CheckPassing, created))
+	h.poll()
+	k41 = h.queued(id)[0].Key
+	f := tc.startLauncher(func(n int, call launchCall) (string, error) {
+		if n > 1 {
+			return fmt.Sprintf("wf_%d", n), tc.NameAttempt(call.ruleID, call.key, fmt.Sprintf("wf_%d", n))
+		}
+		h.runPage(run(42, forgeapi.CheckPassing, created.Add(time.Minute)))
+		h.poll()
+		if failBefore != nil {
+			return "", failBefore
+		}
+		return "wf_1", tc.NameAttempt(call.ruleID, call.key, "wf_1")
+	})
+	tc.letLaunch(nil)
+	if calls := f.taken(); len(calls) == 0 || calls[0].key != k41 {
+		t.Fatalf("calls = %+v, want 41 launched first", calls)
+	}
+	return h, id, k41, h.queued(id)[len(h.queued(id))-1].Key
 }
 
 func TestPruneKeepsOpenItems(t *testing.T) {
@@ -122,7 +202,7 @@ func TestPruneKeepsOpenItems(t *testing.T) {
 		if len(lc.Items) != 5001 || !lc.TooMany {
 			t.Errorf("entries %d, too many %v; want every open item kept and the rule blocked", len(lc.Items), lc.TooMany)
 		}
-		pr := (&Poller{store: h.store, marks: h.marks}).load(&r, Feed{Connection: testConn, Selector: testRepo}, h.now)
+		pr := (&poller{c: h.c}).load(&r, Feed{Connection: testConn, Selector: testRepo}, h.now)
 		if got := pr.blocked(); got != "more than 5,000 open items" {
 			t.Errorf("blocked = %q, want more than 5,000 open items", got)
 		}
@@ -226,7 +306,7 @@ func TestFifoHeadHoldsLaterEntries(t *testing.T) {
 		ev.Filter.Branch = ""
 		edited, _ := h.store.Get(id)
 		edited.When.Event = ev
-		if _, err := h.store.Replace(t.Context(), id, &edited, 0); err != nil {
+		if err := changeRule(t, h.c, id, 0, func(r *launchrule.Rule) { *r = edited }); err != nil {
 			t.Fatal(err)
 		}
 		h.runPage(run(41, forgeapi.CheckPassing, pollStart.Add(time.Minute)), other)
@@ -312,7 +392,7 @@ func TestQueueFullLeavesEventsAtForge(t *testing.T) {
 		if _, fired := c.Fired[43]; fired {
 			t.Error("run 43 is in fired, want it matched again later")
 		}
-		if got := runBound([]*pollRule{(&Poller{store: h.store, marks: h.marks}).load(&r, Feed{Connection: testConn, Selector: testRepo}, h.now)}, h.now, horizon(h.now)); got.After(created) {
+		if got := runBound([]*pollRule{(&poller{c: h.c}).load(&r, Feed{Connection: testConn, Selector: testRepo}, h.now)}, h.now, horizon(h.now)); got.After(created) {
 			t.Errorf("bound = %v, want it held back to run 43's creation", got)
 		}
 		h.dequeue(r.ID)

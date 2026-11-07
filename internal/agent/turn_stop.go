@@ -152,7 +152,7 @@ func (lc *chatLifecycle) keepUnsentLocked(stop *command.TurnStop) bool {
 	return acted
 }
 
-// armCallGraceLocked cancels t's call at d unless it ended first (EndPromptCall). Caller holds mu.
+// armCallGraceLocked cancels t's call at d unless it ended first (endPromptCall). Caller holds mu.
 func (lc *chatLifecycle) armCallGraceLocked(t *activeTurn, d time.Duration) {
 	if t.graceTimer != nil {
 		t.graceTimer.Stop()
@@ -179,8 +179,8 @@ func (bc *bridgeCoordinator) armWireGrace(chatID marotte.ChatID, turnID string, 
 	})
 }
 
-// EndPromptCall forgets the named turn's call once it returned: its cancel, its grace and its hold on lc.call.
-func (bc *bridgeCoordinator) EndPromptCall(turn command.TurnRef) {
+// endPromptCall forgets the named turn's call once it returned: its cancel, its grace and its hold on lc.call.
+func (bc *bridgeCoordinator) endPromptCall(turn command.TurnRef) {
 	lc, ok := bc.turns.lookup(turn.Chat)
 	if !ok {
 		return

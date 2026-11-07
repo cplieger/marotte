@@ -47,7 +47,7 @@ func agentRunOnChat(t *testing.T, id string, opts ...Option) (*Runtime, *fakeBri
 // closeReviewStep completes agentRunOnChat's step, leaving the run with no open turn.
 func closeReviewStep(t *testing.T, h *Runtime, id string) {
 	t.Helper()
-	if _, _, err := h.runs.log.closeNode(t.Context(), id, workflow.PathKey([]string{id, "review"}), "completed", ""); err != nil {
+	if _, _, err := h.runs.log.closeNode(t.Context(), id, workflow.PathKey([]string{id, "review"}), "completed", "", nil); err != nil {
 		t.Fatalf("close the step: %v", err)
 	}
 }

@@ -89,6 +89,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.ContextCategory](),
 	wiregen.TypeRef[marotte.ContextBreakdown](),
 	wiregen.TypeRef[marotte.EntryTurnClose](),
+	wiregen.TypeRef[marotte.EntryStepGraded](),
 	wiregen.TypeRef[marotte.ConnectedPayload](),
 	wiregen.TypeRef[marotte.SubjectStamp](),
 	wiregen.TypeRef[marotte.PendingSnapshotPayload](),

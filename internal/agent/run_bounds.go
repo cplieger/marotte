@@ -19,6 +19,7 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/notice"
+	"github.com/cplieger/marotte/internal/obs"
 	"github.com/cplieger/marotte/internal/runlease"
 )
 
@@ -556,6 +557,7 @@ func (rs *Runs) retryTermination(ctx context.Context, workflowID, reason string,
 			"attempts", attempt, "reason", reason)
 		// Only a stop marotte decided reports on the row: a person's cancel (reason "") failed in front of them.
 		if l, held := rs.lease(workflowID); held && reason != "" {
+			countUnattendedFailure(&l, obs.RunCancelGivenUp)
 			rs.recordScheduleOutcome(ctx, ruleRun(&l),
 				launchrule.Outcome{Status: launchrule.StatusFailed, Reason: reasonCancelRefused})
 		}
@@ -747,7 +749,7 @@ func (rs *Runs) cancelExpired(workflowID string, armedFor time.Time) {
 	if !rs.claimExpiredDeadline(workflowID, armedFor) {
 		return
 	}
-	reason, rowReason := runEndOverran, reasonOverran
+	reason, rowReason, counted := runEndOverran, reasonOverran, obs.RunOverran
 	switch {
 	case slotRanOut && l.ScheduleID != "":
 		slog.Error(logMsgRunOverran, "workflow_id", workflowID, "schedule_id", l.ScheduleID,
@@ -756,17 +758,18 @@ func (rs *Runs) cancelExpired(workflowID string, armedFor time.Time) {
 		slog.Info(logMsgRunYieldedToSlot, "workflow_id", workflowID, "recipe", l.Recipe,
 			"slot_at", l.SlotAt)
 	case backstopSpent:
-		rowReason = reasonBackstop
+		rowReason, counted = reasonBackstop, obs.RunBackstop
 		slog.Error(logMsgRunBackstop, "workflow_id", workflowID,
 			"backstop", runBackstop.String(), "recipe", l.Recipe)
 	default:
-		reason, rowReason = runEndStalled, reasonStalled
+		reason, rowReason, counted = runEndStalled, reasonStalled, obs.RunStalled
 		slog.Error(logMsgRunStalled, "workflow_id", workflowID,
 			"idle_window", runIdleWindow.String(), "recipe", l.Recipe)
 	}
 	if rs.cancelBounded(workflowID, reason, armedFor) != nil {
 		return
 	}
+	countUnattendedFailure(&l, counted)
 	// Overwrites the cancel's own terminal frame, which may land first and names no bound.
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
@@ -913,7 +916,9 @@ func (rs *Runs) observeStart(ctx context.Context, chatID marotte.ChatID, msg *ma
 }
 
 // observeComplete drops a terminal run's bounds and step registry, closing open step turns, then
-// translates. A non-terminal run_complete (an onMaxIterations pause) keeps the arm.
+// translates. A non-terminal run_complete (an onMaxIterations pause) keeps the arm. Either records the run's due
+// step grades (goGradeRun), so one a failed read left at node_complete is not left to a reader; the terminal one is
+// the last read any of them is due.
 func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	f := decodeLifecycleFrame(msg)
 	if f.WorkflowID != "" && (f.Status.Terminal() || f.Status == marotte.RunStatusPaused) {
@@ -922,6 +927,7 @@ func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg 
 	if f.WorkflowID != "" && f.Status.Terminal() {
 		// Before HandleRunComplete: the client repaints on its `run_finished` invalidation.
 		rs.closeRun(ctx, f.WorkflowID, string(f.Status))
+		rs.goGradeRun(f.WorkflowID, gradeAtRunEnd)
 		rs.recordRunNotice(chatID, f.WorkflowID, cmp.Or(f.FinalState.RunLabel, f.FinalState.WorkflowName, f.WorkflowID))
 		// Before forgetBounds, which releases the lease the label, the parent and the schedule come from.
 		rs.notifyRunOutcome(ctx, chatID, &f)
@@ -934,6 +940,7 @@ func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg 
 			defer rs.runEnded()
 		}
 	} else if f.WorkflowID != "" && f.Status == marotte.RunStatusPaused {
+		rs.goGradeRun(f.WorkflowID, gradeMidRun)
 		rs.notifyRunOutcome(ctx, chatID, &f)
 	}
 	rs.translate.HandleRunComplete(ctx, chatID, msg)

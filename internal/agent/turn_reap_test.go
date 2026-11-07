@@ -273,7 +273,7 @@ func TestCompactionReap_AnExpiryAfterThePromptCallEndedClaimsNothing(t *testing.
 	h, turnID, _, pctx := newCompactionReapFixture(t)
 	synctest.Test(t, func(t *testing.T) {
 		h.coord.CompactionFailed("c1", turnID, "compaction failed")
-		h.coord.EndPromptCall(command.TurnRef{Chat: "c1", Turn: turnID})
+		h.coord.endPromptCall(command.TurnRef{Chat: "c1", Turn: turnID})
 		time.Sleep(compactionFailedTurnBudget)
 		synctest.Wait()
 	})

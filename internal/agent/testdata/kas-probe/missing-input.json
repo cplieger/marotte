@@ -1,0 +1,14 @@
+{
+  "_meta": {
+    "date": "2026-11-07",
+    "kas": "0.66.91",
+    "kiroCli": "3.1.0",
+    "recorded": "live",
+    "regenerate": "go test ./internal/bridge/ -run TestProbeMissingInput -kas-trigger-probe"
+  },
+  "created": true,
+  "criterion": "how a triggered launch is classed: a -32602 *marotte.RPCError blocks the rule, another error counts on the 24-hour clock, an accepted run launches",
+  "invoke_ok": true,
+  "probe": "workflow/new of a recipe declaring run_id and wait, with only wait given",
+  "run_start": true
+}

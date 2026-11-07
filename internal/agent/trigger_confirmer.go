@@ -3,6 +3,7 @@ package agent
 import (
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/trigger"
 )
 
 // TriggerConfirmer decides every event rule's launch attempts (trigger.Confirmer). Runs holds nil when no rule store
@@ -19,9 +20,10 @@ type TriggerConfirmer interface {
 	PruneAbandoned(ruleID string, statuses map[string]marotte.RunStatus)
 	// RuleChanged reports a landed definitions write of an event rule.
 	RuleChanged(ruleID string, change launchrule.Change)
-	// Retried is a person's retry of the run. true means the rule abandoned the run, so the retry is the person's
-	// and takes a manual lease; an error refuses the retry.
-	Retried(workflowID string) (bool, error)
+	// Retried is a person's retry of the run. HandedBack means the rule abandoned the run, so the retry is the
+	// person's and takes a manual lease; Event names a live attempt's event, under whose lease the retry runs; an
+	// error refuses the retry.
+	Retried(workflowID string) (trigger.RetryAnswer, error)
 	// RecordOutcome writes the run's outcome on its rule's row, only for the run that confirmed the rule's event.
 	RecordOutcome(ruleID, workflowID string, outcome launchrule.Outcome)
 	// RecordEnding is RecordOutcome for how the run ended on its own, landing only while the row still reads it
@@ -29,11 +31,12 @@ type TriggerConfirmer interface {
 	RecordEnding(ruleID, workflowID string, outcome launchrule.Outcome)
 	// DismissGap clears the rule's catch-up gap segment.
 	DismissGap(ruleID string) error
+	// View is the event rule's state as its row shows it, with what no write persisted; it answers what
+	// launchrule.Store.State does for a rule it cannot show.
+	View(ruleID string) (launchrule.State, error)
 }
 
 // WithTriggerConfirmer wires the event rules' confirmer; without it no launch is triggered.
-//
-//deadset:ignore DS1102 -- composition wires it with the trigger runner; until that lands only the tests do
 func WithTriggerConfirmer(c TriggerConfirmer) Option {
 	return func(rt *Runtime) { rt.runs.confirmer = c }
 }

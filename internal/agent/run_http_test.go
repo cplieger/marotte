@@ -80,7 +80,7 @@ func TestHandleRun_CarriesTheRunsStepEnds(t *testing.T) {
 			t.Fatal(err)
 		}
 		h.runs.log.stopReason("wf_1", build, marotte.StopReasonToolUse)
-		if _, _, err := h.runs.log.closeNode(t.Context(), "wf_1", build, "completed", ""); err != nil {
+		if _, _, err := h.runs.log.closeNode(t.Context(), "wf_1", build, "completed", "", nil); err != nil {
 			t.Fatal(err)
 		}
 

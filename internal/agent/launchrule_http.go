@@ -73,6 +73,9 @@ func (rr *runRoutes) registerLaunchRules(mux *http.ServeMux, write func(string, 
 	write("POST /api/launch-rules", rr.handleLaunchRuleCreate)
 	write("PUT /api/launch-rules/{id}", rr.handleLaunchRuleReplace)
 	write("DELETE /api/launch-rules/{id}", rr.handleLaunchRuleDelete)
+	if rr.runs.confirmer != nil {
+		write("POST /api/launch-rules/{id}/dismiss-gap", rr.handleLaunchRuleDismissGap)
+	}
 }
 
 func (rr *runRoutes) handleLaunchRuleList(w http.ResponseWriter, _ *http.Request) {
@@ -80,13 +83,22 @@ func (rr *runRoutes) handleLaunchRuleList(w http.ResponseWriter, _ *http.Request
 	rules := st.List()
 	out := make([]launchRuleView, 0, len(rules))
 	for i := range rules {
-		state, err := st.State(rules[i].ID)
+		state, err := rr.ruleState(&rules[i])
 		if errors.Is(err, launchrule.ErrNotFound) {
 			continue
 		}
 		out = append(out, launchRuleViewOf(&rules[i], &state, err))
 	}
 	httpserver.WriteJSON(w, map[string]any{"rules": out})
+}
+
+// ruleState is the state a rule's view shows: an event rule's as the confirmer holds it, since a row text or a
+// write-failure block may be in no file.
+func (rr *runRoutes) ruleState(r *launchrule.Rule) (launchrule.State, error) {
+	if r.When.Event != nil && rr.runs.confirmer != nil {
+		return rr.runs.confirmer.View(r.ID)
+	}
+	return rr.runs.launchRules.State(r.ID)
 }
 
 func (rr *runRoutes) handleLaunchRuleCreate(w http.ResponseWriter, r *http.Request) {
@@ -121,13 +133,24 @@ func (rr *runRoutes) handleLaunchRuleReplace(w http.ResponseWriter, r *http.Requ
 	if !rr.prepareRule(r.Context(), w, &rule, &prev) {
 		return
 	}
-	saved, err := rr.runs.launchRules.Replace(r.Context(), id, &rule, confirmDrop)
+	saved, change, err := rr.runs.launchRules.Replace(r.Context(), id, &rule, confirmDrop)
+	if err == nil {
+		rr.ruleChanged(saved.ID, change)
+	}
 	rr.answerSave(w, &saved, err)
+}
+
+// ruleChanged hands an event rule's landed definitions write to the confirmer, which owns the rule's state; a
+// clock rule's change is empty.
+func (rr *runRoutes) ruleChanged(id string, change launchrule.Change) {
+	if change != "" && rr.runs.confirmer != nil {
+		rr.runs.confirmer.RuleChanged(id, change)
+	}
 }
 
 func (rr *runRoutes) handleLaunchRuleDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	err := rr.runs.launchRules.Delete(r.Context(), id)
+	deleted, err := rr.runs.launchRules.Delete(r.Context(), id)
 	switch {
 	case errors.Is(err, launchrule.ErrNotFound):
 		httpreply.NotFound(w, "no such launch rule")
@@ -136,8 +159,33 @@ func (rr *runRoutes) handleLaunchRuleDelete(w http.ResponseWriter, r *http.Reque
 		httpreply.ServerError(w, "could not delete the launch rule", err)
 		return
 	}
+	if deleted.When.Event != nil {
+		rr.ruleChanged(deleted.ID, launchrule.ChangeDelete)
+	}
 	slog.Info("launch rule deleted", "id", logsafe.Field(id))
 	httpserver.WriteJSON(w, map[string]any{"ok": true})
+}
+
+// handleLaunchRuleDismissGap serves POST /api/launch-rules/{id}/dismiss-gap, answering the rule as it now reads; only
+// an event rule has gaps, so any other id answers 404.
+func (rr *runRoutes) handleLaunchRuleDismissGap(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	switch err := rr.runs.confirmer.DismissGap(id); {
+	case errors.Is(err, launchrule.ErrNotFound):
+		httpreply.NotFound(w, "no such event rule")
+		return
+	case err != nil:
+		httpreply.ServerError(w, "could not dismiss the gap", err)
+		return
+	}
+	rule, found := rr.runs.launchRules.Get(id)
+	if !found {
+		httpreply.NotFound(w, "no such event rule")
+		return
+	}
+	state, stateErr := rr.ruleState(&rule)
+	slog.Info("launch rule gaps dismissed", "id", logsafe.Field(id))
+	httpserver.WriteJSON(w, launchRuleViewOf(&rule, &state, stateErr))
 }
 
 // readRuleBody decodes a client's rule, refusing server-written and unknown fields with a 400. withConfirm takes
@@ -241,7 +289,7 @@ func (rr *runRoutes) answerSave(w http.ResponseWriter, saved *launchrule.Rule, e
 		writeSaveErr(w, err)
 		return
 	}
-	state, stateErr := rr.runs.launchRules.State(saved.ID)
+	state, stateErr := rr.ruleState(saved)
 	slog.Info("launch rule saved", "id", saved.ID, "recipe", logsafe.Field(saved.Name), "enabled", saved.Enabled)
 	httpserver.WriteJSON(w, launchRuleViewOf(saved, &state, stateErr))
 }

@@ -42,7 +42,7 @@ const {
   mockRequestTurnRange,
   mockListTabs,
   mockRebuildLiveRuns,
-  mockInvalidate,
+  mockRereadHeldRuns,
   mockRunTurnHeldSeq,
   mockRequestRunTurnRange,
   mockPeekRunState,
@@ -56,8 +56,8 @@ const {
   ),
   mockRequestTurnRange: vi.fn((_chatID: string, _turnID: string) => undefined),
   mockListTabs: vi.fn((_signal?: AbortSignal) => Promise.resolve(true)),
-  mockRebuildLiveRuns: vi.fn((_cause?: string, _signal?: AbortSignal) => Promise.resolve()),
-  mockInvalidate: vi.fn(),
+  mockRebuildLiveRuns: vi.fn((_signal?: AbortSignal) => Promise.resolve()),
+  mockRereadHeldRuns: vi.fn(),
   mockRunTurnHeldSeq: vi.fn((_id: string, _turn: string): number | undefined => undefined),
   mockRequestRunTurnRange: vi.fn((_id: string, _turn: string, _after?: number) => undefined),
   mockPeekRunState: vi.fn((_id: string): unknown => undefined),
@@ -73,7 +73,7 @@ vi.mock("./store-load.js", () => ({
 vi.mock("./tabs-sync.js", () => ({ listTabs: mockListTabs }));
 vi.mock("./run-store.js", () => ({
   rebuildLiveRuns: mockRebuildLiveRuns,
-  invalidateCachedRuns: mockInvalidate,
+  rereadHeldRuns: mockRereadHeldRuns,
   peekRunState: mockPeekRunState,
   runTurnHeldSeq: mockRunTurnHeldSeq,
 }));
@@ -742,8 +742,7 @@ describe("revalidate", () => {
 
     expect(mockLoadList).toHaveBeenCalledWith(controller.signal);
     expect(mockListTabs).toHaveBeenCalledWith(controller.signal);
-    expect(mockRebuildLiveRuns).toHaveBeenCalledWith(expect.any(String), controller.signal);
-    expect(mockInvalidate).toHaveBeenCalledWith(mockRebuildLiveRuns.mock.calls[0]?.[0]);
+    expect(mockRebuildLiveRuns).toHaveBeenCalledWith(controller.signal);
     expect(mockFetchCatalog).toHaveBeenCalledWith({ signal: controller.signal });
   });
 
@@ -1179,5 +1178,119 @@ describe("attached to a worker host", () => {
     await hostRoundTrip();
     expect(scripted.connections[1]?.aborted()).toBe(false);
     expect(scripted.connections).toHaveLength(2);
+  });
+});
+
+// A run's tree and its step_ends are applied from frames a gap can swallow, and only a run read
+// repairs them, so every revalidation re-reads the held runs once, whichever way it exits.
+describe("every revalidation re-reads the held runs once", () => {
+  it("a same-epoch hello whose digest moved nothing", async () => {
+    observeStamp({ kind: "chat", ref: "X", version: "3" });
+    scripted.respond("/api/sync", digestAnswer([]));
+    let reconciled = 0;
+    const unsub = onBus(BUS_RECONCILE, () => {
+      reconciled++;
+    });
+    try {
+      await _revalidateForTest(ctx({ cause: "hello", full: false }));
+    } finally {
+      unsub();
+    }
+    expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
+    expect(reconciled).toBe(0);
+  });
+
+  it("a hello with no held stamp", async () => {
+    await _revalidateForTest(ctx({ cause: "hello", full: false }));
+    expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
+    expect(scripted.requests).toEqual([]);
+  });
+
+  it("a full revalidation", async () => {
+    let atReconcile = -1;
+    const unsub = onBus(BUS_RECONCILE, () => {
+      atReconcile = mockRereadHeldRuns.mock.calls.length;
+    });
+    try {
+      await _revalidateForTest(ctx({ full: true }));
+    } finally {
+      unsub();
+    }
+    expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
+    expect(atReconcile).toBe(1);
+  });
+
+  it("a digest that answers must_refetch", async () => {
+    observeStamp({ kind: "chats", ref: "", version: "2" });
+    scripted.respond("/api/sync", () => json({ epoch: EPOCH_B, head: "0", must_refetch: true }));
+    await _revalidateForTest(ctx());
+    expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it("the same full cause twice re-reads twice", async () => {
+    await _revalidateForTest(ctx({ cause: "hello", full: true }));
+    await _revalidateForTest(ctx({ cause: "hello", full: true }));
+    expect(mockRereadHeldRuns).toHaveBeenCalledTimes(2);
+  });
+
+  it("a wake re-reads before the wake refresh", async () => {
+    let atResume = -1;
+    const unsub = onBus(BUS_PAGE_RESUMED, () => {
+      atResume = mockRereadHeldRuns.mock.calls.length;
+    });
+    try {
+      await _revalidateForTest(ctx({ cause: "visible", full: false }));
+    } finally {
+      unsub();
+    }
+    expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
+    expect(atResume).toBe(1);
+  });
+
+  it("the body the host routes to this tab, with no verdict", async () => {
+    await _tabRevalidateForTest(tabCtx({ changed: [], removed: [] }));
+    expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it("the body the host routes to this tab, full", async () => {
+    await _tabRevalidateForTest(tabCtx({ full: true }));
+    expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it("a verdict naming the runs subject rebuilds the inventory and re-reads nothing more", async () => {
+    observeStamp({ kind: "chats", ref: "", version: "1" });
+    observeStamp({ kind: "runs", ref: "", version: "1" });
+    scripted.respond(
+      "/api/sync",
+      digestAnswer([
+        { kind: "chats", ref: "", version: "2" },
+        { kind: "runs", ref: "", version: "2" },
+      ]),
+    );
+    const controller = new AbortController();
+
+    await _revalidateForTest(ctx({ signal: controller.signal }));
+
+    expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
+    expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
+    expect(mockRebuildLiveRuns.mock.calls[0]).toEqual([controller.signal]);
+  });
+
+  it("a refused runs frame on the stream re-reads the held runs", async () => {
+    // Held, so the hello's own revalidation settles before the frame.
+    observeStamp({ kind: "chat", ref: "X", version: "3" });
+    const conn = await connectSettled();
+    mockRereadHeldRuns.mockClear();
+    mockRebuildLiveRuns.mockClear();
+
+    conn?.frame({
+      type: "subject_changed",
+      chat_id: "",
+      subject: { kind: "runs", ref: "", version: "2" },
+    });
+    await until(() => mockRebuildLiveRuns.mock.calls.length === 1, "the inventory rebuild");
+
+    expect(mockRereadHeldRuns).toHaveBeenCalledTimes(1);
+    expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
   });
 });

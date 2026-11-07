@@ -45,8 +45,8 @@ import {
   stepTranscriptVersion,
 } from "./run-step-transcript.js";
 import {
-  invalidateRun,
   noteRunChat,
+  readRunUnlessOut,
   runState,
   runChatID,
   runPlan,
@@ -125,7 +125,8 @@ export function showRun(workflowID: string): void {
 
 /** Refetch this run's state and its controls. A run tab's `refresh`. */
 export function refreshRun(workflowID: string): void {
-  invalidateRun(workflowID);
+  // The wake and the reconcile run this right after the revalidation's own read of the run.
+  readRunUnlessOut(workflowID);
   // NO chat refresh: a step's entries are the RUN's, so a chat's window cannot move this pane. The
   // step transcript's refresh is the step GET, armed by `armStepRead`.
 }
@@ -455,9 +456,9 @@ function turnsForStep(
   return turns.filter(([, t]) => turnOpenOf(t)?.node_path === nodePath);
 }
 
-/** The turns with each step's newest closed turn reading its `step_ends` row, the server's grade
- *  under KAS's record of the node. A live `turn_close` cannot carry that grade: it is sealed
- *  before the server reads KAS's record, and a later read of the same entry is a redelivery. */
+/** The turns with each step's newest closed turn reading its `step_ends` row: the step's grade the
+ *  server recorded (`runLog.gradeLocked`), else its broken close. The pane reads a grade only here,
+ *  as the step tree does, so one run read moves both. */
 function gradedTurns(
   turns: readonly [string, TurnState][],
   ends: StepEnds,
@@ -491,19 +492,23 @@ function withStepEnd(state: TurnState, end: RunStepEnd): TurnState {
   if (at === undefined || entry === undefined || close === undefined) {
     return state;
   }
+  // The close's refusal stands only while the grade is refused, as the server's `withGrade` folds it.
+  const dropRefusal = close.refusal !== undefined && end.outcome !== "refused";
   if (
+    !dropRefusal &&
     close.outcome === end.outcome &&
     close.failure_kind === end.failure_kind &&
     close.failure_reason === end.failure_reason
   ) {
     return state;
   }
-  const { failure_kind: _kind, failure_reason: _reason, ...rest } = close;
+  const { failure_kind: _kind, failure_reason: _reason, refusal, ...rest } = close;
   const graded: EntryTurnClose = {
     ...rest,
     outcome: end.outcome,
     ...(end.failure_kind === undefined ? {} : { failure_kind: end.failure_kind }),
     ...(end.failure_reason === undefined ? {} : { failure_reason: end.failure_reason }),
+    ...(refusal === undefined || dropRefusal ? {} : { refusal }),
   };
   const entries = [...state.entries];
   entries[at] = { ...entry, payload: graded };

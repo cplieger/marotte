@@ -109,7 +109,7 @@ func TestSweep_WaitsOnABusyEngineUntilTheNextSlot(t *testing.T) {
 		r.sweep(t.Context())
 		e := st.Clocks()[0].Rule
 		e.Enabled = false
-		if _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
+		if _, _, err := st.Replace(t.Context(), e.ID, &e, 0); err != nil {
 			t.Fatalf("Replace: %v", err)
 		}
 		r.sweep(t.Context())
@@ -269,7 +269,7 @@ func TestSweep_JudgesEachSlotByTheClockWhenItIsReached(t *testing.T) {
 // The wait is persisted, so a reopened store still knows the slot it waits on.
 func TestWaitSurvivesAReopen(t *testing.T) {
 	dir := t.TempDir()
-	st, err := launchrule.NewStore(dir)
+	st, _, err := launchrule.NewStore(dir)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestWaitSurvivesAReopen(t *testing.T) {
 	})
 	due := at(2026, time.August, 4, 2, 0)
 	waitOn(t, st, e.Row(), due)
-	again, err := launchrule.NewStore(dir)
+	again, _, err := launchrule.NewStore(dir)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -308,14 +308,14 @@ func TestSweep_AScheduleChangedMidSweepDoesNotLaunch(t *testing.T) {
 		name   string
 	}{
 		{name: "deleted", change: func(t *testing.T, st *launchrule.Store, b *launchrule.Rule) {
-			if err := st.Delete(t.Context(), b.ID); err != nil {
+			if _, err := st.Delete(t.Context(), b.ID); err != nil {
 				t.Errorf("Delete: %v", err)
 			}
 		}},
 		{name: "disabled", change: func(t *testing.T, st *launchrule.Store, b *launchrule.Rule) {
 			off := *b
 			off.Enabled = false
-			if _, err := st.Replace(t.Context(), b.ID, &off, 0); err != nil {
+			if _, _, err := st.Replace(t.Context(), b.ID, &off, 0); err != nil {
 				t.Errorf("Replace: %v", err)
 			}
 		}},

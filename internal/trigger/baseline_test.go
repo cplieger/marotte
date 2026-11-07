@@ -99,7 +99,7 @@ func TestEditFilterKeepsCursor(t *testing.T) {
 
 	edited := r
 	edited.When.Event.Filter.Authors = []string{"alice", "bob"}
-	if _, err := h.store.Replace(t.Context(), r.ID, &edited, 0); err != nil {
+	if err := changeRule(t, h.c, r.ID, 0, func(r *launchrule.Rule) { *r = edited }); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
 	if oc := h.cursorOf(r.ID).Opened; oc == nil || oc.Floor != 10 {
@@ -121,7 +121,7 @@ func TestEditFilterKeepsCursor(t *testing.T) {
 		h.poll()
 		edited := r
 		edited.When.Event.Filter.Branch = "dev"
-		if _, err := h.store.Replace(t.Context(), r.ID, &edited, 0); err != nil {
+		if err := changeRule(t, h.c, r.ID, 0, func(r *launchrule.Rule) { *r = edited }); err != nil {
 			t.Fatalf("Replace: %v", err)
 		}
 		h.prPage(pull(5, "alice", "main", testLabel), pull(6, "alice", "dev", testLabel))
@@ -146,10 +146,10 @@ func TestChangeRepoRebaselines(t *testing.T) {
 
 	edited := r
 	edited.When.Event.Repo = "cplieger/other"
-	if _, err := h.store.Replace(t.Context(), r.ID, &edited, 0); !errors.As(err, new(*launchrule.DropError)) {
+	if err := changeRule(t, h.c, r.ID, 0, func(r *launchrule.Rule) { *r = edited }); !errors.As(err, new(*launchrule.DropError)) {
 		t.Fatalf("Replace without confirm_drop = %v, want a DropError naming the held event", err)
 	}
-	if _, err := h.store.Replace(t.Context(), r.ID, &edited, 1); err != nil {
+	if err := changeRule(t, h.c, r.ID, 1, func(r *launchrule.Rule) { *r = edited }); err != nil {
 		t.Fatalf("Replace with confirm_drop 1: %v", err)
 	}
 	es := h.state(r.ID)
@@ -163,7 +163,7 @@ func TestChangeRepoRebaselines(t *testing.T) {
 	if q := h.queued(r.ID); len(q) != 0 {
 		t.Errorf("the new repository's first poll queued %v, want a baseline that fires nothing", keysOf(q))
 	}
-	other := Feed{Selector: "cplieger/other"}.RepoID()
+	other := Feed{Selector: "cplieger/other"}.repoID()
 	if rc := h.state(r.ID).cursor[other]; rc == nil || rc.Labeled == nil || rc.Labeled.Items[3].HasLabel != labelYes {
 		t.Errorf("the new repository's cursor = %+v, want its baseline", rc)
 	}

@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func scrape() *httptest.ResponseRecorder {
@@ -50,6 +51,17 @@ func TestCounters_EveryKnownValueIsOnThePageBeforeItsFirstEvent(t *testing.T) {
 	}
 	for _, reason := range []string{"staged_copy_left", "write_failed"} {
 		want = append(want, `marotte_signin_save_failures_total{backend="obs-test",reason="`+reason+`"} `)
+	}
+	for _, origin := range []string{"scheduled", "triggered"} {
+		for _, reason := range []string{
+			"needs_approval", "overran", "backstop", "stalled", "paused", "orphaned", "cancel_given_up",
+		} {
+			want = append(want, `marotte_unattended_run_failures_total{origin="`+origin+`",reason="`+reason+`"} `)
+		}
+		want = append(want, `marotte_unattended_approvals_total{origin="`+origin+`"} `)
+	}
+	for _, event := range []string{"launch_failed", "signin_held", "engine_busy"} {
+		want = append(want, `marotte_schedule_slots_not_started_total{event="`+event+`"} `)
 	}
 	for _, series := range want {
 		if !strings.Contains(body, "\n"+series) {
@@ -97,6 +109,38 @@ func TestEngineUp_IsOneOnlyForAReadyEngine(t *testing.T) {
 	EngineUp(false)
 	if v, ok := sample("marotte_engine_up"); !ok || v != "0" {
 		t.Errorf("marotte_engine_up after an engine that is not ready = %q (on the page %v), want 0", v, ok)
+	}
+}
+
+// A schedule's next slot is a Unix time on the page; a slot nobody can name leaves no series rather than a 0 a
+// "time() > next_due" rule would read as long overdue.
+func TestSchedule_ExportsTheCountAndTheNextSlotUntilTheScheduleGoes(t *testing.T) {
+	const failed, due = `marotte_schedule_failed_slots{rule_id="obs-a"}`, `marotte_schedule_next_due_timestamp_seconds{rule_id="obs-a"}`
+	next := time.Date(2026, time.November, 9, 2, 0, 0, 0, time.UTC)
+	Schedule("obs-a", 3, next)
+	if v, ok := sample(failed); !ok || v != "3" {
+		t.Errorf("%s = %q (on the page %v), want 3", failed, v, ok)
+	}
+	if v, ok := sample(due); !ok || v != "1794189600" {
+		t.Errorf("%s = %q (on the page %v), want 1794189600", due, v, ok)
+	}
+	Schedule("obs-a", 0, time.Time{})
+	if v, ok := sample(failed); !ok || v != "0" {
+		t.Errorf("%s after a success = %q (on the page %v), want 0", failed, v, ok)
+	}
+	if v, ok := sample(due); ok {
+		t.Errorf("%s with no nameable slot = %q, want no series", due, v)
+	}
+	Schedule("obs-a", 1, next)
+	Schedule("obs-b", 2, next)
+	ScheduleGone("obs-a")
+	for _, s := range []string{failed, due} {
+		if v, ok := sample(s); ok {
+			t.Errorf("%s after ScheduleGone = %q, want no series", s, v)
+		}
+	}
+	if v, ok := sample(`marotte_schedule_failed_slots{rule_id="obs-b"}`); !ok || v != "2" {
+		t.Errorf("another schedule's count after ScheduleGone(obs-a) = %q (on the page %v), want 2", v, ok)
 	}
 }
 

@@ -18,8 +18,6 @@ var _ trigger.FeedSource = feedSource{}
 
 // NewFeedSource returns the production trigger.FeedSource over m's connections. A call on a connection that is
 // signed out or unusable answers the reader's error and sends nothing.
-//
-//deadset:ignore DS1102 -- composition passes it to the trigger runner; until that lands only the tests do
 func NewFeedSource(m *Manager) trigger.FeedSource {
 	return feedSource{mgr: m}
 }

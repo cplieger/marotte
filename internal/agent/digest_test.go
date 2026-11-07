@@ -122,6 +122,7 @@ func TestResolveDigest_ChatWhoseHeaderIsUnstattableIsNotGone(t *testing.T) {
 
 func TestResolveDigest_LiveTurnFollowsTheTurnRegistry(t *testing.T) {
 	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
 	states, err := h.resolveDigest(t.Context(), []sse.Held{held(subject.KindLiveTurn, "t-never-opened")})
 	if err != nil {
 		t.Fatalf("resolveDigest: %v", err)
@@ -179,7 +180,7 @@ func TestResolveDigest_RunTurnFollowsTheRunRegistry(t *testing.T) {
 		t.Errorf("open step turn: %+v, want current at %q", st, turnVersion(turn.ID(), 0))
 	}
 
-	if _, _, err := h.runs.log.closeNode(t.Context(), "wf-1", "wf-1/step", "completed", ""); err != nil {
+	if _, _, err := h.runs.log.closeNode(t.Context(), "wf-1", "wf-1/step", "completed", "", nil); err != nil {
 		t.Fatalf("CloseNode: %v", err)
 	}
 	states, err = h.resolveDigest(t.Context(), []sse.Held{held(subject.KindRunTurn, ref)})

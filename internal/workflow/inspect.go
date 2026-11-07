@@ -59,6 +59,7 @@ const (
 	statusRunning     = "running"
 	statusPaused      = "paused"
 	statusCompleted   = "completed"
+	statusPending     = "pending"
 	signalSuccess     = "success"
 	signalError       = "error"
 	attentionQuestion = "question"
@@ -109,6 +110,16 @@ func (r StepRecord) Succeeded() bool {
 // Completed reports whether KAS's node status is `completed`, signalled or not.
 func (r StepRecord) Completed() bool {
 	return r.Status == statusCompleted
+}
+
+// Ended reports whether KAS's node status is final: any but running, paused, pending or none, which can still
+// complete.
+func (r StepRecord) Ended() bool {
+	switch r.Status {
+	case "", statusRunning, statusPaused, statusPending:
+		return false
+	}
+	return true
 }
 
 // StepRecords indexes every step node of a run's tree by its PathKey; nil for a state with no tree.

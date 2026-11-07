@@ -5,7 +5,7 @@ import { el } from "@cplieger/ui";
 
 type Field = HTMLInputElement | HTMLSelectElement;
 
-export interface AddFormOptions {
+interface AddFormOptions {
   /** A returned promise holds the button disabled until it settles, whatever is typed meanwhile. */
   readonly onSubmit: () => unknown;
   /** Why the client refuses the values as typed, or null; shown on the error line while it holds. */
@@ -133,7 +133,7 @@ interface AddFieldSpec {
   readonly size?: "compact" | "grow";
 }
 
-export interface AddFormSpec {
+interface AddFormSpec {
   readonly fields: readonly AddFieldSpec[];
   /** The button's text: a verb and the noun the row creates, or the list's own verb ("Block tool", "Test"). */
   readonly label: string;

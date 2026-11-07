@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cplieger/marotte/internal/launchrule"
 )
 
 func TestLabelGainOnce(t *testing.T) {
@@ -63,9 +65,7 @@ func TestLabeledEventIDNotReusedAfterRecreate(t *testing.T) {
 		h.poll()
 		h.poll()
 		old := inputOf(h.queued(first.ID), "event_id")
-		if err := h.store.Delete(t.Context(), first.ID); err != nil {
-			t.Fatal(err)
-		}
+		deleteRule(t, h.c, first.ID)
 		second := h.create(labeledSpec())
 		h.now = pollStart
 		h.issuePage(issue(12, "alice"))
@@ -87,11 +87,11 @@ func TestLabeledEventIDNotReusedAfterRecreate(t *testing.T) {
 		old := inputOf(h.queued(r.ID), "event_id")
 		edited := r
 		edited.When.Event.Repo = "cplieger/other"
-		if _, err := h.store.Replace(t.Context(), r.ID, &edited, 1); err != nil {
+		if err := changeRule(t, h.c, r.ID, 1, func(r *launchrule.Rule) { *r = edited }); err != nil {
 			t.Fatal(err)
 		}
 		edited.When.Event.Repo = testRepo
-		if _, err := h.store.Replace(t.Context(), r.ID, &edited, 0); err != nil {
+		if err := changeRule(t, h.c, r.ID, 0, func(r *launchrule.Rule) { *r = edited }); err != nil {
 			t.Fatal(err)
 		}
 		h.now = pollStart
@@ -123,7 +123,7 @@ func TestLabeledGainAfter30DayDropQueued(t *testing.T) {
 	old := es.queue[0]
 	es.launched = []launchedEntry{{Key: old.Key, CoalesceKey: old.CoalesceKey, Inputs: old.Inputs, WorkflowID: "wf-1"}}
 	es.queue = nil
-	delete(es.cursor[Feed{Selector: testRepo}.RepoID()].Labeled.Items, 12)
+	delete(es.cursor[Feed{Selector: testRepo}.repoID()].Labeled.Items, 12)
 	h.seed(r.ID, &es)
 
 	h.now = pollStart.Add(31 * 24 * time.Hour)
@@ -163,11 +163,11 @@ func TestGainMintMonotonic(t *testing.T) {
 	t.Run("kept across a rebaseline and dropped entries", func(t *testing.T) {
 		edited := r
 		edited.When.Event.Repo = "cplieger/other"
-		if _, err := h.store.Replace(t.Context(), r.ID, &edited, 2); err != nil {
+		if err := changeRule(t, h.c, r.ID, 2, func(r *launchrule.Rule) { *r = edited }); err != nil {
 			t.Fatal(err)
 		}
 		edited.When.Event.Repo = testRepo
-		if _, err := h.store.Replace(t.Context(), r.ID, &edited, 0); err != nil {
+		if err := changeRule(t, h.c, r.ID, 0, func(r *launchrule.Rule) { *r = edited }); err != nil {
 			t.Fatal(err)
 		}
 		if got := h.state(r.ID).raw.Status.LastMinted; !got.Equal(second) {
@@ -201,4 +201,95 @@ func TestMintGain(t *testing.T) {
 	if got := formatGain(last); got != "20261104T101530123Z" {
 		t.Errorf("formatGain = %q, want 20261104T101530123Z", got)
 	}
+}
+
+func TestEditFilterLabelRebaselines(t *testing.T) {
+	t.Run("a filter.label edit resets the labeled cursor and keeps the queue", func(t *testing.T) {
+		h := newHarness(t)
+		r := h.create(labeledSpec())
+		h.issuePage(issue(7, "alice", newLabel), issue(8, "alice"))
+		h.issuePage(issue(7, "alice", newLabel), issue(8, "alice", testLabel))
+		h.poll()
+		h.poll()
+		if got := inputOf(h.queued(r.ID), "issue_number"); !eq(got, []string{"8"}) {
+			t.Fatalf("Setup: queued %v, want #8's gain", got)
+		}
+		if err := changeRule(t, h.c, r.ID, 0, relabel); err != nil {
+			t.Fatalf("Replace: %v", err)
+		}
+		if rc := h.cursorOf(r.ID); rc != nil && rc.Labeled != nil {
+			t.Errorf("labeled cursor after the edit = %+v, want it reset for a new baseline", rc.Labeled)
+		}
+		if got := inputOf(h.queued(r.ID), "issue_number"); !eq(got, []string{"8"}) {
+			t.Errorf("queued after the edit %v, want #8's gain kept", got)
+		}
+		h.issuePage(issue(7, "alice", newLabel), issue(8, "alice", testLabel))
+		h.poll()
+		if got := inputOf(h.queued(r.ID), "issue_number"); !eq(got, []string{"8"}) {
+			t.Errorf("queued after the next poll %v, want only #8's earlier gain: #7 had the new label before the edit", got)
+		}
+		lc := h.cursorOf(r.ID).Labeled
+		if lc == nil || lc.Items[7] == nil || lc.Items[7].HasLabel != labelYes || lc.Items[8] == nil ||
+			lc.Items[8].HasLabel != labelNo {
+			t.Errorf("labeled cursor after the next poll = %+v, want #7 true and #8 false from a new baseline", lc)
+		}
+	})
+	// Each line moves the rule to newLabel and then edits only its branch: the second edit must keep the cursor the
+	// new label's baseline built, so #5 gaining newLabel after it is an event.
+	for _, c := range []struct {
+		edit func(r *launchrule.Rule)
+		name string
+	}{
+		{relabel, "a filter.label edit, then a filter.branch edit"},
+		{func(r *launchrule.Rule) { moveRepo(r); relabel(r) }, "a rebaseline that changes the label, then a filter.branch edit"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t)
+			ev := labeledSpec()
+			ev.Kind = launchrule.KindPRLabeled
+			r := h.create(ev)
+			h.prPage(pull(5, "alice", "main"))
+			h.poll()
+			if err := changeRule(t, h.c, r.ID, 0, c.edit); err != nil {
+				t.Fatalf("Replace: %v", err)
+			}
+			h.prPage(pull(5, "alice", "main"))
+			h.poll()
+			if err := changeRule(t, h.c, r.ID, 0, func(r *launchrule.Rule) { r.When.Event.Filter.Branch = "main" }); err != nil {
+				t.Fatalf("Replace: %v", err)
+			}
+			h.prPage(pull(5, "alice", "main", newLabel))
+			h.poll()
+			if got := inputOf(h.queued(r.ID), "pr_number"); !eq(got, []string{"5"}) {
+				t.Errorf("queued pull requests %v, want #5's gain of %s", got, newLabel)
+			}
+		})
+	}
+	t.Run("a filter.branch edit keeps the labeled cursor", func(t *testing.T) {
+		h := newHarness(t)
+		ev := labeledSpec()
+		ev.Kind = launchrule.KindPRLabeled
+		r := h.create(ev)
+		h.prPage(pull(5, "alice", "main"), pull(6, "alice", "dev", testLabel))
+		h.poll()
+		if err := changeRule(t, h.c, r.ID, 0, func(r *launchrule.Rule) { r.When.Event.Filter.Branch = "dev" }); err != nil {
+			t.Fatalf("Replace: %v", err)
+		}
+		lc := h.cursorOf(r.ID).Labeled
+		if lc == nil || len(lc.Items) != 2 || lc.Items[6] == nil || lc.Items[6].HasLabel != labelYes {
+			t.Errorf("labeled cursor after the edit = %+v, want both baseline entries kept", lc)
+		}
+	})
+	t.Run("a filter.authors edit keeps the opened cursor", func(t *testing.T) {
+		h := newHarness(t)
+		r := h.create(openedSpec("alice"))
+		h.issuePage(issue(10, "alice"))
+		h.poll()
+		if err := changeRule(t, h.c, r.ID, 0, func(r *launchrule.Rule) { r.When.Event.Filter.Authors = []string{"bob"} }); err != nil {
+			t.Fatalf("Replace: %v", err)
+		}
+		if oc := h.cursorOf(r.ID).Opened; oc == nil || oc.Floor != 10 {
+			t.Errorf("opened cursor after the edit = %+v, want floor 10 kept", oc)
+		}
+	})
 }

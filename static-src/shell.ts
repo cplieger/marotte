@@ -7,7 +7,12 @@ import { createTerminal, localScrollbackStorage } from "@cplieger/web-terminal-u
 import { presetSingle } from "@cplieger/web-terminal-ui/presets/single";
 import { mobileToolbar } from "@cplieger/web-terminal-ui/features/mobile-toolbar";
 import type { MobileToolbarApi } from "@cplieger/web-terminal-ui/features/mobile-toolbar";
-import type { ModeReaders, TerminalFeature, TerminalHandle } from "@cplieger/web-terminal-ui";
+import type {
+  ModeReaders,
+  ShellContext,
+  TerminalFeature,
+  TerminalHandle,
+} from "@cplieger/web-terminal-ui";
 import { $ } from "./dom.js";
 import { getScrollEl } from "./messages.js";
 import { shiftScroll } from "./scroll.js";
@@ -30,6 +35,8 @@ import { restartShell } from "./actions/shell.js";
 import { refreshGitStatus } from "./git-status-store.js";
 import { attachSplitter, type Splitter } from "./splitter.js";
 import { touchCapable } from "./pointer-tier.js";
+import { trackShellPresses } from "./shell-keys.js";
+import { shellFontSettled } from "./shell-font.js";
 
 const SHELL_WS_PATH = "/api/shell/ws";
 // Awaited before the first server resize so the PTY is sized on real cell metrics. ONE family — the
@@ -63,28 +70,142 @@ function hostSend(bytes: Uint8Array): void {
   handle?.send(bytes);
 }
 
-/** `firstFrame` settles once the terminal has drawn a screen frame. */
-let settleFirstFrame: () => void = () => undefined;
-const firstFrame = new Promise<void>((resolve) => {
-  settleFirstFrame = resolve;
-});
+/** Runs clicked before `admit` let input through, oldest first. */
+const pendingRuns: string[] = [];
+/** Raw input typed or pasted before `admit` let it through. It belongs to the session it was typed
+ *  for, so a reattach drops it; a held Run instead goes to whichever session draws next. */
+const heldInput: Uint8Array[] = [];
 
-/** The terminal's live mode readers, kept by `firstFrameGate`; null until the terminal exists. */
+/** True once the library's font wait has settled, from which `PaneHandle.announceSize()` sends. */
+let fontSettled = false;
+/** True once the attached session has drawn a frame with rows on a connected socket, so its modes
+ *  frame has landed. Kept through a restart's POST, whose failure leaves that same session live. */
+let sessionDrawn = false;
+/** True once this client announced its grid to the attached session, so input goes straight on. */
+let sessionSized = false;
+/** Restart POSTs in flight: the server kills the PTY with whatever it was sent meanwhile. */
+let restartsInFlight = 0;
+
+/** The terminal's live mode readers, shell and `.term`, kept by `inputGate`; null until it exists. */
 let paneModes: ModeReaders | null = null;
+let paneShell: ShellContext | null = null;
+let paneSurface: HTMLElement | null = null;
+/** Watches `.term`'s children: the engine's cell measure adds and removes a span there. */
+let surfaceObserver: MutationObserver | null = null;
 
-/** Resolve `firstFrame` on the first screen frame that carries rows. Bytes sent before the
- *  resume is served are lost or doubled: on a fresh session the engine's ledger-lost drop
- *  empties the outbox, and a send between socket open and the resumeAck is replayed by the
- *  outbox retransmit. */
-function firstFrameGate(): TerminalFeature {
+/** Whether the cell width the engine last measured (`--char-w`) is the one the font gives now.
+ *  `announceSize()` sends the grid computed on that width, and the engine measures again only once
+ *  the panel's open slide settles, so a width taken before the web font landed sends too many
+ *  columns. Measured as the engine does (web-terminal-engine render.ts measureCellWidth). */
+function cellWidthCurrent(term: HTMLElement): boolean {
+  const span = document.createElement("span");
+  span.style.visibility = "hidden";
+  span.style.position = "absolute";
+  span.style.whiteSpace = "pre";
+  span.textContent = "MMMMMMMMMM";
+  term.append(span);
+  const cell = Math.round(span.getBoundingClientRect().width / 10);
+  span.remove();
+  surfaceObserver?.takeRecords(); // this measure is not the engine's
+  return term.style.getPropertyValue("--char-w") === `${String(cell)}px`;
+}
+
+/** The panel's open slide is running: the grid measured now has the rows of a part-open panel. */
+function panelSliding(): boolean {
+  return $.shellPanel.getAnimations().some((a) => a instanceof CSSTransition);
+}
+
+/** Whether input may reach the PTY now. The server starts a fresh PTY at its default size on the
+ *  first frame it gets, and a live one keeps the last client's size, so the first input to a
+ *  session waits until this panel's grid can be measured and is put on the socket ahead of it. */
+function admit(): boolean {
+  if (restartsInFlight > 0) {
+    return false;
+  }
+  if (sessionSized) {
+    return true;
+  }
+  if (
+    !fontSettled ||
+    !sessionDrawn ||
+    panelSliding() ||
+    paneSurface === null ||
+    !cellWidthCurrent(paneSurface)
+  ) {
+    return false;
+  }
+  paneShell?.pane(paneShell.selected())?.announceSize();
+  sessionSized = true;
+  return true;
+}
+
+/** True while `releaseHeld` sends: its bytes pass back through `inputGate`'s transform, which
+ *  would otherwise release the Runs ahead of the keys still held. */
+let releasing = false;
+
+/** Send what was held, typed input first, once `admit` lets it through. */
+function releaseHeld(): void {
+  if (releasing || (pendingRuns.length === 0 && heldInput.length === 0) || !admit()) {
+    return;
+  }
+  releasing = true;
+  try {
+    for (const bytes of heldInput.splice(0)) {
+      hostSend(bytes);
+    }
+    const bracketed = paneModes?.isBracketedPaste() === true;
+    for (const cmd of pendingRuns.splice(0)) {
+      hostSend(encoder.encode(runInput(cmd, bracketed)));
+    }
+  } finally {
+    releasing = false;
+  }
+}
+
+/** The attached session is no longer the one this client sized: a reattach or a reported drop. */
+function sessionChanged(): void {
+  sessionDrawn = false;
+  sessionSized = false;
+}
+
+const NOTHING = new Uint8Array(0);
+
+/** Holds input until `admit`. Listed first among the features, so its transform sees the raw bytes
+ *  and the later transforms (sticky Ctrl, predictive echo) run once, when the bytes are released. */
+function inputGate(): TerminalFeature {
   return {
-    name: "firstFrameGate",
+    name: "inputGate",
     setup(ctx) {
       paneModes = ctx.modes;
+      paneShell = ctx.shell;
+      paneSurface = ctx.surface();
+      const observer = new MutationObserver(releaseHeld);
+      observer.observe(paneSurface, { childList: true });
+      surfaceObserver = observer;
+      ctx.defer(() => {
+        observer.disconnect();
+      });
+      ctx.registerInputTransform((bytes) => {
+        if (!admit()) {
+          heldInput.push(bytes.slice());
+          return NOTHING;
+        }
+        releaseHeld(); // anything held goes ahead of these bytes
+        return bytes;
+      });
+      // An announce on a socket that is not connected sends nothing. A drop inside the library's
+      // reporting grace is never reported, and its resume carries the size itself.
+      ctx.on("connection:state", (state) => {
+        if (state !== "open") {
+          sessionChanged();
+        }
+      });
       return {
         teardown: ctx.on("wire:screen", (msg) => {
+          // A rows-less frame is the pre-ack scrollback-clear forward, which proves nothing drew.
           if (msg.rows.length > 0) {
-            settleFirstFrame();
+            sessionDrawn = true;
+            releaseHeld();
           }
         }),
       };
@@ -146,6 +267,8 @@ function scheduleReattach(reason: "ended" | "restart"): void {
 }
 
 function reattachShell(): void {
+  sessionChanged();
+  heldInput.length = 0;
   reattachedAt = Date.now();
   reattachSeq++;
   handle?.reattach();
@@ -163,12 +286,13 @@ async function hostRestart(): Promise<void> {
     return;
   }
   const seq = reattachSeq;
-  if ((await restartShell.dispatch()) === null) {
-    return; // the action framework toasts the failure
-  }
-  if (reattachSeq === seq) {
+  restartsInFlight++;
+  const restarted = (await restartShell.dispatch()) !== null;
+  restartsInFlight--;
+  if (restarted && reattachSeq === seq) {
     scheduleReattach("restart");
   }
+  releaseHeld(); // a failed restart leaves the same session live, and nothing else wakes the hold
 }
 
 let handle: TerminalHandle | null = null;
@@ -246,6 +370,7 @@ export function initShellPanel(): void {
     return;
   }
   initialized = true;
+  trackShellPresses();
 
   // Toolbar button opens/toggles the panel; the header X closes it.
   $.shellBtn.addEventListener("click", () => {
@@ -266,14 +391,19 @@ export function initShellPanel(): void {
 
   wireFullscreenToggle();
 
+  for (const type of ["transitionend", "transitioncancel"]) {
+    $.shellPanel.addEventListener(type, (ev) => {
+      if (ev.target === $.shellPanel) {
+        releaseHeld();
+      }
+    });
+  }
   setShellRunCallback((cmd: string) => {
     if (!shellOpen) {
       setShellOpen(true, { focus: false });
     }
-    // Read after the gate: the server's modes frame lands with the session's first frames.
-    void firstFrame.then(() => {
-      hostSend(encoder.encode(runInput(cmd, paneModes?.isBracketedPaste() === true)));
-    });
+    pendingRuns.push(cmd);
+    releaseHeld();
   });
 
   initShellResize();
@@ -360,7 +490,7 @@ function ensureTerminal(): void {
   handle = createTerminal($.shellTerminal, {
     features: () => {
       keys = mobileToolbar({ externalToggle: true });
-      return [...presetSingle(), firstFrameGate(), keys];
+      return [inputGate(), ...presetSingle(), keys];
     },
     layout: "container",
     wsPath: SHELL_WS_PATH,
@@ -373,6 +503,10 @@ function ensureTerminal(): void {
     },
     // Restore the shell's scrollback from this device rather than pulling it back over the wire.
     persistScrollback: shellScrollback,
+  });
+  void shellFontSettled(SHELL_FONT_READY).then(() => {
+    fontSettled = true;
+    releaseHeld();
   });
 }
 

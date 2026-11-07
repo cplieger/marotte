@@ -454,7 +454,7 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 			h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 				marotte.PermissionNeededPayload{RequestID: id}), br)
 
-			h.runs.answerUnattended(chatID, br, id, launchrule.Run{ScheduleID: "sched-1", WorkflowID: "wf_1"}, false, askName{tool: "execute_bash"},
+			h.runs.answerUnattended(chatID, br, id, scheduledLease("sched-1", "wf_1"), false, askName{tool: "execute_bash"},
 				[]byte(`{"options":`+tc.options+tc.meta+`}`))
 
 			select {
@@ -510,7 +510,7 @@ func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing
 	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 
-	h.runs.answerUnattended(chatID, br, id, launchrule.Run{ScheduleID: "sched-1", WorkflowID: "wf_1"}, false, askName{tool: "execute_bash"}, []byte(`{
+	h.runs.answerUnattended(chatID, br, id, scheduledLease("sched-1", "wf_1"), false, askName{tool: "execute_bash"}, []byte(`{
 		"options":[{"optionId":"accept","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}],
 		"_meta":{"kiro":{"consent":{"scope":"administration"}}}}`))
 
@@ -563,21 +563,21 @@ func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
 			h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
 			chatID := runChatID("wf_classifier")
 			h.bridge.mgr.insert(chatID, testBridge(br, bridgeIdle))
-			st, err := launchrule.NewStore(t.TempDir())
+			st, _, err := launchrule.NewStore(t.TempDir())
 			if err != nil {
 				t.Fatalf("launchrule.NewStore: %v", err)
 			}
 			entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
 			h.runs.launchRules = st
-			run := launchrule.Run{ScheduleID: entry.ID, WorkflowID: "wf_classifier"}
-			if rErr := st.RecordStart(t.Context(), run); rErr != nil {
+			l := scheduledLease(entry.ID, "wf_classifier")
+			if rErr := st.RecordStart(t.Context(), ruleRun(l)); rErr != nil {
 				t.Fatalf("RecordStart: %v", rErr)
 			}
 			id := int64(4243)
 			h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 				marotte.PermissionNeededPayload{RequestID: id}), br)
 
-			h.runs.answerUnattended(chatID, br, id, run, tc.delegated, askName{tool: "fs_write"}, []byte(
+			h.runs.answerUnattended(chatID, br, id, l, tc.delegated, askName{tool: "fs_write"}, []byte(
 				`{"options":[{"optionId":"accept","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}]`+tc.meta+`}`,
 			))
 
@@ -615,15 +615,15 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	chatID := runChatID("wf_deny")
 	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
-	st, err := launchrule.NewStore(t.TempDir())
+	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
 	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
 	h.runs.launchRules = st
 	// The row tracks the run its fire launched; only that run's outcome lands on it.
-	run := launchrule.Run{ScheduleID: entry.ID, WorkflowID: "wf_deny"}
-	if rErr := st.RecordStart(t.Context(), run); rErr != nil {
+	l := scheduledLease(entry.ID, "wf_deny")
+	if rErr := st.RecordStart(t.Context(), ruleRun(l)); rErr != nil {
 		t.Fatalf("RecordStart: %v", rErr)
 	}
 
@@ -631,9 +631,15 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 	logs := captureLogs(t)
+	before, approved := failureCounts(t), unattendedApprovals(t, runlease.OriginScheduled)
 
-	h.runs.answerUnattended(chatID, br, id, run, false, askName{tool: "execute_bash"},
+	h.runs.answerUnattended(chatID, br, id, l, false, askName{tool: "execute_bash"},
 		[]byte(`{"options":[{"optionId":"reject","kind":"reject_once"}]}`))
+
+	wantFailureDeltas(t, before, map[string]float64{"scheduled/needs_approval": 1})
+	if d := unattendedApprovals(t, runlease.OriginScheduled) - approved; d != 0 {
+		t.Errorf("a refusal moved the scheduled approvals by %v, want 0", d)
+	}
 
 	rows := st.Clocks()
 	if len(rows) != 1 {
@@ -658,15 +664,15 @@ func TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow(t *testing
 	chatID := runChatID("wf_deny")
 	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
-	st, err := launchrule.NewStore(t.TempDir())
+	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
 	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
 	h.runs.launchRules = st
 	// The row tracks the run its fire launched; only that run's outcome lands on it.
-	run := launchrule.Run{ScheduleID: entry.ID, WorkflowID: "wf_deny"}
-	if rErr := st.RecordStart(t.Context(), run); rErr != nil {
+	l := scheduledLease(entry.ID, "wf_deny")
+	if rErr := st.RecordStart(t.Context(), ruleRun(l)); rErr != nil {
 		t.Fatalf("RecordStart: %v", rErr)
 	}
 
@@ -677,7 +683,7 @@ func TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow(t *testing
 
 	params := []byte(`{"options":[{"optionId":"reject","kind":"reject_once"}],"_meta":{"kiro":{"toolId":"kiro_powers",
 		"consent":{"capability":"power","resource":"github/github/create_pr"}}}}`)
-	h.runs.answerUnattended(chatID, br, id, run, false, permissionAskName(params), params)
+	h.runs.answerUnattended(chatID, br, id, l, false, permissionAskName(params), params)
 
 	rows := st.Clocks()
 	if len(rows) != 1 {
@@ -703,15 +709,15 @@ func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *
 	br.during = func() { h.bus.endAsksOf(br) }
 	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
 
-	st, err := launchrule.NewStore(t.TempDir())
+	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
 	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
 	h.runs.launchRules = st
 	// The row tracks the run its fire launched; only that run's outcome lands on it.
-	run := launchrule.Run{ScheduleID: entry.ID, WorkflowID: "wf_deny"}
-	if rErr := st.RecordStart(t.Context(), run); rErr != nil {
+	l := scheduledLease(entry.ID, "wf_deny")
+	if rErr := st.RecordStart(t.Context(), ruleRun(l)); rErr != nil {
 		t.Fatalf("RecordStart: %v", rErr)
 	}
 
@@ -719,9 +725,13 @@ func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *
 	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 		marotte.PermissionNeededPayload{RequestID: id}), br)
 	logs := captureLogs(t)
+	before := failureCounts(t)
 
-	h.runs.answerUnattended(chatID, br, id, run, false, askName{tool: "execute_bash"},
+	h.runs.answerUnattended(chatID, br, id, l, false, askName{tool: "execute_bash"},
 		[]byte(`{"options":[{"optionId":"reject","kind":"reject_once"}]}`))
+
+	// A refusal that reached nobody failed nothing.
+	wantFailureDeltas(t, before, nil)
 
 	rows := st.Clocks()
 	if len(rows) != 1 {
@@ -771,7 +781,7 @@ func answerTriggered(t *testing.T, autoApprove bool, params string) (*marotte.Pe
 	id := int64(5150)
 	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
 		marotte.PermissionNeededPayload{RequestID: id}), br)
-	h.runs.answerUnattended(chatID, br, id, ruleRun(&l), false, askName{tool: "execute_bash"}, []byte(params))
+	h.runs.answerUnattended(chatID, br, id, &l, false, askName{tool: "execute_bash"}, []byte(params))
 
 	select {
 	case <-br.done:
@@ -794,6 +804,7 @@ const triggeredAskOptions = `"options":[{"optionId":"accept","kind":"allow_once"
 // reaches the rule's row through the confirmer.
 func TestTriggeredRunAutoApprovedWhenOn(t *testing.T) {
 	t.Run("on", func(t *testing.T) {
+		before, approved := failureCounts(t), unattendedApprovals(t, runlease.OriginTriggered)
 		outcome, fc := answerTriggered(t, true, `{`+triggeredAskOptions+`}`)
 		if outcome.Outcome.OptionID != "accept" {
 			t.Errorf("optionId = %q, want accept with auto-approve on", outcome.Outcome.OptionID)
@@ -801,12 +812,21 @@ func TestTriggeredRunAutoApprovedWhenOn(t *testing.T) {
 		if got := fc.count("RecordOutcome"); got != 0 {
 			t.Errorf("an approval wrote the row: %q", fc.recorded())
 		}
+		if d := unattendedApprovals(t, runlease.OriginTriggered) - approved; d != 1 {
+			t.Errorf("the triggered approvals moved by %v, want 1", d)
+		}
+		wantFailureDeltas(t, before, nil)
 	})
 	t.Run("off", func(t *testing.T) {
+		before, approved := failureCounts(t), unattendedApprovals(t, runlease.OriginTriggered)
 		outcome, fc := answerTriggered(t, false, `{`+triggeredAskOptions+`}`)
 		if outcome.Outcome.OptionID != "reject" {
 			t.Errorf("optionId = %q, want reject with auto-approve off", outcome.Outcome.OptionID)
 		}
+		if d := unattendedApprovals(t, runlease.OriginTriggered) - approved; d != 0 {
+			t.Errorf("a refusal moved the triggered approvals by %v, want 0", d)
+		}
+		wantFailureDeltas(t, before, map[string]float64{"triggered/needs_approval": 1})
 		want := "RecordOutcome rule-1 wf_trig failed needed approval for execute_bash with nobody watching"
 		if got := fc.count(want); got != 1 {
 			t.Errorf("confirmer calls %q, want one starting %q", fc.recorded(), want)

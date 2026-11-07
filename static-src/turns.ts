@@ -218,6 +218,7 @@ export function turnIsDrawn(t: TurnState): boolean {
       e.kind === "run_named" ||
       e.kind === "tool_result" ||
       e.kind === "turn_close" ||
+      e.kind === "step_graded" ||
       e.kind === "reconciled" ||
       e.kind === "steer_delivered" ||
       e.kind === "steer_cleared" ||

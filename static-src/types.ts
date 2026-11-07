@@ -162,6 +162,7 @@ import type {
   EntryTurnBind,
   EntryTurnWake,
   EntryRunNamed,
+  EntryStepGraded,
   EntryTurnClose,
   EntryTurnOpen,
   EntryTurnRevert,
@@ -205,6 +206,7 @@ export interface EntryPayload {
   context_reset: EntryContextReset;
   reconciled: EntryReconciled;
   turn_close: EntryTurnClose;
+  step_graded: EntryStepGraded;
 }
 
 /** One sealed entry whose payload is narrowed to its kind's. */

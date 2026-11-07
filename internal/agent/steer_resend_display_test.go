@@ -130,7 +130,7 @@ func TestUnreadSteerResend_ShowsTheUsersWordsLiveAndAfterReplay(t *testing.T) {
 			}
 			s.h.translateACPEvent("c1", at, clearedMsg("steer-a", "steer-b"))
 			s.h.translateACPEvent("c1", at, newTurnEndMsg(tc.stop))
-			s.h.coord.ReleaseTurn("c1", id)
+			s.h.coord.releaseTurn("c1", id)
 
 			live := resendPrompt(t, cs)
 			if live == nil {

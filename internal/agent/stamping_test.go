@@ -27,7 +27,7 @@ var stampWalkPackages = []string{
 // versionSources are the calls a stamp may take its Version from: lock-holding store writers, Buffer mutators and stamped snapshot helpers.
 var versionSources = []string{
 	"Mutate", "Remove", "setComposer", "Reconcile", "stepTurns",
-	"MarkOverCap", "StartTurn", "SplitSegment", "AppendToolCall", "SetToolCall",
+	"MarkOverCap", "SplitSegment", "AppendToolCall", "SetToolCall",
 	"SetSteerCarry", "AppendCodeReferences", "SetModel", "SetRefusal",
 	"AppendTextDelta", "AppendThinkingDelta", "AppendToolUseBlock",
 	"TrackFileChanges", "RecordToolStart", "ComputeDuration", "MarkInFlightToolsAborted",

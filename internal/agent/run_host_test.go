@@ -1645,6 +1645,12 @@ func TestInvokeErrorAfterConfirmKeepsRun(t *testing.T) {
 // triggeredRetryHub is a runtime whose failed run wf_1 holds rule-1's triggered lease on a lease store in dir.
 func triggeredRetryHub(t *testing.T, fc *fakeConfirmer, dir string) (*Runtime, *fakeBridge) {
 	t.Helper()
+	return triggeredRetryHubOn(t, fc, dir, eventLaunch())
+}
+
+// triggeredRetryHubOn is triggeredRetryHub over confirmer c, wf_1 leased as o.
+func triggeredRetryHubOn(t *testing.T, c TriggerConfirmer, dir string, o launchOrigin) (*Runtime, *fakeBridge) {
+	t.Helper()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowRetry: json.RawMessage(`{}`),
@@ -1657,9 +1663,9 @@ func triggeredRetryHub(t *testing.T, fc *fakeConfirmer, dir string) (*Runtime, *
 	}
 	h.runs.mu.Lock()
 	h.runs.leases = st
-	h.runs.confirmer = fc
+	h.runs.confirmer = c
 	h.runs.mu.Unlock()
-	h.runs.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec())
+	h.runs.grantLease(t.Context(), "wf_1", "publish", o, hostSec())
 	h.runs.recordParentSession(t.Context(), "wf_1", testLaunchSession)
 	return h, br
 }
@@ -1769,11 +1775,106 @@ func TestRetryOfAbandonedRunTakesRetryLease(t *testing.T) {
 			t.Errorf("lease = %+v, want none minted for a refused retry", l)
 		}
 	})
+	t.Run("handed back by the confirmer", func(t *testing.T) {
+		cr := abandonedOnRig(t)
+		h, br := triggeredRetryHubOn(t, cr.Confirmer, t.TempDir(), cr.launch())
+
+		if err := retryFailed(t, h); err != nil {
+			t.Fatalf("retry: %v", err)
+		}
+		if !br.called(methodKiroWorkflowRetry) {
+			t.Error("the retry verb was not sent")
+		}
+		if l, held := h.runs.lease("wf_1"); !held || l.Origin != runlease.OriginManual || l.RuleID != "" {
+			t.Errorf("lease = %+v held %v, want a manual lease naming no rule", l, held)
+		}
+		if got := cr.attempts(t); len(got) != 0 {
+			t.Errorf("attempts on disk = %q, want the abandoned record gone", got)
+		}
+	})
+	t.Run("hand-back refused by the confirmer's failed write", func(t *testing.T) {
+		cr := abandonedOnRig(t)
+		h, br := triggeredRetryHubOn(t, cr.Confirmer, t.TempDir(), cr.launch())
+		errWrite := errors.New("no space left on device")
+		cr.w.fail(errWrite)
+
+		if err := retryFailed(t, h); !errors.Is(err, errWrite) {
+			t.Errorf("retry err = %v, want the state write's error", err)
+		}
+		if br.called(methodKiroWorkflowRetry) {
+			t.Error("the retry verb was sent after the hand-back failed")
+		}
+		if l, held := h.runs.lease("wf_1"); !held || l.Origin != runlease.OriginTriggered || l.RuleID != cr.rule.ID {
+			t.Errorf("lease = %+v held %v, want the triggered lease untouched", l, held)
+		}
+		if got := cr.attempts(t); !slices.Equal(got, []string{"wf_1"}) {
+			t.Errorf("attempts on disk = %q, want wf_1 still abandoned", got)
+		}
+	})
+}
+
+// abandonedOnRig is a confirmer rig whose rule abandoned wf_1: named for a key no longer queued.
+func abandonedOnRig(t *testing.T) *confirmerRig {
+	t.Helper()
+	cr := newConfirmerRig(t)
+	if err := cr.NameAttempt(cr.rule.ID, "github.com/o/r/run/8/success", "wf_1"); err == nil {
+		t.Fatal("Setup: NameAttempt for an unqueued key = nil, want the attempt abandoned")
+	}
+	if got := cr.attempts(t); !slices.Equal(got, []string{"wf_1"}) {
+		t.Fatalf("Setup: attempts = %q, want wf_1 abandoned", got)
+	}
+	return cr
 }
 
 // A retry of a run whose attempt is still live keeps the triggered lease and starts a new life, so the retried run's
 // run_start reaches the confirmer again.
 func TestRetryOfLiveTriggeredRunRestartsBound(t *testing.T) {
+	t.Run("fake confirmer", retryLiveOnFake)
+	t.Run("the confirmer, the triggered lease held", func(t *testing.T) {
+		cr := newConfirmerRig(t)
+		cr.named(t, "wf_1")
+		h, br := triggeredRetryHubOn(t, cr.Confirmer, t.TempDir(), cr.launch())
+
+		if err := retryFailed(t, h); err != nil {
+			t.Fatalf("retry: %v", err)
+		}
+		if !br.called(methodKiroWorkflowRetry) {
+			t.Error("the retry verb was not sent")
+		}
+		if l, held := h.runs.lease("wf_1"); !held || l.Origin != runlease.OriginTriggered || l.RuleID != cr.rule.ID {
+			t.Errorf("lease = %+v held %v, want the triggered lease kept", l, held)
+		}
+		h.runs.observeStart(t.Context(), runChatID("wf_1"), runNotif(methodWFRunStart, map[string]any{
+			"workflowId": "wf_1", "workflowName": "publish",
+		}))
+		cr.confirmedBy(t, "wf_1")
+	})
+	t.Run("the confirmer, no lease held", func(t *testing.T) {
+		cr := newConfirmerRig(t)
+		cr.named(t, "wf_1")
+		h, br := triggeredRetryHubOn(t, cr.Confirmer, t.TempDir(), cr.launch())
+		// The run's run_start never reached marotte and its terminal frame released the lease.
+		h.runs.releaseLease(t.Context(), "wf_1")
+
+		if err := retryFailed(t, h); err != nil {
+			t.Fatalf("retry: %v", err)
+		}
+		if !br.called(methodKiroWorkflowRetry) {
+			t.Error("the retry verb was not sent")
+		}
+		l, held := h.runs.lease("wf_1")
+		if !held || l.Origin != runlease.OriginTriggered || l.RuleID != cr.rule.ID || l.EventKey != testEventKey ||
+			l.CoalesceKey != testEventCoalesce || !l.Unattended {
+			t.Errorf("lease = %+v held %v, want the event's triggered lease re-granted", l, held)
+		}
+		h.runs.observeStart(t.Context(), runChatID("wf_1"), runNotif(methodWFRunStart, map[string]any{
+			"workflowId": "wf_1", "workflowName": "publish",
+		}))
+		cr.confirmedBy(t, "wf_1")
+	})
+}
+
+func retryLiveOnFake(t *testing.T) {
 	fc := &fakeConfirmer{}
 	h, br := triggeredRetryHub(t, fc, t.TempDir())
 	start := func() {
@@ -1799,5 +1900,146 @@ func TestRetryOfLiveTriggeredRunRestartsBound(t *testing.T) {
 	}
 	if n := fc.count("ConfirmEvent rule-1"); n != 2 {
 		t.Errorf("ConfirmEvent called %d times, want 2: the retried run's run_start was not handed over", n)
+	}
+}
+
+const (
+	testTriggerKey      = "github.com/o/r/run/7/success"
+	testTriggerCoalesce = "github.com/o/r/run/7"
+)
+
+func launchTriggered(t *testing.T, h *Runtime, inputs map[string]string, d marotte.RunDefaults) (string, error) {
+	t.Helper()
+	return h.runs.LaunchTriggered(t.Context(), "bundled://publish", "rule-1", testTriggerKey, testTriggerCoalesce,
+		inputs, d)
+}
+
+func wireCount(br *fakeBridge, method string) int {
+	n := 0
+	for _, m := range br.wireLog() {
+		if m == method {
+			n++
+		}
+	}
+	return n
+}
+
+// Once workflow/new created a run, LaunchTriggered returns its id with whatever error followed, so the attempt table
+// can name, keep or cancel that run; it never creates a second one.
+func TestLaunchTriggeredReturnsWorkflowIDAfterNew(t *testing.T) {
+	t.Run("an invoke error", func(t *testing.T) {
+		h, _, br := newTestHub()
+		h.runs.confirmer = &fakeConfirmer{}
+		launchableRecipe(br, "wf_1")
+		delete(br.callResults, methodKiroWorkflowInvoke)
+		br.callErrs = map[string]error{methodKiroWorkflowInvoke: errHoldFault}
+
+		id, err := launchTriggered(t, h, nil, marotte.RunDefaults{})
+		if id != "wf_1" || !errors.Is(err, errHoldFault) {
+			t.Errorf("LaunchTriggered = %q, %v; want wf_1 with the invoke error", id, err)
+		}
+		if n := wireCount(br, methodKiroWorkflowNew); n != 1 {
+			t.Errorf("workflow/new sent %d times, want 1", n)
+		}
+	})
+	t.Run("a lease-grant failure", func(t *testing.T) {
+		h, _, br := newTestHub(WithRunLeases(undurableLeaseStore(t)))
+		h.runs.confirmer = &fakeConfirmer{}
+		launchableRecipe(br, "wf_1")
+
+		id, err := launchTriggered(t, h, nil, marotte.RunDefaults{})
+		if id != "wf_1" || !errors.Is(err, trigger.ErrLeaseNotGranted) {
+			t.Errorf("LaunchTriggered = %q, %v; want wf_1 with trigger.ErrLeaseNotGranted", id, err)
+		}
+		if n := wireCount(br, methodKiroWorkflowNew); n != 1 {
+			t.Errorf("workflow/new sent %d times, want 1", n)
+		}
+	})
+}
+
+// A pick the model list refuses stops the launch before any run exists, so there is no id to name.
+func TestLaunchTriggeredRefusesBadDefaults(t *testing.T) {
+	h, br, _ := runDefaultsHub(t)
+	fc := &fakeConfirmer{}
+	h.runs.confirmer = fc
+
+	id, err := launchTriggered(t, h, nil, marotte.RunDefaults{Model: "gpt-9"})
+	if id != "" || !errors.Is(err, errDefaultsRefused) {
+		t.Errorf("LaunchTriggered = %q, %v; want no id and errDefaultsRefused", id, err)
+	}
+	if n := wireCount(br, methodKiroWorkflowNew); n != 0 {
+		t.Errorf("workflow/new sent %d times, want none for a refused pick", n)
+	}
+	if calls := fc.recorded(); len(calls) != 0 {
+		t.Errorf("confirmer calls = %v, want none", calls)
+	}
+}
+
+// The trigger runner outlives Shutdown, so a launch holds the drain until it returns and is refused once it began.
+func TestLaunchTriggeredTakesDrainHold(t *testing.T) {
+	t.Run("a call during a drain is refused", func(t *testing.T) {
+		h, _, br := newTestHub()
+		t.Cleanup(func() { shutdownHub(t, h) })
+		h.runs.confirmer = &fakeConfirmer{}
+		launchableRecipe(br, "wf_1")
+		beginDraining(h)
+
+		id, err := launchTriggered(t, h, nil, marotte.RunDefaults{})
+		if id != "" || !errors.Is(err, errRuntimeDraining) {
+			t.Errorf("LaunchTriggered = %q, %v once Shutdown began, want errRuntimeDraining", id, err)
+		}
+		if n := wireCount(br, methodKiroWorkflowNew); n != 0 {
+			t.Errorf("workflow/new sent %d times once Shutdown began, want none", n)
+		}
+	})
+	t.Run("a drain started during the call waits for it", func(t *testing.T) {
+		h, _, br := newTestHub()
+		h.runs.confirmer = &fakeConfirmer{}
+		launchableRecipe(br, "wf_1")
+		// The model list is read before the launch's own admission, so only the drain hold covers this call.
+		gate := make(chan struct{})
+		openGate := sync.OnceFunc(func() { close(gate) })
+		t.Cleanup(openGate)
+		br.blockOn = map[string]chan struct{}{methodKiroConfigTemplate: gate}
+
+		returned := make(chan struct{})
+		go func() {
+			defer close(returned)
+			_, _ = h.runs.LaunchTriggered(context.WithoutCancel(t.Context()), "bundled://publish", "rule-1",
+				testTriggerKey, testTriggerCoalesce, nil, marotte.RunDefaults{Model: "opus"})
+		}()
+		waitForCall(t, br, methodKiroConfigTemplate)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			shutdownHub(t, h)
+		}()
+		waitFor(t, h.lifecycle.Draining)
+		refuteClosed(t, done, "Shutdown returned while a triggered launch was still running")
+
+		openGate()
+		awaitClosed(t, returned, "LaunchTriggered's return")
+		awaitClosed(t, done, "Shutdown's return")
+	})
+}
+
+// A triggered launch sends only the inputs the recipe declares, and labels the run with its event.
+func TestTriggeredLaunchDropsUndeclaredInputs(t *testing.T) {
+	h, _, br := newTestHub()
+	h.runs.confirmer = &fakeConfirmer{}
+	declaringRecipe(br)
+	inputs := map[string]string{"lane": "fast", "run_id": "7", "event_id": "github.com|o/r|run|7|success"}
+
+	if _, err := launchTriggered(t, h, inputs, marotte.RunDefaults{}); err != nil {
+		t.Fatalf("LaunchTriggered: %v", err)
+	}
+	if got, want := sentInputs(t, br), map[string]any{"lane": "fast"}; !maps.Equal(got, want) {
+		t.Errorf("workflow/new inputs = %v, want %v", got, want)
+	}
+	if got := br.paramsFor(methodKiroWorkflowNew)["runLabel"]; got != "publish · run 7" {
+		t.Errorf("runLabel = %v, want %q", got, "publish · run 7")
+	}
+	if len(inputs) != 3 {
+		t.Errorf("the caller's inputs = %v, want them untouched", inputs)
 	}
 }

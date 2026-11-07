@@ -111,6 +111,35 @@ func (rs *Runs) LaunchScheduled(
 	return id, name, err
 }
 
+var (
+	_ trigger.Effects  = (*Runs)(nil)
+	_ trigger.Launcher = (*Runs)(nil)
+)
+
+// LaunchTriggered launches an unattended run of an event rule's queued event. Once workflow/new created the run it
+// returns the run's id with whatever error followed, so the rule can name, keep or cancel that one run; an error
+// before it (a refused or uncheckable pick, a drain, a busy recipe) returns no id, marked with its class (classLaunch).
+func (rs *Runs) LaunchTriggered(
+	ctx context.Context, source, ruleID, eventKey, coalesceKey string, inputs map[string]string,
+	defaults marotte.RunDefaults,
+) (workflowID string, err error) {
+	// The trigger runner outlives Shutdown, so a launch is held on inflight and refused once draining.
+	release, ok := rs.lifecycle.enterUnlessDraining()
+	if !ok {
+		return "", classLaunch(errRuntimeDraining)
+	}
+	defer release()
+	if dErr := rs.checkRunDefaults(ctx, defaults); dErr != nil {
+		return "", classLaunch(dErr)
+	}
+	o := triggeredLaunch(ruleID, eventKey, coalesceKey, trigger.EventLabel(inputs))
+	workflowID, _, err = rs.launchAs(ctx, source, inputs, defaults, o)
+	if workflowID == "" {
+		err = classLaunch(err)
+	}
+	return workflowID, err
+}
+
 func (rs *Runs) launchAs(
 	ctx context.Context, source string, inputs map[string]string, defaults marotte.RunDefaults, o launchOrigin,
 ) (id, name string, err error) {
@@ -137,9 +166,8 @@ func (rs *Runs) launchAs(
 		return "", "", unanswered(ctx, bErr)
 	}
 	defer unlock()
-	var dropped []string
+	inputs, dropped := o.sentInputs(inputs, recipe.Inputs)
 	if o.origin == runlease.OriginScheduled {
-		inputs, dropped = declaredInputs(inputs, recipe.Inputs)
 		// Before the door: KAS's reset reconnects unconditionally, so a reset after the host's acquire began a fresh
 		// connect would connect twice and close the good one.
 		rs.resetFailedMCP(cctx)
@@ -182,7 +210,7 @@ func (rs *Runs) launchAs(
 	}
 	if !rs.bridges.insert(runChatID(wfID), sb) {
 		sb.closeOwned(rs.bridges.closeSession)
-		return "", "", fmt.Errorf("workflow %s already has a host session", wfID)
+		return "", "", fmt.Errorf("workflow %s %w", wfID, errHostSessionTaken)
 	}
 	// The run exists: a caller that stops waiting now must not leave it half launched, its row naming a run that
 	// nothing tracks, so the rest keeps the launch's budget and drops the caller's cancel. A stall-aware context's
@@ -300,6 +328,15 @@ func (rs *Runs) invokeFailed(ctx context.Context, wfID, recipe string, o *launch
 	rs.releaseLease(ctx, wfID)
 	rs.coord.closeBridge(ctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
 	return err
+}
+
+// sentInputs is what the launch sends of inputs: an unattended launch sends only the inputs its recipe declares,
+// naming the rest in dropped, since nobody is there to fix a stored input its recipe no longer has.
+func (o *launchOrigin) sentInputs(inputs, declared map[string]string) (sent map[string]string, dropped []string) {
+	if o.origin != runlease.OriginScheduled && o.origin != runlease.OriginTriggered {
+		return inputs, nil
+	}
+	return declaredInputs(inputs, declared)
 }
 
 func declaredInputs(inputs, declared map[string]string) (kept map[string]string, dropped []string) {
@@ -624,14 +661,14 @@ func (rs *Runs) retry(
 	if refused := rs.refuseClosedLauncher(workflowID, launchers); refused != nil {
 		return out, refused
 	}
-	own, err := rs.ownForRetry(cctx, workflowID)
+	own, event, err := rs.ownForRetry(cctx, workflowID)
 	if err != nil {
 		return out, err
 	}
 	defer own()
 	// The lease before the verb, since retry's `run_start` can beat the reply, and before the host session's load,
 	// which reads its presets from it.
-	minted := rs.leaseForRetry(cctx, workflowID, &origin, holders, aff)
+	minted := rs.leaseForRetry(cctx, workflowID, &origin, holders, aff, event)
 	rs.markRunAlive(cctx, workflowID, holders)
 	host, err := rs.ensureResident(cctx, workflowID)
 	if err != nil {
@@ -667,22 +704,27 @@ func (rs *Runs) retry(
 }
 
 // ownForRetry makes the retry the run's owner (runOwners), then hands an abandoned run back to the person
-// (handBackAbandoned). release is nil exactly when err is not.
-func (rs *Runs) ownForRetry(ctx context.Context, workflowID string) (release func(), err error) {
+// (handBackAbandoned), answering a live attempt's event. release is nil exactly when err is not.
+func (rs *Runs) ownForRetry(
+	ctx context.Context, workflowID string,
+) (release func(), event *trigger.RetriedEvent, err error) {
 	release, err = rs.owners.hold(ctx, workflowID)
 	if err != nil {
-		return nil, command.StatusError(http.StatusConflict, errRetryRunOwned)
+		return nil, nil, command.StatusError(http.StatusConflict, errRetryRunOwned)
 	}
-	if err := rs.handBackAbandoned(ctx, workflowID); err != nil {
+	event, err = rs.handBackAbandoned(ctx, workflowID)
+	if err != nil {
 		release()
-		return nil, err
+		return nil, nil, err
 	}
-	return release, nil
+	return release, event, nil
 }
 
-// leaseForRetry renews the run's lease for the retry, or grants one from origin, reporting whether it minted one.
+// leaseForRetry renews the run's lease for the retry, or grants one, reporting whether it minted one: a live
+// attempt's run (event) is re-leased as that event's, so its run_start confirms the event, and any other from origin.
 func (rs *Runs) leaseForRetry(
 	ctx context.Context, workflowID string, origin *runOrigin, holders []marotte.ChatID, aff *runAffordance,
+	event *trigger.RetriedEvent,
 ) (minted bool) {
 	if l, held := rs.lease(workflowID); held && (l.ScheduleID != "" || l.RuleID != "") {
 		rs.settleMissedEnd(ctx, &l, aff.status)
@@ -692,6 +734,10 @@ func (rs *Runs) leaseForRetry(
 		rs.restartLife(ctx, workflowID)
 		rs.recordKeepChats(ctx, &l, holders)
 		return false
+	}
+	if event != nil {
+		rs.grantEventRetryLease(ctx, workflowID, origin, holders, event)
+		return true
 	}
 	rs.grantRetryLease(ctx, workflowID, origin, holders)
 	return true
@@ -1059,6 +1105,12 @@ func (rs *Runs) recipeBySource(ctx context.Context, source string) (marotte.Reci
 	return marotte.Recipe{}, fmt.Errorf("%w %q", errUnknownRecipe, source)
 }
 
+// errRunListUnavailable is a launch refused because KAS's run list could not be read.
+var errRunListUnavailable = errors.New("run list unavailable")
+
+// errHostSessionTaken is a created run whose id already has a host session, which the launch then does not own.
+var errHostSessionTaken = errors.New("already has a host session")
+
 // recipeIdle enforces the single-run rule (one live run per recipe, globally) against KAS's run list, the only source that sees runs
 // marotte did not launch. The leases explain a blocking row as marotte's own orphan.
 // ruleID names the event rule of a triggered launch, which is handed the run list's statuses; empty for any other.
@@ -1066,7 +1118,7 @@ func (rs *Runs) recipeIdle(ctx context.Context, name, ruleID string) error {
 	runs, err := rs.list(ctx, nil)
 	if err != nil {
 		// Launching blind could allow a second live run.
-		return fmt.Errorf("run list unavailable: %w", err)
+		return fmt.Errorf("%w: %w", errRunListUnavailable, err)
 	}
 	status := make(map[string]marotte.RunStatus, len(runs))
 	for i := range runs {

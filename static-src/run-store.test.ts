@@ -1,6 +1,6 @@
 // The run store: the fetch discipline, and the derived reads over one state.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from "vitest";
 import { effect, untracked } from "@cplieger/ui";
 import { nodePathKey } from "./run-node-key.js";
 import type { RunNode, RunState } from "./run-store.js";
@@ -169,9 +169,6 @@ describe("the fetch is coalesced, because a busy run invalidates dozens of times
   });
 });
 
-// The CAUSE token. A transport gap invalidates every cached run and then, a network round trip
-// later, invalidates every LIVE run again from the rebuild's answer — so at 7 live runs the gap
-// cost 14 of its 24 requests.
 describe("the reply's step ends travel beside the state", () => {
   it("holds each read's step ends and drops them with the next read that has none", async () => {
     responses = [
@@ -511,126 +508,6 @@ describe("a node's start is its attempt's, from the run log", () => {
   });
 });
 
-describe("one cause costs one request per run", () => {
-  it("fetches once when the second invalidation lands AFTER the first answered", async () => {
-    responses = [{ workflowId: "r1", status: "running" }];
-
-    store.invalidateRun("r1", "gap:1");
-    await settle();
-    expect(fetches).toEqual(["/api/runs/r1"]);
-
-    // This is the interleaving an in-flight-only guard misses: `rebuildLiveRuns` awaits
-    // `/api/runs/live` first, so its invalidation can arrive after the per-run read it would be
-    // duplicating has already come back.
-    store.invalidateRun("r1", "gap:1");
-    await settle();
-    expect(fetches).toEqual(["/api/runs/r1"]);
-  });
-
-  it("fetches once when the second lands WHILE the first is still open", async () => {
-    responses = [{ workflowId: "r1", status: "running" }];
-
-    store.invalidateRun("r1", "gap:1");
-    store.invalidateRun("r1", "gap:1");
-    expect(fetches).toHaveLength(1);
-
-    await settle();
-    // No trailing fetch either: the read in flight was already answering for this cause, so there
-    // is nothing left to be stale about.
-    expect(fetches).toEqual(["/api/runs/r1"]);
-  });
-
-  it("still fetches for a DIFFERENT cause, or a second gap would be swallowed", async () => {
-    responses = [
-      { workflowId: "r1", status: "running" },
-      { workflowId: "r1", status: "completed" },
-    ];
-
-    store.invalidateRun("r1", "gap:1");
-    await settle();
-    store.invalidateRun("r1", "gap:2");
-    await settle();
-
-    expect(fetches).toEqual(["/api/runs/r1", "/api/runs/r1"]);
-    expect(store.runState("r1")?.status).toBe("completed");
-  });
-
-  it("still fetches for an UNCAUSED invalidation, because an SSE frame is its own cause", async () => {
-    responses = [
-      { workflowId: "r1", status: "running" },
-      { workflowId: "r1", status: "completed" },
-    ];
-
-    store.invalidateRun("r1", "gap:1");
-    await settle();
-    store.invalidateRun("r1");
-    await settle();
-
-    expect(fetches).toEqual(["/api/runs/r1", "/api/runs/r1"]);
-  });
-
-  it("claims nothing when the read FAILED, so the same cause retries", async () => {
-    // A cause recorded over an answer nobody got would make the gap's own recovery a no-op — the
-    // one direction this guard must not fail in.
-    responses = [undefined, { workflowId: "r1", status: "running" }];
-
-    store.invalidateRun("r1", "gap:1");
-    await settle();
-    store.invalidateRun("r1", "gap:1");
-    await settle();
-
-    expect(fetches).toEqual(["/api/runs/r1", "/api/runs/r1"]);
-    expect(store.runState("r1")?.status).toBe("running");
-  });
-
-  it("threads the gap's token through BOTH of its readers, so each run is read once", async () => {
-    // The production pair: `invalidateCachedRuns` over what is cached, then `rebuildLiveRuns` over
-    // what the server says is live, on one token.
-    responses = [
-      { workflowId: "r1", status: "running" },
-      { workflowId: "r2", status: "running" },
-    ];
-    store.invalidateRun("r1");
-    store.invalidateRun("r2");
-    await settle();
-    fetches.length = 0;
-
-    responses = [
-      { workflowId: "r1", status: "completed" },
-      { workflowId: "r2", status: "completed" },
-    ];
-    liveRunsReply = {
-      runs: [
-        { workflow_id: "r1", chat_id: "c1", executing: true },
-        { workflow_id: "r2", chat_id: "c1", executing: true },
-      ],
-    };
-
-    const cause = "gap:7";
-    store.invalidateCachedRuns(cause);
-    const rebuilt = store.rebuildLiveRuns(cause);
-    await settle();
-    await rebuilt;
-    await settle();
-
-    expect(fetches.filter((p) => p === "/api/runs/r1")).toHaveLength(1);
-    expect(fetches.filter((p) => p === "/api/runs/r2")).toHaveLength(1);
-  });
-
-  it("forgets the claim with the run, so a re-tracked run is read again", async () => {
-    responses = [{ workflowId: "r1", status: "running" }];
-    store.invalidateRun("r1", "gap:1");
-    await settle();
-
-    store.forgetRun("r1");
-    responses = [{ workflowId: "r1", status: "completed" }];
-    store.invalidateRun("r1", "gap:1");
-    await settle();
-
-    expect(fetches).toEqual(["/api/runs/r1", "/api/runs/r1"]);
-  });
-});
-
 describe("nodesOfType", () => {
   it("finds a type at any depth, every pass included, in plan order", () => {
     const root: RunNode = {
@@ -909,6 +786,9 @@ describe("the live-runs inventory", () => {
   // state, which nothing else fetches for a run this client saw no frames for — a PAUSED run emits
   // none at all, so its row kept the factory's placeholder until a reader opened the run view.
   it("resolves each live run's cell, and reports each to the painter", async () => {
+    // The run tabs whose rows the label paints hold the two runs.
+    const unhold = store.registerRunStateDemand((id) => id === "r1" || id === "r2");
+    onTestFinished(unhold);
     const reported: string[] = [];
     store.registerLiveRunObserver((id) => reported.push(id));
     liveRunsReply = {
@@ -1412,24 +1292,6 @@ describe("the run read carries the run's verbs", () => {
   });
 });
 
-describe("invalidateCachedRuns is the gap-recovery half of the push contract", () => {
-  it("re-reads every run it holds, and nothing it does not", async () => {
-    await seedRun("r1", { workflowId: "r1", status: "running" });
-    await seedRun("r2", { workflowId: "r2", status: "running" });
-
-    responses = [
-      { workflowId: "r1", status: "completed" },
-      { workflowId: "r2", status: "completed" },
-    ];
-    store.invalidateCachedRuns();
-    await settle();
-
-    expect(fetches).toHaveLength(2);
-    expect(fetches.some((p) => p.includes("r1"))).toBe(true);
-    expect(fetches.some((p) => p.includes("r2"))).toBe(true);
-  });
-});
-
 // The retry ladder behind a read that produced nothing.
 
 describe("the retry ladder behind a run read that produced nothing", () => {
@@ -1532,25 +1394,6 @@ describe("the retry ladder behind a run read that produced nothing", () => {
     expect(fetches).toHaveLength(2);
 
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(fetches).toHaveLength(2);
-  });
-
-  it("re-enters under the read's OWN cause, so the gap's other reader is not charged again", async () => {
-    // `""` would fetch too, and it is the wrong token: the cause the failed read dropped is what
-    // the rung answers for, so the gap's second reader — a round trip behind the first — finds the
-    // question already asked.
-    vi.useFakeTimers();
-    responses = [undefined, { workflowId: "r1", status: "running" }];
-
-    store.invalidateRun("r1", "gap:1");
-    await settle();
-    await vi.advanceTimersByTimeAsync(1000);
-    await settle();
-    expect(fetches).toHaveLength(2);
-    expect(store.runState("r1")?.status).toBe("running");
-
-    store.invalidateRun("r1", "gap:1");
-    await settle();
     expect(fetches).toHaveLength(2);
   });
 
@@ -1784,5 +1627,114 @@ describe("a run's log orders its turns by the run's own ordinal", () => {
     store.openRunTurn("r-order", opened("t-first", 1));
     store.openRunTurn("r-order", opened("t-third", 3));
     expect(store.runTurns("r-order").map(([id]) => id)).toEqual(["t-first", "t-second", "t-third"]);
+  });
+});
+
+describe("rereadHeldRuns re-reads every run a reader holds", () => {
+  const unregisters: (() => void)[] = [];
+
+  function hold(...ids: string[]): void {
+    unregisters.push(store.registerRunStateDemand((id) => ids.includes(id)));
+  }
+
+  afterEach(async () => {
+    await settle();
+    for (const un of unregisters.splice(0)) {
+      un();
+    }
+    for (const id of ["wf_1", "wf_2", "wf_3"]) {
+      store.forgetRun(id);
+      store.noteRunSettled(id);
+    }
+  });
+
+  it("reads each held run once, and no run nobody holds", async () => {
+    await seedRun("wf_1", { workflowId: "wf_1", status: "running" });
+    await seedRun("wf_2", { workflowId: "wf_2", status: "running" });
+    hold("wf_1");
+
+    responses = [{ workflowId: "wf_1", status: "completed" }];
+    store.rereadHeldRuns();
+    await settle();
+
+    expect(fetches).toEqual(["/api/runs/wf_1"]);
+    expect(store.runState("wf_1")?.status).toBe("completed");
+  });
+
+  it("sends no read when no run is held", async () => {
+    await seedRun("wf_1", { workflowId: "wf_1", status: "running" });
+    store.rereadHeldRuns();
+    await settle();
+    expect(fetches).toEqual([]);
+
+    store.forgetRun("wf_1");
+    hold("wf_2");
+    store.rereadHeldRuns();
+    await settle();
+    expect(fetches).toEqual([]);
+  });
+
+  it("reads again on every call", async () => {
+    await seedRun("wf_1", { workflowId: "wf_1", status: "running" });
+    hold("wf_1");
+
+    responses = [{ workflowId: "wf_1", status: "running" }];
+    store.rereadHeldRuns();
+    await settle();
+    responses = [{ workflowId: "wf_1", status: "running" }];
+    store.rereadHeldRuns();
+    await settle();
+
+    expect(fetches).toEqual(["/api/runs/wf_1", "/api/runs/wf_1"]);
+  });
+
+  it("a call while a read is out adds one trailing read", async () => {
+    await seedRun("wf_1", { workflowId: "wf_1", status: "running" });
+    hold("wf_1");
+    responses = [
+      { workflowId: "wf_1", status: "running" },
+      { workflowId: "wf_1", status: "completed" },
+    ];
+
+    store.invalidateRun("wf_1");
+    store.rereadHeldRuns();
+    store.rereadHeldRuns();
+    await settle();
+    await settle();
+
+    expect(fetches).toEqual(["/api/runs/wf_1", "/api/runs/wf_1"]);
+    expect(store.runState("wf_1")?.status).toBe("completed");
+  });
+
+  it("readRunUnlessOut asks nothing while a read is out", async () => {
+    responses = [{ workflowId: "wf_1", status: "running" }];
+    store.invalidateRun("wf_1");
+    store.readRunUnlessOut("wf_1");
+    await settle();
+    await settle();
+    expect(fetches).toEqual(["/api/runs/wf_1"]);
+
+    fetches.length = 0;
+    responses = [{ workflowId: "wf_1", status: "running" }];
+    store.readRunUnlessOut("wf_1");
+    await settle();
+    expect(fetches).toEqual(["/api/runs/wf_1"]);
+  });
+
+  it("the live-run rebuild reads only a held run with no state", async () => {
+    await seedRun("wf_1", { workflowId: "wf_1", status: "running" });
+    hold("wf_1", "wf_2");
+    liveRunsReply = {
+      runs: [
+        { workflow_id: "wf_1", chat_id: "", executing: true },
+        { workflow_id: "wf_2", chat_id: "", executing: true },
+        { workflow_id: "wf_3", chat_id: "", executing: true },
+      ],
+    };
+    responses = [{ workflowId: "wf_2", status: "running" }];
+
+    await store.rebuildLiveRuns();
+
+    expect(fetches.filter((p) => p !== "/api/runs/live")).toEqual(["/api/runs/wf_2"]);
   });
 });

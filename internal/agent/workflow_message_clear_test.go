@@ -30,7 +30,7 @@ func clearCauseHub(t *testing.T, onCancel func(clear func())) (*Runtime, *testCh
 	}
 	at := h.originOf("c1")
 	id, _ := h.stagePromptTurn(t, "c1")
-	t.Cleanup(func() { h.coord.ReleaseTurn("c1", id) })
+	t.Cleanup(func() { h.coord.releaseTurn("c1", id) })
 	h.translateACPEvent("c1", at, newPromptTurnStartMsg(id))
 	h.translateACPEvent("c1", at, runNotif(methodKiroSessionNotify, map[string]any{
 		"sessionId": string(br.SessionID()), "message": `paused: repeat "fix-loop" reached its iteration limit`,

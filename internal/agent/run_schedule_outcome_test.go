@@ -20,7 +20,7 @@ func scheduledHub(t *testing.T) (*Runtime, *fakeBridge, *launchrule.Store, launc
 	t.Helper()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	st, err := launchrule.NewStore(t.TempDir())
+	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
@@ -356,6 +356,7 @@ func TestScheduledRun_ABoundStopWhoseCancelIsNeverAcceptedSaysSo(t *testing.T) {
 			br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner is live")}
 			setCancelRetryDelay(h.runs, time.Millisecond)
 			const id = "wf_1"
+			before := failureCounts(t)
 			leaseScheduledWithSlot(t, h, br, &entry, id, tc.slotIn)
 			h.runs.armDeadline(t.Context(), id)
 			if tc.backstop {
@@ -373,6 +374,8 @@ func TestScheduledRun_ABoundStopWhoseCancelIsNeverAcceptedSaysSo(t *testing.T) {
 				t.Errorf("after every cancel was refused the row reads (%q, %q), want failed saying the run may "+
 					"still be running", row.LastStatus, row.LastReason)
 			}
+			// The bound's own stop never landed, so only the given-up cancel counts.
+			wantFailureDeltas(t, before, map[string]float64{"scheduled/cancel_given_up": 1})
 		})
 	}
 	t.Run("a person's cancel", func(t *testing.T) {
@@ -381,6 +384,7 @@ func TestScheduledRun_ABoundStopWhoseCancelIsNeverAcceptedSaysSo(t *testing.T) {
 		br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner is live")}
 		setCancelRetryDelay(h.runs, time.Millisecond)
 		const id = "wf_1"
+		before := failureCounts(t)
 		launchScheduled(t, h, br, &entry, id)
 		h.runs.armDeadline(t.Context(), id)
 
@@ -395,6 +399,7 @@ func TestScheduledRun_ABoundStopWhoseCancelIsNeverAcceptedSaysSo(t *testing.T) {
 			}
 			time.Sleep(time.Millisecond)
 		}
+		wantFailureDeltas(t, before, nil)
 		if row := onlyRow(t, st); string(row.LastStatus) != "started" {
 			t.Errorf("a person's refused cancel left the row reading (%q, %q), want started",
 				row.LastStatus, row.LastReason)

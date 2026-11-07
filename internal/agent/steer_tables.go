@@ -1,7 +1,7 @@
 package agent
 
 // channelState is what the record knows of KAS's read cursor for the chat's own turn. NONE means no turn bound,
-// not no own turn: a prompt turn is own from StartTurn, before its bracket.
+// not no own turn: a prompt turn is own from startTurn, before its bracket.
 type channelState uint8
 
 const (

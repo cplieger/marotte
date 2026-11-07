@@ -111,7 +111,7 @@ func TestAbandonInFlightTurn_ClosesOnACancelledContextWithASeq(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	h.coord.AbandonInFlightTurn(ctx, "c1", id, marotte.StopReasonInterrupted, "the prompt failed", "", 7)
+	h.coord.abandonInFlightTurn(ctx, "c1", id, marotte.StopReasonInterrupted, "the prompt failed", "", 7)
 
 	closes := closesOf(t, logOf(t, cs, "c1"))
 	if len(closes) != 1 || closes[0].FailureReason != "the prompt failed" {
@@ -127,7 +127,7 @@ func TestCloseTurn_ResultCarriesTheLatchedEngineClass(t *testing.T) {
 			h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError)
 		},
 		"prompt failure": func(h *Runtime, id string) {
-			h.coord.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "the prompt failed", "", 0)
+			h.coord.abandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "the prompt failed", "", 0)
 		},
 	}
 	for name, closeIt := range closers {
@@ -138,7 +138,7 @@ func TestCloseTurn_ResultCarriesTheLatchedEngineClass(t *testing.T) {
 
 			closeIt(h, id)
 
-			result, err := h.coord.AwaitTurn(t.Context(), "c1", id)
+			result, err := h.coord.awaitTurn(t.Context(), "c1", id)
 			if err != nil {
 				t.Fatalf("AwaitTurn = %v, want the closed turn's result", err)
 			}

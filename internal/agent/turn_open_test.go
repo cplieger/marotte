@@ -20,7 +20,7 @@ func TestTurnLive_FalseOnAnIdleChat(t *testing.T) {
 func TestTurnLive_TrueWhileATurnIsOpen(t *testing.T) {
 	h, _, _ := newTestHub()
 	id, _ := h.stagePromptTurn(t, "c1")
-	t.Cleanup(func() { h.coord.ReleaseTurn("c1", id) })
+	t.Cleanup(func() { h.coord.releaseTurn("c1", id) })
 
 	if !h.TurnLive("c1") {
 		t.Error("an open turn reports the record final, which is what makes the client " +
@@ -115,7 +115,7 @@ func TestTurnLive_TrueForARewindHoldingTheSlot(t *testing.T) {
 func TestOpenTurns_CarriesTheCoalescingTail(t *testing.T) {
 	h, _, _ := newTestHub()
 	id, log := streamingPromptTurn(t, h, "c1", "the reply so far")
-	t.Cleanup(func() { h.coord.ReleaseTurn("c1", id) })
+	t.Cleanup(func() { h.coord.releaseTurn("c1", id) })
 
 	tails := h.OpenTurns("c1")
 	if len(tails) != 1 || tails[0].ID != id {
@@ -142,7 +142,7 @@ func TestTurnLive_AgreesWithTheConnectBusySet(t *testing.T) {
 		{"idle", func(*testing.T, *Runtime) {}},
 		{"prompt turn", func(t *testing.T, h *Runtime) {
 			id, _ := h.stagePromptTurn(t, "c1")
-			t.Cleanup(func() { h.coord.ReleaseTurn("c1", id) })
+			t.Cleanup(func() { h.coord.releaseTurn("c1", id) })
 		}},
 		{"admitted prompt", func(t *testing.T, h *Runtime) {
 			if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {

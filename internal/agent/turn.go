@@ -27,7 +27,7 @@ const (
 	turnFinalizing
 )
 
-// errTurnSlotHeld is OpenTurn's refusal when the slot the source needs is held: a
+// errTurnSlotHeld is openTurn's refusal when the slot the source needs is held: a
 // prompt while one is still owed its bracket, or any other source over an open turn.
 var errTurnSlotHeld = errors.New("the chat's turn slot is held")
 
@@ -45,7 +45,7 @@ type activeTurn struct {
 	reapTimer *time.Timer
 	// graceTimer is a stop's budget on this turn's call (armCallGraceLocked).
 	graceTimer *time.Timer
-	// cancel trips this turn's own prompt call, from StartTurn until EndPromptCall; nil for a turn with none (KAS's).
+	// cancel trips this turn's own prompt call, from startTurn until endPromptCall; nil for a turn with none (KAS's).
 	cancel context.CancelCauseFunc
 	// Opened is when the turn began, and the only source of its elapsed time.
 	Opened time.Time
@@ -55,13 +55,13 @@ type activeTurn struct {
 	reapStallUntil time.Time
 	// opened is the turn_open entry as written, which the turn_opened frame carries.
 	opened *marotte.Entry
-	// messageID and resends are the turn's prompt id and the unread steer keys it carries, set at OpenTurn: the ids
+	// messageID and resends are the turn's prompt id and the unread steer keys it carries, set at openTurn: the ids
 	// a close's confirmation may name the turn by (closeWork).
 	messageID string
 	resends   []string
 	// ID is the turn_open entry's id: every handle on the turn.
 	ID string
-	// Model is the model answering, stamped at StartTurn for a prompt and at open
+	// Model is the model answering, stamped at startTurn for a prompt and at open
 	// for every other source.
 	Model string
 	Chat  marotte.ChatID
@@ -116,7 +116,7 @@ type chatLifecycle struct {
 	// pending is the prompt-class turn awaiting its wire bracket, usually own
 	// itself. One rather than a queue: admission serializes prompt-class sources.
 	pending *activeTurn
-	// call is the sent prompt whose session/prompt is unanswered, from its send to EndPromptCall; it outlives the
+	// call is the sent prompt whose session/prompt is unanswered, from its send to endPromptCall; it outlives the
 	// turn when a later turn_start closed it. One: the bridge slot serializes calls.
 	call *activeTurn
 	// stops holds the send hold of each stop in progress, by token (requestStop).
@@ -212,7 +212,7 @@ type turnRegistry struct {
 	// claimHook runs just before a named claim's section and each send-gate section; nil in production. A test sets
 	// it before driving the frames, closers or prompt that read it.
 	claimHook func()
-	// openHook runs at the top of OpenTurn, before its section; nil in production, set as claimHook is.
+	// openHook runs at the top of openTurn, before its section; nil in production, set as claimHook is.
 	openHook func()
 	epochs   atomic.Uint64
 	// admissions mints reservation tokens registry-wide, so a release clears its own slot and no later life's.

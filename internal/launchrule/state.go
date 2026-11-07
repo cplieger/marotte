@@ -1,6 +1,7 @@
 package launchrule
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,7 +40,7 @@ type Status struct {
 	// Anchor is a clock rule's next-run origin: its creation, then its last fire or skip.
 	Anchor time.Time `json:"anchor,omitzero"`
 	// LastRunAt is a clock rule's last slot's due time, or its run's start (RecordStart) until the runner records
-	// that slot.
+	// that slot; an event rule's last confirmed launch.
 	LastRunAt time.Time `json:"last_run_at,omitzero"`
 	// WaitingFor is a clock rule's due slot whose launch is retried until the agent engine answers; zero when none.
 	// It is persisted so a restart resumes the wait instead of skipping the slot as missed while offline.
@@ -52,9 +53,16 @@ type Status struct {
 	LastRunID  string        `json:"last_run_id,omitempty"`
 	LastStatus OutcomeStatus `json:"last_status,omitempty"`
 	LastReason string        `json:"last_reason,omitempty"`
+	// Blocked is why an event rule launches nothing until the operator edits or resumes it; empty when nothing does.
+	Blocked string `json:"blocked,omitempty"`
+	// RowText is an event rule's launch state as its row reads it, which the trigger confirmer writes.
+	RowText string `json:"row_text,omitempty"`
 	// Gaps are an event rule's stretches in which runs may have been missed, kept until the operator dismisses them.
 	Gaps          []Gap `json:"gaps,omitempty"`
 	BoundAbandons int   `json:"bound_abandons,omitempty"`
+	// FailedSlots is a clock rule's count of consecutive slots that ended other than completed; a completed slot sets
+	// it back to 0. A slot missed while marotte was down records no outcome, so it does not count.
+	FailedSlots int `json:"failed_slots,omitempty"`
 }
 
 // The causes of a Gap.
@@ -82,8 +90,9 @@ type Gap struct {
 // Held is the number of events the rule holds.
 func (st *State) Held() int { return len(st.Queue) }
 
-// UnreadableStateError is a rule's state file that would not read or parse at load. The rule stays blocked, and
-// its file untouched, rather than starting over and dropping what the file held.
+// UnreadableStateError is a rule's state file that would not read or parse at load. Its file stays untouched
+// rather than starting over and dropping what it held: the store blocks a clock rule, and reports an event rule's
+// to the trigger confirmer, which blocks it and decides when a write replaces the file.
 type UnreadableStateError struct {
 	Err    error
 	RuleID string
@@ -97,6 +106,7 @@ func (e *UnreadableStateError) Unwrap() error { return e.Err }
 
 // ruleState is one rule's state and the mutex its file's writes run under.
 type ruleState struct {
+	// unreadable is the load error of a state file that would not parse, cleared once a write replaces the file.
 	unreadable error
 	// refused is the load-time refusal of the rule's definition, cleared by a Replace that stores a valid one.
 	refused error
@@ -104,22 +114,24 @@ type ruleState struct {
 	mu      sync.Mutex
 	// gone is set, under mu, once the rule is out of the definitions, so no write after it recreates the file
 	// Delete removes.
-	gone bool
+	gone  bool
+	event bool
 }
 
-// blocked is why the rule may neither fire nor have its state read or written, nil when it may; rs.mu is held.
+// blocked is why the store refuses the rule's state, nil when it serves it; rs.mu is held. An event rule's state is
+// the trigger confirmer's, which keeps it through a refused definition and decides on an unreadable file.
 func (rs *ruleState) blocked() error {
-	if rs.refused != nil {
-		return rs.refused
+	if rs.event {
+		return nil
 	}
-	return rs.unreadable
+	return cmp.Or(rs.refused, rs.unreadable)
 }
 
 // removeFile is a test seam for a state file removal that fails.
 var removeFile = os.Remove
 
-// population is the population a fresh state of r carries: an event rule's, empty for a clock rule.
-func population(r *Rule) string {
+// Population is the population a fresh state of r carries: an event rule's, empty for a clock rule.
+func Population(r *Rule) string {
 	ev := r.When.Event
 	if ev == nil {
 		return ""
@@ -131,8 +143,7 @@ func (s *Store) statePath(ruleID string) string {
 	return filepath.Join(s.dir, stateDirName, ruleID+".json")
 }
 
-// loadStates reads every rule's state file, blocks each rule refused names, and removes the files whose rule is
-// gone, which a Delete whose removal failed leaves behind.
+// loadStates reads every rule's state file and blocks each rule refused names.
 func (s *Store) loadStates(refused map[string]error) {
 	s.states = make(map[string]*ruleState, len(s.rules))
 	for i := range s.rules {
@@ -141,24 +152,39 @@ func (s *Store) loadStates(refused map[string]error) {
 		rs.refused = refused[r.ID]
 		s.states[r.ID] = rs
 	}
+}
+
+// Orphans reads the state files whose rule the definitions do not hold, by rule id: a Delete whose removal failed
+// leaves one. The store leaves them on disk, since such a file can name runs still to cancel; its removal is the
+// StateWriter holder's. A file that does not parse reads as an empty State.
+func (s *Store) Orphans() map[string]State {
 	entries, err := os.ReadDir(filepath.Join(s.dir, stateDirName))
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			slog.Warn("launch rules: could not list the state files", "error", err)
 		}
-		return
+		return nil
 	}
+	out := map[string]State{}
 	for _, e := range entries {
 		id, ok := strings.CutSuffix(e.Name(), ".json")
-		if !ok || e.IsDir() || s.states[id] != nil {
+		if !ok || e.IsDir() {
 			continue
 		}
-		s.removeState(id)
+		if _, err := s.ruleState(id); err == nil {
+			continue
+		}
+		var st State
+		if data, err := os.ReadFile(s.statePath(id)); err == nil {
+			st, _ = parseState(data)
+		}
+		out[id] = st
 	}
+	return out
 }
 
 func (s *Store) readState(r *Rule) *ruleState {
-	rs := &ruleState{state: State{Population: population(r)}}
+	rs := &ruleState{state: State{Population: Population(r)}, event: r.When.Event != nil}
 	data, err := os.ReadFile(s.statePath(r.ID))
 	if errors.Is(err, os.ErrNotExist) {
 		return rs
@@ -190,7 +216,7 @@ func parseState(data []byte) (State, error) {
 }
 
 // State returns a copy of the rule's state: ErrNotFound for no such rule, the refusal of a rule this build
-// refused at load, an *UnreadableStateError for a rule whose file would not load.
+// refused at load, an *UnreadableStateError for a rule whose file would not load until a write replaces it.
 func (s *Store) State(ruleID string) (State, error) {
 	rs, err := s.ruleState(ruleID)
 	if err != nil {
@@ -198,17 +224,52 @@ func (s *Store) State(ruleID string) (State, error) {
 	}
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	if err := rs.blocked(); err != nil {
+	if err := cmp.Or(rs.refused, rs.unreadable); err != nil {
 		return State{}, err
 	}
 	return rs.state.clone(), nil
 }
 
-// WriteState replaces the rule's state file with in, touching no other file. ErrNotFound for no such rule; a
-// blocked rule refuses with what State answers, so its file is never overwritten.
-//
-//deadset:ignore DS1102 -- test seam until the forge event runner writes state through it
-func (s *Store) WriteState(ctx context.Context, ruleID string, in *State) error {
+// LoadedState is State through a refused definition: the state the rule's earlier runs left, which a refusal does
+// not void.
+func (s *Store) LoadedState(ruleID string) (State, error) {
+	rs, err := s.ruleState(ruleID)
+	if err != nil {
+		return State{}, err
+	}
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if rs.unreadable != nil {
+		return State{}, rs.unreadable
+	}
+	return rs.state.clone(), nil
+}
+
+// Refused is why this build refuses the rule's stored definition, nil when it takes it; ErrNotFound for no such rule.
+func (s *Store) Refused(ruleID string) error {
+	rs, err := s.ruleState(ruleID)
+	if err != nil {
+		return err
+	}
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return rs.refused
+}
+
+// StateWriter is the raw write and removal of a rule's state file. NewStore hands out the only one, which the
+// trigger confirmer holds, so every write of an event rule's state goes through it.
+type StateWriter interface {
+	WriteState(ctx context.Context, ruleID string, in *State) error
+	RemoveState(ruleID string) error
+}
+
+type stateWriter struct{ s *Store }
+
+// WriteState replaces the rule's state file with in, touching no other file. ErrNotFound for no such rule; a clock
+// rule refused or with an unreadable file refuses with what State answers. An event rule's is always written: the
+// trigger confirmer decides.
+func (w stateWriter) WriteState(ctx context.Context, ruleID string, in *State) error {
+	s := w.s
 	rs, err := s.ruleState(ruleID)
 	if err != nil {
 		return err
@@ -225,6 +286,9 @@ func (s *Store) WriteState(ctx context.Context, ruleID string, in *State) error 
 	return s.writeStateLocked(ctx, ruleID, rs, &st)
 }
 
+// RemoveState removes the rule's state file; a file already gone is not an error.
+func (w stateWriter) RemoveState(ruleID string) error { return w.s.removeStateFile(ruleID) }
+
 // writeStateLocked writes st as the rule's state file and, once it lands, as rs's state; rs.mu is held.
 func (s *Store) writeStateLocked(ctx context.Context, ruleID string, rs *ruleState, st *State) error {
 	data, err := json.MarshalIndent(st, "", "  ")
@@ -235,22 +299,21 @@ func (s *Store) writeStateLocked(ctx context.Context, ruleID string, rs *ruleSta
 		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700)); err != nil {
 		return fmt.Errorf("write the state of launch rule %s: %w", ruleID, err)
 	}
-	rs.state = *st
+	rs.state, rs.unreadable = *st, nil
 	return nil
 }
 
-// RemoveState removes the rule's state file; a file already gone is not an error.
-func (s *Store) RemoveState(ruleID string) error {
+func (s *Store) removeStateFile(ruleID string) error {
 	if err := removeFile(s.statePath(ruleID)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove the state of launch rule %s: %w", ruleID, err)
 	}
 	return nil
 }
 
-// removeState is RemoveState for a rule already out of the definitions: a failure is logged, and the next load,
-// finding the file's rule gone, removes it again.
+// removeState is removeStateFile for a rule already out of the definitions: a failure is logged, and the next load
+// reports the file among Orphans.
 func (s *Store) removeState(ruleID string) {
-	if err := s.RemoveState(ruleID); err != nil {
+	if err := s.removeStateFile(ruleID); err != nil {
 		slog.Warn("launch rules: a deleted rule's state file stays until the next start", "rule", ruleID, "error", err)
 	}
 }
