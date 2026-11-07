@@ -304,6 +304,7 @@ describe("a message between two chats", () => {
       session("c-billing", { name: "Billing" }),
     ]);
     store.setActive(c);
+    store.setPainted(c);
     store.bumpMessages(c, "load");
     await Promise.resolve();
     const view = messages.transcriptViewFor(c);

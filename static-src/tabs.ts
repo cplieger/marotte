@@ -929,7 +929,7 @@ export function activateRestoredTab(): void {
 }
 
 /** Run the pending activation half now, as its scheduled task would. */
-// deadset:ignore DS1004 -- test seam: flushes the deferred activation half
+// deadset:ignore DS1102 -- test seam: flushes the deferred activation half
 export function flushActivationForTest(): void {
   if (currentActivation !== null) {
     runActivation(currentActivation.gen);
@@ -1110,7 +1110,7 @@ const switchHooks: SwitchHooks = { begin: beginSwitch, settle: settleSwitch, rev
 let switchCommand = defineSwitchCommand(switchHooks, SWITCH_LOAD_MS);
 
 /** Rebuild the switch action with a shorter bound; `null` restores `SWITCH_LOAD_MS`. */
-// deadset:ignore DS1004 -- test seam: the switch action's time bound
+// deadset:ignore DS1102 -- test seam: the switch action's time bound
 export function setSwitchBoundForTest(ms: number | null): void {
   switchCommand = defineSwitchCommand(switchHooks, ms ?? SWITCH_LOAD_MS);
 }

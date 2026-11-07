@@ -102,7 +102,7 @@ describe("re-delivery run buttons", () => {
     await nextFrame();
     for (const h of headers) {
       const buttons = [
-        ...requestText(h).querySelectorAll<HTMLButtonElement>("button.turn-wake-row-run"),
+        ...requestText(h).querySelectorAll<HTMLElement>('.turn-wake-row-run[role="button"]'),
       ];
       expect(
         buttons.map((b) => b.inert),
@@ -114,7 +114,7 @@ describe("re-delivery run buttons", () => {
   it("never measures a wake header with no run buttons", async () => {
     const header = mountHeader(wakeData(stepMessage("The link check failed.")));
     const text = requestText(header);
-    expect(text.querySelector("button.turn-wake-row-run")).toBeNull();
+    expect(text.querySelector('.turn-wake-row-run[role="button"]')).toBeNull();
     const rect = vi.spyOn(Element.prototype, "getBoundingClientRect");
     updateTurnHeader(header, wakeData(stepMessage("The link check failed twice.")));
     await nextFrame();
