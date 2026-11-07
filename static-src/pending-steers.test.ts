@@ -1113,6 +1113,59 @@ describe("the steer stack", () => {
     });
   });
 
+  function withCompactStage(running: boolean, turnOpen: boolean): void {
+    setSessions([
+      {
+        ...makeSession("chat-1"),
+        queued: [],
+        compact_queued: true,
+        compact_running: running,
+        turn_open: turnOpen,
+      },
+    ]);
+    setActive("chat-1");
+  }
+
+  it("turns the queued row into the running one in place when the compaction starts, with no control", () => {
+    withCompactStage(false, true);
+    const queued = firstRow();
+    expect(queued.dataset["state"]).toBe("queued");
+    expect(actions(queued)).toEqual(["Cancel the queued compaction"]);
+
+    withCompactStage(true, false);
+
+    expectSameNodes(rows(), [queued]);
+    expect(queued.dataset["state"]).toBe("compacting");
+    expect(textOf(queued)).toBe("Compacting the context…");
+    expect(labelOf(queued)).toBe("Running");
+    expect(queued.getAttribute("aria-label")).toBe("Running: Compacting the context…");
+    expect(queued.dataset["tooltip"]).toBe("Compacting the context…");
+    expect(queued.querySelector(".steer-state-icon .steer-spinner")).not.toBeNull();
+    expect(actions(queued)).toEqual([]);
+  });
+
+  it("draws a compaction already running when the page loads as the running row", () => {
+    withCompactStage(true, false);
+
+    expect(rows()).toHaveLength(1);
+    expect(firstRow().dataset["state"]).toBe("compacting");
+    expect(textOf(firstRow())).toBe("Compacting the context…");
+    expect(actions(firstRow())).toEqual([]);
+  });
+
+  it("clears the running row when the compaction ends, accepted or refused, leaving no stale chip", () => {
+    withCompactStage(true, false);
+    expect(rows()).toHaveLength(1);
+
+    setSessions([
+      { ...makeSession("chat-1"), queued: [], compact_queued: false, compact_running: false },
+    ]);
+    setActive("chat-1");
+
+    expect(rows()).toEqual([]);
+    expect(stackHidden()).toBe(true);
+  });
+
   it("drops the row when the header no longer carries the compaction, keeping the follow-ups' rows", () => {
     withCompact(three.slice(0, 1));
     const followUp = rowAt(1);

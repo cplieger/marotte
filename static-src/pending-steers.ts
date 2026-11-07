@@ -36,10 +36,12 @@ import type { PendingSteer, QueuedPrompt } from "./types.js";
 import { readQuoted, splitLeadingQuote } from "./message-quote.js";
 import { buildQuoteBand } from "./quote-band.js";
 
-/** The chat's queued compaction, which the server runs at a turn's end. */
+/** The chat's compaction, queued for a turn's end or already running. */
 interface CompactSlot {
   /** A turn runs now, so it waits for this turn's end rather than the next one's. */
-  readonly running: boolean;
+  readonly afterTurn: boolean;
+  /** Its call is in flight: nothing cancels it, so the row has no control. */
+  readonly compacting: boolean;
 }
 
 /** One dock row: a steer the agent has not read, the queued compaction, or a follow-up the server holds. */
@@ -97,7 +99,7 @@ export function mountSteerStack(stack: HTMLUListElement, src: SteerStackSource):
   const announced = { waiting: 0, id: "" };
   const sig = computed(() => {
     const s = src.read();
-    const compact = s.compact === undefined ? "" : s.compact.running ? "running" : "idle";
+    const compact = s.compact === undefined ? "" : compactStage(s.compact);
     return join(
       s.id,
       join(...s.steers.map(steerSig)),
@@ -634,7 +636,9 @@ const chatSource: SteerStackSource = {
       id: s.id,
       steers: s.steers ?? [],
       queued: sessionDrain(s).rows,
-      ...(s.compact_queued === true && { compact: { running: sessionBusy(s) } }),
+      ...(s.compact_queued === true && {
+        compact: { afterTurn: sessionBusy(s), compacting: s.compact_running === true },
+      }),
     };
   },
   sendNow: sendSteerNow,
@@ -647,56 +651,80 @@ const chatSource: SteerStackSource = {
 };
 
 const COMPACT_TEXT = "Compact the context";
+const COMPACTING_TEXT = "Compacting the context\u2026";
 
-/** With no turn running the row is either the close's compaction in progress or left for the next turn's end, which
- *  the page cannot tell apart, so it says only that the compaction is still to come. */
-function compactWord(slot: CompactSlot): string {
-  return slot.running ? `After ${turnsPhrase(1, true)}` : "Pending";
+function compactStage(slot: CompactSlot): string {
+  return slot.compacting ? "compacting" : slot.afterTurn ? "running" : "idle";
 }
 
-/** The queued compaction's row: its wait, what it does, and Cancel, the one control (it has no words to edit and
- *  never stops a turn). */
+/** With no turn running and no call in flight, the row is left for the next turn's end. */
+function compactWord(slot: CompactSlot): string {
+  if (slot.compacting) {
+    return "Running";
+  }
+  return slot.afterTurn ? `After ${turnsPhrase(1, true)}` : "Pending";
+}
+
+/** The compaction's row: its wait, what it does, and while queued Cancel, the one control (it has no
+ *  words to edit and never stops a turn). The key stays the same from queued to running, so the
+ *  row changes in place rather than fading back in. */
 function buildCompactRow(slot: CompactSlot): HTMLElement {
   const li = el(
     "li",
-    {
-      className: "steer-row",
-      "data-state": "queued",
-      "data-kind": "compact",
-      "data-tooltip": COMPACT_TEXT,
-    },
+    { className: "steer-row", "data-kind": "compact" },
     el(
       "span",
       { className: "steer-state" },
-      el("span", { className: "steer-state-icon", "aria-hidden": "true" }, iconEl(ICON_COMPACT)),
+      el("span", { className: "steer-state-icon", "aria-hidden": "true" }),
       el("span", { className: "steer-state-label" }),
     ),
-    el("span", { className: "steer-text" }, COMPACT_TEXT),
-    el(
-      "span",
-      { className: "steer-actions" },
-      actionButton(
-        ICON_TRASH,
-        "Cancel the queued compaction",
-        "The context stays as it is",
-        () => {
-          void cancelQueuedCompaction();
-        },
-        "steer-act-danger",
-      ),
-    ),
+    el("span", { className: "steer-text" }),
+    el("span", { className: "steer-actions" }),
   );
   updateCompactRow(li, slot);
   return li;
 }
 
+const compactShown = new WeakMap<HTMLElement, boolean>();
+
+/** The icon and the control are rebuilt only when the stage flips, so a repaint never takes focus
+ *  off the Cancel button. */
 function updateCompactRow(li: HTMLElement, slot: CompactSlot): void {
   const word = compactWord(slot);
-  li.setAttribute("aria-label", `${word}: ${COMPACT_TEXT}`);
+  const text = slot.compacting ? COMPACTING_TEXT : COMPACT_TEXT;
+  li.dataset["state"] = slot.compacting ? "compacting" : "queued";
+  li.dataset["tooltip"] = text;
+  li.setAttribute("aria-label", `${word}: ${text}`);
   const label = li.querySelector(".steer-state-label");
   if (label !== null) {
     label.textContent = word;
   }
+  const textEl = li.querySelector(".steer-text");
+  if (textEl !== null) {
+    textEl.textContent = text;
+  }
+  if (compactShown.get(li) === slot.compacting) {
+    return;
+  }
+  compactShown.set(li, slot.compacting);
+  li.querySelector(".steer-state-icon")?.replaceChildren(
+    slot.compacting ? el("span", { className: "steer-spinner" }) : iconEl(ICON_COMPACT),
+  );
+  li.querySelector(".steer-actions")?.replaceChildren(
+    ...(slot.compacting
+      ? []
+      : [
+          actionButton(
+            ICON_TRASH,
+            "Cancel the queued compaction",
+            "The context stays as it is",
+            () => {
+              void cancelQueuedCompaction();
+            },
+            "steer-act-danger",
+          ),
+        ]),
+  );
 }
 
 async function cancelQueuedCompaction(): Promise<void> {

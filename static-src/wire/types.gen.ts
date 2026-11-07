@@ -2452,10 +2452,12 @@ export interface PctRange {
   step: number;
 }
 
-/** PendingCompaction is a compaction queued for a turn's end. */
+/** PendingCompaction is a compaction queued for a turn's end, or one whose call is in flight. */
 export interface PendingCompaction {
-  /** RequestedAt is when it was queued, in Unix ms. */
+  /** RequestedAt is when it was queued or, for one never queued, claimed, in Unix ms. */
   requested_at: number;
+  /** Running is set once the compaction is claimed and its call made; the row goes when the call ends. */
+  running?: boolean;
 }
 
 /**

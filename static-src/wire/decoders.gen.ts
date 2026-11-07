@@ -2762,6 +2762,10 @@ export const decodePendingCompaction: Decoder<PendingCompaction> = (v) => {
   const out: PendingCompaction = {
     requested_at: reqNum(o, "requested_at", "$.pending_compaction"),
   };
+  {
+    const $v = own(o, "running");
+    if ($v !== undefined && $v !== null) out.running = reqBool(o, "running", "$.pending_compaction");
+  }
   return out;
 };
 

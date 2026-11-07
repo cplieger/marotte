@@ -338,9 +338,9 @@ export const setAttachments = transportAction<{ chatID: string; paths: string[] 
 });
 
 /** Summarizes through KAS's native `compact` verb (typed `/compact` reaches the model as prose): at once on an idle
- *  chat, else at the running turn's end, which the dock shows. `idempotencyKey`: a double compact summarizes a
- *  summary. Success claims ACCEPTANCE, not completion (`internal/command/compact.go`). Resolves true when the server
- *  queued it. */
+ *  chat, else at the running turn's end; the dock shows it queued, then running. `idempotencyKey`: a double compact
+ *  summarizes a summary. An idle chat's reply comes once KAS accepted the summary (`internal/command/compact.go`).
+ *  Resolves true when the server queued it. */
 export const compactChat = defineAction<{ chatID: string }, boolean>({
   name: "chat.compact",
   networkMode: "always",
@@ -363,7 +363,7 @@ export const compactChat = defineAction<{ chatID: string }, boolean>({
     return compactQueued(r);
   },
   success: successAbout(onChat, (queued: boolean) =>
-    queued ? "Compaction queued for the end of this turn" : "Compacting the conversation…",
+    queued ? "Compaction queued for the end of this turn" : "Compaction finished",
   ),
   error: errorAbout(onChat, stillOr("starting the compaction", "Compact failed", "chat")),
 });
