@@ -1,8 +1,10 @@
 package trigger
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -316,5 +318,53 @@ func TestUndecodableStateFileIsUnreadable(t *testing.T) {
 				assertUnreadable(t, tc, r.ID, body)
 			})
 		})
+	}
+}
+
+// A stored definition this build refuses blocks launching the rule, not the state its earlier events left: the
+// edit that makes it valid again keeps the held event.
+func TestRefusedEventRuleKeepsItsState(t *testing.T) {
+	inBubble(t, func(t *testing.T, tc *testConfirmer) {
+		r := tc.createRule(runSpec("success"))
+		tc.enqueue(r.ID, held("k1", "c1"))
+		tc.persist(r.ID)
+		refuseOnDisk(t, tc, r.ID)
+		tc.restart()
+		if es, _ := tc.memory(r.ID); !slices.Equal(keysOf(es.queue), []string{"k1"}) {
+			t.Errorf("queue in memory after the load = %v, want [k1]", keysOf(es.queue))
+		}
+		def, _ := tc.store.Get(r.ID)
+		if _, _, ok := tc.claim(&def); ok {
+			t.Error("claim of a refused rule = an entry, want none")
+		}
+		edit(tc, &r, 0, func(r *launchrule.Rule) { r.When.Event.IntervalMin = 10 })
+		if es, _ := tc.file(r.ID); !slices.Equal(keysOf(es.queue), []string{"k1"}) {
+			t.Errorf("file queue after the edit = %v, want [k1] kept", keysOf(es.queue))
+		}
+	})
+}
+
+// refuseOnDisk rewrites the rule's stored interval_min to one this build refuses.
+func refuseOnDisk(t *testing.T, tc *testConfirmer, ruleID string) {
+	t.Helper()
+	path := filepath.Join(tc.dir, "launch-rules.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rules []map[string]any
+	if err := json.Unmarshal(data, &rules); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rules {
+		if r["id"] == ruleID {
+			r["when"].(map[string]any)["event"].(map[string]any)["interval_min"] = 99
+		}
+	}
+	if data, err = json.Marshal(rules); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

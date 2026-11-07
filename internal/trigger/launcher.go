@@ -141,8 +141,12 @@ func launchInputs(r *launchrule.Rule, e *queueEntry) map[string]string {
 }
 
 // claim is the rule's next launchable entry, marked launching under the rule's mutex so no poll supersedes it
-// between the pick and the call. A rule blocked, write-blocked, backing off or holding an entry in flight has none.
+// between the pick and the call. A rule refused, blocked, write-blocked, backing off or holding an entry in flight
+// has none.
 func (c *Confirmer) claim(r *launchrule.Rule) (queueEntry, func(), bool) {
+	if c.store.Refused(r.ID) != nil {
+		return queueEntry{}, nil, false
+	}
 	rv := c.lock(r.ID)
 	defer rv.mu.Unlock()
 	if rv.writeBlocked != "" || rv.es.raw.Status.Blocked != "" || time.Now().Before(rv.retryAt) {

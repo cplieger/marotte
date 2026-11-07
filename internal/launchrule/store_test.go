@@ -453,6 +453,32 @@ func TestRefusedStoredRuleBlocksOnlyItself(t *testing.T) {
 	}
 }
 
+// A refused event rule launches nothing, but its state stays the trigger confirmer's: it reads and writes it.
+func TestRefusedEventRuleStateStaysReadable(t *testing.T) {
+	const id = "AAAAAAAAAAAAAAAAAAAAAA"
+	body := `[{"id":"` + id + `","source":"bundled://a","enabled":true,"when":{"event":{"connection":"github:github.com",` +
+		`"repo":"cplieger/animap-source","kind":"run_concluded","interval_min":99,"filter":{"workflow":".github/workflows/weekly.yaml","result":["success"]}}}}]`
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, rulesFileName), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeUnreadable(t, dir, id, `{"queue":[{"key":"k1"}],"status":{}}`)
+	st := openStore(t, dir)
+	if err := st.Refused(id); err == nil || !strings.Contains(err.Error(), "interval_min") {
+		t.Errorf("Refused = %v, want the refusal naming interval_min", err)
+	}
+	if _, err := st.State(id); err == nil {
+		t.Error("State of a refused rule = nil error, want the refusal")
+	}
+	got, err := st.LoadedState(id)
+	if err != nil || got.Held() != 1 {
+		t.Fatalf("LoadedState = %d held, %v; want the file's one", got.Held(), err)
+	}
+	if err := writerOf(st).WriteState(t.Context(), id, &State{Status: Status{LastRunID: "wf"}}); err != nil {
+		t.Errorf("WriteState of a refused event rule: %v, want it written", err)
+	}
+}
+
 func TestReplaceAndDelete(t *testing.T) {
 	dir := t.TempDir()
 	st := openStore(t, dir)

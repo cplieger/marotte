@@ -92,7 +92,7 @@ func (c *Confirmer) rule(ruleID string) *ruleValue {
 	if def, ok := c.store.Get(ruleID); ok {
 		rv.newest, rv.label = isNewest(&def), labelOf(&def)
 	}
-	st, err := c.store.State(ruleID)
+	st, err := c.store.LoadedState(ruleID)
 	if ue, ok := errors.AsType[*launchrule.UnreadableStateError](err); ok {
 		rv.unreadable = ue.Error()
 	} else if err == nil {

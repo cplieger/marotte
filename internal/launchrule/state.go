@@ -115,15 +115,13 @@ type ruleState struct {
 	event bool
 }
 
-// blocked is why the rule may neither fire nor have its state written, nil when it may; rs.mu is held.
+// blocked is why the store refuses the rule's state, nil when it serves it; rs.mu is held. An event rule's state is
+// the trigger confirmer's, which keeps it through a refused definition and decides on an unreadable file.
 func (rs *ruleState) blocked() error {
-	if rs.refused != nil {
-		return rs.refused
-	}
 	if rs.event {
 		return nil
 	}
-	return rs.unreadable
+	return cmp.Or(rs.refused, rs.unreadable)
 }
 
 // removeFile is a test seam for a state file removal that fails.
@@ -223,10 +221,36 @@ func (s *Store) State(ruleID string) (State, error) {
 	}
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	if err := cmp.Or(rs.blocked(), rs.unreadable); err != nil {
+	if err := cmp.Or(rs.refused, rs.unreadable); err != nil {
 		return State{}, err
 	}
 	return rs.state.clone(), nil
+}
+
+// LoadedState is State through a refused definition: the state the rule's earlier runs left, which a refusal does
+// not void.
+func (s *Store) LoadedState(ruleID string) (State, error) {
+	rs, err := s.ruleState(ruleID)
+	if err != nil {
+		return State{}, err
+	}
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if rs.unreadable != nil {
+		return State{}, rs.unreadable
+	}
+	return rs.state.clone(), nil
+}
+
+// Refused is why this build refuses the rule's stored definition, nil when it takes it; ErrNotFound for no such rule.
+func (s *Store) Refused(ruleID string) error {
+	rs, err := s.ruleState(ruleID)
+	if err != nil {
+		return err
+	}
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return rs.refused
 }
 
 // StateWriter is the raw write and removal of a rule's state file. NewStore hands out the only one, which the
@@ -238,9 +262,9 @@ type StateWriter interface {
 
 type stateWriter struct{ s *Store }
 
-// WriteState replaces the rule's state file with in, touching no other file. ErrNotFound for no such rule; a
-// refused rule, or a clock rule whose file is unreadable, refuses with what State answers. An event rule's
-// unreadable file is replaced: the caller is the one that decided to.
+// WriteState replaces the rule's state file with in, touching no other file. ErrNotFound for no such rule; a clock
+// rule refused or with an unreadable file refuses with what State answers. An event rule's is always written: the
+// trigger confirmer decides.
 func (w stateWriter) WriteState(ctx context.Context, ruleID string, in *State) error {
 	s := w.s
 	rs, err := s.ruleState(ruleID)
