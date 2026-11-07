@@ -108,7 +108,6 @@ func TestCloseTurnOnBridgeDeath_ClosesAnOpenTurn(t *testing.T) {
 	if got := closedBroadcasts(t, h); len(got) != 1 || got[0].Outcome != marotte.TurnOutcomeInterrupted {
 		t.Errorf("turn_closed broadcasts = %+v, want exactly one interrupted", got)
 	}
-	// The close's drain runs on its own goroutine and may hold the admission slot while it finds nothing to send.
 	waitFor(t, func() bool { return !h.coord.turns.live("c1") })
 }
 
