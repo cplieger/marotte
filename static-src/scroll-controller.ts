@@ -611,7 +611,10 @@ export class ScrollController {
       view.style.minBlockSize = `${String(size)}px`;
       this.floorPx = size;
     }
-    view.setAttribute("data-scroll-floor", "");
+    // A same-value attribute write still queues a mutation, which dirties the next read.
+    if (!view.hasAttribute("data-scroll-floor")) {
+      view.setAttribute("data-scroll-floor", "");
+    }
   }
 
   private clearFloor(): void {
@@ -1064,8 +1067,13 @@ export class ScrollController {
       fn();
       return;
     }
-    this.attributePending();
-    if (this.holding() && this.anchor === null) {
+    // A pending restore takes the anchor at its own write; a hold before it reads the view at a position the reader
+    // is not at, forcing a layout per read.
+    const restoring = this.pendingRestore !== null;
+    if (!restoring) {
+      this.attributePending();
+    }
+    if (!restoring && this.holding() && this.anchor === null) {
       this.retake();
     }
     this.mutating = true;
@@ -1073,6 +1081,9 @@ export class ScrollController {
       fn();
     } finally {
       this.mutating = false;
+    }
+    if (restoring) {
+      return;
     }
     if (this.holding()) {
       this.holdAnchor();
@@ -1141,7 +1152,9 @@ export class ScrollController {
       return;
     }
     this.pendingRestore = null;
-    this.writeTop(handle.scrollTop);
+    // The write before any read: `writeTop` measures the end first, which would force the task's layout ahead of it.
+    this.scrollEl.scrollTo({ top: Math.max(0, Math.round(handle.scrollTop)), behavior: "instant" });
+    this.noteOwnWrite();
     const saved = handle.anchor;
     if (
       this.state === "reading" &&
@@ -1152,9 +1165,13 @@ export class ScrollController {
     } else {
       this.retake();
     }
+    // Every read before the floor's and the near marks' writes, which would dirty the layout the reads take.
+    this.lastT = this.clampedTop();
+    const near = this.nearJumpBoxes();
+    this.nearQueued = false;
     this.openSettle();
     this.holdFloor();
-    this.lastT = this.clampedTop();
+    this.markNear(near);
     for (const cb of [...this.attachListeners]) {
       cb();
     }
@@ -1286,41 +1303,58 @@ export class ScrollController {
     }
     this.nearQueued = true;
     queueMicrotask(() => {
+      // Cleared by a caller that ran the pass itself (`applyPendingRestore`).
+      if (!this.nearQueued) {
+        return;
+      }
       this.nearQueued = false;
-      this.markNearJump();
+      this.markNear(this.nearJumpBoxes());
     });
   }
 
-  /** After a move past `NEAR_JUMP`, mark the boxes now inside the near band in this task, then re-observe each so the
-   *  observer's next notification confirms or clears the mark. Gecko re-determines `content-visibility: auto` proximity
+  /** After a move past `NEAR_JUMP`, the unmarked boxes now inside the near band, which `markNear` marks in this task
+   *  and re-observes so the observer's next notification confirms or clears the mark. Gecko re-determines `content-visibility: auto` proximity
    *  inside the resize loop and any layout read applies it (`DetermineProximityToViewport`, `DoFlushPendingNotifications`
    *  in https://github.com/mozilla-firefox/firefox/blob/main/layout/base/PresShell.cpp), so a box the observer has not
    *  marked yet lays out mid-loop and resizes a turn already delivered. Never inside the content delivery, whose loop
    *  the marks' layout would be, nor in a microtask after it, which still runs inside that loop: a write the delivery
    *  makes is marked at its scroll event, before the next frame's loop. */
-  private markNearJump(): void {
+  private nearJumpBoxes(): Element[] {
     const t = this.scrollEl.scrollTop;
     if (this.delivering || Math.abs(t - this.nearTop) <= this.scrollEl.clientHeight * NEAR_JUMP) {
-      return;
+      return [];
     }
     this.nearTop = t;
-    const observer = this.nearObserver;
-    if (observer === null) {
-      return;
+    if (this.nearObserver === null) {
+      return [];
     }
     const port = this.scrollEl.getBoundingClientRect();
     const top = port.top - this.nearMargin;
     const bottom = port.bottom + this.nearMargin;
+    const near: Element[] = [];
     for (const box of this.nearTargets) {
       if (box.hasAttribute("data-near")) {
         continue;
       }
       const r = box.getBoundingClientRect();
       if (r.bottom >= top && r.top <= bottom) {
-        box.setAttribute("data-near", "");
-        observer.unobserve(box);
-        observer.observe(box);
+        near.push(box);
       }
+    }
+    return near;
+  }
+
+  /** The write half of the near jump, apart from its reads (`nearJumpBoxes`): a mark changes the box's size, so a
+   *  mark between two reads forces a layout per box. */
+  private markNear(boxes: readonly Element[]): void {
+    const observer = this.nearObserver;
+    if (observer === null) {
+      return;
+    }
+    for (const box of boxes) {
+      box.setAttribute("data-near", "");
+      observer.unobserve(box);
+      observer.observe(box);
     }
   }
 
