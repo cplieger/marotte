@@ -1,6 +1,8 @@
 package command
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -25,7 +27,7 @@ func callerPromptParams(t *testing.T, from *marotte.Caller) map[string]any {
 	return params
 }
 
-// A notify prompt reaches the engine with the caller's label, which KAS keeps on the prompt's user row.
+// A notify prompt's Caller.Label is copied to _meta.kiro.callerLabel.
 func TestBuildPromptParams_NamesTheNotifyCallerToTheEngine(t *testing.T) {
 	params := callerPromptParams(t, &marotte.Caller{Label: "grelot"})
 	if got, ok := promptCallerLabel(params); !ok || got != "grelot" {
@@ -33,12 +35,13 @@ func TestBuildPromptParams_NamesTheNotifyCallerToTheEngine(t *testing.T) {
 	}
 }
 
-// /api/command's caller label rides the same key, unchanged from the label commandCaller made.
+// An /api/command caller's label reaches _meta.kiro.callerLabel as commandCaller cleaned it: one line,
+// runs of blanks collapsed, ends trimmed.
 func TestBuildPromptParams_NamesTheCommandCallerToTheEngine(t *testing.T) {
-	const label = "ci bot 7"
-	params := callerPromptParams(t, &marotte.Caller{Label: label})
-	if got, ok := promptCallerLabel(params); !ok || got != label {
-		t.Errorf("params[_meta].kiro.callerLabel = %q (present %v), want %q", got, ok, label)
+	r := httptest.NewRequest(http.MethodPost, "/api/command", nil)
+	params := callerPromptParams(t, commandCaller(r, "  ci\tbot \n7 "))
+	if got, ok := promptCallerLabel(params); !ok || got != "ci bot 7" {
+		t.Errorf("params[_meta].kiro.callerLabel = %q (present %v), want %q", got, ok, "ci bot 7")
 	}
 }
 

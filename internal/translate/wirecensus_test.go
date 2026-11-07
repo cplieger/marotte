@@ -461,6 +461,27 @@ func TestToolCallUpdate_CensusIsQuietOnASubAgentStop(t *testing.T) {
 	}
 }
 
+// KAS echoes a caller prompt's callerLabel on its user_message_chunk; marotte sent the key, so the
+// census stays quiet on it.
+func TestUserMessageChunk_CensusIsQuietOnTheCallerLabel(t *testing.T) {
+	resetCensus(t)
+	var logbuf bytes.Buffer
+	captureSlog(t, &logbuf)
+	var u struct {
+		Meta acpKiroMeta `json:"_meta"`
+	}
+	if err := json.Unmarshal(mustJSON(t, map[string]any{
+		"sessionUpdate": "user_message_chunk",
+		"content":       map[string]any{"type": "text", "text": "1 new"},
+		"_meta":         map[string]any{"kiro": map[string]any{"callerLabel": "grelot", "userMessageTag": "t-1"}},
+	}), &u); err != nil {
+		t.Fatalf("decode user_message_chunk: %v", err)
+	}
+	if out := logbuf.String(); strings.Contains(out, "UNKNOWN _meta.kiro field") {
+		t.Errorf("a user_message_chunk carrying callerLabel reported a member: %s", out)
+	}
+}
+
 func updateParams(t *testing.T, kind string) json.RawMessage {
 	t.Helper()
 	return mustJSON(t, map[string]any{"sessionId": "s", "update": map[string]any{"sessionUpdate": kind}})
