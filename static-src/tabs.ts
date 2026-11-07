@@ -865,7 +865,8 @@ export function navigationHeld(ticket: number): boolean {
   return ticket === navigationSeq;
 }
 
-/** Advanced by every close of the active tab, which hands the view on as the reader's act. */
+/** Advanced by every close of the active tab that hands the view to another tab, the reader's
+ *  act. */
 let activeCloses = 0;
 
 /** Activate an existing tab, and reveal it: this is the reader picking a destination. Every gesture
@@ -912,6 +913,12 @@ function activateSuccessor(local: boolean): void {
   state.active = "";
   setActiveView("");
   dropCover();
+  // The departed tab's activation must not count as binding the row a re-list or rollback puts back.
+  if (currentActivation !== null) {
+    currentActivation.controller.abort();
+    currentActivation.resolveDone();
+    currentActivation = null;
+  }
   if (local) {
     scheduleEmpty();
   }
@@ -1221,12 +1228,11 @@ interface CapturedClose {
   activeTabID: string;
   /** `navigationSeq` at the gesture, read without claiming. */
   navigation: number;
-  /** This close's `activeCloses` value; 0 for a close of a background tab. */
+  /** `activeCloses` once this close of the active tab ran; 0 for a close of a background tab. */
   handoff: number;
-  /** The close emptied the strip, so text typed meanwhile is the restored chat's draft. */
-  emptied: boolean;
   /** The store's active chat at gesture time, when it was a chat this close took out; ""
-   *  otherwise. Its draft owner when the strip emptied, and the sign that the rollback re-selects. */
+   *  otherwise. The draft owner of text typed with no chat active, and the sign that the rollback
+   *  re-selects. */
   storeActive: string;
   /** The strip's scroll at the gesture, read before any write of the close. */
   stripScroll: StripScroll;
@@ -1357,7 +1363,6 @@ function captureClose(row: TabRow): CapturedClose {
     activeTabID: ids.has(state.active) ? state.active : "",
     navigation: navigationSeq,
     handoff: 0,
-    emptied: false,
     storeActive: rows.some((r) => r.subject.kind === "chat" && r.subject.ref === storeActive)
       ? storeActive
       : "",
@@ -1378,10 +1383,10 @@ function applyGestureRemoval(c: CapturedClose): void {
     forgetRow(r);
   }
   if (c.activeTabID !== "") {
-    c.handoff = ++activeCloses;
     // scheduleEmpty defers itself while this remove is pending.
     activateSuccessor(true);
-    c.emptied = state.active === "";
+    // An emptying close shows no tab, so it is no move away from an earlier close's tab.
+    c.handoff = state.active === "" ? activeCloses : ++activeCloses;
   }
   // The store row survives to onConfirm, and a reader acting for the user must never act for a
   // chat whose tab is gone: a non-chat tab was shown, or the strip emptied.
@@ -1404,6 +1409,29 @@ function confirmClose(c: CapturedClose): void {
     }
     tearDown(r);
   }
+  settleCloseView("");
+}
+
+/** The last step of every close outcome: show `pick` (the navigation-ticket rule's choice, ""
+ *  for none) when it is open, else keep a bound active tab, else bind one, so a strip with rows
+ *  always shows one and Send acts for it. Answers whether it started an activation. */
+function settleCloseView(pick: string): boolean {
+  const bound = state.active !== "" && currentActivation?.id === state.active;
+  let target = pick !== "" && hasRow(pick) ? pick : "";
+  if (target === "" && !bound) {
+    const recent = hasRow(state.active) ? state.active : mostRecentOpenTab();
+    target = recent !== "" ? recent : (state.tabs[0]?.subject.id ?? "");
+  }
+  if (target === "" || (target === state.active && bound)) {
+    return false;
+  }
+  // reset's boot branch points `state.active` at a row with no activation, which the
+  // already-active guard would swallow.
+  if (target === state.active) {
+    state.active = "";
+  }
+  beginActivation(target, { quiet: true, now: true });
+  return true;
 }
 
 /** Restore a captured subtree: the definitive-failure rollback and the verify-settled restore. A
@@ -1433,34 +1461,24 @@ function rollbackClose(c: CapturedClose): void {
   const restoredChat =
     c.rows.find((r) => r.subject.id === c.activeTabID && r.subject.kind === "chat")?.subject.ref ??
     c.storeActive;
-  if (restoredChat !== "" && c.emptied && getActiveId() === "") {
+  if (restoredChat !== "" && getActiveId() === "") {
     const typed = $.promptInput.value;
     if (typed !== "") {
       restoreFailedSend(restoredChat, typed);
     }
   }
-  if (restorable.length > 0 && internal.stripGestures === c.stripGestures) {
+  // Also when the verify re-list already put the rows back: its render did not restore the scroll.
+  if (internal.stripGestures === c.stripGestures && c.rows.some((r) => hasRow(r.subject.id))) {
     internal.stripRestore = c.stripScroll;
   }
   emit();
-  // reset's boot branch points `state.active` at a restored row with no activation; the shown tab
-  // must be bound, or Send acts for no chat.
-  const unbound = c.rows.some((r) => r.subject.id === state.active);
-  let target = unbound ? state.active : "";
+  const stillThere =
+    c.activeTabID !== "" && navigationHeld(c.navigation) && c.handoff === activeCloses;
   if (
-    c.activeTabID !== "" &&
-    hasRow(c.activeTabID) &&
-    navigationHeld(c.navigation) &&
-    c.handoff === activeCloses
+    !settleCloseView(stillThere ? c.activeTabID : "") &&
+    c.storeActive !== "" &&
+    getActiveTabKind() !== "chat"
   ) {
-    target = c.activeTabID;
-  }
-  if (target !== "") {
-    if (unbound) {
-      state.active = "";
-    }
-    beginActivation(target, { quiet: true, now: true });
-  } else if (c.storeActive !== "" && getActiveTabKind() !== "chat") {
     reselectPaintedChat();
   }
   if (!c.refused) {
