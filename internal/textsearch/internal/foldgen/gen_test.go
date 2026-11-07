@@ -14,31 +14,31 @@ const moduleRoot = "../../../.."
 // TestCheckedInTablesAreCurrent regenerates both tables in memory: a checked-in file that differs was edited by
 // hand or generated from another Unicode version.
 func TestCheckedInTablesAreCurrent(t *testing.T) {
-	table := Table()
-	goSrc, err := GoSource(table)
+	table := accentTable()
+	goSrc, err := goSource(table)
 	if err != nil {
-		t.Fatalf("GoSource: %v", err)
+		t.Fatalf("goSource: %v", err)
 	}
 	for _, f := range []struct {
 		path string
 		want []byte
-	}{{GoPath, goSrc}, {TSPath, TSSource(table)}} {
+	}{{goPath, goSrc}, {tsPath, tsSource(table)}} {
 		got, err := os.ReadFile(filepath.Join(moduleRoot, f.path))
 		if err != nil {
-			t.Fatalf("read %s (run %s from the module root): %v", f.path, Cmd, err)
+			t.Fatalf("read %s (run %s from the module root): %v", f.path, genCmd, err)
 		}
 		if !bytes.Equal(got, f.want) {
-			t.Errorf("%s is stale; run %s from the module root", f.path, Cmd)
+			t.Errorf("%s is stale; run %s from the module root", f.path, genCmd)
 		}
 	}
 }
 
 func TestTable(t *testing.T) {
-	table := Table()
+	table := accentTable()
 	fold := map[rune]rune{}
 	for i, p := range table {
 		if i > 0 && table[i-1].From >= p.From {
-			t.Fatalf("Table is not ascending at %d: U+%04X then U+%04X", i, table[i-1].From, p.From)
+			t.Fatalf("accentTable is not ascending at %d: U+%04X then U+%04X", i, table[i-1].From, p.From)
 		}
 		if utf16.RuneLen(p.From) != utf16.RuneLen(p.To) {
 			t.Errorf("U+%04X -> U+%04X changes UTF-16 length", p.From, p.To)

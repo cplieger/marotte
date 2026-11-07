@@ -113,7 +113,6 @@ function skippableBoxOf(el: Element, root: Element): Element | null {
 function literalWalk(query: string, caseSensitive: boolean): Walk {
   const needle = prepare(query, caseSensitive);
   return {
-    key: query,
     find: (text) =>
       occurrences(text, needle).map((at) => ({ term: 0, at, len: needle.text.length })),
     terms: needle.text === "" ? 0 : 1,
@@ -189,18 +188,16 @@ interface Found {
   readonly len: number;
 }
 
-/** One walk: the box value it answers, how it finds stretches and how many terms a unit must hold, and, in unit
- *  mode, the scope of its units. */
+/** One walk: how it finds stretches and how many terms a unit must hold, and, in unit mode, the scope of its
+ *  units. */
 interface Walk {
-  readonly key: string;
   readonly find: (text: string) => readonly Found[];
   readonly terms: number;
   readonly scope: UnitScope | null;
 }
 
-function unitWalk(key: string, matcher: Matcher, scope: UnitScope): Walk {
+function unitWalk(matcher: Matcher, scope: UnitScope): Walk {
   return {
-    key,
     find: (text) => spans(text, matcher),
     terms: matcher.terms.length,
     scope,
@@ -319,7 +316,6 @@ export class FindEngine {
   private anchor: Range | null = null;
   private held: Held | null = null;
   private readonly holderAttrs: readonly string[];
-  private lastQuery = "";
 
   /**
    * `holderAttrs` names the attributes identifying the element a hit lives in: the closest carrying all of them. A
@@ -340,28 +336,23 @@ export class FindEngine {
     return this.current;
   }
 
-  /** The box value the standing walk answers. */
-  get query(): string {
-    return this.lastQuery;
-  }
-
   /** Literal mode: re-highlight every occurrence of `query` across the root, each a step; the current step resets
    *  to 0 (or -1). Returns the count. */
   search(query: string, caseSensitive = false): number {
     return this.walk(literalWalk(query, caseSensitive), null);
   }
 
-  /** Unit mode: re-highlight every span of every term inside the units holding all of them, each unit a step. `key`
-   *  is the box value the walk answers. Returns the count. */
-  searchUnits(key: string, matcher: Matcher, scope: UnitScope): number {
-    return this.walk(unitWalk(key, matcher, scope), null);
+  /** Unit mode: re-highlight every span of every term inside the units holding all of them, each unit a step.
+   *  Returns the count. */
+  searchUnits(matcher: Matcher, scope: UnitScope): number {
+    return this.walk(unitWalk(matcher, scope), null);
   }
 
   /** Unit mode where a unit holding any one term is a step: for a stand-in that names a hit in other words than the
    *  hit's own text (a folded hook's row in its badge list), so the words it shares still show. */
-  searchAnyTerm(key: string, matcher: Matcher, scope: UnitScope): number {
+  searchAnyTerm(matcher: Matcher, scope: UnitScope): number {
     return this.walk(
-      { ...unitWalk(key, matcher, scope), terms: Math.min(1, matcher.terms.length) },
+      { ...unitWalk(matcher, scope), terms: Math.min(1, matcher.terms.length) },
       null,
     );
   }
@@ -373,13 +364,14 @@ export class FindEngine {
    * that character position; else it is where the step's element stood. Once it is gone (its turn folded, its holder
    * removed), the first step from there is current, wrapping like `next`. Returns the count.
    */
+  // deadset:ignore DS1102 -- test seam: drives the re-walk's spot rules one occurrence a step, as refreshUnits does
   refresh(query: string, caseSensitive = false): number {
     return this.rewalk(literalWalk(query, caseSensitive));
   }
 
   /** `refresh` for unit mode. */
-  refreshUnits(key: string, matcher: Matcher, scope: UnitScope): number {
-    return this.rewalk(unitWalk(key, matcher, scope));
+  refreshUnits(matcher: Matcher, scope: UnitScope): number {
+    return this.rewalk(unitWalk(matcher, scope));
   }
 
   private rewalk(w: Walk): number {
@@ -394,7 +386,6 @@ export class FindEngine {
 
   private walk(w: Walk, keep: Element | null): number {
     this.clear();
-    this.lastQuery = w.key;
     if (w.terms === 0) {
       return 0;
     }
@@ -437,7 +428,7 @@ export class FindEngine {
    * The text unit mode matches in each unit of `scope`, one string per run (a phrase never crosses two), in document
    * order: what internal/chat/testdata/search_items.json's `texts` pins against the server's items.
    */
-  // deadset:ignore DS1004 -- test seam: the unit text search-items-contract.test.ts compares with the server's
+  // deadset:ignore DS1102 -- test seam: the unit text search-items-contract.test.ts compares with the server's
   unitTexts(scope: UnitScope): Map<Element, string[]> {
     const out = new Map<Element, string[]>();
     for (const [unit, runs] of this.groupUnits(this.collectRuns(null), scope)) {
@@ -552,7 +543,6 @@ export class FindEngine {
     this.current = -1;
     this.anchor = null;
     this.held = null;
-    this.lastQuery = "";
   }
 
   next(): void {

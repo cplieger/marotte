@@ -9,18 +9,17 @@ import (
 // the caller's rule accepted.
 type Query struct {
 	Terms   []Term
-	Filters []Filter
+	Filters []filter
 }
 
 // Term is one thing that must match: a word, or a quoted phrase whose words match in order with any run of
 // whitespace between them.
 type Term struct {
-	Words  []string `json:"words"`
-	Phrase bool     `json:"phrase"`
+	Words []string `json:"words"`
 }
 
-// Filter is an unquoted `name:value` word the caller's rule accepted. Name is lowercased; Value is as typed.
-type Filter struct {
+// filter is an unquoted `name:value` word the caller's rule accepted. Name is lowercased; Value is as typed.
+type filter struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }
@@ -70,7 +69,7 @@ func (p *queryParser) endWord() {
 		return
 	}
 	if name, value, ok := strings.Cut(w, ":"); ok && value != "" && p.isFilter != nil && p.isFilter(strings.ToLower(name), value) {
-		p.q.Filters = append(p.q.Filters, Filter{Name: strings.ToLower(name), Value: value})
+		p.q.Filters = append(p.q.Filters, filter{Name: strings.ToLower(name), Value: value})
 		return
 	}
 	p.q.Terms = append(p.q.Terms, Term{Words: []string{w}})
@@ -78,7 +77,7 @@ func (p *queryParser) endWord() {
 
 func (p *queryParser) endPhrase() {
 	if len(p.phrase) > 0 {
-		p.q.Terms = append(p.q.Terms, Term{Words: p.phrase, Phrase: true})
+		p.q.Terms = append(p.q.Terms, Term{Words: p.phrase})
 	}
 	p.phrase = nil
 	p.inPhrase = false

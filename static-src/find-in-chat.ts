@@ -949,11 +949,9 @@ function markHookRow(badge: HTMLElement, hit: Hit): void {
   }
   // Rooted at the list: a unit is found below the engine's root, never as it.
   hookRowEngine = new FindEngine(row.parentElement ?? row);
-  hookRowEngine.searchAnyTerm(
-    serverHitsQuery,
-    walkOf(serverHitsQuery, shell?.caseSensitive ?? false).matcher,
-    { units: [row] },
-  );
+  hookRowEngine.searchAnyTerm(walkOf(serverHitsQuery, shell?.caseSensitive ?? false).matcher, {
+    units: [row],
+  });
 }
 
 function clearHookRow(): void {
@@ -1020,7 +1018,7 @@ function searchNow(query: string, caseSensitive: boolean): void {
   cancelRerun();
   const { matcher, scope } = walkOf(query, caseSensitive);
   applyEngine(() => {
-    engine?.searchUnits(query, matcher, scope);
+    engine?.searchUnits(matcher, scope);
   });
 }
 
@@ -1048,7 +1046,7 @@ function rerun(): void {
   const query = searchedQuery;
   const { matcher, scope } = walkOf(query, shell.caseSensitive);
   applyEngine(() => {
-    engine?.refreshUnits(query, matcher, scope);
+    engine?.refreshUnits(matcher, scope);
     if (marklessStep && stepsOwnedList(query)) {
       engine?.clearCurrent();
     }

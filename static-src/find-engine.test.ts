@@ -592,8 +592,7 @@ describe("unit mode", () => {
   it("steps through the units holding every term, across their blocks, and marks each term only there", () => {
     const host = units();
     const eng = new FindEngine(host);
-    expect(eng.searchUnits("q", matcherOf("deadset security failure"), UNITS)).toBe(2);
-    expect(eng.query).toBe("q");
+    expect(eng.searchUnits(matcherOf("deadset security failure"), UNITS)).toBe(2);
     expect(currentUnitOf(host)).toBe("u1");
     expect(marks(host).map((m) => [m.closest("[data-find-unit]")?.id, m.textContent])).toEqual([
       ["u1", "security"],
@@ -608,7 +607,7 @@ describe("unit mode", () => {
   it("gives every mark of the current unit the current style, and moves by unit", () => {
     const host = units();
     const eng = new FindEngine(host);
-    eng.searchUnits("q", matcherOf("deadset security failure"), UNITS);
+    eng.searchUnits(matcherOf("deadset security failure"), UNITS);
     const current = (): (string | null)[] =>
       [...host.querySelectorAll("mark.find-hit-current")].map(
         (m) => m.closest("[data-find-unit]")?.id ?? null,
@@ -625,7 +624,7 @@ describe("unit mode", () => {
   it("makes a named unit current, and refuses one that holds no step", () => {
     const host = units();
     const eng = new FindEngine(host);
-    eng.searchUnits("q", matcherOf("deadset security failure"), UNITS);
+    eng.searchUnits(matcherOf("deadset security failure"), UNITS);
     expect(eng.setCurrentUnit(host.querySelector("#u3") as Element)).toBe(true);
     expect(currentUnitOf(host)).toBe("u3");
     expect(eng.setCurrentUnit(host.querySelector("#u2") as Element)).toBe(false);
@@ -635,7 +634,7 @@ describe("unit mode", () => {
   it("marks the union of overlapping terms once", () => {
     const host = mount(`<div data-find-unit="message"><p>deadset-go</p></div>`);
     const eng = new FindEngine(host);
-    eng.searchUnits("q", matcherOf("deadset set-go"), UNITS);
+    eng.searchUnits(matcherOf("deadset set-go"), UNITS);
     expect(marks(host).map((m) => m.textContent)).toEqual(["deadset-go"]);
   });
 
@@ -643,7 +642,7 @@ describe("unit mode", () => {
     const host = units();
     const eng = new FindEngine(host);
     const u2 = host.querySelector("#u2") as Element;
-    expect(eng.searchUnits("q", matcherOf("deadset"), { units: [u2] })).toBe(1);
+    expect(eng.searchUnits(matcherOf("deadset"), { units: [u2] })).toBe(1);
     expect(marks(host).map((m) => m.closest("[data-find-unit]")?.id)).toEqual(["u2"]);
   });
 
@@ -651,8 +650,8 @@ describe("unit mode", () => {
     const html = `<div data-find-unit="tool" id="a">lint guard</div><div data-find-unit="tool" id="b">format</div>`;
     const host = mount(html);
     const eng = new FindEngine(host);
-    expect(eng.searchUnits("q", matcherOf("guard deadset"), UNITS)).toBe(0);
-    expect(eng.searchAnyTerm("q", matcherOf("guard deadset"), UNITS)).toBe(1);
+    expect(eng.searchUnits(matcherOf("guard deadset"), UNITS)).toBe(0);
+    expect(eng.searchAnyTerm(matcherOf("guard deadset"), UNITS)).toBe(1);
     expect(marks(host).map((m) => [m.textContent, m.closest("[data-find-unit]")?.id])).toEqual([
       ["guard", "a"],
     ]);
@@ -662,7 +661,7 @@ describe("unit mode", () => {
   it("folds accents and matches a phrase across a line break", () => {
     const host = mount(`<div data-find-unit="message"><p>La Sécurité\n   failure</p></div>`);
     const eng = new FindEngine(host);
-    expect(eng.searchUnits("q", matcherOf('"securite failure"'), UNITS)).toBe(1);
+    expect(eng.searchUnits(matcherOf('"securite failure"'), UNITS)).toBe(1);
     expect(marks(host).map((m) => m.textContent)).toEqual(["Sécurité\n   failure"]);
   });
 
@@ -670,9 +669,9 @@ describe("unit mode", () => {
     const host = units();
     const eng = new FindEngine(host);
     const m = matcherOf("deadset security failure");
-    eng.searchUnits("q", m, UNITS);
+    eng.searchUnits(m, UNITS);
     eng.next();
-    expect(eng.refreshUnits("q", m, UNITS)).toBe(2);
+    expect(eng.refreshUnits(m, UNITS)).toBe(2);
     expect(currentUnitOf(host)).toBe("u3");
   });
 });

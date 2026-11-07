@@ -16,20 +16,17 @@
         {
           "words": [
             "deadset"
-          ],
-          "phrase": false
+          ]
         },
         {
           "words": [
             "security"
-          ],
-          "phrase": false
+          ]
         },
         {
           "words": [
             "failure"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": {
@@ -45,14 +42,12 @@
           "words": [
             "security",
             "failure"
-          ],
-          "phrase": true
+          ]
         },
         {
           "words": [
             "deadset"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": {
@@ -67,8 +62,7 @@
         {
           "words": [
             "retry"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": {
@@ -92,8 +86,7 @@
         {
           "words": [
             "turn:0"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": {
@@ -108,8 +101,7 @@
         {
           "words": [
             "turn:abc"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": {
@@ -124,8 +116,7 @@
         {
           "words": [
             "turn:-1"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": {
@@ -149,8 +140,7 @@
         {
           "words": [
             "turn:99999999999999999999"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": {
@@ -165,8 +155,7 @@
         {
           "words": [
             "http://x"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": {
@@ -181,15 +170,13 @@
         {
           "words": [
             "file:"
-          ],
-          "phrase": false
+          ]
         },
         {
           "words": [
             "a",
             "b"
-          ],
-          "phrase": true
+          ]
         }
       ],
       "filters": {
@@ -222,8 +209,7 @@
         {
           "words": [
             "file:a.go"
-          ],
-          "phrase": true
+          ]
         }
       ],
       "filters": {
@@ -238,8 +224,7 @@
         {
           "words": [
             "role:user"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": {
@@ -254,8 +239,7 @@
         {
           "words": [
             "file:"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": {
@@ -270,14 +254,12 @@
         {
           "words": [
             "-v"
-          ],
-          "phrase": false
+          ]
         },
         {
           "words": [
             "--force"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": {

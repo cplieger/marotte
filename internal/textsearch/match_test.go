@@ -19,17 +19,17 @@ func TestMatcher_Spans(t *testing.T) {
 		{
 			"every term, merged in text order", "failure deadset", "deadset failure deadset",
 			false,
-			[]Span{{Term: 1, Rune: 0, Byte: 0, Runes: 7}, {Term: 0, Rune: 8, Byte: 8, Runes: 7}, {Term: 1, Rune: 16, Byte: 16, Runes: 7}},
+			[]Span{{Term: 1, Rune: 0, Runes: 7}, {Term: 0, Rune: 8, Runes: 7}, {Term: 1, Rune: 16, Runes: 7}},
 		},
-		{"a phrase spans its whitespace", `"security failure"`, "a security\n  failure", false, []Span{{Term: 0, Rune: 2, Byte: 2, Runes: 18}}},
+		{"a phrase spans its whitespace", `"security failure"`, "a security\n  failure", false, []Span{{Term: 0, Rune: 2, Runes: 18}}},
 		{"a phrase out of order has no span", `"security failure"`, "failure security", false, nil},
-		{"a failed extension resumes one rune on", `"aa b"`, "aaa b", false, []Span{{Term: 0, Rune: 1, Byte: 1, Runes: 4}}},
-		{"a phrase's last word may continue", `"security fail"`, "security failure", false, []Span{{Term: 0, Rune: 0, Byte: 0, Runes: 13}}},
-		{"spans of one term never overlap", "aa", "aaa", false, []Span{{Term: 0, Rune: 0, Byte: 0, Runes: 2}}},
-		{"ties order by term", "ab a", "ab", false, []Span{{Term: 0, Rune: 0, Byte: 0, Runes: 2}, {Term: 1, Rune: 0, Byte: 0, Runes: 1}}},
-		{"accents fold", "securite", "La Sécurité", false, []Span{{Term: 0, Rune: 3, Byte: 3, Runes: 8}}},
+		{"a failed extension resumes one rune on", `"aa b"`, "aaa b", false, []Span{{Term: 0, Rune: 1, Runes: 4}}},
+		{"a phrase's last word may continue", `"security fail"`, "security failure", false, []Span{{Term: 0, Rune: 0, Runes: 13}}},
+		{"spans of one term never overlap", "aa", "aaa", false, []Span{{Term: 0, Rune: 0, Runes: 2}}},
+		{"ties order by term", "ab a", "ab", false, []Span{{Term: 0, Rune: 0, Runes: 2}, {Term: 1, Rune: 0, Runes: 1}}},
+		{"accents fold", "securite", "La Sécurité", false, []Span{{Term: 0, Rune: 3, Runes: 8}}},
 		{"case-sensitive is literal", "securite", "La Sécurité", true, nil},
-		{"byte offsets index the original", "x", "é😀x", false, []Span{{Term: 0, Rune: 2, Byte: 6, Runes: 1}}},
+		{"rune offsets index the original", "x", "é😀x", false, []Span{{Term: 0, Rune: 2, Runes: 1}}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

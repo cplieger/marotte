@@ -38,8 +38,8 @@ func NewMatcher(terms []Term, caseSensitive bool) Matcher {
 // Terms is how many terms must match; 0 means the query has no free text.
 func (m Matcher) Terms() int { return len(m.terms) }
 
-// Span is one term's match, addressed into the ORIGINAL text: Rune and Byte where it starts, Runes its length.
-type Span struct{ Term, Rune, Byte, Runes int }
+// Span is one term's match, addressed into the ORIGINAL text: Rune where it starts, Runes its length.
+type Span struct{ Term, Rune, Runes int }
 
 // Spans lists every term's matches in text order, ties by term index. One term's spans never overlap (scanned
 // left to right); spans of different terms may. A phrase matches its first word as a substring, then each next
@@ -59,18 +59,12 @@ func (m Matcher) Spans(text string) []Span {
 	if len(out) == 0 {
 		return nil
 	}
+	// The fold preserves rune count, so a rune offset into hay is one into text.
 	slices.SortStableFunc(out, func(a, b Span) int { return cmp.Or(cmp.Compare(a.Rune, b.Rune), cmp.Compare(a.Term, b.Term)) })
-	// The fold preserves rune count, not bytes: Byte is re-read off the original text in one walk.
-	b, r := 0, 0
-	for i := range out {
-		b = advanceRunes(text, b, out[i].Rune-r)
-		r = out[i].Rune
-		out[i].Byte = b
-	}
 	return out
 }
 
-// appendTermSpans scans hay for one term; Byte is left for Spans to fill.
+// appendTermSpans scans hay for one term.
 func appendTermSpans(out []Span, hay string, term int, words []string) []Span {
 	hb, hr := 0, 0
 	for from := 0; from < len(hay); {

@@ -6,7 +6,6 @@ import { foldText } from "./fold.js";
 /** One thing that must match: a word, or a quoted phrase whose words match in order across any whitespace. */
 export interface Term {
   readonly words: readonly string[];
-  readonly phrase: boolean;
 }
 
 /** An unquoted `name:value` word the caller's rule accepted; `name` is lowercased. */
@@ -53,11 +52,11 @@ export function parseQuery(
       filters.push({ name, value });
       return;
     }
-    terms.push({ words: [w], phrase: false });
+    terms.push({ words: [w] });
   };
   const endPhrase = (): void => {
     if (phrase.length > 0) {
-      terms.push({ words: phrase, phrase: true });
+      terms.push({ words: phrase });
     }
     phrase = [];
     inPhrase = false;

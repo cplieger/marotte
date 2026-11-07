@@ -20,20 +20,17 @@
         {
           "words": [
             "deadset"
-          ],
-          "phrase": false
+          ]
         },
         {
           "words": [
             "security"
-          ],
-          "phrase": false
+          ]
         },
         {
           "words": [
             "failure"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": [],
@@ -74,20 +71,17 @@
         {
           "words": [
             "deadset"
-          ],
-          "phrase": false
+          ]
         },
         {
           "words": [
             "security"
-          ],
-          "phrase": false
+          ]
         },
         {
           "words": [
             "failure"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": [],
@@ -121,8 +115,7 @@
           "words": [
             "security",
             "failure"
-          ],
-          "phrase": true
+          ]
         }
       ],
       "filters": [],
@@ -148,8 +141,7 @@
           "words": [
             "security",
             "failure"
-          ],
-          "phrase": true
+          ]
         }
       ],
       "filters": [],
@@ -166,8 +158,7 @@
           "words": [
             "security",
             "failure"
-          ],
-          "phrase": true
+          ]
         }
       ],
       "filters": [],
@@ -193,8 +184,7 @@
           "words": [
             "security",
             "failure"
-          ],
-          "phrase": true
+          ]
         }
       ],
       "filters": [],
@@ -220,8 +210,7 @@
           "words": [
             "security",
             "failure"
-          ],
-          "phrase": true
+          ]
         }
       ],
       "filters": [],
@@ -237,15 +226,13 @@
         {
           "words": [
             "deadset"
-          ],
-          "phrase": false
+          ]
         },
         {
           "words": [
             "security",
             "fail"
-          ],
-          "phrase": true
+          ]
         }
       ],
       "filters": [],
@@ -278,8 +265,7 @@
         {
           "words": [
             "file:a.go"
-          ],
-          "phrase": true
+          ]
         }
       ],
       "filters": [],
@@ -304,8 +290,7 @@
         {
           "words": [
             "retry"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": [
@@ -335,8 +320,7 @@
         {
           "words": [
             "http://x"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": [],
@@ -361,8 +345,7 @@
         {
           "words": [
             "-v"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": [],
@@ -387,8 +370,7 @@
         {
           "words": [
             "securite"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": [],
@@ -413,8 +395,7 @@
         {
           "words": [
             "Sécurité"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": [],
@@ -439,8 +420,7 @@
         {
           "words": [
             "ecole"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": [],
@@ -465,8 +445,7 @@
         {
           "words": [
             "école"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": [],
@@ -482,8 +461,7 @@
         {
           "words": [
             "deadset"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": [],
@@ -508,8 +486,7 @@
         {
           "words": [
             "kelvin"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": [],
@@ -534,8 +511,7 @@
         {
           "words": [
             "οδος"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": [],
@@ -551,8 +527,7 @@
         {
           "words": [
             "securite"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": [],
@@ -568,8 +543,7 @@
         {
           "words": [
             "retry"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": [],
@@ -594,14 +568,12 @@
         {
           "words": [
             "deadset"
-          ],
-          "phrase": false
+          ]
         },
         {
           "words": [
             "set-go"
-          ],
-          "phrase": false
+          ]
         }
       ],
       "filters": [],

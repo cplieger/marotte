@@ -56,7 +56,6 @@ type searchItem struct {
 func searchItems(entries []marotte.Entry, turns map[string]*searchTurn) []searchItem {
 	b := itemBuilder{
 		entries: entries,
-		turns:   turns,
 		names:   wakeFactsOf(entries).names,
 		silent:  silentSteers(entries),
 		reverts: newestReverts(entries),
@@ -86,7 +85,6 @@ func searchItems(entries []marotte.Entry, turns map[string]*searchTurn) []search
 
 type itemBuilder struct {
 	entries []marotte.Entry
-	turns   map[string]*searchTurn
 	names   map[string]string
 	silent  map[int]struct{}
 	reverts map[toolRunKey]int
@@ -117,16 +115,16 @@ func (b *itemBuilder) observe(i int, e *marotte.Entry, t *searchTurn) {
 		b.flush(k)
 		var text strings.Builder
 		appendProse(&text, entrySegments(e, t, b.names))
-		b.add(b.item(itemMessage, i, e, t, e.Lane), proseLines(text.String()))
+		b.add(newItem(itemMessage, i, e, t, e.Lane), proseLines(text.String()))
 	case marotte.EntryKindTurnOpen, marotte.EntryKindTurnWake:
 		b.addHeader(i, e, t)
 	case marotte.EntryKindTurnClose:
-		b.add(b.item(itemTurnFailure, i, e, t, ""), entrySegments(e, t, b.names))
+		b.add(newItem(itemTurnFailure, i, e, t, ""), entrySegments(e, t, b.names))
 	case marotte.EntryKindSteer:
 		if _, silent := b.silent[i]; !silent {
 			// A steer is the reader's words, drawn in the chat's own flow whichever lane read it.
 			b.flush(toolRunKey{turn: e.Turn})
-			b.add(b.item(itemSteer, i, e, t, ""), entrySegments(e, t, b.names))
+			b.add(newItem(itemSteer, i, e, t, ""), entrySegments(e, t, b.names))
 		}
 	case marotte.EntryKindPlan:
 		b.observePlan(i, e, k, t)
@@ -166,10 +164,10 @@ func (b *itemBuilder) observeRow(i int, e *marotte.Entry, k toolRunKey, t *searc
 		return
 	}
 	b.flush(k)
-	b.add(b.item(kind, i, e, t, e.Lane), entrySegments(e, t, b.names))
+	b.add(newItem(kind, i, e, t, e.Lane), entrySegments(e, t, b.names))
 }
 
-func (b *itemBuilder) item(kind ItemKind, i int, e *marotte.Entry, t *searchTurn, lane string) *searchItem {
+func newItem(kind ItemKind, i int, e *marotte.Entry, t *searchTurn, lane string) *searchItem {
 	return &searchItem{kind: kind, turn: e.Turn, lane: lane, entries: []string{e.ID}, ordinal: t.n, at: i}
 }
 
@@ -191,7 +189,7 @@ func (b *itemBuilder) joinProse(i int, e *marotte.Entry, k toolRunKey, t *search
 		run = nil
 	}
 	if run == nil {
-		run = &proseRun{item: *b.item(itemMessage, i, e, t, e.Lane)}
+		run = &proseRun{item: *newItem(itemMessage, i, e, t, e.Lane)}
 		b.runs[k] = run
 	} else {
 		run.item.entries = append(run.item.entries, e.ID)
@@ -241,7 +239,7 @@ func (b *itemBuilder) addHeader(i int, e *marotte.Entry, t *searchTurn) {
 		return
 	}
 	b.headers[e.Turn] = len(b.items)
-	it := b.item(itemHeader, i, e, t, "")
+	it := newItem(itemHeader, i, e, t, "")
 	it.segs = segs
 	b.items = append(b.items, *it)
 }
@@ -257,7 +255,7 @@ func (b *itemBuilder) observePlan(i int, e *marotte.Entry, k toolRunKey, t *sear
 	}
 	b.flush(k)
 	b.plans[k] = len(b.items)
-	it := b.item(itemPlan, i, e, t, e.Lane)
+	it := newItem(itemPlan, i, e, t, e.Lane)
 	it.segs = segs
 	b.items = append(b.items, *it)
 }
@@ -265,7 +263,7 @@ func (b *itemBuilder) observePlan(i int, e *marotte.Entry, k toolRunKey, t *sear
 // addTool adds a tool card, its call's segments then its settled result's. The engine's bookkeeping call ends a
 // message (entryRenders draws it) but is never mounted, so it is no item.
 func (b *itemBuilder) addTool(i int, e *marotte.Entry, t *searchTurn) {
-	it := b.item(itemTool, i, e, t, e.Lane)
+	it := newItem(itemTool, i, e, t, e.Lane)
 	if c := t.calls[e.ID]; c != nil {
 		it.call = c.call
 	}

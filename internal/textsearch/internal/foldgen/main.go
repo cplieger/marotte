@@ -8,15 +8,15 @@ import (
 )
 
 func main() {
-	t := Table()
-	goSrc, err := GoSource(t)
+	t := accentTable()
+	goSrc, err := goSource(t)
 	if err != nil {
-		log.Fatalf("format %s: %v", GoPath, err)
+		log.Fatalf("format %s: %v", goPath, err)
 	}
-	if err := os.WriteFile(GoPath, goSrc, 0o600); err != nil {
-		log.Fatalf("write %s: %v", GoPath, err)
+	if err := os.WriteFile(goPath, goSrc, 0o600); err != nil {
+		log.Fatalf("write %s: %v", goPath, err)
 	}
-	if err := os.WriteFile(TSPath, TSSource(t), 0o600); err != nil {
-		log.Fatalf("write %s: %v", TSPath, err)
+	if err := os.WriteFile(tsPath, tsSource(t), 0o600); err != nil {
+		log.Fatalf("write %s: %v", tsPath, err)
 	}
 }

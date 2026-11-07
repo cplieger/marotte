@@ -22,7 +22,7 @@ type matchRow struct {
 	Query         string        `json:"query"`
 	CaseSensitive bool          `json:"case_sensitive"`
 	Terms         []Term        `json:"terms"`
-	Filters       []Filter      `json:"filters"`
+	Filters       []filter      `json:"filters"`
 	Spans         []fixtureSpan `json:"spans"`
 	All           bool          `json:"all"`
 }
@@ -93,17 +93,18 @@ func TestMatchFixture(t *testing.T) {
 			row.Terms = []Term{}
 		}
 		if row.Filters == nil {
-			row.Filters = []Filter{}
+			row.Filters = []filter{}
 		}
 		m := NewMatcher(q.Terms, row.CaseSensitive)
 		row.Spans = []fixtureSpan{}
 		hit := make(map[int]bool)
 		for _, s := range m.Spans(row.Text) {
-			end := byteAfterRunes(row.Text, s.Byte, s.Runes)
+			start := byteAfterRunes(row.Text, 0, s.Rune)
+			end := byteAfterRunes(row.Text, start, s.Runes)
 			row.Spans = append(row.Spans, fixtureSpan{
-				Term: s.Term, Rune: s.Rune, Byte: s.Byte, Runes: s.Runes,
-				UTF16:    utf16Len(row.Text[:s.Byte]),
-				UTF16Len: utf16Len(row.Text[s.Byte:end]),
+				Term: s.Term, Rune: s.Rune, Byte: start, Runes: s.Runes,
+				UTF16:    utf16Len(row.Text[:start]),
+				UTF16Len: utf16Len(row.Text[start:end]),
 			})
 			hit[s.Term] = true
 		}
