@@ -188,21 +188,37 @@ func TestSweep_ADeletedScheduleLosesOnlyItsSeriesWhileAScrapeRuns(t *testing.T) 
 	}
 }
 
-// A slot waiting on the engine is still the schedule's next due slot, so next-due reads in the past while the wait
-// lasts.
-func TestSweep_ASlotWaitingOnTheEngineKeepsItsPastNextDue(t *testing.T) {
+// A slot waiting on the engine may still launch until the schedule's next slot, so next-due reads that next slot
+// while the wait lasts: an alert on an overdue next-due then means a runner that stopped judging, not a busy engine.
+func TestSweep_ASlotWaitingOnTheEngineReadsDueWhenItsWaitEnds(t *testing.T) {
 	st, l, r := newFixture(t, time.Time{})
 	id := st.Clocks()[0].ID
 	// The fixture is daily at 02:00, anchored 2026-08-03 12:00: its first slot is 2026-08-04 02:00.
 	slot := at(2026, time.August, 4, 2, 0)
+	next := at(2026, time.August, 5, 2, 0)
 	l.failWith(fmt.Errorf("%w: %w", ErrEngineBusy, errors.New("workflow list call: context deadline exceeded")))
 	r.now = func() time.Time { return slot.Add(30 * time.Second) }
 	r.sweep(t.Context())
-	r.now = func() time.Time { return slot.Add(5 * time.Minute) }
+	r.now = func() time.Time { return slot.Add(5 * time.Hour) }
 	r.sweep(t.Context())
 
+	if got := testsupport.MetricValue(t, nextDueSeries(id)); got != float64(next.Unix()) {
+		t.Errorf("next due while the slot waits on the engine = %v, want the slot that ends the wait %v (%v)",
+			got, next.Unix(), next)
+	}
+}
+
+// A due slot nobody has judged, with no wait on the engine, stays the schedule's next due slot, so next-due reads in
+// the past until the runner reaches it.
+func TestPublish_AnUnjudgedDueSlotReadsOverdue(t *testing.T) {
+	st, _, r := newFixture(t, time.Time{})
+	id := st.Clocks()[0].ID
+	slot := at(2026, time.August, 4, 2, 0)
+	r.now = func() time.Time { return slot.Add(time.Hour) }
+	r.publish(st.Clocks())
+
 	if got := testsupport.MetricValue(t, nextDueSeries(id)); got != float64(slot.Unix()) {
-		t.Errorf("next due while the slot waits on the engine = %v, want the waiting slot %v (%v)", got, slot.Unix(), slot)
+		t.Errorf("next due of an unjudged due slot = %v, want the slot %v (%v)", got, slot.Unix(), slot)
 	}
 }
 

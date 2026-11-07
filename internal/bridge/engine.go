@@ -105,9 +105,6 @@ type ExitInfo struct {
 	RelayWriteTimeout bool
 }
 
-// EndedItself reports whether the engine ended without marotte stopping it.
-func (i *ExitInfo) EndedItself() bool { return i.Reason != ExitStopped }
-
 // DetachedSession is a session lane the engine cut loose because its consumer stopped reading: Requests are the
 // requests it held, oldest first, each still owed exactly one answer; DroppedNotifications counts what was dropped.
 type DetachedSession struct {

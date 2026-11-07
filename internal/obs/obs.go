@@ -9,6 +9,7 @@ package obs
 
 import (
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/cplieger/go/measure"
@@ -16,11 +17,16 @@ import (
 
 var registry = measure.NewRegistry("marotte")
 
+// requestedStopCauses are the names internal/agent's exitCause gives a stop marotte asked for.
+var requestedStopCauses = []string{"restart_confirmed", "restart_auto", "shutdown", "stopped"}
+
 // engineExitCauses are the names internal/agent's exitCause gives an engine's end.
-var engineExitCauses = []string{
-	"restart_confirmed", "restart_auto", "shutdown", "stopped", "stdin_stalled", "parse_breaker",
-	"lane_overflow", "external_stop", "crash",
-}
+var engineExitCauses = slices.Concat(requestedStopCauses,
+	[]string{"stdin_stalled", "parse_breaker", "lane_overflow", "external_stop", "crash"})
+
+// RequestedStop reports whether an engine exit cause names a stop marotte asked for, a restart or a shutdown. Every
+// other cause is an end marotte did not ask for.
+func RequestedStop(cause string) bool { return slices.Contains(requestedStopCauses, cause) }
 
 // promptFailureClasses are the names internal/command gives a failed prompt's class.
 var promptFailureClasses = []string{"fatal", "pipe_death", "busy", "transient", "throttled", "rejected", "auth"}
@@ -96,7 +102,8 @@ var (
 	scheduleFailedSlots = measure.NewLabeledGauge("schedule_failed_slots",
 		"Consecutive slots of an enabled schedule that ended without a completed run.", []string{"rule_id"})
 	scheduleNextDue = measure.NewLabeledGauge("schedule_next_due_timestamp_seconds",
-		"When an enabled schedule's next slot not yet judged falls due, in Unix seconds.", []string{"rule_id"})
+		"When an enabled schedule's next slot not yet judged falls due, or the end of its wait on the agent engine, "+
+			"in Unix seconds.", []string{"rule_id"})
 )
 
 func init() {
@@ -175,8 +182,8 @@ func UnattendedApproved(origin string) { unattendedApprovals.Inc(origin) }
 func ScheduleSlotNotStarted(event string) { slotsNotStarted.Inc(event) }
 
 // Schedule exports schedule ruleID's consecutive failed slots and its next due slot. A zero nextDue, a slot nobody
-// can name, removes the next-due series, since a 0 would read as a slot long overdue. nextDue is past while a slot
-// waits on the engine and for up to a tick after a start, so a rule over it needs a for: longer than a minute.
+// can name, removes the next-due series, since a 0 would read as a slot long overdue. nextDue is past for up to a
+// tick after a slot falls due, so a rule over it needs a for: longer than a minute.
 func Schedule(ruleID string, failedSlots int, nextDue time.Time) {
 	scheduleFailedSlots.Set(float64(failedSlots), ruleID)
 	if nextDue.IsZero() {
