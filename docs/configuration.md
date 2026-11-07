@@ -124,6 +124,8 @@ environment:
 
 A service on your network, such as a mail or job server for your agents, can hand a chat a message with one request. marotte steers the message into the chat's running reply, or sends it as a new message when the chat is idle, the same way **Steer** and **Send** on the page do. The message box, its draft and a question the chat is waiting on you for are left as they are. The delivered message shows "Sent by" and the caller's `source`.
 
+The agent is not told who sent the message. kiro-cli presents a message steered into a running reply as a new message from the user, and a new message as one the user typed. marotte also gives kiro-cli the `source` with a new message, and kiro-cli keeps it with that message in the session's history, but the agent does not read it there. So start `text` by naming the sender, as the example below does.
+
 The route is off until you give it a token. Generate a random value of 32 to 512 characters, for example with `openssl rand -base64 48`, and give the same value to the calling service. Prefer a Docker secret, read through the `_FILE` variant:
 
 ```yaml
@@ -141,7 +143,7 @@ The request names the chat by its session ID, which the agent's shell commands c
 curl -X POST http://marotte:9847/api/sessions/$SESSION/notify \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"text":"You have new mail.","source":"mail","dedupe_key":"mail-1234"}'
+  -d '{"text":"mail (automated, not the user): You have new mail.","source":"mail","dedupe_key":"mail-1234"}'
 ```
 
 | Field | Rule |

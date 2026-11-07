@@ -143,6 +143,9 @@ type Prompt struct {
 	Label string
 	// Tag is the chat turn id the engine echoes on this prompt's turn_start; empty for a step message.
 	Tag string
+	// Caller is the label of the program that sent the prompt through marotte's API (marotte.Caller.Label); empty
+	// for the user's own prompt and for a caller that gave no name.
+	Caller string
 }
 
 type decl struct {

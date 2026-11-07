@@ -694,6 +694,15 @@ var table = []decl{
 		},
 	},
 	{
+		key:      "callerLabel",
+		door:     doorPrompt,
+		resolver: resolverText,
+		send:     true,
+		promptGate: func(p *Prompt) (any, bool) {
+			return p.Caller, p.Caller != ""
+		},
+	},
+	{
 		key:      "outputStyle",
 		door:     doorPrompt,
 		resolver: resolverEnum,
