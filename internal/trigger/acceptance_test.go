@@ -669,6 +669,9 @@ func TestAC1_13(t *testing.T) {
 			if got := a.eng.launches(); len(got) != 1 {
 				t.Errorf("launches = %+v, want none past the abandoned run", got)
 			}
+			if n := a.eng.noticed(); n != 1 {
+				t.Errorf("%d notices over a day of failing, want one as the rule started failing", n)
+			}
 		})
 	})
 	t.Run("an unleased run whose cancel fails", func(t *testing.T) {

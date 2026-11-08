@@ -233,6 +233,7 @@ type engine struct {
 	calls   []launchCall
 	created []launch
 	cancels []string
+	notices []string
 	n       int
 	mu      sync.Mutex
 }
@@ -310,6 +311,19 @@ func (e *engine) CancelAbandoned(ctx context.Context, workflowID string) error {
 
 func (e *engine) ReleaseTriggered(ctx context.Context, workflowID string) {
 	_ = e.tc.leases.Release(ctx, workflowID)
+}
+
+func (e *engine) NotifyNotStarted(_ context.Context, _ *launchrule.Rule, reason string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.notices = append(e.notices, reason)
+}
+
+// noticed is how many notices the rules sent.
+func (e *engine) noticed() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.notices)
 }
 
 func (e *engine) endLocked(workflowID string) {

@@ -369,12 +369,13 @@ func advance(d time.Duration) {
 	synctest.Wait()
 }
 
-// recordingEffects records each cancel and release the effect goroutine runs, answering every cancel with
+// recordingEffects records each cancel, release and notice the effect goroutine runs, answering every cancel with
 // cancelErr.
 type recordingEffects struct {
 	cancelErr error
 	cancels   []string
 	releases  []string
+	notified  []string
 	mu        sync.Mutex
 }
 
@@ -391,6 +392,19 @@ func (f *recordingEffects) ReleaseTriggered(_ context.Context, workflowID string
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.releases = append(f.releases, workflowID)
+}
+
+func (f *recordingEffects) NotifyNotStarted(_ context.Context, _ *launchrule.Rule, reason string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.notified = append(f.notified, reason)
+}
+
+// notices are the reasons of the notices sent so far.
+func (f *recordingEffects) notices() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.notified)
 }
 
 func (f *recordingEffects) calls() (cancels, releases []string) {

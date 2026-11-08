@@ -86,7 +86,7 @@ Two settings under **Agent capabilities** on the **General** tab in **Settings**
 
 ## When a launch fails
 
-- A launch that fails is tried again after 1, 2, 4, 8, then every 15 minutes. A rule whose launches keep failing for 24 hours stops, and its line says why. Edit the rule, or switch it off and on, to start it again.
+- A launch that fails is tried again after 1, 2, 4, 8, then every 15 minutes. A rule whose launches keep failing for 24 hours stops, and its line says why. Edit the rule, or switch it off and on, to start it again. A rule sends one notification, under the workflow run switch, when its launches start failing, and none while they keep failing.
 - A run that does not report its start within 5 minutes is cancelled and the event is started again. A second such run stops the rule, and its line says the run did not report its start twice: check the agent engine, then switch the rule off and on.
 - A cancel the agent engine refuses is sent again at each check, and a run whose cancel has not landed holds the workflow until it does.
 - A rule whose saved state does not load stops until you edit or delete it. A rule whose state cannot be written stops launching until a write lands, tried again at each check. Its line says which.

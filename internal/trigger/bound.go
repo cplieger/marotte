@@ -25,6 +25,7 @@ func (s *stepper) arm(rec *record) {
 func (s *stepper) failedAttempt(workflowID, lastErr string) {
 	st := s.status()
 	if st.FailingSince.IsZero() {
+		s.startFailing(lastErr)
 		st.FailingSince = s.now
 		s.res.write = true
 	}
@@ -42,7 +43,17 @@ func (s *stepper) block(workflowID, sentence string) {
 	}
 	if st.Blocked == "" {
 		logRunNotStarted(s.ruleID, workflowID, notStartedBlocked, sentence)
+		s.startFailing(sentence)
 	}
 	st.Blocked = sentence
 	s.res.write = true
+}
+
+// startFailing sends a failing streak's one notice, as the rule goes from launching to failing: the streak lasts
+// until resetFailures, which a confirmed launch, an edit or a resume runs, so a rule that keeps failing notifies
+// once. It runs before the caller sets the clock or the block.
+func (s *stepper) startFailing(reason string) {
+	if st := s.status(); st.FailingSince.IsZero() && st.Blocked == "" {
+		s.res.effects = append(s.res.effects, attemptEffect{kind: effectNotify, reason: reason})
+	}
 }
