@@ -727,7 +727,7 @@ func buildToolsEngine(cfg *Config, h *agent.Runtime,
 		Refresh:             catalogRefresh,
 		CatalogOverlays:     cfg.ToolCatalogOverlays,
 		Seed:                toolbelt.DefaultSeed(),
-		System:              []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
+		System:              []string{"git", "jq", "curl", "rg", "unzip", "xz", "ssh", "scp", "sftp", "tar", "bash"},
 		GitHubToken:         githubToken,
 		TrustedUIDs:         cfg.TrustedInstallUIDs,
 		OnJobChanged: func(j *toolbelt.Job) {

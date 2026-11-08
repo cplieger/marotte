@@ -55,7 +55,16 @@ func writeRepoSteering(b *strings.Builder, repo string, docs []docEntry) {
 
 func writeSteeringEntry(b *strings.Builder, repo string, d docEntry) {
 	fmt.Fprintf(b, "    - `%s/.kiro/steering/%s`", repo, d.Filename)
-	if d.FileMatch != "" {
+	writeEntryTail(b, d)
+}
+
+// writeEntryTail writes an entry's pattern and description, each bounded: both are untrusted
+// front matter sent on every model call.
+func writeEntryTail(b *strings.Builder, d docEntry) {
+	switch {
+	case len(d.FileMatch) > maxFileMatchBytes:
+		b.WriteString(" (matches the `fileMatchPattern` in its front matter)")
+	case d.FileMatch != "":
 		fmt.Fprintf(b, " (matches `%s`)", d.FileMatch)
 	}
 	if d.Description != "" {
@@ -110,27 +119,27 @@ func writeRepoSkills(b *strings.Builder, repo string, docs []docEntry) {
 
 func writeSkillEntry(b *strings.Builder, repo string, d docEntry) {
 	fmt.Fprintf(b, "    - `%s/.kiro/skills/%s`", repo, d.Filename)
-	if d.FileMatch != "" {
-		fmt.Fprintf(b, " (matches `%s`)", d.FileMatch)
-	}
-	if d.Description != "" {
-		fmt.Fprintf(b, " — %s", capWords(d.Description, maxDescWords))
-	}
-	b.WriteString("\n")
+	writeEntryTail(b, d)
 }
 
-// capWords keeps s's first n words, marking a cut with " …".
+// capWords keeps s's first n words and at most maxDescBytes of them, marking a cut with " …".
 func capWords(s string, n int) string {
-	f := strings.Fields(s)
-	if len(f) <= n {
-		return s
+	cut := false
+	if f := strings.Fields(s); len(f) > n {
+		s, cut = strings.Join(f[:n], " "), true
 	}
-	return strings.Join(f[:n], " ") + " …"
+	if len(s) > maxDescBytes {
+		s, cut = strings.TrimRight(truncateUTF8(s, maxDescBytes), " "), true
+	}
+	if cut {
+		return s + " …"
+	}
+	return s
 }
 
 // findRepoDocs returns a repo's `.kiro/steering/` markdown files classified by inclusion
-// mode (default "always"), via findMdDocsInDir's caps.
-func findRepoDocs(repoDir string) []docEntry {
+// mode (default "always"), via findMdDocsInDir's caps, and how many the directory holds.
+func findRepoDocs(repoDir string) (docs []docEntry, total int) {
 	return findMdDocsInDir(filepath.Join(repoDir, ".kiro", "steering"))
 }
 
@@ -175,29 +184,30 @@ func normalizeInclusion(v string) string {
 	}
 }
 
-// findRepoSkills scans `.kiro/skills/` for skill DIRECTORIES (holding SKILL.md), classified by
-// SKILL.md's inclusion mode. Capped.
-func findRepoSkills(repoDir string) []docEntry {
+// findRepoSkills scans `.kiro/skills/` for skill DIRECTORIES (holding SKILL.md), reading the
+// first 20, and returns them with how many the directory holds.
+func findRepoSkills(repoDir string) (skills []docEntry, total int) {
 	dir := filepath.Join(repoDir, ".kiro", "skills")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil
+		return nil, 0
 	}
-	out := make([]docEntry, 0, len(entries))
+	out := make([]docEntry, 0, min(len(entries), 20))
 	for _, e := range entries {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		// A missing SKILL.md yields empty data, so the default "always".
+		total++
+		if len(out) >= 20 {
+			continue
+		}
+		// A missing SKILL.md yields empty data: the skill renders with no description.
 		data, _ := readCappedFile(filepath.Join(dir, e.Name(), "SKILL.md"), FrontMatterReadCap)
 		doc := parseSteeringFrontmatter(data)
 		doc.Filename = defuse(e.Name()) + "/SKILL.md"
 		out = append(out, doc)
-		if len(out) >= 20 {
-			break
-		}
 	}
-	return out
+	return out, total
 }
 
 // agentEntry is a custom agent config found in `.kiro/agents/`.
@@ -206,23 +216,20 @@ type agentEntry struct {
 }
 
 // findRepoAgents scans `.kiro/agents/` for agent configs, collapsing each
-// `.json`/`.md` pair to ONE agent through DedupeAgentFiles. Capped at 10
-// distinct agents.
-func findRepoAgents(repoDir string) []agentEntry {
+// `.json`/`.md` pair to ONE agent through DedupeAgentFiles. It returns the first
+// 10 distinct agents and how many there are.
+func findRepoAgents(repoDir string) (agents []agentEntry, total int) {
 	dir := filepath.Join(repoDir, ".kiro", "agents")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil
+		return nil, 0
 	}
-	agents := DedupeAgentFiles(entries)
-	out := make([]agentEntry, 0, min(len(agents), 10))
-	for _, a := range agents {
-		if len(out) >= 10 {
-			break
-		}
+	all := DedupeAgentFiles(entries)
+	out := make([]agentEntry, 0, min(len(all), 10))
+	for _, a := range all[:min(len(all), 10)] {
 		out = append(out, agentEntry{Name: defuse(a.Base)})
 	}
-	return out
+	return out, len(all)
 }
 
 // HookEntry is one hook from a `.kiro/hooks/*.json` document.
@@ -235,12 +242,12 @@ type HookEntry struct {
 
 // findRepoHooks scans `.kiro/hooks/` for JSON hook documents. Each file
 // is a v1 envelope carrying one or more hooks; every hook renders as
-// its own entry. Capped at 10 entries total.
-func findRepoHooks(repoDir string) []HookEntry {
+// its own entry. It returns the first 10, and more reports an 11th.
+func findRepoHooks(repoDir string) (hooks []HookEntry, more bool) {
 	dir := filepath.Join(repoDir, ".kiro", "hooks")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	var out []HookEntry
 	for _, e := range entries {
@@ -253,14 +260,14 @@ func findRepoHooks(repoDir string) []HookEntry {
 		path := filepath.Join(dir, e.Name())
 		data, _ := readCappedFile(path, 16<<10)
 		for _, h := range parseHookDoc(data) {
+			if len(out) >= 10 {
+				return out, true
+			}
 			h.Filename = defuse(e.Name())
 			out = append(out, h)
-			if len(out) >= 10 {
-				return out
-			}
 		}
 	}
-	return out
+	return out, false
 }
 
 // ParseHooks parses a v1 hook document into its entries, every field defused. Exported for
@@ -296,17 +303,21 @@ func parseHookDoc(data []byte) []HookEntry {
 		if h.Action.Type == "agent" {
 			preview = h.Action.Prompt
 		}
-		preview = defuse(preview)
-		if len(preview) > 80 {
-			preview = truncateUTF8(preview, 77) + "..."
-		}
 		out = append(out, HookEntry{
 			Name:    defuse(h.Name),
 			Trigger: defuse(h.Trigger),
-			Command: preview,
+			Command: capPreview(defuse(preview)),
 		})
 	}
 	return out
+}
+
+// capPreview keeps at most 80 bytes of s, marking a cut with "...".
+func capPreview(s string) string {
+	if len(s) > 80 {
+		return truncateUTF8(s, 77) + "..."
+	}
+	return s
 }
 
 // defuse flattens control characters, strips hidden Unicode and swaps backticks for quotes:
@@ -325,29 +336,26 @@ func defuse(s string) string {
 	return sanitize.Unicode(s)
 }
 
-// findMdDocsInDir classifies each `.md` in a flat directory by its front-matter. Reads are
-// capped at 64 KiB and the result at 20 entries.
-func findMdDocsInDir(dir string) []docEntry {
+// findMdDocsInDir classifies the first 20 `.md` files in a flat directory by their front-matter,
+// each read capped at 64 KiB, and returns how many the directory holds.
+func findMdDocsInDir(dir string) (docs []docEntry, total int) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil
+		return nil, 0
 	}
-	out := make([]docEntry, 0, len(entries))
+	out := make([]docEntry, 0, min(len(entries), 20))
 	for _, e := range entries {
-		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
-		if !strings.HasSuffix(e.Name(), ".md") {
+		total++
+		if len(out) >= 20 {
 			continue
 		}
-		path := filepath.Join(dir, e.Name())
-		data, _ := readCappedFile(path, FrontMatterReadCap)
+		data, _ := readCappedFile(filepath.Join(dir, e.Name()), FrontMatterReadCap)
 		doc := parseSteeringFrontmatter(data)
 		doc.Filename = defuse(e.Name())
 		out = append(out, doc)
-		if len(out) >= 20 {
-			break
-		}
 	}
-	return out
+	return out, total
 }

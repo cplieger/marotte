@@ -232,11 +232,11 @@ func TestToolsSnapshot_KeepsWhatTheProbeReportsInstalledAndEnabled(t *testing.T)
 
 	want := []steering.InstalledTool{
 		{Version: "1.26.2", Commands: []string{"go", "gofmt"}},
-		{Version: "2.0"},
+		{Version: "2.0", Apt: true},
 		{},
 	}
 	same := func(a, b steering.InstalledTool) bool {
-		return a.Version == b.Version && slices.Equal(a.Commands, b.Commands)
+		return a.Version == b.Version && slices.Equal(a.Commands, b.Commands) && a.Apt == b.Apt
 	}
 	if !slices.EqualFunc(got.Tools, want, same) {
 		t.Errorf("toolsSnapshot rows = %+v, want %+v", got.Tools, want)

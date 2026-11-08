@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/cplieger/marotte/internal/logsafe"
@@ -113,6 +114,7 @@ func toolsSnapshot(inv *toolbelt.Inventory) steering.ToolsSnapshot {
 		}
 		out.Tools = append(out.Tools, steering.InstalledTool{
 			Version: t.InstalledVersion, Commands: t.Commands,
+			Apt: strings.HasPrefix(t.Source, toolbelt.SourceApt+":"),
 		})
 	}
 	for _, sys := range inv.System {

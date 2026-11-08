@@ -20,7 +20,7 @@ func FuzzWriteTools_keepsItsLineShape(f *testing.F) {
 		writeTools(&b, ToolsSnapshot{
 			Tools:  []InstalledTool{{Version: version, Commands: []string{name}}, {Version: "1"}},
 			System: []string{system},
-		}, "/tools")
+		}, true)
 		result := b.String()
 
 		if !utf8.ValidString(result) {

@@ -25,19 +25,20 @@ func TestWriteTools(t *testing.T) {
 		Tools: []InstalledTool{
 			{Version: "v0.30.0", Commands: []string{"goimports"}},
 			{Version: "1.26.2", Commands: []string{"go", "gofmt"}},
-			{Version: "14.1.1-1", Commands: []string{"rg"}},
-			{Version: "2.0"},
+			{Version: "14.1.1-1", Commands: []string{"rg"}, Apt: true},
+			{Version: "2.0", Apt: true},
 		},
 		System: []string{"git", "curl"},
 	}
 	var b strings.Builder
-	writeTools(&b, snap, "/tools")
+	writeTools(&b, snap, true)
 
 	want := "## Installed tools\n\n" +
 		"Commands: go 1.26.2, gofmt 1.26.2, goimports v0.30.0, rg 14.1.1-1\n\n" +
 		"Baked into the image: curl, git\n\n" +
-		"The image is Debian slim: anything not listed is likely absent (common utilities such as " +
-		"file, bc, xxd, netstat and ss are not installed). Check with `command -v`, and install through the tools engine below.\n\n" +
+		"The image is Debian slim: its base userland (coreutils, grep, sed, awk, find, xargs, diff, gzip) is present " +
+		"and not listed here. Anything else not listed is likely absent (file, bc, xxd, netstat and ss are not installed). " +
+		"Check with `command -v`, and install through the tools engine below.\n\n" +
 		"1 more installed packages ship no command (mostly libraries): `dpkg -l` or `curl -s localhost:9847/api/tools` lists them.\n\n"
 	if got := b.String(); got != want {
 		t.Errorf("writeTools =\n%s\nwant\n%s", got, want)
@@ -46,7 +47,7 @@ func TestWriteTools(t *testing.T) {
 
 func TestWriteTools_AnUnrecordedVersionIsLeftOut(t *testing.T) {
 	var b strings.Builder
-	writeTools(&b, ToolsSnapshot{Tools: []InstalledTool{{Commands: []string{"fd"}}}}, "/tools")
+	writeTools(&b, ToolsSnapshot{Tools: []InstalledTool{{Commands: []string{"fd"}}}}, true)
 	if got := lineWithPrefix(b.String(), "Commands: "); got != "Commands: fd" {
 		t.Errorf("Commands line = %q, want no placeholder for the empty version", got)
 	}
@@ -58,9 +59,84 @@ func TestWriteTools_ACommandTwoRowsShipIsListedOnce(t *testing.T) {
 		{Version: "1.0.0", Commands: []string{"tsc"}},
 	}}
 	var b strings.Builder
-	writeTools(&b, snap, "/tools")
+	writeTools(&b, snap, true)
 	if got := strings.Count(b.String(), "tsc "); got != 1 {
 		t.Errorf("tsc listed %d times, want once: PATH holds one:\n%s", got, b.String())
+	}
+}
+
+// The engine's bin dir precedes /usr/bin on PATH, so an engine row's copy is the one that runs.
+func TestWriteTools_AnEngineRowsVersionWinsOverAnAptRows(t *testing.T) {
+	snap := ToolsSnapshot{Tools: []InstalledTool{
+		{Version: "1.0-1", Commands: []string{"node"}, Apt: true},
+		{Version: "24.0.0", Commands: []string{"node"}},
+	}}
+	var b strings.Builder
+	writeTools(&b, snap, true)
+	if got := lineWithPrefix(b.String(), "Commands: "); got != "Commands: node 24.0.0" {
+		t.Errorf("Commands line = %q, want the engine row's version", got)
+	}
+}
+
+func TestWriteTools_AnInstalledUtilityIsNotCalledMissing(t *testing.T) {
+	cases := []struct {
+		name    string
+		snap    ToolsSnapshot
+		missing string
+	}{{
+		name:    "one installed through the engine",
+		snap:    ToolsSnapshot{Tools: []InstalledTool{{Version: "1:5.46", Commands: []string{"file"}, Apt: true}}},
+		missing: " (bc, xxd, netstat and ss are not installed). ",
+	}, {
+		name:    "one baked into the image",
+		snap:    ToolsSnapshot{System: []string{"bc", "xxd", "netstat", "ss"}},
+		missing: " (file is not installed). ",
+	}, {
+		name: "all of them",
+		snap: ToolsSnapshot{
+			Tools:  []InstalledTool{{Commands: []string{"file", "bc"}}, {Commands: []string{"xxd"}, Apt: true}},
+			System: []string{"netstat", "ss"},
+		},
+		missing: ". ",
+	}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var b strings.Builder
+			writeTools(&b, tc.snap, true)
+			want := "Anything else not listed is likely absent" + tc.missing + "Check with `command -v`"
+			if !strings.Contains(b.String(), want) {
+				t.Errorf("writeTools lacks %q:\n%s", want, b.String())
+			}
+		})
+	}
+}
+
+func TestWriteTools_ABakedNameAnInstalledRowShipsIsListedOnce(t *testing.T) {
+	snap := ToolsSnapshot{
+		Tools:  []InstalledTool{{Version: "1:10.0", Commands: []string{"scp", "ssh"}, Apt: true}},
+		System: []string{"git", "ssh"},
+	}
+	var b strings.Builder
+	writeTools(&b, snap, true)
+	if got := lineWithPrefix(b.String(), "Baked into the image: "); got != "Baked into the image: git" {
+		t.Errorf("Baked line = %q, want ssh only under Commands", got)
+	}
+}
+
+// Past the cap, every engine command is kept before an apt row's: the user chose each engine
+// row, while an apt package also ships its auxiliaries.
+func TestWriteTools_TheCommandsCapKeepsEngineCommandsFirst(t *testing.T) {
+	tools := []InstalledTool{{Version: "14", Commands: []string{"aux-a", "aux-b"}, Apt: true}}
+	tools = append(tools, engineRows(maxCommands, "tool")...)
+	var b strings.Builder
+	writeTools(&b, ToolsSnapshot{Tools: tools}, true)
+	commands := lineWithPrefix(b.String(), "Commands: ")
+	if strings.Contains(commands, "aux-") {
+		t.Errorf("an apt row's command took a slot from an engine command: %q", commands)
+	}
+	if !strings.HasPrefix(commands, "Commands: tool000 1.0.0, ") || !strings.HasSuffix(commands, ", … and 2 more "+
+		"(`command -v <name>` checks one; `curl -s localhost:9847/api/tools` lists every row's commands)") {
+		t.Errorf("Commands line does not keep the engine commands sorted then count the 2 apt ones: %q", commands)
 	}
 }
 

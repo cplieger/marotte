@@ -108,7 +108,7 @@ func TestFindRepoDocs_ClassifiesByFrontmatter(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	docs := findRepoDocs(dir)
+	docs, _ := findRepoDocs(dir)
 	if len(docs) != 4 {
 		t.Fatalf("got %d docs, want 4", len(docs))
 	}
@@ -132,8 +132,7 @@ func TestFindRepoDocs_ClassifiesByFrontmatter(t *testing.T) {
 
 func TestFindRepoDocs_NoSteeringDir(t *testing.T) {
 	dir := t.TempDir()
-	docs := findRepoDocs(dir)
-	if docs != nil {
+	if docs, total := findRepoDocs(dir); docs != nil || total != 0 {
 		t.Errorf("expected nil, got %+v", docs)
 	}
 }
@@ -150,9 +149,9 @@ func TestFindRepoDocs_CapAt20(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	docs := findRepoDocs(dir)
-	if len(docs) != 20 {
-		t.Errorf("got %d docs, want 20 (capped)", len(docs))
+	docs, total := findRepoDocs(dir)
+	if len(docs) != 20 || total != 25 {
+		t.Errorf("got %d docs of %d, want 20 (capped) of 25", len(docs), total)
 	}
 }
 
@@ -241,6 +240,11 @@ func TestCapWords(t *testing.T) {
 		{"over the cap is cut with a marker", words(21), words(20) + " …"},
 		{"short is kept", "one two", "one two"},
 		{"empty stays empty", "", ""},
+		{"one long token is cut at the byte cap", strings.Repeat("x", 400), strings.Repeat("x", 300) + " …"},
+		{"a byte cut never splits a rune", strings.Repeat("é", 200), strings.Repeat("é", 150) + " …"},
+		{"a byte cut drops the space it lands after", strings.Repeat("x", 299) + " yyyy", strings.Repeat("x", 299) + " …"},
+		// words(19) and its space take 76 bytes.
+		{"a word cut over the byte cap is marked once", words(19) + " " + strings.Repeat("z", 400) + " w", words(19) + " " + strings.Repeat("z", 300-76) + " …"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -321,14 +325,14 @@ func TestFindRepoAgents_ReadableDir(t *testing.T) {
 	repo := t.TempDir()
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "agents", "deploy.json"), `{"name":"deploy"}`)
 
-	got := findRepoAgents(repo)
+	got, _ := findRepoAgents(repo)
 	if len(got) != 1 {
 		t.Fatalf("findRepoAgents(readable dir) = %+v (len %d), want 1 agent", got, len(got))
 	}
 	if got[0].Name != "deploy" {
 		t.Errorf("findRepoAgents()[0] = %+v, want {Name: deploy}", got[0])
 	}
-	if got := findRepoAgents(filepath.Join(repo, "does-not-exist")); got != nil {
+	if got, _ := findRepoAgents(filepath.Join(repo, "does-not-exist")); got != nil {
 		t.Errorf("findRepoAgents(missing dir) = %+v, want nil", got)
 	}
 }
@@ -343,8 +347,8 @@ func TestFindRepoHooks_ReadableDir(t *testing.T) {
 		`{"name":"Regen","trigger":"PostFileSave","action":{"type":"command","command":"make gen"}}`,
 	))
 
-	got := findRepoHooks(repo)
-	if len(got) != 2 {
+	got, more := findRepoHooks(repo)
+	if len(got) != 2 || more {
 		t.Fatalf("findRepoHooks(readable dir) = %+v (len %d), want 2 hooks from one document", got, len(got))
 	}
 	if got[0].Trigger != "PreToolUse" || got[0].Filename != "guard.json" || got[0].Name != "Guard" {
@@ -353,7 +357,7 @@ func TestFindRepoHooks_ReadableDir(t *testing.T) {
 	if got[1].Trigger != "PostFileSave" || got[1].Filename != "guard.json" {
 		t.Errorf("findRepoHooks()[1] = %+v, want the second hook from the same file", got[1])
 	}
-	if got := findRepoHooks(filepath.Join(repo, "does-not-exist")); got != nil {
+	if got, _ := findRepoHooks(filepath.Join(repo, "does-not-exist")); got != nil {
 		t.Errorf("findRepoHooks(missing dir) = %+v, want nil", got)
 	}
 }
@@ -364,14 +368,14 @@ func TestFindMdDocsInDir_ReadableDir(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "doc.md"), "body\n")
 
-	got := findMdDocsInDir(dir)
+	got, _ := findMdDocsInDir(dir)
 	if len(got) != 1 {
 		t.Fatalf("findMdDocsInDir(readable dir) = %+v (len %d), want 1 doc", got, len(got))
 	}
 	if got[0].Filename != "doc.md" || got[0].Inclusion != "always" {
 		t.Errorf("findMdDocsInDir()[0] = %+v, want {Filename: doc.md, Inclusion: always}", got[0])
 	}
-	if got := findMdDocsInDir(filepath.Join(dir, "does-not-exist")); got != nil {
+	if got, _ := findMdDocsInDir(filepath.Join(dir, "does-not-exist")); got != nil {
 		t.Errorf("findMdDocsInDir(missing dir) = %+v, want nil", got)
 	}
 }
@@ -386,8 +390,8 @@ func TestDiscoveryEntryCaps(t *testing.T) {
 				filepath.Join(repo, ".kiro", "agents", fmt.Sprintf("agent%02d.json", i)),
 				fmt.Sprintf(`{"name":"a%02d"}`, i))
 		}
-		if got := len(findRepoAgents(repo)); got != 10 {
-			t.Errorf("findRepoAgents(12 files) returned %d, want exactly 10 (cap)", got)
+		if got, total := findRepoAgents(repo); len(got) != 10 || total != 12 {
+			t.Errorf("findRepoAgents(12 files) returned %d of %d, want exactly 10 (cap) of 12", len(got), total)
 		}
 	})
 	t.Run("findRepoHooks caps at 10 entries", func(t *testing.T) {
@@ -401,8 +405,22 @@ func TestDiscoveryEntryCaps(t *testing.T) {
 					`{"name":"b","trigger":"PostToolUse","action":{"type":"command","command":"y"}}`,
 				))
 		}
-		if got := len(findRepoHooks(repo)); got != 10 {
-			t.Errorf("findRepoHooks(12 hooks in 6 files) returned %d, want exactly 10 (cap)", got)
+		if got, more := findRepoHooks(repo); len(got) != 10 || !more {
+			t.Errorf("findRepoHooks(12 hooks in 6 files) returned %d (more %v), want exactly 10 (cap) and more", len(got), more)
+		}
+	})
+	t.Run("findRepoHooks with exactly 10 entries reports no more", func(t *testing.T) {
+		repo := t.TempDir()
+		for i := range 5 {
+			mustWriteFile(t,
+				filepath.Join(repo, ".kiro", "hooks", fmt.Sprintf("hook%02d.json", i)),
+				hookDoc(
+					`{"name":"a","trigger":"PreToolUse","action":{"type":"command","command":"x"}}`,
+					`{"name":"b","trigger":"PostToolUse","action":{"type":"command","command":"y"}}`,
+				))
+		}
+		if got, more := findRepoHooks(repo); len(got) != 10 || more {
+			t.Errorf("findRepoHooks(10 hooks in 5 files) returned %d (more %v), want 10 and no more", len(got), more)
 		}
 	})
 	t.Run("findMdDocsInDir caps at 20", func(t *testing.T) {
@@ -410,8 +428,8 @@ func TestDiscoveryEntryCaps(t *testing.T) {
 		for i := range 25 {
 			mustWriteFile(t, filepath.Join(dir, fmt.Sprintf("doc%02d.md", i)), "body\n")
 		}
-		if got := len(findMdDocsInDir(dir)); got != 20 {
-			t.Errorf("findMdDocsInDir(25 files) returned %d, want exactly 20 (cap)", got)
+		if got, total := findMdDocsInDir(dir); len(got) != 20 || total != 25 {
+			t.Errorf("findMdDocsInDir(25 files) returned %d of %d, want exactly 20 (cap) of 25", len(got), total)
 		}
 	})
 }
@@ -426,7 +444,7 @@ func TestFindRepoSkills_ScansSubdirsWithSkillMd(t *testing.T) {
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "gamma", "notes.txt"), "no skill.md here\n")
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "loose.md"), "# not a skill\n")
 
-	skills := findRepoSkills(repo)
+	skills, _ := findRepoSkills(repo)
 	// alpha, beta, gamma are directories -> 3 skills. loose.md is a flat
 	// file -> ignored.
 	if len(skills) != 3 {
@@ -455,7 +473,7 @@ func TestFindRepoSkills_ScansSubdirsWithSkillMd(t *testing.T) {
 }
 
 func TestFindRepoSkills_NoSkillsDir(t *testing.T) {
-	if got := findRepoSkills(t.TempDir()); got != nil {
+	if got, total := findRepoSkills(t.TempDir()); got != nil || total != 0 {
 		t.Errorf("findRepoSkills(no skills dir) = %+v, want nil", got)
 	}
 }
@@ -469,8 +487,8 @@ func TestFindRepoSkills_CapAt20(t *testing.T) {
 			filepath.Join(repo, ".kiro", "skills", fmt.Sprintf("skill%02d", i), "SKILL.md"),
 			"body\n")
 	}
-	if got := len(findRepoSkills(repo)); got != 20 {
-		t.Errorf("findRepoSkills(25 skill dirs) = %d, want 20 (capped)", got)
+	if got, total := findRepoSkills(repo); len(got) != 20 || total != 25 {
+		t.Errorf("findRepoSkills(25 skill dirs) = %d of %d, want 20 (capped) of 25", len(got), total)
 	}
 }
 
@@ -485,7 +503,7 @@ func TestFindRepoAgents_DedupsPairedFiles(t *testing.T) {
 	mustWriteFile(t, filepath.Join(agentsDir, "deploy.json"), `{"name":"deploy"}`)
 	mustWriteFile(t, filepath.Join(agentsDir, "notes.md"), "# notes\n")
 
-	agents := findRepoAgents(repo)
+	agents, _ := findRepoAgents(repo)
 	if len(agents) != 3 {
 		t.Fatalf("findRepoAgents = %+v (len %d), want 3 (reviewer paired -> 1)", agents, len(agents))
 	}

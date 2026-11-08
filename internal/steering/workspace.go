@@ -83,21 +83,27 @@ func writeScratchGuidance(b *strings.Builder, workDir string) {
 	b.WriteString("`git status` next, and it can end up in a commit.\n\n")
 }
 
-// kiroRepo is one repo with `.kiro/` content and what discovery found in it.
+// kiroRepo is one repo with `.kiro/` content, what discovery read of it, and how much it holds.
 type kiroRepo struct {
-	name   string
-	docs   []docEntry
-	skills []docEntry
-	agents []agentEntry
-	hooks  []HookEntry
+	name        string
+	docs        []docEntry
+	skills      []docEntry
+	agents      []agentEntry
+	hooks       []HookEntry
+	docsTotal   int
+	skillsTotal int
+	agentsTotal int
+	moreHooks   bool
 }
 
 func scanKiroRepo(workDir, r string) kiroRepo {
 	dir := filepath.Join(workDir, r)
-	return kiroRepo{
-		name: r, docs: findRepoDocs(dir), skills: findRepoSkills(dir),
-		agents: findRepoAgents(dir), hooks: findRepoHooks(dir),
-	}
+	k := kiroRepo{name: r}
+	k.docs, k.docsTotal = findRepoDocs(dir)
+	k.skills, k.skillsTotal = findRepoSkills(dir)
+	k.agents, k.agentsTotal = findRepoAgents(dir)
+	k.hooks, k.moreHooks = findRepoHooks(dir)
+	return k
 }
 
 func (k *kiroRepo) empty() bool {
@@ -116,18 +122,19 @@ func writeRepoList(b *strings.Builder, workDir string, repos []string) bool {
 			plain = append(plain, r)
 		}
 	}
-	budget := maxRouting
-	for i := range kiro[:min(len(kiro), maxKiroRepos)] {
-		writeKiroRepo(b, &kiro[i], &budget)
+	shown := kiro[:min(len(kiro), maxKiroRepos)]
+	for i, kept := range allotRouting(shown, maxRouting) {
+		writeKiroRepo(b, &shown[i], kept)
 	}
 	if len(kiro) > maxKiroRepos {
 		names := make([]string, 0, len(kiro)-maxKiroRepos)
-		for _, k := range kiro[maxKiroRepos:] {
-			names = append(names, k.name)
+		for i := range kiro[maxKiroRepos:] {
+			names = append(names, kiro[maxKiroRepos+i].name)
 		}
 		b.WriteString("- More repositories with .kiro content: ")
-		writeNameList(b, names, "`ls -d "+workDir+"/*/.kiro`")
-		b.WriteString(". Before working in one, list its `.kiro/steering/` and `.kiro/skills/`\n")
+		writeNameList(b, names, "`ls -ad "+workDir+"/*/.kiro "+workDir+"/.[!.]*/.kiro`")
+		b.WriteString(". Before working in one, list its `.kiro/steering/`, `.kiro/skills/`, `.kiro/hooks/` and " +
+			"`.kiro/agents/`, and apply the protocol below to them.\n")
 	}
 	if len(plain) > 0 {
 		b.WriteString("- Other repositories: ")
@@ -149,53 +156,108 @@ func writeNameList(b *strings.Builder, names []string, how string) {
 	}
 }
 
-// writeKiroRepo spends the workspace-wide routing budget on the repo's steering, then its skills.
-func writeKiroRepo(b *strings.Builder, k *kiroRepo, budget *int) {
-	// One defusal per repo, threaded into every writer below. k.name stays raw as a path component.
-	label := defuse(k.name)
-	fmt.Fprintf(b, "- `%s/`\n", label)
-	docs := k.docs[:min(len(k.docs), *budget)]
-	*budget -= len(docs)
-	skills := k.skills[:min(len(k.skills), *budget)]
-	*budget -= len(skills)
-	if len(docs) > 0 {
-		writeRepoSteering(b, label, docs)
-	}
-	if len(skills) > 0 {
-		writeRepoSkills(b, label, skills)
-	}
-	if cut := len(k.docs) + len(k.skills) - len(docs) - len(skills); cut > 0 {
-		fmt.Fprintf(b, "  - … %d more .kiro entries: list `%s/.kiro/steering/` and `%s/.kiro/skills/`\n", cut, label, label)
-	}
-	if len(k.agents) > 0 {
-		writeRepoAgents(b, label, k.agents)
-	}
-	if len(k.hooks) > 0 {
-		writeRepoHooks(b, label, k.hooks)
+// routed is the share of one repo's steering and skills the routing budget renders.
+type routed struct{ docs, skills []docEntry }
+
+// Routing ranks: the protocol has an agent read always-loaded steering unprompted, a path
+// triggers a file-match entry, and the rest wait for a task to name them.
+const (
+	rankAlways = iota
+	rankFileMatch
+	rankOnDemand
+	routingRanks
+)
+
+func docRank(d docEntry) int {
+	switch d.Inclusion {
+	case inclusionFileMatch:
+		return rankFileMatch
+	case inclusionManual, inclusionAuto:
+		return rankOnDemand
+	default:
+		return rankAlways
 	}
 }
 
-func writeRepoAgents(b *strings.Builder, repo string, agents []agentEntry) {
+func skillRank(d docEntry) int {
+	if d.Inclusion == inclusionFileMatch {
+		return rankFileMatch
+	}
+	return rankOnDemand
+}
+
+// allotRouting spends budget across repos by rank, then repo order, then filename, so a later
+// repo's always-loaded steering outranks an earlier repo's on-demand entries.
+func allotRouting(repos []kiroRepo, budget int) []routed {
+	out := make([]routed, len(repos))
+	for rank := range routingRanks {
+		for i := range repos {
+			out[i].docs = takeRank(out[i].docs, repos[i].docs, docRank, rank, &budget)
+			out[i].skills = takeRank(out[i].skills, repos[i].skills, skillRank, rank, &budget)
+		}
+	}
+	return out
+}
+
+func takeRank(kept, entries []docEntry, rankOf func(docEntry) int, rank int, budget *int) []docEntry {
+	for _, d := range entries {
+		if *budget > 0 && rankOf(d) == rank {
+			kept = append(kept, d)
+			*budget--
+		}
+	}
+	return kept
+}
+
+func writeKiroRepo(b *strings.Builder, k *kiroRepo, kept routed) {
+	// One defusal per repo, threaded into every writer below. k.name stays raw as a path component.
+	label := defuse(k.name)
+	fmt.Fprintf(b, "- `%s/`\n", label)
+	if len(kept.docs) > 0 {
+		writeRepoSteering(b, label, kept.docs)
+	}
+	if len(kept.skills) > 0 {
+		writeRepoSkills(b, label, kept.skills)
+	}
+	if cut := k.docsTotal + k.skillsTotal - len(kept.docs) - len(kept.skills); cut > 0 {
+		fmt.Fprintf(b, "  - … %d more .kiro entries: list `%s/.kiro/steering/` and `%s/.kiro/skills/`\n", cut, label, label)
+	}
+	if len(k.agents) > 0 {
+		writeRepoAgents(b, label, k)
+	}
+	if len(k.hooks) > 0 {
+		writeRepoHooks(b, label, k)
+	}
+}
+
+func writeRepoAgents(b *strings.Builder, repo string, k *kiroRepo) {
 	fmt.Fprintf(b, "  - **Custom agents** (`%s/.kiro/agents/`):", repo)
-	for _, a := range agents {
+	for _, a := range k.agents {
 		fmt.Fprintf(b, " `%s`", a.Name)
+	}
+	if extra := k.agentsTotal - len(k.agents); extra > 0 {
+		fmt.Fprintf(b, " … and %d more", extra)
 	}
 	b.WriteString("\n")
 }
 
-func writeRepoHooks(b *strings.Builder, repo string, hooks []HookEntry) {
+func writeRepoHooks(b *strings.Builder, repo string, k *kiroRepo) {
 	fmt.Fprintf(b, "  - **Hooks** (`%s/.kiro/hooks/`):\n", repo)
-	for _, h := range hooks {
-		trigger := cmp.Or(h.Trigger, "unknown")
+	for _, h := range k.hooks {
+		// Name and trigger are bounded here, not in parseHookDoc: the REST scanner shows them whole.
+		trigger := cmp.Or(capPreview(h.Trigger), "unknown")
 		fmt.Fprintf(b, "    - `%s`", h.Filename)
 		if h.Name != "" {
-			fmt.Fprintf(b, " %s", h.Name)
+			fmt.Fprintf(b, " %s", capPreview(h.Name))
 		}
 		fmt.Fprintf(b, " [%s]", trigger)
 		if h.Command != "" {
 			fmt.Fprintf(b, " → `%s`", h.Command)
 		}
 		b.WriteString("\n")
+	}
+	if k.moreHooks {
+		fmt.Fprintf(b, "    - … more hooks: list `%s/.kiro/hooks/`\n", repo)
 	}
 }
 

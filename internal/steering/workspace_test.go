@@ -1,8 +1,10 @@
 package steering
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -217,8 +219,7 @@ func TestWriteKiroRepo_RendersEveryGroup(t *testing.T) {
 
 	var b strings.Builder
 	k := scanKiroRepo(work, "myrepo")
-	budget := maxRouting
-	writeKiroRepo(&b, &k, &budget)
+	writeKiroRepo(&b, &k, allotRouting([]kiroRepo{k}, maxRouting)[0])
 	out := b.String()
 
 	if !strings.HasPrefix(out, "- `myrepo/`\n") {
@@ -232,9 +233,6 @@ func TestWriteKiroRepo_RendersEveryGroup(t *testing.T) {
 	if strings.Contains(out, "[unknown]") {
 		t.Errorf("hook with a known trigger rendered [unknown]:\n%s", out)
 	}
-	if budget != maxRouting-1 {
-		t.Errorf("one skill spent %d of the routing budget, want 1", maxRouting-budget)
-	}
 }
 
 // TestWriteKiroRepo_OmitsAgentAndHookHeadersWhenEmpty verifies a repo with only steering emits
@@ -244,8 +242,7 @@ func TestWriteKiroRepo_OmitsAgentAndHookHeadersWhenEmpty(t *testing.T) {
 	mustWriteFile(t, filepath.Join(work, "r", ".kiro", "steering", "s.md"), "# S\n")
 	var b strings.Builder
 	k := scanKiroRepo(work, "r")
-	budget := maxRouting
-	writeKiroRepo(&b, &k, &budget)
+	writeKiroRepo(&b, &k, allotRouting([]kiroRepo{k}, maxRouting)[0])
 	out := b.String()
 	if strings.Contains(out, "**Custom agents**") || strings.Contains(out, "**Hooks**") {
 		t.Errorf("an agent or hook header emitted with none:\n%s", out)
@@ -260,8 +257,7 @@ func TestWriteKiroRepo_CountsTheEntriesPastTheBudget(t *testing.T) {
 	}
 	var b strings.Builder
 	k := scanKiroRepo(work, "r")
-	budget := 2
-	writeKiroRepo(&b, &k, &budget)
+	writeKiroRepo(&b, &k, allotRouting([]kiroRepo{k}, 2)[0])
 	out := b.String()
 	if got := len(routingEntry.FindAllString(out, -1)); got != 2 {
 		t.Errorf("rendered %d entries with a budget of 2:\n%s", got, out)
@@ -269,8 +265,111 @@ func TestWriteKiroRepo_CountsTheEntriesPastTheBudget(t *testing.T) {
 	if !strings.Contains(out, "  - … 1 more .kiro entries: list `r/.kiro/steering/` and `r/.kiro/skills/`\n") {
 		t.Errorf("the entry past the budget is not counted:\n%s", out)
 	}
-	if budget != 0 {
-		t.Errorf("budget left = %d, want 0", budget)
+}
+
+// Entries past discovery's per-repo read caps are counted too, and so are agents and hooks.
+func TestWriteKiroRepo_CountsWhatDiscoveryDidNotRead(t *testing.T) {
+	work := t.TempDir()
+	for i := range 22 {
+		mustWriteFile(t, filepath.Join(work, "r", ".kiro", "steering", fmt.Sprintf("d%02d.md", i)), "# S\n")
+		mustWriteFile(t, filepath.Join(work, "r", ".kiro", "skills", fmt.Sprintf("s%02d", i), "SKILL.md"), "# S\n")
+	}
+	for i := range 12 {
+		mustWriteFile(t, filepath.Join(work, "r", ".kiro", "agents", fmt.Sprintf("a%02d.json", i)), `{"name":"a"}`)
+		mustWriteFile(t, filepath.Join(work, "r", ".kiro", "hooks", fmt.Sprintf("h%02d.json", i)),
+			`{"version":"v1","hooks":[{"name":"n","trigger":"PostFileSave","action":{"type":"command","command":"x"}}]}`)
+	}
+	var b strings.Builder
+	k := scanKiroRepo(work, "r")
+	writeKiroRepo(&b, &k, allotRouting([]kiroRepo{k}, maxRouting)[0])
+	out := b.String()
+	for _, want := range []string{
+		"  - … 4 more .kiro entries: list `r/.kiro/steering/` and `r/.kiro/skills/`\n",
+		" `a09` … and 2 more\n",
+		"    - … more hooks: list `r/.kiro/hooks/`\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeKiroRepo lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// A hook's name and trigger are untrusted JSON sent on every model call, so both are bounded.
+func TestWriteKiroRepo_BoundsAHooksNameAndTrigger(t *testing.T) {
+	work := t.TempDir()
+	long := strings.Repeat("n", 200)
+	mustWriteFile(t, filepath.Join(work, "r", ".kiro", "hooks", "h.json"),
+		`{"version":"v1","hooks":[{"name":"`+long+`","trigger":"`+long+`","action":{"type":"command","command":"x"}}]}`)
+	var b strings.Builder
+	k := scanKiroRepo(work, "r")
+	writeKiroRepo(&b, &k, routed{})
+	short := strings.Repeat("n", 77) + "..."
+	if want := "    - `h.json` " + short + " [" + short + "] → `x`\n"; !strings.Contains(b.String(), want) {
+		t.Errorf("hook line not bounded, want %q in:\n%s", want, b.String())
+	}
+}
+
+func TestAllotRouting_SpendsTheBudgetByRank(t *testing.T) {
+	always := docEntry{Filename: "z-always.md", Inclusion: inclusionAlways}
+	manual := docEntry{Filename: "a-manual.md", Inclusion: inclusionManual}
+	auto := docEntry{Filename: "b-auto.md", Inclusion: inclusionAuto}
+	matchDoc := docEntry{Filename: "m-match.md", Inclusion: inclusionFileMatch}
+	skill := docEntry{Filename: "s/SKILL.md", Inclusion: inclusionAlways}
+	matchSkill := docEntry{Filename: "t/SKILL.md", Inclusion: inclusionFileMatch}
+	names := func(r []routed) []string {
+		var out []string
+		for i, x := range r {
+			for _, d := range append(slices.Clone(x.docs), x.skills...) {
+				out = append(out, fmt.Sprintf("%d:%s", i, d.Filename))
+			}
+		}
+		return out
+	}
+	cases := []struct {
+		name   string
+		repos  []kiroRepo
+		budget int
+		want   []string
+	}{{
+		name:   "an always doc sorting after a manual doc is kept first",
+		repos:  []kiroRepo{{docs: []docEntry{manual, always}}},
+		budget: 1,
+		want:   []string{"0:z-always.md"},
+	}, {
+		name: "a later repo's always doc outranks an earlier repo's on-demand entries",
+		repos: []kiroRepo{
+			{docs: []docEntry{manual, auto}, skills: []docEntry{skill}},
+			{docs: []docEntry{always}},
+		},
+		budget: 1,
+		want:   []string{"1:z-always.md"},
+	}, {
+		name:   "file-match docs and skills come before on-demand ones",
+		repos:  []kiroRepo{{docs: []docEntry{manual}, skills: []docEntry{skill, matchSkill}}, {docs: []docEntry{matchDoc}}},
+		budget: 2,
+		want:   []string{"0:t/SKILL.md", "1:m-match.md"},
+	}, {
+		name:   "a skill never ranks as always-loaded",
+		repos:  []kiroRepo{{skills: []docEntry{skill}}, {docs: []docEntry{manual}}},
+		budget: 1,
+		want:   []string{"0:s/SKILL.md"},
+	}, {
+		name:   "within a rank, repo order then filename order",
+		repos:  []kiroRepo{{docs: []docEntry{manual, auto}}, {docs: []docEntry{manual}}},
+		budget: 2,
+		want:   []string{"0:a-manual.md", "0:b-auto.md"},
+	}, {
+		name:   "a budget over every entry keeps them all",
+		repos:  []kiroRepo{{docs: []docEntry{manual, always, matchDoc}, skills: []docEntry{skill}}},
+		budget: maxRouting,
+		want:   []string{"0:z-always.md", "0:m-match.md", "0:a-manual.md", "0:s/SKILL.md"},
+	}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := names(allotRouting(tc.repos, tc.budget)); !slices.Equal(got, tc.want) {
+				t.Errorf("allotRouting = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-func writeAdditionalDirs(b *strings.Builder, dirs []string) {
+func writeAdditionalDirs(b *strings.Builder, dirs []string, configDir string) {
 	if len(dirs) == 0 {
 		return
 	}
@@ -17,7 +17,7 @@ func writeAdditionalDirs(b *strings.Builder, dirs []string) {
 		fmt.Fprintf(b, "- `%s`\n", defuse(d))
 	}
 	if extra := len(dirs) - maxGrantedDirs; extra > 0 {
-		fmt.Fprintf(b, "- … and %d more\n", extra)
+		fmt.Fprintf(b, "- … and %d more (`additional_directories` in `%s/config.json`)\n", extra, configDir)
 	}
 	b.WriteString("\n")
 }
