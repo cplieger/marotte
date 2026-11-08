@@ -21,7 +21,7 @@ func TestEngineExit_ClosesEveryHostedSessionsTurnAndAsks(t *testing.T) {
 	}
 	chats := []marotte.ChatID{"c1", "c2"}
 	for i, chatID := range chats {
-		sb, err := h.coord.openBridge(t.Context(), chatID, "")
+		sb, err := h.coord.openReleased(t.Context(), chatID, "")
 		if err != nil {
 			t.Fatalf("Setup: OpenBridge(%s): %v", chatID, err)
 		}
@@ -116,7 +116,7 @@ func loadEndingFixture(t *testing.T, n int32) (*Runtime, func() []*marotte.Sessi
 func TestEngineExit_ALoadItEndsLoadsAgainOnTheNextEngine(t *testing.T) {
 	h, doorOpts := loadEndingFixture(t, 1)
 
-	sb, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge(c1) after the engine ended under its load: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestEngineExit_ALoadItEndsLoadsAgainOnTheNextEngine(t *testing.T) {
 func TestEngineExit_ALoadEndedTwiceKeepsTheChatsSession(t *testing.T) {
 	h, doorOpts := loadEndingFixture(t, 2)
 
-	_, err := h.coord.openBridge(t.Context(), "c1", "")
+	_, err := h.coord.openReleased(t.Context(), "c1", "")
 
 	if !errors.Is(err, marotte.ErrBridgeExited) {
 		t.Fatalf("OpenBridge(c1) = %v, want the engine's end", err)
@@ -155,7 +155,7 @@ func TestEngineExit_ALoadEndedTwiceKeepsTheChatsSession(t *testing.T) {
 			t.Errorf("a session/new was opened for the chat: %+v", o)
 		}
 	}
-	sb, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("the next OpenBridge(c1): %v", err)
 	}

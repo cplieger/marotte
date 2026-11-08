@@ -404,10 +404,6 @@ func (rs *Runs) endHostedSteers(ctx context.Context, host marotte.ChatID) {
 	}
 }
 
-func (rs *Runs) hostsLiveRun(chatID marotte.ChatID) bool {
-	return rs.log != nil && rs.log.hostsOpen(chatID)
-}
-
 func (rs *Runs) openSeq(runID, turn string) (uint64, bool) {
 	if rs.log == nil {
 		return 0, false

@@ -377,7 +377,8 @@ func autoResumeStopNoteText(workflowID, name string, throttled bool) string {
 // tellLaunchingAgent files text in the run's launching session; command.SteerWarningNotice owns how it is read. about
 // names what it tells, for the log.
 func (rs *Runs) tellLaunchingAgent(ctx context.Context, workflowID string, chat marotte.ChatID, about, text string) {
-	host, err := rs.ensureResident(ctx, workflowID)
+	host, release, err := rs.ensureResident(ctx, workflowID)
+	defer release()
 	if err == nil {
 		err = command.SteerWarningNotice(ctx, host.sb, text)
 	}

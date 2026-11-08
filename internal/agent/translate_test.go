@@ -543,7 +543,7 @@ func registerParentSession(t *testing.T, h *Runtime, chatID marotte.ChatID, pare
 	br := newFakeBridge()
 	br.sessionID = parentSession
 	sb.attach(br)
-	sb.state = bridgeIdle
+	sb.state = bridgeReady
 }
 
 // captureAttribution is captureSubSession's sibling for the whole attribution, for the step case a string cannot express.

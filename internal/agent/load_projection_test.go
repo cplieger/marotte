@@ -481,7 +481,7 @@ func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
 	loadedChat(t, cs, chatID)
 
 	// The replay arrives inside this call, as KAS delivers it inside session/load.
-	sb, err := h.coord.openBridge(t.Context(), chatID, "")
+	sb, err := h.coord.openReleased(t.Context(), chatID, "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}

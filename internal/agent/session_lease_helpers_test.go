@@ -6,9 +6,11 @@ import "context"
 // lifetime. A test that exercises a close builds its entry through openBridge instead, with a real lifecycle.
 type admitAllLife struct{}
 
-func (admitAllLife) beginLease(context.CancelCauseFunc) (context.Context, func(), bool) {
-	return context.Background(), func() {}, true
+func (admitAllLife) beginLease(*sharedBridge, context.CancelCauseFunc) (context.Context, func(), error) {
+	return context.Background(), func() {}, nil
 }
+
+func (admitAllLife) closingSession(*sharedBridge) bool { return false }
 
 // testBridge builds an entry holding s in state, its leases always admitted; an entry past its door is settled.
 func testBridge(s engineSession, state bridgeState) *sharedBridge {

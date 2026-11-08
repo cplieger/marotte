@@ -109,11 +109,14 @@ func (q *closingQueue) AppendIfLive(ctx context.Context, chatID marotte.ChatID, 
 	return q.fakeQueue.AppendIfLive(ctx, chatID, fn)
 }
 
+// awaitMergeSettled also waits for the merge's goroutine to end: conclude reopens the parent's tab in the
+// fixture's tab store after the record settles, and a write still running fails t.TempDir's cleanup.
 func awaitMergeSettled(t *testing.T, f *mergeFixture) marotte.TangentMerge {
 	t.Helper()
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
 		rec, ok := f.merges.record(t.Context(), tangentOp1)
 		if ok && rec.State != marotte.TangentMergeRunning {
+			f.host.waitInflight(t)
 			return rec
 		}
 		if time.Now().After(deadline) {

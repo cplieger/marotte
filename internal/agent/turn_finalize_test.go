@@ -393,7 +393,7 @@ func TestAwaitTurn_DeadContextReturnsRatherThanParking(t *testing.T) {
 func TestAbandonInFlightTurn_WithNoTurnIDClosesNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "A" })
-	// An engine-started streaming turn holds no prompt slot.
+	// An engine-started streaming turn holds no reservation.
 	engine := h.stageWireTurn(t, "c1")
 	if engine == nil {
 		t.Fatal("no engine turn was opened")

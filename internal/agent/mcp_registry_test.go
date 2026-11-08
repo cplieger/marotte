@@ -776,7 +776,7 @@ func TestMCPPool_ChatViewElseUnion(t *testing.T) {
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed the chat: %v", err)
 	}
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("openBridge: %v", err)
 	}
 	reportMCP(t, h, "sess_other", resourceMCP("extra", "e://x"), resourceMCP("docs", "d://other"))
@@ -807,7 +807,7 @@ func TestBridgeExit_DropsTheChatView(t *testing.T) {
 		if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 			t.Fatalf("seed the chat: %v", err)
 		}
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("openBridge: %v", err)
 		}
 		br.deliver(mcpStatusFrame(t, br.SessionID(), map[string]string{"docs": "d://x"}))
@@ -829,7 +829,7 @@ func TestBridgeExit_DropsTheChatView(t *testing.T) {
 		next := newFakeBridge()
 		next.sessionID = string(br.SessionID())
 		h.bridge.mgr.mu.Lock()
-		h.bridge.mgr.bridges["c1"] = testBridge(next, bridgeIdle)
+		h.bridge.mgr.bridges["c1"] = testBridge(next, bridgeReady)
 		h.bridge.mgr.mu.Unlock()
 
 		br.endStream()

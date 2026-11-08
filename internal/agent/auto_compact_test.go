@@ -71,7 +71,7 @@ func (r *compactRig) rowLog() []compactRow {
 
 func newCompactRig(pct int) *compactRig {
 	r := &compactRig{enabled: true, pct: pct, bridge: newFakeBridge()}
-	entry := testBridge(r.bridge, bridgeIdle)
+	entry := testBridge(r.bridge, bridgeReady)
 	r.ac = &autoCompactor{
 		chats: map[marotte.ChatID]*autoCompactState{},
 		turnOf: func(marotte.ChatID) (string, bool) {

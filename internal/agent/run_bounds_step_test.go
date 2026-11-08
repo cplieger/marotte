@@ -28,7 +28,7 @@ func stepFixture(t *testing.T, id string) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
 	h.runs.log = newRunLog(t.TempDir())
 	return h, br
 }

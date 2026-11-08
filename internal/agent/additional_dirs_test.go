@@ -56,7 +56,7 @@ func TestSessionDoors_CarryTheGrantedAdditionalDirectories(t *testing.T) {
 				c.ACPSessionID = tc.session
 				return true
 			})
-			sb, err := h.coord.openBridge(t.Context(), "c1", "")
+			sb, err := h.coord.openReleased(t.Context(), "c1", "")
 			if err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
@@ -181,7 +181,7 @@ func TestUnreadableConfig_EverySessionDoorOpensOnTheLastReadableSettings(t *test
 			src, _ := shared()
 			h, f := boot(t, src)
 			_, _ = h.chatStore.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.ACPSessionID = tc.session; return true })
-			sb, err := h.coord.openBridge(t.Context(), "c1", "")
+			sb, err := h.coord.openReleased(t.Context(), "c1", "")
 			if err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}

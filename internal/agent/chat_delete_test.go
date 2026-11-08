@@ -141,7 +141,7 @@ func insertChatSession(t *testing.T, h *Runtime, rig *deleteRig, chatID marotte.
 		t.Fatal("Setup: the rig handed back something other than a fake")
 	}
 	br.sessionID = sessionID
-	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
+	h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
 	return br
 }
 

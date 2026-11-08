@@ -27,7 +27,7 @@ func openTestTurn(t *testing.T, reg *turnRegistry, chatID marotte.ChatID) *activ
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	if !lc.slotFreeLocked(marotte.TurnSourcePrompt) {
-		t.Fatalf("open(%q) was refused: the prompt slot is held", chatID)
+		t.Fatalf("open(%q) was refused: the admission slot is held", chatID)
 	}
 	return lc.openLocked(chatID, &marotte.Entry{ID: id}, marotte.TurnSourcePrompt, "", turnlog.Open(id, nil))
 }

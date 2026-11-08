@@ -32,7 +32,7 @@ func scheduledHub(t *testing.T) (*Runtime, *fakeBridge, *launchrule.Store, launc
 // launchScheduled leases workflowID as the schedule's fire, bounded by a slot an hour out.
 func launchScheduled(t *testing.T, h *Runtime, br *fakeBridge, entry *launchrule.Rule, workflowID string) {
 	t.Helper()
-	h.insertBridgeNow(runChatID(workflowID), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID(workflowID), testBridge(br, bridgeReady))
 	h.runs.grantLease(t.Context(), workflowID, "nightly",
 		scheduledLaunch(entry.Row(), time.Now().Add(time.Hour)), hostSec())
 }
@@ -443,7 +443,7 @@ func triggeredHub(t *testing.T) (*Runtime, *fakeConfirmer, *launchrule.Store) {
 	h, br, st, _ := scheduledHub(t)
 	fc := &fakeConfirmer{}
 	h.runs.confirmer = fc
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 	h.runs.grantLease(t.Context(), "wf_1", "nightly", eventLaunch(), hostSec())
 	return h, fc, st
 }

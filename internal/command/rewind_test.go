@@ -67,8 +67,6 @@ func (b *recordingBridge) CallAt(ctx context.Context, method string, params any)
 func (*recordingBridge) Notify(context.Context, string, any) error        { return nil }
 func (*recordingBridge) Respond(context.Context, int64, any, error) error { return nil }
 func (b *recordingBridge) SessionID() marotte.SessionID                   { return b.sessionID }
-func (*recordingBridge) TryAcquireForPrompt() bool                        { return true }
-func (*recordingBridge) ReleaseAfterPrompt()                              {}
 
 // bridgeDeps adds a bridge to storeDeps so the outgoing call can be observed.
 type bridgeDeps struct {
@@ -85,8 +83,8 @@ func (d *bridgeDeps) Bridge(marotte.ChatID) Bridge { return d.bridge }
 // BridgeLive follows the live bridge: an opening or absent one parks a steer.
 func (d *bridgeDeps) BridgeLive(marotte.ChatID) bool { return d.bridge != nil }
 
-func (d *bridgeDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
-	return d.opened, nil
+func (d *bridgeDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, func(), error) {
+	return d.opened, func() {}, nil
 }
 
 // newBridgeHost lets one bridge answer both lookups: a chat with a live bridge is what
@@ -837,6 +835,6 @@ func (*slotAdmission) AwaitNoClose(context.Context, marotte.ChatID) (bool, error
 	return false, nil
 }
 
-func (r *bridgeDeps) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+func (r *bridgeDeps) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, func(), error) {
 	return r.OpenBridge(ctx, chatID, model)
 }

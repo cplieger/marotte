@@ -37,60 +37,62 @@ type drivenHost struct {
 // ensureResident makes the run's launching session resident, one load per run at a time: a chat-parented run's chat
 // session through the chat's own open, a parentless run's host session loaded under run:<id> with the presets its
 // lease recorded at launch. A load runs to completion whatever ctx does, since a cancelled door would detach the
-// session; ctx bounds only this caller's waits, for the run's lock and for the load.
-func (rs *Runs) ensureResident(ctx context.Context, workflowID string) (*drivenHost, error) {
+// session; ctx bounds only this caller's waits, for the run's lock and for the load. release ends a chat-parented
+// run's open hold on its chat's session (openBridge); it is never nil, so the caller defers it before the error check.
+func (rs *Runs) ensureResident(ctx context.Context, workflowID string) (host *drivenHost, release func(), err error) {
 	unlock, err := rs.hosts.Lock(ctx, workflowID)
 	if err != nil {
-		return nil, err
+		return nil, func() {}, err
 	}
 	defer unlock()
 	if sb := rs.residentRunHost(workflowID); sb != nil {
-		return &drivenHost{sb: sb, chatID: runChatID(workflowID)}, nil
+		return &drivenHost{sb: sb, chatID: runChatID(workflowID)}, func() {}, nil
 	}
 	o := rs.originFromLease(ctx, workflowID)
 	if o.err != nil {
-		return nil, o.err
+		return nil, func() {}, o.err
 	}
 	if o.parent.chat != "" {
-		sb, hErr := rs.hostOnChat(ctx, workflowID, o.parent)
+		sb, release, hErr := rs.hostOnChat(ctx, workflowID, o.parent)
 		if hErr != nil {
-			return nil, hErr
+			return nil, release, hErr
 		}
 		rs.router.registerOwner(workflowID, marotte.SessionID(o.parent.session))
-		return &drivenHost{sb: sb, chatID: o.parent.chat}, nil
+		return &drivenHost{sb: sb, chatID: o.parent.chat}, release, nil
 	}
 	l, held := rs.lease(workflowID)
 	if !held {
-		return nil, fmt.Errorf("%w: a run marotte did not launch has no recorded security profile",
+		return nil, func() {}, fmt.Errorf("%w: a run marotte did not launch has no recorded security profile",
 			errLaunchSessionUnavailable)
 	}
 	presets, err := l.HostPresets()
 	if err != nil {
 		slog.Warn("a run's launching session was not loaded, because its lease recorded no security profile",
 			"workflow_id", workflowID)
-		return nil, fmt.Errorf("%w: %w", errLaunchSessionUnavailable, err)
+		return nil, func() {}, fmt.Errorf("%w: %w", errLaunchSessionUnavailable, err)
 	}
 	sb, err := rs.loadHost(ctx, workflowID, o.parent.session, presets)
 	if err != nil {
-		return nil, err
+		return nil, func() {}, err
 	}
-	return &drivenHost{sb: sb, chatID: runChatID(workflowID)}, nil
+	return &drivenHost{sb: sb, chatID: runChatID(workflowID)}, func() {}, nil
 }
 
 // hostOnChat reaches a chat-parented run through the chat's own session, never a second one: that session must be
-// the run's launching session, since openBridge can fall back to a new one.
-func (rs *Runs) hostOnChat(ctx context.Context, workflowID string, parent runParent) (*sharedBridge, error) {
-	held, err := rs.coord.openBridge(ctx, parent.chat, "")
+// the run's launching session, since openBridge can fall back to a new one. release is never nil.
+func (rs *Runs) hostOnChat(ctx context.Context, workflowID string, parent runParent) (*sharedBridge, func(), error) {
+	held, release, err := rs.coord.openBridge(ctx, parent.chat, "")
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errRunHostStart, err)
+		return nil, release, fmt.Errorf("%w: %w", errRunHostStart, err)
 	}
 	if got := string(held.SessionID()); got != parent.session {
+		release()
 		slog.Warn("a run's launching chat is open on another session, so the run was not driven",
 			"workflow_id", workflowID, "chat_id", parent.chat,
 			"launch_session", parent.session, "chat_session", got)
-		return nil, errLaunchSessionUnavailable
+		return nil, func() {}, errLaunchSessionUnavailable
 	}
-	return held, nil
+	return held, release, nil
 }
 
 // loadHost loads a parentless run's host session under run:<id>, its forward attached before the door, and makes the
@@ -140,7 +142,7 @@ func (rs *Runs) openHost(workflowID, session string, presets []string, sb *share
 		sb.settled.settle(err)
 		return
 	}
-	sb.setIdle()
+	sb.setReady()
 	rs.router.registerOwner(workflowID, marotte.SessionID(session))
 	sb.settled.settle(nil)
 	slog.Info("loaded a run's launching session", "workflow_id", workflowID, "session_id", session)

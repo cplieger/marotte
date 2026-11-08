@@ -71,7 +71,7 @@ func TestCloseImpact_NamesEachTurnByItsIds(t *testing.T) {
 	t.Run("a drain's reservation is named by its row, not as a turn", func(t *testing.T) {
 		rt, cs, _ := newTestHub()
 		seedChat(t, cs, "c1")
-		if !rt.coord.tryReserveFencedNow("c1", marotte.TurnSourcePrompt, fenceNow(rt, "c1")) {
+		if !rt.coord.tryReserveDrainNow("c1", fenceNow(rt, "c1")) {
 			t.Fatal("the drain's reserve refused")
 		}
 		if got := turnsOf(rt, "c1"); len(got) != 0 {

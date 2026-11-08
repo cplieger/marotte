@@ -112,11 +112,22 @@ type runRecord struct {
 // One mutex, held across the store call; nothing here runs under the log's own lock.
 type runLog struct {
 	runs map[string]*runRecord
+	// steps learns each step turn a chat's session hosts, from its open to its close; nil records none.
+	steps stepHolds
 	// removeAll is removeDir's os.RemoveAll, a field so a test can fail one removal as root cannot be refused.
 	removeAll func(path string) error
 	root      string
 	mu        sync.Mutex
 }
+
+// stepHolds is the turn registry as the run log reports a hosted step turn: the host's session may not close while
+// the turn is open. Both run under runLog.mu (lock order runLog.mu -> turnRegistry.mu -> chatLifecycle.mu).
+type stepHolds interface {
+	holdStep(host marotte.ChatID, turnID string)
+	endStep(host marotte.ChatID, turnID string)
+}
+
+var _ stepHolds = (*turnRegistry)(nil)
 
 func newRunLog(configDir string) *runLog {
 	return &runLog{
@@ -462,17 +473,6 @@ func (r *runLog) hasClosed(workflowID, nodePath string) bool {
 	return false
 }
 
-func (r *runLog) hostsOpen(chatID marotte.ChatID) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, rec := range r.runs {
-		if rec.host == chatID && len(rec.open) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
 // openSeqs answers every open turn of a run as turn id to newest seq: the digest's
 // `run_turn` arm.
 func (r *runLog) openSeqs(workflowID string) map[string]uint64 {
@@ -550,6 +550,9 @@ func (r *runLog) open(ctx context.Context, step *translate.RunStep, chatID marot
 	delete(rec.staged, nodePath)
 	t := &runTurn{path: nodePath, top: topStepOf(step)}
 	t.turn = turnlog.Open(e.ID, runSink{log: rec.log, turn: t})
+	if r.steps != nil {
+		r.steps.holdStep(rec.host, e.ID)
+	}
 	rec.open[nodePath] = t
 	if rec.starts != nil {
 		noteAttemptOpen(rec.starts, nodePath, e.Ts)
@@ -927,9 +930,12 @@ func (r *runLog) closeAllLocked(ctx context.Context, rec *runRecord, c marotte.T
 }
 
 // The path leaves `open` whatever the close answered: a refused write latched the log.
-func (*runLog) closeLocked(ctx context.Context, rec *runRecord, t *runTurn, c marotte.TurnConclusion) ([]turnlog.Sealed, error) {
+func (r *runLog) closeLocked(ctx context.Context, rec *runRecord, t *runTurn, c marotte.TurnConclusion) ([]turnlog.Sealed, error) {
 	sealed, err := t.turn.Close(ctx, c)
 	delete(rec.open, t.path)
+	if r.steps != nil {
+		r.steps.endStep(rec.host, t.turn.ID())
+	}
 	rec.closed[t.path] = t.turn.ID()
 	if rec.closes != nil {
 		rec.closes[t.path] = sealedClose(sealed, t.turn.ID(), &c)

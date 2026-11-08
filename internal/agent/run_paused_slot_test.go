@@ -18,7 +18,7 @@ import (
 // leaseScheduledWithSlot leases workflowID as entry's fire whose next slot comes due slotIn from now.
 func leaseScheduledWithSlot(t *testing.T, h *Runtime, br *fakeBridge, entry *launchrule.Rule, workflowID string, slotIn time.Duration) {
 	t.Helper()
-	h.insertBridgeNow(runChatID(workflowID), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID(workflowID), testBridge(br, bridgeReady))
 	h.runs.grantLease(t.Context(), workflowID, "nightly",
 		scheduledLaunch(entry.Row(), time.Now().Add(slotIn)), hostSec())
 }
@@ -97,7 +97,7 @@ func TestManualRun_APauseStillParksItsClock(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
 	h.runs.grantLease(t.Context(), id, "publish",
 		launchOrigin{origin: runlease.OriginManual, slotAt: time.Now().Add(50 * time.Millisecond)}, hostSec())
 	h.runs.armDeadline(t.Context(), id)

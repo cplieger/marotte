@@ -158,7 +158,7 @@ func hostedLeasedRun(t *testing.T, reply json.RawMessage) (*Runtime, *fakeBridge
 	t.Helper()
 	h, _, br := newTestHub()
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ParentSessionID: testLaunchSession})
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 	br.setCallResult(methodKiroWorkflowInspect, reply)
 	return h, br
 }
@@ -656,7 +656,7 @@ func TestControlHandler_ForwardsKASsOwnRefusal(t *testing.T) {
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "running", ""),
 	}
 	// This process holds the run, so pause is offered.
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 	// KAS refuses with -32603 and the reason in `error.data`, hence rpcerr.Text.
 	br.callRPCErrs = map[string]*marotte.RPCError{
 		methodKiroWorkflowPause: {
@@ -687,7 +687,7 @@ func TestHandleResume_AClaimInFlightIsReaderText(t *testing.T) {
 		methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "paused", ""),
 	}
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 	br.callRPCErrs = map[string]*marotte.RPCError{
 		methodKiroWorkflowResume: {
 			Code:    -32603,
@@ -728,7 +728,7 @@ func TestHandleResume_AQueuedClaimIsWaitedForNotRefused(t *testing.T) {
 	}
 	queued := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{methodKiroWorkflowResume: queued}
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 	req := httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/resume", nil)
 	req.SetPathValue("id", "wf_1")
 	rec := httptest.NewRecorder()
@@ -760,7 +760,7 @@ func TestHandleResume_AQuestionParkWhoseTreeDoesNotDecodeIsUnread(t *testing.T) 
 		methodKiroWorkflowInspect: withAttentionDrift(t, parked),
 		methodKiroWorkflowResume:  json.RawMessage(`{}`),
 	}
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 	req := httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/resume", nil)
 	req.SetPathValue("id", "wf_1")
 	rec := httptest.NewRecorder()

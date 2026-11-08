@@ -35,9 +35,9 @@ func (*promptSpy) OpenTurn(context.Context, marotte.ChatID, TurnOpen) (string, e
 	return "", chat.ErrTombstoned
 }
 
-func (s *promptSpy) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
+func (s *promptSpy) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, func(), error) {
 	s.opened++
-	return nil, errors.New("the bridge must not be opened")
+	return nil, func() {}, errors.New("the bridge must not be opened")
 }
 
 func (s *promptSpy) Broadcast(_ context.Context, evt marotte.ServerEvent) {
@@ -81,8 +81,8 @@ type promptBridgeSpy struct {
 	events []marotte.ServerEvent
 }
 
-func (s *promptBridgeSpy) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
-	return s.bridge, nil
+func (s *promptBridgeSpy) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, func(), error) {
+	return s.bridge, func() {}, nil
 }
 
 func (s *promptBridgeSpy) Broadcast(_ context.Context, evt marotte.ServerEvent) {
@@ -221,10 +221,10 @@ func TestReportPromptSuccess_ClearsAuthLatch(t *testing.T) {
 	}
 }
 
-func (r *promptSpy) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+func (r *promptSpy) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, func(), error) {
 	return r.OpenBridge(ctx, chatID, model)
 }
 
-func (r *promptBridgeSpy) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+func (r *promptBridgeSpy) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, func(), error) {
 	return r.OpenBridge(ctx, chatID, model)
 }

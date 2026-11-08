@@ -48,7 +48,7 @@ func askCoreHub(t *testing.T, workflowID string, reply json.RawMessage) (*Runtim
 	t.Cleanup(func() { shutdownHub(t, h) })
 	settleBoot(t, h)
 	leaseRun(t, h, runlease.Lease{WorkflowID: workflowID, ParentSessionID: testLaunchSession})
-	h.insertBridgeNow(runChatID(workflowID), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID(workflowID), testBridge(br, bridgeReady))
 	if reply != nil {
 		br.setCallResult(methodKiroWorkflowInspect, reply)
 	}
@@ -456,7 +456,7 @@ func TestRunAsks_VerbsOnARunWithNoCell(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, br := newTestHub()
-			h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+			h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 			status := cmp.Or(tc.status, marotte.RunStatusPaused)
 			steps := tc.steps
 			if steps == nil {

@@ -5,9 +5,8 @@ import "sync"
 type bridgeState int
 
 const (
-	bridgeIdle      bridgeState = iota // ready for a new prompt
-	bridgeStarting                     // the session door is in progress (held during openGeneration)
-	bridgePrompting                    // prompt in flight
+	bridgeReady    bridgeState = iota // the door attached the session
+	bridgeStarting                    // the session door is in progress (held during openGeneration)
 )
 
 // mu guards the fields and state encodes the lifecycle phase.
@@ -19,32 +18,10 @@ type sharedBridge struct {
 	// settled is the generation's readiness from the session open's first instant: openBridge hands sb to
 	// no caller before it settles.
 	settled *sessionSettle
-	// closeClaim is non-nil while a reload or a release owns the session's close, so its forward's end is not the
-	// session ending on its own; finishReload closes it, and an open meanwhile waits on it (claimReload).
-	closeClaim chan struct{}
-	state      bridgeState
-	mu         sync.Mutex
+	state   bridgeState
+	mu      sync.Mutex
 	// effortHealed latches the one reactive effort repair (bridgeCoordinator.healEffort).
 	effortHealed bool
-	// reload marks a session whose door settings moved: its next idle open closes it and loads it again.
-	reload bool
-}
-
-// tryAcquireForPrompt moves idle to prompting, reporting whether the caller owns the slot.
-func (sb *sharedBridge) tryAcquireForPrompt() bool {
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	if sb.state != bridgeIdle {
-		return false
-	}
-	sb.state = bridgePrompting
-	return true
-}
-
-func (sb *sharedBridge) releaseAfterPrompt() {
-	sb.mu.Lock()
-	sb.state = bridgeIdle
-	sb.mu.Unlock()
 }
 
 // The manager registers the record before the door, so map presence is not liveness.
@@ -54,23 +31,11 @@ func (sb *sharedBridge) startedPastOpen() bool {
 	return sb.state != bridgeStarting
 }
 
-// setIdle publishes the idle transition under the lock: admission reads liveness during the session open.
-func (sb *sharedBridge) setIdle() {
+// setReady publishes the door's end under the lock: admission reads liveness during the session open.
+func (sb *sharedBridge) setReady() {
 	sb.mu.Lock()
-	sb.state = bridgeIdle
+	sb.state = bridgeReady
 	sb.mu.Unlock()
-}
-
-// The command layer's calls on an entry are leases (session_lease.go), so a command.Bridge holder can never close
-// the session or SetModel behind the state machine. Before its door attaches a session, every call refuses with
-// marotte.ErrSessionClosed and SessionID answers "".
-
-func (sb *sharedBridge) TryAcquireForPrompt() bool {
-	return sb.tryAcquireForPrompt()
-}
-
-func (sb *sharedBridge) ReleaseAfterPrompt() {
-	sb.releaseAfterPrompt()
 }
 
 // claimEffortHeal reports whether the caller won the one reactive effort repair, latching it.

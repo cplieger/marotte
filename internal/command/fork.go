@@ -168,7 +168,8 @@ func loadForkedHistory(ctx context.Context, bridges bridgeAccess, chats chatStor
 // transcript.
 func resumeForkedSession(ctx context.Context, bridges bridgeAccess, chatID marotte.ChatID, want string) {
 	// durable: the fork's answer reports whether the resume held, which a client leaving must not cut short.
-	bridge, err := bridges.OpenBridge(durable.Context(ctx), chatID, "")
+	bridge, release, err := bridges.OpenBridge(durable.Context(ctx), chatID, "")
+	defer release()
 	if err != nil || bridge == nil {
 		slog.Warn("tangent: the forked session could not be resumed, so the tangent opens empty",
 			"chat", chatID, "acp_session", want, keyError, err)
@@ -256,7 +257,8 @@ func forkSession(ctx context.Context, bridges bridgeAccess, ws Workspace, p maro
 	if branch && want == "" {
 		return "", StatusError(http.StatusConflict, errBranchNoSession)
 	}
-	bridge := parentBridge(ctx, bridges, p.ParentChatID)
+	bridge, release := parentBridge(ctx, bridges, p.ParentChatID)
+	defer release()
 	if bridge == nil {
 		if branch {
 			return "", StatusError(http.StatusBadGateway, errBranchNoBridge)
@@ -310,17 +312,18 @@ func forkSession(ctx context.Context, bridges bridgeAccess, ws Workspace, p maro
 
 // parentBridge is the parent chat's bridge with a session, opened when it is cold, or nil. A
 // session/fork is addressed through the parent chat's own bridge, so a cold parent's opens first;
-// the empty model keeps the parent's own.
-func parentBridge(ctx context.Context, bridges bridgeAccess, parentID marotte.ChatID) Bridge {
-	if bridge := bridges.Bridge(parentID); bridge != nil && bridge.SessionID() != "" {
-		return bridge
+// the empty model keeps the parent's own. release ends the open's hold and is never nil.
+func parentBridge(ctx context.Context, bridges bridgeAccess, parentID marotte.ChatID) (bridge Bridge, release func()) {
+	if live := bridges.Bridge(parentID); live != nil && live.SessionID() != "" {
+		return live, func() {}
 	}
-	bridge, err := bridges.OpenBridge(ctx, parentID, "")
+	bridge, release, err := bridges.OpenBridge(ctx, parentID, "")
 	if err != nil || bridge == nil || bridge.SessionID() == "" {
+		release()
 		slog.Warn("tangent: parent bridge unavailable", "parent", parentID, keyError, err)
-		return nil
+		return nil, func() {}
 	}
-	return bridge
+	return bridge, release
 }
 
 // branchRefusal is a failed session/fork's answer: none for a head fork, KAS's own reason for a

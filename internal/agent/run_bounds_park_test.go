@@ -27,7 +27,7 @@ func agentRunOnChat(t *testing.T, id string, opts ...Option) (*Runtime, *fakeBri
 	h, cs, br := newTestHub(opts...)
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	br.sessionID = parkSession
-	h.insertBridgeNow(parkChat, testBridge(br, bridgeIdle))
+	h.insertBridgeNow(parkChat, testBridge(br, bridgeReady))
 	h.runs.useLog(newRunLog(t.TempDir()))
 	h.coord.runs = h.runs.log
 	if _, err := cs.Mutate(t.Context(), parkChat, func(c *marotte.Chat, _ bool) bool {

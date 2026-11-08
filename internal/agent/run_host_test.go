@@ -205,7 +205,7 @@ func TestRunDispatch_PermissionKeyedToRunChat(t *testing.T) {
 // TestRunDispatch_UnknownRequestIsRefused pins that an unanswered A→C request wedges the step.
 func TestRunDispatch_UnknownRequestIsRefused(t *testing.T) {
 	h, _, br := newTestHub()
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 
 	id := int64(3)
 	msg := runNotif("_kiro/spec/getTaskStatuses", map[string]any{})
@@ -464,11 +464,11 @@ func TestLaunchRun_SingleRunRule(t *testing.T) {
 // TestBridgeManagerInsert_RefusesReplacement pins that inserting over a live entry would orphan its session.
 func TestBridgeManagerInsert_RefusesReplacement(t *testing.T) {
 	h, _, br := newTestHub()
-	first := testBridge(br, bridgeIdle)
+	first := testBridge(br, bridgeReady)
 	if !h.insertBridgeNow("run:wf_1", first) {
 		t.Fatal("first insert refused")
 	}
-	if h.insertBridgeNow("run:wf_1", testBridge(br, bridgeIdle)) {
+	if h.insertBridgeNow("run:wf_1", testBridge(br, bridgeReady)) {
 		t.Error("second insert over a live entry succeeded")
 	}
 	if got := h.bridge.mgr.get("run:wf_1"); got != first {
@@ -481,7 +481,7 @@ func TestRetry_SuccessClearsTheOldTerminalReason(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowRetry: json.RawMessage(`{}`)}
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
 
 	// The run as the bounds left it: terminated, reason recorded, claim taken.
 	h.runs.claimTermination(id)
@@ -508,7 +508,7 @@ func TestRetry_FailureKeepsTheOldTerminalReason(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
 
 	h.runs.claimTermination(id)
 	h.runs.recordEnd(id, runEndOverran)
@@ -539,7 +539,7 @@ func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testin
 	}
 	held := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{methodKiroWorkflowRetry: held}
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
 	if o := h.runs.originOf(t.Context(), id); o.recipe != "nightly" {
 		t.Fatalf("Setup: the run list resolves recipe %q, want nightly", o.recipe)
 	}
@@ -655,7 +655,7 @@ func TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) 
 func TestCancelRun_LostClaimIssuesNoSecondCancel(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
 
 	// A bound got there first.
 	if !h.runs.claimTermination(id) {
@@ -679,7 +679,7 @@ func TestCancelRun_WinsTheClaimAndRecordsNothing(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
 	h.runs.grantLease(t.Context(), id, "publish", manualLaunch(), hostSec())
 	h.runs.armDeadline(t.Context(), id)
 
@@ -706,7 +706,7 @@ func TestCancelRun_FailedRPCHandsTheClaimBack(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("kas refused")}
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
 
 	if err := h.runs.cancel(t.Context(), id, callerPage); err == nil {
 		t.Fatal("a refused cancel reported success")
@@ -755,7 +755,7 @@ func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			h, _, br := newTestHub()
-			h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+			h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 
 			id := int64(11)
 			msg := runNotif(c.method, c.params)
@@ -792,7 +792,7 @@ func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
 func TestRunDispatch_TerminalCompletionClosesTheRunsHostSession(t *testing.T) {
 	h, _, br := newTestHub()
 	const id = "wf_1"
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
 
 	h.dispatch(t.Context(), runChatID(id), br,
 		runNotif(methodWFRunComplete, map[string]any{"workflowId": id, "status": "completed"}))
@@ -850,7 +850,7 @@ func TestStopChatRuns_CancelsARunOnAnySessionOfTheChain(t *testing.T) {
 				}),
 				methodKiroWorkflowCancel: json.RawMessage(`{}`),
 			}
-			h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
+			h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
 			cs.seed(t, "c1", func(c *marotte.Chat) {
 				for _, s := range tc.chain {
 					c.RecordSession(s)
@@ -1307,7 +1307,7 @@ func readKASProbe(t *testing.T, name string, v any) {
 func TestReleaseTriggeredReleasesLeaseAndHost(t *testing.T) {
 	t.Run("releases the lease, the termination claim and the host session", func(t *testing.T) {
 		h, _, br := newTestHub()
-		h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+		h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 		h.runs.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec())
 		if !h.runs.claimTermination("wf_1") {
 			t.Fatal("the fixture could not take the claim the landed cancel held")
@@ -1340,7 +1340,7 @@ func TestReleaseTriggeredReleasesLeaseAndHost(t *testing.T) {
 		id, _ := complete["workflowId"].(string)
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: fx.CancelResult}
-		h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
+		h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
 		h.runs.grantLease(t.Context(), id, "trigger-probe", eventLaunch(), hostSec())
 		h.runs.armDeadline(t.Context(), id)
 		h.dispatch(t.Context(), runChatID(id), br, runNotif(methodWFRunComplete, complete))
@@ -1493,7 +1493,7 @@ func TestCancelAbandonedRefusedRetriesUnarmedRun(t *testing.T) {
 	h, _, br := newTestHub()
 	setCancelRetryDelay(h.runs, time.Millisecond)
 	br.callRPCErrs = map[string]*marotte.RPCError{methodKiroWorkflowCancel: {Code: -32603, Message: "cancel refused"}}
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 	h.runs.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec())
 
 	if err := h.runs.CancelAbandoned(t.Context(), "wf_1"); err == nil {
@@ -1519,7 +1519,7 @@ func TestCancelAbandonedRefusedKeepsRecipeBusy(t *testing.T) {
 		`{"runs":[{"workflowId":"wf_1","name":"publish","workflowName":"publish","status":"running"}]}`,
 	)
 	br.callRPCErrs = map[string]*marotte.RPCError{methodKiroWorkflowCancel: {Code: -32603, Message: "cancel refused"}}
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 	h.runs.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec())
 	h.runs.armDeadline(t.Context(), "wf_1")
 
@@ -1540,7 +1540,7 @@ func TestCancelAbandonedRefusedKeepsRecipeBusy(t *testing.T) {
 func TestCancelAbandonedLostClaimIsAnError(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 	h.runs.grantLease(t.Context(), "wf_1", "publish", eventLaunch(), hostSec())
 	if !h.runs.claimTermination("wf_1") {
 		t.Fatal("the fixture could not take the claim another terminator holds")

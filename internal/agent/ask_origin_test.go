@@ -61,7 +61,7 @@ func TestAskAnswer_GoesBackOnTheBridgeTheAskArrivedOn(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, _, _ := newTestHub()
 			origin, current := newFakeBridge(), newFakeBridge()
-			h.insertBridgeNow("c1", testBridge(current, bridgeIdle))
+			h.insertBridgeNow("c1", testBridge(current, bridgeReady))
 			askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(tc.event, "c1", tc.payload), origin))
 
 			if rec := postCmd(t, h, tc.cmd(askID)); rec.Code != http.StatusOK {
@@ -81,7 +81,7 @@ func TestAskAnswer_GoesBackOnTheBridgeTheAskArrivedOn(t *testing.T) {
 func TestAskAnswer_ADeliveredAnswerSettlesItOnceAsTheUsers(t *testing.T) {
 	h, _, _ := newTestHub()
 	origin := newFakeBridge()
-	h.insertBridgeNow("c1", testBridge(origin, bridgeIdle))
+	h.insertBridgeNow("c1", testBridge(origin, bridgeReady))
 	askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
 		marotte.UserInputNeededPayload{}), origin))
 	head := h.bus.fanout.Position().Head
@@ -110,7 +110,7 @@ func (*exitedBridge) Respond(context.Context, int64, any, error) error {
 func TestAskAnswer_ToABridgeThatEndedSinceTheClaimSettlesItEnded(t *testing.T) {
 	h, _, _ := newTestHub()
 	ended := &exitedBridge{fakeBridge: newFakeBridge()}
-	h.insertBridgeNow("c1", testBridge(ended, bridgeIdle))
+	h.insertBridgeNow("c1", testBridge(ended, bridgeReady))
 	askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
 		marotte.UserInputNeededPayload{}), ended))
 	head := h.bus.fanout.Position().Head
@@ -148,7 +148,7 @@ func (b *endingBridge) Respond(context.Context, int64, any, error) error {
 func TestAskAnswer_AnEndDuringTheWriteSettlesItEndedOnce(t *testing.T) {
 	h, _, _ := newTestHub()
 	br := &endingBridge{fakeBridge: newFakeBridge(), h: h}
-	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
+	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
 	askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
 		marotte.UserInputNeededPayload{}), br))
 	head := h.bus.fanout.Position().Head
@@ -174,7 +174,7 @@ func TestAskAnswer_AFailedWriteOnALiveBridgeRefusesTheAnswerAndReoffersTheAsk(t 
 		t.Run(name, func(t *testing.T) {
 			h, _, _ := newTestHub()
 			live := &droppingBridge{fakeBridge: newFakeBridge()}
-			h.insertBridgeNow("c1", testBridge(live, bridgeIdle))
+			h.insertBridgeNow("c1", testBridge(live, bridgeReady))
 			h.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
 			askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(tc.event, "c1", tc.payload), live))
 			head := h.bus.fanout.Position().Head
@@ -218,7 +218,7 @@ func TestAskAnswer_AnAskSettledDuringTheWriteRefusesTheAnswerAsWithdrawn(t *test
 				h, _, _ := newTestHub()
 				br := &duringWriteBridge{fakeBridge: newFakeBridge()}
 				br.during = func() { settle(h, br) }
-				h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
+				h.insertBridgeNow("c1", testBridge(br, bridgeReady))
 				h.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
 				askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(tc.event, "c1", tc.payload), br))
 
@@ -288,7 +288,7 @@ func TestAskAnswer_ATerminalTransitionDuringTheWriteSettlesTheClaimOnce(t *testi
 					}
 					transitioned = tc.transition(h)
 				}
-				h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
+				h.insertBridgeNow("c1", testBridge(br, bridgeReady))
 				askID := requestIDOf(t, h.bus.pendingPerms.add(42, marotte.NewEvent(marotte.EventUserInputNeeded, "c1",
 					marotte.UserInputNeededPayload{ToolCallID: toolCallID, RunID: workflowID}), br))
 				head := h.bus.fanout.Position().Head

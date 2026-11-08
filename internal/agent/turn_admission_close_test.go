@@ -121,7 +121,7 @@ func TestDrain_AfterTheForgetMintsNoLifecycle(t *testing.T) {
 	h.coord.turns.forget("c1")
 	hold.Release()
 
-	if h.coord.tryReserveFencedNow("c1", marotte.TurnSourcePrompt, fence) {
+	if h.coord.tryReserveDrainNow("c1", fence) {
 		t.Error("the drain reserved in a forgotten chat")
 	}
 	if _, ok := h.coord.turns.lookup("c1"); ok {
@@ -227,7 +227,7 @@ func TestDrain_APromptParkedBeforeItsDoorAcrossTheCloseOpensNothing(t *testing.T
 				reopenTab(t, h, "op-reopen")
 			}
 
-			_, err := h.coord.openBridgeAt(t.Context(), "c1", "", res.Stamp)
+			_, err := h.coord.openAtReleased(t.Context(), "c1", "", res)
 			if !errors.Is(err, marotte.ErrChatClosedDuringCall) {
 				t.Errorf("open at the old stamp = %v, want ErrChatClosedDuringCall", err)
 			}
@@ -239,7 +239,7 @@ func TestDrain_APromptParkedBeforeItsDoorAcrossTheCloseOpensNothing(t *testing.T
 				t.Fatalf("close_tab = %d, want 200", code)
 			}
 			if tc.reopen {
-				if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+				if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 					t.Errorf("the reopened chat's own open = %v, want it to open", err)
 				}
 			}
@@ -252,7 +252,7 @@ func TestDrain_APromptParkedBeforeItsDoorAcrossTheCloseOpensNothing(t *testing.T
 func TestCloseTab_ATurnClosingBeforeTheJobStartsNoTail(t *testing.T) {
 	h, cs, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
 	holdPrompt(t, br)

@@ -295,7 +295,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // sessionParams builds the base ACP parameter map with the "sessionId" key
 // set from the bridge. Extra key-value pairs are merged in (last-wins).
 // Takes the 1-method sessionScoped rather than a whole Bridge: reading an id
-// is not a licence to call, notify or take the turn slot.
+// is not a licence to call, notify or write a prompt.
 func sessionParams(b sessionScoped, extra ...map[string]any) map[string]any {
 	m := map[string]any{keySessionID: b.SessionID()}
 	for _, e := range extra {

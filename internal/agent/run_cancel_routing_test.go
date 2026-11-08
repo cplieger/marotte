@@ -348,7 +348,7 @@ func TestResumeIfInterrupted_ArmsTheDeadline(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed the chat: %v", err)
 	}
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	// Leased and parked, so the arm is a fresh budget.
@@ -382,7 +382,7 @@ func TestResumeIfInterrupted_DoesNotArmARefusedResume(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed the chat: %v", err)
 	}
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	leased(t, h.runs, "wf_1")

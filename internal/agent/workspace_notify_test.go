@@ -49,7 +49,7 @@ func TestWorkspaceNotifications_HandledOnceOnEveryLane(t *testing.T) {
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: OpenBridge: %v", err)
 	}
 	count := countWorkspaceHandlers(h)

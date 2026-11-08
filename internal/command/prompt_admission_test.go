@@ -79,32 +79,10 @@ func (r *callRecorder) snapshot() []string {
 	return append([]string(nil), r.log...)
 }
 
-// orderedBridge is a Bridge with a REAL single-holder prompt slot and the
-// shared log, so "the goroutine released the bridge slot" is a fact rather
-// than a stub's yes.
+// orderedBridge is a Bridge that writes each call to the shared log.
 type orderedBridge struct {
 	recordingBridge
-	rec  *callRecorder
-	mu   sync.Mutex
-	held bool
-}
-
-func (b *orderedBridge) TryAcquireForPrompt() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.held {
-		return false
-	}
-	b.held = true
-	b.rec.add("bridge.acquire")
-	return true
-}
-
-func (b *orderedBridge) ReleaseAfterPrompt() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.held = false
-	b.rec.add("bridge.release")
+	rec *callRecorder
 }
 
 func (b *orderedBridge) PromptAt(ctx context.Context, params any, commit func() error) (*marotte.RPCResponse, uint64, error) {
@@ -169,7 +147,7 @@ func (a *scriptedAdmission) ReserveIdleTurn(_ context.Context, chatID marotte.Ch
 	return IdleHeld, Reservation{}
 }
 
-func (a *scriptedAdmission) tryReserveFencedOld(c marotte.ChatID, s marotte.TurnOpenSource, _ TurnFence) bool {
+func (a *scriptedAdmission) tryReserveDrainOld(c marotte.ChatID, s marotte.TurnOpenSource, _ CloseFacts) bool {
 	return a.tryReserveOld(c, s)
 }
 
@@ -250,12 +228,12 @@ type admissionHost struct {
 	events    []marotte.ServerEvent
 }
 
-func (h *admissionHost) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
+func (h *admissionHost) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, func(), error) {
 	h.rec.add("openBridge")
 	if h.openErr != nil {
-		return nil, h.openErr
+		return nil, func() {}, h.openErr
 	}
-	return h.bridge, nil
+	return h.bridge, func() { h.rec.add("open.release") }, nil
 }
 
 func (h *admissionHost) Broadcast(_ context.Context, evt marotte.ServerEvent) {
@@ -342,7 +320,7 @@ func (g *gatedBridgeAccess) CallBudget(ctx context.Context, d time.Duration) (co
 	return g.inner.CallBudget(ctx, d)
 }
 
-func (g *gatedBridgeAccess) OpenBridge(ctx context.Context, id marotte.ChatID, model string) (Bridge, error) {
+func (g *gatedBridgeAccess) OpenBridge(ctx context.Context, id marotte.ChatID, model string) (Bridge, func(), error) {
 	select {
 	case <-g.gate:
 	case <-ctx.Done():
@@ -436,8 +414,9 @@ func TestWriteErr_EmitsTheReasonAdditively(t *testing.T) {
 
 // A StartTurn that answers false is a failed turn, never a silent one and never
 // an ACP call: the turn cmdPrompt opened is closed by the turn end rule, the
-// failure is broadcast, and BOTH holds release so the chat is not wedged.
-func TestCmdPrompt_ARefusedStartTurnFailsLoudAndReleasesBothSlots(t *testing.T) {
+// failure is broadcast, and the reservation and the door's open hold release so
+// the chat is not wedged.
+func TestCmdPrompt_ARefusedStartTurnFailsLoudAndReleasesItsHolds(t *testing.T) {
 	host, roles, join := newAdmissionFixture(t, marotte.TurnResult{}, true)
 
 	if _, err := cmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
@@ -455,8 +434,8 @@ func TestCmdPrompt_ARefusedStartTurnFailsLoudAndReleasesBothSlots(t *testing.T) 
 	if len(codes) != 1 || codes[0] != marotte.ErrCodePromptFailed {
 		t.Errorf("error codes = %v, want exactly [%s]", codes, marotte.ErrCodePromptFailed)
 	}
-	if host.rec.indexOf("bridge.release") == -1 {
-		t.Error("the bridge slot was not released")
+	if host.rec.indexOf("open.release") == -1 {
+		t.Error("the door's open hold was not released")
 	}
 	if host.rec.indexOf("reservation.release") == -1 {
 		t.Error("the admission reservation was not released")
@@ -497,7 +476,7 @@ func TestCmdPrompt_CallFailureBroadcastsAndReleases(t *testing.T) {
 	if host.rec.indexOf("abandon") == -1 {
 		t.Error("the failed turn was never finalized")
 	}
-	for _, want := range []string{"bridge.release", "reservation.release", "releaseTurn"} {
+	for _, want := range []string{"open.release", "reservation.release", "releaseTurn"} {
 		if host.rec.indexOf(want) == -1 {
 			t.Errorf("%s missing from %v: a failed call must release everything", want, host.rec.snapshot())
 		}
@@ -510,9 +489,9 @@ func firingResult() marotte.TurnResult {
 }
 
 // The settled path's release order is the design's contract: the result is
-// captured while the turn handle is held, the bridge slot and the reservation
-// release BEFORE the recovery arbitrates, the recovery's predicates read a
-// still-live record, and ReleaseTurn goes LAST. The test FAILS if ReleaseTurn
+// captured while the turn handle is held, the reservation releases BEFORE the
+// recovery arbitrates, the recovery's predicates read a still-live record, and
+// ReleaseTurn goes LAST. The test FAILS if ReleaseTurn
 // precedes the recovery read.
 func TestCmdPrompt_RecoveryReadsTheCapturedResultBeforeTheHandleGoes(t *testing.T) {
 	host, roles, join := newAdmissionFixture(t, firingResult(), false)
@@ -522,7 +501,7 @@ func TestCmdPrompt_RecoveryReadsTheCapturedResultBeforeTheHandleGoes(t *testing.
 	}
 	join.join()
 
-	order := []string{"settle", "await", "bridge.release", "reservation.release", "openedAfter", "tryReserve", "releaseTurn"}
+	order := []string{"settle", "await", "reservation.release", "openedAfter", "tryReserve", "releaseTurn"}
 	last := -1
 	for _, step := range order {
 		idx := host.rec.indexOf(step)
@@ -539,17 +518,15 @@ func TestCmdPrompt_RecoveryReadsTheCapturedResultBeforeTheHandleGoes(t *testing.
 	}
 }
 
-// A prompt arriving during recovery preempts it: the goroutine released both
-// holds before the recovery re-reserves, the competitor (injected in the pause
-// between the releases and the re-reserve) acquires BOTH, and the recovery's
+// A prompt arriving during recovery preempts it: the goroutine released its
+// reservation before the recovery re-reserves, the competitor (injected in the
+// pause between the release and the re-reserve) acquires it, and the recovery's
 // try-reserve refusal abandons the retry.
 func TestCmdPrompt_APromptDuringRecoveryPreemptsTheRetry(t *testing.T) {
 	host, roles, join := newAdmissionFixture(t, firingResult(), false)
 	var competitor AdmissionOutcome
-	competitorGotBridge := false
 	host.admission.afterReservationRelease = func() {
 		competitor = host.admission.reservePromptOld(context.Background(), "c1", 0)
-		competitorGotBridge = host.bridge.TryAcquireForPrompt()
 	}
 
 	if _, err := cmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
@@ -558,10 +535,7 @@ func TestCmdPrompt_APromptDuringRecoveryPreemptsTheRetry(t *testing.T) {
 	join.join()
 
 	if competitor != AdmissionAcquired {
-		t.Fatalf("the competing prompt's admission = %v, want acquired: both holds must be free in the pause", competitor)
-	}
-	if !competitorGotBridge {
-		t.Fatal("the competing prompt could not take the bridge slot in the pause")
+		t.Fatalf("the competing prompt's admission = %v, want acquired: the reservation must be free in the pause", competitor)
 	}
 	if got := host.rec.snapshot(); host.rec.indexOf("tryReserve") == -1 {
 		t.Fatalf("the recovery never tried to re-reserve; log = %v", got)
@@ -651,8 +625,8 @@ func (r *scriptedAdmission) TryReserveIdleTurn(chatID marotte.ChatID, source mar
 	return testReservation(chatID, ok), ok
 }
 
-func (r *scriptedAdmission) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence TurnFence) (Reservation, bool) {
-	ok := r.tryReserveFencedOld(chatID, source, fence)
+func (r *scriptedAdmission) TryReserveDrain(chatID marotte.ChatID, cl CloseFacts) (Reservation, bool) {
+	ok := r.tryReserveDrainOld(chatID, marotte.TurnSourcePrompt, cl)
 	return testReservation(chatID, ok), ok
 }
 
@@ -664,11 +638,11 @@ func (*scriptedAdmission) AwaitNoClose(context.Context, marotte.ChatID) (bool, e
 	return false, nil
 }
 
-func (r *admissionHost) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+func (r *admissionHost) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, func(), error) {
 	return r.OpenBridge(ctx, chatID, model)
 }
 
-func (r *gatedBridgeAccess) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+func (r *gatedBridgeAccess) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, func(), error) {
 	return r.OpenBridge(ctx, chatID, model)
 }
 

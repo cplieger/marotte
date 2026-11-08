@@ -41,7 +41,7 @@ func sessionDoors() []sessionDoor {
 	return []sessionDoor{
 		{name: "chat_new", open: func(t *testing.T, h *Runtime, cs *testChatStore, _ *fakeBridge) {
 			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+			if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
 		}},
@@ -51,7 +51,7 @@ func sessionDoors() []sessionDoor {
 				c.ACPSessionID = "sess_resume_probe"
 				return true
 			})
-			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+			if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
 		}},
@@ -66,7 +66,7 @@ func sessionDoors() []sessionDoor {
 		}},
 		{name: "host_load", open: func(t *testing.T, h *Runtime, _ *testChatStore, _ *fakeBridge) {
 			leaseParentless(t, h, "wf_1")
-			if _, err := h.runs.ensureResident(t.Context(), "wf_1"); err != nil {
+			if _, err := h.runs.residentReleased(t.Context(), "wf_1"); err != nil {
 				t.Fatalf("ensureResident: %v", err)
 			}
 		}},

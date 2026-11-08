@@ -23,7 +23,7 @@ func clearCauseHub(t *testing.T, onCancel func(clear func())) (*Runtime, *testCh
 	h, cs, br := newTestHub(WithTabs(st))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
-	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
+	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
 	opened, err := h.Membership().OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c1"}, "op-open")
 	if err != nil {
 		t.Fatalf("Setup: open tab: %v", err)

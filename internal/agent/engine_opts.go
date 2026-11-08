@@ -138,7 +138,7 @@ func (rt *Runtime) terminalTimeout(ctx context.Context) int {
 	return doc.engine.features.TerminalCommandTimeoutMs
 }
 
-// sessionSettings are a chat session door's inputs; a move reloads resident chat sessions at their next idle open.
+// sessionSettings are a chat session door's inputs; a move reloads resident chat sessions (markSessionsForReload).
 // Live settings (ignore files, the shell timeout, content collection) are pushed instead.
 type sessionSettings struct {
 	Presets               []string                 `json:"presets"`

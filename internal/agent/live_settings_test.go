@@ -182,13 +182,13 @@ func TestOpenBridge_AHandEditPushesExactlyTheLiveSurfacesItMoved(t *testing.T) {
 			rec := newLiveRecorder(t)
 			h, configDir := reopenFixture(t, rec.options()...)
 			rec.openWithStore(t, configDir)
-			first, err := h.coord.openBridge(t.Context(), "c1", "")
+			first, err := h.coord.openReleased(t.Context(), "c1", "")
 			if err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
 
 			rewriteConfigByHand(t, configDir, tc.body)
-			second, err := h.coord.openBridge(t.Context(), "c1", "")
+			second, err := h.coord.openReleased(t.Context(), "c1", "")
 			if err != nil {
 				t.Fatalf("OpenBridge after the hand edit: %v", err)
 			}
@@ -210,11 +210,11 @@ func TestOpenBridge_AHandEditOfDebugLogsSwitchesTheLogLevel(t *testing.T) {
 	rec := newLiveRecorder(t)
 	h, configDir := reopenFixture(t, rec.options()...)
 	rec.openWithStore(t, configDir)
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	rewriteConfigByHand(t, configDir, `{"debug_logs":true}`)
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge after the hand edit: %v", err)
 	}
 	rec.mu.Lock()
@@ -227,7 +227,7 @@ func TestOpenBridge_AHandEditOfDebugLogsSwitchesTheLogLevel(t *testing.T) {
 
 func TestOpenBridge_ADocumentTurnedUnreadableIsReportedOnce(t *testing.T) {
 	h, configDir := reopenFixture(t)
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	lane := fakeSourceOf(t, h).lane
@@ -236,7 +236,7 @@ func TestOpenBridge_ADocumentTurnedUnreadableIsReportedOnce(t *testing.T) {
 
 	rewriteConfigByHand(t, configDir, "{not json")
 	for range 2 {
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge after the hand edit: %v", err)
 		}
 	}
@@ -263,7 +263,7 @@ func TestOpenBridge_ValuesTheDocumentHeldBeforeBootReachTheSurfacesThatNeverAppl
 	h := reopenFixtureIn(t, configDir, nil, WithKASMCPRenderer(render), WithDebugLogs(rec.debugLogs, rec.setDebug), WithPush(rec))
 
 	for i := range 2 {
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge %d: %v", i+1, err)
 		}
 		if got := render.count(); got != 1 {
@@ -286,7 +286,7 @@ func TestOpenBridge_AnMCPFileTheBootRenderFailedToWriteIsRenderedAtTheFirstOpen(
 	h, _ := reopenFixture(t, WithKASMCPRenderer(render))
 
 	for i := range 2 {
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge %d: %v", i+1, err)
 		}
 		if got := render.count(); got != 1 {
@@ -303,7 +303,7 @@ func TestEngineSpawn_ADocumentUnreadableAtBootIsReportedOnce(t *testing.T) {
 	const since = 0
 
 	for i := range 2 {
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge %d: %v", i+1, err)
 		}
 		reports := 0
@@ -383,7 +383,7 @@ func policyErrorMessages(h *Runtime, since uint64) []string {
 func openChat(t *testing.T, h *Runtime, chatID marotte.ChatID) {
 	t.Helper()
 	_, _ = h.chatStore.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool { c.Name = string(chatID); return true })
-	if _, err := h.coord.openBridge(t.Context(), chatID, ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), chatID, ""); err != nil {
 		t.Fatalf("OpenBridge %s: %v", chatID, err)
 	}
 }
@@ -463,7 +463,7 @@ func TestOpenBridge_AConfigBrokenAfterTheSnapshotRendersNoMCPFileAndTheRepairRen
 		t.Fatalf("Setup: stat KAS's MCP file: %v", err)
 	}
 
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
@@ -474,7 +474,7 @@ func TestOpenBridge_AConfigBrokenAfterTheSnapshotRendersNoMCPFileAndTheRepairRen
 	rec.beforeRender = nil
 	rec.mu.Unlock()
 	rewriteConfigByHand(t, configDir, `{"mcp_wait_for_ready":true}`)
-	sb, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge after the repair: %v", err)
 	}

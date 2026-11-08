@@ -23,22 +23,24 @@ func (b bridgeRole) Bridge(chatID marotte.ChatID) command.Bridge {
 	return sb
 }
 
-// OpenBridge ensures a bridge exists for the chat (typed-nil checked).
-func (b bridgeRole) OpenBridge(ctx context.Context, chatID marotte.ChatID, model string) (command.Bridge, error) {
-	sb, err := b.coord.openBridge(ctx, chatID, model)
+// OpenBridge ensures a bridge exists for the chat (typed-nil checked), with the caller's open hold on it.
+func (b bridgeRole) OpenBridge(ctx context.Context, chatID marotte.ChatID, model string) (command.Bridge, func(), error) {
+	sb, release, err := b.coord.openBridge(ctx, chatID, model)
 	if err != nil || sb == nil {
-		return nil, err
+		return nil, release, err
 	}
-	return sb, nil
+	return sb, release, nil
 }
 
-// OpenBridgeAt is OpenBridge for a caller whose intent began at stamp.
-func (b bridgeRole) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, stamp uint64) (command.Bridge, error) {
-	sb, err := b.coord.openBridgeAt(ctx, chatID, model, stamp)
+// OpenBridgeAt is OpenBridge for the holder of res.
+func (b bridgeRole) OpenBridgeAt(
+	ctx context.Context, chatID marotte.ChatID, model string, res command.Reservation,
+) (command.Bridge, func(), error) {
+	sb, release, err := b.coord.openBridgeAt(ctx, chatID, model, res)
 	if err != nil || sb == nil {
-		return nil, err
+		return nil, release, err
 	}
-	return sb, nil
+	return sb, release, nil
 }
 
 // RefreshForRetry abandons the empty turn's session as one lease on its entry (bridgeCoordinator.refreshForRetry).
@@ -149,10 +151,9 @@ func (rt *Runtime) ReserveTurn(
 	return rt.coord.ReserveTurn(ctx, chatID, source, stamp, wait)
 }
 
-// TryReserveTurnFenced takes the chat's admission slot iff it is free and no turn
-// opened after the fenced one.
-func (rt *Runtime) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) (command.Reservation, bool) {
-	return rt.coord.TryReserveTurnFenced(chatID, source, fence)
+// TryReserveDrain is a close's drain picking its prompt (bridgeCoordinator.TryReserveDrain).
+func (rt *Runtime) TryReserveDrain(chatID marotte.ChatID, cl command.CloseFacts) (command.Reservation, bool) {
+	return rt.coord.TryReserveDrain(chatID, cl)
 }
 
 // PromptHolder names the prompt-class turn holding the chat's admission.

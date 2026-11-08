@@ -82,7 +82,7 @@ func TestRunLog_ANodeStartOpensOneTurnPerStepInstance(t *testing.T) {
 	if got := r.turn("wf1", "root/step"); got != turn {
 		t.Fatalf("Turn() = %v, want the open turn", got)
 	}
-	if !r.hostsOpen("c-1") || r.hostsOpen("c-2") {
+	if hostOf(r, "wf1") != "c-1" {
 		t.Fatal("the run's host is not the chat the frame arrived on")
 	}
 	if got := r.openSeqs("wf1"); len(got) != 1 {
@@ -112,7 +112,7 @@ func TestRunLog_AnEmptyChatIDRecordsTheParentlessHostSessionAsHost(t *testing.T)
 	if _, _, err := r.open(t.Context(), &translate.RunStep{RunID: "wf1", NodePath: "root/step"}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if !r.hostsOpen(runChatID("wf1")) {
+	if hostOf(r, "wf1") != runChatID("wf1") {
 		t.Fatalf("an empty chat id did not record %q as the host", runChatID("wf1"))
 	}
 }
@@ -126,7 +126,7 @@ func TestRunLog_TheHostIsRecordedByTheFirstOpenAndNeverMoved(t *testing.T) {
 	if _, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "b"}, "c-2"); err != nil {
 		t.Fatal(err)
 	}
-	if !r.hostsOpen("c-1") || r.hostsOpen("c-2") {
+	if hostOf(r, "wf1") != "c-1" {
 		t.Fatal("the host moved to the second opener's chat")
 	}
 }
@@ -733,7 +733,7 @@ func TestRunLog_CloseRunClosesEveryOpenTurnAndDropsHostWhenTerminal(t *testing.T
 	if _, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "par/b3"}, "c-9"); err != nil {
 		t.Fatal(err)
 	}
-	if !r.hostsOpen("c-1") || r.hostsOpen("c-9") {
+	if hostOf(r, "wf1") != "c-1" {
 		t.Fatal("a non-terminal run_complete dropped the host")
 	}
 	if _, err := r.closeRunTurns(ctx, "wf1", c, true); err != nil {
@@ -745,7 +745,7 @@ func TestRunLog_CloseRunClosesEveryOpenTurnAndDropsHostWhenTerminal(t *testing.T
 	if _, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "par/b4"}, "c-9"); err != nil {
 		t.Fatal(err)
 	}
-	if !r.hostsOpen("c-9") || r.hostsOpen("c-1") {
+	if hostOf(r, "wf1") != "c-9" {
 		t.Fatal("the terminal close kept the host; a re-entered step must record its own")
 	}
 	for _, e := range runLogEntries(t, r, "wf1") {
@@ -784,7 +784,7 @@ func TestRunLog_TheDeathArmClosesTheDeadHostsRunsOnly(t *testing.T) {
 	if _, _, err := r.open(ctx, &translate.RunStep{RunID: "wf1", NodePath: "s2"}, "c-9"); err != nil {
 		t.Fatal(err)
 	}
-	if !r.hostsOpen("c-1") || r.hostsOpen("c-9") {
+	if hostOf(r, "wf1") != "c-1" {
 		t.Fatal("the death arm dropped the host; a re-entered step must find it")
 	}
 }
@@ -1053,4 +1053,14 @@ func TestRunLog_RecordsAStepsHook(t *testing.T) {
 	if len(kinds) != 1 || !slices.Contains(kinds[0], marotte.EntryKindToolCall) {
 		t.Errorf("review step turns = %v, want the hook card inside its one turn", kinds)
 	}
+}
+
+// hostOf is the chat workflowID's run records as its host, "" for none.
+func hostOf(r *runLog, workflowID string) marotte.ChatID {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if rec := r.runs[workflowID]; rec != nil {
+		return rec.host
+	}
+	return ""
 }

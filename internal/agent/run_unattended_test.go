@@ -141,7 +141,7 @@ func TestUnattendedFloor_DelegatedLeaseRefusesAnUnclearedAsk(t *testing.T) {
 			}
 			h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
 			chatID := runChatID("wf_floor")
-			h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
+			h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
 			h.runs.grantLease(t.Context(), "wf_floor", "nightly", scheduledLaunch(launchrule.Row{ID: "sched-1"}, time.Time{}), tc.host)
 
 			id := int64(4244)
@@ -448,7 +448,7 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, br := hubForFSTest(t, t.TempDir())
 			chatID := runChatID("wf_deny")
-			h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
+			h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
 
 			id := int64(90210)
 			h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
@@ -504,7 +504,7 @@ func TestAnswerUnattended_AdministratorAskIsRefusedDespiteAutoApprove(t *testing
 	}
 	h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
 	chatID := runChatID("wf_admin")
-	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
+	h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
 
 	id := int64(4242)
 	h.bus.pendingPerms.add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
@@ -562,7 +562,7 @@ func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
 			}
 			h, br := hubForFSTest(t, t.TempDir(), WithConfigDir(dir))
 			chatID := runChatID("wf_classifier")
-			h.bridge.mgr.insert(chatID, testBridge(br, bridgeIdle))
+			h.bridge.mgr.insert(chatID, testBridge(br, bridgeReady))
 			st, _, err := launchrule.NewStore(t.TempDir())
 			if err != nil {
 				t.Fatalf("launchrule.NewStore: %v", err)
@@ -613,7 +613,7 @@ func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
 func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
 	chatID := runChatID("wf_deny")
-	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
+	h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
 
 	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
@@ -662,7 +662,7 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 func TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
 	chatID := runChatID("wf_deny")
-	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
+	h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
 
 	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
@@ -707,7 +707,7 @@ func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *
 	chatID := runChatID("wf_deny")
 	br := &duringWriteBridge{fakeBridge: newFakeBridge()}
 	br.during = func() { h.bus.endAsksOf(br) }
-	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
+	h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
 
 	st, _, err := launchrule.NewStore(t.TempDir())
 	if err != nil {
@@ -771,7 +771,7 @@ func answerTriggered(t *testing.T, autoApprove bool, params string) (*marotte.Pe
 	fc := &fakeConfirmer{}
 	h.runs.confirmer = fc
 	chatID := runChatID("wf_trig")
-	h.insertBridgeNow(chatID, testBridge(br, bridgeIdle))
+	h.insertBridgeNow(chatID, testBridge(br, bridgeReady))
 	h.runs.grantLease(t.Context(), "wf_trig", "triage", eventLaunch(), hostSec())
 	l, held := h.runs.lease("wf_trig")
 	if !held || !l.Unattended {
@@ -892,7 +892,7 @@ func TestTriggeredPauseEndsUnattended(t *testing.T) {
 	}
 	fc := &fakeConfirmer{}
 	h.runs.confirmer = fc
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 	h.runs.grantLease(t.Context(), "wf_1", "triage", eventLaunch(), hostSec())
 	h.runs.armDeadline(t.Context(), "wf_1")
 

@@ -44,13 +44,15 @@ type lockProbeLife struct {
 	free *bool
 }
 
-func (l lockProbeLife) beginLease(context.CancelCauseFunc) (context.Context, func(), bool) {
+func (l lockProbeLife) beginLease(*sharedBridge, context.CancelCauseFunc) (context.Context, func(), error) {
 	if l.sb.mu.TryLock() {
 		*l.free = true
 		l.sb.mu.Unlock()
 	}
-	return context.Background(), func() {}, true
+	return context.Background(), func() {}, nil
 }
+
+func (lockProbeLife) closingSession(*sharedBridge) bool { return false }
 
 func TestSessionLease_UseHoldsNoLockAcrossBeginLease(t *testing.T) {
 	free := false

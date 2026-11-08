@@ -13,6 +13,7 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // releaseFixture is a runtime with a tab set whose chat c1 has an open, idle session and no tab.
@@ -24,29 +25,41 @@ func releaseFixture(t *testing.T) (*Runtime, *tabs.Store, *sharedBridge) {
 	}
 	h := reopenFixtureIn(t, t.TempDir(), nil, WithTabs(st))
 	settleBoot(t, h)
-	sb, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("Setup: OpenBridge(c1): %v", err)
 	}
 	return h, st, sb
 }
 
-// released reports whether the release check took c1's session, waiting up to 5 s for the close it started to drop
-// the entry. The claim is synchronous, so a check that left the session alone reads unclaimed at once.
+// released reports whether the release check took c1's session, waiting up to 5 s for its close to drop the entry. A
+// check that asked nothing, or whose ungranted ask waits on a reservation, a turn or a step the test holds, reads
+// unreleased at once; a granted close, which no later hold stops, and an ask pending behind the runtime's own
+// transient work are waited for.
 func released(t *testing.T, h *Runtime, sb *sharedBridge) bool {
 	t.Helper()
-	sb.mu.Lock()
-	claimed := sb.closeClaim != nil
-	sb.mu.Unlock()
-	if !claimed && h.bridge.mgr.get("c1") == sb {
-		return false
+	lc, ok := sb.life.(*chatLifecycle)
+	if !ok {
+		t.Fatal("Setup: c1's entry is not on the chat's life")
 	}
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		// Read before the close's outcome: a close drops the entry before it ends its grant (closeConfirmed).
+		lc.mu.Lock()
+		granted := lc.closing != nil && lc.closing.sb == sb
+		asked := lc.ask != nil && lc.ask.sb == sb
+		blocker := lc.blockerLocked(0)
+		lc.mu.Unlock()
 		if sessionClosed(fakeOf(sb)) && h.bridge.mgr.get("c1") == nil {
 			return true
 		}
+		if granted {
+			continue
+		}
+		if !asked || blocker == holdAdmission || blocker == holdTurn || blocker == holdStep {
+			return false
+		}
 	}
-	t.Fatal("the release check claimed c1's session and did not close it within 5s")
+	t.Fatal("the release check asked to close c1's session and did not close it within 5s")
 	return false
 }
 
@@ -70,8 +83,10 @@ func TestReleaseIfUnheld_ClosesOnlyChatsWithNoTabTurnOrLiveRun(t *testing.T) {
 		{name: "a live run it launched", hold: func(t *testing.T, h *Runtime, _ *tabs.Store) {
 			h.runs.grantLease(t.Context(), "wf_1", "fix", launchOrigin{origin: runlease.OriginAgent, chatID: "c1"}, hostSec())
 		}},
-		{name: "a run step it hosts", hold: func(_ *testing.T, h *Runtime, _ *tabs.Store) {
-			h.bridge.mgr.hostsLiveRun = func(chatID marotte.ChatID) bool { return chatID == "c1" }
+		{name: "a run step it hosts", hold: func(t *testing.T, h *Runtime, _ *tabs.Store) {
+			if _, _, err := h.runs.log.open(t.Context(), &translate.RunStep{RunID: "wf-host", NodePath: "wf-host/step", SessionID: "sess-step"}, "c1"); err != nil {
+				t.Fatalf("Setup: open the hosted step turn: %v", err)
+			}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -119,8 +134,8 @@ func TestReleaseIfUnheld_RunsWhenTheTurnEndsAndWhenTheRunEnds(t *testing.T) {
 	})
 }
 
-// A turn admitted after the release's turn check, while the claimed session is still open, waits for the close and
-// takes a fresh generation instead of prompting on the session being closed.
+// An open while a granted release still closes the session waits for the close and takes a fresh generation instead
+// of prompting on the session being closed.
 func TestReleaseIfUnheld_AnOpenDuringTheClaimWaitsAndTakesAFreshGeneration(t *testing.T) {
 	h, _, sb := releaseFixture(t)
 	old := fakeOf(sb)
@@ -130,9 +145,15 @@ func TestReleaseIfUnheld_AnOpenDuringTheClaimWaitsAndTakesAFreshGeneration(t *te
 	old.mu.Unlock()
 
 	h.coord.releaseIfUnheld("c1")
+	// The fixture's own door may still be finishing, which grants the release only at its end.
+	for deadline := time.Now().Add(5 * time.Second); !sb.life.closingSession(sb); time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("Setup: the release was not granted within 5s")
+		}
+	}
 	got := make(chan *sharedBridge, 1)
 	go func() {
-		next, err := h.coord.openBridge(context.Background(), "c1", "")
+		next, err := h.coord.openReleased(context.Background(), "c1", "")
 		if err != nil {
 			t.Errorf("OpenBridge(c1) during the release: %v", err)
 		}

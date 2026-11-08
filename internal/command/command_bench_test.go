@@ -88,8 +88,8 @@ func (*benchDeps) SetAttachments(context.Context, marotte.ChatID, []string) (*ma
 func (*benchDeps) Delete(context.Context, marotte.ChatID) ([]string, error) { return nil, nil }
 func (*benchDeps) Broadcast(context.Context, marotte.ServerEvent)           {}
 func (*benchDeps) Bridge(marotte.ChatID) Bridge                             { return nil }
-func (*benchDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
-	return nil, nil
+func (*benchDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, func(), error) {
+	return nil, func() {}, nil
 }
 
 // BridgeLive answers true: the stub models a chat whose bridge is past its session open,
@@ -190,7 +190,7 @@ func (d *benchDeps) ReserveIdleTurn(_ context.Context, chatID marotte.ChatID, _ 
 	return IdleAcquired, testReservation(chatID, true)
 }
 
-func (*benchDeps) tryReserveFencedOld(marotte.ChatID, marotte.TurnOpenSource, TurnFence) bool {
+func (*benchDeps) tryReserveDrainOld(marotte.ChatID, marotte.TurnOpenSource, CloseFacts) bool {
 	return true
 }
 func (*benchDeps) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
@@ -313,7 +313,7 @@ func TestBenchDeps_Contract(t *testing.T) {
 		if d.TurnOpenedAfter("x", benchTurnID) {
 			t.Error("TurnOpenedAfter on the stub should report false")
 		}
-		if _, err := d.OpenBridge(t.Context(), "x", ""); err != nil {
+		if _, _, err := d.OpenBridge(t.Context(), "x", ""); err != nil {
 			t.Errorf("OpenBridge returned error: %v", err)
 		}
 	})
@@ -401,8 +401,8 @@ func (r *benchDeps) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.Tur
 	return testReservation(chatID, ok), ok
 }
 
-func (r *benchDeps) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence TurnFence) (Reservation, bool) {
-	ok := r.tryReserveFencedOld(chatID, source, fence)
+func (r *benchDeps) TryReserveDrain(chatID marotte.ChatID, cl CloseFacts) (Reservation, bool) {
+	ok := r.tryReserveDrainOld(chatID, marotte.TurnSourcePrompt, cl)
 	return testReservation(chatID, ok), ok
 }
 
@@ -412,7 +412,7 @@ func (*benchDeps) LifeStamp() uint64 { return 0 }
 
 func (*benchDeps) AwaitNoClose(context.Context, marotte.ChatID) (bool, error) { return false, nil }
 
-func (r *benchDeps) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+func (r *benchDeps) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, func(), error) {
 	return r.OpenBridge(ctx, chatID, model)
 }
 

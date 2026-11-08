@@ -261,7 +261,7 @@ func startedChatEngine(t *testing.T, opts ...Option) *fakeEngine {
 	}); err != nil {
 		t.Fatalf("seed the chat: %v", err)
 	}
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	if br.lastSessionOpts() == nil {

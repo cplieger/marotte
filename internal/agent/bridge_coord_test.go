@@ -106,7 +106,7 @@ func TestOpenBridge_ANewSessionTakesTheOverrideModel(t *testing.T) {
 		return true // no ACPSessionID -> fresh session/new path
 	})
 
-	if _, err := h.coord.openBridge(ctx, "c1", "model-override"); err != nil {
+	if _, err := h.coord.openReleased(ctx, "c1", "model-override"); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
@@ -146,7 +146,7 @@ func TestOpenBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
 		t.Fatalf("seed the chat: %v", err)
 	}
 
-	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
@@ -174,7 +174,7 @@ func TestApplyModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
-	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
@@ -191,7 +191,7 @@ func TestApplyModelSwitch_TouchesNoOpenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
-	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	id, log := streamingPromptTurn(t, h, "c1", "the user's own reply, still streaming")
@@ -213,7 +213,7 @@ func TestApplyModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
-	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
@@ -234,7 +234,7 @@ func TestOpenBridge_RepairsTheEffortOnAnOpenBridge(t *testing.T) {
 		c.Effort = "max"
 		return true
 	})
-	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	// Stand in for KAS moving the level.
@@ -242,7 +242,7 @@ func TestOpenBridge_RepairsTheEffortOnAnOpenBridge(t *testing.T) {
 	br.effort = "high"
 	br.mu.Unlock()
 
-	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge (reopen): %v", err)
 	}
 
@@ -256,14 +256,14 @@ func TestOpenBridge_RepairsNothingWithoutAChoice(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	br.mu.Lock()
 	br.effort = ""
 	br.mu.Unlock()
 
-	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge (reopen): %v", err)
 	}
 
@@ -1007,7 +1007,7 @@ func TestOpenGeneration_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 			})
 
 			since := h.bus.fanout.Position().Head
-			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+			if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
 
@@ -1142,7 +1142,7 @@ func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
 		t.Fatalf("seed the chat: %v", err)
 	}
 
-	if _, err := h.coord.openBridge(t.Context(), chatID, ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), chatID, ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
@@ -1269,7 +1269,7 @@ func TestOpenBridge_RecordsAWithheldModelAsAnUnavailableSwitch(t *testing.T) {
 		return true
 	})
 
-	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
@@ -1296,7 +1296,7 @@ func TestOpenBridge_RecordsAModelTheLoadDropped(t *testing.T) {
 		return true
 	})
 
-	if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
@@ -1323,7 +1323,7 @@ func TestLoadUnservedAutoMovesRecord(t *testing.T) {
 				return true
 			})
 
-			if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+			if _, err := h.coord.openReleased(ctx, "c1", ""); err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
 
@@ -1346,7 +1346,7 @@ func TestOpenBridge_ServedOrFailedOpenRecordsNoUnavailableSwitch(t *testing.T) {
 			c.Name, c.Model, c.ServedModelIDs = "A", "fake-model", []string{"fake-model"}
 			return true
 		})
-		if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+		if _, err := h.coord.openReleased(ctx, "c1", ""); err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
 		if got := switchesOf(t, logOf(t, cs, "c1")); len(got) != 0 {
@@ -1361,7 +1361,7 @@ func TestOpenBridge_ServedOrFailedOpenRecordsNoUnavailableSwitch(t *testing.T) {
 			c.Name, c.Model, c.Effort, c.ServedModelIDs = "A", "m-gone", "max", []string{"m-other"}
 			return true
 		})
-		if _, err := h.coord.openBridge(ctx, "c1", ""); err == nil {
+		if _, err := h.coord.openReleased(ctx, "c1", ""); err == nil {
 			t.Fatal("OpenBridge = nil, want the open's error")
 		}
 		if got := switchesOf(t, logOf(t, cs, "c1")); len(got) != 0 {
@@ -1391,7 +1391,7 @@ func TestOpenBridge_AnUnservedModelTheSessionRunsKeepsItsSelection(t *testing.T)
 				return true
 			})
 
-			if _, err := h.coord.openBridge(ctx, "c1", ""); err != nil {
+			if _, err := h.coord.openReleased(ctx, "c1", ""); err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
 
@@ -1479,7 +1479,7 @@ func TestChatForACPSession_NamesTheResidentChat(t *testing.T) {
 	sessions := map[marotte.ChatID]string{}
 	for _, chatID := range []marotte.ChatID{"c1", "c2"} {
 		cs.seed(t, chatID, func(c *marotte.Chat) { c.Name = string(chatID) })
-		sb, err := h.coord.openBridge(t.Context(), chatID, "")
+		sb, err := h.coord.openReleased(t.Context(), chatID, "")
 		if err != nil {
 			t.Fatalf("Setup: openBridge(%s): %v", chatID, err)
 		}

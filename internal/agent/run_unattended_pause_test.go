@@ -244,7 +244,7 @@ func TestManualRun_AStepQuestionStaysPaused(t *testing.T) {
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
 		methodKiroWorkflowInspect: inspectPaused(t, gateRunID, stepQuestionReason),
 	}
-	h.insertBridgeNow(runChatID(gateRunID), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID(gateRunID), testBridge(br, bridgeReady))
 	h.runs.grantLease(t.Context(), gateRunID, "publish", launchOrigin{origin: runlease.OriginManual}, hostSec())
 	h.runs.armDeadline(t.Context(), gateRunID)
 
@@ -292,7 +292,7 @@ func TestParentlessRun_AFaultPauseIsResumedOnItsFrame(t *testing.T) {
 				methodKiroWorkflowInspect: inspectPaused(t, gateRunID, interruptedReason),
 				methodKiroWorkflowResume:  json.RawMessage(`{}`),
 			}
-			h.insertBridgeNow(runChatID(gateRunID), testBridge(br, bridgeIdle))
+			h.insertBridgeNow(runChatID(gateRunID), testBridge(br, bridgeReady))
 			h.runs.grantLease(t.Context(), gateRunID, "nightly", origin, hostSec())
 
 			heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})

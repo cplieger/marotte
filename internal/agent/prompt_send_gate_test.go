@@ -22,7 +22,7 @@ import (
 func admitPromptBehindSteerLock(t *testing.T, h *Runtime, cs *testChatStore, text string) func() {
 	t.Helper()
 	seedChat(t, cs, "c1")
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open bridge: %v", err)
 	}
 	unlock, err := h.steerQueue.LockSteerOps(t.Context(), "c1")

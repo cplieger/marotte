@@ -34,12 +34,12 @@ type tagRetryBridges struct {
 	bridge *tagRetryBridge
 }
 
-func (b *tagRetryBridges) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
-	return b.bridge, nil
+func (b *tagRetryBridges) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, func(), error) {
+	return b.bridge, func() {}, nil
 }
 
-func (b *tagRetryBridges) OpenBridgeAt(context.Context, marotte.ChatID, string, uint64) (Bridge, error) {
-	return b.bridge, nil
+func (b *tagRetryBridges) OpenBridgeAt(context.Context, marotte.ChatID, string, Reservation) (Bridge, func(), error) {
+	return b.bridge, func() {}, nil
 }
 
 type tagRetryBridge struct {

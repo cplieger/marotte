@@ -12,11 +12,15 @@ import (
 )
 
 // markSessionsForReload is the one way a setting a session reads only at its door reaches resident chat sessions:
-// each is marked, and closes and reloads at its next idle open (reloadIfMarked). A busy chat reloads after its turn,
-// one hosting a live run step after that step's turn. A run's host session is never marked: it keeps the presets its
-// lease recorded at launch.
+// each entry's life is marked (chatLifecycle.markReload) and closes from the chat's next door (reloadIfMarked). A
+// run's host session is never marked: it keeps the presets its lease recorded at launch.
 func (rt *Runtime) markSessionsForReload(reason string) {
-	marked := rt.bridge.mgr.markSessionsForReload()
+	marked := 0
+	for chatID, sb := range rt.bridge.mgr.all() {
+		if lc, ok := rt.coord.turns.closeOwner(chatID, sb); ok && lc.markReload(sb) {
+			marked++
+		}
+	}
 	slog.Info("open chats reload their session at their next message", "reason", reason, "marked", marked)
 }
 

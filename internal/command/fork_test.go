@@ -37,14 +37,14 @@ type forkHost struct {
 	openModels  []string
 }
 
-func (d *forkHost) OpenBridge(ctx context.Context, chatID marotte.ChatID, model string) (Bridge, error) {
+func (d *forkHost) OpenBridge(ctx context.Context, chatID marotte.ChatID, model string) (Bridge, func(), error) {
 	d.openChatIDs = append(d.openChatIDs, chatID)
 	d.openModels = append(d.openModels, model)
 	if chatID != d.parent {
 		if d.onOpenTangent != nil {
 			d.onOpenTangent(chatID)
 		}
-		return d.tangentBridge, nil
+		return d.tangentBridge, func() {}, nil
 	}
 	return d.bridgeDeps.OpenBridge(ctx, chatID, model)
 }
@@ -1015,6 +1015,6 @@ func TestCmdForkChat_AnUntitledForkIsNotUserNamed(t *testing.T) {
 	}
 }
 
-func (r *forkHost) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+func (r *forkHost) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, func(), error) {
 	return r.OpenBridge(ctx, chatID, model)
 }

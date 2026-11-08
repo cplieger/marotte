@@ -127,7 +127,9 @@ func (rt *Runtime) resumeInterrupted(ctx context.Context, set interruptSet) {
 	}
 	for chatID := range chats {
 		rt.lifecycle.goUnlessDraining(func() {
-			if _, err := rt.coord.openBridge(ctx, chatID, ""); err != nil {
+			_, release, err := rt.coord.openBridge(ctx, chatID, "")
+			defer release()
+			if err != nil {
 				slog.Warn("an interrupted run's chat could not be reopened to resume it", "chat_id", chatID, "error", err)
 			}
 		})
@@ -231,7 +233,7 @@ func (rt *Runtime) onEngineEnded(gen uint64) {
 func (*Runtime) closeSession(s engineSession) { s.Release() }
 
 // onSignInChange applies a committed sign-in edge: the engine fingerprint holds the pending account, and the first
-// sign-in reloads resident sessions at their next idle open, so their model lists follow the account.
+// sign-in reloads resident sessions (markSessionsForReload), so their model lists follow the account.
 func (rt *Runtime) onSignInChange(c signin.Change) {
 	rt.engine.reconcile(rt.lifecycle.shutdownCtx)
 	if c.To == signin.StatusSignedIn && c.From != signin.StatusSignedIn {

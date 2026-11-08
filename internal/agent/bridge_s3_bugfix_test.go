@@ -30,7 +30,7 @@ func hubWithBridge(t *testing.T, workDir string, br engineSession) *Runtime {
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	sb, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("Setup: OpenBridge(c1): %v", err)
 	}

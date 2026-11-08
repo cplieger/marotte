@@ -112,7 +112,7 @@ func TestEngineUp_ARequestedRestartIsUpAgainInsideTheRulesFor(t *testing.T) {
 		o.start()
 		synctest.Wait()
 		waitReady(t, o, 1)
-		release := holdDoor(t, o)
+		release := holdEngineDoor(t, o)
 		t.Cleanup(release)
 
 		asked := time.Now()

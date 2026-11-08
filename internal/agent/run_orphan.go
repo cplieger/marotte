@@ -129,24 +129,33 @@ func (rs *Runs) askBootPass(ctx context.Context) {
 	started := time.Now()
 	read := 0
 	for i := range leases {
-		id := leases[i].WorkflowID
-		c := rs.cellFor(id)
-		if c == nil {
-			continue
+		if rs.bootReadOne(ctx, &leases[i]) {
+			read++
 		}
-		if leases[i].Origin == runlease.OriginAgent {
-			if _, err := rs.ensureResident(ctx, id); err != nil {
-				slog.Warn("boot: a chat-parented run's chat could not be reopened", "workflow_id", id, "error", err)
-			}
-		}
-		if _, err := rs.readAsks(ctx, c); err != nil {
-			slog.Warn("boot: a leased run could not be read", "workflow_id", id, "error", err)
-			continue
-		}
-		read++
 	}
 	slog.Info("boot: read every leased run's questions", "leases", len(leases), "read", read,
 		"took", time.Since(started).Round(time.Millisecond))
+}
+
+// bootReadOne is askBootPass's read of one leased run, reporting whether it was read. A chat-parented run's chat
+// session is held resident until the read ends, so no chat's hold outlives its own run's read.
+func (rs *Runs) bootReadOne(ctx context.Context, l *runlease.Lease) bool {
+	c := rs.cellFor(l.WorkflowID)
+	if c == nil {
+		return false
+	}
+	if l.Origin == runlease.OriginAgent {
+		_, release, err := rs.ensureResident(ctx, l.WorkflowID)
+		defer release()
+		if err != nil {
+			slog.Warn("boot: a chat-parented run's chat could not be reopened", "workflow_id", l.WorkflowID, "error", err)
+		}
+	}
+	if _, err := rs.readAsks(ctx, c); err != nil {
+		slog.Warn("boot: a leased run could not be read", "workflow_id", l.WorkflowID, "error", err)
+		return false
+	}
+	return true
 }
 
 // releaseIfOver drops a run's lease and bounds (forgetBounds) when KAS says it is over, for a stop with no terminal

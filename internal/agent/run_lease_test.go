@@ -374,7 +374,7 @@ func heldRun(t *testing.T, id, recipe string) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
-	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID(id), testBridge(br, bridgeReady))
 	st, err := runlease.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)

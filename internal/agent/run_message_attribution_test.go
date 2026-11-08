@@ -57,7 +57,7 @@ func TestStepMessage_AColdRegistryStillAttributesTheStepsSteeringFrames(t *testi
 			br.setCallResult(marotte.MethodSessionSteer, json.RawMessage(`{"queued":true}`))
 			frameChat := runChatID("wf_1")
 			if door == "host_session" {
-				h.insertBridgeNow(frameChat, testBridge(br, bridgeIdle))
+				h.insertBridgeNow(frameChat, testBridge(br, bridgeReady))
 			} else {
 				frameChat = "c1"
 				br.setCallResult(methodKiroWorkflowList, kasRuns(t, map[string]any{
@@ -69,7 +69,7 @@ func TestStepMessage_AColdRegistryStillAttributesTheStepsSteeringFrames(t *testi
 				}); err != nil {
 					t.Fatalf("Setup: seeding the chat: %s", err)
 				}
-				if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+				if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 					t.Fatalf("Setup: opening the chat's bridge: %s", err)
 				}
 			}

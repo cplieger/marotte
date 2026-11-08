@@ -94,7 +94,8 @@ func cmdRewindChat(
 		return nil, refused
 	}
 
-	bridge, err := resumeForRevert(ctx, bridges, cmd.ChatID, chat.ACPSessionID)
+	bridge, release, err := resumeForRevert(ctx, bridges, cmd.ChatID, chat.ACPSessionID)
+	defer release()
 	if err != nil {
 		return nil, err
 	}
@@ -160,29 +161,31 @@ func stopRunsInCut(ctx context.Context, runs runCutter, chatID marotte.ChatID, l
 }
 
 // `want` is read BEFORE the resume, because a failed session/load falls through to session/new and
-// retires that id.
-func resumeForRevert(ctx context.Context, bridges bridgeAccess, chatID marotte.ChatID, want string) (Bridge, error) {
+// retires that id. release ends the open's hold and is never nil.
+func resumeForRevert(ctx context.Context, bridges bridgeAccess, chatID marotte.ChatID, want string) (bridge Bridge, release func(), err error) {
 	if want == "" {
-		return nil, StatusError(http.StatusConflict, errRewindNoSession)
+		return nil, func() {}, StatusError(http.StatusConflict, errRewindNoSession)
 	}
 
 	// Empty model on purpose: the session door then keeps the chat's own, so a rewind
 	// can never silently change which model the chat runs.
-	bridge, err := bridges.OpenBridge(ctx, chatID, "")
+	bridge, release, err = bridges.OpenBridge(ctx, chatID, "")
 	if err != nil || bridge == nil {
+		release()
 		// The session door's own error is logged, not forwarded: it names marotte's
 		// internals, and the client renders the reason verbatim to the user.
 		slog.Warn("rewind: no bridge to revert on", "chat", chatID, keyError, err)
-		return nil, StatusError(http.StatusBadGateway, errRewindNoBridge)
+		return nil, func() {}, StatusError(http.StatusBadGateway, errRewindNoBridge)
 	}
 	if string(bridge.SessionID()) != want {
 		// The resume fell through to a fresh session, which holds none of this
 		// transcript: KAS would refuse the id or roll back the wrong thing.
+		release()
 		slog.Warn("rewind: original session not resumed",
 			"chat", chatID, "want", want, "got", bridge.SessionID())
-		return nil, StatusError(http.StatusConflict, errRewindSessionNotResumed)
+		return nil, func() {}, StatusError(http.StatusConflict, errRewindSessionNotResumed)
 	}
-	return bridge, nil
+	return bridge, release, nil
 }
 
 // revertResult is KAS's reply to a revert. affectedFiles are the paths it put

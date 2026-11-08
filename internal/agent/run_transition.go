@@ -432,7 +432,8 @@ func (rs *Runs) resumeAsked(ctx context.Context, workflowID string, extra map[st
 		return err
 	}
 	defer a.settle(workflowID)
-	host, err := rs.ensureResident(ctx, workflowID)
+	host, release, err := rs.ensureResident(ctx, workflowID)
+	defer release()
 	if err != nil {
 		return err
 	}
@@ -445,7 +446,8 @@ func (rs *Runs) resumeAsked(ctx context.Context, workflowID string, extra map[st
 
 // finishAsked is a person's finish of the repeat at nodeID, refused while the gate is closed (drive admits it).
 func (rs *Runs) finishAsked(ctx context.Context, workflowID, nodeID string) error {
-	host, err := rs.ensureResident(ctx, workflowID)
+	host, release, err := rs.ensureResident(ctx, workflowID)
+	defer release()
 	if err != nil {
 		return err
 	}
@@ -547,7 +549,8 @@ func (rs *Runs) healSpent(
 // failure, which is logged here.
 func (rs *Runs) writeHealResume(ctx context.Context, a runAdmission, chatID marotte.ChatID, workflowID string) (wrote bool, err error) {
 	defer a.settle(workflowID)
-	host, err := rs.ensureResident(ctx, workflowID)
+	host, release, err := rs.ensureResident(ctx, workflowID)
+	defer release()
 	if err != nil {
 		slog.Warn("rehydrate: the run's launching session could not be made resident, so it was not resumed",
 			"workflow_id", workflowID, "chat_id", chatID, "error", err)

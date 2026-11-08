@@ -111,7 +111,7 @@ func TestSettingsWrite_SendsTheShellTimeoutOnceOnTheEngine(t *testing.T) {
 		if _, err := cs.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool { c.Name = string(id); return true }); err != nil {
 			t.Fatalf("seed chat %s: %v", id, err)
 		}
-		if _, err := h.coord.openBridge(t.Context(), id, ""); err != nil {
+		if _, err := h.coord.openReleased(t.Context(), id, ""); err != nil {
 			t.Fatalf("OpenBridge %s: %v", id, err)
 		}
 	}

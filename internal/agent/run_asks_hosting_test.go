@@ -21,7 +21,7 @@ func chatParentedHub(t *testing.T, l runlease.Lease) (*Runtime, *fakeBridge) {
 	chat := newFakeBridge()
 	chat.sessionID = "sess_parent"
 	engine.setCallResult(methodKiroWorkflowInspect, recordedReply(t, "parked"))
-	h.insertBridgeNow("c1", testBridge(chat, bridgeIdle))
+	h.insertBridgeNow("c1", testBridge(chat, bridgeReady))
 	l.Origin = runlease.OriginAgent
 	leaseRun(t, h, l)
 	return h, engine
@@ -68,7 +68,7 @@ func TestRunAsks_AnEngineRestartKeepsTheRunsQuestion(t *testing.T) {
 	br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	fakeSourceOf(t, h).setFactory(func() engineSession { return newFakeBridge() })
 	leaseParentless(t, h, "wf_1")
-	if _, err := h.runs.ensureResident(t.Context(), "wf_1"); err != nil {
+	if _, err := h.runs.residentReleased(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Setup: ensureResident = %v", err)
 	}
 	h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeStart)
@@ -106,7 +106,7 @@ func TestRunAsks_AWedgedRunBlocksNoOtherRun(t *testing.T) {
 	h, wedged, _ := askCoreHub(t, "wf_1", inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	other := newFakeBridge()
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_2", ParentSessionID: testLaunchSession})
-	h.insertBridgeNow(runChatID("wf_2"), testBridge(other, bridgeIdle))
+	h.insertBridgeNow(runChatID("wf_2"), testBridge(other, bridgeReady))
 	askID := readNow(t, h, "wf_1").asks[0].ID
 	stuck := make(chan struct{})
 	wf2 := inspectAsk(t, "wf_2", marotte.RunStatusRunning, parkedStep("review", "sess_two"))

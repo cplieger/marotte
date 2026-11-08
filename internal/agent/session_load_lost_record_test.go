@@ -138,7 +138,7 @@ func TestSessionLoad_ALoadThatReplaysNothingForItsBoundSessionOpensANewOne(t *te
 	onSession(t, cs, chatID, lostSession)
 	boundTurn(t, cs, chatID, lostSession)
 
-	sb, err := h.coord.openBridge(t.Context(), chatID, "")
+	sb, err := h.coord.openReleased(t.Context(), chatID, "")
 	if err != nil {
 		t.Fatalf("openBridge: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestSessionLoad_AnEmptyReplayOfASessionWithNoBoundTurnKeepsIt(t *testing.T)
 	boundTurn(t, cs, chatID, "s-a")
 	onSession(t, cs, chatID, "s-b")
 
-	if _, err := h.coord.openBridge(t.Context(), chatID, ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), chatID, ""); err != nil {
 		t.Fatalf("openBridge: %v", err)
 	}
 
@@ -193,7 +193,7 @@ func TestSessionLoad_AnEmptyReplayAfterEveryBoundTurnWasRewoundKeepsIt(t *testin
 		t.Fatalf("Revert: %v", err)
 	}
 
-	if _, err := h.coord.openBridge(t.Context(), chatID, ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), chatID, ""); err != nil {
 		t.Fatalf("openBridge: %v", err)
 	}
 
@@ -214,7 +214,7 @@ func TestSessionLoad_ARefusedLoadOfABoundSessionRecordsAContextReset(t *testing.
 	onSession(t, cs, chatID, lostSession)
 	boundTurn(t, cs, chatID, lostSession)
 
-	if _, err := h.coord.openBridge(t.Context(), chatID, ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), chatID, ""); err != nil {
 		t.Fatalf("openBridge: %v", err)
 	}
 
@@ -232,7 +232,7 @@ func TestSessionLoad_ARefusedLoadOfAnUnboundSessionRecordsNothing(t *testing.T) 
 	onSession(t, cs, chatID, "s-b")
 	boundTurn(t, cs, chatID, "s-a")
 
-	if _, err := h.coord.openBridge(t.Context(), chatID, ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), chatID, ""); err != nil {
 		t.Fatalf("openBridge: %v", err)
 	}
 
@@ -255,7 +255,7 @@ func TestSessionLoad_ABlankLoadUnderAPromptSendsThePromptToTheNewSession(t *test
 	}
 	t.Cleanup(func() { h.coord.releaseTurn(chatID, turnID) })
 
-	if _, err := h.coord.openBridge(t.Context(), chatID, ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), chatID, ""); err != nil {
 		t.Fatalf("openBridge: %v", err)
 	}
 
@@ -298,7 +298,7 @@ func TestOpenBridge_ABlankLoadRecordsTheUnservedModelOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := h.coord.openBridge(t.Context(), chatID, ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), chatID, ""); err != nil {
 		t.Fatalf("openBridge: %v", err)
 	}
 
@@ -334,7 +334,7 @@ func TestSessionLoad_ASessionEndingDuringItsReplayFailsTheOpenAndKeepsTheSession
 
 	opened := make(chan error, 1)
 	go func() {
-		_, err := h.coord.openBridge(t.Context(), chatID, "")
+		_, err := h.coord.openReleased(t.Context(), chatID, "")
 		opened <- err
 	}()
 	var loaded *fakeBridge

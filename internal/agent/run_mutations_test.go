@@ -199,7 +199,7 @@ func TestRunMutations_EveryDrivingVerbEnters(t *testing.T) {
 		verb   func(t *testing.T, h *Runtime) error
 	}{
 		{name: "resume", method: methodKiroWorkflowResume, verb: func(t *testing.T, h *Runtime) error {
-			host, err := h.runs.ensureResident(t.Context(), "wf_1")
+			host, err := h.runs.residentReleased(t.Context(), "wf_1")
 			if err != nil {
 				return err
 			}
@@ -273,7 +273,7 @@ func TestRunMutations_AHostSessionVerbSettlesFromItsLanesFrames(t *testing.T) {
 
 // driveOnHost writes method on the run's resident launching session, as each driving verb does.
 func driveOnHost(t *testing.T, h *Runtime, method string) error {
-	host, err := h.runs.ensureResident(t.Context(), "wf_1")
+	host, err := h.runs.residentReleased(t.Context(), "wf_1")
 	if err != nil {
 		return err
 	}

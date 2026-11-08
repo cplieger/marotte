@@ -246,12 +246,9 @@ func TestOpenBridge_AdmitsNoCallerBeforeTheReplayMerged(t *testing.T) {
 
 	short, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancel()
-	sb, err := h.coord.openBridge(short, "c1", "")
-	if !errors.Is(err, context.DeadlineExceeded) {
+	sb, err := h.coord.openReleased(short, "c1", "")
+	if sb != nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("OpenBridge with the replay a frame short = (%v, %v), want no bridge at the deadline", sb, err)
-	}
-	if sb != nil && !sb.TryAcquireForPrompt() {
-		t.Error("the bridge handed out before its replay merged is not even idle")
 	}
 	first := h.coord.bridgeFor("c1")
 	if first == nil {
@@ -422,7 +419,7 @@ func TestOpenBridge_AdmitsNoBridgeForARecordDeletedBeforeItsReadinessPublished(t
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "A" })
 	store.armed.Store(true)
 
-	sb, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openReleased(t.Context(), "c1", "")
 	switch {
 	case err == nil && cs.Presence("c1") != chat.PresencePresent:
 		t.Errorf("OpenBridge(c1) admitted bridge %p, but the record was deleted before its readiness published", sb)

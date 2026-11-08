@@ -450,8 +450,8 @@ func (h *resendHost) OpenTurn(_ context.Context, _ marotte.ChatID, open TurnOpen
 }
 
 // OpenBridge refuses, so the prompt goroutine the resend starts ends at once.
-func (*resendHost) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
-	return nil, errors.New("no bridge in this test")
+func (*resendHost) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, func(), error) {
+	return nil, func() {}, errors.New("no bridge in this test")
 }
 
 func (h *resendHost) InflightAdd(delta int) {
@@ -788,6 +788,6 @@ func (r *resendHost) ReserveTurnForPrompt(ctx context.Context, chatID marotte.Ch
 	return out, testReservation(chatID, out == AdmissionAcquired)
 }
 
-func (r *resendHost) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+func (r *resendHost) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, func(), error) {
 	return r.OpenBridge(ctx, chatID, model)
 }

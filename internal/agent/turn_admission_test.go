@@ -71,7 +71,7 @@ func TestReserveTurnForPrompt_RefusalKeysOnTheHoldersSource(t *testing.T) {
 			chatID := marotte.ChatID("c-admission-" + string(rune('a'+i)))
 			seedChat(t, cs, chatID)
 			if tc.bridged {
-				if _, err := h.coord.openBridge(t.Context(), chatID, ""); err != nil {
+				if _, err := h.coord.openReleased(t.Context(), chatID, ""); err != nil {
 					t.Fatalf("OpenBridge: %v", err)
 				}
 			}
@@ -134,7 +134,7 @@ func TestReserveTurnForPrompt_AnOpeningPromptHolderAnswersBusyAtOnce(t *testing.
 	t.Cleanup(func() { h.coord.releaseHeld("c1") })
 	opened := make(chan error, 1)
 	go func() {
-		_, err := h.coord.openBridge(t.Context(), "c1", "")
+		_, err := h.coord.openReleased(t.Context(), "c1", "")
 		opened <- err
 	}()
 
@@ -690,12 +690,12 @@ func TestTryReserve_BesideAWireTurn(t *testing.T) {
 			if got != tc.wantBare {
 				t.Errorf("tryReserve = %t, want %t", got, tc.wantBare)
 			}
-			got = h.coord.tryReserveFencedNow("c1", marotte.TurnSourcePrompt, command.TurnFence{})
+			got = h.coord.tryReserveDrainNow("c1", command.TurnFence{})
 			if got {
 				h.coord.releaseHeld("c1")
 			}
 			if got != tc.wantFence {
-				t.Errorf("TryReserveTurnFenced = %t, want %t", got, tc.wantFence)
+				t.Errorf("TryReserveDrain = %t, want %t", got, tc.wantFence)
 			}
 		})
 	}

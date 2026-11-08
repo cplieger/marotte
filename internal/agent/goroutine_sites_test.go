@@ -39,6 +39,9 @@ var unheldSites = map[string]struct {
 	"engine_lane.go (Runtime).observerForward": {
 		"a frame pump ending with its pass's session; a request's work goes through answerUnlessDraining", 1,
 	},
+	"session_close_owner.go (turnRegistry).holdWake": {
+		"it ends a wake hold under the lifecycle's lock and starts nothing; the closer it lets run is held", 1,
+	},
 	"run_hosts.go newHostRelay": {"a frame pump ending with its session; early answers through answerUnlessDraining", 1},
 }
 

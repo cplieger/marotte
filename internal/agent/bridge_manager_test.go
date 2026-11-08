@@ -37,7 +37,7 @@ func TestBridgeManager_RemoveIfBridge(t *testing.T) {
 	sb, _ := bm.orInsertNow("c1")
 	stored := newFakeBridge()
 	sb.attach(stored)
-	sb.setIdle()
+	sb.setReady()
 	other := newFakeBridge()
 
 	if removed := bm.removeIfBridge("c1", other); removed {
@@ -63,7 +63,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 	for i := range 100 {
 		sb, existed := bm.orInsertNow(marotte.ChatID(fmt.Sprintf("chat-%d", i)))
 		if !existed {
-			sb.state = bridgeIdle
+			sb.state = bridgeReady
 		}
 	}
 
@@ -92,7 +92,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 
 				sb, existed := bm2.orInsertNow(marotte.ChatID(id))
 				if !existed {
-					sb.state = bridgeIdle
+					sb.state = bridgeReady
 				}
 			}
 		})

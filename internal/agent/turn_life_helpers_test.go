@@ -82,9 +82,9 @@ func (sb *sharedBridge) session() engineSession {
 	return sb.leased
 }
 
-// tryReserveFencedNow is TryReserveTurnFenced for a test that needs only the verdict.
-func (bc *bridgeCoordinator) tryReserveFencedNow(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) bool {
-	_, ok := bc.TryReserveTurnFenced(chatID, source, fence)
+// tryReserveDrainNow is TryReserveDrain for a close fenced at fence with no tail, for a test that needs only the verdict.
+func (bc *bridgeCoordinator) tryReserveDrainNow(chatID marotte.ChatID, fence command.TurnFence) bool {
+	_, ok := bc.TryReserveDrain(chatID, command.CloseFacts{Fence: fence})
 	return ok
 }
 

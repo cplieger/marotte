@@ -167,7 +167,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		}); err != nil {
 			t.Fatalf("seed the chat: %v", err)
 		}
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
 		// The lease names the chat's session the run was launched from, which the heal resumes it on.

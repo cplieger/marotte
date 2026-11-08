@@ -131,7 +131,7 @@ func TestDrain_WaitsOutTheClosingPromptsReservation(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		h.coord.afterTurnClose(t.Context(), h.coord.turns.testLifecycle("c1"), closeFacts{outcome: marotte.TurnOutcomeCompleted})
+		h.coord.afterTurnClose(t.Context(), h.coord.turns.testLifecycle("c1"), &closeFacts{outcome: marotte.TurnOutcomeCompleted})
 	}()
 	select {
 	case <-done:
@@ -159,7 +159,7 @@ func TestDrain_StandsDownWhenATurnOpensBehindTheReservation(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		h.coord.afterTurnClose(t.Context(), h.coord.turns.testLifecycle("c1"), closeFacts{outcome: marotte.TurnOutcomeCompleted})
+		h.coord.afterTurnClose(t.Context(), h.coord.turns.testLifecycle("c1"), &closeFacts{outcome: marotte.TurnOutcomeCompleted})
 	}()
 	turnID, _ := h.stagePromptTurn(t, "c1")
 	<-done

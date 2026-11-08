@@ -93,7 +93,7 @@ func (o *recoveryOutcome) ReserveIdleTurn(_ context.Context, chatID marotte.Chat
 	return IdleHeld, Reservation{}
 }
 
-func (o *recoveryOutcome) tryReserveFencedOld(c marotte.ChatID, s marotte.TurnOpenSource, _ TurnFence) bool {
+func (o *recoveryOutcome) tryReserveDrainOld(c marotte.ChatID, s marotte.TurnOpenSource, _ CloseFacts) bool {
 	return o.tryReserveOld(c, s)
 }
 
@@ -131,19 +131,18 @@ func (b *recoveryBridges) closeBridgeOld(context.Context, marotte.ChatID, marott
 	b.closed++
 }
 
-func (b *recoveryBridges) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
+func (b *recoveryBridges) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, func(), error) {
 	if b.onOpen != nil {
 		b.onOpen()
 	}
 	if b.bridge == nil {
 		b.bridge = &recoveryBridge{}
 	}
-	return b.bridge, nil
+	return b.bridge, func() {}, nil
 }
 
-// recoveryBridge is a Bridge that grants the prompt slot and answers every call,
-// so the firing row runs the retry to the end rather than abandoning it at the
-// slot.
+// recoveryBridge is a Bridge that answers every call, so the firing row runs the
+// retry to the end.
 type recoveryBridge struct {
 	calls int
 }
@@ -164,8 +163,6 @@ func (b *recoveryBridge) CallAt(context.Context, string, any) (*marotte.RPCRespo
 func (*recoveryBridge) Notify(context.Context, string, any) error        { return nil }
 func (*recoveryBridge) Respond(context.Context, int64, any, error) error { return nil }
 func (*recoveryBridge) SessionID() marotte.SessionID                     { return "s1" }
-func (*recoveryBridge) TryAcquireForPrompt() bool                        { return true }
-func (*recoveryBridge) ReleaseAfterPrompt()                              {}
 
 // The four clauses, each one moved on its own from a firing baseline. Every row
 // but the first must NOT re-prompt.
@@ -287,8 +284,8 @@ type orderedRetryBridges struct {
 	add func(string)
 }
 
-func (b *orderedRetryBridges) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
-	return &orderedRetryBridge{add: b.add}, nil
+func (b *orderedRetryBridges) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, func(), error) {
+	return &orderedRetryBridge{add: b.add}, func() {}, nil
 }
 
 type orderedRetryBridge struct {
@@ -359,8 +356,8 @@ func (r *recoveryOutcome) TryReserveIdleTurn(chatID marotte.ChatID, source marot
 	return testReservation(chatID, ok), ok
 }
 
-func (r *recoveryOutcome) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence TurnFence) (Reservation, bool) {
-	ok := r.tryReserveFencedOld(chatID, source, fence)
+func (r *recoveryOutcome) TryReserveDrain(chatID marotte.ChatID, cl CloseFacts) (Reservation, bool) {
+	ok := r.tryReserveDrainOld(chatID, marotte.TurnSourcePrompt, cl)
 	return testReservation(chatID, ok), ok
 }
 
@@ -372,11 +369,11 @@ func (*recoveryOutcome) AwaitNoClose(context.Context, marotte.ChatID) (bool, err
 	return false, nil
 }
 
-func (r *recoveryBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+func (r *recoveryBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, func(), error) {
 	return r.OpenBridge(ctx, chatID, model)
 }
 
-func (r *orderedRetryBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+func (r *orderedRetryBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, func(), error) {
 	return r.OpenBridge(ctx, chatID, model)
 }
 

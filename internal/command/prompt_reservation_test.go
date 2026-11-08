@@ -63,8 +63,8 @@ func (a *reservationLedger) ReserveIdleTurn(ctx context.Context, chatID marotte.
 	return out, res
 }
 
-func (a *reservationLedger) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence TurnFence) (Reservation, bool) {
-	return a.mint(a.turnAdmission.TryReserveTurnFenced(chatID, source, fence))
+func (a *reservationLedger) TryReserveDrain(chatID marotte.ChatID, cl CloseFacts) (Reservation, bool) {
+	return a.mint(a.turnAdmission.TryReserveDrain(chatID, cl))
 }
 
 func (a *reservationLedger) ReleaseTurnReservation(res Reservation) {
@@ -83,11 +83,11 @@ type stampedOpens struct {
 	mu     sync.Mutex
 }
 
-func (b *stampedOpens) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, stamp uint64) (Bridge, error) {
+func (b *stampedOpens) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, res Reservation) (Bridge, func(), error) {
 	b.mu.Lock()
-	b.stamps = append(b.stamps, stamp)
+	b.stamps = append(b.stamps, res.Stamp)
 	b.mu.Unlock()
-	return b.bridgeAccess.OpenBridgeAt(ctx, chatID, model, stamp)
+	return b.bridgeAccess.OpenBridgeAt(ctx, chatID, model, res)
 }
 
 // withLedger routes roles' admission and session opens through a ledger and a stamp recorder.

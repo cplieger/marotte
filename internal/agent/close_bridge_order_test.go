@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,7 +29,7 @@ func TestCloseBridge_ReleasesThenWaitsForTheForwardThenClosesTheTurns(t *testing
 	t.Run("a chunk queued at the release folds into the open turn", func(t *testing.T) {
 		h, cs, br, tab := closeTabHub(t)
 		t.Cleanup(func() { shutdownHub(t, h) })
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("Setup: open session: %v", err)
 		}
 		br.deliver(newTurnStartMsg())
@@ -61,7 +62,7 @@ func TestCloseBridge_ReleasesThenWaitsForTheForwardThenClosesTheTurns(t *testing
 	t.Run("a turn started at the release is closed before the forgets", func(t *testing.T) {
 		h, cs, br, tab := closeTabHub(t)
 		t.Cleanup(func() { shutdownHub(t, h) })
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("Setup: open session: %v", err)
 		}
 		br.mu.Lock()
@@ -103,7 +104,7 @@ func withSessionID(t *testing.T, msg *marotte.RPCResponse, sessionID string) *ma
 func TestCloseTab_TheOldSessionsFramesNeverReachTheReopenedChat(t *testing.T) {
 	h, cs, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
 	old := recordSessionID(t, cs)
@@ -171,10 +172,15 @@ func isCancelledOutcome(result any) bool {
 // and the prompt whose open asked for the reload, not yet sent, stays open for the reloaded session.
 func TestReloadIfMarked_AWireTurnOpenedDuringItsCloseIsClosed(t *testing.T) {
 	h, _ := reopenFixture(t)
-	first, err := h.coord.openBridge(t.Context(), "c1", "")
+	first, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("Setup: OpenBridge: %v", err)
 	}
+	res, ok := h.coord.turns.tryReserve("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp())
+	if !ok {
+		t.Fatal("Setup: the prompt's reservation was refused on an idle chat")
+	}
+	t.Cleanup(func() { h.coord.turns.releaseReservation(res) })
 	prompt, err := h.coord.openTurnNow(t.Context(), "c1", command.TurnOpen{
 		Source: marotte.TurnSourcePrompt, Prompt: &marotte.EntryPrompt{ID: "m-1", Text: "prompt"},
 	})
@@ -190,14 +196,11 @@ func TestReloadIfMarked_AWireTurnOpenedDuringItsCloseIsClosed(t *testing.T) {
 
 	opened := make(chan error, 1)
 	go func() {
-		_, err := h.coord.openBridge(context.Background(), "c1", "")
+		_, err := h.coord.openAtReleased(context.Background(), "c1", "", res)
 		opened <- err
 	}()
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
-		first.mu.Lock()
-		claimed := first.closeClaim != nil
-		first.mu.Unlock()
-		if claimed {
+		if first.life.closingSession(first) {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -230,11 +233,19 @@ func TestReleaseCheck_AWireTurnOpenedDuringItsCloseIsClosed(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br := fakeOf(sb)
 	gate := make(chan struct{})
+	closeAt := make(chan struct{})
+	var entered sync.Once
 	br.mu.Lock()
 	br.stopGate = gate
+	br.onCloseStart = func() { entered.Do(func() { close(closeAt) }) }
 	br.mu.Unlock()
 
 	h.coord.releaseIfUnheld("c1")
+	select {
+	case <-closeAt:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the release check's session/close never started")
+	}
 	br.deliver(newTurnStartMsg())
 	close(gate)
 	if !released(t, h, sb) {
