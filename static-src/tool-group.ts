@@ -1,9 +1,9 @@
 // Tool group: a collapsible container over consecutive tool calls, with a per-kind or mixed summary.
-// The box exists only FROM THE SECOND ROW: a shell showing one row and no folded hook carries CLS_BARE and renders
-// pixel-identical to a standalone `.tool-call`. The shell is mounted on the FIRST card and gains
-// chrome by class, since re-seating a card replays its entry slide and drops focus; so the
-// `.tool-group` selector alone does not mean "two or more" (consult `groupIsBare`). Collapse is
-// POSITIONAL: a group folds once something is posted after it, applied at construction when already
+// The header shows from the SECOND NON-HOOK CARD, or the second hook row in a lane with none (`paintGroup`); a shell
+// holding one card is CLS_BARE and renders as that `.tool-call`, its hooks badge on the card's header line and its
+// hook rows inside its box. The shell is mounted on the FIRST card and gains chrome by class, since re-seating a card
+// replays its entry slide and drops focus; so `.tool-group` alone does not mean "two or more" (`groupIsBare`).
+// Collapse is POSITIONAL: a group folds once something is posted after it, applied at construction when already
 // superseded (the only silent route) and by `autoCollapseGroup` live. A user click takes over.
 // A failed member folds like any other; the header's mark and count carry the failure.
 
@@ -12,7 +12,13 @@ import { chevronEl } from "./chevron.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { iconEl } from "./icon-el.js";
 import { outcomeIcon } from "./icons.js";
-import { foldGroupHooks, onHookVisibility } from "./hook-fold.js";
+import {
+  foldGroupHooks,
+  foldStrayHook,
+  hookStatusShown,
+  onHookVisibility,
+  type HookFold,
+} from "./hook-fold.js";
 import { syncHookBadge } from "./hook-badge.js";
 import { pressHold } from "./scroll.js";
 import { kindNoun } from "./tool-kind-noun.js";
@@ -24,14 +30,60 @@ import { queryAll } from "./dom.js";
  *  it, so a close that leaves it off makes the next header click close the group again. */
 const CLS_COLLAPSED = "tool-group-collapsed";
 const CLS_USER_TOGGLED = "tool-group-user-toggled";
-/** A shell showing fewer than two rows and no folded hook: no header, no group chrome. A pure
- *  function of what `foldGroupHooks` leaves, with ONE writer (refreshGroupHeader), so there is
- *  no second flag or counter to keep in step. */
+/** A shell with no header: fewer than two non-hook cards, or hook rows alone (`paintGroup` says when those count). A
+ *  pure function of what `foldGroupHooks` and `placeStrays` leave, with ONE writer (paintGroup), so there is no
+ *  second flag or counter to keep in step. */
 const CLS_BARE = "tool-group-bare";
 
+/** Each group's members as its last refresh folded them; `placeStrays` reads every sibling's. */
+const folds = new WeakMap<HTMLElement, HookFold>();
+
+/** The strays of hook-only siblings each group with work folds into its badge besides its own hooks. */
+const adopted = new WeakMap<HTMLElement, readonly HTMLElement[]>();
+
+/** Hook-only shells whose container's lane holds a non-hook card: their rows never form a group there. */
+const besideWork = new WeakSet<HTMLElement>();
+
+/** Whether each container's lane holds a non-hook card, mounted or not, as its renderer last said. */
+const laneWork = new WeakMap<HTMLElement, boolean>();
+
+/** Record whether `container`'s lane holds a non-hook card anywhere in its turn, mounted or not. Call it before the
+ *  pass that mounts into `container`. */
+export function setLaneHoldsWork(container: HTMLElement, holds: boolean): void {
+  laneWork.set(container, holds);
+}
+
+/** The delegate's or run's card a tool-trigger hook belongs to, and whether the call that opened it was refused. */
+export interface HookHost {
+  /** Null while the card is not mounted: its hooks keep the fate they would have beside it, and no badge lists them. */
+  readonly card: HTMLElement | null;
+  readonly refused: boolean;
+}
+
+/** Each container's hook cards bound to a card host, as its renderer last said. */
+const hookHosts = new WeakMap<HTMLElement, ReadonlyMap<HTMLElement, HookHost>>();
+
+/** A delegate's or a workflow run's card, a hooks badge host outside any tool group. */
+const CARD_HOST = ".subagent-block, .run-card";
+
+/** Record which card hosts each mounted hook card of `container` (from the store, so a window that leaves out the
+ *  card leaves the hook folded) and repaint every badge and row that moves. */
+export function setHookHosts(
+  container: HTMLElement,
+  hosts: ReadonlyMap<HTMLElement, HookHost>,
+): void {
+  hookHosts.set(container, hosts);
+  for (const [g, f] of placeStrays(container)) {
+    paintGroup(g, f);
+  }
+}
+
+/** Groups the reader had closed when they went bare, so the region they get back is born closed. */
+const readerClosed = new WeakSet<HTMLElement>();
+
 // Per-group disclosure controllers for .tool-group-body; the collapse STATE MACHINE stays marotte's.
-// ABSENT on a BARE shell: minted once by the refresh that makes the group non-bare, in the verdict's
-// state.
+// ABSENT on a BARE shell: minted by the refresh that makes the group non-bare, in the verdict's
+// state, and dropped by the one that makes it bare again.
 const groupCtls = new WeakMap<HTMLElement, DisclosureController>();
 
 // The newest-element verdict, pushed per card append. Read ONCE, by the refresh that creates the
@@ -50,9 +102,8 @@ export function groupBody(group: HTMLElement): HTMLElement {
   return group.querySelector<HTMLElement>(":scope > .tool-group-body") ?? group;
 }
 
-/** Whether this shell shows fewer than two rows and no folded hook, so it renders as a plain
- *  card with no header. Read it rather than the `.tool-group` selector, which does
- *  not mean "a group of two or more". */
+/** Whether this shell renders with no header (`paintGroup` decides). Read it rather than the `.tool-group` selector,
+ *  which does not mean "a group of two or more". */
 export function groupIsBare(group: HTMLElement): boolean {
   return group.classList.contains(CLS_BARE);
 }
@@ -62,7 +113,7 @@ export function groupIsBare(group: HTMLElement): boolean {
 /** Build a `.tool-group` shell: header (role=button, tabindex, aria-expanded) and a click/keyboard
  *  collapse toggle. The caller appends the cards and owns per-container grouping. */
 export function buildToolGroupShell(): HTMLDivElement {
-  // Born BARE, so "bare ⇔ fewer than two members" holds at every instant, construction included.
+  // Born BARE: an empty shell has nothing to group, so the class is right before the first refresh too.
   const group = el("div", { className: `tool-group ${CLS_BARE}` }) as HTMLDivElement;
   const header = el(
     "div",
@@ -93,27 +144,153 @@ export function buildToolGroupShell(): HTMLDivElement {
   group.appendChild(header);
   group.appendChild(el("div", { className: "tool-group-body" }));
   // NO disclosure yet: a bare shell has nothing to disclose and its header is `display: none`.
-  // `ensureGroupDisclosure` mints it when the second card lands.
+  // `ensureGroupDisclosure` mints it from the refresh that first paints the shell non-bare.
   return group;
 }
 
 /** Bring a group's header into line with its members: the bare class, the body region (created
- *  only here, via `ensureGroupDisclosure`), the summary and the verdict. Called after each append,
- *  on every status flip and on collapse toggle. */
+ *  only here, via `ensureGroupDisclosure`), the hooks badge, the summary and the verdict, and the
+ *  same for each sibling `placeStrays` moved. Called after each append, on every status flip
+ *  and on collapse toggle. */
 export function refreshGroupHeader(group: HTMLElement): void {
-  const members = [
-    ...group.querySelectorAll(":scope > .tool-group-body > .tool-call"),
-  ] as HTMLElement[];
+  const fold = foldGroupHooks([
+    ...group.querySelectorAll<HTMLElement>(":scope > .tool-group-body > .tool-call"),
+  ]);
+  folds.set(group, fold);
+  const moved =
+    group.parentElement === null
+      ? new Map<HTMLElement, HookFold>()
+      : placeStrays(group.parentElement);
+  paintGroup(group, fold);
+  for (const [g, f] of moved) {
+    if (g !== group) {
+      paintGroup(g, f);
+    }
+  }
+}
+
+/** Fold each hook-only sibling's strays into the nearest badge host in `container`, a group with work or a card
+ *  host: the last one before it, else the first one after it. With no such host they stay rows. A gated hook goes by
+ *  `setHookHosts`. Paints each card host's badge and returns the groups whose rows, badge or `besideWork` membership
+ *  moved, with their folds. */
+function placeStrays(container: HTMLElement): Map<HTMLElement, HookFold> {
+  const groups: [HTMLElement, HookFold][] = [];
+  const into = new Map<HTMLElement, HTMLElement[]>();
+  let last: HTMLElement[] | null = null;
+  const before: HTMLElement[] = [];
+  for (const c of container.querySelectorAll<HTMLElement>(
+    `:scope > .tool-group, :scope > :is(${CARD_HOST})`,
+  )) {
+    const card = c.matches(CARD_HOST);
+    const f = card ? undefined : folds.get(c);
+    if (f !== undefined) {
+      groups.push([c, f]);
+    }
+    if (card || (f !== undefined && f.work.length > 0)) {
+      last = last === null ? before : [];
+      into.set(c, last);
+    } else if (f !== undefined) {
+      (last ?? before).push(...f.strays);
+    }
+  }
+  const bound = hookHosts.get(container);
+  const shown = hookStatusShown();
+  const gatedMoved = new Set<HTMLElement>();
+  for (const [g, f] of groups) {
+    for (const c of f.gated) {
+      const h = bound?.get(c);
+      if (placeGated(c, h, h !== undefined && !h.refused && shown, shown)) {
+        gatedMoved.add(g);
+      }
+    }
+  }
+  // A card host lists every hook bound to it: folded, or a row while status shows, as a lone box lists its own.
+  for (const [c, h] of bound ?? []) {
+    if (h.card !== null && (c.hasAttribute("data-hook-folded") || (shown && !c.hidden))) {
+      into.get(h.card)?.push(c);
+    }
+  }
+  const folded = new Set([...into.values()].flat());
+  // Strays need a mounted badge to join; whether the lane holds a tool box does not.
+  const work = laneWork.get(container) === true;
+  const moved = new Map<HTMLElement, HookFold>();
+  for (const [g, f] of groups) {
+    if (f.work.length > 0) {
+      const list = into.get(g) ?? [];
+      const was = adopted.get(g) ?? [];
+      if (list.length !== was.length || list.some((c, i) => c !== was[i])) {
+        adopted.set(g, list);
+        moved.set(g, f);
+      }
+      continue;
+    }
+    // A group a window drop left with no non-hook card folds no sibling's strays any more.
+    let changed = adopted.delete(g) || besideWork.has(g) !== work || gatedMoved.has(g);
+    if (work) {
+      besideWork.add(g);
+    } else {
+      besideWork.delete(g);
+    }
+    for (const s of f.strays) {
+      if (s.hidden !== folded.has(s)) {
+        foldStrayHook(s, folded.has(s));
+        changed = true;
+      }
+    }
+    if (changed) {
+      moved.set(g, f);
+    }
+  }
+  for (const [h, list] of into) {
+    if (h.matches(CARD_HOST)) {
+      // In page order: its strays and its bound hooks join it in two passes.
+      list.sort((a, b) =>
+        a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+      );
+      syncHookBadge(h, list, h);
+    }
+  }
+  return moved;
+}
+
+/** Give a gated hook its fate: folded into its card host's badge, a row beside a refused one, else what
+ *  `foldGroupHooks` gave it. Returns whether it moved. */
+function placeGated(
+  c: HTMLElement,
+  h: HookHost | undefined,
+  folded: boolean,
+  shown: boolean,
+): boolean {
+  const hidden = folded || (h?.refused !== true && !shown);
+  if (c.hidden === hidden && c.hasAttribute("data-hook-folded") === folded) {
+    return false;
+  }
+  c.hidden = hidden;
+  c.toggleAttribute("data-hook-folded", folded);
+  return true;
+}
+
+/** The ONE writer of the bare class: paint `group` from its fold and the strays it took in. */
+function paintGroup(group: HTMLElement, fold: HookFold): void {
   // The summary reads the rows alone: the hooks badge counts every folded hook, and a hook is no operation.
-  const { rows, folded } = foldGroupHooks(members);
-  // The ONE writer of the bare class. Above the summary-span guard, which would otherwise exempt a
-  // shell without a count span.
-  group.classList.toggle(CLS_BARE, rows.length < 2 && folded.length === 0);
-  group.hidden = rows.length === 0 && folded.length === 0;
+  const rows = fold.rows.filter((c) => !c.hidden);
+  // A group is made of non-hook cards. Hook rows alone form one only in a lane with none.
+  const bare =
+    fold.work.length > 0 ? fold.work.length < 2 : besideWork.has(group) || rows.length < 2;
+  // A lone box's badge lists its hook rows too, which it keeps showing; a group's lists what it folded.
+  const own = bare && fold.work.length > 0 ? fold.listed : fold.folded;
+  const badged = [...own, ...(adopted.get(group) ?? [])];
+  // Above the summary-span guard, which would otherwise exempt a shell without a count span.
+  group.classList.toggle(CLS_BARE, bare);
+  group.hidden = rows.length === 0 && badged.length === 0;
   // Deliberately ABOVE the summary-span guard too, and for the same reason: a shell carrying no
   // count span would otherwise never get its region. This is the ONE creation site.
-  ensureGroupDisclosure(group, members);
-  syncHookBadge(group, folded);
+  if (bare) {
+    dropGroupDisclosure(group);
+  } else {
+    ensureGroupDisclosure(group, fold.rows);
+  }
+  syncHookBadge(group, badged, bare ? (fold.work[0] ?? group) : group);
   const header = group.querySelector(".tool-group-header .tool-group-count");
   if (header === null) {
     return;
@@ -137,11 +314,9 @@ onHookVisibility(() => {
 });
 
 /** Give a non-bare group its body region ONCE, in its FINAL open/closed state, so the state machine
- *  alone moves a fold afterwards. A non-bare → bare drop (`pruneEmptyContainers`) leaves the
- *  controller in place: disposing would also need `region.style.height` cleared, since
- *  `dispose()` pins `0px` for a closed region. */
+ *  alone moves a fold afterwards. */
 function ensureGroupDisclosure(group: HTMLElement, calls: HTMLElement[]): void {
-  if (groupIsBare(group) || groupCtls.has(group)) {
+  if (groupCtls.has(group)) {
     return;
   }
   const collapsed = bornCollapsed(group, calls);
@@ -151,10 +326,36 @@ function ensureGroupDisclosure(group: HTMLElement, calls: HTMLElement[]): void {
   }
 }
 
-/** Whether the region is created CLOSED: `autoCollapseGroup`'s carve-outs at construction (the
- *  verdict, then a reader's decision, a running member). */
+/** Unwire the region of a group that went bare and leave it open: its header is hidden, so a
+ *  closed region would hide its rows with no way back. `dispose()` pins `0px` on a closed region
+ *  and keeps it inert, so both are cleared here. */
+function dropGroupDisclosure(group: HTMLElement): void {
+  const ctl = groupCtls.get(group);
+  if (ctl === undefined) {
+    return;
+  }
+  if (group.classList.contains(CLS_USER_TOGGLED) && group.classList.contains(CLS_COLLAPSED)) {
+    readerClosed.add(group);
+  } else {
+    readerClosed.delete(group);
+  }
+  ctl.dispose();
+  groupCtls.delete(group);
+  const body = groupBody(group);
+  body.style.removeProperty("height");
+  body.inert = false;
+  body.setAttribute("aria-hidden", "false");
+  group.classList.remove(CLS_COLLAPSED);
+  group.querySelector(".tool-group-header")?.setAttribute("aria-expanded", "true");
+}
+
+/** Whether the region is created CLOSED: a reader's decision first, then `autoCollapseGroup`'s
+ *  carve-outs at construction (the verdict, a running member). */
 function bornCollapsed(group: HTMLElement, calls: HTMLElement[]): boolean {
-  if (groupSuperseded.get(group) !== true || group.classList.contains(CLS_USER_TOGGLED)) {
+  if (group.classList.contains(CLS_USER_TOGGLED)) {
+    return readerClosed.has(group);
+  }
+  if (groupSuperseded.get(group) !== true) {
     return false;
   }
   for (const c of calls) {
@@ -432,9 +633,8 @@ function onHeaderClick(group: HTMLDivElement, header: HTMLDivElement): void {
  *  a running member (folded by the render pass after its settle drops `data-start-ms`). THE LIVE PATH
  *  ONLY, and animated; a group condemned at creation is closed silently by `ensureGroupDisclosure`. */
 export function autoCollapseGroup(group: HTMLElement): void {
-  // A BARE group's body region IS the lone card, and its header is hidden — so
-  // closing the disclosure would make the card vanish with no affordance to bring
-  // it back. Correctness, not tidiness.
+  // A BARE group's body holds every row it shows, and its header is hidden, so closing
+  // the region would make them vanish with no affordance to bring them back.
   if (groupIsBare(group)) {
     return;
   }

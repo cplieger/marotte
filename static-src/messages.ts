@@ -88,6 +88,7 @@ import {
   planResidency,
   rendersNothing,
   runCardOwners,
+  setRunCardOwners,
   sliceTurn,
   turnOrdinalOf,
   turnSpan,
@@ -127,7 +128,6 @@ import {
   dropHead,
   dropTail,
   geometrySkipped,
-  setRunCardOwners,
   openNoteRun,
 } from "./messages-blocks.js";
 import { wakeLine } from "./turn-wake.js";

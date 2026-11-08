@@ -100,25 +100,29 @@
   border-radius: var(--r);
   overflow: hidden;
 
-  /* The hooks badge's box: its glyph, gap and count digits (`--hooks-digits`, hook-badge.ts) in the badge's own mono
-     font, floored at the row's tap size. The header reserves it as padding, so it reads in the header's font too. */
-  &.tool-group-has-hooks {
-    --hooks-w: max(
-      var(--row-tap),
-      calc(2 * var(--sp-2) + var(--icon-btn) + var(--sp-1) + var(--hooks-digits, 1) * 1ch)
-    );
-
-    position: relative;
-    isolation: isolate;
-
-    & > .tool-group-header {
-      padding-inline-end: calc(var(--hooks-w) + 2 * var(--sp-2));
-    }
-  }
-
   /* The `display` above beats the UA's `[hidden]`; a group whose every member is hidden is. */
   &[hidden] {
     display: none;
+  }
+}
+
+/* A group, a lone card, or a delegate's or run's card carrying the hooks badge (hook-badge.ts). The badge's box: its
+   glyph, gap and count digits (`--hooks-digits`) in the badge's own mono font, floored at the row's tap size. The
+   header reserves it as padding, so it reads in the header's font too. */
+.tool-group-has-hooks {
+  --hooks-w: max(
+    var(--row-tap),
+    calc(2 * var(--sp-2) + var(--icon-btn) + var(--sp-1) + var(--hooks-digits, 1) * 1ch)
+  );
+
+  position: relative;
+  isolation: isolate;
+
+  & > .tool-group-header,
+  & > .tool-summary > .tool-header,
+  & > .subagent-header,
+  & > .run-head {
+    padding-inline-end: calc(var(--hooks-w) + 2 * var(--sp-2));
   }
 }
 
@@ -186,12 +190,17 @@
   display: none;
 }
 
-/* No header, so the one row's hairline would be a stray line. This and the
+/* No header, so the first row's hairline would be a stray line. This and the
  * `padding-block` scoping above together make a bare group identical to a standalone
  * `.tool-call`; the chrome stays on the group, or a two-member group would have none.
- * Every member, not `:first-child`: a hidden hook card may sit before the one row. */
+ * Every member, not `:first-child`: a hidden hook card may sit before the one row. A hook
+ * row the lone call keeps sits in that same box, ruled off the row above it. */
 .tool-group-bare > .tool-group-body > .tool-call {
   border-top: 0;
+
+  &:not([hidden]) ~ :where(.tool-call:not([hidden])) {
+    border-top: 1px solid color-mix(in srgb, var(--c-border) 55%, transparent);
+  }
 }
 
 /* One hover recipe for every transcript box header: the interaction ladder's wash
@@ -233,8 +242,9 @@
 }
 
 /* The hooks folded out of the rows: the fish-hook glyph and their count, a button that opens the list of those hooks.
-   A button cannot sit inside the header's `role="button"`, so it is the header's sibling, laid over the header's
-   top-right corner and centred in its first line: the header's own surface, and so its highlight, spans the card.
+   A button cannot sit inside the group header's `role="button"`, so it is the sibling of its host's header (the
+   group's, a lone card's summary, or a delegate's or run's card's head), laid over that header's top-right corner
+   and centred in its first line: the header's own surface, and so its highlight, spans the card.
    It takes the turn footer's control box (61-mcp-tools.css), so its paint, hover and press are the footer buttons';
    the shared expander holds the target. Its width is floored at the row's tap size, so the expander never grows
    sideways over the header. */
@@ -269,7 +279,7 @@
 
 /* The footer row's ink, which the footer buttons inherit: the badge is no child of the header, so the shared box's
    `color: inherit` would give it the box's primary ink and leave hover no lift. (0,2,0), under the shared hover. */
-.tool-group > .tool-group-hooks {
+.tool-group-has-hooks > .tool-group-hooks {
   color: var(--c-text-secondary);
 }
 

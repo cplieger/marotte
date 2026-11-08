@@ -1160,6 +1160,7 @@ describe("server-hit navigation", () => {
       const group = buildToolGroupShell();
       row.appendChild(group);
       const members: Record<string, string>[] = [
+        { entryId: "e0", kind: "execute", title: "go build" },
         { entryId: "e1", kind: "execute", title: "go vet" },
         {
           entryId: "e2",
@@ -1238,6 +1239,80 @@ describe("server-hit navigation", () => {
     },
   );
 
+  /** A lone command's shell, and with `stray` a quiet turn hook's own shell after prose, in one message row. */
+  function loneCommand(stray: boolean): HTMLElement {
+    stageChat(["u1"]);
+    const row = mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row"></div>`,
+    ).querySelector(".msg-row") as HTMLElement;
+    const card = (m: Record<string, string>): HTMLElement => {
+      const c = document.createElement("div");
+      c.className = "tool-call";
+      c.dataset["outcome"] = "ok";
+      Object.assign(c.dataset, m);
+      c.innerHTML = `<div class="tool-summary"><span class="tool-title">${m["title"] ?? ""}</span></div>`;
+      return c;
+    };
+    const hook = {
+      entryId: "e2",
+      kind: "hook",
+      title: "Hook fired: Destructive command guard",
+      filePath: ".kiro/hooks/destructive-guard.json",
+      filename: "destructive-guard.json",
+      hookTrigger: "Stop",
+    };
+    const lone = buildToolGroupShell();
+    row.appendChild(lone);
+    groupBody(lone).appendChild(card({ entryId: "e1", kind: "execute", title: "go vet" }));
+    let shells = [lone];
+    if (stray) {
+      row.insertAdjacentHTML("beforeend", `<div class="message assistant">done</div>`);
+      const own = buildToolGroupShell();
+      row.appendChild(own);
+      shells = [own, lone];
+      groupBody(own).appendChild(card(hook));
+    } else {
+      groupBody(lone).appendChild(card(hook));
+    }
+    for (const g of shells) {
+      refreshGroupHeader(g);
+    }
+    return groupBody(lone).querySelector<HTMLElement>(".tool-call") as HTMLElement;
+  }
+
+  it.each<[string, boolean]>([
+    ["its own", false],
+    ["a stray turn hook's", true],
+  ])(
+    "lands a hit on %s folded hook on the hooks badge of a lone command's card",
+    async (_case, stray) => {
+      const command = loneCommand(stray);
+      const badge = command.querySelector<HTMLElement>(":scope > .tool-group-hooks");
+      expect(badge).not.toBeNull();
+      stageHits([
+        serverHit({
+          entry_id: "e2",
+          excerpt: "Hook fired: Destructive command guard",
+          kind: "tool",
+          segments: ["tool_title"],
+        }),
+      ]);
+
+      await openAndSearch("Destructive");
+      await vi.waitFor(() => {
+        expect(countText()).toBe("1 of 1 \u00b7 listed under the hooks badge");
+      });
+      expect(badge?.classList).toContain("find-target-flash");
+      const item = document.querySelector(".tool-hook-popover .tool-hook-item");
+      expect(item?.querySelector("mark.find-hit-current")?.textContent).toBe("Destructive");
+      closeFind();
+      await vi.waitFor(() => {
+        expect(document.querySelector(".tool-hook-popover.is-open")).toBeNull();
+      });
+    },
+  );
+
   it("marks only the current folded hook's row when two hooks of one group are hits", async () => {
     stageChat(["u1"]);
     const row = mountTurnCard(
@@ -1261,6 +1336,7 @@ describe("server-hit navigation", () => {
       card.className = "tool-call";
       card.dataset["outcome"] = "ok";
       Object.assign(card.dataset, m);
+      card.innerHTML = `<div class="tool-summary"><span class="tool-title">${m["title"] ?? ""}</span></div>`;
       if (m["kind"] === "hook") {
         card.setAttribute("data-hook-gates", "");
       }

@@ -315,7 +315,22 @@ interface RunCardOwner {
 }
 
 /** run id → its card's host, in turn and `seq` order. */
-export type RunCardOwners = ReadonlyMap<string, RunCardOwner>;
+type RunCardOwners = ReadonlyMap<string, RunCardOwner>;
+
+// The transcript's owners for the current pass, read by the renderer and the spacer alike so the two cannot price
+// one mention differently. Derived per pass, never a live registry, which would let two mentions both claim a card.
+let transcriptOwners: RunCardOwners = new Map();
+
+/** Name the transcript's run-card owners for this pass, `runCardOwners` over its held turns. */
+export function setRunCardOwners(owners: RunCardOwners): void {
+  transcriptOwners = owners;
+}
+
+/** Whether `entryID` hosts `runID`'s card in the transcript: the run's owner, or any mention of a run with none. */
+export function hostsRunCard(runID: string, entryID: string): boolean {
+  const owner = transcriptOwners.get(runID);
+  return owner === undefined || owner.entry === entryID;
+}
 
 /**
  * run id → the `tool_call` entry hosting that run's card: the first naming it in turn and

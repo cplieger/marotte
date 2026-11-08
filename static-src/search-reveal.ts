@@ -152,7 +152,10 @@ function openContainers(itemEl: HTMLElement, hit: Hit): OpenedContainer[] {
       break;
     }
   }
-  const card = itemEl.closest<HTMLElement>(".tool-call");
+  // A lone card's hooks badge sits in that card, whose details hold none of the hook's words.
+  const card = itemEl.classList.contains("tool-group-hooks")
+    ? null
+    : itemEl.closest<HTMLElement>(".tool-call");
   if (card !== null && wordsInDetails(card, hit.segments)) {
     openToolDetails(card, out, keep);
   }

@@ -1,7 +1,7 @@
 // What a range of a turn's ENTRIES is worth in pixels. In the NODE project because the
 // arithmetic is pure, and a DOM import in this graph would throw at load. Every case
 // states the whole cache and turn.
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 
 import {
   ENTRY_ESTIMATE_PX,
@@ -12,7 +12,7 @@ import {
   recordRowHeight,
   spacerHeight,
 } from "./block-heights.js";
-import type { EntryRange } from "./block-window.js";
+import { runCardOwners, setRunCardOwners, type EntryRange } from "./block-window.js";
 import type { Turn } from "./turns.js";
 import type { Entry } from "./types.js";
 
@@ -234,7 +234,32 @@ describe("what a tool call MOUNTS AS", () => {
   it("prices a DELEGATE INVOCATION at the subagent card, not at the tool row", () => {
     // Its element is a `.subagent-block`, and the transcript draws exactly one thing per
     // delegate — this entry — so the card's height is reserved here or nowhere.
-    expect(stood(turn("t", [call(1, { subtask: "sub-1" })]))).toBe(71 + GAP_PX);
+    expect(stood(turn("t", [call(1, { subtask: "sub-1", title: "invokeSubAgent" })]))).toBe(
+      71 + GAP_PX,
+    );
+  });
+
+  describe("with the transcript's run-card owners named", () => {
+    afterEach(() => {
+      setRunCardOwners(new Map());
+    });
+
+    it("prices a LATER MENTION of a run as the tool row it mounts as", () => {
+      const t = turn("t", [
+        call(1, { id: "launch", run: "wf-1" }),
+        call(2, { id: "inspect", run: "wf-1" }),
+        call(3),
+      ]);
+      setRunCardOwners(runCardOwners([t]));
+      const plain = turn("t", [call(1, { id: "launch", run: "wf-1" }), call(2), call(3)]);
+      expect(stood(t)).toBe(stood(plain));
+    });
+
+    it("prices a mention whose run's card another turn hosts as a tool row", () => {
+      setRunCardOwners(new Map([["wf-1", { turn: "earlier", entry: "launch" }]]));
+      const t = turn("t", [call(1, { id: "inspect", run: "wf-1" }), call(2)]);
+      expect(stood(t)).toBe(stood(turn("t", [call(1), call(2)])));
+    });
   });
 
   // Replay of an older engine's pipeline: the driver is an ordinary tool row and each stage an

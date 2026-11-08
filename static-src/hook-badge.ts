@@ -1,5 +1,6 @@
-// The hooks badge on a tool group's header, and the popover it opens listing each folded hook once with its run
-// count. hook-fold.ts decides which hooks fold; this draws them.
+// The hooks badge on a tool group's header, a lone tool card's, or a delegate's or run's card's, and the popover it
+// opens listing each hook it counts once with its run count. hook-fold.ts decides which hooks fold and tool-group.ts
+// which header carries them; this draws them.
 
 import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
@@ -9,11 +10,14 @@ import { iconEl } from "./icon-el.js";
 import { fileIcon, toolIcon } from "./icons.js";
 import { kindNoun } from "./tool-kind-noun.js";
 
-/** Set on a group that carries a hooks badge, which `14-tools.css` lays over the header's top-right corner. */
+/** Set on the group or card that carries a hooks badge, which `14-tools.css` lays over its header's top-right corner. */
 const CLS_HAS_HOOKS = "tool-group-has-hooks";
 
 /** The badge count's digit count, from which `14-tools.css` sizes the badge and the header's reserved padding. */
 const DIGITS_VAR = "--hooks-digits";
+
+/** The box a badge's list fits in: its group, or the delegate's or run's card it sits on. */
+const BOX = ".tool-group, .subagent-block, .run-card";
 
 /** The open list's widest fit, which `14-tools.css` caps the panel at. */
 const ROOM_VAR = "--hook-pop-room";
@@ -44,7 +48,7 @@ export function hookTriggerLabel(trigger: string): string {
   return trigger === "" ? "trigger unknown" : (TRIGGER_LABELS.get(trigger) ?? trigger);
 }
 
-/** One hook as the popover lists it: all its folded runs, which share a name, a hook file and a trigger. */
+/** One hook as the popover lists it: all its listed runs, which share a name, a hook file and a trigger. */
 interface HookEntry {
   readonly key: string;
   readonly name: string;
@@ -56,7 +60,7 @@ interface HookEntry {
   runs: number;
 }
 
-/** The list row a folded hook card is counted in: its name, hook file and trigger. */
+/** The list row a listed hook card is counted in: its name, hook file and trigger. */
 function hookKey(card: HTMLElement): string {
   return join(
     card.dataset["title"] ?? "",
@@ -65,10 +69,10 @@ function hookKey(card: HTMLElement): string {
   );
 }
 
-/** The folded hooks grouped by name, hook file and trigger, in order of first appearance. */
-function hookEntries(folded: readonly HTMLElement[]): HookEntry[] {
+/** The listed hooks grouped by name, hook file and trigger, in order of first appearance. */
+function hookEntries(listed: readonly HTMLElement[]): HookEntry[] {
   const entries = new Map<string, HookEntry>();
-  for (const card of folded) {
+  for (const card of listed) {
     const title = card.dataset["title"] ?? "";
     const path = card.dataset["filePath"] ?? "";
     const trigger = card.dataset["hookTrigger"] ?? "";
@@ -93,7 +97,7 @@ function hookEntries(folded: readonly HTMLElement[]): HookEntry[] {
 
 /** What a hooks badge opens: the hooks it counts and its popover, which lives as long as the badge. */
 interface HookPopover {
-  folded: readonly HTMLElement[];
+  listed: readonly HTMLElement[];
   readonly panel: HTMLElement;
   readonly ctl: PopoverController;
   /** Watches the open list's group: a resize refits the list, and a group leaving the page closes it. */
@@ -102,40 +106,84 @@ interface HookPopover {
 
 const popovers = new WeakMap<HTMLElement, HookPopover>();
 
-/** Paint the group's hooks badge for its folded hooks, absent with none. The badge is the one place the hook count
- *  lives and counts runs; it is a sibling of the header, since a button inside the header's `role="button"` is not
+/** Each group's or card host's badge, wherever in it the badge sits. */
+const badges = new WeakMap<HTMLElement, HTMLElement>();
+
+/** The badge listing each folded hook card, which may sit in another group than the card. */
+const foldedInto = new WeakMap<HTMLElement, HTMLElement>();
+
+/** Paint the group's hooks badge listing the hook cards `listed` on `host`, the group, its lone card or (as `group`
+ *  too) a delegate's or run's card, absent with none. The badge is the one place the hook count lives and counts
+ *  runs; it is a sibling of the host's header, since a button inside the group header's `role="button"` is not
  *  reachable by assistive technology. */
-export function syncHookBadge(group: HTMLElement, folded: readonly HTMLElement[]): void {
-  let badge = group.querySelector<HTMLElement>(":scope > .tool-group-hooks");
-  if (folded.length === 0) {
+export function syncHookBadge(
+  group: HTMLElement,
+  listed: readonly HTMLElement[],
+  host: HTMLElement,
+): void {
+  let badge = badges.get(group) ?? null;
+  const was = badge?.parentElement ?? null;
+  if (listed.length === 0) {
     if (badge !== null) {
       const state = popovers.get(badge);
       state?.watch.disconnect();
       state?.ctl.dispose();
       state?.panel.remove();
       badge.remove();
+      badges.delete(group);
     }
-    group.classList.remove(CLS_HAS_HOOKS);
-    group.style.removeProperty(DIGITS_VAR);
+    if (was !== null) {
+      unmarkHost(was);
+    }
     return;
   }
   badge ??= mountBadge(group);
-  group.classList.add(CLS_HAS_HOOKS);
+  if (was !== host) {
+    if (was !== null) {
+      unmarkHost(was);
+    }
+    seatBadge(badge, host);
+  }
+  host.classList.add(CLS_HAS_HOOKS);
   const state = popovers.get(badge);
   if (state === undefined) {
     return;
   }
-  state.folded = folded;
-  const count = String(folded.length);
-  group.style.setProperty(DIGITS_VAR, String(count.length));
+  state.listed = listed;
+  for (const card of listed) {
+    if (card.hasAttribute("data-hook-folded")) {
+      foldedInto.set(card, badge);
+    } else {
+      foldedInto.delete(card);
+    }
+  }
+  const count = String(listed.length);
+  host.style.setProperty(DIGITS_VAR, String(count.length));
   const visible = badge.querySelector(".tool-group-hooks-n");
   if (visible !== null && visible.textContent !== count) {
     visible.textContent = count;
   }
-  badge.setAttribute("aria-label", `${count} ${kindNoun("hook", folded.length)} ran`);
+  badge.setAttribute("aria-label", `${count} ${kindNoun("hook", listed.length)} ran`);
   if (state.ctl.isOpen) {
     renderHookList(state);
   }
+}
+
+function unmarkHost(host: HTMLElement): void {
+  host.classList.remove(CLS_HAS_HOOKS);
+  host.style.removeProperty(DIGITS_VAR);
+}
+
+/** After the host's header: the group's, a card's summary row, or a delegate's or run's card's head. Every host has
+ *  one, so none is a broken caller. */
+function seatBadge(badge: HTMLElement, host: HTMLElement): void {
+  const header = host.querySelector(
+    ":scope > :is(.tool-group-header, .tool-summary, .subagent-header, .run-head)",
+  );
+  if (header === null) {
+    throw new Error("hooks badge host has no header");
+  }
+  header.after(badge);
 }
 
 function mountBadge(group: HTMLElement): HTMLElement {
@@ -176,7 +224,7 @@ function mountBadge(group: HTMLElement): HTMLElement {
     initialFocus: panel,
     returnFocus: badge,
     onOpen: () => {
-      const g = badge.closest(".tool-group");
+      const g = badge.closest(BOX);
       if (g !== null) {
         watch.observe(g);
       }
@@ -186,17 +234,12 @@ function mountBadge(group: HTMLElement): HTMLElement {
       panel.remove();
     },
   });
-  const state: HookPopover = { folded: [], panel, ctl, watch };
+  const state: HookPopover = { listed: [], panel, ctl, watch };
   popovers.set(badge, state);
   badge.addEventListener("click", () => {
     toggleHookPopover(state, badge);
   });
-  const header = group.querySelector(":scope > .tool-group-header");
-  if (header === null) {
-    group.appendChild(badge);
-  } else {
-    header.after(badge);
-  }
+  badges.set(group, badge);
   return badge;
 }
 
@@ -220,7 +263,7 @@ function showList(state: HookPopover, badge: HTMLElement): void {
 /** Cap the list at the room between its group's start edge and the badge's end edge, the span an end-aligned list
  *  can take without leaving the turn card. Measured, since the panel is fixed to the viewport. */
 function fitList(panel: HTMLElement, badge: HTMLElement): void {
-  const group = badge.closest(".tool-group");
+  const group = badge.closest(BOX);
   if (group === null) {
     return;
   }
@@ -240,7 +283,7 @@ export function showHookPopover(badge: HTMLElement): boolean {
   return true;
 }
 
-/** The open list's row counting the folded hook `card`, null while the list is closed. Every show rebuilds the
+/** The open list's row counting the listed hook `card`, null while the list is closed. Every show rebuilds the
  *  list, so a mark find-in-chat puts in a row never outlives the list's close. */
 export function hookRowOf(badge: HTMLElement, card: HTMLElement): HTMLElement | null {
   const state = popovers.get(badge);
@@ -265,7 +308,7 @@ export function hideHookPopover(badge: HTMLElement): void {
 
 /** Rebuilt only when the entries change, so a focused chip keeps its focus. */
 function renderHookList(state: HookPopover): void {
-  const entries = hookEntries(state.folded);
+  const entries = hookEntries(state.listed);
   const keys = entries.map((e) => join(e.key, String(e.runs))).join("\n");
   if (state.panel.dataset["keys"] === keys) {
     return;
@@ -327,7 +370,6 @@ export function foldedHookBadge(card: HTMLElement): HTMLElement | null {
   if (!card.hasAttribute("data-hook-folded")) {
     return null;
   }
-  return (
-    card.closest(".tool-group")?.querySelector<HTMLElement>(":scope > .tool-group-hooks") ?? null
-  );
+  const badge = foldedInto.get(card);
+  return badge?.isConnected === true ? badge : null;
 }

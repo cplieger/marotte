@@ -164,6 +164,7 @@ const within = (inner: Box, outer: Box): boolean =>
  *  overlap is a target covering another. */
 const OVERLAYS: readonly (readonly [over: string, base: string])[] = [
   [".tool-group-hooks", ".tool-group-header"],
+  [".tool-group-hooks", ".tool-header"],
 ];
 
 const overlays = (over: HTMLElement, base: HTMLElement): boolean =>

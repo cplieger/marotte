@@ -862,7 +862,7 @@ function entryElement(card: HTMLElement, entryID: string): HTMLElement | null {
   if (stamped === null) {
     return null;
   }
-  // A folded hook's card is hidden; its group's hooks badge stands for it.
+  // A folded hook's card is hidden; the hooks badge counting it stands for it.
   return foldedHookBadge(stamped) ?? stamped.closest<HTMLElement>(FIND_UNIT_SELECTOR) ?? stamped;
 }
 

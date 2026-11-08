@@ -20,6 +20,7 @@ import {
   effectiveRunID,
   entryAt,
   entryRenders,
+  hostsRunCard,
   NO_FOLDS,
   turnFolds,
   continuesRun,
@@ -27,7 +28,6 @@ import {
   runResults,
   turnSpan,
   type EntryRange,
-  type RunCardOwners,
   type RunResults,
   type TurnFolds,
 } from "./block-window.js";
@@ -80,16 +80,19 @@ import { planElement, updatePlanElement } from "./messages-plan.js";
 import {
   buildToolGroupShell,
   groupBody,
-  groupIsBare,
   refreshGroupHeader,
   autoCollapseGroup,
   setGroupSuperseded,
+  setHookHosts,
+  setLaneHoldsWork,
+  type HookHost,
 } from "./tool-group.js";
 
 // Re-exported for messages.ts to inject into messages-tools' status-flip path.
 export { refreshGroupHeader };
 import { delegateDetail, iconForSubagent, subagentLabel, subagentName } from "./roles.js";
 import { delegateStopWord } from "./delegate-stop.js";
+import { callRefused } from "./hook-fold.js";
 import { buildRunCard, type RunCardView, type RunDisclosure } from "./fundamentals/run-card.js";
 import {
   invalidateRun,
@@ -184,22 +187,9 @@ function clearLiveAnchor(el: HTMLElement): void {
   setLiveAnchor(scanLiveAnchor());
 }
 
-// Run id to the `tool_call` entry hosting its card, derived per pass by `runCardOwners`. Derived, not a live
-// registry, which would let two mentions in one turn both claim it. An absent run lets every mention build the card.
-
-let runCardOwnerEntries: RunCardOwners = new Map();
-
-export function setRunCardOwners(owners: RunCardOwners): void {
-  runCardOwnerEntries = owners;
-}
-
 /** Whether this `tool_call` entry hosts `runID`'s card. A detached render is exempt, being its own surface. */
 function ownsRunCard(st: TurnRender, runID: string, entryID: string): boolean {
-  if (st.detached) {
-    return true;
-  }
-  const owner = runCardOwnerEntries.get(runID);
-  return owner === undefined || owner.entry === entryID;
+  return st.detached || hostsRunCard(runID, entryID);
 }
 
 // Which collapsible containers are open, so a re-mount restores the reader's choice. Delegates have no key, and
@@ -338,6 +328,8 @@ interface TurnRender {
    * because the lazy creators run without `idx`.
    */
   boxExpanded: Map<string, boolean>;
+  /** Hook entry `seq` to the box hosting it (`indexGroups`), overwritten wholesale per pass. */
+  hookBoxes: Map<number, HookBox>;
   /**
    * Where an inserted entry goes in its container: a Map during a head extension, null otherwise. Null also tells
    * `appendEntry` not to seal.
@@ -464,6 +456,7 @@ function buildBody(
     toolGroups: new Map(),
     containerAt: new Map(),
     boxExpanded: new Map(),
+    hookBoxes: new Map(),
     insertBefore: null,
     renderID: renderIDFor(turn.id, lane),
     turnID: turn.id,
@@ -488,6 +481,7 @@ function buildBody(
     renderRange(st, want.from, want.to, live, idx);
     syncOpenTail(st, live);
     syncContainerCollapse(st, idx);
+    syncHookHosts(st);
   });
 }
 
@@ -708,11 +702,13 @@ function updatePass(st: TurnRender, turn: Turn, want: EntryRange, streaming: boo
   if (want.to > st.window.to) {
     renderRange(st, st.window.to, want.to, streaming, idx);
   }
+  syncRunCuts(st, idx);
   // Unconditional: an open entry has no `seq`, so only this call puts it on screen.
   syncOpenTail(st, streaming);
   // Before the collapse sync, so a card folded into place takes its verdict this pass.
   syncFolds(st, streaming, idx);
   syncContainerCollapse(st, idx);
+  syncHookHosts(st);
   syncMountedText(st);
 }
 
@@ -1154,6 +1150,7 @@ export function mountHeadRange(turn: Turn, keep: EntryRange, live: boolean): voi
     st.insertBefore = null;
   }
   syncContainerCollapse(st, idx);
+  syncHookHosts(st);
 }
 
 /** Retract the window's head to `keep.from`, a head-side change above the reader. */
@@ -1278,7 +1275,8 @@ function recordOutgoingHeight(st: TurnRender, seq: number): void {
     return;
   }
   const px = el.offsetHeight;
-  if (px <= 0) {
+  // A card the hook fold hid holds 0px; any other 0 is a box not laid out, whose estimate stays the better guess.
+  if (px <= 0 && !el.hidden) {
     return;
   }
   const view = head === seq ? st.proseRuns.get(seq) : undefined;
@@ -1290,18 +1288,18 @@ function recordOutgoingHeight(st: TurnRender, seq: number): void {
   }
 }
 
-/** Record the group `card` sits in, against the members it holds, so a spacer standing for the whole run prices
- *  its real box; a bare shell is the card itself, which `recordEntryHeight` has. */
+/** Record the shell `card` sits in, bare or not, against the members it holds, so a spacer standing for the whole
+ *  run prices its real box; a shell the hook fold hid records 0. */
 function recordToolGroupHeight(st: TurnRender, card: HTMLElement): void {
   const group = card.parentElement?.closest<HTMLElement>(".tool-group") ?? null;
-  if (group?.parentElement !== st.bodyEl || groupIsBare(group)) {
+  if (group?.parentElement !== st.bodyEl) {
     return;
   }
   const seqs = [...groupBody(group).querySelectorAll<HTMLElement>(":scope > [data-entry-seq]")].map(
     (m) => Number(m.dataset["entrySeq"]),
   );
   const px = group.offsetHeight;
-  if (seqs.length > 0 && px > 0) {
+  if (seqs.length > 0 && (px > 0 || group.hidden)) {
     recordGroupHeight(st.turnID, { from: Math.min(...seqs), to: Math.max(...seqs) + 1 }, px);
   }
 }
@@ -1524,13 +1522,20 @@ function groupsHolding(st: TurnRender, seqs: Iterable<number>): Set<HTMLElement>
  */
 function pruneEmptyToolGroups(st: TurnRender, lost: ReadonlySet<HTMLElement>): void {
   for (const [key, bucket] of st.toolGroups) {
+    let pruned = false;
     for (const [runStart, group] of bucket) {
       if (groupBody(group).querySelector(":scope > [data-entry-seq]") === null) {
         group.remove();
         bucket.delete(runStart);
+        pruned = true;
       } else if (lost.has(group)) {
         refreshGroupHeader(group);
       }
+    }
+    // A pruned group may have held the strays a sibling folded, or folded a sibling's: one refresh re-places them.
+    const kept = bucket.values().next().value;
+    if (pruned && kept !== undefined) {
+      refreshGroupHeader(kept);
     }
     if (bucket.size === 0) {
       st.toolGroups.delete(key);
@@ -2904,12 +2909,18 @@ interface GroupIndex {
   readonly lastPost: ReadonlyMap<string, number>;
 }
 
+/** A delegate's or run's card that hosts hooks, by container key, and whether the call that opened it was refused. */
+interface HookBox {
+  readonly id: string;
+  readonly refused: boolean;
+}
+
 function indexGroups(st: TurnRender): GroupIndex {
   const starts = new Map<string, number[]>();
   const lastPost = new Map<string, number>();
   const built = new Set<string>();
-  // Each box's seat (host and establishing index), the only input `rendersExpanded` needs.
-  const boxes = new Map<string, { host: string; at: number }>();
+  // Each box's establishing index in the view's lane, the only input its verdict needs.
+  const boxes = new Map<string, number>();
   const startAt = (key: string, at: number): void => {
     const list = starts.get(key);
     if (list === undefined) {
@@ -2924,16 +2935,52 @@ function indexGroups(st: TurnRender): GroupIndex {
       startAt(key, at + 1);
     }
   };
+  let work = false;
+  // A box owns the PostToolUse hooks right after it, and the PreToolUse hooks right before it in a run of hooks only,
+  // each set a run of its own so it mounts apart from a neighbour's group (Go `toolRunScan.endRun`, `block-heights.ts`
+  // `toolRun`). kiro-cli files a write's guards after the write and no hook names its call (kirodotdev/Kiro#12284),
+  // so guards after another call stay that call's.
+  const hookBoxes = new Map<number, HookBox>();
+  let run: { seq: number; hook: boolean; trigger: string | undefined }[] = [];
+  let prevBox: HookBox | null = null;
+  const endRun = (next: HookBox | null): void => {
+    let from = 0;
+    while (prevBox !== null && run[from]?.trigger === "PostToolUse") {
+      from++;
+    }
+    let to = run.length;
+    const hooksOnly = run.every((m) => m.hook);
+    while (next !== null && hooksOnly && to > from && run[to - 1]?.trigger === "PreToolUse") {
+      to--;
+    }
+    for (const [i, m] of run.entries()) {
+      const box = i < from ? prevBox : i >= to ? next : null;
+      if (box !== null) {
+        hookBoxes.set(m.seq, box);
+      }
+    }
+    // A cut at the run's head would rekey the group its cards already mounted in.
+    for (const cut of [from, to]) {
+      const at = run[cut]?.seq;
+      if (cut > 0 && at !== undefined) {
+        startAt(st.lane, at);
+      }
+    }
+    run = [];
+    prevBox = next;
+  };
   // Priced and recorded at the store's index for `placeContainer`: the run break and the box's seat are one fact.
-  const openBox = (id: string, host: string, at: number): void => {
+  // A repeat mounts nothing where it sits, so it posts nothing (Go `seatOf`'s `seatNone`).
+  const openBox = (id: string, at: number, call: ToolCall): void => {
     if (built.has(id)) {
       return;
     }
     built.add(id);
     st.containerAt.set(id, at);
-    boxes.set(id, { host, at });
-    lastPost.set(host, at);
-    startAt(host, at + 1);
+    boxes.set(id, at);
+    post(st.lane, at, true);
+    endRun({ id, refused: callRefused(call) });
+    work = true;
   };
   // Every entry this view draws at its own position posts into the root lane at its `seq` and closes the tool-card
   // run unless it is a tool card, so any rendering kind breaks a run. A delegate posts only its card.
@@ -2943,6 +2990,7 @@ function indexGroups(st: TurnRender): GroupIndex {
     }
     if (e.kind !== "tool_call") {
       post(st.lane, e.seq, true);
+      endRun(null);
       continue;
     }
     const held = st.callByEntry.get(e.id);
@@ -2951,18 +2999,27 @@ function indexGroups(st: TurnRender): GroupIndex {
     }
     const tc = held.call;
     const subtask = tc.agent_subtask_id ?? "";
-    if (subtask !== "") {
-      // The delegate's card, priced at its invocation.
-      openBox(`sub:${subtask}`, "", e.seq);
-      continue;
-    }
-    if (held.runID !== "" && ownsRunCard(st, held.runID, e.id)) {
+    // In `placeEntry`'s order: a delegate's page stamps its own nested calls, which mount as tool cards.
+    if (subtask === "" && held.runID !== "" && ownsRunCard(st, held.runID, e.id)) {
       // Gated on the owner, as `placeEntry` is: a later mention mounts a tool row and must not post a break.
-      openBox(`run:${held.runID}`, "", e.seq);
+      openBox(`run:${held.runID}`, e.seq, tc);
+    } else if (isDelegateInvocation(st, e)) {
+      // The delegate's card, priced at its invocation.
+      openBox(`sub:${subtask}`, e.seq, tc);
     } else {
       post(st.lane, e.seq, false);
+      work ||= tc.kind !== "hook";
+      run.push({
+        seq: e.seq,
+        hook: tc.kind === "hook",
+        trigger: tc.kind === "hook" ? tc.hook_trigger : undefined,
+      });
     }
   }
+  endRun(null);
+  st.hookBoxes = hookBoxes;
+  // From the store, so a box the window dropped still keeps the turn's hook rows out of a group.
+  setLaneHoldsWork(st.bodyEl, work);
 
   for (const list of starts.values()) {
     list.sort((a, b) => a - b);
@@ -2970,16 +3027,16 @@ function indexGroups(st: TurnRender): GroupIndex {
   const idx: GroupIndex = { starts, lastPost };
   // AFTER the sort, so `lastPost` is final.
   const expanded = new Map<string, boolean>();
-  for (const [id, seat] of boxes) {
-    expanded.set(id, rendersExpanded(idx, seat.host, seat.at));
+  for (const [id, at] of boxes) {
+    expanded.set(id, !containerFollowed(idx, st.lane, at));
   }
   st.boxExpanded = expanded;
   return idx;
 }
 
 /**
- * Whether an element at `at` in `host` renders expanded under the newest-element policy, the one gate. Only the root
- * lane `""` qualifies, which is the no-cascade rule; the turn card applies it separately at turn scope.
+ * Whether a reasoning trace at `at` in `host` renders expanded under the newest-element policy. Only the chat's lane
+ * `""` qualifies, so a delegate page's traces stay collapsed (pinned in messages-blocks.test.ts).
  */
 function rendersExpanded(idx: GroupIndex, host: string, at: number): boolean {
   return host === "" && !containerFollowed(idx, host, at);
@@ -3009,6 +3066,59 @@ function containerFollowed(idx: GroupIndex, key: string, i: number): boolean {
 function runFollowed(idx: GroupIndex, key: string, runStart: number): boolean {
   const starts = idx.starts.get(key) ?? [];
   return (starts[starts.length - 1] ?? -1) > runStart;
+}
+
+/** Move each mounted tool card whose run a later entry cut (a box arriving after its PreToolUse hooks mounted) into
+ *  its run's shell, seated after the shell it leaves. */
+function syncRunCuts(st: TurnRender, idx: GroupIndex): void {
+  const bucket = st.toolGroups.get(st.lane);
+  if (bucket === undefined) {
+    return;
+  }
+  const touched = new Set<HTMLElement>();
+  // A shell added here is visited later in this loop and moves nothing: its cards all start its run.
+  for (const [runStart, group] of bucket) {
+    let seat: HTMLElement = group;
+    for (const card of groupBody(group).querySelectorAll<HTMLElement>(":scope > .tool-call")) {
+      const want = groupRunStart(idx, st.lane, Number(card.dataset["entrySeq"]));
+      if (want === runStart) {
+        continue;
+      }
+      let target = bucket.get(want);
+      if (target === undefined) {
+        target = buildToolGroupShell();
+        setGroupSuperseded(target, runFollowed(idx, st.lane, want));
+        seat.after(target);
+        bucket.set(want, target);
+      }
+      groupBody(target).append(card);
+      seat = target;
+      touched.add(group).add(target);
+    }
+  }
+  if (touched.size > 0) {
+    pruneEmptyToolGroups(st, touched);
+  }
+}
+
+/** Hand `tool-group.ts` each mounted hook card the store binds to a box, with that box's card when it is mounted. */
+function syncHookHosts(st: TurnRender): void {
+  const hosts = new Map<HTMLElement, HookHost>();
+  for (const [seq, box] of st.hookBoxes) {
+    const hook = st.entryEls.get(seq);
+    if (hook !== undefined) {
+      hosts.set(hook, { card: boxCard(st, box.id), refused: box.refused });
+    }
+  }
+  setHookHosts(st.bodyEl, hosts);
+}
+
+/** The mounted card of the box keyed `id` (`sub:` or `run:`), or null. */
+function boxCard(st: TurnRender, id: string): HTMLElement | null {
+  const card = id.startsWith("sub:")
+    ? st.subagents.get(id.slice(4))?.root
+    : st.runs.get(id.slice(4))?.root;
+  return card?.parentElement === st.bodyEl ? card : null;
 }
 
 /** Collapse-only, so idempotent. A box's verdict is per seat (`st.boxExpanded`), a group's needs

@@ -26,7 +26,7 @@ const { buildAssistantBody, resetBlockRenders, initBlockRenderer, dropHead, moun
 const { rendersNothing } = await import("./block-window.js");
 const { clearAllEntrySigs, ensureToolCallSig, toolCallSigs } = await import("./store-signals.js");
 const { initToolCallbacks } = await import("./messages-tools.js");
-const { refreshGroupHeader } = await import("./tool-group.js");
+const { refreshGroupHeader, groupBody } = await import("./tool-group.js");
 const { setActive } = await import("./store.js");
 const { setHookStatusShown } = await import("./hook-fold.js");
 const { hookTriggerLabel } = await import("./hook-badge.js");
@@ -172,7 +172,7 @@ function badge(root: HTMLElement): HTMLElement | null {
 }
 
 function hooksButton(root: HTMLElement): HTMLButtonElement {
-  const b = root.querySelector<HTMLButtonElement>(".tool-group > .tool-group-hooks");
+  const b = root.querySelector<HTMLButtonElement>(".tool-group .tool-group-hooks");
   if (b === null) {
     throw new Error("no hooks badge button");
   }
@@ -237,13 +237,11 @@ describe("passing tool-trigger hooks fold into the group header", () => {
     expect(hooksButton(r.body).getAttribute("aria-label")).toBe("8 hooks ran");
   });
 
-  it("keeps a lone command with its two guards a group: Ran 1 command with a 2 badge", () => {
+  it("draws a lone command with its two guards as its own card, the 2 badge on that card", () => {
     const r = render((t) => guardedCommands(t, 1));
     const group = r.body.querySelector<HTMLElement>(".tool-group");
-    expect(group?.classList.contains("tool-group-bare")).toBe(false);
-    expect(header(r.body).querySelector(".tool-group-count")?.textContent).toMatch(
-      /^Ran 1 command/,
-    );
+    expect(group?.classList.contains("tool-group-bare")).toBe(true);
+    expect(hooksButton(r.body).closest<HTMLElement>(".tool-call")?.dataset["title"]).toBe("cmd 0");
     expect(badge(r.body)?.textContent).toContain("2");
     expect(hooksButton(r.body).getAttribute("aria-label")).toBe("2 hooks ran");
   });
@@ -296,7 +294,8 @@ describe("passing turn hooks fold into the group they sit in", () => {
     ]);
     const shown = shownHookRows(r.body).map((c) => c.dataset["title"]);
     expect(shown).toEqual([`Hook fired: ${GUARDS[0].name}`, "Hook fired: mystery"]);
-    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("1 hook ran");
+    // A lone card's badge lists its hook rows as well as the folded one.
+    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("3 hooks ran");
   });
 });
 
@@ -317,7 +316,7 @@ describe("a hook that does something keeps its row", () => {
     expect(badge(r.body)).toBeNull();
   });
 
-  it("unfolds the hooks of a policy-denied command", () => {
+  it("unfolds the hooks of a policy-denied command, which its badge still lists", () => {
     const r = render((t) => [
       call(t, 1, {
         id: "cmd-d",
@@ -329,10 +328,23 @@ describe("a hook that does something keeps its row", () => {
       hook(t, 3, GUARDS[1].name),
     ]);
     expect(shownHookRows(r.body)).toHaveLength(2);
-    expect(badge(r.body)).toBeNull();
+    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("2 hooks ran");
   });
 
   it("keeps a hook that printed output and a failed hook as rows, folding the quiet ones", () => {
+    const r = render((t) => [
+      call(t, 1, { id: "cmd-a" }),
+      call(t, 2, { id: "cmd-b" }),
+      hook(t, 3, "printer", { output: "lint: 2 warnings" }),
+      hook(t, 4, "broken", { status: "failed" }),
+      hook(t, 5, GUARDS[1].name),
+    ]);
+    const shown = shownHookRows(r.body).map((c) => c.dataset["title"]);
+    expect(shown).toEqual(["Hook fired: printer", "Hook fired: broken"]);
+    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("1 hook ran");
+  });
+
+  it("counts a lone card's printing and failed hooks in its badge as well as keeping their rows", () => {
     const r = render((t) => [
       call(t, 1, { id: "cmd-a" }),
       hook(t, 2, "printer", { output: "lint: 2 warnings" }),
@@ -341,7 +353,7 @@ describe("a hook that does something keeps its row", () => {
     ]);
     const shown = shownHookRows(r.body).map((c) => c.dataset["title"]);
     expect(shown).toEqual(["Hook fired: printer", "Hook fired: broken"]);
-    expect(badge(r.body)?.textContent).toContain("1");
+    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("3 hooks ran");
   });
 
   it("keeps a printing and a failed turn hook as rows, folding the quiet one", () => {
@@ -353,19 +365,41 @@ describe("a hook that does something keeps its row", () => {
     ]);
     const shown = shownHookRows(r.body).map((c) => c.dataset["title"]);
     expect(shown).toEqual(["Hook fired: prompt printer", "Hook fired: stop broken"]);
-    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("1 hook ran");
+    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("3 hooks ran");
   });
 
-  it("keeps a quiet turn hook as a row when its group holds no other card", () => {
+  it("folds a quiet turn hook past the prose into the last card before it, else the first after it", () => {
     const r = render((t) => [
       hook(t, 1, "prompt check", { hook_trigger: "UserPromptSubmit" }),
       entry(t, 2, "text", { text: "on it" }, `${t}-say#2`),
-      call(t, 3, { id: "cmd-a" }),
-      entry(t, 4, "text", { text: "done" }, `${t}-say#4`),
-      hook(t, 5, "stop check", { hook_trigger: "Stop" }),
+      call(t, 3, { id: "cmd-a", title: "cmd a" }),
+      entry(t, 4, "text", { text: "saved" }, `${t}-say#4`),
+      hook(t, 5, "save check", { hook_trigger: "PostFileSave" }),
+      entry(t, 6, "text", { text: "next" }, `${t}-say#6`),
+      call(t, 7, { id: "cmd-b", title: "cmd b" }),
+      entry(t, 8, "text", { text: "done" }, `${t}-say#8`),
+      hook(t, 9, "stop check", { hook_trigger: "Stop" }),
     ]);
-    const shown = shownHookRows(r.body).map((c) => c.dataset["title"]);
-    expect(shown).toEqual(["Hook fired: prompt check", "Hook fired: stop check"]);
+    expect(shownHookRows(r.body)).toHaveLength(0);
+    const labels = [...r.body.querySelectorAll<HTMLElement>(".tool-group-hooks")].map((b) => [
+      b.closest<HTMLElement>(".tool-call")?.dataset["title"],
+      b.getAttribute("aria-label"),
+    ]);
+    expect(labels).toEqual([
+      ["cmd a", "2 hooks ran"],
+      ["cmd b", "1 hook ran"],
+    ]);
+  });
+
+  it("keeps a quiet tool-trigger hook past the prose as a row: it gates no card there", () => {
+    const r = render((t) => [
+      call(t, 1, { id: "cmd-a" }),
+      entry(t, 2, "text", { text: "done" }, `${t}-say#2`),
+      hook(t, 3, GUARDS[0].name),
+    ]);
+    expect(shownHookRows(r.body).map((c) => c.dataset["title"])).toEqual([
+      `Hook fired: ${GUARDS[0].name}`,
+    ]);
     expect(r.body.querySelector(".tool-group-hooks")).toBeNull();
   });
 
@@ -469,13 +503,28 @@ describe("the hooks badge opens a popover of the folded hooks", () => {
     ]);
   });
 
-  it("keeps a failed run of a hook in place and out of the passing count", async () => {
+  it("keeps a group's failed run of a hook in place and out of the passing count", async () => {
     const r = render((t) => [
       call(t, 1, { id: "cmd-a", title: "go vet" }),
-      hook(t, 2, GUARD_A),
+      call(t, 2, { id: "cmd-b", title: "go test" }),
       hook(t, 3, GUARD_A),
       hook(t, 4, GUARD_A),
-      hook(t, 5, GUARD_A, { status: "failed" }),
+      hook(t, 5, GUARD_A),
+      hook(t, 6, GUARD_A, { status: "failed" }),
+    ]);
+    const rows = shownHookRows(r.body);
+    expect(rows.map((c) => c.dataset["outcome"])).toEqual(["fail"]);
+    expect(hooksButton(r.body).textContent).toContain("3");
+    await userEvent.click(hooksButton(r.body));
+    await expect.poll(() => popoverEntries()).toEqual([["3×", GUARD_A]]);
+  });
+
+  it("keeps a lone card's failed run of a hook in place and counts it with the passing runs", async () => {
+    const r = render((t) => [
+      call(t, 1, { id: "cmd-a", title: "go vet" }),
+      hook(t, 2, GUARD_A, { status: "failed" }),
+      hook(t, 3, GUARD_A),
+      hook(t, 4, GUARD_A),
     ]);
     const rows = shownHookRows(r.body);
     expect(rows.map((c) => c.dataset["outcome"])).toEqual(["fail"]);
@@ -631,7 +680,7 @@ describe("Show hook status off", () => {
       untriggered(hook(t, 3, "mystery")),
     ]);
     expect(shownHookRows(r.body).map((c) => c.dataset["title"])).toEqual(["Hook fired: mystery"]);
-    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("1 hook ran");
+    expect(hooksButton(r.body).getAttribute("aria-label")).toBe("2 hooks ran");
     setHookStatusShown(false);
     expect(shownHookRows(r.body)).toHaveLength(0);
     expect(r.body.querySelector(".tool-group-hooks")).toBeNull();
@@ -698,12 +747,52 @@ describe("a group the window drops", () => {
     expect(badge(body)?.textContent).toContain("4");
   });
 
+  it("gives a turn hook back its row when the window drops the only command it folded into", () => {
+    const t = "t-drop-stray";
+    const turn = turnOf(t, [
+      call(t, 1, { id: "cmd-a" }),
+      hook(t, 2, GUARDS[0].name),
+      entry(t, 3, "text", { text: "done" }, `${t}-say#3`),
+      hook(t, 4, "stop check", { hook_trigger: "Stop" }),
+    ]);
+    const body = document.createElement("div");
+    body.className = "turn-body";
+    document.body.appendChild(body);
+    hosts.push(body);
+    buildAssistantBody(body, turn, CHAT_ID, false);
+    expect(badge(body)?.getAttribute("aria-label")).toBe("2 hooks ran");
+    dropHead(turn, { from: 2, to: 5 });
+    expect(shownHookRows(body).map((c) => c.dataset["title"])).toEqual([
+      `Hook fired: ${GUARDS[0].name}`,
+      "Hook fired: stop check",
+    ]);
+    expect(body.querySelector(".tool-group-hooks")).toBeNull();
+  });
+
+  it("keeps a group the reader closed closed once the window gives back the cards it dropped", async () => {
+    const { body, turn } = mount("t-drop-closed");
+    const first = (): HTMLElement => body.querySelector<HTMLElement>(".tool-group")!;
+    await userEvent.click(header(first()));
+    await userEvent.click(header(first()));
+    expect(header(first()).getAttribute("aria-expanded"), "premise: the reader closed it").toBe(
+      "false",
+    );
+    dropHead(turn, { from: 4, to: 14 });
+    expect(first().querySelector(".tool-call:not([hidden])")?.closest("[inert]")).toBeNull();
+    mountHeadRange(turn, { from: 1, to: 14 }, false);
+    expect(first().querySelectorAll(".tool-call")).toHaveLength(6);
+    expect(header(first()).getAttribute("aria-expanded")).toBe("false");
+    expect(groupBody(first()).inert).toBe(true);
+  });
+
   it("recounts a group that keeps some of its cards", async () => {
     const { body, turn } = mount("t-drop-part");
     dropHead(turn, { from: 4, to: 14 });
     const first = body.querySelector<HTMLElement>(".tool-group")!;
     expect(first.querySelectorAll(".tool-call")).toHaveLength(3);
     expect(badge(first)?.textContent).toContain("2");
+    // The group the drop left with one command shows it, though the group had folded shut.
+    expect(first.querySelector(".tool-call:not([hidden])")?.closest("[inert]")).toBeNull();
     await userEvent.click(hooksButton(first));
     await expect.poll(() => popoverEntries().map(([n]) => n)).toEqual(["1\u00d7", "1\u00d7"]);
   });

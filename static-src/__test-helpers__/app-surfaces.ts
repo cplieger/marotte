@@ -271,6 +271,35 @@ function plantTurn(): void {
   t.appendChild(footer);
 }
 
+/** A lone file edit with a folded passing guard, so the hooks badge sits on the edit card's own header beside its
+ *  file chip. */
+function plantLoneEdit(): void {
+  const shell = buildToolGroupShell();
+  groupBody(shell).appendChild(
+    buildToolCard({
+      id: "lone-edit",
+      title: "Edit File",
+      kind: "edit",
+      status: "completed",
+      live: false,
+      input: { path: "static-src/a-long-module-name-for-the-chip.ts", oldStr: "a", newStr: "b" },
+      output: "Applied 1 edit.",
+    }),
+  );
+  const guard = buildToolCard({
+    id: "hook-op-2",
+    title: "Hook fired: Destructive command guard",
+    kind: "hook",
+    status: "completed",
+    live: false,
+    sourcePath: ".kiro/hooks/destructive-guard.json",
+  });
+  stampHookCard(guard, { status: "completed", hook_trigger: "PreToolUse" });
+  groupBody(shell).appendChild(guard);
+  turn(shell);
+  refreshGroupHeader(shell);
+}
+
 /** Sixty lines with every tenth one edited: more hunks than the diff preview's rows show. */
 const LONG_EDIT = ((): { oldStr: string; newStr: string } => {
   const lines = Array.from({ length: 60 }, (_, i) => `line ${String(i)}`);
@@ -1323,6 +1352,13 @@ export const SURFACES: readonly Surface[] = [
       ".tool-diff-stats",
       ".tool-group-hooks",
     ],
+  },
+  {
+    name: "a lone edit with its hooks",
+    sizes: TWO,
+    setup: plantLoneEdit,
+    controls: [".tool-file-link", ".tool-disclosure"],
+    rows: [".tool-header", ".tool-group-hooks"],
   },
   {
     name: "a long edit's diff",

@@ -25,12 +25,25 @@ function u64(view: DataView, off: number, v: number): void {
 
 /** A resumeAck carrying the received count and a server epoch (the engine's binary layout). */
 // deadset:ignore DS1002 -- used by FakeShellSocket.send, which the terminal library calls on the stubbed WebSocket
-function resumeAck(): ArrayBuffer {
+function resumeAck(epoch: number): ArrayBuffer {
   const buf = new ArrayBuffer(17);
   const view = new DataView(buf);
   view.setUint8(0, 2);
   u64(view, 1, 0);
-  u64(view, 9, 1);
+  u64(view, 9, epoch);
+  return buf;
+}
+
+/** A modes frame with only DEC 2004 (bracketed paste) varying (the engine's binary layout). */
+// deadset:ignore DS1002 -- used by FakeShellSocket.send, which the terminal library calls on the stubbed WebSocket
+function modes(bracketedPaste: boolean): ArrayBuffer {
+  const buf = new ArrayBuffer(13);
+  const view = new DataView(buf);
+  view.setUint8(0, 3);
+  u64(view, 1, 0);
+  view.setUint8(9, bracketedPaste ? 1 : 0);
+  view.setUint16(10, 0, true);
+  view.setUint8(12, 0);
   return buf;
 }
 
@@ -93,19 +106,44 @@ export const isResize = (f: ClientFrame): f is { kind: "control"; msg: Record<st
   f.kind === "control" && f.msg["type"] === "resize";
 
 /** The shell server's side of one socket: it answers the resume as the engine's server does, with
- *  the ack and a default-sized screen, and records every client frame in order. */
+ *  the ack, the modes when `bracketedPaste` is set, and a default-sized screen, and records every
+ *  client frame in order. */
 export class FakeShellSocket extends EventTarget {
   static last: FakeShellSocket | null = null;
+  /** The server's boot epoch in every resumeAck; a new value is a server restart. */
+  static epoch = 1;
+  /** DEC 2004 as the modes frame reports it; null sends no modes frame. */
+  static bracketedPaste: boolean | null = null;
+  /** While true a new socket is refused, as by a server that is down. */
+  static refuse = false;
+  /** While true a socket answers a resize sent before its resume with a modes frame, as the
+   *  engine's server can when its connect flush wins the race with the resume. */
+  static modesBeforeResume = false;
   readyState = 0;
   binaryType = "blob";
   readonly frames: ClientFrame[] = [];
   /** True once the default-sized screen answering the resume was delivered. */
   drawn = false;
 
+  /** Put the statics back to a live server on epoch 1 that sends no modes frame. */
+  static reset(): void {
+    FakeShellSocket.last = null;
+    FakeShellSocket.epoch = 1;
+    FakeShellSocket.bracketedPaste = null;
+    FakeShellSocket.refuse = false;
+    FakeShellSocket.modesBeforeResume = false;
+  }
+
   constructor(readonly url: string) {
     super();
     FakeShellSocket.last = this;
+    const refused = FakeShellSocket.refuse;
     setTimeout(() => {
+      if (refused) {
+        this.readyState = 3;
+        this.dispatchEvent(new CloseEvent("close", { code: 1006, wasClean: false }));
+        return;
+      }
       this.readyState = 1;
       this.dispatchEvent(new Event("open"));
     }, 0);
@@ -119,10 +157,21 @@ export class FakeShellSocket extends EventTarget {
           ? new Uint8Array(data)
           : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
     const frame = classify(typeof data === "string", bytes);
+    const resumed = this.frames.some((f) => f.kind === "control" && f.msg["type"] === "resume");
     this.frames.push(frame);
-    if (frame.kind === "control" && frame.msg["type"] === "resume") {
+    if (FakeShellSocket.modesBeforeResume && !resumed && isResize(frame)) {
+      const bracketedPaste = FakeShellSocket.bracketedPaste ?? false;
       setTimeout(() => {
-        this.deliver(resumeAck());
+        this.deliver(modes(bracketedPaste));
+      }, 0);
+    }
+    if (frame.kind === "control" && frame.msg["type"] === "resume") {
+      const { epoch, bracketedPaste } = FakeShellSocket;
+      setTimeout(() => {
+        this.deliver(resumeAck(epoch));
+        if (bracketedPaste !== null) {
+          this.deliver(modes(bracketedPaste));
+        }
         this.deliver(screen(30));
         this.drawn = true;
       }, 0);
@@ -139,17 +188,25 @@ export class FakeShellSocket extends EventTarget {
     this.dispatchEvent(new CloseEvent("close", { code: 4001, wasClean: true }));
   }
 
+  /** Close as a lost network or a stopping server does (1006), which the library reconnects. */
+  drop(): void {
+    this.readyState = 3;
+    this.dispatchEvent(new CloseEvent("close", { code: 1006, wasClean: false }));
+  }
+
   /** Whether any input frame reached this socket. */
   hasInput(): boolean {
     return this.frames.some((f) => f.kind === "input");
   }
 
+  /** Every input frame this socket received, joined in order. */
+  input(): string {
+    return this.frames.flatMap((f) => (f.kind === "input" ? [f.text] : [])).join("");
+  }
+
   /** Whether the input frames this socket received, in order, spell `text`. */
   inputIncludes(text: string): boolean {
-    return this.frames
-      .flatMap((f) => (f.kind === "input" ? [f.text] : []))
-      .join("")
-      .includes(text);
+    return this.input().includes(text);
   }
 
   private deliver(data: ArrayBuffer): void {
@@ -253,17 +310,21 @@ export function holdWebFont(): { fontLands: () => HTMLStyleElement } {
   };
 }
 
-/** The socket the terminal opened after `prev` (any, by default), once it has sent its resume. */
-export async function resumedSocket(prev: FakeShellSocket | null = null): Promise<FakeShellSocket> {
-  const sock = await vi.waitUntil(
-    () => (FakeShellSocket.last !== prev ? FakeShellSocket.last : null),
-    { timeout: 2000 },
+/** The newest socket the terminal opened after `prev` (any, by default), once it has sent its
+ *  resume; a refused socket never does, so the wait passes over it. */
+export async function resumedSocket(
+  prev: FakeShellSocket | null = null,
+  timeout = 2000,
+): Promise<FakeShellSocket> {
+  return vi.waitUntil(
+    () => {
+      const sock = FakeShellSocket.last;
+      const resumed =
+        sock?.frames.some((f) => f.kind === "control" && f.msg["type"] === "resume") === true;
+      return sock !== prev && resumed ? sock : null;
+    },
+    { timeout },
   );
-  await vi.waitUntil(
-    () => sock.frames.some((f) => f.kind === "control" && f.msg["type"] === "resume"),
-    { timeout: 2000 },
-  );
-  return sock;
 }
 
 /** Index of the first input frame carrying `text`. */
