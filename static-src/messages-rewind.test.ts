@@ -151,7 +151,9 @@ function composer(): HTMLTextAreaElement {
 }
 
 function rewindButtonOf(card: HTMLElement | undefined): HTMLButtonElement {
-  const btn = card?.querySelector<HTMLButtonElement>(":scope > .turn-footer > .turn-rewind");
+  const btn = card?.querySelector<HTMLButtonElement>(
+    ":scope > .turn-footer > .turn-actions-buttons > .turn-rewind",
+  );
   if (btn === null || btn === undefined) {
     throw new Error("the turn has no Rewind button");
   }

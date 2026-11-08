@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type { TurnState } from "./types.js";
-import type { Entry } from "./wire/types.gen.js";
+import type { Entry, TurnOutcome } from "./wire/types.gen.js";
 
 const outer = document.createElement("div");
 outer.id = "messages-wrap-outer";
@@ -57,7 +57,7 @@ afterAll(() => {
  * Settled, its `turn_close` carrying the outcome only. An empty `text` leaves `settledProse` false while the turn is
  * still drawn by `turn_open.source`.
  */
-function promptTurn(n: number, text: string): Entry[] {
+function promptTurn(n: number, text: string, outcome: TurnOutcome = "completed"): Entry[] {
   const id = `t${String(n)}`;
   const at = (seq: number, kind: Entry["kind"], payload: unknown): Entry =>
     ({ id: `${id}-e${String(seq)}`, turn: id, kind, seq, ts: 1000, payload }) as Entry;
@@ -65,7 +65,7 @@ function promptTurn(n: number, text: string): Entry[] {
   return [
     at(0, "turn_open", { prompt: { id: `${id}-p`, text: `prompt ${id}` }, source: "prompt", n }),
     ...body,
-    at(body.length + 1, "turn_close", { outcome: "completed" }),
+    at(body.length + 1, "turn_close", { outcome }),
   ];
 }
 
@@ -90,11 +90,13 @@ function cards(): HTMLElement[] {
   return root === null ? [] : [...root.querySelectorAll<HTMLElement>(":scope > .turn")];
 }
 
+/** `compactionWatermark` names an entry; every turn up to the one holding it is summarized, so it has no Branch. */
 async function paint(
   turnEntries: readonly (readonly Entry[])[],
   expected = turnEntries.length,
+  compactionWatermark?: string,
+  id = nextChat(),
 ): Promise<HTMLElement[]> {
-  const id = nextChat();
   const turns = new Map<string, TurnState>();
   const order: string[] = [];
   for (const entries of turnEntries) {
@@ -125,6 +127,7 @@ async function paint(
       turn_count: order.length,
       has_more: false,
       residency: "loaded",
+      ...(compactionWatermark === undefined ? {} : { compaction_watermark: compactionWatermark }),
       thinking: false,
       working_label: "",
       usage: {
@@ -137,6 +140,8 @@ async function paint(
     },
   ]);
   store.setActive(id);
+  // A repaint of the active chat: `setSessions` alone bumps no transcript version.
+  store.bumpMessages(id);
   await until(() => cards().length === expected, `${String(expected)} cards for ${id}`);
   // The footer fades in from `opacity: 0`, so a control read before that settles shows the pre-transition value.
   await until(
@@ -187,7 +192,11 @@ describe("a footer earned by an extra mounts that extra's control", () => {
     expect(footer, "the turn earned a footer").not.toBeNull();
     expect(footerPaintsText(footer as HTMLElement), "and it earned it by nothing else").toBe(false);
     expect(
-      controlShows((footer as HTMLElement).querySelector<HTMLElement>(":scope > .turn-rewind")),
+      controlShows(
+        (footer as HTMLElement).querySelector<HTMLElement>(
+          ":scope > .turn-actions-buttons > .turn-rewind",
+        ),
+      ),
       "so Rewind is what paints",
     ).toBe(true);
   });
@@ -200,14 +209,14 @@ describe("a footer earned by an extra mounts that extra's control", () => {
     expect(footer, "the turn earned a footer").not.toBeNull();
     expect(footerPaintsText(footer as HTMLElement), "and it earned it by nothing else").toBe(false);
     expect(
-      (footer as HTMLElement).querySelector(":scope > .turn-rewind"),
+      (footer as HTMLElement).querySelector(":scope > .turn-actions-buttons > .turn-rewind"),
       "the last turn has no rewind target",
     ).toBeNull();
     const actions = (footer as HTMLElement).querySelector<HTMLElement>(
       ":scope > .turn-actions-buttons",
     );
     expect(controlShows(actions), "so the actions row is what paints").toBe(true);
-    // `:not(.turn-action-more)` excludes the phone layout's `…` trigger, hidden at this width by design.
+    // `:not(.turn-action-more)` excludes the `…` trigger, unpainted while the actions fit.
     const buttons = [
       ...(actions?.querySelectorAll<HTMLElement>(".turn-action-btn:not(.turn-action-more)") ?? []),
     ];
@@ -236,7 +245,7 @@ describe("Rewind beside a turn the agent started", () => {
   it("is enabled once every turn has closed", async () => {
     const [first] = await paint([promptTurn(1, ""), promptTurn(2, "reply")]);
     const btn = footerOf(first as HTMLElement)?.querySelector<HTMLButtonElement>(
-      ":scope > .turn-rewind",
+      ":scope > .turn-actions-buttons > .turn-rewind",
     );
     expect(btn?.disabled).toBe(false);
   });
@@ -256,12 +265,28 @@ describe("Rewind beside a turn the agent started", () => {
     // An open turn with nothing in it draws no card yet.
     const [first] = await paint([promptTurn(1, ""), promptTurn(2, "reply"), wake], 2);
     const btn = footerOf(first as HTMLElement)?.querySelector<HTMLButtonElement>(
-      ":scope > .turn-rewind",
+      ":scope > .turn-actions-buttons > .turn-rewind",
     );
     expect(btn, "turn 1 has a rewind target").toBeDefined();
     expect(btn?.disabled, "KAS refuses a revert while a turn runs").toBe(true);
     expect(btn?.getAttribute("data-tooltip")).toBe(
       "Cannot rewind while the agent is running. Cancel the turn first",
     );
+  });
+
+  it("leaves no empty actions container once the turn stops being a rewind target", async () => {
+    // Cancelled keeps the footer once Rewind goes; no prose and the watermark keep the container Rewind's alone.
+    const first = promptTurn(1, "", "cancelled");
+    const id = nextChat();
+    const [before] = await paint([first, promptTurn(2, "reply")], 2, "t1-e1", id);
+    const footer = footerOf(before as HTMLElement);
+    expect(
+      footer?.querySelector(":scope > .turn-actions-buttons > :only-child.turn-rewind"),
+      "Rewind is the container's only control",
+    ).not.toBeNull();
+    // A rewind past turn 2 leaves turn 1 newest, with no next trigger to target.
+    const [after] = await paint([first], 1, "t1-e1", id);
+    expect(footerOf(after as HTMLElement), "the same footer repainted in place").toBe(footer);
+    expect(footer?.querySelector(":scope > .turn-actions-buttons")).toBeNull();
   });
 });

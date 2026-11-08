@@ -363,8 +363,8 @@ function gaps(boxes: readonly Element[]): number[] {
   });
 }
 
-// The inline actions on a mouse, the `…` overflow on a phone, and Rewind's icon-only square on
-// both. `system-ui` resolves through the host's fonts, so nothing here depends on a glyph's
+// The actions inline on both tiers, since they fit at every width pinned here, and Rewind's
+// icon-only square. `system-ui` resolves through the host's fonts, so nothing here depends on a glyph's
 // metrics: the ledger's parts are held by the `i` and the outcome mark, their spacing and their
 // centres, the trailing controls by their boxes, their spacing and the last one's distance from
 // the end.
@@ -383,26 +383,31 @@ const FINE = {
   branch: [["Branch from here", { y: 4, w: 24, h: 24 }]],
   actionGaps: [2, 2, 2],
   rewind: ["Rewind", { y: 4, w: 24, h: 24 }],
-  rewindGap: 8,
+  rewindGap: 2,
   end: 8,
   glyphs: { actions: 4, branch: 1, size: 16 },
 } as const;
 // On a phone the controls paint at the mouse's 24px, centred in the 44px band their targets fill
-// ((44 - 24) / 2 = 10px above and below), the glyphs at the mouse's 16px, and Rewind sits 20px from
-// the `…` so their two 44px targets meet.
+// ((44 - 24) / 2 = 10px above and below), the glyphs at the mouse's 16px, and each sits 20px from
+// the next so their 44px targets meet.
 const COARSE = {
   band: 44,
   ledger: { x: 8, y: 10, h: 24 },
   info: { x: 12, y: 14, w: 16, h: 16 },
   mark: { x: 36, y: 18, w: 8, h: 8 },
   ledgerGap: 8,
-  actions: [["More turn actions", { y: 10, w: 24, h: 24 }]],
-  branch: [["More turn actions", { y: 10, w: 24, h: 24 }]],
-  actionGaps: [],
+  actions: [
+    ["Copy as text", { y: 10, w: 24, h: 24 }],
+    ["Copy as markdown", { y: 10, w: 24, h: 24 }],
+    ["Copy link to this turn", { y: 10, w: 24, h: 24 }],
+    ["Branch from here", { y: 10, w: 24, h: 24 }],
+  ],
+  branch: [["Branch from here", { y: 10, w: 24, h: 24 }]],
+  actionGaps: [20, 20, 20],
   rewind: ["Rewind", { y: 10, w: 24, h: 24 }],
   rewindGap: 20,
   end: 8,
-  glyphs: { actions: 0, branch: 0, size: 16 },
+  glyphs: { actions: 4, branch: 1, size: 16 },
 } as const;
 const PIN = { 1280: FINE, 390: COARSE, 320: COARSE } as const;
 /** The footer's width in each frame, which no glyph decides. */
@@ -738,10 +743,11 @@ describe("the closed footer row", () => {
           ).toEqual([
             "turn-ledger-summary",
             "turn-info-panel",
-            ...(slot === undefined ? [] : ["turn-actions-buttons"]),
-            ...(rewinds ? ["turn-rewind"] : []),
+            ...(slot === undefined && !rewinds ? [] : ["turn-actions-buttons"]),
           ]);
-          const rewind = footer.querySelector<HTMLButtonElement>(":scope > .turn-rewind");
+          const rewind = footer.querySelector<HTMLButtonElement>(
+            ":scope > .turn-actions-buttons > .turn-rewind",
+          );
           expect(rewind?.disabled, "Rewind's state").toBe(
             rewinds ? row.rewind === "disabled" : undefined,
           );
@@ -800,7 +806,7 @@ describe("the closed footer row", () => {
 
           const controls = [
             ...footer.querySelectorAll<HTMLElement>(
-              ":scope > .turn-actions-buttons :is(button, summary), :scope > .turn-rewind",
+              ":scope > .turn-actions-buttons :is(button, summary)",
             ),
           ].filter((c) => c.checkVisibility());
           const want = [...(slot === undefined ? [] : pin[slot]), ...(rewinds ? [pin.rewind] : [])];

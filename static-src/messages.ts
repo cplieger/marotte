@@ -148,7 +148,9 @@ import {
   initToolViewCallbacks,
 } from "./messages-tools.js";
 import {
+  footerActionsSlot,
   mountTurnFooterActions,
+  releaseFooterFitsIn,
   turnMarkdown,
   initTurnActionCallbacks,
   initTurnActionsBodyProbe,
@@ -357,6 +359,7 @@ export function disposeChatView(chatID: string): void {
   // Every clamp in the view in one sweep; `parkView` deliberately keeps its clamps and re-measures on unpark.
   releaseClampsIn(view.el);
   releaseScrollableTablesIn(view.el);
+  releaseFooterFitsIn(view.el);
   // After the row disposal, which records one last height per entry. Heights are keyed `(turnID, seq)`, and the cache
   // survives unmounts, so the view's dispose is where they stop meaning anything.
   forgetHeights(get(chatID)?.turn_order ?? []);
@@ -1571,6 +1574,7 @@ const turnSpec: ReconcileSpec<Turn> = {
     // A rewind truncation drops a card while its view lives, so `disposeChatView` never runs for it.
     releaseClampsIn(card);
     releaseScrollableTablesIn(card);
+    releaseFooterFitsIn(card);
   },
 };
 
@@ -2479,9 +2483,16 @@ function mountRewind(card: HTMLElement, t: Turn): void {
   if (footer === null) {
     return;
   }
-  let btn = footer.querySelector<HTMLButtonElement>(":scope > .turn-rewind");
+  let btn = footer.querySelector<HTMLButtonElement>(
+    ":scope > .turn-actions-buttons > .turn-rewind",
+  );
   if (target === undefined) {
+    const slot = btn?.parentElement;
     btn?.remove();
+    if (slot?.childElementCount === 0) {
+      releaseFooterFitsIn(slot);
+      slot.remove();
+    }
     return;
   }
   if (btn === null) {
@@ -2494,7 +2505,7 @@ function mountRewind(card: HTMLElement, t: Turn): void {
       },
       svgTemplate(ICON_REWIND)(),
     ) as HTMLButtonElement;
-    footer.appendChild(btn);
+    footerActionsSlot(footer).appendChild(btn);
   }
   // Rebound per paint: the target moves as turns are added or removed.
   btn.onclick = (): void => {
@@ -2545,7 +2556,10 @@ function mountTurnFooter(card: HTMLElement, t: Turn): void {
     settledProse: settled && turnMarkdown(t).trim() !== "",
   });
   if (!keep) {
-    existing?.remove();
+    if (existing !== null) {
+      releaseFooterFitsIn(existing);
+      existing.remove();
+    }
     return;
   }
   let footer = existing;
