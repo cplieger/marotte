@@ -170,18 +170,15 @@ func writeToolsEngine(b *strings.Builder, configDir, toolsDir, workDir string) {
 	b.WriteString("expect to use again, and tell the user what you installed\n")
 	b.WriteString("- Add `&unavailable=1` to the search to also list catalog entries the engine cannot install ")
 	b.WriteString("(each with its `reason`); those are the ones to build or install by hand\n")
-	b.WriteString("- UI path for users: Settings → Tools → \"Tools & runtimes\": a switch per row (off = ")
-	b.WriteString("uninstall, keep the entry as a template), \"Add tool\" (a search over the same catalog and ")
-	b.WriteString("Debian packages), \"Update all\", \"Refresh catalog\"; \"MCP integrations\" sits below it ")
-	b.WriteString("on the same tab. \"Advanced configuration\" → \"tools.json\" opens the manifest in the editor: a save there installs or ")
-	b.WriteString("removes what changed and refuses an invalid file. ")
+	b.WriteString("- `" + configDir + "/tools.json` is the manifest. A save in its editor (Settings → Tools → ")
+	b.WriteString("\"Advanced configuration\" → \"tools.json\") installs or removes what changed and refuses an invalid file. ")
 	if _, err := workspace.ResolveInsideAbs(workDir, filepath.Join(configDir, "tools.json")); err == nil {
 		b.WriteString("A write from your own file tools gets the same check and install: an invalid one is refused with the ")
 		b.WriteString("reason, so fix it and write again. ")
 	} else {
 		b.WriteString("Your file tools cannot write it, because `" + configDir + "` is outside the workspace. ")
 	}
-	b.WriteString("A shell write is neither checked nor applied until the next boot or the next save there. A `tools.json` the ")
+	b.WriteString("A shell write is neither checked nor applied until the next boot or the next editor save. A `tools.json` the ")
 	b.WriteString("engine refuses at boot leaves the tools engine off, with the reason in Settings → Tools and the boot log, ")
 	b.WriteString("until a valid save turns it back on. Prefer the engine API above\n\n")
 }
@@ -277,7 +274,9 @@ func writeUIGuide(b *strings.Builder, workDir, configDir string) {
 	b.WriteString("\"Data sharing\" (\"Share content with AWS for service improvement\", \"kiro-cli telemetry\"), ")
 	b.WriteString("\"Experimental features\" (\"Show hook status in chat\", \"Exclude ")
 	b.WriteString("default resources from custom agents\", \"Debug logs\"), \"Advanced\" (\"config.json\" opens every setting as one file in the editor)\n")
-	b.WriteString("- Settings → Tools: \"Tools & runtimes\" (see Tools engine in the environment steering doc), \"Advanced configuration\" (\"tools.json\") and \"MCP integrations\" ")
+	b.WriteString("- Settings → Tools: \"Tools & runtimes\" (a switch per row: off uninstalls and keeps the entry as a template; ")
+	b.WriteString("\"Add tool\", a search over the tools catalog and Debian packages; \"Update all\"; \"Refresh catalog\"), ")
+	b.WriteString("\"Advanced configuration\" (\"tools.json\") and \"MCP integrations\" ")
 	b.WriteString("(\"Connect integration\", per-server status, OAuth)\n")
 	b.WriteString("- Settings → Permissions: \"Security profile\" (guarded, read-only, trusted, unrestricted, ")
 	b.WriteString("custom; \"Customize\"), \"Active policy\" with \"Add a rule\" and \"Test a decision (why?)\", ")

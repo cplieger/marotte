@@ -138,7 +138,7 @@ func engineRows(n int, prefix string) []InstalledTool {
 	rows := make([]InstalledTool, n)
 	for i := range rows {
 		name := fmt.Sprintf("%s%03d", prefix, i)
-		rows[i] = InstalledTool{Name: name, Version: fmt.Sprintf("1.0.%d", i), Commands: []string{name}}
+		rows[i] = InstalledTool{Version: fmt.Sprintf("1.0.%d", i), Commands: []string{name}}
 	}
 	return rows
 }
@@ -146,7 +146,7 @@ func engineRows(n int, prefix string) []InstalledTool {
 func libraryRows(n int) []InstalledTool {
 	rows := make([]InstalledTool, n)
 	for i := range rows {
-		rows[i] = InstalledTool{Name: fmt.Sprintf("libpkg%03d", i), Version: "1.0"}
+		rows[i] = InstalledTool{Version: "1.0"}
 	}
 	return rows
 }
@@ -176,8 +176,8 @@ func smallFixture() *renderFixture {
 func typicalFixture() *renderFixture {
 	tools := engineRows(15, "tool")
 	tools = append(tools,
-		InstalledTool{Name: "ffmpeg", Version: "7:7.1", Commands: []string{"ffmpeg", "ffprobe"}},
-		InstalledTool{Name: "imagekit", Version: "2.0", Commands: []string{"imgconv"}})
+		InstalledTool{Version: "7:7.1", Commands: []string{"ffmpeg", "ffprobe"}},
+		InstalledTool{Version: "2.0", Commands: []string{"imgconv"}})
 	tools = append(tools, libraryRows(6)...)
 	return &renderFixture{
 		tools:      ToolsSnapshot{Tools: tools, System: strings.Fields(baseSystem)},
@@ -281,9 +281,6 @@ func TestRender_Fixtures(t *testing.T) {
 			if !strings.Contains(tools, "\n6 more installed packages ship no command (mostly libraries): "+
 				"`dpkg -l` or `curl -s localhost:9847/api/tools` lists them.\n") {
 				t.Errorf("Installed tools lacks the no-command count line:\n%s", tools)
-			}
-			if strings.Contains(out, "libpkg") {
-				t.Errorf("a package with no command is named")
 			}
 			if !strings.Contains(out, "  - **Skills** (`kirotwo/.kiro/skills/`; read a SKILL.md when its description matches the task):\n"+
 				"    - `kirotwo/.kiro/skills/skill00/SKILL.md` — "+words(20)+" …\n") {

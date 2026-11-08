@@ -34,14 +34,11 @@ func TestGenerate_DefusesEveryUntrustedChannel(t *testing.T) {
 		// the filesystem-only channels).
 		plant func(t *testing.T, workDir, configDir string) (mcp func() MCPSnapshot, forge func() ForgeSnapshot)
 		// tools is the tools snapshot, nil for every channel but the tools engine's.
-		tools func() ([]InstalledTool, bool)
-		// refused marks a channel whose contract is REFUSAL rather than defusal: only the host,
-		// which has a knowable alphabet (see isHostShaped).
-		refused bool
+		tools func() (ToolsSnapshot, bool)
 	}{{
 		name: "repo directory name",
 		plant: func(t *testing.T, workDir, _ string) (func() MCPSnapshot, func() ForgeSnapshot) {
-			seedRepo(t, workDir, injPayload, "main")
+			seedRepo(t, workDir, injPayload)
 			return nil, nil
 		},
 	}, {
@@ -54,31 +51,16 @@ func TestGenerate_DefusesEveryUntrustedChannel(t *testing.T) {
 			return nil, nil
 		},
 	}, {
-		name: "git branch from .git/HEAD",
-		plant: func(t *testing.T, workDir, _ string) (func() MCPSnapshot, func() ForgeSnapshot) {
-			seedRepo(t, workDir, "repo", injPayload)
-			return nil, nil
-		},
-	}, {
-		name:    "git origin host from .git/config",
-		refused: true,
-		plant: func(t *testing.T, workDir, _ string) (func() MCPSnapshot, func() ForgeSnapshot) {
-			repo := seedRepo(t, workDir, "repo", "main")
-			mustWriteFile(t, filepath.Join(repo, ".git", "config"),
-				"[remote \"origin\"]\n\turl = https://"+injPayloadNoNewline+"/o/r.git\n")
-			return nil, nil
-		},
-	}, {
 		name: "steering doc filename",
 		plant: func(t *testing.T, workDir, _ string) (func() MCPSnapshot, func() ForgeSnapshot) {
-			repo := seedRepo(t, workDir, "repo", "main")
+			repo := seedRepo(t, workDir, "repo")
 			mustWriteFile(t, filepath.Join(repo, ".kiro", "steering", injPayloadNoNewline+".md"), "# T\n")
 			return nil, nil
 		},
 	}, {
 		name: "steering doc description and fileMatchPattern",
 		plant: func(t *testing.T, workDir, _ string) (func() MCPSnapshot, func() ForgeSnapshot) {
-			repo := seedRepo(t, workDir, "repo", "main")
+			repo := seedRepo(t, workDir, "repo")
 			mustWriteFile(t, filepath.Join(repo, ".kiro", "steering", "d.md"),
 				"---\ninclusion: fileMatch\nfileMatchPattern: \""+injPayloadNoNewline+"\"\ndescription: "+
 					injPayloadNoNewline+"\n---\n\n# T\n")
@@ -87,21 +69,21 @@ func TestGenerate_DefusesEveryUntrustedChannel(t *testing.T) {
 	}, {
 		name: "skill directory name",
 		plant: func(t *testing.T, workDir, _ string) (func() MCPSnapshot, func() ForgeSnapshot) {
-			repo := seedRepo(t, workDir, "repo", "main")
+			repo := seedRepo(t, workDir, "repo")
 			mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", injPayloadNoNewline, "SKILL.md"), "# S\n")
 			return nil, nil
 		},
 	}, {
 		name: "agent filename",
 		plant: func(t *testing.T, workDir, _ string) (func() MCPSnapshot, func() ForgeSnapshot) {
-			repo := seedRepo(t, workDir, "repo", "main")
+			repo := seedRepo(t, workDir, "repo")
 			mustWriteFile(t, filepath.Join(repo, ".kiro", "agents", injPayloadNoNewline+".json"), "{}\n")
 			return nil, nil
 		},
 	}, {
 		name: "hook filename",
 		plant: func(t *testing.T, workDir, _ string) (func() MCPSnapshot, func() ForgeSnapshot) {
-			repo := seedRepo(t, workDir, "repo", "main")
+			repo := seedRepo(t, workDir, "repo")
 			mustWriteFile(t, filepath.Join(repo, ".kiro", "hooks", injPayloadNoNewline+".json"),
 				`{"version":"v1","hooks":[{"name":"n","trigger":"SessionStart",`+
 					`"action":{"type":"command","command":"echo"}}]}`)
@@ -110,26 +92,21 @@ func TestGenerate_DefusesEveryUntrustedChannel(t *testing.T) {
 	}, {
 		name: "hook name, trigger and command",
 		plant: func(t *testing.T, workDir, _ string) (func() MCPSnapshot, func() ForgeSnapshot) {
-			repo := seedRepo(t, workDir, "repo", "main")
+			repo := seedRepo(t, workDir, "repo")
 			mustWriteFile(t, filepath.Join(repo, ".kiro", "hooks", "h.json"),
 				`{"version":"v1","hooks":[{"name":"`+injMarker+"\\u0060"+`","trigger":"`+injMarker+`",`+
 					`"action":{"type":"command","command":"`+injMarker+"\\n## Capabilities"+`"}}]}`)
 			return nil, nil
 		},
 	}, {
-		name:  "tool name, kind and version from the inventory",
+		name:  "tool command, version and system command from the inventory",
 		plant: func(_ *testing.T, _, _ string) (func() MCPSnapshot, func() ForgeSnapshot) { return nil, nil },
-		tools: func() ([]InstalledTool, bool) {
-			return []InstalledTool{{Name: injPayload, Kind: injPayload, Version: injPayload}}, true
+		tools: func() (ToolsSnapshot, bool) {
+			return ToolsSnapshot{
+				Tools:  []InstalledTool{{Version: injPayload, Commands: []string{injPayload}}},
+				System: []string{injPayload},
+			}, true
 		},
-	}, {
-		name: "tool bin from tools-state.json",
-		plant: func(t *testing.T, _, configDir string) (func() MCPSnapshot, func() ForgeSnapshot) {
-			mustWriteFile(t, filepath.Join(configDir, "tools-state.json"),
-				`{"tools":{"t":{"bins":["`+injMarker+"\\u0060\\n## Capabilities"+`"]}}}`)
-			return nil, nil
-		},
-		tools: func() ([]InstalledTool, bool) { return []InstalledTool{{Name: "t", Kind: "aqua"}}, true },
 	}, {
 		name: "MCP server name",
 		plant: func(_ *testing.T, _, _ string) (func() MCPSnapshot, func() ForgeSnapshot) {
@@ -174,19 +151,7 @@ func TestGenerate_DefusesEveryUntrustedChannel(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read %s: %v", steeringFile, err)
 			}
-			out := string(data)
-			if tc.refused {
-				if strings.Contains(out, injMarker) {
-					t.Errorf("a refused channel put %q in environment.md: %q", injMarker,
-						lineAt(out, strings.Index(out, injMarker)))
-				}
-				// The repo line still renders, so refused is not "the entry was dropped".
-				if !strings.Contains(out, "- `repo/`") {
-					t.Errorf("refusing the host dropped the repo entry entirely:\n%s", out)
-				}
-				return
-			}
-			assertDefused(t, out)
+			assertDefused(t, string(data))
 		})
 	}
 }
@@ -206,7 +171,7 @@ func TestGenerate_WritesTheConfiguredDirectoriesVerbatim(t *testing.T) {
 			dir := map[string]*string{"work": &workDir, "config": &configDir, "tools": &toolsDir}[which]
 			parent := *dir
 			*dir = filepath.Join(parent, odd)
-			repo := seedRepo(t, workDir, "repo", "main")
+			repo := seedRepo(t, workDir, "repo")
 			mustWriteFile(t, filepath.Join(repo, ".kiro", "steering", "s.md"), "# S\n")
 			mustWriteFile(t, filepath.Join(configDir, "config.json"), `{"memory_mode":"read_only"}`)
 
@@ -263,10 +228,10 @@ func lineAt(s string, i int) string {
 	return s[start : i+end]
 }
 
-func seedRepo(t *testing.T, workDir, name, branch string) string {
+func seedRepo(t *testing.T, workDir, name string) string {
 	t.Helper()
 	repo := filepath.Join(workDir, name)
-	mustWriteFile(t, filepath.Join(repo, ".git", "HEAD"), "ref: refs/heads/"+branch+"\n")
+	mustWriteFile(t, filepath.Join(repo, ".git", "HEAD"), "ref: refs/heads/main\n")
 	return repo
 }
 
@@ -280,7 +245,7 @@ func TestReadCappedFile_RefusesAFIFO(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if _, err := readCappedFile(fifo, firstLineReadCap); err == nil {
+		if _, err := readCappedFile(fifo, 4096); err == nil {
 			t.Error("readCappedFile(<fifo>) = nil error, want a refusal")
 		}
 	}()
@@ -292,43 +257,17 @@ func TestReadCappedFile_RefusesAFIFO(t *testing.T) {
 	}
 }
 
-// TestReadFirstLine_RefusesASymlink pins that a symlinked README is not followed into
-// environment.md (it published an OAuth token, measured).
-func TestReadFirstLine_RefusesASymlink(t *testing.T) {
+// TestReadCappedFile_RefusesASymlink pins that a symlinked workspace file is not followed into
+// environment.md (a symlinked README published an OAuth token, measured).
+func TestReadCappedFile_RefusesASymlink(t *testing.T) {
 	dir := t.TempDir()
 	secret := filepath.Join(dir, "mcp-secrets.json")
 	mustWriteFile(t, secret, `{"acme":{"refresh_token":"rt_S3CR3T_abc123"}}`+"\n")
-	link := filepath.Join(dir, "README.md")
+	link := filepath.Join(dir, "SKILL.md")
 	if err := os.Symlink(secret, link); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
-	if got := readFirstLine(link); got != "" {
-		t.Errorf("readFirstLine(<symlink to a secret>) = %q, want %q", got, "")
-	}
-}
-
-// TestHostGate_RefusesAHomoglyphHost pins the alphabet gate: `g\u0130thub.com` lowercases to
-// "github.com".
-func TestHostGate_RefusesAHomoglyphHost(t *testing.T) {
-	const homoglyph = "g\u0130thub.com"
-	for _, url := range []string{"https://" + homoglyph + "/o/r.git", "git@" + homoglyph + ":o/r.git"} {
-		if got := hostFromGitURL(url); got != "" {
-			t.Errorf("hostFromGitURL(%q) = %q, want %q: a non-ASCII host must not reach the annotation", url, got, "")
-		}
-	}
-	// The ordinary host still resolves.
-	if got := hostFromGitURL("https://github.com/o/r.git"); got != "github.com" {
-		t.Errorf("hostFromGitURL(github.com) = %q, want %q", got, "github.com")
-	}
-}
-
-// TestReadGitBranch_TakesOnlyTheFirstLine pins the first-line cut on `.git/HEAD`, which
-// defuse alone cannot show.
-func TestReadGitBranch_TakesOnlyTheFirstLine(t *testing.T) {
-	repo := t.TempDir()
-	mustWriteFile(t, filepath.Join(repo, ".git", "HEAD"),
-		"ref: refs/heads/main\nrubbish\nmore rubbish\n")
-	if got, want := readGitBranch(repo), "main"; got != want {
-		t.Errorf("readGitBranch(<multi-line HEAD>) = %q, want %q", got, want)
+	if got, err := readCappedFile(link, 4096); err == nil || len(got) != 0 {
+		t.Errorf("readCappedFile(<symlink to a secret>) = (%q, %v), want a refusal", got, err)
 	}
 }

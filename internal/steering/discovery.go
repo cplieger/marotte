@@ -59,75 +59,39 @@ func writeSteeringEntry(b *strings.Builder, repo string, d docEntry) {
 		fmt.Fprintf(b, " (matches `%s`)", d.FileMatch)
 	}
 	if d.Description != "" {
-		fmt.Fprintf(b, " — %s", d.Description)
+		fmt.Fprintf(b, " — %s", capWords(d.Description, maxDescWords))
 	}
 	b.WriteString("\n")
 }
 
 // writeRepoSteeringInstructions tells the agent to read per-repo steering: the agent boots
 // in workDir, so kiro-cli auto-loads steering only at that level.
-func writeRepoSteeringInstructions(b *strings.Builder, repos []string, workDir string) {
-	// Only when some repo carries .kiro/ content.
-	hasAny := false
-	for _, r := range repos {
-		rd := filepath.Join(workDir, r)
-		if len(findRepoDocs(rd)) > 0 || len(findRepoSkills(rd)) > 0 ||
-			len(findRepoAgents(rd)) > 0 || len(findRepoHooks(rd)) > 0 {
-			hasAny = true
-			break
-		}
-	}
-	if !hasAny {
-		return
-	}
+func writeRepoSteeringInstructions(b *strings.Builder, workDir string) {
 	b.WriteString("### Per-repo .kiro protocol\n\n")
-	b.WriteString("The per-repo `.kiro/` directories above are NOT auto-loaded ")
-	b.WriteString("by kiro-cli (its auto-include only fires for the cwd it booted in, ")
-	b.WriteString("which is `" + workDir + "`). Treat the inventory above as a routing table:\n\n")
-	b.WriteString("- **When you start working in a repo** (any prompt that mentions it, ")
-	b.WriteString("or as soon as you cd / read / edit a file inside it): immediately ")
-	b.WriteString("read every \"Always-loaded steering\" and \"Always-loaded skills\" file listed for that repo.\n")
-	b.WriteString("- **When you open or edit a file** that matches a \"File-match\" ")
-	b.WriteString("pattern (steering or skill): read the matching doc first, then ")
-	b.WriteString("proceed with the change.\n")
-	b.WriteString("- **\"Manual\" steering/skills** are reference material — read on demand if a ")
-	b.WriteString("relevant question arises or the user references them by name.\n")
+	b.WriteString("kiro-cli loads `.kiro/` only from `" + workDir + "`, so the repos' `.kiro/` content listed above ")
+	b.WriteString("is not loaded. Use the list as a routing table:\n\n")
+	b.WriteString("- When you start working in a repo (a prompt names it, or you read, edit or cd into it), ")
+	b.WriteString("read its \"Always-loaded steering\" files.\n")
+	b.WriteString("- Before opening or editing a file that matches a \"File-match\" pattern, read that doc or skill.\n")
+	b.WriteString("- Read a \"Manual\" steering doc or a skill when the task or the user calls for it.\n")
 	// KAS loads agents and hooks only from a session root's .kiro/, and no nested repo is one.
-	b.WriteString("- **Custom agents**: don't read. They are not loaded in this session ")
-	b.WriteString("and cannot be switched to; they are listed so you know they exist.\n")
-	b.WriteString("- **Hooks**: don't read. kiro-cli does not run a nested repo's hooks, ")
-	b.WriteString("so when you perform a listed hook's trigger action, run its command ")
-	b.WriteString("yourself (for an agent hook, act on its prompt). When the user describes ")
-	b.WriteString("a workflow pattern that would benefit from a hook, suggest creating one.\n")
-	b.WriteString("- One read per session is enough; subsequent prompts within the same ")
-	b.WriteString("turn don't need to re-read what you already loaded.\n")
-	b.WriteString("- **If a doc is added or edited during this session**: the ")
-	b.WriteString("inventory above is a snapshot from when this session started and ")
-	b.WriteString("won't auto-refresh. Re-read the file via read_file directly if the ")
-	b.WriteString("user mentions it. A fresh chat will pick it up automatically.\n\n")
+	b.WriteString("- Custom agents are listed for awareness: this session cannot load or switch to them.\n")
+	b.WriteString("- Hooks do not run for nested repos: when you perform a hook's trigger action, run its command ")
+	b.WriteString("yourself (for an agent hook, act on its prompt).\n")
+	b.WriteString("- One read per session is enough. The list is a snapshot from session start: read a doc added ")
+	b.WriteString("or edited since then directly with read_file.\n\n")
 }
 
-// writeRepoSkills renders the per-repo skills inventory grouped by
-// inclusion trigger, same as steering.
+// writeRepoSkills renders the per-repo skills inventory: file-match skills apart, since a path
+// triggers them, and every other skill read when its description matches the task.
 func writeRepoSkills(b *strings.Builder, repo string, docs []docEntry) {
-	always := make([]docEntry, 0, len(docs))
 	matched := make([]docEntry, 0, len(docs))
-	manual := make([]docEntry, 0, len(docs))
+	other := make([]docEntry, 0, len(docs))
 	for _, d := range docs {
-		switch d.Inclusion {
-		case inclusionFileMatch:
+		if d.Inclusion == inclusionFileMatch {
 			matched = append(matched, d)
-		case inclusionManual, inclusionAuto:
-			// "auto" is on demand like "manual": KAS offers both as slash commands.
-			manual = append(manual, d)
-		default:
-			always = append(always, d)
-		}
-	}
-	if len(always) > 0 {
-		fmt.Fprintf(b, "  - **Always-loaded skills** (`%s/.kiro/skills/`):\n", repo)
-		for _, d := range always {
-			writeSkillEntry(b, repo, d)
+		} else {
+			other = append(other, d)
 		}
 	}
 	if len(matched) > 0 {
@@ -136,9 +100,9 @@ func writeRepoSkills(b *strings.Builder, repo string, docs []docEntry) {
 			writeSkillEntry(b, repo, d)
 		}
 	}
-	if len(manual) > 0 {
-		fmt.Fprintf(b, "  - **Manual skills** (invoke verbally by name):\n")
-		for _, d := range manual {
+	if len(other) > 0 {
+		fmt.Fprintf(b, "  - **Skills** (`%s/.kiro/skills/`; read a SKILL.md when its description matches the task):\n", repo)
+		for _, d := range other {
 			writeSkillEntry(b, repo, d)
 		}
 	}
@@ -150,9 +114,18 @@ func writeSkillEntry(b *strings.Builder, repo string, d docEntry) {
 		fmt.Fprintf(b, " (matches `%s`)", d.FileMatch)
 	}
 	if d.Description != "" {
-		fmt.Fprintf(b, " — %s", d.Description)
+		fmt.Fprintf(b, " — %s", capWords(d.Description, maxDescWords))
 	}
 	b.WriteString("\n")
+}
+
+// capWords keeps s's first n words, marking a cut with " …".
+func capWords(s string, n int) string {
+	f := strings.Fields(s)
+	if len(f) <= n {
+		return s
+	}
+	return strings.Join(f[:n], " ") + " …"
 }
 
 // findRepoDocs returns a repo's `.kiro/steering/` markdown files classified by inclusion

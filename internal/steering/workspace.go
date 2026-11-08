@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/cplieger/marotte/internal/git"
-	"github.com/cplieger/marotte/internal/sanitize"
 )
 
 func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string) {
@@ -32,12 +31,12 @@ func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string) {
 		b.WriteString("(e.g. `cwd: \"myrepo\"` runs in `" + workDir + "/myrepo/`). ")
 		b.WriteString("File paths like `myrepo/src/main.go` work with the file tools ")
 		b.WriteString("(read_file, read_code, grep_search).\n\n")
-		for _, r := range repos {
-			writeRepoEntry(b, workDir, r)
-		}
+		hasKiro := writeRepoList(b, workDir, repos)
 		b.WriteString("\n")
-		// kiro-cli auto-loads steering only for its boot cwd, so per-repo steering needs this nudge.
-		writeRepoSteeringInstructions(b, repos, workDir)
+		if hasKiro {
+			// kiro-cli auto-loads steering only for its boot cwd, so per-repo steering needs this nudge.
+			writeRepoSteeringInstructions(b, workDir)
+		}
 	}
 	if len(foundFiles) > 0 {
 		b.WriteString("### Notable files\n\n")
@@ -48,8 +47,11 @@ func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string) {
 	}
 	if len(dirs) > 0 && !isRoot {
 		b.WriteString("### Directories\n\n")
-		for _, d := range dirs {
+		for _, d := range dirs[:min(len(dirs), maxDirectories)] {
 			fmt.Fprintf(b, "- `%s/`\n", defuse(d))
+		}
+		if extra := len(dirs) - maxDirectories; extra > 0 {
+			fmt.Fprintf(b, "- … and %d more (`ls %s`)\n", extra, workDir)
 		}
 		b.WriteString("\n")
 	}
@@ -77,40 +79,95 @@ func writeScratchGuidance(b *strings.Builder, workDir string) {
 	b.WriteString("`git status` next, and it can end up in a commit.\n\n")
 }
 
-func writeRepoEntry(b *strings.Builder, workDir, r string) {
-	repoDir := filepath.Join(workDir, r)
-	// One defusal per repo, threaded into every writer below (per-`%s` defusal already lost a
-	// channel). `r` stays raw because it is also a path component.
-	label := defuse(r)
-	origin := readGitOrigin(repoDir)
-	branch := readGitBranch(repoDir)
-	desc := readFirstLine(filepath.Join(repoDir, "README.md"))
-	fmt.Fprintf(b, "- `%s/`", label)
-	if branch != "" {
-		fmt.Fprintf(b, " on `%s`", branch)
+// kiroRepo is one repo with `.kiro/` content and what discovery found in it.
+type kiroRepo struct {
+	name   string
+	docs   []docEntry
+	skills []docEntry
+	agents []agentEntry
+	hooks  []HookEntry
+}
+
+func scanKiroRepo(workDir, r string) kiroRepo {
+	dir := filepath.Join(workDir, r)
+	return kiroRepo{
+		name: r, docs: findRepoDocs(dir), skills: findRepoSkills(dir),
+		agents: findRepoAgents(dir), hooks: findRepoHooks(dir),
 	}
-	if host := hostFromGitURL(origin); host != "" {
-		fmt.Fprintf(b, " (%s)", host)
+}
+
+func (k *kiroRepo) empty() bool {
+	return len(k.docs)+len(k.skills)+len(k.agents)+len(k.hooks) == 0
+}
+
+// writeRepoList lists the repos: one routing block per repo with `.kiro/` content, the rest
+// by name on one line. It reports whether any repo carries `.kiro/` content.
+func writeRepoList(b *strings.Builder, workDir string, repos []string) bool {
+	var kiro []kiroRepo
+	var plain []string
+	for _, r := range repos {
+		if k := scanKiroRepo(workDir, r); !k.empty() {
+			kiro = append(kiro, k)
+		} else {
+			plain = append(plain, r)
+		}
 	}
-	if desc != "" {
-		fmt.Fprintf(b, " — %s", desc)
+	budget := maxRouting
+	for i := range kiro[:min(len(kiro), maxKiroRepos)] {
+		writeKiroRepo(b, &kiro[i], &budget)
 	}
-	b.WriteString("\n")
-	docs := findRepoDocs(repoDir)
+	if len(kiro) > maxKiroRepos {
+		names := make([]string, 0, len(kiro)-maxKiroRepos)
+		for _, k := range kiro[maxKiroRepos:] {
+			names = append(names, k.name)
+		}
+		b.WriteString("- More repositories with .kiro content: ")
+		writeNameList(b, names, "`ls -d "+workDir+"/*/.kiro`")
+		b.WriteString(". Before working in one, list its `.kiro/steering/` and `.kiro/skills/`\n")
+	}
+	if len(plain) > 0 {
+		b.WriteString("- Other repositories: ")
+		writeNameList(b, plain, "`ls "+workDir+"`")
+		b.WriteString("\n")
+	}
+	return len(kiro) > 0
+}
+
+// writeNameList writes up to maxPlainRepos names as `name/` spans, then an overflow naming how.
+func writeNameList(b *strings.Builder, names []string, how string) {
+	spans := make([]string, 0, min(len(names), maxPlainRepos))
+	for _, n := range names[:min(len(names), maxPlainRepos)] {
+		spans = append(spans, "`"+defuse(n)+"/`")
+	}
+	b.WriteString(strings.Join(spans, ", "))
+	if extra := len(names) - maxPlainRepos; extra > 0 {
+		fmt.Fprintf(b, ", … and %d more (%s)", extra, how)
+	}
+}
+
+// writeKiroRepo spends the workspace-wide routing budget on the repo's steering, then its skills.
+func writeKiroRepo(b *strings.Builder, k *kiroRepo, budget *int) {
+	// One defusal per repo, threaded into every writer below. k.name stays raw as a path component.
+	label := defuse(k.name)
+	fmt.Fprintf(b, "- `%s/`\n", label)
+	docs := k.docs[:min(len(k.docs), *budget)]
+	*budget -= len(docs)
+	skills := k.skills[:min(len(k.skills), *budget)]
+	*budget -= len(skills)
 	if len(docs) > 0 {
 		writeRepoSteering(b, label, docs)
 	}
-	skills := findRepoSkills(repoDir)
 	if len(skills) > 0 {
 		writeRepoSkills(b, label, skills)
 	}
-	agents := findRepoAgents(repoDir)
-	if len(agents) > 0 {
-		writeRepoAgents(b, label, agents)
+	if cut := len(k.docs) + len(k.skills) - len(docs) - len(skills); cut > 0 {
+		fmt.Fprintf(b, "  - … %d more .kiro entries: list `%s/.kiro/steering/` and `%s/.kiro/skills/`\n", cut, label, label)
 	}
-	hooks := findRepoHooks(repoDir)
-	if len(hooks) > 0 {
-		writeRepoHooks(b, label, hooks)
+	if len(k.agents) > 0 {
+		writeRepoAgents(b, label, k.agents)
+	}
+	if len(k.hooks) > 0 {
+		writeRepoHooks(b, label, k.hooks)
 	}
 }
 
@@ -136,125 +193,6 @@ func writeRepoHooks(b *strings.Builder, repo string, hooks []HookEntry) {
 		}
 		b.WriteString("\n")
 	}
-}
-
-// readGitOrigin returns a repo's origin URL by reading `.git/config` directly: generation is
-// synchronous and must not block on a wedged subprocess.
-func readGitOrigin(repoDir string) string {
-	data, err := readCappedFile(filepath.Join(repoDir, ".git", "config"), 64*1024)
-	if err != nil {
-		return ""
-	}
-	inOrigin := false
-	for line := range strings.SplitSeq(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") {
-			inOrigin = trimmed == `[remote "origin"]`
-			continue
-		}
-		if !inOrigin {
-			continue
-		}
-		if k, v, ok := strings.Cut(trimmed, "="); ok {
-			if strings.TrimSpace(k) == "url" {
-				return strings.TrimSpace(v)
-			}
-		}
-	}
-	return ""
-}
-
-// "" when detached. Cut at the FIRST line and defused: the file is workspace content.
-func readGitBranch(repoDir string) string {
-	data, err := readCappedFile(filepath.Join(repoDir, ".git", "HEAD"), 1024)
-	if err != nil {
-		return ""
-	}
-	first, _, _ := strings.Cut(string(data), "\n")
-	s := strings.TrimSpace(first)
-	const refsPrefix = "ref: refs/heads/"
-	if branch, ok := strings.CutPrefix(s, refsPrefix); ok {
-		return defuse(branch)
-	}
-	return ""
-}
-
-// Handles both https:// and scp-style git@host:path forms. Returns "" for shapes we don't recognise
-// (file://, ext::, etc) and for anything that is not SHAPED like a host (see isHostShaped).
-func hostFromGitURL(url string) string {
-	url = strings.TrimSpace(url)
-	var host string
-	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") {
-		host = hostFromHTTPURL(url)
-	} else {
-		host = hostFromSCPURL(url)
-	}
-	if !isHostShaped(host) {
-		return ""
-	}
-	return host
-}
-
-// isHostShaped reports whether s could be a DNS host or IPv4 literal with an optional port
-// (ASCII letters, digits, dot, dash, underscore, colon), refusing markup and homoglyph
-// hosts. Cost: an IPv6-literal remote loses its annotation.
-func isHostShaped(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := range len(s) {
-		c := s[i]
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
-		case c == '.', c == '-', c == '_', c == ':':
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-// hostFromHTTPURL extracts the host from an http(s):// git URL, stripping
-// any user[:pass]@ credentials that appear before the first path slash.
-// Returns "" when the resulting host still carries an "@" or "/".
-func hostFromHTTPURL(url string) string {
-	_, rest, _ := strings.Cut(url, "://")
-	// Strip credentials only when the @ precedes the first /.
-	slash := strings.Index(rest, "/")
-	if at := strings.Index(rest, "@"); at >= 0 && (slash < 0 || at < slash) {
-		rest = rest[at+1:]
-	}
-	if i := strings.Index(rest, "/"); i > 0 {
-		host := rest[:i]
-		if strings.ContainsAny(host, "@/") {
-			return ""
-		}
-		return host
-	}
-	if strings.ContainsAny(rest, "@/") {
-		return ""
-	}
-	return rest
-}
-
-// hostFromSCPURL extracts the host from an scp-style git@host:path URL.
-// Returns "" for any other shape (no "@", a leading "@", or no ":"
-// separator), and for a host that still contains an "@" or "/".
-func hostFromSCPURL(url string) string {
-	at := strings.Index(url, "@")
-	if at <= 0 {
-		return ""
-	}
-	rest := url[at+1:]
-	colon := strings.Index(rest, ":")
-	if colon <= 0 {
-		return ""
-	}
-	host := rest[:colon]
-	if strings.ContainsAny(host, "@/") {
-		return ""
-	}
-	return host
 }
 
 // Dot-named repos (".kiro", ".github") are listed; dot-named non-repos (.cache, .venv) stay hidden.
@@ -288,97 +226,6 @@ func findNotableFiles(workDir string) []string {
 		}
 	}
 	return found
-}
-
-const firstLineWindow = 10
-
-// readFirstLine returns the first non-heading paragraph of the README at path,
-// wrapped lines joined and a leading blockquote marker stripped, capped and
-// sanitised so hostile repo content cannot inject agent instructions into
-// environment.md. One line carrying link syntax, an HTML tag, a backtick or a
-// bare URL drops its WHOLE paragraph: the continuation of a wrapped sentence is
-// a fragment, not a description. Cost: an opening sentence that quotes a
-// `symbol` yields no description.
-func readFirstLine(path string) string {
-	data, err := readCappedFile(path, firstLineReadCap)
-	if err != nil {
-		return ""
-	}
-	lines := strings.Split(string(data), "\n")
-	if len(lines) > firstLineWindow {
-		lines = lines[:firstLineWindow]
-	}
-	var para []string
-	clean := true
-	flush := func() string {
-		if !clean || len(para) == 0 {
-			return ""
-		}
-		return capDescription(strings.TrimSpace(strings.Join(para, " ")))
-	}
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || isMarkdownHeading(line) {
-			if desc := flush(); desc != "" {
-				return desc
-			}
-			para, clean = nil, true
-			continue
-		}
-		line = descriptionLine(line)
-		if carriesMarkup(line) {
-			clean = false
-		}
-		para = append(para, line)
-	}
-	return flush()
-}
-
-// descriptionLine normalises one README paragraph line: the blockquote marker
-// stripped, line breaks and tabs folded to spaces, hidden runes removed.
-func descriptionLine(line string) string {
-	line = strings.TrimSpace(strings.TrimPrefix(line, ">"))
-	line = strings.Map(func(r rune) rune {
-		switch r {
-		case '\n', '\r', '\t':
-			return ' '
-		}
-		return r
-	}, line)
-	return sanitize.Unicode(line)
-}
-
-// carriesMarkup reports whether a line holds link syntax, an HTML tag, a backtick
-// or a bare URL, any of which disqualifies its whole paragraph as a description.
-func carriesMarkup(line string) bool {
-	return strings.ContainsAny(line, "[]<`") ||
-		strings.Contains(line, "http://") ||
-		strings.Contains(line, "https://")
-}
-
-func capDescription(s string) string {
-	if len(s) > 100 {
-		return truncateUTF8(s, 100) + "..."
-	}
-	return s
-}
-
-// isMarkdownHeading reports whether line is a true CommonMark ATX
-// heading: one to six `#` followed by whitespace or end-of-line.
-// `#hashtag` content (no space after `#`) is NOT a heading and must
-// fall through so legitimate README first lines are kept.
-func isMarkdownHeading(line string) bool {
-	if line == "" || line[0] != '#' {
-		return false
-	}
-	i := 0
-	for i < len(line) && line[i] == '#' {
-		i++
-	}
-	if i > 6 {
-		return false
-	}
-	return i == len(line) || line[i] == ' ' || line[i] == '\t'
 }
 
 // truncateUTF8 returns s truncated to at most n bytes without splitting a multi-byte rune.

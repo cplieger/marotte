@@ -201,54 +201,54 @@ func TestWriteRepoSteering_OmitsEmptyGroupHeaders(t *testing.T) {
 	})
 }
 
-// TestWriteRepoSkills_HeadersAndEntryFields verifies the skills inventory
-// emits a group header only for non-empty groups and renders the
-// FileMatch / Description annotations only when those fields are set.
+// TestWriteRepoSkills_HeadersAndEntryFields verifies a file-match skill sits apart from every other
+// skill, a group header appears only for a non-empty group, and the FileMatch / Description
+// annotations render only when set.
 func TestWriteRepoSkills_HeadersAndEntryFields(t *testing.T) {
-	t.Run("fileMatch+manual: no Always header, others present, fields rendered", func(t *testing.T) {
+	t.Run("fileMatch and manual: both groups, fields rendered", func(t *testing.T) {
 		var b strings.Builder
 		writeRepoSkills(&b, "myrepo", []docEntry{
-			{Filename: "match.md", Inclusion: "fileMatch", FileMatch: "internal/**", Description: "go layout"},
-			{Filename: "ref.md", Inclusion: "manual"},
+			{Filename: "match/SKILL.md", Inclusion: "fileMatch", FileMatch: "internal/**", Description: "go layout"},
+			{Filename: "ref/SKILL.md", Inclusion: "manual"},
 		})
 		out := b.String()
-		if strings.Contains(out, "Always-loaded skills") {
-			t.Errorf("emitted Always-loaded skills header with zero always docs:\n%s", out)
+		if !strings.Contains(out, "  - **File-match skills** (`myrepo/.kiro/skills/`):\n    - `myrepo/.kiro/skills/match/SKILL.md` (matches `internal/**`) — go layout\n") {
+			t.Errorf("the fileMatch skill is not under File-match skills with its fields:\n%s", out)
 		}
-		if !strings.Contains(out, "File-match skills") {
-			t.Errorf("missing File-match skills header for a fileMatch doc:\n%s", out)
-		}
-		if !strings.Contains(out, "Manual skills") {
-			t.Errorf("missing Manual skills header for a manual doc:\n%s", out)
-		}
-		if !strings.Contains(out, "(matches `internal/**`)") {
-			t.Errorf("missing FileMatch annotation:\n%s", out)
-		}
-		if !strings.Contains(out, "— go layout") {
-			t.Errorf("missing Description annotation:\n%s", out)
+		if !strings.Contains(out, "  - **Skills** (`myrepo/.kiro/skills/`; read a SKILL.md when its description matches the task):\n    - `myrepo/.kiro/skills/ref/SKILL.md`\n") {
+			t.Errorf("the manual skill is not under Skills:\n%s", out)
 		}
 	})
-
-	t.Run("only always: no File-match/Manual headers; bare entry has no annotations", func(t *testing.T) {
+	t.Run("an always skill is read on description match, not announced as loaded", func(t *testing.T) {
 		var b strings.Builder
-		writeRepoSkills(&b, "myrepo", []docEntry{{Filename: "build.md", Inclusion: "always"}})
+		writeRepoSkills(&b, "myrepo", []docEntry{{Filename: "build/SKILL.md", Inclusion: "always"}})
 		out := b.String()
-		if strings.Contains(out, "File-match skills") {
-			t.Errorf("emitted File-match skills header with zero fileMatch docs:\n%s", out)
+		if strings.Contains(out, "File-match skills") || strings.Contains(out, "Always-loaded") {
+			t.Errorf("an always skill got a header other than Skills:\n%s", out)
 		}
-		if strings.Contains(out, "Manual skills") {
-			t.Errorf("emitted Manual skills header with zero manual docs:\n%s", out)
+		if !strings.Contains(out, "**Skills**") {
+			t.Errorf("missing Skills header:\n%s", out)
 		}
-		if !strings.Contains(out, "Always-loaded skills") {
-			t.Errorf("missing Always-loaded skills header:\n%s", out)
-		}
-		if strings.Contains(out, "(matches") {
-			t.Errorf("rendered FileMatch annotation for an empty FileMatch:\n%s", out)
-		}
-		if strings.Contains(out, "build.md` —") {
-			t.Errorf("rendered Description annotation for an empty Description:\n%s", out)
+		if strings.Contains(out, "(matches") || strings.Contains(out, "SKILL.md` —") {
+			t.Errorf("rendered an annotation for an empty field:\n%s", out)
 		}
 	})
+}
+
+func TestCapWords(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"at the cap is kept whole", words(20), words(20)},
+		{"over the cap is cut with a marker", words(21), words(20) + " …"},
+		{"short is kept", "one two", "one two"},
+		{"empty stays empty", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := capWords(tc.in, maxDescWords); got != tc.want {
+				t.Errorf("capWords(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
 }
 
 func hookDoc(hooks ...string) string {
@@ -500,18 +500,12 @@ func TestFindRepoAgents_DedupsPairedFiles(t *testing.T) {
 // claim kiro-cli loads a nested repo's agents or runs its hooks: a model told a hook runs skips
 // the check the hook stood for.
 func TestWriteRepoSteeringInstructions_NestedAgentsAndHooksAreInert(t *testing.T) {
-	dir := t.TempDir()
-	repo := filepath.Join(dir, "r")
-	mustWriteFile(t, filepath.Join(repo, ".kiro", "agents", "helper.md"), "---\nname: helper\n---\n")
-	mustWriteFile(t, filepath.Join(repo, ".kiro", "hooks", "regen.json"), hookDoc(
-		`{"name":"Regen","trigger":"PostFileSave","action":{"type":"command","command":"make gen"}}`,
-	))
 	var b strings.Builder
-	writeRepoSteeringInstructions(&b, []string{"r"}, dir)
+	writeRepoSteeringInstructions(&b, "/work")
 	out := b.String()
 	for _, want := range []string{
-		"not loaded in this session",
-		"kiro-cli does not run a nested repo's hooks",
+		"this session cannot load or switch to them",
+		"Hooks do not run for nested repos",
 		"run its command yourself",
 	} {
 		if !strings.Contains(out, want) {

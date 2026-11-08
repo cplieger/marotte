@@ -8,11 +8,10 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"path/filepath"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -26,8 +25,6 @@ import (
 // Read caps bound untrusted workspace input (agent-cloned repos) so a crafted file cannot
 // OOM the container.
 const (
-	firstLineReadCap = 4 << 10 // README first non-heading line fits easily in 4 KiB
-	toolsManifestCap = 1 << 20 // any realistic tools.json stays well under 1 MiB
 	// steeringCompareCap bounds the read of the existing environment.md for the unchanged check;
 	// anything larger is not a file this wrote, compares unequal, and is replaced.
 	steeringCompareCap = 4 << 20
@@ -57,18 +54,38 @@ type ForgeProvider struct {
 	Repos []string // top repo names (capped for brevity)
 }
 
+// ToolsSnapshot is what the tools engine reports installed.
+type ToolsSnapshot struct {
+	Tools  []InstalledTool
+	System []string // image-baked commands present on this host
+}
+
 // InstalledTool is one tools-engine row the engine's live probe reports installed.
 type InstalledTool struct {
-	Name    string // the row's name, which tools-state.json records its commands under
-	Kind    string // the source kind: "aqua", "apt", "npm" and so on
-	Version string // the installed version, "" when none is recorded
+	Version  string   // the installed version, "" when none is recorded
+	Commands []string // what the row puts on PATH; none for a library package
 }
+
+// Caps on lists that grow with the user's setup: past one, a line names the count and the
+// command that lists the rest, so environment.md stays bounded however large the setup.
+const (
+	maxCommands    = 120
+	maxMCPServers  = 30
+	maxPlainRepos  = 60
+	maxKiroRepos   = 10
+	maxRouting     = 40
+	maxDescWords   = 20
+	maxDirectories = 30
+	maxGrantedDirs = 20
+	maxMemoryTags  = 30
+	maxForgeRepos  = 20
+)
 
 // Generator produces steering files for kiro-cli.
 type Generator struct {
 	mcpSnapshot   func() MCPSnapshot
 	forgeSnapshot func() ForgeSnapshot
-	toolsSnapshot func() ([]InstalledTool, bool)
+	toolsSnapshot func() (ToolsSnapshot, bool)
 	workDir       string
 	configDir     string
 	toolsDir      string
@@ -99,9 +116,8 @@ func (g *Generator) SetForgeSnapshot(fn func() ForgeSnapshot) {
 }
 
 // SetToolsSnapshot wires a callback that returns the installed tools, with ok false when the
-// tools engine is down or its inventory failed. Unset or not ok omits the Installed tools
-// section.
-func (g *Generator) SetToolsSnapshot(fn func() (tools []InstalledTool, ok bool)) {
+// tools engine is down or its inventory failed. Unset or not ok lists none.
+func (g *Generator) SetToolsSnapshot(fn func() (tools ToolsSnapshot, ok bool)) {
 	g.mu.Lock()
 	g.toolsSnapshot = fn
 	g.mu.Unlock()
@@ -127,7 +143,7 @@ func (g *Generator) Generate(ctx context.Context) error {
 	g.mu.Unlock()
 	var mcp MCPSnapshot
 	var forges ForgeSnapshot
-	var tools []InstalledTool
+	var tools ToolsSnapshot
 	var toolsOK bool
 	if snapshotFn != nil {
 		mcp = snapshotFn()
@@ -175,17 +191,14 @@ func stopped(ctx context.Context) error {
 // hasMCP and hasForges say whether a snapshot callback was wired at all, which decides whether the
 // MCP and forge sections appear; toolsOK says the tools snapshot answered.
 func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, forges ForgeSnapshot, hasForges bool,
-	tools []InstalledTool, toolsOK bool,
+	tools ToolsSnapshot, toolsOK bool,
 ) []byte {
 	var b strings.Builder
 	writeIntro(&b, g.workDir)
-
-	if toolsOK {
-		// The inventory carries no bins: tools-state.json records them. An unreadable file
-		// leaves every tool without a recorded command.
-		data, _ := readCappedFile(filepath.Join(g.configDir, "tools-state.json"), toolsManifestCap)
-		writeTools(&b, tools, data)
+	if !toolsOK {
+		tools = ToolsSnapshot{}
 	}
+	writeTools(&b, tools, g.toolsDir)
 	writeRuntime(&b, g.configDir, g.toolsDir)
 	writeToolsEngine(&b, g.configDir, g.toolsDir, g.workDir)
 	if hasMCP {
@@ -253,69 +266,55 @@ func (*Generator) CustomPath() string {
 	return workspace.KiroSteeringPath("custom.md")
 }
 
-// toolState is the subset of a tools-state.json row (the toolbelt engine's ToolStatus) this
-// generator reads: the commands a tool owns.
-type toolState struct {
-	Bins   []string `json:"bins,omitempty"`
-	PMBins []string `json:"pm_bins,omitempty"`
-}
-
-// writeTools lists installed's commands from the bins state records. A tool with none is listed
-// as a package, never under its name as a command: an apt package's commands need not match its
-// name (ripgrep ships rg), and an npm package may ship none.
-func writeTools(b *strings.Builder, installed []InstalledTool, state []byte) {
-	var recorded struct {
-		Tools map[string]toolState `json:"tools"`
-	}
-	if len(state) > 0 {
-		if err := json.Unmarshal(state, &recorded); err != nil {
-			slog.Error("steering: parse tools-state.json", "error", err)
-		}
-	}
-	var commands, packages []toolEntry
-	for _, t := range installed {
-		// Defused: names and versions come from the catalog, hand edits and --version output.
-		version := defuse(t.Version)
-		st := recorded.Tools[t.Name]
-		bins := slices.Concat(st.Bins, st.PMBins)
-		if len(bins) == 0 {
-			packages = append(packages, toolEntry{defuse(t.Name), version, defuse(t.Kind)})
+// writeTools lists commands, not packages: an apt package's commands need not match its name
+// (ripgrep ships rg).
+func writeTools(b *strings.Builder, snap ToolsSnapshot, toolsDir string) {
+	versions := map[string]string{}
+	libraries := 0
+	for _, t := range snap.Tools {
+		if len(t.Commands) == 0 {
+			libraries++
 			continue
 		}
-		for _, bin := range bins {
-			commands = append(commands, toolEntry{defuse(bin), version, ""})
+		for _, c := range t.Commands {
+			// Defused: names and versions come from the catalog, dpkg and --version output.
+			if name := defuse(c); name != "" {
+				if _, seen := versions[name]; !seen {
+					versions[name] = defuse(t.Version)
+				}
+			}
 		}
-	}
-	if len(commands)+len(packages) == 0 {
-		return
 	}
 	b.WriteString("## Installed tools\n\n")
-	if len(commands) > 0 {
-		writeToolEntries(b, commands)
-	}
-	if len(packages) > 0 {
-		b.WriteString("Installed packages with no recorded command (`dpkg -L <package>` lists an apt package's files):\n\n")
-		writeToolEntries(b, packages)
-	}
-}
-
-type toolEntry struct{ name, version, kind string }
-
-// writeToolEntries writes one line per name, sorted; a name listed twice is one PATH entry.
-func writeToolEntries(b *strings.Builder, list []toolEntry) {
-	slices.SortFunc(list, func(x, y toolEntry) int { return strings.Compare(x.name, y.name) })
-	list = slices.CompactFunc(list, func(x, y toolEntry) bool { return x.name == y.name })
-	for _, e := range list {
-		b.WriteString("- " + e.name)
-		if e.version != "" {
-			b.WriteString(" " + e.version)
+	if len(versions) > 0 {
+		names := slices.Sorted(maps.Keys(versions))
+		entries := make([]string, 0, min(len(names), maxCommands))
+		for _, n := range names[:min(len(names), maxCommands)] {
+			entries = append(entries, strings.TrimSpace(n+" "+versions[n]))
 		}
-		if e.kind != "" {
-			b.WriteString(" (" + e.kind + ")")
+		b.WriteString("Commands: " + strings.Join(entries, ", "))
+		if extra := len(names) - maxCommands; extra > 0 {
+			fmt.Fprintf(b, ", … and %d more (`ls %s/bin`, `command -v <name>`)", extra, toolsDir)
 		}
-		b.WriteString("\n")
+		b.WriteString("\n\n")
 	}
-	b.WriteString("\n")
+	var baked []string
+	for _, s := range snap.System {
+		if d := defuse(s); d != "" {
+			baked = append(baked, d)
+		}
+	}
+	if len(baked) > 0 {
+		slices.Sort(baked)
+		b.WriteString("Baked into the image: " + strings.Join(slices.Compact(baked), ", ") + "\n\n")
+	}
+	b.WriteString("The image is Debian slim: anything not listed is likely absent (common utilities such as ")
+	b.WriteString("file, bc, xxd, netstat and ss are not installed). Check with `command -v`, and install ")
+	b.WriteString("through the tools engine below.\n\n")
+	if libraries > 0 {
+		fmt.Fprintf(b, "%d more installed packages ship no command (mostly libraries): ", libraries)
+		b.WriteString("`dpkg -l` or `curl -s localhost:9847/api/tools` lists them.\n\n")
+	}
 }
 
 func writeMCP(b *strings.Builder, snap MCPSnapshot) {
@@ -336,8 +335,11 @@ func writeMCP(b *strings.Builder, snap MCPSnapshot) {
 	b.WriteString("or, in a session without it, tool_load. ")
 	b.WriteString("A workflow step whose agent profile does not set includeMcpJson sees none of them, ")
 	b.WriteString("and reaches a Power's servers only through the Power: its power:: ids in load_resource, or kiro_powers.\n\n")
-	for _, s := range servers {
+	for _, s := range servers[:min(len(servers), maxMCPServers)] {
 		fmt.Fprintf(b, "- **%s**\n", defuse(s.Name))
+	}
+	if extra := len(servers) - maxMCPServers; extra > 0 {
+		fmt.Fprintf(b, "- … and %d more (the load_resource catalog lists them)\n", extra)
 	}
 	b.WriteString("\n")
 }
@@ -370,12 +372,11 @@ func writeForgeProvider(w io.Writer, p *ForgeProvider) {
 	fmt.Fprintf(w, "- Clone via: `git clone https://%s/<owner>/<repo>.git`\n", defuse(p.Host))
 	if len(p.Repos) > 0 {
 		fmt.Fprintf(w, "- Accessible repositories:\n")
-		n := min(len(p.Repos), 20)
-		for _, r := range p.Repos[:n] {
+		for _, r := range p.Repos[:min(len(p.Repos), maxForgeRepos)] {
 			fmt.Fprintf(w, "  - %s\n", defuse(r))
 		}
-		if len(p.Repos) > 20 {
-			fmt.Fprintf(w, "  - … and %d more\n", len(p.Repos)-20)
+		if extra := len(p.Repos) - maxForgeRepos; extra > 0 {
+			fmt.Fprintf(w, "  - … and %d more\n", extra)
 		}
 	}
 	fmt.Fprintln(w)

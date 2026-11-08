@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
-	"strings"
 	"sync"
 
 	"github.com/cplieger/marotte/internal/logsafe"
@@ -90,29 +89,36 @@ func (s *toolsSlot) Engine() (*toolbelt.Engine, error) {
 
 // installedTools is the steering generator's tools snapshot: ok false while the engine is down or
 // its inventory fails.
-func (s *toolsSlot) installedTools() ([]steering.InstalledTool, bool) {
+func (s *toolsSlot) installedTools() (steering.ToolsSnapshot, bool) {
 	engine, err := s.Engine()
 	if err != nil {
-		return nil, false
+		return steering.ToolsSnapshot{}, false
 	}
 	inv, err := engine.Inventory()
 	if err != nil {
-		return nil, false
+		return steering.ToolsSnapshot{}, false
 	}
-	return installedRows(inv), true
+	return toolsSnapshot(inv), true
 }
 
-// installedRows keeps the rows the live probe reports installed. A disabled row is left out: its
-// Installed means only that the engine still owns files the next reconcile removes.
-func installedRows(inv *toolbelt.Inventory) []steering.InstalledTool {
-	var out []steering.InstalledTool
+// toolsSnapshot keeps the rows the live probe reports installed and the system commands present.
+// A disabled row is left out: its Installed means only that the engine still owns files the next
+// reconcile removes.
+func toolsSnapshot(inv *toolbelt.Inventory) steering.ToolsSnapshot {
+	var out steering.ToolsSnapshot
 	for i := range inv.Tools {
 		t := &inv.Tools[i]
 		if !t.Installed || t.Disabled {
 			continue
 		}
-		kind, _, _ := strings.Cut(t.Source, ":")
-		out = append(out, steering.InstalledTool{Name: t.Name, Kind: kind, Version: t.InstalledVersion})
+		out.Tools = append(out.Tools, steering.InstalledTool{
+			Version: t.InstalledVersion, Commands: t.Commands,
+		})
+	}
+	for _, sys := range inv.System {
+		if sys.Installed {
+			out.System = append(out.System, sys.Name)
+		}
 	}
 	return out
 }
