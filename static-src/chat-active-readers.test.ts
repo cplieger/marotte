@@ -68,7 +68,6 @@ vi.mock("./transcript-cover.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   dropCover: vi.fn(),
   holdCover: vi.fn(),
-  inertUnderCover: vi.fn(),
   releaseCover: vi.fn(),
   moveFocusOffTranscript: vi.fn(),
 }));

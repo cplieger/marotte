@@ -79,6 +79,10 @@ export interface TabViewSpec {
   /** Called in the gesture that makes the tab active, before anything paints: moves what acts
    *  for the reader to this tab and reads no layout. */
   readonly onSelect?: (() => void) | undefined;
+  /** Start the request a stale view's `refresh` will make, before `onShow` mounts the view, so the
+   *  request does not wait on the mount; the `refresh` that follows with the same `signal` joins it
+   *  instead of sending its own. Called only by tabs.ts, behind `viewStale`. */
+  readonly prefetch?: ((signal: AbortSignal) => void) | undefined;
   /** Called when the tab's view is shown. */
   readonly onShow?: (() => void) | undefined;
   /** Bring this view's DATA up to date. REQUIRED. Called only by tabs.ts `refreshRow` behind

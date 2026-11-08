@@ -82,6 +82,7 @@ function subject(over: Partial<TabSubject> & { kind: TabKind }): TabSubject {
 
 interface Spies {
   chatShow: Mock<TabOpeners["chat"]["show"]>;
+  chatPrefetch: Mock<TabOpeners["chat"]["prefetch"]>;
   chatRefresh: Mock<TabOpeners["chat"]["refresh"]>;
   chatClose: Mock<TabOpeners["chat"]["close"]>;
   chatDot: Mock<TabOpeners["chat"]["dot"]>;
@@ -106,6 +107,7 @@ let spies: Spies;
 function register(dot: TabDotStatus | "" = ""): void {
   spies = {
     chatShow: vi.fn<TabOpeners["chat"]["show"]>(),
+    chatPrefetch: vi.fn<TabOpeners["chat"]["prefetch"]>(),
     chatRefresh: vi.fn<TabOpeners["chat"]["refresh"]>(),
     chatClose: vi.fn<TabOpeners["chat"]["close"]>(),
     chatDot: vi.fn<TabOpeners["chat"]["dot"]>(() => dot),
@@ -125,6 +127,7 @@ function register(dot: TabDotStatus | "" = ""): void {
     chat: {
       select: spies.chatSelect,
       show: spies.chatShow,
+      prefetch: spies.chatPrefetch,
       refresh: spies.chatRefresh,
       loadFailed: spies.chatLoadFailed,
       close: spies.chatClose,
@@ -348,6 +351,14 @@ describe("the injected behaviours receive the subject's ref", () => {
     register();
     materializeTab(subject({ kind: "chat", ref: "c-9" })).refresh(signal);
     expect(spies.chatRefresh).toHaveBeenCalledWith("c-9", signal);
+    expect(spies.chatShow).not.toHaveBeenCalled();
+  });
+
+  it("chat prefetch", () => {
+    register();
+    materializeTab(subject({ kind: "chat", ref: "c-9" })).prefetch?.(signal);
+    expect(spies.chatPrefetch).toHaveBeenCalledWith("c-9", signal);
+    expect(spies.chatRefresh).not.toHaveBeenCalled();
     expect(spies.chatShow).not.toHaveBeenCalled();
   });
 

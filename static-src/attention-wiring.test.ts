@@ -276,6 +276,7 @@ const seededDots = new Map<string, TabDotStatus>();
 function registerOpeners(): void {
   registerTabOpeners({
     chat: {
+      prefetch: vi.fn(),
       select: vi.fn(),
       loadFailed: vi.fn(),
       show: vi.fn(),

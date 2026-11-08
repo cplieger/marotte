@@ -58,12 +58,7 @@ import {
   disposeChatView,
   parkPaintedView,
 } from "./messages.js";
-import {
-  dropCover,
-  holdCover,
-  inertUnderCover,
-  moveFocusOffTranscript,
-} from "./transcript-cover.js";
+import { dropCover, holdCover, moveFocusOffTranscript } from "./transcript-cover.js";
 import {
   addAttachment,
   addAttachmentTo,
@@ -192,14 +187,12 @@ function readerOn(chatID: string): boolean {
 /** The failure box's Retry: load the chat again in place, under the cover when nothing of it is
  *  resident. A click inside the painted view, so no switch is involved. */
 async function retryChatLoad(chatID: string): Promise<void> {
-  // First: the click left focus on the Retry button the cover is about to make inert.
+  // First: the click left focus on the Retry button the cover is about to hide.
   moveFocusOffTranscript();
   clearChatLoadError();
   markWindowStale(chatID);
   if ((get(chatID)?.turn_order.length ?? 0) === 0) {
-    // No resident turns to restyle, so `inert` costs this click's frame nothing.
     holdCover(chatID);
-    inertUnderCover();
   }
   try {
     await refreshChatView(chatID, AbortSignal.timeout(SWITCH_LOAD_MS));
@@ -282,6 +275,24 @@ export function showChatView(id: string): void {
   }
 }
 
+/** The newest page `startChatPage` sent, until a `refreshChatView` takes or passes it. */
+let startedPage: {
+  readonly id: string;
+  readonly signal: AbortSignal;
+  readonly load: Promise<PageLoad>;
+} | null = null;
+
+/** Send the newest page `refreshChatView(id, signal)` would load, before `showChatView` mounts
+ *  the chat (a chat tab's `prefetch`); that refresh joins it. Sends nothing for a chat the store
+ *  lacks, an empty chat or a fresh window, whose refresh loads no page. */
+export function startChatPage(id: string, signal: AbortSignal): void {
+  const session = get(id);
+  if (session === undefined || isEmptyChat(session) || !transcriptStale(session)) {
+    return;
+  }
+  startedPage = { id, signal, load: loadMessages(id, undefined, signal) };
+}
+
 /**
  * Bring chat `id`'s DATA up to date (a chat tab's `refresh`). Resolves once the view has
  * something real to show; rejects with an `ActionError` only when nothing of the chat is
@@ -289,6 +300,8 @@ export function showChatView(id: string): void {
  * A failed refresh behind resident turns paints its own Retry box and resolves.
  */
 export function refreshChatView(id: string, signal: AbortSignal): Promise<void> {
+  const early = startedPage;
+  startedPage = null;
   const session = get(id);
   if (session === undefined) {
     return Promise.resolve(); // showChatView painted the box and owns the re-read
@@ -312,7 +325,8 @@ export function refreshChatView(id: string, signal: AbortSignal): Promise<void> 
   if (getPaintedId() === id) {
     clearChatLoadError();
   }
-  const load = loadMessages(id, undefined, signal);
+  const load =
+    early?.id === id && early.signal === signal ? early.load : loadMessages(id, undefined, signal);
   if (session.turn_order.length > 0) {
     void load.then((r) => {
       if (r.kind === "loaded") {

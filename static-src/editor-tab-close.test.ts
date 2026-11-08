@@ -238,6 +238,7 @@ beforeEach(() => {
   // rather than as an argument at the door.
   registerTabOpeners({
     chat: {
+      prefetch: vi.fn(),
       select: vi.fn(),
       loadFailed: vi.fn(),
       show: vi.fn(),

@@ -247,6 +247,7 @@ beforeEach(() => {
   _resetTabOpenersForTest();
   registerTabOpeners({
     chat: {
+      prefetch: vi.fn(),
       select: vi.fn(),
       loadFailed: vi.fn(),
       show: vi.fn(),

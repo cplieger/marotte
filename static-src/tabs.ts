@@ -62,7 +62,6 @@ import {
 import {
   dropCover,
   holdCover,
-  inertUnderCover,
   moveFocusOffTranscript,
   releaseCoverExceptFor,
 } from "./transcript-cover.js";
@@ -587,13 +586,14 @@ function revealActiveView(): void {
 }
 
 /** THE one caller of `viewStale`, so all ten kinds are gated in one place and none can answer it by
- *  accident from its own `onShow`. A fresh view resolves at once; the promise is the spec's
- *  `refresh` contract. */
+ *  accident from its own `onShow`. */
+function rowStale(row: TabRow): boolean {
+  return viewStale(row.subject.kind, row.subject.ref);
+}
+
+/** A fresh view resolves at once; the promise is the spec's `refresh` contract. */
 function refreshRow(row: TabRow, signal: AbortSignal): Promise<void> {
-  if (viewStale(row.subject.kind, row.subject.ref)) {
-    return row.spec.refresh(signal);
-  }
-  return Promise.resolve();
+  return rowStale(row) ? row.spec.refresh(signal) : Promise.resolve();
 }
 
 /** The newest activation: scheduled, running or finished. KEPT until a newer activation replaces
@@ -781,6 +781,9 @@ function runActivation(gen: number): void {
     const chat = row.subject.kind === "chat" ? row.subject.ref : "";
     const mounted = chat !== "" && chat === shownChat && chat === getPaintedId();
     if (!mounted || record.again) {
+      if (rowStale(row)) {
+        row.spec.prefetch?.(record.controller.signal);
+      }
       row.spec.onShow?.();
       if (chat !== "") {
         shownChat = chat;
@@ -797,8 +800,6 @@ function runActivation(gen: number): void {
   }
   pushRoute(row.spec.route);
   watchRefresh(record, row);
-  // The task's last write, after every read, so it forces no style recalc of its own.
-  inertUnderCover();
   // Last, so a caller awaiting `done` resumes after a refresh that already resolved has settled.
   record.resolveDone();
 }

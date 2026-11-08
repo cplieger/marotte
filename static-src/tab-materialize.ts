@@ -18,6 +18,7 @@ import { FB_ROOT, normalizeDirPath } from "./files-shared.js";
 interface ChatTabOpener {
   select: (chatID: string) => void;
   show: (chatID: string) => void;
+  prefetch: (chatID: string, signal: AbortSignal) => void;
   refresh: (chatID: string, signal: AbortSignal) => Promise<void>;
   loadFailed: (chatID: string) => void;
   close: (chatID: string) => void;
@@ -228,6 +229,9 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         ...dotOf(reg.chat.dot(chatID)),
         onSelect: () => {
           reg.chat.select(chatID);
+        },
+        prefetch: (signal) => {
+          reg.chat.prefetch(chatID, signal);
         },
         onShow: () => {
           reg.chat.show(chatID);

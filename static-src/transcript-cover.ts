@@ -50,8 +50,8 @@ function ensureCover(): HTMLDivElement {
   return node;
 }
 
-/** Move focus off the transcript before it is covered: an `inert` subtree drops focus to <body>,
- *  and the composer is the app's focus home. Reads no layout. */
+/** Move focus off the transcript before it is covered: a hidden subtree must not hold focus, and
+ *  the composer is the app's focus home. Reads no layout. */
 export function moveFocusOffTranscript(): void {
   const focused = document.activeElement;
   if (focused !== null && $.messagesWrap.contains(focused)) {
@@ -59,25 +59,30 @@ export function moveFocusOffTranscript(): void {
   }
 }
 
+let focusGuarded = false;
+
+/** Turn focus that enters the covered transcript (Tab, a script) to the composer. */
+function guardCoveredFocus(e: FocusEvent): void {
+  if (holder !== "" && e.target instanceof Node && $.messagesWrap.contains(e.target)) {
+    $.promptInput.focus({ preventScroll: true });
+  }
+}
+
 /** Cover the transcript for `chatID`, or hand an existing cover to it without re-creating or
- *  re-animating it. The transcript under it is `aria-busy` until a release; `inertUnderCover`
- *  makes it `inert`. */
+ *  re-animating it. Until a release the transcript under it is `aria-busy`, hidden from assistive
+ *  tech and refuses focus; the opaque cover takes the pointer. */
 export function holdCover(chatID: string): void {
   const node = ensureCover();
   holder = chatID;
   pendingLift = null;
   node.hidden = false;
   delete node.dataset["state"];
+  // Not `inert`: setting it restyles every resident turn, 30 to 140 ms each way in WebKit.
+  $.messagesWrap.setAttribute("aria-hidden", "true");
   setBusy($.messagesWrap, true);
-}
-
-/** Make the transcript under a held cover `inert` until a release; a no-op with no cover. Apart
- *  from `holdCover` because `inert` restyles every resident turn, which in a gesture's frame costs
- *  a 4x-throttled CPU about 50 ms of style; until it runs, the opaque cover takes the pointer. */
-export function inertUnderCover(): void {
-  // A deferred lift runs a task from now; `inert` now would restyle the turns twice.
-  if (holder !== "" && pendingLift === null) {
-    $.messagesWrap.inert = true;
+  if (!focusGuarded) {
+    document.addEventListener("focusin", guardCoveredFocus, true);
+    focusGuarded = true;
   }
 }
 
@@ -115,7 +120,7 @@ export function dropCover(): void {
   const wasHeld = holder !== "";
   holder = "";
   pendingLift = null;
-  $.messagesWrap.inert = false;
+  $.messagesWrap.removeAttribute("aria-hidden");
   setBusy($.messagesWrap, false);
   if (cover === null || !wasHeld) {
     return;

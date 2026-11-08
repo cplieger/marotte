@@ -406,6 +406,7 @@ async function resetProjection(): Promise<void> {
   seededDots.clear();
   registerTabOpeners({
     chat: {
+      prefetch: vi.fn(),
       select: vi.fn(),
       loadFailed: vi.fn(),
       show: vi.fn(),

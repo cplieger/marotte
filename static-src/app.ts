@@ -79,6 +79,7 @@ import {
   showChatView,
   cancelActiveTurn,
   refreshChatView,
+  startChatPage,
   showBlankLoadFailure,
   closeChatTab,
   chatTabDot,
@@ -167,6 +168,7 @@ function init(): void {
     chat: {
       select: selectChat,
       show: showChatView,
+      prefetch: startChatPage,
       refresh: refreshChatView,
       loadFailed: showBlankLoadFailure,
       close: closeChatTab,

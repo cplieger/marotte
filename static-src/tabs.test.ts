@@ -269,6 +269,7 @@ function registerOpeners(): void {
   };
   registerTabOpeners({
     chat: {
+      prefetch: vi.fn(),
       select: vi.fn(),
       loadFailed: vi.fn(),
       show: openers.chatShow,

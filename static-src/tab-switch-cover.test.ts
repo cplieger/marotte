@@ -135,9 +135,7 @@ describe("the cover is released by the paint that shows content", () => {
     store.setActive("cv-b");
     coverModule.holdCover("cv-b");
     expect(wrap().getAttribute("aria-busy")).toBe("true");
-    expect(wrap().inert, "holding the cover alone restyles nothing").toBe(false);
-    coverModule.inertUnderCover();
-    expect(wrap().inert).toBe(true);
+    expect(wrap().getAttribute("aria-hidden")).toBe("true");
     setPainted("cv-b");
     await flushed();
     expect(coverUp(), "a paint with no turns released the cover").toBe(true);
@@ -153,7 +151,7 @@ describe("the cover is released by the paint that shows content", () => {
     expect(view?.querySelectorAll(".turn").length ?? 0).toBeGreaterThan(0);
     expect(coverUp(), "the paint that mounted B's turns left the cover up").toBe(false);
     expect(wrap().hasAttribute("aria-busy")).toBe(false);
-    expect(wrap().inert).toBe(false);
+    expect(wrap().hasAttribute("aria-hidden")).toBe(false);
   });
 
   it("lifts in the activation's paint when the target is parked with its turns", async () => {
@@ -269,12 +267,13 @@ describe("a switch's cover lifts with its paint, and only a switch raises it", (
       () => pending,
       async () => {
         expect(await paintSwitchToB(), "the cover lifted over waiting input").toBe(true);
-        expect(wrap().inert, "a deferred lift made the turns inert").toBe(false);
-        coverModule.inertUnderCover();
-        expect(wrap().inert, "inert under a lift a task away").toBe(false);
+        expect(wrap().getAttribute("aria-hidden"), "a deferred lift unhid the covered turns").toBe(
+          "true",
+        );
         pending = false;
         await nextTask();
         expect(coverUp(), "the deferred lift did not run in the next task").toBe(false);
+        expect(wrap().hasAttribute("aria-hidden")).toBe(false);
       },
     );
   });
