@@ -31,7 +31,7 @@ const (
 
 // leaseKinds classifies every *sharedBridge method declared in the lease file.
 var leaseKinds = map[string]string{
-	"use": "use", "Call": "use", "CallAt": "use", "PromptAt": "use", "Notify": "use",
+	"use": "use", "lease": "use", "Call": "use", "CallAt": "use", "PromptAt": "use", "Notify": "use",
 	"useRun":    "useRun",
 	"responder": "responder", "Respond": "responder",
 	"closeOwned": "closer",
@@ -89,7 +89,7 @@ var recordSessionWriters = map[string][]string{
 }
 
 // leaseCallers are the lease methods whose function-literal callback receives the session.
-var leaseCallers = []string{"use", "useRun", "closeOwned", "useSession"}
+var leaseCallers = []string{"use", "useClosing", "useRun", "closeOwned", "useSession"}
 
 // A parse of internal/command that finds fewer files is wrongly rooted. 39 measured.
 const commandFileFloor = 30

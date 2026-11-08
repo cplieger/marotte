@@ -128,6 +128,17 @@ type chatLifecycle struct {
 	fwdExits map[uint64]chan struct{}
 	// leaseCuts holds each running session lease's cancel, by leaseSeq token (beginLease).
 	leaseCuts map[uint64]context.CancelCauseFunc
+	// ask is the chat's one pending close and closing its one granted close (session_close_owner.go).
+	ask     *closeAsk
+	closing *closeGrant
+	// reloadFor is the entry a reload is marked for (markReload), so a later generation never inherits the mark.
+	reloadFor *sharedBridge
+	// tails, steps, opens and wakes are the hold records of holdTail, holdStep, holdOpen and holdWake. opens maps
+	// each open id to its door's opener token (0 for a non-prompt door); it is outside work, so quiet never waits on it.
+	tails map[uint64]struct{}
+	steps map[string]struct{}
+	opens map[uint64]uint64
+	wakes map[string]*time.Timer
 	// quiet is closed once the life ended and none of its work runs (turn_life.go).
 	quiet chan struct{}
 	// ctx is the life's: cancelled with marotte.ErrChatClosedDuringCall when the life ends, and every wait of the
@@ -148,8 +159,9 @@ type chatLifecycle struct {
 	// nextSeq is the open sequence the newest record took; openLocked increments it
 	// before assigning, so the next record takes nextSeq+1.
 	nextSeq uint64
-	// leaseSeq is the last token beginLease issued; tokens start at 1.
+	// leaseSeq is the last token beginLease issued; tokens start at 1. openSeq is the last open id holdOpenLocked issued.
 	leaseSeq uint64
+	openSeq  uint64
 	// epoch names this lifecycle among the chat's; a fence from another epoch never holds. Re-minted when the life
 	// ends, so a surviving drain opens nothing.
 	epoch uint64
@@ -187,6 +199,8 @@ type chatLifecycle struct {
 	admissionOpened bool
 	// ended is set once, when the life ends (endLifeLocked); an ended life admits nothing.
 	ended bool
+	// closer is whether a closer goroutine runs for this life; only the request that set it starts one (askClose).
+	closer bool
 	// stopCause is the cause of the stops stopSeq records (requestStop decides it).
 	stopCause marotte.TurnStopCause
 	state     turnState
@@ -204,6 +218,8 @@ type turnRegistry struct {
 	// lifeParent is the context every life's is a child of: the runtime's lifetime. Nil is context.Background.
 	lifeParent context.Context
 	chats      map[marotte.ChatID]*chatLifecycle
+	// steps is every chat's open hosted step turns (holdStep), which a lifecycle created later starts from.
+	steps map[marotte.ChatID]map[string]struct{}
 	// records writes the chat's turn keep fact; required by newTurnRegistry.
 	records turnRecords
 	// onIdle runs, with no lock held, each time a chat leaves its last open turn or admission: an engine restart
@@ -217,7 +233,9 @@ type turnRegistry struct {
 	epochs   atomic.Uint64
 	// admissions mints reservation tokens registry-wide, so a release clears its own slot and no later life's.
 	admissions atomic.Uint64
-	fwdGens    atomic.Uint64
+	// tailSeq mints close-tail tokens registry-wide, so a token never names another life's tail.
+	tailSeq atomic.Uint64
+	fwdGens atomic.Uint64
 	// stopTokens mints each stop's send-hold token.
 	stopTokens atomic.Uint64
 	mu         sync.Mutex
@@ -369,8 +387,10 @@ func (r *turnRegistry) forgetIfIdle(chatID marotte.ChatID) {
 	lc.endLifeLocked(r.mintEpoch)
 }
 
-// wakeLocked wakes every waiter without moving the state. Caller holds mu.
+// wakeLocked wakes every waiter without moving the state. It decides the pending close first: every hold release
+// changes state through here, so no release can skip the decision. Caller holds mu.
 func (lc *chatLifecycle) wakeLocked() {
+	lc.decideLocked()
 	close(lc.changed)
 	lc.changed = make(chan struct{})
 }
@@ -427,6 +447,7 @@ func (lc *chatLifecycle) openLocked(chatID marotte.ChatID, opened *marotte.Entry
 	} else {
 		lc.own = t
 	}
+	lc.endWakesLocked()
 	lc.setStateLocked(turnOpen)
 	return t
 }

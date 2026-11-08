@@ -65,15 +65,19 @@ func (lc *chatLifecycle) holderSourceLocked() (marotte.TurnOpenSource, bool) {
 	return 0, false
 }
 
-// tryReserveFenced takes the slot iff free and the fence holds, never waiting (a close's drain). The fence names a
-// life that existed, so a missing lifecycle refuses, and a held close refuses.
-func (r *turnRegistry) tryReserveFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) (command.Reservation, bool) {
+// drainPick is a close's drain picking its next turn. In one section it ends the hold of the tail whose token is
+// tail and takes the slot iff free and the fence holds, never waiting, so a pending close never sees an empty hold set
+// between the tail and the drained prompt's reservation. The fence names a life that existed, so a missing lifecycle
+// refuses, and a held close refuses.
+func (r *turnRegistry) drainPick(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence, tail uint64) (command.Reservation, bool) {
 	lc, ok := r.lookup(chatID)
 	if !ok {
 		return command.Reservation{}, false
 	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
+	delete(lc.tails, tail)
+	defer lc.wakeLocked()
 	if !lc.fenceHoldsLocked(fence) {
 		return command.Reservation{}, false
 	}
@@ -170,6 +174,7 @@ func (r *turnRegistry) releaseReservation(res command.Reservation) {
 	lc.reservedSource = 0
 	lc.admissionMessage = ""
 	lc.reservedForRow, lc.admissionOpened = false, false
+	lc.endOpensLocked(res.Token)
 	lc.wakeLocked()
 	idle := !lc.liveLockedState()
 	announce := idle && r.records.EndTurn(context.Background(), res.Chat)
@@ -303,7 +308,7 @@ func (bc *bridgeCoordinator) reserveWaiting(
 // TryReserveTurnFenced takes the admission slot for a close's drain iff it is free, never waiting, refused once a turn
 // opened after the closed one. The open checks the fence again where it appends.
 func (bc *bridgeCoordinator) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) (command.Reservation, bool) {
-	return bc.turns.tryReserveFenced(chatID, source, fence)
+	return bc.turns.drainPick(chatID, source, fence, 0)
 }
 
 // LifeStamp is the life gate's position now, the stamp a caller takes where its intent toward a chat begins.
@@ -410,6 +415,9 @@ func (r *turnRegistry) noteKASActivity(chatID marotte.ChatID, active bool) (*act
 		in = kasReportActive
 	}
 	lc.kasStepLocked(in, 0)
+	if active {
+		lc.endWakesLocked()
+	}
 	if !lc.bracketedWireLocked() {
 		return nil, 0, false
 	}
@@ -427,6 +435,10 @@ func (r *turnRegistry) noteKASActivity(chatID marotte.ChatID, active bool) (*act
 // (KAS's idle report, the session ending or shutdown do): a send beside a still-running execution is the loss the
 // wait prevents, while a refused prompt hands its text back.
 const kasHoldWarnAfter = 15 * time.Minute
+
+// wakeHoldBound is how long a terminal run_complete keeps its parent chat's session for KAS's wake (holdWake). KAS
+// sends the wake after one message-store append on the parent, whose longest logged duration was 24.6 s.
+const wakeHoldBound = 60 * time.Second
 
 // awaitKASIdle waits, after the fenced turn closed, until KAS's state permits session calls (kasPermits), so the
 // closer's model switch, compaction and drain are not queued beside a run KAS still reports, such as the cancelled

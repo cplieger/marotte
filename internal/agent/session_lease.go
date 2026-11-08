@@ -14,17 +14,21 @@ import (
 // or writes sharedBridge.leased; session_lease_test.go fails the build on any other access.
 
 // leaseLife is the life an entry's leases are counted on: the chat's lifecycle, or runHostLife for a run host.
-// beginLease answers the life's context; a life that can end calls cut when it does, before the ending call returns.
+// beginLease answers the life's context for a lease on sb, or the refusal the caller returns; a life that can end
+// calls cut when it does, before the ending call returns. closingSession reports whether a close is granted on sb.
 type leaseLife interface {
-	beginLease(cut context.CancelCauseFunc) (ctx context.Context, done func(), ok bool)
+	beginLease(sb *sharedBridge, cut context.CancelCauseFunc) (ctx context.Context, done func(), err error)
+	closingSession(sb *sharedBridge) bool
 }
 
 // runHostLife is a run host's life, which no close ends: it always admits, on the runtime's lifetime.
 type runHostLife struct{ ctx context.Context }
 
-func (l runHostLife) beginLease(context.CancelCauseFunc) (context.Context, func(), bool) {
-	return l.ctx, func() {}, true
+func (l runHostLife) beginLease(*sharedBridge, context.CancelCauseFunc) (context.Context, func(), error) {
+	return l.ctx, func() {}, nil
 }
+
+func (runHostLife) closingSession(*sharedBridge) bool { return false }
 
 // newSharedBridge is the one constructor of an entry, whose leases are counted on life.
 func newSharedBridge(life leaseLife) *sharedBridge {
@@ -36,9 +40,25 @@ func newSharedBridge(life leaseLife) *sharedBridge {
 
 // use runs fn on the entry's session as one lease of its life. fn's context is also cancelled, with the life's cause,
 // when the life ends, and an error fn returns then wraps marotte.ErrChatClosedDuringCall; a lease the life refuses
-// runs nothing and answers that error. fn must not keep the session past its return. An entry with no session yet
-// answers marotte.ErrSessionClosed.
+// runs nothing and answers the life's refusal (beginLease). fn must not keep the session past its return. An entry
+// with no session yet answers marotte.ErrSessionClosed.
 func (sb *sharedBridge) use(ctx context.Context, fn func(ctx context.Context, s engineSession) error) error {
+	return sb.lease(ctx, func(cut context.CancelCauseFunc) (context.Context, func(), error) {
+		return sb.life.beginLease(sb, cut)
+	}, fn)
+}
+
+// useClosing is use for the close g grants, on g's entry: the closer's own lease, which the grant does not refuse.
+func (lc *chatLifecycle) useClosing(ctx context.Context, g *closeGrant, fn func(ctx context.Context, s engineSession) error) error {
+	return g.sb.lease(ctx, func(cut context.CancelCauseFunc) (context.Context, func(), error) {
+		return leaseOutcome(lc.begin(workSession, cut))
+	}, fn)
+}
+
+func (sb *sharedBridge) lease(
+	ctx context.Context, begin func(cut context.CancelCauseFunc) (context.Context, func(), error),
+	fn func(ctx context.Context, s engineSession) error,
+) error {
 	sb.mu.Lock()
 	s := sb.leased
 	sb.mu.Unlock()
@@ -47,9 +67,9 @@ func (sb *sharedBridge) use(ctx context.Context, fn func(ctx context.Context, s 
 	}
 	child, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	lifeCtx, done, ok := sb.life.beginLease(cancel)
-	if !ok {
-		return marotte.ErrChatClosedDuringCall
+	lifeCtx, done, err := begin(cancel)
+	if err != nil {
+		return err
 	}
 	defer done()
 	// The life's own end cuts child through beginLease; this carries the end of the life's parent, the runtime.

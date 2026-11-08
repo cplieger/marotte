@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
 
@@ -25,12 +26,15 @@ const (
 	workTail
 	workSweep
 	workSession
+	// workCloser is the chat's closer goroutine (askClose); it is the life's work, not a hold.
+	workCloser
 	workKinds
 )
 
-var workKindNames = [workKinds]string{"doors", "forwards", "tails", "sweeps", "sessions"}
+var workKindNames = [workKinds]string{"doors", "forwards", "tails", "sweeps", "sessions", "closers"}
 
-// newLifecycle builds a lifecycle for chatID admitted at stamp, its context a child of the registry's lifetime.
+// newLifecycle builds a lifecycle for chatID admitted at stamp, its context a child of the registry's lifetime, holding
+// the chat's open hosted steps. Caller holds r.mu.
 func (r *turnRegistry) newLifecycle(chatID marotte.ChatID, stamp uint64) *chatLifecycle {
 	parent := r.lifeParent
 	if parent == nil {
@@ -45,6 +49,7 @@ func (r *turnRegistry) newLifecycle(chatID marotte.ChatID, stamp uint64) *chatLi
 		stamp:   stamp,
 		ctx:     ctx,
 		cancel:  cancel,
+		steps:   maps.Clone(r.steps[chatID]),
 	}
 }
 
@@ -54,16 +59,35 @@ func (lc *chatLifecycle) beginWork(kind workKind) (context.Context, func(), bool
 	return lc.begin(kind, nil)
 }
 
-// beginLease is beginWork for one session lease, whose own context cut cancels: the life's end calls cut before
+// beginLease is beginWork for one session lease on sb, whose own context cut cancels: the life's end calls cut before
 // it returns, so no check on the lease's context passes once a close committed. A lease's context derives from its
-// caller's, and context.AfterFunc on the life's would cut it later, on another goroutine.
-func (lc *chatLifecycle) beginLease(cut context.CancelCauseFunc) (context.Context, func(), bool) {
-	return lc.begin(workSession, cut)
+// caller's, and context.AfterFunc on the life's would cut it later, on another goroutine. A lease on an entry whose
+// close is granted answers marotte.ErrSessionClosing; the closer's own lease is useClosing.
+func (lc *chatLifecycle) beginLease(sb *sharedBridge, cut context.CancelCauseFunc) (context.Context, func(), error) {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if !lc.ended && lc.closing != nil && lc.closing.sb == sb {
+		return nil, func() {}, marotte.ErrSessionClosing
+	}
+	return leaseOutcome(lc.beginLocked(workSession, cut, nil))
+}
+
+// leaseOutcome is a work count's answer as a lease's: a life that ended answers marotte.ErrChatClosedDuringCall.
+func leaseOutcome(ctx context.Context, done func(), ok bool) (context.Context, func(), error) {
+	if !ok {
+		return nil, done, marotte.ErrChatClosedDuringCall
+	}
+	return ctx, done, nil
 }
 
 func (lc *chatLifecycle) begin(kind workKind, cut context.CancelCauseFunc) (context.Context, func(), bool) {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
+	return lc.beginLocked(kind, cut, nil)
+}
+
+// beginLocked is begin under mu; onDone, when set, runs in done's section before the count drops.
+func (lc *chatLifecycle) beginLocked(kind workKind, cut context.CancelCauseFunc, onDone func()) (context.Context, func(), bool) {
 	if lc.ended {
 		return nil, func() {}, false
 	}
@@ -81,6 +105,9 @@ func (lc *chatLifecycle) begin(kind workKind, cut context.CancelCauseFunc) (cont
 	return lc.ctx, func() {
 		once.Do(func() {
 			lc.mu.Lock()
+			if onDone != nil {
+				onDone()
+			}
 			lc.work[kind]--
 			delete(lc.leaseCuts, token)
 			lc.quietIfDoneLocked()
@@ -91,7 +118,8 @@ func (lc *chatLifecycle) begin(kind workKind, cut context.CancelCauseFunc) (cont
 }
 
 // endLifeLocked ends the life: every fence taken before it stops holding, its context and every running lease's are
-// cancelled with marotte.ErrChatClosedDuringCall, and no new work starts. Idempotent. Caller holds mu.
+// cancelled with marotte.ErrChatClosedDuringCall, and no new work starts. The pending close, the open holds and the
+// wake holds go with it: the teardown owns the session's end. Idempotent. Caller holds mu.
 func (lc *chatLifecycle) endLifeLocked(epochs func() uint64) {
 	if lc.ended {
 		return
@@ -102,6 +130,9 @@ func (lc *chatLifecycle) endLifeLocked(epochs func() uint64) {
 	for _, cut := range lc.leaseCuts {
 		cut(marotte.ErrChatClosedDuringCall)
 	}
+	lc.ask = nil
+	clear(lc.opens)
+	lc.endWakesLocked()
 	lc.quietIfDoneLocked()
 	lc.wakeLocked()
 }

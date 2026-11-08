@@ -17,11 +17,8 @@ import (
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/turnlog"
 )
-
-// ownerWakeBound is how long KAS's terminal parent wake may take to start: one message-store append after the
-// run_complete frame, whose longest logged duration is 24.6 s.
-const ownerWakeBound = 60 * time.Second
 
 // ownerHub is a runtime whose chat c1 has an open, idle session on its own fake, with a tab store holding c1's tab
 // when the hub is tabbed. Build it inside a synctest bubble.
@@ -924,7 +921,7 @@ func TestCloseOwner_ARunEndKeepsTheChatForALateWake(t *testing.T) {
 		o.launchRun(t, recordedRun)
 
 		deliverRunComplete(t, o.h, "c1", recordedRun, "completed")
-		time.Sleep(ownerWakeBound - time.Second)
+		time.Sleep(wakeHoldBound - time.Second)
 		synctest.Wait()
 
 		if !o.keptOpen() {
@@ -977,7 +974,7 @@ func TestCloseOwner_TheWakeBoundReleasesTheChat(t *testing.T) {
 		o.launchRun(t, recordedRun)
 
 		deliverRunComplete(t, o.h, "c1", recordedRun, "completed")
-		time.Sleep(ownerWakeBound - time.Millisecond)
+		time.Sleep(wakeHoldBound - time.Millisecond)
 		synctest.Wait()
 		if !o.keptOpen() {
 			t.Fatal("the chat's session closed before the wake's bound")
@@ -1017,33 +1014,34 @@ func TestCloseOwner_ABusyParentsWakeHoldsUntilTheNextTurn(t *testing.T) {
 type holdRow struct {
 	acquire func(t *testing.T, o *ownerHub) (release func())
 	name    string
+	kind    holdKind
 }
 
 var closeHoldRows = []holdRow{
-	{name: "an admission held by another caller", acquire: func(t *testing.T, o *ownerHub) func() {
+	{name: "an admission held by another caller", kind: holdAdmission, acquire: func(t *testing.T, o *ownerHub) func() {
 		if !o.h.coord.tryReserveIdleNow("c1", marotte.TurnSourcePrompt) {
 			t.Fatal("Setup: the admission slot was not free")
 		}
 		return once(func() { o.h.coord.releaseHeld("c1") })
 	}},
-	{name: "a wire turn", acquire: func(t *testing.T, o *ownerHub) func() {
+	{name: "a wire turn", kind: holdTurn, acquire: func(t *testing.T, o *ownerHub) func() {
 		send(t, o.h, newTurnStartMsg())
 		return once(func() { send(t, o.h, newTurnEndMsg("end_turn")) })
 	}},
-	{name: "a sent prompt turn", acquire: func(t *testing.T, o *ownerHub) func() {
+	{name: "a sent prompt turn", kind: holdTurn, acquire: func(t *testing.T, o *ownerHub) func() {
 		id, _ := o.h.stagePromptTurn(t, "c1")
 		return once(func() { endTurn(t, o.h, "c1", id) })
 	}},
-	{name: "a run KAS reports", acquire: func(_ *testing.T, o *ownerHub) func() {
+	{name: "a run KAS reports", kind: holdKAS, acquire: func(_ *testing.T, o *ownerHub) func() {
 		o.h.coord.turns.noteKASActivity("c1", true)
 		return once(func() { o.h.coord.turns.noteKASActivity("c1", false) })
 	}},
-	{name: "a closer's KAS hold", acquire: func(t *testing.T, o *ownerHub) func() {
+	{name: "a closer's KAS hold", kind: holdKAS, acquire: func(t *testing.T, o *ownerHub) func() {
 		lc := lifecycleOf(t, o.h, "c1")
 		lc.kasStep(kasGraceClaim, 1)
 		return once(func() { lc.kasStep(kasReleaseOwn, 1) })
 	}},
-	{name: "a running session call", acquire: func(t *testing.T, o *ownerHub) func() {
+	{name: "a running session call", kind: holdLease, acquire: func(t *testing.T, o *ownerHub) func() {
 		gate := make(chan struct{})
 		o.br.setBlockOn("test/held", gate)
 		called := make(chan struct{})
@@ -1054,7 +1052,7 @@ var closeHoldRows = []holdRow{
 		synctest.Wait()
 		return once(func() { close(gate); <-called })
 	}},
-	{name: "a turn's close tail", acquire: func(t *testing.T, o *ownerHub) func() {
+	{name: "a turn's close tail", kind: holdTail, acquire: func(t *testing.T, o *ownerHub) func() {
 		tails := blockTails(t, o.h)
 		send(t, o.h, newTurnStartMsg(), newTurnEndMsg("end_turn"))
 		synctest.Wait()
@@ -1063,7 +1061,7 @@ var closeHoldRows = []holdRow{
 		}
 		return tails.release
 	}},
-	{name: "a door in progress", acquire: func(t *testing.T, o *ownerHub) func() {
+	{name: "a door in progress", kind: holdDoor, acquire: func(t *testing.T, o *ownerHub) func() {
 		_, done, ok := lifecycleOf(t, o.h, "c1").beginWork(workDoor)
 		if !ok {
 			t.Fatal("Setup: the life refused the door's work")
@@ -1073,10 +1071,10 @@ var closeHoldRows = []holdRow{
 		o.sb.mu.Unlock()
 		return once(func() { o.sb.setIdle(); done() })
 	}},
-	{name: "a run step the session hosts", acquire: func(t *testing.T, o *ownerHub) func() {
+	{name: "a run step the session hosts", kind: holdStep, acquire: func(t *testing.T, o *ownerHub) func() {
 		return hostStepOn(t, o.h, "sess-step")
 	}},
-	{name: "the wake a run's end owes the chat", acquire: func(t *testing.T, o *ownerHub) func() {
+	{name: "the wake a run's end owes the chat", kind: holdWake, acquire: func(t *testing.T, o *ownerHub) func() {
 		o.launchRun(t, recordedRun)
 		deliverRunComplete(t, o.h, "c1", recordedRun, "completed")
 		return once(func() {
@@ -1171,5 +1169,513 @@ func TestCloseOwner_EachHoldRefusesThenReleases(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+// ownerLife is c1's lifecycle on a bare registry, with one entry on it: the owner's own answers, with no runtime path
+// asking or closing beside the test.
+type ownerLife struct {
+	r  *turnRegistry
+	lc *chatLifecycle
+	sb *sharedBridge
+}
+
+func newOwnerLife(t *testing.T) *ownerLife {
+	t.Helper()
+	r := newTurnRegistry(nopTurnRecords{})
+	lc := r.testLifecycle("c1")
+	t.Cleanup(func() { r.forget("c1") })
+	return &ownerLife{r: r, lc: lc, sb: newSharedBridge(lc)}
+}
+
+// reserve takes c1's admission slot, as a prompt's admission does.
+func (o *ownerLife) reserve(t *testing.T) command.Reservation {
+	t.Helper()
+	o.lc.mu.Lock()
+	a := o.r.reserveLocked(o.lc, marotte.TurnSourcePrompt, o.lc.stamp, "")
+	o.lc.mu.Unlock()
+	if a.res.Token == 0 {
+		t.Fatal("Setup: the admission slot was not free")
+	}
+	return a.res
+}
+
+func (o *ownerLife) holdOpen(opener uint64) func() {
+	o.lc.mu.Lock()
+	defer o.lc.mu.Unlock()
+	return o.lc.holdOpenLocked(opener)
+}
+
+// closeState is a snapshot of the owner's close state.
+type closeState struct {
+	ask     *closeAsk
+	closing *closeGrant
+	tails   int
+	opens   int
+	closer  bool
+}
+
+func (o *ownerLife) state() closeState {
+	o.lc.mu.Lock()
+	defer o.lc.mu.Unlock()
+	var ask *closeAsk
+	if o.lc.ask != nil {
+		cp := *o.lc.ask
+		ask = &cp
+	}
+	return closeState{ask: ask, closing: o.lc.closing, tails: len(o.lc.tails), opens: len(o.lc.opens), closer: o.lc.closer}
+}
+
+func (o *ownerLife) blocker(opener uint64) holdKind {
+	o.lc.mu.Lock()
+	defer o.lc.mu.Unlock()
+	return o.lc.blockerLocked(opener)
+}
+
+// ownerHolds takes one hold of each kind through the owner's own acquire, answering its release.
+var ownerHolds = map[holdKind]struct {
+	take func(t *testing.T, o *ownerLife) (release func())
+	name string
+}{
+	holdAdmission: {name: "admission", take: func(t *testing.T, o *ownerLife) func() {
+		res := o.reserve(t)
+		return func() { o.r.releaseReservation(res) }
+	}},
+	holdTurn: {name: "turn", take: func(t *testing.T, o *ownerLife) func() {
+		o.lc.mu.Lock()
+		tr := o.lc.openLocked("c1", &marotte.Entry{ID: "w-owner"}, marotte.TurnSourceWireTurnStart, "", turnlog.Open("w-owner", nil))
+		o.lc.mu.Unlock()
+		return func() { o.r.finish(tr, marotte.TurnResult{}) }
+	}},
+	holdKAS: {name: "KAS", take: func(_ *testing.T, o *ownerLife) func() {
+		o.r.noteKASActivity("c1", true)
+		return func() { o.r.noteKASActivity("c1", false) }
+	}},
+	holdLease: {name: "lease", take: func(t *testing.T, o *ownerLife) func() {
+		_, done, err := o.lc.beginLease(o.sb, func(error) {})
+		if err != nil {
+			t.Fatalf("Setup: lease refused: %v", err)
+		}
+		return done
+	}},
+	holdTail: {name: "tail", take: func(t *testing.T, o *ownerLife) func() {
+		_, done, _, ok := o.r.beginTail(o.lc)
+		if !ok {
+			t.Fatal("Setup: the life refused the tail")
+		}
+		return done
+	}},
+	holdDoor: {name: "door", take: func(t *testing.T, o *ownerLife) func() {
+		_, done, ok := o.lc.beginWork(workDoor)
+		if !ok {
+			t.Fatal("Setup: the life refused the door")
+		}
+		return done
+	}},
+	holdOpen: {name: "open", take: func(_ *testing.T, o *ownerLife) func() { return o.holdOpen(0) }},
+	holdStep: {name: "step", take: func(_ *testing.T, o *ownerLife) func() {
+		o.r.holdStep("c1", "step-owner")
+		return func() { o.r.endStep("c1", "step-owner") }
+	}},
+	holdWake: {name: "wake", take: func(_ *testing.T, o *ownerLife) func() {
+		o.r.holdWake("c1", "wf-owner")
+		return func() { o.r.noteKASActivity("c1", true); o.r.noteKASActivity("c1", false) }
+	}},
+}
+
+func TestCloseOwner_EveryHoldKindHasARow(t *testing.T) {
+	rows := make(map[holdKind]bool)
+	for _, row := range closeHoldRows {
+		rows[row.kind] = true
+	}
+	for k := range holdKinds {
+		h, ok := ownerHolds[k]
+		if !ok {
+			t.Errorf("hold kind %d has no owner-level acquire", k)
+			continue
+		}
+		if !rows[k] {
+			t.Errorf("hold kind %s has no row in TestCloseOwner_EachHoldRefusesThenReleases", h.name)
+		}
+		t.Run(h.name, func(t *testing.T) {
+			o := newOwnerLife(t)
+			release := h.take(t, o)
+			if got := o.blocker(0); got != k {
+				t.Errorf("blockerLocked with only the %s hold held = %d, want %d", h.name, got, k)
+			}
+			release()
+			if got := o.blocker(0); got != holdKinds {
+				t.Errorf("blockerLocked after the %s hold's release = %d, want none", h.name, got)
+			}
+		})
+	}
+}
+
+func TestCloseOwner_TheOpenersOwnAdmissionAndUnsentTurnDoNotRefuse(t *testing.T) {
+	o := newOwnerLife(t)
+	res := o.reserve(t)
+	o.lc.mu.Lock()
+	o.lc.openLocked("c1", &marotte.Entry{ID: "p-owner"}, marotte.TurnSourcePrompt, "", turnlog.Open("p-owner", nil))
+	o.lc.mu.Unlock()
+	if got := o.blocker(res.Token); got != holdKinds {
+		t.Errorf("the opener's own door = %d, want no hold refusing it", got)
+	}
+	if got := o.blocker(0); got != holdAdmission {
+		t.Errorf("another caller = %d, want the reservation refusing it", got)
+	}
+	o.lc.mu.Lock()
+	o.lc.pending.sent = true
+	o.lc.mu.Unlock()
+	if got := o.blocker(res.Token); got != holdTurn {
+		t.Errorf("the opener's door once its prompt was sent = %d, want the turn refusing it", got)
+	}
+}
+
+func TestCloseOwner_TwoAsksWhileHeldMakeOneClose(t *testing.T) {
+	for _, k := range []holdKind{holdKAS, holdTail, holdStep} {
+		h := ownerHolds[k]
+		t.Run(h.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				o := newOwnerLife(t)
+				release := h.take(t, o)
+
+				first := o.lc.askClose(o.sb, closeRelease, 0, false)
+				second := o.lc.askClose(o.sb, closeReload, 0, false)
+				if first.verdict != askPending || !first.startCloser {
+					t.Errorf("the first ask = %+v, want pending, starting the closer", first)
+				}
+				if second.verdict != askPending || second.startCloser {
+					t.Errorf("the second ask = %+v, want pending, joining the first", second)
+				}
+				st := o.state()
+				if st.closing != nil || st.ask == nil || st.ask.sb != o.sb || st.ask.why != closeRelease|closeReload {
+					t.Fatalf("while held: ask %+v, closing %v; want one pending close carrying both purposes", st.ask, st.closing)
+				}
+
+				release()
+				st = o.state()
+				if st.ask != nil || st.closing == nil || st.closing.sb != o.sb || st.closing.why != closeRelease|closeReload {
+					t.Fatalf("after the release: ask %+v, closing %+v; want the one close granted in its section", st.ask, st.closing)
+				}
+				g, why, ok := o.lc.nextClose()
+				if !ok || g != st.closing || why != closeRelease|closeReload {
+					t.Fatalf("the closer's next close = (%v, %b, %t), want the grant with both purposes", g == st.closing, why, ok)
+				}
+				if o.lc.endClose(g, true) {
+					t.Error("the running closer's own endClose asked for a second closer")
+				}
+				if _, _, ok := o.lc.nextClose(); ok {
+					t.Error("the closer found a second close to run")
+				}
+				if o.state().closer {
+					t.Error("the closer returned with lc.closer still set")
+				}
+			})
+		})
+	}
+}
+
+func TestCloseOwner_EndCloseTwiceIsANoOp(t *testing.T) {
+	o := newOwnerLife(t)
+	o.lc.askClose(o.sb, closeRelease, 0, false)
+	g := o.state().closing
+	if g == nil {
+		t.Fatal("Setup: a release with nothing held was not granted")
+	}
+	o.lc.endClose(g, true)
+	o.lc.endClose(g, true)
+	if o.state().closing != nil {
+		t.Error("the grant stands after its endClose")
+	}
+	select {
+	case <-g.done:
+	default:
+		t.Error("endClose left the grant's done open")
+	}
+
+	o.lc.askClose(o.sb, closeRelease, 0, false)
+	next := o.state().closing
+	if next == nil || next == g {
+		t.Fatal("Setup: the second release was not granted")
+	}
+	o.lc.endClose(g, true)
+	if o.state().closing != next {
+		t.Error("an endClose for a grant that is no longer the chat's ended the current one")
+	}
+	select {
+	case <-next.done:
+		t.Error("an endClose for an old grant closed the current grant's done")
+	default:
+	}
+}
+
+func TestCloseOwner_AskOnANewEntryReplacesTheStaleAsk(t *testing.T) {
+	o := newOwnerLife(t)
+	o.r.noteKASActivity("c1", true)
+	if a := o.lc.askClose(o.sb, closeRelease, 0, false); !a.startCloser {
+		t.Fatal("Setup: the first release did not start the closer")
+	}
+	sb2 := newSharedBridge(o.lc)
+	if a := o.lc.askClose(sb2, closeRelease, 0, false); a.verdict != askPending || a.startCloser {
+		t.Errorf("the ask on the new entry = %+v, want pending on the one closer", a)
+	}
+	if st := o.state(); st.ask == nil || st.ask.sb != sb2 {
+		t.Fatalf("pending ask = %+v, want it on the new entry", st.ask)
+	}
+	o.r.noteKASActivity("c1", false)
+	g, _, ok := o.lc.nextClose()
+	if !ok || g.sb != sb2 {
+		t.Fatalf("the closer's next close = (%v, %t), want the new entry's", g, ok)
+	}
+	o.lc.endClose(g, true)
+	if g, _, ok := o.lc.nextClose(); ok {
+		t.Errorf("the closer ran a second close, on the old entry %t", g.sb == o.sb)
+	}
+}
+
+func TestCloseOwner_DrainPickHandsTheTailToTheReservation(t *testing.T) {
+	t.Run("the slot is free", func(t *testing.T) {
+		o := newOwnerLife(t)
+		_, done, tail, _ := o.r.beginTail(o.lc)
+		defer done()
+		o.lc.askClose(o.sb, closeRelease, 0, false)
+
+		res, ok := o.r.drainPick("c1", marotte.TurnSourcePrompt, command.TurnFence{}, tail)
+		if !ok {
+			t.Fatal("the drain's pick took no reservation")
+		}
+		if st := o.state(); st.tails != 0 || st.closing != nil {
+			t.Errorf("after the pick: %d tails held, grant %v; want the tail ended and the close still pending", st.tails, st.closing)
+		}
+		o.r.releaseReservation(res)
+		if o.state().closing == nil {
+			t.Error("the drained reservation's release left the pending close ungranted")
+		}
+	})
+	t.Run("the predecessor was a prompt", func(t *testing.T) {
+		o := newOwnerLife(t)
+		_, done, tail, _ := o.r.beginTail(o.lc)
+		defer done()
+		prev := o.reserve(t)
+		o.holdOpen(prev.Token)
+		o.r.releaseReservation(prev)
+		o.lc.askClose(o.sb, closeRelease, 0, false)
+
+		res, ok := o.r.drainPick("c1", marotte.TurnSourcePrompt, command.TurnFence{}, tail)
+		if !ok {
+			t.Fatal("the drain's pick took no reservation")
+		}
+		if st := o.state(); st.opens != 0 || st.tails != 0 || st.closing != nil {
+			t.Errorf("after the pick: %d opens, %d tails, grant %v; want the predecessor and the tail holding nothing, the close pending",
+				st.opens, st.tails, st.closing)
+		}
+		o.r.releaseReservation(res)
+		if o.state().closing == nil {
+			t.Error("the drained reservation's release left the pending close ungranted")
+		}
+	})
+	t.Run("the pick refuses", func(t *testing.T) {
+		o := newOwnerLife(t)
+		_, done, tail, _ := o.r.beginTail(o.lc)
+		defer done()
+		o.lc.askClose(o.sb, closeRelease, 0, false)
+		o.lc.mu.Lock()
+		failed := command.TurnFence{Epoch: o.lc.epoch + 1}
+		o.lc.mu.Unlock()
+
+		if _, ok := o.r.drainPick("c1", marotte.TurnSourcePrompt, failed, tail); ok {
+			t.Fatal("a pick on a failed fence reserved")
+		}
+		if st := o.state(); st.tails != 0 || st.closing == nil {
+			t.Errorf("after the refused pick: %d tails, grant %v; want the tail ended and the close granted", st.tails, st.closing)
+		}
+	})
+}
+
+func TestCloseOwner_AReservationReleaseEndsItsDoorsOpenHold(t *testing.T) {
+	o := newOwnerLife(t)
+	res := o.reserve(t)
+	promptDoor := o.holdOpen(res.Token)
+	otherDoor := o.holdOpen(0)
+	o.lc.askClose(o.sb, closeRelease, 0, false)
+
+	o.r.releaseReservation(res)
+	if st := o.state(); st.opens != 1 || st.closing != nil {
+		t.Fatalf("after the reservation's release: %d opens, grant %v; want only the other door's hold left, no grant", st.opens, st.closing)
+	}
+	promptDoor()
+	if st := o.state(); st.opens != 1 || st.closing != nil {
+		t.Errorf("the prompt door's own release after its reservation's = %d opens, grant %v; want a no-op", st.opens, st.closing)
+	}
+	otherDoor()
+	if st := o.state(); st.opens != 0 || st.closing == nil {
+		t.Errorf("the last open hold's release = %d opens, grant %v; want the pending close granted", st.opens, st.closing)
+	}
+}
+
+// ownerCloser runs c1's closer as the coordinator will: each granted close is recorded and ended as closed. running
+// counts the closers alive, most is the highest it reached, and extra counts endClose answers asking for another.
+type ownerCloser struct {
+	ran                  []*sharedBridge
+	running, most, extra int
+	mu                   sync.Mutex
+}
+
+func (c *ownerCloser) start(o *ownerLife) {
+	c.mu.Lock()
+	c.running++
+	c.most = max(c.most, c.running)
+	c.mu.Unlock()
+	go func() {
+		defer func() { c.mu.Lock(); c.running--; c.mu.Unlock() }()
+		for {
+			g, _, ok := o.lc.nextClose()
+			if !ok {
+				return
+			}
+			again := o.lc.endClose(g, true)
+			c.mu.Lock()
+			c.ran = append(c.ran, g.sb)
+			if again {
+				c.extra++
+			}
+			c.mu.Unlock()
+		}
+	}()
+}
+
+func (c *ownerCloser) snapshot() (ran []*sharedBridge, running, most, extra int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.ran), c.running, c.most, c.extra
+}
+
+func TestCloseOwner_AnInlineGrantStartsTheCloserItLeavesWork(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		o := newOwnerLife(t)
+		sb2 := newSharedBridge(o.lc)
+		res := o.reserve(t)
+		var c ownerCloser
+		if a := o.lc.askClose(o.sb, closeRelease, 0, false); a.startCloser {
+			c.start(o)
+		}
+		synctest.Wait()
+		if _, running, _, _ := c.snapshot(); running != 1 {
+			t.Fatal("Setup: no closer waits on the pending close")
+		}
+
+		door := o.lc.askClose(o.sb, closeReload, res.Token, true)
+		if door.verdict != askGranted || door.grant.why != closeReload|closeRelease {
+			t.Fatalf("the opener's door = %+v, want its inline grant absorbing the pending release", door)
+		}
+		synctest.Wait()
+		if _, running, _, _ := c.snapshot(); running != 0 || o.state().closer {
+			t.Error("the running closer did not return at the door's inline grant")
+		}
+		if a := o.lc.askClose(sb2, closeRelease, 0, false); a.verdict != askPending || a.startCloser {
+			t.Errorf("an ask during the inline grant = %+v, want pending with no closer started", a)
+		}
+		if !o.lc.endClose(door.grant, true) {
+			t.Fatal("the inline grant's endClose left the pending close with no closer")
+		}
+		if !o.state().closer {
+			t.Error("endClose answered a closer to start without marking one running")
+		}
+		c.start(o)
+		o.r.releaseReservation(res)
+		synctest.Wait()
+		ran, _, most, extra := c.snapshot()
+		if len(ran) != 1 || ran[0] != sb2 {
+			t.Errorf("the closer ran %d closes (the new entry's %t), want the new entry's release once", len(ran), len(ran) == 1 && ran[0] == sb2)
+		}
+		if most > 1 || extra > 0 {
+			t.Errorf("%d closers ran at once and %d endClose answers asked for another, want one closer", most, extra)
+		}
+	})
+}
+
+func TestCloseOwner_ALeaseOnTheClosingEntryIsRefused(t *testing.T) {
+	o := newOwnerLife(t)
+	o.lc.askClose(o.sb, closeRelease, 0, false)
+	g := o.state().closing
+	if g == nil {
+		t.Fatal("Setup: the release was not granted")
+	}
+	if _, _, err := o.lc.beginLease(o.sb, func(error) {}); !errors.Is(err, marotte.ErrSessionClosing) {
+		t.Errorf("a lease on the closing entry = %v, want marotte.ErrSessionClosing", err)
+	}
+	other := newSharedBridge(o.lc)
+	_, done, err := o.lc.beginLease(other, func(error) {})
+	if err != nil {
+		t.Errorf("a lease on another entry = %v, want it admitted", err)
+	}
+	done()
+	if !o.lc.closingSession(o.sb) || o.lc.closingSession(other) {
+		t.Error("closingSession does not name exactly the granted entry")
+	}
+}
+
+func TestCloseOwner_AWakeHoldEndsAtItsBoundOrATurn(t *testing.T) {
+	t.Run("the bound", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			o := newOwnerLife(t)
+			o.r.holdWake("c1", "wf-owner")
+			o.lc.askClose(o.sb, closeRelease, 0, false)
+			time.Sleep(wakeHoldBound - time.Millisecond)
+			if o.state().closing != nil {
+				t.Fatal("the release was granted before the wake's bound")
+			}
+			time.Sleep(time.Millisecond)
+			synctest.Wait()
+			if o.state().closing == nil {
+				t.Error("the wake's bound left the pending release ungranted")
+			}
+		})
+	})
+	t.Run("a turn opens", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			o := newOwnerLife(t)
+			o.r.holdWake("c1", "wf-owner")
+			o.lc.mu.Lock()
+			o.lc.openLocked("c1", &marotte.Entry{ID: "w-wake"}, marotte.TurnSourceWireTurnStart, "", turnlog.Open("w-wake", nil))
+			wakes := len(o.lc.wakes)
+			o.lc.mu.Unlock()
+			if wakes != 0 {
+				t.Errorf("%d wake holds after a turn opened, want the turn to take over", wakes)
+			}
+		})
+	})
+	t.Run("the life ends", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			o := newOwnerLife(t)
+			o.r.holdWake("c1", "wf-owner")
+			o.r.forget("c1")
+			o.lc.mu.Lock()
+			wakes := len(o.lc.wakes)
+			o.lc.mu.Unlock()
+			if wakes != 0 {
+				t.Errorf("%d wake holds after the life ended, want none", wakes)
+			}
+			time.Sleep(wakeHoldBound)
+			synctest.Wait()
+		})
+	})
+}
+
+func TestCloseOwner_AWithdrawnCloseAsksItsLatePurposesAgain(t *testing.T) {
+	o := newOwnerLife(t)
+	o.lc.askClose(o.sb, closeRelease, 0, false)
+	g, why, ok := o.lc.nextClose()
+	if !ok || why != closeRelease {
+		t.Fatalf("Setup: the closer's next close = (%t, %b), want the release", ok, why)
+	}
+	if a := o.lc.askClose(o.sb, closeReload, 0, false); a.verdict != askClosing {
+		t.Fatalf("a reload asked on the frozen grant = %+v, want it told to wait for the close", a)
+	}
+	if o.lc.endClose(g, false) {
+		t.Error("the running closer's withdraw asked for a second closer")
+	}
+	if st := o.state(); st.closing == nil || st.closing == g || st.closing.why != closeReload {
+		t.Errorf("after the withdraw: grant %+v, want a new grant carrying only the late reload", st.closing)
 	}
 }
