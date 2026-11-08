@@ -132,7 +132,7 @@ func TestFindRepoDocs_ClassifiesByFrontmatter(t *testing.T) {
 
 func TestFindRepoDocs_NoSteeringDir(t *testing.T) {
 	dir := t.TempDir()
-	if docs, total := findRepoDocs(dir); docs != nil || total != 0 {
+	if docs, seen := findRepoDocs(dir); docs != nil || seen != (dirCount{}) {
 		t.Errorf("expected nil, got %+v", docs)
 	}
 }
@@ -149,9 +149,9 @@ func TestFindRepoDocs_CapAt20(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	docs, total := findRepoDocs(dir)
-	if len(docs) != 20 || total != 25 {
-		t.Errorf("got %d docs of %d, want 20 (capped) of 25", len(docs), total)
+	docs, seen := findRepoDocs(dir)
+	if len(docs) != 20 || seen.total != 25 {
+		t.Errorf("got %d docs of %d, want 20 (capped) of 25", len(docs), seen.total)
 	}
 }
 
@@ -428,8 +428,8 @@ func TestDiscoveryEntryCaps(t *testing.T) {
 		for i := range 25 {
 			mustWriteFile(t, filepath.Join(dir, fmt.Sprintf("doc%02d.md", i)), "body\n")
 		}
-		if got, total := findMdDocsInDir(dir); len(got) != 20 || total != 25 {
-			t.Errorf("findMdDocsInDir(25 files) returned %d of %d, want exactly 20 (cap) of 25", len(got), total)
+		if got, seen := findMdDocsInDir(dir); len(got) != 20 || seen.total != 25 {
+			t.Errorf("findMdDocsInDir(25 files) returned %d of %d, want exactly 20 (cap) of 25", len(got), seen.total)
 		}
 	})
 	t.Run("findMdDocsInDir counts past its scan bound", func(t *testing.T) {
@@ -437,14 +437,18 @@ func TestDiscoveryEntryCaps(t *testing.T) {
 		for i := range 105 {
 			mustWriteFile(t, filepath.Join(dir, fmt.Sprintf("doc%03d.md", i)), "body\n")
 		}
-		if got, total := findMdDocsInDir(dir); len(got) != 20 || total != 105 {
-			t.Errorf("findMdDocsInDir(105 files) returned %d of %d, want 20 of 105", len(got), total)
+		got, seen := findMdDocsInDir(dir)
+		if len(got) != 20 || seen.total != 105 {
+			t.Errorf("findMdDocsInDir(105 files) returned %d of %d, want 20 of 105", len(got), seen.total)
+		}
+		if seen.byRank != [routingRanks]int{rankAlways: 100} {
+			t.Errorf("ranks read = %v, want the first 100 always-loaded and none past the scan bound", seen.byRank)
 		}
 	})
 }
 
 // The per-repo cap keeps entries by rank, so a doc the protocol has an agent read unprompted
-// survives however many on-demand docs sort before it.
+// survives up to maxScannedEntries on-demand docs sorting before it.
 func TestFindMdDocsInDir_KeepsAnAlwaysDocThatSortsAfterTheCap(t *testing.T) {
 	dir := t.TempDir()
 	for i := range 21 {
@@ -453,10 +457,13 @@ func TestFindMdDocsInDir_KeepsAnAlwaysDocThatSortsAfterTheCap(t *testing.T) {
 	mustWriteFile(t, filepath.Join(dir, "y-match.md"), "---\ninclusion: fileMatch\nfileMatchPattern: \"*.go\"\n---\n")
 	mustWriteFile(t, filepath.Join(dir, "z-rules.md"), "---\ninclusion: always\n---\n")
 
-	got, total := findMdDocsInDir(dir)
+	got, seen := findMdDocsInDir(dir)
 
-	if len(got) != 20 || total != 23 {
-		t.Fatalf("findMdDocsInDir returned %d of %d, want 20 of 23", len(got), total)
+	if len(got) != 20 || seen.total != 23 {
+		t.Fatalf("findMdDocsInDir returned %d of %d, want 20 of 23", len(got), seen.total)
+	}
+	if want := [routingRanks]int{rankAlways: 1, rankFileMatch: 1, rankOnDemand: 21}; seen.byRank != want {
+		t.Errorf("ranks read = %v, want %v, counted before the cut", seen.byRank, want)
 	}
 	if got[0].Filename != "z-rules.md" || got[1].Filename != "y-match.md" {
 		t.Errorf("first two kept = %q, %q, want the always doc then the file-match doc", got[0].Filename, got[1].Filename)
@@ -505,7 +512,7 @@ func TestFindRepoSkills_ScansSubdirsWithSkillMd(t *testing.T) {
 }
 
 func TestFindRepoSkills_NoSkillsDir(t *testing.T) {
-	if got, total := findRepoSkills(t.TempDir()); got != nil || total != 0 {
+	if got, seen := findRepoSkills(t.TempDir()); got != nil || seen != (dirCount{}) {
 		t.Errorf("findRepoSkills(no skills dir) = %+v, want nil", got)
 	}
 }
@@ -519,8 +526,8 @@ func TestFindRepoSkills_CapAt20(t *testing.T) {
 			filepath.Join(repo, ".kiro", "skills", fmt.Sprintf("skill%02d", i), "SKILL.md"),
 			"body\n")
 	}
-	if got, total := findRepoSkills(repo); len(got) != 20 || total != 25 {
-		t.Errorf("findRepoSkills(25 skill dirs) = %d of %d, want 20 (capped) of 25", len(got), total)
+	if got, seen := findRepoSkills(repo); len(got) != 20 || seen.total != 25 {
+		t.Errorf("findRepoSkills(25 skill dirs) = %d of %d, want 20 (capped) of 25", len(got), seen.total)
 	}
 }
 
@@ -532,10 +539,13 @@ func TestFindRepoSkills_KeepsAFileMatchSkillThatSortsAfterTheCap(t *testing.T) {
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "z-sql", "SKILL.md"),
 		"---\ninclusion: fileMatch\nfileMatchPattern: \"*.sql\"\n---\n")
 
-	got, total := findRepoSkills(repo)
+	got, seen := findRepoSkills(repo)
 
-	if len(got) != 20 || total != 21 {
-		t.Fatalf("findRepoSkills returned %d of %d, want 20 of 21", len(got), total)
+	if len(got) != 20 || seen.total != 21 {
+		t.Fatalf("findRepoSkills returned %d of %d, want 20 of 21", len(got), seen.total)
+	}
+	if want := [routingRanks]int{rankFileMatch: 1, rankOnDemand: 20}; seen.byRank != want {
+		t.Errorf("ranks read = %v, want %v: a skill is never always-loaded", seen.byRank, want)
 	}
 	if got[0].Filename != "z-sql/SKILL.md" || got[19].Filename != "a18/SKILL.md" {
 		t.Errorf("kept %q..%q, want the file-match skill first, then a00..a18", got[0].Filename, got[19].Filename)

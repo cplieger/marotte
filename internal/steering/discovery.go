@@ -140,8 +140,8 @@ func capWords(s string, n int) string {
 }
 
 // findRepoDocs returns a repo's `.kiro/steering/` markdown files classified by inclusion
-// mode (default "always"), within findMdDocsInDir's caps, and how many the directory holds.
-func findRepoDocs(repoDir string) (docs []docEntry, total int) {
+// mode (default "always"), within findMdDocsInDir's caps, and the directory's dirCount.
+func findRepoDocs(repoDir string) (docs []docEntry, seen dirCount) {
 	return findMdDocsInDir(filepath.Join(repoDir, ".kiro", "steering"))
 }
 
@@ -186,15 +186,17 @@ func normalizeInclusion(v string) string {
 	}
 }
 
-// findRepoSkills scans `.kiro/skills/` for skill DIRECTORIES (holding SKILL.md) and returns
-// keepByRank's share of the first maxScannedEntries, with how many the directory holds.
-func findRepoSkills(repoDir string) (skills []docEntry, total int) {
+// findRepoSkills scans `.kiro/skills/` for skill directories (any non-dot directory; one with no
+// SKILL.md is counted and renders with no description) and returns keepByRank's share of the
+// first maxScannedEntries, with the directory's dirCount.
+func findRepoSkills(repoDir string) (skills []docEntry, seen dirCount) {
 	dir := filepath.Join(repoDir, ".kiro", "skills")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, 0
+		return nil, dirCount{}
 	}
 	out := make([]docEntry, 0, min(len(entries), maxScannedEntries))
+	total := 0
 	for _, e := range entries {
 		if !isSkillDir(e) {
 			continue
@@ -209,7 +211,8 @@ func findRepoSkills(repoDir string) (skills []docEntry, total int) {
 		doc.Filename = defuse(e.Name()) + "/SKILL.md"
 		out = append(out, doc)
 	}
-	return keepByRank(out, skillRank), total
+	seen = countRanks(out, skillRank, total)
+	return keepByRank(out, skillRank), seen
 }
 
 // agentEntry is a custom agent config found in `.kiro/agents/`.
@@ -339,13 +342,14 @@ func defuse(s string) string {
 }
 
 // findMdDocsInDir classifies a flat directory's `.md` files by their front matter, reading the
-// first maxScannedEntries, and returns keepByRank's share with how many the directory holds.
-func findMdDocsInDir(dir string) (docs []docEntry, total int) {
+// first maxScannedEntries, and returns keepByRank's share with the directory's dirCount.
+func findMdDocsInDir(dir string) (docs []docEntry, seen dirCount) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, 0
+		return nil, dirCount{}
 	}
 	out := make([]docEntry, 0, min(len(entries), maxScannedEntries))
+	total := 0
 	for _, e := range entries {
 		if !isSteeringDoc(e) {
 			continue
@@ -359,16 +363,33 @@ func findMdDocsInDir(dir string) (docs []docEntry, total int) {
 		doc.Filename = defuse(e.Name())
 		out = append(out, doc)
 	}
-	return keepByRank(out, docRank), total
+	seen = countRanks(out, docRank, total)
+	return keepByRank(out, docRank), seen
 }
 
 // Discovery reads front matter for up to maxScannedEntries of a directory's entries, each read
-// capped at FrontMatterReadCap, and keeps maxRepoEntries of them: the scan sits well above the
-// cut so a repo's always-loaded doc is ranked before the cut, wherever its name sorts.
+// capped at FrontMatterReadCap, and keeps maxRepoEntries of them, ranked: an always-loaded doc or
+// file-match skill among the first maxScannedEntries by filename survives the cut; past that
+// window only the overflow count shows it.
 const (
 	maxScannedEntries = 100
 	maxRepoEntries    = 20
 )
+
+// dirCount is how many entries a directory holds, and how many of each routing rank discovery
+// read: the entries past maxScannedEntries have no rank.
+type dirCount struct {
+	byRank [routingRanks]int
+	total  int
+}
+
+func countRanks(read []docEntry, rankOf func(docEntry) int, total int) dirCount {
+	c := dirCount{total: total}
+	for _, d := range read {
+		c.byRank[rankOf(d)]++
+	}
+	return c
+}
 
 // keepByRank keeps the first maxRepoEntries of entries by routing rank, each rank in the
 // directory's filename order.

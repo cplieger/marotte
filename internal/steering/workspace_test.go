@@ -262,8 +262,64 @@ func TestWriteKiroRepo_CountsTheEntriesPastTheBudget(t *testing.T) {
 	if got := len(routingEntry.FindAllString(out, -1)); got != 2 {
 		t.Errorf("rendered %d entries with a budget of 2:\n%s", got, out)
 	}
-	if !strings.Contains(out, "  - … 1 more .kiro entries: list `r/.kiro/steering/` and `r/.kiro/skills/`\n") {
-		t.Errorf("the entry past the budget is not counted:\n%s", out)
+	if !strings.Contains(out, "  - … 1 more always-loaded steering docs: read every `r/.kiro/steering/` doc whose "+
+		"`inclusion` is not `fileMatch`, `manual` or `auto`\n") {
+		t.Errorf("the always-loaded doc past the budget is not named as one:\n%s", out)
+	}
+	if strings.Contains(out, "more .kiro entries") || strings.Contains(out, "more file-match entries") {
+		t.Errorf("a cut counted twice, or as the wrong rank:\n%s", out)
+	}
+}
+
+// A file-match entry the budget cuts is named as one, so its pattern still gates an edit.
+func TestWriteKiroRepo_NamesACutFileMatchEntry(t *testing.T) {
+	work := t.TempDir()
+	mustWriteFile(t, filepath.Join(work, "r", ".kiro", "steering", "a.md"), "# S\n")
+	mustWriteFile(t, filepath.Join(work, "r", ".kiro", "steering", "b.md"), "---\ninclusion: fileMatch\nfileMatchPattern: \"*.go\"\n---\n")
+	mustWriteFile(t, filepath.Join(work, "r", ".kiro", "steering", "c.md"), "---\ninclusion: manual\n---\n")
+	mustWriteFile(t, filepath.Join(work, "r", ".kiro", "skills", "s", "SKILL.md"), "---\ninclusion: fileMatch\nfileMatchPattern: \"*.sql\"\n---\n")
+	var b strings.Builder
+	k := scanKiroRepo(work, "r")
+	writeKiroRepo(&b, &k, allotRouting([]kiroRepo{k}, 2)[0])
+	out := b.String()
+	for _, want := range []string{
+		"  - … 1 more file-match entries: before editing a file in this repo, check the `fileMatchPattern` in its " +
+			"`r/.kiro/steering/` docs and `r/.kiro/skills/*/SKILL.md`\n",
+		"  - … 1 more .kiro entries: list `r/.kiro/steering/` and `r/.kiro/skills/`\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeKiroRepo lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "more always-loaded") {
+		t.Errorf("the always-loaded doc fit the budget but is counted as cut:\n%s", out)
+	}
+}
+
+// Kiro's default inclusion is always, so ten repos of five unannotated docs spend the 40-entry
+// budget on the first eight; the last two still tell the agent to read their house rules.
+func TestWriteRepoList_NamesAlwaysDocsTheBudgetCut(t *testing.T) {
+	work := t.TempDir()
+	var repos []string
+	for i := range 10 {
+		r := fmt.Sprintf("r%02d", i)
+		repos = append(repos, r)
+		for j := range 5 {
+			mustWriteFile(t, filepath.Join(work, r, ".kiro", "steering", fmt.Sprintf("d%d.md", j)), "# S\n")
+		}
+	}
+	var b strings.Builder
+	writeRepoList(&b, work, repos)
+	out := b.String()
+	for i, r := range repos {
+		line := "  - … 5 more always-loaded steering docs: read every `" + r + "/.kiro/steering/` doc whose " +
+			"`inclusion` is not `fileMatch`, `manual` or `auto`\n"
+		if got, want := strings.Contains(out, line), i >= 8; got != want {
+			t.Errorf("%s carries the always-loaded cut line: %v, want %v:\n%s", r, got, want, out)
+		}
+	}
+	if strings.Contains(out, "more .kiro entries") {
+		t.Errorf("the cut always-loaded docs are also counted as generic entries:\n%s", out)
 	}
 }
 
@@ -284,7 +340,9 @@ func TestWriteKiroRepo_CountsWhatDiscoveryDidNotRead(t *testing.T) {
 	writeKiroRepo(&b, &k, allotRouting([]kiroRepo{k}, maxRouting)[0])
 	out := b.String()
 	for _, want := range []string{
-		"  - … 4 more .kiro entries: list `r/.kiro/steering/` and `r/.kiro/skills/`\n",
+		"  - … 2 more always-loaded steering docs: read every `r/.kiro/steering/` doc whose " +
+			"`inclusion` is not `fileMatch`, `manual` or `auto`\n",
+		"  - … 2 more .kiro entries: list `r/.kiro/steering/` and `r/.kiro/skills/`\n",
 		" `a09` … and 2 more\n",
 		"    - … more hooks: list `r/.kiro/hooks/`\n",
 	} {

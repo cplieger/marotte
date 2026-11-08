@@ -429,7 +429,8 @@ func checkLarge(t *testing.T, r rendered) {
 	memory := sectionOf(out, "## Memory")
 	if got := strings.Count(memory, "`: `repo:"); got != 30 ||
 		!strings.Contains(memory, "\n- … and 142 more (each repository's tag is `repo:<provider>/<owner>/<name>` from its "+
-			"origin: the provider is github, gitlab, bitbucket or azure for those hosts, the host name otherwise)\n") {
+			"origin: the provider is github, gitlab, bitbucket or azure when the host name contains that word, "+
+			"gitfarm for git.amazon.com, the host name otherwise)\n") {
 		t.Errorf("Memory lists %d tags, want 30 then `… and 142 more`:\n%s", got, memory)
 	}
 	if !strings.Contains(memory, "\n- `kiro000/`: `repo:github/owner/kiro000`\n") {

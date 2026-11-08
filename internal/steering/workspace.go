@@ -91,8 +91,8 @@ type kiroRepo struct {
 	skills      []docEntry
 	agents      []agentEntry
 	hooks       []HookEntry
-	docsTotal   int
-	skillsTotal int
+	docsSeen    dirCount
+	skillsSeen  dirCount
 	agentsTotal int
 	moreHooks   bool
 }
@@ -100,8 +100,8 @@ type kiroRepo struct {
 func scanKiroRepo(workDir, r string) kiroRepo {
 	dir := filepath.Join(workDir, r)
 	k := kiroRepo{name: r}
-	k.docs, k.docsTotal = findRepoDocs(dir)
-	k.skills, k.skillsTotal = findRepoSkills(dir)
+	k.docs, k.docsSeen = findRepoDocs(dir)
+	k.skills, k.skillsSeen = findRepoSkills(dir)
 	k.agents, k.agentsTotal = findRepoAgents(dir)
 	k.hooks, k.moreHooks = findRepoHooks(dir)
 	return k
@@ -209,8 +209,9 @@ func skillRank(d docEntry) int {
 	return rankOnDemand
 }
 
-// allotRouting spends budget across repos by rank, then repo order, then filename, so a later
-// repo's always-loaded steering outranks an earlier repo's on-demand entries.
+// allotRouting spends budget across repos by rank, then repo order, then the repo's steering
+// before its skills, each in filename order, so a later repo's always-loaded steering outranks
+// an earlier repo's on-demand entries.
 func allotRouting(repos []kiroRepo, budget int) []routed {
 	out := make([]routed, len(repos))
 	for rank := range routingRanks {
@@ -242,14 +243,35 @@ func writeKiroRepo(b *strings.Builder, k *kiroRepo, kept routed) {
 	if len(kept.skills) > 0 {
 		writeRepoSkills(b, label, kept.skills)
 	}
-	if cut := k.docsTotal + k.skillsTotal - len(kept.docs) - len(kept.skills); cut > 0 {
-		fmt.Fprintf(b, "  - … %d more .kiro entries: list `%s/.kiro/steering/` and `%s/.kiro/skills/`\n", cut, label, label)
-	}
+	writeRoutingCuts(b, label, k, kept)
 	if len(k.agents) > 0 {
 		writeRepoAgents(b, label, k)
 	}
 	if len(k.hooks) > 0 {
 		writeRepoHooks(b, label, k)
+	}
+}
+
+// writeRoutingCuts counts the steering and skills the caps cut from a repo's block, naming the
+// cut always-loaded and file-match entries apart, since the protocol has an agent act on those
+// without a task naming them.
+func writeRoutingCuts(b *strings.Builder, repo string, k *kiroRepo, kept routed) {
+	cutOf := func(rank int) int {
+		return k.docsSeen.byRank[rank] + k.skillsSeen.byRank[rank] -
+			countRanks(kept.docs, docRank, 0).byRank[rank] - countRanks(kept.skills, skillRank, 0).byRank[rank]
+	}
+	always, fileMatch := cutOf(rankAlways), cutOf(rankFileMatch)
+	if always > 0 {
+		fmt.Fprintf(b, "  - … %d more always-loaded steering docs: read every `%s/.kiro/steering/` doc whose "+
+			"`inclusion` is not `fileMatch`, `manual` or `auto`\n", always, repo)
+	}
+	if fileMatch > 0 {
+		fmt.Fprintf(b, "  - … %d more file-match entries: before editing a file in this repo, check the "+
+			"`fileMatchPattern` in its `%s/.kiro/steering/` docs and `%s/.kiro/skills/*/SKILL.md`\n", fileMatch, repo, repo)
+	}
+	rest := k.docsSeen.total + k.skillsSeen.total - len(kept.docs) - len(kept.skills) - always - fileMatch
+	if rest > 0 {
+		fmt.Fprintf(b, "  - … %d more .kiro entries: list `%s/.kiro/steering/` and `%s/.kiro/skills/`\n", rest, repo, repo)
 	}
 }
 
