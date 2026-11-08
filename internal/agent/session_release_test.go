@@ -33,8 +33,9 @@ func releaseFixture(t *testing.T) (*Runtime, *tabs.Store, *sharedBridge) {
 }
 
 // released reports whether the release check took c1's session, waiting up to 5 s for its close to drop the entry. A
-// check that asked nothing, or whose ask waits on a reservation, a turn or a step the test holds, reads unreleased at once; an
-// ask pending behind the runtime's own transient work is waited for.
+// check that asked nothing, or whose ungranted ask waits on a reservation, a turn or a step the test holds, reads
+// unreleased at once; a granted close, which no later hold stops, and an ask pending behind the runtime's own
+// transient work are waited for.
 func released(t *testing.T, h *Runtime, sb *sharedBridge) bool {
 	t.Helper()
 	lc, ok := sb.life.(*chatLifecycle)
@@ -42,13 +43,18 @@ func released(t *testing.T, h *Runtime, sb *sharedBridge) bool {
 		t.Fatal("Setup: c1's entry is not on the chat's life")
 	}
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		// Read before the close's outcome: a close drops the entry before it ends its grant (closeConfirmed).
+		lc.mu.Lock()
+		granted := lc.closing != nil && lc.closing.sb == sb
+		asked := lc.ask != nil && lc.ask.sb == sb
+		blocker := lc.blockerLocked(0)
+		lc.mu.Unlock()
 		if sessionClosed(fakeOf(sb)) && h.bridge.mgr.get("c1") == nil {
 			return true
 		}
-		lc.mu.Lock()
-		asked := lc.closing != nil && lc.closing.sb == sb || lc.ask != nil && lc.ask.sb == sb
-		blocker := lc.blockerLocked(0)
-		lc.mu.Unlock()
+		if granted {
+			continue
+		}
 		if !asked || blocker == holdAdmission || blocker == holdTurn || blocker == holdStep {
 			return false
 		}

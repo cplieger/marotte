@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -232,11 +233,19 @@ func TestReleaseCheck_AWireTurnOpenedDuringItsCloseIsClosed(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	br := fakeOf(sb)
 	gate := make(chan struct{})
+	closeAt := make(chan struct{})
+	var entered sync.Once
 	br.mu.Lock()
 	br.stopGate = gate
+	br.onCloseStart = func() { entered.Do(func() { close(closeAt) }) }
 	br.mu.Unlock()
 
 	h.coord.releaseIfUnheld("c1")
+	select {
+	case <-closeAt:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the release check's session/close never started")
+	}
 	br.deliver(newTurnStartMsg())
 	close(gate)
 	if !released(t, h, sb) {
