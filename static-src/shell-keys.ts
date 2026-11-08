@@ -20,6 +20,15 @@ export function trackShellPresses(): void {
   );
 }
 
+/** Whether the terminal takes a key aimed at `target`: typed into its focused input, or from the
+ *  body as {@link shellTakesBodyKeys} decides. */
+export function shellTakesKey(target: EventTarget | null): boolean {
+  return (
+    (target instanceof HTMLTextAreaElement && $.shellTerminal.contains(target)) ||
+    shellTakesBodyKeys()
+  );
+}
+
 /** Whether the terminal takes the next typed key from the document while the panel is open. With a
  *  hardware keyboard seen on a touch device (an iPad), web-terminal-ui releases focus to the body
  *  on a tap in the terminal and types the next key itself when the last press was inside it (its
