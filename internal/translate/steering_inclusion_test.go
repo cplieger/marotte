@@ -74,14 +74,18 @@ func wantSteeringBox(t *testing.T, e marotte.Entry) marotte.EntryToolCall {
 
 func TestSteeringDocName(t *testing.T) {
 	cases := map[string]string{
-		"file:///w/.kiro/steering/go.md":         "go.md",
-		"file:///w/.kiro/steering/my%20notes.md": "my notes.md",
-		"kiro-default-steering":                  "kiro-default-steering",
-		"file:///":                               "file:///",
-		"file://elsewhere/w/go.md":               "file://elsewhere/w/go.md",
-		"file://localhost/w/go.md":               "go.md",
-		"file:/w/go.md":                          "file:/w/go.md",
-		"file:///w/.kiro/steering/":              "steering",
+		"file:///w/.kiro/steering/go.md":                           "go.md",
+		"file:///w/.kiro/steering/my%20notes.md":                   "my notes.md",
+		"kiro-default-steering":                                    "kiro-default-steering",
+		"file:///":                                                 "file:///",
+		"file://elsewhere/w/go.md":                                 "file://elsewhere/w/go.md",
+		"file://localhost/w/go.md":                                 "go.md",
+		"file:/w/go.md":                                            "file:/w/go.md",
+		"file:///w/.kiro/steering/":                                "steering",
+		"client:sess_79643ff5-74a8-49d5-a321-6a3698d6d9ad:marotte": "marotte",
+		"client:sess_1:":                                           "client",
+		"client:no-name":                                           "client",
+		"client:":                                                  "client",
 	}
 	for id, want := range cases {
 		if got := steeringDocName(id); got != want {

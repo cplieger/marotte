@@ -15,7 +15,6 @@ import { outcomeIcon } from "./icons.js";
 import { foldGroupHooks, onHookVisibility } from "./hook-fold.js";
 import { syncHookBadge } from "./hook-badge.js";
 import { pressHold } from "./scroll.js";
-import { STEERING_TITLE_PREFIX } from "./steering-docs.js";
 import { kindNoun } from "./tool-kind-noun.js";
 import type { ToolKind } from "./tool-schema.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui/disclosure";
@@ -259,6 +258,8 @@ export interface CallInfo {
   title: string;
   filename: string;
   mcpServer: string;
+  /** A steering box's document names, as its title shows them; empty for any other kind. */
+  steeringDocs: readonly string[];
 }
 
 export function summarize(calls: HTMLElement[]): string {
@@ -271,6 +272,7 @@ export function summarize(calls: HTMLElement[]): string {
     title: c.dataset["title"] ?? "",
     filename: c.dataset["filename"] ?? "",
     mcpServer: c.dataset["mcpServer"] ?? "",
+    steeringDocs: steeringDocsOf(c),
   }));
 
   // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -282,13 +284,19 @@ export function summarize(calls: HTMLElement[]): string {
   return summarizeMixed(infos);
 }
 
-/** `many` defaults to `noun` plus "s". `docNames` samples a title past the steering prefix, its
- *  document names. */
+/** The names a steering card stamped as `data-steering-docs`, a JSON array of strings. */
+function steeringDocsOf(card: HTMLElement): string[] {
+  const raw = card.dataset["steeringDocs"];
+  if (raw === undefined) {
+    return [];
+  }
+  const parsed: unknown = JSON.parse(raw);
+  return Array.isArray(parsed) ? parsed.filter((n): n is string => typeof n === "string") : [];
+}
+
+/** `many` defaults to `noun` plus "s". */
 const TOOL_KIND_LABELS: Readonly<
-  Record<
-    ToolKind,
-    { verb: string; noun: string; many?: string; samplesFrom: "files" | "titles" | "docNames" }
-  >
+  Record<ToolKind, { verb: string; noun: string; many?: string; samplesFrom: "files" | "titles" }>
 > = {
   read: { verb: "Read", noun: "file", samplesFrom: "files" },
   edit: { verb: "Edited", noun: "file", samplesFrom: "files" },
@@ -299,7 +307,7 @@ const TOOL_KIND_LABELS: Readonly<
   execute: { verb: "Ran", noun: "command", samplesFrom: "titles" },
   shell: { verb: "Ran", noun: "shell command", samplesFrom: "titles" },
   hook: { verb: "Ran", noun: "hook", samplesFrom: "titles" },
-  steering: { verb: "Loaded", noun: "steering set", samplesFrom: "docNames" },
+  steering: { verb: "Loaded", noun: "steering doc", samplesFrom: "titles" },
   fetch: { verb: "Fetched", noun: "URL", samplesFrom: "titles" },
   think: { verb: "", noun: "thinking step", samplesFrom: "titles" },
   switch_mode: { verb: "", noun: "mode switch", samplesFrom: "titles" },
@@ -314,6 +322,9 @@ export function summarizeSameKind(kind: ToolKind, infos: CallInfo[]): string {
   if (kind === "mcp") {
     return summarizeMCP(infos);
   }
+  if (kind === "steering") {
+    return summarizeSteering(infos);
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   const label = TOOL_KIND_LABELS[kind] ?? TOOL_KIND_LABELS.other;
@@ -325,22 +336,15 @@ export function summarizeSameKind(kind: ToolKind, infos: CallInfo[]): string {
   return labelWithSamples(n, label.noun, label.verb, samples, label.many);
 }
 
-// A capped box's own " +N more" tail is a count, not a document, so it is not a sample.
-const MORE_TAIL = /^\+\d+ more$/;
+function sampleOf(info: CallInfo, from: "files" | "titles"): string[] {
+  return [from === "files" ? info.filename : info.title];
+}
 
-function sampleOf(info: CallInfo, from: "files" | "titles" | "docNames"): string[] {
-  switch (from) {
-    case "files":
-      return [info.filename];
-    case "titles":
-      return [info.title];
-    case "docNames": {
-      const names = info.title.startsWith(STEERING_TITLE_PREFIX)
-        ? info.title.slice(STEERING_TITLE_PREFIX.length)
-        : info.title;
-      return names.split(", ").filter((n) => !MORE_TAIL.test(n));
-    }
-  }
+/** Counts the documents a run of steering boxes loaded, not the boxes, and samples their names. */
+function summarizeSteering(infos: CallInfo[]): string {
+  const label = TOOL_KIND_LABELS.steering;
+  const names = dedup(infos.flatMap((i) => i.steeringDocs));
+  return labelWithSamples(names.length, label.noun, label.verb, names, label.many);
 }
 
 export function summarizeMCP(infos: CallInfo[]): string {
@@ -368,6 +372,7 @@ export function summarizeMCP(infos: CallInfo[]): string {
   return `${String(n)} integration call${n === 1 ? "" : "s"}: ${parts.join(", ")}`;
 }
 
+/** `unnamed` counts items no sample names, so the "+N more" tail includes them. */
 export function labelWithSamples(
   n: number,
   noun: string,

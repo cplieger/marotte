@@ -59,6 +59,8 @@ const PAIRS: readonly (readonly [
   ["sidebar Git", 'id="git-btn"', ICON_TAB_GIT],
   ["toolbar Settings", 'id="settings-btn"', ICON_TAB_SETTINGS],
   // The shell toggle is not here (see the divergence test). Docs categories the app already draws elsewhere.
+  ["docs tab Steering", 'data-docs-tab="steering"', toolIcon({ kind: "steering", toolName: "" })],
+  ["docs tab Hooks", 'data-docs-tab="hooks"', toolIcon({ kind: "hook", toolName: "" })],
   ["docs tab Agents", 'data-docs-tab="agents"', ICON_TAB_AGENT],
   ["docs tab Specs", 'data-docs-tab="specs"', ICON_TAB_SPEC],
   ["docs tab Workflows", 'data-docs-tab="workflows"', ICON_TAB_RUN],

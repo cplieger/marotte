@@ -14,9 +14,22 @@ import (
 // steeringTitlePrefix opens a steering box's title; the client draws the same words.
 const steeringTitlePrefix = "Steering loaded: "
 
-// steeringDocName is how a box names one document: a file URI's percent-decoded base name,
-// any other id as KAS wrote it.
+// clientDocPrefix opens the id KAS gives a document the client injected: `client:<session>:<name>`.
+const clientDocPrefix = "client:"
+
+// clientDocLabel names a client-injected document whose id carries no name, so a session id
+// never reaches the box.
+const clientDocLabel = "client"
+
+// steeringDocName is how a box names one document: a file URI's percent-decoded base name, a
+// client-injected document's own name, any other id as KAS wrote it.
 func steeringDocName(id string) string {
+	if rest, ok := strings.CutPrefix(id, clientDocPrefix); ok {
+		if _, name, ok := strings.Cut(rest, ":"); ok && name != "" {
+			return name
+		}
+		return clientDocLabel
+	}
 	p := localPath(id)
 	if p == id {
 		return id
@@ -56,7 +69,8 @@ func steeringTitle(names []string) string {
 	return steeringTitlePrefix + strings.Join(clean[:shown], ", ") + steeringMoreTail(len(clean)-shown)
 }
 
-// steeringMoreTail counts the documents a title leaves out; the client parses the same words.
+// steeringMoreTail counts the documents a title leaves out; the client's steeringTitle rebuilds the
+// same words to decide whether to link the names.
 func steeringMoreTail(n int) string {
 	return " +" + strconv.Itoa(n) + " more"
 }

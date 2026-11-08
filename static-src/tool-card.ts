@@ -89,6 +89,10 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   if (info.mcp !== null) {
     node.dataset["mcpServer"] = info.mcp.server_name;
   }
+  if (info.kind === "steering") {
+    // The group header counts documents from these names; its title may cap or hold commas.
+    node.dataset["steeringDocs"] = JSON.stringify((opts.steeringDocs ?? []).map(docName));
+  }
   if (info.filePath !== "") {
     node.dataset["filename"] = info.fileBasename;
     node.dataset["filePath"] = info.filePath;
@@ -454,7 +458,8 @@ function steeringTitle(title: string, docs: readonly string[]): HTMLElement | nu
         "data-tooltip": path,
         "aria-label": `Open ${name}`,
       },
-      name,
+      el("span", { className: "tool-file-icon" }, iconEl(fileIcon(name, false))),
+      el("span", { className: "tool-file-name" }, name),
     );
     link.addEventListener("click", (e: Event) => {
       e.stopPropagation();
