@@ -488,7 +488,7 @@ func (r *turnRegistry) endStep(host marotte.ChatID, turnID string) {
 
 // holdWake keeps chatID's session for the wake KAS owes it after workflowID's terminal run_complete: KAS sends the
 // wake after the frame, and with no resident session its frames would reach the engine lane. The hold ends when a
-// turn KAS opened opens on the chat (takeWakeLocked), its life ends or wakeHoldBound passes. A run chat takes none.
+// turn KAS opens on the chat (takeWakeLocked), its life ends or wakeHoldBound passes. A run chat takes none.
 func (r *turnRegistry) holdWake(chatID marotte.ChatID, workflowID string) {
 	if isRunChat(chatID) {
 		return
@@ -521,10 +521,10 @@ func (r *turnRegistry) holdWake(chatID marotte.ChatID, workflowID string) {
 	lc.wakeLocked()
 }
 
-// takeWakeLocked ends one wake hold, any of them, for a turn KAS opened: each run's end owes the chat one wake turn,
-// so that turn takes over one hold and leaves the others to their own turns. A turn marotte opened takes none, since
-// KAS buffers a wake that reaches a busy chat and opens its own turn for it later. KAS's activity takes none either,
-// since holdKAS already refuses while it lasts. Caller holds mu.
+// takeWakeLocked ends one wake hold, any of them, for a turn KAS opened: that turn, including a continuation that
+// delivers a buffered wake, takes over the session in this section. A turn marotte opened takes none, since it may end
+// unsent while KAS, still idle, starts the wake. A wake the running turn reads opens no turn, so its hold ends at
+// wakeHoldBound. KAS's activity takes none, since holdKAS refuses while it lasts. Caller holds mu.
 func (lc *chatLifecycle) takeWakeLocked() {
 	for workflowID, bound := range lc.wakes {
 		bound.Stop()
