@@ -315,7 +315,7 @@ interface RunCardOwner {
 }
 
 /** run id → its card's host, in turn and `seq` order. */
-export type RunCardOwners = ReadonlyMap<string, RunCardOwner>;
+type RunCardOwners = ReadonlyMap<string, RunCardOwner>;
 
 // The transcript's owners for the current pass, read by the renderer and the spacer alike so the two cannot price
 // one mention differently. Derived per pass, never a live registry, which would let two mentions both claim a card.
