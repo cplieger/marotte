@@ -109,12 +109,10 @@ interface Harness {
   endSession: () => void;
   /** Report a connection state on the feature bus, as the kernel does. */
   connectionState: (state: string) => void;
-  /** A socket's resume as the kernel reports it: `input:ready`, then the modes frame. */
+  /** The socket's input starts: the pane reads ready, then `input:ready` fires. */
   inputReady: () => void;
-  /** Only the socket's `input:ready`, with no modes frame yet. */
-  inputStarts: () => void;
-  /** The current socket's modes become known, reported by `event`. */
-  modesArrive: (event: "wire:modes" | "wire:screen") => void;
+  /** A modes frame reaches features, which says nothing about input. */
+  modesArrive: () => void;
   /** The socket closes, before the kernel reports any state for it. */
   socketCloses: () => void;
   /** What the panel put on the kernel's input path, in order: a send's bytes as text, or a paste. */
@@ -189,13 +187,18 @@ async function setup(
 
   const resetSpy = vi.fn();
   const termFocus = vi.fn();
-  const reattachSpy = vi.fn();
+  // web-terminal-ui's PaneHandle.inputReady: true from `input:ready` until the socket closes or is
+  // replaced (a reattach) or its session ends.
+  let ready = false;
+  const reattachSpy = vi.fn(() => {
+    ready = false;
+  });
   // The panel's half of the ended contract is the callback it passes, so the mock captures it.
   // Without that the reattach path would only be reachable through the Restart button, and the
   // `exit` half of the same defect would go untested.
   let endedCb: (() => void) | null = null;
   // The feature context, reduced to what the panel's own feature uses: its bus events, the input
-  // path, the modes' isKnown and the pane's input hold.
+  // path and the pane's input readiness and hold.
   const listeners = new Map<string, ((payload: unknown) => void)[]>();
   const emit = (event: string, payload: unknown): void => {
     for (const fn of listeners.get(event) ?? []) {
@@ -203,15 +206,9 @@ async function setup(
     }
   };
   const inputs: ({ send: string } | { paste: string })[] = [];
-  // The engine clears it at every socket close and sets it before the modes or first screen frame
-  // reaches features.
-  let modesKnown = false;
-  const modesArrive = (event: "wire:modes" | "wire:screen"): void => {
-    modesKnown = true;
-    emit(event, {});
-  };
   let holds = 0;
   const pane = {
+    inputReady: (): boolean => ready,
     holdInput: (): (() => void) => {
       holds++;
       let released = false;
@@ -230,7 +227,6 @@ async function setup(
     paste: (text: string): void => {
       inputs.push({ paste: text });
     },
-    modes: { isKnown: () => modesKnown },
     shell: { selected: () => "left", pane: () => pane },
     on: (event: string, fn: (payload: unknown) => void): (() => void) => {
       listeners.set(event, [...(listeners.get(event) ?? []), fn]);
@@ -351,21 +347,21 @@ async function setup(
       if (endedCb === null) {
         throw new Error("no onSessionEnded handler; open the panel first");
       }
+      ready = false;
       endedCb();
     },
     connectionState: (state: string) => {
       emit("connection:state", state);
     },
     inputReady: () => {
-      emit("input:ready", { cols: 80, rows: 24 });
-      modesArrive("wire:modes");
-    },
-    inputStarts: () => {
+      ready = true;
       emit("input:ready", { cols: 80, rows: 24 });
     },
-    modesArrive,
+    modesArrive: () => {
+      emit("wire:modes", {});
+    },
     socketCloses: () => {
-      modesKnown = false;
+      ready = false;
     },
     inputs,
     holds: () => holds,
@@ -660,6 +656,7 @@ describe("shell.ts: host-driven actions", () => {
       h.mod.initShellPanel();
       h.shellBtn.click();
       h.inputReady();
+      h.socketCloses();
       h.connectionState(state);
 
       h.getRunCb()?.("echo hi");
@@ -672,8 +669,8 @@ describe("shell.ts: host-driven actions", () => {
   });
 
   // The kernel reports a drop only after a grace period, or not at all when the next socket opens
-  // first, so the closed socket's unknown modes are what hold the Run.
-  it("holds a Run made after an unreported drop until the next socket's modes are known", async () => {
+  // first, so the pane's readiness is what holds the Run.
+  it("holds a Run made after an unreported drop until the next socket's input is ready", async () => {
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click();
@@ -682,23 +679,18 @@ describe("shell.ts: host-driven actions", () => {
 
     h.getRunCb()?.("echo hi");
     expect(h.inputs, "on the closed socket").toEqual([]);
-    h.inputStarts();
-    expect(h.inputs, "before the next socket's modes").toEqual([]);
 
-    h.modesArrive("wire:screen");
+    h.inputReady();
     expect(h.inputs).toEqual([{ send: "echo hi\r" }]);
   });
 
-  it("sends a Run made between input:ready and the modes frame once the modes arrive", async () => {
+  it("sends a Run made after input:ready at once, with no modes frame yet", async () => {
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click();
-    h.inputStarts();
+    h.inputReady();
 
     h.getRunCb()?.("echo hi");
-    expect(h.inputs).toEqual([]);
-
-    h.modesArrive("wire:modes");
     expect(h.inputs).toEqual([{ send: "echo hi\r" }]);
   });
 
@@ -713,10 +705,10 @@ describe("shell.ts: host-driven actions", () => {
     h.connectionState("open");
 
     h.getRunCb()?.("echo hi");
-    h.modesArrive("wire:modes");
+    h.modesArrive();
     expect(h.inputs, "before the next socket's input:ready").toEqual([]);
 
-    h.inputStarts();
+    h.inputReady();
     expect(h.inputs).toEqual([{ send: "echo hi\r" }]);
   });
 

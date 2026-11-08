@@ -7,7 +7,12 @@ import { createTerminal, localScrollbackStorage } from "@cplieger/web-terminal-u
 import { presetSingle } from "@cplieger/web-terminal-ui/presets/single";
 import { mobileToolbar } from "@cplieger/web-terminal-ui/features/mobile-toolbar";
 import type { MobileToolbarApi } from "@cplieger/web-terminal-ui/features/mobile-toolbar";
-import type { TerminalContext, TerminalFeature, TerminalHandle } from "@cplieger/web-terminal-ui";
+import type {
+  PaneHandle,
+  TerminalContext,
+  TerminalFeature,
+  TerminalHandle,
+} from "@cplieger/web-terminal-ui";
 import { $ } from "./dom.js";
 import { getScrollEl } from "./messages.js";
 import { shiftScroll } from "./scroll.js";
@@ -63,18 +68,17 @@ const CR = new Uint8Array([0x0d]);
 const pendingRuns: string[] = [];
 /** The run queue's context; null until the terminal exists. */
 let runCtx: TerminalContext | null = null;
-/** True from the socket's `input:ready` until the next socket opens, a reported drop or a
- *  reattach. A Run sent before it waits in the library's queue, which a server restart at the
- *  next resume drops. */
-let socketReady = false;
 /** Restart POSTs in flight: the server kills the PTY with whatever it was sent meanwhile. */
 let restartsInFlight = 0;
 
-/** The engine clears the modes at every close, so `isKnown()` false is the only sign of a drop the
- *  kernel has not reported yet. They can come before the next socket's resume (engine terminal.go
- *  announceTo), so only `input:ready` sets `socketReady`. */
+function shownPane(ctx: TerminalContext): PaneHandle | null {
+  return ctx.shell.pane(ctx.shell.selected());
+}
+
+/** A Run sent before the pane's input is ready waits in the library's queue, which a server
+ *  restart drops at the next resume. */
 function inputReady(ctx: TerminalContext): boolean {
-  return socketReady && ctx.modes.isKnown() && restartsInFlight === 0;
+  return shownPane(ctx)?.inputReady() === true && restartsInFlight === 0;
 }
 
 /**
@@ -105,24 +109,10 @@ function runQueue(): TerminalFeature {
     name: "runQueue",
     setup(ctx) {
       runCtx = ctx;
-      // The kernel reports a drop 600 ms late or not at all (web-terminal-ui conn-state.ts), but it
-      // reports each new socket's open at once, after the engine cleared the modes at the close.
-      ctx.on("connection:state", (state) => {
-        if ((state !== "open" && state !== "restarted") || !ctx.modes.isKnown()) {
-          socketReady = false;
-        }
-      });
-      ctx.on("input:ready", () => {
-        socketReady = true;
-        flushRuns();
-      });
-      // The engine marks the modes known before either frame reaches features.
-      ctx.on("wire:modes", flushRuns);
-      ctx.on("wire:screen", flushRuns);
+      ctx.on("input:ready", flushRuns);
       return {
         teardown: () => {
           runCtx = null;
-          socketReady = false;
         },
       };
     },
@@ -183,7 +173,6 @@ function scheduleReattach(reason: "ended" | "restart"): void {
 }
 
 function reattachShell(): void {
-  socketReady = false;
   reattachedAt = Date.now();
   reattachSeq++;
   handle?.reattach();
@@ -204,7 +193,7 @@ async function hostRestart(): Promise<void> {
   // Keys typed during the POST wait. On success, those typed before the replacement's resume are
   // dropped with the old shell, and those typed at its prompt while the POST is still out reach it
   // at release. A failed restart sends them on to the same shell.
-  const release = runCtx?.shell.pane(runCtx.shell.selected())?.holdInput();
+  const release = runCtx === null ? undefined : shownPane(runCtx)?.holdInput();
   restartsInFlight++;
   const restarted = (await restartShell.dispatch()) !== null;
   restartsInFlight--;
