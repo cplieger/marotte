@@ -1189,21 +1189,56 @@ function paint(): void {
       parkView(activeView);
     }
     pruneDeadViews();
-    unparked = activateView(session.id);
+    // Already active only after a switch pass that threw: its finally landed the restore, and a second attach would
+    // put the reader back on the park's snapshot.
+    if (activeView?.chatID !== session.id) {
+      unparked = activateView(session.id);
+    }
   }
+  let cards: HTMLElement[] | null;
+  try {
+    cards = paintPass(session, isChatSwitch, unparked);
+  } finally {
+    if (unparked && activeView !== null) {
+      // After the pass, one that threw included: a body left paused never takes another write.
+      resumeView(activeView, session);
+    }
+    if (isChatSwitch) {
+      // After the pass's last write: the restore's scroll write is the one layout the switch forces. In a finally, so
+      // a pass that throws never leaves the restore pending, which would turn every later hold off.
+      applyPendingRestore();
+    }
+  }
+  if (cards === null) {
+    return;
+  }
+  // The one releaser for content: an empty turn list is a chat still loading, unless the window is
+  // the server's answer or the chat has nothing to load.
+  if (cards.length > 0 || session.residency === "loaded" || isEmptyChat(session)) {
+    releaseCover(session.id);
+  }
+}
+
+/** Bring the painted view to the store's state and return the turn cards it walked; null when the flushed cause
+ *  needed only tail bookkeeping. */
+function paintPass(
+  session: Session,
+  isChatSwitch: boolean,
+  unparked: boolean,
+): HTMLElement[] | null {
   // What the flushed version was for, untracked by design. A chat switch is always the full pass.
   const flushed = isChatSwitch ? undefined : renderCauseOf(session.id);
   if (flushed?.cause === "chunk") {
     // Text growth of mounted entries: their signal effects painted it, so only tail bookkeeping remains.
     refreshResumeLabel();
     lastNewestTurnID = newestTurnID(session);
-    return;
+    return null;
   }
   if (flushed?.cause === "tool" && refreshToolTurn(session, flushed.turnID)) {
     // The keyed update refreshed that one turn; an absent render falls through to the full pass, which alone mounts.
     refreshResumeLabel();
     lastNewestTurnID = newestTurnID(session);
-    return;
+    return null;
   }
   // Only genuinely new appended turns get the entry animation.
   appendNewIds.clear();
@@ -1261,20 +1296,9 @@ function paint(): void {
   reachableEntries = entryCount(turns);
   refreshResumeLabel();
   lastNewestTurnID = newestTurnID(session);
+  // Last: a pass that throws leaves the next paint a chat switch, so it runs the full pass again.
   lastPaintedId = session.id;
-  if (unparked && activeView !== null) {
-    // The DOM is at the store's state; now the paused effects come back.
-    resumeView(activeView, session);
-  }
-  if (isChatSwitch) {
-    // After the pass's last write: the restore's scroll write is the one layout the switch forces.
-    applyPendingRestore();
-  }
-  // The one releaser for content: an empty turn list is a chat still loading, unless the window is
-  // the server's answer or the chat has nothing to load.
-  if (cards.length > 0 || session.residency === "loaded" || isEmptyChat(session)) {
-    releaseCover(session.id);
-  }
+  return cards;
 }
 
 function turnCards(root: HTMLElement): HTMLElement[] {

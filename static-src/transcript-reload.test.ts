@@ -36,6 +36,16 @@ import { clearAllEntrySigs } from "./store-signals.js";
 import { createScriptedFetch, json, type ScriptedFetch } from "./__test-helpers__/sse-fetch.js";
 import { IDLE_RUN } from "./run-order.js";
 
+// The composer's controls, which the send button's effect repaints when the active chat's turn state moves.
+for (const [tag, id] of [
+  ["button", "send-btn"],
+  ["textarea", "prompt-input"],
+] as const) {
+  const node = document.createElement(tag);
+  node.id = id;
+  document.body.appendChild(node);
+}
+
 const CHAT = "c";
 const TURN = "t1";
 const EPOCH = "0123456789abcdef";
