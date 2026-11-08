@@ -60,10 +60,14 @@ import {
   type SwitchVerdict,
 } from "./actions/tabs.js";
 import {
+  coverHeld,
   dropCover,
+  hideTranscript,
   holdCover,
   moveFocusOffTranscript,
   releaseCoverExceptFor,
+  showTranscript,
+  transcriptHidden,
 } from "./transcript-cover.js";
 import { afterNextPaint } from "./next-paint.js";
 import { ActionError, retryNetwork, type ActionErrorLike } from "./actions/index.js";
@@ -74,7 +78,7 @@ import { ICON_CLOSE, ICON_PIN_FILLED, ICON_TAB_SUBTAB } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { activeView, setActiveView } from "./device-view.js";
 import { $, queryEl, setAttr, setText } from "./dom.js";
-import { showOnlyView } from "./view-swap.js";
+import { hideOtherViews, showOnlyView } from "./view-swap.js";
 import { signal, effect, el } from "@cplieger/ui";
 import {
   attachDrag,
@@ -775,6 +779,8 @@ function runActivation(gen: number): void {
     return;
   }
   try {
+    // First: a chat's restore writes the scroll offset, which a scroller with no box cannot take.
+    revealView(row);
     // A chat this file showed and that is still painted is mounted; showing it again would re-key
     // its rail and clear what it painted. One painted only because `removeChat` moved the pointer
     // onto it was never shown. A Retry's fresh activation clears its own failure box.
@@ -2273,8 +2279,14 @@ function syncSidebarButtons(activeKind: TabKind | null): void {
 }
 
 function showView(row: TabRow): void {
-  // Read from the DOM, not a cached selector, so a second writer of these classes can never leave a view hidden.
-  showOnlyView(queryEl<HTMLElement>(row.spec.view));
+  // A pending activation reveals its own view and pushes its own route once, when it runs, so a
+  // superseded switch shows nothing and leaves no history entry.
+  if (activationPending()) {
+    holdView(row);
+  } else {
+    revealView(row);
+    pushRoute(row.spec.route);
+  }
 
   // The tab's name IS the page title; the kind lets the heading recover a subtitle (page-title.ts).
   setPageTitle(row.name, row.subject.kind);
@@ -2283,11 +2295,29 @@ function showView(row: TabRow): void {
   // `revealActiveView` belongs to the navigation gesture.
 
   syncSidebarButtons(row.subject.kind);
+}
 
-  // A pending activation pushes its own route once, when it runs, so a superseded switch leaves no
-  // history entry.
-  if (!activationPending()) {
-    pushRoute(row.spec.route);
+/** Show the row's view alone, with its transcript laid out. Read from the DOM, not a cached
+ *  selector, so a second writer of these classes can never leave a view hidden. */
+function revealView(row: TabRow): void {
+  showTranscript();
+  showOnlyView(queryEl<HTMLElement>(row.spec.view));
+}
+
+/** The gesture form of `revealView`: lay out no view the click did not find laid out, so its frame
+ *  paints the strip and, over a chat waiting on its paint, the cover. Every other view hides; the
+ *  chat view shows only over a laid-out transcript or under the cover, with the transcript out of
+ *  layout. The activation reveals the rest. */
+function holdView(row: TabRow): void {
+  const target = queryEl<HTMLElement>(row.spec.view);
+  const laidOut = target?.classList.contains("hidden") === false && !transcriptHidden();
+  if (row.subject.kind !== "chat" || laidOut) {
+    hideOtherViews(target);
+  } else if (coverHeld()) {
+    hideTranscript();
+    showOnlyView(target);
+  } else {
+    hideOtherViews(null);
   }
 }
 
@@ -2295,6 +2325,7 @@ function showView(row: TabRow): void {
  *  HIDES the other views without disposing anything, so a rollback finds state intact. No
  *  pushRoute: the settlement's own activation corrects the URL. */
 function showEmptySurface(): void {
+  showTranscript();
   showOnlyView(queryEl<HTMLElement>(TAB_VIEWS.chat));
   clearPageTitle();
   syncSidebarButtons(null);

@@ -108,7 +108,7 @@ const mounted = new Map<string, HTMLElement>();
 
 function view(id: string): HTMLElement {
   const el = mounted.get(id);
-  if (el === null) {
+  if (el === undefined) {
     throw new Error(`no #${id}`);
   }
   return el;

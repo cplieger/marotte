@@ -2957,6 +2957,8 @@ describe("the visible view is only swapped when it actually changes", () => {
     watch();
 
     await openTab({ kind: "settings", ref: "" });
+    // The activation half shows the view, after the gesture's frame.
+    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
 
     // A real navigation: settings has its own view element, so the swap has to
     // run — and this is the case the guard must not swallow.

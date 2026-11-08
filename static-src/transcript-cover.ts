@@ -114,6 +114,30 @@ export function releaseCoverExceptFor(chatID: string): void {
   }
 }
 
+export function coverHeld(): boolean {
+  return holder !== "";
+}
+
+/** Take the transcript scroller out of layout (display: none), so a frame that paints the cover
+ *  over a chat view coming back from another view kind lays out none of the turns under it.
+ *  Chromium, Firefox and WebKit keep a scroller's offset across display: none and fire no scroll
+ *  event; `content-visibility: hidden` on the scroller loses the offset in Chromium and WebKit. */
+export function hideTranscript(): void {
+  if (!$.messagesWrap.classList.contains("hidden")) {
+    $.messagesWrap.classList.add("hidden");
+  }
+}
+
+export function transcriptHidden(): boolean {
+  return $.messagesWrap.classList.contains("hidden");
+}
+
+export function showTranscript(): void {
+  if ($.messagesWrap.classList.contains("hidden")) {
+    $.messagesWrap.classList.remove("hidden");
+  }
+}
+
 /** Lift the cover whoever holds it: the view is not a chat, the strip went empty, or the load
  *  failed and the reader must reach what is painted instead. */
 export function dropCover(): void {
