@@ -29,11 +29,11 @@ require (
 	github.com/cplieger/go/slogx v1.0.0-dev.2
 	github.com/cplieger/go/sse v1.5.0-dev.9
 	github.com/cplieger/go/ssrf v1.0.0-dev.2
-	github.com/cplieger/go/textsafe v1.0.0-dev.1
+	github.com/cplieger/go/textsafe v1.0.0
 	github.com/cplieger/go/wiregen v1.0.0-dev.4
 	github.com/cplieger/go/yamlenv v1.0.0-dev.2
 	github.com/cplieger/toolbelt/v3 v3.15.0-dev.19
-	github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.6
+	github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.9
 	github.com/evanw/esbuild v0.28.2
 	github.com/klauspost/compress v1.20.3
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f

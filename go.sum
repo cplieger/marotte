@@ -32,8 +32,8 @@ github.com/cplieger/go/sse v1.5.0-dev.9 h1:hWFzX9gTmkYlDZ5nz434W4pazMYTe5C65bIEE
 github.com/cplieger/go/sse v1.5.0-dev.9/go.mod h1:lbuQRbOTCVmra7M6bdKqIWf9jkisQIebnFiRIAHmfR4=
 github.com/cplieger/go/ssrf v1.0.0-dev.2 h1:g2BAHqh7yX4ubNMHKhGr5tLDpSljdq45/aNXxQNvbfg=
 github.com/cplieger/go/ssrf v1.0.0-dev.2/go.mod h1:/YuSCNO/nE8JB4PAw6FEA/A3AsqHLzcZckpLgQCMGnA=
-github.com/cplieger/go/textsafe v1.0.0-dev.1 h1:NqiLs9uk4eOoXXkTQo0O8lMtYddo3XZuCuyx/ruB66w=
-github.com/cplieger/go/textsafe v1.0.0-dev.1/go.mod h1:5IH0ZWTC+U864nzWGtcwGkp+PtA5hrlcfY2zLY/TexM=
+github.com/cplieger/go/textsafe v1.0.0 h1:cQhZdSsiwSI9VpRjGoib5N59K9uC7fLzqIg8DrmQneU=
+github.com/cplieger/go/textsafe v1.0.0/go.mod h1:5IH0ZWTC+U864nzWGtcwGkp+PtA5hrlcfY2zLY/TexM=
 github.com/cplieger/go/urlform v1.0.0-dev.1 h1:tJo35Y4xIwM2IzGxK7DXcbVGb3y9lF8l7griM1VF8a4=
 github.com/cplieger/go/urlform v1.0.0-dev.1/go.mod h1:za2vxWNMT4+X50qgurZEDBsrxhMlkntfh6XJnfxzYH8=
 github.com/cplieger/go/wiregen v1.0.0-dev.4 h1:vn4BcCLZxdwj+NJz4okccTT9VY0qQFYylAS4MprXV68=
@@ -42,8 +42,8 @@ github.com/cplieger/go/yamlenv v1.0.0-dev.2 h1:YZriaF+FfG6ulLQx7fAyPZI7QvgsuML7K
 github.com/cplieger/go/yamlenv v1.0.0-dev.2/go.mod h1:bYTrNFzQ0qSpy0u51Bouc9yTNXuj0FfGppio02PiJBw=
 github.com/cplieger/toolbelt/v3 v3.15.0-dev.19 h1:2+aARtgpHUfWUmpqRDlgcLMcuHVgVbKy8+qMS2wgrL8=
 github.com/cplieger/toolbelt/v3 v3.15.0-dev.19/go.mod h1:9JLK4fW34zfX6NlDZgLNpWijbHlJNlS5Q/26chJgB2U=
-github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.6 h1:4jD9qMNe0c/Idc+ULbgXnwTwDyCUcbKwJ5rNXogQin4=
-github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.6/go.mod h1:9uZwFofHysDAWBdTCEJxpmB3mkxNnlXrpv1es6BielQ=
+github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.9 h1:Fsyj8Xf++iksSqeHgLJ2jxFZUmXiOUrYl6qi01CXtOM=
+github.com/cplieger/web-terminal-engine/v6 v6.5.0-dev.9/go.mod h1:1b6PhRuc80UtQrucmlMi8u57KrU1SLRdL4kM4SyN81k=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
 github.com/evanw/esbuild v0.28.2 h1:A2uETn4jrQTcXaT/shwTDTYBxDjl7fV7nXmUrJxfA2w=
