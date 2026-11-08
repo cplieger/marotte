@@ -150,6 +150,7 @@ func (s *stepper) confirm(rec *record) {
 	}
 	st := s.status()
 	st.LastRunID, st.LastStatus, st.LastReason, st.LastRunAt = rec.workflowID, launchrule.StatusStarted, "", s.now
+	st.LastEvent = rec.key
 	st.BoundAbandons, st.FailingSince, st.RowText = 0, time.Time{}, ""
 	s.rv.retries, s.rv.retryAt = 0, time.Time{}
 	slog.Info(logMsgRunStarted, "rule_id", s.ruleID, "workflow_id", rec.workflowID, "key", rec.key)

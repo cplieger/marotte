@@ -1,8 +1,17 @@
 // The shipped markup, not a fixture: a fixture would keep passing after index.html regressed.
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import indexHtml from "../static/index.html?raw";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { settingsPayload } from "./__test-helpers__/settings.js";
+import { patchSettings } from "./persist.js";
+import { applyGeneralPanel, initGeneralPanelControls } from "./settings.js";
+import type * as Persist from "./persist.js";
+
+vi.mock("./persist.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Persist>()),
+  patchSettings: vi.fn(() => Promise.resolve({ outcome: "saved" })),
+}));
 
 const page = new DOMParser().parseFromString(indexHtml, "text/html");
 const host = document.createElement("div");
@@ -36,6 +45,8 @@ const VALUE_CONTROLS = [
   "output-style",
   "workflow-launch",
   "shell-command-timeout",
+  "trigger-max-live-runs",
+  "trigger-max-launches-per-hour",
 ] as const;
 
 function control(id: string): HTMLElement {
@@ -132,5 +143,35 @@ describe("the unattended runs section", () => {
     expect(hint).toContain(
       "A triggered run can read text other people wrote, such as an issue body",
     );
+  });
+});
+
+describe("the triggered-run caps", () => {
+  it("edits the trigger live and hourly caps", () => {
+    initGeneralPanelControls();
+    applyGeneralPanel(
+      settingsPayload({ trigger_max_live_runs: 4, trigger_max_launches_per_hour: 9 }),
+    );
+    const cases = [
+      ["trigger-max-live-runs", "trigger_max_live_runs", "4"],
+      ["trigger-max-launches-per-hour", "trigger_max_launches_per_hour", "9"],
+    ] as const;
+    for (const [id, key, stored] of cases) {
+      const input = control(id) as HTMLInputElement;
+      expect(input.type).toBe("number");
+      expect([input.min, input.max]).toEqual(["1", "100"]);
+      expect(input.value, `#${id} paints the stored cap`).toBe(stored);
+      input.value = "7";
+      input.dispatchEvent(new Event("change"));
+      expect(patchSettings).toHaveBeenLastCalledWith({ [key]: 7 });
+      input.value = "500";
+      input.dispatchEvent(new Event("change"));
+      expect(patchSettings).toHaveBeenLastCalledWith({ [key]: 100 });
+      expect(input.value).toBe("100");
+      vi.mocked(patchSettings).mockClear();
+      input.value = "";
+      input.dispatchEvent(new Event("change"));
+      expect(patchSettings, "an emptied box sends nothing").not.toHaveBeenCalled();
+    }
   });
 });

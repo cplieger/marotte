@@ -118,7 +118,7 @@ func runWalkComplete(w *listWalk[forgeapi.Run]) bool {
 // pending run the walk's bound reached and the forge no longer listed.
 func (pr *pollRule) noteRunWalk(c *runCursor, w *listWalk[forgeapi.Run], bound, h time.Time, listed map[int64]bool) {
 	if c.LastComplete.Add(-runReach).Before(h) {
-		pr.recordGap(&launchrule.Gap{Cause: launchrule.GapOutage, From: c.LastComplete, To: pr.start})
+		pr.recordGap(&launchrule.Gap{Cause: launchrule.GapOutage, From: c.LastComplete, To: pr.start, CreatedBefore: h})
 	}
 	if w.Partial != nil && w.Partial.Reason == forgeapi.PartialResultWindow {
 		pr.noteResultWindow(bound, w.Partial.OmittedAtLeast)

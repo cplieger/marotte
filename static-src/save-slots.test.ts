@@ -38,6 +38,8 @@ const EXPECTED_KEYS = [
   "cloudformation_safety_check",
   "output_style",
   "terminal_command_timeout_ms",
+  "trigger_max_launches_per_hour",
+  "trigger_max_live_runs",
   // Data sharing: marotte's content-collection switch and kiro-cli's telemetry
   "content_collection_enabled",
   "telemetry.enabled",

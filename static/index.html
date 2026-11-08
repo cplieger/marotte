@@ -808,6 +808,26 @@
               <div class="section-option section-option-fixed">
                 <div class="section-field">
                   <div class="section-title-status-row">
+                    <label class="section-option-label" for="trigger-max-live-runs">Triggered runs at once</label>
+                    <span class="settings-save-status hidden" data-save-status="trigger_max_live_runs" aria-live="polite"></span>
+                  </div>
+                  <input type="number" id="trigger-max-live-runs" class="rf-input rf-number" autocomplete="off" min="1" max="100" step="1" inputmode="numeric" placeholder="3" aria-describedby="trigger-max-live-runs-hint">
+                  <p class="section-hint" id="trigger-max-live-runs-hint">How many runs that forge events started may run at the same time, across every workflow, from 1 to 100. An event past the limit waits until one ends. 3 by default.</p>
+                </div>
+              </div>
+              <div class="section-option section-option-fixed">
+                <div class="section-field">
+                  <div class="section-title-status-row">
+                    <label class="section-option-label" for="trigger-max-launches-per-hour">Triggered runs per hour</label>
+                    <span class="settings-save-status hidden" data-save-status="trigger_max_launches_per_hour" aria-live="polite"></span>
+                  </div>
+                  <input type="number" id="trigger-max-launches-per-hour" class="rf-input rf-number" autocomplete="off" min="1" max="100" step="1" inputmode="numeric" placeholder="6" aria-describedby="trigger-max-launches-per-hour-hint">
+                  <p class="section-hint" id="trigger-max-launches-per-hour-hint">How many runs forge events may start in any hour, across every workflow, from 1 to 100. An event past the limit waits for the hour to make room. 6 by default.</p>
+                </div>
+              </div>
+              <div class="section-option section-option-fixed">
+                <div class="section-field">
+                  <div class="section-title-status-row">
                     <label class="section-option-label" for="output-style">Output style</label>
                     <span class="settings-save-status hidden" data-save-status="output_style" aria-live="polite"></span>
                   </div>

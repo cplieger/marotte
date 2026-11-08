@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -212,10 +213,69 @@ func (pr *pollRule) applyTo(es *eventState, rd *reads) bool {
 	pr.st.raw.Status.Paused = ""
 	if bo := rd.paused[listOf(pr.ev.Kind)]; bo != nil {
 		pr.st.raw.Status.Paused = bo.rowText()
+	} else {
+		pr.st.checkedAt = pr.start
+		pr.showFull()
+		pr.noteBaselineStop(rd)
 	}
 	*es = pr.st
 	after, aerr := stateJSON(es)
 	return err != nil || aerr != nil || !bytes.Equal(before, after)
+}
+
+// noteBaselineStop says where and why this poll's walk stopped short while the rule has no baseline yet.
+func (pr *pollRule) noteBaselineStop(rd *reads) {
+	pr.st.baselineStop = ""
+	if rc := pr.st.cursor[pr.feed.repoID()]; rc != nil && !rc.empty() {
+		return
+	}
+	var calls int
+	var partial *forgeapi.Partial
+	switch listOf(pr.ev.Kind) {
+	case listIssues:
+		calls, partial = stoppedShort(rd.issues)
+	case listPRs:
+		calls, partial = stoppedShort(rd.prs)
+	default:
+		calls, partial = stoppedShort(rd.runs)
+	}
+	if partial != nil {
+		pr.st.baselineStop = baselineStopText(calls, partial.Reason)
+	}
+}
+
+// stoppedShort answers a walk's call count and the marker it stopped on, or a nil marker for a walk that read to
+// the end or failed, since a failed walk's last page says nothing of why it stopped.
+func stoppedShort[T any](w *listWalk[T]) (int, *forgeapi.Partial) {
+	if w == nil || w.Err != nil {
+		return 0, nil
+	}
+	return w.Calls, w.Partial
+}
+
+func baselineStopText(calls int, reason forgeapi.PartialReason) string {
+	pages := fmt.Sprintf("%d pages", calls)
+	if calls == 1 {
+		pages = "1 page"
+	}
+	return "the last walk stopped after " + pages + ": " + partialText(reason)
+}
+
+func partialText(r forgeapi.PartialReason) string {
+	switch r {
+	case forgeapi.PartialBudget:
+		return "the forge client's request budget ran out"
+	case forgeapi.PartialRateLimited:
+		return "the forge's rate limit held the walk back"
+	case forgeapi.PartialGraphQLPartial:
+		return "the forge answered a page with errors"
+	case forgeapi.PartialPaginationCap:
+		return "the forge's page limit was reached"
+	case forgeapi.PartialResultWindow:
+		return "the forge lists no rows past its result window"
+	default:
+		return "the forge did not say why"
+	}
 }
 
 func stateJSON(es *eventState) ([]byte, error) {

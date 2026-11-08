@@ -89,6 +89,7 @@ func (s *stepper) rebaseline() {
 	s.rv.generation++
 	es := &s.rv.es
 	es.cursor, es.queue, es.launched, es.superseded = cursor{}, nil, nil, nil
+	es.checkedAt, es.baselineStop = time.Time{}, ""
 	s.rv.unreadable = nil
 	s.resetFailures()
 	es.raw.Population = launchrule.Population(&s.def)

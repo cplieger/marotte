@@ -592,6 +592,9 @@ func confirmed(t *testing.T, tc *testConfirmer, r *launchrule.Rule) {
 	if st.LastRunID != "wf_1" || st.BoundAbandons != 0 || !st.FailingSince.IsZero() {
 		t.Errorf("status = %+v, want last_run_id wf_1, count 0, failing_since zero", st)
 	}
+	if st.LastEvent != "k1" {
+		t.Errorf("last_event = %q, want k1: the row names the confirmed event", st.LastEvent)
+	}
 	advance(launchConfirmBound + time.Second)
 	if got := tc.cancels(); len(got) != 0 {
 		t.Errorf("cancels after the bound = %v, want none: the bound stopped", got)

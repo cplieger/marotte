@@ -435,6 +435,106 @@
   justify-content: flex-end;
 }
 
+/* Fixed text beside a field: what it takes, what the rule cannot see. */
+.sched-hint {
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--c-text-secondary);
+}
+
+/* --- Run when… ------------------------------------------------------------ */
+
+.rw-popup,
+.rw-rules,
+.rw-add,
+.rw-inputs,
+.rw-kind-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.rw-popup {
+  max-inline-size: min(32rem, 100vw - 4 * var(--sp-4));
+}
+
+.rw-rule {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding-block-end: var(--sp-2);
+  border-block-end: 1px solid var(--c-border);
+}
+
+.rw-line {
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.rw-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.rw-add {
+  align-items: start;
+}
+
+.rw-conn,
+.rw-kind,
+.rw-hold-policy,
+.rw-repo,
+.rw-label,
+.rw-workflow,
+.rw-branch,
+.rw-authors {
+  min-block-size: var(--field-h-dense);
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-1) var(--sp-2);
+}
+
+.rw-repo,
+.rw-workflow,
+.rw-authors {
+  flex: 1;
+  min-inline-size: 12rem;
+}
+
+.rw-authors {
+  resize: vertical;
+  font-family: var(--font-mono);
+}
+
+/* The inputs the event sets, which the form lists and never edits. */
+.rw-event-inputs {
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  color: var(--c-text-secondary);
+}
+
+.rw-no-event-id {
+  font-size: var(--fs-xs);
+  color: var(--c-yellow);
+}
+
+.rw-more > summary {
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  cursor: pointer;
+}
+
+.rw-error {
+  font-size: var(--fs-xs);
+}
+
 /* --- Memories tab --------------------------------------------------------- */
 
 .memories-head {

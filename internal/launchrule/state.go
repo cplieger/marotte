@@ -57,6 +57,14 @@ type Status struct {
 	Blocked string `json:"blocked,omitempty"`
 	// RowText is an event rule's launch state as its row reads it, which the trigger confirmer writes.
 	RowText string `json:"row_text,omitempty"`
+	// LastEvent is the key of an event rule's last confirmed event, which its row names by number or run id.
+	LastEvent string `json:"last_event,omitempty"`
+	// CheckedAt is the start of an event rule's last applied poll; the trigger confirmer's View sets it and no write
+	// persists it.
+	CheckedAt time.Time `json:"checked_at,omitzero"`
+	// BaselineStop is where and why an event rule's last walk stopped short while no baseline is taken; the trigger
+	// confirmer's View sets it and no write persists it.
+	BaselineStop string `json:"baseline_stop,omitempty"`
 	// Paused is why an event rule's reads wait for a forge or trigger budget, and until when; empty while they run.
 	Paused string `json:"paused,omitempty"`
 	// Gaps are an event rule's stretches in which runs may have been missed, kept until the operator dismisses them.
@@ -78,9 +86,11 @@ const (
 // window reaches (outage), a run that reached the read horizon before it was seen to end or launched (aged_out),
 // or more runs created in one second than the forge lists (result_window).
 type Gap struct {
-	From  time.Time `json:"from"`
-	To    time.Time `json:"to"`
-	Cause string    `json:"cause"`
+	From time.Time `json:"from"`
+	To   time.Time `json:"to"`
+	// CreatedBefore is an outage's read horizon: a run created before it that ended in the gap was not checked.
+	CreatedBefore time.Time `json:"created_before,omitzero"`
+	Cause         string    `json:"cause"`
 	// RunID names the aged_out run.
 	RunID int64 `json:"run_id,omitempty"`
 	// OmittedAtLeast is a result_window's lower bound on the runs the forge did not list.

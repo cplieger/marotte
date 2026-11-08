@@ -53,13 +53,18 @@ vi.mock("./persist.js", () => ({
   refreshSettings: vi.fn(async () => ({})),
 }));
 
-// The Schedule button's actions: unmocked they reach the network, and a row's summary line is
-// decoration this suite does not assert on.
-vi.mock("./actions/schedules.js", () => ({
-  loadSchedules: { dispatch: vi.fn(async () => schedulesReply) },
-  saveSchedule: { dispatch: vi.fn(async () => null) },
-  deleteSchedule: { dispatch: vi.fn(async () => null) },
+// The Run when… popup's actions: unmocked they reach the network.
+vi.mock("./actions/launch-rules.js", () => ({
+  loadLaunchRules: { dispatch: vi.fn(async () => rulesReply) },
+  saveLaunchRule: { dispatch: vi.fn(async () => null) },
+  saveEventRule: { dispatch: vi.fn(async () => null) },
+  deleteLaunchRule: { dispatch: vi.fn(async () => ({ ok: true })) },
+  dismissGap: { dispatch: vi.fn(async () => null) },
 }));
+vi.mock("./actions/forge-list.js", () => ({
+  listForges: { dispatch: vi.fn(async () => forgesReply) },
+}));
+vi.mock("./confirm.js", () => ({ confirm: vi.fn(async () => true) }));
 
 const standing = vi.hoisted(() => ({ files: new Map<string, ConfigStanding>() }));
 vi.mock("./config-standing.js", async (importOriginal) => {
@@ -73,16 +78,24 @@ vi.mock("./config-standing.js", async (importOriginal) => {
 
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
 import { BUS_CATALOG_MODELS, dispatch, emitBus } from "./bus.js";
-import { deleteSchedule, loadSchedules, saveSchedule } from "./actions/schedules.js";
+import {
+  deleteLaunchRule,
+  loadLaunchRules,
+  saveEventRule,
+  saveLaunchRule,
+} from "./actions/launch-rules.js";
+import { confirm } from "./confirm.js";
 import { openRunView } from "./run-view.js";
 import { launchRun, cancelRun, loadRecipes } from "./actions/runs.js";
 import type { ModelInfo, RecipesResponse, WorkflowRun, ResumableSession } from "./types.js";
 import type { ConfigStanding, RunStatus } from "./wire/types.gen.js";
-import type { SchedulesResponse, ScheduleView } from "./schedule-types.js";
+import type { LaunchRulesResponse, LaunchRuleView } from "./launch-rule-types.js";
+import type { ForgesListResponse } from "./actions/forge-list.js";
 import type * as ConfigStandingModule from "./config-standing.js";
 
 let recipesReply: RecipesResponse = { recipes: [] };
-let schedulesReply: SchedulesResponse = { schedules: [] };
+let rulesReply: LaunchRulesResponse = { rules: [] };
+let forgesReply: ForgesListResponse = { forges: [], kinds: [] };
 let runsReply: { sessions: ResumableSession[]; runs: WorkflowRun[] } = {
   sessions: [],
   runs: [],
@@ -132,7 +145,8 @@ beforeEach(() => {
   vi.mocked(launchRun.dispatch).mockClear();
   vi.mocked(cancelRun.dispatch).mockClear();
   recipesReply = { recipes: [] };
-  schedulesReply = { schedules: [] };
+  rulesReply = { rules: [] };
+  forgesReply = { forges: [], kinds: [] };
   runsReply = { sessions: [], runs: [] };
 });
 
@@ -504,7 +518,7 @@ describe("the recipe row on the shared builder", () => {
 
   // Each case names its own recipe.
 
-  it("is an inert entry whose two lines are the description and the schedule", async () => {
+  it("is an inert entry whose two lines are the description and the rules", async () => {
     // Not a door: a recipe row's one destination is the run its button launches, and that run opens
     // its own tab.
     recipesReply = { recipes: [{ ...recipe("shape", { prompt: "prompt" }), built_in: true }] };
@@ -523,7 +537,7 @@ describe("the recipe row on the shared builder", () => {
     ).toEqual(["shape desc", "Not scheduled · Inputs: prompt"]);
   });
 
-  it("puts Schedule then Run in the actions slot as text buttons", async () => {
+  it("puts Run when… then Run in the actions slot as text buttons", async () => {
     recipesReply = { recipes: [recipe("actions")] };
     const panel = await render();
     const actions = [
@@ -533,10 +547,10 @@ describe("the recipe row on the shared builder", () => {
       "btn-small recipe-sched-btn",
       "btn-small recipe-run-btn",
     ]);
-    expect(actions.map((a) => a.textContent)).toEqual(["Schedule", "Run"]);
+    expect(actions.map((a) => a.textContent)).toEqual(["Run when…", "Run"]);
   });
 
-  it("keeps the second line for the schedule when a recipe declares no inputs", async () => {
+  it("keeps the second line for the rules when a recipe declares no inputs", async () => {
     recipesReply = { recipes: [recipe("plain")] };
     const panel = await render();
     const lines = [
@@ -568,7 +582,7 @@ describe("the recipe row on the shared builder", () => {
   });
 
   it("keeps what the reader typed across a repaint", async () => {
-    // The panel repaints on its own schedule — the run poll, the schedules fetch — so a form that
+    // The panel repaints on its own schedule — the run poll, the rules fetch — so a form that
     // was rebuilt on each one would lose its values.
     recipesReply = { recipes: [recipe("typing", { prompt: "prompt" })] };
     const panel = await render();
@@ -740,36 +754,138 @@ describe("the filter", () => {
   });
 });
 
-describe("the Schedule form", () => {
-  async function openSchedule(): Promise<HTMLButtonElement> {
-    recipesReply = { recipes: [recipe("nightly")] };
+describe("the Run when… popup", () => {
+  const daily = { freq: "daily", hour: 3, minute: 0 } as const;
+
+  function clockRule(id: string, over: Partial<LaunchRuleView> = {}): LaunchRuleView {
+    return {
+      id,
+      source: "bundled://nightly",
+      enabled: true,
+      when: { clock: daily },
+      held: 0,
+      ...over,
+    };
+  }
+
+  function eventRule(id: string, over: Partial<LaunchRuleView> = {}): LaunchRuleView {
+    return {
+      id,
+      source: "bundled://nightly",
+      enabled: true,
+      when: {
+        event: {
+          connection: "github:github.com",
+          repo: "o/r",
+          kind: "run_concluded",
+          filter: { result: ["success"] },
+        },
+      },
+      cursor: { baselined: true },
+      held: 0,
+      ...over,
+    };
+  }
+
+  async function openPopup(inputs?: Record<string, string>): Promise<HTMLButtonElement> {
+    recipesReply = { recipes: [recipe("nightly", inputs)] };
     const panel = await render();
+    await vi.waitFor(() => {
+      expect(vi.mocked(loadLaunchRules.dispatch)).toHaveBeenCalled();
+    });
+    await new Promise((r) => setTimeout(r, 0));
     const btn = panel.querySelector<HTMLButtonElement>(".recipe-sched-btn");
     if (btn === null) {
-      throw new Error("the row has no Schedule button");
+      throw new Error("the row has no Run when… button");
     }
     btn.click();
     expect(btn.getAttribute("aria-expanded")).toBe("true");
     return btn;
   }
 
+  function popupButton(text: string): HTMLButtonElement {
+    // A hidden popup stays in the document, so only the one opened last is searched.
+    const open = [...document.querySelectorAll<HTMLElement>(".sched-popup")].at(-1);
+    const b = [...(open?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+      (x) => x.textContent === text,
+    );
+    if (b === undefined) {
+      throw new Error(`the popup has no ${text} button`);
+    }
+    return b;
+  }
+
   function scheduleModel(): HTMLSelectElement {
     const sel = document.querySelector<HTMLSelectElement>(".sched-picker .run-pick-select");
     if (sel === null) {
-      throw new Error("the Schedule form has no Model select");
+      throw new Error("the schedule form has no Model select");
     }
     return sel;
   }
 
-  function clickSave(): void {
-    [...document.querySelectorAll<HTMLButtonElement>(".sched-picker button")]
-      .find((b) => b.textContent === "Save")
-      ?.click();
-  }
+  beforeEach(() => {
+    vi.mocked(saveLaunchRule.dispatch).mockClear();
+    vi.mocked(saveEventRule.dispatch).mockClear();
+    vi.mocked(loadLaunchRules.dispatch).mockClear();
+    vi.mocked(deleteLaunchRule.dispatch).mockClear();
+    vi.mocked(confirm).mockClear();
+  });
 
-  it("takes the catalog that lands after it opened", async () => {
+  it("counts enabled rules on the button", async () => {
+    rulesReply = {
+      rules: [clockRule("c1"), eventRule("e1"), eventRule("e2", { enabled: false })],
+    };
+    const btn = await openPopup();
+    expect(btn.textContent).toBe("Run when… 2");
+    expect(btn.classList.contains("on")).toBe(true);
+    expect(
+      [...document.querySelectorAll(".rw-rule")].map((r) => r.getAttribute("data-rule-id")),
+    ).toEqual(["c1", "e1", "e2"]);
+
+    document.body.replaceChildren();
+    rulesReply = { rules: [clockRule("c1"), eventRule("e2", { enabled: false })] };
+    const one = await openPopup();
+    expect(one.textContent).toBe("Run when…");
+    expect(one.classList.contains("on")).toBe(true);
+
+    document.body.replaceChildren();
+    rulesReply = { rules: [clockRule("c1", { enabled: false })] };
+    const none = await openPopup();
+    expect(none.textContent).toBe("Run when…");
+    expect(none.classList.contains("on")).toBe(false);
+  });
+
+  it("shows the first error state on the recipe row", async () => {
+    rulesReply = {
+      rules: [
+        clockRule("c1"),
+        eventRule("e1", { status: { blocked: "this rule's workflow file is gone" } }),
+        eventRule("e2", { cursor: { baselined: true, blocked: "connection signed out" } }),
+      ],
+    };
+    await openPopup();
+    const line = document.querySelector<HTMLElement>(
+      '[data-recipe="bundled://nightly"] .entry-lines > .entry-sub:nth-child(2)',
+    );
+    expect(line?.textContent).toBe("blocked: this rule's workflow file is gone. Edit the rule");
+    expect(line?.classList.contains("entry-sub-error")).toBe(true);
+    expect(line?.classList.contains("is-scheduled")).toBe(false);
+  });
+
+  it("shows the first enabled rule and how many more on the recipe row", async () => {
+    rulesReply = { rules: [clockRule("c1", { enabled: false }), clockRule("c2"), clockRule("c3")] };
+    await openPopup();
+    const line = document.querySelector<HTMLElement>(
+      '[data-recipe="bundled://nightly"] .entry-lines > .entry-sub:nth-child(2)',
+    );
+    expect(line?.textContent).toMatch(/^Every day at .+ · \+1 more rule$/);
+    expect(line?.classList.contains("is-scheduled")).toBe(true);
+  });
+
+  it("takes the catalog that lands after the schedule form opened", async () => {
     catalog.models = [];
-    await openSchedule();
+    await openPopup();
+    popupButton("On a schedule").click();
     expect([...scheduleModel().options].map((o) => o.value)).toEqual([""]);
     catalog.models = [{ model_id: "opus", model_name: "Opus" }];
     emitBus(BUS_CATALOG_MODELS);
@@ -778,247 +894,310 @@ describe("the Schedule form", () => {
   });
 
   it("stays open with the reader's edits when the save is refused", async () => {
-    vi.mocked(saveSchedule.dispatch).mockClear();
-    const btn = await openSchedule();
-    clickSave();
+    const btn = await openPopup();
+    popupButton("On a schedule").click();
+    popupButton("Save").click();
     await vi.waitFor(() => {
-      expect(vi.mocked(saveSchedule.dispatch)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(saveLaunchRule.dispatch)).toHaveBeenCalledTimes(1);
     });
     await Promise.resolve();
     expect(btn.getAttribute("aria-expanded")).toBe("true");
+    expect(document.querySelector(".sched-picker")).not.toBeNull();
   });
 
-  it("passes the existing clock rule's id on save", async () => {
-    vi.mocked(saveSchedule.dispatch).mockClear();
-    schedulesReply = {
-      schedules: [
-        {
-          id: "r-nightly",
-          source: "bundled://nightly",
-          enabled: true,
-          spec: { freq: "daily", hour: 3, minute: 0 },
-          inputs: { tag: "v1" },
-        },
-      ],
-    };
-    recipesReply = { recipes: [recipe("nightly")] };
-    const panel = await render();
+  it("sends no id for a new rule, and the stored rule's id and inputs on an edit", async () => {
+    rulesReply = { rules: [clockRule("r-nightly", { inputs: { tag: "v1" } })] };
+    await openPopup({ tag: "string" });
+    popupButton("On a schedule").click();
+    popupButton("Save").click();
     await vi.waitFor(() => {
-      expect(panel.querySelector(".recipe-sched-btn.on")).not.toBeNull();
+      expect(vi.mocked(saveLaunchRule.dispatch)).toHaveBeenCalledTimes(1);
     });
-    panel.querySelector<HTMLButtonElement>(".recipe-sched-btn")?.click();
-    clickSave();
+    expect(vi.mocked(saveLaunchRule.dispatch).mock.calls[0]?.[0]).not.toHaveProperty("id");
+
+    document.body.replaceChildren();
+    await openPopup({ tag: "string" });
+    popupButton("Edit").click();
+    popupButton("Save").click();
     await vi.waitFor(() => {
-      expect(vi.mocked(saveSchedule.dispatch)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(saveLaunchRule.dispatch)).toHaveBeenCalledTimes(2);
     });
-    expect(vi.mocked(saveSchedule.dispatch).mock.calls[0]?.[0]).toMatchObject({
+    expect(vi.mocked(saveLaunchRule.dispatch).mock.calls[1]?.[0]).toMatchObject({
       id: "r-nightly",
       source: "bundled://nightly",
+      when: { clock: daily },
       inputs: { tag: "v1" },
     });
   });
 
-  it("replaces the clock rule a list landing after the form opened names", async () => {
-    vi.mocked(saveSchedule.dispatch).mockClear();
-    vi.mocked(loadSchedules.dispatch).mockClear();
-    recipesReply = { recipes: [recipe("nightly")] };
-    // A first panel whose list reads empty, so no rule is known when the second one opens its form.
-    const first = await render();
-    await vi.waitFor(() => {
-      expect(vi.mocked(loadSchedules.dispatch)).toHaveBeenCalledTimes(1);
-    });
-    await Promise.resolve();
-    first.remove();
-    let land: (r: SchedulesResponse) => void = () => undefined;
-    vi.mocked(loadSchedules.dispatch).mockImplementationOnce(
-      (() =>
-        new Promise<SchedulesResponse>((resolve) => {
-          land = resolve;
-        })) as unknown as typeof loadSchedules.dispatch,
+  it("lists the rule a create minted when the list read after it fails", async () => {
+    const btn = await openPopup();
+    vi.mocked(saveLaunchRule.dispatch).mockImplementationOnce((async () =>
+      clockRule("r-minted")) as unknown as typeof saveLaunchRule.dispatch);
+    vi.mocked(loadLaunchRules.dispatch).mockImplementationOnce(
+      (async () => null) as unknown as typeof loadLaunchRules.dispatch,
     );
-    const panel = await render();
-    await vi.waitFor(() => {
-      expect(vi.mocked(loadSchedules.dispatch)).toHaveBeenCalledTimes(2);
-    });
-    const btn = panel.querySelector<HTMLButtonElement>(".recipe-sched-btn");
-    expect(btn?.classList.contains("on")).toBe(false);
-    btn?.click();
-    land({
-      schedules: [
-        {
-          id: "r-late",
-          source: "bundled://nightly",
-          enabled: true,
-          spec: { freq: "daily", hour: 3, minute: 0 },
-        },
-      ],
-    });
-    await vi.waitFor(() => {
-      expect(panel.querySelector(".recipe-sched-btn.on")).not.toBeNull();
-    });
-    clickSave();
-    await vi.waitFor(() => {
-      expect(vi.mocked(saveSchedule.dispatch)).toHaveBeenCalledTimes(1);
-    });
-    expect(vi.mocked(saveSchedule.dispatch).mock.calls[0]?.[0]).toMatchObject({
-      id: "r-late",
-      source: "bundled://nightly",
-    });
-  });
-
-  it("offers Remove once a list landing after the form opened names a rule", async () => {
-    vi.mocked(deleteSchedule.dispatch).mockClear();
-    vi.mocked(loadSchedules.dispatch).mockClear();
-    recipesReply = { recipes: [recipe("nightly")] };
-    // A first panel whose list reads empty, so no rule is known when the second one opens its form.
-    const first = await render();
-    await vi.waitFor(() => {
-      expect(vi.mocked(loadSchedules.dispatch)).toHaveBeenCalledTimes(1);
-    });
-    await Promise.resolve();
-    first.remove();
-    let land: (r: SchedulesResponse) => void = () => undefined;
-    vi.mocked(loadSchedules.dispatch).mockImplementationOnce(
-      (() =>
-        new Promise<SchedulesResponse>((resolve) => {
-          land = resolve;
-        })) as unknown as typeof loadSchedules.dispatch,
-    );
-    const panel = await render();
-    await vi.waitFor(() => {
-      expect(vi.mocked(loadSchedules.dispatch)).toHaveBeenCalledTimes(2);
-    });
-    panel.querySelector<HTMLButtonElement>(".recipe-sched-btn")?.click();
-    const removeButton = (): HTMLButtonElement | null =>
-      document.querySelector<HTMLButtonElement>(".sched-picker .btn-danger");
-    expect(removeButton()).toBeNull();
-    land({
-      schedules: [
-        {
-          id: "r-late",
-          source: "bundled://nightly",
-          enabled: true,
-          spec: { freq: "daily", hour: 3, minute: 0 },
-        },
-      ],
-    });
-    await vi.waitFor(() => {
-      expect(removeButton()).not.toBeNull();
-    });
-    removeButton()?.click();
-    await vi.waitFor(() => {
-      expect(vi.mocked(deleteSchedule.dispatch)).toHaveBeenCalledWith("r-late");
-    });
-  });
-
-  it("replaces the rule a create minted when the list read after it fails", async () => {
-    vi.mocked(saveSchedule.dispatch).mockClear();
-    const btn = await openSchedule();
-    vi.mocked(saveSchedule.dispatch).mockImplementationOnce((async () => ({
-      id: "r-minted",
-      source: "bundled://nightly",
-      enabled: true,
-      spec: { freq: "daily", hour: 3, minute: 0 },
-    })) as unknown as typeof saveSchedule.dispatch);
-    vi.mocked(loadSchedules.dispatch).mockImplementationOnce(
-      (async () => null) as unknown as typeof loadSchedules.dispatch,
-    );
-    clickSave();
+    popupButton("On a schedule").click();
+    popupButton("Save").click();
     await vi.waitFor(() => {
       expect(btn.getAttribute("aria-expanded")).toBe("false");
     });
     btn.click();
-    clickSave();
+    popupButton("Edit").click();
+    popupButton("Save").click();
     await vi.waitFor(() => {
-      expect(vi.mocked(saveSchedule.dispatch)).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(saveLaunchRule.dispatch)).toHaveBeenCalledTimes(2);
     });
-    expect(vi.mocked(saveSchedule.dispatch).mock.calls[0]?.[0]).not.toHaveProperty("id");
-    expect(vi.mocked(saveSchedule.dispatch).mock.calls[1]?.[0]).toMatchObject({
-      id: "r-minted",
-      source: "bundled://nightly",
+    expect(vi.mocked(saveLaunchRule.dispatch).mock.calls[1]?.[0]).toMatchObject({ id: "r-minted" });
+  });
+
+  it("lists the rules a fetch lands after the popup opened", async () => {
+    let land: (r: LaunchRulesResponse) => void = () => undefined;
+    vi.mocked(loadLaunchRules.dispatch).mockImplementationOnce(
+      (() =>
+        new Promise<LaunchRulesResponse>((resolve) => {
+          land = resolve;
+        })) as unknown as typeof loadLaunchRules.dispatch,
+    );
+    recipesReply = { recipes: [recipe("nightly")] };
+    const panel = await render();
+    panel.querySelector<HTMLButtonElement>(".recipe-sched-btn")?.click();
+    expect(document.querySelector('[data-rule-id="r-late"]')).toBeNull();
+    land({ rules: [clockRule("r-late")] });
+    await vi.waitFor(() => {
+      expect(document.querySelector(".rw-rule")?.getAttribute("data-rule-id")).toBe("r-late");
     });
   });
 
-  it("sends no id for a recipe with no clock rule yet", async () => {
-    vi.mocked(saveSchedule.dispatch).mockClear();
-    await openSchedule();
-    clickSave();
+  it("pauses a rule from its switch, keeping the rest of it", async () => {
+    rulesReply = { rules: [clockRule("c1", { inputs: { tag: "v1" }, model: "opus" })] };
+    await openPopup({ tag: "string" });
+    const box = document.querySelector<HTMLInputElement>(".rw-rule input[type=checkbox]");
+    box!.checked = false;
+    box!.dispatchEvent(new Event("change"));
     await vi.waitFor(() => {
-      expect(vi.mocked(saveSchedule.dispatch)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(saveLaunchRule.dispatch)).toHaveBeenCalledTimes(1);
     });
-    expect(vi.mocked(saveSchedule.dispatch).mock.calls[0]?.[0]).not.toHaveProperty("id");
+    expect(vi.mocked(saveLaunchRule.dispatch).mock.calls[0]?.[0]).toEqual({
+      id: "c1",
+      source: "bundled://nightly",
+      enabled: false,
+      when: { clock: daily },
+      inputs: { tag: "v1" },
+      model: "opus",
+    });
   });
 
-  it("closes once the save lands", async () => {
-    vi.mocked(saveSchedule.dispatch).mockImplementationOnce((async () => ({
-      id: "r-saved",
-      source: "bundled://nightly",
-      enabled: true,
-      spec: { freq: "daily", hour: 3, minute: 0 },
-    })) as unknown as typeof saveSchedule.dispatch);
-    const btn = await openSchedule();
-    clickSave();
+  it("deletes a rule after a confirm naming the events it holds", async () => {
+    rulesReply = { rules: [eventRule("e1", { held: 3 })] };
+    await openPopup();
+    popupButton("Delete").click();
     await vi.waitFor(() => {
-      expect(btn.getAttribute("aria-expanded")).toBe("false");
+      expect(vi.mocked(deleteLaunchRule.dispatch)).toHaveBeenCalledWith("e1");
     });
+    expect(vi.mocked(confirm).mock.calls[0]?.[0].body).toContain("3 events");
+
+    vi.mocked(deleteLaunchRule.dispatch).mockClear();
+    vi.mocked(confirm).mockResolvedValueOnce(false);
+    document.body.replaceChildren();
+    await openPopup();
+    popupButton("Delete").click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(vi.mocked(deleteLaunchRule.dispatch)).not.toHaveBeenCalled();
+  });
+
+  it("deletes a rule holding nothing without asking", async () => {
+    rulesReply = { rules: [clockRule("c1")] };
+    await openPopup();
+    popupButton("Delete").click();
+    await vi.waitFor(() => {
+      expect(vi.mocked(deleteLaunchRule.dispatch)).toHaveBeenCalledWith("c1");
+    });
+    expect(vi.mocked(confirm)).not.toHaveBeenCalled();
+  });
+
+  it("drops a stored input the recipe no longer declares when a switch saves the rule", async () => {
+    rulesReply = { rules: [clockRule("c1", { inputs: { tag: "v1", gone: "x" } })] };
+    await openPopup({ tag: "string" });
+    const box = document.querySelector<HTMLInputElement>(".rw-rule input[type=checkbox]");
+    box!.checked = false;
+    box!.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => {
+      expect(vi.mocked(saveLaunchRule.dispatch)).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(saveLaunchRule.dispatch).mock.calls[0]?.[0]).toMatchObject({
+      id: "c1",
+      enabled: false,
+      inputs: { tag: "v1" },
+    });
+    expect(vi.mocked(saveLaunchRule.dispatch).mock.calls[0]?.[0].inputs).not.toHaveProperty("gone");
+  });
+
+  describe("an edit that drops held events", () => {
+    const github = {
+      id: "github:github.com",
+      kind: "github",
+      host: "github.com",
+      account: "a",
+      status: "connected",
+    } as const;
+
+    function refuseWith409Once(): void {
+      vi.mocked(saveEventRule.dispatch).mockImplementationOnce(((
+        _args: unknown,
+        opts?: { onError?: (e: { message: string; status: number }) => void },
+      ) => {
+        opts?.onError?.({
+          message: "This change drops 3 held events. Send it again with `confirm_drop: 3`",
+          status: 409,
+        });
+        return Promise.resolve(null);
+      }) as unknown as typeof saveEventRule.dispatch);
+    }
+
+    async function editAndSave(): Promise<HTMLButtonElement> {
+      forgesReply = { forges: [github], kinds: ["github"] };
+      rulesReply = { rules: [eventRule("e1", { held: 3 })] };
+      const btn = await openPopup();
+      popupButton("Edit").click();
+      await vi.waitFor(() => {
+        expect(document.querySelector(".rw-form .rw-repo")).not.toBeNull();
+      });
+      const repo = document.querySelector<HTMLInputElement>(".rw-form .rw-repo")!;
+      repo.value = "o/other";
+      repo.dispatchEvent(new Event("input"));
+      popupButton("Save").click();
+      return btn;
+    }
+
+    it("resends the save with the held count once the confirm is accepted", async () => {
+      refuseWith409Once();
+      vi.mocked(saveEventRule.dispatch).mockImplementationOnce((async () =>
+        eventRule("e1")) as unknown as typeof saveEventRule.dispatch);
+      await editAndSave();
+      await vi.waitFor(() => {
+        expect(vi.mocked(saveEventRule.dispatch)).toHaveBeenCalledTimes(2);
+      });
+      expect(vi.mocked(confirm).mock.calls[0]?.[0].body).toContain("3 events");
+      expect(vi.mocked(saveEventRule.dispatch).mock.calls[0]?.[0]).not.toHaveProperty(
+        "confirm_drop",
+      );
+      expect(vi.mocked(saveEventRule.dispatch).mock.calls[1]?.[0]).toMatchObject({
+        id: "e1",
+        confirm_drop: 3,
+        when: { event: { repo: "o/other" } },
+      });
+      // saveLaunchRule toasts every refusal; the confirm flow's expected 409 must not.
+      expect(vi.mocked(saveLaunchRule.dispatch)).not.toHaveBeenCalled();
+    });
+
+    it("keeps the form open with no error when the confirm is cancelled", async () => {
+      refuseWith409Once();
+      vi.mocked(confirm).mockResolvedValueOnce(false);
+      const btn = await editAndSave();
+      await vi.waitFor(() => {
+        expect(vi.mocked(confirm)).toHaveBeenCalledTimes(1);
+      });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(vi.mocked(saveEventRule.dispatch)).toHaveBeenCalledTimes(1);
+      expect(btn.getAttribute("aria-expanded")).toBe("true");
+      expect(document.querySelector(".rw-form")).not.toBeNull();
+      expect(document.querySelector(".rw-error")?.classList.contains("hidden")).toBe(true);
+    });
+  });
+
+  it("keeps the event form open with the server's sentence on a refusal", async () => {
+    forgesReply = {
+      forges: [
+        {
+          id: "github:github.com",
+          kind: "github",
+          host: "github.com",
+          account: "a",
+          status: "connected",
+        },
+      ],
+      kinds: ["github"],
+    };
+    vi.mocked(saveEventRule.dispatch).mockImplementationOnce(((
+      _args: unknown,
+      opts?: { onError?: (e: { message: string; status: number }) => void },
+    ) => {
+      opts?.onError?.({ message: "Connect github.com in Sources first", status: 400 });
+      return Promise.resolve(null);
+    }) as unknown as typeof saveEventRule.dispatch);
+    const btn = await openPopup();
+    popupButton("When something happens on a forge").click();
+    await vi.waitFor(() => {
+      expect(document.querySelector(".rw-form .rw-repo")).not.toBeNull();
+    });
+    popupButton("Save").click();
+    await vi.waitFor(() => {
+      expect(document.querySelector(".rw-error")?.textContent).toBe(
+        "Connect github.com in Sources first",
+      );
+    });
+    expect(vi.mocked(saveEventRule.dispatch).mock.calls[0]?.[0]).toMatchObject({
+      source: "bundled://nightly",
+      when: { event: { connection: "github:github.com", kind: "run_concluded" } },
+    });
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
   });
 });
 
-describe("a schedule whose recipe is gone", () => {
+describe("a rule whose recipe is gone", () => {
   const GONE = "/workspace/.kiro/workflows/weekly-smoke.workflow.json";
 
-  function scheduleOf(source: string, id: string, name: string): ScheduleView {
-    return { id, source, name, enabled: true, spec: { freq: "daily", hour: 3, minute: 0 } };
+  function ruleOf(source: string, id: string, name: string): LaunchRuleView {
+    const clock = { freq: "daily", hour: 3, minute: 0 } as const;
+    return { id, source, name, enabled: true, when: { clock }, held: 0 };
   }
 
   function orphans(panel: HTMLElement): HTMLElement[] {
-    return [...panel.querySelectorAll<HTMLElement>("[data-orphan-schedule]")];
+    return [...panel.querySelectorAll<HTMLElement>("[data-orphan-rule]")];
   }
 
   async function settled(): Promise<void> {
     await vi.waitFor(() => {
-      expect(vi.mocked(loadSchedules.dispatch)).toHaveBeenCalled();
+      expect(vi.mocked(loadLaunchRules.dispatch)).toHaveBeenCalled();
     });
     await new Promise((r) => setTimeout(r, 0));
   }
 
   beforeEach(() => {
-    vi.mocked(loadSchedules.dispatch).mockClear();
-    vi.mocked(deleteSchedule.dispatch).mockClear();
+    vi.mocked(loadLaunchRules.dispatch).mockClear();
+    vi.mocked(deleteLaunchRule.dispatch).mockClear();
   });
 
   it("is listed under the recipes with a Delete that removes it", async () => {
     recipesReply = { recipes: [recipe("nightly")] };
-    schedulesReply = {
-      schedules: [
-        scheduleOf("bundled://nightly", "kept", "nightly"),
-        scheduleOf(GONE, "gone", "weekly-smoke"),
-      ],
+    rulesReply = {
+      rules: [ruleOf("bundled://nightly", "kept", "nightly"), ruleOf(GONE, "gone", "weekly-smoke")],
     };
     const panel = await render();
     await settled();
 
     const rows = orphans(panel);
-    expect(rows.map((r) => r.dataset["orphanSchedule"])).toEqual(["gone"]);
+    expect(rows.map((r) => r.dataset["orphanRule"])).toEqual(["gone"]);
     const row = rows[0];
     if (row === undefined) {
-      throw new Error("no orphaned schedule row");
+      throw new Error("no orphaned rule row");
     }
     expect(names(panel)).toEqual(["nightly", "weekly-smoke"]);
     expect(row.textContent).toContain(GONE);
     const del = row.querySelector<HTMLButtonElement>(".recipe-sched-delete-btn");
-    expect(del?.textContent).toBe("Delete schedule");
+    expect(del?.textContent).toBe("Delete rule");
 
-    schedulesReply = { schedules: [scheduleOf("bundled://nightly", "kept", "nightly")] };
+    rulesReply = { rules: [ruleOf("bundled://nightly", "kept", "nightly")] };
     del?.click();
     await vi.waitFor(() => {
       expect(orphans(panel)).toHaveLength(0);
     });
-    expect(vi.mocked(deleteSchedule.dispatch).mock.calls.map((c) => c[0])).toEqual(["gone"]);
+    expect(vi.mocked(deleteLaunchRule.dispatch).mock.calls.map((c) => c[0])).toEqual(["gone"]);
   });
 
   it("is listed when no recipe is left at all", async () => {
-    schedulesReply = { schedules: [scheduleOf(GONE, "gone", "weekly-smoke")] };
+    rulesReply = { rules: [ruleOf(GONE, "gone", "weekly-smoke")] };
     const panel = await render();
     await settled();
 
@@ -1030,7 +1209,7 @@ describe("a schedule whose recipe is gone", () => {
     vi.mocked(loadRecipes.dispatch).mockImplementationOnce(
       (async () => null) as unknown as typeof loadRecipes.dispatch,
     );
-    schedulesReply = { schedules: [scheduleOf(GONE, "gone", "weekly-smoke")] };
+    rulesReply = { rules: [ruleOf(GONE, "gone", "weekly-smoke")] };
     const panel = document.createElement("div");
     document.body.appendChild(panel);
     renderRecipesPanel(panel);
@@ -1041,7 +1220,7 @@ describe("a schedule whose recipe is gone", () => {
 
   it("answers the filter like a recipe row", async () => {
     recipesReply = { recipes: [recipe("nightly")] };
-    schedulesReply = { schedules: [scheduleOf(GONE, "gone", "weekly-smoke")] };
+    rulesReply = { rules: [ruleOf(GONE, "gone", "weekly-smoke")] };
     expect(orphans(await render("nightly"))).toHaveLength(0);
     await settled();
     const panel = await render("smoke");
