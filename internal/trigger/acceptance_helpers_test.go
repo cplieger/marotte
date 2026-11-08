@@ -199,7 +199,7 @@ func (a *acceptance) view(ruleID string) launchrule.State {
 type launchStep int
 
 const (
-	runsToEnd launchStep = iota
+	_ launchStep = iota
 	// diesAfterNew: workflow/new created the run and nothing named it.
 	diesAfterNew
 	// diesAfterName: the attempt is written and the lease is not.

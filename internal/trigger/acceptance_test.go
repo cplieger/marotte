@@ -834,8 +834,8 @@ func gained(t *testing.T, a *acceptance) (launchrule.Rule, launch) {
 	return r, got[0]
 }
 
-// regained has issue 5 gain the label again and answers the launches since first.
-func regained(t *testing.T, a *acceptance, first launch) []launch {
+// regained has issue 5 gain the label again and checks it launched once more with a new event_id.
+func regained(t *testing.T, a *acceptance, first launch) {
 	t.Helper()
 	a.setIssues(report(5, testLabel))
 	advance(pollTick + time.Second)
@@ -847,7 +847,6 @@ func regained(t *testing.T, a *acceptance, first launch) []launch {
 	if got[1].inputs["event_id"] == first.inputs["event_id"] {
 		t.Errorf("the new gain's event_id %q is the first launch's", got[1].inputs["event_id"])
 	}
-	return got
 }
 
 func TestAC2_4(t *testing.T) {
