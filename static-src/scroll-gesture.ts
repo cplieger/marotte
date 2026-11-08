@@ -1,6 +1,8 @@
 // The reader's gestures on one scroller: which input would move it, which way, and when the motion it started is
 // over. It reports to its owner (scroll-controller.ts) and never decides a reading state itself.
 
+import { shellTakesBodyKeys } from "./shell-keys.js";
+
 /** Which way an input moves the content: -1 up, 1 down, 0 no stated direction. */
 export type Aim = -1 | 0 | 1;
 
@@ -345,7 +347,10 @@ export class GestureTracker {
       return;
     }
     const t = e.target instanceof HTMLElement ? e.target : null;
-    if (t !== null && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) {
+    if (
+      (t !== null && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) ||
+      shellTakesBodyKeys()
+    ) {
       return;
     }
     if ((e.key === "Enter" || e.key === " ") && t !== null && this.viewOf().contains(t)) {

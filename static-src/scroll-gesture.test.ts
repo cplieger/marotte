@@ -2,6 +2,7 @@
 // motion it started ends.
 import { afterEach, beforeAll, afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { GESTURE_IDLE_MS, GestureTracker, type Aim, type GestureHost } from "./scroll-gesture.js";
+import { trackShellPresses } from "./shell-keys.js";
 
 const nextFrame = window.requestAnimationFrame.bind(window);
 async function frames(n: number): Promise<void> {
@@ -71,6 +72,9 @@ beforeAll(() => {
 });
 afterAll(() => {
   vi.useRealTimers();
+  // Kept until here: trackShellPresses' document listener reads #shell-terminal at every later
+  // pointerdown in the file.
+  document.getElementById("shell-panel")?.remove();
 });
 beforeEach(() => {
   mount(1300);
@@ -142,6 +146,29 @@ describe("which input opens a gesture", () => {
     tab.remove();
     field.remove();
     expect(log.calls).toEqual([]);
+  });
+
+  // web-terminal-ui docs/input.md: with a hardware keyboard on an iPad, a press in the terminal
+  // leaves focus on the body and the terminal types the keys the body gets.
+  it("ignores a key the shell's terminal takes from the body after a press inside it", () => {
+    const panel = document.createElement("div");
+    panel.id = "shell-panel";
+    const terminal = document.createElement("div");
+    terminal.id = "shell-terminal";
+    panel.append(terminal);
+    document.body.append(panel);
+    trackShellPresses();
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    terminal.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    for (const key of ["ArrowUp", "End"]) {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    }
+    expect(log.calls, "after a press in the terminal").toEqual([]);
+
+    document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+    expect(log.calls, "after a press outside it").toEqual(["open -1"]);
   });
 
   it("aims the scrolling keys, Shift+Space up, and hands End to the owner", () => {
