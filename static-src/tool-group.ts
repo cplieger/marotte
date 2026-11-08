@@ -55,7 +55,7 @@ export function setLaneHoldsWork(container: HTMLElement, holds: boolean): void {
 
 /** The delegate's or run's card a tool-trigger hook belongs to, and whether the call that opened it was refused. */
 export interface HookHost {
-  /** Null while the card is not mounted: the hook then hides as folded, as it would beside its card. */
+  /** Null while the card is not mounted: its hooks keep the fate they would have beside it, and no badge lists them. */
   readonly card: HTMLElement | null;
   readonly refused: boolean;
 }

@@ -2,7 +2,7 @@
   "doc": [
     "The shared oracle for where a run of tool cards ends in a turn's own lane. The client half is",
     "static-src/messages-blocks.ts indexGroups (through entryRenders, read off the rendered groups) and",
-    "the server half is internal/chat's toolCardRuns, which hiddenHookIDs filters find by. Each reader",
+    "the server half is internal/chat's scanToolRuns, which hiddenHookIDs filters find by. Each reader",
     "builds its own entries from these cases.",
     "",
     "body lists the turn's entries after its turn_open, in order; lane is \"\" when absent. runs lists",
@@ -12,10 +12,12 @@
     "later turn of the same chat. pane_runs, when present, is what a workflow run's tab draws instead",
     "of runs: the tab is its own surface, where every mention of a run seats on its card.",
     "",
-    "Every tool call here is a plain command, a read, a steering box, a delegate's invocation or a",
-    "mention of a workflow run, and only an invocation or a mention that seats on the run's card ends",
-    "a run, so the cases measure boundaries alone; which hooks a boundary hides is",
-    "hook_visibility_test.go's."
+    "Every tool call here is a plain command, a read, a steering box, a hook, a delegate's invocation",
+    "or a mention of a workflow run, and only an invocation or a mention that seats on the run's card",
+    "ends a run. The PostToolUse hooks right after such a card and the PreToolUse hooks right before",
+    "it are that card's, each set a run of its own. status_off_hook_rows, when present, lists the",
+    "chat lane's hooks drawn as rows while hooks.showStatus is off; every hook here is quiet, so a hook",
+    "is listed only when a refused card keeps it. Which other hooks hide is hook_visibility_test.go's."
   ],
   "cases": [
     {
@@ -319,6 +321,73 @@
       ],
       "runs": [],
       "lane_runs": { "sub-1": [["d1"], ["d3", "d5"]] }
+    },
+    {
+      "name": "a delegate's own hooks between other tool calls are runs of their own",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "h1", "kind": "tool_call", "payload": { "id": "t-h1", "title": "Hook fired: seat guard", "kind": "hook", "status": "completed", "hook_trigger": "PreToolUse" } },
+        { "id": "i1", "kind": "tool_call", "payload": { "id": "t-i1", "title": "invokeSubAgent", "kind": "other", "status": "completed", "agent_subtask_id": "sub-1" } },
+        { "id": "h2", "kind": "tool_call", "payload": { "id": "t-h2", "title": "Hook fired: notify", "kind": "hook", "status": "completed", "hook_trigger": "PostToolUse" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "Read File", "kind": "read", "status": "completed" } }
+      ],
+      "runs": [["c1"], ["h1"], ["h2"], ["c2"]],
+      "status_off_hook_rows": []
+    },
+    {
+      "name": "a failed delegate keeps its own hooks between other tool calls",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "h1", "kind": "tool_call", "payload": { "id": "t-h1", "title": "Hook fired: seat guard", "kind": "hook", "status": "completed", "hook_trigger": "PreToolUse" } },
+        { "id": "i1", "kind": "tool_call", "payload": { "id": "t-i1", "title": "invokeSubAgent", "kind": "other", "status": "failed", "agent_subtask_id": "sub-1" } },
+        { "id": "h2", "kind": "tool_call", "payload": { "id": "t-h2", "title": "Hook fired: notify", "kind": "hook", "status": "completed", "hook_trigger": "PostToolUse" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "Read File", "kind": "read", "status": "completed" } }
+      ],
+      "runs": [["c1"], ["h1"], ["h2"], ["c2"]],
+      "status_off_hook_rows": ["h1", "h2"]
+    },
+    {
+      "name": "a failed run launch keeps its own hooks between other tool calls",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "h1", "kind": "tool_call", "payload": { "id": "t-h1", "title": "Hook fired: seat guard", "kind": "hook", "status": "completed", "hook_trigger": "PreToolUse" } },
+        { "id": "l1", "kind": "tool_call", "payload": { "id": "t-l1", "title": "Run Workflow", "kind": "other", "status": "failed", "workflow_id": "wf-1" } },
+        { "id": "h2", "kind": "tool_call", "payload": { "id": "t-h2", "title": "Hook fired: notify", "kind": "hook", "status": "completed", "hook_trigger": "PostToolUse" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "Read File", "kind": "read", "status": "completed" } }
+      ],
+      "runs": [["c1"], ["h1"], ["h2"], ["c2"]],
+      "status_off_hook_rows": ["h1", "h2"]
+    },
+    {
+      "name": "hooks between two delegates' cards split at the first that is not the earlier card's",
+      "body": [
+        { "id": "i1", "kind": "tool_call", "payload": { "id": "t-i1", "title": "invokeSubAgent", "kind": "other", "status": "failed", "agent_subtask_id": "sub-1" } },
+        { "id": "h1", "kind": "tool_call", "payload": { "id": "t-h1", "title": "Hook fired: notify", "kind": "hook", "status": "completed", "hook_trigger": "PostToolUse" } },
+        { "id": "h2", "kind": "tool_call", "payload": { "id": "t-h2", "title": "Hook fired: seat guard", "kind": "hook", "status": "completed", "hook_trigger": "PreToolUse" } },
+        { "id": "i2", "kind": "tool_call", "payload": { "id": "t-i2", "title": "invokeSubAgent", "kind": "other", "status": "completed", "agent_subtask_id": "sub-2" } }
+      ],
+      "runs": [["h1"], ["h2"]],
+      "status_off_hook_rows": ["h1"]
+    },
+    {
+      "name": "a guard with a tool call between it and a delegate's card is that call's",
+      "body": [
+        { "id": "i1", "kind": "tool_call", "payload": { "id": "t-i1", "title": "invokeSubAgent", "kind": "other", "status": "failed", "agent_subtask_id": "sub-1" } },
+        { "id": "h1", "kind": "tool_call", "payload": { "id": "t-h1", "title": "Hook fired: seat guard", "kind": "hook", "status": "completed", "hook_trigger": "PreToolUse" } },
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["h1", "c1"]],
+      "status_off_hook_rows": []
+    },
+    {
+      "name": "a delegate's guard after a failed command leaves that command's run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "failed" } },
+        { "id": "h1", "kind": "tool_call", "payload": { "id": "t-h1", "title": "Hook fired: seat guard", "kind": "hook", "status": "completed", "hook_trigger": "PreToolUse" } },
+        { "id": "i1", "kind": "tool_call", "payload": { "id": "t-i1", "title": "invokeSubAgent", "kind": "other", "status": "completed", "agent_subtask_id": "sub-1" } }
+      ],
+      "runs": [["c1"], ["h1"]],
+      "status_off_hook_rows": []
     }
   ]
 }

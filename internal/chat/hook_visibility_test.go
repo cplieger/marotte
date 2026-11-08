@@ -126,6 +126,20 @@ func TestSearch_HookStatusOffSkipsTheHooksTheTranscriptHides(t *testing.T) {
 			want:    0,
 		},
 		{
+			name: "switch off keeps a failed delegate's own hooks between other calls",
+			calls: []marotte.EntryToolCall{
+				command("c1"), guard("h1", "PreToolUse"), invocation("i1"), guard("h2", "PostToolUse"), command("c2"),
+			},
+			results: []marotte.EntryToolResult{completed(), completed(), {Status: marotte.ToolFailed}, completed(), completed()},
+			want:    2,
+		},
+		{
+			name:    "switch off skips a delegate's guard after a failed command",
+			calls:   []marotte.EntryToolCall{command("c1"), guard("h1", "PreToolUse"), invocation("i1")},
+			results: []marotte.EntryToolResult{{Status: marotte.ToolFailed}, completed(), completed()},
+			want:    0,
+		},
+		{
 			name:    "switch off keeps a hook that printed",
 			calls:   []marotte.EntryToolCall{guard("h1", "PostToolUse"), command("c1")},
 			results: []marotte.EntryToolResult{{Status: marotte.ToolCompleted, Output: "run the linter next"}, completed()},

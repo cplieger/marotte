@@ -33,6 +33,7 @@ const {
   initBlockRenderer,
   dropHead,
   mountHeadRange,
+  updateAssistantBody,
 } = await import("./messages-blocks.js");
 const { forgetHeights, spacerHeight } = await import("./block-heights.js");
 const { clearAllEntrySigs, toolCallSigs } = await import("./store-signals.js");
@@ -587,6 +588,122 @@ describe("a delegate's or a run's card with hooks", () => {
       delegate(t, 3, { status: "failed" }),
     ]);
     expect(quiet).toBe(loud);
+  });
+
+  /** A command, then the card opened at 3 with its quiet guard right before it and its after-hook right after it,
+   *  then a read: the card's launching call `failed` or not. */
+  const between =
+    (kind: "delegate's" | "run's", failed: boolean) =>
+    (t: string): Entry[] => {
+      const status = failed ? "failed" : "completed";
+      const card =
+        kind === "delegate's"
+          ? [delegate(t, 3, { status })]
+          : [
+              call(t, 3, { title: "Run Workflow" }),
+              result(t, 4, 3, { workflow_id: `wf-${t}`, status }),
+            ];
+      const after = 3 + card.length;
+      return [
+        call(t, 1, { title: "go vet", kind: "execute" }),
+        hook(t, 2, "seat guard"),
+        ...card,
+        hook(t, after, "notify", { hook_trigger: "PostToolUse" }),
+        call(t, after + 1, { title: "Read File", kind: "read" }),
+      ];
+    };
+
+  it.each(["delegate's", "run's"] as const)(
+    "folds the %s launching call's quiet hooks into its card's badge between other tool calls",
+    async (kind) => {
+      const root = render(between(kind, false));
+      await frame();
+      expect(toolBoxes(root), "premise: the command and the read are boxes").toHaveLength(2);
+      expect(hookRows(root), "no hook rows").toHaveLength(0);
+      const badge = only(badges(root), "one hooks badge, the card's");
+      expect(badge.parentElement, "on the card").toBe(cardOf(root));
+      expect(await openList(badge)).toEqual(["seat guard", "notify"]);
+      await userEvent.keyboard("{Escape}");
+    },
+  );
+
+  it.each(["delegate's", "run's"] as const)(
+    "keeps the %s failed launching call's quiet hooks as rows between other tool calls with hook status off",
+    (kind) => {
+      setHookStatusShown(false);
+      const root = render(between(kind, true));
+      expect(hookRows(root).map((c) => c.dataset["title"])).toEqual([
+        "Hook fired: seat guard",
+        "Hook fired: notify",
+      ]);
+    },
+  );
+
+  it("moves a guard that mounted beside a command into the delegate's badge once the delegate's call arrives", async () => {
+    seq++;
+    const id = `t-box-hooks-${String(seq)}`;
+    const turnOf = (body: Entry[]): Turn => ({
+      id,
+      n: 1,
+      trigger: { id: `${id}-p`, text: "go" },
+      body,
+      openEntries: new Map(),
+      ts: 1,
+      outcome: "running",
+      rewindTo: undefined,
+      branchFrom: undefined,
+    });
+    const card = document.createElement("div");
+    card.className = "turn";
+    const root = document.createElement("div");
+    root.className = "turn-body";
+    card.append(root);
+    document.body.prepend(card);
+    hosts.push(card);
+    const head = [call(id, 1, { title: "go vet", kind: "execute" }), hook(id, 2, "seat guard")];
+    buildAssistantBody(root, turnOf(head), CHAT_ID, true);
+    expect(badges(root), "premise: the guard folded into the command's badge").toHaveLength(1);
+    updateAssistantBody(root, turnOf([...head, delegate(id, 3)]), CHAT_ID, true);
+    await frame();
+    const guard = root.querySelector<HTMLElement>(`[data-entry-seq="2"]`);
+    const box = only(toolBoxes(root), "the command's box");
+    expect(box.closest(".tool-group")?.contains(guard), "the guard left the command's shell").toBe(
+      false,
+    );
+    const badge = only(badges(root), "one hooks badge, the card's");
+    expect(badge.parentElement, "on the card").toBe(cardOf(root));
+    expect(await openList(badge)).toEqual(["seat guard"]);
+    await userEvent.keyboard("{Escape}");
+  });
+
+  it("prices a never-mounted repeat of a delegate's invocation as nothing, the calls around it one group", () => {
+    const repeated = unmeasuredTail((t) => [
+      say(t, 1, "go"),
+      delegate(t, 2),
+      call(t, 3, { title: "go vet", kind: "execute" }),
+      delegate(t, 4),
+      call(t, 5, { title: "Read File", kind: "read" }),
+    ]);
+    const once = unmeasuredTail((t) => [
+      say(t, 1, "go"),
+      delegate(t, 2),
+      call(t, 3, { title: "go vet", kind: "execute" }),
+      call(t, 4, { title: "Read File", kind: "read" }),
+    ]);
+    expect(repeated).toBe(once);
+  });
+
+  it("prices a never-mounted failed delegate's quiet hooks between other tool calls as their rows", () => {
+    const priced = (status: "completed" | "failed"): number =>
+      unmeasuredTail((t) => [
+        say(t, 1, "go"),
+        call(t, 2, { title: "go vet", kind: "execute" }),
+        hook(t, 3, "seat guard", { status }),
+        delegate(t, 4, { status: "failed" }),
+        hook(t, 5, "notify", { hook_trigger: "PostToolUse", status }),
+        call(t, 6, { title: "Read File", kind: "read" }),
+      ]);
+    expect(priced("completed")).toBe(priced("failed"));
   });
 });
 

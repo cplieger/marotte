@@ -702,6 +702,7 @@ function updatePass(st: TurnRender, turn: Turn, want: EntryRange, streaming: boo
   if (want.to > st.window.to) {
     renderRange(st, st.window.to, want.to, streaming, idx);
   }
+  syncRunCuts(st, idx);
   // Unconditional: an open entry has no `seq`, so only this call puts it on screen.
   syncOpenTail(st, streaming);
   // Before the collapse sync, so a card folded into place takes its verdict this pass.
@@ -2935,22 +2936,34 @@ function indexGroups(st: TurnRender): GroupIndex {
     }
   };
   let work = false;
-  // A run with no tool box hands its tool-trigger hooks to the box it touches: its PreToolUse hooks to the box that
-  // ends it, its PostToolUse ones to the box it opened right after (Go `toolRunScan.kept`, `block-heights.ts`
-  // `spacerBoxes`).
+  // A box owns the PostToolUse hooks right after it and the PreToolUse hooks right before it, each set a run of its
+  // own so it mounts apart from a neighbour's group (Go `toolRunScan.endRun`, `block-heights.ts` `toolRun`).
   const hookBoxes = new Map<number, HookBox>();
-  let runHooks: { seq: number; pre: boolean }[] = [];
-  let runWork = false;
+  let run: { seq: number; trigger: string | undefined }[] = [];
   let prevBox: HookBox | null = null;
   const endRun = (next: HookBox | null): void => {
-    for (const h of runWork ? [] : runHooks) {
-      const box = h.pre ? next : prevBox;
+    let from = 0;
+    while (prevBox !== null && run[from]?.trigger === "PostToolUse") {
+      from++;
+    }
+    let to = run.length;
+    while (next !== null && to > from && run[to - 1]?.trigger === "PreToolUse") {
+      to--;
+    }
+    for (const [i, m] of run.entries()) {
+      const box = i < from ? prevBox : i >= to ? next : null;
       if (box !== null) {
-        hookBoxes.set(h.seq, box);
+        hookBoxes.set(m.seq, box);
       }
     }
-    runHooks = [];
-    runWork = false;
+    // A cut at the run's head would rekey the group its cards already mounted in.
+    for (const cut of [from, to]) {
+      const at = run[cut]?.seq;
+      if (cut > 0 && at !== undefined) {
+        startAt(st.lane, at);
+      }
+    }
+    run = [];
     prevBox = next;
   };
   // Priced and recorded at the store's index for `placeContainer`: the run break and the box's seat are one fact.
@@ -2993,10 +3006,7 @@ function indexGroups(st: TurnRender): GroupIndex {
     } else {
       post(st.lane, e.seq, false);
       work ||= tc.kind !== "hook";
-      runWork ||= tc.kind !== "hook";
-      if (tc.hook_trigger === "PreToolUse" || tc.hook_trigger === "PostToolUse") {
-        runHooks.push({ seq: e.seq, pre: tc.hook_trigger === "PreToolUse" });
-      }
+      run.push({ seq: e.seq, trigger: tc.kind === "hook" ? tc.hook_trigger : undefined });
     }
   }
   endRun(null);
@@ -3019,8 +3029,7 @@ function indexGroups(st: TurnRender): GroupIndex {
 
 /**
  * Whether a reasoning trace at `at` in `host` renders expanded under the newest-element policy. Only the chat's lane
- * `""` qualifies, so a delegate page's traces stay collapsed (pinned in messages-blocks.test.ts); a box's verdict
- * reads its view's lane instead (`indexGroups`), since the chat folds that same card once anything follows it.
+ * `""` qualifies, so a delegate page's traces stay collapsed (pinned in messages-blocks.test.ts).
  */
 function rendersExpanded(idx: GroupIndex, host: string, at: number): boolean {
   return host === "" && !containerFollowed(idx, host, at);
@@ -3050,6 +3059,39 @@ function containerFollowed(idx: GroupIndex, key: string, i: number): boolean {
 function runFollowed(idx: GroupIndex, key: string, runStart: number): boolean {
   const starts = idx.starts.get(key) ?? [];
   return (starts[starts.length - 1] ?? -1) > runStart;
+}
+
+/** Move each mounted tool card whose run a later entry cut (a box arriving after its PreToolUse hooks mounted) into
+ *  its run's shell, seated after the shell it leaves. */
+function syncRunCuts(st: TurnRender, idx: GroupIndex): void {
+  const bucket = st.toolGroups.get(st.lane);
+  if (bucket === undefined) {
+    return;
+  }
+  const touched = new Set<HTMLElement>();
+  // A shell added here is visited later in this loop and moves nothing: its cards all start its run.
+  for (const [runStart, group] of bucket) {
+    let seat: HTMLElement = group;
+    for (const card of groupBody(group).querySelectorAll<HTMLElement>(":scope > .tool-call")) {
+      const want = groupRunStart(idx, st.lane, Number(card.dataset["entrySeq"]));
+      if (want === runStart) {
+        continue;
+      }
+      let target = bucket.get(want);
+      if (target === undefined) {
+        target = buildToolGroupShell();
+        setGroupSuperseded(target, runFollowed(idx, st.lane, want));
+        seat.after(target);
+        bucket.set(want, target);
+      }
+      groupBody(target).append(card);
+      seat = target;
+      touched.add(group).add(target);
+    }
+  }
+  if (touched.size > 0) {
+    pruneEmptyToolGroups(st, touched);
+  }
 }
 
 /** Hand `tool-group.ts` each mounted hook card the store binds to a box, with that box's card when it is mounted. */

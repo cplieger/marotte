@@ -270,11 +270,14 @@ function runCardHost(e: Entry, results: RunResults): boolean {
   return runID !== "" && hostsRunCard(runID, e.id);
 }
 
+/** How a drawn entry takes part in a tool group: a member, nothing, a box that ends the run, or another break. */
+type GroupRole = "member" | "none" | "box" | "break";
+
 /** How an entry the caller's `entryRenders` drew takes part in a tool group: a plain call is a member, an internal
- *  one mounts nothing, and anything else (a delegate's invocation, the run's card, any other kind) ends the run. It
- *  matches `messages-blocks.ts` `indexGroups` for the transcript's chat lane, the only lane priced, where no
- *  invocation or run card repeats. */
-function groupRole(e: Entry, results: RunResults): "member" | "none" | "break" {
+ *  one or a delegate's `repeats` mounts nothing, a delegate's invocation or the run's card opens a box, and any other
+ *  kind breaks the run. It matches `messages-blocks.ts` `indexGroups` for the transcript's chat lane, the only lane
+ *  priced. */
+function groupRole(e: Entry, results: RunResults, repeats: ReadonlySet<number>): GroupRole {
   if (e.kind !== "tool_call") {
     return "break";
   }
@@ -282,10 +285,38 @@ function groupRole(e: Entry, results: RunResults): "member" | "none" | "break" {
   if (call === undefined) {
     return "break";
   }
-  if (isInternalToolTitle(call.title)) {
+  if (isInternalToolTitle(call.title) || repeats.has(e.seq)) {
     return "none";
   }
-  return opensBox(e, call, results) ? "break" : "member";
+  return opensBox(e, call, results) ? "box" : "member";
+}
+
+/** The `seq`s of the drawn invocations of a delegate whose card an earlier one in `lane` opened. */
+function repeatedInvocations(
+  t: Turn,
+  lane: string,
+  folds: ReturnType<typeof turnFolds>,
+): Set<number> {
+  const opened = new Set<string>();
+  const out = new Set<number>();
+  for (const e of t.body) {
+    const call = payloadOf(e, "tool_call");
+    const subtask = call?.agent_subtask_id ?? "";
+    if (
+      call === undefined ||
+      subtask === "" ||
+      !isSubagentInvocation(call) ||
+      !entryRenders(e, lane, folds)
+    ) {
+      continue;
+    }
+    if (opened.has(subtask)) {
+      out.add(e.seq);
+    } else {
+      opened.add(subtask);
+    }
+  }
+  return out;
 }
 
 /** Whether a drawn call opens a box of its own: its workflow run's card, or a delegate's. */
@@ -305,39 +336,52 @@ function refusedCall(call: EntryToolCall, result: EntryToolResult | undefined): 
   });
 }
 
-/** The tool run holding member `seq`: its members in order, over the whole turn. */
+/** The tool run holding member `seq`, its members in order over the turn's `span`, and the box owning it. A box owns
+ *  the PostToolUse hooks right after it and the PreToolUse hooks right before it, each set a run of its own
+ *  (`messages-blocks.ts` `indexGroups`). */
 function toolRun(
-  t: Turn,
   seq: number,
-  lane: string,
-  folds: ReturnType<typeof turnFolds>,
-  results: RunResults,
-): number[] {
-  const role = (at: number): "member" | "none" | "break" => {
-    const e = entryAt(t, at);
-    return e === undefined || !entryRenders(e, lane, folds) ? "none" : groupRole(e, results);
-  };
+  span: number,
+  role: (at: number) => GroupRole,
+  trigger: (at: number) => string | undefined,
+): { members: number[]; box: number | undefined } {
   const members = [seq];
+  let before: number | undefined;
   for (let at = seq - 1; at >= 0; at--) {
     const r = role(at);
-    if (r === "break") {
-      break;
-    }
     if (r === "member") {
       members.unshift(at);
-    }
-  }
-  const span = turnSpan(t);
-  for (let at = seq + 1; at < span; at++) {
-    const r = role(at);
-    if (r === "break") {
+    } else if (r !== "none") {
+      before = r === "box" ? at : undefined;
       break;
     }
+  }
+  let after: number | undefined;
+  for (let at = seq + 1; at < span; at++) {
+    const r = role(at);
     if (r === "member") {
       members.push(at);
+    } else if (r !== "none") {
+      after = r === "box" ? at : undefined;
+      break;
     }
   }
-  return members;
+  let from = 0;
+  while (before !== undefined && trigger(members[from] ?? -1) === "PostToolUse") {
+    from++;
+  }
+  let to = members.length;
+  while (after !== undefined && to > from && trigger(members[to - 1] ?? -1) === "PreToolUse") {
+    to--;
+  }
+  const i = members.indexOf(seq);
+  if (i < from) {
+    return { members: members.slice(0, from), box: before };
+  }
+  if (i >= to) {
+    return { members: members.slice(to), box: after };
+  }
+  return { members: members.slice(from, to), box: undefined };
 }
 
 /** A prose run is one box, keyed by its first `seq`; a tool run is one box, its group shell, keyed by its first
@@ -360,11 +404,17 @@ function* spacerBoxes(
   const per = entryHeights.get(t.id);
   const rows = rowHeights.get(t.id);
   const groups = groupHeights.get(t.id);
+  const repeats = repeatedInvocations(t, lane, folds);
+  const roleAt = (at: number): GroupRole => {
+    const e = entryAt(t, at);
+    return e === undefined || !entryRenders(e, lane, folds)
+      ? "none"
+      : groupRole(e, results, repeats);
+  };
   // A group is collapsed by position once anything renders after its run (`tool-group.ts`).
   let lastRendered = -1;
   for (let seq = span - 1; seq >= 0 && lastRendered < 0; seq--) {
-    const e = entryAt(t, seq);
-    if (e !== undefined && entryRenders(e, lane, folds) && groupRole(e, results) !== "none") {
+    if (roleAt(seq) !== "none") {
       lastRendered = seq;
     }
   }
@@ -373,36 +423,12 @@ function* spacerBoxes(
     const call = e === undefined ? undefined : payloadOf(e, "tool_call");
     return call?.kind === "hook" ? call : undefined;
   };
-  // The box a drawn tool call opens, which counts as lane work as a tool box does.
-  const boxAt = (at: number): boolean => {
-    const e = entryAt(t, at);
-    const call = e === undefined ? undefined : payloadOf(e, "tool_call");
-    return (
-      e !== undefined &&
-      call !== undefined &&
-      !isInternalToolTitle(call.title) &&
-      entryRenders(e, lane, folds) &&
-      opensBox(e, call, results)
-    );
-  };
+  // A box counts as lane work as a tool box does.
   let laneWork = false;
   for (let seq = 0; seq < span && !laneWork; seq++) {
-    const e = entryAt(t, seq);
-    laneWork =
-      e !== undefined &&
-      entryRenders(e, lane, folds) &&
-      ((groupRole(e, results) === "member" && hookAt(seq) === undefined) || boxAt(seq));
+    const r = roleAt(seq);
+    laneWork = r === "box" || (r === "member" && hookAt(seq) === undefined);
   }
-  /** The first entry drawn from `from` on, stepping by `step`, when it opens a box. */
-  const boxBeside = (from: number, step: 1 | -1): number | undefined => {
-    for (let at = from; at >= 0 && at < span; at += step) {
-      const e = entryAt(t, at);
-      if (e !== undefined && entryRenders(e, lane, folds) && groupRole(e, results) !== "none") {
-        return boxAt(at) ? at : undefined;
-      }
-    }
-    return undefined;
-  };
   let settled: Map<string, EntryToolResult> | undefined;
   const refusedAt = (m: number): boolean => {
     const e = entryAt(t, m);
@@ -420,14 +446,14 @@ function* spacerBoxes(
   };
   // An unmeasured hook member is priced by the fate `hook-fold.ts` `hookFate` gives it. A row when it failed or
   // printed; when its run's tool box was refused and it is a tool-trigger hook, or an untriggered one while status
-  // shows; when its run has no tool box and it is a tool-trigger hook bound to a refused box (`bound`); or, while
-  // status shows, when its run has no tool box and it is an unbound tool-trigger hook or its lane holds no tool box
-  // to fold into. Otherwise it folds into a badge or hides, and costs nothing.
+  // shows; when its run belongs to a refused box (`toolRun`); or, while status shows, when its run has no tool box
+  // and belongs to no box and it is a tool-trigger hook or its lane holds no tool box to fold into. Otherwise it
+  // folds into a badge or hides, and costs nothing.
   const priceMember = (
     m: number,
     runWork: boolean,
     refused: boolean,
-    bound: (call: EntryToolCall) => number | undefined,
+    box: number | undefined,
   ): number => {
     const known = per?.get(m);
     const call = hookAt(m);
@@ -440,7 +466,6 @@ function* spacerBoxes(
       output: result?.output ?? call.output,
     });
     const shown = hookStatusShown();
-    const box = runWork ? undefined : bound(call);
     const row =
       !quiet ||
       (refused && (isToolTriggerHook(call) || (shown && call.hook_trigger === undefined))) ||
@@ -458,7 +483,7 @@ function* spacerBoxes(
       continue;
     }
     let own: number;
-    const role = groupRole(e, results);
+    const role = roleAt(seq);
     if (role === "none") {
       continue;
     }
@@ -466,22 +491,14 @@ function* spacerBoxes(
       if (seq < runTo) {
         continue;
       }
-      const members = toolRun(t, seq, lane, folds, results);
+      const { members, box } = toolRun(seq, span, roleAt, (at) => hookAt(at)?.hook_trigger);
       const first = members[0] ?? seq;
       const last = members[members.length - 1] ?? seq;
       runTo = last + 1;
       const inside = members.filter((m) => m >= stood.from && m < stood.to);
       const work = members.filter((m) => hookAt(m) === undefined);
       const refused = work.some(refusedAt);
-      // The box a hook-only run touches hosts its PreToolUse hooks when it ends the run, its PostToolUse ones when it
-      // opens just before (`messages-blocks.ts` `indexGroups`).
-      const bound = (call: EntryToolCall): number | undefined =>
-        call.hook_trigger === "PreToolUse"
-          ? boxBeside(last + 1, 1)
-          : call.hook_trigger === "PostToolUse"
-            ? boxBeside(first - 1, -1)
-            : undefined;
-      const px = new Map(members.map((m) => [m, priceMember(m, work.length > 0, refused, bound)]));
+      const px = new Map(members.map((m) => [m, priceMember(m, work.length > 0, refused, box)]));
       const member = (m: number): number => px.get(m) ?? 0;
       // Only non-hook cards form a group; hook rows alone form one only in a lane with none (`tool-group.ts`
       // `paintGroup`).

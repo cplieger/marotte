@@ -65,13 +65,9 @@ func hiddenHookIDs(entries []marotte.Entry) map[string]struct{} {
 	return hidden
 }
 
-// toolCardRuns are the log's tool-card runs as the transcript groups them, in log order of each run's first card;
-// internal/chat/testdata/tool_runs.json pins the boundaries against static-src/messages-blocks.ts indexGroups.
-func toolCardRuns(entries []marotte.Entry, results map[string]*marotte.EntryToolResult) [][]toolRunMember {
-	return scanToolRuns(entries, results).done
-}
-
-// scanToolRuns walks the log once for its tool-card runs and the hooks a refused box keeps.
+// scanToolRuns walks the log once for its tool-card runs, as the transcript groups them in log order of each run's
+// first card, and the hooks a refused box keeps; internal/chat/testdata/tool_runs.json pins both against
+// static-src/messages-blocks.ts indexGroups.
 func scanToolRuns(entries []marotte.Entry, results map[string]*marotte.EntryToolResult) *toolRunScan {
 	sc := &toolRunScan{
 		results: results,
@@ -105,8 +101,7 @@ type toolRunScan struct {
 	boxes   map[boxKey]bool
 	// after holds a lane whose last drawn entry opened a box, and whether that box's call was refused.
 	after map[toolRunKey]bool
-	// kept are the tool-trigger hooks a refused box keeps as rows: a hook-only run's PreToolUse hooks when the box
-	// ends the run, its PostToolUse ones when the box opened right before it (messages-blocks.ts indexGroups).
+	// kept are the hooks a refused box keeps as rows, the ones endRun gives it.
 	kept map[string]struct{}
 	done [][]toolRunMember
 }
@@ -155,7 +150,7 @@ func (sc *toolRunScan) observeCall(i int, e *marotte.Entry, k toolRunKey) {
 	switch sc.seatOf(&call, e) {
 	case seatBox:
 		refused := toolRefused(&call, sc.results[e.ID])
-		sc.endRun(k, refused)
+		sc.endRun(k, true, refused)
 		sc.after[k] = refused
 	case seatNone:
 	case seatMember:
@@ -165,27 +160,40 @@ func (sc *toolRunScan) observeCall(i int, e *marotte.Entry, k toolRunKey) {
 
 // flush ends lane k's run at an entry that opens no box.
 func (sc *toolRunScan) flush(k toolRunKey) {
-	sc.endRun(k, false)
+	sc.endRun(k, false, false)
 }
 
-// endRun ends lane k's run, at a box whose call was refused when nextRefused, and records what a refused box keeps.
-func (sc *toolRunScan) endRun(k toolRunKey, nextRefused bool) {
+// endRun ends lane k's run, at a box when atBox, whose call was refused when nextRefused. A box owns the PostToolUse
+// hooks right after it and the PreToolUse hooks right before it, each set a run of its own (messages-blocks.ts
+// indexGroups), and a refused box keeps them.
+func (sc *toolRunScan) endRun(k toolRunKey, atBox, nextRefused bool) {
 	members := sc.open[k]
-	prevRefused := sc.after[k]
+	prevRefused, afterBox := sc.after[k]
 	delete(sc.after, k)
 	delete(sc.open, k)
-	if len(members) == 0 {
-		return
+	from := 0
+	for afterBox && from < len(members) && hookOn(members[from], "PostToolUse") {
+		from++
 	}
-	sc.done = append(sc.done, members)
-	if slices.ContainsFunc(members, func(m toolRunMember) bool { return m.call.Kind != marotte.ToolKindHook }) {
-		return
+	to := len(members)
+	for atBox && to > from && hookOn(members[to-1], "PreToolUse") {
+		to--
 	}
-	for _, m := range members {
-		if (m.call.HookTrigger == "PreToolUse" && nextRefused) || (m.call.HookTrigger == "PostToolUse" && prevRefused) {
+	for _, run := range [][]toolRunMember{members[:from], members[from:to], members[to:]} {
+		if len(run) > 0 {
+			sc.done = append(sc.done, run)
+		}
+	}
+	for i, m := range members {
+		if (i < from && prevRefused) || (i >= to && nextRefused) {
 			sc.kept[m.id] = struct{}{}
 		}
 	}
+}
+
+// hookOn is a hook card fired by trigger.
+func hookOn(m toolRunMember, trigger string) bool {
+	return m.call.Kind == marotte.ToolKindHook && m.call.HookTrigger == trigger
 }
 
 // silentSteers are the indexes of the steers that draw nothing where they were filed: a row a wake draws in its

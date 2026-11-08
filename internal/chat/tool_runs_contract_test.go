@@ -11,7 +11,7 @@ import (
 )
 
 // The fixture is the contract and static-src/tool-runs-contract.test.ts is the other reader, through the
-// rendered groups: a boundary toolCardRuns draws where indexGroups does not would hide from find a hook the
+// rendered groups: a boundary scanToolRuns draws where indexGroups does not would hide from find a hook the
 // transcript shows.
 const toolRunsFixture = "testdata/tool_runs.json"
 
@@ -23,9 +23,10 @@ type toolRunsCase struct {
 		Lane    string            `json:"lane"`
 		Payload json.RawMessage   `json:"payload"`
 	} `json:"body"`
-	LaterWake json.RawMessage       `json:"later_wake"`
-	Runs      [][]string            `json:"runs"`
-	LaneRuns  map[string][][]string `json:"lane_runs"`
+	LaterWake         json.RawMessage       `json:"later_wake"`
+	Runs              [][]string            `json:"runs"`
+	LaneRuns          map[string][][]string `json:"lane_runs"`
+	StatusOffHookRows []string              `json:"status_off_hook_rows"`
 }
 
 func TestToolRunsContract_ServerHalf(t *testing.T) {
@@ -55,7 +56,7 @@ func TestToolRunsContract_ServerHalf(t *testing.T) {
 					marotte.Entry{ID: "wake-2", Turn: "t-2", Kind: marotte.EntryKindTurnWake, Payload: c.LaterWake})
 			}
 			byLane := map[string][][]string{}
-			for _, run := range toolCardRuns(entries, settledResults(entries)) {
+			for _, run := range scanToolRuns(entries, settledResults(entries)).done {
 				if run[0].at >= len(c.Body)+1 {
 					continue
 				}
@@ -80,6 +81,29 @@ func TestToolRunsContract_ServerHalf(t *testing.T) {
 					t.Errorf("lane %s runs = %v, which lane_runs does not list", lane, got)
 				}
 			}
+			if c.StatusOffHookRows != nil {
+				if got := statusOffHookRows(entries); !slices.Equal(got, c.StatusOffHookRows) {
+					t.Errorf("hook rows with status off = %v, want %v", got, c.StatusOffHookRows)
+				}
+			}
 		})
 	}
+}
+
+// statusOffHookRows are the chat lane's hook calls find counts while hooks.showStatus is off, in log order.
+func statusOffHookRows(entries []marotte.Entry) []string {
+	hidden := hiddenHookIDs(entries)
+	rows := []string{}
+	for i := range entries {
+		e := &entries[i]
+		var call marotte.EntryToolCall
+		if e.Kind != marotte.EntryKindToolCall || e.Lane != "" || json.Unmarshal(e.Payload, &call) != nil ||
+			call.Kind != marotte.ToolKindHook {
+			continue
+		}
+		if _, gone := hidden[e.ID]; !gone {
+			rows = append(rows, e.ID)
+		}
+	}
+	return rows
 }

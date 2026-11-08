@@ -1,5 +1,5 @@
 // The client half of the tool-run boundary oracle (internal/chat/testdata/tool_runs.json; the server half is
-// TestToolRunsContract_ServerHalf, through toolCardRuns). Read off the groups the production dispatcher mounts, in
+// TestToolRunsContract_ServerHalf, through scanToolRuns). Read off the groups the production dispatcher mounts, in
 // the transcript, on each delegate's page and in a workflow run's step pane, so a boundary indexGroups draws and find's
 // filter does not fails here.
 
@@ -29,6 +29,7 @@ const { markWakingRows } = await import("./turn-wake.js");
 const { setActive } = await import("./store.js");
 const { createRunStepStream } = await import("./run-chat-steps.js");
 const { runCardOwners, setRunCardOwners } = await import("./block-window.js");
+const { setHookStatusShown } = await import("./hook-fold.js");
 
 const CHAT_ID = "c-tool-runs";
 setActive(CHAT_ID);
@@ -60,6 +61,7 @@ interface RunsCase {
   runs: string[][];
   lane_runs?: Record<string, string[][]>;
   pane_runs?: string[][];
+  status_off_hook_rows?: string[];
 }
 
 function loadCases(): RunsCase[] {
@@ -70,6 +72,7 @@ let turnSeq = 0;
 let hosts: HTMLElement[] = [];
 
 afterEach(() => {
+  setHookStatusShown(true);
   resetBlockRenders();
   setRunCardOwners(new Map());
   for (const host of hosts) {
@@ -192,6 +195,26 @@ describe("tool-card run boundaries shared with the Go implementation", () => {
   for (const c of cases) {
     it(c.name, () => {
       expect(renderedRuns(c)).toEqual({ "": c.runs, ...c.lane_runs });
+    });
+  }
+});
+
+describe("hook rows the chat draws with hook status off, shared with find's filter", () => {
+  for (const c of loadCases()) {
+    const want = c.status_off_hook_rows;
+    if (want === undefined) {
+      continue;
+    }
+    it(c.name, () => {
+      setHookStatusShown(false);
+      const turn = caseTurn(c);
+      const chat = mountHost();
+      setRunCardOwners(runCardOwners([turn]));
+      buildAssistantBody(chat, turn, CHAT_ID, false);
+      const rows = [...chat.querySelectorAll<HTMLElement>(".tool-call[data-kind='hook']")]
+        .filter((card) => card.checkVisibility())
+        .map((card) => card.dataset["entryId"] ?? "");
+      expect(rows).toEqual(want);
     });
   }
 });
