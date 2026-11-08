@@ -1097,6 +1097,35 @@ func TestCloseOwner_ABusyParentsWakeHoldsUntilTheNextTurn(t *testing.T) {
 	})
 }
 
+func TestCloseOwner_EachRunEndKeepsTheChatForItsOwnWake(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		o := newOwnerHub(t, false)
+		o.launchRun(t, recordedRun)
+		o.launchRun(t, "wf-second")
+		deliverRunComplete(t, o.h, "c1", recordedRun, "completed")
+		deliverRunComplete(t, o.h, "c1", "wf-second", "completed")
+
+		o.wakeTurn(t, "First run finished.", 0)
+		o.wakeEnds(t)
+		o.wakeLogged(t, "First run finished.")
+		lc := lifecycleOf(t, o.h, "c1")
+		lc.mu.Lock()
+		owed := len(lc.wakes)
+		lc.mu.Unlock()
+		if owed != 1 || !o.keptOpen() {
+			t.Fatalf("after the first wake: %d wakes owed, session kept %v; want the second run's wake held", owed, o.keptOpen())
+		}
+		o.wakeTurn(t, "Second run finished.", 94)
+		o.wakeLanded(t, 94)
+		o.wakeEnds(t)
+		o.wakeLogged(t, "Second run finished.")
+
+		if !o.closed() {
+			t.Error("the second wake's end left the pending release unrun")
+		}
+	})
+}
+
 // holdRow acquires one claimant of c1's session the way its real path does, answering the release that ends it.
 type holdRow struct {
 	acquire func(t *testing.T, o *ownerHub) (release func())
@@ -1188,6 +1217,8 @@ var closeHoldRows = []holdRow{
 		deliverRunComplete(t, o.h, "c1", recordedRun, "completed")
 		return once(func() {
 			kasDelivers(t, o.h, o.frame(t, newActivityMsg(true)))
+			kasDelivers(t, o.h, o.frame(t, newTurnStartMsg()))
+			kasDelivers(t, o.h, o.frame(t, newTurnEndMsg("end_turn")))
 			kasDelivers(t, o.h, o.frame(t, newActivityMsg(false)))
 		})
 	}},
@@ -1402,7 +1433,12 @@ var ownerHolds = map[holdKind]struct {
 	}},
 	holdWake: {name: "wake", take: func(_ *testing.T, o *ownerLife) func() {
 		o.r.holdWake("c1", "wf-owner")
-		return func() { o.r.noteKASActivity("c1", true); o.r.noteKASActivity("c1", false) }
+		return func() {
+			o.lc.mu.Lock()
+			tr := o.lc.openLocked("c1", &marotte.Entry{ID: "w-wake"}, marotte.TurnSourceWireTurnStart, "", turnlog.Open("w-wake", nil))
+			o.lc.mu.Unlock()
+			o.r.finish(tr, marotte.TurnResult{})
+		}
 	}},
 }
 
@@ -1717,24 +1753,65 @@ func TestCloseOwner_AnInlineGrantStartsTheCloserItLeavesWork(t *testing.T) {
 	})
 }
 
-func TestCloseOwner_ALeaseOnTheClosingEntryIsRefused(t *testing.T) {
+func TestCloseOwner_OnlyAConfirmedCloseRefusesALease(t *testing.T) {
 	o := newOwnerLife(t)
 	o.lc.askClose(o.sb, closeRelease, 0, false)
-	g := o.state().closing
-	if g == nil {
+	g, _, ok := o.lc.nextClose()
+	if !ok {
 		t.Fatal("Setup: the release was not granted")
+	}
+	_, done, err := o.lc.beginLease(o.sb, func(error) {})
+	if err != nil {
+		t.Fatalf("a lease while the closer has not confirmed the close = %v, want it admitted", err)
+	}
+	if o.lc.closingSession(o.sb) {
+		t.Error("closingSession names a close the closer has not confirmed")
+	}
+	if o.lc.confirmClose(g) {
+		t.Fatal("the close confirmed while a lease on its entry runs")
+	}
+	if st := o.state(); st.closing != nil || st.ask == nil || st.ask.why != closeRelease {
+		t.Errorf("after the refused confirm: grant %+v, ask %+v; want the release pending again", st.closing, st.ask)
+	}
+	done()
+	g, _, ok = o.lc.nextClose()
+	if !ok || !o.lc.confirmClose(g) {
+		t.Fatal("the lease's end did not grant the release again for the closer to confirm")
 	}
 	if _, _, err := o.lc.beginLease(o.sb, func(error) {}); !errors.Is(err, marotte.ErrSessionClosing) {
 		t.Errorf("a lease on the closing entry = %v, want marotte.ErrSessionClosing", err)
 	}
 	other := newSharedBridge(o.lc)
-	_, done, err := o.lc.beginLease(other, func(error) {})
+	_, done, err = o.lc.beginLease(other, func(error) {})
 	if err != nil {
 		t.Errorf("a lease on another entry = %v, want it admitted", err)
 	}
 	done()
 	if !o.lc.closingSession(o.sb) || o.lc.closingSession(other) {
-		t.Error("closingSession does not name exactly the granted entry")
+		t.Error("closingSession does not name exactly the confirmed entry")
+	}
+}
+
+func TestCloseOwner_TheLifesEndEndsAGrantNoCloserTook(t *testing.T) {
+	o := newOwnerLife(t)
+	o.lc.askClose(o.sb, closeRelease, 0, false)
+	if g := o.state().closing; g == nil || g.frozen {
+		t.Fatalf("Setup: the release's grant = %+v, want granted and not yet taken by a closer", g)
+	}
+	door := o.lc.askClose(o.sb, closeReload, 0, true)
+	if door.verdict != askClosing {
+		t.Fatalf("Setup: a door on the granted entry = %+v, want it told to wait for the close", door)
+	}
+
+	o.r.forget("c1")
+
+	select {
+	case <-door.done:
+	default:
+		t.Error("the life ended and the door still waits on a close no closer will run")
+	}
+	if o.state().closing != nil {
+		t.Error("the ended life kept a grant no closer took")
 	}
 }
 
@@ -1759,12 +1836,26 @@ func TestCloseOwner_AWakeHoldEndsAtItsBoundOrATurn(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			o := newOwnerLife(t)
 			o.r.holdWake("c1", "wf-owner")
+			o.r.holdWake("c1", "wf-second")
 			o.lc.mu.Lock()
 			o.lc.openLocked("c1", &marotte.Entry{ID: "w-wake"}, marotte.TurnSourceWireTurnStart, "", turnlog.Open("w-wake", nil))
 			wakes := len(o.lc.wakes)
 			o.lc.mu.Unlock()
-			if wakes != 0 {
-				t.Errorf("%d wake holds after a turn opened, want the turn to take over", wakes)
+			if wakes != 1 {
+				t.Errorf("%d wake holds after one turn opened for two owed wakes, want that turn to take over one", wakes)
+			}
+		})
+	})
+	t.Run("KAS's activity", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			o := newOwnerLife(t)
+			o.r.holdWake("c1", "wf-owner")
+			o.r.noteKASActivity("c1", true)
+			o.lc.mu.Lock()
+			wakes := len(o.lc.wakes)
+			o.lc.mu.Unlock()
+			if wakes != 1 {
+				t.Errorf("%d wake holds after KAS reported activity, want the wake held until its turn", wakes)
 			}
 		})
 	})
@@ -1855,8 +1946,8 @@ func TestCloseOwner_TheRunEndKeepsATabbedParentResident(t *testing.T) {
 		kasDelivers(t, h, withSessionID(t, newTurnEndMsg("end_turn"), "sess_parent"))
 		synctest.Wait()
 
-		if reached.Load() == 0 {
-			t.Error("the step's close granted the pending reload to no closer")
+		if n := reached.Load(); n != 0 {
+			t.Errorf("a tabbed chat's reload reached the closer %d times, want it left to the chat's next door", n)
 		}
 		if h.bridge.mgr.get("c1") != sb || !chat.Open() {
 			t.Fatal("the run's end closed a tabbed parent's session outside a door")
@@ -1876,6 +1967,53 @@ func TestCloseOwner_TheRunEndKeepsATabbedParentResident(t *testing.T) {
 			t.Errorf("the next open = (same entry %v, %v), first session open %v; want it closed and a new generation", next == sb, err, chat.Open())
 		}
 	})
+}
+
+func TestCloseOwner_AKeptChatsLeaseIsNeverRefusedForACloseThatWillNotHappen(t *testing.T) {
+	for _, tc := range []struct {
+		// ask runs while c1 runs a wire turn: a close asked that its re-check will find c1 kept resident.
+		ask func(t *testing.T, o *ownerHub)
+		// closerLooks is whether the hold's end grants the close to the closer.
+		closerLooks bool
+		name        string
+		tabbed      bool
+	}{
+		{name: "a tabbed chat's door reload a turn refused", tabbed: true, ask: func(t *testing.T, o *ownerHub) {
+			o.h.markSessionsForReload("test")
+			o.openReturnsCurrent(t, openAsync(t, o.h), "a turn runs")
+		}},
+		{name: "a release asked before the chat's tab opened", closerLooks: true, ask: func(t *testing.T, o *ownerHub) {
+			o.h.coord.releaseIfUnheld("c1")
+			if _, _, _, err := o.st.Open(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c1"}); err != nil {
+				t.Fatalf("Setup: open c1's tab: %v", err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				o := newOwnerHub(t, tc.tabbed)
+				reached, openHook := holdCloser(t, o.h)
+				send(t, o.h, newTurnStartMsg())
+				tc.ask(t, o)
+				send(t, o.h, newTurnEndMsg("end_turn"))
+				synctest.Wait()
+
+				err := o.sb.use(t.Context(), func(context.Context, engineSession) error { return nil })
+
+				if err != nil {
+					t.Errorf("a lease after the turn ended = %v, want it admitted", err)
+				}
+				if looked := reached.Load() != 0; looked != tc.closerLooks {
+					t.Errorf("the closer looked %v after the turn ended, want %v", looked, tc.closerLooks)
+				}
+				openHook()
+				synctest.Wait()
+				if !o.keptOpen() {
+					t.Error("the kept chat's session closed")
+				}
+			})
+		})
+	}
 }
 
 func TestCloseOwner_ARunEndDuringAFrozenCloseRequeues(t *testing.T) {
