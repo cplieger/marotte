@@ -157,7 +157,9 @@ func writeRepoList(b *strings.Builder, workDir string, repos []string) bool {
 		b.WriteString("- More repositories with .kiro content: ")
 		writeNameList(b, folded, "`ls -ad "+workDir+"/*/.kiro "+workDir+"/.[!.]*/.kiro`")
 		b.WriteString(". Before working in one, list its `.kiro/steering/`, `.kiro/skills/`, `.kiro/hooks/` and " +
-			"`.kiro/agents/`, and apply the protocol below to them.\n")
+			"`.kiro/agents/`: read every steering doc whose `inclusion` is not `fileMatch`, `manual` or `auto`, " +
+			"check the `fileMatchPattern` in its steering docs and `skills/*/SKILL.md` before opening or editing a " +
+			"matching file, and apply the protocol below to the rest.\n")
 	}
 	if len(plain) > 0 {
 		b.WriteString("- Other repositories: ")
@@ -266,7 +268,7 @@ func writeRoutingCuts(b *strings.Builder, repo string, k *kiroRepo, kept routed)
 			"`inclusion` is not `fileMatch`, `manual` or `auto`\n", always, repo)
 	}
 	if fileMatch > 0 {
-		fmt.Fprintf(b, "  - … %d more file-match entries: before editing a file in this repo, check the "+
+		fmt.Fprintf(b, "  - … %d more file-match entries: before opening or editing a file in this repo, check the "+
 			"`fileMatchPattern` in its `%s/.kiro/steering/` docs and `%s/.kiro/skills/*/SKILL.md`\n", fileMatch, repo, repo)
 	}
 	rest := k.docsSeen.total + k.skillsSeen.total - len(kept.docs) - len(kept.skills) - always - fileMatch

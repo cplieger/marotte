@@ -283,7 +283,7 @@ func TestWriteKiroRepo_NamesACutFileMatchEntry(t *testing.T) {
 	writeKiroRepo(&b, &k, allotRouting([]kiroRepo{k}, 2)[0])
 	out := b.String()
 	for _, want := range []string{
-		"  - … 1 more file-match entries: before editing a file in this repo, check the `fileMatchPattern` in its " +
+		"  - … 1 more file-match entries: before opening or editing a file in this repo, check the `fileMatchPattern` in its " +
 			"`r/.kiro/steering/` docs and `r/.kiro/skills/*/SKILL.md`\n",
 		"  - … 1 more .kiro entries: list `r/.kiro/steering/` and `r/.kiro/skills/`\n",
 	} {
@@ -349,6 +349,27 @@ func TestWriteKiroRepo_CountsWhatDiscoveryDidNotRead(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("writeKiroRepo lacks %q:\n%s", want, out)
 		}
+	}
+}
+
+// Entries past the front-matter read window have no rank, so the generic line counts them.
+func TestWriteKiroRepo_CountsEntriesPastTheReadWindow(t *testing.T) {
+	work := t.TempDir()
+	for i := range 105 {
+		mustWriteFile(t, filepath.Join(work, "r", ".kiro", "steering", fmt.Sprintf("d%03d.md", i)), "---\ninclusion: manual\n---\n")
+	}
+	if err := os.MkdirAll(filepath.Join(work, "r", ".kiro", "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	k := scanKiroRepo(work, "r")
+	writeKiroRepo(&b, &k, allotRouting([]kiroRepo{k}, maxRouting)[0])
+	out := b.String()
+	if want := "  - … 85 more .kiro entries: list `r/.kiro/steering/` and `r/.kiro/skills/`\n"; !strings.Contains(out, want) {
+		t.Errorf("writeKiroRepo lacks %q:\n%s", want, out)
+	}
+	if strings.Contains(out, "more always-loaded") || strings.Contains(out, "more file-match") {
+		t.Errorf("manual docs counted as always-loaded or file-match:\n%s", out)
 	}
 }
 

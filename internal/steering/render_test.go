@@ -430,7 +430,8 @@ func checkLarge(t *testing.T, r rendered) {
 	if got := strings.Count(memory, "`: `repo:"); got != 30 ||
 		!strings.Contains(memory, "\n- … and 142 more (each repository's tag is `repo:<provider>/<owner>/<name>` from its "+
 			"origin: the provider is github, gitlab, bitbucket or azure when the host name contains that word, "+
-			"gitfarm for git.amazon.com, the host name otherwise)\n") {
+			"the host name otherwise; on git.amazon.com or a subdomain of it the tag is "+
+			"`repo:gitfarm/gitfarm/<path after pkg/, else its last segment>`)\n") {
 		t.Errorf("Memory lists %d tags, want 30 then `… and 142 more`:\n%s", got, memory)
 	}
 	if !strings.Contains(memory, "\n- `kiro000/`: `repo:github/owner/kiro000`\n") {
@@ -478,7 +479,9 @@ func checkLargeRouting(t *testing.T, out, workDir string) {
 	}
 	want := "- More repositories with .kiro content: " + strings.Join(folded, ", ") +
 		", … and 2 more (`ls -ad " + workDir + "/*/.kiro " + workDir + "/.[!.]*/.kiro`). Before working in one, list its " +
-		"`.kiro/steering/`, `.kiro/skills/`, `.kiro/hooks/` and `.kiro/agents/`, and apply the protocol below to them."
+		"`.kiro/steering/`, `.kiro/skills/`, `.kiro/hooks/` and `.kiro/agents/`: read every steering doc whose `inclusion` " +
+		"is not `fileMatch`, `manual` or `auto`, check the `fileMatchPattern` in its steering docs and `skills/*/SKILL.md` " +
+		"before opening or editing a matching file, and apply the protocol below to the rest."
 	if got := lineWithPrefix(out, "- More repositories with .kiro content: "); got != want {
 		t.Errorf("folded .kiro repos line =\n%s\nwant\n%s", got, want)
 	}

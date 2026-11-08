@@ -368,9 +368,9 @@ func findMdDocsInDir(dir string) (docs []docEntry, seen dirCount) {
 }
 
 // Discovery reads front matter for up to maxScannedEntries of a directory's entries, each read
-// capped at FrontMatterReadCap, and keeps maxRepoEntries of them, ranked: an always-loaded doc or
-// file-match skill among the first maxScannedEntries by filename survives the cut; past that
-// window only the overflow count shows it.
+// capped at FrontMatterReadCap, and keeps maxRepoEntries of them, ranked, so an entry among the
+// first maxScannedEntries by filename is kept before any lower-ranked one; past that window only
+// the overflow count shows it.
 const (
 	maxScannedEntries = 100
 	maxRepoEntries    = 20
