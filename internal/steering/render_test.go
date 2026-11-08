@@ -185,8 +185,10 @@ func typicalFixture() *renderFixture {
 		forgeRepos: 30,
 		plainRepos: 10,
 		kiroRepos: []kiroRepoFixture{
-			{name: "kiroone", steering: []string{"inclusion: always\ndescription: The house rules.",
-				"inclusion: fileMatch\nfileMatchPattern: \"src/**\"\ndescription: Source rules."}},
+			{name: "kiroone", steering: []string{
+				"inclusion: always\ndescription: The house rules.",
+				"inclusion: fileMatch\nfileMatchPattern: \"src/**\"\ndescription: Source rules.",
+			}},
 			{name: "kirotwo", skills: []string{"description: " + words(60)}},
 		},
 	}

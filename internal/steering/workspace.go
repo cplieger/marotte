@@ -46,19 +46,23 @@ func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string) {
 		b.WriteString("\n")
 	}
 	if len(dirs) > 0 && !isRoot {
-		b.WriteString("### Directories\n\n")
-		for _, d := range dirs[:min(len(dirs), maxDirectories)] {
-			fmt.Fprintf(b, "- `%s/`\n", defuse(d))
-		}
-		if extra := len(dirs) - maxDirectories; extra > 0 {
-			fmt.Fprintf(b, "- … and %d more (`ls %s`)\n", extra, workDir)
-		}
-		b.WriteString("\n")
+		writeDirectories(b, dirs, workDir)
 	}
 	// Only when repos sit UNDER the workspace root (same guard as Directories above).
 	if len(repos) > 0 && !isRoot {
 		writeScratchGuidance(b, workDir)
 	}
+}
+
+func writeDirectories(b *strings.Builder, dirs []string, workDir string) {
+	b.WriteString("### Directories\n\n")
+	for _, d := range dirs[:min(len(dirs), maxDirectories)] {
+		fmt.Fprintf(b, "- `%s/`\n", defuse(d))
+	}
+	if extra := len(dirs) - maxDirectories; extra > 0 {
+		fmt.Fprintf(b, "- … and %d more (`ls %s`)\n", extra, workDir)
+	}
+	b.WriteString("\n")
 }
 
 // writeScratchGuidance suggests a scratch location outside every repo. A workflow step

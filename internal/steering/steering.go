@@ -269,44 +269,13 @@ func (*Generator) CustomPath() string {
 // writeTools lists commands, not packages: an apt package's commands need not match its name
 // (ripgrep ships rg).
 func writeTools(b *strings.Builder, snap ToolsSnapshot, toolsDir string) {
-	versions := map[string]string{}
-	libraries := 0
-	for _, t := range snap.Tools {
-		if len(t.Commands) == 0 {
-			libraries++
-			continue
-		}
-		for _, c := range t.Commands {
-			// Defused: names and versions come from the catalog, dpkg and --version output.
-			if name := defuse(c); name != "" {
-				if _, seen := versions[name]; !seen {
-					versions[name] = defuse(t.Version)
-				}
-			}
-		}
-	}
+	versions, libraries := commandVersions(snap.Tools)
 	b.WriteString("## Installed tools\n\n")
 	if len(versions) > 0 {
-		names := slices.Sorted(maps.Keys(versions))
-		entries := make([]string, 0, min(len(names), maxCommands))
-		for _, n := range names[:min(len(names), maxCommands)] {
-			entries = append(entries, strings.TrimSpace(n+" "+versions[n]))
-		}
-		b.WriteString("Commands: " + strings.Join(entries, ", "))
-		if extra := len(names) - maxCommands; extra > 0 {
-			fmt.Fprintf(b, ", … and %d more (`ls %s/bin`, `command -v <name>`)", extra, toolsDir)
-		}
-		b.WriteString("\n\n")
+		writeCommands(b, versions, toolsDir)
 	}
-	var baked []string
-	for _, s := range snap.System {
-		if d := defuse(s); d != "" {
-			baked = append(baked, d)
-		}
-	}
-	if len(baked) > 0 {
-		slices.Sort(baked)
-		b.WriteString("Baked into the image: " + strings.Join(slices.Compact(baked), ", ") + "\n\n")
+	if baked := defusedSorted(snap.System); len(baked) > 0 {
+		b.WriteString("Baked into the image: " + strings.Join(baked, ", ") + "\n\n")
 	}
 	b.WriteString("The image is Debian slim: anything not listed is likely absent (common utilities such as ")
 	b.WriteString("file, bc, xxd, netstat and ss are not installed). Check with `command -v`, and install ")
@@ -315,6 +284,50 @@ func writeTools(b *strings.Builder, snap ToolsSnapshot, toolsDir string) {
 		fmt.Fprintf(b, "%d more installed packages ship no command (mostly libraries): ", libraries)
 		b.WriteString("`dpkg -l` or `curl -s localhost:9847/api/tools` lists them.\n\n")
 	}
+}
+
+// commandVersions maps each defused command to its row's version, the first row naming it
+// winning, and counts the rows that ship none.
+func commandVersions(tools []InstalledTool) (versions map[string]string, libraries int) {
+	versions = map[string]string{}
+	for _, t := range tools {
+		if len(t.Commands) == 0 {
+			libraries++
+			continue
+		}
+		// Defused: names and versions come from the catalog, dpkg and --version output.
+		for _, name := range defusedSorted(t.Commands) {
+			if _, seen := versions[name]; !seen {
+				versions[name] = defuse(t.Version)
+			}
+		}
+	}
+	return versions, libraries
+}
+
+func writeCommands(b *strings.Builder, versions map[string]string, toolsDir string) {
+	names := slices.Sorted(maps.Keys(versions))
+	entries := make([]string, 0, min(len(names), maxCommands))
+	for _, n := range names[:min(len(names), maxCommands)] {
+		entries = append(entries, strings.TrimSpace(n+" "+versions[n]))
+	}
+	b.WriteString("Commands: " + strings.Join(entries, ", "))
+	if extra := len(names) - maxCommands; extra > 0 {
+		fmt.Fprintf(b, ", … and %d more (`ls %s/bin`, `command -v <name>`)", extra, toolsDir)
+	}
+	b.WriteString("\n\n")
+}
+
+// defusedSorted defuses each name, drops the empty ones and returns the rest sorted and deduped.
+func defusedSorted(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if d := defuse(n); d != "" {
+			out = append(out, d)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 func writeMCP(b *strings.Builder, snap MCPSnapshot) {
