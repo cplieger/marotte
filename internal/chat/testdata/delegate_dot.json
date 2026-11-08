@@ -129,17 +129,17 @@
       "status": "aborted"
     },
     {
-      "site": "internal/chat/hook_visibility.go:246",
+      "site": "internal/chat/hook_visibility.go:247",
       "form": "compare",
       "status": "completed"
     },
     {
-      "site": "internal/chat/hook_visibility.go:260",
+      "site": "internal/chat/hook_visibility.go:261",
       "form": "compare",
       "status": "failed"
     },
     {
-      "site": "internal/chat/hook_visibility.go:262",
+      "site": "internal/chat/hook_visibility.go:263",
       "form": "compare",
       "status": "failed"
     },

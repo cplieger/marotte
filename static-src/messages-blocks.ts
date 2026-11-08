@@ -2960,14 +2960,13 @@ function indexGroups(st: TurnRender): GroupIndex {
     }
     const tc = held.call;
     const subtask = tc.agent_subtask_id ?? "";
-    if (subtask !== "") {
-      // The delegate's card, priced at its invocation.
-      openBox(`sub:${subtask}`, "", e.seq);
-      continue;
-    }
-    if (held.runID !== "" && ownsRunCard(st, held.runID, e.id)) {
+    // In `placeEntry`'s order: a delegate's page stamps its own nested calls, which mount as tool cards.
+    if (subtask === "" && held.runID !== "" && ownsRunCard(st, held.runID, e.id)) {
       // Gated on the owner, as `placeEntry` is: a later mention mounts a tool row and must not post a break.
       openBox(`run:${held.runID}`, "", e.seq);
+    } else if (isDelegateInvocation(st, e)) {
+      // The delegate's card, priced at its invocation.
+      openBox(`sub:${subtask}`, "", e.seq);
     } else {
       post(st.lane, e.seq, false);
       work ||= tc.kind !== "hook";

@@ -38,8 +38,7 @@ const adopted = new WeakMap<HTMLElement, readonly HTMLElement[]>();
 /** Hook-only shells whose container's lane holds a non-hook card: their rows never form a group there. */
 const besideWork = new WeakSet<HTMLElement>();
 
-/** Whether each container's lane holds a non-hook card, mounted or not, as its renderer last said. A container no
- *  renderer recorded answers from its mounted shells. */
+/** Whether each container's lane holds a non-hook card, mounted or not, as its renderer last said. */
 const laneWork = new WeakMap<HTMLElement, boolean>();
 
 /** Record whether `container`'s lane holds a non-hook card anywhere in its turn, mounted or not. Call it before the
@@ -163,7 +162,7 @@ function placeStrays(container: HTMLElement): Map<HTMLElement, HookFold> {
   }
   const folded = new Set([...into.values()].flat());
   // Strays need a mounted badge to join; whether the lane holds a tool box does not.
-  const work = laneWork.get(container) ?? into.size > 0;
+  const work = laneWork.get(container) === true;
   const moved = new Map<HTMLElement, HookFold>();
   for (const [g, f] of groups) {
     if (f.work.length > 0) {

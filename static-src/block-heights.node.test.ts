@@ -234,7 +234,9 @@ describe("what a tool call MOUNTS AS", () => {
   it("prices a DELEGATE INVOCATION at the subagent card, not at the tool row", () => {
     // Its element is a `.subagent-block`, and the transcript draws exactly one thing per
     // delegate — this entry — so the card's height is reserved here or nowhere.
-    expect(stood(turn("t", [call(1, { subtask: "sub-1" })]))).toBe(71 + GAP_PX);
+    expect(stood(turn("t", [call(1, { subtask: "sub-1", title: "invokeSubAgent" })]))).toBe(
+      71 + GAP_PX,
+    );
   });
 
   // Replay of an older engine's pipeline: the driver is an ordinary tool row and each stage an

@@ -7,6 +7,7 @@ import { userEvent } from "vitest/browser";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type { Turn } from "./turns.js";
+import { toolResultID } from "./entry-ids.js";
 import type { Entry, EntryToolCall } from "./wire/types.gen.js";
 
 for (const id of [
@@ -24,8 +25,14 @@ for (const id of [
   }
 }
 
-const { buildAssistantBody, resetBlockRenders, initBlockRenderer, dropHead, mountHeadRange } =
-  await import("./messages-blocks.js");
+const {
+  buildAssistantBody,
+  buildDetachedBody,
+  resetBlockRenders,
+  initBlockRenderer,
+  dropHead,
+  mountHeadRange,
+} = await import("./messages-blocks.js");
 const { forgetHeights, spacerHeight } = await import("./block-heights.js");
 const { clearAllEntrySigs, toolCallSigs } = await import("./store-signals.js");
 const { initToolCallbacks } = await import("./messages-tools.js");
@@ -417,6 +424,48 @@ describe("hook rows with no tool call between them", () => {
   });
 });
 
+describe("a delegate's page", () => {
+  const LANE = "sub-1";
+  /** `e` as the live path persists a delegate's own entry: in its lane, a call stamped with the delegate's id. */
+  function nested(e: Entry): Entry {
+    const call =
+      e.kind === "tool_call"
+        ? { ...(e.payload as EntryToolCall), agent_subtask_id: LANE }
+        : e.payload;
+    return { ...e, lane: LANE, payload: call };
+  }
+
+  function renderPage(build: (turn: string) => Entry[]): HTMLElement {
+    const { body, turn } = mount((t) => [
+      call(t, 1, { title: "invokeSubAgent", agent_subtask_id: LANE }),
+      ...build(t).map(nested),
+    ]);
+    const page = document.createElement("div");
+    page.className = "turn-body";
+    body.closest(".turn")?.append(page);
+    buildDetachedBody(page, turn, CHAT_ID, LANE, false);
+    return page;
+  }
+
+  it("keeps hook rows past the prose headerless beside the delegate's tool box", () => {
+    const page = renderPage((t) => [
+      call(t, 2),
+      say(t, 3, "done"),
+      hook(t, 4, "stop a", { hook_trigger: "Stop", status: "failed" }),
+      hook(t, 5, "stop b", { hook_trigger: "Stop", status: "failed" }),
+    ]);
+    only(toolBoxes(page), "premise: the delegate's tool box mounted");
+    expect(groupHeaders(page), "no group header").toHaveLength(0);
+    expect(hookRows(page)).toHaveLength(2);
+  });
+
+  it("groups two adjacent stamped calls as the chat groups unstamped ones", () => {
+    const page = renderPage((t) => [call(t, 2), call(t, 3, { title: "Read Inbox" })]);
+    const count = only(groupHeaders(page), "one group header").querySelector(".tool-group-count");
+    expect(count?.textContent).toBe("Ran 2 calls: Send Message, Read Inbox");
+  });
+});
+
 describe("the spacer standing for a dropped box", () => {
   /** How far `next` starts below `box`'s top, less the one row gap between them: what a head spacer must hold. */
   function heldAbove(box: HTMLElement, next: HTMLElement, body: HTMLElement): number {
@@ -468,6 +517,52 @@ describe("the spacer standing for a dropped box", () => {
       hook(t, 4, "notify", { hook_trigger: "PostToolUse" }),
     ]);
     expect(hooked).toBe(bare);
+  });
+
+  it("prices a never-mounted failed lone box's quiet tool-trigger hook as its row", () => {
+    const quiet = unmeasuredTail((t) => [
+      say(t, 1, "go"),
+      call(t, 2, { status: "failed" }),
+      hook(t, 3, "seat guard"),
+    ]);
+    const loud = unmeasuredTail((t) => [
+      say(t, 1, "go"),
+      call(t, 2, { status: "failed" }),
+      hook(t, 3, "seat guard", { status: "failed" }),
+    ]);
+    expect(quiet).toBe(loud);
+  });
+
+  it("prices a never-mounted lone box its result denied with its quiet tool-trigger hook as a row", () => {
+    const denied = (t: string): Entry => ({
+      id: toolResultID(`${t}-c2`),
+      turn: t,
+      kind: "tool_result",
+      seq: 3,
+      ts: 4,
+      payload: {
+        status: "failed",
+        denial: {
+          capability: "fs.write",
+          resource: "/etc/passwd",
+          scope: "path",
+          source: "policy",
+        },
+      },
+    });
+    const quiet = unmeasuredTail((t) => [
+      say(t, 1, "go"),
+      call(t, 2),
+      denied(t),
+      hook(t, 4, "seat guard"),
+    ]);
+    const loud = unmeasuredTail((t) => [
+      say(t, 1, "go"),
+      call(t, 2),
+      denied(t),
+      hook(t, 4, "seat guard", { status: "failed" }),
+    ]);
+    expect(quiet).toBe(loud);
   });
 
   it("prices a never-mounted turn hook folded into another box's badge at nothing", () => {

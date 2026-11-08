@@ -12,9 +12,11 @@ import {
   type EntryRange,
   type RunResults,
 } from "./block-window.js";
+import { toolResultID } from "./entry-ids.js";
 import { hookQuiet, hookStatusShown, isToolTriggerHook } from "./hook-fold.js";
-import { isInternalToolTitle } from "./tool-schema.js";
-import type { Entry, EntryToolCall } from "./types.js";
+import { askBucket } from "./interaction.js";
+import { isInternalToolTitle, isSubagentInvocation } from "./tool-schema.js";
+import type { Entry, EntryToolCall, EntryToolResult } from "./types.js";
 import { payloadOf, type Turn } from "./turns.js";
 // Type-only, so this costs no import edge at runtime: `tierNow` below reads the
 // attribute rather than calling `pointer-tier.ts`, and this is only the vocabulary.
@@ -262,10 +264,10 @@ export function spacerOrdinalAt(
   return last;
 }
 
-/** How a rendered entry takes part in a tool group: a plain call is a member, an internal one mounts nothing, and
- *  anything else (a delegate's card, a run card, any other kind) ends the run, as `messages-blocks.ts`
- *  `indexGroups` breaks it. */
-function groupRole(e: Entry, results: RunResults): "member" | "none" | "break" {
+/** How a rendered entry takes part in a tool group in `lane`: a plain call is a member, an internal one mounts
+ *  nothing, and anything else (a delegate's invocation, a run card, any other kind) ends the run, as
+ *  `messages-blocks.ts` `indexGroups` breaks it. */
+function groupRole(e: Entry, lane: string, results: RunResults): "member" | "none" | "break" {
   if (e.kind !== "tool_call") {
     return "break";
   }
@@ -276,9 +278,24 @@ function groupRole(e: Entry, results: RunResults): "member" | "none" | "break" {
   if (isInternalToolTitle(call.title)) {
     return "none";
   }
-  return effectiveRunID(e, results) === "" && (call.agent_subtask_id ?? "") === ""
-    ? "member"
-    : "break";
+  const subtask = call.agent_subtask_id ?? "";
+  const runCard = subtask === "" && effectiveRunID(e, results) !== "";
+  const delegate = subtask !== "" && (e.lane ?? "") === lane && isSubagentInvocation(call);
+  return runCard || delegate ? "break" : "member";
+}
+
+/** Whether a call's card paints a refusal (`tool-card.ts` `applyOutcome`'s fail, denied or declined), with its
+ *  result merged over it as `store.ts` `settledToolCall` merges them. */
+function refusedCall(call: EntryToolCall, result: EntryToolResult | undefined): boolean {
+  const status = result?.status ?? call.status;
+  const interaction = result?.interaction;
+  return (
+    status === "failed" ||
+    (result?.denial ?? call.denial) !== undefined ||
+    result?.declined === true ||
+    call.declined === true ||
+    (status === "aborted" && interaction !== undefined && askBucket(interaction) === "rejected")
+  );
 }
 
 /** The tool run holding member `seq`: its members in order, over the whole turn. */
@@ -291,7 +308,7 @@ function toolRun(
 ): number[] {
   const role = (at: number): "member" | "none" | "break" => {
     const e = entryAt(t, at);
-    return e === undefined || !entryRenders(e, lane, folds) ? "none" : groupRole(e, results);
+    return e === undefined || !entryRenders(e, lane, folds) ? "none" : groupRole(e, lane, results);
   };
   const members = [seq];
   for (let at = seq - 1; at >= 0; at--) {
@@ -340,7 +357,7 @@ function* spacerBoxes(
   let lastRendered = -1;
   for (let seq = span - 1; seq >= 0 && lastRendered < 0; seq--) {
     const e = entryAt(t, seq);
-    if (e !== undefined && entryRenders(e, lane, folds) && groupRole(e, results) !== "none") {
+    if (e !== undefined && entryRenders(e, lane, folds) && groupRole(e, lane, results) !== "none") {
       lastRendered = seq;
     }
   }
@@ -355,12 +372,29 @@ function* spacerBoxes(
     laneWork =
       e !== undefined &&
       entryRenders(e, lane, folds) &&
-      groupRole(e, results) === "member" &&
+      groupRole(e, lane, results) === "member" &&
       hookAt(seq) === undefined;
   }
-  // An unmeasured hook member is priced by the fate `hook-fold.ts` `hookFate` gives it: a row, or nothing when it
-  // folds into a badge or hides.
-  const priceMember = (m: number, runWork: boolean): number => {
+  let settled: Map<string, EntryToolResult> | undefined;
+  const refusedAt = (m: number): boolean => {
+    const e = entryAt(t, m);
+    const call = e === undefined ? undefined : payloadOf(e, "tool_call");
+    if (e === undefined || call === undefined) {
+      return false;
+    }
+    settled ??= new Map(
+      t.body.flatMap((r) => {
+        const result = payloadOf(r, "tool_result");
+        return result === undefined ? [] : [[r.id, result] as const];
+      }),
+    );
+    return refusedCall(call, settled.get(toolResultID(e.id)));
+  };
+  // An unmeasured hook member is priced by the fate `hook-fold.ts` `hookFate` gives it. A row when it failed or
+  // printed; when its run's tool box was refused and it is a tool-trigger hook, or an untriggered one while status
+  // shows; or, while status shows, when its run has no tool box and it is a tool-trigger hook or its lane holds no
+  // tool box to fold into. Otherwise it folds into a badge or hides, and costs nothing.
+  const priceMember = (m: number, runWork: boolean, refused: boolean): number => {
     const known = per?.get(m);
     const call = hookAt(m);
     if (known !== undefined || call === undefined) {
@@ -371,7 +405,11 @@ function* spacerBoxes(
       status: result?.status ?? call.status,
       output: result?.output ?? call.output,
     });
-    const row = !quiet || (hookStatusShown() && !runWork && (isToolTriggerHook(call) || !laneWork));
+    const shown = hookStatusShown();
+    const row =
+      !quiet ||
+      (refused && (isToolTriggerHook(call) || (shown && call.hook_trigger === undefined))) ||
+      (shown && !runWork && (isToolTriggerHook(call) || !laneWork));
     return row ? est.toolCard : 0;
   };
   const mounted = range.to > range.from;
@@ -383,7 +421,7 @@ function* spacerBoxes(
       continue;
     }
     let own: number;
-    const role = groupRole(e, results);
+    const role = groupRole(e, lane, results);
     if (role === "none") {
       continue;
     }
@@ -396,12 +434,14 @@ function* spacerBoxes(
       const last = members[members.length - 1] ?? seq;
       runTo = last + 1;
       const inside = members.filter((m) => m >= stood.from && m < stood.to);
-      const work = members.filter((m) => hookAt(m) === undefined).length;
-      const px = new Map(members.map((m) => [m, priceMember(m, work > 0)]));
+      const work = members.filter((m) => hookAt(m) === undefined);
+      const refused = work.some(refusedAt);
+      const px = new Map(members.map((m) => [m, priceMember(m, work.length > 0, refused)]));
       const member = (m: number): number => px.get(m) ?? 0;
       // Only non-hook cards form a group; hook rows alone form one only in a lane with none (`tool-group.ts`
       // `paintGroup`).
-      const boxes = work > 0 ? work : laneWork ? 0 : members.filter((m) => member(m) > 0).length;
+      const boxes =
+        work.length > 0 ? work.length : laneWork ? 0 : members.filter((m) => member(m) > 0).length;
       const grouped = boxes > 1;
       const collapsed = grouped && lastRendered > last;
       // A run crossing into the mounted rows is their group's: only an expanded one grows by the members here.

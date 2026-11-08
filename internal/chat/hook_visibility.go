@@ -101,7 +101,7 @@ func (sc *toolRunScan) observe(i int, e *marotte.Entry) {
 		if json.Unmarshal(e.Payload, &call) != nil || call.Title == internalToolTitle {
 			return
 		}
-		if breaksRun(&call, sc.results[e.ID], sc.owners) {
+		if breaksRun(&call, e.Lane, sc.results[e.ID], sc.owners) {
 			sc.flush(k)
 			return
 		}
@@ -201,11 +201,12 @@ func hideQuietHooks(members []toolRunMember, results map[string]*marotte.EntryTo
 	}
 }
 
-// breaksRun is whether a call opens a box of its own instead of joining the run: a delegate's invocation, or the
-// first call naming a workflow run, which owns its run card.
-func breaksRun(call *marotte.EntryToolCall, res *marotte.EntryToolResult, owners map[string]bool) bool {
+// breaksRun is whether a call in lane opens a box of its own instead of joining the run: a delegate's invocation, or
+// the first unstamped call naming a workflow run, which owns its run card. An invocation is filed in its issuer's
+// lane and stamped with the delegate's; the live path stamps a delegate's own calls with the lane they are in.
+func breaksRun(call *marotte.EntryToolCall, lane string, res *marotte.EntryToolResult, owners map[string]bool) bool {
 	if call.AgentSubtaskID != "" {
-		return true
+		return call.AgentSubtaskID != lane
 	}
 	run := call.WorkflowID
 	if run == "" && res != nil {
