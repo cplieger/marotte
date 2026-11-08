@@ -80,7 +80,6 @@ import { planElement, updatePlanElement } from "./messages-plan.js";
 import {
   buildToolGroupShell,
   groupBody,
-  groupIsBare,
   refreshGroupHeader,
   autoCollapseGroup,
   setGroupSuperseded,
@@ -1278,7 +1277,8 @@ function recordOutgoingHeight(st: TurnRender, seq: number): void {
     return;
   }
   const px = el.offsetHeight;
-  if (px <= 0) {
+  // A card the hook fold hid holds 0px; any other 0 is a box not laid out, whose estimate stays the better guess.
+  if (px <= 0 && !el.hidden) {
     return;
   }
   const view = head === seq ? st.proseRuns.get(seq) : undefined;
@@ -1290,22 +1290,18 @@ function recordOutgoingHeight(st: TurnRender, seq: number): void {
   }
 }
 
-function shownRows(group: HTMLElement): number {
-  return groupBody(group).querySelectorAll(":scope > .tool-call:not([hidden])").length;
-}
-
-/** Record the group `card` sits in, against the members it holds, so a spacer standing for the whole run prices
- *  its real box; a shell showing one row is that card, which `recordEntryHeight` has. */
+/** Record the shell `card` sits in, bare or not, against the members it holds, so a spacer standing for the whole
+ *  run prices its real box; a shell the hook fold hid records 0. */
 function recordToolGroupHeight(st: TurnRender, card: HTMLElement): void {
   const group = card.parentElement?.closest<HTMLElement>(".tool-group") ?? null;
-  if (group?.parentElement !== st.bodyEl || (groupIsBare(group) && shownRows(group) < 2)) {
+  if (group?.parentElement !== st.bodyEl) {
     return;
   }
   const seqs = [...groupBody(group).querySelectorAll<HTMLElement>(":scope > [data-entry-seq]")].map(
     (m) => Number(m.dataset["entrySeq"]),
   );
   const px = group.offsetHeight;
-  if (seqs.length > 0 && px > 0) {
+  if (seqs.length > 0 && (px > 0 || group.hidden)) {
     recordGroupHeight(st.turnID, { from: Math.min(...seqs), to: Math.max(...seqs) + 1 }, px);
   }
 }

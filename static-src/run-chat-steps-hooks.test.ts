@@ -156,7 +156,7 @@ describe("a step's hooks in the run pane", () => {
       .toEqual(["seat guard"]);
   });
 
-  it("keeps a failed hook and a hook that printed as rows", () => {
+  it("keeps a failed hook and a hook that printed as rows, which the lone card's badge lists too", () => {
     const root = paintStep((t) => [
       call(t, 1, { id: "cmd-a" }),
       hook(t, 2, "broken", { status: "failed", output: "exit 1" }),
@@ -164,10 +164,10 @@ describe("a step's hooks in the run pane", () => {
       hook(t, 4, "seat guard"),
     ]);
     expect(shownHookTitles(root)).toEqual(["Hook fired: broken", "Hook fired: printer"]);
-    expect(badgeText(root)).toContain("1");
+    expect(badgeText(root)).toContain("3");
   });
 
-  it("unfolds the hooks of a denied command", () => {
+  it("unfolds the hooks of a denied command, which its badge still lists", () => {
     const root = paintStep((t) => [
       call(t, 1, {
         id: "cmd-d",
@@ -178,7 +178,7 @@ describe("a step's hooks in the run pane", () => {
       hook(t, 2, "seat guard"),
     ]);
     expect(shownHookTitles(root)).toEqual(["Hook fired: seat guard"]);
-    expect(badgeText(root)).toBeNull();
+    expect(badgeText(root)).toContain("1");
   });
 
   it("hides the badge and every quiet hook with Show hook status off, keeping the failed one", () => {

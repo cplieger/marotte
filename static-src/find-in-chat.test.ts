@@ -1336,6 +1336,7 @@ describe("server-hit navigation", () => {
       card.className = "tool-call";
       card.dataset["outcome"] = "ok";
       Object.assign(card.dataset, m);
+      card.innerHTML = `<div class="tool-summary"><span class="tool-title">${m["title"] ?? ""}</span></div>`;
       if (m["kind"] === "hook") {
         card.setAttribute("data-hook-gates", "");
       }

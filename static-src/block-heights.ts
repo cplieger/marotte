@@ -315,8 +315,8 @@ function toolRun(
   return members;
 }
 
-/** A prose run is one box, keyed by its first `seq`; a tool run of two or more is one box, its group, keyed by its
- *  first member. */
+/** A prose run is one box, keyed by its first `seq`; a tool run is one box, its group shell, keyed by its first
+ *  member. */
 function* spacerBoxes(
   t: Turn,
   range: EntryRange,
@@ -381,10 +381,10 @@ function* spacerBoxes(
         continue;
       }
       const measured = groups?.get(first);
-      if (members.length === 1) {
-        own = member(first);
-      } else if (measured?.range.from === first && measured.range.to === last + 1) {
+      if (measured?.range.from === first && measured.range.to === last + 1) {
         own = measured.px;
+      } else if (members.length === 1) {
+        own = member(first);
       } else {
         own = collapsed
           ? est.toolGroup

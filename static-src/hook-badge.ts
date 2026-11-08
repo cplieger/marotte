@@ -1,5 +1,5 @@
-// The hooks badge on a tool group's header, or on a lone tool card's, and the popover it opens listing each folded hook
-// once with its run count. hook-fold.ts decides which hooks fold and tool-group.ts which header carries them; this
+// The hooks badge on a tool group's header, or on a lone tool card's, and the popover it opens listing each hook it
+// counts once with its run count. hook-fold.ts decides which hooks fold and tool-group.ts which header carries them; this
 // draws them.
 
 import { el } from "@cplieger/ui";
@@ -109,7 +109,7 @@ const badges = new WeakMap<HTMLElement, HTMLElement>();
 /** The badge counting each folded hook card, which may sit in another group than the card. */
 const foldedInto = new WeakMap<HTMLElement, HTMLElement>();
 
-/** Paint the group's hooks badge for its folded hooks on `host`, the group or its lone card, absent with none. The
+/** Paint the group's hooks badge listing `folded` on `host`, the group or its lone card, absent with none. The
  *  badge is the one place the hook count lives and counts runs; it is a sibling of the host's header, since a button
  *  inside the group header's `role="button"` is not reachable by assistive technology. */
 export function syncHookBadge(
@@ -166,14 +166,13 @@ function unmarkHost(host: HTMLElement): void {
   host.style.removeProperty(DIGITS_VAR);
 }
 
-/** After the host's header: the group's, or a card's summary row. */
+/** After the host's header: the group's, or a card's summary row. Every host has one, so none is a broken caller. */
 function seatBadge(badge: HTMLElement, host: HTMLElement): void {
   const header = host.querySelector(":scope > .tool-group-header, :scope > .tool-summary");
   if (header === null) {
-    host.appendChild(badge);
-  } else {
-    header.after(badge);
+    throw new Error("hooks badge host has no header");
   }
+  header.after(badge);
 }
 
 function mountBadge(group: HTMLElement): HTMLElement {

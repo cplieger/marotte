@@ -2,7 +2,7 @@
 // own header line, and a quiet turn hook folds into the badge of the nearest box in its turn. Rendered through the
 // production dispatcher with the shipped stylesheets, so what is asserted is what a reader sees.
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -24,8 +24,9 @@ for (const id of [
   }
 }
 
-const { buildAssistantBody, resetBlockRenders, initBlockRenderer } =
+const { buildAssistantBody, resetBlockRenders, initBlockRenderer, dropHead } =
   await import("./messages-blocks.js");
+const { forgetHeights, spacerHeight } = await import("./block-heights.js");
 const { clearAllEntrySigs, toolCallSigs } = await import("./store-signals.js");
 const { initToolCallbacks } = await import("./messages-tools.js");
 const { refreshGroupHeader } = await import("./tool-group.js");
@@ -111,17 +112,17 @@ function say(turn: string, n: number, text: string): Entry {
 }
 
 /** Mount one finished turn card at the top of the page, its body built by the production renderer. */
-function render(build: (turn: string) => Entry[]): HTMLElement {
+function mount(build: (turn: string) => Entry[]): { body: HTMLElement; turn: Turn } {
   seq++;
   const id = `t-box-hooks-${String(seq)}`;
-  const turn = document.createElement("div");
-  turn.className = "turn";
+  const card = document.createElement("div");
+  card.className = "turn";
   const body = document.createElement("div");
   body.className = "turn-body";
-  turn.append(body);
-  document.body.prepend(turn);
-  hosts.push(turn);
-  const t: Turn = {
+  card.append(body);
+  document.body.prepend(card);
+  hosts.push(card);
+  const turn: Turn = {
     id,
     n: 1,
     trigger: { id: `${id}-p`, text: "go" },
@@ -132,8 +133,13 @@ function render(build: (turn: string) => Entry[]): HTMLElement {
     rewindTo: undefined,
     branchFrom: undefined,
   };
-  buildAssistantBody(body, t, CHAT_ID, false);
-  return body;
+  forgetHeights([id]);
+  buildAssistantBody(body, turn, CHAT_ID, false);
+  return { body, turn };
+}
+
+function render(build: (turn: string) => Entry[]): HTMLElement {
+  return mount(build).body;
 }
 
 const seen = (e: Element): boolean => e.checkVisibility();
@@ -211,7 +217,7 @@ describe("a lone tool call with hooks", () => {
     await userEvent.keyboard("{Escape}");
   });
 
-  it("keeps a failed hook's row inside the tool box", () => {
+  it("keeps a failed hook's row inside the tool box, its badge listing every hook", async () => {
     const root = render((t) => [
       call(t, 1),
       hook(t, 2, "seat guard"),
@@ -230,7 +236,11 @@ describe("a lone tool call with hooks", () => {
     expect(r.right).toBeLessThanOrEqual(s.right);
     expect(r.bottom).toBeLessThanOrEqual(s.bottom);
     expect(getComputedStyle(shell).borderTopStyle, "one bordered box").toBe("solid");
-    expectOnLine(only(badges(root), "the passing hook's badge"), headerLine(box));
+    const badge = only(badges(root), "the box's hooks badge");
+    expectOnLine(badge, headerLine(box));
+    expect(badge.getAttribute("aria-label")).toBe("2 hooks ran");
+    expect(await openList(badge)).toEqual(["seat guard", "broken"]);
+    await userEvent.keyboard("{Escape}");
   });
 });
 
@@ -336,5 +346,86 @@ describe("the group header's count", () => {
     ]);
     const count = only(groupHeaders(two), "one group header").querySelector(".tool-group-count");
     expect(count?.textContent).toBe("Ran 2 calls: Send Message, Read Inbox \u00b7 1 failed");
+  });
+});
+
+describe("hook rows with no tool call between them", () => {
+  it("share one box with no header in a turn that has a tool box", () => {
+    const root = render((t) => [
+      call(t, 1),
+      say(t, 2, "done"),
+      hook(t, 3, "stop a", { hook_trigger: "Stop", status: "failed" }),
+      hook(t, 4, "stop b", { hook_trigger: "Stop", status: "failed" }),
+    ]);
+    expect(groupHeaders(root), "no group header").toHaveLength(0);
+    const rows = hookRows(root);
+    expect(rows.map((c) => c.dataset["title"])).toEqual([
+      "Hook fired: stop a",
+      "Hook fired: stop b",
+    ]);
+    const shell = rows[0]?.closest<HTMLElement>(".tool-group");
+    expect(rows[1]?.closest(".tool-group"), "one box").toBe(shell);
+    expect(getComputedStyle(shell ?? document.body).borderTopStyle).toBe("solid");
+  });
+
+  it("are a group counting them in a turn with no tool box", () => {
+    const root = render((t) => [
+      hook(t, 1, "stop a", { hook_trigger: "Stop", status: "failed" }),
+      hook(t, 2, "stop b", { hook_trigger: "Stop", status: "failed" }),
+    ]);
+    const count = only(groupHeaders(root), "one group header").querySelector(".tool-group-count");
+    expect(count?.textContent).toMatch(/^Ran 2 hooks/);
+    expect(hookRows(root)).toHaveLength(2);
+    expect(badges(root)).toHaveLength(0);
+  });
+});
+
+describe("the spacer standing for a dropped box", () => {
+  /** How far `next` starts below `box`'s top, less the one row gap between them: what a head spacer must hold. */
+  function heldAbove(box: HTMLElement, next: HTMLElement, body: HTMLElement): number {
+    const gap = Number.parseFloat(getComputedStyle(body).rowGap);
+    return next.getBoundingClientRect().top - box.getBoundingClientRect().top - gap;
+  }
+
+  function row(body: HTMLElement, at: number): HTMLElement {
+    const r = body.querySelector<HTMLElement>(`:scope > [data-entry-seq="${String(at)}"]`);
+    if (r === null) {
+      throw new Error(`no row at ${String(at)}`);
+    }
+    return r;
+  }
+
+  it("holds a lone tool box with its quiet hooks at its open height", async () => {
+    const output = Array.from({ length: 30 }, (_, i) => `line ${String(i)}`).join("\n");
+    const { body, turn } = mount((t) => [
+      call(t, 1, { output }),
+      hook(t, 2, "seat guard"),
+      hook(t, 3, "notify", { hook_trigger: "PostToolUse" }),
+      say(t, 4, "sent"),
+    ]);
+    const box = only(toolBoxes(body), "one tool box");
+    box.querySelector<HTMLElement>(".tool-disclosure")?.click();
+    await vi.waitFor(() => {
+      expect(box.getAnimations({ subtree: true })).toHaveLength(0);
+    });
+    const shell = box.closest<HTMLElement>(".tool-group") ?? box;
+    const held = heldAbove(shell, row(body, 4), body);
+    expect(held, "premise: the open box is taller than a folded group").toBeGreaterThan(200);
+    dropHead(turn, { from: 4, to: 5 });
+    expect(spacerHeight(turn, { from: 4, to: 5 }, "head", "")).toBe(held);
+  });
+
+  it("adds nothing for a turn hook folded into another box's badge", () => {
+    const { body, turn } = mount((t) => [
+      call(t, 1),
+      say(t, 2, "sent it"),
+      hook(t, 3, "stop check", { hook_trigger: "Stop" }),
+      say(t, 4, "bye"),
+    ]);
+    expect(hookRows(body), "premise: the stop hook folded").toHaveLength(0);
+    const box = only(toolBoxes(body), "one tool box");
+    const held = heldAbove(box.closest<HTMLElement>(".tool-group") ?? box, row(body, 4), body);
+    dropHead(turn, { from: 4, to: 5 });
+    expect(spacerHeight(turn, { from: 4, to: 5 }, "head", "")).toBe(held);
   });
 });

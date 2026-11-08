@@ -89,6 +89,8 @@ export interface HookFold {
   /** Rows of a group with no work: quiet hooks that gate no tool call, which the nearest group with work in the
    *  same container may fold (`foldStrayHook`); a row until one does. */
   readonly strays: HTMLElement[];
+  /** Every hook a badge may list, in member order: the folded ones and, while hook status shows, the hook rows. */
+  readonly listed: HTMLElement[];
 }
 
 /** Hide or show each member per the hook rules and return what is left as rows and folded hooks. */
@@ -98,6 +100,7 @@ export function foldGroupHooks(members: readonly HTMLElement[]): HookFold {
   const rows: HTMLElement[] = [];
   const folded: HTMLElement[] = [];
   const strays: HTMLElement[] = [];
+  const listed: HTMLElement[] = [];
   for (const c of members) {
     const fate = hookFate(c, refused, work.length > 0);
     const row = fate === "row" || fate === "stray";
@@ -111,8 +114,11 @@ export function foldGroupHooks(members: readonly HTMLElement[]): HookFold {
     if (fate === "stray") {
       strays.push(c);
     }
+    if (fate === "folded" || (row && statusShown && c.dataset["kind"] === "hook")) {
+      listed.push(c);
+    }
   }
-  return { rows, folded, work, strays };
+  return { rows, folded, work, strays, listed };
 }
 
 /** Fold a stray into another group's badge, or give it back its row. */
@@ -121,8 +127,10 @@ export function foldStrayHook(card: HTMLElement, folded: boolean): void {
   card.toggleAttribute("data-hook-folded", folded);
 }
 
-/** A quiet hook folds whatever its trigger, but a refused group keeps as a row a hook that could have refused: a
- *  tool-trigger one, or an unresolved one while status shows (with it off, `hookRenders` and the server hide it). */
+/** A hook that failed or printed is a row, and so is a quiet one a refused group keeps because it could have refused
+ *  (a tool-trigger hook, or an unresolved one while status shows). Any other quiet hook hides with status off; with
+ *  it on, it folds beside a non-hook card, and with none a tool-trigger hook is a row and any other a stray that
+ *  `placeStrays` may fold. */
 function hookFate(
   c: HTMLElement,
   refused: boolean,
