@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Turn } from "./turns.js";
 import toolsCSS from "./css/14-tools.css?raw";
+import indexHtml from "../static/index.html?raw";
 import type * as EditorOpeners from "./editor-openers.js";
 import type { Entry, EntryToolCall } from "./wire/types.gen.js";
 
@@ -38,6 +39,8 @@ const { setActive } = await import("./store.js");
 const { toolIcon } = await import("./icons.js");
 const { iconEl } = await import("./icon-el.js");
 const { setWorkspaceRoot, _resetForTest: resetWorkspaceRoot } = await import("./workspace.js");
+const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
+const { createRunStepStream } = await import("./run-chat-steps.js");
 
 const CHAT_ID = "c-steering-card";
 setActive(CHAT_ID);
@@ -282,5 +285,279 @@ describe("a steering box", () => {
     } finally {
       style.remove();
     }
+  });
+});
+
+// KAS names a document the client injected (marotte's own environment doc) `client:<session>:<name>`.
+const CLIENT_DOC = "client:sess_79643ff5-74a8-49d5-a321-6a3698d6d9ad:marotte";
+const SECOND_DOC = "file:///workspace/.kiro/steering/mandatory-instructions.md";
+const CLEAN_TITLE =
+  "Steering loaded: marotte, mandatory-instructions.md, git commits.md, global.md";
+const clientSet = (turnID: string): Entry[] => [
+  steering(turnID, 1, [CLIENT_DOC, SECOND_DOC, WORKSPACE_DOC, GLOBAL_DOC], CLEAN_TITLE),
+];
+
+/** The inline glyph a docs-page tab draws in static/index.html, children only. */
+function docsTabGlyph(tab: string): string {
+  const at = indexHtml.indexOf(`data-docs-tab="${tab}"`);
+  expect(at, `static/index.html has no ${tab} docs tab`).toBeGreaterThan(-1);
+  const tpl = document.createElement("template");
+  tpl.innerHTML = /<svg\b[\s\S]*?<\/svg>/.exec(indexHtml.slice(at))?.[0] ?? "";
+  // Serialized through the DOM like the card's icon, so `<circle/>` and `<circle></circle>` compare equal.
+  return (tpl.content.querySelector("svg")?.innerHTML ?? "").replace(/\s+/g, " ").trim();
+}
+
+function frame(): Promise<void> {
+  return new Promise((r) => requestAnimationFrame(() => r()));
+}
+
+describe("a steering box's words", () => {
+  it("names a client-injected document by its name, with no session id or source key", () => {
+    const box = onlyBox(render(clientSet, true));
+    const header = box.querySelector<HTMLElement>(".tool-header");
+    for (const text of [
+      header?.textContent ?? "",
+      header?.title ?? "",
+      box.dataset["title"] ?? "",
+    ]) {
+      expect(text).not.toContain("client:");
+      expect(text).not.toContain("sess_");
+    }
+    expect(nameParts(box)).toEqual([
+      ["marotte", null],
+      ["mandatory-instructions.md", "/workspace/.kiro/steering/mandatory-instructions.md"],
+      ["git commits.md", "/workspace/.kiro/steering/git commits.md"],
+      ["global.md", null],
+    ]);
+  });
+
+  it("counts documents in its group's header, singular and plural, with no source key", () => {
+    const body = render(
+      (turnID) => [
+        steering(turnID, 1, [CLIENT_DOC], "Steering loaded: marotte"),
+        steering(
+          turnID,
+          2,
+          [SECOND_DOC, WORKSPACE_DOC],
+          "Steering loaded: mandatory-instructions.md, git commits.md",
+        ),
+      ],
+      true,
+    );
+    const group = boxes(body)[0]?.closest<HTMLElement>(".tool-group");
+    expect(group).not.toBeNull();
+    refreshGroupHeader(group as HTMLDivElement);
+    const count = group?.querySelector(".tool-group-count")?.textContent ?? "";
+    expect(count).toBe("Loaded 3 steering docs: marotte, mandatory-instructions.md, +1 more");
+  });
+
+  it("counts a document whose name holds a comma once, from the box's documents", () => {
+    const body = render(
+      (turnID) => [
+        steering(
+          turnID,
+          1,
+          ["file:///workspace/.kiro/steering/a,%20b.md"],
+          "Steering loaded: a, b.md",
+        ),
+        steering(turnID, 2, ["file:///workspace/.kiro/steering/go.md"], "Steering loaded: go.md"),
+      ],
+      true,
+    );
+    const group = boxes(body)[0]?.closest<HTMLElement>(".tool-group");
+    expect(group).not.toBeNull();
+    refreshGroupHeader(group as HTMLDivElement);
+    const count = group?.querySelector(".tool-group-count")?.textContent ?? "";
+    expect(count).toBe("Loaded 2 steering docs: a, b.md, go.md");
+  });
+});
+
+describe("a steering box's links", () => {
+  let style: HTMLStyleElement | null = null;
+  afterEach(() => {
+    style?.remove();
+    style = null;
+  });
+
+  it("draws every openable document as the standard file pill and every other name as plain text", () => {
+    const box = onlyBox(render(clientSet, true));
+    const links = [...box.querySelectorAll<HTMLButtonElement>(".tool-title button")];
+    expect(links.map((b) => b.dataset["path"])).toEqual([
+      "/workspace/.kiro/steering/mandatory-instructions.md",
+      "/workspace/.kiro/steering/git commits.md",
+    ]);
+    for (const b of links) {
+      expect(b.classList).toContain("tool-file-link");
+      expect(b.querySelector(".tool-file-icon > svg"), "the pill's file glyph").not.toBeNull();
+      expect(b.querySelector(".tool-file-name")?.textContent).toBe(b.textContent);
+    }
+    const plain = [...box.querySelectorAll<HTMLElement>(".tool-title .steering-doc")].filter(
+      (n) => n.tagName !== "BUTTON",
+    );
+    expect(plain.map((n) => n.textContent)).toEqual(["marotte", "global.md"]);
+    for (const n of plain) {
+      expect(n.closest(".tool-file-link")).toBeNull();
+    }
+  });
+
+  it("paints the title's words in the default text colour and only the links in the accent", () => {
+    style = mountAppCSS();
+    const box = onlyBox(render(clientSet, true));
+    const probe = document.createElement("span");
+    probe.style.color = "var(--c-text-secondary)";
+    box.appendChild(probe);
+    const accent = document.createElement("span");
+    accent.style.color = "var(--c-accent)";
+    box.appendChild(accent);
+    const title = box.querySelector<HTMLElement>(".tool-title");
+    const plain = box.querySelector<HTMLElement>(".tool-title span.steering-doc");
+    expect(getComputedStyle(title as HTMLElement).color).toBe(getComputedStyle(probe).color);
+    expect(getComputedStyle(plain as HTMLElement).color).toBe(getComputedStyle(probe).color);
+    for (const b of box.querySelectorAll<HTMLElement>(".tool-title .tool-file-link")) {
+      expect(getComputedStyle(b).color).toBe(getComputedStyle(accent).color);
+    }
+  });
+});
+
+describe("a steering box's icon", () => {
+  let style: HTMLStyleElement | null = null;
+  afterEach(() => {
+    style?.remove();
+    style = null;
+  });
+
+  it("is the docs page's Steering glyph", () => {
+    const box = onlyBox(render(threeDocs, true));
+    const svg = box.querySelector(".tool-icon > svg")?.innerHTML.replace(/\s+/g, " ").trim();
+    expect(svg).toBe(docsTabGlyph("steering"));
+  });
+
+  for (const width of [760, 360]) {
+    it(`sits in its neighbours' icon column and row centre at ${String(width)}px`, async () => {
+      style = mountAppCSS();
+      const body = render(
+        (turnID) => [
+          call(turnID, 1, { id: "r1", input: { path: "/workspace/main.go" } }),
+          steering(turnID, 2, [CLIENT_DOC, SECOND_DOC, WORKSPACE_DOC, GLOBAL_DOC], CLEAN_TITLE),
+          call(turnID, 3, { id: "r3", input: { path: "/workspace/other.go" } }),
+        ],
+        true,
+      );
+      body.style.cssText = `position:fixed;top:0;left:0;inline-size:${String(width)}px;`;
+      const group = body.querySelector<HTMLElement>(".tool-group");
+      if (group?.classList.contains("tool-group-collapsed") === true) {
+        group.querySelector<HTMLElement>(".tool-group-header")?.click();
+      }
+      await frame();
+      await Promise.all(document.getAnimations().map((a) => a.finished));
+      await frame();
+      const cards = [...body.querySelectorAll<HTMLElement>(".tool-call")];
+      expect(cards.map((c) => c.dataset["kind"])).toEqual(["read", "steering", "read"]);
+      const at = (card: HTMLElement): { left: number; mid: number } => {
+        const icon = card.querySelector(".tool-header > .tool-icon")?.getBoundingClientRect();
+        const top = card.getBoundingClientRect().top;
+        return {
+          left: icon?.left ?? NaN,
+          mid: (icon?.top ?? NaN) + (icon?.height ?? NaN) / 2 - top,
+        };
+      };
+      const [above, box, below] = cards.map(at);
+      for (const n of [above, below]) {
+        expect(
+          Math.abs((box?.left ?? NaN) - (n?.left ?? NaN)),
+          "icon left edge",
+        ).toBeLessThanOrEqual(1);
+        expect(
+          Math.abs((box?.mid ?? NaN) - (n?.mid ?? NaN)),
+          "icon vertical centre",
+        ).toBeLessThanOrEqual(1);
+      }
+    });
+  }
+
+  it("is as tall as a one-line read card when a file pill sits on its line", async () => {
+    style = mountAppCSS();
+    const body = render(
+      (turnID) => [
+        call(turnID, 1, { id: "r1", input: { path: "/workspace/main.go" } }),
+        steering(turnID, 2, [SECOND_DOC], "Steering loaded: mandatory-instructions.md"),
+        call(turnID, 3, { id: "r3", input: { path: "/workspace/other.go" } }),
+      ],
+      true,
+    );
+    body.style.cssText = "position:fixed;top:0;left:0;inline-size:760px;";
+    const group = body.querySelector<HTMLElement>(".tool-group");
+    if (group?.classList.contains("tool-group-collapsed") === true) {
+      group.querySelector<HTMLElement>(".tool-group-header")?.click();
+    }
+    await frame();
+    await Promise.all(document.getAnimations().map((a) => a.finished));
+    await frame();
+    const headers = [...body.querySelectorAll<HTMLElement>(".tool-call .tool-header")];
+    expect(headers).toHaveLength(3);
+    const [read, box] = headers.map((h) => h.getBoundingClientRect());
+    expect(box?.height, "steering header height").toBeCloseTo(read?.height ?? NaN, 0);
+    const icon = headers[1]?.querySelector(".tool-icon")?.getBoundingClientRect();
+    const pill = headers[1]?.querySelector(".tool-file-name")?.getBoundingClientRect();
+    expect(
+      Math.abs(
+        (pill?.top ?? NaN) +
+          (pill?.height ?? NaN) / 2 -
+          ((icon?.top ?? NaN) + (icon?.height ?? NaN) / 2),
+      ),
+      "pill text centre against the icon centre",
+    ).toBeLessThanOrEqual(1);
+  });
+
+  it("draws the same box in the chat and in a run step's transcript", async () => {
+    style = mountAppCSS();
+    const build = (turnID: string): Entry[] => [
+      call(turnID, 1, { id: "r1", input: { path: "/workspace/main.go" } }),
+      steering(turnID, 2, [CLIENT_DOC, SECOND_DOC, WORKSPACE_DOC, GLOBAL_DOC], CLEAN_TITLE),
+    ];
+    const chat = render(build, false);
+    const pane = document.createElement("div");
+    pane.className = "run-step-body";
+    document.body.appendChild(pane);
+    hosts.push(pane);
+    const stream = createRunStepStream(() => pane);
+    turnSeq += 1;
+    const turnID = `t-sc-run-${String(turnSeq)}`;
+    const turn: Turn = {
+      id: turnID,
+      n: 1,
+      trigger: undefined,
+      body: build(turnID),
+      openEntries: new Map(),
+      ts: 1,
+      outcome: "completed",
+      rewindTo: undefined,
+      branchFrom: undefined,
+    };
+    stream.apply(new Map([["step", [{ turn, live: false }]]]));
+    chat.style.cssText = "position:fixed;top:0;left:0;inline-size:360px;";
+    pane.style.cssText = "position:fixed;top:0;left:400px;inline-size:360px;";
+    for (const root of [chat, pane]) {
+      const group = root.querySelector<HTMLElement>(".tool-group");
+      if (group?.classList.contains("tool-group-collapsed") === true) {
+        group.querySelector<HTMLElement>(".tool-group-header")?.click();
+      }
+    }
+    await frame();
+    await Promise.all(document.getAnimations().map((a) => a.finished));
+    await frame();
+    const look = (root: HTMLElement): unknown => {
+      const box = onlyBox(root);
+      const card = box.getBoundingClientRect();
+      const icon = box.querySelector(".tool-header > .tool-icon")?.getBoundingClientRect();
+      return {
+        left: Math.round((icon?.left ?? NaN) - card.left),
+        mid: Math.round((icon?.top ?? NaN) + (icon?.height ?? NaN) / 2 - card.top),
+        colour: getComputedStyle(box.querySelector(".tool-title") as HTMLElement).color,
+        names: nameParts(box),
+      };
+    };
+    stream.dispose();
+    expect(look(pane)).toEqual(look(chat));
   });
 });

@@ -15,6 +15,10 @@ describe("docName", () => {
     ["file://localhost/w/go.md", "go.md"],
     ["file:/w/go.md", "file:/w/go.md"],
     ["file:///w/.kiro/steering/", "steering"],
+    ["client:sess_79643ff5-74a8-49d5-a321-6a3698d6d9ad:marotte", "marotte"],
+    ["client:sess_1:", "client"],
+    ["client:no-name", "client"],
+    ["client:", "client"],
   ])("names %s as %s", (id, want) => {
     expect(docName(id)).toBe(want);
   });

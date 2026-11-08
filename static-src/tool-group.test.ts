@@ -61,8 +61,8 @@ describe("kindNoun", () => {
     ["shell", 2, "shell commands"],
     ["hook", 1, "hook"],
     ["hook", 2, "hooks"],
-    ["steering", 1, "steering set"],
-    ["steering", 2, "steering sets"],
+    ["steering", 1, "steering load"],
+    ["steering", 2, "steering loads"],
     ["browser", 1, "page"],
     ["browser", 2, "pages"],
     ["command", 1, "command"],
@@ -84,6 +84,7 @@ describe("summarizeSameKind", () => {
       filename: f,
       title: titles[i] ?? "",
       mcpServer: "",
+      steeringDocs: [],
     }));
   }
 
@@ -94,9 +95,9 @@ describe("summarizeSameKind", () => {
 
   it("execute with titles", () => {
     const infos: CallInfo[] = [
-      { kind: "execute", filename: "", title: "npm test", mcpServer: "" },
-      { kind: "execute", filename: "", title: "npm build", mcpServer: "" },
-      { kind: "execute", filename: "", title: "npm lint", mcpServer: "" },
+      { kind: "execute", filename: "", title: "npm test", mcpServer: "", steeringDocs: [] },
+      { kind: "execute", filename: "", title: "npm build", mcpServer: "", steeringDocs: [] },
+      { kind: "execute", filename: "", title: "npm lint", mcpServer: "", steeringDocs: [] },
     ];
     expect(summarizeSameKind("execute", infos)).toBe(
       "Ran 3 commands: npm test, npm build, +1 more",
@@ -108,50 +109,61 @@ describe("summarizeSameKind", () => {
     expect(summarizeSameKind("search", infos)).toBe("Searched 3 searches: foo, bar, +1 more");
   });
 
-  it("steering samples the document names, not the repeated title prefix", () => {
-    const infos = makeInfos(
-      "steering",
-      ["", ""],
-      ["Steering loaded: go.md, testing.md", "Steering loaded: git-commits.md"],
-    );
+  function steeringInfos(...boxes: string[][]): CallInfo[] {
+    return boxes.map((docs) => ({
+      kind: "steering",
+      filename: "",
+      title: `Steering loaded: ${docs.join(", ")}`,
+      mcpServer: "",
+      steeringDocs: docs,
+    }));
+  }
+
+  it("steering counts and samples documents, not boxes or the repeated title prefix", () => {
+    const infos = steeringInfos(["go.md", "testing.md"], ["git-commits.md"]);
     expect(summarizeSameKind("steering", infos)).toBe(
-      "Loaded 2 steering sets: go.md, testing.md, +1 more",
+      "Loaded 3 steering docs: go.md, testing.md, +1 more",
     );
   });
 
-  it("steering counts the tail in documents, across three boxes and a capped one", () => {
-    const infos = makeInfos(
-      "steering",
-      ["", "", ""],
-      [
-        "Steering loaded: go.md",
-        "Steering loaded: testing.md, +40 more",
-        "Steering loaded: git-commits.md",
-      ],
-    );
+  it("steering names one document in the singular", () => {
+    const infos = steeringInfos(["go.md"]);
+    expect(summarizeSameKind("steering", infos)).toBe("Loaded 1 steering doc: go.md");
+  });
+
+  it("steering counts every document a box loaded, also those its capped title leaves out", () => {
+    const capped = ["testing.md", ...Array.from({ length: 40 }, (_, i) => `doc-${String(i)}.md`)];
+    const infos = steeringInfos(["go.md"], capped, ["git-commits.md"]);
     expect(summarizeSameKind("steering", infos)).toBe(
-      "Loaded 3 steering sets: go.md, testing.md, +1 more",
+      "Loaded 43 steering docs: go.md, testing.md, +41 more",
     );
+  });
+
+  it("steering counts a document loaded by two boxes once", () => {
+    const infos = steeringInfos(["go.md"], ["go.md", "testing.md"]);
+    expect(summarizeSameKind("steering", infos)).toBe("Loaded 2 steering docs: go.md, testing.md");
   });
 
   it("think single", () => {
-    const infos: CallInfo[] = [{ kind: "think", filename: "", title: "", mcpServer: "" }];
+    const infos: CallInfo[] = [
+      { kind: "think", filename: "", title: "", mcpServer: "", steeringDocs: [] },
+    ];
     expect(summarizeSameKind("think", infos)).toBe("1 thinking step");
   });
 
   it("think plural", () => {
     const infos: CallInfo[] = [
-      { kind: "think", filename: "", title: "", mcpServer: "" },
-      { kind: "think", filename: "", title: "", mcpServer: "" },
+      { kind: "think", filename: "", title: "", mcpServer: "", steeringDocs: [] },
+      { kind: "think", filename: "", title: "", mcpServer: "", steeringDocs: [] },
     ];
     expect(summarizeSameKind("think", infos)).toBe("2 thinking steps");
   });
 
   it("switch_mode plural", () => {
     const infos: CallInfo[] = [
-      { kind: "switch_mode", filename: "", title: "", mcpServer: "" },
-      { kind: "switch_mode", filename: "", title: "", mcpServer: "" },
-      { kind: "switch_mode", filename: "", title: "", mcpServer: "" },
+      { kind: "switch_mode", filename: "", title: "", mcpServer: "", steeringDocs: [] },
+      { kind: "switch_mode", filename: "", title: "", mcpServer: "", steeringDocs: [] },
+      { kind: "switch_mode", filename: "", title: "", mcpServer: "", steeringDocs: [] },
     ];
     expect(summarizeSameKind("switch_mode", infos)).toBe("3 mode switches");
   });
@@ -162,7 +174,7 @@ describe("summarizeSameKind", () => {
     // undefined; this test pins that fallback behaviour.
     const customKind = "custom" as ToolKind;
     const infos: CallInfo[] = [
-      { kind: customKind, filename: "", title: "do thing", mcpServer: "" },
+      { kind: customKind, filename: "", title: "do thing", mcpServer: "", steeringDocs: [] },
     ];
     expect(summarizeSameKind(customKind, infos)).toBe("Ran 1 call: do thing");
   });
@@ -173,26 +185,26 @@ describe("summarizeSameKind", () => {
 describe("summarizeMCP", () => {
   it("single server", () => {
     const infos: CallInfo[] = [
-      { kind: "mcp", filename: "", title: "create_issue", mcpServer: "GitHub" },
-      { kind: "mcp", filename: "", title: "search_repos", mcpServer: "GitHub" },
+      { kind: "mcp", filename: "", title: "create_issue", mcpServer: "GitHub", steeringDocs: [] },
+      { kind: "mcp", filename: "", title: "search_repos", mcpServer: "GitHub", steeringDocs: [] },
     ];
     expect(summarizeMCP(infos)).toBe("Called 2 GitHub tools: create_issue, search_repos");
   });
 
   it("single server with many tools", () => {
     const infos: CallInfo[] = [
-      { kind: "mcp", filename: "", title: "a", mcpServer: "Linear" },
-      { kind: "mcp", filename: "", title: "b", mcpServer: "Linear" },
-      { kind: "mcp", filename: "", title: "c", mcpServer: "Linear" },
+      { kind: "mcp", filename: "", title: "a", mcpServer: "Linear", steeringDocs: [] },
+      { kind: "mcp", filename: "", title: "b", mcpServer: "Linear", steeringDocs: [] },
+      { kind: "mcp", filename: "", title: "c", mcpServer: "Linear", steeringDocs: [] },
     ];
     expect(summarizeMCP(infos)).toBe("Called 3 Linear tools: a, b, +1 more");
   });
 
   it("multi server", () => {
     const infos: CallInfo[] = [
-      { kind: "mcp", filename: "", title: "x", mcpServer: "GitHub" },
-      { kind: "mcp", filename: "", title: "y", mcpServer: "GitHub" },
-      { kind: "mcp", filename: "", title: "z", mcpServer: "Linear" },
+      { kind: "mcp", filename: "", title: "x", mcpServer: "GitHub", steeringDocs: [] },
+      { kind: "mcp", filename: "", title: "y", mcpServer: "GitHub", steeringDocs: [] },
+      { kind: "mcp", filename: "", title: "z", mcpServer: "Linear", steeringDocs: [] },
     ];
     expect(summarizeMCP(infos)).toBe("3 integration calls: 2 GitHub, 1 Linear");
   });
@@ -203,20 +215,26 @@ describe("summarizeMCP", () => {
 describe("summarizeMixed", () => {
   it("mixed kinds", () => {
     const infos: CallInfo[] = [
-      { kind: "read", filename: "a.ts", title: "", mcpServer: "" },
-      { kind: "read", filename: "b.ts", title: "", mcpServer: "" },
-      { kind: "edit", filename: "c.ts", title: "", mcpServer: "" },
-      { kind: "execute", filename: "", title: "npm test", mcpServer: "" },
+      { kind: "read", filename: "a.ts", title: "", mcpServer: "", steeringDocs: [] },
+      { kind: "read", filename: "b.ts", title: "", mcpServer: "", steeringDocs: [] },
+      { kind: "edit", filename: "c.ts", title: "", mcpServer: "", steeringDocs: [] },
+      { kind: "execute", filename: "", title: "npm test", mcpServer: "", steeringDocs: [] },
     ];
     expect(summarizeMixed(infos)).toBe("4 operations: 2 reads, 1 edit, 1 command");
   });
 
-  it("names a steering box by the noun its own group uses", () => {
+  it("counts a steering box as one operation, a steering load, whatever it holds", () => {
     const infos: CallInfo[] = [
-      { kind: "read", filename: "a.ts", title: "", mcpServer: "" },
-      { kind: "steering", filename: "", title: "Steering loaded: ts.md", mcpServer: "" },
+      { kind: "read", filename: "a.ts", title: "", mcpServer: "", steeringDocs: [] },
+      {
+        kind: "steering",
+        filename: "",
+        title: "Steering loaded: ts.md",
+        mcpServer: "",
+        steeringDocs: [],
+      },
     ];
-    expect(summarizeMixed(infos)).toBe("2 operations: 1 read, 1 steering set");
+    expect(summarizeMixed(infos)).toBe("2 operations: 1 read, 1 steering load");
   });
 });
 

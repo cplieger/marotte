@@ -24,8 +24,21 @@ function localFilePath(id: string): string | null {
   }
 }
 
-/** A document's name: a local file's base name, any other id as written. */
+/** The id KAS gives a document the client injected opens `client:<session>:<name>`. */
+const CLIENT_DOC_PREFIX = "client:";
+
+/** A client-injected document whose id carries no name, so a session id never reaches the box. */
+const CLIENT_DOC_LABEL = "client";
+
+/** A document's name: a local file's base name, a client-injected document's own name, any other
+ *  id as written. Mirrors the server's `steeringDocName`. */
 export function docName(id: string): string {
+  if (id.startsWith(CLIENT_DOC_PREFIX)) {
+    const rest = id.slice(CLIENT_DOC_PREFIX.length);
+    const sep = rest.indexOf(":");
+    const name = sep < 0 ? "" : rest.slice(sep + 1);
+    return name === "" ? CLIENT_DOC_LABEL : name;
+  }
   // Trailing slashes trimmed first, as Go's `path.Base` does.
   const path = localFilePath(id)?.replace(/\/+$/, "") ?? "";
   const base = path.slice(path.lastIndexOf("/") + 1);

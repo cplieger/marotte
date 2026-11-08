@@ -331,16 +331,16 @@ const ICON_TOOL_MCP = svg(
   '<path d="M9 2v6"/><path d="M15 2v6"/><path d="M6 8h12v3a6 6 0 11-12 0z"/><path d="M12 17v5"/>',
 );
 
-/** A fish-hook: the eye, the shank, the bend and the barbed point. */
+/** A fish-hook: the eye, the shank, the bend and the barbed point. The docs page's Hooks tab draws it too. */
 const ICON_TOOL_HOOK = svg(
   "ui",
   '<g transform="translate(0.25 1)"><circle cx="15" cy="4" r="2.5"/><path d="M15 6.5V14a4.5 4.5 0 0 1-9 0V8.5l3 3"/></g>',
 );
 
-/** A ship's wheel: rim, hub, four handled spokes and four inner ones; the handles keep it apart from the fetch globe. */
+/** A compass: the docs page's Steering tab draws it too. */
 const ICON_TOOL_STEERING = svg(
   "ui",
-  '<circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="1.75"/><path d="M12 1.75v8.5M12 13.75v8.5M1.75 12h8.5M13.75 12h8.5"/><path d="M13.24 10.76l3-3M10.76 13.24l-3 3M13.24 13.24l3 3M10.76 10.76l-3-3"/>',
+  '<circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>',
 );
 
 const ICON_BY_KIND: Record<ToolKind, string> = {
