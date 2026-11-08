@@ -829,7 +829,7 @@ func TestBridgeExit_DropsTheChatView(t *testing.T) {
 		next := newFakeBridge()
 		next.sessionID = string(br.SessionID())
 		h.bridge.mgr.mu.Lock()
-		h.bridge.mgr.bridges["c1"] = testBridge(next, bridgeIdle)
+		h.bridge.mgr.bridges["c1"] = testBridge(next, bridgeReady)
 		h.bridge.mgr.mu.Unlock()
 
 		br.endStream()

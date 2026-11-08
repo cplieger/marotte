@@ -443,7 +443,7 @@ func TestCloseOwner_ReleaseWaitsForADoorInProgress(t *testing.T) {
 		if o.h.bridge.mgr.get("c2") != sb || sessionClosed(br) {
 			t.Fatal("the release closed a session whose door is in progress")
 		}
-		sb.setIdle()
+		sb.setReady()
 		done()
 		synctest.Wait()
 		if !sessionClosed(br) || o.h.bridge.mgr.get("c2") != nil {
@@ -850,7 +850,7 @@ func TestCloseOwner_AStepMessageReachesItsParentAfterAPendingReload(t *testing.T
 		}
 		chat := newFakeBridge()
 		chat.sessionID = "sess_parent"
-		sb := chatEntry(t, h, "c1", chat, bridgeIdle)
+		sb := chatEntry(t, h, "c1", chat, bridgeReady)
 		leaseRun(t, h, runlease.Lease{WorkflowID: recordedRun, ChatID: "c1", ParentSessionID: "sess_parent", Origin: runlease.OriginAgent})
 		h.markSessionsForReload("test")
 		if _, _, err := h.runs.log.open(t.Context(), &translate.RunStep{RunID: recordedRun, NodePath: "seq/step", SessionID: recordedSession}, "c1"); err != nil {
@@ -1158,7 +1158,7 @@ var closeHoldRows = []holdRow{
 		o.sb.mu.Lock()
 		o.sb.state = bridgeStarting
 		o.sb.mu.Unlock()
-		return once(func() { o.sb.setIdle(); done() })
+		return once(func() { o.sb.setReady(); done() })
 	}},
 	{name: "an open its caller still uses", kind: holdOpen, acquire: func(t *testing.T, o *ownerHub) func() {
 		sb, release, err := o.h.coord.openBridge(t.Context(), "c1", "")
@@ -1826,7 +1826,7 @@ func TestCloseOwner_TheRunEndKeepsATabbedParentResident(t *testing.T) {
 		}
 		chat := newFakeBridge()
 		chat.sessionID = "sess_parent"
-		sb := chatEntry(t, h, "c1", chat, bridgeIdle)
+		sb := chatEntry(t, h, "c1", chat, bridgeReady)
 		leaseRun(t, h, runlease.Lease{WorkflowID: recordedRun, ChatID: "c1", ParentSessionID: "sess_parent", Origin: runlease.OriginAgent})
 		h.markSessionsForReload("test")
 		if _, _, err := h.runs.log.open(t.Context(), &translate.RunStep{RunID: recordedRun, NodePath: "seq/step", SessionID: recordedSession}, "c1"); err != nil {

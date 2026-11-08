@@ -43,7 +43,7 @@ func newStopRig(t *testing.T) (*Runtime, *testChatStore, *fakeBridge) {
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", marotte.RunStatusRunning, ""),
 	}
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.RecordSession("sess_owner") })
-	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
+	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
 	h.runs.observeStart(t.Context(), "", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_1", "workflowName": "r", "parentSessionId": "sess_owner",
 	}))
@@ -67,7 +67,7 @@ func TestStopChatRuns_ReadsTheRunInventoryOnce(t *testing.T) {
 		methodKiroWorkflowInspect: inspectReply(t, "wf_other", "running", ""),
 	}
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.RecordSession("sess_owner") })
-	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
+	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
 	leased(t, h.runs, "wf_1")
 	leased(t, h.runs, "wf_2")
 
@@ -101,7 +101,7 @@ func TestStopChatRuns_TheFirstCancelRidesTheChatsResidentSession(t *testing.T) {
 	}
 	owner.sessionID = "sess_owner"
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.RecordSession("sess_owner") })
-	h.insertBridgeNow("c1", testBridge(owner, bridgeIdle))
+	h.insertBridgeNow("c1", testBridge(owner, bridgeReady))
 	leaseRun(t, h, runlease.Lease{WorkflowID: "wf_1", ChatID: "c1", ParentSessionID: "sess_owner", Origin: runlease.OriginAgent})
 
 	h.runs.stopChatRuns(t.Context(), "c1", &chat.Claim{})

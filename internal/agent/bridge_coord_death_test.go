@@ -20,7 +20,7 @@ func TestForward_DischargesWaitingOnUserWhenTheAgentDies(t *testing.T) {
 		Status:      marotte.ChatStatusWaitingOnUser,
 		Description: "needs a decision",
 	})
-	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
+	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
 
 	br.endStream()
 	h.coord.Forward("c1", br)
@@ -37,7 +37,7 @@ func TestForward_LeavesANonWaitingStatusAlone(t *testing.T) {
 		Status:      "in_progress",
 		Description: "working",
 	})
-	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
+	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
 
 	br.endStream()
 	h.coord.Forward("c1", br)
@@ -61,7 +61,7 @@ func TestForward_BridgeExitedNamesSessionAndCause(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, br := newTestHub()
 			if tc.registered {
-				h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
+				h.insertBridgeNow("c1", testBridge(br, bridgeReady))
 			}
 			logs := captureLogs(t)
 
@@ -115,7 +115,7 @@ func TestBridgeEnd_RetiresTheAsksItCarriedAsEnded(t *testing.T) {
 			if engineExited {
 				registered = br
 			}
-			h.insertBridgeNow("c1", testBridge(registered, bridgeIdle))
+			h.insertBridgeNow("c1", testBridge(registered, bridgeReady))
 			head := h.bus.fanout.Position().Head
 
 			br.endStream()

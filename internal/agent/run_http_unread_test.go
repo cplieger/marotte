@@ -33,7 +33,7 @@ func TestControlHandler_AnAnswerThatCouldNotBeReadIsNotARefusal(t *testing.T) {
 					methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
 					methodKiroWorkflowInspect: inspectReply(t, "wf_1", v.status, ""),
 				}
-				h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+				h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 				br.setCallErr(v.method, callErr)
 				req := httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/"+vName, nil)
 				req.SetPathValue("id", "wf_1")

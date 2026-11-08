@@ -71,7 +71,7 @@ func TestRunComplete_ATerminalRunReleasesItsHostSessionAndAPauseKeepsIt(t *testi
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()
 			t.Cleanup(func() { shutdownHub(t, h) })
-			h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+			h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 			h.runs.grantLease(t.Context(), "wf_1", "nightly", manualLaunch(), hostSec())
 
 			h.dispatch(t.Context(), runChatID("wf_1"), h.originOf(runChatID("wf_1")), runCompleteFrame(t, "wf_1", tc.status))
@@ -94,7 +94,7 @@ func TestRunComplete_ATerminalRunReleasesItsHostSessionAndAPauseKeepsIt(t *testi
 func TestRunStopped_APausedRunKeepsTheFieldsItsLeaseIsFor(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeIdle))
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(br, bridgeReady))
 	// A scheduled launch carries the unattended mark.
 	h.runs.grantLease(t.Context(), "wf_1", "nightly",
 		scheduledLaunch(launchrule.Row{ID: "sched_1"}, time.Now().Add(time.Hour)), hostSec())
@@ -123,7 +123,7 @@ func TestEnsureResident_AResidentRunIsHandedBackWithNoLoad(t *testing.T) {
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	incumbent := newFakeBridge()
-	h.insertBridgeNow(runChatID("wf_1"), testBridge(incumbent, bridgeIdle))
+	h.insertBridgeNow(runChatID("wf_1"), testBridge(incumbent, bridgeReady))
 	leaseParentless(t, h, "wf_1")
 	second := newFakeBridge()
 	fakeSourceOf(t, h).setFactory(func() engineSession { return second })

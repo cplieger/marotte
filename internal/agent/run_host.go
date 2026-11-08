@@ -217,7 +217,7 @@ func (rs *Runs) launchAs(
 	// Deadline is its extension ceiling, not its budget, so the budget's end is carried over instead.
 	rctx, rcancel := rs.engine.stallAware(context.WithoutCancel(ctx), time.Until(budgetEnd))
 	defer rcancel()
-	sb.setIdle()
+	sb.setReady()
 	sb.settled.settle(nil)
 	_ = sb.useRun(cctx, func(_ context.Context, s engineSession) error {
 		rs.coord.goRunForward(runChatID(wfID), s)

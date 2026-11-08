@@ -58,7 +58,7 @@ func handoffHub(t *testing.T) (*Runtime, *testChatStore) {
 	h, cs, br := newTestHub()
 	seedChat(t, cs, "c1")
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
-	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
+	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
 	for _, k := range []string{"steer-a", "steer-b"} {
 		h.steerQueue.RouteSteer("c1", k, k, nil, command.SteerHolder{Held: true, PromptClass: true})
 		if _, refuse := h.steerQueue.RouteSteer("c1", k, k, nil, command.SteerHolder{}); refuse != command.SteerRefuseNoTurn {
@@ -217,7 +217,7 @@ func pickHub(t *testing.T) (*Runtime, *testChatStore, *pausingStore) {
 	h, cs, br := newTestHub()
 	seedChat(t, cs, "c1")
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
-	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
+	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
 	seedQueue(t, cs, "c1", marotte.QueuedPrompt{ID: "m-q1", Text: "next"})
 	ps := newPausingStore(h.coord.chatStore)
 	ps.onPick = true

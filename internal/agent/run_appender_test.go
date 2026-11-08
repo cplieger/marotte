@@ -373,7 +373,7 @@ func newWakeRig(t *testing.T, id string, inspect json.RawMessage) *wakeRig {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	g := &wakeRig{h: h, br: br, push: push}
 	br.sessionID = parkSession
-	h.insertBridgeNow(parkChat, testBridge(br, bridgeIdle))
+	h.insertBridgeNow(parkChat, testBridge(br, bridgeReady))
 	h.runs.useLog(newRunLog(t.TempDir()))
 	h.coord.runs = h.runs.log
 	if _, err := cs.Mutate(t.Context(), parkChat, func(c *marotte.Chat, _ bool) bool {

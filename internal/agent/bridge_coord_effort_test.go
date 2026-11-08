@@ -48,7 +48,7 @@ func healEffortFixture(t *testing.T, chose string, opts ...Option) (*Runtime, *f
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
+	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
 	return h, br
 }
 

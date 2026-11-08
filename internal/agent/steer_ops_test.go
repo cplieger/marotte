@@ -50,7 +50,7 @@ func steerOpsHub(t *testing.T) (*steerHarness, *testChatStore, *fakeBridge) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
 	br.callResults = map[string]json.RawMessage{marotte.MethodSessionSteer: json.RawMessage(`{"queued":true}`)}
-	h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
+	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
 	return harnessOn(h, "c1", t.Fatalf), cs, br
 }
 
@@ -223,7 +223,7 @@ func TestCmdSteerRemove_ATurnEndingUnderTheClearResendsTheKeptRows(t *testing.T)
 						TurnID: s.turnID(), BridgeDeath: true, Exit: deathExit, Source: marotte.TurnSourcePrompt,
 					})
 				})
-			}}, bridgeIdle))
+			}}, bridgeReady))
 		}, closed: func(t *testing.T, s *steerHarness) {
 			s.h.coord.afterTurnClose(t.Context(), s.h.coord.turns.testLifecycle("c1"), &closeFacts{exit: deathExit, outcome: marotte.TurnOutcomeInterrupted})
 		}},

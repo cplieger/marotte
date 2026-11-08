@@ -453,7 +453,7 @@ func TestSwitchModel_TheChatRecordOutranksTheLiveSession(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("seed the chat: %v", err)
 			}
-			h.insertBridgeNow("c1", testBridge(br, bridgeIdle))
+			h.insertBridgeNow("c1", testBridge(br, bridgeReady))
 
 			rec := postCmd(t, h, marotte.ClientCommand{
 				Type: "switch_model", ChatID: "c1",

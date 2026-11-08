@@ -142,7 +142,7 @@ func (rs *Runs) openHost(workflowID, session string, presets []string, sb *share
 		sb.settled.settle(err)
 		return
 	}
-	sb.setIdle()
+	sb.setReady()
 	rs.router.registerOwner(workflowID, marotte.SessionID(session))
 	sb.settled.settle(nil)
 	slog.Info("loaded a run's launching session", "workflow_id", workflowID, "session_id", session)

@@ -5,7 +5,7 @@ import "sync"
 type bridgeState int
 
 const (
-	bridgeIdle      bridgeState = iota // ready for a new prompt
+	bridgeReady     bridgeState = iota // ready for a new prompt
 	bridgeStarting                     // the session door is in progress (held during openGeneration)
 	bridgePrompting                    // prompt in flight
 )
@@ -29,7 +29,7 @@ type sharedBridge struct {
 func (sb *sharedBridge) tryAcquireForPrompt() bool {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
-	if sb.state != bridgeIdle {
+	if sb.state != bridgeReady {
 		return false
 	}
 	sb.state = bridgePrompting
@@ -38,7 +38,7 @@ func (sb *sharedBridge) tryAcquireForPrompt() bool {
 
 func (sb *sharedBridge) releaseAfterPrompt() {
 	sb.mu.Lock()
-	sb.state = bridgeIdle
+	sb.state = bridgeReady
 	sb.mu.Unlock()
 }
 
@@ -49,10 +49,10 @@ func (sb *sharedBridge) startedPastOpen() bool {
 	return sb.state != bridgeStarting
 }
 
-// setIdle publishes the idle transition under the lock: admission reads liveness during the session open.
-func (sb *sharedBridge) setIdle() {
+// setReady publishes the door's end under the lock: admission reads liveness during the session open.
+func (sb *sharedBridge) setReady() {
 	sb.mu.Lock()
-	sb.state = bridgeIdle
+	sb.state = bridgeReady
 	sb.mu.Unlock()
 }
 

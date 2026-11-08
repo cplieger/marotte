@@ -599,7 +599,7 @@ func (bc *bridgeCoordinator) openGeneration(
 	bc.commitUnservedModel(ctx, chatID, held, session.ModelID())
 	// The session door's half of the supervised fail-open (the door's own assert is best-effort).
 	bc.reportSupervisedNotApplied(ctx, chatID, rec.SupervisedMode, session.SupervisedApplied())
-	sb.setIdle()
+	sb.setReady()
 	bc.publishGeneration(ctx, chatID, sb)
 }
 
@@ -903,7 +903,7 @@ func (bc *bridgeCoordinator) tryLoadSession(
 	}
 	bc.commitUnservedModel(ctx, chatID, held, session.ModelID())
 	reassertUserName(ctx, chatID, session, renameTo)
-	sb.setIdle()
+	sb.setReady()
 	return true, nil
 }
 

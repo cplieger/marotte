@@ -169,7 +169,7 @@ func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
 	sb, _ := h.bridge.mgr.orInsertNow(chatID)
 	// A session past its door: one still opening has its door retire it.
 	sb.attach(br)
-	sb.setIdle()
+	sb.setReady()
 
 	forwardDone := make(chan struct{})
 	go func() {
