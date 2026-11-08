@@ -248,8 +248,8 @@ func signature(v *ConfiguredForge) ConfiguredForge {
 	return s
 }
 
-// List answers every connection's view, ordered by kind then host. It reads
-// memory only.
+// List answers every connection's view, ordered by kind then host, a total
+// order since kind and host make the unique id. It reads memory only.
 func (m *Manager) List() []ConfiguredForge {
 	m.mu.RLock()
 	out := make([]ConfiguredForge, 0, len(m.conns))

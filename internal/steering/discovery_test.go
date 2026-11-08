@@ -108,7 +108,7 @@ func TestFindRepoDocs_ClassifiesByFrontmatter(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	docs := findRepoDocs(dir)
+	docs, _ := findRepoDocs(dir)
 	if len(docs) != 4 {
 		t.Fatalf("got %d docs, want 4", len(docs))
 	}
@@ -132,8 +132,7 @@ func TestFindRepoDocs_ClassifiesByFrontmatter(t *testing.T) {
 
 func TestFindRepoDocs_NoSteeringDir(t *testing.T) {
 	dir := t.TempDir()
-	docs := findRepoDocs(dir)
-	if docs != nil {
+	if docs, seen := findRepoDocs(dir); docs != nil || seen != (dirCount{}) {
 		t.Errorf("expected nil, got %+v", docs)
 	}
 }
@@ -150,9 +149,9 @@ func TestFindRepoDocs_CapAt20(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	docs := findRepoDocs(dir)
-	if len(docs) != 20 {
-		t.Errorf("got %d docs, want 20 (capped)", len(docs))
+	docs, seen := findRepoDocs(dir)
+	if len(docs) != 20 || seen.total != 25 {
+		t.Errorf("got %d docs of %d, want 20 (capped) of 25", len(docs), seen.total)
 	}
 }
 
@@ -201,54 +200,59 @@ func TestWriteRepoSteering_OmitsEmptyGroupHeaders(t *testing.T) {
 	})
 }
 
-// TestWriteRepoSkills_HeadersAndEntryFields verifies the skills inventory
-// emits a group header only for non-empty groups and renders the
-// FileMatch / Description annotations only when those fields are set.
+// TestWriteRepoSkills_HeadersAndEntryFields verifies a file-match skill sits apart from every other
+// skill, a group header appears only for a non-empty group, and the FileMatch / Description
+// annotations render only when set.
 func TestWriteRepoSkills_HeadersAndEntryFields(t *testing.T) {
-	t.Run("fileMatch+manual: no Always header, others present, fields rendered", func(t *testing.T) {
+	t.Run("fileMatch and manual: both groups, fields rendered", func(t *testing.T) {
 		var b strings.Builder
 		writeRepoSkills(&b, "myrepo", []docEntry{
-			{Filename: "match.md", Inclusion: "fileMatch", FileMatch: "internal/**", Description: "go layout"},
-			{Filename: "ref.md", Inclusion: "manual"},
+			{Filename: "match/SKILL.md", Inclusion: "fileMatch", FileMatch: "internal/**", Description: "go layout"},
+			{Filename: "ref/SKILL.md", Inclusion: "manual"},
 		})
 		out := b.String()
-		if strings.Contains(out, "Always-loaded skills") {
-			t.Errorf("emitted Always-loaded skills header with zero always docs:\n%s", out)
+		if !strings.Contains(out, "  - **File-match skills** (`myrepo/.kiro/skills/`):\n    - `myrepo/.kiro/skills/match/SKILL.md` (matches `internal/**`) — go layout\n") {
+			t.Errorf("the fileMatch skill is not under File-match skills with its fields:\n%s", out)
 		}
-		if !strings.Contains(out, "File-match skills") {
-			t.Errorf("missing File-match skills header for a fileMatch doc:\n%s", out)
-		}
-		if !strings.Contains(out, "Manual skills") {
-			t.Errorf("missing Manual skills header for a manual doc:\n%s", out)
-		}
-		if !strings.Contains(out, "(matches `internal/**`)") {
-			t.Errorf("missing FileMatch annotation:\n%s", out)
-		}
-		if !strings.Contains(out, "— go layout") {
-			t.Errorf("missing Description annotation:\n%s", out)
+		if !strings.Contains(out, "  - **Skills** (`myrepo/.kiro/skills/`; read a SKILL.md when its description matches the task):\n    - `myrepo/.kiro/skills/ref/SKILL.md`\n") {
+			t.Errorf("the manual skill is not under Skills:\n%s", out)
 		}
 	})
-
-	t.Run("only always: no File-match/Manual headers; bare entry has no annotations", func(t *testing.T) {
+	t.Run("an always skill is read on description match, not announced as loaded", func(t *testing.T) {
 		var b strings.Builder
-		writeRepoSkills(&b, "myrepo", []docEntry{{Filename: "build.md", Inclusion: "always"}})
+		writeRepoSkills(&b, "myrepo", []docEntry{{Filename: "build/SKILL.md", Inclusion: "always"}})
 		out := b.String()
-		if strings.Contains(out, "File-match skills") {
-			t.Errorf("emitted File-match skills header with zero fileMatch docs:\n%s", out)
+		if strings.Contains(out, "File-match skills") || strings.Contains(out, "Always-loaded") {
+			t.Errorf("an always skill got a header other than Skills:\n%s", out)
 		}
-		if strings.Contains(out, "Manual skills") {
-			t.Errorf("emitted Manual skills header with zero manual docs:\n%s", out)
+		if !strings.Contains(out, "**Skills**") {
+			t.Errorf("missing Skills header:\n%s", out)
 		}
-		if !strings.Contains(out, "Always-loaded skills") {
-			t.Errorf("missing Always-loaded skills header:\n%s", out)
-		}
-		if strings.Contains(out, "(matches") {
-			t.Errorf("rendered FileMatch annotation for an empty FileMatch:\n%s", out)
-		}
-		if strings.Contains(out, "build.md` —") {
-			t.Errorf("rendered Description annotation for an empty Description:\n%s", out)
+		if strings.Contains(out, "(matches") || strings.Contains(out, "SKILL.md` —") {
+			t.Errorf("rendered an annotation for an empty field:\n%s", out)
 		}
 	})
+}
+
+func TestCapWords(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"at the cap is kept whole", words(20), words(20)},
+		{"over the cap is cut with a marker", words(21), words(20) + " …"},
+		{"short is kept", "one two", "one two"},
+		{"empty stays empty", "", ""},
+		{"one long token is cut at the byte cap", strings.Repeat("x", 400), strings.Repeat("x", 300) + " …"},
+		{"a byte cut never splits a rune", strings.Repeat("é", 200), strings.Repeat("é", 150) + " …"},
+		{"a byte cut drops the space it lands after", strings.Repeat("x", 299) + " yyyy", strings.Repeat("x", 299) + " …"},
+		// words(19) and its space take 76 bytes.
+		{"a word cut over the byte cap is marked once", words(19) + " " + strings.Repeat("z", 400) + " w", words(19) + " " + strings.Repeat("z", 300-76) + " …"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := capWords(tc.in, maxDescWords); got != tc.want {
+				t.Errorf("capWords(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
 }
 
 func hookDoc(hooks ...string) string {
@@ -321,14 +325,14 @@ func TestFindRepoAgents_ReadableDir(t *testing.T) {
 	repo := t.TempDir()
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "agents", "deploy.json"), `{"name":"deploy"}`)
 
-	got := findRepoAgents(repo)
+	got, _ := findRepoAgents(repo)
 	if len(got) != 1 {
 		t.Fatalf("findRepoAgents(readable dir) = %+v (len %d), want 1 agent", got, len(got))
 	}
 	if got[0].Name != "deploy" {
 		t.Errorf("findRepoAgents()[0] = %+v, want {Name: deploy}", got[0])
 	}
-	if got := findRepoAgents(filepath.Join(repo, "does-not-exist")); got != nil {
+	if got, _ := findRepoAgents(filepath.Join(repo, "does-not-exist")); got != nil {
 		t.Errorf("findRepoAgents(missing dir) = %+v, want nil", got)
 	}
 }
@@ -343,8 +347,8 @@ func TestFindRepoHooks_ReadableDir(t *testing.T) {
 		`{"name":"Regen","trigger":"PostFileSave","action":{"type":"command","command":"make gen"}}`,
 	))
 
-	got := findRepoHooks(repo)
-	if len(got) != 2 {
+	got, more := findRepoHooks(repo)
+	if len(got) != 2 || more {
 		t.Fatalf("findRepoHooks(readable dir) = %+v (len %d), want 2 hooks from one document", got, len(got))
 	}
 	if got[0].Trigger != "PreToolUse" || got[0].Filename != "guard.json" || got[0].Name != "Guard" {
@@ -353,7 +357,7 @@ func TestFindRepoHooks_ReadableDir(t *testing.T) {
 	if got[1].Trigger != "PostFileSave" || got[1].Filename != "guard.json" {
 		t.Errorf("findRepoHooks()[1] = %+v, want the second hook from the same file", got[1])
 	}
-	if got := findRepoHooks(filepath.Join(repo, "does-not-exist")); got != nil {
+	if got, _ := findRepoHooks(filepath.Join(repo, "does-not-exist")); got != nil {
 		t.Errorf("findRepoHooks(missing dir) = %+v, want nil", got)
 	}
 }
@@ -364,14 +368,14 @@ func TestFindMdDocsInDir_ReadableDir(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "doc.md"), "body\n")
 
-	got := findMdDocsInDir(dir)
+	got, _ := findMdDocsInDir(dir)
 	if len(got) != 1 {
 		t.Fatalf("findMdDocsInDir(readable dir) = %+v (len %d), want 1 doc", got, len(got))
 	}
 	if got[0].Filename != "doc.md" || got[0].Inclusion != "always" {
 		t.Errorf("findMdDocsInDir()[0] = %+v, want {Filename: doc.md, Inclusion: always}", got[0])
 	}
-	if got := findMdDocsInDir(filepath.Join(dir, "does-not-exist")); got != nil {
+	if got, _ := findMdDocsInDir(filepath.Join(dir, "does-not-exist")); got != nil {
 		t.Errorf("findMdDocsInDir(missing dir) = %+v, want nil", got)
 	}
 }
@@ -386,8 +390,8 @@ func TestDiscoveryEntryCaps(t *testing.T) {
 				filepath.Join(repo, ".kiro", "agents", fmt.Sprintf("agent%02d.json", i)),
 				fmt.Sprintf(`{"name":"a%02d"}`, i))
 		}
-		if got := len(findRepoAgents(repo)); got != 10 {
-			t.Errorf("findRepoAgents(12 files) returned %d, want exactly 10 (cap)", got)
+		if got, total := findRepoAgents(repo); len(got) != 10 || total != 12 {
+			t.Errorf("findRepoAgents(12 files) returned %d of %d, want exactly 10 (cap) of 12", len(got), total)
 		}
 	})
 	t.Run("findRepoHooks caps at 10 entries", func(t *testing.T) {
@@ -401,8 +405,22 @@ func TestDiscoveryEntryCaps(t *testing.T) {
 					`{"name":"b","trigger":"PostToolUse","action":{"type":"command","command":"y"}}`,
 				))
 		}
-		if got := len(findRepoHooks(repo)); got != 10 {
-			t.Errorf("findRepoHooks(12 hooks in 6 files) returned %d, want exactly 10 (cap)", got)
+		if got, more := findRepoHooks(repo); len(got) != 10 || !more {
+			t.Errorf("findRepoHooks(12 hooks in 6 files) returned %d (more %v), want exactly 10 (cap) and more", len(got), more)
+		}
+	})
+	t.Run("findRepoHooks with exactly 10 entries reports no more", func(t *testing.T) {
+		repo := t.TempDir()
+		for i := range 5 {
+			mustWriteFile(t,
+				filepath.Join(repo, ".kiro", "hooks", fmt.Sprintf("hook%02d.json", i)),
+				hookDoc(
+					`{"name":"a","trigger":"PreToolUse","action":{"type":"command","command":"x"}}`,
+					`{"name":"b","trigger":"PostToolUse","action":{"type":"command","command":"y"}}`,
+				))
+		}
+		if got, more := findRepoHooks(repo); len(got) != 10 || more {
+			t.Errorf("findRepoHooks(10 hooks in 5 files) returned %d (more %v), want 10 and no more", len(got), more)
 		}
 	})
 	t.Run("findMdDocsInDir caps at 20", func(t *testing.T) {
@@ -410,10 +428,49 @@ func TestDiscoveryEntryCaps(t *testing.T) {
 		for i := range 25 {
 			mustWriteFile(t, filepath.Join(dir, fmt.Sprintf("doc%02d.md", i)), "body\n")
 		}
-		if got := len(findMdDocsInDir(dir)); got != 20 {
-			t.Errorf("findMdDocsInDir(25 files) returned %d, want exactly 20 (cap)", got)
+		if got, seen := findMdDocsInDir(dir); len(got) != 20 || seen.total != 25 {
+			t.Errorf("findMdDocsInDir(25 files) returned %d of %d, want exactly 20 (cap) of 25", len(got), seen.total)
 		}
 	})
+	t.Run("findMdDocsInDir counts past its scan bound", func(t *testing.T) {
+		dir := t.TempDir()
+		for i := range 105 {
+			mustWriteFile(t, filepath.Join(dir, fmt.Sprintf("doc%03d.md", i)), "body\n")
+		}
+		got, seen := findMdDocsInDir(dir)
+		if len(got) != 20 || seen.total != 105 {
+			t.Errorf("findMdDocsInDir(105 files) returned %d of %d, want 20 of 105", len(got), seen.total)
+		}
+		if seen.byRank != [routingRanks]int{rankAlways: 100} {
+			t.Errorf("ranks read = %v, want the first 100 always-loaded and none past the scan bound", seen.byRank)
+		}
+	})
+}
+
+// The per-repo cap keeps entries by rank, so a doc the protocol has an agent read unprompted
+// survives up to maxScannedEntries on-demand docs sorting before it.
+func TestFindMdDocsInDir_KeepsAnAlwaysDocThatSortsAfterTheCap(t *testing.T) {
+	dir := t.TempDir()
+	for i := range 21 {
+		mustWriteFile(t, filepath.Join(dir, fmt.Sprintf("a%02d.md", i)), "---\ninclusion: manual\n---\n")
+	}
+	mustWriteFile(t, filepath.Join(dir, "y-match.md"), "---\ninclusion: fileMatch\nfileMatchPattern: \"*.go\"\n---\n")
+	mustWriteFile(t, filepath.Join(dir, "z-rules.md"), "---\ninclusion: always\n---\n")
+
+	got, seen := findMdDocsInDir(dir)
+
+	if len(got) != 20 || seen.total != 23 {
+		t.Fatalf("findMdDocsInDir returned %d of %d, want 20 of 23", len(got), seen.total)
+	}
+	if want := [routingRanks]int{rankAlways: 1, rankFileMatch: 1, rankOnDemand: 21}; seen.byRank != want {
+		t.Errorf("ranks read = %v, want %v, counted before the cut", seen.byRank, want)
+	}
+	if got[0].Filename != "z-rules.md" || got[1].Filename != "y-match.md" {
+		t.Errorf("first two kept = %q, %q, want the always doc then the file-match doc", got[0].Filename, got[1].Filename)
+	}
+	if got[2].Filename != "a00.md" || got[19].Filename != "a17.md" {
+		t.Errorf("manual docs kept = %q..%q, want a00.md..a17.md in filename order", got[2].Filename, got[19].Filename)
+	}
 }
 
 // TestFindRepoSkills_ScansSubdirsWithSkillMd pins skills as subdirectories pointing at
@@ -426,7 +483,7 @@ func TestFindRepoSkills_ScansSubdirsWithSkillMd(t *testing.T) {
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "gamma", "notes.txt"), "no skill.md here\n")
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "loose.md"), "# not a skill\n")
 
-	skills := findRepoSkills(repo)
+	skills, _ := findRepoSkills(repo)
 	// alpha, beta, gamma are directories -> 3 skills. loose.md is a flat
 	// file -> ignored.
 	if len(skills) != 3 {
@@ -455,7 +512,7 @@ func TestFindRepoSkills_ScansSubdirsWithSkillMd(t *testing.T) {
 }
 
 func TestFindRepoSkills_NoSkillsDir(t *testing.T) {
-	if got := findRepoSkills(t.TempDir()); got != nil {
+	if got, seen := findRepoSkills(t.TempDir()); got != nil || seen != (dirCount{}) {
 		t.Errorf("findRepoSkills(no skills dir) = %+v, want nil", got)
 	}
 }
@@ -469,8 +526,29 @@ func TestFindRepoSkills_CapAt20(t *testing.T) {
 			filepath.Join(repo, ".kiro", "skills", fmt.Sprintf("skill%02d", i), "SKILL.md"),
 			"body\n")
 	}
-	if got := len(findRepoSkills(repo)); got != 20 {
-		t.Errorf("findRepoSkills(25 skill dirs) = %d, want 20 (capped)", got)
+	if got, seen := findRepoSkills(repo); len(got) != 20 || seen.total != 25 {
+		t.Errorf("findRepoSkills(25 skill dirs) = %d of %d, want 20 (capped) of 25", len(got), seen.total)
+	}
+}
+
+func TestFindRepoSkills_KeepsAFileMatchSkillThatSortsAfterTheCap(t *testing.T) {
+	repo := t.TempDir()
+	for i := range 20 {
+		mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", fmt.Sprintf("a%02d", i), "SKILL.md"), "---\ndescription: d\n---\n")
+	}
+	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "z-sql", "SKILL.md"),
+		"---\ninclusion: fileMatch\nfileMatchPattern: \"*.sql\"\n---\n")
+
+	got, seen := findRepoSkills(repo)
+
+	if len(got) != 20 || seen.total != 21 {
+		t.Fatalf("findRepoSkills returned %d of %d, want 20 of 21", len(got), seen.total)
+	}
+	if want := [routingRanks]int{rankFileMatch: 1, rankOnDemand: 20}; seen.byRank != want {
+		t.Errorf("ranks read = %v, want %v: a skill is never always-loaded", seen.byRank, want)
+	}
+	if got[0].Filename != "z-sql/SKILL.md" || got[19].Filename != "a18/SKILL.md" {
+		t.Errorf("kept %q..%q, want the file-match skill first, then a00..a18", got[0].Filename, got[19].Filename)
 	}
 }
 
@@ -485,7 +563,7 @@ func TestFindRepoAgents_DedupsPairedFiles(t *testing.T) {
 	mustWriteFile(t, filepath.Join(agentsDir, "deploy.json"), `{"name":"deploy"}`)
 	mustWriteFile(t, filepath.Join(agentsDir, "notes.md"), "# notes\n")
 
-	agents := findRepoAgents(repo)
+	agents, _ := findRepoAgents(repo)
 	if len(agents) != 3 {
 		t.Fatalf("findRepoAgents = %+v (len %d), want 3 (reviewer paired -> 1)", agents, len(agents))
 	}
@@ -500,18 +578,12 @@ func TestFindRepoAgents_DedupsPairedFiles(t *testing.T) {
 // claim kiro-cli loads a nested repo's agents or runs its hooks: a model told a hook runs skips
 // the check the hook stood for.
 func TestWriteRepoSteeringInstructions_NestedAgentsAndHooksAreInert(t *testing.T) {
-	dir := t.TempDir()
-	repo := filepath.Join(dir, "r")
-	mustWriteFile(t, filepath.Join(repo, ".kiro", "agents", "helper.md"), "---\nname: helper\n---\n")
-	mustWriteFile(t, filepath.Join(repo, ".kiro", "hooks", "regen.json"), hookDoc(
-		`{"name":"Regen","trigger":"PostFileSave","action":{"type":"command","command":"make gen"}}`,
-	))
 	var b strings.Builder
-	writeRepoSteeringInstructions(&b, []string{"r"}, dir)
+	writeRepoSteeringInstructions(&b, "/work")
 	out := b.String()
 	for _, want := range []string{
-		"not loaded in this session",
-		"kiro-cli does not run a nested repo's hooks",
+		"this session cannot load or switch to them",
+		"Hooks do not run for nested repos",
 		"run its command yourself",
 	} {
 		if !strings.Contains(out, want) {

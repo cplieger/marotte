@@ -2868,6 +2868,7 @@ const arbModel = fc.letrec<{
       last_error: fc.string(),
       checksum: fc.string(),
       requires: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
+      commands: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       dependents: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       pin: fc.boolean(),
       disabled: fc.boolean(),

@@ -4310,6 +4310,13 @@ export interface ToolInfo {
   checksum?: string;
   requires?: string[];
   /**
+ * Commands names what an installed row puts on PATH, sorted: the bin
+ * names the engine linked for it or, for an apt: row, the entries dpkg
+ * records it placing directly in /usr/bin, /usr/sbin, /bin or /sbin.
+ * Empty when the row is not installed or ships no command (a library).
+ */
+  commands?: string[];
+  /**
  * Dependents names the ENABLED entries that need this tool, directly
  * (Requires or the implied backend of their source kind) or through
  * another entry, disabled or not, or a catalog tool their install would

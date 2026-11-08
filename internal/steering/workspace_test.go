@@ -1,8 +1,10 @@
 package steering
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -129,7 +131,7 @@ func TestWriteWorkspace_RendersGroupedSteering(t *testing.T) {
 		"`myrepo/.kiro/steering/go-files.md` (matches `**/*.go`) — Go conventions",
 		"`myrepo/.kiro/steering/incident.md` — On-call runbook",
 		"Per-repo .kiro protocol",
-		"NOT auto-loaded",
+		"is not loaded",
 		"routing table",
 	}
 	for _, want := range checks {
@@ -202,15 +204,12 @@ func TestWriteWorkspace_OmitsProtocolWhenNoSteering(t *testing.T) {
 	}
 }
 
-// TestWriteRepoEntry_RendersAllFields verifies a fully-populated repo
-// renders every field: branch, origin host, README description, and the
-// steering / skills / agents / hooks sections.
-func TestWriteRepoEntry_RendersAllFields(t *testing.T) {
+// TestWriteKiroRepo_RendersEveryGroup verifies a repo's line carries only its name, followed by
+// its skills, agents and hooks groups.
+func TestWriteKiroRepo_RendersEveryGroup(t *testing.T) {
 	work := t.TempDir()
 	repo := filepath.Join(work, "myrepo")
 	mustWriteFile(t, filepath.Join(repo, ".git", "HEAD"), "ref: refs/heads/feature-x\n")
-	mustWriteFile(t, filepath.Join(repo, ".git", "config"),
-		"[remote \"origin\"]\n\turl = https://github.com/acme/widget.git\n")
 	mustWriteFile(t, filepath.Join(repo, "README.md"), "A widget toolkit\n")
 	// Skills are directories containing SKILL.md, not flat .md files.
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "build", "SKILL.md"), "body\n")
@@ -219,318 +218,290 @@ func TestWriteRepoEntry_RendersAllFields(t *testing.T) {
 		`{"version":"v1","hooks":[{"name":"Guard","trigger":"PreToolUse","action":{"type":"command","command":"echo hi"}}]}`)
 
 	var b strings.Builder
-	writeRepoEntry(&b, work, "myrepo")
+	k := scanKiroRepo(work, "myrepo")
+	writeKiroRepo(&b, &k, allotRouting([]kiroRepo{k}, maxRouting)[0])
 	out := b.String()
 
-	checks := map[string]string{
-		"feature-x":            "branch",
-		"github.com":           "origin host",
-		"A widget toolkit":     "README description",
-		"Always-loaded skills": "skills section",
-		"**Custom agents**":    "agents section",
-		"**Hooks**":            "hooks section",
-		"deploy":               "agent name",
-		"guard.json":           "hook filename",
+	if !strings.HasPrefix(out, "- `myrepo/`\n") {
+		t.Errorf("the repo line carries more than its name:\n%s", out)
 	}
-	for want, why := range checks {
+	for _, want := range []string{"**Skills**", "build/SKILL.md", "**Custom agents**", "`deploy`", "**Hooks**", "guard.json", "Guard [PreToolUse]", "echo hi"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("writeRepoEntry omitted %q [%s]\n--- output ---\n%s", want, why, out)
+			t.Errorf("writeKiroRepo omitted %q\n--- output ---\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "[unknown]") {
+		t.Errorf("hook with a known trigger rendered [unknown]:\n%s", out)
+	}
+}
+
+// TestWriteKiroRepo_OmitsAgentAndHookHeadersWhenEmpty verifies a repo with only steering emits
+// neither the Custom agents nor the Hooks header.
+func TestWriteKiroRepo_OmitsAgentAndHookHeadersWhenEmpty(t *testing.T) {
+	work := t.TempDir()
+	mustWriteFile(t, filepath.Join(work, "r", ".kiro", "steering", "s.md"), "# S\n")
+	var b strings.Builder
+	k := scanKiroRepo(work, "r")
+	writeKiroRepo(&b, &k, allotRouting([]kiroRepo{k}, maxRouting)[0])
+	out := b.String()
+	if strings.Contains(out, "**Custom agents**") || strings.Contains(out, "**Hooks**") {
+		t.Errorf("an agent or hook header emitted with none:\n%s", out)
+	}
+}
+
+// A repo partly over the routing budget keeps the entries that fit and counts the rest.
+func TestWriteKiroRepo_CountsTheEntriesPastTheBudget(t *testing.T) {
+	work := t.TempDir()
+	for _, n := range []string{"a", "b", "c"} {
+		mustWriteFile(t, filepath.Join(work, "r", ".kiro", "steering", n+".md"), "# S\n")
+	}
+	var b strings.Builder
+	k := scanKiroRepo(work, "r")
+	writeKiroRepo(&b, &k, allotRouting([]kiroRepo{k}, 2)[0])
+	out := b.String()
+	if got := len(routingEntry.FindAllString(out, -1)); got != 2 {
+		t.Errorf("rendered %d entries with a budget of 2:\n%s", got, out)
+	}
+	if !strings.Contains(out, "  - … 1 more always-loaded steering docs: read every `r/.kiro/steering/` doc whose "+
+		"`inclusion` is not `fileMatch`, `manual` or `auto`\n") {
+		t.Errorf("the always-loaded doc past the budget is not named as one:\n%s", out)
+	}
+	if strings.Contains(out, "more .kiro entries") || strings.Contains(out, "more file-match entries") {
+		t.Errorf("a cut counted twice, or as the wrong rank:\n%s", out)
+	}
+}
+
+// A file-match entry the budget cuts is named as one, so its pattern still gates an edit.
+func TestWriteKiroRepo_NamesACutFileMatchEntry(t *testing.T) {
+	work := t.TempDir()
+	mustWriteFile(t, filepath.Join(work, "r", ".kiro", "steering", "a.md"), "# S\n")
+	mustWriteFile(t, filepath.Join(work, "r", ".kiro", "steering", "b.md"), "---\ninclusion: fileMatch\nfileMatchPattern: \"*.go\"\n---\n")
+	mustWriteFile(t, filepath.Join(work, "r", ".kiro", "steering", "c.md"), "---\ninclusion: manual\n---\n")
+	mustWriteFile(t, filepath.Join(work, "r", ".kiro", "skills", "s", "SKILL.md"), "---\ninclusion: fileMatch\nfileMatchPattern: \"*.sql\"\n---\n")
+	var b strings.Builder
+	k := scanKiroRepo(work, "r")
+	writeKiroRepo(&b, &k, allotRouting([]kiroRepo{k}, 2)[0])
+	out := b.String()
+	for _, want := range []string{
+		"  - … 1 more file-match entries: before opening or editing a file in this repo, check the `fileMatchPattern` in its " +
+			"`r/.kiro/steering/` docs and `r/.kiro/skills/*/SKILL.md`\n",
+		"  - … 1 more .kiro entries: list `r/.kiro/steering/` and `r/.kiro/skills/`\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeKiroRepo lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "more always-loaded") {
+		t.Errorf("the always-loaded doc fit the budget but is counted as cut:\n%s", out)
+	}
+}
+
+// Kiro's default inclusion is always, so ten repos of five unannotated docs spend the 40-entry
+// budget on the first eight; the last two still tell the agent to read their house rules.
+func TestWriteRepoList_NamesAlwaysDocsTheBudgetCut(t *testing.T) {
+	work := t.TempDir()
+	var repos []string
+	for i := range 10 {
+		r := fmt.Sprintf("r%02d", i)
+		repos = append(repos, r)
+		for j := range 5 {
+			mustWriteFile(t, filepath.Join(work, r, ".kiro", "steering", fmt.Sprintf("d%d.md", j)), "# S\n")
+		}
+	}
+	var b strings.Builder
+	writeRepoList(&b, work, repos)
+	out := b.String()
+	for i, r := range repos {
+		line := "  - … 5 more always-loaded steering docs: read every `" + r + "/.kiro/steering/` doc whose " +
+			"`inclusion` is not `fileMatch`, `manual` or `auto`\n"
+		if got, want := strings.Contains(out, line), i >= 8; got != want {
+			t.Errorf("%s carries the always-loaded cut line: %v, want %v:\n%s", r, got, want, out)
+		}
+	}
+	if strings.Contains(out, "more .kiro entries") {
+		t.Errorf("the cut always-loaded docs are also counted as generic entries:\n%s", out)
+	}
+}
+
+// Entries past discovery's per-repo read caps are counted too, and so are agents and hooks.
+func TestWriteKiroRepo_CountsWhatDiscoveryDidNotRead(t *testing.T) {
+	work := t.TempDir()
+	for i := range 22 {
+		mustWriteFile(t, filepath.Join(work, "r", ".kiro", "steering", fmt.Sprintf("d%02d.md", i)), "# S\n")
+		mustWriteFile(t, filepath.Join(work, "r", ".kiro", "skills", fmt.Sprintf("s%02d", i), "SKILL.md"), "# S\n")
+	}
+	for i := range 12 {
+		mustWriteFile(t, filepath.Join(work, "r", ".kiro", "agents", fmt.Sprintf("a%02d.json", i)), `{"name":"a"}`)
+		mustWriteFile(t, filepath.Join(work, "r", ".kiro", "hooks", fmt.Sprintf("h%02d.json", i)),
+			`{"version":"v1","hooks":[{"name":"n","trigger":"PostFileSave","action":{"type":"command","command":"x"}}]}`)
+	}
+	var b strings.Builder
+	k := scanKiroRepo(work, "r")
+	writeKiroRepo(&b, &k, allotRouting([]kiroRepo{k}, maxRouting)[0])
+	out := b.String()
+	for _, want := range []string{
+		"  - … 2 more always-loaded steering docs: read every `r/.kiro/steering/` doc whose " +
+			"`inclusion` is not `fileMatch`, `manual` or `auto`\n",
+		"  - … 2 more .kiro entries: list `r/.kiro/steering/` and `r/.kiro/skills/`\n",
+		" `a09` … and 2 more\n",
+		"    - … more hooks: list `r/.kiro/hooks/`\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeKiroRepo lacks %q:\n%s", want, out)
 		}
 	}
 }
 
-// TestWriteRepoEntry_NamesNoForgeCLI pins the origin annotation to the bare
-// host for every forge kind: no forge CLI is offered for PRs, issues or CI.
-func TestWriteRepoEntry_NamesNoForgeCLI(t *testing.T) {
-	origins := map[string]string{
-		"github.com":   "https://github.com/acme/widget.git",
-		"gitlab.com":   "git@gitlab.com:acme/widget.git",
-		"codeberg.org": "https://codeberg.org/acme/widget.git",
-		"gitea.io":     "https://gitea.io/acme/widget.git",
-	}
-	for host, url := range origins {
-		t.Run(host, func(t *testing.T) {
-			work := t.TempDir()
-			mustWriteFile(t, filepath.Join(work, "myrepo", ".git", "config"),
-				"[remote \"origin\"]\n\turl = "+url+"\n")
-			var b strings.Builder
-			writeRepoEntry(&b, work, "myrepo")
-			out := b.String()
-			if !strings.Contains(out, "("+host+")") {
-				t.Errorf("writeRepoEntry(origin %s) omitted the bare host annotation:\n%s", url, out)
-			}
-			if cli := forgeCLIName.FindString(out); cli != "" {
-				t.Errorf("writeRepoEntry(origin %s) names the forge CLI %q:\n%s", url, cli, out)
-			}
-		})
-	}
-}
-
-// TestWriteRepoEntry_HookFields verifies the per-hook name, trigger label and
-// command preview render for a repo carrying a v1 hook document.
-func TestWriteRepoEntry_HookFields(t *testing.T) {
+// Entries past the front-matter read window have no rank, so the generic line counts them.
+func TestWriteKiroRepo_CountsEntriesPastTheReadWindow(t *testing.T) {
 	work := t.TempDir()
-	repo := filepath.Join(work, "myrepo")
-	mustWriteFile(t, filepath.Join(repo, ".kiro", "hooks", "guard.json"),
-		`{"version":"v1","hooks":[{"name":"Guard","trigger":"PreToolUse","action":{"type":"command","command":"echo hi"}}]}`)
-
-	var b strings.Builder
-	writeRepoEntry(&b, work, "myrepo")
-	out := b.String()
-
-	if !strings.Contains(out, "Guard [PreToolUse]") {
-		t.Errorf("hook name+trigger not rendered as Guard [PreToolUse]:\n%s", out)
+	for i := range 105 {
+		mustWriteFile(t, filepath.Join(work, "r", ".kiro", "steering", fmt.Sprintf("d%03d.md", i)), "---\ninclusion: manual\n---\n")
 	}
-	if strings.Contains(out, "[unknown]") {
-		t.Errorf("hook with a known trigger wrongly rendered [unknown]:\n%s", out)
-	}
-	if !strings.Contains(out, "echo hi") {
-		t.Errorf("hook command preview not rendered:\n%s", out)
-	}
-}
-
-// TestWriteRepoEntry_OmitsAgentAndHookHeadersWhenEmpty verifies a repo with
-// zero agents and zero hooks emits neither the Custom agents nor the Hooks
-// header.
-func TestWriteRepoEntry_OmitsAgentAndHookHeadersWhenEmpty(t *testing.T) {
-	work := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(work, "bare"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(work, "r", ".kiro", "skills"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	var b strings.Builder
-	writeRepoEntry(&b, work, "bare")
+	k := scanKiroRepo(work, "r")
+	writeKiroRepo(&b, &k, allotRouting([]kiroRepo{k}, maxRouting)[0])
 	out := b.String()
-	if strings.Contains(out, "**Custom agents**") {
-		t.Errorf("Custom agents header emitted with zero agents:\n%s", out)
+	if want := "  - … 85 more .kiro entries: list `r/.kiro/steering/` and `r/.kiro/skills/`\n"; !strings.Contains(out, want) {
+		t.Errorf("writeKiroRepo lacks %q:\n%s", want, out)
 	}
-	if strings.Contains(out, "**Hooks**") {
-		t.Errorf("Hooks header emitted with zero hooks:\n%s", out)
-	}
-}
-
-func TestReadGitOrigin_ReturnsURLOnSuccessfulRead(t *testing.T) {
-	repo := t.TempDir()
-	mustWriteFile(t, filepath.Join(repo, ".git", "config"),
-		"[remote \"origin\"]\n\turl = https://github.com/acme/widget.git\n")
-
-	const want = "https://github.com/acme/widget.git"
-	if got := readGitOrigin(repo); got != want {
-		t.Errorf("readGitOrigin(valid config) = %q, want %q", got, want)
-	}
-	// A missing config still yields "" (read error path).
-	if got := readGitOrigin(filepath.Join(repo, "does-not-exist")); got != "" {
-		t.Errorf("readGitOrigin(missing config) = %q, want \"\"", got)
+	if strings.Contains(out, "more always-loaded") || strings.Contains(out, "more file-match") {
+		t.Errorf("manual docs counted as always-loaded or file-match:\n%s", out)
 	}
 }
 
-// TestReadGitOrigin_ReadsURLBeyondReadCap places the url past byte 1088 so a shrunk read cap
-// would miss it.
-func TestReadGitOrigin_ReadsURLBeyondReadCap(t *testing.T) {
-	repo := t.TempDir()
-	filler := strings.Repeat("a", 2000)
-	cfg := "[core]\n\tpadding = " + filler +
-		"\n[remote \"origin\"]\n\turl = https://github.com/acme/widget.git\n"
-	mustWriteFile(t, filepath.Join(repo, ".git", "config"), cfg)
-
-	got := readGitOrigin(repo)
-	const want = "https://github.com/acme/widget.git"
-	if got != want {
-		t.Errorf("readGitOrigin(padded config) = %q, want %q", got, want)
+// A hook's name and trigger are untrusted JSON sent on every model call, so both are bounded.
+func TestWriteKiroRepo_BoundsAHooksNameAndTrigger(t *testing.T) {
+	work := t.TempDir()
+	long := strings.Repeat("n", 200)
+	mustWriteFile(t, filepath.Join(work, "r", ".kiro", "hooks", "h.json"),
+		`{"version":"v1","hooks":[{"name":"`+long+`","trigger":"`+long+`","action":{"type":"command","command":"x"}}]}`)
+	var b strings.Builder
+	k := scanKiroRepo(work, "r")
+	writeKiroRepo(&b, &k, routed{})
+	short := strings.Repeat("n", 77) + "..."
+	if want := "    - `h.json` " + short + " [" + short + "] → `x`\n"; !strings.Contains(b.String(), want) {
+		t.Errorf("hook line not bounded, want %q in:\n%s", want, b.String())
 	}
 }
 
-func TestReadGitBranch_ReturnsBranchOnSuccessfulRead(t *testing.T) {
-	repo := t.TempDir()
-	mustWriteFile(t, filepath.Join(repo, ".git", "HEAD"), "ref: refs/heads/main\n")
-
-	if got := readGitBranch(repo); got != "main" {
-		t.Errorf("readGitBranch(valid HEAD) = %q, want %q", got, "main")
+func TestAllotRouting_SpendsTheBudgetByRank(t *testing.T) {
+	always := docEntry{Filename: "z-always.md", Inclusion: inclusionAlways}
+	manual := docEntry{Filename: "a-manual.md", Inclusion: inclusionManual}
+	auto := docEntry{Filename: "b-auto.md", Inclusion: inclusionAuto}
+	matchDoc := docEntry{Filename: "m-match.md", Inclusion: inclusionFileMatch}
+	skill := docEntry{Filename: "s/SKILL.md", Inclusion: inclusionAlways}
+	matchSkill := docEntry{Filename: "t/SKILL.md", Inclusion: inclusionFileMatch}
+	names := func(r []routed) []string {
+		var out []string
+		for i, x := range r {
+			for _, d := range append(slices.Clone(x.docs), x.skills...) {
+				out = append(out, fmt.Sprintf("%d:%s", i, d.Filename))
+			}
+		}
+		return out
 	}
-	if got := readGitBranch(filepath.Join(repo, "does-not-exist")); got != "" {
-		t.Errorf("readGitBranch(missing HEAD) = %q, want \"\"", got)
-	}
-}
-
-// TestHostFromGitURL_HTTPS covers the https credential-stripping logic:
-// `user@` before the first `/` is stripped; a leading `/` before the `@`
-// is not credentials; a missing host yields "".
-func TestHostFromGitURL_HTTPS(t *testing.T) {
-	tests := []struct {
-		name string
-		url  string
-		want string
-	}{
-		{"creds-stripped", "https://user@github.com/acme/widget.git", "github.com"},
-		{"leading-at-creds", "https://@github.com/acme/widget.git", "github.com"},
-		{"creds-no-path", "https://user@github.com", "github.com"},
-		{"slash-before-at", "https:///@github.com/foo", ""},
-		{"no-creds", "https://github.com/acme/widget.git", "github.com"},
-	}
-	for _, tc := range tests {
+	cases := []struct {
+		name   string
+		repos  []kiroRepo
+		budget int
+		want   []string
+	}{{
+		name:   "an always doc sorting after a manual doc is kept first",
+		repos:  []kiroRepo{{docs: []docEntry{manual, always}}},
+		budget: 1,
+		want:   []string{"0:z-always.md"},
+	}, {
+		name: "a later repo's always doc outranks an earlier repo's on-demand entries",
+		repos: []kiroRepo{
+			{docs: []docEntry{manual, auto}, skills: []docEntry{skill}},
+			{docs: []docEntry{always}},
+		},
+		budget: 1,
+		want:   []string{"1:z-always.md"},
+	}, {
+		name:   "file-match docs and skills come before on-demand ones",
+		repos:  []kiroRepo{{docs: []docEntry{manual}, skills: []docEntry{skill, matchSkill}}, {docs: []docEntry{matchDoc}}},
+		budget: 2,
+		want:   []string{"0:t/SKILL.md", "1:m-match.md"},
+	}, {
+		name:   "a skill never ranks as always-loaded",
+		repos:  []kiroRepo{{skills: []docEntry{skill}}, {docs: []docEntry{manual}}},
+		budget: 1,
+		want:   []string{"0:s/SKILL.md"},
+	}, {
+		name:   "within a rank, repo order then filename order",
+		repos:  []kiroRepo{{docs: []docEntry{manual, auto}}, {docs: []docEntry{manual}}},
+		budget: 2,
+		want:   []string{"0:a-manual.md", "0:b-auto.md"},
+	}, {
+		name:   "a budget over every entry keeps them all",
+		repos:  []kiroRepo{{docs: []docEntry{manual, always, matchDoc}, skills: []docEntry{skill}}},
+		budget: maxRouting,
+		want:   []string{"0:z-always.md", "0:m-match.md", "0:a-manual.md", "0:s/SKILL.md"},
+	}}
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := hostFromGitURL(tc.url); got != tc.want {
-				t.Errorf("hostFromGitURL(%q) = %q, want %q", tc.url, got, tc.want)
+			if got := names(allotRouting(tc.repos, tc.budget)); !slices.Equal(got, tc.want) {
+				t.Errorf("allotRouting = %v, want %v", got, tc.want)
 			}
 		})
 	}
 }
 
-// TestHostFromGitURL_SCP covers the scp-style git@host:path form: a
-// non-leading `@` selects the host; a leading `@` yields "".
-func TestHostFromGitURL_SCP(t *testing.T) {
-	tests := []struct {
-		name string
-		url  string
-		want string
+// A repo past the first maxKiroRepos is classified by a presence check, which must agree with
+// the full scan the first ones get: a hooks file with no hook, or files the finders skip, is no
+// .kiro content.
+func TestWriteRepoList_ThePresenceCheckAgreesWithTheScan(t *testing.T) {
+	probes := []struct {
+		name, path, body string
 	}{
-		{"scp-standard", "git@github.com:acme/widget.git", "github.com"},
-		{"scp-leading-at", "@github.com:acme/repo", ""},
+		{"p-agent", "agents/a.json", `{"name":"a"}`},
+		{"p-doc", "steering/rules.md", "# R\n"},
+		{"p-hook", "hooks/h.json", `{"version":"v1","hooks":[{"name":"n","trigger":"PostFileSave","action":{"type":"command","command":"make"}}]}`},
+		{"p-skill", "skills/s/notes.txt", "no SKILL.md\n"},
+		{"q-deadhook", "hooks/h.json", `{"version":"v1","hooks":[]}`},
+		{"q-skipped", "steering/notes.txt", "not markdown\n"},
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := hostFromGitURL(tc.url); got != tc.want {
-				t.Errorf("hostFromGitURL(%q) = %q, want %q", tc.url, got, tc.want)
+	for _, fillers := range []int{0, maxKiroRepos} {
+		t.Run(fmt.Sprintf("after %d repos with content", fillers), func(t *testing.T) {
+			workDir := t.TempDir()
+			for i := range fillers {
+				name := fmt.Sprintf("a%02d", i)
+				writeRepo(t, workDir, name, "https://git.example.org/o/"+name+".git", false)
+				mustWrite(t, filepath.Join(workDir, name, ".kiro", "steering", "d.md"), "# D\n")
+			}
+			for _, p := range probes {
+				writeRepo(t, workDir, p.name, "https://git.example.org/o/"+p.name+".git", false)
+				mustWrite(t, filepath.Join(workDir, p.name, ".kiro", p.path), p.body)
+			}
+			entries, err := os.ReadDir(workDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			repos, _ := classifyEntries(t.Context(), entries, workDir)
+			var b strings.Builder
+
+			writeRepoList(&b, workDir, repos)
+
+			out := b.String()
+			if got := lineWithPrefix(out, "- Other repositories: "); got != "- Other repositories: `q-deadhook/`, `q-skipped/`" {
+				t.Errorf("Other repositories line = %q, want the two repos with no .kiro content", got)
+			}
+			if fillers == 0 {
+				return
+			}
+			if got := lineWithPrefix(out, "- More repositories with .kiro content: "); !strings.HasPrefix(got,
+				"- More repositories with .kiro content: `p-agent/`, `p-doc/`, `p-hook/`, `p-skill/`. ") {
+				t.Errorf("folded line = %q, want the four repos with .kiro content", got)
 			}
 		})
 	}
 }
 
-func TestReadFirstLine(t *testing.T) {
-	// U+E0000 TAG character in UTF-8 for the StripsHiddenUnicode case.
-	hiddenUnicodeContent := append([]byte("# Title\nHello"), 0xF3, 0xA0, 0x80, 0x80)
-	hiddenUnicodeContent = append(hiddenUnicodeContent, []byte("World\n")...)
-
-	// The 100-byte boundary lands mid-rune: 48 × "é" (96 bytes) + "ABCé" = 101 bytes.
-	truncBody := strings.Repeat("é", 48) + "ABCé"
-
-	tests := []struct {
-		name                 string
-		want                 string
-		wantContains         string
-		wantSuffix           string
-		content              []byte
-		wantNotContain       []string
-		useMissingPath       bool
-		wantEmpty            bool
-		checkValidUTF8Prefix bool
-	}{
-		{name: "normal", content: []byte("# Title\nThis is the description.\n"), want: "This is the description."},
-		{name: "skip blanks", content: []byte("\n\n# Heading\nContent here\n"), want: "Content here"},
-		{name: "empty", content: []byte(""), wantEmpty: true},
-		{name: "only headings", content: []byte("# H1\n## H2\n"), wantEmpty: true},
-		{name: "long line", content: []byte("# Title\n" + strings.Repeat("x", 150) + "\n"), want: strings.Repeat("x", 100) + "..."},
-
-		{name: "Missing", useMissingPath: true, wantEmpty: true},
-
-		// The injected paragraph is dropped and the next clean one used.
-		{name: "DropsMarkdownLinks", content: []byte("# Title\n[click here](javascript:alert(1))\n\nA clean line\n"), want: "A clean line", wantNotContain: []string{"]("}},
-		{name: "DropsHTMLTags", content: []byte("# Title\n<script>alert(1)</script>\n\nA clean line\n"), wantNotContain: []string{"<"}, wantContains: "clean"},
-		{name: "DropsBackticks", content: []byte("# Title\nRun `rm -rf /` to clean up\n\nA clean line\n"), wantNotContain: []string{"`"}, wantContains: "clean"},
-		{name: "StripsHiddenUnicode", content: hiddenUnicodeContent, want: "HelloWorld"},
-		{name: "DropsReferenceLinks", content: []byte("# Title\n[click here][evil]\n\nA clean line\n"), want: "A clean line", wantNotContain: []string{"[", "]"}},
-		{name: "DropsImageReferences", content: []byte("# Title\n![alt][evil]\n\nA clean line\n"), wantNotContain: []string{"[", "]"}, wantContains: "clean"},
-		{name: "DropsBareURLs", content: []byte("# Title\nVisit https://evil.example for setup\n\nA clean line\n"), want: "A clean line", wantNotContain: []string{"https://", "http://"}},
-
-		// A wrapped sentence is one description; an offending line takes its whole paragraph.
-		{name: "JoinsWrappedParagraph", content: []byte("# Title\nA sentence that wraps\nonto a second line.\n\nNext paragraph\n"), want: "A sentence that wraps onto a second line."},
-		{name: "StripsBlockquoteMarker", content: []byte("# Title\n\n> Typed configuration for Go apps\n\nMore prose\n"), want: "Typed configuration for Go apps"},
-		{name: "DropsWholeParagraphOnLaterLine", content: []byte("# Title\nA clean opening line\nwith a `code span` on the next\n\nSecond paragraph\n"), want: "Second paragraph", wantNotContain: []string{"clean opening"}},
-		{name: "DropsWholeParagraphOnFirstLine", content: []byte("# Title\nDefaults for `x` repos. GitHub applies\nthese to any repo, so they\n"), wantEmpty: true},
-
-		{name: "OnlyScansFirstTenLines", content: []byte("# a\n# b\n# c\n# d\n# e\n# f\n# g\n# h\n# i\n# j\nplain line outside window\n"), wantEmpty: true},
-		{name: "ReturnsFirstPlainLineWithinWindow", content: []byte("# a\n# b\n# c\n# d\n# e\n# f\n# g\n# h\nplain line\n"), want: "plain line"},
-
-		{name: "HashtagIsNotHeading", content: []byte("#mobile responsive design\n"), want: "#mobile responsive design"},
-
-		{name: "SizeCapRejects", content: []byte("# Title\nA clean first line\n\n" + strings.Repeat("x", 32*1024)), want: "A clean first line"},
-
-		{name: "TruncationIsUTF8Safe", content: []byte("# Title\n" + truncBody + "\n"), wantSuffix: "...", checkValidUTF8Prefix: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var path string
-			if tt.useMissingPath {
-				path = "/nonexistent/path"
-			} else {
-				dir := t.TempDir()
-				path = filepath.Join(dir, "README.md")
-				if err := os.WriteFile(path, tt.content, 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-
-			got := readFirstLine(path)
-
-			if tt.want != "" {
-				if got != tt.want {
-					t.Errorf("readFirstLine() = %q, want %q", got, tt.want)
-				}
-			}
-			if tt.wantEmpty && got != "" {
-				t.Errorf("readFirstLine() = %q, want empty", got)
-			}
-			for _, s := range tt.wantNotContain {
-				if strings.Contains(got, s) {
-					t.Errorf("readFirstLine() = %q, must not contain %q", got, s)
-				}
-			}
-			if tt.wantContains != "" && !strings.Contains(got, tt.wantContains) {
-				t.Errorf("readFirstLine() = %q, want substring %q", got, tt.wantContains)
-			}
-			if tt.wantSuffix != "" && !strings.HasSuffix(got, tt.wantSuffix) {
-				t.Errorf("readFirstLine() = %q, want suffix %q", got, tt.wantSuffix)
-			}
-			if tt.checkValidUTF8Prefix {
-				prefix := strings.TrimSuffix(got, "...")
-				if !isValidUTF8(prefix) {
-					t.Errorf("readFirstLine produced invalid UTF-8 prefix: %q", prefix)
-				}
-			}
-		})
-	}
-}
-
-// TestReadFirstLine_LengthBoundary pins the 100-byte cap: a 100-byte line
-// is returned verbatim (no ellipsis); a 101-byte line is truncated to 100
-// bytes + "...".
-func TestReadFirstLine_LengthBoundary(t *testing.T) {
-	dir := t.TempDir()
-	line100 := strings.Repeat("a", 100)
-	mustWriteFile(t, filepath.Join(dir, "README.md"), line100+"\n")
-
-	got := readFirstLine(filepath.Join(dir, "README.md"))
-	if got != line100 {
-		t.Errorf("readFirstLine(100-byte line) = %q (len %d), want the 100-byte line unchanged", got, len(got))
-	}
-	if strings.HasSuffix(got, "...") {
-		t.Errorf("readFirstLine(100-byte line) wrongly appended ellipsis: %q", got)
-	}
-
-	dir2 := t.TempDir()
-	line101 := strings.Repeat("b", 101)
-	mustWriteFile(t, filepath.Join(dir2, "README.md"), line101+"\n")
-	want2 := strings.Repeat("b", 100) + "..."
-	if got2 := readFirstLine(filepath.Join(dir2, "README.md")); got2 != want2 {
-		t.Errorf("readFirstLine(101-byte line) = %q, want %q", got2, want2)
-	}
-}
-
-// TestIsMarkdownHeading_SixHashBoundary verifies exactly six `#` is a valid
-// ATX heading while seven is not.
-func TestIsMarkdownHeading_SixHashBoundary(t *testing.T) {
-	if !isMarkdownHeading("###### heading") {
-		t.Errorf("isMarkdownHeading(%q) = false, want true", "###### heading")
-	}
-	if !isMarkdownHeading("######") {
-		t.Errorf("isMarkdownHeading(%q) = false, want true", "######")
-	}
-	if isMarkdownHeading("####### heading") {
-		t.Errorf("isMarkdownHeading(%q) = true, want false", "####### heading")
-	}
-}
-
-// TestTruncateUTF8_LenEqualsN verifies truncateUTF8 returns s unchanged when
-// len(s) == n (no out-of-range rune walk).
 func TestTruncateUTF8_LenEqualsN(t *testing.T) {
 	if got := truncateUTF8("abcd", 4); got != "abcd" {
 		t.Errorf("truncateUTF8(%q, 4) = %q, want %q", "abcd", got, "abcd")
@@ -590,24 +561,20 @@ func TestClassifyEntries(t *testing.T) {
 	}
 }
 
-func isValidUTF8(s string) bool {
-	return strings.ToValidUTF8(s, "\uFFFD") == s
-}
-
 // KIRO_WORK_DIR and KIRO_CONFIG_DIR move the folders, so both docs name the configured ones.
 func TestRender_NamesTheConfiguredFoldersNotTheDefaults(t *testing.T) {
 	workDir, configDir := t.TempDir(), t.TempDir()
-	repo := seedRepo(t, workDir, "repo", "main")
+	repo := seedRepo(t, workDir, "repo")
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "steering", "s.md"), "# S\n")
 	mustWriteFile(t, filepath.Join(configDir, "config.json"), `{"memory_mode":"read_only"}`)
 	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
-	env := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, nil, false))
+	env := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, ToolsSnapshot{}, false))
 	chat := g.renderChat(ForgeSnapshot{})
 
 	for _, want := range []string{
 		"Multiple repos coexist under `" + workDir + "`. ",
 		"runs in `" + workDir + "/myrepo/`",
-		"which is `" + workDir + "`). Treat the inventory",
+		"kiro-cli loads `.kiro/` only from `" + workDir + "`, so",
 		"every chat starts in `" + workDir + "`. ",
 		"No repository under `" + workDir + "` has an `origin`",
 		"`" + workDir + "/_scratch/<task>/` is a good default",

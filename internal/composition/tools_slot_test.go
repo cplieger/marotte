@@ -216,24 +216,33 @@ func TestWireToolsEngine_StaysDownOverAnUnusableToolsFolder(t *testing.T) {
 	}
 }
 
-func TestInstalledRows_KeepsWhatTheProbeReportsInstalledAndEnabled(t *testing.T) {
-	inv := &toolbelt.Inventory{Tools: []toolbelt.ToolInfo{
-		{Name: "go", Source: "aqua:golang/go", InstalledVersion: "1.26.2", Installed: true},
-		{Name: "black", Source: "pip:black", InstalledVersion: "24.1.0"},
-		{Name: "ripgrep", Source: "apt:ripgrep", InstalledVersion: "14.1.1-1", Installed: true, Disabled: true},
-		{Name: "lodash", Source: "npm:lodash", InstalledVersion: "4.17.21", Installed: true},
-		{Name: "fd", Installed: true},
-	}}
+func TestToolsSnapshot_KeepsWhatTheProbeReportsInstalledAndEnabled(t *testing.T) {
+	inv := &toolbelt.Inventory{
+		Tools: []toolbelt.ToolInfo{
+			{Name: "go", Source: "aqua:golang/go", InstalledVersion: "1.26.2", Installed: true, Commands: []string{"go", "gofmt"}},
+			{Name: "black", Source: "pip:black", InstalledVersion: "24.1.0", Commands: []string{"black"}},
+			{Name: "ripgrep", Source: "apt:ripgrep", InstalledVersion: "14.1.1-1", Installed: true, Disabled: true, Commands: []string{"rg"}},
+			{Name: "libfoo", Source: "apt:libfoo", InstalledVersion: "2.0", Installed: true},
+			{Name: "fd", Installed: true},
+		},
+		System: []toolbelt.SystemTool{{Name: "git", Installed: true}, {Name: "ssh"}, {Name: "jq", Installed: true}},
+	}
 
-	got := installedRows(inv)
+	got := toolsSnapshot(inv)
 
 	want := []steering.InstalledTool{
-		{Name: "go", Kind: "aqua", Version: "1.26.2"},
-		{Name: "lodash", Kind: "npm", Version: "4.17.21"},
-		{Name: "fd"},
+		{Version: "1.26.2", Commands: []string{"go", "gofmt"}},
+		{Version: "2.0", Apt: true},
+		{},
 	}
-	if !slices.Equal(got, want) {
-		t.Errorf("installedRows = %+v, want %+v", got, want)
+	same := func(a, b steering.InstalledTool) bool {
+		return a.Version == b.Version && slices.Equal(a.Commands, b.Commands) && a.Apt == b.Apt
+	}
+	if !slices.EqualFunc(got.Tools, want, same) {
+		t.Errorf("toolsSnapshot rows = %+v, want %+v", got.Tools, want)
+	}
+	if want := []string{"git", "jq"}; !slices.Equal(got.System, want) {
+		t.Errorf("toolsSnapshot system = %v, want the present ones %v", got.System, want)
 	}
 }
 
@@ -253,8 +262,8 @@ func TestToolsSlot_InstalledToolsAnswersOnlyWhileTheEngineIsUp(t *testing.T) {
 	if err := down.start(); err != nil {
 		t.Fatal(err)
 	}
-	if tools, ok := down.installedTools(); ok || tools != nil {
-		t.Errorf("installedTools() with the engine down = (%v, %t), want (nil, false)", tools, ok)
+	if tools, ok := down.installedTools(); ok || tools.Tools != nil || tools.System != nil {
+		t.Errorf("installedTools() with the engine down = (%v, %t), want (empty, false)", tools, ok)
 	}
 
 	up := newToolsSlot(manifest, func() (*toolbelt.Engine, error) {
@@ -264,13 +273,13 @@ func TestToolsSlot_InstalledToolsAnswersOnlyWhileTheEngineIsUp(t *testing.T) {
 	if err := up.start(); err != nil {
 		t.Fatal(err)
 	}
-	if tools, ok := up.installedTools(); !ok || len(tools) != 0 {
+	if tools, ok := up.installedTools(); !ok || len(tools.Tools) != 0 {
 		t.Errorf("installedTools() with the engine up over an empty tools.json = (%v, %t), want (none, true)", tools, ok)
 	}
 }
 
-// The boot regenerates environment.md once the engine is up, listing what its probe reports
-// installed under the bins tools-state.json records.
+// The boot regenerates environment.md once the engine is up, listing the commands of what its
+// probe reports installed.
 func TestWireToolsSteering_ListsTheEnginesInstalledTools(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	configDir, toolsDir := fitTree(t)
@@ -307,7 +316,7 @@ func TestWireToolsSteering_ListsTheEnginesInstalledTools(t *testing.T) {
 	wireToolsSteering(context.WithoutCancel(t.Context()), tools, steering.New(t.TempDir(), configDir, toolsDir))
 
 	path := workspace.KiroSteeringPath("environment.md")
-	want := "## Installed tools\n\n- hello 1.0\n- hello-cli 1.0\n\n"
+	want := "## Installed tools\n\nCommands: hello 1.0, hello-cli 1.0\n\n"
 	waitFor(t, "environment.md to list the installed tool", func() bool {
 		data, err := os.ReadFile(path)
 		return err == nil && strings.Contains(string(data), want)

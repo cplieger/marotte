@@ -21,148 +21,122 @@ import (
 )
 
 func TestWriteTools(t *testing.T) {
-	installed := []InstalledTool{
-		{Name: "goimports", Kind: "go", Version: "v0.30.0"},
-		{Name: "go", Kind: "aqua", Version: "1.26.2"},
-		{Name: "pyright", Kind: "npm", Version: "1.1.411"},
+	snap := ToolsSnapshot{
+		Tools: []InstalledTool{
+			{Version: "v0.30.0", Commands: []string{"goimports"}},
+			{Version: "1.26.2", Commands: []string{"go", "gofmt"}},
+			{Version: "14.1.1-1", Commands: []string{"rg"}, Apt: true},
+			{Version: "2.0", Apt: true},
+		},
+		System: []string{"git", "curl"},
 	}
-	state := []byte(`{
-		"tools": {
-			"goimports": {"installed_version": "v0.30.0", "bins": ["goimports"]},
-			"go": {"installed_version": "1.26.2", "bins": ["go", "gofmt"]},
-			"pyright": {"installed_version": "1.1.411", "pm_bins": ["pyright", "pyright-langserver"]}
-		}
-	}`)
 	var b strings.Builder
-	writeTools(&b, installed, state)
+	writeTools(&b, snap, true)
 
 	want := "## Installed tools\n\n" +
-		"- go 1.26.2\n" +
-		"- gofmt 1.26.2\n" +
-		"- goimports v0.30.0\n" +
-		"- pyright 1.1.411\n" +
-		"- pyright-langserver 1.1.411\n\n"
+		"Commands: go 1.26.2, gofmt 1.26.2, goimports v0.30.0, rg 14.1.1-1\n\n" +
+		"Baked into the image: curl, git\n\n" +
+		"The image is Debian slim: its base userland (coreutils, util-linux, findutils, grep, sed, awk, diff, gzip, " +
+		"which, perl, dpkg and apt-get) is present and not listed here. The image does not ship file, bc, xxd, netstat " +
+		"or ss. Check any other command with `command -v`, and install through the tools engine below.\n\n" +
+		"1 more installed packages ship no command (mostly libraries): `dpkg -l` or `curl -s localhost:9847/api/tools` lists them.\n\n"
 	if got := b.String(); got != want {
 		t.Errorf("writeTools =\n%s\nwant\n%s", got, want)
 	}
 }
 
-func TestWriteTools_NothingInstalledEmitsNothing(t *testing.T) {
+func TestWriteTools_AnUnrecordedVersionIsLeftOut(t *testing.T) {
 	var b strings.Builder
-	writeTools(&b, nil, []byte(`{"tools":{"go":{"installed_version":"1.26.2","bins":["go"]}}}`))
-	if b.Len() != 0 {
-		t.Errorf("writeTools with nothing installed wrote:\n%s", b.String())
+	writeTools(&b, ToolsSnapshot{Tools: []InstalledTool{{Commands: []string{"fd"}}}}, true)
+	if got := lineWithPrefix(b.String(), "Commands: "); got != "Commands: fd" {
+		t.Errorf("Commands line = %q, want no placeholder for the empty version", got)
 	}
 }
 
-// A row tools-state.json still records, but whose probe failed (a pip tool whose interpreter is
-// gone), is not offered as a command.
-func TestWriteTools_ListsOnlyWhatTheProbeReportsInstalled(t *testing.T) {
-	state := []byte(`{"tools": {
-		"ruff": {"installed_version": "0.9.0", "pm_bins": ["ruff"]},
-		"black": {"installed_version": "24.1.0", "pm_bins": ["black", "blackd"]}
-	}}`)
+func TestWriteTools_ACommandTwoRowsShipIsListedOnce(t *testing.T) {
+	snap := ToolsSnapshot{Tools: []InstalledTool{
+		{Version: "5.9.0", Commands: []string{"tsc", "tsserver"}},
+		{Version: "1.0.0", Commands: []string{"tsc"}},
+	}}
 	var b strings.Builder
-	writeTools(&b, []InstalledTool{{Name: "ruff", Kind: "pip", Version: "0.9.0"}}, state)
-	out := b.String()
-	if !strings.Contains(out, "- ruff 0.9.0\n") {
-		t.Errorf("installed ruff missing:\n%s", out)
-	}
-	if strings.Contains(out, "black") {
-		t.Errorf("a tool the probe does not report installed is listed:\n%s", out)
+	writeTools(&b, snap, true)
+	if got := strings.Count(b.String(), "tsc "); got != 1 {
+		t.Errorf("tsc listed %d times, want once: PATH holds one:\n%s", got, b.String())
 	}
 }
 
-// A tool with no recorded bins has no known command: an npm package that ships no bin, or an apt
-// package, whose commands need not share its name.
-func TestWriteTools_AToolWithNoRecordedCommandIsListedAsAPackage(t *testing.T) {
-	installed := []InstalledTool{
-		{Name: "jq", Kind: "aqua", Version: "1.8.1"},
-		{Name: "ripgrep", Kind: "apt", Version: "14.1.1-1"},
-		{Name: "lodash", Kind: "npm", Version: "4.17.21"},
-	}
-	state := []byte(`{"tools": {
-		"jq": {"installed_version": "1.8.1", "bins": ["jq"]},
-		"ripgrep": {"installed_version": "14.1.1-1"},
-		"lodash": {"installed_version": "4.17.21"}
-	}}`)
+// The engine's bin dir precedes /usr/bin on PATH, so an engine row's copy is the one that runs.
+func TestWriteTools_AnEngineRowsVersionWinsOverAnAptRows(t *testing.T) {
+	snap := ToolsSnapshot{Tools: []InstalledTool{
+		{Version: "1.0-1", Commands: []string{"node"}, Apt: true},
+		{Version: "24.0.0", Commands: []string{"node"}},
+	}}
 	var b strings.Builder
-	writeTools(&b, installed, state)
-
-	want := "## Installed tools\n\n" +
-		"- jq 1.8.1\n\n" +
-		"Installed packages with no recorded command (`dpkg -L <package>` lists an apt package's files):\n\n" +
-		"- lodash 4.17.21 (npm)\n" +
-		"- ripgrep 14.1.1-1 (apt)\n\n"
-	if got := b.String(); got != want {
-		t.Errorf("writeTools =\n%s\nwant\n%s", got, want)
+	writeTools(&b, snap, true)
+	if got := lineWithPrefix(b.String(), "Commands: "); got != "Commands: node 24.0.0" {
+		t.Errorf("Commands line = %q, want the engine row's version", got)
 	}
 }
 
-// Without the state file's bins every installed tool is still listed, none as a command.
-func TestWriteTools_UnreadableStateListsEveryToolAsAPackage(t *testing.T) {
-	for state, logged := range map[string]bool{"": false, "not json": true} {
-		t.Run(fmt.Sprintf("state %q", state), func(t *testing.T) {
-			var logs bytes.Buffer
-			capture.SwapDefault(t, slog.New(slog.NewTextHandler(&logs, nil)))
+func TestWriteTools_AnInstalledUtilityIsNotCalledMissing(t *testing.T) {
+	cases := []struct {
+		name    string
+		snap    ToolsSnapshot
+		missing string
+	}{{
+		name:    "one installed through the engine",
+		snap:    ToolsSnapshot{Tools: []InstalledTool{{Version: "1:5.46", Commands: []string{"file"}, Apt: true}}},
+		missing: " The image does not ship bc, xxd, netstat or ss.",
+	}, {
+		name:    "one baked into the image",
+		snap:    ToolsSnapshot{System: []string{"bc", "xxd", "netstat", "ss"}},
+		missing: " The image does not ship file.",
+	}, {
+		name: "all of them",
+		snap: ToolsSnapshot{
+			Tools:  []InstalledTool{{Commands: []string{"file", "bc"}}, {Commands: []string{"xxd"}, Apt: true}},
+			System: []string{"netstat", "ss"},
+		},
+		missing: "",
+	}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			var b strings.Builder
-			writeTools(&b, []InstalledTool{{Name: "go", Kind: "aqua", Version: "1.26.2"}}, []byte(state))
-			want := "## Installed tools\n\n" +
-				"Installed packages with no recorded command (`dpkg -L <package>` lists an apt package's files):\n\n" +
-				"- go 1.26.2 (aqua)\n\n"
-			if got := b.String(); got != want {
-				t.Errorf("writeTools =\n%s\nwant\n%s", got, want)
-			}
-			if got := strings.Contains(logs.String(), "parse tools-state.json"); got != logged {
-				t.Errorf("parse error logged = %t, want %t; logs:\n%s", got, logged, logs.String())
+			writeTools(&b, tc.snap, true)
+			want := "is present and not listed here." + tc.missing + " Check any other command with `command -v`"
+			if !strings.Contains(b.String(), want) {
+				t.Errorf("writeTools lacks %q:\n%s", want, b.String())
 			}
 		})
 	}
 }
 
-func TestWriteTools_AnUnrecordedVersionOrKindIsLeftOut(t *testing.T) {
-	installed := []InstalledTool{{Name: "fd"}, {Name: "rg", Kind: "aqua"}}
-	state := []byte(`{"tools": {"rg": {"bins": ["rg"]}}}`)
+func TestWriteTools_ABakedNameAnInstalledRowShipsIsListedOnce(t *testing.T) {
+	snap := ToolsSnapshot{
+		Tools:  []InstalledTool{{Version: "1:10.0", Commands: []string{"scp", "ssh"}, Apt: true}},
+		System: []string{"git", "ssh"},
+	}
 	var b strings.Builder
-	writeTools(&b, installed, state)
-	out := b.String()
-	if !strings.Contains(out, "\n- rg\n") || !strings.Contains(out, "\n- fd\n") {
-		t.Errorf("writeTools wrote a placeholder for an empty version or kind:\n%q", out)
+	writeTools(&b, snap, true)
+	if got := lineWithPrefix(b.String(), "Baked into the image: "); got != "Baked into the image: git" {
+		t.Errorf("Baked line = %q, want ssh only under Commands", got)
 	}
 }
 
-func TestWriteTools_DuplicateBinsDeduped(t *testing.T) {
-	// A bin two tools ship is listed once: PATH, not ownership.
-	installed := []InstalledTool{
-		{Name: "typescript", Kind: "npm", Version: "5.9.0"},
-		{Name: "tsc-wrapper", Kind: "aqua", Version: "1.0.0"},
-	}
-	state := []byte(`{"tools": {
-		"typescript": {"installed_version": "5.9.0", "pm_bins": ["tsc", "tsserver"]},
-		"tsc-wrapper": {"installed_version": "1.0.0", "bins": ["tsc"]}
-	}}`)
+// Past the cap, every engine command is kept before an apt row's: the user chose each engine
+// row, while an apt package also ships its auxiliaries.
+func TestWriteTools_TheCommandsCapKeepsEngineCommandsFirst(t *testing.T) {
+	tools := []InstalledTool{{Version: "14", Commands: []string{"aux-a", "aux-b"}, Apt: true}}
+	tools = append(tools, engineRows(maxCommands, "tool")...)
 	var b strings.Builder
-	writeTools(&b, installed, state)
-	out := b.String()
-	if strings.Count(out, "- tsc ") != 1 {
-		t.Errorf("duplicate bin not deduped; output:\n%s", out)
+	writeTools(&b, ToolsSnapshot{Tools: tools}, true)
+	commands := lineWithPrefix(b.String(), "Commands: ")
+	if strings.Contains(commands, "aux-") {
+		t.Errorf("an apt row's command took a slot from an engine command: %q", commands)
 	}
-}
-
-// The section comes from the live inventory, so a down engine (no snapshot) lists nothing,
-// whatever tools-state.json still records.
-func TestRender_ListsNoToolsWithoutAnInventory(t *testing.T) {
-	workDir, configDir := t.TempDir(), t.TempDir()
-	mustWriteFile(t, filepath.Join(configDir, "tools-state.json"),
-		`{"tools":{"goimports":{"installed_version":"v0.30.0","bins":["goimports"]}}}`)
-	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
-
-	installed := []InstalledTool{{Name: "goimports", Kind: "go", Version: "v0.30.0"}}
-	if out := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, installed, false)); strings.Contains(out, "## Installed tools") {
-		t.Errorf("render without an inventory listed tools:\n%s", out)
-	}
-	if out := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, installed, true)); !strings.Contains(out, "## Installed tools\n\n- goimports v0.30.0\n") {
-		t.Errorf("render with an inventory lacks the tool:\n%s", out)
+	if !strings.HasPrefix(commands, "Commands: tool000 1.0.0, ") || !strings.HasSuffix(commands, ", … and 2 more "+
+		"(`command -v <name>` checks one; `curl -s localhost:9847/api/tools` lists every row's commands)") {
+		t.Errorf("Commands line does not keep the engine commands sorted then count the 2 apt ones: %q", commands)
 	}
 }
 
@@ -272,20 +246,14 @@ func TestWriteForges_PerProviderFields(t *testing.T) {
 	})
 }
 
-// TestGenerate_WritesCompleteSteeringFile drives the full Generate
-// flow: reads tools-state.json, inspects workDir, uses the wired MCP
-// snapshot, and writes ~/.kiro/steering/environment.md.
+// TestGenerate_WritesCompleteSteeringFile drives the full Generate flow: the wired tools and MCP
+// snapshots, the workDir scan, and the write of ~/.kiro/steering/environment.md.
 func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
-	tools := `{"tools":{"goimports":{"installed_version":"v0.30.0","bins":["goimports"]}}}`
-	if err := os.WriteFile(filepath.Join(configDir, "tools-state.json"),
-		[]byte(tools), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.MkdirAll(filepath.Join(workDir, "myrepo", ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -294,8 +262,8 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 	g.SetMCPSnapshot(func() MCPSnapshot {
 		return MCPSnapshot{Servers: []marotte.MCPSnapshotServer{{Name: "github"}}}
 	})
-	g.SetToolsSnapshot(func() ([]InstalledTool, bool) {
-		return []InstalledTool{{Name: "goimports", Kind: "go", Version: "v0.30.0"}}, true
+	g.SetToolsSnapshot(func() (ToolsSnapshot, bool) {
+		return ToolsSnapshot{Tools: []InstalledTool{{Version: "v0.30.0", Commands: []string{"goimports"}}}}, true
 	})
 
 	g.Generate(t.Context())
@@ -309,7 +277,7 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 	wants := []string{
 		"# Environment",
 		"## Installed tools",
-		"- goimports v0.30.0",
+		"Commands: goimports v0.30.0",
 		"## Container runtime",
 		"## Tools engine",
 		"## Connected integrations",
@@ -565,8 +533,8 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 	g.SetMCPSnapshot(func() MCPSnapshot {
 		return MCPSnapshot{Servers: []marotte.MCPSnapshotServer{{Name: "github"}}}
 	})
-	g.SetToolsSnapshot(func() ([]InstalledTool, bool) {
-		return []InstalledTool{{Name: "goimports", Kind: "go", Version: "v0.30.0"}}, true
+	g.SetToolsSnapshot(func() (ToolsSnapshot, bool) {
+		return ToolsSnapshot{Tools: []InstalledTool{{Version: "v0.30.0", Commands: []string{"goimports"}}}}, true
 	})
 
 	const n = 16
@@ -600,13 +568,13 @@ func TestGenerate_AnOlderGenerationNeverOverwritesANewerOne(t *testing.T) {
 	g := New(t.TempDir(), t.TempDir(), "")
 	entered, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
-	g.SetToolsSnapshot(func() ([]InstalledTool, bool) {
+	g.SetToolsSnapshot(func() (ToolsSnapshot, bool) {
 		if calls.Add(1) == 1 {
 			close(entered)
 			<-release
-			return []InstalledTool{{Name: "old", Version: "1"}}, true
+			return ToolsSnapshot{Tools: []InstalledTool{{Version: "1", Commands: []string{"old"}}}}, true
 		}
-		return []InstalledTool{{Name: "new", Version: "2"}}, true
+		return ToolsSnapshot{Tools: []InstalledTool{{Version: "2", Commands: []string{"new"}}}}, true
 	})
 
 	firstDone, secondDone := make(chan struct{}), make(chan struct{})
@@ -633,7 +601,7 @@ func TestGenerate_AnOlderGenerationNeverOverwritesANewerOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(got), "- new 2\n") || strings.Contains(string(got), "- old 1") {
+	if !strings.Contains(string(got), "Commands: new 2\n") || strings.Contains(string(got), "old 1") {
 		t.Errorf("environment.md holds the older generation's tools, not the newer one's:\n%s", got)
 	}
 }
@@ -645,7 +613,7 @@ func TestGenerate_ACancelledContextRunsNoSnapshot(t *testing.T) {
 	var calls atomic.Int32
 	g.SetMCPSnapshot(func() MCPSnapshot { calls.Add(1); return MCPSnapshot{} })
 	g.SetForgeSnapshot(func() ForgeSnapshot { calls.Add(1); return ForgeSnapshot{} })
-	g.SetToolsSnapshot(func() ([]InstalledTool, bool) { calls.Add(1); return nil, true })
+	g.SetToolsSnapshot(func() (ToolsSnapshot, bool) { calls.Add(1); return ToolsSnapshot{}, true })
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
@@ -659,31 +627,6 @@ func TestGenerate_ACancelledContextRunsNoSnapshot(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".kiro", "steering", "environment.md")); !os.IsNotExist(err) {
 		t.Errorf("a cancelled Generate wrote environment.md (stat error %v)", err)
-	}
-}
-
-func TestGenerate_CancelledDuringItsSnapshotsRendersNothing(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	var buf bytes.Buffer
-	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	configDir := t.TempDir()
-	// A render would log this file's parse error, so the ERROR check sees a render that ran.
-	mustWriteFile(t, filepath.Join(configDir, "tools-state.json"), "{")
-	g := New(t.TempDir(), configDir, "")
-	ctx, cancel := context.WithCancel(t.Context())
-	g.SetToolsSnapshot(func() ([]InstalledTool, bool) { cancel(); return nil, true })
-
-	err := g.Generate(ctx)
-
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("Generate cancelled during its snapshots returned %v, want its ctx's error", err)
-	}
-	if _, err := os.Stat(filepath.Join(home, ".kiro", "steering", "environment.md")); !os.IsNotExist(err) {
-		t.Errorf("Generate wrote environment.md after its ctx was cancelled (stat error %v)", err)
-	}
-	if strings.Contains(buf.String(), "level=ERROR") {
-		t.Errorf("Generate rendered after its ctx was cancelled:\n%s", buf.String())
 	}
 }
 
@@ -814,7 +757,7 @@ func TestCustomPath_HomeUnsetFallback(t *testing.T) {
 }
 
 // TestWriteForges_RepoListTruncatesAtTwenty pins the `len(p.Repos) > 20` boundary: 20 repos
-// list with no overflow line, 21 list 20 plus "… and 1 more".
+// list with no overflow line, 21 list 20 plus "… and at least 1 more": a forge reports one page.
 func TestWriteForges_RepoListTruncatesAtTwenty(t *testing.T) {
 	mkRepos := func(n int) []string {
 		repos := make([]string, n)
@@ -842,8 +785,8 @@ func TestWriteForges_RepoListTruncatesAtTwenty(t *testing.T) {
 			Kind: "github", Host: "github.com", User: "alice", Repos: mkRepos(21),
 		}}})
 		out := b.String()
-		if !strings.Contains(out, "… and 1 more") {
-			t.Errorf("21 repos: want an \"… and 1 more\" overflow line:\n%s", out)
+		if !strings.Contains(out, "\n  - … and at least 1 more (the Sources tab lists them)\n") {
+			t.Errorf("21 repos: want an \"… and at least 1 more\" overflow line:\n%s", out)
 		}
 		if strings.Contains(out, "acme/repo-20") {
 			t.Errorf("21 repos: the 21st repo must be summarised, not listed inline:\n%s", out)
