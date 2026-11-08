@@ -416,9 +416,6 @@ func (r *turnRegistry) noteKASActivity(chatID marotte.ChatID, active bool) (*act
 		in = kasReportActive
 	}
 	lc.kasStepLocked(in, 0)
-	if active {
-		lc.endWakesLocked()
-	}
 	if !lc.bracketedWireLocked() {
 		return nil, 0, false
 	}

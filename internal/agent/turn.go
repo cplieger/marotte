@@ -453,7 +453,7 @@ func (lc *chatLifecycle) openLocked(chatID marotte.ChatID, opened *marotte.Entry
 	} else {
 		lc.own = t
 	}
-	lc.endWakesLocked()
+	lc.takeWakeLocked()
 	lc.setStateLocked(turnOpen)
 	return t
 }

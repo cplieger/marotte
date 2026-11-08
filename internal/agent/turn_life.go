@@ -62,11 +62,11 @@ func (lc *chatLifecycle) beginWork(kind workKind) (context.Context, func(), bool
 // beginLease is beginWork for one session lease on sb, whose own context cut cancels: the life's end calls cut before
 // it returns, so no check on the lease's context passes once a close committed. A lease's context derives from its
 // caller's, and context.AfterFunc on the life's would cut it later, on another goroutine. A lease on an entry whose
-// close is granted answers marotte.ErrSessionClosing; the closer's own lease is useClosing.
+// close is confirmed answers marotte.ErrSessionClosing; the closer's own lease is useClosing.
 func (lc *chatLifecycle) beginLease(sb *sharedBridge, cut context.CancelCauseFunc) (context.Context, func(), error) {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	if !lc.ended && lc.closing != nil && lc.closing.sb == sb {
+	if !lc.ended && lc.closingLocked(sb) {
 		return nil, func() {}, marotte.ErrSessionClosing
 	}
 	return leaseOutcome(lc.beginLocked(workSession, cut, nil))
@@ -118,8 +118,8 @@ func (lc *chatLifecycle) beginLocked(kind workKind, cut context.CancelCauseFunc,
 }
 
 // endLifeLocked ends the life: every fence taken before it stops holding, its context and every running lease's are
-// cancelled with marotte.ErrChatClosedDuringCall, and no new work starts. The pending close, the open holds and the
-// wake holds go with it: the teardown owns the session's end. Idempotent. Caller holds mu.
+// cancelled with marotte.ErrChatClosedDuringCall, and no new work starts. The pending close, a grant no closer took,
+// the open holds and the wake holds go with it: the teardown owns the session's end. Idempotent. Caller holds mu.
 func (lc *chatLifecycle) endLifeLocked(epochs func() uint64) {
 	if lc.ended {
 		return
@@ -131,6 +131,7 @@ func (lc *chatLifecycle) endLifeLocked(epochs func() uint64) {
 		cut(marotte.ErrChatClosedDuringCall)
 	}
 	lc.ask = nil
+	lc.dropUntakenGrantLocked()
 	clear(lc.opens)
 	lc.endWakesLocked()
 	lc.quietIfDoneLocked()

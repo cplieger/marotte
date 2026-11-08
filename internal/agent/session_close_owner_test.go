@@ -1998,9 +1998,7 @@ func TestCloseOwner_AKeptChatsLeaseIsNeverRefusedForACloseThatWillNotHappen(t *t
 				send(t, o.h, newTurnEndMsg("end_turn"))
 				synctest.Wait()
 
-				err := o.sb.use(t.Context(), func(context.Context, engineSession) error { return nil })
-
-				if err != nil {
+				if err := o.sb.use(t.Context(), func(context.Context, engineSession) error { return nil }); err != nil {
 					t.Errorf("a lease after the turn ended = %v, want it admitted", err)
 				}
 				if looked := reached.Load() != 0; looked != tc.closerLooks {

@@ -2489,7 +2489,7 @@ func agentRunOnChatAs(
 	e.mu.Lock()
 	e.sessions = append(e.sessions, first)
 	e.mu.Unlock()
-	h.insertBridgeNow(chat, testBridge(first, bridgeReady))
+	chatEntry(t, h, chat, first, bridgeReady)
 	h.runs.useLog(newRunLog(t.TempDir()))
 	h.coord.runs = h.runs.log
 	if _, err := cs.Mutate(t.Context(), chat, func(c *marotte.Chat, _ bool) bool {

@@ -12,9 +12,8 @@ import (
 )
 
 // markSessionsForReload is the one way a setting a session reads only at its door reaches resident chat sessions:
-// each entry's life is marked (chatLifecycle.markReload), and the session closes once no hold refuses it, at its next
-// door or by the closer (reloadIfMarked). A run's host session is never marked: it keeps the presets its lease
-// recorded at launch.
+// each entry's life is marked (chatLifecycle.markReload) and closes from the chat's next door (reloadIfMarked). A
+// run's host session is never marked: it keeps the presets its lease recorded at launch.
 func (rt *Runtime) markSessionsForReload(reason string) {
 	marked := 0
 	for chatID, sb := range rt.bridge.mgr.all() {

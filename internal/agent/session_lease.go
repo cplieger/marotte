@@ -15,7 +15,7 @@ import (
 
 // leaseLife is the life an entry's leases are counted on: the chat's lifecycle, or runHostLife for a run host.
 // beginLease answers the life's context for a lease on sb, or the refusal the caller returns; a life that can end
-// calls cut when it does, before the ending call returns. closingSession reports whether a close is granted on sb.
+// calls cut when it does, before the ending call returns. closingSession reports whether a confirmed close is on sb.
 type leaseLife interface {
 	beginLease(sb *sharedBridge, cut context.CancelCauseFunc) (ctx context.Context, done func(), err error)
 	closingSession(sb *sharedBridge) bool

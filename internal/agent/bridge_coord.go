@@ -292,9 +292,9 @@ func (bc *bridgeCoordinator) generationAt(
 // caller's open hold on sb, or reopen when the caller must open the next generation. A close granted on sb is waited
 // out, so no open hands out a session being closed. A dead session, or a marked one that no hold refuses but the
 // opener's own (opener is its reservation token), closes here, so this open loads the next generation with the
-// current door settings; a reload a hold refuses stays pending and the door uses sb. A refused close keeps the
-// session and its mark; an unconfirmed one fails this open. The close is a lease, so the chat's close refuses it or
-// cuts it and this open fails with that error.
+// current door settings; a reload a hold refuses stays pending, or for a kept chat marked for its next door, and the
+// door uses sb. A refused close keeps the session and its mark; an unconfirmed one fails this open. The close is a
+// lease, so the chat's close refuses it or cuts it and this open fails with that error.
 func (bc *bridgeCoordinator) reloadIfMarked(
 	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, opener uint64,
 ) (release func(), reopen bool, err error) {
@@ -305,7 +305,7 @@ func (bc *bridgeCoordinator) reloadIfMarked(
 	if bc.bridge.mgr.get(chatID) != sb {
 		return nil, true, nil
 	}
-	a := lc.openOrReload(sb, opener, !sb.open(), bc.configHeld())
+	a := lc.openOrReload(sb, opener, doorReads{dead: !sb.open(), configHeld: bc.configHeld(), kept: bc.keptResident(chatID)})
 	switch a.verdict {
 	case askClosing:
 		return nil, true, awaitDone(ctx, a.done)
