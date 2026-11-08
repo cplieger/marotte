@@ -834,6 +834,31 @@ func TestTriggeredRunAutoApprovedWhenOn(t *testing.T) {
 	})
 }
 
+// The line recording an answer given with nobody watching names the rule a triggered run was launched for, as it names
+// a scheduled run's schedule.
+func TestUnattendedLineCarriesRuleID(t *testing.T) {
+	for name, approve := range map[string]bool{"approved": true, "refused": false} {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLogs(t)
+			answerTriggered(t, approve, `{`+triggeredAskOptions+`}`)
+			var lines []map[string]any
+			for line := range strings.SplitSeq(logs.String(), "\n") {
+				var rec map[string]any
+				if json.Unmarshal([]byte(line), &rec) == nil && rec["msg"] == logMsgUnattendedPermission {
+					lines = append(lines, rec)
+				}
+			}
+			if len(lines) != 1 {
+				t.Fatalf("%d %q lines, want 1: %s", len(lines), logMsgUnattendedPermission, logs.String())
+			}
+			if lines[0]["rule_id"] != "rule-1" || lines[0]["outcome"] != name {
+				t.Errorf("the line carries rule_id=%v outcome=%v, want rule-1 and %s", lines[0]["rule_id"],
+					lines[0]["outcome"], name)
+			}
+		})
+	}
+}
+
 // An administrator ask needs a person, for a triggered run as for a scheduled one.
 func TestTriggeredAdminAskStillRefused(t *testing.T) {
 	outcome, _ := answerTriggered(t, true, `{`+triggeredAskOptions+`,"_meta":{"kiro":{"consent":{"scope":"administration"}}}}`)

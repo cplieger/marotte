@@ -1,6 +1,10 @@
 package trigger
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/cplieger/marotte/internal/obs"
+)
 
 // anyGeneration is the generation of an update that holds whatever edit came before it.
 const anyGeneration = -1
@@ -19,6 +23,7 @@ func (c *Confirmer) update(ruleID string, gen int, fn func(es *eventState) bool)
 		return
 	}
 	retry := fn(&rv.es) || rv.writeBlocked != ""
+	c.export(ruleID, rv)
 	rv.mu.Unlock()
 	if retry {
 		c.deliver(ruleID, &attemptEvent{kind: evWriteRetry})
@@ -44,4 +49,24 @@ func (c *Confirmer) snapshot(ruleID string) (es eventState, gen int, err error) 
 	}
 	es, err = decodeState(&st)
 	return es, gen, err
+}
+
+// export shows the rule's state on the metrics page; a rule switched off, deleted or no longer an event rule shows
+// nothing. rv.mu is held.
+func (c *Confirmer) export(ruleID string, rv *ruleValue) {
+	def, ok := c.store.Get(ruleID)
+	if !ok || !def.Enabled || def.When.Event == nil || rv.dropped {
+		obs.TriggerRuleGone(ruleID)
+		return
+	}
+	es := &rv.es
+	st := obs.TriggerRuleState{
+		PollFailures: es.pollFailures, QueueFull: es.queueFull, UnnamedRun: rv.blocker.warned,
+		StateUnreadable: rv.unreadable != nil, StateUnwritten: rv.writeBlocked != "",
+		LaunchFailed: es.raw.Status.Blocked != "" && rv.unreadable == nil, CatchUpGaps: len(es.raw.Status.Gaps),
+	}
+	for _, rc := range es.cursor {
+		st.TooManyItems = st.TooManyItems || (rc != nil && rc.Labeled != nil && rc.Labeled.TooMany)
+	}
+	obs.TriggerRule(ruleID, &st)
 }

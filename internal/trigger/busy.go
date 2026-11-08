@@ -2,7 +2,6 @@ package trigger
 
 import (
 	"fmt"
-	"log/slog"
 	"slices"
 	"time"
 
@@ -125,8 +124,7 @@ func (s *stepper) unnamedBlocker(workflowID string) {
 	}
 	st.RowText = unnamedBlockingText(workflowID, s.recipe())
 	if !b.warned {
-		slog.Warn(logMsgRunNotStarted, "rule_id", s.ruleID, "workflow_id", workflowID, "class", "blocked",
-			"error", st.RowText)
+		logRunNotStarted(s.ruleID, workflowID, notStartedBlocked, st.RowText)
 		b.warned = true
 	}
 }

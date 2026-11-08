@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/cplieger/forgeapi/v2"
@@ -46,6 +46,9 @@ type poller struct {
 	c      *Confirmer
 	budget *Budget
 	now    func() time.Time
+	// failing counts each feed list's failed reads in a row, by feedListKey.
+	failing   map[string]int
+	failingMu sync.Mutex
 }
 
 // newPoller returns a poller reading through src within b and keeping rule state in c.
@@ -60,6 +63,10 @@ type reads struct {
 	runs   *listWalk[forgeapi.Run]
 	// paused is each list the budget skipped, and why.
 	paused map[string]*backoff
+	// failures is each list's failed reads in a row, this poll's included.
+	failures map[string]int
+	// failed is each list whose read this poll ended in an error, a rate limit's included.
+	failed map[string]bool
 	// since and horizon are the run walk's bound and H, both fixed when it starts.
 	since   time.Time
 	horizon time.Time
@@ -101,31 +108,30 @@ func (p *poller) apply(run *pollRun) {
 	for _, pr := range run.rules {
 		p.c.update(pr.rule.ID, pr.gen, func(es *eventState) bool { return pr.applyTo(es, &run.rd) })
 	}
-	slog.Debug(logMsgPoll, "connection", run.feed.Connection, "repo", run.feed.Selector,
-		"reads", run.rd.calls(), "since", run.rd.since, "took", p.now().Sub(run.start))
+	logPoll(run.feed, run.rd.calls(), run.rd.since, p.now().Sub(run.start))
 }
 
 // load plans the rule's part of the poll on a copy of its state; the poll's changes are applied to the rule's
 // current value, under its mutex, once the reads are back.
 func (p *poller) load(r *launchrule.Rule, f Feed, start time.Time) *pollRule {
 	if _, err := p.c.store.State(r.ID); err != nil {
-		slog.Debug(logMsgRuleSkipped, "rule_id", r.ID, "error", err)
+		logRuleSkipped(r.ID, err)
 		return nil
 	}
 	es, gen, err := p.c.snapshot(r.ID)
 	if errors.Is(err, errRuleUnreadable) {
-		slog.Debug(logMsgRuleSkipped, "rule_id", r.ID, "error", err)
+		logRuleSkipped(r.ID, err)
 		return nil
 	}
 	if err != nil {
-		slog.Error(logMsgStateBad, "rule_id", r.ID, "error", err)
+		logStateBad(r.ID, err)
 		return nil
 	}
 	return &pollRule{rule: r, ev: r.When.Event, feed: f, start: start, st: es, gen: gen, marks: p.c.marks}
 }
 
 func (p *poller) read(ctx context.Context, f Feed, rules []*pollRule, start time.Time) reads {
-	rd := reads{paused: map[string]*backoff{}}
+	rd := reads{paused: map[string]*backoff{}, failures: map[string]int{}, failed: map[string]bool{}}
 	need := map[string]bool{}
 	for _, pr := range rules {
 		need[listOf(pr.ev.Kind)] = true
@@ -133,6 +139,7 @@ func (p *poller) read(ctx context.Context, f Feed, rules []*pollRule, start time
 	for _, list := range []string{listIssues, listPRs, listRuns} {
 		if !need[list] {
 			p.budget.forget(f, list)
+			p.forgetFailures(f, list)
 		}
 	}
 	if need[listIssues] {
@@ -161,13 +168,59 @@ func readList[T any](ctx context.Context, p *poller, f Feed, list string, rd *re
 ) *listWalk[T] {
 	if bo := p.budget.hold(f, list); bo != nil {
 		rd.paused[list] = bo
+		rd.failures[list] = p.noteRead(f, list, errBackedOff)
 		return &listWalk[T]{Err: errBackedOff}
 	}
 	lctx, tag := withRead(ctx, list)
 	w := walkList(lctx)
 	complete := w.complete() || (w.Err == nil && w.Partial.Reason == forgeapi.PartialResultWindow)
 	p.budget.walked(f, list, max(int(tag.pages.Load()), w.Calls), complete, w.Err, w.Partial)
+	rd.failures[list] = p.noteRead(f, list, w.Err)
+	rd.failed[list] = w.Err != nil
 	return &w
+}
+
+// pollFailingAfter is how many polls in a row a feed's list must fail before it warns, so a forge's passing 502
+// stays quiet.
+const pollFailingAfter = 3
+
+// noteRead counts a failed read of f's list, or ends the run of failures a good read ends, and answers the failures
+// in a row. A read the budget held back or the forge rate-limited is waited out, so it neither counts nor ends a run,
+// and nor does one this poll's own end cut short.
+func (p *poller) noteRead(f Feed, list string, err error) int {
+	p.failingMu.Lock()
+	defer p.failingMu.Unlock()
+	key := feedListKey(f, list)
+	n := p.failing[key]
+	fe, isForge := errors.AsType[*forgeapi.Error](err)
+	switch {
+	case errors.Is(err, errBackedOff), errors.Is(err, context.Canceled), isForge && fe.Kind == forgeapi.KindRateLimited:
+		return n
+	case err == nil:
+		if n >= pollFailingAfter {
+			logPollRecovered(f, list, n)
+		}
+		delete(p.failing, key)
+		return 0
+	}
+	n++
+	if p.failing == nil {
+		p.failing = map[string]int{}
+	}
+	p.failing[key] = n
+	kind := "other"
+	if isForge {
+		kind = fe.Kind.String()
+	}
+	logPollRead(f, list, n, kind, err)
+	return n
+}
+
+// forgetFailures drops the failures of f's list that no rule reads any more.
+func (p *poller) forgetFailures(f Feed, list string) {
+	p.failingMu.Lock()
+	defer p.failingMu.Unlock()
+	delete(p.failing, feedListKey(f, list))
 }
 
 func (rd *reads) calls() int {
@@ -205,6 +258,10 @@ type pollRule struct {
 func (pr *pollRule) applyTo(es *eventState, rd *reads) bool {
 	before, err := stateJSON(es)
 	pr.st = *es
+	if len(pr.st.queue) < pr.ev.Hold.Cap {
+		pr.st.fullLogged = false
+	}
+	pr.st.pollFailures = rd.failures[listOf(pr.ev.Kind)]
 	if pr.ev.Kind == launchrule.KindRunConcluded {
 		pr.ageOut(rd.horizon)
 	}
@@ -215,7 +272,11 @@ func (pr *pollRule) applyTo(es *eventState, rd *reads) bool {
 		pr.st.raw.Status.Paused = bo.rowText()
 	} else {
 		pr.st.checkedAt = pr.start
-		pr.showFull()
+		// A failed read walked too little to show the queue has room, and the turned-away event still waits.
+		if pr.full || !rd.failed[listOf(pr.ev.Kind)] {
+			pr.st.queueFull = pr.full
+			pr.showFull()
+		}
 		pr.noteBaselineStop(rd)
 	}
 	*es = pr.st
@@ -299,10 +360,6 @@ func (pr *pollRule) repoCursor() *repoCursor {
 		pr.st.cursor[id] = rc
 	}
 	return rc
-}
-
-func (pr *pollRule) attrs() []any {
-	return []any{"rule_id", pr.rule.ID, "recipe", pr.rule.Name, "repo", pr.ev.Repo, "kind", string(pr.ev.Kind)}
 }
 
 func (pr *pollRule) apply(rd *reads) {

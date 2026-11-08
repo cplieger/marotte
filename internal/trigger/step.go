@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/cplieger/marotte/internal/launchrule"
@@ -165,6 +164,7 @@ func (c *Confirmer) step(ruleID string, ev *attemptEvent) stepResult {
 		s.res = impossible(ruleID, rec, ev)
 	}
 	s.commit()
+	c.export(ruleID, rv)
 	if !s.held && len(rv.records) == 0 {
 		c.forget(ruleID, rv)
 	}
@@ -177,8 +177,7 @@ func impossible(ruleID string, rec *record, ev *attemptEvent) stepResult {
 	if rec != nil {
 		state = rec.state
 	}
-	slog.Error(logMsgImpossible, "rule_id", ruleID, "state", state.String(), "event", ev.kind.String(),
-		"workflow_id", ev.workflowID)
+	logImpossible(ruleID, state.String(), ev.kind.String(), ev.workflowID)
 	return stepResult{err: errImpossibleTransition}
 }
 

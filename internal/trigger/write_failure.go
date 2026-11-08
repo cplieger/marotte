@@ -2,7 +2,6 @@ package trigger
 
 import (
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/cplieger/marotte/internal/launchrule"
@@ -16,7 +15,7 @@ func (s *stepper) commit() {
 		return
 	}
 	if err := s.c.writeLocked(s.ruleID, s.rv); err != nil {
-		slog.Error(logMsgNotWritten, "file", stateFile(s.ruleID), "op", "write", "rule_id", s.ruleID, "error", err)
+		logNotWritten(s.ruleID, opWrite, err)
 		s.writeFailed(err)
 		return
 	}

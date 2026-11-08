@@ -1,7 +1,6 @@
 package trigger
 
 import (
-	"log/slog"
 	"slices"
 	"time"
 
@@ -89,7 +88,7 @@ func (s *stepper) rebaseline() {
 	s.rv.generation++
 	es := &s.rv.es
 	es.cursor, es.queue, es.launched, es.superseded = cursor{}, nil, nil, nil
-	es.checkedAt, es.baselineStop = time.Time{}, ""
+	es.checkedAt, es.baselineStop, es.pollFailures, es.queueFull, es.fullLogged = time.Time{}, "", 0, false, false
 	s.rv.unreadable = nil
 	s.resetFailures()
 	es.raw.Population = launchrule.Population(&s.def)
@@ -116,7 +115,7 @@ func (s *stepper) deleteRule() {
 	}
 	s.clearWriteBlock()
 	if err := s.c.writer.RemoveState(s.ruleID); err != nil {
-		slog.Error(logMsgNotWritten, "file", stateFile(s.ruleID), "op", "remove", "rule_id", s.ruleID, "error", err)
+		logNotWritten(s.ruleID, opRemove, err)
 	}
 }
 
@@ -125,7 +124,7 @@ func (s *stepper) deleteRule() {
 func (s *stepper) resetFailures() {
 	st := s.status()
 	st.BoundAbandons, st.FailingSince = 0, time.Time{}
-	s.rv.retries, s.rv.retryAt = 0, time.Time{}
+	s.rv.retries, s.rv.retryAt, s.rv.retryReason = 0, time.Time{}, ""
 	if st.Blocked != "" && s.rv.unreadable == nil {
 		st.Blocked, st.RowText = "", ""
 	}

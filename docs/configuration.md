@@ -83,6 +83,8 @@ Whether the chat agent can start and manage workflow runs is a setting, not a va
 
 When a loop in a run the agent started stops at its pass limit, kiro-cli tells the agent, which then asks you whether to give the loop more passes or end it.
 
+A workflow can also start itself on a schedule or when something happens on a forge, through **Run when…** on its row on the **Workflows** panel. [Event triggers](triggers.md) describes the forge rules and the two settings that cap the runs they start.
+
 ## kiro-cli telemetry
 
 kiro-cli's telemetry is a setting, not a variable: **kiro-cli telemetry** under **Data sharing** on the **General** tab in **Settings**. It is on by default, as in kiro-cli. One switch covers both kinds kiro-cli sends: its usage telemetry and its legacy toolkit telemetry. Off stops both. An existing install keeps the value it already has, so one that earlier versions started with telemetry off stays off. On an enterprise account, the organization's usage-analytics setting decides it instead, and the switch is locked. A change applies after the agent engine restarts, which it does by itself once no reply and no workflow is running.

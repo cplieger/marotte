@@ -4,14 +4,19 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/cplieger/marotte/internal/launchrule"
 )
 
-// Effects is what the Confirmer asks of the runs it abandoned. *agent.Runs implements it.
+// Effects is what the Confirmer asks of the engine and the user: cancels and releases of the runs it abandoned,
+// and a rule's failing notice. *agent.Runs implements it.
 type Effects interface {
 	// CancelAbandoned cancels the run; nil only when its own cancel verb returned nil.
 	CancelAbandoned(ctx context.Context, workflowID string) error
 	// ReleaseTriggered ends marotte's hold on a run whose cancel landed: its lease, bounds and host session.
 	ReleaseTriggered(ctx context.Context, workflowID string)
+	// NotifyNotStarted tells the user the rule's launches started failing; reason is the text its row records.
+	NotifyNotStarted(ctx context.Context, rule *launchrule.Rule, reason string)
 }
 
 type effectKind int
@@ -20,12 +25,15 @@ const (
 	effectCancel effectKind = iota + 1
 	effectRelease
 	effectWakeLauncher
+	effectNotify
 )
 
 // attemptEffect is one effect a row returns, run by the Confirmer once the rule's mutex is released.
 type attemptEffect struct {
 	workflowID string
-	kind       effectKind
+	// reason is a notice's text.
+	reason string
+	kind   effectKind
 }
 
 type queuedEffect struct {
@@ -33,8 +41,8 @@ type queuedEffect struct {
 	effect attemptEffect
 }
 
-// effectQueue holds the cancels and releases waiting for the effect goroutine. push never blocks: a row's caller
-// may own the run the effect is for (agent's runOwners), and the effect would wait for that same owner.
+// effectQueue holds the cancels, releases and notices waiting for the effect goroutine. push never blocks: a row's
+// caller may own the run the effect is for (agent's runOwners), and the effect would wait for that same owner.
 type effectQueue struct {
 	signal  chan struct{}
 	pending []queuedEffect
@@ -63,8 +71,8 @@ func (q *effectQueue) take() []queuedEffect {
 	return out
 }
 
-// Run runs the queued cancels and releases through fx, one at a time and outside every lock, handing each cancel's
-// answer back to step, and the hourly TTL ticker, until ctx ends. Nothing runs before engineReady closes; what is
+// Run runs the queued cancels, releases and notices through fx, one at a time and outside every lock, handing each
+// cancel's answer back to step, and the hourly TTL ticker, until ctx ends. Nothing runs before engineReady closes; what is
 // queued before then waits, and the boot-held records' bounds start then.
 func (c *Confirmer) Run(ctx context.Context, engineReady <-chan struct{}, fx Effects) {
 	select {
@@ -105,10 +113,14 @@ func (c *Confirmer) runEffect(ctx context.Context, fx Effects, e queuedEffect) {
 		c.deliver(e.ruleID, &ev)
 	case effectRelease:
 		fx.ReleaseTriggered(ctx, e.effect.workflowID)
+	case effectNotify:
+		if def, ok := c.store.Get(e.ruleID); ok {
+			fx.NotifyNotStarted(ctx, &def, e.effect.reason)
+		}
 	}
 }
 
-// dispatch runs a row's effects: cancels and releases go to the effect goroutine, a wake to the launcher.
+// dispatch runs a row's effects: cancels, releases and notices go to the effect goroutine, a wake to the launcher.
 func (c *Confirmer) dispatch(ruleID string, effects []attemptEffect) {
 	for _, e := range effects {
 		if e.kind == effectWakeLauncher {

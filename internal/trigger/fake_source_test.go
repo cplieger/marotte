@@ -2,6 +2,7 @@ package trigger
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -17,12 +18,14 @@ type fakeCall struct {
 
 // fakeSource answers each list from a queue of pages per list, and records every call. A list with no
 // page left answers an empty, complete page. With forge set, Runs answers instead every run of forge created at
-// or after the bound's second, in one complete page, as the forge's created filter does.
+// or after the bound's second, in one complete page, as the forge's created filter does; with open set,
+// OpenIssues answers every issue of open in one complete page.
 type fakeSource struct {
 	issues []forgeapi.Page[forgeapi.Issue]
 	prs    []forgeapi.Page[forgeapi.PullRequest]
 	runs   []forgeapi.Page[forgeapi.Run]
 	forge  *[]forgeapi.Run
+	open   *[]forgeapi.Issue
 	errs   map[string]error
 	calls  []fakeCall
 	mu     sync.Mutex
@@ -49,6 +52,9 @@ func (s *fakeSource) OpenIssues(_ context.Context, _ Feed, after forgeapi.Cursor
 	defer s.mu.Unlock()
 	if err := s.record("issues", after, time.Time{}); err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
+	}
+	if s.open != nil {
+		return forgeapi.Page[forgeapi.Issue]{Items: slices.Clone(*s.open)}, nil
 	}
 	return pop(&s.issues), nil
 }

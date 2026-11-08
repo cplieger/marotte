@@ -433,11 +433,12 @@ func (b *busyLauncher) LaunchTriggered(
 	return "", &schedule.BusyError{WorkflowID: b.wf}
 }
 
-// idleEffects answers every cancel and release at once.
+// idleEffects answers every cancel and release at once, and sends no notice.
 type idleEffects struct{}
 
-func (idleEffects) CancelAbandoned(context.Context, string) error { return nil }
-func (idleEffects) ReleaseTriggered(context.Context, string)      {}
+func (idleEffects) CancelAbandoned(context.Context, string) error              { return nil }
+func (idleEffects) ReleaseTriggered(context.Context, string)                   {}
+func (idleEffects) NotifyNotStarted(context.Context, *launchrule.Rule, string) {}
 
 // A row text the confirmer sets without a state write, as a recipe held by a run nothing names, is what the list
 // shows.

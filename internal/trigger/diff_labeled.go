@@ -2,7 +2,6 @@ package trigger
 
 import (
 	"cmp"
-	"log/slog"
 	"slices"
 	"time"
 )
@@ -87,5 +86,5 @@ func (pr *pollRule) mint() time.Time {
 }
 
 func (pr *pollRule) logCut(it *item) {
-	slog.Debug(logMsgLabelsCut, append(pr.attrs(), "item", it.number, "omitted_at_least", it.omitted)...)
+	logLabelsCut(refOf(pr.rule), it.number, it.omitted)
 }

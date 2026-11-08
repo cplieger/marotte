@@ -176,11 +176,12 @@ func (l *countingLauncher) count() int {
 	return l.calls
 }
 
-// noEffects answers every cancel and release at once.
+// noEffects answers every cancel and release at once, and sends no notice.
 type noEffects struct{}
 
-func (noEffects) CancelAbandoned(context.Context, string) error { return nil }
-func (noEffects) ReleaseTriggered(context.Context, string)      {}
+func (noEffects) CancelAbandoned(context.Context, string) error              { return nil }
+func (noEffects) ReleaseTriggered(context.Context, string)                   {}
+func (noEffects) NotifyNotStarted(context.Context, *launchrule.Rule, string) {}
 
 func TestLauncherStartsAfterEngineReady(t *testing.T) {
 	t.Run("the launcher is built over the agent's runs after the confirmer starts", func(t *testing.T) {
