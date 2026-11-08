@@ -1,7 +1,7 @@
 // The hooks badge lies over its header's top-right corner, the group's or a lone tool card's: the header's toggle
 // surface, and so its hover, press and focus highlight, spans the whole card, and the badge is a second control on
-// top of it. The list the badge
-// opens is an anchored menu with the tab menu's surface, right-aligned under the badge and inside the turn card.
+// top of it. The list the badge opens is an anchored menu with the tab menu's surface, right-aligned under the badge
+// and inside the turn card.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";

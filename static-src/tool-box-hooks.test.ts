@@ -24,7 +24,7 @@ for (const id of [
   }
 }
 
-const { buildAssistantBody, resetBlockRenders, initBlockRenderer, dropHead } =
+const { buildAssistantBody, resetBlockRenders, initBlockRenderer, dropHead, mountHeadRange } =
   await import("./messages-blocks.js");
 const { forgetHeights, spacerHeight } = await import("./block-heights.js");
 const { clearAllEntrySigs, toolCallSigs } = await import("./store-signals.js");
@@ -112,7 +112,10 @@ function say(turn: string, n: number, text: string): Entry {
 }
 
 /** Mount one finished turn card at the top of the page, its body built by the production renderer. */
-function mount(build: (turn: string) => Entry[]): { body: HTMLElement; turn: Turn } {
+function mount(
+  build: (turn: string) => Entry[],
+  range?: { from: number; to: number },
+): { body: HTMLElement; turn: Turn } {
   seq++;
   const id = `t-box-hooks-${String(seq)}`;
   const card = document.createElement("div");
@@ -134,7 +137,7 @@ function mount(build: (turn: string) => Entry[]): { body: HTMLElement; turn: Tur
     branchFrom: undefined,
   };
   forgetHeights([id]);
-  buildAssistantBody(body, turn, CHAT_ID, false);
+  buildAssistantBody(body, turn, CHAT_ID, false, range);
   return { body, turn };
 }
 
@@ -368,6 +371,40 @@ describe("hook rows with no tool call between them", () => {
     expect(getComputedStyle(shell ?? document.body).borderTopStyle).toBe("solid");
   });
 
+  /** A tool box, then prose, then two failed turn-end hook rows and more prose. */
+  const boxThenRows = (t: string): Entry[] => [
+    call(t, 1),
+    say(t, 2, "done"),
+    hook(t, 3, "stop a", { hook_trigger: "Stop", status: "failed" }),
+    hook(t, 4, "stop b", { hook_trigger: "Stop", status: "failed" }),
+    say(t, 5, "bye"),
+  ];
+
+  it("keep no header when the window drops the turn's tool box", () => {
+    const { body, turn } = mount(boxThenRows);
+    expect(groupHeaders(body), "premise: no header").toHaveLength(0);
+    dropHead(turn, { from: 2, to: 6 });
+    expect(toolBoxes(body), "premise: the tool box left the window").toHaveLength(0);
+    expect(groupHeaders(body), "no header").toHaveLength(0);
+    expect(hookRows(body)).toHaveLength(2);
+  });
+
+  it("keep no header when a head extension gives the box back", () => {
+    const { body, turn } = mount(boxThenRows);
+    dropHead(turn, { from: 2, to: 6 });
+    mountHeadRange(turn, { from: 0, to: 6 }, false);
+    only(toolBoxes(body), "premise: the tool box is back");
+    expect(groupHeaders(body), "no header").toHaveLength(0);
+    expect(hookRows(body)).toHaveLength(2);
+  });
+
+  it("start with no header when only the turn's tail mounts", () => {
+    const { body } = mount(boxThenRows, { from: 2, to: 6 });
+    expect(toolBoxes(body), "premise: the tool box is not mounted").toHaveLength(0);
+    expect(groupHeaders(body), "no header").toHaveLength(0);
+    expect(hookRows(body)).toHaveLength(2);
+  });
+
   it("are a group counting them in a turn with no tool box", () => {
     const root = render((t) => [
       hook(t, 1, "stop a", { hook_trigger: "Stop", status: "failed" }),
@@ -413,6 +450,44 @@ describe("the spacer standing for a dropped box", () => {
     expect(held, "premise: the open box is taller than a folded group").toBeGreaterThan(200);
     dropHead(turn, { from: 4, to: 5 });
     expect(spacerHeight(turn, { from: 4, to: 5 }, "head", "")).toBe(held);
+  });
+
+  /** The tail spacer for everything past `say(1)`, priced from estimates alone. */
+  function unmeasuredTail(build: (turn: string) => Entry[]): number {
+    const { turn } = mount(build, { from: 0, to: 2 });
+    forgetHeights([turn.id]);
+    return spacerHeight(turn, { from: 0, to: 2 }, "tail", "");
+  }
+
+  it("prices a never-mounted lone tool box as one card, its quiet hooks adding nothing", () => {
+    const bare = unmeasuredTail((t) => [say(t, 1, "go"), call(t, 2)]);
+    const hooked = unmeasuredTail((t) => [
+      say(t, 1, "go"),
+      call(t, 2),
+      hook(t, 3, "seat guard"),
+      hook(t, 4, "notify", { hook_trigger: "PostToolUse" }),
+    ]);
+    expect(hooked).toBe(bare);
+  });
+
+  it("prices a never-mounted turn hook folded into another box's badge at nothing", () => {
+    const { turn } = mount((t) => [
+      call(t, 1),
+      say(t, 2, "sent it"),
+      hook(t, 3, "stop check", { hook_trigger: "Stop" }),
+      say(t, 4, "bye"),
+    ]);
+    forgetHeights([turn.id]);
+    const withHook = spacerHeight(turn, { from: 4, to: 5 }, "head", "");
+    expect(withHook).toBe(spacerHeight(turn, { from: 3, to: 5 }, "head", ""));
+  });
+
+  it("prices a never-mounted turn hook's row in a turn with no tool box", () => {
+    const row = unmeasuredTail((t) => [
+      say(t, 1, "go"),
+      hook(t, 2, "prompt check", { hook_trigger: "UserPromptSubmit" }),
+    ]);
+    expect(row).toBe(unmeasuredTail((t) => [say(t, 1, "go"), call(t, 2)]));
   });
 
   it("adds nothing for a turn hook folded into another box's badge", () => {

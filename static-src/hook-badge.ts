@@ -45,7 +45,7 @@ export function hookTriggerLabel(trigger: string): string {
   return trigger === "" ? "trigger unknown" : (TRIGGER_LABELS.get(trigger) ?? trigger);
 }
 
-/** One hook as the popover lists it: all its folded runs, which share a name, a hook file and a trigger. */
+/** One hook as the popover lists it: all its listed runs, which share a name, a hook file and a trigger. */
 interface HookEntry {
   readonly key: string;
   readonly name: string;
@@ -57,7 +57,7 @@ interface HookEntry {
   runs: number;
 }
 
-/** The list row a folded hook card is counted in: its name, hook file and trigger. */
+/** The list row a listed hook card is counted in: its name, hook file and trigger. */
 function hookKey(card: HTMLElement): string {
   return join(
     card.dataset["title"] ?? "",
@@ -66,10 +66,10 @@ function hookKey(card: HTMLElement): string {
   );
 }
 
-/** The folded hooks grouped by name, hook file and trigger, in order of first appearance. */
-function hookEntries(folded: readonly HTMLElement[]): HookEntry[] {
+/** The listed hooks grouped by name, hook file and trigger, in order of first appearance. */
+function hookEntries(listed: readonly HTMLElement[]): HookEntry[] {
   const entries = new Map<string, HookEntry>();
-  for (const card of folded) {
+  for (const card of listed) {
     const title = card.dataset["title"] ?? "";
     const path = card.dataset["filePath"] ?? "";
     const trigger = card.dataset["hookTrigger"] ?? "";
@@ -94,7 +94,7 @@ function hookEntries(folded: readonly HTMLElement[]): HookEntry[] {
 
 /** What a hooks badge opens: the hooks it counts and its popover, which lives as long as the badge. */
 interface HookPopover {
-  folded: readonly HTMLElement[];
+  listed: readonly HTMLElement[];
   readonly panel: HTMLElement;
   readonly ctl: PopoverController;
   /** Watches the open list's group: a resize refits the list, and a group leaving the page closes it. */
@@ -106,20 +106,20 @@ const popovers = new WeakMap<HTMLElement, HookPopover>();
 /** Each group's badge, wherever in the group it sits. */
 const badges = new WeakMap<HTMLElement, HTMLElement>();
 
-/** The badge counting each folded hook card, which may sit in another group than the card. */
+/** The badge listing each folded hook card, which may sit in another group than the card. */
 const foldedInto = new WeakMap<HTMLElement, HTMLElement>();
 
-/** Paint the group's hooks badge listing `folded` on `host`, the group or its lone card, absent with none. The
- *  badge is the one place the hook count lives and counts runs; it is a sibling of the host's header, since a button
- *  inside the group header's `role="button"` is not reachable by assistive technology. */
+/** Paint the group's hooks badge listing the hook cards `listed` on `host`, the group or its lone card, absent with
+ *  none. The badge is the one place the hook count lives and counts runs; it is a sibling of the host's header,
+ *  since a button inside the group header's `role="button"` is not reachable by assistive technology. */
 export function syncHookBadge(
   group: HTMLElement,
-  folded: readonly HTMLElement[],
+  listed: readonly HTMLElement[],
   host: HTMLElement,
 ): void {
   let badge = badges.get(group) ?? null;
   const was = badge?.parentElement ?? null;
-  if (folded.length === 0) {
+  if (listed.length === 0) {
     if (badge !== null) {
       const state = popovers.get(badge);
       state?.watch.disconnect();
@@ -145,17 +145,21 @@ export function syncHookBadge(
   if (state === undefined) {
     return;
   }
-  state.folded = folded;
-  for (const card of folded) {
-    foldedInto.set(card, badge);
+  state.listed = listed;
+  for (const card of listed) {
+    if (card.hasAttribute("data-hook-folded")) {
+      foldedInto.set(card, badge);
+    } else {
+      foldedInto.delete(card);
+    }
   }
-  const count = String(folded.length);
+  const count = String(listed.length);
   host.style.setProperty(DIGITS_VAR, String(count.length));
   const visible = badge.querySelector(".tool-group-hooks-n");
   if (visible !== null && visible.textContent !== count) {
     visible.textContent = count;
   }
-  badge.setAttribute("aria-label", `${count} ${kindNoun("hook", folded.length)} ran`);
+  badge.setAttribute("aria-label", `${count} ${kindNoun("hook", listed.length)} ran`);
   if (state.ctl.isOpen) {
     renderHookList(state);
   }
@@ -223,7 +227,7 @@ function mountBadge(group: HTMLElement): HTMLElement {
       panel.remove();
     },
   });
-  const state: HookPopover = { folded: [], panel, ctl, watch };
+  const state: HookPopover = { listed: [], panel, ctl, watch };
   popovers.set(badge, state);
   badge.addEventListener("click", () => {
     toggleHookPopover(state, badge);
@@ -272,7 +276,7 @@ export function showHookPopover(badge: HTMLElement): boolean {
   return true;
 }
 
-/** The open list's row counting the folded hook `card`, null while the list is closed. Every show rebuilds the
+/** The open list's row counting the listed hook `card`, null while the list is closed. Every show rebuilds the
  *  list, so a mark find-in-chat puts in a row never outlives the list's close. */
 export function hookRowOf(badge: HTMLElement, card: HTMLElement): HTMLElement | null {
   const state = popovers.get(badge);
@@ -297,7 +301,7 @@ export function hideHookPopover(badge: HTMLElement): void {
 
 /** Rebuilt only when the entries change, so a focused chip keeps its focus. */
 function renderHookList(state: HookPopover): void {
-  const entries = hookEntries(state.folded);
+  const entries = hookEntries(state.listed);
   const keys = entries.map((e) => join(e.key, String(e.runs))).join("\n");
   if (state.panel.dataset["keys"] === keys) {
     return;

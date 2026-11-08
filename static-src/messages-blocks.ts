@@ -83,6 +83,7 @@ import {
   refreshGroupHeader,
   autoCollapseGroup,
   setGroupSuperseded,
+  setLaneHoldsWork,
 } from "./tool-group.js";
 
 // Re-exported for messages.ts to inject into messages-tools' status-flip path.
@@ -2942,6 +2943,7 @@ function indexGroups(st: TurnRender): GroupIndex {
     lastPost.set(host, at);
     startAt(host, at + 1);
   };
+  let work = false;
   // Every entry this view draws at its own position posts into the root lane at its `seq` and closes the tool-card
   // run unless it is a tool card, so any rendering kind breaks a run. A delegate posts only its card.
   for (const e of st.turn.body) {
@@ -2968,8 +2970,11 @@ function indexGroups(st: TurnRender): GroupIndex {
       openBox(`run:${held.runID}`, "", e.seq);
     } else {
       post(st.lane, e.seq, false);
+      work ||= tc.kind !== "hook";
     }
   }
+  // From the store, so a box the window dropped still keeps the turn's hook rows out of a group.
+  setLaneHoldsWork(st.bodyEl, work);
 
   for (const list of starts.values()) {
     list.sort((a, b) => a - b);

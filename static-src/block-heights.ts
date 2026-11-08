@@ -12,6 +12,7 @@ import {
   type EntryRange,
   type RunResults,
 } from "./block-window.js";
+import { hookQuiet, hookStatusShown, isToolTriggerHook } from "./hook-fold.js";
 import { isInternalToolTitle } from "./tool-schema.js";
 import type { Entry, EntryToolCall } from "./types.js";
 import { payloadOf, type Turn } from "./turns.js";
@@ -343,6 +344,36 @@ function* spacerBoxes(
       lastRendered = seq;
     }
   }
+  const hookAt = (at: number): EntryToolCall | undefined => {
+    const e = entryAt(t, at);
+    const call = e === undefined ? undefined : payloadOf(e, "tool_call");
+    return call?.kind === "hook" ? call : undefined;
+  };
+  let laneWork = false;
+  for (let seq = 0; seq < span && !laneWork; seq++) {
+    const e = entryAt(t, seq);
+    laneWork =
+      e !== undefined &&
+      entryRenders(e, lane, folds) &&
+      groupRole(e, results) === "member" &&
+      hookAt(seq) === undefined;
+  }
+  // An unmeasured hook member is priced by the fate `hook-fold.ts` `hookFate` gives it: a row, or nothing when it
+  // folds into a badge or hides.
+  const priceMember = (m: number, runWork: boolean): number => {
+    const known = per?.get(m);
+    const call = hookAt(m);
+    if (known !== undefined || call === undefined) {
+      return known ?? est.toolCard;
+    }
+    const result = folds.hookResults.get(entryAt(t, m)?.id ?? "");
+    const quiet = hookQuiet({
+      status: result?.status ?? call.status,
+      output: result?.output ?? call.output,
+    });
+    const row = !quiet || (hookStatusShown() && !runWork && (isToolTriggerHook(call) || !laneWork));
+    return row ? est.toolCard : 0;
+  };
   const mounted = range.to > range.from;
   // The exclusive end of the run being priced: its later members share its box.
   let runTo = -1;
@@ -365,8 +396,14 @@ function* spacerBoxes(
       const last = members[members.length - 1] ?? seq;
       runTo = last + 1;
       const inside = members.filter((m) => m >= stood.from && m < stood.to);
-      const member = (m: number): number => per?.get(m) ?? est.toolCard;
-      const collapsed = members.length > 1 && lastRendered > last;
+      const work = members.filter((m) => hookAt(m) === undefined).length;
+      const px = new Map(members.map((m) => [m, priceMember(m, work > 0)]));
+      const member = (m: number): number => px.get(m) ?? 0;
+      // Only non-hook cards form a group; hook rows alone form one only in a lane with none (`tool-group.ts`
+      // `paintGroup`).
+      const boxes = work > 0 ? work : laneWork ? 0 : members.filter((m) => member(m) > 0).length;
+      const grouped = boxes > 1;
+      const collapsed = grouped && lastRendered > last;
       // A run crossing into the mounted rows is their group's: only an expanded one grows by the members here.
       const joined = (first < stood.from || last >= stood.to) && mounted;
       if (joined) {
@@ -383,12 +420,10 @@ function* spacerBoxes(
       const measured = groups?.get(first);
       if (measured?.range.from === first && measured.range.to === last + 1) {
         own = measured.px;
-      } else if (members.length === 1) {
-        own = member(first);
+      } else if (collapsed) {
+        own = est.toolGroup;
       } else {
-        own = collapsed
-          ? est.toolGroup
-          : est.toolGroup + members.reduce((px, m) => px + member(m), 0);
+        own = members.reduce((sum, m) => sum + member(m), grouped ? est.toolGroup : 0);
       }
     } else if (e.kind === "text") {
       if (seq < runTo) {

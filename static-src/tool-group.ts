@@ -1,9 +1,9 @@
 // Tool group: a collapsible container over consecutive tool calls, with a per-kind or mixed summary.
-// The header exists only FROM THE SECOND NON-HOOK CARD: a shell holding one carries CLS_BARE and renders as a
-// standalone `.tool-call`, its hooks badge on that card's header line and its hook rows inside its box. The
-// shell is mounted on the FIRST card and gains chrome by class, since re-seating a card replays its entry slide and
-// drops focus; so the `.tool-group` selector alone does not mean "two or more" (consult `groupIsBare`). Collapse is
-// POSITIONAL: a group folds once something is posted after it, applied at construction when already
+// The header shows from the SECOND NON-HOOK CARD, or the second hook row in a lane with none (`paintGroup`); a shell
+// holding one card is CLS_BARE and renders as that `.tool-call`, its hooks badge on the card's header line and its
+// hook rows inside its box. The shell is mounted on the FIRST card and gains chrome by class, since re-seating a card
+// replays its entry slide and drops focus; so `.tool-group` alone does not mean "two or more" (`groupIsBare`).
+// Collapse is POSITIONAL: a group folds once something is posted after it, applied at construction when already
 // superseded (the only silent route) and by `autoCollapseGroup` live. A user click takes over.
 // A failed member folds like any other; the header's mark and count carry the failure.
 
@@ -24,7 +24,7 @@ import { queryAll } from "./dom.js";
  *  it, so a close that leaves it off makes the next header click close the group again. */
 const CLS_COLLAPSED = "tool-group-collapsed";
 const CLS_USER_TOGGLED = "tool-group-user-toggled";
-/** A shell with no header: fewer than two non-hook cards, or hooks alone (`paintGroup` says when those count). A
+/** A shell with no header: fewer than two non-hook cards, or hook rows alone (`paintGroup` says when those count). A
  *  pure function of what `foldGroupHooks` and `placeStrays` leave, with ONE writer (paintGroup), so there is no
  *  second flag or counter to keep in step. */
 const CLS_BARE = "tool-group-bare";
@@ -35,8 +35,18 @@ const folds = new WeakMap<HTMLElement, HookFold>();
 /** The strays of hook-only siblings each group with work folds into its badge besides its own hooks. */
 const adopted = new WeakMap<HTMLElement, readonly HTMLElement[]>();
 
-/** Hook-only shells whose container holds a non-hook card: their rows never form a group there. */
+/** Hook-only shells whose container's lane holds a non-hook card: their rows never form a group there. */
 const besideWork = new WeakSet<HTMLElement>();
+
+/** Whether each container's lane holds a non-hook card, mounted or not, as its renderer last said. A container no
+ *  renderer recorded answers from its mounted shells. */
+const laneWork = new WeakMap<HTMLElement, boolean>();
+
+/** Record whether `container`'s lane holds a non-hook card anywhere in its turn, mounted or not. Call it before the
+ *  pass that mounts into `container`. */
+export function setLaneHoldsWork(container: HTMLElement, holds: boolean): void {
+  laneWork.set(container, holds);
+}
 
 /** Groups the reader had closed when they went bare, so the region they get back is born closed. */
 const readerClosed = new WeakSet<HTMLElement>();
@@ -62,8 +72,8 @@ export function groupBody(group: HTMLElement): HTMLElement {
   return group.querySelector<HTMLElement>(":scope > .tool-group-body") ?? group;
 }
 
-/** Whether this shell renders with no header: one non-hook card with its hook rows, or hook rows alone. Read it
- *  rather than the `.tool-group` selector, which does not mean "a group of two or more". */
+/** Whether this shell renders with no header (`paintGroup` decides). Read it rather than the `.tool-group` selector,
+ *  which does not mean "a group of two or more". */
 export function groupIsBare(group: HTMLElement): boolean {
   return group.classList.contains(CLS_BARE);
 }
@@ -152,7 +162,8 @@ function placeStrays(container: HTMLElement): Map<HTMLElement, HookFold> {
     }
   }
   const folded = new Set([...into.values()].flat());
-  const work = into.size > 0;
+  // Strays need a mounted badge to join; whether the lane holds a tool box does not.
+  const work = laneWork.get(container) ?? into.size > 0;
   const moved = new Map<HTMLElement, HookFold>();
   for (const [g, f] of groups) {
     if (f.work.length > 0) {
@@ -188,7 +199,7 @@ function placeStrays(container: HTMLElement): Map<HTMLElement, HookFold> {
 function paintGroup(group: HTMLElement, fold: HookFold): void {
   // The summary reads the rows alone: the hooks badge counts every folded hook, and a hook is no operation.
   const rows = fold.rows.filter((c) => !c.hidden);
-  // A group is made of non-hook cards. Hooks alone form one only in a container with none, as before.
+  // A group is made of non-hook cards. Hook rows alone form one only in a lane with none.
   const bare =
     fold.work.length > 0 ? fold.work.length < 2 : besideWork.has(group) || rows.length < 2;
   // A lone box's badge lists its hook rows too, which it keeps showing; a group's lists what it folded.
