@@ -126,6 +126,7 @@ marotte serves Prometheus metrics at `/metrics` on port 9847, and alert rules fo
 
 - [Features](docs/features.md) describes every part of the page, knowledge bases included.
 - [Configuration](docs/configuration.md) lists every setting and what it checks.
+- [Event triggers](docs/triggers.md) covers workflows that start themselves on a forge event, and how a workflow handles an event that starts it twice.
 - [Security](docs/hardening.md) covers tool installs, the image and the kiro-cli install.
 - [Monitoring and alerts](docs/monitoring.md) covers metrics and alerts.
 - [How marotte works](docs/how-it-works.md) explains syncing across devices, the agent engine, and how kiro-cli is installed and repaired.

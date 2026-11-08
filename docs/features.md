@@ -111,7 +111,9 @@ A steering doc or agent that kiro-cli loaded but does not use carries a badge na
 
 **Run** opens a form under the workflow with its inputs and a **Model** and **Effort** choice. Above **Launch**, the form lists the workflow's steps, with their agents, models, effort levels and loop limits. The choice applies to every step that does not name its own model or effort. **Default** sends neither, so the workflow's own settings apply. A schedule keeps its own choice for every run it starts. When you launch or save, marotte refuses a model or effort level your account does not offer. Without that check, kiro-cli would accept it and fail the step later.
 
-A schedule whose workflow file is gone stays on the **Workflows** panel, marked orphaned, with a **Delete schedule** button.
+**Run when…** on a workflow's row starts it on a schedule, or when something happens on a forge: a label added to an issue or pull request, one opened by an account you list, or a CI run that finished. [Event triggers](triggers.md) describes the forge rules, who can start a run and how a workflow handles an event that starts it twice.
+
+A rule whose workflow file is gone stays on the **Workflows** panel, marked "Its workflow file is gone, so this rule cannot run.", with a **Delete rule** button.
 
 If the agent engine is too busy to start a scheduled run, marotte tries again, waiting longer each time, up to 8 minutes between tries. Meanwhile the schedule's row says the run is waiting on the agent engine. If the schedule's next run time comes first, the row records the missed run as skipped because the engine was busy, and the next run starts on time.
 
