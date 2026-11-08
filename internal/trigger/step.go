@@ -164,6 +164,7 @@ func (c *Confirmer) step(ruleID string, ev *attemptEvent) stepResult {
 		s.res = impossible(ruleID, rec, ev)
 	}
 	s.commit()
+	c.export(ruleID, rv)
 	if !s.held && len(rv.records) == 0 {
 		c.forget(ruleID, rv)
 	}

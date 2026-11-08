@@ -1,6 +1,6 @@
 # Monitoring and alerts
 
-marotte serves a Prometheus metrics page and ships metric alert rules in [`alerts/promql.yaml`](../alerts/promql.yaml). The rules cover engine crashes, prompt failures, memory pressure, schedules that stopped running and unattended runs that failed. marotte ships no log rules, so alerting needs a metric store. Without one, marotte's push notifications and its page tell you about turns, permission requests and workflow runs.
+marotte serves a Prometheus metrics page and ships metric alert rules in [`alerts/promql.yaml`](../alerts/promql.yaml). The rules cover engine crashes, prompt failures, memory pressure, schedules that stopped running, event rules that stopped launching and unattended runs that failed. marotte ships no log rules, so alerting needs a metric store. Without one, marotte's push notifications and its page tell you about turns, permission requests and workflow runs.
 
 ## What you get
 
@@ -21,7 +21,7 @@ When `ALLOWED_HOSTS` is set, the scraper must call marotte by a name in that lis
 
 The page has no login, and marotte has none of its own. If you put marotte behind a reverse proxy that asks for a login, exempt `/metrics` at the proxy. Otherwise, scrape the container directly, but only from a network you already trust with the whole agent, because anyone who reaches port 9847 can use it.
 
-Labels carry fixed values only, with one exception. `rule_id` is the random id marotte gives a schedule, and it names no workflow, path or command.
+Labels carry fixed values only, with one exception. `rule_id` is the random id marotte gives a schedule or an event rule, and it names no workflow, path, repository or command.
 
 | Series | Type | Labels | Meaning |
 | --- | --- | --- | --- |
@@ -36,10 +36,14 @@ Labels carry fixed values only, with one exception. `rule_id` is the random id m
 | `marotte_schedule_slots_not_started_total` | counter | `event` | Schedule slots that started no run, by `launch_failed`, `signin_held` or `engine_busy` |
 | `marotte_unattended_run_failures_total` | counter | `origin`, `reason` | Scheduled and triggered runs that failed with nobody watching. `origin` is `scheduled` or `triggered`. `reason` is `needs_approval`, `overran`, `backstop`, `stalled`, `paused`, `orphaned` or `cancel_given_up` |
 | `marotte_unattended_approvals_total` | counter | `origin` | Tool requests of scheduled and triggered runs approved with nobody watching |
+| `marotte_trigger_rule_blocked` | gauge | `rule_id`, `reason` | 1 while an enabled event rule launches nothing until someone acts, else 0, for each `reason`: `launch_failed`, `unnamed_run`, `too_many_items`, `state_unreadable` or `state_unwritten` |
+| `marotte_trigger_queue_full` | gauge | `rule_id` | 1 while an enabled event rule's last poll left an event at the forge because its queue was full, else 0 |
+| `marotte_trigger_poll_failures` | gauge | `rule_id` | Consecutive polls in which an enabled event rule's read of its repository failed. A good read resets it to 0, and a rate limit leaves it as it is |
+| `marotte_trigger_catch_up_gaps_total` | counter | `cause` | Time ranges an event rule could not read back, by `outage`, `aged_out` or `result_window` |
 
 An engine exit's `cause` is one of these. marotte asked for `restart_confirmed`, `restart_auto`, `shutdown` and `stopped`. Another process sent `external_stop`. The engine ended by itself in `crash`, `stdin_stalled`, `parse_breaker` and `lane_overflow`.
 
-A disabled or deleted schedule's series leave the page. Every counter starts at 0 for each of its label values, so the first event after a start shows in `increase()`.
+A disabled or deleted schedule's or event rule's series leave the page. Every counter starts at 0 for each of its label values, so the first event after a start shows in `increase()`.
 
 The page also carries the Go runtime and process families (`go_*`, `process_*`) under the names Go's official Prometheus client uses, so stock Go dashboards work. marotte bundles no dashboard. These queries are a start in Grafana's Metrics Drilldown:
 
@@ -72,6 +76,11 @@ Load [`alerts/promql.yaml`](../alerts/promql.yaml) into Prometheus, Mimir or vma
 | `MarotteUnattendedRunStopped` | marotte stopped an unattended run that overran, stalled, spent its time budget, paused or was orphaned, in the last 24 hours | warning |
 | `MarotteUnattendedRunCancelFailed` | kiro-cli refused every cancel of an unattended run in the last 24 hours | critical |
 | `MarotteUnattendedRunSelfApproved` | A tool request of an unattended run was approved with nobody watching in the last 24 hours | warning |
+| `MarotteTriggerRuleBlocked` | An event rule launches nothing until someone acts: its launches kept failing, a run it has no record of holds its workflow, it matches more than 5,000 open items, or its saved state does not load | warning |
+| `MarotteLaunchRulesNotWritten` | marotte cannot write an event rule's saved state | critical |
+| `MarotteTriggerQueueFull` | An event rule's last poll left events at the forge because its queue was full | warning |
+| `MarotteTriggerPollFailing` | An event rule's read of its repository failed 3 or more polls in a row | warning |
+| `MarotteTriggerCatchUpGap` | An event rule could not read back over a time range in the last hour, so events in it may never launch | warning |
 
 Thresholds and the `severity` labels are starting points. Keep the scrape job name `marotte`, which `MarotteDown` reads, or change the rule to your job name.
 

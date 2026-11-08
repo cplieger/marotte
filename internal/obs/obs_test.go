@@ -63,6 +63,9 @@ func TestCounters_EveryKnownValueIsOnThePageBeforeItsFirstEvent(t *testing.T) {
 	for _, event := range []string{"launch_failed", "signin_held", "engine_busy"} {
 		want = append(want, `marotte_schedule_slots_not_started_total{event="`+event+`"} `)
 	}
+	for _, cause := range []string{"outage", "aged_out", "result_window"} {
+		want = append(want, `marotte_trigger_catch_up_gaps_total{cause="`+cause+`"} `)
+	}
 	for _, series := range want {
 		if !strings.Contains(body, "\n"+series) {
 			t.Errorf("the page lacks %q before any event", series)
@@ -168,5 +171,33 @@ func TestEngineMemory_AnUnknownLimitLeavesNoLimitSeries(t *testing.T) {
 		if v, ok := sample(s); ok {
 			t.Errorf("%s after EngineMemoryGone = %q, want no series", s, v)
 		}
+	}
+}
+
+// An event rule shows every blocked reason at 0 or 1, so a rule matching one reason sees the others' series, and a
+// gone rule's series leave without another rule's.
+func TestTriggerRule_ExportsEveryReasonUntilTheRuleGoes(t *testing.T) {
+	TriggerRule("obs-a", &TriggerRuleState{UnnamedRun: true, QueueFull: true, PollFailures: 4})
+	TriggerRule("obs-b", &TriggerRuleState{StateUnwritten: true})
+	for reason, want := range map[string]string{
+		"launch_failed": "0", "unnamed_run": "1", "too_many_items": "0", "state_unreadable": "0", "state_unwritten": "0",
+	} {
+		series := `marotte_trigger_rule_blocked{reason="` + reason + `",rule_id="obs-a"}`
+		if v, ok := sample(series); !ok || v != want {
+			t.Errorf("%s = %q (on the page %v), want %s", series, v, ok, want)
+		}
+	}
+	if v, ok := sample(`marotte_trigger_queue_full{rule_id="obs-a"}`); !ok || v != "1" {
+		t.Errorf("queue full = %q (on the page %v), want 1", v, ok)
+	}
+	if v, ok := sample(`marotte_trigger_poll_failures{rule_id="obs-a"}`); !ok || v != "4" {
+		t.Errorf("poll failures = %q (on the page %v), want 4", v, ok)
+	}
+	TriggerRuleGone("obs-a")
+	if body := scrape().Body.String(); strings.Contains(body, `rule_id="obs-a"`) {
+		t.Errorf("obs-a's series are on the page after TriggerRuleGone")
+	}
+	if v, ok := sample(`marotte_trigger_rule_blocked{reason="state_unwritten",rule_id="obs-b"}`); !ok || v != "1" {
+		t.Errorf("another rule's series after TriggerRuleGone(obs-a) = %q (on the page %v), want 1", v, ok)
 	}
 }

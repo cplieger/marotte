@@ -78,6 +78,15 @@ const (
 
 var slotNotStartedEvents = []string{SlotLaunchFailed, SlotSignInHeld, SlotEngineBusy}
 
+// The label names more than one family carries.
+const (
+	labelReason = "reason"
+	labelRuleID = "rule_id"
+)
+
+// triggerGapCauses are the causes internal/launchrule gives a gap an event rule could not read back.
+var triggerGapCauses = []string{"outage", "aged_out", "result_window"}
+
 var (
 	engineExits = measure.NewLabeledCounter("engine_exits_total",
 		"Agent engine exits, by the cause the exit line names.", []string{"cause"})
@@ -85,7 +94,7 @@ var (
 		"Failed prompts, failed empty-turn retries included, by failure class; "+
 			"pipe_death is a prompt the engine's own exit ended.", []string{"class"})
 	signInSaveFailures = measure.NewLabeledCounter("signin_save_failures_total",
-		"Sign-in changes the sign-in file could not take, by backend and reason.", []string{"backend", "reason"})
+		"Sign-in changes the sign-in file could not take, by backend and reason.", []string{"backend", labelReason})
 	engineUp = measure.NewGauge("engine_up", "1 while the agent engine is ready to take prompts, else 0.")
 	// The memory gauges carry no label; a labeled gauge is what lets Delete take a series off the page.
 	engineResident = measure.NewLabeledGauge("engine_resident_memory_bytes",
@@ -94,21 +103,33 @@ var (
 		"JavaScript heap limit of the running agent engine; absent while the limit is unknown.", nil)
 	unattendedRunFailures = measure.NewLabeledCounter("unattended_run_failures_total",
 		"Scheduled and triggered runs that failed with nobody watching, by origin and reason.",
-		[]string{"origin", "reason"})
+		[]string{"origin", labelReason})
 	unattendedApprovals = measure.NewLabeledCounter("unattended_approvals_total",
 		"Permission asks of scheduled and triggered runs approved automatically, by origin.", []string{"origin"})
 	slotsNotStarted = measure.NewLabeledCounter("schedule_slots_not_started_total",
 		"Schedule slots that produced no run, by what stopped them.", []string{"event"})
 	scheduleFailedSlots = measure.NewLabeledGauge("schedule_failed_slots",
-		"Consecutive slots of an enabled schedule that ended without a completed run.", []string{"rule_id"})
+		"Consecutive slots of an enabled schedule that ended without a completed run.", []string{labelRuleID})
 	scheduleNextDue = measure.NewLabeledGauge("schedule_next_due_timestamp_seconds",
 		"When an enabled schedule's next slot not yet judged falls due, or the end of its wait on the agent engine, "+
-			"in Unix seconds.", []string{"rule_id"})
+			"in Unix seconds.", []string{labelRuleID})
+	triggerBlocked = measure.NewLabeledGauge("trigger_rule_blocked",
+		"1 while an enabled event rule launches nothing until someone acts, by reason, else 0.",
+		[]string{labelRuleID, labelReason})
+	triggerQueueFull = measure.NewLabeledGauge("trigger_queue_full",
+		"1 while an enabled event rule's last poll left an event at the forge for its full queue, else 0.",
+		[]string{labelRuleID})
+	triggerPollFailures = measure.NewLabeledGauge("trigger_poll_failures",
+		"Consecutive polls in which an enabled event rule's read of its repository failed.", []string{labelRuleID})
+	triggerGaps = measure.NewLabeledCounter("trigger_catch_up_gaps_total",
+		"Time ranges an event rule could not read back, so events in them may never launch, by cause.",
+		[]string{"cause"})
 )
 
 func init() {
 	registry.MustRegister(engineExits, promptFailures, signInSaveFailures, engineUp, engineResident, engineHeapLimit,
-		unattendedRunFailures, unattendedApprovals, slotsNotStarted, scheduleFailedSlots, scheduleNextDue)
+		unattendedRunFailures, unattendedApprovals, slotsNotStarted, scheduleFailedSlots, scheduleNextDue,
+		triggerBlocked, triggerQueueFull, triggerPollFailures, triggerGaps)
 	for _, c := range engineExitCauses {
 		engineExits.Add(0, c)
 	}
@@ -123,6 +144,9 @@ func init() {
 	}
 	for _, e := range slotNotStartedEvents {
 		slotsNotStarted.Add(0, e)
+	}
+	for _, c := range triggerGapCauses {
+		triggerGaps.Add(0, c)
 	}
 }
 
@@ -211,4 +235,67 @@ func ScheduleGone(ruleID string) {
 func EngineMemoryGone() {
 	engineResident.Delete()
 	engineHeapLimit.Delete()
+}
+
+// TriggerRuleState is what an enabled event rule's series show.
+type TriggerRuleState struct {
+	// PollFailures is the failed reads in a row of the rule's repository.
+	PollFailures int
+	// LaunchFailed is a rule its launch failures blocked until it is edited or switched off and on.
+	LaunchFailed bool
+	// UnnamedRun is a rule held past its confirmation bound by a run no rule has a record of launching.
+	UnnamedRun bool
+	// TooManyItems is a labeled rule matching more open items than it can track.
+	TooManyItems bool
+	// StateUnreadable is a rule whose saved state does not load.
+	StateUnreadable bool
+	// StateUnwritten is a rule whose saved state marotte cannot write.
+	StateUnwritten bool
+	// QueueFull is a rule whose last poll left an event at the forge for its full queue.
+	QueueFull bool
+}
+
+// blockReason is one reason of the blocked series and whether it holds.
+type blockReason struct {
+	reason string
+	on     bool
+}
+
+func (st *TriggerRuleState) reasons() []blockReason {
+	return []blockReason{
+		{"launch_failed", st.LaunchFailed},
+		{"unnamed_run", st.UnnamedRun},
+		{"too_many_items", st.TooManyItems},
+		{"state_unreadable", st.StateUnreadable},
+		{"state_unwritten", st.StateUnwritten},
+	}
+}
+
+// TriggerRule exports event rule ruleID's state, every blocked reason included at 0 or 1.
+func TriggerRule(ruleID string, st *TriggerRuleState) {
+	for _, r := range st.reasons() {
+		triggerBlocked.Set(flag(r.on), ruleID, r.reason)
+	}
+	triggerQueueFull.Set(flag(st.QueueFull), ruleID)
+	triggerPollFailures.Set(float64(st.PollFailures), ruleID)
+}
+
+// TriggerRuleGone removes event rule ruleID's series, for a rule disabled, deleted or no longer an event rule. It
+// deletes the one rule's series, so a scrape never finds another rule's missing.
+func TriggerRuleGone(ruleID string) {
+	for _, r := range (&TriggerRuleState{}).reasons() {
+		triggerBlocked.Delete(ruleID, r.reason)
+	}
+	triggerQueueFull.Delete(ruleID)
+	triggerPollFailures.Delete(ruleID)
+}
+
+// TriggerCatchUpGap counts one gap an event rule could not read back, under cause, one of triggerGapCauses.
+func TriggerCatchUpGap(cause string) { triggerGaps.Inc(cause) }
+
+func flag(on bool) float64 {
+	if on {
+		return 1
+	}
+	return 0
 }

@@ -35,6 +35,11 @@ var shippedAlerts = map[string]string{
 	"MarotteUnattendedRunStopped":       "",
 	"MarotteUnattendedRunCancelFailed":  "",
 	"MarotteUnattendedRunSelfApproved":  "",
+	"MarotteTriggerRuleBlocked":         "",
+	"MarotteLaunchRulesNotWritten":      "",
+	"MarotteTriggerQueueFull":           "",
+	"MarotteTriggerPollFailing":         "",
+	"MarotteTriggerCatchUpGap":          "",
 }
 
 type ruleFile struct {
@@ -171,6 +176,7 @@ func servedPage(t *testing.T) map[string]map[string]map[string]bool {
 	obs.Schedule("alerts-test", 0, time.Unix(1, 0))
 	obs.EngineMemory(1, 1)
 	obs.SignInBackend("alerts-test")
+	obs.TriggerRule("alerts-test", &obs.TriggerRuleState{})
 
 	rec := httptest.NewRecorder()
 	obs.Handler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/metrics", http.NoBody))

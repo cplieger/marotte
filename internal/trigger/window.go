@@ -9,6 +9,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/marotte/internal/launchrule"
+	"github.com/cplieger/marotte/internal/obs"
 )
 
 // runReach is how far before the last complete run walk a walk reads, which is what catches a re-run: GitHub
@@ -98,6 +99,7 @@ func (pr *pollRule) ageOut(h time.Time) {
 func (pr *pollRule) recordGap(g *launchrule.Gap) {
 	pr.st.raw.Status.Gaps = append(pr.st.raw.Status.Gaps, *g)
 	logCatchUpGap(refOf(pr.rule), g)
+	obs.TriggerCatchUpGap(g.Cause)
 }
 
 // runWalkComplete counts a walk the route's result window ended as complete: it carries no continuation, and the
