@@ -2,7 +2,6 @@ package trigger
 
 import (
 	"fmt"
-	"log/slog"
 	"slices"
 	"strings"
 	"sync"
@@ -62,7 +61,7 @@ func (pr *pollRule) hold(e *queueEntry) bool {
 		return false
 	}
 	pr.st.queue = append(pr.st.queue, *e)
-	slog.Info(logMsgEventMatched, append(pr.attrs(), "key", e.Key, "held", len(pr.st.queue))...)
+	logEventMatched(refOf(pr.rule), e.Key, len(pr.st.queue))
 	return true
 }
 
@@ -82,10 +81,11 @@ func (pr *pollRule) supersede(e *queueEntry) {
 	es.queue = kept
 }
 
-// logFull warns once per poll that left a match unqueued.
+// logFull warns of a poll that left a match unqueued, once until a poll finds the queue with room.
 func (pr *pollRule) logFull() {
-	if pr.full {
-		slog.Warn(logMsgQueueFull, append(pr.attrs(), "held", len(pr.st.queue), "cap", pr.ev.Hold.Cap)...)
+	if pr.full && !pr.st.fullLogged {
+		logQueueFull(refOf(pr.rule), len(pr.st.queue), pr.ev.Hold.Cap)
+		pr.st.fullLogged = true
 	}
 }
 

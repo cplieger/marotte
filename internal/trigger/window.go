@@ -3,7 +3,6 @@ package trigger
 import (
 	"cmp"
 	"fmt"
-	"log/slog"
 	"maps"
 	"slices"
 	"time"
@@ -98,14 +97,7 @@ func (pr *pollRule) ageOut(h time.Time) {
 
 func (pr *pollRule) recordGap(g *launchrule.Gap) {
 	pr.st.raw.Status.Gaps = append(pr.st.raw.Status.Gaps, *g)
-	attrs := append(pr.attrs(), "cause", g.Cause, "from", g.From, "to", g.To)
-	switch {
-	case g.RunID != 0:
-		attrs = append(attrs, "run_id", g.RunID)
-	case g.Cause == launchrule.GapResultWindow:
-		attrs = append(attrs, "omitted_at_least", g.OmittedAtLeast)
-	}
-	slog.Warn(logMsgCatchUpGap, attrs...)
+	logCatchUpGap(refOf(pr.rule), g)
 }
 
 // runWalkComplete counts a walk the route's result window ended as complete: it carries no continuation, and the

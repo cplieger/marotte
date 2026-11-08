@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/cplieger/marotte/internal/launchrule"
@@ -177,8 +176,7 @@ func impossible(ruleID string, rec *record, ev *attemptEvent) stepResult {
 	if rec != nil {
 		state = rec.state
 	}
-	slog.Error(logMsgImpossible, "rule_id", ruleID, "state", state.String(), "event", ev.kind.String(),
-		"workflow_id", ev.workflowID)
+	logImpossible(ruleID, state.String(), ev.kind.String(), ev.workflowID)
 	return stepResult{err: errImpossibleTransition}
 }
 

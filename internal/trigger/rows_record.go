@@ -3,7 +3,6 @@ package trigger
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"maps"
 	"slices"
 	"time"
@@ -152,8 +151,8 @@ func (s *stepper) confirm(rec *record) {
 	st.LastRunID, st.LastStatus, st.LastReason, st.LastRunAt = rec.workflowID, launchrule.StatusStarted, "", s.now
 	st.LastEvent = rec.key
 	st.BoundAbandons, st.FailingSince, st.RowText = 0, time.Time{}, ""
-	s.rv.retries, s.rv.retryAt = 0, time.Time{}
-	slog.Info(logMsgRunStarted, "rule_id", s.ruleID, "workflow_id", rec.workflowID, "key", rec.key)
+	s.rv.retries, s.rv.retryAt, s.rv.retryReason = 0, time.Time{}, ""
+	logRunStarted(s.ruleID, rec.workflowID, rec.key)
 	s.res.write = true
 }
 
@@ -180,7 +179,7 @@ func (s *stepper) invokeRefused(rec *record, err error) {
 		s.status().RowText = retryingText(rec.workflowID, text, s.rv.retryAt)
 	}
 	if s.status().Blocked == "" {
-		warnRetryable(s.ruleID, rec.workflowID, text)
+		s.warnRetryable(rec.workflowID, text)
 	}
 	s.wakeLauncher()
 }
@@ -251,7 +250,7 @@ func (s *stepper) abandon(rec *record, cause string) {
 		s.leaveLive(rec)
 	}
 	rec.state, rec.cause, rec.at = stateAbandonedCancelling, cause, s.now
-	slog.Info(logMsgLaunchAbandoned, "workflow_id", rec.workflowID, "rule_id", s.ruleID, "key", rec.key, "cause", cause)
+	logLaunchAbandoned(s.ruleID, rec.workflowID, rec.key, cause)
 	s.cancel(rec)
 	if !rec.unpersisted {
 		s.res.write = true

@@ -1,7 +1,6 @@
 package trigger
 
 import (
-	"log/slog"
 	"slices"
 	"strings"
 
@@ -52,7 +51,7 @@ func (pr *pollRule) baselineRuns(rc *repoCursor, read int) {
 }
 
 func (pr *pollRule) logBaseline(items int) {
-	slog.Info(logMsgBaselineTaken, append(pr.attrs(), "items", items)...)
+	logBaselineTaken(refOf(pr.rule), items)
 }
 
 func (pr *pollRule) hasLabel(it *item) bool {

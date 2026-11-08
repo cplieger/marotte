@@ -30,8 +30,10 @@ type harness struct {
 	// leases is what each reopen's boot load reads; nil reads none.
 	leases Leases
 	budget *Budget
-	now    time.Time
-	dir    string
+	// p is the poller every poll runs through until a reopen, as the runner keeps one for its life.
+	p   *poller
+	now time.Time
+	dir string
 }
 
 func newHarness(t *testing.T) *harness {
@@ -49,7 +51,7 @@ func (h *harness) reopen() {
 		h.t.Fatalf("Setup: NewStore: %v", err)
 	}
 	h.store, h.c = st, NewConfirmer(st, w, h.leases)
-	h.marks = h.c.marks
+	h.marks, h.p = h.c.marks, nil
 }
 
 func (h *harness) create(ev *launchrule.EventSpec) launchrule.Rule {
@@ -66,9 +68,12 @@ func (h *harness) create(ev *launchrule.EventSpec) launchrule.Rule {
 // poll runs one poll of every feed at h.now, then moves h.now on by five minutes.
 func (h *harness) poll() {
 	h.t.Helper()
-	p := &poller{src: h.src, c: h.c, budget: h.budget, now: func() time.Time { return h.now }}
+	if h.p == nil {
+		h.p = &poller{src: h.src, c: h.c, now: func() time.Time { return h.now }}
+	}
+	h.p.budget = h.budget
 	for _, fr := range groupFeeds(h.store.List()) {
-		p.poll(h.t.Context(), fr)
+		h.p.poll(h.t.Context(), fr)
 	}
 	h.now = h.now.Add(5 * time.Minute)
 }

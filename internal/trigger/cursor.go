@@ -95,6 +95,11 @@ type eventState struct {
 	launched     []launchedEntry
 	superseded   []supersededEntry
 	raw          launchrule.State
+	// pollFailures is the failed reads in a row of the rule's list at the last applied poll, in memory only.
+	pollFailures int
+	// queueFull marks a last applied poll that left a match at the forge; fullLogged, that its warning is written
+	// and not owed again until a poll finds the queue with room. Both are in memory only.
+	queueFull, fullLogged bool
 }
 
 func decodeState(st *launchrule.State) (eventState, error) {

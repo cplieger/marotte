@@ -2,7 +2,6 @@ package trigger
 
 import (
 	"errors"
-	"log/slog"
 	"maps"
 	"sync"
 	"time"
@@ -46,6 +45,8 @@ func NewConfirmer(store *launchrule.Store, writer launchrule.StateWriter, leases
 // ruleValue is one event rule's in-memory state; mu covers all of it and every write of the rule's state file.
 type ruleValue struct {
 	retryAt time.Time
+	// retryReason is the reason of the last retryable launch failure logged, empty since the last confirmed launch.
+	retryReason string
 	// label is the filter.label the labeled cursor was built for.
 	label        string
 	writeRetry   *time.Timer
@@ -68,7 +69,7 @@ type ruleValue struct {
 // markUnreadable blocks the rule on a state file the store read but whose content does not decode.
 func (rv *ruleValue) markUnreadable(ruleID string, err error) {
 	rv.unreadable = &launchrule.UnreadableStateError{RuleID: ruleID, Err: err}
-	slog.Error(logMsgStateUnreadable, "rule_id", ruleID, "error", rv.unreadable.Error())
+	logStateUnreadable(ruleID, rv.unreadable)
 }
 
 func (rv *ruleValue) find(workflowID string) *record {
@@ -208,7 +209,7 @@ var changeEvents = map[launchrule.Change]eventKind{
 func (c *Confirmer) RuleChanged(ruleID string, change launchrule.Change) {
 	kind, ok := changeEvents[change]
 	if !ok {
-		slog.Error(logMsgImpossible, "rule_id", ruleID, "event", string(change), "error", errUnknownChange)
+		logUnknownChange(ruleID, change)
 		return
 	}
 	c.deliver(ruleID, &attemptEvent{kind: kind})

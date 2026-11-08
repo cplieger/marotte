@@ -1,7 +1,6 @@
 package trigger
 
 import (
-	"log/slog"
 	"time"
 )
 
@@ -42,8 +41,7 @@ func (s *stepper) block(workflowID, sentence string) {
 		return
 	}
 	if st.Blocked == "" {
-		slog.Warn(logMsgRunNotStarted, "rule_id", s.ruleID, "workflow_id", workflowID, "class", "blocked",
-			"error", sentence)
+		logRunNotStarted(s.ruleID, workflowID, notStartedBlocked, sentence)
 	}
 	st.Blocked = sentence
 	s.res.write = true

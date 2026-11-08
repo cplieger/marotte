@@ -3,7 +3,6 @@ package trigger
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"strconv"
 	"strings"
@@ -151,13 +150,12 @@ func (b *Budget) hold(f Feed, list string) *backoff {
 	if wasHeld && (bo == nil || bo.pool != held) {
 		delete(b.backedOff, key)
 		if !b.feedHolds(f, held) {
-			slog.Info(logMsgResumed, "connection", f.Connection, "repo", f.Selector, "pool", held)
+			logResumed(f, held)
 		}
 	}
 	if bo != nil && (!wasHeld || bo.pool != held) {
 		if !b.feedHolds(f, bo.pool) {
-			slog.Warn(logMsgBackedOff, "connection", f.Connection, "repo", f.Selector, "pool", bo.pool,
-				"reason", bo.reason, "remaining", bo.remaining, "resumes_at", bo.until)
+			logBackedOff(f, bo)
 		}
 		b.backedOff[key] = bo.pool
 	}
@@ -176,7 +174,7 @@ func (b *Budget) forget(f Feed, list string) {
 	}
 	delete(b.backedOff, key)
 	if !b.feedHolds(f, held) {
-		slog.Info(logMsgResumed, "connection", f.Connection, "repo", f.Selector, "pool", held)
+		logResumed(f, held)
 	}
 }
 

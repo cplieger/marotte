@@ -3,7 +3,6 @@ package trigger
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"time"
 
 	"github.com/cplieger/marotte/internal/launchrule"
@@ -88,7 +87,7 @@ func (s *stepper) launchFailed(err error) {
 		s.failedAttempt("", text)
 	}
 	if st.Blocked == "" {
-		warnRetryable(s.ruleID, "", text)
+		s.warnRetryable("", text)
 	}
 }
 
@@ -101,6 +100,12 @@ func reasonText(err error) string {
 	return launchrule.ReasonText(rpcerr.Text(err))
 }
 
-func warnRetryable(ruleID, workflowID, text string) {
-	slog.Warn(logMsgRunNotStarted, "rule_id", ruleID, "workflow_id", workflowID, "class", "retryable", "error", text)
+// warnRetryable logs a failed launch the rule retries, once per reason: a reason that repeats on every backoff step
+// is one line until another reason or a confirmed launch comes between.
+func (s *stepper) warnRetryable(workflowID, text string) {
+	if s.rv.retryReason == text {
+		return
+	}
+	s.rv.retryReason = text
+	logRunNotStarted(s.ruleID, workflowID, notStartedRetryable, text)
 }
