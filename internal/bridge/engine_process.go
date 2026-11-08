@@ -324,8 +324,8 @@ func buildACPArgs(authArgs []string) []string {
 func (e *Engine) startProcess() error {
 	if e.cliPath == "" {
 		// No active version: the first install is running or failed with no fallback. The client shows this message;
-		// /api/health carries the same verdict.
-		return errors.New("kiro-cli is not available yet: the pinned version is still installing or its install failed (see /api/health)")
+		// /healthz carries the same verdict.
+		return errors.New("kiro-cli is not available yet: the pinned version is still installing or its install failed (see /healthz)")
 	}
 	// Operator flags follow the derived ones, so they are initial values: kiro-cli takes the last spelling. Filtered in
 	// acp_args.go.

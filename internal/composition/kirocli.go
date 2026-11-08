@@ -46,7 +46,7 @@ type kiroRuntime struct {
 	version func() string
 	// env is the environment overlay for a spawned kiro-cli, nil when there is none.
 	env func() []string
-	// ready is the /api/health verdict plus the library's TYPED reason, or nil when this
+	// ready is the /healthz verdict plus the library's TYPED reason, or nil when this
 	// app does not own the install and readiness stays pure-listener. The wording an
 	// operator reads is applied at the HTTP boundary.
 	ready func() (bool, pin.Reason)
@@ -64,7 +64,7 @@ type kiroRuntime struct {
 
 // unmanagedKiroRuntime is the runtime for a process with no pins: a bare `go run` outside
 // the container. kiro-cli resolves by bare name through the developer's own PATH and there
-// is no readiness gate, so /api/health reflects only that the listener is up.
+// is no readiness gate, so /healthz reflects only that the listener is up.
 func unmanagedKiroRuntime() kiroRuntime {
 	return kiroRuntime{
 		cliPath: func() string { return kirorelease.Name },
@@ -90,7 +90,7 @@ func unavailableKiroRuntime() kiroRuntime {
 }
 
 // startKiroCLI builds the install manager and starts the install in the background, bind-first:
-// only readiness waits, so a first-boot download is a /api/health reason. Three shapes: a
+// only readiness waits, so a first-boot download is a /healthz reason. Three shapes: a
 // rejected tools dir or unusable pins (unready), no pins or no tools dir (unmanaged), and the
 // managed install. The rejection is checked first, so no pins never makes a bare-name search
 // that could reach the rejected folder.

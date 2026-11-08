@@ -20,7 +20,7 @@ import (
 )
 
 // errEngineUnavailable is the readiness answer while no kiro-cli is installed.
-var errEngineUnavailable = errors.New("kiro-cli is not available yet: marotte is still installing it, or the install failed (see /api/health)")
+var errEngineUnavailable = errors.New("kiro-cli is not available yet: marotte is still installing it, or the install failed (see /healthz)")
 
 const (
 	respawnBaseDelay = time.Second

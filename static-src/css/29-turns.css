@@ -375,14 +375,14 @@
   padding-block-end: 0;
 }
 
-/* Four columns: the ledger button (carrying the turn's LEAD fact), the row's slack, the
-   turn actions, then Rewind; the file list spans all columns beneath. Grid rather than a
+/* Three columns: the ledger button (carrying the turn's LEAD fact), the row's slack, then
+   the trailing controls (the turn actions and Rewind); the file list spans all columns beneath. Grid rather than a
    wrapper so every `:scope >` selector the footer's own JS uses keeps working, and the row
    is IDENTICAL open and folded. TRACK 2 IS SLACK: an `auto` track sizes to max-content and
    lets `1fr` take the rest, so a long fact clips inside the button rather than pushing it. */
 .turn-footer {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
 
   /* THE BAND IS THE ROW'S OWN: `--action-band-h` (32 on a mouse, 52 on a coarse pointer),
@@ -393,8 +393,8 @@
   --footer-inset: var(--sp-2);
 
   /* Row 1's TRACK, never the box's floor, which stops binding row 1 once the info panel opens
-     beneath it. No `gap`: a column gap is charged beside an EMPTY Rewind track, and the inline
-     spacing is Rewind's own margin. */
+     beneath it. No `gap`: a column gap is charged beside an EMPTY track, so the inline spacing
+     rides the trailing container's margin. */
   grid-template-rows: var(--action-band-h);
   transition: opacity var(--dur-enter) var(--ease-enter);
   font-size: var(--fs-sm);
@@ -427,19 +427,7 @@
   grid-column: 3;
   grid-row: 1;
   justify-self: end;
-  /* The inline gap rides the element it separates; see `row-gap` above. */
-  margin-inline-start: var(--sp-2);
-}
-
-/* THE NEWEST TURN HAS NO REWIND TARGET, so this track collapses and the actions slide
-   right by the button's square and its margin. RESERVING IT IS
-   REFUSED: a hidden element carrying the button's own children left the row above
-   PERMANENTLY skipped by `content-visibility: auto`, pruning it from the find walker's
-   scope. */
-.turn-footer > .turn-rewind {
-  grid-column: 4;
-  grid-row: 1;
-  justify-self: end;
+  /* The inline gap rides the element it separates; see the footer's `No gap` note. */
   margin-inline-start: var(--sp-2);
 }
 
@@ -458,12 +446,24 @@
    reaches the narrowest fact `turnFacts` emits (`0.1s`, 24.2px), the query measuring the
    CONTENT box. A DESCENDANT combinator, because naming both ancestors takes the chain
    past stylelint's `selector-max-specificity` of `0,4,3`. ONE threshold, so it
-   over-reaches the FINE tier by ~24px — accepted: reaching it needs a desktop window
+   over-reaches the FINE tier by ~30px — accepted: reaching it needs a desktop window
    narrowed past any phone, and the `i` holds the value. */
 @container turn-footer (inline-size < 17.96rem) {
-  .turn-footer:not([data-severity="clean"]):has(> .turn-rewind) .turn-fact {
+  .turn-footer:not([data-severity="clean"]):has(.turn-rewind) .turn-fact {
     display: none;
   }
+}
+
+/* `fitFooterActions` (messages-turn-actions.ts) writes `data-actions-tight` when hiding the words is
+   what keeps every action inline. Visually hidden only, so the button's name still carries them. */
+.turn-footer[data-actions-tight] > .turn-ledger-summary > :is(.turn-ledger-text, .turn-fact) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .turn-footer > .turn-info-panel {

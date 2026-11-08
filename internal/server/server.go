@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 	"sync/atomic"
 	"syscall"
 
+	"github.com/cplieger/go/health"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
@@ -61,7 +63,7 @@ type Server struct {
 	// kiroDocs memoizes the .kiro inventory; a pointer so the zero Server needs no init.
 	kiroDocs *docsCache
 	tools    toolsSource
-	// kiroReady is the install manager's readiness verdict, re-read per /api/health.
+	// kiroReady is the install manager's readiness verdict, re-read per /healthz.
 	kiroReady func() (bool, pin.Reason)
 	// kiroRescan re-derives the active version from disk; nil leaves the repair route unmounted.
 	kiroRescan func(context.Context) (bool, error)
@@ -181,13 +183,13 @@ func WithKiroCLI(resolvePath func() string, resolveEnv func() []string) Option {
 	}
 }
 
-// WithKiroReady sets the kiro-cli readiness verdict /api/health reports. Unset
+// WithKiroReady sets the kiro-cli readiness verdict /healthz reports. Unset
 // leaves the probe reflecting only that the listener is up.
 func WithKiroReady(ready func() (bool, pin.Reason)) Option {
 	return func(s *Server) { s.kiroReady = ready }
 }
 
-// WithAuthUnavailable sets the sign-in leg /api/health reports. It must be a LATCH read,
+// WithAuthUnavailable sets the sign-in leg /healthz reports. It must be a LATCH read,
 // not a probe: the handler runs per request. Unset leaves readiness with no auth leg.
 func WithAuthUnavailable(unavailable func() bool) Option {
 	return func(s *Server) { s.authUnavailable = unavailable }
@@ -296,7 +298,9 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("/api/diagnostics", s.handleDiagnostics)
 	mux.HandleFunc("/api/kiro-settings", s.handleKiroSettings)
 	s.chats.RegisterRoutes(mux)
-	mux.HandleFunc("/api/health", s.handleHealth)
+	mux.HandleFunc(healthzPath, s.handleHealth)
+	// Without it the "/" single-page app answers a stray trailing slash 200, which a prober reads as healthy.
+	mux.Handle(healthzPath+"/", unknownEndpoint)
 	// Registered explicitly, or the "/" single-page app answers a scrape with its HTML.
 	if s.metrics != nil {
 		mux.Handle(metricsPath, requireGET(s.metrics))
@@ -427,12 +431,14 @@ func requireGET(next http.Handler) http.Handler {
 // registerAPIFallback puts a 404 under the /api/ subtree, so an unmatched API path is not
 // answered 200 with index.html by "/". Both spellings, or GET /api draws a 301.
 func registerAPIFallback(mux *http.ServeMux) {
-	fallback := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		httpreply.NotFound(w, msgUnknownAPIEndpoint)
-	})
-	mux.Handle(strings.TrimSuffix(apiPathPrefix, "/"), fallback)
-	mux.Handle(apiPathPrefix, fallback)
+	mux.Handle(strings.TrimSuffix(apiPathPrefix, "/"), unknownEndpoint)
+	mux.Handle(apiPathPrefix, unknownEndpoint)
 }
+
+// unknownEndpoint is the 404 for a path no route claims outside the single-page app.
+var unknownEndpoint = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	httpreply.NotFound(w, msgUnknownAPIEndpoint)
+})
 
 // middlewareStack returns the middleware wrapping the route mux, OUTERMOST FIRST: access log,
 // recovery, security (CSP + ALLOWED_HOSTS + CSRF), notify-token confinement, Fetch Metadata, canonical path, compression,
@@ -446,7 +452,7 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []htt
 			httpserver.WithSkipUpgrades(true),
 			// A prober and a scraper call these every 15 to 60s, so a served request logs at
 			// Debug and only a refused or failing one is surfaced.
-			httpserver.ProbeLogLevel("/api/health", metricsPath),
+			httpserver.ProbeLogLevel(healthzPath, metricsPath),
 			httpserver.WithClientIPFunc(s.clientIP),
 			// A preview path carries a 12h bearer token, so it logs as the route template.
 			httpserver.WithTemplatePathsUnder(preview.PathPrefix),
@@ -475,41 +481,36 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	return httpreply.DecodeBody(w, r, v, "bad request")
 }
 
-// A struct, not a map, so the key order matches httpserver.ReadinessHandler's byte for byte.
-type healthBody struct {
-	Status string `json:"status"`
-	Reason string `json:"reason,omitempty"`
-}
+// healthzPath is the health route: no login, method gated to GET and HEAD.
+const healthzPath = "/healthz"
 
-// handleHealth returns 200 {"status":"ok"} when the listener is bound and serving, or 503
-// {"status":"unready",...} during startup, drain, or an unavailable kiro-cli. The kiro-cli
-// verdict is version-aware and read per request without a spawn.
-func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	// Never cached: a 200 with no freshness is heuristically cacheable (RFC 9111), and a cached
-	// "ok" would outlive a drain.
-	w.Header().Set("Cache-Control", "no-store")
-	unready := func(reason string) {
-		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
-			Status: "unready",
-			Reason: reason,
-		})
-	}
-	if !s.ready.Load() {
-		unready("starting up or shutting down")
+// verdict is a health.Signal fixed for one request.
+type verdict bool
+
+func (v verdict) Healthy() bool { return bool(v) }
+
+// handleHealth answers 200 {"status":"ok"}, or 503 {"status":"unhealthy","reasons":[...]}
+// listing every standing fault: not serving (startup or drain), the kiro-cli install verdict,
+// then sign-in. runtime-health.ts reads reasons[0], so that order is a client contract.
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodHead)
 		return
 	}
+	// One read of each leg per request, so a verdict moving mid-request cannot drop every reason.
+	kiroFault := ""
 	if s.kiroReady != nil {
 		if ok, why := s.kiroReady(); !ok {
-			unready(kiroReasonText(why))
-			return
+			kiroFault = cmp.Or(kiroReasonText(why), reasonUnavailable)
 		}
 	}
-	// The kiro-cli leg stays FIRST: it is the superset failure.
-	if s.authUnavailable != nil && s.authUnavailable() {
-		unready(reasonSignIn)
-		return
+	authOK := s.authUnavailable == nil || !s.authUnavailable()
+	checks := []health.Check{{Signal: verdict(s.ready.Load()), Reason: "starting up or shutting down"}}
+	for _, reason := range []string{reasonInstalling, reasonRetrying, reasonUnavailable, reasonSettings} {
+		checks = append(checks, health.Check{Signal: verdict(kiroFault != reason), Reason: reason})
 	}
-	httpserver.WriteJSON(w, healthBody{Status: "ok"})
+	checks = append(checks, health.Check{Signal: verdict(authOK), Reason: reasonSignIn})
+	health.CheckHandler(checks...).ServeHTTP(w, r)
 }
 
 // confineNotifyToken refuses the notify token on every path but the notify route, so a leaked

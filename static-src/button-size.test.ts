@@ -1340,12 +1340,7 @@ describe("the turn footer's glyphs, against the reference", () => {
         }
       }
       clearSurface();
-      if (tier === "coarse") {
-        expect(
-          controls.some((el) => el.classList.contains("turn-action-more")),
-          "the More trigger shows on a phone",
-        ).toBe(true);
-      }
+      // Whether the `…` shows is the footer's measured fit (`turn-footer-overflow.test.ts`, which pins its glyph).
       expect(controls.length, "the footer draws its actions").toBeGreaterThan(0);
       expect(off).toEqual([]);
     });

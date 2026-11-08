@@ -27,7 +27,7 @@ func TestAuthReasonIsTheClientContract(t *testing.T) {
 	}
 }
 
-// TestHealthReportsTheSignInLeg pins that readiness reports a dead sign-in, behind the
+// TestHealthReportsTheSignInLeg pins that readiness reports a dead sign-in, after the
 // kiro-cli leg, by reading a value rather than probing (no process-launch lever).
 func TestHealthReportsTheSignInLeg(t *testing.T) {
 	ready := func() (bool, pin.Reason) { return true, pin.ReasonReady }
@@ -53,18 +53,16 @@ func TestHealthReportsTheSignInLeg(t *testing.T) {
 			wireAuth:   true,
 			authFailed: true,
 			wantStatus: http.StatusServiceUnavailable,
-			wantBody:   `{"status":"unready","reason":"` + reasonSignIn + `"}`,
+			wantBody:   `{"status":"unhealthy","reasons":["` + reasonSignIn + `"]}`,
 			wantCalls:  1,
 		},
-		"the kiro-cli leg wins when both are withheld": {
+		"both legs are listed, kiro-cli first, when both are withheld": {
 			kiroReady:  installing,
 			wireAuth:   true,
 			authFailed: true,
 			wantStatus: http.StatusServiceUnavailable,
-			wantBody:   `{"status":"unready","reason":"` + reasonInstalling + `"}`,
-			// Not consulted at all behind a withheld install verdict, which is
-			// what keeps the single reason field honest.
-			wantCalls: 0,
+			wantBody:   `{"status":"unhealthy","reasons":["` + reasonInstalling + `","` + reasonSignIn + `"]}`,
+			wantCalls:  1,
 		},
 		"an unwired auth leg leaves readiness to the install verdict": {
 			kiroReady:  ready,
@@ -86,7 +84,7 @@ func TestHealthReportsTheSignInLeg(t *testing.T) {
 			s.ready.Store(true)
 
 			rec := httptest.NewRecorder()
-			s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+			s.handleHealth(rec, httptest.NewRequest(http.MethodGet, healthzPath, nil))
 
 			if rec.Code != tc.wantStatus {
 				t.Errorf("status = %d, want %d; body=%s", rec.Code, tc.wantStatus, rec.Body.String())
@@ -104,7 +102,7 @@ func TestHealthReportsTheSignInLeg(t *testing.T) {
 	}
 }
 
-// TestHealthNeverLeaksTheAuthFailureReason pins that unauthenticated /api/health serves a
+// TestHealthNeverLeaksTheAuthFailureReason pins that unauthenticated /healthz serves a
 // fixed literal: kiro-cli's error can name a path on the volume.
 func TestHealthNeverLeaksTheAuthFailureReason(t *testing.T) {
 	s := &Server{
@@ -113,10 +111,10 @@ func TestHealthNeverLeaksTheAuthFailureReason(t *testing.T) {
 	}
 	s.ready.Store(true)
 	rec := httptest.NewRecorder()
-	s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+	s.handleHealth(rec, httptest.NewRequest(http.MethodGet, healthzPath, nil))
 
 	body := strings.TrimSpace(rec.Body.String())
-	if body != `{"status":"unready","reason":"`+reasonSignIn+`"}` {
+	if body != `{"status":"unhealthy","reasons":["`+reasonSignIn+`"]}` {
 		t.Errorf("body = %q: the sign-in leg must serve the fixed literal and nothing else", body)
 	}
 }

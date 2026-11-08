@@ -112,7 +112,7 @@ describe("the status card's version lines", () => {
     await loadVersions();
     mocks.apiGetOrError.mockResolvedValue({
       ok: false,
-      body: { reason: "kiro-cli installing" },
+      body: { status: "unhealthy", reasons: ["kiro-cli installing"] },
     });
     await refreshRuntimeLine();
     expect(kiro()).toBe("kiro-cli installing");

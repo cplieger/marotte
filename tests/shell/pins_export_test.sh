@@ -81,7 +81,7 @@ done
 # the read would bring that back SILENTLY, so its absence is asserted in the Go sources and the
 # README table. Dot-directories are skipped: not source, and a stale scratch copy would fail this.
 if grep -rq --include='*.go' --exclude-dir='.*' 'KIRO_CLI_PATH' "$GO_SOURCE_ROOT"; then
-  no "KIRO_CLI_PATH in Go sources" "a Go source still mentions KIRO_CLI_PATH; reading it stands the install manager down and takes kiro-cli readiness off /api/health"
+  no "KIRO_CLI_PATH in Go sources" "a Go source still mentions KIRO_CLI_PATH; reading it stands the install manager down and takes kiro-cli readiness off /healthz"
 else
   ok "no Go source mentions KIRO_CLI_PATH: the install manager is the only source of the binary path"
 fi

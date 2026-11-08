@@ -86,7 +86,13 @@ function mountCard(
     const rewindGlyph = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
     rewindGlyph.setAttribute("class", "ic-ui");
     rewind.append(rewindGlyph);
-    footer.appendChild(rewind);
+    // `mountRewind`'s seat: the actions container, created when the turn has no actions.
+    if (actions === null) {
+      actions = doc.createElement("span");
+      actions.className = "turn-actions-buttons";
+      footer.appendChild(actions);
+    }
+    actions.appendChild(rewind);
   }
 
   card.appendChild(footer);
@@ -391,16 +397,13 @@ describe("the slot, read as source", () => {
     // The button shrink-wraps the slot and the `1fr` takes the rest, so trailing controls cannot be
     // pushed. The slot is a flex child, not a grid item.
     expect(ruleContaining(turns, ".turn-footer", "top").body).toMatch(
-      /grid-template-columns:\s*auto\s+minmax\(0,\s*1fr\)\s+auto\s+auto/u,
+      /grid-template-columns:\s*auto\s+minmax\(0,\s*1fr\)\s+auto;/u,
     );
     expect(ruleContaining(turns, ".turn-ledger-summary > .turn-fact", "top").body).not.toMatch(
       /grid-column:/u,
     );
     expect(ruleContaining(turns, ".turn-footer > .turn-actions-buttons", "top").body).toMatch(
       /grid-column:\s*3/u,
-    );
-    expect(ruleContaining(turns, ".turn-footer > .turn-rewind", "top").body).toMatch(
-      /grid-column:\s*4/u,
     );
   });
 });

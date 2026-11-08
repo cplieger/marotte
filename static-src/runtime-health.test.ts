@@ -51,7 +51,7 @@ describe("runtime-health: degraded banner reconciliation", () => {
       status: 503,
       data: null,
       error: "HTTP 503",
-      body: { status: "unready", reason: "kiro-cli unavailable" },
+      body: { status: "unhealthy", reasons: ["kiro-cli unavailable"] },
     });
     await checkRuntimeHealth();
     expect(mockedShow).toHaveBeenCalledTimes(1);
@@ -62,7 +62,7 @@ describe("runtime-health: degraded banner reconciliation", () => {
     expect(message).toContain("restart the container");
     expect(level).toBe("error");
     expect(dismissible).toBe(false);
-    // The health envelope reports ONE reason, so the other family's banner is stale the moment
+    // Only the first reason raises a banner, so the other family's banner is stale the moment
     // this one is true.
     expect(mockedClear).toHaveBeenCalledWith("*", ["runtime_signed_out"]);
   });
@@ -73,7 +73,7 @@ describe("runtime-health: degraded banner reconciliation", () => {
       status: 503,
       data: null,
       error: "HTTP 503",
-      body: { status: "unready", reason: "kiro-cli installing" },
+      body: { status: "unhealthy", reasons: ["kiro-cli installing"] },
     });
     await checkRuntimeHealth();
 
@@ -99,7 +99,7 @@ describe("runtime-health: degraded banner reconciliation", () => {
       status: 503,
       data: null,
       error: "HTTP 503",
-      body: { status: "unready", reason },
+      body: { status: "unhealthy", reasons: [reason] },
     });
     await checkRuntimeHealth();
     expect(mockedShow).toHaveBeenCalledTimes(1);
@@ -128,7 +128,7 @@ describe("runtime-health: degraded banner reconciliation", () => {
       status: 503,
       data: null,
       error: "HTTP 503",
-      body: { status: "unready", reason: "starting up or shutting down" },
+      body: { status: "unhealthy", reasons: ["starting up or shutting down"] },
     });
     await checkRuntimeHealth();
     expect(mockedShow).not.toHaveBeenCalled();
@@ -162,7 +162,7 @@ describe("runtime-health: the sign-in family", () => {
       status: 503,
       data: null,
       error: "HTTP 503",
-      body: { status: "unready", reason: "sign-in required" },
+      body: { status: "unhealthy", reasons: ["sign-in required"] },
     });
     await checkRuntimeHealth();
 
@@ -182,8 +182,30 @@ describe("runtime-health: the sign-in family", () => {
     link?.onClick?.();
     expect(mockShowLoginModal).toHaveBeenCalledTimes(1);
     expect(mockOpenSetting).not.toHaveBeenCalled();
-    // One reason at a time: the stale install-family banner clears.
+    // Only the first reason decides: the stale install-family banner clears.
     expect(mockedClear).toHaveBeenCalledWith("*", ["runtime_degraded"]);
+  });
+
+  it("probes the health route", async () => {
+    mockedGet.mockResolvedValueOnce({ ok: true, status: 200, data: { status: "ok" }, error: "" });
+    await checkRuntimeHealth();
+    expect(mockedGet).toHaveBeenCalledWith("/healthz");
+  });
+
+  // The server lists every standing fault with the kiro-cli install before sign-in, and a
+  // signed-out runtime with no usable kiro-cli is an install problem first.
+  it("banners the first reason when several faults stand", async () => {
+    mockedGet.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      data: null,
+      error: "HTTP 503",
+      body: { status: "unhealthy", reasons: ["kiro-cli installing", "sign-in required"] },
+    });
+    await checkRuntimeHealth();
+    expect(mockedShow).toHaveBeenCalledTimes(1);
+    expect(mockedShow.mock.calls[0]?.[1]).toBe("runtime_degraded");
+    expect(runtimeStatusLine()).toBe("kiro-cli installing");
   });
 
   it("does not read a kiro-cli install reason as a sign-in one", async () => {
@@ -192,7 +214,7 @@ describe("runtime-health: the sign-in family", () => {
       status: 503,
       data: null,
       error: "HTTP 503",
-      body: { status: "unready", reason: "kiro-cli installing" },
+      body: { status: "unhealthy", reasons: ["kiro-cli installing"] },
     });
     await checkRuntimeHealth();
     expect(mockedShow.mock.calls[0]?.[1]).toBe("runtime_degraded");
@@ -234,7 +256,7 @@ describe("runtime-health: the status card's agent-runtime line", () => {
       status: 503,
       data: null,
       error: "HTTP 503",
-      body: { status: "unready", reason },
+      body: { status: "unhealthy", reasons: [reason] },
     });
     await checkRuntimeHealth();
     // Verbatim on purpose, including an unknown state: the server already phrases the reason as a
@@ -255,7 +277,7 @@ describe("runtime-health: the status card's agent-runtime line", () => {
       status: 503,
       data: null,
       error: "HTTP 503",
-      body: { status: "unready", reason: "sign-in required" },
+      body: { status: "unhealthy", reasons: ["sign-in required"] },
     });
     await checkRuntimeHealth();
     expect(runtimeStatusLine()).toBe("kiro-cli signed out");
@@ -265,7 +287,7 @@ describe("runtime-health: the status card's agent-runtime line", () => {
   // something the probe never established, and reusing a degraded reason would blame kiro-cli for
   // the server being mid-restart.
   it.each([
-    ["a startup/shutdown 503", { status: "unready", reason: "starting up or shutting down" }],
+    ["a startup/shutdown 503", { status: "unhealthy", reasons: ["starting up or shutting down"] }],
     ["a network failure", undefined],
   ])("reads unknown for %s", async (_label, body) => {
     mockedGet.mockResolvedValueOnce({
@@ -292,7 +314,7 @@ describe("runtime-health: the unready re-probe", () => {
       status: 503,
       data: null,
       error: "HTTP 503",
-      body: { status: "unready", reason },
+      body: { status: "unhealthy", reasons: [reason] },
     });
   }
 
@@ -345,7 +367,7 @@ describe("runtime-health: the unready re-probe", () => {
   });
 
   // An install converges in minutes; a page left open against a STOPPED server never does, so a
-  // flat cadence is one /api/health per tick for as long as that tab lives. These two bind to the
+  // flat cadence is one /healthz per tick for as long as that tab lives. These two bind to the
   // GROWTH rather than to the numbers.
   it("backs off rather than probing at the initial cadence forever", async () => {
     const TEN_MINUTES_MS = 600_000;

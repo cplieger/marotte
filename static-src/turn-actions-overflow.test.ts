@@ -1,16 +1,15 @@
-// The turn-actions overflow menu as a GROUPED <details>, plus the desktop path it must not disturb.
-// A shared `name` makes the per-turn phone menus exclusive with no JS. The desktop row's buttons
+// The turn-actions overflow menu as a GROUPED <details>, plus the inline path it must not disturb.
+// A shared `name` makes the per-turn menus exclusive with no JS. The inline row's buttons
 // stay painted only through `::details-content { content-visibility: visible }` on that element,
 // so the group is pinned with what it could break. Dismissal: `pointerdown` fires BEFORE `click`,
 // so the document listener exempts the menu's subtree or a menu click loses the `open` its
 // "Copied" toast depends on (asserted through `silent`).
 
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
-import { page } from "vitest/browser";
 
 import type { Turn } from "./turns.js";
 import type { Entry, EntryText } from "./wire/types.gen.js";
-import { loadCSS, mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 vi.mock("./store.js", () => ({
   getActive: () => ({ id: "c1", name: "chat", messages: [] }),
@@ -53,11 +52,15 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-function mountCard(id: string): HTMLDetailsElement {
+/** `width` narrows the footer, so its four actions (`branch`) do not all fit and `…` collapses them. */
+function mountCard(id: string, width?: string): HTMLDetailsElement {
   const card = document.createElement("div");
   card.className = "turn";
   const footer = document.createElement("div");
   footer.className = "turn-footer";
+  if (width !== undefined) {
+    footer.style.width = width;
+  }
   card.appendChild(footer);
   document.body.appendChild(card);
   // The body needs a `text` entry: `mountTurnFooterActions` returns early on an empty `turnMarkdown`.
@@ -72,7 +75,7 @@ function mountCard(id: string): HTMLDetailsElement {
     ts: 1,
     outcome: "completed",
     rewindTo: undefined,
-    branchFrom: undefined,
+    branchFrom: width === undefined ? undefined : { id: `${id}-p`, text: "prompt" },
   };
   mountTurnFooterActions(footer, card, turn);
   const menu = footer.querySelector<HTMLDetailsElement>("details.turn-actions-more");
@@ -115,50 +118,46 @@ describe("the overflow menu is an exclusive group", () => {
   });
 });
 
-describe("the phone layout, at a real viewport size", () => {
-  // A media query answers about the VIEWPORT, so the only honest test resizes one.
-  // The block restores the entry size in `afterAll`, read off the frame rather than
-  // copied from `vitest.config.ts`.
-  let entry: { readonly width: number; readonly height: number } | null = null;
+/** Two frames: the fit runs on the frame after the mount. */
+function fitted(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  });
+}
 
-  beforeAll(() => {
-    entry = { width: window.innerWidth, height: window.innerHeight };
+describe("the menu layout, once two or more actions do not fit", () => {
+  // 100px leaves room for the `…` and one action on either tier; the other three go behind it.
+  const NARROW = "100px";
+
+  afterEach(() => {
+    document.documentElement.removeAttribute("data-pointer");
   });
 
-  afterAll(async () => {
-    if (entry !== null) {
-      await page.viewport(entry.width, entry.height);
-    }
-  });
+  for (const tier of ["fine", "coarse"] as const) {
+    it(`collapses the actions behind the … trigger and reveals them on open, on the ${tier} tier`, async () => {
+      document.documentElement.dataset["pointer"] = tier;
+      const menu = mountCard("m1", NARROW);
+      await fitted();
+      const summary = menu.querySelector<HTMLElement>("summary.turn-action-more");
+      const group = menu.querySelector<HTMLElement>(".turn-actions-group");
+      expect(getComputedStyle(summary as HTMLElement).display).not.toBe("none");
+      expect(getComputedStyle(group as HTMLElement).display, "closed hides the group").toBe("none");
+      expect(group?.children.length, "the menu holds two or more").toBeGreaterThanOrEqual(2);
 
-  async function phone(): Promise<void> {
-    await page.viewport(375, 800);
-    expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
-      375, 800,
-    ]);
+      menu.open = true;
+      expect(getComputedStyle(group as HTMLElement).display, "open reveals it").toBe("flex");
+      expect((group as HTMLElement).getBoundingClientRect().height).toBeGreaterThan(0);
+    });
   }
 
-  it("collapses the actions behind the … trigger and reveals them on open", async () => {
-    await phone();
-    const menu = mountCard("m1");
-    const summary = menu.querySelector<HTMLElement>("summary.turn-action-more");
-    const group = menu.querySelector<HTMLElement>(".turn-actions-group");
-    expect(summary).not.toBeNull();
-    expect(group).not.toBeNull();
-
-    // The trigger exists here and only here; on desktop it is `display: none`.
-    expect(getComputedStyle(summary as HTMLElement).display).not.toBe("none");
-    expect(getComputedStyle(group as HTMLElement).display, "closed hides the group").toBe("none");
-
-    menu.open = true;
-    expect(getComputedStyle(group as HTMLElement).display, "open reveals it").toBe("flex");
-    expect((group as HTMLElement).getBoundingClientRect().height).toBeGreaterThan(0);
-  });
-
   it("never shows two menus at once, even opened by the trigger", async () => {
-    await phone();
-    const first = mountCard("m1");
-    const second = mountCard("m2");
+    const first = mountCard("m1", NARROW);
+    const second = mountCard("m2", NARROW);
+    await fitted();
     const trigger = (m: HTMLDetailsElement): HTMLElement => {
       const s = m.querySelector<HTMLElement>("summary.turn-action-more");
       if (s === null) {
@@ -172,25 +171,62 @@ describe("the phone layout, at a real viewport size", () => {
     trigger(second).click();
 
     expect([first.open, second.open]).toEqual([false, true]);
-    // And the CONSEQUENCE that matters on a phone: only one menu card is painted.
+    // And the consequence that matters: only one menu card is painted.
     const painted = [...document.querySelectorAll<HTMLElement>(".turn-actions-group")].filter(
       (g) => getComputedStyle(g).display !== "none",
     );
     expect(painted, "one floating menu on screen, not two").toHaveLength(1);
   });
+
+  it("fades the menu in on open, at the context menu's enter motion", async () => {
+    const menu = mountCard("m1", NARROW);
+    await fitted();
+    const group = menu.querySelector<HTMLElement>(".turn-actions-group");
+    if (group === null) {
+      throw new Error("no group");
+    }
+    menu.open = true;
+    const fades = group
+      .getAnimations()
+      .filter((a) => a instanceof CSSTransition && a.transitionProperty === "opacity");
+    expect(fades, "one opacity entry").toHaveLength(1);
+    const root = getComputedStyle(document.documentElement);
+    const want = root.getPropertyValue("--uip-popover-enter-duration").trim();
+    expect(fades[0]?.effect?.getTiming().duration).toBe(
+      want.endsWith("ms") ? parseFloat(want) : parseFloat(want) * 1000,
+    );
+    menu.open = false;
+  });
+
+  it("puts the actions back inline once the footer is wide enough", async () => {
+    const menu = mountCard("m1", NARROW);
+    await fitted();
+    const footer = menu.closest<HTMLElement>(".turn-footer") as HTMLElement;
+    footer.style.width = "";
+    await fitted();
+    const summary = menu.querySelector<HTMLElement>("summary.turn-action-more");
+    expect(getComputedStyle(summary as HTMLElement).display, "no trigger").toBe("none");
+    const painted = [
+      ...footer.querySelectorAll<HTMLElement>(".turn-action-btn:not(.turn-action-more)"),
+    ];
+    expect(
+      painted.map((b) => b.getAttribute("aria-label")),
+      "in reading order",
+    ).toEqual(["Copy as text", "Copy as markdown", "Copy link to this turn", "Branch from here"]);
+    expect(painted.every((b) => b.checkVisibility())).toBe(true);
+  });
 });
 
-describe("the desktop path the group must not disturb", () => {
+describe("the inline path (every action fits) the group must not disturb", () => {
   it("keeps every action painted and hittable while `open` is absent", () => {
-    // The browser project's own 1280px viewport, which is above the 40rem media
-    // rule, so this is the inline layout.
+    // The browser project's own 1280px viewport, where every action fits, so this is the inline layout.
     const menu = mountCard("m1");
     expect(menu.open, "the inline layout is the CLOSED disclosure").toBe(false);
 
     // `display: contents` removes the details' own box, not the box the UA hides a
     // closed disclosure through, so this declaration is what cancels the skip.
     expect(getComputedStyle(menu, "::details-content").contentVisibility).toBe("visible");
-    // The trigger is not part of the desktop row.
+    // The trigger is not painted while the actions fit inline.
     const summary = menu.querySelector<HTMLElement>("summary.turn-action-more");
     expect(getComputedStyle(summary as HTMLElement).display).toBe("none");
 
@@ -295,141 +331,5 @@ describe("dismissal, which the native disclosure does not supply", () => {
     press(btn);
     btn.click();
     expect(dispatchedSilent()).toBe(true);
-  });
-});
-
-function blockAfter(css: string, marker: string): string {
-  const at = css.indexOf(marker);
-  expect(at, `not found in the stylesheet: ${marker}`).toBeGreaterThan(-1);
-  const open = css.indexOf("{", at + marker.length);
-  let depth = 0;
-  for (let i = open; i < css.length; i++) {
-    if (css[i] === "{") {
-      depth++;
-    } else if (css[i] === "}") {
-      depth--;
-      if (depth === 0) {
-        return css.slice(open + 1, i);
-      }
-    }
-  }
-  throw new Error(`unbalanced braces after ${marker}`);
-}
-
-/** A block's declarations, with comments dropped and whitespace flattened — so the
- *  comparison below is about the rules and not about how deep one arm is nested. */
-function declarations(block: string): string {
-  return block
-    .replace(/\/\*[\s\S]*?\*\//gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim();
-}
-
-describe("the two collapse arms are one rule", () => {
-  it("states each threshold exactly once", () => {
-    // Or "the two arms" is a claim about whichever pair a reader's grep found
-    // first, and a third arm could sit anywhere in the file unnoticed.
-    const css = loadCSS("61-mcp-tools.css");
-    expect(css.match(/@media \(width <= 40rem\)/gu), "the every-tier arm").toHaveLength(1);
-    expect(css.match(/@media \(width <= 56rem\)/gu), "the coarse arm").toHaveLength(1);
-  });
-
-  it("carries identical declarations in both", () => {
-    // A media query cannot read a custom property, so the QUERY is stated twice and this keeps the two
-    // bodies equal.
-    const css = loadCSS("61-mcp-tools.css");
-    const fine = declarations(blockAfter(css, "@media (width <= 40rem)"));
-    const coarse = declarations(
-      blockAfter(
-        blockAfter(css, "@media (width <= 56rem)"),
-        ':where(:root:not([data-pointer="fine"]))',
-      ),
-    );
-    expect(fine, "the arm being compared is the collapsed-actions one").toContain(
-      ".turn-actions-more",
-    );
-    expect(coarse).toBe(fine);
-  });
-});
-
-describe("the coarse tier collapses at a width a fine pointer does not", () => {
-  // 896px IS 56rem, the widest row a coarse pointer collapses, above the 40rem arm and the 48rem no-JS
-  // fallback, so only the tier can collapse it. At 1024px NEITHER tier collapses (the third case).
-  // The tier is an attribute, so this tests the RULE, not a real tablet. Last in the file and restores
-  // its size: `page.viewport` has no getter.
-  let entry: { readonly width: number; readonly height: number } | null = null;
-
-  beforeAll(() => {
-    entry = { width: window.innerWidth, height: window.innerHeight };
-  });
-
-  afterAll(async () => {
-    document.documentElement.removeAttribute("data-pointer");
-    if (entry !== null) {
-      await page.viewport(entry.width, entry.height);
-    }
-  });
-
-  async function at(width: number, tier: "fine" | "coarse"): Promise<void> {
-    await page.viewport(width, 900);
-    expect([window.innerWidth, window.innerHeight], "viewport actually resized").toEqual([
-      width,
-      900,
-    ]);
-    document.documentElement.dataset["pointer"] = tier;
-  }
-
-  it("hides the closed group and paints the … trigger on a coarse pointer", async () => {
-    await at(896, "coarse");
-    const menu = mountCard("m1");
-    const summary = menu.querySelector<HTMLElement>("summary.turn-action-more");
-    const group = menu.querySelector<HTMLElement>(".turn-actions-group");
-    expect(summary).not.toBeNull();
-    expect(group).not.toBeNull();
-    expect(getComputedStyle(group as HTMLElement).display, "closed hides the group").toBe("none");
-    expect(getComputedStyle(summary as HTMLElement).display, "the trigger is painted").not.toBe(
-      "none",
-    );
-    // The trigger is an icon in the button box, at the button glyph's touch size, as Rewind's is.
-    const mark = summary?.querySelector("svg")?.getBoundingClientRect();
-    expect([mark?.width, mark?.height], "the trigger's glyph").toEqual([20, 20]);
-  });
-
-  it("fades the menu in on open, at the context menu's enter motion", async () => {
-    await at(896, "coarse");
-    const menu = mountCard("m1");
-    const group = menu.querySelector<HTMLElement>(".turn-actions-group");
-    if (group === null) {
-      throw new Error("no group");
-    }
-    menu.open = true;
-    const fades = group
-      .getAnimations()
-      .filter((a) => a instanceof CSSTransition && a.transitionProperty === "opacity");
-    expect(fades, "one opacity entry").toHaveLength(1);
-    const root = getComputedStyle(document.documentElement);
-    const want = root.getPropertyValue("--uip-popover-enter-duration").trim();
-    expect(fades[0]?.effect?.getTiming().duration).toBe(
-      want.endsWith("ms") ? parseFloat(want) : parseFloat(want) * 1000,
-    );
-    menu.open = false;
-  });
-
-  it("keeps the actions inline at the same width on a fine pointer", async () => {
-    await at(896, "fine");
-    const menu = mountCard("m1");
-    const summary = menu.querySelector<HTMLElement>("summary.turn-action-more");
-    const group = menu.querySelector<HTMLElement>(".turn-actions-group");
-    expect(getComputedStyle(group as HTMLElement).display, "the row is inline").toBe("inline-flex");
-    expect(getComputedStyle(summary as HTMLElement).display, "no trigger to press").toBe("none");
-  });
-
-  it("leaves a coarse pointer inline once the row is wider than the arm", async () => {
-    await at(1024, "coarse");
-    const menu = mountCard("m1");
-    const group = menu.querySelector<HTMLElement>(".turn-actions-group");
-    expect(getComputedStyle(group as HTMLElement).display, "56rem is a bound, not a tier").toBe(
-      "inline-flex",
-    );
   });
 });

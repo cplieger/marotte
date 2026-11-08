@@ -83,6 +83,8 @@ function mountFooter(doc: Document, trailing: Trailing): Mounted {
     more.append(summary, group);
     slot.appendChild(more);
     footer.appendChild(slot);
+    // The collapsed layout, as `fitFooterActions` writes it when the actions do not fit.
+    footer.setAttribute("data-actions-menu", "");
     last = slot;
   } else if (trailing === "rewind") {
     const btn = doc.createElement("button");
@@ -91,7 +93,10 @@ function mountFooter(doc: Document, trailing: Trailing): Mounted {
     const glyph = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
     glyph.setAttribute("class", "ic-ui");
     btn.append(glyph);
-    footer.appendChild(btn);
+    const slot = doc.createElement("span");
+    slot.className = "turn-actions-buttons";
+    slot.appendChild(btn);
+    footer.appendChild(slot);
     last = btn;
   }
 

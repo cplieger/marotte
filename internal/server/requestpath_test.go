@@ -37,12 +37,13 @@ func requestPathMux() (*http.ServeMux, *string) {
 			if v := r.PathValue("name"); v != "" {
 				reached = name + ":" + v
 			}
-			httpserver.WriteJSON(w, healthBody{Status: "ok"})
+			httpserver.WriteJSON(w, map[string]string{"status": "ok"})
 		}
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/", spaHandler(requestPathFixtureFS()))
-	mux.HandleFunc("/api/health", mark("health"))
+	mux.HandleFunc("/api/version", mark("version"))
+	mux.HandleFunc(healthzPath, mark("healthz"))
 	mux.Handle("POST "+kiroRescanPath, mark("rescan"))
 	mux.HandleFunc("/api/chats", mark("chats"))
 	mux.HandleFunc("/api/chats/", mark("chat-one"))
@@ -72,9 +73,14 @@ func TestCanonicalAPIPath(t *testing.T) {
 	}{
 		// --- the API surface: canonical reaches the handler ---
 		{
+			name:   "canonical read reaches the version handler",
+			method: http.MethodGet, target: "/api/version",
+			wantCode: http.StatusOK, wantReached: "version",
+		},
+		{
 			name:   "canonical probe reaches the health handler",
-			method: http.MethodGet, target: "/api/health",
-			wantCode: http.StatusOK, wantReached: "health",
+			method: http.MethodGet, target: healthzPath,
+			wantCode: http.StatusOK, wantReached: "healthz",
 		},
 		{
 			name:   "canonical repair call reaches the mutating handler",
@@ -94,18 +100,33 @@ func TestCanonicalAPIPath(t *testing.T) {
 
 		// --- the API surface: non-canonical is refused, not redirected ---
 		{
+			name:   "doubled slash on an API read is refused",
+			method: http.MethodGet, target: "//api/version",
+			wantCode: http.StatusBadRequest, wantBody: msgNonCanonicalPath,
+		},
+		{
+			name:   "dot segment on an API read is refused",
+			method: http.MethodGet, target: "/api/./version",
+			wantCode: http.StatusBadRequest, wantBody: msgNonCanonicalPath,
+		},
+		{
+			name:   "dotdot segment on an API read is refused",
+			method: http.MethodGet, target: "/api/x/../version",
+			wantCode: http.StatusBadRequest, wantBody: msgNonCanonicalPath,
+		},
+		{
 			name:   "doubled slash on the probe is refused",
-			method: http.MethodGet, target: "//api/health",
+			method: http.MethodGet, target: "/" + healthzPath,
 			wantCode: http.StatusBadRequest, wantBody: msgNonCanonicalPath,
 		},
 		{
-			name:   "dot segment on the probe is refused",
-			method: http.MethodGet, target: "/api/./health",
+			name:   "dotdot that cleans onto the probe is refused",
+			method: http.MethodGet, target: "/x/.." + healthzPath,
 			wantCode: http.StatusBadRequest, wantBody: msgNonCanonicalPath,
 		},
 		{
-			name:   "dotdot segment on the probe is refused",
-			method: http.MethodGet, target: "/api/x/../health",
+			name:   "dotdot below the probe is refused",
+			method: http.MethodGet, target: healthzPath + "/..",
 			wantCode: http.StatusBadRequest, wantBody: msgNonCanonicalPath,
 		},
 		{
@@ -121,12 +142,12 @@ func TestCanonicalAPIPath(t *testing.T) {
 		// The encoded spellings ServeMux does NOT redirect: decoding is what refuses them.
 		{
 			name:   "encoded dotdot below the prefix is refused (would be 200 index.html)",
-			method: http.MethodGet, target: "/api/%2e%2e/api/health",
+			method: http.MethodGet, target: "/api/%2e%2e/api/version",
 			wantCode: http.StatusBadRequest, wantBody: msgNonCanonicalPath,
 		},
 		{
 			name:   "encoded dotdot ABOVE the prefix is refused (clean lands on the API)",
-			method: http.MethodGet, target: "/%2e%2e/api/health",
+			method: http.MethodGet, target: "/%2e%2e/api/version",
 			wantCode: http.StatusBadRequest, wantBody: msgNonCanonicalPath,
 		},
 		{
@@ -137,7 +158,7 @@ func TestCanonicalAPIPath(t *testing.T) {
 		// This one's clean is "/api", outside the prefix: refused on the RAW leg.
 		{
 			name:   "a trailing dotdot that cleans ABOVE the prefix is refused",
-			method: http.MethodGet, target: "/api/health/..",
+			method: http.MethodGet, target: "/api/version/..",
 			wantCode: http.StatusBadRequest, wantBody: msgNonCanonicalPath,
 		},
 
@@ -175,7 +196,7 @@ func TestCanonicalAPIPath(t *testing.T) {
 		// The trailing-slash class is outside the guard's claim and left where it was.
 		{
 			name:   "a canonical trailing slash on an API route is untouched",
-			method: http.MethodGet, target: "/api/health/",
+			method: http.MethodGet, target: "/api/version/",
 			wantCode: http.StatusOK, wantBody: indexBody,
 		},
 	}
@@ -289,14 +310,15 @@ func TestMiddlewareStack_GuardOrder(t *testing.T) {
 // refusal implies a non-canonical path.
 func FuzzCanonicalAPIPath(f *testing.F) {
 	for _, seed := range []string{
-		"/api/health", "//api/health", "/api/./health", "/api/x/../health",
-		"/api/%2e%2e/api/health", "/%2e%2e/api/health", "/api/health/",
-		"/api/health/..", "/api/kiro-cli/rescan", "//api/kiro-cli/rescan",
+		"/api/version", "//api/version", "/api/./version", "/api/x/../version",
+		"/api/%2e%2e/api/version", "/%2e%2e/api/version", "/api/version/",
+		"/api/version/..", "/healthz", "//healthz", "/x/../healthz", "/healthz/..",
+		"/api/kiro-cli/rescan", "//api/kiro-cli/rescan",
 		"/api/chats/c-1", "/api/knowledge/my.base", "/api/knowledge/%2e%2e",
 		"/api/chats//", "/app.js", "//app.js", "/./app.js", "/api/../app.js",
 		"/chat/abc", "/", "//", "/.", "/..", "/api", "/api/", "/api//",
-		"///api///health//", "/api/a%2fb", "/%2f/api/health", "/api/health%20",
-		"/api/health?x=1",
+		"///api///version//", "/api/a%2fb", "/%2f/api/version", "/api/version%20",
+		"/api/version?x=1",
 	} {
 		for method := range uint8(4) {
 			f.Add(method, seed)

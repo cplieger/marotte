@@ -165,7 +165,7 @@ RUN set -e; mkdir -p static/vendor/fonts; \
 ARG BUILD_VERSION=dev
 # Wire-floor gate: go.mod's engine module and the npm client pin move
 # independently, so assert both directional compatibility floors here. A mismatched
-# pair closes every shell with code 4002 while /api/health stays green. The client
+# pair closes every shell with code 4002 while /healthz stays green. The client
 # floors come from the vendored wire-compatibility.json, the server's from
 # scripts/wirecheck. Built, not `go run`: the exit code is the contract (0 ok,
 # 1 floor violated, 2 gate broken), and `go run` collapses it to 1.
@@ -270,9 +270,9 @@ WORKDIR /workspace
 EXPOSE 9847
 
 # start-period=300s: a first boot downloads and verifies kiro-cli (~528 MB), and
-# /api/health answers 503 until the pinned version is installed.
+# /healthz answers 503 until the pinned version is installed.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=300s \
-    CMD ["curl", "-sf", "http://127.0.0.1:9847/api/health"]
+    CMD ["curl", "-sf", "http://127.0.0.1:9847/healthz"]
 # tini is PID 1 so orphans are reaped: marotte waits only the children it
 # started, and its git and kiro-cli grandchildren otherwise piled up as zombies
 # (1,172 of 1,246 processes measured). entrypoint.sh keeps its `exec`, so the
