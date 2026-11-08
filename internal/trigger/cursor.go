@@ -87,12 +87,14 @@ type cursor map[string]*repoCursor
 // eventState is an event rule's state with its event parts typed; the rest of the file is carried as read.
 type eventState struct {
 	// checkedAt is the last applied poll's start, kept in memory only: a write per poll would buy nothing.
-	checkedAt  time.Time
-	cursor     cursor
-	queue      []queueEntry
-	launched   []launchedEntry
-	superseded []supersededEntry
-	raw        launchrule.State
+	checkedAt time.Time
+	// baselineStop is the row's note on a walk that stopped short of a baseline, kept in memory like checkedAt.
+	baselineStop string
+	cursor       cursor
+	queue        []queueEntry
+	launched     []launchedEntry
+	superseded   []supersededEntry
+	raw          launchrule.State
 }
 
 func decodeState(st *launchrule.State) (eventState, error) {

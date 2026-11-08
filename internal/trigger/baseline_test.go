@@ -91,6 +91,62 @@ func TestPartialBaselineRetries(t *testing.T) {
 	})
 }
 
+func TestPartialBaselineShowsWhereTheWalkStopped(t *testing.T) {
+	h := newHarness(t)
+	r := h.create(labeledSpec())
+	stop := func() string {
+		t.Helper()
+		st, err := h.c.View(r.ID)
+		if err != nil {
+			t.Fatalf("View: %v", err)
+		}
+		return st.Status.BaselineStop
+	}
+	partialWalk := func(reason forgeapi.PartialReason) {
+		h.src.issues = append(h.src.issues,
+			forgeapi.Page[forgeapi.Issue]{
+				Items: []forgeapi.Issue{issue(12, "alice")}, Next: "p2",
+				Partial: &forgeapi.Partial{Reason: forgeapi.PartialPaginationCap},
+			},
+			forgeapi.Page[forgeapi.Issue]{
+				Items: []forgeapi.Issue{issue(13, "bob")}, Partial: &forgeapi.Partial{Reason: reason},
+			})
+	}
+
+	partialWalk(forgeapi.PartialBudget)
+	h.poll()
+	if got, want := stop(), "the last walk stopped after 2 pages: the forge client's request budget ran out"; got != want {
+		t.Fatalf("after a partial walk, baseline_stop = %q, want %q", got, want)
+	}
+	if file := h.state(r.ID); file.raw.Status.BaselineStop != "" {
+		t.Errorf("file baseline_stop = %q, want none written", file.raw.Status.BaselineStop)
+	}
+
+	h.issuePage(issue(12, "alice"), issue(13, "bob"))
+	h.poll()
+	if got := stop(); got != "" {
+		t.Errorf("after the baseline, baseline_stop = %q, want none", got)
+	}
+
+	t.Run("a rebaseline clears it", func(t *testing.T) {
+		h := newHarness(t)
+		r := h.create(labeledSpec())
+		h.src.issues = append(h.src.issues, forgeapi.Page[forgeapi.Issue]{
+			Items: []forgeapi.Issue{issue(12, "alice")}, Partial: &forgeapi.Partial{Reason: forgeapi.PartialRateLimited},
+		})
+		h.poll()
+		if st, _ := h.c.View(r.ID); st.Status.BaselineStop != "the last walk stopped after 1 page: the forge's rate limit held the walk back" {
+			t.Fatalf("Setup: baseline_stop = %q, want the rate limit's", st.Status.BaselineStop)
+		}
+		if err := changeRule(t, h.c, r.ID, 0, func(r *launchrule.Rule) { r.When.Event.Repo = "cplieger/other" }); err != nil {
+			t.Fatalf("Replace: %v", err)
+		}
+		if st, _ := h.c.View(r.ID); st.Status.BaselineStop != "" {
+			t.Errorf("after a repo change, baseline_stop = %q, want none until the next walk", st.Status.BaselineStop)
+		}
+	})
+}
+
 func TestEditFilterKeepsCursor(t *testing.T) {
 	h := newHarness(t)
 	r := h.create(openedSpec("alice"))

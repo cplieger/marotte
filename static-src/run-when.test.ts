@@ -185,6 +185,24 @@ describe("eventState", () => {
       ],
       ["launching", eventRule({}, { row_text: "starting run wf_1" }), "starting run wf_1", false],
       ["baseline", eventRule({ cursor: { baselined: false } }), "taking a baseline", false],
+      [
+        "baseline, walk stopped short",
+        eventRule(
+          { cursor: { baselined: false } },
+          {
+            baseline_stop:
+              "the last walk stopped after 3 pages: the forge's page limit was reached",
+          },
+        ),
+        "taking a baseline; the last walk stopped after 3 pages: the forge's page limit was reached",
+        false,
+      ],
+      [
+        "queue full",
+        eventRule({}, { row_text: "queue full: 20 events held, newer events wait at the forge" }),
+        "queue full: 20 events held, newer events wait at the forge",
+        true,
+      ],
       ["watching", eventRule(), "watching", false],
       [
         "watching, checked",
@@ -256,6 +274,22 @@ describe("buildEventForm", () => {
       "This workflow does not declare event_id, so it cannot skip a repeated event",
     );
     expect(eventForm().querySelector(".rw-no-event-id")).toBeNull();
+  });
+
+  it("keeps a cleared input cleared across a When change", async () => {
+    const onSave = vi.fn<Parameters<typeof buildEventForm>[0]["onSave"]>(() =>
+      Promise.resolve(null),
+    );
+    const form = eventForm({ rule: eventRule({ inputs: { tag: "v1" } }), onSave });
+    const tag = (): HTMLInputElement =>
+      form.querySelector<HTMLInputElement>('.rw-inputs input[aria-label="Input tag"]')!;
+    expect(tag().value).toBe("v1");
+    tag().value = "";
+    pick(form, ".rw-kind", "pr_labeled");
+    expect(tag().value).toBe("");
+    form.querySelector<HTMLButtonElement>(".rw-save")!.click();
+    await flush();
+    expect(onSave.mock.calls[0]?.[0]).not.toHaveProperty("inputs");
   });
 
   it("says to connect a forge when no connection is usable", () => {

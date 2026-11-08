@@ -7,9 +7,10 @@ vi.mock("../toast.js", async (importOriginal) => ({
 }));
 
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
-import { loadLaunchRules, saveLaunchRule } from "./launch-rules.js";
+import { loadLaunchRules, saveEventRule, saveLaunchRule } from "./launch-rules.js";
+import { error as toastError } from "../toast.js";
 import { scheduleViewOf } from "../launch-rule-types.js";
-import type { LaunchRuleView } from "../launch-rule-types.js";
+import type { EventSpec, LaunchRuleView } from "../launch-rule-types.js";
 
 const mockFetch = vi.fn();
 
@@ -168,6 +169,52 @@ describe("saveLaunchRule", () => {
       enabled: true,
     });
     expect(calls()[0]?.url).toBe("/api/launch-rules/a%2Fb");
+  });
+});
+
+describe("a refused save", () => {
+  const event: EventSpec = {
+    connection: "github:github.com",
+    repo: "o/r",
+    kind: "run_concluded",
+    filter: { result: ["success"] },
+  };
+
+  function refuse(status: number, error: string): void {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error }), {
+        status,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+  }
+
+  it("toasts the server's sentence from saveLaunchRule", async () => {
+    refuse(400, "Connect github.com in Sources first");
+    const saved = await saveLaunchRule.dispatch({
+      id: "r1",
+      source: "bundled://nightly",
+      when: { event },
+      enabled: true,
+    });
+    expect(saved).toBeNull();
+    expect(vi.mocked(toastError).mock.calls[0]?.[0]).toBe("Connect github.com in Sources first");
+  });
+
+  it("hands saveEventRule's refusal to its caller alone", async () => {
+    refuse(409, "This change drops 3 held events. Send it again with `confirm_drop: 3`");
+    let status: number | undefined;
+    const saved = await saveEventRule.dispatch(
+      { id: "r1", source: "bundled://nightly", when: { event }, enabled: true },
+      {
+        onError: (err) => {
+          status = err.status;
+        },
+      },
+    );
+    expect([saved, status]).toEqual([null, 409]);
+    expect(calls().map((c) => [c.method, c.url])).toEqual([["PUT", "/api/launch-rules/r1"]]);
+    expect(vi.mocked(toastError)).not.toHaveBeenCalled();
   });
 });
 

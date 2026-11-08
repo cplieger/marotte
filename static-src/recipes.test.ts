@@ -57,6 +57,7 @@ vi.mock("./persist.js", () => ({
 vi.mock("./actions/launch-rules.js", () => ({
   loadLaunchRules: { dispatch: vi.fn(async () => rulesReply) },
   saveLaunchRule: { dispatch: vi.fn(async () => null) },
+  saveEventRule: { dispatch: vi.fn(async () => null) },
   deleteLaunchRule: { dispatch: vi.fn(async () => ({ ok: true })) },
   dismissGap: { dispatch: vi.fn(async () => null) },
 }));
@@ -77,7 +78,12 @@ vi.mock("./config-standing.js", async (importOriginal) => {
 
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
 import { BUS_CATALOG_MODELS, dispatch, emitBus } from "./bus.js";
-import { deleteLaunchRule, loadLaunchRules, saveLaunchRule } from "./actions/launch-rules.js";
+import {
+  deleteLaunchRule,
+  loadLaunchRules,
+  saveEventRule,
+  saveLaunchRule,
+} from "./actions/launch-rules.js";
 import { confirm } from "./confirm.js";
 import { openRunView } from "./run-view.js";
 import { launchRun, cancelRun, loadRecipes } from "./actions/runs.js";
@@ -819,6 +825,7 @@ describe("the Run when… popup", () => {
 
   beforeEach(() => {
     vi.mocked(saveLaunchRule.dispatch).mockClear();
+    vi.mocked(saveEventRule.dispatch).mockClear();
     vi.mocked(loadLaunchRules.dispatch).mockClear();
     vi.mocked(deleteLaunchRule.dispatch).mockClear();
     vi.mocked(confirm).mockClear();
@@ -1036,7 +1043,7 @@ describe("the Run when… popup", () => {
     } as const;
 
     function refuseWith409Once(): void {
-      vi.mocked(saveLaunchRule.dispatch).mockImplementationOnce(((
+      vi.mocked(saveEventRule.dispatch).mockImplementationOnce(((
         _args: unknown,
         opts?: { onError?: (e: { message: string; status: number }) => void },
       ) => {
@@ -1045,7 +1052,7 @@ describe("the Run when… popup", () => {
           status: 409,
         });
         return Promise.resolve(null);
-      }) as unknown as typeof saveLaunchRule.dispatch);
+      }) as unknown as typeof saveEventRule.dispatch);
     }
 
     async function editAndSave(): Promise<HTMLButtonElement> {
@@ -1065,21 +1072,23 @@ describe("the Run when… popup", () => {
 
     it("resends the save with the held count once the confirm is accepted", async () => {
       refuseWith409Once();
-      vi.mocked(saveLaunchRule.dispatch).mockImplementationOnce((async () =>
-        eventRule("e1")) as unknown as typeof saveLaunchRule.dispatch);
+      vi.mocked(saveEventRule.dispatch).mockImplementationOnce((async () =>
+        eventRule("e1")) as unknown as typeof saveEventRule.dispatch);
       await editAndSave();
       await vi.waitFor(() => {
-        expect(vi.mocked(saveLaunchRule.dispatch)).toHaveBeenCalledTimes(2);
+        expect(vi.mocked(saveEventRule.dispatch)).toHaveBeenCalledTimes(2);
       });
       expect(vi.mocked(confirm).mock.calls[0]?.[0].body).toContain("3 events");
-      expect(vi.mocked(saveLaunchRule.dispatch).mock.calls[0]?.[0]).not.toHaveProperty(
+      expect(vi.mocked(saveEventRule.dispatch).mock.calls[0]?.[0]).not.toHaveProperty(
         "confirm_drop",
       );
-      expect(vi.mocked(saveLaunchRule.dispatch).mock.calls[1]?.[0]).toMatchObject({
+      expect(vi.mocked(saveEventRule.dispatch).mock.calls[1]?.[0]).toMatchObject({
         id: "e1",
         confirm_drop: 3,
         when: { event: { repo: "o/other" } },
       });
+      // saveLaunchRule toasts every refusal; the confirm flow's expected 409 must not.
+      expect(vi.mocked(saveLaunchRule.dispatch)).not.toHaveBeenCalled();
     });
 
     it("keeps the form open with no error when the confirm is cancelled", async () => {
@@ -1090,7 +1099,7 @@ describe("the Run when… popup", () => {
         expect(vi.mocked(confirm)).toHaveBeenCalledTimes(1);
       });
       await new Promise((r) => setTimeout(r, 0));
-      expect(vi.mocked(saveLaunchRule.dispatch)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(saveEventRule.dispatch)).toHaveBeenCalledTimes(1);
       expect(btn.getAttribute("aria-expanded")).toBe("true");
       expect(document.querySelector(".rw-form")).not.toBeNull();
       expect(document.querySelector(".rw-error")?.classList.contains("hidden")).toBe(true);
@@ -1110,13 +1119,13 @@ describe("the Run when… popup", () => {
       ],
       kinds: ["github"],
     };
-    vi.mocked(saveLaunchRule.dispatch).mockImplementationOnce(((
+    vi.mocked(saveEventRule.dispatch).mockImplementationOnce(((
       _args: unknown,
       opts?: { onError?: (e: { message: string; status: number }) => void },
     ) => {
       opts?.onError?.({ message: "Connect github.com in Sources first", status: 400 });
       return Promise.resolve(null);
-    }) as unknown as typeof saveLaunchRule.dispatch);
+    }) as unknown as typeof saveEventRule.dispatch);
     const btn = await openPopup();
     popupButton("When something happens on a forge").click();
     await vi.waitFor(() => {
@@ -1128,7 +1137,7 @@ describe("the Run when… popup", () => {
         "Connect github.com in Sources first",
       );
     });
-    expect(vi.mocked(saveLaunchRule.dispatch).mock.calls[0]?.[0]).toMatchObject({
+    expect(vi.mocked(saveEventRule.dispatch).mock.calls[0]?.[0]).toMatchObject({
       source: "bundled://nightly",
       when: { event: { connection: "github:github.com", kind: "run_concluded" } },
     });

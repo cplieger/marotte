@@ -10,6 +10,7 @@ import {
   deleteLaunchRule,
   dismissGap,
   loadLaunchRules,
+  saveEventRule,
   saveLaunchRule,
   type LaunchRuleBody,
 } from "./actions/launch-rules.js";
@@ -296,13 +297,13 @@ async function toggleRule(v: LaunchRuleView, enabled: boolean): Promise<void> {
 /** A 409 is a held-event count the save did not confirm; the server's sentence names an API field. */
 const HELD_MOVED = "The number of held events changed. Save again to confirm the new count.";
 
-/** One save, with the refusal's sentence and status for a form that stays open. */
+/** One event-form save, with the refusal's sentence and status for a form that stays open. */
 async function sendRule(
   body: LaunchRuleBody,
 ): Promise<{ saved: LaunchRuleView | null; refusal: string; status: number }> {
   let refusal = "Could not save the rule";
   let status = 0;
-  const saved = await saveLaunchRule.dispatch(body, {
+  const saved = await saveEventRule.dispatch(body, {
     onError: (err) => {
       status = err.status ?? 0;
       refusal = status === 409 ? HELD_MOVED : (serverSentence(err) ?? refusal);

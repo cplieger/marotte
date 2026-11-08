@@ -1,8 +1,10 @@
 package trigger
 
 import (
+	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/cplieger/go/keyenc"
@@ -84,6 +86,29 @@ func (pr *pollRule) supersede(e *queueEntry) {
 func (pr *pollRule) logFull() {
 	if pr.full {
 		slog.Warn(logMsgQueueFull, append(pr.attrs(), "held", len(pr.st.queue), "cap", pr.ev.Hold.Cap)...)
+	}
+}
+
+const queueFullPrefix = "queue full: "
+
+func queueFullText(held int) string {
+	events := fmt.Sprintf("%d events", held)
+	if held == 1 {
+		events = "1 event"
+	}
+	return queueFullPrefix + events + " held, newer events wait at the forge"
+}
+
+// showFull puts a full poll on the row and takes it off after a poll that left nothing at the forge. A launch or
+// hold sentence another row wrote outranks it, so it is neither replaced nor cleared.
+func (pr *pollRule) showFull() {
+	st := &pr.st.raw.Status
+	shown := strings.HasPrefix(st.RowText, queueFullPrefix)
+	switch {
+	case pr.full && (st.RowText == "" || shown):
+		st.RowText = queueFullText(len(pr.st.queue))
+	case !pr.full && shown:
+		st.RowText = ""
 	}
 }
 

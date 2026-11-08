@@ -104,6 +104,9 @@ function trimDot(s: string): string {
   return s.endsWith(".") ? s.slice(0, -1) : s;
 }
 
+/** internal/trigger's queueFullPrefix: a full queue leaves events at the forge, so the recipe row shows it. */
+const QUEUE_FULL = "queue full: ";
+
 /** An event rule's state segment, and whether it is an error the recipe row should surface. */
 export function eventState(v: LaunchRuleView): { text: string; error: boolean } {
   const st = v.status;
@@ -121,10 +124,14 @@ export function eventState(v: LaunchRuleView): { text: string; error: boolean } 
   }
   const now = st?.paused ?? st?.row_text;
   if (now !== undefined) {
-    return { text: now, error: false };
+    return { text: now, error: now.startsWith(QUEUE_FULL) };
   }
   if (v.cursor?.baselined !== true) {
-    return { text: "taking a baseline", error: false };
+    const stop = st?.baseline_stop;
+    return {
+      text: stop === undefined ? "taking a baseline" : `taking a baseline; ${stop}`,
+      error: false,
+    };
   }
   const at = st?.checked_at === undefined ? Number.NaN : Date.parse(st.checked_at);
   return {
@@ -537,7 +544,7 @@ export function buildEventForm(opts: EventFormOptions): HTMLElement {
     inputs = buildRuleInputs({
       declared: opts.declared,
       setByEvent: eventInputsOf(kind()),
-      initial: inputs?.value() ?? opts.rule?.inputs,
+      initial: inputs === null ? opts.rule?.inputs : (inputs.value() ?? {}),
     });
     inputsSlot.replaceChildren(inputs.el);
   };

@@ -322,6 +322,59 @@ func TestFifoHeadHoldsLaterEntries(t *testing.T) {
 	})
 }
 
+func TestQueueFullShowsOnTheRow(t *testing.T) {
+	const fullOfTwo = "queue full: 2 events held, newer events wait at the forge"
+	full := func(t *testing.T, cap int) (h *harness, id string, all []forgeapi.Issue) {
+		t.Helper()
+		h = newHarness(t)
+		r := h.create(fifo(labeledSpec(), cap))
+		h.issuePage(issue(1, "a"), issue(2, "a"), issue(3, "a"))
+		h.poll()
+		return h, r.ID, []forgeapi.Issue{issue(1, "a", testLabel), issue(2, "a", testLabel), issue(3, "a", testLabel)}
+	}
+	rowText := func(h *harness, id string) string { return h.state(id).raw.Status.RowText }
+
+	t.Run("until a poll leaves nothing at the forge", func(t *testing.T) {
+		h, id, all := full(t, 2)
+		h.issuePage(all...)
+		h.poll()
+		if got := rowText(h, id); got != fullOfTwo {
+			t.Fatalf("row text = %q, want %q", got, fullOfTwo)
+		}
+		h.dequeue(id)
+		h.issuePage(all...)
+		h.poll()
+		if got := rowText(h, id); got != "" {
+			t.Errorf("with room for #3, row text = %q, want none", got)
+		}
+	})
+	t.Run("one held event", func(t *testing.T) {
+		h, id, all := full(t, 1)
+		h.issuePage(all...)
+		h.poll()
+		if got, want := rowText(h, id), "queue full: 1 event held, newer events wait at the forge"; got != want {
+			t.Errorf("row text = %q, want %q", got, want)
+		}
+	})
+	t.Run("never over a launch's sentence", func(t *testing.T) {
+		h, id, all := full(t, 2)
+		es := h.state(id)
+		es.raw.Status.RowText = "starting run wf_1"
+		h.seed(id, &es)
+		h.issuePage(all...)
+		h.poll()
+		if got := rowText(h, id); got != "starting run wf_1" {
+			t.Errorf("full poll: row text = %q, want the launch's sentence kept", got)
+		}
+		h.dequeue(id)
+		h.issuePage(all...)
+		h.poll()
+		if got := rowText(h, id); got != "starting run wf_1" {
+			t.Errorf("poll with room: row text = %q, want the launch's sentence kept", got)
+		}
+	})
+}
+
 func TestQueueFullLeavesEventsAtForge(t *testing.T) {
 	t.Run("labeled", func(t *testing.T) {
 		logs := captureLogs(t)

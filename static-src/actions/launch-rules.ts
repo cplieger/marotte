@@ -2,6 +2,7 @@
 // and every event rule's row state.
 
 import { join as joinKey } from "@cplieger/keyenc";
+import type { RequestSpec } from "@cplieger/ui/actions";
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import type { LaunchRulesResponse, LaunchRuleView } from "../launch-rule-types.js";
 import type { RunDefaults } from "../run-defaults-picker.js";
@@ -31,13 +32,11 @@ export type LaunchRuleBody = {
   confirm_drop?: number;
 } & RunDefaults;
 
-/** Create a rule, or replace the one `id` names, answering the stored rule. A refusal's error is
- *  the server's sentence, for the form to show beside its fields. A create joins one for the same
- *  recipe still in flight, because a second POST would mint a second rule the form never shows. */
-export const saveLaunchRule = apiAction<LaunchRuleBody, LaunchRuleView>({
-  name: "launch-rules.save",
-  dedupe: (a) => (a.id === undefined ? joinKey("new", a.source) : joinKey("rule", a.id)),
-  request: (a) => ({
+const saveDedupe = (a: LaunchRuleBody): string =>
+  a.id === undefined ? joinKey("new", a.source) : joinKey("rule", a.id);
+
+function saveRequest(a: LaunchRuleBody): RequestSpec {
+  return {
     method: a.id === undefined ? "POST" : "PUT",
     path:
       a.id === undefined ? "/api/launch-rules" : `/api/launch-rules/${encodeURIComponent(a.id)}`,
@@ -52,11 +51,26 @@ export const saveLaunchRule = apiAction<LaunchRuleBody, LaunchRuleView>({
         ? {}
         : { confirm_drop: a.confirm_drop }),
     },
-  }),
-  error: (_args, err) =>
-    err.status === 409
-      ? "This change drops held events, so it needs a confirm"
-      : (serverSentence(err) ?? "Could not save the rule"),
+  };
+}
+
+/** Create a rule, or replace the one `id` names, answering the stored rule; a refusal toasts the
+ *  server's sentence. A create joins one for the same recipe still in flight, because a second POST
+ *  would mint a second rule the form never shows. */
+export const saveLaunchRule = apiAction<LaunchRuleBody, LaunchRuleView>({
+  name: "launch-rules.save",
+  dedupe: saveDedupe,
+  request: saveRequest,
+  error: (_args, err) => serverSentence(err) ?? "Could not save the rule",
+});
+
+/** saveLaunchRule with no toast, for the event form: it shows a refusal on its own line, and its
+ *  first 409 is the held-event confirm's question, not an error. */
+export const saveEventRule = apiAction<LaunchRuleBody, LaunchRuleView>({
+  name: "launch-rules.save-event",
+  dedupe: saveDedupe,
+  request: saveRequest,
+  error: false,
 });
 
 /** Remove a rule by its minted id; an event rule's held events go with it. */

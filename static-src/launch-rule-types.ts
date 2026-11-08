@@ -119,6 +119,8 @@ export interface LaunchRuleStatus {
   last_event?: string;
   /** RFC3339 start of an event rule's last applied poll. */
   checked_at?: string;
+  /** Where and why an event rule's last walk stopped short while it has no baseline. */
+  baseline_stop?: string;
   /** Why an event rule's reads wait for a forge or trigger budget, and until when. */
   paused?: string;
   gaps?: Gap[];

@@ -62,6 +62,9 @@ type Status struct {
 	// CheckedAt is the start of an event rule's last applied poll; the trigger confirmer's View sets it and no write
 	// persists it.
 	CheckedAt time.Time `json:"checked_at,omitzero"`
+	// BaselineStop is where and why an event rule's last walk stopped short while no baseline is taken; the trigger
+	// confirmer's View sets it and no write persists it.
+	BaselineStop string `json:"baseline_stop,omitempty"`
 	// Paused is why an event rule's reads wait for a forge or trigger budget, and until when; empty while they run.
 	Paused string `json:"paused,omitempty"`
 	// Gaps are an event rule's stretches in which runs may have been missed, kept until the operator dismisses them.
