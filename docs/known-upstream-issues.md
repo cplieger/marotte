@@ -120,6 +120,18 @@ kiro-cli accepts a request to pause a workflow run only on behalf of the user, a
 
 Reported as [kirodotdev/Kiro#12274](https://github.com/kirodotdev/Kiro/issues/12274), open. When marotte stops resuming a run after repeated throttling, it sends no pause and records the stop itself: the run's tab reads "marotte stopped resuming this run after repeated model throttling" beside **Resume**, a **Workflow runs** notification says so, and the agent that started the run reads it on its next turn. While your Kiro sign-in cannot be answered, marotte still pauses running runs, and that pause must name you, since kiro-cli accepts nothing else. The run's tab shows marotte's sign-in reason for it instead of saying you paused it.
 
+### A model throttle after an answered question pauses the step as a question
+
+When a workflow step asks a question, gets its answer while its turn is still running, and then hits a model throttle in that same turn, kiro-cli pauses the run as if the step still waited for an answer. It skips its own retries of the throttle, and nothing in the run says a throttle stopped it.
+
+Reported as [kirodotdev/Kiro#12326](https://github.com/kirodotdev/Kiro/issues/12326), open. When marotte's record of every waiting step shows that the step's question was answered and its turn then failed on a model error a retry can clear, such as a throttle, marotte answers the question itself with kiro-cli's own message for continuing an interrupted turn, and the step carries on. The answer shows in the step as sent by marotte. **Resume** on the run's tab sends the same answer in your name. marotte's own answers count toward its limit of 3 automatic resumes with no progress in between, after which it stops resuming the run as described in the entry above. A step whose turn failed before its question was answered keeps waiting for your answer.
+
+### A step on grok-4.7 can end with kiro-cli's placeholder as its answer
+
+When a turn fails on a model throttle before the model replies, kiro-cli puts a placeholder reply in its place in every later request to the model. The placeholder starts "(No assistant response was recorded for the preceding turn." Later in such a session, grok-4.7 sometimes answers with that exact text and ends its turn. In a workflow step, kiro-cli then counts the step as completed with the placeholder as its output, and the run moves on. On one host this happened in about 1 in 10 grok-4.7 sessions with a throttled turn, and in no Claude session.
+
+Reported as [kirodotdev/Kiro#12327](https://github.com/kirodotdev/Kiro/issues/12327), open. marotte marks a step failed when kiro-cli completes it with no completion signal and the step's answer after its last tool call is empty or is the placeholder. The run's tab shows the step as failed with the reason "The step ended with an empty model turn and no completion signal, so its work may be unfinished." A **Workflow runs** notification says the step failed, and the agent that started the run is told which step failed and how to run its work again. kiro-cli has already moved the run past the step, so marotte does not re-run it.
+
 ### A step that finished inside a parallel group holds up the steps after it
 
 When a paused step that runs beside other steps finishes, because it reported that it is done or failed or because you chose **Mark step done** or **Mark step failed**, the steps after it in its group wait until every other step of the run stops. A step you mark done or failed shows as finished or failed at once and its group as paused. A step that reported it is done or failed stays paused until the other steps stop.
