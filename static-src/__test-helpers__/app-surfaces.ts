@@ -258,12 +258,16 @@ function plantTurn(): void {
   summary.textContent = "…";
   const actionGroup = make("span", "turn-actions-group");
   for (const label of ["Copy as text", "Copy as markdown", "Copy link to this turn"]) {
-    actionGroup.appendChild(iconButton("turn-action-btn", label));
+    // The label span is what the menu rows show; inline it is hidden.
+    const text = make("span", "turn-action-label");
+    text.textContent = label;
+    const b = iconButton("turn-action-btn", label);
+    b.appendChild(text);
+    actionGroup.appendChild(b);
   }
   more.append(summary, actionGroup);
-  actions.appendChild(more);
-  const rewind = iconButton("turn-rewind", "Rewind");
-  footer.append(button("turn-ledger-summary", "Completed"), actions, rewind);
+  actions.append(more, iconButton("turn-rewind", "Rewind"));
+  footer.append(button("turn-ledger-summary", "Completed"), actions);
   t.appendChild(footer);
 }
 
@@ -388,6 +392,8 @@ function plantTurnDetails(): void {
 /** A turn's footer with its More menu open. */
 function plantTurnMore(): void {
   plantTurn();
+  // The menu paints only under the attribute the footer's fit writes, which this plant never runs.
+  q(".turn-footer").setAttribute("data-actions-menu", "");
   q<HTMLDetailsElement>(".turn-actions-more").open = true;
 }
 

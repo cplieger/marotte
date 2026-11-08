@@ -183,19 +183,21 @@ describe("the two ends of the footer share one press box", () => {
     expect(box.body, "the transition names box-shadow").toContain("box-shadow ");
   });
 
-  it("leaves the ledger's and Rewind's own rules holding geometry only", () => {
+  it("leaves the ledger's own rule holding geometry only, and Rewind none of its own", () => {
     // 29-turns.css owns the band's height and the card's ink gutter; every fill, ink and
     // transition is the shared rule's, so a copy here would silently overlap it.
-    for (const [control, own] of [
-      [".turn-ledger-summary", ".turn-ledger-summary"],
-      [".turn-rewind", ".turn-footer > .turn-rewind"],
-    ] as const) {
-      const geometry = ruleContaining(turns, own, "top");
-      for (const decl of ["background", "border", "color", "cursor", "transition"]) {
-        expect(geometry.body, `${own}: ${decl} belongs to the shared rule`).not.toContain(
-          `${decl}:`,
-        );
-      }
+    const geometry = ruleContaining(turns, ".turn-ledger-summary", "top");
+    for (const decl of ["background", "border", "color", "cursor", "transition"]) {
+      expect(
+        geometry.body,
+        `.turn-ledger-summary: ${decl} belongs to the shared rule`,
+      ).not.toContain(`${decl}:`);
+    }
+    // Rewind sits in the actions container, which places and spaces it like the actions.
+    expect(turns, "Rewind: no footer placement of its own").not.toContain(
+      ".turn-footer > .turn-rewind",
+    );
+    for (const control of [".turn-ledger-summary", ".turn-rewind"]) {
       expect(turns, `${control}: no bespoke focus ring`).not.toContain(`${control}:focus-visible`);
       expect(turns, `${control}: no bespoke hover`).not.toMatch(
         new RegExp(`\\${control}:hover\\s*\\{`, "u"),
