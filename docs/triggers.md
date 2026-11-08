@@ -32,7 +32,7 @@ A triggered run starts with nobody watching, like a scheduled one. A tool reques
 
 A run receives ids and your own values, never an issue's or pull request's title, body or branch, and never a commit author. A workflow that needs the text reads it through its own tools, from the ids, and treats it as untrusted data.
 
-Every event sets these inputs:
+Every event sets the first six of these inputs, and each later one names the rules that set it:
 
 | Input | Value |
 | --- | --- |
@@ -42,13 +42,13 @@ Every event sets these inputs:
 | `trigger_rule` | The rule's id |
 | `trigger_key` | The event's key |
 | `event_id` | The event's id, which stays the same for every run marotte starts for that event. Compare it whole: a GitLab repository path can contain `/` |
-| `issue_number` or `pr_number` | The item's number, for the label and opened kinds |
-| `label` | The rule's label, as you typed it |
-| `author` | The entry of the rule's list that matched, as you typed it |
-| `run_id` | The CI run's id |
-| `result` | `success`, `failure` or `neutral` |
-| `workflow` | The rule's workflow file path |
-| `head_sha` | The commit the CI run ran on, when it is a full commit id |
+| `issue_number` or `pr_number` | The item's number, on a label or opened rule |
+| `label` | The rule's label, as you typed it, on a label rule |
+| `author` | The entry of the rule's list that matched, as you typed it, on an opened rule |
+| `run_id` | The CI run's id, on a CI run rule |
+| `result` | `success`, `failure` or `neutral`, on a CI run rule |
+| `workflow` | The rule's workflow file path, on a CI run rule |
+| `head_sha` | The commit the CI run ran on, on a CI run rule when it is a full commit id |
 
 A workflow receives only the inputs it declares, so declare each one it should read. A label event's `event_id` includes the rule's id and the time marotte saw the label added, so a label removed and added again is a new event, and two label rules on one item never share an id. The other kinds' ids name the item or the run, so two rules on the same connection pass the same id for the same item or the same run ending with the same result. A fixed input cannot use a name the event sets.
 

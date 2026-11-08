@@ -63,7 +63,7 @@ func (c *Confirmer) export(ruleID string, rv *ruleValue) {
 	st := obs.TriggerRuleState{
 		PollFailures: es.pollFailures, QueueFull: es.queueFull, UnnamedRun: rv.blocker.warned,
 		StateUnreadable: rv.unreadable != nil, StateUnwritten: rv.writeBlocked != "",
-		LaunchFailed: es.raw.Status.Blocked != "" && rv.unreadable == nil,
+		LaunchFailed: es.raw.Status.Blocked != "" && rv.unreadable == nil, CatchUpGaps: len(es.raw.Status.Gaps),
 	}
 	for _, rc := range es.cursor {
 		st.TooManyItems = st.TooManyItems || (rc != nil && rc.Labeled != nil && rc.Labeled.TooMany)

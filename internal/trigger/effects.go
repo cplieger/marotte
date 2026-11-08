@@ -8,7 +8,8 @@ import (
 	"github.com/cplieger/marotte/internal/launchrule"
 )
 
-// Effects is what the Confirmer asks of the runs it abandoned. *agent.Runs implements it.
+// Effects is what the Confirmer asks of the engine and the user: cancels and releases of the runs it abandoned,
+// and a rule's failing notice. *agent.Runs implements it.
 type Effects interface {
 	// CancelAbandoned cancels the run; nil only when its own cancel verb returned nil.
 	CancelAbandoned(ctx context.Context, workflowID string) error

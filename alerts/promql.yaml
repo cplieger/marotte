@@ -236,15 +236,9 @@ groups:
         annotations:
           summary: "A marotte event rule launches nothing until you act"
           description: >
-            An event rule is blocked as {{ $labels.reason }}. launch_failed:
-            its launches kept failing for a day, failed in a way no retry
-            fixes, or twice started a run that never reported its start; fix
-            the cause, then switch the rule off and on. unnamed_run: a run
-            marotte has no record of launching holds the recipe; let it finish
-            or cancel it. too_many_items: more than 5,000 open items match;
-            narrow the rule. state_unreadable: the rule's saved state does not
-            load; edit or delete the rule. The rule's row on the Workflows
-            panel says more.
+            An event rule is blocked as {{ $labels.reason }}, so it launches
+            nothing until someone acts. The rule's row on the Workflows panel
+            says why, and marotte's monitoring docs say what each reason needs.
 
       # marotte retries the write at each of the rule's polls, and the rule
       # launches nothing new until one lands.
@@ -256,11 +250,10 @@ groups:
         annotations:
           summary: "marotte cannot save an event rule's state"
           description: >
-            marotte cannot write an event rule's saved state under its config
-            directory, so the rule launches nothing new and a restart would
-            lose what it has seen. Check the disk space and the permissions of
-            the config volume. The launch rules not written log line names the
-            file and the error.
+            marotte cannot write an event rule's saved state, so the rule
+            launches nothing new and a restart would lose what it has seen.
+            Check the config volume's free space and permissions. The log line
+            names the file.
 
       - alert: MarotteTriggerQueueFull
         expr: marotte_trigger_queue_full == 1
@@ -270,10 +263,10 @@ groups:
         annotations:
           summary: "A marotte event rule left events at the forge"
           description: >
-            An event rule holds as many events as its hold cap allows, so its
-            last poll left newer ones at the forge. They are read again once
-            the queue has room, unless they age out first. Check why the
-            recipe's runs are not finishing, or raise the rule's cap.
+            An event rule's queue is full, so its last poll left events at the
+            forge; they are read again once it has room, unless they age out.
+            Check why the recipe's runs are not finishing, or raise the rule's
+            cap.
 
       # One failed poll is often a forge's passing error, so the rule waits for
       # three in a row. A rate limit is waited out and does not count.
@@ -286,22 +279,19 @@ groups:
           summary: "A marotte event rule cannot read its repository"
           description: >
             An event rule's reads of its repository failed 3 or more polls in
-            a row, so it sees no new events. The trigger poll failing log line
-            names the error. Check the forge account on the Sources tab and
-            that it can still read the repository.
+            a row, so it sees no new events. Check the forge account on the
+            Sources tab. The trigger poll failing log line names the error.
 
-      # Each gap is also on the rule's row until it is dismissed there.
+      # The series counts the gaps saved in the rule's state, so a gap found
+      # before the first scrape after a restart still fires, until dismissed.
       - alert: MarotteTriggerCatchUpGap
-        expr: increase(marotte_trigger_catch_up_gaps_total[1h]) >= 1
+        expr: marotte_trigger_catch_up_gaps > 0
         for: 0m
         labels:
           severity: warning
         annotations:
           summary: "A marotte event rule may have missed events"
           description: >
-            An event rule could not read far enough back, so events in a time
-            range may never launch ({{ $labels.cause }}). outage: marotte was
-            down longer than the rule reads back. aged_out: a run was still
-            running at its last check and was not seen to end. result_window:
-            the forge lists no rows that far back. The rule's row names the
-            range; check it by hand, then dismiss the gap there.
+            An event rule could not read back over a time range, so events in
+            it may never launch. The rule's row names the range: check it by
+            hand, then dismiss the gap there. The alert fires until you do.

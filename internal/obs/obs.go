@@ -84,9 +84,6 @@ const (
 	labelRuleID = "rule_id"
 )
 
-// triggerGapCauses are the causes internal/launchrule gives a gap an event rule could not read back.
-var triggerGapCauses = []string{"outage", "aged_out", "result_window"}
-
 var (
 	engineExits = measure.NewLabeledCounter("engine_exits_total",
 		"Agent engine exits, by the cause the exit line names.", []string{"cause"})
@@ -121,9 +118,9 @@ var (
 		[]string{labelRuleID})
 	triggerPollFailures = measure.NewLabeledGauge("trigger_poll_failures",
 		"Consecutive polls in which an enabled event rule's read of its repository failed.", []string{labelRuleID})
-	triggerGaps = measure.NewLabeledCounter("trigger_catch_up_gaps_total",
-		"Time ranges an event rule could not read back, so events in them may never launch, by cause.",
-		[]string{"cause"})
+	triggerGaps = measure.NewLabeledGauge("trigger_catch_up_gaps",
+		"Undismissed time ranges an enabled event rule could not read back, so events in them may never launch.",
+		[]string{labelRuleID})
 )
 
 func init() {
@@ -144,9 +141,6 @@ func init() {
 	}
 	for _, e := range slotNotStartedEvents {
 		slotsNotStarted.Add(0, e)
-	}
-	for _, c := range triggerGapCauses {
-		triggerGaps.Add(0, c)
 	}
 }
 
@@ -241,6 +235,8 @@ func EngineMemoryGone() {
 type TriggerRuleState struct {
 	// PollFailures is the failed reads in a row of the rule's repository.
 	PollFailures int
+	// CatchUpGaps is the rule's gaps nobody has dismissed yet.
+	CatchUpGaps int
 	// LaunchFailed is a rule its launch failures blocked until it is edited or switched off and on.
 	LaunchFailed bool
 	// UnnamedRun is a rule held past its confirmation bound by a run no rule has a record of launching.
@@ -255,7 +251,6 @@ type TriggerRuleState struct {
 	QueueFull bool
 }
 
-// blockReason is one reason of the blocked series and whether it holds.
 type blockReason struct {
 	reason string
 	on     bool
@@ -278,6 +273,7 @@ func TriggerRule(ruleID string, st *TriggerRuleState) {
 	}
 	triggerQueueFull.Set(flag(st.QueueFull), ruleID)
 	triggerPollFailures.Set(float64(st.PollFailures), ruleID)
+	triggerGaps.Set(float64(st.CatchUpGaps), ruleID)
 }
 
 // TriggerRuleGone removes event rule ruleID's series, for a rule disabled, deleted or no longer an event rule. It
@@ -288,10 +284,8 @@ func TriggerRuleGone(ruleID string) {
 	}
 	triggerQueueFull.Delete(ruleID)
 	triggerPollFailures.Delete(ruleID)
+	triggerGaps.Delete(ruleID)
 }
-
-// TriggerCatchUpGap counts one gap an event rule could not read back, under cause, one of triggerGapCauses.
-func TriggerCatchUpGap(cause string) { triggerGaps.Inc(cause) }
 
 func flag(on bool) float64 {
 	if on {

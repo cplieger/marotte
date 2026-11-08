@@ -8,6 +8,7 @@ import (
 	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/obs"
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
@@ -162,16 +163,13 @@ func TestPollFailuresSeries(t *testing.T) {
 	}
 }
 
-// A catch-up gap counts once under its cause, and every cause a row records is pre-set.
-func TestCatchUpGapCounted(t *testing.T) {
-	for _, cause := range []string{launchrule.GapOutage, launchrule.GapAgedOut, launchrule.GapResultWindow} {
-		if _, ok := testsupport.MetricSample(t, `marotte_trigger_catch_up_gaps_total{cause="`+cause+`"}`); !ok {
-			t.Errorf("no catch-up gap series for cause %s, want every cause a row records pre-set", cause)
-		}
-	}
-	series := `marotte_trigger_catch_up_gaps_total{cause="` + launchrule.GapOutage + `"}`
-	before := testsupport.MetricValue(t, series)
+// A rule's catch-up gaps show until they are dismissed, a restart's included: a new process has no earlier sample
+// to compare with, so the boot load must show the gaps saved before it.
+func TestCatchUpGapsSeries(t *testing.T) {
 	h, id, runs := overForge(t, runSpec("success"))
+	if v, ok := ruleGauge(t, "marotte_trigger_catch_up_gaps", id); !ok || v != 0 {
+		t.Errorf("catch-up gaps before any gap = %v (%v), want 0", v, ok)
+	}
 	for _, at := range []time.Duration{40 * time.Hour, 80 * time.Hour} {
 		h.pollAt(pollStart.Add(at))
 	}
@@ -184,7 +182,18 @@ func TestCatchUpGapCounted(t *testing.T) {
 	if g := h.gaps(id); len(g) != 1 {
 		t.Fatalf("gaps = %+v, want one outage", g)
 	}
-	if d := testsupport.MetricValue(t, series) - before; d != 1 {
-		t.Errorf("the outage counter moved by %v, want 1", d)
+	if v, _ := ruleGauge(t, "marotte_trigger_catch_up_gaps", id); v != 1 {
+		t.Errorf("catch-up gaps after an outage = %v, want 1", v)
+	}
+	obs.TriggerRuleGone(id)
+	h.reopen()
+	if v, ok := ruleGauge(t, "marotte_trigger_catch_up_gaps", id); !ok || v != 1 {
+		t.Errorf("catch-up gaps after a restart = %v (%v), want the saved 1", v, ok)
+	}
+	if err := h.c.DismissGap(id); err != nil {
+		t.Fatalf("DismissGap = %v", err)
+	}
+	if v, ok := ruleGauge(t, "marotte_trigger_catch_up_gaps", id); !ok || v != 0 {
+		t.Errorf("catch-up gaps after DismissGap = %v (%v), want 0", v, ok)
 	}
 }

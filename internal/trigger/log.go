@@ -9,7 +9,6 @@ import (
 	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
-// The msg of every line the poller and the confirmer log.
 const (
 	logMsgBaselineTaken   = "trigger baseline taken"
 	logMsgEventMatched    = "trigger event matched"
@@ -36,7 +35,6 @@ const (
 // counts, instants and errors: none takes a forge's item, so no line can carry an issue's or pull request's title,
 // body, branch or author.
 
-// ruleRef names a rule on a poll's lines.
 type ruleRef struct{ id, recipe, repo, kind string }
 
 func refOf(r *launchrule.Rule) ruleRef {
