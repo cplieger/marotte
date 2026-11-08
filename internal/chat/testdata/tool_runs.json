@@ -9,11 +9,13 @@
     "the chat lane's tool-card runs in order, each by its call ids. lane_runs, when present, lists",
     "each delegate lane's runs the same way, as that delegate's own page draws them; a delegate lane",
     "with a tool call is always listed. later_wake, when present, is a turn_wake payload recorded in a",
-    "later turn of the same chat.",
+    "later turn of the same chat. pane_runs, when present, is what a workflow run's tab draws instead",
+    "of runs: the tab is its own surface, where every mention of a run seats on its card.",
     "",
-    "Every tool call here is a plain command, a read, a steering box or a delegate's invocation, and",
-    "only the invocation ends a run, so the cases measure boundaries alone; which hooks a boundary",
-    "hides is hook_visibility_test.go's."
+    "Every tool call here is a plain command, a read, a steering box, a delegate's invocation or a",
+    "mention of a workflow run, and only an invocation or a mention that seats on the run's card ends",
+    "a run, so the cases measure boundaries alone; which hooks a boundary hides is",
+    "hook_visibility_test.go's."
   ],
   "cases": [
     {
@@ -264,6 +266,49 @@
       ],
       "runs": [],
       "lane_runs": { "sub-1": [["d1", "d2"]] }
+    },
+    {
+      "name": "a grandchild delegate's card ends its parent delegate's run on that delegate's page",
+      "body": [
+        { "id": "i1", "kind": "tool_call", "payload": { "id": "t-i1", "title": "invokeSubAgent", "kind": "other", "status": "completed", "agent_subtask_id": "sub-1" } },
+        { "id": "d1", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "t-d1", "title": "go vet", "kind": "execute", "status": "completed", "agent_subtask_id": "sub-1" } },
+        { "id": "g1", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "t-g1", "title": "invokeSubAgent", "kind": "other", "status": "completed", "agent_subtask_id": "sub-2" } },
+        { "id": "d2", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "t-d2", "title": "go test", "kind": "execute", "status": "completed", "agent_subtask_id": "sub-1" } }
+      ],
+      "runs": [],
+      "lane_runs": { "sub-1": [["d1"], ["d2"]] }
+    },
+    {
+      "name": "only a run's first mention in the chat's lane opens its card, and a later one joins the run",
+      "body": [
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "Run Workflow", "kind": "other", "status": "completed", "workflow_id": "wf-1" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "Inspect Workflow", "kind": "other", "status": "completed", "workflow_id": "wf-1" } },
+        { "id": "c3", "kind": "tool_call", "payload": { "id": "t-c3", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c2", "c3"]],
+      "pane_runs": [["c3"]]
+    },
+    {
+      "name": "a delegate's mention of a run leaves the chat's first mention its card",
+      "body": [
+        { "id": "d1", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "t-d1", "title": "Run Workflow", "kind": "other", "status": "completed", "workflow_id": "wf-1" } },
+        { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "Inspect Workflow", "kind": "other", "status": "completed", "workflow_id": "wf-1" } },
+        { "id": "c2", "kind": "tool_call", "payload": { "id": "t-c2", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [["c2"]],
+      "lane_runs": { "sub-1": [] }
+    },
+    {
+      "name": "on a delegate's page a run's card ends the run and a later mention draws nothing",
+      "body": [
+        { "id": "d1", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "t-d1", "title": "go vet", "kind": "execute", "status": "completed" } },
+        { "id": "d2", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "t-d2", "title": "Run Workflow", "kind": "other", "status": "completed", "workflow_id": "wf-1" } },
+        { "id": "d3", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "t-d3", "title": "go build", "kind": "execute", "status": "completed" } },
+        { "id": "d4", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "t-d4", "title": "Inspect Workflow", "kind": "other", "status": "completed", "workflow_id": "wf-1" } },
+        { "id": "d5", "lane": "sub-1", "kind": "tool_call", "payload": { "id": "t-d5", "title": "go test", "kind": "execute", "status": "completed" } }
+      ],
+      "runs": [],
+      "lane_runs": { "sub-1": [["d1"], ["d3", "d5"]] }
     }
   ]
 }

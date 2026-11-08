@@ -8,7 +8,7 @@ import { userEvent } from "vitest/browser";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type { Turn } from "./turns.js";
 import { toolResultID } from "./entry-ids.js";
-import type { Entry, EntryToolCall } from "./wire/types.gen.js";
+import type { Entry, EntryToolCall, EntryToolResult } from "./wire/types.gen.js";
 
 for (const id of [
   "messages",
@@ -533,15 +533,21 @@ describe("the spacer standing for a dropped box", () => {
     expect(quiet).toBe(loud);
   });
 
-  it("prices a never-mounted lone box its result denied with its quiet tool-trigger hook as a row", () => {
-    const denied = (t: string): Entry => ({
-      id: toolResultID(`${t}-c2`),
-      turn: t,
-      kind: "tool_result",
-      seq: 3,
-      ts: 4,
-      payload: {
-        status: "failed",
+  /** The tail priced for a lone box whose result is `result`, its tool-trigger hook quiet or failed. */
+  function settledTail(result: EntryToolResult, hookStatus: "completed" | "failed"): number {
+    return unmeasuredTail((t) => [
+      say(t, 1, "go"),
+      call(t, 2),
+      { id: toolResultID(`${t}-c2`), turn: t, kind: "tool_result", seq: 3, ts: 4, payload: result },
+      hook(t, 4, "seat guard", { status: hookStatus }),
+    ]);
+  }
+
+  it.each<[string, EntryToolResult]>([
+    [
+      "denied",
+      {
+        status: "completed",
         denial: {
           capability: "fs.write",
           resource: "/etc/passwd",
@@ -549,21 +555,21 @@ describe("the spacer standing for a dropped box", () => {
           source: "policy",
         },
       },
-    });
-    const quiet = unmeasuredTail((t) => [
-      say(t, 1, "go"),
-      call(t, 2),
-      denied(t),
-      hook(t, 4, "seat guard"),
-    ]);
-    const loud = unmeasuredTail((t) => [
-      say(t, 1, "go"),
-      call(t, 2),
-      denied(t),
-      hook(t, 4, "seat guard", { status: "failed" }),
-    ]);
-    expect(quiet).toBe(loud);
-  });
+    ],
+    ["declined", { status: "completed", declined: true }],
+    [
+      "aborted after a rejected ask",
+      {
+        status: "aborted",
+        interaction: { type: "tool_approval", outcome: "selected", choice: "reject_once" },
+      },
+    ],
+  ])(
+    "prices a never-mounted lone box %s with its quiet tool-trigger hook as a row",
+    (_, result) => {
+      expect(settledTail(result, "completed")).toBe(settledTail(result, "failed"));
+    },
+  );
 
   it("prices a never-mounted turn hook folded into another box's badge at nothing", () => {
     const { turn } = mount((t) => [

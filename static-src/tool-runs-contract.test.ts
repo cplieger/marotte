@@ -28,6 +28,7 @@ const { buildAssistantBody, buildDetachedBody, resetBlockRenders, initBlockRende
 const { markWakingRows } = await import("./turn-wake.js");
 const { setActive } = await import("./store.js");
 const { createRunStepStream } = await import("./run-chat-steps.js");
+const { runCardOwners, setRunCardOwners } = await import("./block-window.js");
 
 const CHAT_ID = "c-tool-runs";
 setActive(CHAT_ID);
@@ -58,6 +59,7 @@ interface RunsCase {
   later_wake?: unknown;
   runs: string[][];
   lane_runs?: Record<string, string[][]>;
+  pane_runs?: string[][];
 }
 
 function loadCases(): RunsCase[] {
@@ -69,6 +71,7 @@ let hosts: HTMLElement[] = [];
 
 afterEach(() => {
   resetBlockRenders();
+  setRunCardOwners(new Map());
   for (const host of hosts) {
     host.remove();
   }
@@ -153,6 +156,8 @@ function renderedRuns(c: RunsCase): Record<string, string[][]> {
   const turn = caseTurn(c);
   const body = turn.body;
   const chat = mountHost();
+  // As the transcript's pass names them before it renders.
+  setRunCardOwners(runCardOwners([turn]));
   buildAssistantBody(chat, turn, CHAT_ID, false);
   const out: Record<string, string[][]> = { "": groupsIn(chat) };
   const delegates = new Set(
@@ -194,7 +199,7 @@ describe("tool-card run boundaries shared with the Go implementation", () => {
 describe("a workflow run's tab draws the same tool-card runs as the chat", () => {
   for (const c of loadCases()) {
     it(c.name, () => {
-      expect(runPaneRuns(c)).toEqual(c.runs);
+      expect(runPaneRuns(c)).toEqual(c.pane_runs ?? c.runs);
     });
   }
 });

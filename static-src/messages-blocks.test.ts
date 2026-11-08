@@ -37,9 +37,8 @@ const {
   mountHeadRange,
   dropHead,
   dropTail,
-  setRunCardOwners,
 } = await import("./messages-blocks.js");
-const { runCardOwners, sliceTurn } = await import("./block-window.js");
+const { runCardOwners, setRunCardOwners, sliceTurn } = await import("./block-window.js");
 const { toolResultID } = await import("./entry-ids.js");
 const { clearAllEntrySigs, ensureToolCallSig, toolCallSigs } = await import("./store-signals.js");
 const { setActive } = await import("./store.js");

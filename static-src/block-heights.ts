@@ -5,6 +5,7 @@ import {
   effectiveRunID,
   entryAt,
   entryRenders,
+  hostsRunCard,
   turnFolds,
   runResults,
   sliceTurn,
@@ -134,7 +135,7 @@ function callEstimate(
 ): number {
   // The run test stays FIRST: a launch carries no subtask id, so the arms are disjoint, but
   // ordering them makes that independent of the titles.
-  if (effectiveRunID(e, results) !== "") {
+  if (runCardHost(e, results)) {
     return est.runCard;
   }
   return (call.agent_subtask_id ?? "") === "" ? est.toolCard : est.subagentCard;
@@ -264,10 +265,16 @@ export function spacerOrdinalAt(
   return last;
 }
 
-/** How a rendered entry takes part in a tool group in `lane`: a plain call is a member, an internal one mounts
- *  nothing, and anything else (a delegate's invocation, a run card, any other kind) ends the run, as
+/** Whether `e` mounts its workflow run's card: an unstamped call naming the run, and its owner (`hostsRunCard`). */
+function runCardHost(e: Entry, results: RunResults): boolean {
+  const runID = effectiveRunID(e, results);
+  return runID !== "" && hostsRunCard(runID, e.id);
+}
+
+/** How an entry the caller's `entryRenders` drew takes part in a tool group: a plain call is a member, an internal
+ *  one mounts nothing, and anything else (a delegate's invocation, the run's card, any other kind) ends the run, as
  *  `messages-blocks.ts` `indexGroups` breaks it. */
-function groupRole(e: Entry, lane: string, results: RunResults): "member" | "none" | "break" {
+function groupRole(e: Entry, results: RunResults): "member" | "none" | "break" {
   if (e.kind !== "tool_call") {
     return "break";
   }
@@ -279,8 +286,8 @@ function groupRole(e: Entry, lane: string, results: RunResults): "member" | "non
     return "none";
   }
   const subtask = call.agent_subtask_id ?? "";
-  const runCard = subtask === "" && effectiveRunID(e, results) !== "";
-  const delegate = subtask !== "" && (e.lane ?? "") === lane && isSubagentInvocation(call);
+  const runCard = subtask === "" && runCardHost(e, results);
+  const delegate = subtask !== "" && isSubagentInvocation(call);
   return runCard || delegate ? "break" : "member";
 }
 
@@ -308,7 +315,7 @@ function toolRun(
 ): number[] {
   const role = (at: number): "member" | "none" | "break" => {
     const e = entryAt(t, at);
-    return e === undefined || !entryRenders(e, lane, folds) ? "none" : groupRole(e, lane, results);
+    return e === undefined || !entryRenders(e, lane, folds) ? "none" : groupRole(e, results);
   };
   const members = [seq];
   for (let at = seq - 1; at >= 0; at--) {
@@ -357,7 +364,7 @@ function* spacerBoxes(
   let lastRendered = -1;
   for (let seq = span - 1; seq >= 0 && lastRendered < 0; seq--) {
     const e = entryAt(t, seq);
-    if (e !== undefined && entryRenders(e, lane, folds) && groupRole(e, lane, results) !== "none") {
+    if (e !== undefined && entryRenders(e, lane, folds) && groupRole(e, results) !== "none") {
       lastRendered = seq;
     }
   }
@@ -372,7 +379,7 @@ function* spacerBoxes(
     laneWork =
       e !== undefined &&
       entryRenders(e, lane, folds) &&
-      groupRole(e, lane, results) === "member" &&
+      groupRole(e, results) === "member" &&
       hookAt(seq) === undefined;
   }
   let settled: Map<string, EntryToolResult> | undefined;
@@ -421,7 +428,7 @@ function* spacerBoxes(
       continue;
     }
     let own: number;
-    const role = groupRole(e, lane, results);
+    const role = groupRole(e, results);
     if (role === "none") {
       continue;
     }

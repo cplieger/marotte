@@ -70,6 +70,7 @@ func toolCardRuns(entries []marotte.Entry, results map[string]*marotte.EntryTool
 		open:    make(map[toolRunKey][]toolRunMember),
 		plans:   make(map[toolRunKey]bool),
 		owners:  make(map[string]bool),
+		boxes:   make(map[boxKey]bool),
 	}
 	for i := range entries {
 		sc.observe(i, &entries[i])
@@ -89,6 +90,7 @@ type toolRunScan struct {
 	open    map[toolRunKey][]toolRunMember
 	plans   map[toolRunKey]bool
 	owners  map[string]bool
+	boxes   map[boxKey]bool
 	done    [][]toolRunMember
 }
 
@@ -97,15 +99,7 @@ func (sc *toolRunScan) observe(i int, e *marotte.Entry) {
 	k := toolRunKey{turn: e.Turn, lane: e.Lane}
 	switch e.Kind {
 	case marotte.EntryKindToolCall:
-		var call marotte.EntryToolCall
-		if json.Unmarshal(e.Payload, &call) != nil || call.Title == internalToolTitle {
-			return
-		}
-		if breaksRun(&call, e.Lane, sc.results[e.ID], sc.owners) {
-			sc.flush(k)
-			return
-		}
-		sc.open[k] = append(sc.open[k], toolRunMember{id: e.ID, call: &call, at: i})
+		sc.observeCall(i, e, k)
 	case marotte.EntryKindSteer:
 		// A steer draws in the chat's own flow whichever lane read it.
 		if _, silent := sc.silent[i]; !silent {
@@ -132,6 +126,21 @@ func (sc *toolRunScan) observe(i int, e *marotte.Entry) {
 		marotte.EntryKindStepGraded:
 	default:
 		sc.flush(k)
+	}
+}
+
+// observeCall adds a tool call to its lane's run as seatOf seats it; an internal call draws nothing.
+func (sc *toolRunScan) observeCall(i int, e *marotte.Entry, k toolRunKey) {
+	var call marotte.EntryToolCall
+	if json.Unmarshal(e.Payload, &call) != nil || call.Title == internalToolTitle {
+		return
+	}
+	switch sc.seatOf(&call, e) {
+	case seatBox:
+		sc.flush(k)
+	case seatNone:
+	case seatMember:
+		sc.open[k] = append(sc.open[k], toolRunMember{id: e.ID, call: &call, at: i})
 	}
 }
 
@@ -201,22 +210,52 @@ func hideQuietHooks(members []toolRunMember, results map[string]*marotte.EntryTo
 	}
 }
 
-// breaksRun is whether a call in lane opens a box of its own instead of joining the run: a delegate's invocation, or
-// the first unstamped call naming a workflow run, which owns its run card. An invocation is filed in its issuer's
-// lane and stamped with the delegate's; the live path stamps a delegate's own calls with the lane they are in.
-func breaksRun(call *marotte.EntryToolCall, lane string, res *marotte.EntryToolResult, owners map[string]bool) bool {
+// runSeat is how a tool call takes part in its lane's tool-card run.
+type runSeat int
+
+const (
+	seatMember runSeat = iota // a tool card in the run
+	seatBox                   // opens a box of its own, which ends the run
+	seatNone                  // a repeat of a box its turn's lane already opened, drawing nothing where it sits
+)
+
+// boxKey names a box a turn's lane opens once: a delegate's card, or a run's card on a delegate's page.
+type boxKey struct{ turn, lane, box string }
+
+// seatOf is where a call sits. A delegate's invocation, filed in its issuer's lane and stamped with the delegate's,
+// opens that delegate's card; the live path stamps a delegate's own calls with their lane, which makes them tool
+// cards. In the chat's lane only a run's first mention owns its card (block-window.ts runCardOwners) and a later one
+// is a tool card; a delegate's page is its own surface, where every mention seats on the card.
+func (sc *toolRunScan) seatOf(call *marotte.EntryToolCall, e *marotte.Entry) runSeat {
 	if call.AgentSubtaskID != "" {
-		return call.AgentSubtaskID != lane
+		if call.AgentSubtaskID == e.Lane {
+			return seatMember
+		}
+		return sc.openBox(boxKey{turn: e.Turn, lane: e.Lane, box: "sub:" + call.AgentSubtaskID})
 	}
 	run := call.WorkflowID
-	if run == "" && res != nil {
+	if res := sc.results[e.ID]; run == "" && res != nil {
 		run = res.WorkflowID
 	}
-	if run == "" || owners[run] {
-		return false
+	switch {
+	case run == "":
+		return seatMember
+	case e.Lane != "":
+		return sc.openBox(boxKey{turn: e.Turn, lane: e.Lane, box: "run:" + run})
+	case sc.owners[run]:
+		return seatMember
 	}
-	owners[run] = true
-	return true
+	sc.owners[run] = true
+	return seatBox
+}
+
+// openBox seats a call on box k, opened by the first call naming it in its turn's lane.
+func (sc *toolRunScan) openBox(k boxKey) runSeat {
+	if sc.boxes[k] {
+		return seatNone
+	}
+	sc.boxes[k] = true
+	return seatBox
 }
 
 // settledResults maps each tool_call id to its tool_result.

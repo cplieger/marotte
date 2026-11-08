@@ -20,6 +20,7 @@ import {
   effectiveRunID,
   entryAt,
   entryRenders,
+  hostsRunCard,
   NO_FOLDS,
   turnFolds,
   continuesRun,
@@ -27,7 +28,6 @@ import {
   runResults,
   turnSpan,
   type EntryRange,
-  type RunCardOwners,
   type RunResults,
   type TurnFolds,
 } from "./block-window.js";
@@ -184,22 +184,9 @@ function clearLiveAnchor(el: HTMLElement): void {
   setLiveAnchor(scanLiveAnchor());
 }
 
-// Run id to the `tool_call` entry hosting its card, derived per pass by `runCardOwners`. Derived, not a live
-// registry, which would let two mentions in one turn both claim it. An absent run lets every mention build the card.
-
-let runCardOwnerEntries: RunCardOwners = new Map();
-
-export function setRunCardOwners(owners: RunCardOwners): void {
-  runCardOwnerEntries = owners;
-}
-
 /** Whether this `tool_call` entry hosts `runID`'s card. A detached render is exempt, being its own surface. */
 function ownsRunCard(st: TurnRender, runID: string, entryID: string): boolean {
-  if (st.detached) {
-    return true;
-  }
-  const owner = runCardOwnerEntries.get(runID);
-  return owner === undefined || owner.entry === entryID;
+  return st.detached || hostsRunCard(runID, entryID);
 }
 
 // Which collapsible containers are open, so a re-mount restores the reader's choice. Delegates have no key, and
@@ -2933,6 +2920,8 @@ function indexGroups(st: TurnRender): GroupIndex {
     }
   };
   // Priced and recorded at the store's index for `placeContainer`: the run break and the box's seat are one fact.
+  // A repeat mounts nothing where it sits, so it posts nothing (Go `seatOf`'s `seatNone`). The box mounts in the
+  // view's lane, which on a delegate's page is not `host`, the seat `rendersExpanded` reads.
   const openBox = (id: string, host: string, at: number): void => {
     if (built.has(id)) {
       return;
@@ -2942,6 +2931,10 @@ function indexGroups(st: TurnRender): GroupIndex {
     boxes.set(id, { host, at });
     lastPost.set(host, at);
     startAt(host, at + 1);
+    if (host !== st.lane) {
+      lastPost.set(st.lane, at);
+      startAt(st.lane, at + 1);
+    }
   };
   let work = false;
   // Every entry this view draws at its own position posts into the root lane at its `seq` and closes the tool-card
