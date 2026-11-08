@@ -49,6 +49,7 @@ vi.mock("./send-state.js", () => ({
   reportSendRefused: mockReportSendRefused,
 }));
 vi.mock("./composer-state.js", () => ({
+  adoptUnownedComposer: vi.fn(),
   restoreFailedSend: mockRestoreFailedSend,
   retargetComposer: vi.fn(),
   saveComposerState: vi.fn(),

@@ -199,6 +199,7 @@ vi.mock("./store.js", () =>
 );
 vi.mock("./run-store.js", () => ({ runLabelOf: vi.fn(() => "") }));
 vi.mock("./composer-state.js", () => ({
+  adoptUnownedComposer: vi.fn(),
   retargetComposer: vi.fn(),
   restoreFailedSend: vi.fn(),
   saveComposerState: vi.fn(),

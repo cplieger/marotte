@@ -131,6 +131,7 @@ vi.mock("./run-store.js", () => ({
 // The composer half of the close gesture: retargeting and the failed-send
 // restore are per-chat state this suite does not stage, so both are inert.
 vi.mock("./composer-state.js", () => ({
+  adoptUnownedComposer: vi.fn(),
   retargetComposer: vi.fn(),
   restoreFailedSend: vi.fn(),
   saveComposerState: vi.fn(),
@@ -200,7 +201,7 @@ import { pushRoute } from "./router.js";
 // faking the verdict. `chat` is the one kind whose ledger can answer "fresh" at all.
 import { observeStamp, _resetForTest as _resetFreshnessForTest } from "./subject-versions.js";
 import { closeTabCommand } from "./actions/tabs.js";
-import { restoreFailedSend, retargetComposer } from "./composer-state.js";
+import { adoptUnownedComposer, retargetComposer } from "./composer-state.js";
 import { info as toastInfo, error as toastErrorFn } from "./toast.js";
 import { attachDrag, pointerDragActivation, setReorderCallback } from "./tabs-drag.js";
 import { $ } from "./dom.js";
@@ -3431,13 +3432,12 @@ describe("optimistic close: the last tab and the empty-state surface", () => {
     await closing;
     await visited();
 
-    // The subtree is back, re-activated, and the typed text was filed as the
-    // restored chat's draft through the failed-send primitive (which writes the
-    // draft map and only ever an EMPTY box).
+    // The subtree is back, re-activated, and the composer's unowned text went to the
+    // restored chat (tab-close-draft.test.ts pins what that keeps).
     expect(hasTab("chat", "solo")).toBe(true);
     expect(getActiveTabId()).toBe(solo);
     expect(openers.chatShow).toHaveBeenCalledWith("solo");
-    expect(vi.mocked(restoreFailedSend)).toHaveBeenCalledWith("solo", "half a thought");
+    expect(vi.mocked(adoptUnownedComposer)).toHaveBeenCalledWith("solo");
     expect(vi.mocked(retargetComposer)).not.toHaveBeenCalled();
   });
 

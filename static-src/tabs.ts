@@ -94,7 +94,7 @@ import { downloadChatExport } from "./chat-export.js";
 import { MAX_CHAT_NAME_UNITS, downloadKiroSession, renameChat } from "./actions/chat.js";
 import { get, getActiveId, getPaintedId, isEmptyChat, removeChat, setActive } from "./store.js";
 import { relativeTime } from "./relative-time.js";
-import { restoreFailedSend, retargetComposer } from "./composer-state.js";
+import { adoptUnownedComposer, retargetComposer } from "./composer-state.js";
 import { info, error as toastError } from "./toast.js";
 import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
 import { setPageTitle, clearPageTitle } from "./page-title.js";
@@ -1457,17 +1457,12 @@ function rollbackClose(c: CapturedClose): void {
     }
     restoreActivation(id, after);
   }
-  // Empty-state composer text lives only in the box, so it is filed as the restored chat's draft
-  // BEFORE re-activation repaints the box: restoreComposerState would CLEAR a draftless chat's box.
+  // What the reader typed or staged on the emptied strip lives only in the box: it joins the
+  // restored chat's draft BEFORE the re-activation's restore writes that draft over the box.
   const restoredChat =
     c.rows.find((r) => r.subject.id === c.activeTabID && r.subject.kind === "chat")?.subject.ref ??
     c.storeActive;
-  if (restoredChat !== "" && getActiveId() === "") {
-    const typed = $.promptInput.value;
-    if (typed !== "") {
-      restoreFailedSend(restoredChat, typed);
-    }
-  }
+  adoptUnownedComposer(restoredChat);
   // Also when the verify re-list already put the rows back: its render did not restore the scroll.
   if (internal.stripGestures === c.stripGestures && c.rows.some((r) => hasRow(r.subject.id))) {
     internal.stripRestore = c.stripScroll;

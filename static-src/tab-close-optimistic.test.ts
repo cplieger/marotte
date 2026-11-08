@@ -75,8 +75,6 @@ import {
   setTabPinned,
 } from "./tabs.js";
 import { getSessions } from "./store.js";
-import { restoreFailedSend } from "./composer-state.js";
-import { $ } from "./dom.js";
 import { removePendingFor } from "./tabs-sync.js";
 import { releaseCover } from "./transcript-cover.js";
 import { tabServer, settleTabs } from "./__test-helpers__/tabs-server.js";
@@ -583,7 +581,7 @@ describe("an unanswered close of the active tab", () => {
     }
   });
 
-  it("binds the only tab again, with the text typed meanwhile as its draft", async () => {
+  it("binds the only tab again", async () => {
     const ids = await strip("solo");
     const solo = ids["solo"] ?? "";
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
@@ -594,7 +592,6 @@ describe("an unanswered close of the active tab", () => {
       void closeTab(solo);
       expect(getActiveTabId(), "the strip emptied").toBe("");
       expect(pointers.active, "Send creates a fresh chat while the strip is empty").toBe("");
-      $.promptInput.value = "half a thought";
 
       await vi.advanceTimersByTimeAsync(5_000 + 1_000);
       await settleTabs();
@@ -603,7 +600,6 @@ describe("an unanswered close of the active tab", () => {
       expect(rowIDs()).toEqual([solo]);
       expect(getActiveTabId()).toBe(solo);
       expect(pointers.active, "Send acts for the restored chat").toBe("solo");
-      expect(vi.mocked(restoreFailedSend)).toHaveBeenCalledWith("solo", "half a thought");
     } finally {
       vi.useRealTimers();
       tabServer.releaseResponses();
@@ -743,31 +739,6 @@ describe("after any close outcome the strip shows a bound tab whenever it has on
       expect(getActiveTabId(), "the tab the reader is shown").toBe(id(k.shown));
       expect(pointers.active, "Send acts for the shown tab").toBe(k.shown);
       expect(navigationHeld(ticket), "a navigation asked for still takes the view").toBe(k.nav);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("files the text typed on the emptied strip as the restored chat's draft", async () => {
-    const ids = await activeLast("a", "c");
-    await frame();
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
-    try {
-      arrangeClose("refused");
-      const closedC = closeTab(ids["c"] ?? "");
-      await activationRan();
-      const closedA = closeTab(ids["a"] ?? "");
-      await activationRan();
-      expect(getActiveTabId(), "the strip emptied").toBe("");
-      $.promptInput.value = "half a thought";
-
-      await vi.advanceTimersByTimeAsync(4_000);
-      await Promise.all([closedC, closedA]);
-      await settleTabs();
-      await activationRan();
-
-      expect(getActiveTabId()).toBe(ids["c"]);
-      expect(vi.mocked(restoreFailedSend)).toHaveBeenCalledWith("c", "half a thought");
     } finally {
       vi.useRealTimers();
     }

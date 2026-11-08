@@ -493,8 +493,7 @@ export async function createSession(initialPrompt?: string): Promise<string> {
   // Registered BEFORE the dispatch so the tabs frame correlates.
   const opID = newOpID();
   beginAdopt(opID);
-  // Read before the await: files staged with no chat open belong to no chat, so the
-  // retarget below would discard them instead of handing them to the chat it makes.
+  // Read before the await: a chat the reader moves to meanwhile discards files no chat owns.
   const carried = unownedAttachmentPaths();
   const created = await createChat.dispatch({ opID, model });
   if (created === null) {
@@ -520,11 +519,8 @@ export async function createSession(initialPrompt?: string): Promise<string> {
   }
   setActive(id);
   // Ahead of the activation, whose save would drop what the empty composer held: the retarget
-  // hands its text to this chat, and the files follow.
+  // hands its text and files to this chat.
   retargetComposer(id);
-  for (const path of carried) {
-    addAttachment(path);
-  }
   if (tabID !== "") {
     void activateTab(tabID);
   }

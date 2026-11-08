@@ -121,6 +121,7 @@ export function domMock(): Record<string, unknown> {
 export function composerStateMock(): Record<string, Mock> {
   return {
     retargetComposer: vi.fn(),
+    adoptUnownedComposer: vi.fn(),
     restoreFailedSend: vi.fn(),
     saveComposerState: vi.fn(),
     restoreComposerState: vi.fn(),

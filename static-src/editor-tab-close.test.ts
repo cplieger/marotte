@@ -115,6 +115,7 @@ vi.mock("./store.js", () =>
 // The composer half of the close gesture (tabs.ts reaches it for the rollback's
 // draft restore); inert here, per-chat state this suite does not stage.
 vi.mock("./composer-state.js", () => ({
+  adoptUnownedComposer: vi.fn(),
   retargetComposer: vi.fn(),
   restoreFailedSend: vi.fn(),
   saveComposerState: vi.fn(),

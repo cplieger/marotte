@@ -83,6 +83,7 @@ vi.mock("./attachments.js", () => ({
   unownedAttachmentPaths: vi.fn(() => []),
 }));
 vi.mock("./composer-state.js", () => ({
+  adoptUnownedComposer: vi.fn(),
   saveComposerState: vi.fn(),
   restoreComposerState: vi.fn(),
   retargetComposer: vi.fn(),

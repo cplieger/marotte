@@ -45,6 +45,7 @@ vi.mock("../banner-stack.js", () => ({ clearBannersForChat: vi.fn() }));
 const mockAdoptComposer = vi.fn();
 const mockDropComposer = vi.fn();
 vi.mock("../composer-state.js", () => ({
+  adoptUnownedComposer: vi.fn(),
   dropComposerState: mockDropComposer,
   adoptRemoteComposerState: mockAdoptComposer,
   // Present-but-inert so real-ESM linking succeeds: another module in this graph

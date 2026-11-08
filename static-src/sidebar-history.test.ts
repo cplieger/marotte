@@ -48,6 +48,7 @@ vi.mock("./run-store.js", async (importOriginal) => ({
 vi.mock("./composer-state.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ComposerState>()),
   retargetComposer: vi.fn(),
+  adoptUnownedComposer: vi.fn(),
   restoreFailedSend: vi.fn(),
   saveComposerState: vi.fn(),
   restoreComposerState: vi.fn(),

@@ -91,6 +91,7 @@ vi.mock("./composer-value.js", () => ({ setComposerValue: mocks.setComposerValue
 // The rollback's own rules are pinned against the real composer in
 // pending-steers-edit-rollback.test.ts; here only what reaches it is asserted.
 vi.mock("./composer-state.js", () => ({
+  adoptUnownedComposer: vi.fn(),
   composerDraft: mocks.composerDraftMock,
   restoreRefusedEdit: mocks.restoreRefusedEditMock,
   restoreFailedSend: mocks.restoreFailedSendMock,

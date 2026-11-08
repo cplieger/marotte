@@ -181,6 +181,7 @@ vi.mock("./attachments.js", () => ({
 }));
 // chat.ts only orders the save/restore pair, which the mock records.
 vi.mock("./composer-state.js", () => ({
+  adoptUnownedComposer: vi.fn(),
   saveComposerState: vi.fn(),
   restoreComposerState: vi.fn(),
   retargetComposer: vi.fn(),
@@ -437,10 +438,10 @@ describe("createSession is async, and what that means for its callers", () => {
 
   // Files staged before any chat existed would be discarded by the retarget, so an
   // attachment-only send from the empty state would create a chat and send nothing.
-  it("carries files staged with no chat into the new chat and sends them", async () => {
+  it("hands the composer to the new chat and sends the files staged with no chat", async () => {
     vi.mocked(unownedAttachmentPaths).mockReturnValueOnce(["/workspace/shot.png"]);
     await chatModule.createSession("");
-    expect(vi.mocked(addAttachment)).toHaveBeenCalledWith("/workspace/shot.png");
+    expect(vi.mocked(retargetComposer)).toHaveBeenCalledWith("c-created");
     expect(submitPromptMock).toHaveBeenCalledWith("c-created", "");
   });
 

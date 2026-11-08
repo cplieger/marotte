@@ -193,6 +193,17 @@ describe("draft text across a chat switch", () => {
       expect(input().value).toBe("the stored draft\n\ntyped with no chat open");
     });
 
+    it("hands files staged with no chat open to the chat it opens, after the chat's own", () => {
+      restoreComposerState("c2");
+      addAttachment("/w/own.png");
+      saveComposerState();
+      addAttachment("/w/staged.png");
+
+      retargetComposer("c2");
+
+      expect(takeAttachments().map((a) => a.path)).toEqual(["/w/own.png", "/w/staged.png"]);
+    });
+
     it("leaves text typed with no chat open in the box when no chat takes it", () => {
       saveComposerState();
       type("typed on the empty strip");

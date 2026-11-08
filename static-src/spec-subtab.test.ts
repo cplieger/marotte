@@ -112,6 +112,7 @@ vi.mock("./tabs-drag.js", async (importOriginal) => ({
 // is both sufficient and one fewer thing to keep in step with `store.ts`'s own exports.
 vi.mock("./run-store.js", () => ({ runLabelOf: vi.fn(() => "") }));
 vi.mock("./composer-state.js", () => ({
+  adoptUnownedComposer: vi.fn(),
   retargetComposer: vi.fn(),
   restoreFailedSend: vi.fn(),
   saveComposerState: vi.fn(),
