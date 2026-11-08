@@ -373,6 +373,56 @@ func TestAllotRouting_SpendsTheBudgetByRank(t *testing.T) {
 	}
 }
 
+// A repo past the first maxKiroRepos is classified by a presence check, which must agree with
+// the full scan the first ones get: a hooks file with no hook, or files the finders skip, is no
+// .kiro content.
+func TestWriteRepoList_ThePresenceCheckAgreesWithTheScan(t *testing.T) {
+	probes := []struct {
+		name, path, body string
+	}{
+		{"p-agent", "agents/a.json", `{"name":"a"}`},
+		{"p-doc", "steering/rules.md", "# R\n"},
+		{"p-hook", "hooks/h.json", `{"version":"v1","hooks":[{"name":"n","trigger":"PostFileSave","action":{"type":"command","command":"make"}}]}`},
+		{"p-skill", "skills/s/notes.txt", "no SKILL.md\n"},
+		{"q-deadhook", "hooks/h.json", `{"version":"v1","hooks":[]}`},
+		{"q-skipped", "steering/notes.txt", "not markdown\n"},
+	}
+	for _, fillers := range []int{0, maxKiroRepos} {
+		t.Run(fmt.Sprintf("after %d repos with content", fillers), func(t *testing.T) {
+			workDir := t.TempDir()
+			for i := range fillers {
+				name := fmt.Sprintf("a%02d", i)
+				writeRepo(t, workDir, name, "https://git.example.org/o/"+name+".git", false)
+				mustWrite(t, filepath.Join(workDir, name, ".kiro", "steering", "d.md"), "# D\n")
+			}
+			for _, p := range probes {
+				writeRepo(t, workDir, p.name, "https://git.example.org/o/"+p.name+".git", false)
+				mustWrite(t, filepath.Join(workDir, p.name, ".kiro", p.path), p.body)
+			}
+			entries, err := os.ReadDir(workDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			repos, _ := classifyEntries(t.Context(), entries, workDir)
+			var b strings.Builder
+
+			writeRepoList(&b, workDir, repos)
+
+			out := b.String()
+			if got := lineWithPrefix(out, "- Other repositories: "); got != "- Other repositories: `q-deadhook/`, `q-skipped/`" {
+				t.Errorf("Other repositories line = %q, want the two repos with no .kiro content", got)
+			}
+			if fillers == 0 {
+				return
+			}
+			if got := lineWithPrefix(out, "- More repositories with .kiro content: "); !strings.HasPrefix(got,
+				"- More repositories with .kiro content: `p-agent/`, `p-doc/`, `p-hook/`, `p-skill/`. ") {
+				t.Errorf("folded line = %q, want the four repos with .kiro content", got)
+			}
+		})
+	}
+}
+
 func TestTruncateUTF8_LenEqualsN(t *testing.T) {
 	if got := truncateUTF8("abcd", 4); got != "abcd" {
 		t.Errorf("truncateUTF8(%q, 4) = %q, want %q", "abcd", got, "abcd")
@@ -430,10 +480,6 @@ func TestClassifyEntries(t *testing.T) {
 	if len(dirs) != 1 || dirs[0] != "plain" {
 		t.Errorf("dirs = %v, want [plain] (dot-named non-repos stay hidden)", dirs)
 	}
-}
-
-func isValidUTF8(s string) bool {
-	return strings.ToValidUTF8(s, "\uFFFD") == s
 }
 
 // KIRO_WORK_DIR and KIRO_CONFIG_DIR move the folders, so both docs name the configured ones.

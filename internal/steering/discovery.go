@@ -1,10 +1,12 @@
 package steering
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cplieger/marotte/internal/sanitize"
@@ -138,7 +140,7 @@ func capWords(s string, n int) string {
 }
 
 // findRepoDocs returns a repo's `.kiro/steering/` markdown files classified by inclusion
-// mode (default "always"), via findMdDocsInDir's caps, and how many the directory holds.
+// mode (default "always"), within findMdDocsInDir's caps, and how many the directory holds.
 func findRepoDocs(repoDir string) (docs []docEntry, total int) {
 	return findMdDocsInDir(filepath.Join(repoDir, ".kiro", "steering"))
 }
@@ -184,21 +186,21 @@ func normalizeInclusion(v string) string {
 	}
 }
 
-// findRepoSkills scans `.kiro/skills/` for skill DIRECTORIES (holding SKILL.md), reading the
-// first 20, and returns them with how many the directory holds.
+// findRepoSkills scans `.kiro/skills/` for skill DIRECTORIES (holding SKILL.md) and returns
+// keepByRank's share of the first maxScannedEntries, with how many the directory holds.
 func findRepoSkills(repoDir string) (skills []docEntry, total int) {
 	dir := filepath.Join(repoDir, ".kiro", "skills")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, 0
 	}
-	out := make([]docEntry, 0, min(len(entries), 20))
+	out := make([]docEntry, 0, min(len(entries), maxScannedEntries))
 	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+		if !isSkillDir(e) {
 			continue
 		}
 		total++
-		if len(out) >= 20 {
+		if len(out) >= maxScannedEntries {
 			continue
 		}
 		// A missing SKILL.md yields empty data: the skill renders with no description.
@@ -207,7 +209,7 @@ func findRepoSkills(repoDir string) (skills []docEntry, total int) {
 		doc.Filename = defuse(e.Name()) + "/SKILL.md"
 		out = append(out, doc)
 	}
-	return out, total
+	return keepByRank(out, skillRank), total
 }
 
 // agentEntry is a custom agent config found in `.kiro/agents/`.
@@ -336,20 +338,20 @@ func defuse(s string) string {
 	return sanitize.Unicode(s)
 }
 
-// findMdDocsInDir classifies the first 20 `.md` files in a flat directory by their front-matter,
-// each read capped at 64 KiB, and returns how many the directory holds.
+// findMdDocsInDir classifies a flat directory's `.md` files by their front matter, reading the
+// first maxScannedEntries, and returns keepByRank's share with how many the directory holds.
 func findMdDocsInDir(dir string) (docs []docEntry, total int) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, 0
 	}
-	out := make([]docEntry, 0, min(len(entries), 20))
+	out := make([]docEntry, 0, min(len(entries), maxScannedEntries))
 	for _, e := range entries {
-		if e.IsDir() || strings.HasPrefix(e.Name(), ".") || !strings.HasSuffix(e.Name(), ".md") {
+		if !isSteeringDoc(e) {
 			continue
 		}
 		total++
-		if len(out) >= 20 {
+		if len(out) >= maxScannedEntries {
 			continue
 		}
 		data, _ := readCappedFile(filepath.Join(dir, e.Name()), FrontMatterReadCap)
@@ -357,5 +359,28 @@ func findMdDocsInDir(dir string) (docs []docEntry, total int) {
 		doc.Filename = defuse(e.Name())
 		out = append(out, doc)
 	}
-	return out, total
+	return keepByRank(out, docRank), total
+}
+
+// Discovery reads front matter for up to maxScannedEntries of a directory's entries, each read
+// capped at FrontMatterReadCap, and keeps maxRepoEntries of them: the scan sits well above the
+// cut so a repo's always-loaded doc is ranked before the cut, wherever its name sorts.
+const (
+	maxScannedEntries = 100
+	maxRepoEntries    = 20
+)
+
+// keepByRank keeps the first maxRepoEntries of entries by routing rank, each rank in the
+// directory's filename order.
+func keepByRank(entries []docEntry, rankOf func(docEntry) int) []docEntry {
+	slices.SortStableFunc(entries, func(a, b docEntry) int { return cmp.Compare(rankOf(a), rankOf(b)) })
+	return entries[:min(len(entries), maxRepoEntries)]
+}
+
+func isSteeringDoc(e os.DirEntry) bool {
+	return !e.IsDir() && !strings.HasPrefix(e.Name(), ".") && strings.HasSuffix(e.Name(), ".md")
+}
+
+func isSkillDir(e os.DirEntry) bool {
+	return e.IsDir() && !strings.HasPrefix(e.Name(), ".")
 }

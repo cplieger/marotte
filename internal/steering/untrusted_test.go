@@ -257,8 +257,8 @@ func TestReadCappedFile_RefusesAFIFO(t *testing.T) {
 	}
 }
 
-// TestReadCappedFile_RefusesASymlink pins that a symlinked workspace file is not followed into
-// environment.md (a symlinked README published an OAuth token, measured).
+// TestReadCappedFile_RefusesASymlink pins that a symlinked steering doc or SKILL.md is not followed
+// into environment.md: it would copy whatever it names, such as an MCP credential.
 func TestReadCappedFile_RefusesASymlink(t *testing.T) {
 	dir := t.TempDir()
 	secret := filepath.Join(dir, "mcp-secrets.json")

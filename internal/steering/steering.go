@@ -48,7 +48,7 @@ type ForgeProvider struct {
 	Host  string   // "github.com", "gitlab.company.com"
 	User  string   // authenticated username
 	Email string   // authenticated email (best-effort, may be "")
-	Repos []string // top repo names (capped for brevity)
+	Repos []string // repo names the forge reported, possibly only its first page
 }
 
 // ToolsSnapshot is what the tools engine reports installed.
@@ -265,7 +265,8 @@ func (*Generator) CustomPath() string {
 }
 
 // writeTools lists commands, not packages: an apt package's commands need not match its name
-// (ripgrep ships rg). With ok false the engine did not answer, so nothing is listed as present.
+// (ripgrep ships rg). With ok false the engine did not answer: no snapshot command is listed, and
+// the base-userland sentence still says that userland is present.
 func writeTools(b *strings.Builder, snap ToolsSnapshot, ok bool) {
 	b.WriteString("## Installed tools\n\n")
 	if !ok {
@@ -298,28 +299,28 @@ func writeTools(b *strings.Builder, snap ToolsSnapshot, ok bool) {
 	}
 }
 
-// writeAbsentLine names the commonly missing utilities, leaving out any that present holds.
+// writeAbsentLine names the utilities the image does not ship, leaving out any that present holds.
 func writeAbsentLine(b *strings.Builder, present map[string]bool) {
-	missing := slices.DeleteFunc(slices.Clone(commonlyMissing), func(n string) bool { return present[n] })
-	b.WriteString(debianBase + " Anything else not listed is likely absent")
+	missing := slices.DeleteFunc(slices.Clone(notShipped), func(n string) bool { return present[n] })
+	b.WriteString(debianBase)
 	switch n := len(missing); n {
 	case 0:
 	case 1:
-		b.WriteString(" (" + missing[0] + " is not installed)")
+		b.WriteString(" The image does not ship " + missing[0] + ".")
 	default:
-		b.WriteString(" (" + strings.Join(missing[:n-1], ", ") + " and " + missing[n-1] + " are not installed)")
+		b.WriteString(" The image does not ship " + strings.Join(missing[:n-1], ", ") + " or " + missing[n-1] + ".")
 	}
-	b.WriteString(". Check with `command -v`, and install through the tools engine below.\n\n")
+	b.WriteString(" Check any other command with `command -v`, and install through the tools engine below.\n\n")
 }
 
-// debianBase names the Debian required-priority userland a debian:*-slim image ships, which no
-// inventory reports.
-const debianBase = "The image is Debian slim: its base userland (coreutils, grep, sed, awk, find, xargs, diff, " +
-	"gzip) is present and not listed here."
+// debianBase names the Debian essential and required-priority userland a debian:*-slim image
+// ships, which no inventory reports.
+const debianBase = "The image is Debian slim: its base userland (coreutils, util-linux, findutils, grep, sed, awk, " +
+	"diff, gzip, which, perl, dpkg and apt-get) is present and not listed here."
 
-// commonlyMissing are utilities agents reach for that the slim image lacks; one the user
-// installed is not named.
-var commonlyMissing = []string{"file", "bc", "xxd", "netstat", "ss"}
+// notShipped are utilities agents reach for that the slim image lacks; one the user installed
+// is not named.
+var notShipped = []string{"file", "bc", "xxd", "netstat", "ss"}
 
 type command struct{ name, version string }
 
@@ -445,7 +446,7 @@ func writeForgeProvider(w io.Writer, p *ForgeProvider) {
 			fmt.Fprintf(w, "  - %s\n", defuse(r))
 		}
 		if extra := len(p.Repos) - maxForgeRepos; extra > 0 {
-			fmt.Fprintf(w, "  - … and %d more\n", extra)
+			fmt.Fprintf(w, "  - … and at least %d more (the Sources tab lists them)\n", extra)
 		}
 	}
 	fmt.Fprintln(w)

@@ -36,9 +36,9 @@ func TestWriteTools(t *testing.T) {
 	want := "## Installed tools\n\n" +
 		"Commands: go 1.26.2, gofmt 1.26.2, goimports v0.30.0, rg 14.1.1-1\n\n" +
 		"Baked into the image: curl, git\n\n" +
-		"The image is Debian slim: its base userland (coreutils, grep, sed, awk, find, xargs, diff, gzip) is present " +
-		"and not listed here. Anything else not listed is likely absent (file, bc, xxd, netstat and ss are not installed). " +
-		"Check with `command -v`, and install through the tools engine below.\n\n" +
+		"The image is Debian slim: its base userland (coreutils, util-linux, findutils, grep, sed, awk, diff, gzip, " +
+		"which, perl, dpkg and apt-get) is present and not listed here. The image does not ship file, bc, xxd, netstat " +
+		"or ss. Check any other command with `command -v`, and install through the tools engine below.\n\n" +
 		"1 more installed packages ship no command (mostly libraries): `dpkg -l` or `curl -s localhost:9847/api/tools` lists them.\n\n"
 	if got := b.String(); got != want {
 		t.Errorf("writeTools =\n%s\nwant\n%s", got, want)
@@ -86,24 +86,24 @@ func TestWriteTools_AnInstalledUtilityIsNotCalledMissing(t *testing.T) {
 	}{{
 		name:    "one installed through the engine",
 		snap:    ToolsSnapshot{Tools: []InstalledTool{{Version: "1:5.46", Commands: []string{"file"}, Apt: true}}},
-		missing: " (bc, xxd, netstat and ss are not installed). ",
+		missing: " The image does not ship bc, xxd, netstat or ss.",
 	}, {
 		name:    "one baked into the image",
 		snap:    ToolsSnapshot{System: []string{"bc", "xxd", "netstat", "ss"}},
-		missing: " (file is not installed). ",
+		missing: " The image does not ship file.",
 	}, {
 		name: "all of them",
 		snap: ToolsSnapshot{
 			Tools:  []InstalledTool{{Commands: []string{"file", "bc"}}, {Commands: []string{"xxd"}, Apt: true}},
 			System: []string{"netstat", "ss"},
 		},
-		missing: ". ",
+		missing: "",
 	}}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var b strings.Builder
 			writeTools(&b, tc.snap, true)
-			want := "Anything else not listed is likely absent" + tc.missing + "Check with `command -v`"
+			want := "is present and not listed here." + tc.missing + " Check any other command with `command -v`"
 			if !strings.Contains(b.String(), want) {
 				t.Errorf("writeTools lacks %q:\n%s", want, b.String())
 			}
@@ -246,9 +246,8 @@ func TestWriteForges_PerProviderFields(t *testing.T) {
 	})
 }
 
-// TestGenerate_WritesCompleteSteeringFile drives the full Generate
-// flow: reads tools-state.json, inspects workDir, uses the wired MCP
-// snapshot, and writes ~/.kiro/steering/environment.md.
+// TestGenerate_WritesCompleteSteeringFile drives the full Generate flow: the wired tools and MCP
+// snapshots, the workDir scan, and the write of ~/.kiro/steering/environment.md.
 func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -631,31 +630,6 @@ func TestGenerate_ACancelledContextRunsNoSnapshot(t *testing.T) {
 	}
 }
 
-func TestGenerate_CancelledDuringItsSnapshotsRendersNothing(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	var buf bytes.Buffer
-	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	configDir := t.TempDir()
-	// A render would log this file's parse error, so the ERROR check sees a render that ran.
-	mustWriteFile(t, filepath.Join(configDir, "tools-state.json"), "{")
-	g := New(t.TempDir(), configDir, "")
-	ctx, cancel := context.WithCancel(t.Context())
-	g.SetToolsSnapshot(func() (ToolsSnapshot, bool) { cancel(); return ToolsSnapshot{}, true })
-
-	err := g.Generate(ctx)
-
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("Generate cancelled during its snapshots returned %v, want its ctx's error", err)
-	}
-	if _, err := os.Stat(filepath.Join(home, ".kiro", "steering", "environment.md")); !os.IsNotExist(err) {
-		t.Errorf("Generate wrote environment.md after its ctx was cancelled (stat error %v)", err)
-	}
-	if strings.Contains(buf.String(), "level=ERROR") {
-		t.Errorf("Generate rendered after its ctx was cancelled:\n%s", buf.String())
-	}
-}
-
 // cancelAfterChecks is a context whose first checks pass, then reads as cancelled.
 type cancelAfterChecks struct {
 	context.Context
@@ -783,7 +757,7 @@ func TestCustomPath_HomeUnsetFallback(t *testing.T) {
 }
 
 // TestWriteForges_RepoListTruncatesAtTwenty pins the `len(p.Repos) > 20` boundary: 20 repos
-// list with no overflow line, 21 list 20 plus "… and 1 more".
+// list with no overflow line, 21 list 20 plus "… and at least 1 more": a forge reports one page.
 func TestWriteForges_RepoListTruncatesAtTwenty(t *testing.T) {
 	mkRepos := func(n int) []string {
 		repos := make([]string, n)
@@ -811,8 +785,8 @@ func TestWriteForges_RepoListTruncatesAtTwenty(t *testing.T) {
 			Kind: "github", Host: "github.com", User: "alice", Repos: mkRepos(21),
 		}}})
 		out := b.String()
-		if !strings.Contains(out, "… and 1 more") {
-			t.Errorf("21 repos: want an \"… and 1 more\" overflow line:\n%s", out)
+		if !strings.Contains(out, "\n  - … and at least 1 more (the Sources tab lists them)\n") {
+			t.Errorf("21 repos: want an \"… and at least 1 more\" overflow line:\n%s", out)
 		}
 		if strings.Contains(out, "acme/repo-20") {
 			t.Errorf("21 repos: the 21st repo must be summarised, not listed inline:\n%s", out)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cplieger/marotte/internal/git"
@@ -110,29 +111,51 @@ func (k *kiroRepo) empty() bool {
 	return len(k.docs)+len(k.skills)+len(k.agents)+len(k.hooks) == 0
 }
 
-// writeRepoList lists the repos: one routing block per repo with `.kiro/` content, the rest
-// by name on one line. It reports whether any repo carries `.kiro/` content.
+// hasKiroContent reports what scanKiroRepo's empty would, through the finders' filters, with no
+// front-matter read: a hooks dir counts only once a document in it parses to a hook.
+func hasKiroContent(repoDir string) bool {
+	dir := filepath.Join(repoDir, ".kiro")
+	if anyEntry(filepath.Join(dir, "steering"), isSteeringDoc) || anyEntry(filepath.Join(dir, "skills"), isSkillDir) {
+		return true
+	}
+	if entries, err := os.ReadDir(filepath.Join(dir, "agents")); err == nil && len(DedupeAgentFiles(entries)) > 0 {
+		return true
+	}
+	hooks, _ := findRepoHooks(repoDir)
+	return len(hooks) > 0
+}
+
+func anyEntry(dir string, match func(os.DirEntry) bool) bool {
+	entries, err := os.ReadDir(dir)
+	return err == nil && slices.ContainsFunc(entries, match)
+}
+
+// writeRepoList lists the repos: one routing block for each of the first maxKiroRepos with
+// `.kiro/` content, the later ones by name, the rest by name on one line. It reports whether
+// any repo carries `.kiro/` content.
 func writeRepoList(b *strings.Builder, workDir string, repos []string) bool {
 	var kiro []kiroRepo
-	var plain []string
+	var folded, plain []string
 	for _, r := range repos {
-		if k := scanKiroRepo(workDir, r); !k.empty() {
-			kiro = append(kiro, k)
-		} else {
+		switch {
+		case len(kiro) < maxKiroRepos:
+			if k := scanKiroRepo(workDir, r); !k.empty() {
+				kiro = append(kiro, k)
+			} else {
+				plain = append(plain, r)
+			}
+		case hasKiroContent(filepath.Join(workDir, r)):
+			folded = append(folded, r)
+		default:
 			plain = append(plain, r)
 		}
 	}
-	shown := kiro[:min(len(kiro), maxKiroRepos)]
-	for i, kept := range allotRouting(shown, maxRouting) {
-		writeKiroRepo(b, &shown[i], kept)
+	for i, kept := range allotRouting(kiro, maxRouting) {
+		writeKiroRepo(b, &kiro[i], kept)
 	}
-	if len(kiro) > maxKiroRepos {
-		names := make([]string, 0, len(kiro)-maxKiroRepos)
-		for i := range kiro[maxKiroRepos:] {
-			names = append(names, kiro[maxKiroRepos+i].name)
-		}
+	if len(folded) > 0 {
 		b.WriteString("- More repositories with .kiro content: ")
-		writeNameList(b, names, "`ls -ad "+workDir+"/*/.kiro "+workDir+"/.[!.]*/.kiro`")
+		writeNameList(b, folded, "`ls -ad "+workDir+"/*/.kiro "+workDir+"/.[!.]*/.kiro`")
 		b.WriteString(". Before working in one, list its `.kiro/steering/`, `.kiro/skills/`, `.kiro/hooks/` and " +
 			"`.kiro/agents/`, and apply the protocol below to them.\n")
 	}

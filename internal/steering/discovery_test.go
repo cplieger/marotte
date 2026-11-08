@@ -432,6 +432,38 @@ func TestDiscoveryEntryCaps(t *testing.T) {
 			t.Errorf("findMdDocsInDir(25 files) returned %d of %d, want exactly 20 (cap) of 25", len(got), total)
 		}
 	})
+	t.Run("findMdDocsInDir counts past its scan bound", func(t *testing.T) {
+		dir := t.TempDir()
+		for i := range 105 {
+			mustWriteFile(t, filepath.Join(dir, fmt.Sprintf("doc%03d.md", i)), "body\n")
+		}
+		if got, total := findMdDocsInDir(dir); len(got) != 20 || total != 105 {
+			t.Errorf("findMdDocsInDir(105 files) returned %d of %d, want 20 of 105", len(got), total)
+		}
+	})
+}
+
+// The per-repo cap keeps entries by rank, so a doc the protocol has an agent read unprompted
+// survives however many on-demand docs sort before it.
+func TestFindMdDocsInDir_KeepsAnAlwaysDocThatSortsAfterTheCap(t *testing.T) {
+	dir := t.TempDir()
+	for i := range 21 {
+		mustWriteFile(t, filepath.Join(dir, fmt.Sprintf("a%02d.md", i)), "---\ninclusion: manual\n---\n")
+	}
+	mustWriteFile(t, filepath.Join(dir, "y-match.md"), "---\ninclusion: fileMatch\nfileMatchPattern: \"*.go\"\n---\n")
+	mustWriteFile(t, filepath.Join(dir, "z-rules.md"), "---\ninclusion: always\n---\n")
+
+	got, total := findMdDocsInDir(dir)
+
+	if len(got) != 20 || total != 23 {
+		t.Fatalf("findMdDocsInDir returned %d of %d, want 20 of 23", len(got), total)
+	}
+	if got[0].Filename != "z-rules.md" || got[1].Filename != "y-match.md" {
+		t.Errorf("first two kept = %q, %q, want the always doc then the file-match doc", got[0].Filename, got[1].Filename)
+	}
+	if got[2].Filename != "a00.md" || got[19].Filename != "a17.md" {
+		t.Errorf("manual docs kept = %q..%q, want a00.md..a17.md in filename order", got[2].Filename, got[19].Filename)
+	}
 }
 
 // TestFindRepoSkills_ScansSubdirsWithSkillMd pins skills as subdirectories pointing at
@@ -489,6 +521,24 @@ func TestFindRepoSkills_CapAt20(t *testing.T) {
 	}
 	if got, total := findRepoSkills(repo); len(got) != 20 || total != 25 {
 		t.Errorf("findRepoSkills(25 skill dirs) = %d of %d, want 20 (capped) of 25", len(got), total)
+	}
+}
+
+func TestFindRepoSkills_KeepsAFileMatchSkillThatSortsAfterTheCap(t *testing.T) {
+	repo := t.TempDir()
+	for i := range 20 {
+		mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", fmt.Sprintf("a%02d", i), "SKILL.md"), "---\ndescription: d\n---\n")
+	}
+	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "z-sql", "SKILL.md"),
+		"---\ninclusion: fileMatch\nfileMatchPattern: \"*.sql\"\n---\n")
+
+	got, total := findRepoSkills(repo)
+
+	if len(got) != 20 || total != 21 {
+		t.Fatalf("findRepoSkills returned %d of %d, want 20 of 21", len(got), total)
+	}
+	if got[0].Filename != "z-sql/SKILL.md" || got[19].Filename != "a18/SKILL.md" {
+		t.Errorf("kept %q..%q, want the file-match skill first, then a00..a18", got[0].Filename, got[19].Filename)
 	}
 }
 

@@ -703,6 +703,13 @@ func wireToolsEngine(cfg *Config, h *agent.Runtime,
 	return tools, nil
 }
 
+// bakedCommands are commands the Dockerfile's runtime stage installs; the engine reports which of
+// them a host has.
+var bakedCommands = []string{
+	"git", "jq", "curl", "rg", "unzip", "xz", "ssh", "scp", "sftp", "ssh-keygen", "ssh-add", "ssh-keyscan",
+	"openssl", "tar", "bash",
+}
+
 // A failed enqueue only logs, since installed tools persist on the volume. A toolbelt.New failure
 // is returned as is, for the slot to classify. githubToken is the engine's only GitHub credential.
 func buildToolsEngine(cfg *Config, h *agent.Runtime,
@@ -727,7 +734,7 @@ func buildToolsEngine(cfg *Config, h *agent.Runtime,
 		Refresh:             catalogRefresh,
 		CatalogOverlays:     cfg.ToolCatalogOverlays,
 		Seed:                toolbelt.DefaultSeed(),
-		System:              []string{"git", "jq", "curl", "rg", "unzip", "xz", "ssh", "scp", "sftp", "tar", "bash"},
+		System:              bakedCommands,
 		GitHubToken:         githubToken,
 		TrustedUIDs:         cfg.TrustedInstallUIDs,
 		OnJobChanged: func(j *toolbelt.Job) {

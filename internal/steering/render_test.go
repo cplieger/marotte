@@ -58,7 +58,7 @@ func (f *renderFixture) build(t *testing.T) rendered {
 		}
 	}
 	for _, k := range f.kiroRepos {
-		writeRepo(t, workDir, k.name, "https://git.example.org/owner/"+k.name+".git", false)
+		writeRepo(t, workDir, k.name, "https://github.com/owner/"+k.name+".git", false)
 		for i, fm := range k.steering {
 			mustWrite(t, filepath.Join(workDir, k.name, ".kiro", "steering", fmt.Sprintf("doc%02d.md", i)), "---\n"+fm+"\n---\n\n# D\n")
 		}
@@ -183,12 +183,12 @@ func words(n int) string {
 }
 
 // baseSystem is what the image bakes in, present on every host.
-const baseSystem = "bash curl git jq rg scp sftp ssh tar unzip xz"
+const baseSystem = "bash curl git jq openssl rg scp sftp ssh ssh-add ssh-keygen ssh-keyscan tar unzip xz"
 
-const debianSlimHead = "The image is Debian slim: its base userland (coreutils, grep, sed, awk, find, xargs, diff, gzip) " +
-	"is present and not listed here. Anything else not listed is likely absent"
+const debianSlimHead = "The image is Debian slim: its base userland (coreutils, util-linux, findutils, grep, sed, awk, " +
+	"diff, gzip, which, perl, dpkg and apt-get) is present and not listed here."
 
-const debianSlimTail = ". Check with `command -v`, and install through the tools engine below."
+const debianSlimTail = " Check any other command with `command -v`, and install through the tools engine below."
 
 func smallFixture() *renderFixture {
 	return &renderFixture{
@@ -227,8 +227,9 @@ func typicalFixture() *renderFixture {
 }
 
 // largeFixture sits over every cap at scale 1, so a larger scale changes only overflow counts.
-// Its tenth .kiro repo is over discovery's per-repo caps, and each other one's always-loaded doc
-// sorts after its manual and file-match docs.
+// Its tenth .kiro repo is over discovery's per-repo caps, with its always-loaded doc and its
+// file-match skill sorting after 25 others; each other one's always-loaded doc sorts after its
+// manual and file-match docs. Each forge account holds one page of 100 names, as a forge reports.
 func largeFixture(scale int) *renderFixture {
 	tools := engineRows(200*scale, "cmd")
 	tools = append(tools, aptRows(10*scale, "aux")...)
@@ -252,12 +253,14 @@ func largeFixture(scale int) *renderFixture {
 		heavy.steering = append(heavy.steering, "inclusion: manual\ndescription: Heavy doc.")
 		heavy.skills = append(heavy.skills, "description: Heavy skill.")
 	}
+	heavy.steering = append(heavy.steering, "inclusion: always\ndescription: Heavy house rules.")
+	heavy.skills = append(heavy.skills, "inclusion: fileMatch\nfileMatchPattern: \"*.sql\"\ndescription: Heavy file-match skill.")
 	heavy.hooks, heavy.agents = 12*scale, 12*scale
 	return &renderFixture{
 		tools:         ToolsSnapshot{Tools: tools, System: strings.Fields(baseSystem)},
 		mcp:           40 * scale,
 		forgeAccounts: 8 * scale,
-		forgeRepos:    500 * scale,
+		forgeRepos:    100,
 		plainRepos:    100 * scale,
 		kiroRepos:     kiro,
 		dirs:          40 * scale,
@@ -286,10 +289,10 @@ func TestRender_Fixtures(t *testing.T) {
 		check: func(t *testing.T, r rendered) {
 			out := r.out
 			tools := sectionOf(out, "## Installed tools")
-			if !strings.Contains(tools, "Baked into the image: bash, curl, git, jq, rg, scp, sftp, ssh, tar, unzip, xz\n") {
+			if !strings.Contains(tools, "Baked into the image: bash, curl, git, jq, openssl, rg, scp, sftp, ssh, ssh-add, ssh-keygen, ssh-keyscan, tar, unzip, xz\n") {
 				t.Errorf("Installed tools lacks the baked-in line:\n%s", tools)
 			}
-			if want := debianSlimHead + " (file, bc, xxd, netstat and ss are not installed)" + debianSlimTail; !strings.Contains(tools, want) {
+			if want := debianSlimHead + " The image does not ship file, bc, xxd, netstat or ss." + debianSlimTail; !strings.Contains(tools, want) {
 				t.Errorf("Installed tools lacks the Debian slim line naming every missing utility:\n%s", tools)
 			}
 			if strings.Contains(tools, "Commands:") {
@@ -325,10 +328,10 @@ func TestRender_Fixtures(t *testing.T) {
 			if got := len(strings.Split(strings.TrimPrefix(commands, "Commands: "), ", ")); got != 22 {
 				t.Errorf("Commands line names %d commands, want 22 (15 engine, ffmpeg's 2, file, the ssh client's 3, imgconv): %q", got, commands)
 			}
-			if got := lineWithPrefix(tools, "Baked into the image: "); got != "Baked into the image: bash, curl, git, jq, rg, tar, unzip, xz" {
+			if got := lineWithPrefix(tools, "Baked into the image: "); got != "Baked into the image: bash, curl, git, jq, openssl, rg, ssh-add, ssh-keygen, ssh-keyscan, tar, unzip, xz" {
 				t.Errorf("Baked line = %q, want the names Commands already lists left out", got)
 			}
-			if want := debianSlimHead + " (bc, xxd, netstat and ss are not installed)" + debianSlimTail; !strings.Contains(tools, want) {
+			if want := debianSlimHead + " The image does not ship bc, xxd, netstat or ss." + debianSlimTail; !strings.Contains(tools, want) {
 				t.Errorf("the Debian slim line calls the installed file missing:\n%s", tools)
 			}
 			if !strings.Contains(tools, "\n6 more installed packages ship no command (mostly libraries): "+
@@ -419,19 +422,24 @@ func checkLarge(t *testing.T, r rendered) {
 		!strings.Contains(forge, "\n… and 3 more connected accounts, authenticated the same way (the Sources tab lists them).\n") {
 		t.Errorf("forge lists %d accounts, want 5 then `… and 3 more`:\n%s", got, forge)
 	}
-	if got := strings.Count(forge, "\n  - someone/"); got != 100 || strings.Count(forge, "\n  - … and 480 more\n") != 5 {
-		t.Errorf("forge lists %d repos, want 20 then `… and 480 more` for each of 5 accounts", got)
+	if got := strings.Count(forge, "\n  - someone/"); got != 100 ||
+		strings.Count(forge, "\n  - … and at least 80 more (the Sources tab lists them)\n") != 5 {
+		t.Errorf("forge lists %d repos, want 20 then `… and at least 80 more` for each of 5 accounts", got)
 	}
 	memory := sectionOf(out, "## Memory")
 	if got := strings.Count(memory, "`: `repo:"); got != 30 ||
-		!strings.Contains(memory, "\n- … and 142 more (each repository's tag is `repo:<host>/<owner>/<name>` from its origin)\n") {
+		!strings.Contains(memory, "\n- … and 142 more (each repository's tag is `repo:<provider>/<owner>/<name>` from its "+
+			"origin: the provider is github, gitlab, bitbucket or azure for those hosts, the host name otherwise)\n") {
 		t.Errorf("Memory lists %d tags, want 30 then `… and 142 more`:\n%s", got, memory)
+	}
+	if !strings.Contains(memory, "\n- `kiro000/`: `repo:github/owner/kiro000`\n") {
+		t.Errorf("a github.com origin is not tagged by its provider word:\n%s", memory)
 	}
 }
 
-// checkLargeRouting: the first ten .kiro repos get blocks; the budget goes to the nine always-loaded
-// docs, then the nine file-match docs, then 22 on-demand entries in repo order (three each for
-// kiro000-kiro006, one for kiro007); the remaining 62 repos fold onto one line.
+// checkLargeRouting: the first ten .kiro repos get blocks; the budget goes to the ten always-loaded
+// docs, then nine file-match docs and kiro009's file-match skill, then 20 on-demand entries in repo
+// order (three each for kiro000-kiro005, two for kiro006); the remaining 62 repos fold onto one line.
 func checkLargeRouting(t *testing.T, out, workDir string) {
 	if got := len(routingEntry.FindAllString(out, -1)); got != 40 {
 		t.Errorf("routing lists %d steering and skill entries, want 40", got)
@@ -443,13 +451,22 @@ func checkLargeRouting(t *testing.T, out, workDir string) {
 			t.Errorf("%s lost its always-loaded doc to the routing budget", r)
 		}
 	}
-	for r, cut := range map[string]int{"kiro007": 2, "kiro008": 3, "kiro009": 50} {
+	if !strings.Contains(out, "  - **Always-loaded steering** (read these as soon as you start working in `kiro009/`):\n"+
+		"    - `kiro009/.kiro/steering/doc25.md` — Heavy house rules.\n") ||
+		!strings.Contains(out, "  - **File-match skills** (`kiro009/.kiro/skills/`):\n"+
+			"    - `kiro009/.kiro/skills/skill25/SKILL.md` (matches `*.sql`) — Heavy file-match skill.\n") {
+		t.Errorf("kiro009 lost an entry that sorts after its 20th to discovery's per-repo cap:\n%s", sectionOf(out, "### Git repositories"))
+	}
+	if strings.Contains(out, "Heavy doc.") || strings.Contains(out, "Heavy skill.") {
+		t.Errorf("kiro009's on-demand entries outranked another repo's within the budget")
+	}
+	for r, cut := range map[string]int{"kiro006": 1, "kiro007": 3, "kiro008": 3, "kiro009": 50} {
 		if !strings.Contains(out, fmt.Sprintf("  - … %d more .kiro entries: list `%s/.kiro/steering/` and `%s/.kiro/skills/`\n", cut, r, r)) {
 			t.Errorf("%s lacks its `… %d more .kiro entries` line", r, cut)
 		}
 	}
-	if strings.Contains(out, "more .kiro entries: list `kiro006/") {
-		t.Errorf("kiro006, inside the budget, got an overflow line")
+	if strings.Contains(out, "more .kiro entries: list `kiro005/") {
+		t.Errorf("kiro005, inside the budget, got an overflow line")
 	}
 	if !strings.Contains(out, " `a09` … and 2 more\n") || !strings.Contains(out, "    - … more hooks: list `kiro009/.kiro/hooks/`\n") {
 		t.Errorf("kiro009's agents and hooks past discovery's caps are not counted:\n%s", sectionOf(out, "### Git repositories"))
@@ -490,9 +507,10 @@ func TestRender_ToolsSnapshotNotOKListsNothingAsPresent(t *testing.T) {
 	g := New(workDir, configDir, filepath.Join(configDir, "tools"))
 	snap := ToolsSnapshot{Tools: engineRows(2, "tool"), System: []string{"git"}}
 	out := string(g.render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, snap, false))
-	want := "\nThe image is Debian slim: its base userland (coreutils, grep, sed, awk, find, xargs, diff, gzip) is present and " +
-		"not listed here. The tools engine did not answer, so the commands installed or baked in are not listed: check " +
-		"with `command -v`, and install through the tools engine below.\n\n"
+	want := "\nThe image is Debian slim: its base userland (coreutils, util-linux, findutils, grep, sed, awk, diff, gzip, " +
+		"which, perl, dpkg and apt-get) is present and not listed here. The tools engine did not answer, so the " +
+		"commands installed or baked in are not listed: check with `command -v`, and install through the tools " +
+		"engine below.\n\n"
 	if got := sectionOf(out, "## Installed tools"); got != want {
 		t.Errorf("Installed tools with the engine down =\n%q\nwant\n%q", got, want)
 	}

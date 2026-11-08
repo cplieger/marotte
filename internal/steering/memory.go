@@ -48,7 +48,8 @@ func writeMemory(ctx context.Context, b *strings.Builder, workDir, configDir str
 		tagged++
 	}
 	if extra := tagged - maxMemoryTags; extra > 0 {
-		fmt.Fprintf(b, "- … and %d more (each repository's tag is `repo:<host>/<owner>/<name>` from its origin)\n", extra)
+		fmt.Fprintf(b, "- … and %d more (each repository's tag is `repo:<provider>/<owner>/<name>` from its origin: "+
+			"the provider is github, gitlab, bitbucket or azure for those hosts, the host name otherwise)\n", extra)
 	}
 	if tagged == 0 {
 		b.WriteString("No repository under `" + workDir + "` has an `origin` remote KAS can tag, so repository facts will be filed under Global.\n")
