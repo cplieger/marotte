@@ -5,6 +5,7 @@ import {
   effectiveRunID,
   entryAt,
   entryRenders,
+  hostsRunCard,
   turnFolds,
   runResults,
   sliceTurn,
@@ -12,8 +13,10 @@ import {
   type EntryRange,
   type RunResults,
 } from "./block-window.js";
-import { isInternalToolTitle } from "./tool-schema.js";
-import type { Entry, EntryToolCall } from "./types.js";
+import { toolResultID } from "./entry-ids.js";
+import { callRefused, hookQuiet, hookStatusShown, isToolTriggerHook } from "./hook-fold.js";
+import { isInternalToolTitle, isSubagentInvocation } from "./tool-schema.js";
+import type { Entry, EntryToolCall, EntryToolResult } from "./types.js";
 import { payloadOf, type Turn } from "./turns.js";
 // Type-only, so this costs no import edge at runtime: `tierNow` below reads the
 // attribute rather than calling `pointer-tier.ts`, and this is only the vocabulary.
@@ -131,7 +134,7 @@ function callEstimate(
 ): number {
   // The run test stays FIRST: a launch carries no subtask id, so the arms are disjoint, but
   // ordering them makes that independent of the titles.
-  if (effectiveRunID(e, results) !== "") {
+  if (runCardHost(e, results)) {
     return est.runCard;
   }
   return (call.agent_subtask_id ?? "") === "" ? est.toolCard : est.subagentCard;
@@ -261,10 +264,20 @@ export function spacerOrdinalAt(
   return last;
 }
 
-/** How a rendered entry takes part in a tool group: a plain call is a member, an internal one mounts nothing, and
- *  anything else (a delegate's card, a run card, any other kind) ends the run, as `messages-blocks.ts`
- *  `indexGroups` breaks it. */
-function groupRole(e: Entry, results: RunResults): "member" | "none" | "break" {
+/** Whether `e` mounts its workflow run's card: an unstamped call naming the run, and its owner (`hostsRunCard`). */
+function runCardHost(e: Entry, results: RunResults): boolean {
+  const runID = effectiveRunID(e, results);
+  return runID !== "" && hostsRunCard(runID, e.id);
+}
+
+/** How a drawn entry takes part in a tool group: a member, nothing, a box that ends the run, or another break. */
+type GroupRole = "member" | "none" | "box" | "break";
+
+/** How an entry the caller's `entryRenders` drew takes part in a tool group: a plain call is a member, an internal
+ *  one or a delegate's `repeats` mounts nothing, a delegate's invocation or the run's card opens a box, and any other
+ *  kind breaks the run. It matches `messages-blocks.ts` `indexGroups` for the transcript's chat lane, the only lane
+ *  priced. */
+function groupRole(e: Entry, results: RunResults, repeats: ReadonlySet<number>): GroupRole {
   if (e.kind !== "tool_call") {
     return "break";
   }
@@ -272,51 +285,114 @@ function groupRole(e: Entry, results: RunResults): "member" | "none" | "break" {
   if (call === undefined) {
     return "break";
   }
-  if (isInternalToolTitle(call.title)) {
+  if (isInternalToolTitle(call.title) || repeats.has(e.seq)) {
     return "none";
   }
-  return effectiveRunID(e, results) === "" && (call.agent_subtask_id ?? "") === ""
-    ? "member"
-    : "break";
+  return opensBox(e, call, results) ? "box" : "member";
 }
 
-/** The tool run holding member `seq`: its members in order, over the whole turn. */
-function toolRun(
+/** The `seq`s of the drawn invocations of a delegate whose card an earlier one in `lane` opened. */
+function repeatedInvocations(
   t: Turn,
-  seq: number,
   lane: string,
   folds: ReturnType<typeof turnFolds>,
-  results: RunResults,
-): number[] {
-  const role = (at: number): "member" | "none" | "break" => {
-    const e = entryAt(t, at);
-    return e === undefined || !entryRenders(e, lane, folds) ? "none" : groupRole(e, results);
-  };
-  const members = [seq];
-  for (let at = seq - 1; at >= 0; at--) {
-    const r = role(at);
-    if (r === "break") {
-      break;
+): Set<number> {
+  const opened = new Set<string>();
+  const out = new Set<number>();
+  for (const e of t.body) {
+    const call = payloadOf(e, "tool_call");
+    const subtask = call?.agent_subtask_id ?? "";
+    if (
+      call === undefined ||
+      subtask === "" ||
+      !isSubagentInvocation(call) ||
+      !entryRenders(e, lane, folds)
+    ) {
+      continue;
     }
-    if (r === "member") {
-      members.unshift(at);
-    }
-  }
-  const span = turnSpan(t);
-  for (let at = seq + 1; at < span; at++) {
-    const r = role(at);
-    if (r === "break") {
-      break;
-    }
-    if (r === "member") {
-      members.push(at);
+    if (opened.has(subtask)) {
+      out.add(e.seq);
+    } else {
+      opened.add(subtask);
     }
   }
-  return members;
+  return out;
 }
 
-/** A prose run is one box, keyed by its first `seq`; a tool run of two or more is one box, its group, keyed by its
- *  first member. */
+/** Whether a drawn call opens a box of its own: its workflow run's card, or a delegate's. */
+function opensBox(e: Entry, call: EntryToolCall, results: RunResults): boolean {
+  return (call.agent_subtask_id ?? "") === ""
+    ? runCardHost(e, results)
+    : isSubagentInvocation(call);
+}
+
+/** `callRefused` with the result merged over the call as `store.ts` `settledToolCall` merges them. */
+function refusedCall(call: EntryToolCall, result: EntryToolResult | undefined): boolean {
+  return callRefused({
+    status: result?.status ?? call.status,
+    denial: result?.denial ?? call.denial,
+    declined: result?.declined === true || call.declined === true,
+    interaction: result?.interaction,
+  });
+}
+
+/** The tool run holding member `seq`, its members in order over the turn's `span`, and the box owning it. A box owns
+ *  the PostToolUse hooks right after it, and the PreToolUse hooks right before it in a run of hooks only, each set a
+ *  run of its own (`messages-blocks.ts` `indexGroups`). */
+function toolRun(
+  seq: number,
+  span: number,
+  role: (at: number) => GroupRole,
+  hook: (at: number) => EntryToolCall | undefined,
+): { members: number[]; box: number | undefined } {
+  const trigger = (at: number): string | undefined => hook(at)?.hook_trigger;
+  const members = [seq];
+  let before: number | undefined;
+  for (let at = seq - 1; at >= 0; at--) {
+    const r = role(at);
+    if (r === "member") {
+      members.unshift(at);
+    } else if (r !== "none") {
+      before = r === "box" ? at : undefined;
+      break;
+    }
+  }
+  let after: number | undefined;
+  for (let at = seq + 1; at < span; at++) {
+    const r = role(at);
+    if (r === "member") {
+      members.push(at);
+    } else if (r !== "none") {
+      after = r === "box" ? at : undefined;
+      break;
+    }
+  }
+  let from = 0;
+  while (before !== undefined && trigger(members[from] ?? -1) === "PostToolUse") {
+    from++;
+  }
+  let to = members.length;
+  const hooksOnly = members.every((m) => hook(m) !== undefined);
+  while (
+    after !== undefined &&
+    hooksOnly &&
+    to > from &&
+    trigger(members[to - 1] ?? -1) === "PreToolUse"
+  ) {
+    to--;
+  }
+  const i = members.indexOf(seq);
+  if (i < from) {
+    return { members: members.slice(0, from), box: before };
+  }
+  if (i >= to) {
+    return { members: members.slice(to), box: after };
+  }
+  return { members: members.slice(from, to), box: undefined };
+}
+
+/** A prose run is one box, keyed by its first `seq`; a tool run is one box, its group shell, keyed by its first
+ *  member. */
 function* spacerBoxes(
   t: Turn,
   range: EntryRange,
@@ -335,14 +411,76 @@ function* spacerBoxes(
   const per = entryHeights.get(t.id);
   const rows = rowHeights.get(t.id);
   const groups = groupHeights.get(t.id);
+  const repeats = repeatedInvocations(t, lane, folds);
+  const roleAt = (at: number): GroupRole => {
+    const e = entryAt(t, at);
+    return e === undefined || !entryRenders(e, lane, folds)
+      ? "none"
+      : groupRole(e, results, repeats);
+  };
   // A group is collapsed by position once anything renders after its run (`tool-group.ts`).
   let lastRendered = -1;
   for (let seq = span - 1; seq >= 0 && lastRendered < 0; seq--) {
-    const e = entryAt(t, seq);
-    if (e !== undefined && entryRenders(e, lane, folds) && groupRole(e, results) !== "none") {
+    if (roleAt(seq) !== "none") {
       lastRendered = seq;
     }
   }
+  const hookAt = (at: number): EntryToolCall | undefined => {
+    const e = entryAt(t, at);
+    const call = e === undefined ? undefined : payloadOf(e, "tool_call");
+    return call?.kind === "hook" ? call : undefined;
+  };
+  // A box counts as lane work as a tool box does.
+  let laneWork = false;
+  for (let seq = 0; seq < span && !laneWork; seq++) {
+    const r = roleAt(seq);
+    laneWork = r === "box" || (r === "member" && hookAt(seq) === undefined);
+  }
+  let settled: Map<string, EntryToolResult> | undefined;
+  const refusedAt = (m: number): boolean => {
+    const e = entryAt(t, m);
+    const call = e === undefined ? undefined : payloadOf(e, "tool_call");
+    if (e === undefined || call === undefined) {
+      return false;
+    }
+    settled ??= new Map(
+      t.body.flatMap((r) => {
+        const result = payloadOf(r, "tool_result");
+        return result === undefined ? [] : [[r.id, result] as const];
+      }),
+    );
+    return refusedCall(call, settled.get(toolResultID(e.id)));
+  };
+  // An unmeasured hook member is priced by the fate `hook-fold.ts` `hookFate` gives it. A row when it failed or
+  // printed; when its run's tool box was refused and it is a tool-trigger hook, or an untriggered one while status
+  // shows; when its run belongs to a refused box (`toolRun`); or, while status shows, when its run has no tool box
+  // and belongs to no box and it is a tool-trigger hook or its lane holds no tool box to fold into. Otherwise it
+  // folds into a badge or hides, and costs nothing.
+  const priceMember = (
+    m: number,
+    runWork: boolean,
+    refused: boolean,
+    box: number | undefined,
+  ): number => {
+    const known = per?.get(m);
+    const call = hookAt(m);
+    if (known !== undefined || call === undefined) {
+      return known ?? est.toolCard;
+    }
+    const result = folds.hookResults.get(entryAt(t, m)?.id ?? "");
+    const quiet = hookQuiet({
+      status: result?.status ?? call.status,
+      output: result?.output ?? call.output,
+    });
+    const shown = hookStatusShown();
+    const row =
+      !quiet ||
+      (refused && (isToolTriggerHook(call) || (shown && call.hook_trigger === undefined))) ||
+      (box === undefined
+        ? shown && !runWork && (isToolTriggerHook(call) || !laneWork)
+        : refusedAt(box));
+    return row ? est.toolCard : 0;
+  };
   const mounted = range.to > range.from;
   // The exclusive end of the run being priced: its later members share its box.
   let runTo = -1;
@@ -352,7 +490,7 @@ function* spacerBoxes(
       continue;
     }
     let own: number;
-    const role = groupRole(e, results);
+    const role = roleAt(seq);
     if (role === "none") {
       continue;
     }
@@ -360,13 +498,21 @@ function* spacerBoxes(
       if (seq < runTo) {
         continue;
       }
-      const members = toolRun(t, seq, lane, folds, results);
+      const { members, box } = toolRun(seq, span, roleAt, hookAt);
       const first = members[0] ?? seq;
       const last = members[members.length - 1] ?? seq;
       runTo = last + 1;
       const inside = members.filter((m) => m >= stood.from && m < stood.to);
-      const member = (m: number): number => per?.get(m) ?? est.toolCard;
-      const collapsed = members.length > 1 && lastRendered > last;
+      const work = members.filter((m) => hookAt(m) === undefined);
+      const refused = work.some(refusedAt);
+      const px = new Map(members.map((m) => [m, priceMember(m, work.length > 0, refused, box)]));
+      const member = (m: number): number => px.get(m) ?? 0;
+      // Only non-hook cards form a group; hook rows alone form one only in a lane with none (`tool-group.ts`
+      // `paintGroup`).
+      const boxes =
+        work.length > 0 ? work.length : laneWork ? 0 : members.filter((m) => member(m) > 0).length;
+      const grouped = boxes > 1;
+      const collapsed = grouped && lastRendered > last;
       // A run crossing into the mounted rows is their group's: only an expanded one grows by the members here.
       const joined = (first < stood.from || last >= stood.to) && mounted;
       if (joined) {
@@ -381,14 +527,12 @@ function* spacerBoxes(
         continue;
       }
       const measured = groups?.get(first);
-      if (members.length === 1) {
-        own = member(first);
-      } else if (measured?.range.from === first && measured.range.to === last + 1) {
+      if (measured?.range.from === first && measured.range.to === last + 1) {
         own = measured.px;
+      } else if (collapsed) {
+        own = est.toolGroup;
       } else {
-        own = collapsed
-          ? est.toolGroup
-          : est.toolGroup + members.reduce((px, m) => px + member(m), 0);
+        own = members.reduce((sum, m) => sum + member(m), grouped ? est.toolGroup : 0);
       }
     } else if (e.kind === "text") {
       if (seq < runTo) {

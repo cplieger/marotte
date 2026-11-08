@@ -18,9 +18,9 @@ for (const id of [
   document.body.appendChild(d);
 }
 
-const { buildAssistantBody, resetBlockRenders, initBlockRenderer, setRunCardOwners } =
+const { buildAssistantBody, resetBlockRenders, initBlockRenderer } =
   await import("./messages-blocks.js");
-const { sliceTurn } = await import("./block-window.js");
+const { setRunCardOwners, sliceTurn } = await import("./block-window.js");
 const { toolResultID } = await import("./entry-ids.js");
 const { clearAllEntrySigs, toolCallSigs } = await import("./store-signals.js");
 const { setActive } = await import("./store.js");

@@ -1,5 +1,5 @@
-// Renders a finished turn whose tool group carries the hooks badge, through the production block renderer, inside a
-// `.turn` card, for the badge's geometry and its popover. Importers run in a browser project.
+// Renders a finished turn whose tool group, or lone tool card, carries the hooks badge, through the production block
+// renderer, inside a `.turn` card, for the badge's geometry and its popover. Importers run in a browser project.
 
 import type { Turn } from "../turns.js";
 import type { Entry, EntryToolCall } from "../wire/types.gen.js";
@@ -58,11 +58,14 @@ export interface HookGroupOptions {
   readonly folded?: boolean;
   /** The card's inline size, `100%` of the page when absent. */
   readonly width?: string;
+  /** The first command's output, which gives its card a details region to open. */
+  readonly output?: string;
 }
 
 export interface HookGroup {
   readonly turn: HTMLElement;
   readonly group: HTMLElement;
+  /** The header the badge lies over: the group's, or with one command its card's summary row. */
   readonly header: HTMLElement;
   readonly badge: HTMLButtonElement;
 }
@@ -94,6 +97,7 @@ export function mountHookGroup(opts: HookGroupOptions): HookGroup {
         title,
         ...(i === 0 && opts.outcome === "failed" ? { status: "failed" } : {}),
         ...(i === 0 && opts.outcome === "declined" ? { declined: true } : {}),
+        ...(i === 0 && opts.output !== undefined ? { output: opts.output } : {}),
       } as Partial<EntryToolCall>),
     );
   }
@@ -138,12 +142,27 @@ export function mountHookGroup(opts: HookGroupOptions): HookGroup {
   };
   buildAssistantBody(body, t, CHAT_ID, false);
   const group = body.querySelector<HTMLElement>(".tool-group");
-  const header = group?.querySelector<HTMLElement>(":scope > .tool-group-header") ?? null;
-  const badge = group?.querySelector<HTMLButtonElement>(":scope > .tool-group-hooks") ?? null;
+  const badge = group?.querySelector<HTMLButtonElement>(".tool-group-hooks") ?? null;
+  const header =
+    badge?.parentElement?.querySelector<HTMLElement>(
+      ":scope > .tool-group-header, :scope > .tool-summary",
+    ) ?? null;
   if (group === null || header === null || badge === null) {
     throw new Error("the renderer built no group with a hooks badge");
   }
   return { turn, group, header, badge };
+}
+
+/** Wait out the rendering update that first finds a mounted card relevant: until it runs, Chromium skips the contents
+ *  of a `content-visibility: auto` card in hit testing, so a point on a lone card's header lands on the card. */
+export async function rendered(): Promise<void> {
+  await new Promise<void>((r) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        r();
+      });
+    });
+  });
 }
 
 /** Remove every mounted card and any popover panel left in the body. */
@@ -179,7 +198,7 @@ function badgeTarget(badge: HTMLElement): DOMRect {
  *  the group's rounded clip), its middle, the strip past the badge's end edge, and the strips above and below the badge,
  *  on its horizontal centre. */
 export function headerPointsOutsideBadge(header: HTMLElement, badge: HTMLElement): Point[] {
-  const group = header.parentElement ?? header;
+  const group = header.closest<HTMLElement>(".tool-group") ?? header;
   const g = group.getBoundingClientRect();
   const row = header.getBoundingClientRect();
   const left = g.left + group.clientLeft;

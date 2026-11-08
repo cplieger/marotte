@@ -49,27 +49,36 @@ type toolRunMember struct {
 }
 
 // hiddenHookIDs are the hook tool_call ids the transcript draws nothing for while hooks.showStatus is off, the twin
-// of static-src/hook-fold.ts (hookRenders, foldGroupHooks): a quiet hook hides, except one gating a tool call in a
-// run of tool cards that holds a failed, denied or declined card.
+// of static-src/hook-fold.ts (hookRenders, foldGroupHooks) and tool-group.ts placeStrays: a quiet hook hides, except
+// one gating a tool call in a run of tool cards that holds a failed, denied or declined card, or one a refused box
+// keeps (toolRunScan.kept).
 func hiddenHookIDs(entries []marotte.Entry) map[string]struct{} {
 	results := settledResults(entries)
 	hidden := make(map[string]struct{})
-	for _, run := range toolCardRuns(entries, results) {
+	sc := scanToolRuns(entries, results)
+	for _, run := range sc.done {
 		hideQuietHooks(run, results, hidden)
+	}
+	for id := range sc.kept {
+		delete(hidden, id)
 	}
 	return hidden
 }
 
-// toolCardRuns are the log's tool-card runs as the transcript groups them, in log order of each run's first card;
-// internal/chat/testdata/tool_runs.json pins the boundaries against static-src/messages-blocks.ts indexGroups.
-func toolCardRuns(entries []marotte.Entry, results map[string]*marotte.EntryToolResult) [][]toolRunMember {
-	sc := toolRunScan{
+// scanToolRuns walks the log once for its tool-card runs, as the transcript groups them in log order of each run's
+// first card, and the hooks a refused box keeps; internal/chat/testdata/tool_runs.json pins both against
+// static-src/messages-blocks.ts indexGroups.
+func scanToolRuns(entries []marotte.Entry, results map[string]*marotte.EntryToolResult) *toolRunScan {
+	sc := &toolRunScan{
 		results: results,
 		silent:  silentSteers(entries),
 		reverts: newestReverts(entries),
 		open:    make(map[toolRunKey][]toolRunMember),
 		plans:   make(map[toolRunKey]bool),
 		owners:  make(map[string]bool),
+		boxes:   make(map[boxKey]bool),
+		after:   make(map[toolRunKey]bool),
+		kept:    make(map[string]struct{}),
 	}
 	for i := range entries {
 		sc.observe(i, &entries[i])
@@ -78,7 +87,7 @@ func toolCardRuns(entries []marotte.Entry, results map[string]*marotte.EntryTool
 		sc.flush(k)
 	}
 	slices.SortFunc(sc.done, func(a, b []toolRunMember) int { return a[0].at - b[0].at })
-	return sc.done
+	return sc
 }
 
 // toolRunScan walks a log one open run per lane of a turn.
@@ -89,7 +98,12 @@ type toolRunScan struct {
 	open    map[toolRunKey][]toolRunMember
 	plans   map[toolRunKey]bool
 	owners  map[string]bool
-	done    [][]toolRunMember
+	boxes   map[boxKey]bool
+	// after holds a lane whose last drawn entry opened a box, and whether that box's call was refused.
+	after map[toolRunKey]bool
+	// kept are the hooks a refused box keeps as rows, the ones endRun gives it.
+	kept map[string]struct{}
+	done [][]toolRunMember
 }
 
 // observe adds a tool card to its lane's run, or ends the run at anything else the transcript draws in that lane.
@@ -97,15 +111,7 @@ func (sc *toolRunScan) observe(i int, e *marotte.Entry) {
 	k := toolRunKey{turn: e.Turn, lane: e.Lane}
 	switch e.Kind {
 	case marotte.EntryKindToolCall:
-		var call marotte.EntryToolCall
-		if json.Unmarshal(e.Payload, &call) != nil || call.Title == internalToolTitle {
-			return
-		}
-		if breaksRun(&call, sc.results[e.ID], sc.owners) {
-			sc.flush(k)
-			return
-		}
-		sc.open[k] = append(sc.open[k], toolRunMember{id: e.ID, call: &call, at: i})
+		sc.observeCall(i, e, k)
 	case marotte.EntryKindSteer:
 		// A steer draws in the chat's own flow whichever lane read it.
 		if _, silent := sc.silent[i]; !silent {
@@ -135,11 +141,60 @@ func (sc *toolRunScan) observe(i int, e *marotte.Entry) {
 	}
 }
 
-func (sc *toolRunScan) flush(k toolRunKey) {
-	if members := sc.open[k]; len(members) > 0 {
-		sc.done = append(sc.done, members)
+// observeCall adds a tool call to its lane's run as seatOf seats it; an internal call draws nothing.
+func (sc *toolRunScan) observeCall(i int, e *marotte.Entry, k toolRunKey) {
+	var call marotte.EntryToolCall
+	if json.Unmarshal(e.Payload, &call) != nil || call.Title == internalToolTitle {
+		return
 	}
+	switch sc.seatOf(&call, e) {
+	case seatBox:
+		refused := toolRefused(&call, sc.results[e.ID])
+		sc.endRun(k, true, refused)
+		sc.after[k] = refused
+	case seatNone:
+	case seatMember:
+		sc.open[k] = append(sc.open[k], toolRunMember{id: e.ID, call: &call, at: i})
+	}
+}
+
+// flush ends lane k's run at an entry that opens no box.
+func (sc *toolRunScan) flush(k toolRunKey) {
+	sc.endRun(k, false, false)
+}
+
+// endRun ends lane k's run, at a box when atBox, whose call was refused when nextRefused. A box owns the PostToolUse
+// hooks right after it, and the PreToolUse hooks right before it in a run of hooks only, each set a run of its own
+// (messages-blocks.ts indexGroups), and a refused box keeps them.
+func (sc *toolRunScan) endRun(k toolRunKey, atBox, nextRefused bool) {
+	members := sc.open[k]
+	prevRefused, afterBox := sc.after[k]
+	delete(sc.after, k)
 	delete(sc.open, k)
+	from := 0
+	for afterBox && from < len(members) && hookOn(members[from], "PostToolUse") {
+		from++
+	}
+	to := len(members)
+	hooksOnly := !slices.ContainsFunc(members, func(m toolRunMember) bool { return m.call.Kind != marotte.ToolKindHook })
+	for atBox && hooksOnly && to > from && hookOn(members[to-1], "PreToolUse") {
+		to--
+	}
+	for _, run := range [][]toolRunMember{members[:from], members[from:to], members[to:]} {
+		if len(run) > 0 {
+			sc.done = append(sc.done, run)
+		}
+	}
+	for i, m := range members {
+		if (i < from && prevRefused) || (i >= to && nextRefused) {
+			sc.kept[m.id] = struct{}{}
+		}
+	}
+}
+
+// hookOn is a hook card fired by trigger.
+func hookOn(m toolRunMember, trigger string) bool {
+	return m.call.Kind == marotte.ToolKindHook && m.call.HookTrigger == trigger
 }
 
 // silentSteers are the indexes of the steers that draw nothing where they were filed: a row a wake draws in its
@@ -201,21 +256,53 @@ func hideQuietHooks(members []toolRunMember, results map[string]*marotte.EntryTo
 	}
 }
 
-// breaksRun is whether a call opens a box of its own instead of joining the run: a delegate's invocation, or the
-// first call naming a workflow run, which owns its run card.
-func breaksRun(call *marotte.EntryToolCall, res *marotte.EntryToolResult, owners map[string]bool) bool {
+// runSeat is how a tool call takes part in its lane's tool-card run.
+type runSeat int
+
+const (
+	seatMember runSeat = iota // a tool card in the run
+	seatBox                   // opens a box of its own, which ends the run
+	seatNone                  // a repeat of a box its turn's lane already opened, drawing nothing where it sits
+)
+
+// boxKey names a box a turn's lane opens once: a delegate's card, or a run's card on a delegate's page.
+type boxKey struct{ turn, lane, box string }
+
+// seatOf is where a call sits. A delegate's invocation, filed in its issuer's lane and stamped with the delegate's,
+// opens that delegate's card; the live path stamps a delegate's own calls with their lane, which makes them tool
+// cards. In the chat's lane only a run's first mention in the whole log owns its card and a later one is a tool card,
+// which is block-window.ts hostsRunCard's owner once that mention's turn is resident (a paged chat can disagree); a
+// delegate's page is its own surface, where every mention seats on the card.
+func (sc *toolRunScan) seatOf(call *marotte.EntryToolCall, e *marotte.Entry) runSeat {
 	if call.AgentSubtaskID != "" {
-		return true
+		if call.AgentSubtaskID == e.Lane {
+			return seatMember
+		}
+		return sc.openBox(boxKey{turn: e.Turn, lane: e.Lane, box: "sub:" + call.AgentSubtaskID})
 	}
 	run := call.WorkflowID
-	if run == "" && res != nil {
+	if res := sc.results[e.ID]; run == "" && res != nil {
 		run = res.WorkflowID
 	}
-	if run == "" || owners[run] {
-		return false
+	switch {
+	case run == "":
+		return seatMember
+	case e.Lane != "":
+		return sc.openBox(boxKey{turn: e.Turn, lane: e.Lane, box: "run:" + run})
+	case sc.owners[run]:
+		return seatMember
 	}
-	owners[run] = true
-	return true
+	sc.owners[run] = true
+	return seatBox
+}
+
+// openBox seats a call on box k, opened by the first call naming it in its turn's lane.
+func (sc *toolRunScan) openBox(k boxKey) runSeat {
+	if sc.boxes[k] {
+		return seatNone
+	}
+	sc.boxes[k] = true
+	return seatBox
 }
 
 // settledResults maps each tool_call id to its tool_result.
@@ -251,7 +338,8 @@ func toolTriggerHook(call *marotte.EntryToolCall) bool {
 	return call.HookTrigger == "PreToolUse" || call.HookTrigger == "PostToolUse"
 }
 
-// toolRefused is a card whose outcome mark reads failed, denied or declined.
+// toolRefused is a card whose outcome mark reads failed, denied or declined, twin of static-src/hook-fold.ts
+// callRefused.
 func toolRefused(call *marotte.EntryToolCall, res *marotte.EntryToolResult) bool {
 	if call.Denial != nil || call.Declined {
 		return true
@@ -259,5 +347,11 @@ func toolRefused(call *marotte.EntryToolCall, res *marotte.EntryToolResult) bool
 	if res == nil {
 		return call.Status == marotte.ToolFailed
 	}
-	return res.Status == marotte.ToolFailed || res.Denial != nil || res.Declined
+	return res.Status == marotte.ToolFailed || res.Denial != nil || res.Declined ||
+		(res.Status == marotte.ToolAborted && rejectedAsk(res.Interaction))
+}
+
+// rejectedAsk is an approval the reader rejected, static-src/interaction.ts askBucket's "rejected".
+func rejectedAsk(i *marotte.ToolInteraction) bool {
+	return i != nil && i.Type != "user_input" && (i.Choice == "reject_once" || i.Choice == "reject_always")
 }

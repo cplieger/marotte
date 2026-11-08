@@ -1,9 +1,10 @@
-// Which hook cards a reader sees: a row, folded into its tool group's hooks badge, or hidden. The one owner of
+// Which hook cards a reader sees: a row, folded into a hooks badge, or hidden. The one owner of
 // that decision; every hook visibility question routes here. internal/chat/hook_visibility.go is its server twin, so
 // find-in-chat counts no hook this hides. DOM-free at import: block-window.ts reads it under Node, so the badge
 // and its popover live in hook-badge.ts.
 
-import type { ToolStatus } from "./types.js";
+import { askBucket } from "./interaction.js";
+import type { ToolInteraction, ToolStatus } from "./types.js";
 
 /** The fields of a settled hook call the rules read. */
 interface HookFacts {
@@ -81,10 +82,40 @@ export function stampHookCard(card: HTMLElement, call: Partial<HookFacts>): void
  *  wire does not say which hook refused. */
 const REFUSED = new Set(["fail", "denied", "declined"]);
 
-/** What a group shows of its members: the rows, and the hooks folded into its badge. */
-interface HookFold {
+/** The fields of a settled call, its result merged over it, that its outcome mark reads. */
+interface RefusalFacts {
+  readonly status: ToolStatus;
+  readonly denial?: unknown;
+  readonly declined?: boolean | undefined;
+  readonly interaction?: ToolInteraction | undefined;
+}
+
+/** Whether a settled call's mark reads as one of `REFUSED` (`tool-card.ts` `applyOutcome`), for a card or a call
+ *  that is not mounted. */
+export function callRefused(call: RefusalFacts): boolean {
+  return (
+    call.status === "failed" ||
+    call.denial !== undefined ||
+    call.declined === true ||
+    (call.status === "aborted" &&
+      call.interaction !== undefined &&
+      askBucket(call.interaction) === "rejected")
+  );
+}
+
+/** What a group shows of its members: the rows, the hooks folded into its badge, and the cards that are no hook. */
+export interface HookFold {
   readonly rows: HTMLElement[];
   readonly folded: HTMLElement[];
+  readonly work: HTMLElement[];
+  /** Rows of a group with no work: quiet hooks that gate no tool call, which the nearest group with work in the
+   *  same container may fold (`foldStrayHook`); a row until one does. */
+  readonly strays: HTMLElement[];
+  /** Quiet tool-trigger hooks of a group with no work, in `rows` whether shown or not: the delegate's or run's card
+   *  that call started may fold them (`tool-group.ts` `setHookHosts`). A row while hook status shows, else hidden. */
+  readonly gated: HTMLElement[];
+  /** Every hook a badge may list, in member order: the folded ones and, while hook status shows, the hook rows. */
+  readonly listed: HTMLElement[];
 }
 
 /** Hide or show each member per the hook rules and return what is left as rows and folded hooks. */
@@ -93,22 +124,47 @@ export function foldGroupHooks(members: readonly HTMLElement[]): HookFold {
   const refused = work.some((c) => REFUSED.has(c.dataset["outcome"] ?? ""));
   const rows: HTMLElement[] = [];
   const folded: HTMLElement[] = [];
+  const strays: HTMLElement[] = [];
+  const gated: HTMLElement[] = [];
+  const listed: HTMLElement[] = [];
   for (const c of members) {
     const fate = hookFate(c, refused, work.length > 0);
-    c.hidden = fate !== "row";
+    const row = fate === "row" || fate === "stray" || (fate === "gated" && statusShown);
+    c.hidden = !row;
     c.toggleAttribute("data-hook-folded", fate === "folded");
-    if (fate === "row") {
+    if (row || fate === "gated") {
       rows.push(c);
     } else if (fate === "folded") {
       folded.push(c);
     }
+    if (fate === "stray") {
+      strays.push(c);
+    }
+    if (fate === "gated") {
+      gated.push(c);
+    }
+    if (fate === "folded" || (row && statusShown && c.dataset["kind"] === "hook")) {
+      listed.push(c);
+    }
   }
-  return { rows, folded };
+  return { rows, folded, work, strays, gated, listed };
 }
 
-/** A quiet hook folds whatever its trigger, but a refused group keeps as a row a hook that could have refused: a
- *  tool-trigger one, or an unresolved one while status shows (with it off, `hookRenders` and the server hide it). */
-function hookFate(c: HTMLElement, refused: boolean, hasWork: boolean): "row" | "folded" | "hidden" {
+/** Fold a stray into another group's badge, or give it back its row. */
+export function foldStrayHook(card: HTMLElement, folded: boolean): void {
+  card.hidden = folded;
+  card.toggleAttribute("data-hook-folded", folded);
+}
+
+/** A hook that failed or printed is a row, and so is a quiet one a refused group keeps because it could have refused
+ *  (a tool-trigger hook, or an unresolved one while status shows). With no non-hook card a quiet tool-trigger hook is
+ *  gated. Any other quiet hook hides with status off; with it on, it folds beside a non-hook card, and with none it is
+ *  a stray that `placeStrays` may fold. */
+function hookFate(
+  c: HTMLElement,
+  refused: boolean,
+  hasWork: boolean,
+): "row" | "folded" | "hidden" | "stray" | "gated" {
   const quiet =
     c.dataset["kind"] === "hook" &&
     c.dataset["outcome"] === "ok" &&
@@ -118,8 +174,11 @@ function hookFate(c: HTMLElement, refused: boolean, hasWork: boolean): "row" | "
   if (!quiet || (refused && suspect)) {
     return "row";
   }
+  if (!hasWork && c.hasAttribute("data-hook-gates")) {
+    return "gated";
+  }
   if (!statusShown) {
     return "hidden";
   }
-  return hasWork ? "folded" : "row";
+  return hasWork ? "folded" : "stray";
 }

@@ -1,5 +1,6 @@
-// On a touch device the hooks badge's 44px target still lies over its header's corner: a tap anywhere else on the
-// header toggles the group, and a tap on the badge opens its list and leaves the group as it was.
+// On a touch device the hooks badge's 44px target still lies over its header's corner, the group's or a lone tool
+// card's: a tap anywhere else on the header toggles the group or the card, and a tap on the badge opens its list and
+// leaves them as they were.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { page } from "vitest/browser";
@@ -37,9 +38,15 @@ async function tap(at: { readonly x: number; readonly y: number }): Promise<void
 const STATES = [
   { name: "expanded", commands: ["cmd a", "cmd b"], hooks: ["guard", "seat guard"] },
   { name: "collapsed", commands: ["cmd a", "cmd b"], hooks: ["guard", "seat guard"], folded: true },
+  { name: "one command", commands: ["cmd a"], hooks: ["guard", "seat guard"], output: "ok" },
 ] as const;
 
-describe("a tap on a tool group header carrying the hooks badge", () => {
+/** The header's fold: the group's, or a lone card's details. */
+function expanded(header: HTMLElement): string | null {
+  return (header.querySelector(".tool-disclosure") ?? header).getAttribute("aria-expanded");
+}
+
+describe("a tap on a header carrying the hooks badge", () => {
   for (const s of STATES) {
     it(`toggles the group anywhere outside the badge (${s.name})`, async () => {
       const { header, badge } = mountHookGroup(s);
@@ -49,22 +56,20 @@ describe("a tap on a tool group header carrying the hooks badge", () => {
         true,
       );
       for (const p of points) {
-        const before = header.getAttribute("aria-expanded");
+        const before = expanded(header);
         await tap(p);
-        expect(header.getAttribute("aria-expanded"), JSON.stringify(p)).toBe(
-          before === "true" ? "false" : "true",
-        );
+        expect(expanded(header), JSON.stringify(p)).toBe(before === "true" ? "false" : "true");
       }
       expect(document.querySelector(".tool-hook-popover.is-open")).toBeNull();
     });
 
     it(`opens the list from the badge and leaves the group as it was (${s.name})`, async () => {
       const { header, badge } = mountHookGroup(s);
-      const before = header.getAttribute("aria-expanded");
+      const before = expanded(header);
       const b = badge.getBoundingClientRect();
       await tap({ x: b.left + b.width / 2, y: b.top + b.height / 2 });
       expect(document.querySelector(".tool-hook-popover.is-open")).not.toBeNull();
-      expect(header.getAttribute("aria-expanded")).toBe(before);
+      expect(expanded(header)).toBe(before);
     });
   }
 });
