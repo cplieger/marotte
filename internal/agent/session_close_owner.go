@@ -361,7 +361,7 @@ func (lc *chatLifecycle) closingLocked(sb *sharedBridge) bool {
 
 // closeOwner is the lifecycle that decides when sb, chatID's entry, may close: the life its leases are counted on. A
 // run chat's entry has none: releaseEndedHost owns it.
-func (r *turnRegistry) closeOwner(chatID marotte.ChatID, sb *sharedBridge) (*chatLifecycle, bool) {
+func (*turnRegistry) closeOwner(chatID marotte.ChatID, sb *sharedBridge) (*chatLifecycle, bool) {
 	if sb == nil || isRunChat(chatID) {
 		return nil, false
 	}
