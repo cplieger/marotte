@@ -325,3 +325,40 @@ describe("the covered transcript is out of reach with no restyle", () => {
     }
   });
 });
+
+describe("the cover's skeleton pulses only while the cover is held", () => {
+  /** The play state of every skeleton pulse in the cover. */
+  function pulses(): string[] {
+    const cover = document.getElementById("transcript-cover");
+    if (cover === null) {
+      throw new Error("no cover");
+    }
+    return cover
+      .getAnimations({ subtree: true })
+      .filter((a) => a instanceof CSSAnimation && a.animationName === "vk-skeleton")
+      .map((a) => a.playState);
+  }
+
+  it("pauses the pulse where it stands at the release, and runs it again at the next hold", () => {
+    const pulse = document.createElement("style");
+    pulse.textContent = ["01-tokens.css", "03-base.css", "30-utilities.css"]
+      .map(loadCSS)
+      .join("\n");
+    document.head.appendChild(pulse);
+    try {
+      coverModule.holdCover("cv-a");
+      const held = pulses();
+      expect(held.length, "the skeleton's bars pulse").toBeGreaterThan(0);
+      expect(new Set(held), "while held").toEqual(new Set(["running"]));
+
+      coverModule.dropCover();
+      expect(new Set(pulses()), "after the release").toEqual(new Set(["paused"]));
+
+      coverModule.holdCover("cv-b");
+      expect(new Set(pulses()), "at the next hold").toEqual(new Set(["running"]));
+    } finally {
+      coverModule.dropCover();
+      pulse.remove();
+    }
+  });
+});

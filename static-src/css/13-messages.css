@@ -132,6 +132,12 @@
   &[data-state="released"] {
     pointer-events: none;
     animation: vk-fade-out var(--dur-exit) var(--ease-exit) forwards;
+
+    /* Paused where it stands, so the fade shows no jump: in WebKit a pulse still running over
+     * the content the release uncovers held that content's first frame back by about 45 ms. */
+    & .skeleton {
+      animation-play-state: paused;
+    }
   }
 }
 
