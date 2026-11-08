@@ -9,7 +9,11 @@ import indexHtml from "../static/index.html?raw";
 import { buildAttachmentPill } from "./attachment-pill.js";
 import { ICON_SEND } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { BUTTON_BOX } from "./__test-helpers__/button-reference.js";
 import { allRules, loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
+
+/** The pill row's band on touch: the button box and the row's 4px inset above and below it. */
+const COARSE_BAND = BUTTON_BOX.coarse + 2 * 4;
 
 /** Sliced from the shipped page: the pill row's height is the sum of its real controls. */
 function composerMarkup(): string {
@@ -79,9 +83,9 @@ describe("the height's declarations, read from source", () => {
 
   it("derives the textarea's resting band from that height and the row's own inset", () => {
     const input = ruleContaining(css, '[id="prompt-input"]', "top");
-    // The row's padding pays for the expander's block reach (`--composer-pill-pad`, floored at `--pill-inset`).
+    // The row's padding is `--pill-inset`; each `--btn-h` control is its own target, so it pays no reach.
     expect(input.body).toMatch(
-      /--composer-rest-h:\s*calc\(var\(--btn-h\)\s*\+\s*2\s*\*\s*var\(--composer-pill-pad\)\)/,
+      /--composer-rest-h:\s*calc\(var\(--btn-h\)\s*\+\s*2\s*\*\s*var\(--pill-inset\)\)/,
     );
   });
 
@@ -252,9 +256,9 @@ describe("the composer, measured at real viewport sizes", () => {
   it("matches the two rows on a touch DESKTOP, which is the case a width query cannot reach", async () => {
     // Wide coarse: a width query cannot see the tier, so the textarea could sit over a taller pill row.
     const { textarea, band, control } = await bandsAt(1440, 900, "coarse");
-    expect(control, "the toolbar's box, the 44px living in the target").toBe(36);
-    expect(textarea).toBe(44);
-    expect(band).toBe(44);
+    expect(control, "the toolbar's box, its own 44px target").toBe(BUTTON_BOX.coarse);
+    expect(textarea).toBe(COARSE_BAND);
+    expect(band).toBe(COARSE_BAND);
   });
 
   it("matches them on a mouse desktop, at the toolbar's button size", async () => {
@@ -266,8 +270,8 @@ describe("the composer, measured at real viewport sizes", () => {
 
   it("matches them on a phone", async () => {
     const { textarea, band } = await bandsAt(390, 844, "coarse");
-    expect(textarea).toBe(44);
-    expect(band).toBe(44);
+    expect(textarea).toBe(COARSE_BAND);
+    expect(band).toBe(COARSE_BAND);
   });
 
   it("holds every control's TARGET at the hit floor, and lets none reach the textarea", async () => {
@@ -460,10 +464,10 @@ describe("the attachment chip's declarations, read from source", () => {
     expect(own, "no literal height beside the derived one").not.toMatch(/(^|[^-])height:\s*\d/);
   });
 
-  it("pays for the chips' target reach out of the row's own padding", () => {
-    // Without the row's padding term a chip's expander overhangs `#prompt-input` above and the pill targets below.
+  it("insets the chip row by the pill row's inset, from one padding writer", () => {
+    // The chips paint the button box, so the row shares the pill row's inline edge and pays no reach.
     const rule = ruleContaining(css, ".attachment-row", "top");
-    expect(declaration(rule.body, "padding")).toBe("var(--composer-pill-pad)");
+    expect(declaration(rule.body, "padding")).toBe("var(--pill-inset)");
     const writers = allRules(css)
       .filter((r) => /\.attachment-row/.test(r.selector) && /padding:/.test(r.body))
       .map((r) => r.selector);
@@ -552,13 +556,13 @@ describe("the attachment chip, measured at real viewport sizes", () => {
   it("matches the chip to the pill row's controls on a phone, which is the reported defect", async () => {
     const { chip, control, floor } = await chipsAt(390, 844, "coarse");
     expect(floor, "the coarse floor, in px").toBe(44);
-    expect(chip, "the chip paints the toolbar's --btn-h").toBe(36);
+    expect(chip, "the chip paints the toolbar's box").toBe(BUTTON_BOX.coarse);
     expect(chip).toBe(control);
   });
 
   it("matches it on a touch DESKTOP, the tier a width query cannot see", async () => {
     const { chip, control } = await chipsAt(1440, 900, "coarse");
-    expect(chip).toBe(36);
+    expect(chip).toBe(BUTTON_BOX.coarse);
     expect(chip).toBe(control);
   });
 

@@ -6,6 +6,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { page, server } from "vitest/browser";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { BUTTON_BOX, GLYPH_STEP } from "./__test-helpers__/button-reference.js";
 import {
   ALL,
   SURFACES,
@@ -353,33 +354,41 @@ describe.each(ALL)("the coarse tier at %ipx", (size) => {
     (s) => s.controls.length + (s.painted?.length ?? 0) > 0 && s.ownFineForm !== true,
   );
   it.each(painted.map((s) => [s.name, s] as const))(
-    "%s: each control paints at its mouse-tier height, or grows with its column's rows",
+    "%s: each control paints at its mouse-tier height, the button box, or grows with its column's rows",
     async (_name, s) => {
       const heights = async (
         tier: "fine" | "coarse",
-      ): Promise<{ controls: Map<string, number>; row: number }> => {
+      ): Promise<{ controls: Map<string, number>; track: Set<string>; row: number }> => {
         await mountSurface(s, size, tier);
         const row = s.rowStep === undefined ? 0 : q(s.rowStep.row).getBoundingClientRect().height;
+        const probes = probesFor(s, "controls");
         return {
-          controls: new Map(
-            probesFor(s, "controls").map((p) => [p.label, p.box.bottom - p.box.top] as const),
+          controls: new Map(probes.map((p) => [p.label, p.box.bottom - p.box.top] as const)),
+          track: new Set(
+            probes.filter((p) => p.el.closest(".seg-bar") !== null).map((p) => p.label),
           ),
           row,
         };
       };
       const { controls: fine, row: rowFine } = await heights("fine");
-      const { controls: coarse, row: rowCoarse } = await heights("coarse");
+      const { controls: coarse, track, row: rowCoarse } = await heights("coarse");
       const stepped = new Set(s.rowStep?.controls);
       const step = (label: string): number =>
         stepped.has(label.replace(/\[\d+\]$/, "")) ? rowCoarse - rowFine : 0;
       if (s.rowStep !== undefined) {
         expect(rowCoarse - rowFine, `premise: ${s.rowStep.row} grows on coarse`).toBeGreaterThan(0);
       }
+      // A button grows to the chat toolbar's 44px box on touch, and a segment by its track's growth.
+      const grown = (label: string, h: number, was: number): boolean =>
+        (Math.abs(h - BUTTON_BOX.coarse) <= 0.5 && was < h) ||
+        (track.has(label) && Math.abs(h - was - (BUTTON_BOX.coarse - BUTTON_BOX.fine)) <= 0.5);
       const drift = [...coarse]
-        .filter(
-          ([label, h]) =>
-            Math.abs(h - (fine.get(label) ?? Number.NaN) - step(label)) > 0.5 || !fine.has(label),
-        )
+        .filter(([label, h]) => {
+          const was = fine.get(label) ?? Number.NaN;
+          return (
+            (Math.abs(h - was - step(label)) > 0.5 && !grown(label, h, was)) || !fine.has(label)
+          );
+        })
         .map(
           ([label, h]) =>
             `${label}: ${h.toFixed(1)}px coarse, ${String(fine.get(label)?.toFixed(1))}px fine`,
@@ -389,7 +398,7 @@ describe.each(ALL)("the coarse tier at %ipx", (size) => {
   );
 
   it.each(cases.filter((s) => s.ownFineForm !== true).map((s) => [s.name, s] as const))(
-    "%s: each glyph inside a control or row draws at its mouse-tier size",
+    "%s: each glyph inside a control or row draws at its mouse-tier size, or one step up in a button",
     async (_name, s) => {
       const glyphs = async (tier: "fine" | "coarse"): Promise<Map<string, string>> => {
         await mountSurface(s, size, tier);
@@ -410,8 +419,16 @@ describe.each(ALL)("the coarse tier at %ipx", (size) => {
       const fine = await glyphs("fine");
       const coarse = await glyphs("coarse");
       expect(coarse.size, "glyphs drawn on coarse").toBe(fine.size);
+      const step = (a: string, b: string): boolean => {
+        const [aw, ah] = a.split("x").map(Number);
+        const [bw, bh] = b.split("x").map(Number);
+        return (
+          Math.abs((aw ?? 0) - (bw ?? 0) - GLYPH_STEP) <= 0.05 &&
+          Math.abs((ah ?? 0) - (bh ?? 0) - GLYPH_STEP) <= 0.05
+        );
+      };
       const grown = [...coarse]
-        .filter(([label, wh]) => fine.get(label) !== wh)
+        .filter(([label, wh]) => fine.get(label) !== wh && !step(wh, fine.get(label) ?? ""))
         .map(([label, wh]) => `${label}: ${wh} coarse, ${String(fine.get(label))} fine`);
       expect(grown, `\n${grown.join("\n")}\n`).toEqual([]);
     },
@@ -475,27 +492,22 @@ describe("a transcript's task list on the coarse tier", () => {
 });
 
 describe("the chat header's icons", () => {
-  // `--btn-h` is 2.25rem on every tier: touch grows their targets, never their boxes.
-  it.each(ALL)(
-    "paint their 36px mouse box on the coarse and the fine tier at %ipx",
-    async (size) => {
-      await page.viewport(...VIEWPORTS[size]);
-      const header = SURFACES.find((s) => s.name === "the chat header")!;
-      for (const [tier, want] of [
-        ["fine", 36],
-        ["coarse", 36],
-      ] as const) {
-        await mountSurface(header, size, tier);
-        const sizes = probesFor(header).map(
-          (p) =>
-            `${p.label} ${String(p.box.bottom - p.box.top)}x${String(p.box.right - p.box.left)}`,
-        );
-        expect(sizes, tier).toEqual(
-          probesFor(header).map((p) => `${p.label} ${String(want)}x${String(want)}`),
-        );
-      }
-    },
-  );
+  it.each(ALL)("paint the button box, 36px on a mouse and 44px on touch, at %ipx", async (size) => {
+    await page.viewport(...VIEWPORTS[size]);
+    const header = SURFACES.find((s) => s.name === "the chat header")!;
+    for (const [tier, want] of [
+      ["fine", BUTTON_BOX.fine],
+      ["coarse", BUTTON_BOX.coarse],
+    ] as const) {
+      await mountSurface(header, size, tier);
+      const sizes = probesFor(header).map(
+        (p) => `${p.label} ${String(p.box.bottom - p.box.top)}x${String(p.box.right - p.box.left)}`,
+      );
+      expect(sizes, tier).toEqual(
+        probesFor(header).map((p) => `${p.label} ${String(want)}x${String(want)}`),
+      );
+    }
+  });
 });
 
 /** Everything a press can land on: the ARIA widget roles a pointer operates, focusable elements,

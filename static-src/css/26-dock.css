@@ -274,7 +274,7 @@
   :where(:root[data-keyboard]) & {
     box-sizing: content-box;
     max-block-size: calc(
-      var(--dock-viewport-h, 100dvh) + var(--btn-h) + 2 * var(--composer-pill-pad) + 2px
+      var(--dock-viewport-h, 100dvh) + var(--btn-h) + 2 * var(--pill-inset) + 2px
     );
   }
 }
@@ -310,12 +310,12 @@
   /* One draft line and the pill row (each `--composer-rest-h`, 15-input.css), the box's two
      borders and the row's divider. */
   & > [id="prompt-box"] {
-    min-block-size: calc(2 * (var(--btn-h) + 2 * var(--composer-pill-pad)) + 3px);
+    min-block-size: calc(2 * (var(--btn-h) + 2 * var(--pill-inset)) + 3px);
   }
 
   & > [id="run-composer"] {
     flex: 0 1 auto;
-    min-block-size: calc(var(--btn-h) + 2 * var(--composer-pill-pad) + 2px);
+    min-block-size: calc(var(--btn-h) + 2 * var(--pill-inset) + 2px);
 
     & > .run-composer-box {
       min-block-size: 0;
@@ -1213,9 +1213,6 @@
    The list takes what the host's cap leaves under the fold row and scrolls inside itself
    past it. */
 .run-bar {
-  /* What the batch button's shared expander adds on each side to reach the hit floor, 0 on a mouse. */
-  --all-reach: max(0px, (var(--hit-floor) - var(--btn-h)) / 2);
-
   display: grid;
   grid-template-columns:
     [glyph] auto [title] fit-content(18rem) [state] auto [progress] auto
@@ -1254,12 +1251,12 @@
     grid-template-columns: subgrid;
   }
 
-  /* The one run's row ends with the batch button, out of the line's flow: the row pads its end by the button and
-     its reach, so the run's line never meets the target, and is never shorter than the button. */
+  /* The one run's row ends with the batch button, out of the line's flow: the row pads its end by the button, its
+     own target, so the run's line never meets it, and is never shorter than the button. */
   & > li:has(> .run-bar-all:not([hidden])) {
     position: relative;
     min-block-size: var(--btn-h);
-    padding-inline-end: calc(var(--btn-h) + 2 * var(--all-reach));
+    padding-inline-end: var(--btn-h);
   }
 }
 
@@ -1391,12 +1388,12 @@
     display: none;
   }
 
-  /* In the one run's row it takes the row's end, centred on the row, inset by its reach so the list's clip
-     leaves the whole target (`.run-bar > li:has(> .run-bar-all)` keeps the room). */
+  /* In the one run's row it takes the row's end, centred on the row; its box is its own target
+     (`.run-bar > li:has(> .run-bar-all)` keeps the room). */
   .run-bar > li > & {
     position: absolute;
     inset-block: 0;
-    inset-inline-end: var(--all-reach);
+    inset-inline-end: 0;
     margin-block: auto;
   }
 

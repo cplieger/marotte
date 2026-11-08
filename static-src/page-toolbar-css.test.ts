@@ -6,11 +6,12 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 import indexHtml from "../static/index.html?raw";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { BUTTON_BOX } from "./__test-helpers__/button-reference.js";
 
 type Tier = "fine" | "coarse";
 const TIERS: readonly Tier[] = ["fine", "coarse"];
 // A control paints at the mouse's size under a finger too; its 44px is its target.
-const BTN_H: Record<Tier, number> = { fine: 36, coarse: 36 };
+const BTN_H: Record<Tier, number> = BUTTON_BOX;
 const BAR_H: Record<Tier, number> = { fine: 40, coarse: 40 };
 
 let style: HTMLStyleElement;

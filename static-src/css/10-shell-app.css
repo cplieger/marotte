@@ -142,7 +142,7 @@ body.sidebar-resizing {
 .sidebar-header-actions {
   display: flex;
   align-items: center;
-  gap: max(var(--sp-1), var(--tap-gap));
+  gap: var(--btn-gap);
   margin-inline-end: -0.5rem;
 }
 
@@ -627,8 +627,8 @@ body.sidebar-resizing {
 
 /* Sidebar footer, the panel's other end band (`--sidebar-band-h` above).
    `min-height` rather than the `height` this declared, so the band is a FLOOR the
-   way the header's is: nothing here exceeds it today (the two controls paint 36px and
-   their 44px targets fit the 52px band), and a fixed height is the one shape
+   way the header's is: nothing here exceeds it today (the two controls paint --btn-h,
+   their own targets, inside the 52px band), and a fixed height is the one shape
    that could not grow if one ever did. No `env()` term — the panel pays the bottom
    inset for it. */
 .sidebar-footer {
@@ -686,10 +686,8 @@ body.sidebar-resizing {
      Both axes are spelled: 02-reset.css never resets Chromium's UA `padding-block:
      1px`, which a `padding-inline` shorthand would keep. */
   padding: 0 var(--sp-2);
-  /* The trailing bleed gives way under a finger so Log out's expander, which reaches
-     `--tap-gap / 2` past its box, stops at this box's edge across the footer's
-     `--sp-3` gap; the phone footer's wider `--sp-4` gap leaves it short. */
-  margin-inline: calc(-1 * var(--sp-2)) calc(max(var(--sp-1), var(--tap-gap) / 2) - var(--sp-3));
+  /* The trailing bleed stops `--sp-1` short of Log out, its own target, across the footer's gap. */
+  margin-inline: calc(-1 * var(--sp-2)) calc(var(--sp-1) - var(--sp-3));
   border-radius: var(--r);
 
   /* `background` and `color` only, character for character with `.icon-btn`,
@@ -880,6 +878,14 @@ body.sidebar-resizing {
   transition:
     background var(--dur-micro),
     color var(--dur-micro) var(--ease-standard);
+
+  /* The `--btn-h` box's glyph; a row action painted at a dense token sets `--btn-glyph` to
+     `--icon-ui`. Zero specificity, so a site that sizes its own glyph keeps it. */
+  & > :where(.ic-ui),
+  & > :where(.icon-swap) > :where(.ic-ui) {
+    inline-size: var(--btn-glyph, var(--icon-btn));
+    block-size: var(--btn-glyph, var(--icon-btn));
+  }
 
   &:where(:disabled:hover) {
     background: none;

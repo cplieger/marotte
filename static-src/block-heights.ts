@@ -47,7 +47,7 @@ export const ENTRY_ESTIMATE_PX: Readonly<Record<PointerTier, EntryEstimates>> = 
     runCard: 91,
     toolCard: 46,
     toolGroup: 46,
-    subagentCard: 91,
+    subagentCard: 99,
     // Tier-INVARIANT: the reserve is two line boxes plus a spacing token, and the card
     // reads no control-height token (14-tools.css `.plan-message`).
     planCard: 70,

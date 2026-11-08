@@ -118,9 +118,9 @@
   /* No `.pill` or `#send-btn` sizing here: both live in the unlayered 15-input.css,
      so a declaration in this layer loses to it whatever its specificity. */
 
-  /* The toolbar's 36px buttons: on touch, the gap their targets meet across. */
+  /* The toolbar's `--btn-h` buttons, each its own target. */
   .view-toolbar-inner {
-    gap: max(var(--sp-1), var(--tap-gap));
+    gap: var(--sp-1);
   }
 
   .fb-actions {

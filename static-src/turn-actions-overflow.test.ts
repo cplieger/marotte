@@ -30,8 +30,13 @@ const { mountTurnFooterActions, initTurnActionCallbacks } =
   await import("./messages-turn-actions.js");
 const { copyClipboard } = await import("./actions/messages.js");
 
+// messages.ts's template, so a trigger's glyph draws at its real size.
 initTurnActionCallbacks({
-  svgTemplate: () => () => document.createElement("span"),
+  svgTemplate: (markup) => {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = markup;
+    return () => tpl.content.cloneNode(true);
+  },
 });
 
 let style: HTMLStyleElement;
@@ -385,6 +390,9 @@ describe("the coarse tier collapses at a width a fine pointer does not", () => {
     expect(getComputedStyle(summary as HTMLElement).display, "the trigger is painted").not.toBe(
       "none",
     );
+    // The trigger is an icon in the button box, at the button glyph's touch size, as Rewind's is.
+    const mark = summary?.querySelector("svg")?.getBoundingClientRect();
+    expect([mark?.width, mark?.height], "the trigger's glyph").toEqual([20, 20]);
   });
 
   it("fades the menu in on open, at the context menu's enter motion", async () => {

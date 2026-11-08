@@ -88,8 +88,8 @@
  * (`.code-actions`, 13-messages.css) holds the same buttons, so it shares the gap. */
 .turn-actions-buttons,
 .code-actions {
-  /* Wide enough that two neighbours' expanders meet rather than overlap. */
-  --action-gap: max(0.125rem, var(--tap-gap-sm));
+  /* Each box is its own target on touch and clears the mouse floor, so the gap only parts the fills. */
+  --action-gap: var(--sp-05);
 }
 
 .turn-actions-buttons {
@@ -130,9 +130,8 @@
 
 /* THE TURN FOOTER'S CONTROL BOX for the action buttons, the ledger trigger and
    Rewind, the code block's header buttons and a tool group's hooks badge: ONE definition, so they cannot drift.
-   The paint stays under the hit floor so each control keeps air on every side in the
-   band (29-turns.css); the shared expander below holds the target. The menu rows
-   below put their own floor back.
+   `--btn-h-sm` with the button glyph: the mouse paint stays under the band so each control keeps air on
+   every side (29-turns.css), and on touch the box is the 44px target, as the chat toolbar's is.
    `box-shadow` is in the transition because 03-base.css's press wash is an inset
    shadow, which otherwise appears and leaves in one frame. */
 .turn-action-btn,
@@ -140,7 +139,7 @@
 .turn-rewind,
 .code-act-btn,
 .tool-group-hooks {
-  height: var(--ctl-h-sm);
+  height: var(--btn-h-sm);
   border: none;
   background: transparent;
   border-radius: var(--r-sm);
@@ -167,8 +166,13 @@
   justify-content: center;
 
   /* Square, so the one control-box token above answers both axes. */
-  width: var(--ctl-h-sm);
+  width: var(--btn-h-sm);
   padding: 0;
+
+  & > :where(.ic-ui) {
+    inline-size: var(--icon-btn);
+    block-size: var(--icon-btn);
+  }
 }
 
 /* REQUIRED, not defensive, and the same trap 31-exec-view.css records at
@@ -193,6 +197,12 @@
 
 .turn-action-btn.copied {
   color: var(--c-green);
+}
+
+/* A row of the open `…` menu draws the menu glyph, not the button's; `[open]` is the collapsed layout only. */
+.turn-actions-more[open] > .turn-actions-group > .turn-action-btn > :where(.ic-ui) {
+  inline-size: var(--icon-ui);
+  block-size: var(--icon-ui);
 }
 
 /* THE COLLAPSED ACTIONS, in TWO arms with identical declarations: 40rem on every
@@ -222,8 +232,6 @@
   .turn-actions-more > .turn-action-more {
     display: inline-flex;
     list-style: none;
-    font-size: 1.1rem;
-    line-height: 1;
   }
 
   .turn-action-more::-webkit-details-marker {
@@ -265,8 +273,8 @@
     gap: var(--sp-2);
     width: 100%;
     height: auto;
-    min-height: var(--hit-floor);
-    padding-inline: var(--sp-2);
+    min-height: var(--menu-row-h);
+    padding: var(--menu-row-pad);
   }
 
   .turn-actions-group .turn-action-label {
@@ -289,8 +297,6 @@
     .turn-actions-more > .turn-action-more {
       display: inline-flex;
       list-style: none;
-      font-size: 1.1rem;
-      line-height: 1;
     }
 
     .turn-action-more::-webkit-details-marker {
@@ -332,8 +338,8 @@
       gap: var(--sp-2);
       width: 100%;
       height: auto;
-      min-height: var(--hit-floor);
-      padding-inline: var(--sp-2);
+      min-height: var(--menu-row-h);
+      padding: var(--menu-row-pad);
     }
 
     .turn-actions-group .turn-action-label {

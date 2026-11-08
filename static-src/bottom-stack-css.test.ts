@@ -24,7 +24,7 @@ function probe(el: HTMLElement, name: string): HTMLElement {
  *  composer holding an upload chip over its pill row. */
 function chatBar(): HTMLElement {
   const form = document.createElement("form");
-  // The id carries the composer's tokens (`--composer-pill-pad`, 15-input.css).
+  // The id carries the composer's tokens (`--pill-inset`, 15-input.css).
   form.id = "prompt-form";
   form.className = "bottom-bar";
   const dock = box("div", "decision-dock", form, "");
@@ -101,8 +101,7 @@ describe("the bottom stack", () => {
     }
   });
 
-  // 12 - 1px border - the row's 4px inset on both tiers: the house inset on a mouse, and on a
-  // finger the 4px the 36px controls' targets reach past their box ((44 - 36) / 2).
+  // 12 - 1px border - the row's 4px --pill-inset on both tiers.
   for (const [pointer, radius] of [
     ["fine", "7px"],
     ["coarse", "7px"],

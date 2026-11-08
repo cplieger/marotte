@@ -130,7 +130,7 @@ describe("the composer, measured at real viewport sizes", () => {
 
   // composer-row-height-css.test.ts owns the box heights; this case is only that the font does not move the box.
   it.each([
-    [390, 844, "coarse" as const, 44, 45],
+    [390, 844, "coarse" as const, 52, 53],
     [1280, 800, "fine" as const, 44, 45],
   ])(
     "leaves the resting box and the pill row alone at %ix%i on a %s pointer",

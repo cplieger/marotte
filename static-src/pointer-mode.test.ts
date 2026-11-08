@@ -306,7 +306,7 @@ describe("the toolbar row at phone width", () => {
     return { rows: new Set(shown.map((b) => b.offsetTop)).size, ids: shown.map((b) => b.id) };
   }
 
-  it.each([390, 375, 360, 344, 324])(
+  it.each([390, 375, 360, 344])(
     "holds the phone's seven buttons on one row at %ipx",
     async (px) => {
       try {
@@ -343,7 +343,7 @@ describe("the toolbar row at phone width", () => {
     expect(barBox.right - gutter - last.right, "slack left of the actions").toBeCloseTo(0, 0);
 
     // Same row as the actions, and to their left. CENTRES rather than top edges: the bar is
-    // `align-items: center` over a 19px heading and 36px buttons, so equal tops would be the wrong
+    // `align-items: center` over a 19px heading and the bar's buttons, so equal tops would be the wrong
     // assertion and fail on a correct layout.
     const headBox = heading!.getBoundingClientRect();
     const mid = (r: DOMRect) => r.top + r.height / 2;
@@ -380,17 +380,17 @@ describe("the toolbar row at phone width", () => {
     }
   });
 
-  it("wraps at 323px", async () => {
-    // Seven 36px buttons and six 8px tap gaps are 300px, plus the bar's two `--sp-3`: 324px.
+  it("wraps at 343px", async () => {
+    // Seven 44px buttons and six 2px gaps are 320px, plus the bar's two `--sp-3`: 344px.
     try {
-      expect((await phoneBar(323)).rows).toBe(2);
+      expect((await phoneBar(343)).rows).toBe(2);
     } finally {
       await page.viewport(1280, 720);
     }
   });
 
   it("wraps rather than pushing an action off the start edge at 320px", async () => {
-    // A 320px phone leaves 296px for 300px of actions; they cannot shrink into it because
+    // A 320px phone leaves 296px for 320px of actions; they cannot shrink into it because
     // `min-width: var(--btn-h)` holds their paint, and overflow past `flex-end` leaves a control
     // left of the bar with no scroll to reach it.
     try {

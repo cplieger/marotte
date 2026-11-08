@@ -14,6 +14,7 @@ import { ICON_CANCEL, ICON_CLOSE, ICON_HOURGLASS, ICON_MODEL, ICON_SEND } from "
 import { setActive, setSessions } from "./store.js";
 import type { updateContextBar as updateContextBarFn } from "./status.js";
 import { makeSession } from "./__test-helpers__/model.js";
+import { BUTTON_REFERENCE, MENU_ROW } from "./__test-helpers__/button-reference.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import {
   SURFACES as CATALOGUE,
@@ -284,6 +285,11 @@ function targetRect(el: HTMLElement): Box {
   };
 }
 
+/** The pill row's one gap, which its controls' targets reach half across on each side. */
+function rowGap(): number {
+  return Number.parseFloat(getComputedStyle(document.querySelector(".prompt-pills")!).columnGap);
+}
+
 const width = (b: Box): number => b.right - b.left;
 const height = (b: Box): number => b.bottom - b.top;
 
@@ -331,17 +337,54 @@ describe("the composer's controls and the resume button, against the toolbar's b
       const off: string[] = [];
       for (const el of controls()) {
         const hit = hitRect(el);
+        // A pill row control reaches half the row's gap past each side, so its width is the toolbar's plus one gap.
+        const reach = el.closest(".prompt-pills") === null ? 0 : rowGap();
         if (Math.abs(height(hit) - ref.hit.h) > SLACK) {
           off.push(`${nameOf(el)} reaches ${String(height(hit))}px tall`);
         }
         if (width(hit) < floor - 2 * STEP) {
           off.push(`${nameOf(el)} reaches ${String(width(hit))}px wide`);
         }
-        if (SQUARE.includes(el.id) && Math.abs(width(hit) - ref.hit.w) > SLACK) {
+        if (SQUARE.includes(el.id) && Math.abs(width(hit) - ref.hit.w - reach) > SLACK) {
           off.push(`${nameOf(el)} reaches ${String(width(hit))}px wide, not the toolbar's`);
         }
       }
       expect(off, `${state}: every target is the toolbar's`).toEqual([]);
+    }
+  });
+
+  it("meets neighbouring pill row targets across the gap, never overlapping, at the phone preset in touch mode", async () => {
+    for (const state of STATES) {
+      await mount(PHONE, "coarse", state);
+      const row = [
+        ...document.querySelectorAll<HTMLElement>(".prompt-pills .pill, .prompt-pills .send-btn"),
+      ]
+        .filter(shown)
+        .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+      const off: string[] = [];
+      for (let i = 1; i < row.length; i++) {
+        const a = row[i - 1]!;
+        const b = row[i]!;
+        const ra = a.getBoundingClientRect();
+        const rb = b.getBoundingClientRect();
+        if (rb.left - ra.right > 16) {
+          continue; // the spacer's free space: no neighbour to meet
+        }
+        const x = (ra.right + rb.left) / 2;
+        const y = (ra.top + ra.bottom) / 2;
+        if (!owns(a, x, y) && !owns(b, x, y)) {
+          off.push(`${nameOf(a)} | ${nameOf(b)}: the gap's middle reaches ${answering(x, y)}`);
+        }
+        const ta = targetRect(a);
+        const tb = targetRect(b);
+        if (ta.right > tb.left + 0.01) {
+          off.push(
+            `${nameOf(a)} | ${nameOf(b)}: targets overlap by ${String(ta.right - tb.left)}px`,
+          );
+        }
+      }
+      expect(row.length, `${state}: the row renders its controls`).toBeGreaterThanOrEqual(3);
+      expect(off, `${state}: neighbours meet edge to edge`).toEqual([]);
     }
   });
 
@@ -352,9 +395,11 @@ describe("the composer's controls and the resume button, against the toolbar's b
       const painted = send.getBoundingClientRect();
       const hit = hitRect(send);
       expect(painted.width, `${state}: a square button`).toBe(painted.height);
-      expect(Math.abs(width(hit) - height(hit)), `${state}: a square target`).toBeLessThanOrEqual(
-        SLACK,
-      );
+      // Square but for the half gap it reaches on each side.
+      expect(
+        Math.abs(width(hit) - rowGap() - height(hit)),
+        `${state}: a square target`,
+      ).toBeLessThanOrEqual(SLACK);
       expect(width(hit), `${state}: at the floor`).toBeGreaterThanOrEqual(floorPx() - 2 * STEP);
     }
   });
@@ -467,7 +512,8 @@ describe("the model and mode pills, by the room the row has", () => {
 });
 
 /** What a family is held to. `toolbar`: the chat toolbar's painted size and target. `tab-row`: the sidebar's tab
- *  row height. `dense`: a row action's token. The other kinds keep their own size and name where that is decided. */
+ *  row height. `dense`: a row action's token. `menu-row`: the popup menus' one row. The other kinds keep their own
+ *  size and name where that is decided. */
 type Family =
   | {
       readonly name: string;
@@ -493,9 +539,14 @@ type Family =
   | {
       readonly name: string;
       readonly selector: string;
-      readonly kind: "own-size" | "row" | "inline" | "turn-map";
+      readonly kind: "own-size" | "row" | "inline" | "turn-map" | "menu-row";
       readonly documented: string;
     };
+
+/** The popup menus' rows: the mode and model pickers, Chat options, the slash menu, the context menus, the
+ *  branch switcher and the file browser's phone New menu. */
+const MENU_ROWS =
+  ".pill-model-item, .pill-role-item, .chat-opt-btn, .chat-opt-row, .slash-opt, .tab-context-item, .git-branch-popover-row, .fb-new-menu[open] > .fb-new-actions > .icon-btn";
 
 /** Every button family the app has, each control in exactly one. A new control joins a family or adds one. */
 const CENSUS: readonly Family[] = [
@@ -553,7 +604,11 @@ const CENSUS: readonly Family[] = [
     kind: "toolbar",
   },
   { name: "notice dismiss", selector: ".banner-dismiss", kind: "toolbar" },
-  { name: "view toolbar", selector: ".view-toolbar-inner .icon-btn", kind: "toolbar" },
+  {
+    name: "view toolbar",
+    selector: ".view-toolbar-inner .icon-btn:not(.fb-new-menu[open] > .fb-new-actions > *)",
+    kind: "toolbar",
+  },
   {
     name: "find bars",
     selector: ".editor-find-btn, .chat-find-btn, .page-find-btn",
@@ -625,7 +680,7 @@ const CENSUS: readonly Family[] = [
   {
     name: "disclosure and list rows",
     selector:
-      ".chat-opt-btn, .chat-opt-strip-btn, .run-bar-open, .run-bar-toggle, .tool-group-header, .reasoning-summary, .run-head, .run-step-head, .subagent-header, .tool-diff-stats, .native-explain-summary, .turn-file-row, .turn-info-dbtn, .turn-info-link, .turn-review-all, .entry, .entry-open, .fb-row, .ev-dock-row, .ev-tl-lane, .ev-dock-more, .ev-dock-ask-more, .dock-ask-more, .user-input-option, .pill-role-item, .tab-context-item, .git-branch-popover-row, .git-repo-section-header, .git-file-path, .git-pr-row-title, .git-recent-commits-summary, .code-refs-summary, .forge-options-summary, .mcp-result-summary, .always-choice-option, .compaction-head, .mcp-discovery-summary, .forge-account-repos-summary, .git-repo-section-header-toggle",
+      ".chat-opt-strip-btn, .run-bar-open, .run-bar-toggle, .tool-group-header, .reasoning-summary, .run-head, .run-step-head, .subagent-header, .tool-diff-stats, .native-explain-summary, .turn-file-row, .turn-info-dbtn, .turn-info-link, .turn-review-all, .entry, .entry-open, .fb-row, .ev-dock-row, .ev-tl-lane, .ev-dock-more, .ev-dock-ask-more, .dock-ask-more, .user-input-option, .git-repo-section-header, .git-file-path, .git-pr-row-title, .git-recent-commits-summary, .code-refs-summary, .forge-options-summary, .mcp-result-summary, .always-choice-option, .compaction-head, .mcp-discovery-summary, .forge-account-repos-summary, .git-repo-section-header-toggle",
     kind: "row",
     documented: "each family's `--row-tap*` rule: a row, its own target",
   },
@@ -645,13 +700,19 @@ const CENSUS: readonly Family[] = [
       "61-mcp-tools.css: links and inline controls in prose carry no expander (WCAG 2.5.8)",
   },
   {
+    name: "popup menu rows",
+    selector: `${MENU_ROWS}, .turn-actions-more[open] > .turn-actions-group > .turn-action-btn`,
+    kind: "menu-row",
+    documented: "01-tokens.css `--menu-row-h` and `--menu-row-pad`, held by the popup menu case",
+  },
+  {
     name: "turn footer and code actions",
     selector:
-      ".turn-action-btn, .turn-action-more, .turn-rewind, .turn-ledger-summary, .code-act-btn, .tool-group-hooks",
+      ".turn-action-btn:not(.turn-actions-more[open] > .turn-actions-group > *), .turn-action-more, .turn-rewind, .turn-ledger-summary, .code-act-btn, .tool-group-hooks",
     kind: "dense",
-    paint: "--ctl-h-sm",
+    paint: "--btn-h-sm",
     documented:
-      "61-mcp-tools.css, the turn footer's control box: `--ctl-h-sm` with the shared expander",
+      "61-mcp-tools.css, the turn footer's control box: `--btn-h-sm`, the 24px row action on a mouse and the button box on touch",
   },
   {
     name: "row chevrons and row x",
@@ -1023,6 +1084,7 @@ async function measureCell(
   for (const surface of SURFACES) {
     await mountSurface(viewport, pointer, surface);
     const btn = tokenPx("--btn-h");
+    expect(btn, `${surface}: --btn-h is the reference box`).toBe(BUTTON_REFERENCE[pointer].box);
     const ref = byId("settings-btn").getBoundingClientRect();
     expect([ref.width, ref.height], `${surface}: the toolbar paints --btn-h`).toEqual([btn, btn]);
     check(held(), surface, at, out);
@@ -1209,6 +1271,184 @@ describe("the button census", () => {
         expect(tops.size, `${state}: one line`).toBe(1);
       }
     });
+  }
+});
+
+describe("the chat toolbar, the reference every button follows", () => {
+  for (const [preset, viewport] of PRESETS) {
+    for (const pointer of TIERS) {
+      const want = BUTTON_REFERENCE[pointer];
+      it(`paints ${String(want.box)}px boxes with ${String(want.glyph)}px glyphs, ${String(want.gap)}px apart, ${preset} ${pointer}`, async () => {
+        await mount(viewport, pointer, "idle");
+        const buttons = toolbar();
+        expect(buttons.length, "the toolbar renders its buttons").toBeGreaterThanOrEqual(6);
+        const off: string[] = [];
+        for (const [i, b] of buttons.entries()) {
+          const r = b.getBoundingClientRect();
+          if (r.width !== want.box || r.height !== want.box) {
+            off.push(`${b.id} paints ${String(r.width)}x${String(r.height)}`);
+          }
+          const g = b.querySelector("svg")?.getBoundingClientRect();
+          if (g?.width !== want.glyph || g.height !== want.glyph) {
+            off.push(`${b.id}'s glyph is ${String(g?.width)}x${String(g?.height)}`);
+          }
+          const hit = hitRect(b);
+          const reach = Math.max(want.box, floorPx());
+          if (Math.abs(width(hit) - reach) > SLACK || Math.abs(height(hit) - reach) > SLACK) {
+            off.push(`${b.id} reaches ${String(width(hit))}x${String(height(hit))}`);
+          }
+          const next = buttons[i + 1];
+          if (next !== undefined) {
+            const gap = next.getBoundingClientRect().left - r.right;
+            if (Math.abs(gap - want.gap) > 0.01) {
+              off.push(`${b.id} to ${next.id}: ${String(gap)}px apart`);
+            }
+          }
+        }
+        expect(off, `the reference at ${preset} ${pointer}`).toEqual([]);
+      });
+    }
+  }
+});
+
+describe("the turn footer's glyphs, against the reference", () => {
+  for (const [tier, size] of [
+    ["coarse", 390],
+    ["fine", 1180],
+  ] as const) {
+    it(`draws every footer action's glyph at the reference's ${String(BUTTON_REFERENCE[tier].glyph)}px at ${String(size)}px ${tier}`, async () => {
+      const surface = CATALOGUE.find((s) => s.name === "a turn");
+      if (surface === undefined) {
+        throw new Error("no turn surface");
+      }
+      await page.viewport(...CATALOGUE_VIEWPORTS[size]);
+      await mountCatalogue(surface, size, tier);
+      const want = BUTTON_REFERENCE[tier].glyph;
+      const controls = [
+        ...document.querySelectorAll<HTMLElement>(
+          ".turn-footer :is(.turn-action-btn, .turn-rewind):not(.turn-actions-more[open] > .turn-actions-group > *)",
+        ),
+      ].filter((el) => shown(el) && el.checkVisibility({ visibilityProperty: true }));
+      const off: string[] = [];
+      for (const el of controls) {
+        const g = [...el.querySelectorAll("svg")].find((x) => x.getBoundingClientRect().width > 0);
+        const r = g?.getBoundingClientRect();
+        if (r?.width !== want || r.height !== want) {
+          off.push(
+            `${el.getAttribute("aria-label") ?? el.className}'s glyph is ${r === undefined ? "no svg" : `${String(r.width)}x${String(r.height)}`}`,
+          );
+        }
+      }
+      clearSurface();
+      if (tier === "coarse") {
+        expect(
+          controls.some((el) => el.classList.contains("turn-action-more")),
+          "the More trigger shows on a phone",
+        ).toBe(true);
+      }
+      expect(controls.length, "the footer draws its actions").toBeGreaterThan(0);
+      expect(off).toEqual([]);
+    });
+  }
+});
+
+describe("the popup menus' rows", () => {
+  /** The menus the touch contract's surfaces open, the slash menu planted on the chat page. */
+  const MENUS = [
+    "the model popup",
+    "the role popup",
+    "the chat options popup",
+    "the tab menu",
+    "a turn's More menu",
+    "the branch switcher",
+    "the file browser's New menu",
+  ];
+
+  /** Distinct text lines a row draws, so a two-line row may grow past the one-line height. */
+  function lines(el: HTMLElement): number {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return new Set(
+      [...range.getClientRects()].filter((r) => r.height > 0).map((r) => Math.round(r.bottom)),
+    ).size;
+  }
+
+  function measureRows(where: string, tier: Pointer, off: string[]): number {
+    const want = MENU_ROW[tier];
+    const rows = [
+      ...document.querySelectorAll<HTMLElement>(
+        `${MENU_ROWS}, .turn-actions-more[open] > .turn-actions-group > .turn-action-btn`,
+      ),
+    ].filter((el) => shown(el) && el.checkVisibility({ visibilityProperty: true }));
+    for (const row of rows) {
+      const name = `${where}: ${row.className.split(" ")[0] ?? ""} "${(row.textContent ?? "").trim().slice(0, 20)}"`;
+      const cs = getComputedStyle(row);
+      const h = row.getBoundingClientRect().height;
+      if (h < want.h - 0.01 || (lines(row) <= 1 && Math.abs(h - want.h) > 0.01)) {
+        off.push(`${name} is ${String(h)}px tall`);
+      }
+      const inset = [
+        Number.parseFloat(cs.paddingTop) + Number.parseFloat(cs.borderTopWidth),
+        Number.parseFloat(cs.paddingLeft) + Number.parseFloat(cs.borderLeftWidth),
+      ];
+      if (inset[0] !== want.pad[0] || inset[1] !== want.pad[1]) {
+        off.push(`${name} insets its content ${inset.join("/")}px`);
+      }
+      for (const g of row.querySelectorAll("svg")) {
+        const r = g.getBoundingClientRect();
+        if (r.width > 0 && (r.width !== want.glyph || r.height !== want.glyph)) {
+          off.push(`${name}'s glyph is ${String(r.width)}x${String(r.height)}`);
+        }
+      }
+      const r = row.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      if (!owns(row, cx, r.top + 1) || !owns(row, cx, r.bottom - 1)) {
+        off.push(`${name}: a press 1px inside its edge misses it`);
+      }
+    }
+    return rows.length;
+  }
+
+  for (const [tier, size] of [
+    ["coarse", 390],
+    ["fine", 1180],
+  ] as const) {
+    it(`gives every menu row one height, padding and glyph at ${String(size)}px ${tier}`, async () => {
+      const off: string[] = [];
+      for (const name of MENUS) {
+        const surface = CATALOGUE.find((s) => s.name === name);
+        expect(surface, `${name} is a surface of app-surfaces.ts`).toBeDefined();
+        const at = surface?.sizes.includes(size) === true ? size : surface?.sizes[0];
+        if (surface === undefined || at === undefined) {
+          continue;
+        }
+        await page.viewport(...CATALOGUE_VIEWPORTS[at]);
+        await mountCatalogue(surface, at, tier);
+        expect(measureRows(name, tier, off), `${name} draws its rows`).toBeGreaterThan(0);
+        clearSurface();
+      }
+      await mount(size === 390 ? PHONE : DESKTOP, tier, "idle");
+      const menu = byId("slash-menu");
+      for (const [cmd, desc] of [
+        ["/compact", "Summarise the chat"],
+        ["/review", "Review the changes"],
+      ] as const) {
+        const li = document.createElement("li");
+        li.className = "slash-opt";
+        li.setAttribute("role", "option");
+        const n = document.createElement("span");
+        n.className = "slash-opt-name";
+        n.textContent = cmd;
+        const d = document.createElement("span");
+        d.className = "slash-opt-desc";
+        d.textContent = desc;
+        li.append(n, d);
+        menu.appendChild(li);
+      }
+      menu.hidden = false;
+      expect(measureRows("the slash menu", tier, off), "the slash menu draws its rows").toBe(2);
+      expect(off, `one menu row at ${tier}:\n${off.join("\n")}\n`).toEqual([]);
+    }, 60_000);
   }
 });
 

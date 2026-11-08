@@ -275,10 +275,10 @@ describe("the composer's bottom clearance", () => {
     const { form, box, pill } = mountComposer();
     const row = pill.closest(".prompt-pills") as HTMLElement;
     const inset = parseFloat(getComputedStyle(row).paddingBlockEnd);
-    // Read off the row's own TOP inset rather than restated, so a retune of `--composer-pill-pad`
+    // Read off the row's own TOP inset rather than restated, so a retune of `--pill-inset`
     // moves both sides of the comparison together.
     const top = parseFloat(getComputedStyle(row).paddingBlockStart);
-    // The phone-width tier: a 36px control's 44px target reaches 4px past its box.
+    // `--pill-inset`: each control paints the button box, its own target, so the row pays no reach.
     expect(top, "the row's own inset term, resolved").toBeCloseTo(4, 0);
     expect(inset).toBeCloseTo(top, 0);
     const page = form.getBoundingClientRect().bottom - box.getBoundingClientRect().bottom;

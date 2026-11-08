@@ -270,14 +270,14 @@ describe("the band and the control in it", () => {
     expect(cs(phone.documentElement).getPropertyValue("--hit-floor").trim()).toBe("2.75rem");
   });
 
-  it("gives a finger a 44px band with the control CENTRED in it, not filling it", () => {
-    // The floor lifting the paint to the band is what put the wash flush against the card's
-    // edges on a phone; the paint stays `--ctl-h-sm` and the expander carries the target.
+  it("gives a finger the 44px button box CENTRED in a 52px band, not filling it", () => {
+    // A box filling the band put the wash flush against the card's edges on a phone; the band
+    // keeps 4px of air above and below the 44px box, as the chat toolbar's does.
     const { footer, ledger } = mountFooter(phone, "rewind");
     const floor = token(phone, "--hit-floor");
     expect(floor).toBeCloseTo(44, 0);
-    expect(band(footer)).toBeCloseTo(floor, 0);
-    expect(ledger.getBoundingClientRect().height).toBeCloseTo(token(phone, "--ctl-h-sm"), 0);
+    expect(band(footer)).toBeCloseTo(52, 0);
+    expect(ledger.getBoundingClientRect().height).toBeCloseTo(floor, 0);
     expect(target(ledger, "block"), "the target still clears the floor").toBeGreaterThanOrEqual(
       floor,
     );
@@ -368,15 +368,14 @@ describe("the trailing control", () => {
     }
   });
 
-  it("is a square when it is icon-only, with the hit floor back past its paint", () => {
-    // Both trailing controls are icon-only on the phone; the expander carries the target on
-    // each axis the paint is short of the floor.
+  it("is a square when it is icon-only, the button box its own target", () => {
+    // Both trailing controls are icon-only on the phone, painted at the 44px button box.
     const floor = token(phone, "--hit-floor");
     for (const trailing of ["actions", "rewind"] as const) {
       const el = trailingControl(mountFooter(phone, trailing));
       const r = el.getBoundingClientRect();
       expect(r.width, `${trailing} square`).toBeCloseTo(r.height, 1);
-      expect(r.height, `${trailing} paint under the floor`).toBeLessThan(floor);
+      expect(r.height, `${trailing} paints the button box`).toBeCloseTo(floor, 1);
       expect(target(el, "block"), `${trailing} target height`).toBeGreaterThanOrEqual(floor);
       expect(target(el, "inline"), `${trailing} target width`).toBeGreaterThanOrEqual(floor);
     }

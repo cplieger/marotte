@@ -105,7 +105,7 @@
   &.tool-group-has-hooks {
     --hooks-w: max(
       var(--row-tap),
-      calc(2 * var(--sp-2) + var(--icon-ui) + var(--sp-1) + var(--hooks-digits, 1) * 1ch)
+      calc(2 * var(--sp-2) + var(--icon-btn) + var(--sp-1) + var(--hooks-digits, 1) * 1ch)
     );
 
     position: relative;
@@ -241,7 +241,7 @@
 .tool-group-hooks {
   position: absolute;
   z-index: 1;
-  inset-block-start: calc((var(--row-tap) - var(--ctl-h-sm)) / 2);
+  inset-block-start: calc((var(--row-tap) - var(--btn-h-sm)) / 2);
   inset-inline-end: var(--sp-2);
   justify-content: center;
   inline-size: var(--hooks-w);
@@ -262,8 +262,8 @@
 
   & svg {
     display: block;
-    inline-size: var(--icon-ui);
-    block-size: var(--icon-ui);
+    inline-size: var(--icon-btn);
+    block-size: var(--icon-btn);
   }
 }
 
@@ -307,7 +307,7 @@
 
   /* Read by `.tool-file-link`, which `.tool-header` otherwise declares it for. */
   --tool-chev-box: 1.5rem;
-  --tool-badge-h: calc(var(--btn-h) - 2 * var(--sp-2));
+  --tool-badge-h: calc(var(--ctl-h) - 2 * var(--sp-2));
 
   & > .tool-hook-count {
     flex: none;
@@ -372,12 +372,12 @@
   min-height: var(--row-tap);
   min-width: 0; /* allow ellipsis on flex children */
 
-  /* THE FILE BADGE'S HEIGHT: the content box a STANDALONE card's header leaves, the
-     tightest context it renders in, so one badge size holds per pointer tier. Declared
+  /* THE FILE BADGE'S HEIGHT: the content box a STANDALONE card's header leaves on a
+     mouse, the tightest context it renders in, so one badge size holds on every tier. Declared
      here because its inputs are the two declarations above; it inherits to the badge, a
      child. The badge is then the tallest thing in a header, so anything taller grows the
      row. */
-  --tool-badge-h: calc(var(--btn-h) - 2 * var(--sp-2));
+  --tool-badge-h: calc(var(--ctl-h) - 2 * var(--sp-2));
 }
 
 /* The WHOLE summary expands the card; `disclosure-row.ts` forwards the click to the
@@ -791,11 +791,11 @@
 
   /* Containment: see `.tool-call`. The reserve is the RESTING shape, identity row plus
      foot row, as a CONTENT height (the border adds on top). Both tier
-     terms move with the pointer: `--btn-h` and `.turn-footer`'s band (29-turns.css); the
+     terms move with the pointer: `--row-tap` and `.turn-footer`'s band (29-turns.css); the
      1px is `.subagent-foot`'s border. It is the LARGER of the settled and running heights
      (`subagent-card-metrics.test.ts`): only settled cards persist into the history this
      fallback serves, and a running card renders on arrival at the live edge. */
-  --subagent-content: calc(var(--row-tap) + max(var(--hit-floor), var(--ctl-h-dense)) + 1px);
+  --subagent-content: calc(var(--row-tap) + var(--action-band-h) + 1px);
 
   content-visibility: auto;
   contain-intrinsic-size: auto var(--subagent-content);
@@ -1155,7 +1155,7 @@ a.subagent-header {
 }
 
 /* The icon-only case keeps the square padding: nothing to separate, and the
- * wider inline padding would make a 36px button oblong. */
+ * wider inline padding would make a square button oblong. */
 .action-pill:not(:has(> :not(svg))) {
   padding-inline: var(--sp-2);
 }

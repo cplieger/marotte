@@ -603,14 +603,14 @@ label.toggle-inline:has(> .toggle) {
  * packed against whatever the row's label happened to measure, so the switches
  * in Settings → Tools landed at a different x on every row and read as floating
  * mid-row rather than belonging to a column. `align-items: center` keeps a
- * 20px switch centred against a 36px icon button beside it. */
+ * 20px switch centred against a `--btn-h` icon button beside it. */
 .list-row-actions,
 .fb-actions,
 .editor-actions {
   display: flex;
   align-items: center;
-  /* Wide enough that two neighbours' targets meet rather than overlap. */
-  gap: max(0.125rem, var(--tap-gap));
+  /* Each `--btn-h` button is its own target, so the gap is the row's own. */
+  gap: 0.125rem;
 }
 
 .list-row-actions {
@@ -644,6 +644,9 @@ label.toggle-inline:has(> .toggle) {
   /* A row action's square; touch-action prevents double-tap zoom on touch. */
   min-inline-size: var(--ctl-h-sm);
   min-block-size: var(--ctl-h-sm);
+
+  --btn-glyph: var(--icon-ui);
+
   padding: 0;
   touch-action: manipulation;
   border-radius: var(--r-sm);
@@ -1104,7 +1107,7 @@ label.toggle-inline:has(> .toggle) {
   }
 
   & > .send-btn {
-    margin: var(--composer-pill-pad);
+    margin: var(--pill-inset);
   }
 }
 

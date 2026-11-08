@@ -181,13 +181,13 @@ describe("the merged control's box", () => {
     }
   });
 
-  it("paints both controls at one height under the floor on the coarse tier, in a 52px band", () => {
-    // The finger's 44px lives in the target, not the box (Apple HIG: the hit region).
+  it("paints both controls at the 44px button box on the coarse tier, in a 52px band", () => {
+    // The button box is the chat toolbar's on touch: its own 44px target (Apple HIG's hit region).
     document.documentElement.dataset["pointer"] = "coarse";
     const { footer, btn, logout } = mountFooter();
     const [l, b] = [logout, btn].map((e) => e.getBoundingClientRect().height);
     expect(b).toBe(l);
-    expect(l).toBeLessThan(44);
+    expect(l).toBe(44);
     expect(footer.getBoundingClientRect().height).toBeCloseTo(52, 0);
   });
 

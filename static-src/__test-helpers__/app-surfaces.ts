@@ -255,7 +255,7 @@ function plantTurn(): void {
   const summary = make("summary", "turn-action-btn turn-action-more", {
     "aria-label": "More turn actions",
   });
-  summary.textContent = "…";
+  summary.appendChild(glyph());
   const actionGroup = make("span", "turn-actions-group");
   for (const label of ["Copy as text", "Copy as markdown", "Copy link to this turn"]) {
     actionGroup.appendChild(iconButton("turn-action-btn", label));
@@ -1494,6 +1494,17 @@ export const SURFACES: readonly Surface[] = [
       "#fb-delete",
     ],
     rows: ["#fb-path"],
+  },
+  {
+    name: "the file browser's New menu",
+    sizes: [390],
+    setup: () => {
+      show("files-view");
+      q(".fb-new-menu").setAttribute("open", "");
+      teardown.push(() => q(".fb-new-menu").removeAttribute("open"));
+    },
+    controls: [],
+    rows: ["#fb-new-file", "#fb-new-folder"],
   },
   {
     name: "the file browser's rows",

@@ -1361,6 +1361,9 @@
   min-inline-size: var(--ctl-h-dense);
   block-size: var(--ctl-h-dense);
   min-block-size: var(--ctl-h-dense);
+
+  --btn-glyph: var(--icon-ui);
+
   padding: 0;
   color: var(--c-text-control);
   font-size: var(--fs-sm);

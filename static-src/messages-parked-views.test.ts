@@ -36,12 +36,14 @@ for (const id of [
 import { loadCSS } from "./__test-helpers__/css-rules.js";
 
 // The shipped transcript stylesheet, so the geometry is production's; every load-bearing declaration is a
-// literal, and the harness pins the wrapper height the app shell provides.
+// literal, and the harness pins the wrapper height the app shell provides and the glyph size 03-base.css
+// gives `.ic-ui`, which an unsized footer svg would otherwise blow up to the row's width.
 const style = document.createElement("style");
 style.textContent =
   loadCSS("13-messages.css") +
   `
   #messages-wrap-outer { height: 400px; }
+  .ic-ui { inline-size: 16px; block-size: 16px; }
 `;
 document.head.appendChild(style);
 

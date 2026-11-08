@@ -125,14 +125,14 @@
 }
 
 /* The header is its own content band: one row of title plus controls, as tall as a button
-   or its target, whichever is taller, plus the border it declares (`box-sizing: border-box`
+   (its own target), plus the border it declares (`box-sizing: border-box`
    is global, 02-reset.css), so each button's target stays inside it. */
 .shell-header {
   display: flex;
   align-items: center;
-  gap: max(var(--sp-2), var(--tap-gap));
+  gap: var(--sp-2);
   padding-inline: var(--sp-3);
-  height: calc(max(var(--btn-h), var(--hit-floor)) + var(--hairline));
+  height: calc(var(--btn-h) + var(--hairline));
   border-block-end: 1px solid var(--c-border);
   flex-shrink: 0;
 }

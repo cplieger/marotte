@@ -64,8 +64,7 @@ describe("the file browser toolbar", () => {
   it.each(TIERS)("keeps one row where it fits, at 1180px, %s pointer", async (tier) => {
     await at(1180, 820);
     mountPage(tier);
-    // One row by centres: on a coarse pointer the field keeps its 44px typing height while
-    // the icon buttons paint at 36.
+    // One row by the shared centre line of the field and the icon buttons.
     const mid = (r: DOMRect): number => r.top + r.height / 2;
     const path = rect("fb-path");
     expect(mid(path)).toBe(mid(rect("fb-back")));

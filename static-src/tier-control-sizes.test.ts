@@ -101,11 +101,11 @@ const PAINTED: Record<Tier, Record<string, [number, number]>> = {
     steerAct: [24, 24],
     tabClose: [24, 24],
   },
-  // A finger's 44px is each control's target, never its box: the coarse tier paints the mouse's.
+  // The button box is the chat toolbar's on touch, 44px, its own target; a row action keeps its mouse box.
   coarse: {
     segBar: [-1, 40],
-    iconBtn: [36, 36],
-    shellBtn: [36, 36],
+    iconBtn: [44, 44],
+    shellBtn: [44, 44],
     steerAct: [24, 24],
     tabClose: [24, 24],
   },
@@ -117,7 +117,7 @@ function painted(els: Controls): Record<string, [number, number]> {
   );
 }
 
-describe("a control's painted box is the same at every tier", () => {
+describe("a control's painted box at each tier", () => {
   it.each(["fine", "coarse"] as const)("at the %s tier", async (tier) => {
     document.documentElement.dataset["pointer"] = tier;
     const els = mount();
@@ -161,7 +161,7 @@ describe("a control's painted box is the same at every tier", () => {
   it.each([
     [1180, 820],
     [390, 844],
-  ] as const)("is the same box at %ix%i at each tier", async (width, height) => {
+  ] as const)("is the tier's box at %ix%i at each tier", async (width, height) => {
     await page.viewport(width, height);
     for (const tier of ["fine", "coarse"] as const) {
       document.documentElement.dataset["pointer"] = tier;
