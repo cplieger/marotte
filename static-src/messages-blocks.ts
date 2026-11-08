@@ -2936,10 +2936,12 @@ function indexGroups(st: TurnRender): GroupIndex {
     }
   };
   let work = false;
-  // A box owns the PostToolUse hooks right after it and the PreToolUse hooks right before it, each set a run of its
-  // own so it mounts apart from a neighbour's group (Go `toolRunScan.endRun`, `block-heights.ts` `toolRun`).
+  // A box owns the PostToolUse hooks right after it, and the PreToolUse hooks right before it in a run of hooks only,
+  // each set a run of its own so it mounts apart from a neighbour's group (Go `toolRunScan.endRun`, `block-heights.ts`
+  // `toolRun`). kiro-cli files a write's guards after the write and no hook names its call (kirodotdev/Kiro#12284),
+  // so guards after another call stay that call's.
   const hookBoxes = new Map<number, HookBox>();
-  let run: { seq: number; trigger: string | undefined }[] = [];
+  let run: { seq: number; hook: boolean; trigger: string | undefined }[] = [];
   let prevBox: HookBox | null = null;
   const endRun = (next: HookBox | null): void => {
     let from = 0;
@@ -2947,7 +2949,8 @@ function indexGroups(st: TurnRender): GroupIndex {
       from++;
     }
     let to = run.length;
-    while (next !== null && to > from && run[to - 1]?.trigger === "PreToolUse") {
+    const hooksOnly = run.every((m) => m.hook);
+    while (next !== null && hooksOnly && to > from && run[to - 1]?.trigger === "PreToolUse") {
       to--;
     }
     for (const [i, m] of run.entries()) {
@@ -3006,7 +3009,11 @@ function indexGroups(st: TurnRender): GroupIndex {
     } else {
       post(st.lane, e.seq, false);
       work ||= tc.kind !== "hook";
-      run.push({ seq: e.seq, trigger: tc.kind === "hook" ? tc.hook_trigger : undefined });
+      run.push({
+        seq: e.seq,
+        hook: tc.kind === "hook",
+        trigger: tc.kind === "hook" ? tc.hook_trigger : undefined,
+      });
     }
   }
   endRun(null);

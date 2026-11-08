@@ -164,8 +164,8 @@ func (sc *toolRunScan) flush(k toolRunKey) {
 }
 
 // endRun ends lane k's run, at a box when atBox, whose call was refused when nextRefused. A box owns the PostToolUse
-// hooks right after it and the PreToolUse hooks right before it, each set a run of its own (messages-blocks.ts
-// indexGroups), and a refused box keeps them.
+// hooks right after it, and the PreToolUse hooks right before it in a run of hooks only, each set a run of its own
+// (messages-blocks.ts indexGroups), and a refused box keeps them.
 func (sc *toolRunScan) endRun(k toolRunKey, atBox, nextRefused bool) {
 	members := sc.open[k]
 	prevRefused, afterBox := sc.after[k]
@@ -176,7 +176,8 @@ func (sc *toolRunScan) endRun(k toolRunKey, atBox, nextRefused bool) {
 		from++
 	}
 	to := len(members)
-	for atBox && to > from && hookOn(members[to-1], "PreToolUse") {
+	hooksOnly := !slices.ContainsFunc(members, func(m toolRunMember) bool { return m.call.Kind != marotte.ToolKindHook })
+	for atBox && hooksOnly && to > from && hookOn(members[to-1], "PreToolUse") {
 		to--
 	}
 	for _, run := range [][]toolRunMember{members[:from], members[from:to], members[to:]} {
@@ -269,8 +270,9 @@ type boxKey struct{ turn, lane, box string }
 
 // seatOf is where a call sits. A delegate's invocation, filed in its issuer's lane and stamped with the delegate's,
 // opens that delegate's card; the live path stamps a delegate's own calls with their lane, which makes them tool
-// cards. In the chat's lane only a run's first mention owns its card (block-window.ts runCardOwners) and a later one
-// is a tool card; a delegate's page is its own surface, where every mention seats on the card.
+// cards. In the chat's lane only a run's first mention in the whole log owns its card and a later one is a tool card,
+// which is block-window.ts hostsRunCard's owner once that mention's turn is resident (a paged chat can disagree); a
+// delegate's page is its own surface, where every mention seats on the card.
 func (sc *toolRunScan) seatOf(call *marotte.EntryToolCall, e *marotte.Entry) runSeat {
 	if call.AgentSubtaskID != "" {
 		if call.AgentSubtaskID == e.Lane {

@@ -590,28 +590,68 @@ describe("a delegate's or a run's card with hooks", () => {
     expect(quiet).toBe(loud);
   });
 
-  /** A command, then the card opened at 3 with its quiet guard right before it and its after-hook right after it,
-   *  then a read: the card's launching call `failed` or not. */
+  /** The card opened at `n` by a delegate's invocation or a run's launch, whose launching call is `status`. */
+  const cardAt = (
+    kind: "delegate's" | "run's",
+    t: string,
+    n: number,
+    status: "completed" | "failed",
+  ): Entry[] =>
+    kind === "delegate's"
+      ? [delegate(t, n, { status })]
+      : [
+          call(t, n, { title: "Run Workflow" }),
+          result(t, n + 1, n, { workflow_id: `wf-${t}`, status }),
+        ];
+
+  /** A command and the agent's text, then the card opened at 4 with its quiet guard right before it and its
+   *  after-hook right after it, then a read: the card's launching call `failed` or not. */
   const between =
     (kind: "delegate's" | "run's", failed: boolean) =>
     (t: string): Entry[] => {
-      const status = failed ? "failed" : "completed";
-      const card =
-        kind === "delegate's"
-          ? [delegate(t, 3, { status })]
-          : [
-              call(t, 3, { title: "Run Workflow" }),
-              result(t, 4, 3, { workflow_id: `wf-${t}`, status }),
-            ];
-      const after = 3 + card.length;
+      const card = cardAt(kind, t, 4, failed ? "failed" : "completed");
+      const after = 4 + card.length;
       return [
         call(t, 1, { title: "go vet", kind: "execute" }),
-        hook(t, 2, "seat guard"),
+        say(t, 2, "now the card"),
+        hook(t, 3, "seat guard"),
         ...card,
         hook(t, after, "notify", { hook_trigger: "PostToolUse" }),
         call(t, after + 1, { title: "Read File", kind: "read" }),
       ];
     };
+
+  it.each(["delegate's", "run's"] as const)(
+    "keeps a write's guards filed after the write in its badge before the %s card",
+    async (kind) => {
+      const root = render((t) => [
+        call(t, 1, { title: "Write File", kind: "edit" }),
+        hook(t, 2, "spec freeze"),
+        hook(t, 3, "seat guard"),
+        ...cardAt(kind, t, 4, "completed"),
+      ]);
+      await frame();
+      expect(hookRows(root), "no hook rows").toHaveLength(0);
+      const badge = only(badges(root), "one hooks badge, the write's");
+      const box = only(toolBoxes(root), "the write's box");
+      expect(box.contains(badge), "on the write's box").toBe(true);
+      expect(await openList(badge)).toEqual(["spec freeze", "seat guard"]);
+      await userEvent.keyboard("{Escape}");
+    },
+  );
+
+  it.each(["delegate's", "run's"] as const)(
+    "keeps a failed write's guard filed after the write as its row before the %s card with hook status off",
+    (kind) => {
+      setHookStatusShown(false);
+      const root = render((t) => [
+        call(t, 1, { title: "Write File", kind: "edit", status: "failed" }),
+        hook(t, 2, "seat guard"),
+        ...cardAt(kind, t, 3, "completed"),
+      ]);
+      expect(hookRows(root).map((c) => c.dataset["title"])).toEqual(["Hook fired: seat guard"]);
+    },
+  );
 
   it.each(["delegate's", "run's"] as const)(
     "folds the %s launching call's quiet hooks into its card's badge between other tool calls",
@@ -639,7 +679,7 @@ describe("a delegate's or a run's card with hooks", () => {
     },
   );
 
-  it("moves a guard that mounted beside a command into the delegate's badge once the delegate's call arrives", async () => {
+  it("moves a guard that mounted beside another hook into the delegate's badge once the delegate's call arrives", async () => {
     seq++;
     const id = `t-box-hooks-${String(seq)}`;
     const turnOf = (body: Entry[]): Turn => ({
@@ -660,16 +700,25 @@ describe("a delegate's or a run's card with hooks", () => {
     card.append(root);
     document.body.prepend(card);
     hosts.push(card);
-    const head = [call(id, 1, { title: "go vet", kind: "execute" }), hook(id, 2, "seat guard")];
+    const head = [
+      say(id, 1, "go"),
+      hook(id, 2, "notify", { hook_trigger: "PostToolUse" }),
+      hook(id, 3, "seat guard"),
+    ];
     buildAssistantBody(root, turnOf(head), CHAT_ID, true);
-    expect(badges(root), "premise: the guard folded into the command's badge").toHaveLength(1);
-    updateAssistantBody(root, turnOf([...head, delegate(id, 3)]), CHAT_ID, true);
+    const notify = root.querySelector<HTMLElement>(`[data-entry-seq="2"]`);
+    const shared = notify?.closest(".tool-group");
+    expect(
+      shared?.contains(root.querySelector(`[data-entry-seq="3"]`)),
+      "premise: the guard mounted in the notify hook's shell",
+    ).toBe(true);
+    updateAssistantBody(root, turnOf([...head, delegate(id, 4)]), CHAT_ID, true);
     await frame();
-    const guard = root.querySelector<HTMLElement>(`[data-entry-seq="2"]`);
-    const box = only(toolBoxes(root), "the command's box");
-    expect(box.closest(".tool-group")?.contains(guard), "the guard left the command's shell").toBe(
-      false,
-    );
+    const guard = root.querySelector<HTMLElement>(`[data-entry-seq="3"]`);
+    expect(
+      notify?.closest(".tool-group")?.contains(guard),
+      "the guard left the notify hook's shell",
+    ).toBe(false);
     const badge = only(badges(root), "one hooks badge, the card's");
     expect(badge.parentElement, "on the card").toBe(cardOf(root));
     expect(await openList(badge)).toEqual(["seat guard"]);
@@ -693,15 +742,27 @@ describe("a delegate's or a run's card with hooks", () => {
     expect(repeated).toBe(once);
   });
 
+  it("prices a never-mounted failed write's guard filed after the write before a delegate's card as its row", () => {
+    const priced = (status: "completed" | "failed"): number =>
+      unmeasuredTail((t) => [
+        say(t, 1, "go"),
+        call(t, 2, { title: "Write File", kind: "edit", status: "failed" }),
+        hook(t, 3, "seat guard", { status }),
+        delegate(t, 4),
+      ]);
+    expect(priced("completed")).toBe(priced("failed"));
+  });
+
   it("prices a never-mounted failed delegate's quiet hooks between other tool calls as their rows", () => {
     const priced = (status: "completed" | "failed"): number =>
       unmeasuredTail((t) => [
         say(t, 1, "go"),
         call(t, 2, { title: "go vet", kind: "execute" }),
-        hook(t, 3, "seat guard", { status }),
-        delegate(t, 4, { status: "failed" }),
-        hook(t, 5, "notify", { hook_trigger: "PostToolUse", status }),
-        call(t, 6, { title: "Read File", kind: "read" }),
+        say(t, 3, "now the delegate"),
+        hook(t, 4, "seat guard", { status }),
+        delegate(t, 5, { status: "failed" }),
+        hook(t, 6, "notify", { hook_trigger: "PostToolUse", status }),
+        call(t, 7, { title: "Read File", kind: "read" }),
       ]);
     expect(priced("completed")).toBe(priced("failed"));
   });

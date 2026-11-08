@@ -129,14 +129,9 @@
       "status": "aborted"
     },
     {
-      "site": "internal/chat/hook_visibility.go:331",
+      "site": "internal/chat/hook_visibility.go:333",
       "form": "compare",
       "status": "completed"
-    },
-    {
-      "site": "internal/chat/hook_visibility.go:346",
-      "form": "compare",
-      "status": "failed"
     },
     {
       "site": "internal/chat/hook_visibility.go:348",
@@ -144,7 +139,12 @@
       "status": "failed"
     },
     {
-      "site": "internal/chat/hook_visibility.go:349",
+      "site": "internal/chat/hook_visibility.go:350",
+      "form": "compare",
+      "status": "failed"
+    },
+    {
+      "site": "internal/chat/hook_visibility.go:351",
       "form": "compare",
       "status": "aborted"
     },

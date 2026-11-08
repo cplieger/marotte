@@ -337,14 +337,15 @@ function refusedCall(call: EntryToolCall, result: EntryToolResult | undefined): 
 }
 
 /** The tool run holding member `seq`, its members in order over the turn's `span`, and the box owning it. A box owns
- *  the PostToolUse hooks right after it and the PreToolUse hooks right before it, each set a run of its own
- *  (`messages-blocks.ts` `indexGroups`). */
+ *  the PostToolUse hooks right after it, and the PreToolUse hooks right before it in a run of hooks only, each set a
+ *  run of its own (`messages-blocks.ts` `indexGroups`). */
 function toolRun(
   seq: number,
   span: number,
   role: (at: number) => GroupRole,
-  trigger: (at: number) => string | undefined,
+  hook: (at: number) => EntryToolCall | undefined,
 ): { members: number[]; box: number | undefined } {
+  const trigger = (at: number): string | undefined => hook(at)?.hook_trigger;
   const members = [seq];
   let before: number | undefined;
   for (let at = seq - 1; at >= 0; at--) {
@@ -371,7 +372,13 @@ function toolRun(
     from++;
   }
   let to = members.length;
-  while (after !== undefined && to > from && trigger(members[to - 1] ?? -1) === "PreToolUse") {
+  const hooksOnly = members.every((m) => hook(m) !== undefined);
+  while (
+    after !== undefined &&
+    hooksOnly &&
+    to > from &&
+    trigger(members[to - 1] ?? -1) === "PreToolUse"
+  ) {
     to--;
   }
   const i = members.indexOf(seq);
@@ -491,7 +498,7 @@ function* spacerBoxes(
       if (seq < runTo) {
         continue;
       }
-      const { members, box } = toolRun(seq, span, roleAt, (at) => hookAt(at)?.hook_trigger);
+      const { members, box } = toolRun(seq, span, roleAt, hookAt);
       const first = members[0] ?? seq;
       const last = members[members.length - 1] ?? seq;
       runTo = last + 1;
