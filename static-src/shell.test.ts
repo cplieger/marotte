@@ -28,7 +28,6 @@ interface Live {
   confirmMock: (...args: unknown[]) => Promise<boolean>;
   toastError: (...args: unknown[]) => void;
   touchCapable: () => boolean;
-  shellFontSettled: () => Promise<void>;
   els: Record<string, HTMLElement>;
 }
 let live: Live;
@@ -59,9 +58,6 @@ vi.mock("./device-view.js", () => ({
   shellHeight: (): number => live.shellHeight(),
   setShellHeight: (px: number): void => live.setShellHeight(px),
   setShellOpen: (open: boolean): void => live.recordShellOpen(open),
-}));
-vi.mock("./shell-font.js", () => ({
-  shellFontSettled: (): Promise<void> => live.shellFontSettled(),
 }));
 vi.mock("./pointer-tier.js", () => ({
   touchCapable: (): boolean => live.touchCapable(),
@@ -95,7 +91,6 @@ interface Harness {
   mobileToolbar: ReturnType<typeof vi.fn>;
   kbToggleSpy: ReturnType<typeof vi.fn>;
   resetSpy: ReturnType<typeof vi.fn>;
-  sendSpy: ReturnType<typeof vi.fn>;
   reattachSpy: ReturnType<typeof vi.fn>;
   termFocus: ReturnType<typeof vi.fn>;
   shellBtn: HTMLButtonElement;
@@ -112,23 +107,20 @@ interface Harness {
   confirmMock: ReturnType<typeof vi.fn>;
   getRunCb: () => ((cmd: string) => void) | null;
   endSession: () => void;
-  /** Deliver a screen frame on the feature bus, as the kernel does on every frame it renders;
-   *  `rows` is the row count the frame carries. */
-  screenFrame: (rows: number) => void;
-  /** Settle the library's font wait, held when `setup` was given `fontHeld`. */
-  settleFont: () => void;
   /** Report a connection state on the feature bus, as the kernel does. */
   connectionState: (state: string) => void;
-  /** The pane's `announceSize`, which puts the grid size on the socket. */
-  announceSize: ReturnType<typeof vi.fn>;
-  /** The pane's `.term`, whose `--char-w` starts at the width its font measures. */
-  surface: HTMLElement;
-  /** Re-measure the cell as the engine does: publish the width and add and remove its span. */
-  remeasure: () => void;
-  /** Type `text` into the terminal: the kernel sends it through the same input funnel. */
-  type: (text: string) => void;
-  /** Set what the engine reports for DEC mode 2004, as its modes frame does. */
-  setBracketedPaste: (on: boolean) => void;
+  /** A socket's resume as the kernel reports it: `input:ready`, then the modes frame. */
+  inputReady: () => void;
+  /** Only the socket's `input:ready`, with no modes frame yet. */
+  inputStarts: () => void;
+  /** The current socket's modes become known, reported by `event`. */
+  modesArrive: (event: "wire:modes" | "wire:screen") => void;
+  /** The socket closes, before the kernel reports any state for it. */
+  socketCloses: () => void;
+  /** What the panel put on the kernel's input path, in order: a send's bytes as text, or a paste. */
+  inputs: ({ send: string } | { paste: string })[];
+  /** Input holds taken on the pane and not yet released. */
+  holds: () => number;
 }
 
 /** The mock features are a string and a bare `{ setup: vi.fn() }`, so the guard reads the shape
@@ -169,7 +161,6 @@ function ptr(
 async function setup(
   uiStateData: { shell_h?: number; shell_open?: boolean } = {},
   device: { touchCapable?: boolean } = {},
-  library: { fontHeld?: boolean } = {},
 ): Promise<Harness> {
   vi.resetModules();
   bootSeq++;
@@ -196,9 +187,6 @@ async function setup(
   // behave; replaceChildren drops the previous test's DOM.
   document.body.replaceChildren(shellPanel, shellBtn);
 
-  // The v6 handle's host controls: send routes the sanitizing funnel, reset drops the local
-  // scrollback + screen, reattach picks up the PTY the server serves now.
-  const sendSpy = vi.fn();
   const resetSpy = vi.fn();
   const termFocus = vi.fn();
   const reattachSpy = vi.fn();
@@ -206,66 +194,51 @@ async function setup(
   // Without that the reattach path would only be reachable through the Restart button, and the
   // `exit` half of the same defect would go untested.
   let endedCb: (() => void) | null = null;
-  // The feature bus, reduced to the one event the panel's own feature listens for. The kernel runs
-  // every feature's setup with the real context; here the fake records the `wire:screen` listeners
-  // so a test can deliver a frame.
-  let screenListeners: ((msg: unknown) => void)[] = [];
-  const stateListeners: ((state: unknown) => void)[] = [];
-  // The engine's ModeState starts with bracketed paste on, before the server's first modes frame.
-  let bracketedPaste = true;
-  let settleFont: () => void = () => undefined;
-  const fontSettled = library.fontHeld
-    ? new Promise<void>((resolve) => {
-        settleFont = resolve;
-      })
-    : Promise.resolve();
-  const announceSize = vi.fn();
-  const surface = document.createElement("div");
-  shellTerminal.append(surface);
-  const remeasure = (): void => {
-    const span = document.createElement("span");
-    span.style.position = "absolute";
-    span.style.whiteSpace = "pre";
-    span.textContent = "MMMMMMMMMM";
-    surface.append(span);
-    const cell = Math.round(span.getBoundingClientRect().width / 10);
-    span.remove();
-    surface.style.setProperty("--char-w", `${String(cell)}px`);
-  };
-  remeasure();
-  // The kernel's input funnel: every send runs the registered transforms in order, and one that
-  // returns no bytes drops the input.
-  let transforms: ((bytes: Uint8Array) => Uint8Array)[] = [];
-  const funnel = (bytes: Uint8Array): void => {
-    let out = bytes;
-    for (const t of transforms) {
-      out = t(out);
-      if (out.length === 0) {
-        return;
-      }
+  // The feature context, reduced to what the panel's own feature uses: its bus events, the input
+  // path, the modes' isKnown and the pane's input hold.
+  const listeners = new Map<string, ((payload: unknown) => void)[]>();
+  const emit = (event: string, payload: unknown): void => {
+    for (const fn of listeners.get(event) ?? []) {
+      fn(payload);
     }
-    sendSpy(out);
   };
-  const fakeCtx = {
-    registerInputTransform: (fn: (bytes: Uint8Array) => Uint8Array): (() => void) => {
-      transforms.push(fn);
+  const inputs: ({ send: string } | { paste: string })[] = [];
+  // The engine clears it at every socket close and sets it before the modes or first screen frame
+  // reaches features.
+  let modesKnown = false;
+  const modesArrive = (event: "wire:modes" | "wire:screen"): void => {
+    modesKnown = true;
+    emit(event, {});
+  };
+  let holds = 0;
+  const pane = {
+    holdInput: (): (() => void) => {
+      holds++;
+      let released = false;
       return () => {
-        transforms = transforms.filter((t) => t !== fn);
+        if (!released) {
+          released = true;
+          holds--;
+        }
       };
     },
-    surface: () => surface,
-    defer: (): void => undefined,
-    modes: { isBracketedPaste: () => bracketedPaste },
-    shell: { selected: () => "left", pane: () => ({ announceSize }) },
-    on: (event: string, fn: (msg: unknown) => void): (() => void) => {
-      if (event === "wire:screen") {
-        screenListeners.push(fn);
-      }
-      if (event === "connection:state") {
-        stateListeners.push(fn);
-      }
+  };
+  const fakeCtx = {
+    send: (bytes: Uint8Array): void => {
+      inputs.push({ send: new TextDecoder().decode(bytes) });
+    },
+    paste: (text: string): void => {
+      inputs.push({ paste: text });
+    },
+    modes: { isKnown: () => modesKnown },
+    shell: { selected: () => "left", pane: () => pane },
+    on: (event: string, fn: (payload: unknown) => void): (() => void) => {
+      listeners.set(event, [...(listeners.get(event) ?? []), fn]);
       return () => {
-        screenListeners = screenListeners.filter((f) => f !== fn);
+        listeners.set(
+          event,
+          (listeners.get(event) ?? []).filter((f) => f !== fn),
+        );
       };
     },
   } as unknown as TerminalContext;
@@ -283,7 +256,7 @@ async function setup(
       }
       return {
         focus: termFocus,
-        send: funnel,
+        send: vi.fn(),
         reset: resetSpy,
         reattach: reattachSpy,
         destroy: vi.fn(),
@@ -339,7 +312,6 @@ async function setup(
     confirmMock,
     toastError,
     touchCapable: () => device.touchCapable ?? false,
-    shellFontSettled: () => fontSettled,
     els: {
       shellBtn,
       shellToggleBtn,
@@ -360,7 +332,6 @@ async function setup(
     mobileToolbar,
     kbToggleSpy,
     resetSpy,
-    sendSpy,
     reattachSpy,
     termFocus,
     shellBtn,
@@ -376,9 +347,6 @@ async function setup(
     restartDispatch,
     confirmMock,
     getRunCb: () => runCb,
-    type: (text: string) => {
-      funnel(new TextEncoder().encode(text));
-    },
     endSession: () => {
       if (endedCb === null) {
         throw new Error("no onSessionEnded handler; open the panel first");
@@ -386,27 +354,21 @@ async function setup(
       endedCb();
     },
     connectionState: (state: string) => {
-      for (const fn of stateListeners) {
-        fn(state);
-      }
+      emit("connection:state", state);
     },
-    announceSize,
-    surface,
-    remeasure,
-    settleFont: () => {
-      settleFont();
+    inputReady: () => {
+      emit("input:ready", { cols: 80, rows: 24 });
+      modesArrive("wire:modes");
     },
-    screenFrame: (rows: number) => {
-      // A frame carries every visible row, so a row count is what separates a drawn screen from the
-      // rows-less signal frame; a row is a run list and an empty one is still a row.
-      const msg = { rows: Array.from({ length: rows }, () => []) };
-      for (const fn of [...screenListeners]) {
-        fn(msg);
-      }
+    inputStarts: () => {
+      emit("input:ready", { cols: 80, rows: 24 });
     },
-    setBracketedPaste: (on: boolean) => {
-      bracketedPaste = on;
+    modesArrive,
+    socketCloses: () => {
+      modesKnown = false;
     },
+    inputs,
+    holds: () => holds,
   };
 }
 
@@ -590,289 +552,196 @@ describe("shell.ts: host-driven actions", () => {
     expect(h.reattachSpy).toHaveBeenCalledTimes(1);
   });
 
+  // The restart POST kills the PTY with whatever it was sent, and the library holds what the
+  // pane accepts meanwhile until the release.
+  it("holds the shell's input for the restart POST and releases it once the POST answers", async () => {
+    for (const answer of [{ ok: true }, null]) {
+      const h = await setup();
+      h.mod.initShellPanel();
+      h.shellBtn.click();
+      let releaseDispatch: (value: { ok: boolean } | null) => void = () => undefined;
+      h.restartDispatch.mockImplementationOnce(
+        () =>
+          new Promise<{ ok: boolean } | null>((resolve) => {
+            releaseDispatch = resolve;
+          }),
+      );
+
+      h.shellRestartBtn.click();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(h.holds(), `during the POST, answer ${JSON.stringify(answer)}`).toBe(1);
+
+      releaseDispatch(answer);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(h.holds(), `after the POST, answer ${JSON.stringify(answer)}`).toBe(0);
+    }
+  });
+
+  it("takes no hold when the confirm is declined", async () => {
+    const h = await setup();
+    h.confirmMock.mockResolvedValueOnce(false);
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+
+    h.shellRestartBtn.click();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.holds()).toBe(0);
+  });
+
   // Enter on a PTY is CR (0x0d), the byte the engine's keyboard module sends for the key, so LF
   // must not appear.
-  it("runs a one-line command unbracketed: the text and one CR, in a single send", async () => {
+  it("runs a one-line command as typed keys: the text and one CR, in a single send", async () => {
     const h = await setup();
     h.mod.initShellPanel(); // registers the run callback
     h.shellBtn.click(); // open so the terminal (and its handle) exists
-    h.screenFrame(24);
+    h.inputReady();
 
     const runCb = h.getRunCb();
     expect(runCb).not.toBeNull();
     runCb?.("echo hi");
-    await Promise.resolve();
 
-    expect(h.sendSpy).toHaveBeenCalledTimes(1);
-    expect(h.sendSpy).toHaveBeenCalledWith(new TextEncoder().encode("echo hi\r"));
-    const sent = h.sendSpy.mock.calls[0]?.[0] as Uint8Array;
-    expect(sent.at(-1)).toBe(0x0d);
-    expect(sent.includes(0x0a)).toBe(false);
+    expect(h.inputs).toEqual([{ send: "echo hi\r" }]);
+  });
+
+  // The library brackets a paste under DEC mode 2004 and normalises its line ends, so the panel
+  // hands it the block as written and submits it with one CR.
+  it("runs a multi-line block as one paste and one CR", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    h.inputReady();
+
+    h.getRunCb()?.("cd /tmp\nls -la");
+
+    expect(h.inputs).toEqual([{ paste: "cd /tmp\nls -la" }, { send: "\r" }]);
   });
 
   // The reader is in the transcript, so the open must not take focus. The first open is also what
-  // connects, so `admit` holds the Run until the session draws (here with the font settled, a
-  // current `--char-w` and no open slide already in place).
-  it("opens a closed panel without focusing it and sends once the session draws", async () => {
+  // connects, so the Run waits for that socket's input to start.
+  it("opens a closed panel without focusing it and sends once input is ready", async () => {
     const h = await setup();
     h.mod.initShellPanel();
     expect(h.createTerminal).not.toHaveBeenCalled();
 
     h.getRunCb()?.("echo hi");
-    await Promise.resolve();
 
     expect(h.createTerminal).toHaveBeenCalledTimes(1);
     expect(h.shellPanel.classList.contains("shell-closed")).toBe(false);
     expect(h.recordShellOpen).toHaveBeenCalledWith(true);
-    expect(h.sendSpy).not.toHaveBeenCalled();
+    expect(h.inputs).toEqual([]);
 
-    h.screenFrame(24);
-    await Promise.resolve();
-    expect(h.sendSpy).toHaveBeenCalledTimes(1);
-    expect(h.sendSpy).toHaveBeenCalledWith(new TextEncoder().encode("echo hi\r"));
+    h.connectionState("open");
+    expect(h.inputs, "an open socket has not started sending input").toEqual([]);
+    h.inputReady();
+    expect(h.inputs).toEqual([{ send: "echo hi\r" }]);
 
     await nextFrame();
     expect(h.termFocus).not.toHaveBeenCalled();
   });
 
-  // A rows-less frame is the pre-ack ED3 forward, which `inputGate` does not count as drawn.
-  it("does not release the command on a rows-less signal frame", async () => {
+  it("sends a queued Run once, not again at the next socket's input:ready", async () => {
     const h = await setup();
     h.mod.initShellPanel();
 
     h.getRunCb()?.("echo hi");
-    h.screenFrame(0);
-    await Promise.resolve();
-    expect(h.sendSpy).not.toHaveBeenCalled();
+    h.inputReady();
+    h.connectionState("reconnecting");
+    h.inputReady();
 
-    h.screenFrame(24);
-    await Promise.resolve();
-    expect(h.sendSpy).toHaveBeenCalledTimes(1);
+    expect(h.inputs).toEqual([{ send: "echo hi\r" }]);
   });
 
-  // A frame can land while the font is still loading, and until it settles announceSize sends
-  // nothing, so the server would start the PTY at its default size on the Run bytes.
-  it("holds a Run until the font settles, then puts the size on the socket before the bytes", async () => {
-    const h = await setup({}, {}, { fontHeld: true });
-    h.mod.initShellPanel();
+  // Input queued in the library for a socket that drops is dropped at the resume when the server
+  // restarted meanwhile, so the Run waits for the next socket's input to start.
+  it("holds a Run made after a reported drop until the reconnected socket's input is ready", async () => {
+    for (const state of ["connecting", "reconnecting", "offline", "ended", "idle"]) {
+      const h = await setup();
+      h.mod.initShellPanel();
+      h.shellBtn.click();
+      h.inputReady();
+      h.connectionState(state);
 
-    h.getRunCb()?.("echo hi");
-    h.screenFrame(30);
-    await Promise.resolve();
-    expect(h.sendSpy).not.toHaveBeenCalled();
-    expect(h.announceSize).not.toHaveBeenCalled();
+      h.getRunCb()?.("echo hi");
+      h.connectionState("restarted");
+      expect(h.inputs, `after ${state}`).toEqual([]);
 
-    h.settleFont();
-    await Promise.resolve();
-    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
-    expect(h.announceSize).toHaveBeenCalledTimes(1);
-    expect(h.announceSize.mock.invocationCallOrder[0]).toBeLessThan(
-      h.sendSpy.mock.invocationCallOrder[0] ?? 0,
-    );
+      h.inputReady();
+      expect(h.inputs, `after ${state}`).toEqual([{ send: "echo hi\r" }]);
+    }
   });
 
-  // The library lowers its loading state when the process exits, font or not, and its replacement
-  // session draws before the font settles too; the size announce still waits for the font.
-  it("holds a Run across a session that ends before the font settles", async () => {
-    const h = await setup({}, {}, { fontHeld: true });
+  // The kernel reports a drop only after a grace period, or not at all when the next socket opens
+  // first, so the closed socket's unknown modes are what hold the Run.
+  it("holds a Run made after an unreported drop until the next socket's modes are known", async () => {
+    const h = await setup();
     h.mod.initShellPanel();
+    h.shellBtn.click();
+    h.inputReady();
+    h.socketCloses();
 
     h.getRunCb()?.("echo hi");
-    h.screenFrame(30);
+    expect(h.inputs, "on the closed socket").toEqual([]);
+    h.inputStarts();
+    expect(h.inputs, "before the next socket's modes").toEqual([]);
+
+    h.modesArrive("wire:screen");
+    expect(h.inputs).toEqual([{ send: "echo hi\r" }]);
+  });
+
+  it("sends a Run made between input:ready and the modes frame once the modes arrive", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    h.inputStarts();
+
+    h.getRunCb()?.("echo hi");
+    expect(h.inputs).toEqual([]);
+
+    h.modesArrive("wire:modes");
+    expect(h.inputs).toEqual([{ send: "echo hi\r" }]);
+  });
+
+  // The engine's server can send a new socket its modes before the resume, whose epoch check then
+  // drops input sent for a restarted server's old process.
+  it("holds a Run whose next socket reports its modes before its input is ready", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    h.inputReady();
+    h.socketCloses();
+    h.connectionState("open");
+
+    h.getRunCb()?.("echo hi");
+    h.modesArrive("wire:modes");
+    expect(h.inputs, "before the next socket's input:ready").toEqual([]);
+
+    h.inputStarts();
+    expect(h.inputs).toEqual([{ send: "echo hi\r" }]);
+  });
+
+  it("holds a Run made after the session ended until the reattached socket's input is ready", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    h.inputReady();
     h.endSession();
     expect(h.reattachSpy).toHaveBeenCalledTimes(1);
-    h.screenFrame(30);
-    await Promise.resolve();
-    expect(h.sendSpy).not.toHaveBeenCalled();
-    expect(h.announceSize).not.toHaveBeenCalled();
-
-    h.settleFont();
-    await Promise.resolve();
-    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
-    expect(h.announceSize.mock.invocationCallOrder[0]).toBeLessThan(
-      h.sendSpy.mock.invocationCallOrder[0] ?? 0,
-    );
-  });
-
-  // The engine measures its cell at build, often on the fallback font, and again only once the
-  // panel's open slide settles; a size announced on the build width has the wrong columns.
-  it("holds a Run while the published cell width is stale, until the engine re-measures", async () => {
-    const h = await setup();
-    h.mod.initShellPanel();
-    h.surface.style.setProperty("--char-w", "1px");
 
     h.getRunCb()?.("echo hi");
-    h.screenFrame(24);
-    await Promise.resolve();
-    expect(h.sendSpy).not.toHaveBeenCalled();
-    expect(h.announceSize).not.toHaveBeenCalled();
+    expect(h.inputs).toEqual([]);
 
-    h.remeasure();
-    await Promise.resolve();
-    expect(h.announceSize).toHaveBeenCalledTimes(1);
-    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
-  });
-
-  // The size announce goes nowhere while the socket is down, so the Run waits for the reconnect.
-  it("holds a Run after a drop until the reconnected session draws", async () => {
-    const h = await setup();
-    h.mod.initShellPanel();
-    h.shellBtn.click();
-    h.screenFrame(24);
-    h.connectionState("reconnecting");
-
-    h.getRunCb()?.("echo hi");
-    await Promise.resolve();
-    expect(h.sendSpy).not.toHaveBeenCalled();
-
-    h.connectionState("open");
-    h.screenFrame(24);
-    await Promise.resolve();
-    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
-  });
-
-  // Measured mid-slide, the grid has the rows of a part-open panel.
-  it("holds a Run until the panel's open transition ends", async () => {
-    const h = await setup();
-    h.mod.initShellPanel();
-    h.shellBtn.click();
-    h.screenFrame(24);
-    let running: Animation[] = [Object.create(CSSTransition.prototype) as CSSTransition];
-    h.shellPanel.getAnimations = () => running;
-
-    h.getRunCb()?.("echo hi");
-    await Promise.resolve();
-    expect(h.sendSpy).not.toHaveBeenCalled();
-
-    running = [];
-    h.shellPanel.dispatchEvent(new Event("transitionend"));
-    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
-  });
-
-  // The server starts a fresh PTY at its default size on the first bytes it gets, keys included.
-  it("holds keys typed before the font settles, then sends them after the size and ahead of a Run", async () => {
-    const h = await setup({}, {}, { fontHeld: true });
-    h.mod.initShellPanel();
-    h.shellBtn.click();
-    h.screenFrame(30);
-
-    h.type("l");
-    h.getRunCb()?.("echo hi");
-    h.type("s");
-    await Promise.resolve();
-    expect(h.sendSpy).not.toHaveBeenCalled();
-
-    h.settleFont();
-    await Promise.resolve();
-    const enc = new TextEncoder();
-    expect(h.sendSpy.mock.calls).toEqual([
-      [enc.encode("l")],
-      [enc.encode("s")],
-      [enc.encode("echo hi\r")],
-    ]);
-    expect(h.announceSize.mock.invocationCallOrder[0]).toBeLessThan(
-      h.sendSpy.mock.invocationCallOrder[0] ?? 0,
-    );
-  });
-
-  it("sends keys straight on once the session has this panel's size", async () => {
-    const h = await setup();
-    h.mod.initShellPanel();
-    h.shellBtn.click();
-    h.screenFrame(24);
-    h.getRunCb()?.("true");
-    await Promise.resolve();
-    expect(h.sendSpy).toHaveBeenCalledTimes(1);
-    h.sendSpy.mockClear();
-
-    h.type("x");
-
-    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("x"));
-    expect(h.announceSize).toHaveBeenCalledTimes(1);
-  });
-
-  // Keys typed for the session a restart kills are not the replacement's; a Run is a request to run
-  // the command in whichever shell is there.
-  it("drops keys held across a restart's reattach, and sends the held Run to the replacement", async () => {
-    const h = await setup();
-    h.mod.initShellPanel();
-    h.shellBtn.click();
-    h.screenFrame(24);
-    let releaseDispatch: (value: { ok: boolean }) => void = () => undefined;
-    h.restartDispatch.mockImplementationOnce(
-      () =>
-        new Promise<{ ok: boolean }>((resolve) => {
-          releaseDispatch = resolve;
-        }),
-    );
-    h.shellRestartBtn.click();
-    await new Promise((r) => setTimeout(r, 0));
-    h.type("rm");
-    h.getRunCb()?.("echo hi");
-
-    releaseDispatch({ ok: true });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(h.reattachSpy).toHaveBeenCalledTimes(1);
-    h.screenFrame(24);
-
-    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
-  });
-
-  // DEC mode 2004 (xterm ctlseqs "Bracketed Paste Mode"): ESC [200~ opens the paste and ESC [201~
-  // closes it, so bash takes the block as one input; the CR after it is the one Enter.
-  it("runs a multi-line block as one bracketed paste and one CR, in a single send", async () => {
-    const h = await setup();
-    h.mod.initShellPanel();
-    h.shellBtn.click();
-    h.screenFrame(24);
-
-    h.getRunCb()?.("cd /tmp\nls -la");
-    await Promise.resolve();
-
-    expect(h.sendSpy).toHaveBeenCalledTimes(1);
-    expect(h.sendSpy).toHaveBeenCalledWith(
-      new TextEncoder().encode("\x1b[200~cd /tmp\rls -la\x1b[201~\r"),
-    );
-  });
-
-  // Without mode 2004 the markers would be typed as text, so the lines go as typed keys, each
-  // line end a CR as the terminal's own paste sends it, with one more CR to submit the last line.
-  it("sends the lines unbracketed when the program has bracketed paste off", async () => {
-    const h = await setup();
-    h.mod.initShellPanel();
-    h.shellBtn.click();
-    h.screenFrame(24);
-    h.setBracketedPaste(false);
-
-    h.getRunCb()?.("cd /tmp\nls -la");
-    await Promise.resolve();
-
-    expect(h.sendSpy).toHaveBeenCalledTimes(1);
-    expect(h.sendSpy).toHaveBeenCalledWith(new TextEncoder().encode("cd /tmp\rls -la\r"));
-  });
-
-  // The server's modes frame lands with the session's first frames, so the mode is read at send
-  // time, after the gate, never when Run is clicked.
-  it("reads the paste mode when it sends, not when Run was clicked", async () => {
-    const h = await setup();
-    h.mod.initShellPanel();
-
-    h.getRunCb()?.("cd /tmp\nls -la");
-    h.setBracketedPaste(false);
-    h.screenFrame(24);
-    await Promise.resolve();
-
-    expect(h.sendSpy).toHaveBeenCalledTimes(1);
-    expect(h.sendSpy).toHaveBeenCalledWith(new TextEncoder().encode("cd /tmp\rls -la\r"));
+    h.inputReady();
+    expect(h.inputs).toEqual([{ send: "echo hi\r" }]);
   });
 
   // The server kills the old PTY with whatever it was sent, so a Run between the confirm and the
-  // reattach belongs to the replacement, and the old session's last frames prove nothing.
-  it("holds a Run made during a restart until the replacement session draws", async () => {
+  // reattach belongs to the replacement.
+  it("holds a Run made during a restart until the replacement's input is ready", async () => {
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click();
-    h.screenFrame(24);
+    h.inputReady();
     let releaseDispatch: (value: { ok: boolean }) => void = () => undefined;
     h.restartDispatch.mockImplementationOnce(
       () =>
@@ -884,25 +753,22 @@ describe("shell.ts: host-driven actions", () => {
     await new Promise((r) => setTimeout(r, 0)); // confirm resolves, POST in flight
 
     h.getRunCb()?.("echo hi");
-    h.screenFrame(24); // the doomed session still drawing
-    await Promise.resolve();
-    expect(h.sendSpy).not.toHaveBeenCalled();
+    expect(h.inputs).toEqual([]);
 
     releaseDispatch({ ok: true });
     await new Promise((r) => setTimeout(r, 0));
     expect(h.reattachSpy).toHaveBeenCalledTimes(1);
-    expect(h.sendSpy).not.toHaveBeenCalled();
+    expect(h.inputs, "the old socket's readiness is not the replacement's").toEqual([]);
 
-    h.screenFrame(24);
-    await Promise.resolve();
-    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
+    h.inputReady();
+    expect(h.inputs).toEqual([{ send: "echo hi\r" }]);
   });
 
   it("sends a Run held by a failed restart to the session that is still live", async () => {
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click();
-    h.screenFrame(24);
+    h.inputReady();
     let releaseDispatch: (value: null) => void = () => undefined;
     h.restartDispatch.mockImplementationOnce(
       () =>
@@ -918,11 +784,12 @@ describe("shell.ts: host-driven actions", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(h.reattachSpy).not.toHaveBeenCalled();
-    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
+    expect(h.inputs).toEqual([{ send: "echo hi\r" }]);
   });
 
-  // The session that outlives a failed restart may have drawn only while the POST was in flight.
-  it("sends a Run held by a failed restart when the live session first drew during it", async () => {
+  // The session that outlives a failed restart may have started its input only while the POST was
+  // in flight.
+  it("sends a Run held by a failed restart when the live socket became ready during it", async () => {
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click();
@@ -936,22 +803,21 @@ describe("shell.ts: host-driven actions", () => {
     h.shellRestartBtn.click();
     await new Promise((r) => setTimeout(r, 0));
     h.getRunCb()?.("echo hi");
-    h.screenFrame(24);
-    await Promise.resolve();
-    expect(h.sendSpy).not.toHaveBeenCalled();
+    h.inputReady();
+    expect(h.inputs).toEqual([]);
 
     releaseDispatch(null);
     await new Promise((r) => setTimeout(r, 0));
 
     expect(h.reattachSpy).not.toHaveBeenCalled();
-    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
+    expect(h.inputs).toEqual([{ send: "echo hi\r" }]);
   });
 
   it("keeps a Run held while a second restart is in flight after the first one fails", async () => {
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click();
-    h.screenFrame(24);
+    h.inputReady();
     let failFirst: (value: null) => void = () => undefined;
     let finishSecond: (value: { ok: boolean }) => void = () => undefined;
     h.restartDispatch
@@ -975,34 +841,32 @@ describe("shell.ts: host-driven actions", () => {
 
     failFirst(null);
     await new Promise((r) => setTimeout(r, 0));
-    expect(h.sendSpy).not.toHaveBeenCalled();
+    expect(h.inputs).toEqual([]);
+    expect(h.holds(), "the second restart still holds the input").toBe(1);
 
     finishSecond({ ok: true });
     await new Promise((r) => setTimeout(r, 0));
     expect(h.reattachSpy).toHaveBeenCalledTimes(1);
-    expect(h.sendSpy).not.toHaveBeenCalled();
+    expect(h.inputs).toEqual([]);
 
-    h.screenFrame(24);
-    await Promise.resolve();
-    expect(h.sendSpy).toHaveBeenCalledExactlyOnceWith(new TextEncoder().encode("echo hi\r"));
+    h.inputReady();
+    expect(h.inputs).toEqual([{ send: "echo hi\r" }]);
   });
 
-  // Reopening reuses the terminal, which has already drawn, so nothing waits.
+  // Reopening reuses the terminal, whose socket is already sending input, so nothing waits.
   it("reopens a closed panel whose terminal already exists and sends at once", async () => {
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click(); // open (creates terminal)
-    h.screenFrame(24);
+    h.inputReady();
     h.shellToggleBtn.click(); // close
     expect(h.shellPanel.classList.contains("shell-closed")).toBe(true);
 
     h.getRunCb()?.("echo hi");
-    await Promise.resolve();
 
     expect(h.createTerminal).toHaveBeenCalledTimes(1);
     expect(h.shellPanel.classList.contains("shell-closed")).toBe(false);
-    expect(h.sendSpy).toHaveBeenCalledTimes(1);
-    expect(h.sendSpy).toHaveBeenCalledWith(new TextEncoder().encode("echo hi\r"));
+    expect(h.inputs).toEqual([{ send: "echo hi\r" }]);
   });
 });
 
