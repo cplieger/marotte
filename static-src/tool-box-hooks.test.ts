@@ -654,7 +654,7 @@ describe("a delegate's or a run's card with hooks", () => {
   );
 
   it.each(["delegate's", "run's"] as const)(
-    "folds the %s launching call's quiet hooks into its card's badge between other tool calls",
+    "folds the %s launching call's quiet hooks into its card's badge after the agent's text",
     async (kind) => {
       const root = render(between(kind, false));
       await frame();
@@ -668,7 +668,7 @@ describe("a delegate's or a run's card with hooks", () => {
   );
 
   it.each(["delegate's", "run's"] as const)(
-    "keeps the %s failed launching call's quiet hooks as rows between other tool calls with hook status off",
+    "keeps the %s failed launching call's quiet hooks as rows after the agent's text with hook status off",
     (kind) => {
       setHookStatusShown(false);
       const root = render(between(kind, true));
@@ -753,7 +753,7 @@ describe("a delegate's or a run's card with hooks", () => {
     expect(priced("completed")).toBe(priced("failed"));
   });
 
-  it("prices a never-mounted failed delegate's quiet hooks between other tool calls as their rows", () => {
+  it("prices a never-mounted failed delegate's quiet hooks after the agent's text as their rows", () => {
     const priced = (status: "completed" | "failed"): number =>
       unmeasuredTail((t) => [
         say(t, 1, "go"),

@@ -324,7 +324,7 @@
       "lane_runs": { "sub-1": [["d1"], ["d3", "d5"]] }
     },
     {
-      "name": "a delegate's own hooks between other tool calls are runs of their own",
+      "name": "a delegate's hooks after the agent's text are runs of their own",
       "body": [
         { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
         { "id": "x1", "kind": "text", "payload": { "text": "Now the delegate." } },
@@ -337,7 +337,7 @@
       "status_off_hook_rows": []
     },
     {
-      "name": "a failed delegate keeps its own hooks between other tool calls",
+      "name": "a failed delegate keeps the hooks after the agent's text",
       "body": [
         { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
         { "id": "x1", "kind": "text", "payload": { "text": "Now the delegate." } },
@@ -350,7 +350,7 @@
       "status_off_hook_rows": ["h1", "h2"]
     },
     {
-      "name": "a failed run launch keeps its own hooks between other tool calls",
+      "name": "a failed run launch keeps the hooks after the agent's text",
       "body": [
         { "id": "c1", "kind": "tool_call", "payload": { "id": "t-c1", "title": "go vet", "kind": "execute", "status": "completed" } },
         { "id": "x1", "kind": "text", "payload": { "text": "Now the run." } },
