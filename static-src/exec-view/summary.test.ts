@@ -307,6 +307,16 @@ describe("the run summary", () => {
     expect(view.describe()).toBe("nightly, running, step 2 of 3, 3.10 credits");
   });
 
+  it("shows the consumer's figure on screen and keeps the cents in its name", () => {
+    const view = buildExecSummary({ figure: () => "230" });
+    host.append(view.root);
+    view.paint(
+      run([step("a", "ok"), step("b", "running"), step("c", "pending")], { credits: 230.28 }),
+    );
+    expect(part(view, "ev-sum-credits")).toBe("230 cr");
+    expect(view.describe()).toBe("nightly, running, step 2 of 3, 230.28 credits");
+  });
+
   it("states a sub-cent run as under a cent, and drops the figure once credits go", () => {
     const view = build(false);
     view.paint(run([step("a", "running")], { credits: 0.004 }));

@@ -10,6 +10,7 @@ import {
   humanName,
   rateLabel,
   truncate,
+  wholeCreditFigure,
 } from "./strings.js";
 
 /** A high surrogate with no low surrogate after it: what the DOM draws as U+FFFD. */
@@ -211,6 +212,23 @@ describe("creditFigure", () => {
   it("states any other charge to the cent", () => {
     expect(creditFigure(1.2)).toBe("1.20");
     expect(creditFigure(3.14159)).toBe("3.14");
+  });
+});
+
+describe("wholeCreditFigure", () => {
+  it("rounds a charge to the nearest whole credit", () => {
+    expect(wholeCreditFigure(230.28)).toBe("230");
+    expect(wholeCreditFigure(3210.64)).toBe("3211");
+    expect(wholeCreditFigure(0.5)).toBe("1");
+  });
+
+  it("states a charge under half a credit as under one, never as 0", () => {
+    expect(wholeCreditFigure(0.31)).toBe("<1");
+    expect(wholeCreditFigure(0.004)).toBe("<1");
+  });
+
+  it("states no charge as 0", () => {
+    expect(wholeCreditFigure(0)).toBe("0");
   });
 });
 

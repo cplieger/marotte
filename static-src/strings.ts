@@ -141,6 +141,15 @@ export function creditFigure(credits: number): string {
   return credits < 0.005 ? "<0.01" : credits.toFixed(2);
 }
 
+/** A credit figure to the nearest whole credit: "0" for none, "<1" for a charge that would round
+ *  to 0, so a run that spent something never reads as free. */
+export function wholeCreditFigure(credits: number): string {
+  if (credits > 0 && credits < 0.5) {
+    return "<1";
+  }
+  return String(Math.round(credits));
+}
+
 /** A wall-clock span for a reader: tenths below a minute, whole seconds above, "0.0s" for zero
  *  (callers check first). Shared by the turn footer and the run card. */
 export function formatElapsed(ms: number): string {

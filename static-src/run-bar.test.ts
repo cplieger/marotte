@@ -688,6 +688,49 @@ describe("the run bar", () => {
   });
 });
 
+describe("the run bar's credit figure", () => {
+  function billed(name: string, usage: number): Record<string, unknown> {
+    const st = state({ display_name: name });
+    const root = st["root"] as Record<string, unknown>;
+    return { ...st, root: { ...root, credits: [{ usage, unit: "credit" }] } };
+  }
+
+  async function mountBilled(usages: readonly number[]): Promise<HTMLElement[]> {
+    const c = chatID();
+    chats.push(c);
+    for (const [i, usage] of usages.entries()) {
+      const id = runID(`cr${String(i)}`);
+      inspect.set(id, billed(`run-${String(i)}`, usage));
+      live(id, c);
+    }
+    await activate(c);
+    return [...bar.querySelectorAll<HTMLElement>(".run-bar-open")];
+  }
+
+  const figure = (btn: HTMLElement | undefined): string | null =>
+    btn?.querySelector(".ev-sum-credits")?.textContent ?? null;
+
+  it("shows the one run's spend to the whole credit, its name keeping the cents", async () => {
+    const [btn] = await mountBilled([230.28]);
+    expect(figure(btn)).toBe("230 cr");
+    expect(btn?.getAttribute("aria-label")).toContain("230.28 credits");
+  });
+
+  it("rounds each row of a fan-out to the nearest whole credit", async () => {
+    const rows = await mountBilled([3210.64, 230.28, 0.31]);
+    expect(rows.map(figure).sort()).toEqual(["230 cr", "3211 cr", "<1 cr"]);
+    expect(rows.map((b) => b.getAttribute("aria-label") ?? "").join("|")).toContain(
+      "3210.64 credits",
+    );
+  });
+
+  it("shows a spend under half a credit as under one, never as free", async () => {
+    const [btn] = await mountBilled([0.31]);
+    expect(figure(btn)).toBe("<1 cr");
+    expect(btn?.getAttribute("aria-label")).toContain("0.31 credits");
+  });
+});
+
 // Object IDENTITY is the assertion in every case here: a rebuilt row is indistinguishable from a
 // patched one by content.
 describe("a render patches its rows rather than rebuilding them", () => {
