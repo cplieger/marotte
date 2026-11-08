@@ -679,7 +679,8 @@ func (rs *Runs) retry(
 	// which reads its presets from it.
 	minted := rs.leaseForRetry(cctx, workflowID, &origin, holders, aff, event)
 	rs.markRunAlive(cctx, workflowID, holders)
-	host, err := rs.ensureResident(cctx, workflowID)
+	host, release, err := rs.ensureResident(cctx, workflowID)
+	defer release()
 	if err != nil {
 		if minted {
 			rs.releaseLease(cctx, workflowID)
@@ -877,7 +878,8 @@ func (rs *Runs) answerInput(ctx context.Context, workflowID, askID, text string,
 	if c == nil {
 		return errAskGone
 	}
-	host, err := rs.ensureResident(ctx, workflowID)
+	host, releaseHost, err := rs.ensureResident(ctx, workflowID)
+	defer releaseHost()
 	if err != nil {
 		return err
 	}

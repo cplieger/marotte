@@ -195,7 +195,8 @@ func turnStopBeforeStart(ctx context.Context, interrupted string) (stop marotte.
 // the retry's admission reservation res; emptyTurnID is the turn the retry replaces.
 func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, res Reservation, emptyTurnID string, p *marotte.PromptCommand, params map[string]any) {
 	chatID := res.Chat
-	sb2, err2 := roles.bridges.OpenBridgeAt(ctx, chatID, p.Model, res)
+	sb2, release, err2 := roles.bridges.OpenBridgeAt(ctx, chatID, p.Model, res)
+	defer release()
 	if closedCancelled(err2) {
 		slog.Info("empty turn: the chat closed during the reload, not retrying", "chat_id", chatID)
 		return
@@ -496,7 +497,8 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 	defer cancel()
 	chatID := res.Chat
 	defer roles.turnOutcome.ReleaseTurn(chatID, turnID)
-	sb, err := roles.bridges.OpenBridgeAt(ctx, chatID, p.Model, res)
+	sb, release, err := roles.bridges.OpenBridgeAt(ctx, chatID, p.Model, res)
+	defer release()
 	if closedCancelled(err) {
 		roles.admission.ReleaseTurnReservation(res)
 		slog.Debug("prompt: the chat closed before its session opened", "chat_id", chatID, "turn", turnID)

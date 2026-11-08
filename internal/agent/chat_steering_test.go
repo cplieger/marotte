@@ -30,7 +30,7 @@ func TestChatSteeringReachesBothChatVerbsAndNotAnObserver(t *testing.T) {
 				return true
 			})
 
-			sb, err := h.coord.openBridge(t.Context(), "c1", "")
+			sb, err := h.coord.openReleased(t.Context(), "c1", "")
 			if err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}

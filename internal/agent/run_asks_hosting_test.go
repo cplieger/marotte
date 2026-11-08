@@ -68,7 +68,7 @@ func TestRunAsks_AnEngineRestartKeepsTheRunsQuestion(t *testing.T) {
 	br.setCallResult(methodKiroWorkflowInspect, inspectAsk(t, "wf_1", marotte.RunStatusPaused, parkedStep("review", "sess_step")))
 	fakeSourceOf(t, h).setFactory(func() engineSession { return newFakeBridge() })
 	leaseParentless(t, h, "wf_1")
-	if _, err := h.runs.ensureResident(t.Context(), "wf_1"); err != nil {
+	if _, err := h.runs.residentReleased(t.Context(), "wf_1"); err != nil {
 		t.Fatalf("Setup: ensureResident = %v", err)
 	}
 	h.runs.askTurnEdge("wf_1", "sess_step", translate.TurnEdgeStart)

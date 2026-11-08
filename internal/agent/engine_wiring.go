@@ -127,7 +127,9 @@ func (rt *Runtime) resumeInterrupted(ctx context.Context, set interruptSet) {
 	}
 	for chatID := range chats {
 		rt.lifecycle.goUnlessDraining(func() {
-			if _, err := rt.coord.openBridge(ctx, chatID, ""); err != nil {
+			_, release, err := rt.coord.openBridge(ctx, chatID, "")
+			defer release()
+			if err != nil {
 				slog.Warn("an interrupted run's chat could not be reopened to resume it", "chat_id", chatID, "error", err)
 			}
 		})

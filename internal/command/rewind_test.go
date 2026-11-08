@@ -85,8 +85,8 @@ func (d *bridgeDeps) Bridge(marotte.ChatID) Bridge { return d.bridge }
 // BridgeLive follows the live bridge: an opening or absent one parks a steer.
 func (d *bridgeDeps) BridgeLive(marotte.ChatID) bool { return d.bridge != nil }
 
-func (d *bridgeDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
-	return d.opened, nil
+func (d *bridgeDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, func(), error) {
+	return d.opened, func() {}, nil
 }
 
 // newBridgeHost lets one bridge answer both lookups: a chat with a live bridge is what
@@ -837,6 +837,6 @@ func (*slotAdmission) AwaitNoClose(context.Context, marotte.ChatID) (bool, error
 	return false, nil
 }
 
-func (r *bridgeDeps) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, error) {
+func (r *bridgeDeps) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, func(), error) {
 	return r.OpenBridge(ctx, chatID, model)
 }

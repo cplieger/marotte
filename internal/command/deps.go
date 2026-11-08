@@ -82,12 +82,14 @@ type Bridge interface {
 // cancel, subagent, slash, and permission handlers.
 type bridgeAccess interface {
 	Bridge(chatID marotte.ChatID) Bridge
-	// OpenBridge answers once the chat's log holds KAS's account of its session (sessionLoader).
-	OpenBridge(ctx context.Context, chatID marotte.ChatID, model string) (Bridge, error)
+	// OpenBridge answers once the chat's log holds KAS's account of its session (sessionLoader), with the caller's
+	// hold on that session: no close of it is granted until release runs. release is never nil (a no-op on an
+	// error), so the caller defers it before the error check.
+	OpenBridge(ctx context.Context, chatID marotte.ChatID, model string) (b Bridge, release func(), err error)
 	// OpenBridgeAt is OpenBridge for the holder of res, whose intent began at res.Stamp: a close of the chat committed
 	// since answers marotte.ErrChatClosedDuringCall. res's own admission and unsent turn do not keep a session marked
-	// for reload from reloading at this open.
-	OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, res Reservation) (Bridge, error)
+	// for reload from reloading at this open, and the hold also ends with res's release.
+	OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, res Reservation) (b Bridge, release func(), err error)
 	// BridgeLive reports a bridge for the chat that is past its session open: the state
 	// a steer can be delivered into, where an opening one parks it.
 	BridgeLive(chatID marotte.ChatID) bool

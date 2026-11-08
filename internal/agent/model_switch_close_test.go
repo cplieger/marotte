@@ -44,7 +44,7 @@ func reopenAndOpen(t *testing.T, h *Runtime, cs *testChatStore) *marotte.Chat {
 	next := newFakeBridge()
 	fakeSourceOf(t, h).setFactory(func() engineSession { return next })
 	reopenTab(t, h, "op-reopen")
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("open after the reopen: %v", err)
 	}
 	c, _ := cs.Get(t.Context(), "c1")
@@ -57,7 +57,7 @@ func TestSwitchModel_AnApplyOnAnEndedLifeKeepsThePick(t *testing.T) {
 	t.Run("after the commit", func(t *testing.T) {
 		h, cs, br, tab := closeTabHub(t)
 		t.Cleanup(func() { shutdownHub(t, h) })
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("Setup: open session: %v", err)
 		}
 		reached, release := parkTeardownAt(t, h, "begun")
@@ -97,7 +97,7 @@ func TestSwitchModel_AnApplyOnAnEndedLifeKeepsThePick(t *testing.T) {
 	t.Run("during set_config_option", func(t *testing.T) {
 		h, cs, br, tab := closeTabHub(t)
 		t.Cleanup(func() { shutdownHub(t, h) })
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("Setup: open session: %v", err)
 		}
 		gate := make(chan struct{})
@@ -142,7 +142,7 @@ func TestSwitchModel_AnApplyOnAnEndedLifeKeepsThePick(t *testing.T) {
 	t.Run("kiro-cli refused the swap", func(t *testing.T) {
 		h, cs, br, _ := closeTabHub(t)
 		t.Cleanup(func() { shutdownHub(t, h) })
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("Setup: open session: %v", err)
 		}
 		br.mu.Lock()
@@ -169,7 +169,7 @@ func TestSwitchModel_AnApplyOnAnEndedLifeKeepsThePick(t *testing.T) {
 func TestCloseTab_AReopenWaitsForTheClosedLifesTail(t *testing.T) {
 	h, cs, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
 	release := holdPrompt(t, br)
@@ -207,7 +207,7 @@ func TestCloseTab_AReopenWaitsForTheClosedLifesTail(t *testing.T) {
 	next := newFakeBridge()
 	fakeSourceOf(t, h).setFactory(func() engineSession { return next })
 	reopenTab(t, h, "op-reopen")
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("open after the reopen: %v", err)
 	}
 

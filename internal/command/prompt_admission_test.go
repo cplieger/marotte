@@ -250,12 +250,12 @@ type admissionHost struct {
 	events    []marotte.ServerEvent
 }
 
-func (h *admissionHost) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
+func (h *admissionHost) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, func(), error) {
 	h.rec.add("openBridge")
 	if h.openErr != nil {
-		return nil, h.openErr
+		return nil, func() {}, h.openErr
 	}
-	return h.bridge, nil
+	return h.bridge, func() {}, nil
 }
 
 func (h *admissionHost) Broadcast(_ context.Context, evt marotte.ServerEvent) {
@@ -342,7 +342,7 @@ func (g *gatedBridgeAccess) CallBudget(ctx context.Context, d time.Duration) (co
 	return g.inner.CallBudget(ctx, d)
 }
 
-func (g *gatedBridgeAccess) OpenBridge(ctx context.Context, id marotte.ChatID, model string) (Bridge, error) {
+func (g *gatedBridgeAccess) OpenBridge(ctx context.Context, id marotte.ChatID, model string) (Bridge, func(), error) {
 	select {
 	case <-g.gate:
 	case <-ctx.Done():
@@ -664,11 +664,11 @@ func (*scriptedAdmission) AwaitNoClose(context.Context, marotte.ChatID) (bool, e
 	return false, nil
 }
 
-func (r *admissionHost) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, error) {
+func (r *admissionHost) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, func(), error) {
 	return r.OpenBridge(ctx, chatID, model)
 }
 
-func (r *gatedBridgeAccess) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, error) {
+func (r *gatedBridgeAccess) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, func(), error) {
 	return r.OpenBridge(ctx, chatID, model)
 }
 

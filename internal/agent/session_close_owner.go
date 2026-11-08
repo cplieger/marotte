@@ -102,6 +102,8 @@ const (
 type askAnswer struct {
 	grant *closeGrant
 	done  <-chan struct{}
+	// release ends the open hold a door's askPending or askEnded answer took (openOrReload); nil on any other answer.
+	release func()
 	// startCloser is true only for the request that moved lc.closer from false to true; that caller starts it.
 	startCloser bool
 	verdict     askVerdict
@@ -148,12 +150,31 @@ func (lc *chatLifecycle) askCloseLocked(sb *sharedBridge, why closePurpose, open
 
 // openOrReload is a session door's one section on sb, its open entry: a close granted on sb, or a marked entry whose
 // door is still in progress, answers askClosing with the channel to wait on; a dead session's close, or the reload of
-// a marked entry while config.json reads (held false), is asked at the door with opener's exemption; anything else
-// answers askPending with nothing asked, and the door uses sb. dead is read
-// by the caller, since sb.mu is never taken under mu.
+// a marked entry while config.json reads (held false), is asked at the door with opener's exemption. When the door
+// uses sb (askPending, askEnded) the answer carries the open hold taken in this section, so no close is granted
+// between the decision and the caller's use. dead is read by the caller, since sb.mu is never taken under mu.
 func (lc *chatLifecycle) openOrReload(sb *sharedBridge, opener uint64, dead, held bool) askAnswer {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
+	a := lc.doorAskLocked(sb, opener, dead, held)
+	if a.verdict == askPending || a.verdict == askEnded {
+		a.release = lc.holdOpenLocked(opener)
+	}
+	return a
+}
+
+// holdOpenOn is the open hold of a door that keeps sb after its own close was refused: it waits on done when a close
+// was granted on sb meanwhile, since no hold is taken on a closing entry.
+func (lc *chatLifecycle) holdOpenOn(sb *sharedBridge, opener uint64) (release func(), done <-chan struct{}) {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if g := lc.closing; g != nil && g.sb == sb {
+		return nil, g.done
+	}
+	return lc.holdOpenLocked(opener), nil
+}
+
+func (lc *chatLifecycle) doorAskLocked(sb *sharedBridge, opener uint64, dead, held bool) askAnswer {
 	switch {
 	case lc.ended:
 		return askAnswer{verdict: askEnded}

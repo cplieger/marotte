@@ -206,7 +206,7 @@ func (d *effortDrift) bootOver(t *testing.T, store chatRecords) *Runtime {
 // chat's pick does (recordEffortSeed).
 func (d *effortDrift) firstSessionThenDrift(t *testing.T, h *Runtime) *sharedBridge {
 	t.Helper()
-	sb, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("first open: %v", err)
 	}
@@ -232,7 +232,7 @@ func crash(t *testing.T, h *Runtime) {
 
 func reopenSessionOpts(t *testing.T, h *Runtime) *marotte.SessionOpts {
 	t.Helper()
-	sb, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestEffortDrift_ThePromptRepairKeepsTheChatsLevel(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	sb := d.firstSessionThenDrift(t, h)
 
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
 
@@ -416,7 +416,7 @@ func TestEffortDrift_AResumedSessionKeepsItsOwnLevel(t *testing.T) {
 	}
 	br := fakeOf(h.coord.bridgeFor("c1"))
 	h.handleSessionUpdate(t.Context(), "c1", modelEffortFrame(t, "fake-model", "low"))
-	_, openErr := h.coord.openBridge(t.Context(), "c1", "")
+	_, openErr := h.coord.openReleased(t.Context(), "c1", "")
 	settleHeals(t, h)
 	if openErr != nil {
 		t.Fatalf("reopen: %v", openErr)
@@ -541,7 +541,7 @@ func TestApplyPendingModel_CapsTheSwitchLevelForThinkingOff(t *testing.T) {
 		c.EffortLevels = []marotte.SessionEffortLevel{{ID: "low"}, {ID: "medium"}, {ID: "max"}}
 		return true
 	})
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -641,7 +641,7 @@ func TestModelMove_TheOldModelsTierReachesNoLaterSession(t *testing.T) {
 			h.applyPendingModel(t.Context(), "c1")
 		},
 		"a live switch, then a failed load's replacement": func(t *testing.T, d *effortDrift, h *Runtime) {
-			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+			if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 				t.Fatalf("open: %v", err)
 			}
 			parkPick(t, d, "m-flat")
@@ -652,7 +652,7 @@ func TestModelMove_TheOldModelsTierReachesNoLaterSession(t *testing.T) {
 			d.mu.Unlock()
 		},
 		"KAS repinning to auto, then a refreshed session": func(t *testing.T, d *effortDrift, h *Runtime) {
-			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+			if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 				t.Fatalf("open: %v", err)
 			}
 			h.handleSessionUpdate(t.Context(), "c1", modelOnlyFrame(t, marotte.ModelAuto))

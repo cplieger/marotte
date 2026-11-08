@@ -131,14 +131,14 @@ func (b *recoveryBridges) closeBridgeOld(context.Context, marotte.ChatID, marott
 	b.closed++
 }
 
-func (b *recoveryBridges) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
+func (b *recoveryBridges) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, func(), error) {
 	if b.onOpen != nil {
 		b.onOpen()
 	}
 	if b.bridge == nil {
 		b.bridge = &recoveryBridge{}
 	}
-	return b.bridge, nil
+	return b.bridge, func() {}, nil
 }
 
 // recoveryBridge is a Bridge that grants the prompt slot and answers every call,
@@ -287,8 +287,8 @@ type orderedRetryBridges struct {
 	add func(string)
 }
 
-func (b *orderedRetryBridges) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
-	return &orderedRetryBridge{add: b.add}, nil
+func (b *orderedRetryBridges) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, func(), error) {
+	return &orderedRetryBridge{add: b.add}, func() {}, nil
 }
 
 type orderedRetryBridge struct {
@@ -372,11 +372,11 @@ func (*recoveryOutcome) AwaitNoClose(context.Context, marotte.ChatID) (bool, err
 	return false, nil
 }
 
-func (r *recoveryBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, error) {
+func (r *recoveryBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, func(), error) {
 	return r.OpenBridge(ctx, chatID, model)
 }
 
-func (r *orderedRetryBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, error) {
+func (r *orderedRetryBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, func(), error) {
 	return r.OpenBridge(ctx, chatID, model)
 }
 

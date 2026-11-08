@@ -83,7 +83,7 @@ type stampedOpens struct {
 	mu     sync.Mutex
 }
 
-func (b *stampedOpens) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, res Reservation) (Bridge, error) {
+func (b *stampedOpens) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, res Reservation) (Bridge, func(), error) {
 	b.mu.Lock()
 	b.stamps = append(b.stamps, res.Stamp)
 	b.mu.Unlock()

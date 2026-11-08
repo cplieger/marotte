@@ -123,7 +123,7 @@ func TestCloseTab_ABusyEngineAnswersAtOnceAndClosesTheSessionLater(t *testing.T)
 	logs := captureLogs(t)
 	h, _, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
 	gate := make(chan struct{})
@@ -199,7 +199,7 @@ func TestCloseTab_APromptWaitingOnItsDoorEndsCancelledAndOpensNoSecondDoor(t *te
 func TestCloseTab_ARunningTurnIsCancelledBeforeItsSessionCloses(t *testing.T) {
 	h, _, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
 	release := make(chan struct{})
@@ -243,7 +243,7 @@ func TestCloseTab_ARunningTurnIsCancelledBeforeItsSessionCloses(t *testing.T) {
 func TestCloseTab_AReopenDuringTheCancelWaitsForTheTeardown(t *testing.T) {
 	h, _, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
 	cancelGate := make(chan struct{})
@@ -302,7 +302,7 @@ func TestCloseTab_AReopenDuringTheCancelWaitsForTheTeardown(t *testing.T) {
 func TestCloseTab_AReopenDuringTheForgetsWaitsForThem(t *testing.T) {
 	h, _, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
 	next := newFakeBridge()
@@ -353,7 +353,7 @@ func TestCloseTab_AReopenDuringTheForgetsWaitsForThem(t *testing.T) {
 func TestCloseTab_APromptWaitingOnATeardownIsEndedByASecondClose(t *testing.T) {
 	h, _, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
 	cancelGate := make(chan struct{})
@@ -411,7 +411,7 @@ func TestCloseTab_APromptWaitingOnATeardownIsEndedByASecondClose(t *testing.T) {
 func TestCloseTab_TheTeardownReleasesItsSession(t *testing.T) {
 	h, _, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
 	gate := make(chan struct{})
@@ -474,7 +474,7 @@ func recordSessionID(t *testing.T, cs *testChatStore) string {
 func TestCloseTab_ALatePromptReplyAfterTheCloseMintsNothing(t *testing.T) {
 	h, _, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
 	release := holdPrompt(t, br)
@@ -502,7 +502,7 @@ func TestCloseTab_ALatePromptReplyAfterTheCloseMintsNothing(t *testing.T) {
 func TestCloseTab_ALatePromptReplyAfterAReopenLeavesTheNewTurnAlone(t *testing.T) {
 	h, _, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
 	releaseOld := holdPrompt(t, br)
@@ -550,7 +550,7 @@ func TestCloseTab_ALatePromptReplyAfterAReopenLeavesTheNewTurnAlone(t *testing.T
 func TestCloseTab_ADeleteDuringABackgroundCloseRunsAfterIt(t *testing.T) {
 	h, _, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
 	reached, release := parkTeardownAt(t, h, "forgotten")
@@ -588,7 +588,7 @@ func TestCloseTab_ADeleteDuringABackgroundCloseRunsAfterIt(t *testing.T) {
 func TestCloseTab_TheTeardownsOwnTurnCloseStartsNoTail(t *testing.T) {
 	h, cs, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
 	release := holdPrompt(t, br)
@@ -708,7 +708,7 @@ func TestOpenGeneration_ARefusedAttachEndsTheDoorBeforeItWrites(t *testing.T) {
 			})
 			opened := make(chan error, 1)
 			go func() {
-				_, err := h.coord.openBridge(context.Background(), "c1", "")
+				_, err := h.coord.openReleased(context.Background(), "c1", "")
 				opened <- err
 			}()
 			select {
@@ -743,7 +743,7 @@ func TestOpenGeneration_ARefusedAttachEndsTheDoorBeforeItWrites(t *testing.T) {
 func TestCloseTab_TheJobWaitsForEveryLeaseBeforeItsCancel(t *testing.T) {
 	h, cs, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
 	holdPrompt(t, br)
@@ -811,7 +811,7 @@ func TestEffortHeal_AfterTheCommitSendsNothing(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Setup: seed effort: %v", err)
 	}
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
 	reached, release := parkTeardownAt(t, h, "begun")
@@ -844,7 +844,7 @@ func TestRunVerb_ACloseLeavesTheResidentSessionToTheRunUntilItsRelease(t *testin
 	t.Cleanup(func() { shutdownHub(t, h) })
 	chat := newFakeBridge()
 	fakeSourceOf(t, h).setFactory(func() engineSession { return chat })
-	sb, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
@@ -896,7 +896,7 @@ func TestRunVerb_ACloseLeavesTheResidentSessionToTheRunUntilItsRelease(t *testin
 func TestCloseTab_APromptBetweenStartTurnAndItsSendEndsCancelled(t *testing.T) {
 	h, _, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
 	atGate, resume := make(chan struct{}), make(chan struct{})

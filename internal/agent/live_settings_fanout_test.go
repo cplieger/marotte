@@ -35,7 +35,7 @@ func TestSyncProcessLive_TogglesReadBeforeAHandEditCannotLandAfterTheOpenThatRea
 		rewriteConfigByHand(t, configDir, `{"notify_pr_status":false}`)
 		opened := make(chan error, 1)
 		go func() {
-			_, err := h.coord.openBridge(t.Context(), "c1", "")
+			_, err := h.coord.openReleased(t.Context(), "c1", "")
 			opened <- err
 		}()
 		synctest.Wait()

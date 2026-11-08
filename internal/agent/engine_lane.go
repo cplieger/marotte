@@ -184,7 +184,8 @@ func (rt *Runtime) hostPeerTarget(h engineHandle, msg *marotte.RPCResponse) bool
 func (rt *Runtime) residePeerTarget(h engineHandle, session marotte.SessionID) {
 	ctx, cancel := rt.lifecycle.derivedContext()
 	defer cancel()
-	chatID, sb, err := rt.peerTargetChat(ctx, session)
+	chatID, sb, release, err := rt.peerTargetChat(ctx, session)
+	defer release()
 	if err != nil {
 		slog.Warn("engine: a chat another chat messaged could not be opened, so the turn the message woke is not shown",
 			"session_id", logsafe.Field(string(session)), "error", err)
@@ -205,19 +206,22 @@ func (rt *Runtime) residePeerTarget(h engineHandle, session marotte.SessionID) {
 
 // peerTargetChat opens the chat whose record names session, which must come up on that session: openBridge can
 // fall back to a new one, and a chat that moved past it no longer owns the woken turn.
-func (rt *Runtime) peerTargetChat(ctx context.Context, session marotte.SessionID) (marotte.ChatID, *sharedBridge, error) {
-	chatID, _ := rt.runs.chatForSession(ctx, string(session))
+func (rt *Runtime) peerTargetChat(
+	ctx context.Context, session marotte.SessionID,
+) (chatID marotte.ChatID, sb *sharedBridge, release func(), err error) {
+	chatID, _ = rt.runs.chatForSession(ctx, string(session))
 	if chatID == "" {
-		return "", nil, errPeerTargetUnknown
+		return "", nil, func() {}, errPeerTargetUnknown
 	}
-	sb, err := rt.coord.openBridge(ctx, chatID, "")
+	sb, release, err = rt.coord.openBridge(ctx, chatID, "")
 	if err != nil {
-		return "", nil, err
+		return "", nil, release, err
 	}
 	if got := sb.SessionID(); got != session {
-		return "", nil, fmt.Errorf("%w: chat %s opened on session %s", errPeerTargetMoved, chatID, got)
+		release()
+		return "", nil, func() {}, fmt.Errorf("%w: chat %s opened on session %s", errPeerTargetMoved, chatID, got)
 	}
-	return chatID, sb, nil
+	return chatID, sb, release, nil
 }
 
 var (
@@ -329,7 +333,8 @@ func respondHostCallback(ctx context.Context, origin acpResponder, id int64, res
 func (rt *Runtime) heldStepRequest(h engineHandle, workflowID string, msg *marotte.RPCResponse) {
 	ctx, cancel := rt.lifecycle.derivedContext()
 	defer cancel()
-	host, err := rt.runs.ensureResident(ctx, workflowID)
+	host, release, err := rt.runs.ensureResident(ctx, workflowID)
+	defer release()
 	if err != nil {
 		slog.Warn("engine: a resumed run's launching session could not be made resident to answer its step",
 			"workflow_id", workflowID, "method", msg.Method, "error", err)

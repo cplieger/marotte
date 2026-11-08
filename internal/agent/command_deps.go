@@ -23,22 +23,24 @@ func (b bridgeRole) Bridge(chatID marotte.ChatID) command.Bridge {
 	return sb
 }
 
-// OpenBridge ensures a bridge exists for the chat (typed-nil checked).
-func (b bridgeRole) OpenBridge(ctx context.Context, chatID marotte.ChatID, model string) (command.Bridge, error) {
-	sb, err := b.coord.openBridge(ctx, chatID, model)
+// OpenBridge ensures a bridge exists for the chat (typed-nil checked), with the caller's open hold on it.
+func (b bridgeRole) OpenBridge(ctx context.Context, chatID marotte.ChatID, model string) (command.Bridge, func(), error) {
+	sb, release, err := b.coord.openBridge(ctx, chatID, model)
 	if err != nil || sb == nil {
-		return nil, err
+		return nil, release, err
 	}
-	return sb, nil
+	return sb, release, nil
 }
 
 // OpenBridgeAt is OpenBridge for the holder of res.
-func (b bridgeRole) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, res command.Reservation) (command.Bridge, error) {
-	sb, err := b.coord.openBridgeAt(ctx, chatID, model, res)
+func (b bridgeRole) OpenBridgeAt(
+	ctx context.Context, chatID marotte.ChatID, model string, res command.Reservation,
+) (command.Bridge, func(), error) {
+	sb, release, err := b.coord.openBridgeAt(ctx, chatID, model, res)
 	if err != nil || sb == nil {
-		return nil, err
+		return nil, release, err
 	}
-	return sb, nil
+	return sb, release, nil
 }
 
 // RefreshForRetry abandons the empty turn's session as one lease on its entry (bridgeCoordinator.refreshForRetry).

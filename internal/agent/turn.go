@@ -233,7 +233,10 @@ type turnRegistry struct {
 	// closerHook runs in a chat's closer once it took a grant, before its re-check; nil in production, set as
 	// claimHook is.
 	closerHook func(marotte.ChatID)
-	epochs     atomic.Uint64
+	// openReleaseHook runs at the top of an open hold's release func, with the door's opener token; nil in
+	// production, set as claimHook is.
+	openReleaseHook func(chatID marotte.ChatID, opener uint64)
+	epochs          atomic.Uint64
 	// admissions mints reservation tokens registry-wide, so a release clears its own slot and no later life's.
 	admissions atomic.Uint64
 	// tailSeq mints close-tail tokens registry-wide, so a token never names another life's tail.

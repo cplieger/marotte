@@ -51,7 +51,7 @@ func newOwnerHub(t *testing.T, tabbed bool) *ownerHub {
 			t.Fatalf("Setup: open c1's tab: %v", err)
 		}
 	}
-	sb, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("Setup: OpenBridge(c1): %v", err)
 	}
@@ -72,7 +72,7 @@ func (o *ownerHub) closed() bool {
 // current settings, in that one call.
 func (o *ownerHub) reloadsInline(t *testing.T) *sharedBridge {
 	t.Helper()
-	next, err := o.h.coord.openBridge(t.Context(), "c1", "")
+	next, err := o.h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("the next OpenBridge(c1): %v", err)
 	}
@@ -123,7 +123,7 @@ func openAsync(t *testing.T, h *Runtime) <-chan openResult {
 	t.Helper()
 	got := make(chan openResult, 1)
 	go func() {
-		sb, err := h.coord.openBridge(t.Context(), "c1", "")
+		sb, err := h.coord.openReleased(t.Context(), "c1", "")
 		got <- openResult{sb: sb, err: err}
 	}()
 	return got
@@ -269,7 +269,7 @@ func TestCloseOwner_ReloadWaitsForAWireTurnBesideTheOpenersPrompt(t *testing.T) 
 
 		got := make(chan openResult, 1)
 		go func() {
-			sb, err := o.h.coord.openBridgeAt(t.Context(), "c1", "", res)
+			sb, err := o.h.coord.openAtReleased(t.Context(), "c1", "", res)
 			got <- openResult{sb: sb, err: err}
 		}()
 		o.openReturnsCurrent(t, got, "a wire turn runs beside the opener's unsent prompt")
@@ -355,14 +355,19 @@ func TestCloseOwner_QueuedReloadIgnoresTheOpenersExemption(t *testing.T) {
 		t.Cleanup(release)
 		o.h.coord.turns.noteKASActivity("c1", true)
 
-		got := make(chan openResult, 1)
-		go func() {
-			sb, err := o.h.coord.openBridgeAt(t.Context(), "c1", "", res)
-			got <- openResult{sb: sb, err: err}
-		}()
-		o.openReturnsCurrent(t, got, "KAS reports a run")
+		sb, door, err := o.h.coord.openBridgeAt(t.Context(), "c1", "", res)
+		t.Cleanup(door)
+		if err != nil || sb != o.sb || !o.keptOpen() {
+			t.Fatalf("an open while KAS reports a run = (same entry %v, %v), session kept %v; want the current session",
+				sb == o.sb, err, o.keptOpen())
+		}
 
 		o.h.coord.turns.noteKASActivity("c1", false)
+		synctest.Wait()
+		if !o.keptOpen() {
+			t.Fatal("the pending reload closed the session under the opener's open hold and reservation")
+		}
+		door()
 		synctest.Wait()
 		if !o.keptOpen() {
 			t.Fatal("the pending reload closed the session under the opener's own reservation")
@@ -397,7 +402,7 @@ func TestCloseOwner_ReloadWaitsForAHostedStep(t *testing.T) {
 		if !o.closed() {
 			t.Error("the step's close left the pending reload of a tabless chat unrun")
 		}
-		if next, err := o.h.coord.openBridge(t.Context(), "c1", ""); err != nil || next == o.sb {
+		if next, err := o.h.coord.openReleased(t.Context(), "c1", ""); err != nil || next == o.sb {
 			t.Errorf("the next open = (same entry %v, %v), want a new session", next == o.sb, err)
 		}
 	})
@@ -563,7 +568,7 @@ func TestCloseOwner_TwoReleaseAsksWhileTheTailIsHeldCloseOnce(t *testing.T) {
 		if !o.closed() {
 			t.Error("the two release asks left the session open")
 		}
-		if next, err := o.h.coord.openBridge(t.Context(), "c1", ""); err != nil || next == o.sb {
+		if next, err := o.h.coord.openReleased(t.Context(), "c1", ""); err != nil || next == o.sb {
 			t.Errorf("a later open = (same entry %v, %v), want a new session", next == o.sb, err)
 		}
 	})
@@ -572,7 +577,8 @@ func TestCloseOwner_TwoReleaseAsksWhileTheTailIsHeldCloseOnce(t *testing.T) {
 func TestCloseOwner_OpenBridgeHoldsTheSessionUntilReleased(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
-		sb, err := o.h.coord.openBridge(t.Context(), "c1", "")
+		sb, release, err := o.h.coord.openBridge(t.Context(), "c1", "")
+		t.Cleanup(release)
 		if err != nil || sb != o.sb {
 			t.Fatalf("Setup: OpenBridge(c1) = (same entry %v, %v)", sb == o.sb, err)
 		}
@@ -586,7 +592,45 @@ func TestCloseOwner_OpenBridgeHoldsTheSessionUntilReleased(t *testing.T) {
 			t.Errorf("the opener's call = %v, want it answered", err)
 		}
 		if !o.keptOpen() {
-			t.Error("a release closed the session between its open and the opener's call")
+			t.Fatal("a release closed the session between its open and the opener's call")
+		}
+		release()
+		synctest.Wait()
+		if !o.closed() {
+			t.Error("the opener's release left the pending release unrun")
+		}
+	})
+}
+
+func TestCloseOwner_LeaseEndAloneDoesNotCloseAnOpenedBridge(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		o := newOwnerHub(t, false)
+		if _, err := o.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Effort = "max"; return true }); err != nil {
+			t.Fatalf("Setup: give c1 an effort: %v", err)
+		}
+		o.h.coord.turns.noteKASActivity("c1", true)
+		o.h.coord.releaseIfUnheld("c1")
+		// KAS goes idle inside the open's effort repair, so its lease is the last hold to end before the open returns.
+		o.br.mu.Lock()
+		o.br.onEnsureEffort = func() { o.h.coord.turns.noteKASActivity("c1", false) }
+		o.br.mu.Unlock()
+
+		sb, release, err := o.h.coord.openBridge(t.Context(), "c1", "")
+		t.Cleanup(release)
+		if err != nil || sb != o.sb {
+			t.Fatalf("OpenBridge(c1) = (same entry %v, %v), want the current session", sb == o.sb, err)
+		}
+		if got := o.br.lastEffort(); got != "max" {
+			t.Fatalf("Setup: the open's effort repair = %q, want it to run", got)
+		}
+		synctest.Wait()
+		if _, err := sb.Call(t.Context(), "test/after-open", nil); err != nil || !o.keptOpen() {
+			t.Fatalf("the opener's call = %v, session kept %v; want it answered on the open session", err, o.keptOpen())
+		}
+		release()
+		synctest.Wait()
+		if !o.closed() {
+			t.Error("the opener's release left the pending release unrun")
 		}
 	})
 }
@@ -630,15 +674,36 @@ func TestCloseOwner_OpenDuringAGrantedCloseGetsAFreshSession(t *testing.T) {
 
 func TestCloseOwner_DrainedPromptReloadsBeforeTheTailEnds(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		pendingFirst bool
+		name            string
+		pendingFirst    bool
+		heldPredecessor bool
 	}{
 		{name: "the mark alone"},
 		{name: "with a reload already pending", pendingFirst: true},
+		{name: "the predecessor is held after its reservation release", heldPredecessor: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				o := newOwnerHub(t, true)
+				// drainedOnNew reports that the drained prompt reached a session its door loaded again.
+				drainedOnNew := func() bool {
+					cur := o.h.bridge.mgr.get("c1")
+					return cur != nil && cur != o.sb && slices.Contains(fakeOf(cur).callLog(), marotte.MethodPrompt)
+				}
+				var heldPast atomic.Bool
+				if tc.heldPredecessor {
+					// A prompt door's release func waits until the drained prompt ran, so the running prompt's goroutine
+					// stays past its reservation release with its deferred release func not yet run.
+					o.h.coord.turns.openReleaseHook = func(_ marotte.ChatID, opener uint64) {
+						if opener == 0 || drainedOnNew() {
+							return
+						}
+						heldPast.Store(true)
+						for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline) && !drainedOnNew(); {
+							time.Sleep(time.Millisecond)
+						}
+					}
+				}
 				gate := make(chan struct{})
 				release := once(func() { close(gate) })
 				t.Cleanup(release)
@@ -688,6 +753,9 @@ func TestCloseOwner_DrainedPromptReloadsBeforeTheTailEnds(t *testing.T) {
 				if rows := queuedRows(t, o.cs, "c1"); len(rows) != 0 {
 					t.Errorf("queued rows = %v, want the drained one gone", rows)
 				}
+				if tc.heldPredecessor && !heldPast.Load() {
+					t.Error("Setup: no prompt's release func ran before the drained prompt did")
+				}
 			})
 		})
 	}
@@ -709,7 +777,7 @@ func TestCloseOwner_PendingReloadClosesAndTheNextOpenLoads(t *testing.T) {
 		if !o.keptOpen() {
 			t.Fatal("the pending reload closed the session of a chat with a live run it launched")
 		}
-		if _, err := o.h.runs.ensureResident(t.Context(), "wf_1"); err != nil {
+		if _, err := o.h.runs.residentReleased(t.Context(), "wf_1"); err != nil {
 			t.Fatalf("ensureResident(wf_1): %v", err)
 		}
 		next := o.h.bridge.mgr.get("c1")
@@ -738,7 +806,7 @@ func TestCloseOwner_PendingReloadClosesAndTheNextOpenLoads(t *testing.T) {
 			if !o.closed() {
 				t.Fatal("KAS's idle report left the pending reload of a tabless chat unrun, or it loaded a session")
 			}
-			next, err := o.h.coord.openBridge(t.Context(), "c1", "")
+			next, err := o.h.coord.openReleased(t.Context(), "c1", "")
 			if err != nil || next == o.sb {
 				t.Fatalf("the next open = (same entry %v, %v), want a new session", next == o.sb, err)
 			}
@@ -1092,6 +1160,26 @@ var closeHoldRows = []holdRow{
 		o.sb.mu.Unlock()
 		return once(func() { o.sb.setIdle(); done() })
 	}},
+	{name: "an open its caller still uses", kind: holdOpen, acquire: func(t *testing.T, o *ownerHub) func() {
+		sb, release, err := o.h.coord.openBridge(t.Context(), "c1", "")
+		t.Cleanup(release)
+		if err != nil || sb != o.sb {
+			t.Fatalf("Setup: OpenBridge(c1) = (same entry %v, %v)", sb == o.sb, err)
+		}
+		return once(release)
+	}},
+	{name: "a prompt door's open, ended by its reservation", kind: holdOpen, acquire: func(t *testing.T, o *ownerHub) func() {
+		res, ok := o.h.coord.turns.tryReserve("c1", marotte.TurnSourcePrompt, o.h.coord.LifeStamp())
+		if !ok {
+			t.Fatal("Setup: the prompt's reservation was refused on an idle chat")
+		}
+		sb, door, err := o.h.coord.openBridgeAt(t.Context(), "c1", "", res)
+		t.Cleanup(door)
+		if err != nil || sb != o.sb {
+			t.Fatalf("Setup: OpenBridgeAt(c1) = (same entry %v, %v)", sb == o.sb, err)
+		}
+		return once(func() { o.h.coord.turns.releaseReservation(res) })
+	}},
 	{name: "a run step the session hosts", kind: holdStep, acquire: func(t *testing.T, o *ownerHub) func() {
 		return hostStepOn(t, o.h, "sess-step")
 	}},
@@ -1129,9 +1217,10 @@ func TestCloseOwner_EachHoldRefusesThenReleases(t *testing.T) {
 			t.Run("reload", func(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
 					o := newOwnerHub(t, true)
-					o.h.markSessionsForReload("test")
+					// Marked after the hold: an open the row takes is itself a door, which reloads a marked chat.
 					release := row.acquire(t, o)
 					t.Cleanup(release)
+					o.h.markSessionsForReload("test")
 
 					if row.doorWaits {
 						got := openAsync(t, o.h)
@@ -1782,7 +1871,7 @@ func TestCloseOwner_TheRunEndKeepsATabbedParentResident(t *testing.T) {
 		if !slices.Contains(textsOf(t, logOf(t, cs, "c1")), "Run finished.") {
 			t.Error("the wake turn's text is not in the chat's log")
 		}
-		next, err := h.coord.openBridge(t.Context(), "c1", "")
+		next, err := h.coord.openReleased(t.Context(), "c1", "")
 		if err != nil || next == sb || chat.Open() {
 			t.Errorf("the next open = (same entry %v, %v), first session open %v; want it closed and a new generation", next == sb, err, chat.Open())
 		}
@@ -1834,7 +1923,7 @@ func TestCloseOwner_AReleaseAskedDuringTheNextDoorRunsOnTheCloser(t *testing.T) 
 		if !o.closed() {
 			t.Fatal("Setup: the pending reload of a tabless chat did not close it")
 		}
-		next, err := o.h.coord.openBridge(t.Context(), "c1", "")
+		next, err := o.h.coord.openReleased(t.Context(), "c1", "")
 		if err != nil || next == o.sb {
 			t.Fatalf("Setup: the next open = (same entry %v, %v)", next == o.sb, err)
 		}
@@ -1907,7 +1996,7 @@ func TestCloseOwner_AStaleReleaseGrantMovesToTheCurrentEntry(t *testing.T) {
 		if o.h.bridge.mgr.get("c1") != nil {
 			t.Fatal("Setup: the session that ended on its own kept its entry")
 		}
-		next, err := o.h.coord.openBridge(t.Context(), "c1", "")
+		next, err := o.h.coord.openReleased(t.Context(), "c1", "")
 		if err != nil || next == o.sb {
 			t.Fatalf("Setup: the next open = (same entry %v, %v)", next == o.sb, err)
 		}
@@ -1935,7 +2024,7 @@ func TestCloseOwner_AStepOpenedBeforeTheChatsFirstDoorHolds(t *testing.T) {
 		if _, _, err := o.h.runs.log.open(t.Context(), &translate.RunStep{RunID: "wf-c2", NodePath: "wf-c2/step", SessionID: "sess-step"}, "c2"); err != nil {
 			t.Fatalf("Setup: open the hosted step turn: %v", err)
 		}
-		sb, err := o.h.coord.openBridge(t.Context(), "c2", "")
+		sb, err := o.h.coord.openReleased(t.Context(), "c2", "")
 		if err != nil {
 			t.Fatalf("Setup: OpenBridge(c2): %v", err)
 		}
@@ -1978,5 +2067,160 @@ func TestCloseOwner_EveryAcquireReleasesOnError(t *testing.T) {
 				t.Error("a later release ask found the refused start still owed")
 			}
 		})
+	})
+	for _, tc := range []struct {
+		// fail drives one acquire site into an error after its open, answering how many open holds it took.
+		fail func(t *testing.T, o *ownerHub) (opens int)
+		name string
+	}{
+		{name: "a run host on a chat open on another session", fail: func(t *testing.T, o *ownerHub) int {
+			o.h.runs.grantLease(t.Context(), "wf_1", "fix", launchOrigin{origin: runlease.OriginAgent, chatID: "c1"}, hostSec())
+			o.h.runs.recordParentSession(t.Context(), "wf_1", "sess-other")
+			_, release, err := o.h.runs.ensureResident(t.Context(), "wf_1")
+			defer release()
+			if !errors.Is(err, errLaunchSessionUnavailable) {
+				t.Errorf("ensureResident = %v, want %v", err, errLaunchSessionUnavailable)
+			}
+			return 1
+		}},
+		{name: "a peer's target chat open on another session", fail: func(t *testing.T, o *ownerHub) int {
+			if _, err := o.cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.ACPSessionID = "sess-old"; return true }); err != nil {
+				t.Fatalf("Setup: record c1 on another session: %v", err)
+			}
+			_, _, release, err := o.h.peerTargetChat(t.Context(), "sess-old")
+			defer release()
+			if !errors.Is(err, errPeerTargetMoved) {
+				t.Errorf("peerTargetChat = %v, want %v", err, errPeerTargetMoved)
+			}
+			return 1
+		}},
+		{name: "a notice to the launching agent that fails", fail: func(t *testing.T, o *ownerHub) int {
+			o.launchRun(t, "wf_1")
+			o.br.setCallErr(marotte.MethodSessionSteer, errors.New("broken pipe"))
+			o.h.runs.tellLaunchingAgent(t.Context(), "wf_1", "c1", "test", "hello")
+			if !slices.Contains(o.br.callLog(), marotte.MethodSessionSteer) {
+				t.Error("Setup: the notice never reached the launching session")
+			}
+			return 1
+		}},
+		{name: "the boot pass over two chat-parented runs", fail: func(t *testing.T, o *ownerHub) int {
+			o.launchRun(t, "wf_1")
+			o.launchRun(t, "wf_2")
+			o.h.runs.askBootPass(t.Context())
+			return 2
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				o := newOwnerHub(t, false)
+				var released atomic.Int32
+				o.h.coord.turns.openReleaseHook = func(chatID marotte.ChatID, _ uint64) {
+					if chatID == "c1" {
+						released.Add(1)
+					}
+				}
+				opens := tc.fail(t, o)
+				synctest.Wait()
+
+				if got := released.Load(); got != int32(opens) {
+					t.Errorf("open holds released = %d, want %d", got, opens)
+				}
+				o.assertNoHolds(t, "c1")
+				for _, l := range o.h.runs.leaseStore().List() {
+					if err := o.h.runs.leaseStore().Release(t.Context(), l.WorkflowID); err != nil {
+						t.Fatalf("drop the lease %s: %v", l.WorkflowID, err)
+					}
+				}
+				o.h.coord.releaseIfUnheld("c1")
+				synctest.Wait()
+				if !o.closed() {
+					t.Error("a release ask after the failed acquire left the session open")
+				}
+			})
+		})
+	}
+	t.Run("a turn whose close tail the runtime refuses to start", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			o := newOwnerHub(t, false)
+			o.h.lifecycle.draining.Store(true)
+			send(t, o.h, newTurnStartMsg(), newTurnEndMsg("end_turn"))
+			synctest.Wait()
+			o.h.lifecycle.draining.Store(false)
+			o.assertNoHolds(t, "c1")
+		})
+	})
+	t.Run("a door whose generation fails", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			o := newOwnerHub(t, false)
+			sb, release, err := o.h.coord.openBridge(t.Context(), "c-missing", "")
+			defer release()
+			if err == nil || sb != nil {
+				t.Fatalf("OpenBridge(c-missing) = (%v, %v), want the door's failure", sb, err)
+			}
+			synctest.Wait()
+			o.assertNoHolds(t, "c-missing")
+		})
+	})
+}
+
+// assertNoHolds fails when chatID's life still counts a hold or work an acquire took.
+func (o *ownerHub) assertNoHolds(t *testing.T, chatID marotte.ChatID) {
+	t.Helper()
+	lc, ok := o.h.coord.turns.lookup(chatID)
+	if !ok {
+		return
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if len(lc.opens) != 0 || len(lc.tails) != 0 || lc.work[workDoor] != 0 || lc.work[workSession] != 0 ||
+		lc.work[workTail] != 0 || lc.blockerLocked(0) != holdKinds {
+		t.Errorf("%s holds after the failed acquire: %d opens, %d tails, work %v, blocker %d; want none",
+			chatID, len(lc.opens), len(lc.tails), lc.work, lc.blockerLocked(0))
+	}
+}
+
+func TestCloseOwner_TeardownEndsWithAnOpenHoldHeld(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		o := newOwnerHub(t, false)
+		_, withheld, err := o.h.coord.openBridge(t.Context(), "c1", "")
+		if err != nil {
+			t.Fatalf("Setup: OpenBridge(c1): %v", err)
+		}
+		o.h.coord.releaseIfUnheld("c1")
+		synctest.Wait()
+		if !o.keptOpen() {
+			t.Fatal("Setup: the release closed the session under the caller's open hold")
+		}
+		lc := lifecycleOf(t, o.h, "c1")
+		var mu sync.Mutex
+		var steps []string
+		setTeardownHook(t, o.h, func(step string) {
+			mu.Lock()
+			steps = append(steps, step)
+			mu.Unlock()
+		})
+
+		o.h.cleanupChatState(t.Context(), "c1")
+		synctest.Wait()
+
+		mu.Lock()
+		reached := slices.Contains(steps, "forgotten")
+		mu.Unlock()
+		if !reached {
+			t.Fatalf("teardown steps = %v, want it past its wait for the life's work", steps)
+		}
+		lc.mu.Lock()
+		opens, closer, closers := len(lc.opens), lc.closer, lc.work[workCloser]
+		lc.mu.Unlock()
+		if opens != 0 || closer || closers != 0 {
+			t.Errorf("after the life's end: %d opens, closer %v, %d closers; want none", opens, closer, closers)
+		}
+		withheld()
+		lc.mu.Lock()
+		opens = len(lc.opens)
+		lc.mu.Unlock()
+		if opens != 0 {
+			t.Errorf("the withheld release after the life's end left %d opens", opens)
+		}
 	})
 }

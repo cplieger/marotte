@@ -30,7 +30,7 @@ func switchFixtureOver(t *testing.T, over func(*testChatStore) chatRecords) (*ef
 	h := d.bootOver(t, over(d.cs))
 	t.Cleanup(func() { shutdownHub(t, h) })
 	finishedTurn(t, h, "c1")
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	h.coord.catalog.SetModels([]marotte.SessionModel{
@@ -614,7 +614,7 @@ func TestSwitchModel_ASwitchByRestartCarriesTheChatsLevel(t *testing.T) {
 		t.Fatalf("seed the level: %v", err)
 	}
 
-	sb, err := h.coord.openBridge(t.Context(), "c1", "opus")
+	sb, err := h.coord.openReleased(t.Context(), "c1", "opus")
 	if err != nil {
 		t.Fatalf("open on opus: %v", err)
 	}

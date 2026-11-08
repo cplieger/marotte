@@ -190,56 +190,64 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 }
 
 // openBridge returns chatID's session once its generation is ready (sessionSettle), opening one when
-// none is registered. The door runs under the runtime's lifetime, since a cancelled one would detach
-// the chat's session; ctx bounds only this caller's wait. A failed generation answers its failure and
-// is already gone, so the next call opens a fresh one. Before it returns it sends the engine each
-// live setting it has not confirmed, waiting no later than ignorePushTimeout after the call.
-func (bc *bridgeCoordinator) openBridge(ctx context.Context, chatID marotte.ChatID, modelOverride string) (*sharedBridge, error) {
+// none is registered, with the caller's open hold on it: no close of the session is granted until release runs.
+// release is never nil (a no-op on an error), so the caller defers it before the error check. The door runs under
+// the runtime's lifetime, since a cancelled one would detach the chat's session; ctx bounds only this caller's wait.
+// A failed generation answers its failure and is already gone, so the next call opens a fresh one. Before it returns
+// it sends the engine each live setting it has not confirmed, waiting no later than ignorePushTimeout after the call.
+func (bc *bridgeCoordinator) openBridge(ctx context.Context, chatID marotte.ChatID, modelOverride string) (*sharedBridge, func(), error) {
 	return bc.openBridgeAt(ctx, chatID, modelOverride, command.Reservation{Chat: chatID, Stamp: bc.turns.gates.stamp()})
 }
 
 // openBridgeAt is openBridge for the holder of res, a prompt's reservation: its intent began at res.Stamp, so a close
 // committed since then answers marotte.ErrChatClosedDuringCall and a held one is waited out, and its own admission and
-// unsent turn do not keep a marked session from reloading at this door (res.Token; 0 for a non-prompt door).
-func (bc *bridgeCoordinator) openBridgeAt(ctx context.Context, chatID marotte.ChatID, modelOverride string, res command.Reservation) (*sharedBridge, error) {
+// unsent turn do not keep a marked session from reloading at this door (res.Token; 0 for a non-prompt door). The open
+// hold also ends with res's release (releaseReservation).
+func (bc *bridgeCoordinator) openBridgeAt(
+	ctx context.Context, chatID marotte.ChatID, modelOverride string, res command.Reservation,
+) (*sharedBridge, func(), error) {
 	syncBy := time.Now().Add(ignorePushTimeout)
-	sb, err := bc.openBridgeBy(ctx, chatID, modelOverride, syncBy, res)
+	sb, release, err := bc.openBridgeBy(ctx, chatID, modelOverride, syncBy, res)
 	if err != nil {
-		return nil, err
+		return nil, func() {}, err
+	}
+	if hook := bc.turns.openReleaseHook; hook != nil {
+		held := release
+		release = func() { hook(chatID, res.Token); held() }
 	}
 	syncCtx, cancel := context.WithDeadline(ctx, syncBy)
 	bc.syncLive(syncCtx)
 	cancel()
-	return sb, nil
+	return sb, release, nil
 }
 
 // openBridgeBy creates the chat's life before its door generation, which runs as the life's work on the life's
 // context, so a close ends a door still waiting on kiro-cli.
 func (bc *bridgeCoordinator) openBridgeBy(
 	ctx context.Context, chatID marotte.ChatID, modelOverride string, syncBy time.Time, res command.Reservation,
-) (*sharedBridge, error) {
+) (*sharedBridge, func(), error) {
 	bc.reconcileSessions(ctx, syncBy)
 	for {
 		sb, existed, err := bc.generationAt(ctx, chatID, modelOverride, res.Stamp)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if sb == nil {
 			continue
 		}
 		err = sb.settled.wait(ctx)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		reopen, err := bc.reloadIfMarked(ctx, chatID, sb, res.Token)
+		release, reopen, err := bc.reloadIfMarked(ctx, chatID, sb, res.Token)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if !reopen {
 			if existed {
 				bc.repairEffort(ctx, chatID, sb)
 			}
-			return sb, nil
+			return sb, release, nil
 		}
 	}
 }
@@ -280,36 +288,34 @@ func (bc *bridgeCoordinator) generationAt(
 	return sb, false, nil
 }
 
-// reloadIfMarked is the door's close decision on sb, its open entry (chatLifecycle.openOrReload), and reports whether
-// the caller must open the next generation. A close granted on sb is waited out, so no open hands out a session being
-// closed. A dead session, or a marked one that no hold refuses but the opener's own (opener is its reservation token),
-// closes here, so this open loads the next generation with the current door settings; a reload a hold refuses stays
-// pending and the door uses sb. A refused close keeps the session and its mark; an unconfirmed one fails this open.
-// The close is a lease, so the chat's close refuses it or cuts it and this open fails with that error.
-func (bc *bridgeCoordinator) reloadIfMarked(ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, opener uint64) (reopen bool, err error) {
+// reloadIfMarked is the door's close decision on sb, its open entry (chatLifecycle.openOrReload). It answers the
+// caller's open hold on sb, or reopen when the caller must open the next generation. A close granted on sb is waited
+// out, so no open hands out a session being closed. A dead session, or a marked one that no hold refuses but the
+// opener's own (opener is its reservation token), closes here, so this open loads the next generation with the
+// current door settings; a reload a hold refuses stays pending and the door uses sb. A refused close keeps the
+// session and its mark; an unconfirmed one fails this open. The close is a lease, so the chat's close refuses it or
+// cuts it and this open fails with that error.
+func (bc *bridgeCoordinator) reloadIfMarked(
+	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, opener uint64,
+) (release func(), reopen bool, err error) {
 	lc, ok := bc.turns.closeOwner(chatID, sb)
 	if !ok {
-		return false, nil
+		return func() {}, false, nil
 	}
 	if bc.bridge.mgr.get(chatID) != sb {
-		return true, nil
+		return nil, true, nil
 	}
 	a := lc.openOrReload(sb, opener, !sb.open(), bc.configHeld())
 	switch a.verdict {
 	case askClosing:
-		select {
-		case <-a.done:
-			return true, nil
-		case <-ctx.Done():
-			return false, ctx.Err()
-		}
+		return nil, true, awaitDone(ctx, a.done)
 	case askPending:
 		if a.startCloser {
 			bc.startCloser(chatID, lc)
 		}
-		return false, nil
+		return a.release, false, nil
 	case askEnded:
-		return false, nil
+		return a.release, false, nil
 	case askGranted:
 	}
 	g := a.grant
@@ -317,7 +323,7 @@ func (bc *bridgeCoordinator) reloadIfMarked(ctx context.Context, chatID marotte.
 	if g.why&closeDead != 0 {
 		bc.endDoorClose(chatID, lc, g, true)
 		bc.goCloseHeldSessionTurns(chatID, exit)
-		return true, nil
+		return nil, true, nil
 	}
 	stillOpen := false
 	closeErr := lc.useClosing(ctx, g, func(ctx context.Context, s engineSession) error {
@@ -328,24 +334,38 @@ func (bc *bridgeCoordinator) reloadIfMarked(ctx context.Context, chatID marotte.
 	switch {
 	case errors.Is(closeErr, marotte.ErrChatClosedDuringCall):
 		bc.endDoorClose(chatID, lc, g, !stillOpen)
-		return false, closeErr
+		return nil, false, closeErr
 	case closeErr == nil:
 		bc.endDoorClose(chatID, lc, g, true)
 		bc.closeHeldSessionTurns(ctx, chatID, exit)
 		slog.Info("chat session closed for its reload", "chat_id", chatID, "session_id", sb.SessionID())
-		return true, nil
+		return nil, true, nil
 	case stillOpen:
 		bc.endDoorClose(chatID, lc, g, false)
 		slog.Warn("a chat's session refused its reload; it keeps its current settings until the next message",
 			"chat_id", chatID, "error", closeErr)
-		return false, nil
+		release, done := lc.holdOpenOn(sb, opener)
+		if done != nil {
+			return nil, true, awaitDone(ctx, done)
+		}
+		return release, false, nil
 	}
 	bc.endDoorClose(chatID, lc, g, true)
 	bc.closeHeldSessionTurns(ctx, chatID, exit)
 	if errors.Is(closeErr, marotte.ErrSessionClosing) {
-		return false, closeErr
+		return nil, false, closeErr
 	}
-	return false, fmt.Errorf("%w: %w", marotte.ErrSessionClosing, closeErr)
+	return nil, false, fmt.Errorf("%w: %w", marotte.ErrSessionClosing, closeErr)
+}
+
+// awaitDone waits for a granted close's done, answering ctx's error when the caller stops waiting first.
+func awaitDone(ctx context.Context, done <-chan struct{}) error {
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // endDoorClose ends a door's own grant g: a closed session's entry leaves the registry before the grant ends, so an
@@ -506,7 +526,8 @@ func (bc *bridgeCoordinator) closeHeldSessionTurns(ctx context.Context, chatID m
 
 // LoadSession answers once chatID's bridge generation is ready (openBridge).
 func (bc *bridgeCoordinator) LoadSession(ctx context.Context, chatID marotte.ChatID) error {
-	_, err := bc.openBridge(ctx, chatID, "")
+	_, release, err := bc.openBridge(ctx, chatID, "")
+	release()
 	return err
 }
 

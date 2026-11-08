@@ -166,7 +166,7 @@ func TestChatTeardown_RetiresTheBridgesAsksAsEnded(t *testing.T) {
 			if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 				t.Fatalf("seed the chat: %v", err)
 			}
-			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+			if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
 			askID := requestIDOf(t, h.bus.pendingPerms.add(7, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",

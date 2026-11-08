@@ -61,7 +61,7 @@ func hubForFSTest(t *testing.T, workDir string, opts ...Option) (*Runtime, *resp
 	cs.wire(h)
 	settleBoot(t, h)
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	sb, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("Setup: OpenBridge(c1): %v", err)
 	}

@@ -90,6 +90,8 @@ type fakeBridge struct {
 	closeErr error
 	// onCloseStart runs as Close is entered, before stopGate.
 	onCloseStart func()
+	// onEnsureEffort runs as EnsureEffort is entered, with no lock held.
+	onEnsureEffort func()
 	// onCloseReturn runs as Close returns, with its error.
 	onCloseReturn func(error)
 	// onStart runs at the top of the door, so a test can change the world while a session opens.
@@ -932,6 +934,12 @@ func (b *fakeBridge) SetModel(ctx context.Context, modelID string) error {
 }
 
 func (b *fakeBridge) EnsureEffort(_ context.Context, level string) error {
+	b.mu.Lock()
+	hook := b.onEnsureEffort
+	b.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	b.mu.Lock()
 	b.effort = level
 	b.calls = append(b.calls, "session/set_config_option")

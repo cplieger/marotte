@@ -278,8 +278,8 @@ type promptParamsBridges struct {
 	mu     sync.Mutex
 }
 
-func (b *promptParamsBridges) OpenBridge(_ context.Context, chatID marotte.ChatID, _ string) (Bridge, error) {
-	return &promptParamsBridge{owner: b, chat: chatID}, nil
+func (b *promptParamsBridges) OpenBridge(_ context.Context, chatID marotte.ChatID, _ string) (Bridge, func(), error) {
+	return &promptParamsBridge{owner: b, chat: chatID}, func() {}, nil
 }
 
 func (b *promptParamsBridges) outputStyle(chatID marotte.ChatID) (style any, sent, prompted bool) {
@@ -873,7 +873,7 @@ func TestTangentMerges_PublishesOnlyTheOutcomeItCommitted(t *testing.T) {
 	}
 }
 
-func (r *promptParamsBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, error) {
+func (r *promptParamsBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, func(), error) {
 	return r.OpenBridge(ctx, chatID, model)
 }
 

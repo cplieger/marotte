@@ -3291,7 +3291,7 @@ func TestGateHold_EachDoorOpensItsOwnHandleOverTheCellsRun(t *testing.T) {
 	reopen := func() *sharedBridge {
 		t.Helper()
 		c.h.markSessionsForReload("a test's reload")
-		sb, err := c.h.coord.openBridge(t.Context(), c.chat, "")
+		sb, err := c.h.coord.openReleased(t.Context(), c.chat, "")
 		if err != nil {
 			t.Fatalf("Setup: reopen the chat: %v", err)
 		}

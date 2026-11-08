@@ -869,7 +869,7 @@ func heldRowHub(t *testing.T) (*Runtime, *testChatStore, func() []string) {
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: open bridge: %v", err)
 	}
 	return h, cs, promptCalls(br)

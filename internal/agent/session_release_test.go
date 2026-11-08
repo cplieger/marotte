@@ -25,7 +25,7 @@ func releaseFixture(t *testing.T) (*Runtime, *tabs.Store, *sharedBridge) {
 	}
 	h := reopenFixtureIn(t, t.TempDir(), nil, WithTabs(st))
 	settleBoot(t, h)
-	sb, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("Setup: OpenBridge(c1): %v", err)
 	}
@@ -147,7 +147,7 @@ func TestReleaseIfUnheld_AnOpenDuringTheClaimWaitsAndTakesAFreshGeneration(t *te
 	}
 	got := make(chan *sharedBridge, 1)
 	go func() {
-		next, err := h.coord.openBridge(context.Background(), "c1", "")
+		next, err := h.coord.openReleased(context.Background(), "c1", "")
 		if err != nil {
 			t.Errorf("OpenBridge(c1) during the release: %v", err)
 		}

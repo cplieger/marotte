@@ -128,7 +128,7 @@ func TestEnsureResident_AResidentRunIsHandedBackWithNoLoad(t *testing.T) {
 	second := newFakeBridge()
 	fakeSourceOf(t, h).setFactory(func() engineSession { return second })
 
-	host, err := h.runs.ensureResident(t.Context(), "wf_1")
+	host, err := h.runs.residentReleased(t.Context(), "wf_1")
 	if err != nil {
 		t.Fatalf("ensureResident on a resident run = %v, want the incumbent", err)
 	}
@@ -687,7 +687,7 @@ func TestRetry_RefusesARetiredSegmentRunWhileItsChatIsOpen(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Setup: seeding the chat: %s", err)
 	}
-	open, err := h.coord.openBridge(t.Context(), "c1", "")
+	open, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil || open.SessionID() != "sess_now" {
 		t.Fatalf("Setup: opening the chat = (%v, %v), want it live on sess_now", open, err)
 	}

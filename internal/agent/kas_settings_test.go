@@ -268,7 +268,7 @@ func TestChatDoor_TurnsKASsCompactionOffAndAnObserverDoorDoesNot(t *testing.T) {
 			if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 				t.Fatalf("seed the chat: %v", err)
 			}
-			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+			if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
 			if err := h.engine.observe(t.Context(), nil, nil, func(context.Context, engineSession) error { return nil }); err != nil {

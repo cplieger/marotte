@@ -127,7 +127,7 @@ func TestEngineRestart_AutoNeverFiresWhileAnyQuiescenceTermHolds(t *testing.T) {
 		hold func(t *testing.T, h *Runtime) (release func())
 	}{
 		{name: "an admitted prompt", hold: func(t *testing.T, h *Runtime) func() {
-			if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+			if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 				t.Fatalf("Setup: OpenBridge: %v", err)
 			}
 			if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
@@ -169,7 +169,7 @@ func TestEngineRestart_AutoNeverFiresWhileAnyQuiescenceTermHolds(t *testing.T) {
 // An open turn, not only an admission, holds an automatic restart, and its close is the edge that fires it.
 func TestEngineRestart_WaitsForOpenTurns(t *testing.T) {
 	h, dir, src := restartFixture(t)
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("Setup: OpenBridge: %v", err)
 	}
 	turn := openTestTurn(t, h.coord.turns, "c1")
@@ -211,7 +211,7 @@ func TestEngineRestart_NewTurnsWaitOnTheGateOnlyDuringTheRestart(t *testing.T) {
 
 func TestEngineRestart_IdleChatsKeepRecordsAndLoadLazily(t *testing.T) {
 	h, _, src := restartFixture(t)
-	first, err := h.coord.openBridge(t.Context(), "c1", "")
+	first, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestEngineRestart_IdleChatsKeepRecordsAndLoadLazily(t *testing.T) {
 	if sb := h.bridge.mgr.get("c1"); sb != nil && sb.startedPastOpen() && sb.session().Open() {
 		t.Error("the idle chat holds an open session on the new engine before anything asked for one")
 	}
-	again, err := h.coord.openBridge(t.Context(), "c1", "")
+	again, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge after the restart: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestEngineRestart_ConfirmedSnapshotsFirstAndWritesNoCancel(t *testing.T) {
 	h, cs, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {

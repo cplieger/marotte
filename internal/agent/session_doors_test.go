@@ -131,7 +131,7 @@ func reloadMarked(h *Runtime, chatID marotte.ChatID) bool {
 
 func TestSettings_SessionDoorMoveReloadsSessionsAndNeverRestarts(t *testing.T) {
 	h, dir, src := restartFixture(t)
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	writeSetting(t, dir, settings.KeyMemoryMode, "learn")
@@ -147,7 +147,7 @@ func TestSettings_SessionDoorMoveReloadsSessionsAndNeverRestarts(t *testing.T) {
 
 func TestSettings_EngineDoorMoveMakesRestartPending(t *testing.T) {
 	h, dir, src := restartFixture(t)
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	executingLease(t, h, "wf_1")
@@ -163,7 +163,7 @@ func TestSettings_EngineDoorMoveMakesRestartPending(t *testing.T) {
 
 func TestSignIn_FirstSignInMarksResidentSessionsForReload(t *testing.T) {
 	h, _, _ := restartFixture(t)
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	h.onSignInChange(signin.Change{From: signin.StatusSignedIn, To: signin.StatusSignedIn})
@@ -198,7 +198,7 @@ func TestSignIn_AnotherBackendsSignInLeavesTheEngineSessionsAlone(t *testing.T) 
 	vault := openVault(t, t.TempDir(), &flowBackend{id: "test"}, &flowBackend{id: "other"})
 	h, _ := reopenFixture(t, WithSignIn(vault, "test"))
 	settleBoot(t, h)
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	// Registered after the runtime's listener, so a delivery here means the runtime's has returned.
@@ -243,12 +243,12 @@ func TestEnsureResident_ACallerWaitsOnlyItsOwnContextAndALaterCallerJoinsTheLoad
 
 	short, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
-	if _, err := h.runs.ensureResident(short, "wf_1"); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := h.runs.residentReleased(short, "wf_1"); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("a caller whose context ended = %v, want its own deadline", err)
 	}
 	joined := make(chan error, 1)
 	go func() {
-		_, err := h.runs.ensureResident(t.Context(), "wf_1")
+		_, err := h.runs.residentReleased(t.Context(), "wf_1")
 		joined <- err
 	}()
 	close(gate)
@@ -273,7 +273,7 @@ func TestUnreadableConfig_AResidentSessionIsNotMarkedUntilTheRepairMovesAValue(t
 	dir := writeSettings(t, `{"security_profile":"unrestricted"}`)
 	h := reopenFixtureIn(t, dir, nil)
 	settleBoot(t, h)
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
@@ -297,7 +297,7 @@ func TestUnreadableConfig_AResidentSessionIsNotMarkedUntilTheRepairMovesAValue(t
 // A chat marked before config.json broke keeps its session until the file reads again, then reloads once.
 func TestUnreadableConfig_AMarkedSessionWaitsForConfigToReadBeforeItReloads(t *testing.T) {
 	h, dir, _ := restartFixture(t)
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 	sb1 := h.bridge.mgr.get("c1")
@@ -308,7 +308,7 @@ func TestUnreadableConfig_AMarkedSessionWaitsForConfigToReadBeforeItReloads(t *t
 	}
 
 	rewriteConfigByHand(t, dir, `{"memory_mode":`)
-	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge over an unreadable config.json: %v", err)
 	}
 	if h.bridge.mgr.get("c1") != sb1 {
@@ -319,7 +319,7 @@ func TestUnreadableConfig_AMarkedSessionWaitsForConfigToReadBeforeItReloads(t *t
 	}
 
 	rewriteConfigByHand(t, dir, `{"memory_mode":"learn"}`)
-	sb2, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb2, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge after the repair: %v", err)
 	}

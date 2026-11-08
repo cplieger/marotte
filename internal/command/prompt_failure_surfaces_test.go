@@ -85,11 +85,11 @@ func (d *surfaceDeps) AwaitTurn(ctx context.Context, chatID marotte.ChatID, turn
 	return d.benchDeps.AwaitTurn(ctx, chatID, turnID)
 }
 
-func (d *surfaceDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
+func (d *surfaceDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, func(), error) {
 	if d.spawnErr != nil {
-		return nil, d.spawnErr
+		return nil, func() {}, d.spawnErr
 	}
-	return &surfaceBridge{deps: d}, nil
+	return &surfaceBridge{deps: d}, func() {}, nil
 }
 
 func (*surfaceDeps) EndPromptCall(TurnRef) {}
@@ -764,7 +764,7 @@ func (r *surfaceDeps) ReserveTurnForPrompt(ctx context.Context, chatID marotte.C
 	return out, testReservation(chatID, out == AdmissionAcquired)
 }
 
-func (r *surfaceDeps) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, error) {
+func (r *surfaceDeps) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, func(), error) {
 	return r.OpenBridge(ctx, chatID, model)
 }
 

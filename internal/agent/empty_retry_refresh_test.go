@@ -17,7 +17,7 @@ func refreshHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge, marotte.Ta
 	t.Helper()
 	h, cs, br, tab := closeTabHub(t)
 	t.Cleanup(func() { shutdownHub(t, h) })
-	sb, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestEmptyRetry_ARefreshAfterAReopenTouchesNothing(t *testing.T) {
 		next := newFakeBridge()
 		fakeSourceOf(t, h).setFactory(func() engineSession { return next })
 		reopenTab(t, h, "op-reopen")
-		reopened, err := h.coord.openBridge(t.Context(), "c1", "")
+		reopened, err := h.coord.openReleased(t.Context(), "c1", "")
 		if err != nil {
 			t.Fatalf("open after the reopen: %v", err)
 		}
@@ -109,7 +109,7 @@ func TestEmptyRetry_ACutDuringTheForwardWaitClosesNoTurn(t *testing.T) {
 			observe(origin, seq, msg)
 		}
 	}
-	sb, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("Setup: open session: %v", err)
 	}

@@ -41,7 +41,8 @@ func (rs *Runs) endStepAsked(ctx context.Context, workflowID string, req *runReq
 	if err != nil {
 		return err
 	}
-	host, err := rs.ensureResident(ctx, workflowID)
+	host, release, err := rs.ensureResident(ctx, workflowID)
+	defer release()
 	if err != nil {
 		return err
 	}

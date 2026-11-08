@@ -153,7 +153,7 @@ func TestHandleRetry_AnEngineEndKeepsTheLeaseOnlyIfWritten(t *testing.T) {
 func TestWrite_AnUnwrittenRequestLeavesNoMutation(t *testing.T) {
 	h, br := seedChatParentedRun(t, true, "final-verify")
 	br.setCallErr(methodKiroWorkflowRetry, unwrittenExit())
-	host, err := h.runs.ensureResident(t.Context(), "wf_1")
+	host, err := h.runs.residentReleased(t.Context(), "wf_1")
 	if err != nil {
 		t.Fatalf("Setup: ensureResident: %v", err)
 	}

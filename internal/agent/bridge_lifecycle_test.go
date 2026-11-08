@@ -18,11 +18,11 @@ func TestOpenBridge_ReusesExisting(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	sb1, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb1, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("first create error = %v", err)
 	}
-	sb2, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb2, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("second create error = %v", err)
 	}
@@ -33,7 +33,7 @@ func TestOpenBridge_ReusesExisting(t *testing.T) {
 
 func TestOpenBridge_MissingChatIsError(t *testing.T) {
 	h, _, _ := newTestHub()
-	_, err := h.coord.openBridge(t.Context(), "no-chat", "")
+	_, err := h.coord.openReleased(t.Context(), "no-chat", "")
 	if err == nil {
 		t.Fatal("expected error for missing chat")
 	}
@@ -47,7 +47,7 @@ func TestCloseBridge_RemovesAndClosesTheSession(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	sb, err := h.coord.openBridge(t.Context(), "c1", "")
+	sb, err := h.coord.openReleased(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}

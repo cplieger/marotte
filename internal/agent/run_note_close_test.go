@@ -21,7 +21,7 @@ func TestRunNote_AfterAReopenLandsInTheReopenedChat(t *testing.T) {
 		h, cs, _, tab := closeTabHub(t)
 		t.Cleanup(func() { shutdownHub(t, h) })
 		leaseRun(t, h, lease)
-		if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
+		if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("Setup: open session: %v", err)
 		}
 		if code := postCloseTab(t, h, tab); code != http.StatusOK {

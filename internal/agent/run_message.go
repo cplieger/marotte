@@ -230,7 +230,8 @@ func (rs *Runs) messageStep(ctx context.Context, workflowID, nodePath, raw, mess
 	if refused := rs.preRefuse(ctx, workflowID, nodePath); refused != nil {
 		return out, refused
 	}
-	host, err := rs.ensureResident(ctx, workflowID)
+	host, release, err := rs.ensureResident(ctx, workflowID)
+	defer release()
 	if err != nil {
 		return out, err
 	}
