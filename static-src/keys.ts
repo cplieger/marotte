@@ -3,6 +3,7 @@
 
 import { emitBus, BUS_KEYS_ESCAPE } from "./bus.js";
 import { closeTopModal } from "./modals.js";
+import { shellTakesBodyKeys } from "./shell-keys.js";
 
 interface ShortcutDef {
   key: string;
@@ -98,7 +99,7 @@ export function initKeyboardShortcuts(actions: {
   });
 
   document.addEventListener("keydown", (e: KeyboardEvent) => {
-    const isInput = isTextEntry(e.target);
+    const isInput = isTextEntry(e.target) || shellTakesBodyKeys();
 
     if (e.key === "Escape") {
       // The shared helper runs confirm-dialog cleanup (clone-replaced buttons) on Escape dismissal too.

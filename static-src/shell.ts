@@ -7,12 +7,7 @@ import { createTerminal, localScrollbackStorage } from "@cplieger/web-terminal-u
 import { presetSingle } from "@cplieger/web-terminal-ui/presets/single";
 import { mobileToolbar } from "@cplieger/web-terminal-ui/features/mobile-toolbar";
 import type { MobileToolbarApi } from "@cplieger/web-terminal-ui/features/mobile-toolbar";
-import type {
-  ModeReaders,
-  ShellContext,
-  TerminalFeature,
-  TerminalHandle,
-} from "@cplieger/web-terminal-ui";
+import type { TerminalContext, TerminalFeature, TerminalHandle } from "@cplieger/web-terminal-ui";
 import { $ } from "./dom.js";
 import { getScrollEl } from "./messages.js";
 import { shiftScroll } from "./scroll.js";
@@ -36,7 +31,6 @@ import { refreshGitStatus } from "./git-status-store.js";
 import { attachSplitter, type Splitter } from "./splitter.js";
 import { touchCapable } from "./pointer-tier.js";
 import { trackShellPresses } from "./shell-keys.js";
-import { shellFontSettled } from "./shell-font.js";
 
 const SHELL_WS_PATH = "/api/shell/ws";
 // Awaited before the first server resize so the PTY is sized on real cell metrics. ONE family — the
@@ -63,151 +57,73 @@ const SHELL_THEME: Readonly<Record<string, string>> = {
 };
 
 const encoder = new TextEncoder();
+const CR = new Uint8Array([0x0d]);
 
-/** Send bytes to the PTY through the kernel's sanitizing, scroll-snapping funnel (the v4
- *  handle's supported host path). No-op until the terminal is created (first panel open). */
-function hostSend(bytes: Uint8Array): void {
-  handle?.send(bytes);
-}
-
-/** Runs clicked before `admit` let input through, oldest first. */
+/** Runs clicked while the shell's input was not ready, oldest first. */
 const pendingRuns: string[] = [];
-/** Raw input typed or pasted before `admit` let it through. It belongs to the session it was typed
- *  for, so a reattach drops it; a held Run instead goes to whichever session draws next. */
-const heldInput: Uint8Array[] = [];
-
-/** True once the library's font wait has settled, from which `PaneHandle.announceSize()` sends. */
-let fontSettled = false;
-/** True once the attached session has drawn a frame with rows on a connected socket, so its modes
- *  frame has landed. Kept through a restart's POST, whose failure leaves that same session live. */
-let sessionDrawn = false;
-/** True once this client announced its grid to the attached session, so input goes straight on. */
-let sessionSized = false;
+/** The run queue's context; null until the terminal exists. */
+let runCtx: TerminalContext | null = null;
+/** True from the socket's `input:ready` until the next socket opens, a reported drop or a
+ *  reattach. A Run sent before it waits in the library's queue, which a server restart at the
+ *  next resume drops. */
+let socketReady = false;
 /** Restart POSTs in flight: the server kills the PTY with whatever it was sent meanwhile. */
 let restartsInFlight = 0;
 
-/** The terminal's live mode readers, shell and `.term`, kept by `inputGate`; null until it exists. */
-let paneModes: ModeReaders | null = null;
-let paneShell: ShellContext | null = null;
-let paneSurface: HTMLElement | null = null;
-/** Watches `.term`'s children: the engine's cell measure adds and removes a span there. */
-let surfaceObserver: MutationObserver | null = null;
-
-/** Whether the cell width the engine last measured (`--char-w`) is the one the font gives now.
- *  `announceSize()` sends the grid computed on that width, and the engine measures again only once
- *  the panel's open slide settles, so a width taken before the web font landed sends too many
- *  columns. Measured as the engine does (web-terminal-engine render.ts measureCellWidth). */
-function cellWidthCurrent(term: HTMLElement): boolean {
-  const span = document.createElement("span");
-  span.style.visibility = "hidden";
-  span.style.position = "absolute";
-  span.style.whiteSpace = "pre";
-  span.textContent = "MMMMMMMMMM";
-  term.append(span);
-  const cell = Math.round(span.getBoundingClientRect().width / 10);
-  span.remove();
-  surfaceObserver?.takeRecords(); // this measure is not the engine's
-  return term.style.getPropertyValue("--char-w") === `${String(cell)}px`;
+/** The engine clears the modes at every close, so `isKnown()` false is the only sign of a drop the
+ *  kernel has not reported yet. They can come before the next socket's resume (engine terminal.go
+ *  announceTo), so only `input:ready` sets `socketReady`. */
+function inputReady(ctx: TerminalContext): boolean {
+  return socketReady && ctx.modes.isKnown() && restartsInFlight === 0;
 }
 
-/** The panel's open slide is running: the grid measured now has the rows of a part-open panel. */
-function panelSliding(): boolean {
-  return $.shellPanel.getAnimations().some((a) => a instanceof CSSTransition);
-}
-
-/** Whether input may reach the PTY now. The server starts a fresh PTY at its default size on the
- *  first frame it gets, and a live one keeps the last client's size, so the first input to a
- *  session waits until this panel's grid can be measured and is put on the socket ahead of it. */
-function admit(): boolean {
-  if (restartsInFlight > 0) {
-    return false;
-  }
-  if (sessionSized) {
-    return true;
-  }
-  if (
-    !fontSettled ||
-    !sessionDrawn ||
-    panelSliding() ||
-    paneSurface === null ||
-    !cellWidthCurrent(paneSurface)
-  ) {
-    return false;
-  }
-  paneShell?.pane(paneShell.selected())?.announceSize();
-  sessionSized = true;
-  return true;
-}
-
-/** True while `releaseHeld` sends: its bytes pass back through `inputGate`'s transform, which
- *  would otherwise release the Runs ahead of the keys still held. */
-let releasing = false;
-
-/** Send what was held, typed input first, once `admit` lets it through. */
-function releaseHeld(): void {
-  if (releasing || (pendingRuns.length === 0 && heldInput.length === 0) || !admit()) {
+/**
+ * A block goes through `paste`, which brackets it under DEC mode 2004 (xterm ctlseqs "Bracketed
+ * Paste Mode") as the session's modes stand when it is sent. A line and the block's CR go as
+ * bytes, which the kernel accepts as a `key` input that sticky Ctrl leaves alone.
+ */
+function sendRun(ctx: TerminalContext, cmd: string): void {
+  if (cmd.includes("\n")) {
+    ctx.paste(cmd);
+    ctx.send(CR);
     return;
   }
-  releasing = true;
-  try {
-    for (const bytes of heldInput.splice(0)) {
-      hostSend(bytes);
-    }
-    const bracketed = paneModes?.isBracketedPaste() === true;
-    for (const cmd of pendingRuns.splice(0)) {
-      hostSend(encoder.encode(runInput(cmd, bracketed)));
-    }
-  } finally {
-    releasing = false;
+  ctx.send(encoder.encode(`${cmd}\r`));
+}
+
+function flushRuns(): void {
+  if (runCtx === null || !inputReady(runCtx)) {
+    return;
+  }
+  for (const cmd of pendingRuns.splice(0)) {
+    sendRun(runCtx, cmd);
   }
 }
 
-/** The attached session is no longer the one this client sized: a reattach or a reported drop. */
-function sessionChanged(): void {
-  sessionDrawn = false;
-  sessionSized = false;
-}
-
-const NOTHING = new Uint8Array(0);
-
-/** Holds input until `admit`. Listed first among the features, so its transform sees the raw bytes
- *  and the later transforms (sticky Ctrl, predictive echo) run once, when the bytes are released. */
-function inputGate(): TerminalFeature {
+function runQueue(): TerminalFeature {
   return {
-    name: "inputGate",
+    name: "runQueue",
     setup(ctx) {
-      paneModes = ctx.modes;
-      paneShell = ctx.shell;
-      paneSurface = ctx.surface();
-      const observer = new MutationObserver(releaseHeld);
-      observer.observe(paneSurface, { childList: true });
-      surfaceObserver = observer;
-      ctx.defer(() => {
-        observer.disconnect();
-      });
-      ctx.registerInputTransform((bytes) => {
-        if (!admit()) {
-          heldInput.push(bytes.slice());
-          return NOTHING;
-        }
-        releaseHeld(); // anything held goes ahead of these bytes
-        return bytes;
-      });
-      // An announce on a socket that is not connected sends nothing. A drop inside the library's
-      // reporting grace is never reported, and its resume carries the size itself.
+      runCtx = ctx;
+      // The kernel reports a drop 600 ms late or not at all (web-terminal-ui conn-state.ts), but it
+      // reports each new socket's open at once, after the engine cleared the modes at the close.
       ctx.on("connection:state", (state) => {
-        if (state !== "open") {
-          sessionChanged();
+        if ((state !== "open" && state !== "restarted") || !ctx.modes.isKnown()) {
+          socketReady = false;
         }
       });
+      ctx.on("input:ready", () => {
+        socketReady = true;
+        flushRuns();
+      });
+      // The engine marks the modes known before either frame reaches features.
+      ctx.on("wire:modes", flushRuns);
+      ctx.on("wire:screen", flushRuns);
       return {
-        teardown: ctx.on("wire:screen", (msg) => {
-          // A rows-less frame is the pre-ack scrollback-clear forward, which proves nothing drew.
-          if (msg.rows.length > 0) {
-            sessionDrawn = true;
-            releaseHeld();
-          }
-        }),
+        teardown: () => {
+          runCtx = null;
+          socketReady = false;
+        },
       };
     },
   };
@@ -267,8 +183,7 @@ function scheduleReattach(reason: "ended" | "restart"): void {
 }
 
 function reattachShell(): void {
-  sessionChanged();
-  heldInput.length = 0;
+  socketReady = false;
   reattachedAt = Date.now();
   reattachSeq++;
   handle?.reattach();
@@ -286,13 +201,18 @@ async function hostRestart(): Promise<void> {
     return;
   }
   const seq = reattachSeq;
+  // Keys typed during the POST wait. On success, those typed before the replacement's resume are
+  // dropped with the old shell, and those typed at its prompt while the POST is still out reach it
+  // at release. A failed restart sends them on to the same shell.
+  const release = runCtx?.shell.pane(runCtx.shell.selected())?.holdInput();
   restartsInFlight++;
   const restarted = (await restartShell.dispatch()) !== null;
   restartsInFlight--;
   if (restarted && reattachSeq === seq) {
     scheduleReattach("restart");
   }
-  releaseHeld(); // a failed restart leaves the same session live, and nothing else wakes the hold
+  release?.();
+  flushRuns();
 }
 
 let handle: TerminalHandle | null = null;
@@ -391,34 +311,15 @@ export function initShellPanel(): void {
 
   wireFullscreenToggle();
 
-  for (const type of ["transitionend", "transitioncancel"]) {
-    $.shellPanel.addEventListener(type, (ev) => {
-      if (ev.target === $.shellPanel) {
-        releaseHeld();
-      }
-    });
-  }
   setShellRunCallback((cmd: string) => {
     if (!shellOpen) {
       setShellOpen(true, { focus: false });
     }
     pendingRuns.push(cmd);
-    releaseHeld();
+    flushRuns();
   });
 
   initShellResize();
-}
-
-/**
- * The keys one Run sends, ending in the one CR that submits it, all in ONE buffer: the sticky Ctrl
- * transform rewrites a one-character payload, so a separate CR send becomes a CSI-u sequence. Line ends
- * go as CR, as the engine's own paste sends them. Under DEC mode 2004 (xterm ctlseqs "Bracketed Paste
- * Mode") a block rides inside ESC [200~ ... ESC [201~ so the program takes it as one input; with the mode
- * off the markers would be typed as text, so the lines go bare.
- */
-function runInput(cmd: string, bracketedPaste: boolean): string {
-  const body = cmd.replaceAll("\n", "\r");
-  return bracketedPaste && body !== cmd ? `\x1b[200~${body}\x1b[201~\r` : `${body}\r`;
 }
 
 /** Keyboard resize step (2rem) per ArrowUp/ArrowDown on the handle. */
@@ -490,7 +391,7 @@ function ensureTerminal(): void {
   handle = createTerminal($.shellTerminal, {
     features: () => {
       keys = mobileToolbar({ externalToggle: true });
-      return [inputGate(), ...presetSingle(), keys];
+      return [runQueue(), ...presetSingle(), keys];
     },
     layout: "container",
     wsPath: SHELL_WS_PATH,
@@ -503,10 +404,6 @@ function ensureTerminal(): void {
     },
     // Restore the shell's scrollback from this device rather than pulling it back over the wire.
     persistScrollback: shellScrollback,
-  });
-  void shellFontSettled(SHELL_FONT_READY).then(() => {
-    fontSettled = true;
-    releaseHeld();
   });
 }
 

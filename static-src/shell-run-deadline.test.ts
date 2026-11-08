@@ -2,7 +2,7 @@
 // shipped stylesheet, against a fake shell server on the WebSocket seam: the Run waits out the
 // library's font deadline and still reaches the PTY after a resize to the panel's grid.
 
-import { afterAll, describe, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 import {
   FakeShellSocket,
@@ -17,7 +17,6 @@ import type * as CodeBlocks from "./code-blocks.js";
 import type * as Dom from "./dom.js";
 import type * as Messages from "./messages.js";
 import type * as Scroll from "./scroll.js";
-import { LIBRARY_FONT_DEADLINE_MS } from "./shell-font.js";
 
 const live = vi.hoisted(() => ({
   els: {} as Record<string, HTMLElement>,
@@ -50,6 +49,11 @@ vi.mock("./code-blocks.js", async (importOriginal) => ({
   },
 }));
 
+// web-terminal-ui docs/configuration.md "Waiting for the font": the wait ends after 3 seconds.
+const LIBRARY_FONT_DEADLINE_MS = 3000;
+// performance.now() and the deadline's timer clamp to different granularities.
+const CLOCK_SLACK_MS = 50;
+
 const styles = mountShellCSS();
 
 afterAll(() => {
@@ -70,9 +74,14 @@ describe("Run from a closed shell panel when the web font never lands", () => {
       const shell = await import("./shell.js");
       shell.initShellPanel();
 
+      const runClicked = performance.now();
       live.runCb?.("echo hello");
       const sock = await resumedSocket();
       const runAt = await inputAt(sock, "echo hello", LIBRARY_FONT_DEADLINE_MS + FRAME_BUDGET_MS);
+
+      expect(performance.now() - runClicked, "the Run waited for the font").toBeGreaterThanOrEqual(
+        LIBRARY_FONT_DEADLINE_MS - CLOCK_SLACK_MS,
+      );
 
       await expectSizedBefore(
         live.els["shellTerminal"] as HTMLElement,

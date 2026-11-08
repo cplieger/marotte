@@ -8,6 +8,7 @@ const { closeTop } = vi.hoisted(() => ({ closeTop: vi.fn(() => false) }));
 vi.mock("./modals.js", () => ({ closeTopModal: () => closeTop() }));
 
 import { initKeyboardShortcuts, registeredShortcuts } from "./keys.js";
+import { trackShellPresses } from "./shell-keys.js";
 import { onBus, BUS_KEYS_ESCAPE } from "./bus.js";
 
 const actions = {
@@ -39,10 +40,13 @@ beforeEach(() => {
   for (const fn of Object.values(actions)) {
     fn.mockClear();
   }
+  // The shell panel stays for every test: trackShellPresses' document listener, once installed,
+  // reads #shell-terminal at each pointerdown for the rest of the file.
   document.body.innerHTML = `
     <textarea id="prompt-input"></textarea>
     <input id="a-text-field" type="text">
-    <svg id="an-icon"></svg>`;
+    <svg id="an-icon"></svg>
+    <div id="shell-panel"><div id="shell-terminal"></div></div>`;
 });
 
 afterEach(() => {
@@ -146,6 +150,30 @@ describe("a focused text field", () => {
     const icon = document.getElementById("an-icon") as unknown as Element;
     press("?", icon);
     expect(actions.showShortcuts).toHaveBeenCalledTimes(1);
+  });
+});
+
+// web-terminal-ui docs/input.md: with a hardware keyboard on an iPad, a press in the terminal leaves
+// focus on the body and the terminal types the keys the body gets while the last press was inside it.
+describe("a key the shell's terminal takes from the body", () => {
+  it("is left to the terminal after a press inside it, and handled after a press elsewhere", () => {
+    const terminal = document.getElementById("shell-terminal") as HTMLElement;
+    trackShellPresses();
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    terminal.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    const typed = press("?");
+    const chord = press("/", undefined, { ctrlKey: true });
+    expect(actions.showShortcuts, "? after a press in the terminal").not.toHaveBeenCalled();
+    expect(typed.defaultPrevented).toBe(false);
+    expect(actions.toggleShell, "Ctrl+/ after a press in the terminal").not.toHaveBeenCalled();
+    expect(chord.defaultPrevented).toBe(false);
+
+    document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    press("?");
+    press("/", undefined, { ctrlKey: true });
+    expect(actions.showShortcuts, "? after a press outside it").toHaveBeenCalledTimes(1);
+    expect(actions.toggleShell, "Ctrl+/ after a press outside it").toHaveBeenCalledTimes(1);
   });
 });
 
