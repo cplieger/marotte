@@ -1418,6 +1418,51 @@ describe("showChatView routes on the staleness verdict", () => {
     expect(loadMessages).toHaveBeenCalledWith(...pageLoad("c-bg"));
     expect(messagesEl.querySelector(".load-error")).toBeNull();
   });
+
+  describe("a page started before the view mounts", () => {
+    it("is the one load the activation's refresh waits on, sent before the mount", async () => {
+      vi.mocked(get).mockReturnValue(loadedChat("c-early"));
+      const signal = new AbortController().signal;
+
+      chatModule.startChatPage("c-early", signal);
+      expect(loadMessages).toHaveBeenCalledExactlyOnceWith("c-early", undefined, signal);
+      expect(paintedId, "the page left after the view mounted").toBe("");
+
+      showChat("c-early");
+      await refreshChatView("c-early", signal);
+
+      expect(loadMessages, "the refresh issued a second page load").toHaveBeenCalledTimes(1);
+      expect(loadTurnRail, "the joined page's landing was not followed up").toHaveBeenCalledWith(
+        "c-early",
+        { force: true },
+      );
+    });
+
+    it("is not joined by a refresh under another signal", () => {
+      vi.mocked(get).mockReturnValue(loadedChat("c-early"));
+      const started = new AbortController().signal;
+      const other = new AbortController().signal;
+
+      chatModule.startChatPage("c-early", started);
+      showChat("c-early");
+      void refreshChatView("c-early", other).catch(() => undefined);
+
+      expect(loadMessages).toHaveBeenCalledTimes(2);
+      expect(loadMessages).toHaveBeenLastCalledWith("c-early", undefined, other);
+    });
+
+    it("starts nothing for a fresh window or a chat with no conversation", () => {
+      vi.mocked(get).mockReturnValue(loadedChat("c-fresh-early"));
+      vi.mocked(transcriptStale).mockReturnValue(false);
+      chatModule.startChatPage("c-fresh-early", new AbortController().signal);
+
+      vi.mocked(get).mockReturnValue(emptyChat("c-empty-early"));
+      vi.mocked(transcriptStale).mockReturnValue(true);
+      chatModule.startChatPage("c-empty-early", new AbortController().signal);
+
+      expect(loadMessages).not.toHaveBeenCalled();
+    });
+  });
 });
 
 // Behind resident turns a refresh never fails the switch: it paints its own Retry box, which the

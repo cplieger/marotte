@@ -194,6 +194,7 @@ export function held(): Held {
 export interface ChatOpenerFake {
   readonly select: Mock<(chatID: string) => void>;
   readonly show: Mock<(chatID: string) => void>;
+  readonly prefetch: Mock<(chatID: string, signal: AbortSignal) => void>;
   readonly refresh: Mock<(chatID: string, signal: AbortSignal) => Promise<void>>;
   readonly loadFailed: Mock<(chatID: string) => void>;
   readonly close: Mock<(chatID: string) => void>;
@@ -211,6 +212,7 @@ export function chatOpenerFake(): ChatOpenerFake {
     show: vi.fn((id: string) => {
       pointers.painted = id;
     }),
+    prefetch: vi.fn(),
     refresh: vi.fn((id: string, signal: AbortSignal) => {
       const next = queued.get(id)?.shift();
       if (next === undefined) {

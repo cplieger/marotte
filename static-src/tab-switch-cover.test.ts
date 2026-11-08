@@ -292,3 +292,37 @@ describe("a switch's cover lifts with its paint, and only a switch raises it", (
     );
   });
 });
+
+describe("the covered transcript is out of reach with no restyle", () => {
+  it("is hidden from assistive tech and turns focus away from the hold to the lift", async () => {
+    const a = withTurn(makeSession({ id: "cv-a", name: "a" }), "text of a");
+    store.setSessions([a, evicted("cv-b")]);
+    store.setActive("cv-a");
+    setPainted("cv-a");
+    store.bumpMessages("cv-a", "load");
+    await flushed();
+    const button = document.createElement("button");
+    (messages.transcriptViewFor("cv-a") ?? wrap()).appendChild(button);
+    // As index.html marks the scroller.
+    wrap().tabIndex = -1;
+    try {
+      coverModule.holdCover("cv-b");
+      expect(wrap().getAttribute("aria-hidden")).toBe("true");
+      expect(wrap().inert, "inert restyles every resident turn").toBe(false);
+      button.focus();
+      expect(document.activeElement?.id, "a control under the cover took focus").toBe(
+        "prompt-input",
+      );
+      wrap().focus();
+      expect(document.activeElement?.id, "the covered scroller took focus").toBe("prompt-input");
+
+      coverModule.dropCover();
+      expect(wrap().hasAttribute("aria-hidden")).toBe(false);
+      button.focus();
+      expect(document.activeElement, "the lifted transcript refused focus").toBe(button);
+    } finally {
+      button.remove();
+      wrap().removeAttribute("tabindex");
+    }
+  });
+});

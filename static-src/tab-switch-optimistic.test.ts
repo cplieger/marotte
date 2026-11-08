@@ -64,7 +64,7 @@ vi.mock("./api-client.js", async (importOriginal) => ({
   }))),
 }));
 
-import { tabIdFor, getActiveTabId } from "./tabs.js";
+import { tabIdFor, getActiveTabId, closeTab } from "./tabs.js";
 import { observeStamp } from "./subject-versions.js";
 import { fx, installSwitchSuite, strip } from "./__test-helpers__/tab-switch-suite.js";
 import {
@@ -105,13 +105,12 @@ describe("a switch paints the target tab at once", () => {
     expect(cover()?.querySelector(".skeleton-rows")).not.toBeNull();
     const wrap = document.getElementById("messages-wrap");
     expect(wrap?.getAttribute("aria-busy")).toBe("true");
-    expect(wrap?.inert, "inert restyles every turn, so the gesture's frame must not carry it").toBe(
-      false,
-    );
+    expect(wrap?.getAttribute("aria-hidden"), "the covered transcript is read").toBe("true");
+    expect(wrap?.inert, "inert restyles every resident turn").toBe(false);
     expect(document.activeElement?.id, "focus left the covered transcript").toBe("prompt-input");
 
     await activationRan();
-    expect(wrap?.inert, "the activation task leaves the covered transcript inert").toBe(true);
+    expect(wrap?.inert, "inert restyles every resident turn").toBe(false);
     expect(fx.chat.show).toHaveBeenCalledTimes(1);
     expect(fx.chat.show).toHaveBeenCalledWith("b");
     expect(fx.chat.refresh).toHaveBeenCalledTimes(1);
@@ -191,5 +190,50 @@ describe("a switch paints the target tab at once", () => {
     expect(fx.chat.refresh).toHaveBeenCalledTimes(1);
     expect(page.signal?.aborted, "the re-click restarted the load").toBe(false);
     page.resolve();
+  });
+});
+
+describe("the activation sends a stale target's page request before mounting its view", () => {
+  function sentBeforeMount(ref: string): void {
+    expect(fx.chat.prefetch).toHaveBeenCalledExactlyOnceWith(ref, expect.any(AbortSignal));
+    expect(fx.chat.refresh.mock.calls[0]?.[1], "the refresh did not join the started page").toBe(
+      fx.chat.prefetch.mock.calls[0]?.[1],
+    );
+    const sent = fx.chat.prefetch.mock.invocationCallOrder[0] ?? Infinity;
+    const mounted = fx.chat.show.mock.invocationCallOrder[0] ?? -Infinity;
+    expect(sent, "the page request waited for the view to mount").toBeLessThan(mounted);
+  }
+
+  it("on a reader's switch, after the gesture's frame", async () => {
+    const ids = await strip("a", "b");
+    fx.chat.page("b").resolve();
+
+    clickRow(ids["b"] ?? "");
+    expect(fx.chat.prefetch, "a superseded target's page left in the click").not.toHaveBeenCalled();
+    await activationRan();
+
+    sentBeforeMount("b");
+  });
+
+  it("on a close that hands the view to its successor", async () => {
+    const ids = await strip("a", "b");
+    fx.chat.page("b").resolve();
+
+    void closeTab(ids["a"] ?? "");
+    await activationRan();
+
+    sentBeforeMount("b");
+  });
+
+  it("not for a parked chat whose window is fresh", async () => {
+    observeStamp({ kind: "chat", ref: "b", version: "1" });
+    const ids = await strip("a", "b");
+    resident.add("b");
+
+    clickRow(ids["b"] ?? "");
+    await activationRan();
+
+    expect(fx.chat.show).toHaveBeenCalledWith("b");
+    expect(fx.chat.prefetch).not.toHaveBeenCalled();
   });
 });
