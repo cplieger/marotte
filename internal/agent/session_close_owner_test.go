@@ -1792,6 +1792,71 @@ func TestCloseOwner_OnlyAConfirmedCloseRefusesALease(t *testing.T) {
 	}
 }
 
+func TestCloseOwner_AHoldStartedSinceTheGrantPutsTheCloseBack(t *testing.T) {
+	for _, k := range []holdKind{holdTurn, holdTail, holdKAS, holdStep, holdWake, holdLease} {
+		h := ownerHolds[k]
+		t.Run(h.name, func(t *testing.T) {
+			o := newOwnerLife(t)
+			o.lc.askClose(o.sb, closeRelease, 0, false)
+			g, _, ok := o.lc.nextClose()
+			if !ok {
+				t.Fatal("Setup: the release was not granted")
+			}
+			release := h.take(t, o)
+			if o.lc.confirmClose(g) {
+				t.Fatalf("the close confirmed while a %s hold started since its grant stands", h.name)
+			}
+			if st := o.state(); st.closing != nil || st.ask == nil || st.ask.why != closeRelease {
+				t.Errorf("after the refused confirm: grant %+v, ask %+v; want the release pending again", st.closing, st.ask)
+			}
+			release()
+			g, _, ok = o.lc.nextClose()
+			if !ok || !o.lc.confirmClose(g) {
+				t.Errorf("the %s hold's end did not grant the release again for the closer to confirm", h.name)
+			}
+		})
+	}
+}
+
+func TestCloseOwner_OnlyAWireTurnTakesAWake(t *testing.T) {
+	for _, row := range []struct {
+		name   string
+		source marotte.TurnOpenSource
+	}{
+		{name: "a prompt", source: marotte.TurnSourcePrompt},
+		{name: "an empty retry", source: marotte.TurnSourceEmptyRetry},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				o := newOwnerLife(t)
+				o.r.holdWake("c1", "wf-owner")
+				o.lc.askClose(o.sb, closeRelease, 0, false)
+				o.lc.mu.Lock()
+				own := o.lc.openLocked("c1", &marotte.Entry{ID: "p-wake"}, row.source, "", turnlog.Open("p-wake", nil))
+				o.lc.mu.Unlock()
+				o.r.finish(own, marotte.TurnResult{})
+				if got := o.blocker(0); got != holdWake {
+					t.Errorf("the hold after marotte's own turn ended = %d, want the wake hold standing for KAS's turn", got)
+				}
+				if o.state().closing != nil {
+					t.Fatal("the release was granted before KAS's wake turn opened")
+				}
+				o.lc.mu.Lock()
+				wake := o.lc.openLocked("c1", &marotte.Entry{ID: "w-wake"}, marotte.TurnSourceWireTurnStart, "", turnlog.Open("w-wake", nil))
+				wakes := len(o.lc.wakes)
+				o.lc.mu.Unlock()
+				if wakes != 0 {
+					t.Errorf("%d wake holds after KAS's wake turn opened, want it to take the hold", wakes)
+				}
+				o.r.finish(wake, marotte.TurnResult{})
+				if o.state().closing == nil {
+					t.Error("KAS's wake turn ended and the release stayed pending")
+				}
+			})
+		})
+	}
+}
+
 func TestCloseOwner_TheLifesEndEndsAGrantNoCloserTook(t *testing.T) {
 	o := newOwnerLife(t)
 	o.lc.askClose(o.sb, closeRelease, 0, false)
