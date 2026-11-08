@@ -94,7 +94,8 @@ function foldedGroup(): HTMLElement {
     callEntry(turn, 1, "hook", "hook a"),
     callEntry(turn, 2, "hook", "hook b"),
     callEntry(turn, 3, "execute", "npm test"),
-    { id: `${turn}-say#4`, turn, kind: "text", seq: 4, ts: 5, payload: { text: "and so" } },
+    callEntry(turn, 4, "execute", "npm run lint"),
+    { id: `${turn}-say#5`, turn, kind: "text", seq: 5, ts: 6, payload: { text: "and so" } },
   ];
   host = document.createElement("div");
   host.className = "turn-body";

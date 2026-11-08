@@ -137,14 +137,14 @@ afterEach(() => {
 });
 
 describe("a step's hooks in the run pane", () => {
-  it("folds a passing tool-trigger hook into its group's badge, hidden from find and listed by name", async () => {
+  it("folds a passing tool-trigger hook into its command's badge, hidden from find and listed by name", async () => {
     const root = paintStep((t) => [call(t, 1, { id: "cmd-a" }), hook(t, 2, "seat guard")]);
     expect(shownHookTitles(root)).toEqual([]);
     expect(badgeText(root)).toContain("1");
     const folded = root.querySelector<HTMLElement>('.tool-call[data-kind="hook"]');
     expect(folded?.hidden).toBe(true);
     expect(folded?.hasAttribute("data-hook-folded")).toBe(true);
-    const badge = root.querySelector<HTMLButtonElement>(".tool-group > .tool-group-hooks");
+    const badge = root.querySelector<HTMLButtonElement>(".tool-group .tool-group-hooks");
     expect(badge).not.toBeNull();
     await userEvent.click(badge as HTMLButtonElement);
     await expect

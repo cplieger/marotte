@@ -1,5 +1,6 @@
-// The hooks badge on a tool group's header, and the popover it opens listing each folded hook once with its run
-// count. hook-fold.ts decides which hooks fold; this draws them.
+// The hooks badge on a tool group's header, or on a lone tool card's, and the popover it opens listing each folded hook
+// once with its run count. hook-fold.ts decides which hooks fold and tool-group.ts which header carries them; this
+// draws them.
 
 import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
@@ -9,7 +10,7 @@ import { iconEl } from "./icon-el.js";
 import { fileIcon, toolIcon } from "./icons.js";
 import { kindNoun } from "./tool-kind-noun.js";
 
-/** Set on a group that carries a hooks badge, which `14-tools.css` lays over the header's top-right corner. */
+/** Set on the group or card that carries a hooks badge, which `14-tools.css` lays over its header's top-right corner. */
 const CLS_HAS_HOOKS = "tool-group-has-hooks";
 
 /** The badge count's digit count, from which `14-tools.css` sizes the badge and the header's reserved padding. */
@@ -102,11 +103,22 @@ interface HookPopover {
 
 const popovers = new WeakMap<HTMLElement, HookPopover>();
 
-/** Paint the group's hooks badge for its folded hooks, absent with none. The badge is the one place the hook count
- *  lives and counts runs; it is a sibling of the header, since a button inside the header's `role="button"` is not
- *  reachable by assistive technology. */
-export function syncHookBadge(group: HTMLElement, folded: readonly HTMLElement[]): void {
-  let badge = group.querySelector<HTMLElement>(":scope > .tool-group-hooks");
+/** Each group's badge, wherever in the group it sits. */
+const badges = new WeakMap<HTMLElement, HTMLElement>();
+
+/** The badge counting each folded hook card, which may sit in another group than the card. */
+const foldedInto = new WeakMap<HTMLElement, HTMLElement>();
+
+/** Paint the group's hooks badge for its folded hooks on `host`, the group or its lone card, absent with none. The
+ *  badge is the one place the hook count lives and counts runs; it is a sibling of the host's header, since a button
+ *  inside the group header's `role="button"` is not reachable by assistive technology. */
+export function syncHookBadge(
+  group: HTMLElement,
+  folded: readonly HTMLElement[],
+  host: HTMLElement,
+): void {
+  let badge = badges.get(group) ?? null;
+  const was = badge?.parentElement ?? null;
   if (folded.length === 0) {
     if (badge !== null) {
       const state = popovers.get(badge);
@@ -114,20 +126,31 @@ export function syncHookBadge(group: HTMLElement, folded: readonly HTMLElement[]
       state?.ctl.dispose();
       state?.panel.remove();
       badge.remove();
+      badges.delete(group);
     }
-    group.classList.remove(CLS_HAS_HOOKS);
-    group.style.removeProperty(DIGITS_VAR);
+    if (was !== null) {
+      unmarkHost(was);
+    }
     return;
   }
   badge ??= mountBadge(group);
-  group.classList.add(CLS_HAS_HOOKS);
+  if (was !== host) {
+    if (was !== null) {
+      unmarkHost(was);
+    }
+    seatBadge(badge, host);
+  }
+  host.classList.add(CLS_HAS_HOOKS);
   const state = popovers.get(badge);
   if (state === undefined) {
     return;
   }
   state.folded = folded;
+  for (const card of folded) {
+    foldedInto.set(card, badge);
+  }
   const count = String(folded.length);
-  group.style.setProperty(DIGITS_VAR, String(count.length));
+  host.style.setProperty(DIGITS_VAR, String(count.length));
   const visible = badge.querySelector(".tool-group-hooks-n");
   if (visible !== null && visible.textContent !== count) {
     visible.textContent = count;
@@ -135,6 +158,21 @@ export function syncHookBadge(group: HTMLElement, folded: readonly HTMLElement[]
   badge.setAttribute("aria-label", `${count} ${kindNoun("hook", folded.length)} ran`);
   if (state.ctl.isOpen) {
     renderHookList(state);
+  }
+}
+
+function unmarkHost(host: HTMLElement): void {
+  host.classList.remove(CLS_HAS_HOOKS);
+  host.style.removeProperty(DIGITS_VAR);
+}
+
+/** After the host's header: the group's, or a card's summary row. */
+function seatBadge(badge: HTMLElement, host: HTMLElement): void {
+  const header = host.querySelector(":scope > .tool-group-header, :scope > .tool-summary");
+  if (header === null) {
+    host.appendChild(badge);
+  } else {
+    header.after(badge);
   }
 }
 
@@ -191,12 +229,7 @@ function mountBadge(group: HTMLElement): HTMLElement {
   badge.addEventListener("click", () => {
     toggleHookPopover(state, badge);
   });
-  const header = group.querySelector(":scope > .tool-group-header");
-  if (header === null) {
-    group.appendChild(badge);
-  } else {
-    header.after(badge);
-  }
+  badges.set(group, badge);
   return badge;
 }
 
@@ -327,7 +360,6 @@ export function foldedHookBadge(card: HTMLElement): HTMLElement | null {
   if (!card.hasAttribute("data-hook-folded")) {
     return null;
   }
-  return (
-    card.closest(".tool-group")?.querySelector<HTMLElement>(":scope > .tool-group-hooks") ?? null
-  );
+  const badge = foldedInto.get(card);
+  return badge?.isConnected === true ? badge : null;
 }

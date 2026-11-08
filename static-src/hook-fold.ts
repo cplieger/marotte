@@ -1,4 +1,4 @@
-// Which hook cards a reader sees: a row, folded into its tool group's hooks badge, or hidden. The one owner of
+// Which hook cards a reader sees: a row, folded into a hooks badge, or hidden. The one owner of
 // that decision; every hook visibility question routes here. internal/chat/hook_visibility.go is its server twin, so
 // find-in-chat counts no hook this hides. DOM-free at import: block-window.ts reads it under Node, so the badge
 // and its popover live in hook-badge.ts.
@@ -81,10 +81,14 @@ export function stampHookCard(card: HTMLElement, call: Partial<HookFacts>): void
  *  wire does not say which hook refused. */
 const REFUSED = new Set(["fail", "denied", "declined"]);
 
-/** What a group shows of its members: the rows, and the hooks folded into its badge. */
-interface HookFold {
+/** What a group shows of its members: the rows, the hooks folded into its badge, and the cards that are no hook. */
+export interface HookFold {
   readonly rows: HTMLElement[];
   readonly folded: HTMLElement[];
+  readonly work: HTMLElement[];
+  /** Rows of a group with no work: quiet hooks that gate no tool call, which the nearest group with work in the
+   *  same container may fold (`foldStrayHook`); a row until one does. */
+  readonly strays: HTMLElement[];
 }
 
 /** Hide or show each member per the hook rules and return what is left as rows and folded hooks. */
@@ -93,22 +97,37 @@ export function foldGroupHooks(members: readonly HTMLElement[]): HookFold {
   const refused = work.some((c) => REFUSED.has(c.dataset["outcome"] ?? ""));
   const rows: HTMLElement[] = [];
   const folded: HTMLElement[] = [];
+  const strays: HTMLElement[] = [];
   for (const c of members) {
     const fate = hookFate(c, refused, work.length > 0);
-    c.hidden = fate !== "row";
+    const row = fate === "row" || fate === "stray";
+    c.hidden = !row;
     c.toggleAttribute("data-hook-folded", fate === "folded");
-    if (fate === "row") {
+    if (row) {
       rows.push(c);
     } else if (fate === "folded") {
       folded.push(c);
     }
+    if (fate === "stray") {
+      strays.push(c);
+    }
   }
-  return { rows, folded };
+  return { rows, folded, work, strays };
+}
+
+/** Fold a stray into another group's badge, or give it back its row. */
+export function foldStrayHook(card: HTMLElement, folded: boolean): void {
+  card.hidden = folded;
+  card.toggleAttribute("data-hook-folded", folded);
 }
 
 /** A quiet hook folds whatever its trigger, but a refused group keeps as a row a hook that could have refused: a
  *  tool-trigger one, or an unresolved one while status shows (with it off, `hookRenders` and the server hide it). */
-function hookFate(c: HTMLElement, refused: boolean, hasWork: boolean): "row" | "folded" | "hidden" {
+function hookFate(
+  c: HTMLElement,
+  refused: boolean,
+  hasWork: boolean,
+): "row" | "folded" | "hidden" | "stray" {
   const quiet =
     c.dataset["kind"] === "hook" &&
     c.dataset["outcome"] === "ok" &&
@@ -121,5 +140,8 @@ function hookFate(c: HTMLElement, refused: boolean, hasWork: boolean): "row" | "
   if (!statusShown) {
     return "hidden";
   }
-  return hasWork ? "folded" : "row";
+  if (hasWork) {
+    return "folded";
+  }
+  return c.hasAttribute("data-hook-gates") ? "row" : "stray";
 }

@@ -1,5 +1,6 @@
-// The hooks badge lies over its group header's top-right corner: the header's toggle surface, and so its hover, press
-// and focus highlight, spans the whole card, and the badge is a second control on top of it. The list the badge
+// The hooks badge lies over its header's top-right corner, the group's or a lone tool card's: the header's toggle
+// surface, and so its hover, press and focus highlight, spans the whole card, and the badge is a second control on
+// top of it. The list the badge
 // opens is an anchored menu with the tab menu's surface, right-aligned under the badge and inside the turn card.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
@@ -7,7 +8,7 @@ import { page, userEvent } from "vitest/browser";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
-const { headerPointsOutsideBadge, mountHookGroup, unmountHookGroups } =
+const { headerPointsOutsideBadge, mountHookGroup, rendered, unmountHookGroups } =
   await import("./__test-helpers__/hook-group.js");
 
 let style: HTMLStyleElement | undefined;
@@ -53,17 +54,21 @@ const STATES = [
     outcome: "declined",
     trigger: "Stop",
   },
-  { name: "one command", commands: ["cmd a"], hooks: ["guard", "seat guard"] },
+  { name: "one command", commands: ["cmd a"], hooks: ["guard", "seat guard"], output: "ok" },
 ] as const;
 
+/** The header's fold: the group's, or a lone card's details. */
 function expanded(header: HTMLElement): string | null {
-  return header.getAttribute("aria-expanded");
+  return (header.querySelector(".tool-disclosure") ?? header).getAttribute("aria-expanded");
 }
 
-describe("the hooks badge over its group header", () => {
+const HEADER = ".tool-group-header, .tool-summary";
+
+describe("the hooks badge over its header", () => {
   for (const s of STATES) {
-    it(`leaves the header's surface the full card width (${s.name})`, () => {
+    it(`leaves the header's surface the full card width (${s.name})`, async () => {
       const { group, header, badge } = mountHookGroup(s);
+      await rendered();
       const g = group.getBoundingClientRect();
       const h = header.getBoundingClientRect();
       const b = badge.getBoundingClientRect();
@@ -74,13 +79,14 @@ describe("the hooks badge over its group header", () => {
       expect(b.top).toBeGreaterThanOrEqual(h.top);
       expect(b.right).toBeLessThanOrEqual(h.right);
       for (const p of headerPointsOutsideBadge(header, badge)) {
-        expect(
-          document.elementFromPoint(p.x, p.y)?.closest(".tool-group-header"),
-          JSON.stringify(p),
-        ).toBe(header);
+        expect(document.elementFromPoint(p.x, p.y)?.closest(HEADER), JSON.stringify(p)).toBe(
+          header,
+        );
       }
       // The summary stops short of the badge.
-      const count = header.querySelector<HTMLElement>(".tool-group-count")?.getBoundingClientRect();
+      const count = header
+        .querySelector<HTMLElement>(".tool-group-count, .tool-title")
+        ?.getBoundingClientRect();
       expect(count?.right ?? Infinity).toBeLessThanOrEqual(b.left);
     });
   }
@@ -88,6 +94,7 @@ describe("the hooks badge over its group header", () => {
   for (const s of STATES) {
     it(`opens the hooks list from a click on the badge and leaves the group as it was (${s.name})`, async () => {
       const { group, header, badge } = mountHookGroup(s);
+      await rendered();
       const b = badge.getBoundingClientRect();
       const h = header.getBoundingClientRect();
       // On the header's surface, and the topmost control there.
@@ -106,8 +113,9 @@ describe("the hooks badge over its group header", () => {
       await userEvent.keyboard("{Escape}");
     });
 
-    it(`toggles the group from a click anywhere on the header outside the badge (${s.name})`, () => {
+    it(`toggles the group from a click anywhere on the header outside the badge (${s.name})`, async () => {
       const { header, badge } = mountHookGroup(s);
+      await rendered();
       for (const p of headerPointsOutsideBadge(header, badge)) {
         const before = expanded(header);
         const hit = document.elementFromPoint(p.x, p.y);

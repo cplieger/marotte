@@ -494,7 +494,7 @@ const CLOSED = { expanded: "false", hidden: "true", inert: true };
 
 describe("one header click flips what the reader sees", () => {
   it("opens a group the live fold closed, and the next click closes it", () => {
-    const g = groupWith(card("hook", "ok"), card("execute", "ok"));
+    const g = groupWith(card("execute", "ok"), card("execute", "ok"));
     autoCollapseGroup(g);
     expect(shown(g)).toEqual(CLOSED);
 
@@ -508,7 +508,7 @@ describe("one header click flips what the reader sees", () => {
 
   it("opens a group born folded, and the next click closes it", () => {
     const g = buildToolGroupShell();
-    groupBody(g).append(card("hook", "ok"), card("execute", "ok"));
+    groupBody(g).append(card("execute", "ok"), card("execute", "ok"));
     document.body.appendChild(g);
     setGroupSuperseded(g, true);
     refreshGroupHeader(g);

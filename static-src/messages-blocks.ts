@@ -1290,11 +1290,15 @@ function recordOutgoingHeight(st: TurnRender, seq: number): void {
   }
 }
 
+function shownRows(group: HTMLElement): number {
+  return groupBody(group).querySelectorAll(":scope > .tool-call:not([hidden])").length;
+}
+
 /** Record the group `card` sits in, against the members it holds, so a spacer standing for the whole run prices
- *  its real box; a bare shell is the card itself, which `recordEntryHeight` has. */
+ *  its real box; a shell showing one row is that card, which `recordEntryHeight` has. */
 function recordToolGroupHeight(st: TurnRender, card: HTMLElement): void {
   const group = card.parentElement?.closest<HTMLElement>(".tool-group") ?? null;
-  if (group?.parentElement !== st.bodyEl || groupIsBare(group)) {
+  if (group?.parentElement !== st.bodyEl || (groupIsBare(group) && shownRows(group) < 2)) {
     return;
   }
   const seqs = [...groupBody(group).querySelectorAll<HTMLElement>(":scope > [data-entry-seq]")].map(
@@ -1524,13 +1528,20 @@ function groupsHolding(st: TurnRender, seqs: Iterable<number>): Set<HTMLElement>
  */
 function pruneEmptyToolGroups(st: TurnRender, lost: ReadonlySet<HTMLElement>): void {
   for (const [key, bucket] of st.toolGroups) {
+    let pruned = false;
     for (const [runStart, group] of bucket) {
       if (groupBody(group).querySelector(":scope > [data-entry-seq]") === null) {
         group.remove();
         bucket.delete(runStart);
+        pruned = true;
       } else if (lost.has(group)) {
         refreshGroupHeader(group);
       }
+    }
+    // A pruned group may have held the strays a sibling folded, or folded a sibling's: one refresh re-places them.
+    const kept = bucket.values().next().value;
+    if (pruned && kept !== undefined) {
+      refreshGroupHeader(kept);
     }
     if (bucket.size === 0) {
       st.toolGroups.delete(key);
