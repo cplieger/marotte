@@ -183,6 +183,16 @@ async function settledFrames(): Promise<void> {
   await new Promise((r) => requestAnimationFrame(() => r(undefined)));
 }
 
+/** The follower has landed the reader on the live edge, so a move up from there is a move up. */
+async function followedToEnd(scroller: HTMLElement): Promise<void> {
+  await settledFrames();
+  // Over a fractional end Chromium truncates `scrollTop` and rounds `scrollHeight`, a pixel apart.
+  expect(
+    Math.abs(scroller.scrollTop - (scroller.scrollHeight - scroller.clientHeight)),
+    "the premise: Following at the end",
+  ).toBeLessThanOrEqual(1);
+}
+
 beforeEach(() => {
   // The multiplexer's registry persists at module scope; earlier parked views would count against the LRU.
   messages.teardownAll();
@@ -450,12 +460,7 @@ describe("the view handle", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => 
     // scroll event says where it went.
     const scroller = scroll.getScrollEl();
     expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight + 150);
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    // scrollHeight rounds a fractional content height up, so the live edge reads up to 1px past the scrollTop it clamps to.
-    expect(
-      scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop,
-      "the premise: Following at the end",
-    ).toBeLessThanOrEqual(1);
+    await followedToEnd(scroller);
     scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
     scroller.scrollTo({ top: 5, behavior: "instant" });
     scroller.dispatchEvent(new Event("scroll"));
@@ -857,6 +862,7 @@ describe("disposal", () => {
     await flushed();
     const scroller = scroll.getScrollEl();
     expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight + 150);
+    await followedToEnd(scroller);
     scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
     scroller.scrollTo({ top: 5, behavior: "instant" });
     scroller.dispatchEvent(new Event("scroll"));

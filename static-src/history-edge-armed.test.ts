@@ -110,16 +110,18 @@ describe("the history edge after an attach", () => {
     const load = vi.fn();
     s.controller.setLoadMore(load, true);
     await frames(5);
-    // The page lands and the reader scrolls down it in one task: the scroll event is dispatched in
-    // the next frame, before the edge observer's report of the new geometry.
+    // The page lands and the reader scrolls down to its end in one task: the scroll event is dispatched in the next
+    // frame, before the edge observer's report of the new geometry. A move down keeps a Following reader Following,
+    // so only the end is a landing the follower does not move.
     const page = document.createElement("div");
     page.style.height = `${String(VIEWPORT_PX * 8)}px`;
     s.view.appendChild(page);
+    const end = s.scroller.scrollHeight - VIEWPORT_PX;
     s.scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: 120 }));
-    s.scroller.scrollTop = VIEWPORT_PX * 6;
+    s.scroller.scrollTop = end;
     await frames(3);
-    expect(s.scroller.scrollTop, "the reader's scroll landed").toBe(VIEWPORT_PX * 6);
-    expect(load, "older-page requests with the edge 6 viewports away").not.toHaveBeenCalled();
+    expect(s.scroller.scrollTop, "the reader's scroll landed").toBe(end);
+    expect(load, "older-page requests with the edge 7 viewports away").not.toHaveBeenCalled();
   });
 
   it("fills an underfilled window at attach", async () => {
