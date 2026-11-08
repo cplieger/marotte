@@ -293,8 +293,9 @@ func (bc *bridgeCoordinator) generationAt(
 // out, so no open hands out a session being closed. A dead session, or a marked one that no hold refuses but the
 // opener's own (opener is its reservation token), closes here, so this open loads the next generation with the
 // current door settings; a reload a hold refuses stays pending, or for a kept chat marked for its next door, and the
-// door uses sb. A refused close keeps the session and its mark; an unconfirmed one fails this open. The close is a
-// lease, so the chat's close refuses it or cuts it and this open fails with that error.
+// door uses sb. A refused close keeps the session and its mark; a close that errs with the session ended fails this
+// open with marotte.ErrSessionClosing. The close is a lease, so the chat's close refuses it or cuts it and this open
+// fails with that error.
 func (bc *bridgeCoordinator) reloadIfMarked(
 	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, opener uint64,
 ) (release func(), reopen bool, err error) {

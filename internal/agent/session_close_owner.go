@@ -76,10 +76,10 @@ type closeAsk struct {
 	why closePurpose
 }
 
-// closeGrant is the chat's one granted close, set in the section that decided it and cleared by endClose.
+// closeGrant is the chat's one granted close, set in the section that decided it.
 type closeGrant struct {
 	sb *sharedBridge
-	// done is closed once, by endClose; an open on sb waits on it, then asks again.
+	// done is closed once, when the grant ends; an open on sb waits on it, then asks again.
 	done chan struct{}
 	// why is what the closer re-checks; a request on the grant ORs in here until frozen, then into late, which
 	// endClose asks again when the close withdrew.
@@ -257,12 +257,13 @@ func (lc *chatLifecycle) decideLocked() {
 	lc.ask = nil
 }
 
-// heldSinceGrantLocked reports a hold that can start while a close is granted and not yet confirmed: KAS's own, and
-// a session call, which only a confirmed close refuses. The other holds cannot start on a granted entry, and a
-// reservation taken meanwhile belongs to the next generation. Caller holds mu.
+// heldSinceGrantLocked reports a hold KAS's own work can start while a close is granted and not yet confirmed (a
+// wire turn, its close tail, KAS's state, a hosted step, an owed wake), and a session call, which only a confirmed
+// close refuses. None of them stands at grant time, since blockerLocked refuses on each. An open or a door on the
+// entry waits on done, and a reservation taken meanwhile belongs to the next generation. Caller holds mu.
 func (lc *chatLifecycle) heldSinceGrantLocked() bool {
-	return (lc.own != nil && lc.own.Source == marotte.TurnSourceWireTurnStart) || lc.kas.state != kasIdle ||
-		len(lc.steps) > 0 || len(lc.wakes) > 0 || lc.work[workSession] > 0
+	return (lc.own != nil && lc.own.Source == marotte.TurnSourceWireTurnStart) || len(lc.tails) > 0 ||
+		lc.kas.state != kasIdle || len(lc.steps) > 0 || len(lc.wakes) > 0 || lc.work[workSession] > 0
 }
 
 // nextClose is one wait of the chat's closer: the granted close it runs next with the purposes it froze, or false
@@ -487,7 +488,7 @@ func (r *turnRegistry) endStep(host marotte.ChatID, turnID string) {
 
 // holdWake keeps chatID's session for the wake KAS owes it after workflowID's terminal run_complete: KAS sends the
 // wake after the frame, and with no resident session its frames would reach the engine lane. The hold ends when a
-// turn opens on the chat (takeWakeLocked), its life ends or wakeHoldBound passes. A run chat takes none.
+// turn KAS opened opens on the chat (takeWakeLocked), its life ends or wakeHoldBound passes. A run chat takes none.
 func (r *turnRegistry) holdWake(chatID marotte.ChatID, workflowID string) {
 	if isRunChat(chatID) {
 		return
@@ -520,9 +521,10 @@ func (r *turnRegistry) holdWake(chatID marotte.ChatID, workflowID string) {
 	lc.wakeLocked()
 }
 
-// takeWakeLocked ends one wake hold, any of them, for a turn that opened: each run's end owes the chat one wake turn,
-// so a turn takes over one hold and leaves the others to their own turns. KAS's activity takes none, since holdKAS
-// already refuses while it lasts. Caller holds mu.
+// takeWakeLocked ends one wake hold, any of them, for a turn KAS opened: each run's end owes the chat one wake turn,
+// so that turn takes over one hold and leaves the others to their own turns. A turn marotte opened takes none, since
+// KAS buffers a wake that reaches a busy chat and opens its own turn for it later. KAS's activity takes none either,
+// since holdKAS already refuses while it lasts. Caller holds mu.
 func (lc *chatLifecycle) takeWakeLocked() {
 	for workflowID, bound := range lc.wakes {
 		bound.Stop()
