@@ -15,7 +15,7 @@ import (
 
 // validateConfig performs fail-fast checks so a misconfiguration is a clear startup error naming
 // the env var and value. kiro-cli is not checked: the manager installs it after this runs and
-// reports through /api/health.
+// reports through /healthz.
 func validateConfig(ctx context.Context, cfg *Config) error {
 	var errs []error
 	if cfg.notifyErr != nil {

@@ -35,7 +35,7 @@ func previewStack(t *testing.T) (http.Handler, *preview.Handler, string) {
 	ph := preview.New(ws, filebrowse.Sensitive{}, signer, slog.New(slog.DiscardHandler))
 	mux := http.NewServeMux()
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("spa")) }))
-	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) { httpserver.Ok(w) })
+	mux.HandleFunc(healthzPath, func(w http.ResponseWriter, _ *http.Request) { httpserver.Ok(w) })
 	ph.RegisterRoutes(mux)
 	idem := newIdempotencyCache(idempotencyTTL)
 	t.Cleanup(idem.stop)
@@ -68,7 +68,7 @@ func TestPreviewStack_PreviewHeadersWinOnThePreviewRouteOnly(t *testing.T) {
 				rec.Header().Get("X-Frame-Options"), rec.Header().Get("Content-Security-Policy"), rec.Header().Get("Access-Control-Allow-Origin"))
 		}
 	}
-	for _, target := range []string{"/", "/api/health"} {
+	for _, target := range []string{"/", healthzPath} {
 		rec := serveStack(h, http.MethodGet, target, "")
 		if rec.Header().Get("X-Frame-Options") != "DENY" || rec.Header().Get("Content-Security-Policy") != baseCSPPolicy ||
 			rec.Header().Get("Access-Control-Allow-Origin") != "" {

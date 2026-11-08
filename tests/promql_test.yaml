@@ -65,7 +65,7 @@ tests:
             exp_annotations:
               summary: "marotte's agent engine has not been ready for 10 minutes"
               description: >
-                No chat or workflow can run. If /api/health reports a kiro-cli
+                No chat or workflow can run. If /healthz reports a kiro-cli
                 install problem, fix that first. Otherwise the engine keeps failing
                 to start, and the engine start failed log lines say why.
 

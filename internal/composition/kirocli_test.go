@@ -17,7 +17,7 @@ import (
 )
 
 // TestStartKiroCLIShapes pins the runtimes startKiroCLI returns for a configuration it cannot
-// install from, since each answers /api/health differently and a wrong choice is silent.
+// install from, since each answers /healthz differently and a wrong choice is silent.
 func TestStartKiroCLIShapes(t *testing.T) {
 	const goodDigest = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
 	tests := map[string]struct {
@@ -74,7 +74,7 @@ func TestStartKiroCLIShapes(t *testing.T) {
 			}
 			switch {
 			case tc.wantGate && kiro.ready == nil:
-				t.Fatal("no readiness verdict published; /api/health would report healthy with no usable kiro-cli")
+				t.Fatal("no readiness verdict published; /healthz would report healthy with no usable kiro-cli")
 			case !tc.wantGate && kiro.ready != nil:
 				t.Fatal("a readiness verdict was published for an install this server does not own")
 			}

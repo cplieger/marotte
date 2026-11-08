@@ -210,7 +210,7 @@ export function updateContextBar(opts: ContextBarUpdate): void {
 
 /** Paint the status card's agent-runtime line, then re-probe so an open card is never as stale
  *  as the last transport gap (the boot probe and the gap probe are the only other times
- *  /api/health is read). Painted twice on purpose: the cached line lands in the same frame the
+ *  /healthz is read). Painted twice on purpose: the cached line lands in the same frame the
  *  card opens in, and the fresh one replaces it when the probe answers. */
 export function refreshRuntimeLine(): Promise<void> {
   $.stKiro.textContent = runtimeStatusLine();

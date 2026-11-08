@@ -311,7 +311,7 @@ func handshakeTimeout(err error, phase string, budget time.Duration) error {
 	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	return fmt.Errorf("%s did not finish within %s. kiro-cli stopped answering. Send again to retry, and check /api/health if it keeps happening: %w",
+	return fmt.Errorf("%s did not finish within %s. kiro-cli stopped answering. Send again to retry, and check /healthz if it keeps happening: %w",
 		phase, budget, err)
 }
 

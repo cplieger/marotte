@@ -92,7 +92,7 @@ Every setting, with what each one checks, is in [Configuration](docs/configurati
 
 | Port | Description |
 | --- | --- |
-| `9847` | The web page, its live updates, the terminal and the [metrics page](docs/monitoring.md#metrics) at `/metrics` |
+| `9847` | The web page, its live updates, the terminal, the [health check](docs/monitoring.md#knowing-the-app-is-alive) at `/healthz` and the [metrics page](docs/monitoring.md#metrics) at `/metrics` |
 
 ## Security
 
@@ -108,7 +108,7 @@ marotte sends no telemetry. kiro-cli's own telemetry is on by default, as in kir
 
 ## Troubleshooting
 
-Docker checks `/api/health` every 30 seconds. The container shows healthy once marotte is up and kiro-cli is installed and working, and the first start gets five minutes for the download. While it shows unhealthy the page still works and only chats wait. Docker does not restart a container because it is unhealthy.
+Docker checks `/healthz` every 30 seconds. The container shows healthy once marotte is up and kiro-cli is installed and working, and the first start gets five minutes for the download. While it shows unhealthy the page still works and only chats wait. Docker does not restart a container because it is unhealthy, and its health status notifies nobody: point an uptime prober at `/healthz` to hear about it, as [Monitoring and alerts](docs/monitoring.md#knowing-the-app-is-alive) describes.
 
 - The container restarts in a loop with `failed to create required directories`. The host folders are missing or belong to another user. Repeat steps 1 and 2 of the quick start.
 - Health stays at `kiro-cli install retrying` or `kiro-cli unavailable`. The download failed. marotte tries four times, then waits for a container restart.
