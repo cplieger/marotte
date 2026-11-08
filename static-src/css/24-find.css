@@ -126,7 +126,7 @@
 .page-find-row {
   display: flex;
   align-items: center;
-  gap: max(var(--sp-1), var(--tap-gap));
+  gap: var(--sp-1);
 }
 
 /* The kind's glyph, and the ONE place a reader learns which of the two this box
@@ -402,7 +402,7 @@
 .chat-find-nav {
   display: flex;
   align-items: center;
-  gap: max(2px, var(--tap-gap));
+  gap: 2px;
 }
 
 /* The bar's buttons take the shared rule above, beside the page find bar's. */

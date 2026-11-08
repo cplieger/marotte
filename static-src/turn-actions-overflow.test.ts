@@ -29,8 +29,13 @@ const { mountTurnFooterActions, initTurnActionCallbacks } =
   await import("./messages-turn-actions.js");
 const { copyClipboard } = await import("./actions/messages.js");
 
+// messages.ts's template, so a trigger's glyph draws at its real size.
 initTurnActionCallbacks({
-  svgTemplate: () => () => document.createElement("span"),
+  svgTemplate: (markup) => {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = markup;
+    return () => tpl.content.cloneNode(true);
+  },
 });
 
 let style: HTMLStyleElement;

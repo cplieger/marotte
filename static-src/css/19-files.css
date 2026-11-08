@@ -572,8 +572,8 @@
 
 /* The path takes its own row once one row would leave it under 12rem. Query
    conditions cannot read `var()`, so each threshold is 12rem plus the row's other
-   content: nine `--btn-h` buttons, five `--sp-2` gaps and margins, and five
-   `.fb-actions` gaps, 0.125rem fine and `--tap-gap` coarse (23.375rem fine, 25.25rem
+   content: nine `--btn-h` buttons (36px fine, 44px coarse), five `--sp-2` gaps and
+   margins, and five 0.125rem `.fb-actions` gaps (23.375rem fine, 27.875rem
    coarse). A button added
    to the bar moves both; `fb-toolbar-css.test.ts` fails until they follow. */
 @container fb-toolbar (width < 35.375rem) {
@@ -592,7 +592,7 @@
   }
 }
 
-@container fb-toolbar (width < 37.25rem) {
+@container fb-toolbar (width < 39.875rem) {
   :root[data-pointer="coarse"] .fb-toolbar .view-toolbar-inner {
     flex-wrap: wrap;
     row-gap: var(--sp-1);
@@ -688,10 +688,12 @@
     display: none;
   }
 
+  /* Opens from the trigger's start edge: the trigger sits in the toolbar's first few buttons,
+     so an end-aligned menu would run off the screen's start edge. */
   .fb-new-menu[open] > .fb-new-actions {
     position: absolute;
     z-index: 20;
-    inset-inline-end: 0;
+    inset-inline-start: 0;
     inset-block-end: calc(100% + var(--sp-2));
     display: flex;
     flex-direction: column;
@@ -708,11 +710,15 @@
     color: var(--c-text-secondary);
   }
 
+  /* A popup menu row, not a button box: `--menu-row-h`, its padding and its glyph. */
   .fb-new-actions > .icon-btn {
+    --btn-glyph: var(--icon-ui);
+
     justify-content: flex-start;
     gap: var(--sp-2);
     width: 100%;
-    padding-inline: var(--sp-2);
+    min-block-size: var(--menu-row-h);
+    padding: var(--menu-row-pad);
   }
 
   .fb-new-label {

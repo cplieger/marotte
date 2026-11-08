@@ -385,10 +385,9 @@
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
 
-  /* THE BAND IS THE ROW'S OWN: `--ctl-h-dense` floored by `--hit-floor` (32 on a mouse,
-     44 on a coarse pointer), a declared height because block padding cannot follow the
-     tier. Every control paints at `--ctl-h-sm` centred in it (4px of air above and below
-     on a mouse, 10px, its target's reach, on a coarse pointer). `--footer-inset` is the
+  /* THE BAND IS THE ROW'S OWN: `--action-band-h` (32 on a mouse, 52 on a coarse pointer),
+     a declared height because block padding cannot follow the tier. Every control paints at
+     `--btn-h-sm` centred in it with 4px of air above and below. `--footer-inset` is the
      inline air: more than the card's 5px corner radius, so a control's corner sits
      clear of the arc and its own `--r-sm` needs no concentric radius. */
   --footer-inset: var(--sp-2);
@@ -396,7 +395,7 @@
   /* Row 1's TRACK, never the box's floor, which stops binding row 1 once the info panel opens
      beneath it. No `gap`: a column gap is charged beside an EMPTY track, so the inline spacing
      rides the trailing container's margin. */
-  grid-template-rows: max(var(--hit-floor), var(--ctl-h-dense));
+  grid-template-rows: var(--action-band-h);
   transition: opacity var(--dur-enter) var(--ease-enter);
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);

@@ -84,6 +84,11 @@ export const ICON_REPO =
 const PATH_TANGENT =
   '<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/>';
 export const ICON_TANGENT = svg("ui", PATH_TANGENT);
+/** Lucide `ellipsis`: a menu of more actions. */
+export const ICON_MORE = svg(
+  "ui",
+  '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+);
 /** The same mark at the 14px a Chat options row's leading column is sized for. */
 export const ICON_TANGENT_ROW = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${PATH_TANGENT}</svg>`;
 export const ICON_EXPORT =

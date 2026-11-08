@@ -405,10 +405,10 @@
     /* ---- Control heights ------------------------------------------------- *
      * --ctl-h stands alone in its row or beside a full-size button, --ctl-h-dense
      * is a labelled field or an action in a dense row; every action in one row
-     * takes one height. --btn-h is an alias. A control PAINTS at these sizes on
-     * every tier: the pointer tier moves only --hit-floor, the invisible target
-     * the shared expander (61-mcp-tools.css) grows to, and the tokens below
-     * that derive from it. THE TIER IS THE POINTER, NOT THE WIDTH. */
+     * takes one height. A control PAINTS at these sizes on every tier: the
+     * pointer tier moves --hit-floor, the invisible target the shared expander
+     * (61-mcp-tools.css) grows to, and the tokens below that derive from it,
+     * --btn-h among them. THE TIER IS THE POINTER, NOT THE WIDTH. */
     --ctl-h: 2.25rem;
     --ctl-h-dense: 2rem;
     --ctl-h-sm: 1.5rem;
@@ -417,7 +417,18 @@
      * touch expander can read it: 44px is Apple's HIG figure and WCAG 2.5.5 (AAA),
      * against WCAG 2.5.8's 24px (AA) on the fine tier. */
     --hit-floor-touch: 2.75rem;
-    --btn-h: var(--ctl-h);
+    /* THE BUTTON BOX, every button family's (`button-size.test.ts`): the chat toolbar's
+     * icon button, 36px on a mouse and the 44px floor on touch, where the box is its own
+     * target. --icon-btn is its glyph (16px, 20px): --icon-grow, half what the box grows,
+     * over --icon-ui; a glyph of another size in the box grows by the same step. */
+    --btn-h: max(var(--ctl-h), var(--hit-floor));
+    --icon-grow: calc((var(--btn-h) - var(--ctl-h)) / 2);
+    --icon-btn: calc(var(--icon-ui) + var(--icon-grow));
+    /* The turn footer's and a code block's action box: 24px on a mouse, --btn-h's 44px on touch.
+     * The band that holds it, --action-band-h, leaves 4px of air above and below: 32px on a mouse,
+     * 52px on touch. */
+    --btn-h-sm: max(var(--ctl-h-sm), var(--hit-floor));
+    --action-band-h: calc(var(--btn-h-sm) + 2 * var(--sp-1));
     /* The smallest painted box of an interactive element, WCAG 2.5.8's 24px. */
     --paint-floor: 1.5rem;
     /* The expander's `inset`: `%` resolves on the pseudo-element against its host,
@@ -430,6 +441,10 @@
     --row-tap: max(var(--ctl-h), var(--hit-floor));
     --row-tap-dense: max(var(--ctl-h-dense), var(--hit-floor));
     --row-tap-sm: max(var(--ctl-h-sm), var(--hit-floor));
+    /* A popup menu's row, every menu's (`button-size.test.ts`): 32px on a mouse, the floor on
+     * touch, at one padding, its glyph `--icon-ui`. A row of two text lines grows from it. */
+    --menu-row-h: var(--row-tap-dense);
+    --menu-row-pad: var(--sp-1) var(--sp-2);
     /* A sidebar tab's mouse height (its ×, its block padding, its reserved 1px border) and its row
      * at the tier, which New chat and History match. Here, not on the sidebar: the drag ghost
      * (tabs-drag.ts) clones a tab into `body`. */
@@ -442,15 +457,18 @@
      * pseudo-element to carry an expander. */
     --field-h: max(var(--ctl-h), var(--hit-floor));
     --field-h-dense: max(var(--ctl-h-dense), var(--hit-floor));
-    /* The gap at which two neighbours painted at one control height have targets that
-     * meet without overlapping. Negative where the paint clears the floor, so a site
-     * writes `gap: max(<its own gap>, var(--tap-gap*))` and keeps its fine-tier gap. */
-    --tap-gap: calc(var(--hit-floor) - var(--ctl-h));
+    /* The gap at which two neighbours painted at a dense height have targets that meet
+     * without overlapping. Negative on a mouse, so a site writes
+     * `gap: max(<its own gap>, var(--tap-gap-*))` and keeps its fine-tier gap. A `--btn-h`
+     * box is its own target on both tiers, so a row of them takes its own gap. */
     --tap-gap-dense: calc(var(--hit-floor) - var(--ctl-h-dense));
     --tap-gap-sm: calc(var(--hit-floor) - var(--ctl-h-sm));
     /* How far the coarse tier lifts the target: 0 on a mouse. A spacing that a 44px
      * row makes redundant subtracts it. */
     --hit-grow: calc(var(--hit-floor) - var(--paint-floor));
+    /* The gap in a row of `--btn-h` buttons: 4px on a mouse, the chat toolbar's 2px on touch,
+     * where each box is its own target. */
+    --btn-gap: max(var(--sp-05), calc(var(--sp-1) - var(--hit-grow)));
 
     /* How far the sidebar's resize target reaches over the main area, 0px while
      * 10-shell-app.css hides the handle. A surface flush to the sidebar starts its

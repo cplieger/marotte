@@ -392,13 +392,14 @@
   display: none;
 }
 
+/* A popup menu row (`--menu-row-h`); the padding is less the 1px edge 70-selection.css reserves. */
 .git-branch-popover-row {
-  min-block-size: var(--row-tap-sm);
+  min-block-size: var(--menu-row-h);
   appearance: none;
   background: transparent;
   border: 0;
   text-align: start;
-  padding: var(--sp-1) var(--sp-2);
+  padding: calc(var(--sp-1) - 1px) calc(var(--sp-2) - 1px);
   font: inherit;
   color: var(--c-text-primary);
   cursor: pointer;

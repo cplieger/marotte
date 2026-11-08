@@ -9,7 +9,7 @@ import { wakeText } from "./turn-wake.js";
 import { sentBy } from "./sent-by.js";
 import { entryRenders, turnFolds } from "./block-window.js";
 import { MessageRun } from "./entry-ids.js";
-import { ICON_COPY, ICON_COPY_MD, ICON_LINK, ICON_TANGENT } from "./icons.js";
+import { ICON_COPY, ICON_COPY_MD, ICON_LINK, ICON_MORE, ICON_TANGENT } from "./icons.js";
 import { blockquote } from "./message-quote.js";
 import { get, getActiveId } from "./store.js";
 import { chatNotice } from "./notice-subject.js";
@@ -210,7 +210,7 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
         "aria-label": "More turn actions",
         "data-tooltip": "More turn actions",
       },
-      "\u2026",
+      _svgTemplate(ICON_MORE)(),
     ),
   );
   more.appendChild(group);

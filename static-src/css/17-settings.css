@@ -443,7 +443,7 @@
 .forge-account-repo-actions {
   display: flex;
   align-items: center;
-  gap: max(var(--sp-1), var(--tap-gap));
+  gap: var(--sp-1);
   flex-shrink: 0;
 }
 
@@ -1580,6 +1580,9 @@ select.native-rule-effect:focus-visible {
 .native-rule-remove {
   min-inline-size: var(--ctl-h-sm);
   min-block-size: var(--ctl-h-sm);
+
+  --btn-glyph: var(--icon-ui);
+
   margin-inline-start: auto;
   padding: var(--sp-1);
   border-radius: var(--r-sm);

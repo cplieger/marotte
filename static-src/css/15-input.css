@@ -77,19 +77,8 @@
      the cap, and an iPad's inset is under it. */
   --composer-inset-cap: 1.5rem;
 
-  /* THE ROW'S OWN PADDING PAYS FOR THE EXPANDER'S BLOCK REACH, so a pill's target
-     never overhangs into `#prompt-input`'s box (a target reaching into its
-     neighbour's). The reach is (--hit-floor - box) / 2 above the painted box, 4px
-     on a coarse pointer, and the floor at --pill-inset keeps the 4px chrome inset
-     wherever the box already clears the target. It is the ROW's padding and NOT
-     --pill-inset, because raising the inset raises the gap between the controls
-     with it, which costs the pills' label width. */
-  --composer-pill-pad: max(var(--pill-inset), calc((var(--hit-floor) - var(--btn-h)) / 2));
-
-  /* THE PILL ROW'S ONE GAP, between every pair of controls, so touch spaces the whole
-     row or none of it: the toolbar's spacing for `--btn-h` boxes, where two icon-only
-     neighbours' targets meet instead of crossing. 4px on a mouse, 8px on touch. */
-  --pill-gap: max(var(--pill-inset), var(--tap-gap));
+  /* THE PILL ROW'S ONE GAP, between every pair of controls: the button row's. */
+  --pill-gap: var(--btn-gap);
 }
 
 .prompt-box {
@@ -108,11 +97,10 @@
      shares the outer corner's centre only at inner = outer − border − inset, which
      needs an EQUAL inset on both edges of the corner. Cloud Four's form
      (https://cloudfour.com/thinks/the-math-behind-nesting-rounded-corners/) omits
-     the border term. The inset term is the ROW's padding, not --pill-inset, since
-     the row pays for its controls' target expander out of its own inset: 12 − 1 − 4
+     the border term. The inset term is the row's padding, --pill-inset: 12 − 1 − 4
      = 7px on both pointer tiers, and `max()` holds 0 once an inset passes the
      corner. A per-container derivation, so not a token. */
-  --pill-radius: max(0px, calc(var(--stack-r) - 1px - var(--composer-pill-pad)));
+  --pill-radius: max(0px, calc(var(--stack-r) - 1px - var(--pill-inset)));
 
   transition:
     border-color var(--dur-micro),
@@ -167,10 +155,10 @@
      air below it down to the divider the pill row draws are equal at every line
      count. `1lh` is this element's own line-height, so the derivation follows
      the type scale instead of restating it.
-     The pill row's band (one control plus its two `--composer-pill-pad` edges), so
+     The pill row's band (one control plus its two `--pill-inset` edges), so
      the two rows match on every tier. The 1px divider between them is not in the
      sum: counting it would put the box 0.5px out of symmetry about it. */
-  --composer-rest-h: calc(var(--btn-h) + 2 * var(--composer-pill-pad));
+  --composer-rest-h: calc(var(--btn-h) + 2 * var(--pill-inset));
 
   padding: calc((var(--composer-rest-h) - 1lh) / 2) var(--sp-4);
 
@@ -212,14 +200,8 @@
   flex-wrap: wrap;
   gap: var(--sp-1);
 
-  /* THE ROW'S PADDING PAYS FOR ITS CHIPS' TARGET REACH, exactly as `.prompt-pills`
-     pays for its controls': a chip's expander below reaches (--hit-floor - box) / 2
-     past the painted box on a coarse pointer, and without this term that target
-     overhangs into `#prompt-input`'s box above and into the pill row's own
-     controls' targets below. Reading `--composer-pill-pad` rather than
-     `--pill-inset` also keeps the chips on the same inline edge as the controls
-     under them, whichever of the two is larger. */
-  padding: var(--composer-pill-pad);
+  /* The pill row's inset, so the chips share the inline edge of the controls under them. */
+  padding: var(--pill-inset);
 }
 
 .attachment-pill {
@@ -372,9 +354,8 @@
   align-items: center;
   gap: var(--pill-gap);
 
-  /* The inset is the EXPANDER's term, not the chrome's: see --composer-pill-pad on
-     `#prompt-form`. Equal on all four edges, which the concentric corner requires. */
-  padding: var(--composer-pill-pad);
+  /* Equal on all four edges, which the concentric corner requires. */
+  padding: var(--pill-inset);
   border-block-start: 1px solid color-mix(in srgb, var(--c-border) 50%, transparent);
   container-type: inline-size;
   container-name: pill-row;
@@ -437,6 +418,16 @@
 
   & svg {
     flex-shrink: 0;
+  }
+
+  & > :where(.ic-ui) {
+    inline-size: var(--icon-btn);
+    block-size: var(--icon-btn);
+  }
+
+  & > :where(.ic-inline) {
+    inline-size: calc(var(--icon-inline) + var(--icon-grow));
+    block-size: calc(var(--icon-inline) + var(--icon-grow));
   }
 }
 
@@ -549,6 +540,8 @@
 
   & .context-ring {
     flex-shrink: 0;
+    inline-size: calc(1rem + var(--icon-grow));
+    block-size: calc(1rem + var(--icon-grow));
   }
 
   /* The fill's transitions live HERE rather than on a style attribute: the served
@@ -638,6 +631,12 @@
     color: var(--c-accent);
     animation: vk-breathe 1.8s ease-in-out infinite;
   }
+}
+
+/* Each target reaches over its 1px border and half the row's gap, so neighbours' targets meet
+   edge to edge: an absolute box's inset starts at its host's padding edge, inside the border. */
+.prompt-pills :is(.pill, .send-btn)::after {
+  inset-inline: calc(var(--pill-gap) / -2 - 1px);
 }
 
 .pill-spacer {
@@ -930,14 +929,16 @@
 }
 
 .pill-model-item {
-  /* The row is the target, so it takes the hit floor: a floor, so a taller row keeps
+  /* The row is the target, so it takes the menu row: a floor, so a taller row keeps
      its own height. */
-  min-block-size: var(--row-tap-sm);
+  min-block-size: var(--menu-row-h);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-2);
-  padding: var(--sp-1) var(--sp-2);
+
+  /* The menu row's padding less the 1px edge 70-selection.css reserves. */
+  padding: calc(var(--sp-1) - 1px) calc(var(--sp-2) - 1px);
   border: none;
   background: transparent;
   border-radius: var(--card-radius);
@@ -972,8 +973,8 @@
   line-height: 0;
 
   & svg {
-    width: 0.875rem;
-    height: 0.875rem;
+    width: calc(0.875rem + var(--icon-grow));
+    height: calc(0.875rem + var(--icon-grow));
   }
 }
 
@@ -997,11 +998,13 @@
 
 .pill-role-item {
   /* The row is the target; see `.pill-model-item`. */
-  min-block-size: var(--row-tap-sm);
+  min-block-size: var(--menu-row-h);
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: var(--sp-1) var(--sp-2);
+
+  /* The menu row's padding less the 1px edge 70-selection.css reserves. */
+  padding: calc(var(--sp-1) - 1px) calc(var(--sp-2) - 1px);
   border: none;
   background: transparent;
   border-radius: var(--card-radius);
@@ -1592,7 +1595,9 @@
   /* The card's derived rung, not --r-md: the first and last rows sit in the
      card's own corners. See --card-radius on .pill-expand-content. */
   border-radius: var(--card-radius);
-  padding: var(--sp-1);
+
+  /* The menu row's padding, less the shared 1px border, so the content sits at its inset. */
+  padding: calc(var(--sp-1) - 1px) calc(var(--sp-2) - 1px);
 
   /* The border, the hover and the press are SHARED because the six rows must read
      as one list, and the border is also what puts their labels on one x: declared
@@ -1620,7 +1625,7 @@
   color: inherit;
   font: inherit;
   width: 100%;
-  min-block-size: var(--hit-floor);
+  min-block-size: var(--menu-row-h);
 
   /* Unavailable rather than offering an error: the tangent row is disabled until
    * its chat holds a conversation to branch. Kept visible (not hidden) so the
@@ -1632,9 +1637,9 @@
   }
 }
 
-/* The row's LEADING COLUMN, one width for a 14px glyph and for the switch row's
+/* The row's LEADING COLUMN, one width for the menu glyph and for the switch row's
    checkbox, so every row's label starts on the same x. 1rem is the checkbox's
-   painted size (02-reset.css owns it); the glyph centres inside it. */
+   painted size (02-reset.css owns it) and `--icon-ui`'s. */
 .chat-opt-icon {
   display: inline-flex;
   align-items: center;
@@ -1644,10 +1649,9 @@
   margin-block-start: 0.125rem;
   color: var(--c-text-tertiary);
 
-  /* A registry `.ic-ui` glyph (Compact's) draws at the 14px of the local glyphs beside it. */
-  & > .ic-ui {
-    inline-size: 0.875rem;
-    block-size: 0.875rem;
+  & > svg {
+    inline-size: var(--icon-ui);
+    block-size: var(--icon-ui);
   }
 }
 
@@ -1668,10 +1672,10 @@
   content: none;
 }
 
-/* The switch rows take the button rows' `--hit-floor` box, which `.chat-opt-btn`
-   declares; a <label> row is content-driven without it. */
+/* The switch rows take the button rows' menu row, which `.chat-opt-btn` declares; a
+   <label> row is content-driven without it. */
 .chat-opt-row {
-  min-block-size: var(--hit-floor);
+  min-block-size: var(--menu-row-h);
 }
 
 /* The goal row's inline input collection: an expanding row section, not a
@@ -1817,11 +1821,11 @@
     color var(--dur-micro) var(--ease-standard);
 
   /* The TOKEN, not a literal: a hard `1rem` at (0,1,0) beats `.ic-ui`'s
-     zero-specificity rule (03-base.css), so a retuned `--icon-ui` would leave Send behind.
+     zero-specificity rule (03-base.css), so a retuned `--icon-btn` would leave Send behind.
      Every face takes it — a per-path size cannot live on a control that swaps paths. */
   & svg {
-    width: var(--icon-ui);
-    height: var(--icon-ui);
+    width: var(--icon-btn);
+    height: var(--icon-btn);
     flex-shrink: 0;
     transition: transform var(--dur-micro) var(--ease-standard);
   }
@@ -2090,8 +2094,8 @@
   display: flex;
   align-items: baseline;
   gap: var(--sp-2);
-  min-height: var(--row-tap-dense);
-  padding: var(--sp-1) var(--sp-2);
+  min-height: var(--menu-row-h);
+  padding: var(--menu-row-pad);
   border-radius: var(--stack-in-r);
   cursor: pointer;
 

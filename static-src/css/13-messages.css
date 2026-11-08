@@ -1072,8 +1072,8 @@
   position: absolute;
 
   /* Two declarations, and the second is the exact one. `--below-chat-toolbar`
-   * describes a ONE-ROW bar, and the toolbar reaches two below 324px of chat
-   * area on touch, where the seven buttons and their tap gaps no longer fit a row
+   * describes a ONE-ROW bar, and the toolbar reaches two below 344px of chat
+   * area on touch, where the seven buttons and their gaps no longer fit a row
    * and wrap (12-chat.css) — the token would leave this band over the second row of buttons.
    * `anchor()` reads the real bottom edge. Its own fallback is the one-row edge, so
    * an engine with no anchor positioning drops the second declaration and keeps the
@@ -1208,7 +1208,7 @@
  * banner-stack.ts (an `<a>` and a `<button>`), as every other banner's action is; a
  * local skin here reset none of a button's UA chrome. The shared class's target
  * follows the pointer tier through the shared expander (61-mcp-tools.css), its hover
- * raises contrast by construction, and its 36px takes the row past the
+ * raises contrast by construction, and its `--btn-h` takes the row past the
  * `--chat-toolbar-h` floor. It gives up the severity ink deliberately: the banner
  * states its level by glyph, ink and wash already, and the sibling banners all put
  * neutral chrome in this slot. */
@@ -1256,11 +1256,11 @@
   gap: var(--sp-2);
 
   /* The turn footer's row height (29-turns.css), for the same buttons: their
-     `--hit-floor` expanders must fit inside `.code-wrap`'s clip, which cuts hit
+     `--hit-floor` targets must fit inside `.code-wrap`'s clip, which cuts hit
      testing as well as paint. */
-  min-height: max(var(--hit-floor), var(--ctl-h-dense));
+  min-height: var(--action-band-h);
   padding-block: 0;
-  padding-inline: var(--sp-2) max(var(--sp-2), calc(var(--tap-gap-sm) / 2));
+  padding-inline: var(--sp-2);
   background: var(--c-bg-secondary);
 }
 

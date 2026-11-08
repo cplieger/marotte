@@ -48,7 +48,7 @@ describe("a control that must stay visually small opts out of the box floor", ()
 
     const header = ruleContaining(shell, ".shell-header", "top");
     expect(header.body, "the header is one row of buttons and their own targets").toMatch(
-      /height:\s*calc\(max\(var\(--btn-h\), var\(--hit-floor\)\) \+ var\(--hairline\)\)/u,
+      /height:\s*calc\(var\(--btn-h\) \+ var\(--hairline\)\)/u,
     );
     expect(header.body, "with no block padding to hold a target").toMatch(
       /padding-inline:\s*var\(--sp-3\)/u,
@@ -462,7 +462,7 @@ describe("the shell resize bar's real target", () => {
     ["fine", 37],
     ["coarse", 45],
   ] as const)("stays one content row tall on %s (%ipx)", (t, expected) => {
-    // (iv) The reader-visible half: hardcoded heights. 37 is the 36px button and 45 its 44px target,
+    // (iv) The reader-visible half: hardcoded heights. 37 is the 36px button and 45 the 44px one on touch,
     // each plus the 1px border `box-sizing: border-box` charges.
     tier(t);
     const { bar } = mountPanel();

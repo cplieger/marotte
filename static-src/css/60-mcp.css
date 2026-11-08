@@ -686,6 +686,8 @@
 .mcp-row-actions > .icon-btn {
   min-inline-size: var(--ctl-h-dense);
   min-block-size: var(--ctl-h-dense);
+
+  --btn-glyph: var(--icon-ui);
 }
 
 /* REQUIRED: `.icon-btn` declares `display: flex`, which beats the UA sheet's
@@ -881,9 +883,6 @@
   gap: var(--sp-2);
   overflow-y: auto;
   padding-inline: var(--sp-1);
-
-  /* The first and last control's targets stay inside the clip. */
-  padding-block: max(0px, calc(var(--tap-gap) / 2));
   scrollbar-gutter: stable;
 }
 
@@ -909,7 +908,7 @@
 
 /* THE SEARCH BUTTON IS THE PENDING FACE, for a click and for a typed query alike
  * (both dispatch the one action `bindLoadingState` watches). The glyph is REPLACED
- * rather than joined, because the pill is icon-only at 36px and `.btn-loading`'s
+ * rather than joined, because the pill is icon-only and `.btn-loading`'s
  * ring-beside-a-label does not fit one. Ring idiom and period token:
  * `.tool-spinner` (14-tools.css); the full opacity is the busy face in 40-a11y,
  * which reads the `aria-busy` this same binding sets. */
@@ -1050,6 +1049,9 @@
 .mcp-pair-del {
   min-inline-size: var(--ctl-h-sm);
   min-block-size: var(--ctl-h-dense);
+
+  --btn-glyph: var(--icon-ui);
+
   padding: var(--sp-1);
 
   /* The field beside it has no expander, so the ×'s own reach needs the whole gap. */

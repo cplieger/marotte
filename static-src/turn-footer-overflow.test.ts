@@ -2,6 +2,7 @@
 // only actions that do not fit and never just one, and a footer with three actions or fewer never shows it.
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { page } from "vitest/browser";
+import { BUTTON_REFERENCE } from "./__test-helpers__/button-reference.js";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type * as StoreLoad from "./store-load.js";
@@ -248,7 +249,7 @@ describe("the footer's … menu", () => {
   }
 
   it("holds only what does not fit, at least two, when two or more do not fit", async () => {
-    // A coarse 352px row beside "Outcome unknown" has room for three of the five slots.
+    // A coarse 352px row beside "Outcome unknown" has room for two of the five 44px slots: Rewind and the `…`.
     await at(352, "coarse");
     const [first] = await paint([promptTurn(1, "reply", "unknown"), promptTurn(2, "reply")]);
     const footer = footerOf(first);
@@ -256,6 +257,12 @@ describe("the footer's … menu", () => {
     expect(row.total, "copy ×3, Branch and Rewind").toBe(5);
     expect(row.opener, "the … opener").not.toBeNull();
     expect(row.held.length, "the menu holds at least two").toBeGreaterThanOrEqual(2);
+    // The `…` is an icon in the button box, at the button glyph's touch size, as Rewind's is.
+    const mark = row.opener?.querySelector("svg")?.getBoundingClientRect();
+    expect([mark?.width, mark?.height], "the … glyph").toEqual([
+      BUTTON_REFERENCE.coarse.glyph,
+      BUTTON_REFERENCE.coarse.glyph,
+    ]);
     expect(row.inline.length + row.held.length, "every action is reachable").toBe(row.total);
     expectRowFits(footer, "352 coarse five actions");
     // Nothing that fits is held: the row has no room left for one more action and its gap.
@@ -287,11 +294,11 @@ describe("the footer's … menu", () => {
     }
   });
 
-  // Measured: beside "Outcome unknown" five actions are one slot short from 322 to 346px fine and from 376 to
-  // 418px coarse, and fit once the word is hidden.
+  // Measured: beside "Outcome unknown" five actions are one slot short from 322 to 346px fine and from 402 to
+  // 446px coarse, and fit once the word is hidden.
   for (const [tier, width] of [
     ["fine", 336],
-    ["coarse", 396],
+    ["coarse", 424],
   ] as const) {
     it(`hides the outcome word rather than hold one action, at ${String(width)}px on the ${tier} tier`, async () => {
       await at(1280, tier);

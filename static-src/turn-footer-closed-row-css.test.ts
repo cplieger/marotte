@@ -387,27 +387,27 @@ const FINE = {
   end: 8,
   glyphs: { actions: 4, branch: 1, size: 16 },
 } as const;
-// On a phone the controls paint at the mouse's 24px, centred in the 44px band their targets fill
-// ((44 - 24) / 2 = 10px above and below), the glyphs at the mouse's 16px, and each sits 20px from
-// the next so their 44px targets meet.
+// On a phone the controls paint the 44px button box, centred in the 52px band with 4px of air above
+// and below, the glyphs one step up at 20px, and each box is its own target, so the container's one
+// gap only parts the fills.
 const COARSE = {
-  band: 44,
-  ledger: { x: 8, y: 10, h: 24 },
-  info: { x: 12, y: 14, w: 16, h: 16 },
-  mark: { x: 36, y: 18, w: 8, h: 8 },
+  band: 52,
+  ledger: { x: 8, y: 4, h: 44 },
+  info: { x: 12, y: 18, w: 16, h: 16 },
+  mark: { x: 36, y: 22, w: 8, h: 8 },
   ledgerGap: 8,
   actions: [
-    ["Copy as text", { y: 10, w: 24, h: 24 }],
-    ["Copy as markdown", { y: 10, w: 24, h: 24 }],
-    ["Copy link to this turn", { y: 10, w: 24, h: 24 }],
-    ["Branch from here", { y: 10, w: 24, h: 24 }],
+    ["Copy as text", { y: 4, w: 44, h: 44 }],
+    ["Copy as markdown", { y: 4, w: 44, h: 44 }],
+    ["Copy link to this turn", { y: 4, w: 44, h: 44 }],
+    ["Branch from here", { y: 4, w: 44, h: 44 }],
   ],
-  branch: [["Branch from here", { y: 10, w: 24, h: 24 }]],
-  actionGaps: [20, 20, 20],
-  rewind: ["Rewind", { y: 10, w: 24, h: 24 }],
-  rewindGap: 20,
+  branch: [["Branch from here", { y: 4, w: 44, h: 44 }]],
+  actionGaps: [2, 2, 2],
+  rewind: ["Rewind", { y: 4, w: 44, h: 44 }],
+  rewindGap: 2,
   end: 8,
-  glyphs: { actions: 4, branch: 1, size: 16 },
+  glyphs: { actions: 4, branch: 1, size: 20 },
 } as const;
 const PIN = { 1280: FINE, 390: COARSE, 320: COARSE } as const;
 /** The footer's width in each frame, which no glyph decides. */
@@ -838,12 +838,11 @@ describe("the closed footer row", () => {
           expect(glyphs.length, "the row's shown glyphs: the `i`, the actions', Rewind's").toBe(
             1 + (slot === undefined ? 0 : pin.glyphs[slot]) + (rewinds ? 1 : 0),
           );
+          // The `i` is the ledger's mark, held by `pin.info`; the controls' glyphs are the button glyph.
           glyphs.forEach((g, i) => {
             const b = g.getBoundingClientRect();
-            expect([b.width, b.height], `glyph ${String(i)}`).toEqual([
-              pin.glyphs.size,
-              pin.glyphs.size,
-            ]);
+            const size = i === 0 ? pin.info.w : pin.glyphs.size;
+            expect([b.width, b.height], `glyph ${String(i)}`).toEqual([size, size]);
           });
         });
       }

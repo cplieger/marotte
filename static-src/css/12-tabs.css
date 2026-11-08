@@ -958,8 +958,8 @@
   display: flex;
   align-items: center;
   width: 100%;
-  min-block-size: var(--row-tap-sm);
-  padding: var(--sp-1) var(--sp-3);
+  min-block-size: var(--menu-row-h);
+  padding: var(--menu-row-pad);
   border: none;
   background: none;
   color: var(--c-text-primary);

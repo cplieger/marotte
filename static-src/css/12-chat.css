@@ -83,8 +83,8 @@
 }
 
 .chat-toolbar {
-  /* Wide enough on touch for neighbouring buttons' 44px targets to meet. */
-  --toolbar-gap: max(0.125rem, var(--tap-gap));
+  /* Each button is its own target on both tiers, so the reference's 2px gap holds on both. */
+  --toolbar-gap: 0.125rem;
 
   /* The bar's rendered bottom edge, for the notice band (`.banner-stack`,
      13-messages.css), which no token can place: on a narrow phone the
@@ -104,8 +104,8 @@
      which is `position: absolute`, so it leaves the flex line entirely. */
   justify-content: flex-end;
 
-  /* On touch, seven 36px buttons plus six 8px gaps is 300px against `width - 24px`,
-     so the phone row fits from 324px; below that the wrap is deliberate, since
+  /* On touch, seven 44px buttons plus six 2px gaps is 320px against `width - 24px`,
+     so the phone row fits from 344px; below that the wrap is deliberate, since
      without it the row overflows past `flex-end` off the start edge, out of
      reach. An in-flow heading costs one more gap, so `page-title.ts` measures
      the actions' rows too and clips the heading before the bar breaks for it.
@@ -239,7 +239,7 @@
 
 .titlebar-title {
   /* --fs-md, not the --fs-xl the old `.page-title` used: an 18px title beside
-     36px buttons in a 52px bar is top-heavy, and that 18px lived in scrolling
+     the bar's buttons in a 52px bar is top-heavy, and that 18px lived in scrolling
      content rather than in chrome. */
   font-size: var(--fs-md);
   font-weight: var(--fw-semibold);

@@ -13,7 +13,7 @@
      literal here under-stated a coarse card by 20px once. Under-stating an OPEN card
      is the right error: the container grows rather than shrinking under a reader.
      `block-heights.ts` shadows the resolved values. */
-  --run-card-content: calc(var(--row-tap) + max(var(--hit-floor), var(--btn-h)) + 1px);
+  --run-card-content: calc(var(--row-tap) + var(--btn-h) + 1px);
 
   content-visibility: auto;
   contain-intrinsic-size: auto var(--run-card-content);
@@ -562,15 +562,15 @@
    Foot — the outcome, and the way out
    -------------------------------------------------------------------------- */
 
-/* Outside the disclosure, so a collapsed card still states its result. The block
-   padding is `.run-open`'s expander reach, so the card's clip leaves its target whole.
+/* Outside the disclosure, so a collapsed card still states its result. `.run-open` paints
+   the button box, its own target, so the card's clip leaves it whole with no block padding.
    Box rung with a rule, like every nested foot. */
 .run-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-3);
-  padding-block: max(0px, calc(var(--tap-gap) / 2));
+  padding-block: 0;
   padding-inline: var(--sp-3);
   border-block-start: 1px solid var(--c-border);
   font-size: var(--fs-xs);
