@@ -143,11 +143,11 @@
 /* A MEMBER ROW DECLARES NO FLOOR and inherits `.tool-header`'s `--btn-h`, so the group
  * header and its rows share one token. The header keeps that floor: it is
  * `role="button"`, and a dense-tier height would put it under the touch hit floor.
- * `padding-block: var(--sp-1)` is the real density difference, scoped OFF the bare state
+ * The `--sp-1` block padding is the real density difference, scoped OFF the bare state
  * so a lone call renders identical to a standalone `.tool-call`. The negation is in
  * `:where()` because the chain is already at this file's `selector-max-specificity` cap. */
 .tool-group:not(:where(.tool-group-bare)) > .tool-group-body > .tool-call .tool-header {
-  padding-block: var(--sp-1);
+  --tool-header-pad: var(--sp-1);
 }
 
 .tool-group-header,
@@ -362,14 +362,20 @@
   display: flex;
 
   /* CENTRING IS CORRECT HERE only because this row CANNOT wrap: `.tool-title` clips with
-     an ellipsis and the subtitle is a sibling. A wrappable child here breaks both this and
-     `.tool-disclosure`'s 50%. */
+     an ellipsis and the subtitle is a sibling. The steering title wraps, so its header
+     aligns to `--tool-first-line` instead (below). */
   align-items: center;
   gap: var(--sp-2);
-  padding-block: var(--sp-2);
+
+  --tool-header-pad: var(--sp-2);
+
+  padding-block: var(--tool-header-pad);
   padding-inline: 0.75rem;
   min-height: var(--row-tap);
   min-width: 0; /* allow ellipsis on flex children */
+
+  /* The ONE-LINE content box, where a one-line header's icon and chevron centre. */
+  --tool-first-line: calc(var(--row-tap) - 2 * var(--tool-header-pad));
 
   /* THE FILE BADGE'S HEIGHT: the content box a STANDALONE card's header leaves on a
      mouse, the tightest context it renders in, so one badge size holds on every tier. Declared
@@ -692,25 +698,27 @@
 /* A steering title wraps: a button is an atomic inline even at `display: inline`, so an ellipsis
    would drop every name that does not fit whole, all of them on a phone. */
 .tool-call[data-kind="steering"] .tool-title {
+  color: var(--c-text-secondary);
   white-space: normal;
   overflow-wrap: anywhere;
+  /* Each line is a pill's height, so a pill fills its line instead of growing it past the
+     padding's `1lh`, and the plain words centre on the pills beside them. */
+  line-height: var(--tool-badge-h);
+  padding-block: calc((var(--tool-first-line) - 1lh) / 2);
+
+  & > .tool-file-link {
+    vertical-align: top;
+  }
 }
 
-/* The names are links inside the title's text run, so they read as text, not chips. */
-.tool-title > .steering-doc.tool-file-link {
-  display: inline;
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: inherit;
-  block-size: auto;
-  max-width: none;
-  text-decoration: underline dotted;
+/* So the wrapped header's icon sits on its first line, in the column and at the centre every
+   one-line card's does. The icon slot keeps its glyph's size and is inset to that line's centre:
+   sizing the slot from `--row-tap` would grow a drawing on the touch tier. */
+.tool-call[data-kind="steering"] .tool-header {
+  align-items: flex-start;
 
-  &:hover {
-    background: none;
-    color: var(--c-text-primary);
+  & > .tool-icon {
+    margin-block-start: calc((var(--tool-first-line) - var(--icon-ui)) / 2);
   }
 }
 
