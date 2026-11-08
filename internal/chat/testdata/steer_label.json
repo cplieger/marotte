@@ -51,9 +51,9 @@
       "reason": "restart",
       "label": "Workflow result not delivered · the session restarted",
       "sites": [
-        "internal/agent/bridge_coord.go:1764",
+        "internal/agent/bridge_coord.go:1892",
         "internal/agent/entry_merge.go:609",
-        "internal/agent/runtime.go:801"
+        "internal/agent/runtime.go:803"
       ]
     },
     {
@@ -211,7 +211,7 @@
       "label": "Not read · the session restarted",
       "sites": [
         "internal/agent/entry_merge.go:609",
-        "internal/agent/runtime.go:795"
+        "internal/agent/runtime.go:797"
       ]
     },
     {
@@ -221,7 +221,7 @@
       "label": "Mid-turn message",
       "sites": [
         "internal/agent/run_appender.go:376",
-        "internal/agent/run_message.go:520",
+        "internal/agent/run_message.go:521",
         "internal/translate/steering.go:130",
         "internal/translate/steering.go:272"
       ]
@@ -239,7 +239,7 @@
   ],
   "sites": [
     {
-      "site": "internal/agent/bridge_coord.go:1764",
+      "site": "internal/agent/bridge_coord.go:1892",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",
@@ -281,7 +281,7 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/run_message.go:520",
+      "site": "internal/agent/run_message.go:521",
       "form": "literal",
       "origin": "user",
       "state": "read",
@@ -295,14 +295,14 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/runtime.go:795",
+      "site": "internal/agent/runtime.go:797",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/runtime.go:801",
+      "site": "internal/agent/runtime.go:803",
       "form": "mutation",
       "origin": "agent",
       "state": "dropped",
