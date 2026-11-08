@@ -40,6 +40,12 @@ func command(id string) marotte.EntryToolCall {
 	return marotte.EntryToolCall{ID: id, Title: "go test ./...", Kind: marotte.ToolKindExecute, Status: marotte.ToolInProgress}
 }
 
+func invocation(id string) marotte.EntryToolCall {
+	return marotte.EntryToolCall{
+		ID: id, Title: "invokeSubAgent", Kind: marotte.ToolKindOther, Status: marotte.ToolInProgress, AgentSubtaskID: "sub-1",
+	}
+}
+
 func completed() marotte.EntryToolResult {
 	return marotte.EntryToolResult{Status: marotte.ToolCompleted}
 }
@@ -85,6 +91,39 @@ func TestSearch_HookStatusOffSkipsTheHooksTheTranscriptHides(t *testing.T) {
 			calls:   []marotte.EntryToolCall{guard("h1", "PreToolUse"), command("c1")},
 			results: []marotte.EntryToolResult{completed(), {Status: marotte.ToolFailed}},
 			want:    1,
+		},
+		{
+			name:  "switch off keeps the guards of a command aborted after a rejected ask",
+			calls: []marotte.EntryToolCall{guard("h1", "PreToolUse"), command("c1")},
+			results: []marotte.EntryToolResult{completed(), {
+				Status:      marotte.ToolAborted,
+				Interaction: &marotte.ToolInteraction{Type: "tool_approval", Outcome: "selected", Choice: "reject_once"},
+			}},
+			want: 1,
+		},
+		{
+			name:    "switch off skips the guard of a delegate's invocation",
+			calls:   []marotte.EntryToolCall{guard("h1", "PreToolUse"), invocation("i1")},
+			results: []marotte.EntryToolResult{completed(), completed()},
+			want:    0,
+		},
+		{
+			name:    "switch off keeps the guard of a failed delegate's invocation",
+			calls:   []marotte.EntryToolCall{guard("h1", "PreToolUse"), invocation("i1")},
+			results: []marotte.EntryToolResult{completed(), {Status: marotte.ToolFailed}},
+			want:    1,
+		},
+		{
+			name:    "switch off keeps the after-hook of a failed delegate's invocation",
+			calls:   []marotte.EntryToolCall{invocation("i1"), guard("h1", "PostToolUse")},
+			results: []marotte.EntryToolResult{{Status: marotte.ToolFailed}, completed()},
+			want:    1,
+		},
+		{
+			name:    "switch off skips a failed delegate's guard that belongs to its next call",
+			calls:   []marotte.EntryToolCall{invocation("i1"), guard("h1", "PreToolUse")},
+			results: []marotte.EntryToolResult{{Status: marotte.ToolFailed}, completed()},
+			want:    0,
 		},
 		{
 			name:    "switch off keeps a hook that printed",

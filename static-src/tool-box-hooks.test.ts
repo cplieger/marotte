@@ -1,5 +1,6 @@
 // Tool groups are made of tool calls alone: a lone call with hooks is a plain tool box carrying the hooks badge on its
-// own header line, and a quiet turn hook folds into the badge of the nearest box in its turn. Rendered through the
+// own header line, a delegate's or run's card carries its launching call's hooks the same way, and a quiet turn hook
+// folds into the badge of the nearest box in its turn. Rendered through the
 // production dispatcher with the shipped stylesheets, so what is asserted is what a reader sees.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
@@ -424,6 +425,171 @@ describe("hook rows with no tool call between them", () => {
   });
 });
 
+describe("a delegate's or a run's card with hooks", () => {
+  function result(turn: string, n: number, of: number, over: Partial<EntryToolResult>): Entry {
+    const payload = { status: "completed", ...over } as EntryToolResult;
+    return {
+      id: toolResultID(`${turn}-c${String(of)}`),
+      turn,
+      kind: "tool_result",
+      seq: n,
+      ts: n + 1,
+      payload,
+    };
+  }
+
+  const delegate = (t: string, n: number, over: Partial<EntryToolCall> = {}): Entry =>
+    call(t, n, { title: "invokeSubAgent", agent_subtask_id: "sub-1", ...over });
+
+  /** A workflow launch at `n` and the result naming its run at `n + 1`. */
+  const launch = (t: string, n: number): Entry[] => [
+    call(t, n, { title: "Run Workflow" }),
+    result(t, n + 1, n, { workflow_id: `wf-${t}` }),
+  ];
+
+  /** The card's head, the line its badge sits on. */
+  function head(card: HTMLElement): DOMRect {
+    const h = card.querySelector<HTMLElement>(":scope > :is(.subagent-header, .run-head)");
+    if (h === null) {
+      throw new Error("card without a head");
+    }
+    return h.getBoundingClientRect();
+  }
+
+  /** One frame, so a card's `content-visibility: auto` contents are laid out. */
+  const frame = (): Promise<void> =>
+    new Promise<void>((r) => {
+      requestAnimationFrame(() => {
+        r();
+      });
+    });
+
+  const cardOf = (root: HTMLElement): HTMLElement =>
+    only(
+      [...root.querySelectorAll<HTMLElement>(":scope > :is(.subagent-block, .run-card)")],
+      "one card",
+    );
+
+  it.each<[string, (t: string) => Entry[]]>([
+    [
+      "delegate's",
+      (t) => [
+        hook(t, 1, "seat guard"),
+        delegate(t, 2),
+        hook(t, 3, "notify", { hook_trigger: "PostToolUse" }),
+      ],
+    ],
+    [
+      "run's",
+      (t) => [
+        hook(t, 1, "seat guard"),
+        ...launch(t, 2),
+        hook(t, 4, "notify", { hook_trigger: "PostToolUse" }),
+      ],
+    ],
+  ])(
+    "folds the %s launching call's quiet hooks into one badge on its card's head",
+    async (_, build) => {
+      const root = render(build);
+      await frame();
+      expect(hookRows(root), "no hook rows").toHaveLength(0);
+      expect(groupHeaders(root), "no group header").toHaveLength(0);
+      const card = cardOf(root);
+      const badge = only(badges(root), "one hooks badge");
+      expect(badge.parentElement, "on the card").toBe(card);
+      expectOnLine(badge, head(card));
+      expect(badge.getAttribute("aria-label")).toBe("2 hooks ran");
+      expect(await openList(badge)).toEqual(["seat guard", "notify"]);
+      await userEvent.keyboard("{Escape}");
+    },
+  );
+
+  it("keeps a failed delegate's quiet PreToolUse hook as a row, the card's badge listing it", async () => {
+    const root = render((t) => [hook(t, 1, "seat guard"), delegate(t, 2, { status: "failed" })]);
+    await frame();
+    expect(hookRows(root).map((c) => c.dataset["title"])).toEqual(["Hook fired: seat guard"]);
+    const badge = only(badges(root), "the card's hooks badge");
+    expect(badge.parentElement).toBe(cardOf(root));
+    expect(await openList(badge)).toEqual(["seat guard"]);
+    await userEvent.keyboard("{Escape}");
+  });
+
+  it("keeps a failed delegate's quiet PreToolUse hook as a row with hook status off", () => {
+    setHookStatusShown(false);
+    const root = render((t) => [hook(t, 1, "seat guard"), delegate(t, 2, { status: "failed" })]);
+    expect(hookRows(root).map((c) => c.dataset["title"])).toEqual(["Hook fired: seat guard"]);
+    expect(badges(root)).toHaveLength(0);
+  });
+
+  it("folds a quiet turn-end hook into the badge of a turn whose only card is a delegate's", async () => {
+    const root = render((t) => [
+      delegate(t, 1),
+      say(t, 2, "done"),
+      hook(t, 3, "stop check", { hook_trigger: "Stop" }),
+    ]);
+    await frame();
+    expect(hookRows(root), "no hook rows").toHaveLength(0);
+    const badge = only(badges(root), "one hooks badge");
+    expect(badge.parentElement).toBe(cardOf(root));
+    expect(await openList(badge)).toEqual(["stop check"]);
+    await userEvent.keyboard("{Escape}");
+  });
+
+  it("keeps hook rows headerless in a turn whose only card is a run's", () => {
+    const root = render((t) => [
+      ...launch(t, 1),
+      say(t, 3, "done"),
+      hook(t, 4, "stop a", { hook_trigger: "Stop", status: "failed" }),
+      hook(t, 5, "stop b", { hook_trigger: "Stop", status: "failed" }),
+    ]);
+    expect(groupHeaders(root), "no group header").toHaveLength(0);
+    expect(hookRows(root)).toHaveLength(2);
+  });
+
+  /** The tail spacer for everything past `say(1)`, priced from estimates alone. */
+  function unmeasuredTail(build: (turn: string) => Entry[]): number {
+    const { turn } = mount(build, { from: 0, to: 2 });
+    forgetHeights([turn.id]);
+    return spacerHeight(turn, { from: 0, to: 2 }, "tail", "");
+  }
+
+  it("prices a never-mounted delegate's card as itself, its quiet hooks adding nothing", () => {
+    const bare = unmeasuredTail((t) => [say(t, 1, "go"), delegate(t, 2)]);
+    const hooked = unmeasuredTail((t) => [
+      say(t, 1, "go"),
+      hook(t, 2, "seat guard"),
+      delegate(t, 3),
+      hook(t, 4, "notify", { hook_trigger: "PostToolUse" }),
+    ]);
+    expect(hooked).toBe(bare);
+  });
+
+  it("prices a never-mounted run's card as itself, its quiet hooks adding nothing", () => {
+    const bare = unmeasuredTail((t) => [say(t, 1, "go"), ...launch(t, 2)]);
+    const hooked = unmeasuredTail((t) => [
+      say(t, 1, "go"),
+      hook(t, 2, "seat guard"),
+      ...launch(t, 3),
+      hook(t, 5, "notify", { hook_trigger: "PostToolUse" }),
+    ]);
+    expect(hooked).toBe(bare);
+  });
+
+  it("prices a never-mounted failed delegate's quiet PreToolUse hook as its row", () => {
+    const quiet = unmeasuredTail((t) => [
+      say(t, 1, "go"),
+      hook(t, 2, "seat guard"),
+      delegate(t, 3, { status: "failed" }),
+    ]);
+    const loud = unmeasuredTail((t) => [
+      say(t, 1, "go"),
+      hook(t, 2, "seat guard", { status: "failed" }),
+      delegate(t, 3, { status: "failed" }),
+    ]);
+    expect(quiet).toBe(loud);
+  });
+});
+
 describe("a delegate's page", () => {
   const LANE = "sub-1";
   /** `e` as the live path persists a delegate's own entry: in its lane, a call stamped with the delegate's id. */
@@ -533,17 +699,21 @@ describe("the spacer standing for a dropped box", () => {
     expect(quiet).toBe(loud);
   });
 
-  /** The tail priced for a lone box whose result is `result`, its tool-trigger hook quiet or failed. */
-  function settledTail(result: EntryToolResult, hookStatus: "completed" | "failed"): number {
+  /** The tail priced for a lone box `over` and settled by `result`, its tool-trigger hook quiet or failed. */
+  function settledTail(
+    result: EntryToolResult,
+    hookStatus: "completed" | "failed",
+    over: Partial<EntryToolCall> = {},
+  ): number {
     return unmeasuredTail((t) => [
       say(t, 1, "go"),
-      call(t, 2),
+      call(t, 2, over),
       { id: toolResultID(`${t}-c2`), turn: t, kind: "tool_result", seq: 3, ts: 4, payload: result },
       hook(t, 4, "seat guard", { status: hookStatus }),
     ]);
   }
 
-  it.each<[string, EntryToolResult]>([
+  it.each<[string, EntryToolResult, Partial<EntryToolCall>?]>([
     [
       "denied",
       {
@@ -557,6 +727,7 @@ describe("the spacer standing for a dropped box", () => {
       },
     ],
     ["declined", { status: "completed", declined: true }],
+    ["declined on its call", { status: "completed" }, { declined: true }],
     [
       "aborted after a rejected ask",
       {
@@ -566,8 +737,8 @@ describe("the spacer standing for a dropped box", () => {
     ],
   ])(
     "prices a never-mounted lone box %s with its quiet tool-trigger hook as a row",
-    (_, result) => {
-      expect(settledTail(result, "completed")).toBe(settledTail(result, "failed"));
+    (_, result, over) => {
+      expect(settledTail(result, "completed", over)).toBe(settledTail(result, "failed", over));
     },
   );
 

@@ -1,6 +1,6 @@
-// The hooks badge on a tool group's header, or on a lone tool card's, and the popover it opens listing each hook it
-// counts once with its run count. hook-fold.ts decides which hooks fold and tool-group.ts which header carries them; this
-// draws them.
+// The hooks badge on a tool group's header, a lone tool card's, or a delegate's or run's card's, and the popover it
+// opens listing each hook it counts once with its run count. hook-fold.ts decides which hooks fold and tool-group.ts
+// which header carries them; this draws them.
 
 import { el } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
@@ -15,6 +15,9 @@ const CLS_HAS_HOOKS = "tool-group-has-hooks";
 
 /** The badge count's digit count, from which `14-tools.css` sizes the badge and the header's reserved padding. */
 const DIGITS_VAR = "--hooks-digits";
+
+/** The box a badge's list fits in: its group, or the delegate's or run's card it sits on. */
+const BOX = ".tool-group, .subagent-block, .run-card";
 
 /** The open list's widest fit, which `14-tools.css` caps the panel at. */
 const ROOM_VAR = "--hook-pop-room";
@@ -103,15 +106,16 @@ interface HookPopover {
 
 const popovers = new WeakMap<HTMLElement, HookPopover>();
 
-/** Each group's badge, wherever in the group it sits. */
+/** Each group's or card host's badge, wherever in it the badge sits. */
 const badges = new WeakMap<HTMLElement, HTMLElement>();
 
 /** The badge listing each folded hook card, which may sit in another group than the card. */
 const foldedInto = new WeakMap<HTMLElement, HTMLElement>();
 
-/** Paint the group's hooks badge listing the hook cards `listed` on `host`, the group or its lone card, absent with
- *  none. The badge is the one place the hook count lives and counts runs; it is a sibling of the host's header,
- *  since a button inside the group header's `role="button"` is not reachable by assistive technology. */
+/** Paint the group's hooks badge listing the hook cards `listed` on `host`, the group, its lone card or (as `group`
+ *  too) a delegate's or run's card, absent with none. The badge is the one place the hook count lives and counts
+ *  runs; it is a sibling of the host's header, since a button inside the group header's `role="button"` is not
+ *  reachable by assistive technology. */
 export function syncHookBadge(
   group: HTMLElement,
   listed: readonly HTMLElement[],
@@ -170,9 +174,12 @@ function unmarkHost(host: HTMLElement): void {
   host.style.removeProperty(DIGITS_VAR);
 }
 
-/** After the host's header: the group's, or a card's summary row. Every host has one, so none is a broken caller. */
+/** After the host's header: the group's, a card's summary row, or a delegate's or run's card's head. Every host has
+ *  one, so none is a broken caller. */
 function seatBadge(badge: HTMLElement, host: HTMLElement): void {
-  const header = host.querySelector(":scope > .tool-group-header, :scope > .tool-summary");
+  const header = host.querySelector(
+    ":scope > :is(.tool-group-header, .tool-summary, .subagent-header, .run-head)",
+  );
   if (header === null) {
     throw new Error("hooks badge host has no header");
   }
@@ -217,7 +224,7 @@ function mountBadge(group: HTMLElement): HTMLElement {
     initialFocus: panel,
     returnFocus: badge,
     onOpen: () => {
-      const g = badge.closest(".tool-group");
+      const g = badge.closest(BOX);
       if (g !== null) {
         watch.observe(g);
       }
@@ -256,7 +263,7 @@ function showList(state: HookPopover, badge: HTMLElement): void {
 /** Cap the list at the room between its group's start edge and the badge's end edge, the span an end-aligned list
  *  can take without leaving the turn card. Measured, since the panel is fixed to the viewport. */
 function fitList(panel: HTMLElement, badge: HTMLElement): void {
-  const group = badge.closest(".tool-group");
+  const group = badge.closest(BOX);
   if (group === null) {
     return;
   }

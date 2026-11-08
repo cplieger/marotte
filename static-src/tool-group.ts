@@ -12,7 +12,13 @@ import { chevronEl } from "./chevron.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { iconEl } from "./icon-el.js";
 import { outcomeIcon } from "./icons.js";
-import { foldGroupHooks, foldStrayHook, onHookVisibility, type HookFold } from "./hook-fold.js";
+import {
+  foldGroupHooks,
+  foldStrayHook,
+  hookStatusShown,
+  onHookVisibility,
+  type HookFold,
+} from "./hook-fold.js";
 import { syncHookBadge } from "./hook-badge.js";
 import { pressHold } from "./scroll.js";
 import { kindNoun } from "./tool-kind-noun.js";
@@ -45,6 +51,31 @@ const laneWork = new WeakMap<HTMLElement, boolean>();
  *  pass that mounts into `container`. */
 export function setLaneHoldsWork(container: HTMLElement, holds: boolean): void {
   laneWork.set(container, holds);
+}
+
+/** The delegate's or run's card a tool-trigger hook belongs to, and whether the call that opened it was refused. */
+export interface HookHost {
+  /** Null while the card is not mounted: the hook then hides as folded, as it would beside its card. */
+  readonly card: HTMLElement | null;
+  readonly refused: boolean;
+}
+
+/** Each container's hook cards bound to a card host, as its renderer last said. */
+const hookHosts = new WeakMap<HTMLElement, ReadonlyMap<HTMLElement, HookHost>>();
+
+/** A delegate's or a workflow run's card, a hooks badge host outside any tool group. */
+const CARD_HOST = ".subagent-block, .run-card";
+
+/** Record which card hosts each mounted hook card of `container` (from the store, so a window that leaves out the
+ *  card leaves the hook folded) and repaint every badge and row that moves. */
+export function setHookHosts(
+  container: HTMLElement,
+  hosts: ReadonlyMap<HTMLElement, HookHost>,
+): void {
+  hookHosts.set(container, hosts);
+  for (const [g, f] of placeStrays(container)) {
+    paintGroup(g, f);
+  }
 }
 
 /** Groups the reader had closed when they went bare, so the region they get back is born closed. */
@@ -138,26 +169,45 @@ export function refreshGroupHeader(group: HTMLElement): void {
   }
 }
 
-/** Fold each hook-only sibling's strays into the nearest group with work in `container`: the last one before it,
- *  else the first one after it. With no such group they stay rows. Returns the groups whose rows, badge or
- *  `besideWork` membership moved, with their folds. */
+/** Fold each hook-only sibling's strays into the nearest badge host in `container`, a group with work or a card
+ *  host: the last one before it, else the first one after it. With no such host they stay rows. A gated hook goes by
+ *  `setHookHosts`. Paints each card host's badge and returns the groups whose rows, badge or `besideWork` membership
+ *  moved, with their folds. */
 function placeStrays(container: HTMLElement): Map<HTMLElement, HookFold> {
   const groups: [HTMLElement, HookFold][] = [];
-  for (const g of container.querySelectorAll<HTMLElement>(":scope > .tool-group")) {
-    const f = folds.get(g);
-    if (f !== undefined) {
-      groups.push([g, f]);
-    }
-  }
   const into = new Map<HTMLElement, HTMLElement[]>();
   let last: HTMLElement[] | null = null;
   const before: HTMLElement[] = [];
-  for (const [g, f] of groups) {
-    if (f.work.length > 0) {
+  for (const c of container.querySelectorAll<HTMLElement>(
+    `:scope > .tool-group, :scope > :is(${CARD_HOST})`,
+  )) {
+    const card = c.matches(CARD_HOST);
+    const f = card ? undefined : folds.get(c);
+    if (f !== undefined) {
+      groups.push([c, f]);
+    }
+    if (card || (f !== undefined && f.work.length > 0)) {
       last = last === null ? before : [];
-      into.set(g, last);
-    } else {
+      into.set(c, last);
+    } else if (f !== undefined) {
       (last ?? before).push(...f.strays);
+    }
+  }
+  const bound = hookHosts.get(container);
+  const shown = hookStatusShown();
+  const gatedMoved = new Set<HTMLElement>();
+  for (const [g, f] of groups) {
+    for (const c of f.gated) {
+      const h = bound?.get(c);
+      if (placeGated(c, h, h !== undefined && !h.refused && shown, shown)) {
+        gatedMoved.add(g);
+      }
+    }
+  }
+  // A card host lists every hook bound to it: folded, or a row while status shows, as a lone box lists its own.
+  for (const [c, h] of bound ?? []) {
+    if (h.card !== null && (c.hasAttribute("data-hook-folded") || (shown && !c.hidden))) {
+      into.get(h.card)?.push(c);
     }
   }
   const folded = new Set([...into.values()].flat());
@@ -175,7 +225,7 @@ function placeStrays(container: HTMLElement): Map<HTMLElement, HookFold> {
       continue;
     }
     // A group a window drop left with no non-hook card folds no sibling's strays any more.
-    let changed = adopted.delete(g) || besideWork.has(g) !== work;
+    let changed = adopted.delete(g) || besideWork.has(g) !== work || gatedMoved.has(g);
     if (work) {
       besideWork.add(g);
     } else {
@@ -191,7 +241,33 @@ function placeStrays(container: HTMLElement): Map<HTMLElement, HookFold> {
       moved.set(g, f);
     }
   }
+  for (const [h, list] of into) {
+    if (h.matches(CARD_HOST)) {
+      // In page order: its strays and its bound hooks join it in two passes.
+      list.sort((a, b) =>
+        a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+      );
+      syncHookBadge(h, list, h);
+    }
+  }
   return moved;
+}
+
+/** Give a gated hook its fate: folded into its card host's badge, a row beside a refused one, else what
+ *  `foldGroupHooks` gave it. Returns whether it moved. */
+function placeGated(
+  c: HTMLElement,
+  h: HookHost | undefined,
+  folded: boolean,
+  shown: boolean,
+): boolean {
+  const hidden = folded || (h?.refused !== true && !shown);
+  if (c.hidden === hidden && c.hasAttribute("data-hook-folded") === folded) {
+    return false;
+  }
+  c.hidden = hidden;
+  c.toggleAttribute("data-hook-folded", folded);
+  return true;
 }
 
 /** The ONE writer of the bare class: paint `group` from its fold and the strays it took in. */

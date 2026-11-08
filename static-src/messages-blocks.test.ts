@@ -1116,6 +1116,64 @@ describe("the newest top-level box renders expanded", () => {
   });
 });
 
+describe("a run card on a delegate's page", () => {
+  const worker = setupWorker(
+    http.get("/api/runs/:id", ({ params }) => {
+      const id = String(params["id"]);
+      return HttpResponse.json({ workflowId: id, state: { workflowId: id, status: "completed" } });
+    }),
+  );
+
+  beforeAll(async () => {
+    await worker.start({ quiet: true });
+  });
+
+  afterAll(() => {
+    worker.stop();
+  });
+
+  /** A delegate's page whose own lane launches a run, then holds `after`; the run reads completed. */
+  async function pageCard(after: (turnID: string) => Entry[]): Promise<HTMLElement> {
+    const turnID = nextTurnID();
+    const lane = { lane: "sub-A" };
+    const turn = turnOf(turnID, [
+      invocation(turnID, 1, "sub-A"),
+      callEntry(turnID, 2, toolCall(`tool-launch-${turnID}`, { title: "Run Workflow" }), lane),
+      sealed(
+        turnID,
+        3,
+        "tool_result",
+        { status: "completed", workflow_id: `wf-${turnID}` },
+        { id: toolResultID(`${turnID}-c2`), ...lane },
+      ),
+      ...after(turnID),
+    ]);
+    const host = bodyHost();
+    buildDetachedBody(host, turn, CHAT_ID, "sub-A", false);
+    const card = host.querySelector<HTMLElement>(".run-card");
+    expect(card, "premise: the launch drew the run's card").not.toBeNull();
+    await until(() => card?.dataset["status"] === "completed", "the run to read completed");
+    return card as HTMLElement;
+  }
+
+  it("folds once a tool call on the page follows it", async () => {
+    const card = await pageCard((t) => [
+      callEntry(t, 4, toolCall(`tool-after-${t}`), { lane: "sub-A" }),
+    ]);
+    expect(card.classList.contains("collapsed")).toBe(true);
+  });
+
+  it("folds once the delegate's text follows it", async () => {
+    const card = await pageCard((t) => [text(t, 4, "the run is done", "sub-A")]);
+    expect(card.classList.contains("collapsed")).toBe(true);
+  });
+
+  it("stays open with nothing after it", async () => {
+    const card = await pageCard(() => []);
+    expect(card.classList.contains("collapsed")).toBe(false);
+  });
+});
+
 describe("blockElement resolves an entry's own element", () => {
   it("answers the trace's own details element", () => {
     const r = render([thinking("t", 1, "weighing")]);

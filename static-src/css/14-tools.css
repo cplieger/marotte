@@ -106,9 +106,9 @@
   }
 }
 
-/* A group, or a lone card, carrying the hooks badge (hook-badge.ts). The badge's box: its glyph, gap and count digits
-   (`--hooks-digits`) in the badge's own mono font, floored at the row's tap size. The header reserves it as padding,
-   so it reads in the header's font too. */
+/* A group, a lone card, or a delegate's or run's card carrying the hooks badge (hook-badge.ts). The badge's box: its
+   glyph, gap and count digits (`--hooks-digits`) in the badge's own mono font, floored at the row's tap size. The
+   header reserves it as padding, so it reads in the header's font too. */
 .tool-group-has-hooks {
   --hooks-w: max(
     var(--row-tap),
@@ -119,7 +119,9 @@
   isolation: isolate;
 
   & > .tool-group-header,
-  & > .tool-summary > .tool-header {
+  & > .tool-summary > .tool-header,
+  & > .subagent-header,
+  & > .run-head {
     padding-inline-end: calc(var(--hooks-w) + 2 * var(--sp-2));
   }
 }
@@ -241,8 +243,8 @@
 
 /* The hooks folded out of the rows: the fish-hook glyph and their count, a button that opens the list of those hooks.
    A button cannot sit inside the group header's `role="button"`, so it is the sibling of its host's header (the
-   group's, or a lone card's summary), laid over that header's top-right corner and centred in its first line: the
-   header's own surface, and so its highlight, spans the card.
+   group's, a lone card's summary, or a delegate's or run's card's head), laid over that header's top-right corner
+   and centred in its first line: the header's own surface, and so its highlight, spans the card.
    It takes the turn footer's control box (61-mcp-tools.css), so its paint, hover and press are the footer buttons';
    the shared expander holds the target. Its width is floored at the row's tap size, so the expander never grows
    sideways over the header. */
