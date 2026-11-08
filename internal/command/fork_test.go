@@ -1015,6 +1015,6 @@ func TestCmdForkChat_AnUntitledForkIsNotUserNamed(t *testing.T) {
 	}
 }
 
-func (r *forkHost) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+func (r *forkHost) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, error) {
 	return r.OpenBridge(ctx, chatID, model)
 }

@@ -555,9 +555,11 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	}
 	if lc.configDir != "" {
 		runs.useLog(newRunLog(lc.configDir))
-		bridgeP.mgr.hostsLiveRun = runs.hostsLiveRun
 	}
 	h.coord = newBridgeCoordinator(h)
+	if runs.log != nil {
+		runs.log.steps = h.coord.turns
+	}
 	h.coord.turns.onIdle = func(chatID marotte.ChatID) {
 		h.engine.poke()
 		h.coord.releaseIfUnheld(chatID)

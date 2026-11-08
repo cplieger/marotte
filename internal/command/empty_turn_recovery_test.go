@@ -93,7 +93,7 @@ func (o *recoveryOutcome) ReserveIdleTurn(_ context.Context, chatID marotte.Chat
 	return IdleHeld, Reservation{}
 }
 
-func (o *recoveryOutcome) tryReserveFencedOld(c marotte.ChatID, s marotte.TurnOpenSource, _ TurnFence) bool {
+func (o *recoveryOutcome) tryReserveDrainOld(c marotte.ChatID, s marotte.TurnOpenSource, _ CloseFacts) bool {
 	return o.tryReserveOld(c, s)
 }
 
@@ -359,8 +359,8 @@ func (r *recoveryOutcome) TryReserveIdleTurn(chatID marotte.ChatID, source marot
 	return testReservation(chatID, ok), ok
 }
 
-func (r *recoveryOutcome) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence TurnFence) (Reservation, bool) {
-	ok := r.tryReserveFencedOld(chatID, source, fence)
+func (r *recoveryOutcome) TryReserveDrain(chatID marotte.ChatID, cl CloseFacts) (Reservation, bool) {
+	ok := r.tryReserveDrainOld(chatID, marotte.TurnSourcePrompt, cl)
 	return testReservation(chatID, ok), ok
 }
 
@@ -372,11 +372,11 @@ func (*recoveryOutcome) AwaitNoClose(context.Context, marotte.ChatID) (bool, err
 	return false, nil
 }
 
-func (r *recoveryBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+func (r *recoveryBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, error) {
 	return r.OpenBridge(ctx, chatID, model)
 }
 
-func (r *orderedRetryBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+func (r *orderedRetryBridges) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, error) {
 	return r.OpenBridge(ctx, chatID, model)
 }
 

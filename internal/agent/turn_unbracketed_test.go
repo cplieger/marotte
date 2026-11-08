@@ -750,7 +750,7 @@ func TestAfterTurnClose_Order(t *testing.T) {
 		},
 		drainAfterClose: func(context.Context, marotte.ChatID, command.CloseFacts, command.EndFacts) { record("drain") },
 	}
-	bc.afterTurnClose(t.Context(), bc.turns.testLifecycle("c1"), closeFacts{outcome: marotte.TurnOutcomeCompleted})
+	bc.afterTurnClose(t.Context(), bc.turns.testLifecycle("c1"), &closeFacts{outcome: marotte.TurnOutcomeCompleted})
 	if want := []string{"resolve", "model", "compact", "drain"}; !slices.Equal(order, want) {
 		t.Errorf("afterTurnClose order = %v, want %v", order, want)
 	}
@@ -783,7 +783,7 @@ func TestAfterTurnClose_ARefusedReleaseCompactsOnce(t *testing.T) {
 			autoCompact:     r.ac,
 			drainAfterClose: func(context.Context, marotte.ChatID, command.CloseFacts, command.EndFacts) { drained = true },
 		}
-		bc.afterTurnClose(t.Context(), lc, closeFacts{outcome: marotte.TurnOutcomeFailed, contextLimit: true})
+		bc.afterTurnClose(t.Context(), lc, &closeFacts{outcome: marotte.TurnOutcomeFailed, contextLimit: true})
 		if !drained {
 			t.Fatal("the close never drained after KAS went idle")
 		}

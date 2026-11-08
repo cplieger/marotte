@@ -934,6 +934,10 @@ func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg 
 		if l, held := rs.lease(f.WorkflowID); held {
 			rs.recordScheduleEnding(ctx, ruleRun(&l), f.Status, f.FinalState.StopReason)
 		}
+		// Before forgetBounds, whose lease release asks the chat's release: KAS wakes the parent after this frame.
+		if rs.coord != nil && chatID != "" {
+			rs.coord.turns.holdWake(chatID, f.WorkflowID)
+		}
 		rs.forgetBounds(ctx, f.WorkflowID)
 		rs.translate.ForgetRunSteps(f.WorkflowID)
 		if rs.runEnded != nil {

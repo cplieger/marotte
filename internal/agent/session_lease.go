@@ -155,13 +155,7 @@ func (sb *sharedBridge) open() bool {
 func (sb *sharedBridge) endedOnItsOwn(session engineSession) bool {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
-	return sb.leased == session && sb.state != bridgeStarting && sb.closeClaim == nil
-}
-
-// sessionDeadLocked is the reload or release claim's test of the session: due when no session is attached or it is no
-// longer open. Caller holds sb.mu.
-func (sb *sharedBridge) sessionDeadLocked() bool {
-	return sb.leased == nil || !sb.leased.Open()
+	return sb.leased == session && sb.state != bridgeStarting && !sb.life.closingSession(sb)
 }
 
 // SessionID is the entry's session id, "" while it has none.

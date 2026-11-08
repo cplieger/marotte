@@ -169,7 +169,7 @@ func (a *scriptedAdmission) ReserveIdleTurn(_ context.Context, chatID marotte.Ch
 	return IdleHeld, Reservation{}
 }
 
-func (a *scriptedAdmission) tryReserveFencedOld(c marotte.ChatID, s marotte.TurnOpenSource, _ TurnFence) bool {
+func (a *scriptedAdmission) tryReserveDrainOld(c marotte.ChatID, s marotte.TurnOpenSource, _ CloseFacts) bool {
 	return a.tryReserveOld(c, s)
 }
 
@@ -651,8 +651,8 @@ func (r *scriptedAdmission) TryReserveIdleTurn(chatID marotte.ChatID, source mar
 	return testReservation(chatID, ok), ok
 }
 
-func (r *scriptedAdmission) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence TurnFence) (Reservation, bool) {
-	ok := r.tryReserveFencedOld(chatID, source, fence)
+func (r *scriptedAdmission) TryReserveDrain(chatID marotte.ChatID, cl CloseFacts) (Reservation, bool) {
+	ok := r.tryReserveDrainOld(chatID, marotte.TurnSourcePrompt, cl)
 	return testReservation(chatID, ok), ok
 }
 
@@ -664,11 +664,11 @@ func (*scriptedAdmission) AwaitNoClose(context.Context, marotte.ChatID) (bool, e
 	return false, nil
 }
 
-func (r *admissionHost) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+func (r *admissionHost) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, error) {
 	return r.OpenBridge(ctx, chatID, model)
 }
 
-func (r *gatedBridgeAccess) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+func (r *gatedBridgeAccess) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, error) {
 	return r.OpenBridge(ctx, chatID, model)
 }
 

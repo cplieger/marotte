@@ -36,7 +36,7 @@ var leaseKinds = map[string]string{
 	"responder": "responder", "Respond": "responder",
 	"closeOwned": "closer",
 	"attach":     "attach",
-	"holds":      "fact", "hasSession": "fact", "open": "fact", "endedOnItsOwn": "fact", "sessionDeadLocked": "fact",
+	"holds":      "fact", "hasSession": "fact", "open": "fact", "endedOnItsOwn": "fact",
 	"SessionID": "fact", "awaitAbandonedPrompt": "fact", "observeEffort": "fact", "observeThinking": "fact",
 }
 

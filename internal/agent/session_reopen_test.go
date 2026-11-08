@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -113,14 +114,16 @@ func TestMarkSessionsForReload_AnIdleChatReloadsAtItsNextOpen(t *testing.T) {
 // A host session keeps the presets its run launched with, so a mark never reaches it.
 func TestMarkSessionsForReload_LeavesHostSessionsUnmarked(t *testing.T) {
 	h, _ := reopenFixture(t)
-	sb := testBridge(newFakeBridge(), bridgeIdle)
-	if !h.insertBridgeNow(runChatID("wf-1"), sb) {
+	lc := h.coord.turns.lifecycleForRun(runChatID("wf-1"))
+	sb := newSharedBridge(lc)
+	sb.attach(newFakeBridge())
+	if !h.bridge.mgr.insert(runChatID("wf-1"), sb) {
 		t.Fatal("Setup: insert host session = false")
 	}
 
 	h.markSessionsForReload("test")
 
-	if h.bridge.mgr.claimReload(runChatID("wf-1"), sb, false).due {
+	if lc.reloadMarked(sb) {
 		t.Error("the mark reached a run's host session, whose presets only its lease decides")
 	}
 }
@@ -546,12 +549,9 @@ func TestGovernanceLockChange_ReopensOpenChatsOnlyWhenAFingerprintMoves(t *testi
 			if pending := h.engine.restartPending(); pending != tc.wantPending {
 				t.Errorf("%s over stored %v: engine restart pending = %v, want %v", tc.name, tc.stored, pending, tc.wantPending)
 			}
-			second, err := h.coord.openBridge(t.Context(), "c1", "")
-			if err != nil {
-				t.Fatalf("OpenBridge after the lock change: %v", err)
-			}
-			if reopened := second != first; reopened != tc.wantReopen {
-				t.Errorf("%s over stored %v: reopened = %v, want %v", tc.name, tc.stored, reopened, tc.wantReopen)
+			// The open turn keeps a marked session until it ends, so the mark is what the lock change decided.
+			if marked := reloadMarked(h, "c1") && h.bridge.mgr.get("c1") == first; marked != tc.wantReopen {
+				t.Errorf("%s over stored %v: marked for its reload = %v, want %v", tc.name, tc.stored, marked, tc.wantReopen)
 			}
 		})
 	}
@@ -635,62 +635,64 @@ func TestOpenBridge_AHandEditOfConfigReopensTheChatAtItsNextOpen(t *testing.T) {
 }
 
 func TestReconcileSessionSettings_ABusyChatSwitchesAfterItsTurn(t *testing.T) {
-	h, configDir := reopenFixture(t)
-	first, err := h.coord.openBridge(t.Context(), "c1", "")
-	if err != nil {
-		t.Fatalf("OpenBridge: %v", err)
-	}
-	if !first.tryAcquireForPrompt() {
-		t.Fatal("Setup: the chat's prompt slot was not free")
-	}
-	writeSetting(t, configDir, settings.KeySecurityProfile, "unrestricted")
+	synctest.Test(t, func(t *testing.T) {
+		h, configDir := reopenFixture(t)
+		first, err := h.coord.openBridge(t.Context(), "c1", "")
+		if err != nil {
+			t.Fatalf("OpenBridge: %v", err)
+		}
+		turnID, _ := h.stagePromptTurn(t, "c1")
+		writeSetting(t, configDir, settings.KeySecurityProfile, "unrestricted")
 
-	h.ReconcileSessionSettings(t.Context())
+		h.ReconcileSessionSettings(t.Context())
 
-	if during, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil || during != first || sessionClosed(fakeOf(first)) {
-		t.Fatalf("an open during the turn replaced or stopped the busy bridge (err %v)", err)
-	}
-	first.releaseAfterPrompt()
-	after, err := h.coord.openBridge(t.Context(), "c1", "")
-	if err != nil {
-		t.Fatalf("OpenBridge after the turn: %v", err)
-	}
-	if after == first || !sessionClosed(fakeOf(first)) {
-		t.Fatal("the first open after the turn kept the session opened under the old profile")
-	}
-	opts := fakeOf(after).lastSessionOpts()
-	if !slices.Equal(opts.Presets, []string{"allow-all"}) || opts.SessionID != string(first.session().SessionID()) {
-		t.Errorf("the reopened bridge started with presets %v loading %q, want [allow-all] loading the chat's session", opts.Presets, opts.SessionID)
-	}
+		if during, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil || during != first || sessionClosed(fakeOf(first)) {
+			t.Fatalf("an open during the turn replaced or stopped the busy bridge (err %v)", err)
+		}
+		endTurn(t, h, "c1", turnID)
+		synctest.Wait()
+		after, err := h.coord.openBridge(t.Context(), "c1", "")
+		if err != nil {
+			t.Fatalf("OpenBridge after the turn: %v", err)
+		}
+		if after == first || !sessionClosed(fakeOf(first)) {
+			t.Fatal("the first open after the turn kept the session opened under the old profile")
+		}
+		opts := fakeOf(after).lastSessionOpts()
+		if !slices.Equal(opts.Presets, []string{"allow-all"}) || opts.SessionID != string(first.session().SessionID()) {
+			t.Errorf("the reopened bridge started with presets %v loading %q, want [allow-all] loading the chat's session", opts.Presets, opts.SessionID)
+		}
+	})
 }
 
 func TestReconcileSessionSettings_AChatHostingALiveRunSwitchesAfterTheRun(t *testing.T) {
-	h, configDir := reopenFixture(t)
-	var runLive atomic.Bool
-	runLive.Store(true)
-	h.bridge.mgr.hostsLiveRun = func(chatID marotte.ChatID) bool { return chatID == "c1" && runLive.Load() }
-	first, err := h.coord.openBridge(t.Context(), "c1", "")
-	if err != nil {
-		t.Fatalf("OpenBridge: %v", err)
-	}
-	writeSetting(t, configDir, settings.KeySecurityProfile, "unrestricted")
+	synctest.Test(t, func(t *testing.T) {
+		h, configDir := reopenFixture(t)
+		first, err := h.coord.openBridge(t.Context(), "c1", "")
+		if err != nil {
+			t.Fatalf("OpenBridge: %v", err)
+		}
+		writeSetting(t, configDir, settings.KeySecurityProfile, "unrestricted")
 
-	h.ReconcileSessionSettings(t.Context())
+		endStep := hostStepOn(t, h, "sess-step")
+		h.ReconcileSessionSettings(t.Context())
 
-	if during, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil || during != first || sessionClosed(fakeOf(first)) {
-		t.Fatalf("an open while the chat hosts a live run replaced or stopped its bridge (err %v)", err)
-	}
-	runLive.Store(false)
-	after, err := h.coord.openBridge(t.Context(), "c1", "")
-	if err != nil {
-		t.Fatalf("OpenBridge after the run: %v", err)
-	}
-	if after == first || !sessionClosed(fakeOf(first)) {
-		t.Fatal("the first open after the run kept the session opened under the old profile")
-	}
-	if got := fakeOf(after).lastSessionOpts().Presets; !slices.Equal(got, []string{"allow-all"}) {
-		t.Errorf("the reopened bridge's presets = %v, want [allow-all]", got)
-	}
+		if during, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil || during != first || sessionClosed(fakeOf(first)) {
+			t.Fatalf("an open while the chat hosts a live run replaced or stopped its bridge (err %v)", err)
+		}
+		endStep()
+		synctest.Wait()
+		after, err := h.coord.openBridge(t.Context(), "c1", "")
+		if err != nil {
+			t.Fatalf("OpenBridge after the run: %v", err)
+		}
+		if after == first || !sessionClosed(fakeOf(first)) {
+			t.Fatal("the first open after the run kept the session opened under the old profile")
+		}
+		if got := fakeOf(after).lastSessionOpts().Presets; !slices.Equal(got, []string{"allow-all"}) {
+			t.Errorf("the reopened bridge's presets = %v, want [allow-all]", got)
+		}
+	})
 }
 
 func TestReconcileSessionSettings_ACancelledCallerReopensNothing(t *testing.T) {
@@ -815,9 +817,7 @@ func TestSessionReset_LeavesEngineAndCoTenantUntouched(t *testing.T) {
 	}
 	src := fakeSourceOf(t, h)
 	engines := src.generations()
-	first.mu.Lock()
-	first.reload = true
-	first.mu.Unlock()
+	first.life.(*chatLifecycle).markReload(first)
 
 	if _, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge(c1) after the mark: %v", err)
@@ -834,46 +834,44 @@ func TestSessionReset_LeavesEngineAndCoTenantUntouched(t *testing.T) {
 	}
 }
 
-// A mark waits for the chat's turn to release its prompt slot and for the run step it hosts to close, so a session
-// is never closed under a live turn or step.
+// A mark waits for the chat's turn and for the run step it hosts to close, so a session is never closed under a live
+// turn or step.
 func TestReloadIfMarked_WaitsForTheTurnAndTheHostedStep(t *testing.T) {
 	for _, tc := range []struct {
 		hold func(t *testing.T, h *Runtime, sb *sharedBridge) (release func())
 		name string
 	}{
-		{name: "an open turn", hold: func(t *testing.T, _ *Runtime, sb *sharedBridge) func() {
-			if !sb.tryAcquireForPrompt() {
-				t.Fatal("Setup: the chat's prompt slot was not free")
-			}
-			return sb.releaseAfterPrompt
+		{name: "an open turn", hold: func(t *testing.T, h *Runtime, _ *sharedBridge) func() {
+			id, _ := h.stagePromptTurn(t, "c1")
+			return func() { endTurn(t, h, "c1", id) }
 		}},
-		{name: "a hosted run step", hold: func(_ *testing.T, h *Runtime, _ *sharedBridge) func() {
-			var live atomic.Bool
-			live.Store(true)
-			h.bridge.mgr.hostsLiveRun = func(chatID marotte.ChatID) bool { return chatID == "c1" && live.Load() }
-			return func() { live.Store(false) }
+		{name: "a hosted run step", hold: func(t *testing.T, h *Runtime, _ *sharedBridge) func() {
+			return hostStepOn(t, h, "sess-step")
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h, _ := reopenFixture(t)
-			first, err := h.coord.openBridge(t.Context(), "c1", "")
-			if err != nil {
-				t.Fatalf("OpenBridge: %v", err)
-			}
-			release := tc.hold(t, h, first)
-			h.markSessionsForReload("test")
+			synctest.Test(t, func(t *testing.T) {
+				h, _ := reopenFixture(t)
+				first, err := h.coord.openBridge(t.Context(), "c1", "")
+				if err != nil {
+					t.Fatalf("OpenBridge: %v", err)
+				}
+				release := tc.hold(t, h, first)
+				h.markSessionsForReload("test")
 
-			if during, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil || during != first || sessionClosed(fakeOf(first)) {
-				t.Fatalf("an open while held replaced or closed the session (err %v)", err)
-			}
-			release()
-			after, err := h.coord.openBridge(t.Context(), "c1", "")
-			if err != nil {
-				t.Fatalf("OpenBridge after the hold: %v", err)
-			}
-			if after == first || !sessionClosed(fakeOf(first)) {
-				t.Error("the first open after the hold kept the marked session")
-			}
+				if during, err := h.coord.openBridge(t.Context(), "c1", ""); err != nil || during != first || sessionClosed(fakeOf(first)) {
+					t.Fatalf("an open while held replaced or closed the session (err %v)", err)
+				}
+				release()
+				synctest.Wait()
+				after, err := h.coord.openBridge(t.Context(), "c1", "")
+				if err != nil {
+					t.Fatalf("OpenBridge after the hold: %v", err)
+				}
+				if after == first || !sessionClosed(fakeOf(first)) {
+					t.Error("the first open after the hold kept the marked session")
+				}
+			})
 		})
 	}
 }

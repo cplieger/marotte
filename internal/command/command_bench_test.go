@@ -190,7 +190,7 @@ func (d *benchDeps) ReserveIdleTurn(_ context.Context, chatID marotte.ChatID, _ 
 	return IdleAcquired, testReservation(chatID, true)
 }
 
-func (*benchDeps) tryReserveFencedOld(marotte.ChatID, marotte.TurnOpenSource, TurnFence) bool {
+func (*benchDeps) tryReserveDrainOld(marotte.ChatID, marotte.TurnOpenSource, CloseFacts) bool {
 	return true
 }
 func (*benchDeps) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
@@ -401,8 +401,8 @@ func (r *benchDeps) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.Tur
 	return testReservation(chatID, ok), ok
 }
 
-func (r *benchDeps) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence TurnFence) (Reservation, bool) {
-	ok := r.tryReserveFencedOld(chatID, source, fence)
+func (r *benchDeps) TryReserveDrain(chatID marotte.ChatID, cl CloseFacts) (Reservation, bool) {
+	ok := r.tryReserveDrainOld(chatID, marotte.TurnSourcePrompt, cl)
 	return testReservation(chatID, ok), ok
 }
 
@@ -412,7 +412,7 @@ func (*benchDeps) LifeStamp() uint64 { return 0 }
 
 func (*benchDeps) AwaitNoClose(context.Context, marotte.ChatID) (bool, error) { return false, nil }
 
-func (r *benchDeps) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ uint64) (Bridge, error) {
+func (r *benchDeps) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, _ Reservation) (Bridge, error) {
 	return r.OpenBridge(ctx, chatID, model)
 }
 

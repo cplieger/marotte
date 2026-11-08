@@ -125,9 +125,8 @@ func reloadMarked(h *Runtime, chatID marotte.ChatID) bool {
 	if sb == nil {
 		return false
 	}
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	return sb.reload
+	lc, ok := h.coord.turns.closeOwner(chatID, sb)
+	return ok && lc.reloadMarked(sb)
 }
 
 func TestSettings_SessionDoorMoveReloadsSessionsAndNeverRestarts(t *testing.T) {

@@ -121,7 +121,7 @@ func TestConnect_TheBusySetExcludesStepTurns(t *testing.T) {
 	if _, _, err := rt.runs.log.open(t.Context(), &translate.RunStep{RunID: "wf-1", NodePath: "wf-1/step", SessionID: "sess-step"}, "c-step"); err != nil {
 		t.Fatalf("Open(step turn): %v", err)
 	}
-	if !rt.runs.hostsLiveRun("c-step") {
+	if rt.runs.log.turn("wf-1", "wf-1/step") == nil {
 		t.Fatal("the fixture's chat hosts no live run, so nothing below measures the exclusion")
 	}
 	rt.stagePromptTurn(t, "c-own")

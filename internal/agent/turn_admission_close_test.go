@@ -121,7 +121,7 @@ func TestDrain_AfterTheForgetMintsNoLifecycle(t *testing.T) {
 	h.coord.turns.forget("c1")
 	hold.Release()
 
-	if h.coord.tryReserveFencedNow("c1", marotte.TurnSourcePrompt, fence) {
+	if h.coord.tryReserveDrainNow("c1", fence) {
 		t.Error("the drain reserved in a forgotten chat")
 	}
 	if _, ok := h.coord.turns.lookup("c1"); ok {
@@ -227,7 +227,7 @@ func TestDrain_APromptParkedBeforeItsDoorAcrossTheCloseOpensNothing(t *testing.T
 				reopenTab(t, h, "op-reopen")
 			}
 
-			_, err := h.coord.openBridgeAt(t.Context(), "c1", "", res.Stamp)
+			_, err := h.coord.openBridgeAt(t.Context(), "c1", "", res)
 			if !errors.Is(err, marotte.ErrChatClosedDuringCall) {
 				t.Errorf("open at the old stamp = %v, want ErrChatClosedDuringCall", err)
 			}

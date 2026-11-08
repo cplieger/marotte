@@ -231,14 +231,16 @@ func TestEmptyRetry_TheRefreshReleasesThroughItsLease(t *testing.T) {
 			t.Errorf("record session = %q, want it detached", got)
 		}
 	})
-	t.Run("an entry the release check claimed", func(t *testing.T) {
+	t.Run("an entry a granted close owns", func(t *testing.T) {
 		h, cs, br, _, sb, sessionID := refreshHub(t)
 		br.deliver(newTurnStartMsg())
 		awaitOpenTurns(t, h, 1)
-		if _, ok := h.bridge.mgr.claimRelease("c1"); !ok {
-			t.Fatal("Setup: the release check could not claim the entry")
+		lc := lifecycleOf(t, h, "c1")
+		a := lc.askClose(sb, closeDead, 0, true)
+		if a.verdict != askGranted {
+			t.Fatalf("Setup: the door's close of the entry = %+v, want it granted", a)
 		}
-		t.Cleanup(func() { h.bridge.mgr.finishReload("c1", sb, false) })
+		t.Cleanup(func() { lc.endClose(a.grant, false) })
 		if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 			c.RecordSession("sess-other")
 			return true
@@ -246,12 +248,12 @@ func TestEmptyRetry_TheRefreshReleasesThroughItsLease(t *testing.T) {
 			t.Fatalf("Setup: record another session: %v", err)
 		}
 
-		if err := h.coord.refreshForRetry(t.Context(), "c1", sb); err != nil {
-			t.Fatalf("refresh = %v, want nil", err)
+		if err := h.coord.refreshForRetry(t.Context(), "c1", sb); !errors.Is(err, marotte.ErrSessionClosing) {
+			t.Fatalf("refresh = %v, want %v: the close owns the session", err, marotte.ErrSessionClosing)
 		}
 
 		if br.Released() {
-			t.Error("the refresh released a session the release check owns")
+			t.Error("the refresh released a session a granted close owns")
 		}
 		if open := h.coord.turns.openTurnIDs("c1"); len(open) != 1 {
 			t.Errorf("open turns = %d, want the turn left open", len(open))

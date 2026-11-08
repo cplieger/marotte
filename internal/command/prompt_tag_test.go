@@ -38,7 +38,7 @@ func (b *tagRetryBridges) OpenBridge(context.Context, marotte.ChatID, string) (B
 	return b.bridge, nil
 }
 
-func (b *tagRetryBridges) OpenBridgeAt(context.Context, marotte.ChatID, string, uint64) (Bridge, error) {
+func (b *tagRetryBridges) OpenBridgeAt(context.Context, marotte.ChatID, string, Reservation) (Bridge, error) {
 	return b.bridge, nil
 }
 

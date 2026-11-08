@@ -113,6 +113,10 @@ type askAnswer struct {
 func (lc *chatLifecycle) askClose(sb *sharedBridge, why closePurpose, opener uint64, door bool) askAnswer {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
+	return lc.askCloseLocked(sb, why, opener, door)
+}
+
+func (lc *chatLifecycle) askCloseLocked(sb *sharedBridge, why closePurpose, opener uint64, door bool) askAnswer {
 	switch g := lc.closing; {
 	case lc.ended:
 		return askAnswer{verdict: askEnded}
@@ -140,6 +144,53 @@ func (lc *chatLifecycle) askClose(sb *sharedBridge, why closePurpose, opener uin
 	}
 	lc.decideLocked()
 	return askAnswer{verdict: askPending, startCloser: lc.claimCloserLocked()}
+}
+
+// openOrReload is a session door's one section on sb, its open entry: a close granted on sb, or a marked entry whose
+// door is still in progress, answers askClosing with the channel to wait on; a dead session's close, or the reload of
+// a marked entry while config.json reads (held false), is asked at the door with opener's exemption; anything else
+// answers askPending with nothing asked, and the door uses sb. dead is read
+// by the caller, since sb.mu is never taken under mu.
+func (lc *chatLifecycle) openOrReload(sb *sharedBridge, opener uint64, dead, held bool) askAnswer {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	switch {
+	case lc.ended:
+		return askAnswer{verdict: askEnded}
+	case lc.closing != nil && lc.closing.sb == sb:
+		return askAnswer{verdict: askClosing, done: lc.closing.done}
+	case dead:
+		return lc.askCloseLocked(sb, closeDead, 0, true)
+	case lc.reloadFor == sb && !held:
+		// The entry's own door is still finishing after it settled: wait for it, as a door reloads inline once the
+		// door before it is done, rather than leave the reload to the closer.
+		if lc.closing == nil && lc.blockerLocked(opener) == holdDoor {
+			return askAnswer{verdict: askClosing, done: lc.changed}
+		}
+		return lc.askCloseLocked(sb, closeReload, opener, true)
+	}
+	return askAnswer{verdict: askPending}
+}
+
+// reloadMarked reports whether sb is marked for a reload (markReload).
+func (lc *chatLifecycle) reloadMarked(sb *sharedBridge) bool {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.reloadFor == sb
+}
+
+// closerRefused undoes a closer start the runtime refused (its shutdown began): no closer will run what is owed, so
+// the pending ask and a granted close it would have run go, and an open waiting on that grant asks again.
+func (lc *chatLifecycle) closerRefused() {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	lc.closer = false
+	lc.ask = nil
+	if g := lc.closing; g != nil && !g.inline {
+		lc.closing = nil
+		close(g.done)
+	}
+	lc.wakeLocked()
 }
 
 // claimCloserLocked marks the closer running when a close is owed it and none runs, reporting whether the caller
@@ -171,9 +222,8 @@ func (lc *chatLifecycle) kasStartedLocked() bool {
 }
 
 // nextClose is one wait of the chat's closer: the granted close it runs next with the purposes it froze, or false
-// when it returns (no close owed, a door's inline grant, or the life's end), having cleared lc.closer. A grant that a
-// hold KAS started since refuses goes back as the pending ask. It waits with mu dropped, since wakeLocked closes
-// lc.changed under mu.
+// when it returns (no close owed, a door's inline grant, or the life's end), having cleared lc.closer. It waits with
+// mu dropped, since wakeLocked closes lc.changed under mu.
 func (lc *chatLifecycle) nextClose() (*closeGrant, closePurpose, bool) {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -185,27 +235,44 @@ func (lc *chatLifecycle) nextClose() (*closeGrant, closePurpose, bool) {
 			return nil, 0, false
 		case g != nil && !g.frozen:
 			g.frozen = true
-			if !lc.kasStartedLocked() {
-				return g, g.why, true
-			}
-			lc.closing = nil
-			if lc.ask == nil {
-				lc.ask = &closeAsk{sb: g.sb, why: g.why}
-			} else if lc.ask.sb == g.sb {
-				lc.ask.why |= g.why
-			}
-			close(g.done)
-			lc.wakeLocked()
-			continue
+			return g, g.why, true
 		}
 		changed := lc.changed
 		lc.mu.Unlock()
 		select {
 		case <-changed:
+			lc.mu.Lock()
 		case <-lc.ctx.Done():
+			// The runtime's end cancels the life's context before any teardown ends the life.
+			lc.mu.Lock()
+			lc.ask = nil
+			lc.closer = false
+			return nil, 0, false
 		}
-		lc.mu.Lock()
 	}
+}
+
+// confirmClose is the closer's last look before it closes for g: a hold KAS started on its own since the grant
+// (kasStartedLocked) puts g back as the pending ask, answering false, so the close waits for that hold too.
+func (lc *chatLifecycle) confirmClose(g *closeGrant) bool {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if lc.closing != g {
+		return false
+	}
+	if !lc.kasStartedLocked() {
+		return true
+	}
+	lc.closing = nil
+	why := g.why | g.late
+	if lc.ask == nil {
+		lc.ask = &closeAsk{sb: g.sb, why: why}
+	} else if lc.ask.sb == g.sb {
+		lc.ask.why |= why
+	}
+	close(g.done)
+	lc.wakeLocked()
+	return false
 }
 
 // endClose ends grant g, closed reporting whether its session closed; a call for a grant that is no longer the
@@ -238,16 +305,28 @@ func (lc *chatLifecycle) closingSession(sb *sharedBridge) bool {
 	return lc.closing != nil && lc.closing.sb == sb
 }
 
-// markReload marks sb, chatID's resident entry, for a reload (closeReload). The mark is not a request: an idle chat
-// keeps its session until its next door or close.
-func (r *turnRegistry) markReload(chatID marotte.ChatID, sb *sharedBridge) {
-	lc, ok := r.lookup(chatID)
-	if !ok {
-		return
+// closeOwner is the lifecycle that decides when sb, chatID's entry, may close: the life its leases are counted on, or
+// the chat's current one for an entry built on another life. A run chat's entry has none: releaseEndedHost owns it.
+func (r *turnRegistry) closeOwner(chatID marotte.ChatID, sb *sharedBridge) (*chatLifecycle, bool) {
+	if sb == nil || isRunChat(chatID) {
+		return nil, false
 	}
+	if lc, ok := sb.life.(*chatLifecycle); ok {
+		return lc, true
+	}
+	return r.lookup(chatID)
+}
+
+// markReload marks sb, an entry of this life, for a reload (closeReload), reporting whether it was not marked yet.
+// The mark is not a request: an idle chat keeps its session until its next door or close.
+func (lc *chatLifecycle) markReload(sb *sharedBridge) bool {
 	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if lc.ended || lc.reloadFor == sb {
+		return false
+	}
 	lc.reloadFor = sb
-	lc.mu.Unlock()
+	return true
 }
 
 // holdOpenLocked takes an open hold for the caller of a door whose opener token is opener (0 for a non-prompt door),
@@ -287,11 +366,11 @@ func (lc *chatLifecycle) endOpensLocked(opener uint64) {
 // beginTail counts a turn's close tail on lc and takes its hold, answering the life's context, the idempotent done
 // that ends both in one section, and the tail's token, whose hold the drain's pick ends earlier (drainPick); false
 // once the life ended.
-func (r *turnRegistry) beginTail(lc *chatLifecycle) (context.Context, func(), uint64, bool) {
-	token := r.tailSeq.Add(1)
+func (r *turnRegistry) beginTail(lc *chatLifecycle) (lifeCtx context.Context, done func(), token uint64, ok bool) {
+	token = r.tailSeq.Add(1)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	ctx, done, ok := lc.beginLocked(workTail, nil, func() { delete(lc.tails, token) })
+	lifeCtx, done, ok = lc.beginLocked(workTail, nil, func() { delete(lc.tails, token) })
 	if !ok {
 		return nil, done, 0, false
 	}
@@ -299,7 +378,7 @@ func (r *turnRegistry) beginTail(lc *chatLifecycle) (context.Context, func(), ui
 		lc.tails = make(map[uint64]struct{})
 	}
 	lc.tails[token] = struct{}{}
-	return ctx, done, token, true
+	return lifeCtx, done, token, true
 }
 
 // holdStep records that host's session hosts the run step turn turnID, until endStep. A run chat's session is its

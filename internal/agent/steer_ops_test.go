@@ -225,7 +225,7 @@ func TestCmdSteerRemove_ATurnEndingUnderTheClearResendsTheKeptRows(t *testing.T)
 				})
 			}}, bridgeIdle))
 		}, closed: func(t *testing.T, s *steerHarness) {
-			s.h.coord.afterTurnClose(t.Context(), s.h.coord.turns.testLifecycle("c1"), closeFacts{exit: deathExit, outcome: marotte.TurnOutcomeInterrupted})
+			s.h.coord.afterTurnClose(t.Context(), s.h.coord.turns.testLifecycle("c1"), &closeFacts{exit: deathExit, outcome: marotte.TurnOutcomeInterrupted})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -84,9 +84,10 @@ type bridgeAccess interface {
 	Bridge(chatID marotte.ChatID) Bridge
 	// OpenBridge answers once the chat's log holds KAS's account of its session (sessionLoader).
 	OpenBridge(ctx context.Context, chatID marotte.ChatID, model string) (Bridge, error)
-	// OpenBridgeAt is OpenBridge for a caller whose intent began at stamp (TurnAdmission.LifeStamp): a close of the
-	// chat committed since answers marotte.ErrChatClosedDuringCall.
-	OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, stamp uint64) (Bridge, error)
+	// OpenBridgeAt is OpenBridge for the holder of res, whose intent began at res.Stamp: a close of the chat committed
+	// since answers marotte.ErrChatClosedDuringCall. res's own admission and unsent turn do not keep a session marked
+	// for reload from reloading at this open.
+	OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, res Reservation) (Bridge, error)
 	// BridgeLive reports a bridge for the chat that is past its session open: the state
 	// a steer can be delivered into, where an opening one parks it.
 	BridgeLive(chatID marotte.ChatID) bool
@@ -507,9 +508,11 @@ type turnAdmission interface {
 	// reservation, a closing turn, a held close); a turn marotte or kiro-cli runs answers IdleTurnOpen at once. The
 	// Reservation is the zero one unless the answer is IdleAcquired.
 	ReserveIdleTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration) (IdleAdmission, Reservation)
-	// TryReserveTurnFenced takes the admission slot for a close's drain iff it is free, never waiting; it also refuses
-	// once the fence no longer holds, sparing a reservation the open would refuse.
-	TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence TurnFence) (Reservation, bool)
+	// TryReserveDrain is a close's drain picking its prompt: it takes the admission slot iff it is free, never
+	// waiting, and refuses once cl.Fence no longer holds, sparing a reservation the open would refuse. Either way it
+	// ends cl.Tail's hold on the chat's session in the same step, so the session never stands unheld between the
+	// close's tail and the drained prompt.
+	TryReserveDrain(chatID marotte.ChatID, cl CloseFacts) (Reservation, bool)
 	// AwaitNoClose waits until no close of chatID is being decided or torn down, reporting whether it waited; a ctx
 	// end answers the ctx's error. It admits nothing.
 	AwaitNoClose(ctx context.Context, chatID marotte.ChatID) (waited bool, err error)

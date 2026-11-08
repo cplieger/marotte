@@ -32,9 +32,9 @@ func (b bridgeRole) OpenBridge(ctx context.Context, chatID marotte.ChatID, model
 	return sb, nil
 }
 
-// OpenBridgeAt is OpenBridge for a caller whose intent began at stamp.
-func (b bridgeRole) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, stamp uint64) (command.Bridge, error) {
-	sb, err := b.coord.openBridgeAt(ctx, chatID, model, stamp)
+// OpenBridgeAt is OpenBridge for the holder of res.
+func (b bridgeRole) OpenBridgeAt(ctx context.Context, chatID marotte.ChatID, model string, res command.Reservation) (command.Bridge, error) {
+	sb, err := b.coord.openBridgeAt(ctx, chatID, model, res)
 	if err != nil || sb == nil {
 		return nil, err
 	}
@@ -149,10 +149,9 @@ func (rt *Runtime) ReserveTurn(
 	return rt.coord.ReserveTurn(ctx, chatID, source, stamp, wait)
 }
 
-// TryReserveTurnFenced takes the chat's admission slot iff it is free and no turn
-// opened after the fenced one.
-func (rt *Runtime) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) (command.Reservation, bool) {
-	return rt.coord.TryReserveTurnFenced(chatID, source, fence)
+// TryReserveDrain is a close's drain picking its prompt (bridgeCoordinator.TryReserveDrain).
+func (rt *Runtime) TryReserveDrain(chatID marotte.ChatID, cl command.CloseFacts) (command.Reservation, bool) {
+	return rt.coord.TryReserveDrain(chatID, cl)
 }
 
 // PromptHolder names the prompt-class turn holding the chat's admission.

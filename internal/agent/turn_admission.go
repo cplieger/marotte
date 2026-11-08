@@ -69,7 +69,7 @@ func (lc *chatLifecycle) holderSourceLocked() (marotte.TurnOpenSource, bool) {
 // tail and takes the slot iff free and the fence holds, never waiting, so a pending close never sees an empty hold set
 // between the tail and the drained prompt's reservation. The fence names a life that existed, so a missing lifecycle
 // refuses, and a held close refuses.
-func (r *turnRegistry) drainPick(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence, tail uint64) (command.Reservation, bool) {
+func (r *turnRegistry) drainPick(chatID marotte.ChatID, fence command.TurnFence, tail uint64) (command.Reservation, bool) {
 	lc, ok := r.lookup(chatID)
 	if !ok {
 		return command.Reservation{}, false
@@ -81,7 +81,7 @@ func (r *turnRegistry) drainPick(chatID marotte.ChatID, source marotte.TurnOpenS
 	if !lc.fenceHoldsLocked(fence) {
 		return command.Reservation{}, false
 	}
-	a := r.reserveLocked(lc, source, lc.stamp, "")
+	a := r.reserveLocked(lc, marotte.TurnSourcePrompt, lc.stamp, "")
 	lc.reservedForRow = a.res.Token != 0
 	return a.res, a.res.Token != 0
 }
@@ -305,10 +305,11 @@ func (bc *bridgeCoordinator) reserveWaiting(
 	}
 }
 
-// TryReserveTurnFenced takes the admission slot for a close's drain iff it is free, never waiting, refused once a turn
-// opened after the closed one. The open checks the fence again where it appends.
-func (bc *bridgeCoordinator) TryReserveTurnFenced(chatID marotte.ChatID, source marotte.TurnOpenSource, fence command.TurnFence) (command.Reservation, bool) {
-	return bc.turns.drainPick(chatID, source, fence, 0)
+// TryReserveDrain takes the admission slot for a close's drained prompt iff it is free, never waiting, refused once a
+// turn opened after the closed one, and ends cl.Tail's hold in the same section (drainPick). The open checks the
+// fence again where it appends.
+func (bc *bridgeCoordinator) TryReserveDrain(chatID marotte.ChatID, cl command.CloseFacts) (command.Reservation, bool) {
+	return bc.turns.drainPick(chatID, cl.Fence, cl.Tail)
 }
 
 // LifeStamp is the life gate's position now, the stamp a caller takes where its intent toward a chat begins.

@@ -19,15 +19,10 @@ type sharedBridge struct {
 	// settled is the generation's readiness from the session open's first instant: openBridge hands sb to
 	// no caller before it settles.
 	settled *sessionSettle
-	// closeClaim is non-nil while a reload or a release owns the session's close, so its forward's end is not the
-	// session ending on its own; finishReload closes it, and an open meanwhile waits on it (claimReload).
-	closeClaim chan struct{}
-	state      bridgeState
-	mu         sync.Mutex
+	state   bridgeState
+	mu      sync.Mutex
 	// effortHealed latches the one reactive effort repair (bridgeCoordinator.healEffort).
 	effortHealed bool
-	// reload marks a session whose door settings moved: its next idle open closes it and loads it again.
-	reload bool
 }
 
 // tryAcquireForPrompt moves idle to prompting, reporting whether the caller owns the slot.

@@ -139,8 +139,11 @@ func (bc *bridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 	cf := bc.closeFactsOf(t, tc.Closer, outcome)
 	cf.answerWait = answerWait
 	cf.contextLimit = kind == marotte.FailureKindContextLimit
+	// Before finish, whose idle edge asks the release: the tail's hold must already stand there.
+	lifeCtx, done, tail, ok := bc.turns.beginTail(t.lc)
+	cf.tail = tail
 	bc.turns.finish(t, result)
-	bc.publishClose(t, cf)
+	bc.publishClose(lifeCtx, t, &cf, done, ok)
 	return true
 }
 
@@ -161,13 +164,15 @@ func graceClosed(closer turnCloser, stop marotte.StopReason) bool {
 	return closer == closerCancelGrace || closer == closerPromptFailure && stop == marotte.StopReasonCancelled
 }
 
-func (bc *bridgeCoordinator) publishClose(t *activeTurn, cf closeFacts) {
+// publishClose runs the turn's close tail on lifeCtx, counted and held by beginTail (done, ok), which it ends on
+// every path that starts none.
+func (bc *bridgeCoordinator) publishClose(lifeCtx context.Context, t *activeTurn, cf *closeFacts, done func(), ok bool) {
 	if bc.onTurnClosed != nil {
 		bc.onTurnClosed(t.Chat, t.ID)
 	}
 	// The tail is the life's work: a turn closed once its life ended runs none.
-	lifeCtx, done, ok := t.lc.beginWork(workTail)
 	if !ok {
+		done()
 		return
 	}
 	// Its own goroutine, on inflight so a drained prompt joins a held count instead of racing Shutdown's Wait. None
@@ -211,6 +216,8 @@ type closeFacts struct {
 	turnID     string
 	fence      command.TurnFence
 	answerWait time.Duration
+	// tail is the close tail's hold token (beginTail), which the drain's pick ends (command.CloseFacts.Tail).
+	tail       uint64
 	unattended bool
 	// contextLimit is a turn the model refused for the context's size, which the turn's end compacts.
 	contextLimit bool
@@ -222,7 +229,7 @@ type closeFacts struct {
 // remains, and a clear before its idle report empties the buffer under that continuation. So the steer settle
 // waits for idle and is skipped when a turn opens first, whose close resolves the end; a death settles at once.
 // ctx is lc's life context, and each step first checks the life still stands, so no step begins once it ended.
-func (bc *bridgeCoordinator) afterTurnClose(ctx context.Context, lc *chatLifecycle, cf closeFacts) {
+func (bc *bridgeCoordinator) afterTurnClose(ctx context.Context, lc *chatLifecycle, cf *closeFacts) {
 	chatID := lc.chatID
 	var ends command.EndFacts
 	if cf.exit != nil {
@@ -244,12 +251,12 @@ func (bc *bridgeCoordinator) afterTurnClose(ctx context.Context, lc *chatLifecyc
 		return
 	}
 	bc.drainAfterClose(ctx, chatID, command.CloseFacts{
-		Outcome: cf.outcome, Fence: cf.fence, Unattended: cf.unattended, AfterStop: afterStop,
+		Outcome: cf.outcome, Fence: cf.fence, Unattended: cf.unattended, AfterStop: afterStop, Tail: cf.tail,
 	}, ends)
 }
 
 // resolveCloseEnds settles the steer ends of the closed turn and older ones. Nothing once shutdown began.
-func (bc *bridgeCoordinator) resolveCloseEnds(ctx context.Context, lc *chatLifecycle, cf closeFacts) command.EndFacts {
+func (bc *bridgeCoordinator) resolveCloseEnds(ctx context.Context, lc *chatLifecycle, cf *closeFacts) command.EndFacts {
 	if bc.resolveEnds == nil || bc.draining() || lc.endedNow() {
 		return command.EndFacts{}
 	}
@@ -271,7 +278,7 @@ func (bc *bridgeCoordinator) resolveCloseEnds(ctx context.Context, lc *chatLifec
 // the wait. After the release it takes a compaction requested under the hold (afterRelease). It answers the rows
 // queued under the hold, false when a wait stood down (a turn opened, a teardown, shutdown), which ends the hold with
 // no drain and skips atIdle.
-func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, lc *chatLifecycle, cf closeFacts, atIdle func()) ([]string, bool) {
+func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, lc *chatLifecycle, cf *closeFacts, atIdle func()) ([]string, bool) {
 	chatID := lc.chatID
 	accepted, turnEnded := false, false
 	for {
@@ -297,7 +304,7 @@ func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, lc *chatLifecycle
 }
 
 // compactAtTurnEnd runs the closed turn's one compaction, reporting whether KAS accepted it.
-func (bc *bridgeCoordinator) compactAtTurnEnd(ctx context.Context, lc *chatLifecycle, cf closeFacts) bool {
+func (bc *bridgeCoordinator) compactAtTurnEnd(ctx context.Context, lc *chatLifecycle, cf *closeFacts) bool {
 	return !lc.endedNow() && bc.autoCompact.afterTurn(ctx, lc.chatID, cf.turnID, cf.contextLimit)
 }
 

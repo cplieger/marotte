@@ -319,7 +319,7 @@ func TestDrain_ATurnOpeningBetweenThePickAndTheOpenSupersedesIt(t *testing.T) {
 }
 
 // A close's fence refuses its drain's reservation once a newer turn has opened.
-func TestTryReserveTurnFenced_ANewerTurnRefusesTheOldClose(t *testing.T) {
+func TestTryReserveDrain_ANewerTurnRefusesTheOldClose(t *testing.T) {
 	h, cs, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	seedChat(t, cs, "c1")
@@ -336,10 +336,10 @@ func TestTryReserveTurnFenced_ANewerTurnRefusesTheOldClose(t *testing.T) {
 	// The close's drain runs off this goroutine and holds the slot as a prompt while it looks for a queued row.
 	awaitClosed(t, drained, "the close's drain")
 
-	if h.coord.tryReserveFencedNow("c1", marotte.TurnSourcePrompt, fence) {
+	if h.coord.tryReserveDrainNow("c1", fence) {
 		t.Error("an older close's drain reserved a chat a newer turn opened on")
 	}
-	if !h.coord.tryReserveFencedNow("c1", marotte.TurnSourcePrompt, fenceNow(h, "c1")) {
+	if !h.coord.tryReserveDrainNow("c1", fenceNow(h, "c1")) {
 		t.Error("the newest close's drain was refused an idle chat")
 	}
 }

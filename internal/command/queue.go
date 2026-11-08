@@ -257,6 +257,8 @@ type CloseFacts struct {
 	// Unattended is a close no one stopped (marotte closing a turn KAS went idle without
 	// ending), after which queued user rows still go, as after a clean close.
 	Unattended bool
+	// Tail names the close tail's hold on the chat's session, which TryReserveDrain ends; zero names none.
+	Tail uint64
 }
 
 // drainAfterClose sends at most one prompt for a close, under the chat's steer lock from the pick
@@ -273,7 +275,7 @@ func drainAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 	if roles.lifecycle.Draining() || len(roles.jobs.Ends(chatID)) > 0 {
 		return
 	}
-	res, ok := roles.admission.TryReserveTurnFenced(chatID, marotte.TurnSourcePrompt, cl.Fence)
+	res, ok := roles.admission.TryReserveDrain(chatID, cl)
 	if !ok {
 		return
 	}
