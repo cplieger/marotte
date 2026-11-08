@@ -776,7 +776,7 @@ func heldOwner(t *testing.T) (*engineOwner, *fakeEngineSource, *configModel) {
 	return o, src, m
 }
 
-func holdDoor(t *testing.T, o *engineOwner) func() {
+func holdEngineDoor(t *testing.T, o *engineOwner) func() {
 	t.Helper()
 	_, _, release, err := o.acquire(t.Context())
 	if err != nil {
@@ -805,7 +805,7 @@ func assertGenerationOneKeepsItsQueue(t *testing.T, o *engineOwner, src *fakeEng
 func TestEngineOwner_AnUnreadableSpecQueuesReasonsAndHoldsEveryRestart(t *testing.T) {
 	t.Run("held_edges_and_restarts_keep_the_engine", func(t *testing.T) {
 		o, src, m := heldOwner(t)
-		release := holdDoor(t, o)
+		release := holdEngineDoor(t, o)
 		m.set(func(m *configModel) { m.broken, m.value = true, "v2" })
 		o.reconcile(t.Context())
 		release()
@@ -823,7 +823,7 @@ func TestEngineOwner_AnUnreadableSpecQueuesReasonsAndHoldsEveryRestart(t *testin
 	})
 	t.Run("a_stale_verdict_is_caught_before_the_gate_closes", func(t *testing.T) {
 		o, src, m := heldOwner(t)
-		release := holdDoor(t, o)
+		release := holdEngineDoor(t, o)
 		m.set(func(m *configModel) { m.value = "v2" })
 		o.reconcile(t.Context())
 		m.set(func(m *configModel) { m.broken = true })
@@ -838,14 +838,14 @@ func TestEngineOwner_AnUnreadableSpecQueuesReasonsAndHoldsEveryRestart(t *testin
 	})
 	t.Run("the_repair_recovers_at_the_next_edge_once", func(t *testing.T) {
 		o, src, m := heldOwner(t)
-		release := holdDoor(t, o)
+		release := holdEngineDoor(t, o)
 		m.set(func(m *configModel) { m.broken, m.value = true, "v2" })
 		o.reconcile(t.Context())
 		gate := make(chan struct{})
 		m.set(func(m *configModel) { m.broken, m.gate, m.entries = false, gate, 0 })
 		release()
 		for range 10 {
-			holdDoor(t, o)()
+			holdEngineDoor(t, o)()
 		}
 		close(gate)
 		waitGenerations(t, src, 2)
@@ -971,7 +971,7 @@ func reasonsOf(o *engineOwner) []marotte.EngineReason { return o.status().Restar
 func TestEngineOwner_TheHoldFollowsTheCacheVerdict(t *testing.T) {
 	t.Run("an_older_readable_read_during_an_unordered_failure_admits_no_restart", func(t *testing.T) {
 		o, src, c := scriptedOwner(t, scriptRead{5, 2048, true})
-		release := holdDoor(t, o)
+		release := holdEngineDoor(t, o)
 		c.setLive("b")
 		o.reconcile(t.Context())
 		c.l.settle(&configDocument{}, 0, false)

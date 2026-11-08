@@ -355,8 +355,8 @@ const (
 	evRehydrate
 )
 
-// holdStep is one step of a cell: the event it drives and the run's state after it, until the next step's event.
-type holdStep struct {
+// gateHoldStep is one step of a cell: the event it drives and the run's state after it, until the next step's event.
+type gateHoldStep struct {
 	text string
 	// loud are the ERRORs the step's failing readers log, which it waits for before the readers settle.
 	loud []string
@@ -433,8 +433,8 @@ type releasers struct {
 
 // holdSim is holdModel's state while it walks a cell.
 type holdSim struct {
-	steps   []holdStep
-	cur     holdStep
+	steps   []gateHoldStep
+	cur     gateHoldStep
 	c       holdCombo
 	kas     kasHold
 	claims  int
@@ -464,7 +464,7 @@ type holdSim struct {
 
 // holdModel is the reference model of the hold matrix: the steps a cell drives, each with the state the cell must
 // reach, or why the matrix skips the combination: it cannot happen, or it drives as its twin.
-func holdModel(c holdCombo) (steps []holdStep, impossible string) {
+func holdModel(c holdCombo) (steps []gateHoldStep, impossible string) {
 	if why := c.ruledOut(); why != "" {
 		return nil, why
 	}
@@ -552,7 +552,7 @@ func (s *holdSim) state() holdState { return holdState{kas: s.kas, heal: s.entry
 
 // begin starts the next step.
 func (s *holdSim) begin(ev holdEvent, text string) {
-	s.cur = holdStep{ev: ev, text: text, chainTry: s.chainNext, engineSweeps: s.sweepNext}
+	s.cur = gateHoldStep{ev: ev, text: text, chainTry: s.chainNext, engineSweeps: s.sweepNext}
 	s.chainNext, s.sweepNext = false, false
 	signs := s.signsIn(ev)
 	s.freshMark = signs && s.c.chat() && !s.reload
@@ -1255,7 +1255,7 @@ func holdOutcome(c holdCombo) string {
 		return "cannot happen, " + why
 	}
 	parts := []string{"held " + steps[holdCheckpoint(steps)].want.String(), holdPersisted(steps)}
-	loud := slices.ContainsFunc(steps, func(s holdStep) bool { return len(s.loud) > 0 })
+	loud := slices.ContainsFunc(steps, func(s gateHoldStep) bool { return len(s.loud) > 0 })
 	last := steps[len(steps)-1]
 	parts = append(parts, fmt.Sprintf("ends %s after %s", last.want, resumeCount(last.resumes)))
 	if loud {
@@ -1272,7 +1272,7 @@ func resumeCount(n int32) string {
 }
 
 // holdCheckpoint is the index of the step the cell's faults and crossing start after, the first step when none does.
-func holdCheckpoint(steps []holdStep) int {
+func holdCheckpoint(steps []gateHoldStep) int {
 	for i := range steps {
 		if steps[i].arm {
 			return i
@@ -1283,7 +1283,7 @@ func holdCheckpoint(steps []holdStep) int {
 
 // holdPersisted is what a fresh runtime finds at the cell's checkpoint: a restart cell's own assertion, or for any
 // other cell KAS's state there, which the cell asserts and the restart cells show a fresh runtime reads.
-func holdPersisted(steps []holdStep) string {
+func holdPersisted(steps []gateHoldStep) string {
 	for i := range steps {
 		if steps[i].persisted != kasNone {
 			return "a restart finds it " + steps[i].persisted.String() + " with no heal held"
@@ -1311,7 +1311,7 @@ func holdCellText(c holdCombo) string {
 	return strings.Join(parts, "; then ") + "; " + holdPersisted(steps) + "."
 }
 
-func holdStepText(s *holdStep) string {
+func holdStepText(s *gateHoldStep) string {
 	text := fmt.Sprintf("%s: %s, resumes %d", s.text, s.want, s.resumes)
 	if s.blocked {
 		text += ", until the held try goes on"
@@ -2302,7 +2302,7 @@ type holdCell struct {
 	lapsed bool
 	// liveTry holds a release live after its try, for the next step's opening edge (crossRepausedLive).
 	liveTry *holdBlock
-	// heldMark is the reload mark a step's sign-in left held for the next step (holdStep.holdsMark).
+	// heldMark is the reload mark a step's sign-in left held for the next step (gateHoldStep.holdsMark).
 	heldMark *lateMark
 	// onBoot arms a restart step's holds once the stopped runtime let go of the last ones.
 	onBoot func()
@@ -2640,7 +2640,7 @@ func (c *holdCell) lapse(t *testing.T) {
 
 // formHold carries out a gate pause's start: the lapse unless a step before closed the gate, the held read's retry,
 // and the run's next credential ask when the step says so.
-func (c *holdCell) formHold(t *testing.T, s *holdStep) {
+func (c *holdCell) formHold(t *testing.T, s *gateHoldStep) {
 	t.Helper()
 	if !c.lapsed {
 		c.lapse(t)
@@ -2709,13 +2709,13 @@ func (c *holdCell) engineRestart(t *testing.T) {
 }
 
 // armEntryList sets whether the next first list of a chat's rehydrate fails, as the step's failsEntry says.
-func (c *holdCell) armEntryList(s *holdStep) {
+func (c *holdCell) armEntryList(s *gateHoldStep) {
 	c.k.set(func(k *kasRun) { k.failEntryList = s.failsEntry })
 }
 
 // restart ends the runtime and boots a new one over the same KAS run, the gate open at boot for evRestartOpen, and
 // checks what the restart kept, s.persisted.
-func (c *holdCell) restart(t *testing.T, s *holdStep) {
+func (c *holdCell) restart(t *testing.T, s *gateHoldStep) {
 	t.Helper()
 	signedIn, persisted := s.ev == evRestartOpen, s.persisted
 	c.unhook()
@@ -2773,7 +2773,7 @@ func (c *holdCell) awaitInfo(t *testing.T, msg string) {
 }
 
 // drive carries out one step's event.
-func (c *holdCell) drive(t *testing.T, s *holdStep) {
+func (c *holdCell) drive(t *testing.T, s *gateHoldStep) {
 	t.Helper()
 	switch s.ev {
 	case evHold:
@@ -2934,7 +2934,7 @@ func (c *holdCell) armFlap() {
 // flap closes and opens the gate while the held release waits to retry its lost write, once the step's other calls
 // settled. With s.flapPauses a rehydrate resumes the run in that wait first, and the gate opens again only once the
 // closing edge's sweep paused it.
-func (c *holdCell) flap(t *testing.T, s *holdStep) {
+func (c *holdCell) flap(t *testing.T, s *gateHoldStep) {
 	t.Helper()
 	c.f.mu.Lock()
 	reached := c.f.gapReached
@@ -2963,7 +2963,7 @@ type inFlightHolds struct {
 
 // armInFlight holds the step's held release's next resume write in flight, with crossRepausedLive the try that wrote
 // it once it ended, and with orderSweepFirst the run list of the rehydrate that write's reload starts.
-func (c *holdCell) armInFlight(s *holdStep) *inFlightHolds {
+func (c *holdCell) armInFlight(s *gateHoldStep) *inFlightHolds {
 	h := &inFlightHolds{write: c.f.newHold(), sweeps: c.k.sweepLists.Load()}
 	c.k.set(func(k *kasRun) { k.writeHold = h.write })
 	if s.inFlight == crossRepausedLive {
@@ -2984,7 +2984,7 @@ func (c *holdCell) armInFlight(s *holdStep) *inFlightHolds {
 // run, the release ended or held live for the next step's edge. A chat's rehydrate reads the run as the cell's order
 // says: before that pause, its list taken while the write was in flight and the sweep's list held until its read, or
 // after it, its list held until the pause.
-func (c *holdCell) inFlight(t *testing.T, s *holdStep, h *inFlightHolds) {
+func (c *holdCell) inFlight(t *testing.T, s *gateHoldStep, h *inFlightHolds) {
 	t.Helper()
 	select {
 	case <-h.write.reached:
@@ -3051,7 +3051,7 @@ func (c *holdCell) awaitPaused(t *testing.T) {
 }
 
 // liveServes is the step's wait after its opening edge when s.servesLive: letLive's.
-func (c *holdCell) liveServes(s *holdStep) func() {
+func (c *holdCell) liveServes(s *gateHoldStep) func() {
 	if !s.servesLive {
 		return nil
 	}
@@ -3095,7 +3095,7 @@ const faultQuiet = 150 * time.Millisecond
 // step's end state, then until the faults go unhit, checks each spent retryResumeLater chain made its tries, and ends
 // the faults. hits is the count of faults hit before the step, errs the count of each of its ERRORs, later the
 // chains' later tries.
-func (c *holdCell) settle(t *testing.T, s *holdStep, hits int, errs map[string]int, later [2]int) {
+func (c *holdCell) settle(t *testing.T, s *gateHoldStep, hits int, errs map[string]int, later [2]int) {
 	t.Helper()
 	for _, msg := range s.loud {
 		// Each listing is one reader's ERROR: two chat sweep chains log it twice.
@@ -3170,7 +3170,7 @@ func (c *holdCell) orderFinder(first bool) {
 }
 
 // run drives the cell's steps, checking the state after each.
-func (c *holdCell) run(t *testing.T, steps []holdStep) {
+func (c *holdCell) run(t *testing.T, steps []gateHoldStep) {
 	t.Helper()
 	var at string
 	defer func() {
