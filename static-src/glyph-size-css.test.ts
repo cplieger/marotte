@@ -91,11 +91,12 @@ function touchTokens(decls: readonly Decl[]): Set<string> {
 const BUTTON_GLYPH: ReadonlySet<string> = new Set(["--icon-btn", "--icon-grow"]);
 
 /** Where the button glyph is read: `.icon-btn`, the composer's pills and Send, the turn footer's and code
- *  block's action box, the hooks badge, the context pie and the mode pill's role icon. A new reader is a
- *  control that paints `--btn-h` or `--btn-h-sm`, added here. */
+ *  block's action box, the hooks badge and the header room it keeps for it, the context pie and the mode pill's
+ *  role icon. A new reader is a control that paints `--btn-h` or `--btn-h-sm`, added here. */
 const BUTTON_GLYPH_READERS: readonly string[] = [
   "10-shell-app.css .icon-btn >> & > :where(.ic-ui), & > :where(.icon-swap) > :where(.ic-ui) inline-size",
   "10-shell-app.css .icon-btn >> & > :where(.ic-ui), & > :where(.icon-swap) > :where(.ic-ui) block-size",
+  "14-tools.css .tool-group, .steer-group >> &.tool-group-has-hooks --hooks-w",
   "14-tools.css .tool-group-hooks >> & svg inline-size",
   "14-tools.css .tool-group-hooks >> & svg block-size",
   "15-input.css .pill >> & > :where(.ic-ui) inline-size",

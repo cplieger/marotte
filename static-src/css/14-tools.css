@@ -274,8 +274,8 @@
 }
 
 /* The list the hooks badge opens: one row per hook, its run count, its name and its hook file's chip. The menu
-   surface is the tab menu's (12-tabs.css). `--hook-pop-room` (hook-badge.ts) is the span from the group's start edge
-   to the badge's end edge, so an end-aligned list stays inside the turn card. */
+   surface is the tab menu's (12-tabs.css) and each row the shared menu row. `--hook-pop-room` (hook-badge.ts) is the
+   span from the group's start edge to the badge's end edge, so an end-aligned list stays inside the turn card. */
 .tool-hook-popover {
   min-inline-size: min(16rem, var(--hook-pop-room, 16rem));
   max-inline-size: min(28rem, var(--hook-pop-room, 100vw - 1rem));
@@ -299,9 +299,8 @@
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  min-height: var(--row-tap-sm);
-  padding-block: var(--sp-1);
-  padding-inline: 0.75rem;
+  min-height: var(--menu-row-h);
+  padding: var(--menu-row-pad);
   min-width: 0;
   color: var(--c-text-primary);
 
