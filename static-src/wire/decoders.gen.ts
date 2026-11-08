@@ -4772,6 +4772,10 @@ export const decodeToolInfo: Decoder<ToolInfo> = (v) => {
     if ($v !== undefined && $v !== null) out.requires = own(o, "requires") === null ? [] : decodeArray(own(o, "requires"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.tool_info.requires");
   }
   {
+    const $v = own(o, "commands");
+    if ($v !== undefined && $v !== null) out.commands = own(o, "commands") === null ? [] : decodeArray(own(o, "commands"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.tool_info.commands");
+  }
+  {
     const $v = own(o, "dependents");
     if ($v !== undefined && $v !== null) out.dependents = own(o, "dependents") === null ? [] : decodeArray(own(o, "dependents"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.tool_info.dependents");
   }
