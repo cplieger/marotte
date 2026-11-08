@@ -65,6 +65,8 @@ type reads struct {
 	paused map[string]*backoff
 	// failures is each list's failed reads in a row, this poll's included.
 	failures map[string]int
+	// failed is each list whose read this poll ended in an error, a rate limit's included.
+	failed map[string]bool
 	// since and horizon are the run walk's bound and H, both fixed when it starts.
 	since   time.Time
 	horizon time.Time
@@ -129,7 +131,7 @@ func (p *poller) load(r *launchrule.Rule, f Feed, start time.Time) *pollRule {
 }
 
 func (p *poller) read(ctx context.Context, f Feed, rules []*pollRule, start time.Time) reads {
-	rd := reads{paused: map[string]*backoff{}, failures: map[string]int{}}
+	rd := reads{paused: map[string]*backoff{}, failures: map[string]int{}, failed: map[string]bool{}}
 	need := map[string]bool{}
 	for _, pr := range rules {
 		need[listOf(pr.ev.Kind)] = true
@@ -174,6 +176,7 @@ func readList[T any](ctx context.Context, p *poller, f Feed, list string, rd *re
 	complete := w.complete() || (w.Err == nil && w.Partial.Reason == forgeapi.PartialResultWindow)
 	p.budget.walked(f, list, max(int(tag.pages.Load()), w.Calls), complete, w.Err, w.Partial)
 	rd.failures[list] = p.noteRead(f, list, w.Err)
+	rd.failed[list] = w.Err != nil
 	return &w
 }
 
@@ -269,8 +272,11 @@ func (pr *pollRule) applyTo(es *eventState, rd *reads) bool {
 		pr.st.raw.Status.Paused = bo.rowText()
 	} else {
 		pr.st.checkedAt = pr.start
-		pr.st.queueFull = pr.full
-		pr.showFull()
+		// A failed read walked too little to show the queue has room, and the turned-away event still waits.
+		if pr.full || !rd.failed[listOf(pr.ev.Kind)] {
+			pr.st.queueFull = pr.full
+			pr.showFull()
+		}
 		pr.noteBaselineStop(rd)
 	}
 	*es = pr.st

@@ -348,6 +348,16 @@ func TestQueueFullShowsOnTheRow(t *testing.T) {
 			t.Errorf("with room for #3, row text = %q, want none", got)
 		}
 	})
+	t.Run("through a failed read", func(t *testing.T) {
+		h, id, all := full(t, 2)
+		h.issuePage(all...)
+		h.poll()
+		h.src.errs = map[string]error{listIssues: &forgeapi.Error{Kind: forgeapi.KindTransient, Status: 502}}
+		h.poll()
+		if got := rowText(h, id); got != fullOfTwo {
+			t.Errorf("after a failed read, row text = %q, want %q: #3 still waits at the forge", got, fullOfTwo)
+		}
+	})
 	t.Run("one held event", func(t *testing.T) {
 		h, id, all := full(t, 1)
 		h.issuePage(all...)

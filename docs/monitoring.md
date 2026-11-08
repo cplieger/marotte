@@ -43,7 +43,7 @@ Labels carry fixed values only, with one exception. `rule_id` is the random id m
 
 An engine exit's `cause` is one of these. marotte asked for `restart_confirmed`, `restart_auto`, `shutdown` and `stopped`. Another process sent `external_stop`. The engine ended by itself in `crash`, `stdin_stalled`, `parse_breaker` and `lane_overflow`.
 
-A disabled or deleted schedule's or event rule's series leave the page. Every counter starts at 0 for each of its label values, so the first event after a start shows in `increase()`. The event rule series are gauges read from each rule's saved state, so a catch-up gap found before the first scrape after a restart still shows.
+A disabled or deleted schedule's or event rule's series leave the page. Every counter starts at 0 for each of its label values, so the first event after a start shows in `increase()`. `marotte_trigger_catch_up_gaps` counts the gaps saved in each rule's state, so a gap found before the first scrape after a restart still shows. `marotte_trigger_queue_full` and `marotte_trigger_poll_failures` describe this process's last poll, and read 0 after a restart until the rule's next poll.
 
 The page also carries the Go runtime and process families (`go_*`, `process_*`) under the names Go's official Prometheus client uses, so stock Go dashboards work. marotte bundles no dashboard. These queries are a start in Grafana's Metrics Drilldown:
 

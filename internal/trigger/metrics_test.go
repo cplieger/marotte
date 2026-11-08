@@ -135,6 +135,14 @@ func TestQueueFullSeries(t *testing.T) {
 	if v, _ := ruleGauge(t, "marotte_trigger_queue_full", r.ID); v != 1 {
 		t.Errorf("queue full after #3 was left at the forge = %v, want 1", v)
 	}
+	for _, kind := range []forgeapi.ErrorKind{forgeapi.KindRateLimited, forgeapi.KindTransient} {
+		h.src.errs = map[string]error{listIssues: &forgeapi.Error{Kind: kind, Status: 502}}
+		h.poll()
+		if v, _ := ruleGauge(t, "marotte_trigger_queue_full", r.ID); v != 1 {
+			t.Errorf("queue full after a %v read = %v, want 1: #3 still waits at the forge", kind, v)
+		}
+	}
+	h.src.errs = nil
 	h.drain(r.ID)
 	h.issuePage(all...)
 	h.poll()

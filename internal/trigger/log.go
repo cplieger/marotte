@@ -134,7 +134,6 @@ func logLaunchAbandoned(ruleID, workflowID, key, cause string) {
 	slog.Info(logMsgLaunchAbandoned, "rule_id", ruleID, "workflow_id", workflowID, "key", key, "cause", cause)
 }
 
-// The classes of a triggered run did not start line.
 const (
 	notStartedRetryable = "retryable"
 	notStartedBlocked   = "blocked"
@@ -146,7 +145,6 @@ func logRunNotStarted(ruleID, workflowID, class, sentence string) {
 	slog.Warn(logMsgRunNotStarted, "rule_id", ruleID, "workflow_id", workflowID, "class", class, "error", sentence)
 }
 
-// The operations a launch rules not written line names.
 const (
 	opWrite  = "write"
 	opRemove = "remove"
