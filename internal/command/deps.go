@@ -38,10 +38,7 @@ type SessionCaller interface {
 	sessionScoped
 }
 
-// bridgeRPC is the full JSON-RPC surface — request, notification, and the
-// answer to an inbound request from kiro-cli. Carries no prompt-slot method:
-// sending a frame and owning the turn are different rights, and the cancel
-// path sends a notification without holding the slot.
+// bridgeRPC is the full JSON-RPC surface: request, notification, and the answer to an inbound request from kiro-cli.
 type bridgeRPC interface {
 	SessionCaller
 
@@ -50,16 +47,6 @@ type bridgeRPC interface {
 	// Respond sends a permission response to kiro-cli.
 	//deadset:ignore DS1102 -- decision_answer_test.go's bridgeReply answers a claimed ask through Bridge; production answers through translate's bridge interface
 	Respond(ctx context.Context, requestID int64, result any, err error) error
-}
-
-// promptSlot is the per-chat bridge lock a prompt call holds. The call's cancel and its grace budget live on the
-// call's turn (turnOutcomeAccess.StartTurn, turnStopper.ArmStopGrace), never on the bridge, which would name
-// whichever call holds it when the budget runs out.
-type promptSlot interface {
-	// TryAcquireForPrompt attempts to lock the bridge for prompting.
-	TryAcquireForPrompt() bool
-	// ReleaseAfterPrompt releases the prompt lock.
-	ReleaseAfterPrompt()
 }
 
 // promptWriter writes a turn's session/prompt, which CallAt refuses; sendTurnPrompt is its one caller.
@@ -75,7 +62,6 @@ type promptWriter interface {
 type Bridge interface {
 	bridgeRPC
 	promptWriter
-	promptSlot
 }
 
 // bridgeAccess provides bridge lifecycle operations needed by prompt,

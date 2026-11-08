@@ -212,15 +212,6 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, res Reservati
 		}))
 		return
 	}
-	// Take the new bridge's slot rather than assert it: OpenBridge leaves it idle, so a concurrent
-	// taker can win it first. Losing abandons the retry.
-	if !sb2.TryAcquireForPrompt() {
-		slog.Warn("empty turn: another turn started during recovery, abandoning retry",
-			"chat_id", chatID)
-		return
-	}
-	defer sb2.ReleaseAfterPrompt()
-
 	params[marotte.KeySessionID] = sb2.SessionID()
 	// The retry is a turn of its own, closed on every path out of here, since
 	// the turn it replaces is already closed. The open refuses once a stop followed
@@ -490,8 +481,8 @@ func reservePromptAdmission(ctx context.Context, roles *promptRoles, chatID maro
 // errChatClosed is the prompt's refusal when the chat's close ended it before it ran.
 var errChatClosed = errors.New("this chat was closed, so the message was not sent")
 
-// Every path out releases all four. Failures past the ack are SSE-only: the POST has already
-// answered.
+// Every path out releases the inflight count, the turn, the reservation and the door's open hold. Failures past
+// the ack are SSE-only: the POST has already answered.
 func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *promptRoles, res Reservation, turnID string, p *marotte.PromptCommand) {
 	defer roles.lifecycle.InflightDone()
 	defer cancel()
@@ -510,16 +501,6 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 		reason := rpcerr.Text(err)
 		closeBeforeStart(ctx, roles, chatID, turnID, marotte.StopReasonInterrupted, reason)
 		roles.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{Code: marotte.ErrCodeBridgeStartFailed, Message: reason, TurnScoped: true}))
-		return
-	}
-	// The reservation already excludes every other prompt, so a held
-	// bridge slot here is a programming error.
-	if !sb.TryAcquireForPrompt() {
-		roles.admission.ReleaseTurnReservation(res)
-		slog.Error("prompt: bridge slot held despite an owned admission reservation", "chat_id", chatID)
-		const reason = "The prompt could not start. Send it again."
-		closeBeforeStart(ctx, roles, chatID, turnID, marotte.StopReasonInterrupted, reason)
-		roles.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{Code: marotte.ErrCodePromptFailed, Message: reason, TurnScoped: true}))
 		return
 	}
 	promptAdmittedTurn(ctx, roles, sb, res, turnID, p)
@@ -549,9 +530,9 @@ func closeBeforeStart(ctx context.Context, roles *promptRoles, chatID marotte.Ch
 	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, turnID, stop, reason, "", 0)
 }
 
-// promptAdmittedTurn runs the turn with both holds owned. The release ORDER is the contract:
-// capture the finalized result through the still-held turn handle, then the bridge slot, then the
-// reservation, and the deferred ReleaseTurn last so every turn-keyed predicate reads a live record.
+// promptAdmittedTurn runs the turn under its reservation. The release ORDER is the contract: capture the finalized
+// result through the still-held turn handle, then the reservation, and the deferred ReleaseTurn last so every
+// turn-keyed predicate reads a live record.
 func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, res Reservation, turnID string, p *marotte.PromptCommand) {
 	chatID := res.Chat
 	// callCtx is this call's alone: its cancel is the turn's (StartTurn), so the settle and the empty-turn retry
@@ -570,7 +551,6 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, res 
 	if !roles.turnOutcome.StartTurn(callCtx, turn, cancelPrompt) {
 		// Dead ctx, or the death closer took the turn: the turn end rule runs here, and a closed
 		// turn writes nothing.
-		sb.ReleaseAfterPrompt()
 		roles.admission.ReleaseTurnReservation(res)
 		if callCtx.Err() == nil && closedBeforeStart(ctx, roles, chatID, turnID) {
 			return
@@ -596,7 +576,6 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, res 
 	if err != nil {
 		// callCtx: its cause tells a stop's expired grace from any other cancel.
 		reportPromptFailure(callCtx, roles, chatID, turnID, err, reply.seq, elapsed, inlinedImage)
-		sb.ReleaseAfterPrompt()
 		roles.admission.ReleaseTurnReservation(res)
 		return
 	}
@@ -609,11 +588,10 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, res 
 	// close is what settles the withheld steer carry and measures the
 	// turn, and recovery reads that measurement.
 	roles.turnOutcome.SettleTurnOnResponse(ctx, chatID, turnID, reply.seq, reply.resp)
-	// Capture the result while the turn handle is still held, then free
-	// both admission holds so a waiting prompt is admitted before
-	// recovery's own bookkeeping runs.
+	// Capture the result while the turn handle is still held, then free the
+	// reservation so a waiting prompt is admitted before recovery's own
+	// bookkeeping runs.
 	result, aErr := roles.turnOutcome.AwaitTurn(ctx, chatID, turnID)
-	sb.ReleaseAfterPrompt()
 	roles.admission.ReleaseTurnReservation(res)
 	if aErr != nil {
 		slog.Warn("empty turn check: no turn outcome", "chat_id", chatID, keyError, aErr)

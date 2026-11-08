@@ -5,9 +5,8 @@ import "sync"
 type bridgeState int
 
 const (
-	bridgeReady     bridgeState = iota // ready for a new prompt
-	bridgeStarting                     // the session door is in progress (held during openGeneration)
-	bridgePrompting                    // prompt in flight
+	bridgeReady    bridgeState = iota // the door attached the session
+	bridgeStarting                    // the session door is in progress (held during openGeneration)
 )
 
 // mu guards the fields and state encodes the lifecycle phase.
@@ -25,23 +24,6 @@ type sharedBridge struct {
 	effortHealed bool
 }
 
-// tryAcquireForPrompt moves idle to prompting, reporting whether the caller owns the slot.
-func (sb *sharedBridge) tryAcquireForPrompt() bool {
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	if sb.state != bridgeReady {
-		return false
-	}
-	sb.state = bridgePrompting
-	return true
-}
-
-func (sb *sharedBridge) releaseAfterPrompt() {
-	sb.mu.Lock()
-	sb.state = bridgeReady
-	sb.mu.Unlock()
-}
-
 // The manager registers the record before the door, so map presence is not liveness.
 func (sb *sharedBridge) startedPastOpen() bool {
 	sb.mu.Lock()
@@ -54,18 +36,6 @@ func (sb *sharedBridge) setReady() {
 	sb.mu.Lock()
 	sb.state = bridgeReady
 	sb.mu.Unlock()
-}
-
-// The command layer's calls on an entry are leases (session_lease.go), so a command.Bridge holder can never close
-// the session or SetModel behind the state machine. Before its door attaches a session, every call refuses with
-// marotte.ErrSessionClosed and SessionID answers "".
-
-func (sb *sharedBridge) TryAcquireForPrompt() bool {
-	return sb.tryAcquireForPrompt()
-}
-
-func (sb *sharedBridge) ReleaseAfterPrompt() {
-	sb.releaseAfterPrompt()
 }
 
 // claimEffortHeal reports whether the caller won the one reactive effort repair, latching it.

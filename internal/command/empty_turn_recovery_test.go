@@ -141,9 +141,8 @@ func (b *recoveryBridges) OpenBridge(context.Context, marotte.ChatID, string) (B
 	return b.bridge, func() {}, nil
 }
 
-// recoveryBridge is a Bridge that grants the prompt slot and answers every call,
-// so the firing row runs the retry to the end rather than abandoning it at the
-// slot.
+// recoveryBridge is a Bridge that answers every call, so the firing row runs the
+// retry to the end.
 type recoveryBridge struct {
 	calls int
 }
@@ -164,8 +163,6 @@ func (b *recoveryBridge) CallAt(context.Context, string, any) (*marotte.RPCRespo
 func (*recoveryBridge) Notify(context.Context, string, any) error        { return nil }
 func (*recoveryBridge) Respond(context.Context, int64, any, error) error { return nil }
 func (*recoveryBridge) SessionID() marotte.SessionID                     { return "s1" }
-func (*recoveryBridge) TryAcquireForPrompt() bool                        { return true }
-func (*recoveryBridge) ReleaseAfterPrompt()                              {}
 
 // The four clauses, each one moved on its own from a firing baseline. Every row
 // but the first must NOT re-prompt.

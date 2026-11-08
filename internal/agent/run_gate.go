@@ -179,12 +179,12 @@ const (
 //   - The gate opens and the release writes before the sign-in marks the chat for its reload. A chat-parented run's
 //     gate pause: cannot happen, no sign-in opens the gate onto a held release's resume write with its own reload mark
 //     the only one pending: an earlier sign-in's mark still waits on the chat's session for the run's first resume
-//     write (with a signed-out boot, the sign-in before the lapse, whose mark the run's open step turn keeps from an
-//     idle open (claimReload), or an earlier opening edge whose release wrote no resume), or no held release writes a
-//     resume in the edge's round, nor in that of the pending pause's frame. A manual run's gate pause, a scheduled
-//     run's gate pause, a manual run's heal, a scheduled run's heal: cannot happen, only a chat's session is marked for
-//     its reload at a sign-in (markSessionsForReload), and a reload's rehydrate sweeps only a chat's runs; a manual or
-//     scheduled run's host session is never marked. A chat-parented run's heal: as in the plain cell.
+//     write (with a signed-out boot, the sign-in before the lapse, whose mark the run's open step turn keeps from
+//     closing the session (holdStep), or an earlier opening edge whose release wrote no resume), or no held release
+//     writes a resume in the edge's round, nor in that of the pending pause's frame. A manual run's gate pause, a
+//     scheduled run's gate pause, a manual run's heal, a scheduled run's heal: cannot happen, only a chat's session is
+//     marked for its reload at a sign-in (markSessionsForReload), and a reload's rehydrate sweeps only a chat's runs; a
+//     manual or scheduled run's host session is never marked. A chat-parented run's heal: as in the plain cell.
 //   - The closing sweep pauses the resumed run before the chat's rehydrate reads it. A chat-parented run's gate pause,
 //     a chat-parented run's heal: cannot happen, no closing sweep pauses the run again while a chat's rehydrate waits
 //     to read it: only a held release's resume write that reloads the chat's session and lands at the closed gate

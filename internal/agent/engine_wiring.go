@@ -233,7 +233,7 @@ func (rt *Runtime) onEngineEnded(gen uint64) {
 func (*Runtime) closeSession(s engineSession) { s.Release() }
 
 // onSignInChange applies a committed sign-in edge: the engine fingerprint holds the pending account, and the first
-// sign-in reloads resident sessions at their next idle open, so their model lists follow the account.
+// sign-in reloads resident sessions (markSessionsForReload), so their model lists follow the account.
 func (rt *Runtime) onSignInChange(c signin.Change) {
 	rt.engine.reconcile(rt.lifecycle.shutdownCtx)
 	if c.To == signin.StatusSignedIn && c.From != signin.StatusSignedIn {

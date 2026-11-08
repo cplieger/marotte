@@ -111,7 +111,7 @@ const (
 
 const (
 	// bootSignedOut: the cell's first runtime boots with no sign-in, so a gate pause's lapse follows the sign-in that
-	// opened the gate, whose reload mark a chat's open step turn keeps on its session (claimReload).
+	// opened the gate, whose reload mark a chat's open step turn keeps on its session (holdStep).
 	bootSignedOut bootSign = iota
 	// bootSignedIn: it boots on a loaded sign-in, which marks no session (Runtime.onSignInChange marks on an edge).
 	bootSignedIn
@@ -497,7 +497,7 @@ func holdModel(c holdCombo) (steps []gateHoldStep, impossible string) {
 		return nil, "no sign-in opens the gate onto a held release's resume write with its own reload mark the only " +
 			"one pending: an earlier sign-in's mark still waits on the chat's session for the run's first resume " +
 			"write (with a signed-out boot, the sign-in before the lapse, whose mark the run's open step turn keeps " +
-			"from an idle open (claimReload), or an earlier opening edge whose release wrote no resume), or no held " +
+			"from closing the session (holdStep), or an earlier opening edge whose release wrote no resume), or no held " +
 			"release writes a resume in the edge's round, nor in that of the pending pause's frame"
 	case c.cross != crossNone && !s.crossFired:
 		return nil, "no release reads the hold at an open gate, or none of its reads answers before its tries are " +

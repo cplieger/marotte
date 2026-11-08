@@ -31,8 +31,6 @@ type surfaceDeps struct {
 	abandoned []abandonedTurn
 	// spawnErr, when set, is what OpenBridge answers: the reload-failure path.
 	spawnErr error
-	// slotHeld makes TryAcquireForPrompt refuse, which is the held-bridge-slot path.
-	slotHeld bool
 	// closedReason, when set, is the reason AwaitTurn reports the turn closed with:
 	// the engine's turn_end winning the close.
 	closedReason string
@@ -131,8 +129,6 @@ func (b *surfaceBridge) CallAt(context.Context, string, any) (*marotte.RPCRespon
 func (*surfaceBridge) Notify(context.Context, string, any) error        { return nil }
 func (*surfaceBridge) Respond(context.Context, int64, any, error) error { return nil }
 func (*surfaceBridge) SessionID() marotte.SessionID                     { return "s1" }
-func (b *surfaceBridge) TryAcquireForPrompt() bool                      { return !b.deps.slotHeld }
-func (*surfaceBridge) ReleaseAfterPrompt()                              {}
 
 // A turn WAS finalized, so the reason is on its card and the toast may stand down.
 func TestReportPromptFailure_MarksTheFrameTurnScoped(t *testing.T) {
@@ -347,15 +343,6 @@ func TestPromptFailure_PreCallEmittersReadTurnScopedWhenTheyCloseATurn(t *testin
 			turnScoped: true,
 		},
 		{
-			name:    "the bridge slot was held despite the reservation",
-			want:    marotte.ErrCodePromptFailed,
-			arrange: func(d *surfaceDeps) { d.slotHeld = true },
-			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
-				runPromptTurn(ctx, func() {}, roles, testReservation("c1", true), benchTurnID, p)
-			},
-			turnScoped: true,
-		},
-		{
 			name:    "the turn was refused before it started",
 			want:    marotte.ErrCodePromptFailed,
 			arrange: func(d *surfaceDeps) { d.startRefused = true },
@@ -530,16 +517,6 @@ func TestPromptExits_CloseTheTurnThroughTheTurnEndRule(t *testing.T) {
 				runPromptTurn(ctx, func() {}, roles, testReservation("c1", true), benchTurnID, p)
 			},
 			want:  "no such binary",
-			stop:  marotte.StopReasonInterrupted,
-			frame: true,
-		},
-		{
-			name:    "the bridge slot was held despite the reservation",
-			arrange: func(d *surfaceDeps) { d.slotHeld = true },
-			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
-				runPromptTurn(ctx, func() {}, roles, testReservation("c1", true), benchTurnID, p)
-			},
-			want:  "The prompt could not start",
 			stop:  marotte.StopReasonInterrupted,
 			frame: true,
 		},

@@ -247,11 +247,8 @@ func TestOpenBridge_AdmitsNoCallerBeforeTheReplayMerged(t *testing.T) {
 	short, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancel()
 	sb, err := h.coord.openReleased(short, "c1", "")
-	if !errors.Is(err, context.DeadlineExceeded) {
+	if sb != nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("OpenBridge with the replay a frame short = (%v, %v), want no bridge at the deadline", sb, err)
-	}
-	if sb != nil && !sb.TryAcquireForPrompt() {
-		t.Error("the bridge handed out before its replay merged is not even idle")
 	}
 	first := h.coord.bridgeFor("c1")
 	if first == nil {

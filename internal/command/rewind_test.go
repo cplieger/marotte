@@ -67,8 +67,6 @@ func (b *recordingBridge) CallAt(ctx context.Context, method string, params any)
 func (*recordingBridge) Notify(context.Context, string, any) error        { return nil }
 func (*recordingBridge) Respond(context.Context, int64, any, error) error { return nil }
 func (b *recordingBridge) SessionID() marotte.SessionID                   { return b.sessionID }
-func (*recordingBridge) TryAcquireForPrompt() bool                        { return true }
-func (*recordingBridge) ReleaseAfterPrompt()                              {}
 
 // bridgeDeps adds a bridge to storeDeps so the outgoing call can be observed.
 type bridgeDeps struct {

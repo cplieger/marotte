@@ -119,7 +119,7 @@ func TestStepTranscript_LiveRunsStepSessionIsNeverClosed(t *testing.T) {
 	}
 }
 
-// reloadMarked reports whether chatID's resident session is marked to reload at its next idle open.
+// reloadMarked reports whether chatID's resident session is marked to reload.
 func reloadMarked(h *Runtime, chatID marotte.ChatID) bool {
 	sb := h.bridge.mgr.get(chatID)
 	if sb == nil {

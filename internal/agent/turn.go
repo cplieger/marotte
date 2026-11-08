@@ -117,7 +117,7 @@ type chatLifecycle struct {
 	// itself. One rather than a queue: admission serializes prompt-class sources.
 	pending *activeTurn
 	// call is the sent prompt whose session/prompt is unanswered, from its send to endPromptCall; it outlives the
-	// turn when a later turn_start closed it. One: the bridge slot serializes calls.
+	// turn when a later turn_start closed it. One: the admission reservation serializes calls.
 	call *activeTurn
 	// stops holds the send hold of each stop in progress, by token (requestStop).
 	stops map[uint64]struct{}
@@ -950,7 +950,7 @@ func (r *turnRegistry) sessionTurns(chatID marotte.ChatID) []*activeTurn {
 	return out
 }
 
-// ownTurns returns every chat's own open turn, so a connect replay reads the turn, not the prompt slot. Lock order registry.mu -> lifecycle.mu.
+// ownTurns returns every chat's own open turn for a connect replay. Lock order registry.mu -> lifecycle.mu.
 func (r *turnRegistry) ownTurns() map[marotte.ChatID]*activeTurn {
 	r.mu.Lock()
 	defer r.mu.Unlock()

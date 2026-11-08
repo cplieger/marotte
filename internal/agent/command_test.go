@@ -362,22 +362,17 @@ func TestPrompt_BangPrefixedTextReachesTheAgent(t *testing.T) {
 }
 
 // A second prompt during a streaming turn answers the plain 409 (no `reason`), so the client
-// converts it to a steer. The fixture holds the reservation plus the bridge slot.
+// converts it to a steer. The fixture holds the reservation.
 func TestPrompt_BusyReturns409(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	sb, err := h.coord.openReleased(t.Context(), "c1", "")
-	if err != nil {
+	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
 		t.Fatal(err)
 	}
 	if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
 		t.Fatal("setup: the admission slot was already held")
 	}
 	t.Cleanup(func() { h.coord.releaseHeld("c1") })
-	if !sb.TryAcquireForPrompt() {
-		t.Fatal("setup: the bridge slot was already held")
-	}
-	t.Cleanup(sb.ReleaseAfterPrompt)
 
 	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
