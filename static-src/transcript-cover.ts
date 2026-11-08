@@ -149,6 +149,12 @@ export function dropCover(): void {
   if (cover === null || !wasHeld) {
     return;
   }
+  // Under a hidden view no animation runs, so no `animationend` would come before the view shows
+  // again and plays the fade-out over its content.
+  if (cover.closest(".hidden") !== null) {
+    cover.hidden = true;
+    return;
+  }
   // The fade-out is opacity only and stops taking pointer input at once (13-messages.css); its
   // `animationend` hides the element.
   cover.dataset["state"] = "released";

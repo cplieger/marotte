@@ -78,22 +78,6 @@ function hide(v: HTMLElement): void {
   }
 }
 
-/** The gesture half of `showOnlyView`: hide and park every view but `target` and leave `target` as it is, so a view
- *  not yet shown stays out of layout until `showOnlyView` swaps it in with its fade. A null target hides every view. */
-export function hideOtherViews(target: HTMLElement | null): void {
-  const views = queryAll<HTMLElement>(VIEWS_SELECTOR);
-  for (const v of views) {
-    if (v !== target && !KEPT_IN_PAGE.has(v.id)) {
-      park(v);
-    }
-  }
-  for (const v of views) {
-    if (v !== target) {
-      hide(v);
-    }
-  }
-}
-
 /** Show `target` alone among the `[data-tab-view]` views, parking the hidden ones (dom.ts `park`). Swaps, with the
  *  entry fade, only when `target` is not already the one shown: callers re-run this on every projection change. */
 export function showOnlyView(target: HTMLElement | null): void {

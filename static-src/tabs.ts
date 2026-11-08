@@ -65,6 +65,7 @@ import {
   hideTranscript,
   holdCover,
   moveFocusOffTranscript,
+  releaseCover,
   releaseCoverExceptFor,
   showTranscript,
   transcriptHidden,
@@ -78,7 +79,7 @@ import { ICON_CLOSE, ICON_PIN_FILLED, ICON_TAB_SUBTAB } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { activeView, setActiveView } from "./device-view.js";
 import { $, queryEl, setAttr, setText } from "./dom.js";
-import { hideOtherViews, showOnlyView } from "./view-swap.js";
+import { showOnlyView } from "./view-swap.js";
 import { signal, effect, el } from "@cplieger/ui";
 import {
   attachDrag,
@@ -722,14 +723,20 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
       // Its page is local and loads nothing, so it shows in this task and a cover would only flash.
       dropCover();
       now = true;
-    } else if (ref !== getPaintedId() || (opts.again === true && !hasResidentTurns(ref))) {
+    } else if (
+      ref !== getPaintedId() ||
+      (opts.again === true && !hasResidentTurns(ref)) ||
+      !viewLaidOut(row)
+    ) {
+      // A painted chat coming back from another view kind is covered too: its transcript stays out
+      // of layout until the activation, and the cover is what this frame shows in its place.
       holdCover(ref);
     } else {
       releaseCoverExceptFor(ref);
     }
   } else {
+    // The cover stays held: a burst's covered chat view stays up until this activation hides it.
     reselectPaintedChat();
-    dropCover();
   }
   if (currentActivation !== null) {
     currentActivation.controller.abort();
@@ -786,6 +793,12 @@ function runActivation(gen: number): void {
     // onto it was never shown. A Retry's fresh activation clears its own failure box.
     const chat = row.subject.kind === "chat" ? row.subject.ref : "";
     const mounted = chat !== "" && chat === shownChat && chat === getPaintedId();
+    if (chat === "") {
+      dropCover();
+    } else if (mounted && !record.again) {
+      // No paint follows for a mounted chat, so the gesture's cover lifts over the revealed transcript.
+      releaseCover(chat);
+    }
     if (!mounted || record.again) {
       if (rowStale(row)) {
         row.spec.prefetch?.(record.controller.signal);
@@ -2304,20 +2317,20 @@ function revealView(row: TabRow): void {
   showOnlyView(queryEl<HTMLElement>(row.spec.view));
 }
 
-/** The gesture form of `revealView`: lay out no view the click did not find laid out, so its frame
- *  paints the strip and, over a chat waiting on its paint, the cover. Every other view hides; the
- *  chat view shows only over a laid-out transcript or under the cover, with the transcript out of
- *  layout. The activation reveals the rest. */
-function holdView(row: TabRow): void {
+/** The row's view is not hidden and its transcript is laid out. Reads classes only. */
+function viewLaidOut(row: TabRow): boolean {
   const target = queryEl<HTMLElement>(row.spec.view);
-  const laidOut = target?.classList.contains("hidden") === false && !transcriptHidden();
-  if (row.subject.kind !== "chat" || laidOut) {
-    hideOtherViews(target);
-  } else if (coverHeld()) {
+  return target?.classList.contains("hidden") !== true && !transcriptHidden();
+}
+
+/** The gesture form of `revealView`: lay out no view the click did not find laid out, and never
+ *  leave the view area empty. A chat view not laid out shows under the cover (`beginActivation`
+ *  holds it) with its transcript out of layout; every other target leaves the shown view up. The
+ *  activation reveals the rest. */
+function holdView(row: TabRow): void {
+  if (row.subject.kind === "chat" && coverHeld() && !viewLaidOut(row)) {
     hideTranscript();
-    showOnlyView(target);
-  } else {
-    hideOtherViews(null);
+    showOnlyView(queryEl<HTMLElement>(row.spec.view));
   }
 }
 
