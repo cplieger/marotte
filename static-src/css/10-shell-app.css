@@ -208,6 +208,18 @@ body.sidebar-resizing {
   & svg {
     flex-shrink: 0;
   }
+
+  /* `.btn-loading`'s ring takes the glyph's place at the glyph's size, so the label holds still
+     while a create is in flight; the row's `gap` already spaces it. */
+  &.btn-loading > svg {
+    display: none;
+  }
+
+  &.btn-loading::before {
+    inline-size: var(--icon-ui);
+    block-size: var(--icon-ui);
+    margin-inline-end: 0;
+  }
 }
 
 .sidebar-history-btn {

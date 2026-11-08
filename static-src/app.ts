@@ -11,7 +11,7 @@ import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_RECONCILE } from "./bus.js
 import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { $ } from "./dom.js";
-import { guardDuplicateActivation, initSidebarSwipe } from "./platform.js";
+import { initSidebarSwipe } from "./platform.js";
 import { initShellViewport } from "./shell-viewport.js";
 import { initPointerTier } from "./pointer-tier.js";
 import { initPointerModeToggle, revealPointerModeToggle } from "./pointer-mode.js";
@@ -63,6 +63,7 @@ import { initTerminalStream } from "./terminal-stream.js";
 import { initTooltips } from "./tooltip.js";
 import { guardBackspaceChars } from "./backspace-char.js";
 import { initSidebarHistory } from "./sidebar-history.js";
+import { initNewChatControl } from "./new-chat-control.js";
 import { initKeyboardShortcuts } from "./keys.js";
 import { openShortcutsSheet } from "./shortcuts.js";
 import {
@@ -473,13 +474,11 @@ function setupInput(): void {
     },
   );
 
-  const doCreate = guardDuplicateActivation(() => {
-    // Detached: closing the sidebar does not depend on the chat. The guard absorbs a duplicate
-    // dispatch; the create's op id covers a deliberate repeat.
+  initNewChatControl($.newChatBtn, () => {
+    // Detached: closing the sidebar does not depend on the chat.
     void createSession();
     $.sidebar.classList.remove("open");
   });
-  $.newChatBtn.addEventListener("click", doCreate);
   $.menuToggle.addEventListener("click", () => $.sidebar.classList.toggle("open"));
   $.sidebarClose.addEventListener("click", () => {
     $.sidebar.classList.remove("open");
