@@ -9,7 +9,7 @@ export interface RuleInputs {
   value(): Record<string, string> | undefined;
 }
 
-export interface RuleInputsOptions {
+interface RuleInputsOptions {
   /** The recipe's declared inputs, name to placeholder. */
   declared: Readonly<Record<string, string>> | undefined;
   /** The names the rule's kind sets, or null for a clock rule, which sets none. */

@@ -37,11 +37,6 @@ export interface ScheduleSpec {
 
 /** One recipe's clock rule as the schedule form reads it, next run already resolved. */
 export interface ScheduleView {
-  /** The rule's server-minted id, which a save of this rule sends back. */
-  id: string;
-  source: string;
-  /** The recipe's name when the schedule was saved. */
-  name?: string;
   spec: ScheduleSpec;
   enabled: boolean;
   /** RFC3339; the server computes this so the client never does. */
@@ -53,11 +48,6 @@ export interface ScheduleView {
   last_reason?: string;
   /** RFC3339 due time of a slot whose launch is retried until the agent engine answers. */
   waiting_for?: string;
-  /** The run's model and effort pick, sent at each fire; absent is Default. */
-  model?: string;
-  effort?: string;
-  /** Fixed inputs sent with each fire; a save sends them back, since the server stores the rule whole. */
-  inputs?: Record<string, string>;
 }
 
 /** The forge event an event rule watches for; mirrors internal/launchrule.Kind. */
@@ -104,11 +94,8 @@ export interface Gap {
 
 /** A launch rule's row; mirrors internal/launchrule.Status. */
 export interface LaunchRuleStatus {
-  /** A clock rule's next-run origin: its creation, then its last fire or skip. */
-  anchor?: string;
   last_run_at?: string;
   waiting_for?: string;
-  last_run_id?: string;
   last_status?: ScheduleView["last_status"];
   last_reason?: string;
   /** Why an event rule launches nothing until it is edited or resumed. */
@@ -130,10 +117,6 @@ export interface LaunchRuleStatus {
 interface CursorSummary {
   blocked?: string;
   notes?: string[];
-  items?: number;
-  floor?: number;
-  watching?: number;
-  fired?: number;
   baselined: boolean;
 }
 
@@ -153,7 +136,6 @@ export interface LaunchRuleView {
   error?: string;
   cursor?: CursorSummary;
   held: number;
-  held_events?: { key: string; observed_at: string }[];
 }
 
 export interface LaunchRulesResponse {
@@ -171,14 +153,8 @@ export function scheduleViewOf(r: LaunchRuleView): ScheduleView | null {
   const status = r.error === undefined ? st?.last_status : "failed";
   const reason = r.error ?? st?.last_reason;
   return {
-    id: r.id,
-    source: r.source,
     enabled: r.enabled,
     spec,
-    ...(r.name === undefined ? {} : { name: r.name }),
-    ...(r.model === undefined ? {} : { model: r.model }),
-    ...(r.effort === undefined ? {} : { effort: r.effort }),
-    ...(r.inputs === undefined ? {} : { inputs: r.inputs }),
     ...(r.next_run_at === undefined ? {} : { next_run_at: r.next_run_at }),
     ...(st?.last_run_at === undefined ? {} : { last_run_at: st.last_run_at }),
     ...(status === undefined ? {} : { last_status: status }),

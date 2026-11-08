@@ -170,7 +170,7 @@ function lastFired(v: LaunchRuleView): string {
   return seg;
 }
 
-export interface LineContext {
+interface LineContext {
   autoApprove: boolean;
   /** The recipe's declared input names; undefined while the recipe list has not answered. */
   declared: readonly string[] | undefined;
@@ -211,7 +211,7 @@ export function ruleError(v: LaunchRuleView): string {
   return gap === undefined ? "" : gapText(gap);
 }
 
-export interface RuleListOptions {
+interface RuleListOptions {
   rules: readonly LaunchRuleView[];
   autoApprove: boolean;
   declared: readonly string[] | undefined;
@@ -314,7 +314,7 @@ interface EventRuleDraft {
   inputs?: Record<string, string>;
 }
 
-export interface EventFormOptions {
+interface EventFormOptions {
   /** The rule being edited; absent for a new one. */
   rule?: LaunchRuleView;
   /** The Sources tab's connections. */

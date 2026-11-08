@@ -231,7 +231,6 @@ describe("loadLaunchRules", () => {
         when: { clock: daily },
         next_run_at: "2026-11-06T02:00:00Z",
         status: {
-          anchor: "2026-11-01T00:00:00Z",
           last_run_at: "2026-11-05T02:00:00Z",
           last_status: "completed",
           last_reason: "done",
@@ -263,13 +262,8 @@ describe("loadLaunchRules", () => {
     expect(got).toEqual({ rules });
     expect(rules.map(scheduleViewOf)).toEqual([
       {
-        id: "c1",
-        source: "bundled://nightly",
-        name: "nightly",
         enabled: true,
         spec: daily,
-        model: "opus",
-        inputs: { tag: "v1" },
         next_run_at: "2026-11-06T02:00:00Z",
         last_run_at: "2026-11-05T02:00:00Z",
         last_status: "completed",
@@ -278,8 +272,6 @@ describe("loadLaunchRules", () => {
       },
       null,
       {
-        id: "c2",
-        source: "bundled://weekly",
         enabled: false,
         spec: daily,
         last_status: "failed",

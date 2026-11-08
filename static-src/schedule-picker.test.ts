@@ -362,8 +362,6 @@ describe("formatStamp", () => {
 });
 
 const view = (over: Partial<ScheduleView>): ScheduleView => ({
-  id: "bundled://demo",
-  source: "bundled://demo",
   spec: { freq: "daily", hour: 2, minute: 0 },
   enabled: true,
   ...over,
