@@ -959,6 +959,10 @@ describe("the run bar's fold motion", () => {
   });
 
   afterEach(() => {
+    // A case can leave the list scrolled. With the stylesheet gone the list stops scrolling, so the
+    // root afterEach empties it without clamping, and Chromium applies the kept offset again once a
+    // later case's rows overflow it.
+    bar.scrollTop = 0;
     style.remove();
     vi.unstubAllGlobals();
     localStorage.removeItem("marotte.ui-state");
