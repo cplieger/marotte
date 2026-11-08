@@ -737,7 +737,9 @@ export function applyResult(ref: string, id: string, result: SendPromptResult): 
   }
   st.failure = "";
   switch (result) {
+    // "compacting": accepted behind the chat's running compaction, whose end sends it.
     case "sent":
+    case "compacting":
       st.unmoved.delete(id);
       st.dispatched.add(id);
       st.dispatching = true;

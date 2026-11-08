@@ -194,6 +194,15 @@ func (d *Dispatcher) DrainAfterClose(ctx context.Context, chatID marotte.ChatID,
 	drainAfterClose(ctx, d.prompts, chatID, closed, ends)
 }
 
+// DrainAfterCompaction sends at most one prompt once a compaction that ran on an idle
+// chat has ended (see drainAfterCompaction).
+func (d *Dispatcher) DrainAfterCompaction(ctx context.Context, chatID marotte.ChatID) {
+	if d.prompts == nil || d.prompts.queue == nil || d.prompts.followups == nil {
+		return
+	}
+	drainAfterCompaction(ctx, d.prompts, chatID)
+}
+
 type errorResponse struct {
 	// Impact is what a close refused with close_impact_changed would stop. See statusErrorImpact.
 	Impact *marotte.CloseImpact `json:"impact,omitempty"`

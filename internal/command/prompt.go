@@ -367,6 +367,8 @@ const reasonTurnLive = "turn_live"
 type promptAck struct {
 	MessageID string `json:"message_id"`
 	Accepted  bool   `json:"accepted"`
+	// Queued: the prompt waits in the follow-up queue behind the chat's running compaction.
+	Queued bool `json:"queued,omitempty"`
 }
 
 // cmdPrompt handles the prompt command: validate → persist → admit → ack.
@@ -384,6 +386,14 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 	// The prompt's intent begins here: a close that commits after this stamp ends it wherever it waits.
 	stamp := roles.admission.LifeStamp()
 
+	queued, err := queueBehindCompaction(ctx, roles, cmd.ChatID, &p)
+	if err != nil || queued {
+		if err != nil {
+			return nil, err
+		}
+		return promptAck{Accepted: true, MessageID: p.MessageID, Queued: true}, nil
+	}
+
 	// Admission FIRST: a refused admission writes nothing, so the log never holds a turn no process
 	// owns. It also dedupes a re-send of a running prompt, which meets Busy and becomes a steer.
 	res, err := reservePromptAdmission(ctx, roles, cmd.ChatID, stamp, p.MessageID)
@@ -394,6 +404,32 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 		return nil, err
 	}
 	return promptAck{Accepted: true, MessageID: p.MessageID}, nil
+}
+
+// queueBehindCompaction holds a prompt that reached a chat whose compaction runs with no
+// turn live as a queued row, which the compaction's end sends: a turn opened now would show
+// nothing until then. False when no compaction runs, a turn is live (admission answers it) or
+// the prompt does not fit a queued row (it then waits in the turn, AwaitCompaction).
+func queueBehindCompaction(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, p *marotte.PromptCommand) (bool, error) {
+	if roles.followups == nil || len(p.Text) > marotte.MaxDraftBytes || len(p.Attachments) > marotte.MaxAttachments {
+		return false, nil
+	}
+	row := marotte.QueuedPrompt{
+		ID: p.MessageID, Text: p.Text, Label: displayLabel(p.DisplayText), Attachments: p.Attachments, Caller: p.Caller,
+	}
+	queued, err := roles.followups.AppendIfCompacting(ctx, chatID, func(c *marotte.Chat) error {
+		return appendUserRow(c, &row)
+	})
+	switch {
+	case err != nil:
+		if _, ok := errors.AsType[*statusError](err); ok {
+			return false, err
+		}
+		return false, StatusError(http.StatusInternalServerError, err)
+	case queued:
+		slog.Info("prompt queued behind the running compaction", "chat_id", chatID, "message_id", p.MessageID)
+	}
+	return queued, nil
 }
 
 // launch is how launchPrompt opens a turn. resends names the steer keys the

@@ -15,9 +15,10 @@ import (
 
 // A row whose id is in sending is one whose turn this process opened.
 type fakeQueue struct {
-	chat    *marotte.Chat
-	sending map[string]bool
-	live    bool
+	chat       *marotte.Chat
+	sending    map[string]bool
+	live       bool
+	compacting bool
 }
 
 func (q *fakeQueue) AppendIfLive(_ context.Context, _ marotte.ChatID, fn func(c *marotte.Chat) error) (bool, error) {
@@ -26,6 +27,15 @@ func (q *fakeQueue) AppendIfLive(_ context.Context, _ marotte.ChatID, fn func(c 
 	}
 	return true, fn(q.chat)
 }
+
+func (q *fakeQueue) AppendIfCompacting(_ context.Context, _ marotte.ChatID, fn func(c *marotte.Chat) error) (bool, error) {
+	if !q.compacting || q.live {
+		return false, nil
+	}
+	return true, fn(q.chat)
+}
+
+func (q *fakeQueue) Compacting(marotte.ChatID) bool { return q.compacting }
 
 func (q *fakeQueue) Unqueue(_ context.Context, _ marotte.ChatID, id string) (bool, error) {
 	if q.sending[id] {
@@ -450,5 +460,25 @@ func TestSendQueuedNow_AnUndeliveredCancelClearsTheMarkAndIsBadGateway(t *testin
 	}
 	if slices.ContainsFunc(q.chat.QueuedPrompts, func(r marotte.QueuedPrompt) bool { return r.Next }) {
 		t.Errorf("queue = %+v, want no row left marked next", q.chat.QueuedPrompts)
+	}
+}
+
+// A prompt a queued row cannot hold is not queued behind the compaction: it takes the prompt path, whose turn waits
+// for the compaction to end.
+func TestQueueBehindCompaction_APromptPastTheRowCapIsNotQueued(t *testing.T) {
+	q := &fakeQueue{chat: &marotte.Chat{ID: "c1"}, compacting: true}
+	roles := &promptRoles{followups: q}
+
+	for name, p := range map[string]marotte.PromptCommand{
+		"text":        {MessageID: "m-1", Text: strings.Repeat("x", marotte.MaxDraftBytes+1)},
+		"attachments": {MessageID: "m-2", Text: "x", Attachments: make([]marotte.Attachment, marotte.MaxAttachments+1)},
+	} {
+		queued, err := queueBehindCompaction(t.Context(), roles, "c1", &p)
+		if err != nil || queued {
+			t.Errorf("%s past the cap = (%v, %v), want (false, nil)", name, queued, err)
+		}
+	}
+	if rows := q.chat.QueuedPrompts; len(rows) != 0 {
+		t.Errorf("queue = %+v, want nothing queued", rows)
 	}
 }

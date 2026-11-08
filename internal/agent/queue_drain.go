@@ -17,22 +17,44 @@ import (
 
 var errQueueChatGone = errors.New("agent: the chat has no record to queue on")
 
-// AppendIfLive applies fn to the record while the chat holds a live turn or a KAS hold, in the lifecycle section
-// (lifecycle then store), waiting out a finalizing turn: the close sees the row or the caller sees no turn. A life
-// that ended or a close being decided appends nothing, so a close's impact read sees every row it stops. A row
-// appended under a hold with no turn live is owed a send despite the stop; kasExec.holdRows owns which drain takes it.
+// AppendIfLive applies fn to the record while the chat holds a live turn, a KAS hold or a running compaction, in the
+// lifecycle section (lifecycle then store), waiting out a finalizing turn: the close or the compaction's end sees the
+// row, or the caller sees nothing to queue behind. A life that ended or a close being decided appends nothing, so a
+// close's impact read sees every row it stops. A row appended under a hold with no turn live is owed a send despite
+// the stop; kasExec.holdRows owns which drain takes it.
 func (bc *bridgeCoordinator) AppendIfLive(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (bool, error) {
+	return bc.appendBehind(ctx, chatID, false, fn)
+}
+
+// AppendIfCompacting is AppendIfLive for a prompt: only while a compaction runs with no turn live, since a live turn
+// refuses the prompt at admission instead.
+func (bc *bridgeCoordinator) AppendIfCompacting(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (bool, error) {
+	return bc.appendBehind(ctx, chatID, true, fn)
+}
+
+// Compacting reports a compaction running on the chat.
+func (bc *bridgeCoordinator) Compacting(chatID marotte.ChatID) bool {
+	return bc.autoCompact.compacting(chatID)
+}
+
+func (bc *bridgeCoordinator) appendBehind(
+	ctx context.Context, chatID marotte.ChatID, onlyCompacting bool, fn func(c *marotte.Chat) error,
+) (bool, error) {
 	live := false
 	err := bc.turns.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
 		if v, _ := bc.turns.gates.admit(chatID, lc.stamp); lc.ended || v != gateAdmitted {
 			return nil
 		}
-		turnLive := lc.liveLockedState()
-		if !turnLive && !lc.kas.may().holdRows {
+		turnLive, holds := lc.liveLockedState(), lc.kas.may().holdRows
+		compacting := bc.autoCompact.compacting(chatID)
+		switch {
+		case onlyCompacting && (turnLive || !compacting):
+			return nil
+		case !turnLive && !holds && !compacting:
 			return nil
 		}
 		live = true
-		return bc.appendLocked(ctx, lc, chatID, turnLive, fn)
+		return bc.appendLocked(ctx, lc, chatID, !turnLive && holds, fn)
 	})
 	if errors.Is(err, errNoLife) {
 		return false, nil
@@ -41,9 +63,9 @@ func (bc *bridgeCoordinator) AppendIfLive(ctx context.Context, chatID marotte.Ch
 }
 
 // appendLocked is AppendIfLive's write, under lc.mu: fn on the record, and the rows it added kept for the KAS hold's
-// drain when no turn is live.
+// drain when forHold.
 func (bc *bridgeCoordinator) appendLocked(
-	ctx context.Context, lc *chatLifecycle, chatID marotte.ChatID, turnLive bool, fn func(c *marotte.Chat) error,
+	ctx context.Context, lc *chatLifecycle, chatID marotte.ChatID, forHold bool, fn func(c *marotte.Chat) error,
 ) error {
 	var fnErr error
 	var added []string
@@ -57,7 +79,7 @@ func (bc *bridgeCoordinator) appendLocked(
 	}); err != nil {
 		return err
 	}
-	if fnErr == nil && !turnLive {
+	if fnErr == nil && forHold {
 		lc.kas.keepHoldRows(added)
 	}
 	return fnErr

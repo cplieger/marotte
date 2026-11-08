@@ -79,7 +79,9 @@ type autoCompactor struct {
 	queue  compactQueue
 	// failed tells the chat's pages that a compaction the dock showed did not run.
 	failed func(ctx context.Context, chatID marotte.ChatID, detail string)
-	mu     sync.Mutex
+	// drain sends the first prompt queued behind a compaction no close follows; nil in tests.
+	drain func(ctx context.Context, chatID marotte.ChatID)
+	mu    sync.Mutex
 }
 
 // compactRow is the stage the chat record's row shows on every page's dock.
@@ -139,6 +141,11 @@ func newAutoCompactor(bc *bridgeCoordinator, policy func(context.Context) (enabl
 			bc.broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
 				Code: marotte.ErrCodeCompactionFailed, Message: detail,
 			}))
+		},
+		drain: func(ctx context.Context, chatID marotte.ChatID) {
+			if bc.drainAfterCompaction != nil {
+				bc.drainAfterCompaction(ctx, chatID)
+			}
 		},
 	}
 }
@@ -347,6 +354,18 @@ func (a *autoCompactor) runOrJoin(ctx context.Context, chatID marotte.ChatID, b 
 	return c.accepted
 }
 
+// compacting reports a compaction call in flight on the chat, which a message queues behind. Lock order: the queue's
+// section, then a.mu.
+func (a *autoCompactor) compacting(chatID marotte.ChatID) bool {
+	if a == nil {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	st := a.chats[chatID]
+	return st != nil && st.running != nil
+}
+
 // awaitRunning holds a prompt until a running compaction is settled, so the prompt does not abort it.
 func (a *autoCompactor) awaitRunning(ctx context.Context, chatID marotte.ChatID) {
 	if a == nil {
@@ -365,7 +384,8 @@ func (a *autoCompactor) awaitRunning(ctx context.Context, chatID marotte.ChatID)
 
 // request is the reader's compaction: queued while a turn runs, else run now, joining a running one, and taking a
 // request left queued on the idle chat. A run KAS refused because a turn opened meanwhile is queued behind that turn,
-// unless the reader cancelled it.
+// unless the reader cancelled it. A call it made is followed by no close, so its end sends the first prompt queued
+// behind it, whatever the outcome.
 func (a *autoCompactor) request(ctx context.Context, chatID marotte.ChatID) (command.CompactOutcome, error) {
 	b := a.bridgeOf(chatID)
 	var (
@@ -392,6 +412,9 @@ func (a *autoCompactor) request(ctx context.Context, chatID marotte.ChatID) (com
 		return command.CompactNoSession, nil
 	case mine:
 		a.call(ctx, chatID, b, c, a.usage(ctx, chatID).ContextPct, "request", false)
+		if a.drain != nil {
+			a.drain(context.WithoutCancel(ctx), chatID)
+		}
 	case !a.await(ctx, chatID, c):
 		return command.CompactRefused, ctx.Err()
 	}

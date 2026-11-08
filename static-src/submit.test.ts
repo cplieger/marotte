@@ -912,6 +912,71 @@ describe("submitPrompt in Queue mode", () => {
   });
 });
 
+// A compaction runs on an idle chat: a prompt now would open a turn that shows nothing until the
+// compaction ends, so Send queues the message behind it, as kiro-cli's own TUI does.
+describe("submitPrompt while a compaction runs", () => {
+  function compactingChat(mode: "steer" | "queue"): void {
+    resetStore("c1");
+    setChatInterruptMode("c1", mode);
+    const session = get("c1");
+    if (session !== undefined) {
+      session.compact_queued = true;
+      session.compact_running = true;
+    }
+  }
+
+  it.each(["steer", "queue"] as const)(
+    "queues behind it in %s mode and never steers or sends a prompt",
+    async (mode) => {
+      compactingChat(mode);
+
+      expect(await submitPrompt("c1", "then add tests")).toBe("queued");
+      expect(queuedArgs()).toMatchObject({ chatID: "c1", text: "then add tests" });
+      expect(mockSendPromptTo).not.toHaveBeenCalled();
+      expect(mockSteer).not.toHaveBeenCalled();
+    },
+  );
+
+  it("queues a labelled send behind it", async () => {
+    compactingChat("steer");
+
+    expect(await submitLabelled("c1", "the findings", "Merging findings")).toBe("queued");
+    expect(queuedArgs()).toMatchObject({ displayText: "Merging findings" });
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
+  });
+
+  it("holds a context reference, which only a new turn resolves", async () => {
+    compactingChat("steer");
+
+    expect(await submitPrompt("c1", "look at #[[file:a.ts]] too")).toBe("held");
+    expect(mockQueue).not.toHaveBeenCalled();
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
+  });
+
+  it("sends the prompt it should have been when the compaction ended first", async () => {
+    compactingChat("steer");
+    mockQueue.mockReturnValue(steerRefused("nothing is running", "no_turn"));
+    mockSendPromptTo.mockResolvedValue("sent");
+
+    expect(await submitPrompt("c1", "hello")).toBe("sent");
+    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The page had not yet seen a compaction the server was running, so the server queued the prompt
+// behind it: the message is held, nothing goes back to the composer.
+describe("a prompt the server queued behind a compaction", () => {
+  it("counts as queued and hands nothing back", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("compacting");
+
+    expect(await submitPrompt("c1", "hello")).toBe("queued");
+    expect(mockRestoreFailedSend).not.toHaveBeenCalled();
+    expect(mockQueue).not.toHaveBeenCalled();
+    expect(mockSteer).not.toHaveBeenCalled();
+  });
+});
+
 // A turn the agent started itself (a notification wake): `turn_opened` arrived, nothing has streamed
 // yet, so `thinking` is still false. A prompt here would make KAS abort that turn.
 describe("submitPrompt beside a turn the agent started that has not streamed", () => {

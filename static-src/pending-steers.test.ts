@@ -1153,6 +1153,33 @@ describe("the steer stack", () => {
     expect(actions(firstRow())).toEqual([]);
   });
 
+  it("draws follow-ups sent during a running compaction under it, the first waiting for it", () => {
+    setSessions([
+      {
+        ...makeSession("chat-1"),
+        queued: three,
+        compact_queued: true,
+        compact_running: true,
+        turn_open: false,
+      },
+    ]);
+    setActive("chat-1");
+
+    expect(rows().map(textOf)).toEqual(["Compacting the context…", "first", "second", "third"]);
+    expect(rows().map(labelOf)).toEqual([
+      "Running",
+      "After the compaction",
+      "After the next turn",
+      "After 2 turns",
+    ]);
+    expect(rowAt(1).getAttribute("aria-label")).toBe("After the compaction: first");
+    // Nothing sends sooner than the compaction's end, so the first row has no send-now arrow.
+    expect(actions(rowAt(1))).toEqual(["Edit this follow-up", "Discard this follow-up"]);
+    expect(actionButton(rowAt(2), "Send this follow-up now").dataset["tooltip"]).toBe(
+      "Sends this follow-up first once the compaction ends",
+    );
+  });
+
   it("clears the running row when the compaction ends, accepted or refused, leaving no stale chip", () => {
     withCompactStage(true, false);
     expect(rows()).toHaveLength(1);

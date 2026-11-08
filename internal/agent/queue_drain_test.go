@@ -453,3 +453,147 @@ func TestSendQueuedNow_IdleSendsTheRowAtOnce(t *testing.T) {
 		t.Errorf("queue = %v, want m-q1 still waiting", ids)
 	}
 }
+
+// compactingHub is a chat whose reader's compaction runs on its idle session until release is called.
+func compactingHub(t *testing.T) (h *Runtime, cs *testChatStore, release func()) {
+	t.Helper()
+	h, cs, br := newTestHub()
+	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
+	var tails atomic.Int32
+	h.coord.drainAfterClose = func(ctx context.Context, chatID marotte.ChatID, cl command.CloseFacts, ends command.EndFacts) {
+		h.dispatcher.DrainAfterClose(ctx, chatID, cl, ends)
+		tails.Add(1)
+	}
+	seedQueue(t, cs, "c1")
+	runPrompt(t, h, cs, "c1", "m-first")
+	// The close's tail (its KAS hold, its drain) ends before the compaction starts, so the press runs it now.
+	waitFor(t, func() bool { return tails.Load() == 1 })
+	br.setCallResult(marotte.MethodSessionCompact, json.RawMessage(`{"success":true}`))
+	release = holdCall(t, br, marotte.MethodSessionCompact)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = h.RequestCompact(context.WithoutCancel(t.Context()), "c1")
+	}()
+	waitForCall(t, br, marotte.MethodSessionCompact)
+	t.Cleanup(func() {
+		release()
+		<-done
+	})
+	return h, cs, release
+}
+
+func queueDuring(t *testing.T, h *Runtime, ids ...string) {
+	t.Helper()
+	for _, id := range ids {
+		rec := postCmd(t, h, marotte.ClientCommand{
+			Type: marotte.CmdQueuePrompt, ChatID: "c1",
+			Payload: json.RawMessage(`{"text":"after the compaction","message_id":"` + id + `"}`),
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("queue_prompt %s during the compaction = %d %s, want 200", id, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// Messages queued while the reader's compaction runs on an idle chat open no turn under it, then go after it, one per
+// turn in the order they were queued.
+func TestQueuePrompt_DuringAnIdleCompactionSendsAfterItOneATurn(t *testing.T) {
+	h, cs, release := compactingHub(t)
+	queueDuring(t, h, "m-q1", "m-q2")
+	if ids := promptIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-first"}) {
+		t.Fatalf("turns opened while the compaction ran = %v, want none", ids)
+	}
+
+	release()
+
+	waitFor(t, func() bool {
+		return slices.Equal(promptIDs(t, cs, "c1"), []string{"m-first", "m-q1", "m-q2"}) &&
+			len(queuedRows(t, cs, "c1")) == 0 && !h.coord.turns.live("c1")
+	})
+}
+
+// A prompt that reaches the server while a compaction runs (a page that has not seen it yet, another device, an API
+// caller) joins the queue behind it instead of opening a turn that shows nothing until the compaction ends.
+func TestPrompt_DuringACompactionIsQueuedBehindIt(t *testing.T) {
+	h, cs, release := compactingHub(t)
+
+	rec := postCmd(t, h, marotte.ClientCommand{
+		Type: marotte.CmdPrompt, ChatID: "c1",
+		Payload: json.RawMessage(`{"text":"what changed?","message_id":"m-p1"}`),
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("prompt during the compaction = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	var ack struct {
+		MessageID string `json:"message_id"`
+		Queued    bool   `json:"queued"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &ack); err != nil || !ack.Queued || ack.MessageID != "m-p1" {
+		t.Errorf("prompt ack = %s (%v), want queued under m-p1", rec.Body.String(), err)
+	}
+	if ids := promptIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-first"}) {
+		t.Errorf("turns opened while the compaction ran = %v, want none", ids)
+	}
+	if rows := queuedRows(t, cs, "c1"); len(rows) != 1 || rows[0].ID != "m-p1" || rows[0].Text != "what changed?" {
+		t.Errorf("queue = %+v, want the prompt as its one row", rows)
+	}
+
+	release()
+
+	waitFor(t, func() bool {
+		return slices.Equal(promptIDs(t, cs, "c1"), []string{"m-first", "m-p1"}) && len(queuedRows(t, cs, "c1")) == 0
+	})
+}
+
+// Send now on a row waiting for a compaction cannot send sooner than its end: it opens no turn under it, and the row
+// goes first once it ends.
+func TestSendQueuedNow_DuringACompactionSendsTheRowFirstAfterIt(t *testing.T) {
+	h, cs, release := compactingHub(t)
+	queueDuring(t, h, "m-q1", "m-q2")
+
+	rec := postCmd(t, h, marotte.ClientCommand{
+		Type: marotte.CmdSendQueuedNow, ChatID: "c1", Payload: json.RawMessage(`{"message_id":"m-q2"}`),
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("send_queued_now during the compaction = %d %s", rec.Code, rec.Body.String())
+	}
+	if ids := promptIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-first"}) {
+		t.Errorf("turns opened while the compaction ran = %v, want none", ids)
+	}
+
+	release()
+
+	waitFor(t, func() bool {
+		return slices.Equal(promptIDs(t, cs, "c1"), []string{"m-first", "m-q2", "m-q1"}) && len(queuedRows(t, cs, "c1")) == 0
+	})
+}
+
+// A close's drain that runs beside the reader's compaction (pressed once the close's hold was released) sends no row
+// under it; the rows still go one per turn once it ends.
+func TestDrain_AfterACloseWaitsForARunningCompaction(t *testing.T) {
+	h, cs, release := compactingHub(t)
+	queueDuring(t, h, "m-q1", "m-q2")
+
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		drainOnce(t, h, "c1", marotte.TurnOutcomeCompleted)
+	}()
+	select {
+	case <-drained:
+		t.Fatal("the close's drain returned while the compaction still ran")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if ids := promptIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-first"}) {
+		t.Errorf("turns opened while the compaction ran = %v, want none", ids)
+	}
+
+	release()
+	<-drained
+
+	waitFor(t, func() bool {
+		return slices.Equal(promptIDs(t, cs, "c1"), []string{"m-first", "m-q1", "m-q2"}) &&
+			len(queuedRows(t, cs, "c1")) == 0 && !h.coord.turns.live("c1")
+	})
+}

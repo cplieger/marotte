@@ -339,12 +339,13 @@ export const setAttachments = transportAction<{ chatID: string; paths: string[] 
 
 /** Summarizes through KAS's native `compact` verb (typed `/compact` reaches the model as prose): at once on an idle
  *  chat, else at the running turn's end; the dock shows it queued, then running. `idempotencyKey`: a double compact
- *  summarizes a summary. An idle chat's reply comes once KAS accepted the summary (`internal/command/compact.go`).
- *  Resolves true when the server queued it. */
+ *  summarizes a summary. An idle chat's reply comes once KAS accepted the summary (`internal/command/compact.go`), so
+ *  its scope is its own: under `chat:<id>` a message sent meanwhile waited, unseen, for the whole compaction; the
+ *  server queues it behind the compaction instead. Resolves true when the server queued it. */
 export const compactChat = defineAction<{ chatID: string }, boolean>({
   name: "chat.compact",
   networkMode: "always",
-  scope: ({ chatID }) => `chat:${chatID}`,
+  scope: ({ chatID }) => `compact:${chatID}`,
   idempotencyKey: true,
   run: async ({ chatID }, signal, ctx) => {
     const r = await transportSend(
@@ -368,7 +369,8 @@ export const compactChat = defineAction<{ chatID: string }, boolean>({
   error: errorAbout(onChat, stillOr("starting the compaction", "Compact failed", "chat")),
 });
 
-/** Whether a compact's answer says the server queued it (`{"queued": true}`). */
+/** Whether an answer says the server queued it (`{"queued": true}`): a compact for the turn's end, a prompt behind
+ *  the running compaction. */
 function compactQueued(r: SendResult): boolean {
   const body = r.body;
   return (
@@ -898,8 +900,9 @@ export const switchModel = defineAction<
 });
 
 // The server acks at admission, so dispatch runs at the standard timeout; completion is SSE's.
-// Returns "sent", "queued" (409 turn_live: a steerable turn), "starting" (409 starting, or any
-// other 409), "gone" (409 chat_not_found), "closed" (409 chat_closed) or null. `error: false`:
+// Returns "sent", "compacting" (the ack's `queued`: the server queued it behind the chat's running
+// compaction), "queued" (409 turn_live: a steerable turn), "starting" (409 starting, or any other
+// 409), "gone" (409 chat_not_found), "closed" (409 chat_closed) or null. `error: false`:
 // transport.send already toasts.
 
 interface SendPromptArgs {
@@ -914,7 +917,7 @@ interface SendPromptArgs {
 
 export const sendPrompt = defineAction<
   SendPromptArgs,
-  "sent" | "queued" | "starting" | "gone" | "closed",
+  "sent" | "compacting" | "queued" | "starting" | "gone" | "closed",
   { chatID: string }
 >({
   name: "chat.send_prompt",
@@ -952,6 +955,11 @@ export const sendPrompt = defineAction<
       { signal, reportSendState: true, timeoutMs: API_TIMEOUT_MS },
     );
     if (r.ok) {
+      if (compactQueued(r)) {
+        // No turn opened, so the optimistic thinking would draw Steer beside nothing.
+        setThinking(chatID, false);
+        return "compacting";
+      }
       return "sent";
     }
     if (r.status === 409) {

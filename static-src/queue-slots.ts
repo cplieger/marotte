@@ -3,9 +3,16 @@ import { messagesVersionOf, promptOpened, sessionBusy } from "./store.js";
 import type { PendingSteer, QueuedPrompt, Session } from "./types.js";
 
 /** When the server sends a queued row. `turns` counts turn ends, the running turn's included, or
- *  from the next turn's while none runs. */
+ *  from the next turn's while none runs; behind a running compaction the first row goes at its end
+ *  (`compaction`) and `turns` counts from the turn that row opens. */
 type QueuedWait =
-  | { readonly kind: "turns"; readonly turns: number; readonly running: boolean }
+  | {
+      readonly kind: "turns";
+      readonly turns: number;
+      readonly running: boolean;
+      readonly afterCompaction: boolean;
+    }
+  | { readonly kind: "compaction" }
   | { readonly kind: "held" }
   | { readonly kind: "sent" };
 
@@ -18,12 +25,15 @@ export interface QueuedSlot {
  *  unsent steers together ahead of the first user row that is not held, carried or opened, unless
  *  the server marks them `awaitsPrompt`, no turn runs, or a row is marked `next` (the send-now
  *  arrow's): then a prompt's start carries them. A sent steer is counted as read inside its turn.
- *  `opened` answers whether a turn for the row's id has opened, which the header shows until the
- *  server's dequeue lands. The returned `next` is the wait a row queued now would get. */
+ *  A compaction running with no turn sends the first sendable row at its end
+ *  (`drainAfterCompaction`). `opened` answers whether a turn for the row's id has opened, which the
+ *  header shows until the server's dequeue lands. The returned `next` is the wait a row queued now
+ *  would get, in turn ends after the compaction when one runs. */
 function drainSlots(
   steers: readonly PendingSteer[],
   queued: readonly QueuedPrompt[],
   running: boolean,
+  compacting: boolean,
   opened: (id: string) => boolean,
 ): { rows: QueuedSlot[]; next: number } {
   const unreadTurn = steers.some((s) => s.unsent === true && s.awaitsPrompt !== true);
@@ -31,7 +41,8 @@ function drainSlots(
     (row) =>
       row.next === true && row.held !== true && (row.resends ?? []).length === 0 && !opened(row.id),
   );
-  let ahead = running && unreadTurn && !marked ? 1 : 0;
+  const afterCompaction = compacting && !running;
+  let ahead = running && unreadTurn && !marked ? 1 : afterCompaction ? -1 : 0;
   const rows = queued.map((row): QueuedSlot => {
     if (opened(row.id)) {
       return { row, wait: { kind: "sent" } };
@@ -40,7 +51,10 @@ function drainSlots(
       return { row, wait: { kind: "held" } };
     }
     ahead += 1;
-    return { row, wait: { kind: "turns", turns: ahead, running } };
+    if (ahead === 0) {
+      return { row, wait: { kind: "compaction" } };
+    }
+    return { row, wait: { kind: "turns", turns: ahead, running, afterCompaction } };
   });
   return { rows, next: ahead + 1 };
 }
@@ -49,11 +63,20 @@ function drainSlots(
  *  place and bumps only the transcript version, so the read subscribes to that too. */
 export function sessionDrain(s: Session): { rows: QueuedSlot[]; next: number } {
   touch(messagesVersionOf(s.id));
-  return drainSlots(s.steers ?? [], s.queued ?? [], sessionBusy(s), (id) => promptOpened(s, id));
+  return drainSlots(
+    s.steers ?? [],
+    s.queued ?? [],
+    sessionBusy(s),
+    s.compact_running === true,
+    (id) => promptOpened(s, id),
+  );
 }
 
-/** The turns a wait covers, as "after …" completes it. */
+/** The turns a wait covers, as "after …" completes it; zero turns is a running compaction's end. */
 export function turnsPhrase(turns: number, running: boolean): string {
+  if (turns === 0) {
+    return "the compaction";
+  }
   if (turns > 1) {
     return `${String(turns)} turns`;
   }

@@ -45,6 +45,10 @@ type QueueAccess interface {
 	// live=false (and writing nothing) when neither. fn's error aborts the write and
 	// is returned as is.
 	AppendIfLive(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (live bool, err error)
+	// AppendIfCompacting applies fn as AppendIfLive does, only while the chat's compaction runs with no turn live.
+	AppendIfCompacting(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (queued bool, err error)
+	// Compacting reports a compaction running on the chat, whose end sends the next queued row.
+	Compacting(chatID marotte.ChatID) bool
 	// NextUserRow answers the first queued user row that is not held and whose
 	// turn this process has not opened, among only when it is non-nil.
 	NextUserRow(ctx context.Context, chatID marotte.ChatID, only []string) (marotte.QueuedPrompt, bool, error)
@@ -72,8 +76,8 @@ type chatMutator interface {
 	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)
 }
 
-// cmdQueuePrompt holds a message for the end of the running turn. An idle chat is
-// a 409 no_turn, the refusal a steer gives, so the client sends a prompt instead.
+// cmdQueuePrompt holds a message for the end of the running turn or compaction. An idle
+// chat is a 409 no_turn, the refusal a steer gives, so the client sends a prompt instead.
 func cmdQueuePrompt(ctx context.Context, queue QueueAccess, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
@@ -204,8 +208,9 @@ func cmdSendQueuedNow(
 	})
 }
 
-// markQueuedNext marks the row next and, with no turn running, sends it at once.
-// stop reports a marked row whose turn the caller must stop.
+// markQueuedNext marks the row next and, with no turn running, sends it at once, unless
+// a compaction runs: its end's drain sends the marked row first. stop reports a marked row
+// whose turn the caller must stop.
 func markQueuedNext(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, id string) (stop bool, err error) {
 	// The send's intent begins here: a close that commits after this stamp refuses its reservation.
 	stamp := roles.admission.LifeStamp()
@@ -222,6 +227,8 @@ func markQueuedNext(ctx context.Context, roles *promptRoles, chatID marotte.Chat
 		return false, nil
 	case held:
 		return false, StatusErrorReason(http.StatusConflict, reasonHeld, errQueueHeld)
+	case roles.followups.Compacting(chatID):
+		return false, nil
 	}
 	res, reserved := roles.admission.TryReserveIdleTurn(chatID, marotte.TurnSourcePrompt, stamp)
 	if !reserved {
@@ -265,8 +272,13 @@ type CloseFacts struct {
 // to launchPrompt's return: the row marked Next first, after any close leaving a live bridge (the
 // unread steers ride into its turn); then unread steers (after a close leaving a live bridge or a
 // drained death), else one queued user row (after a clean or unattended close, or one of AfterStop,
-// bridge live). A pending end, a held slot, a newer turn or a shutdown sends nothing.
+// bridge live). A pending end, a held slot, a newer turn or a shutdown sends nothing. A
+// compaction the reader started after the close's hold was released runs beside this tail:
+// the drain waits for it, so it sends nothing under it.
 func drainAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, cl CloseFacts, ends EndFacts) {
+	if roles.compactor != nil {
+		roles.compactor.AwaitCompaction(ctx, chatID)
+	}
 	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
 	if err != nil {
 		return
@@ -280,6 +292,25 @@ func drainAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 		return
 	}
 	sendReserved(ctx, roles, res, cl, ends)
+}
+
+// drainAfterCompaction sends at most one prompt once a compaction no close follows has
+// ended, picked as after a clean close; each later row goes at the next close.
+func drainAfterCompaction(ctx context.Context, roles *promptRoles, chatID marotte.ChatID) {
+	stamp := roles.admission.LifeStamp()
+	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
+	if err != nil {
+		return
+	}
+	defer unlock()
+	if roles.lifecycle.Draining() || len(roles.jobs.Ends(chatID)) > 0 {
+		return
+	}
+	res, ok := roles.admission.TryReserveIdleTurn(chatID, marotte.TurnSourcePrompt, stamp)
+	if !ok {
+		return
+	}
+	sendReserved(ctx, roles, res, CloseFacts{Outcome: marotte.TurnOutcomeCompleted}, EndFacts{})
 }
 
 // sendReserved is drainAfterClose's pick, on the reservation it took, which it owns from here.

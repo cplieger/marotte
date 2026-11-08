@@ -3,7 +3,15 @@ import { join } from "@cplieger/keyenc";
 import { announce } from "@cplieger/ui/announce";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
-import { activeSession, getActiveId, hasMessage, hasQueued, isBusy, sessionBusy } from "./store.js";
+import {
+  activeSession,
+  get,
+  getActiveId,
+  hasMessage,
+  hasQueued,
+  isBusy,
+  sessionBusy,
+} from "./store.js";
 import {
   cancelCompact,
   cancelTurn,
@@ -758,6 +766,8 @@ function queuedState(slot: QueuedSlot): string {
       return "Sent";
     case "held":
       return "Not sent \u00b7 the server restarted";
+    case "compaction":
+      return `After ${turnsPhrase(0, false)}`;
     case "turns":
       return `After ${turnsPhrase(wait.turns, wait.running)}`;
   }
@@ -847,7 +857,8 @@ function updateQueuedRow(li: HTMLElement, slot: QueuedSlot): void {
 const queuedArrowOf = new WeakMap<HTMLElement, HTMLElement>();
 
 /** Only the arrow comes and goes, so a wait change never rebuilds Edit or Discard under the
- *  reader's focus. A held or sent row gets none: no turn end sends it, or its turn already opened. */
+ *  reader's focus. A held or sent row gets none: no turn end sends it, or its turn already opened;
+ *  nor does the row a running compaction's end sends, which nothing sends sooner. */
 function syncQueuedArrow(li: HTMLElement, slot: QueuedSlot): void {
   const { wait } = slot;
   const arrow = queuedArrowOf.get(li);
@@ -856,9 +867,11 @@ function syncQueuedArrow(li: HTMLElement, slot: QueuedSlot): void {
     queuedArrowOf.delete(li);
     return;
   }
-  const tooltip = wait.running
-    ? "Stops the turn and sends this follow-up next"
-    : "Sends this follow-up now";
+  const tooltip = wait.afterCompaction
+    ? "Sends this follow-up first once the compaction ends"
+    : wait.running
+      ? "Stops the turn and sends this follow-up next"
+      : "Sends this follow-up now";
   if (arrow !== undefined) {
     arrow.dataset["tooltip"] = tooltip;
     return;
@@ -919,7 +932,11 @@ async function sendQueuedRowNow(messageID: string): Promise<void> {
   }
   const name = subjectName(chatID);
   announce(
-    isBusy(chatID) ? "Stopping the turn and sending this follow-up" : "Sending this follow-up",
+    isBusy(chatID)
+      ? "Stopping the turn and sending this follow-up"
+      : get(chatID)?.compact_running === true
+        ? "Sending this follow-up first once the compaction ends"
+        : "Sending this follow-up",
   );
   const outcome = await sendQueuedNow.dispatch({ chatID, messageID }).outcome;
   if (outcome.status === "success" && outcome.value) {

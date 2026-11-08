@@ -78,6 +78,7 @@ func newCallerFixture(t *testing.T) *callerFixture {
 	join := &promptJoin{}
 	roles.lifecycle = join
 	queue := &fakeQueue{chat: &marotte.Chat{ID: "c1"}, live: true}
+	roles.followups = queue
 
 	d := New()
 	d.status = &fakeChatStatus{}
@@ -179,6 +180,25 @@ func TestSteer_FromAnAPICallerIsAttributed(t *testing.T) {
 	}
 	if got := f.steers.froms[1]; got != nil {
 		t.Errorf("page steer caller = %+v, want none", got)
+	}
+}
+
+// An API caller's prompt that meets a running compaction waits behind it as a queued row, still attributed, and
+// opens no turn until the compaction's end sends it.
+func TestPrompt_FromAnAPICallerDuringACompactionIsQueuedAttributed(t *testing.T) {
+	f := newCallerFixture(t)
+	f.queue.live, f.queue.compacting = false, true
+	f.post(t, marotte.CmdPrompt, "Agent Mail", nil)
+
+	if prompts := f.opens.prompts(); len(prompts) != 0 {
+		t.Errorf("turn opens = %v, want none while the compaction runs", prompts)
+	}
+	rows := f.queue.chat.QueuedPrompts
+	if len(rows) != 1 || rows[0].ID != "m-1" || rows[0].Text != "Agent Mail: 1 new message" {
+		t.Fatalf("queue = %+v, want the prompt as its one row", rows)
+	}
+	if got := rows[0].Caller; got == nil || got.Label != "Agent Mail" {
+		t.Errorf("queued row caller = %+v, want the API caller", got)
 	}
 }
 

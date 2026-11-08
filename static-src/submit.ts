@@ -1,6 +1,7 @@
 // What pressing Send means: idle sends a prompt; mid-turn, Steer mode joins the running turn
-// (`_session/steer`) and Queue mode hands the server a follow-up (`queue_prompt`). Follow-ups live
-// on `Chat.QueuedPrompts`, so every device draws the same rows.
+// (`_session/steer`) and Queue mode hands the server a follow-up (`queue_prompt`); while the chat's
+// compaction runs, every mode queues behind it, as kiro-cli's TUI does. Follow-ups live on
+// `Chat.QueuedPrompts`, so every device draws the same rows.
 
 import { sendPromptTo } from "./chat-commands.js";
 import { handleTypedCommand, terminalCommandRefusal } from "./typed-commands.js";
@@ -122,7 +123,7 @@ export async function submitPrompt(
     return refusal.keepText ? holdText(chatID, text) : "sent";
   }
   // Held before the attachments are taken, so a busy chat keeps its pill row.
-  const reason = isBusy(chatID) ? promptOnlyReason(text) : null;
+  const reason = waits(chatID) ? promptOnlyReason(text) : null;
   if (reason !== null) {
     chatNotice(chatID, reason);
     return holdText(chatID, text);
@@ -140,8 +141,14 @@ export async function submitPrompt(
     deleted: false,
   };
   return whileInFlight(send, (s) =>
-    isBusy(chatID) ? busy(s, CONVERT_BUDGET) : prompt(s, CONVERT_BUDGET),
+    waits(chatID) ? busy(s, CONVERT_BUDGET) : prompt(s, CONVERT_BUDGET),
   );
+}
+
+/** Send takes the busy verb: mid-turn, or while a compaction runs, since a prompt then opens a turn
+ *  that shows nothing until the compaction ends. */
+function waits(chatID: string): boolean {
+  return isBusy(chatID) || get(chatID)?.compact_running === true;
 }
 
 /** Hands `text` back to the composer once its own clear, after submitPrompt's synchronous
@@ -164,7 +171,7 @@ export function submitLabelled(
     return Promise.resolve("failed");
   }
   const send: Send = { kind: "labelled", chatID, text, messageID: newMessageID(), displayText };
-  return isBusy(chatID) ? busy(send, CONVERT_BUDGET) : prompt(send, CONVERT_BUDGET);
+  return waits(chatID) ? busy(send, CONVERT_BUDGET) : prompt(send, CONVERT_BUDGET);
 }
 
 /** One send's inputs, carried unchanged through every conversion. Only a typed send came from
@@ -204,8 +211,8 @@ function promptOnlyReason(text: string): string | null {
 }
 
 /** The busy verb, read per hop: a labelled send queues, since `_session/steer` carries no label;
- *  a typed one takes the chat's mode. Every busy hop comes through here, so the prompt-only hold
- *  lives here. */
+ *  a typed one takes the chat's mode, except behind a running compaction, which has no turn to
+ *  steer. Every busy hop comes through here, so the prompt-only hold lives here. */
 function busy(send: Send, convertBudget: number): Promise<SubmitResult> {
   if (send.kind === "labelled") {
     return queue(send, convertBudget);
@@ -216,7 +223,8 @@ function busy(send: Send, convertBudget: number): Promise<SubmitResult> {
     recordFailure(send);
     return Promise.resolve("held");
   }
-  return get(send.chatID)?.interrupt_mode === "queue"
+  const s = get(send.chatID);
+  return s?.interrupt_mode === "queue" || s?.compact_running === true
     ? queue(send, convertBudget)
     : steer(send, convertBudget);
 }
@@ -265,7 +273,8 @@ async function prompt(send: Send, convertBudget: number): Promise<SubmitResult> 
     return "failed";
   }
   settled(send);
-  return "sent";
+  // "compacting": the server queued it behind a compaction this page had not seen yet.
+  return result === "compacting" ? "queued" : "sent";
 }
 
 /** The action's rollback has already un-drawn a still-pending chip by the time the outcome

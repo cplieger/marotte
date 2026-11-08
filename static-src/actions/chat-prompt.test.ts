@@ -57,7 +57,7 @@ vi.mock("../api-client.js", () => ({
 import { send as transportSend } from "../transport.js";
 import { setThinking, recordSteerQueued } from "../store.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
-import { sendPrompt } from "./chat.js";
+import { compactChat, queuePrompt, sendPrompt } from "./chat.js";
 
 const mockSend = vi.mocked(transportSend);
 
@@ -100,6 +100,18 @@ describe("sendPrompt — the ack is the whole POST", () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
     await sendPrompt.dispatch({ ...args, messageID: "m2" });
     expect(setThinking).toHaveBeenCalledWith("c1", true);
+  });
+
+  it("returns 'compacting' and retracts thinking when the server queued it behind a compaction", async () => {
+    mockSend.mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: { accepted: true, message_id: "m1", queued: true },
+    });
+
+    expect(await sendPrompt.dispatch(args)).toBe("compacting");
+    // No turn opened, so a latched thinking would turn Send into Steer beside nothing.
+    expect(vi.mocked(setThinking).mock.calls.at(-1)).toEqual(["c1", false]);
   });
 });
 
@@ -188,5 +200,38 @@ describe("sendPrompt — rollback retracts the optimistic thinking", () => {
 
     // Negative control: an unconditional rollback would satisfy every case above.
     expect(vi.mocked(setThinking).mock.calls).not.toContainEqual(["c1", false]);
+  });
+});
+
+// An idle chat's compact POST answers only once the summary commits, so a message sent meanwhile
+// must reach the server at once: held behind it, the message showed nowhere for the whole compaction.
+describe("a message sent while the chat's compact POST waits", () => {
+  it.each([
+    ["queued", () => queuePrompt.dispatch({ chatID: "c1", text: "next", messageID: "m7" })],
+    ["sent as a prompt", () => sendPrompt.dispatch({ ...args, messageID: "m8" })],
+  ])("is %s without waiting for the compaction", async (_how, send) => {
+    let finishCompact: (r: { ok: boolean; status: number }) => void = () => undefined;
+    mockSend.mockImplementation((cmd: { type?: string }) =>
+      cmd.type === "compact"
+        ? new Promise((resolve) => {
+            finishCompact = resolve;
+          })
+        : Promise.resolve({ ok: true, status: 200 }),
+    );
+
+    const compacting = compactChat.dispatch({ chatID: "c1" });
+    await vi.waitFor(() => {
+      expect(mockSend).toHaveBeenCalledTimes(1);
+    });
+    void send();
+
+    try {
+      await vi.waitFor(() => {
+        expect(mockSend).toHaveBeenCalledTimes(2);
+      });
+    } finally {
+      finishCompact({ ok: true, status: 200 });
+      await compacting.outcome;
+    }
   });
 });

@@ -488,6 +488,16 @@ describe("dispatch", () => {
     }
   });
 
+  it("renders a prompt queued behind the chat's compaction as dispatched, not busy", async () => {
+    openParented();
+    m.replies = [reply(spec([tasksDoc([node("L1", "Pending one")])]))];
+    view.showSpec(DIR);
+    await settle();
+    view.applyResult(DIR, "L1", "compacting");
+    expect(body().querySelector(".spec-node")?.classList.contains("spec-dispatched")).toBe(true);
+    expect(body().querySelector(".spec-run")?.classList.contains("spec-busy")).toBe(false);
+  });
+
   it("renders gone as the empty state and failed as a failure line", async () => {
     openParented();
     m.replies = [reply(spec([tasksDoc([node("L1", "Pending one")])]))];

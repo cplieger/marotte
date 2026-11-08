@@ -33,6 +33,9 @@ const queueWait = computed(() => {
   return turnsPhrase(sessionDrain(s).next, sessionBusy(s));
 });
 
+/** A running compaction makes an idle Send queue the message behind it (submit.ts). */
+const compacting = computed(() => activeSession.value?.compact_running === true);
+
 /** While a turn runs the placeholder names what Send will do with the text. */
 const BUSY_PLACEHOLDER: Record<InterruptMode, (wait: string) => string> = {
   steer: () => "Steer the agent mid-turn...",
@@ -259,7 +262,11 @@ class PromptInputController {
     $.sendBtn.disabled = false;
     $.promptInput.disabled = false;
     $.promptInput.placeholder =
-      k === "streaming" ? BUSY_PLACEHOLDER[busyMode.peek()](queueWait.peek()) : "Message Kiro...";
+      k === "streaming"
+        ? BUSY_PLACEHOLDER[busyMode.peek()](queueWait.peek())
+        : compacting.peek()
+          ? "Queue a message for after the compaction..."
+          : "Message Kiro...";
     this.applyMidTurnSend();
   }
 
@@ -303,6 +310,7 @@ class PromptInputController {
     effect(() => {
       touch(busyMode);
       touch(queueWait);
+      touch(compacting);
       this.applyButtonState();
     });
     effect(() => {

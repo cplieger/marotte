@@ -715,6 +715,18 @@ describe("the mid-turn Send", () => {
     expect(input().placeholder).toBe("Queue a follow-up for after this turn...");
   });
 
+  it("says a message waits for a running compaction, and goes back once it ends", () => {
+    setSessions([{ ...makeSession([]), compact_queued: true, compact_running: true, queued: [] }]);
+    setActive(CHAT);
+    setSendState({ kind: "idle" });
+    expect(input().placeholder).toBe("Queue a message for after the compaction...");
+
+    setSessions([
+      { ...makeSession([]), compact_queued: false, compact_running: false, queued: [] },
+    ]);
+    expect(input().placeholder).toBe("Message Kiro...");
+  });
+
   it("names this turn while a turn the agent started has not streamed", () => {
     setSessions([{ ...makeSession([]), interrupt_mode: "queue", queued: [] }]);
     setActive(CHAT);
