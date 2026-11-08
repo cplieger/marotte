@@ -8,11 +8,9 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -23,11 +21,7 @@ import (
 	"github.com/cplieger/marotte/internal/workspace"
 )
 
-// Read caps bound untrusted workspace input (agent-cloned repos) so a crafted file cannot
-// OOM the container.
 const (
-	firstLineReadCap = 4 << 10 // README first non-heading line fits easily in 4 KiB
-	toolsManifestCap = 1 << 20 // any realistic tools.json stays well under 1 MiB
 	// steeringCompareCap bounds the read of the existing environment.md for the unchanged check;
 	// anything larger is not a file this wrote, compares unequal, and is replaced.
 	steeringCompareCap = 4 << 20
@@ -54,21 +48,45 @@ type ForgeProvider struct {
 	Host  string   // "github.com", "gitlab.company.com"
 	User  string   // authenticated username
 	Email string   // authenticated email (best-effort, may be "")
-	Repos []string // top repo names (capped for brevity)
+	Repos []string // repo names the forge reported, possibly only its first page
+}
+
+// ToolsSnapshot is what the tools engine reports installed.
+type ToolsSnapshot struct {
+	Tools  []InstalledTool
+	System []string // image-baked commands present on this host
 }
 
 // InstalledTool is one tools-engine row the engine's live probe reports installed.
 type InstalledTool struct {
-	Name    string // the row's name, which tools-state.json records its commands under
-	Kind    string // the source kind: "aqua", "apt", "npm" and so on
-	Version string // the installed version, "" when none is recorded
+	Version  string   // the installed version, "" when none is recorded
+	Commands []string // what the row puts on PATH; none for a library package
+	Apt      bool     // a Debian package, whose commands can include its auxiliaries
 }
+
+// Caps on lists that grow with the user's setup. Each sits well above what one developer's
+// typical setup reaches, so only a heavy setup sees a cut, and a cut list ends in a count.
+const (
+	maxCommands       = 120
+	maxMCPServers     = 30
+	maxPlainRepos     = 60
+	maxKiroRepos      = 10
+	maxRouting        = 40
+	maxDescWords      = 20
+	maxDescBytes      = 300
+	maxFileMatchBytes = 200
+	maxDirectories    = 30
+	maxGrantedDirs    = 20
+	maxMemoryTags     = 30
+	maxForgeAccounts  = 5
+	maxForgeRepos     = 20
+)
 
 // Generator produces steering files for kiro-cli.
 type Generator struct {
 	mcpSnapshot   func() MCPSnapshot
 	forgeSnapshot func() ForgeSnapshot
-	toolsSnapshot func() ([]InstalledTool, bool)
+	toolsSnapshot func() (ToolsSnapshot, bool)
 	workDir       string
 	configDir     string
 	toolsDir      string
@@ -99,9 +117,8 @@ func (g *Generator) SetForgeSnapshot(fn func() ForgeSnapshot) {
 }
 
 // SetToolsSnapshot wires a callback that returns the installed tools, with ok false when the
-// tools engine is down or its inventory failed. Unset or not ok omits the Installed tools
-// section.
-func (g *Generator) SetToolsSnapshot(fn func() (tools []InstalledTool, ok bool)) {
+// tools engine is down or its inventory failed. Unset or not ok lists none.
+func (g *Generator) SetToolsSnapshot(fn func() (tools ToolsSnapshot, ok bool)) {
 	g.mu.Lock()
 	g.toolsSnapshot = fn
 	g.mu.Unlock()
@@ -127,7 +144,7 @@ func (g *Generator) Generate(ctx context.Context) error {
 	g.mu.Unlock()
 	var mcp MCPSnapshot
 	var forges ForgeSnapshot
-	var tools []InstalledTool
+	var tools ToolsSnapshot
 	var toolsOK bool
 	if snapshotFn != nil {
 		mcp = snapshotFn()
@@ -175,17 +192,11 @@ func stopped(ctx context.Context) error {
 // hasMCP and hasForges say whether a snapshot callback was wired at all, which decides whether the
 // MCP and forge sections appear; toolsOK says the tools snapshot answered.
 func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, forges ForgeSnapshot, hasForges bool,
-	tools []InstalledTool, toolsOK bool,
+	tools ToolsSnapshot, toolsOK bool,
 ) []byte {
 	var b strings.Builder
 	writeIntro(&b, g.workDir)
-
-	if toolsOK {
-		// The inventory carries no bins: tools-state.json records them. An unreadable file
-		// leaves every tool without a recorded command.
-		data, _ := readCappedFile(filepath.Join(g.configDir, "tools-state.json"), toolsManifestCap)
-		writeTools(&b, tools, data)
-	}
+	writeTools(&b, tools, toolsOK)
 	writeRuntime(&b, g.configDir, g.toolsDir)
 	writeToolsEngine(&b, g.configDir, g.toolsDir, g.workDir)
 	if hasMCP {
@@ -196,7 +207,7 @@ func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, fo
 	}
 	writeWorkspace(ctx, &b, g.workDir)
 	granted, _, _ := settings.AgentDirs{Workspace: g.workDir, Config: g.configDir}.Granted(ctx)
-	writeAdditionalDirs(&b, granted)
+	writeAdditionalDirs(&b, granted, g.configDir)
 	writeMemory(ctx, &b, g.workDir, g.configDir)
 	writeLimitations(&b)
 	writeCapabilities(&b, g.configDir)
@@ -236,7 +247,7 @@ func (g *Generator) renderChat(forges ForgeSnapshot) string {
 }
 
 // Errors are log-and-omit. It opens with filesafe.OpenRegular: a FIFO would hang Generate, which
-// runs synchronously before every session door, and a symlinked README would copy whatever it names
+// runs synchronously before every session door, and a symlinked steering doc would copy whatever it names
 // (an MCP credential, measured) into authoritative agent context. Truncation is kept: only the head
 // matters.
 func readCappedFile(path string, limit int64) ([]byte, error) {
@@ -253,69 +264,124 @@ func (*Generator) CustomPath() string {
 	return workspace.KiroSteeringPath("custom.md")
 }
 
-// toolState is the subset of a tools-state.json row (the toolbelt engine's ToolStatus) this
-// generator reads: the commands a tool owns.
-type toolState struct {
-	Bins   []string `json:"bins,omitempty"`
-	PMBins []string `json:"pm_bins,omitempty"`
-}
-
-// writeTools lists installed's commands from the bins state records. A tool with none is listed
-// as a package, never under its name as a command: an apt package's commands need not match its
-// name (ripgrep ships rg), and an npm package may ship none.
-func writeTools(b *strings.Builder, installed []InstalledTool, state []byte) {
-	var recorded struct {
-		Tools map[string]toolState `json:"tools"`
-	}
-	if len(state) > 0 {
-		if err := json.Unmarshal(state, &recorded); err != nil {
-			slog.Error("steering: parse tools-state.json", "error", err)
-		}
-	}
-	var commands, packages []toolEntry
-	for _, t := range installed {
-		// Defused: names and versions come from the catalog, hand edits and --version output.
-		version := defuse(t.Version)
-		st := recorded.Tools[t.Name]
-		bins := slices.Concat(st.Bins, st.PMBins)
-		if len(bins) == 0 {
-			packages = append(packages, toolEntry{defuse(t.Name), version, defuse(t.Kind)})
-			continue
-		}
-		for _, bin := range bins {
-			commands = append(commands, toolEntry{defuse(bin), version, ""})
-		}
-	}
-	if len(commands)+len(packages) == 0 {
+// writeTools lists commands, not packages: an apt package's commands need not match its name
+// (ripgrep ships rg). With ok false the engine did not answer: no snapshot command is listed, and
+// the base-userland sentence still says that userland is present.
+func writeTools(b *strings.Builder, snap ToolsSnapshot, ok bool) {
+	b.WriteString("## Installed tools\n\n")
+	if !ok {
+		b.WriteString(debianBase + " The tools engine did not answer, so the commands installed or baked in are not " +
+			"listed: check with `command -v`, and install through the tools engine below.\n\n")
 		return
 	}
-	b.WriteString("## Installed tools\n\n")
-	if len(commands) > 0 {
-		writeToolEntries(b, commands)
+	cmds, libraries := listCommands(snap.Tools)
+	present := map[string]bool{}
+	for _, c := range cmds {
+		present[c.name] = true
 	}
-	if len(packages) > 0 {
-		b.WriteString("Installed packages with no recorded command (`dpkg -L <package>` lists an apt package's files):\n\n")
-		writeToolEntries(b, packages)
+	if len(cmds) > 0 {
+		writeCommands(b, cmds)
+	}
+	var baked []string
+	for _, n := range defusedSorted(snap.System) {
+		if !present[n] {
+			baked = append(baked, n)
+		}
+		present[n] = true
+	}
+	if len(baked) > 0 {
+		b.WriteString("Baked into the image: " + strings.Join(baked, ", ") + "\n\n")
+	}
+	writeAbsentLine(b, present)
+	if libraries > 0 {
+		fmt.Fprintf(b, "%d more installed packages ship no command (mostly libraries): ", libraries)
+		b.WriteString("`dpkg -l` or `curl -s localhost:9847/api/tools` lists them.\n\n")
 	}
 }
 
-type toolEntry struct{ name, version, kind string }
-
-// writeToolEntries writes one line per name, sorted; a name listed twice is one PATH entry.
-func writeToolEntries(b *strings.Builder, list []toolEntry) {
-	slices.SortFunc(list, func(x, y toolEntry) int { return strings.Compare(x.name, y.name) })
-	list = slices.CompactFunc(list, func(x, y toolEntry) bool { return x.name == y.name })
-	for _, e := range list {
-		b.WriteString("- " + e.name)
-		if e.version != "" {
-			b.WriteString(" " + e.version)
-		}
-		if e.kind != "" {
-			b.WriteString(" (" + e.kind + ")")
-		}
-		b.WriteString("\n")
+// writeAbsentLine names the utilities the image does not ship, leaving out any that present holds.
+func writeAbsentLine(b *strings.Builder, present map[string]bool) {
+	missing := slices.DeleteFunc(slices.Clone(notShipped), func(n string) bool { return present[n] })
+	b.WriteString(debianBase)
+	switch n := len(missing); n {
+	case 0:
+	case 1:
+		b.WriteString(" The image does not ship " + missing[0] + ".")
+	default:
+		b.WriteString(" The image does not ship " + strings.Join(missing[:n-1], ", ") + " or " + missing[n-1] + ".")
 	}
-	b.WriteString("\n")
+	b.WriteString(" Check any other command with `command -v`, and install through the tools engine below.\n\n")
+}
+
+// debianBase names the Debian essential and required-priority userland a debian:*-slim image
+// ships, which no inventory reports.
+const debianBase = "The image is Debian slim: its base userland (coreutils, util-linux, findutils, grep, sed, awk, " +
+	"diff, gzip, which, perl, dpkg and apt-get) is present and not listed here."
+
+// notShipped are utilities agents reach for that the slim image lacks; one the user installed
+// is not named.
+var notShipped = []string{"file", "bc", "xxd", "netstat", "ss"}
+
+type command struct{ name, version string }
+
+// listCommands returns each defused command once, an engine row's before an apt row's: the
+// engine's bin dir precedes /usr/bin on PATH, so its copy is the one that runs. It also counts
+// the rows that ship none.
+func listCommands(tools []InstalledTool) (cmds []command, libraries int) {
+	seen := map[string]bool{}
+	for _, apt := range []bool{false, true} {
+		for _, t := range tools {
+			if t.Apt != apt {
+				continue
+			}
+			if len(t.Commands) == 0 {
+				libraries++
+			}
+			cmds = appendNewCommands(cmds, seen, t)
+		}
+	}
+	return cmds, libraries
+}
+
+// appendNewCommands appends t's commands that seen lacks. Defused: names and versions come from
+// the catalog, dpkg and --version output.
+func appendNewCommands(cmds []command, seen map[string]bool, t InstalledTool) []command {
+	for _, name := range defusedSorted(t.Commands) {
+		if !seen[name] {
+			seen[name] = true
+			cmds = append(cmds, command{name: name, version: defuse(t.Version)})
+		}
+	}
+	return cmds
+}
+
+// writeCommands fills the cap in listCommands' order, engine commands first: the user picked each
+// engine row, while an apt package also ships auxiliaries (gcc's gcov-dump).
+func writeCommands(b *strings.Builder, cmds []command) {
+	kept := slices.Clone(cmds[:min(len(cmds), maxCommands)])
+	slices.SortFunc(kept, func(x, y command) int { return strings.Compare(x.name, y.name) })
+	entries := make([]string, 0, len(kept))
+	for _, c := range kept {
+		entries = append(entries, strings.TrimSpace(c.name+" "+c.version))
+	}
+	b.WriteString("Commands: " + strings.Join(entries, ", "))
+	if extra := len(cmds) - maxCommands; extra > 0 {
+		fmt.Fprintf(b, ", … and %d more (`command -v <name>` checks one; `curl -s localhost:9847/api/tools` "+
+			"lists every row's commands)", extra)
+	}
+	b.WriteString("\n\n")
+}
+
+// defusedSorted defuses each name, drops the empty ones and returns the rest sorted and deduped.
+func defusedSorted(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if d := defuse(n); d != "" {
+			out = append(out, d)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 func writeMCP(b *strings.Builder, snap MCPSnapshot) {
@@ -336,8 +402,11 @@ func writeMCP(b *strings.Builder, snap MCPSnapshot) {
 	b.WriteString("or, in a session without it, tool_load. ")
 	b.WriteString("A workflow step whose agent profile does not set includeMcpJson sees none of them, ")
 	b.WriteString("and reaches a Power's servers only through the Power: its power:: ids in load_resource, or kiro_powers.\n\n")
-	for _, s := range servers {
+	for _, s := range servers[:min(len(servers), maxMCPServers)] {
 		fmt.Fprintf(b, "- **%s**\n", defuse(s.Name))
+	}
+	if extra := len(servers) - maxMCPServers; extra > 0 {
+		fmt.Fprintf(b, "- … and %d more (the load_resource catalog lists them)\n", extra)
 	}
 	b.WriteString("\n")
 }
@@ -352,8 +421,11 @@ func writeForges(w io.Writer, snap ForgeSnapshot) {
 	fmt.Fprintf(w, "Git over HTTPS (clone, push, pull, fetch) is authenticated for each connected forge by marotte's own git credential helper, which connecting the account in the Sources tab registers in `$HOME/.gitconfig`. Use plain `git` with an `https://` remote. SSH remotes are not covered: an `ssh://` or `git@host:` remote authenticates with whatever SSH key the user set up, if any.\n\n")
 	fmt.Fprintf(w, "The helper answers with the connected account's own credential, so a push or fetch the forge refuses for a missing permission is that credential's limit. The user changes it by reconnecting the account in Sources with a token or sign-in that has the permission.\n\n")
 	fmt.Fprintf(w, "marotte installs and signs in no forge CLI and exports no forge token to agent sessions. A forge CLI under Installed tools was installed by the user and carries only its own login, if any, which can belong to a different account.\n\n")
-	for i := range snap.Providers {
+	for i := range snap.Providers[:min(len(snap.Providers), maxForgeAccounts)] {
 		writeForgeProvider(w, &snap.Providers[i])
+	}
+	if extra := len(snap.Providers) - maxForgeAccounts; extra > 0 {
+		fmt.Fprintf(w, "… and %d more connected accounts, authenticated the same way (the Sources tab lists them).\n\n", extra)
 	}
 }
 
@@ -370,12 +442,11 @@ func writeForgeProvider(w io.Writer, p *ForgeProvider) {
 	fmt.Fprintf(w, "- Clone via: `git clone https://%s/<owner>/<repo>.git`\n", defuse(p.Host))
 	if len(p.Repos) > 0 {
 		fmt.Fprintf(w, "- Accessible repositories:\n")
-		n := min(len(p.Repos), 20)
-		for _, r := range p.Repos[:n] {
+		for _, r := range p.Repos[:min(len(p.Repos), maxForgeRepos)] {
 			fmt.Fprintf(w, "  - %s\n", defuse(r))
 		}
-		if len(p.Repos) > 20 {
-			fmt.Fprintf(w, "  - … and %d more\n", len(p.Repos)-20)
+		if extra := len(p.Repos) - maxForgeRepos; extra > 0 {
+			fmt.Fprintf(w, "  - … and at least %d more (the Sources tab lists them)\n", extra)
 		}
 	}
 	fmt.Fprintln(w)

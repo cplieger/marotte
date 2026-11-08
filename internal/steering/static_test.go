@@ -262,19 +262,35 @@ func TestWriteToolsEngine(t *testing.T) {
 		"`/cfg/tools.json`",
 		"`/t/opt/<name>/<version>/`",
 		"`/t/bin/`",
-		`"Refresh catalog"`,
+		"`/cfg/tools.json` is the manifest.",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("writeToolsEngine output missing %q:\n%s", want, out)
 		}
 	}
-	// The catalog count moves with every refresh.
-	if strings.Contains(out, "~870") {
-		t.Errorf("writeToolsEngine printed the retired catalog count:\n%s", out)
+	// The Tools tab's controls are UI guidance, which the chat doc carries.
+	for _, ui := range []string{`"Refresh catalog"`, `"Update all"`, "UI path for users"} {
+		if strings.Contains(out, ui) {
+			t.Errorf("writeToolsEngine carries the UI text %q:\n%s", ui, out)
+		}
+	}
+}
+
+func TestWriteUIGuide_DescribesTheToolsTab(t *testing.T) {
+	var b strings.Builder
+	writeUIGuide(&b, "/w", "/cfg")
+	line := lineWithPrefix(b.String(), "- Settings → Tools: ")
+	for _, want := range []string{`"Tools & runtimes" (a switch per row`, `"Add tool"`, `"Update all"`, `"Refresh catalog"`, `"MCP integrations"`} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the Settings → Tools bullet lacks %q: %q", want, line)
+		}
+	}
+	if strings.Contains(line, "environment steering doc") {
+		t.Errorf("the Settings → Tools bullet still points at environment.md: %q", line)
 	}
 	// The button text is "Refresh catalog"; the longer string is its aria-label.
-	if strings.Contains(out, `"Refresh the tool catalog"`) {
-		t.Errorf("writeToolsEngine quoted an aria-label as the on-screen label:\n%s", out)
+	if strings.Contains(line, `"Refresh the tool catalog"`) {
+		t.Errorf("the bullet quotes an aria-label as the on-screen label: %q", line)
 	}
 }
 

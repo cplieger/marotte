@@ -161,7 +161,7 @@ func TestFindRepoAgents_AgreesWithTheRule(t *testing.T) {
 	}
 
 	want := DedupeAgentFiles(entries(agentDoorFixture...))
-	got := findRepoAgents(repo)
+	got, _ := findRepoAgents(repo)
 
 	if len(got) != len(want) {
 		t.Fatalf("findRepoAgents = %+v (len %d), want the rule's %+v (len %d)", got, len(got), want, len(want))

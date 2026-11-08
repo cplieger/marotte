@@ -37,36 +37,3 @@ func FuzzTruncateUTF8(f *testing.F) {
 		}
 	})
 }
-
-// FuzzIsMarkdownHeading verifies isMarkdownHeading never panics and accepts only ATX headings.
-func FuzzIsMarkdownHeading(f *testing.F) {
-	f.Add("# Heading")
-	f.Add("## Sub")
-	f.Add("###### Deep")
-	f.Add("####### TooMany")
-	f.Add("")
-	f.Add("#")
-	f.Add("not a heading")
-	f.Add("#\t")
-
-	f.Fuzz(func(t *testing.T, line string) {
-		result := isMarkdownHeading(line)
-
-		if line == "" && result {
-			t.Fatal("isMarkdownHeading(\"\") should be false")
-		}
-
-		if result {
-			if line[0] != '#' {
-				t.Fatalf("isMarkdownHeading(%q) = true but doesn't start with #", line)
-			}
-			hashes := 0
-			for hashes < len(line) && line[hashes] == '#' {
-				hashes++
-			}
-			if hashes > 6 {
-				t.Fatalf("isMarkdownHeading(%q) = true with %d hashes", line, hashes)
-			}
-		}
-	})
-}

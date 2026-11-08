@@ -130,7 +130,7 @@ func TestRender_IncludesTheMemorySection(t *testing.T) {
 	writeRepo(t, workDir, "marotte", "git@github.com:cplieger/marotte.git", false)
 	cfg := t.TempDir()
 	mustWrite(t, filepath.Join(cfg, "config.json"), `{"memory_mode":"read_only"}`)
-	out := string(New(workDir, cfg, filepath.Join(cfg, "tools")).render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, nil, false))
+	out := string(New(workDir, cfg, filepath.Join(cfg, "tools")).render(t.Context(), MCPSnapshot{}, false, ForgeSnapshot{}, false, ToolsSnapshot{}, false))
 	if !strings.Contains(out, "## Memory\n") || !strings.Contains(out, "`repo:github/cplieger/marotte`") {
 		t.Errorf("environment.md lacks the Memory section with memory read only")
 	}
