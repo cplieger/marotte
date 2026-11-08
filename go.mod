@@ -5,7 +5,6 @@ go 1.27.3
 require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
-	github.com/cplieger/go/health v1.0.0-dev.3 // indirect
 	github.com/cplieger/go/httpclient v1.0.0-dev.4 // indirect
 	github.com/cplieger/go/jsonx v1.0.0-dev.2 // indirect
 	github.com/cplieger/go/scheduler v1.0.0-dev.1 // indirect
@@ -21,6 +20,7 @@ require (
 	github.com/cplieger/forgeapi/v2 v2.0.0-dev.4
 	github.com/cplieger/go/envx v1.0.0-dev.1
 	github.com/cplieger/go/filesafe v1.0.0-dev.4
+	github.com/cplieger/go/health v1.0.0-dev.3
 	github.com/cplieger/go/httpserver v1.0.0-dev.5
 	github.com/cplieger/go/keyenc v1.2.0-dev.2
 	github.com/cplieger/go/keylock v1.0.0-dev.1
