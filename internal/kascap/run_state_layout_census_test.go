@@ -90,8 +90,8 @@ func TestRunStateLayoutExtractors(t *testing.T) {
 
 // TestRunStateParentKeyMatchesBundle pins the one member the orphan sweep reads off a run's state: if a release
 // renames or nests it, the decode leaves every parent empty with no error and every parentless run's launching
-// session is reaped again. The second pattern pins that the probed state is the parsed file, so the member is
-// top-level in it.
+// session is reaped again. The second pattern pins that KAS's state reader returns the schema-parsed file whole,
+// so a top-level member of the file is a top-level member of what it reads.
 func TestRunStateParentKeyMatchesBundle(t *testing.T) {
 	want := reaperStringConst(t, "stateParentKey")
 	forEachBundle(t, func(t *testing.T, b bundle) {

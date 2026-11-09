@@ -404,8 +404,7 @@ func WithAuthReadiness(readiness *command.AuthReadiness) Option {
 	return func(h *Runtime) { h.authReadiness = readiness }
 }
 
-// WithSessionReaper wires the KAS session reaper a chat delete and the run-log sweep read; the orphan session
-// sweep is composition's (kirosession.OrphanSweep).
+// WithSessionReaper wires the KAS session reaper a chat delete and the run-log sweep read.
 func WithSessionReaper(r *kirosession.Reaper) Option {
 	return func(h *Runtime) { h.sessionReaper = r }
 }

@@ -1,7 +1,7 @@
-// Package kirosession reaps the kiro-cli / KAS on-disk session state that backs session/load
-// resume. It lives while a holder names it (a chat's chain, a run's launching session while KAS
-// keeps the run, a resident session, a live run's step sessions). marotte is the sole retention
-// authority: KAS's sessionEviction defaults to disabled and the boot conformance check keeps it so.
+// Package kirosession reaps the kiro-cli / KAS on-disk session state that backs session/load resume. It
+// lives while something names it: a holder's answer (a chat's chain, a resident session), KAS's run state
+// (a run's launching session), or its own record naming a run whose state exists (a step session). marotte
+// is the sole retention authority: KAS's sessionEviction defaults to disabled and boot conformance keeps it so.
 //
 // Layout (KAS 2.12):
 //
@@ -181,7 +181,7 @@ func (r *Reaper) sweep(referenced map[string]struct{}) int {
 			slog.Error("kirosession: REFUSING orphan sweep, keep-list is empty but sessions exist on disk",
 				"sessions_on_disk", n,
 				"sessions_dir", r.sessionsDir,
-				"hint", "the chat store and the Kiro home are pointing at different volumes; set KIRO_HOME under the same root as KIRO_CONFIG_DIR")
+				"hint", "no chat names a session: either the chat store and the Kiro home sit on different volumes (set KIRO_HOME under the same root as KIRO_CONFIG_DIR), or no chat holds one (only Runs-page, scheduled or triggered runs, or every chat deleted)")
 			return 0
 		}
 		return 0
