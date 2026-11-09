@@ -1219,6 +1219,42 @@ describe("the steer stack", () => {
     expect(followUps.map(labelOf)).toEqual(["After the next turn", "After 2 turns"]);
   });
 
+  // A steer left unread when its turn stopped goes out as the prompt the compaction's end opens.
+  it("draws a steer left unread by a stopped turn under the running compaction it waits for", () => {
+    withCompactRunning(three.slice(0, 1), true);
+    recordSteerQueued("chat-1", { id: "steer-1", text: "a", origin: "user", state: "unsent" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "b", origin: "user" });
+
+    expect(rows().map(textOf)).toEqual(["Compacting the context…", "a", "b", "first"]);
+    expect(rows().map(labelOf)).toEqual([
+      "Running",
+      "After the compaction",
+      "After the compaction",
+      "After the next turn",
+    ]);
+    expect(rowAt(1).getAttribute("aria-label")).toBe("After the compaction: a");
+    expect(rowAt(2).getAttribute("aria-label")).toBe("After the compaction: b");
+    // No turn runs for the arrow to stop, and nothing sends these sooner than the compaction's end.
+    expect(actions(rowAt(2))).not.toContain("Send this message now");
+  });
+
+  it("keeps a steer above a running compaction's row while its turn still runs", () => {
+    setSessions([
+      {
+        ...makeSession("chat-1"),
+        queued: [],
+        compact_queued: true,
+        compact_running: true,
+        turn_open: true,
+      },
+    ]);
+    setActive("chat-1");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "a", origin: "user" });
+
+    expect(rows().map(textOf)).toEqual(["a", "Compacting the context…"]);
+    expect(rows().map(labelOf)).toEqual(["Sent", "Running"]);
+  });
+
   it("clears the running row when the compaction ends, accepted or refused, leaving no stale chip", () => {
     withCompactStage(true, false);
     expect(rows()).toHaveLength(1);

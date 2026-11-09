@@ -89,6 +89,8 @@ interface StackState {
   perRow: boolean;
   /** No row is delivering: the server refuses every whole-buffer clear while one is. */
   clearable: boolean;
+  /** A compaction runs with no turn, so every steer waits for its end. */
+  behindCompaction: boolean;
   src: SteerStackSource;
 }
 
@@ -149,13 +151,16 @@ function render(
     waiting: steers.filter((e) => e.pending !== true).length,
     perRow: steers.every((e) => e.origin === "user"),
     clearable: !steers.some((e) => e.delivering === true),
+    behindCompaction: compact?.compacting === true && !compact.afterTurn,
     src,
   };
   const waiting = state.waiting;
+  const steerRows = steers.map((steer): DockRow => ({ kind: "steer", steer }));
+  const compactRow: DockRow[] = compact === undefined ? [] : [{ kind: "compact", slot: compact }];
+  // Top to bottom is send order: a running turn reads its steers before its end compacts, and with
+  // no turn the compaction's end sends them (drainSlots).
   const rows: DockRow[] = [
-    ...steers.map((steer): DockRow => ({ kind: "steer", steer })),
-    // Below the steers: a steer is read inside this turn, then the turn's end compacts before it sends a follow-up.
-    ...(compact === undefined ? [] : [{ kind: "compact", slot: compact } satisfies DockRow]),
+    ...(state.behindCompaction ? [...compactRow, ...steerRows] : [...steerRows, ...compactRow]),
     ...queued.map((slot): DockRow => ({ kind: "queued", slot })),
   ];
 
@@ -249,11 +254,11 @@ function updateRow(row: HTMLElement, steer: PendingSteer, state: StackState): vo
     row.dataset["compacted"] = "";
   }
   row.dataset["tooltip"] = readQuoted(steer.text);
-  row.setAttribute("aria-label", accessibleName(steer));
+  row.setAttribute("aria-label", accessibleName(steer, state.behindCompaction));
 
   const label = row.querySelector(".steer-state-label");
   if (label !== null) {
-    label.textContent = stateWord(steer);
+    label.textContent = stateWord(steer, state.behindCompaction);
   }
 
   syncText(row, steer.text);
@@ -297,6 +302,7 @@ function syncActions(row: HTMLElement, steer: PendingSteer, state: StackState): 
     String(state.waiting),
     state.perRow ? "1" : "0",
     state.clearable ? "1" : "0",
+    state.behindCompaction ? "1" : "0",
   ].join("\u0001");
   if (actionSig.get(row) === sig) {
     return;
@@ -315,7 +321,7 @@ function buildRow(steer: PendingSteer, state: StackState): HTMLElement {
     el("span", { className: "steer-state-icon", "aria-hidden": "true" }, iconEl(ICON_HOURGLASS)),
     // The word, not only the glyph. "Sent" is the fact this stack states: the message has left,
     // it is not a draft, and it is waiting.
-    el("span", { className: "steer-state-label" }, stateWord(steer)),
+    el("span", { className: "steer-state-label" }, stateWord(steer, state.behindCompaction)),
   );
 
   // Collapsed to one line and clipped to four lines in CSS, the quote band counting as one, never
@@ -338,7 +344,7 @@ function buildRow(steer: PendingSteer, state: StackState): HTMLElement {
       "data-tooltip": readQuoted(steer.text),
       // The state is carried by the glyph AND the label, both visual, so it has to be in the
       // accessible name too.
-      "aria-label": accessibleName(steer),
+      "aria-label": accessibleName(steer, state.behindCompaction),
     },
     stateEl,
     text,
@@ -365,10 +371,10 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
   const { waiting, perRow, clearable, src } = state;
   const user = steer.origin === "user";
   const controls: HTMLElement[] = [];
-  // Send now LEADS, and the destructive control stays last. Not on an unsent row: it has no turn to
-  // stop, and Edit already sends it.
+  // Send now LEADS, and the destructive control stays last. Not on an unsent row (Edit already sends
+  // it) nor behind a compaction: neither has a turn to stop.
   const sendNow = src.sendNow;
-  if (user && steer.unsent !== true && sendNow !== undefined) {
+  if (user && steer.unsent !== true && !state.behindCompaction && sendNow !== undefined) {
     controls.push(
       actionButton(
         ICON_ARROW_UP,
@@ -957,23 +963,23 @@ async function sendQueuedRowNow(messageID: string): Promise<void> {
 // The row's state in words, because the glyph and the label's styling are both visual, and the
 // WHOLE message collapsed to one line: the visible row clamps to fit and a reader who cannot see it
 // is not subject to that.
-function accessibleName(steer: PendingSteer): string {
+function accessibleName(steer: PendingSteer, behindCompaction: boolean): string {
   const steerText = oneLine(readQuoted(steer.text));
   if (steer.pending === true) {
     return `Sending, not in the agent's buffer yet: ${steerText}`;
   }
-  if (steer.unsent === true) {
-    return `${stateWord(steer)}: ${steerText}`;
-  }
   if (steer.delivering === true) {
-    return `${stateWord(steer)}, the agent is reading or dropping it: ${steerText}`;
+    return `${stateWord(steer, behindCompaction)}, the agent is reading or dropping it: ${steerText}`;
   }
-  return `${stateWord(steer)}, waiting for the agent: ${steerText}`;
+  if (steer.unsent === true || behindCompaction) {
+    return `${stateWord(steer, behindCompaction)}: ${steerText}`;
+  }
+  return `${stateWord(steer, behindCompaction)}, waiting for the agent: ${steerText}`;
 }
 
 // stateWord is the row's state in words, and the ONE spelling of it: the label and the accessible
 // name both read it. The compaction marker extends the SENT word alone.
-function stateWord(steer: PendingSteer): string {
+function stateWord(steer: PendingSteer, behindCompaction: boolean): string {
   if (steer.pending === true) {
     return "Sending";
   }
@@ -981,6 +987,10 @@ function stateWord(steer: PendingSteer): string {
     return "Delivering";
   }
   const sent = steer.caller === undefined ? "Sent" : sentBy(steer.caller);
+  if (behindCompaction) {
+    const wait = turnsPhrase(0, false);
+    return steer.caller === undefined ? `After ${wait}` : `${sent} \u00b7 after ${wait}`;
+  }
   if (steer.unsent === true) {
     return steer.caller === undefined
       ? "Unread \u00b7 sends next"
