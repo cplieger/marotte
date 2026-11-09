@@ -9,11 +9,11 @@
 .run-card {
   /* The COLLAPSED card's content height — head, foot row, foot hairline — which is
      the smallest real card, since only the body is inside the disclosure. Reads the
-     tokens the head and `.run-open` read so it moves with the pointer tier; a
+     tokens the head and `.run-foot` read so it moves with the pointer tier; a
      literal here under-stated a coarse card by 20px once. Under-stating an OPEN card
      is the right error: the container grows rather than shrinking under a reader.
      `block-heights.ts` shadows the resolved values. */
-  --run-card-content: calc(var(--row-tap) + var(--btn-h) + 1px);
+  --run-card-content: calc(var(--row-tap) + var(--action-band-h) + 1px);
 
   content-visibility: auto;
   contain-intrinsic-size: auto var(--run-card-content);
@@ -562,14 +562,17 @@
    Foot — the outcome, and the way out
    -------------------------------------------------------------------------- */
 
-/* Outside the disclosure, so a collapsed card still states its result. `.run-open` paints
-   the button box, its own target, so the card's clip leaves it whole with no block padding.
-   Box rung with a rule, like every nested foot. */
+/* Outside the disclosure, so a collapsed card still states its result. The band is the
+   turn footer's (29-turns.css): `--action-band-h` with `.run-open` centred in it, so its
+   hover fill keeps the footer buttons' air above and below. Box rung with a rule, like
+   every nested foot. */
 .run-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-3);
+  /* The band plus the hairline above it, which the border box counts. */
+  min-height: calc(var(--action-band-h) + 1px);
   padding-block: 0;
   padding-inline: var(--sp-3);
   border-block-start: 1px solid var(--c-border);
@@ -593,12 +596,11 @@
   color: var(--c-text-secondary);
   text-decoration: none;
 
-  /* The hit target is the shared expander (61-mcp-tools.css). The `padding-inline`
-     is the hover wash's inset, not the target. On a mouse the foot has no block
-     padding, so its hover wash lands flush in the card's bottom trailing corner,
-     which the card's own clip rounds: a child flush inside a clipping parent takes no
-     radius of its own. */
-  min-height: var(--btn-h);
+  /* The turn footer's control box height (61-mcp-tools.css), its own target on both
+     tiers. The `padding-inline` is the hover wash's inset, not the target. The foot's
+     `--sp-3` inline padding exceeds the card's inner radius, so the wash's corner sits
+     clear of the card's arc and `--r-sm` needs no concentric radius. */
+  height: var(--btn-h-sm);
   padding-inline: var(--sp-1);
   border-radius: var(--r-sm);
   transition:
