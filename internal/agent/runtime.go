@@ -926,25 +926,19 @@ func (rt *Runtime) awaitSweepGate() bool {
 	}
 }
 
-// The keep-list is every chat's chain plus every resident session (age is no evidence), or a resident session loses
-// its state past the 10-minute guard. An incomplete keep-list skips the sweep.
+// sweepSessionsOnce runs one orphan-session round; kirosession.OrphanSweep owns its keep-list.
 func (rt *Runtime) sweepSessionsOnce() {
 	ctx, cancel := rt.lifecycle.derivedContext()
 	defer cancel()
-	held, err := rt.sessionRefs(ctx)
-	if err != nil {
-		slog.Warn("kirosession: skipping orphan sweep, a session holder could not answer", "err", err)
-		return
-	}
-	live, _ := rt.HeldSessions(ctx)
-	refs := make(map[string]struct{}, len(held)+len(live))
-	for _, ids := range [][]string{held, live} {
-		for _, id := range ids {
-			refs[id] = struct{}{}
-		}
-	}
-	rt.sessionReaper.Sweep(refs)
+	kirosession.NewOrphanSweep(rt.sessionReaper, kirosession.Holders{
+		Records: []kirosession.Holder{heldFunc(rt.sessionRefs)},
+		Live:    []kirosession.Holder{rt},
+	}).Once(ctx)
 }
+
+type heldFunc func(context.Context) ([]string, error)
+
+func (f heldFunc) HeldSessions(ctx context.Context) ([]string, error) { return f(ctx) }
 
 // HeldSessions returns every resident session's id, chat and run host alike, and never fails.
 func (rt *Runtime) HeldSessions(context.Context) ([]string, error) {

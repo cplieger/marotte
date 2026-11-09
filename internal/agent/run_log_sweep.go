@@ -210,36 +210,17 @@ func (rt *Runtime) runsAbsent(ctx context.Context, t *logSweepTally) (func(workf
 	if err != nil {
 		return nil, fmt.Errorf("KAS's run state could not be listed: %w", err)
 	}
-	inWorkspace, err := workspaceRunStates(rt.lifecycle.workDir)
-	if err != nil {
-		return nil, fmt.Errorf("the workspace's run state could not be listed: %w", err)
-	}
 	return func(workflowID string) bool {
 		if _, ok := listed[workflowID]; ok {
 			t.inList++
 			return false
 		}
-		_, inStore := onDisk[workflowID]
-		if _, ok := inWorkspace[workflowID]; ok || inStore {
+		if _, ok := onDisk[workflowID]; ok {
 			t.onDisk++
 			return false
 		}
 		return true
 	}, nil
-}
-
-// workspaceRunStates names every entry of workDir's .kiro/workflows: KAS still finds a run's state there by id for
-// inspect, retry and delete, though its list scans only the session store. Recipes there never share a run's id.
-func workspaceRunStates(workDir string) (map[string]struct{}, error) {
-	entries, err := os.ReadDir(filepath.Join(workDir, ".kiro", "workflows"))
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
-	}
-	out := make(map[string]struct{}, len(entries))
-	for _, e := range entries {
-		out[e.Name()] = struct{}{}
-	}
-	return out, nil
 }
 
 // lastWrite is a run log's age source: the later of its entries file's and its directory's modification time, since
