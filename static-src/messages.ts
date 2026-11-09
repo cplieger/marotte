@@ -1234,7 +1234,7 @@ let coverCheckFrame = 0;
  */
 function releaseCoverOverBuiltRows(chatID: string): void {
   coverOwed = "";
-  if (coldBuilds.size === 0 || !coverHeld(chatID)) {
+  if (!paintedOwesBuild() || !coverHeld(chatID)) {
     releaseCover(chatID);
     return;
   }
@@ -1256,7 +1256,7 @@ function liftOwedCover(): void {
     return;
   }
   // At the landing, not the scroller: a page answered in a task is checked before the owner's follow write lands.
-  if (coldBuilds.size === 0 || !spacerInView(landingTop() - getScrollEl().scrollTop)) {
+  if (!paintedOwesBuild() || !spacerInView(landingTop() - getScrollEl().scrollTop)) {
     coverOwed = "";
     releaseCover(chatID);
   }
@@ -2409,6 +2409,17 @@ const turnBodyBuilds = new Map<
  * the cards finishes no body but a covered reader's.
  */
 const coldBuilds = new Set<string>();
+
+/** Whether the painted chat owes a body. The set spans chats: the one left keeps its entries until its drain's next
+ *  build finds no card, and they never hold this chat's cover. */
+function paintedOwesBuild(): boolean {
+  for (const id of coldBuilds) {
+    if (turnByID.has(id)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /** Whether `turnID`'s body is mid-build; the full pass keeps its hands off a partial body. */
 function hasPendingBuild(turnID: string): boolean {
