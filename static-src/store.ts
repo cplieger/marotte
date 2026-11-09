@@ -854,6 +854,7 @@ export function upsertHeader(h: ChatHeader): void {
         queued: h.queued_prompts ?? [],
         compact_queued: h.compact_pending !== undefined,
         compact_running: h.compact_pending?.running === true,
+        compact_sends: h.compact_pending?.sends === true,
         tangent: h.tangent ?? false,
       };
       if (h.compaction_watermark !== undefined) {
@@ -895,6 +896,7 @@ export function upsertHeader(h: ChatHeader): void {
     queued: h.queued_prompts ?? [],
     compact_queued: h.compact_pending !== undefined,
     compact_running: h.compact_pending?.running === true,
+    compact_sends: h.compact_pending?.sends === true,
     tangent: h.tangent ?? false,
     turns: new Map(),
     turn_order: [],

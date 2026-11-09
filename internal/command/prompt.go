@@ -386,19 +386,12 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 	// The prompt's intent begins here: a close that commits after this stamp ends it wherever it waits.
 	stamp := roles.admission.LifeStamp()
 
-	queued, err := queueBehindCompaction(ctx, roles, cmd.ChatID, &p)
-	if err != nil || queued {
-		if err != nil {
-			return nil, err
-		}
-		return promptAck{Accepted: true, MessageID: p.MessageID, Queued: true}, nil
-	}
-
-	// Admission FIRST: a refused admission writes nothing, so the log never holds a turn no process
-	// owns. It also dedupes a re-send of a running prompt, which meets Busy and becomes a steer.
-	res, err := reservePromptAdmission(ctx, roles, cmd.ChatID, stamp, p.MessageID)
-	if err != nil {
+	res, queued, err := admitOrQueue(ctx, roles, cmd.ChatID, stamp, &p)
+	switch {
+	case err != nil:
 		return nil, err
+	case queued:
+		return promptAck{Accepted: true, MessageID: p.MessageID, Queued: true}, nil
 	}
 	if err := launchPrompt(ctx, roles, cmd.ChatID, &p, &launch{composer: true, res: res}); err != nil {
 		return nil, err
@@ -406,10 +399,40 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 	return promptAck{Accepted: true, MessageID: p.MessageID}, nil
 }
 
+// admitOrQueue reserves the prompt's turn, or queues the prompt behind a compaction running on
+// the chat (queued), which a turn opened now would sit under.
+func admitOrQueue(
+	ctx context.Context, roles *promptRoles, chatID marotte.ChatID, stamp uint64, p *marotte.PromptCommand,
+) (res Reservation, queued bool, err error) {
+	for {
+		// Admission FIRST: a refused admission writes nothing, so the log never holds a turn no process
+		// owns. It also dedupes a re-send of a running prompt, which meets Busy and becomes a steer.
+		res, err = reservePromptAdmission(ctx, roles, chatID, stamp, p.MessageID)
+		if err != nil || !compactingBeside(roles, res) {
+			return res, false, err
+		}
+		queued, err = queueBehindCompaction(ctx, roles, chatID, p)
+		if queued || err != nil {
+			return Reservation{}, queued, err
+		}
+		// The compaction ended between the reservation's release and the append: reserve again.
+	}
+}
+
+// compactingBeside gives res back when a compaction runs on its chat, reporting whether it did.
+// A reserved turn stops any new claim, so a compaction seen here was claimed before res and the
+// caller must not open a turn under it.
+func compactingBeside(roles *promptRoles, res Reservation) bool {
+	if roles.followups == nil || !roles.followups.Compacting(res.Chat) {
+		return false
+	}
+	roles.admission.ReleaseTurnReservation(res)
+	return true
+}
+
 // queueBehindCompaction holds a validated prompt that reached a chat whose compaction runs
 // with no turn live as a queued row, which the compaction's end sends: a turn opened now
-// would show nothing until then. False when no compaction runs or a turn is live (admission
-// answers it).
+// would show nothing until then. False when no compaction runs or a turn is live.
 func queueBehindCompaction(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, p *marotte.PromptCommand) (bool, error) {
 	if roles.followups == nil {
 		return false, nil

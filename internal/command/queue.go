@@ -253,12 +253,13 @@ func markQueuedNext(ctx context.Context, roles *promptRoles, chatID marotte.Chat
 		return false, nil
 	case held:
 		return false, StatusErrorReason(http.StatusConflict, reasonHeld, errQueueHeld)
-	case roles.followups.Compacting(chatID):
-		return false, nil
 	}
 	res, reserved := roles.admission.TryReserveIdleTurn(chatID, marotte.TurnSourcePrompt, stamp)
-	if !reserved {
+	switch {
+	case !reserved:
 		return true, nil
+	case compactingBeside(roles, res):
+		return false, nil
 	}
 	row, ok, err := roles.followups.NextMarkedRow(ctx, chatID)
 	if err != nil || !ok {
@@ -293,6 +294,12 @@ type CloseFacts struct {
 	Unattended bool
 	// Tail names the close tail's hold on the chat's session, which TryReserveDrain ends; zero names none.
 	Tail uint64
+}
+
+// Clean reports a close whose drain sends the first queued user row: a clean or unattended
+// one. After any other, only a row of AfterStop goes.
+func (cl CloseFacts) Clean() bool {
+	return marotte.SeverityOf(cl.Outcome) == marotte.TurnSeverityClean || cl.Unattended
 }
 
 // drainAfterClose sends at most one prompt for a close, under the chat's steer lock from the pick
@@ -355,8 +362,7 @@ func drainReserved(
 	if !ok {
 		return false
 	}
-	if roles.followups != nil && roles.followups.Compacting(chatID) {
-		roles.admission.ReleaseTurnReservation(res)
+	if compactingBeside(roles, res) {
 		return true
 	}
 	send(res)
@@ -377,7 +383,7 @@ func sendReserved(ctx context.Context, roles *promptRoles, res Reservation, cl C
 			return
 		}
 	}
-	clean := marotte.SeverityOf(cl.Outcome) == marotte.TurnSeverityClean || cl.Unattended
+	clean := cl.Clean()
 	var only []string
 	if !clean {
 		only = cl.AfterStop

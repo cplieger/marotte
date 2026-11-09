@@ -22,7 +22,8 @@ var errQueueChatGone = errors.New("agent: the chat has no record to queue on")
 // row, or the caller sees nothing to queue behind. A life that ended or a close being decided appends nothing, so a
 // close's impact read sees every row it stops. A row appended with no turn live is owed a send despite a stop or a
 // broken close: kasExec.holdRows owns which drain takes one appended under a hold, compactCall.owed one appended
-// behind a compaction.
+// behind a compaction. Unless that drain sends the queue's head (compactCall.head), the row is placed ahead of the
+// rows the close paused (placeOwed), so the queue lists rows in the order they go.
 func (bc *bridgeCoordinator) AppendIfLive(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (bool, error) {
 	return bc.appendBehind(ctx, chatID, false, fn)
 }
@@ -46,24 +47,16 @@ func (bc *bridgeCoordinator) appendBehind(
 		if v, _ := bc.turns.gates.admit(chatID, lc.stamp); lc.ended || v != gateAdmitted {
 			return nil
 		}
-		turnLive, holds := lc.liveLockedState(), lc.kas.may().holdRows
-		compacting := bc.autoCompact.compacting(chatID)
+		b := bc.behindLocked(lc)
 		switch {
-		case onlyCompacting && (turnLive || !compacting):
+		case onlyCompacting && (b.turnLive || !b.compacting):
 			return nil
-		case !turnLive && !holds && !compacting:
+		case !b.turnLive && !b.holds && !b.compacting:
 			return nil
 		}
 		live = true
-		var keep func(added []string)
-		switch {
-		case turnLive:
-		case holds:
-			keep = lc.kas.keepHoldRows
-		default:
-			keep = func(added []string) { bc.autoCompact.owe(chatID, added) }
-		}
-		return bc.appendLocked(ctx, chatID, keep, fn)
+		keep, place := bc.owedWrites(lc, b)
+		return bc.appendLocked(ctx, chatID, keep, place, fn)
 	})
 	if errors.Is(err, errNoLife) {
 		return false, nil
@@ -71,10 +64,56 @@ func (bc *bridgeCoordinator) appendBehind(
 	return live, err
 }
 
-// appendLocked is AppendIfLive's write, in the lifecycle section: fn on the record, and the rows it added handed to keep, which
-// records them for the drain they are owed to; nil keeps nothing.
+// queueBehind is what a row appended in the lifecycle section queues behind.
+type queueBehind struct {
+	// owed are the rows already owed to the running compaction (compactCall.owed).
+	owed []string
+	// head is the running compaction's compactCall.head.
+	turnLive, holds, compacting, head bool
+}
+
+func (bc *bridgeCoordinator) behindLocked(lc *chatLifecycle) queueBehind {
+	compacting, head, owed := bc.autoCompact.behind(lc.chatID)
+	return queueBehind{
+		owed: owed, turnLive: lc.liveLockedState(), holds: lc.kas.may().holdRows, compacting: compacting, head: head,
+	}
+}
+
+// owedWrites is how appendLocked records rows appended with no turn live: keep hands them to the drain they are owed
+// to, place moves them ahead of the rows a broken close paused. Both nil while a turn is live.
+func (bc *bridgeCoordinator) owedWrites(lc *chatLifecycle, b queueBehind) (keep func([]string), place func(*marotte.Chat, []string)) {
+	chatID := lc.chatID
+	switch {
+	case b.turnLive:
+		return nil, nil
+	case b.holds:
+		keep = func(added []string) {
+			lc.kas.keepHoldRows(added)
+			if b.compacting {
+				bc.autoCompact.owe(chatID, nil)
+			}
+		}
+	default:
+		keep = func(added []string) { bc.autoCompact.owe(chatID, added) }
+	}
+	if b.compacting && b.head {
+		return keep, nil
+	}
+	owed := slices.Concat(lc.kas.holdRows, b.owed)
+	return keep, func(c *marotte.Chat, added []string) {
+		bc.placeOwed(chatID, c, added, owed)
+		// In the row's own write, so no page reads the moved row under a compaction that sends none.
+		if p := c.CompactPending; b.compacting && p != nil && p.Running {
+			p.Sends = true
+		}
+	}
+}
+
+// appendLocked is AppendIfLive's write, in the lifecycle section: fn on the record, then place on the rows it added in
+// the same write, and those rows handed to keep, which records them for the drain they are owed to; nil skips either.
 func (bc *bridgeCoordinator) appendLocked(
-	ctx context.Context, chatID marotte.ChatID, keep func(added []string), fn func(c *marotte.Chat) error,
+	ctx context.Context, chatID marotte.ChatID,
+	keep func(added []string), place func(c *marotte.Chat, added []string), fn func(c *marotte.Chat) error,
 ) error {
 	var fnErr error
 	var added []string
@@ -84,6 +123,9 @@ func (bc *bridgeCoordinator) appendLocked(
 			return false
 		}
 		added, fnErr = appendedRows(c, fn)
+		if fnErr == nil && len(added) > 0 && place != nil {
+			place(c, added)
+		}
 		return fnErr == nil && len(added) > 0
 	}); err != nil {
 		return err
@@ -92,6 +134,32 @@ func (bc *bridgeCoordinator) appendLocked(
 		keep(added)
 	}
 	return fnErr
+}
+
+// placeOwed moves the rows just added, which a broken close owes a send, ahead of the rows it paused: after the row
+// marked next and the rows owed before them, every order kept, as MarkNext moves a row.
+func (bc *bridgeCoordinator) placeOwed(chatID marotte.ChatID, c *marotte.Chat, added, owed []string) {
+	moved := make([]marotte.QueuedPrompt, 0, len(added))
+	rest := make([]marotte.QueuedPrompt, 0, len(c.QueuedPrompts))
+	for i := range c.QueuedPrompts {
+		if slices.Contains(added, c.QueuedPrompts[i].ID) {
+			moved = append(moved, c.QueuedPrompts[i])
+		} else {
+			rest = append(rest, c.QueuedPrompts[i])
+		}
+	}
+	at := slices.IndexFunc(rest, func(q marotte.QueuedPrompt) bool {
+		return bc.sendable(chatID, &q) && !q.Next && !slices.Contains(owed, q.ID)
+	})
+	if at < 0 {
+		at = len(rest)
+	}
+	c.QueuedPrompts = slices.Insert(rest, at, moved...)
+}
+
+// sendable reports a queued row a drain may send: not held or carried, and its turn not opened by this process.
+func (bc *bridgeCoordinator) sendable(chatID marotte.ChatID, q *marotte.QueuedPrompt) bool {
+	return !q.Held && !q.Carried() && !bc.chatStore.Opened(chatID, q.ID)
 }
 
 // appendedRows applies fn to c and answers the ids of the queued rows it added.
@@ -162,9 +230,6 @@ func (bc *bridgeCoordinator) MarkNext(ctx context.Context, chatID marotte.ChatID
 	if bc.chatStore.Opened(chatID, id) {
 		return true, true, false, nil
 	}
-	sendable := func(q *marotte.QueuedPrompt) bool {
-		return !q.Held && !q.Carried() && !bc.chatStore.Opened(chatID, q.ID)
-	}
 	_, err = bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		at := -1
 		if exists {
@@ -175,7 +240,7 @@ func (bc *bridgeCoordinator) MarkNext(ctx context.Context, chatID marotte.ChatID
 		}
 		found = true
 		row := c.QueuedPrompts[at]
-		if !sendable(&row) {
+		if !bc.sendable(chatID, &row) {
 			held = true
 			return false
 		}
@@ -183,7 +248,7 @@ func (bc *bridgeCoordinator) MarkNext(ctx context.Context, chatID marotte.ChatID
 		for i := range rest {
 			rest[i].Next = false
 		}
-		head := slices.IndexFunc(rest, func(q marotte.QueuedPrompt) bool { return sendable(&q) })
+		head := slices.IndexFunc(rest, func(q marotte.QueuedPrompt) bool { return bc.sendable(chatID, &q) })
 		if head < 0 {
 			head = len(rest)
 		}

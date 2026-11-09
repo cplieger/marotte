@@ -1153,17 +1153,22 @@ describe("the steer stack", () => {
     expect(actions(firstRow())).toEqual([]);
   });
 
-  it("draws follow-ups sent during a running compaction under it, the first waiting for it", () => {
+  function withCompactRunning(queued: QueuedPrompt[], sends: boolean): void {
     setSessions([
       {
         ...makeSession("chat-1"),
-        queued: three,
+        queued,
         compact_queued: true,
         compact_running: true,
+        compact_sends: sends,
         turn_open: false,
       },
     ]);
     setActive("chat-1");
+  }
+
+  it("draws follow-ups sent during a running compaction under it, the first waiting for it", () => {
+    withCompactRunning(three, true);
 
     expect(rows().map(textOf)).toEqual(["Compacting the context…", "first", "second", "third"]);
     expect(rows().map(labelOf)).toEqual([
@@ -1178,6 +1183,40 @@ describe("the steer stack", () => {
     expect(actionButton(rowAt(2), "Send this follow-up now").dataset["tooltip"]).toBe(
       "Sends this follow-up first once the compaction ends",
     );
+  });
+
+  // After a stopped or refused turn the server sends no paused follow-up when its compaction ends,
+  // so each still waits for turns; send now still makes one go at that end.
+  it("counts follow-ups in turns behind a compaction whose end sends none of them", () => {
+    withCompactRunning(three, false);
+
+    expect(rows().map(labelOf)).toEqual([
+      "Running",
+      "After the next turn",
+      "After 2 turns",
+      "After 3 turns",
+    ]);
+    expect(actionButton(rowAt(1), "Send this follow-up now").dataset["tooltip"]).toBe(
+      "Sends this follow-up first once the compaction ends",
+    );
+  });
+
+  it("puts a follow-up marked to send next at the compaction's end, even one whose end sends none", () => {
+    withCompactRunning(
+      [{ ...three[0], next: true } as QueuedPrompt, three[1] as QueuedPrompt],
+      false,
+    );
+
+    expect(rows().map(labelOf)).toEqual(["Running", "After the compaction", "After the next turn"]);
+  });
+
+  // The compaction's end sends unread steers as their own prompt before any follow-up.
+  it("counts the unread steers' prompt ahead of the follow-ups behind a compaction", () => {
+    withCompactRunning(three.slice(0, 2), true);
+    recordSteerQueued("chat-1", { id: "steer-1", text: "a", origin: "user", state: "unsent" });
+
+    const followUps = rows().filter((r) => textOf(r) === "first" || textOf(r) === "second");
+    expect(followUps.map(labelOf)).toEqual(["After the next turn", "After 2 turns"]);
   });
 
   it("clears the running row when the compaction ends, accepted or refused, leaving no stale chip", () => {

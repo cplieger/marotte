@@ -2461,6 +2461,8 @@ export interface PendingCompaction {
   requested_at: number;
   /** Running is set once the compaction is claimed and its call made; the row goes when the call ends. */
   running?: boolean;
+  /** Sends is set on a running compaction with no turn beside it whose end sends the first sendable queued row. */
+  sends?: boolean;
 }
 
 /**

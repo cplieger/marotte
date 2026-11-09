@@ -679,3 +679,99 @@ func TestQueuePrompt_BehindACompactionResolvesAContextReference(t *testing.T) {
 		t.Errorf("prompt blocks = %v, want a resource block for %s with the file's text", blocks, token)
 	}
 }
+
+func compactPending(t *testing.T, cs *testChatStore, chatID marotte.ChatID) marotte.PendingCompaction {
+	t.Helper()
+	c, ok := cs.Get(t.Context(), chatID)
+	if !ok || c.CompactPending == nil {
+		return marotte.PendingCompaction{}
+	}
+	return *c.CompactPending
+}
+
+// contextLimitCompaction is chat c1 whose turn m-old was queued behind ended refused for the context's size, its
+// turn-end compaction running until release is called; tails counts the closes whose drain returned.
+func contextLimitCompaction(t *testing.T) (h *Runtime, cs *testChatStore, tails *atomic.Int32, release func()) {
+	t.Helper()
+	h, cs, br, tails := idleAfterFirstTurn(t, "/tmp/work")
+	h.coord.autoCompact.policy = func(context.Context) (bool, int) { return true, 90 }
+	release = holdCall(t, br, marotte.MethodSessionCompact)
+	id, _ := h.stagePromptTurn(t, "c1")
+	queueTextDuring(t, h, "m-old", "queued while the turn ran")
+	h.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "too long", marotte.FailureKindContextLimit, 0)
+	waitForCall(t, br, marotte.MethodSessionCompact)
+	return h, cs, tails, release
+}
+
+// The compaction after a turn the model refused for the context's size sends no row that turn left waiting, so the
+// header says its end sends none, and the row is still queued once it ends.
+func TestCompaction_AfterARefusedTurnSendsNoRowThatTurnLeft(t *testing.T) {
+	_, cs, tails, release := contextLimitCompaction(t)
+	if p := compactPending(t, cs, "c1"); !p.Running || p.Sends {
+		t.Errorf("compaction row = %+v, want running with no row sent at its end", p)
+	}
+
+	release()
+
+	waitFor(t, func() bool { return tails.Load() == 2 && compactPending(t, cs, "c1") == marotte.PendingCompaction{} })
+	if ids := promptIDs(t, cs, "c1"); slices.Contains(ids, "m-old") {
+		t.Errorf("turns opened = %v, want m-old still waiting", ids)
+	}
+	if ids, _ := queuedIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-old"}) {
+		t.Errorf("queue = %v, want m-old still waiting", ids)
+	}
+}
+
+// A message sent during that compaction is owed its send, so it goes first: the queue lists it above the row the
+// refused turn left, the header says the compaction's end sends a row, and the two turns open in that order.
+func TestCompaction_AfterARefusedTurnListsTheMessageSentDuringItFirst(t *testing.T) {
+	h, cs, _, release := contextLimitCompaction(t)
+
+	queueTextDuring(t, h, "m-new", "sent during the compaction")
+
+	if ids, _ := queuedIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-new", "m-old"}) {
+		t.Errorf("queue during the compaction = %v, want [m-new m-old], the order they are sent in", ids)
+	}
+	if p := compactPending(t, cs, "c1"); !p.Running || !p.Sends {
+		t.Errorf("compaction row = %+v, want running with a row sent at its end", p)
+	}
+
+	release()
+
+	waitFor(t, func() bool {
+		ids := promptIDs(t, cs, "c1")
+		return slices.Contains(ids, "m-old") && len(queuedRows(t, cs, "c1")) == 0 && !h.coord.turns.live("c1")
+	})
+	ids := promptIDs(t, cs, "c1")
+	if n, o := slices.Index(ids, "m-new"), slices.Index(ids, "m-old"); n < 0 || n > o {
+		t.Errorf("turns opened = %v, want m-new before m-old", ids)
+	}
+}
+
+// The reader's compaction on an idle chat and the one a clean turn end runs each send the first queued row when they
+// end, which the header says while they run.
+func TestCompaction_TheHeaderSaysAnIdleOrCleanEndsCompactionSendsARow(t *testing.T) {
+	t.Run("idle request", func(t *testing.T) {
+		_, cs, _ := compactingHub(t)
+		if p := compactPending(t, cs, "c1"); !p.Running || !p.Sends {
+			t.Errorf("compaction row = %+v, want running with a row sent at its end", p)
+		}
+	})
+	t.Run("clean turn end", func(t *testing.T) {
+		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+		h.coord.autoCompact.policy = func(context.Context) (bool, int) { return true, 90 }
+		if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+			c.Usage = marotte.Usage{HasRealData: true, ContextPct: 95}
+			return true
+		}); err != nil {
+			t.Fatal(err)
+		}
+		release := holdCall(t, br, marotte.MethodSessionCompact)
+		defer release()
+		runPrompt(t, h, cs, "c1", "m-second")
+		waitForCall(t, br, marotte.MethodSessionCompact)
+		if p := compactPending(t, cs, "c1"); !p.Running || !p.Sends {
+			t.Errorf("compaction row = %+v, want running with a row sent at its end", p)
+		}
+	})
+}

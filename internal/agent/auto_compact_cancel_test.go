@@ -269,13 +269,13 @@ func TestAutoCompact_ARepressAfterACancelDuringARefusedTurnEndRunRunsAtTheReleas
 			r.pressUnderHold(t)
 		})
 	}
-	accepted, _ := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
+	accepted, _ := r.ac.afterTurn(t.Context(), "c1", turnEnd{id: r.lastTurn()})
 	if accepted || !r.isQueued() {
 		t.Fatalf("after the refused turn end: accepted %v, queued %v; want not accepted and the re-press kept", accepted, r.isQueued())
 	}
 	r.setRefuse(false)
 	r.onCompact = nil
-	r.ac.afterRelease(t.Context(), "c1", accepted)
+	r.ac.afterRelease(t.Context(), "c1", turnEnd{}, accepted)
 	if r.count() != 2 || r.isQueued() || len(r.failures) != 0 {
 		t.Errorf("the re-press at the release: calls %d, queued %v, failures %v; want 2 calls, the row gone, no failure",
 			r.count(), r.isQueued(), r.failures)
@@ -375,7 +375,7 @@ func TestAutoCompact_ACancelArrivingAsTheReleaseClaimsHolds(t *testing.T) {
 	r.ac.queue = hookQueue{compactQueue: r.ac.queue, after: cancelOnce(t, r.ac.cancel)}
 	r.setRefuse(true)
 	r.onCompact = r.kasOpensTheNextTurn
-	r.ac.afterRelease(t.Context(), "c1", false)
+	r.ac.afterRelease(t.Context(), "c1", turnEnd{}, false)
 	if r.isQueued() || r.count() != 1 || len(r.failures) != 0 {
 		t.Errorf("a cancel as the release claimed: queued %v, calls %d, failures %v; want not queued, 1 call, no failure",
 			r.isQueued(), r.count(), r.failures)

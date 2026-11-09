@@ -969,6 +969,44 @@ describe("submitPrompt while a compaction runs", () => {
     expect(mockSendPromptTo).not.toHaveBeenCalled();
   });
 
+  // The compaction ended and its drain opened a turn before the row landed, so the server capped it
+  // at the draft size as a row behind a turn. Steer mode then steers into that turn.
+  it.each([
+    ["steer", 1, "steered"],
+    ["queue", 0, "failed"],
+  ] as const)(
+    "takes the busy verb again in %s mode when the row was refused for its size after the compaction ended",
+    async (mode, steers, result) => {
+      compactingChat(mode);
+      mockQueue.mockImplementation(() => {
+        const session = get("c1");
+        if (session !== undefined) {
+          session.compact_running = false;
+        }
+        return steerHandle({
+          status: "error",
+          error: { message: "a message queued behind a running turn is capped", status: 413 },
+        });
+      });
+
+      expect(await submitPrompt("c1", "x".repeat(17 * 1024))).toBe(result);
+      expect(mockQueue).toHaveBeenCalledTimes(1);
+      expect(mockSteer).toHaveBeenCalledTimes(steers);
+      expect(mockSendPromptTo).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps the size refusal when the page still shows the compaction", async () => {
+    compactingChat("steer");
+    mockQueue.mockReturnValue(
+      steerHandle({ status: "error", error: { message: "capped", status: 413 } }),
+    );
+
+    expect(await submitPrompt("c1", "x".repeat(17 * 1024))).toBe("failed");
+    expect(mockSteer).not.toHaveBeenCalled();
+    expect(mockReportSendRefused).toHaveBeenCalledWith("capped");
+  });
+
   it("sends the prompt it should have been when the compaction ended first", async () => {
     compactingChat("steer");
     mockQueue.mockReturnValue(steerRefused("nothing is running", "no_turn"));

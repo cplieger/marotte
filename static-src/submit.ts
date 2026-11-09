@@ -226,9 +226,32 @@ function busy(send: Send, convertBudget: number): Promise<SubmitResult> {
     return Promise.resolve("held");
   }
   const s = get(send.chatID);
-  return s?.interrupt_mode === "queue" || s?.compact_running === true
-    ? queue(send, convertBudget)
+  if (s?.interrupt_mode === "queue") {
+    return queue(send, convertBudget);
+  }
+  return s?.compact_running === true
+    ? queueBehindCompaction(send, convertBudget)
     : steer(send, convertBudget);
+}
+
+/** Steer mode's queue_prompt behind a compaction. The server caps a row behind a turn at the draft
+ *  size (413), so a refusal that arrives once the page saw the compaction end is the drain's turn
+ *  opening first: the send takes the busy verb again on the fresh state. */
+async function queueBehindCompaction(
+  send: TypedSend,
+  convertBudget: number,
+): Promise<SubmitResult> {
+  const { chatID, text, messageID } = send;
+  const outcome = await queuePrompt.dispatch({ chatID, text, messageID, ...extras(send) }).outcome;
+  if (
+    outcome.status === "error" &&
+    outcome.error.status === 413 &&
+    get(chatID)?.compact_running !== true &&
+    convertBudget > 0
+  ) {
+    return busy(send, convertBudget - 1);
+  }
+  return settleBusy(send, outcome, "queued", convertBudget);
 }
 
 /** How many prompt⇄steer conversions one submit may make. Two allows the honest

@@ -221,7 +221,7 @@ func (r *compactRig) finishTurn() { r.setLive(false) }
 // turnEnd runs the turn-end trigger for the turn that finished last.
 func (r *compactRig) turnEnd(t *testing.T, contextLimit bool) {
 	t.Helper()
-	r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), contextLimit)
+	r.ac.afterTurn(t.Context(), "c1", turnEnd{id: r.lastTurn(), contextLimit: contextLimit})
 }
 
 // kasOpensTheNextTurn closes the live turn and opens the next before the closed turn's end ran.
@@ -458,7 +458,7 @@ func TestAutoCompact_AReadingOutsideATurnQueuesNothing(t *testing.T) {
 func TestAutoCompact_TurnEndSkipsALiveChat(t *testing.T) {
 	r := newCompactRig(90)
 	r.turn(t, 95)
-	r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
+	r.ac.afterTurn(t.Context(), "c1", turnEnd{id: r.lastTurn()})
 	if got := r.count(); got != 0 {
 		t.Errorf("a live chat got %d compact calls at turn end, want 0", got)
 	}
@@ -518,13 +518,13 @@ func TestAutoCompact_APressDuringTheTurnEndsRunIsSatisfiedByIt(t *testing.T) {
 	r := newCompactRig(90)
 	r.reading(93)
 	r.onCompact = func() { r.pressUnderHold(t) }
-	accepted, _ := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
+	accepted, _ := r.ac.afterTurn(t.Context(), "c1", turnEnd{id: r.lastTurn()})
 	r.onCompact = nil
 	if !accepted || r.isQueued() {
 		t.Fatalf("a press during the turn end's run: accepted %v, queued %v; want accepted and the row taken by it",
 			accepted, r.isQueued())
 	}
-	r.ac.afterRelease(t.Context(), "c1", accepted)
+	r.ac.afterRelease(t.Context(), "c1", turnEnd{}, accepted)
 	if got := r.count(); got != 1 {
 		t.Errorf("the close made %d compact calls, want 1", got)
 	}
@@ -535,12 +535,12 @@ func TestAutoCompact_ARowWrittenUnderTheHoldRunsAtTheRelease(t *testing.T) {
 	r := newCompactRig(90)
 	r.turn(t, 50)
 	r.setLive(false)
-	accepted, _ := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
+	accepted, _ := r.ac.afterTurn(t.Context(), "c1", turnEnd{id: r.lastTurn()})
 	if accepted {
 		t.Fatal("a turn end at 50 with pct 90 and nothing queued reported a compaction")
 	}
 	r.pressUnderHold(t)
-	r.ac.afterRelease(t.Context(), "c1", accepted)
+	r.ac.afterRelease(t.Context(), "c1", turnEnd{}, accepted)
 	if r.count() != 1 || r.isQueued() {
 		t.Errorf("the row written under the hold: calls %d, queued %v; want 1 call and the row gone", r.count(), r.isQueued())
 	}
@@ -562,13 +562,13 @@ func TestAutoCompact_APressAfterARefusedTurnEndRunRunsAtTheRelease(t *testing.T)
 			r := newCompactRig(90)
 			r.reading(93)
 			r.setRefuse(true)
-			accepted, _ := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
+			accepted, _ := r.ac.afterTurn(t.Context(), "c1", turnEnd{id: r.lastTurn()})
 			if accepted {
 				t.Errorf("a refused turn-end call reported accepted")
 			}
 			r.pressUnderHold(t)
 			r.setRefuse(tc.refuseAgain)
-			r.ac.afterRelease(t.Context(), "c1", accepted)
+			r.ac.afterRelease(t.Context(), "c1", turnEnd{}, accepted)
 			if r.count() != 2 || r.isQueued() || len(r.failures) != tc.wantFailures {
 				t.Errorf("the press at the release: calls %d, queued %v, failures %v; want 2 calls, the row gone, %d failures",
 					r.count(), r.isQueued(), r.failures, tc.wantFailures)
@@ -585,14 +585,14 @@ func TestAutoCompact_ARunQueuedAgainForAClosedKASTurnRunsAtTheRelease(t *testing
 	r.finishTurn()
 	r.setRefuse(true)
 	r.onCompact = r.kasOpensTheNextTurn
-	accepted, _ := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
+	accepted, _ := r.ac.afterTurn(t.Context(), "c1", turnEnd{id: r.lastTurn()})
 	if !r.isQueued() {
 		t.Fatalf("not queued again after the refusal under KAS's turn")
 	}
 	r.setRefuse(false)
 	r.onCompact = nil
 	r.finishTurn()
-	r.ac.afterRelease(t.Context(), "c1", accepted)
+	r.ac.afterRelease(t.Context(), "c1", turnEnd{}, accepted)
 	if r.count() != 2 || r.isQueued() || len(r.failures) != 0 {
 		t.Errorf("the re-queued run at the release: calls %d, queued %v, failures %v; want 2 calls, the row gone, no failure",
 			r.count(), r.isQueued(), r.failures)
@@ -605,7 +605,7 @@ func TestAutoCompact_ARowUnderANewTurnWaitsForThatTurnsEnd(t *testing.T) {
 		r := newCompactRig(90)
 		r.pressUnderHold(t)
 		r.setLive(true)
-		r.ac.afterRelease(t.Context(), "c1", accepted)
+		r.ac.afterRelease(t.Context(), "c1", turnEnd{}, accepted)
 		if r.count() != 0 || !r.isQueued() {
 			t.Errorf("close accepted %v, a turn live at the release: calls %d, queued %v; want no call and the row kept",
 				accepted, r.count(), r.isQueued())
@@ -620,7 +620,7 @@ func TestAwaitCompaction_HoldsAPromptUntilTheRunningCompactionReturns(t *testing
 		r.reading(95)
 		closed := make(chan struct{})
 		go func() {
-			r.ac.afterTurn(context.Background(), "c1", r.lastTurn(), false)
+			r.ac.afterTurn(context.Background(), "c1", turnEnd{id: r.lastTurn()})
 			close(closed)
 		}()
 		synctest.Wait()
@@ -649,7 +649,7 @@ func TestAwaitCompaction_ACompactionThatNeverAnswersIsBounded(t *testing.T) {
 		r := newCompactRig(90)
 		r.block = make(chan struct{})
 		r.reading(95)
-		go r.ac.afterTurn(context.Background(), "c1", r.lastTurn(), false)
+		go r.ac.afterTurn(context.Background(), "c1", turnEnd{id: r.lastTurn()})
 		synctest.Wait()
 		start := time.Now()
 		r.ac.awaitRunning(context.Background(), "c1")
@@ -851,7 +851,7 @@ func TestCompactRequest_JoinsARunningCompaction(t *testing.T) {
 		r := newCompactRig(90)
 		r.block = make(chan struct{})
 		r.reading(95)
-		go r.ac.afterTurn(context.Background(), "c1", r.lastTurn(), false)
+		go r.ac.afterTurn(context.Background(), "c1", turnEnd{id: r.lastTurn()})
 		synctest.Wait()
 		answered := make(chan command.CompactOutcome, 1)
 		go func() {
@@ -881,7 +881,7 @@ func TestCompactRequest_ATurnEndJoinsTheRunningCompaction(t *testing.T) {
 		r.pressUnderHold(t)
 		closed := make(chan struct{})
 		go func() {
-			r.ac.afterTurn(context.Background(), "c1", r.lastTurn(), false)
+			r.ac.afterTurn(context.Background(), "c1", turnEnd{id: r.lastTurn()})
 			close(closed)
 		}()
 		synctest.Wait()
@@ -990,10 +990,10 @@ func TestCompactRequest_WaitsForTheFramesBeforeTheReply(t *testing.T) {
 	if !slices.Equal(waited, []uint64{7}) {
 		t.Errorf("read loop waits = %v, want one at the reply's position 7", waited)
 	}
-	if !slices.Equal(rowAtFold, []compactRow{compactRowRunning}) {
+	if !slices.Equal(rowAtFold, []compactRow{compactRowRunningSends}) {
 		t.Errorf("rows when the frames folded = %v, want [running]: the row cleared before the entry", rowAtFold)
 	}
-	if got := r.rowLog(); !slices.Equal(got, []compactRow{compactRowRunning, compactRowOff}) {
+	if got := r.rowLog(); !slices.Equal(got, []compactRow{compactRowRunningSends, compactRowOff}) {
 		t.Errorf("rows after the reply = %v, want [running off]", got)
 	}
 }
@@ -1008,7 +1008,7 @@ func TestQueuedCompaction_ClaimAtTurnEndShowsRunning(t *testing.T) {
 		r.finishTurn()
 		closed := make(chan struct{})
 		go func() {
-			r.ac.afterTurn(context.Background(), "c1", r.lastTurn(), false)
+			r.ac.afterTurn(context.Background(), "c1", turnEnd{id: r.lastTurn()})
 			close(closed)
 		}()
 		synctest.Wait()
@@ -1023,7 +1023,7 @@ func TestQueuedCompaction_ClaimAtTurnEndShowsRunning(t *testing.T) {
 	})
 }
 
-// The reader's compaction on an idle chat shows as running for the whole call, then goes.
+// The reader's compaction on an idle chat shows as running for the whole call, its end sending a queued row, then goes.
 func TestIdleCompactRequest_ShowsRunningThenClears(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		r := newCompactRig(90)
@@ -1034,14 +1034,14 @@ func TestIdleCompactRequest_ShowsRunningThenClears(t *testing.T) {
 			answered <- out
 		}()
 		synctest.Wait()
-		if got := r.rowLog(); !slices.Equal(got, []compactRow{compactRowRunning}) {
-			t.Errorf("rows while the idle press's call runs = %v, want [running]", got)
+		if got := r.rowLog(); !slices.Equal(got, []compactRow{compactRowRunningSends}) {
+			t.Errorf("rows while the idle press's call runs = %v, want [running, sends]", got)
 		}
 		close(r.block)
 		if out := <-answered; out != command.CompactAccepted {
 			t.Errorf("the idle press = %v, want accepted", out)
 		}
-		if got := r.rowLog(); !slices.Equal(got, []compactRow{compactRowRunning, compactRowOff}) {
+		if got := r.rowLog(); !slices.Equal(got, []compactRow{compactRowRunningSends, compactRowOff}) {
 			t.Errorf("rows after the call = %v, want [running off]", got)
 		}
 	})

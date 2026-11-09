@@ -476,11 +476,14 @@ describe("loadList rebuilds each row from the header", () => {
   it("takes a running compaction from the reloaded list, so the dock shows it running", async () => {
     seedSession("c1", { compact_queued: true, compact_running: false });
     const reloaded = await rebuild(
-      header("c1", { compact_pending: { requested_at: 1, running: true } }),
+      header("c1", { compact_pending: { requested_at: 1, running: true, sends: true } }),
     );
     expect(reloaded.compact_queued).toBe(true);
     expect(reloaded.compact_running).toBe(true);
-    expect((await rebuild(header("c1"))).compact_running).toBe(false);
+    expect(reloaded.compact_sends).toBe(true);
+    const cleared = await rebuild(header("c1"));
+    expect(cleared.compact_running).toBe(false);
+    expect(cleared.compact_sends).toBe(false);
   });
 
   it("replaces updated_at, which is required on the wire", async () => {

@@ -532,6 +532,7 @@ export async function loadList(signal?: AbortSignal): Promise<boolean> {
       queued: h.queued_prompts ?? [],
       compact_queued: h.compact_pending !== undefined,
       compact_running: h.compact_pending?.running === true,
+      compact_sends: h.compact_pending?.sends === true,
       tangent: h.tangent ?? false,
       effort: h.effort ?? "",
       // Keep the client's live effort catalog when the header carries none: this list endpoint

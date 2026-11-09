@@ -1078,10 +1078,18 @@ describe("upsertHeader re-syncs an existing row", () => {
     upsertHeader({ ...headerFor("a"), compact_pending: { requested_at: 1, running: true } });
     expect(get("a")?.compact_queued).toBe(true);
     expect(get("a")?.compact_running).toBe(true);
+    expect(get("a")?.compact_sends).toBe(false);
+
+    upsertHeader({
+      ...headerFor("a"),
+      compact_pending: { requested_at: 1, running: true, sends: true },
+    });
+    expect(get("a")?.compact_sends).toBe(true);
 
     upsertHeader(headerFor("a"));
     expect(get("a")?.compact_queued).toBe(false);
     expect(get("a")?.compact_running).toBe(false);
+    expect(get("a")?.compact_sends).toBe(false);
   });
 });
 
@@ -1115,8 +1123,12 @@ describe("upsertHeader seeds a brand-new row", () => {
 
   it("seeds a compaction already running from the header", () => {
     setSessions([]);
-    upsertHeader({ ...headerFor("a"), compact_pending: { requested_at: 1, running: true } });
+    upsertHeader({
+      ...headerFor("a"),
+      compact_pending: { requested_at: 1, running: true, sends: true },
+    });
     expect(get("a")?.compact_running).toBe(true);
+    expect(get("a")?.compact_sends).toBe(true);
   });
 
   it("derives has_more from the record's count, because a header carries no window", () => {

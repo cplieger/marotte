@@ -1801,6 +1801,7 @@ const arbModel = fc.letrec<{
     {
       requested_at: fc.double({ noNaN: true, noDefaultInfinity: true }),
       running: fc.boolean(),
+      sends: fc.boolean(),
     },
     { requiredKeys: ["requested_at"] },
   ),

@@ -588,3 +588,67 @@ func TestDrain_ACompactionClaimedBeforeTheReservationIsWaitedOut(t *testing.T) {
 		t.Errorf("drained prompts = %+v, want m-q1 once the compaction ended", h.opened)
 	}
 }
+
+// A compaction claimed just before a prompt reserves its turn, after any check made ahead of the reservation, still
+// queues the prompt behind it: no turn opens under it.
+func TestPrompt_ACompactionClaimedBeforeItsReservationQueuesIt(t *testing.T) {
+	q := &fakeQueue{chat: &marotte.Chat{ID: "c1"}}
+	h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
+	h.onReserve = func() { q.compacting = true }
+	roles := drainRoles(h, newStubSteerQueue())
+	roles.followups = q
+
+	got, err := cmdPrompt(t.Context(), roles, &marotte.ClientCommand{
+		Type: marotte.CmdPrompt, ChatID: "c1", Payload: json.RawMessage(`{"text":"hello","message_id":"m-1"}`),
+	})
+	if err != nil {
+		t.Fatalf("prompt = %v", err)
+	}
+	if ack, ok := got.(promptAck); !ok || !ack.Queued {
+		t.Errorf("prompt answer = %+v, want queued", got)
+	}
+	h.mu.Lock()
+	opened := len(h.opened)
+	h.mu.Unlock()
+	if opened != 0 {
+		t.Errorf("turns opened = %d, want none under the compaction", opened)
+	}
+	if ids := rowIDs(q.chat.QueuedPrompts); !slices.Equal(ids, []string{"m-1"}) {
+		t.Errorf("queue = %v, want the prompt as its one row", ids)
+	}
+}
+
+// claimOnIdleReserve is a compaction claimed just before a send-now reserves its idle turn.
+type claimOnIdleReserve struct {
+	*resendHost
+	q *fakeQueue
+}
+
+func (c claimOnIdleReserve) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (Reservation, bool) {
+	c.q.compacting = true
+	return c.resendHost.TryReserveIdleTurn(chatID, source, stamp)
+}
+
+// Send now on an idle chat whose compaction claims just before the reservation sends nothing under it: the row stays
+// marked first for the compaction's end.
+func TestSendQueuedNow_ACompactionClaimedBeforeTheReservationLeavesTheMark(t *testing.T) {
+	q := queueOf(marotte.QueuedPrompt{ID: "m-q1", Text: "a"}, marotte.QueuedPrompt{ID: "m-q2", Text: "b"})
+	h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
+	roles := drainRoles(h, newStubSteerQueue())
+	roles.followups = q
+	roles.admission = claimOnIdleReserve{resendHost: h, q: q}
+
+	stop, err := markQueuedNext(t.Context(), roles, "c1", "m-q2")
+	if stop || err != nil {
+		t.Fatalf("markQueuedNext = (%v, %v), want (false, nil)", stop, err)
+	}
+	h.mu.Lock()
+	opened := len(h.opened)
+	h.mu.Unlock()
+	if opened != 0 {
+		t.Errorf("turns opened = %d, want none under the compaction", opened)
+	}
+	if ids := rowIDs(q.chat.QueuedPrompts); !slices.Equal(ids, []string{"m-q2", "m-q1"}) || !q.chat.QueuedPrompts[0].Next {
+		t.Errorf("queue = %+v, want m-q2 first and marked next", q.chat.QueuedPrompts)
+	}
+}

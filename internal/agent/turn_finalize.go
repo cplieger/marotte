@@ -300,7 +300,7 @@ func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, lc *chatLifecycle
 			accepted, owed = bc.compactAtTurnEnd(ctx, lc, cf)
 			turnEnded = true
 		}
-		if rows, drain := bc.releaseHold(ctx, lc, cf.fence.Seq, accepted); drain {
+		if rows, drain := bc.releaseHold(ctx, lc, cf, accepted); drain {
 			return slices.Concat(rows, owed), true
 		}
 	}
@@ -311,15 +311,21 @@ func (bc *bridgeCoordinator) compactAtTurnEnd(ctx context.Context, lc *chatLifec
 	if lc.endedNow() {
 		return false, nil
 	}
-	return bc.autoCompact.afterTurn(ctx, lc.chatID, cf.turnID, cf.contextLimit)
+	return bc.autoCompact.afterTurn(ctx, lc.chatID, cf.turnEnd())
+}
+
+// turnEnd is what the closed turn's compactions read of the close.
+func (cf closeFacts) turnEnd() turnEnd {
+	clean := command.CloseFacts{Outcome: cf.outcome, Unattended: cf.unattended}.Clean()
+	return turnEnd{id: cf.turnID, contextLimit: cf.contextLimit, clean: clean}
 }
 
 // releaseHold releases the close's KAS hold, answering the rows owed to its drain; on a drain it first takes a
 // compaction requested under the hold.
-func (bc *bridgeCoordinator) releaseHold(ctx context.Context, lc *chatLifecycle, seq uint64, accepted bool) ([]string, bool) {
-	drain, rows := lc.kasStep(kasReleaseOwn, seq)
+func (bc *bridgeCoordinator) releaseHold(ctx context.Context, lc *chatLifecycle, cf closeFacts, accepted bool) ([]string, bool) {
+	drain, rows := lc.kasStep(kasReleaseOwn, cf.fence.Seq)
 	if drain && !lc.endedNow() {
-		rows = append(rows, bc.autoCompact.afterRelease(ctx, lc.chatID, accepted)...)
+		rows = append(rows, bc.autoCompact.afterRelease(ctx, lc.chatID, cf.turnEnd(), accepted)...)
 	}
 	return rows, drain
 }
