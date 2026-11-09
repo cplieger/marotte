@@ -14,6 +14,7 @@ import (
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/tabs"
@@ -310,6 +311,27 @@ func TestKeepRound_AddsTheFactsItsSourcesShow(t *testing.T) {
 	}
 	if slices.Contains(r.runs.inspected, "wf_stateless") {
 		t.Error("a run record KAS keeps no state for was inspected; it needs no protection")
+	}
+}
+
+// KAS finds a run by id in the workspace's own .kiro/workflows too, so a recorded run whose state sits there is live.
+func TestKeepRound_InspectsARecordedRunWhoseStateSitsInTheWorkspaceBase(t *testing.T) {
+	r := newKeepRig(t, t.TempDir())
+	workDir := t.TempDir()
+	writeFixture(t, filepath.Join(workDir, ".kiro", "workflows", "wf_ws", "workflow-state.json"),
+		`{"workflowId":"wf_ws","status":"running","parentSessionId":"sess_ws"}`)
+	r.deps.runStates = kirosession.New(filepath.Join(t.TempDir(), "sessions"), workDir).RunStates
+	r.runs.recorded = []string{"wf_ws"}
+	r.runs.inspect["wf_ws"] = agent.RunRow{WorkflowID: "wf_ws", ParentSessionID: "sess_ws"}
+
+	if !r.round(t) {
+		t.Fatal("keepRound did not finish")
+	}
+	if got := r.runs.attributed; !maps.Equal(got, map[string]string{"wf_ws": "sess_ws"}) {
+		t.Errorf("recorded runs attributed = %v, want the live run whose state sits in the workspace base", got)
+	}
+	if !slices.Contains(r.runs.inspected, "wf_ws") {
+		t.Error("a recorded run whose state sits in the workspace base was not inspected, so it counted as stateless")
 	}
 }
 
