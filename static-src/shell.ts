@@ -57,6 +57,9 @@ const SHELL_THEME: Readonly<Record<string, string>> = {
   "--accent": "var(--c-accent)",
   "--surface": "var(--c-bg-tertiary)",
   "--border": "var(--c-border)",
+  // The library's defaults suit only a dark surface; these reach 4.5:1 on --surface in both themes.
+  "--banner-offline": "var(--c-danger)",
+  "--banner-restarted": "var(--c-warning)",
   // The library sizes its key grid, scroll button and menu rows at one touch size on every tier.
   "--touch-target": "var(--ctl-h)",
 };

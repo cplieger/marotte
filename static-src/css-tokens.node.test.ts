@@ -133,7 +133,7 @@ describe("design tokens are declared before they are read", () => {
   it("has no colour or elevation token declared with nothing reading it", () => {
     // The inverse: a colour, shadow or elevation token with no reader is dead, since it is chosen for a surface.
     // Geometry and motion tokens are a vocabulary and out of scope. The four exempt `--c-term-*` members are the
-    // terminal engine's cursor and selection vocabulary, unwired today (shell.ts's SHELL_THEME maps five other variables).
+    // terminal engine's cursor and selection vocabulary, which shell.ts's SHELL_THEME leaves unwired today.
     const scoped = /^--(c|shadow|elev)-/;
     const vocabulary = /^--c-term-(cursor|cursor-accent|selection|selection-inactive)$/;
 
