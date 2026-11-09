@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, afterAll, afterEach, onTestFinished } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 
 import type * as ApiClient from "./api-client.js";
 import type * as Scroll from "./scroll.js";
@@ -36,8 +36,6 @@ const {
   tooltipText,
 } = await import("./__test-helpers__/turn-rail-dom.js");
 const { initTooltips } = await import("./tooltip.js");
-const { loadTurnRail } = await import("./turn-rail.js");
-const { apiGet } = await import("./api-client.js");
 
 /** Whether a touch is down, so cleanup cancels only a live gesture (CDP refuses any other). */
 let touching = false;
@@ -220,9 +218,7 @@ describe("a re-bin under a held finger", () => {
     vi.useRealTimers();
     track().style.removeProperty("flex");
     await vi.waitFor(() => {
-      expect(
-        document.querySelectorAll(".turn-map-stack:not([data-parked]) > .turn-pill"),
-      ).toHaveLength(20);
+      expect(document.querySelectorAll(".turn-map-stack > .turn-pill")).toHaveLength(20);
     });
   });
 
@@ -269,7 +265,7 @@ describe("a re-bin under a held finger", () => {
       await frames();
       await frames();
       expect(
-        document.querySelectorAll(".turn-map-stack:not([data-parked]) > .turn-pill").length,
+        document.querySelectorAll(".turn-map-stack > .turn-pill").length,
         "premise: the rows re-binned",
       ).toBe(10);
       expect(tooltipText(), "the replaced row's info goes with it").toBeNull();
@@ -284,37 +280,6 @@ describe("a re-bin under a held finger", () => {
     },
   );
 
-  it("moves a held finger's scrub onto the map of a chat switched to mid-gesture", async () => {
-    const answer = {
-      turns: Array.from({ length: 20 }, (_, i) => ({
-        id: `m${String(i + 1)}`,
-        n: i + 1,
-        outcome: "completed",
-        ts: (i + 1) * 60_000,
-        first_line: `Question ${String(i + 1)}`,
-      })),
-    };
-    onTestFinished(async () => {
-      vi.mocked(apiGet).mockResolvedValue(answer);
-      await loadTurnRail("c-touch");
-      await frames();
-    });
-    await touch("touchStart", pointOn(5));
-    await frames();
-    expect(scrubbedTurn(), "the premise").toBe("5");
-
-    // The same twenty turns under another chat, so the finger's row exists on both maps.
-    vi.mocked(apiGet).mockResolvedValue(answer);
-    await loadTurnRail("c-touch-other");
-    await frames();
-
-    expect(
-      document.querySelectorAll(".turn-map-stack[data-parked] [data-scrub]"),
-      "the map switched away from keeps no scrub mark",
-    ).toHaveLength(0);
-    expect(scrubbedTurn(), "the finger's row on the shown map").toBe("5");
-  });
-
   it("takes the turn info down when the track collapses under the finger", async () => {
     await touch("touchStart", pointOn(12));
     await vi.waitFor(
@@ -327,7 +292,7 @@ describe("a re-bin under a held finger", () => {
     await frames();
     await frames();
     expect(
-      document.querySelectorAll(".turn-map-stack:not([data-parked]) > .turn-pill"),
+      document.querySelectorAll(".turn-map-stack > .turn-pill"),
       "premise: no rows",
     ).toHaveLength(0);
     expect(tooltipText()).toBeNull();

@@ -61,9 +61,7 @@ function card(n: number): void {
 }
 
 const links = (): HTMLAnchorElement[] => [
-  ...document.querySelectorAll<HTMLAnchorElement>(
-    ".turn-map .turn-map-stack:not([data-parked]) .turn-pill-link",
-  ),
+  ...document.querySelectorAll<HTMLAnchorElement>(".turn-map .turn-pill-link"),
 ];
 
 function linkFor(n: number): HTMLAnchorElement {
@@ -215,6 +213,26 @@ describe("a changed map still redraws", () => {
 describe("a re-point to another chat", () => {
   const FIVE = [summary(1), summary(2), summary(3), summary(4), summary(5)];
 
+  /** Record, for every row the repaint places, whether the stack was in the document then. */
+  function watchInserts(): { connected: boolean[]; stop: () => void } {
+    const stack = outer.querySelector<HTMLElement>(".turn-map-stack");
+    if (stack === null) {
+      throw new Error("no turn-map stack");
+    }
+    const connected: boolean[] = [];
+    const insert = stack.insertBefore.bind(stack);
+    stack.insertBefore = <T extends Node>(node: T, child: Node | null): T => {
+      connected.push(stack.isConnected);
+      return insert(node, child);
+    };
+    return {
+      connected,
+      stop: () => {
+        Reflect.deleteProperty(stack, "insertBefore");
+      },
+    };
+  }
+
   async function paintOther(turns: TurnSummary[]): Promise<void> {
     vi.mocked(apiGet).mockResolvedValue({ turns } as never);
     await rail.loadTurnRail("c-rail-other", { force: true });
@@ -226,32 +244,35 @@ describe("a re-point to another chat", () => {
     await settle();
   }
 
-  it("mounts the new chat's rows off the document", async () => {
+  it("swaps the rows with the stack out of the document", async () => {
     await paint(THREE);
-    const rowsAdded: Node[] = [];
-    const stacksAdded: Element[] = [];
-    const seen = new MutationObserver((records) => {
-      for (const r of records) {
-        for (const n of r.addedNodes) {
-          if (n instanceof Element && n.matches(".turn-pill")) {
-            rowsAdded.push(n);
-          } else if (n instanceof Element && n.matches(".turn-map-stack")) {
-            stacksAdded.push(n);
-          }
-        }
-      }
-    });
-    seen.observe(outer, { childList: true, subtree: true });
+    const seen = watchInserts();
 
     await paintOther(FIVE);
-    seen.disconnect();
+    seen.stop();
 
     expect(links()).toHaveLength(5);
-    expect(rowsAdded, "no row was placed into a stack in the document").toEqual([]);
-    expect(stacksAdded).toHaveLength(1);
+    expect(seen.connected.length, "the new chat's rows were placed").toBeGreaterThan(0);
     expect(
-      stacksAdded[0]?.querySelectorAll(".turn-pill"),
-      "the stack arrived with its rows",
-    ).toHaveLength(5);
+      seen.connected.every((c) => !c),
+      "every row placed off the document",
+    ).toBe(true);
+    expect(outer.querySelector(".turn-map-track > .turn-map-stack")).not.toBeNull();
+  });
+
+  it("keeps a keyboard reader's focus on a row the new chat keeps", async () => {
+    await paint(THREE);
+    const link = linkFor(2);
+    link.focus();
+    const seen = watchInserts();
+
+    await paintOther(FIVE);
+    seen.stop();
+
+    expect(document.activeElement, "a re-point must not take focus off a row").toBe(link);
+    expect(
+      seen.connected.every((c) => c),
+      "the focused stack stays in place",
+    ).toBe(true);
   });
 });

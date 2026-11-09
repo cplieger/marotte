@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type { TurnSummary } from "./rail-merge.js";
@@ -6,9 +6,8 @@ import type { Session } from "./types.js";
 import type * as ApiClient from "./api-client.js";
 import type * as StoreLoad from "./store-load.js";
 
-// A re-point between chats the reader keeps open: the map of a chat shown before must come back
-// as the rows it had, never a fresh mount, since styling a long map's rows costs a frame tens of
-// ms in Firefox and WebKit. The real stylesheet, so where a held map sits is the shipped rule's.
+// Where a keyboard reader on the map lands when the map is handed to another chat. The real
+// stylesheet, so a row's box and the tab stop are the shipped ones.
 
 vi.mock("./api-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClient>()),
@@ -63,14 +62,7 @@ const { setSessions } = await import("./store.js");
 
 rail.mountTurnRail(outer);
 
-const COUNTS: Record<string, number> = {
-  "c-a": 40,
-  "c-b": 30,
-  "c-c": 20,
-  "c-d": 25,
-  "c-e": 35,
-  "c-empty": 0,
-};
+const COUNTS: Record<string, number> = { "c-a": 40, "c-b": 30, "c-empty": 0 };
 
 function turns(chat: string): TurnSummary[] {
   return Array.from({ length: COUNTS[chat] ?? 0 }, (_, i) => ({
@@ -78,7 +70,7 @@ function turns(chat: string): TurnSummary[] {
     n: i + 1,
     outcome: "completed" as const,
     ts: (i + 1) * 60_000,
-    first_line: `${chat} request ${String(i + 1)}`,
+    first_line: `request ${String(i + 1)}`,
   }));
 }
 
@@ -103,20 +95,6 @@ function session(id: string): Session {
 function linksOf(chat: string): HTMLAnchorElement[] {
   return [...outer.querySelectorAll<HTMLAnchorElement>(".turn-map .turn-pill-link")].filter((a) =>
     (a.getAttribute("href") ?? "").includes(`/${chat}`),
-  );
-}
-
-/** Whether the reader can see, point at, tab to or hear `link`. */
-function reachable(link: HTMLAnchorElement): boolean {
-  const r = link.getBoundingClientRect();
-  const onScreen = r.bottom > 0 && r.top < window.innerHeight && r.height > 0;
-  const hit = onScreen
-    ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
-    : null;
-  return (
-    (hit !== null && link.contains(hit)) ||
-    link.getAttribute("tabindex") === "0" ||
-    link.closest('[aria-hidden="true"]') === null
   );
 }
 
@@ -145,88 +123,23 @@ beforeEach(() => {
   );
 });
 
-afterEach(() => {
-  document.querySelector(".uip-tooltip")?.remove();
-});
+describe("a re-point under a keyboard reader on the map", () => {
+  const stop = (chat: string): HTMLAnchorElement | undefined =>
+    linksOf(chat).find((a) => a.getAttribute("tabindex") === "0");
 
-describe("a switch back to a chat whose map was shown", () => {
-  it("shows the rows it had, mounting none", async () => {
-    await show("c-a");
-    const before = linksOf("c-a");
-    expect(before.length, "the premise: the map binned c-a's turns into rows").toBeGreaterThan(10);
-    await show("c-b");
-
-    const added: Node[] = [];
-    const seen = new MutationObserver((records) => {
-      for (const r of records) {
-        added.push(...r.addedNodes);
-      }
-    });
-    seen.observe(outer, { childList: true, subtree: true });
-    await show("c-a");
-    seen.disconnect();
-
-    const after = linksOf("c-a").filter(reachable);
-    expect(after.length, "c-a's rows show again").toBe(before.length);
-    after.forEach((link, i) => {
-      expect(link, `row ${String(i)} is the element it was`).toBe(before[i]);
-    });
-    // A re-inserted row or stack is restyled whole, which is the cost a held map exists to skip.
-    const inserted = added.filter(
-      (n) =>
-        n instanceof Element && (n.matches(".turn-pill") || n.querySelector(".turn-pill") !== null),
-    );
-    expect(inserted, "no row entered the document for the switch back").toEqual([]);
-  });
-
-  it("keeps the other chat's rows out of reach while they wait", async () => {
-    await show("c-a");
-    await show("c-b");
-
-    expect(linksOf("c-b").filter(reachable).length, "c-b's rows are the ones shown").toBe(
-      linksOf("c-b").length,
-    );
-    for (const link of linksOf("c-a")) {
-      expect(reachable(link), `${link.getAttribute("href") ?? ""} is out of reach`).toBe(false);
-    }
-  });
-
-  it("holds the shown chat's map and three others, the least recent dropped first", async () => {
-    for (const chat of ["c-a", "c-b", "c-c", "c-d", "c-e"]) {
-      await show(chat);
-    }
-    expect(outer.querySelectorAll(".turn-map-stack").length).toBeLessThanOrEqual(4);
-    expect(linksOf("c-a"), "the least recent chat's rows are gone").toEqual([]);
-    expect(linksOf("c-b").length, "the next one's are still held").toBeGreaterThan(0);
-  });
-
-  it("drops a chat's rows once the chat leaves the store", async () => {
-    await show("c-a");
-    await show("c-b");
-    setSessions(["c-b", "c-c"].map(session));
-    await show("c-c");
-    expect(linksOf("c-a")).toEqual([]);
-  });
-
-  it("keeps a keyboard reader on the map, on the shown chat's tab stop", async () => {
-    const stop = (chat: string): HTMLAnchorElement | undefined =>
-      linksOf(chat).find((a) => a.getAttribute("tabindex") === "0" && reachable(a));
+  it("keeps them on the map, on the new chat's tab stop", async () => {
     await show("c-a");
     stop("c-a")?.focus();
     expect(document.activeElement, "the premise: a row of c-a holds focus").toBe(stop("c-a"));
 
     await show("c-b");
 
-    const now = document.activeElement;
-    expect(now, "focus is on c-b's tab stop").toBe(stop("c-b"));
-    expect(now?.closest('[aria-hidden="true"]') ?? null, "never on a held row").toBeNull();
+    expect(document.activeElement).toBe(stop("c-b"));
   });
 
-  it("moves focus to the transcript when the shown chat's map has no rows", async () => {
+  it("moves them to the transcript when the new chat's map has no rows", async () => {
     await show("c-a");
-    linksOf("c-a")
-      .find((a) => a.getAttribute("tabindex") === "0")
-      ?.focus();
+    stop("c-a")?.focus();
     expect(document.activeElement?.closest(".turn-map"), "the premise").not.toBeNull();
 
     await show("c-empty");

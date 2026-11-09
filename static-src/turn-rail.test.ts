@@ -17,6 +17,7 @@ const { scrollable } = vi.hoisted(() => {
     },
     clientTop: 0,
     getBoundingClientRect: () => ({ top: el.scrollTop, bottom: el.scrollTop + 600, height: 600 }),
+    focus: (_o?: FocusOptions): void => undefined,
     addEventListener(type: string, fn: () => void) {
       const set = handlers.get(type) ?? new Set<() => void>();
       set.add(fn);
@@ -262,13 +263,9 @@ function turnOf(link: Element | null | undefined): string {
   return /#turn-(\d+)$/u.exec(link?.getAttribute("href") ?? "")?.[1] ?? "";
 }
 
-/** The links of the shown chat's rows, in order. */
+/** The links of the map's rows, in order. */
 function rowLinks(root: ParentNode): HTMLAnchorElement[] {
-  return [
-    ...root.querySelectorAll<HTMLAnchorElement>(
-      ".turn-map-stack:not([data-parked]) .turn-pill-link",
-    ),
-  ];
+  return [...root.querySelectorAll<HTMLAnchorElement>(".turn-map-stack .turn-pill-link")];
 }
 
 /** The row a link sits in, which carries the position and severity attributes. */
@@ -285,9 +282,9 @@ function isPending(link: HTMLElement): boolean {
   return link.getAttribute("data-tooltip")?.includes("Loading\u2026") ?? false;
 }
 
-/** The shown chat's stack, the box a click's pointer Y is read against. */
+/** The map's stack, the box a click's pointer Y is read against. */
 function stackOf(root: ParentNode): HTMLElement {
-  const el = root.querySelector<HTMLElement>(".turn-map-stack:not([data-parked])");
+  const el = root.querySelector<HTMLElement>(".turn-map-stack");
   if (el === null) {
     throw new Error("no stack");
   }
@@ -305,11 +302,7 @@ function trackOf(root: ParentNode): HTMLElement {
 
 /** The turn the map marks current, or "" when none is. */
 function currentOf(root: ParentNode): string {
-  return turnOf(
-    root.querySelector(
-      ".turn-map-stack:not([data-parked]) > .turn-pill[data-current] > .turn-pill-link",
-    ),
-  );
+  return turnOf(root.querySelector(".turn-pill[data-current] > .turn-pill-link"));
 }
 
 function fakeRect(top: number, height: number): DOMRect {
@@ -1529,7 +1522,7 @@ describe("a click always produces a reaction", () => {
     await refreshTurnRail("c-other");
 
     // The other chat carries the same ids, so a kept pick would still mark turn 3.
-    expect(stackOf(rail).querySelector("[data-current]")).toBeNull();
+    expect(rail.querySelector("[data-current]")).toBeNull();
   });
 });
 
@@ -1707,11 +1700,7 @@ describe("the mark is sticky", () => {
   }
 
   function marked(): HTMLElement[] {
-    return [
-      ...rail.querySelectorAll<HTMLElement>(
-        ".turn-map-stack:not([data-parked]) > .turn-pill[data-current]",
-      ),
-    ];
+    return [...rail.querySelectorAll<HTMLElement>(".turn-pill[data-current]")];
   }
 
   async function scrollTo(px: number): Promise<void> {

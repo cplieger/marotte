@@ -62,25 +62,10 @@ interface MapNodes {
   nav: HTMLElement;
   /** The box binning is measured against: its height never depends on the rows inside it. */
   track: HTMLElement;
-  /** The pointed chat's rows; every other held stack is parked in the same track. */
   stack: HTMLOListElement;
   prev: HTMLButtonElement;
   next: HTMLButtonElement;
 }
-
-/** One chat's rows and everything they were painted FROM (`renderSignature`, which must name every
- *  input the rows read), so a render that would redraw the same map writes nothing. */
-interface HeldStack {
-  el: HTMLOListElement;
-  sig: readonly unknown[];
-}
-
-/** The pointed chat's stack and one per parked transcript view (messages.ts `PARKED_VIEWS`), so a
- *  switch back shows rows already styled instead of restyling them all (29-turns.css). */
-const HELD_STACKS = 4;
-
-/** Held stacks by chat, least recently pointed first. */
-const stacks = new Map<string, HeldStack>();
 
 let root: MapNodes | undefined;
 let chatID = "";
@@ -153,6 +138,11 @@ function measureNavigable(): boolean {
 /** `measureNavigable()`'s last answer, taken in `pick()` so `render()` reads no layout. */
 let navigable = false;
 
+/** Everything the map's rows were built FROM, so a render that would redraw the same map writes
+ *  nothing: `render()` runs on every transcript paint. It must name EVERY input the map's nodes
+ *  read (`renderSignature`, the one list), or the map goes stale. */
+let renderedSig: readonly unknown[] = [];
+
 /** The track's height, from its ResizeObserver entry: `render()` reads no layout. 0 wherever CSS
  *  does not draw the map (the phone layout), so `binTurns` lays no rows there; an unshown map stays
  *  laid out (29-turns.css), so a chat switch bins against a live height. */
@@ -163,6 +153,8 @@ let inView: ReadonlySet<string> = new Set();
 let rovingKey: string | undefined;
 let shown: readonly TurnBin[] = [];
 let shownSlots = 0;
+/** The chat whose rows the stack holds, which tells a re-point's repaint from an in-place one. */
+let stackChatID = "";
 
 /** The one writer of the turn set: the resident window merged into the fetched
  *  index, so the newest turn appears the moment its card mounts and the index only
@@ -204,7 +196,6 @@ export function mountTurnRail(host: HTMLElement): void {
     return;
   }
   root = buildMap();
-  stacks.set(chatID, { el: root.stack, sig: [] });
   host.append(root.nav);
   bindMapInput(root);
   getScrollEl().addEventListener("scroll", schedulePick, { passive: true });
@@ -270,12 +261,6 @@ export function pointTurnRail(id: string): void {
       records.delete(key);
     }
   }
-  for (const [key, held] of stacks) {
-    if (get(key) === undefined && held.el !== root?.stack) {
-      held.el.remove();
-      stacks.delete(key);
-    }
-  }
   chatID = id;
   indexed = records.get(id)?.summaries ?? [];
   activeID = "";
@@ -334,15 +319,6 @@ export async function refreshTurnRail(id: string): Promise<void> {
 export function resetTurnRail(): void {
   chatID = "";
   records.clear();
-  for (const held of stacks.values()) {
-    if (held.el !== root?.stack) {
-      held.el.remove();
-    }
-  }
-  stacks.clear();
-  if (root !== undefined) {
-    stacks.set(chatID, { el: root.stack, sig: [] });
-  }
   indexed = [];
   summaries = [];
   summaryByID = new Map();
@@ -515,8 +491,6 @@ function render(): void {
   if (root === undefined) {
     return;
   }
-  const leaving = root.stack;
-  const held = pointStack(root);
   const visible = summaries.length > 0 && navigable;
   const layout = visible ? layoutOf(summaries, trackPx) : NO_LAYOUT;
   const n = markedN();
@@ -540,62 +514,11 @@ function render(): void {
   shown = layout.bins;
   shownSlots = layout.slots;
   const sig = renderSignature(rows, layout, visible, n);
-  if (!sameParts(sig, held.sig)) {
-    held.sig = sig;
-    paintMap(root, rows, layout, visible, current);
+  if (sameParts(sig, renderedSig)) {
+    return;
   }
-  if (leaving !== root.stack && leaving.contains(document.activeElement)) {
-    // The keyboard reader stays on the map, on the pointed chat's tab stop when it has rows.
-    const stop = root.stack.querySelector<HTMLElement>('.turn-pill-link[tabindex="0"]');
-    (stop ?? getScrollEl()).focus({ preventScroll: true });
-  }
-}
-
-/** Make the pointed chat's stack the shown one: its held stack, else a new one that `paintMap`
- *  attaches once its rows are in; the stack it replaces is parked, and past `HELD_STACKS` the
- *  least recent is dropped. */
-function pointStack(m: MapNodes): HeldStack {
-  let held = stacks.get(chatID);
-  if (held?.el === m.stack) {
-    return held;
-  }
-  park(m.stack);
-  if (held === undefined) {
-    held = { el: el("ol", { className: "turn-map-stack" }) as HTMLOListElement, sig: [] };
-  } else {
-    stacks.delete(chatID);
-    held.el.removeAttribute("data-parked");
-    held.el.removeAttribute("aria-hidden");
-  }
-  stacks.set(chatID, held);
-  m.stack = held.el;
-  for (const [key, old] of stacks) {
-    if (stacks.size <= HELD_STACKS) {
-      break;
-    }
-    old.el.remove();
-    stacks.delete(key);
-  }
-  return held;
-}
-
-/** Take a stack out of reach while it waits: off the screen (29-turns.css), out of the
- *  accessibility tree, with no tab stop and no scrub mark. Its signature is cleared, so showing it
- *  again repaints the tab stop. */
-function park(stack: HTMLOListElement): void {
-  stack.setAttribute("data-parked", "");
-  stack.setAttribute("aria-hidden", "true");
-  stack.querySelector('.turn-pill-link[tabindex="0"]')?.setAttribute("tabindex", "-1");
-  const scrubbed = stack.querySelector(":scope > [data-scrub]");
-  if (scrubbed !== null) {
-    scrubbed.removeAttribute("data-scrub");
-    hoverRow(scrubbed, "pointerout");
-  }
-  for (const held of stacks.values()) {
-    if (held.el === stack) {
-      held.sig = [];
-    }
-  }
+  renderedSig = sig;
+  paintMap(root, rows, layout, visible, current);
 }
 
 const NO_LAYOUT: TurnMapLayout = { total: 0, slots: 0, bins: [] };
@@ -622,7 +545,7 @@ function rovingIndex(bins: readonly TurnBin[], current: number): number {
   return bins.length === 0 ? -1 : Math.max(0, current);
 }
 
-/** Every value the rendered nodes read (see `HeldStack.sig`). A member is compared by identity: `mergeTurnSets` hands an
+/** Every value the rendered nodes read (see `renderedSig`). A member is compared by identity: `mergeTurnSets` hands an
  *  unchanged turn the same row object, and the paint reads only a bin's first, last and target member. */
 function renderSignature(
   rows: readonly PillView[],
@@ -662,11 +585,23 @@ function paintMap(
   setAttr(m.nav, "aria-busy", pending.size > 0 ? "true" : null);
   setStyleVar(m.stack, "--turn-map-slots", String(Math.max(1, layout.slots)));
   dropScrubbedRow(m, rows);
+  // WebKit restyles every row on each row insertion or removal once a hover has matched the
+  // fisheye's sibling rules (29-turns.css), so a re-point swaps the whole rail off the document.
+  // A focused row stays in place: removal would blur it.
+  const focused = m.stack.contains(document.activeElement);
+  const offDocument = stackChatID !== chatID && !focused;
+  stackChatID = chatID;
+  if (offDocument) {
+    m.stack.remove();
+  }
   reconcile(m.stack, rows, { key: (r) => r.bin.key, mount: mountPill, update: paintPill });
-  // A new chat's rows are mounted off the document: WebKit restyles every row on each row
-  // insertion once a hover has matched the fisheye's sibling rules (29-turns.css).
-  if (!m.stack.isConnected) {
+  if (offDocument) {
     m.track.append(m.stack);
+  }
+  if (focused && !m.stack.contains(document.activeElement)) {
+    // The focused row is gone: the reader stays on the map's tab stop, else the transcript, never <body>.
+    const stop = m.stack.querySelector<HTMLElement>('.turn-pill-link[tabindex="0"]');
+    (stop ?? getScrollEl()).focus({ preventScroll: true });
   }
   if (scrubPointer !== undefined) {
     scrubTo(m, scrubY);
@@ -732,18 +667,11 @@ function isPlainClick(e: MouseEvent): boolean {
   );
 }
 
-/** Whether `e` reached the pointed chat's stack: a parked stack's row keys name another chat's
- *  turns. */
-function onShownStack(m: MapNodes, e: Event): boolean {
-  return e.target instanceof Node && m.stack.contains(e.target);
-}
-
 function bindMapInput(m: MapNodes): void {
-  // ONE listener for every row of every held stack: the rows tile the stack, so native hit-testing
-  // maps pointer Y to a turn, and a click landing in a gap left by an undrawn turn resolves to the
-  // nearest row.
-  m.track.addEventListener("click", (e) => {
-    if (!isPlainClick(e) || !onShownStack(m, e)) {
+  // ONE listener for every row: the rows tile the stack, so native hit-testing maps pointer Y to a
+  // turn, and a click landing in a gap left by an undrawn turn resolves to the nearest row.
+  m.stack.addEventListener("click", (e) => {
+    if (!isPlainClick(e)) {
       return;
     }
     const bin = binAt(m, e);
@@ -753,16 +681,11 @@ function bindMapInput(m: MapNodes): void {
     e.preventDefault();
     landTurn(bin.target);
   });
-  m.track.addEventListener("keydown", (e) => {
-    if (onShownStack(m, e)) {
-      onStackKey(m, e);
-    }
+  m.stack.addEventListener("keydown", (e) => {
+    onStackKey(m, e);
   });
-  m.track.addEventListener("focusout", (e) => {
-    if (
-      !onShownStack(m, e) ||
-      (e.relatedTarget instanceof Node && m.stack.contains(e.relatedTarget))
-    ) {
+  m.stack.addEventListener("focusout", (e) => {
+    if (e.relatedTarget instanceof Node && m.stack.contains(e.relatedTarget)) {
       return;
     }
     if (rovingKey !== undefined) {
