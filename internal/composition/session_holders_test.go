@@ -44,8 +44,7 @@ func sessionFields(typ reflect.Type) []string {
 			return
 		}
 		seen[t] = true
-		for i := range t.NumField() {
-			f := t.Field(i)
+		for f := range t.Fields() {
 			if !f.IsExported() || f.Tag.Get("json") == "-" {
 				continue
 			}

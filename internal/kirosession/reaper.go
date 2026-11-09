@@ -340,9 +340,23 @@ func runStateIn(bucket, workflowID string) string {
 // workspace's own .kiro/workflows, where KAS still finds a run by id for inspect, retry and delete though its list
 // never scans it. A missing directory holds none; any other listing failure, or fn's error, ends the walk with it.
 func (r *Reaper) eachRunState(fn func(workflowID, dir string) error) error {
+	bases, err := r.runStateBases()
+	if err != nil {
+		return err
+	}
+	for _, base := range bases {
+		if err := eachRunIn(base, fn); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// runStateBases answers every runs directory eachRunState walks, whether it exists or not.
+func (r *Reaper) runStateBases() ([]string, error) {
 	buckets, err := os.ReadDir(r.sessionsDir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("listing %s: %w", r.sessionsDir, err)
+		return nil, fmt.Errorf("listing %s: %w", r.sessionsDir, err)
 	}
 	bases := make([]string, 0, len(buckets)+1)
 	for _, b := range buckets {
@@ -353,21 +367,24 @@ func (r *Reaper) eachRunState(fn func(workflowID, dir string) error) error {
 	if r.workspaceRoot != "" {
 		bases = append(bases, runStateIn(filepath.Join(r.workspaceRoot, ".kiro"), ""))
 	}
-	for _, base := range bases {
-		runs, err := os.ReadDir(base)
-		if errors.Is(err, fs.ErrNotExist) {
+	return bases, nil
+}
+
+// eachRunIn calls fn with every run directory in base whose name is a workflow id; a missing base holds none.
+func eachRunIn(base string, fn func(workflowID, dir string) error) error {
+	runs, err := os.ReadDir(base)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("listing %s: %w", base, err)
+	}
+	for _, e := range runs {
+		if !e.IsDir() || !ids.ValidChatID(e.Name()) {
 			continue
 		}
-		if err != nil {
-			return fmt.Errorf("listing %s: %w", base, err)
-		}
-		for _, e := range runs {
-			if !e.IsDir() || !ids.ValidChatID(e.Name()) {
-				continue
-			}
-			if err := fn(e.Name(), filepath.Join(base, e.Name())); err != nil {
-				return err
-			}
+		if err := fn(e.Name(), filepath.Join(base, e.Name())); err != nil {
+			return err
 		}
 	}
 	return nil

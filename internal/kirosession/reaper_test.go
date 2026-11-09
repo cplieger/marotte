@@ -811,7 +811,6 @@ func TestRunParents_HoldsEveryRunsParentInEveryBucket(t *testing.T) {
 	}
 
 	held, corrupt, err := New(root, work).runParents()
-
 	if err != nil {
 		t.Fatalf("runParents() error = %v", err)
 	}
@@ -859,7 +858,6 @@ func TestRunParents_ACorruptStateHoldsNothing(t *testing.T) {
 			bad := writeRunState(t, filepath.Join(root, "h"), "wf_bad", tc.body)
 
 			held, corrupt, err := New(root, t.TempDir()).runParents()
-
 			if err != nil {
 				t.Fatalf("runParents() error = %v, want nil: a corrupt state is no doubt", err)
 			}
@@ -880,7 +878,6 @@ func TestRunParents_ReadsItsMemberThroughStateParentKey(t *testing.T) {
 	writeRunState(t, filepath.Join(root, "h"), "wf_x", `{"parentSessionID":"sess_x"}`)
 
 	held, _, err := New(root, t.TempDir()).runParents()
-
 	if err != nil {
 		t.Fatalf("runParents() error = %v", err)
 	}
