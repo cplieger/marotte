@@ -90,6 +90,12 @@ Reported as [kirodotdev/Kiro#11101](https://github.com/kirodotdev/Kiro/issues/11
 
 ## Workflows
 
+### A message from another service shows in a workflow step's request as something you said
+
+Every step of a workflow starts with a block that quotes the messages you sent the chat, as the request it is working on. A message another service sends through the [notify route](configuration.md#waking-a-chat-from-another-service-marotte_notify_token) is quoted there as one of your messages, so a step can treat it as your instruction. The block keeps only the newest 12 messages, so many of these lines can push your own messages out of it. A message that was withdrawn before the agent read it is quoted too.
+
+Reported as [kirodotdev/Kiro#12346](https://github.com/kirodotdev/Kiro/issues/12346), open, beside [kirodotdev/Kiro#12325](https://github.com/kirodotdev/Kiro/issues/12325) in the entry "A message from another service reads to the agent as yours". marotte has no workaround. kiro-cli quotes the text of the message and removes every marker a client can send to tell it the message is not yours. This lasts until kiro-cli fixes it.
+
 ### An answer to a waiting step can become an ordinary message
 
 kiro-cli can take an answer to a step's question as an ordinary message to the step. The step reads the words, but the run keeps showing the question as open.
