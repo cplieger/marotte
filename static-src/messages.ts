@@ -1237,7 +1237,8 @@ let coverCheckFrame = 0;
 /**
  * Lift `chatID`'s cover now, or, while it holds bodies this pass could only start, from the first
  * frame once no unbuilt row shows where the reader lands. In the frame, so the paint task forces no
- * layout read of its own.
+ * layout read of its own. A release in the task needs no landing read: the scroll owner's follow
+ * write runs in the next frame before it renders.
  */
 function releaseCoverOverBuiltRows(chatID: string): void {
   coverOwed = "";

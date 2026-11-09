@@ -1,8 +1,8 @@
 // A landing page's paint spends its sync allowance on the reader's body first and starts every other
 // body from the rows nearest where the reader lands, so the transcript cover lifts by the first frame
-// with no unbuilt row in view; while those rows cannot fill the view the cover stays up until they
-// do, and it never waits on a body out of view or on another chat's. Real store, renderer, scroll
-// controller and layout.
+// with no unbuilt row in view, in a frame showing where the reader lands; while those rows cannot
+// fill the view the cover stays up until they do, and it never waits on a body out of view or on
+// another chat's. Real store, renderer, scroll controller and layout.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
@@ -395,6 +395,60 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
     expect(blankInView(), "the premise: its rows are out of view").toBe(false);
     expect(coverUp(), "the cover waited on a body out of view").toBe(false);
     await yields.releaseAll();
+  });
+
+  it("renders a cold chat's built answer at the reader's landing in the first frame after the lift", async () => {
+    const b = freshID("cr-b");
+    await switchUnderCover([evicted(b)], b);
+    for (let i = 0; i < 4; i++) {
+      await nextFrame();
+    }
+    await new Promise((r) => setTimeout(r, 0));
+    const s = store.get(b);
+    if (s === undefined) {
+      throw new Error("no cold chat");
+    }
+    for (const entries of [
+      tallProseTurn(`${b}-1`, 1),
+      heavyTurn(`${b}-2`, 3, 2),
+      tallProseTurn(`${b}-3`, 3),
+    ]) {
+      const first = entries[0];
+      if (first !== undefined) {
+        s.turns.set(first.turn, { entries: [...entries], openEntries: new Map() });
+        s.turn_order.push(first.turn);
+      }
+    }
+    s.turn_count = s.turn_order.length;
+    s.has_more = false;
+    s.residency = "loaded";
+    // In a task, as a fetch answers: the paint is no chat switch, so no restore lands the scroller.
+    await new Promise((r) => setTimeout(r, 0));
+    store.bumpMessages(b, "load");
+    await flushed();
+    expect(scroll.readingState(), "the premise: the reader lands on the live edge").toBe(
+      "following",
+    );
+    expect(coverUp(), "the premise: the answer's paint lifts the cover in its task").toBe(false);
+    expect(
+      scroll.getScrollEl().scrollTop,
+      "the premise: the paint left the scroller unlanded",
+    ).toBe(0);
+    // A task posted from the frame's rAF runs after that frame rendered.
+    const rendered = await new Promise<{ top: number; end: number; up: boolean }>((resolve) => {
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          const el = scroll.getScrollEl();
+          resolve({ top: el.scrollTop, end: el.scrollHeight - el.clientHeight, up: coverUp() });
+        }, 0);
+      });
+    });
+    expect(rendered.end, "the premise: the answer overflows the port").toBeGreaterThan(400);
+    expect(rendered.up, "the cover waited on an answer with nothing owed").toBe(false);
+    expect(
+      rendered.top,
+      "the first frame uncovered the answer away from the live edge",
+    ).toBeGreaterThanOrEqual(rendered.end - 1);
   });
 
   it("lifts in the paint's task over a chat switched back to with its bodies built, while the chat left owes one", async () => {
