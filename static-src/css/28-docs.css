@@ -493,6 +493,12 @@
   align-items: center;
   gap: var(--sp-2);
   flex-wrap: wrap;
+
+  /* The switch leads the row, so `.toggle-inline`'s margin for text before it would
+     indent it off the rule text's edge. */
+  & > .toggle-inline {
+    margin-inline-start: 0;
+  }
 }
 
 .rw-add,

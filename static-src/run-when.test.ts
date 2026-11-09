@@ -558,6 +558,24 @@ describe("the Run when… surfaces in real layout", () => {
     expect(toggled).toEqual([false]);
   });
 
+  it("starts the rule's switch at the rule text's edge", () => {
+    const list = buildRuleList({
+      rules: [eventRule()],
+      autoApprove: false,
+      declared: ["event_id"],
+      onToggle: () => undefined,
+      onEdit: () => undefined,
+      onDelete: () => undefined,
+      onDismissGap: () => Promise.resolve(null),
+      onAddClock: () => undefined,
+      onAddEvent: () => undefined,
+    });
+    inPopup(list);
+    const line = list.querySelector<HTMLElement>(".rw-rule .rw-line")!;
+    const track = list.querySelector<HTMLElement>(".rw-rule .toggle-slider")!;
+    expect(track.getBoundingClientRect().left).toBe(line.getBoundingClientRect().left);
+  });
+
   it.each(["dark", "light"])("keeps the form's text at 4.5:1 or better in the %s theme", (t) => {
     document.documentElement.dataset["theme"] = t;
     const form = inPopup(eventForm({ declared: { tag: "string" } }));
