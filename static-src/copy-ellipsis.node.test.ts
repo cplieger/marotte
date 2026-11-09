@@ -2,9 +2,11 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 
-// A word then three dots then the string's end (or a template's `${`) is UI copy
-// trailing off; spread syntax and code comments never take that shape.
-const THREE_DOTS = /[A-Za-z]\.\.\.(?=["`<]| \$\{)/;
+// Three dots after a word, `)` or `}` and before the string's end (or a template's `${`) is UI
+// copy trailing off; spread follows a space, `(` or `[`, and an empty `"..."` is a placeholder.
+const THREE_DOTS = /[^\s.("'`[]\.\.\.(?=["'`<]| \$\{)/;
+// Comments quote paths and prose with three dots.
+const COMMENT = /^\s*(\/\/|\/\*|\*)/;
 
 function shippedSources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -22,7 +24,9 @@ describe("UI copy", () => {
       readFileSync(p, "utf8")
         .split("\n")
         .flatMap((line, i) =>
-          THREE_DOTS.test(line) ? [`${p}:${String(i + 1)}: ${line.trim()}`] : [],
+          !COMMENT.test(line) && THREE_DOTS.test(line)
+            ? [`${p}:${String(i + 1)}: ${line.trim()}`]
+            : [],
         ),
     );
     expect(hits).toEqual([]);

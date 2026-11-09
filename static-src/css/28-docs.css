@@ -290,9 +290,7 @@
 /* An active schedule is a state, marked the way every other on-state is. */
 /* .recipe-sched-btn.on: 70-selection.css. */
 
-/* The Run when… and agent Run panels, anchored by `anchored-popover.ts`, on the
-   anchored form surface `.docs-new-popover` uses. `--popover-room` is the room
-   beside the button, set on open and on every content or viewport change. */
+/* The Run when… and agent Run panels; anchored-popover.ts sets --popover-room. */
 .sched-popup {
   z-index: 100;
   min-width: min(17rem, 100vw - 4 * var(--sp-4));
@@ -486,7 +484,8 @@
   overflow-wrap: anywhere;
 }
 
-/* The row's error class; `.rw-line`'s ink above comes later and would outrank it. */
+/* `.rw-line` sits after 11-page-lists.css's `.entry-sub-error` and would win on
+   source order; the two-class selector keeps the error ink. */
 .rw-line.entry-sub-error {
   color: var(--c-red);
 }

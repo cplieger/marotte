@@ -172,7 +172,7 @@ describe("the container is a plain layout div", () => {
     const { bar, row, label } = start("a.png");
     expect(row.classList.contains("upload-closed")).toBe(false);
     expect(bar.value).toBe(0);
-    expect(label.textContent).toBe("Uploading 1 file(s)...");
+    expect(label.textContent).toBe("Uploading 1 file(s)…");
   });
 });
 

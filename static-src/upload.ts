@@ -83,7 +83,7 @@ export function uploadFiles(opts: UploadOptions): void {
   progress.classList.remove("upload-closed");
   bar.setAttribute("aria-label", `Uploading ${String(opts.files.length)} file(s)`);
   bar.value = 0;
-  label.textContent = `Uploading ${String(opts.files.length)} file(s)...`;
+  label.textContent = `Uploading ${String(opts.files.length)} file(s)…`;
 
   const xhr = new XMLHttpRequest();
 
