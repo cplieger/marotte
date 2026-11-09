@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -345,18 +346,61 @@ func TestWireToolsSteering_ListsTheEnginesInstalledTools(t *testing.T) {
 	})
 }
 
+// within fails the test unless f returns inside d.
+func within(t *testing.T, d time.Duration, what string, f func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f()
+	}()
+	select {
+	case <-done:
+	case <-time.After(d):
+		t.Fatalf("%s has not returned after %v", what, d)
+	}
+}
+
+// fifoAt replaces path with a FIFO no one writes to.
+func fifoAt(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatalf("Setup: mkfifo: %v", err)
+	}
+	// A writer end opened and closed releases a read the slot may have left blocked on the FIFO.
+	t.Cleanup(func() {
+		if f, err := os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_ = f.Close()
+		}
+	})
+}
+
 func TestToolsSlot_AFIFOAtToolsJSONNeverBlocks(t *testing.T) {
+	t.Run("while_up", func(t *testing.T) {
+		fx := newOwnedFilesFixture(t)
+		fifoAt(t, fx.manifest)
+
+		within(t, time.Second, "the first tick over a FIFO", fx.tools.tick)
+		if engine, reason := fx.tools.Engine(); engine == nil || len(loggedManifestRefusals(t, fx.logs)) != 0 {
+			t.Errorf("after one tick: Engine() = (%v, %v), refusals %d; want up and nothing logged", engine, reason, len(loggedManifestRefusals(t, fx.logs)))
+		}
+		within(t, time.Second, "the second tick over a FIFO", fx.tools.tick)
+		if engine, reason := fx.tools.Engine(); engine != nil || reason == nil || !strings.Contains(reason.Error(), "not a regular file") {
+			t.Errorf("Engine() after two ticks = (%v, %v), want down with a reason naming a file that is not regular", engine, reason)
+		}
+		if n := len(loggedManifestRefusals(t, fx.logs)); n != 1 {
+			t.Errorf("refusals logged after two ticks = %d, want 1", n)
+		}
+		if got := fx.enqueued(); len(got) != 0 {
+			t.Errorf("jobs queued = %v, want none", got)
+		}
+	})
 	t.Run("at_boot", func(t *testing.T) {
 		manifest := filepath.Join(t.TempDir(), toolsManifestName)
-		if err := syscall.Mkfifo(manifest, 0o600); err != nil {
-			t.Fatalf("Setup: mkfifo: %v", err)
-		}
-		// A writer end opened and closed releases a read the slot may have left blocked on the FIFO.
-		t.Cleanup(func() {
-			if f, err := os.OpenFile(manifest, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
-				_ = f.Close()
-			}
-		})
+		fifoAt(t, manifest)
 		captureDefaultLogger(t)
 		slot := newToolsSlot(manifest, func() (*toolbelt.Engine, error) {
 			return nil, fmt.Errorf("toolbelt: init %s: %w", manifest, errors.New("not a regular file"))
@@ -374,6 +418,292 @@ func TestToolsSlot_AFIFOAtToolsJSONNeverBlocks(t *testing.T) {
 		engine, reason := slot.Engine()
 		if engine != nil || reason == nil || !strings.Contains(reason.Error(), "not a regular file") {
 			t.Errorf("Engine() over a FIFO = (%v, %v), want down with a reason naming a file that is not regular", engine, reason)
+		}
+	})
+}
+
+// countedSlot is a started tools slot over a fresh config dir whose build counts its calls: it
+// fails with fail when that is set and runs toolbelt.New otherwise.
+type countedSlot struct {
+	fail     error
+	slot     *toolsSlot
+	logs     *bytes.Buffer
+	manifest string
+	builds   int
+}
+
+func newCountedSlot(t *testing.T, doc string, fail error) *countedSlot {
+	t.Helper()
+	configDir, toolsDir := fitTree(t)
+	c := &countedSlot{manifest: filepath.Join(configDir, toolsManifestName), fail: fail}
+	writeConfig(t, c.manifest, doc)
+	c.logs = captureDefaultLogger(t)
+	c.slot = newToolsSlot(c.manifest, func() (*toolbelt.Engine, error) {
+		c.builds++
+		if c.fail != nil {
+			return nil, c.fail
+		}
+		return toolbelt.New(&toolbelt.Config{ConfigDir: configDir, ToolsDir: toolsDir})
+	})
+	t.Cleanup(c.slot.Close)
+	if err := c.slot.start(); err != nil {
+		t.Fatalf("Setup: start: %v", err)
+	}
+	return c
+}
+
+func (c *countedSlot) refusals(t *testing.T) int {
+	t.Helper()
+	return len(loggedManifestRefusals(t, c.logs))
+}
+
+func (c *countedSlot) remove(t *testing.T) {
+	t.Helper()
+	if err := os.Remove(c.manifest); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestToolsSlotTick_ActsOnceOnEachChangeWhileDown(t *testing.T) {
+	unfit := fmt.Errorf("toolbelt: %w", toolbelt.ErrRootIntegrity)
+	invalid, otherInvalid := `{"version":3,"tools":{}}`, `{"version":4,"tools":{}}`
+	t.Run("an invalid file", func(t *testing.T) {
+		c := newCountedSlot(t, invalid, nil)
+		if c.builds != 1 || c.refusals(t) != 1 {
+			t.Fatalf("after start: %d builds, %d refusals; want 1 and 1", c.builds, c.refusals(t))
+		}
+		c.slot.tick()
+		c.slot.tick()
+		if c.builds != 1 || c.refusals(t) != 1 {
+			t.Errorf("after two unchanged ticks: %d builds, %d refusals; want 1 and 1", c.builds, c.refusals(t))
+		}
+		writeConfig(t, c.manifest, otherInvalid)
+		c.slot.tick()
+		if n := c.refusals(t); n != 1 {
+			t.Errorf("refusals after one tick over another invalid document = %d, want 1 (the read is held)", n)
+		}
+		c.slot.tick()
+		if c.builds != 1 || c.refusals(t) != 2 {
+			t.Errorf("after the second tick over it: %d builds, %d refusals; want 1 and 2", c.builds, c.refusals(t))
+		}
+		writeConfig(t, c.manifest, manifestOf())
+		c.slot.tick()
+		if engine, reason := c.slot.Engine(); c.builds != 2 || engine == nil {
+			t.Errorf("after a valid edit and a tick: %d builds, Engine() = (%v, %v); want 2 and up", c.builds, engine, reason)
+		}
+	})
+	t.Run("an unfit root over a valid manifest", func(t *testing.T) {
+		c := newCountedSlot(t, manifestOf(), unfit)
+		c.slot.tick()
+		c.slot.tick()
+		if c.builds != 1 {
+			t.Errorf("builds after start and two unchanged ticks = %d, want 1", c.builds)
+		}
+		writeConfig(t, c.manifest, manifestOf(disabledRow("x")))
+		c.slot.tick()
+		if c.builds != 2 {
+			t.Errorf("builds after an edit and a tick = %d, want 2", c.builds)
+		}
+	})
+	t.Run("an invalid edit while up", func(t *testing.T) {
+		c := newCountedSlot(t, manifestOf(), nil)
+		writeConfig(t, c.manifest, invalid)
+		c.slot.tick()
+		if engine, _ := c.slot.Engine(); engine == nil || c.refusals(t) != 0 {
+			t.Errorf("after one tick: engine up %v, %d refusals; want up and none", engine != nil, c.refusals(t))
+		}
+		c.slot.tick()
+		if engine, _ := c.slot.Engine(); engine != nil || c.refusals(t) != 1 {
+			t.Errorf("after two ticks: engine up %v, %d refusals; want down and 1", engine != nil, c.refusals(t))
+		}
+		c.slot.tick()
+		if n := c.refusals(t); n != 1 {
+			t.Errorf("refusals after a third unchanged tick = %d, want 1", n)
+		}
+	})
+	t.Run("absent, then the person's manifest", func(t *testing.T) {
+		c := newCountedSlot(t, invalid, nil)
+		c.remove(t)
+		c.slot.tick()
+		if _, err := os.Stat(c.manifest); c.builds != 1 || !os.IsNotExist(err) {
+			t.Errorf("after one tick over an absence: %d builds, stat %v; want 1 and still absent", c.builds, err)
+		}
+		doc := manifestOf(disabledRow("mine"))
+		writeConfig(t, c.manifest, doc)
+		c.slot.tick()
+		if got, _ := os.ReadFile(c.manifest); c.builds != 2 || string(got) != doc {
+			t.Errorf("after the person's manifest and a tick: %d builds, tools.json %q; want 2 and %q byte for byte", c.builds, got, doc)
+		}
+	})
+	t.Run("absent for two ticks", func(t *testing.T) {
+		c := newCountedSlot(t, invalid, nil)
+		c.remove(t)
+		c.slot.tick()
+		c.slot.tick()
+		got, err := os.ReadFile(c.manifest)
+		if m, perr := toolbelt.ParseManifest(got); c.builds != 2 || err != nil || perr != nil || len(m.Tools) != 0 {
+			t.Errorf("after two ticks over an absence: %d builds, tools.json %q (%v, %v); want 2 and the empty seed", c.builds, got, err, perr)
+		}
+		c.slot.tick()
+		if c.builds != 2 {
+			t.Errorf("builds after a third tick = %d, want 2", c.builds)
+		}
+	})
+	t.Run("absent under an unfit root", func(t *testing.T) {
+		c := newCountedSlot(t, manifestOf(), unfit)
+		c.remove(t)
+		c.slot.tick()
+		if c.builds != 1 {
+			t.Errorf("builds after one tick over an absence = %d, want 1", c.builds)
+		}
+	})
+	t.Run("a save ends a hold from before it", func(t *testing.T) {
+		c := newCountedSlot(t, manifestOf(), unfit)
+		c.builds = 0
+		c.remove(t)
+		c.slot.tick()
+		if _, err := c.slot.Replace(t.Context(), []byte(manifestOf(disabledRow("x"))), nil); err != nil {
+			t.Fatalf("Replace = %v, want written", err)
+		}
+		if engine, _ := c.slot.Engine(); c.builds != 1 || engine != nil {
+			t.Fatalf("after Replace: %d builds, engine up %v; want 1 and still down", c.builds, engine != nil)
+		}
+		c.remove(t)
+		c.slot.tick()
+		if c.builds != 1 {
+			t.Errorf("builds after one tick over the absence that followed the save = %d, want 1 (a hold from before the save counted)", c.builds)
+		}
+	})
+}
+
+// pinnedManualRow is a manual row the fixture's state reports installed at 1.0.
+func pinnedManualRow(name string) string {
+	return fmt.Sprintf(`%q:{"source":"manual","install":"true","version":"1.0","pin":true}`, name)
+}
+
+// installedToolsSeed lists a alone.
+func installedToolsSeed() *toolbelt.Manifest {
+	return &toolbelt.Manifest{Version: toolbelt.ManifestVersion, Tools: map[string]toolbelt.Tool{
+		"a": {Source: toolbelt.SourceManual, Install: "true", Version: "1.0", Pin: true},
+	}}
+}
+
+// installedTools is an engine up over tools.json holding rows a and b, both installed, with a
+// seed listing a alone.
+func installedTools() toolsSetup {
+	return toolsSetup{
+		manifest: manifestOf(pinnedManualRow("a"), pinnedManualRow("b")),
+		config:   func(c *toolbelt.Config) { c.Seed = installedToolsSeed() },
+		prepare: func(t *testing.T, configDir, toolsDir string) {
+			t.Helper()
+			state := `{"tools":{"a":{"installed_version":"1.0","bins":["a"]},"b":{"installed_version":"1.0","bins":["b"]}}}`
+			writeConfig(t, filepath.Join(configDir, "tools-state.json"), state)
+			if err := os.MkdirAll(filepath.Join(toolsDir, "bin"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			syscall.ForkLock.RLock()
+			defer syscall.ForkLock.RUnlock()
+			for _, bin := range []string{"a", "b"} {
+				if err := os.WriteFile(filepath.Join(toolsDir, "bin", bin), []byte("#!/bin/sh\necho 1.0\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+		},
+	}
+}
+
+// seedAsNewWritesIt is tools.json as toolbelt.New writes installedToolsSeed on a fresh config dir.
+func seedAsNewWritesIt(t *testing.T) []byte {
+	t.Helper()
+	dir := t.TempDir()
+	engine, err := toolbelt.New(&toolbelt.Config{ConfigDir: dir, ToolsDir: filepath.Join(dir, "tools"), Seed: installedToolsSeed()})
+	if err != nil {
+		t.Fatalf("Setup: a second engine for the seed: %v", err)
+	}
+	engine.Close()
+	data, err := os.ReadFile(filepath.Join(dir, toolsManifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestToolsSlotTick_ARemovalWhileUpIsSeededAtTheSecondTick(t *testing.T) {
+	remove := func(t *testing.T, fx *ownedFilesFixture) {
+		t.Helper()
+		if err := os.Remove(fx.manifest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("removed", func(t *testing.T) {
+		fx := newOwnedFilesFixtureWith(t, installedTools())
+		seed := seedAsNewWritesIt(t)
+		remove(t, fx)
+		fx.tools.tick()
+		if _, err := os.Stat(fx.manifest); !os.IsNotExist(err) || len(fx.enqueued()) != 0 {
+			t.Errorf("after one tick: stat %v, jobs %v; want still absent and none", err, fx.enqueued())
+		}
+		fx.tools.tick()
+		if got, _ := os.ReadFile(fx.manifest); !bytes.Equal(got, seed) {
+			t.Errorf("tools.json after two ticks = %q, want the seed as New writes it %q", got, seed)
+		}
+		if got := fx.enqueued(); !slices.Equal(got, []string{toolbelt.JobKindReconcile}) {
+			t.Errorf("jobs after two ticks = %v, want one %q", got, toolbelt.JobKindReconcile)
+		}
+		fx.tools.tick()
+		if got := fx.enqueued(); len(got) != 1 {
+			t.Errorf("jobs after a third tick = %v, want still one", got)
+		}
+	})
+	t.Run("removed, then the person's manifest", func(t *testing.T) {
+		fx := newOwnedFilesFixtureWith(t, installedTools())
+		remove(t, fx)
+		fx.tools.tick()
+		doc := manifestOf(pinnedManualRow("a"), disabledRow("mine"))
+		writeConfig(t, fx.manifest, doc)
+		fx.tools.tick()
+		if got, _ := os.ReadFile(fx.manifest); string(got) != doc {
+			t.Errorf("tools.json = %q, want the person's %q byte for byte", got, doc)
+		}
+		if got := fx.enqueued(); !slices.Equal(got, []string{toolbelt.JobKindReconcile}) {
+			t.Errorf("jobs = %v, want one %q", got, toolbelt.JobKindReconcile)
+		}
+	})
+	t.Run("a save ends a hold from before it", func(t *testing.T) {
+		fx := newOwnedFilesFixtureWith(t, installedTools())
+		remove(t, fx)
+		fx.tools.tick()
+		if _, err := fx.tools.Replace(t.Context(), []byte(manifestOf(pinnedManualRow("a"), pinnedManualRow("b"), disabledRow("x"))), nil); err != nil {
+			t.Fatalf("Replace = %v, want written", err)
+		}
+		if got := fx.enqueued(); len(got) != 1 {
+			t.Fatalf("Setup: jobs after the save = %v, want its one reconcile", got)
+		}
+		remove(t, fx)
+		fx.tools.tick()
+		if _, err := os.Stat(fx.manifest); !os.IsNotExist(err) || len(fx.enqueued()) != 1 {
+			t.Errorf("after one tick over the removal that followed the save: stat %v, jobs %v; want still absent and no new job", err, fx.enqueued())
+		}
+	})
+	t.Run("an Add inside the hold", func(t *testing.T) {
+		fx := newOwnedFilesFixtureWith(t, installedTools())
+		remove(t, fx)
+		fx.tools.tick()
+		engine, reason := fx.tools.Engine()
+		if engine == nil {
+			t.Fatalf("Setup: Engine() = (nil, %v)", reason)
+		}
+		if _, err := engine.Add(t.Context(), &toolbelt.AddRequest{Name: "c", Source: toolbelt.SourceManual, Install: "true", Disabled: true}); err != nil {
+			t.Fatalf("Add inside the hold = %v", err)
+		}
+		fx.tools.tick()
+		got, _ := os.ReadFile(fx.manifest)
+		m, err := toolbelt.ParseManifest(got)
+		if err != nil || !slices.Equal(slices.Sorted(maps.Keys(m.Tools)), []string{"a", "b", "c"}) {
+			t.Errorf("tools.json after an Add inside the hold and a tick = %q (%v), want rows a, b and c", got, err)
+		}
+		if got := fx.enqueued(); len(got) != 0 {
+			t.Errorf("jobs = %v, want none (nothing was seeded)", got)
 		}
 	})
 }
