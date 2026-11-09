@@ -1851,6 +1851,10 @@ export const decodeFileWriteResult: Decoder<FileWriteResult> = (v) => {
     size: reqNum(o, "size", "$.file_write_result"),
     ok: reqBool(o, "ok", "$.file_write_result"),
   };
+  {
+    const $v = own(o, "content");
+    if ($v !== undefined && $v !== null) out.content = reqStr(o, "content", "$.file_write_result");
+  }
   return out;
 };
 

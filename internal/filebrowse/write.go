@@ -1,6 +1,7 @@
 package filebrowse
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -32,7 +33,8 @@ type writeBody struct {
 	Content string  `json:"content"`
 }
 
-func writeFile(w http.ResponseWriter, r *http.Request, l loc, hook SaveHook) {
+// writeFile writes the body to l, through owner when l is an owned file (owner nil otherwise).
+func writeFile(w http.ResponseWriter, r *http.Request, l loc, owner Owner) {
 	body, ok := decodeWriteBody(w, r, l)
 	if !ok {
 		return
@@ -55,10 +57,11 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc, hook SaveHook) {
 		httpreply.BadRequest(w, "path is a directory")
 		return
 	}
-	if body.FileID != nil && !staleWriteAllowed(w, r, l, parent, base, *body.FileID) {
+	if owner != nil {
+		writeOwned(w, r, l, owner, body)
 		return
 	}
-	if refusedBySaveHook(w, l, hook, []byte(body.Content)) {
+	if body.FileID != nil && !staleWriteAllowed(w, r, l, parent, base, *body.FileID) {
 		return
 	}
 	// A rename publishes a new inode, so an existing regular file's bits are
@@ -82,9 +85,6 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc, hook SaveHook) {
 		}
 	}
 	slog.Info("filebrowse: file written", "path", logsafe.Field(l.abs), "bytes", len(data))
-	if hook.Saved != nil {
-		hook.Saved()
-	}
 	httpserver.WriteJSON(w, FileWriteResult{OK: true, FileID: fileIDOf(data), Size: int64(len(data))})
 }
 
@@ -119,18 +119,62 @@ func decodeWriteBody(w http.ResponseWriter, r *http.Request, l loc) (writeBody, 
 	return body, true
 }
 
-func refusedBySaveHook(w http.ResponseWriter, l loc, hook SaveHook, content []byte) (answered bool) {
-	if hook.Check == nil {
-		return false
+// staleError is an owner's check refusing the bytes on disk, which differ from the editor's.
+type staleError struct{ current []byte }
+
+func (e *staleError) Error() string { return errStaleWrite }
+
+// writeOwned hands the save to l's owner, which reads, checks and writes under its own lock. The
+// answer carries the written bytes when the owner wrote other bytes than were sent.
+func writeOwned(w http.ResponseWriter, r *http.Request, l loc, owner Owner, body writeBody) {
+	var check func([]byte) error
+	if body.FileID != nil {
+		want := *body.FileID
+		check = func(current []byte) error {
+			if current == nil || fileIDOf(current) == want {
+				return nil
+			}
+			return &staleError{current: current}
+		}
 	}
-	err := hook.Check(content)
-	if err == nil {
-		return false
+	content := []byte(body.Content)
+	written, err := owner.Replace(r.Context(), content, check)
+	if stale, ok := errors.AsType[*staleError](err); ok {
+		writeOwnedStale(w, l, stale.current, *body.FileID)
+		return
 	}
-	slog.Info("filebrowse: save refused by its hook",
-		"path", logsafe.Field(l.abs), "reason", logsafe.Field(err.Error()))
-	httpreply.BadRequest(w, err.Error())
-	return true
+	if refusal, ok := errors.AsType[SaveRefusalError](err); ok {
+		slog.Info("filebrowse: save refused by its owner",
+			"path", logsafe.Field(l.abs), "reason", logsafe.Field(refusal.Error()))
+		httpreply.BadRequest(w, refusal.Error())
+		return
+	}
+	if err != nil {
+		writeFileError(w, l, err)
+		return
+	}
+	slog.Info("filebrowse: file written", "path", logsafe.Field(l.abs), "bytes", len(written))
+	out := FileWriteResult{OK: true, FileID: fileIDOf(written), Size: int64(len(written))}
+	if !bytes.Equal(written, content) {
+		text := string(written)
+		out.Content = &text
+	}
+	httpserver.WriteJSON(w, out)
+}
+
+// writeOwnedStale answers a stale owned save as staleWriteAllowed answers an unowned one.
+func writeOwnedStale(w http.ResponseWriter, l loc, current []byte, want string) {
+	got := fileIDOf(current)
+	slog.Info("filebrowse: refused a stale write",
+		"path", logsafe.Field(l.abs), "expected", logsafe.Field(want), "actual", got)
+	if len(current) > WholeFileMax {
+		size := int64(len(current))
+		httpserver.WriteJSONStatus(w, http.StatusConflict, FileRefusal{
+			Error: errStaleWrite, Code: refusalChanged, ContentKind: contentTooLarge, Size: &size,
+		})
+		return
+	}
+	httpserver.WriteJSONStatus(w, http.StatusConflict, staleRefusal(current, got))
 }
 
 // A full volume gets its own status and message.

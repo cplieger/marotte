@@ -26,5 +26,5 @@ type ownedFileDeps struct {
 
 // ownedFileOptions registers every file marotte owns with the file browser.
 func ownedFileOptions(d ownedFileDeps) []filebrowse.Option {
-	return []filebrowse.Option{toolsManifestSaveHook(d.Tools)}
+	return []filebrowse.Option{toolsManifestOwner(d.Tools)}
 }

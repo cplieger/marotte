@@ -167,7 +167,7 @@ func TestWrite_PinsTheParentAgainstAnAncestorSwap(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/file", strings.NewReader(`{"content":"clobbered"}`))
-	writeFile(rec, req, l, SaveHook{})
+	writeFile(rec, req, l, nil)
 	if rec.Code == http.StatusOK {
 		t.Errorf("PUT through a swapped ancestor = 200, want a refusal")
 	}

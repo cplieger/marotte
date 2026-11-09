@@ -53,7 +53,7 @@ func newManifestSaveFixture(t *testing.T, initial string) *manifestSaveFixture {
 		t.Fatalf("Setup: start the tools slot: %v", err)
 	}
 	t.Cleanup(fx.tools.Close)
-	files, err := filebrowse.New(filebrowse.NewSensitive(dir), []string{dir}, toolsManifestSaveHook(fx.tools))
+	files, err := filebrowse.New(filebrowse.NewSensitive(dir), []string{dir}, toolsManifestOwner(fx.tools))
 	if err != nil {
 		t.Fatal(err)
 	}

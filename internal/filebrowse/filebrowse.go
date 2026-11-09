@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/cplieger/go/pathinside"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 )
@@ -39,9 +40,9 @@ const (
 
 // Handler serves /api/file/* and /api/files/*.
 type Handler struct {
-	saveHooks   []savePathHook // registration order, so the first match is deterministic
-	toolOutputs string         // AllowToolOutputs; "" grants nothing
-	mounts      []mount        // sorted longest-dir-first (see sortMounts)
+	owners      []pathOwner // registration order, so the first match is deterministic
+	toolOutputs string      // AllowToolOutputs; "" grants nothing
+	mounts      []mount     // sorted longest-dir-first (see sortMounts)
 	liveRoots   func(ctx context.Context) []string
 	sensitive   Sensitive
 }
@@ -50,45 +51,65 @@ type Handler struct {
 // roots open, so where two set the same thing the later one wins.
 type Option func(*Handler)
 
-// SaveHook governs editor saves (PUT /api/file) of one file. Either func may be nil.
-type SaveHook struct {
-	// Check runs before anything is written; a non-nil error refuses the save with a 400 whose
-	// message is the error's text, so it must read as an answer to the person saving.
-	Check func(content []byte) error
-	// Saved runs after the content is on disk, on the request goroutine, before the response.
-	Saved func()
+// Owner is the one writer of a file the browser serves. Replace writes content as the whole file
+// under the owner's lock when check accepts the bytes then on disk (nil when absent, non-nil and
+// possibly empty when present; a nil check always accepts), and answers the bytes it wrote. It
+// returns once they are on disk: the save's answer ends only when Replace returns, so a slow
+// after-write effect goes to the owner's own worker. A SaveRefusalError answers 400 with its text;
+// check's own error answers the stale 409.
+type Owner interface {
+	Replace(ctx context.Context, content []byte, check func(current []byte) error) (written []byte, err error)
 }
 
-type savePathHook struct {
-	hook SaveHook
-	path string
+// SaveRefusalError is an owner's refusal of the content itself, worded for the person saving.
+type SaveRefusalError struct{ Err error }
+
+func (r SaveRefusalError) Error() string { return r.Err.Error() }
+
+func (r SaveRefusalError) Unwrap() error { return r.Err }
+
+type pathOwner struct {
+	owner Owner
+	path  string
 }
 
-// WithSaveHook runs hook on every save whose target resolves to wherever path, an absolute path,
-// points at the time of that save. A later hook for the same cleaned path replaces this one; of
-// two spellings that resolve to one file, the one registered first runs.
-func WithSaveHook(path string, hook SaveHook) Option {
+// WithOwner routes every save whose target resolves to wherever path, an absolute path, points at
+// the time of that save through o, and refuses the file actions that would create, delete or
+// rename it. A later owner for the same cleaned path replaces this one; of two spellings that
+// resolve to one file, the one registered first owns it.
+func WithOwner(path string, o Owner) Option {
 	return func(h *Handler) {
 		path = filepath.Clean(path)
-		for i := range h.saveHooks {
-			if h.saveHooks[i].path == path {
-				h.saveHooks[i].hook = hook
+		for i := range h.owners {
+			if h.owners[i].path == path {
+				h.owners[i].owner = o
 				return
 			}
 		}
-		h.saveHooks = append(h.saveHooks, savePathHook{path: path, hook: hook})
+		h.owners = append(h.owners, pathOwner{path: path, owner: o})
 	}
 }
 
-// saveHookFor resolves each hook's path per save, so a symlink swapped in after New cannot
-// route a save around its hook.
-func (h *Handler) saveHookFor(l loc) SaveHook {
-	for _, r := range h.saveHooks {
+// ownerFor resolves each owned path per request, so a symlink swapped in after New cannot route a
+// save around its owner.
+func (h *Handler) ownerFor(l loc) Owner {
+	for _, r := range h.owners {
 		if resolved, err := resolveRealPath(r.path); err == nil && resolved == l.abs {
-			return r.hook
+			return r.owner
 		}
 	}
-	return SaveHook{}
+	return nil
+}
+
+// ownedAtOrAbove answers the owned path that is abs or one of its ancestors, or "": creating
+// anything below an absent owned file puts a directory at its path.
+func (h *Handler) ownedAtOrAbove(abs string) string {
+	for _, r := range h.owners {
+		if resolved, err := resolveRealPath(r.path); err == nil && pathinside.Root(resolved).Contains(abs) {
+			return resolved
+		}
+	}
+	return ""
 }
 
 // New creates a file handler whose browsable surface is exactly rootDirs,
@@ -168,7 +189,7 @@ func (h *Handler) handleFile(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		writeFile(w, r, l, h.saveHookFor(l))
+		writeFile(w, r, l, h.ownerFor(l))
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
 	}

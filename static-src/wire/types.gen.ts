@@ -1654,6 +1654,8 @@ export interface FileStat {
  * this request wrote.
  */
 export interface FileWriteResult {
+  /** Content is present when the file's owner wrote other bytes than were sent. */
+  content?: string;
   file_id: string;
   size: number;
   ok: boolean;
