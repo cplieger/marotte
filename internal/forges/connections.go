@@ -298,7 +298,7 @@ func (f recordsFile) read() ([]connectionRecord, error) {
 }
 
 func (f recordsFile) readBytes() ([]byte, error) {
-	fh, _, err := filesafe.OpenRegular(f.path)
+	fh, _, err := filesafe.OpenRegularNoFollow(f.path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", f.path, err)
 	}

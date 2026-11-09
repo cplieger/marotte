@@ -11,6 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -330,7 +331,7 @@ var attemptCases = []attemptCase{
 			if n := tc.log.CountExact(logMsgImpossible); n != 1 {
 				t.Errorf("%d ERROR %q lines, want 1", n, logMsgImpossible)
 			}
-			for key, want := range map[string]string{
+			for key, want := range map[capture.AttrName]string{
 				"rule_id": r.ID, "state": "invoking", "event": "named", "workflow_id": "wf_1",
 			} {
 				if got, ok := tc.log.AttrValueExact(logMsgImpossible, key); !ok || got != want {

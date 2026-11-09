@@ -3,13 +3,13 @@
 // worker can be had.
 
 import {
+  type Changed,
   type DigestResult,
   type Frame,
   type LifecycleEvent,
   type Removed,
   type RevalidateContext,
   type SharedWorkerLike,
-  type State,
   type TabAttachment,
   type TabFallback,
   type TabRevalidateContext,
@@ -367,7 +367,7 @@ function isWake(cause: RevalidateContext["cause"]): boolean {
 /** Every fetch takes `signal`, so `stop()` and the revalidation timeout cancel them and
  *  `reconnect()` does not. Resolves to whether `pending` or `status` moved. */
 async function applyVerdict(
-  changed: readonly State[],
+  changed: readonly Changed[],
   removed: readonly Removed[],
   signal: AbortSignal,
 ): Promise<boolean> {

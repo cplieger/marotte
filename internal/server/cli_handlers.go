@@ -183,7 +183,7 @@ func (s *Server) writeKiroSetting(w http.ResponseWriter, r *http.Request) {
 		}
 		if _, held := s.heldKiroPrefs.held[key]; held {
 			s.heldKiroPrefs.held[key] = value
-			httpserver.Ok(w)
+			httpserver.OK(w)
 			return
 		}
 	}
@@ -200,7 +200,7 @@ func (s *Server) writeKiroSetting(w http.ResponseWriter, r *http.Request) {
 	// The user's write is kiro-cli's value now, so a restore still pending from
 	// a lifted lock must not write the older choice over it.
 	delete(s.heldKiroPrefs.held, key)
-	httpserver.Ok(w)
+	httpserver.OK(w)
 	if s.agent != nil {
 		s.agent.ReconcileSessionSettings(durable.Context(r.Context()))
 		// The effective settings mirror this key, so every tab rereads them.

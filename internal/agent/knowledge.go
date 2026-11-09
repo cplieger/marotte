@@ -158,7 +158,7 @@ func (st *Settings) handleKnowledgeClear(w http.ResponseWriter, r *http.Request)
 			refusal := errors.New(cleanKnowledgeMsg(res.Message))
 			return engineReply{err: refusal, write: func(w http.ResponseWriter) { httpreply.ServerError(w, "clear failed", refusal) }}
 		}
-		return engineReply{write: httpserver.Ok, applied: true}
+		return engineReply{write: httpserver.OK, applied: true}
 	})
 }
 
@@ -282,7 +282,7 @@ func (st *Settings) handleKnowledgeRemove(w http.ResponseWriter, r *http.Request
 		if !res.Success {
 			return knowledgeNotFound(cleanKnowledgeMsg(res.Message))
 		}
-		return engineReply{write: httpserver.Ok, applied: true}
+		return engineReply{write: httpserver.OK, applied: true}
 	})
 }
 

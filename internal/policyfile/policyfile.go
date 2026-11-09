@@ -203,12 +203,12 @@ func readSource(ctx context.Context, path string) (data []byte, name string, err
 	return data, name, nil
 }
 
-// readPolicy returns abs's bytes, nil for a missing file. Through filesafe.OpenRegular: a FIFO
+// readPolicy returns abs's bytes, nil for a missing file. Through filesafe.OpenRegularNoFollow: a FIFO
 // at the name (the agent can write $HOME/.kiro) would block os.ReadFile forever, the size is
 // checked off the descriptor before reading, and a final-component symlink is refused as Save
 // refuses it.
 func readPolicy(ctx context.Context, abs string) ([]byte, error) {
-	fh, _, err := filesafe.OpenRegular(abs)
+	fh, _, err := filesafe.OpenRegularNoFollow(abs)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil

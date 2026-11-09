@@ -353,7 +353,7 @@ func (h *HTTPHandler) handlePRRerun(w http.ResponseWriter, r *http.Request, rh *
 		h.poller.refill(rh.id, ref.ID, pr.Number)
 	}
 	h.askCycle()
-	httpserver.Ok(w)
+	httpserver.OK(w)
 }
 
 func (h *HTTPHandler) handleIssues(w http.ResponseWriter, r *http.Request, rh *readHandle, ref forgeapi.RepoRef, tail string) {

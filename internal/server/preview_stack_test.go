@@ -35,7 +35,7 @@ func previewStack(t *testing.T) (http.Handler, *preview.Handler, string) {
 	ph := preview.New(ws, filebrowse.Sensitive{}, signer, slog.New(slog.DiscardHandler))
 	mux := http.NewServeMux()
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("spa")) }))
-	mux.HandleFunc(healthzPath, func(w http.ResponseWriter, _ *http.Request) { httpserver.Ok(w) })
+	mux.HandleFunc(healthzPath, func(w http.ResponseWriter, _ *http.Request) { httpserver.OK(w) })
 	ph.RegisterRoutes(mux)
 	idem := newIdempotencyCache(idempotencyTTL)
 	t.Cleanup(idem.stop)

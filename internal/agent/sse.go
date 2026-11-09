@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/go/sse"
+	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -96,7 +96,7 @@ func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 	rt.bus.fanout.Serve(armedWriter(&rt.bus.closeAfter, w), r,
 		sse.WithClientTag(tag),
-		sse.OnConnect(func(sw *sse.Writer, h sse.Hello) error {
+		sse.WithOnConnect(func(sw *sse.Writer, h sse.Hello) error {
 			return rt.streamInitialState(sw, &h, legacy)
 		}),
 	)
@@ -112,7 +112,7 @@ const (
 	maxConnectLiveRuns = 128
 )
 
-// streamInitialState is the OnConnect body: `connected`, then workspace state the event log cannot give. A v3
+// streamInitialState is the WithOnConnect body: `connected`, then workspace state the event log cannot give. A v3
 // connect gets pending_snapshot and status_snapshot, each whole and stamped; a legacy one gets the per-item
 // replay and numeric floor/head. Frames are id-less and unnamed (v2 reads onmessage); `connected` has no Subject.
 func (rt *Runtime) streamInitialState(sw *sse.Writer, h *sse.Hello, legacy bool) error {

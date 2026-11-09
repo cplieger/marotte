@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/cplieger/go/slogx/capture"
-	"github.com/cplieger/go/sse"
-	"github.com/cplieger/go/sse/ssetest"
+	"github.com/cplieger/go/sse/v2"
+	"github.com/cplieger/go/sse/v2/ssetest"
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/liveness"
 	"github.com/cplieger/marotte/internal/marotte"

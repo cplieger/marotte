@@ -386,11 +386,12 @@ func verifyHandle(h ModeHandle, path string) error {
 
 // RewriteOptions says how to rewrite an existing regular file of mode perm so
 // it keeps its permission bits. An owner-only mode is enforced on the write. Any
-// other mode comes back as restore, for the caller to chmod after the write, so
-// a directory whose inherited ACL widens new files cannot refuse the save.
-func RewriteOptions(perm os.FileMode) (opts []filesafe.Option, restore os.FileMode) {
-	if perm&0o077 == 0 {
-		return []filesafe.Option{filesafe.WithMode(perm)}, 0
+// other mode, 0 included since filesafe refuses WithMode(0), comes back as
+// restore with chmod true, for the caller to chmod after the write, so a
+// directory whose inherited ACL widens new files cannot refuse the save.
+func RewriteOptions(perm os.FileMode) (opts []filesafe.WriteOption, restore os.FileMode, chmod bool) {
+	if perm != 0 && perm&0o077 == 0 {
+		return []filesafe.WriteOption{filesafe.WithMode(perm)}, 0, false
 	}
-	return nil, perm
+	return nil, perm, true
 }

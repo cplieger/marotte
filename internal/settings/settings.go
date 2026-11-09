@@ -88,7 +88,7 @@ func (c *cache) load() generation {
 // reload is the body of the singleflight slot: resolve the path, take the mtime/size fast
 // path, otherwise read and cache.
 func (c *cache) reload() generation {
-	// Absolute because filesafe.OpenRegular requires it.
+	// Absolute because filesafe.OpenRegularNoFollow requires it.
 	path, err := filepath.Abs(filepath.Join(c.configDir, filename))
 	if err != nil {
 		return generation{err: err}
@@ -117,10 +117,10 @@ func (c *cache) reload() generation {
 }
 
 // readRegular reads path under maxBytes, refusing anything but a regular file (and a final
-// symlink), and returns the FileInfo of the descriptor read. OpenRegular because os.Open
+// symlink), and returns the FileInfo of the descriptor read. OpenRegularNoFollow because os.Open
 // blocks forever on a FIFO, which inside the singleflight slot would wedge every reader.
 func readRegular(path string) (data []byte, info os.FileInfo, err error) {
-	f, info, err := filesafe.OpenRegular(path)
+	f, info, err := filesafe.OpenRegularNoFollow(path)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -132,11 +132,11 @@ func readRegular(path string) (data []byte, info os.FileInfo, err error) {
 	return data, info, nil
 }
 
-// A zero identity reports Changed.
+// A zero identity matches nothing.
 func (c *cache) hit(info os.FileInfo) (generation, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.id.Changed(info) || info.Size() != c.size {
+	if !c.id.Matches(info) || info.Size() != c.size {
 		return generation{}, false
 	}
 	return generation{data: c.data, gen: c.gen}, true
@@ -157,7 +157,7 @@ func (c *cache) store(data []byte, info os.FileInfo) uint64 {
 func (c *cache) forget() uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.data != nil || c.id != (filesafe.FileIdentity{}) {
+	if c.data != nil || c.id.Recorded() {
 		c.data = nil
 		c.id = filesafe.FileIdentity{}
 		c.size = 0

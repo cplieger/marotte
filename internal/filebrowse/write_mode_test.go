@@ -49,3 +49,9 @@ func TestWriteFile_EnforcesAnOwnerOnlyModeWithoutAChmod(t *testing.T) {
 		t.Errorf("saving a 0600 file ran %d post-write chmods, want 0: the mode must be enforced on the write itself", chmods)
 	}
 }
+
+func TestWriteFile_KeepsANoPermissionModeAcrossASave(t *testing.T) {
+	if got := saveExisting(t, 0); got != 0 {
+		t.Errorf("saving a 0000 file left mode %#o, want 0000", got)
+	}
+}

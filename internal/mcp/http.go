@@ -156,7 +156,7 @@ func (s *Store) deleteOne(w http.ResponseWriter, r *http.Request, id serverID) {
 		s.writeErr(w, err)
 		return
 	}
-	httpserver.Ok(w)
+	httpserver.OK(w)
 }
 
 // writeErr maps package-level sentinel errors to the right HTTP status.

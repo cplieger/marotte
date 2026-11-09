@@ -304,7 +304,7 @@ func TestSettingsGet_FailsOpenOnAnUnreadableDocument(t *testing.T) {
 	}
 }
 
-// TestSettingsGet_DoesNotBlockOnAFIFO pins OpenRegular's FIFO refusal on the GET. A revert
+// TestSettingsGet_DoesNotBlockOnAFIFO pins OpenRegularNoFollow's FIFO refusal on the GET. A revert
 // to os.ReadFile makes this HANG rather than fail.
 func TestSettingsGet_DoesNotBlockOnAFIFO(t *testing.T) {
 	dir := t.TempDir()

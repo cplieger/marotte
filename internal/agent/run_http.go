@@ -584,7 +584,7 @@ func (rr *runRoutes) handleFinishLoop(w http.ResponseWriter, r *http.Request) {
 func (rr *runRoutes) writeRepeatResult(w http.ResponseWriter, verb, id string, err error) {
 	switch {
 	case err == nil:
-		httpserver.Ok(w)
+		httpserver.OK(w)
 	case errors.Is(err, errRunHostStart):
 		slog.Warn("run control failed", "verb", verb, "workflow_id", logsafe.Field(id), "error", err)
 		httpreply.InternalError(w, errors.New(verb+" failed"))
@@ -651,7 +651,7 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	err := rr.runs.answerInput(r.Context(), id, body.AskID, body.Text, apiCaller(r))
 	switch {
 	case err == nil:
-		httpserver.Ok(w)
+		httpserver.OK(w)
 	case writeStatusErr(w, err):
 	case errors.Is(err, errStepUnrecorded):
 		// placeStepMessage logged the fault.
@@ -712,7 +712,7 @@ func (rr *runRoutes) handleStepPost(w http.ResponseWriter, r *http.Request) {
 			rr.writeStepErr(w, "steer clear", id, nodePath, err)
 			return
 		}
-		httpserver.Ok(w)
+		httpserver.OK(w)
 	case "end":
 		rr.handleStepEnd(w, r, id, nodePath)
 	default:
@@ -734,7 +734,7 @@ func (rr *runRoutes) handleStepEnd(w http.ResponseWriter, r *http.Request, id, n
 		rr.writeStepErr(w, verbEndStep, id, nodePath, err)
 		return
 	}
-	httpserver.Ok(w)
+	httpserver.OK(w)
 }
 
 // writeStatusErr answers an error that names its own status, with its machine reason as `code`,
@@ -978,5 +978,5 @@ func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb
 		rr.writeControlErr(w, verb.name, id, err)
 		return
 	}
-	httpserver.Ok(w)
+	httpserver.OK(w)
 }

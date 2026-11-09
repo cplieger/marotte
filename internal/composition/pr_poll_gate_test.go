@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/go/sse"
+	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/forges"
 	"github.com/cplieger/marotte/internal/liveness"
 	"github.com/cplieger/marotte/internal/marotte"

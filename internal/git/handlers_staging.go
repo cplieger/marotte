@@ -91,7 +91,7 @@ func (h *Handler) handleStage(w http.ResponseWriter, r *http.Request) {
 		httpserver.WriteJSON(w, httpreply.ErrorJSON(clientBlock(out)))
 		return
 	}
-	httpserver.Ok(w)
+	httpserver.OK(w)
 }
 
 func (h *Handler) handleUnstage(w http.ResponseWriter, r *http.Request) {
@@ -118,7 +118,7 @@ func (h *Handler) handleUnstage(w http.ResponseWriter, r *http.Request) {
 		httpserver.WriteJSON(w, httpreply.ErrorJSON(clientBlock(out)))
 		return
 	}
-	httpserver.Ok(w)
+	httpserver.OK(w)
 }
 
 func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
@@ -171,5 +171,5 @@ func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
 		httpserver.WriteJSON(w, httpreply.ErrorJSON(clientBlock(strings.Join(errs, "\n"))))
 		return
 	}
-	httpserver.Ok(w)
+	httpserver.OK(w)
 }

@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/go/httpserver"
-	"github.com/cplieger/go/sse"
+	"github.com/cplieger/go/sse/v2"
 )
 
 // presenceTable is the push presence table: hub connect/disconnect events plus keepalive acks. *push.Presence satisfies it.

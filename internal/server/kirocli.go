@@ -93,12 +93,12 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 // processes. The provenance deny closes a reverse proxy on the loopback interface, which
 // satisfies both other legs. surface names the refusing endpoint, since two mounts share it.
 func loopbackOnly(surface string, next http.Handler) http.Handler {
-	refuse := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	refuse := func(w http.ResponseWriter, r *http.Request, status int, _ httpserver.ErrorCode, _ string) {
 		// Log the refusal: both endpoints gate a process spawn, so it is worth a correlatable record.
 		slog.Warn("loopback-only endpoint refused: not a loopback caller",
 			"surface", surface, "remote", r.RemoteAddr, "host", logsafe.Field(r.Host))
-		httpserver.WriteJSONStatus(w, http.StatusForbidden,
+		httpserver.WriteJSONStatus(w, status,
 			httpreply.ErrorJSON(surface+" is loopback-only. Call it from inside the container"))
-	})
-	return httpserver.LoopbackOnly(refuse)(next)
+	}
+	return httpserver.LoopbackOnly(httpserver.WithLoopbackResponder(refuse))(next)
 }

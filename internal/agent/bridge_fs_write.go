@@ -43,10 +43,11 @@ func (in *inbound) respondFSWrite(ctx context.Context, chatID marotte.ChatID, or
 	root, rel := target.root, target.rel
 
 	// Preserve an existing regular file's permission bits; a new file takes the directory's default.
-	var opts []filesafe.Option
+	var opts []filesafe.WriteOption
 	var restore os.FileMode
+	var chmod bool
 	if info, statErr := root.Lstat(rel); statErr == nil && info.Mode().IsRegular() {
-		opts, restore = filemode.RewriteOptions(info.Mode().Perm())
+		opts, restore, chmod = filemode.RewriteOptions(info.Mode().Perm())
 	}
 	// Missing parents are created through the root, so they stay confined.
 	if dir := filepath.Dir(rel); dir != "." {
@@ -62,7 +63,7 @@ func (in *inbound) respondFSWrite(ctx context.Context, chatID marotte.ChatID, or
 		in.respondFSError(ctx, chatID, origin, msg, wErr)
 		return
 	}
-	if restore != 0 {
+	if chmod {
 		if chErr := chmodInRoot(root, rel, restore); chErr != nil {
 			slog.Debug("fs/write_text_file: could not restore the file's mode",
 				"chat_id", chatID, "path", logsafe.Field(rel), "mode", restore, "error", logsafe.Field(chErr.Error()))

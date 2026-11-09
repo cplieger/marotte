@@ -912,13 +912,13 @@ func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
 				if rec.CountExact(msg) != 1 {
 					t.Errorf("got %d %q lines, want 1", rec.CountExact(msg), msg)
 				}
-				for key, want := range map[string]string{
+				for key, want := range map[capture.AttrName]string{
 					"workflow_id": "wf_7",
 					"origin":      "agent",
 					"recipe":      "publish-pr",
 				} {
-					if !rec.HasAttr(msg, key, want) {
-						got, _ := rec.AttrValue(msg, key)
+					if !rec.HasAttr(capture.Message(msg), key, want) {
+						got, _ := rec.AttrValue(capture.Message(msg), key)
 						t.Errorf("%q: %s = %q, want %q", msg, key, got, want)
 					}
 				}

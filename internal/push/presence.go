@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/go/sse"
+	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/liveness"
 )
 

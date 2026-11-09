@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/slogx/capture"
-	"github.com/cplieger/go/sse"
+	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/turnlog"

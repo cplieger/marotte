@@ -95,7 +95,7 @@ func checkDirWritable(ctx context.Context, dir, envVar string) error {
 	}
 	if !res.OK() {
 		slog.Warn("directory accepts writes but refused probe cleanup",
-			"env", envVar, "dir", res.Dir, "stage", res.Stage.String(),
+			"env", envVar, "dir", res.Dir, "stage", res.Phase.String(),
 			"probe", res.Name, "leaked", res.Leaked, "error", res.Err)
 	}
 	return nil

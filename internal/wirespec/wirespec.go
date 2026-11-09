@@ -20,7 +20,7 @@ import (
 )
 
 // wireTypes is every Go type the generator emits a TypeScript declaration for.
-var wireTypes = []wiregen.WireType{
+var wireTypes = []wiregen.Type{
 	wiregen.TypeRef[marotte.ToolLocation](),
 	wiregen.TypeRef[marotte.ToolDiff](),
 	wiregen.TypeRef[marotte.ToolCheckpoint](),
@@ -508,10 +508,10 @@ var wireEvents = []wiregen.Event{
 // owns where the files go.
 func Registry() *wiregen.Registry {
 	return &wiregen.Registry{
-		Types:            wireTypes,
-		Enums:            wireEnums,
-		EnumTSName:       enumTSNames,
-		PathNameOverride: pathNameOverrides,
-		Events:           wireEvents,
+		Types:              wireTypes,
+		Enums:              wireEnums,
+		EnumTSNameOverride: enumTSNames,
+		PathNameOverride:   pathNameOverrides,
+		Events:             wireEvents,
 	}
 }
