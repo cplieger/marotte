@@ -14,7 +14,7 @@ const shellSource = readFileSync(join(here, "shell.ts"), "utf8");
 
 /** The app token SHELL_THEME maps a terminal token to, or undefined when it maps none. */
 function themeToken(token: string): string | undefined {
-  const escaped = token.replace(/[-]/g, "\\-");
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`"${escaped}":\\s*"var\\((--c-[\\w-]+)\\)"`).exec(shellSource)?.[1];
 }
 
