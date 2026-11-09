@@ -31,6 +31,7 @@ export const scrollMock = {
   setLoadMore: vi.fn(),
   noteHistoryEdge: vi.fn(),
   readingState: vi.fn((): ReadingState => "following"),
+  landingTop: vi.fn(() => 0),
   onReadingStateChange: vi.fn(),
   // Inert registrations: a mocked scroller never fires them; each returns the promised unregister.
   onTranscriptMutate: vi.fn(() => () => undefined),

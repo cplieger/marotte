@@ -45,6 +45,7 @@ import {
   setAnchorProvider,
   setResumeLabel,
   readingState,
+  landingTop,
   jumpTo,
   attach as attachScroll,
   detach as detachScroll,
@@ -862,9 +863,11 @@ function coverCard(
   return out;
 }
 
-/** Whether any turn's spacer shows inside the scrollport, the state `coverBand` exists to prevent. */
-function spacerInView(): boolean {
-  const port = getScrollEl().getBoundingClientRect();
+/** Whether any turn's spacer shows inside the scrollport, the state `coverBand` exists to prevent; `ahead` px moves
+ *  the port down the content, to a position the scroller has not landed on yet. */
+function spacerInView(ahead = 0): boolean {
+  const scrollport = getScrollEl().getBoundingClientRect();
+  const port = { top: scrollport.top + ahead, bottom: scrollport.bottom + ahead };
   for (const card of turnCards(paintRoot())) {
     const box = card.getBoundingClientRect();
     if (box.bottom <= port.top || box.top >= port.bottom) {
@@ -1226,8 +1229,8 @@ let coverCheckFrame = 0;
 
 /**
  * Lift `chatID`'s cover now, or, while it holds bodies this pass could only start, from the first
- * frame once no unbuilt row shows where the reader lands. In the frame: a fresh view's Following
- * write lands in the scroll owner's first settle frame, so this task's geometry is the wrong place.
+ * frame once no unbuilt row shows where the reader lands. In the frame, so the paint task forces no
+ * layout read of its own.
  */
 function releaseCoverOverBuiltRows(chatID: string): void {
   coverOwed = "";
@@ -1246,13 +1249,14 @@ function releaseCoverOverBuiltRows(chatID: string): void {
   });
 }
 
-/** Lift a cover waiting on owed builds once none is left or none shows a spacer in the scrollport. */
+/** Lift a cover waiting on owed builds once none is left or none shows a spacer where the reader lands. */
 function liftOwedCover(): void {
   const chatID = coverOwed;
   if (chatID === "" || getPaintedId() !== chatID) {
     return;
   }
-  if (coldBuilds.size === 0 || !spacerInView()) {
+  // At the landing, not the scroller: a page answered in a task is checked before the owner's follow write lands.
+  if (coldBuilds.size === 0 || !spacerInView(landingTop() - getScrollEl().scrollTop)) {
     coverOwed = "";
     releaseCover(chatID);
   }

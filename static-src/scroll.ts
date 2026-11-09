@@ -106,6 +106,9 @@ export function resetScrollState(): void {
 export function readingState(): ReadingState {
   return getInstance().readingState();
 }
+export function landingTop(): number {
+  return getInstance().landingTop();
+}
 export function onReadingStateChange(cb: (s: ReadingState) => void): void {
   getInstance().onReadingStateChange(cb);
 }

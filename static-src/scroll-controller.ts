@@ -1516,6 +1516,15 @@ export class ScrollController {
     return this.state;
   }
 
+  /** Where the scroller stands once the owner answers this frame's layout, writing nothing: the follow position while
+   *  Following with no gesture or flight holding the write back, else where it stands now. */
+  landingTop(): number {
+    if (this.state === "following" && this.flight === null && !this.gesture.isOpen()) {
+      return this.followPosition();
+    }
+    return this.clampedTop();
+  }
+
   /** Whether a reader gesture is open on this scroller. */
   gestureOpen(): boolean {
     return this.gesture.isOpen();
