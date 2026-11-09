@@ -1,6 +1,7 @@
 // Text typed while a close has emptied the strip belongs to no chat, and a close put back must keep
-// it beside the draft the restored chat already held. Real tabs.ts and the real composer state;
-// the chat opener's select saves and restores the composer as `selectChat` does.
+// it beside the draft the restored chat already held, and out of every other chat. Real tabs.ts and
+// the real composer state; the chat opener's select saves and restores the composer as
+// `selectChat` does.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type * as TabsDrag from "./tabs-drag.js";
 
@@ -91,9 +92,11 @@ beforeEach(() => {
   });
 });
 
-/** Strip a, c with C active, C holding `draft` as its saved draft. */
-async function withDraftOnC(draft: string): Promise<Record<string, string>> {
+/** Strip a, c with C active, C holding `draft` as its saved draft and A holding `aDraft`. */
+async function withDraftOnC(draft: string, aDraft = ""): Promise<Record<string, string>> {
   const ids = await strip("a", "c");
+  $.promptInput.value = aDraft;
+  noteComposerText(aDraft);
   activateTab(ids["c"] ?? "");
   await activationRan();
   resident.add("a");
@@ -108,8 +111,9 @@ async function withDraftOnC(draft: string): Promise<Record<string, string>> {
 
 type Outcome = "refused" | "unanswered";
 
-/** C's close fails after 2 s, or is never answered inside its 5 s deadline. */
-function arrangeC(outcome: Outcome): void {
+/** The next close fails after 2 s, or is never answered inside its 5 s deadline and never
+ *  commits, so its verify finds the row still open and puts it back. */
+function arrangeNextClose(outcome: Outcome): void {
   tabServer.failNext("close_tab", 500);
   tabServer.answerAfterNext("close_tab", outcome === "refused" ? 2_000 : 60_000, {
     ok: false,
@@ -135,7 +139,7 @@ describe("text typed on a strip a close emptied", () => {
       await frame();
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
       try {
-        arrangeC(k.outcome);
+        arrangeNextClose(k.outcome);
         const closedC = closeTab(ids["c"] ?? "");
         await activationRan();
         if (k.a === "pending") {
@@ -168,7 +172,7 @@ describe("text typed on a strip a close emptied", () => {
     await frame();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
     try {
-      arrangeC("refused");
+      arrangeNextClose("refused");
       const closedC = closeTab(ids["c"] ?? "");
       await activationRan();
       void closeTab(ids["a"] ?? "");
@@ -188,12 +192,53 @@ describe("text typed on a strip a close emptied", () => {
     }
   });
 
+  it("keeps the typed text out of the other chat when both closes are put back", async () => {
+    const A_DRAFT = "a's own draft";
+    const ids = await withDraftOnC(SAVED, A_DRAFT);
+    await frame();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    try {
+      arrangeNextClose("refused");
+      const closedC = closeTab(ids["c"] ?? "");
+      await activationRan();
+      arrangeNextClose("unanswered");
+      const closedA = closeTab(ids["a"] ?? "");
+      await activationRan();
+      expect(getActiveTabId(), "the strip emptied").toBe("");
+      $.promptInput.value = TYPED;
+
+      await vi.advanceTimersByTimeAsync(2_500);
+      await closedC;
+      await settleTabs();
+      await activationRan();
+      expect(getActiveTabId(), "C's refusal put C back").toBe(ids["c"]);
+      $.promptInput.value += " more";
+      noteComposerText($.promptInput.value);
+
+      await vi.advanceTimersByTimeAsync(6_500);
+      await closedA;
+      await settleTabs();
+      await activationRan();
+
+      expect(getActiveTabId(), "A's verify put A back where the reader left it").toBe(ids["a"]);
+      expect($.promptInput.value, "A's composer, which is what Send sends").toBe(A_DRAFT);
+      expect(composerDraft("a")).toBe(A_DRAFT);
+      const kept = `${SAVED}\n\n${TYPED} more`;
+      expect(composerDraft("c")).toBe(kept);
+      activateTab(ids["c"] ?? "");
+      await activationRan();
+      expect($.promptInput.value, "C shows the typed text once").toBe(kept);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("hands a file staged on the emptied strip to the restored chat", async () => {
     const ids = await withDraftOnC(SAVED);
     await frame();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
     try {
-      arrangeC("refused");
+      arrangeNextClose("refused");
       const closedC = closeTab(ids["c"] ?? "");
       await activationRan();
       void closeTab(ids["a"] ?? "");
