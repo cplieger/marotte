@@ -75,7 +75,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.RegisterChange(marotte.CmdSetSupervisedMode,
 		bind3(r.Bridges, chats, keylock.New(cmp.Compare[marotte.ChatID]), cmdSetSupervisedMode))
 
-	d.register(marotte.CmdCancel, bind5(r.Bridges, r.Perms, r.Terminals, r.Stops, r.SteerQueue, cmdCancel))
+	d.register(marotte.CmdCancel, bind6(r.Bridges, r.Perms, r.Terminals, r.Stops, r.SteerQueue, compactionReader(r.Queue), cmdCancel))
 	d.RegisterChange(marotte.CmdForkChat, bind4(r.Bridges, chats, r.Workspace, mem, cmdForkChat))
 
 	d.register(marotte.CmdQueuePrompt, bind1(r.Queue, cmdQueuePrompt))

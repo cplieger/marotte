@@ -328,6 +328,11 @@ type TurnStop struct {
 	Wire bool
 }
 
+// targetless reports a stop that captured no turn, sent or unsent.
+func (s *TurnStop) targetless() bool {
+	return !s.Own.Named() && !s.Call.Named() && !s.Next.Named() && s.Admitted == 0
+}
+
 // ErrPromptStopped fails a prompt the reader stopped before its session/prompt was sent; it concludes cancelled.
 var ErrPromptStopped = errors.New("the prompt was stopped before it was sent")
 
@@ -453,6 +458,9 @@ const (
 	// AdmissionChatGone is a chat whose record was deleted or whose purge teardown
 	// still runs: nothing was reserved. Answered as 409 `reason: "chat_not_found"`.
 	AdmissionChatGone
+	// AdmissionCompacting is a prompt kiro-cli's state held (a stopped run's hold) while a
+	// compaction claimed on the chat: nothing was reserved, and the prompt queues behind it.
+	AdmissionCompacting
 )
 
 // IdleAdmission is ReserveIdleTurn's answer.

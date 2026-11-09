@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -774,4 +775,53 @@ func TestCompaction_TheHeaderSaysAnIdleOrCleanEndsCompactionSendsARow(t *testing
 			t.Errorf("compaction row = %+v, want running with a row sent at its end", p)
 		}
 	})
+}
+
+// A client retrying a queue_prompt whose row the refused turn left waiting adds no row, so the compaction after that
+// turn still says its end sends none.
+func TestCompaction_AfterARefusedTurnAResentRowSendsNothingAtItsEnd(t *testing.T) {
+	h, cs, _, _ := contextLimitCompaction(t)
+
+	queueTextDuring(t, h, "m-old", "queued while the turn ran")
+	// A cancel leaves the running row up and writes it again.
+	if err := h.CancelCompact(t.Context(), "c1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if p := compactPending(t, cs, "c1"); !p.Running || p.Sends {
+		t.Errorf("compaction row = %+v, want running with no row sent at its end", p)
+	}
+}
+
+// A prompt that reaches the chat as the reader's compaction ends opens no turn ahead of the row queued behind it,
+// which the dock said goes when the compaction ends.
+func TestCompaction_APromptAsItEndsOpensNoTurnAheadOfTheQueuedRow(t *testing.T) {
+	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+	release := holdCall(t, br, marotte.MethodSessionCompact)
+	drain := h.coord.autoCompact.drain
+	var gap *httptest.ResponseRecorder
+	h.coord.autoCompact.drain = func(ctx context.Context, chatID marotte.ChatID, settle func(command.Reservation)) {
+		drain(ctx, chatID, func(next command.Reservation) {
+			settle(next)
+			gap = postCmd(t, h, marotte.ClientCommand{
+				Type: marotte.CmdPrompt, ChatID: "c1", Payload: json.RawMessage(`{"text":"as it ends","message_id":"m-gap"}`),
+			})
+		})
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = h.RequestCompact(context.WithoutCancel(t.Context()), "c1")
+	}()
+	waitForCall(t, br, marotte.MethodSessionCompact)
+	queueDuring(t, h, "m-q1")
+
+	release()
+	<-done
+
+	waitFor(t, func() bool { return slices.Contains(promptIDs(t, cs, "c1"), "m-q1") && !h.coord.turns.live("c1") })
+	if ids := promptIDs(t, cs, "c1"); len(ids) < 2 || ids[1] != "m-q1" {
+		t.Errorf("turns opened = %v (the prompt as it ended answered %d %s), want m-q1 right after m-first",
+			ids, gap.Code, gap.Body.String())
+	}
 }

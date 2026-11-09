@@ -194,13 +194,14 @@ func (d *Dispatcher) DrainAfterClose(ctx context.Context, chatID marotte.ChatID,
 	drainAfterClose(ctx, d.prompts, chatID, closed, ends)
 }
 
-// DrainAfterCompaction sends at most one prompt once a compaction that ran on an idle
-// chat has ended (see drainAfterCompaction).
-func (d *Dispatcher) DrainAfterCompaction(ctx context.Context, chatID marotte.ChatID) {
+// DrainAfterCompaction settles a compaction that ran on an idle chat and sends at most
+// one prompt after it (see drainAfterCompaction).
+func (d *Dispatcher) DrainAfterCompaction(ctx context.Context, chatID marotte.ChatID, settle func(Reservation)) {
 	if d.prompts == nil || d.prompts.queue == nil || d.prompts.followups == nil {
+		settle(Reservation{})
 		return
 	}
-	drainAfterCompaction(ctx, d.prompts, chatID)
+	drainAfterCompaction(ctx, d.prompts, chatID, settle)
 }
 
 type errorResponse struct {

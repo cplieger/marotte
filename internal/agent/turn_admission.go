@@ -208,9 +208,10 @@ func (lc *chatLifecycle) bracketedWireLocked() bool {
 // promptAdmission is one look at a prompt's admission: the reservation taken, or why not and what to wait on.
 type promptAdmission struct {
 	// changed is the lifecycle's next-change channel, gate the close hold's idle channel; either may be nil.
-	changed, gate      <-chan struct{}
-	res                command.Reservation
-	busy, closed, gone bool
+	changed, gate <-chan struct{}
+	res           command.Reservation
+	// kasOnly: only kiro-cli's state refused it (a KAS hold, a run it reports), with no turn or reservation live.
+	busy, closed, gone, kasOnly bool
 }
 
 // reserveOrHolder tries a prompt's reservation at stamp and on refusal reports whether a steerable holder or a close
@@ -239,7 +240,11 @@ func (r *turnRegistry) reserveOrHolder(chatID marotte.ChatID, source marotte.Tur
 		return promptAdmission{gate: a.idle, changed: lc.changed}
 	}
 	holder, held := lc.holderSourceLocked()
-	return promptAdmission{busy: lc.kas.may().steerHolder && held && holder.SteerableHolder(), changed: lc.changed}
+	return promptAdmission{
+		busy:    lc.kas.may().steerHolder && held && holder.SteerableHolder(),
+		kasOnly: !lc.kas.may().admit && !lc.liveLockedState(),
+		changed: lc.changed,
+	}
 }
 
 // admissionHolder reports the holder's source (open turn, else reservation), false when neither.
@@ -339,7 +344,8 @@ func (bc *bridgeCoordinator) AdmissionHolderSource(chatID marotte.ChatID) (marot
 // ReserveTurnForPrompt takes the slot for a prompt whose intent began at stamp, waiting up to wait; one waiter
 // acquires per wake. A steerable holder (a prompt-class turn, or a wire turn KAS bracketed) answers Busy at once; a
 // close committed since stamp answers Closed; a revert holder, a held close, a KAS hold or a run KAS reports with no
-// steerable holder parks the waiter and answers Starting at the budget. A dead ctx answers Starting.
+// steerable holder parks the waiter and answers Starting at the budget, unless a compaction runs while only kiro-cli's
+// state refuses it, which answers Compacting (a claim wakes the waiter). A dead ctx answers Starting.
 func (bc *bridgeCoordinator) ReserveTurnForPrompt(
 	ctx context.Context, chatID marotte.ChatID, wait time.Duration, stamp uint64, messageID string,
 ) (command.AdmissionOutcome, command.Reservation) {
@@ -349,6 +355,9 @@ func (bc *bridgeCoordinator) ReserveTurnForPrompt(
 		a := bc.turns.reserveOrHolder(chatID, marotte.TurnSourcePrompt, stamp, messageID)
 		if out, done := a.outcome(); done {
 			return out, a.res
+		}
+		if a.kasOnly && bc.autoCompact.compacting(chatID) {
+			return command.AdmissionCompacting, command.Reservation{}
 		}
 		select {
 		case <-a.changed:

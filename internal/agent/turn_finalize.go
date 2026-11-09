@@ -325,7 +325,9 @@ func (cf closeFacts) turnEnd() turnEnd {
 func (bc *bridgeCoordinator) releaseHold(ctx context.Context, lc *chatLifecycle, cf closeFacts, accepted bool) ([]string, bool) {
 	drain, rows := lc.kasStep(kasReleaseOwn, cf.fence.Seq)
 	if drain && !lc.endedNow() {
-		rows = append(rows, bc.autoCompact.afterRelease(ctx, lc.chatID, cf.turnEnd(), accepted)...)
+		end := cf.turnEnd()
+		end.heldRows = len(rows) > 0
+		rows = append(rows, bc.autoCompact.afterRelease(ctx, lc.chatID, end, accepted)...)
 	}
 	return rows, drain
 }

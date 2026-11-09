@@ -429,7 +429,7 @@ func TestAutoCompact_ASecondSettleOfOneCallDoesNothing(t *testing.T) {
 		r.finishTurn()
 		go r.turnEnd(t, false)
 		synctest.Wait()
-		r.ac.settle(t.Context(), "c1", refused, true)
+		r.ac.settle(t.Context(), "c1", refused, true, command.Reservation{})
 		if !r.isQueued() || len(r.failures) != 0 {
 			t.Errorf("a second settle of the refused call: queued %v, failures %v; want the running row kept and no toast",
 				r.isQueued(), r.failures)

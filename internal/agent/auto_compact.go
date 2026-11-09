@@ -64,8 +64,9 @@ type turnEnd struct {
 	id string
 	// contextLimit: the model refused the turn for the context's size, which the turn's end compacts.
 	contextLimit bool
-	// clean: the close's drain sends the queue's first row (command.CloseFacts.Clean).
-	clean bool
+	// clean: the close's drain sends the queue's first row (command.CloseFacts.Clean). heldRows: the close's KAS hold
+	// handed its drain rows queued under it, one of which that drain sends.
+	clean, heldRows bool
 }
 
 type autoCompactState struct {
@@ -96,7 +97,7 @@ type autoCompactor struct {
 	// failed tells the chat's pages that a compaction the dock showed did not run.
 	failed func(ctx context.Context, chatID marotte.ChatID, detail string)
 	// drain sends the first prompt queued behind a compaction no close follows; nil in tests.
-	drain func(ctx context.Context, chatID marotte.ChatID)
+	drain func(ctx context.Context, chatID marotte.ChatID, settle func(command.Reservation))
 	mu    sync.Mutex
 }
 
@@ -115,13 +116,25 @@ const (
 type queueTurn struct {
 	// id is the turn a request belongs to (turnRegistry.compactTurn's), "" for none.
 	id string
-	// live: a turn is open or reserved. holds: a close's KAS hold stands, and its release runs a request. open: the
-	// chat is not closing, so a request may be written.
-	live, holds, open bool
+	// unopened is the token of a reservation whose turn has not opened, zero for none.
+	unopened uint64
+	// live: a turn is open or reserved. holds: a close's KAS hold stands, and its release runs a request. heldRows:
+	// rows queued under that hold wait for its drain (kasExec.holdRows). open: the chat is not closing, so a request
+	// may be written.
+	live, holds, heldRows, open bool
 }
 
 // queueable reports that a request now waits for a turn end instead of running.
 func (t queueTurn) queueable() bool { return t.open && (t.live || t.holds) }
+
+// compactDrain is what the drain after a claimed call sends (compactCall.head and sends).
+type compactDrain struct{ head, sends bool }
+
+// drainAfter is the drain after a call claimed for end: the queue's head after a clean close, and a row whenever rows
+// queued under the close's KAS hold are owed to it.
+func (t queueTurn) drainAfter(end turnEnd) compactDrain {
+	return compactDrain{head: end.clean, sends: end.clean || end.heldRows || t.heldRows}
+}
 
 // compactQueue is the section every compaction decision is made in, the one a turn opens and closes in, and the
 // row on the chat record that shows the queued or running compaction on every page.
@@ -160,10 +173,12 @@ func newAutoCompactor(bc *bridgeCoordinator, policy func(context.Context) (enabl
 				Code: marotte.ErrCodeCompactionFailed, Message: detail,
 			}))
 		},
-		drain: func(ctx context.Context, chatID marotte.ChatID) {
-			if bc.drainAfterCompaction != nil {
-				bc.drainAfterCompaction(ctx, chatID)
+		drain: func(ctx context.Context, chatID marotte.ChatID, settle func(command.Reservation)) {
+			if bc.drainAfterCompaction == nil {
+				settle(command.Reservation{})
+				return
 			}
+			bc.drainAfterCompaction(ctx, chatID, settle)
 		},
 	}
 }
@@ -215,10 +230,10 @@ func (st *autoCompactState) enqueueLocked(row func(compactRow) error) error {
 	return nil
 }
 
-// claimLocked starts run, the queued request or nil for a new one, as the call in flight, and shows it running; head
-// is compactCall.head. Caller saw none running. A failed row write is only logged: the call is claimed, and failing
-// here would leave it claimed with no call made, holding every prompt in awaitRunning for compactCallBudget.
-func (st *autoCompactState) claimLocked(chatID marotte.ChatID, run *compactRun, head bool, row func(compactRow) error) *compactCall {
+// claimLocked starts run, the queued request or nil for a new one, as the call in flight, and shows it running; d is
+// what the drain after it sends. Caller saw none running. A failed row write is only logged: the call is claimed, and
+// failing here would leave it claimed with no call made, holding every prompt in awaitRunning for compactCallBudget.
+func (st *autoCompactState) claimLocked(chatID marotte.ChatID, run *compactRun, d compactDrain, row func(compactRow) error) *compactCall {
 	if run == nil {
 		run = &compactRun{}
 	}
@@ -226,7 +241,7 @@ func (st *autoCompactState) claimLocked(chatID marotte.ChatID, run *compactRun, 
 		st.queued = nil
 	}
 	run.phase = compactRunning
-	run.call = &compactCall{run: run, done: make(chan struct{}), head: head, sends: head}
+	run.call = &compactCall{run: run, done: make(chan struct{}), head: d.head, sends: d.sends}
 	st.running = run
 	if err := row(st.rowLocked()); err != nil {
 		slog.Warn("compaction: the running row could not be written", "chat_id", chatID, "error", err)
@@ -319,7 +334,7 @@ func (a *autoCompactor) afterTurn(ctx context.Context, chatID marotte.ChatID, en
 			if st.queued != nil {
 				trigger = "queued"
 			}
-			c, mine = st.claimLocked(chatID, st.queued, end.clean, row), true
+			c, mine = st.claimLocked(chatID, st.queued, t.drainAfter(end), row), true
 		}
 		return nil
 	})
@@ -351,7 +366,7 @@ func (a *autoCompactor) afterRelease(ctx context.Context, chatID marotte.ChatID,
 		case st.running != nil:
 			c = st.running.call
 		case b != nil:
-			c, mine = st.claimLocked(chatID, st.queued, end.clean, row), true
+			c, mine = st.claimLocked(chatID, st.queued, t.drainAfter(end), row), true
 		}
 		return nil
 	})
@@ -372,7 +387,8 @@ func (a *autoCompactor) runOrJoin(
 	case c == nil:
 		return false, nil
 	case mine:
-		a.call(ctx, chatID, b, c, atPct, trigger, true)
+		a.call(ctx, chatID, b, c, atPct, trigger)
+		a.settle(ctx, chatID, c, true, command.Reservation{})
 	case !a.await(ctx, chatID, c):
 		return false, nil
 	}
@@ -433,7 +449,7 @@ func (a *autoCompactor) awaitRunning(ctx context.Context, chatID marotte.ChatID)
 // request is the reader's compaction: queued while a turn runs, else run now, joining a running one, and taking a
 // request left queued on the idle chat. A run KAS refused because a turn opened meanwhile is queued behind that turn,
 // unless the reader cancelled it. A call it made is followed by no close, so its end sends the first queued prompt,
-// whatever the outcome.
+// whatever the outcome: the drain settles it once it holds that prompt's reservation.
 func (a *autoCompactor) request(ctx context.Context, chatID marotte.ChatID) (command.CompactOutcome, error) {
 	b := a.bridgeOf(chatID)
 	var (
@@ -449,7 +465,7 @@ func (a *autoCompactor) request(ctx context.Context, chatID marotte.ChatID) (com
 		case st.running != nil:
 			c = st.running.call
 		default:
-			c, mine = st.claimLocked(chatID, st.queued, true, row), true
+			c, mine = st.claimLocked(chatID, st.queued, compactDrain{head: true, sends: true}, row), true
 		}
 		return nil
 	})
@@ -459,10 +475,12 @@ func (a *autoCompactor) request(ctx context.Context, chatID marotte.ChatID) (com
 	case c == nil:
 		return command.CompactNoSession, nil
 	case mine:
-		a.call(ctx, chatID, b, c, a.usage(ctx, chatID).ContextPct, "request", false)
+		a.call(ctx, chatID, b, c, a.usage(ctx, chatID).ContextPct, "request")
+		settle := func(next command.Reservation) { a.settle(ctx, chatID, c, false, next) }
 		if a.drain != nil {
-			a.drain(context.WithoutCancel(ctx), chatID)
+			a.drain(context.WithoutCancel(ctx), chatID, settle)
 		}
+		settle(command.Reservation{})
 	case !a.await(ctx, chatID, c):
 		return command.CompactRefused, ctx.Err()
 	}
@@ -509,9 +527,9 @@ func (*autoCompactor) await(ctx context.Context, chatID marotte.ChatID, c *compa
 	}
 }
 
-// call makes c and settles it; report toasts c's own run when it did not run. An accepted call waits for the frames
-// before its reply, so a prompt sent next opens after the summary.
-func (a *autoCompactor) call(ctx context.Context, chatID marotte.ChatID, b *sharedBridge, c *compactCall, atPct float64, trigger string, report bool) {
+// call makes c and records its outcome; the caller settles it. An accepted call waits for the frames before its
+// reply, so a prompt sent next opens after the summary.
+func (a *autoCompactor) call(ctx context.Context, chatID marotte.ChatID, b *sharedBridge, c *compactCall, atPct float64, trigger string) {
 	callCtx, cancel := a.callContext(ctx)
 	var (
 		accepted bool
@@ -538,15 +556,15 @@ func (a *autoCompactor) call(ctx context.Context, chatID marotte.ChatID, b *shar
 	default:
 		slog.Info("compaction accepted", "chat_id", chatID, "trigger", trigger, "context_pct", atPct)
 	}
-	a.settle(ctx, chatID, c, report)
 }
 
 // settle ends c in the queue's section, once: a later settle finds c done and does nothing, and done closes there,
 // so a joiner returns after it. An accepted call satisfies the request queued during it; one KAS refused under a turn
 // it opened is queued for that turn's end unless the reader cancelled it; any other end drops the queue, with a toast
 // for a request queued during the call, and for c's own run when report is set (an idle press passes false: its
-// reply carries its refusal).
-func (a *autoCompactor) settle(ctx context.Context, chatID marotte.ChatID, c *compactCall, report bool) {
+// reply carries its refusal). next is the drain's reservation for the prompt sent after c, which is no turn KAS
+// refused c under.
+func (a *autoCompactor) settle(ctx context.Context, chatID marotte.ChatID, c *compactCall, report bool, next command.Reservation) {
 	toast, requeued := false, false
 	err := a.queue.section(context.WithoutCancel(ctx), chatID, func(t queueTurn, row func(compactRow) error) error {
 		a.mu.Lock()
@@ -562,7 +580,8 @@ func (a *autoCompactor) settle(ctx context.Context, chatID marotte.ChatID, c *co
 			return nil
 		}
 		st.running = nil
-		own, dropped := st.endLocked(c, t.open && t.live)
+		turnLive := t.live && (next.Token == 0 || t.unopened != next.Token)
+		own, dropped := st.endLocked(c, t.open && turnLive)
 		toast = own && report || dropped
 		requeued = c.requeued
 		return row(st.rowLocked())
@@ -623,20 +642,25 @@ func (a *autoCompactor) callContext(ctx context.Context) (context.Context, conte
 type recordCompactQueue struct{ bc *bridgeCoordinator }
 
 // section runs fn in the chat's lifecycle section, as AppendIfLive writes, so a close sees a request or its writer
-// sees no turn.
+// sees no turn. Each row write wakes the lifecycle's waiters: a prompt parked under a KAS hold queues behind a
+// compaction claimed here (ReserveTurnForPrompt).
 func (q recordCompactQueue) section(ctx context.Context, chatID marotte.ChatID, fn func(t queueTurn, row func(compactRow) error) error) error {
-	row := func(want compactRow) error { return q.setRow(ctx, chatID, want) }
 	err := q.bc.turns.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
 		v, _ := q.bc.turns.gates.admit(chatID, lc.stamp)
 		return fn(queueTurn{
-			id:    lc.compactTurnLocked(),
-			live:  lc.liveLockedState(),
-			holds: lc.kas.may().holdRows,
-			open:  !lc.ended && v == gateAdmitted,
-		}, row)
+			id:       lc.compactTurnLocked(),
+			live:     lc.liveLockedState(),
+			unopened: lc.unopenedReservationLocked(),
+			holds:    lc.kas.may().holdRows,
+			heldRows: len(lc.kas.holdRows) > 0,
+			open:     !lc.ended && v == gateAdmitted,
+		}, func(want compactRow) error {
+			lc.wakeLocked()
+			return q.setRow(ctx, chatID, want)
+		})
 	})
 	if errors.Is(err, errNoLife) {
-		return fn(queueTurn{}, row)
+		return fn(queueTurn{}, func(want compactRow) error { return q.setRow(ctx, chatID, want) })
 	}
 	return err
 }

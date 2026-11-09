@@ -634,7 +634,8 @@ type PendingCompaction struct {
 	RequestedAt int64 `json:"requested_at"`
 	// Running is set once the compaction is claimed and its call made; the row goes when the call ends.
 	Running bool `json:"running,omitempty"`
-	// Sends is set on a running compaction with no turn beside it whose end sends the first sendable queued row.
+	// Sends is set on a running compaction with no turn beside it whose end sends the next prompt: the unread steers,
+	// else the first sendable queued row.
 	Sends bool `json:"sends,omitempty"`
 }
 

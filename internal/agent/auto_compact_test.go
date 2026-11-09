@@ -991,10 +991,10 @@ func TestCompactRequest_WaitsForTheFramesBeforeTheReply(t *testing.T) {
 		t.Errorf("read loop waits = %v, want one at the reply's position 7", waited)
 	}
 	if !slices.Equal(rowAtFold, []compactRow{compactRowRunningSends}) {
-		t.Errorf("rows when the frames folded = %v, want [running]: the row cleared before the entry", rowAtFold)
+		t.Errorf("rows when the frames folded = %v, want [running+sends]: the row cleared before the entry", rowAtFold)
 	}
 	if got := r.rowLog(); !slices.Equal(got, []compactRow{compactRowRunningSends, compactRowOff}) {
-		t.Errorf("rows after the reply = %v, want [running off]", got)
+		t.Errorf("rows after the reply = %v, want [running+sends off]", got)
 	}
 }
 
@@ -1035,14 +1035,14 @@ func TestIdleCompactRequest_ShowsRunningThenClears(t *testing.T) {
 		}()
 		synctest.Wait()
 		if got := r.rowLog(); !slices.Equal(got, []compactRow{compactRowRunningSends}) {
-			t.Errorf("rows while the idle press's call runs = %v, want [running, sends]", got)
+			t.Errorf("rows while the idle press's call runs = %v, want [running+sends]", got)
 		}
 		close(r.block)
 		if out := <-answered; out != command.CompactAccepted {
 			t.Errorf("the idle press = %v, want accepted", out)
 		}
 		if got := r.rowLog(); !slices.Equal(got, []compactRow{compactRowRunningSends, compactRowOff}) {
-			t.Errorf("rows after the call = %v, want [running off]", got)
+			t.Errorf("rows after the call = %v, want [running+sends off]", got)
 		}
 	})
 }

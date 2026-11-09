@@ -109,6 +109,7 @@ func cmdCancel(
 	terms terminalAccess,
 	stops turnStopper,
 	queue SteerQueue,
+	compactions compactionReader,
 	cmd *marotte.ClientCommand,
 ) (any, error) {
 	// An absent or empty payload is a plain cancel.
@@ -117,11 +118,11 @@ func cmdCancel(
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	if queue == nil || p.Lead == "" {
-		return stopChatTurn(ctx, bridges, perms, terms, stops, nil, cmd.ChatID, nil)
+		return stopChatTurn(ctx, bridges, perms, terms, stops, nil, compactions, cmd.ChatID, nil)
 	}
 	// The lead is steer-queue state: a stop in the session-door window (no bridge
 	// yet) still ends an admitted turn, whose hand-on sends the lead first.
-	return stopChatTurn(ctx, bridges, perms, terms, stops, queue, cmd.ChatID, func() (func(), bool) {
+	return stopChatTurn(ctx, bridges, perms, terms, stops, queue, compactions, cmd.ChatID, func() (func(), bool) {
 		undo, waiting := queue.SetSteerLead(cmd.ChatID, p.Lead)
 		return undo, !waiting
 	})
@@ -136,7 +137,14 @@ type stopMark func() (undo func(), skip bool)
 // and stop announcement must go; never mutated.
 var responseSkipped = map[string]bool{"ok": true, "skipped": true}
 
-// stopChatTurn is a reader's stop of the chat's turn; a nil mark is a plain stop.
+// compactionReader reports a compaction running on a chat.
+type compactionReader interface {
+	Compacting(chatID marotte.ChatID) bool
+}
+
+// stopChatTurn is a reader's stop of the chat's turn; a nil mark is a plain stop. A stop
+// that finds no turn while a compaction runs sends no session/cancel, which kiro-cli takes
+// as an abort of the compaction, and keeps its mark for the compaction's end.
 func stopChatTurn(
 	ctx context.Context,
 	bridges bridgeAccess,
@@ -144,6 +152,7 @@ func stopChatTurn(
 	terms terminalAccess,
 	stops turnStopper,
 	queue SteerQueue,
+	compactions compactionReader,
 	chatID marotte.ChatID,
 	mark stopMark,
 ) (any, error) {
@@ -152,6 +161,9 @@ func stopChatTurn(
 		return responseSkipped, nil
 	}
 	defer stops.ReleaseStop(stop)
+	if stop.targetless() && compactions != nil && compactions.Compacting(chatID) {
+		return responseSkipped, nil
+	}
 
 	sb := bridges.Bridge(chatID)
 	err := cancelSession(ctx, perms, sb, chatID, ScopeChatSession)

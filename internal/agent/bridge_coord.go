@@ -88,7 +88,7 @@ type bridgeCoordinator struct {
 	resolveEnds     func(context.Context, marotte.ChatID, command.TurnFence) command.EndFacts   `wiring:"optional"`
 	drainAfterClose func(context.Context, marotte.ChatID, command.CloseFacts, command.EndFacts) `wiring:"optional"`
 	// drainAfterCompaction sends the first prompt queued behind a compaction that ran on an idle chat.
-	drainAfterCompaction func(context.Context, marotte.ChatID) `wiring:"optional"`
+	drainAfterCompaction func(ctx context.Context, chatID marotte.ChatID, settle func(command.Reservation)) `wiring:"optional"`
 	// settleNotices clears a run notice KAS's boundary left queued, once KAS is idle. Nil in tests.
 	settleNotices func(context.Context, marotte.ChatID) `wiring:"optional"`
 	// runs lets the death closer close every open step turn of the runs this bridge hosted.
@@ -178,8 +178,8 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		drainAfterClose: func(ctx context.Context, chatID marotte.ChatID, cl command.CloseFacts, ends command.EndFacts) {
 			h.dispatcher.DrainAfterClose(ctx, chatID, cl, ends)
 		},
-		drainAfterCompaction: func(ctx context.Context, chatID marotte.ChatID) {
-			h.dispatcher.DrainAfterCompaction(ctx, chatID)
+		drainAfterCompaction: func(ctx context.Context, chatID marotte.ChatID, settle func(command.Reservation)) {
+			h.dispatcher.DrainAfterCompaction(ctx, chatID, settle)
 		},
 		settleNotices:    h.runs.clearStaleNotices,
 		runs:             h.runs.log,

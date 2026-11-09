@@ -661,7 +661,7 @@ func TestCmdCancel_TheLeadIsSetBeforeTheCancelAndUndoneIfItFails(t *testing.T) {
 			host := removeHost(b)
 			cmd := &marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1", Payload: json.RawMessage(`{"lead":"steer-a"}`)}
 
-			if _, err := cmdCancel(t.Context(), host, host, host, host, q, cmd); err != nil {
+			if _, err := cmdCancel(t.Context(), host, host, host, host, q, nil, cmd); err != nil {
 				t.Fatalf("CmdCancel = %v", err)
 			}
 			if got := q.callLog(); !slices.Equal(got, tc.want) {
@@ -691,7 +691,7 @@ func TestCmdCancel_InTheSessionDoorWindowTheLeadIsStillSet(t *testing.T) {
 			q := newStubSteerQueue()
 			cmd := &marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1", Payload: json.RawMessage(`{"lead":"steer-a"}`)}
 
-			_, _ = cmdCancel(t.Context(), d, d, d, d, q, cmd)
+			_, _ = cmdCancel(t.Context(), d, d, d, d, q, nil, cmd)
 
 			if got := q.callLog(); !slices.Equal(got, tc.want) {
 				t.Errorf("record calls = %v, want %v", got, tc.want)
@@ -709,7 +709,7 @@ func TestCmdCancel_ALeadNoLongerWaitingStopsNothing(t *testing.T) {
 	q.leadGone = true
 	cmd := &marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1", Payload: json.RawMessage(`{"lead":"steer-a"}`)}
 
-	got, err := cmdCancel(t.Context(), d, d, d, d, q, cmd)
+	got, err := cmdCancel(t.Context(), d, d, d, d, q, nil, cmd)
 	if err != nil {
 		t.Fatalf("CmdCancel = %v, want success", err)
 	}

@@ -917,6 +917,15 @@ func (lc *chatLifecycle) liveLockedState() bool {
 	return lc.own != nil || lc.pending != nil || lc.reserved
 }
 
+// unopenedReservationLocked is the token of the admission reservation when no turn is open yet, zero otherwise.
+// Caller holds mu.
+func (lc *chatLifecycle) unopenedReservationLocked() uint64 {
+	if !lc.reserved || lc.own != nil || lc.pending != nil {
+		return 0
+	}
+	return lc.admission
+}
+
 func (r *turnRegistry) openTurnIDs(chatID marotte.ChatID) []*activeTurn {
 	lc, ok := r.lookup(chatID)
 	if !ok {

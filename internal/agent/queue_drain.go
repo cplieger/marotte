@@ -110,7 +110,8 @@ func (bc *bridgeCoordinator) owedWrites(lc *chatLifecycle, b queueBehind) (keep 
 }
 
 // appendLocked is AppendIfLive's write, in the lifecycle section: fn on the record, then place on the rows it added in
-// the same write, and those rows handed to keep, which records them for the drain they are owed to; nil skips either.
+// the same write, and those rows handed to keep, which records them for the drain they are owed to; nil skips either,
+// and a write that added no row (a retried id) owes nothing.
 func (bc *bridgeCoordinator) appendLocked(
 	ctx context.Context, chatID marotte.ChatID,
 	keep func(added []string), place func(c *marotte.Chat, added []string), fn func(c *marotte.Chat) error,
@@ -130,7 +131,7 @@ func (bc *bridgeCoordinator) appendLocked(
 	}); err != nil {
 		return err
 	}
-	if fnErr == nil && keep != nil {
+	if fnErr == nil && keep != nil && len(added) > 0 {
 		keep(added)
 	}
 	return fnErr

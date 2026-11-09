@@ -401,8 +401,8 @@ export interface Session {
   compact_queued?: boolean;
   /** That compaction's call is in flight (`ChatHeader.compact_pending.running`). A header read replaces it. */
   compact_running?: boolean;
-  /** That running compaction's end sends the first sendable queued row
-   *  (`ChatHeader.compact_pending.sends`). A header read replaces it. */
+  /** That running compaction's end sends the next prompt: the unread steers, else the
+   *  first sendable queued row (`ChatHeader.compact_pending.sends`). A header read replaces it. */
   compact_sends?: boolean;
   /** `ChatHeader.tangent`. */
   tangent?: boolean;

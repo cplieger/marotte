@@ -400,22 +400,25 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 }
 
 // admitOrQueue reserves the prompt's turn, or queues the prompt behind a compaction running on
-// the chat (queued), which a turn opened now would sit under.
+// the chat (queued), which a turn opened now would sit under: one running when it arrives, one
+// claimed while it waits under kiro-cli's hold, or one claimed just before its reservation.
 func admitOrQueue(
 	ctx context.Context, roles *promptRoles, chatID marotte.ChatID, stamp uint64, p *marotte.PromptCommand,
 ) (res Reservation, queued bool, err error) {
 	for {
+		if roles.followups != nil && roles.followups.Compacting(chatID) {
+			queued, err = queueBehindCompaction(ctx, roles, chatID, p)
+			if queued || err != nil {
+				return Reservation{}, queued, err
+			}
+		}
 		// Admission FIRST: a refused admission writes nothing, so the log never holds a turn no process
 		// owns. It also dedupes a re-send of a running prompt, which meets Busy and becomes a steer.
-		res, err = reservePromptAdmission(ctx, roles, chatID, stamp, p.MessageID)
-		if err != nil || !compactingBeside(roles, res) {
+		var claimed bool
+		res, claimed, err = reservePromptAdmission(ctx, roles, chatID, stamp, p.MessageID)
+		if err != nil || !claimed && !compactingBeside(roles, res) {
 			return res, false, err
 		}
-		queued, err = queueBehindCompaction(ctx, roles, chatID, p)
-		if queued || err != nil {
-			return Reservation{}, queued, err
-		}
-		// The compaction ended between the reservation's release and the append: reserve again.
 	}
 }
 
@@ -520,21 +523,26 @@ func startPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID,
 
 // reservePromptAdmission takes the chat's admission slot for a prompt whose intent began at stamp: AdmissionBusy
 // answers 409 `turn_live` (which the client steers or queues, per the chat's mode), AdmissionClosed 409
-// `chat_closed`, AdmissionChatGone 409 `chat_not_found`, AdmissionStarting 409 `starting`.
-func reservePromptAdmission(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, stamp uint64, messageID string) (Reservation, error) {
+// `chat_closed`, AdmissionChatGone 409 `chat_not_found`, AdmissionStarting 409 `starting`; AdmissionCompacting
+// reserves nothing and answers compacting.
+func reservePromptAdmission(
+	ctx context.Context, roles *promptRoles, chatID marotte.ChatID, stamp uint64, messageID string,
+) (res Reservation, compacting bool, err error) {
 	out, res := roles.admission.ReserveTurnForPrompt(ctx, chatID, AdmissionWait, stamp, messageID)
 	switch out {
 	case AdmissionAcquired:
-		return res, nil
+		return res, false, nil
+	case AdmissionCompacting:
+		return Reservation{}, true, nil
 	case AdmissionBusy:
-		return Reservation{}, StatusErrorReason(http.StatusConflict, reasonTurnLive, errBusy)
+		return Reservation{}, false, StatusErrorReason(http.StatusConflict, reasonTurnLive, errBusy)
 	case AdmissionClosed:
-		return Reservation{}, StatusErrorReason(http.StatusConflict, reasonChatClosed, errChatClosed)
+		return Reservation{}, false, StatusErrorReason(http.StatusConflict, reasonChatClosed, errChatClosed)
 	case AdmissionChatGone:
-		return Reservation{}, StatusErrorReason(http.StatusConflict, reasonChatGone, ErrChatNotFound)
+		return Reservation{}, false, StatusErrorReason(http.StatusConflict, reasonChatGone, ErrChatNotFound)
 	case AdmissionStarting:
 	}
-	return Reservation{}, StatusErrorReason(http.StatusConflict, reasonStarting, errBusy)
+	return Reservation{}, false, StatusErrorReason(http.StatusConflict, reasonStarting, errBusy)
 }
 
 // errChatClosed is the prompt's refusal when the chat's close ended it before it ran.

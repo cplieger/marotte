@@ -222,7 +222,7 @@ func cmdSendQueuedNow(
 	if !stop || err != nil {
 		return responseOrErr(err)
 	}
-	return stopChatTurn(ctx, roles.bridges, perms, terms, stops, roles.queue, cmd.ChatID, func() (func(), bool) {
+	return stopChatTurn(ctx, roles.bridges, perms, terms, stops, roles.queue, roles.followups, cmd.ChatID, func() (func(), bool) {
 		if roles.followups.Sending(cmd.ChatID, p.MessageID) {
 			return nil, true
 		}
@@ -235,8 +235,8 @@ func cmdSendQueuedNow(
 }
 
 // markQueuedNext marks the row next and, with no turn running, sends it at once, unless
-// a compaction runs: its end's drain sends the marked row first. stop reports a marked row
-// whose turn the caller must stop.
+// a compaction runs: its end's drain sends the marked row first, and a stop would abort it
+// (stopChatTurn). stop reports a marked row whose turn the caller must stop.
 func markQueuedNext(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, id string) (stop bool, err error) {
 	// The send's intent begins here: a close that commits after this stamp refuses its reservation.
 	stamp := roles.admission.LifeStamp()
@@ -257,7 +257,7 @@ func markQueuedNext(ctx context.Context, roles *promptRoles, chatID marotte.Chat
 	res, reserved := roles.admission.TryReserveIdleTurn(chatID, marotte.TurnSourcePrompt, stamp)
 	switch {
 	case !reserved:
-		return true, nil
+		return !roles.followups.Compacting(chatID), nil
 	case compactingBeside(roles, res):
 		return false, nil
 	}
@@ -314,16 +314,46 @@ func drainAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.Cha
 	}, func(res Reservation) { sendReserved(ctx, roles, res, cl, ends) })
 }
 
-// drainAfterCompaction sends at most one prompt once a compaction no close follows has
-// ended, the first queued one whatever the compaction's outcome, picked as after a clean
+// drainAfterCompaction ends a compaction no close follows (settle, told the drain's
+// reservation) and sends at most one prompt, the first queued one whatever the compaction's outcome, picked as after a clean
 // close; each later row goes at the next close.
-func drainAfterCompaction(ctx context.Context, roles *promptRoles, chatID marotte.ChatID) {
+func drainAfterCompaction(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, settle func(Reservation)) {
 	stamp := roles.admission.LifeStamp()
-	drainOutsideCompaction(ctx, roles, chatID, func() (Reservation, bool) {
+	reserve := func() (Reservation, bool) {
 		return roles.admission.TryReserveIdleTurn(chatID, marotte.TurnSourcePrompt, stamp)
-	}, func(res Reservation) {
+	}
+	send := func(res Reservation) {
 		sendReserved(ctx, roles, res, CloseFacts{Outcome: marotte.TurnOutcomeCompleted}, EndFacts{})
-	})
+	}
+	if settleReserved(ctx, roles, chatID, reserve, settle, send) {
+		return
+	}
+	drainOutsideCompaction(ctx, roles, chatID, reserve, send)
+}
+
+// settleReserved is drainReserved with the reservation taken while the compaction still runs
+// and settle run after it, so a prompt reaching the chat as the compaction ends cannot open a
+// turn ahead of the queued rows. False, the compaction settled, when no reservation was granted.
+func settleReserved(
+	ctx context.Context, roles *promptRoles, chatID marotte.ChatID,
+	reserve func() (Reservation, bool), settle, send func(Reservation),
+) bool {
+	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
+	if err != nil {
+		settle(Reservation{})
+		return false
+	}
+	defer unlock()
+	if roles.lifecycle.Draining() || len(roles.jobs.Ends(chatID)) > 0 {
+		settle(Reservation{})
+		return true
+	}
+	res, ok := reserve()
+	settle(res)
+	if ok {
+		send(res)
+	}
+	return ok
 }
 
 // drainOutsideCompaction takes a drain's reservation under the chat's steer lock and hands it
