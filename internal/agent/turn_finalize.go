@@ -322,7 +322,7 @@ func (cf closeFacts) turnEnd() turnEnd {
 
 // releaseHold releases the close's KAS hold, answering the rows owed to its drain; on a drain it first takes a
 // compaction requested under the hold.
-func (bc *bridgeCoordinator) releaseHold(ctx context.Context, lc *chatLifecycle, cf closeFacts, accepted bool) ([]string, bool) {
+func (bc *bridgeCoordinator) releaseHold(ctx context.Context, lc *chatLifecycle, cf *closeFacts, accepted bool) ([]string, bool) {
 	drain, rows := lc.kasStep(kasReleaseOwn, cf.fence.Seq)
 	if drain && !lc.endedNow() {
 		end := cf.turnEnd()
