@@ -17,7 +17,8 @@ export async function resizeViewport(width: number, height: number): Promise<voi
 const EDGE_MARGIN = 8;
 
 /** Fixed, on an opaque overlay surface, against its trigger's top or bottom edge and over its
- *  inline span, wholly inside the viewport, its end edge on the trigger's unless clamped. */
+ *  inline span, wholly inside the viewport, its end edge on the trigger's unless clamped, and
+ *  every visible control inside its inline span. */
 export function expectAnchored(panel: HTMLElement, trigger: HTMLElement): void {
   const p = panel.getBoundingClientRect();
   const t = trigger.getBoundingClientRect();
@@ -38,4 +39,15 @@ export function expectAnchored(panel: HTMLElement, trigger: HTMLElement): void {
     endAligned || pinned,
     `end-aligned to its trigger's ${String(Math.round(t.right))}, or pinned to the edge margin (left ${String(Math.round(p.left))}, right ${String(Math.round(p.right))})`,
   ).toBe(true);
+  // Overflow toward the start edge adds no scroll width, so only the boxes show it.
+  for (const c of panel.querySelectorAll<HTMLElement>("input, textarea, select, button")) {
+    const b = c.getBoundingClientRect();
+    if (b.width === 0) {
+      continue;
+    }
+    expect(
+      [b.left >= p.left, b.right <= p.right],
+      `${c.tagName.toLowerCase()} ${c.className} at ${String(Math.round(b.left))}..${String(Math.round(b.right))} inside the panel's ${String(Math.round(p.left))}..${String(Math.round(p.right))}`,
+    ).toEqual([true, true]);
+  }
 }

@@ -314,11 +314,14 @@
   flex-direction: column;
   align-items: flex-end;
   gap: var(--sp-2);
+  /* The width lives on the form so the panel's cap can shrink it: a min-size on the
+     field would push it out of a narrower panel. */
+  inline-size: 20rem;
+  max-inline-size: 100%;
 }
 
 .agent-run-prompt {
   inline-size: 100%;
-  min-inline-size: min(20rem, 100vw - 4 * var(--sp-4));
   resize: vertical;
   font-family: inherit;
 }
