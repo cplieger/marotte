@@ -178,7 +178,7 @@ describe("a key the shell's terminal takes from the body", () => {
   });
 });
 
-// Ctrl+K is the line editor's kill to end of line in bash, nano and emacs; a terminal never gets a
+// bash and emacs kill to end of line on Ctrl+K and nano cuts the line; a terminal never gets a
 // Cmd chord, so Cmd+K stays the app's on macOS.
 describe("the new-chat chords in the shell", () => {
   function terminalInput(): HTMLElement {

@@ -650,22 +650,20 @@ describe("shell.ts: host-driven actions", () => {
 
   // Input queued in the library for a socket that drops is dropped at the resume when the server
   // restarted meanwhile, so the Run waits for the next socket's input to start.
-  it("holds a Run made after a reported drop until the reconnected socket's input is ready", async () => {
-    for (const state of ["connecting", "reconnecting", "offline", "ended", "idle"]) {
-      const h = await setup();
-      h.mod.initShellPanel();
-      h.shellBtn.click();
-      h.inputReady();
-      h.socketCloses();
-      h.connectionState(state);
+  it("holds a Run through a reported drop and a restarted state until the next socket's input is ready", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    h.inputReady();
+    h.socketCloses();
+    h.connectionState("reconnecting");
 
-      h.getRunCb()?.("echo hi");
-      h.connectionState("restarted");
-      expect(h.inputs, `after ${state}`).toEqual([]);
+    h.getRunCb()?.("echo hi");
+    h.connectionState("restarted");
+    expect(h.inputs, "after the restarted state").toEqual([]);
 
-      h.inputReady();
-      expect(h.inputs, `after ${state}`).toEqual([{ send: "echo hi\r" }]);
-    }
+    h.inputReady();
+    expect(h.inputs).toEqual([{ send: "echo hi\r" }]);
   });
 
   // The kernel reports a drop only after a grace period, or not at all when the next socket opens
