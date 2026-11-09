@@ -17,8 +17,9 @@ import {
 import { listForges } from "./actions/forge-list.js";
 import { serverSentence } from "./actions/server-sentence.js";
 import { confirm } from "./confirm.js";
+import { anchoredPopover } from "./anchored-popover.js";
 import { buildSchedulePicker, defaultSpec } from "./schedule-picker.js";
-import { buildEventForm, buildRuleList, ruleError, ruleLine } from "./run-when.js";
+import { buildEventForm, buildRuleList, ruleError, ruleRowLine } from "./run-when.js";
 import {
   buildRunDefaultsPicker,
   type RunDefaults,
@@ -26,11 +27,10 @@ import {
 } from "./run-defaults-picker.js";
 import { getCachedModels } from "./picker.js";
 import type { LaunchRuleView } from "./launch-rule-types.js";
-import { createPopup } from "@cplieger/ui/popup";
 import { openRunView } from "./run-view.js";
 import { loadSettings, refreshSettings } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
-import { openSettingsView } from "./tabs.js";
+import { openGitView, openSettingsView } from "./tabs.js";
 import { forceReflow } from "./dom.js";
 import type { Recipe, WorkflowRun } from "./types.js";
 import { entryDetail, entryList, entryRow } from "./entry-row.js";
@@ -215,7 +215,7 @@ async function refreshAutoApprove(read: () => Promise<EffectiveSettings | null>)
 let rules = new Map<string, LaunchRuleView[]>();
 
 /** The open popup's rule list, repainted when a fetch lands; null while it shows a form. */
-let popupList: { readonly source: string; readonly repaint: () => void } | null = null;
+let popupList: { readonly repaint: () => void } | null = null;
 
 async function refreshRules(): Promise<void> {
   const d = await loadLaunchRules.dispatch(undefined);
@@ -363,6 +363,8 @@ function syncRules(row: HTMLElement, r: Recipe): void {
   const enabled = list.filter((v) => v.enabled).length;
   const failing = list.some((v) => ruleError(v) !== "");
   line.textContent = rulesLine(r);
+  // The row's width cuts the line; on touch the Run when… list shows each rule's whole line.
+  line.setAttribute("data-tooltip", line.textContent);
   line.classList.toggle("is-scheduled", enabled > 0 && !failing);
   line.classList.toggle("entry-sub-error", failing);
   const btn = row.querySelector<HTMLButtonElement>(".recipe-sched-btn");
@@ -387,34 +389,48 @@ function picksFor(v: LaunchRuleView | undefined): RunDefaultsPicker {
 }
 
 function wireRulesPopup(btn: HTMLButtonElement, source: string): void {
-  let popup: ReturnType<typeof createPopup> | null = null;
-  let open = false;
+  const body = el("div", { className: "sched-popup" });
+  // This popup's entry in `popupList`, so a close clears only its own.
+  let listed: typeof popupList = null;
+  const popup = anchoredPopover(btn, body, {
+    group: "recipe-schedule",
+    onClose: () => {
+      if (popupList === listed) {
+        popupList = null;
+      }
+      // A row rebuild drops the button; its panel would otherwise stay parked in the page.
+      if (!btn.isConnected) {
+        popup.dispose();
+        body.remove();
+      }
+    },
+  });
+  const close = (): void => {
+    popup.hide();
+  };
+  const view = (node: HTMLElement): void => {
+    if (!btn.isConnected) {
+      popup.hide();
+      return;
+    }
+    body.replaceChildren(node);
+    popup.reposition();
+  };
 
   btn.addEventListener("click", (e: MouseEvent) => {
     e.stopPropagation();
-    if (open && popup !== null) {
+    if (popup.isOpen) {
       popup.hide();
-      open = false;
       return;
     }
-    const body = el("div", { className: "sched-popup" });
-    // Rebuilt per open rather than cached: the popup renders the CURRENT rules.
-    popup?.hide();
-    popup = createPopup(body, { trigger: btn, group: "recipe-schedule" });
-    const close = (): void => {
-      popup?.hide();
-      open = false;
-      if (popupList?.source === source) {
-        popupList = null;
-      }
-    };
-    const view = (node: HTMLElement): void => {
-      body.replaceChildren(node);
-    };
     const recipe = (): Recipe | undefined => recipes.find((x) => x.source === source);
     const openPermissions = (): void => {
       close();
       void openSettingsView("permissions");
+    };
+    const openSources = (): void => {
+      close();
+      void openGitView("sources");
     };
     const saved = async (v: LaunchRuleView): Promise<void> => {
       close();
@@ -486,6 +502,7 @@ function wireRulesPopup(btn: HTMLButtonElement, source: string): void {
             autoApprove,
             picks: picksFor(v),
             onOpenPermissions: openPermissions,
+            onOpenSources: openSources,
             onClose: close,
             onSave: async (draft, defaults) => {
               const body: LaunchRuleBody = {
@@ -552,13 +569,14 @@ function wireRulesPopup(btn: HTMLButtonElement, source: string): void {
           }),
         );
       };
-      popupList = { source, repaint };
+      listed = { repaint };
+      popupList = listed;
       repaint();
     };
 
+    // Rebuilt per open: the popup renders the CURRENT rules.
     showList();
     popup.show();
-    open = true;
   });
 }
 
@@ -819,7 +837,7 @@ function rulesLine(r: Recipe): string {
   if (line === undefined) {
     const on = list.filter((v) => v.enabled);
     const [first] = on;
-    line = first === undefined ? "Not scheduled" : ruleLine(first, { autoApprove, declared });
+    line = first === undefined ? "Not scheduled" : ruleRowLine(first, { autoApprove, declared });
     const more = on.length - 1;
     if (more > 0) {
       line += ` \u00b7 +${String(more)} more rule${more === 1 ? "" : "s"}`;

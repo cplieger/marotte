@@ -71,6 +71,7 @@ const { renderRepoRow } = await import("../forge-auth-repos.js");
 const { buildRunDefaultsPicker } = await import("../run-defaults-picker.js");
 const { showContextMenu } = await import("../context-menu.js");
 const { buildSchedulePicker, defaultSpec } = await import("../schedule-picker.js");
+const { buildEventForm, buildRuleList } = await import("../run-when.js");
 const { mountRow } = await import("../mcp-ui.js");
 const { openMermaidOverlay } = await import("../mermaid-overlay.js");
 const { renderDiffPane } = await import("../diff-pane.js");
@@ -1025,6 +1026,66 @@ function plantSchedule(): void {
   q('[data-docs-panel="workflows"]').appendChild(body);
 }
 
+/** A workflow's Run when… panel: its rule list, then the event form, in the body `recipes.ts`
+ *  anchors. */
+function plantEventRule(): void {
+  show("docs-view");
+  showPanel("data-docs-panel", "workflows");
+  const body = make("div", "sched-popup");
+  body.appendChild(
+    buildRuleList({
+      rules: [
+        {
+          id: "e1",
+          source: "bundled://goal",
+          enabled: true,
+          when: {
+            event: {
+              connection: "github:github.com",
+              repo: "cplieger/marotte",
+              kind: "issue_labeled",
+              filter: { label: "agent" },
+            },
+          },
+          status: {},
+          cursor: { baselined: true },
+          held: 0,
+        },
+      ],
+      autoApprove: false,
+      declared: undefined,
+      onToggle: () => undefined,
+      onEdit: () => undefined,
+      onDelete: () => undefined,
+      onDismissGap: () => Promise.resolve(null),
+      onAddClock: () => undefined,
+      onAddEvent: () => undefined,
+    }),
+  );
+  body.appendChild(
+    buildEventForm({
+      forges: [
+        {
+          id: "github:github.com",
+          kind: "github",
+          host: "github.com",
+          username: "cplieger",
+          account: "a1",
+          status: "connected",
+        },
+      ],
+      declared: { tag: "The release tag" },
+      autoApprove: false,
+      picks: buildRunDefaultsPicker({ models: [], initial: {} }),
+      onSave: () => Promise.resolve(null),
+      onClose: () => undefined,
+      onOpenPermissions: () => undefined,
+      onOpenSources: () => undefined,
+    }),
+  );
+  q('[data-docs-panel="workflows"]').appendChild(body);
+}
+
 /** Settings' MCP server list with two configured servers, through `mountRow`. */
 function plantMcpRows(): void {
   show("settings-view");
@@ -1870,6 +1931,18 @@ export const SURFACES: readonly Surface[] = [
     setup: plantSchedule,
     controls: [".sched-day", ".sched-actions .btn-small"],
     rows: [".sched-enabled", ".sched-freq"],
+  },
+  {
+    name: "a workflow's event rule",
+    sizes: ALL,
+    setup: plantEventRule,
+    controls: [
+      ".rw-controls label.toggle",
+      ".rw-controls .btn-small",
+      ".rw-add .btn-small",
+      ".sched-actions .btn-small",
+    ],
+    rows: [".rw-conn", ".rw-repo", ".rw-kind", ".rw-input"],
   },
   {
     name: "Settings, MCP servers",

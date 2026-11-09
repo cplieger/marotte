@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import type * as Toast from "./toast.js";
 
 vi.mock("./toast.js", async (importOriginal) => ({
@@ -10,6 +10,7 @@ import { join as joinKey } from "@cplieger/keyenc";
 import { buildEventForm, buildRuleList, eventState, ruleLine } from "./run-when.js";
 import { buildRunDefaultsPicker } from "./run-defaults-picker.js";
 import { formatStamp } from "./schedule-picker.js";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { dismissGap } from "./actions/launch-rules.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import type { EventSpec, LaunchRuleStatus, LaunchRuleView } from "./launch-rule-types.js";
@@ -79,6 +80,7 @@ function eventForm(over: Partial<Parameters<typeof buildEventForm>[0]> = {}): HT
     onSave: () => Promise.resolve(null),
     onClose: () => undefined,
     onOpenPermissions: () => undefined,
+    onOpenSources: () => undefined,
     ...over,
   });
   document.body.appendChild(form);
@@ -292,10 +294,87 @@ describe("buildEventForm", () => {
     expect(onSave.mock.calls[0]?.[0]).not.toHaveProperty("inputs");
   });
 
-  it("says to connect a forge when no connection is usable", () => {
-    const form = eventForm({ forges: [{ ...github, status: "reconnect" }] });
+  it("says to connect a forge when there is no connection", () => {
+    const form = eventForm({ forges: [] });
     expect(form.textContent).toContain("Connect a forge in Sources first");
     expect(form.querySelector(".rw-repo")).toBeNull();
+  });
+
+  it("names a connection that needs a new sign-in, with the way to Sources", () => {
+    const onOpenSources = vi.fn();
+    const gitlab: ConfiguredForge = {
+      id: "gitlab:gitlab.com",
+      kind: "gitlab",
+      host: "gitlab.com",
+      username: "cplieger",
+      account: "a2",
+      status: "reconnect",
+    };
+    const form = eventForm({ forges: [github, gitlab], onOpenSources });
+    const options = [...form.querySelectorAll<HTMLOptionElement>(".rw-conn option")];
+    expect(options.map((o) => [o.value, o.disabled])).toEqual([
+      ["github:github.com", false],
+      ["gitlab:gitlab.com", true],
+    ]);
+    expect(options[1]?.textContent).toBe("gitlab.com · cplieger (sign in again in Sources)");
+    form.querySelector<HTMLButtonElement>(".rw-open-sources")!.click();
+    expect(onOpenSources).toHaveBeenCalledTimes(1);
+  });
+
+  it("says to sign in again when the only connection needs it", () => {
+    const form = eventForm({ forges: [{ ...github, status: "reconnect" }] });
+    expect(form.textContent).not.toContain("Connect a forge");
+    expect(form.textContent).toContain("github.com · cplieger needs a new sign-in");
+    expect(form.querySelector(".rw-open-sources")).not.toBeNull();
+    expect(form.querySelector(".rw-repo")).toBeNull();
+  });
+
+  it("says the opened-by field takes one login per line", () => {
+    const form = eventForm();
+    pick(form, ".rw-kind", "pr_opened");
+    const row = form.querySelector(".rw-authors")?.closest(".sched-row");
+    expect(row?.querySelector(".sched-hint")?.textContent).toBe(
+      "One login per line, such as renovate[bot]",
+    );
+  });
+
+  it("writes every field label in sentence case", () => {
+    const form = eventForm();
+    const labels = (): string[] =>
+      [...form.querySelectorAll(".sched-label:not(.rw-input-name)")].map(
+        (l) => l.textContent ?? "",
+      );
+    const seen = new Set<string>();
+    for (const kind of ["issue_labeled", "pr_opened", "run_concluded"]) {
+      pick(form, ".rw-kind", kind);
+      for (const l of labels()) {
+        seen.add(l);
+      }
+    }
+    expect([...seen].filter((l) => l.charAt(0) !== l.charAt(0).toUpperCase())).toEqual([]);
+  });
+
+  it("puts the trust and catch-up hints under the When fields", () => {
+    const form = eventForm();
+    const order = (a: Element, b: Element): boolean =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    const trust = form.querySelector(".rw-trust")!;
+    const windowLine = form.querySelector(".rw-window")!;
+    const kindFields = form.querySelector(".rw-kind-fields")!;
+    const interval = form.querySelector(".rw-interval")!;
+    expect(order(kindFields, trust) && order(trust, interval)).toBe(true);
+    expect(order(kindFields, windowLine) && order(windowLine, interval)).toBe(true);
+  });
+
+  it("shows an input's description as hint text that stays once a value is typed", () => {
+    const form = eventForm({ declared: { event_id: "", tag: "The release tag to stamp" } });
+    const tag = form.querySelector<HTMLInputElement>('.rw-inputs input[aria-label="Input tag"]')!;
+    tag.value = "v1";
+    expect(tag.placeholder).toBe("");
+    expect(tag.closest(".rw-input-field")?.querySelector(".sched-hint")?.textContent).toBe(
+      "The release tag to stamp",
+    );
+    expect(form.querySelector(".rw-inputs-title")?.textContent).toBe("Inputs");
   });
 
   it("keeps the form open on a refusal", async () => {
@@ -351,5 +430,178 @@ describe("buildRuleList", () => {
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect([init.method, url]).toEqual(["POST", "/api/launch-rules/e1/dismiss-gap"]);
     expect(list.querySelector(".rw-line")?.textContent).not.toContain("gap: ");
+  });
+});
+
+describe("the Run when… surfaces in real layout", () => {
+  let style: HTMLStyleElement;
+
+  beforeAll(() => {
+    style = mountAppCSS();
+  });
+
+  afterAll(() => {
+    style.remove();
+  });
+
+  afterEach(() => {
+    delete document.documentElement.dataset["theme"];
+  });
+
+  /** The form inside the popup's own surface, at the phone's inner width. */
+  function inPopup(form: HTMLElement, width = 302): HTMLElement {
+    const panel = document.createElement("div");
+    panel.className = "sched-popup";
+    panel.style.inlineSize = `${String(width)}px`;
+    panel.append(form);
+    document.body.append(panel);
+    return form;
+  }
+
+  function painted(colour: string, under: readonly string[] = []): [number, number, number] {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    const cx = canvas.getContext("2d", { willReadFrequently: true })!;
+    for (const layer of [...under, colour]) {
+      cx.fillStyle = layer;
+      cx.fillRect(0, 0, 1, 1);
+    }
+    const d = cx.getImageData(0, 0, 1, 1).data;
+    return [d[0] ?? 0, d[1] ?? 0, d[2] ?? 0];
+  }
+
+  function ratio(a: [number, number, number], b: [number, number, number]): number {
+    const lum = (c: [number, number, number]): number => {
+      const ch = (v: number): number => {
+        const x = v / 255;
+        return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+      };
+      return 0.2126 * ch(c[0]) + 0.7152 * ch(c[1]) + 0.0722 * ch(c[2]);
+    };
+    const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x) as [number, number];
+    return (hi + 0.05) / (lo + 0.05);
+  }
+
+  /** The text's ink against every background from the page down to it, composited. */
+  function contrastOf(text: Element): number {
+    const layers: string[] = [];
+    for (let cur: Element | null = text; cur !== null; cur = cur.parentElement) {
+      layers.unshift(getComputedStyle(cur).backgroundColor);
+    }
+    const bg = painted(layers.at(-1)!, ["#fff", ...layers.slice(0, -1)]);
+    return ratio(painted(getComputedStyle(text).color, ["#fff", ...layers]), bg);
+  }
+
+  it("heads Add a rule in the neutral ink, not the caution title's", () => {
+    const list = buildRuleList({
+      rules: [],
+      autoApprove: false,
+      declared: undefined,
+      onToggle: () => undefined,
+      onEdit: () => undefined,
+      onDelete: () => undefined,
+      onDismissGap: () => Promise.resolve(null),
+      onAddClock: () => undefined,
+      onAddEvent: () => undefined,
+    });
+    inPopup(list);
+    const heading = [...list.querySelectorAll(".rw-add > *")].find(
+      (n) => n.textContent === "Add a rule",
+    )!;
+    const probe = document.createElement("span");
+    probe.style.color = "var(--c-text-secondary)";
+    list.append(probe);
+    expect(getComputedStyle(heading).color).toBe(getComputedStyle(probe).color);
+  });
+
+  it.each(["dark", "light"])("paints a rule's error line in the error ink (%s)", (t) => {
+    document.documentElement.dataset["theme"] = t;
+    const list = buildRuleList({
+      rules: [eventRule({}, { blocked: "the connection was removed." })],
+      autoApprove: false,
+      declared: ["event_id"],
+      onToggle: () => undefined,
+      onEdit: () => undefined,
+      onDelete: () => undefined,
+      onDismissGap: () => Promise.resolve(null),
+      onAddClock: () => undefined,
+      onAddEvent: () => undefined,
+    });
+    inPopup(list);
+    const line = list.querySelector(".rw-line")!;
+    expect(line.textContent).toContain("blocked: the connection was removed");
+    const probe = document.createElement("span");
+    probe.style.color = "var(--c-red)";
+    list.append(probe);
+    expect(getComputedStyle(line).color).toBe(getComputedStyle(probe).color);
+  });
+
+  it("pauses a rule with the house switch, its 36x20 track the target", () => {
+    const toggled: boolean[] = [];
+    const list = buildRuleList({
+      rules: [eventRule()],
+      autoApprove: false,
+      declared: ["event_id"],
+      onToggle: (_v, on) => toggled.push(on),
+      onEdit: () => undefined,
+      onDelete: () => undefined,
+      onDismissGap: () => Promise.resolve(null),
+      onAddClock: () => undefined,
+      onAddEvent: () => undefined,
+    });
+    inPopup(list);
+    const track = list.querySelector<HTMLElement>(".rw-rule label.toggle > .toggle-slider")!;
+    const box = track.getBoundingClientRect();
+    expect([box.width, box.height]).toEqual([36, 20]);
+    track.click();
+    expect(toggled).toEqual([false]);
+  });
+
+  it.each(["dark", "light"])("keeps the form's text at 4.5:1 or better in the %s theme", (t) => {
+    document.documentElement.dataset["theme"] = t;
+    const form = inPopup(eventForm({ declared: { tag: "string" } }));
+    const texts = [
+      form.querySelector(".rw-no-event-id")!,
+      form.querySelector(".sched-note-title")!,
+      ...form.querySelectorAll(".sched-label, .sched-hint, .sched-note-body"),
+    ];
+    const low = texts
+      .map((n) => [n.textContent?.slice(0, 24), Number(contrastOf(n).toFixed(2))] as const)
+      .filter(([, r]) => r < 4.5);
+    expect(low).toEqual([]);
+  });
+
+  it("gives the form's fields one height and one type size", () => {
+    const form = inPopup(eventForm({ declared: { event_id: "", tag: "string" } }));
+    const fields = [
+      ...form.querySelectorAll<HTMLElement>(
+        "input:not([type='checkbox']), select, .rw-form textarea",
+      ),
+    ].filter((f) => f.getClientRects().length > 0);
+    const heights = new Set(fields.map((f) => f.getBoundingClientRect().height));
+    const sizes = new Set(fields.map((f) => getComputedStyle(f).fontSize));
+    expect([...heights], fields.map((f) => f.className).join(", ")).toHaveLength(1);
+    expect([...sizes]).toHaveLength(1);
+    const label = getComputedStyle(form.querySelector(".sched-label")!);
+    const unit = [...form.querySelectorAll(".sched-row > *")].find(
+      (n) => n.textContent === "minutes",
+    )!;
+    expect([getComputedStyle(unit).fontSize, getComputedStyle(unit).color]).toEqual([
+      label.fontSize,
+      label.color,
+    ]);
+  });
+
+  it("keeps each hold field beside its label on a phone", () => {
+    const form = inPopup(eventForm());
+    form.querySelector<HTMLDetailsElement>(".rw-more")!.open = true;
+    for (const sel of [".rw-hold-policy", ".rw-hold-cap"]) {
+      const field = form.querySelector(sel)!;
+      const label = field.parentElement!.querySelector(".sched-label")!.getBoundingClientRect();
+      const box = field.getBoundingClientRect();
+      const mid = (r: DOMRect): number => r.top + r.height / 2;
+      expect(Math.abs(mid(box) - mid(label)), sel).toBeLessThanOrEqual(box.height / 2);
+    }
   });
 });

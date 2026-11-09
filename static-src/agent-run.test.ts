@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { page } from "vitest/browser";
+import { expectAnchored, resizeViewport } from "./__test-helpers__/anchored-panel.js";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type * as Runs from "./actions/runs.js";
 import type * as RunView from "./run-view.js";
 
@@ -150,5 +153,40 @@ describe("the agent Run control", () => {
     btn.click();
     expect(btn.getAttribute("aria-expanded")).toBe("true");
     expect(document.querySelectorAll(".sched-popup")).toHaveLength(1);
+  });
+});
+
+describe("the agent Run panel's placement", () => {
+  let style: HTMLStyleElement;
+  let entry: { readonly width: number; readonly height: number } | null = null;
+
+  beforeAll(() => {
+    entry = { width: window.innerWidth, height: window.innerHeight };
+    style = mountAppCSS();
+  });
+
+  afterAll(async () => {
+    style.remove();
+    if (entry !== null) {
+      await page.viewport(entry.width, entry.height);
+    }
+  });
+
+  // A row near the window's bottom edge: the panel must open above it rather than off-screen.
+  describe.each([
+    [390, 844],
+    [1440, 900],
+  ])("at %dx%d", (width, height) => {
+    it("opens the prompt anchored to its Run button", async () => {
+      await resizeViewport(width, height);
+      const row = document.createElement("div");
+      row.style.cssText = "position: absolute; inset-inline-end: 8px; inset-block-end: 8px";
+      document.body.append(row);
+      const btn = agentRunButton("reviewer")!;
+      row.append(btn);
+      btn.click();
+      const panel = document.querySelector<HTMLElement>(".sched-popup.is-open")!;
+      expectAnchored(panel, btn);
+    });
   });
 });

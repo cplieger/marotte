@@ -17,6 +17,7 @@ import type { RunDefaults, RunDefaultsPicker } from "./run-defaults-picker.js";
 import { buildUnattendedNote, describeSpec, formatStamp, summaryLine } from "./schedule-picker.js";
 import { buildRuleInputs, type RuleInputs } from "./rule-inputs.js";
 import { formatClock } from "./locale-time.js";
+import { usableStatus } from "./forge-auth-status.js";
 
 const KINDS: readonly [EventKind, string][] = [
   ["issue_labeled", "an issue gets a label"],
@@ -178,6 +179,15 @@ interface LineContext {
 
 /** A rule's line: what starts the run, what last happened, then the state, middot-joined. */
 export function ruleLine(v: LaunchRuleView, ctx: LineContext): string {
+  return composeLine(v, ctx, false);
+}
+
+/** ruleLine for the recipe row, whose width cuts the line: an event rule's state leads. */
+export function ruleRowLine(v: LaunchRuleView, ctx: LineContext): string {
+  return composeLine(v, ctx, true);
+}
+
+function composeLine(v: LaunchRuleView, ctx: LineContext, stateFirst: boolean): string {
   const clock = v.when.clock;
   if (clock !== undefined) {
     const view = scheduleViewOf(v);
@@ -187,7 +197,9 @@ export function ruleLine(v: LaunchRuleView, ctx: LineContext): string {
   if (ev === undefined) {
     return "";
   }
-  const segs = [describeEvent(ev), lastFired(v), eventState(v).text];
+  const head = [describeEvent(ev), lastFired(v)];
+  const state = eventState(v).text;
+  const segs = stateFirst ? [state, ...head] : [...head, state];
   segs.push(...(v.cursor?.notes ?? []), ...(v.status?.gaps ?? []).map(gapText));
   if (ctx.autoApprove) {
     segs.push("auto-approve on");
@@ -254,7 +266,12 @@ export function buildRuleList(opts: RuleListOptions): HTMLElement {
     const controls = el(
       "div",
       { className: "rw-controls" },
-      el("label", { className: "sched-enabled" }, on, el("span", {}, "On")),
+      el(
+        "label",
+        { className: "toggle toggle-inline" },
+        on,
+        el("span", { className: "toggle-slider" }),
+      ),
       button("Edit", "rw-edit", () => {
         opts.onEdit(v);
       }),
@@ -300,7 +317,7 @@ export function buildRuleList(opts: RuleListOptions): HTMLElement {
     el(
       "div",
       { className: "rw-add" },
-      el("div", { className: "sched-note-title" }, "Add a rule"),
+      el("div", { className: "rw-add-title" }, "Add a rule"),
       add("On a schedule", opts.onAddClock),
       add("When something happens on a forge", opts.onAddEvent),
     ),
@@ -327,9 +344,23 @@ interface EventFormOptions {
   onSave: (draft: EventRuleDraft, defaults: RunDefaults) => Promise<string | null>;
   onClose: () => void;
   onOpenPermissions: () => void;
+  onOpenSources: () => void;
 }
 
-const usable = (f: ConfiguredForge): boolean => f.status === "connected" || f.status === "retrying";
+function connLabel(f: ConfiguredForge): string {
+  return `${f.host} · ${f.username ?? f.account}`;
+}
+
+/** Why a connection the Sources tab lists cannot back a rule, as a sentence. */
+function lapsedText(f: ConfiguredForge): string {
+  return f.status === "reconnect"
+    ? `${connLabel(f)} needs a new sign-in. Reconnect it in Sources.`
+    : `${connLabel(f)} cannot read the forge now. Sources says why.`;
+}
+
+function lapsedNote(f: ConfiguredForge): string {
+  return f.status === "reconnect" ? "sign in again in Sources" : "see Sources";
+}
 
 function trustText(kind: EventKind): string {
   if (labeled(kind)) {
@@ -383,17 +414,53 @@ function numberField(
   }) as HTMLInputElement;
 }
 
+/** The lapsed connections' sentences and the way to Sources, or null when none is lapsed. */
+function lapsedBlock(
+  lapsed: readonly ConfiguredForge[],
+  onOpenSources: () => void,
+): HTMLElement | null {
+  if (lapsed.length === 0) {
+    return null;
+  }
+  return el(
+    "div",
+    { className: "rw-lapsed" },
+    ...lapsed.map((f) => el("div", { className: "sched-hint" }, lapsedText(f))),
+    sourcesButton(onOpenSources),
+  );
+}
+
+function sourcesButton(onOpenSources: () => void): HTMLButtonElement {
+  const b = el(
+    "button",
+    { type: "button", className: "btn-small rw-open-sources" },
+    "Open Sources",
+  ) as HTMLButtonElement;
+  b.addEventListener("click", (e: MouseEvent) => {
+    e.stopPropagation();
+    onOpenSources();
+  });
+  return b;
+}
+
 /** The event rule's form. The caller anchors it and owns dismissal. */
 export function buildEventForm(opts: EventFormOptions): HTMLElement {
   const ev = opts.rule?.when.event;
-  const conns = opts.forges.filter(usable);
+  const conns = opts.forges.filter((f) => usableStatus(f.status));
+  const lapsed = opts.forges.filter((f) => !usableStatus(f.status));
   const cancel = el("button", { type: "button", className: "btn-small" }, "Cancel");
   cancel.addEventListener("click", opts.onClose);
   if (conns.length === 0 && ev === undefined) {
     return el(
       "div",
       { className: "sched-picker rw-form" },
-      el("div", { className: "sched-hint" }, "Connect a forge in Sources first"),
+      lapsedBlock(lapsed, opts.onOpenSources) ??
+        el(
+          "div",
+          { className: "rw-lapsed" },
+          el("div", { className: "sched-hint" }, "Connect a forge in Sources first"),
+          sourcesButton(opts.onOpenSources),
+        ),
       el("div", { className: "sched-actions" }, cancel),
     );
   }
@@ -403,9 +470,19 @@ export function buildEventForm(opts: EventFormOptions): HTMLElement {
     "aria-label": "Connection",
   }) as HTMLSelectElement;
   for (const f of conns) {
-    connSel.appendChild(el("option", { value: f.id }, `${f.host} · ${f.username ?? f.account}`));
+    connSel.appendChild(el("option", { value: f.id }, connLabel(f)));
   }
-  if (ev !== undefined && !conns.some((f) => f.id === ev.connection)) {
+  // Listed so the reader sees it, and off unless the rule being edited already names it.
+  for (const f of lapsed) {
+    const o = el(
+      "option",
+      { value: f.id },
+      `${connLabel(f)} (${lapsedNote(f)})`,
+    ) as HTMLOptionElement;
+    o.disabled = f.id !== ev?.connection;
+    connSel.appendChild(o);
+  }
+  if (ev !== undefined && !opts.forges.some((f) => f.id === ev.connection)) {
     connSel.appendChild(el("option", { value: ev.connection }, `${ev.connection} (signed out)`));
   }
   connSel.value = ev?.connection ?? conns[0]?.id ?? "";
@@ -449,10 +526,16 @@ export function buildEventForm(opts: EventFormOptions): HTMLElement {
       el("div", { className: "sched-row" }, ...nodes);
     const nodes: HTMLElement[] = [];
     if (labeled(k)) {
-      nodes.push(row(el("span", { className: "sched-label" }, "label"), label));
+      nodes.push(row(el("span", { className: "sched-label" }, "Label"), label));
     }
     if (opened(k)) {
-      nodes.push(row(el("span", { className: "sched-label" }, "by"), authors));
+      nodes.push(
+        row(
+          el("span", { className: "sched-label" }, "Opened by"),
+          authors,
+          el("div", { className: "sched-hint" }, "One login per line, such as renovate[bot]"),
+        ),
+      );
     }
     if (k === "run_concluded") {
       nodes.push(
@@ -463,12 +546,12 @@ export function buildEventForm(opts: EventFormOptions): HTMLElement {
               "GitLab runs one pipeline configuration per project.",
             )
           : row(
-              el("span", { className: "sched-label" }, "workflow"),
+              el("span", { className: "sched-label" }, "Workflow"),
               workflow,
               el("div", { className: "sched-hint" }, workflowHint(forgeKind())),
             ),
         row(
-          el("span", { className: "sched-label" }, "with"),
+          el("span", { className: "sched-label" }, "Result"),
           ...results.map((b) =>
             el("label", { className: "sched-enabled" }, b, el("span", {}, b.value)),
           ),
@@ -496,7 +579,7 @@ export function buildEventForm(opts: EventFormOptions): HTMLElement {
       }
     }
     if (k === "run_concluded" || onPR(k)) {
-      nodes.push(row(el("span", { className: "sched-label" }, "on branch"), branch));
+      nodes.push(row(el("span", { className: "sched-label" }, "Branch"), branch));
     }
     kindFields.replaceChildren(...nodes);
   };
@@ -528,13 +611,19 @@ export function buildEventForm(opts: EventFormOptions): HTMLElement {
   const more = el(
     "details",
     { className: "rw-more" },
-    el("summary", {}, "More"),
+    el("summary", { className: "rw-more-summary" }, "More"),
     el(
       "div",
       { className: "sched-row" },
-      el("span", { className: "sched-label" }, "while it cannot run, hold"),
+      el("span", { className: "sched-label" }, "While busy, hold"),
       policy,
+    ),
+    el(
+      "div",
+      { className: "sched-row" },
+      el("span", { className: "sched-label" }, "At most"),
       cap,
+      el("span", { className: "rw-unit" }, "events"),
     ),
   );
 
@@ -637,6 +726,7 @@ export function buildEventForm(opts: EventFormOptions): HTMLElement {
       el("span", { className: "sched-label" }, "Connection"),
       connSel,
     ),
+    lapsedBlock(lapsed, opts.onOpenSources),
     el(
       "div",
       { className: "sched-row" },
@@ -650,19 +740,19 @@ export function buildEventForm(opts: EventFormOptions): HTMLElement {
       kindSel,
     ),
     kindFields,
+    trust,
+    windowLine,
     el(
       "div",
       { className: "sched-row" },
       el("span", { className: "sched-label" }, "Check every"),
       interval,
-      el("span", {}, "minutes"),
+      el("span", { className: "rw-unit" }, "minutes"),
     ),
     more,
     inputsSlot,
     el("div", { className: "sched-row" }, opts.picks.el),
     buildUnattendedNote(opts.autoApprove, opts.onOpenPermissions, true),
-    trust,
-    windowLine,
     error,
     el("div", { className: "sched-actions" }, save, cancel),
   );

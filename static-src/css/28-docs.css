@@ -290,9 +290,23 @@
 /* An active schedule is a state, marked the way every other on-state is. */
 /* .recipe-sched-btn.on: 70-selection.css. */
 
+/* The Run when… and agent Run panels, anchored by `anchored-popover.ts`, on the
+   anchored form surface `.docs-new-popover` uses. `--popover-room` is the room
+   beside the button, set on open and on every content or viewport change. */
 .sched-popup {
-  min-width: 17rem;
+  z-index: 100;
+  min-width: min(17rem, 100vw - 4 * var(--sp-4));
+  max-inline-size: min(32rem, 100vw - 4 * var(--sp-4));
+  max-block-size: min(var(--popover-room, 80dvh), 80dvh);
+  overflow: auto;
+  overscroll-behavior: contain;
   padding: var(--sp-3);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  box-shadow:
+    var(--shadow-ambient),
+    0 0.5rem 1.5rem oklch(0% 0 none / 30%);
 }
 
 .agent-run-form {
@@ -447,15 +461,12 @@
 .rw-popup,
 .rw-rules,
 .rw-add,
+.rw-lapsed,
 .rw-inputs,
 .rw-kind-fields {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-}
-
-.rw-popup {
-  max-inline-size: min(32rem, 100vw - 4 * var(--sp-4));
 }
 
 .rw-rule {
@@ -472,6 +483,11 @@
   overflow-wrap: anywhere;
 }
 
+/* The row's error class; `.rw-line`'s ink above comes later and would outrank it. */
+.rw-line.entry-sub-error {
+  color: var(--c-red);
+}
+
 .rw-controls {
   display: flex;
   align-items: center;
@@ -479,8 +495,33 @@
   flex-wrap: wrap;
 }
 
-.rw-add {
+.rw-add,
+.rw-lapsed {
   align-items: start;
+}
+
+/* Section headings; the caution title is `.sched-note-title`'s alone. */
+.rw-add-title,
+.rw-inputs-title {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--c-text-secondary);
+}
+
+/* An input's name is the workflow's identifier, shown verbatim. */
+.rw-input-name {
+  font-family: var(--font-mono);
+}
+
+/* A unit after a field reads as its label does. */
+.rw-unit {
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+}
+
+/* One type size with the form's other fields; `.sched-num` alone inherits it. */
+.rw-form .sched-num {
+  font-size: var(--fs-sm);
 }
 
 .rw-conn,
@@ -490,7 +531,8 @@
 .rw-label,
 .rw-workflow,
 .rw-branch,
-.rw-authors {
+.rw-authors,
+.rw-input {
   min-block-size: var(--field-h-dense);
   font: inherit;
   font-size: var(--fs-sm);
@@ -503,7 +545,8 @@
 
 .rw-repo,
 .rw-workflow,
-.rw-authors {
+.rw-authors,
+.rw-input {
   flex: 1;
   min-inline-size: 12rem;
 }
@@ -525,10 +568,20 @@
   color: var(--c-yellow);
 }
 
-.rw-more > summary {
+/* A disclosure head between two fields: its box is its target. */
+.rw-more-summary {
+  display: flex;
+  align-items: center;
+  min-block-size: var(--row-tap-sm);
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
   cursor: pointer;
+}
+
+/* The Result boxes share one line, where a box's centred expander would reach the label
+   before it: each label is its box's target. */
+.sched-enabled > .rw-result::after {
+  content: none;
 }
 
 .rw-error {

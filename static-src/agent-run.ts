@@ -2,14 +2,13 @@
 // its own run tab like any other workflow run.
 
 import { el } from "@cplieger/ui";
-import { createPopup } from "@cplieger/ui/popup";
+import type { PopoverController } from "@cplieger/ui/popover";
 import { launchRun } from "./actions/runs.js";
+import { anchoredPopover } from "./anchored-popover.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_PLAY } from "./icons.js";
 
 const AGENT_NAME = /^[A-Za-z0-9._-]+$/;
-
-type Popup = ReturnType<typeof createPopup>;
 
 /** A Run button for the named agent, or null when KAS could not address it. */
 export function agentRunButton(name: string): HTMLButtonElement | null {
@@ -27,7 +26,7 @@ export function agentRunButton(name: string): HTMLButtonElement | null {
     },
     iconEl(ICON_PLAY),
   ) as HTMLButtonElement;
-  let popup: Popup | null = null;
+  let popup: PopoverController | null = null;
   btn.addEventListener("click", (e: MouseEvent) => {
     e.stopPropagation();
     popup ??= buildPopup(name, btn);
@@ -36,12 +35,11 @@ export function agentRunButton(name: string): HTMLButtonElement | null {
   return btn;
 }
 
-function buildPopup(name: string, btn: HTMLButtonElement): Popup {
+function buildPopup(name: string, btn: HTMLButtonElement): PopoverController {
   const panel = promptForm(name, () => {
     popup.hide();
   });
-  const popup = createPopup(panel, {
-    trigger: btn,
+  const popup = anchoredPopover(btn, panel, {
     group: "agent-run",
     haspopup: "dialog",
     initialFocus: panel.querySelector("textarea"),
