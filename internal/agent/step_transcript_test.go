@@ -410,7 +410,7 @@ func TestStepTranscript_TheLoadOpensNoSessionLane(t *testing.T) {
 	}
 	doors := br.startCount()
 	lanes := len(h.bridge.mgr.all())
-	keep := h.liveSessionIDs()
+	keep, _ := h.HeldSessions(t.Context())
 
 	if _, err := h.Runs().stepTranscript(t.Context(), "wf_1", "wf_1:loop:iter-0:build"); err != nil {
 		t.Fatalf("StepTranscript: %v", err)
@@ -422,7 +422,7 @@ func TestStepTranscript_TheLoadOpensNoSessionLane(t *testing.T) {
 	if got := len(h.bridge.mgr.all()); got != lanes {
 		t.Errorf("registered sessions = %d after a step read, want %d", got, lanes)
 	}
-	if got := h.liveSessionIDs(); !slices.Equal(got, keep) {
+	if got, _ := h.HeldSessions(t.Context()); !slices.Equal(got, keep) {
 		t.Errorf("the reaper keep-list moved from %v to %v across a step read", keep, got)
 	}
 	if !slices.Contains(br.callLog(), marotte.MethodSessionLoad) {

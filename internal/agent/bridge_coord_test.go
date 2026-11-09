@@ -849,8 +849,11 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 			h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
 				WithSessionReaper(
 					kirosession.New(sessionsDir, testReaperWorkDir),
-					func(context.Context) (map[string]struct{}, bool) {
-						return map[string]struct{}{"sess_ref": {}}, tc.complete
+					func(context.Context) ([]string, error) {
+						if !tc.complete {
+							return nil, errors.New("a chat file could not be read")
+						}
+						return []string{"sess_ref"}, nil
 					},
 				),
 				// The loop's own first sweep would race this test's.
@@ -874,7 +877,7 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 
 // The 10-minute guard is a create-race cushion, not a liveness test: the on-disk sweep spares every resident
 // session, a run's host session included, which no chat file names.
-func TestLiveSessionIDs_CoversEveryResidentSession(t *testing.T) {
+func TestHeldSessions_CoversEveryResidentSession(t *testing.T) {
 	cs := newTestChatStore()
 	h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs)
 	cs.wire(h)
@@ -894,11 +897,14 @@ func TestLiveSessionIDs_CoversEveryResidentSession(t *testing.T) {
 	// An entry with no session yet contributes nothing.
 	setSession("chatC", "")
 
-	got := h.liveSessionIDs()
+	got, err := h.HeldSessions(t.Context())
+	if err != nil {
+		t.Errorf("HeldSessions() error = %v, want nil", err)
+	}
 	slices.Sort(got)
 	want := []string{"sess_chatA", "sess_chatB", "sess_host"}
 	if !slices.Equal(got, want) {
-		t.Errorf("liveSessionIDs() = %v, want %v", got, want)
+		t.Errorf("HeldSessions() = %v, want %v", got, want)
 	}
 }
 
@@ -1066,8 +1072,8 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 			h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
 				WithSessionReaper(
 					kirosession.New(sessionsDir, testReaperWorkDir),
-					func(context.Context) (map[string]struct{}, bool) {
-						return map[string]struct{}{"sess_owned": {}}, true
+					func(context.Context) ([]string, error) {
+						return []string{"sess_owned"}, nil
 					},
 				))
 			cs.wire(h)
@@ -1107,8 +1113,8 @@ func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 	h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
 		WithSessionReaper(
 			kirosession.New(sessionsDir, testReaperWorkDir),
-			func(context.Context) (map[string]struct{}, bool) {
-				return map[string]struct{}{"sess_owned": {}}, true
+			func(context.Context) ([]string, error) {
+				return []string{"sess_owned"}, nil
 			},
 		))
 	cs.wire(h)

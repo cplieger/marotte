@@ -439,7 +439,7 @@ func bootSeam(t *testing.T, root string, eng *seamEngine, logs *seamLogs, o seam
 	}
 	b.h = agent.New(ctx, b.workDir, src, b.chats,
 		agent.WithConfigDir(root),
-		agent.WithSessionReaper(reaper, b.chats.ReferencedSessionIDs),
+		agent.WithSessionReaper(reaper, b.chats.HeldSessions),
 		agent.WithRunLeases(b.leases),
 		agent.WithTabs(b.tabs))
 	chat.WithBroadcaster(b.h)(b.chats)

@@ -191,7 +191,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		agent.WithACPArgs(cfg.ACPArgs),
 		agent.WithPowers(powersMgr),
 		agent.WithAuthReadiness(authReadiness),
-		agent.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs),
+		agent.WithSessionReaper(sessionReaper, chatStore.HeldSessions),
 		agent.WithSessionSweepGate(listenerBound),
 		agent.WithLaunchRules(launchRules),
 		withTriggerConfirmer(confirmer),

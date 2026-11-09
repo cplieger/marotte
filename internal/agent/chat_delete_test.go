@@ -255,7 +255,7 @@ func TestDeleteChatStateByChain_ReapsWhenTheDeleteIsRefused(t *testing.T) {
 	cs := newTestChatStore()
 	h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(rig.factory, nil), cs,
 		WithSessionReaper(kirosession.New(sessionsDir, testReaperWorkDir),
-			func(context.Context) (map[string]struct{}, bool) { return map[string]struct{}{}, true }))
+			func(context.Context) ([]string, error) { return nil, nil }))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 

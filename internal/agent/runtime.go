@@ -291,7 +291,7 @@ type Runtime struct {
 	specs         *spec.Notifier
 	replay        *replay
 	sessionReaper *kirosession.Reaper
-	sessionRefs   func(context.Context) (map[string]struct{}, bool)
+	sessionRefs   func(context.Context) ([]string, error)
 	// sweepGate closes once this process serves its config dir, which the session sweep waits for. Nil: no gate.
 	sweepGate    <-chan struct{}
 	lines        *buffer.LineTracker
@@ -407,9 +407,9 @@ func WithAuthReadiness(readiness *command.AuthReadiness) Option {
 	return func(h *Runtime) { h.authReadiness = readiness }
 }
 
-// WithSessionReaper wires the KAS session reaper and the referenced-session thunk. refs returns (set,
-// complete); an incomplete set skips the sweep (sweepSessionsOnce).
-func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) (map[string]struct{}, bool)) Option {
+// WithSessionReaper wires the KAS session reaper and the referenced-session thunk. A refs error skips the
+// sweep (sweepSessionsOnce).
+func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) ([]string, error)) Option {
 	return func(h *Runtime) {
 		h.sessionReaper = r
 		h.sessionRefs = refs
@@ -931,28 +931,30 @@ func (rt *Runtime) awaitSweepGate() bool {
 func (rt *Runtime) sweepSessionsOnce() {
 	ctx, cancel := rt.lifecycle.derivedContext()
 	defer cancel()
-	refs, complete := rt.sessionRefs(ctx)
-	if !complete {
-		slog.Warn("kirosession: skipping orphan sweep, keep-list incomplete (a chat file could not be read)")
+	held, err := rt.sessionRefs(ctx)
+	if err != nil {
+		slog.Warn("kirosession: skipping orphan sweep, a session holder could not answer", "err", err)
 		return
 	}
-	if refs == nil {
-		refs = map[string]struct{}{}
-	}
-	for _, id := range rt.liveSessionIDs() {
-		refs[id] = struct{}{}
+	live, _ := rt.HeldSessions(ctx)
+	refs := make(map[string]struct{}, len(held)+len(live))
+	for _, ids := range [][]string{held, live} {
+		for _, id := range ids {
+			refs[id] = struct{}{}
+		}
 	}
 	rt.sessionReaper.Sweep(refs)
 }
 
-func (rt *Runtime) liveSessionIDs() []string {
+// HeldSessions returns every resident session's id, chat and run host alike, and never fails.
+func (rt *Runtime) HeldSessions(context.Context) ([]string, error) {
 	var ids []string
 	for _, sb := range rt.bridge.mgr.all() {
 		if id := string(sb.SessionID()); id != "" {
 			ids = append(ids, id)
 		}
 	}
-	return ids
+	return ids, nil
 }
 
 // configDocument is every config.json value a spawn, a restart decision or a session door reads, through the configDoc

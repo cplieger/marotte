@@ -161,10 +161,10 @@ func TestShutdown_WaitsForARunningSweep(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
-	refs := func(context.Context) (map[string]struct{}, bool) {
+	refs := func(context.Context) ([]string, error) {
 		once.Do(func() { close(entered) })
 		<-release
-		return nil, false
+		return nil, errors.New("released")
 	}
 	cs := newTestChatStore()
 	h := newRuntimeOn(context.Background(), t.TempDir(),
@@ -196,7 +196,7 @@ func TestShutdown_WaitsForARunningSweep(t *testing.T) {
 // could reap the real instance's sessions before App.Run binds. Shutdown waits on the loop group, so zero
 // calls afterwards proves the gate held.
 func TestSweepSessionsLoop_WaitsForTheListenerToBind(t *testing.T) {
-	newGatedHub := func(t *testing.T, gate <-chan struct{}, refs func(context.Context) (map[string]struct{}, bool)) *Runtime {
+	newGatedHub := func(t *testing.T, gate <-chan struct{}, refs func(context.Context) ([]string, error)) *Runtime {
 		t.Helper()
 		cs := newTestChatStore()
 		h := newRuntimeOn(context.Background(), t.TempDir(),
@@ -207,13 +207,13 @@ func TestSweepSessionsLoop_WaitsForTheListenerToBind(t *testing.T) {
 		return h
 	}
 	// Non-empty and complete, so the sweep reaches Reaper.Sweep.
-	keepList := func(context.Context) (map[string]struct{}, bool) {
-		return map[string]struct{}{"sess_live": {}}, true
+	keepList := func(context.Context) ([]string, error) {
+		return []string{"sess_live"}, nil
 	}
 
 	t.Run("a gate that never closes reaps nothing", func(t *testing.T) {
 		var calls atomic.Int32
-		h := newGatedHub(t, make(chan struct{}), func(ctx context.Context) (map[string]struct{}, bool) {
+		h := newGatedHub(t, make(chan struct{}), func(ctx context.Context) ([]string, error) {
 			calls.Add(1)
 			return keepList(ctx)
 		})
@@ -230,7 +230,7 @@ func TestSweepSessionsLoop_WaitsForTheListenerToBind(t *testing.T) {
 	t.Run("a closed gate releases the sweep", func(t *testing.T) {
 		gate := make(chan struct{})
 		asked := make(chan struct{}, 1)
-		h := newGatedHub(t, gate, func(ctx context.Context) (map[string]struct{}, bool) {
+		h := newGatedHub(t, gate, func(ctx context.Context) ([]string, error) {
 			select {
 			case asked <- struct{}{}:
 			default:
