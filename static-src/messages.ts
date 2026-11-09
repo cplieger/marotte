@@ -1201,8 +1201,10 @@ function paint(): void {
     }
   }
   let cards: HTMLElement[] | null;
+  let passed = false;
   try {
     cards = paintPass(session, isChatSwitch, unparked);
+    passed = true;
   } finally {
     if (unparked && activeView !== null) {
       // After the pass, one that threw included: a body left paused never takes another write.
@@ -1212,6 +1214,10 @@ function paint(): void {
       // After the pass's last write: the restore's scroll write is the one layout the switch forces. In a finally, so
       // a pass that throws never leaves the restore pending, which would turn every later hold off.
       applyPendingRestore();
+    }
+    if (!passed) {
+      // The effect runner swallows the throw, so no caller lifts the cover, and a parked re-show has no later paint.
+      releaseCover(session.id);
     }
   }
   if (cards === null) {

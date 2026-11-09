@@ -812,7 +812,8 @@ function runActivation(gen: number): void {
     }
     record.refresh = refreshRow(row, record.controller.signal);
   } catch (e) {
-    // A defect in a view must never leave the cover up or the record unwatched.
+    // A defect in showing the view or starting its refresh must never leave the cover up or the
+    // record unwatched; a paint that throws lifts its own cover (messages.ts `paint`).
     console.error("tab activation failed", record.id, e);
     dropCover();
     record.refresh = Promise.reject(
