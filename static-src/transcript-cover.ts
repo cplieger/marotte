@@ -114,8 +114,9 @@ export function releaseCoverExceptFor(chatID: string): void {
   }
 }
 
-export function coverHeld(): boolean {
-  return holder !== "";
+/** Whether the cover is up, and stands for `forChat` when one is given. */
+export function coverHeld(forChat?: string): boolean {
+  return holder !== "" && (forChat === undefined || holder === forChat);
 }
 
 /** Take the transcript scroller out of layout (display: none), so a frame that paints the cover

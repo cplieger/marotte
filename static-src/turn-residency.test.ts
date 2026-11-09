@@ -1137,7 +1137,10 @@ describe("the cold build", () => {
     // body under a folded card.
     activate(id, [heavyTurn("u-heavy", RESIDENT_ENTRIES + 64), toolTurn("u1", 2)]);
     expect(hasBody("u-heavy")).toBe(false);
-    expect(held.length, "the cold build is owed").toBeGreaterThan(0);
+    // One drain serves every pass, so it may still be finishing an earlier case's build first.
+    await vi.waitFor(() => {
+      expect(held.length, "the drain waits on a yield").toBeGreaterThan(0);
+    });
 
     // Release every yield, including any the released work asks for, until none is left. A task
     // after a release runs once every promise continuation queued by then has.

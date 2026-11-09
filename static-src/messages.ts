@@ -28,7 +28,7 @@ import { releaseClampsIn } from "./clamp-text.js";
 import { releaseScrollableTablesIn } from "./table-scroll.js";
 import { effect, el, touch } from "@cplieger/ui";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
-import { releaseCover } from "./transcript-cover.js";
+import { coverHeld, releaseCover } from "./transcript-cover.js";
 import { $ } from "./dom.js";
 import {
   followTargetChanged,
@@ -922,6 +922,7 @@ function computeFoldPlan(
   foldPlan.clear();
   turnByID.clear();
   wantedWindow.clear();
+  readerTurn = reader.anchor?.turnID;
   // The dispatcher's one turn-scope input: a render holds one turn and cannot see its neighbours' runs.
   const owners = runCardOwners(turns);
   setRunCardOwners(owners);
@@ -1215,7 +1216,45 @@ function paint(): void {
   // The one releaser for content: an empty turn list is a chat still loading, unless the window is
   // the server's answer or the chat has nothing to load.
   if (cards.length > 0 || session.residency === "loaded" || isEmptyChat(session)) {
-    releaseCover(session.id);
+    releaseCoverOverBuiltRows(session.id);
+  }
+}
+
+/** The chat whose cover waits on the owed builds of the rows the reader landed on; "" when none. */
+let coverOwed = "";
+let coverCheckFrame = 0;
+
+/**
+ * Lift `chatID`'s cover now, or, while it holds bodies this pass could only start, from the first
+ * frame once no unbuilt row shows where the reader lands. In the frame: a fresh view's Following
+ * write lands in the scroll owner's first settle frame, so this task's geometry is the wrong place.
+ */
+function releaseCoverOverBuiltRows(chatID: string): void {
+  coverOwed = "";
+  if (coldBuilds.size === 0 || !coverHeld(chatID)) {
+    releaseCover(chatID);
+    return;
+  }
+  cancelAnimationFrame(coverCheckFrame);
+  coverCheckFrame = requestAnimationFrame(() => {
+    coverCheckFrame = 0;
+    if (getPaintedId() !== chatID) {
+      return;
+    }
+    coverOwed = chatID;
+    liftOwedCover();
+  });
+}
+
+/** Lift a cover waiting on owed builds once none is left or none shows a spacer in the scrollport. */
+function liftOwedCover(): void {
+  const chatID = coverOwed;
+  if (chatID === "" || getPaintedId() !== chatID) {
+    return;
+  }
+  if (coldBuilds.size === 0 || !spacerInView()) {
+    coverOwed = "";
+    releaseCover(chatID);
   }
 }
 
@@ -2407,28 +2446,68 @@ function existingOrNewBody(card: HTMLElement): HTMLElement | null {
   return body;
 }
 
+let draining = false;
+
 /**
- * Finish the bodies this pass could only start, one yielded build per turn; each slice re-reads the store and DOM.
- * The chat is read here, since another chat's build has no card to find.
+ * Finish the bodies passes could only start, one turn at a time, nearest the reader first: built side by side they
+ * would all finish late, the one in view among them. Each slice re-reads the store and DOM.
  */
 function drainColdBuilds(): void {
-  if (coldBuilds.size === 0) {
+  if (draining || coldBuilds.size === 0) {
     return;
   }
-  const chatID = getPaintedId();
-  for (const id of [...coldBuilds]) {
-    // The entry stays until the build settles, keeping `hasPendingBuild` true across the yield.
-    void yieldToBrowser()
-      .then(() => buildOrJoin(chatID, id, wantedWindow.get(id) ?? EMPTY_RANGE))
-      .catch((e: unknown) => {
+  draining = true;
+  void drainNearestFirst().catch((e: unknown) => {
+    console.warn("[messages] cold body drain failed", e);
+  });
+}
+
+async function drainNearestFirst(): Promise<void> {
+  try {
+    for (;;) {
+      await yieldToBrowser();
+      // Picked after the yield: a pass may have dropped or added an owed body meanwhile.
+      const id = nearestColdBuild();
+      if (id === undefined) {
+        return;
+      }
+      // The entry stays until the build settles, keeping `hasPendingBuild` true across its yields. The chat is read
+      // per build, since another chat's build has no card to find.
+      try {
+        await buildOrJoin(getPaintedId(), id, wantedWindow.get(id) ?? EMPTY_RANGE);
+      } catch (e: unknown) {
         console.warn("[messages] cold body build failed", e);
-      })
-      .finally(() => {
-        coldBuilds.delete(id);
-        // `buildOrJoin`'s own pass refused while this entry stood.
-        windowPass("settle");
-      });
+      }
+      coldBuilds.delete(id);
+      // `buildOrJoin`'s own pass refused while this entry stood.
+      windowPass("settle");
+      liftOwedCover();
+    }
+  } finally {
+    draining = false;
+    // An unmount can take the last owed body with no build settling.
+    liftOwedCover();
   }
+}
+
+/** The reader's anchor turn at the last plan; undefined at the live edge. */
+let readerTurn: string | undefined;
+
+/** The owed body nearest the reader's turn, the newest at the live edge, ties going to the turn below; a body the
+ *  last projection lacks (another chat's) comes last. */
+function nearestColdBuild(): string | undefined {
+  const anchor = readerTurn === undefined ? -1 : lastTurns.findIndex((t) => t.id === readerTurn);
+  const at = anchor < 0 ? lastTurns.length - 1 : anchor;
+  let best: string | undefined;
+  let bestRank = Infinity;
+  for (const [i, t] of lastTurns.entries()) {
+    const rank = 2 * Math.abs(i - at) - (i >= at ? 1 : 0);
+    if (coldBuilds.has(t.id) && rank < bestRank) {
+      best = t.id;
+      bestRank = rank;
+    }
+  }
+  return best ?? coldBuilds.values().next().value;
 }
 
 function yieldToBrowser(): Promise<void> {

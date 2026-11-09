@@ -138,24 +138,28 @@ async function nextFrame(): Promise<void> {
   await new Promise((r) => requestAnimationFrame(() => r(undefined)));
 }
 
-/** Park every `scheduler.yield` the owed builds take until `releaseAll`, which lets each one and
- *  every yield the released work asks for run, then restores the scheduler. */
-function holdYields(): { releaseAll: () => Promise<void> } {
+/** Park every `scheduler.yield` the owed builds take. `step` lets the ones parked so far run and
+ *  waits a task; `releaseAll` steps until none is left, then restores the scheduler. */
+function holdYields(): { step: () => Promise<void>; releaseAll: () => Promise<void> } {
   const held: (() => void)[] = [];
   const sched = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
   expect(sched?.yield, "the owed builds yield through scheduler.yield").toBeTypeOf("function");
   const spy = vi
     .spyOn(sched as { yield: () => Promise<void> }, "yield")
     .mockImplementation(() => new Promise<void>((release) => held.push(release)));
+  let released = 0;
+  const step = async (): Promise<void> => {
+    while (released < held.length) {
+      held[released++]?.();
+    }
+    await new Promise((r) => setTimeout(r, 0));
+  };
   return {
+    step,
     async releaseAll() {
-      let released = 0;
       for (let round = 0; released < held.length; round++) {
         expect(round, "the owed builds kept yielding").toBeLessThan(200);
-        while (released < held.length) {
-          held[released++]?.();
-        }
-        await new Promise((r) => setTimeout(r, 0));
+        await step();
       }
       spy.mockRestore();
     },
@@ -225,6 +229,7 @@ afterEach(() => {
 
 describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
   it("stays up until the body in view is built, and lifts before the bodies above finish", async () => {
+    const yields = holdYields();
     const b = freshID("cr-b");
     const older = `${b}-old`;
     const newest = `${b}-new`;
@@ -241,14 +246,22 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
     expect(scroll.readingState(), "the premise: the reader lands on the live edge").toBe(
       "following",
     );
-
-    const at = await lift;
-    if (at === undefined) {
+    if (lift === undefined) {
       throw new Error("the switch never held the cover");
+    }
+    let at: AtLift | undefined;
+    void lift.then((v) => {
+      at = v;
+    });
+    await nextFrame();
+    for (let round = 0; at === undefined; round++) {
+      expect(round, "the cover never lifted").toBeLessThan(200);
+      await yields.step();
     }
     expect(at.blank, "a blank band showed at the lift").toBe(false);
     expect(at.newestBuilt, "the body in view was still being built at the lift").toBe(true);
     expect(at.olderBuilt, "the lift waited on a body out of view").toBe(false);
+    await yields.releaseAll();
   });
 
   it("lifts by the first frame when every body still owed is out of view", async () => {
