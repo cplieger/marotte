@@ -1,7 +1,8 @@
 // A chat switch whose paint throws part-way (a card that fails to render) still lands the reader on
 // the incoming chat's parked position, keeps the scroll owner's holds on, resumes the paused bodies,
 // and the next paint finishes the pass without moving the reader back. Real store, renderer, scroll
-// controller and layout; only the turn header builder is made to throw once.
+// controller and layout; only the turn header builder is made to throw once. The cover held for the
+// switch lifts with the throw, since a parked re-show has no later paint to lift it.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
@@ -48,6 +49,7 @@ document.head.appendChild(style);
 const store = await import("./store.js");
 const scroll = await import("./scroll.js");
 const messages = await import("./messages.js");
+const cover = await import("./transcript-cover.js");
 const { buildTurnHeader } = await import("./fundamentals/turn-header.js");
 
 messages.mountChatView();
@@ -143,8 +145,8 @@ function readTo(scroller: HTMLElement, top: number): void {
 }
 
 /** A failed switch to `a`, which the reader left Reading at 5: a turn opened while it was parked,
- *  and that turn's card throws as it is built. */
-async function failedSwitch(a: string, b: string): Promise<HTMLElement> {
+ *  and that turn's card throws as it is built. `onActive` runs between the switch's two store writes. */
+async function failedSwitch(a: string, b: string, onActive?: () => void): Promise<HTMLElement> {
   store.setSessions([longChat(a), oneTurn(b)]);
   switchTo(a);
   store.bumpMessages(a, "load");
@@ -165,7 +167,9 @@ async function failedSwitch(a: string, b: string): Promise<HTMLElement> {
   vi.mocked(buildTurnHeader).mockImplementationOnce(() => {
     throw new Error("render failed");
   });
-  switchTo(a);
+  store.setActive(a);
+  onActive?.();
+  store.setPainted(a);
   await flushed();
   expect(
     vi.mocked(buildTurnHeader).mock.results.some((r) => r.type === "throw"),
@@ -186,6 +190,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cover.dropCover();
   vi.restoreAllMocks();
   scroll.getScrollEl().style.removeProperty("overflow-anchor");
 });
@@ -195,6 +200,14 @@ describe("a chat switch whose paint throws", { timeout: testTimeoutFor(FRAME_BUD
     const scroller = await failedSwitch(freshID("c-thr"), freshID("c-thr"));
     expect(scroll.readingState()).toBe("reading");
     expect(scroller.scrollTop).toBe(5);
+  });
+
+  it("lifts the cover the switch was made under", async () => {
+    const a = freshID("c-thr");
+    await failedSwitch(a, freshID("c-thr"), () => {
+      cover.holdCover(a);
+    });
+    expect(cover.coverHeld(), "the transcript stayed under the cover").toBe(false);
   });
 
   it("keeps the scroll owner holding the reader through a later change above them", async () => {
