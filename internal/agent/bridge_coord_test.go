@@ -814,67 +814,6 @@ func writeSessionRecord(t *testing.T, sessionDir, workspaceRoot string) {
 	}
 }
 
-// TestSweepSessionsOnce_KeepListCompleteness pins doubt-retains against a real orphan: a
-// partial keep-list must not sweep. The control's keep-list names an existing session,
-// since the reaper refuses an empty one outright.
-func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
-	cases := []struct {
-		name        string
-		complete    bool
-		wantSurvive bool
-	}{
-		{name: "incomplete keep-list spares the orphan", complete: false, wantSurvive: true},
-		{name: "complete keep-list reaps it (control)", complete: true, wantSurvive: false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			sessionsDir := t.TempDir()
-			old := time.Now().Add(-24 * time.Hour)
-			// Old enough to clear the create-race guard, plus a referenced sibling so the keep-list is non-empty.
-			orphan := filepath.Join(sessionsDir, "hash01", "sess_orphan")
-			kept := filepath.Join(sessionsDir, "hash01", "sess_ref")
-			for _, p := range []string{orphan, kept} {
-				if err := os.MkdirAll(p, 0o700); err != nil {
-					t.Fatalf("mkdir %s: %v", p, err)
-				}
-				// Without this record the reaper retains whatever the keep-list says.
-				writeSessionRecord(t, p, testReaperWorkDir)
-				if err := os.Chtimes(p, old, old); err != nil {
-					t.Fatalf("chtimes %s: %v", p, err)
-				}
-			}
-
-			// Wired at construction: New starts sweepSessionsLoop, so later assignment races (-race).
-			cs := newTestChatStore()
-			h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
-				WithSessionReaper(
-					kirosession.New(sessionsDir, testReaperWorkDir),
-					func(context.Context) ([]string, error) {
-						if !tc.complete {
-							return nil, errors.New("a chat file could not be read")
-						}
-						return []string{"sess_ref"}, nil
-					},
-				),
-				// The loop's own first sweep would race this test's.
-				WithSessionSweepGate(make(chan struct{})))
-			cs.wire(h)
-			t.Cleanup(func() { shutdownHub(t, h) })
-
-			h.sweepSessionsOnce()
-
-			_, err := os.Stat(orphan)
-			survived := err == nil
-			if survived != tc.wantSurvive {
-				t.Errorf("orphan survived = %v, want %v", survived, tc.wantSurvive)
-			}
-			if _, kErr := os.Stat(kept); kErr != nil {
-				t.Errorf("referenced session was reaped: %v", kErr)
-			}
-		})
-	}
-}
-
 // The 10-minute guard is a create-race cushion, not a liveness test: the on-disk sweep spares every resident
 // session, a run's host session included, which no chat file names.
 func TestHeldSessions_CoversEveryResidentSession(t *testing.T) {
@@ -1070,12 +1009,7 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 
 			cs := newTestChatStore()
 			h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
-				WithSessionReaper(
-					kirosession.New(sessionsDir, testReaperWorkDir),
-					func(context.Context) ([]string, error) {
-						return []string{"sess_owned"}, nil
-					},
-				))
+				WithSessionReaper(kirosession.New(sessionsDir, testReaperWorkDir)))
 			cs.wire(h)
 			t.Cleanup(func() { shutdownHub(t, h) })
 
@@ -1111,12 +1045,7 @@ func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 
 	cs := newTestChatStore()
 	h := newRuntimeOn(t.Context(), testReaperWorkDir, fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
-		WithSessionReaper(
-			kirosession.New(sessionsDir, testReaperWorkDir),
-			func(context.Context) ([]string, error) {
-				return []string{"sess_owned"}, nil
-			},
-		))
+		WithSessionReaper(kirosession.New(sessionsDir, testReaperWorkDir)))
 	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 

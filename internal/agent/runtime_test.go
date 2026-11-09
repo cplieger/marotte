@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -156,101 +155,7 @@ func TestShutdown_BoundsAStallingEngineStop(t *testing.T) {
 	}
 }
 
-// TestShutdown_WaitsForARunningSweep pins that closing lifecycle.done does not say the loop left.
-func TestShutdown_WaitsForARunningSweep(t *testing.T) {
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	var once sync.Once
-	refs := func(context.Context) ([]string, error) {
-		once.Do(func() { close(entered) })
-		<-release
-		return nil, errors.New("released")
-	}
-	cs := newTestChatStore()
-	h := newRuntimeOn(context.Background(), t.TempDir(),
-		fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
-		WithSessionReaper(kirosession.New(t.TempDir(), testReaperWorkDir), refs))
-	cs.wire(h)
-
-	select {
-	case <-entered:
-	case <-time.After(2 * time.Second):
-		t.Fatal("the orphan sweep never ran, so the fixture is holding nothing")
-	}
-
-	const budget = 150 * time.Millisecond
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
-	defer cancel()
-	if err := h.Shutdown(ctx); err == nil {
-		t.Error("Shutdown reported success while the orphan sweep was still running")
-	} else if !strings.Contains(err.Error(), "background loops") {
-		t.Errorf("error %q does not name the background-loop wait", err)
-	}
-
-	// Released, the loop returns: the control.
-	close(release)
-	shutdownHub(t, h)
-}
-
-// TestSweepSessionsLoop_WaitsForTheListenerToBind pins that the reaper roots at $KIRO_HOME, so a misconfigured boot
-// could reap the real instance's sessions before App.Run binds. Shutdown waits on the loop group, so zero
-// calls afterwards proves the gate held.
-func TestSweepSessionsLoop_WaitsForTheListenerToBind(t *testing.T) {
-	newGatedHub := func(t *testing.T, gate <-chan struct{}, refs func(context.Context) ([]string, error)) *Runtime {
-		t.Helper()
-		cs := newTestChatStore()
-		h := newRuntimeOn(context.Background(), t.TempDir(),
-			fakeEngineOf(func() engineSession { return newFakeBridge() }, nil), cs,
-			WithSessionReaper(kirosession.New(t.TempDir(), testReaperWorkDir), refs),
-			WithSessionSweepGate(gate))
-		cs.wire(h)
-		return h
-	}
-	// Non-empty and complete, so the sweep reaches Reaper.Sweep.
-	keepList := func(context.Context) ([]string, error) {
-		return []string{"sess_live"}, nil
-	}
-
-	t.Run("a gate that never closes reaps nothing", func(t *testing.T) {
-		var calls atomic.Int32
-		h := newGatedHub(t, make(chan struct{}), func(ctx context.Context) ([]string, error) {
-			calls.Add(1)
-			return keepList(ctx)
-		})
-
-		shutdownHub(t, h)
-
-		if got := calls.Load(); got != 0 {
-			t.Errorf("the keep-list was read %d time(s) with the listener unbound, want 0: "+
-				"a boot that cannot bind is not the owner of its config dir and must not "+
-				"reap another live process's session trees", got)
-		}
-	})
-
-	t.Run("a closed gate releases the sweep", func(t *testing.T) {
-		gate := make(chan struct{})
-		asked := make(chan struct{}, 1)
-		h := newGatedHub(t, gate, func(ctx context.Context) ([]string, error) {
-			select {
-			case asked <- struct{}{}:
-			default:
-			}
-			return keepList(ctx)
-		})
-		t.Cleanup(func() { shutdownHub(t, h) })
-
-		close(gate)
-
-		select {
-		case <-asked:
-		case <-time.After(5 * time.Second):
-			t.Fatal("the sweep never ran after the listener bound, so the gate is a " +
-				"dead end and nothing reclaims KAS session state at all")
-		}
-	})
-}
-
-// TestShutdown_JoinsTheTickerLoops pins that with the reaper unwired the group holds exactly the two ticker loops.
+// TestShutdown_JoinsTheTickerLoops pins that Shutdown waits for New's background loops.
 func TestShutdown_JoinsTheTickerLoops(t *testing.T) {
 	h, _, _ := newTestHub()
 

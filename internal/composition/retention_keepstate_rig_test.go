@@ -377,27 +377,28 @@ const (
 const seamIdle = (seamRetentionDays + 1) * 24 * time.Hour
 
 // seamBoot is one marotte boot over root, wired the way Build wires retention: the real chat, lease and tab
-// stores, the session reaper, the runtime over the fake engine, the load-time tab prune, the orphan sweep and
+// stores, the session reaper, the runtime over the fake engine, the load-time tab prune, both orphan sweeps and
 // wireRetention's scheduler and reconcile.
 type seamBoot struct {
-	eng         *seamEngine
-	logs        *seamLogs
-	chats       *chat.Store
-	tabs        *tabs.Store
-	leases      *runlease.Store
-	h           *agent.Runtime
-	sched       *archive.PurgeScheduler
-	mux         *http.ServeMux
-	cancel      context.CancelFunc
-	schedCtx    context.Context
-	schedStop   context.CancelFunc
-	stopKeep    func()
-	stopSweep   func()
-	root        string
-	workDir     string
-	sessionsDir string
-	started     bool
-	stopped     bool
+	eng              *seamEngine
+	logs             *seamLogs
+	chats            *chat.Store
+	tabs             *tabs.Store
+	leases           *runlease.Store
+	h                *agent.Runtime
+	sched            *archive.PurgeScheduler
+	mux              *http.ServeMux
+	cancel           context.CancelFunc
+	schedCtx         context.Context
+	schedStop        context.CancelFunc
+	stopKeep         func()
+	stopSweep        func()
+	stopSessionSweep func()
+	root             string
+	workDir          string
+	sessionsDir      string
+	started          bool
+	stopped          bool
 }
 
 type seamOpts struct {
@@ -439,13 +440,16 @@ func bootSeam(t *testing.T, root string, eng *seamEngine, logs *seamLogs, o seam
 	}
 	b.h = agent.New(ctx, b.workDir, src, b.chats,
 		agent.WithConfigDir(root),
-		agent.WithSessionReaper(reaper, b.chats.HeldSessions),
+		agent.WithSessionReaper(reaper),
 		agent.WithRunLeases(b.leases),
 		agent.WithTabs(b.tabs))
 	chat.WithBroadcaster(b.h)(b.chats)
 	chat.WithEpoch(b.h.Epoch)(b.chats)
 	pruneTabs(ctx, b.tabs, b.chats)
 	b.stopSweep = startOrphanSweep(ctx, b.h.Runs().BootSweep, b.h.EngineReady())
+	listenerBound := make(chan struct{})
+	close(listenerBound)
+	b.stopSessionSweep = startSessionSweep(ctx, reaper, sessionHolders(b.chats, b.h), listenerBound)
 	sched, start, err := wireRetention(ctx, &Config{ConfigDir: root, WorkDir: b.workDir}, b.chats, b.h,
 		retentionStores{tabs: b.tabs, leases: b.leases, reaper: reaper})
 	if err != nil {
@@ -478,6 +482,7 @@ func (b *seamBoot) shutdown(t *testing.T) {
 	b.schedStop()
 	b.sched.Stop()
 	b.stopSweep()
+	b.stopSessionSweep()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := b.h.Shutdown(ctx); err != nil {

@@ -291,12 +291,9 @@ type Runtime struct {
 	specs         *spec.Notifier
 	replay        *replay
 	sessionReaper *kirosession.Reaper
-	sessionRefs   func(context.Context) ([]string, error)
-	// sweepGate closes once this process serves its config dir, which the session sweep waits for. Nil: no gate.
-	sweepGate    <-chan struct{}
-	lines        *buffer.LineTracker
-	agentTerms   *agentTerminals
-	hookTriggers *hookTriggers
+	lines         *buffer.LineTracker
+	agentTerms    *agentTerminals
+	hookTriggers  *hookTriggers
 
 	// tabs is the open-tab set and the membership coordinator; nil without a store (unavailable). Held only for retention.
 	tabs       *tabs.Store
@@ -407,19 +404,10 @@ func WithAuthReadiness(readiness *command.AuthReadiness) Option {
 	return func(h *Runtime) { h.authReadiness = readiness }
 }
 
-// WithSessionReaper wires the KAS session reaper and the referenced-session thunk. A refs error skips the
-// sweep (sweepSessionsOnce).
-func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) ([]string, error)) Option {
-	return func(h *Runtime) {
-		h.sessionReaper = r
-		h.sessionRefs = refs
-	}
-}
-
-// WithSessionSweepGate holds the periodic orphan-session sweep until gate closes, once the listener bound:
-// the cheapest ownership evidence, since the reaper's root is $KIRO_HOME.
-func WithSessionSweepGate(gate <-chan struct{}) Option {
-	return func(h *Runtime) { h.sweepGate = gate }
+// WithSessionReaper wires the KAS session reaper a chat delete and the run-log sweep read; the orphan session
+// sweep is composition's (kirosession.OrphanSweep).
+func WithSessionReaper(r *kirosession.Reaper) Option {
+	return func(h *Runtime) { h.sessionReaper = r }
 }
 
 // New constructs a Runtime over the agent engine source resolves; tool authorization is Cedar's. ctx is the required
@@ -618,7 +606,6 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	h.signin.onAnswerability(runs.gateMoved)
 	requireCollaborators(h)
 	h.sessionSeen.chat, _ = h.sessionFingerprint(lc.shutdownCtx)
-	lc.loops.Go(h.sweepSessionsLoop)
 	lc.loops.Go(func() { h.powers.syncLoop(lc.shutdownCtx, lc.done) })
 	h.engine.start()
 	return h
@@ -885,60 +872,6 @@ func (rt *Runtime) refuseWhenDraining(next http.Handler) http.Handler {
 func writeShuttingDown(w http.ResponseWriter) {
 	httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("shutting down"))
 }
-
-// sweepSessionsInterval is how often the orphan-session sweep runs after
-// its initial boot pass.
-const sweepSessionsInterval = 1 * time.Hour
-
-// sweepSessionsLoop sweeps orphan KAS session state once this process owns its config dir, then every
-// sweepSessionsInterval until shutdown.
-func (rt *Runtime) sweepSessionsLoop() {
-	if rt.sessionReaper == nil || rt.sessionRefs == nil {
-		return
-	}
-	if !rt.awaitSweepGate() {
-		return
-	}
-	rt.sweepSessionsOnce()
-	ticker := time.NewTicker(sweepSessionsInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-rt.lifecycle.done:
-			return
-		case <-ticker.C:
-			rt.sweepSessionsOnce()
-		}
-	}
-}
-
-// awaitSweepGate blocks until this process may reap, false when shutdown came first; nil proceeds. Waiting,
-// not skipping: the gate closes milliseconds after Build.
-func (rt *Runtime) awaitSweepGate() bool {
-	if rt.sweepGate == nil {
-		return true
-	}
-	select {
-	case <-rt.sweepGate:
-		return true
-	case <-rt.lifecycle.done:
-		return false
-	}
-}
-
-// sweepSessionsOnce runs one orphan-session round; kirosession.OrphanSweep owns its keep-list.
-func (rt *Runtime) sweepSessionsOnce() {
-	ctx, cancel := rt.lifecycle.derivedContext()
-	defer cancel()
-	kirosession.NewOrphanSweep(rt.sessionReaper, kirosession.Holders{
-		Records: []kirosession.Holder{heldFunc(rt.sessionRefs)},
-		Live:    []kirosession.Holder{rt},
-	}).Once(ctx)
-}
-
-type heldFunc func(context.Context) ([]string, error)
-
-func (f heldFunc) HeldSessions(ctx context.Context) ([]string, error) { return f(ctx) }
 
 // HeldSessions returns every resident session's id, chat and run host alike, and never fails.
 func (rt *Runtime) HeldSessions(context.Context) ([]string, error) {

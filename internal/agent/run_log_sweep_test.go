@@ -35,7 +35,7 @@ func newSweepRig(t *testing.T) *sweepRig {
 	sessionsDir := filepath.Join(t.TempDir(), "sessions")
 	workDir := t.TempDir()
 	h, rig := newEngineRigAt(t, workDir, map[string]json.RawMessage{methodKiroWorkflowList: purgeRuns(t)}, nil, nil, st,
-		WithSessionReaper(kirosession.New(sessionsDir, workDir), nil))
+		WithSessionReaper(kirosession.New(sessionsDir, workDir)))
 	cfgDir := t.TempDir()
 	h.runs.useLog(newRunLog(cfgDir))
 	return &sweepRig{h: h, rig: rig, cfgDir: cfgDir, sessionsDir: sessionsDir, workDir: workDir}

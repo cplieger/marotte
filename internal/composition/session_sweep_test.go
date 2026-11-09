@@ -31,14 +31,20 @@ func newSweepFixture(t *testing.T) sweepFixture {
 	t.Helper()
 	root := seamRoot(t)
 	f := sweepFixture{root: root, workDir: filepath.Join(root, "work"), sessionsDir: filepath.Join(root, "kiro", "sessions")}
-	chats, err := chat.NewStore(filepath.Join(root, "chats"))
-	if err != nil {
-		t.Fatalf("Setup: chat store: %v", err)
-	}
-	seedChat(t, chats, "c-anchor", sweepAnchor)
+	seedChat(t, f.chats(t), "c-anchor", sweepAnchor)
 	f.session(t, "ba", sweepAnchor)
 	f.session(t, "ba", sweepWitness)
 	return f
+}
+
+// chats opens the fixture's chat store, for seeding before the boot opens its own.
+func (f sweepFixture) chats(t *testing.T) *chat.Store {
+	t.Helper()
+	chats, err := chat.NewStore(filepath.Join(f.root, "chats"))
+	if err != nil {
+		t.Fatalf("Setup: chat store: %v", err)
+	}
+	return chats
 }
 
 // session writes a KAS session directory in bucket that names the rig's workspace and no workflow, old enough to reap.
