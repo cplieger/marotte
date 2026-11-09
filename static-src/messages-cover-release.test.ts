@@ -427,6 +427,32 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
     });
   });
 
+  it("lets a task run between the drain's batches once a switch away from its chat is pending, and still finishes it", async () => {
+    await withPortHeight(2400, async () => {
+      const a = freshID("cr-a");
+      const b = freshID("cr-b");
+      const older = `${a}-old`;
+      await switchUnderCover(
+        [
+          chat(a, [heavyTurn(older, 300, 1, "failed"), heavyTurn(`${a}-new`, 2, 2)]),
+          chat(b, [heavyTurn(`${b}-t`, 1, 1)]),
+        ],
+        a,
+      );
+      expect(built(older, 300), "the premise: A owes its older body").toBe(false);
+      // A switch's gesture moves the active chat; the painted one moves at its activation.
+      store.setActive(b);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(built(older, 300), "the drain built A to its end ahead of the task").toBe(false);
+
+      store.setActive(a);
+      for (let round = 0; !built(older, 300); round++) {
+        expect(round, "A's drain never finished").toBeLessThan(200);
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    });
+  });
+
   it("leaves a cover handed on to a chat still loading when the landing's builds finish", async () => {
     // An older body's first slice short of the port, so B's cover waits on its drain.
     await withPortHeight(2400, async () => {
