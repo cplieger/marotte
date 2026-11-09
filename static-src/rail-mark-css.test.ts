@@ -22,9 +22,10 @@ afterAll(() => {
 });
 
 afterEach(async () => {
-  await userEvent.hover(park);
+  // Removed first: a hover that times out must not leave this fixture for every later case to match.
   area?.remove();
   area = undefined;
+  await userEvent.hover(park);
 });
 
 /** A token's computed value for `prop`, so a comparison is computed against computed. */
