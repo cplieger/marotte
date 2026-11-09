@@ -117,7 +117,7 @@ func TestSweep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reaped := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_ref": {}})
+	reaped := New(root, testWorkspace).sweep(map[string]struct{}{"sess_ref": {}})
 
 	if reaped != 1 {
 		t.Errorf("reaped count = %d, want 1 (only sess_orphan)", reaped)
@@ -140,7 +140,7 @@ func TestSweep(t *testing.T) {
 }
 
 func TestSweepEmptyDirIsNoop(t *testing.T) {
-	if n := New(filepath.Join(t.TempDir(), "nonexistent"), testWorkspace).Sweep(nil); n != 0 {
+	if n := New(filepath.Join(t.TempDir(), "nonexistent"), testWorkspace).sweep(nil); n != 0 {
 		t.Errorf("sweep of missing dir reaped %d, want 0", n)
 	}
 }
@@ -148,8 +148,8 @@ func TestSweepEmptyDirIsNoop(t *testing.T) {
 func TestNilReaperSafe(t *testing.T) {
 	var r *Reaper
 	r.Reap("sess_x")
-	if n := r.Sweep(nil); n != 0 {
-		t.Errorf("nil reaper Sweep = %d, want 0", n)
+	if n := r.sweep(nil); n != 0 {
+		t.Errorf("nil reaper sweep = %d, want 0", n)
 	}
 }
 
@@ -164,8 +164,8 @@ func TestSweepRefusesEmptyKeepListAgainstPopulatedTree(t *testing.T) {
 	makeSession(t, root, "second_hash", "sess_d", old)
 
 	for _, keep := range []map[string]struct{}{nil, {}} {
-		if n := New(root, testWorkspace).Sweep(keep); n != 0 {
-			t.Errorf("Sweep(%v) reaped %d, want 0 — an empty keep-list must be refused", keep, n)
+		if n := New(root, testWorkspace).sweep(keep); n != 0 {
+			t.Errorf("sweep(%v) reaped %d, want 0 — an empty keep-list must be refused", keep, n)
 		}
 	}
 
@@ -190,7 +190,7 @@ func TestSweepEmptyKeepListOnEmptyTreeIsOrdinaryNoop(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "cli"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if n := New(root, testWorkspace).Sweep(map[string]struct{}{}); n != 0 {
+	if n := New(root, testWorkspace).sweep(map[string]struct{}{}); n != 0 {
 		t.Errorf("reaped %d on an empty tree, want 0", n)
 	}
 }
@@ -228,10 +228,10 @@ func TestSweep_ReapingASessionTakesItsSidecarsWhateverTheirAge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reaped := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}})
+	reaped := New(root, testWorkspace).sweep(map[string]struct{}{"sess_live": {}})
 
 	if reaped != 1 {
-		t.Errorf("Sweep() = %d, want 1: the session dir it removed must be counted", reaped)
+		t.Errorf("sweep() = %d, want 1: the session dir it removed must be counted", reaped)
 	}
 	if exists(t, filepath.Join(root, "h", "sess_orphan")) {
 		t.Error("old orphan session dir survived the sweep")
@@ -258,10 +258,10 @@ func TestSweep_CountsAStrandedSidecarAsAReapedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reaped := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}})
+	reaped := New(root, testWorkspace).sweep(map[string]struct{}{"sess_live": {}})
 
 	if reaped != 1 {
-		t.Errorf("Sweep() = %d, want 1: a stranded v3 sidecar is a session being reclaimed", reaped)
+		t.Errorf("sweep() = %d, want 1: a stranded v3 sidecar is a session being reclaimed", reaped)
 	}
 	if exists(t, stranded) {
 		t.Error("stranded sidecar survived the sweep")
@@ -298,8 +298,8 @@ func TestReaperLogsOnlyWhatHappened(t *testing.T) {
 		makeSession(t, root, "otherapp", "sess_b", 30*time.Minute)
 		logs := captureLogs(t)
 
-		if n := New(root, testWorkspace).Sweep(map[string]struct{}{}); n != 0 {
-			t.Fatalf("Sweep(empty keep-list) = %d, want 0", n)
+		if n := New(root, testWorkspace).sweep(map[string]struct{}{}); n != 0 {
+			t.Fatalf("sweep(empty keep-list) = %d, want 0", n)
 		}
 		out := logs.String()
 		if !strings.Contains(out, "REFUSING orphan sweep") {
@@ -317,8 +317,8 @@ func TestReaperLogsOnlyWhatHappened(t *testing.T) {
 		}
 		logs := captureLogs(t)
 
-		if n := New(root, testWorkspace).Sweep(map[string]struct{}{}); n != 0 {
-			t.Fatalf("Sweep() = %d, want 0", n)
+		if n := New(root, testWorkspace).sweep(map[string]struct{}{}); n != 0 {
+			t.Fatalf("sweep() = %d, want 0", n)
 		}
 		if out := logs.String(); strings.Contains(out, "REFUSING orphan sweep") {
 			t.Errorf("logs = %q, must not refuse on a fresh volume: there is nothing to lose", out)
@@ -330,8 +330,8 @@ func TestReaperLogsOnlyWhatHappened(t *testing.T) {
 		makeSession(t, root, "h", "sess_live", 30*time.Minute)
 		logs := captureLogs(t)
 
-		if n := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}}); n != 0 {
-			t.Fatalf("Sweep() = %d, want 0: the only session is referenced", n)
+		if n := New(root, testWorkspace).sweep(map[string]struct{}{"sess_live": {}}); n != 0 {
+			t.Fatalf("sweep() = %d, want 0: the only session is referenced", n)
 		}
 		if out := logs.String(); strings.Contains(out, "orphan sweep reaped sessions") {
 			t.Errorf("logs = %q, must not claim a reap when nothing was reaped", out)
@@ -339,8 +339,8 @@ func TestReaperLogsOnlyWhatHappened(t *testing.T) {
 
 		makeSession(t, root, "h", "sess_orphan", 30*time.Minute)
 		logs2 := captureLogs(t)
-		if n := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}}); n != 1 {
-			t.Fatalf("Sweep() = %d, want 1", n)
+		if n := New(root, testWorkspace).sweep(map[string]struct{}{"sess_live": {}}); n != 1 {
+			t.Fatalf("sweep() = %d, want 1", n)
 		}
 		out := logs2.String()
 		if !strings.Contains(out, "orphan sweep reaped sessions") {
@@ -391,10 +391,10 @@ func TestSweep_SkipsSessionsThatDoNotNameThisWorkspace(t *testing.T) {
 	makeSessionIn(t, root, "elsewhere", "sess_ours_elsewhere", old,
 		`{"workspacePaths":["/other/ws","`+testWorkspace+`"]}`)
 
-	reaped := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}})
+	reaped := New(root, testWorkspace).sweep(map[string]struct{}{"sess_live": {}})
 
 	if reaped != 2 {
-		t.Errorf("Sweep() = %d, want 2: both sessions naming this workspace, and only those", reaped)
+		t.Errorf("sweep() = %d, want 2: both sessions naming this workspace, and only those", reaped)
 	}
 	if exists(t, filepath.Join(root, "h", "sess_ours")) {
 		t.Error("an orphan naming this workspace survived")
@@ -432,8 +432,8 @@ func TestSweep_DoubtRetains(t *testing.T) {
 			root := t.TempDir()
 			makeSessionIn(t, root, "h", "sess_doubt", old, tc.record)
 
-			if n := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}}); n != 0 {
-				t.Errorf("Sweep() = %d, want 0: doubt retains", n)
+			if n := New(root, testWorkspace).sweep(map[string]struct{}{"sess_live": {}}); n != 0 {
+				t.Errorf("sweep() = %d, want 0: doubt retains", n)
 			}
 			if !exists(t, filepath.Join(root, "h", "sess_doubt")) {
 				t.Errorf("a session whose ownership could not be established (%s) was deleted", tc.desc)
@@ -518,11 +518,11 @@ func TestSweep_SparesAStepSessionWhoseRunStillExists(t *testing.T) {
 				makeRunDir(t, root, "h", "wf_live")
 			}
 
-			n := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}})
+			n := New(root, testWorkspace).sweep(map[string]struct{}{"sess_live": {}})
 
 			gone := !exists(t, filepath.Join(root, "h", "sess_step"))
 			if gone != tc.want {
-				t.Errorf("reaped = %v, want %v (Sweep reported %d)", gone, tc.want, n)
+				t.Errorf("reaped = %v, want %v (sweep reported %d)", gone, tc.want, n)
 			}
 			hist := exists(t, filepath.Join(root, "cli", "sess_step.history"))
 			if hist == tc.want {
@@ -542,8 +542,8 @@ func TestSweep_AStepSessionIsNotSparedByARunInAnotherBucket(t *testing.T) {
 	makeSessionIn(t, root, "h", "sess_step", 30*time.Minute, stepRecord("wf_live"))
 	makeRunDir(t, root, "elsewhere", "wf_live")
 
-	if n := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}}); n != 1 {
-		t.Errorf("Sweep() = %d, want 1", n)
+	if n := New(root, testWorkspace).sweep(map[string]struct{}{"sess_live": {}}); n != 1 {
+		t.Errorf("sweep() = %d, want 1", n)
 	}
 	if exists(t, filepath.Join(root, "h", "sess_step")) {
 		t.Error("a step session was spared by a same-named run in another workspace bucket")
@@ -559,8 +559,8 @@ func TestSweep_AStepSessionInAForeignWorkspaceIsStillNotOurs(t *testing.T) {
 	makeSessionIn(t, root, "h", "sess_theirs", 30*time.Minute,
 		`{"workspacePaths":["/other"],"_meta":{"kiro":{"workflow":{"workflowId":"wf_x"}}}}`)
 
-	if n := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}}); n != 0 {
-		t.Errorf("Sweep() = %d, want 0", n)
+	if n := New(root, testWorkspace).sweep(map[string]struct{}{"sess_live": {}}); n != 0 {
+		t.Errorf("sweep() = %d, want 0", n)
 	}
 	if !exists(t, filepath.Join(root, "h", "sess_theirs")) {
 		t.Error("another workspace's step session was deleted")
@@ -656,13 +656,13 @@ func TestSweep_SparesAStepSessionWhoseRunDirCannotBeStatted(t *testing.T) {
 	makeSessionIn(t, root, "h", "sess_step", 30*time.Minute, stepRecord("wf_x"))
 	selfLoop(t, filepath.Join(root, "h", workflowsDirName, "wf_x"))
 
-	n := New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}})
+	n := New(root, testWorkspace).sweep(map[string]struct{}{"sess_live": {}})
 
 	if !exists(t, filepath.Join(root, "h", "sess_step")) {
-		t.Errorf("Sweep() reaped %d; a step session whose run dir stat fails with ELOOP was deleted", n)
+		t.Errorf("sweep() reaped %d; a step session whose run dir stat fails with ELOOP was deleted", n)
 	}
 	if !exists(t, filepath.Join(root, "cli", "sess_step.history")) {
-		t.Error("Sweep() removed the sidecar of a step session whose run dir could not be judged")
+		t.Error("sweep() removed the sidecar of a step session whose run dir could not be judged")
 	}
 }
 
@@ -682,10 +682,10 @@ func TestSweep_KeepsASidecarWhoseSessionDirCannotBeStatted(t *testing.T) {
 		t.Fatalf("Setup: chtimes: %v", err)
 	}
 
-	New(root, testWorkspace).Sweep(map[string]struct{}{"sess_live": {}})
+	New(root, testWorkspace).sweep(map[string]struct{}{"sess_live": {}})
 
 	if !exists(t, hist) {
-		t.Error("Sweep() removed a sidecar whose session dir exists but could not be stat'ed")
+		t.Error("sweep() removed a sidecar whose session dir exists but could not be stat'ed")
 	}
 }
 
@@ -705,12 +705,20 @@ func TestRunStates_ListsEveryBucketsRunDirectories(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "h1", workflowsDirName, "wf_file"), []byte("x"), 0o644); err != nil {
 		t.Fatalf("Setup: write a stray file: %v", err)
 	}
+	work := t.TempDir()
+	wsRuns := filepath.Join(work, ".kiro", workflowsDirName)
+	if err := os.MkdirAll(filepath.Join(wsRuns, "wf_ws"), 0o755); err != nil {
+		t.Fatalf("Setup: mkdir the workspace's run: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wsRuns, "x.workflow.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("Setup: write a recipe: %v", err)
+	}
 
-	got, err := New(root, testWorkspace).RunStates()
+	got, err := New(root, work).RunStates()
 	if err != nil {
 		t.Fatalf("RunStates() error = %v", err)
 	}
-	if want := []string{"wf_a", "wf_b"}; !slices.Equal(slices.Sorted(maps.Keys(got)), want) {
+	if want := []string{"wf_a", "wf_b", "wf_ws"}; !slices.Equal(slices.Sorted(maps.Keys(got)), want) {
 		t.Errorf("RunStates() = %v, want %v", slices.Sorted(maps.Keys(got)), want)
 	}
 }
@@ -767,5 +775,113 @@ func TestWorkspacePaths(t *testing.T) {
 				t.Errorf("WorkspacePaths(%q) = (%q, %v), want (%q, %v)", tc.id, got, ok, tc.want, tc.wantOK)
 			}
 		})
+	}
+}
+
+// writeRunState writes body as run workflowID's state file under base, a bucket or the workspace's .kiro, and
+// returns its path.
+func writeRunState(t *testing.T, base, workflowID, body string) string {
+	t.Helper()
+	dir := runStateIn(base, workflowID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("Setup: mkdir %s: %v", dir, err)
+	}
+	path := filepath.Join(dir, runStateFileName)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("Setup: write %s: %v", path, err)
+	}
+	return path
+}
+
+func parentState(parent string) string {
+	return `{"workflowId":"wf","status":"failed","` + stateParentKey + `":"` + parent + `"}`
+}
+
+func TestRunParents_HoldsEveryRunsParentInEveryBucket(t *testing.T) {
+	root, work := t.TempDir(), t.TempDir()
+	writeRunState(t, filepath.Join(root, "h1"), "wf_a", parentState("sess_a"))
+	writeRunState(t, filepath.Join(root, "h2"), "wf_b", parentState("sess_b"))
+	writeRunState(t, filepath.Join(work, ".kiro"), "wf_c", parentState("sess_c"))
+	writeRunState(t, filepath.Join(root, "h2"), "wf_empty", parentState(""))
+	if err := os.MkdirAll(runStateIn(filepath.Join(root, "h1"), "wf_nostate"), 0o755); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runStateIn(filepath.Join(root, "h1"), ""), "stray"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+
+	held, corrupt, err := New(root, work).runParents()
+	if err != nil {
+		t.Fatalf("runParents() error = %v", err)
+	}
+	if got, want := slices.Sorted(maps.Keys(held)), []string{"sess_a", "sess_b", "sess_c"}; !slices.Equal(got, want) {
+		t.Errorf("runParents() held = %v, want %v", got, want)
+	}
+	if len(corrupt) != 0 {
+		t.Errorf("runParents() corrupt = %v, want none", corrupt)
+	}
+}
+
+// A state file that exists but cannot be read may name a live run's launcher, so the walk answers an error.
+func TestRunParents_AStateThatCannotBeReadIsAnError(t *testing.T) {
+	t.Run("a state file that is a self-loop symlink", func(t *testing.T) {
+		root := t.TempDir()
+		state := filepath.Join(runStateIn(filepath.Join(root, "h"), "wf_loop"), runStateFileName)
+		selfLoop(t, state)
+
+		_, _, err := New(root, t.TempDir()).runParents()
+
+		if err == nil || !strings.Contains(err.Error(), state) {
+			t.Errorf("runParents() error = %v, want one naming %s", err, state)
+		}
+	})
+	t.Run("a runs directory that cannot be listed", func(t *testing.T) {
+		root := t.TempDir()
+		selfLoop(t, runStateIn(filepath.Join(root, "h"), ""))
+
+		if _, _, err := New(root, t.TempDir()).runParents(); err == nil {
+			t.Error("runParents() error = nil, want one for a runs directory whose listing fails with ELOOP")
+		}
+	})
+}
+
+func TestRunParents_ACorruptStateHoldsNothing(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{name: "not json", body: "{"},
+		{name: "an array", body: "[]"},
+		{name: "null", body: "null"},
+		{name: "a parent that is not a string", body: `{"` + stateParentKey + `":7}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeRunState(t, filepath.Join(root, "h"), "wf_a", parentState("sess_a"))
+			bad := writeRunState(t, filepath.Join(root, "h"), "wf_bad", tc.body)
+
+			held, corrupt, err := New(root, t.TempDir()).runParents()
+			if err != nil {
+				t.Fatalf("runParents() error = %v, want nil: a corrupt state is no doubt", err)
+			}
+			if got := slices.Sorted(maps.Keys(held)); !slices.Equal(got, []string{"sess_a"}) {
+				t.Errorf("runParents() held = %v, want [sess_a]", got)
+			}
+			if !slices.Equal(corrupt, []string{bad}) {
+				t.Errorf("runParents() corrupt = %v, want [%s]", corrupt, bad)
+			}
+		})
+	}
+}
+
+// Go's struct-tag decode matches keys case-insensitively; KAS's reader does not, so neither may this one.
+func TestRunParents_ReadsItsMemberThroughStateParentKey(t *testing.T) {
+	root := t.TempDir()
+	writeRunState(t, filepath.Join(root, "h"), "wf_a", `{"`+stateParentKey+`":"sess_a"}`)
+	writeRunState(t, filepath.Join(root, "h"), "wf_x", `{"parentSessionID":"sess_x"}`)
+
+	held, _, err := New(root, t.TempDir()).runParents()
+	if err != nil {
+		t.Fatalf("runParents() error = %v", err)
+	}
+	if got := slices.Sorted(maps.Keys(held)); !slices.Equal(got, []string{"sess_a"}) {
+		t.Errorf("runParents() held = %v, want [sess_a]: only the exact key %q names a parent", got, stateParentKey)
 	}
 }

@@ -84,21 +84,21 @@ type listResult struct {
 	complete bool
 }
 
-// ReferencedSessionIDs returns every ACP session id in any kept chat's CHAIN,
-// not just its current one, and reports whether that set is COMPLETE.
-//
-// It backs the orphan session sweep, which reaps any session absent from the
-// set, so it FAILS CLOSED: complete is false when a chat file that exists could
-// not be read. A chat that vanished mid-scan (ENOENT) is not a failure.
-func (s *Store) ReferencedSessionIDs(ctx context.Context) (refs map[string]struct{}, complete bool) {
-	refs = make(map[string]struct{})
+var errChatsUnread = errors.New("chat: a chat file that exists could not be read")
+
+// HeldSessions returns every ACP session id in any kept chat's CHAIN, not just its current one. It fails
+// closed for the orphan session sweep: errChatsUnread when a chat file that exists could not be read, while a
+// chat that vanished mid-scan (ENOENT) is absence.
+func (s *Store) HeldSessions(ctx context.Context) ([]string, error) {
 	headers, complete := s.listWithCompleteness(ctx)
-	for i := range headers {
-		for _, id := range headers[i].SessionChain() {
-			refs[id] = struct{}{}
-		}
+	if !complete {
+		return nil, errChatsUnread
 	}
-	return refs, complete
+	var held []string
+	for i := range headers {
+		held = append(held, headers[i].SessionChain()...)
+	}
+	return held, nil
 }
 
 // listWithCompleteness is List plus the read-completeness flag the sweep needs,

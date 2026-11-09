@@ -1,18 +1,18 @@
-// Package kirosession reaps the kiro-cli / KAS on-disk session state that backs
-// session/load resume: it exists only to reload a chat marotte still keeps, so it
-// dies with that chat. marotte is the sole retention authority — KAS's own
-// sessionEviction defaults to disabled and the boot conformance check keeps it so.
+// Package kirosession reaps the kiro-cli / KAS on-disk session state that backs session/load resume. It
+// lives while something names it: a holder's answer (a chat's chain, a resident session), KAS's run state
+// (a run's launching session), or its own record naming a run whose state exists (a step session). marotte
+// is the sole retention authority: KAS's sessionEviction defaults to disabled and boot conformance keeps it so.
 //
 // Layout (KAS 2.12):
 //
 //	$KIRO_HOME/sessions/<workspace-hash>/sess_<id>/   — the KAS session dir
 //	$KIRO_HOME/sessions/<workspace-hash>/workflows/<workflowId>/ — a run's state
+//	<workspace>/.kiro/workflows/<workflowId>/          — a run's state KAS still finds by id
 //	$KIRO_HOME/sessions/cli/sess_<id>.history         — its history sidecar
 //	$KIRO_HOME/sessions/cli/<uuid>.{json,jsonl,lock}  — dead v2-engine files
 //
-// The workspace-hash dir is untracked, so a session is located by globbing
-// sessions/*/sess_<id>: that crosses every bucket under one $KIRO_HOME, so each
-// match must still name this workspace (belongsToWorkspace).
+// The workspace-hash dir is untracked, so a session is found by globbing sessions/*/sess_<id>,
+// which crosses every bucket: each match must still name this workspace (belongsToWorkspace).
 package kirosession
 
 import (
@@ -50,6 +50,13 @@ const cliDirName = "cli"
 // workflowsDirName is the per-bucket directory KAS keeps a workflow RUN's state in:
 // sessions/<workspace-hash>/workflows/<workflowId>/.
 const workflowsDirName = "workflows"
+
+// runStateFileName is the file in a run's state directory that KAS's reader parses whole.
+const runStateFileName = "workflow-state.json"
+
+// stateParentKey is the top-level member of a run's state that names the session the run was launched from, the one
+// a verb on that run loads. TestRunStateParentKeyMatchesBundle pins it to KAS's reader.
+const stateParentKey = "parentSessionId"
 
 // Reaper removes on-disk KAS session state under sessionsDir, for the one
 // workspace it is entitled to reap.
@@ -159,11 +166,11 @@ func (r *Reaper) Reap(sessionID string) {
 	r.removeCLISidecars(sessionID)
 }
 
-// Sweep removes orphaned session state: any session dir or cli sidecar whose id is not in
+// sweep removes orphaned session state: any session dir or cli sidecar whose id is not in
 // referenced and is older than the guard, plus dead v2-engine files. Returns the number reaped.
-// `referenced` must be the COMPLETE keep-list, every chat's chain unioned with every resident
-// session; anything less deletes live history.
-func (r *Reaper) Sweep(referenced map[string]struct{}) int {
+// `referenced` must be OrphanSweep's complete union and nothing less, or live history goes; an
+// empty one refuses while sessions exist on disk.
+func (r *Reaper) sweep(referenced map[string]struct{}) int {
 	if r == nil {
 		return 0
 	}
@@ -174,7 +181,7 @@ func (r *Reaper) Sweep(referenced map[string]struct{}) int {
 			slog.Error("kirosession: REFUSING orphan sweep, keep-list is empty but sessions exist on disk",
 				"sessions_on_disk", n,
 				"sessions_dir", r.sessionsDir,
-				"hint", "the chat store and the Kiro home are pointing at different volumes; set KIRO_HOME under the same root as KIRO_CONFIG_DIR")
+				"hint", "no chat names a session: either the chat store and the Kiro home sit on different volumes (set KIRO_HOME under the same root as KIRO_CONFIG_DIR), or no chat holds one (only Runs-page, scheduled or triggered runs, or every chat deleted)")
 			return 0
 		}
 		return 0
@@ -324,52 +331,126 @@ func (r *Reaper) spareReason(sub, path string) sweepSpare {
 }
 
 // runStateIn is where KAS keeps run workflowID's state in bucket; an empty workflowID names the bucket's runs
-// directory. RunStates and spareReason both read through it, so the two readers of KAS's run state cannot drift.
+// directory. eachRunState and spareReason both read through it, so the two readers of KAS's run state cannot drift.
 func runStateIn(bucket, workflowID string) string {
 	return filepath.Join(bucket, workflowsDirName, workflowID)
 }
 
-// RunStates answers the workflow ids KAS keeps run state for, in any bucket under sessionsDir. A missing sessions or
-// runs directory holds none; any other listing failure is an error, because an id it could not list may be live.
-// A nil reaper answers none.
+// eachRunState calls fn with every run directory KAS keeps state in: each bucket's runs directory and the
+// workspace's own .kiro/workflows, where KAS still finds a run by id for inspect, retry and delete though its list
+// never scans it. A missing directory holds none; any other listing failure, or fn's error, ends the walk with it.
+func (r *Reaper) eachRunState(fn func(workflowID, dir string) error) error {
+	bases, err := r.runStateBases()
+	if err != nil {
+		return err
+	}
+	for _, base := range bases {
+		if err := eachRunIn(base, fn); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// runStateBases answers every runs directory eachRunState walks, whether it exists or not.
+func (r *Reaper) runStateBases() ([]string, error) {
+	buckets, err := os.ReadDir(r.sessionsDir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("listing %s: %w", r.sessionsDir, err)
+	}
+	bases := make([]string, 0, len(buckets)+1)
+	for _, b := range buckets {
+		if b.IsDir() && b.Name() != cliDirName {
+			bases = append(bases, runStateIn(filepath.Join(r.sessionsDir, b.Name()), ""))
+		}
+	}
+	if r.workspaceRoot != "" {
+		bases = append(bases, runStateIn(filepath.Join(r.workspaceRoot, ".kiro"), ""))
+	}
+	return bases, nil
+}
+
+// eachRunIn calls fn with every run directory in base whose name is a workflow id; a missing base holds none.
+func eachRunIn(base string, fn func(workflowID, dir string) error) error {
+	runs, err := os.ReadDir(base)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("listing %s: %w", base, err)
+	}
+	for _, e := range runs {
+		if !e.IsDir() || !ids.ValidChatID(e.Name()) {
+			continue
+		}
+		if err := fn(e.Name(), filepath.Join(base, e.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RunStates answers the workflow ids KAS keeps run state for (eachRunState's places). Any listing failure but a
+// missing directory is an error, because an id it could not list may be live. A nil reaper answers none.
 func (r *Reaper) RunStates() (map[string]struct{}, error) {
 	out := map[string]struct{}{}
 	if r == nil {
 		return out, nil
 	}
-	buckets, err := os.ReadDir(r.sessionsDir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return out, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("listing %s: %w", r.sessionsDir, err)
-	}
-	for _, b := range buckets {
-		if !b.IsDir() || b.Name() == cliDirName {
-			continue
-		}
-		if err := addRunStates(runStateIn(filepath.Join(r.sessionsDir, b.Name()), ""), out); err != nil {
-			return nil, err
-		}
+	if err := r.eachRunState(func(workflowID, _ string) error {
+		out[workflowID] = struct{}{}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
 
-// addRunStates adds each run directory under dir to out; a missing dir holds none.
-func addRunStates(dir string, out map[string]struct{}) error {
-	runs, err := os.ReadDir(dir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("listing %s: %w", dir, err)
-	}
-	for _, e := range runs {
-		if e.IsDir() && ids.ValidChatID(e.Name()) {
-			out[e.Name()] = struct{}{}
+// runParents answers the launching session of every run KAS keeps state for. Every bucket is read, because a run's
+// state sits in its workspace's bucket and its launching session in the launcher's. A state file that exists but
+// cannot be read is an error naming it; one that reads but does not decode holds nothing and is listed in corrupt,
+// since KAS's reader rejects it too and no verb can load that run.
+func (r *Reaper) runParents() (held map[string]struct{}, corrupt []string, err error) {
+	held = map[string]struct{}{}
+	err = r.eachRunState(func(_, dir string) error {
+		path := filepath.Join(dir, runStateFileName)
+		data, rErr := os.ReadFile(path)
+		if errors.Is(rErr, fs.ErrNotExist) {
+			return nil
 		}
+		if rErr != nil {
+			return fmt.Errorf("reading run state %s: %w", path, rErr)
+		}
+		parent, ok := decodeStateParent(data)
+		if !ok {
+			corrupt = append(corrupt, path)
+		} else if parent != "" {
+			held[parent] = struct{}{}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
 	}
-	return nil
+	return held, corrupt, nil
+}
+
+// decodeStateParent reads stateParentKey off a run state, ok false when the file is not a JSON object or the member
+// is not a string. The member is looked up by its exact key: a struct tag cannot name a constant, and its decode
+// would also match a differently-cased key KAS's reader ignores.
+func decodeStateParent(data []byte) (parent string, ok bool) {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(data, &m) != nil || m == nil {
+		return "", false
+	}
+	raw, present := m[stateParentKey]
+	if !present {
+		return "", true
+	}
+	if json.Unmarshal(raw, &parent) != nil {
+		return "", false
+	}
+	return parent, true
 }
 
 // sweepCLI reaps orphaned files under sessions/cli/: v3 sess_<id>.* sidecars whose

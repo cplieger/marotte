@@ -291,12 +291,9 @@ type Runtime struct {
 	specs         *spec.Notifier
 	replay        *replay
 	sessionReaper *kirosession.Reaper
-	sessionRefs   func(context.Context) (map[string]struct{}, bool)
-	// sweepGate closes once this process serves its config dir, which the session sweep waits for. Nil: no gate.
-	sweepGate    <-chan struct{}
-	lines        *buffer.LineTracker
-	agentTerms   *agentTerminals
-	hookTriggers *hookTriggers
+	lines         *buffer.LineTracker
+	agentTerms    *agentTerminals
+	hookTriggers  *hookTriggers
 
 	// tabs is the open-tab set and the membership coordinator; nil without a store (unavailable). Held only for retention.
 	tabs       *tabs.Store
@@ -407,19 +404,9 @@ func WithAuthReadiness(readiness *command.AuthReadiness) Option {
 	return func(h *Runtime) { h.authReadiness = readiness }
 }
 
-// WithSessionReaper wires the KAS session reaper and the referenced-session thunk. refs returns (set,
-// complete); an incomplete set skips the sweep (sweepSessionsOnce).
-func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) (map[string]struct{}, bool)) Option {
-	return func(h *Runtime) {
-		h.sessionReaper = r
-		h.sessionRefs = refs
-	}
-}
-
-// WithSessionSweepGate holds the periodic orphan-session sweep until gate closes, once the listener bound:
-// the cheapest ownership evidence, since the reaper's root is $KIRO_HOME.
-func WithSessionSweepGate(gate <-chan struct{}) Option {
-	return func(h *Runtime) { h.sweepGate = gate }
+// WithSessionReaper wires the KAS session reaper a chat delete and the run-log sweep read.
+func WithSessionReaper(r *kirosession.Reaper) Option {
+	return func(h *Runtime) { h.sessionReaper = r }
 }
 
 // New constructs a Runtime over the agent engine source resolves; tool authorization is Cedar's. ctx is the required
@@ -618,7 +605,6 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	h.signin.onAnswerability(runs.gateMoved)
 	requireCollaborators(h)
 	h.sessionSeen.chat, _ = h.sessionFingerprint(lc.shutdownCtx)
-	lc.loops.Go(h.sweepSessionsLoop)
 	lc.loops.Go(func() { h.powers.syncLoop(lc.shutdownCtx, lc.done) })
 	h.engine.start()
 	return h
@@ -886,73 +872,15 @@ func writeShuttingDown(w http.ResponseWriter) {
 	httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("shutting down"))
 }
 
-// sweepSessionsInterval is how often the orphan-session sweep runs after
-// its initial boot pass.
-const sweepSessionsInterval = 1 * time.Hour
-
-// sweepSessionsLoop sweeps orphan KAS session state once this process owns its config dir, then every
-// sweepSessionsInterval until shutdown.
-func (rt *Runtime) sweepSessionsLoop() {
-	if rt.sessionReaper == nil || rt.sessionRefs == nil {
-		return
-	}
-	if !rt.awaitSweepGate() {
-		return
-	}
-	rt.sweepSessionsOnce()
-	ticker := time.NewTicker(sweepSessionsInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-rt.lifecycle.done:
-			return
-		case <-ticker.C:
-			rt.sweepSessionsOnce()
-		}
-	}
-}
-
-// awaitSweepGate blocks until this process may reap, false when shutdown came first; nil proceeds. Waiting,
-// not skipping: the gate closes milliseconds after Build.
-func (rt *Runtime) awaitSweepGate() bool {
-	if rt.sweepGate == nil {
-		return true
-	}
-	select {
-	case <-rt.sweepGate:
-		return true
-	case <-rt.lifecycle.done:
-		return false
-	}
-}
-
-// The keep-list is every chat's chain plus every resident session (age is no evidence), or a resident session loses
-// its state past the 10-minute guard. An incomplete keep-list skips the sweep.
-func (rt *Runtime) sweepSessionsOnce() {
-	ctx, cancel := rt.lifecycle.derivedContext()
-	defer cancel()
-	refs, complete := rt.sessionRefs(ctx)
-	if !complete {
-		slog.Warn("kirosession: skipping orphan sweep, keep-list incomplete (a chat file could not be read)")
-		return
-	}
-	if refs == nil {
-		refs = map[string]struct{}{}
-	}
-	for _, id := range rt.liveSessionIDs() {
-		refs[id] = struct{}{}
-	}
-	rt.sessionReaper.Sweep(refs)
-}
-
-func (rt *Runtime) liveSessionIDs() []string {
+// HeldSessions returns every resident session's id, chat and run host alike, and never fails.
+func (rt *Runtime) HeldSessions(context.Context) ([]string, error) {
 	var ids []string
 	for _, sb := range rt.bridge.mgr.all() {
 		if id := string(sb.SessionID()); id != "" {
 			ids = append(ids, id)
 		}
 	}
-	return ids
+	return ids, nil
 }
 
 // configDocument is every config.json value a spawn, a restart decision or a session door reads, through the configDoc

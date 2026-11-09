@@ -89,6 +89,8 @@ type App struct {
 	stopToolsSteering func()
 	// stopKeepState stops the keep-state reconcile and waits: a round in flight reads KAS over the agent engine.
 	stopKeepState func()
+	// stopSessionSweep stops the orphan session sweep and waits: a round in flight reads the runtime's resident sessions.
+	stopSessionSweep func()
 	// stopApp ends the app's LIFETIME: what every process-bound component is parented on.
 	stopApp func()
 	// waitSignIn waits for the sign-in vault's goroutines, which end with the app's lifetime.
@@ -176,7 +178,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// The second argument is whom this reaper answers for; only the workspace root is correct.
 	sessionReaper := kirosession.New(filepath.Join(workspace.KiroHome(), "sessions"), cfg.WorkDir)
 	// Closed by the server once its listener has bound; the destructive session sweep
-	// waits on it. Created here because the runtime is built before the server.
+	// waits on it. Created here because the sweep starts before the server is built.
 	listenerBound := make(chan struct{})
 	tabStore := openTabStore(cfg.ConfigDir)
 	approvalStore := openSpecApprovalStore(cfg.ConfigDir)
@@ -191,8 +193,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		agent.WithACPArgs(cfg.ACPArgs),
 		agent.WithPowers(powersMgr),
 		agent.WithAuthReadiness(authReadiness),
-		agent.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs),
-		agent.WithSessionSweepGate(listenerBound),
+		agent.WithSessionReaper(sessionReaper),
 		agent.WithLaunchRules(launchRules),
 		withTriggerConfirmer(confirmer),
 		agent.WithRunLeases(leaseStore),
@@ -211,6 +212,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// correctness a property of the tick interval. On the APP's lifetime, never Build's,
 	// or the sweep outlives App.Shutdown; backgrounded because a boot must not wait.
 	stopOrphanSweep := startOrphanSweep(appCtx, h.Runs().BootSweep, h.EngineReady())
+	stopSessionSweep := startSessionSweep(appCtx, sessionReaper, sessionHolders(chatStore, h), listenerBound)
 
 	stopScheduleRunner := startScheduleRunner(appCtx, launchRules, h.Runs())
 	stopTriggerConfirmer := startTriggerConfirmer(appCtx, confirmer, h.EngineReady(), h.Runs())
@@ -382,6 +384,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		stopKASHeal:          stopKASHeal,
 		stopToolsSteering:    stopToolsSteering,
 		stopKeepState:        stopKeepState,
+		stopSessionSweep:     stopSessionSweep,
 		stopApp:              stopApp,
 		waitSignIn:           vault.Wait,
 		roots:                roots,
@@ -425,6 +428,7 @@ func (a *App) Shutdown() {
 	// runtime teardown is about to stop, so the reverse order leaves one mid-inspect.
 	callIfSet(a.stopOrphanSweep)
 	callIfSet(a.stopKeepState)
+	callIfSet(a.stopSessionSweep)
 	callIfSet(a.stopKiroSeed)
 	callIfSet(a.stopKiro)
 	if a.purgeScheduler != nil {
@@ -1092,6 +1096,28 @@ func startOrphanSweep(ctx context.Context, sweep func(context.Context) bool,
 		case <-bctx.Done():
 		}
 	})
+}
+
+var (
+	_ kirosession.Holder = (*chat.Store)(nil)
+	_ kirosession.Holder = (*agent.Runtime)(nil)
+)
+
+// sessionHolders is every record outside KAS's own state that names a KAS session marotte will load again. A new
+// one joins here; TestSessionHolders_HoldEveryPersistedSessionField fails on a stored session field none holds.
+func sessionHolders(chats *chat.Store, residents *agent.Runtime) kirosession.Holders {
+	return kirosession.Holders{
+		Records: []kirosession.Holder{chats},
+		Live:    []kirosession.Holder{residents},
+	}
+}
+
+// startSessionSweep runs the orphan session sweep once gate closes, then hourly; stop cancels it and waits.
+func startSessionSweep(ctx context.Context, r *kirosession.Reaper, h kirosession.Holders,
+	gate <-chan struct{},
+) (stop func()) {
+	sweep := kirosession.NewOrphanSweep(r, h)
+	return runBackground(ctx, "orphan session sweep", func(bctx context.Context) { sweep.Run(bctx, gate) })
 }
 
 // The runner reuses Runtime.Launch, so a scheduled run needs no host chat. A nil store

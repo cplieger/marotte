@@ -2,8 +2,10 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"testing/synctest"
 
@@ -128,8 +130,8 @@ func TestListWithCompleteness_AHeaderThatCannotBeStattedMakesTheScanIncomplete(t
 		if complete {
 			t.Errorf("listWithCompleteness() complete = true with %d headers, want false: b's header stat fails with ELOOP", len(headers))
 		}
-		if _, refsComplete := s.ReferencedSessionIDs(t.Context()); refsComplete {
-			t.Error("ReferencedSessionIDs() complete = true, want false")
+		if _, err := s.HeldSessions(t.Context()); !errors.Is(err, errChatsUnread) {
+			t.Errorf("HeldSessions() error = %v, want errChatsUnread", err)
 		}
 	})
 	t.Run("eacces", func(t *testing.T) {
@@ -176,5 +178,29 @@ func TestChatEntries_AnUnstattableHeaderTruncatesTheSearch(t *testing.T) {
 	entries, truncated := s.chatEntries(t.Context())
 	if !truncated {
 		t.Errorf("chatEntries() truncated = false with %d entries, want true", len(entries))
+	}
+}
+
+// The orphan session sweep reaps any session no holder names, so a chat's PRIOR sessions must be held too.
+func TestHeldSessions_AnswersEveryChatsWholeChain(t *testing.T) {
+	s, _ := newTestStore(t)
+	for id, chain := range map[string][]string{"a": {"sess_a0", "sess_a1"}, "b": {"sess_b0"}} {
+		if _, err := s.Mutate(t.Context(), marotte.ChatID(id), func(c *marotte.Chat, _ bool) bool {
+			for _, sess := range chain {
+				c.RecordSession(sess)
+			}
+			return true
+		}); err != nil {
+			t.Fatalf("Setup: seed chat %s: %v", id, err)
+		}
+	}
+
+	got, err := s.HeldSessions(t.Context())
+	if err != nil {
+		t.Fatalf("HeldSessions() error = %v, want nil", err)
+	}
+	slices.Sort(got)
+	if want := []string{"sess_a0", "sess_a1", "sess_b0"}; !slices.Equal(got, want) {
+		t.Errorf("HeldSessions() = %v, want %v", got, want)
 	}
 }
