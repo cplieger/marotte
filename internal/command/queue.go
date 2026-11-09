@@ -1,8 +1,9 @@
 package command
 
-// The follow-up queue. In Queue mode a message sent mid-turn waits on the chat
-// record rather than joining the turn, and the server sends it after the turn
-// closes (drainAfterClose); no client sends a queued row.
+// The follow-up queue. In Queue mode a message sent mid-turn, and in every mode one
+// sent while a compaction runs, waits on the chat record rather than joining a turn,
+// and the server sends it after the turn closes (drainAfterClose) or the compaction
+// ends (drainAfterCompaction); no client sends a queued row.
 
 import (
 	"context"
@@ -20,7 +21,7 @@ import (
 var (
 	errQueueNoTurn = errors.New("nothing is running to queue behind, so send this as a prompt instead")
 	errQueueFull   = errors.New("this chat already holds the most follow-ups it can queue; wait for one to send, then try again")
-	errQueueTooBig = errors.New("a queued message is capped at the draft size")
+	errQueueTooBig = errors.New("a message queued behind a running turn is capped at the draft size")
 	// errQueueTooMany refuses an attachment list past MaxAttachments.
 	errQueueTooMany = errors.New("too many attachments on one queued message")
 	errQueueSending = errors.New("this follow-up is already being sent")
@@ -38,12 +39,12 @@ const reasonHeld = "held"
 // append sees the turn registry, so a live turn cannot close between "it is
 // running" and "it is queued" and leave a row no close will send.
 type QueueAccess interface {
-	// AppendIfLive applies fn to the chat's record while the chat holds a live turn,
-	// or waits for kiro-cli to end a run the user stopped (the next drain once that wait
-	// ends may send one such row despite a stop, CloseFacts.AfterStop; the rest go as
-	// after any close), reporting
-	// live=false (and writing nothing) when neither. fn's error aborts the write and
-	// is returned as is.
+	// AppendIfLive applies fn to the chat's record while the chat holds a live turn, waits
+	// for kiro-cli to end a run the user stopped, or runs a compaction (the next drain
+	// after that wait or compaction may send one row appended with no turn live despite a
+	// stop, CloseFacts.AfterStop; the rest go as after any close), reporting live=false
+	// (and writing nothing) when none holds. fn's error aborts the write and is returned
+	// as is.
 	AppendIfLive(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (live bool, err error)
 	// AppendIfCompacting applies fn as AppendIfLive does, only while the chat's compaction runs with no turn live.
 	AppendIfCompacting(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (queued bool, err error)
@@ -86,9 +87,13 @@ func cmdQueuePrompt(ctx context.Context, queue QueueAccess, cmd *marotte.ClientC
 	if err != nil {
 		return nil, err
 	}
-	live, err := queue.AppendIfLive(ctx, cmd.ChatID, func(c *marotte.Chat) error {
-		return appendUserRow(c, &row)
-	})
+	appendRow := func(c *marotte.Chat) error { return appendUserRow(c, &row) }
+	var live bool
+	if len(row.Text) > marotte.MaxDraftBytes {
+		live, err = appendPastDraftCap(ctx, queue, cmd.ChatID, appendRow)
+	} else {
+		live, err = queue.AppendIfLive(ctx, cmd.ChatID, appendRow)
+	}
 	switch {
 	case err != nil:
 		if _, ok := errors.AsType[*statusError](err); ok {
@@ -102,8 +107,25 @@ func cmdQueuePrompt(ctx context.Context, queue QueueAccess, cmd *marotte.ClientC
 	return responseWith(map[string]any{"message_id": row.ID}), nil
 }
 
-// appendUserRow adds a user row to the queue: a repeated id is already there, and the cap
-// leaves room for the carried rows a close can add.
+// appendPastDraftCap queues a row past the draft cap only behind a compaction with no turn
+// live, where it stands for the prompt it would otherwise be. Behind a turn it is refused
+// 413; an idle chat answers live=false, as for any row.
+func appendPastDraftCap(ctx context.Context, queue QueueAccess, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (bool, error) {
+	if queued, err := queue.AppendIfCompacting(ctx, chatID, fn); queued || err != nil {
+		return queued, err
+	}
+	return queue.AppendIfLive(ctx, chatID, func(*marotte.Chat) error {
+		return StatusError(http.StatusRequestEntityTooLarge, errQueueTooBig)
+	})
+}
+
+// maxQueuedEncodedBytes bounds the queue's rows as the chat header encodes them. The header
+// is capped at 8 MiB (internal/chat maxHeaderBytes) and must still hold a shutdown's carried
+// row and the draft, each up to six times its text once JSON escapes it (\u003c for <).
+const maxQueuedEncodedBytes = 4 << 20
+
+// appendUserRow adds a user row to the queue: a repeated id is already there, and the caps
+// leave room for the carried row a shutdown can add.
 func appendUserRow(c *marotte.Chat, row *marotte.QueuedPrompt) error {
 	if slices.ContainsFunc(c.QueuedPrompts, func(q marotte.QueuedPrompt) bool { return q.ID == row.ID }) {
 		return nil
@@ -117,7 +139,11 @@ func appendUserRow(c *marotte.Chat, row *marotte.QueuedPrompt) error {
 	if users >= marotte.MaxQueuedPrompts-2 {
 		return StatusErrorReason(http.StatusConflict, reasonFull, errQueueFull)
 	}
-	c.QueuedPrompts = append(c.QueuedPrompts, *row)
+	rows := append(slices.Clip(c.QueuedPrompts), *row)
+	if encoded, err := json.Marshal(rows); err != nil || len(encoded) > maxQueuedEncodedBytes {
+		return StatusErrorReason(http.StatusConflict, reasonFull, errQueueFull)
+	}
+	c.QueuedPrompts = rows
 	return nil
 }
 
@@ -129,8 +155,8 @@ func queuedRow(cmd *marotte.ClientCommand) (marotte.QueuedPrompt, error) {
 	switch {
 	case strings.TrimSpace(p.Text) == "" && len(p.Attachments) == 0:
 		return marotte.QueuedPrompt{}, StatusError(http.StatusBadRequest, errEmptyPrompt)
-	case len(p.Text) > marotte.MaxDraftBytes:
-		return marotte.QueuedPrompt{}, StatusError(http.StatusRequestEntityTooLarge, errQueueTooBig)
+	case len(p.Text) > MaxPromptBytes:
+		return marotte.QueuedPrompt{}, StatusError(http.StatusRequestEntityTooLarge, errPromptTooLong)
 	case !validMessageID(p.MessageID):
 		return marotte.QueuedPrompt{}, StatusError(http.StatusBadRequest, errMissingMessageID)
 	case len(p.Attachments) > marotte.MaxAttachments:
@@ -256,9 +282,10 @@ func responseOrErr(err error) (any, error) {
 // and the fence naming it.
 type CloseFacts struct {
 	Outcome marotte.TurnOutcome
-	// AfterStop are rows queued while kiro-cli ended the stopped run, with no turn
-	// live: one of them may go after this close although it was stopped (after any
-	// unread steers, which go first); the rest wait for the next close's drain.
+	// AfterStop are rows queued with no turn live while kiro-cli ended the stopped run
+	// or a compaction ran: one of them may go after this close although it was stopped
+	// or broke (after any unread steers, which go first); the rest wait for the next
+	// close's drain.
 	AfterStop []string
 	Fence     TurnFence
 	// Unattended is a close no one stopped (marotte closing a turn KAS went idle without
@@ -272,45 +299,68 @@ type CloseFacts struct {
 // to launchPrompt's return: the row marked Next first, after any close leaving a live bridge (the
 // unread steers ride into its turn); then unread steers (after a close leaving a live bridge or a
 // drained death), else one queued user row (after a clean or unattended close, or one of AfterStop,
-// bridge live). A pending end, a held slot, a newer turn or a shutdown sends nothing. A
-// compaction the reader started after the close's hold was released runs beside this tail:
-// the drain waits for it, so it sends nothing under it.
+// bridge live). A pending end, a held slot, a newer turn or a shutdown sends nothing, and
+// nothing goes under a running compaction (drainOutsideCompaction).
 func drainAfterClose(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, cl CloseFacts, ends EndFacts) {
-	if roles.compactor != nil {
-		roles.compactor.AwaitCompaction(ctx, chatID)
-	}
-	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
-	if err != nil {
-		return
-	}
-	defer unlock()
-	if roles.lifecycle.Draining() || len(roles.jobs.Ends(chatID)) > 0 {
-		return
-	}
-	res, ok := roles.admission.TryReserveDrain(chatID, cl)
-	if !ok {
-		return
-	}
-	sendReserved(ctx, roles, res, cl, ends)
+	drainOutsideCompaction(ctx, roles, chatID, func() (Reservation, bool) {
+		return roles.admission.TryReserveDrain(chatID, cl)
+	}, func(res Reservation) { sendReserved(ctx, roles, res, cl, ends) })
 }
 
 // drainAfterCompaction sends at most one prompt once a compaction no close follows has
-// ended, picked as after a clean close; each later row goes at the next close.
+// ended, the first queued one whatever the compaction's outcome, picked as after a clean
+// close; each later row goes at the next close.
 func drainAfterCompaction(ctx context.Context, roles *promptRoles, chatID marotte.ChatID) {
 	stamp := roles.admission.LifeStamp()
+	drainOutsideCompaction(ctx, roles, chatID, func() (Reservation, bool) {
+		return roles.admission.TryReserveIdleTurn(chatID, marotte.TurnSourcePrompt, stamp)
+	}, func(res Reservation) {
+		sendReserved(ctx, roles, res, CloseFacts{Outcome: marotte.TurnOutcomeCompleted}, EndFacts{})
+	})
+}
+
+// drainOutsideCompaction takes a drain's reservation under the chat's steer lock and hands it
+// to send, never while a compaction runs. A reserved turn makes a later press queue behind it,
+// so a compaction claimed before the reservation is the only one to fear: it is waited out,
+// the reservation given back, and the pick repeated.
+func drainOutsideCompaction(
+	ctx context.Context, roles *promptRoles, chatID marotte.ChatID,
+	reserve func() (Reservation, bool), send func(Reservation),
+) {
+	for {
+		if roles.compactor != nil {
+			roles.compactor.AwaitCompaction(ctx, chatID)
+		}
+		if !drainReserved(ctx, roles, chatID, reserve, send) {
+			return
+		}
+	}
+}
+
+// drainReserved is one pick of drainOutsideCompaction, reporting a compaction that kept it
+// from sending.
+func drainReserved(
+	ctx context.Context, roles *promptRoles, chatID marotte.ChatID,
+	reserve func() (Reservation, bool), send func(Reservation),
+) (compacting bool) {
 	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
 	if err != nil {
-		return
+		return false
 	}
 	defer unlock()
 	if roles.lifecycle.Draining() || len(roles.jobs.Ends(chatID)) > 0 {
-		return
+		return false
 	}
-	res, ok := roles.admission.TryReserveIdleTurn(chatID, marotte.TurnSourcePrompt, stamp)
+	res, ok := reserve()
 	if !ok {
-		return
+		return false
 	}
-	sendReserved(ctx, roles, res, CloseFacts{Outcome: marotte.TurnOutcomeCompleted}, EndFacts{})
+	if roles.followups != nil && roles.followups.Compacting(chatID) {
+		roles.admission.ReleaseTurnReservation(res)
+		return true
+	}
+	send(res)
+	return false
 }
 
 // sendReserved is drainAfterClose's pick, on the reservation it took, which it owns from here.

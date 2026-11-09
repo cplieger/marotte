@@ -47,6 +47,9 @@ type compactCall struct {
 	run  *compactRun
 	done chan struct{}
 	err  error
+	// owed are the rows queued behind the call with no turn live and no KAS hold, appended under a.mu while it runs:
+	// the close it ends may send one of them whatever its grade (command.CloseFacts.AfterStop).
+	owed []string
 	// requeued: KAS refused the call under a turn it opened, and a queued request now stands for it.
 	requeued bool
 	accepted bool
@@ -272,14 +275,16 @@ func (a *autoCompactor) forget(chatID marotte.ChatID) {
 // aborted upstream): the queued one, else the policy's when the reading is at the point or the model refused the turn
 // for the context's size, unless the reader cancelled that turn's (turn is the closed turn's id). It joins a call
 // already in flight instead of making a second. Reports whether the compaction it ran or joined was accepted, which
-// afterRelease takes.
-func (a *autoCompactor) afterTurn(ctx context.Context, chatID marotte.ChatID, turn string, contextLimit bool) bool {
+// afterRelease takes, and the rows owed behind it (compactCall.owed).
+func (a *autoCompactor) afterTurn(
+	ctx context.Context, chatID marotte.ChatID, turn string, contextLimit bool,
+) (accepted bool, owed []string) {
 	if a == nil {
-		return false
+		return false, nil
 	}
 	b := a.bridgeOf(chatID)
 	if b == nil {
-		return false
+		return false, nil
 	}
 	u := a.usage(ctx, chatID)
 	enabled, point := a.policy(ctx)
@@ -304,16 +309,17 @@ func (a *autoCompactor) afterTurn(ctx context.Context, chatID marotte.ChatID, tu
 	})
 	if err != nil {
 		slog.Warn("compaction: the turn end could not read the queue", "chat_id", chatID, "error", err)
-		return false
+		return false, nil
 	}
 	return a.runOrJoin(ctx, chatID, b, c, mine, u.ContextPct, trigger)
 }
 
 // afterRelease takes a request written under the close's KAS hold after afterTurn ran: satisfied when the close's
-// compaction was accepted, else run now. A turn open by then owns the request.
-func (a *autoCompactor) afterRelease(ctx context.Context, chatID marotte.ChatID, accepted bool) {
+// compaction was accepted, else run now, answering the rows owed behind the one it ran or joined. A turn open by then
+// owns the request.
+func (a *autoCompactor) afterRelease(ctx context.Context, chatID marotte.ChatID, accepted bool) []string {
 	if a == nil {
-		return
+		return nil
 	}
 	b := a.bridgeOf(chatID)
 	var (
@@ -335,23 +341,26 @@ func (a *autoCompactor) afterRelease(ctx context.Context, chatID marotte.ChatID,
 	})
 	if err != nil {
 		slog.Warn("queued compaction: the request could not be settled", "chat_id", chatID, "error", err)
-		return
+		return nil
 	}
-	a.runOrJoin(ctx, chatID, b, c, mine, a.usage(ctx, chatID).ContextPct, "queued")
+	_, owed := a.runOrJoin(ctx, chatID, b, c, mine, a.usage(ctx, chatID).ContextPct, "queued")
+	return owed
 }
 
 // runOrJoin makes a claimed call (its refusal is reported) or waits for the one it joined, reporting
-// whether that call was accepted: false with no call or when the wait ended first.
-func (a *autoCompactor) runOrJoin(ctx context.Context, chatID marotte.ChatID, b *sharedBridge, c *compactCall, mine bool, atPct float64, trigger string) bool {
+// whether that call was accepted and the rows owed behind it: none with no call or when the wait ended first.
+func (a *autoCompactor) runOrJoin(
+	ctx context.Context, chatID marotte.ChatID, b *sharedBridge, c *compactCall, mine bool, atPct float64, trigger string,
+) (accepted bool, owed []string) {
 	switch {
 	case c == nil:
-		return false
+		return false, nil
 	case mine:
 		a.call(ctx, chatID, b, c, atPct, trigger, true)
 	case !a.await(ctx, chatID, c):
-		return false
+		return false, nil
 	}
-	return c.accepted
+	return c.accepted, c.owed
 }
 
 // compacting reports a compaction call in flight on the chat, which a message queues behind. Lock order: the queue's
@@ -364,6 +373,16 @@ func (a *autoCompactor) compacting(chatID marotte.ChatID) bool {
 	defer a.mu.Unlock()
 	st := a.chats[chatID]
 	return st != nil && st.running != nil
+}
+
+// owe records rows queued behind the running call (compactCall.owed). Called in the queue's section, which settle
+// also needs, so the call seen running by the caller's check is still the one running.
+func (a *autoCompactor) owe(chatID marotte.ChatID, ids []string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if st := a.chats[chatID]; st != nil && st.running != nil {
+		st.running.call.owed = append(st.running.call.owed, ids...)
+	}
 }
 
 // awaitRunning holds a prompt until a running compaction is settled, so the prompt does not abort it.
@@ -384,8 +403,8 @@ func (a *autoCompactor) awaitRunning(ctx context.Context, chatID marotte.ChatID)
 
 // request is the reader's compaction: queued while a turn runs, else run now, joining a running one, and taking a
 // request left queued on the idle chat. A run KAS refused because a turn opened meanwhile is queued behind that turn,
-// unless the reader cancelled it. A call it made is followed by no close, so its end sends the first prompt queued
-// behind it, whatever the outcome.
+// unless the reader cancelled it. A call it made is followed by no close, so its end sends the first queued prompt,
+// whatever the outcome.
 func (a *autoCompactor) request(ctx context.Context, chatID marotte.ChatID) (command.CompactOutcome, error) {
 	b := a.bridgeOf(chatID)
 	var (

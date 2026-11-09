@@ -123,7 +123,7 @@ export async function submitPrompt(
     return refusal.keepText ? holdText(chatID, text) : "sent";
   }
   // Held before the attachments are taken, so a busy chat keeps its pill row.
-  const reason = waits(chatID) ? promptOnlyReason(text) : null;
+  const reason = isBusy(chatID) ? promptOnlyReason(text) : null;
   if (reason !== null) {
     chatNotice(chatID, reason);
     return holdText(chatID, text);
@@ -198,8 +198,8 @@ interface LabelledSend {
 }
 
 /** Why `text` can only be sent as a prompt, or null. A saved prompt, a steering
- *  command and a context reference are resolved on the prompt path alone, so a
- *  steer would deliver them to the model as prose and a queued row would keep them. */
+ *  command and a context reference are resolved only by a new turn, so a steer
+ *  would deliver them to the model as prose; mid-turn, Queue mode holds them too. */
 function promptOnlyReason(text: string): string | null {
   if (invokesCatalogCommand(text)) {
     return "That command runs as a new turn. Send it when the agent is idle.";
@@ -212,12 +212,14 @@ function promptOnlyReason(text: string): string | null {
 
 /** The busy verb, read per hop: a labelled send queues, since `_session/steer` carries no label;
  *  a typed one takes the chat's mode, except behind a running compaction, which has no turn to
- *  steer. Every busy hop comes through here, so the prompt-only hold lives here. */
+ *  steer. Every busy hop comes through here, so the prompt-only hold lives here; it skips a chat
+ *  only a compaction holds, whose queued row opens the new turn a prompt would. */
 function busy(send: Send, convertBudget: number): Promise<SubmitResult> {
   if (send.kind === "labelled") {
     return queue(send, convertBudget);
   }
-  const reason = promptOnlyReason(send.text);
+  const onlyCompacting = !isBusy(send.chatID) && get(send.chatID)?.compact_running === true;
+  const reason = onlyCompacting ? null : promptOnlyReason(send.text);
   if (reason !== null) {
     chatNotice(send.chatID, reason);
     recordFailure(send);

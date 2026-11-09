@@ -945,11 +945,27 @@ describe("submitPrompt while a compaction runs", () => {
     expect(mockSendPromptTo).not.toHaveBeenCalled();
   });
 
-  it("holds a context reference, which only a new turn resolves", async () => {
+  // No turn runs, so the queued row's turn is the new turn that resolves a saved prompt or a reference.
+  it.each([
+    ["a context reference", "look at #[[file:a.ts]] too", false],
+    ["a saved prompt", "/review the diff", true],
+  ])("queues %s, which its own turn resolves", async (_name, text, catalog) => {
     compactingChat("steer");
+    mockInvokesCatalog.mockReturnValue(catalog);
 
-    expect(await submitPrompt("c1", "look at #[[file:a.ts]] too")).toBe("held");
-    expect(mockQueue).not.toHaveBeenCalled();
+    expect(await submitPrompt("c1", text)).toBe("queued");
+    expect(queuedArgs()).toMatchObject({ chatID: "c1", text });
+    expect(mockChatNotice).not.toHaveBeenCalled();
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
+    mockInvokesCatalog.mockReturnValue(false);
+  });
+
+  it("queues a message past the draft size whole", async () => {
+    compactingChat("steer");
+    const long = "x".repeat(17 * 1024);
+
+    expect(await submitPrompt("c1", long)).toBe("queued");
+    expect(queuedArgs()).toMatchObject({ text: long });
     expect(mockSendPromptTo).not.toHaveBeenCalled();
   });
 

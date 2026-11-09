@@ -518,7 +518,7 @@ func TestAutoCompact_APressDuringTheTurnEndsRunIsSatisfiedByIt(t *testing.T) {
 	r := newCompactRig(90)
 	r.reading(93)
 	r.onCompact = func() { r.pressUnderHold(t) }
-	accepted := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
+	accepted, _ := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
 	r.onCompact = nil
 	if !accepted || r.isQueued() {
 		t.Fatalf("a press during the turn end's run: accepted %v, queued %v; want accepted and the row taken by it",
@@ -535,7 +535,7 @@ func TestAutoCompact_ARowWrittenUnderTheHoldRunsAtTheRelease(t *testing.T) {
 	r := newCompactRig(90)
 	r.turn(t, 50)
 	r.setLive(false)
-	accepted := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
+	accepted, _ := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
 	if accepted {
 		t.Fatal("a turn end at 50 with pct 90 and nothing queued reported a compaction")
 	}
@@ -562,7 +562,7 @@ func TestAutoCompact_APressAfterARefusedTurnEndRunRunsAtTheRelease(t *testing.T)
 			r := newCompactRig(90)
 			r.reading(93)
 			r.setRefuse(true)
-			accepted := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
+			accepted, _ := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
 			if accepted {
 				t.Errorf("a refused turn-end call reported accepted")
 			}
@@ -585,7 +585,7 @@ func TestAutoCompact_ARunQueuedAgainForAClosedKASTurnRunsAtTheRelease(t *testing
 	r.finishTurn()
 	r.setRefuse(true)
 	r.onCompact = r.kasOpensTheNextTurn
-	accepted := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
+	accepted, _ := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
 	if !r.isQueued() {
 		t.Fatalf("not queued again after the refusal under KAS's turn")
 	}

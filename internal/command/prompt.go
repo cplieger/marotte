@@ -406,16 +406,16 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 	return promptAck{Accepted: true, MessageID: p.MessageID}, nil
 }
 
-// queueBehindCompaction holds a prompt that reached a chat whose compaction runs with no
-// turn live as a queued row, which the compaction's end sends: a turn opened now would show
-// nothing until then. False when no compaction runs, a turn is live (admission answers it) or
-// the prompt does not fit a queued row (it then waits in the turn, AwaitCompaction).
+// queueBehindCompaction holds a validated prompt that reached a chat whose compaction runs
+// with no turn live as a queued row, which the compaction's end sends: a turn opened now
+// would show nothing until then. False when no compaction runs or a turn is live (admission
+// answers it).
 func queueBehindCompaction(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, p *marotte.PromptCommand) (bool, error) {
-	if roles.followups == nil || len(p.Text) > marotte.MaxDraftBytes || len(p.Attachments) > marotte.MaxAttachments {
+	if roles.followups == nil {
 		return false, nil
 	}
 	row := marotte.QueuedPrompt{
-		ID: p.MessageID, Text: p.Text, Label: displayLabel(p.DisplayText), Attachments: p.Attachments, Caller: p.Caller,
+		ID: p.MessageID, Text: p.Text, Label: p.DisplayText, Attachments: p.Attachments, Caller: p.Caller,
 	}
 	queued, err := roles.followups.AppendIfCompacting(ctx, chatID, func(c *marotte.Chat) error {
 		return appendUserRow(c, &row)

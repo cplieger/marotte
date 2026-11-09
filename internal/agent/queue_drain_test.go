@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -454,21 +457,34 @@ func TestSendQueuedNow_IdleSendsTheRowAtOnce(t *testing.T) {
 	}
 }
 
-// compactingHub is a chat whose reader's compaction runs on its idle session until release is called.
-func compactingHub(t *testing.T) (h *Runtime, cs *testChatStore, release func()) {
+// idleAfterFirstTurn is chat c1 with a live session, idle once its first turn m-first and that close's tail (its KAS
+// hold, its drain) ended; tails counts the closes whose drain returned. Every compaction call answers accepted.
+func idleAfterFirstTurn(t *testing.T, workDir string) (h *Runtime, cs *testChatStore, br *fakeBridge, tails *atomic.Int32) {
 	t.Helper()
-	h, cs, br := newTestHub()
+	h, cs, br = newTestHubIn(workDir)
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
-	var tails atomic.Int32
+	tails = &atomic.Int32{}
 	h.coord.drainAfterClose = func(ctx context.Context, chatID marotte.ChatID, cl command.CloseFacts, ends command.EndFacts) {
 		h.dispatcher.DrainAfterClose(ctx, chatID, cl, ends)
 		tails.Add(1)
 	}
 	seedQueue(t, cs, "c1")
 	runPrompt(t, h, cs, "c1", "m-first")
-	// The close's tail (its KAS hold, its drain) ends before the compaction starts, so the press runs it now.
 	waitFor(t, func() bool { return tails.Load() == 1 })
 	br.setCallResult(marotte.MethodSessionCompact, json.RawMessage(`{"success":true}`))
+	return h, cs, br, tails
+}
+
+// compactingHub is a chat whose reader's compaction runs on its idle session until release is called.
+func compactingHub(t *testing.T) (h *Runtime, cs *testChatStore, release func()) {
+	t.Helper()
+	h, cs, _, release = compactingHubIn(t, "/tmp/work")
+	return h, cs, release
+}
+
+func compactingHubIn(t *testing.T, workDir string) (h *Runtime, cs *testChatStore, br *fakeBridge, release func()) {
+	t.Helper()
+	h, cs, br, _ = idleAfterFirstTurn(t, workDir)
 	release = holdCall(t, br, marotte.MethodSessionCompact)
 	done := make(chan struct{})
 	go func() {
@@ -480,19 +496,25 @@ func compactingHub(t *testing.T) (h *Runtime, cs *testChatStore, release func())
 		release()
 		<-done
 	})
-	return h, cs, release
+	return h, cs, br, release
 }
 
 func queueDuring(t *testing.T, h *Runtime, ids ...string) {
 	t.Helper()
 	for _, id := range ids {
-		rec := postCmd(t, h, marotte.ClientCommand{
-			Type: marotte.CmdQueuePrompt, ChatID: "c1",
-			Payload: json.RawMessage(`{"text":"after the compaction","message_id":"` + id + `"}`),
-		})
-		if rec.Code != http.StatusOK {
-			t.Fatalf("queue_prompt %s during the compaction = %d %s, want 200", id, rec.Code, rec.Body.String())
-		}
+		queueTextDuring(t, h, id, "after the compaction")
+	}
+}
+
+func queueTextDuring(t *testing.T, h *Runtime, id, text string) {
+	t.Helper()
+	payload, err := json.Marshal(marotte.QueuePromptCommand{Text: text, MessageID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdQueuePrompt, ChatID: "c1", Payload: payload})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("queue_prompt %s during the compaction = %d %s, want 200", id, rec.Code, rec.Body.String())
 	}
 }
 
@@ -596,4 +618,64 @@ func TestDrain_AfterACloseWaitsForARunningCompaction(t *testing.T) {
 		return slices.Equal(promptIDs(t, cs, "c1"), []string{"m-first", "m-q1", "m-q2"}) &&
 			len(queuedRows(t, cs, "c1")) == 0 && !h.coord.turns.live("c1")
 	})
+}
+
+// A message queued during the compaction that ends a turn the model refused for the context's size goes once that
+// compaction ends: the chat is idle, and the user was told to send the message again.
+func TestQueuePrompt_DuringAContextLimitTurnsCompactionIsSentAfterIt(t *testing.T) {
+	h, cs, br, tails := idleAfterFirstTurn(t, "/tmp/work")
+	h.coord.autoCompact.policy = func(context.Context) (bool, int) { return true, 90 }
+	release := holdCall(t, br, marotte.MethodSessionCompact)
+	id, _ := h.stagePromptTurn(t, "c1")
+	h.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "too long", marotte.FailureKindContextLimit, 0)
+	waitForCall(t, br, marotte.MethodSessionCompact)
+
+	queueDuring(t, h, "m-again")
+	release()
+
+	waitFor(t, func() bool { return tails.Load() == 2 })
+	waitFor(t, func() bool {
+		return slices.Contains(promptIDs(t, cs, "c1"), "m-again") && len(queuedRows(t, cs, "c1")) == 0
+	})
+}
+
+// A message past the draft cap sent during a compaction is queued behind it, as a prompt of that size would be
+// answered after it, and goes when the compaction ends.
+func TestQueuePrompt_DuringACompactionTakesAMessagePastTheDraftCap(t *testing.T) {
+	h, cs, release := compactingHub(t)
+	long := strings.Repeat("x", marotte.MaxDraftBytes+1)
+
+	queueTextDuring(t, h, "m-long", long)
+	if rows := queuedRows(t, cs, "c1"); len(rows) != 1 || rows[0].Text != long {
+		t.Fatalf("queue holds %d rows, want the long message as its one row", len(rows))
+	}
+	release()
+
+	waitFor(t, func() bool {
+		return slices.Equal(promptIDs(t, cs, "c1"), []string{"m-first", "m-long"}) && len(queuedRows(t, cs, "c1")) == 0
+	})
+}
+
+// A context reference in a message queued behind a compaction is resolved when its turn opens, as a prompt's is.
+func TestQueuePrompt_BehindACompactionResolvesAContextReference(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("remember the milk\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h, cs, br, release := compactingHubIn(t, dir)
+	const token = "#[[file:notes.txt]]"
+
+	queueTextDuring(t, h, "m-ref", "read "+token)
+	release()
+
+	waitFor(t, func() bool { return slices.Contains(promptIDs(t, cs, "c1"), "m-ref") && !h.coord.turns.live("c1") })
+	blocks, _ := br.paramsFor(marotte.MethodPrompt)[marotte.KeyPrompt].([]map[string]any)
+	resolved := slices.ContainsFunc(blocks, func(b map[string]any) bool {
+		res, ok := b["resource"].(map[string]any)
+		text, _ := res["text"].(string)
+		return ok && res["uri"] == token && strings.Contains(text, "remember the milk")
+	})
+	if !resolved {
+		t.Errorf("prompt blocks = %v, want a resource block for %s with the file's text", blocks, token)
+	}
 }

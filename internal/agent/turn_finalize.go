@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/cplieger/go/textsafe"
@@ -276,11 +277,12 @@ func (bc *bridgeCoordinator) resolveCloseEnds(ctx context.Context, lc *chatLifec
 // compaction once and applies a parked model, then releases the close's KAS hold if it started one (claimTurn), so a
 // waiting prompt cannot reach the session before them; a release refused because KAS reported a run meanwhile repeats
 // the wait. After the release it takes a compaction requested under the hold (afterRelease). It answers the rows
-// queued under the hold, false when a wait stood down (a turn opened, a teardown, shutdown), which ends the hold with
-// no drain and skips atIdle.
+// queued under the hold or behind its compactions with no turn live, false when a wait stood down (a turn opened, a
+// teardown, shutdown), which ends the hold with no drain and skips atIdle.
 func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, lc *chatLifecycle, cf *closeFacts, atIdle func()) ([]string, bool) {
 	chatID := lc.chatID
 	accepted, turnEnded := false, false
+	var owed []string
 	for {
 		if !lc.awaitKASIdle(ctx, cf.fence) ||
 			cf.answerWait > 0 && !bc.awaitAbandonedAnswer(ctx, chatID, cf.fence, cf.answerWait) {
@@ -295,24 +297,29 @@ func (bc *bridgeCoordinator) betweenTurns(ctx context.Context, lc *chatLifecycle
 			bc.applyPendingModel(ctx, chatID)
 		}
 		if !turnEnded {
-			accepted, turnEnded = bc.compactAtTurnEnd(ctx, lc, cf), true
+			accepted, owed = bc.compactAtTurnEnd(ctx, lc, cf)
+			turnEnded = true
 		}
 		if rows, drain := bc.releaseHold(ctx, lc, cf.fence.Seq, accepted); drain {
-			return rows, true
+			return slices.Concat(rows, owed), true
 		}
 	}
 }
 
-// compactAtTurnEnd runs the closed turn's one compaction, reporting whether KAS accepted it.
-func (bc *bridgeCoordinator) compactAtTurnEnd(ctx context.Context, lc *chatLifecycle, cf *closeFacts) bool {
-	return !lc.endedNow() && bc.autoCompact.afterTurn(ctx, lc.chatID, cf.turnID, cf.contextLimit)
+// compactAtTurnEnd runs the closed turn's one compaction, reporting whether KAS accepted it and the rows owed behind it.
+func (bc *bridgeCoordinator) compactAtTurnEnd(ctx context.Context, lc *chatLifecycle, cf *closeFacts) (accepted bool, owed []string) {
+	if lc.endedNow() {
+		return false, nil
+	}
+	return bc.autoCompact.afterTurn(ctx, lc.chatID, cf.turnID, cf.contextLimit)
 }
 
-// releaseHold releases the close's KAS hold; on a drain it first takes a compaction requested under the hold.
+// releaseHold releases the close's KAS hold, answering the rows owed to its drain; on a drain it first takes a
+// compaction requested under the hold.
 func (bc *bridgeCoordinator) releaseHold(ctx context.Context, lc *chatLifecycle, seq uint64, accepted bool) ([]string, bool) {
 	drain, rows := lc.kasStep(kasReleaseOwn, seq)
 	if drain && !lc.endedNow() {
-		bc.autoCompact.afterRelease(ctx, lc.chatID, accepted)
+		rows = append(rows, bc.autoCompact.afterRelease(ctx, lc.chatID, accepted)...)
 	}
 	return rows, drain
 }

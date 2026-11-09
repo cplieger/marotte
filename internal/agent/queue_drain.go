@@ -20,8 +20,9 @@ var errQueueChatGone = errors.New("agent: the chat has no record to queue on")
 // AppendIfLive applies fn to the record while the chat holds a live turn, a KAS hold or a running compaction, in the
 // lifecycle section (lifecycle then store), waiting out a finalizing turn: the close or the compaction's end sees the
 // row, or the caller sees nothing to queue behind. A life that ended or a close being decided appends nothing, so a
-// close's impact read sees every row it stops. A row appended under a hold with no turn live is owed a send despite
-// the stop; kasExec.holdRows owns which drain takes it.
+// close's impact read sees every row it stops. A row appended with no turn live is owed a send despite a stop or a
+// broken close: kasExec.holdRows owns which drain takes one appended under a hold, compactCall.owed one appended
+// behind a compaction.
 func (bc *bridgeCoordinator) AppendIfLive(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (bool, error) {
 	return bc.appendBehind(ctx, chatID, false, fn)
 }
@@ -54,7 +55,15 @@ func (bc *bridgeCoordinator) appendBehind(
 			return nil
 		}
 		live = true
-		return bc.appendLocked(ctx, lc, chatID, !turnLive && holds, fn)
+		var keep func(added []string)
+		switch {
+		case turnLive:
+		case holds:
+			keep = lc.kas.keepHoldRows
+		default:
+			keep = func(added []string) { bc.autoCompact.owe(chatID, added) }
+		}
+		return bc.appendLocked(ctx, chatID, keep, fn)
 	})
 	if errors.Is(err, errNoLife) {
 		return false, nil
@@ -62,10 +71,10 @@ func (bc *bridgeCoordinator) appendBehind(
 	return live, err
 }
 
-// appendLocked is AppendIfLive's write, under lc.mu: fn on the record, and the rows it added kept for the KAS hold's
-// drain when forHold.
+// appendLocked is AppendIfLive's write, in the lifecycle section: fn on the record, and the rows it added handed to keep, which
+// records them for the drain they are owed to; nil keeps nothing.
 func (bc *bridgeCoordinator) appendLocked(
-	ctx context.Context, lc *chatLifecycle, chatID marotte.ChatID, forHold bool, fn func(c *marotte.Chat) error,
+	ctx context.Context, chatID marotte.ChatID, keep func(added []string), fn func(c *marotte.Chat) error,
 ) error {
 	var fnErr error
 	var added []string
@@ -79,8 +88,8 @@ func (bc *bridgeCoordinator) appendLocked(
 	}); err != nil {
 		return err
 	}
-	if fnErr == nil && forHold {
-		lc.kas.keepHoldRows(added)
+	if fnErr == nil && keep != nil {
+		keep(added)
 	}
 	return fnErr
 }

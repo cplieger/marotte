@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -463,22 +464,127 @@ func TestSendQueuedNow_AnUndeliveredCancelClearsTheMarkAndIsBadGateway(t *testin
 	}
 }
 
-// A prompt a queued row cannot hold is not queued behind the compaction: it takes the prompt path, whose turn waits
-// for the compaction to end.
-func TestQueueBehindCompaction_APromptPastTheRowCapIsNotQueued(t *testing.T) {
+// A prompt past the draft cap that meets a running compaction still waits behind it as a row: a turn opened now would
+// show nothing until the compaction ends.
+func TestQueueBehindCompaction_APromptPastTheDraftCapIsQueued(t *testing.T) {
 	q := &fakeQueue{chat: &marotte.Chat{ID: "c1"}, compacting: true}
 	roles := &promptRoles{followups: q}
+	p := marotte.PromptCommand{MessageID: "m-1", Text: strings.Repeat("x", marotte.MaxDraftBytes+1)}
 
-	for name, p := range map[string]marotte.PromptCommand{
-		"text":        {MessageID: "m-1", Text: strings.Repeat("x", marotte.MaxDraftBytes+1)},
-		"attachments": {MessageID: "m-2", Text: "x", Attachments: make([]marotte.Attachment, marotte.MaxAttachments+1)},
-	} {
-		queued, err := queueBehindCompaction(t.Context(), roles, "c1", &p)
-		if err != nil || queued {
-			t.Errorf("%s past the cap = (%v, %v), want (false, nil)", name, queued, err)
+	queued, err := queueBehindCompaction(t.Context(), roles, "c1", &p)
+	if err != nil || !queued {
+		t.Fatalf("queueBehindCompaction = (%v, %v), want (true, nil)", queued, err)
+	}
+	if rows := q.chat.QueuedPrompts; len(rows) != 1 || rows[0].Text != p.Text {
+		t.Errorf("queue holds %d rows, want the prompt as its one row", len(rows))
+	}
+}
+
+// A queued message past the draft cap waits only behind a running compaction: behind a running turn the cap stands,
+// and an idle chat answers no_turn so the client sends it as a prompt.
+func TestQueuePrompt_PastTheDraftCapQueuesOnlyBehindACompaction(t *testing.T) {
+	long := strings.Repeat("x", marotte.MaxDraftBytes+1)
+
+	compacting := &fakeQueue{chat: &marotte.Chat{ID: "c1"}, compacting: true}
+	if _, err := cmdQueuePrompt(t.Context(), compacting, queueReq(t, long, "m-1")); err != nil {
+		t.Errorf("queue_prompt past the draft cap during a compaction: %v, want queued", err)
+	}
+	if rows := compacting.chat.QueuedPrompts; len(rows) != 1 || rows[0].Text != long {
+		t.Errorf("compacting queue holds %d rows, want the long message", len(rows))
+	}
+
+	midTurn := &fakeQueue{chat: &marotte.Chat{ID: "c1"}, live: true}
+	if _, err := cmdQueuePrompt(t.Context(), midTurn, queueReq(t, long, "m-2")); statusOf(err) != http.StatusRequestEntityTooLarge {
+		t.Errorf("queue_prompt past the draft cap mid-turn status = %d, want 413", statusOf(err))
+	}
+	if rows := midTurn.chat.QueuedPrompts; len(rows) != 0 {
+		t.Errorf("mid-turn queue holds %d rows, want none", len(rows))
+	}
+
+	idle := &fakeQueue{chat: &marotte.Chat{ID: "c1"}}
+	if _, err := cmdQueuePrompt(t.Context(), idle, queueReq(t, long, "m-4")); reasonOf(err) != reasonNoTurn {
+		t.Errorf("queue_prompt past the draft cap on an idle chat = %v, want 409 %s so it goes as a prompt", err, reasonNoTurn)
+	}
+
+	tooLong := strings.Repeat("x", MaxPromptBytes+1)
+	if _, err := cmdQueuePrompt(t.Context(), compacting, queueReq(t, tooLong, "m-3")); statusOf(err) != http.StatusRequestEntityTooLarge {
+		t.Errorf("queue_prompt past the prompt cap status = %d, want 413", statusOf(err))
+	}
+}
+
+// Rows of prompt size queued behind a compaction stop while the chat header (8 MiB, internal/chat) can still hold
+// them, a shutdown's carried row and the draft, each escaped to six bytes per character at worst.
+func TestQueuePrompt_RowsBehindACompactionStopBeforeTheHeaderCap(t *testing.T) {
+	const headerCap = 8 << 20
+	q := &fakeQueue{chat: &marotte.Chat{ID: "c1"}, compacting: true}
+	worst := strings.Repeat("<", MaxPromptBytes)
+
+	var refusal error
+	for i := range marotte.MaxQueuedPrompts {
+		if _, err := cmdQueuePrompt(t.Context(), q, queueReq(t, worst, fmt.Sprintf("m-%d", i))); err != nil {
+			refusal = err
+			break
 		}
 	}
-	if rows := q.chat.QueuedPrompts; len(rows) != 0 {
-		t.Errorf("queue = %+v, want nothing queued", rows)
+	if statusOf(refusal) != http.StatusConflict || reasonOf(refusal) != reasonFull {
+		t.Fatalf("refusal = %v (status %d), want 409 %s once the rows reach the bound", refusal, statusOf(refusal), reasonFull)
+	}
+	if len(q.chat.QueuedPrompts) == 0 {
+		t.Fatal("no row of prompt size was queued")
+	}
+	encoded, err := json.Marshal(q.chat.QueuedPrompts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if room := headerCap - 6*(MaxPromptBytes+marotte.MaxDraftBytes); len(encoded) > room {
+		t.Errorf("queued rows encode to %d bytes, want at most %d", len(encoded), room)
+	}
+}
+
+// claimAfterWait is a compaction a press claims just after the drain's first wait returns, and that has ended by the
+// next wait.
+type claimAfterWait struct {
+	q *fakeQueue
+	// opened counts the turns opened so far; openedUnder is set when one opened while the compaction ran.
+	opened      func() int
+	mu          sync.Mutex
+	waits       int
+	openedUnder bool
+}
+
+func (c *claimAfterWait) AwaitCompaction(context.Context, marotte.ChatID) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.openedUnder = c.openedUnder || c.q.compacting && c.opened() > 0
+	c.waits++
+	c.q.compacting = c.waits == 1
+}
+
+// A compaction that claims between a close's wait for one and its reservation is waited out too, so the drain opens no
+// turn under it, and the row goes once it ends.
+func TestDrain_ACompactionClaimedBeforeTheReservationIsWaitedOut(t *testing.T) {
+	q := &fakeQueue{chat: &marotte.Chat{ID: "c1", QueuedPrompts: []marotte.QueuedPrompt{{ID: "m-q1", Text: "next"}}}}
+	h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
+	roles := drainRoles(h, newStubSteerQueue())
+	roles.followups = q
+	compactor := &claimAfterWait{q: q, opened: func() int {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.opened)
+	}}
+	roles.compactor = compactor
+
+	drainAfterClose(t.Context(), roles, "c1", cleanClose, EndFacts{})
+	h.waitInflight(t)
+
+	compactor.mu.Lock()
+	waits, openedUnder := compactor.waits, compactor.openedUnder
+	compactor.mu.Unlock()
+	if waits < 2 || openedUnder {
+		t.Errorf("waits = %d, opened under the compaction = %v; want the drain to wait out the one claimed before it reserved",
+			waits, openedUnder)
+	}
+	if len(h.opened) != 1 || h.opened[0].ID != "m-q1" {
+		t.Errorf("drained prompts = %+v, want m-q1 once the compaction ended", h.opened)
 	}
 }

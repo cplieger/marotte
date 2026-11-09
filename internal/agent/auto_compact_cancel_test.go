@@ -269,7 +269,7 @@ func TestAutoCompact_ARepressAfterACancelDuringARefusedTurnEndRunRunsAtTheReleas
 			r.pressUnderHold(t)
 		})
 	}
-	accepted := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
+	accepted, _ := r.ac.afterTurn(t.Context(), "c1", r.lastTurn(), false)
 	if accepted || !r.isQueued() {
 		t.Fatalf("after the refused turn end: accepted %v, queued %v; want not accepted and the re-press kept", accepted, r.isQueued())
 	}
