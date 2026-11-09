@@ -412,7 +412,7 @@ describe("a cold load of a 700-entry turn mounts a WINDOW", () => {
     const id = chatID();
     activate(id, [hugeTurn("big", HUGE)]);
     // The window is 320 ordinals of ONE turn, so a builder cutting only between turns would
-    // mount them all in one paint.
+    // mount them all in one paint. No cover is held, so the reader sees this frame.
     expect(mountedSeqs("big").length).toBeLessThanOrEqual(BUILD_BATCH_ENTRIES);
     // Nothing is lost: the drain finishes the window off the frame.
     await vi.waitFor(() => {

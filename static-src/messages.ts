@@ -1326,13 +1326,18 @@ function paintPass(
   beginCardPass(session);
   // One walk builds the card list the rail, the fold pass and the cover release share.
   let cards: HTMLElement[] = [];
-  heldMutation(() => {
-    reconcile(root, turns, turnSpec);
-    cards = turnCards(root);
-    // Re-run per full pass: the set changes as pages load and turns arrive.
-    setResidentTurns(cards);
-    applyFoldPass(session.id, turns, cards, false);
-  });
+  inFullPass = true;
+  try {
+    heldMutation(() => {
+      reconcile(root, turns, turnSpec);
+      cards = turnCards(root);
+      // Re-run per full pass: the set changes as pages load and turns arrive.
+      setResidentTurns(cards);
+      applyFoldPass(session.id, turns, cards, false);
+    });
+  } finally {
+    inFullPass = false;
+  }
   // After the fold pass: an unmounted card is owed no build, and a folded one builds invisibly.
   drainColdBuilds();
   finalizeStreamingIfNeeded(turns);
@@ -1357,6 +1362,9 @@ function turnCards(root: HTMLElement): HTMLElement[] {
 /** Not re-entrant: a pass's mutations move the scroller through the owner's hold. Across frames the plan-equality exit
  *  terminates. */
 let inWindowPass = false;
+
+/** Whether the full pass is building cards: under a cover, the one build that may finish the reader's body. */
+let inFullPass = false;
 
 /**
  * The plan the DOM was last brought to, which the window pass compares against. Not the current plan:
@@ -2384,8 +2392,8 @@ function unmountTurnBody(card: HTMLElement): void {
 const BUILD_BATCH_ENTRIES = 32;
 
 /**
- * Entries one full pass may mount synchronously, refilled by `paint`: a work cap. Only a demand grant can make it
- * bind, and that body is then born empty for `drainColdBuilds`.
+ * Entries one pass may mount synchronously, refilled per pass: a work cap. A body born once it is spent is empty
+ * for `drainColdBuilds`.
  */
 const PAINT_SYNC_ENTRIES = RESIDENT_ENTRIES;
 let paintSyncEntries = PAINT_SYNC_ENTRIES;
@@ -2398,7 +2406,7 @@ const turnBodyBuilds = new Map<
 
 /**
  * Turns whose cold build owes the rest after its first slice, drained at the pass's end, so the frame that creates
- * the cards never finishes them.
+ * the cards finishes no body but a covered reader's.
  */
 const coldBuilds = new Set<string>();
 
@@ -2407,10 +2415,16 @@ function hasPendingBuild(turnID: string): boolean {
   return coldBuilds.has(turnID) || turnBodyBuilds.has(turnID);
 }
 
-/** Once the pass's allowance is spent, build over an empty range so `drainColdBuilds` mounts it off
- *  the frame. */
+/**
+ * Build one batch of the body now and leave the rest to `drainColdBuilds`. Under a landing's cover the full pass
+ * gives the reader's turn what is left of the allowance instead: its rows fill the view the cover waits on, and
+ * the frame shows only the cover. Every other build keeps the batch, its frame being the reader's.
+ */
 function startFirstSlice(body: HTMLElement, t: Turn, range: EntryRange): void {
-  const take = Math.min(BUILD_BATCH_ENTRIES, Math.max(0, paintSyncEntries));
+  const readerBody =
+    inFullPass && coverHeld(getPaintedId()) && lastTurns[readerIndex()]?.id === t.id;
+  const cap = readerBody ? paintSyncEntries : BUILD_BATCH_ENTRIES;
+  const take = Math.min(cap, Math.max(0, paintSyncEntries));
   const slice = firstSliceOf(t, range, take);
   heldMutation(() => {
     buildAssistantBody(body, t, getPaintedId(), turnIsLive(t), slice);
