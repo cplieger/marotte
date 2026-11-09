@@ -65,7 +65,7 @@ function promptForm(name: string, close: () => void): HTMLElement {
     className: "tool-form-input agent-run-prompt",
     rows: "4",
     required: true,
-    placeholder: "What should the agent do...",
+    placeholder: "What should the agent do…",
     "aria-label": `Prompt for ${name}`,
   }) as HTMLTextAreaElement;
   const form = el(

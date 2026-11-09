@@ -213,6 +213,6 @@ async function detectThenConnect(
     return null;
   }
   const kind = o.value.kind;
-  lines.note(`${kindTitle(kind)} found. Connecting...`);
+  lines.note(`${kindTitle(kind)} found. Connecting…`);
   return connectAs({ kind, host, token, options }, lines);
 }

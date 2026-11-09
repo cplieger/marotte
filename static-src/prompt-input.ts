@@ -35,8 +35,8 @@ const queueWait = computed(() => {
 
 /** While a turn runs the placeholder names what Send will do with the text. */
 const BUSY_PLACEHOLDER: Record<InterruptMode, (wait: string) => string> = {
-  steer: () => "Steer the agent mid-turn...",
-  queue: (wait) => `Queue a follow-up for after ${wait}...`,
+  steer: () => "Steer the agent mid-turn…",
+  queue: (wait) => `Queue a follow-up for after ${wait}…`,
 };
 
 /** The mid-turn Send's face per mode. The word is a word of the name (WCAG 2.5.3). */
@@ -259,7 +259,7 @@ class PromptInputController {
     $.sendBtn.disabled = false;
     $.promptInput.disabled = false;
     $.promptInput.placeholder =
-      k === "streaming" ? BUSY_PLACEHOLDER[busyMode.peek()](queueWait.peek()) : "Message Kiro...";
+      k === "streaming" ? BUSY_PLACEHOLDER[busyMode.peek()](queueWait.peek()) : "Message Kiro…";
     this.applyMidTurnSend();
   }
 
