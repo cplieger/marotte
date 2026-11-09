@@ -272,12 +272,12 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	ensureUploadDir()
 	sensitive := filebrowse.NewSensitive(cfg.ConfigDir)
 	agentDirs := settings.AgentDirs{Workspace: cfg.WorkDir, Config: cfg.ConfigDir}
-	fileHandler, err := filebrowse.New(sensitive, cfg.BrowseRoots,
-		toolsManifestSaveHook(tools),
+	fileOpts := append(ownedFileOptions(ownedFileDeps{Settings: h, Tools: tools, Dirs: agentDirs}),
 		filebrowse.WithLiveRoots(func(ctx context.Context) []string {
 			granted, _, _ := agentDirs.Granted(ctx)
 			return granted
 		}))
+	fileHandler, err := filebrowse.New(sensitive, cfg.BrowseRoots, fileOpts...)
 	if err != nil {
 		return nil, err
 	}

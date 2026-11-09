@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/steering"
 	"github.com/cplieger/marotte/internal/workspace"
@@ -320,5 +321,38 @@ func TestWireToolsSteering_ListsTheEnginesInstalledTools(t *testing.T) {
 	waitFor(t, "environment.md to list the installed tool", func() bool {
 		data, err := os.ReadFile(path)
 		return err == nil && strings.Contains(string(data), want)
+	})
+}
+
+func TestToolsSlot_AFIFOAtToolsJSONNeverBlocks(t *testing.T) {
+	t.Run("at_boot", func(t *testing.T) {
+		manifest := filepath.Join(t.TempDir(), toolsManifestName)
+		if err := syscall.Mkfifo(manifest, 0o600); err != nil {
+			t.Fatalf("Setup: mkfifo: %v", err)
+		}
+		// A writer end opened and closed releases a read the slot may have left blocked on the FIFO.
+		t.Cleanup(func() {
+			if f, err := os.OpenFile(manifest, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+				_ = f.Close()
+			}
+		})
+		captureDefaultLogger(t)
+		slot := newToolsSlot(manifest, func() (*toolbelt.Engine, error) {
+			return nil, fmt.Errorf("toolbelt: init %s: %w", manifest, errors.New("not a regular file"))
+		})
+		started := make(chan error, 1)
+		go func() { started <- slot.start() }()
+		select {
+		case err := <-started:
+			if err != nil {
+				t.Fatalf("start over a FIFO = %v, want the engine down with its reason", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("start over a FIFO at tools.json has not returned after 1s")
+		}
+		engine, reason := slot.Engine()
+		if engine != nil || reason == nil || !strings.Contains(reason.Error(), "not a regular file") {
+			t.Errorf("Engine() over a FIFO = (%v, %v), want down with a reason naming a file that is not regular", engine, reason)
+		}
 	})
 }

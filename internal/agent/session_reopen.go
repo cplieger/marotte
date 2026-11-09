@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/securityprofile"
+	"github.com/cplieger/marotte/internal/settings"
 )
 
 // markSessionsForReload is the one way a setting a session reads only at its door reaches resident chat sessions:
@@ -30,6 +32,16 @@ func (rt *Runtime) SecurityProfileChanged(ctx context.Context) {
 	rt.reconcileSettingsWrite(ctx, "security profile")
 	rt.Broadcast(ctx, marotte.NewEvent(marotte.EventPermissionsChanged, "",
 		marotte.PermissionsChangedPayload{}))
+}
+
+// SettingsWritten is the after-write rule for a config.json write that brings none of its own. keys are the keys
+// whose value changed; nil means either side did not parse, so any key may have moved.
+func (rt *Runtime) SettingsWritten(ctx context.Context, keys []string) {
+	if keys == nil || slices.Contains(keys, settings.KeySecurityProfile) {
+		rt.SecurityProfileChanged(ctx)
+		return
+	}
+	rt.ReconcileSessionSettings(ctx)
 }
 
 // EnsureCustomProfile runs Customize unless the profile already is Custom, so a rule an answer

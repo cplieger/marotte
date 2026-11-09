@@ -667,3 +667,24 @@ func TestWriteAttachments_TeachesTheHTMLPreview(t *testing.T) {
 		}
 	}
 }
+
+func TestToolsSection_SaysAShellWriteAppliesWithinSeconds(t *testing.T) {
+	var b strings.Builder
+	writeToolsEngine(&b, "/cfg", "/t", "/w")
+	// A config dir inside the workspace is refused at boot, so no text may describe one.
+	writeToolsEngine(&b, "/w/cfg", "/t", "/w")
+	out := b.String()
+	for _, want := range []string{
+		"A shell write is checked and applied within seconds",
+		"until a valid save, or a valid shell write, turns it back on",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeToolsEngine output missing %q:\n%s", want, out)
+		}
+	}
+	for _, gone := range []string{"neither checked nor applied", "A write from your own file tools"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("writeToolsEngine output still says %q:\n%s", gone, out)
+		}
+	}
+}
