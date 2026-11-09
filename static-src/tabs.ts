@@ -735,7 +735,6 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
       releaseCoverExceptFor(ref);
     }
   } else {
-    // The cover stays held: a burst's covered chat view stays up until this activation hides it.
     reselectPaintedChat();
   }
   if (currentActivation !== null) {
@@ -760,6 +759,11 @@ function beginActivation(id: string, opts: ActivationOpts): ActivationRecord | u
   };
   currentActivation = record;
   emit();
+  if (row.subject.kind !== "chat") {
+    // After `emit`'s `holdView` hid the chat view: a cover lifted while it shows starts a fade-out
+    // that a hidden view never ends, which would then play over the chat's next show.
+    dropCover();
+  }
   paintStripNow();
   const gen = record.gen;
   if (now) {
@@ -793,9 +797,7 @@ function runActivation(gen: number): void {
     // onto it was never shown. A Retry's fresh activation clears its own failure box.
     const chat = row.subject.kind === "chat" ? row.subject.ref : "";
     const mounted = chat !== "" && chat === shownChat && chat === getPaintedId();
-    if (chat === "") {
-      dropCover();
-    } else if (mounted && !record.again) {
+    if (mounted && !record.again) {
       // No paint follows for a mounted chat, so the gesture's cover lifts over the revealed transcript.
       releaseCover(chat);
     }
@@ -2323,12 +2325,14 @@ function viewLaidOut(row: TabRow): boolean {
   return target?.classList.contains("hidden") !== true && !transcriptHidden();
 }
 
-/** The gesture form of `revealView`: lay out no view the click did not find laid out, and never
- *  leave the view area empty. A chat view not laid out shows under the cover (`beginActivation`
- *  holds it) with its transcript out of layout; every other target leaves the shown view up. The
- *  activation reveals the rest. */
+/** The gesture form of `revealView`, which never leaves the view area empty. A non-chat view shows
+ *  now, its entry fade starting with the click. A chat view not laid out shows under the cover
+ *  (`beginActivation` holds it) with its transcript out of layout, which the activation lays out;
+ *  a laid-out chat view is already the one shown. */
 function holdView(row: TabRow): void {
-  if (row.subject.kind === "chat" && coverHeld() && !viewLaidOut(row)) {
+  if (row.subject.kind !== "chat") {
+    showOnlyView(queryEl<HTMLElement>(row.spec.view));
+  } else if (coverHeld() && !viewLaidOut(row)) {
     hideTranscript();
     showOnlyView(queryEl<HTMLElement>(row.spec.view));
   }
