@@ -94,22 +94,31 @@ func TestWireToolsEngineBootsOverAnUnreadableManifest(t *testing.T) {
 	}
 }
 
-func TestToolsSlot_ManifestChangedAfterCloseStartsNothing(t *testing.T) {
-	fx := newManifestSaveFixture(t, `{"version":1,"tools":{}}`)
-	if err := os.WriteFile(fx.manifest, []byte(`{"version":2,"tools":{}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	fx.tools.Close()
+func TestToolsSlotTick_AfterCloseDoesNothing(t *testing.T) {
+	for name, initial := range map[string]string{"up": `{"version":2,"tools":{}}`, "down": `{"version":1,"tools":{}}`} {
+		t.Run(name, func(t *testing.T) {
+			fx := newOwnedFilesFixtureWith(t, toolsSetup{manifest: initial})
+			before := len(fx.enqueued())
+			fx.tools.Close()
+			if err := os.WriteFile(fx.manifest, []byte(`{"version":2,"tools":{"x":{"source":"manual","install":"true"}}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
 
-	fx.tools.manifestChanged()
+			fx.tools.tick()
+			fx.tools.tick()
 
-	if engine, reason := fx.tools.Engine(); engine != nil || !errors.Is(reason, errToolsClosed) {
-		t.Errorf("Engine() after Close and a save = (%v, %v), want (nil, %v)", engine, reason, errToolsClosed)
+			if engine, reason := fx.tools.Engine(); engine != nil || !errors.Is(reason, errToolsClosed) {
+				t.Errorf("Engine() after Close and two ticks = (%v, %v), want (nil, %v)", engine, reason, errToolsClosed)
+			}
+			if got := fx.enqueued(); len(got) != before {
+				t.Errorf("jobs queued = %v, want none after the %d before Close", got, before)
+			}
+		})
 	}
 }
 
-func TestToolsSlot_ManifestChangedOverABadManifestTakesTheEngineDownWithItsReason(t *testing.T) {
-	fx := newManifestSaveFixture(t, `{"version":2,"tools":{}}`)
+func TestToolsSlotTick_ABadManifestTakesTheEngineDownWithItsReasonAtTheSecondTick(t *testing.T) {
+	fx := newOwnedFilesFixtureWith(t, toolsSetup{manifest: `{"version":2,"tools":{}}`})
 	if engine, reason := fx.tools.Engine(); engine == nil {
 		t.Fatalf("Setup: Engine() over a valid manifest = (nil, %v), want the engine up", reason)
 	}
@@ -117,11 +126,15 @@ func TestToolsSlot_ManifestChangedOverABadManifestTakesTheEngineDownWithItsReaso
 		t.Fatal(err)
 	}
 
-	fx.tools.manifestChanged()
+	fx.tools.tick()
+	if engine, reason := fx.tools.Engine(); engine == nil {
+		t.Fatalf("Engine() after one tick over a version-3 manifest = (nil, %v), want still up (the read is held)", reason)
+	}
+	fx.tools.tick()
 
 	engine, reason := fx.tools.Engine()
 	if engine != nil {
-		t.Fatal("Engine() after a version-3 manifest landed = a live engine, want down")
+		t.Fatal("Engine() after two ticks over a version-3 manifest = a live engine, want down")
 	}
 	if reason == nil || !strings.Contains(reason.Error(), "tools.json is invalid: manifest version 3") {
 		t.Errorf("Engine() reason = %v, want it to say tools.json is invalid: manifest version 3", reason)
@@ -182,7 +195,15 @@ func TestToolsSlot_AnUnusableToolsFolderIsBuiltOncePerAttempt(t *testing.T) {
 	if builds != 1 {
 		t.Errorf("start() built the engine %d times, want 1", builds)
 	}
-	tools.manifestChanged()
+	tools.tick()
+	if builds != 1 {
+		t.Errorf("a tick over the tools.json start read built the engine again: %d builds, want 1", builds)
+	}
+	if err := os.WriteFile(manifest, []byte(fmt.Sprintf(`{"version":%d,"tools":{"x":{"source":"manual","install":"true"}}}`,
+		toolbelt.ManifestVersion)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tools.tick()
 	if builds != 2 {
 		t.Errorf("start() and one tools.json write built the engine %d times, want 2", builds)
 	}
@@ -208,7 +229,7 @@ func TestWireToolsEngine_StaysDownOverAnUnusableToolsFolder(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(configDir, "tools.json"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	tools.manifestChanged()
+	tools.tick()
 	if engine, reason := tools.Engine(); engine != nil || !errors.Is(reason, errToolsDirUnusable) {
 		t.Errorf("after a tools.json write Engine() = (%v, %v), want still down with the folder's reason", engine, reason)
 	}

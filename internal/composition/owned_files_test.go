@@ -1,6 +1,7 @@
 package composition
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -53,25 +54,63 @@ type ownedFilesFixture struct {
 	handler   http.Handler
 	reactor   *fakeSettingsReactor
 	tools     *toolsSlot
+	watch     *configWatch
+	logs      *bytes.Buffer
 	configDir string
+	manifest  string
+	mu        sync.Mutex
+	kinds     []string
+}
+
+// toolsSetup shapes the fixture's tools engine: the tools.json it boots over ("" for none, which
+// New seeds) and an edit of its config.
+type toolsSetup struct {
+	config   func(*toolbelt.Config)
+	manifest string
 }
 
 func newOwnedFilesFixture(t *testing.T) *ownedFilesFixture {
 	t.Helper()
+	return newOwnedFilesFixtureWith(t, toolsSetup{})
+}
+
+func newOwnedFilesFixtureWith(t *testing.T, ts toolsSetup) *ownedFilesFixture {
+	t.Helper()
 	dir := t.TempDir()
+	fx := &ownedFilesFixture{reactor: &fakeSettingsReactor{}, configDir: dir, manifest: filepath.Join(dir, toolsManifestName)}
+	if ts.manifest != "" {
+		if err := os.WriteFile(fx.manifest, []byte(ts.manifest), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	toolsDir := filepath.Join(t.TempDir(), "tools")
-	tools := newToolsSlot(filepath.Join(dir, toolsManifestName), func() (*toolbelt.Engine, error) {
-		return toolbelt.New(&toolbelt.Config{ConfigDir: dir, ToolsDir: toolsDir})
+	fx.tools = newToolsSlot(fx.manifest, func() (*toolbelt.Engine, error) {
+		cfg := &toolbelt.Config{
+			ConfigDir: dir,
+			ToolsDir:  toolsDir,
+			OnJobChanged: func(j *toolbelt.Job) {
+				if j != nil && j.State == toolbelt.JobQueued {
+					fx.mu.Lock()
+					fx.kinds = append(fx.kinds, j.Kind)
+					fx.mu.Unlock()
+				}
+			},
+		}
+		if ts.config != nil {
+			ts.config(cfg)
+		}
+		return toolbelt.New(cfg)
 	})
-	if err := tools.start(); err != nil {
+	fx.logs = captureDefaultLogger(t)
+	if err := fx.tools.start(); err != nil {
 		t.Fatalf("Setup: start the tools slot: %v", err)
 	}
-	t.Cleanup(tools.Close)
-	fx := &ownedFilesFixture{reactor: &fakeSettingsReactor{}, tools: tools, configDir: dir}
+	t.Cleanup(fx.tools.Close)
+	fx.watch = newConfigWatch(dir, fx.reactor)
 	files, err := filebrowse.New(filebrowse.NewSensitive(dir), []string{dir}, ownedFileOptions(ownedFileDeps{
-		Settings: fx.reactor,
-		Tools:    tools,
-		Dirs:     settings.AgentDirs{Workspace: t.TempDir(), Config: dir},
+		Config: fx.watch,
+		Tools:  fx.tools,
+		Dirs:   settings.AgentDirs{Workspace: t.TempDir(), Config: dir},
 	})...)
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +119,13 @@ func newOwnedFilesFixture(t *testing.T) *ownedFilesFixture {
 	files.RegisterRoutes(mux)
 	fx.handler = mux
 	return fx
+}
+
+// enqueued answers the kinds of the jobs the tools engine queued so far.
+func (fx *ownedFilesFixture) enqueued() []string {
+	fx.mu.Lock()
+	defer fx.mu.Unlock()
+	return append([]string(nil), fx.kinds...)
 }
 
 func (fx *ownedFilesFixture) configPath() string {
@@ -185,5 +231,64 @@ func TestEditorSaveOfConfigJSON_RefusesAValueThePatchRefuses(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(fx.configPath()); string(got) != stored {
 		t.Errorf("config.json after a refused save = %q, want %q unchanged", got, stored)
+	}
+}
+
+func TestEditorSaveOfToolsJSON_GoesThroughTheEngine(t *testing.T) {
+	fx := newOwnedFilesFixture(t)
+	doc := `{"version":2,"tools":{"hello":{"source":"manual","install":"true"}}}`
+
+	if code, msg := fx.save(t, fx.manifest, doc, ""); code != http.StatusOK {
+		t.Fatalf("save of a valid manifest = %d %q, want 200", code, msg)
+	}
+
+	// The reconcile may already have rewritten the file in the engine's own layout.
+	written, _ := os.ReadFile(fx.manifest)
+	if m, err := toolbelt.ParseManifest(written); err != nil || m.Tools["hello"].Source != "manual" {
+		t.Errorf("tools.json = %q (parse error %v), want the saved hello entry", written, err)
+	}
+	if got := fx.enqueued(); len(got) != 1 || got[0] != toolbelt.JobKindReconcile {
+		t.Errorf("jobs enqueued by the save = %v, want exactly one %q (no update pass)", got, toolbelt.JobKindReconcile)
+	}
+}
+
+func TestEditorSaveOfToolsJSON_InvalidIsRefusedWithTodaysText(t *testing.T) {
+	fx := newOwnedFilesFixture(t)
+	before, err := os.ReadFile(fx.manifest)
+	if err != nil {
+		t.Fatalf("Setup: the engine seeds tools.json at start: %v", err)
+	}
+
+	code, msg := fx.save(t, fx.manifest, `{"version":1,"tools":{}}`, "")
+
+	if code != http.StatusBadRequest || !strings.HasPrefix(msg, "tools.json was not saved:") || !strings.Contains(msg, "manifest version 1") {
+		t.Errorf("save of a wrong-version manifest = %d %q, want 400 tools.json was not saved: naming the version", code, msg)
+	}
+	if after, _ := os.ReadFile(fx.manifest); string(after) != string(before) {
+		t.Errorf("tools.json after a refused save = %q, want %q unchanged", after, before)
+	}
+	if got := fx.enqueued(); len(got) != 0 {
+		t.Errorf("jobs enqueued by a refused save = %v, want none", got)
+	}
+}
+
+func TestToolsJSONSaveWhileDownStartsTheEngine(t *testing.T) {
+	fx := newOwnedFilesFixtureWith(t, toolsSetup{manifest: `{"version":1,"tools":{}}`})
+	if engine, reason := fx.tools.Engine(); engine != nil || reason == nil {
+		t.Fatalf("Setup: Engine() over a version-1 manifest = (%v, %v), want down with a reason", engine, reason)
+	}
+
+	if code, msg := fx.save(t, fx.manifest, `{"version":2,"tools":{}}`, ""); code != http.StatusOK {
+		t.Fatalf("save of a valid manifest over a down engine = %d %q, want 200", code, msg)
+	}
+
+	engine, reason := fx.tools.Engine()
+	if engine == nil {
+		t.Fatalf("Engine() after a valid save = (nil, %v), want the engine up without a restart", reason)
+	}
+	if inv, err := engine.Inventory(); err != nil {
+		t.Errorf("Inventory() on the engine the save started: %v", err)
+	} else if len(inv.Tools) != 0 {
+		t.Errorf("Inventory().Tools on the engine the save started = %v, want the saved empty manifest", inv.Tools)
 	}
 }

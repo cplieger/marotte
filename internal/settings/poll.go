@@ -58,7 +58,8 @@ func Poll(ctx context.Context, configDir string, publish func(context.Context, m
 	}
 	c.setApplied(r, data)
 	c.forget()
-	slog.Warn("settings: change announced without a version", "error", fmt.Errorf("%w: %w", ErrUnreadable, readErr))
+	slog.Warn("settings: config.json cannot be read; it stays refused until it reads again", "path", path,
+		"error", fmt.Errorf("%w: %w", ErrUnreadable, readErr))
 	publish(ctx, stamp{}.event())
 	return nil, true, nil
 }

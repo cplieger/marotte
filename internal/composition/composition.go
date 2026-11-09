@@ -63,6 +63,10 @@ type App struct {
 	stopOrphanSweep func()
 	// stopKiroSeed stops the kiro-cli settings seed and waits for its goroutine.
 	stopKiroSeed func()
+	// stopConfigWatch stops the config.json watch and waits for a pass or effect in flight.
+	stopConfigWatch func()
+	// stopToolsWatch stops the tools.json watch between ticks.
+	stopToolsWatch func()
 	// stopPRPoller stops the PR-status poller and waits for its goroutine.
 	stopPRPoller func()
 	// stopForgeKeeper stops the forge credential keeper and waits for its goroutine.
@@ -272,7 +276,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	ensureUploadDir()
 	sensitive := filebrowse.NewSensitive(cfg.ConfigDir)
 	agentDirs := settings.AgentDirs{Workspace: cfg.WorkDir, Config: cfg.ConfigDir}
-	fileOpts := append(ownedFileOptions(ownedFileDeps{Settings: h, Tools: tools, Dirs: agentDirs}),
+	configWatch := newConfigWatch(cfg.ConfigDir, h)
+	fileOpts := append(ownedFileOptions(ownedFileDeps{Config: configWatch, Tools: tools, Dirs: agentDirs}),
 		filebrowse.WithLiveRoots(func(ctx context.Context) []string {
 			granted, _, _ := agentDirs.Granted(ctx)
 			return granted
@@ -360,6 +365,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	)
 	lockedSettings.bind(appCtx, srv.ApplyGovernanceLocks)
 	stopKiroSeed := startKiroSettingsSeed(appCtx, kiro.installed, srv.SeedKiroSettings)
+	stopConfigWatch := startConfigWatch(appCtx, configWatch)
+	stopToolsWatch := startToolsWatch(appCtx, tools)
 
 	built = true
 	return &App{
@@ -371,6 +378,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		stopKiro:             kiro.stop,
 		stopOrphanSweep:      stopOrphanSweep,
 		stopKiroSeed:         stopKiroSeed,
+		stopConfigWatch:      stopConfigWatch,
+		stopToolsWatch:       stopToolsWatch,
 		stopPRPoller:         stopPRPoller,
 		stopForgeKeeper:      stopForgeKeeper,
 		stopForges:           func() { shutdownWithin("forge reads", forgesManager.Shutdown) },
@@ -409,6 +418,10 @@ func (a *App) Run() error {
 // position is load-bearing. Every member is treated as optional: a panic on a service never
 // started would abort the teardown of the rest.
 func (a *App) Shutdown() {
+	// First: the config watch's stop waits for an effect in flight, which pushes to the runtime;
+	// the tools watch's tick reaches the engine Close ends.
+	callIfSet(a.stopConfigWatch)
+	callIfSet(a.stopToolsWatch)
 	// Before stopForges: a poll in flight reads through the forge connections.
 	callIfSet(a.stopTriggerRunner)
 	callIfSet(a.stopPRPoller)
