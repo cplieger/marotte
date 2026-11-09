@@ -1,7 +1,7 @@
-// A landing page whose paint can only start the bodies in view keeps the transcript cover up until
-// those bodies are built, then lifts it before the bodies out of view finish; a page whose owed
-// bodies are all out of view where the reader lands lifts by the first frame. Real store, renderer,
-// scroll controller and layout.
+// A landing page's paint builds each body it can only start from the rows nearest where the reader
+// lands, so the transcript cover lifts by the first frame with no unbuilt row in view; while those
+// rows cannot fill the view the cover stays up until they do, and it never waits on a body out of
+// view. Real store, renderer, scroll controller and layout.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
@@ -130,6 +130,20 @@ function built(turnID: string, count: number): boolean {
   return w !== undefined && w.from <= 1 && w.to >= count;
 }
 
+/** Run `body` with the scroller `px` tall. */
+async function withPortHeight(px: number, body: () => Promise<void>): Promise<void> {
+  const outer = document.getElementById("messages-wrap-outer");
+  if (outer === null) {
+    throw new Error("no scroller host");
+  }
+  outer.style.height = `${String(px)}px`;
+  try {
+    await body();
+  } finally {
+    outer.style.removeProperty("height");
+  }
+}
+
 async function flushed(): Promise<void> {
   await Promise.resolve();
 }
@@ -138,9 +152,17 @@ async function nextFrame(): Promise<void> {
   await new Promise((r) => requestAnimationFrame(() => r(undefined)));
 }
 
+interface HeldYields {
+  step: () => Promise<void>;
+  releaseAll: () => Promise<void>;
+}
+
+/** Holds a failed case left open: its parked drain would starve every later case's builds. */
+const openHolds: HeldYields[] = [];
+
 /** Park every `scheduler.yield` the owed builds take. `step` lets the ones parked so far run and
  *  waits a task; `releaseAll` steps until none is left, then restores the scheduler. */
-function holdYields(): { step: () => Promise<void>; releaseAll: () => Promise<void> } {
+function holdYields(): HeldYields {
   const held: (() => void)[] = [];
   const sched = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
   expect(sched?.yield, "the owed builds yield through scheduler.yield").toBeTypeOf("function");
@@ -154,9 +176,10 @@ function holdYields(): { step: () => Promise<void>; releaseAll: () => Promise<vo
     }
     await new Promise((r) => setTimeout(r, 0));
   };
-  return {
+  const hold: HeldYields = {
     step,
     async releaseAll() {
+      openHolds.splice(openHolds.indexOf(hold), 1);
       for (let round = 0; released < held.length; round++) {
         expect(round, "the owed builds kept yielding").toBeLessThan(200);
         await step();
@@ -164,6 +187,8 @@ function holdYields(): { step: () => Promise<void>; releaseAll: () => Promise<vo
       spy.mockRestore();
     },
   };
+  openHolds.push(hold);
+  return hold;
 }
 
 /** Switch to `to` under a cover held for it, from a painted one-turn chat, as an activation does. */
@@ -188,12 +213,11 @@ async function switchUnderCover(
 /** What the page looked like at the moment the cover was released. */
 interface AtLift {
   blank: boolean;
-  newestBuilt: boolean;
   olderBuilt: boolean;
 }
 
 /** Resolves with the page as it stood when the held cover was next released. */
-function watchLift(newest: [string, number], older: [string, number]): Promise<AtLift> {
+function watchLift(older: [string, number]): Promise<AtLift> {
   return new Promise((resolve) => {
     const mo = new MutationObserver(() => {
       if (coverUp()) {
@@ -202,7 +226,6 @@ function watchLift(newest: [string, number], older: [string, number]): Promise<A
       mo.disconnect();
       resolve({
         blank: blankInView(),
-        newestBuilt: built(...newest),
         olderBuilt: built(...older),
       });
     });
@@ -222,46 +245,87 @@ beforeEach(() => {
   store.setPainted("");
 });
 
-afterEach(() => {
+afterEach(async () => {
+  for (const hold of [...openHolds]) {
+    await hold.releaseAll();
+  }
   vi.restoreAllMocks();
   cover.dropCover();
 });
 
 describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
-  it("stays up until the body in view is built, and lifts before the bodies above finish", async () => {
+  it("lifts by the first frame over a body longer than one slice, its rows in view built", async () => {
     const yields = holdYields();
     const b = freshID("cr-b");
     const older = `${b}-old`;
     const newest = `${b}-new`;
-    let lift: Promise<AtLift> | undefined;
     await switchUnderCover(
       [chat(b, [heavyTurn(older, 120, 1, "failed"), heavyTurn(newest, 200, 2)])],
       b,
-      () => {
-        lift = watchLift([newest, 200], [older, 120]);
-      },
     );
-    expect(built(newest, 200), "the premise: the paint only started the newest body").toBe(false);
-    expect(built(older, 120), "the premise: the older body is owed too").toBe(false);
     expect(scroll.readingState(), "the premise: the reader lands on the live edge").toBe(
       "following",
     );
-    if (lift === undefined) {
-      throw new Error("the switch never held the cover");
-    }
-    let at: AtLift | undefined;
-    void lift.then((v) => {
-      at = v;
-    });
     await nextFrame();
-    for (let round = 0; at === undefined; round++) {
-      expect(round, "the cover never lifted").toBeLessThan(200);
-      await yields.step();
-    }
-    expect(at.blank, "a blank band showed at the lift").toBe(false);
-    expect(at.newestBuilt, "the body in view was still being built at the lift").toBe(true);
-    expect(at.olderBuilt, "the lift waited on a body out of view").toBe(false);
+    expect(built(newest, 200), "the premise: the paint only started the newest body").toBe(false);
+    expect(built(older, 120), "the premise: the older body is owed too").toBe(false);
+    expect(blankInView(), "the rows where the reader lands were left to the drain").toBe(false);
+    expect(coverUp(), "the cover waited on rows the paint could build").toBe(false);
     await yields.releaseAll();
+  });
+
+  it("lifts by the first frame when the rows in view end a body above a short newest turn", async () => {
+    // Tall enough to show the older body's last rows above the newest turn and its footer.
+    await withPortHeight(900, async () => {
+      const yields = holdYields();
+      const b = freshID("cr-b");
+      const older = `${b}-old`;
+      await switchUnderCover(
+        [chat(b, [heavyTurn(older, 120, 1, "failed"), heavyTurn(`${b}-new`, 2, 2)])],
+        b,
+      );
+      await nextFrame();
+      expect(built(older, 120), "the premise: the older body is still owed").toBe(false);
+      expect(blankInView(), "the older body's last rows, in view, were left to the drain").toBe(
+        false,
+      );
+      expect(coverUp(), "the cover waited on rows the paint could build").toBe(false);
+      await yields.releaseAll();
+    });
+  });
+
+  it("stays up while one slice cannot fill the view, and lifts before the bodies above finish", async () => {
+    // A port taller than one slice of rows: what the paint builds leaves a spacer in view.
+    await withPortHeight(2400, async () => {
+      const yields = holdYields();
+      const b = freshID("cr-b");
+      const older = `${b}-old`;
+      const newest = `${b}-new`;
+      let lift: Promise<AtLift> | undefined;
+      await switchUnderCover(
+        [chat(b, [heavyTurn(older, 120, 1, "failed"), heavyTurn(newest, 200, 2)])],
+        b,
+        () => {
+          lift = watchLift([older, 120]);
+        },
+      );
+      if (lift === undefined) {
+        throw new Error("the switch never held the cover");
+      }
+      let at: AtLift | undefined;
+      void lift.then((v) => {
+        at = v;
+      });
+      await nextFrame();
+      expect(coverUp(), "the premise: one slice leaves a spacer in view").toBe(true);
+      for (let round = 0; at === undefined; round++) {
+        expect(round, "the cover never lifted").toBeLessThan(200);
+        await yields.step();
+      }
+      expect(at.blank, "a blank band showed at the lift").toBe(false);
+      expect(at.olderBuilt, "the lift waited on a body out of view").toBe(false);
+      await yields.releaseAll();
+    });
   });
 
   it("lifts by the first frame when every body still owed is out of view", async () => {
