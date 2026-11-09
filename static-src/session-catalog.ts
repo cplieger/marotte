@@ -14,6 +14,7 @@ import { refreshPickerIfVisible, setCatalogPhase, setPickerModels } from "./pick
 import { refreshContextUI } from "./context-ui.js";
 import { setCatalogOutputStyles } from "./output-style.js";
 import { MODEL_CONTEXT_SIZES, contextSizeFor, getActive, parseContextSize } from "./store.js";
+import { getConfigTemplateEndpoint } from "./wire/client.gen.js";
 
 /** One catalog entry, mapped from the wire `SessionModel` to the picker's `ModelInfo`. */
 function toModelInfo(m: SessionModel): ModelInfo {
@@ -44,7 +45,7 @@ export function fetchCatalog(
       // path.
       read: (signal) =>
         apiGetTyped(
-          "/api/config-template",
+          getConfigTemplateEndpoint.path,
           decodeConfigTemplateResponse,
           signal,
           CATALOG_REQUEST_TIMEOUT_MS,

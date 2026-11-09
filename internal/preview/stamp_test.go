@@ -168,8 +168,8 @@ func TestStamp_ADirectoryOfIgnoredNamesSpendsTheScanBudget(t *testing.T) {
 func TestStamp_Refusals(t *testing.T) {
 	f := newFixture(t)
 	rec := f.do(http.MethodPost, "/api/preview/stamp?path="+url.QueryEscape(filepath.Join(f.demo, "index.html")), "")
-	if rec.Code != 405 || rec.Header().Get("Allow") != "GET" {
-		t.Errorf("POST stamp = %d Allow %q, want 405 GET", rec.Code, rec.Header().Get("Allow"))
+	if rec.Code != 405 || rec.Header().Get("Allow") != "GET, HEAD" {
+		t.Errorf("POST stamp = %d Allow %q, want 405 GET, HEAD", rec.Code, rec.Header().Get("Allow"))
 	}
 	for p, want := range map[string]int{"rel.html": 400, "/etc/x.html": 403, filepath.Join(f.ws, "root.html"): 400, filepath.Join(f.demo, "nope.html"): 404} {
 		if rec := f.do(http.MethodGet, "/api/preview/stamp?path="+url.QueryEscape(p), ""); rec.Code != want {

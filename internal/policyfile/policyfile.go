@@ -44,7 +44,7 @@ const (
 
 // Rule is one policy rule. Field order (capability, effect, match, exclude) is
 // the canonical KAS order. YAML tags only: the REST layer decodes into its own
-// policyRuleBody, so nothing encodes a Rule as JSON.
+// PolicyRuleWrite, so nothing encodes a Rule as JSON.
 type Rule struct {
 	Capability string   `yaml:"capability"`
 	Effect     string   `yaml:"effect"`

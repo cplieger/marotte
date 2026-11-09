@@ -5,6 +5,7 @@
 import { apiGetTyped } from "./api-client.js";
 import { decodeToolCallBulk } from "./wire/decoders.gen.js";
 import type { TextSpan, ToolCallBulk, ToolDiff } from "./wire/types.gen.js";
+import { getChatsByIdToolsByToolEndpoint } from "./wire/client.gen.js";
 
 /** What a reveal renders, and all this module holds. Not the wire `ToolCallBulk`: its `input` is
  *  read by nobody (a `has_full` card is never live) and is `unknown`, so dropping it keeps every
@@ -110,7 +111,7 @@ export function toolCallBulk(chatID: string, toolCallID: string): Promise<ToolBu
   const entry: Entry = {
     cost: undefined,
     promise: apiGetTyped(
-      `/api/chats/${encodeURIComponent(chatID)}/tools/${encodeURIComponent(toolCallID)}`,
+      getChatsByIdToolsByToolEndpoint.request({ id: chatID, tool: toolCallID }).path,
       decodeToolCallBulk,
     ).then((d) => settle(k, entry, d)),
   };

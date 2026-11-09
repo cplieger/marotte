@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/go/wiregen"
+	"github.com/cplieger/go/wiregen/v2"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 

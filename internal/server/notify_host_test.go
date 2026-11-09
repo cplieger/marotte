@@ -35,7 +35,7 @@ func hostGatedNotifyStack(t *testing.T, gate notify.Gate, deliv notify.Deliverer
 	s := docServer(t.TempDir(), WithHostPolicy(policy), WithNotifyGate(gate), WithNotifyDeliverer(deliv))
 	idem := newIdempotencyCache(idempotencyTTL)
 	t.Cleanup(idem.stop)
-	return httpserver.Chain(s.routes(), s.middlewareStack(baseCSPPolicy, idem)...)
+	return httpserver.Chain(s.mux(), s.middlewareStack(baseCSPPolicy, idem)...)
 }
 
 func serveOne(h http.Handler, method, host, path, auth, body string) *httptest.ResponseRecorder {

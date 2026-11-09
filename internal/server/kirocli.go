@@ -50,8 +50,8 @@ func kiroReasonText(why pin.Reason) string {
 	return reasonUnavailable
 }
 
-// rescanBody is the repair hook's answer. A struct, not a map, so the key order is fixed.
-type rescanBody struct {
+// RescanResult is the repair hook's answer. A struct, not a map, so the key order is fixed.
+type RescanResult struct {
 	Status string `json:"status"`
 	Reason string `json:"reason,omitempty"`
 }
@@ -59,15 +59,10 @@ type rescanBody struct {
 // handleKiroRescan re-derives the active kiro-cli version from disk (downloading nothing) and
 // reports readiness: 200 when a version is active, else 503 with the manager's reason.
 func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
-	// The method gate sits INSIDE the loopback wrapper, so a remote caller learns nothing; not
-	// on the pattern, whose mismatch falls through to the SPA mount (see ListenAndServe).
-	if !httpreply.RequireMethod(w, r, http.MethodPost) {
-		return
-	}
 	w.Header().Set("Cache-Control", "no-store")
 	ok, err := s.kiroRescan(r.Context())
 	if ok {
-		httpserver.WriteJSON(w, rescanBody{Status: "ok"})
+		httpserver.WriteJSON(w, RescanResult{Status: "ok"})
 		return
 	}
 	// Report the VERDICT, not err (which can name a volume path); the manager logged the fault.
@@ -82,7 +77,7 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 		errText = logsafe.Field(err.Error())
 	}
 	slog.Warn("kiro-cli rescan found no usable version", "reason", reason, "error", errText)
-	httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, rescanBody{
+	httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, RescanResult{
 		Status: "unready",
 		Reason: reason,
 	})

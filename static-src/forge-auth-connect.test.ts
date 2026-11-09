@@ -613,7 +613,7 @@ describe("forge-auth: the connect dialog", () => {
       const { spy, answer } = queuedFetch();
 
       connectButton(slot).click();
-      answer(0, json({ error: "refused", code: "reconnect_required" }, 401));
+      answer(0, json({ error: "refused", code: "reconnect_required" }, 409));
 
       await vi.waitFor(() => expect(spy).toHaveBeenCalledOnce());
       expect(bodyOf(spy, 0)).toEqual({
@@ -677,7 +677,7 @@ describe("forge-auth: the connect dialog", () => {
       const { spy, answer } = queuedFetch();
 
       connectButton(slot).click();
-      answer(0, json({ error: "the token was refused", code: "reconnect_required" }, 401));
+      answer(0, json({ error: "the token was refused", code: "reconnect_required" }, 409));
 
       await vi.waitFor(() => expect(statusText(slot)).toBe("the token was refused"));
       expect(spy).toHaveBeenCalledOnce();

@@ -26,7 +26,8 @@ const writeBodyLimit = 6*WholeFileMax + 1024
 
 var chmodInRoot = (*os.Root).Chmod
 
-type writeBody struct {
+// FileWrite is PUT /api/file's body.
+type FileWrite struct {
 	// FileID is the identity the client's buffer was read under. Absent (or null) writes
 	// unconditionally, for non-editor writers and the editor's explicit Overwrite.
 	FileID  *string `json:"file_id"`
@@ -89,32 +90,32 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc, owner Owner) {
 }
 
 // decodeWriteBody reads and validates the PUT body before anything on disk is opened.
-func decodeWriteBody(w http.ResponseWriter, r *http.Request, l loc) (writeBody, bool) {
+func decodeWriteBody(w http.ResponseWriter, r *http.Request, l loc) (FileWrite, bool) {
 	httpserver.LimitBody(w, r, writeBodyLimit)
-	var body writeBody
+	var body FileWrite
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filebrowse: write body too large",
 				"path", logsafe.Field(l.abs), "limit", writeBodyLimit, "error", logsafe.Field(maxErr.Error()))
 			httpserver.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				FileRefusal{Error: "file too large", Code: refusalTooLarge})
-			return writeBody{}, false
+			return FileWrite{}, false
 		}
 		httpreply.BadRequest(w, "invalid json")
-		return writeBody{}, false
+		return FileWrite{}, false
 	}
 	if body.FileID != nil {
 		if _, err := parseFileID(*body.FileID); err != nil {
 			httpserver.WriteJSONStatus(w, http.StatusBadRequest,
 				FileRefusal{Error: errInvalidFileID.Error(), Code: refusalInvalidFileID})
-			return writeBody{}, false
+			return FileWrite{}, false
 		}
 	}
 	if len(body.Content) > WholeFileMax {
 		size := int64(len(body.Content))
 		httpserver.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 			FileRefusal{Error: "file too large", Code: refusalTooLarge, Size: &size})
-		return writeBody{}, false
+		return FileWrite{}, false
 	}
 	return body, true
 }
@@ -126,7 +127,7 @@ func (*staleError) Error() string { return errStaleWrite }
 
 // writeOwned hands the save to l's owner, which reads, checks and writes under its own lock. The
 // answer carries the written bytes when the owner wrote other bytes than were sent.
-func writeOwned(w http.ResponseWriter, r *http.Request, l loc, owner Owner, body writeBody) {
+func writeOwned(w http.ResponseWriter, r *http.Request, l loc, owner Owner, body FileWrite) {
 	var check func([]byte) error
 	if body.FileID != nil {
 		want := *body.FileID

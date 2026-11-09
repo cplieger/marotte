@@ -11,6 +11,7 @@ import {
   decodeShowResponse,
 } from "./wire/decoders.gen.js";
 import type { FileRead, ShowRefusalCode, ShowResponse } from "./wire/types.gen.js";
+import { getGitShowEndpoint } from "./wire/client.gen.js";
 
 const HTTP_TOO_LARGE = 413;
 const HTTP_UNSUPPORTED = 415;
@@ -69,9 +70,9 @@ export async function showRevision(
   at: { readonly path: string; readonly ref: string; readonly repo: string },
   signal?: AbortSignal,
 ): Promise<ShowAnswer> {
-  const repoParam = at.repo !== "" ? `&repo=${encodeURIComponent(at.repo)}` : "";
+  const rev = { path: at.path, ref: at.ref };
   const r = await apiGetTypedOrError(
-    `/api/git/show?path=${encodeURIComponent(at.path)}&ref=${encodeURIComponent(at.ref)}${repoParam}`,
+    getGitShowEndpoint.request(at.repo === "" ? rev : { ...rev, repo: at.repo }).path,
     decodeShowOk,
     signal,
   );

@@ -106,7 +106,7 @@ func liveCases() []attemptCase {
 				name: fmt.Sprintf("46 %s, count 1, pause: E8 with A25, then run_start confirms", ls.state),
 				setup: func(tc *testConfirmer, r *launchrule.Rule) {
 					ls.setup(tc, r)
-					tc.setStatus(r.ID, func(st *launchrule.Status) { st.BoundAbandons = 1 })
+					tc.setStatus(r.ID, func(st *launchrule.RuleStatus) { st.BoundAbandons = 1 })
 				},
 				deliver: func(tc *testConfirmer, r *launchrule.Rule) {
 					if n := edit(tc, r, 0, func(r *launchrule.Rule) { r.Enabled = false }); n != 0 {
@@ -346,7 +346,7 @@ var ruleRowCases = slices.Concat(liveCases(), abandonedCases(), []attemptCase{
 	{
 		name: "43 no record, count 2, blocked by A6, edit (filter): E1, then one abandon does not block",
 		setup: func(tc *testConfirmer, r *launchrule.Rule) {
-			tc.setStatus(r.ID, func(st *launchrule.Status) {
+			tc.setStatus(r.ID, func(st *launchrule.RuleStatus) {
 				st.BoundAbandons, st.Blocked, st.RowText = 2, twiceUnreported("wf_0"), twiceUnreported("wf_0")
 			})
 		},
@@ -411,7 +411,7 @@ var ruleRowCases = slices.Concat(liveCases(), abandonedCases(), []attemptCase{
 		name: "45 no record, count 1, blocked by the 24-hour clock, resume: E4",
 		setup: func(tc *testConfirmer, r *launchrule.Rule) {
 			edit(tc, r, 0, func(r *launchrule.Rule) { r.Enabled = false })
-			tc.setStatus(r.ID, func(st *launchrule.Status) {
+			tc.setStatus(r.ID, func(st *launchrule.RuleStatus) {
 				st.BoundAbandons, st.FailingSince, st.Blocked = 1, time.Now().Add(-25*time.Hour), "session not idle"
 			})
 		},

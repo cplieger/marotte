@@ -543,6 +543,37 @@ func TestRemoveStepSteer_DeletesARowKASHolds(t *testing.T) {
 	}
 }
 
+// A row the agent read before the clear landed is refused as consumed, at 409; not_waiting is a
+// row that is not there at all, at 404.
+func TestRemoveStepSteer_ARowTheAgentReadIsConsumed(t *testing.T) {
+	h, br := messageHub(t, marotte.RunStatusRunning, marotte.RunNodeStatusRunning)
+	if _, err := h.runs.messageStep(t.Context(), "wf_1", reviewPath, "check the logs", "m-7", "", nil); err != nil {
+		t.Fatalf("Setup: MessageStep = %v", err)
+	}
+	// The agent reads the row while the clear is in flight, so the clear finds it already delivered.
+	br.mu.Lock()
+	br.onCall = func(method string, _ map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool) {
+		if method != marotte.MethodSessionSteerClear {
+			return nil, nil, false
+		}
+		h.bus.SteerRead(marotte.StepSteerKey("sess_step"), "steer-m-7")
+		return json.RawMessage(`{"messageIds":["steer-m-7"]}`), nil, true
+	}
+	br.mu.Unlock()
+	gen := h.coord.turns.attachForwardNow(runChatID("wf_1")).gen
+	br.mu.Lock()
+	br.deliveredSeq = 3
+	br.mu.Unlock()
+	h.coord.turns.observe(runChatID("wf_1"), gen, 3)
+
+	err := h.runs.removeStepSteer(t.Context(), "wf_1", reviewPath, "steer-m-7")
+	rec := httptest.NewRecorder()
+	h.runRoutes.writeStepErr(rec, "steer remove", "wf_1", reviewPath, err)
+	if rec.Code != http.StatusConflict || reasonOf(t, rec.Body.Bytes()) != command.SteerRefuseConsumed {
+		t.Errorf("reply = %d %s, want 409 consumed", rec.Code, rec.Body.String())
+	}
+}
+
 func TestRemoveStepSteer_AStepWithNoRowsIsNotWaiting(t *testing.T) {
 	h, _, _ := newTestHub()
 	err := h.runs.removeStepSteer(t.Context(), "wf_1", reviewPath, "steer-x")

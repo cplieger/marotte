@@ -26,6 +26,7 @@ import type { TurnBin, TurnMapLayout } from "./rail-select.js";
 import { activeTurnAt, buildOffsets, markerSlotFor, turnsInView } from "./rail-activation.js";
 import type { CardTop, TurnOffsets } from "./rail-activation.js";
 import { queryEl, setAttr, setStyleVar } from "./dom.js";
+import { getChatsByIdTurnsEndpoint } from "./wire/client.gen.js";
 
 /** How far the transcript must scroll before the map appears: a threshold, not `> 0`, so a few
  *  pixels of settling overflow do not flicker it. */
@@ -292,7 +293,7 @@ export async function refreshTurnRail(id: string): Promise<void> {
   // Captured BEFORE the request — see RailRecord. A count the store does not know
   // records nothing: there is no session left to activate against.
   const countAtStart = get(id)?.turn_count;
-  const d = await apiGet<{ turns?: unknown }>(`/api/chats/${encodeURIComponent(id)}/turns`);
+  const d = await apiGet<{ turns?: unknown }>(getChatsByIdTurnsEndpoint.request({ id }).path);
   if (d === null) {
     // A failed fetch, already logged centrally. Keep what the map is showing and
     // keep the stale record, so the next activation retries instead of trusting it.

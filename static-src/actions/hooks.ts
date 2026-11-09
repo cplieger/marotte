@@ -1,10 +1,9 @@
 // Toggles a workspace hook. The list is server-canonical (.kiro/hooks/*.json via KAS,
 // internal/hub/hooks.go) and refetched after every mutation, so no optimistic state.
 
-import { apiAction } from "./index.js";
+import { apiAction, fromEndpoint } from "./index.js";
+import { postHooksByIdEnabledEndpoint } from "../wire/client.gen.js";
 import { stillOr } from "./still-applying.js";
-
-const HOOKS_API = "/api/hooks";
 
 interface SetEnabledArgs {
   id: string;
@@ -16,10 +15,7 @@ interface SetEnabledArgs {
 export const setHookEnabled = apiAction<SetEnabledArgs, void>({
   name: "hooks.set_enabled",
   dedupe: (args) => `hooks.set_enabled:${args.id}`,
-  request: ({ id, enabled }) => ({
-    method: "POST",
-    path: `${HOOKS_API}/${encodeURIComponent(id)}/enabled`,
-    body: { enabled },
-  }),
+  request: ({ id, enabled }) =>
+    fromEndpoint(postHooksByIdEnabledEndpoint.request({ id, body: { enabled } })),
   error: stillOr("updating the hook", "Could not update hook"),
 });

@@ -4,6 +4,7 @@
 
 import { apiGetTyped } from "./api-client.js";
 import { decodeWhoamiResponse } from "./wire/decoders.gen.js";
+import { getWhoamiEndpoint } from "./wire/client.gen.js";
 
 /**
  * The three answers, plus the transport's. A discriminated union, so a branch over it is total and `unavailable`
@@ -32,7 +33,7 @@ const REASON_UNREACHABLE = "marotte could not be reached";
 
 /** Read the current identity. Never rejects: every failure is the `unavailable` arm. */
 export async function resolveIdentity(): Promise<IdentityVerdict> {
-  const d = await apiGetTyped("/api/whoami", decodeWhoamiResponse);
+  const d = await apiGetTyped(getWhoamiEndpoint.path, decodeWhoamiResponse);
   if (d === null) {
     return { state: "unavailable", reason: REASON_UNREACHABLE };
   }

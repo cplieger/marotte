@@ -9,6 +9,7 @@ import { restartEngine } from "./actions/settings.js";
 import { decodeEngineStatus } from "./wire/decoders.gen.js";
 import type { EngineBusy, EngineStatus } from "./wire/types.gen.js";
 import { maybeEl } from "./dom.js";
+import { getEngineEndpoint } from "./wire/client.gen.js";
 
 /** The last status the server reported; null until the first answer. */
 const engineStatus = signal<EngineStatus | null>(null);
@@ -288,7 +289,7 @@ let connection = 0;
  *  failed with no reconcile since: never an answer from a replaced process. A failed read keeps what is shown. */
 async function readEngineStatus(signal?: AbortSignal): Promise<EngineStatus | null> {
   const askedIn = connection;
-  const s = await apiGetTyped("/api/engine", decodeEngineStatus, signal);
+  const s = await apiGetTyped(getEngineEndpoint.path, decodeEngineStatus, signal);
   if (askedIn === connection) {
     if (s === null) {
       return null;

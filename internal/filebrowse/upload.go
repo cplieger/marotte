@@ -21,14 +21,8 @@ import (
 // --- /api/file/upload (POST multipart into a target directory) ---
 
 func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
-	// gosec:G120 is a false positive: r.Body is capped by MaxBytesReader
-	// above, so ParseMultipartForm can't cause memory exhaustion here.
-	if err := r.ParseMultipartForm(multipartMaxMemory); err != nil { //nolint:gosec // G120: size bounded by nginx proxy
+	if err := r.ParseMultipartForm(multipartMaxMemory); err != nil { //nolint:gosec // G120: r.Body is capped by the MaxBytesReader above
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filebrowse: upload too large",
 				"limit", maxUploadSize, "error", err)
@@ -42,7 +36,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	dir := cmp.Or(r.FormValue("dir"), marotte.DefaultUploadDir)
+	dir := cmp.Or(r.PostFormValue("dir"), marotte.DefaultUploadDir)
 	dirLoc, ok := h.resolveOrForbid(w, dir)
 	if !ok {
 		return
@@ -87,7 +81,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("filebrowse: upload",
 		"dir", dirLoc.abs, "count", len(uploaded), "bytes", totalBytes)
-	httpserver.WriteJSON(w, map[string]any{"ok": true, "uploaded": uploaded})
+	httpserver.WriteJSON(w, UploadResult{OK: true, Uploaded: uploaded})
 }
 
 // respondUploadError maps a writeUploads failure: invalid filename 400, an over-cap file 413 (never

@@ -20,18 +20,17 @@ import (
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route"
 	"github.com/cplieger/marotte/internal/settings"
 )
 
 func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {
 	path := s.steering.CustomPath()
 	switch r.Method {
-	case http.MethodGet:
+	case http.MethodGet, http.MethodHead:
 		handleSteeringGet(w, r, path)
 	case http.MethodPut:
 		handleSteeringPut(w, r, path)
-	default:
-		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
 	}
 }
 
@@ -50,20 +49,27 @@ const msgSteeringConflict = "custom.md changed since you loaded it, so your text
 // write cannot be told from one that would overwrite a newer document.
 const msgSteeringIfMatchRequired = "If-Match is required to save custom.md"
 
+// entityTagsMaxBytes bounds the If-Match and If-None-Match a caller sends: marotte's longest tag is
+// a quoted SHA-256 hex (66 bytes), so this holds a short list of them.
+const entityTagsMaxBytes = 256
+
 const (
 	headerETag    = "ETag"
 	headerIfMatch = "If-Match"
 )
 
+// ifMatchHeader is the save token a steering write must carry (428 without it).
+var ifMatchHeader = route.Header{Name: headerIfMatch, Arg: "ifMatch", Required: true, MinBytes: 1, MaxBytes: entityTagsMaxBytes}
+
 // steeringAbsentETag is the token for "no file at custom.md", a real state (an empty document
 // is stored as an absent file), so a fresh volume's first save has a token to send.
 const steeringAbsentETag = `"absent"`
 
-// steeringDocBody is the GET's payload. ETag is the save token, the identity representation's
+// SteeringDoc is the GET's payload. ETag is the save token, the identity representation's
 // strong tag, which If-Match matches as a current representation's (RFC 9110 section 13.1.1).
 // The ETag header is no carrier for it: a gzip-coded answer gets a distinct, weak tag there
 // (section 8.8.3.3), and a weak tag never passes If-Match.
-type steeringDocBody struct {
+type SteeringDoc struct {
 	Content string `json:"content"`
 	ETag    string `json:"etag"`
 }
@@ -76,10 +82,15 @@ type steeringConflictBody struct {
 	Content string `json:"content"`
 }
 
-// steeringSaveBody is a PUT's 200 payload: the ack plus the token for what the write left on
+// SteeringWrite is PUT /api/steering's body.
+type SteeringWrite struct {
+	Content string `json:"content"`
+}
+
+// SteeringSave is a PUT's 200 payload: the ack plus the token for what the write left on
 // disk. "" means no token could be read, and the caller keeps what it had. No ETag header: the
 // stored document is not the request content (RFC 9110 section 9.3.4).
-type steeringSaveBody struct {
+type SteeringSave struct {
 	ETag string `json:"etag"`
 	OK   bool   `json:"ok"`
 }
@@ -121,7 +132,7 @@ func handleSteeringGet(w http.ResponseWriter, r *http.Request, path string) {
 		return
 	}
 	w.Header().Set(headerETag, etag)
-	httpserver.WriteJSON(w, steeringDocBody{Content: content, ETag: etag})
+	httpserver.WriteJSON(w, SteeringDoc{Content: content, ETag: etag})
 }
 
 // steeringWriteAllowed gates a save on the caller's If-Match token, the document's whole
@@ -162,9 +173,7 @@ func savedSteeringETag(r *http.Request, path string) string {
 
 func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
-	var body struct {
-		Content string `json:"content"`
-	}
+	var body SteeringWrite
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpreply.BadRequest(w, "bad request")
 		return
@@ -178,7 +187,7 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 			httpreply.InternalError(w, err)
 			return
 		}
-		httpserver.WriteJSON(w, steeringSaveBody{OK: true, ETag: steeringAbsentETag})
+		httpserver.WriteJSON(w, SteeringSave{OK: true, ETag: steeringAbsentETag})
 		return
 	}
 	if r.Context().Err() != nil {
@@ -196,17 +205,19 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 		slog.Warn("steering: saved but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
 			"path", path)
 	}
-	httpserver.WriteJSON(w, steeringSaveBody{OK: true, ETag: savedSteeringETag(r, path)})
+	httpserver.WriteJSON(w, SteeringSave{OK: true, ETag: savedSteeringETag(r, path)})
 }
+
+// SettingsPatch is PATCH /api/settings' body: the keys to change, each with its JSON value. An
+// unknown key is persisted verbatim, so the body is a map rather than a struct.
+type SettingsPatch map[string]json.RawMessage
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
-	case http.MethodGet:
+	case http.MethodGet, http.MethodHead:
 		handleSettingsGet(w, settings.AgentDirs{Workspace: s.workDir, Config: s.configDir}, s.kiroDefaults)
 	case http.MethodPatch:
 		s.handleSettingsWrite(w, r)
-	default:
-		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPatch)
 	}
 }
 
@@ -281,7 +292,7 @@ func mergeSettingsPatch(dirs settings.AgentDirs, patch map[string]json.RawMessag
 // the document it committed, resolved as a GET resolves it.
 func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
-	var patch map[string]json.RawMessage
+	var patch SettingsPatch
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		httpreply.BadRequest(w, "invalid json")
 		return

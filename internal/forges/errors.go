@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/route"
 )
 
 var kindStatus = map[forgeapi.ErrorKind]int{
@@ -25,41 +27,82 @@ var kindStatus = map[forgeapi.ErrorKind]int{
 	forgeapi.KindUpstream:     http.StatusBadGateway,
 }
 
-// localRefusals are the library's refusals of a request it never sent because
-// the caller's input was wrong.
-var localRefusals = map[string]bool{
-	forgeapi.CodeRepoRefInvalid:        true,
-	forgeapi.CodeRefInvalid:            true,
-	forgeapi.CodeMissingSHA:            true,
-	forgeapi.CodeStrategyNotAllowed:    true,
-	forgeapi.CodeCursorInvalid:         true,
-	forgeapi.CodeListStateInvalid:      true,
-	forgeapi.CodeListOwnerInvalid:      true,
-	forgeapi.CodePageBoundInvalid:      true,
-	forgeapi.CodeConnectionInvalid:     true,
-	forgeapi.CodeHeaderReserved:        true,
-	forgeapi.CodePlaintextRefused:      true,
-	forgeapi.CodePrivateAddressRefused: true,
-	forgeapi.CodeAnonymousRefused:      true,
-	forgeapi.CodeBudgetInvalid:         true,
+// codeStatus is the one status each forgeapi code is answered with, by its remedy, whatever Kind
+// forgeapi built it with: a code has one status across the endpoint table. A code-less error falls
+// back to its Kind.
+var codeStatus = map[string]int{
+	forgeapi.CodeRepoRefInvalid:        http.StatusBadRequest,
+	forgeapi.CodeRepoRefStale:          http.StatusNotFound,
+	forgeapi.CodeRepoOrPRNotVisible:    http.StatusNotFound,
+	forgeapi.CodePRNotFound:            http.StatusNotFound,
+	forgeapi.CodeOwnerUnresolved:       http.StatusNotFound,
+	forgeapi.CodeNotMergeable:          http.StatusConflict,
+	forgeapi.CodeMissingSHA:            http.StatusBadRequest,
+	forgeapi.CodeNoMergePermission:     http.StatusForbidden,
+	forgeapi.CodeStrategyNotAllowed:    http.StatusBadRequest,
+	forgeapi.CodeStaleHead:             http.StatusConflict,
+	forgeapi.CodeValidation:            http.StatusBadGateway,
+	forgeapi.CodeLabelPageTruncated:    http.StatusBadGateway,
+	forgeapi.CodeBranchCannotMerge:     http.StatusConflict,
+	forgeapi.CodeRepoArchived:          http.StatusForbidden,
+	forgeapi.CodeScopeInsufficient:     http.StatusForbidden,
+	forgeapi.CodeAPIVersionRetired:     http.StatusBadGateway,
+	forgeapi.CodeMutationsDisabled:     http.StatusForbidden,
+	forgeapi.CodeRedirectHopCap:        http.StatusBadGateway,
+	forgeapi.CodeRedirectPortRefused:   http.StatusBadGateway,
+	forgeapi.CodeTLSRefused:            http.StatusBadGateway,
+	forgeapi.CodeUnreachable:           http.StatusServiceUnavailable,
+	forgeapi.CodeResponseTooLarge:      http.StatusBadGateway,
+	forgeapi.CodeConnectionInvalid:     http.StatusBadRequest,
+	forgeapi.CodeAnonymousRefused:      http.StatusBadRequest,
+	forgeapi.CodePlaintextRefused:      http.StatusBadRequest,
+	forgeapi.CodePrivateAddressRefused: http.StatusBadRequest,
+	forgeapi.CodeBudgetInvalid:         http.StatusBadRequest,
+	forgeapi.CodePageBoundInvalid:      http.StatusBadRequest,
+	forgeapi.CodeListStateInvalid:      http.StatusBadRequest,
+	forgeapi.CodeListOwnerInvalid:      http.StatusBadRequest,
+	forgeapi.CodeListSinceInvalid:      http.StatusBadRequest,
+	forgeapi.CodeListMergeStateInvalid: http.StatusBadRequest,
+	forgeapi.CodeRunUndated:            http.StatusBadGateway,
+	forgeapi.CodeCursorInvalid:         http.StatusBadRequest,
+	forgeapi.CodeRefInvalid:            http.StatusBadRequest,
+	forgeapi.CodeHeaderReserved:        http.StatusBadRequest,
+	// capability_unsupported arrives as KindForbidden, but it says the instance cannot do this,
+	// which must not read as a permission refusal.
+	forgeapi.CodeCapabilityUnsupported: http.StatusNotImplemented,
+	forgeapi.CodeGrantUnsupported:      http.StatusNotImplemented,
+	// family_undetected carries the last family's kind, but its remedy is a corrected address.
+	forgeapi.CodeFamilyUndetected:  http.StatusUnprocessableEntity,
+	forgeapi.CodeReconnectRequired: http.StatusConflict,
+	forgeapi.CodeGrantDenied:       http.StatusForbidden,
+	forgeapi.CodeGrantExpired:      http.StatusUnauthorized,
+	forgeapi.CodeAppKeyInvalid:     http.StatusBadRequest,
+	forgeapi.CodeAppGrantInvalid:   http.StatusBadRequest,
 }
 
+// notErrorCodes are forgeapi codes that ride a success value, never an *Error: already_enqueued
+// is a merge outcome's.
+var notErrorCodes = map[string]bool{forgeapi.CodeAlreadyEnqueued: true}
+
+// ForgeAPICodes are the forgeapi codes this package relays in its error envelope, each with its
+// codeStatus; a code Codes lists is this package's own.
+var ForgeAPICodes = func() route.CodeSet {
+	var out route.CodeSet
+	for _, c := range forgeapi.Codes() {
+		if notErrorCodes[c] || slices.ContainsFunc(Codes, func(o route.Code) bool { return o.Code == c }) {
+			continue
+		}
+		out = append(out, route.Code{Code: c, Status: codeStatus[c]})
+	}
+	return out
+}()
+
 func statusFor(e *forgeapi.Error) int {
-	switch e.Code {
-	// capability_unsupported arrives as KindForbidden, but it says the instance
-	// cannot do this, which must not read as a permission refusal.
-	case forgeapi.CodeCapabilityUnsupported, forgeapi.CodeGrantUnsupported:
-		return http.StatusNotImplemented
-	// family_undetected carries the last family's kind, but its remedy is a
-	// corrected address, not whatever that one read failed on.
-	case forgeapi.CodeFamilyUndetected:
-		return http.StatusUnprocessableEntity
+	if status, ok := codeStatus[e.Code]; ok {
+		return status
 	}
 	if status, ok := kindStatus[e.Kind]; ok {
 		return status
-	}
-	if localRefusals[e.Code] {
-		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError
 }

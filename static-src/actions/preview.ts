@@ -1,4 +1,5 @@
-import { apiAction } from "./index.js";
+import { apiAction, fromEndpoint } from "./index.js";
+import { getPreviewStampEndpoint, postPreviewGrantEndpoint } from "../wire/client.gen.js";
 import { decodePreviewGrant, decodePreviewStamp } from "../wire/decoders.gen.js";
 import type { PreviewGrant, PreviewStamp } from "../wire/types.gen.js";
 
@@ -14,7 +15,7 @@ const isRefusal = (status: number): boolean => status >= 400 && status < 500 && 
  *  two grants, so the later load's hint and stamp describe the later read. */
 export const grantPreview = apiAction<string, GrantOutcome>({
   name: "preview.grant",
-  request: (path) => ({ method: "POST", path: "/api/preview/grant", body: { path } }),
+  request: (path) => fromEndpoint(postPreviewGrantEndpoint.request({ body: { path } })),
   decode: (data) => ({ kind: "granted", grant: decodePreviewGrant(data) }),
   decodeError: (info) =>
     isRefusal(info.status) || info.status === 503
@@ -28,10 +29,7 @@ export const grantPreview = apiAction<string, GrantOutcome>({
 export const previewStamp = apiAction<string, PreviewStamp>({
   name: "preview.stamp",
   dedupe: (path) => path,
-  request: (path) => ({
-    method: "GET",
-    path: `/api/preview/stamp?path=${encodeURIComponent(path)}`,
-  }),
+  request: (path) => fromEndpoint(getPreviewStampEndpoint.request({ path })),
   decode: decodePreviewStamp,
   error: false,
 });

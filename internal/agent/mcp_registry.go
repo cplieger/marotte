@@ -11,13 +11,14 @@ import (
 	"crypto/subtle"
 	"net/http"
 	"net/url"
+	"reflect"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/cplieger/go/httpserver"
-	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route"
 	"github.com/cplieger/marotte/internal/translate"
 )
 
@@ -200,13 +201,17 @@ func (reg *mcpRegistry) snapshot() []mcpServerRuntime {
 
 // RegisterRoutes wires the status view and the live-control routes (mcp_control.go); these exact
 // paths outrank the mcp store's "/api/mcp/" subtree.
-func (reg *mcpRegistry) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/mcp/status", reg.handleStatus)
-	mux.HandleFunc("/api/mcp/pool", reg.handlePool)
-	mux.HandleFunc("/api/mcp/reconnect", reg.handleReconnect)
-	mux.HandleFunc("/api/mcp/sign-in", reg.handleSignIn)
-	// Registered here, or the "/api/mcp/" subtree reads "oauth-relay" as a server id and 404s.
-	mux.HandleFunc("/api/mcp/oauth-relay", reg.handleOAuthRelay)
+func (reg *mcpRegistry) RegisterRoutes(m routeMux) {
+	m.Bind(route.Methods("/api/mcp/status", http.HandlerFunc(reg.handleStatus), route.Typed[struct{}, MCPStatus](http.MethodGet)))
+	m.Bind(route.Methods("/api/mcp/pool", http.HandlerFunc(reg.handlePool),
+		route.Typed[struct{}, MCPPool](http.MethodGet).WithQuery(reflect.TypeFor[MCPPoolQuery]())))
+	m.Bind(route.Methods("/api/mcp/reconnect", http.HandlerFunc(reg.handleReconnect),
+		route.Typed[MCPServerRef, struct{}](http.MethodPost).WithStatus(http.StatusNoContent)))
+	m.Bind(route.Methods("/api/mcp/sign-in", http.HandlerFunc(reg.handleSignIn),
+		route.Typed[MCPServerRef, MCPSignInStarted](http.MethodPost).WithStatus(http.StatusAccepted)))
+	// Bound here, or the "/api/mcp/{name}" route reads "oauth-relay" as a server id and 404s.
+	m.Bind(route.Methods("/api/mcp/oauth-relay", http.HandlerFunc(reg.handleOAuthRelay),
+		route.Typed[MCPOAuthRelay, MCPOAuthRelayResult](http.MethodPost)))
 }
 
 // RecordSessionStatus replaces sessionID's view with its frame and re-derives the records. A server the frame
@@ -598,14 +603,14 @@ func appendNew(dst, src []string) []string {
 }
 
 // viewPool is what a view's connected servers offer the `#` menu, sorted by server.
-func viewPool(servers []translate.MCPServerReport) []poolServerJSON {
-	var pool []poolServerJSON
+func viewPool(servers []translate.MCPServerReport) []MCPPoolServer {
+	var pool []MCPPoolServer
 	for i := range servers {
 		s := &servers[i]
 		if s.State != translate.MCPReportConnected || len(s.Resources)+len(s.ResourceTemplates) == 0 {
 			continue
 		}
-		row := poolServerJSON{Name: s.Name, Resources: s.Resources, ResourceTemplates: s.ResourceTemplates}
+		row := MCPPoolServer{Name: s.Name, Resources: s.Resources, ResourceTemplates: s.ResourceTemplates}
 		if row.Resources == nil {
 			row.Resources = []marotte.MCPResourceInfo{}
 		}
@@ -614,17 +619,17 @@ func viewPool(servers []translate.MCPServerReport) []poolServerJSON {
 		}
 		pool = append(pool, row)
 	}
-	slices.SortFunc(pool, func(a, b poolServerJSON) int { return cmp.Compare(a.Name, b.Name) })
+	slices.SortFunc(pool, func(a, b MCPPoolServer) int { return cmp.Compare(a.Name, b.Name) })
 	return pool
 }
 
-func poolServerEqual(a, b poolServerJSON) bool {
+func poolServerEqual(a, b MCPPoolServer) bool {
 	return a.Name == b.Name && slices.Equal(a.Resources, b.Resources) && slices.Equal(a.ResourceTemplates, b.ResourceTemplates)
 }
 
 // poolFor is chatID's own view's pool when its session is live and has reported, else the union of every view's
 // (a chat's session opens only at its first prompt, rewind or fork), the oldest view's entry for each name.
-func (reg *mcpRegistry) poolFor(chatID marotte.ChatID) []poolServerJSON {
+func (reg *mcpRegistry) poolFor(chatID marotte.ChatID) []MCPPoolServer {
 	var sid marotte.SessionID
 	live := false
 	if chatID != "" {
@@ -637,15 +642,15 @@ func (reg *mcpRegistry) poolFor(chatID marotte.ChatID) []poolServerJSON {
 			return viewPool(reg.views[i].servers)
 		}
 	}
-	var out []poolServerJSON
+	var out []MCPPoolServer
 	for _, v := range reg.views {
 		for _, row := range viewPool(v.servers) {
-			if !slices.ContainsFunc(out, func(o poolServerJSON) bool { return o.Name == row.Name }) {
+			if !slices.ContainsFunc(out, func(o MCPPoolServer) bool { return o.Name == row.Name }) {
 				out = append(out, row)
 			}
 		}
 	}
-	slices.SortFunc(out, func(a, b poolServerJSON) int { return cmp.Compare(a.Name, b.Name) })
+	slices.SortFunc(out, func(a, b MCPPoolServer) int { return cmp.Compare(a.Name, b.Name) })
 	return out
 }
 
@@ -654,24 +659,31 @@ func (reg *mcpRegistry) poolChanged() {
 	reg.bus.Broadcast(reg.lifetime.shutdownCtx, marotte.NewEvent(marotte.EventMCPPoolChanged, "", marotte.MCPPoolChangedPayload{}))
 }
 
-type poolServerJSON struct {
+// MCPPoolServer is one server of GET /api/mcp/pool.
+type MCPPoolServer struct {
 	Name              string                            `json:"name"`
 	Resources         []marotte.MCPResourceInfo         `json:"resources"`
 	ResourceTemplates []marotte.MCPResourceTemplateInfo `json:"resource_templates"`
 }
 
+// MCPPoolQuery is GET /api/mcp/pool's query.
+type MCPPoolQuery struct {
+	ChatID string `json:"chat_id,omitempty"`
+}
+
+// MCPPool is GET /api/mcp/pool's body.
+type MCPPool struct {
+	Servers []MCPPoolServer `json:"servers"`
+}
+
 // handlePool serves GET /api/mcp/pool?chat_id=: poolFor's resources and templates, sorted by server; empty before
 // any session reported them.
 func (reg *mcpRegistry) handlePool(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
 	out := reg.poolFor(marotte.ChatID(r.URL.Query().Get("chat_id")))
 	if out == nil {
-		out = []poolServerJSON{}
+		out = []MCPPoolServer{}
 	}
-	httpserver.WriteJSON(w, map[string][]poolServerJSON{"servers": out})
+	httpserver.WriteJSON(w, MCPPool{Servers: out})
 }
 
 // anchorConsentURL is the one writer of new anchors, and decides how a consent URL KAS opened is shown. A state an
@@ -910,9 +922,10 @@ func (reg *mcpRegistry) originFor(name string, src marotte.MCPSource, configured
 	return p
 }
 
+// MCPStatusServer is one server of GET /api/mcp/status.
 // Field order must match that struct: handleStatus converts directly, so a reorder is a compile
 // error, not a silent swap.
-type statusServer struct {
+type MCPStatusServer struct {
 	Name  string                 `json:"name"`
 	State marotte.MCPServerState `json:"state"`
 	// Origin is never omitted: the client attributes a status to marotte's row only on "user".
@@ -932,17 +945,18 @@ type statusServer struct {
 	Shadows bool `json:"shadows,omitempty"`
 }
 
-type mcpStatusResponse struct {
-	Servers []statusServer `json:"servers"`
+// MCPStatus is GET /api/mcp/status' body.
+type MCPStatus struct {
+	Servers []MCPStatusServer `json:"servers"`
 }
 
 func (reg *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	snap := reg.snapshot()
-	out := make([]statusServer, len(snap))
+	out := make([]MCPStatusServer, len(snap))
 	for i := range snap {
-		out[i] = statusServer(snap[i])
+		out[i] = MCPStatusServer(snap[i])
 	}
-	httpserver.WriteJSON(w, mcpStatusResponse{Servers: out})
+	httpserver.WriteJSON(w, MCPStatus{Servers: out})
 }
 
 // startNotifier runs the one goroutine that drains notifyCh and calls onChange after a short

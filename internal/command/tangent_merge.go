@@ -77,12 +77,12 @@ func cmdMergeTangent(ctx context.Context, tangents TangentAccess, merges *tangen
 		merges.release(key)
 		return nil, err
 	}
-	reply := mergeReply(mergeStatus{State: string(marotte.TangentMergeRunning), ParentChatID: parent})
+	reply := mergeReply(TangentMergeStatus{State: string(marotte.TangentMergeRunning), ParentChatID: parent})
 	reply["message_id"] = messageID
 	return reply, nil
 }
 
-func mergeReply(s mergeStatus) map[string]any {
+func mergeReply(s TangentMergeStatus) map[string]any {
 	extra := map[string]any{"state": s.State}
 	if s.ParentChatID != "" {
 		extra["parent_chat_id"] = s.ParentChatID

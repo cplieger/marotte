@@ -10,10 +10,6 @@ import (
 )
 
 func (rt *Runtime) handleFileChanges(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
 	chatID := r.URL.Query().Get("chat_id")
 	if chatID == "" {
 		httpreply.BadRequest(w, "chat_id is required")
@@ -28,5 +24,5 @@ func (rt *Runtime) handleFileChanges(w http.ResponseWriter, r *http.Request) {
 	if ranges == nil {
 		ranges = []buffer.LineRange{}
 	}
-	httpserver.WriteJSON(w, map[string]any{"changes": ranges})
+	httpserver.WriteJSON(w, FileChanges{Changes: ranges})
 }

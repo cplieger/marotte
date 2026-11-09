@@ -2,7 +2,7 @@ import { signal } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { apiGetTypedOrError } from "./api-client.js";
 import { decodeRunStepTranscript } from "./wire/decoders.gen.js";
-import { runStepURL } from "./actions/runs.js";
+import { getRunsByIdStepsByPathEndpoint } from "./wire/client.gen.js";
 import {
   adoptRunOpenEntries,
   appendRunEntry,
@@ -89,7 +89,10 @@ export function rereadStepTranscript(workflowID: string, nodePath: string): void
  *  refusal from a transient one and the collapsing helper hands back one null for both. */
 async function fetchStep(key: string, workflowID: string, nodePath: string): Promise<void> {
   try {
-    const r = await apiGetTypedOrError(runStepURL(workflowID, nodePath), decodeRunStepTranscript);
+    const r = await apiGetTypedOrError(
+      getRunsByIdStepsByPathEndpoint.request({ id: workflowID, path: nodePath }).path,
+      decodeRunStepTranscript,
+    );
     if (r.ok && r.data !== null) {
       adopt(workflowID, r.data);
       reads.set(key, { state: r.data.state });

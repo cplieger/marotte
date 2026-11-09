@@ -17,6 +17,7 @@ import (
 	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/push"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // probeEngine is a fakeEngine that also answers the SSE probe, so the hooks mount.
@@ -35,14 +36,14 @@ func (p *probeEngine) CloseNextSSEAfter(n int)       { p.armed = n }
 func TestTestHooks_CensusReadsTheProbe(t *testing.T) {
 	eng := &probeEngine{clients: 2, legacy: 1, v3: 5}
 	mux := http.NewServeMux()
-	(&Server{agent: eng}).registerTestHooks(mux)
+	(&Server{agent: eng}).registerTestHooks(routetest.On(mux))
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/test/sse", http.NoBody))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /api/test/sse = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	var got sseProbeResponse
+	var got SSEProbe
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -54,7 +55,7 @@ func TestTestHooks_CensusReadsTheProbe(t *testing.T) {
 func TestTestHooks_CloseAfterArmsTheProbe(t *testing.T) {
 	eng := &probeEngine{}
 	mux := http.NewServeMux()
-	(&Server{agent: eng}).registerTestHooks(mux)
+	(&Server{agent: eng}).registerTestHooks(routetest.On(mux))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/test/sse/close-after", strings.NewReader(`{"after":3}`))
@@ -76,7 +77,7 @@ func TestTestHooks_CloseAfterArmsTheProbe(t *testing.T) {
 // probe, and a server without one has no census to serve.
 func TestTestHooks_NarrowEngineMountsNothing(t *testing.T) {
 	mux := http.NewServeMux()
-	(&Server{agent: &fakeEngine{}}).registerTestHooks(mux)
+	(&Server{agent: &fakeEngine{}}).registerTestHooks(routetest.On(mux))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/test/sse", http.NoBody))
 	if rec.Code != http.StatusNotFound {
@@ -93,11 +94,11 @@ func TestTestHooks_CensusReportsPresenceAndSuppression(t *testing.T) {
 	svc := push.New(context.Background(), t.TempDir(), "mailto:test@example.com", push.WithPresence(presence))
 	t.Cleanup(svc.Close)
 	mux := http.NewServeMux()
-	(&Server{agent: &probeEngine{}, push: svc}).registerTestHooks(mux)
+	(&Server{agent: &probeEngine{}, push: svc}).registerTestHooks(routetest.On(mux))
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/test/sse", http.NoBody))
-	var got sseProbeResponse
+	var got SSEProbe
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -118,7 +119,7 @@ func TestTestHooks_CensusReportsPresenceAndSuppression(t *testing.T) {
 func TestTestHooks_PreviewTokenMintsAnExpiredGrant(t *testing.T) {
 	h, ph, page := previewStack(t)
 	mux := http.NewServeMux()
-	(&Server{agent: &fakeEngine{}, preview: ph}).registerTestHooks(mux)
+	(&Server{agent: &fakeEngine{}, preview: ph}).registerTestHooks(routetest.On(mux))
 	body := `{"path":"` + page + `","expires_at":"` + time.Now().Add(-time.Minute).UTC().Format(time.RFC3339) + `"}`
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/test/preview-token", strings.NewReader(body)))
@@ -134,7 +135,7 @@ func TestTestHooks_PreviewTokenMintsAnExpiredGrant(t *testing.T) {
 	}
 
 	bare := http.NewServeMux()
-	(&Server{agent: &fakeEngine{}}).registerTestHooks(bare)
+	(&Server{agent: &fakeEngine{}}).registerTestHooks(routetest.On(bare))
 	rec = httptest.NewRecorder()
 	bare.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/test/preview-token", strings.NewReader(body)))
 	if rec.Code != http.StatusNotFound {
@@ -145,7 +146,7 @@ func TestTestHooks_PreviewTokenMintsAnExpiredGrant(t *testing.T) {
 func TestTestHooks_PreviewResolverMakesEveryRouteAnswer503(t *testing.T) {
 	h, ph, page := previewStack(t)
 	mux := http.NewServeMux()
-	(&Server{agent: &fakeEngine{}, preview: ph}).registerTestHooks(mux)
+	(&Server{agent: &fakeEngine{}, preview: ph}).registerTestHooks(routetest.On(mux))
 	g, err := ph.Grant(page, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
@@ -182,7 +183,7 @@ func TestTestHooks_PreviewResolverMakesEveryRouteAnswer503(t *testing.T) {
 func TestTestHooks_PreviewResolverBusyExhaustsTheRetryBudget(t *testing.T) {
 	h, ph, page := previewStack(t)
 	mux := http.NewServeMux()
-	(&Server{agent: &fakeEngine{}, preview: ph}).registerTestHooks(mux)
+	(&Server{agent: &fakeEngine{}, preview: ph}).registerTestHooks(routetest.On(mux))
 	g, err := ph.Grant(page, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +216,7 @@ func TestTestHooks_PreviewResolverBusyExhaustsTheRetryBudget(t *testing.T) {
 func TestTestHooks_PreviewGrowServesTheCheckedSize(t *testing.T) {
 	h, ph, page := previewStack(t)
 	mux := http.NewServeMux()
-	(&Server{agent: &fakeEngine{}, preview: ph}).registerTestHooks(mux)
+	(&Server{agent: &fakeEngine{}, preview: ph}).registerTestHooks(routetest.On(mux))
 	asset := filepath.Join(filepath.Dir(page), "grow.bin")
 	if err := os.WriteFile(asset, []byte("0123456789"), 0o600); err != nil {
 		t.Fatal(err)

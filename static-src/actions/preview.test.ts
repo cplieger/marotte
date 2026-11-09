@@ -9,6 +9,7 @@ vi.mock("../toast.js", async (importOriginal) => ({
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { grantPreview, previewStamp } from "./preview.js";
 import { error as toastError } from "../toast.js";
+import { asked } from "../__test-helpers__/url.js";
 
 const mockFetch = vi.fn();
 
@@ -92,7 +93,10 @@ describe("preview.stamp", () => {
     const out = await previewStamp.dispatch("/workspace/my demo/index.html");
     expect(out).toEqual({ stamp: "ab", epoch: "e1", entries: 3, truncated: false });
     const [url] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/preview/stamp?path=%2Fworkspace%2Fmy%20demo%2Findex.html");
+    expect(asked(String(url))).toEqual({
+      path: "/api/preview/stamp",
+      query: { path: "/workspace/my demo/index.html" },
+    });
   });
 
   it("resolves null on a failure, so the poll reads it as no news", async () => {

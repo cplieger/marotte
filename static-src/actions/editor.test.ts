@@ -33,6 +33,7 @@ vi.mock("../editor-types.js", () => ({
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "../workspace.js";
 import * as api from "../api-client.js";
+import { asked } from "../__test-helpers__/url.js";
 
 const mockFetch = vi.fn();
 const ID = `sha256:${"a".repeat(64)}`;
@@ -178,7 +179,10 @@ describe("editor.load_diff", () => {
     stage({ [SHOW]: show({ content: "base" }), [FILE]: read("work") });
     const { loadDiff } = await import("./editor.js");
     await loadDiff.dispatch({ path: "static-src/a.ts", repo: "marotte", ref: "HEAD" }).outcome;
-    expect(urls()).toContain("/api/git/show?path=static-src%2Fa.ts&ref=HEAD&repo=marotte");
+    expect(urls().map(asked)).toContainEqual({
+      path: "/api/git/show",
+      query: { path: "static-src/a.ts", ref: "HEAD", repo: "marotte" },
+    });
   });
 
   it("captions both panes and carries the working read for an ordinary change", async () => {

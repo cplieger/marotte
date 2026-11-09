@@ -21,7 +21,7 @@ import (
 
 type testPush struct{}
 
-func (*testPush) RegisterRoutes(*http.ServeMux) {}
+func (*testPush) RegisterRoutes(routeMux) {}
 
 func TestSafeKiroSetting(t *testing.T) {
 	tests := []struct {
@@ -417,20 +417,6 @@ func TestHandleHealth_reasonsKeepThePriorityOrder(t *testing.T) {
 	want := []string{"starting up or shutting down", "kiro-cli install retrying", "sign-in required"}
 	if !slices.Equal(got.Reasons, want) {
 		t.Errorf("reasons = %q, want %q", got.Reasons, want)
-	}
-}
-
-func TestHandleHealth_RefusesAWriteMethod(t *testing.T) {
-	s := &Server{}
-	s.ready.Store(true)
-	rec := httptest.NewRecorder()
-	s.handleHealth(rec, httptest.NewRequest(http.MethodPost, healthzPath, nil))
-
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d, want 405", rec.Code)
-	}
-	if got := rec.Header().Get("Allow"); got != "GET, HEAD" {
-		t.Errorf("Allow = %q, want %q", got, "GET, HEAD")
 	}
 }
 

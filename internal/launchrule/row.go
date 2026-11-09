@@ -42,7 +42,7 @@ type Outcome struct {
 }
 
 // BeginSlot records a new slot of the row, its run runID ("" for none) and its first outcome o.
-func (st *Status) BeginSlot(runID string, o Outcome) {
+func (st *RuleStatus) BeginSlot(runID string, o Outcome) {
 	st.LastRunID, st.LastStatus = runID, StatusStarted
 	st.settleSlot(o)
 }
@@ -50,7 +50,7 @@ func (st *Status) BeginSlot(runID string, o Outcome) {
 // settleSlot records o as the outcome of the row's current slot. The slot counts toward FailedSlots once: a
 // completed slot sets it to 0 and any other ending adds one, unless the slot already ended in a failure; a started
 // slot has no ending yet.
-func (st *Status) settleSlot(o Outcome) {
+func (st *RuleStatus) settleSlot(o Outcome) {
 	failedAlready := st.LastStatus != StatusStarted && st.LastStatus != StatusCompleted
 	st.LastStatus, st.LastReason = o.Status, o.Reason
 	switch {
@@ -87,7 +87,7 @@ type Run struct {
 type Clock struct {
 	Err error
 	Rule
-	Status
+	RuleStatus
 }
 
 // Clocks returns every clock rule with its row, in creation order.
@@ -128,12 +128,12 @@ func clockOf(r *Rule, rs *ruleState) Clock {
 	if err := rs.blocked(); err != nil {
 		return Clock{Rule: *r, Err: err}
 	}
-	return Clock{Rule: *r, Status: rs.state.Status}
+	return Clock{Rule: *r, RuleStatus: rs.state.Status}
 }
 
 // UpdateClock applies set to the clock rule row names and writes that rule's state file when set reports a
 // change. ErrNotFound when no clock rule has the id, what State answers when the rule is blocked.
-func (s *Store) UpdateClock(ctx context.Context, row Row, set func(st *Status) bool) error {
+func (s *Store) UpdateClock(ctx context.Context, row Row, set func(st *RuleStatus) bool) error {
 	s.mu.Lock()
 	i := s.indexLocked(row.ID)
 	if i < 0 || s.rules[i].When.Clock == nil {
@@ -160,7 +160,7 @@ func (s *Store) UpdateClock(ctx context.Context, row Row, set func(st *Status) b
 // RecordStart marks run as the row's live run, before the run can execute, so its ending has a row to land on
 // whenever it comes.
 func (s *Store) RecordStart(ctx context.Context, run Run) error {
-	return s.UpdateClock(ctx, Row{ID: run.ScheduleID}, func(st *Status) bool {
+	return s.UpdateClock(ctx, Row{ID: run.ScheduleID}, func(st *RuleStatus) bool {
 		st.BeginSlot(run.WorkflowID, Outcome{Status: StatusStarted})
 		if !run.StartedAt.IsZero() {
 			st.LastRunAt = run.StartedAt
@@ -174,7 +174,7 @@ func (s *Store) RecordStart(ctx context.Context, run Run) error {
 // with its own run or a refusal. It leaves the anchor: moving it would shift the next run by however long the
 // failure took.
 func (s *Store) RecordOutcome(ctx context.Context, run Run, o Outcome) error {
-	return s.UpdateClock(ctx, Row{ID: run.ScheduleID}, func(st *Status) bool {
+	return s.UpdateClock(ctx, Row{ID: run.ScheduleID}, func(st *RuleStatus) bool {
 		if st.LastRunID != run.WorkflowID {
 			return false
 		}
@@ -186,7 +186,7 @@ func (s *Store) RecordOutcome(ctx context.Context, run Run, o Outcome) error {
 // RecordEnding records how run ended on its own, only while the row still reads it started: an outcome
 // RecordOutcome wrote first (a denial, a bound stop) names the cause, and an ending says less.
 func (s *Store) RecordEnding(ctx context.Context, run Run, o Outcome) error {
-	return s.UpdateClock(ctx, Row{ID: run.ScheduleID}, func(st *Status) bool {
+	return s.UpdateClock(ctx, Row{ID: run.ScheduleID}, func(st *RuleStatus) bool {
 		if st.LastRunID != run.WorkflowID || st.LastStatus != StatusStarted {
 			return false
 		}

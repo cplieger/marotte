@@ -6,9 +6,10 @@
 import { el } from "@cplieger/ui";
 
 import { exportFilename } from "./export-filename.js";
+import { getChatsByIdExportEndpoint } from "./wire/client.gen.js";
 
 function chatExportURL(chatID: string, format: "md" | "json"): string {
-  return `/api/chats/${encodeURIComponent(chatID)}/export?format=${format}`;
+  return getChatsByIdExportEndpoint.request({ id: chatID, format }).path;
 }
 
 /** Trigger a browser download of chatID's transcript in the given format

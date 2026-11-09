@@ -47,7 +47,7 @@ func TestValidate_AccumulatesIndependentFields(t *testing.T) {
 				Transport: transportHTTP,
 				Name:      "1bad name",
 				URL:       "ftp://example.test/mcp",
-				Headers:   []keyPair{{Name: "bad header", Value: "x"}},
+				Headers:   []KeyPair{{Name: "bad header", Value: "x"}},
 			},
 			wantFields: []string{"headers", "name", "url"},
 			wantMsgs: []string{
@@ -65,7 +65,7 @@ func TestValidate_AccumulatesIndependentFields(t *testing.T) {
 				Name:      "ok",
 				Command:   "bash",
 				URL:       "https://leaked.example/mcp",
-				Headers:   []keyPair{{Name: "Authorization", Value: "Bearer t"}},
+				Headers:   []KeyPair{{Name: "Authorization", Value: "Bearer t"}},
 			},
 			wantFields: []string{"headers", "url"},
 			wantMsgs: []string{
@@ -84,7 +84,7 @@ func TestValidate_AccumulatesIndependentFields(t *testing.T) {
 				URL:       "https://x.example/mcp",
 				Command:   "npx",
 				Args:      []string{"-y", "server"},
-				Env:       []keyPair{{Name: "TOKEN", Value: "t"}},
+				Env:       []KeyPair{{Name: "TOKEN", Value: "t"}},
 			},
 			wantFields: []string{"args", "command", "env"},
 			wantMsgs: []string{
@@ -117,7 +117,7 @@ func TestValidate_AccumulatesIndependentFields(t *testing.T) {
 				Transport: transportHTTP,
 				Name:      "ok",
 				URL:       "https://example.test/mcp",
-				Headers: []keyPair{
+				Headers: []KeyPair{
 					{Name: "Authorization", Value: "a"},
 					{Name: "authorization", Value: "b"},
 					{Name: "X-Other", Value: "c\x00d"},
@@ -300,9 +300,9 @@ func TestFieldErrors_Bounded(t *testing.T) {
 		for range 400 {
 			tools = append(tools, "bad\x01name")
 		}
-		env := make([]keyPair, 0, 64)
+		env := make([]KeyPair, 0, 64)
 		for range 64 {
-			env = append(env, keyPair{Name: "bad name", Value: "x"})
+			env = append(env, KeyPair{Name: "bad name", Value: "x"})
 		}
 		// Two sub-validators, so more failures arrive at the outer accumulator
 		// than one of them can hand it.
@@ -346,11 +346,11 @@ func TestValidate_CleanRecordsStayClean(t *testing.T) {
 	cases := []*Server{
 		{
 			Name: "ok", Transport: TransportStdio, Command: "bash", Args: []string{"-c", "echo"},
-			Env: []keyPair{{Name: "FOO", Value: "bar"}},
+			Env: []KeyPair{{Name: "FOO", Value: "bar"}},
 		},
 		{
 			Name: "ok", Transport: transportHTTP, URL: "https://x.test/mcp",
-			Headers: []keyPair{{Name: "Authorization", Value: "Bearer x"}},
+			Headers: []KeyPair{{Name: "Authorization", Value: "Bearer x"}},
 		},
 		{Name: "ok", Transport: transportSSE, URL: "http://x.test/sse"},
 		{

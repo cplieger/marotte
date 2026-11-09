@@ -38,8 +38,8 @@ func TestValidate_RegistryTakesEnvAndHeaders(t *testing.T) {
 	}
 	sv := &Server{
 		Name: "github", Transport: transportRegistry,
-		Env:     []keyPair{{Name: "GITHUB_TOKEN", Value: "test-key"}},
-		Headers: []keyPair{{Name: "Authorization", Value: "Bearer test-key"}},
+		Env:     []KeyPair{{Name: "GITHUB_TOKEN", Value: "test-key"}},
+		Headers: []KeyPair{{Name: "Authorization", Value: "Bearer test-key"}},
 	}
 	if err := validate(sv); err != nil {
 		t.Errorf("validate(registry with env and headers) = %v, want nil", err)
@@ -50,8 +50,8 @@ func TestValidate_RegistryTakesEnvAndHeaders(t *testing.T) {
 func TestValidate_RegistryHoldsOverridesToThePairRules(t *testing.T) {
 	err := validate(&Server{
 		Name: "github", Transport: transportRegistry,
-		Env:     []keyPair{{Name: "1BAD", Value: "x"}},
-		Headers: []keyPair{{Name: "X-Key", Value: "a"}, {Name: "x-key", Value: "b"}},
+		Env:     []KeyPair{{Name: "1BAD", Value: "x"}},
+		Headers: []KeyPair{{Name: "X-Key", Value: "a"}, {Name: "x-key", Value: "b"}},
 	})
 	got := fieldSet(err)
 	if !strings.Contains(got[fieldEnvPairs], `bad name "1BAD"`) {
@@ -89,8 +89,8 @@ func TestWriteKASConfig_RegistryCarriesEnvAndHeaders(t *testing.T) {
 	s, kas := newIsolatedStore(t)
 	if _, err := s.Create(t.Context(), &Server{
 		Transport: transportRegistry, Name: "catalog", Enabled: true,
-		Env:     []keyPair{{Name: "API_KEY", Value: "env-test-value"}},
-		Headers: []keyPair{{Name: "X-Api-Key", Value: "header-test-value"}},
+		Env:     []KeyPair{{Name: "API_KEY", Value: "env-test-value"}},
+		Headers: []KeyPair{{Name: "X-Api-Key", Value: "header-test-value"}},
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -112,8 +112,8 @@ func TestUpdate_RegistryKeepsAMaskedSecret(t *testing.T) {
 	s, kas := newIsolatedStore(t)
 	orig, err := s.Create(t.Context(), &Server{
 		Transport: transportRegistry, Name: "catalog", Enabled: true,
-		Env:     []keyPair{{Name: "API_KEY", Value: "env-test-value"}},
-		Headers: []keyPair{{Name: "X-Api-Key", Value: "header-test-value"}},
+		Env:     []KeyPair{{Name: "API_KEY", Value: "env-test-value"}},
+		Headers: []KeyPair{{Name: "X-Api-Key", Value: "header-test-value"}},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -123,13 +123,13 @@ func TestUpdate_RegistryKeepsAMaskedSecret(t *testing.T) {
 	}
 	out, err := s.update(t.Context(), orig.ID, &Server{
 		Transport: transportRegistry, Name: "catalog", Enabled: true,
-		Env:     []keyPair{{Name: "API_KEY", Value: secretMask}, {Name: "REGION", Value: "eu"}},
-		Headers: []keyPair{{Name: "X-Api-Key", Value: secretMask}},
+		Env:     []KeyPair{{Name: "API_KEY", Value: secretMask}, {Name: "REGION", Value: "eu"}},
+		Headers: []KeyPair{{Name: "X-Api-Key", Value: secretMask}},
 	})
 	if err != nil {
 		t.Fatalf("update echoing the mask: %v", err)
 	}
-	if !slices.ContainsFunc(out.Env, func(kv keyPair) bool { return kv.Name == "REGION" && kv.Value == secretMask }) {
+	if !slices.ContainsFunc(out.Env, func(kv KeyPair) bool { return kv.Name == "REGION" && kv.Value == secretMask }) {
 		t.Errorf("update returned env %v, want REGION masked", out.Env)
 	}
 	entry := readKASServers(t, kas)["catalog"]

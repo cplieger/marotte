@@ -320,7 +320,7 @@ func TestForgesList_OffersDeviceSignInOnGitHubAndGitLab(t *testing.T) {
 func TestGitLabGrant_PublicInstanceUsesMarottesApplication(t *testing.T) {
 	h := newConnectHarness(t, nil)
 
-	rec, req, err := h.handler.grantFor(KindGitLab, &grantBody{})
+	rec, req, err := h.handler.grantFor(KindGitLab, &GrantStart{})
 	if err != nil {
 		t.Fatalf("grantFor(gitlab, no host) = %v, want Marotte's application on gitlab.com", err)
 	}
@@ -351,10 +351,10 @@ func TestDeviceGrant_FamilyWithoutOneIsNotFound(t *testing.T) {
 func TestGitLabGrant_SelfManagedInstanceNeedsItsOwnClientID(t *testing.T) {
 	h := newConnectHarness(t, nil)
 
-	if _, _, err := h.handler.grantFor(KindGitLab, &grantBody{Host: "gitlab.example.com"}); !errors.Is(err, errClientIDNeeded) {
+	if _, _, err := h.handler.grantFor(KindGitLab, &GrantStart{Host: "gitlab.example.com"}); !errors.Is(err, errClientIDNeeded) {
 		t.Errorf("grantFor(gitlab.example.com, no client id) = %v, want errClientIDNeeded", err)
 	}
-	rec, req, err := h.handler.grantFor(KindGitLab, &grantBody{Host: "gitlab.example.com", ClientID: "admin-app"})
+	rec, req, err := h.handler.grantFor(KindGitLab, &GrantStart{Host: "gitlab.example.com", ClientID: "admin-app"})
 	if err != nil || rec.OAuthClientID != "admin-app" || req.ClientID != "admin-app" || !slices.Equal(req.Scopes, []string{"api"}) {
 		t.Errorf("grantFor(gitlab.example.com, admin-app) = record client %q, request %+v, %v; want admin-app with scope api",
 			rec.OAuthClientID, req, err)

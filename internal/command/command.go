@@ -240,10 +240,6 @@ func requireChatID(cmd *marotte.ClientCommand) error {
 
 // ServeHTTP is the POST /api/command HTTP handler.
 func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
 	httpserver.LimitBody(w, r, maxCommandBody)
 	var cmd marotte.ClientCommand
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {

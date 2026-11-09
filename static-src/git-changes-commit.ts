@@ -5,6 +5,7 @@ import { el } from "@cplieger/ui";
 import { isHttpURL } from "./url-safety.js";
 import type { GitRepoStatus } from "./git-types.js";
 import { queryEl } from "./dom.js";
+import { getGitLogEndpoint } from "./wire/client.gen.js";
 
 type RepoStatus = GitRepoStatus;
 
@@ -109,7 +110,7 @@ export function renderRecentCommits(r: RepoStatus, deps: CommitDeps): HTMLElemen
       remote?: string;
       behind?: number;
       commit_url_prefix?: string;
-    }>(`/api/git/log?repo=${encodeURIComponent(r.repo)}`, deps.diffAbort?.signal).then((data) => {
+    }>(getGitLogEndpoint.request({ repo: r.repo }).path, deps.diffAbort?.signal).then((data) => {
       if (deps.diffAbort?.signal.aborted) {
         return;
       }

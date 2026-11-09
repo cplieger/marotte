@@ -36,6 +36,11 @@ import { framedSince, headerFrameMark } from "./header-frames.js";
 import { observeStamp } from "./subject-versions.js";
 import { settleWorkflowMessages, turnsInOrder } from "./workflow-delivery.js";
 import type { Entry, OpenEntry, SubjectStamp } from "./wire/types.gen.js";
+import {
+  getChatsByIdEndpoint,
+  getChatsByIdTurnsByTurnEndpoint,
+  getChatsEndpoint,
+} from "./wire/client.gen.js";
 
 const decodeChatListResponseLocal: Decoder<{ chats?: ChatHeader[]; subject?: SubjectStamp }> = (
   v,
@@ -445,7 +450,7 @@ export async function confirmChatExists(chatID: string): Promise<ChatVerdict> {
   // the transcript is not what is being asked about.
   const mark = headerFrameMark();
   const r = await apiGetTypedOrError(
-    `/api/chats/${encodeURIComponent(chatID)}?limit=1`,
+    getChatsByIdEndpoint.request({ id: chatID, limit: 1 }).path,
     decodeChatConfirmResponseLocal,
   );
   if (r.ok && r.data !== null) {
@@ -503,7 +508,7 @@ export async function loadList(signal?: AbortSignal): Promise<boolean> {
   const knownBefore = new Set(sessionIndex.keys());
 
   const mark = headerFrameMark();
-  const d = await apiGetTyped("/api/chats", decodeChatListResponseLocal, combined);
+  const d = await apiGetTyped(getChatsEndpoint.path, decodeChatListResponseLocal, combined);
   if (combined.aborted) {
     // `listReach` is deliberately NOT written here. This request was superseded — by a `connected`
     // refetch, or by the page unloading — and it never learned anything about the server, so
@@ -650,12 +655,9 @@ export async function loadMessages(
     signal === undefined ? controller.signal : AbortSignal.any([controller.signal, signal]);
   // No `limit`: a window is N TURNS and the count is the server's decision (it clamps and defaults
   // its own), so naming one here would be this client asserting a number it has no basis for.
-  const params = new URLSearchParams();
-  if (beforeTurnID !== undefined) {
-    params.set("before", beforeTurnID);
-  }
-  const query = params.toString();
-  const path = `/api/chats/${encodeURIComponent(chatID)}${query === "" ? "" : `?${query}`}`;
+  const path = getChatsByIdEndpoint.request(
+    beforeTurnID === undefined ? { id: chatID } : { id: chatID, before: beforeTurnID },
+  ).path;
   const heldAtRequest = new Set(beforeTurnID === undefined ? (get(chatID)?.turn_order ?? []) : []);
   const mark = headerFrameMark();
   const d = await apiGetTyped(path, decodeChatGetResponseLocal, combined);
@@ -818,8 +820,10 @@ async function runTurnRange(chatID: string, turnID: string, afterSeq?: number): 
   }
   const controller = new AbortController();
   turnRepairs.set(key, { chatID, controller });
-  const params = afterSeq === undefined ? "" : `?after=${String(afterSeq)}`;
-  const path = `/api/chats/${encodeURIComponent(chatID)}/turns/${encodeURIComponent(turnID)}${params}`;
+  const turn = { id: chatID, turn: turnID };
+  const path = getChatsByIdTurnsByTurnEndpoint.request(
+    afterSeq === undefined ? turn : { ...turn, after: String(afterSeq) },
+  ).path;
   let d: TurnRangeResponse | null;
   // Released the moment it settles, before the seat: a read still counting itself keeps
   // `repairsPending` true so the window never returns to `loaded`, and the in-flight guard above

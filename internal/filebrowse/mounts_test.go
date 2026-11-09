@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 func TestParseBrowseRoots(t *testing.T) {
@@ -105,7 +106,7 @@ func TestListFiles_Root_NestedGrantName(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
-	var resp struct{ Files []fileEntry }
+	var resp struct{ Files []FileEntry }
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +153,7 @@ func TestResolvePath_SymlinkAcrossGrantedMounts(t *testing.T) {
 func TestHandleUpload_DefaultDirRequiresUploadsGrant(t *testing.T) {
 	h, _, _ := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	req := multipartUpload(t, "", map[string][]byte{"x.txt": []byte("x")})
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)

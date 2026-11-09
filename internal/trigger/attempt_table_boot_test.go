@@ -91,7 +91,7 @@ var bootCases = []attemptCase{
 		name: "16 boot-held, bound reached: A8",
 		setup: func(tc *testConfirmer, r *launchrule.Rule) {
 			leasedPending(tc, r)
-			tc.setStatus(r.ID, func(st *launchrule.Status) { st.BoundAbandons = 1 })
+			tc.setStatus(r.ID, func(st *launchrule.RuleStatus) { st.BoundAbandons = 1 })
 			tc.persist(r.ID)
 			tc.restart()
 			tc.run()
@@ -278,7 +278,7 @@ var bootCases = []attemptCase{
 		setup: func(tc *testConfirmer, r *launchrule.Rule) {
 			leasedPending(tc, r)
 			tc.lease(r.ID, "k1", "wf_0")
-			tc.setStatus(r.ID, func(st *launchrule.Status) { st.BoundAbandons = 1 })
+			tc.setStatus(r.ID, func(st *launchrule.RuleStatus) { st.BoundAbandons = 1 })
 			tc.persist(r.ID)
 			moved := *r
 			moved.When.Event = cloneSpec(r.When.Event)

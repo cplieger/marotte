@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os/signal"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -17,8 +18,10 @@ import (
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/notify"
 	"github.com/cplieger/marotte/internal/preview"
+	"github.com/cplieger/marotte/internal/route"
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/toolbelt/v3/pin"
@@ -84,6 +87,10 @@ type Server struct {
 	sensitive filebrowse.Sensitive
 	// heldKiroPrefs keeps the user's value of each kiro-cli setting a lock pins.
 	heldKiroPrefs heldKiroPrefs
+	// entries is the endpoint table every route is bound against.
+	entries []route.Entry
+	// openAPI is the document GET /api/openapi.json serves.
+	openAPI []byte
 	// trustedProxies feeds clientIP; nil logs the unspoofable socket peer.
 	trustedProxies []netip.Prefix
 	acctUsage      acctUsageCache
@@ -98,6 +105,12 @@ type Server struct {
 
 // Option configures a Server at construction time.
 type Option func(*Server)
+
+// WithEndpoints sets the endpoint table every route is bound against and the OpenAPI document
+// generated from it. Without it, Routes refuses every binding.
+func WithEndpoints(entries []route.Entry, openAPI []byte) Option {
+	return func(s *Server) { s.entries, s.openAPI = entries, openAPI }
+}
 
 // WithSteering sets the steering generator used to produce environment.md for kiro-cli.
 func WithSteering(g SteeringGenerator) Option { return func(s *Server) { s.steering = g } }
@@ -281,74 +294,104 @@ func New(opts ...Option) *Server {
 	return s
 }
 
-// routes is the route table ListenAndServe serves.
-//
-// Every route is a PLAIN PATH with the method gated in the handler: ServeMux's 405 fires only
-// when no pattern matched, and the "/" SPA mount matches everything. Do not put a method
-// back on a pattern here.
-func (s *Server) routes() *http.ServeMux {
-	mux := http.NewServeMux()
-	mux.Handle("/", spaHandler(s.staticFS))
-	registerAPIFallback(mux)
-	s.agent.RegisterRoutes(mux)
+// Register binds every route the server serves onto m, the composed handler packages' included.
+func (s *Server) Register(m routeMux) {
+	m.Bind(route.AnyMethod("/", spaHandler(s.staticFS)))
+	registerAPIFallback(m)
+	s.agent.RegisterRoutes(m)
 	if s.notifyDeliverer != nil {
-		mux.Handle(notify.Pattern, notify.NewHandler(s.notifyGate, s.notifyDeliverer))
+		m.Bind(notify.Binding(notify.NewHandler(s.notifyGate, s.notifyDeliverer)))
 	}
-	mux.HandleFunc("/api/version", s.handleVersion)
-	mux.HandleFunc("/api/diagnostics", s.handleDiagnostics)
-	mux.HandleFunc("/api/kiro-settings", s.handleKiroSettings)
-	s.chats.RegisterRoutes(mux)
-	mux.HandleFunc(healthzPath, s.handleHealth)
+	m.Bind(route.Methods("/api/version", http.HandlerFunc(s.handleVersion), route.Typed[struct{}, VersionInfo](http.MethodGet)))
+	m.Bind(route.Methods("/api/diagnostics", http.HandlerFunc(s.handleDiagnostics), route.Typed[struct{}, DiagnosticsReport](http.MethodPost)))
+	m.Bind(route.Methods("/api/kiro-settings", http.HandlerFunc(s.handleKiroSettings),
+		route.Typed[struct{}, KiroSettings](http.MethodGet).WithQuery(reflect.TypeFor[KiroSettingsQuery]()),
+		route.Typed[KiroSettingWrite, httpreply.OKBody](http.MethodPut)))
+	s.chats.RegisterRoutes(m)
+	m.Bind(route.Raw(healthzPath, http.HandlerFunc(s.handleHealth)))
 	// Without it the "/" single-page app answers a stray trailing slash 200, which a prober reads as healthy.
-	mux.Handle(healthzPath+"/", unknownEndpoint)
-	// Registered explicitly, or the "/" single-page app answers a scrape with its HTML.
+	m.Bind(route.AnyMethod(healthzPath+"/", httpreply.UnknownEndpoint))
+	// Bound explicitly, or the "/" single-page app answers a scrape with its HTML.
 	if s.metrics != nil {
-		mux.Handle(metricsPath, requireGET(s.metrics))
+		m.Bind(route.Raw(metricsPath, s.metrics))
 	}
-	// Only when this server owns the install, so the route is absent rather than a misleading 503.
+	// Method-qualified, so a LAN caller's wrong method meets the /api/ fallback, never an Allow list.
+	rescan := http.Handler(httpreply.UnknownEndpoint)
 	if s.kiroRescan != nil {
-		mux.Handle(kiroRescanPath, loopbackOnly(kiroRescanSurface, http.HandlerFunc(s.handleKiroRescan)))
+		rescan = http.HandlerFunc(s.handleKiroRescan)
 	}
-	mux.Handle(pprofPath, pprofHandler())
-	s.auth.RegisterRoutes(mux)
-	mux.HandleFunc("/api/steering", s.handleSteering)
-	// The exact app-owned pattern wins over toolbelt's subtree for EVERY method, keeping
-	// "status" out of its {name} handlers.
+	m.Bind(route.JSON[struct{}, RescanResult](http.MethodPost+" "+kiroRescanPath, loopbackOnly(kiroRescanSurface, rescan)))
+	m.Bind(route.AnyMethod(pprofPath, pprofHandler()))
+	s.auth.RegisterRoutes(m)
+	m.Bind(route.Methods("/api/steering", http.HandlerFunc(s.handleSteering),
+		route.Typed[struct{}, SteeringDoc](http.MethodGet),
+		route.Typed[SteeringWrite, SteeringSave](http.MethodPut).WithHeaders(ifMatchHeader)))
 	if s.tools != nil {
-		api := &toolsAPI{src: s.tools}
-		mux.Handle(toolsAPIPrefix, api)
-		mux.Handle(toolsAPIPrefix+"/", api)
+		(&toolsAPI{src: s.tools}).register(m)
 	}
-	mux.HandleFunc("/api/tools/status", handleToolStatus)
-	s.git.RegisterRoutes(mux)
-	s.files.RegisterRoutes(mux)
-	mux.HandleFunc("/api/settings", s.handleSettings)
-	mux.HandleFunc("/api/tabs", s.handleTabs)
-	mux.HandleFunc("/api/workspace/kiro-docs", s.handleKiroDocs)
-	mux.HandleFunc("/api/workspace/kiro-docs/new", s.handleKiroDocNew)
-	mux.HandleFunc("/api/specs/{dir}", s.handleSpec)
-	s.mcpConfig.RegisterRoutes(mux)
-	s.mcpStatus.RegisterRoutes(mux)
-	s.mcpRegistry.RegisterRoutes(mux)
+	// Method-qualified: a plain path would conflict in ServeMux with toolbelt's PATCH and DELETE /api/tools/{name}.
+	m.Bind(route.JSON[struct{}, ToolPresence](http.MethodGet+" "+toolsAPIPrefix+"/status", http.HandlerFunc(handleToolStatus)))
+	s.git.RegisterRoutes(m)
+	s.files.RegisterRoutes(m)
+	m.Bind(route.Methods("/api/settings", http.HandlerFunc(s.handleSettings),
+		route.Typed[struct{}, marotte.EffectiveSettings](http.MethodGet),
+		route.Typed[SettingsPatch, marotte.EffectiveSettings](http.MethodPatch)))
+	m.Bind(route.Methods("/api/tabs", http.HandlerFunc(s.handleTabs), route.Typed[struct{}, marotte.TabList](http.MethodGet)))
+	m.Bind(route.Methods("/api/workspace/kiro-docs", http.HandlerFunc(s.handleKiroDocs),
+		route.Typed[struct{}, KiroDocsResponse](http.MethodGet)))
+	m.Bind(route.Methods("/api/workspace/kiro-docs/new", http.HandlerFunc(s.handleKiroDocNew),
+		route.Typed[KiroDocNewRequest, KiroDocNewResult](http.MethodPost).WithStatus(http.StatusCreated)))
+	m.Bind(route.Methods("/api/specs/{dir}", http.HandlerFunc(s.handleSpec),
+		route.Typed[struct{}, marotte.Spec](http.MethodGet).WithParams(reflect.TypeFor[marotte.DirPath]()).WithHeaders(ifNoneMatchHeader)))
+	s.mcpConfig.RegisterRoutes(m)
+	s.mcpStatus.RegisterRoutes(m)
+	s.mcpRegistry.RegisterRoutes(m)
 	if s.forges != nil {
-		s.forges.RegisterRoutes(mux)
+		s.forges.RegisterRoutes(m)
 	}
-	mux.HandleFunc("/api/permissions", s.handlePolicyView)
-	mux.HandleFunc("/api/permissions/explain", s.handlePolicyExplain)
-	mux.HandleFunc("/api/permissions/rules", s.handlePolicyRules)
-	mux.HandleFunc("/api/permissions/profile", s.handlePolicyProfile)
-	mux.HandleFunc("/api/account/usage", s.handleAccountUsage)
-	s.push.RegisterRoutes(mux)
+	m.Bind(route.Methods("/api/permissions", http.HandlerFunc(s.handlePolicyView),
+		route.Typed[struct{}, marotte.PolicyView](http.MethodGet).WithQuery(reflect.TypeFor[PolicyViewQuery]())))
+	m.Bind(route.Methods("/api/permissions/explain", http.HandlerFunc(s.handlePolicyExplain),
+		route.Typed[marotte.PolicyExplainRequest, marotte.PolicyExplainResult](http.MethodPost)))
+	m.Bind(route.Methods("/api/permissions/rules", http.HandlerFunc(s.handlePolicyRules),
+		route.Typed[PolicyRuleWrite, httpreply.OKBody](http.MethodPost)))
+	m.Bind(route.Methods("/api/permissions/profile", http.HandlerFunc(s.handlePolicyProfile),
+		route.Typed[PolicyProfileWrite, httpreply.OKBody](http.MethodPost)))
+	m.Bind(route.Methods("/api/account/usage", http.HandlerFunc(s.handleAccountUsage),
+		route.Typed[struct{}, marotte.AccountUsage](http.MethodGet)))
+	m.Bind(route.Raw(openAPIPath, openAPIHandler(s.openAPI)))
+	s.push.RegisterRoutes(m)
 	if s.preview != nil {
-		s.preview.RegisterRoutes(mux)
+		s.preview.RegisterRoutes(m)
 	}
-	s.registerTestHooks(mux)
-	return mux
+	s.registerTestHooks(m)
 }
 
-// ListenAndServe registers all routes and starts the HTTP server, blocking until SIGTERM/SIGINT.
+// Routes is the sealed route mux: every route bound against the endpoint table WithEndpoints set.
+// Its error is a *SealError listing every disagreement between the two.
+func (s *Server) Routes() (*http.ServeMux, error) {
+	mux, g := s.routes()
+	if err := g.Seal(); err != nil {
+		return nil, err
+	}
+	return mux, nil
+}
+
+// routes binds every route and leaves the registrar unsealed, for a test that serves a partial server.
+func (s *Server) routes() (*http.ServeMux, *Registrar) {
+	mux := http.NewServeMux()
+	g := NewRegistrar(mux, s.entries)
+	s.Register(g)
+	return mux, g
+}
+
+// ListenAndServe binds and seals every route and starts the HTTP server, blocking until
+// SIGTERM/SIGINT. A refused seal returns its *SealError before any listener opens.
 func (s *Server) ListenAndServe() error {
-	mux := s.routes()
+	mux, err := s.Routes()
+	if err != nil {
+		return err
+	}
 	cspPolicy, err := buildCSPPolicy(s.staticFS)
 	if err != nil {
 		return fmt.Errorf("build CSP: %w", err)
@@ -416,29 +459,14 @@ func (s *Server) clientIP(r *http.Request) string {
 	return res.IP.String()
 }
 
-const msgUnknownAPIEndpoint = "unknown endpoint"
-
 const metricsPath = "/metrics"
-
-func requireGET(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if httpreply.RequireMethod(w, r, http.MethodGet) {
-			next.ServeHTTP(w, r)
-		}
-	})
-}
 
 // registerAPIFallback puts a 404 under the /api/ subtree, so an unmatched API path is not
 // answered 200 with index.html by "/". Both spellings, or GET /api draws a 301.
-func registerAPIFallback(mux *http.ServeMux) {
-	mux.Handle(strings.TrimSuffix(apiPathPrefix, "/"), unknownEndpoint)
-	mux.Handle(apiPathPrefix, unknownEndpoint)
+func registerAPIFallback(m routeMux) {
+	m.Bind(route.AnyMethod(strings.TrimSuffix(apiPathPrefix, "/"), httpreply.UnknownEndpoint))
+	m.Bind(route.AnyMethod(apiPathPrefix, httpreply.UnknownEndpoint))
 }
-
-// unknownEndpoint is the 404 for a path no route claims outside the single-page app.
-var unknownEndpoint = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-	httpreply.NotFound(w, msgUnknownAPIEndpoint)
-})
 
 // middlewareStack returns the middleware wrapping the route mux, OUTERMOST FIRST: access log,
 // recovery, security (CSP + ALLOWED_HOSTS + CSRF), notify-token confinement, Fetch Metadata, canonical path, compression,
@@ -471,17 +499,13 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []htt
 	}
 }
 
-func requirePOST(w http.ResponseWriter, r *http.Request) bool {
-	return httpreply.RequireMethod(w, r, http.MethodPost)
-}
-
 // decodeBody applies LimitBody, decodes JSON into v, and returns true on success. On
 // failure it writes a 400 and returns false.
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	return httpreply.DecodeBody(w, r, v, "bad request")
 }
 
-// healthzPath is the health route: no login, method gated to GET and HEAD.
+// healthzPath is the health route: no login, GET and HEAD.
 const healthzPath = "/healthz"
 
 // verdict is a health.Signal fixed for one request.
@@ -493,10 +517,6 @@ func (v verdict) Healthy() bool { return bool(v) }
 // listing every standing fault: not serving (startup or drain), the kiro-cli install verdict,
 // then sign-in. runtime-health.ts reads reasons[0], so that order is a client contract.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodHead)
-		return
-	}
 	// One read of each leg per request, so a verdict moving mid-request cannot drop every reason.
 	kiroFault := ""
 	if s.kiroReady != nil {
@@ -505,7 +525,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	authOK := s.authUnavailable == nil || !s.authUnavailable()
-	checks := []health.Check{{Signal: verdict(s.ready.Load()), Reason: "starting up or shutting down"}}
+	checks := make([]health.Check, 0, 6)
+	checks = append(checks, health.Check{Signal: verdict(s.ready.Load()), Reason: "starting up or shutting down"})
 	for _, reason := range []string{reasonInstalling, reasonRetrying, reasonUnavailable, reasonSettings} {
 		checks = append(checks, health.Check{Signal: verdict(kiroFault != reason), Reason: reason})
 	}

@@ -29,7 +29,7 @@ func TestViewShowsUnwrittenState(t *testing.T) {
 		inBubble(t, func(t *testing.T, tc *testConfirmer) {
 			r := tc.createRule(runSpec("success"))
 			tc.enqueue(r.ID, held("k1", "c1"))
-			tc.setStatus(r.ID, func(st *launchrule.Status) { st.Blocked = "run wf_1 did not report its start twice" })
+			tc.setStatus(r.ID, func(st *launchrule.RuleStatus) { st.Blocked = "run wf_1 did not report its start twice" })
 			tc.failWrites(errors.New("disk full"))
 			tc.persist(r.ID)
 			st, err := tc.View(r.ID)
@@ -95,7 +95,7 @@ func TestViewRefusesWhatItCannotShow(t *testing.T) {
 	t.Run("an unknown id or a clock rule", func(t *testing.T) {
 		inBubble(t, func(t *testing.T, tc *testConfirmer) {
 			clock, err := tc.store.Create(t.Context(), &launchrule.Rule{Source: "bundled://c", When: launchrule.When{
-				Clock: &launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2},
+				Clock: &launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2},
 			}})
 			if err != nil {
 				t.Fatalf("Setup: Create: %v", err)

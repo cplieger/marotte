@@ -24,6 +24,7 @@ import {
 } from "./actions/knowledge.js";
 import { ICON_CLOSE_UI, ICON_PLUS_UI, ICON_REFRESH, ICON_TRASH_UI } from "./icons.js";
 import { asObject, decodeArray, optBool, optStr, reqNum, reqStr } from "./wire/validators.gen.js";
+import { getKnowledgeEndpoint } from "./wire/client.gen.js";
 
 // Wire type and decoder, matching internal/hub/knowledge.go knowledgeContext.
 
@@ -121,7 +122,7 @@ export function loadKnowledge(fromPoll = false): void {
   }
   clearPoll();
   const signal = listSlot.start();
-  void apiGetTyped("/api/knowledge", decodeList, signal).then((d) => {
+  void apiGetTyped(getKnowledgeEndpoint.path, decodeList, signal).then((d) => {
     if (signal.aborted) {
       return;
     }

@@ -14,16 +14,6 @@ import (
 	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
-func TestDispatcher_MethodNotAllowed(t *testing.T) {
-	d := New()
-	req := httptest.NewRequest(http.MethodGet, "/api/command", nil)
-	w := httptest.NewRecorder()
-	d.ServeHTTP(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("got %d, want 405", w.Code)
-	}
-}
-
 func TestDispatcher_InvalidJSON(t *testing.T) {
 	d := New()
 	req := httptest.NewRequest(http.MethodPost, "/api/command", strings.NewReader("{invalid"))

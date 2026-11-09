@@ -2,6 +2,7 @@
 // and what it does with the answer.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Hit, SearchResult } from "./wire/types.gen.js";
+import { asked } from "./__test-helpers__/url.js";
 
 const apiGetTyped = vi.fn<(url: string, decode: (v: unknown) => unknown) => Promise<unknown>>();
 const openForSearch = vi.fn();
@@ -86,10 +87,10 @@ beforeEach(() => {
 describe("runServerSearch: the request", () => {
   it("asks the chat's own search endpoint with the encoded query", async () => {
     await runServerSearch("c 1", "why retry?");
-    expect(apiGetTyped).toHaveBeenCalledWith(
-      "/api/chats/c%201/search?q=why%20retry%3F",
-      expect.any(Function),
-    );
+    expect(asked(String(apiGetTyped.mock.calls[0]?.[0]))).toEqual({
+      path: "/api/chats/c%201/search",
+      query: { q: "why retry?" },
+    });
   });
 
   it("omits the case parameter by default, so an unset flag keeps the old behaviour", async () => {

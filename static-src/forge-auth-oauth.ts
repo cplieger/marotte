@@ -7,6 +7,7 @@ import { cancelDeviceFlow, startDeviceFlow } from "./actions/forge.js";
 import { DEFAULT_HOST, kindTitle } from "./forge-types.js";
 import type { DeviceFlowResponse, ForgeKind } from "./wire/types.gen.js";
 import { decodePollResult } from "./wire/decoders.gen.js";
+import { postForgesOauthByNamePollEndpoint } from "./wire/client.gen.js";
 
 export function isDeviceKind(kind: ForgeKind): kind is DeviceKind {
   return kind === "github" || kind === "gitlab";
@@ -302,7 +303,10 @@ async function pollDevice(
   const outcome = await pollUntil(
     (s) =>
       apiPostTyped(
-        `/api/forges/oauth/${kind}/poll`,
+        postForgesOauthByNamePollEndpoint.request({
+          name: kind,
+          body: { grant_id: start.grant_id },
+        }).path,
         { grant_id: start.grant_id },
         decodePollResult,
         s,

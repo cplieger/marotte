@@ -96,18 +96,15 @@ func (reg *mcpRegistry) reconnectServer(ctx context.Context, name string) error 
 	return err
 }
 
-type mcpReconnectReq struct {
+// MCPServerRef names the server POST /api/mcp/reconnect and /api/mcp/sign-in act on.
+type MCPServerRef struct {
 	Server string `json:"server"`
 }
 
 // handleReconnect serves POST /api/mcp/reconnect {server}: 204 once the engine took the reset, 409 when no live
 // session binds the server, 503 while no engine is running, 502 when it refused or did not answer.
 func (reg *mcpRegistry) handleReconnect(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
-	var body mcpReconnectReq
+	var body MCPServerRef
 	if !httpreply.DecodeJSON(w, r, &body) {
 		return
 	}
@@ -287,15 +284,15 @@ func (reg *mcpRegistry) failSignIn(ctx context.Context, attempt uint64, name, re
 	reg.publish(ctx, d)
 }
 
+// MCPSignInStarted is POST /api/mcp/sign-in's 202 body, which carries no field: the sign-in's progress
+// arrives on the event stream.
+type MCPSignInStarted struct{}
+
 // handleSignIn serves POST /api/mcp/sign-in {server}: 202 once the sign-in is queued, 404 for an unknown or disabled
 // server, 409 when no session is waiting for sign-in on this server or its sign-in already stands, 503 while no
 // engine runs.
 func (reg *mcpRegistry) handleSignIn(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
-	var body mcpReconnectReq
+	var body MCPServerRef
 	if !httpreply.DecodeJSON(w, r, &body) {
 		return
 	}
@@ -305,7 +302,7 @@ func (reg *mcpRegistry) handleSignIn(w http.ResponseWriter, r *http.Request) {
 	}
 	switch err := reg.startSignIn(r.Context(), body.Server); {
 	case err == nil:
-		w.WriteHeader(http.StatusAccepted)
+		httpserver.WriteJSONStatus(w, http.StatusAccepted, MCPSignInStarted{})
 	case errors.Is(err, errMCPResetNoEngine):
 		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable,
 			httpreply.ErrorJSON("The agent engine is not running. Try again once it is back."))

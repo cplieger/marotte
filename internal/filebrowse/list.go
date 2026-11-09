@@ -23,7 +23,8 @@ import (
 // codeNotADirectory tags the 400 for a path that names a file; the client's file-vs-directory test reads it.
 const codeNotADirectory = "not_a_directory"
 
-type fileEntry struct {
+// FileEntry is one GET /api/files row.
+type FileEntry struct {
 	Name    string `json:"name"`
 	Mode    string `json:"mode"`
 	Size    int64  `json:"size"`
@@ -32,10 +33,6 @@ type fileEntry struct {
 }
 
 func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
 	reqPath := r.URL.Query().Get("path")
 	if reqPath == "" || reqPath == "." {
 		reqPath = "/"
@@ -75,38 +72,30 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	files := listEntries(r.Context(), entries, l.abs, h.sensitive)
-	httpserver.WriteJSON(w, map[string]any{
-		respPath:   reqPath,
-		"files":    files,
-		"writable": isWritable(l),
-	})
+	httpserver.WriteJSON(w, FileList{Path: reqPath, Files: files, Writable: isWritable(l)})
 }
 
 // listMounts writes the synthetic root listing: one directory entry per
 // granted mount. The root itself is never writable: mounts are configuration, not filesystem
 // entries.
 func (h *Handler) listMounts(w http.ResponseWriter) {
-	files := make([]fileEntry, 0, len(h.mounts))
+	files := make([]FileEntry, 0, len(h.mounts))
 	for i := range h.mounts {
 		m := &h.mounts[i]
-		e := fileEntry{Name: m.name, IsDir: true, Mode: os.ModeDir.String()}
+		e := FileEntry{Name: m.name, IsDir: true, Mode: os.ModeDir.String()}
 		if info, err := m.root.Stat("."); err == nil {
 			e.Mode = info.Mode().String()
 			e.ModTime = info.ModTime().UnixMilli()
 		}
 		files = append(files, e)
 	}
-	slices.SortFunc(files, func(a, b fileEntry) int { return strings.Compare(a.Name, b.Name) })
-	httpserver.WriteJSON(w, map[string]any{
-		respPath:   "/",
-		"files":    files,
-		"writable": false,
-	})
+	slices.SortFunc(files, func(a, b FileEntry) int { return strings.Compare(a.Name, b.Name) })
+	httpserver.WriteJSON(w, FileList{Path: "/", Files: files})
 }
 
 // listEntries filters DirEntries: sensitive paths are hidden.
-func listEntries(ctx context.Context, entries []os.DirEntry, resolved string, sensitive Sensitive) []fileEntry {
-	files := make([]fileEntry, 0, len(entries))
+func listEntries(ctx context.Context, entries []os.DirEntry, resolved string, sensitive Sensitive) []FileEntry {
+	files := make([]FileEntry, 0, len(entries))
 	for _, e := range entries {
 		if err := ctx.Err(); err != nil {
 			break
@@ -123,7 +112,7 @@ func listEntries(ctx context.Context, entries []os.DirEntry, resolved string, se
 				"dir", logsafe.Field(resolved), "name", logsafe.Field(name), "error", logsafe.Field(err.Error()))
 			continue
 		}
-		files = append(files, fileEntry{
+		files = append(files, FileEntry{
 			Name:    name,
 			IsDir:   e.IsDir(),
 			Size:    info.Size(),

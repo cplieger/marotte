@@ -1,11 +1,14 @@
-// Every REST-style call goes through here: each helper collapses failure to
-// `null` and logs it once. The POST /api/command
-// envelope is transport.ts's — a different contract, deliberately not shared.
+// Every REST-style call goes through here. apiGet, apiPost and their Typed
+// variants collapse failure to `null` and log it once; the *OrError helpers and
+// clientRequest (the transport wire/client.gen.ts calls) return the failure
+// unlogged for the caller to report. The POST /api/command envelope is
+// transport.ts's, a different contract, deliberately not shared.
 
 import {
   createFetch,
   type ApiErr,
   type ApiResult as FetchResult,
+  type HttpMethod,
   type RequestOptions,
 } from "@cplieger/ui/fetch";
 
@@ -15,7 +18,9 @@ import type { Decoder } from "./wire/validators.gen.js";
 // No baseUrl or prepareHeaders: paths are same-origin and the server checks Origin instead
 // of a CSRF token (internal/server/security.go). An ISOLATED instance, so nothing else can
 // mutate the module-global default.
-const fx = createFetch({ credentials: "same-origin" });
+// Pure: the service worker imports generated descriptors for their paths alone, so a bundle that
+// calls no helper drops the instance and the fetch library with it.
+const fx = /* @__PURE__ */ createFetch({ credentials: "same-origin" });
 
 /** Build fetch RequestOptions, attaching `signal` only when defined —
  *  exactOptionalPropertyTypes forbids an explicit `signal: undefined`. */
@@ -66,7 +71,7 @@ export async function apiPost<T>(
 
 /** A failure a caller has to distinguish rather than collapse. `error` is the
  *  server's own "error" field, or "" when the body carried none. */
-interface ApiResult<T> {
+interface ApiReply<T> {
   ok: boolean;
   status: number;
   data: T | null;
@@ -81,14 +86,14 @@ interface ApiResult<T> {
 }
 
 /**
- * The ONE mapping onto `ApiResult`, shared by the two OrError helpers. `data` is dropped
+ * The ONE mapping onto `ApiReply`, shared by the two OrError helpers. `data` is dropped
  * on failure: a body the transport rejected is not for reading.
  */
-function toApiResult<T>(r: FetchResult<T>): ApiResult<T> {
+function toApiReply<T>(r: FetchResult<T>): ApiReply<T> {
   if (r.ok) {
     return { ok: true, status: r.status, data: r.data ?? null, error: "" };
   }
-  const out: ApiResult<T> = {
+  const out: ApiReply<T> = {
     ok: false,
     status: r.status,
     data: null,
@@ -124,8 +129,8 @@ export async function apiGetTypedOrError<T>(
   path: string,
   decoder: Decoder<T>,
   signal?: AbortSignal,
-): Promise<ApiResult<T>> {
-  return toApiResult(await fx.apiGetRaw<T>(path, reqOpts({ decoder }, signal)));
+): Promise<ApiReply<T>> {
+  return toApiReply(await fx.apiGetRaw<T>(path, reqOpts({ decoder }, signal)));
 }
 
 /** A conditional GET's answer. `status` is 0 on a transport failure or an abort,
@@ -177,26 +182,83 @@ export async function apiPostTypedOrError<T>(
   body: unknown,
   decoder: Decoder<T>,
   signal?: AbortSignal,
-): Promise<ApiResult<T>> {
-  return toApiResult(await fx.apiPostRaw<T>(path, body, reqOpts({ decoder }, signal)));
+): Promise<ApiReply<T>> {
+  return toApiReply(await fx.apiPostRaw<T>(path, body, reqOpts({ decoder }, signal)));
 }
 
 /** GET variant for a caller to whom a non-2xx body is itself meaningful —
  *  /healthz's 503 `reasons` is the canonical consumer. */
-export async function apiGetOrError<T>(path: string, signal?: AbortSignal): Promise<ApiResult<T>> {
+export async function apiGetOrError<T>(path: string, signal?: AbortSignal): Promise<ApiReply<T>> {
   // Unlogged: that consumer polls health, where a 503 is an expected state.
-  return toApiResult(await fx.apiGetRaw<T>(path, reqOpts({}, signal)));
+  return toApiReply(await fx.apiGetRaw<T>(path, reqOpts({}, signal)));
 }
 
 /** A binary read: the 2xx body whole as a `Blob`, or fetch's failure envelope. Unlogged: the caller reports the failure. */
 export async function apiBlobOrError(
-  method: "GET" | "POST",
+  method: HttpMethod,
   path: string,
   body: unknown,
   signal: AbortSignal,
   timeoutMs: number,
 ): Promise<FetchResult<Blob>> {
   return fx.requestRaw(method, path, { as: "blob", body, signal, timeoutMs });
+}
+
+/** The request a generated endpoint descriptor builds (wire/client.gen.ts): the path carries its
+ *  encoded parameters and query, and `codes` is the endpoint's error union. */
+export interface EndpointSpec {
+  readonly method: HttpMethod;
+  readonly path: string;
+  readonly raw?: true;
+  readonly body?: unknown;
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly codes: readonly string[];
+}
+
+/** A generated client function's answer. A failure's `code` is the server's code only when the
+ *  endpoint's union lists it; `status` is 0 for a transport failure, as fetch reports it. */
+export type ApiResult<T, E extends string> =
+  | { readonly ok: true; readonly status: number; readonly data: T }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly error: string;
+      readonly code?: E;
+      readonly body?: unknown;
+    };
+
+/** Send `spec` and decode its 2xx body with `decode`: a Blob for a raw endpoint, `undefined` for
+ *  no body. A decode that throws is a failure at the 2xx status. Unlogged: the caller reports. */
+export async function clientRequest<T, E extends string>(
+  spec: EndpointSpec,
+  decode: (v: unknown) => T,
+  opts?: { readonly signal?: AbortSignal },
+): Promise<ApiResult<T, E>> {
+  const base: { body?: unknown; headers?: Record<string, string>; signal?: AbortSignal } = {};
+  if (spec.body !== undefined) {
+    base.body = spec.body;
+  }
+  if (spec.headers !== undefined) {
+    base.headers = { ...spec.headers };
+  }
+  if (opts?.signal !== undefined) {
+    base.signal = opts.signal;
+  }
+  const r: FetchResult<unknown> = spec.raw
+    ? await fx.requestRaw(spec.method, spec.path, { ...base, as: "blob" })
+    : await fx.requestRaw<unknown>(spec.method, spec.path, base);
+  if (!r.ok) {
+    const out = { ok: false as const, status: r.status, error: r.error, body: r.body };
+    // spec.codes is E's members, the generated descriptor's union, so a listed code is an E.
+    return r.code !== undefined && spec.codes.includes(r.code)
+      ? { ...out, code: r.code as E }
+      : out;
+  }
+  try {
+    return { ok: true, status: r.status, data: decode(r.data) };
+  } catch (err) {
+    return { ok: false, status: r.status, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /** One AbortController slot: `start()` aborts the previous in-flight request

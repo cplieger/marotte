@@ -4,6 +4,7 @@
 import { $ } from "./dom.js";
 import { hasErrorString } from "./actions/index.js";
 import { joinPath } from "./files-shared.js";
+import { postFileUploadEndpoint } from "./wire/client.gen.js";
 
 export interface UploadOptions {
   files: FileList;
@@ -104,7 +105,7 @@ export function uploadFiles(opts: UploadOptions): void {
     opts.signal?.removeEventListener("abort", onSignalAbort);
   };
 
-  xhr.open("POST", "/api/file/upload");
+  xhr.open(postFileUploadEndpoint.method, postFileUploadEndpoint.path);
   xhr.timeout = 300_000; // 5 minutes
   xhr.upload.addEventListener("progress", (e: ProgressEvent) => {
     if (e.lengthComputable) {

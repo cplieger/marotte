@@ -1,8 +1,30 @@
 // Workflow-run actions. Cancel, pause and resume are KAS's own verbs; cancel doubles as the
 // tab-close gesture for a launcher-owned run tab.
 
-import { ActionError, apiAction, defineAction, retryNetwork, RETRY_STANDARD } from "./index.js";
-import type { RequestSpec } from "@cplieger/ui/actions";
+import {
+  ActionError,
+  apiAction,
+  defineAction,
+  fromEndpoint,
+  retryNetwork,
+  RETRY_STANDARD,
+} from "./index.js";
+import {
+  deleteRunsByIdEndpoint,
+  getRecipesEndpoint,
+  getSessionsEndpoint,
+  postRunsByIdCancelEndpoint,
+  postRunsByIdExtendEndpoint,
+  postRunsByIdFinishLoopEndpoint,
+  postRunsByIdPauseEndpoint,
+  postRunsByIdResumeEndpoint,
+  postRunsByIdRetryEndpoint,
+  postRunsByIdStepsByPathEndEndpoint,
+  postRunsByIdStepsByPathMessageEndpoint,
+  postRunsByIdStepsByPathSteerClearEndpoint,
+  postRunsByIdStepsByPathSteerRemoveEndpoint,
+  postRunsEndpoint,
+} from "../wire/client.gen.js";
 import { retryOutcomeNotice } from "../run-controls.js";
 import { invalidateRun } from "../run-store.js";
 import { errorAbout, noticeAbout } from "./subject.js";
@@ -37,7 +59,7 @@ export const loadRecipes = apiAction<
   dedupe: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  request: () => ({ method: "GET", path: "/api/recipes" }),
+  request: () => fromEndpoint(getRecipesEndpoint.request()),
   error: "Could not load workflows",
 });
 
@@ -52,7 +74,7 @@ export const loadRuns = apiAction<
   dedupe: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  request: () => ({ method: "GET", path: "/api/sessions" }),
+  request: () => fromEndpoint(getSessionsEndpoint.request()),
   // The same reply as chat.load_sessions, so one generated decoder.
   decode: decodeSessionListResponse,
   error: false,
@@ -62,7 +84,7 @@ export const loadRuns = apiAction<
  *  has not answered may still start, and run_started shows it if it does. */
 export const launchRun = apiAction<RunLaunchRequest, RunLaunchedResponse>({
   name: "runs.launch",
-  request: (body) => ({ method: "POST", path: "/api/runs", body }),
+  request: (body) => fromEndpoint(postRunsEndpoint.request({ body })),
   error: (_args, err) =>
     mayStillApply(err)
       ? "Still starting the run; it appears if kiro-cli starts it"
@@ -80,28 +102,23 @@ function rereadAfterVerb(workflowID: string): void {
  *  in-flight node's end. */
 export const cancelRun = apiAction<string, { ok: boolean }>({
   name: "runs.cancel",
-  request: (workflowID) => ({
-    method: "POST",
-    path: `/api/runs/${encodeURIComponent(workflowID)}/cancel`,
-  }),
+  request: (workflowID) => fromEndpoint(postRunsByIdCancelEndpoint.request({ id: workflowID })),
   error: errorAbout(onRun, "Could not cancel the run"),
   onSuccess: (_res, workflowID) => {
     rereadAfterVerb(workflowID);
   },
 });
 
-/** A run-control verb's request: POST to a sub-path, no body, `{ok:true}` back. */
-function controlRequest(verb: string): (workflowID: string) => RequestSpec {
-  return (workflowID) => ({
-    method: "POST",
-    path: `/api/runs/${encodeURIComponent(workflowID)}/${verb}`,
-  });
-}
+/** A run-control verb's endpoint: POST, no body, `{ok:true}` back. */
+const controlEndpoints = {
+  pause: postRunsByIdPauseEndpoint,
+  resume: postRunsByIdResumeEndpoint,
+} as const;
 
-function runControl(verb: string, errorText: string) {
+function runControl(verb: keyof typeof controlEndpoints, errorText: string) {
   return apiAction<string, { ok: boolean }>({
     name: `runs.${verb}`,
-    request: controlRequest(verb),
+    request: (workflowID) => fromEndpoint(controlEndpoints[verb].request({ id: workflowID })),
     error: errorAbout(onRun, errorText),
     onSuccess: (_res, workflowID) => {
       rereadAfterVerb(workflowID);
@@ -120,7 +137,7 @@ export interface RunRef {
 function runBatch(verb: "pause" | "resume", errorLead: string) {
   const one = apiAction<string, { ok: boolean }>({
     name: `runs.${verb}_one`,
-    request: controlRequest(verb),
+    request: (workflowID) => fromEndpoint(controlEndpoints[verb].request({ id: workflowID })),
     error: false,
     onSettled: rereadAfterVerb,
   });
@@ -156,10 +173,7 @@ export const resumeRuns = runBatch("resume", "Could not resume");
  *  since a no-op produces no `run_progress` frame. Refusals show the server's sentence alone. */
 export const retryRun = apiAction<string, RunRetriedResponse>({
   name: "runs.retry",
-  request: (workflowID) => ({
-    method: "POST",
-    path: `/api/runs/${encodeURIComponent(workflowID)}/retry`,
-  }),
+  request: (workflowID) => fromEndpoint(postRunsByIdRetryEndpoint.request({ id: workflowID })),
   decode: (data) => decodeRunRetriedResponse(data),
   error: errorAbout(onRun, (_args, err) =>
     mayStillApply(err)
@@ -178,13 +192,8 @@ export const retryRun = apiAction<string, RunRetriedResponse>({
  *  from disk), so it is offered on any paused run. */
 export const resumeRun = runControl("resume", "Could not resume the run");
 
-/** One run step's address, `/api/runs/{id}/steps/{path}` with `{path}` one encoded `nodePathKey`; its
- *  verbs are sub-paths. The workflow id and the node path are independent, so neither is derived from
- *  the other. */
-export function runStepURL(workflowID: string, nodePath: string): string {
-  return `/api/runs/${encodeURIComponent(workflowID)}/steps/${encodeURIComponent(nodePath)}`;
-}
-
+/** One run step's address: `nodePath` is one `nodePathKey`, the route's `{path}` segment. The workflow
+ *  id and the node path are independent, so neither is derived from the other. */
 interface StepAddress {
   workflowID: string;
   nodePath: string;
@@ -201,11 +210,14 @@ export const messageRunStep = apiAction<
 >({
   name: "runs.message_step",
   idempotencyKey: ({ message_id }) => message_id,
-  request: ({ workflowID, nodePath, text, message_id, ask_id }) => ({
-    method: "POST",
-    path: `${runStepURL(workflowID, nodePath)}/message`,
-    body: ask_id === undefined ? { text, message_id } : { text, message_id, ask_id },
-  }),
+  request: ({ workflowID, nodePath, text, message_id, ask_id }) =>
+    fromEndpoint(
+      postRunsByIdStepsByPathMessageEndpoint.request({
+        id: workflowID,
+        path: nodePath,
+        body: ask_id === undefined ? { text, message_id } : { text, message_id, ask_id },
+      }),
+    ),
   decode: decodeRunStepMessageResponse,
   error: false,
 });
@@ -215,11 +227,14 @@ export const messageRunStep = apiAction<
 export const removeRunStepSteer = apiAction<StepAddress & RunStepSteerRequest, { deleted: string }>(
   {
     name: "runs.remove_step_steer",
-    request: ({ workflowID, nodePath, steer_id }) => ({
-      method: "POST",
-      path: `${runStepURL(workflowID, nodePath)}/steer-remove`,
-      body: { steer_id },
-    }),
+    request: ({ workflowID, nodePath, steer_id }) =>
+      fromEndpoint(
+        postRunsByIdStepsByPathSteerRemoveEndpoint.request({
+          id: workflowID,
+          path: nodePath,
+          body: { steer_id },
+        }),
+      ),
     error: false,
   },
 );
@@ -227,10 +242,10 @@ export const removeRunStepSteer = apiAction<StepAddress & RunStepSteerRequest, {
 /** Discard every unread row of a step's dock (the chat's steer_clear, on the step's session). */
 export const clearRunStepSteers = apiAction<StepAddress, { ok: boolean }>({
   name: "runs.clear_step_steers",
-  request: ({ workflowID, nodePath }) => ({
-    method: "POST",
-    path: `${runStepURL(workflowID, nodePath)}/steer-clear`,
-  }),
+  request: ({ workflowID, nodePath }) =>
+    fromEndpoint(
+      postRunsByIdStepsByPathSteerClearEndpoint.request({ id: workflowID, path: nodePath }),
+    ),
   error: errorAbout(
     ({ workflowID }: { workflowID: string }) => onRun(workflowID),
     "Could not discard",
@@ -241,11 +256,14 @@ export const clearRunStepSteers = apiAction<StepAddress, { ok: boolean }>({
  *  on, a twin execution shares its id, KAS's own decline) shows the server's sentence. */
 export const endRunStep = apiAction<StepAddress & RunStepEndRequest, { ok: boolean }>({
   name: "runs.end_step",
-  request: ({ workflowID, nodePath, status }) => ({
-    method: "POST",
-    path: `${runStepURL(workflowID, nodePath)}/end`,
-    body: { status },
-  }),
+  request: ({ workflowID, nodePath, status }) =>
+    fromEndpoint(
+      postRunsByIdStepsByPathEndEndpoint.request({
+        id: workflowID,
+        path: nodePath,
+        body: { status },
+      }),
+    ),
   error: errorAbout(
     ({ workflowID }) => onRun(workflowID),
     (_args, err) => serverSentence(err) ?? "Couldn't end the step",
@@ -260,11 +278,10 @@ export const extendRunRepeat = apiAction<
   { ok: boolean }
 >({
   name: "runs.extend",
-  request: ({ workflowID, nodeID, iterations }) => ({
-    method: "POST",
-    path: `/api/runs/${encodeURIComponent(workflowID)}/extend`,
-    body: { node_id: nodeID, iterations },
-  }),
+  request: ({ workflowID, nodeID, iterations }) =>
+    fromEndpoint(
+      postRunsByIdExtendEndpoint.request({ id: workflowID, body: { node_id: nodeID, iterations } }),
+    ),
   error: errorAbout(
     ({ workflowID }) => onRun(workflowID),
     (_args, err) => serverSentence(err) ?? "Couldn't add passes",
@@ -276,11 +293,10 @@ export const extendRunRepeat = apiAction<
 
 export const finishRunRepeat = apiAction<{ workflowID: string; nodeID: string }, { ok: boolean }>({
   name: "runs.finish_loop",
-  request: ({ workflowID, nodeID }) => ({
-    method: "POST",
-    path: `/api/runs/${encodeURIComponent(workflowID)}/finish-loop`,
-    body: { node_id: nodeID },
-  }),
+  request: ({ workflowID, nodeID }) =>
+    fromEndpoint(
+      postRunsByIdFinishLoopEndpoint.request({ id: workflowID, body: { node_id: nodeID } }),
+    ),
   error: errorAbout(
     ({ workflowID }) => onRun(workflowID),
     (_args, err) => serverSentence(err) ?? "Couldn't end the loop",
@@ -294,9 +310,6 @@ export const finishRunRepeat = apiAction<{ workflowID: string; nodeID: string },
  *  run verb that cannot be undone, so the caller confirms first (`modals.ts`). */
 export const deleteRun = apiAction<string, { ok: boolean }>({
   name: "runs.delete",
-  request: (workflowID) => ({
-    method: "DELETE",
-    path: `/api/runs/${encodeURIComponent(workflowID)}`,
-  }),
+  request: (workflowID) => fromEndpoint(deleteRunsByIdEndpoint.request({ id: workflowID })),
   error: errorAbout(onRun, "Could not delete the run"),
 });

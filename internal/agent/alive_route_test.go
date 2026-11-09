@@ -10,6 +10,7 @@ import (
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/go/sse/v2"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 type recordingPresence struct {
@@ -38,7 +39,7 @@ func (p *recordingPresence) snapshot() (events []sse.PresenceEvent, alive []stri
 
 func postAlive(rt *Runtime, tag string) *httptest.ResponseRecorder {
 	mux := http.NewServeMux()
-	rt.RegisterRoutes(mux)
+	rt.RegisterRoutes(routetest.On(mux))
 	req := httptest.NewRequest(http.MethodPost, "/api/events/alive", nil)
 	if tag != "" {
 		req.Header.Set(clientTagHeader, tag)

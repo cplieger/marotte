@@ -16,6 +16,7 @@ import {
   createVersionMap,
   createWorkerHost,
 } from "@cplieger/sse";
+import { getEventsEndpoint, postEventsAliveEndpoint, postSyncEndpoint } from "./wire/client.gen.js";
 
 /** The digest's own budget, matching the server's `RouteTimeout` on `POST /api/sync`. */
 const DIGEST_TIMEOUT_MS = 10_000;
@@ -73,12 +74,12 @@ function reconnectForAttach(ev: LifecycleEvent, stream: Stream): void {
 /** Build the host over marotte's routes. */
 export function createSSEHost(): WorkerHost {
   const versions = createVersionMap();
-  const digest = createDigestClient({ url: "/api/sync", timeoutMs: DIGEST_TIMEOUT_MS });
+  const digest = createDigestClient({ url: postSyncEndpoint.path, timeoutMs: DIGEST_TIMEOUT_MS });
   const created: WorkerHost = createWorkerHost({
-    url: "/api/events",
+    url: getEventsEndpoint.path,
     // `SSE-Client` is filled by the host from the first attaching tab's tag, before the first
     // connect; an empty header would reach the server as an invalid tag.
-    alive: { url: "/api/events/alive" },
+    alive: { url: postEventsAliveEndpoint.path },
     versions,
     revalidate: (ctx, tabs) => profileRevalidate(ctx, tabs, versions, digest, created.stream()),
     onLifecycle(ev) {

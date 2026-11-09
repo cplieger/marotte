@@ -13,6 +13,11 @@ import { deleteMemory, setMemorySync, updateMemory } from "./actions/memory.js";
 import type { MemoryEdit } from "./actions/memory.js";
 import { forceReflow } from "./dom.js";
 import { onSSE } from "./bus.js";
+import {
+  getMemoryByIdEndpoint,
+  getMemoryEndpoint,
+  getMemorySyncEndpoint,
+} from "./wire/client.gen.js";
 
 interface MemoryRecord {
   readonly id: string;
@@ -193,7 +198,7 @@ export function renderMemoriesPanel(panel: HTMLElement, filter = ""): void {
 
 async function refreshCloud(): Promise<void> {
   const gen = ++cloudGeneration;
-  const res = await apiGetTypedOrError("/api/memory/sync", decodeMemorySync);
+  const res = await apiGetTypedOrError(getMemorySyncEndpoint.path, decodeMemorySync);
   if (gen !== cloudGeneration) {
     return;
   }
@@ -223,7 +228,7 @@ function onMemoriesChanged(): void {
 
 async function refresh(): Promise<void> {
   const gen = ++generation;
-  const res = await apiGetTypedOrError("/api/memory", decodeMemoryList);
+  const res = await apiGetTypedOrError(getMemoryEndpoint.path, decodeMemoryList);
   if (gen !== generation) {
     return;
   }
@@ -622,7 +627,7 @@ function openDetail(id: string, edit: boolean): void {
 
 async function loadContent(id: string): Promise<void> {
   details.set(id, { kind: "loading" });
-  const res = await apiGetTypedOrError(`/api/memory/${encodeURIComponent(id)}`, decodeMemoryOne);
+  const res = await apiGetTypedOrError(getMemoryByIdEndpoint.request({ id }).path, decodeMemoryOne);
   if (details.get(id)?.kind !== "loading") {
     return; // Deleted or re-requested meanwhile.
   }

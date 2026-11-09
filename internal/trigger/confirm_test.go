@@ -55,7 +55,7 @@ func TestInBandInvokeRefusalAbandonsAtOnce(t *testing.T) {
 	refuse := func(tc *testConfirmer) string {
 		r := tc.createRule(runSpec("success"))
 		tc.enqueue(r.ID, held("k1", "c1"))
-		tc.setStatus(r.ID, func(st *launchrule.Status) { st.BoundAbandons = 1 })
+		tc.setStatus(r.ID, func(st *launchrule.RuleStatus) { st.BoundAbandons = 1 })
 		tc.name(r.ID, "k1", "wf_1")
 		tc.LaunchReturned(r.ID, "wf_1", refusal)
 		return r.ID
@@ -106,7 +106,7 @@ func TestInBandInvokeRefusalAbandonsAtOnce(t *testing.T) {
 		inBubble(t, func(t *testing.T, tc *testConfirmer) {
 			r := tc.createRule(runSpec("success"))
 			since := time.Now().Add(-24 * time.Hour)
-			tc.setStatus(r.ID, func(st *launchrule.Status) { st.FailingSince = since })
+			tc.setStatus(r.ID, func(st *launchrule.RuleStatus) { st.FailingSince = since })
 			tc.enqueue(r.ID, held("k1", "c1"))
 			tc.name(r.ID, "k1", "wf_1")
 			tc.LaunchReturned(r.ID, "wf_1", refusal)
@@ -378,7 +378,7 @@ func TestTwoBoundAbandonsBlockRule(t *testing.T) {
 		inBubble(t, func(t *testing.T, tc *testConfirmer) {
 			r := tc.createRule(runSpec("success"))
 			minted := time.Now().Add(-time.Hour)
-			tc.setStatus(r.ID, func(st *launchrule.Status) { st.LastMinted = minted })
+			tc.setStatus(r.ID, func(st *launchrule.RuleStatus) { st.LastMinted = minted })
 			tc.enqueue(r.ID, held("k1", "c1"))
 			tc.abandonAtBound(r.ID, "k1", "wf_1")
 			edit(tc, &r, 1, moveRepo)
@@ -711,7 +711,7 @@ func TestPauseKeepsAttempt(t *testing.T) {
 	inBubble(t, func(t *testing.T, tc *testConfirmer) {
 		r := tc.createRule(runSpec("success"))
 		tc.enqueue(r.ID, held("k1", "c1"))
-		tc.setStatus(r.ID, func(st *launchrule.Status) { st.BoundAbandons = 1 })
+		tc.setStatus(r.ID, func(st *launchrule.RuleStatus) { st.BoundAbandons = 1 })
 		tc.name(r.ID, "k1", "wf_1")
 		if n := edit(tc, &r, 0, func(r *launchrule.Rule) { r.Enabled = false }); n != 0 {
 			t.Errorf("the pause wrote %d times, want none", n)
@@ -968,7 +968,7 @@ func TestStoreWriteFailureBlocksRule(t *testing.T) {
 	t.Run("a landed write lifts only the write-failure block", func(t *testing.T) {
 		inBubble(t, func(t *testing.T, tc *testConfirmer) {
 			r := tc.createRule(runSpec("success"))
-			tc.setStatus(r.ID, func(st *launchrule.Status) { st.Blocked = "session not idle" })
+			tc.setStatus(r.ID, func(st *launchrule.RuleStatus) { st.Blocked = "session not idle" })
 			writeBlocked(tc, &r)
 			tc.failWrites(nil)
 			tc.persist(r.ID)

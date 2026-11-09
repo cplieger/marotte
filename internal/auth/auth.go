@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"regexp"
 
+	"github.com/cplieger/marotte/internal/route"
 	"github.com/cplieger/marotte/internal/signin"
 )
 
@@ -58,10 +59,25 @@ func NewHandler(vault *signin.Vault, backend signin.BackendID, opts ...Option) *
 	return h
 }
 
-// RegisterRoutes wires GET /api/whoami, POST /api/login, GET /api/login/options and POST /api/logout onto mux.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/whoami", h.handleWhoami)
-	mux.HandleFunc("/api/login", h.handleLogin)
-	mux.HandleFunc("/api/login/options", h.handleLoginOptions)
-	mux.HandleFunc("/api/logout", h.handleLogout)
+// routeMux is what a route registration needs: the server's registrar, or a test's mux. An alias, so
+// RegisterRoutes has the server's routeHandler signature.
+type routeMux = interface{ Bind(route.Binding) }
+
+// LoginRequest is POST /api/login's body.
+type LoginRequest struct {
+	Provider string `json:"provider"`
+	Region   string `json:"region"`
+}
+
+// LogoutResult is POST /api/logout's body.
+type LogoutResult struct {
+	Output string `json:"output"`
+}
+
+// RegisterRoutes binds GET /api/whoami, POST /api/login, GET /api/login/options and POST /api/logout.
+func (h *Handler) RegisterRoutes(m routeMux) {
+	m.Bind(route.Methods("/api/whoami", http.HandlerFunc(h.handleWhoami), route.Typed[struct{}, WhoamiResponse](http.MethodGet)))
+	m.Bind(route.Methods("/api/login", http.HandlerFunc(h.handleLogin), route.Typed[LoginRequest, LoginResponse](http.MethodPost)))
+	m.Bind(route.Methods("/api/login/options", http.HandlerFunc(h.handleLoginOptions), route.Typed[struct{}, LoginOptions](http.MethodGet)))
+	m.Bind(route.Methods("/api/logout", http.HandlerFunc(h.handleLogout), route.Typed[struct{}, LogoutResult](http.MethodPost)))
 }

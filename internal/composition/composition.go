@@ -17,6 +17,7 @@ import (
 
 	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/agent"
+	"github.com/cplieger/marotte/internal/apitable"
 	"github.com/cplieger/marotte/internal/auth"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/chat/archive"
@@ -324,6 +325,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	}
 
 	srv := server.New(
+		server.WithEndpoints(apitable.Entries(), apitable.OpenAPI),
 		server.WithSteering(steer),
 		server.WithAgent(h),
 		server.WithChats(chatStore),
@@ -406,6 +408,12 @@ func (a *App) Run() error {
 	if errors.Is(err, http.ErrServerClosed) {
 		slog.Info("HTTP server shut down cleanly")
 		return nil
+	}
+	if se, ok := errors.AsType[*server.SealError](err); ok {
+		// A defect compiled into the binary, never /config state, so no retry can heal it.
+		slog.Error("refusing to start: the endpoint table and the bound routes disagree", "violations", se.Violations)
+		a.shutdownHub()
+		return err
 	}
 	if err != nil {
 		slog.Error("HTTP server", "error", err)

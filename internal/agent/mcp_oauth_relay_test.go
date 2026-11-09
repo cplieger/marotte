@@ -18,6 +18,7 @@ import (
 
 	"github.com/cplieger/go/ssrf"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // authURLFor builds the consent URL KAS opens for a sign-in, the relay's trust anchor, the way KAS builds it.
@@ -580,7 +581,9 @@ func TestOAuthRelay_RejectsNonPOST(t *testing.T) {
 	h := newHubWithMCPConfig(t, nil)
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/mcp/oauth-relay", nil)
 	rec := httptest.NewRecorder()
-	h.mcpRegistry.handleOAuthRelay(rec, req)
+	mux := http.NewServeMux()
+	h.mcpRegistry.RegisterRoutes(routetest.On(mux))
+	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", rec.Code)
 	}

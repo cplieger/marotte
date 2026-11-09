@@ -5,11 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 func TestHandleMemoryCollection_ListsTheStoreWithoutASession(t *testing.T) {
@@ -24,7 +26,7 @@ func TestHandleMemoryCollection_ListsTheStoreWithoutASession(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /api/memory = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
-	var body memoryListResponse
+	var body MemoryList
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +223,7 @@ func TestMemoryListCarriesCloudState(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.config.handleMemoryCollection(rec, httptest.NewRequest(http.MethodGet, "/api/memory", nil))
 
-	var got memoryListResponse
+	var got MemoryList
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got.Memories) != 2 {
 		t.Fatalf("GET = %d %s, want two rows", rec.Code, rec.Body.String())
 	}
@@ -230,5 +232,54 @@ func TestMemoryListCarriesCloudState(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), `"_meta"`) {
 		t.Errorf("body %s passes KAS's _meta through", rec.Body.String())
+	}
+}
+
+// A HEAD on a path whose GET reads the engine and whose other methods write it takes the read arm: the engine sees
+// the read's calls only, though the body would make a write arm succeed.
+func TestKnowledgeAndMemoryRoutes_HEADOnlyReads(t *testing.T) {
+	tests := map[string]struct {
+		path, body string
+		want       []string
+	}{
+		"knowledge":   {"/api/knowledge", `{"path":"/w/docs"}`, []string{methodKiroKnowledge}},
+		"memory sync": {"/api/memory/sync", `{"scope":"device","on":true}`, []string{methodKiroMemoryGetSyncStatus, methodKiroConfigurationGet}},
+		"one memory":  {"/api/memory/m1", `{"title":"New"}`, []string{methodKiroMemoryGet}},
+	}
+	const record = `{"memory":{"id":"m1","memoryType":"SEMANTIC","title":"Old","summary":"s","content":"c"}}`
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			h, _, br := newTestHub()
+			t.Cleanup(func() { shutdownHub(t, h) })
+			for method, res := range map[string]string{
+				methodKiroKnowledge:           `{"success":true,"message":"done","entries":[{"name":"docs","id":"a1","item_count":1,"path":"/w/docs"}]}`,
+				methodKiroMemoryGet:           record,
+				methodKiroMemoryUpdate:        record,
+				methodKiroMemoryDelete:        `{"id":"m1","title":"Old"}`,
+				methodKiroMemoryGetSyncStatus: `{"state":"synced","lastSyncAt":"2026-11-06T10:00:00.000Z","pending":0}`,
+				methodKiroConfigurationGet:    string(memorySyncView("on", "replace", `[]`, `[]`)),
+				methodKiroConfigurationSet:    `{"setting":{"krn":"krn:::setting/memorySync","value":"on","compose":"replace","assertions":[],"contributions":[]}}`,
+			} {
+				br.setCallResult(method, json.RawMessage(res))
+			}
+			mux := http.NewServeMux()
+			h.config.registerKnowledgeRoutes(routetest.On(mux))
+			h.config.registerMemoryRoutes(routetest.On(mux))
+			br.forgetCalls()
+
+			req := httptest.NewRequest(http.MethodHead, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
+				t.Errorf("HEAD %s = %d %q, want 200 application/json", tc.path, rec.Code, rec.Header().Get("Content-Type"))
+			}
+			if got := br.callLog(); !slices.Equal(got, tc.want) {
+				t.Errorf("HEAD %s called %v, want only the read's %v", tc.path, got, tc.want)
+			}
+			if p := br.paramsFor(methodKiroKnowledge); p != nil && p[keySubcommand] != "show" {
+				t.Errorf("HEAD %s sent knowledge %v, want show", tc.path, p[keySubcommand])
+			}
+		})
 	}
 }

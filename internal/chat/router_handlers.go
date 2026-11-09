@@ -17,68 +17,92 @@ import (
 	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route"
 )
 
-// RegisterRoutes wires GET /api/chats (list) and GET /api/chats/{id} (one chat with a paged window of turns).
-func (s *Store) RegisterRoutes(mux *http.ServeMux) {
-	rt := newRouter(s)
-	rt.register(mux)
+// routeMux is what a route registration needs: the server's registrar, or a test's mux. An alias, so
+// RegisterRoutes has the server's routeHandler signature.
+type routeMux = interface{ Bind(route.Binding) }
+
+// RegisterRoutes binds GET /api/chats (list), GET /api/chats/{id} (one chat with a paged window of turns) and
+// the chat's read sub-resources.
+func (s *Store) RegisterRoutes(m routeMux) {
+	newRouter(s).register(m)
+}
+
+// List is GET /api/chats' body.
+type List struct {
+	Subject *marotte.SubjectStamp `json:"subject"`
+	Chats   []marotte.ChatHeader  `json:"chats"`
+}
+
+// PageQuery is GET /api/chats/{id}'s query: how many turns, and the turn to page older from.
+type PageQuery struct {
+	Before string `json:"before,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+}
+
+// Page is GET /api/chats/{id}'s body.
+type Page struct {
+	Draft       string                  `json:"draft"`
+	Entries     []marotte.Entry         `json:"entries"`
+	OpenEntries []marotte.OpenEntry     `json:"open_entries"`
+	Subject     []*marotte.SubjectStamp `json:"subject"`
+	Chat        marotte.ChatHeader      `json:"chat"`
+	HasMore     bool                    `json:"has_more"`
+	Live        bool                    `json:"live"`
+}
+
+// TurnQuery is GET /api/chats/{id}/turns/{turn}'s query: the exclusive sequence to read after.
+type TurnQuery struct {
+	After string `json:"after,omitempty"`
+}
+
+// TurnRange is GET /api/chats/{id}/turns/{turn}'s body.
+type TurnRange struct {
+	Entries     []marotte.Entry         `json:"entries"`
+	OpenEntries []marotte.OpenEntry     `json:"open_entries"`
+	Subject     []*marotte.SubjectStamp `json:"subject"`
+}
+
+// Turns is GET /api/chats/{id}/turns' body.
+type Turns struct {
+	Turns []marotte.TurnSummary `json:"turns"`
+}
+
+// InChatSearchQuery is GET /api/chats/{id}/search's query; Case "1" matches case.
+type InChatSearchQuery struct {
+	Q    string `json:"q,omitempty"`
+	Case string `json:"case,omitempty"`
+}
+
+// SearchAllQuery is GET /api/chats/search's query.
+type SearchAllQuery struct {
+	Q string `json:"q,omitempty"`
+}
+
+// ExportQuery is GET /api/chats/{id}/export's query: md (the default) or json.
+type ExportQuery struct {
+	Format string `json:"format,omitempty"`
+}
+
+// Export is the json export's body.
+type Export struct {
+	Chat    *marotte.Chat   `json:"chat"`
+	Entries []marotte.Entry `json:"entries"`
 }
 
 func (rt *router) handleList(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
 	headers, stamp := rt.store.listStamped(r.Context())
-	httpserver.WriteJSON(w, map[string]any{"chats": headers, keySubject: stamp})
-}
-
-// handleOne serves GET /api/chats/{id}?limit=<turns>&before=<turn_id> and routes /api/chats/{id}/<sub> requests.
-func (rt *router) handleOne(w http.ResponseWriter, r *http.Request) {
-	rest := strings.TrimPrefix(r.URL.Path, "/api/chats/")
-	if rest == "" || strings.HasPrefix(rest, "/") {
-		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
-		return
-	}
-	if id, sub, ok := strings.Cut(rest, "/"); ok {
-		rt.routeChatSubResource(w, r, marotte.ChatID(id), sub)
-		return
-	}
-	rt.serveChatPage(w, r, marotte.ChatID(rest))
-}
-
-func (rt *router) routeChatSubResource(w http.ResponseWriter, r *http.Request, cid marotte.ChatID, sub string) {
-	// The two addressed sub-resources: /tools/{toolCallID} and /turns/{turn}.
-	if rest, ok := strings.CutPrefix(sub, "tools/"); ok {
-		rt.handleToolCall(w, r, cid, rest)
-		return
-	}
-	if rest, ok := strings.CutPrefix(sub, "turns/"); ok {
-		rt.handleTurnRange(w, r, cid, rest)
-		return
-	}
-	switch sub {
-	case "export":
-		rt.handleExport(w, r, cid)
-	case "turns":
-		rt.handleTurns(w, r, cid)
-	case "search":
-		rt.handleSearch(w, r, cid)
-	default:
-		httpreply.NotFound(w, "unknown chat sub-resource")
-	}
+	httpserver.WriteJSON(w, List{Chats: headers, Subject: stamp})
 }
 
 // serveChatPage serves /api/chats/{id}: a window of whole turns, its open tails, the liveness verdict and the stamps
 // certifying those bytes. `?limit=` counts turns; `?before=<turn_id>` pages older (no tails, the `chat` stamp only).
 // Tool payloads are bounded to the preview budget with has_full; a page is never bounded by bytes, since turns are
 // never split.
-func (rt *router) serveChatPage(w http.ResponseWriter, r *http.Request, id marotte.ChatID) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
+func (rt *router) serveChatPage(w http.ResponseWriter, r *http.Request) {
+	id := marotte.ChatID(r.PathValue("id"))
 	if !chatIDPattern(id) {
 		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
@@ -102,14 +126,14 @@ func (rt *router) serveChatPage(w http.ResponseWriter, r *http.Request, id marot
 		httpreply.NotFound(w, errMsgChatNotFound)
 		return
 	}
-	httpserver.WriteJSON(w, map[string]any{
-		"chat":         page.Chat,
-		keyEntries:     previewEntries(nonNilEntries(page.Entries)),
-		"open_entries": page.OpenEntries,
-		"has_more":     page.HasMore,
-		"live":         page.Live,
-		keySubject:     page.Subject,
-		"draft":        page.Draft,
+	httpserver.WriteJSON(w, Page{
+		Chat:        page.Chat,
+		Entries:     previewEntries(nonNilEntries(page.Entries)),
+		OpenEntries: page.OpenEntries,
+		HasMore:     page.HasMore,
+		Live:        page.Live,
+		Subject:     page.Subject,
+		Draft:       page.Draft,
 	})
 }
 
@@ -123,11 +147,8 @@ func nonNilEntries(entries []marotte.Entry) []marotte.Entry {
 
 // handleTurnRange serves GET /api/chats/{id}/turns/{turn}?after=<seq>: one turn's entries past `after` plus its
 // open tails, the client's repair read for a seq hole or an unknown turn. No `after` is the whole turn.
-func (rt *router) handleTurnRange(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID, turn string) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
+func (rt *router) handleTurnRange(w http.ResponseWriter, r *http.Request) {
+	chatID, turn := marotte.ChatID(r.PathValue("id")), r.PathValue("turn")
 	if !chatIDPattern(chatID) {
 		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
@@ -156,10 +177,10 @@ func (rt *router) handleTurnRange(w http.ResponseWriter, r *http.Request, chatID
 			fmt.Errorf("chat turn range %s/%s: %w", logsafe.Field(string(chatID)), logsafe.Field(turn), err))
 		return
 	}
-	httpserver.WriteJSON(w, map[string]any{
-		keyEntries:     previewEntries(nonNilEntries(page.Entries)),
-		"open_entries": page.OpenEntries,
-		keySubject:     page.Subject,
+	httpserver.WriteJSON(w, TurnRange{
+		Entries:     previewEntries(nonNilEntries(page.Entries)),
+		OpenEntries: page.OpenEntries,
+		Subject:     page.Subject,
 	})
 }
 
@@ -180,11 +201,8 @@ func parseAfterParam(r *http.Request) (from uint64, ok bool) {
 
 // handleTurns serves GET /api/chats/{id}/turns: the rail index, one row per drawn turn, from the offset index.
 // Server-side because the client holds only a paginated window.
-func (rt *router) handleTurns(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
+func (rt *router) handleTurns(w http.ResponseWriter, r *http.Request) {
+	chatID := marotte.ChatID(r.PathValue("id"))
 	if !chatIDPattern(chatID) {
 		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
@@ -201,16 +219,13 @@ func (rt *router) handleTurns(w http.ResponseWriter, r *http.Request, chatID mar
 	if rows == nil {
 		rows = []marotte.TurnSummary{}
 	}
-	httpserver.WriteJSON(w, map[string]any{"turns": rows})
+	httpserver.WriteJSON(w, Turns{Turns: rows})
 }
 
 // handleSearch serves GET /api/chats/{id}/search?q=: a lexical scan of the log's sealed entries, server-side for
 // the same reason. Open entries are in the DOM, searched by the client, so the two counts are reported side by side.
-func (rt *router) handleSearch(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
+func (rt *router) handleSearch(w http.ResponseWriter, r *http.Request) {
+	chatID := marotte.ChatID(r.PathValue("id"))
 	if !chatIDPattern(chatID) {
 		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
@@ -232,21 +247,14 @@ func (rt *router) handleSearch(w http.ResponseWriter, r *http.Request, chatID ma
 // defaultPageTurns is a page's turns when no limit is named: a few screens, one read for the common chat.
 const defaultPageTurns = 20
 
-// The two envelope keys every page shares.
-const (
-	keyEntries = "entries"
-	keySubject = "subject"
-)
-
 // Anything else gets the default.
 func parseLimitParam(r *http.Request) int {
-	return clampedQueryInt(r, "limit", defaultPageTurns, 1, 200)
+	return clampedInt(r.URL.Query().Get("limit"), defaultPageTurns, 1, 200)
 }
 
-// clampedQueryInt returns the named query parameter when it parses inside [lo, hi], else def. Out of range takes the
-// default rather than clamping, so the caller does not keep believing its number.
-func clampedQueryInt(r *http.Request, name string, def, lo, hi int) int {
-	v := r.URL.Query().Get(name)
+// clampedInt returns v when it parses inside [lo, hi], else def. Out of range takes the default rather than
+// clamping, so the caller does not keep believing its number.
+func clampedInt(v string, def, lo, hi int) int {
 	if v == "" {
 		return def
 	}
@@ -266,11 +274,8 @@ const (
 
 // handleExport serves GET /api/chats/{id}/export?format=md|json as a download: Markdown (default) or the header plus
 // every entry as JSON.
-func (rt *router) handleExport(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
+func (rt *router) handleExport(w http.ResponseWriter, r *http.Request) {
+	chatID := marotte.ChatID(r.PathValue("id"))
 	if !chatIDPattern(chatID) {
 		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
@@ -292,7 +297,7 @@ func (rt *router) handleExport(w http.ResponseWriter, r *http.Request, chatID ma
 	if format == exportFormatJSON {
 		w.Header().Set("Content-Disposition",
 			dispositionAttachment(exportFilename(c.Name, string(chatID), ".json")))
-		httpserver.WriteJSON(w, map[string]any{"chat": c, keyEntries: nonNilEntries(entries)})
+		httpserver.WriteJSON(w, Export{Chat: c, Entries: nonNilEntries(entries)})
 		return
 	}
 	w.Header().Set("Content-Disposition",

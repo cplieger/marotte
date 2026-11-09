@@ -23,7 +23,7 @@ import (
 
 type noRoutes struct{}
 
-func (noRoutes) RegisterRoutes(*http.ServeMux) {}
+func (noRoutes) RegisterRoutes(routeMux) {}
 
 // testKASNode prefers the node KAS runs on, so a verdict is the engine's that runs the hook; any
 // node otherwise, since every case here holds across V8 versions.
@@ -65,7 +65,7 @@ func postKiroDocNew(t *testing.T, srv *Server, body string) *httptest.ResponseRe
 	req := httptest.NewRequest(http.MethodPost, "/api/workspace/kiro-docs/new", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	srv.routes().ServeHTTP(rec, req)
+	srv.mux().ServeHTTP(rec, req)
 	return rec
 }
 
@@ -74,7 +74,7 @@ func createdPath(t *testing.T, rec *httptest.ResponseRecorder) string {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body %s", rec.Code, rec.Body.String())
 	}
-	var res kiroDocNewResponse
+	var res KiroDocNewResult
 	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
 		t.Fatalf("decode reply %q: %v", rec.Body.String(), err)
 	}
@@ -627,7 +627,7 @@ func TestHandleKiroDocNew_FailedCreateLeavesNothingBehind(t *testing.T) {
 func TestHandleKiroDocNew_MethodGuard(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/workspace/kiro-docs/new", nil)
 	rec := httptest.NewRecorder()
-	docServer(t.TempDir()).routes().ServeHTTP(rec, req)
+	docServer(t.TempDir()).mux().ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("GET returned %d, want 405", rec.Code)
 	}
@@ -635,7 +635,7 @@ func TestHandleKiroDocNew_MethodGuard(t *testing.T) {
 
 func skillBody(t *testing.T, name, desc string) string {
 	t.Helper()
-	body, err := json.Marshal(kiroDocNewRequest{Category: catSkill, Name: name, Description: desc})
+	body, err := json.Marshal(KiroDocNewRequest{Category: catSkill, Name: name, Description: desc})
 	if err != nil {
 		t.Fatalf("Setup: encode the request: %v", err)
 	}

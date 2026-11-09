@@ -567,7 +567,7 @@ func TestAnswerUnattended_RefusesClassifierHandedAsk(t *testing.T) {
 			if err != nil {
 				t.Fatalf("launchrule.NewStore: %v", err)
 			}
-			entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+			entry := putClockRule(t, st, "bundled://nightly", launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}, true)
 			h.runs.launchRules = st
 			l := scheduledLease(entry.ID, "wf_classifier")
 			if rErr := st.RecordStart(t.Context(), ruleRun(l)); rErr != nil {
@@ -619,7 +619,7 @@ func TestAnswerUnattended_ADenialFailsTheScheduleRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	entry := putClockRule(t, st, "bundled://nightly", launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}, true)
 	h.runs.launchRules = st
 	// The row tracks the run its fire launched; only that run's outcome lands on it.
 	l := scheduledLease(entry.ID, "wf_deny")
@@ -668,7 +668,7 @@ func TestAnswerUnattended_APowerDenialNamesItsSubjectOnTheScheduleRow(t *testing
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	entry := putClockRule(t, st, "bundled://nightly", launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}, true)
 	h.runs.launchRules = st
 	// The row tracks the run its fire launched; only that run's outcome lands on it.
 	l := scheduledLease(entry.ID, "wf_deny")
@@ -713,7 +713,7 @@ func TestAnswerUnattended_ADenialTheAskWasWithdrawnUnderLeavesTheScheduleRow(t *
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	entry := putClockRule(t, st, "bundled://nightly", launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}, true)
 	h.runs.launchRules = st
 	// The row tracks the run its fire launched; only that run's outcome lands on it.
 	l := scheduledLease(entry.ID, "wf_deny")

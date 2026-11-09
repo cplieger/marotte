@@ -10,12 +10,14 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route"
 	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
@@ -50,8 +52,8 @@ type kasMemory struct {
 	Scopes    []string        `json:"scopes"`
 }
 
-// memoryRow is one record on the wire; Content is set only by GET /api/memory/{id}.
-type memoryRow struct {
+// MemoryRow is one record on the wire; Content is set only by GET /api/memory/{id}.
+type MemoryRow struct {
 	ID         string          `json:"id"`
 	MemoryType string          `json:"memory_type"`
 	Title      string          `json:"title"`
@@ -63,30 +65,33 @@ type memoryRow struct {
 	Scopes     []string        `json:"scopes"`
 }
 
+// MemoryList is GET /api/memory's body.
 // Cap feeds the "N of 1,000" label.
-type memoryListResponse struct {
-	Memories []memoryRow `json:"memories"`
+type MemoryList struct {
+	Memories []MemoryRow `json:"memories"`
 	Cap      int         `json:"cap"`
 }
 
-type memoryOneResponse struct {
-	Memory memoryRow `json:"memory"`
+// MemoryOne is GET /api/memory/{id}'s body.
+type MemoryOne struct {
+	Memory MemoryRow `json:"memory"`
 }
 
+// MemoryUpdate is PATCH /api/memory/{id}'s body.
 // An absent field is left unchanged.
-type memoryUpdateReq struct {
+type MemoryUpdate struct {
 	Title      *string `json:"title"`
 	Summary    *string `json:"summary"`
 	Content    *string `json:"content"`
 	MemoryType *string `json:"memory_type"`
 }
 
-func rowFromKAS(m *kasMemory) memoryRow {
+func rowFromKAS(m *kasMemory) MemoryRow {
 	scopes := m.Scopes
 	if len(scopes) == 0 {
 		scopes = []string{"Global"}
 	}
-	return memoryRow{
+	return MemoryRow{
 		ID: m.ID, MemoryType: m.MemoryType, Title: m.Title, Summary: m.Summary,
 		Content: m.Content, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, CloudState: m.Meta.Kiro.CloudState, Scopes: scopes,
 	}
@@ -99,8 +104,8 @@ func (st *Settings) memoryCall(ctx context.Context, method string, params map[st
 }
 
 // One page normally covers it.
-func (st *Settings) memoryList(ctx context.Context) ([]memoryRow, error) {
-	out := []memoryRow{}
+func (st *Settings) memoryList(ctx context.Context) ([]MemoryRow, error) {
+	out := []MemoryRow{}
 	params := map[string]any{"limit": memoryStoreCap}
 	for range memoryMaxPages {
 		raw, err := st.memoryCall(ctx, methodKiroMemoryList, params)
@@ -125,15 +130,15 @@ func (st *Settings) memoryList(ctx context.Context) ([]memoryRow, error) {
 	return out, nil
 }
 
-func decodeOneMemory(raw json.RawMessage) (memoryRow, error) {
+func decodeOneMemory(raw json.RawMessage) (MemoryRow, error) {
 	var res struct {
 		Memory *kasMemory `json:"memory"`
 	}
 	if err := json.Unmarshal(raw, &res); err != nil {
-		return memoryRow{}, err
+		return MemoryRow{}, err
 	}
 	if res.Memory == nil {
-		return memoryRow{}, errors.New("memory: reply carried no record")
+		return MemoryRow{}, errors.New("memory: reply carried no record")
 	}
 	return rowFromKAS(res.Memory), nil
 }
@@ -165,16 +170,12 @@ func memoryAlreadyGone(err error) bool {
 }
 
 func (st *Settings) handleMemoryCollection(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
 	rows, err := st.memoryList(r.Context())
 	if err != nil {
 		writeMemoryErr(w, err)
 		return
 	}
-	httpserver.WriteJSON(w, memoryListResponse{Memories: rows, Cap: memoryStoreCap})
+	httpserver.WriteJSON(w, MemoryList{Memories: rows, Cap: memoryStoreCap})
 }
 
 // handleMemoryOne serves one record by id (a title can repeat): GET with content, PATCH edits, DELETE removes.
@@ -185,10 +186,10 @@ func (st *Settings) handleMemoryOne(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.Method {
-	case http.MethodGet:
+	case http.MethodGet, http.MethodHead:
 		st.memoryOne(r.Context(), methodKiroMemoryGet, map[string]any{"id": id}).write(w)
 	case http.MethodPatch:
-		var body memoryUpdateReq
+		var body MemoryUpdate
 		if !httpreply.DecodeJSON(w, r, &body) {
 			return
 		}
@@ -213,10 +214,8 @@ func (st *Settings) handleMemoryOne(w http.ResponseWriter, r *http.Request) {
 			if err != nil && !memoryAlreadyGone(err) {
 				return memoryFailure(err)
 			}
-			return engineReply{write: httpserver.OK, applied: true}
+			return engineReply{write: httpreply.OK, applied: true}
 		})
-	default:
-		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPatch, http.MethodDelete)
 	}
 }
 
@@ -231,7 +230,7 @@ func (st *Settings) memoryOne(ctx context.Context, method string, params map[str
 		// KAS answered, so an update landed; only its record is unreadable.
 		return engineReply{err: err, write: func(w http.ResponseWriter) { writeMemoryErr(w, err) }, applied: true}
 	}
-	return engineReply{write: func(w http.ResponseWriter) { httpserver.WriteJSON(w, memoryOneResponse{Memory: row}) }, applied: true}
+	return engineReply{write: func(w http.ResponseWriter) { httpserver.WriteJSON(w, MemoryOne{Memory: row}) }, applied: true}
 }
 
 // memoryWrite runs a memory change as an engine mutation, so the list refetches on memories_changed once it lands.
@@ -247,9 +246,16 @@ func memoryFailure(err error) engineReply {
 	return engineReply{err: err, write: func(w http.ResponseWriter) { writeMemoryErr(w, err) }}
 }
 
-// registerMemoryRoutes wires the Memories endpoints, method-less so a refused method answers 405 + Allow.
-func (st *Settings) registerMemoryRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/memory", st.handleMemoryCollection)
-	mux.HandleFunc("/api/memory/sync", st.handleMemorySync)
-	mux.HandleFunc("/api/memory/{id}", st.handleMemoryOne)
+// registerMemoryRoutes binds the Memories endpoints as plain paths, so the registrar answers a refused method
+// with 405 + Allow.
+func (st *Settings) registerMemoryRoutes(m routeMux) {
+	id := reflect.TypeFor[marotte.IDPath]()
+	m.Bind(route.Methods("/api/memory", http.HandlerFunc(st.handleMemoryCollection), route.Typed[struct{}, MemoryList](http.MethodGet)))
+	m.Bind(route.Methods("/api/memory/sync", http.HandlerFunc(st.handleMemorySync),
+		route.Typed[struct{}, MemorySync](http.MethodGet),
+		route.Typed[MemorySyncUpdate, MemorySyncChoice](http.MethodPut)))
+	m.Bind(route.Methods("/api/memory/{id}", http.HandlerFunc(st.handleMemoryOne),
+		route.Typed[struct{}, MemoryOne](http.MethodGet).WithParams(id),
+		route.Typed[MemoryUpdate, MemoryOne](http.MethodPatch).WithParams(id),
+		route.Typed[struct{}, httpreply.OKBody](http.MethodDelete).WithParams(id)))
 }

@@ -38,6 +38,7 @@ import { compactionPolicy } from "./context-ring.js";
 import { onGovernanceChange, paintSettingLocks, writeSwitch } from "./governance.js";
 import { paintOutputStyle, paintOutputStyleHint } from "./output-style.js";
 import { resetAccountUsage } from "./account-usage.js";
+import { getKiroSettingsEndpoint } from "./wire/client.gen.js";
 
 // The kiro-cli settings endpoint does not go through persist.ts's settings state, so it keeps its own
 // per-key write generation: only a key's newest write reports its outcome.
@@ -663,7 +664,7 @@ export function initExperimentalToggles(): void {
   togglesAC?.abort();
   togglesAC = new AbortController();
   const { signal } = togglesAC;
-  void apiGet<KiroSettingsPayload>(`/api/kiro-settings?keys=${encodeURIComponent(wanted)}`).then(
+  void apiGet<KiroSettingsPayload>(getKiroSettingsEndpoint.request({ keys: wanted }).path).then(
     (payload) => {
       if (gen !== togglesGen) {
         return;

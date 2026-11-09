@@ -231,7 +231,7 @@ func TestHandleSteeringPut_RefusesAStaleToken(t *testing.T) {
 
 func savedETag(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
-	var got steeringSaveBody
+	var got SteeringSave
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("save body not JSON: %v; body=%s", err, rec.Body)
 	}
@@ -340,7 +340,7 @@ func steeringReadToken(t *testing.T, rec *httptest.ResponseRecorder) string {
 	if rec.Header().Get("Content-Encoding") == "gzip" {
 		body = gunzipped(t, rec)
 	}
-	var doc steeringDocBody
+	var doc SteeringDoc
 	if err := json.Unmarshal(body, &doc); err != nil {
 		t.Fatalf("GET body not JSON: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestHandleSteeringPut_ALargeDocumentSavesThroughGzip(t *testing.T) {
 	if get.Code != http.StatusOK {
 		t.Fatalf("GET = %d, want 200", get.Code)
 	}
-	var doc steeringDocBody
+	var doc SteeringDoc
 	if err := json.Unmarshal(gunzipped(t, get), &doc); err != nil {
 		t.Fatalf("GET body not JSON: %v", err)
 	}

@@ -7,9 +7,10 @@ import (
 	"context"
 )
 
+// StatusFile is one changed path of a repository's status.
 // OrigPath is set only on a rename or copy entry, carrying the path the content came FROM; every
 // other field describes the path it is at now.
-type gitFile struct {
+type StatusFile struct {
 	Path     string `json:"path"`
 	Display  string `json:"display"`
 	Status   string `json:"status"`
@@ -41,8 +42,8 @@ func statusLabel(c byte) string {
 
 // A path both staged and changed yields two rows, one per side, so counting changed FILES means
 // counting distinct paths. orig is the rename/copy origin, empty otherwise.
-func appendStatusEntries(files []gitFile, x, y byte, path, orig string) []gitFile {
-	f := gitFile{Path: path}
+func appendStatusEntries(files []StatusFile, x, y byte, path, orig string) []StatusFile {
+	f := StatusFile{Path: path}
 	switch {
 	case x == '?' && y == '?':
 		f.Status = "?"
@@ -63,7 +64,7 @@ func appendStatusEntries(files []gitFile, x, y byte, path, orig string) []gitFil
 	}
 	files = append(files, f)
 	if x != ' ' && x != '?' && y != ' ' && y != '?' {
-		second := gitFile{
+		second := StatusFile{
 			Path: path, Status: string(y), Staged: false,
 			Display: statusLabel(y),
 		}

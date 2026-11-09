@@ -23,13 +23,13 @@ func copyServer(s *Server, maskSecrets bool) *Server {
 	c.DisabledTools = append([]string(nil), s.DisabledTools...)
 	c.OAuthScopes = slices.Clone(s.OAuthScopes)
 	if maskSecrets {
-		c.Env = make([]keyPair, len(s.Env))
+		c.Env = make([]KeyPair, len(s.Env))
 		for i, kv := range s.Env {
-			c.Env[i] = keyPair{Name: kv.Name, Value: secretMask}
+			c.Env[i] = KeyPair{Name: kv.Name, Value: secretMask}
 		}
-		c.Headers = make([]keyPair, len(s.Headers))
+		c.Headers = make([]KeyPair, len(s.Headers))
 		for i, kv := range s.Headers {
-			c.Headers[i] = keyPair{Name: kv.Name, Value: secretMask}
+			c.Headers[i] = KeyPair{Name: kv.Name, Value: secretMask}
 		}
 	} else {
 		c.Env = copyPairs(s.Env)
@@ -44,11 +44,11 @@ func maskedCopy(s *Server) *Server { return copyServer(s, true) }
 
 func rawCopy(s *Server) *Server { return copyServer(s, false) }
 
-func copyPairs(in []keyPair) []keyPair {
+func copyPairs(in []KeyPair) []KeyPair {
 	if in == nil {
 		return nil
 	}
-	out := make([]keyPair, len(in))
+	out := make([]KeyPair, len(in))
 	copy(out, in)
 	return out
 }
@@ -67,8 +67,8 @@ func preserveNilSlice(patch, existing []string) []string {
 // mergeSecrets returns a new slice that mirrors `patch` in order and key-set, but substitutes the
 // previously-stored value wherever the client sent secretMask. Preserves the user's intended
 // ordering while keeping secrets round-trip safe.
-func mergeSecrets(patch, existing []keyPair) []keyPair {
-	out := make([]keyPair, len(patch))
+func mergeSecrets(patch, existing []KeyPair) []KeyPair {
+	out := make([]KeyPair, len(patch))
 	index := make(map[string]string, len(existing))
 	for _, kv := range existing {
 		index[kv.Name] = kv.Value
@@ -119,7 +119,7 @@ func sortedCopy(in []string) []string {
 // sortedPairNames returns the pair names in sorted order, lowercased when the
 // field dedupes case-insensitively (headers do, env does not — the same split
 // validateKeyPairs makes).
-func sortedPairNames(pairs []keyPair, fold bool) []string {
+func sortedPairNames(pairs []KeyPair, fold bool) []string {
 	out := make([]string, 0, len(pairs))
 	for _, kv := range pairs {
 		if fold {
@@ -146,7 +146,7 @@ func guardOriginChange(in, existing *Server) error {
 		}
 		// Exact-name lookup mirrors mergeSecrets: a name it would not match
 		// preserves nothing, so there is nothing to refuse.
-		if idx := slices.IndexFunc(existing.Headers, func(p keyPair) bool {
+		if idx := slices.IndexFunc(existing.Headers, func(p KeyPair) bool {
 			return p.Name == kv.Name && p.Value != ""
 		}); idx >= 0 {
 			return fmt.Errorf(

@@ -57,7 +57,7 @@ func TestCreate_ValidStdio(t *testing.T) {
 		Name:      "github",
 		Command:   "npx",
 		Args:      []string{"-y", "@modelcontextprotocol/server-github"},
-		Env:       []keyPair{{Name: "GITHUB_TOKEN", Value: "ghp_abc"}},
+		Env:       []KeyPair{{Name: "GITHUB_TOKEN", Value: "ghp_abc"}},
 		Enabled:   true,
 	})
 	if err != nil {
@@ -111,7 +111,7 @@ func TestCreate_IdenticalSpecPreservesEnvValues(t *testing.T) {
 		return &Server{
 			Transport: TransportStdio, Name: "github", Command: "npx",
 			Args:    []string{"-y", "@modelcontextprotocol/server-github"},
-			Env:     []keyPair{{Name: "TOKEN", Value: "<YOUR_TOKEN>"}},
+			Env:     []KeyPair{{Name: "TOKEN", Value: "<YOUR_TOKEN>"}},
 			Enabled: true,
 		}
 	}
@@ -123,7 +123,7 @@ func TestCreate_IdenticalSpecPreservesEnvValues(t *testing.T) {
 	if _, err := s.update(t.Context(), first.ID, &Server{
 		Transport: TransportStdio, Name: "github", Command: "npx",
 		Args:    []string{"-y", "@modelcontextprotocol/server-github"},
-		Env:     []keyPair{{Name: "TOKEN", Value: "ghp_real"}},
+		Env:     []KeyPair{{Name: "TOKEN", Value: "ghp_real"}},
 		Enabled: true,
 	}); err != nil {
 		t.Fatalf("fill token: %v", err)
@@ -182,14 +182,14 @@ func TestUpdate_PreservesSecretsWithMask(t *testing.T) {
 	s := newTestStore(t)
 	orig, _ := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx",
-		Env:     []keyPair{{Name: "TOKEN", Value: "real-secret"}},
+		Env:     []KeyPair{{Name: "TOKEN", Value: "real-secret"}},
 		Enabled: true,
 	})
 
 	// PUT with the mask as the value — should preserve the stored secret.
 	_, err := s.update(t.Context(), orig.ID, &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx",
-		Env:     []keyPair{{Name: "TOKEN", Value: secretMask}},
+		Env:     []KeyPair{{Name: "TOKEN", Value: secretMask}},
 		Enabled: true,
 	})
 	if err != nil {
@@ -208,12 +208,12 @@ func TestUpdate_ReplacesSecretWithNewValue(t *testing.T) {
 	s := newTestStore(t)
 	orig, _ := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx",
-		Env:     []keyPair{{Name: "TOKEN", Value: "old-secret"}},
+		Env:     []KeyPair{{Name: "TOKEN", Value: "old-secret"}},
 		Enabled: true,
 	})
 	_, err := s.update(t.Context(), orig.ID, &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx",
-		Env:     []keyPair{{Name: "TOKEN", Value: "new-secret"}},
+		Env:     []KeyPair{{Name: "TOKEN", Value: "new-secret"}},
 		Enabled: true,
 	})
 	if err != nil {
@@ -411,7 +411,7 @@ func TestSSE_SecretRoundTrip(t *testing.T) {
 		Transport: transportSSE,
 		Name:      "sse-secret",
 		URL:       "https://mcp.example/sse",
-		Headers:   []keyPair{{Name: "Authorization", Value: "Bearer real-token"}},
+		Headers:   []KeyPair{{Name: "Authorization", Value: "Bearer real-token"}},
 		Enabled:   true,
 	})
 	if err != nil {
@@ -432,7 +432,7 @@ func TestSSE_SecretRoundTrip(t *testing.T) {
 		Transport: transportSSE,
 		Name:      "sse-secret",
 		URL:       "https://mcp.example/sse",
-		Headers:   []keyPair{{Name: "Authorization", Value: secretMask}},
+		Headers:   []KeyPair{{Name: "Authorization", Value: secretMask}},
 		Enabled:   true,
 	}); err != nil {
 		t.Fatalf("Update: %v", err)
@@ -787,7 +787,7 @@ func TestList_ReturnsDeepCopy(t *testing.T) {
 	_, _ = s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "a", Command: "bash",
 		Args:    []string{"-c", "echo"},
-		Env:     []keyPair{{Name: "K", Value: "v"}},
+		Env:     []KeyPair{{Name: "K", Value: "v"}},
 		Enabled: true,
 	})
 	list := s.list(t.Context())
@@ -817,7 +817,7 @@ func TestGet_ReturnsDeepCopy(t *testing.T) {
 	s := newTestStore(t)
 	orig, _ := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "a", Command: "bash",
-		Env: []keyPair{{Name: "K", Value: "v"}},
+		Env: []KeyPair{{Name: "K", Value: "v"}},
 	})
 	got := s.get(t.Context(), orig.ID)
 	if got == nil {

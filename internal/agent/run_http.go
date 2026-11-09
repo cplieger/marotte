@@ -31,10 +31,6 @@ import (
 // handleRun serves GET /api/runs/{workflowId}: the run's full state. It grades a failed read two ways,
 // since the client treats 404 as final.
 func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
 	id := r.PathValue("id")
 	if id == "" {
 		httpreply.BadRequest(w, "missing workflow id")
@@ -100,7 +96,7 @@ func writeInspectErr(w http.ResponseWriter, id string, err error) {
 		slog.Warn("workflow inspect did not reach the engine", "workflow_id", logsafe.Field(id),
 			"error", err, "detail", rpcerr.Details(err))
 		httpserver.WriteJSONStatus(w, http.StatusBadGateway,
-			map[string]string{"error": "the workflow run could not be read"})
+			httpreply.ErrorJSON("the workflow run could not be read"))
 		return
 	}
 	slog.Warn("workflow inspect failed", "workflow_id", logsafe.Field(id),
@@ -289,10 +285,6 @@ func withOptionalExtras(obj map[string]json.RawMessage, x *runExtras) (err error
 // percent-encoded workflow.PathKey. A step outside run {id} is a 404 (StepTranscript). Every 4xx is
 // settled, so `gone` and `unavailable` are 200s.
 func (rr *runRoutes) handleStepTranscript(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
 	id := r.PathValue("id")
 	if id == "" {
 		httpreply.BadRequest(w, "missing workflow id")
@@ -317,10 +309,6 @@ func (rr *runRoutes) handleStepTranscript(w http.ResponseWriter, r *http.Request
 // log, its open tails and its run_turn stamp. Addressed by turn: a parallel node holds several open turns.
 // An unknown turn is 404.
 func (rr *runRoutes) handleTurnRange(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
 	id := r.PathValue("id")
 	if id == "" {
 		httpreply.BadRequest(w, "missing workflow id")
@@ -347,10 +335,10 @@ func (rr *runRoutes) handleTurnRange(w http.ResponseWriter, r *http.Request) {
 		httpreply.NotFound(w, "this run has no turn with that id")
 		return
 	}
-	httpserver.WriteJSON(w, map[string]any{
-		"entries":      nonNilRunEntries(entries),
-		"open_entries": nonNilOpenEntries(open),
-		"subject":      nonNilStamps(stamps),
+	httpserver.WriteJSON(w, RunTurnRange{
+		Entries:     nonNilRunEntries(entries),
+		OpenEntries: nonNilOpenEntries(open),
+		Subject:     nonNilStamps(stamps),
 	})
 }
 
@@ -369,7 +357,6 @@ func parseAfterSeq(r *http.Request) (from uint64, ok bool) {
 	return n + 1, true
 }
 
-// The three lists travel as `[]`: a null fails the client's array decode and loses the page.
 func nonNilRunEntries(e []marotte.Entry) []marotte.Entry {
 	if e == nil {
 		return []marotte.Entry{}
@@ -393,11 +380,7 @@ func nonNilStamps(s []marotte.SubjectStamp) []marotte.SubjectStamp {
 
 // handleLiveRuns serves GET /api/runs/live: every live lease as `{workflow_id, chat_id, executing}`.
 // Presence over local state, no KAS call; staleness errs to keeping.
-func (rr *runRoutes) handleLiveRuns(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
+func (rr *runRoutes) handleLiveRuns(w http.ResponseWriter, _ *http.Request) {
 	rows, stamp := rr.runs.liveRunRowsStamped()
 	stamp.Epoch = rr.epoch()
 	httpserver.WriteJSON(w, marotte.LiveRunsResponse{Runs: rows, Subject: stamp})
@@ -438,10 +421,6 @@ func (rr *runRoutes) head(ctx context.Context, workflowID string) (runHead, erro
 
 // handleRecipes: GET /api/recipes → the launchable recipe list, bundled + workspace.
 func (rr *runRoutes) handleRecipes(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
 	recipes, err := rr.runs.recipeList(r.Context())
 	if err != nil {
 		slog.Warn("recipe list failed", "error", err, "detail", rpcerr.Details(err))
@@ -456,10 +435,6 @@ func (rr *runRoutes) handleRecipes(w http.ResponseWriter, r *http.Request) {
 
 // handleLaunch serves POST /api/runs: one parentless run, 409 when the recipe already has a live run.
 func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
 	var req marotte.RunLaunchRequest
 	if !httpreply.DecodeJSON(w, r, &req) {
 		return
@@ -512,10 +487,6 @@ func (rr *runRoutes) handleCancel(w http.ResponseWriter, r *http.Request) {
 // handleControls serves GET /api/runs/{id}/controls: what may be done and why not
 // (marotte.RunControlsResponse), the `controls` the run read carries, for a caller that wants no more.
 func (rr *runRoutes) handleControls(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
 	id := r.PathValue("id")
 	if id == "" {
 		httpreply.BadRequest(w, "missing workflow id")
@@ -584,7 +555,7 @@ func (rr *runRoutes) handleFinishLoop(w http.ResponseWriter, r *http.Request) {
 func (rr *runRoutes) writeRepeatResult(w http.ResponseWriter, verb, id string, err error) {
 	switch {
 	case err == nil:
-		httpserver.OK(w)
+		httpreply.OK(w)
 	case errors.Is(err, errRunHostStart):
 		slog.Warn("run control failed", "verb", verb, "workflow_id", logsafe.Field(id), "error", err)
 		httpreply.InternalError(w, errors.New(verb+" failed"))
@@ -607,10 +578,6 @@ func (rr *runRoutes) handleResume(w http.ResponseWriter, r *http.Request) {
 // handleRetry serves POST /api/runs/{id}/retry and reports what was reset, so its own handler: runVerb
 // answers `error` alone.
 func (rr *runRoutes) handleRetry(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
 	id := r.PathValue("id")
 	if id == "" {
 		httpreply.BadRequest(w, "missing workflow id")
@@ -635,10 +602,6 @@ func (rr *runRoutes) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 // REST: a parentless run's ask has no chat id.
 func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
 	id := r.PathValue("id")
 	if id == "" {
 		httpreply.BadRequest(w, "missing workflow id")
@@ -651,7 +614,7 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	err := rr.runs.answerInput(r.Context(), id, body.AskID, body.Text, apiCaller(r))
 	switch {
 	case err == nil:
-		httpserver.OK(w)
+		httpreply.OK(w)
 	case writeStatusErr(w, err):
 	case errors.Is(err, errStepUnrecorded):
 		// placeStepMessage logged the fault.
@@ -675,53 +638,68 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleStepPost serves POST /api/runs/{id}/steps/{path}/{message,steer-remove,steer-clear,end}, {path}
-// one percent-encoded workflow.PathKey. The workflow id and the node path are independent: the run's
-// own inspect, read by each verb, decides whether the path is one of its steps.
-func (rr *runRoutes) handleStepPost(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	nodePath, verb := r.PathValue("path"), r.PathValue("verb")
+// stepAddress reads a step route's {id} and {path}, one percent-encoded workflow.PathKey. The workflow id
+// and the node path are independent: the run's own inspect, read by each verb, decides whether the path is
+// one of its steps.
+func stepAddress(w http.ResponseWriter, r *http.Request) (id, nodePath string, ok bool) {
+	id, nodePath = r.PathValue("id"), r.PathValue("path")
 	if id == "" || nodePath == "" {
 		httpreply.BadRequest(w, "missing workflow id or step path")
-		return
+		return "", "", false
 	}
-	switch verb {
-	case "message":
-		var body marotte.RunStepMessageRequest
-		if !httpreply.DecodeJSON(w, r, &body) {
-			return
-		}
-		out, err := rr.runs.messageStep(r.Context(), id, nodePath, body.Text, body.MessageID, body.AskID, apiCaller(r))
-		if err != nil {
-			rr.writeStepErr(w, "message", id, nodePath, err)
-			return
-		}
-		httpserver.WriteJSON(w, out)
-	case "steer-remove":
-		var body marotte.RunStepSteerRequest
-		if !httpreply.DecodeJSON(w, r, &body) {
-			return
-		}
-		if err := rr.runs.removeStepSteer(r.Context(), id, nodePath, body.SteerID); err != nil {
-			rr.writeStepErr(w, "steer remove", id, nodePath, err)
-			return
-		}
-		httpserver.WriteJSON(w, map[string]string{"deleted": body.SteerID})
-	case "steer-clear":
-		if err := rr.runs.clearStepSteers(r.Context(), id, nodePath); err != nil {
-			rr.writeStepErr(w, "steer clear", id, nodePath, err)
-			return
-		}
-		httpserver.OK(w)
-	case "end":
-		rr.handleStepEnd(w, r, id, nodePath)
-	default:
-		// The step itself, which only GET reads.
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-	}
+	return id, nodePath, true
 }
 
-func (rr *runRoutes) handleStepEnd(w http.ResponseWriter, r *http.Request, id, nodePath string) {
+func (rr *runRoutes) handleStepMessage(w http.ResponseWriter, r *http.Request) {
+	id, nodePath, ok := stepAddress(w, r)
+	if !ok {
+		return
+	}
+	var body marotte.RunStepMessageRequest
+	if !httpreply.DecodeJSON(w, r, &body) {
+		return
+	}
+	out, err := rr.runs.messageStep(r.Context(), id, nodePath, body.Text, body.MessageID, body.AskID, apiCaller(r))
+	if err != nil {
+		rr.writeStepErr(w, "message", id, nodePath, err)
+		return
+	}
+	httpserver.WriteJSON(w, out)
+}
+
+func (rr *runRoutes) handleStepSteerRemove(w http.ResponseWriter, r *http.Request) {
+	id, nodePath, ok := stepAddress(w, r)
+	if !ok {
+		return
+	}
+	var body marotte.RunStepSteerRequest
+	if !httpreply.DecodeJSON(w, r, &body) {
+		return
+	}
+	if err := rr.runs.removeStepSteer(r.Context(), id, nodePath, body.SteerID); err != nil {
+		rr.writeStepErr(w, "steer remove", id, nodePath, err)
+		return
+	}
+	httpserver.WriteJSON(w, RunStepSteerRemoved{Deleted: body.SteerID})
+}
+
+func (rr *runRoutes) handleStepSteerClear(w http.ResponseWriter, r *http.Request) {
+	id, nodePath, ok := stepAddress(w, r)
+	if !ok {
+		return
+	}
+	if err := rr.runs.clearStepSteers(r.Context(), id, nodePath); err != nil {
+		rr.writeStepErr(w, "steer clear", id, nodePath, err)
+		return
+	}
+	httpreply.OK(w)
+}
+
+func (rr *runRoutes) handleStepEnd(w http.ResponseWriter, r *http.Request) {
+	id, nodePath, ok := stepAddress(w, r)
+	if !ok {
+		return
+	}
 	var body marotte.RunStepEndRequest
 	if !httpreply.DecodeJSON(w, r, &body) {
 		return
@@ -734,7 +712,7 @@ func (rr *runRoutes) handleStepEnd(w http.ResponseWriter, r *http.Request, id, n
 		rr.writeStepErr(w, verbEndStep, id, nodePath, err)
 		return
 	}
-	httpserver.OK(w)
+	httpreply.OK(w)
 }
 
 // writeStatusErr answers an error that names its own status, with its machine reason as `code`,
@@ -781,8 +759,6 @@ func (rr *runRoutes) writeStepErr(w http.ResponseWriter, verb, id, nodePath stri
 type runVerb struct {
 	name  string
 	issue func(*Runs, context.Context, string, controlCaller) error
-	// method is explicit on every verb.
-	method string
 	// from lists legal statuses; empty is unrestricted.
 	from []marotte.RunStatus
 }
@@ -791,20 +767,17 @@ var (
 	runVerbCancel = runVerb{
 		name: verbCancel,
 		// Unrestricted: cancel is the tab-close gesture; KAS is idempotent on a terminal run.
-		issue:  (*Runs).cancel,
-		method: http.MethodPost,
+		issue: (*Runs).cancel,
 	}
 	runVerbPause = runVerb{
-		name:   verbPause,
-		issue:  (*Runs).pause,
-		method: http.MethodPost,
-		from:   []marotte.RunStatus{marotte.RunStatusRunning},
+		name:  verbPause,
+		issue: (*Runs).pause,
+		from:  []marotte.RunStatus{marotte.RunStatusRunning},
 	}
 	runVerbResume = runVerb{
-		name:   verbResume,
-		issue:  (*Runs).resume,
-		method: http.MethodPost,
-		from:   []marotte.RunStatus{marotte.RunStatusPaused},
+		name:  verbResume,
+		issue: (*Runs).resume,
+		from:  []marotte.RunStatus{marotte.RunStatusPaused},
 	}
 	// Unrestricted, and the only way a row leaves History.
 	runVerbDelete = runVerb{
@@ -812,7 +785,6 @@ var (
 		issue: func(rs *Runs, ctx context.Context, id string, _ controlCaller) error {
 			return rs.delete(ctx, id)
 		},
-		method: http.MethodDelete,
 	}
 )
 
@@ -947,10 +919,6 @@ func callerOf(r *http.Request) controlCaller {
 }
 
 func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb runVerb) {
-	if r.Method != verb.method {
-		httpreply.MethodNotAllowed(w, verb.method)
-		return
-	}
 	id := r.PathValue("id")
 	if id == "" {
 		httpreply.BadRequest(w, "missing workflow id")
@@ -978,5 +946,5 @@ func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb
 		rr.writeControlErr(w, verb.name, id, err)
 		return
 	}
-	httpserver.OK(w)
+	httpreply.OK(w)
 }

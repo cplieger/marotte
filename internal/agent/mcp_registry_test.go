@@ -409,7 +409,7 @@ func TestMCPRegistry_StatusJSONCarriesOrigin(t *testing.T) {
 		t.Fatalf("body = %s, want both origins on the wire", raw)
 	}
 	var body struct {
-		Servers []statusServer `json:"servers"`
+		Servers []MCPStatusServer `json:"servers"`
 	}
 	if err := json.Unmarshal([]byte(raw), &body); err != nil {
 		t.Fatal(err)
@@ -430,7 +430,7 @@ func TestMCPStatus_CarriesProvenanceFields(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.mcpRegistry.handleStatus(rec, httptest.NewRequest(http.MethodGet, "/api/mcp/status", nil))
 	var body struct {
-		Servers []statusServer `json:"servers"`
+		Servers []MCPStatusServer `json:"servers"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
@@ -574,7 +574,7 @@ func TestMCPRegistry_HandleStatusReturnsJSON(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	var body struct {
-		Servers []statusServer `json:"servers"`
+		Servers []MCPStatusServer `json:"servers"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatal(err)

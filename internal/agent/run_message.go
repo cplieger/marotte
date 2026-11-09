@@ -168,18 +168,30 @@ func stepMessageVerb(s *stepNow, asked bool) (marotte.RunStepMessageVerb, marott
 	return "", marotte.RunStepBusy
 }
 
-var stepRefusalText = map[marotte.RunStepMessageRefusal]string{
-	marotte.RunStepNotStarted: "this step has not started yet",
-	marotte.RunStepFinished:   "this step has finished, so it cannot take a message",
-	marotte.RunStepRunPaused:  "the run is paused; resume it to message this step",
-	marotte.RunStepBusy:       "this step cannot take a message right now; try again in a moment",
-	marotte.RunStepWaitsOnRun: "Mark step done ends this step now; its lane moves on when the run's other steps finish, " +
-		"or at once if you pause and resume the run, which interrupts them",
-	marotte.RunStepFull: "too many unread messages are waiting for this step",
+// stepRefusals are the refusals of a message to a step, each a 409 coded with its refusal.
+var stepRefusals = map[marotte.RunStepMessageRefusal]error{
+	marotte.RunStepNotStarted: command.StatusErrorReason(http.StatusConflict, string(marotte.RunStepNotStarted),
+		errors.New("this step has not started yet")),
+	marotte.RunStepFinished: command.StatusErrorReason(http.StatusConflict, string(marotte.RunStepFinished),
+		errors.New("this step has finished, so it cannot take a message")),
+	marotte.RunStepRunPaused: command.StatusErrorReason(http.StatusConflict, string(marotte.RunStepRunPaused),
+		errors.New("the run is paused; resume it to message this step")),
+	marotte.RunStepBusy: command.StatusErrorReason(http.StatusConflict, string(marotte.RunStepBusy),
+		errors.New("this step cannot take a message right now; try again in a moment")),
+	marotte.RunStepWaitsOnRun: command.StatusErrorReason(http.StatusConflict, string(marotte.RunStepWaitsOnRun),
+		//nolint:staticcheck // ST1005: the client shows this sentence, which opens with the run tab's control label.
+		errors.New("Mark step done ends this step now; its lane moves on when the run's other steps finish, "+
+			"or at once if you pause and resume the run, which interrupts them")),
+	marotte.RunStepFull: command.StatusErrorReason(http.StatusConflict, string(marotte.RunStepFull),
+		errors.New("too many unread messages are waiting for this step")),
 }
 
+// stepRefusal is r's refusal; a refusal with no entry is the busy one, never a nil error.
 func stepRefusal(r marotte.RunStepMessageRefusal) error {
-	return command.StatusErrorReason(http.StatusConflict, string(r), errors.New(stepRefusalText[r]))
+	if err, ok := stepRefusals[r]; ok {
+		return err
+	}
+	return stepRefusals[marotte.RunStepBusy]
 }
 
 type stepDecision struct {

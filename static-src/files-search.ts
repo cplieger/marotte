@@ -26,6 +26,7 @@ import type { Nouns } from "./textsearch/copy.js";
 import type { FileMatch, FileSearchResult, MatchRange } from "./wire/types.gen.js";
 import { decodeFileSearchResult } from "./wire/decoders.gen.js";
 import { shellTakesBodyKeys } from "./shell-keys.js";
+import { getFilesSearchEndpoint } from "./wire/client.gen.js";
 
 type SearchMode = "names" | "contents";
 
@@ -93,21 +94,16 @@ export function searchURL(
   query: string,
   opts: { caseSensitive?: boolean; mode?: SearchMode; files?: string; ignored?: boolean } = {},
 ): string {
-  const q = new URLSearchParams({ path, q: query });
-  if (opts.mode === "contents") {
-    q.set("mode", "contents");
-  }
   const flag = caseParam(opts.caseSensitive === true);
-  if (flag !== "") {
-    q.set("case", flag);
-  }
-  if ((opts.files ?? "") !== "") {
-    q.set("files", opts.files ?? "");
-  }
-  if (opts.ignored === true) {
-    q.set("ignored", "1");
-  }
-  return `/api/files/search?${q.toString()}`;
+  const files = opts.files ?? "";
+  return getFilesSearchEndpoint.request({
+    path,
+    q: query,
+    ...(opts.mode === "contents" ? { mode: "contents" } : {}),
+    ...(flag === "" ? {} : { case: flag }),
+    ...(files === "" ? {} : { files }),
+    ...(opts.ignored === true ? { ignored: "1" } : {}),
+  }).path;
 }
 
 /** Relative to the folder searched when under it, else absolute (a root search spans mounts). */

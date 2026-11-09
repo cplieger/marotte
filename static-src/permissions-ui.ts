@@ -44,6 +44,7 @@ function policyEntryKey(e: PolicyEntry): string {
 import { ICON_CLOSE } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { el } from "@cplieger/ui";
+import { getPermissionsEndpoint } from "./wire/client.gen.js";
 
 // Agent ignore files: the floor, and the entry rule KAS enforces.
 
@@ -444,7 +445,7 @@ class NativePolicyController {
   }
 
   private async fetchAndRender(signal: AbortSignal): Promise<void> {
-    const data = await apiGet<PolicyView>("/api/permissions", signal);
+    const data = await apiGet<PolicyView>(getPermissionsEndpoint.path, signal);
     if (signal.aborted || data === null) {
       return;
     }

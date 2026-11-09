@@ -4,11 +4,12 @@
 // is the agent's writer and can name the repos, and a recursive inotify watch over many worktrees exceeds the host
 // limit. git-changes-tab.ts keeps its own `?fetch=1` read for user gestures.
 
-import { apiAction, defineAction } from "./actions/index.js";
+import { apiAction, defineAction, fromEndpoint } from "./actions/index.js";
 import { signal, subscribe } from "@cplieger/ui";
 import { absPath, onWorkspaceRoot, workspaceRoot } from "./workspace.js";
 import type { GitRepoStatus } from "./git-types.js";
 import { statusLetter } from "./git-types.js";
+import { getGitStatusAllEndpoint } from "./wire/client.gen.js";
 
 interface StatusAllResponse {
   repos?: GitRepoStatus[] | null;
@@ -17,16 +18,11 @@ interface StatusAllResponse {
 /** The server's cap binds; this keeps a large turn from building a URL that is mostly dropped. */
 const SCOPE_PATHS_MAX = 64;
 
-/** Paths are workspace-relative, as `ownerOf` speaks; the path-to-repository split stays server-side. */
-function scopeQuery(paths: readonly string[] | undefined): string {
-  if (paths === undefined || paths.length === 0) {
-    return "";
-  }
-  const wanted = [...new Set(paths.filter((p) => p !== ""))].slice(0, SCOPE_PATHS_MAX);
-  if (wanted.length === 0) {
-    return "";
-  }
-  return `?paths=${encodeURIComponent(wanted.join(","))}`;
+/** The `paths` argument, absent for an unscoped read. Paths are workspace-relative, as `ownerOf`
+ *  speaks; the path-to-repository split stays server-side. */
+function scopeArgs(paths: readonly string[] | undefined): { paths?: string } {
+  const wanted = [...new Set((paths ?? []).filter((p) => p !== ""))].slice(0, SCOPE_PATHS_MAX);
+  return wanted.length === 0 ? {} : { paths: wanted.join(",") };
 }
 
 interface ScopeArgs {
@@ -37,7 +33,7 @@ interface ScopeArgs {
 
 const fetchStatusAll = apiAction<ScopeArgs, StatusAllResponse>({
   name: "git-status.all",
-  request: ({ paths }) => ({ method: "GET", path: `/api/git/status-all${scopeQuery(paths)}` }),
+  request: ({ paths }) => fromEndpoint(getGitStatusAllEndpoint.request(scopeArgs(paths))),
   error: false,
   success: false,
 });
@@ -46,7 +42,8 @@ const refreshAction = defineAction<ScopeArgs, StatusAllResponse>({
   name: "git-status.refresh",
   // Keyed on the scope: two reads naming different repositories are two, or the second repository's rows go stale;
   // and on the root generation, so a read for a new server never joins one the previous server answers.
-  dedupe: (args) => `git-status.refresh${scopeQuery(args.paths)}#${String(args.gen ?? 0)}`,
+  dedupe: (args) =>
+    `git-status.refresh:${getGitStatusAllEndpoint.request(scopeArgs(args.paths)).path}#${String(args.gen ?? 0)}`,
   run: async ({ paths }) =>
     (await fetchStatusAll.dispatch(paths === undefined ? {} : { paths })) ?? { repos: [] },
   error: false,

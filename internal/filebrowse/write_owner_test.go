@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 const refusalText = "tools.json: manifest version 1, want 2"
@@ -83,7 +84,7 @@ type writeReply struct {
 
 func put(t *testing.T, h *Handler, path, content string, fileID *string) (int, writeReply) {
 	t.Helper()
-	body, err := json.Marshal(writeBody{Content: content, FileID: fileID})
+	body, err := json.Marshal(FileWrite{Content: content, FileID: fileID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +167,7 @@ func TestWriteFile_TheAnswerIsWrittenOnlyAfterReplaceReturns(t *testing.T) {
 	owner := &fakeOwner{path: target, onReturn: func() { events = append(events, "replace returned") }}
 	h := newOwned(t, dir, WithOwner(target, owner))
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	req := httptest.NewRequest(http.MethodPut, "/api/file?path="+url.QueryEscape(target), strings.NewReader(`{"content":"after"}`))
 	rec := answerOrder{ResponseRecorder: httptest.NewRecorder(), events: &events}
 

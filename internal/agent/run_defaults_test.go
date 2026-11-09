@@ -13,6 +13,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/marotte/internal/schedule"
 )
 
@@ -33,7 +34,7 @@ func runDefaultsHub(t *testing.T) (*Runtime, *fakeBridge, *http.ServeMux) {
 	}
 	h.runs.launchRules = st
 	mux := http.NewServeMux()
-	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(mux)
+	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(routetest.On(mux))
 	return h, br, mux
 }
 
@@ -128,7 +129,7 @@ func TestLaunchRoute_ChecksThePickAgainstTheTemplateWithNoLiveCatalog(t *testing
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_pick")
 		mux := http.NewServeMux()
-		(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(mux)
+		(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(routetest.On(mux))
 		return br, mux
 	}
 	t.Run("the template offers it", func(t *testing.T) {
@@ -181,7 +182,7 @@ func TestLaunchRuleRoute_StoresThePickAndRefusesAnUnknownOne(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST /api/launch-rules = %d %s, want 200", rec.Code, rec.Body.String())
 	}
-	var view launchRuleView
+	var view LaunchRuleView
 	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
 		t.Fatalf("decode %s: %v", rec.Body.String(), err)
 	}
@@ -381,7 +382,7 @@ func TestHandleLaunch_UncheckableStepPinsAnswersTryLater(t *testing.T) {
 		pinnedRecipe(br, step)
 		br.callErrs = map[string]error{methodKiroConfigTemplate: errors.New("engine down")}
 		mux := http.NewServeMux()
-		(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(mux)
+		(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(routetest.On(mux))
 		return br, mux
 	}
 	t.Run("a pinned step", func(t *testing.T) {

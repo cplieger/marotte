@@ -208,6 +208,7 @@ const decodeMCPServersResponseLocal: Decoder<{ servers: Server[]; unreadable: nu
 // SSE is the legacy HTTP+SSE remote transport, a first-class stored value sharing the url/headers form with http.
 export type { Transport } from "./wire/types.gen.js";
 import type { MCPOrigin, MCPPrewarmState, Transport } from "./wire/types.gen.js";
+import { getMcpEndpoint, getMcpStatusEndpoint } from "./wire/client.gen.js";
 
 /** KAS's per-server `versionNegotiation` enum. */
 type VersionNegotiation = "auto" | "legacy";
@@ -506,7 +507,7 @@ class MCPStateController {
   private async doRefetchServers(): Promise<void> {
     // Named `abort` to avoid shadowing reactive's `signal`.
     const abort = this.serversSlot.start();
-    const d = await apiGetTyped("/api/mcp", decodeMCPServersResponseLocal, abort);
+    const d = await apiGetTyped(getMcpEndpoint.path, decodeMCPServersResponseLocal, abort);
     if (abort.aborted) {
       return;
     }
@@ -527,7 +528,7 @@ class MCPStateController {
 
   private async doRefetchStatus(): Promise<void> {
     const abort = this.statusSlot.start();
-    const d = await apiGetTyped("/api/mcp/status", decodeMCPStatusResponseLocal, abort);
+    const d = await apiGetTyped(getMcpStatusEndpoint.path, decodeMCPStatusResponseLocal, abort);
     if (abort.aborted) {
       return;
     }

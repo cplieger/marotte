@@ -12,6 +12,7 @@ import { usableStatus } from "./forge-auth-status.js";
 import { readFirstPage, readNextPage, type RepoListing } from "./forge-auth-repos.js";
 import type { ConfiguredForge } from "./wire/types.gen.js";
 import { decodeRepoList } from "./wire/decoders.gen.js";
+import { getForgesByIdReposEndpoint } from "./wire/client.gen.js";
 
 const rows = signal<ForgesListResponse | null>(null);
 const failed = signal(false);
@@ -230,7 +231,7 @@ async function sendFirst(
   read: FirstRead,
 ): Promise<boolean> {
   const page = await apiGetTyped(
-    `/api/forges/${encodeURIComponent(id)}/repos${read.fresh ? "?refresh=1" : ""}`,
+    getForgesByIdReposEndpoint.request(read.fresh ? { id, refresh: "1" } : { id }).path,
     decodeRepoList,
   );
   if (pendingFirst.get(key) !== read) {

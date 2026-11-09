@@ -7,6 +7,7 @@ import { $ } from "./dom.js";
 import { apiGetTyped } from "./api-client.js";
 import { decodeAccountUsage } from "./wire/decoders.gen.js";
 import type { AccountUsage, AccountUsageBreakdown } from "./types.js";
+import { getAccountUsageEndpoint } from "./wire/client.gen.js";
 
 const CLIENT_TTL_MS = 30_000;
 let lastFetch = 0;
@@ -26,7 +27,7 @@ export function loadAccountUsage(force = false): void {
   inflight = true;
   lastFetch = now;
   const started = epoch;
-  void apiGetTyped<AccountUsage>("/api/account/usage", decodeAccountUsage)
+  void apiGetTyped<AccountUsage>(getAccountUsageEndpoint.path, decodeAccountUsage)
     .then((u) => {
       if (started === epoch) {
         renderAccountUsage(u);

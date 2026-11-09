@@ -23,7 +23,7 @@ func metricsStack(t *testing.T) http.Handler {
 	s := docServer(t.TempDir(), WithMetrics(obs.Handler()), WithHostPolicy(policy))
 	idem := newIdempotencyCache(idempotencyTTL)
 	t.Cleanup(idem.stop)
-	return httpserver.Chain(s.routes(), s.middlewareStack(baseCSPPolicy, idem)...)
+	return httpserver.Chain(s.mux(), s.middlewareStack(baseCSPPolicy, idem)...)
 }
 
 func scrapeMetrics(h http.Handler, method, host string) *httptest.ResponseRecorder {
@@ -65,8 +65,8 @@ func TestMetricsRoute_RefusesAWriteMethod(t *testing.T) {
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", rec.Code)
 	}
-	if got := rec.Header().Get("Allow"); got != http.MethodGet {
-		t.Errorf("Allow = %q, want GET", got)
+	if got := rec.Header().Get("Allow"); got != "GET, HEAD" {
+		t.Errorf("Allow = %q, want GET, HEAD", got)
 	}
 }
 

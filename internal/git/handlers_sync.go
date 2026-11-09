@@ -10,14 +10,7 @@ import (
 )
 
 func (h *Handler) handleCommit(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	var body struct {
-		repoBody
-
-		Message string `json:"message"`
-	}
+	var body CommitRequest
 	if !decodePostBody(w, r, &body, "message required") {
 		return
 	}
@@ -35,10 +28,7 @@ func (h *Handler) handleCommit(w http.ResponseWriter, r *http.Request) {
 // is not exposed (use the shell), and an unconfigured upstream fails cleanly rather than being
 // guessed.
 func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	var body repoBody
+	var body RepoRequest
 	if !decodePostBodyOptional(w, r, &body) {
 		return
 	}
@@ -49,10 +39,7 @@ func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handlePull(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	var body repoBody
+	var body RepoRequest
 	if !decodePostBodyOptional(w, r, &body) {
 		return
 	}
@@ -63,10 +50,7 @@ func (h *Handler) handlePull(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleStash(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	var body repoBody
+	var body RepoRequest
 	if !decodePostBodyOptional(w, r, &body) {
 		return
 	}
@@ -77,10 +61,7 @@ func (h *Handler) handleStash(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleStashPop(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	var body repoBody
+	var body RepoRequest
 	if !decodePostBodyOptional(w, r, &body) {
 		return
 	}

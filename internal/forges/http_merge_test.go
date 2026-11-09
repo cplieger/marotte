@@ -451,3 +451,18 @@ func TestMergeRoute_OtherMethodsAre405(t *testing.T) {
 		t.Errorf("another method merged %+v or read %+v, want nothing", core.merges(), core.statusPRs)
 	}
 }
+
+// HEAD is the GET's twin on the merge path, so even with a merge body it reads the state.
+func TestMergeRoute_HEADReadsTheStateAndNeverMerges(t *testing.T) {
+	core := &mergeCore{status: forgeapi.MergeStatus{Merged: forgeapi.SupportNo, Queue: forgeapi.QueueNone}}
+	mux := mergeMux(t, githubMergeRow(), core)
+
+	rec := sendRoute(t, mux, http.MethodHead, githubMergeRow().mergePath("15"),
+		`{"intent":"default","strategy":"squash","head_sha":"`+mergeHead+`"}`)
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
+		t.Errorf("HEAD merge = %d %q, want 200 application/json", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	if !slices.Equal(core.statusPRs, []forgeapi.PRRef{{Number: 15}}) || len(core.merges()) != 0 {
+		t.Errorf("HEAD merge read %+v and merged %+v, want #15 read and nothing merged", core.statusPRs, core.merges())
+	}
+}

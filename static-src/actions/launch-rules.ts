@@ -3,7 +3,14 @@
 
 import { join as joinKey } from "@cplieger/keyenc";
 import type { RequestSpec } from "@cplieger/ui/actions";
-import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import { apiAction, fromEndpoint, retryNetwork, RETRY_STANDARD } from "./index.js";
+import {
+  deleteLaunchRulesByIdEndpoint,
+  getLaunchRulesEndpoint,
+  postLaunchRulesByIdDismissGapEndpoint,
+  postLaunchRulesEndpoint,
+  putLaunchRulesByIdEndpoint,
+} from "../wire/client.gen.js";
 import type { LaunchRulesResponse, LaunchRuleView } from "../launch-rule-types.js";
 import type { RunDefaults } from "../run-defaults-picker.js";
 import { serverSentence } from "./server-sentence.js";
@@ -17,7 +24,7 @@ export const loadLaunchRules = apiAction<
   dedupe: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  request: () => ({ method: "GET", path: "/api/launch-rules" }),
+  request: () => fromEndpoint(getLaunchRulesEndpoint.request()),
   error: "Could not load the launch rules",
 });
 
@@ -36,22 +43,19 @@ const saveDedupe = (a: LaunchRuleBody): string =>
   a.id === undefined ? joinKey("new", a.source) : joinKey("rule", a.id);
 
 function saveRequest(a: LaunchRuleBody): RequestSpec {
-  return {
-    method: a.id === undefined ? "POST" : "PUT",
-    path:
-      a.id === undefined ? "/api/launch-rules" : `/api/launch-rules/${encodeURIComponent(a.id)}`,
-    body: {
-      source: a.source,
-      enabled: a.enabled,
-      ...(a.model === undefined ? {} : { model: a.model }),
-      ...(a.effort === undefined ? {} : { effort: a.effort }),
-      ...(a.inputs === undefined ? {} : { inputs: a.inputs }),
-      when: a.when,
-      ...(a.id === undefined || a.confirm_drop === undefined
-        ? {}
-        : { confirm_drop: a.confirm_drop }),
-    },
+  const rule = {
+    source: a.source,
+    enabled: a.enabled,
+    ...(a.model === undefined ? {} : { model: a.model }),
+    ...(a.effort === undefined ? {} : { effort: a.effort }),
+    ...(a.inputs === undefined ? {} : { inputs: a.inputs }),
+    when: a.when,
   };
+  if (a.id === undefined) {
+    return fromEndpoint(postLaunchRulesEndpoint.request({ body: rule }));
+  }
+  const body = a.confirm_drop === undefined ? rule : { ...rule, confirm_drop: a.confirm_drop };
+  return fromEndpoint(putLaunchRulesByIdEndpoint.request({ id: a.id, body }));
 }
 
 /** Create a rule, or replace the one `id` names, answering the stored rule; a refusal toasts the
@@ -76,16 +80,13 @@ export const saveEventRule = apiAction<LaunchRuleBody, LaunchRuleView>({
 /** Remove a rule by its minted id; an event rule's held events go with it. */
 export const deleteLaunchRule = apiAction<string, { ok: boolean }>({
   name: "launch-rules.delete",
-  request: (id) => ({ method: "DELETE", path: `/api/launch-rules/${encodeURIComponent(id)}` }),
+  request: (id) => fromEndpoint(deleteLaunchRulesByIdEndpoint.request({ id })),
   error: "Could not remove the rule",
 });
 
 /** Clear an event rule's gap segments, answering the rule as it now reads. */
 export const dismissGap = apiAction<string, LaunchRuleView>({
   name: "launch-rules.dismiss-gap",
-  request: (id) => ({
-    method: "POST",
-    path: `/api/launch-rules/${encodeURIComponent(id)}/dismiss-gap`,
-  }),
+  request: (id) => fromEndpoint(postLaunchRulesByIdDismissGapEndpoint.request({ id })),
   error: (_args, err) => serverSentence(err) ?? "Could not dismiss the gap",
 });

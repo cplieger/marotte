@@ -31,11 +31,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.serveFile(w, r, folder, rel)
 }
 
-func (h *Handler) admit(w http.ResponseWriter, r *http.Request, hostOK bool, tok string, rel []string, perr error) (string, bool) {
+func (h *Handler) admit(w http.ResponseWriter, _ *http.Request, hostOK bool, tok string, rel []string, perr error) (string, bool) {
 	switch {
-	case r.Method != http.MethodGet && r.Method != http.MethodHead:
-		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodHead)
-		return "", false
 	case !hostOK:
 		httpreply.BadRequest(w, "bad Host header")
 		return "", false

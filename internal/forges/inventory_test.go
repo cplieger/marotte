@@ -15,6 +15,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/forgeapi/v2/creds"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // scopeCore serves ListMyPRs per owner ("" is the authored list), from walks
@@ -404,7 +405,7 @@ func TestInventory_AddedOwnerIsReadNextCycle(t *testing.T) {
 	rec := githubRecord()
 	p, _, _, m := inventoryPoller(t, map[string]forgeapi.Core{rec.ID: core}, nil, rec)
 	mux := http.NewServeMux()
-	NewHTTPHandler(m).RegisterRoutes(mux)
+	NewHTTPHandler(m).RegisterRoutes(routetest.On(mux))
 
 	p.sweep(t.Context())
 	answeredOwners(t, putOwners(t, mux, rec.ID, ownersBodyOf("acme")))

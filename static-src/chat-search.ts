@@ -9,6 +9,7 @@ import { openForSearch, clearSearchOpened } from "./fold-state.js";
 import { bumpMessages } from "./store.js";
 import { decodeSearchResult } from "./wire/decoders.gen.js";
 import type { Hit, SearchResult } from "./wire/types.gen.js";
+import { getChatsByIdSearchEndpoint } from "./wire/client.gen.js";
 
 /** The typing pause before Find in chat and History search. 300 ms waits out a typical keystroke gap (about 230 ms
  *  at 52 WPM) and still answers well inside NN/g's one-second flow limit; VS Code's search-on-type uses the same. */
@@ -79,9 +80,10 @@ export async function runServerSearch(
   }
   // `case=1` only when asked. The server treats an absent parameter as
   // insensitive, so the default stays the behaviour it has always had.
-  const flag = caseSensitive ? "&case=1" : "";
   const d = await apiGetTyped(
-    `/api/chats/${encodeURIComponent(chatID)}/search?q=${encodeURIComponent(query)}${flag}`,
+    getChatsByIdSearchEndpoint.request(
+      caseSensitive ? { id: chatID, q: query, case: "1" } : { id: chatID, q: query },
+    ).path,
     decodeSearchResult,
   );
   // A failed fetch (logged centrally): keep the previous counts and return `null`, so the

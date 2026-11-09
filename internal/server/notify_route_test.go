@@ -24,7 +24,7 @@ func servedNotify(t *testing.T, gate notify.Gate, deliv notify.Deliverer, auth s
 	s := docServer(t.TempDir(), WithNotifyGate(gate), WithNotifyDeliverer(deliv))
 	idem := newIdempotencyCache(idempotencyTTL)
 	t.Cleanup(idem.stop)
-	h := httpserver.Chain(s.routes(), s.middlewareStack(baseCSPPolicy, idem)...)
+	h := httpserver.Chain(s.mux(), s.middlewareStack(baseCSPPolicy, idem)...)
 	r := httptest.NewRequest(http.MethodPost, "/api/sessions/s1/notify",
 		strings.NewReader(`{"text":"wake","source":"grelot","dedupe_key":"m-1"}`))
 	if auth != "" {

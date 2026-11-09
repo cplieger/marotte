@@ -21,15 +21,6 @@ import (
 )
 
 // TestHandleRun_RejectsNonGET pins that the surface is read-only.
-func TestHandleRun_RejectsNonGET(t *testing.T) {
-	h, _, _ := newTestHub()
-	rec := httptest.NewRecorder()
-	h.runRoutes.handleRun(rec, httptest.NewRequest(http.MethodPost, "/api/runs/wf_1", nil))
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("POST /api/runs/{id} = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
-	}
-}
-
 func TestHandleRun_RejectsAMissingID(t *testing.T) {
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()
@@ -286,15 +277,6 @@ func getLiveRuns(t *testing.T, rr *runRoutes) marotte.LiveRunsResponse {
 	return out
 }
 
-func TestHandleLiveRuns_RejectsNonGET(t *testing.T) {
-	h, _, _ := newTestHub()
-	rec := httptest.NewRecorder()
-	h.runRoutes.handleLiveRuns(rec, httptest.NewRequest(http.MethodPost, "/api/runs/live", nil))
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("POST /api/runs/live = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
-	}
-}
-
 // TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat pins that chat-parented runs carry their chat, parentless none, served without KAS.
 func TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat(t *testing.T) {
 	h, _, br := newTestHub()
@@ -478,15 +460,6 @@ func TestHandleControls(t *testing.T) {
 		return req
 	}
 
-	t.Run("it refuses a non-GET", func(t *testing.T) {
-		h, _ := seedChatParentedRun(t, true)
-		rec := httptest.NewRecorder()
-		h.runRoutes.handleControls(rec, httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/controls", nil))
-		if rec.Code != http.StatusMethodNotAllowed {
-			t.Errorf("POST = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
-		}
-	})
-
 	t.Run("it refuses a missing id", func(t *testing.T) {
 		h, _ := seedChatParentedRun(t, true)
 		rec := httptest.NewRecorder()
@@ -538,15 +511,6 @@ func answerReq(t *testing.T, id, askID, text string) *http.Request {
 
 // TestHandleAnswer pins the guards and the coded refusals.
 func TestHandleAnswer(t *testing.T) {
-	t.Run("it refuses a non-POST", func(t *testing.T) {
-		h, _, _ := newTestHub()
-		rec := httptest.NewRecorder()
-		h.runRoutes.handleAnswer(rec, httptest.NewRequest(http.MethodGet, "/api/runs/wf_1/answer", nil))
-		if rec.Code != http.StatusMethodNotAllowed {
-			t.Errorf("GET = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
-		}
-	})
-
 	t.Run("it refuses a missing id", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		rec := httptest.NewRecorder()

@@ -25,6 +25,7 @@ import type { Spec, SpecDoc, SpecDocRole, SpecTaskNode } from "./wire/types.gen.
 import { absPath } from "./workspace.js";
 import { formatFullStamp } from "./locale-time.js";
 import { maybeEl, queryEl } from "./dom.js";
+import { getSpecsByDirEndpoint } from "./wire/client.gen.js";
 
 /** Tree depth, read by css/32-spec.css to indent a row, its note and its detail. */
 const DEPTH_PROP = "--depth";
@@ -366,7 +367,7 @@ function targetChat(ref: string): string {
 }
 
 function specPath(ref: string): string {
-  return `/api/specs/${encodeURIComponent(ref)}`;
+  return getSpecsByDirEndpoint.request({ dir: ref }).path;
 }
 
 /** Fetch `ref` once, with one in-flight request and one trailing refetch remembered. Resolves

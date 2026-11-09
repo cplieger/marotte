@@ -41,11 +41,11 @@ const maxScanDays = 400
 // validated spec cannot produce this.
 var errNoOccurrence = errors.New("schedule has no next occurrence")
 
-// Spec is one clock rule's recurrence, a subset of RFC 5545's recurrence rule rather than a
+// ClockSpec is one clock rule's recurrence, a subset of RFC 5545's recurrence rule rather than a
 // cron expression: it maps one-to-one onto the UI's choices and needs no parser. Everything is
 // LOCAL time, by decision: there is no per-rule timezone. Only the fields its freq uses are
 // read, so a stored spec keeps the others at zero.
-type Spec struct {
+type ClockSpec struct {
 	Freq Freq `json:"freq"`
 	// Weekdays are the days FreqWeekly fires on, as time.Weekday (0=Sunday).
 	Weekdays []int `json:"weekdays,omitempty"`
@@ -66,7 +66,7 @@ type Spec struct {
 
 // validate reports whether the spec is well-formed. The store calls it on every write so the
 // clock runner can trust a stored spec.
-func (s Spec) validate() error {
+func (s ClockSpec) validate() error {
 	if s.Minute < 0 || s.Minute > 59 {
 		return fmt.Errorf("minute %d out of range 0-59", s.Minute)
 	}
@@ -94,7 +94,7 @@ func (s Spec) validate() error {
 	}
 }
 
-func (s Spec) validateWeekly() error {
+func (s ClockSpec) validateWeekly() error {
 	if len(s.Weekdays) == 0 {
 		return errors.New("weekly schedule needs at least one weekday")
 	}
@@ -106,14 +106,14 @@ func (s Spec) validateWeekly() error {
 	return s.validateHour()
 }
 
-func (s Spec) validateMonthly() error {
+func (s ClockSpec) validateMonthly() error {
 	if s.MonthDay != lastDay && (s.MonthDay < 1 || s.MonthDay > 31) {
 		return fmt.Errorf("month day %d out of range 1-31 (or %d for last)", s.MonthDay, lastDay)
 	}
 	return s.validateHour()
 }
 
-func (s Spec) validateHour() error {
+func (s ClockSpec) validateHour() error {
 	if s.Hour < 0 || s.Hour > 23 {
 		return fmt.Errorf("hour %d out of range 0-23", s.Hour)
 	}
@@ -123,7 +123,7 @@ func (s Spec) validateHour() error {
 // NextRun returns the first occurrence strictly after `after`, in after's location. It
 // scans forward a day at a time, so all calendar arithmetic (month lengths, leap years,
 // DST) is delegated to time.Date.
-func NextRun(s Spec, after time.Time) (time.Time, error) {
+func NextRun(s ClockSpec, after time.Time) (time.Time, error) {
 	if err := s.validate(); err != nil {
 		return time.Time{}, err
 	}
@@ -146,7 +146,7 @@ func startOfDay(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 }
 
-func (s Spec) matchesDay(day time.Time) bool {
+func (s ClockSpec) matchesDay(day time.Time) bool {
 	switch s.Freq {
 	case FreqMinutely, FreqHourly, FreqDaily:
 		return true
@@ -161,7 +161,7 @@ func (s Spec) matchesDay(day time.Time) bool {
 
 // monthDayIn resolves MonthDay against the length of the given day's month:
 // lastDay and any overshoot both become that month's final day.
-func (s Spec) monthDayIn(day time.Time) int {
+func (s ClockSpec) monthDayIn(day time.Time) int {
 	last := daysInMonth(day)
 	if s.MonthDay == lastDay || s.MonthDay > last {
 		return last
@@ -179,7 +179,7 @@ func daysInMonth(t time.Time) int {
 // The switch is EXHAUSTIVE: a fallback would silently degrade an unhandled frequency to daily. DST
 // is delegated to time.Date; on spring-forward the list is not monotonic, which is safe because the
 // out-of-order slots are already past when NextRun reaches them.
-func (s Spec) timesOn(day time.Time) []time.Time {
+func (s ClockSpec) timesOn(day time.Time) []time.Time {
 	at := func(h, m int) time.Time {
 		return time.Date(day.Year(), day.Month(), day.Day(), h, m, 0, 0, day.Location())
 	}

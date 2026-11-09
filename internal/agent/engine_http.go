@@ -6,13 +6,19 @@ import (
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route"
 )
 
-// registerEngineRoutes mounts the engine's status, its confirmed restart and the configuration standing.
-func (rt *Runtime) registerEngineRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/engine", rt.handleEngineStatus)
-	mux.Handle("POST /api/engine/restart", rt.lifecycle.admitUnlessDraining(http.HandlerFunc(rt.handleEngineRestart)))
-	mux.HandleFunc("GET /api/config/standing", rt.standing.handle)
+// EngineRestartAccepted is POST /api/engine/restart's 202 body, which carries no field.
+type EngineRestartAccepted struct{}
+
+// registerEngineRoutes binds the engine's status, its confirmed restart and the configuration standing.
+func (rt *Runtime) registerEngineRoutes(m routeMux) {
+	m.Bind(route.JSON[struct{}, marotte.EngineStatus]("GET /api/engine", http.HandlerFunc(rt.handleEngineStatus)))
+	m.Bind(route.WithStatus(route.JSON[struct{}, EngineRestartAccepted]("POST /api/engine/restart",
+		rt.lifecycle.admitUnlessDraining(http.HandlerFunc(rt.handleEngineRestart))), http.StatusAccepted))
+	m.Bind(route.JSON[struct{}, marotte.ConfigStandingResponse]("GET /api/config/standing", http.HandlerFunc(rt.standing.handle)))
 }
 
 func (rt *Runtime) handleEngineStatus(w http.ResponseWriter, _ *http.Request) {
@@ -30,6 +36,6 @@ func (rt *Runtime) handleEngineRestart(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		httpreply.Conflict(w, "The agent engine is already restarting.")
 	default:
-		w.WriteHeader(http.StatusAccepted)
+		httpserver.WriteJSONStatus(w, http.StatusAccepted, EngineRestartAccepted{})
 	}
 }

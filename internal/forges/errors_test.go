@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,29 @@ import (
 	"github.com/cplieger/marotte/internal/logsafe"
 )
 
+// TestCodeStatus_EveryForgeAPICodeHasOneStatus holds the table to forgeapi's own list, so a code a
+// later forgeapi adds fails here until it is given its status.
+func TestCodeStatus_EveryForgeAPICodeHasOneStatus(t *testing.T) {
+	for _, c := range forgeapi.Codes() {
+		status, ok := codeStatus[c]
+		switch {
+		case notErrorCodes[c]:
+			if ok {
+				t.Errorf("%s is no error code and has status %d", c, status)
+			}
+		case !ok:
+			t.Errorf("forgeapi code %s has no status", c)
+		case status < 400 || status > 599:
+			t.Errorf("forgeapi code %s has status %d", c, status)
+		}
+	}
+	for c := range codeStatus {
+		if !slices.Contains(forgeapi.Codes(), c) {
+			t.Errorf("codeStatus lists %s, which forgeapi does not declare", c)
+		}
+	}
+}
+
 func TestStatusFor_EveryKindAndEveryListedCode(t *testing.T) {
 	cases := []struct {
 		name string
@@ -20,7 +44,7 @@ func TestStatusFor_EveryKindAndEveryListedCode(t *testing.T) {
 		want int
 	}{
 		{"unauthorized", forgeapi.Error{Kind: forgeapi.KindUnauthorized}, http.StatusUnauthorized},
-		{"reconnect required", forgeapi.Error{Kind: forgeapi.KindUnauthorized, Code: forgeapi.CodeReconnectRequired}, http.StatusUnauthorized},
+		{"reconnect required outranks its unauthorized kind", forgeapi.Error{Kind: forgeapi.KindUnauthorized, Code: forgeapi.CodeReconnectRequired}, http.StatusConflict},
 		{"forbidden", forgeapi.Error{Kind: forgeapi.KindForbidden}, http.StatusForbidden},
 		{"mutations disabled", forgeapi.Error{Kind: forgeapi.KindForbidden, Code: forgeapi.CodeMutationsDisabled}, http.StatusForbidden},
 		{"scope insufficient", forgeapi.Error{Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient}, http.StatusForbidden},
@@ -36,6 +60,15 @@ func TestStatusFor_EveryKindAndEveryListedCode(t *testing.T) {
 		{"family undetected outranks the last read's kind", forgeapi.Error{Kind: forgeapi.KindNotFound, Code: forgeapi.CodeFamilyUndetected, Status: 404}, http.StatusUnprocessableEntity},
 		{"an unlisted local code", forgeapi.Error{Kind: forgeapi.KindUnknown, Code: "something_new"}, http.StatusInternalServerError},
 		{"no code at all", forgeapi.Error{Kind: forgeapi.KindUnknown}, http.StatusInternalServerError},
+		// A code built with two Kinds answers its one status on both paths.
+		{"validation from a conflicting create", forgeapi.Error{Kind: forgeapi.KindNotMergeable, Code: forgeapi.CodeValidation}, http.StatusBadGateway},
+		{"connection invalid on a redirect", forgeapi.Error{Kind: forgeapi.KindUpstream, Code: forgeapi.CodeConnectionInvalid}, http.StatusBadRequest},
+		{"plaintext refused on a redirect", forgeapi.Error{Kind: forgeapi.KindUpstream, Code: forgeapi.CodePlaintextRefused}, http.StatusBadRequest},
+		{"private address refused on a redirect", forgeapi.Error{Kind: forgeapi.KindUpstream, Code: forgeapi.CodePrivateAddressRefused}, http.StatusBadRequest},
+		{"missing SHA from the forge", forgeapi.Error{Kind: forgeapi.KindNotMergeable, Code: forgeapi.CodeMissingSHA}, http.StatusBadRequest},
+		{"ref invalid from the forge", forgeapi.Error{Kind: forgeapi.KindNotFound, Code: forgeapi.CodeRefInvalid}, http.StatusBadRequest},
+		{"list since invalid", forgeapi.Error{Kind: forgeapi.KindUnknown, Code: forgeapi.CodeListSinceInvalid}, http.StatusBadRequest},
+		{"list merge state invalid", forgeapi.Error{Kind: forgeapi.KindUnknown, Code: forgeapi.CodeListMergeStateInvalid}, http.StatusBadRequest},
 	}
 	for _, code := range []string{
 		forgeapi.CodeRepoRefInvalid, forgeapi.CodeRefInvalid, forgeapi.CodeMissingSHA,

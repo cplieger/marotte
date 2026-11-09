@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 // TestTestHooks_AbsentWithoutTheBuildTag pins that a binary without -tags marotte_test mounts
@@ -13,7 +15,7 @@ import (
 func TestTestHooks_AbsentWithoutTheBuildTag(t *testing.T) {
 	s := &Server{agent: &fakeEngine{}}
 	mux := http.NewServeMux()
-	s.registerTestHooks(mux)
+	s.registerTestHooks(routetest.On(mux))
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodGet, "/api/test/sse"},
 		{http.MethodPost, "/api/test/sse/close-after"},

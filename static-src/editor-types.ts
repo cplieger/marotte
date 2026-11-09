@@ -13,6 +13,7 @@ import type { EolRecord, EolTracker } from "./viewer-eol.js";
 import type { WholeRows } from "./viewer-rows.js";
 import type { HighlightRuns } from "./highlight.js";
 import type { FileRefusal } from "./wire/types.gen.js";
+import { getFileEndpoint, getFileStatEndpoint } from "./wire/client.gen.js";
 
 const DIFF_LABEL_WORKING_TREE = "working tree";
 
@@ -24,11 +25,12 @@ export function routeForPath(path: string): {
   writeURL: string;
   displayPath: string;
 } {
-  const q = `?path=${encodeURIComponent(path)}`;
+  // PUT /api/file takes the same path argument as the read, so both address one URL.
+  const fileURL = getFileEndpoint.request({ path }).path;
   return {
-    readURL: `/api/file${q}`,
-    statURL: `/api/file/stat${q}`,
-    writeURL: `/api/file${q}`,
+    readURL: fileURL,
+    statURL: getFileStatEndpoint.request({ path }).path,
+    writeURL: fileURL,
     displayPath: relToWorkspace(path),
   };
 }

@@ -1,6 +1,6 @@
 # Features
 
-This page describes each part of the marotte page. Everything here works from any device that opens the same server.
+This page describes each part of the marotte page. Everything here works from any device that opens the same server, and every action the page takes is an endpoint of [the HTTP API](api.md).
 
 ## Chat
 

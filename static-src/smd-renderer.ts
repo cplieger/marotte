@@ -575,7 +575,9 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
       () => {
         const src = node.getAttribute("src") ?? "";
         const alt = node.getAttribute("alt") ?? "";
-        const shown = alt !== "" ? alt : decodeURIComponent(src.replace(/^.*[?&]path=/, ""));
+        // The query is form-encoded (a space is "+"), so it is read as a URL's, never decoded by hand.
+        const asked = new URL(src, location.href).searchParams.get("path") ?? src;
+        const shown = alt !== "" ? alt : asked;
         const miss = document.createElement("span");
         miss.className = "img-missing";
         miss.setAttribute(CHROME_ATTR, "");

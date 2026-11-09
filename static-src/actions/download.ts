@@ -1,12 +1,8 @@
-import { apiBlobOrError } from "../api-client.js";
+import { apiBlobOrError, type EndpointSpec } from "../api-client.js";
 import { ActionError } from "./index.js";
 
-/** A download: a GET, or a POST whose `body` is sent as JSON. */
-interface DownloadRequest {
-  readonly method: "GET" | "POST";
-  readonly path: string;
-  readonly body?: unknown;
-}
+/** A download: a generated descriptor's request, whose `body` is sent as JSON. */
+type DownloadRequest = Pick<EndpointSpec, "method" | "path" | "body">;
 
 /**
  * Read a download's 2xx body whole as a `Blob`, or throw the ActionError its action reports. A

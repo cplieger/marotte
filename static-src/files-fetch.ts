@@ -1,5 +1,6 @@
 import { apiGetOrError } from "./api-client.js";
 import type { FileEntry } from "./files-shared.js";
+import { getFilesEndpoint } from "./wire/client.gen.js";
 
 /** `/api/files`'s code for a path that names a file; owned by `internal/filebrowse/list.go` `codeNotADirectory`. */
 const NOT_A_DIRECTORY = "not_a_directory";
@@ -29,7 +30,7 @@ export async function fetchDir(path: string, opts: FetchDirOpts): Promise<DirRes
   holder.current = new AbortController();
   const { signal } = holder.current;
   const r = await apiGetOrError<{ files?: FileEntry[]; writable?: boolean }>(
-    `/api/files?path=${encodeURIComponent(path)}`,
+    getFilesEndpoint.request({ path }).path,
     signal,
   );
   if (signal.aborted) {

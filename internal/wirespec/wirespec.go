@@ -1,22 +1,27 @@
-// Package wirespec is the single source of truth for marotte's wire contract: the
-// registered wire types, the enums, the TS-name and path-name overrides, and the SSE
-// events cmd/wire-codegen feeds into wiregen to emit static-src/wire/*.gen.ts.
+// Package wirespec is marotte's wire contract for cmd/wire-codegen: the endpoints, built from
+// apitable's endpoint table, the command union, and the registered wire types, enums, TS-name and
+// path-name overrides and SSE events wiregen emits static-src/wire/*.gen.ts and the OpenAPI
+// document from.
 //
-// Build-time only: imported by cmd/wire-codegen and tests, never the server, or
-// go/packages would enter the binary. No endpoint table: the server's routes are not built
-// from one, so a table here would be an unverified copy of the routing.
+// Build-time only: imported by cmd/wire-codegen and tests, never the server, or go/packages would
+// enter the binary.
 package wirespec
 
 import (
-	"github.com/cplieger/go/wiregen"
+	"github.com/cplieger/go/wiregen/v2"
+	"github.com/cplieger/marotte/internal/agent"
+	"github.com/cplieger/marotte/internal/apitable"
 	"github.com/cplieger/marotte/internal/auth"
+	"github.com/cplieger/marotte/internal/buffer"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/forges"
 	"github.com/cplieger/marotte/internal/git"
+	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/mcp"
 	"github.com/cplieger/marotte/internal/server"
+	"github.com/cplieger/marotte/internal/trigger"
 )
 
 // wireTypes is every Go type the generator emits a TypeScript declaration for.
@@ -322,6 +327,38 @@ var wireTypes = []wiregen.Type{
 	// GET /api/workspace/kiro-docs.
 	wiregen.TypeRef[server.KiroDoc](),
 	wiregen.TypeRef[server.KiroDocsResponse](),
+	// Types the endpoint table's bodies reach.
+	wiregen.TypeRef[agent.HookInfo](),
+	wiregen.TypeRef[agent.KnowledgeContext](),
+	wiregen.TypeRef[agent.MCPPoolServer](),
+	wiregen.TypeRef[agent.MCPStatusServer](),
+	wiregen.TypeRef[agent.MemoryRow](),
+	wiregen.TypeRef[agent.MemorySyncStatus](),
+	wiregen.TypeRef[agent.MemorySyncLock](),
+	wiregen.TypeRef[agent.PowerLoadError](),
+	wiregen.TypeRef[agent.PowerRow](),
+	wiregen.TypeRef[buffer.LineRange](),
+	wiregen.TypeRef[launchrule.When](),
+	wiregen.TypeRef[launchrule.RuleStatus](),
+	wiregen.TypeRef[trigger.CursorSummary](),
+	wiregen.TypeRef[trigger.HeldEvent](),
+	wiregen.TypeRef[marotte.TurnSummary](),
+	wiregen.TypeRef[marotte.PushSubscriptionKeys](),
+	wiregen.TypeRef[filebrowse.FileEntry](),
+	wiregen.TypeRef[git.Branch](),
+	wiregen.TypeRef[git.PullResult](),
+	wiregen.TypeRef[git.StatusFile](),
+	wiregen.TypeRef[git.RepoStatus](),
+	wiregen.TypeRef[mcp.KeyPair](),
+	wiregen.TypeRef[mcp.ImportResult](),
+	wiregen.TypeRef[marotte.MCPResourceTemplateInfo](),
+	wiregen.TypeRef[marotte.MCPResourceInfo](),
+	wiregen.TypeRef[marotte.MCPPromptInfo](),
+	wiregen.TypeRef[launchrule.Gap](),
+	wiregen.TypeRef[launchrule.ClockSpec](),
+	wiregen.TypeRef[launchrule.EventSpec](),
+	wiregen.TypeRef[launchrule.Filter](),
+	wiregen.TypeRef[launchrule.Hold](),
 }
 
 // Members are the type's constants in its own package. Each is a vocabulary a client branch or
@@ -450,6 +487,20 @@ var enumTSNames = map[string]string{
 	"Origin": "MCPOrigin", // a bare Origin reads ambiguously beside SteerOrigin
 }
 
+// tsNames keeps a package-qualified Go name readable in TS, where every type shares one namespace.
+var tsNames = map[string]string{
+	"List":              "ChatList",
+	"Page":              "ChatPage",
+	"PageQuery":         "ChatPageQuery",
+	"Turns":             "ChatTurns",
+	"TurnQuery":         "ChatTurnQuery",
+	"TurnRange":         "ChatTurnRange",
+	"InChatSearchQuery": "ChatSearchQuery",
+	"SearchAllQuery":    "ChatSearchAllQuery",
+	"ExportQuery":       "ChatExportQuery",
+	"StampQuery":        "PreviewStampQuery",
+}
+
 // pathNameOverrides pins the snake_case path for a name whose acronym cluster
 // cannot be split unambiguously.
 var pathNameOverrides = map[string]string{
@@ -520,11 +571,5 @@ var wireEvents = []wiregen.Event{
 // Registry returns marotte's wire contract. It holds no output layout: cmd/wire-codegen
 // owns where the files go.
 func Registry() *wiregen.Registry {
-	return &wiregen.Registry{
-		Types:              wireTypes,
-		Enums:              wireEnums,
-		EnumTSNameOverride: enumTSNames,
-		PathNameOverride:   pathNameOverrides,
-		Events:             wireEvents,
-	}
+	return registryFor(apitable.Entries(), apitable.Commands())
 }

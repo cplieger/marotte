@@ -20,6 +20,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/marotte/internal/subject"
 )
 
@@ -33,7 +34,7 @@ func inventoryRoutes(m *Manager, p *PRStatusPoller) *http.ServeMux {
 	h := NewHTTPHandler(m)
 	h.SetPoller(p)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	return mux
 }
 
@@ -281,7 +282,7 @@ func TestInventoryRoutes_RefuseOtherMethodsAndAnUnwiredPoller(t *testing.T) {
 	}
 	h := NewHTTPHandler(nil)
 	unwired := http.NewServeMux()
-	h.RegisterRoutes(unwired)
+	h.RegisterRoutes(routetest.On(unwired))
 	for _, req := range []struct{ method, path string }{
 		{http.MethodGet, inventoryPath}, {http.MethodPost, refreshPath}, {http.MethodPost, watchPath},
 	} {

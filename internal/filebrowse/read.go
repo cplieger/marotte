@@ -83,10 +83,6 @@ func writeStableError(w http.ResponseWriter, abs string, err error) {
 // --- GET /api/file/stat: the facts the viewer picks a view from ---
 
 func (h *Handler) handleStat(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
 	reqPath := r.URL.Query().Get("path")
 	if reqPath == "" {
 		httpreply.BadRequest(w, "missing path")
@@ -133,10 +129,6 @@ func (h *Handler) handleStat(w http.ResponseWriter, r *http.Request) {
 // of that identity or refuses with 409 before any header, so an image or a download the
 // viewer offers can never deliver bytes other than the ones it shows.
 func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
 	q := r.URL.Query()
 	reqPath := q.Get("path")
 	if reqPath == "" {

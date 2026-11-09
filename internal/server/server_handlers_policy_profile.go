@@ -14,17 +14,15 @@ import (
 	"github.com/cplieger/marotte/internal/securityprofile"
 )
 
+// PolicyProfileWrite is POST /api/permissions/profile's body.
 // Seed is valid only when switching TO custom, and refused otherwise rather than ignored.
-type profileBody struct {
+type PolicyProfileWrite struct {
 	Profile string `json:"profile"`
 	Seed    bool   `json:"seed"`
 }
 
 func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	var body profileBody
+	var body PolicyProfileWrite
 	if !decodeBody(w, r, &body) {
 		return
 	}
@@ -49,7 +47,7 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("security profile selected", "profile", profile.ID,
 		"presets", profile.Presets, "seeded", body.Seed)
-	httpserver.OK(w)
+	httpreply.OK(w)
 	if s.policyReload != nil {
 		s.policyReload.SecurityProfileChanged(durable.Context(r.Context()))
 	}

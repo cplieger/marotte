@@ -49,7 +49,8 @@ const (
 	reasonOutOfTime    = "out_of_time"
 )
 
-type pullResult struct {
+// PullResult is one repo's outcome in POST /api/git/pull-all.
+type PullResult struct {
 	Repo    string      `json:"repo"`
 	Verdict pullVerdict `json:"verdict"`
 	Reason  string      `json:"reason,omitempty"`
@@ -71,15 +72,12 @@ const (
 // join one pass, and detached from the request context because a client that
 // navigates away mid-pass must not SIGKILL a pull inside its checkout.
 func (h *Handler) handlePullAll(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
 	v, _, _ := h.pullFlight.Do("pull-all", func() (any, error) {
 		sctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), pullAllBudget)
 		defer cancel()
 		deadline, _ := sctx.Deadline()
 		repos := h.cachedDiscoverRepos(sctx)
-		results := make([]pullResult, len(repos))
+		results := make([]PullResult, len(repos))
 		g, gctx := errgroup.WithContext(sctx)
 		g.SetLimit(8)
 		for i, e := range repos {
@@ -93,14 +91,14 @@ func (h *Handler) handlePullAll(w http.ResponseWriter, r *http.Request) {
 		_ = g.Wait()
 		return results, nil
 	})
-	results, _ := v.([]pullResult)
+	results, _ := v.([]PullResult)
 	// Treated as read-only by every singleflight sharer.
-	httpserver.WriteJSON(w, map[string]any{jsonKeyRepos: results})
+	httpserver.WriteJSON(w, PullAll{Repos: results})
 }
 
 // Every exit carries a verdict, so the zero value is out_of_time rather than empty.
-func (h *Handler) pullOne(ctx context.Context, e repoEntry, deadline time.Time) pullResult {
-	res := pullResult{Repo: e.Name, Verdict: verdictSkipped, Reason: reasonOutOfTime}
+func (h *Handler) pullOne(ctx context.Context, e repoEntry, deadline time.Time) PullResult {
+	res := PullResult{Repo: e.Name, Verdict: verdictSkipped, Reason: reasonOutOfTime}
 	if ctx.Err() != nil {
 		return res
 	}
@@ -145,15 +143,15 @@ func (h *Handler) pullOne(ctx context.Context, e repoEntry, deadline time.Time) 
 	slog.Info("git pull-all: pulling", "repo", logsafe.Field(e.Name), "behind", behind)
 	out, perr := gitCmdWithCreds(ctx, budget, e.Dir, "", "pull", "--ff-only")
 	if perr != nil {
-		return pullResult{Repo: e.Name, Verdict: verdictFailed, Detail: clientBlock(cmdFailure(out, perr))}
+		return PullResult{Repo: e.Name, Verdict: verdictFailed, Detail: clientBlock(cmdFailure(out, perr))}
 	}
-	return pullResult{Repo: e.Name, Verdict: verdictPulled}
+	return PullResult{Repo: e.Name, Verdict: verdictPulled}
 }
 
 // preflight judges whether a fast-forward is safe in a repository already behind, returning the
 // blocking verdict or nil, most severe first. `git pull --ff-only` would refuse these too, but its
 // message names the symptom, not the cause.
-func preflight(ctx context.Context, dir, branch string, ahead int) *pullResult {
+func preflight(ctx context.Context, dir, branch string, ahead int) *PullResult {
 	if operationInProgress(ctx, dir) {
 		return blocked(reasonInProgress, "A merge, rebase or cherry-pick is in progress here.")
 	}
@@ -181,8 +179,8 @@ func preflight(ctx context.Context, dir, branch string, ahead int) *pullResult {
 }
 
 // The caller fills in Repo.
-func blocked(reason, detail string) *pullResult {
-	return &pullResult{Verdict: verdictBlocked, Reason: reason, Detail: detail}
+func blocked(reason, detail string) *PullResult {
+	return &PullResult{Verdict: verdictBlocked, Reason: reason, Detail: detail}
 }
 
 // Ok is false when the branch tracks nothing. Asks rev-list rather than the shared status call

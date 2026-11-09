@@ -36,12 +36,12 @@ func TestSweep_ARecreatedScheduleKeepsItsOwnRow(t *testing.T) {
 				if _, err := st.Delete(t.Context(), old.ID); err != nil {
 					t.Errorf("Delete: %v", err)
 				}
-				rule := putClock(t, st, clockSeed{Source: old.Source, Spec: launchrule.Spec{Freq: launchrule.FreqHourly, Interval: 1}})
+				rule := putClock(t, st, clockSeed{Source: old.Source, Spec: launchrule.ClockSpec{Freq: launchrule.FreqHourly, Interval: 1}})
 				reborn, _ = st.Clock(rule.ID)
 			}
 			r.sweep(t.Context())
 			got := st.Clocks()[0]
-			if got.ID != reborn.ID || !reflect.DeepEqual(got.Status, reborn.Status) {
+			if got.ID != reborn.ID || !reflect.DeepEqual(got.RuleStatus, reborn.RuleStatus) {
 				t.Errorf("recreated row = %+v, want it as the store created it: %+v", got, reborn)
 			}
 		})
@@ -69,12 +69,12 @@ func TestSweep_ARunOfThePredecessorHoldingTheRecipeFailsTheSlot(t *testing.T) {
 // the new schedule still does.
 func TestStore_ARunOfARecreatedScheduleLeavesItsSuccessorAlone(t *testing.T) {
 	st := mustStore(t)
-	old := putClock(t, st, clockSeed{Source: "bundled://x", Spec: launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}})
+	old := putClock(t, st, clockSeed{Source: "bundled://x", Spec: launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}})
 	stale := launchrule.Run{ScheduleID: old.ID, WorkflowID: "wf-old"}
 	if _, err := st.Delete(t.Context(), old.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	reborn := putClock(t, st, clockSeed{Source: old.Source, Spec: launchrule.Spec{Freq: launchrule.FreqHourly, Interval: 1}})
+	reborn := putClock(t, st, clockSeed{Source: old.Source, Spec: launchrule.ClockSpec{Freq: launchrule.FreqHourly, Interval: 1}})
 	if err := st.RecordStart(t.Context(), stale); !errors.Is(err, launchrule.ErrNotFound) {
 		t.Errorf("RecordStart = %v, want ErrNotFound for a deleted rule", err)
 	}

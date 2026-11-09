@@ -15,58 +15,58 @@ func at(y int, mo time.Month, d, h, mi int) time.Time {
 func TestNextRun(t *testing.T) {
 	tests := []struct {
 		name  string
-		spec  Spec
+		spec  ClockSpec
 		after time.Time
 		want  time.Time
 	}{
 		{
 			name:  "daily later today",
-			spec:  Spec{Freq: FreqDaily, Hour: 2, Minute: 30},
+			spec:  ClockSpec{Freq: FreqDaily, Hour: 2, Minute: 30},
 			after: at(2026, time.August, 4, 1, 0),
 			want:  at(2026, time.August, 4, 2, 30),
 		},
 		{
 			name:  "daily rolls to tomorrow once passed",
-			spec:  Spec{Freq: FreqDaily, Hour: 2, Minute: 30},
+			spec:  ClockSpec{Freq: FreqDaily, Hour: 2, Minute: 30},
 			after: at(2026, time.August, 4, 2, 30),
 			want:  at(2026, time.August, 5, 2, 30),
 		},
 		{
 			name:  "hourly steps from local midnight",
-			spec:  Spec{Freq: FreqHourly, Interval: 6, Minute: 15},
+			spec:  ClockSpec{Freq: FreqHourly, Interval: 6, Minute: 15},
 			after: at(2026, time.August, 4, 7, 0),
 			want:  at(2026, time.August, 4, 12, 15),
 		},
 		{
 			// A step of 15 phased at :07 fires 07,22,37,52 past each hour.
 			name:  "minutely steps from local midnight with the chosen offset",
-			spec:  Spec{Freq: FreqMinutely, Interval: 15, Minute: 7},
+			spec:  ClockSpec{Freq: FreqMinutely, Interval: 15, Minute: 7},
 			after: at(2026, time.August, 4, 9, 30),
 			want:  at(2026, time.August, 4, 9, 37),
 		},
 		{
 			// The picked minute is always a fire time: 37 is 2 steps of 15 past phase 7.
 			name:  "minutely fires at the minute the user picked",
-			spec:  Spec{Freq: FreqMinutely, Interval: 15, Minute: 37},
+			spec:  ClockSpec{Freq: FreqMinutely, Interval: 15, Minute: 37},
 			after: at(2026, time.August, 4, 9, 30),
 			want:  at(2026, time.August, 4, 9, 37),
 		},
 		{
 			name:  "minutely with a zero offset is on the step",
-			spec:  Spec{Freq: FreqMinutely, Interval: 30, Minute: 0},
+			spec:  ClockSpec{Freq: FreqMinutely, Interval: 30, Minute: 0},
 			after: at(2026, time.August, 4, 9, 5),
 			want:  at(2026, time.August, 4, 9, 30),
 		},
 		{
 			name:  "minutely wraps to the next day past the last slot",
-			spec:  Spec{Freq: FreqMinutely, Interval: 30, Minute: 0},
+			spec:  ClockSpec{Freq: FreqMinutely, Interval: 30, Minute: 0},
 			after: at(2026, time.August, 4, 23, 45),
 			want:  at(2026, time.August, 5, 0, 0),
 		},
 		{
 			// A step not dividing 1440 has a short final gap: the walk restarts at local midnight.
 			name:  "minutely step that does not divide the day has a short final gap",
-			spec:  Spec{Freq: FreqMinutely, Interval: 50, Minute: 0},
+			spec:  ClockSpec{Freq: FreqMinutely, Interval: 50, Minute: 0},
 			after: at(2026, time.August, 4, 23, 30),
 			want:  at(2026, time.August, 5, 0, 0),
 		},
@@ -74,92 +74,92 @@ func TestNextRun(t *testing.T) {
 			// The walk stops at the day, so the next fire is the next day's PHASE, not the midnight
 			// the step points at.
 			name:  "minutely step landing exactly on the end of the day keeps its phase",
-			spec:  Spec{Freq: FreqMinutely, Interval: 50, Minute: 40},
+			spec:  ClockSpec{Freq: FreqMinutely, Interval: 50, Minute: 40},
 			after: at(2026, time.August, 4, 23, 30),
 			want:  at(2026, time.August, 5, 0, 40),
 		},
 		{
 			// The walk is over minutes of the DAY: phase 20, step 45 gives 00:20, 01:05, ... 10:05.
 			name:  "minutely straddles the hour when the step does not divide 60",
-			spec:  Spec{Freq: FreqMinutely, Interval: 45, Minute: 20},
+			spec:  ClockSpec{Freq: FreqMinutely, Interval: 45, Minute: 20},
 			after: at(2026, time.August, 4, 9, 30),
 			want:  at(2026, time.August, 4, 10, 5),
 		},
 		{
 			name:  "hourly wraps to midnight after the last step",
-			spec:  Spec{Freq: FreqHourly, Interval: 6, Minute: 15},
+			spec:  ClockSpec{Freq: FreqHourly, Interval: 6, Minute: 15},
 			after: at(2026, time.August, 4, 18, 30),
 			want:  at(2026, time.August, 5, 0, 15),
 		},
 		{
 			name:  "hourly step that does not divide 24 has a short final gap",
-			spec:  Spec{Freq: FreqHourly, Interval: 5, Minute: 0},
+			spec:  ClockSpec{Freq: FreqHourly, Interval: 5, Minute: 0},
 			after: at(2026, time.August, 4, 20, 30),
 			want:  at(2026, time.August, 5, 0, 0),
 		},
 		{
 			name:  "weekly picks the next listed weekday",
-			spec:  Spec{Freq: FreqWeekly, Weekdays: []int{int(time.Monday)}, Hour: 9},
+			spec:  ClockSpec{Freq: FreqWeekly, Weekdays: []int{int(time.Monday)}, Hour: 9},
 			after: at(2026, time.August, 4, 10, 0), // a Tuesday
 			want:  at(2026, time.August, 10, 9, 0), // the following Monday
 		},
 		{
 			name:  "weekly with several days takes the soonest",
-			spec:  Spec{Freq: FreqWeekly, Weekdays: []int{int(time.Monday), int(time.Wednesday)}, Hour: 9},
+			spec:  ClockSpec{Freq: FreqWeekly, Weekdays: []int{int(time.Monday), int(time.Wednesday)}, Hour: 9},
 			after: at(2026, time.August, 4, 10, 0), // Tuesday
 			want:  at(2026, time.August, 5, 9, 0),  // Wednesday
 		},
 		{
 			name:  "weekly same day but earlier hour still fires today",
-			spec:  Spec{Freq: FreqWeekly, Weekdays: []int{int(time.Tuesday)}, Hour: 23},
+			spec:  ClockSpec{Freq: FreqWeekly, Weekdays: []int{int(time.Tuesday)}, Hour: 23},
 			after: at(2026, time.August, 4, 10, 0),
 			want:  at(2026, time.August, 4, 23, 0),
 		},
 		{
 			name:  "monthly this month",
-			spec:  Spec{Freq: FreqMonthly, MonthDay: 15, Hour: 3},
+			spec:  ClockSpec{Freq: FreqMonthly, MonthDay: 15, Hour: 3},
 			after: at(2026, time.August, 4, 10, 0),
 			want:  at(2026, time.August, 15, 3, 0),
 		},
 		{
 			name:  "monthly rolls to next month once passed",
-			spec:  Spec{Freq: FreqMonthly, MonthDay: 1, Hour: 3},
+			spec:  ClockSpec{Freq: FreqMonthly, MonthDay: 1, Hour: 3},
 			after: at(2026, time.August, 4, 10, 0),
 			want:  at(2026, time.September, 1, 3, 0),
 		},
 		{
 			name:  "day 31 clamps to the end of a 30-day month",
-			spec:  Spec{Freq: FreqMonthly, MonthDay: 31, Hour: 3},
+			spec:  ClockSpec{Freq: FreqMonthly, MonthDay: 31, Hour: 3},
 			after: at(2026, time.September, 1, 0, 0),
 			want:  at(2026, time.September, 30, 3, 0),
 		},
 		{
 			name:  "day 31 clamps to the end of February",
-			spec:  Spec{Freq: FreqMonthly, MonthDay: 31, Hour: 3},
+			spec:  ClockSpec{Freq: FreqMonthly, MonthDay: 31, Hour: 3},
 			after: at(2026, time.February, 1, 0, 0),
 			want:  at(2026, time.February, 28, 3, 0),
 		},
 		{
 			name:  "day 30 clamps to a leap February's 29th",
-			spec:  Spec{Freq: FreqMonthly, MonthDay: 30, Hour: 3},
+			spec:  ClockSpec{Freq: FreqMonthly, MonthDay: 30, Hour: 3},
 			after: at(2028, time.February, 1, 0, 0),
 			want:  at(2028, time.February, 29, 3, 0),
 		},
 		{
 			name:  "last day of a 31-day month",
-			spec:  Spec{Freq: FreqMonthly, MonthDay: lastDay, Hour: 3},
+			spec:  ClockSpec{Freq: FreqMonthly, MonthDay: lastDay, Hour: 3},
 			after: at(2026, time.August, 1, 0, 0),
 			want:  at(2026, time.August, 31, 3, 0),
 		},
 		{
 			name:  "last day of a leap February",
-			spec:  Spec{Freq: FreqMonthly, MonthDay: lastDay, Hour: 3},
+			spec:  ClockSpec{Freq: FreqMonthly, MonthDay: lastDay, Hour: 3},
 			after: at(2028, time.February, 10, 0, 0),
 			want:  at(2028, time.February, 29, 3, 0),
 		},
 		{
 			name:  "monthly crosses a year boundary",
-			spec:  Spec{Freq: FreqMonthly, MonthDay: 5, Hour: 3},
+			spec:  ClockSpec{Freq: FreqMonthly, MonthDay: 5, Hour: 3},
 			after: at(2026, time.December, 20, 0, 0),
 			want:  at(2027, time.January, 5, 3, 0),
 		},
@@ -180,7 +180,7 @@ func TestNextRun(t *testing.T) {
 // TestNextRun_IsStrictlyAfter pins that a fired due time is not returned again, or a
 // schedule re-fires in a loop for the whole minute.
 func TestNextRun_IsStrictlyAfter(t *testing.T) {
-	spec := Spec{Freq: FreqDaily, Hour: 2, Minute: 30}
+	spec := ClockSpec{Freq: FreqDaily, Hour: 2, Minute: 30}
 	exact := at(2026, time.August, 4, 2, 30)
 	got, err := NextRun(spec, exact)
 	if err != nil {
@@ -194,7 +194,7 @@ func TestNextRun_IsStrictlyAfter(t *testing.T) {
 // TestNextRun_Idempotent guards against drift: feeding a result back in must
 // yield the following slot, never the same one.
 func TestNextRun_Idempotent(t *testing.T) {
-	spec := Spec{Freq: FreqHourly, Interval: 8, Minute: 0}
+	spec := ClockSpec{Freq: FreqHourly, Interval: 8, Minute: 0}
 	cur := at(2026, time.August, 4, 3, 0)
 	seen := map[time.Time]bool{}
 	for range 10 {
@@ -239,7 +239,7 @@ func TestNextRun_MinutelyAcrossADSTBoundary(t *testing.T) {
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			spec := Spec{Freq: FreqMinutely, Interval: step}
+			spec := ClockSpec{Freq: FreqMinutely, Interval: step}
 			end := tt.day.AddDate(0, 0, 1)
 			cur := tt.day.Add(-time.Second) // just before midnight's own slot
 			var slots []time.Time
@@ -293,7 +293,7 @@ func TestNextRun_MinutelySkipsTheMissingHour(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load zone: %v", err)
 	}
-	spec := Spec{Freq: FreqMinutely, Interval: 15}
+	spec := ClockSpec{Freq: FreqMinutely, Interval: 15}
 	cur := time.Date(2026, time.March, 8, 1, 0, 0, 0, loc)
 	end := time.Date(2026, time.March, 8, 4, 0, 0, 0, loc)
 	for cur.Before(end) {
@@ -319,40 +319,40 @@ func TestNextRun_MinutelySkipsTheMissingHour(t *testing.T) {
 func TestSpecValidate(t *testing.T) {
 	tests := []struct {
 		name string
-		spec Spec
+		spec ClockSpec
 		ok   bool
 	}{
-		{"valid daily", Spec{Freq: FreqDaily, Hour: 2, Minute: 30}, true},
-		{"valid hourly", Spec{Freq: FreqHourly, Interval: 6}, true},
-		{"valid minutely", Spec{Freq: FreqMinutely, Interval: 15, Minute: 7}, true},
-		{"valid weekly", Spec{Freq: FreqWeekly, Weekdays: []int{0}, Hour: 9}, true},
-		{"valid monthly last day", Spec{Freq: FreqMonthly, MonthDay: lastDay, Hour: 9}, true},
-		{"unknown freq", Spec{Freq: "yearly", Hour: 1}, false},
-		{"empty freq", Spec{Hour: 1}, false},
-		{"hour too high", Spec{Freq: FreqDaily, Hour: 24}, false},
-		{"hour negative", Spec{Freq: FreqDaily, Hour: -1}, false},
-		{"minute too high", Spec{Freq: FreqDaily, Minute: 60}, false},
+		{"valid daily", ClockSpec{Freq: FreqDaily, Hour: 2, Minute: 30}, true},
+		{"valid hourly", ClockSpec{Freq: FreqHourly, Interval: 6}, true},
+		{"valid minutely", ClockSpec{Freq: FreqMinutely, Interval: 15, Minute: 7}, true},
+		{"valid weekly", ClockSpec{Freq: FreqWeekly, Weekdays: []int{0}, Hour: 9}, true},
+		{"valid monthly last day", ClockSpec{Freq: FreqMonthly, MonthDay: lastDay, Hour: 9}, true},
+		{"unknown freq", ClockSpec{Freq: "yearly", Hour: 1}, false},
+		{"empty freq", ClockSpec{Hour: 1}, false},
+		{"hour too high", ClockSpec{Freq: FreqDaily, Hour: 24}, false},
+		{"hour negative", ClockSpec{Freq: FreqDaily, Hour: -1}, false},
+		{"minute too high", ClockSpec{Freq: FreqDaily, Minute: 60}, false},
 		// Every range in the error messages is inclusive at both ends.
-		{"midnight, the bottom of the hour range", Spec{Freq: FreqDaily, Hour: 0, Minute: 30}, true},
-		{"the last minute of the hour", Spec{Freq: FreqDaily, Hour: 2, Minute: 59}, true},
-		{"hourly interval zero", Spec{Freq: FreqHourly, Interval: 0}, false},
-		{"hourly interval too high", Spec{Freq: FreqHourly, Interval: 25}, false},
-		{"hourly at the floor, every hour", Spec{Freq: FreqHourly, Interval: 1}, true},
-		{"hourly at the ceiling, once a day", Spec{Freq: FreqHourly, Interval: 24}, true},
+		{"midnight, the bottom of the hour range", ClockSpec{Freq: FreqDaily, Hour: 0, Minute: 30}, true},
+		{"the last minute of the hour", ClockSpec{Freq: FreqDaily, Hour: 2, Minute: 59}, true},
+		{"hourly interval zero", ClockSpec{Freq: FreqHourly, Interval: 0}, false},
+		{"hourly interval too high", ClockSpec{Freq: FreqHourly, Interval: 25}, false},
+		{"hourly at the floor, every hour", ClockSpec{Freq: FreqHourly, Interval: 1}, true},
+		{"hourly at the ceiling, once a day", ClockSpec{Freq: FreqHourly, Interval: 24}, true},
 		// The floor (see minMinuteInterval).
-		{"minutely every minute is refused", Spec{Freq: FreqMinutely, Interval: 1}, false},
-		{"minutely just under the floor", Spec{Freq: FreqMinutely, Interval: minMinuteInterval - 1}, false},
-		{"minutely at the floor", Spec{Freq: FreqMinutely, Interval: minMinuteInterval}, true},
-		{"minutely interval zero", Spec{Freq: FreqMinutely, Interval: 0}, false},
-		{"minutely at the ceiling", Spec{Freq: FreqMinutely, Interval: maxMinuteInterval}, true},
+		{"minutely every minute is refused", ClockSpec{Freq: FreqMinutely, Interval: 1}, false},
+		{"minutely just under the floor", ClockSpec{Freq: FreqMinutely, Interval: minMinuteInterval - 1}, false},
+		{"minutely at the floor", ClockSpec{Freq: FreqMinutely, Interval: minMinuteInterval}, true},
+		{"minutely interval zero", ClockSpec{Freq: FreqMinutely, Interval: 0}, false},
+		{"minutely at the ceiling", ClockSpec{Freq: FreqMinutely, Interval: maxMinuteInterval}, true},
 		// An hour or more is the hourly frequency's.
-		{"minutely an hour is refused", Spec{Freq: FreqMinutely, Interval: 60}, false},
-		{"minutely offset out of range", Spec{Freq: FreqMinutely, Interval: 15, Minute: 60}, false},
-		{"weekly with no days", Spec{Freq: FreqWeekly, Hour: 9}, false},
-		{"weekday out of range", Spec{Freq: FreqWeekly, Weekdays: []int{7}, Hour: 9}, false},
-		{"Saturday, the top of the weekday range", Spec{Freq: FreqWeekly, Weekdays: []int{6}, Hour: 9}, true},
-		{"month day zero", Spec{Freq: FreqMonthly, MonthDay: 0, Hour: 9}, false},
-		{"month day too high", Spec{Freq: FreqMonthly, MonthDay: 32, Hour: 9}, false},
+		{"minutely an hour is refused", ClockSpec{Freq: FreqMinutely, Interval: 60}, false},
+		{"minutely offset out of range", ClockSpec{Freq: FreqMinutely, Interval: 15, Minute: 60}, false},
+		{"weekly with no days", ClockSpec{Freq: FreqWeekly, Hour: 9}, false},
+		{"weekday out of range", ClockSpec{Freq: FreqWeekly, Weekdays: []int{7}, Hour: 9}, false},
+		{"Saturday, the top of the weekday range", ClockSpec{Freq: FreqWeekly, Weekdays: []int{6}, Hour: 9}, true},
+		{"month day zero", ClockSpec{Freq: FreqMonthly, MonthDay: 0, Hour: 9}, false},
+		{"month day too high", ClockSpec{Freq: FreqMonthly, MonthDay: 32, Hour: 9}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -370,7 +370,7 @@ func TestSpecValidate(t *testing.T) {
 // TestNextRun_RejectsAnInvalidSpec keeps a bad stored spec from silently
 // producing a fire time.
 func TestNextRun_RejectsAnInvalidSpec(t *testing.T) {
-	if _, err := NextRun(Spec{Freq: "nope"}, time.Now()); err == nil {
+	if _, err := NextRun(ClockSpec{Freq: "nope"}, time.Now()); err == nil {
 		t.Errorf("an invalid spec must not yield a next run")
 	}
 }
@@ -397,7 +397,7 @@ func FuzzNextRun(f *testing.F) {
 				wd = append(wd, d)
 			}
 		}
-		s := Spec{
+		s := ClockSpec{
 			Freq:     freqs[freqSel%len(freqs)],
 			Interval: interval,
 			Hour:     hour,

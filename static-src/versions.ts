@@ -1,5 +1,6 @@
 import { signal, type Signal } from "@cplieger/ui";
 import { apiGet } from "./api-client.js";
+import { getVersionEndpoint } from "./wire/client.gen.js";
 
 /** The wire shape of GET /api/version (internal/server/cli_handlers.go). Every
  *  field is optional: `kiro_cli` is omitted when the `--version` probe fails
@@ -48,7 +49,7 @@ function load(): Promise<boolean> {
   if (loaded) {
     return Promise.resolve(true);
   }
-  inflight ??= apiGet<VersionPayload>("/api/version").then((v) => {
+  inflight ??= apiGet<VersionPayload>(getVersionEndpoint.path).then((v) => {
     inflight = null;
     if (v === null) {
       return false;

@@ -3,37 +3,45 @@ package server
 import (
 	"net/http"
 	"os/exec"
+	"reflect"
+	"strings"
 
 	"github.com/cplieger/go/httpserver"
-	"github.com/cplieger/marotte/internal/httpreply"
 )
 
-// Each key is a name kiro-cli or a marotte feature panel expects on PATH (the MCP add modal gates
-// on node/npx/uv).
-var statusBinaries = []string{
-	"node", "npm", "npx",
-	"go", "gofmt",
-	"java",
-	"cargo", "rustc",
-	"uv", "uvx",
-	"typescript-language-server", "tsc",
-	"pyright", "pyrefly",
-	"gopls", "rust-analyzer", "clangd",
-	"jdtls", "kotlin-language-server",
+// ToolPresence is GET /api/tools/status' body: whether PATH has each binary kiro-cli or a feature
+// panel expects (the MCP add modal gates on node/npx/uv). Each json name is the binary probed, and
+// the fields are in name order, the order a map of the same keys encodes in.
+type ToolPresence struct {
+	Cargo                    bool `json:"cargo"`
+	Clangd                   bool `json:"clangd"`
+	Go                       bool `json:"go"`
+	Gofmt                    bool `json:"gofmt"`
+	Gopls                    bool `json:"gopls"`
+	Java                     bool `json:"java"`
+	Jdtls                    bool `json:"jdtls"`
+	KotlinLanguageServer     bool `json:"kotlin-language-server"`
+	Node                     bool `json:"node"`
+	Npm                      bool `json:"npm"`
+	Npx                      bool `json:"npx"`
+	Pyrefly                  bool `json:"pyrefly"`
+	Pyright                  bool `json:"pyright"`
+	RustAnalyzer             bool `json:"rust-analyzer"`
+	Rustc                    bool `json:"rustc"`
+	Tsc                      bool `json:"tsc"`
+	TypescriptLanguageServer bool `json:"typescript-language-server"`
+	Uv                       bool `json:"uv"`
+	Uvx                      bool `json:"uvx"`
 }
 
-// handleToolStatus serves GET /api/tools/status: bare PATH presence probes for the binaries
-// feature panels gate on.
-func handleToolStatus(w http.ResponseWriter, r *http.Request) {
-	// Gated here, not on the pattern: a GET pattern would hand PATCH/DELETE /api/tools/status to
-	// toolbelt's /api/tools/{name} with name="status". See ListenAndServe.
-	if !httpreply.RequireMethod(w, r, http.MethodGet) {
-		return
-	}
-	out := make(map[string]bool, len(statusBinaries))
-	for _, b := range statusBinaries {
-		_, err := exec.LookPath(b)
-		out[b] = err == nil
+// handleToolStatus serves GET /api/tools/status: a bare PATH presence probe per ToolPresence field.
+func handleToolStatus(w http.ResponseWriter, _ *http.Request) {
+	var out ToolPresence
+	v := reflect.ValueOf(&out).Elem()
+	for i := range v.NumField() {
+		name, _, _ := strings.Cut(v.Type().Field(i).Tag.Get("json"), ",")
+		_, err := exec.LookPath(name)
+		v.Field(i).SetBool(err == nil)
 	}
 	httpserver.WriteJSON(w, out)
 }

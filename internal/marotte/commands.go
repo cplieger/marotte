@@ -209,9 +209,9 @@ const MaxRejectionReasonRunes = 1000
 // line holding a lone surrogate escape or an invalid UTF-8 byte, and decoding
 // turns both into U+FFFD.
 type ElicitationResponseCommand struct {
-	Content   map[string]any `json:"content,omitempty"`
-	Action    string         `json:"action"`
-	RequestID int64          `json:"request_id"`
+	Content   map[string]json.RawMessage `json:"content,omitempty"`
+	Action    string                     `json:"action"`
+	RequestID int64                      `json:"request_id"`
 }
 
 // UserInputActionAnswered and UserInputActionDismissed are the accepted actions

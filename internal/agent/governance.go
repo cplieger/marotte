@@ -17,6 +17,7 @@ import (
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route"
 	"github.com/cplieger/marotte/internal/translate"
 )
 
@@ -293,6 +294,6 @@ func (st *Settings) handleGovernance(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, st.governanceState(r.Context()))
 }
 
-func (st *Settings) registerGovernanceRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/governance", st.handleGovernance)
+func (st *Settings) registerGovernanceRoutes(m routeMux) {
+	m.Bind(route.JSON[struct{}, marotte.GovernanceStatePayload]("GET /api/governance", http.HandlerFunc(st.handleGovernance)))
 }

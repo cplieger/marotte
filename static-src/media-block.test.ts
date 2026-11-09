@@ -3,6 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { mediaElementFor } from "./media-block.js";
 import { renderMarkdownInto } from "./markdown.js";
+import { asked } from "./__test-helpers__/url.js";
 
 describe("mediaElementFor", () => {
   it("gives audio a native player with controls", () => {
@@ -51,7 +52,10 @@ describe("mediaElementFor", () => {
 
   it("decodes a percent-escaped path once", () => {
     const a = mediaElementFor("/workspace/my%20clip.mp3", "");
-    expect(a?.getAttribute("src")).toBe("/api/file/download?path=%2Fworkspace%2Fmy%20clip.mp3");
+    expect(asked(a?.getAttribute("src") ?? "")).toEqual({
+      path: "/api/file/download",
+      query: { path: "/workspace/my clip.mp3" },
+    });
     expect(a?.textContent).toBe("my clip.mp3");
   });
 

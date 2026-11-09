@@ -11,6 +11,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 )
@@ -24,7 +25,7 @@ func scheduledHub(t *testing.T) (*Runtime, *fakeBridge, *launchrule.Store, launc
 	if err != nil {
 		t.Fatalf("launchrule.NewStore: %v", err)
 	}
-	entry := putClockRule(t, st, "bundled://nightly", launchrule.Spec{Freq: launchrule.FreqDaily, Hour: 2}, true)
+	entry := putClockRule(t, st, "bundled://nightly", launchrule.ClockSpec{Freq: launchrule.FreqDaily, Hour: 2}, true)
 	h.runs.launchRules = st
 	return h, br, st, entry
 }
@@ -57,7 +58,7 @@ func TestLaunch_ARecipeBusyRefusalNamesTheLiveRun(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(mux)
+	(&runRoutes{runs: h.runs, epoch: h.Epoch}).register(routetest.On(mux))
 	rec := postRoute(t, mux, "/api/runs", `{"source":"bundled://publish"}`)
 	if rec.Code != http.StatusConflict || errorText(t, rec) != "this recipe already has a live run" {
 		t.Errorf("POST /api/runs on a busy recipe = %d %s, want 409 with the single-run sentence", rec.Code, rec.Body.String())

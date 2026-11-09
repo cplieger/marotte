@@ -11,6 +11,7 @@ import { apiGetTyped } from "./api-client.js";
 import { observeStamp } from "./subject-versions.js";
 import type { TabSubject, TabsChangedPayload } from "./types.js";
 import { decodeTabList } from "./wire/decoders.gen.js";
+import { getTabsEndpoint } from "./wire/client.gen.js";
 
 /** How long a dispatched mutation stays correlatable: bounds the set for frames that never come
  *  (an idempotent open, a refusal, a dropped connection). */
@@ -531,7 +532,7 @@ function relist(signal?: AbortSignal): Promise<boolean> {
 }
 
 async function readList(signal?: AbortSignal): Promise<boolean> {
-  const list = await apiGetTyped("/api/tabs", decodeTabList, signal);
+  const list = await apiGetTyped(getTabsEndpoint.path, decodeTabList, signal);
   if (list === null) {
     // Unreachable or undecodable: keep the projection; a failed list settles NO pending op.
     return false;

@@ -25,8 +25,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// kiroDocNewRequest is POST /api/workspace/kiro-docs/new's body; each kind reads only its fields.
-type kiroDocNewRequest struct {
+// KiroDocNewRequest is POST /api/workspace/kiro-docs/new's body; each kind reads only its fields.
+type KiroDocNewRequest struct {
 	// Timeout is a hook command's limit in seconds; absent leaves KAS's default.
 	Timeout     *int   `json:"timeout,omitempty"`
 	Category    string `json:"category"`
@@ -40,8 +40,8 @@ type kiroDocNewRequest struct {
 	Content string `json:"content,omitempty"`
 }
 
-// kiroDocNewResponse is the 201 reply: the new file's path in the inventory rows' spelling.
-type kiroDocNewResponse struct {
+// KiroDocNewResult is the 201 reply: the new file's path in the inventory rows' spelling.
+type KiroDocNewResult struct {
 	Path string `json:"path"`
 }
 
@@ -83,7 +83,7 @@ var writeDocData = func(f *os.File, data []byte) error {
 	return err
 }
 
-var newDocBuilders = map[string]func(*kiroDocNewRequest, matcherCheck) (newDoc, error){
+var newDocBuilders = map[string]func(*KiroDocNewRequest, matcherCheck) (newDoc, error){
 	catSteering: newSteeringDoc,
 	catSkill:    newSkillDoc,
 	catPrompt:   newPromptDoc,
@@ -92,10 +92,7 @@ var newDocBuilders = map[string]func(*kiroDocNewRequest, matcherCheck) (newDoc, 
 }
 
 func (s *Server) handleKiroDocNew(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	var req kiroDocNewRequest
+	var req KiroDocNewRequest
 	if !decodeBody(w, r, &req) {
 		return
 	}
@@ -140,7 +137,7 @@ func (s *Server) handleKiroDocNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("kiro docs: created", "category", req.Category, "path", logsafe.Field(rel))
-	httpserver.WriteJSONStatus(w, http.StatusCreated, kiroDocNewResponse{
+	httpserver.WriteJSONStatus(w, http.StatusCreated, KiroDocNewResult{
 		Path: strings.TrimPrefix(s.workDir, "/") + "/.kiro/" + rel,
 	})
 }
@@ -327,7 +324,7 @@ var steeringTemplates = map[string]string{
 	"manual": steeringTemplateManual,
 }
 
-func newSteeringDoc(req *kiroDocNewRequest, _ matcherCheck) (newDoc, error) {
+func newSteeringDoc(req *KiroDocNewRequest, _ matcherCheck) (newDoc, error) {
 	tmpl, ok := steeringTemplates[req.Inclusion]
 	if !ok {
 		return newDoc{}, fieldError("Choose agent steering or manual steering.")
@@ -357,7 +354,7 @@ const (
 	maxSkillDescription = 1024
 )
 
-func newSkillDoc(req *kiroDocNewRequest, _ matcherCheck) (newDoc, error) {
+func newSkillDoc(req *KiroDocNewRequest, _ matcherCheck) (newDoc, error) {
 	name := strings.TrimSpace(req.Name)
 	if len(name) > maxSkillName || !skillNameRe.MatchString(name) {
 		return newDoc{}, fieldError("Use lowercase letters, numbers and single hyphens, up to 64 characters.")
@@ -385,7 +382,7 @@ var promptNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 const maxPromptName = 50
 
-func newPromptDoc(req *kiroDocNewRequest, _ matcherCheck) (newDoc, error) {
+func newPromptDoc(req *KiroDocNewRequest, _ matcherCheck) (newDoc, error) {
 	name := strings.TrimSpace(req.Name)
 	switch {
 	case name == "":
@@ -413,7 +410,7 @@ type agentSkeleton struct {
 	Tools       []string `json:"tools"`
 }
 
-func newAgentDoc(req *kiroDocNewRequest, _ matcherCheck) (newDoc, error) {
+func newAgentDoc(req *KiroDocNewRequest, _ matcherCheck) (newDoc, error) {
 	name := strings.TrimSpace(req.Name)
 	switch {
 	case name == "":
@@ -475,7 +472,7 @@ type hookFile struct {
 	Hooks   []hookEntry `json:"hooks"`
 }
 
-func newHookDoc(req *kiroDocNewRequest, accepts matcherCheck) (newDoc, error) {
+func newHookDoc(req *KiroDocNewRequest, accepts matcherCheck) (newDoc, error) {
 	entry, err := hookEntryFrom(req, accepts)
 	if err != nil {
 		return newDoc{}, err
@@ -492,7 +489,7 @@ func newHookDoc(req *kiroDocNewRequest, accepts matcherCheck) (newDoc, error) {
 	}, nil
 }
 
-func hookEntryFrom(req *kiroDocNewRequest, accepts matcherCheck) (hookEntry, error) {
+func hookEntryFrom(req *KiroDocNewRequest, accepts matcherCheck) (hookEntry, error) {
 	name := strings.TrimSpace(req.Name)
 	switch {
 	case name == "":
@@ -535,7 +532,7 @@ func hookEntryFrom(req *kiroDocNewRequest, accepts matcherCheck) (hookEntry, err
 }
 
 // hookMatcher is the request's trimmed matcher, dropped for a trigger with no subject to match.
-func hookMatcher(req *kiroDocNewRequest, accepts matcherCheck) (string, error) {
+func hookMatcher(req *KiroDocNewRequest, accepts matcherCheck) (string, error) {
 	subject, _ := marotte.HookTriggerSubject(req.Trigger)
 	m := strings.TrimSpace(req.Matcher)
 	if subject == marotte.HookMatcherSubjectNone || m == "" {

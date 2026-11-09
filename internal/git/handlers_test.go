@@ -21,6 +21,7 @@ import (
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/go/textsafe"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -412,39 +413,12 @@ func TestPRRefShape(t *testing.T) {
 	}
 }
 
-func TestRequirePOST_AcceptsPOST(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/x", nil)
-	rec := httptest.NewRecorder()
-	if !requirePOST(rec, req) {
-		t.Errorf("requirePOST(POST) = false, want true")
-	}
-}
-
-func TestRequirePOST_RejectsOtherMethods(t *testing.T) {
-	methods := []string{
-		http.MethodGet, http.MethodPut, http.MethodPatch,
-		http.MethodDelete, http.MethodOptions, http.MethodHead,
-	}
-	for _, m := range methods {
-		t.Run(m, func(t *testing.T) {
-			req := httptest.NewRequest(m, "/x", nil)
-			rec := httptest.NewRecorder()
-			if requirePOST(rec, req) {
-				t.Errorf("requirePOST(%s) = true, want false", m)
-			}
-			if rec.Code != http.StatusMethodNotAllowed {
-				t.Errorf("code = %d, want 405", rec.Code)
-			}
-		})
-	}
-}
-
 func TestDecodePostBody_SuccessPopulatesStruct(t *testing.T) {
 	body := strings.NewReader(`{"repo":"foo"}`)
 	req := httptest.NewRequest(http.MethodPost, "/x", body)
 	rec := httptest.NewRecorder()
 
-	var got repoBody
+	var got RepoRequest
 	ok := decodePostBody(rec, req, &got, "bad")
 
 	if !ok {
@@ -460,7 +434,7 @@ func TestDecodePostBody_MalformedJSONRejected(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/x", body)
 	rec := httptest.NewRecorder()
 
-	var got repoBody
+	var got RepoRequest
 	ok := decodePostBody(rec, req, &got, "custom error msg")
 
 	if ok {
@@ -479,7 +453,7 @@ func TestDecodePostBodyOptional_MalformedJSONIgnored(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/x", body)
 	rec := httptest.NewRecorder()
 
-	var got repoBody
+	var got RepoRequest
 	if !decodePostBodyOptional(rec, req, &got) {
 		t.Fatalf("decodePostBodyOptional(%q) = false, want true", `{not-json`)
 	}
@@ -493,7 +467,7 @@ func TestDecodePostBodyOptional_EmptyBodyIgnored(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/x", nil)
 	rec := httptest.NewRecorder()
 
-	var got repoBody
+	var got RepoRequest
 	if !decodePostBodyOptional(rec, req, &got) {
 		t.Fatalf("decodePostBodyOptional(nil body) = false, want true")
 	}
@@ -1599,7 +1573,7 @@ func TestHandleStatus_NonRepoReturnsIsRepoFalse(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d", rec.Code)
 	}
-	var resp gitStatusResp
+	var resp Status
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -1618,7 +1592,7 @@ func TestHandleStatusAll_EmptyWorkspaceReturnsEmptyArray(t *testing.T) {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	var resp struct {
-		Repos []allRepoStatus `json:"repos"`
+		Repos []RepoStatus `json:"repos"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -1643,7 +1617,7 @@ func TestHandleStatusAll_CleanRepoListedOnce(t *testing.T) {
 		t.Fatalf("code = %d", rec.Code)
 	}
 	var resp struct {
-		Repos []allRepoStatus `json:"repos"`
+		Repos []RepoStatus `json:"repos"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -1673,7 +1647,7 @@ func TestHandleStatus_CleanRepoReportsBranchAndNoFiles(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	var resp gitStatusResp
+	var resp Status
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -1701,7 +1675,7 @@ func TestHandleStatus_DirtyRepoReportsFiles(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/git/status?quick=1", nil)
 	rec := httptest.NewRecorder()
 	h.handleStatus(rec, req)
-	var resp gitStatusResp
+	var resp Status
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -2084,38 +2058,26 @@ func TestStagingHandlers_InputValidation(t *testing.T) {
 	}
 }
 
+// TestSimpleHandlers_NonPostRejected serves each write route through its binding: every other method
+// is refused 405 before the handler runs.
 func TestSimpleHandlers_NonPostRejected(t *testing.T) {
-	tests := []struct {
-		handler func(h *Handler) http.HandlerFunc
-		name    string
-	}{
-		{func(h *Handler) http.HandlerFunc { return h.handleClone }, "clone"},
-		{func(h *Handler) http.HandlerFunc { return h.handleCheckout }, "checkout"},
-		{func(h *Handler) http.HandlerFunc { return h.handleRemove }, "remove"},
-		{func(h *Handler) http.HandlerFunc { return h.handleCommit }, "commit"},
-		{func(h *Handler) http.HandlerFunc { return h.handlePRFetch }, "pr-fetch"},
-		{func(h *Handler) http.HandlerFunc { return h.handleReclone }, "reclone"},
-		{func(h *Handler) http.HandlerFunc { return h.handleStage }, "stage"},
-		{func(h *Handler) http.HandlerFunc { return h.handleUnstage }, "unstage"},
-		{func(h *Handler) http.HandlerFunc { return h.handleDiscard }, "discard"},
-		{func(h *Handler) http.HandlerFunc { return h.handlePush }, "push"},
-		{func(h *Handler) http.HandlerFunc { return h.handlePull }, "pull"},
-		{func(h *Handler) http.HandlerFunc { return h.handleStash }, "stash"},
-		{func(h *Handler) http.HandlerFunc { return h.handleStashPop }, "stash-pop"},
+	names := []string{
+		"clone", "checkout", "remove", "commit", "pr-fetch", "reclone", "stage", "unstage", "discard",
+		"push", "pull", "pull-all", "stash", "stash-pop",
 	}
 	methods := []string{
 		http.MethodGet, http.MethodPut, http.MethodPatch,
 		http.MethodDelete, http.MethodOptions,
 	}
-	for _, tt := range tests {
+	mux := http.NewServeMux()
+	newTestHandler(t, t.TempDir()).RegisterRoutes(routetest.On(mux))
+	for _, name := range names {
 		for _, m := range methods {
-			t.Run(tt.name+"_"+m, func(t *testing.T) {
-				h := newTestHandler(t, t.TempDir())
-				req := httptest.NewRequest(m, "/api/git/"+tt.name, nil)
+			t.Run(name+"_"+m, func(t *testing.T) {
 				rec := httptest.NewRecorder()
-				tt.handler(h)(rec, req)
+				mux.ServeHTTP(rec, httptest.NewRequest(m, "/api/git/"+name, nil))
 				if rec.Code != http.StatusMethodNotAllowed {
-					t.Errorf("%s %s: code = %d, want 405", m, tt.name, rec.Code)
+					t.Errorf("%s %s: code = %d, want 405", m, name, rec.Code)
 				}
 			})
 		}

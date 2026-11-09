@@ -1,7 +1,25 @@
 // Git Changes tab actions. The server answers HTTP 200 for both outcomes; failures surface beside
 // the pressed control, so no action toasts one.
 
-import { apiAction, ActionError, hasErrorString, retryNetwork, RETRY_STANDARD } from "./index.js";
+import {
+  apiAction,
+  ActionError,
+  fromEndpoint,
+  hasErrorString,
+  retryNetwork,
+  RETRY_STANDARD,
+} from "./index.js";
+import {
+  postGitCommitEndpoint,
+  postGitDiscardEndpoint,
+  postGitPullAllEndpoint,
+  postGitPullEndpoint,
+  postGitPushEndpoint,
+  postGitStageEndpoint,
+  postGitStashEndpoint,
+  postGitStashPopEndpoint,
+  postGitUnstageEndpoint,
+} from "../wire/client.gen.js";
 
 import { summarizePullAll, type GitPullResult } from "../git-types.js";
 
@@ -49,7 +67,7 @@ export function decodeGitResult(data: unknown): GitCmdResult {
 export const stage = apiAction<GitRepoFilesArgs, GitCmdResult>({
   name: "git.stage",
   scope: (args) => "git:" + args.repo,
-  request: (args) => ({ method: "POST", path: "/api/git/stage", body: args }),
+  request: (args) => fromEndpoint(postGitStageEndpoint.request({ body: args })),
   decode: decodeGitResult,
   error: false,
   retryable: retryNetwork,
@@ -60,7 +78,7 @@ export const stage = apiAction<GitRepoFilesArgs, GitCmdResult>({
 export const discard = apiAction<GitRepoFilesArgs, GitCmdResult>({
   name: "git.discard",
   scope: (args) => "git:" + args.repo,
-  request: (args) => ({ method: "POST", path: "/api/git/discard", body: args }),
+  request: (args) => fromEndpoint(postGitDiscardEndpoint.request({ body: args })),
   decode: decodeGitResult,
   error: false,
   // Not retryable: a timed-out discard may have succeeded server-side.
@@ -69,7 +87,7 @@ export const discard = apiAction<GitRepoFilesArgs, GitCmdResult>({
 export const unstage = apiAction<GitRepoFilesArgs, GitCmdResult>({
   name: "git.unstage",
   scope: (args) => "git:" + args.repo,
-  request: (args) => ({ method: "POST", path: "/api/git/unstage", body: args }),
+  request: (args) => fromEndpoint(postGitUnstageEndpoint.request({ body: args })),
   decode: decodeGitResult,
   error: false,
   retryable: retryNetwork,
@@ -79,7 +97,7 @@ export const unstage = apiAction<GitRepoFilesArgs, GitCmdResult>({
 export const pull = apiAction<GitRepoArgs, GitCmdResult>({
   name: "git.pull",
   scope: (args) => "git:" + args.repo,
-  request: (args) => ({ method: "POST", path: "/api/git/pull", body: args }),
+  request: (args) => fromEndpoint(postGitPullEndpoint.request({ body: args })),
   decode: decodeGitResult,
   success: (args) => (args.repo !== "" ? `Pulled ${args.repo}` : "Pulled"),
   error: false,
@@ -121,7 +139,7 @@ function decodePullAll(data: unknown): GitPullResult[] {
 export const pullAll = apiAction<void, GitPullResult[]>({
   name: "git.pull_all",
   dedupe: true,
-  request: () => ({ method: "POST", path: "/api/git/pull-all" }),
+  request: () => fromEndpoint(postGitPullAllEndpoint.request()),
   decode: decodePullAll,
   success: (_args, result) => summarizePullAll(result),
   error: false,
@@ -130,7 +148,7 @@ export const pullAll = apiAction<void, GitPullResult[]>({
 export const push = apiAction<GitRepoArgs, GitCmdResult>({
   name: "git.push",
   scope: (args) => "git:" + args.repo,
-  request: (args) => ({ method: "POST", path: "/api/git/push", body: args }),
+  request: (args) => fromEndpoint(postGitPushEndpoint.request({ body: args })),
   decode: decodeGitResult,
   success: (args) => (args.repo !== "" ? `Pushed ${args.repo}` : "Pushed"),
   error: false,
@@ -140,7 +158,7 @@ export const push = apiAction<GitRepoArgs, GitCmdResult>({
 export const stash = apiAction<GitRepoArgs, GitCmdResult>({
   name: "git.stash",
   scope: (args) => "git:" + args.repo,
-  request: (args) => ({ method: "POST", path: "/api/git/stash", body: args }),
+  request: (args) => fromEndpoint(postGitStashEndpoint.request({ body: args })),
   decode: decodeGitResult,
   error: false,
   idempotencyKey: true,
@@ -150,7 +168,7 @@ export const stash = apiAction<GitRepoArgs, GitCmdResult>({
 export const stashPop = apiAction<GitRepoArgs, GitCmdResult>({
   name: "git.stash_pop",
   scope: (args) => "git:" + args.repo,
-  request: (args) => ({ method: "POST", path: "/api/git/stash-pop", body: args }),
+  request: (args) => fromEndpoint(postGitStashPopEndpoint.request({ body: args })),
   decode: decodeGitResult,
   error: false,
   idempotencyKey: true,
@@ -160,7 +178,7 @@ export const stashPop = apiAction<GitRepoArgs, GitCmdResult>({
 export const commit = apiAction<{ repo: string; message: string }, GitCmdResult>({
   name: "git.commit",
   scope: (args) => "git:" + args.repo,
-  request: (args) => ({ method: "POST", path: "/api/git/commit", body: args }),
+  request: (args) => fromEndpoint(postGitCommitEndpoint.request({ body: args })),
   decode: decodeGitResult,
   success: "Committed",
   error: false,

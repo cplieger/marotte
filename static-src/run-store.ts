@@ -28,6 +28,7 @@ import {
   type ClassifiedRunNodeStatus,
   type ClassifiedRunStatus,
 } from "./run-status.js";
+import { getRunsByIdEndpoint, getRunsLiveEndpoint } from "./wire/client.gen.js";
 
 /** One node of KAS's execution tree, from `state.root`. */
 export interface RunNode {
@@ -841,7 +842,9 @@ async function fetchRun(workflowID: string): Promise<void> {
   let failed = 0;
   const issued = executionsOf(workflowID).frames;
   try {
-    const r = await apiGetOrError<RawRunInspect>(`/api/runs/${encodeURIComponent(workflowID)}`);
+    const r = await apiGetOrError<RawRunInspect>(
+      getRunsByIdEndpoint.request({ id: workflowID }).path,
+    );
     const d = r.data;
     if (forgotten.has(workflowID)) {
       // The last reader left while this read was out: writing the answer would recreate a cell nobody holds.
@@ -1206,7 +1209,7 @@ export function registerLiveRunObserver(fn: (workflowID: string) => void): void 
  *  exemption costs memory, a wrongly-evicted live chat costs correctness, and the next gap or
  *  boot retries. */
 export async function rebuildLiveRuns(signal?: AbortSignal): Promise<void> {
-  const d = await apiGetTyped("/api/runs/live", decodeLiveRunsResponse, signal);
+  const d = await apiGetTyped(getRunsLiveEndpoint.path, decodeLiveRunsResponse, signal);
   if (d === null) {
     return;
   }

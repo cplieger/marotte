@@ -10,7 +10,7 @@ import (
 // REST view. It measures from the anchor (last fire or skip) and floors at notBefore. The
 // runner passes a zero notBefore because its sweep must SEE a stale slot to tell "may still
 // fire" (inside missGrace) from "missed while down"; the view floors at now.
-func NextRunFrom(s launchrule.Spec, anchor, notBefore time.Time) (time.Time, error) {
+func NextRunFrom(s launchrule.ClockSpec, anchor, notBefore time.Time) (time.Time, error) {
 	from := anchor
 	if notBefore.After(from) {
 		from = notBefore

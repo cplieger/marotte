@@ -14,13 +14,13 @@ import (
 // is all these tests need of a row's contents. The promoted fields are set
 // directly in the literal, which is Go 1.27's spelling and what the modernize
 // `embedlit` analyzer asks for.
-func repoRow(name string) allRepoStatus {
-	return allRepoStatus{Repo: name, IsRepo: true, Files: []gitFile{}}
+func repoRow(name string) RepoStatus {
+	return RepoStatus{Repo: name, IsRepo: true, Files: []StatusFile{}}
 }
 
 // Written directly rather than through publish, which stamps `now` and so cannot express an old
 // snapshot.
-func seedSnapshot(c *statusCache, key string, rows []allRepoStatus, at time.Time) {
+func seedSnapshot(c *statusCache, key string, rows []RepoStatus, at time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.slots == nil {
@@ -34,7 +34,7 @@ func seedSnapshot(c *statusCache, key string, rows []allRepoStatus, at time.Time
 	slot.snap = &statusSnapshot{at: at, repos: rows}
 }
 
-func getStatusAll(t *testing.T, h *Handler, query string) statusAllResp {
+func getStatusAll(t *testing.T, h *Handler, query string) StatusAll {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/git/status-all"+query, nil)
 	rec := httptest.NewRecorder()
@@ -42,7 +42,7 @@ func getStatusAll(t *testing.T, h *Handler, query string) statusAllResp {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	var resp statusAllResp
+	var resp StatusAll
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestHandleStatusAll_PollAnswersFromTheSnapshot(t *testing.T) {
 	workDir := t.TempDir()
 	initFixtureRepo(t, workDir)
 	h := newTestHandler(t, workDir)
-	seeded := []allRepoStatus{repoRow("seeded")}
+	seeded := []RepoStatus{repoRow("seeded")}
 	seedSnapshot(&h.statusCache, statusKeyPoll, seeded, time.Now())
 
 	got := getStatusAll(t, h, "")
@@ -70,7 +70,7 @@ func TestHandleStatusAll_PollAnswersFromTheSnapshot(t *testing.T) {
 // knows is seconds old instead of waiting for certainty.
 func TestHandleStatusAll_ReportsTheSnapshotAge(t *testing.T) {
 	h := newTestHandler(t, t.TempDir())
-	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{}, time.Now().Add(-3*time.Second))
+	seedSnapshot(&h.statusCache, statusKeyPoll, []RepoStatus{}, time.Now().Add(-3*time.Second))
 
 	got := getStatusAll(t, h, "")
 
@@ -89,7 +89,7 @@ func TestHandleStatusAll_StaleSnapshotRefreshesBehindTheAnswer(t *testing.T) {
 	}
 	initFixtureRepo(t, repoDir)
 	h := newTestHandler(t, workDir)
-	stale := []allRepoStatus{repoRow("seeded")}
+	stale := []RepoStatus{repoRow("seeded")}
 	seedSnapshot(&h.statusCache, statusKeyPoll, stale, time.Now().Add(-statusMaxAge-time.Second))
 
 	got := getStatusAll(t, h, "")
@@ -135,7 +135,7 @@ func TestHandleStatusAll_ForcedRefreshWaitsForFreshData(t *testing.T) {
 	}
 	initFixtureRepo(t, repoDir)
 	h := newTestHandler(t, workDir)
-	seeded := []allRepoStatus{repoRow("seeded")}
+	seeded := []RepoStatus{repoRow("seeded")}
 	seedSnapshot(&h.statusCache, statusKeyFetch, seeded, time.Now())
 
 	got := getStatusAll(t, h, "?fetch=1")
@@ -151,7 +151,7 @@ func TestHandleStatusAll_ForcedRefreshWaitsForFreshData(t *testing.T) {
 // facts: `?fetch=1` measures ahead/behind against a freshly fetched ref.
 func TestHandleStatusAll_TheFetchVariantHasItsOwnSnapshot(t *testing.T) {
 	h := newTestHandler(t, t.TempDir())
-	seeded := []allRepoStatus{repoRow("poll-only")}
+	seeded := []RepoStatus{repoRow("poll-only")}
 	seedSnapshot(&h.statusCache, statusKeyPoll, seeded, time.Now())
 
 	if got := getStatusAll(t, h, "?fetch=1"); len(got.Repos) != 0 {
@@ -167,7 +167,7 @@ func TestHandleStatusAll_TheFetchVariantHasItsOwnSnapshot(t *testing.T) {
 // show a spinner over its data.
 func TestHandleStatusAll_ReportsAScanInFlight(t *testing.T) {
 	h := newTestHandler(t, t.TempDir())
-	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{}, time.Now().Add(-statusMaxAge-time.Second))
+	seedSnapshot(&h.statusCache, statusKeyPoll, []RepoStatus{}, time.Now().Add(-statusMaxAge-time.Second))
 	done, started := h.statusCache.claim(statusKeyPoll, nil)
 	if !started {
 		t.Fatal("claim on a fresh cache did not start")
@@ -208,7 +208,7 @@ func TestStatusCache_AdmitsOneRefreshAtATime(t *testing.T) {
 		t.Error("the fetch variant could not claim while the poll variant was in flight")
 	}
 
-	rows := []allRepoStatus{{Repo: "one"}}
+	rows := []RepoStatus{{Repo: "one"}}
 	c.finish(statusKeyPoll, rows)
 	select {
 	case <-first:

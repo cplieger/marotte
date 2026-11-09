@@ -147,6 +147,15 @@ describe("rendered before the handshake names a custom work dir", () => {
     expect(img?.getAttribute("alt")).toBe("shot");
   });
 
+  it("names the asked-for file, decoded, when a served image fails to load", () => {
+    setWorkspaceRoot("/srv/proj");
+    const host = render("![](/srv/proj/out/my%20shot.png)");
+    host.querySelector("img")?.dispatchEvent(new Event("error"));
+    expect(host.querySelector(".img-missing")?.textContent).toBe(
+      "Image not available: /srv/proj/out/my shot.png",
+    );
+  });
+
   it("serves an image whose first load already failed", () => {
     const host = render("![shot](/srv/proj/out/shot.png)");
     host.querySelector("img")?.dispatchEvent(new Event("error"));

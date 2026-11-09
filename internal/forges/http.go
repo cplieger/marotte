@@ -39,40 +39,14 @@ func NewHTTPHandler(m *Manager) *HTTPHandler {
 // Called once at composition, before the routes serve.
 func (h *HTTPHandler) SetPoller(p *PRStatusPoller) { h.poller = p }
 
-// Detection, a token sign-in and a device-grant start share one bucket: any
-// caller can send each, and each sends requests to a forge.
-const (
-	outboundBurst    = 6
-	outboundInterval = 10 * time.Second
-)
-
-// RegisterRoutes installs the /api/forges/* mux entries.
-func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) {
-	outbound := httpserver.RateLimiter(outboundBurst, outboundInterval,
-		httpserver.WithRateLimitWhen(sendsOutbound),
-		httpserver.WithRateLimitError("rate_limited", "Too many sign-ins or detections were started. Wait a moment and try again"))
-	mux.HandleFunc("/api/forges", h.handleForgesList)
-	mux.HandleFunc("/api/forges/", h.handleForgeItem)
-	mux.Handle("/api/forges/login", outbound(http.HandlerFunc(h.handleLogin)))
-	mux.Handle("/api/forges/detect", outbound(http.HandlerFunc(h.handleDetect)))
-	mux.HandleFunc("/api/forges/inventory", h.handleInventory)
-	mux.HandleFunc("/api/forges/inventory/refresh", h.handleInventoryRefresh)
-	mux.HandleFunc("/api/forges/inventory/watch", h.handleInventoryWatch)
-	mux.Handle("/api/forges/oauth/", outbound(http.HandlerFunc(h.handleDeviceGrant)))
-}
-
-func sendsOutbound(r *http.Request) bool {
-	return r.Method == http.MethodPost &&
-		(r.URL.Path == "/api/forges/detect" || r.URL.Path == "/api/forges/login" || strings.HasSuffix(r.URL.Path, "/start"))
-}
-
 const (
 	clientTagHeader = "SSE-Client"
 	// codeWatchInvalid answers a watch whose tag or body is not one.
 	codeWatchInvalid = "watch_invalid"
 )
 
-type watchBody struct {
+// InventoryWatch is POST /api/forges/inventory/watch's body.
+type InventoryWatch struct {
 	Watching *bool  `json:"watching"`
 	Page     string `json:"page"`
 }
@@ -81,10 +55,6 @@ type watchBody struct {
 // client behind the SSE-Client tag shows the pull-request view or stopped. The
 // tag is held to the grammar the stream's presence table keys on.
 func (h *HTTPHandler) handleInventoryWatch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
 	if h.poller == nil {
 		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(errNoInventory))
 		return
@@ -95,7 +65,7 @@ func (h *HTTPHandler) handleInventoryWatch(w http.ResponseWriter, r *http.Reques
 			httpreply.ErrorJSONWithCode("SSE-Client header absent or outside [A-Za-z0-9_-]{1,64}", codeWatchInvalid))
 		return
 	}
-	var body watchBody
+	var body InventoryWatch
 	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Watching == nil ||
 		(body.Page != "" && !httpserver.ValidRequestID(body.Page)) {
@@ -109,11 +79,7 @@ func (h *HTTPHandler) handleInventoryWatch(w http.ResponseWriter, r *http.Reques
 
 const errNoInventory = "the pull-request inventory is not running"
 
-func (h *HTTPHandler) handleInventory(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
+func (h *HTTPHandler) handleInventory(w http.ResponseWriter, _ *http.Request) {
 	if h.poller == nil {
 		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(errNoInventory))
 		return
@@ -121,11 +87,7 @@ func (h *HTTPHandler) handleInventory(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, h.poller.inventoryFor(h.manager.readers()))
 }
 
-func (h *HTTPHandler) handleInventoryRefresh(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
+func (h *HTTPHandler) handleInventoryRefresh(w http.ResponseWriter, _ *http.Request) {
 	if h.poller == nil {
 		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(errNoInventory))
 		return
@@ -133,59 +95,14 @@ func (h *HTTPHandler) handleInventoryRefresh(w http.ResponseWriter, r *http.Requ
 	httpserver.WriteJSONStatus(w, http.StatusAccepted, InventoryRefresh{CycleID: h.poller.refresh()})
 }
 
-func (h *HTTPHandler) handleForgesList(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
-	forges := h.manager.List()
+func (h *HTTPHandler) handleForgesList(w http.ResponseWriter, _ *http.Request) {
 	_, github := marotteApp(forgeapi.FamilyGitHub)
 	_, gitlab := marotteApp(forgeapi.FamilyGitLab)
-	httpserver.WriteJSON(w, map[string]any{
-		"forges": forges,
-		"kinds":  allKinds(),
-		// Device sign-in with Marotte's own application, per public instance.
-		"oauth": map[string]bool{string(KindGitHub): github, string(KindGitLab): gitlab},
+	httpserver.WriteJSON(w, ForgeList{
+		Forges: h.manager.List(),
+		Kinds:  allKinds(),
+		OAuth:  map[string]bool{string(KindGitHub): github, string(KindGitLab): gitlab},
 	})
-}
-
-func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
-	tail := strings.TrimPrefix(r.URL.Path, "/api/forges/")
-	if tail == "" {
-		httpreply.NotFound(w, "missing forge id")
-		return
-	}
-	id, sub, _ := splitFirst(tail)
-	if sub == "" && r.Method == http.MethodDelete {
-		h.handleDisconnect(w, r, id)
-		return
-	}
-	row, ok := h.manager.view(id)
-	if !ok {
-		httpreply.NotFound(w, "unknown forge id")
-		return
-	}
-	if sub == "" {
-		if r.Method != http.MethodGet {
-			httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodDelete)
-			return
-		}
-		httpserver.WriteJSON(w, row)
-		return
-	}
-	op, rest, _ := splitFirst(sub)
-	switch op {
-	case "probe":
-		h.handleProbe(w, r, id)
-	case "capabilities":
-		h.handleCapabilities(w, r, id)
-	case "owners":
-		h.handleOwners(w, r, id)
-	case "repos":
-		h.handleRepos(w, r, id, rest)
-	default:
-		httpreply.NotFound(w, "unknown forge sub-resource")
-	}
 }
 
 // handleDisconnect is DELETE /api/forges/{id}: a sign-out of any id parseID
@@ -199,7 +116,7 @@ func (h *HTTPHandler) handleDisconnect(w http.ResponseWriter, r *http.Request, i
 	err := h.manager.signOut(r.Context(), deadline, id)
 	switch {
 	case err == nil:
-		httpserver.OK(w)
+		httpreply.OK(w)
 	case r.Context().Err() != nil, writeMutationError(w, err):
 	case errors.Is(err, errCleanupPending):
 		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable,
@@ -229,20 +146,16 @@ const (
 	codeOwnersTooMany = "owners_too_many"
 )
 
-// An empty list clears them.
-type ownersBody struct {
+// OwnersWrite is PUT /api/forges/{id}/owners' body. An empty list clears them.
+type OwnersWrite struct {
 	Owners *[]string `json:"owners"`
 }
 
 // handleOwners is PUT /api/forges/{id}/owners {owners}: the stored list is
 // replaced whole, every owner checked before anything is stored.
 func (h *HTTPHandler) handleOwners(w http.ResponseWriter, r *http.Request, id string) {
-	if r.Method != http.MethodPut {
-		httpreply.MethodNotAllowed(w, http.MethodPut)
-		return
-	}
 	deadline := h.manager.deadlines.from(time.Now())
-	var body ownersBody
+	var body OwnersWrite
 	httpserver.LimitBody(w, r, httpserver.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Owners == nil {
 		httpserver.WriteJSONStatus(w, http.StatusBadRequest,
@@ -299,10 +212,6 @@ func (h *HTTPHandler) handle(w http.ResponseWriter, id string) (readHandle, bool
 
 // A failed read of either scope answers its envelope, never a partial verdict.
 func (h *HTTPHandler) handleCapabilities(w http.ResponseWriter, r *http.Request, id string) {
-	if r.Method != http.MethodGet {
-		httpreply.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
 	rh, ok := h.handle(w, id)
 	if !ok {
 		return
@@ -323,10 +232,6 @@ const (
 // handleProbe is the Check: one check of the connection under the request's
 // context, answering the row it left.
 func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id string) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
 	_, err := h.manager.check(r.Context(), id, checkBudget)
 	switch {
 	case r.Context().Err() != nil, writeMutationError(w, err):
@@ -354,9 +259,9 @@ const (
 	codeTokenRequired = "token_required"
 )
 
-// patLoginBody is a token sign-in: the forge's kind and host, the token, and
+// TokenLogin is a token sign-in: the forge's kind and host, the token, and
 // for a self-managed instance how to reach it.
-type patLoginBody struct {
+type TokenLogin struct {
 	Kind  Kind   `json:"kind"`
 	Host  string `json:"host"`
 	Token string `json:"token"`
@@ -366,12 +271,8 @@ type patLoginBody struct {
 // handleLogin is POST /api/forges/login: a token sign-in, answering the id the
 // server minted for the saved connection.
 func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
 	deadline := h.manager.deadlines.from(time.Now())
-	var body patLoginBody
+	var body TokenLogin
 	if err := httpserver.DecodeJSONInto(w, r, &body, httpserver.MaxJSONBody); err != nil {
 		httpreply.BadRequest(w, "invalid json")
 		return
@@ -415,18 +316,18 @@ func writeFieldError(w http.ResponseWriter, err error) {
 }
 
 type connectionFields struct {
-	WebBaseURL string `json:"web_base_url"`
-	APIBaseURL string `json:"api_base_url"`
+	WebBaseURL string `json:"web_base_url,omitempty"`
+	APIBaseURL string `json:"api_base_url,omitempty"`
 	trustFields
 }
 
 type trustFields struct {
-	CAPEM            string `json:"ca_pem"`
-	ClientCertPEM    string `json:"client_cert_pem"`
-	ClientKeyPEM     string `json:"client_key_pem"`
-	Proxy            string `json:"proxy"`
-	PrivateAddresses bool   `json:"private_addresses"`
-	PlaintextHTTP    bool   `json:"plaintext_http"`
+	CAPEM            string `json:"ca_pem,omitempty"`
+	ClientCertPEM    string `json:"client_cert_pem,omitempty"`
+	ClientKeyPEM     string `json:"client_key_pem,omitempty"`
+	Proxy            string `json:"proxy,omitempty"`
+	PrivateAddresses bool   `json:"private_addresses,omitempty"`
+	PlaintextHTTP    bool   `json:"plaintext_http,omitempty"`
 }
 
 // codeWebBaseInvalid answers a web base URL that is not the scheme and host the
@@ -549,10 +450,4 @@ func parseID(id string) (Kind, string, bool) {
 		return "", "", false
 	}
 	return kind, host, true
-}
-
-// splitFirst splits s at the first '/' separator, returning
-// (head, tail, found). If '/' is not present, returns (s, "", false).
-func splitFirst(s string) (head, tail string, found bool) {
-	return strings.Cut(s, "/")
 }

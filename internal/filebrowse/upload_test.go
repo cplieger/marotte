@@ -16,6 +16,7 @@ import (
 
 	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 )
 
 func uploadsHandler(t *testing.T) (*Handler, string) {
@@ -63,7 +64,7 @@ func uploadOrdered(t *testing.T, targetDir string, names []string, contents [][]
 func serveUpload(t *testing.T, h *Handler, req *http.Request) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	return rec
@@ -248,7 +249,7 @@ func TestRespondUploadError_Statuses(t *testing.T) {
 func TestHandleUpload_NoSpaceRefusesTheWholeBatchBeforeWriting(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	stubAvailableBytes(t, 4, nil)
 
 	req := multipartUpload(t, prefix, map[string][]byte{
@@ -286,7 +287,7 @@ func TestHandleUpload_NoSpaceRefusesTheWholeBatchBeforeWriting(t *testing.T) {
 func TestHandleUpload_UnknownFreeSpaceStillUploads(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(routetest.On(mux))
 	stubAvailableBytes(t, 0, syscall.ENOSYS)
 
 	req := multipartUpload(t, prefix, map[string][]byte{"a.txt": []byte("hi")})

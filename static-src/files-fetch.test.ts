@@ -8,6 +8,7 @@ vi.mock("./api-client.js", async (importOriginal) => ({
 import type * as ApiClient from "./api-client.js";
 import { apiGetOrError } from "./api-client.js";
 import { fetchDir } from "./files-fetch.js";
+import { asked } from "./__test-helpers__/url.js";
 
 function holder(): { controllerHolder: { current: AbortController | null } } {
   return { controllerHolder: { current: null } };
@@ -35,7 +36,10 @@ describe("fetchDir", () => {
       error: "",
     });
     const d = await fetchDir("/w s/x", holder());
-    expect(vi.mocked(apiGetOrError).mock.calls[0]?.[0]).toBe("/api/files?path=%2Fw%20s%2Fx");
+    expect(asked(vi.mocked(apiGetOrError).mock.calls[0]?.[0] ?? "")).toEqual({
+      path: "/api/files",
+      query: { path: "/w s/x" },
+    });
     expect(d).toEqual({
       kind: "ok",
       files: [{ name: "a", isDir: true, size: 0, mode: "drwx", modTime: 0 }],

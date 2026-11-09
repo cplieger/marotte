@@ -15,6 +15,7 @@ import (
 
 	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/route/routetest"
 	"github.com/cplieger/marotte/internal/signin"
 )
 
@@ -111,7 +112,7 @@ func newHarness(t *testing.T, opts ...Option) *harness {
 func (hs *harness) do(method, path, body string) *httptest.ResponseRecorder {
 	hs.t.Helper()
 	mux := http.NewServeMux()
-	hs.h.RegisterRoutes(mux)
+	hs.h.RegisterRoutes(routetest.On(mux))
 	req := httptest.NewRequestWithContext(hs.t.Context(), method, path, strings.NewReader(body))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -181,7 +182,7 @@ func TestLogin_ClientDisconnectAfterTheResponseStillCompletes(t *testing.T) {
 	hs := newHarness(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	mux := http.NewServeMux()
-	hs.h.RegisterRoutes(mux)
+	hs.h.RegisterRoutes(routetest.On(mux))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/login", nil))
 	var lr LoginResponse

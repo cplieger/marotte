@@ -345,7 +345,7 @@ func TestUnnamedBlockerRowText(t *testing.T) {
 		inBubble(t, func(t *testing.T, tc *testConfirmer) {
 			r := tc.createRule(runSpec("success"))
 			tc.busy(r.ID, "wf_9")
-			tc.setStatus(r.ID, func(st *launchrule.Status) { st.RowText = "starting run wf_2" })
+			tc.setStatus(r.ID, func(st *launchrule.RuleStatus) { st.RowText = "starting run wf_2" })
 			tc.PruneAbandoned(r.ID, map[string]marotte.RunStatus{})
 			if _, st := tc.memory(r.ID); st.RowText != "starting run wf_2" {
 				t.Errorf("row text = %q, want the later row's kept", st.RowText)
