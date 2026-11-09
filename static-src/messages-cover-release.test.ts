@@ -1,7 +1,7 @@
-// A landing page's paint builds each body it can only start from the rows nearest where the reader
-// lands, so the transcript cover lifts by the first frame with no unbuilt row in view; while those
-// rows cannot fill the view the cover stays up until they do, and it never waits on a body out of
-// view. Real store, renderer, scroll controller and layout.
+// A landing page's paint spends its sync allowance on the reader's body first and starts every other
+// body from the rows nearest where the reader lands, so the transcript cover lifts by the first frame
+// with no unbuilt row in view; while those rows cannot fill the view the cover stays up until they
+// do, and it never waits on a body out of view. Real store, renderer, scroll controller and layout.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
@@ -256,24 +256,25 @@ afterEach(async () => {
 });
 
 describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
-  it("lifts by the first frame over a body longer than one slice, its rows in view built", async () => {
-    const yields = holdYields();
-    const b = freshID("cr-b");
-    const older = `${b}-old`;
-    const newest = `${b}-new`;
-    await switchUnderCover(
-      [chat(b, [heavyTurn(older, 120, 1, "failed"), heavyTurn(newest, 200, 2)])],
-      b,
-    );
-    expect(scroll.readingState(), "the premise: the reader lands on the live edge").toBe(
-      "following",
-    );
-    await nextFrame();
-    expect(built(newest, 200), "the premise: the paint only started the newest body").toBe(false);
-    expect(built(older, 120), "the premise: the older body is owed too").toBe(false);
-    expect(blankInView(), "the rows where the reader lands were left to the drain").toBe(false);
-    expect(coverUp(), "the cover waited on rows the paint could build").toBe(false);
-    await yields.releaseAll();
+  it("lifts by the first frame over a body in view taller than one slice, no drain batch run", async () => {
+    // A port taller than one slice of rows: the reader's body fills it only past its first slice.
+    await withPortHeight(2400, async () => {
+      const yields = holdYields();
+      const b = freshID("cr-b");
+      const older = `${b}-old`;
+      await switchUnderCover(
+        [chat(b, [heavyTurn(older, 120, 1, "failed"), heavyTurn(`${b}-new`, 200, 2)])],
+        b,
+      );
+      expect(scroll.readingState(), "the premise: the reader lands on the live edge").toBe(
+        "following",
+      );
+      await nextFrame();
+      expect(built(older, 120), "the premise: the older body is owed").toBe(false);
+      expect(blankInView(), "the rows where the reader lands were left to the drain").toBe(false);
+      expect(coverUp(), "the cover waited on rows the paint could build").toBe(false);
+      await yields.releaseAll();
+    });
   });
 
   it("lifts by the first frame when the rows in view end a body above a short newest turn", async () => {
@@ -296,8 +297,9 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
     });
   });
 
-  it("stays up while one slice cannot fill the view, and lifts once the rows in view are built", async () => {
-    // A port taller than one slice of rows: what the paint builds leaves a spacer in view.
+  it("stays up while the rows in view end a body above the reader's, and lifts once they are built", async () => {
+    // A short newest turn under a port taller than one slice: the older body's first slice leaves
+    // its spacer in view.
     await withPortHeight(2400, async () => {
       const yields = holdYields();
       const b = freshID("cr-b");
@@ -305,10 +307,10 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
       const newest = `${b}-new`;
       let lift: Promise<AtLift> | undefined;
       await switchUnderCover(
-        [chat(b, [heavyTurn(older, 120, 1, "failed"), heavyTurn(newest, 200, 2)])],
+        [chat(b, [heavyTurn(older, 300, 1, "failed"), heavyTurn(newest, 2, 2)])],
         b,
         () => {
-          lift = watchLift([newest, 200], [older, 120]);
+          lift = watchLift([newest, 2], [older, 300]);
         },
       );
       if (lift === undefined) {
@@ -325,10 +327,8 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
         await yields.step();
       }
       expect(at.blank, "a blank band showed at the lift").toBe(false);
-      expect(at.newestBuilt, "the lift waited on the newest body's rows above the view").toBe(
-        false,
-      );
-      expect(at.olderBuilt, "the lift waited on a body out of view").toBe(false);
+      expect(at.newestBuilt, "the premise: the reader's short body is built").toBe(true);
+      expect(at.olderBuilt, "the lift waited on the older body's rows above the view").toBe(false);
       await yields.releaseAll();
     });
   });
@@ -397,13 +397,18 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
   });
 
   it("leaves a cover handed on to a chat still loading when the landing's builds finish", async () => {
-    // Taller than one slice, so B's cover waits on its drain.
+    // An older body's first slice short of the port, so B's cover waits on its drain.
     await withPortHeight(2400, async () => {
       const yields = holdYields();
       const b = freshID("cr-b");
-      const newest = `${b}-new`;
       const c = freshID("cr-c");
-      await switchUnderCover([chat(b, [heavyTurn(newest, 200, 1)]), evicted(c)], b);
+      await switchUnderCover(
+        [
+          chat(b, [heavyTurn(`${b}-old`, 300, 1, "failed"), heavyTurn(`${b}-new`, 2, 2)]),
+          evicted(c),
+        ],
+        b,
+      );
       await nextFrame();
       expect(coverUp(), "the premise: B's cover waits on its body in view").toBe(true);
 
