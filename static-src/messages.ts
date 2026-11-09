@@ -6,6 +6,7 @@ import { stampFindUnit } from "./find-unit.js";
 import { turnRevision } from "./turn-revision.js";
 import {
   get,
+  getActiveId,
   getPainted,
   getPaintedId,
   watchPaintedId,
@@ -2564,9 +2565,11 @@ function nearestColdBuild(): string | undefined {
   return best ?? coldBuilds.values().next().value;
 }
 
+/** A `scheduler.yield` continuation runs ahead of every plain task, the next frame's among them, so a chat being
+ *  left (the active chat moved off the painted one) yields as a plain task and its switch goes first. */
 function yieldToBrowser(): Promise<void> {
   const sched = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
-  if (sched?.yield !== undefined) {
+  if (sched?.yield !== undefined && getActiveId() === getPaintedId()) {
     return sched.yield.call(sched);
   }
   return new Promise((resolve) => {
