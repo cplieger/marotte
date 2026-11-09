@@ -925,7 +925,7 @@ function computeFoldPlan(
   foldPlan.clear();
   turnByID.clear();
   wantedWindow.clear();
-  readerTurn = reader.anchor?.turnID;
+  readerAnchor = reader.anchor;
   // The dispatcher's one turn-scope input: a render holds one turn and cannot see its neighbours' runs.
   const owners = runCardOwners(turns);
   setRunCardOwners(owners);
@@ -2411,28 +2411,47 @@ function hasPendingBuild(turnID: string): boolean {
  *  the frame. */
 function startFirstSlice(body: HTMLElement, t: Turn, range: EntryRange): void {
   const take = Math.min(BUILD_BATCH_ENTRIES, Math.max(0, paintSyncEntries));
-  const to = Math.min(range.to, range.from + take);
+  const slice = firstSliceOf(t, range, take);
   heldMutation(() => {
-    buildAssistantBody(body, t, getPaintedId(), turnIsLive(t), { from: range.from, to });
-    syncSpacers(body, t, { from: range.from, to });
+    buildAssistantBody(body, t, getPaintedId(), turnIsLive(t), slice);
+    syncSpacers(body, t, slice);
   });
-  paintSyncEntries -= to - range.from;
-  if (to < range.to) {
+  paintSyncEntries -= slice.to - slice.from;
+  if (slice.from > range.from || slice.to < range.to) {
     coldBuilds.add(t.id);
   }
 }
 
 /**
- * Where the next slice ends, or `done`, derived from the mounted window: a full pass may finish the range while
- * this yields. Tail only; `mountHeadRange` owns the head.
+ * The `take` entries of `range` nearest where the reader lands: the tail of a turn above the reader's, and of the
+ * newest at the live edge; else the head, since an anchored reader reads down from a stub's face. The drain grows
+ * the rest outward, so the paint never leaves the rows in view to it.
  */
-function nextBuildTo(turnID: string, want: EntryRange): number | "done" {
-  const have = mountedWindow(turnID);
-  const from = have === undefined ? want.from : have.to;
-  if (have !== undefined && have.to >= want.to) {
-    return "done";
+function firstSliceOf(t: Turn, range: EntryRange, take: number): EntryRange {
+  const reader = readerIndex();
+  const i = lastTurns.findIndex((x) => x.id === t.id);
+  const tailFirst = i >= 0 && (i < reader || (i === reader && readerAnchor === undefined));
+  const from = tailFirst ? Math.max(range.from, range.to - take) : range.from;
+  return bodyRange(t, { from, to: Math.min(range.to, from + take) });
+}
+
+/**
+ * The next batch toward `want`, or `done`, derived from the mounted window: a full pass may finish the range while
+ * this yields. The tail grows first, then the head, outward from where the first slice started.
+ */
+function nextBuildSlice(t: Turn, want: EntryRange): EntryRange | "done" {
+  const have = mountedWindow(t.id);
+  if (have === undefined || have.to < want.to) {
+    const from = have?.to ?? want.from;
+    return { from, to: Math.min(want.to, from + BUILD_BATCH_ENTRIES) };
   }
-  return Math.min(want.to, from + BUILD_BATCH_ENTRIES);
+  if (have.from > want.from) {
+    return bodyRange(t, {
+      from: Math.max(want.from, have.from - BUILD_BATCH_ENTRIES),
+      to: have.from,
+    });
+  }
+  return "done";
 }
 
 /** `card`'s body, created empty after the header when absent; null only for a headerless card. */
@@ -2494,14 +2513,20 @@ async function drainNearestFirst(): Promise<void> {
   }
 }
 
-/** The reader's anchor turn at the last plan; undefined at the live edge. */
-let readerTurn: string | undefined;
+/** The reader's anchor at the last plan; undefined at the live edge. */
+let readerAnchor: ResidencyAnchor | undefined;
 
-/** The owed body nearest the reader's turn, the newest at the live edge, ties going to the turn below; a body the
- *  last projection lacks (another chat's) comes last. */
+/** The reader's turn in `lastTurns`: the anchor's, the newest at the live edge. */
+function readerIndex(): number {
+  const id = readerAnchor?.turnID;
+  const anchor = id === undefined ? -1 : lastTurns.findIndex((t) => t.id === id);
+  return anchor < 0 ? lastTurns.length - 1 : anchor;
+}
+
+/** The owed body nearest the reader's turn, ties going to the turn below; a body the last projection lacks (another
+ *  chat's) comes last. */
 function nearestColdBuild(): string | undefined {
-  const anchor = readerTurn === undefined ? -1 : lastTurns.findIndex((t) => t.id === readerTurn);
-  const at = anchor < 0 ? lastTurns.length - 1 : anchor;
+  const at = readerIndex();
   let best: string | undefined;
   let bestRank = Infinity;
   for (const [i, t] of lastTurns.entries()) {
@@ -2596,26 +2621,33 @@ async function buildTurnBodyBatches(chatID: string, turnID: string): Promise<voi
     }
     // Recomputed per slice: the window can move while this yields.
     const range = bodyRange(t, want);
-    const to = nextBuildTo(turnID, range);
-    if (to === "done") {
+    const slice = nextBuildSlice(t, range);
+    if (slice === "done") {
       heldMutation(() => {
         syncSpacers(body, t, range);
       });
       syncTurnBodyless(card);
       return;
     }
-    const slice = { from: range.from, to };
+    const before = mountedWindow(turnID);
     heldMutation(() => {
-      updateAssistantBody(body, t, chatID, turnIsLive(t), slice);
+      if (before !== undefined && slice.to <= before.from) {
+        mountHeadRange(t, slice, turnIsLive(t));
+      } else {
+        updateAssistantBody(body, t, chatID, turnIsLive(t), {
+          from: before?.from ?? slice.from,
+          to: slice.to,
+        });
+      }
       syncSpacers(body, t, slice);
     });
-    const after = nextBuildTo(turnID, range);
-    if (after === "done") {
+    if (nextBuildSlice(t, range) === "done") {
       syncTurnBodyless(card);
       return;
     }
     // A slice that moved no edge mounted nothing; spinning would hold `hasPendingBuild` true.
-    if (after === to) {
+    const after = mountedWindow(turnID);
+    if (after?.from === before?.from && after?.to === before?.to) {
       return;
     }
     await yieldToBrowser();

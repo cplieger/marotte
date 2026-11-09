@@ -392,19 +392,22 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
   });
 
   it("leaves a cover handed on to a chat still loading when the landing's builds finish", async () => {
-    const yields = holdYields();
-    const b = freshID("cr-b");
-    const newest = `${b}-new`;
-    const c = freshID("cr-c");
-    await switchUnderCover([chat(b, [heavyTurn(newest, 200, 1)]), evicted(c)], b);
-    await nextFrame();
-    expect(coverUp(), "the premise: B's cover waits on its body in view").toBe(true);
+    // Taller than one slice, so B's cover waits on its drain.
+    await withPortHeight(2400, async () => {
+      const yields = holdYields();
+      const b = freshID("cr-b");
+      const newest = `${b}-new`;
+      const c = freshID("cr-c");
+      await switchUnderCover([chat(b, [heavyTurn(newest, 200, 1)]), evicted(c)], b);
+      await nextFrame();
+      expect(coverUp(), "the premise: B's cover waits on its body in view").toBe(true);
 
-    store.setActive(c);
-    cover.holdCover(c);
-    store.setPainted(c);
-    await flushed();
-    await yields.releaseAll();
-    expect(coverUp(), "B's builds released the cover held for C").toBe(true);
+      store.setActive(c);
+      cover.holdCover(c);
+      store.setPainted(c);
+      await flushed();
+      await yields.releaseAll();
+      expect(coverUp(), "B's builds released the cover held for C").toBe(true);
+    });
   });
 });

@@ -380,12 +380,12 @@ describe("the mounted derivation", () => {
     // in for the ordinals above it.
     expect(hasBody("big")).toBe(true);
     expect(isFolded("big")).toBe(false);
-    // The paint takes ONE slice and owes the rest, so assert the settled shape: the head spacer alone,
-    // tail reached.
+    // The paint takes ONE slice and owes the rest, so wait for the settled shape: the whole window
+    // mounted, with the head spacer alone.
     await vi.waitFor(() => {
-      expect(spacersIn("big")).toEqual(["head"]);
+      expect(ordinalsIn("big")).toBe(RESIDENT_ENTRIES);
     });
-    expect(ordinalsIn("big")).toBe(RESIDENT_ENTRIES);
+    expect(spacersIn("big")).toEqual(["head"]);
     expect(ordinalsIn("big")).toBeLessThan(span);
     // That spacer prices the ordinals it stands in for, floored at 1px so no
     // ordinal is ever worth nothing at all.
