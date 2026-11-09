@@ -28,6 +28,9 @@ export function anchoredPopover(
 ): PopoverController {
   const fit = (): void => {
     panel.style.setProperty("--popover-room", `${String(Math.max(0, roomBeside(anchor)))}px`);
+    // The popover measures the panel's width where it last placed it, and a fixed box shrinks to
+    // the room right of its `left`: wider new content would be measured short and end-aligned wrong.
+    panel.style.left = "0px";
   };
   let frame = 0;
   // The popover re-places on these too, but from the old cap: this pass re-fits, then re-places.

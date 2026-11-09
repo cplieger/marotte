@@ -593,6 +593,40 @@ describe("the Run when… surfaces in real layout", () => {
     ]);
   });
 
+  it("marks the More disclosure with the house chevron, turned down when open", () => {
+    const form = inPopup(eventForm());
+    const more = form.querySelector<HTMLDetailsElement>(".rw-more")!;
+    const chevron = more.querySelector<HTMLElement>(":scope > summary > .disclosure-chevron");
+    expect(chevron).not.toBeNull();
+    expect(chevron!.getBoundingClientRect().width).toBeGreaterThan(0);
+    const turn = (): string => getComputedStyle(chevron!).getPropertyValue("--chev-turn").trim();
+    expect(turn()).toBe("-90deg");
+    more.open = true;
+    expect(turn()).toBe("0deg");
+  });
+
+  it.each([302, 488])(
+    "lays every input out the same way at a %dpx panel: name, then field, then its hint",
+    (width) => {
+      const form = inPopup(
+        eventForm({ declared: { event_id: "", max_iterations: "string", prompt: "prompt" } }),
+        width,
+      );
+      const rows = [...form.querySelectorAll<HTMLElement>(".rw-input-field")];
+      expect(rows).toHaveLength(2);
+      const lefts = new Set<number>();
+      for (const row of rows) {
+        const name = row.querySelector(".rw-input-name")!.getBoundingClientRect();
+        const field = row.querySelector("input")!.getBoundingClientRect();
+        const hint = row.querySelector(".sched-hint")!.getBoundingClientRect();
+        expect(field.top, "the field under its name").toBeGreaterThanOrEqual(name.bottom);
+        expect(hint.top, "the hint under its field").toBeGreaterThanOrEqual(field.bottom);
+        lefts.add(Math.round(field.left));
+      }
+      expect([...lefts], "one inline start for every field").toHaveLength(1);
+    },
+  );
+
   it("keeps each hold field beside its label on a phone", () => {
     const form = inPopup(eventForm());
     form.querySelector<HTMLDetailsElement>(".rw-more")!.open = true;

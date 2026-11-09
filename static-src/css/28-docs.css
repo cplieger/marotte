@@ -508,9 +508,26 @@
   color: var(--c-text-secondary);
 }
 
-/* An input's name is the workflow's identifier, shown verbatim. */
+/* An input's name is the workflow's identifier, shown verbatim. Names run to any length, so the
+   name sits over its field and every field starts at one edge, whatever the panel's width. */
 .rw-input-name {
   font-family: var(--font-mono);
+}
+
+.rw-input-field {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-1);
+
+  & > .rw-input {
+    flex: none;
+    min-inline-size: 0;
+  }
+}
+
+/* A row's hint explains the row: it starts its own line, under the field. */
+.sched-row > .sched-hint {
+  flex-basis: 100%;
 }
 
 /* A unit after a field reads as its label does. */
@@ -572,10 +589,26 @@
 .rw-more-summary {
   display: flex;
   align-items: center;
+  gap: var(--sp-2);
   min-block-size: var(--row-tap-sm);
+  list-style: none;
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
   cursor: pointer;
+
+  &::-webkit-details-marker {
+    display: none;
+  }
+
+  & > .disclosure-chevron {
+    --chev-size: 0.75rem;
+
+    color: var(--c-text-tertiary);
+  }
+}
+
+.rw-more[open] > .rw-more-summary > .disclosure-chevron {
+  --chev-turn: 0deg;
 }
 
 /* The Result boxes share one line, where a box's centred expander would reach the label

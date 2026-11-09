@@ -18,6 +18,7 @@ import { buildUnattendedNote, describeSpec, formatStamp, summaryLine } from "./s
 import { buildRuleInputs, type RuleInputs } from "./rule-inputs.js";
 import { formatClock } from "./locale-time.js";
 import { usableStatus } from "./forge-auth-status.js";
+import { chevronEl } from "./chevron.js";
 
 const KINDS: readonly [EventKind, string][] = [
   ["issue_labeled", "an issue gets a label"],
@@ -611,7 +612,7 @@ export function buildEventForm(opts: EventFormOptions): HTMLElement {
   const more = el(
     "details",
     { className: "rw-more" },
-    el("summary", { className: "rw-more-summary" }, "More"),
+    el("summary", { className: "rw-more-summary" }, chevronEl(), "More"),
     el(
       "div",
       { className: "sched-row" },

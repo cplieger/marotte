@@ -13,8 +13,11 @@ export async function resizeViewport(width: number, height: number): Promise<voi
   ]);
 }
 
+/** The popover's viewport margin, which its clamp pins a too-wide panel to. */
+const EDGE_MARGIN = 8;
+
 /** Fixed, on an opaque overlay surface, against its trigger's top or bottom edge and over its
- *  inline span, wholly inside the viewport. */
+ *  inline span, wholly inside the viewport, its end edge on the trigger's unless clamped. */
 export function expectAnchored(panel: HTMLElement, trigger: HTMLElement): void {
   const p = panel.getBoundingClientRect();
   const t = trigger.getBoundingClientRect();
@@ -29,4 +32,10 @@ export function expectAnchored(panel: HTMLElement, trigger: HTMLElement): void {
   const gap = Math.min(Math.abs(p.top - t.bottom), Math.abs(t.top - p.bottom));
   expect(gap, "against its trigger's top or bottom edge").toBeLessThanOrEqual(8);
   expect(p.left < t.right && p.right > t.left, "over its trigger's inline span").toBe(true);
+  const endAligned = Math.abs(p.right - t.right) <= 1;
+  const pinned = Math.abs(p.left - EDGE_MARGIN) <= 1;
+  expect(
+    endAligned || pinned,
+    `end-aligned to its trigger's ${String(Math.round(t.right))}, or pinned to the edge margin (left ${String(Math.round(p.left))}, right ${String(Math.round(p.right))})`,
+  ).toBe(true);
 }
