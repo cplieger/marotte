@@ -36,7 +36,7 @@ func TestOrphanSweep_KeepsTheUnionOfItsHolders(t *testing.T) {
 	NewOrphanSweep(New(root, testWorkspace), Holders{
 		Records: []Holder{holding("sess_a")},
 		Live:    []Holder{holding("sess_b")},
-	}).Once(t.Context())
+	}).once(t.Context())
 
 	for _, id := range []string{"sess_a", "sess_b", "sess_c"} {
 		if !exists(t, filepath.Join(root, "h", id)) {
@@ -74,7 +74,7 @@ func TestOrphanSweep_AHolderThatCannotAnswerReapsNothing(t *testing.T) {
 			}
 
 			NewOrphanSweep(New(root, testWorkspace), Holders{Records: []Holder{tc.records}, Live: []Holder{tc.live}}).
-				Once(t.Context())
+				once(t.Context())
 
 			if survived := exists(t, filepath.Join(root, "h", "sess_orphan")); survived != tc.wantSkip {
 				t.Errorf("sess_orphan survived = %v, want %v", survived, tc.wantSkip)
@@ -94,7 +94,7 @@ func TestOrphanSweep_ACorruptRunStateHoldsNothing(t *testing.T) {
 	makeSession(t, root, "h", "sess_orphan", oldAge)
 	bad := writeRunState(t, filepath.Join(root, "h"), "wf_bad", "not json")
 
-	NewOrphanSweep(New(root, testWorkspace), Holders{Records: []Holder{holding("sess_anchor")}}).Once(t.Context())
+	NewOrphanSweep(New(root, testWorkspace), Holders{Records: []Holder{holding("sess_anchor")}}).once(t.Context())
 
 	if exists(t, filepath.Join(root, "h", "sess_orphan")) {
 		t.Error("sess_orphan survived: a corrupt run state stopped the round")
@@ -121,7 +121,7 @@ func TestOrphanSweep_RefusesWhenNoRecordHoldsASession(t *testing.T) {
 	NewOrphanSweep(New(root, testWorkspace), Holders{
 		Records: []Holder{holding()},
 		Live:    []Holder{holding("sess_b")},
-	}).Once(t.Context())
+	}).once(t.Context())
 
 	for _, id := range []string{"sess_b", "sess_c", "sess_orphan"} {
 		if !exists(t, filepath.Join(root, "h", id)) {

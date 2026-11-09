@@ -47,7 +47,7 @@ func (s *OrphanSweep) Run(ctx context.Context, gate <-chan struct{}) {
 			return
 		}
 	}
-	s.Once(ctx)
+	s.once(ctx)
 	ticker := time.NewTicker(sweepInterval)
 	defer ticker.Stop()
 	for {
@@ -55,13 +55,13 @@ func (s *OrphanSweep) Run(ctx context.Context, gate <-chan struct{}) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.Once(ctx)
+			s.once(ctx)
 		}
 	}
 }
 
-// Once runs one round. A holder that cannot answer, or a run state that exists but cannot be read, removes nothing.
-func (s *OrphanSweep) Once(ctx context.Context) {
+// once runs one round. A holder that cannot answer, or a run state that exists but cannot be read, removes nothing.
+func (s *OrphanSweep) once(ctx context.Context) {
 	keep := map[string]struct{}{}
 	if err := addHeld(ctx, s.holders.Records, keep); err != nil {
 		logSkip(err)
