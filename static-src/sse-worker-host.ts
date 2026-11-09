@@ -3,11 +3,11 @@
 // the classic-script entry that wires `onconnect`.
 
 import {
+  type Changed,
   type DigestClient,
   type DigestVerdict,
   type LifecycleEvent,
   type RevalidateContext,
-  type State,
   type Stream,
   type TabSet,
   type VersionMap,
@@ -24,7 +24,7 @@ const DIGEST_TIMEOUT_MS = 10_000;
 const NOTHING_MOVED: DigestVerdict = { changed: [], removed: [] };
 
 /** Whether a subject's set reaches a client only through a hello's connect hook. */
-function hookCarried(subject: State): boolean {
+function hookCarried(subject: Changed): boolean {
   return subject.kind === "pending" || subject.kind === "status";
 }
 

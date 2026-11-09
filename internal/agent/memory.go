@@ -213,7 +213,7 @@ func (st *Settings) handleMemoryOne(w http.ResponseWriter, r *http.Request) {
 			if err != nil && !memoryAlreadyGone(err) {
 				return memoryFailure(err)
 			}
-			return engineReply{write: httpserver.Ok, applied: true}
+			return engineReply{write: httpserver.OK, applied: true}
 		})
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPatch, http.MethodDelete)

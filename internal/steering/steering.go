@@ -246,12 +246,12 @@ func (g *Generator) renderChat(forges ForgeSnapshot) string {
 	return b.String()
 }
 
-// Errors are log-and-omit. It opens with filesafe.OpenRegular: a FIFO would hang Generate, which
+// Errors are log-and-omit. It opens with filesafe.OpenRegularNoFollow: a FIFO would hang Generate, which
 // runs synchronously before every session door, and a symlinked steering doc would copy whatever it names
 // (an MCP credential, measured) into authoritative agent context. Truncation is kept: only the head
 // matters.
 func readCappedFile(path string, limit int64) ([]byte, error) {
-	f, _, err := filesafe.OpenRegular(path)
+	f, _, err := filesafe.OpenRegularNoFollow(path)
 	if err != nil {
 		return nil, err
 	}

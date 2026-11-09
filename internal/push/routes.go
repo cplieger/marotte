@@ -55,7 +55,7 @@ func (s *Service) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Subscribe(sub)
-	httpserver.Ok(w)
+	httpserver.OK(w)
 }
 
 func (s *Service) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
@@ -71,5 +71,5 @@ func (s *Service) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.unsubscribe(body.Endpoint)
-	httpserver.Ok(w)
+	httpserver.OK(w)
 }

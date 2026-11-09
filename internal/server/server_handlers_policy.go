@@ -276,7 +276,7 @@ func (*Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *polic
 		return
 	}
 	if !changed {
-		httpserver.Ok(w) // idempotent: identical rule already present
+		httpserver.OK(w) // idempotent: identical rule already present
 		return
 	}
 	if err := policyfile.Save(r.Context(), path, f); err != nil {
@@ -284,7 +284,7 @@ func (*Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *polic
 		return
 	}
 	slog.Info("policy rule added", "scope", body.Scope, "capability", logsafe.Field(rule.Capability), "effect", rule.Effect)
-	httpserver.Ok(w)
+	httpserver.OK(w)
 }
 
 func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {
@@ -313,7 +313,7 @@ func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 		return
 	}
 	if !f.Remove(&rule) {
-		httpserver.Ok(w) // idempotent: rule already absent
+		httpserver.OK(w) // idempotent: rule already absent
 		return
 	}
 	if err := policyfile.Save(r.Context(), path, f); err != nil {
@@ -321,7 +321,7 @@ func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 		return
 	}
 	slog.Info("policy rule removed", "scope", body.Scope, "capability", logsafe.Field(rule.Capability), "effect", rule.Effect)
-	httpserver.Ok(w)
+	httpserver.OK(w)
 }
 
 // A widening change requires confirm=true.
@@ -358,7 +358,7 @@ func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 		target := rule
 		target.Effect = body.NewEffect
 		if f.Has(&target) {
-			httpserver.Ok(w)
+			httpserver.OK(w)
 			return
 		}
 		httpreply.NotFound(w, "rule not found. Refresh the policy view")
@@ -370,5 +370,5 @@ func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 	}
 	slog.Info("policy rule updated", "scope", body.Scope,
 		"capability", logsafe.Field(rule.Capability), "effect", body.Effect, "new_effect", body.NewEffect)
-	httpserver.Ok(w)
+	httpserver.OK(w)
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/launchrule"
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -926,7 +927,7 @@ func TestStoreWriteFailureBlocksRule(t *testing.T) {
 			if got := tc.writeBlock(r.ID); got != writeBlockedText(&r) {
 				t.Errorf("write block = %q, want %q", got, writeBlockedText(&r))
 			}
-			for attr, want := range map[string]string{
+			for attr, want := range map[capture.AttrName]string{
 				"file": "launch-state/" + r.ID + ".json", "op": "write", "rule_id": r.ID, "error": errDiskFull.Error(),
 			} {
 				if got, _ := tc.log.AttrValueExact(logMsgNotWritten, attr); got != want {

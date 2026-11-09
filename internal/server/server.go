@@ -391,7 +391,7 @@ func (s *Server) ListenAndServe() error {
 
 	// The pre-drain hook keeps the agent-before-server order: readiness flips, the runtime stops
 	// bridges and streams, and only then does the HTTP drain run.
-	runErr := httpserver.Run(ctx, srv, ln, nil, httpserver.WithPreDrain(func(drainCtx context.Context) {
+	runErr := httpserver.Run(ctx, srv, ln, httpserver.WithPreDrain(func(drainCtx context.Context) {
 		slog.Info("received signal, shutting down", "cause", context.Cause(ctx))
 		s.ready.Store(false)
 		// Run calls this hook SYNCHRONOUSLY before srv.Shutdown: drainCtx is passed on, never discarded.
@@ -452,7 +452,7 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []htt
 			httpserver.WithSkipUpgrades(true),
 			// A prober and a scraper call these every 15 to 60s, so a served request logs at
 			// Debug and only a refused or failing one is surfaced.
-			httpserver.ProbeLogLevel(healthzPath, metricsPath),
+			httpserver.WithProbeLogLevel(healthzPath, metricsPath),
 			httpserver.WithClientIPFunc(s.clientIP),
 			// A preview path carries a 12h bearer token, so it logs as the route template.
 			httpserver.WithTemplatePathsUnder(preview.PathPrefix),

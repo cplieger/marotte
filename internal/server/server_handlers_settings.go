@@ -85,15 +85,15 @@ type steeringSaveBody struct {
 }
 
 // An ABSENT file is an empty document. It does NOT fail open (a save PUTs the whole textarea, so an
-// empty answer for an unreadable file lets the first keystroke replace it). OpenRegular refuses
+// empty answer for an unreadable file lets the first keystroke replace it). OpenRegularNoFollow refuses
 // symlinks and FIFOs.
 func steeringDoc(ctx context.Context, path string) (content, etag string, err error) {
-	// Absolute because OpenRegular requires it.
+	// Absolute because OpenRegularNoFollow requires it.
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", "", err
 	}
-	f, info, err := filesafe.OpenRegular(abs)
+	f, info, err := filesafe.OpenRegularNoFollow(abs)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return "", steeringAbsentETag, nil

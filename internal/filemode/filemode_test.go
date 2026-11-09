@@ -189,24 +189,28 @@ func TestRewriteOptions(t *testing.T) {
 		perm        os.FileMode
 		wantOpts    int
 		wantRestore os.FileMode
+		wantChmod   bool
 	}{
 		{name: "owner_only_is_enforced", perm: 0o600, wantOpts: 1},
 		{name: "owner_only_exec_is_enforced", perm: 0o700, wantOpts: 1},
-		{name: "group_readable_is_restored", perm: 0o640, wantRestore: 0o640},
-		{name: "world_readable_script_is_restored", perm: 0o755, wantRestore: 0o755},
+		{name: "group_readable_is_restored", perm: 0o640, wantRestore: 0o640, wantChmod: true},
+		{name: "world_readable_script_is_restored", perm: 0o755, wantRestore: 0o755, wantChmod: true},
+		{name: "no_bits_is_restored", perm: 0, wantChmod: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			opts, restore := RewriteOptions(tc.perm)
-			if len(opts) != tc.wantOpts || restore != tc.wantRestore {
-				t.Errorf("RewriteOptions(%#o) = %d options, restore %#o; want %d options, restore %#o",
-					tc.perm, len(opts), restore, tc.wantOpts, tc.wantRestore)
-			}
-			if tc.wantOpts == 0 {
-				return
+			opts, restore, chmod := RewriteOptions(tc.perm)
+			if len(opts) != tc.wantOpts || restore != tc.wantRestore || chmod != tc.wantChmod {
+				t.Errorf("RewriteOptions(%#o) = %d options, restore %#o, chmod %t; want %d options, restore %#o, chmod %t",
+					tc.perm, len(opts), restore, chmod, tc.wantOpts, tc.wantRestore, tc.wantChmod)
 			}
 			path := filepath.Join(t.TempDir(), "f")
 			if _, err := filesafe.WriteFile(t.Context(), path, []byte("x"), opts...); err != nil {
 				t.Fatalf("WriteFile with RewriteOptions(%#o): %v", tc.perm, err)
+			}
+			if chmod {
+				if err := os.Chmod(path, restore); err != nil {
+					t.Fatalf("chmod %#o: %v", restore, err)
+				}
 			}
 			info, err := os.Stat(path)
 			if err != nil {

@@ -103,9 +103,9 @@ func (s *Store) load() error {
 		return fmt.Errorf("refusing to use %s: its mode could not be verified as %#o, so the credentials in it may be readable by other users on this host: %w",
 			fileName, fileMode, chErr)
 	}
-	// EnforceFile reads a FIFO's bits as compliant; OpenRegular refuses non-regular files and
+	// EnforceFile reads a FIFO's bits as compliant; OpenRegularNoFollow refuses non-regular files and
 	// returns the descriptor the bytes are read from, so the object judged is the object read.
-	fh, _, err := filesafe.OpenRegular(s.path)
+	fh, _, err := filesafe.OpenRegularNoFollow(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

@@ -49,7 +49,7 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("security profile selected", "profile", profile.ID,
 		"presets", profile.Presets, "seeded", body.Seed)
-	httpserver.Ok(w)
+	httpserver.OK(w)
 	if s.policyReload != nil {
 		s.policyReload.SecurityProfileChanged(durable.Context(r.Context()))
 	}

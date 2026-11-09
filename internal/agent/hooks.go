@@ -225,7 +225,7 @@ func (st *Settings) handleHookSetEnabled(w http.ResponseWriter, r *http.Request)
 			if !res.Success {
 				return engineReply{write: func(w http.ResponseWriter) { writeHookResultErr(w, res) }}
 			}
-			return engineReply{write: httpserver.Ok, applied: true}
+			return engineReply{write: httpserver.OK, applied: true}
 		},
 	})
 }

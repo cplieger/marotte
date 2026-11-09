@@ -199,7 +199,7 @@ func (h *HTTPHandler) handleDisconnect(w http.ResponseWriter, r *http.Request, i
 	err := h.manager.signOut(r.Context(), deadline, id)
 	switch {
 	case err == nil:
-		httpserver.Ok(w)
+		httpserver.OK(w)
 	case r.Context().Err() != nil, writeMutationError(w, err):
 	case errors.Is(err, errCleanupPending):
 		httpserver.WriteJSONStatus(w, http.StatusServiceUnavailable,

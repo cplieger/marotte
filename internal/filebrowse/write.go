@@ -64,17 +64,18 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc, hook SaveHook) {
 	// A rename publishes a new inode, so an existing regular file's bits are
 	// carried across or a save would flatten a 0o755 script; a new file passes
 	// no mode and the directory decides.
-	var opts []filesafe.Option
+	var opts []filesafe.WriteOption
 	var restore os.FileMode
+	var chmod bool
 	if statErr == nil && existing.Mode().IsRegular() {
-		opts, restore = filemode.RewriteOptions(existing.Mode().Perm())
+		opts, restore, chmod = filemode.RewriteOptions(existing.Mode().Perm())
 	}
 	data := []byte(body.Content)
 	if _, err := filesafe.WriteFileInRoot(r.Context(), parent, base, data, opts...); err != nil {
 		writeFileError(w, l, err)
 		return
 	}
-	if restore != 0 {
+	if chmod {
 		if err := chmodInRoot(parent, base, restore); err != nil {
 			slog.Debug("filebrowse: could not restore the file's mode after a write",
 				"path", logsafe.Field(l.abs), "mode", restore, "error", logsafe.Field(err.Error()))

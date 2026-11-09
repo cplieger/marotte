@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/go/sse/ssetest"
+	"github.com/cplieger/go/sse/v2/ssetest"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -17,7 +17,7 @@ func dataFrames(t *testing.T, body string) []ssetest.Frame {
 	}
 	var out []ssetest.Frame
 	for _, f := range frames {
-		if f.Event != "retry" {
+		if f.Event != ssetest.RetryEvent {
 			out = append(out, f)
 		}
 	}

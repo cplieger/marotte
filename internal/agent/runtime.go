@@ -17,7 +17,7 @@ import (
 
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/go/keylock"
-	"github.com/cplieger/go/sse"
+	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/buffer"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
@@ -652,7 +652,7 @@ func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/command", rt.lifecycle.admitUnlessDraining(rt.dispatcher))
 	// Behind the same drain gate, under a RouteTimeout so a resolution parked on a lock frees its slot.
 	mux.Handle("POST /api/sync", rt.lifecycle.admitUnlessDraining(
-		httpserver.RouteTimeout(rt.bus.fanout.DigestHandler(rt.resolveDigest), digestTimeout, "digest timed out"),
+		httpserver.RouteTimeout(rt.digestHandler(), digestTimeout, "digest timed out"),
 	))
 	// Not drain-gated: a late receipt changes nothing.
 	mux.HandleFunc("POST /api/events/alive", rt.handleAlive)

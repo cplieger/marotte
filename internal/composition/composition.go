@@ -540,9 +540,9 @@ func sweepStaleTemps(ctx context.Context, configDir, workDir string) {
 	const tempMaxAge = time.Hour
 	for _, sweep := range []struct {
 		dir  string
-		opts []filesafe.Option
+		opts []filesafe.SweepOption
 	}{
-		{configDir, []filesafe.Option{filesafe.WithRecursive(true)}},
+		{configDir, []filesafe.SweepOption{filesafe.WithRecursive(true)}},
 		{workDir, nil},
 	} {
 		res, err := filesafe.CleanupStaleTemps(ctx, sweep.dir, tempMaxAge, sweep.opts...)

@@ -59,3 +59,9 @@ func TestRespondFSWrite_EnforcesAnOwnerOnlyModeWithoutAChmod(t *testing.T) {
 		t.Errorf("rewriting a 0600 file ran %d post-write chmods, want 0: the mode must be enforced on the write itself", chmods)
 	}
 }
+
+func TestRespondFSWrite_KeepsANoPermissionMode(t *testing.T) {
+	if got := agentRewrite(t, 0); got != 0 {
+		t.Errorf("rewriting a 0000 file left mode %#o, want 0000", got)
+	}
+}

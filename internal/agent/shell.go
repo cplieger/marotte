@@ -97,7 +97,7 @@ func (sm *shellManager) handleWS(w http.ResponseWriter, r *http.Request) {
 // POST because it destroys running processes.
 func (sm *shellManager) handleRestart(w http.ResponseWriter, _ *http.Request) {
 	sm.restart()
-	httpserver.Ok(w)
+	httpserver.OK(w)
 }
 
 // ReadShell answers a `#` terminal reference from the handler as it stands: current() would swap out a just-exited shell and lose its final output.

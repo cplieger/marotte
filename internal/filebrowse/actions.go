@@ -83,7 +83,7 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 			httpreply.ErrorJSON(body.Action+" failed"))
 		return
 	}
-	httpserver.Ok(w)
+	httpserver.OK(w)
 }
 
 // refuseMountPoint writes the shared 403 for create/delete/rename/move

@@ -14,7 +14,7 @@ import (
 // loadWithin runs Load on its own goroutine and fails if it has not returned
 // inside budget. A deadline rather than a plain call, because the defect this
 // pins HANGS: os.ReadFile over a FIFO blocks in open(2) until a writer appears
-// and no context deadline can rescue it, so reverting the OpenRegular adoption
+// and no context deadline can rescue it, so reverting the OpenRegularNoFollow adoption
 // makes this run to the go-test timeout instead of reporting a failure. The
 // permissions file lives under $HOME/.kiro, which the agent's own shell can
 // write, so one mkfifo wedged every request on the permissions REST surface.
@@ -85,7 +85,7 @@ func TestLoad_BoundsTheFileBeforeAllocating(t *testing.T) {
 }
 
 // TestLoad_MissingFileIsStillTheEmptyCase — the ENOENT arm keys on fs.ErrNotExist
-// over OpenRegular's error, which must mean "no rules yet" rather than a failure
+// over OpenRegularNoFollow's error, which must mean "no rules yet" rather than a failure
 // the handler surfaces as an unparseable policy.
 func TestLoad_MissingFileIsStillTheEmptyCase(t *testing.T) {
 	f, err := Load(filepath.Join(t.TempDir(), "nothing", filename))

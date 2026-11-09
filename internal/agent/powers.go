@@ -389,7 +389,7 @@ func (ps *powersSurface) runVerb(w http.ResponseWriter, r *http.Request, done st
 		httpserver.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSONWithCode(msg, powerRenderFailedCode))
 		return
 	}
-	httpserver.Ok(w)
+	httpserver.OK(w)
 }
 
 // refresh tells the engine to rescan installed Powers, once for every session; a down engine rescans at its spawn.

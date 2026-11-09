@@ -520,7 +520,7 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("git remove", "repo", body.Repo)
-	httpserver.Ok(w)
+	httpserver.OK(w)
 }
 
 // removeRepoDir unlinks dir through a parent pinned inside a confined root on the workspace, never

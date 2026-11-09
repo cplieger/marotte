@@ -2,11 +2,12 @@ package agent
 
 import (
 	"context"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/cplieger/go/sse"
+	"github.com/cplieger/go/sse/v2"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
@@ -18,6 +19,16 @@ const (
 	// digestTimeout is POST /api/sync's RouteTimeout.
 	digestTimeout = 10 * time.Second
 )
+
+// digestHandler is POST /api/sync's handler. DigestHandler fails only on a nil resolver or a bad
+// option, and this passes neither, so an error is a build defect, as with New's MustNew.
+func (rt *Runtime) digestHandler() http.Handler {
+	h, err := rt.bus.fanout.DigestHandler(rt.resolveDigest)
+	if err != nil {
+		panic(err)
+	}
+	return h
+}
 
 // resolveDigest is the hub's Resolver: one State per Held, from the registry writers mint
 // into. It takes no per-chat store mutex and no lock held across I/O.
