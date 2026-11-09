@@ -14,7 +14,6 @@ const MEMBERS = [
   ".pill-account",
   ".run-head",
   ".run-step-head",
-  ".run-open",
   ".tool-group-header",
   ".tool-group-hooks",
   ".git-repo-section-header",
@@ -227,7 +226,7 @@ function runCard(): { clipper: HTMLElement; head: HTMLElement } {
   return { clipper: mount(clipper), head };
 }
 
-/** Its link clears the clip box by one pixel, one of the two tightest clearances. */
+/** Its link sits centred in the foot band, clear of the card's block-end. */
 function runCardWithFoot(): { clipper: HTMLElement; open: HTMLElement } {
   const head = node("div", "run-head", { role: "button", tabindex: "0" });
   head.append(span("run-name", "recipe"), span("run-count", "step 1 of 3"));
@@ -628,17 +627,6 @@ describe("the ring is painted inside the card that clips it", () => {
     expectRingInside("run head", head, clipper);
   });
 
-  it("on a run card's FOOT link, which stopped clearing the card in 2026-09", async () => {
-    // Flush now that the foot's padding is the link's own hit box.
-    const { clipper, open } = runCardWithFoot();
-    await focusByTab(open);
-    const flush = inset(open, clipper);
-    expect(flush.bottom, `run foot link: bottom is not flush (${flush.bottom}px)`).toBeLessThan(
-      1.5,
-    );
-    expectRingInside("run foot link", open, clipper);
-  });
-
   it("on a run step's head, where every edge is the row's", async () => {
     const { clipper, head } = runStep();
     await focusByTab(head);
@@ -751,7 +739,7 @@ describe("the inset band clears the content it now sits over", () => {
   });
 });
 
-describe("the inset band clears the content it now sits over, on the two card feet", () => {
+describe("the inset band clears the content it now sits over, on the delegate card's foot", () => {
   // `firstElementChild` names the wrong child here: the ledger leads with its `.sr-only` name.
   it("clears the delegate ledger's `i` on the edge the gutter moved for", async () => {
     // 12px, shared with the turn card (29-turns.css), on the button rather than the footer.
@@ -773,30 +761,6 @@ describe("the inset band clears the content it now sits over, on the two card fe
     expect(
       inset(text, ledger).bottom,
       "the band reaches the outcome word at block-end",
-    ).toBeGreaterThanOrEqual(depth);
-  });
-
-  it("clears `.run-open`'s label and its icon", async () => {
-    // The tightest member: 4px inline padding against the 2px band.
-    const { open } = runCardWithFoot();
-    await focusByTab(open);
-    const depth = -px(getComputedStyle(open).outlineOffset);
-    expect(depth, "the link is not on the inset token").toBeGreaterThan(0);
-    expect(px(getComputedStyle(open).paddingInlineStart)).toBeGreaterThanOrEqual(depth);
-    expect(px(getComputedStyle(open).paddingInlineEnd)).toBeGreaterThanOrEqual(depth);
-    // Block clearance is the link's centred line box, not padding.
-    const label = open.firstChild;
-    expect(label?.nodeType, "the link leads with its label text").toBe(Node.TEXT_NODE);
-    const range = document.createRange();
-    range.selectNodeContents(open);
-    const ink = range.getBoundingClientRect();
-    const box = open.getBoundingClientRect();
-    expect(ink.top - box.top, "the band reaches the label at block-start").toBeGreaterThanOrEqual(
-      depth,
-    );
-    expect(
-      box.bottom - ink.bottom,
-      "the band reaches the label at block-end",
     ).toBeGreaterThanOrEqual(depth);
   });
 });
@@ -840,6 +804,13 @@ describe("the exclusions: a focusable whose clipper clears the reach", () => {
     expectClears("code copy button", copy, clipper);
     await focusByTab(run);
     expectClears("code run button", run, clipper);
+  });
+
+  it("pins the run card's Open run, centred in a foot band taller than it", async () => {
+    const { clipper, open } = runCardWithFoot();
+    await focusByTab(open);
+    expect(inset(open, clipper).bottom, "half the foot band's spare block room").toBe(4);
+    expectClears("run foot link", open, clipper);
   });
 
   it("pins the diff pane's whitespace checkbox against its toolbar's padding", async () => {

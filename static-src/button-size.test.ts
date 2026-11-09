@@ -627,7 +627,13 @@ const CENSUS: readonly Family[] = [
     documented:
       "17-settings.css `.add-form > .btn`: the dense field it submits sets the row's height",
   },
-  { name: "run card open", selector: "a.run-open", kind: "toolbar" },
+  {
+    name: "run card open",
+    selector: "a.run-open",
+    kind: "dense",
+    paint: "--btn-h-sm",
+    documented: "27-run-card.css `.run-open`: the turn footer's control box, centred in its band",
+  },
   { name: "shell header", selector: ".shell-header-btn", kind: "toolbar" },
   { name: "sign-in submit", selector: ".modal-btn:not(:has(> .modal-btn-sub))", kind: "toolbar" },
   {
