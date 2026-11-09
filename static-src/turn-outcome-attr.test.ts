@@ -141,7 +141,7 @@ describe("the turn map stamps its severity", () => {
   }
 
   function stack(): HTMLElement {
-    const el = host.querySelector<HTMLElement>(".turn-map .turn-map-stack");
+    const el = host.querySelector<HTMLElement>(".turn-map .turn-map-stack:not([data-parked])");
     if (el === null) {
       throw new Error("turn map not mounted");
     }

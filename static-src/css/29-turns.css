@@ -1077,15 +1077,16 @@
 
 /* The box turn-rail.ts measures to bin against. Its height must not depend on `--turn-map-slots`:
  * a box sized by its rows feeds the bin count back into itself and re-bins frame after frame. A
- * size container, so the stack's pitch reads that height as `cqh`. */
+ * size container, so the stack's pitch reads that height as `cqh`. One grid cell, so the shown
+ * chat's stack and the parked ones overlap and each centres on its own height. */
 .turn-map-track {
   container-type: size;
   flex: 1 1 0;
   min-block-size: 0;
   inline-size: 100%;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+  display: grid;
+  grid-template: 100% / 100%;
+  align-items: center;
 
   /* The press-and-drag band (`bindScrub`, turn-rail.ts): a finger on it scrubs rather than
    * scrolls, and a long press neither selects nor opens the link callout. The track only, so the
@@ -1099,13 +1100,20 @@
 /* Pitch `min(track / slots, 8px)`, unrounded, so a long chat fills its whole track (`binTurns`
  * keeps `slots × 2px` inside it); a short chat stops at 8px a row and centres in the track. */
 .turn-map-stack {
+  grid-area: 1 / 1;
   position: relative;
-  flex: none;
   block-size: min(100cqh, var(--turn-map-slots) * 8px);
   inline-size: 100%;
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+/* Another chat's map, held for a switch back (turn-rail.ts `HELD_STACKS`): moved off the screen,
+ * never hidden or detached. A re-attach or a `visibility`, `opacity` or `content-visibility` flip
+ * restyles every row in Firefox and WebKit, tens of ms for a long chat; a translate keeps them. */
+.turn-map-stack[data-parked] {
+  translate: 0 -200vh;
 }
 
 /* A row spans its slot, `[slot, slot + 1) × pitch`, each edge snapped to a whole pixel by the same

@@ -78,7 +78,7 @@ function turns(chat: string): TurnSummary[] {
     n: i + 1,
     outcome: "completed" as const,
     ts: (i + 1) * 60_000,
-    first_line: `request ${String(i + 1)}`,
+    first_line: `${chat} request ${String(i + 1)}`,
   }));
 }
 

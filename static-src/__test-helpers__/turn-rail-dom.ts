@@ -44,7 +44,9 @@ export async function mountRail(id: string, count: number, width: number): Promi
 }
 
 function rows(): HTMLElement[] {
-  return [...document.querySelectorAll<HTMLElement>(".turn-map-stack > .turn-pill")];
+  return [
+    ...document.querySelectorAll<HTMLElement>(".turn-map-stack:not([data-parked]) > .turn-pill"),
+  ];
 }
 
 function turnOf(row: Element | null): string | null {
@@ -73,12 +75,16 @@ export function pointOn(n: number): Point {
 
 /** The turn whose row wears the scrub mark, or null. */
 export function scrubbedTurn(): string | null {
-  return turnOf(document.querySelector(".turn-pill[data-scrub]"));
+  return turnOf(
+    document.querySelector(".turn-map-stack:not([data-parked]) > .turn-pill[data-scrub]"),
+  );
 }
 
 /** The turn the map marks current, or null. */
 export function currentTurn(): string | null {
-  return turnOf(document.querySelector(".turn-pill[data-current]"));
+  return turnOf(
+    document.querySelector(".turn-map-stack:not([data-parked]) > .turn-pill[data-current]"),
+  );
 }
 
 /** The text of the tooltip on screen, or null. */

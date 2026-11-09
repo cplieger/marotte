@@ -71,7 +71,9 @@ function turns(count: number): TurnSummary[] {
 }
 
 const links = (): HTMLAnchorElement[] => [
-  ...outer.querySelectorAll<HTMLAnchorElement>(".turn-map .turn-pill-link"),
+  ...outer.querySelectorAll<HTMLAnchorElement>(
+    ".turn-map-stack:not([data-parked]) .turn-pill-link",
+  ),
 ];
 
 async function settle(): Promise<void> {
@@ -126,7 +128,9 @@ describe("the rendered pitch", () => {
     const rows = links().map((a) => a.getBoundingClientRect().height);
     expect(rows).toHaveLength(250);
     expect(rows.every((h) => h >= 2 - 0.5)).toBe(true);
-    const stack = outer.querySelector(".turn-map-stack")?.getBoundingClientRect().height ?? 0;
+    const stack =
+      outer.querySelector(".turn-map-stack:not([data-parked])")?.getBoundingClientRect().height ??
+      0;
     expect(Math.abs(stack - track)).toBeLessThan(0.5);
   });
 });
@@ -156,8 +160,10 @@ describe("the hover preview over the map", () => {
 describe("a swipe over the map", () => {
   it("grows the rows under the pointer and writes nothing to the map", async () => {
     await show("c-swipe", 30);
-    const rows = [...outer.querySelectorAll<HTMLElement>(".turn-map .turn-pill")];
-    const stack = outer.querySelector(".turn-map-stack");
+    const rows = [
+      ...outer.querySelectorAll<HTMLElement>(".turn-map-stack:not([data-parked]) > .turn-pill"),
+    ];
+    const stack = outer.querySelector(".turn-map-stack:not([data-parked])");
     if (stack === null) {
       throw new Error("no stack");
     }
@@ -212,7 +218,9 @@ describe("a swipe over the map", () => {
     writes.push(...watch.takeRecords());
     watch.disconnect();
     expect(writes, "no render reached the map during the swipe").toEqual([]);
-    const after = [...outer.querySelectorAll<HTMLElement>(".turn-map .turn-pill")];
+    const after = [
+      ...outer.querySelectorAll<HTMLElement>(".turn-map-stack:not([data-parked]) > .turn-pill"),
+    ];
     expect(after).toHaveLength(rows.length);
     after.forEach((li, i) => {
       expect(li, `row ${String(i)} kept its element`).toBe(rows[i]);
