@@ -35,7 +35,7 @@ import { restartShell } from "./actions/shell.js";
 import { refreshGitStatus } from "./git-status-store.js";
 import { attachSplitter, type Splitter } from "./splitter.js";
 import { touchCapable } from "./pointer-tier.js";
-import { trackShellPresses } from "./shell-keys.js";
+import { appFieldChord, trackShellPresses } from "./shell-keys.js";
 
 const SHELL_WS_PATH = "/api/shell/ws";
 // Awaited before the first server resize so the PTY is sized on real cell metrics. ONE family — the
@@ -57,7 +57,7 @@ const SHELL_THEME: Readonly<Record<string, string>> = {
   "--accent": "var(--c-accent)",
   "--surface": "var(--c-bg-tertiary)",
   "--border": "var(--c-border)",
-  // The library's defaults suit only a dark surface; these reach 4.5:1 on --surface in both themes.
+  // The library's banner defaults miss 4.5:1 on this --surface (offline in both themes, restarted in light).
   "--banner-offline": "var(--c-danger)",
   "--banner-restarted": "var(--c-warning)",
   // The library sizes its key grid, scroll button and menu rows at one touch size on every tier.
@@ -118,6 +118,17 @@ function runQueue(): TerminalFeature {
           runCtx = null;
         },
       };
+    },
+  };
+}
+
+/** The kernel sends a key's byte from its listener on the focused input, before keys.ts's document
+ *  listener sees the event, so the chords keys.ts runs from a field are claimed here unsent. */
+function appChords(): TerminalFeature {
+  return {
+    name: "appChords",
+    setup(ctx) {
+      return { teardown: ctx.registerKeydown((ev) => appFieldChord(ev, true)) };
     },
   };
 }
@@ -383,7 +394,7 @@ function ensureTerminal(): void {
   handle = createTerminal($.shellTerminal, {
     features: () => {
       keys = mobileToolbar({ externalToggle: true });
-      return [runQueue(), ...presetSingle(), keys];
+      return [runQueue(), appChords(), ...presetSingle(), keys];
     },
     layout: "container",
     wsPath: SHELL_WS_PATH,

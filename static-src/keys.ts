@@ -3,7 +3,7 @@
 
 import { emitBus, BUS_KEYS_ESCAPE } from "./bus.js";
 import { closeTopModal } from "./modals.js";
-import { shellTakesBodyKeys, shellTakesKey } from "./shell-keys.js";
+import { appFieldChord, shellTakesBodyKeys, shellTakesKey } from "./shell-keys.js";
 
 interface ShortcutDef {
   key: string;
@@ -138,17 +138,8 @@ export function initKeyboardShortcuts(actions: {
         continue;
       }
 
-      // Ctrl+Enter sends from a textarea.
-      if (s.key === "Enter" && isInput) {
-        e.preventDefault();
-        s.action();
-        return;
-      }
-
-      if (isInput && s.key !== "Enter") {
-        // Ctrl+K/N (new chat) work even in inputs, except Ctrl+K in the shell: it is the line
-        // editor's kill there. A terminal never gets a Cmd chord, so Cmd+K stays the app's.
-        if (s.key === "n" || (s.key === "k" && !(e.ctrlKey && shellTakesKey(e.target)))) {
+      if (isInput) {
+        if (appFieldChord(e, shellTakesKey(e.target))) {
           e.preventDefault();
           s.action();
           return;

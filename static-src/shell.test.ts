@@ -197,8 +197,9 @@ async function setup(
   // Without that the reattach path would only be reachable through the Restart button, and the
   // `exit` half of the same defect would go untested.
   let endedCb: (() => void) | null = null;
-  // The feature context, reduced to what the panel's own feature uses: its bus events, the input
-  // path and the pane's input readiness and hold.
+  // The feature context, reduced to what the panel's own features use: bus events, the input path,
+  // the keydown hook (shell-app-chords.test.ts drives it through the real kernel) and the pane's
+  // input readiness and hold.
   const listeners = new Map<string, ((payload: unknown) => void)[]>();
   const emit = (event: string, payload: unknown): void => {
     for (const fn of listeners.get(event) ?? []) {
@@ -228,6 +229,7 @@ async function setup(
       inputs.push({ paste: text });
     },
     shell: { selected: () => "left", pane: () => pane },
+    registerKeydown: (): (() => void) => () => undefined,
     on: (event: string, fn: (payload: unknown) => void): (() => void) => {
       listeners.set(event, [...(listeners.get(event) ?? []), fn]);
       return () => {
