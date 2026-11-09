@@ -49,7 +49,10 @@ vi.mock("./chat-export.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   downloadChatExport: vi.fn(),
 }));
-vi.mock("./settings-tabs.js", () => ({ refreshSettingsPanel: vi.fn() }));
+vi.mock("./settings-tabs.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  refreshSettingsPanel: vi.fn(),
+}));
 vi.mock("./toast.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   ...(await import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock())),

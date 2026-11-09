@@ -3,8 +3,15 @@
 // actions framework and real stylesheet; only the transport, the network seam, is faked.
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 
-vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
-vi.mock("./transport.js", () => ({ send: vi.fn(), newOpID: vi.fn(() => "op-test") }));
+vi.mock("./toast.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock())),
+}));
+vi.mock("./transport.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  send: vi.fn(),
+  newOpID: vi.fn(() => "op-test"),
+}));
 
 import { send as transportSend, type SendResult } from "./transport.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
