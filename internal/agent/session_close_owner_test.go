@@ -68,6 +68,16 @@ func (o *ownerHub) closed() bool {
 	return sessionClosed(o.br) && o.h.bridge.mgr.get("c1") == nil
 }
 
+// tookPrompt reports whether sb's session ran a session/prompt. A registry entry whose door is still loading holds
+// no session yet, so a poll of the chat's entry can read one.
+func tookPrompt(sb *sharedBridge) bool {
+	if sb == nil {
+		return false
+	}
+	s := fakeOf(sb)
+	return s != nil && slices.Contains(s.callLog(), marotte.MethodPrompt)
+}
+
 // reloadsInline is the chat's next open closing the first session and loading the chat's session again with the
 // current settings, in that one call.
 func (o *ownerHub) reloadsInline(t *testing.T) *sharedBridge {
@@ -323,8 +333,7 @@ func TestCloseOwner_PromptDoorReloadsUnderItsOwnAdmission(t *testing.T) {
 		if slices.Contains(o.br.callLog(), marotte.MethodPrompt) {
 			t.Error("the prompt reached the marked session")
 		}
-		cur := o.h.bridge.mgr.get("c1")
-		if cur == nil || cur == o.sb || !slices.Contains(fakeOf(cur).callLog(), marotte.MethodPrompt) {
+		if cur := o.h.bridge.mgr.get("c1"); cur == o.sb || !tookPrompt(cur) {
 			t.Error("the prompt did not reach the session its door loaded again")
 		}
 	})
@@ -688,7 +697,7 @@ func TestCloseOwner_DrainedPromptReloadsBeforeTheTailEnds(t *testing.T) {
 				// drainedOnNew reports that the drained prompt reached a session its door loaded again.
 				drainedOnNew := func() bool {
 					cur := o.h.bridge.mgr.get("c1")
-					return cur != nil && cur != o.sb && slices.Contains(fakeOf(cur).callLog(), marotte.MethodPrompt)
+					return cur != o.sb && tookPrompt(cur)
 				}
 				var heldPast atomic.Bool
 				if tc.heldPredecessor {
@@ -716,7 +725,7 @@ func TestCloseOwner_DrainedPromptReloadsBeforeTheTailEnds(t *testing.T) {
 				o.h.coord.drainAfterClose = func(ctx context.Context, chatID marotte.ChatID, cl command.CloseFacts, ends command.EndFacts) {
 					drain(ctx, chatID, cl, ends)
 					for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
-						if cur := o.h.bridge.mgr.get("c1"); cur != nil && slices.Contains(fakeOf(cur).callLog(), marotte.MethodPrompt) {
+						if tookPrompt(o.h.bridge.mgr.get("c1")) {
 							return
 						}
 					}
@@ -746,8 +755,7 @@ func TestCloseOwner_DrainedPromptReloadsBeforeTheTailEnds(t *testing.T) {
 				if n := countCalls(o.br, marotte.MethodPrompt); n != 1 {
 					t.Errorf("session/prompt calls on the marked session = %d, want only the first prompt's", n)
 				}
-				cur := o.h.bridge.mgr.get("c1")
-				if cur == nil || cur == o.sb || !slices.Contains(fakeOf(cur).callLog(), marotte.MethodPrompt) {
+				if cur := o.h.bridge.mgr.get("c1"); cur == o.sb || !tookPrompt(cur) {
 					t.Error("the drained prompt did not reach the session its door loaded again")
 				}
 				if rows := queuedRows(t, o.cs, "c1"); len(rows) != 0 {

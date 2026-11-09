@@ -7,7 +7,12 @@ import { createTerminal, localScrollbackStorage } from "@cplieger/web-terminal-u
 import { presetSingle } from "@cplieger/web-terminal-ui/presets/single";
 import { mobileToolbar } from "@cplieger/web-terminal-ui/features/mobile-toolbar";
 import type { MobileToolbarApi } from "@cplieger/web-terminal-ui/features/mobile-toolbar";
-import type { TerminalContext, TerminalFeature, TerminalHandle } from "@cplieger/web-terminal-ui";
+import type {
+  PaneHandle,
+  TerminalContext,
+  TerminalFeature,
+  TerminalHandle,
+} from "@cplieger/web-terminal-ui";
 import { $ } from "./dom.js";
 import { getScrollEl } from "./messages.js";
 import { shiftScroll } from "./scroll.js";
@@ -30,7 +35,7 @@ import { restartShell } from "./actions/shell.js";
 import { refreshGitStatus } from "./git-status-store.js";
 import { attachSplitter, type Splitter } from "./splitter.js";
 import { touchCapable } from "./pointer-tier.js";
-import { trackShellPresses } from "./shell-keys.js";
+import { appFieldChord, trackShellPresses } from "./shell-keys.js";
 
 const SHELL_WS_PATH = "/api/shell/ws";
 // Awaited before the first server resize so the PTY is sized on real cell metrics. ONE family — the
@@ -52,6 +57,9 @@ const SHELL_THEME: Readonly<Record<string, string>> = {
   "--accent": "var(--c-accent)",
   "--surface": "var(--c-bg-tertiary)",
   "--border": "var(--c-border)",
+  // The library's banner defaults miss 4.5:1 on this --surface (offline in both themes, restarted in light).
+  "--banner-offline": "var(--c-danger)",
+  "--banner-restarted": "var(--c-warning)",
   // The library sizes its key grid, scroll button and menu rows at one touch size on every tier.
   "--touch-target": "var(--ctl-h)",
 };
@@ -63,18 +71,17 @@ const CR = new Uint8Array([0x0d]);
 const pendingRuns: string[] = [];
 /** The run queue's context; null until the terminal exists. */
 let runCtx: TerminalContext | null = null;
-/** True from the socket's `input:ready` until the next socket opens, a reported drop or a
- *  reattach. A Run sent before it waits in the library's queue, which a server restart at the
- *  next resume drops. */
-let socketReady = false;
 /** Restart POSTs in flight: the server kills the PTY with whatever it was sent meanwhile. */
 let restartsInFlight = 0;
 
-/** The engine clears the modes at every close, so `isKnown()` false is the only sign of a drop the
- *  kernel has not reported yet. They can come before the next socket's resume (engine terminal.go
- *  announceTo), so only `input:ready` sets `socketReady`. */
+function shownPane(ctx: TerminalContext): PaneHandle | null {
+  return ctx.shell.pane(ctx.shell.selected());
+}
+
+/** A Run sent before the pane's input is ready waits in the library's queue, which a server
+ *  restart drops at the next resume. */
 function inputReady(ctx: TerminalContext): boolean {
-  return socketReady && ctx.modes.isKnown() && restartsInFlight === 0;
+  return shownPane(ctx)?.inputReady() === true && restartsInFlight === 0;
 }
 
 /**
@@ -105,26 +112,23 @@ function runQueue(): TerminalFeature {
     name: "runQueue",
     setup(ctx) {
       runCtx = ctx;
-      // The kernel reports a drop 600 ms late or not at all (web-terminal-ui conn-state.ts), but it
-      // reports each new socket's open at once, after the engine cleared the modes at the close.
-      ctx.on("connection:state", (state) => {
-        if ((state !== "open" && state !== "restarted") || !ctx.modes.isKnown()) {
-          socketReady = false;
-        }
-      });
-      ctx.on("input:ready", () => {
-        socketReady = true;
-        flushRuns();
-      });
-      // The engine marks the modes known before either frame reaches features.
-      ctx.on("wire:modes", flushRuns);
-      ctx.on("wire:screen", flushRuns);
+      ctx.on("input:ready", flushRuns);
       return {
         teardown: () => {
           runCtx = null;
-          socketReady = false;
         },
       };
+    },
+  };
+}
+
+/** The kernel sends a key's byte from its listener on the focused input, before keys.ts's document
+ *  listener sees the event, so the chords keys.ts runs from a field are claimed here unsent. */
+function appChords(): TerminalFeature {
+  return {
+    name: "appChords",
+    setup(ctx) {
+      return { teardown: ctx.registerKeydown((ev) => appFieldChord(ev, true)) };
     },
   };
 }
@@ -183,7 +187,6 @@ function scheduleReattach(reason: "ended" | "restart"): void {
 }
 
 function reattachShell(): void {
-  socketReady = false;
   reattachedAt = Date.now();
   reattachSeq++;
   handle?.reattach();
@@ -204,7 +207,7 @@ async function hostRestart(): Promise<void> {
   // Keys typed during the POST wait. On success, those typed before the replacement's resume are
   // dropped with the old shell, and those typed at its prompt while the POST is still out reach it
   // at release. A failed restart sends them on to the same shell.
-  const release = runCtx?.shell.pane(runCtx.shell.selected())?.holdInput();
+  const release = runCtx === null ? undefined : shownPane(runCtx)?.holdInput();
   restartsInFlight++;
   const restarted = (await restartShell.dispatch()) !== null;
   restartsInFlight--;
@@ -391,7 +394,7 @@ function ensureTerminal(): void {
   handle = createTerminal($.shellTerminal, {
     features: () => {
       keys = mobileToolbar({ externalToggle: true });
-      return [runQueue(), ...presetSingle(), keys];
+      return [runQueue(), appChords(), ...presetSingle(), keys];
     },
     layout: "container",
     wsPath: SHELL_WS_PATH,

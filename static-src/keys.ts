@@ -3,7 +3,7 @@
 
 import { emitBus, BUS_KEYS_ESCAPE } from "./bus.js";
 import { closeTopModal } from "./modals.js";
-import { shellTakesBodyKeys } from "./shell-keys.js";
+import { appFieldChord, shellTakesBodyKeys, shellTakesKey } from "./shell-keys.js";
 
 interface ShortcutDef {
   key: string;
@@ -138,16 +138,8 @@ export function initKeyboardShortcuts(actions: {
         continue;
       }
 
-      // Ctrl+Enter sends from a textarea.
-      if (s.key === "Enter" && isInput) {
-        e.preventDefault();
-        s.action();
-        return;
-      }
-
-      if (isInput && s.key !== "Enter") {
-        // Ctrl+K/N (new chat) work even in inputs.
-        if (s.key === "k" || s.key === "n") {
+      if (isInput) {
+        if (appFieldChord(e, shellTakesKey(e.target))) {
           e.preventDefault();
           s.action();
           return;

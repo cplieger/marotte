@@ -1,6 +1,7 @@
 // The keydown handler's gates: the modifier gate (a bare key never reaches the table), the two-sided Shift match,
-// the text-entry carve-outs (only Ctrl+Enter and Ctrl+K/N survive a focused field), and Escape (closes the top modal
-// and stops). keys.ts listens once per module instance, so it is initialised once and stubs are cleared per test.
+// the text-entry carve-outs (only Ctrl+Enter and Ctrl+K/N survive a focused field, Ctrl+K not in the shell), and
+// Escape (closes the top modal and stops). keys.ts listens once per module instance, so it is initialised once and
+// stubs are cleared per test.
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 
@@ -46,7 +47,7 @@ beforeEach(() => {
     <textarea id="prompt-input"></textarea>
     <input id="a-text-field" type="text">
     <svg id="an-icon"></svg>
-    <div id="shell-panel"><div id="shell-terminal"></div></div>`;
+    <div id="shell-panel"><div id="shell-terminal"><textarea class="term-input"></textarea></div></div>`;
 });
 
 afterEach(() => {
@@ -174,6 +175,53 @@ describe("a key the shell's terminal takes from the body", () => {
     press("/", undefined, { ctrlKey: true });
     expect(actions.showShortcuts, "? after a press outside it").toHaveBeenCalledTimes(1);
     expect(actions.toggleShell, "Ctrl+/ after a press outside it").toHaveBeenCalledTimes(1);
+  });
+});
+
+// bash and emacs kill to end of line on Ctrl+K and nano cuts the line; a terminal never gets a
+// Cmd chord, so Cmd+K stays the app's on macOS.
+describe("the new-chat chords in the shell", () => {
+  function terminalInput(): HTMLElement {
+    return document.querySelector("#shell-terminal .term-input") as HTMLElement;
+  }
+
+  it("leaves Ctrl+K to the terminal's focused input", () => {
+    const e = press("k", terminalInput(), { ctrlKey: true });
+    expect(actions.newChat).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("leaves Ctrl+K to the terminal when it takes keys from the body", () => {
+    trackShellPresses();
+    (document.activeElement as HTMLElement | null)?.blur();
+    terminalInput().dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    try {
+      const e = press("k", undefined, { ctrlKey: true });
+      expect(actions.newChat).not.toHaveBeenCalled();
+      expect(e.defaultPrevented).toBe(false);
+    } finally {
+      // The last press is module state; a press elsewhere hands the body's keys back to the page.
+      document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    }
+  });
+
+  it("opens a chat on Ctrl+N from the shell", () => {
+    const e = press("n", terminalInput(), { ctrlKey: true });
+    expect(actions.newChat).toHaveBeenCalledTimes(1);
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("opens a chat on Cmd+K from the shell", () => {
+    const e = press("k", terminalInput(), { metaKey: true });
+    expect(actions.newChat).toHaveBeenCalledTimes(1);
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("still opens a chat on Ctrl+K from a field outside the shell", () => {
+    const field = document.getElementById("a-text-field") as HTMLElement;
+    const e = press("k", field, { ctrlKey: true });
+    expect(actions.newChat).toHaveBeenCalledTimes(1);
+    expect(e.defaultPrevented).toBe(true);
   });
 });
 
