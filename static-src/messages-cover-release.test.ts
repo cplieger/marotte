@@ -213,11 +213,12 @@ async function switchUnderCover(
 /** What the page looked like at the moment the cover was released. */
 interface AtLift {
   blank: boolean;
+  newestBuilt: boolean;
   olderBuilt: boolean;
 }
 
 /** Resolves with the page as it stood when the held cover was next released. */
-function watchLift(older: [string, number]): Promise<AtLift> {
+function watchLift(newest: [string, number], older: [string, number]): Promise<AtLift> {
   return new Promise((resolve) => {
     const mo = new MutationObserver(() => {
       if (coverUp()) {
@@ -226,6 +227,7 @@ function watchLift(older: [string, number]): Promise<AtLift> {
       mo.disconnect();
       resolve({
         blank: blankInView(),
+        newestBuilt: built(...newest),
         olderBuilt: built(...older),
       });
     });
@@ -294,7 +296,7 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
     });
   });
 
-  it("stays up while one slice cannot fill the view, and lifts before the bodies above finish", async () => {
+  it("stays up while one slice cannot fill the view, and lifts once the rows in view are built", async () => {
     // A port taller than one slice of rows: what the paint builds leaves a spacer in view.
     await withPortHeight(2400, async () => {
       const yields = holdYields();
@@ -306,7 +308,7 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
         [chat(b, [heavyTurn(older, 120, 1, "failed"), heavyTurn(newest, 200, 2)])],
         b,
         () => {
-          lift = watchLift([older, 120]);
+          lift = watchLift([newest, 200], [older, 120]);
         },
       );
       if (lift === undefined) {
@@ -323,6 +325,9 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
         await yields.step();
       }
       expect(at.blank, "a blank band showed at the lift").toBe(false);
+      expect(at.newestBuilt, "the lift waited on the newest body's rows above the view").toBe(
+        false,
+      );
       expect(at.olderBuilt, "the lift waited on a body out of view").toBe(false);
       await yields.releaseAll();
     });
