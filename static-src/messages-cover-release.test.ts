@@ -1,7 +1,7 @@
 // A landing page whose paint can only start the bodies in view keeps the transcript cover up until
 // those bodies are built, then lifts it before the bodies out of view finish; a page whose owed
-// bodies are all out of view lifts in the paint's task. Real store, renderer, scroll controller and
-// layout.
+// bodies are all out of view where the reader lands lifts by the first frame. Real store, renderer,
+// scroll controller and layout.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
@@ -276,6 +276,54 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
     expect(built(older, 200), "the premise: the older body is still owed").toBe(false);
     expect(blankInView(), "the premise: its rows are out of view").toBe(false);
     expect(coverUp()).toBe(false);
+    await yields.releaseAll();
+  });
+
+  it("lifts by the first frame when a cold chat's answer lands with its owed bodies out of view", async () => {
+    // The answer's paint is no chat switch, so no restore lands the scroller: the first frame's check
+    // reads it at top 0, on the oldest turn's spacer, ahead of the owner's follow write.
+    const yields = holdYields();
+    const b = freshID("cr-b");
+    const older = `${b}-old`;
+    await switchUnderCover([evicted(b)], b);
+    // A fetch answers in a task, after the attach's settle frames have run out on the empty view.
+    for (let i = 0; i < 4; i++) {
+      await nextFrame();
+    }
+    await new Promise((r) => setTimeout(r, 0));
+    expect(coverUp(), "the premise: the cold chat's cover waits on its answer").toBe(true);
+    const s = store.get(b);
+    if (s === undefined) {
+      throw new Error("no cold chat");
+    }
+    const oldest = `${b}-oldest`;
+    const answer = [
+      heavyTurn(oldest, 200, 1, "failed"),
+      heavyTurn(older, 200, 2, "failed"),
+      tallProseTurn(`${b}-new`, 3),
+    ];
+    for (const entries of answer) {
+      const first = entries[0];
+      if (first !== undefined) {
+        s.turns.set(first.turn, { entries: [...entries], openEntries: new Map() });
+        s.turn_order.push(first.turn);
+      }
+    }
+    s.turn_count = s.turn_order.length;
+    s.has_more = false;
+    s.residency = "loaded";
+    store.bumpMessages(b, "load");
+    await flushed();
+    expect(scroll.readingState(), "the premise: the reader lands on the live edge").toBe(
+      "following",
+    );
+    expect(blankInView(), "the premise: the scroller still shows the oldest turn's spacer").toBe(
+      true,
+    );
+    await nextFrame();
+    expect(built(older, 200), "the premise: the older body is still owed").toBe(false);
+    expect(blankInView(), "the premise: its rows are out of view").toBe(false);
+    expect(coverUp(), "the cover waited on a body out of view").toBe(false);
     await yields.releaseAll();
   });
 
