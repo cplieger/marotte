@@ -39,6 +39,7 @@ func replaceWithDirectory(t *testing.T, dir string) {
 	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	settleConfig(t, dir)
 }
 
 // restoreFile replaces whatever is at dir's config.json with body.

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -15,11 +14,11 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/memlimit"
 	"github.com/cplieger/marotte/internal/nodeopts"
-	"github.com/cplieger/marotte/internal/userjson"
+	"github.com/cplieger/marotte/internal/ownedfile"
 )
 
-// ErrUnreadable marks the Update failure about the STORED document: config.json exists and
-// could not be read or parsed, so the remedy is the file itself.
+// ErrUnreadable marks a failure about the STORED document: config.json could not be read or
+// parsed, or was refused and has not been read again, so the remedy is the file itself.
 var ErrUnreadable = errors.New("settings: stored document unreadable")
 
 // errNoLaterStamp refuses a write when the stored version and this process's last one are both
@@ -28,13 +27,13 @@ var errNoLaterStamp = fmt.Errorf("settings: no version above settings_epoch and 
 	"remove both keys from config.json and restart marotte", uint64(maxStamp))
 
 // Update applies fn to the stored document and writes it back atomically under ONE per-
-// configDir lock across read, merge and write, so concurrent writers drop no key. An
-// unreadable document refuses (ErrUnreadable): merging over an empty map would destroy every
-// key fn does not name. An absent file is ordinary. Each write stamps the document with the next
+// configDir lock across read, merge and write, so concurrent writers drop no key. It merges
+// over what a reader reads (ownedfile.Merging): an unreadable document refuses (ErrUnreadable),
+// since merging over an empty map would destroy every key fn does not name, and so does a held
+// absence whose last adopted read was refused. Each write stamps the document with the next
 // version (cache.next), whatever fn put there, and refuses when none is left; a refusal writes
 // nothing. publish, when not nil, gets the write's settings_updated event before the lock is
-// released, so events leave in version order; by then the map fn edited is the document
-// written, stamped. That map is returned.
+// released, so events leave in version order. The map fn edited, as written, is returned.
 func Update(ctx context.Context, configDir string, fn func(doc map[string]json.RawMessage) error, publish func(context.Context, marotte.ServerEvent)) (map[string]json.RawMessage, error) {
 	if configDir == "" {
 		return nil, errors.New("settings: no config dir")
@@ -47,24 +46,38 @@ func Update(ctx context.Context, configDir string, fn func(doc map[string]json.R
 	if err != nil {
 		return nil, err
 	}
-	doc, err := Stored(configDir)
+	s, err := c.storedBytes(path, ownedfile.Merging)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUnreadable, err)
 	}
-	next, ok := c.next(stampOf(doc), time.Now())
+	next, ok := c.next(stampOf(s.doc), time.Now())
 	if !ok {
 		return nil, errNoLaterStamp
 	}
-	if mErr := fn(doc); mErr != nil {
+	if mErr := fn(s.doc); mErr != nil {
 		return nil, mErr
 	}
-	next.write(doc)
-	pretty, err := json.MarshalIndent(doc, "", "  ")
+	written, err := c.writeLocked(ctx, path, s.doc, next)
 	if err != nil {
 		return nil, err
 	}
-	res, err := filesafe.WriteFile(ctx, path, append(pretty, '\n'),
-		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700))
+	c.fold(s.base, written)
+	if publish != nil {
+		publish(ctx, next.event())
+	}
+	return s.doc, nil
+}
+
+// writeLocked stamps doc with next and writes it as config.json: every write of the file goes
+// through it. writeMu must be held.
+func (c *cache) writeLocked(ctx context.Context, path string, doc map[string]json.RawMessage, next stamp) ([]byte, error) {
+	next.write(doc)
+	written, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	written = append(written, '\n')
+	res, err := filesafe.WriteFile(ctx, path, written, filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700))
 	if err != nil {
 		return nil, err
 	}
@@ -73,17 +86,26 @@ func Update(ctx context.Context, configDir string, fn func(doc map[string]json.R
 			"path", path)
 	}
 	c.committed = next
+	c.raise(next)
+	c.gate.Reset()
 	c.forget()
-	if publish != nil {
-		publish(ctx, next.event())
-	}
-	return doc, nil
+	return written, nil
 }
 
-// ValidateCompactionPatch refuses a patch whose compaction keys the UI cannot
+// fold moves the applied record to a write's bytes when the write built on it. A write over a
+// document the record has not adopted leaves it, so the next Poll still reports the outside
+// change the write folded in. writeMu must be held.
+func (c *cache) fold(base ownedfile.Read, written []byte) {
+	if a := c.appliedRecord(); a.set && a.read != base {
+		return
+	}
+	c.setApplied(ownedfile.Written(written), written)
+}
+
+// validateCompactionPatch refuses a patch whose compaction keys the UI cannot
 // produce: auto_compaction_enabled must be a bool and auto_compact_pct a
 // ValidAutoCompactPct integer. A patch that carries neither key passes.
-func ValidateCompactionPatch(patch map[string]json.RawMessage) error {
+func validateCompactionPatch(patch map[string]json.RawMessage) error {
 	if raw, ok := patch[KeyAutoCompactionEnabled]; ok {
 		var b bool
 		if decodeInto(&b, raw) != nil {
@@ -99,9 +121,51 @@ func ValidateCompactionPatch(patch map[string]json.RawMessage) error {
 	return nil
 }
 
-// Stored reads configDir's config.json uncached, for a caller that needs the whole document:
-// Update's merge and the settings GET. An absent file is an empty map, every other fault an
-// error. readRegular refuses a FIFO, which under Update's lock would wedge every later write.
+// storedRead is one uncached read of config.json for a writer: the bytes found on disk (nil
+// unless a regular file), the read the document was built from, and the document, which its
+// caller owns.
+type storedRead struct {
+	doc  map[string]json.RawMessage
+	disk []byte
+	base ownedfile.Read
+}
+
+// storedBytes reads config.json once and answers by rule (ownedfile.Reading for a reader,
+// Merging for a merge write), with the read cache's answers: the applied document while a read
+// is held, an empty map for an absence, and an error for refused bytes. disk is set on error too.
+func (c *cache) storedBytes(path string, rule func(r, applied ownedfile.Read, have bool) ownedfile.Source) (storedRead, error) {
+	r, data, _, readErr := classify(path)
+	a := c.appliedRecord()
+	s := storedRead{disk: data, base: r}
+	switch rule(r, a.read, a.set) {
+	case ownedfile.Disk:
+		doc, err := parseObject(data)
+		s.doc = doc
+		return s, err
+	case ownedfile.Applied:
+		doc, err := parseObject(a.data)
+		s.doc, s.base = doc, a.read
+		return s, err
+	case ownedfile.Seed:
+		s.doc = map[string]json.RawMessage{}
+		return s, nil
+	}
+	switch {
+	case data != nil:
+		return s, readErr
+	case a.data != nil && a.read.Kind == ownedfile.Unreadable:
+		_, err := parseObject(a.data)
+		return s, fmt.Errorf("%s holds no document, and its last adopted read was refused: %w", path, err)
+	case readErr == nil:
+		return s, fmt.Errorf("%s is absent and its last adopted read was refused", path)
+	}
+	return s, readErr
+}
+
+// Stored reads configDir's config.json uncached, for a caller that needs the whole document: the
+// settings GET and Announce. It answers as Read does: the applied document while an absent or
+// unreadable read is held, an empty map for an adopted absence, an error for refused bytes. A FIFO
+// is refused without blocking, since under Update's lock it would wedge every later write.
 func Stored(configDir string) (map[string]json.RawMessage, error) {
 	if configDir == "" {
 		return nil, errors.New("settings: no config dir")
@@ -110,25 +174,11 @@ func Stored(configDir string) (map[string]json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, info, err := readRegular(path)
+	s, err := getCache(configDir).storedBytes(path, ownedfile.Reading)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return map[string]json.RawMessage{}, nil
-		}
 		return nil, err
 	}
-	if info.Size() > maxBytes {
-		return nil, fmt.Errorf("settings: %s is %d bytes, over the %d-byte cap", path, info.Size(), maxBytes)
-	}
-	doc := make(map[string]json.RawMessage)
-	if err := json.Unmarshal(userjson.Body(data), &doc); err != nil {
-		return nil, err
-	}
-	// A top-level `null` parses into a NIL map with no error, and maps.Copy onto nil panics.
-	if doc == nil {
-		return nil, fmt.Errorf("settings: %s contains a top-level null, not an object", path)
-	}
-	return doc, nil
+	return s.doc, nil
 }
 
 // The bounds of KeyEngineHeapMiB's nonzero values, and the headroom a container limit keeps beyond the heap for the

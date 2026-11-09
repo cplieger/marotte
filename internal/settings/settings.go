@@ -1,8 +1,9 @@
-// Package settings is the one reader for <configDir>/config.json: Field (typed key), FieldInto
+// Package settings is the one reader and writer of <configDir>/config.json: Field (typed key), FieldInto
 // (pointer target), FieldStrict (unreadable kept apart from absent, for a caller gating a
 // destructive action) and Read (one parsed generation for several keys), all through one
 // freshness-checked cache capped at maxBytes; Stored reads the whole document uncached, as a map
-// its caller owns. Every reader accepts one leading UTF-8 byte order mark.
+// its caller owns. Update, Replace and Poll are its writers. Every reader accepts one leading
+// UTF-8 byte order mark, and an absent or unreadable read is answered by internal/ownedfile's rule.
 //
 // There is no exported raw-bytes reader: the cache's slice is shared by every caller, so an
 // exported accessor would let any caller corrupt every other's settings. For the same reason a
@@ -13,14 +14,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
-	"io/fs"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 
 	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/marotte/internal/ownedfile"
 	"github.com/cplieger/marotte/internal/userjson"
 	"golang.org/x/sync/singleflight"
 )
@@ -33,24 +34,69 @@ const filename = "config.json"
 // Filename is the basename of marotte's config file (not kiro-cli's cli.json).
 const Filename = filename
 
+// errNotObject refuses bytes that are not one JSON object of at most maxBytes.
+var errNotObject = errors.New("settings: config.json is not one JSON object")
+
+// parseObject is the one rule for what config.json's bytes may hold: at most maxBytes, one BOM
+// stripped, a JSON object. A top-level null unmarshals into a nil map with no error, so it is
+// refused here and no reader sees it as an empty document.
+func parseObject(data []byte) (map[string]json.RawMessage, error) {
+	if len(data) > maxBytes {
+		return nil, fmt.Errorf("%w: over the %d-byte cap", errNotObject, maxBytes)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(userjson.Body(data), &doc); err != nil {
+		return nil, err
+	}
+	if doc == nil {
+		return nil, fmt.Errorf("%w: a top-level null", errNotObject)
+	}
+	return doc, nil
+}
+
+func acceptObject(data []byte) error {
+	_, err := parseObject(data)
+	return err
+}
+
+func classify(path string) (r ownedfile.Read, data []byte, info os.FileInfo, err error) {
+	return ownedfile.Classify(path, ownedfile.Options{Limit: maxBytes}, acceptObject)
+}
+
+// applied is the document the owner last wrote or adopted: readers answer it while a read is
+// held. gen is a generation no other byte set is answered under.
+type applied struct {
+	read ownedfile.Read
+	data []byte
+	gen  uint64
+	set  bool
+}
+
 // Staleness is three legs, filesafe.FileIdentity (mtime AND os.SameFile) plus size: neither pair
 // alone catches both a same-length rename within one tick and a different-length in-place rewrite.
 type cache struct {
-	id        filesafe.FileIdentity
 	sfGroup   singleflight.Group
+	id        filesafe.FileIdentity
 	parsed    map[string]json.RawMessage
 	configDir string
 	data      []byte
-	parsedGen uint64
-	gen       uint64
-	size      int64
-	mu        sync.Mutex
-	// writeMu serializes Update's read-modify-write for this configDir. Separate
-	// from mu, which guards the cached bytes for the length of one field access
-	// and is taken inside the window this one holds.
-	writeMu sync.Mutex
-	// committed is the stamp Update last wrote, under writeMu.
+	// gate holds an absent or unreadable Poll read, under writeMu.
+	gate    ownedfile.Gate
+	applied applied
+	// high is the highest stamp this process wrote, published or applied, and committed the
+	// stamp it last wrote; both under writeMu.
+	high      stamp
 	committed stamp
+	parsedGen uint64
+	size      int64
+	// gen counts generations; dataGen is the one data is answered under.
+	dataGen uint64
+	gen     uint64
+	mu      sync.Mutex
+	// writeMu serializes every write and Poll for this configDir. Separate from mu, which guards
+	// the cached bytes and the applied record for the length of one access and is taken inside
+	// the window this one holds; every move of applied but the first-read seed holds both.
+	writeMu sync.Mutex
 }
 
 var (
@@ -86,7 +132,7 @@ func (c *cache) load() generation {
 }
 
 // reload is the body of the singleflight slot: resolve the path, take the mtime/size fast
-// path, otherwise read and cache.
+// path, otherwise classify the read and answer it by ownedfile.Reading.
 func (c *cache) reload() generation {
 	// Absolute because filesafe.OpenRegularNoFollow requires it.
 	path, err := filepath.Abs(filepath.Join(c.configDir, filename))
@@ -94,42 +140,67 @@ func (c *cache) reload() generation {
 		return generation{err: err}
 	}
 	// os.Stat never blocks on a FIFO, so the fast path stays one syscall.
-	info, statErr := os.Stat(path)
-	if statErr != nil {
-		if os.IsNotExist(statErr) {
-			return generation{gen: c.forget()}
+	if info, statErr := os.Stat(path); statErr == nil {
+		if cached, ok := c.hit(info); ok {
+			return cached
 		}
-		return generation{err: statErr}
 	}
-	if cached, ok := c.hit(info); ok {
-		return cached
+	r, data, info, readErr := classify(path)
+	c.mu.Lock()
+	first := !c.applied.set
+	a := c.applied
+	c.mu.Unlock()
+	if readErr == nil && r.Kind == ownedfile.Absent {
+		readErr = fmt.Errorf("%s is absent and its last adopted read was refused", path)
 	}
-	data, readInfo, err := readRegular(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return generation{gen: c.forget()}
-		}
-		return generation{err: err}
+	src := ownedfile.Reading(r, a.read, a.set)
+	g := c.answer(src, data, info, readErr, a)
+	if first {
+		c.seedApplied(r, data, g.gen)
 	}
-	// readInfo, not the stat above: the identity must describe the generation these bytes came
-	// from, which a concurrent publish may already have replaced.
-	return generation{data: data, gen: c.store(data, readInfo)}
+	return g
 }
 
-// readRegular reads path under maxBytes, refusing anything but a regular file (and a final
-// symlink), and returns the FileInfo of the descriptor read. OpenRegularNoFollow because os.Open
-// blocks forever on a FIFO, which inside the singleflight slot would wedge every reader.
-func readRegular(path string) (data []byte, info os.FileInfo, err error) {
-	f, info, err := filesafe.OpenRegularNoFollow(path)
-	if err != nil {
-		return nil, nil, err
+// answer is reload's generation for src. Refused is always an error to the reader: bytes the
+// owner refuses are stored, so parsedOf refuses them; a read with none over a refused applied
+// record serves that record; neither having bytes is an ErrUnreadable at generation 0.
+func (c *cache) answer(src ownedfile.Source, data []byte, info os.FileInfo, readErr error, a applied) generation {
+	switch {
+	case src == ownedfile.Disk || (src == ownedfile.Refused && data != nil):
+		// info, not a stat of the path: the identity must describe the generation these bytes
+		// came from, which a concurrent publish may already have replaced.
+		return generation{data: data, gen: c.store(data, info)}
+	case src == ownedfile.Seed:
+		return generation{gen: c.forget()}
+	case src == ownedfile.Applied || a.data != nil && a.read.Kind == ownedfile.Unreadable:
+		return generation{data: a.data, gen: a.gen}
 	}
-	defer func() { _ = f.Close() }()
-	data, err = io.ReadAll(io.LimitReader(f, maxBytes))
-	if err != nil {
-		return nil, nil, err
+	return generation{err: fmt.Errorf("%w: %w", ErrUnreadable, readErr)}
+}
+
+// seedApplied records a process's first read of config.json as applied (a first read is adopted
+// as it is). It takes mu, not writeMu: a read runs inside Update's window.
+func (c *cache) seedApplied(r ownedfile.Read, data []byte, gen uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.applied.set {
+		return
 	}
-	return data, info, nil
+	c.applied = applied{read: r, data: data, gen: gen, set: true}
+}
+
+// setApplied moves the applied record under a fresh generation. writeMu must be held.
+func (c *cache) setApplied(r ownedfile.Read, data []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.gen++
+	c.applied = applied{read: r, data: data, gen: c.gen, set: true}
+}
+
+func (c *cache) appliedRecord() applied {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.applied
 }
 
 // A zero identity matches nothing.
@@ -139,7 +210,7 @@ func (c *cache) hit(info os.FileInfo) (generation, bool) {
 	if !c.id.Matches(info) || info.Size() != c.size {
 		return generation{}, false
 	}
-	return generation{data: c.data, gen: c.gen}, true
+	return generation{data: c.data, gen: c.dataGen}, true
 }
 
 func (c *cache) store(data []byte, info os.FileInfo) uint64 {
@@ -149,11 +220,13 @@ func (c *cache) store(data []byte, info os.FileInfo) uint64 {
 	c.id = filesafe.Identify(info)
 	c.size = info.Size()
 	c.gen++
-	return c.gen
+	c.dataGen = c.gen
+	return c.dataGen
 }
 
-// forget drops the cached bytes for a vanished file. The generation moves only when the cache
-// held one, so an absent file reads as one generation for as long as it stays absent.
+// forget drops the cached bytes so the next read goes to disk, and answers the generation of no
+// bytes. The generation moves only when the cache held bytes, so an absent file reads as one
+// generation for as long as it stays absent.
 func (c *cache) forget() uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -162,8 +235,9 @@ func (c *cache) forget() uint64 {
 		c.id = filesafe.FileIdentity{}
 		c.size = 0
 		c.gen++
+		c.dataGen = c.gen
 	}
-	return c.gen
+	return c.dataGen
 }
 
 func readGeneration(ctx context.Context, configDir string) generation {
@@ -181,7 +255,8 @@ func readGeneration(ctx context.Context, configDir string) generation {
 var errKeyParse = errors.New("settings: parse")
 
 // FieldStrict is Field with unreadability kept apart from absence: found reports the key was
-// PRESENT and decoded; err reports config.json exists and could not be read or parsed.
+// PRESENT and decoded; err reports config.json could not be read, or was refused and has not
+// been read again.
 func FieldStrict[T any](ctx context.Context, configDir, key string) (value T, found bool, err error) {
 	d, _, err := Read(ctx, configDir)
 	if err != nil {
@@ -260,9 +335,9 @@ func parsedOf(configDir string, g generation) (map[string]json.RawMessage, error
 	}
 	c.mu.Unlock()
 
-	var raw map[string]json.RawMessage
-	// Stripped here, not in reload: the cache holds the file's exact bytes.
-	if err := json.Unmarshal(userjson.Body(g.data), &raw); err != nil {
+	// Parsed here, not in reload: the cache holds the file's exact bytes.
+	raw, err := parseObject(g.data)
+	if err != nil {
 		return nil, err
 	}
 

@@ -807,9 +807,9 @@ export interface EffectiveSettings {
   trigger_max_launches_per_hour: number;
   /**
  * SettingsEpoch and SettingsRevision are config.json's version (settings.KeySettingsEpoch and
- * KeySettingsRevision), both 0 before the first write and compared epoch first. A deleted or
- * restored config.json serves a lower version, which a page holding a higher one refuses until
- * the next write starts a later epoch.
+ * KeySettingsRevision), both 0 before the first write and compared epoch first. A config.json
+ * removed, written without these keys or restored with lower ones is rewritten at a later
+ * version by the next outside-write check that reads it.
  */
   settings_epoch: number;
   settings_revision: number;

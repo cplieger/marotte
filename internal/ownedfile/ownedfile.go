@@ -38,6 +38,10 @@ type Read struct {
 	Kind Kind
 }
 
+// Written is the Valid read Classify answers for a regular file holding data, for an owner
+// recording its own write.
+func Written(data []byte) Read { return Read{Kind: Valid, Key: sum(data)} }
+
 // Options says how Classify opens the file. Limit 0 reads the whole file.
 type Options struct {
 	Limit              int64

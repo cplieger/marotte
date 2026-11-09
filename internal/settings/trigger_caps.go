@@ -33,8 +33,8 @@ func triggerCap(ctx context.Context, configDir, key string, def int) int {
 	return n
 }
 
-// ValidateTriggerCapsPatch refuses a patch whose cap keys hold anything but a whole number from 1 to 100.
-func ValidateTriggerCapsPatch(patch map[string]json.RawMessage) error {
+// validateTriggerCapsPatch refuses a patch whose cap keys hold anything but a whole number from 1 to 100.
+func validateTriggerCapsPatch(patch map[string]json.RawMessage) error {
 	for _, key := range []string{keyTriggerMaxLiveRuns, keyTriggerMaxLaunchesPerHour} {
 		raw, ok := patch[key]
 		if !ok {

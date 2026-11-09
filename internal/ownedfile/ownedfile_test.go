@@ -154,6 +154,21 @@ func TestClassify(t *testing.T) {
 		{name: "follow", o: Options{FollowFinalSymlink: true}},
 	}
 
+	t.Run("an owner's own write is the read Classify answers for it", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "f")
+		content := []byte(`{"theme":"dark"}`)
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		r, _, _, _ := Classify(path, Options{}, func([]byte) error { return nil })
+		if w := Written(content); r != w {
+			t.Errorf("Classify = %v, Written = %v, want equal", r, w)
+		}
+		if Written(content) == Written([]byte(`{"theme":"lite"}`)) {
+			t.Error("Written answers one read for two byte sets")
+		}
+	})
+
 	t.Run("a FIFO with no writer is unreadable and left closed", func(t *testing.T) {
 		for _, m := range modes {
 			t.Run(m.name, func(t *testing.T) {

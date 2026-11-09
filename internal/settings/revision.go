@@ -50,20 +50,32 @@ func stampOf(doc map[string]json.RawMessage) stamp {
 
 // next is the stamp a write over a document stamped stored commits at now, or false when no later
 // stamp fits under maxStamp. It continues the count only over the stamp this process last wrote
-// (c.committed). Otherwise, as on a process's first write or over a file replaced since, it starts
-// an epoch above both, in milliseconds: a count read back from a restored copy could repeat one a
-// page holds. With the epoch saturated by a hand-edited stamp, the count continues above both.
+// (c.committed), and only while nothing it published or applied since is above it (c.high).
+// Otherwise it starts an epoch above all three, in milliseconds: a count read back from a
+// restored copy could repeat one a page holds. With the epoch saturated by a hand-edited stamp,
+// the count continues above them.
 func (c *cache) next(stored stamp, now time.Time) (stamp, bool) {
-	if stored.epoch != 0 && stored.revision != 0 && stored == c.committed {
+	top := c.committed
+	if top.below(c.high) {
+		top = c.high
+	}
+	if stored.epoch != 0 && stored.revision != 0 && stored == c.committed && top == c.committed {
 		return stored.successor()
 	}
-	if epoch := max(uint64(max(now.UnixMilli(), 0)), stored.epoch+1, c.committed.epoch+1); epoch <= maxStamp {
+	if epoch := max(uint64(max(now.UnixMilli(), 0)), stored.epoch+1, top.epoch+1); epoch <= maxStamp {
 		return stamp{epoch: epoch, revision: 1}, true
 	}
-	if stored.below(c.committed) {
-		return c.committed.successor()
+	if stored.below(top) {
+		return top.successor()
 	}
 	return stored.successor()
+}
+
+// raise lifts c.high to s. writeMu must be held.
+func (c *cache) raise(s stamp) {
+	if c.high.below(s) {
+		c.high = s
+	}
 }
 
 // successor is the next stamp after s within maxStamp: the next revision, else the next epoch's first.
@@ -103,7 +115,9 @@ func Announce(ctx context.Context, configDir string, publish func(context.Contex
 	c := getCache(configDir)
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	publish(ctx, readStamp(configDir).event())
+	s := readStamp(configDir)
+	c.raise(s)
+	publish(ctx, s.event())
 }
 
 func readStamp(configDir string) stamp {

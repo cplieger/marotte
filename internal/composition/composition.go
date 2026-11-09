@@ -493,14 +493,14 @@ func cancelUnless(built *bool, cancel context.CancelFunc) {
 }
 
 // chatRetention resolves the purge window on every pass: 0 = off, -1 = forever, N > 0 = purge after
-// N days. FieldStrict, so a PRESENT but unreadable config.json answers 0 rather than the default,
-// which a malformed file could otherwise use to override a stored -1; an absent key or file keeps
-// the default.
+// N days. FieldStrict, so a config.json that cannot be read answers 0 rather than the default,
+// which a malformed file could otherwise use to override a stored -1; an absent key, or a file
+// the config watch settled as absent, keeps the default.
 func chatRetention(ctx context.Context, configDir string) time.Duration {
 	days, ok, err := settings.FieldStrict[int](ctx, configDir, settings.KeyChatRetentionDays)
 	if err != nil {
 		if !isCtxErr(err) {
-			slog.Error("chat retention: config.json is present but unreadable; purged nothing this pass rather than applying the default window",
+			slog.Error("chat retention: config.json cannot be read; purged nothing this pass rather than applying the default window",
 				"key", settings.KeyChatRetentionDays,
 				"default_days", settings.DefaultChatRetentionDays, "error", err)
 		}
@@ -516,7 +516,7 @@ func chatRetention(ctx context.Context, configDir string) time.Duration {
 }
 
 // runRetention resolves how the run purge and the run-log sweep treat finished runs: disabled for
-// keep-forever and for a config.json that is present and unreadable; a zero window purges an
+// keep-forever and for a config.json that cannot be read; a zero window purges an
 // unclaimed run once no tab shows it and leaves a chat's runs to the chat; N days ages out every
 // finished run N days after its last update. An absent key takes the default, as chatRetention does.
 func runRetention(ctx context.Context, configDir string) agent.RunRetention {

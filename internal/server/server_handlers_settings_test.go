@@ -44,6 +44,22 @@ func TestSettingsWrite_ReconcilesOnADurableContext(t *testing.T) {
 	}
 }
 
+// The PATCH runs the one after-write rule with its keys, and nothing else after its write.
+func TestSettingsPatch_CallsSettingsWrittenWithItsKeys(t *testing.T) {
+	eng := &fakeEngine{}
+	s := &Server{agent: eng, push: &testPush{}, configDir: t.TempDir()}
+
+	patchSettings(t.Context(), t, s, `{"`+settings.KeySecurityProfile+`":"trusted","`+settings.KeyTheme+`":"dark"}`)
+
+	want := [][]string{{settings.KeySecurityProfile, settings.KeyTheme}}
+	if !slices.EqualFunc(eng.written, want, slices.Equal) {
+		t.Errorf("SettingsWritten calls = %v, want %v", eng.written, want)
+	}
+	if eng.reconciles != 1 {
+		t.Errorf("reconciles = %d, want 1 (through SettingsWritten only)", eng.reconciles)
+	}
+}
+
 // A refused additional directory answers 400 with its reason and leaves config.json as it was.
 func TestSettingsWrite_AdditionalDirectories(t *testing.T) {
 	base, err := filepath.EvalSymlinks(t.TempDir())

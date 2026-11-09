@@ -61,16 +61,16 @@ func TestValidateAgentPatch_RefusesValuesTheUICannotProduce(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			patch := map[string]json.RawMessage{tc.key: json.RawMessage(tc.raw)}
-			if err := ValidateAgentPatch(patch); (err != nil) != tc.wantErr {
-				t.Errorf("ValidateAgentPatch(%s: %s) = %v, want error %v", tc.key, tc.raw, err, tc.wantErr)
+			if err := validateAgentPatch(patch); (err != nil) != tc.wantErr {
+				t.Errorf("validateAgentPatch(%s: %s) = %v, want error %v", tc.key, tc.raw, err, tc.wantErr)
 			}
 		})
 	}
 }
 
 func TestValidateAgentPatch_PassesAPatchWithNoAgentKeys(t *testing.T) {
-	if err := ValidateAgentPatch(map[string]json.RawMessage{KeyTheme: json.RawMessage(`"dark"`)}); err != nil {
-		t.Errorf("ValidateAgentPatch(theme only) = %v, want nil", err)
+	if err := validateAgentPatch(map[string]json.RawMessage{KeyTheme: json.RawMessage(`"dark"`)}); err != nil {
+		t.Errorf("validateAgentPatch(theme only) = %v, want nil", err)
 	}
 }
 
@@ -137,8 +137,8 @@ func TestEffective_IgnoresAStoredInlineAgentsKey(t *testing.T) {
 	if _, known := KnownKeys["inline_agents_enabled"]; known {
 		t.Error("inline_agents_enabled is still a known key")
 	}
-	if err := ValidateAgentPatch(map[string]json.RawMessage{"inline_agents_enabled": json.RawMessage(`"yes"`)}); err != nil {
-		t.Errorf("ValidateAgentPatch(inline_agents_enabled) = %v, want the client's patch tolerated", err)
+	if err := validateAgentPatch(map[string]json.RawMessage{"inline_agents_enabled": json.RawMessage(`"yes"`)}); err != nil {
+		t.Errorf("validateAgentPatch(inline_agents_enabled) = %v, want the client's patch tolerated", err)
 	}
 }
 

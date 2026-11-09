@@ -174,7 +174,9 @@ func TestEditorSaveOfConfigJSON_RefusesAValueThePatchRefuses(t *testing.T) {
 
 	code, msg := fx.save(t, fx.configPath(), `{"auto_compact_pct": 7}`, "")
 
-	wantMsg := settings.ValidateCompactionPatch(map[string]json.RawMessage{settings.KeyAutoCompactPct: json.RawMessage(`7`)})
+	wantMsg := settings.CheckPatch(settings.AgentDirs{Config: fx.configDir},
+		map[string]json.RawMessage{settings.KeyTheme: json.RawMessage(`"dark"`)},
+		map[string]json.RawMessage{settings.KeyAutoCompactPct: json.RawMessage(`7`)})
 	if wantMsg == nil {
 		t.Fatal("Setup: the PATCH's compaction check accepts auto_compact_pct 7")
 	}

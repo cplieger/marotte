@@ -24,6 +24,7 @@ type fakeEngine struct {
 	sessionSettings            func(context.Context) string
 	seen                       string
 	events                     []marotte.ServerEvent
+	written                    [][]string
 	reopens                    int
 	reconciles                 int
 	reconciledOnCancellableCtx bool
@@ -54,6 +55,13 @@ func (f *fakeEngine) ReconcileSessionSettings(ctx context.Context) {
 		f.seen = now
 		f.reopens++
 	}
+}
+
+// SettingsWritten records its keys and reconciles, as the runtime does for a key that is not
+// security_profile.
+func (f *fakeEngine) SettingsWritten(ctx context.Context, keys []string) {
+	f.written = append(f.written, slices.Sorted(slices.Values(keys)))
+	f.ReconcileSessionSettings(ctx)
 }
 
 type fakeReload struct{ profileChanges int }

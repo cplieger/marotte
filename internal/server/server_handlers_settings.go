@@ -265,11 +265,11 @@ type patchRefusedError struct{ error }
 
 func (r patchRefusedError) Unwrap() error { return r.error }
 
-// There is no replacing arm (only GET and PATCH are served). The additional directories are
-// judged against the document they replace, read under the same lock as the write.
+// There is no replacing arm (only GET and PATCH are served). The patch is checked against the
+// document it replaces, read under the same lock as the write.
 func mergeSettingsPatch(dirs settings.AgentDirs, patch map[string]json.RawMessage) func(map[string]json.RawMessage) error {
 	return func(doc map[string]json.RawMessage) error {
-		if err := dirs.ValidatePatch(doc, patch); err != nil {
+		if err := settings.CheckPatch(dirs, doc, patch); err != nil {
 			return patchRefusedError{err}
 		}
 		maps.Copy(doc, patch)
@@ -297,24 +297,6 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 			httpreply.BadRequest(w, key+" is counted by the server and cannot be written")
 			return
 		}
-	}
-	// Refuse an ignore-file entry kiro-cli would refuse, before the write, or config.json would
-	// disagree with what is enforced.
-	if msg, ok := agentIgnorePatchRefusal(patch); !ok {
-		httpreply.BadRequest(w, msg)
-		return
-	}
-	if err := settings.ValidateCompactionPatch(patch); err != nil {
-		httpreply.BadRequest(w, err.Error())
-		return
-	}
-	if err := settings.ValidateAgentPatch(patch); err != nil {
-		httpreply.BadRequest(w, err.Error())
-		return
-	}
-	if err := settings.ValidateTriggerCapsPatch(patch); err != nil {
-		httpreply.BadRequest(w, err.Error())
-		return
 	}
 	if r.Context().Err() != nil {
 		return
@@ -348,25 +330,5 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 	}
 	httpserver.WriteJSON(w, answer)
 	// Durable: the write landed, so a closed tab must not leave bridges on the old values.
-	s.agent.ReconcileSessionSettings(durable.Context(r.Context()))
-}
-
-// agentIgnorePatchRefusal reports whether a patch's agent_ignore_files is one kiro-cli will
-// enforce, and the message otherwise. A malformed VALUE is refused too (the GET would read it
-// as the default). A patch without the key passes.
-func agentIgnorePatchRefusal(patch map[string]json.RawMessage) (msg string, ok bool) {
-	raw, touched := patch[settings.KeyAgentIgnoreFiles]
-	if !touched {
-		return "", true
-	}
-	var entries []string
-	if err := json.Unmarshal(raw, &entries); err != nil {
-		return settings.KeyAgentIgnoreFiles + " must be a list of ignore file names", false
-	}
-	for _, entry := range entries {
-		if err := settings.ValidAgentIgnoreEntry(entry); err != nil {
-			return err.Error(), false
-		}
-	}
-	return "", true
+	s.agent.SettingsWritten(durable.Context(r.Context()), patchKeys)
 }

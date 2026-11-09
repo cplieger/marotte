@@ -41,14 +41,14 @@ func TestValidAgentIgnoreEntry_WhitespaceMirrorsJavaScript(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidAgentIgnoreEntry(tt.entry)
+			err := validAgentIgnoreEntry(tt.entry)
 			switch {
 			case tt.wantRefusal && err == nil:
-				t.Errorf("ValidAgentIgnoreEntry(%q) = nil, want a refusal", tt.entry)
+				t.Errorf("validAgentIgnoreEntry(%q) = nil, want a refusal", tt.entry)
 			case !tt.wantRefusal && err != nil:
-				t.Errorf("ValidAgentIgnoreEntry(%q) = %v, want nil", tt.entry, err)
+				t.Errorf("validAgentIgnoreEntry(%q) = %v, want nil", tt.entry, err)
 			case tt.wantRefusal && !errors.Is(err, errAgentIgnoreEntry):
-				t.Errorf("ValidAgentIgnoreEntry(%q) = %v, want it to wrap ErrAgentIgnoreEntry", tt.entry, err)
+				t.Errorf("validAgentIgnoreEntry(%q) = %v, want it to wrap ErrAgentIgnoreEntry", tt.entry, err)
 			}
 		})
 	}
@@ -86,14 +86,14 @@ func TestValidAgentIgnoreEntry_CoversKASsWholeRefusalSet(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidAgentIgnoreEntry(tt.entry)
+			err := validAgentIgnoreEntry(tt.entry)
 			switch {
 			case tt.wantRefusal && err == nil:
-				t.Errorf("ValidAgentIgnoreEntry(%q) = nil, want a refusal", tt.entry)
+				t.Errorf("validAgentIgnoreEntry(%q) = nil, want a refusal", tt.entry)
 			case !tt.wantRefusal && err != nil:
-				t.Errorf("ValidAgentIgnoreEntry(%q) = %v, want nil", tt.entry, err)
+				t.Errorf("validAgentIgnoreEntry(%q) = %v, want nil", tt.entry, err)
 			case tt.wantRefusal && !errors.Is(err, errAgentIgnoreEntry):
-				t.Errorf("ValidAgentIgnoreEntry(%q) = %v, want it to wrap ErrAgentIgnoreEntry", tt.entry, err)
+				t.Errorf("validAgentIgnoreEntry(%q) = %v, want it to wrap ErrAgentIgnoreEntry", tt.entry, err)
 			}
 		})
 	}

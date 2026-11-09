@@ -212,11 +212,6 @@ func TestUpdate_StartsALaterEpochOverAReplacedFile(t *testing.T) {
 		replace func(t *testing.T, dir string)
 		name    string
 	}{
-		{name: "config.json deleted", replace: func(t *testing.T, dir string) {
-			if err := os.Remove(filepath.Join(dir, Filename)); err != nil {
-				t.Fatal(err)
-			}
-		}},
 		{name: "config.json restored to an older copy", replace: func(t *testing.T, dir string) {
 			doc := readConfig(t, dir)
 			doc[KeySettingsRevision] = json.RawMessage(`1`)

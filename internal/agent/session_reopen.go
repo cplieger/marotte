@@ -79,8 +79,10 @@ type sessionBaseline struct {
 
 // ReconcileSessionSettings marks resident sessions for reload when a setting they read only at their door moved
 // since the last reconcile, recomputes whether an engine restart is pending, and pushes the engine each live setting
-// it has not confirmed. Every writer calls it after its write lands, and it returns once each push landed or failed.
-// A hand edit has no writer to call it: the next chat open syncs it.
+// it has not confirmed, and returns once each push landed or failed. A config.json writer without its own after-write
+// rule reaches it through SettingsWritten, which goes through SecurityProfileChanged when security_profile moved; a
+// cli.json write calls it directly. An outside edit of config.json reaches it through the config.json watch's
+// settings.Poll.
 func (rt *Runtime) ReconcileSessionSettings(ctx context.Context) {
 	rt.reconcileSettingsWrite(ctx, "session settings")
 }

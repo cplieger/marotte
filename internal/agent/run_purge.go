@@ -18,7 +18,7 @@ import (
 // RunRetention is how the retention side passes treat runs and run logs, read from chat_retention_days.
 type RunRetention struct {
 	Window   time.Duration
-	Enabled  bool // false under Keep forever and for a present but unreadable config.json
+	Enabled  bool // false under Keep forever and for a config.json that cannot be read
 	ChatRuns bool // a living chat's finished runs age out too; only with a positive Window
 }
 

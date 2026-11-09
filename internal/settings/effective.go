@@ -119,13 +119,14 @@ func EffectiveDefaults() marotte.EffectiveSettings {
 }
 
 // RetentionEnabled reports whether chat retention keeps a closed chat's record. It FAILS
-// TOWARD KEEPING: unreadable answers ON, absent takes the default, only 0 answers OFF. It must
+// TOWARD KEEPING: a config.json that cannot be read answers ON, one the config watch settled as
+// absent takes the default, only 0 answers OFF. It must
 // never share a reader with the purge, whose 0-sentinel's safe direction is the inverse.
 func RetentionEnabled(ctx context.Context, configDir string) bool {
 	days, ok, err := FieldStrict[int](ctx, configDir, KeyChatRetentionDays)
 	if err != nil {
 		if !readStopped(err) {
-			slog.Error("chat retention: config.json is present but unreadable; treating retention as ON so this close deletes nothing",
+			slog.Error("chat retention: config.json cannot be read; treating retention as ON so this close deletes nothing",
 				"key", KeyChatRetentionDays, "error", err)
 		}
 		return true

@@ -30,10 +30,10 @@ func jsTrimmed(s string) string {
 	})
 }
 
-// ValidAgentIgnoreEntry mirrors KAS's `Bvt` rule for rule: non-empty, already trimmed, not
+// validAgentIgnoreEntry mirrors KAS's `Bvt` rule for rule: non-empty, already trimmed, not
 // ".", no path separator, no "..", no glob metacharacter. An entry KAS refuses is one it
 // SKIPS, so accepting it would show an unenforced name as enforced.
-func ValidAgentIgnoreEntry(entry string) error {
+func validAgentIgnoreEntry(entry string) error {
 	switch {
 	case entry == "":
 		return fmt.Errorf("%w: an entry cannot be empty", errAgentIgnoreEntry)
@@ -57,7 +57,7 @@ func AgentIgnoreList(entries []string) []string {
 	out := make([]string, 0, len(entries)+1)
 	out = append(out, AgentIgnoreFloor)
 	for _, entry := range entries {
-		if ValidAgentIgnoreEntry(entry) != nil || slices.Contains(out, entry) {
+		if validAgentIgnoreEntry(entry) != nil || slices.Contains(out, entry) {
 			continue
 		}
 		out = append(out, entry)

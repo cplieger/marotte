@@ -72,9 +72,7 @@ func TestSettingsWrite_SendsNoIgnoreListFromAnUnreadableDocument(t *testing.T) {
 	h, lane := liveEngine(t, dir)
 
 	// Corrupt after the engine is up, so it already holds a list.
-	if err := os.WriteFile(filepath.Join(dir, settings.Filename), []byte("{not json"), 0o600); err != nil {
-		t.Fatalf("corrupt settings: %v", err)
-	}
+	rewriteConfigByHand(t, dir, "{not json")
 	h.ReconcileSessionSettings(t.Context())
 
 	if frames := ignoreFrames(t, lane); len(frames) != 0 {
