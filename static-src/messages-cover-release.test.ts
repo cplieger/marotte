@@ -1,7 +1,8 @@
 // A landing page's paint spends its sync allowance on the reader's body first and starts every other
 // body from the rows nearest where the reader lands, so the transcript cover lifts by the first frame
 // with no unbuilt row in view; while those rows cannot fill the view the cover stays up until they
-// do, and it never waits on a body out of view. Real store, renderer, scroll controller and layout.
+// do, and it never waits on a body out of view or on another chat's. Real store, renderer, scroll
+// controller and layout.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
@@ -394,6 +395,36 @@ describe("the cover over a landing page", { timeout: testTimeoutFor(FRAME_BUDGET
     expect(blankInView(), "the premise: its rows are out of view").toBe(false);
     expect(coverUp(), "the cover waited on a body out of view").toBe(false);
     await yields.releaseAll();
+  });
+
+  it("lifts in the paint's task over a chat switched back to with its bodies built, while the chat left owes one", async () => {
+    await withPortHeight(2400, async () => {
+      const yields = holdYields();
+      const a = freshID("cr-a");
+      const b = freshID("cr-b");
+      await switchUnderCover(
+        [
+          chat(a, [heavyTurn(`${a}-t`, 3, 1)]),
+          chat(b, [heavyTurn(`${b}-old`, 300, 1, "failed"), heavyTurn(`${b}-new`, 2, 2)]),
+        ],
+        a,
+      );
+      await nextFrame();
+      expect(coverUp(), "the premise: A lands with nothing owed").toBe(false);
+      store.setActive(b);
+      cover.holdCover(b);
+      store.setPainted(b);
+      await flushed();
+      await nextFrame();
+      expect(built(`${b}-old`, 300), "the premise: B still owes its older body").toBe(false);
+
+      store.setActive(a);
+      cover.holdCover(a);
+      store.setPainted(a);
+      await flushed();
+      expect(coverUp(), "A's cover waited on the body B owes").toBe(false);
+      await yields.releaseAll();
+    });
   });
 
   it("leaves a cover handed on to a chat still loading when the landing's builds finish", async () => {
