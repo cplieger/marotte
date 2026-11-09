@@ -1,8 +1,8 @@
-// A switch between view kinds (a chat and Settings) splits like a chat switch: the click lays out
-// no incoming view and never leaves the view area empty. A chat target shows under the cover with
-// its transcript out of layout; a non-chat target leaves the outgoing view up. The activation shows
-// the incoming view, with its entry fade starting there, before the chat's own show. Real tabs.ts
-// and view-swap.ts against the fake tab server.
+// A switch between view kinds (a chat and Settings). Toward a chat the click lays out no incoming
+// transcript and never leaves the view area empty: the chat view shows under the cover with its
+// transcript out of layout, and the activation lays it out. Toward any other view the click shows
+// that view, its entry fade starting there, and hides the chat view. Real tabs.ts and view-swap.ts
+// against the fake tab server.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as TabsDrag from "./tabs-drag.js";
 
@@ -224,25 +224,22 @@ describe("a switch from Settings to a chat", () => {
     page.resolve();
   });
 
-  it("never shows a superseded chat view: Settings, B, Settings ends on Settings with the transcript held for nothing", async () => {
+  it("never shows a superseded chat view: Settings, B, Settings shows Settings from its click", async () => {
     const ids = await onSettings("a", "b");
 
     clickRow(ids["b"] ?? "");
     clickRow(ids["settings"] ?? "");
-    await frame();
-    expect(coverUp(), "the Settings click lifted the cover off a transcript with no box").toBe(
+
+    expect(rendered("settings-view"), "the Settings click left the covered chat view up").toBe(
       true,
     );
-    expect(rendered("messages-wrap")).toBe(false);
+    expect(rendered("chat-view")).toBe(false);
+    expect(cover()?.hidden, "the cover outlived the click that left the chat").toBe(true);
     await activationRan();
 
     expect(fx.chat.show, "the superseded chat was shown").not.toHaveBeenCalled();
     expect(rendered("settings-view")).toBe(true);
     expect(rendered("chat-view")).toBe(false);
-    expect(
-      cover()?.hidden,
-      "the cover lifted under a hidden view kept its fade-out for the next show",
-    ).toBe(true);
 
     clickRow(ids["a"] ?? "");
     await activationRan();
@@ -271,8 +268,9 @@ describe("a switch from Settings to a chat", () => {
 });
 
 describe("a switch from a chat to Settings", () => {
-  it("keeps the chat view up through the click's frame and shows Settings, fading in, from the activation", async () => {
+  it("shows Settings, fading in, and hides the chat view in the click", async () => {
     await strip("a");
+    view("messages-wrap").scrollTop = 600;
     await openTab({ kind: "settings", ref: "", activate: false });
     const settings = tabIdFor("settings", "");
     await activationRan();
@@ -282,14 +280,18 @@ describe("a switch from a chat to Settings", () => {
     clickRow(settings);
 
     expect(getActiveTabId()).toBe(settings);
-    expect(rendered("settings-view"), "the click laid out Settings").toBe(false);
-    await frame();
-    expect(rendered("settings-view"), "the gesture's frame laid out Settings").toBe(false);
-    expect(rendered("chat-view"), "the gesture's frame showed no view").toBe(true);
+    expect(rendered("settings-view"), "the click left Settings hidden").toBe(true);
+    expect(
+      rendered("chat-view"),
+      "the click left the chat up under the selected Settings tab",
+    ).toBe(false);
+    expect(entryFade("settings-view"), "no entry fade from the click").toBeDefined();
+    expect(coverUp()).toBe(false);
 
     await activationRan();
     expect(rendered("settings-view")).toBe(true);
     expect(rendered("chat-view")).toBe(false);
-    expect(entryFade("settings-view"), "no entry fade from the activation's unhide").toBeDefined();
+    view("chat-view").classList.remove("hidden");
+    expect(view("messages-wrap").scrollTop, "the chat's place was lost").toBe(600);
   });
 });
