@@ -2641,6 +2641,8 @@ async function buildTurnBodyBatches(chatID: string, turnID: string): Promise<voi
       }
       syncSpacers(body, t, slice);
     });
+    // Per batch, not per body: the rows in view are often a few batches of a body much longer than the view.
+    liftOwedCover();
     if (nextBuildSlice(t, range) === "done") {
       syncTurnBodyless(card);
       return;
