@@ -18,14 +18,14 @@ function rows(): GoldenRow[] {
   return JSON.parse(readFileSync(new URL(GOLDEN, import.meta.url), "utf8")) as GoldenRow[];
 }
 
-/** The glyph a call should draw, from the rulings: a kind's own glyph, a workflow action's badge, or the book. */
-type Want = { kind: ToolKind } | { workflow: WorkflowBadge } | { book: true } | { mcp: string };
+/** The glyph a call should draw, from the rulings: a kind's own glyph, a workflow action's badge, or the docs library. */
+type Want = { kind: ToolKind } | { workflow: WorkflowBadge } | { library: true } | { mcp: string };
 
 function wantGlyph(w: Want): string {
   if ("workflow" in w) {
     return workflowIcon(w.workflow);
   }
-  if ("book" in w) {
+  if ("library" in w) {
     return ICON_TAB_DOCS;
   }
   return toolIcon({ kind: "mcp" in w ? "mcp" : w.kind, toolName: "" });
@@ -49,8 +49,8 @@ const WANT: Record<string, Want> = {
   "unloaded built-in via tool_call": { workflow: "inspect" },
   "unloaded MCP tool via tool_call": { mcp: "mailbox" },
   tool_load: { kind: "search" },
-  "disclose_context skill": { book: true },
-  "disclose_context steering": { book: true },
+  "disclose_context skill": { library: true },
+  "disclose_context steering": { library: true },
   read_file: { kind: "read" },
   fs_write: { kind: "edit" },
   str_replace: { kind: "edit" },

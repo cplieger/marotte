@@ -139,15 +139,21 @@ describe("hand-authored glyphs in static/index.html", () => {
     expect(num("width"), "the shell box is square").toBe(num("height"));
   });
 
-  // The browser and the read family share one book on purpose (`PATH_BOOK_OPEN`). Resolved through `toolIcon`, since a
-  // title override would defeat the share without the constant moving.
-  it("draws one open book for the browser and the read family", () => {
-    expect(inner(toolIcon({ kind: "read", toolName: "" }))).toBe(inner(ICON_TAB_DOCS));
+  // The browser and the read family share one drawing on purpose: Lucide `library-big` (lucide-icons/lucide
+  // icons/library-big.svg, minus its stroke-width, which 03-base.css owns). Read is resolved through `toolIcon`, since
+  // a title override would defeat the share without the constant moving.
+  it("draws Lucide library-big for the docs button, the docs tab and the read family", () => {
+    const libraryBig =
+      '<rect width="8" height="18" x="3" y="3" rx="1"/><path d="M7 3v18"/>' +
+      '<path d="M20.4 18.9c.2.5-.1 1.1-.6 1.3l-1.9.7c-.5.2-1.1-.1-1.3-.6L11.1 5.1c-.2-.5.1-1.1.6-1.3l1.9-.7c.5-.2 1.1.1 1.3.6Z"/>';
+    expect(glyphOf('id="docs-btn"'), "the sidebar button").toBe(libraryBig);
+    expect(inner(ICON_TAB_DOCS), "the docs tab").toBe(libraryBig);
+    expect(inner(toolIcon({ kind: "read", toolName: "" })), "the read family").toBe(libraryBig);
   });
 
   // Introspect's old book was indistinguishable from the read glyph at 16px in one transcript.
   it("keeps the introspect subagent out of the book family", () => {
-    expect(inner(ICON_SUBAGENT_INTROSPECT)).not.toBe(inner(ICON_TAB_DOCS));
+    expect(inner(ICON_SUBAGENT_INTROSPECT), "the library").not.toBe(inner(ICON_TAB_DOCS));
     expect(inner(ICON_SUBAGENT_INTROSPECT), "nor the closed book").not.toBe(inner(ICON_REPO));
   });
 });
