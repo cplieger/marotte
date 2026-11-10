@@ -42,7 +42,13 @@ export function entryLive(e: RunEntryView): boolean {
 }
 
 function turnKind(e: RunEntryView): boolean {
-  return e.kind === "turn" || e.kind === "row" || e.kind === "unread" || e.kind === "retry";
+  return (
+    e.kind === "turn" ||
+    e.kind === "row" ||
+    e.kind === "unread" ||
+    e.kind === "retry" ||
+    e.kind === "resume"
+  );
 }
 
 /** Whether a turn runs on the chat by the server's list: any live turn-kind entry at its head, a
@@ -59,13 +65,14 @@ export function runLive(run: RunView): boolean {
   return false;
 }
 
-/** The entries the dock draws: every compaction, and a row whose message is not in the transcript
- *  yet. A turn, retry or revert entry is the transcript's (or has no words), and an unread entry is
- *  drawn as its steers' rows. */
+/** The entries the dock draws: every compaction, and a row or the failsafe's resume whose message
+ *  is not in the transcript yet. A turn, retry or revert entry is the transcript's (or has no
+ *  words), and an unread entry is drawn as its steers' rows. */
 export function dockEntries(run: RunView): RunEntryView[] {
   return run.entries.filter(
     (e) =>
-      e.kind === "compaction" || (e.kind === "row" && e.row !== undefined && e.turn === undefined),
+      e.kind === "compaction" ||
+      ((e.kind === "row" || e.kind === "resume") && e.row !== undefined && e.turn === undefined),
   );
 }
 

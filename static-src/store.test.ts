@@ -87,7 +87,13 @@ import type { ChatHeader, RunView, Session, ToolCall, ToolProgressPayload } from
 import type { Entry, EntryToolCall, EntryToolResult, TurnOutcome } from "./wire/types.gen.js";
 import { effect } from "@cplieger/ui";
 import { IDLE_RUN } from "./run-order.js";
-import { compactionEntry, rowEntry, runAt, turnEntry } from "./__test-helpers__/run-order.js";
+import {
+  compactionEntry,
+  resumeEntry,
+  rowEntry,
+  runAt,
+  turnEntry,
+} from "./__test-helpers__/run-order.js";
 
 function makeSession(chatID: string): Session {
   return {
@@ -795,6 +801,15 @@ describe("isBusy: what Send and the mid-turn gates read", () => {
     expect(isBusy("a")).toBe(true);
     applyRun("a", runAt(2, [compactionEntry("compact-1", { after: "running" })]));
     expect(isBusy("a"), "a compaction alone is no turn").toBe(false);
+  });
+
+  it("is true while marotte's resume is taken, before its turn opens", () => {
+    resetStore("a");
+    applyRun(
+      "a",
+      runAt(1, [resumeEntry("m-resume", "continue", { after: "starting" }, { state: "starting" })]),
+    );
+    expect(isBusy("a")).toBe(true);
   });
 
   it("is false once the open turn closes", () => {

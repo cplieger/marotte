@@ -48,7 +48,7 @@ import { applyOutcome } from "./tool-card.js";
 import type { ToolRenderInfo } from "./tool-schema.js";
 import { ICON_TAB_RUN, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { sentBy } from "./sent-by.js";
+import { senderWords } from "./sent-by.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
 import { registerFind } from "./find-registry.js";
@@ -851,14 +851,15 @@ async function openMatch(match: Match, query: string): Promise<void> {
 
 /** The hit count borrows the time slot as text: a count has no absolute form. */
 function buildMatchRow(m: Match, query: string): HTMLElement {
-  // A title-only match has no hit: say why it matched. Words another program sent say so before the excerpt.
+  // A title-only match has no hit: say why it matched. Words the reader did not send name their sender first.
   const best = m.best;
+  const sender = senderWords(best);
   const line =
     best === undefined
       ? "matches the conversation name"
-      : best.caller === undefined
+      : sender === undefined
         ? best.excerpt
-        : `${sentBy(best.caller)}: ${best.excerpt}`;
+        : `${sender}: ${best.excerpt}`;
   // No one message holds every word: the row says so before the line from one of them.
   const detail = m.spread ? `Words spread across messages: ${line}` : line;
   const more = m.hits > 1 ? `${String(m.hits)} matches` : m.hits === 1 ? "1 match" : "";

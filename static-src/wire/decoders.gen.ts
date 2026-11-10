@@ -36,8 +36,8 @@ const REGISTRY_FAILURE_REASONS = ["rate_limited", "rejected", "unavailable"] as 
 const REJECTION_NOTES = ["reason", "plan_edits"] as const;
 const RUN_ASK_BLOCKERS = ["stopping", "pending", "branch_running", "unsettled", "settling"] as const;
 const RUN_ASK_TEXTS = ["asked", "last_message", "unseen"] as const;
-const RUN_ENTRY_KINDS = ["turn", "row", "unread", "retry", "compaction", "revert"] as const;
-const RUN_ENTRY_ORIGINS = ["prompt", "queue", "tangent", "summary", "unread", "retry", "wire", "run", "carried", "request", "threshold", "turn_end", "context_limit", "rewind"] as const;
+const RUN_ENTRY_KINDS = ["turn", "row", "unread", "retry", "compaction", "revert", "resume"] as const;
+const RUN_ENTRY_ORIGINS = ["prompt", "queue", "tangent", "summary", "unread", "retry", "wire", "run", "carried", "request", "threshold", "turn_end", "context_limit", "rewind", "failsafe"] as const;
 const RUN_ENTRY_STATES = ["pending", "paused", "held", "starting", "running", "stopping", "closing"] as const;
 const RUN_PROGRESS_KINDS = ["node_start", "node_complete", "node_paused", "loop_iteration", "watch_poll", "paused", "steps_queued"] as const;
 const RUN_STANDING_KINDS = ["step", "watch", "pass_limit"] as const;
@@ -1157,6 +1157,10 @@ export const decodeEntryPrompt: Decoder<EntryPrompt> = (v) => {
     const $v = own(o, "resends");
     if ($v !== undefined && $v !== null) out.resends = own(o, "resends") === null ? [] : decodeArray(own(o, "resends"), (v) => { if (typeof v !== "string") throw new globalThis.TypeError("expected string"); return v as string; }, "$.entry_prompt.resends");
   }
+  {
+    const $v = own(o, "automatic");
+    if ($v !== undefined && $v !== null) out.automatic = reqBool(o, "automatic", "$.entry_prompt");
+  }
   return out;
 };
 
@@ -1644,6 +1648,10 @@ export const decodeEntryTurnClose: Decoder<EntryTurnClose> = (v) => {
     const $v = own(o, "ended_off_turn");
     if ($v !== undefined && $v !== null) out.ended_off_turn = reqBool(o, "ended_off_turn", "$.entry_turn_close");
   }
+  {
+    const $v = own(o, "stopped_to_compact");
+    if ($v !== undefined && $v !== null) out.stopped_to_compact = reqBool(o, "stopped_to_compact", "$.entry_turn_close");
+  }
   return out;
 };
 
@@ -2003,6 +2011,10 @@ export const decodeHit: Decoder<Hit> = (v) => {
   {
     const $v = own(o, "caller");
     if ($v !== undefined && $v !== null) out.caller = decodeCaller(own(o, "caller"));
+  }
+  {
+    const $v = own(o, "automatic");
+    if ($v !== undefined && $v !== null) out.automatic = reqBool(o, "automatic", "$.hit");
   }
   {
     const $v = own(o, "lane");

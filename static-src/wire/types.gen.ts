@@ -70,9 +70,9 @@ export type RunAskRefusal = "ask_stopping" | "ask_pending" | "ask_stale" | "ask_
 
 export type RunAskText = "asked" | "last_message" | "unseen";
 
-export type RunEntryKind = "turn" | "row" | "unread" | "retry" | "compaction" | "revert";
+export type RunEntryKind = "turn" | "row" | "unread" | "retry" | "compaction" | "revert" | "resume";
 
-export type RunEntryOrigin = "prompt" | "queue" | "tangent" | "summary" | "unread" | "retry" | "wire" | "run" | "carried" | "request" | "threshold" | "turn_end" | "context_limit" | "rewind";
+export type RunEntryOrigin = "prompt" | "queue" | "tangent" | "summary" | "unread" | "retry" | "wire" | "run" | "carried" | "request" | "threshold" | "turn_end" | "context_limit" | "rewind" | "failsafe";
 
 export type RunEntryState = "pending" | "paused" | "held" | "starting" | "running" | "stopping" | "closing";
 
@@ -1195,6 +1195,8 @@ export interface EntryPrompt {
   label?: string;
   attachments?: Attachment[];
   resends?: string[];
+  /** Automatic marks a prompt marotte sent on its own: the resume after a failsafe compaction. */
+  automatic?: boolean;
 }
 
 /**
@@ -1479,6 +1481,8 @@ export interface EntryTurnClose {
  * or its turn had not ended, when node_complete came.
  */
   ended_off_turn?: boolean;
+  /** StoppedToCompact marks a cancelled close of a turn marotte stopped to compact; FailureReason is then its notice. */
+  stopped_to_compact?: boolean;
 }
 
 /**
@@ -1824,6 +1828,8 @@ export interface GovernanceStatePayload {
 export interface Hit {
   /** Caller is set on a hit in a prompt or steer an API caller sent, so a result names who sent the words. */
   caller?: Caller;
+  /** Automatic is set on a hit in a prompt marotte sent on its own (EntryPrompt.Automatic). */
+  automatic?: boolean;
   /** TurnID is the item's turn. */
   turn_id: string;
   /** EntryID is the item's anchor, its first member entry, which the client resolves the item's element by. */

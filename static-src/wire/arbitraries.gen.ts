@@ -38,8 +38,8 @@ export const arbRejectionNote: fc.Arbitrary<RejectionNote> = fc.constantFrom("re
 export const arbRunAskBlocker: fc.Arbitrary<RunAskBlocker> = fc.constantFrom("stopping", "pending", "branch_running", "unsettled", "settling");
 export const arbRunAskRefusal: fc.Arbitrary<RunAskRefusal> = fc.constantFrom("ask_stopping", "ask_pending", "ask_stale", "ask_gone", "ask_branch_running", "ask_unsettled", "ask_settling", "ask_unreadable", "ask_unnamed", "run_answer_pending");
 export const arbRunAskText: fc.Arbitrary<RunAskText> = fc.constantFrom("asked", "last_message", "unseen");
-export const arbRunEntryKind: fc.Arbitrary<RunEntryKind> = fc.constantFrom("turn", "row", "unread", "retry", "compaction", "revert");
-export const arbRunEntryOrigin: fc.Arbitrary<RunEntryOrigin> = fc.constantFrom("prompt", "queue", "tangent", "summary", "unread", "retry", "wire", "run", "carried", "request", "threshold", "turn_end", "context_limit", "rewind");
+export const arbRunEntryKind: fc.Arbitrary<RunEntryKind> = fc.constantFrom("turn", "row", "unread", "retry", "compaction", "revert", "resume");
+export const arbRunEntryOrigin: fc.Arbitrary<RunEntryOrigin> = fc.constantFrom("prompt", "queue", "tangent", "summary", "unread", "retry", "wire", "run", "carried", "request", "threshold", "turn_end", "context_limit", "rewind", "failsafe");
 export const arbRunEntryState: fc.Arbitrary<RunEntryState> = fc.constantFrom("pending", "paused", "held", "starting", "running", "stopping", "closing");
 export const arbRunNodeStatus: fc.Arbitrary<RunNodeStatus> = fc.constantFrom("pending", "running", "paused", "completed", "failed", "aborted", "skipped");
 export const arbRunProgressKind: fc.Arbitrary<RunProgressKind> = fc.constantFrom("node_start", "node_complete", "node_paused", "loop_iteration", "watch_poll", "paused", "steps_queued");
@@ -966,6 +966,7 @@ const arbModel = fc.letrec<{
       label: fc.string(),
       attachments: fc.array(tie("Attachment"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       resends: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
+      automatic: fc.boolean(),
     },
     { requiredKeys: ["id", "text"] },
   ),
@@ -1159,6 +1160,7 @@ const arbModel = fc.letrec<{
       carrier: fc.boolean(),
       unanswered: fc.boolean(),
       ended_off_turn: fc.boolean(),
+      stopped_to_compact: fc.boolean(),
     },
     { requiredKeys: ["outcome"] },
   ),
@@ -1359,6 +1361,7 @@ const arbModel = fc.letrec<{
   Hit: fc.record(
     {
       caller: tie("Caller"),
+      automatic: fc.boolean(),
       turn_id: fc.string(),
       entry_id: fc.string(),
       lane: fc.string(),

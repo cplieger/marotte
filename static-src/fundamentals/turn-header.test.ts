@@ -76,6 +76,16 @@ describe("buildTurnHeader", () => {
     }
   });
 
+  // The reader did not stop a turn the failsafe stopped, so the dot's sentence must not say they did.
+  it("says marotte stopped a turn it stopped to compact", () => {
+    const dot = (d: TurnHeaderData): string | null | undefined =>
+      buildTurnHeader(d).querySelector(".turn-dot")?.getAttribute("data-tooltip");
+    expect(dot(data({ outcome: "cancelled", stoppedToCompact: true }))).toBe(
+      "marotte stopped this turn to compact the context",
+    );
+    expect(dot(data({ outcome: "cancelled" }))).toBe("You stopped this turn");
+  });
+
   it("renders a typed trigger line instead of inventing a user message", () => {
     const h = buildTurnHeader(data({ request: undefined }));
     expect(h.dataset["trigger"]).toBe("system");
@@ -668,7 +678,7 @@ describe("a request that opens with a quoted reply passage", () => {
   });
 
   it("draws the same band over a run step's request, below its Sent-by line", () => {
-    const h = buildRequestHeader(quoted, { label: "Agent Mail" });
+    const h = buildRequestHeader(quoted, { caller: { label: "Agent Mail" } });
     expect(band(h)?.innerHTML).toBe(band(buildTurnHeader(data({ request: quoted })))?.innerHTML);
     expect(h.querySelector(".turn-req")?.firstElementChild?.className).toBe("turn-sent-by");
     expect(band(h)?.nextElementSibling).toBe(text(h));
@@ -861,6 +871,17 @@ describe("a request an API caller sent", () => {
     } finally {
       style.remove();
     }
+  });
+
+  // marotte's resume after a failsafe compaction is not the reader's words: the header says marotte sent it.
+  it("names marotte over a prompt it sent on its own", () => {
+    const h = buildTurnHeader(data({ request: "Continue the task.", automatic: true }));
+    expect(h.dataset["trigger"]).toBe("caller");
+    expect(sentByLine(h)?.textContent).toBe("Sent by marotte");
+    expect(text(h).textContent).toBe("Continue the task.");
+    updateTurnHeader(h, data({ request: "Continue the task." }));
+    expect(h.dataset["trigger"]).toBe("user");
+    expect(sentByLine(h)).toBeNull();
   });
 
   it("puts the Sent-by line above a quoted reply passage", () => {

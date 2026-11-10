@@ -6,7 +6,7 @@
 import type { Turn } from "./turns.js";
 import { payloadOf, projectTurn } from "./turns.js";
 import { wakeText } from "./turn-wake.js";
-import { sentBy } from "./sent-by.js";
+import { senderWords } from "./sent-by.js";
 import { entryRenders, turnFolds } from "./block-window.js";
 import { MessageRun } from "./entry-ids.js";
 import { ICON_COPY, ICON_COPY_MD, ICON_LINK, ICON_MORE, ICON_TANGENT } from "./icons.js";
@@ -488,18 +488,18 @@ export function turnLink(chatID: string, n: number): string {
   return location.origin + buildPath({ kind: "chat", id: chatID, turn: n });
 }
 
-/** The turn's trigger as its header words it: the prompt under the "Sent by" line of a program that posted it, or
- *  what woke the turn. */
+/** The turn's trigger as its header words it: the prompt under its "Sent by" line when the reader did not send it,
+ *  or what woke the turn. */
 function triggerText(t: Turn): string {
   const text = t.trigger?.text.trim();
   if (text === undefined) {
     return wakeText(t).trim();
   }
-  const caller = t.trigger?.caller;
-  if (caller === undefined) {
+  const sender = senderWords(t.trigger);
+  if (sender === undefined) {
     return text;
   }
-  return text === "" ? sentBy(caller) : `${sentBy(caller)}\n${text}`;
+  return text === "" ? sender : `${sender}\n${text}`;
 }
 
 /** "Copy as text": the reader's prompt or what woke the turn, then the reply (the reply alone when the

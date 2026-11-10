@@ -513,18 +513,20 @@ export function turnAnchorID(n: number): string {
 }
 
 /** What a turn that did not end cleanly SAYS; "" for clean or running. A CANCELLED turn says
- *  nothing (its footer reads "Cancelled"); tested on the OUTCOME, since `unknown` shares its
- *  severity and must keep speaking. `failure_reason` first, then the outcome's default sentence.
- *  This notice owns the prose, present in both fold states. */
+ *  nothing (its footer reads "Cancelled") unless marotte's failsafe stopped it (`stopped_to_compact`),
+ *  whose reason is the only account of a stop the reader did not make; tested on the OUTCOME, since
+ *  `unknown` shares its severity and must keep speaking. `failure_reason` first, then the outcome's
+ *  default sentence. This notice owns the prose, present in both fold states. */
 export function turnFailureText(t: Turn): string {
   const severity = severityOf(t.outcome);
   if (severity === "clean" || severity === "running") {
     return "";
   }
+  const close = closeOfBody(t.body);
   if (t.outcome === "cancelled") {
-    return "";
+    return close?.stopped_to_compact === true ? (close.failure_reason ?? "").trim() : "";
   }
-  const reason = (closeOfBody(t.body)?.failure_reason ?? "").trim();
+  const reason = (close?.failure_reason ?? "").trim();
   return reason !== "" ? reason : defaultFailureReason(t.outcome);
 }
 
