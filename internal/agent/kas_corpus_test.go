@@ -268,6 +268,8 @@ func (d *kasDrive) prompt(f kasFrame) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	waitForWithin(t, 30*time.Second, func() bool { return len(closesOf(t, logOf(t, d.cs, kasChat))) >= d.prompts })
+	// The close is logged before the run list ends its entry; the capture's next prompt was sent on an idle chat.
+	waitForWithin(t, 30*time.Second, func() bool { return !listLive(d.h, kasChat) })
 }
 
 // onCall answers marotte's call with the capture: a prompt or compact delivers every captured

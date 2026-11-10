@@ -92,6 +92,8 @@ import {
   scheduleListRetry,
   requestTurnRange,
 } from "./store-load.js";
+import { IDLE_RUN } from "./run-order.js";
+import { compactionEntry, rowEntry, runAt } from "./__test-helpers__/run-order.js";
 
 function usage(): Usage {
   return {
@@ -109,6 +111,7 @@ function header(id: string, over: Partial<ChatHeader> = {}): ChatHeader {
   const base: ChatHeader = {
     id,
     name: id,
+    run: IDLE_RUN,
     usage: usage(),
     created_at: 0,
     updated_at: 0,
@@ -452,38 +455,25 @@ describe("loadList rebuilds each row from the header", () => {
     expect((await rebuild(header("c1"))).pending_model).toBeUndefined();
   });
 
-  it("replaces the interrupt mode and the queued rows, an absent one reading as none", async () => {
-    seedSession("c1", { interrupt_mode: "queue", queued: [{ id: "m-old", text: "gone" }] });
-    const rebuilt = await rebuild(header("c1"));
-    expect(rebuilt.interrupt_mode).toBe("steer");
-    expect(rebuilt.queued).toEqual([]);
-
-    const fresh = await rebuild(
-      header("c1", { interrupt_mode: "queue", queued_prompts: [{ id: "m-q1", text: "next" }] }),
-    );
+  it("replaces the interrupt mode, an absent one reading as steer", async () => {
+    seedSession("c1", { interrupt_mode: "queue" });
+    expect((await rebuild(header("c1"))).interrupt_mode).toBe("steer");
+    const fresh = await rebuild(header("c1", { interrupt_mode: "queue" }));
     expect(fresh.interrupt_mode).toBe("queue");
-    expect(fresh.queued?.map((q) => q.id)).toEqual(["m-q1"]);
   });
 
-  it("replaces the queued compaction, an absent one reading as none", async () => {
-    seedSession("c1", { compact_queued: true });
-    expect((await rebuild(header("c1"))).compact_queued).toBe(false);
-    expect(
-      (await rebuild(header("c1", { compact_pending: { requested_at: 1 } }))).compact_queued,
-    ).toBe(true);
-  });
+  it("replaces the run order from the reloaded list only with a newer version", async () => {
+    seedSession("c1", { run: runAt(2, [rowEntry("m-old")]) });
+    const older = await rebuild(header("c1", { run: runAt(1, [rowEntry("m-stale")]) }));
+    expect(older.run?.entries.map((e) => e.id)).toEqual(["m-old"]);
 
-  it("takes a running compaction from the reloaded list, so the dock shows it running", async () => {
-    seedSession("c1", { compact_queued: true, compact_running: false });
-    const reloaded = await rebuild(
-      header("c1", { compact_pending: { requested_at: 1, running: true, sends: true } }),
-    );
-    expect(reloaded.compact_queued).toBe(true);
-    expect(reloaded.compact_running).toBe(true);
-    expect(reloaded.compact_sends).toBe(true);
-    const cleared = await rebuild(header("c1"));
-    expect(cleared.compact_running).toBe(false);
-    expect(cleared.compact_sends).toBe(false);
+    seedSession("c1", { run: runAt(2, [rowEntry("m-old")]) });
+    const running = compactionEntry("compact-1", { after: "running" });
+    const newer = await rebuild(header("c1", { run: runAt(3, [running, rowEntry("m-q1")]) }));
+    expect(newer.run?.entries.map((e) => [e.id, e.state])).toEqual([
+      ["compact-1", "running"],
+      ["m-q1", "pending"],
+    ]);
   });
 
   it("replaces updated_at, which is required on the wire", async () => {

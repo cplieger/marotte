@@ -37,7 +37,7 @@ import {
 import { beginAdopt, adoptCommitted, opFailed } from "./tabs-sync.js";
 import { hasPendingDecision, dropDecisions } from "./decision-dock.js";
 import { forgetDeferredCue } from "./agent-finished-cue.js";
-import { submitLabelled, submitPrompt } from "./submit.js";
+import { submitLabelled, submitPrompt, type SubmitResult } from "./submit.js";
 import { chatSkeleton, paintPlaceholder } from "./skeleton.js";
 import { skeletonTiming } from "@cplieger/ui/skeleton";
 import {
@@ -335,16 +335,13 @@ function pageOlder(chatID: string): void {
 
 // --- Sending prompts ---
 
-/**
- * Send from the composer. `submitPrompt` sets `thinking`, which closes the picker's overlay
- * for every sender.
- */
-export function sendPrompt(text: string): void {
+/** Send from the composer; the composer holds the text until the answer says where it went. */
+export function sendPrompt(text: string): Promise<SubmitResult> | undefined {
   const chatID = getActiveId();
   if (chatID === "") {
-    return;
+    return undefined;
   }
-  void submitPrompt(chatID, text);
+  return submitPrompt(chatID, text);
 }
 
 const NEW_CHAT_NAME = "New conversation";

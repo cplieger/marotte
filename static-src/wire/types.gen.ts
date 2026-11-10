@@ -68,6 +68,12 @@ export type RunAskRefusal = "ask_stopping" | "ask_pending" | "ask_stale" | "ask_
 
 export type RunAskText = "asked" | "last_message" | "unseen";
 
+export type RunEntryKind = "turn" | "row" | "unread" | "retry" | "compaction" | "revert";
+
+export type RunEntryOrigin = "prompt" | "queue" | "tangent" | "summary" | "unread" | "retry" | "wire" | "run" | "carried" | "request" | "threshold" | "turn_end" | "context_limit" | "rewind";
+
+export type RunEntryState = "pending" | "paused" | "held" | "starting" | "running" | "stopping" | "closing";
+
 export type RunNodeStatus = "pending" | "running" | "paused" | "completed" | "failed" | "aborted" | "skipped";
 
 export type RunProgressKind = "node_start" | "node_complete" | "node_paused" | "loop_iteration" | "watch_poll" | "paused" | "steps_queued";
@@ -86,9 +92,15 @@ export type RunStepMessageVerb = "steer" | "answer" | "prompt";
 
 export type RunStepTranscriptState = "ready" | "gone" | "unavailable";
 
+export type RunWaitAfter = "running" | "starting" | "next" | "compaction" | "turns" | "held";
+
 export type SafetyStatus = "idle" | "formalizing" | "evaluating" | "blocked" | "error";
 
 export type SegmentKind = "content" | "reasoning" | "tool_title" | "tool_disclosed" | "tool_diff" | "tool_denial" | "tool_input" | "tool_output" | "steer" | "prompt" | "plan" | "attachment" | "turn_failure" | "wake";
+
+export type SendNowKind = "stop" | "stop_then_compaction" | "after_compaction" | "now";
+
+export type SendVerb = "prompt" | "steer" | "queue";
 
 export type SettledBy = "user" | "unattended" | "moot" | "ended";
 
@@ -361,10 +373,10 @@ export interface ChatHeader {
   compaction_watermark?: string;
   /** PriorACPSessionIDs mirrors Chat's: the retention sweep reads headers only. */
   prior_acp_session_ids?: string[];
-  /** InterruptMode, QueuedPrompts and CompactPending mirror Chat's for the composer and the dock. */
+  /** InterruptMode mirrors Chat's for the composer. */
   interrupt_mode?: InterruptMode;
-  queued_prompts?: QueuedPrompt[];
-  compact_pending?: PendingCompaction;
+  /** Run is Chat.Run as the dock and the composer draw it. */
+  run: RunView;
   usage: Usage;
   created_at: number;
   updated_at: number;
@@ -2455,19 +2467,6 @@ export interface PctRange {
   step: number;
 }
 
-/** PendingCompaction is a compaction queued for a turn's end, or one whose call is in flight. */
-export interface PendingCompaction {
-  /** RequestedAt is when it was queued or, for one never queued, claimed, in Unix ms. */
-  requested_at: number;
-  /** Running is set once the compaction is claimed and its call made; the row goes when the call ends. */
-  running?: boolean;
-  /**
- * Sends is set on a running compaction with no turn beside it whose end sends the next prompt: the unread steers,
- * else the first sendable queued row.
- */
-  sends?: boolean;
-}
-
 /**
  * PendingSnapshotPayload is the payload for type="pending_snapshot": every
  * pending item across every chat, each a complete ServerEvent envelope of one
@@ -2757,11 +2756,9 @@ export interface ProbeResult {
 }
 
 /**
- * QueuedPrompt is one follow-up waiting for a turn to end. A row with Resends is CARRIED,
- * written at shutdown from unread steers. Held marks a row a previous process queued; it is
- * never sent automatically. A list holds at most one carried row, and it is held. Label is the
- * row's PromptCommand.DisplayText. Next marks the row send_queued_now chose: the next drain sends
- * it first, even after a stop.
+ * QueuedPrompt is the message a row, unread or retry entry of Chat.Run sends. A row with Resends is CARRIED,
+ * written at shutdown from unread steers; a list holds at most one carried row, and it is held. Label is the row's
+ * PromptCommand.DisplayText; Model is the POST's model, which seeds a new record's.
  */
 export interface QueuedPrompt {
   /** Caller is set on a row an API caller queued. */
@@ -2769,10 +2766,9 @@ export interface QueuedPrompt {
   id: string;
   text: string;
   label?: string;
+  model?: string;
   attachments?: Attachment[];
   resends?: string[];
-  held?: boolean;
-  next?: boolean;
 }
 
 /**
@@ -3096,6 +3092,49 @@ export interface RunControlsResponse {
   verbs: string[];
 }
 
+/** RunEntry is one entry of Chat.Run, in run order: the live entries first, then what runs after them. */
+export interface RunEntry {
+  /** Row is a row, unread or retry entry's message. */
+  row?: QueuedPrompt;
+  id: string;
+  kind: RunEntryKind;
+  state: RunEntryState;
+  origin: RunEntryOrigin;
+  /** Turn is the turn id once the entry's turn opened: the transcript then shows its message. */
+  turn?: string;
+  /** Next marks the row send_queued_now moved to the front. */
+  next?: boolean;
+  steerable?: boolean;
+  /** Yields marks a fold-opened wire turn, which owes no close: a turn-kind take or a compaction goes beside it. */
+  yields?: boolean;
+  /** Admits, with Yields, is whether kiro-cli's state admits a take beside it now. */
+  admits?: boolean;
+}
+
+/** RunEntryView is one entry as the header draws it. */
+export interface RunEntryView {
+  /** SendNow is the row's arrow; absent: no arrow. */
+  send_now?: SendNowKind;
+  /** Row is a row, unread or retry entry's message. */
+  row?: QueuedPrompt;
+  id: string;
+  kind: RunEntryKind;
+  state: RunEntryState;
+  origin: RunEntryOrigin;
+  /** Turn is the turn id once the entry's turn opened: the transcript then shows its message. */
+  turn?: string;
+  /** Next marks the row send_queued_now moved to the front. */
+  next?: boolean;
+  steerable?: boolean;
+  /** Yields marks a fold-opened wire turn, which owes no close: a turn-kind take or a compaction goes beside it. */
+  yields?: boolean;
+  /** Admits, with Yields, is whether kiro-cli's state admits a take beside it now. */
+  admits?: boolean;
+  wait: RunWait;
+  /** CarriesUnread marks the entry whose turn the awaits-prompt steers ride. */
+  carries_unread?: boolean;
+}
+
 /**
  * RunExtendRequest is POST /api/runs/{id}/extend's body: the paused repeat and how
  * many more iterations it gets (1..1000).
@@ -3359,6 +3398,29 @@ export interface RunStepTranscript {
  * on the replay source, which no subject versions.
  */
   subject: SubjectStamp[];
+}
+
+/** RunView is the header's run order: each entry with its wait, and the composer's facts. */
+export interface RunView {
+  /** Send is VerbFor for a plain send. */
+  send: SendVerb;
+  /** Cancel is the entry id a Cancel with no target stops; empty: nothing to stop. */
+  cancel?: string;
+  entries: RunEntryView[];
+  /** NextWait is the wait a message queued now gets. */
+  next_wait: RunWait;
+  /** UnreadWait is where the chat's unsent steers go. */
+  unread_wait: RunWait;
+  version: number;
+}
+
+/** RunWait is when an entry runs, counted from the entries ahead of it. */
+export interface RunWait {
+  after: RunWaitAfter;
+  /** Turns is the turn ends ahead, for "turns". */
+  turns?: number;
+  /** This marks one turn that is the running head's. */
+  this?: boolean;
 }
 
 /**

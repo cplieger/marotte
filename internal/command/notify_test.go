@@ -178,7 +178,6 @@ func TestClassifyNotifyError(t *testing.T) {
 		{"a chat still starting", StatusErrorReason(http.StatusConflict, reasonStarting, errBusy), NotifyRetryLater},
 		{"a full steer buffer", StatusErrorReason(http.StatusConflict, reasonFull, errSteerFull), NotifyRetryLater},
 		{"a chat closed meanwhile", StatusErrorReason(http.StatusConflict, reasonChatClosed, errChatClosed), NotifyRetryLater},
-		{"a turn live again", StatusErrorReason(http.StatusConflict, reasonTurnLive, errBusy), NotifyRetryLater},
 		{"the steer lock unavailable", StatusError(http.StatusServiceUnavailable, errors.New("lock")), NotifyRetryLater},
 		{"the steer send failed", StatusError(http.StatusBadGateway, errors.New("pipe")), NotifyRetryLater},
 		{"system-notice text", StatusError(http.StatusBadRequest, errSteerLooksLikeNotification), NotifyBadText},

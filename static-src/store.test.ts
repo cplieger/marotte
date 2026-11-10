@@ -3,6 +3,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fc from "fast-check";
 import {
+  applyRun,
   parseContextSize,
   setSessions,
   getSessions,
@@ -56,10 +57,7 @@ import {
   bumpMessages,
   messagesVersionOf,
   renderCauseOf,
-  steerIDFor,
   steerCount,
-  recordSteerSent,
-  forgetSteer,
   recordSteerQueued,
   dropConfirmedSteers,
   restoreSteers,
@@ -85,9 +83,11 @@ import {
   clearAllEntrySigs,
 } from "./store-signals.js";
 import { _resetForTest as resetFreshness, observeStamp } from "./subject-versions.js";
-import type { ChatHeader, Session, ToolCall, ToolProgressPayload } from "./types.js";
+import type { ChatHeader, RunView, Session, ToolCall, ToolProgressPayload } from "./types.js";
 import type { Entry, EntryToolCall, EntryToolResult, TurnOutcome } from "./wire/types.gen.js";
 import { effect } from "@cplieger/ui";
+import { IDLE_RUN } from "./run-order.js";
+import { compactionEntry, rowEntry, runAt, turnEntry } from "./__test-helpers__/run-order.js";
 
 function makeSession(chatID: string): Session {
   return {
@@ -119,11 +119,20 @@ function headerFor(chatID: string): ChatHeader {
   return {
     id: chatID,
     name: chatID,
+    run: IDLE_RUN,
     usage: defaultUsage(),
     turn_count: 0,
     created_at: 0,
     updated_at: 0,
   };
+}
+
+/** A run order at `version` holding one queued row per id. */
+function runOfRows(version: number, ids: readonly string[]): RunView {
+  return runAt(
+    version,
+    ids.map((id) => rowEntry(id)),
+  );
 }
 
 /** The `turn_open` that opens turn `turnID`, at session-absolute ordinal `n`. A prompt id makes
@@ -509,8 +518,8 @@ describe("appendEntry", () => {
   it("takes a dock row out on that steer's own entry, whatever its state", () => {
     resetStore("a");
     const turn = openTurnIn("a", "t1");
-    recordSteerSent("a", "m1", "wait");
-    const steerID = steerIDFor("m1");
+    const steerID = "steer-m1";
+    recordSteerQueued("a", { id: steerID, text: "wait", origin: "user" });
     expect(steerCount("a")).toBe(1);
     appendEntry(
       "a",
@@ -780,10 +789,12 @@ describe("isBusy: what Send and the mid-turn gates read", () => {
     expect(isBusy("a")).toBe(true);
   });
 
-  it("is true in Send's optimistic window, before any turn opened", () => {
+  it("is true while the server's run order has a live turn, before the transcript shows one", () => {
     resetStore("a");
-    setThinking("a", true);
+    applyRun("a", runAt(1, [turnEntry("t1")], { cancel: "t1" }));
     expect(isBusy("a")).toBe(true);
+    applyRun("a", runAt(2, [compactionEntry("compact-1", { after: "running" })]));
+    expect(isBusy("a"), "a compaction alone is no turn").toBe(false);
   });
 
   it("is false once the open turn closes", () => {
@@ -1043,53 +1054,35 @@ describe("upsertHeader re-syncs an existing row", () => {
     expect(get("a")?.supervised_mode).toBe(false);
   });
 
-  // The follow-up list and the mode are header-authoritative: a header without them is steer and no
-  // rows, which is how a drained or discarded row leaves every device.
-  it("takes the interrupt mode and the queued rows in both directions", () => {
+  // The mode is header-authoritative: a header without it is steer.
+  it("takes the interrupt mode in both directions", () => {
     resetStore("a");
-    upsertHeader({
-      ...headerFor("a"),
-      interrupt_mode: "queue",
-      queued_prompts: [{ id: "m-q1", text: "then add tests" }],
-    });
+    upsertHeader({ ...headerFor("a"), interrupt_mode: "queue" });
     expect(get("a")?.interrupt_mode).toBe("queue");
-    expect(get("a")?.queued?.map((q) => q.id)).toEqual(["m-q1"]);
-
     upsertHeader(headerFor("a"));
     expect(get("a")?.interrupt_mode).toBe("steer");
-    expect(get("a")?.queued).toEqual([]);
   });
 
-  // The queued compaction is header-authoritative too: its run or its cancel arrives as a header without it.
-  it("takes the queued compaction in both directions", () => {
+  // A header frame and an answer race; the run order with the higher version wins either way.
+  it("takes a header's run order only when its version is newer than the one held", () => {
     resetStore("a");
-    upsertHeader({ ...headerFor("a"), compact_pending: { requested_at: 1 } });
-    expect(get("a")?.compact_queued).toBe(true);
+    upsertHeader({ ...headerFor("a"), run: runOfRows(2, ["m-q1"]) });
+    expect(get("a")?.run?.entries.map((e) => e.id)).toEqual(["m-q1"]);
 
-    upsertHeader(headerFor("a"));
-    expect(get("a")?.compact_queued).toBe(false);
+    upsertHeader({ ...headerFor("a"), run: runOfRows(1, ["m-old"]) });
+    expect(get("a")?.run?.entries.map((e) => e.id)).toEqual(["m-q1"]);
+
+    upsertHeader({ ...headerFor("a"), run: runOfRows(3, []) });
+    expect(get("a")?.run?.entries).toEqual([]);
   });
 
-  it("takes the running compaction from the header, and drops it with the header's row", () => {
+  it("takes an answer's run order only when its version is newer than the one held", () => {
     resetStore("a");
-    upsertHeader({ ...headerFor("a"), compact_pending: { requested_at: 1 } });
-    expect(get("a")?.compact_running).toBe(false);
-
-    upsertHeader({ ...headerFor("a"), compact_pending: { requested_at: 1, running: true } });
-    expect(get("a")?.compact_queued).toBe(true);
-    expect(get("a")?.compact_running).toBe(true);
-    expect(get("a")?.compact_sends).toBe(false);
-
-    upsertHeader({
-      ...headerFor("a"),
-      compact_pending: { requested_at: 1, running: true, sends: true },
-    });
-    expect(get("a")?.compact_sends).toBe(true);
-
-    upsertHeader(headerFor("a"));
-    expect(get("a")?.compact_queued).toBe(false);
-    expect(get("a")?.compact_running).toBe(false);
-    expect(get("a")?.compact_sends).toBe(false);
+    upsertHeader({ ...headerFor("a"), run: runOfRows(5, ["m-q1"]) });
+    applyRun("a", runOfRows(4, ["m-old"]));
+    expect(get("a")?.run?.version).toBe(5);
+    applyRun("a", runOfRows(6, ["m-q1", "m-q2"]));
+    expect(get("a")?.run?.entries.map((e) => e.id)).toEqual(["m-q1", "m-q2"]);
   });
 });
 
@@ -1104,31 +1097,11 @@ describe("upsertHeader seeds a brand-new row", () => {
     expect(s.turn_order).toEqual([]);
   });
 
-  it("seeds the interrupt mode and the queued rows from the header", () => {
+  it("seeds the interrupt mode and the run order from the header", () => {
     setSessions([]);
-    upsertHeader({
-      ...headerFor("a"),
-      interrupt_mode: "queue",
-      queued_prompts: [{ id: "m-q1", text: "held", held: true }],
-    });
+    upsertHeader({ ...headerFor("a"), interrupt_mode: "queue", run: runOfRows(2, ["m-q1"]) });
     expect(get("a")?.interrupt_mode).toBe("queue");
-    expect(get("a")?.queued?.[0]?.held).toBe(true);
-  });
-
-  it("seeds the queued compaction from the header", () => {
-    setSessions([]);
-    upsertHeader({ ...headerFor("a"), compact_pending: { requested_at: 1 } });
-    expect(get("a")?.compact_queued).toBe(true);
-  });
-
-  it("seeds a compaction already running from the header", () => {
-    setSessions([]);
-    upsertHeader({
-      ...headerFor("a"),
-      compact_pending: { requested_at: 1, running: true, sends: true },
-    });
-    expect(get("a")?.compact_running).toBe(true);
-    expect(get("a")?.compact_sends).toBe(true);
+    expect(get("a")?.run?.entries.map((e) => e.id)).toEqual(["m-q1"]);
   });
 
   it("derives has_more from the record's count, because a header carries no window", () => {
@@ -1260,79 +1233,9 @@ describe("the steer dock holds what the agent has NOT read", () => {
     resetStore("a");
   });
 
-  it("derives the id KAS will return, which is what lets a plain id match reconcile", () => {
-    expect(steerIDFor("m1")).toBe("steer-m1");
-  });
-
-  it("records a submitted steer as pending, keyed by the derived id", () => {
-    recordSteerSent("a", "m1", "wait");
-    expect(get("a")?.steers).toEqual([
-      { id: "steer-m1", text: "wait", origin: "user", pending: true },
-    ]);
-  });
-
-  it("is idempotent by message id, so a retried submit adds no second row", () => {
-    recordSteerSent("a", "m1", "wait");
-    recordSteerSent("a", "m1", "wait harder");
-    expect(get("a")?.steers).toHaveLength(1);
-    expect(get("a")?.steers?.[0]?.text).toBe("wait harder");
-  });
-
-  it("ignores a submit with no message id rather than creating an unaddressable row", () => {
-    recordSteerSent("a", "", "wait");
-    expect(steerCount("a")).toBe(0);
-  });
-
-  it("forgets one pending row and leaves a sibling alone", () => {
-    recordSteerSent("a", "m1", "one");
-    recordSteerSent("a", "m2", "two");
-    forgetSteer("a", "steer-m1");
-    expect(get("a")?.steers?.map((e) => e.id)).toEqual(["steer-m2"]);
-  });
-
-  it("deletes the field when the forgotten row was the last one", () => {
-    recordSteerSent("a", "m1", "one");
-    forgetSteer("a", "steer-m1");
-    expect(get("a")?.steers).toBeUndefined();
-  });
-
-  it("keeps a row a frame confirmed, which a lost reply's rollback cannot take back", () => {
-    recordSteerSent("a", "m1", "one");
-    recordSteerQueued("a", { id: "steer-m1", text: "one", origin: "user" });
-    forgetSteer("a", "steer-m1");
-    expect(get("a")?.steers).toEqual([{ id: "steer-m1", text: "one", origin: "user" }]);
-  });
-
-  it("is a no-op when the id to forget is not held", () => {
-    recordSteerSent("a", "m1", "one");
-    const before = get("a");
-    forgetSteer("a", "steer-other");
-    expect(get("a")).toBe(before);
-  });
-
   it("records a queued steer as waiting, with no pending flag", () => {
     recordSteerQueued("a", { id: "steer-x", text: "hi", origin: "user" });
     expect(get("a")?.steers).toEqual([{ id: "steer-x", text: "hi", origin: "user" }]);
-  });
-
-  it("confirms the pending row in place when the ids agree", () => {
-    recordSteerSent("a", "m1", "wait");
-    recordSteerQueued("a", { id: "steer-m1", text: "wait", origin: "user" });
-    expect(get("a")?.steers).toEqual([{ id: "steer-m1", text: "wait", origin: "user" }]);
-  });
-
-  it("adopts a server id onto the pending row when only the text matches", () => {
-    recordSteerSent("a", "m1", "wait");
-    recordSteerQueued("a", { id: "kas-99", text: "wait", origin: "user" });
-    expect(get("a")?.steers).toEqual([{ id: "kas-99", text: "wait", origin: "user" }]);
-  });
-
-  it("adopts onto the OLDEST pending row of equal text, leaving the newer pending", () => {
-    recordSteerSent("a", "m1", "wait");
-    recordSteerSent("a", "m2", "wait");
-    recordSteerQueued("a", { id: "kas-99", text: "wait", origin: "user" });
-    expect(get("a")?.steers?.map((e) => e.id)).toEqual(["kas-99", "steer-m2"]);
-    expect(get("a")?.steers?.[1]?.pending).toBe(true);
   });
 
   it("is idempotent by id across a replayed frame", () => {
@@ -1344,12 +1247,6 @@ describe("the steer dock holds what the agent has NOT read", () => {
   it("ignores a queued frame with an empty id", () => {
     recordSteerQueued("a", { id: "", text: "hi", origin: "user" });
     expect(steerCount("a")).toBe(0);
-  });
-
-  it("takes the frame's origin over this device's claim", () => {
-    recordSteerSent("a", "m1", "wait");
-    recordSteerQueued("a", { id: "steer-m1", text: "wait", origin: "agent" });
-    expect(get("a")?.steers?.[0]?.origin).toBe("agent");
   });
 
   it("does NOT put a steer back in the dock when the log already holds its entry", () => {
@@ -1465,18 +1362,16 @@ describe("the steer dock holds what the agent has NOT read", () => {
     expect(get("a")?.steers?.map((e) => e.id)).toEqual(["s1"]);
   });
 
-  it("takes the confirmed rows out on an explicit discard and keeps the pending one", () => {
+  it("takes every row out on an explicit discard, and answers them as the snapshot", () => {
     recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
-    recordSteerSent("a", "m2", "two");
+    recordSteerQueued("a", { id: "s2", text: "two", origin: "user" });
     const snapshot = dropConfirmedSteers("a");
-    expect(get("a")?.steers?.map((e) => e.id)).toEqual(["steer-m2"]);
-    expect(snapshot.map((e) => e.id)).toEqual(["s1", "steer-m2"]);
+    expect(get("a")?.steers).toBeUndefined();
+    expect(snapshot.map((e) => e.id)).toEqual(["s1", "s2"]);
   });
 
-  it("reports nothing removed when every row is still pending", () => {
-    recordSteerSent("a", "m1", "one");
+  it("reports nothing removed on an empty dock", () => {
     expect(dropConfirmedSteers("a")).toEqual([]);
-    expect(steerCount("a")).toBe(1);
   });
 
   it("restores a discard snapshot in its original order", () => {

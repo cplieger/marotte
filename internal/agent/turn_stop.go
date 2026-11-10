@@ -23,19 +23,24 @@ func refOf(t *activeTurn) command.TurnRef { return command.TurnRef{Chat: t.Chat,
 // The newest stop's cause wins, except that a teardown's outlives a later stop of the same turns: that stop can land
 // before the clear the teardown's session/cancel produced is folded, and the clear's fate is the teardown's.
 func (r *turnRegistry) requestStop(chatID marotte.ChatID, cause marotte.TurnStopCause) *command.TurnStop {
-	stop := &command.TurnStop{Chat: chatID}
 	lc, ok := r.lookup(chatID)
 	if !ok {
-		return stop
+		return &command.TurnStop{Chat: chatID}
 	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
+	return r.requestStopLocked(lc, r.stopTokens.Add(1), cause)
+}
+
+// requestStopLocked is requestStop's section, under the stop token the caller minted (a run list stop stamps what it
+// changed with it). Caller holds lc.mu.
+func (r *turnRegistry) requestStopLocked(lc *chatLifecycle, token uint64, cause marotte.TurnStopCause) *command.TurnStop {
+	stop := &command.TurnStop{Chat: lc.chatID, Token: token}
 	if lc.stopSeq != lc.nextSeq || lc.stopCause != marotte.TurnStopTeardown {
 		lc.stopCause = cause
 	}
 	lc.stopSeq = lc.nextSeq
 	lc.stopCount.Add(1)
-	stop.Token = r.stopTokens.Add(1)
 	if lc.stops == nil {
 		lc.stops = make(map[uint64]struct{})
 	}
@@ -51,18 +56,14 @@ func (r *turnRegistry) requestStop(chatID marotte.ChatID, cause marotte.TurnStop
 	return stop
 }
 
-// captureUnsentLocked captures requestStop's unsent target: the pending prompt, or a prompt's reservation whose turn
-// has not opened. Caller holds mu.
+// captureUnsentLocked captures requestStop's unsent target, the pending prompt. Caller holds mu.
 func (lc *chatLifecycle) captureUnsentLocked(stop *command.TurnStop) {
 	o, u := lc.own, lc.pending
 	if (o != nil && o != u && !o.finalizing) || !lc.kas.may().admit {
 		return
 	}
-	switch {
-	case u != nil && u.awaitsSend() && !u.finalizing:
+	if u != nil && u.awaitsSend() && !u.finalizing {
 		stop.Next = refOf(u)
-	case u == nil && lc.reserved && lc.reservedSource.Acknowledgeable():
-		stop.Admitted = lc.admission
 	}
 }
 
@@ -101,7 +102,7 @@ func (bc *bridgeCoordinator) ReleaseStop(stop *command.TurnStop) {
 	bc.turns.releaseStop(stop)
 }
 
-// ArmStopGrace acts on each captured target still live, in one section: Next and Admitted are kept unsent, a call
+// ArmStopGrace acts on each captured target still live, in one section: Next is kept unsent, a call
 // KAS has not answered within d is cancelled with command.ErrCancelGraceExpired, so the prompt-failure path closes
 // its turn, and an open turn KAS started closes as cancelled at d unless its turn_end comes first, so a lost
 // bracket, or a fold-opened turn no turn_end is owed for, cannot hold the chat's sends.
@@ -128,8 +129,7 @@ func (bc *bridgeCoordinator) ArmStopGrace(stop *command.TurnStop, d time.Duratio
 	return acted
 }
 
-// keepUnsentLocked marks the stop's unsent targets still unsent: Next, and the turn its Admitted reservation opened,
-// or the reservation itself when its turn has not opened, which openLocked then marks. Caller holds mu.
+// keepUnsentLocked marks the stop's unsent target Next still unsent. Caller holds mu.
 func (lc *chatLifecycle) keepUnsentLocked(stop *command.TurnStop) bool {
 	stopTurn := func(t *activeTurn) bool {
 		if t == nil || !t.awaitsSend() || t.finalizing {
@@ -139,17 +139,7 @@ func (lc *chatLifecycle) keepUnsentLocked(stop *command.TurnStop) bool {
 		lc.wakeLocked()
 		return true
 	}
-	acted := stop.Next.Named() && stopTurn(lc.liveLocked(stop.Next.Turn))
-	if a := stop.Admitted; a != 0 && lc.reserved && lc.admission == a {
-		switch u := lc.pending; {
-		case u == nil:
-			lc.stoppedAdmission = a
-			acted = true
-		case u.admission == a:
-			acted = stopTurn(u) || acted
-		}
-	}
-	return acted
+	return stop.Next.Named() && stopTurn(lc.liveLocked(stop.Next.Turn))
 }
 
 // armCallGraceLocked cancels t's call at d unless it ended first (endPromptCall). Caller holds mu.

@@ -491,16 +491,14 @@ func drainRoles(h hostDouble, q *stubSteerQueue) *promptRoles {
 	return steerRolesOf(h, NewSteerLedger(), q)
 }
 
-var cleanClose = CloseFacts{Outcome: marotte.TurnOutcomeCompleted, Fence: TurnFence{Epoch: 1, Seq: 1}}
-
 // What a turn leaves unread goes back together, in order, as the next prompt, and
 // the prompt names the rows it carries; the rows retire only once it opened.
-func TestDrain_UnreadSteersGoAsOnePromptNamingTheirKeys(t *testing.T) {
+func TestSendUnread_UnreadSteersGoAsOnePromptNamingTheirKeys(t *testing.T) {
 	h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
 	q := newStubSteerQueue()
 	q.unsentRows = []SteerRow{{Key: "steer-a", Text: "first"}, {Key: "steer-b", Text: "second"}}
 
-	drainAfterClose(t.Context(), drainRoles(h, q), "c1", cleanClose, EndFacts{})
+	_, _ = sendUnread(t.Context(), drainRoles(h, q), testReservation("c1", true), TurnFence{})
 	h.waitInflight(t)
 
 	if len(h.opened) != 1 {
@@ -517,9 +515,9 @@ func TestDrain_UnreadSteersGoAsOnePromptNamingTheirKeys(t *testing.T) {
 	}
 }
 
-// A drain whose prompt cannot open keeps custody of the rows: they stay unsent
+// An unread entry whose prompt cannot open keeps custody of the rows: they stay unsent
 // rather than vanishing with the refused open.
-func TestDrain_APromptThatCannotOpenLeavesTheRowsUnsent(t *testing.T) {
+func TestSendUnread_APromptThatCannotOpenLeavesTheRowsUnsent(t *testing.T) {
 	for _, tc := range []struct {
 		err  error
 		name string
@@ -533,27 +531,12 @@ func TestDrain_APromptThatCannotOpenLeavesTheRowsUnsent(t *testing.T) {
 			q := newStubSteerQueue()
 			q.unsentRows = []SteerRow{{Key: "steer-a", Text: "first"}}
 
-			drainAfterClose(t.Context(), drainRoles(h, q), "c1", cleanClose, EndFacts{})
+			_, _ = sendUnread(t.Context(), drainRoles(h, q), testReservation("c1", true), TurnFence{})
 
 			if len(q.delivered) != 0 {
 				t.Errorf("delivered = %v, want nothing retired by a refused open", q.delivered)
 			}
 		})
-	}
-}
-
-// A pending end belongs to a newer close or to a shutdown, so this close's drain
-// sends nothing while one is listed.
-func TestDrain_APendingEndHoldsBackEverySend(t *testing.T) {
-	h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
-	q := newStubSteerQueue()
-	q.ends = []SteerEnd{{Owner: "end-2", End: SteerTurnEnd{TurnSeq: 2}}}
-	q.unsentRows = []SteerRow{{Key: "steer-a", Text: "first"}}
-
-	drainAfterClose(t.Context(), drainRoles(h, q), "c1", cleanClose, EndFacts{})
-
-	if slices.Contains(q.callLog(), "unsent-rows") || len(h.opened) != 0 {
-		t.Errorf("record calls = %v, opened = %d, want no send while an end is pending", q.callLog(), len(h.opened))
 	}
 }
 
@@ -661,7 +644,7 @@ func TestCmdCancel_TheLeadIsSetBeforeTheCancelAndUndoneIfItFails(t *testing.T) {
 			host := removeHost(b)
 			cmd := &marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1", Payload: json.RawMessage(`{"lead":"steer-a"}`)}
 
-			if _, err := cmdCancel(t.Context(), host, host, host, host, q, nil, cmd); err != nil {
+			if _, err := cmdCancel(t.Context(), stopRunOf(host), host, host, host, host, q, cmd); err != nil {
 				t.Fatalf("CmdCancel = %v", err)
 			}
 			if got := q.callLog(); !slices.Equal(got, tc.want) {
@@ -691,7 +674,7 @@ func TestCmdCancel_InTheSessionDoorWindowTheLeadIsStillSet(t *testing.T) {
 			q := newStubSteerQueue()
 			cmd := &marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1", Payload: json.RawMessage(`{"lead":"steer-a"}`)}
 
-			_, _ = cmdCancel(t.Context(), d, d, d, d, q, nil, cmd)
+			_, _ = cmdCancel(t.Context(), stopRunOf(d), d, d, d, d, q, cmd)
 
 			if got := q.callLog(); !slices.Equal(got, tc.want) {
 				t.Errorf("record calls = %v, want %v", got, tc.want)
@@ -709,13 +692,13 @@ func TestCmdCancel_ALeadNoLongerWaitingStopsNothing(t *testing.T) {
 	q.leadGone = true
 	cmd := &marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1", Payload: json.RawMessage(`{"lead":"steer-a"}`)}
 
-	got, err := cmdCancel(t.Context(), d, d, d, d, q, nil, cmd)
+	got, err := cmdCancel(t.Context(), stopRunOf(d), d, d, d, d, q, cmd)
 	if err != nil {
 		t.Fatalf("CmdCancel = %v, want success", err)
 	}
 
-	if !answeredSkipped(t, got) {
-		t.Errorf("answer = %v, want skipped, so the client takes back its stop", got)
+	if stoppedOf(t, got) {
+		t.Errorf("answer = %v, want stopped false: nothing was stopped", got)
 	}
 	if len(b.notified) != 0 || len(d.scopes) != 0 || d.killed != 0 {
 		t.Errorf("notifications = %v, permission scopes = %v, kills = %d; want nothing cancelled", b.notified, d.scopes, d.killed)

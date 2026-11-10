@@ -7,7 +7,6 @@
   "actions/chat-decision-answer.test.ts",
   "actions/chat-lifecycle.test.ts",
   "actions/chat-prompt.test.ts",
-  "actions/chat-steer.test.ts",
   "actions/editor.test.ts",
   "actions/files-actions.test.ts",
   "actions/files-download.test.ts",

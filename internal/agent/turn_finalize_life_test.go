@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -37,9 +36,11 @@ func TestAfterTurnClose_ALifeEndedMidTailRunsNoLaterStep(t *testing.T) {
 		close(committed)
 	}
 	h.coord.settleNotices = func(context.Context, marotte.ChatID) { record("notices") }
-	h.coord.drainAfterClose = func(context.Context, marotte.ChatID, command.CloseFacts, command.EndFacts) {
-		record("drain")
-	}
+	tailHooks(h, func(_ marotte.ChatID, ended bool) {
+		if ended {
+			record("tail ended")
+		}
+	})
 
 	turnID, _ := h.stagePromptTurn(t, "c1")
 	endTurn(t, h, "c1", turnID)

@@ -14,8 +14,8 @@ import (
 // reserveNow takes c1's prompt reservation with a stamp taken now, failing the test unless it is acquired.
 func reserveNow(t *testing.T, h *Runtime) command.Reservation {
 	t.Helper()
-	out, res := h.coord.ReserveTurnForPrompt(t.Context(), "c1", time.Second, h.coord.LifeStamp(), "")
-	if out != command.AdmissionAcquired || res.Token == 0 {
+	out, res := h.coord.reservePromptSlot(t.Context(), "c1", time.Second, h.coord.LifeStamp(), "")
+	if out != admissionAcquired || res.Token == 0 {
 		t.Fatalf("reserve = %v %+v, want acquired", out, res)
 	}
 	return res
@@ -108,27 +108,6 @@ func TestCloseTab_ARefusedCloseLetsItsParkedPromptRunInTheSameLife(t *testing.T)
 	}
 }
 
-// A close's drain after the teardown forgot the chat refuses and mints no lifecycle.
-func TestDrain_AfterTheForgetMintsNoLifecycle(t *testing.T) {
-	h, _, _ := newTestHub()
-	t.Cleanup(func() { shutdownHub(t, h) })
-	lc := h.coord.turns.testLifecycle("c1")
-	lc.mu.Lock()
-	fence := command.TurnFence{Epoch: lc.epoch, Seq: lc.nextSeq}
-	lc.mu.Unlock()
-	hold := h.HoldChat("c1")
-	hold.Commit()
-	h.coord.turns.forget("c1")
-	hold.Release()
-
-	if h.coord.tryReserveDrainNow("c1", fence) {
-		t.Error("the drain reserved in a forgotten chat")
-	}
-	if _, ok := h.coord.turns.lookup("c1"); ok {
-		t.Error("the drain's reserve left a lifecycle for the forgotten chat")
-	}
-}
-
 func TestReserveTurnForPrompt_AClosedSinceTheStampAnswersClosed(t *testing.T) {
 	t.Run("a close committed since the stamp", func(t *testing.T) {
 		h, _, _ := newTestHub()
@@ -138,8 +117,8 @@ func TestReserveTurnForPrompt_AClosedSinceTheStampAnswersClosed(t *testing.T) {
 		hold.Commit()
 		hold.Release()
 		start := time.Now()
-		out, res := h.coord.ReserveTurnForPrompt(t.Context(), "c1", time.Second, stamp, "")
-		if out != command.AdmissionClosed || res.Token != 0 {
+		out, res := h.coord.reservePromptSlot(t.Context(), "c1", time.Second, stamp, "")
+		if out != admissionClosed || res.Token != 0 {
 			t.Errorf("reserve = %v %+v, want AdmissionClosed with no reservation", out, res)
 		}
 		if took := time.Since(start); took > 500*time.Millisecond {
@@ -153,8 +132,8 @@ func TestReserveTurnForPrompt_AClosedSinceTheStampAnswersClosed(t *testing.T) {
 		t.Cleanup(hold.Release)
 		const wait = 50 * time.Millisecond
 		start := time.Now()
-		out, res := h.coord.ReserveTurnForPrompt(t.Context(), "c1", wait, h.coord.LifeStamp(), "")
-		if out != command.AdmissionStarting || res.Token != 0 {
+		out, res := h.coord.reservePromptSlot(t.Context(), "c1", wait, h.coord.LifeStamp(), "")
+		if out != admissionStarting || res.Token != 0 {
 			t.Errorf("reserve = %v %+v, want AdmissionStarting with no reservation", out, res)
 		}
 		if took := time.Since(start); took < wait {
@@ -182,7 +161,7 @@ func TestTryReserve_DuringACloseRefusesAtOnce(t *testing.T) {
 			t.Cleanup(hold.Release)
 			stamp := h.coord.LifeStamp()
 			start := time.Now()
-			_, idle := h.coord.TryReserveIdleTurn("c1", marotte.TurnSourceRevert, stamp)
+			_, idle := h.coord.turns.tryReserveIdle("c1", marotte.TurnSourceRevert, stamp)
 			_, try := h.coord.turns.tryReserve("c1", marotte.TurnSourceEmptyRetry, stamp)
 			if took := time.Since(start); took > 100*time.Millisecond {
 				t.Errorf("the try reservations answered after %v, want at once", took)

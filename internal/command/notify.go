@@ -23,11 +23,10 @@ const (
 // an outside caller's word.
 var errNotifyMention = errors.New(`a "#[[kind:query]]" context-mention token is not accepted from an outside caller`)
 
-// Notify delivers text from an outside caller into chatID the way the page's Send does: a prompt, or a steer when a
-// steerable turn holds the chat, or a prompt again when that turn ended before the steer landed. from must be
-// non-nil: a caller-sent prompt neither ends the chat's waiting_on_user claim nor touches its composer. A refusal is
-// a 400 StatusError for text that reads as a system notice or holds a context-mention token, else the prompt's or
-// the steer's StatusError.
+// Notify delivers text from an outside caller into chatID the way the page's Send does: one prompt, which the chat's
+// run order steers into a steerable turn, starts, or queues. from must be non-nil: a caller-sent prompt neither ends
+// the chat's waiting_on_user claim nor touches its composer. A refusal is a 400 StatusError for text that reads as a
+// system notice or holds a context-mention token, else the prompt's StatusError.
 func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text string, from *marotte.Caller) (NotifyDelivery, error) {
 	switch {
 	case notificationPrefix.MatchString(text):
@@ -35,30 +34,22 @@ func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text str
 	case mentionRe.MatchString(text):
 		return "", StatusError(http.StatusBadRequest, errNotifyMention)
 	}
-	switch err := d.notifyAs(ctx, marotte.CmdPrompt, chatID, text, from); {
-	case err == nil:
-		return NotifyPrompt, nil
-	case !refusedFor(err, reasonTurnLive):
-		return "", err
-	}
-	switch err := d.notifyAs(ctx, marotte.CmdSteer, chatID, text, from); {
-	case err == nil:
-		return NotifySteer, nil
-	case !refusedFor(err, reasonNoTurn):
-		return "", err
-	}
-	if err := d.notifyAs(ctx, marotte.CmdPrompt, chatID, text, from); err != nil {
-		return "", err
-	}
-	return NotifyPrompt, nil
-}
-
-func (d *Dispatcher) notifyAs(ctx context.Context, t marotte.CommandType, chatID marotte.ChatID, text string, from *marotte.Caller) error {
 	payload, err := json.Marshal(map[string]string{"text": text, "message_id": ids.NewMessageID()})
 	if err != nil {
-		return err
+		return "", err
 	}
-	return d.Run(ctx, &marotte.ClientCommand{Type: t, ChatID: chatID, Payload: payload, From: from})
+	fn, ok := d.handler(marotte.CmdPrompt)
+	if !ok {
+		return "", StatusError(http.StatusInternalServerError, errors.New("unknown command: "+string(marotte.CmdPrompt)))
+	}
+	out, err := fn(inProcess(ctx), &marotte.ClientCommand{Type: marotte.CmdPrompt, ChatID: chatID, Payload: payload, From: from})
+	if err != nil {
+		return "", err
+	}
+	if ack, ok := out.(promptAck); ok && ack.As == SubmitSteered {
+		return NotifySteer, nil
+	}
+	return NotifyPrompt, nil
 }
 
 // NotifyRefusal is what a Notify error means to its outside caller.
@@ -87,9 +78,4 @@ func ClassifyNotifyError(err error) NotifyRefusal {
 		return NotifyRetryLater
 	}
 	return NotifyFailed
-}
-
-func refusedFor(err error, reason string) bool {
-	code, got, ok := StatusOf(err)
-	return ok && code == http.StatusConflict && got == reason
 }

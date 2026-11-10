@@ -80,6 +80,8 @@ func (lc *chatLifecycle) openRefusalLocked(open *command.TurnOpen) error {
 		return command.ErrTurnSuperseded
 	case open.Replaces != "" && lc.stoppedAfterLocked(open.Replaces):
 		return command.ErrTurnStopped
+	case open.Admission != 0 && (!lc.reserved || lc.admission != open.Admission):
+		return command.ErrTakeWithdrawn
 	case !lc.slotFreeLocked(open.Source):
 		return errTurnSlotHeld
 	}
@@ -96,7 +98,6 @@ func (bc *bridgeCoordinator) openWireTurn(ctx context.Context, chatID marotte.Ch
 		if held && !lc.own.finalizing {
 			// Lost the open race: fold into the turn already announced.
 			t = lc.own
-			t.bracketed = t.bracketed || bracketed
 			return nil
 		}
 		if held {
@@ -111,9 +112,8 @@ func (bc *bridgeCoordinator) openWireTurn(ctx context.Context, chatID marotte.Ch
 		if model != "" {
 			log.SetModel(model)
 		}
-		t = lc.openLocked(chatID, opened, marotte.TurnSourceWireTurnStart, model, log)
+		t = lc.openTurnLocked(chatID, opened, marotte.TurnSourceWireTurnStart, model, log, bracketed)
 		t.acked = true
-		t.bracketed = bracketed
 		created = true
 		return nil
 	})
@@ -203,16 +203,6 @@ func (bc *bridgeCoordinator) awaitTurnBound(ctx context.Context, chatID marotte.
 // releaseTurn gives up the completion handle openTurn issued; the finalized record is dropped with the last handle.
 func (bc *bridgeCoordinator) releaseTurn(chatID marotte.ChatID, turnID string) {
 	bc.turns.release(chatID, turnID)
-}
-
-// turnOpenedAfter reports whether any own turn opened after the named one (the empty-turn gate's structural half).
-func (bc *bridgeCoordinator) turnOpenedAfter(chatID marotte.ChatID, turnID string) bool {
-	return bc.turns.openedAfter(chatID, turnID)
-}
-
-// stopRequestedAfter reports whether a stop was requested after the named turn opened.
-func (bc *bridgeCoordinator) stopRequestedAfter(chatID marotte.ChatID, turnID string) bool {
-	return bc.turns.stoppedAfter(chatID, turnID)
 }
 
 // StopCauseAfter is the recorded stop cause (requestStop) when a stop was requested after the named turn opened.

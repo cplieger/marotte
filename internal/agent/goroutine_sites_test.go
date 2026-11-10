@@ -33,6 +33,7 @@ var unheldSites = map[string]struct {
 		"a lifecycle watch its caller cancels and joins before returning", 1,
 	},
 	"turn_finalize.go (bridgeCoordinator).publishClose": {"a fixture with no lifetime", 1},
+	"run_queue.go (bridgeCoordinator).spawnRun":         {"a fixture with no lifetime", 1},
 	"bridge_coord.go (bridgeCoordinator).Notify":        {"a push once draining, which push.Close in Shutdown owns", 1},
 	"engine_calls.go (engineOwner).observe":             {"drainSession only answers its pass's requests", 1},
 	"engine_owner.go (engineOwner).backoff":             {"it only waits", 1},

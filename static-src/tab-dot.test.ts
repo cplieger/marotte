@@ -61,6 +61,7 @@ function headerWithOutcome(id: string, outcome?: TurnOutcome): ChatHeader {
   return {
     id,
     name: id,
+    run: IDLE_RUN,
     usage: defaultUsage(),
     turn_count: 1,
     created_at: 0,
@@ -250,6 +251,7 @@ vi.mock("./router.js", () => ({
 }));
 // Type-only, for the `importOriginal` below.
 import type * as TabsDrag from "./tabs-drag.js";
+import { IDLE_RUN } from "./run-order.js";
 // `exceedsSlop` stays real: `tabs.ts` reads it, so a partial factory would fail
 // this whole file at link time.
 vi.mock("./tabs-drag.js", async (importOriginal) => ({

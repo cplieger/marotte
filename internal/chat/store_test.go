@@ -454,8 +454,21 @@ func TestHandleList_ReturnsHeaders(t *testing.T) {
 	if !strings.Contains(body, `"turn_count":1`) {
 		t.Errorf("body = %q, want the header's turn_count", body)
 	}
-	if strings.Contains(body, `"entries"`) || strings.Contains(body, `"payload"`) {
-		t.Errorf("entries leaked into list response: %q", body)
+	// A header's run view carries its own "entries" (the run list), so the transcript leak is checked on the
+	// header's own keys.
+	var list struct {
+		Chats []map[string]json.RawMessage `json:"chats"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, h := range list.Chats {
+		if _, ok := h["entries"]; ok {
+			t.Errorf("entries leaked into list response: %q", body)
+		}
+	}
+	if strings.Contains(body, `"payload"`) {
+		t.Errorf("entry payloads leaked into list response: %q", body)
 	}
 }
 

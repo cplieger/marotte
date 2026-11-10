@@ -95,20 +95,6 @@ func (c *closingParent) takeClosedSince() bool {
 }
 
 // closingQueue refuses an append while the parent's close is held, as AppendIfLive's gate read does.
-type closingQueue struct {
-	*fakeQueue
-	gate    *closingParent
-	appends int
-}
-
-func (q *closingQueue) AppendIfLive(ctx context.Context, chatID marotte.ChatID, fn func(c *marotte.Chat) error) (bool, error) {
-	q.appends++
-	if q.gate.holding() {
-		return false, nil
-	}
-	return q.fakeQueue.AppendIfLive(ctx, chatID, fn)
-}
-
 // awaitMergeSettled also waits for the merge's goroutine to end: conclude reopens the parent's tab in the
 // fixture's tab store after the record settles, and a write still running fails t.TempDir's cleanup.
 func awaitMergeSettled(t *testing.T, f *mergeFixture) marotte.TangentMerge {
@@ -139,13 +125,12 @@ func awaitParked(t *testing.T, c *closingParent) {
 // deleted meanwhile settles as gone.
 func TestTangentMerge_AParentClosedDuringTheSummaryGetsTheFindingsAfterItsTeardown(t *testing.T) {
 	findings := &fakeTangents{parent: "c-parent", reply: "The cache halves the load."}
-	setup := func(t *testing.T) (*mergeFixture, *closingParent, *closingQueue) {
+	setup := func(t *testing.T) (*mergeFixture, *closingParent, *launchingRun) {
 		t.Helper()
 		f := newMergeFixture(t)
 		c := newClosingParent(f.host)
-		q := &closingQueue{fakeQueue: f.queue, gate: c}
-		f.roles.admission, f.roles.followups = c, q
-		return f, c, q
+		f.roles.admission = c
+		return f, c, f.queue
 	}
 
 	t.Run("closed before the delivery", func(t *testing.T) {
@@ -167,8 +152,8 @@ func TestTangentMerge_AParentClosedDuringTheSummaryGetsTheFindingsAfterItsTeardo
 		if n := f.host.promptCount(); n != 2 {
 			t.Errorf("prompts opened = %d, want the summary then the findings in the parent's next life", n)
 		}
-		if q.appends != 0 {
-			t.Errorf("appends = %d, want none: the parent was idle after its close", q.appends)
+		if rows := q.queued(); len(rows) != 0 {
+			t.Errorf("queued rows = %+v, want none: the parent was idle after its close", rows)
 		}
 	})
 
@@ -192,8 +177,8 @@ func TestTangentMerge_AParentClosedDuringTheSummaryGetsTheFindingsAfterItsTeardo
 		if rec.State != marotte.TangentMergeSucceeded {
 			t.Errorf("merge = %+v, want succeeded in the next life", rec)
 		}
-		if q.appends != 0 || len(q.chat.QueuedPrompts) != 0 {
-			t.Errorf("appends = %d, queued rows = %+v, want nothing queued into the closing life", q.appends, q.chat.QueuedPrompts)
+		if rows := q.queued(); len(rows) != 0 {
+			t.Errorf("queued rows = %+v, want nothing queued into the closing life", rows)
 		}
 		if n := f.host.promptCount(); n != 2 {
 			t.Errorf("prompts opened = %d, want the summary then the findings", n)
@@ -211,8 +196,8 @@ func TestTangentMerge_AParentClosedDuringTheSummaryGetsTheFindingsAfterItsTeardo
 		if rec.State != marotte.TangentMergeSucceeded {
 			t.Errorf("merge = %+v, want succeeded in the next life", rec)
 		}
-		if q.appends != 0 || len(q.chat.QueuedPrompts) != 0 {
-			t.Errorf("appends = %d, queued rows = %+v, want the findings prompted, not queued", q.appends, q.chat.QueuedPrompts)
+		if rows := q.queued(); len(rows) != 0 {
+			t.Errorf("queued rows = %+v, want the findings prompted, not queued", rows)
 		}
 		if n := f.host.promptCount(); n != 2 {
 			t.Errorf("prompts opened = %d, want the summary then the findings", n)
@@ -230,8 +215,8 @@ func TestTangentMerge_AParentClosedDuringTheSummaryGetsTheFindingsAfterItsTeardo
 		if rec.State != marotte.TangentMergeFailed || rec.Message != deliveryFailure("") {
 			t.Errorf("merge = %+v, want failed with the delivery failure, the findings kept in the tangent", rec)
 		}
-		if q.appends != 0 || len(q.chat.QueuedPrompts) != 0 {
-			t.Errorf("appends = %d, queued rows = %+v, want nothing queued", q.appends, q.chat.QueuedPrompts)
+		if rows := q.queued(); len(rows) != 0 {
+			t.Errorf("queued rows = %+v, want nothing queued", rows)
 		}
 	})
 
@@ -246,8 +231,8 @@ func TestTangentMerge_AParentClosedDuringTheSummaryGetsTheFindingsAfterItsTeardo
 		if rec.State != marotte.TangentMergeFailed || rec.Message != deliveryFailure("") {
 			t.Errorf("merge = %+v, want failed with the delivery failure, the findings kept in the tangent", rec)
 		}
-		if len(q.chat.QueuedPrompts) != 0 {
-			t.Errorf("queued rows = %+v, want no findings row in the parent", q.chat.QueuedPrompts)
+		if rows := q.queued(); len(rows) != 0 {
+			t.Errorf("queued rows = %+v, want no findings row in the parent", rows)
 		}
 	})
 

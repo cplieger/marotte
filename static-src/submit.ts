@@ -1,7 +1,6 @@
-// What pressing Send means: idle sends a prompt; mid-turn, Steer mode joins the running turn
-// (`_session/steer`) and Queue mode hands the server a follow-up (`queue_prompt`); while the chat's
-// compaction runs, every mode queues behind it, as kiro-cli's TUI does. Follow-ups live on
-// `Chat.QueuedPrompts`, so every device draws the same rows.
+// What pressing Send means: one prompt POST, and the server's run order decides where it goes (it
+// starts, steers into the running turn, or queues behind what runs: a turn, a compaction). The dock
+// and the composer draw the answer's `run`, so every device shows the same order.
 
 import { sendPromptTo } from "./chat-commands.js";
 import { handleTypedCommand, terminalCommandRefusal } from "./typed-commands.js";
@@ -13,9 +12,7 @@ import {
   attachmentGeneration,
   type AttachedFile,
 } from "./attachments.js";
-import { get, isBusy, hasMessage, hasQueued, holdsSteer } from "./store.js";
-import { queuePrompt, steerChat } from "./actions/chat.js";
-import type { ActionOutcome } from "./actions/index.js";
+import { hasMessage, hasQueued } from "./store.js";
 import { clearAgentDown, reportSendRefused } from "./send-state.js";
 import { restoreFailedSend } from "./composer-state.js";
 import { isSendable } from "./composer-value.js";
@@ -23,7 +20,7 @@ import { invokesCatalogCommand } from "./slash-menu.js";
 import { carriesContextMention } from "./context-mentions.js";
 import { chatNotice } from "./notice-subject.js";
 
-type SubmitResult = "sent" | "steered" | "queued" | "held" | "failed";
+export type SubmitResult = "sent" | "steered" | "queued" | "held" | "failed";
 
 /** The send-error face for 409 "starting": holder-neutral (a rewind holder is not "starting"). The
  *  next Send retries and clears it. */
@@ -34,6 +31,9 @@ const GONE_FACE = "This chat no longer exists, so the message was not sent";
 
 /** The 409 reason:"chat_closed" face: the chat was closed after the send began. */
 const CLOSED_FACE = "This chat was closed, so the message was not sent";
+
+/** The 409 reason:"full" face: the queue holds as many messages as it takes. */
+const FULL_FACE = "The queue is full. Send again once a queued message has gone";
 
 /** Each chat's last failed TYPED attempt, so a retry of the same text reuses its message id:
  *  `hasMessage` reads the id (`turn_open`'s `prompt.id`) to tell a taken send from a refused one,
@@ -92,10 +92,9 @@ function settled(send: Send): void {
   }
 }
 
-/** Sends a prompt on an idle chat, or the interrupt mode's busy verb on a busy one. Conversion runs
- *  both ways (409-busy → busy verb, `no_turn` → prompt) on a shared budget; a hard failure
- *  restores text and attachments under the same message id. `opts.attachments` is for a send not
- *  drawn from the live composer: it is sent in place of the pill row, which is left untouched. */
+/** Sends one prompt; the server places it. A hard failure restores text and attachments under the
+ *  same message id. `opts.attachments` is for a send not drawn from the live composer: it is sent in
+ *  place of the pill row, which is left untouched. */
 export async function submitPrompt(
   chatID: string,
   text: string,
@@ -122,12 +121,6 @@ export async function submitPrompt(
     chatNotice(chatID, refusal.notice);
     return refusal.keepText ? holdText(chatID, text) : "sent";
   }
-  // Held before the attachments are taken, so a busy chat keeps its pill row.
-  const reason = isBusy(chatID) ? promptOnlyReason(text) : null;
-  if (reason !== null) {
-    chatNotice(chatID, reason);
-    return holdText(chatID, text);
-  }
   const send: TypedSend = {
     kind: "typed",
     chatID,
@@ -140,15 +133,7 @@ export async function submitPrompt(
     attachGen: attachmentGeneration(chatID),
     deleted: false,
   };
-  return whileInFlight(send, (s) =>
-    waits(chatID) ? busy(s, CONVERT_BUDGET) : prompt(s, CONVERT_BUDGET),
-  );
-}
-
-/** Send takes the busy verb: mid-turn, or while a compaction runs, since a prompt then opens a turn
- *  that shows nothing until the compaction ends. */
-function waits(chatID: string): boolean {
-  return isBusy(chatID) || get(chatID)?.compact_running === true;
+  return whileInFlight(send, post);
 }
 
 /** Hands `text` back to the composer once its own clear, after submitPrompt's synchronous
@@ -159,9 +144,9 @@ async function holdText(chatID: string, text: string): Promise<"held"> {
   return "held";
 }
 
-/** Sends a message marotte writes on the user's behalf, labelled `displayText` in the transcript:
- *  a prompt when idle, a labelled queue row when busy whatever the chat's interrupt mode. No
- *  composer is involved: no typed command, no attachment, nothing restored on failure. */
+/** Sends a message marotte writes on the user's behalf, labelled `displayText` in the transcript;
+ *  the server never steers a labelled send. No composer is involved: no typed command, no
+ *  attachment, nothing restored on failure. */
 export function submitLabelled(
   chatID: string,
   text: string,
@@ -170,8 +155,7 @@ export function submitLabelled(
   if (chatID === "" || text === "") {
     return Promise.resolve("failed");
   }
-  const send: Send = { kind: "labelled", chatID, text, messageID: newMessageID(), displayText };
-  return waits(chatID) ? busy(send, CONVERT_BUDGET) : prompt(send, CONVERT_BUDGET);
+  return post({ kind: "labelled", chatID, text, messageID: newMessageID(), displayText });
 }
 
 /** One send's inputs, carried unchanged through every conversion. Only a typed send came from
@@ -197,9 +181,9 @@ interface LabelledSend {
   readonly displayText: string;
 }
 
-/** Why `text` can only be sent as a prompt, or null. A saved prompt, a steering
- *  command and a context reference are resolved only by a new turn, so a steer
- *  would deliver them to the model as prose; mid-turn, Queue mode holds them too. */
+/** Why `text` can only be sent as a prompt, or null. A saved prompt, a steering command and a
+ *  context reference are resolved only by a new turn, so the POST says so (`prompt_only`) and the
+ *  server refuses to steer it or hold it behind a running turn. */
 function promptOnlyReason(text: string): string | null {
   if (invokesCatalogCommand(text)) {
     return "That command runs as a new turn. Send it when the agent is idle.";
@@ -210,147 +194,55 @@ function promptOnlyReason(text: string): string | null {
   return null;
 }
 
-/** The busy verb, read per hop: a labelled send queues, since `_session/steer` carries no label;
- *  a typed one takes the chat's mode, except behind a running compaction, which has no turn to
- *  steer. Every busy hop comes through here, so the prompt-only hold lives here; it skips a chat
- *  only a compaction holds, whose queued row opens the new turn a prompt would. */
-function busy(send: Send, convertBudget: number): Promise<SubmitResult> {
-  if (send.kind === "labelled") {
-    return queue(send, convertBudget);
-  }
-  const onlyCompacting = !isBusy(send.chatID) && get(send.chatID)?.compact_running === true;
-  const reason = onlyCompacting ? null : promptOnlyReason(send.text);
-  if (reason !== null) {
-    chatNotice(send.chatID, reason);
-    recordFailure(send);
-    return Promise.resolve("held");
-  }
-  const s = get(send.chatID);
-  if (s?.interrupt_mode === "queue") {
-    return queue(send, convertBudget);
-  }
-  return s?.compact_running === true
-    ? queueBehindCompaction(send, convertBudget)
-    : steer(send, convertBudget);
-}
-
-/** Steer mode's queue_prompt behind a compaction. The server caps a row behind a turn at the draft
- *  size (413), so a refusal that arrives once the page saw the compaction end is the drain's turn
- *  opening first: the send takes the busy verb again on the fresh state. */
-async function queueBehindCompaction(
-  send: TypedSend,
-  convertBudget: number,
-): Promise<SubmitResult> {
+/** Post the send once and fold the answer: a placed message is settled, a refusal keeps the text
+ *  and says why. */
+async function post(send: Send): Promise<SubmitResult> {
   const { chatID, text, messageID } = send;
-  const outcome = await queuePrompt.dispatch({ chatID, text, messageID, ...extras(send) }).outcome;
-  if (
-    outcome.status === "error" &&
-    outcome.error.status === 413 &&
-    get(chatID)?.compact_running !== true &&
-    convertBudget > 0
-  ) {
-    return busy(send, convertBudget - 1);
-  }
-  return settleBusy(send, outcome, "queued", convertBudget);
-}
-
-/** How many prompt⇄steer conversions one submit may make. Two allows the honest
- *  double race (steer → the turn is gone → prompt → a new turn started → steer)
- *  and stops there. */
-const CONVERT_BUDGET = 2;
-
-/** Post one prompt, converting a turn_live 409 into the busy verb while budget remains. */
-async function prompt(send: Send, convertBudget: number): Promise<SubmitResult> {
-  const { chatID, text, messageID } = send;
-  const result = await sendPromptTo(chatID, text, { messageID, ...extras(send) });
-  if (result === "queued") {
-    // 409 turn_live: a steerable turn started underneath us.
-    if (convertBudget > 0) {
-      return busy(send, convertBudget - 1);
-    }
-    recordFailure(send);
-    reportSendRefused(STARTING_FACE);
-    return "failed";
-  }
-  if (result === "starting") {
-    // 409 "starting": nothing can land now, and the refusal appended nothing, so the text goes back.
-    recordFailure(send);
-    reportSendRefused(STARTING_FACE);
-    return "failed";
-  }
-  if (result === "gone") {
-    // 409 reason:"chat_not_found": the chat is tombstoned, so there is no record to prompt
-    // and no turn to steer into. Terminal for this send, and it must not fall through to
-    // "sent": the text goes back to the composer and the face says what happened.
-    recordFailure(send);
-    reportSendRefused(GONE_FACE);
-    return "failed";
-  }
-  if (result === "closed") {
-    // 409 reason:"chat_closed": a close of the chat committed after this send began, so the
-    // reopened chat never runs it. The text goes back, as for a gone chat.
-    recordFailure(send);
-    reportSendRefused(CLOSED_FACE);
-    return "failed";
-  }
-  if (result === "failed") {
-    recordFailure(send);
-    return "failed";
-  }
-  settled(send);
-  // "compacting": the server queued it behind a compaction this page had not seen yet.
-  return result === "compacting" ? "queued" : "sent";
-}
-
-/** The action's rollback has already un-drawn a still-pending chip by the time the outcome
- *  resolves, so a conversion leaves nothing behind. */
-async function steer(send: TypedSend, convertBudget: number): Promise<SubmitResult> {
-  const { chatID, text, messageID, attachments } = send;
-  const outcome = await steerChat.dispatch({
-    chatID,
-    text: withAttachmentPaths(text, attachments),
+  const reason = send.kind === "typed" ? promptOnlyReason(text) : null;
+  const result = await sendPromptTo(chatID, text, {
     messageID,
-  }).outcome;
-  if (outcome.status !== "success" && holdsSteer(chatID, messageID)) {
-    // A frame confirmed the steer before its reply was lost, so it is delivered.
-    settled(send);
-    return "steered";
+    ...extras(send),
+    ...(reason !== null ? { promptOnly: true } : {}),
+  });
+  switch (result) {
+    case "sent":
+    case "steered":
+    case "queued":
+      settled(send);
+      return result;
+    case "prompt_only":
+      // The chat is busy and the text needs a turn of its own: it stays in the composer.
+      chatNotice(chatID, reason ?? PROMPT_ONLY_NOTICE);
+      recordFailure(send);
+      return "held";
+    case "full":
+      recordFailure(send);
+      reportSendRefused(FULL_FACE);
+      return "failed";
+    case "starting":
+      // Nothing can land now, and the refusal appended nothing, so the text goes back.
+      recordFailure(send);
+      reportSendRefused(STARTING_FACE);
+      return "failed";
+    case "gone":
+      // The chat is tombstoned, so there is no record to prompt: the text goes back and the face
+      // says what happened.
+      recordFailure(send);
+      reportSendRefused(GONE_FACE);
+      return "failed";
+    case "closed":
+      // A close of the chat committed after this send began, so the reopened chat never runs it.
+      recordFailure(send);
+      reportSendRefused(CLOSED_FACE);
+      return "failed";
+    case "failed":
+      recordFailure(send);
+      return "failed";
   }
-  return settleBusy(send, outcome, "steered", convertBudget);
 }
 
-/** Hold the send as a follow-up for the end of the running turn. Unlike a steer it
- *  keeps its attachments as real attachments: the server reads them when the row is
- *  sent, so they reach the model as content blocks. */
-async function queue(send: Send, convertBudget: number): Promise<SubmitResult> {
-  const { chatID, text, messageID } = send;
-  const outcome = await queuePrompt.dispatch({ chatID, text, messageID, ...extras(send) }).outcome;
-  return settleBusy(send, outcome, "queued", convertBudget);
-}
-
-/** The shared tail of both busy verbs: `no_turn` becomes a prompt; any other failure surfaces the
- *  server's words through the send-error face. Branches on the outcome's CODE. */
-function settleBusy(
-  send: Send,
-
-  outcome: ActionOutcome<void>,
-  ok: SubmitResult,
-  convertBudget: number,
-): Promise<SubmitResult> | SubmitResult {
-  if (outcome.status === "success") {
-    settled(send);
-    return ok;
-  }
-  const error = outcome.status === "error" ? outcome.error : undefined;
-  if (error?.code === "no_turn" && convertBudget > 0) {
-    return prompt(send, convertBudget - 1);
-  }
-  recordFailure(send);
-  if (error !== undefined) {
-    reportSendRefused(error.message);
-  }
-  return "failed";
-}
+/** The notice for a `prompt_only` refusal of text this page did not class as prompt-only. */
+const PROMPT_ONLY_NOTICE = "That message runs as a new turn. Send it when the agent is idle.";
 
 /** What rides a prompt or a queued row beside its text: a typed send's attachments, a labelled
  *  send's label. */
@@ -359,20 +251,6 @@ function extras(send: Send): { attachments?: readonly AttachedFile[]; displayTex
     return { displayText: send.displayText };
   }
   return send.attachments.length > 0 ? { attachments: send.attachments } : {};
-}
-
-/** Fold attachment paths into the steer text: `_session/steer` takes a plain string. Uses the
- *  server's own fallback wording ("Attached file: <path>", command/prompt_attachments.go), so the
- *  model learns one convention. */
-function withAttachmentPaths(text: string, attachments: readonly AttachedFile[]): string {
-  const lines = attachments
-    .map((a) => a.path)
-    .filter((path) => path !== "")
-    .map((path) => `Attached file: ${path}`);
-  if (lines.length === 0) {
-    return text;
-  }
-  return text === "" ? lines.join("\n") : `${text}\n\n${lines.join("\n")}`;
 }
 
 /** Nothing goes back when the server already holds it (a persisted `turn_open` or a queued row);

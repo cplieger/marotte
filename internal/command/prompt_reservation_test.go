@@ -42,29 +42,21 @@ func (a *reservationLedger) mint(res Reservation, ok bool) (Reservation, bool) {
 }
 
 func (a *reservationLedger) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration, stamp uint64, messageID string) (AdmissionOutcome, Reservation) {
-	out, res := a.turnAdmission.ReserveTurnForPrompt(ctx, chatID, wait, stamp, messageID)
+	out, res := a.turnAdmission.(promptReserver).ReserveTurnForPrompt(ctx, chatID, wait, stamp, messageID)
 	res, _ = a.mint(res, out == AdmissionAcquired)
 	return out, res
 }
 
-func (a *reservationLedger) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (Reservation, bool) {
-	return a.mint(a.turnAdmission.TryReserveIdleTurn(chatID, source, stamp))
-}
-
 func (a *reservationLedger) ReserveTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration) (IdleAdmission, Reservation) {
-	out, res := a.turnAdmission.ReserveTurn(ctx, chatID, source, stamp, wait)
+	out, res := a.turnAdmission.(idleReserver).ReserveTurn(ctx, chatID, source, stamp, wait)
 	res, _ = a.mint(res, out == IdleAcquired)
 	return out, res
 }
 
 func (a *reservationLedger) ReserveIdleTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration) (IdleAdmission, Reservation) {
-	out, res := a.turnAdmission.ReserveIdleTurn(ctx, chatID, source, stamp, wait)
+	out, res := a.turnAdmission.(idleReserver).ReserveIdleTurn(ctx, chatID, source, stamp, wait)
 	res, _ = a.mint(res, out == IdleAcquired)
 	return out, res
-}
-
-func (a *reservationLedger) TryReserveDrain(chatID marotte.ChatID, cl CloseFacts) (Reservation, bool) {
-	return a.mint(a.turnAdmission.TryReserveDrain(chatID, cl))
 }
 
 func (a *reservationLedger) ReleaseTurnReservation(res Reservation) {
@@ -136,24 +128,27 @@ func TestStartPrompt_EveryCallerCarriesItsReservation(t *testing.T) {
 		join.join()
 		checkCarried(t, ledger, opens, 1)
 	})
-	t.Run("the drain's queued row", func(t *testing.T) {
+	t.Run("a queued row's launch", func(t *testing.T) {
 		h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
 		roles := drainRoles(h, newStubSteerQueue())
-		roles.followups = &fakeQueue{chat: &marotte.Chat{ID: "c1", QueuedPrompts: []marotte.QueuedPrompt{{ID: "m-1", Text: "next"}}}, live: true}
 		ledger, opens := withLedger(roles)
 
-		drainAfterClose(t.Context(), roles, "c1", cleanClose, EndFacts{})
+		res, _ := ledger.mint(testReservation("c1", true), true)
+		_, _ = launchQueuedRow(t.Context(), roles, &EntryLaunch{
+			ID: "m-1", Kind: marotte.RunKindRow, Row: marotte.QueuedPrompt{ID: "m-1", Text: "next"}, Res: res,
+		})
 		h.waitInflight(t)
 		checkCarried(t, ledger, opens, 1)
 	})
-	t.Run("the drain's unread steers", func(t *testing.T) {
+	t.Run("the unread steers' launch", func(t *testing.T) {
 		h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
 		q := newStubSteerQueue()
 		q.unsentRows = []SteerRow{{Key: "steer-a", Text: "first"}}
 		roles := drainRoles(h, q)
 		ledger, opens := withLedger(roles)
 
-		drainAfterClose(t.Context(), roles, "c1", cleanClose, EndFacts{})
+		res, _ := ledger.mint(testReservation("c1", true), true)
+		_, _ = sendUnread(t.Context(), roles, res, TurnFence{})
 		h.waitInflight(t)
 		checkCarried(t, ledger, opens, 1)
 	})

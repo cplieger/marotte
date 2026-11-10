@@ -108,18 +108,23 @@ type scriptedAdmission struct {
 	reserved                bool
 	admitFirst              AdmissionOutcome
 	admitted                int
+	// busyHeld: the last verdict was busy, so a prompt turn holds the slot for the steer to join.
+	busyHeld bool
 }
 
 func (a *scriptedAdmission) reservePromptOld(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.admitted++
+	a.busyHeld = false
 	if a.admitted == 1 && a.admitFirst != AdmissionAcquired {
 		a.rec.add("admission.refused")
+		a.busyHeld = a.admitFirst == AdmissionBusy
 		return a.admitFirst
 	}
 	if a.reserved {
 		a.rec.add("admission.refused")
+		a.busyHeld = true
 		return AdmissionBusy
 	}
 	a.reserved = true
@@ -172,8 +177,10 @@ func (a *scriptedAdmission) releaseOld(marotte.ChatID) {
 	}
 }
 
-func (*scriptedAdmission) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
-	return 0, false
+func (a *scriptedAdmission) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return marotte.TurnSourcePrompt, a.busyHeld
 }
 
 const admissionTurnID = "t-1"
@@ -336,7 +343,6 @@ func TestCmdPrompt_A409WritesNothing(t *testing.T) {
 		refusal    AdmissionOutcome
 		wantReason string
 	}{
-		"plain busy":       {refusal: AdmissionBusy, wantReason: "turn_live"},
 		"starting variant": {refusal: AdmissionStarting, wantReason: "starting"},
 		"closed variant":   {refusal: AdmissionClosed, wantReason: "chat_closed"},
 		"chat gone":        {refusal: AdmissionChatGone, wantReason: "chat_not_found"},
@@ -480,74 +486,6 @@ func TestCmdPrompt_CallFailureBroadcastsAndReleases(t *testing.T) {
 		if host.rec.indexOf(want) == -1 {
 			t.Errorf("%s missing from %v: a failed call must release everything", want, host.rec.snapshot())
 		}
-	}
-}
-
-// firingResult is the captured outcome that arms the empty-turn recovery.
-func firingResult() marotte.TurnResult {
-	return marotte.TurnResult{Stop: marotte.StopReasonEndTurn, EmittedNothing: true, WireEnded: true}
-}
-
-// The settled path's release order is the design's contract: the result is
-// captured while the turn handle is held, the reservation releases BEFORE the
-// recovery arbitrates, the recovery's predicates read a still-live record, and
-// ReleaseTurn goes LAST. The test FAILS if ReleaseTurn
-// precedes the recovery read.
-func TestCmdPrompt_RecoveryReadsTheCapturedResultBeforeTheHandleGoes(t *testing.T) {
-	host, roles, join := newAdmissionFixture(t, firingResult(), false)
-
-	if _, err := cmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
-		t.Fatalf("CmdPrompt = %v, want the early ack", err)
-	}
-	join.join()
-
-	order := []string{"settle", "await", "reservation.release", "openedAfter", "tryReserve", "releaseTurn"}
-	last := -1
-	for _, step := range order {
-		idx := host.rec.indexOf(step)
-		if idx == -1 {
-			t.Fatalf("step %q never ran; log = %v", step, host.rec.snapshot())
-		}
-		if idx < last {
-			t.Fatalf("step %q ran out of order; log = %v, want relative order %v", step, host.rec.snapshot(), order)
-		}
-		last = idx
-	}
-	if await, rel := host.rec.indexOf("await"), host.rec.indexOf("releaseTurn"); rel < await {
-		t.Error("ReleaseTurn preceded the capture: the registry drops the result at the last release")
-	}
-}
-
-// A prompt arriving during recovery preempts it: the goroutine released its
-// reservation before the recovery re-reserves, the competitor (injected in the
-// pause between the release and the re-reserve) acquires it, and the recovery's
-// try-reserve refusal abandons the retry.
-func TestCmdPrompt_APromptDuringRecoveryPreemptsTheRetry(t *testing.T) {
-	host, roles, join := newAdmissionFixture(t, firingResult(), false)
-	var competitor AdmissionOutcome
-	host.admission.afterReservationRelease = func() {
-		competitor = host.admission.reservePromptOld(context.Background(), "c1", 0)
-	}
-
-	if _, err := cmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
-		t.Fatalf("CmdPrompt = %v, want the early ack", err)
-	}
-	join.join()
-
-	if competitor != AdmissionAcquired {
-		t.Fatalf("the competing prompt's admission = %v, want acquired: the reservation must be free in the pause", competitor)
-	}
-	if got := host.rec.snapshot(); host.rec.indexOf("tryReserve") == -1 {
-		t.Fatalf("the recovery never tried to re-reserve; log = %v", got)
-	}
-	calls := 0
-	for _, e := range host.rec.snapshot() {
-		if e == "call" {
-			calls++
-		}
-	}
-	if calls != 1 {
-		t.Errorf("ACP calls = %d, want 1: an abandoned retry must not re-prompt", calls)
 	}
 }
 

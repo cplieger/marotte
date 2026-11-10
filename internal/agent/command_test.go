@@ -361,34 +361,6 @@ func TestPrompt_BangPrefixedTextReachesTheAgent(t *testing.T) {
 	}
 }
 
-// A second prompt during a streaming turn answers the plain 409 (no `reason`), so the client
-// converts it to a steer. The fixture holds the reservation.
-func TestPrompt_BusyReturns409(t *testing.T) {
-	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	if _, err := h.coord.openReleased(t.Context(), "c1", ""); err != nil {
-		t.Fatal(err)
-	}
-	if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
-		t.Fatal("setup: the admission slot was already held")
-	}
-	t.Cleanup(func() { h.coord.releaseHeld("c1") })
-
-	rec := postCmd(t, h, marotte.ClientCommand{
-		Type: "prompt", ChatID: "c1",
-		Payload: json.RawMessage(`{"text":"hi","message_id":"m-2"}`),
-	})
-	if rec.Code != http.StatusConflict {
-		t.Errorf("status = %d, want 409 (busy)", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "busy") {
-		t.Errorf("body = %q, want 'busy' error", rec.Body.String())
-	}
-	if strings.Contains(rec.Body.String(), "starting") {
-		t.Errorf("body = %q carries the starting reason; a steerable holder answers the PLAIN 409", rec.Body.String())
-	}
-}
-
 func TestBuildPromptBlocks(t *testing.T) {
 	tests := []struct {
 		setupFile       func(dir string)

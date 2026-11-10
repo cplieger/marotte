@@ -91,6 +91,9 @@ type PromptCommand struct {
 	Model       string       `json:"model,omitempty"`
 	DisplayText string       `json:"display_text,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
+	// PromptOnly marks text only a prompt carries (a catalog command, a context reference): it is never steered,
+	// and never queued behind a running turn.
+	PromptOnly bool `json:"prompt_only,omitempty"`
 	// ForAgent marks a server-authored prompt whose answer an agent reads, so the user's output
 	// style is withheld from it. Server-only: no client payload can set it.
 	ForAgent bool `json:"-"`
@@ -352,10 +355,18 @@ type SteerRemoveCommand struct {
 	SteerID string `json:"steer_id"`
 }
 
-// CancelCommand is the payload for type="cancel". Lead is the key of the dock row
-// the stop is for: the unread steers the stop resends go out with it first.
+// CancelCommand is the payload for type="cancel". Target is the run entry the stop is for (RunView.Cancel); a
+// target that is not a live turn starting or running stops nothing, and an absent one stops what RunView.Cancel
+// names. Lead is the key of the dock row the stop is for: the unread steers the stop resends go out with it first.
 type CancelCommand struct {
-	Lead string `json:"lead,omitempty"`
+	Target string `json:"target,omitempty"`
+	Lead   string `json:"lead,omitempty"`
+}
+
+// CancelCompactCommand is the payload for type="cancel_compact": the compaction entry to withdraw. A stale id is a
+// no-op.
+type CancelCompactCommand struct {
+	ID string `json:"id,omitempty"`
 }
 
 // QueuePromptCommand is the payload for type="queue_prompt": a message held for
@@ -376,11 +387,15 @@ type UnqueuePromptCommand struct {
 }
 
 // SendQueuedNowCommand is the payload for type="send_queued_now": the row goes next,
-// ahead of the other queued rows, which keep their order. A running turn is stopped
-// and its close sends the row; with none running it is sent at once. An id no row
-// carries, or a row already sending, stops nothing; a held row is a 409 held.
+// ahead of the other queued rows, which keep their order. Stop is the run.cancel the
+// row's arrow was drawn against: that turn is stopped while it is still the lone live
+// turn, and a stop naming no live entry, or one no longer the lone live turn, stops
+// nothing. An absent Stop names RunView.Cancel's target under the same rule. With
+// nothing live the row is sent at once. An id no row carries, or a row already
+// sending, stops nothing; a held row is a 409 held.
 type SendQueuedNowCommand struct {
 	MessageID string `json:"message_id"`
+	Stop      string `json:"stop,omitempty"`
 }
 
 // SetInterruptModeCommand is the payload for type="set_interrupt_mode".

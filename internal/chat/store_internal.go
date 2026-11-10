@@ -43,7 +43,6 @@ func (s *Store) remove(chatID marotte.ChatID) (string, error) {
 	// The index entry goes whatever the remove reports: a chat that was already gone
 	// has no business staying findable.
 	s.index.drop(chatID)
-	s.dequeued.forget(chatID)
 	//nolint:gosec,nolintlint // G703: dir is pathFor's join over a validated chat id
 	if _, err := os.Stat(filepath.Join(dir, headerFileName)); err != nil {
 		if errors.Is(err, os.ErrNotExist) {

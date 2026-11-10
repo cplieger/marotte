@@ -33,6 +33,7 @@ import { _revalidateForTest, _resetForTest as resetAdapter, markHydrated } from 
 import { hasSubject, versionMap, _resetForTest as resetVersions } from "./subject-versions.js";
 import { clearAllEntrySigs } from "./store-signals.js";
 import { createScriptedFetch, json, type ScriptedFetch } from "./__test-helpers__/sse-fetch.js";
+import { IDLE_RUN } from "./run-order.js";
 
 const CHAT = "c";
 const TURN = "t1";
@@ -74,6 +75,7 @@ function header(chatID: string): ChatHeader {
   return {
     id: chatID,
     name: chatID,
+    run: IDLE_RUN,
     usage: defaultUsage(),
     created_at: 1,
     updated_at: 2,

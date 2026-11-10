@@ -474,12 +474,12 @@ describe("dispatch", () => {
     expect(view._stateOf(DIR)?.fastUntil).toBeGreaterThan(Date.now());
   });
 
-  it("renders queued and starting as busy on the row", async () => {
+  it("renders starting and a full queue as busy on the row", async () => {
     openParented();
     m.replies = [reply(spec([tasksDoc([node("L1", "Pending one")])]))];
     view.showSpec(DIR);
     await settle();
-    for (const r of ["queued", "starting"] as const) {
+    for (const r of ["starting", "full"] as const) {
       view.applyResult(DIR, "L1", r);
       const run = body().querySelector<HTMLButtonElement>(".spec-run");
       expect(run?.classList.contains("spec-busy")).toBe(true);
@@ -488,12 +488,12 @@ describe("dispatch", () => {
     }
   });
 
-  it("renders a prompt queued behind the chat's compaction as dispatched, not busy", async () => {
+  it("renders a prompt the server queued behind what runs as dispatched, not busy", async () => {
     openParented();
     m.replies = [reply(spec([tasksDoc([node("L1", "Pending one")])]))];
     view.showSpec(DIR);
     await settle();
-    view.applyResult(DIR, "L1", "compacting");
+    view.applyResult(DIR, "L1", "queued");
     expect(body().querySelector(".spec-node")?.classList.contains("spec-dispatched")).toBe(true);
     expect(body().querySelector(".spec-run")?.classList.contains("spec-busy")).toBe(false);
   });

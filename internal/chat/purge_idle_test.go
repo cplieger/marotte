@@ -127,7 +127,7 @@ func TestPurgeIdle_DecidesFromTheRecordAlone(t *testing.T) {
 			name: "queued_prompt",
 			setup: func(t *testing.T, s *Store) {
 				rewriteChat(t, s, "c1", func(c *marotte.Chat) {
-					c.QueuedPrompts = []marotte.QueuedPrompt{{ID: "m-1", Text: "x"}}
+					c.Run = []marotte.RunEntry{rowEntry("m-1", marotte.RunPaused)}
 				})
 			},
 			wantOutcome: archive.PurgeKept, wantKeptBy: archive.KeptByWords,

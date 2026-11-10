@@ -83,12 +83,13 @@ type bridgeCoordinator struct {
 	applyPendingModel func(context.Context, marotte.ChatID) `wiring:"optional"`
 	// autoCompact owns every compaction of a chat: the policy's triggers and the reader's requests.
 	autoCompact *autoCompactor `wiring:"optional"`
-	// resolveEnds and drainAfterClose are first and last in afterTurnClose; the drain is last so a
-	// queued prompt cannot reach the session before betweenTurns' idle work.
-	resolveEnds     func(context.Context, marotte.ChatID, command.TurnFence) command.EndFacts   `wiring:"optional"`
-	drainAfterClose func(context.Context, marotte.ChatID, command.CloseFacts, command.EndFacts) `wiring:"optional"`
-	// drainAfterCompaction sends the first prompt queued behind a compaction that ran on an idle chat.
-	drainAfterCompaction func(ctx context.Context, chatID marotte.ChatID, settle func(command.Reservation)) `wiring:"optional"`
+	// resolveEnds settles a close's steer ends in afterTurnClose.
+	resolveEnds func(context.Context, marotte.ChatID, command.TurnFence) command.EndFacts `wiring:"optional"`
+	// launchEntry opens the turn of a run list entry the list's taker took (command.Dispatcher.LaunchEntry).
+	launchEntry func(context.Context, marotte.ChatID, *command.EntryLaunch) (string, error) `wiring:"optional"`
+	// steerFacts reads the steer queue's pending ends, unsent row keys and change sequence for the run list
+	// (steerRecords.runFacts).
+	steerFacts func(chatID marotte.ChatID, deathDrained bool) (ends int, unsent []string, seq uint64) `wiring:"optional"`
 	// settleNotices clears a run notice KAS's boundary left queued, once KAS is idle. Nil in tests.
 	settleNotices func(context.Context, marotte.ChatID) `wiring:"optional"`
 	// runs lets the death closer close every open step turn of the runs this bridge hosted.
@@ -128,7 +129,7 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 	if h.bridge != nil && h.bridge.mgr != nil {
 		h.bridge.mgr.gates = turns.gates
 	}
-	return &bridgeCoordinator{
+	bc := &bridgeCoordinator{
 		bridge:         h.bridge,
 		chatStore:      h.chatStore,
 		catalog:        h.catalog,
@@ -175,11 +176,8 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		resolveEnds: func(ctx context.Context, chatID marotte.ChatID, f command.TurnFence) command.EndFacts {
 			return h.dispatcher.ResolveAfterClose(ctx, chatID, f)
 		},
-		drainAfterClose: func(ctx context.Context, chatID marotte.ChatID, cl command.CloseFacts, ends command.EndFacts) {
-			h.dispatcher.DrainAfterClose(ctx, chatID, cl, ends)
-		},
-		drainAfterCompaction: func(ctx context.Context, chatID marotte.ChatID, settle func(command.Reservation)) {
-			h.dispatcher.DrainAfterCompaction(ctx, chatID, settle)
+		launchEntry: func(ctx context.Context, chatID marotte.ChatID, l *command.EntryLaunch) (string, error) {
+			return h.dispatcher.LaunchEntry(ctx, chatID, l)
 		},
 		settleNotices:    h.runs.clearStaleNotices,
 		runs:             h.runs.log,
@@ -192,6 +190,8 @@ func newBridgeCoordinator(h *Runtime) *bridgeCoordinator {
 		steerBridgeGone:  h.bus.steers.bridgeGone,
 		steerKASSettled:  h.bus.steers.kasSettled,
 	}
+	turns.runHost = bc
+	return bc
 }
 
 // openBridge returns chatID's session once its generation is ready (sessionSettle), opening one when

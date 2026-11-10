@@ -17,7 +17,7 @@ func TestPromptReasons_EachHasAPageArm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", clientPromptPath, err)
 	}
-	for _, reason := range []string{reasonTurnLive, reasonStarting, reasonChatGone, reasonChatClosed} {
+	for _, reason := range []string{reasonStarting, reasonChatGone, reasonChatClosed, reasonPromptOnly} {
 		eq, arm := "r.reason === "+strconv.Quote(reason), "case "+strconv.Quote(reason)+":"
 		if !strings.Contains(string(src), eq) && !strings.Contains(string(src), arm) {
 			t.Errorf("%s names no arm (`%s` or `%s`) for the prompt's 409 reason %q", clientPromptPath, eq, arm, reason)

@@ -415,22 +415,21 @@ func (lc *chatLifecycle) endOpensLocked(opener uint64) {
 	maps.DeleteFunc(lc.opens, func(_, o uint64) bool { return o == opener })
 }
 
-// beginTail counts a turn's close tail on lc and takes its hold, answering the life's context, the idempotent done
-// that ends both in one section, and the tail's token, whose hold the drain's pick ends earlier (drainPick); false
-// once the life ended.
-func (r *turnRegistry) beginTail(lc *chatLifecycle) (lifeCtx context.Context, done func(), token uint64, ok bool) {
-	token = r.tailSeq.Add(1)
+// beginTail counts a turn's close tail on lc and takes its hold, answering the life's context and the idempotent done
+// that ends both in one section; false once the life ended.
+func (r *turnRegistry) beginTail(lc *chatLifecycle) (lifeCtx context.Context, done func(), ok bool) {
+	token := r.tailSeq.Add(1)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	lifeCtx, done, ok = lc.beginLocked(workTail, nil, func() { delete(lc.tails, token) })
 	if !ok {
-		return nil, done, 0, false
+		return nil, done, false
 	}
 	if lc.tails == nil {
 		lc.tails = make(map[uint64]struct{})
 	}
 	lc.tails[token] = struct{}{}
-	return lifeCtx, done, token, true
+	return lifeCtx, done, true
 }
 
 // holdStep records that host's session hosts the run step turn turnID, until endStep. A run chat's session is its

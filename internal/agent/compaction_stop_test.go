@@ -9,7 +9,6 @@ import (
 	"slices"
 	"sync/atomic"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -77,9 +76,9 @@ func wantQueuedAck(t *testing.T, rec *httptest.ResponseRecorder, id string) {
 	t.Helper()
 	var ack struct {
 		MessageID string `json:"message_id"`
-		Queued    bool   `json:"queued"`
+		As        string `json:"as"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &ack); rec.Code != http.StatusOK || err != nil || !ack.Queued || ack.MessageID != id {
+	if err := json.Unmarshal(rec.Body.Bytes(), &ack); rec.Code != http.StatusOK || err != nil || ack.As != "queued" || ack.MessageID != id {
 		t.Errorf("prompt answer = %d %s, want 200 queued under %s", rec.Code, rec.Body.String(), id)
 	}
 }
@@ -122,25 +121,6 @@ func TestSendQueuedNow_DuringAStoppedTurnsCompactionLetsItFinish(t *testing.T) {
 	waitFor(t, func() bool { return opensInOrder(t, cs, "m-c1", "m-q0") && len(queuedRows(t, cs, "c1")) == 0 })
 }
 
-// While a compaction runs no turn is live, so a Cancel (from a page that has not drawn the turn's close, say) would
-// stop only the compaction, which kiro-cli aborts on session/cancel: it sends none and answers that it stopped nothing.
-func TestCancel_DuringACompactionSendsNoSessionCancel(t *testing.T) {
-	h, _, br, _ := compactingHubIn(t, "/tmp/work")
-
-	rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"})
-
-	var body struct {
-		OK      bool `json:"ok"`
-		Skipped bool `json:"skipped"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); rec.Code != http.StatusOK || err != nil || !body.Skipped {
-		t.Errorf("cancel during the compaction = %d %s, want 200 skipped", rec.Code, rec.Body.String())
-	}
-	if got := br.notified(marotte.MethodCancel); len(got) != 0 {
-		t.Errorf("session/cancel sent %d times during the compaction, want none", len(got))
-	}
-}
-
 // A message queued under a stopped turn's KAS hold before that turn's compaction starts goes when the compaction
 // ends, so the header says the compaction's end sends a row, above the row the stop paused.
 func TestCompaction_AStoppedTurnsCompactionSaysItSendsTheRowQueuedUnderTheHold(t *testing.T) {
@@ -148,8 +128,8 @@ func TestCompaction_AStoppedTurnsCompactionSaysItSendsTheRowQueuedUnderTheHold(t
 		queueTextDuring(t, h, "m-q1", "sent after the stop")
 	})
 
-	if p := compactPending(t, cs, "c1"); !p.Running || !p.Sends {
-		t.Errorf("compaction row = %+v, want running with a row sent at its end", p)
+	if running, sends := compactionSends(t, cs, "c1"); !running || !sends {
+		t.Errorf("compaction running %v, its end sends a row %v; want both", running, sends)
 	}
 	if ids, _ := queuedIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-q1", "m-q0"}) {
 		t.Errorf("queue = %v, want [m-q1 m-q0]", ids)
@@ -168,21 +148,21 @@ func TestCompaction_OneTheHoldsReleaseRunsSaysItSendsTheRowQueuedUnderTheHold(t 
 	t.Cleanup(release)
 	stopUnderHold(t, h)
 	queueTextDuring(t, h, "m-q1", "sent after the stop")
-	// The press lands after the turn end's own look at the queue, so the hold's release runs it.
+	// The press lands in the close tail, before its end lets the list take what runs next.
 	var pressed atomic.Bool
-	h.coord.autoCompact.queue = hookQueue{compactQueue: h.coord.autoCompact.queue, after: func() {
+	beforeTake(h, func(ctx context.Context) {
 		if pressed.Swap(true) {
 			return
 		}
-		if out, err := h.RequestCompact(t.Context(), "c1"); err != nil || out != command.CompactQueued {
+		if out, err := h.RequestCompact(ctx, "c1"); err != nil || out != command.CompactQueued {
 			t.Errorf("/compact under the hold = (%v, %v), want queued", out, err)
 		}
-	}}
+	})
 	h.coord.WireTurnActivity("c1", false)
 	waitForCall(t, br, marotte.MethodSessionCompact)
 
-	if p := compactPending(t, cs, "c1"); !p.Running || !p.Sends {
-		t.Errorf("compaction row = %+v, want running with a row sent at its end", p)
+	if running, sends := compactionSends(t, cs, "c1"); !running || !sends {
+		t.Errorf("compaction running %v, its end sends a row %v; want both", running, sends)
 	}
 
 	release()
@@ -205,47 +185,11 @@ func TestPrompt_DuringAStoppedTurnsCompactionIsQueuedBehindIt(t *testing.T) {
 	if ids, _ := queuedIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-p1", "m-q0"}) {
 		t.Errorf("queue during the compaction = %v, want [m-p1 m-q0]", ids)
 	}
-	if p := compactPending(t, cs, "c1"); !p.Running || !p.Sends {
-		t.Errorf("compaction row = %+v, want running with a row sent at its end", p)
+	if running, sends := compactionSends(t, cs, "c1"); !running || !sends {
+		t.Errorf("compaction running %v, its end sends a row %v; want both", running, sends)
 	}
 
 	release()
 
 	waitFor(t, func() bool { return opensInOrder(t, cs, "m-c1", "m-p1", "m-q0") })
-}
-
-// A prompt sent right after the stop, while kiro-cli still ends the stopped run, waits under the hold; once the
-// turn's compaction starts it is queued behind it instead of sitting unseen until the compaction ends.
-func TestPrompt_UnderAStopsHoldIsQueuedOnceItsCompactionStarts(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
-		defer shutdownHub(t, h)
-		atThePoint(t, h, cs)
-		release := holdCall(t, br, marotte.MethodSessionCompact)
-		defer release()
-		stopUnderHold(t, h)
-
-		answered := postAsync(h, promptCmd("m-p1", "sent right after the stop"))
-		synctest.Wait()
-		if len(answered) != 0 {
-			t.Fatal("the prompt was answered while kiro-cli still ran the stopped turn, want it held")
-		}
-		h.coord.WireTurnActivity("c1", false)
-		waitForCall(t, br, marotte.MethodSessionCompact)
-		synctest.Wait()
-
-		select {
-		case rec := <-answered:
-			wantQueuedAck(t, rec, "m-p1")
-		default:
-			t.Fatal("the prompt is still unanswered while the compaction runs, want it queued behind it")
-		}
-		if ids, _ := queuedIDs(t, cs, "c1"); !slices.Equal(ids, []string{"m-p1", "m-q0"}) {
-			t.Errorf("queue during the compaction = %v, want [m-p1 m-q0]", ids)
-		}
-
-		release()
-
-		waitFor(t, func() bool { return opensInOrder(t, cs, "m-c1", "m-p1", "m-q0") })
-	})
 }

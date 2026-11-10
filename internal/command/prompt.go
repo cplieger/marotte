@@ -129,56 +129,6 @@ func sendTurnPrompt(ctx context.Context, gate promptSendGate, sb promptWriter, p
 	})
 }
 
-// recoverEmptyTurn re-prompts a turn that produced nothing: recreate the session, then send the
-// same prompt once more as a turn of its own. result is the FINALIZED turn's captured outcome,
-// never the live accumulator. Both admission holds are released, so the retry re-reserves: it
-// waits out a transient holder and abandons when a turn runs, the chat closes or the wait ends.
-func recoverEmptyTurn(
-	ctx context.Context, roles *promptRoles, sb Bridge, res Reservation, turnID string,
-	result marotte.TurnResult, p *marotte.PromptCommand, params map[string]any,
-) {
-	chatID := res.Chat
-	// A verb KAS answers itself produces no content by design, so an
-	// empty turn is the correct outcome and recovery is pure damage.
-	if kasClaimsPromptText(p.Text) {
-		return
-	}
-	// A locally-closed turn's outcome is only the prompt response's, so re-prompting on it is a
-	// guess.
-	if !result.WireEnded || result.Stop != marotte.StopReasonEndTurn || !result.EmittedNothing {
-		return
-	}
-	if roles.turnOutcome.TurnOpenedAfter(chatID, turnID) {
-		slog.Info("empty turn: a later turn opened on this chat, so the binding was not ours",
-			"chat_id", chatID, "turn", turnID)
-		return
-	}
-	// Waiting: the close's drain holds the slot a moment while it looks for a queued prompt.
-	out, retryRes := roles.admission.ReserveTurn(ctx, chatID, marotte.TurnSourceEmptyRetry, res.Stamp, AdmissionWait)
-	if out != IdleAcquired {
-		slog.Warn("empty turn: the retry could not take the chat's turn slot, so it was not sent",
-			"chat_id", chatID)
-		return
-	}
-	defer roles.admission.ReleaseTurnReservation(retryRes)
-	// The reader stopped the turn this retry would replace. Read before the
-	// refresh, so a stop already recorded costs no session close or reload.
-	if roles.turnOutcome.StopRequestedAfter(chatID, turnID) {
-		slog.Info("empty turn: a stop was requested, not retrying", "chat_id", chatID, "turn", turnID)
-		return
-	}
-	slog.Warn("empty turn detected, recreating session", "chat_id", chatID)
-	if err := roles.bridges.RefreshForRetry(ctx, chatID, sb); err != nil {
-		if errors.Is(err, marotte.ErrChatClosedDuringCall) {
-			slog.Info("empty turn: the chat closed, not retrying", "chat_id", chatID)
-			return
-		}
-		slog.Error("empty turn: clear session ID", "chat_id", chatID, keyError, err)
-		return
-	}
-	retryEmptyTurnPrompt(ctx, roles, retryRes, turnID, p, params)
-}
-
 // turnStopBeforeStart decides what a prompt exit that never reached StartTurn
 // concludes: promptFailureAccount's cancelled arm read off the context, since no
 // ACP call was made and there is no failure to classify. The cancelled arm
@@ -191,15 +141,16 @@ func turnStopBeforeStart(ctx context.Context, interrupted string) (stop marotte.
 }
 
 // retryEmptyTurnPrompt reloads the session and re-sends the prompt as a turn of
-// its own: turn_open{source: empty_retry} with the same prompt. The caller holds
-// the retry's admission reservation res; emptyTurnID is the turn the retry replaces.
-func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, res Reservation, emptyTurnID string, p *marotte.PromptCommand, params map[string]any) {
+// its own: turn_open{source: empty_retry} with the same prompt, and runs that turn to
+// its close. The caller holds the retry's admission reservation res; emptyTurnID is
+// the turn the retry replaces. It answers the retry turn's id, or why none opened.
+func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, res Reservation, emptyTurnID string, p *marotte.PromptCommand, params map[string]any) (string, error) {
 	chatID := res.Chat
 	sb2, release, err2 := roles.bridges.OpenBridgeAt(ctx, chatID, p.Model, res)
 	defer release()
 	if closedCancelled(err2) {
 		slog.Info("empty turn: the chat closed during the reload, not retrying", "chat_id", chatID)
-		return
+		return "", err2
 	}
 	if err2 != nil {
 		slog.Error("empty turn: reload failed",
@@ -210,23 +161,23 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, res Reservati
 			Code:    marotte.ErrCodeRecoveryFailed,
 			Message: "Session refresh failed: " + rpcerr.Text(err2),
 		}))
-		return
+		return "", err2
 	}
 	params[marotte.KeySessionID] = sb2.SessionID()
 	// The retry is a turn of its own, closed on every path out of here, since
 	// the turn it replaces is already closed. The open refuses once a stop followed
 	// that turn, in the section a stop's capture also takes.
 	retryTurn, err := roles.turnOutcome.OpenTurn(ctx, chatID, TurnOpen{
-		Source: marotte.TurnSourceEmptyRetry, Prompt: promptEntry(p, nil), Replaces: emptyTurnID,
+		Source: marotte.TurnSourceEmptyRetry, Prompt: promptEntry(p, nil), Replaces: emptyTurnID, Admission: res.Token,
 	})
 	if errors.Is(err, ErrTurnStopped) || errors.Is(err, marotte.ErrChatClosedDuringCall) {
 		slog.Info("empty turn: a stop or the chat's close arrived during the reload, not retrying",
 			"chat_id", chatID, "turn", emptyTurnID)
-		return
+		return "", err
 	}
 	if err != nil {
 		slog.Warn("empty turn: the retry turn could not open", "chat_id", chatID, keyError, err)
-		return
+		return "", err
 	}
 	defer roles.turnOutcome.ReleaseTurn(chatID, retryTurn)
 	// The retry's call context, as promptAdmittedTurn's: a grace or interrupt aimed at the retry reaches only its call.
@@ -237,7 +188,7 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, res Reservati
 		slog.Warn("empty turn: the retry turn could not start", "chat_id", chatID)
 		stop, reason := turnStopBeforeStart(callCtx, "The retry was cancelled before the agent answered.")
 		roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, retryTurn, stop, reason, "", 0)
-		return
+		return retryTurn, nil
 	}
 	deliverParkedSteers(callCtx, roles, chatID, retryTurn)
 	setPromptMeta(callCtx, params, roles.workspace.ConfigDir, p, retryTurn)
@@ -261,9 +212,10 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, res Reservati
 				TurnScoped: g.onCard,
 			}))
 		}
-		return
+		return retryTurn, nil
 	}
 	roles.turnOutcome.SettleTurnOnResponse(ctx, chatID, retryTurn, reply.seq, reply.resp)
+	return retryTurn, nil
 }
 
 // Fails closed to false.
@@ -294,7 +246,8 @@ func openPromptTurn(ctx context.Context, roles *promptRoles, chatID marotte.Chat
 		c.SupervisedMode = supervisedDefault
 	}
 	return roles.turnOutcome.OpenTurn(ctx, chatID, TurnOpen{
-		Source: marotte.TurnSourcePrompt, Prompt: promptEntry(p, l.resends), Init: init, Fence: l.fence, Awaited: l.awaited,
+		Source: marotte.TurnSourcePrompt, Prompt: promptEntry(p, l.resends), Init: init, Awaited: l.awaited,
+		Admission: l.res.Token, Fence: l.fence,
 	})
 }
 
@@ -344,9 +297,7 @@ func settleComposerOnPrompt(ctx context.Context, chats chatStore, bus broadcaste
 // only so tests can shrink it.
 var AdmissionWait = 20 * time.Second
 
-// reasonStarting is the 409 refusal class for AdmissionStarting: nothing steerable
-// can take the prompt. The client renders the busy face and retries instead of
-// converting the 409 to a steer.
+// reasonStarting is the 409 refusal class for a send whose chat a held close kept from starting.
 const reasonStarting = "starting"
 
 // reasonChatGone is the 409 refusal class for a prompt into a chat whose
@@ -354,26 +305,25 @@ const reasonStarting = "starting"
 // terminal outcome rather than the busy face.
 const reasonChatGone = "chat_not_found"
 
-// reasonChatClosed is the 409 refusal class for AdmissionClosed: a close of the chat committed after the prompt
-// began, so the close ended it. The client keeps the text as the chat's draft.
+// reasonChatClosed is the 409 refusal class for a close of the chat that committed after the prompt began, so the
+// close ended it. The client keeps the text as the chat's draft.
 const reasonChatClosed = "chat_closed"
 
-// reasonTurnLive is the 409 refusal class for AdmissionBusy: a steerable turn holds the chat, the one refusal the
-// client turns into a steer or a queued follow-up.
-const reasonTurnLive = "turn_live"
+// reasonPromptOnly is the 409 refusal class for prompt-only text that would be steered or wait behind a running
+// turn. The client keeps the text in the composer.
+const reasonPromptOnly = "prompt_only"
 
-// promptAck is the prompt's early acknowledgement, sent once the user message is persisted and the
-// admission slot is held.
+// promptAck is the prompt's answer: where the message went (As) and the run order after it.
 type promptAck struct {
-	MessageID string `json:"message_id"`
-	Accepted  bool   `json:"accepted"`
-	// Queued: the prompt waits in the follow-up queue behind the chat's running compaction.
-	Queued bool `json:"queued,omitempty"`
+	MessageID string          `json:"message_id"`
+	As        SubmitAs        `json:"as"`
+	Run       marotte.RunView `json:"run"`
+	Accepted  bool            `json:"accepted"`
 }
 
-// cmdPrompt handles the prompt command: validate → persist → admit → ack.
-// The turn itself runs on its own goroutine (runPromptTurn), so the POST
-// answers in the time of a disk append rather than a turn.
+// cmdPrompt handles the prompt command: validate, then place it on the chat's run order, which steers it into the
+// running turn, starts it, or queues it (VerbFor). A started turn runs on its own goroutine (runPromptTurn), so the
+// POST answers at its turn open, or as queued past AdmissionWait.
 func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
 	if cmd.ChatID == "" {
 		return nil, StatusError(http.StatusBadRequest, ErrMissingChatID)
@@ -385,99 +335,99 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 	p.Caller = cmd.From
 	// The prompt's intent begins here: a close that commits after this stamp ends it wherever it waits.
 	stamp := roles.admission.LifeStamp()
-
-	res, queued, err := admitOrQueue(ctx, roles, cmd.ChatID, stamp, &p)
-	switch {
-	case err != nil:
-		return nil, err
-	case queued:
-		return promptAck{Accepted: true, MessageID: p.MessageID, Queued: true}, nil
+	s := Submission{
+		Row: marotte.QueuedPrompt{
+			ID: p.MessageID, Text: p.Text, Label: p.DisplayText, Attachments: p.Attachments, Caller: p.Caller,
+			Model: p.Model,
+		},
+		Origin: marotte.RunFromPrompt, Kind: sendKindOf(&p), PromptOnly: p.PromptOnly,
+		Wait: true, Composer: true, Retry: !kasClaimsPromptText(p.Text),
 	}
-	if err := launchPrompt(ctx, roles, cmd.ChatID, &p, &launch{composer: true, res: res}); err != nil {
-		return nil, err
-	}
-	return promptAck{Accepted: true, MessageID: p.MessageID}, nil
-}
-
-// admitOrQueue reserves the prompt's turn, or queues the prompt behind a compaction running on
-// the chat (queued), which a turn opened now would sit under: one running when it arrives, one
-// claimed while it waits under kiro-cli's hold, or one claimed just before its reservation.
-func admitOrQueue(
-	ctx context.Context, roles *promptRoles, chatID marotte.ChatID, stamp uint64, p *marotte.PromptCommand,
-) (res Reservation, queued bool, err error) {
 	for {
-		if roles.followups != nil && roles.followups.Compacting(chatID) {
-			queued, err = queueBehindCompaction(ctx, roles, chatID, p)
-			if queued || err != nil {
-				return Reservation{}, queued, err
+		ans, err := roles.runq.Submit(ctx, cmd.ChatID, stamp, &s)
+		if err != nil {
+			return nil, submitRefusal(err)
+		}
+		if ans.Steer {
+			steered, err := steerPrompt(ctx, roles, cmd.ChatID, &p)
+			if err != nil {
+				return nil, err
 			}
+			if !steered {
+				s.NoSteer = true
+				continue
+			}
+			ans = SubmitAnswer{As: SubmitSteered, Run: roles.runq.RunView(ctx, cmd.ChatID)}
 		}
-		// Admission FIRST: a refused admission writes nothing, so the log never holds a turn no process
-		// owns. It also dedupes a re-send of a running prompt, which meets Busy and becomes a steer.
-		var claimed bool
-		res, claimed, err = reservePromptAdmission(ctx, roles, chatID, stamp, p.MessageID)
-		if err != nil || !claimed && !compactingBeside(roles, res) {
-			return res, false, err
+		if ans.Settle {
+			settleComposerOnPrompt(ctx, roles.chats, roles.bus, cmd.ChatID, &p)
 		}
+		return promptAck{Accepted: true, MessageID: p.MessageID, As: ans.As, Run: ans.Run}, nil
 	}
 }
 
-// compactingBeside gives res back when a compaction runs on its chat, reporting whether it did.
-// A reserved turn stops any new claim, so a compaction seen here was claimed before res and the
-// caller must not open a turn under it.
-func compactingBeside(roles *promptRoles, res Reservation) bool {
-	if roles.followups == nil || !roles.followups.Compacting(res.Chat) {
-		return false
+// sendKindOf is what a send can be: display text or attachments are a prompt's alone, which a steer cannot carry.
+func sendKindOf(p *marotte.PromptCommand) marotte.SendKind {
+	if p.DisplayText != "" || len(p.Attachments) > 0 {
+		return marotte.SendLabelled
 	}
-	roles.admission.ReleaseTurnReservation(res)
-	return true
+	return marotte.SendPlain
 }
 
-// queueBehindCompaction holds a validated prompt that reached a chat whose compaction runs
-// with no turn live as a queued row, which the compaction's end sends: a turn opened now
-// would show nothing until then. False when no compaction runs or a turn is live.
-func queueBehindCompaction(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, p *marotte.PromptCommand) (bool, error) {
-	if roles.followups == nil {
+// steerPrompt routes a prompt the run order steers into the running turn, reporting false when that turn is gone
+// (the record refused it no_turn), which the caller places again with steering ruled out.
+func steerPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, p *marotte.PromptCommand) (bool, error) {
+	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
+	if err != nil {
+		return false, StatusError(http.StatusServiceUnavailable, err)
+	}
+	defer unlock()
+	switch refuse, sendErr := steerOne(ctx, roles, chatID, p.MessageID, p.Text, "", p.Caller); {
+	case refuse == SteerRefuseFull:
+		return false, StatusErrorReason(http.StatusConflict, reasonFull, errSteerFull)
+	case refuse != "":
 		return false, nil
+	case sendErr != nil:
+		return false, StatusError(http.StatusBadGateway, sendErr)
 	}
-	row := marotte.QueuedPrompt{
-		ID: p.MessageID, Text: p.Text, Label: p.DisplayText, Attachments: p.Attachments, Caller: p.Caller,
+	slog.Info("prompt steered into the running turn", "chat", chatID, "steer_id", p.MessageID)
+	return true, nil
+}
+
+// submitRefusal answers a Submit error as HTTP; a status error passes through.
+func submitRefusal(err error) error {
+	if _, ok := errors.AsType[*statusError](err); ok {
+		return err
 	}
-	queued, err := roles.followups.AppendIfCompacting(ctx, chatID, func(c *marotte.Chat) error {
-		return appendUserRow(c, &row)
-	})
 	switch {
-	case err != nil:
-		if _, ok := errors.AsType[*statusError](err); ok {
-			return false, err
-		}
-		return false, StatusError(http.StatusInternalServerError, err)
-	case queued:
-		slog.Info("prompt queued behind the running compaction", "chat_id", chatID, "message_id", p.MessageID)
+	case errors.Is(err, ErrSubmitNoTurn):
+		return StatusErrorReason(http.StatusConflict, reasonNoTurn, err)
+	case errors.Is(err, ErrSubmitTooBig):
+		return StatusError(http.StatusRequestEntityTooLarge, err)
+	case errors.Is(err, ErrSubmitPromptOnly):
+		return StatusErrorReason(http.StatusConflict, reasonPromptOnly, err)
+	case errors.Is(err, ErrSubmitFull):
+		return StatusErrorReason(http.StatusConflict, reasonFull, err)
+	case errors.Is(err, ErrSubmitStarting):
+		return StatusErrorReason(http.StatusConflict, reasonStarting, err)
+	case errors.Is(err, marotte.ErrChatClosedDuringCall):
+		return StatusErrorReason(http.StatusConflict, reasonChatClosed, errChatClosed)
+	case errors.Is(err, chat.ErrTombstoned), errors.Is(err, ErrChatNotFound):
+		return StatusErrorReason(http.StatusConflict, reasonChatGone, ErrChatNotFound)
 	}
-	return queued, nil
+	return StatusError(http.StatusInternalServerError, err)
 }
 
-// launch is how launchPrompt opens a turn. resends names the steer keys the
-// prompt carries, dequeue the queued row it takes off the header once the turn is
-// announced, fence the closed turn the open must find unsuperseded, and composer
-// whether the prompt's words were the draft. awaited sets TurnOpen.Awaited. res is the reservation the caller took,
-// which the prompt owns from here.
+// launch is how startPrompt opens a turn: resends names the steer keys the prompt carries, res is the take's
+// reservation, which the prompt owns from here, awaited sets TurnOpen.Awaited, and claimComposer, for a page's
+// POST, claims the composer settle it owes (nil for none).
 type launch struct {
-	resends  []string
-	dequeue  string
-	res      Reservation
-	fence    TurnFence
-	composer bool
-	awaited  bool
-}
-
-// launchPrompt opens an admitted prompt's turn and starts it, owning the
-// reservation its caller took. A refused open releases it and returns the error;
-// ErrTurnSuperseded is returned as is, for the drain to stand down on.
-func launchPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, p *marotte.PromptCommand, l *launch) error {
-	_, err := startPrompt(ctx, roles, chatID, p, l)
-	return err
+	claimComposer func() bool
+	resends       []string
+	res           Reservation
+	// fence is the take's: a re-fence since (a shutdown, a teardown) refuses the open.
+	fence   TurnFence
+	awaited bool
 }
 
 // errLaunchUnreserved fails a prompt launched with no reservation, a wiring error.
@@ -491,58 +441,19 @@ func startPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID,
 	turnID, err := openPromptTurn(ctx, roles, chatID, p, l)
 	if err != nil {
 		roles.admission.ReleaseTurnReservation(l.res)
-		switch {
-		case errors.Is(err, ErrTurnSuperseded):
-			return "", err
-		case errors.Is(err, marotte.ErrChatClosedDuringCall):
-			return "", StatusErrorReason(http.StatusConflict, reasonChatClosed, err)
-		case errors.Is(err, chat.ErrTombstoned):
-			return "", StatusErrorReason(http.StatusConflict, reasonChatGone, ErrChatNotFound)
-		}
-		return "", StatusError(http.StatusInternalServerError, err)
+		return "", err
 	}
-	// After OpenTurn returned, so the turn_opened frame precedes the header write
-	// that drops the row.
-	if l.dequeue != "" && roles.followups != nil {
-		if err := roles.followups.Dequeue(ctx, chatID, l.dequeue); err != nil {
-			slog.Warn("prompt: the sent follow-up stays listed until the chat's next write",
-				"chat_id", chatID, "message_id", l.dequeue, keyError, err)
-		}
-	}
-	if l.composer {
+	// After OpenTurn returned, so the turn_opened frame precedes the header write.
+	if l.claimComposer != nil && l.claimComposer() {
 		settleComposerOnPrompt(ctx, roles.chats, roles.bus, chatID, p)
 	}
 
-	// In-flight before the ack, so a shutdown between ack and the goroutine's first step still
+	// In-flight before the answer, so a shutdown between it and the goroutine's first step still
 	// waits. The turn context is detached from the POST's; the goroutine owns the cancel.
 	roles.lifecycle.InflightAdd(1)
 	turnCtx, cancel := roles.lifecycle.TurnContext(ctx)
 	go runPromptTurn(turnCtx, cancel, roles, l.res, turnID, p)
 	return turnID, nil
-}
-
-// reservePromptAdmission takes the chat's admission slot for a prompt whose intent began at stamp: AdmissionBusy
-// answers 409 `turn_live` (which the client steers or queues, per the chat's mode), AdmissionClosed 409
-// `chat_closed`, AdmissionChatGone 409 `chat_not_found`, AdmissionStarting 409 `starting`; AdmissionCompacting
-// reserves nothing and answers compacting.
-func reservePromptAdmission(
-	ctx context.Context, roles *promptRoles, chatID marotte.ChatID, stamp uint64, messageID string,
-) (res Reservation, compacting bool, err error) {
-	out, res := roles.admission.ReserveTurnForPrompt(ctx, chatID, AdmissionWait, stamp, messageID)
-	switch out {
-	case AdmissionAcquired:
-		return res, false, nil
-	case AdmissionCompacting:
-		return Reservation{}, true, nil
-	case AdmissionBusy:
-		return Reservation{}, false, StatusErrorReason(http.StatusConflict, reasonTurnLive, errBusy)
-	case AdmissionClosed:
-		return Reservation{}, false, StatusErrorReason(http.StatusConflict, reasonChatClosed, errChatClosed)
-	case AdmissionChatGone:
-		return Reservation{}, false, StatusErrorReason(http.StatusConflict, reasonChatGone, ErrChatNotFound)
-	case AdmissionStarting:
-	}
-	return Reservation{}, false, StatusErrorReason(http.StatusConflict, reasonStarting, errBusy)
 }
 
 // errChatClosed is the prompt's refusal when the chat's close ended it before it ran.
@@ -608,11 +519,6 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, res 
 	defer cancelPrompt(nil)
 	turn := TurnRef{Chat: chatID, Turn: turnID}
 
-	// Before StartTurn so the wait is not timed as the turn. Not on the empty-turn retry,
-	// which reaches StartTurn on its own path: this prompt just waited.
-	if roles.compactor != nil {
-		roles.compactor.AwaitCompaction(callCtx, chatID)
-	}
 	// At bridge-ready, so the model and credit baseline are captured with the bridge live and the
 	// session open is not timed.
 	if !roles.turnOutcome.StartTurn(callCtx, turn, cancelPrompt) {
@@ -651,20 +557,13 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, res 
 		roles.auth.record(nil)
 	}
 
-	// Settle this turn before deciding whether it produced nothing: the
-	// close is what settles the withheld steer carry and measures the
-	// turn, and recovery reads that measurement.
+	// The close settles the withheld steer carry and decides the turn's empty retry on the run order; the
+	// reservation goes once the turn finalized.
 	roles.turnOutcome.SettleTurnOnResponse(ctx, chatID, turnID, reply.seq, reply.resp)
-	// Capture the result while the turn handle is still held, then free the
-	// reservation so a waiting prompt is admitted before recovery's own
-	// bookkeeping runs.
-	result, aErr := roles.turnOutcome.AwaitTurn(ctx, chatID, turnID)
-	roles.admission.ReleaseTurnReservation(res)
-	if aErr != nil {
-		slog.Warn("empty turn check: no turn outcome", "chat_id", chatID, keyError, aErr)
-		return
+	if _, aErr := roles.turnOutcome.AwaitTurn(ctx, chatID, turnID); aErr != nil {
+		slog.Debug("prompt: no turn outcome to wait for", "chat_id", chatID, keyError, aErr)
 	}
-	recoverEmptyTurn(ctx, roles, sb, res, turnID, result, p, promptParams)
+	roles.admission.ReleaseTurnReservation(res)
 }
 
 // deliverParkedSteers runs between StartTurn and session/prompt under the chat's steer lock, which

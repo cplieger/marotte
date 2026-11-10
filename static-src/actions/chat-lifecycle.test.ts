@@ -22,9 +22,10 @@ vi.mock("../api-client.js", () => ({
   apiGetTyped: vi.fn(),
 }));
 import { send as transportSend } from "../transport.js";
-import { setSessions, get, setActive } from "../store.js";
+import { setSessions, get, setActive, setThinking } from "../store.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import type { Session } from "../types.js";
+import { IDLE_RUN } from "../run-order.js";
 
 const mockSend = vi.mocked(transportSend);
 const mockFetch = vi.fn();
@@ -47,6 +48,7 @@ function makeSession(id: string, extra?: Partial<Session>): Session {
     turns: new Map(),
     turn_order: [],
     turn_count: 0,
+    run: IDLE_RUN,
     has_more: false,
     thinking: false,
     working_label: "Thinking",
@@ -236,10 +238,18 @@ describe("chat.cancel_turn", () => {
     expect((cmd as { payload?: unknown }).payload).toEqual({ lead: "steer-m2" });
   });
 
-  // A skip stopped nothing: the resend the lead rode is running, so the chat shows it running.
-  it("puts the thinking state back when the server skipped the stop", async () => {
+  it("names the entry it was drawn against as its target", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, stopped: true } });
+    const { cancelTurn } = await import("./chat.js");
+    await cancelTurn.dispatch({ chatID: "c1", target: "t-1", lead: "steer-m2" });
+    const [cmd] = mockSend.mock.calls[0] ?? [];
+    expect((cmd as { payload?: unknown }).payload).toEqual({ target: "t-1", lead: "steer-m2" });
+  });
+
+  // Nothing was stopped: the chat's state is the server's, so the action changes none of it.
+  it("answers true when the server stopped nothing, and leaves the chat as it was", async () => {
     setSessions([makeSession("c1", { thinking: true })]);
-    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, skipped: true } });
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, stopped: false } });
     const { cancelTurn } = await import("./chat.js");
 
     const outcome = await cancelTurn.dispatch({ chatID: "c1", lead: "steer-m2" }).outcome;
@@ -248,32 +258,58 @@ describe("chat.cancel_turn", () => {
     expect(get("c1")!.thinking).toBe(true);
   });
 
-  it("leaves the chat idle when the stop was sent", async () => {
+  // A page that had not drawn the turn's close pressed Cancel; the close lands while the request is in flight and a
+  // compaction runs, so the server stops nothing. The composer must not latch on Steer with no turn open.
+  it("a cancel whose turn closed during the request leaves the composer off Steer", async () => {
     setSessions([makeSession("c1", { thinking: true })]);
-    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true } });
+    mockSend.mockImplementation(() => {
+      setThinking("c1", false);
+      return Promise.resolve({ ok: true, status: 200, body: { ok: true, stopped: false } });
+    });
     const { cancelTurn } = await import("./chat.js");
 
-    const outcome = await cancelTurn.dispatch({ chatID: "c1", lead: "steer-m2" }).outcome;
+    await cancelTurn.dispatch({ chatID: "c1" }).outcome;
+
+    expect(get("c1")!.thinking).toBe(false);
+  });
+
+  it("answers false when the stop was sent, and holds the answer's run order", async () => {
+    setSessions([makeSession("c1")]);
+    const run = { ...IDLE_RUN, version: 3 };
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, stopped: true, run } });
+    const { cancelTurn } = await import("./chat.js");
+
+    const outcome = await cancelTurn.dispatch({ chatID: "c1", target: "t-1" }).outcome;
 
     expect(outcome).toMatchObject({ status: "success", value: false });
-    expect(get("c1")!.thinking).toBe(false);
+    expect(get("c1")!.run?.version).toBe(3);
   });
 });
 
 describe("chat.send_queued_now", () => {
-  it("answers whether the server skipped the stop", async () => {
+  it("answers true only when a stop was asked and the server stopped nothing", async () => {
     const { sendQueuedNow } = await import("./chat.js");
-    for (const [body, skipped] of [
-      [{ ok: true, skipped: true }, true],
-      [{ ok: true }, false],
+    for (const [stop, body, nothingStopped] of [
+      ["t-1", { ok: true, stopped: false }, true],
+      ["t-1", { ok: true, stopped: true }, false],
+      [undefined, { ok: true, stopped: false }, false],
     ] as const) {
       mockSend.mockResolvedValueOnce({ ok: true, status: 200, body });
       const outcome = await sendQueuedNow.dispatch({
         chatID: "c1",
-        messageID: `m-${String(skipped)}`,
+        messageID: `m-${String(stop)}-${String(nothingStopped)}`,
+        ...(stop !== undefined ? { stop } : {}),
       }).outcome;
-      expect(outcome).toMatchObject({ status: "success", value: skipped });
+      expect(outcome).toMatchObject({ status: "success", value: nothingStopped });
     }
+  });
+
+  it("carries the stop it was drawn against", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, stopped: true } });
+    const { sendQueuedNow } = await import("./chat.js");
+    await sendQueuedNow.dispatch({ chatID: "c1", messageID: "m-q1", stop: "t-1" });
+    const [cmd] = mockSend.mock.calls[0] ?? [];
+    expect((cmd as { payload?: unknown }).payload).toEqual({ message_id: "m-q1", stop: "t-1" });
   });
 });
 
@@ -329,6 +365,7 @@ describe("chat.create", () => {
     created_at: 0,
     updated_at: 0,
     turn_count: 0,
+    run: IDLE_RUN,
   };
 
   it("sends create_chat with the op id and NO chat id", async () => {

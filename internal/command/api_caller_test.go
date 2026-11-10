@@ -45,7 +45,7 @@ type callerFixture struct {
 	opens  *openRecorder
 	store  *testsupport.InMemoryChatStore
 	steers *stubSteerQueue
-	queue  *fakeQueue
+	queue  *launchingRun
 	join   *promptJoin
 }
 
@@ -77,8 +77,8 @@ func newCallerFixture(t *testing.T) *callerFixture {
 	roles.turnOutcome = opens
 	join := &promptJoin{}
 	roles.lifecycle = join
-	queue := &fakeQueue{chat: &marotte.Chat{ID: "c1"}, live: true}
-	roles.followups = queue
+	queue := runOf(roles)
+	queue.live = true
 
 	d := New()
 	d.status = &fakeChatStatus{}
@@ -91,7 +91,7 @@ func newCallerFixture(t *testing.T) *callerFixture {
 		return cmdSteer(ctx, steerRoles, cmd)
 	})
 	d.register(marotte.CmdQueuePrompt, func(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
-		return cmdQueuePrompt(ctx, queue, cmd)
+		return cmdQueuePrompt(ctx, queue, roles.admission, cmd)
 	})
 	return &callerFixture{d: d, opens: opens, store: store, steers: steers, queue: queue, join: join}
 }
@@ -193,7 +193,7 @@ func TestPrompt_FromAnAPICallerDuringACompactionIsQueuedAttributed(t *testing.T)
 	if prompts := f.opens.prompts(); len(prompts) != 0 {
 		t.Errorf("turn opens = %v, want none while the compaction runs", prompts)
 	}
-	rows := f.queue.chat.QueuedPrompts
+	rows := f.queue.queued()
 	if len(rows) != 1 || rows[0].ID != "m-1" || rows[0].Text != "Agent Mail: 1 new message" {
 		t.Fatalf("queue = %+v, want the prompt as its one row", rows)
 	}
@@ -202,11 +202,11 @@ func TestPrompt_FromAnAPICallerDuringACompactionIsQueuedAttributed(t *testing.T)
 	}
 }
 
-func TestQueuePrompt_FromAnAPICallerIsAttributedThroughItsDrain(t *testing.T) {
+func TestQueuePrompt_FromAnAPICallerIsAttributedThroughItsLaunch(t *testing.T) {
 	f := newCallerFixture(t)
 	f.post(t, marotte.CmdQueuePrompt, "", nil)
 
-	rows := f.queue.chat.QueuedPrompts
+	rows := f.queue.queued()
 	if len(rows) != 1 {
 		t.Fatalf("queued %d rows, want 1", len(rows))
 	}
@@ -217,10 +217,11 @@ func TestQueuePrompt_FromAnAPICallerIsAttributedThroughItsDrain(t *testing.T) {
 	roles := promptRolesOf(newBenchDeps())
 	opens := &openRecorder{scriptedAdmission: &scriptedAdmission{rec: &callRecorder{}}}
 	roles.turnOutcome = opens
-	roles.followups = f.queue
 	roles.lifecycle = f.join
 	roles.bridges = &admissionHost{hostDouble: newBenchDeps(), openErr: context.Canceled, rec: &callRecorder{}}
-	sendNextUserRow(t.Context(), roles, testReservation("c1", true), TurnFence{}, nil)
+	_, _ = launchQueuedRow(t.Context(), roles, &EntryLaunch{
+		ID: rows[0].ID, Kind: marotte.RunKindRow, Row: rows[0], Res: testReservation("c1", true),
+	})
 	f.join.join()
 
 	prompts := opens.prompts()

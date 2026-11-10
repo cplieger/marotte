@@ -19,17 +19,16 @@ import type {
   ToolStatus,
 } from "./types.js";
 // From the generated wire rather than turns.ts, for one spelling of the enum.
-import type { RefusalInfo, TurnOutcome } from "./wire/types.gen.js";
+import type { RefusalInfo, RunView, TurnOutcome } from "./wire/types.gen.js";
 import type { ClassifiedRunStatus } from "./run-status.js";
 // turns.ts is a pure leaf that reaches nothing here, so this edge is one-way.
+import { IDLE_RUN, newerRun, runLive } from "./run-order.js";
 import { payloadOf } from "./turns.js";
 import { touchTurn } from "./turn-revision.js";
 import {
   foldSteerFrame,
-  pendingSteerRow,
   retireSettledSteers,
   steerEntrySettles,
-  upsertSteerRow,
   type SteerFrame,
 } from "./steer-rows.js";
 import { callIDOfToolResult } from "./entry-ids.js";
@@ -221,11 +220,9 @@ export function watchSession(id: string): Session | undefined {
 /** Whether `chatID`'s log already holds a turn this client's prompt opened. */
 export function hasMessage(chatID: string, messageID: string): boolean {
   const s = sessions.get(chatID);
-  return s !== undefined && promptOpened(s, messageID);
-}
-
-/** Whether one of `s`'s resident turns was opened by the prompt under `messageID`. */
-export function promptOpened(s: Session, messageID: string): boolean {
+  if (s === undefined) {
+    return false;
+  }
   for (const state of s.turns.values()) {
     const first = state.entries[0];
     if (first !== undefined && payloadOf(first, "turn_open")?.prompt?.id === messageID) {
@@ -235,10 +232,31 @@ export function promptOpened(s: Session, messageID: string): boolean {
   return false;
 }
 
-/** Whether the chat's header holds a queued follow-up under this message id: the acceptance test
- *  for a Queue-mode send, whose row the server keys by that id. */
+/** Whether the chat's run order holds a message under this id: the acceptance test for a send whose
+ *  answer was lost, which the server keys by that id. */
 export function hasQueued(chatID: string, messageID: string): boolean {
-  return sessions.get(chatID)?.queued?.some((q) => q.id === messageID) ?? false;
+  return sessions.get(chatID)?.run?.entries.some((e) => e.id === messageID) ?? false;
+}
+
+/** Holds an answer's `run` for `chatID` by the version rule (`newerRun`). */
+export function applyRun(chatID: string, run: RunView | undefined): void {
+  const before = sessions.get(chatID);
+  if (run === undefined || before === undefined) {
+    return;
+  }
+  sessions.update(chatID, (s) => {
+    const next = newerRun(s.run, run);
+    return next === s.run ? s : { ...s, run: next };
+  });
+  repaintOnRunLive(chatID, before.run);
+}
+
+/** The transcript's cards read `sessionBusy` (Rewind's state), so a run order whose liveness flipped repaints them. */
+function repaintOnRunLive(chatID: string, before: RunView | undefined): void {
+  const after = sessions.get(chatID)?.run;
+  if (runLive(before ?? IDLE_RUN) !== runLive(after ?? IDLE_RUN)) {
+    scheduleMessages(chatID, "fact");
+  }
 }
 
 export function setSessions(v: Session[]): void {
@@ -404,12 +422,11 @@ export function isThinking(id: string): boolean {
   return get(id)?.thinking ?? false;
 }
 
-/** Is a turn RUNNING as Send and every mid-turn gate read it? `thinking` alone misses a turn the
- *  agent started itself until it streams, and a prompt sent beside that turn cancels it;
- *  `turnLive` alone misses Send's optimistic window before `turn_opened`. `/drop` waives the
- *  turns open when it ran (`Session.turn_dropped`). */
+/** Is a turn RUNNING as every mid-turn gate reads it: the server's run order has a live turn at its
+ *  head, or the transcript holds an open turn its header has not shown yet. `/drop` waives both
+ *  (`Session.turn_dropped`). */
 export function sessionBusy(s: Session): boolean {
-  return s.thinking || (s.turn_dropped !== true && turnLive(s));
+  return s.turn_dropped !== true && (runLive(s.run ?? IDLE_RUN) || turnLive(s));
 }
 
 /** `sessionBusy` by id, untracked. */
@@ -674,60 +691,9 @@ export function setWorkingLabel(id: string, label: string): void {
 // `session.steers` is what the agent has NOT read: the bottom dock's rows. A row that has left the
 // dock is a `steer` ENTRY of the turn it landed in, so this field is the dock and nothing else.
 
-/** The steer id KAS will return for a message id. `internal/marotte/commands.go` documents the
- *  convention (`"steer-" + messageID`) and `internal/command/steer_test.go` pins it. Deriving it
- *  is what lets the optimistic row be reconciled by a plain id match: the POST's reply carries
- *  the authoritative id, but `transportAction` discards the body. */
-export function steerIDFor(messageID: string): string {
-  return `steer-${messageID}`;
-}
-
-/** Whether the server holds this send's steer: a frame confirmed its row, or the log read it. */
-export function holdsSteer(chatID: string, messageID: string): boolean {
-  const s = get(chatID);
-  if (s === undefined) {
-    return false;
-  }
-  const steerID = steerIDFor(messageID);
-  return (
-    s.steers?.some((e) => e.id === steerID && e.pending !== true) === true ||
-    holdsSteerEntry(s, steerID)
-  );
-}
-
 /** Number of steers waiting for the agent, confirmed or still in flight. */
 export function steerCount(id: string): number {
   return get(id)?.steers?.length ?? 0;
-}
-
-/** Record a steer this client has just POSTed, before any server frame. `pending` says the id is
- *  DERIVED rather than confirmed, which is what the dock reads to withhold Edit and Discard —
- *  there is no server-side id to clear yet. Rolled back by `forgetSteer`. */
-export function recordSteerSent(id: string, messageID: string, text: string): void {
-  const s = get(id);
-  if (s === undefined || messageID === "") {
-    return;
-  }
-  // Idempotent by id: submit.ts reuses one message id when retrying a failed attempt, and that
-  // retry must refresh the row rather than add a second.
-  const next = upsertSteerRow(s.steers ?? [], pendingSteerRow(steerIDFor(messageID), text));
-  sessions.update(id, (cur) => ({ ...cur, steers: [...next] }));
-  scheduleMessages(id, "fact"); // the dock row is transcript-adjacent state
-}
-
-/** Un-draw one steer row; the rollback half of `recordSteerSent`. Removes only that row, and only
- *  while it is still pending: a row a frame confirmed is the server's, whatever the reply said. */
-export function forgetSteer(id: string, steerID: string): void {
-  const s = get(id);
-  if (s?.steers === undefined) {
-    return;
-  }
-  const rest = s.steers.filter((e) => e.id !== steerID || e.pending !== true);
-  if (rest.length === s.steers.length) {
-    return;
-  }
-  sessions.update(id, (cur) => withSteers(cur, rest));
-  scheduleMessages(id, "fact");
 }
 
 /** Adopt one `steer_queued` frame (`steer-rows.ts` `foldSteerFrame` owns the rules). */
@@ -746,21 +712,19 @@ export function recordSteerQueued(id: string, frame: SteerFrame): void {
   }
 }
 
-/** Remove every CONFIRMED waiting steer, returning a snapshot to restore from. The optimistic
- *  half of `chat.clear_steers`; a discarded row leaves on the server's `removed` frame and writes
- *  no transcript entry. A `pending` entry STAYS — it is not in KAS's buffer yet, so removing it
- *  locally would hide a message still on its way. */
+/** Remove every waiting steer, returning a snapshot to restore from. The optimistic half of
+ *  `chat.clear_steers`; a discarded row leaves on the server's `removed` frame and writes no
+ *  transcript entry. A chat's rows all come from the server's frames, so none is still on its way. */
 export function dropConfirmedSteers(id: string): readonly PendingSteer[] {
   const s = get(id);
   if (s?.steers === undefined) {
     return [];
   }
   const prev = s.steers;
-  const rest = prev.filter((e) => e.pending === true);
-  if (rest.length === prev.length) {
+  if (prev.length === 0) {
     return [];
   }
-  sessions.update(id, (cur) => withSteers(cur, rest));
+  sessions.update(id, (cur) => withSteers(cur, []));
   scheduleMessages(id, "fact");
   return prev;
 }
@@ -851,10 +815,7 @@ export function upsertHeader(h: ChatHeader): void {
         pending_effort: h.pending_effort ?? "",
         // Both are header-authoritative: an absent field is steer and no follow-ups.
         interrupt_mode: h.interrupt_mode ?? "steer",
-        queued: h.queued_prompts ?? [],
-        compact_queued: h.compact_pending !== undefined,
-        compact_running: h.compact_pending?.running === true,
-        compact_sends: h.compact_pending?.sends === true,
+        run: newerRun(s.run, h.run),
         tangent: h.tangent ?? false,
       };
       if (h.compaction_watermark !== undefined) {
@@ -873,6 +834,7 @@ export function upsertHeader(h: ChatHeader): void {
       next.updated_at = h.updated_at;
       return next;
     });
+    repaintOnRunLive(h.id, existing.run);
     return;
   }
   const s: Session = {
@@ -893,10 +855,7 @@ export function upsertHeader(h: ChatHeader): void {
     pending_model: h.pending_model ?? "",
     pending_effort: h.pending_effort ?? "",
     interrupt_mode: h.interrupt_mode ?? "steer",
-    queued: h.queued_prompts ?? [],
-    compact_queued: h.compact_pending !== undefined,
-    compact_running: h.compact_pending?.running === true,
-    compact_sends: h.compact_pending?.sends === true,
+    run: newerRun(undefined, h.run),
     tangent: h.tangent ?? false,
     turns: new Map(),
     turn_order: [],

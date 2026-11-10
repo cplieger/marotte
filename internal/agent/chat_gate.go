@@ -34,7 +34,7 @@ type chatGates struct {
 }
 
 type gateState struct {
-	// idle is made when holds leaves 0 and closed when it returns there; nil while idle.
+	// idle is made when holds leaves 0 and closed when it returns there, and replaced at each commit; nil while idle.
 	idle chan struct{}
 	// last is seq at the chat's newest committed hold.
 	last  uint64
@@ -77,8 +77,8 @@ func (g *chatGates) hold(chatID marotte.ChatID) *gateHold {
 	return &gateHold{g: g, chatID: chatID}
 }
 
-// commit records that the close this hold guards committed: every stamp taken before it is ended for the chat. A
-// commit after the hold's release does nothing and answers false.
+// commit records that the close this hold guards committed: every stamp taken before it is ended for the chat, and
+// the admissions it parked wake to read that. A commit after the hold's release does nothing and answers false.
 func (h *gateHold) commit() bool {
 	h.g.mu.Lock()
 	defer h.g.mu.Unlock()
@@ -86,7 +86,10 @@ func (h *gateHold) commit() bool {
 		return false
 	}
 	h.g.seq++
-	h.g.chats[h.chatID].last = h.g.seq
+	st := h.g.chats[h.chatID]
+	st.last = h.g.seq
+	close(st.idle)
+	st.idle = make(chan struct{})
 	return true
 }
 

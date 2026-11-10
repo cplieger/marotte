@@ -75,7 +75,6 @@ type Store struct {
 	locks           sync.Map
 	logs            sync.Map
 	keep            keepSets
-	dequeued        dequeues
 	listScans       listFlight
 	dir             string
 	index           searchIndex
@@ -274,18 +273,9 @@ func (s *Store) saveLocked(ctx context.Context, chatID marotte.ChatID, mutate fu
 			return "", nil, exists, err
 		}
 	}
-	stripped := exists && s.dequeued.strip(chatID, c)
 	originalCreatedAt := c.CreatedAt
 	if !mutate(c, exists) {
-		if !stripped {
-			return "", nil, exists, nil
-		}
-		// The mutator declined and may have touched c, so the pending removal is
-		// written alone from a fresh read.
-		if c, err = s.load(ctx, chatID); err != nil {
-			return "", nil, exists, err
-		}
-		s.dequeued.strip(chatID, c)
+		return "", nil, exists, nil
 	}
 	// A reassigned id would let s.save write under a mismatched per-chat mutex.
 	if c.ID != string(chatID) {
@@ -302,9 +292,6 @@ func (s *Store) saveLocked(ctx context.Context, chatID marotte.ChatID, mutate fu
 	}
 	if err := s.save(ctx, chatID, c); err != nil {
 		return "", nil, exists, err
-	}
-	if stripped {
-		s.dequeued.settle(chatID)
 	}
 	if !exists {
 		s.markReconciled(chatID)

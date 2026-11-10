@@ -321,16 +321,8 @@ type TurnStop struct {
 	Chat marotte.ChatID
 	// Token names the stop's send hold.
 	Token uint64
-	// Admitted names the reservation of a prompt admitted as Next would be but whose turn has not opened; zero for
-	// none. The turn that reservation opens is kept unsent.
-	Admitted uint64
 	// Wire reports Own as an open turn KAS started.
 	Wire bool
-}
-
-// targetless reports a stop that captured no turn, sent or unsent.
-func (s *TurnStop) targetless() bool {
-	return !s.Own.Named() && !s.Call.Named() && !s.Next.Named() && s.Admitted == 0
 }
 
 // ErrPromptStopped fails a prompt the reader stopped before its session/prompt was sent; it concludes cancelled.
@@ -437,33 +429,7 @@ type lifecycleAccess interface {
 	GoUnlessDraining(fn func()) bool
 }
 
-// AdmissionOutcome is ReserveTurnForPrompt's answer.
-type AdmissionOutcome int
-
-const (
-	// AdmissionAcquired means the caller holds the chat's admission slot.
-	AdmissionAcquired AdmissionOutcome = iota
-	// AdmissionBusy is the holder a steer can reach
-	// (marotte.TurnOpenSource.SteerableHolder). Answered as the plain 409, on
-	// which the client steers or queues, per the chat's mode.
-	AdmissionBusy
-	// AdmissionStarting is the fail-closed answer when no steerable holder can take
-	// the prompt: a cold session open, a rewind, or a run or close hold kiro-cli
-	// reports with no steerable turn. Answered as 409 with the additive
-	// `reason: "starting"`, which hands the text back.
-	AdmissionStarting
-	// AdmissionClosed is a prompt whose stamp predates a committed close of the chat: the close ended it before it
-	// ran. Answered as 409 `reason: "chat_closed"`; the page keeps the text as the chat's draft.
-	AdmissionClosed
-	// AdmissionChatGone is a chat whose record was deleted or whose purge teardown
-	// still runs: nothing was reserved. Answered as 409 `reason: "chat_not_found"`.
-	AdmissionChatGone
-	// AdmissionCompacting is a prompt kiro-cli's state held (a stopped run's hold) while a
-	// compaction claimed on the chat: nothing was reserved, and the prompt queues behind it.
-	AdmissionCompacting
-)
-
-// IdleAdmission is ReserveIdleTurn's answer.
+// IdleAdmission is runQueue.TakeIdle's answer.
 type IdleAdmission int
 
 const (
@@ -479,36 +445,12 @@ const (
 	IdleChatGone
 )
 
-// turnAdmission is the chat's admission slot as the command handlers hold it:
-// a bare per-chat reservation decided before any turn exists, plus the read
-// that says who holds it. Separate from turnOutcomeAccess because the steer reads
-// the holder and the rewind reserves the slot, and neither opens a turn.
+// turnAdmission is the chat's admission slot as the command handlers read and release it; the run order
+// (runQueue) is its only taker.
 type turnAdmission interface {
 	// LifeStamp is the chat life gate's position now. A caller takes it where its intent toward a chat begins and
 	// presents it to a reserve: a close that commits after it ends that intent.
 	LifeStamp() uint64
-	// ReserveTurnForPrompt takes the chat's admission slot for a prompt whose intent began at stamp, minting no
-	// turn: a bare per-chat reservation, decided synchronously before any bridge exists. A held slot or a held
-	// close parks the caller up to wait; the refusal is keyed on the holder's source (see AdmissionOutcome).
-	// messageID names the prompt to a close's impact read until its turn opens.
-	ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration, stamp uint64, messageID string) (AdmissionOutcome, Reservation)
-	// ReserveTurn takes the admission slot for a caller whose intent began at stamp, waiting up to wait for a holder
-	// that is not a running turn (a close's drain
-	// looking for a queued prompt, a closing turn, a held close), refusing at once beside a turn marotte or kiro-cli
-	// runs. It answers as ReserveIdleTurn does.
-	ReserveTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration) (IdleAdmission, Reservation)
-	// TryReserveIdleTurn takes the admission slot iff it is free, no close is held or committed since stamp and no
-	// turn is open without a reservation (a wire turn), checked in one acquisition and never waiting.
-	TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (Reservation, bool)
-	// ReserveIdleTurn is TryReserveIdleTurn that waits up to wait for a holder that is not a running turn (a bare
-	// reservation, a closing turn, a held close); a turn marotte or kiro-cli runs answers IdleTurnOpen at once. The
-	// Reservation is the zero one unless the answer is IdleAcquired.
-	ReserveIdleTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration) (IdleAdmission, Reservation)
-	// TryReserveDrain is a close's drain picking its prompt: it takes the admission slot iff it is free, never
-	// waiting, and refuses once cl.Fence no longer holds, sparing a reservation the open would refuse. Either way it
-	// ends cl.Tail's hold on the chat's session in the same step, so the session never stands unheld between the
-	// close's tail and the drained prompt.
-	TryReserveDrain(chatID marotte.ChatID, cl CloseFacts) (Reservation, bool)
 	// AwaitNoClose waits until no close of chatID is being decided or torn down, reporting whether it waited; a ctx
 	// end answers the ctx's error. It admits nothing.
 	AwaitNoClose(ctx context.Context, chatID marotte.ChatID) (waited bool, err error)
@@ -555,6 +497,9 @@ type TurnOpen struct {
 	Replaces string
 	Source   marotte.TurnOpenSource
 	Fence    TurnFence
+	// Admission is the take's reservation token for a prompt-class open: an open whose reservation a stop withdrew
+	// is refused with ErrTakeWithdrawn.
+	Admission uint64
 	// Awaited takes a second completion handle for a caller that awaits the turn
 	// past its runner's release; that caller releases it.
 	Awaited bool
@@ -606,15 +551,9 @@ type turnOutcomeAccess interface {
 	// there first. seq is the read loop position the response arrived at, and the
 	// settle parks until the folder reaches it.
 	SettleTurnOnResponse(ctx context.Context, chatID marotte.ChatID, turnID string, seq uint64, resp *marotte.RPCResponse)
-	// TurnOpenedAfter reports whether any own turn on the chat opened after
-	// turnID — the structural half of the empty-turn gate.
-	TurnOpenedAfter(chatID marotte.ChatID, turnID string) bool
 	// TurnIsOpen reports whether turnID is an open, non-finalizing turn of the chat's
 	// current life. False once a close committed: an old prompt then touches no record.
 	TurnIsOpen(chatID marotte.ChatID, turnID string) bool
-	// StopRequestedAfter reports whether any stop (marotte.TurnStopCause) was
-	// requested after turnID opened — the empty-turn retry's consent clause.
-	StopRequestedAfter(chatID marotte.ChatID, turnID string) bool
 	// AbandonInFlightTurn finalizes a turn the prompt call could not finish, and
 	// the prompt's exits before any call. stop is what the failure CONCLUDES —
 	// `interrupted` for a fault, `cancelled` for a user cancel KAS never acked — and
@@ -639,26 +578,14 @@ type signInReach interface {
 	ProviderUnreachable() (reason string, ok bool)
 }
 
-// compactionAwaiter holds a prompt until the chat's running compaction returns, so its session/prompt does not abort
-// the compaction; it never refuses the send.
-type compactionAwaiter interface {
-	AwaitCompaction(ctx context.Context, chatID marotte.ChatID)
-}
-
 // compactRequester takes the reader's compaction requests.
 type compactRequester interface {
 	// RequestCompact compacts the chat now, or queues the compaction for the running turn's close. An error is the
 	// engine call's.
 	RequestCompact(ctx context.Context, chatID marotte.ChatID) (CompactOutcome, error)
-	// CancelCompact drops a queued compaction; none queued is success. A running call is not stopped, but is never
-	// queued again.
-	CancelCompact(ctx context.Context, chatID marotte.ChatID) error
-}
-
-// chatCompactor is every compaction role, one owner for all of a chat's compactions.
-type chatCompactor interface {
-	compactionAwaiter
-	compactRequester
+	// CancelCompact withdraws the compaction entry id ("" names the chat's one): a pending one goes, a running one
+	// is not stopped but never comes back queued; a stale id is success.
+	CancelCompact(ctx context.Context, chatID marotte.ChatID, id string) error
 }
 
 // SteerRecorder is what the steer commands need of the steer ledger: record that
@@ -916,8 +843,8 @@ type Roles struct {
 	// Steers records the steers this server sent, so the translate layer can
 	// tell the user's own words from a workflow reporting into the same buffer.
 	Steers SteerRecorder
-	// Queue appends a follow-up only while the chat's turn is live.
-	Queue QueueAccess
+	// Run is the chat's run order: every send, queued row, compaction, revert and summary is an entry on it.
+	Run runQueue
 	// SteerQueue is the server's record of the user's steers and KAS's buffer,
 	// and SteerJobs the same record as the close pipeline drives it.
 	SteerQueue SteerQueue
@@ -927,9 +854,8 @@ type Roles struct {
 	Status chatStatus
 	// AuthReadiness carries prompt authentication outcomes to readiness.
 	AuthReadiness *AuthReadiness
-	// Compactor owns every compaction: the reader's requests, and the wait a prompt makes for a running one. Nil
-	// sends with no wait.
-	Compactor chatCompactor
+	// Compactor takes the reader's compaction requests, which the run order places.
+	Compactor compactRequester
 	// SignIn tells an unreachable identity provider apart from a refused credential. Nil reads every
 	// credential failure as one a sign-in fixes.
 	SignIn signInReach
@@ -968,8 +894,7 @@ type promptRoles struct {
 	steers      SteerRecorder
 	queue       SteerQueue
 	jobs        SteerJobs
-	followups   QueueAccess
-	compactor   compactionAwaiter
+	runq        runQueue
 	sendGate    promptSendGate
 	auth        *AuthReadiness
 	signIn      signInReach

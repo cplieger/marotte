@@ -4,6 +4,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as Persist from "./persist.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
+import { runAt, turnEntry } from "./__test-helpers__/run-order.js";
+
+let runVersion = 0;
+
+/** The server's run order for chatID: a running turn when busy, else nothing. */
+function setBusy(chatID: string, busy: boolean): void {
+  runVersion += 1;
+  store.applyRun(
+    chatID,
+    busy
+      ? runAt(runVersion, [turnEntry("t-live")], { cancel: "t-live", send: "steer" })
+      : runAt(runVersion, []),
+  );
+}
 
 const dispatch = vi.fn();
 vi.mock("./actions/chat.js", () => ({
@@ -112,7 +126,7 @@ describe("handleTypedCommand", () => {
   // The server queues a compaction asked for mid-turn and runs it at the turn's end.
   it("dispatches /compact mid-turn and refuses nothing", () => {
     seedConversation();
-    store.setThinking("c1", true);
+    setBusy("c1", true);
     expect(handleTypedCommand("c1", "/compact")).toBe(true);
     expect(dispatch).toHaveBeenCalledExactlyOnceWith({ chatID: "c1" });
     expect(toasts).toEqual([]);
@@ -290,7 +304,7 @@ describe("handleTypedCommand /drop", () => {
     );
     store.setActive(ids[0] ?? "");
     for (const id of ids) {
-      store.setThinking(id, true);
+      setBusy(id, true);
     }
   }
 
@@ -301,7 +315,7 @@ describe("handleTypedCommand /drop", () => {
     expect(toastChats).toEqual(["c1"]);
   });
 
-  it("returns the composer to prompt mode by clearing thinking", () => {
+  it("returns the composer to prompt mode", () => {
     seedThinking("c1");
     expect(store.isBusy("c1")).toBe(true);
     expect(handleTypedCommand("c1", "/drop")).toBe(true);
@@ -311,10 +325,10 @@ describe("handleTypedCommand /drop", () => {
   });
 
   // A turn the client holds open with no close (one the agent started, or one whose close never
-  // arrived) is what `isBusy` reads besides `thinking`, so `/drop` has to waive it too.
+  // arrived) is what `isBusy` reads besides the run order, so `/drop` has to waive it too.
   it("returns the composer to prompt mode beside an open turn that never streamed", () => {
     seedThinking("c1");
-    store.setThinking("c1", false);
+    setBusy("c1", false);
     store.openTurn("c1", {
       id: "t-wake-open",
       turn: "t-wake",
@@ -343,7 +357,7 @@ describe("handleTypedCommand /drop", () => {
 
   it("claims the verb on an idle chat rather than sending it to the model", () => {
     seedThinking("c1");
-    store.setThinking("c1", false);
+    setBusy("c1", false);
     expect(handleTypedCommand("c1", "/drop")).toBe(true);
     expect(toasts.at(-1)).toContain("No turn is running");
   });
@@ -358,7 +372,7 @@ describe("handleTypedCommand /drop", () => {
   it("does not claim /drop with arguments", () => {
     seedThinking("c1");
     expect(handleTypedCommand("c1", "/drop this turn")).toBe(false);
-    expect(store.isThinking("c1")).toBe(true);
+    expect(store.isBusy("c1")).toBe(true);
   });
 });
 
@@ -400,7 +414,7 @@ describe("handleTypedCommand /tangent merge", () => {
 
   it("refuses mid-turn rather than queueing a summary behind the turn", () => {
     seed(true);
-    store.setThinking("c1", true);
+    setBusy("c1", true);
     expect(handleTypedCommand("c1", "/tangent merge")).toBe(true);
     expect(toasts).toEqual(["Wait for this turn to finish, then merge."]);
   });
@@ -446,12 +460,12 @@ describe("handleTypedCommand /clear", () => {
         working_label: "Thinking",
       },
     ]);
-    store.setThinking("c1", true);
+    setBusy("c1", true);
     expect(handleTypedCommand("c1", "/CLEAR")).toBe(true);
     await vi.waitFor(() => {
       expect(createSession).toHaveBeenCalledTimes(1);
     });
-    expect(store.isThinking("c1")).toBe(true);
+    expect(store.isBusy("c1")).toBe(true);
     expect(dispatch).not.toHaveBeenCalled();
   });
 
@@ -487,7 +501,7 @@ describe("handleTypedCommand inspect verbs", () => {
         working_label: "Thinking",
       },
     ]);
-    store.setThinking("c1", thinking);
+    setBusy("c1", thinking);
   }
 
   beforeEach(() => {

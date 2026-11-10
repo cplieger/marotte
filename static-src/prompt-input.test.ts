@@ -7,12 +7,15 @@ import { signal } from "@cplieger/ui";
 import { createPopup } from "@cplieger/ui/popup";
 import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { refreshContextUI } from "./context-ui.js";
-import { setSessions, setActive, setChatInterruptMode, openTurn } from "./store.js";
-import type { Session } from "./types.js";
+import { setSessions, setActive } from "./store.js";
+import type { RunView, Session } from "./types.js";
+import { compactionEntry, runAt, turnEntry } from "./__test-helpers__/run-order.js";
 
 const CHAT = "c1";
 
 const submitted: string[] = [];
+/** What the next send answers with: undefined clears the box at once, a promise holds it until it settles. */
+let answer: Promise<unknown> | undefined;
 const cancelled = vi.fn();
 const editLast = vi.fn();
 
@@ -98,6 +101,7 @@ beforeAll(() => {
   initPromptInput(
     (text: string) => {
       submitted.push(text);
+      return answer;
     },
     cancelled,
     staged,
@@ -136,6 +140,29 @@ beforeEach(() => {
   type("");
   staged.value = false;
   submitted.length = 0;
+  answer = undefined;
+});
+
+function sendButton(): HTMLButtonElement {
+  return document.getElementById("send-btn") as HTMLButtonElement;
+}
+
+/** The active chat with the server's run order `run`. */
+function withRun(run: RunView): void {
+  setSessions([{ ...makeSession([]), run }]);
+  setActive(CHAT);
+}
+
+const STEERING = runAt(1, [turnEntry("t1")], {
+  send: "steer",
+  cancel: "t1",
+  next_wait: { after: "turns", turns: 1, this: true },
+});
+
+const QUEUEING = runAt(1, [turnEntry("t1", { steerable: false })], {
+  send: "queue",
+  cancel: "t1",
+  next_wait: { after: "turns", turns: 1, this: true },
 });
 
 describe("prompt history cycling", () => {
@@ -296,6 +323,63 @@ describe("send", () => {
     expect(input().value).toBe("");
   });
 
+  it("holds the text read-only while the send is in flight, and clears it when the answer lands", async () => {
+    let settle: (v: string) => void = () => undefined;
+    const sending = new Promise<string>((resolve) => {
+      settle = resolve;
+    });
+    answer = sending;
+    type("hello");
+    press("Enter");
+    expect(input().value).toBe("hello");
+    expect(input().readOnly).toBe(true);
+    expect(sendButton().getAttribute("aria-busy")).toBe("true");
+
+    press("Enter");
+    expect(submitted, "no second send while one is in flight").toEqual(["hello"]);
+
+    settle("queued");
+    await sending;
+    await Promise.resolve();
+    expect(input().value).toBe("");
+    expect(input().readOnly).toBe(false);
+    expect(sendButton().hasAttribute("aria-busy")).toBe(false);
+  });
+
+  it("holds only the chat whose send is in flight", async () => {
+    let settle: (v: string) => void = () => undefined;
+    const sending = new Promise<string>((resolve) => {
+      settle = resolve;
+    });
+    answer = sending;
+    type("first");
+    press("Enter");
+    expect(input().readOnly).toBe(true);
+
+    setSessions([makeSession([]), { ...makeSession([]), id: "c2" }]);
+    setActive("c2");
+    type("second");
+    answer = undefined;
+    press("Enter");
+    expect(submitted).toEqual(["first", "second"]);
+    expect(input().readOnly).toBe(false);
+
+    settle("queued");
+    await sending;
+    await Promise.resolve();
+  });
+
+  it("keeps the text when the send is refused", async () => {
+    const sending = Promise.resolve("failed");
+    answer = sending;
+    type("hello");
+    press("Enter");
+    await sending;
+    await Promise.resolve();
+    expect(input().value).toBe("hello");
+    expect(input().readOnly).toBe(false);
+  });
+
   it("sends once per Enter, not once per gesture-plus-event", () => {
     // A synthetic submit event dispatched from the keydown handler ran the send AND then let the
     // native submission proceed; one keystroke has to mean one send and nothing else.
@@ -411,15 +495,15 @@ describe("a full context", () => {
 // While a turn runs the placeholder names what Send will do with the text, and it follows the
 // active chat's mode without a send-state change.
 describe("the busy placeholder", () => {
-  it("names the chat's mode while a turn streams, and drops it once idle", () => {
+  it("names what the server's run order does with a send, and drops it once idle", () => {
     const box = input();
-    setSendState({ kind: "streaming" });
+    withRun(STEERING);
     expect(box.placeholder).toBe("Steer the agent mid-turn...");
 
-    setChatInterruptMode(CHAT, "queue");
+    withRun(QUEUEING);
     expect(box.placeholder).toBe("Queue a follow-up for after this turn...");
 
-    setSendState({ kind: "idle" });
+    withRun(runAt(2, []));
     expect(box.placeholder).toBe("Message Kiro...");
   });
 });
@@ -661,8 +745,8 @@ describe("the mid-turn Send", () => {
     expect(midTurn().hidden).toBe(true);
   });
 
-  it("names a steer in steer mode, apart from Cancel", () => {
-    setChatInterruptMode(CHAT, "steer");
+  it("names a steer when the server steers a send, apart from Cancel", () => {
+    withRun(STEERING);
     setSendState({ kind: "streaming" });
     type("hello");
     expect(midTurn().getAttribute("aria-label")).toBe("Steer the running turn");
@@ -671,106 +755,40 @@ describe("the mid-turn Send", () => {
     expect(sendBtn().getAttribute("aria-label")).toBe("Cancel this turn");
   });
 
-  it("names a queued follow-up in queue mode, and repaints when the mode changes", () => {
-    setChatInterruptMode(CHAT, "queue");
+  it("names a queued follow-up when the server queues a send, and repaints when that changes", () => {
+    withRun(QUEUEING);
     setSendState({ kind: "streaming" });
     type("hello");
     expect(midTurn().getAttribute("aria-label")).toBe("Queue for after this turn");
     expect(midTurn().getAttribute("data-tooltip")).toBe("Queue for after this turn");
     expect(midTurn().querySelector(".send-btn-label")?.textContent).toBe("Queue");
 
-    setChatInterruptMode(CHAT, "steer");
+    withRun(STEERING);
+    type("hello");
     expect(midTurn().getAttribute("aria-label")).toBe("Steer the running turn");
   });
 
-  it("names the turn a follow-up queued behind others will wait for", () => {
-    setSessions([
-      {
-        ...makeSession([]),
-        turn_open: true,
-        interrupt_mode: "queue",
-        queued: [
-          { id: "m-q1", text: "first" },
-          { id: "m-q2", text: "second" },
-        ],
-      },
-    ]);
-    setActive(CHAT);
+  it("names the wait the server gives a message queued now", () => {
+    withRun({ ...QUEUEING, next_wait: { after: "turns", turns: 3 } });
     setSendState({ kind: "streaming" });
     type("hello");
     expect(midTurn().getAttribute("aria-label")).toBe("Queue for after 3 turns");
     expect(midTurn().getAttribute("data-tooltip")).toBe("Queue for after 3 turns");
     expect(input().placeholder).toBe("Queue a follow-up for after 3 turns...");
-
-    setSessions([{ ...makeSession([]), turn_open: true, interrupt_mode: "queue", queued: [] }]);
-    expect(midTurn().getAttribute("aria-label")).toBe("Queue for after this turn");
   });
 
-  it("names this turn in Send's window before the turn opens", () => {
-    setSessions([{ ...makeSession([]), thinking: true, interrupt_mode: "queue", queued: [] }]);
-    setActive(CHAT);
-    setSendState({ kind: "streaming" });
-    type("hello");
-    expect(midTurn().getAttribute("aria-label")).toBe("Queue for after this turn");
-    expect(input().placeholder).toBe("Queue a follow-up for after this turn...");
-  });
-
-  it("says a message waits for a running compaction, and goes back once it ends", () => {
-    setSessions([{ ...makeSession([]), compact_queued: true, compact_running: true, queued: [] }]);
-    setActive(CHAT);
+  it("says a message waits for a compaction, and goes back once it ends", () => {
+    withRun(
+      runAt(1, [compactionEntry("compact-1", { after: "running" })], {
+        send: "queue",
+        next_wait: { after: "compaction" },
+      }),
+    );
     setSendState({ kind: "idle" });
     expect(input().placeholder).toBe("Queue a message for after the compaction...");
 
-    setSessions([
-      { ...makeSession([]), compact_queued: false, compact_running: false, queued: [] },
-    ]);
+    withRun(runAt(2, []));
     expect(input().placeholder).toBe("Message Kiro...");
-  });
-
-  it("names this turn while a turn the agent started has not streamed", () => {
-    setSessions([{ ...makeSession([]), interrupt_mode: "queue", queued: [] }]);
-    setActive(CHAT);
-    openTurn(CHAT, {
-      id: "tw-open",
-      turn: "tw",
-      kind: "turn_open",
-      seq: 0,
-      ts: 1,
-      payload: { source: "wire_turn_start", n: 1 },
-    });
-    setSendState({ kind: "streaming" });
-    type("hello");
-    expect(midTurn().getAttribute("aria-label")).toBe("Queue for after this turn");
-  });
-
-  it("stops counting a follow-up once its turn opens", () => {
-    setSessions([
-      {
-        ...makeSession([]),
-        turn_open: true,
-        interrupt_mode: "queue",
-        queued: [
-          { id: "m-q1", text: "first" },
-          { id: "m-q2", text: "second" },
-        ],
-      },
-    ]);
-    setActive(CHAT);
-    setSendState({ kind: "streaming" });
-    type("hello");
-    expect(midTurn().getAttribute("aria-label")).toBe("Queue for after 3 turns");
-
-    openTurn(CHAT, {
-      id: "tq-open",
-      turn: "tq",
-      kind: "turn_open",
-      seq: 0,
-      ts: 1,
-      payload: { source: "prompt", n: 1, prompt: { id: "m-q1", text: "first" } },
-    });
-
-    expect(midTurn().getAttribute("aria-label")).toBe("Queue for after 2 turns");
-    expect(input().placeholder).toBe("Queue a follow-up for after 2 turns...");
   });
 
   it("sends the box through the composer's send path, then empties it and hides", () => {

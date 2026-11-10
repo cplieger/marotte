@@ -185,25 +185,6 @@ func (d *Dispatcher) ResolveAfterClose(ctx context.Context, chatID marotte.ChatI
 	return resolveAfterClose(ctx, d.prompts, chatID, fence)
 }
 
-// DrainAfterClose sends at most one prompt for a close: the chat's unread steers,
-// else one queued user row after a clean close (see drainAfterClose).
-func (d *Dispatcher) DrainAfterClose(ctx context.Context, chatID marotte.ChatID, closed CloseFacts, ends EndFacts) {
-	if d.prompts == nil || d.prompts.queue == nil {
-		return
-	}
-	drainAfterClose(ctx, d.prompts, chatID, closed, ends)
-}
-
-// DrainAfterCompaction settles a compaction that ran on an idle chat and sends at most
-// one prompt after it (see drainAfterCompaction).
-func (d *Dispatcher) DrainAfterCompaction(ctx context.Context, chatID marotte.ChatID, settle func(Reservation)) {
-	if d.prompts == nil || d.prompts.queue == nil || d.prompts.followups == nil {
-		settle(Reservation{})
-		return
-	}
-	drainAfterCompaction(ctx, d.prompts, chatID, settle)
-}
-
 type errorResponse struct {
 	// Impact is what a close refused with close_impact_changed would stop. See statusErrorImpact.
 	Impact *marotte.CloseImpact `json:"impact,omitempty"`

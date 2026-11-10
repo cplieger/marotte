@@ -7,8 +7,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const {
   mockSendPromptTo,
-  mockSteer,
-  mockQueue,
   mockTakeAttachments,
   mockAddAttachmentTo,
   mockAttachmentGeneration,
@@ -20,8 +18,6 @@ const {
   mockChatNotice,
 } = vi.hoisted(() => ({
   mockSendPromptTo: vi.fn(),
-  mockSteer: vi.fn(),
-  mockQueue: vi.fn(),
   mockTakeAttachments: vi.fn(() => [] as unknown[]),
   mockAddAttachmentTo: vi.fn(),
   mockAttachmentGeneration: vi.fn(() => 0),
@@ -35,10 +31,6 @@ const {
 
 vi.mock("./chat-commands.js", () => ({ sendPromptTo: mockSendPromptTo }));
 vi.mock("./notice-subject.js", () => ({ chatNotice: mockChatNotice }));
-vi.mock("./actions/chat.js", () => ({
-  steerChat: { dispatch: mockSteer },
-  queuePrompt: { dispatch: mockQueue },
-}));
 vi.mock("./typed-commands.js", () => ({
   handleTypedCommand: mockTypedCommand,
   terminalCommandRefusal: () => null,
@@ -120,7 +112,6 @@ describe("submitPrompt on a 409 chat_not_found refusal", () => {
   it("never attempts a steer, because there is no turn to join", async () => {
     resetStore("c1");
     await submitPrompt("c1", "hello");
-    expect(mockSteer).not.toHaveBeenCalled();
     expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
   });
 
@@ -153,8 +144,6 @@ describe("submitPrompt on a 409 chat_closed refusal", () => {
   it("never steers or queues the text, because the closed chat's turn is gone", async () => {
     resetStore("c1");
     await submitPrompt("c1", "hello");
-    expect(mockSteer).not.toHaveBeenCalled();
-    expect(mockQueue).not.toHaveBeenCalled();
     expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
   });
 

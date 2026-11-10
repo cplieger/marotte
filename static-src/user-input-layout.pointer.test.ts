@@ -245,7 +245,7 @@ function queueSteers(host: Host, count: number): HTMLUListElement {
     origin: "user",
   }));
   mountSteerStack(stack, {
-    read: () => ({ id: "c1", steers, queued: [] }),
+    read: () => ({ id: "c1", steers }),
     edit: () => Promise.resolve(),
     editByClear: () => Promise.resolve(),
     remove: () => Promise.resolve(),

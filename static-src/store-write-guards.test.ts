@@ -2,6 +2,7 @@
 // it.
 import { describe, it, expect, beforeEach } from "vitest";
 import {
+  recordSteerQueued,
   setSessions,
   setActive,
   get,
@@ -10,11 +11,11 @@ import {
   setWorkingLabel,
   messagesVersionOf,
   upsertHeader,
-  recordSteerSent,
   restoreSteers,
   steerCount,
 } from "./store.js";
 import type { ChatHeader, Session } from "./types.js";
+import { IDLE_RUN } from "./run-order.js";
 
 function makeSession(chatID: string): Session {
   return {
@@ -38,6 +39,7 @@ function headerFor(chatID: string): ChatHeader {
   return {
     id: chatID,
     name: chatID,
+    run: IDLE_RUN,
     usage: defaultUsage(),
     turn_count: 0,
     created_at: 0,
@@ -77,7 +79,7 @@ describe("setWorkingLabel", () => {
 
 describe("restoreSteers", () => {
   it("puts a captured snapshot back", async () => {
-    recordSteerSent("a", "m1", "first");
+    recordSteerQueued("a", { id: "steer-m1", text: "first", origin: "user" });
     await Promise.resolve();
     const snapshot = [...(get("a")?.steers ?? [])];
     expect(snapshot).toHaveLength(1);
@@ -91,11 +93,10 @@ describe("restoreSteers", () => {
   });
 
   it("leaves the dock alone when the snapshot it is rolling back is EMPTY", async () => {
-    // `dropConfirmedSteers` answers `[]` when nothing was confirmed, and `withSteers` DELETES the
-    // field for an empty list — so an unguarded rollback of that answer would clear the rows the
-    // drop deliberately kept.
-    recordSteerSent("a", "m1", "still waiting");
-    recordSteerSent("a", "m2", "also waiting");
+    // `dropConfirmedSteers` answers `[]` when the dock held nothing, and `withSteers` DELETES the
+    // field for an empty list, so an unguarded rollback of that answer would write a change.
+    recordSteerQueued("a", { id: "steer-m1", text: "still waiting", origin: "user" });
+    recordSteerQueued("a", { id: "steer-m2", text: "also waiting", origin: "user" });
     await Promise.resolve();
     expect(steerCount("a")).toBe(2);
 

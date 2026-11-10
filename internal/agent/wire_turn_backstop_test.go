@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -112,10 +111,10 @@ func TestCmdCancel_AWireTurnWithNoTurnEndClosesAtTheGrace(t *testing.T) {
 		t.Errorf("turn_close = %+v, want one cancelled close", closes)
 	}
 	got := h.coord.reserveForPromptNow(t.Context(), "c1", 60*time.Millisecond)
-	if got == command.AdmissionAcquired {
+	if got == admissionAcquired {
 		h.coord.releaseHeld("c1")
 	}
-	if got != command.AdmissionAcquired {
+	if got != admissionAcquired {
 		t.Errorf("ReserveTurnForPrompt after the grace = %v, want acquired", got)
 	}
 }
@@ -187,10 +186,10 @@ func TestKASIdle_ClosesAWireTurnWhoseEndNeverCame(t *testing.T) {
 		t.Errorf("turn_close = %+v, want one unknown close giving the idle reason", closes)
 	}
 	got := h.coord.reserveForPromptNow(t.Context(), "c1", 60*time.Millisecond)
-	if got == command.AdmissionAcquired {
+	if got == admissionAcquired {
 		h.coord.releaseHeld("c1")
 	}
-	if got != command.AdmissionAcquired {
+	if got != admissionAcquired {
 		t.Errorf("ReserveTurnForPrompt after the close = %v, want acquired", got)
 	}
 }

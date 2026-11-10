@@ -80,31 +80,25 @@ type kasPermits struct {
 	sessionCall bool
 	// steerHolder: an admission holder may still take a prompt as a steer; under a hold the turn it follows is closed.
 	steerHolder bool
-	// holdRows: a queued row appended with no turn live is kept for the hold's drain.
-	holdRows bool
 }
 
 var kasPermitTable = [nKASStates]kasPermits{
 	kasIdle:        {admit: true, sessionCall: true, steerHolder: true},
 	kasRunning:     {steerHolder: true},
-	kasHeldRunning: {holdRows: true},
-	kasHeldIdle:    {sessionCall: true, holdRows: true},
+	kasHeldRunning: {},
+	kasHeldIdle:    {sessionCall: true},
 }
 
 // kasExec is guarded by the owning chatLifecycle's mutex.
 type kasExec struct {
-	// holdRows are the queued rows appended during a hold with no turn live: refused as no turn, the client would
-	// have sent them as prompts, so they stay owed past a newer close's hold or a turn opening, until the first
-	// release that drains with no hold left, which may send one of them despite a cancelled close.
-	holdRows []string
 	// holdSeq is the open sequence of the closed turn whose hold this is, zero for none.
 	holdSeq uint64
 	state   kasState
 }
 
 // step applies one input, answering whether the state changed (the caller wakes its waiters), and for a release
-// whether the closer may drain and the owed hold rows it takes. Caller holds the lifecycle's mutex.
-func (k *kasExec) step(in kasInput, seq uint64) (changed, drain bool, rows []string) {
+// whether the hold was released. Caller holds the lifecycle's mutex.
+func (k *kasExec) step(in kasInput, seq uint64) (changed, drain bool) {
 	if seq != k.holdSeq {
 		in = otherHold(in)
 	}
@@ -116,11 +110,8 @@ func (k *kasExec) step(in kasInput, seq uint64) (changed, drain bool, rows []str
 		k.holdSeq, changed = seq, true
 	case !k.held():
 		k.holdSeq = 0
-		if cell.drain {
-			rows, k.holdRows = k.holdRows, nil
-		}
 	}
-	return changed, cell.drain, rows
+	return changed, cell.drain
 }
 
 // otherHold maps an own-hold input to the column for a closer owning no hold.
@@ -138,10 +129,3 @@ func otherHold(in kasInput) kasInput {
 func (k *kasExec) held() bool { return k.state == kasHeldRunning || k.state == kasHeldIdle }
 
 func (k *kasExec) may() kasPermits { return kasPermitTable[k.state] }
-
-// keepHoldRows records rows appended under the hold with no turn live; with no hold nothing keeps them.
-func (k *kasExec) keepHoldRows(ids []string) {
-	if k.may().holdRows {
-		k.holdRows = append(k.holdRows, ids...)
-	}
-}

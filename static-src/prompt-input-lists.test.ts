@@ -59,7 +59,10 @@ beforeAll(() => {
       <button id="midturn-send-btn" type="button" hidden></button>
       <button id="send-btn" type="submit"></button>
     </form>`;
-  initPromptInput((text) => submitted.push(text), vi.fn());
+  initPromptInput((text) => {
+    submitted.push(text);
+    return undefined;
+  }, vi.fn());
 });
 
 function box(): HTMLTextAreaElement {

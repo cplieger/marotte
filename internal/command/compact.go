@@ -50,7 +50,7 @@ type CompactOutcome uint8
 const (
 	// CompactAccepted is KAS accepting the call, which is not a compaction (Compact).
 	CompactAccepted CompactOutcome = iota
-	// CompactQueued is a request held for the running turn's close.
+	// CompactQueued is a compaction waiting on the chat's run order behind what runs.
 	CompactQueued
 	// CompactRefused is KAS's {success: false}.
 	CompactRefused
@@ -82,12 +82,17 @@ func cmdCompact(ctx context.Context, compacts compactRequester, cmd *marotte.Cli
 	return responseWith(nil), nil
 }
 
-// cmdCancelCompact drops the chat's queued compaction.
+// cmdCancelCompact withdraws the compaction entry the payload names (the chat's one when it names none); a stale id
+// is success.
 func cmdCancelCompact(ctx context.Context, compacts compactRequester, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
-	if err := compacts.CancelCompact(ctx, cmd.ChatID); err != nil {
+	var p marotte.CancelCompactCommand
+	if len(cmd.Payload) > 0 && json.Unmarshal(cmd.Payload, &p) != nil {
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
+	}
+	if err := compacts.CancelCompact(ctx, cmd.ChatID, p.ID); err != nil {
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 	return responseOK, nil

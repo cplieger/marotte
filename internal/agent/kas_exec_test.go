@@ -2,7 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"slices"
 	"testing"
 )
 
@@ -11,11 +10,10 @@ import (
 // carries, and what the step must leave.
 func TestKASExec_EveryTransition(t *testing.T) {
 	const own, other, claim = 7, 9, 11
-	held := func(s kasState) kasExec { return kasExec{state: s, holdSeq: own, holdRows: []string{"m-held"}} }
+	held := func(s kasState) kasExec { return kasExec{state: s, holdSeq: own} }
 	cases := []struct {
 		name      string
 		before    kasExec
-		wantRows  []string
 		in        kasInput
 		seq       uint64
 		wantSeq   uint64
@@ -55,21 +53,21 @@ func TestKASExec_EveryTransition(t *testing.T) {
 		{name: "held idle grace claim", before: held(kasHeldIdle), in: kasGraceClaim, seq: claim, want: kasHeldIdle, wantSeq: claim},
 		{
 			name: "held idle release own", before: held(kasHeldIdle), in: kasReleaseOwn, seq: own,
-			want: kasIdle, wantDrain: true, wantRows: []string{"m-held"},
+			want: kasIdle, wantDrain: true,
 		},
 		{name: "held idle release other", before: held(kasHeldIdle), in: kasReleaseOwn, seq: other, want: kasHeldIdle, wantSeq: own, wantDrain: true},
 		{name: "held idle stand down own", before: held(kasHeldIdle), in: kasStandDownOwn, seq: own, want: kasIdle},
-		// Rows a stood-down hold still owes, as after KAS opened a turn of its own.
+		// No hold of its own: a closer whose hold stood down, as after KAS opened a turn of its own.
 		{
-			name: "owed rows idle release other", before: kasExec{holdRows: []string{"m-held"}}, in: kasReleaseOwn, seq: other,
-			want: kasIdle, wantDrain: true, wantRows: []string{"m-held"},
+			name: "no hold idle release other", before: kasExec{}, in: kasReleaseOwn, seq: other,
+			want: kasIdle, wantDrain: true,
 		},
 		{
-			name: "owed rows running release other", before: kasExec{state: kasRunning, holdRows: []string{"m-held"}},
+			name: "no hold running release other", before: kasExec{state: kasRunning},
 			in: kasReleaseOwn, seq: other, want: kasRunning,
 		},
 		{
-			name: "owed rows running grace claim", before: kasExec{state: kasRunning, holdRows: []string{"m-held"}},
+			name: "no hold running grace claim", before: kasExec{state: kasRunning},
 			in: kasGraceClaim, seq: claim, want: kasHeldRunning, wantSeq: claim,
 		},
 		{name: "held idle stand down other", before: held(kasHeldIdle), in: kasStandDownOwn, seq: other, want: kasHeldIdle, wantSeq: own},
@@ -77,20 +75,12 @@ func TestKASExec_EveryTransition(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			k := tc.before
-			_, drain, rows := k.step(tc.in, tc.seq)
+			_, drain := k.step(tc.in, tc.seq)
 			if k.state != tc.want || k.holdSeq != tc.wantSeq {
 				t.Errorf("state = %v hold %d, want %v hold %d", k.state, k.holdSeq, tc.want, tc.wantSeq)
 			}
-			if drain != tc.wantDrain || !slices.Equal(rows, tc.wantRows) {
-				t.Errorf("drain = %v rows %v, want %v rows %v", drain, rows, tc.wantDrain, tc.wantRows)
-			}
-			// Owed rows stay owed through every step but the one that hands them to a drain.
-			wantKept := tc.before.holdRows
-			if tc.wantRows != nil {
-				wantKept = nil
-			}
-			if !slices.Equal(k.holdRows, wantKept) {
-				t.Errorf("rows still owed = %v, want %v", k.holdRows, wantKept)
+			if drain != tc.wantDrain {
+				t.Errorf("released = %v, want %v", drain, tc.wantDrain)
 			}
 		})
 	}
@@ -114,24 +104,23 @@ func TestKASExec_EveryTransition(t *testing.T) {
 	})
 }
 
-// A claim during a hold hands the older hold's rows to the newer close and reports a change, so the older closer's
-// waiters wake to find the hold no longer theirs; a step that leaves the state as it was wakes no one.
+// A claim during a hold reports a change, so the older closer's waiters wake to find the hold no longer theirs; a step
+// that leaves the state as it was wakes no one.
 func TestKASExec_TheChangeReportWakesOnlyOnAChange(t *testing.T) {
-	k := kasExec{state: kasHeldRunning, holdSeq: 7, holdRows: []string{"m-old"}}
-	if changed, _, _ := k.step(kasGraceClaim, 11); !changed || !slices.Equal(k.holdRows, []string{"m-old"}) {
-		t.Errorf("claim over a hold = changed %v rows %v, want a change with m-old still owed", changed, k.holdRows)
+	k := kasExec{state: kasHeldRunning, holdSeq: 7}
+	if changed, _ := k.step(kasGraceClaim, 11); !changed {
+		t.Error("claim over a hold reported no change, want one")
 	}
-	if changed, _, _ := k.step(kasReportActive, 0); changed {
+	if changed, _ := k.step(kasReportActive, 0); changed {
 		t.Error("a repeated active report reported a change, want none")
 	}
-	if changed, _, _ := k.step(kasReportIdle, 0); !changed {
+	if changed, _ := k.step(kasReportIdle, 0); !changed {
 		t.Error("an idle report while held running reported no change, want one")
 	}
 }
 
 // What marotte may do in each state: admit a prompt only with KAS idle and no hold, run session calls whenever KAS
-// reports no run, take a prompt as a steer only outside a hold, and keep rows queued with no turn live only for a
-// hold's drain.
+// reports no run, and take a prompt as a steer only outside a hold.
 func TestKASExec_EachStatesPermits(t *testing.T) {
 	cases := []struct {
 		state kasState
@@ -139,18 +128,14 @@ func TestKASExec_EachStatesPermits(t *testing.T) {
 	}{
 		{state: kasIdle, want: kasPermits{admit: true, sessionCall: true, steerHolder: true}},
 		{state: kasRunning, want: kasPermits{steerHolder: true}},
-		{state: kasHeldRunning, want: kasPermits{holdRows: true}},
-		{state: kasHeldIdle, want: kasPermits{sessionCall: true, holdRows: true}},
+		{state: kasHeldRunning, want: kasPermits{}},
+		{state: kasHeldIdle, want: kasPermits{sessionCall: true}},
 	}
 	for _, tc := range cases {
 		t.Run(fmt.Sprint(tc.state), func(t *testing.T) {
 			k := kasExec{state: tc.state, holdSeq: 7}
 			if got := k.may(); got != tc.want {
 				t.Errorf("may() = %+v, want %+v", got, tc.want)
-			}
-			k.keepHoldRows([]string{"m-q"})
-			if kept := len(k.holdRows) == 1; kept != tc.want.holdRows {
-				t.Errorf("keepHoldRows kept = %v, want %v", kept, tc.want.holdRows)
 			}
 		})
 	}

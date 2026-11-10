@@ -24,15 +24,68 @@ func (bc *bridgeCoordinator) tryReserveNow(chatID marotte.ChatID, source marotte
 	return ok
 }
 
-// tryReserveIdleNow is TryReserveIdleTurn with a stamp taken now.
+// tryReserveIdleNow takes the admission slot with a stamp taken now iff nothing holds it.
 func (bc *bridgeCoordinator) tryReserveIdleNow(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
-	_, ok := bc.TryReserveIdleTurn(chatID, source, bc.LifeStamp())
+	_, ok := bc.turns.tryReserveIdle(chatID, source, bc.LifeStamp())
 	return ok
 }
 
-// reserveForPromptNow is ReserveTurnForPrompt with a stamp taken now and no message id.
-func (bc *bridgeCoordinator) reserveForPromptNow(ctx context.Context, chatID marotte.ChatID, wait time.Duration) command.AdmissionOutcome {
-	out, _ := bc.ReserveTurnForPrompt(ctx, chatID, wait, bc.LifeStamp(), "")
+// admissionOutcome is reservePromptSlot's answer.
+type admissionOutcome int
+
+const (
+	admissionAcquired admissionOutcome = iota
+	admissionBusy
+	admissionClosed
+	admissionChatGone
+	admissionStarting
+)
+
+// reservePromptSlot takes the chat's admission slot for a test's own prompt-class open, waiting up to wait for a
+// holder that is not steerable: a steerable holder answers busy at once, a close committed since stamp closed.
+func (bc *bridgeCoordinator) reservePromptSlot(
+	ctx context.Context, chatID marotte.ChatID, wait time.Duration, stamp uint64, messageID string,
+) (admissionOutcome, command.Reservation) {
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	for {
+		lc, gate, err := bc.turns.admitLife(chatID, stamp)
+		if err != nil {
+			return admissionClosed, command.Reservation{}
+		}
+		var changed <-chan struct{}
+		if lc != nil {
+			lc.mu.Lock()
+			a := bc.turns.reserveLocked(lc, marotte.TurnSourcePrompt, stamp, messageID)
+			holder, held := lc.holderSourceLocked()
+			busy := lc.kas.may().steerHolder && held && holder.SteerableHolder()
+			changed, gate = lc.changed, a.idle
+			lc.mu.Unlock()
+			switch {
+			case a.res.Token != 0:
+				return admissionAcquired, a.res
+			case a.gone:
+				return admissionChatGone, command.Reservation{}
+			case a.verdict == gateClosedSince:
+				return admissionClosed, command.Reservation{}
+			case busy:
+				return admissionBusy, command.Reservation{}
+			}
+		}
+		select {
+		case <-changed:
+		case <-gate:
+		case <-timer.C:
+			return admissionStarting, command.Reservation{}
+		case <-ctx.Done():
+			return admissionStarting, command.Reservation{}
+		}
+	}
+}
+
+// reserveForPromptNow is reservePromptSlot with a stamp taken now and no message id.
+func (bc *bridgeCoordinator) reserveForPromptNow(ctx context.Context, chatID marotte.ChatID, wait time.Duration) admissionOutcome {
+	out, _ := bc.reservePromptSlot(ctx, chatID, wait, bc.LifeStamp(), "")
 	return out
 }
 
@@ -50,10 +103,25 @@ func (r *turnRegistry) releaseHeld(chatID marotte.ChatID) {
 	r.releaseReservation(command.Reservation{Chat: chatID, Token: token})
 }
 
-// tryReserveIdleNow is the registry's tryReserveIdle with a stamp taken now.
+// tryReserveIdleNow is tryReserveIdle with a stamp taken now.
 func (r *turnRegistry) tryReserveIdleNow(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
 	_, ok := r.tryReserveIdle(chatID, source, r.gates.stamp())
 	return ok
+}
+
+// tryReserveIdle takes the slot for a test iff nothing holds admission, an open wire turn included.
+func (r *turnRegistry) tryReserveIdle(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (command.Reservation, bool) {
+	lc, ok := r.tryLifecycleAt(chatID, stamp)
+	if !ok {
+		return command.Reservation{}, false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if _, held := lc.holderSourceLocked(); held {
+		return command.Reservation{}, false
+	}
+	a := r.reserveLocked(lc, source, stamp, "")
+	return a.res, a.res.Token != 0
 }
 
 // attachForwardNow attaches a forward to chatID's life with a stamp taken now, failing the test process on a
@@ -80,12 +148,6 @@ func (sb *sharedBridge) session() engineSession {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 	return sb.leased
-}
-
-// tryReserveDrainNow is TryReserveDrain for a close fenced at fence with no tail, for a test that needs only the verdict.
-func (bc *bridgeCoordinator) tryReserveDrainNow(chatID marotte.ChatID, fence command.TurnFence) bool {
-	_, ok := bc.TryReserveDrain(chatID, command.CloseFacts{Fence: fence})
-	return ok
 }
 
 // switchedOK is applyModelSwitch's verdict as a bool, for a test that checks only whether the swap landed.
@@ -142,4 +204,27 @@ func (g *chatGates) held(chatID marotte.ChatID) bool {
 	defer g.mu.Unlock()
 	st := g.chats[chatID]
 	return st != nil && st.holds > 0
+}
+
+// stopRequestedAfter reports a stop requested after turnID opened (chatLifecycle.stoppedAfterLocked).
+func (bc *bridgeCoordinator) stopRequestedAfter(chatID marotte.ChatID, turnID string) bool {
+	lc, ok := bc.turns.lookup(chatID)
+	if !ok {
+		return false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.stoppedAfterLocked(turnID)
+}
+
+// turnOpenedAfter reports a turn opened after turnID on the chat's life.
+func (bc *bridgeCoordinator) turnOpenedAfter(chatID marotte.ChatID, turnID string) bool {
+	lc, ok := bc.turns.lookup(chatID)
+	if !ok {
+		return false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	t := lc.turnLocked(turnID)
+	return t != nil && lc.nextSeq > t.Seq
 }

@@ -62,6 +62,14 @@ function serverBody(id: string): string {
       created_at: 1_730_000_000,
       updated_at: 1_730_000_500,
       turn_count: 2,
+      // As internal/chat writes an idle chat's header (TestHandleList_ReturnsHeaders's body).
+      run: {
+        send: "prompt",
+        entries: [],
+        next_wait: { after: "next" },
+        unread_wait: { after: "next" },
+        version: 0,
+      },
       usage: {
         context_pct: 12,
         context_size: 200_000,

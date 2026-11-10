@@ -1,7 +1,7 @@
 // Derives the send-button state from the global pieces of the world:
 
 import { signal, computed, effect } from "@cplieger/ui";
-import { activeSession, watchBusy } from "./store.js";
+import { activeSession } from "./store.js";
 import { setSendState } from "./prompt-input.js";
 import type { SendState } from "./prompt-input.js";
 import type { ConnectionStatus } from "./types.js";
@@ -21,7 +21,8 @@ const sendState = computed<SendState>(() => {
   if (session === undefined) {
     return { kind: "idle" };
   }
-  if (watchBusy(session.id)) {
+  // Cancel shows exactly while the server names something it would stop (`RunView.cancel`).
+  if (session.run?.cancel !== undefined && session.turn_dropped !== true) {
     return { kind: "streaming" };
   }
   return { kind: "idle" };

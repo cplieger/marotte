@@ -37,7 +37,7 @@ func (rt *Runtime) registerCommandHandlers() {
 		Admission:     rt,
 		TurnOutcome:   rt,
 		Steers:        rt.steerLedger,
-		Queue:         rt.coord,
+		Run:           rt,
 		SteerQueue:    rt.steerQueue,
 		SteerJobs:     rt.steerQueue,
 		Status:        rt,

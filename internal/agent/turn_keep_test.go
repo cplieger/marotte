@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -24,7 +23,7 @@ func hasTurnFact(t *testing.T, cs *testChatStore, id marotte.ChatID) bool {
 func TestReservation_HoldsTheTurnFactUntilTheLifecycleGoesIdle(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	res, ok := h.coord.TryReserveIdleTurn("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp())
+	res, ok := h.coord.turns.tryReserveIdle("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp())
 	if !ok {
 		t.Fatal("reservation refused on an idle chat")
 	}
@@ -42,7 +41,7 @@ func TestReservation_HoldsTheTurnFactUntilTheLifecycleGoesIdle(t *testing.T) {
 func TestReservation_AReleaseAfterTheTeardownForgotTheLifecycleReleasesTheFact(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	res, ok := h.coord.TryReserveIdleTurn("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp())
+	res, ok := h.coord.turns.tryReserveIdle("c1", marotte.TurnSourcePrompt, h.coord.LifeStamp())
 	if !ok {
 		t.Fatal("reservation refused on an idle chat")
 	}
@@ -59,15 +58,15 @@ func TestReservation_AReleaseAfterTheTeardownForgotTheLifecycleReleasesTheFact(t
 func TestReservation_ADeletedChatIsRefusedAndNothingIsReserved(t *testing.T) {
 	cases := map[string]func(bc *bridgeCoordinator) bool{
 		"prompt": func(bc *bridgeCoordinator) bool {
-			out, _ := bc.ReserveTurnForPrompt(context.Background(), "c1", 10*time.Millisecond, bc.LifeStamp(), "")
-			return out == command.AdmissionChatGone
+			out, _ := bc.reservePromptSlot(context.Background(), "c1", 10*time.Millisecond, bc.LifeStamp(), "")
+			return out == admissionChatGone
 		},
 		"try reserve": func(bc *bridgeCoordinator) bool {
 			_, ok := bc.turns.tryReserve("c1", marotte.TurnSourcePrompt, bc.LifeStamp())
 			return !ok
 		},
 		"try reserve idle": func(bc *bridgeCoordinator) bool {
-			_, ok := bc.TryReserveIdleTurn("c1", marotte.TurnSourcePrompt, bc.LifeStamp())
+			_, ok := bc.turns.tryReserveIdle("c1", marotte.TurnSourcePrompt, bc.LifeStamp())
 			return !ok
 		},
 	}

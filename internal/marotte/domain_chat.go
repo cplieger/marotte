@@ -529,12 +529,9 @@ type Chat struct {
 	PriorACPSessionIDs []string `json:"prior_acp_session_ids,omitempty"`
 	// InterruptMode is what Send does while a turn runs; empty reads as steer.
 	InterruptMode InterruptMode `json:"interrupt_mode,omitempty"`
-	// QueuedPrompts are follow-ups held for the running turn's end, oldest first,
-	// carried rows ahead of user rows. drainAfterClose owns which row a close sends.
-	QueuedPrompts []QueuedPrompt `json:"queued_prompts,omitempty"`
-	// CompactPending is the queued compaction (the reader's, or a turn's that reached the point), run at a close, or
-	// the one running; one at most. A process start drops a previous process's, since no turn of this one was asked to run it.
-	CompactPending *PendingCompaction `json:"compact_pending,omitempty"`
+	// Run is the chat's ordered list of what runs next, as its live lifecycle last wrote it (agent's runList owns it);
+	// a life starts from SanitizeRun of it.
+	Run []RunEntry `json:"run,omitempty"`
 	// TangentMerges are this tangent's merge operations; internal/command owns their lifecycle.
 	TangentMerges []TangentMerge `json:"tangent_merges,omitempty"`
 	// Keep holds every fact that keeps this chat out of the retention purge, by holder key. Server-internal:
@@ -546,6 +543,8 @@ type Chat struct {
 	// KeepFilledAt is the Unix ms at which a create or the first keep-state reconcile wrote this record's keep
 	// facts; zero on a record that predates them. The purge ages a chat from the later of this and UpdatedAt.
 	KeepFilledAt int64 `json:"keep_filled_at,omitempty"`
+	// RunVersion grows with every write of Run, across lives and restarts, so a page keeps the newest.
+	RunVersion uint64 `json:"run_version,omitempty"`
 	// SessionCredits is KAS's running credit total for ACPSessionID (session_usage), overwritten;
 	// CreditOffset is the rest of Usage.Credits: retired sessions' totals, step spend and a model
 	// switch's reset. Server-internal, like Keep; only the spend methods below write them.
@@ -619,7 +618,7 @@ type InterruptMode string
 const (
 	// InterruptSteer joins the running turn (_session/steer).
 	InterruptSteer InterruptMode = "steer"
-	// InterruptQueue holds the message as a QueuedPrompt for the turn's end.
+	// InterruptQueue holds the message as a queued row for the turn's end.
 	InterruptQueue InterruptMode = "queue"
 )
 
@@ -628,18 +627,7 @@ func (m InterruptMode) Valid() bool {
 	return m == InterruptSteer || m == InterruptQueue
 }
 
-// PendingCompaction is a compaction queued for a turn's end, or one whose call is in flight.
-type PendingCompaction struct {
-	// RequestedAt is when it was queued or, for one never queued, claimed, in Unix ms.
-	RequestedAt int64 `json:"requested_at"`
-	// Running is set once the compaction is claimed and its call made; the row goes when the call ends.
-	Running bool `json:"running,omitempty"`
-	// Sends is set on a running compaction with no turn beside it whose end sends the next prompt: the unread steers,
-	// else the first sendable queued row.
-	Sends bool `json:"sends,omitempty"`
-}
-
-// MaxQueuedPrompts caps Chat.QueuedPrompts, which the header carries to every device. A
+// MaxQueuedPrompts caps the rows on Chat.Run, which the header carries to every device. A
 // user's queue_prompt stops short of it, so a shutdown's carried row always has a slot.
 const MaxQueuedPrompts = 20
 
@@ -649,21 +637,18 @@ const carrySeparator = "\n\n"
 // CarryCost is the bytes a steer of this text adds to its carried row, separator included.
 func CarryCost(text string) int { return len(text) + len(carrySeparator) }
 
-// QueuedPrompt is one follow-up waiting for a turn to end. A row with Resends is CARRIED,
-// written at shutdown from unread steers. Held marks a row a previous process queued; it is
-// never sent automatically. A list holds at most one carried row, and it is held. Label is the
-// row's PromptCommand.DisplayText. Next marks the row send_queued_now chose: the next drain sends
-// it first, even after a stop.
+// QueuedPrompt is the message a row, unread or retry entry of Chat.Run sends. A row with Resends is CARRIED,
+// written at shutdown from unread steers; a list holds at most one carried row, and it is held. Label is the row's
+// PromptCommand.DisplayText; Model is the POST's model, which seeds a new record's.
 type QueuedPrompt struct {
 	// Caller is set on a row an API caller queued.
 	Caller      *Caller      `json:"caller,omitempty"`
 	ID          string       `json:"id"`
 	Text        string       `json:"text"`
 	Label       string       `json:"label,omitempty"`
+	Model       string       `json:"model,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 	Resends     []string     `json:"resends,omitempty"`
-	Held        bool         `json:"held,omitempty"`
-	Next        bool         `json:"next,omitempty"`
 }
 
 // Carried reports whether the row resends dropped steers.
@@ -759,8 +744,7 @@ func (c *Chat) Header() ChatHeader {
 		SupervisedMode:      c.SupervisedMode,
 		CompactionWatermark: c.CompactionWatermark,
 		InterruptMode:       c.InterruptMode,
-		QueuedPrompts:       c.QueuedPrompts,
-		CompactPending:      c.CompactPending,
+		Run:                 RunViewOf(c.Run, c.RunVersion, c.InterruptMode),
 		Tangent:             c.Tangent,
 	}
 }
@@ -836,13 +820,13 @@ type ChatHeader struct {
 	CompactionWatermark string `json:"compaction_watermark,omitempty"`
 	// PriorACPSessionIDs mirrors Chat's: the retention sweep reads headers only.
 	PriorACPSessionIDs []string `json:"prior_acp_session_ids,omitempty"`
-	// InterruptMode, QueuedPrompts and CompactPending mirror Chat's for the composer and the dock.
-	InterruptMode  InterruptMode      `json:"interrupt_mode,omitempty"`
-	QueuedPrompts  []QueuedPrompt     `json:"queued_prompts,omitempty"`
-	CompactPending *PendingCompaction `json:"compact_pending,omitempty"`
-	Usage          Usage              `json:"usage"`
-	CreatedAt      int64              `json:"created_at"`
-	UpdatedAt      int64              `json:"updated_at"`
+	// InterruptMode mirrors Chat's for the composer.
+	InterruptMode InterruptMode `json:"interrupt_mode,omitempty"`
+	// Run is Chat.Run as the dock and the composer draw it.
+	Run       RunView `json:"run"`
+	Usage     Usage   `json:"usage"`
+	CreatedAt int64   `json:"created_at"`
+	UpdatedAt int64   `json:"updated_at"`
 	// ReadPosition is wire-only: EntryLog.ReadPosition of the opened log, 0 when the log is not
 	// open. chat.Store fills it; Chat.Header does not.
 	ReadPosition   uint64 `json:"read_position,omitempty"`

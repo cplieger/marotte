@@ -56,7 +56,7 @@ func newCancelDeps(b Bridge) *cancelDeps {
 
 func runCancel(t *testing.T, ctx context.Context, d *cancelDeps) error {
 	t.Helper()
-	_, err := cmdCancel(ctx, d, d, d, d, newStubSteerQueue(), nil, &marotte.ClientCommand{ChatID: "c1"})
+	_, err := cmdCancel(ctx, stopRunOf(d), d, d, d, d, newStubSteerQueue(), &marotte.ClientCommand{ChatID: "c1"})
 	return err
 }
 

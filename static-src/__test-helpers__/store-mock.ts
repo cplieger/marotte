@@ -43,7 +43,7 @@ export const storeMock = {
   // A suite driving the failed-send rescue path overrides it from its own turns.
   hasMessage: vi.fn(() => false),
   hasQueued: vi.fn(() => false),
-  promptOpened: vi.fn(() => false),
+  applyRun: vi.fn(),
 
   isThinking: vi.fn(() => false),
   // IDLE, like `isThinking`: a busy answer would steer a send no suite meant to steer.
@@ -81,14 +81,10 @@ export const storeMock = {
   setWorkingLabel: vi.fn(),
 
   // Mirrors `internal/marotte`'s derived steer id.
-  steerIDFor: vi.fn((messageID: string) => `steer-${messageID}`),
   steerCount: vi.fn(() => 0),
   markSteersCompacted: vi.fn(),
-  recordSteerSent: vi.fn(),
   recordSteerQueued: vi.fn(),
-  forgetSteer: vi.fn(),
   // FALSE: an empty store holds no steer, so a failed send restores its text.
-  holdsSteer: vi.fn(() => false),
   forgetSteers: vi.fn(),
   dropConfirmedSteers: vi.fn(() => []),
   restoreSteers: vi.fn(),

@@ -20,7 +20,6 @@ type pausingStore struct {
 	release chan struct{}
 	once    sync.Once
 	onOpen  bool
-	onPick  bool
 }
 
 func newPausingStore(inner bridgeChatRecords) *pausingStore {
@@ -42,15 +41,6 @@ func (s *pausingStore) WriteCounters(ctx context.Context, chatID marotte.ChatID)
 		s.park()
 	}
 	return err
-}
-
-// Mutate pauses after the drain's pick of a queued row, before its open.
-func (s *pausingStore) Mutate(ctx context.Context, id marotte.ChatID, fn func(c *marotte.Chat, exists bool) bool) (string, error) {
-	v, err := s.bridgeChatRecords.Mutate(ctx, id, fn)
-	if s.onPick {
-		s.park()
-	}
-	return v, err
 }
 
 func handoffHub(t *testing.T) (*Runtime, *testChatStore) {
@@ -112,12 +102,12 @@ func fenceNow(h *Runtime, chatID marotte.ChatID) command.TurnFence {
 	return command.TurnFence{Epoch: lc.epoch, Seq: lc.nextSeq}
 }
 
-func shutdownAsync(t *testing.T, h *Runtime) <-chan struct{} {
-	t.Helper()
+// shutdownWithin runs h's Shutdown under a budget of d.
+func shutdownWithin(h *Runtime, d time.Duration) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), d)
 		defer cancel()
 		_ = h.Shutdown(ctx)
 	}()
@@ -125,7 +115,8 @@ func shutdownAsync(t *testing.T, h *Runtime) <-chan struct{} {
 }
 
 // A shutdown between a resend's open and its retire leaves each steer exactly one destination, the resend,
-// whether the shutdown's drain wait completes or expires.
+// whether the shutdown's drain wait completes or expires. The resend's launch runs on inflight, so the shutdown
+// reaches the steers only once its inflight wait gives up on the parked open (a one-second budget).
 func TestShutdown_AResendOpenedBeforeTheTakeHasOneDestination(t *testing.T) {
 	for _, expired := range []bool{false, true} {
 		name := "completed wait"
@@ -142,15 +133,9 @@ func TestShutdown_AResendOpenedBeforeTheTakeHasOneDestination(t *testing.T) {
 				ps.onOpen = true
 				h.coord.chatStore = ps
 
-				fence := fenceNow(h, "c1")
-				drained := make(chan struct{})
-				go func() {
-					defer close(drained)
-					h.dispatcher.DrainAfterClose(context.Background(), "c1",
-						command.CloseFacts{Outcome: marotte.TurnOutcomeCompleted, Fence: fence}, command.EndFacts{})
-				}()
+				drained := listUnread(t, h, "c1")
 				<-ps.paused
-				stopped := shutdownAsync(t, h)
+				stopped := shutdownWithin(h, time.Second)
 				if expired {
 					waitFor(t, func() bool { return h.bus.steers.gone("c1") })
 				} else {
@@ -187,13 +172,7 @@ func TestBeginChatTeardown_AResendOpenedBeforeTheCloseKeepsItsSteers(t *testing.
 	ps.onOpen = true
 	h.coord.chatStore = ps
 
-	fence := fenceNow(h, "c1")
-	drained := make(chan struct{})
-	go func() {
-		defer close(drained)
-		h.dispatcher.DrainAfterClose(context.Background(), "c1",
-			command.CloseFacts{Outcome: marotte.TurnOutcomeCompleted, Fence: fence}, command.EndFacts{})
-	}()
+	drained := listUnread(t, h, "c1")
 	<-ps.paused
 	h.BeginChatTeardown("c1", true)
 	close(ps.release)
@@ -210,39 +189,46 @@ func TestBeginChatTeardown_AResendOpenedBeforeTheCloseKeepsItsSteers(t *testing.
 	}
 }
 
-// pickHub is a hub whose chat c1 has a live bridge, a queued user row, and a
-// store that parks the drain between its pick of that row and its open.
+// pickHub is a hub whose chat c1 has a live bridge and a waiting user row, and whose launcher parks the first take
+// between the list's pick of that row and its open.
 func pickHub(t *testing.T) (*Runtime, *testChatStore, *pausingStore) {
 	t.Helper()
 	h, cs, br := newTestHub()
 	seedChat(t, cs, "c1")
 	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
 	h.insertBridgeNow("c1", testBridge(br, bridgeReady))
+	h.coord.turns.testLifecycle("c1")
 	seedQueue(t, cs, "c1", marotte.QueuedPrompt{ID: "m-q1", Text: "next"})
 	ps := newPausingStore(h.coord.chatStore)
-	ps.onPick = true
-	h.coord.chatStore = ps
+	launch := h.coord.launchEntry
+	h.coord.launchEntry = func(ctx context.Context, chatID marotte.ChatID, l *command.EntryLaunch) (string, error) {
+		ps.park()
+		return launch(ctx, chatID, l)
+	}
 	return h, cs, ps
 }
 
-// drainPaused parks the drain between pick and open, runs interrupt, releases the drain once interrupt
-// re-fenced the chat, and waits for both.
+// drainPaused lets the list take the waiting row, parks its launch between pick and open, runs interrupt, releases
+// the launch once interrupt re-fenced the chat, and waits for both.
 func drainPaused(t *testing.T, h *Runtime, ps *pausingStore, interrupt func() <-chan struct{}) {
 	t.Helper()
-	fence := fenceNow(h, "c1")
-	before := fence.Epoch
-	drained := make(chan struct{})
-	go func() {
-		defer close(drained)
-		h.dispatcher.DrainAfterClose(context.Background(), "c1",
-			command.CloseFacts{Outcome: marotte.TurnOutcomeCompleted, Fence: fence}, command.EndFacts{})
-	}()
+	before := epochOf(h, "c1")
+	lc := h.coord.turns.testLifecycle("c1")
+	lc.mu.Lock()
+	lc.run.unpauseRows()
+	lc.wakeLocked()
+	lc.mu.Unlock()
 	<-ps.paused
 	done := interrupt()
 	waitFor(t, func() bool { return epochOf(h, "c1") != before })
 	close(ps.release)
-	<-drained
 	<-done
+	waitFor(t, func() bool {
+		lc.mu.Lock()
+		defer lc.mu.Unlock()
+		_, e := lc.run.find("m-q1")
+		return lc.ended || e == nil || !e.live()
+	})
 }
 
 func assertNotOpened(t *testing.T, cs *testChatStore) {
@@ -255,8 +241,9 @@ func assertNotOpened(t *testing.T, cs *testChatStore) {
 	}
 }
 
-// A shutdown landing between a drain's pick and its open starts no new turn, whether
-// its wait for the drain completes or expires.
+// A shutdown landing between a take and its open starts no new turn, whether its wait for the steer lock completes
+// or expires. The launch runs on inflight, so the shutdown re-fences only once its inflight wait gives up on the
+// parked open (a one-second budget).
 func TestShutdown_ARowPickedBeforeTheOpenNeverOpens(t *testing.T) {
 	for _, expired := range []bool{false, true} {
 		name := "completed wait"
@@ -268,7 +255,7 @@ func TestShutdown_ARowPickedBeforeTheOpenNeverOpens(t *testing.T) {
 				shortenSteerLockWait(t)
 			}
 			h, cs, ps := pickHub(t)
-			drainPaused(t, h, ps, func() <-chan struct{} { return shutdownAsync(t, h) })
+			drainPaused(t, h, ps, func() <-chan struct{} { return shutdownWithin(h, time.Second) })
 			assertNotOpened(t, cs)
 		})
 	}
@@ -298,48 +285,23 @@ func TestTeardown_ARowPickedBeforeTheOpenNeverOpens(t *testing.T) {
 	}
 }
 
-// A turn opening between pick and open supersedes the drain: its fence no longer holds, so the open is refused and the row stays.
-func TestDrain_ATurnOpeningBetweenThePickAndTheOpenSupersedesIt(t *testing.T) {
-	h, cs, ps := pickHub(t)
-	t.Cleanup(func() { shutdownHub(t, h) })
-	fence := fenceNow(h, "c1")
-	drained := make(chan struct{})
-	go func() {
-		defer close(drained)
-		h.dispatcher.DrainAfterClose(context.Background(), "c1",
-			command.CloseFacts{Outcome: marotte.TurnOutcomeCompleted, Fence: fence}, command.EndFacts{})
-	}()
-	<-ps.paused
-	h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg())
-	close(ps.release)
-	<-drained
-	h.translateACPEvent("c1", h.originOf("c1"), newTurnEndMsg("end_turn"))
-
-	assertNotOpened(t, cs)
-}
-
-// A close's fence refuses its drain's reservation once a newer turn has opened.
-func TestTryReserveDrain_ANewerTurnRefusesTheOldClose(t *testing.T) {
-	h, cs, _ := newTestHub()
-	t.Cleanup(func() { shutdownHub(t, h) })
-	seedChat(t, cs, "c1")
-	fence := fenceNow(h, "c1")
-	drained := make(chan struct{})
-	drain := h.coord.drainAfterClose
-	h.coord.drainAfterClose = func(ctx context.Context, chatID marotte.ChatID, cl command.CloseFacts, ends command.EndFacts) {
-		drain(ctx, chatID, cl, ends)
-		close(drained)
+// listUnread lists the chat's unread steers as the next entry, as a close whose steer ends left them unsent does, and
+// answers a channel closed once that entry's launch ended.
+func listUnread(t *testing.T, h *Runtime, chatID marotte.ChatID) <-chan struct{} {
+	t.Helper()
+	done := make(chan struct{})
+	launch := h.coord.launchEntry
+	var once sync.Once
+	h.coord.launchEntry = func(ctx context.Context, id marotte.ChatID, l *command.EntryLaunch) (string, error) {
+		defer once.Do(func() { close(done) })
+		return launch(ctx, id, l)
 	}
-	id, _ := h.stagePromptTurn(t, "c1")
-	endTurn(t, h, "c1", id)
-	h.coord.releaseTurn("c1", id)
-	// The close's drain runs off this goroutine and holds the slot as a prompt while it looks for a queued row.
-	awaitClosed(t, drained, "the close's drain")
-
-	if h.coord.tryReserveDrainNow("c1", fence) {
-		t.Error("an older close's drain reserved a chat a newer turn opened on")
-	}
-	if !h.coord.tryReserveDrainNow("c1", fenceNow(h, "c1")) {
-		t.Error("the newest close's drain was refused an idle chat")
-	}
+	lc := h.coord.turns.testLifecycle(chatID)
+	lc.mu.Lock()
+	lc.run.insert(0, &runEntry{
+		id: "m-unread", kind: marotte.RunKindUnread, origin: marotte.RunFromUnread, state: marotte.RunPending,
+	})
+	lc.wakeLocked()
+	lc.mu.Unlock()
+	return done
 }

@@ -592,6 +592,8 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	h.steerQueue = steerQueue{recs: sseP.steers, coord: h.coord, locks: keylock.New(cmp.Compare[marotte.ChatID]), steps: runs.steers}
 	// After the literal: steerQueue is a value, so the copy the step side holds must carry steps.
 	runs.steers.queue = h.steerQueue
+	sseP.steers.onRunFacts = func(chatID marotte.ChatID) { h.coord.spawnRun(func() { h.coord.runFactsChanged(chatID) }) }
+	h.coord.steerFacts = sseP.steers.runFacts
 	h.wireSteerRecords()
 	h.hookTriggers = newHookTriggers(lc.shutdownCtx, configP.hooksListRaw, lc.goUnlessDraining)
 	h.translator = translate.New(h.translateRoles())

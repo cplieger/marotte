@@ -33,6 +33,7 @@ vi.mock("../tabs.js", () => ({
 
 // Capture SSE handlers via shared helper.
 import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
+import { IDLE_RUN } from "../run-order.js";
 vi.mock("../bus.js", () => createBusMock());
 
 // chat_deleted fires fire-and-forget dynamic imports; stub them so they
@@ -73,6 +74,7 @@ function makeHeader(over: Partial<ChatHeader> = {}): ChatHeader {
   return {
     id: "c1",
     name: "Test Chat",
+    run: IDLE_RUN,
     usage: {
       context_pct: 0,
       context_size: 0,

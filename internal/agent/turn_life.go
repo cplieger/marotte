@@ -41,7 +41,8 @@ func (r *turnRegistry) newLifecycle(chatID marotte.ChatID, stamp uint64) *chatLi
 		parent = context.Background()
 	}
 	ctx, cancel := context.WithCancelCause(parent)
-	return &chatLifecycle{
+	lc := &chatLifecycle{
+		reg:     r,
 		changed: make(chan struct{}),
 		quiet:   make(chan struct{}),
 		epoch:   r.epochs.Add(1),
@@ -51,6 +52,8 @@ func (r *turnRegistry) newLifecycle(chatID marotte.ChatID, stamp uint64) *chatLi
 		cancel:  cancel,
 		steps:   maps.Clone(r.steps[chatID]),
 	}
+	r.loadRunLocked(lc)
+	return lc
 }
 
 // beginWork counts one goroutine of the life's work of kind, answering the life's context and the idempotent done
@@ -125,6 +128,7 @@ func (lc *chatLifecycle) endLifeLocked(epochs func() uint64) {
 		return
 	}
 	lc.ended = true
+	lc.endRunLocked()
 	lc.epoch = epochs()
 	lc.cancel(marotte.ErrChatClosedDuringCall)
 	for _, cut := range lc.leaseCuts {
@@ -179,6 +183,7 @@ func (r *turnRegistry) endLife(chatID marotte.ChatID) (*chatLifecycle, bool) {
 	lc.mu.Lock()
 	lc.endLifeLocked(r.mintEpoch)
 	lc.mu.Unlock()
+	lc.writeFinalRun()
 	return lc, true
 }
 

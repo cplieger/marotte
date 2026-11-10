@@ -1,11 +1,10 @@
-// sendPrompt maps the admission ack and the 409 reasons:
-//   ack                  → "sent" (thinking stays true; SSE owns the turn)
-//   409 "turn_live"      → "queued" (a steerable turn is in flight; submit.ts steers)
+// sendPrompt maps the server's answer:
+//   ack                  → its `as`: "sent" (started), "steered" or "queued", and the answer's `run` is held
+//   409 "prompt_only"    → "prompt_only", 409 "full" → "full"
 //   409 "chat_not_found" → "gone", 409 "chat_closed" → "closed"
-//   any other 409        → "starting" (thinking retracted, so the retry is a PROMPT)
-//   anything else        → null (rollback retracts thinking)
-// `thinking` is all the optimistic write risks: the tab dot reads `last_turn_outcome`, which no
-// client path writes.
+//   any other 409        → "starting"
+//   anything else        → null
+// It writes no optimistic state: the composer and the dock draw the server's run order.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -32,6 +31,7 @@ vi.mock("../store.js", async () => ({
   ...(await import("../__test-helpers__/store-mock.js")).storeMock,
   get: mockGet,
   setThinking: vi.fn(),
+  applyRun: vi.fn(),
   recordSteerQueued: vi.fn(),
   setModel: vi.fn(),
   setSupervisedMode: vi.fn(),
@@ -55,7 +55,8 @@ vi.mock("../api-client.js", () => ({
 }));
 
 import { send as transportSend } from "../transport.js";
-import { setThinking, recordSteerQueued } from "../store.js";
+import { applyRun, setThinking, recordSteerQueued } from "../store.js";
+import { IDLE_RUN } from "../run-order.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { compactChat, queuePrompt, sendPrompt } from "./chat.js";
 
@@ -70,23 +71,29 @@ beforeEach(() => {
 });
 
 describe("sendPrompt — the ack is the whole POST", () => {
-  it("returns 'sent' on the admission ack alone, with thinking left on for SSE to clear", async () => {
-    // Ack-only: the turn runs server-side and nothing else arrives on this POST.
-    mockSend.mockResolvedValue({
-      ok: true,
-      status: 200,
-      body: { accepted: true, message_id: "m1" },
-    });
+  it.each([
+    ["started", "sent"],
+    ["steered", "steered"],
+    ["queued", "queued"],
+  ] as const)(
+    "answers the server's %s as '%s' and holds the answer's run order",
+    async (as, result) => {
+      const run = { ...IDLE_RUN, version: 7 };
+      mockSend.mockResolvedValue({
+        ok: true,
+        status: 200,
+        body: { accepted: true, message_id: "m1", as, run },
+      });
 
-    const result = await sendPrompt.dispatch(args);
-
-    expect(result).toBe("sent");
-    expect(mockSend).toHaveBeenCalledTimes(1);
-    // turn_closed (SSE) clears thinking, so success must not touch it after the optimistic set.
-    const calls = vi.mocked(setThinking).mock.calls;
-    expect(calls).toContainEqual(["c1", true]);
-    expect(calls).not.toContainEqual(["c1", false]);
-  });
+      expect(await sendPrompt.dispatch(args)).toBe(result);
+      expect(mockSend).toHaveBeenCalledTimes(1);
+      expect(applyRun).toHaveBeenLastCalledWith("c1", run);
+      expect(
+        setThinking,
+        "no optimistic write: the run order is the server's",
+      ).not.toHaveBeenCalled();
+    },
+  );
 
   it("dispatches at the standard API timeout — the POST no longer spans the turn", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
@@ -96,39 +103,29 @@ describe("sendPrompt — the ack is the whole POST", () => {
     expect(opts?.timeoutMs).toBe(30_000);
   });
 
-  it("sets thinking optimistically", async () => {
+  it("says prompt_only on the payload only when the text needs a turn of its own", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
-    await sendPrompt.dispatch({ ...args, messageID: "m2" });
-    expect(setThinking).toHaveBeenCalledWith("c1", true);
-  });
+    await sendPrompt.dispatch({ ...args, messageID: "m2", promptOnly: true });
+    await sendPrompt.dispatch({ ...args, messageID: "m3" });
 
-  it("returns 'compacting' and retracts thinking when the server queued it behind a compaction", async () => {
-    mockSend.mockResolvedValue({
-      ok: true,
-      status: 200,
-      body: { accepted: true, message_id: "m1", queued: true },
-    });
-
-    expect(await sendPrompt.dispatch(args)).toBe("compacting");
-    // No turn opened, so a latched thinking would turn Send into Steer beside nothing.
-    expect(vi.mocked(setThinking).mock.calls.at(-1)).toEqual(["c1", false]);
+    const payload = (i: number): Record<string, unknown> =>
+      (mockSend.mock.calls[i]?.[0] as { payload: Record<string, unknown> }).payload;
+    expect(payload(0)["prompt_only"]).toBe(true);
+    expect(payload(1)["prompt_only"]).toBeUndefined();
   });
 });
 
-// The server's prompt refusal reasons, mirroring the Go constants reasonTurnLive, reasonStarting,
-// reasonChatGone and reasonChatClosed in internal/command/prompt.go, with the result each maps to.
-const PROMPT_REFUSALS: readonly {
-  reason: string | undefined;
-  result: string;
-  thinking: boolean;
-}[] = [
-  { reason: "turn_live", result: "queued", thinking: true },
-  { reason: "starting", result: "starting", thinking: false },
-  { reason: "chat_not_found", result: "gone", thinking: false },
-  { reason: "chat_closed", result: "closed", thinking: false },
-  // An unknown 409 is a refusal, never a steer: the idempotency layer's in-progress 409 carries none.
-  { reason: undefined, result: "starting", thinking: false },
-  { reason: "elsewhere", result: "starting", thinking: false },
+// The server's prompt refusal reasons, mirroring the Go constants reasonPromptOnly, reasonFull, reasonStarting,
+// reasonChatGone and reasonChatClosed in internal/command, with the result each maps to.
+const PROMPT_REFUSALS: readonly { reason: string | undefined; result: string }[] = [
+  { reason: "prompt_only", result: "prompt_only" },
+  { reason: "full", result: "full" },
+  { reason: "starting", result: "starting" },
+  { reason: "chat_not_found", result: "gone" },
+  { reason: "chat_closed", result: "closed" },
+  // An unknown 409 is a refusal: the idempotency layer's in-progress 409 carries none.
+  { reason: undefined, result: "starting" },
+  { reason: "elsewhere", result: "starting" },
 ];
 
 describe("sendPrompt — each 409 reason has its own arm", () => {
@@ -141,33 +138,18 @@ describe("sendPrompt — each 409 reason has its own arm", () => {
         ...(row.reason !== undefined ? { reason: row.reason } : {}),
       });
 
-      const result = await sendPrompt.dispatch(args);
-
-      expect(result).toBe(row.result);
-      // The action stays a PURE send: submit.ts owns what a busy chat means, and the steer chip is
-      // written only by the server's frame.
+      expect(await sendPrompt.dispatch(args)).toBe(row.result);
+      // The action stays a PURE send: the steer chip is written only by the server's frame.
       expect(recordSteerQueued).not.toHaveBeenCalled();
-      const calls = vi.mocked(setThinking).mock.calls;
-      expect(calls).toContainEqual(["c1", true]);
-      if (row.thinking) {
-        expect(calls).not.toContainEqual(["c1", false]);
-      } else {
-        // A refusal is returned as a value, so the rollback never runs: the arm itself retracts it.
-        expect(setThinking).toHaveBeenLastCalledWith("c1", false);
-      }
+      expect(applyRun).not.toHaveBeenCalled();
     });
   }
 });
 
-// On every failure class the rollback retracts `setThinking(chatID, true)`, leaving the chat
-// promptable.
-describe("sendPrompt — rollback retracts the optimistic thinking", () => {
-  it("fails (null) on a pre-ack network death — the POST is short now, so no echo rescue", async () => {
+describe("sendPrompt — a failure that is not a 409", () => {
+  it("fails (null) on a pre-ack network death", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 0, code: "network", error: "unreachable" });
-
     expect(await sendPrompt.dispatch(args)).toBeNull();
-    // submit.ts owns the text-restore and id-reuse on this result.
-    expect(vi.mocked(setThinking).mock.calls).toContainEqual(["c1", false]);
   });
 
   it("fails (null) on a 5xx — the server spoke, and what it said was not an ack", async () => {
@@ -175,31 +157,9 @@ describe("sendPrompt — rollback retracts the optimistic thinking", () => {
     expect(await sendPrompt.dispatch(args)).toBeNull();
   });
 
-  it("retracts the thinking a 400 refused, in that order", async () => {
-    mockSend.mockResolvedValue({ ok: false, status: 400, error: "bad request" });
-
-    await sendPrompt.dispatch({ ...args, messageID: "m3" });
-
-    // The ORDER too: a rollback that never ran would pass on the last call alone.
-    expect(setThinking).toHaveBeenCalledWith("c1", true);
-    expect(setThinking).toHaveBeenLastCalledWith("c1", false);
-  });
-
-  it("retracts it on a 413 too — the class is every non-ack answer, not one status", async () => {
+  it("fails (null) on a 413", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 413, error: "too large" });
-
-    await sendPrompt.dispatch({ ...args, messageID: "m4" });
-
-    expect(setThinking).toHaveBeenLastCalledWith("c1", false);
-  });
-
-  it("leaves thinking ON when the send succeeded — the turn is running", async () => {
-    mockSend.mockResolvedValue({ ok: true, status: 200 });
-
-    await sendPrompt.dispatch({ ...args, messageID: "m6" });
-
-    // Negative control: an unconditional rollback would satisfy every case above.
-    expect(vi.mocked(setThinking).mock.calls).not.toContainEqual(["c1", false]);
+    expect(await sendPrompt.dispatch({ ...args, messageID: "m4" })).toBeNull();
   });
 });
 

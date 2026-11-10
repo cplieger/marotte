@@ -4,7 +4,7 @@
 // The server is the source of truth: a prompt posts a command and SSE drives rendering.
 
 import type { ServerEvent } from "./types.js";
-import { getActiveId, getSessions, isBusy } from "./store.js";
+import { get, getActiveId, getSessions } from "./store.js";
 import { effect } from "@cplieger/ui";
 import { mountLiveRegions } from "@cplieger/ui/announce";
 import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_RECONCILE } from "./bus.js";
@@ -446,19 +446,18 @@ function setupInput(): void {
         // DETACHED, and the prompt rides INSIDE the create: `createSession(text)` sends
         // once the chat exists, so nothing here needs the id.
         void createSession(text);
-      } else {
-        sendPrompt(text);
+        return undefined;
       }
+      return sendPrompt(text);
     },
     () => {
-      // Cancel the active chat's in-flight turn. No-op if nothing running.
-      if (getActiveId() === "") {
+      // Cancel what the server names (`run.cancel`), by id, so a stale press stops nothing else.
+      const chatID = getActiveId();
+      const target = chatID === "" ? undefined : get(chatID)?.run?.cancel;
+      if (target === undefined) {
         return;
       }
-      if (!isBusy(getActiveId())) {
-        return;
-      }
-      void cancelTurn.dispatch({ chatID: getActiveId() });
+      void cancelTurn.dispatch({ chatID, target });
     },
     stagedAttachment,
     () => {

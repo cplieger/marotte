@@ -8,6 +8,7 @@ import type { Session } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 import { toolResultID } from "./entry-ids.js";
 import { KEY_ATTR } from "./reconcile.js";
+import { runAt, turnEntry } from "./__test-helpers__/run-order.js";
 
 for (const id of [
   "chat-view",
@@ -266,7 +267,7 @@ describe("a full pass updates only the cards whose inputs changed", () => {
     expect(rewindButtons(id)).toHaveLength(CARDS - 1);
     expect(rewindButtons(id).every((b) => !b.disabled)).toBe(true);
 
-    store.setThinking(id, true);
+    store.applyRun(id, runAt(1, [turnEntry("t-live")], { cancel: "t-live" }));
     await flushed();
 
     expect(
@@ -308,7 +309,7 @@ describe("a full pass reads no geometry per card", () => {
     seed(longChat(id, CARDS));
     await flushed();
     const reads = geometryReads();
-    store.setThinking(id, true);
+    store.applyRun(id, runAt(1, [turnEntry("t-live")], { cancel: "t-live" }));
     await flushed();
     const n = reads.count();
     reads.stop();

@@ -1,11 +1,10 @@
-// Primitives for commands that affect a chat's turn state. Each sets thinking before
-// posting; any failure but a 409 clears it and locks nothing, so Send again retries. A
-// leaf: mode changes ride a switch_mode permission request, /compact is intercepted
-// earlier (typed-commands.ts).
+// Primitives for commands that affect a chat's turn state: one prompt POST, whose answer says where
+// the server put the message. Mode changes ride a switch_mode permission request; /compact is
+// intercepted earlier (typed-commands.ts).
 
 import { newMessageID } from "./transport.js";
 import { get as getSession } from "./store.js";
-import { sendPrompt as sendPromptAction } from "./actions/chat.js";
+import { sendPrompt as sendPromptAction, type SendPromptAnswer } from "./actions/chat.js";
 
 /** Options for the low-level prompt sender. */
 interface SendPromptOpts {
@@ -15,18 +14,17 @@ interface SendPromptOpts {
   messageID?: string;
   /** The label of a message marotte writes on the user's behalf (`_meta.kiro.displayText`). */
   displayText?: string;
+  /** The text is resolved only by a turn of its own, so the server never steers it. */
+  promptOnly?: boolean;
 }
 
 /** Every answer `sendPromptTo` gives; a caller's branch over it should be total. */
-export type SendPromptResult =
-  "sent" | "compacting" | "queued" | "starting" | "gone" | "closed" | "failed";
+export type SendPromptResult = SendPromptAnswer | "failed";
 
 /**
- * Post a prompt to a chat once and report the outcome: "sent" on the admission ack, "compacting"
- * on an ack that queued it behind the chat's running compaction, "queued" on a 409 with reason
- * "turn_live" (a steerable turn), "gone" on "chat_not_found" (tombstoned,
- * terminal), "closed" on "chat_closed" (the chat's close ended it), "starting" on any other 409,
- * "failed" otherwise. What a busy chat means is submit.ts's; user sends go through `submitPrompt`.
+ * Post a prompt to a chat once and report the outcome: where the server put it ("sent", "steered",
+ * "queued"), a 409's class (`SendPromptAnswer`), or "failed". What a refusal means to the composer
+ * is submit.ts's; user sends go through `submitPrompt`.
  */
 export async function sendPromptTo(
   chatID: string,
@@ -41,6 +39,7 @@ export async function sendPromptTo(
     model: getSession(chatID)?.model ?? "",
     ...(opts.attachments !== undefined ? { attachments: opts.attachments } : {}),
     ...(opts.displayText !== undefined ? { displayText: opts.displayText } : {}),
+    ...(opts.promptOnly === true ? { promptOnly: true } : {}),
   });
   return result ?? "failed";
 }

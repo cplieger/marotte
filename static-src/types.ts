@@ -52,6 +52,9 @@ export type {
   PolicyView,
   PolicyExplainResult,
   QueuedPrompt,
+  RunEntryView,
+  RunView,
+  RunWait,
   SecurityProfile,
   SessionEffortLevel,
   SessionMode,
@@ -168,7 +171,7 @@ import type {
   EntryTurnRevert,
   InterruptMode,
   OpenEntry,
-  QueuedPrompt,
+  RunView,
   SessionEffortLevel,
   SteerOrigin,
   SubjectStamp,
@@ -393,17 +396,9 @@ export interface Session {
   /** What Send means while a turn runs: a steer into it, or a follow-up held for its
    *  end. From `ChatHeader.interrupt_mode`; absent is steer. */
   interrupt_mode?: InterruptMode;
-  /** The server-held follow-ups (`ChatHeader.queued_prompts`), drained one per clean
-   *  turn end. A header read replaces it, so an absent list is a clear. */
-  queued?: QueuedPrompt[];
-  /** A compaction queued for a turn's end (`ChatHeader.compact_pending`). A header read replaces it, so absent is
-   *  none. */
-  compact_queued?: boolean;
-  /** That compaction's call is in flight (`ChatHeader.compact_pending.running`). A header read replaces it. */
-  compact_running?: boolean;
-  /** That running compaction's end sends the next prompt: the unread steers, else the
-   *  first sendable queued row (`ChatHeader.compact_pending.sends`). A header read replaces it. */
-  compact_sends?: boolean;
+  /** The chat's run order (`ChatHeader.run`): what runs next, each entry's wait and the composer's
+   *  verb. The server's statement; `newerRun` keeps the highest `version`. */
+  run?: RunView;
   /** `ChatHeader.tangent`. */
   tangent?: boolean;
   /** Reasoning-effort level ("low".."max", "" = engine default): a per-chat composer setting. */

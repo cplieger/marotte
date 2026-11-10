@@ -6,8 +6,8 @@
 // second button beside Cancel sends it, because a touch Return is a new line.
 
 import { $, byId, maybeEl, queryEl } from "./dom.js";
-import { activeSession, getActive, getActiveId, sessionBusy } from "./store.js";
-import { sessionDrain, turnsPhrase } from "./queue-slots.js";
+import { activeSession, getActive, getActiveId } from "./store.js";
+import { afterWords } from "./run-order.js";
 import { payloadOf, turnOpenOf } from "./turns.js";
 import { fixIOSViewport } from "./platform.js";
 import { ICON_SEND, ICON_CANCEL, ICON_ALERT, ICON_HOURGLASS } from "./icons.js";
@@ -15,38 +15,41 @@ import { iconEl } from "./icon-el.js";
 import { collapseAll } from "./pill-expand.js";
 import { composerText, isSendable, setComposerValue, syncComposerText } from "./composer-value.js";
 import { touchComposer, wireTouchComposer } from "./composer-touch.js";
+import { restoreRefusedEdit } from "./composer-state.js";
 import { continueList } from "./list-continue.js";
 import { applyEdit } from "./text-edit.js";
 import { computed, effect, el, signal, touch, type ReadonlySignal } from "@cplieger/ui";
-import type { InterruptMode } from "./types.js";
+import type { SendVerb } from "./wire/types.gen.js";
 
-/** The active chat's interrupt mode, value-deduped so an unrelated store write does not repaint
- *  the button. */
-const busyMode = computed(() => activeSession.value?.interrupt_mode ?? "steer");
+/** What Send does with the text now, from the server's run order (`RunView.send`). */
+const sendVerb = computed<SendVerb>(() => activeSession.value?.run?.send ?? "prompt");
 
-/** How long a follow-up queued now would wait, in the dock's words, so the two agree. */
+/** How long a message queued now would wait, in the dock's words, so the two agree. */
 const queueWait = computed(() => {
-  const s = activeSession.value;
-  if (s === undefined) {
-    return turnsPhrase(1, true);
-  }
-  return turnsPhrase(sessionDrain(s).next, sessionBusy(s));
+  const wait = activeSession.value?.run?.next_wait;
+  return wait === undefined ? "the next turn" : afterWords(wait);
 });
 
-/** A running compaction makes an idle Send queue the message behind it (submit.ts). */
-const compacting = computed(() => activeSession.value?.compact_running === true);
+/** The placeholder names what Send will do with the text. */
+function placeholderFor(verb: SendVerb, wait: string): string {
+  switch (verb) {
+    case "prompt":
+      return "Message Kiro...";
+    case "steer":
+      return "Steer the agent mid-turn...";
+    case "queue":
+      return wait === "the compaction"
+        ? "Queue a message for after the compaction..."
+        : `Queue a follow-up for after ${wait}...`;
+  }
+}
 
-/** While a turn runs the placeholder names what Send will do with the text. */
-const BUSY_PLACEHOLDER: Record<InterruptMode, (wait: string) => string> = {
-  steer: () => "Steer the agent mid-turn...",
-  queue: (wait) => `Queue a follow-up for after ${wait}...`,
-};
-
-/** The mid-turn Send's face per mode. The word is a word of the name (WCAG 2.5.3). */
+/** The mid-turn Send's face per verb. The word is a word of the name (WCAG 2.5.3). */
 const MIDTURN_FACE: Record<
-  InterruptMode,
+  SendVerb,
   { label: string; name: (wait: string) => string; icon: string }
 > = {
+  prompt: { label: "Send", name: () => "Send", icon: ICON_SEND },
   steer: { label: "Steer", name: () => "Steer the running turn", icon: ICON_SEND },
   queue: { label: "Queue", name: (wait) => `Queue for after ${wait}`, icon: ICON_HOURGLASS },
 };
@@ -55,7 +58,9 @@ const MIDTURN_FACE: Record<
  *  wording, which is upstream prose. */
 const RETRY_HINT = "Send again to retry.";
 
-type Submit = (text: string) => void;
+/** Sends the text; a send that answers later returns its result, and the composer holds the text,
+ *  read-only, until then. */
+type Submit = (text: string) => Promise<unknown> | undefined;
 type Cancel = () => void;
 type EditLast = () => void;
 type Staged = ReadonlySignal<boolean>;
@@ -114,18 +119,73 @@ class PromptInputController {
   private staged: Staged = signal(false);
   private midTurn: HTMLButtonElement | null = null;
   private midTurnName = "";
+  /** Each chat whose send is in flight, by the token of that send. */
+  private readonly held = new Map<string, object>();
 
   /** Send whatever is in the composer. THE send path: the form's submit handler, Enter, the
    *  mid-turn Send and the keyboard shortcut all call this, and submit.ts decides what a send
    *  means. Neither of the two ways of going through the form works. */
   sendComposer(): void {
-    const text = $.promptInput.value.trim();
-    if (!isSendable(text, this.staged.peek())) {
+    const raw = $.promptInput.value;
+    const text = raw.trim();
+    if (this.heldHere() || !isSendable(text, this.staged.peek())) {
       return;
     }
     this.exitCycling();
-    this.onSubmit(text);
-    setComposerValue("");
+    const chatID = getActiveId();
+    const sending = this.onSubmit(text);
+    if (sending === undefined) {
+      setComposerValue("");
+      return;
+    }
+    this.holdForSend(chatID, raw, sending);
+  }
+
+  /** The send is in flight: the text stays, read-only, and the Send button shows it pending. The
+   *  answer clears it in the render that applies the answer's `run`; a refusal leaves it there. */
+  private holdForSend(chatID: string, raw: string, sending: Promise<unknown>): void {
+    const token = {};
+    this.held.set(chatID, token);
+    this.applyHeld();
+    void sending.then(
+      (result) => {
+        this.releaseHeld(chatID, token);
+        if (result === "held" || result === "failed") {
+          return;
+        }
+        if (getActiveId() === chatID && $.promptInput.value === raw) {
+          setComposerValue("");
+          return;
+        }
+        // The reader moved to another chat: the sent chat's saved draft goes, unless typed over.
+        restoreRefusedEdit(chatID, raw, "");
+      },
+      () => {
+        this.releaseHeld(chatID, token);
+      },
+    );
+  }
+
+  private releaseHeld(chatID: string, token: object): void {
+    if (this.held.get(chatID) === token) {
+      this.held.delete(chatID);
+      this.applyHeld();
+    }
+  }
+
+  /** Whether the active chat's send is in flight. */
+  private heldHere(): boolean {
+    return this.held.has(getActiveId());
+  }
+
+  /** Read-only and pending only on the chat whose send is in flight. */
+  private applyHeld(): void {
+    const on = this.heldHere();
+    if ($.promptInput.readOnly === on) {
+      return;
+    }
+    $.promptInput.readOnly = on;
+    this.applyButtonState();
   }
 
   private exitCycling(): void {
@@ -231,7 +291,7 @@ class PromptInputController {
       return;
     }
     btn.hidden = false;
-    const face = MIDTURN_FACE[busyMode.peek()];
+    const face = MIDTURN_FACE[sendVerb.peek()];
     const name = face.name(queueWait.peek());
     if (this.midTurnName === name) {
       return;
@@ -245,10 +305,16 @@ class PromptInputController {
   private applyButtonState(): void {
     const k = this.state.kind;
     const reason = reasonOf(this.state);
+    const held = this.heldHere();
     $.sendBtn.replaceChildren(
       el("span", { className: "send-btn-label" }, STATE_LABEL[k]),
-      iconEl(STATE_ICON[k]),
+      held ? el("span", { className: "spinner-sm", "aria-hidden": "true" }) : iconEl(STATE_ICON[k]),
     );
+    if (held) {
+      $.sendBtn.setAttribute("aria-busy", "true");
+    } else {
+      $.sendBtn.removeAttribute("aria-busy");
+    }
     const tooltip = reason !== "" ? `${reason} ${RETRY_HINT}` : DEFAULT_TOOLTIP[k];
     $.sendBtn.setAttribute("data-tooltip", k === "streaming" ? `${tooltip} (Esc)` : tooltip);
     $.sendBtn.setAttribute("aria-label", tooltip);
@@ -261,12 +327,7 @@ class PromptInputController {
     // Unconditional, so nothing that ever set them can leave the composer off.
     $.sendBtn.disabled = false;
     $.promptInput.disabled = false;
-    $.promptInput.placeholder =
-      k === "streaming"
-        ? BUSY_PLACEHOLDER[busyMode.peek()](queueWait.peek())
-        : compacting.peek()
-          ? "Queue a message for after the compaction..."
-          : "Message Kiro...";
+    $.promptInput.placeholder = placeholderFor(sendVerb.peek(), queueWait.peek());
     this.applyMidTurnSend();
   }
 
@@ -308,10 +369,13 @@ class PromptInputController {
     // Follows the active chat's mode and queue; setSendState() paints the other input directly,
     // because `state` is not a signal.
     effect(() => {
-      touch(busyMode);
+      touch(sendVerb);
       touch(queueWait);
-      touch(compacting);
       this.applyButtonState();
+    });
+    effect(() => {
+      touch(activeSession);
+      this.applyHeld();
     });
     effect(() => {
       touch(composerText);
