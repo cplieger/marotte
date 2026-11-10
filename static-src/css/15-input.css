@@ -639,6 +639,22 @@
   inset-inline: calc(var(--pill-gap) / -2 - 1px);
 }
 
+/* A pill's border is a hairline in the row's tone, so the eye spaces the pills fill to fill;
+   Send's border is its hue, so at the bare gap the mid-turn Send (or Queue) and Cancel read as
+   touching. The pair adds both borders to the gap, and each facing target reaches one border
+   further so the two still meet. */
+.prompt-pills > .send-btn:not([hidden]) + .send-btn {
+  margin-inline-start: calc(2 * var(--hairline));
+
+  &::after {
+    inset-inline-start: calc(var(--pill-gap) / -2 - 2 * var(--hairline));
+  }
+}
+
+.prompt-pills > .send-btn:not([hidden]):has(+ .send-btn)::after {
+  inset-inline-end: calc(var(--pill-gap) / -2 - 2 * var(--hairline));
+}
+
 .pill-spacer {
   flex: 1;
 
@@ -1957,8 +1973,8 @@
 
 /* The model and mode pills go icon-only where the fullest labelled row (mid-turn, task
    list shown) stops fitting with the catalog's widest pills, "claude sonnet 5.5 · medium"
-   and "Semantic Reviewer": 630px mouse, 654px touch with the tier and Send's word, 496px
-   and 520px without; each threshold adds 10 to 12px (`button-size.test.ts` sweeps it). A
+   and "Semantic Reviewer": 632px mouse, 656px touch with the tier and Send's word, 498px
+   and 522px without; each threshold adds 8 to 10px (`button-size.test.ts` sweeps it). A
    longer name, such as a custom agent's, ellipsises within its cap. A container query
    cannot read `--pill-gap`, so the tier is a selector. The names stay in aria-label and
    the tooltip (`status.ts`, `role-picker.ts`). */
