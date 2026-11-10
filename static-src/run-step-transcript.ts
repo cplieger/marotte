@@ -1,4 +1,4 @@
-import { signal } from "@cplieger/reactive";
+import { batch, signal } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { apiGetTypedOrError } from "./api-client.js";
 import { decodeRunStepTranscript } from "./wire/decoders.gen.js";
@@ -11,6 +11,7 @@ import {
   openRunTurn,
 } from "./run-store.js";
 import type { Entry, OpenEntry, RunStepTranscriptState } from "./types.js";
+import type { RunStepTranscript } from "./wire/types.gen.js";
 
 type StepReadState = "loading" | "unaddressable" | RunStepTranscriptState;
 
@@ -88,23 +89,33 @@ export function rereadStepTranscript(workflowID: string, nodePath: string): void
 /** `apiGetTypedOrError` rather than `apiGetTyped`, because the STATUS is what separates a settled
  *  refusal from a transient one and the collapsing helper hands back one null for both. */
 async function fetchStep(key: string, workflowID: string, nodePath: string): Promise<void> {
+  let data: RunStepTranscript | null = null;
+  let verdict: StepRead;
   try {
     const r = await apiGetTypedOrError(runStepURL(workflowID, nodePath), decodeRunStepTranscript);
-    if (r.ok && r.data !== null) {
-      adopt(workflowID, r.data);
-      reads.set(key, { state: r.data.state });
-    } else {
-      reads.set(key, failedRead(r.status));
-    }
+    data = r.ok ? r.data : null;
+    verdict = data === null ? failedRead(r.status) : { state: data.state };
   } catch {
     // A THROW never reached the server, so it takes the transient verdict via status 0.
-    reads.set(key, failedRead(0));
-  } finally {
-    // In the `finally`, so neither answer path can leave a key in flight and stop that step ever
-    // being asked about again.
-    inFlight.delete(key);
-    stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
+    verdict = failedRead(0);
   }
+  // One batch for the answer's entries and the version bump, so a reader of the log repaints once
+  // per answer: a write per entry repaints the run page once per entry.
+  batch(() => {
+    try {
+      if (data !== null) {
+        adopt(workflowID, data);
+      }
+      reads.set(key, verdict);
+    } catch {
+      reads.set(key, failedRead(0));
+    } finally {
+      // In the `finally`, so neither answer path can leave a key in flight and stop that step ever
+      // being asked about again.
+      inFlight.delete(key);
+      stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
+    }
+  });
 }
 
 /** `clearRunHole` per turn the answer named, because the store's hole marker is what makes the pane

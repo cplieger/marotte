@@ -1,5 +1,6 @@
 // The run's range read: `GET /api/runs/{id}/turns/{turn}?after=<seq>`.
 
+import { batch } from "@cplieger/ui";
 import { join } from "@cplieger/keyenc";
 import { apiGetTyped } from "./api-client.js";
 import { asArray, asObject, type Decoder } from "./wire/validators.gen.js";
@@ -108,7 +109,11 @@ async function runRange(workflowID: string, turnID: string, afterSeq?: number): 
     console.warn(`run turn range: no answer for ${workflowID} ${turnID}`);
     return;
   }
-  adopt(workflowID, turnID, d.entries, d.open_entries, before);
+  // One batch, so the log's readers repaint once per answer rather than once per entry.
+  const { entries, open_entries } = d;
+  batch(() => {
+    adopt(workflowID, turnID, entries, open_entries, before);
+  });
 }
 
 /** The turn's open tails are REPLACED by the answer's, after the sealed entries: the answer is
