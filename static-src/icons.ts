@@ -30,11 +30,11 @@ const PATH_SEND = '<path d="M23.25 12H7.69M23.25 12L4.16 21.19 7.69 12 4.16 2.81
 /** Outline and filled twin share this path; `fill` is the only difference, so the state reads as the same mark. */
 const PATH_PIN = '<path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3.24H7l2-3.24z"/>';
 /**
- * Shared by `ICON_TAB_DOCS` and `ICON_TOOL_READ` so nothing holds two spellings equal; the design notes are at
- * `ICON_TAB_DOCS`.
+ * Lucide `library-big`, shared by `ICON_TAB_DOCS` and `ICON_TOOL_READ` so nothing holds two spellings equal; the
+ * design notes are at `ICON_TAB_DOCS`.
  */
-const PATH_BOOK_OPEN =
-  '<path d="M12 6.25C10 4.7 7.5 3.5 4.5 3.5Q3 3.5 3 5V16.75Q3 18.25 4.5 18.25C7.5 18.25 10 19.45 12 21C14 19.45 16.5 18.25 19.5 18.25Q21 18.25 21 16.75V5Q21 3.5 19.5 3.5C16.5 3.5 14 4.7 12 6.25Z"/><path d="M12 6.25v14.75"/>';
+const PATH_LIBRARY_BIG =
+  '<rect width="8" height="18" x="3" y="3" rx="1"/><path d="M7 3v18"/><path d="M20.4 18.9c.2.5-.1 1.1-.6 1.3l-1.9.7c-.5.2-1.1-.1-1.3-.6L11.1 5.1c-.2-.5.1-1.1.6-1.3l1.9-.7c.5-.2 1.1.1 1.3.6Z"/>';
 
 /** Lucide `eye`. */
 const PATH_EYE =
@@ -296,10 +296,10 @@ export function workflowIcon(badge: WorkflowBadge): string {
 }
 
 /**
- * The read family draws the configuration browser's open book on purpose: one silhouette across sidebar chrome and
+ * The read family draws the configuration browser's library on purpose: one silhouette across sidebar chrome and
  * transcript content, which keeps it clear of every transcript glyph.
  */
-const ICON_TOOL_READ = svg("ui", PATH_BOOK_OPEN);
+const ICON_TOOL_READ = svg("ui", PATH_LIBRARY_BIG);
 const ICON_TOOL_EDIT = svg("ui", PATH_PENCIL);
 const ICON_TOOL_DELETE = svg("ui", PATH_TRASH);
 const ICON_TOOL_MOVE = svg(
@@ -577,13 +577,11 @@ export const ICON_TAB_FILES = svg(
 );
 export const ICON_TAB_HISTORY = svg("ui", '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
 /**
- * The configuration browser's open book: one closed outline plus one spine line (two covers sharing a spine paint
- * it double). Rounded corners and curved page edges. The bottom flaps are the top ones translated, never mirrored.
- * The rise is 2.75: at 16px each page edge must drop a full device pixel toward the spine, or it rasterises flat;
- * much lower renders as a closed book, which is `ICON_REPO`'s meaning. Straight strokes stay on the 3-unit grid;
- * pinned to the sidebar button by `menu-icons.test.ts`.
+ * The configuration browser's library: an upright volume with its spine line beside a leaning one. Two volumes keep
+ * it apart from the single closed book, `ICON_REPO`'s meaning. Duplicated as static markup on `#docs-btn` (pinned
+ * by `menu-icons.test.ts`).
  */
-export const ICON_TAB_DOCS = svg("ui", PATH_BOOK_OPEN);
+export const ICON_TAB_DOCS = svg("ui", PATH_LIBRARY_BIG);
 /** The run dock's Steps segment: Lucide `list-tree`. */
 export const ICON_SEG_STEPS = svg(
   "ui",
