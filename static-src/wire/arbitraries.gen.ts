@@ -3047,6 +3047,7 @@ const arbModel = fc.letrec<{
       credits: fc.double({ noNaN: true, noDefaultInfinity: true }),
       last_turn_ms: fc.double({ noNaN: true, noDefaultInfinity: true }),
       has_real_data: fc.boolean(),
+      context_compacted: fc.boolean(),
     },
     { requiredKeys: ["context_pct", "context_size", "credits", "last_turn_ms", "has_real_data"] },
   ),

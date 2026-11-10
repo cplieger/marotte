@@ -389,9 +389,42 @@ func TestFailsafe_UnreadSteersGoAfterTheCompactionAndBeforeTheResume(t *testing.
 // with no resume, and the rows go after it as a clean end lets them.
 func TestFailsafe_ATurnThatFinishedBeforeTheCancelGetsNoResume(t *testing.T) {
 	w := firedOn(t)
-	w.closed("m-a", listClose{clean: true})
+	w.closed("m-a", listClose{clean: true, completed: true})
 	if got, want := w.order(), "compact-1:starting m-q1:pending"; got != want {
 		t.Errorf("list = %q, want %q", got, want)
+	}
+}
+
+// A close graded clean only because nothing watched it end (KAS's idle report after a lost turn_end) is no finished
+// reply: the stopped turn is still continued and the rows still wait for the continued turn.
+func TestFailsafe_AnUnattendedCloseOfTheStoppedTurnKeepsTheResume(t *testing.T) {
+	w := firedOn(t)
+	w.closed("m-a", listClose{clean: true})
+	if got, want := w.order(), "compact-1:starting m-resume:pending m-q1:paused"; got != want {
+		t.Errorf("list = %q, want %q", got, want)
+	}
+}
+
+// A failsafe compaction that fails while a /compact waits on it still toasts, since the toast is the only word that
+// the stopped turn was not continued, and the resume goes with it.
+func TestFailsafe_AFailedCompactionAJoinedWaiterWaitsOnStillToasts(t *testing.T) {
+	w := firedOn(t)
+	c, joined := w.l.requestCompaction(marotte.RunFromRequest, "t-m-a")
+	if !joined {
+		t.Fatalf("Setup: the press did not join %s", c.id)
+	}
+	c.waiter = true
+	w.closed("m-a", listClose{})
+	w.l.compactionStart("compact-1", w.facts())
+	w.l.takeEffects()
+	w.l.compactionEnded("compact-1", false, errors.New("the summary failed"))
+	fx := w.l.takeEffects()
+	w.advance()
+	if len(fx.toast) != 1 {
+		t.Errorf("toasts = %d, want 1 with a waiter joined", len(fx.toast))
+	}
+	if got := w.order(); got != "m-q1:paused" {
+		t.Errorf("list = %q, want only m-q1 paused", got)
 	}
 }
 
@@ -497,5 +530,31 @@ func TestFailsafe_ARewindDropsTheResume(t *testing.T) {
 	}
 	if got, want := w.order(), "rewind-1:running m-q1:paused"; got != want {
 		t.Errorf("list = %q, want %q", got, want)
+	}
+}
+
+// A close graded clean only because nothing watched it end is clean for the rows behind it, but only a completed
+// outcome says a stopped turn's reply finished before its cancel landed.
+func TestListCloseOf_CompletedIsTheOutcomesOwnGrade(t *testing.T) {
+	h, _, _ := newTestHub()
+	t.Cleanup(func() { shutdownHub(t, h) })
+	for _, tc := range []struct {
+		name             string
+		outcome          marotte.TurnOutcome
+		closer           turnCloser
+		clean, completed bool
+	}{
+		{name: "a completed reply", outcome: marotte.TurnOutcomeCompleted, closer: closerPromptResponse, clean: true, completed: true},
+		{name: "KAS's idle report", outcome: marotte.TurnOutcomeUnknown, closer: closerKASIdle, clean: true},
+		{name: "a cancelled turn", outcome: marotte.TurnOutcomeCancelled, closer: closerPromptResponse},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			turn := &activeTurn{Chat: "c1", ID: "t-1", lc: h.coord.turns.testLifecycle("c1")}
+			cf := h.coord.closeFactsOf(turn, tc.closer, tc.outcome)
+			c := h.coord.listCloseOf(t.Context(), turn, tc.closer, &cf, marotte.TurnResult{}, false)
+			if c.clean != tc.clean || c.completed != tc.completed {
+				t.Errorf("close = clean %v completed %v, want clean %v completed %v", c.clean, c.completed, tc.clean, tc.completed)
+			}
+		})
 	}
 }

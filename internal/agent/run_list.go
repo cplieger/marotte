@@ -858,6 +858,8 @@ type listClose struct {
 	compact marotte.RunEntryOrigin
 	seq     uint64
 	clean   bool
+	// completed: the turn's own outcome graded clean, an unattended close not counted (clean counts it).
+	completed bool
 	// handoff: marotte closed a fold-opened turn to send its next call (closerPromptHandoff).
 	handoff bool
 	// emptyRetry: the closed turn ended clean on the wire with nothing emitted.
@@ -874,7 +876,7 @@ func (l *runList) turnClosed(c listClose, f *orderFacts) {
 	stopped := e.state == marotte.RunStopping
 	e.state, e.steerable, e.clean = marotte.RunClosing, false, c.clean
 	l.touch()
-	finished := stopped && e.fsStopped && c.clean
+	finished := stopped && e.fsStopped && c.completed
 	if finished {
 		l.dropResume()
 	}

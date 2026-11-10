@@ -43,6 +43,9 @@ type sessionInfoKiroBlock struct {
 	Workflow     *ACPWorkflowMeta `json:"workflow"`
 	ContextUsage struct {
 		UsagePercentage *float64 `json:"usagePercentage"`
+		// SummarizationThreshold rides only KAS's publication of its stored figure (publishContextUsage:
+		// a prompt's end, a context refresh, a session load), never a model response's own reading.
+		SummarizationThreshold *float64 `json:"summarizationThreshold"`
 	} `json:"contextUsage"`
 	// Focus is the kind=="focus_update" block (see focus.go).
 	Focus *focusUpdate `json:"focus"`
@@ -118,7 +121,7 @@ func (b *sessionInfoKiroBlock) UnmarshalJSON(data []byte) error {
 	// truncated, an interaction's consentRound (read on the permission request). A plan approval's
 	// flat `_meta` (its workflowPlan) is declined unread; a live bracket's timestamp and
 	// boundarySource add nothing, the boundary being observed at the frame's own time. A
-	// context_usage's summarizationThreshold is the one marotte sent at spawn, and its breakdown a
+	// context_usage's flat summarizationThreshold repeats the nested one, and its breakdown is a
 	// token estimate coarser than turn_completion's contextBreakdown.
 	censusMeta("session_info_update._meta.kiro", data, reflect.TypeFor[sessionInfoKiroShadow](),
 		"errorType", "retryErrorType", "toolCallId", "outcome", "selectedOption",
@@ -368,7 +371,8 @@ func (t *Translator) handleContextUsage(ctx context.Context, chatID marotte.Chat
 		logUnconsumedInfoKind(chatID, k.Kind)
 		return
 	}
-	t.persistUsage(ctx, chatID, *pct, 0) // no size on this channel
+	live := k.ContextUsage.SummarizationThreshold == nil && !k.Replay
+	t.persistUsage(ctx, chatID, *pct, 0, live) // no size on this channel
 }
 
 // handleTurnEvent takes the wire's turn bracket and the routing notice inside it, reporting whether
@@ -528,19 +532,24 @@ func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID marotte.ChatI
 	if json.Unmarshal(raw, &u) != nil || u.Size <= 0 {
 		return
 	}
-	t.persistUsage(ctx, chatID, float64(u.Used)/float64(u.Size)*100, int(u.Size))
+	t.persistUsage(ctx, chatID, float64(u.Used)/float64(u.Size)*100, int(u.Size), true)
 }
 
 // persistUsage writes the context percentage, and optionally the window size (size <= 0 leaves it),
 // into the chat's usage. The percentage gate is a MATERIAL delta: each Mutate rewrites the whole chat
-// file and KAS emits the percentage several times per response.
-func (t *Translator) persistUsage(ctx context.Context, chatID marotte.ChatID, pct float64, size int) {
-	t.usage.ObserveContextUsage(ctx, chatID, pct)
+// file and KAS emits the percentage several times per response. Only a live reading (a model
+// response's own) reaches the compactor or replaces the figure a compaction cleared: KAS's published
+// figure stays the context before a compaction until its next live reading (Usage.ContextCompacted).
+func (t *Translator) persistUsage(ctx context.Context, chatID marotte.ChatID, pct float64, size int, live bool) {
+	if live {
+		t.usage.ObserveContextUsage(ctx, chatID, pct)
+	}
 	_, err := t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists {
+		if !exists || !live && c.Usage.ContextCompacted {
 			return false
 		}
-		changed := false
+		changed := live && c.Usage.ContextCompacted
+		c.Usage.ContextCompacted = false
 		if !c.Usage.HasRealData || materialPctDelta(c.Usage.ContextPct, pct) {
 			c.Usage.ContextPct = pct
 			c.Usage.HasRealData = true

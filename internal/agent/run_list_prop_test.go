@@ -478,7 +478,7 @@ func (w *listWorld) closeTurn(turnID string, handoff bool) {
 	}
 	w.ids++
 	w.l.turnClosed(listClose{
-		turnID: turnID, retryID: "r-" + strconv.Itoa(w.ids), compact: compact, seq: tr.seq, clean: clean,
+		turnID: turnID, retryID: "r-" + strconv.Itoa(w.ids), compact: compact, seq: tr.seq, clean: clean, completed: clean,
 		handoff: handoff, emptyRetry: clean && w.r.IntN(2) == 0,
 	}, w.facts())
 	for i, r := range w.l.entries {

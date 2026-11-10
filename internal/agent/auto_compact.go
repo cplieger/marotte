@@ -81,30 +81,48 @@ func newAutoCompactor(
 	}
 }
 
-// ObserveContextUsage hands each context reading KAS reported to the chat's compactor.
+// ObserveContextUsage hands each live context reading KAS reported to the chat's compactor.
 func (bc *bridgeCoordinator) ObserveContextUsage(ctx context.Context, chatID marotte.ChatID, pct float64) {
 	bc.autoCompact.noteUsage(ctx, chatID, pct)
 }
 
-// noteUsage lists the running turn's compaction the first time a reading inside it reaches the point, once per turn
-// and never after the reader cancelled that turn's (runList.crossing). A reading at compactionFailsafePct stops the
-// turn to compact and resume it (runList.failsafe), unless the turn is parked on an ask; one under the point re-arms
-// the failsafe.
-func (a *autoCompactor) noteUsage(ctx context.Context, chatID marotte.ChatID, pct float64) {
+// ObserveToolCall hands each tool call the chat's own agent opened to the chat's compactor.
+func (bc *bridgeCoordinator) ObserveToolCall(chatID marotte.ChatID) {
+	bc.autoCompact.noteToolCall(chatID)
+}
+
+// noteToolCall records that the chat's running turn went on past its last reading.
+func (a *autoCompactor) noteToolCall(chatID marotte.ChatID) {
 	if a == nil {
-		return
-	}
-	enabled, point := a.policy(ctx)
-	if !enabled {
 		return
 	}
 	lc, ok := a.turns.lookup(chatID)
 	if !ok {
 		return
 	}
-	parked := pct >= compactionFailsafePct && a.asksOpen(chatID)
 	lc.mu.Lock()
-	if lc.ended || !lc.liveLockedState() {
+	lc.toolCallTurn = lc.compactTurnLocked()
+	lc.mu.Unlock()
+}
+
+// noteUsage lists the running turn's compaction the first time a reading inside it reaches the point, once per turn
+// and never after the reader cancelled that turn's (runList.crossing). A reading at compactionFailsafePct stops the
+// turn to compact and resume it (runList.failsafe) when the response it measures called a tool, so the turn goes on,
+// and the turn is not parked on an ask; one under the point re-arms the failsafe.
+func (a *autoCompactor) noteUsage(ctx context.Context, chatID marotte.ChatID, pct float64) {
+	if a == nil {
+		return
+	}
+	lc, ok := a.turns.lookup(chatID)
+	if !ok {
+		return
+	}
+	enabled, point := a.policy(ctx)
+	parked := enabled && pct >= compactionFailsafePct && a.asksOpen(chatID)
+	lc.mu.Lock()
+	goesOn := lc.toolCallTurn
+	lc.toolCallTurn = ""
+	if !enabled || lc.ended || !lc.liveLockedState() {
 		lc.mu.Unlock()
 		return
 	}
@@ -120,7 +138,7 @@ func (a *autoCompactor) noteUsage(ctx context.Context, chatID marotte.ChatID, pc
 		}
 	}
 	var rs command.RunStop
-	if pct >= compactionFailsafePct && !parked {
+	if pct >= compactionFailsafePct && !parked && goesOn == turn {
 		rs = a.failsafeLocked(lc, turn)
 	}
 	lc.wakeOnChangeLocked()

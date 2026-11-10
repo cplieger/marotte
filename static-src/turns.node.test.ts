@@ -1035,7 +1035,7 @@ describe("turnFailureText", () => {
   // The reader did not stop it, so the footer's "Cancelled" alone would leave the stop unexplained.
   it("speaks the notice of a turn marotte stopped to compact", () => {
     const notice =
-      "The context was 95% full, so marotte stopped this turn to compact it before it ran out.";
+      "The context was nearly full, so marotte stopped this turn to compact the context before it ran out.";
     expect(textOf({ outcome: "cancelled", stopped_to_compact: true, failure_reason: notice })).toBe(
       notice,
     );

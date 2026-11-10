@@ -44,8 +44,9 @@ func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID marot
 			return false
 		}
 		c.CompactionWatermark = id
-		// KAS reports no reading after a summary, so the stored one would stand for the context before it.
-		c.Usage.ContextPct, c.Usage.HasRealData = 0, false
+		// KAS republishes its pre-summary figure until its next live reading (handleCompact leaves
+		// lastContextUsagePct, and a session load seeds it from the last persisted reading).
+		c.Usage.ContextPct, c.Usage.HasRealData, c.Usage.ContextCompacted = 0, false, true
 		return true
 	})
 	if errors.Is(err, chat.ErrTombstoned) {

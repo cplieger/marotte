@@ -158,7 +158,9 @@ type chatLifecycle struct {
 	closedIDs [recentCloses]string
 	// admissionMessage is the prompt message id of the held reservation, "" for none.
 	admissionMessage string
-	chatID           marotte.ChatID
+	// toolCallTurn is the turn the chat's own agent opened a tool call in since the last live reading, "" for none.
+	toolCallTurn string
+	chatID       marotte.ChatID
 	// runFinal is the list the life's end left, owed to the record once the ending caller released its locks
 	// (writeFinalRun); runWritten is the record version this life last wrote.
 	runFinal []marotte.RunEntry

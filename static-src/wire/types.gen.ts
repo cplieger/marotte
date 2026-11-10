@@ -4599,6 +4599,11 @@ export interface Usage {
   credits: number;
   last_turn_ms: number;
   has_real_data: boolean;
+  /**
+ * ContextCompacted: a compaction committed and no live reading has come since, so a figure KAS
+ * publishes is the context before it and is not stored.
+ */
+  context_compacted?: boolean;
 }
 
 /**

@@ -329,6 +329,9 @@ type Usage struct {
 	Credits       float64        `json:"credits"`
 	LastTurnMs    float64        `json:"last_turn_ms"`
 	HasRealData   bool           `json:"has_real_data"`
+	// ContextCompacted: a compaction committed and no live reading has come since, so a figure KAS
+	// publishes is the context before it and is not stored.
+	ContextCompacted bool `json:"context_compacted,omitempty"`
 }
 
 // MeteringItem is one usage dimension from kiro-cli's meteringUsage array.

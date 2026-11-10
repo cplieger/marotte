@@ -5148,6 +5148,10 @@ export const decodeUsage: Decoder<Usage> = (v) => {
     const $v = own(o, "metering_items");
     if ($v !== undefined && $v !== null) out.metering_items = own(o, "metering_items") === null ? [] : decodeArray(own(o, "metering_items"), decodeMeteringItem, "$.usage.metering_items");
   }
+  {
+    const $v = own(o, "context_compacted");
+    if ($v !== undefined && $v !== null) out.context_compacted = reqBool(o, "context_compacted", "$.usage");
+  }
   return out;
 };
 

@@ -529,6 +529,25 @@ func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T
 	}
 }
 
+// A switch resets the figures but not a compaction's wait for a live reading: KAS's figure is still the context
+// before the compaction, and the switched session publishes it again.
+func TestPersistModelSwitch_KeepsACompactionsWaitForALiveReading(t *testing.T) {
+	h, cs, _ := newTestHub()
+	ctx := t.Context()
+	finishedTurn(t, h, "c1")
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Model = "m-old"
+		c.Usage = marotte.Usage{ContextSize: 100, ContextCompacted: true}
+		return true
+	})
+
+	h.coord.persistModelSwitch(ctx, "c1", &effortDecision{from: "m-old", to: "m-new"}, 1234)
+
+	if c, _ := cs.Get(ctx, "c1"); !c.Usage.ContextCompacted || c.Usage.ContextSize != 1234 {
+		t.Errorf("Usage after the switch = %+v, want ContextSize 1234 and the compaction's wait kept", c.Usage)
+	}
+}
+
 // Picked between turns, the effort change is appended alone; From == To marks it as not a model switch.
 func TestPersistEffortChange_AppendsTheTierBetweenTurns(t *testing.T) {
 	h, cs, _ := newTestHub()

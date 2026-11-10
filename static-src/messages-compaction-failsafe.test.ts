@@ -45,8 +45,7 @@ mountAppCSS();
 messages.mountChatView();
 
 const NOTICE =
-  "The context was 95% full, so marotte stopped this turn to compact it before it ran out. " +
-  "After the compaction, marotte asks the agent to continue.";
+  "The context was nearly full, so marotte stopped this turn to compact the context before it ran out.";
 const RESUME =
   "The context window was nearly full, so your last turn was stopped. Continue the task.";
 

@@ -12,14 +12,13 @@ const resumeText = "The context window was nearly full, so your last turn was st
 	"stopped may not have finished, so check its result before you rely on it."
 
 // failsafeStopNotice is the stopped turn's close reason, the transcript's account of the stop.
-const failsafeStopNotice = "The context was 95% full, so marotte stopped this turn to compact it before it ran out. " +
-	"After the compaction, marotte asks the agent to continue."
+const failsafeStopNotice = "The context was nearly full, so marotte stopped this turn to compact the context " +
+	"before it ran out."
 
 // compactFailsafeFailed is the toast for a failsafe compaction that did not run, whose stopped turn is not resumed.
 const compactFailsafeFailed = "The compaction did not run (the agent was busy, or the summary failed or the chat " +
 	"changed before it finished), so marotte did not continue the stopped turn. Send a message to go on."
 
-// failsafeFacts name one failsafe fire: the turn the reading belongs to, the resume's message id and the stop's token.
 type failsafeFacts struct {
 	turnID   string
 	resumeID string

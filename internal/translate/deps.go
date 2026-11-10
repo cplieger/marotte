@@ -218,7 +218,7 @@ type Roles struct {
 	TurnInterrupt turnInterruptAccess
 	// Metering is the per-turn accounting a turn_completion frame writes.
 	Metering turnMetering
-	// Usage hears every context reading, which queues the compaction at the point.
+	// Usage hears every live context reading and tool call, which drive the chat's compactor.
 	Usage usageObserver
 	// WorkDir is the workspace root. Last for fieldalignment.
 	WorkDir string
@@ -422,9 +422,13 @@ type turnInterruptAccess interface {
 	CompactionFailed(chatID marotte.ChatID, turnID, detail string)
 }
 
-// usageObserver hears each context reading KAS reports for a chat, whether or not it moved the stored one.
+// usageObserver hears a chat's in-turn signals for its compactor, whether or not they moved the stored figure.
 type usageObserver interface {
+	// ObserveContextUsage hears each live reading: a model response's own, never KAS's published figure.
 	ObserveContextUsage(ctx context.Context, chatID marotte.ChatID, pct float64)
+	// ObserveToolCall hears each tool call the chat's own agent opens. KAS sends a response's tool_call
+	// frames before that response's reading, so a call since the last reading means the turn goes on.
+	ObserveToolCall(chatID marotte.ChatID)
 }
 
 // turnMetering is the per-turn accounting a turn_completion frame writes, split

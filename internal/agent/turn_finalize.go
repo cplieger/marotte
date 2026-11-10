@@ -165,6 +165,7 @@ func (bc *bridgeCoordinator) listCloseOf(
 ) *listClose {
 	return &listClose{
 		clean:      command.CloseFacts{Outcome: cf.outcome, Unattended: cf.unattended}.Clean(),
+		completed:  marotte.SeverityOf(cf.outcome) == marotte.TurnSeverityClean,
 		compact:    bc.autoCompact.turnEndCompaction(ctx, t.Chat, contextLimit),
 		handoff:    closer == closerPromptHandoff,
 		emptyRetry: result.WireEnded && result.Stop == marotte.StopReasonEndTurn && result.EmittedNothing,
