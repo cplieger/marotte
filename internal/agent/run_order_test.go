@@ -383,7 +383,11 @@ func TestRunOrder_APromptAsACompactionEndsGoesBehindTheQueuedRow(t *testing.T) {
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	release := holdCall(t, br, marotte.MethodSessionCompact)
 	var gap <-chan *httptest.ResponseRecorder
-	withCompactionReturnHook(t, func(marotte.ChatID) { gap = postAsync(h, promptCmd("m-gap", "as it ends")) })
+	withCompactionReturnHook(t, func(chatID marotte.ChatID) {
+		gap = postAsync(h, promptCmd("m-gap", "as it ends"))
+		// The prompt must reach the list before the compaction's end applies: one arriving after m-q1 took steers it.
+		eventually(func() bool { return onRunList(h, chatID, "m-gap") })
+	})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)

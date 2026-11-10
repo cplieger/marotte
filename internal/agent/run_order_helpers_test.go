@@ -9,6 +9,18 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
+// onRunList reports whether chatID's live run list holds the entry id.
+func onRunList(h *Runtime, chatID marotte.ChatID, id string) bool {
+	lc, ok := h.coord.turns.lookup(chatID)
+	if !ok {
+		return false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	_, e := lc.run.find(id)
+	return e != nil
+}
+
 // runIDs is the dock's order as the chat's header lists it: each compaction as "compaction", then each row, unread
 // or retry entry not yet taken, in list order.
 func runIDs(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []string {
