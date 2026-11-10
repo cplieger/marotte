@@ -375,14 +375,19 @@ func sendKindOf(p *marotte.PromptCommand) marotte.SendKind {
 }
 
 // steerPrompt routes a prompt the run order steers into the running turn, reporting false when that turn is gone
-// (the record refused it no_turn), which the caller places again with steering ruled out.
+// (the record refused it no_turn) or the text reads as a KAS notification (filed under a notify- id no row
+// carries), which the caller places again with steering ruled out.
 func steerPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, p *marotte.PromptCommand) (bool, error) {
+	if notificationPrefix.MatchString(p.Text) {
+		return false, nil
+	}
 	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
 	if err != nil {
 		return false, StatusError(http.StatusServiceUnavailable, err)
 	}
 	defer unlock()
-	switch refuse, sendErr := steerOne(ctx, roles, chatID, p.MessageID, p.Text, "", p.Caller); {
+	steerID := marotte.SteerIDFor(p.MessageID)
+	switch refuse, sendErr := steerOne(ctx, roles, chatID, steerID, p.Text, "", p.Caller); {
 	case refuse == SteerRefuseFull:
 		return false, StatusErrorReason(http.StatusConflict, reasonFull, errSteerFull)
 	case refuse != "":
@@ -390,7 +395,7 @@ func steerPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID,
 	case sendErr != nil:
 		return false, StatusError(http.StatusBadGateway, sendErr)
 	}
-	slog.Info("prompt steered into the running turn", "chat", chatID, "steer_id", p.MessageID)
+	slog.Info("prompt steered into the running turn", "chat", chatID, "steer_id", steerID)
 	return true, nil
 }
 

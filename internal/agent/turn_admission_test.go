@@ -632,6 +632,57 @@ func TestCmdPrompt_BesideAWireTurnIsSteeredAndOpensNoTurn(t *testing.T) {
 	}
 }
 
+// A prompt steered into the running turn is a dock row under the id KAS stamps on it, `steer-<messageId>`
+// (handleSessionSteer), so KAS's steering_queued for it updates that row instead of adding a second one.
+func TestCmdPrompt_ASteeredPromptsRowIsKeyedByTheIDKASStampsOnIt(t *testing.T) {
+	s, _, _ := steerOpsHub(t)
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
+
+	rec := postCmd(t, s.h, marotte.ClientCommand{
+		Type: marotte.CmdPrompt, ChatID: "c1",
+		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
+	})
+	joinInflight(t, s.h)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	if _, ok := s.state("steer-m-1"); !ok {
+		t.Errorf("no dock row under steer-m-1, the id KAS's frames name for this steer")
+	}
+	if _, ok := s.state("m-1"); ok {
+		t.Errorf("a dock row is keyed by the bare message id m-1, which no KAS frame names, so it never leaves")
+	}
+}
+
+// A prompt that reads as a KAS notification is never steered: KAS would file it under a notify- id no row
+// carries. It waits for the running turn's end instead.
+func TestCmdPrompt_NotificationShapedTextBesideATurnIsQueuedNotSteered(t *testing.T) {
+	h, _, br := wakeTurnHub(t)
+
+	rec := postCmd(t, h, marotte.ClientCommand{
+		Type: marotte.CmdPrompt, ChatID: "c1",
+		Payload: json.RawMessage(`{"text":"[notification/info] hi","message_id":"m-1"}`),
+	})
+	joinInflight(t, h)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		As string `json:"as"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal body %q: %v", rec.Body.String(), err)
+	}
+	if body.As != "queued" {
+		t.Errorf("as = %q, want queued behind the running turn", body.As)
+	}
+	if slices.Contains(br.callLog(), marotte.MethodSessionSteer) {
+		t.Errorf("bridge calls = %v, want no session/steer for notification-shaped text", br.callLog())
+	}
+}
+
 // mergeHub is a hub whose engine lists the tangent "c-tangent" (session s-fork) as forked from the parent "c1"
 // (s-parent) and answers a prompt with a summary.
 func mergeHub(t *testing.T) (*Runtime, *testChatStore, func(method string) int) {
