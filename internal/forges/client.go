@@ -78,7 +78,7 @@ func (staticSource) State() forgeapi.CredState               { return forgeapi.C
 // under the connection's id lock. State and Kind are the refreshing source's,
 // which read without sending.
 type storedToken struct {
-	src *creds.Source
+	src *creds.StoredSource
 }
 
 var _ forgeapi.CredentialSource = storedToken{}
@@ -111,10 +111,10 @@ func (t storedToken) State() forgeapi.CredState { return t.src.State() }
 // refreshing source and the stored-token source it reads by. Construction
 // sends nothing; either constructor's refusal leaves nothing to close.
 func openConn(store creds.Store, spec *connectionSpec, newCore coreFactory, extra []forgeapi.Option,
-) (core forgeapi.Core, src *creds.Source, cred storedToken, err error) {
+) (core forgeapi.Core, src *creds.StoredSource, cred storedToken, err error) {
 	key := slotKey(spec.ID, spec.Slot)
 	opts := slices.Concat(connOptions(spec), extra)
-	src, err = creds.NewSource(store, key, connectionFor(spec), opts...)
+	src, err = creds.NewStoredSource(store, key, connectionFor(spec), opts...)
 	if err != nil {
 		return nil, nil, storedToken{}, err
 	}

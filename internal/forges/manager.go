@@ -70,7 +70,7 @@ type Manager struct {
 // every change installs a new value.
 type connection struct {
 	conn    forgeapi.Core
-	src     *creds.Source
+	src     *creds.StoredSource
 	cred    storedToken
 	status  status
 	login   string
