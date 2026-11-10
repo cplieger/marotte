@@ -140,13 +140,12 @@ vi.mock("./actions/chat.js", async (importOriginal) => ({
 import * as store from "./store.js";
 import * as chat from "./chat.js";
 import { addAttachment } from "./attachments.js";
-import { makeSession } from "./__test-helpers__/model.js";
+import { makeSession, type SessionOverrides } from "./__test-helpers__/model.js";
 import { runAt, turnEntry } from "./__test-helpers__/run-order.js";
-import type { Session } from "./types.js";
 
 /** A switch from A to B between its gesture and its activation: B active, A still painted. */
 function inTheGap(busy: { a?: boolean; b?: boolean } = {}): void {
-  const running = (id: string): Partial<Session> => ({
+  const running = (id: string): SessionOverrides => ({
     thinking: true,
     run: runAt(1, [turnEntry(`t-${id}`)], { cancel: `t-${id}` }),
   });
