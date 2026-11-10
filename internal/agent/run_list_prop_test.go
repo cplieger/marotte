@@ -245,17 +245,14 @@ func (w *listWorld) check() {
 	w.checkTaken()
 }
 
-// checkResume asserts the failsafe's rules: at most one resume, and a resume waiting behind its compaction or after
-// that compaction was accepted.
+// checkResume asserts the failsafe's rules: at most one resume waiting (a running resume can itself be stopped and
+// list the next), and a resume waiting behind its compaction or after that compaction was accepted.
 func (w *listWorld) checkResume() {
-	resumes := w.where(func(e *runEntry) bool { return e.kind == marotte.RunKindResume })
+	resumes := w.where(func(e *runEntry) bool { return e.kind == marotte.RunKindResume && !e.live() })
 	if len(resumes) > 1 {
-		w.fail("%d resumes", len(resumes))
+		w.fail("%d resumes waiting", len(resumes))
 	}
 	for _, r := range resumes {
-		if r.live() {
-			continue
-		}
 		c := w.failsafeOf[r.id]
 		ci, ce := w.l.find(c)
 		ri, _ := w.l.find(r.id)
@@ -632,6 +629,10 @@ func runEntryEqual(a, b marotte.RunEntry) bool {
 }
 
 func (w *listWorld) sendNow() {
+	// A press drops a waiting resume; most runs leave it, so the generator reaches the resume's take.
+	if w.l.resume() != nil && w.r.IntN(4) > 0 {
+		return
+	}
 	rows := w.where(func(e *runEntry) bool { return e.kind == marotte.RunKindRow && !e.live() })
 	e := w.pick(rows)
 	if e == nil {
@@ -673,7 +674,7 @@ func (w *listWorld) sendNow() {
 }
 
 func (w *listWorld) do() {
-	switch w.r.IntN(24) {
+	switch w.r.IntN(26) {
 	case 0, 1, 2:
 		w.submit()
 	case 3:
@@ -753,7 +754,8 @@ func (w *listWorld) do() {
 			w.l.unqueue(e.id)
 		}
 	case 19:
-		if c := w.l.compaction(); c != nil {
+		// As in sendNow: a cancel of the failsafe's compaction drops its resume.
+		if c := w.l.compaction(); c != nil && (c.origin != marotte.RunFromFailsafe || w.r.IntN(4) == 0) {
 			if c.state == marotte.RunRunning {
 				w.cancelled[c.id] = true
 			}
@@ -765,7 +767,7 @@ func (w *listWorld) do() {
 		w.gate = !w.gate && w.r.IntN(4) == 0
 	case 22:
 		w.takeIdle()
-	case 23:
+	case 23, 24, 25:
 		w.failsafe()
 	}
 	w.l.takeEffects()

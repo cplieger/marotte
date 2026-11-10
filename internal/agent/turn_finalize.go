@@ -405,6 +405,9 @@ func (bc *bridgeCoordinator) claimForCloser(ctx context.Context, chatID marotte.
 func (bc *bridgeCoordinator) closeTurn(ctx context.Context, t *activeTurn, stop marotte.StopReason, reason string, kind marotte.FailureKind, closer turnCloser) (marotte.TurnResult, marotte.TurnOutcome) {
 	chatID := t.Chat
 	c := bc.concludeStop(chatID, stop, reason, kind)
+	if c.Outcome == marotte.TurnOutcomeCancelled && bc.turns.stopCauseAfter(chatID, t.ID) == marotte.TurnStopCompaction {
+		c.Reason, c.StoppedToCompact = failsafeStopNotice, true
+	}
 	if closer == closerPromptResponse && stop == marotte.StopReasonEndTurn && !t.Log.Emitted() && t.unbracketedPrompt() {
 		c = c.Unobserved()
 	}

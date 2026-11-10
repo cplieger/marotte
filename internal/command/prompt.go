@@ -245,8 +245,10 @@ func openPromptTurn(ctx context.Context, roles *promptRoles, chatID marotte.Chat
 		c.Model = p.Model
 		c.SupervisedMode = supervisedDefault
 	}
+	prompt := promptEntry(p, l.resends)
+	prompt.Automatic = l.automatic
 	return roles.turnOutcome.OpenTurn(ctx, chatID, TurnOpen{
-		Source: marotte.TurnSourcePrompt, Prompt: promptEntry(p, l.resends), Init: init, Awaited: l.awaited,
+		Source: marotte.TurnSourcePrompt, Prompt: prompt, Init: init, Awaited: l.awaited,
 		Admission: l.res.Token, Fence: l.fence,
 	})
 }
@@ -433,6 +435,8 @@ type launch struct {
 	// fence is the take's: a re-fence since (a shutdown, a teardown) refuses the open.
 	fence   TurnFence
 	awaited bool
+	// automatic marks the turn_open's prompt as marotte's own (EntryPrompt.Automatic).
+	automatic bool
 }
 
 // errLaunchUnreserved fails a prompt launched with no reservation, a wiring error.

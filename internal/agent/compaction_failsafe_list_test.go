@@ -149,6 +149,10 @@ func TestFailsafe_OnlyALoneRunningTurnFires(t *testing.T) {
 			w.wireOpen("t-w", true)
 			return "t-w"
 		}},
+		{name: "a lone fold-opened wire turn, which its compaction closes", setup: func(w *tableWorld) string {
+			w.wireOpen("t-f", false)
+			return "t-f"
+		}},
 		{name: "kiro-cli's run with no turn here", setup: func(w *tableWorld) string {
 			w.kasRunning = true
 			w.advance()
@@ -182,6 +186,12 @@ func TestFailsafe_OnlyALoneRunningTurnFires(t *testing.T) {
 			w.send("m-p", marotte.SendPlain, "")
 			w.running("m-p")
 			return "m-p"
+		}},
+		{name: "kiro-cli's bracketed turn ahead of a prompt running beside it", setup: func(w *tableWorld) string {
+			w.send("m-a", marotte.SendPlain, "")
+			w.running("m-a")
+			w.wireOpen("t-w", true)
+			return "t-w"
 		}},
 		{name: "a reading naming another turn", setup: func(w *tableWorld) string {
 			w.send("m-a", marotte.SendPlain, "")

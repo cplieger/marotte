@@ -282,6 +282,8 @@ type segment struct {
 	caller *marotte.Caller
 	kind   SegmentKind
 	text   string
+	// automatic marks the spans of a prompt marotte sent on its own (EntryPrompt.Automatic).
+	automatic bool
 }
 
 // sentBy stamps c on every span of a message an API caller sent.
@@ -428,7 +430,11 @@ func turnOpenSegments(payload json.RawMessage) []segment {
 	for i := range p.Prompt.Attachments {
 		segs = append(segs, oneSegment(segmentAttachment, p.Prompt.Attachments[i].Name)...)
 	}
-	return sentBy(segs, p.Prompt.Caller)
+	segs = sentBy(segs, p.Prompt.Caller)
+	for i := range segs {
+		segs[i].automatic = p.Prompt.Automatic
+	}
+	return segs
 }
 
 // toolCallSegments is a call's create half: title and input, as the card renders them. Claim, diff, denial and

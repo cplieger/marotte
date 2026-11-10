@@ -76,6 +76,10 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		bind3(r.Bridges, chats, keylock.New(cmp.Compare[marotte.ChatID]), cmdSetSupervisedMode))
 
 	d.register(marotte.CmdCancel, bind6(r.Run, r.Bridges, r.Perms, r.Terminals, r.Stops, r.SteerQueue, cmdCancel))
+	d.carryStop = func(ctx context.Context, chatID marotte.ChatID, rs RunStop) error {
+		_, err := carryOutStop(ctx, r.Run, r.Bridges, r.Perms, r.Terminals, r.Stops, chatID, rs, func() {})
+		return err
+	}
 	d.RegisterChange(marotte.CmdForkChat, bind4(r.Bridges, chats, r.Workspace, mem, cmdForkChat))
 
 	d.register(marotte.CmdQueuePrompt, bind2(r.Run, r.Admission, cmdQueuePrompt))

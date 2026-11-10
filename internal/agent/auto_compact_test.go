@@ -120,7 +120,7 @@ func TestAutoCompact_ACancelHoldsForTheTurn(t *testing.T) {
 	h, cs, _, tails := idleAfterFirstTurn(t, "/tmp/work")
 	calls := onCompactor(h, 90, true, 95)
 	id, _ := h.stagePromptTurn(t, "c1")
-	h.coord.ObserveContextUsage(t.Context(), "c1", 95)
+	h.coord.ObserveContextUsage(t.Context(), "c1", 92)
 	c := compactionEntry(t, cs, "c1")
 	if c.ID == "" {
 		t.Fatal("Setup: the crossing listed no compaction")

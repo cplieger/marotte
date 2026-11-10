@@ -144,11 +144,18 @@ func TestFailsafe_CancelsCompactsThenResumesBeforeTheQueuedRows(t *testing.T) {
 			t.Errorf("prompt %s marked automatic, want only the resume", p.ID)
 		}
 	}
-	w := orderWrites(fc.br)
-	if i := slices.Index(w, marotte.MethodCancel); i < 0 || !slices.Equal(w[i:], []string{
+	wantWrites := []string{
 		marotte.MethodCancel, marotte.MethodSessionCompact, marotte.MethodPrompt, marotte.MethodPrompt, marotte.MethodPrompt,
-	}) {
-		t.Errorf("writes = %v, want the cancel, one compaction, then the resume, m-q1 and m-q2", w)
+	}
+	afterCancel := func() []string {
+		w := orderWrites(fc.br)
+		if i := slices.Index(w, marotte.MethodCancel); i >= 0 {
+			return w[i:]
+		}
+		return nil
+	}
+	if !eventually(func() bool { return len(afterCancel()) >= len(wantWrites) }) || !slices.Equal(afterCancel(), wantWrites) {
+		t.Errorf("writes = %v, want the cancel, one compaction, then the resume, m-q1 and m-q2", orderWrites(fc.br))
 	}
 	closes := closesOf(t, logOf(t, fc.cs, "c1"))
 	if len(closes) < 2 {

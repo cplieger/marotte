@@ -75,13 +75,19 @@ type runEntry struct {
 	// replaces is a retry's empty turn, passed as TurnOpen.Replaces so a stop during its refresh refuses the open.
 	replaces string
 	// forTurn is the turn whose reading or end asked for a compaction (cancel_compact declines it).
-	forTurn  string
-	res      command.Reservation
-	afterSeq uint64
-	stopBy   uint64
-	pausedBy uint64
-	next     bool
-	retry    bool
+	forTurn string
+	// fsPrior and fsPriorFor are the origin and turn a compaction had before the failsafe took it over, given back
+	// when the failsafe's stop is undone.
+	fsPrior    marotte.RunEntryOrigin
+	fsPriorFor string
+	res        command.Reservation
+	afterSeq   uint64
+	stopBy     uint64
+	pausedBy   uint64
+	// fsToken is the failsafe stop that listed this resume or took over this compaction.
+	fsToken uint64
+	next    bool
+	retry   bool
 	// submitter: submit's own take, whose POST still waits on launch.
 	submitter bool
 	yields    bool
@@ -95,6 +101,8 @@ type runEntry struct {
 	cancelled bool
 	sawTurn   bool
 	waiter    bool
+	// fsStopped marks a turn the failsafe stopped: a clean close of it has nothing to resume.
+	fsStopped bool
 }
 
 func (e *runEntry) live() bool { return e.state.Live() }
@@ -160,10 +168,12 @@ type runList struct {
 	intent   *runEntry
 	crossed  string
 	declined string
-	endsLast []string
-	entries  []*runEntry
-	stored   []marotte.RunEntry
-	fx       runEffects
+	// failsafeFor is the last turn the failsafe fired in: once per turn, even when its stop was undone.
+	failsafeFor string
+	endsLast    []string
+	entries     []*runEntry
+	stored      []marotte.RunEntry
+	fx          runEffects
 	// wireSeq is the open sequence of the newest wire turn: a retry overtaken by kiro-cli's own turn is dropped.
 	wireSeq       uint64
 	intentStamp   uint64
@@ -176,6 +186,8 @@ type runList struct {
 	drained       bool
 	dirty         bool
 	ended         bool
+	// failsafeHeld: a failsafe compaction was accepted and no reading under the point has come since.
+	failsafeHeld bool
 }
 
 var (
@@ -463,6 +475,7 @@ func (l *runList) take(e *runEntry, at int) {
 	e.state = marotte.RunStarting
 	if e.kind == marotte.RunKindRevert {
 		e.state = marotte.RunRunning
+		l.dropResume()
 	}
 	l.fx.launch = append(l.fx.launch, e)
 }
@@ -587,6 +600,7 @@ func (l *runList) sendNow(id, stop string, hasStop bool) (*runEntry, error) {
 	l.remove(e)
 	e.state, e.pausedBy, e.next = marotte.RunPending, 0, true
 	l.insert(l.frontOfPending(true), e)
+	l.dropResume()
 	if !hasStop {
 		stop = marotte.CancelTarget(l.project())
 	}
@@ -651,6 +665,9 @@ func (l *runList) cancelCompaction(id string) {
 	_, e := l.find(id)
 	if e == nil || e.kind != marotte.RunKindCompaction {
 		return
+	}
+	if e.origin == marotte.RunFromFailsafe {
+		l.dropResume()
 	}
 	if e.state == marotte.RunPending {
 		l.declined = e.forTurn
@@ -721,10 +738,12 @@ func (l *runList) compactionEnded(id string, accepted bool, err error) {
 	if e == nil || e.kind != marotte.RunKindCompaction || e.state != marotte.RunRunning {
 		return
 	}
+	failsafe := e.origin == marotte.RunFromFailsafe
 	switch {
 	case accepted || e.cancelled:
 		e.done.finish(accepted, false, nil)
 		l.remove(e)
+		l.failsafeHeld = l.failsafeHeld || (failsafe && accepted && !e.cancelled)
 	case err == nil && e.sawTurn:
 		e.sawTurn = false
 		if e.waiter {
@@ -737,7 +756,10 @@ func (l *runList) compactionEnded(id string, accepted bool, err error) {
 	default:
 		e.done.finish(false, false, err)
 		l.remove(e)
-		if !e.waiter && !errors.Is(err, marotte.ErrChatClosedDuringCall) {
+		if failsafe {
+			l.dropResume()
+		}
+		if (!e.waiter || failsafe) && !errors.Is(err, marotte.ErrChatClosedDuringCall) {
 			l.fx.toast = append(l.fx.toast, e)
 		}
 	}
@@ -846,12 +868,16 @@ func (l *runList) turnClosed(c listClose, f *orderFacts) {
 	stopped := e.state == marotte.RunStopping
 	e.state, e.steerable, e.clean = marotte.RunClosing, false, c.clean
 	l.touch()
+	finished := stopped && e.fsStopped && c.clean
+	if finished {
+		l.dropResume()
+	}
 	if n == 2 && l.closedBeside(i, e, c, stopped) {
 		return
 	}
 	retry := retryOwed(e, c, f)
 	if !c.handoff {
-		l.pauseRule(c.clean || retry, stopped)
+		l.pauseRule(c.clean || retry, stopped && !finished)
 	}
 	l.afterHeadClose(e, c, retry)
 }
@@ -1041,7 +1067,7 @@ func (l *runList) launched(id string, token uint64, turnID string, refusal launc
 		return false
 	}
 	switch {
-	case e.origin == marotte.RunFromSummary, e.kind == marotte.RunKindRetry:
+	case e.origin == marotte.RunFromSummary, e.kind == marotte.RunKindRetry, e.kind == marotte.RunKindResume:
 		l.remove(e)
 	case refusal == launchWithdrawn:
 		l.putBack(e, marotte.RunPaused, 0)
@@ -1110,7 +1136,11 @@ func (l *runList) stopHead(target string, token uint64) stopPlan {
 	case e.state == marotte.RunStarting && e.turnID == "":
 		res := e.res
 		l.pauseRows(token)
-		l.putBack(e, marotte.RunPaused, token)
+		if e.kind == marotte.RunKindResume {
+			l.remove(e)
+		} else {
+			l.putBack(e, marotte.RunPaused, token)
+		}
 		return stopPlan{entry: e, res: res, arm: stopWithdraw}
 	case e.state == marotte.RunStarting:
 		mark(e)
@@ -1139,18 +1169,25 @@ func (l *runList) stopRunningAt(i int, token uint64, mark func(*runEntry)) {
 
 // stopUndone restores what the stop with that token marked, when its session/cancel was not delivered: entries
 // still stopping whose turn is still open (open reports it) go back to their prior state, and rows it paused that
-// are still paused go back to pending. A compaction is never touched.
+// are still paused go back to pending. A failsafe stop's resume goes and the compaction it took over gets back its
+// prior origin and turn; no other compaction is touched.
 func (l *runList) stopUndone(token uint64, open func(turnID string) bool) {
 	if token == 0 {
 		return
 	}
-	for _, e := range l.entries {
+	for _, e := range slices.Clone(l.entries) {
 		switch {
 		case e.stopBy == token && e.state == marotte.RunStopping && (e.runEntry() || open(e.turnID)):
-			e.state, e.stopBy, e.prior = e.prior, 0, ""
+			e.state, e.stopBy, e.prior, e.fsStopped = e.prior, 0, "", false
 			l.touch()
 		case e.pausedBy == token && e.state == marotte.RunPaused:
 			e.state, e.pausedBy = marotte.RunPending, 0
+			l.touch()
+		case e.fsToken != token:
+		case e.kind == marotte.RunKindResume && !e.live():
+			l.remove(e)
+		case e.kind == marotte.RunKindCompaction && e.origin == marotte.RunFromFailsafe:
+			e.origin, e.forTurn, e.fsToken = e.fsPrior, e.fsPriorFor, 0
 			l.touch()
 		}
 	}

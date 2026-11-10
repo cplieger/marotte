@@ -31,7 +31,7 @@ const (
 )
 
 // KASRewakes reports a stop whose session/cancel KAS follows by re-prompting the notifications it cleared.
-func (c TurnStopCause) KASRewakes() bool { return c == TurnStopReader }
+func (c TurnStopCause) KASRewakes() bool { return c == TurnStopReader || c == TurnStopCompaction }
 
 // TurnResult is what a finalized turn reports. Immutable once the turn's
 // completion handle fires.

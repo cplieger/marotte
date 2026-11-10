@@ -133,7 +133,7 @@ func TestRunOrder_Table(t *testing.T) {
 			t.Fatalf("Setup: prompt = %d", code)
 		}
 		waitFor(t, func() bool { return countOf(br.callLog(), marotte.MethodPrompt) == 2 })
-		h.coord.ObserveContextUsage(t.Context(), "c1", 95)
+		h.coord.ObserveContextUsage(t.Context(), "c1", 92)
 		queueDuring(t, h, "m-q0", "m-q1")
 		if got := entryView(t, cs, "m-q1").SendNow; got != marotte.SendNowStopThenCompaction {
 			t.Errorf("m-q1's arrow = %q, want stop_then_compaction", got)

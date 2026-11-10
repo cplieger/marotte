@@ -549,7 +549,13 @@ func New(ctx context.Context, workDir string, source EngineSource, chatStore cha
 	h.coord.reconcileSessions = func(ctx context.Context, deadline time.Time) {
 		h.reconcileSessionSettings(ctx, "session settings", deadline)
 	}
-	h.coord.autoCompact = newAutoCompactor(h.coord, h.compactionPolicy)
+	h.coord.autoCompact = newAutoCompactor(h.coord, h.compactionPolicy,
+		func(chatID marotte.ChatID) bool {
+			return len(h.bus.pendingPerms.askRefs(chatID, command.ScopeChatSession)) > 0
+		},
+		func(ctx context.Context, chatID marotte.ChatID, rs command.RunStop) error {
+			return h.dispatcher.CarryOutStop(ctx, chatID, rs)
+		})
 	sseP.stageStatusDesc = h.coord.turns.stageStatusDescription
 	sseP.retractPush = h.coord.retractPush
 	sseP.ownStopped = h.coord.turns.ownStopped

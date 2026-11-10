@@ -134,7 +134,9 @@ type Dispatcher struct {
 	merges *tangentMerges
 	// changes is bound at registration, like prompts.
 	changes detachedChange
-	mu      sync.RWMutex
+	// carryStop is cmdCancel's carrying out of a stop, bound at registration like prompts.
+	carryStop func(ctx context.Context, chatID marotte.ChatID, rs RunStop) error
+	mu        sync.RWMutex
 }
 
 // New constructs a Dispatcher. A handler's own collaborators arrive at

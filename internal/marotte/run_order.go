@@ -24,7 +24,7 @@ const (
 
 // TurnKind reports a kind whose take opens a turn.
 func (k RunEntryKind) TurnKind() bool {
-	return k == RunKindTurn || k == RunKindRow || k == RunKindUnread || k == RunKindRetry
+	return k == RunKindTurn || k == RunKindRow || k == RunKindUnread || k == RunKindRetry || k == RunKindResume
 }
 
 // RunEntryState is where an entry stands in the run order.
