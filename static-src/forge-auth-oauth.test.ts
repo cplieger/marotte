@@ -335,7 +335,7 @@ describe("renderDevicePrompt", () => {
     expect(host.querySelector("p")?.textContent).toContain("javascript:alert(1)");
   });
 
-  it("copy button writes the user_code to the clipboard and shows transient feedback", () => {
+  it("copy button writes the user_code to the clipboard and shows transient feedback", async () => {
     const writeText = vi.fn(() => Promise.resolve());
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     vi.useFakeTimers();
@@ -346,12 +346,41 @@ describe("renderDevicePrompt", () => {
     const btn = host.querySelector<HTMLButtonElement>(".forge-copy-btn");
     expect(btn).not.toBeNull();
     btn?.click();
+    await vi.advanceTimersByTimeAsync(0);
 
     expect(writeText).toHaveBeenCalledWith("ABCD-9999");
     expect(btn?.textContent).toBe("Copied");
     vi.advanceTimersByTime(2000);
     expect(btn?.textContent).toBe("Copy");
 
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    [
+      "the write is refused",
+      { clipboard: { writeText: () => Promise.reject(new Error("denied")) } },
+    ],
+    ["the page is not a secure context", {}],
+  ])("copy button never says Copied when %s, and selects the code instead", async (_case, nav) => {
+    vi.stubGlobal("navigator", nav);
+    vi.useFakeTimers();
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    renderDevicePrompt(host, start({ user_code: "WXYZ-1234" }));
+
+    const btn = host.querySelector<HTMLButtonElement>(".forge-copy-btn");
+    btn?.click();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(btn?.textContent).toBe("Copy failed");
+    expect(window.getSelection()?.toString()).toBe("WXYZ-1234");
+    vi.advanceTimersByTime(2000);
+    expect(btn?.textContent).toBe("Copy");
+
+    host.remove();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
