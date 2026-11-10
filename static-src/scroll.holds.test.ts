@@ -889,6 +889,34 @@ describe("every owner move re-takes the text the reader sees", () => {
   });
 });
 
+describe("a size change above in the frame a restored view settles", () => {
+  it("holds the text once, so no frame paints it moved", async () => {
+    const wrap = await reset();
+    const above = block(1000);
+    const held = block(3000);
+    await land();
+    await readAt(wrap, 2000);
+    const at = screenTop(wrap, held);
+    const parked = scroll.detach();
+    scroll.attach({ el: messagesEl, ...parked });
+    above.style.height = "1189px";
+    const moved: number[] = [];
+    // Created after the owner's observer, so each callback reads what that delivery's frame paints.
+    const ro = new ResizeObserver(() => {
+      moved.push(Math.round(screenTop(wrap, held) - at));
+    });
+    ro.observe(above);
+    await frames(1);
+    await land();
+    ro.disconnect();
+
+    expect({ painted: moved, landed: Math.round(screenTop(wrap, held) - at) }).toEqual({
+      painted: [0],
+      landed: 0,
+    });
+  });
+});
+
 describe("a press whose slide starts late", () => {
   it("leaves the reader where they are while what they pressed opens above the reading line", async () => {
     const wrap = await reset();
@@ -915,6 +943,259 @@ describe("a press whose slide starts late", () => {
     await land();
 
     expect(wrap.scrollTop - top).toBe(0);
+  });
+});
+
+describe("a growth above the viewport during a touch fling", () => {
+  let css: HTMLStyleElement;
+  beforeAll(() => {
+    css = mountAppCSS();
+  });
+  afterAll(() => {
+    css.remove();
+  });
+
+  const scrollTopOf = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop")!;
+
+  /** iOS WebKit while the UI process flings the scroller: until the owner's next write lands, the page reads a
+   *  position `lag` px behind the platform's, the last one the UI reported
+   *  (https://github.com/WebKit/WebKit/commit/e8697834ad4b3d036032823f29b7d4329ffb45ec), while layout and the
+   *  platform's own position are current.
+   *  `landed` is where `el` sat on screen as that write returned. */
+  function staleUntilWrite(wrap: HTMLElement, lag: number, el: Element): { landed: number | null } {
+    const seen: { landed: number | null } = { landed: null };
+    const fresh = (): void => {
+      for (const key of ["scrollTop", "scrollTo", "scrollBy"]) {
+        Reflect.deleteProperty(wrap, key);
+      }
+      seen.landed = screenTop(wrap, el);
+    };
+    Object.defineProperty(wrap, "scrollTop", {
+      configurable: true,
+      get: () => (scrollTopOf.get!.call(wrap) as number) + lag,
+      set: (v: number) => {
+        scrollTopOf.set!.call(wrap, v);
+      },
+    });
+    for (const method of ["scrollTo", "scrollBy"] as const) {
+      const platform = HTMLElement.prototype[method] as (
+        this: HTMLElement,
+        o: ScrollToOptions,
+      ) => void;
+      Object.defineProperty(wrap, method, {
+        configurable: true,
+        value: (o: ScrollToOptions): void => {
+          platform.call(wrap, o);
+          fresh();
+        },
+      });
+    }
+    return seen;
+  }
+
+  /** A finger's drag up the content from `from`, `steps` platform moves of 10px, the finger still down. */
+  async function dragUp(wrap: HTMLElement, from: number, steps: number): Promise<void> {
+    wrap.dispatchEvent(touchEvent("touchstart", wrap, 100));
+    for (let i = 1; i <= steps; i++) {
+      wrap.dispatchEvent(touchEvent("touchmove", wrap, 100 + 10 * i));
+      platformScroll(wrap, from - 10 * i);
+    }
+    await frames(2);
+    expect(
+      { state: scroll.readingState(), gesture: scroll.readerGestureOpen() },
+      "the premise: Reading, mid-gesture",
+    ).toEqual({ state: "reading", gesture: true });
+  }
+
+  afterEach(async () => {
+    const wrap = scroll.getScrollEl();
+    for (const key of ["scrollTop", "scrollTo", "scrollBy"]) {
+      Reflect.deleteProperty(wrap, key);
+    }
+    wrap.dispatchEvent(touchEvent("touchend", wrap));
+    await frames(2);
+    await closeGesture();
+  });
+
+  it("lands the text where it was when a residency change mounts rows above while the page reads a stale position", async () => {
+    const wrap = await reset();
+    const above = block(1000);
+    const held = block(3000);
+    await land();
+    await readAt(wrap, 2000);
+    await dragUp(wrap, 2000, 4);
+    const at = screenTop(wrap, held);
+
+    const seen = staleUntilWrite(wrap, 30, held);
+    scroll.heldMutation(() => {
+      above.style.height = "1021px";
+    });
+
+    expect(seen.landed === null ? null : Math.round(seen.landed - at)).toBe(0);
+  });
+
+  it("lands the text where it was when a box laid out ahead takes its real size while the page reads a stale position", async () => {
+    const wrap = await reset();
+    wrap.id = "messages-wrap";
+    try {
+      const above = block(200);
+      const held = block(3000);
+      await land();
+      await readAt(wrap, 2000);
+      await dragUp(wrap, 2000, 4);
+      // Mounted past the engine's own lead, so it has never been laid out at its real size.
+      const box = document.createElement("div");
+      box.className = "tool-call";
+      box.style.cssText = "contain-intrinsic-size:auto 44px;border:0;";
+      const body = document.createElement("div");
+      body.style.cssText = "height:65px;width:100%;";
+      box.append(body);
+      scroll.heldMutation(() => {
+        above.after(box);
+      });
+      await frames(2);
+      expect(
+        { near: box.hasAttribute("data-near"), height: box.offsetHeight },
+        "the premise: the box sits outside the lead at its estimate",
+      ).toEqual({ near: false, height: 44 });
+      const want = screenTop(wrap, held) + (wrap.scrollTop - 800);
+
+      // Into the lead: the near mark lays the box out at 65px against its 44px estimate.
+      const seen = staleUntilWrite(wrap, 30, held);
+      wrap.dispatchEvent(touchEvent("touchmove", wrap, 250));
+      platformScroll(wrap, 800);
+      await frames(2);
+
+      expect({
+        near: box.hasAttribute("data-near"),
+        moved: seen.landed === null ? null : Math.round(seen.landed - want),
+      }).toEqual({ near: true, moved: 0 });
+    } finally {
+      wrap.id = "messagesWrap";
+    }
+  });
+
+  /** A finger landing on the transcript, not yet moved: a tap, a long-press or a drag to be. */
+  function touchDown(wrap: HTMLElement): void {
+    wrap.dispatchEvent(
+      new PointerEvent("pointerdown", { pointerType: "touch", clientY: 100, bubbles: true }),
+    );
+    wrap.dispatchEvent(touchEvent("touchstart", wrap, 100));
+  }
+
+  it.each([
+    [
+      "a residency change",
+      (above: HTMLElement): void => {
+        scroll.heldMutation(() => {
+          above.style.height = "1021px";
+        });
+      },
+    ],
+    [
+      "a resize the owner hears in its delivery",
+      (above: HTMLElement): void => {
+        above.style.height = "1021px";
+      },
+    ],
+  ])(
+    "holds the text through %s above between a finger's touchdown and its move out of the tap slop",
+    async (_, grow) => {
+      const wrap = await reset();
+      const above = block(1000);
+      const held = block(3000);
+      await land();
+      await readAt(wrap, 2000);
+      const at = screenTop(wrap, held);
+
+      touchDown(wrap);
+      grow(above);
+      await frames(2);
+      const down = Math.round(screenTop(wrap, held) - at);
+      wrap.dispatchEvent(touchEvent("touchmove", wrap, 120));
+      await frames(2);
+
+      expect({ down, moving: Math.round(screenTop(wrap, held) - at) }).toEqual({
+        down: 0,
+        moving: 0,
+      });
+    },
+  );
+
+  it("holds the text when a box the last fling step brought into the lead takes its real size after touchdown", async () => {
+    const wrap = await reset();
+    wrap.id = "messages-wrap";
+    // WebKit's own lead: none, so only the owner's mark lays a box out ahead of the scrollport.
+    const noEngineLead = document.createElement("style");
+    noEngineLead.textContent =
+      '[id="messages-wrap"] .tool-call:not([data-near]) { content-visibility: hidden; }';
+    document.head.append(noEngineLead);
+    try {
+      const above = block(200);
+      const held = block(3000);
+      await land();
+      await readAt(wrap, 2000);
+      const box = document.createElement("div");
+      box.className = "tool-call";
+      box.style.cssText = "contain-intrinsic-size:auto 44px;border:0;";
+      const body = document.createElement("div");
+      body.style.cssText = "height:65px;width:100%;";
+      box.append(body);
+      scroll.heldMutation(() => {
+        above.after(box);
+      });
+      await frames(2);
+      // The owner's lead: 1.5 scrollports past each edge.
+      const edge =
+        box.getBoundingClientRect().bottom -
+        wrap.getBoundingClientRect().top +
+        wrap.scrollTop +
+        Math.round(wrap.clientHeight * 1.5);
+      await readAt(wrap, edge + 20);
+      expect(
+        { near: box.hasAttribute("data-near"), height: box.offsetHeight },
+        "the premise: the box sits just outside the lead at its estimate",
+      ).toEqual({ near: false, height: 44 });
+      let at: number | null = null;
+      // The finger lands after the step's scroll event, before the near mark is delivered.
+      wrap.addEventListener(
+        "scroll",
+        () => {
+          at = screenTop(wrap, held);
+          touchDown(wrap);
+        },
+        { once: true },
+      );
+
+      // A fling's last step, too short for the owner to mark the band itself.
+      platformScroll(wrap, edge - 20);
+      await frames(2);
+
+      expect({
+        near: box.hasAttribute("data-near"),
+        moved: at === null ? null : Math.round(screenTop(wrap, held) - at),
+      }).toEqual({ near: true, moved: 0 });
+    } finally {
+      noEngineLead.remove();
+      wrap.id = "messagesWrap";
+    }
+  });
+
+  it("holds the text through a growth above once a drag opens inside a tap's press", async () => {
+    const wrap = await reset();
+    const above = block(1000);
+    const held = block(3000);
+    await land();
+    await readAt(wrap, 2000);
+    const at = screenTop(wrap, held);
+    held.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    touchDown(wrap);
+    wrap.dispatchEvent(touchEvent("touchmove", wrap, 120));
+    above.style.height = "1021px";
+    await frames(2);
+
+    expect(Math.round(screenTop(wrap, held) - at)).toBe(0);
   });
 });
 

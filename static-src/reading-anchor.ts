@@ -17,13 +17,15 @@ export interface AnchorScope {
 }
 
 /** Where a reader's text stands, by identity: elements best first, finest first, each with its signed top offset from
- *  the reading line. An element gone from the view is found again as the `path` of child indices below whatever
- *  element now matches `sel` (null: the node itself is the identity). Nodes are held weakly, so a parked anchor keeps
- *  no discarded DOM alive. `takenTop` is the view's scroll offset (`viewOffset`) when the marks were measured. */
+ *  the reading line. An element gone from the view is found again `up` parents above whatever element now matches
+ *  `sel`, then down its `path` of child indices (null `sel`: the node itself is the identity). Nodes are held weakly,
+ *  so a parked anchor keeps no discarded DOM alive. `takenTop` is the view's scroll offset (`viewOffset`) when the
+ *  marks were measured. */
 export interface ReadingAnchor {
   readonly marks: readonly {
     readonly node: WeakRef<Element>;
     readonly sel: string | null;
+    readonly up: number;
     readonly path: readonly number[];
     readonly offset: number;
   }[];
@@ -56,6 +58,23 @@ function entryKey(stamped: Element): string {
   const turn = q("data-open-turn");
   const id = q("data-open-id");
   return `[data-open-turn="${turn}"][data-open-id="${id}"], [data-entry-turn="${turn}"][data-entry-id="${id}"]`;
+}
+
+/** How `el` is found again once its own node is gone: by its stamp, else through the first entry inside it (a tool
+ *  group renders a run of entries and carries none of its own), else by node alone. */
+function identity(el: Element): { sel: string | null; up: number } {
+  if (el.matches(ENTRY_STAMP)) {
+    return { sel: entryKey(el), up: 0 };
+  }
+  const inner = el.querySelector(ENTRY_STAMP);
+  if (inner === null) {
+    return { sel: null, up: 0 };
+  }
+  let up = 0;
+  for (let p: Element | null = inner; p !== null && p !== el; p = p.parentElement) {
+    up++;
+  }
+  return { sel: entryKey(inner), up };
 }
 
 /** The index of the element of `els` on `line`: the first, in document order, whose box ends below it, provided that
@@ -191,24 +210,14 @@ export function readingAnchor(
     if (row === null) {
       return null;
     }
-    const stamp = row.matches(ENTRY_STAMP) ? row : row.querySelector(ENTRY_STAMP);
     const marks: ReadingAnchor["marks"][number][] = [];
     const offset = (el: Element): number => el.getBoundingClientRect().top - line;
-    marks.push({
-      node: new WeakRef(row),
-      sel: stamp === row ? entryKey(row) : null,
-      path: [],
-      offset: offset(row),
-    });
+    marks.push({ node: new WeakRef(row), ...identity(row), path: [], offset: offset(row) });
+    const stamp = row.matches(ENTRY_STAMP) ? row : row.querySelector(ENTRY_STAMP);
     if (stamp !== null && stamp !== row) {
-      marks.push({
-        node: new WeakRef(stamp),
-        sel: entryKey(stamp),
-        path: [],
-        offset: offset(stamp),
-      });
+      marks.push({ node: new WeakRef(stamp), ...identity(stamp), path: [], offset: offset(stamp) });
     }
-    marks.push({ node: new WeakRef(card), sel: null, path: [], offset: offset(card) });
+    marks.push({ node: new WeakRef(card), sel: null, up: 0, path: [], offset: offset(card) });
     return { marks, takenTop: viewOffset(scope) };
   }
   const chain = [card];
@@ -230,37 +239,53 @@ export function readingAnchor(
     chain.push(next);
   }
   const marks: ReadingAnchor["marks"][number][] = [];
-  const mark = (el: Element, sel: string | null, path: readonly number[]): void => {
+  const mark = (
+    el: Element,
+    id: { sel: string | null; up: number },
+    path: readonly number[],
+  ): void => {
     marks.push({
       node: new WeakRef(el),
-      sel,
+      ...id,
       path,
       offset: el.getBoundingClientRect().top - line,
     });
   };
-  // Finest first: the block, then the stamps around it, the block found again below the nearest one by its path.
+  const byNode = { sel: null, up: 0 };
+  // Finest first: the block, then the stamps around it, the block found again below the nearest one by its path. With
+  // no stamp on the chain, the base is the deepest row-level element holding an entry: above the rows, the window
+  // mounts and unmounts children, so a path from the card or the body names other text after a rebuild.
   const stamped = chain.filter((el) => el.matches(ENTRY_STAMP)).reverse();
   const block = chain[chain.length - 1] ?? card;
-  const base = stamped[0];
+  const rows = chain.findIndex((el) => el.classList.contains("turn-body")) + 1 || 1;
+  const base =
+    stamped[0] ??
+    chain
+      .slice(rows)
+      .reverse()
+      .find((el) => el.querySelector(ENTRY_STAMP) !== null);
   if (block !== base) {
     const path = base === undefined ? [] : chain.slice(chain.indexOf(base) + 1);
     mark(
       block,
-      base === undefined ? null : entryKey(base),
+      base === undefined ? byNode : identity(base),
       path.map((el) => Array.prototype.indexOf.call(el.parentElement?.children ?? [], el)),
     );
   }
+  if (base !== undefined && stamped[0] === undefined) {
+    mark(base, identity(base), []);
+  }
   for (const el of stamped) {
-    mark(el, entryKey(el), []);
+    mark(el, identity(el), []);
   }
   if (block !== card && !stamped.includes(card)) {
     // By node alone: a keyed reconcile keeps a child's element for as long as its key stays.
-    mark(card, null, []);
+    mark(card, byNode, []);
   }
   for (let d = 1; d <= reach && (at - d >= 0 || at + d < kids.length); d++) {
     for (const kid of [kids[at - d], kids[at + d]]) {
       if (kid !== undefined && !furniture(kid) && kid.getClientRects().length > 0) {
-        mark(kid, null, []);
+        mark(kid, byNode, []);
       }
     }
   }
@@ -281,11 +306,14 @@ export function resolveAnchor(
           ? null
           : view.querySelector(m.sel);
     if (el !== node) {
+      for (let i = 0; i < m.up; i++) {
+        el = el?.parentElement;
+      }
       for (const i of m.path) {
         el = el?.children[i];
       }
     }
-    if (el !== null && el !== undefined && el.getClientRects().length > 0) {
+    if (el !== null && el !== undefined && view.contains(el) && el.getClientRects().length > 0) {
       return { el, offset: m.offset };
     }
   }

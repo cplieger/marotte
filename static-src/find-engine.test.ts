@@ -215,16 +215,6 @@ describe("the fold", () => {
   });
 });
 
-function twoFrames(): Promise<void> {
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        resolve();
-      });
-    });
-  });
-}
-
 function currentHolder(eng: FindEngine): string | null {
   return eng.currentMark()?.closest("p")?.id ?? null;
 }
@@ -258,15 +248,17 @@ function tallScroller(...rows: string[]): string {
   return `<div style="height:300px;overflow:auto">${rows.join(`<div style="height:4000px"></div>`)}</div>`;
 }
 
+// Chromium first renders the top box two or more frames after mount (later for a nested box on a loaded runner), and
+// before that `#top` reads visible while the walk finds nothing: wait until one hit is searchable, not a frame count.
 async function awayFromTop(host: HTMLElement): Promise<FindEngine> {
   const scroller = host.firstElementChild as HTMLElement;
-  await twoFrames();
+  const topRendered = (): boolean | undefined =>
+    host.querySelector("#top")?.checkVisibility({ contentVisibilityAuto: true });
   const eng = new FindEngine(host);
-  expect(eng.search("needle")).toBe(1);
+  await expect.poll(() => eng.search("needle")).toBe(1);
   expect(currentHolder(eng)).toBe("top");
   scroller.scrollTop = scroller.scrollHeight;
-  await twoFrames();
-  expect(host.querySelector("#top")?.checkVisibility({ contentVisibilityAuto: true })).toBe(false);
+  await expect.poll(topRendered).toBe(false);
   return eng;
 }
 
