@@ -25,6 +25,10 @@ function inputPending(): boolean {
   return scheduling?.isInputPending?.() === true;
 }
 
+function reducedMotion(): boolean {
+  return matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 function ensureCover(): HTMLDivElement {
   // Re-created when a test or a remount replaced the shell, since a detached cover covers nothing.
   if (cover?.isConnected === true) {
@@ -179,8 +183,9 @@ export function dropCover(): void {
     return;
   }
   // Under a hidden view no animation runs, so no `animationend` would come before the view shows
-  // again and plays the fade-out over its content.
-  if (cover.closest(".hidden") !== null) {
+  // again and plays the fade-out over its content. Under reduced motion the 40-a11y sweep's
+  // near-zero fade still ends a frame or two after the paint that shows the chat.
+  if (cover.closest(".hidden") !== null || reducedMotion()) {
     cover.hidden = true;
     return;
   }
