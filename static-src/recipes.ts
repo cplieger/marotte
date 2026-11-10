@@ -143,9 +143,9 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
         void refreshRecipes();
       }
     });
+    window.matchMedia(COMPACT_QUERY).addEventListener("change", paint);
     // An open Run or rule form holds the catalog it opened with, which can be empty when it
     // opened before the boot fetch landed.
-    window.matchMedia(COMPACT_QUERY).addEventListener("change", paint);
     onBus(BUS_CATALOG_MODELS, () => {
       const models = getCachedModels();
       const detail = container?.querySelector<HTMLElement>(".entry-detail") ?? null;
