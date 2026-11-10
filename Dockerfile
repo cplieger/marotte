@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl ripgrep && rm -rf /var/lib/apt/lists/*
 
 # renovate: datasource=golang-version depName=golang
-ARG GO_VERSION=1.27.3
+ARG GO_VERSION=1.27.4
 RUN ARCH=$(dpkg --print-architecture) && \
     curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" \
     | tar -C /usr/local -xz
