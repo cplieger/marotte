@@ -46,7 +46,7 @@ func (d *Dispatcher) Notify(ctx context.Context, chatID marotte.ChatID, text str
 	if err != nil {
 		return "", err
 	}
-	if ack, ok := out.(promptAck); ok && ack.As == SubmitSteered {
+	if ack, ok := out.(promptAck); ok && ack.As == submitSteered {
 		return NotifySteer, nil
 	}
 	return NotifyPrompt, nil

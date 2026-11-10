@@ -399,13 +399,6 @@ func (lc *chatLifecycle) sendCommitLocked(t *activeTurn) func() error {
 	}
 }
 
-// kasStep applies a closer's input for the turn at seq.
-func (lc *chatLifecycle) kasStep(in kasInput, seq uint64) {
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	lc.kasStepLocked(in, seq)
-}
-
 // unbracketedPrompt reports a prompt turn no wire turn_start bound: kiro-cli never streamed its run.
 func (t *activeTurn) unbracketedPrompt() bool {
 	t.lc.mu.Lock()

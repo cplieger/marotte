@@ -135,7 +135,6 @@ func (*benchDeps) TurnContext(reqCtx context.Context) (context.Context, context.
 }
 func (*benchDeps) InflightAdd(int)                 {}
 func (*benchDeps) InflightDone()                   {}
-func (*benchDeps) Draining() bool                  { return false }
 func (*benchDeps) GoUnlessDraining(fn func()) bool { go fn(); return true }
 func (*benchDeps) DeleteChatStateByChain(context.Context, marotte.ChatID, []string, RunStopCause) {
 }

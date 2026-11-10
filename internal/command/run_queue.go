@@ -40,7 +40,7 @@ type SubmitAs string
 // A submission started its turn, was steered into the running one, or waits on the list.
 const (
 	SubmitStarted SubmitAs = "started"
-	SubmitSteered SubmitAs = "steered"
+	submitSteered SubmitAs = "steered"
 	SubmitQueued  SubmitAs = "queued"
 )
 
@@ -62,8 +62,8 @@ var (
 	ErrSubmitTooBig = errors.New("a message queued behind a running turn is capped at the draft size")
 	// ErrSubmitPromptOnly refuses prompt-only text that would be steered or wait behind a running turn.
 	ErrSubmitPromptOnly = errors.New("this message only works as a prompt; send it once the turn ends")
-	// ErrSubmitFull refuses a row past the queue's row count or encoded size.
-	ErrSubmitFull = errors.New("this chat already holds the most follow-ups it can queue; wait for one to send, then try again")
+	// errSubmitFull refuses a row past the queue's row count or encoded size.
+	errSubmitFull = errors.New("this chat already holds the most follow-ups it can queue; wait for one to send, then try again")
 	// ErrSubmitStarting refuses a submission whose life a held close kept from starting within AdmissionWait.
 	ErrSubmitStarting = errors.New("the chat is closing or starting; try again in a moment")
 	// ErrTakeWithdrawn refuses a launch's turn open: a stop withdrew the take before it opened.
@@ -110,7 +110,6 @@ type RunStop struct {
 type EntryLaunch struct {
 	Claim    func() bool
 	Row      marotte.QueuedPrompt
-	ID       string
 	Kind     marotte.RunEntryKind
 	Replaces string
 	Res      Reservation

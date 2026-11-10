@@ -18,6 +18,30 @@ func (r *turnRegistry) testLifecycle(chatID marotte.ChatID) *chatLifecycle {
 	return lc
 }
 
+// tryLifecycleAt is lifecycleAt that never waits: false while a close is held or after one committed since stamp.
+func (r *turnRegistry) tryLifecycleAt(chatID marotte.ChatID, stamp uint64) (*chatLifecycle, bool) {
+	lc, _, _ := r.admitLife(chatID, stamp)
+	return lc, lc != nil
+}
+
+// compactTurn is compactTurnLocked's turn with live's answer.
+func (r *turnRegistry) compactTurn(chatID marotte.ChatID) (string, bool) {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return "", false
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.compactTurnLocked(), lc.liveLockedState()
+}
+
+// kasStep applies a closer's input for the turn at seq.
+func (lc *chatLifecycle) kasStep(in kasInput, seq uint64) {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	lc.kasStepLocked(in, seq)
+}
+
 // tryReserveNow is turnRegistry.tryReserve with a stamp taken now, for a test that needs only the verdict.
 func (bc *bridgeCoordinator) tryReserveNow(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
 	_, ok := bc.turns.tryReserve(chatID, source, bc.LifeStamp())
@@ -35,14 +59,13 @@ type admissionOutcome int
 
 const (
 	admissionAcquired admissionOutcome = iota
-	admissionBusy
 	admissionClosed
 	admissionChatGone
 	admissionStarting
 )
 
-// reservePromptSlot takes the chat's admission slot for a test's own prompt-class open, waiting up to wait for a
-// holder that is not steerable: a steerable holder answers busy at once, a close committed since stamp closed.
+// reservePromptSlot takes the chat's admission slot for a test's own prompt-class open, waiting up to wait for the
+// holder to give it back; a close committed since stamp answers closed.
 func (bc *bridgeCoordinator) reservePromptSlot(
 	ctx context.Context, chatID marotte.ChatID, wait time.Duration, stamp uint64, messageID string,
 ) (admissionOutcome, command.Reservation) {
@@ -57,8 +80,6 @@ func (bc *bridgeCoordinator) reservePromptSlot(
 		if lc != nil {
 			lc.mu.Lock()
 			a := bc.turns.reserveLocked(lc, marotte.TurnSourcePrompt, stamp, messageID)
-			holder, held := lc.holderSourceLocked()
-			busy := lc.kas.may().steerHolder && held && holder.SteerableHolder()
 			changed, gate = lc.changed, a.idle
 			lc.mu.Unlock()
 			switch {
@@ -68,8 +89,6 @@ func (bc *bridgeCoordinator) reservePromptSlot(
 				return admissionChatGone, command.Reservation{}
 			case a.verdict == gateClosedSince:
 				return admissionClosed, command.Reservation{}
-			case busy:
-				return admissionBusy, command.Reservation{}
 			}
 		}
 		select {

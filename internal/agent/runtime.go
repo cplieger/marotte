@@ -194,11 +194,6 @@ func (lt *lifetime) InflightDone() {
 	lt.inflight.Done()
 }
 
-// Draining reports that Shutdown has begun.
-func (lt *lifetime) Draining() bool {
-	return lt.draining.Load()
-}
-
 // GoUnlessDraining is goUnlessDraining for the command layer's background work.
 func (lt *lifetime) GoUnlessDraining(fn func()) bool { return lt.goUnlessDraining(fn) }
 

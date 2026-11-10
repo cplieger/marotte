@@ -16,6 +16,9 @@ import (
 	"github.com/cplieger/marotte/internal/testsupport"
 )
 
+// errBusy is the cause a fake refusal carries; the tests read only its status and reason.
+var errBusy = errors.New("busy")
+
 // clientAPITimeout reads the shared fixture pinning @cplieger/ui/fetch's
 // API_TIMEOUT_MS — the timeout every client action dispatches under. The TS
 // half (static-src/api-timeout.node.test.ts) asserts the fixture equals the
@@ -546,7 +549,6 @@ func (*promptJoin) TurnContext(reqCtx context.Context) (context.Context, context
 }
 func (l *promptJoin) InflightAdd(delta int)         { l.wg.Add(delta) }
 func (l *promptJoin) InflightDone()                 { l.wg.Done() }
-func (*promptJoin) Draining() bool                  { return false }
 func (*promptJoin) GoUnlessDraining(fn func()) bool { go fn(); return true }
 
 // join blocks until every in-flight turn has deregistered. Safe to call after

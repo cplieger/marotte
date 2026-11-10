@@ -35,8 +35,8 @@ func runEntry() RunEntry {
 	return RunEntry{ID: "run-1", Kind: RunKindTurn, State: RunRunning, Origin: RunFromRun}
 }
 
-func turns(n int) RunWait           { return RunWait{After: WaitTurns, Turns: n} }
-func thisTurn() RunWait             { return RunWait{After: WaitTurns, Turns: 1, This: true} }
+func turns(n int) RunWait           { return RunWait{After: waitTurns, Turns: n} }
+func thisTurn() RunWait             { return RunWait{After: waitTurns, Turns: 1, This: true} }
 func waitOf(a RunWaitAfter) RunWait { return RunWait{After: a} }
 
 func TestRunViewOf(t *testing.T) {
@@ -55,12 +55,12 @@ func TestRunViewOf(t *testing.T) {
 		entries []RunEntry
 		want    want
 	}{
-		{name: "idle", entries: nil, want: want{send: SendPrompt, next: waitOf(WaitNext), unread: waitOf(WaitNext)}},
+		{name: "idle", entries: nil, want: want{send: SendPrompt, next: waitOf(waitNext), unread: waitOf(waitNext)}},
 		{
 			name: "idle behind a pending row not taken", entries: []RunEntry{row("m-q1", RunPending)},
 			want: want{
-				send: SendQueue, next: turns(1), unread: waitOf(WaitNext),
-				waits: map[string]RunWait{"m-q1": waitOf(WaitNext)}, arrows: map[string]SendNowKind{}, carries: "m-q1",
+				send: SendQueue, next: turns(1), unread: waitOf(waitNext),
+				waits: map[string]RunWait{"m-q1": waitOf(waitNext)}, arrows: map[string]SendNowKind{}, carries: "m-q1",
 			},
 		},
 		{
@@ -68,8 +68,8 @@ func TestRunViewOf(t *testing.T) {
 			entries: []RunEntry{turn("A", RunRunning), row("m-q1", RunPending), row("m-q2", RunPending)},
 			want: want{
 				send: SendSteer, cancel: "A", next: turns(3), unread: thisTurn(),
-				waits:   map[string]RunWait{"A": waitOf(WaitRunning), "m-q1": thisTurn(), "m-q2": turns(2)},
-				arrows:  map[string]SendNowKind{"m-q1": SendNowStop, "m-q2": SendNowStop},
+				waits:   map[string]RunWait{"A": waitOf(waitRunning), "m-q1": thisTurn(), "m-q2": turns(2)},
+				arrows:  map[string]SendNowKind{"m-q1": sendNowStop, "m-q2": sendNowStop},
 				carries: "m-q1",
 			},
 		},
@@ -81,24 +81,24 @@ func TestRunViewOf(t *testing.T) {
 			name: "a starting turn queues", entries: []RunEntry{turn("A", RunStarting)},
 			want: want{
 				send: SendQueue, cancel: "A", next: thisTurn(), unread: thisTurn(),
-				waits: map[string]RunWait{"A": waitOf(WaitStarting)}, carries: "A",
+				waits: map[string]RunWait{"A": waitOf(waitStarting)}, carries: "A",
 			},
 		},
 		{
 			name:    "a stopping head counts no turn",
 			entries: []RunEntry{turn("A", RunStopping), row("m-q1", RunPending), row("m-q0", RunPaused)},
 			want: want{
-				send: SendQueue, next: turns(1), unread: waitOf(WaitNext),
-				waits:   map[string]RunWait{"m-q1": waitOf(WaitNext), "m-q0": turns(1)},
-				arrows:  map[string]SendNowKind{"m-q0": SendNowNow},
+				send: SendQueue, next: turns(1), unread: waitOf(waitNext),
+				waits:   map[string]RunWait{"m-q1": waitOf(waitNext), "m-q0": turns(1)},
+				arrows:  map[string]SendNowKind{"m-q0": sendNowNow},
 				carries: "m-q1",
 			},
 		},
 		{
 			name: "a closing head with one row", entries: []RunEntry{turn("A", RunClosing), row("m-q1", RunPending)},
 			want: want{
-				send: SendQueue, next: turns(1), unread: waitOf(WaitNext),
-				waits: map[string]RunWait{"m-q1": waitOf(WaitNext)}, carries: "m-q1",
+				send: SendQueue, next: turns(1), unread: waitOf(waitNext),
+				waits: map[string]RunWait{"m-q1": waitOf(waitNext)}, carries: "m-q1",
 			},
 		},
 		{
@@ -110,7 +110,7 @@ func TestRunViewOf(t *testing.T) {
 			want: want{
 				send: SendQueue, next: turns(2), unread: waitOf(WaitCompaction),
 				waits: map[string]RunWait{
-					"compact-1": waitOf(WaitNext), "m-q1": waitOf(WaitCompaction),
+					"compact-1": waitOf(waitNext), "m-q1": waitOf(WaitCompaction),
 					"m-q2": turns(1),
 				},
 				arrows:  map[string]SendNowKind{"m-q2": SendNowAfterCompaction},
@@ -135,7 +135,7 @@ func TestRunViewOf(t *testing.T) {
 			entries: []RunEntry{compaction(RunRunning), row("m-new", RunPending), row("m-q0", RunPaused)},
 			want: want{
 				send: SendQueue, next: turns(1), unread: waitOf(WaitCompaction),
-				waits:   map[string]RunWait{"compact-1": waitOf(WaitRunning), "m-new": waitOf(WaitCompaction), "m-q0": turns(1)},
+				waits:   map[string]RunWait{"compact-1": waitOf(waitRunning), "m-new": waitOf(WaitCompaction), "m-q0": turns(1)},
 				arrows:  map[string]SendNowKind{"m-q0": SendNowAfterCompaction},
 				carries: "m-new",
 			},
@@ -145,7 +145,7 @@ func TestRunViewOf(t *testing.T) {
 			entries: []RunEntry{compaction(RunRunning), wire("w", RunRunning), row("m-q1", RunPending)},
 			want: want{
 				send: SendQueue, cancel: "w", next: turns(2), unread: waitOf(WaitCompaction),
-				waits:   map[string]RunWait{"w": waitOf(WaitRunning), "m-q1": waitOf(WaitCompaction)},
+				waits:   map[string]RunWait{"w": waitOf(waitRunning), "m-q1": waitOf(WaitCompaction)},
 				carries: "m-q1",
 			},
 		},
@@ -156,8 +156,8 @@ func TestRunViewOf(t *testing.T) {
 			},
 			want: want{
 				send: SendQueue, cancel: "w", next: turns(3), unread: turns(2),
-				waits:   map[string]RunWait{"m-1": waitOf(WaitStarting), "m-q1": turns(2)},
-				arrows:  map[string]SendNowKind{"m-q1": SendNowNow},
+				waits:   map[string]RunWait{"m-1": waitOf(waitStarting), "m-q1": turns(2)},
+				arrows:  map[string]SendNowKind{"m-q1": sendNowNow},
 				carries: "m-1",
 			},
 		},
@@ -168,7 +168,7 @@ func TestRunViewOf(t *testing.T) {
 			},
 			want: want{
 				send: SendQueue, cancel: "f", next: turns(1), unread: waitOf(WaitCompaction),
-				waits:   map[string]RunWait{"compact-1": waitOf(WaitStarting), "m-new": waitOf(WaitCompaction)},
+				waits:   map[string]RunWait{"compact-1": waitOf(waitStarting), "m-new": waitOf(WaitCompaction)},
 				carries: "m-new",
 			},
 		},
@@ -195,7 +195,7 @@ func TestRunViewOf(t *testing.T) {
 			},
 			want: want{
 				send: SendQueue, cancel: "f", next: turns(2), unread: thisTurn(),
-				waits: map[string]RunWait{"m-q1": thisTurn()}, arrows: map[string]SendNowKind{"m-q1": SendNowStop},
+				waits: map[string]RunWait{"m-q1": thisTurn()}, arrows: map[string]SendNowKind{"m-q1": sendNowStop},
 				carries: "m-q1",
 			},
 		},
@@ -203,15 +203,15 @@ func TestRunViewOf(t *testing.T) {
 			name: "a run entry", entries: []RunEntry{runEntry(), row("m-new", RunPending)},
 			want: want{
 				send: SendQueue, cancel: "run-1", next: turns(2), unread: thisTurn(),
-				waits: map[string]RunWait{"m-new": thisTurn()}, arrows: map[string]SendNowKind{"m-new": SendNowNow},
+				waits: map[string]RunWait{"m-new": thisTurn()}, arrows: map[string]SendNowKind{"m-new": sendNowNow},
 				carries: "m-new",
 			},
 		},
 		{
 			name: "a held row", entries: []RunEntry{func() RunEntry { e := row("m-h", RunHeld); return e }()},
 			want: want{
-				send: SendPrompt, next: waitOf(WaitNext), unread: waitOf(WaitNext),
-				waits: map[string]RunWait{"m-h": waitOf(WaitHeld)}, arrows: map[string]SendNowKind{},
+				send: SendPrompt, next: waitOf(waitNext), unread: waitOf(waitNext),
+				waits: map[string]RunWait{"m-h": waitOf(waitHeld)}, arrows: map[string]SendNowKind{},
 			},
 		},
 		{
@@ -273,7 +273,7 @@ func TestVerbFor_Labelled(t *testing.T) {
 
 func TestInsertAt_BeforeTheFirstPausedRow(t *testing.T) {
 	entries := []RunEntry{turn("A", RunStopping), row("m-q1", RunPending), row("m-q0", RunPaused)}
-	if got := InsertAt(entries); got != 2 {
+	if got := insertAt(entries); got != 2 {
 		t.Errorf("got %d, want 2", got)
 	}
 }

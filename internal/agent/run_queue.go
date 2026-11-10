@@ -253,7 +253,7 @@ func (bc *bridgeCoordinator) startEntry(lc *chatLifecycle, e *runEntry) {
 		return
 	}
 	l := &command.EntryLaunch{
-		ID: e.id, Kind: e.kind, Replaces: e.replaces, Res: e.res, Awaited: e.opts.awaited,
+		Kind: e.kind, Replaces: e.replaces, Res: e.res, Awaited: e.opts.awaited,
 		Fence: command.TurnFence{Epoch: lc.epoch, Seq: math.MaxUint64},
 	}
 	if e.row != nil {
@@ -404,7 +404,7 @@ func (bc *bridgeCoordinator) Submit(ctx context.Context, chatID marotte.ChatID, 
 	if err != nil || e == nil {
 		return out, err
 	}
-	return bc.awaitLaunch(ctx, lc, e, mode)
+	return lc.awaitLaunch(ctx, e, mode)
 }
 
 // submitLocked decides a send by VerbFor and places it, answering the entry whose launch the caller waits on (nil
@@ -486,7 +486,7 @@ func queueRefusal(entries []marotte.RunEntry, row *marotte.QueuedPrompt, promptO
 
 // awaitLaunch waits for submit's own take to open its turn, up to command.AdmissionWait; past it, one section
 // answers queued unless the launch answered first.
-func (bc *bridgeCoordinator) awaitLaunch(ctx context.Context, lc *chatLifecycle, e *runEntry, mode marotte.InterruptMode) (command.SubmitAnswer, error) {
+func (lc *chatLifecycle) awaitLaunch(ctx context.Context, e *runEntry, mode marotte.InterruptMode) (command.SubmitAnswer, error) {
 	lc.mu.Lock()
 	w := e.launch
 	lc.mu.Unlock()
@@ -500,7 +500,7 @@ func (bc *bridgeCoordinator) awaitLaunch(ctx context.Context, lc *chatLifecycle,
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	if !w.closed {
-		settle := lc.run.answerQueued(e)
+		settle := answerQueued(e)
 		return command.SubmitAnswer{As: command.SubmitQueued, Settle: settle, Run: lc.runViewLocked(mode)}, nil
 	}
 	view := lc.runViewLocked(mode)
@@ -798,8 +798,8 @@ func (bc *bridgeCoordinator) closeEndsResolved(lc *chatLifecycle, turnID string,
 }
 
 // awaitReleased waits until the entry whose turn is turnID has given its reservation back, or is gone: a holder a
-// close's steer resolve then sees is another turn, not this close's prompt. False on budget or ctx end.
-func (lc *chatLifecycle) awaitReleased(ctx context.Context, turnID string, budget time.Duration) bool {
+// close's steer resolve then sees is another turn, not this close's prompt. It gives up at budget or ctx end.
+func (lc *chatLifecycle) awaitReleased(ctx context.Context, turnID string, budget time.Duration) {
 	timer := time.NewTimer(budget)
 	defer timer.Stop()
 	for {
@@ -808,14 +808,14 @@ func (lc *chatLifecycle) awaitReleased(ctx context.Context, turnID string, budge
 		done, changed := e == nil || e.released, lc.changed
 		lc.mu.Unlock()
 		if done {
-			return true
+			return
 		}
 		select {
 		case <-changed:
 		case <-timer.C:
-			return false
+			return
 		case <-ctx.Done():
-			return false
+			return
 		}
 	}
 }

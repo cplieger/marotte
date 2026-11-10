@@ -292,7 +292,7 @@ func (l *runList) frontOfPending(behindCompaction bool) int {
 func (l *runList) project() []marotte.RunEntry {
 	out := make([]marotte.RunEntry, len(l.entries))
 	for i, e := range l.entries {
-		out[i] = l.projectOne(e)
+		out[i] = projectOne(e)
 	}
 	return out
 }
@@ -469,7 +469,6 @@ func (l *runList) take(e *runEntry, at int) {
 
 // submitAnswer is submit's outcome: taken, refused, or neither (the entry waits on the list).
 type submitAnswer struct {
-	entry   *runEntry
 	refused takeAnswer
 	taken   bool
 }
@@ -488,19 +487,19 @@ func (l *runList) submit(e *runEntry, f *orderFacts, intentStamp uint64, waits b
 	l.intent = nil
 	switch {
 	case e.state == marotte.RunStarting || e.state == marotte.RunRunning:
-		return submitAnswer{entry: e, taken: true}
+		return submitAnswer{taken: true}
 	case l.intentRefused == takeClosed || l.intentRefused == takeGone:
 		l.remove(e)
 		l.fx.changed = before
-		return submitAnswer{entry: e, refused: l.intentRefused}
+		return submitAnswer{refused: l.intentRefused}
 	}
-	l.answerQueued(e)
-	return submitAnswer{entry: e}
+	answerQueued(e)
+	return submitAnswer{}
 }
 
 // answerQueued is the one section that answers e's submitter queued: it ends the wait and claims the composer
 // settle, reporting whether the settle is owed.
-func (l *runList) answerQueued(e *runEntry) bool {
+func answerQueued(e *runEntry) bool {
 	settle := e.submitter && e.opts.composer
 	e.submitter, e.opts.composer = false, false
 	return settle
@@ -1193,12 +1192,12 @@ func (l *runList) endLife() []marotte.RunEntry {
 			e.launch.finish("", marotte.ErrChatClosedDuringCall, false, false)
 			continue
 		}
-		keep = append(keep, l.projectOne(e))
+		keep = append(keep, projectOne(e))
 	}
 	return marotte.SanitizeRun(keep, false)
 }
 
-func (l *runList) projectOne(e *runEntry) marotte.RunEntry {
+func projectOne(e *runEntry) marotte.RunEntry {
 	return marotte.RunEntry{
 		Row: e.row, ID: e.id, Kind: e.kind, State: e.state, Origin: e.origin, Turn: e.turnID, Next: e.next,
 		Steerable: e.steerable, Yields: e.yields, Admits: e.admits,

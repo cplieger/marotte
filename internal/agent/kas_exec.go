@@ -78,13 +78,11 @@ type kasPermits struct {
 	admit bool
 	// sessionCall: a closer's model switch or compaction, or a parked model pick's apply.
 	sessionCall bool
-	// steerHolder: an admission holder may still take a prompt as a steer; under a hold the turn it follows is closed.
-	steerHolder bool
 }
 
 var kasPermitTable = [nKASStates]kasPermits{
-	kasIdle:        {admit: true, sessionCall: true, steerHolder: true},
-	kasRunning:     {steerHolder: true},
+	kasIdle:        {admit: true, sessionCall: true},
+	kasRunning:     {},
 	kasHeldRunning: {},
 	kasHeldIdle:    {sessionCall: true},
 }

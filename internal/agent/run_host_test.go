@@ -2014,7 +2014,7 @@ func TestLaunchTriggeredTakesDrainHold(t *testing.T) {
 			defer close(done)
 			shutdownHub(t, h)
 		}()
-		waitFor(t, h.lifecycle.Draining)
+		waitFor(t, h.lifecycle.draining.Load)
 		refuteClosed(t, done, "Shutdown returned while a triggered launch was still running")
 
 		openGate()

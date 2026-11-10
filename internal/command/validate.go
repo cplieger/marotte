@@ -49,7 +49,6 @@ var (
 	errBranchNotReturned       = errors.New("the agent did not return the branched conversation, so no chat was opened")
 	// Appended to KAS's refusal of a branch point.
 	errBranchTurnUnknown = errors.New("the agent no longer holds this turn, because a compaction summarized it or it ran on an earlier agent session")
-	errBusy              = errors.New("busy")
 	// errAlreadyAnswered is the 409 for a decision another surface settled
 	// first. A code rather than prose: the client keys off it.
 	errAlreadyAnswered = errors.New("already_answered")

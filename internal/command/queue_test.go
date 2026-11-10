@@ -80,15 +80,15 @@ func TestQueuePrompt_RefusesPastItsCaps(t *testing.T) {
 			t.Fatalf("a row below the cap = %v, want nil", err)
 		}
 		rows = append(rows, &marotte.QueuedPrompt{ID: "m-last"})
-		if err := RowCapsRefusal(rows, &marotte.QueuedPrompt{ID: "m-over"}); err != ErrSubmitFull {
-			t.Errorf("a row past the user cap = %v, want ErrSubmitFull", err)
+		if err := RowCapsRefusal(rows, &marotte.QueuedPrompt{ID: "m-over"}); err != errSubmitFull {
+			t.Errorf("a row past the user cap = %v, want errSubmitFull", err)
 		}
 	})
 	t.Run("encoded size", func(t *testing.T) {
 		big := strings.Repeat("x", maxQueuedEncodedBytes/2)
 		rows := []*marotte.QueuedPrompt{{ID: "m-a", Text: big}}
-		if err := RowCapsRefusal(rows, &marotte.QueuedPrompt{ID: "m-b", Text: big}); err != ErrSubmitFull {
-			t.Errorf("rows past the encoded cap = %v, want ErrSubmitFull", err)
+		if err := RowCapsRefusal(rows, &marotte.QueuedPrompt{ID: "m-b", Text: big}); err != errSubmitFull {
+			t.Errorf("rows past the encoded cap = %v, want errSubmitFull", err)
 		}
 	})
 	t.Run("text", func(t *testing.T) {
@@ -188,7 +188,7 @@ func TestQueuePrompt_ALabelledRowIsSentWithItsLabel(t *testing.T) {
 	h := newResendHost(newSteerBridge(), AdmissionAcquired, 0, false)
 	roles := drainRoles(h, newStubSteerQueue())
 	_, _ = launchQueuedRow(t.Context(), roles, &EntryLaunch{
-		ID: row.ID, Kind: marotte.RunKindRow, Row: row, Res: testReservation("c1", true),
+		Kind: marotte.RunKindRow, Row: row, Res: testReservation("c1", true),
 	})
 	h.waitInflight(t)
 

@@ -422,8 +422,6 @@ type lifecycleAccess interface {
 	TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc)
 	InflightAdd(delta int)
 	InflightDone()
-	// Draining reports that shutdown has begun, after which nothing sends.
-	Draining() bool
 	// GoUnlessDraining runs fn on the runtime's lifetime, which Shutdown waits for, unless shutdown has begun;
 	// it reports whether fn started.
 	GoUnlessDraining(fn func()) bool

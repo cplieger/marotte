@@ -220,7 +220,7 @@ func TestQueuePrompt_FromAnAPICallerIsAttributedThroughItsLaunch(t *testing.T) {
 	roles.lifecycle = f.join
 	roles.bridges = &admissionHost{hostDouble: newBenchDeps(), openErr: context.Canceled, rec: &callRecorder{}}
 	_, _ = launchQueuedRow(t.Context(), roles, &EntryLaunch{
-		ID: rows[0].ID, Kind: marotte.RunKindRow, Row: rows[0], Res: testReservation("c1", true),
+		Kind: marotte.RunKindRow, Row: rows[0], Res: testReservation("c1", true),
 	})
 	f.join.join()
 

@@ -300,12 +300,6 @@ func (r *turnRegistry) lifecycleAt(ctx context.Context, chatID marotte.ChatID, s
 	}
 }
 
-// tryLifecycleAt is lifecycleAt that never waits: false while a close is held or after one committed since stamp.
-func (r *turnRegistry) tryLifecycleAt(chatID marotte.ChatID, stamp uint64) (*chatLifecycle, bool) {
-	lc, _, _ := r.admitLife(chatID, stamp)
-	return lc, lc != nil
-}
-
 // admitLife is one gated look at chatID's lifecycle: the lifecycle, or the hold to wait on, or the refusal. An ended
 // lifecycle is never handed out.
 func (r *turnRegistry) admitLife(chatID marotte.ChatID, stamp uint64) (*chatLifecycle, <-chan struct{}, error) {
@@ -903,17 +897,6 @@ func (lc *chatLifecycle) kasStepLocked(in kasInput, seq uint64) {
 	if changed {
 		lc.wakeLocked()
 	}
-}
-
-// compactTurn is compactTurnLocked's turn with live's answer.
-func (r *turnRegistry) compactTurn(chatID marotte.ChatID) (string, bool) {
-	lc, ok := r.lookup(chatID)
-	if !ok {
-		return "", false
-	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	return lc.compactTurnLocked(), lc.liveLockedState()
 }
 
 // compactTurnLocked names the turn a queued compaction belongs to: the open turn (own, else pending), else the newest

@@ -34,7 +34,7 @@ func (r *turnRegistry) requestStop(chatID marotte.ChatID, cause marotte.TurnStop
 
 // requestStopLocked is requestStop's section, under the stop token the caller minted (a run list stop stamps what it
 // changed with it). Caller holds lc.mu.
-func (r *turnRegistry) requestStopLocked(lc *chatLifecycle, token uint64, cause marotte.TurnStopCause) *command.TurnStop {
+func (*turnRegistry) requestStopLocked(lc *chatLifecycle, token uint64, cause marotte.TurnStopCause) *command.TurnStop {
 	stop := &command.TurnStop{Chat: lc.chatID, Token: token}
 	if lc.stopSeq != lc.nextSeq || lc.stopCause != marotte.TurnStopTeardown {
 		lc.stopCause = cause

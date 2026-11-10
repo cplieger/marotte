@@ -119,15 +119,15 @@ func TestKASExec_TheChangeReportWakesOnlyOnAChange(t *testing.T) {
 	}
 }
 
-// What marotte may do in each state: admit a prompt only with KAS idle and no hold, run session calls whenever KAS
-// reports no run, and take a prompt as a steer only outside a hold.
+// What marotte may do in each state: admit a prompt only with KAS idle and no hold, and run session calls whenever
+// KAS reports no run.
 func TestKASExec_EachStatesPermits(t *testing.T) {
 	cases := []struct {
 		state kasState
 		want  kasPermits
 	}{
-		{state: kasIdle, want: kasPermits{admit: true, sessionCall: true, steerHolder: true}},
-		{state: kasRunning, want: kasPermits{steerHolder: true}},
+		{state: kasIdle, want: kasPermits{admit: true, sessionCall: true}},
+		{state: kasRunning, want: kasPermits{}},
 		{state: kasHeldRunning, want: kasPermits{}},
 		{state: kasHeldIdle, want: kasPermits{sessionCall: true}},
 	}

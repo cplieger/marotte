@@ -29,33 +29,33 @@ type reservationLedger struct {
 	next     uint64
 }
 
-func (a *reservationLedger) mint(res Reservation, ok bool) (Reservation, bool) {
+func (a *reservationLedger) mint(res Reservation, ok bool) Reservation {
 	if !ok {
-		return Reservation{}, false
+		return Reservation{}
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.next++
 	token := 100 + a.next
 	a.issued = append(a.issued, token)
-	return Reservation{Chat: res.Chat, Token: token, Stamp: lifeStamp}, true
+	return Reservation{Chat: res.Chat, Token: token, Stamp: lifeStamp}
 }
 
 func (a *reservationLedger) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration, stamp uint64, messageID string) (AdmissionOutcome, Reservation) {
 	out, res := a.turnAdmission.(promptReserver).ReserveTurnForPrompt(ctx, chatID, wait, stamp, messageID)
-	res, _ = a.mint(res, out == AdmissionAcquired)
+	res = a.mint(res, out == AdmissionAcquired)
 	return out, res
 }
 
 func (a *reservationLedger) ReserveTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration) (IdleAdmission, Reservation) {
 	out, res := a.turnAdmission.(idleReserver).ReserveTurn(ctx, chatID, source, stamp, wait)
-	res, _ = a.mint(res, out == IdleAcquired)
+	res = a.mint(res, out == IdleAcquired)
 	return out, res
 }
 
 func (a *reservationLedger) ReserveIdleTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration) (IdleAdmission, Reservation) {
 	out, res := a.turnAdmission.(idleReserver).ReserveIdleTurn(ctx, chatID, source, stamp, wait)
-	res, _ = a.mint(res, out == IdleAcquired)
+	res = a.mint(res, out == IdleAcquired)
 	return out, res
 }
 
@@ -133,9 +133,9 @@ func TestStartPrompt_EveryCallerCarriesItsReservation(t *testing.T) {
 		roles := drainRoles(h, newStubSteerQueue())
 		ledger, opens := withLedger(roles)
 
-		res, _ := ledger.mint(testReservation("c1", true), true)
+		res := ledger.mint(testReservation("c1", true), true)
 		_, _ = launchQueuedRow(t.Context(), roles, &EntryLaunch{
-			ID: "m-1", Kind: marotte.RunKindRow, Row: marotte.QueuedPrompt{ID: "m-1", Text: "next"}, Res: res,
+			Kind: marotte.RunKindRow, Row: marotte.QueuedPrompt{ID: "m-1", Text: "next"}, Res: res,
 		})
 		h.waitInflight(t)
 		checkCarried(t, ledger, opens, 1)
@@ -147,7 +147,7 @@ func TestStartPrompt_EveryCallerCarriesItsReservation(t *testing.T) {
 		roles := drainRoles(h, q)
 		ledger, opens := withLedger(roles)
 
-		res, _ := ledger.mint(testReservation("c1", true), true)
+		res := ledger.mint(testReservation("c1", true), true)
 		_, _ = sendUnread(t.Context(), roles, res, TurnFence{})
 		h.waitInflight(t)
 		checkCarried(t, ledger, opens, 1)

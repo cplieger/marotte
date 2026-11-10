@@ -92,7 +92,7 @@ func (q *launchingRun) Submit(ctx context.Context, chatID marotte.ChatID, stamp 
 		return q.queue(s), nil
 	}
 	claimed := false
-	l := &EntryLaunch{ID: s.Row.ID, Kind: marotte.RunKindRow, Row: s.Row, Res: res, Awaited: s.Awaited}
+	l := &EntryLaunch{Kind: marotte.RunKindRow, Row: s.Row, Res: res, Awaited: s.Awaited}
 	if s.Composer {
 		l.Claim = func() bool {
 			was := claimed
@@ -178,7 +178,7 @@ func (q *launchingRun) StopUndone(_ marotte.ChatID, stop *TurnStop) {
 	q.undone = append(q.undone, stop)
 }
 
-func (q *launchingRun) RunView(context.Context, marotte.ChatID) marotte.RunView {
+func (*launchingRun) RunView(context.Context, marotte.ChatID) marotte.RunView {
 	return marotte.RunView{}
 }
 

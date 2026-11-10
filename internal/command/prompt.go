@@ -357,7 +357,7 @@ func cmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 				s.NoSteer = true
 				continue
 			}
-			ans = SubmitAnswer{As: SubmitSteered, Run: roles.runq.RunView(ctx, cmd.ChatID)}
+			ans = SubmitAnswer{As: submitSteered, Run: roles.runq.RunView(ctx, cmd.ChatID)}
 		}
 		if ans.Settle {
 			settleComposerOnPrompt(ctx, roles.chats, roles.bus, cmd.ChatID, &p)
@@ -411,7 +411,7 @@ func submitRefusal(err error) error {
 		return StatusError(http.StatusRequestEntityTooLarge, err)
 	case errors.Is(err, ErrSubmitPromptOnly):
 		return StatusErrorReason(http.StatusConflict, reasonPromptOnly, err)
-	case errors.Is(err, ErrSubmitFull):
+	case errors.Is(err, errSubmitFull):
 		return StatusErrorReason(http.StatusConflict, reasonFull, err)
 	case errors.Is(err, ErrSubmitStarting):
 		return StatusErrorReason(http.StatusConflict, reasonStarting, err)

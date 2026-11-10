@@ -75,10 +75,6 @@ func (o *recoveryOutcome) reservePromptOld(context.Context, marotte.ChatID, time
 
 func (*recoveryOutcome) PromptHolder(marotte.ChatID) (string, bool) { return "", false }
 
-func (o *recoveryOutcome) tryReserveIdleOld(c marotte.ChatID, s marotte.TurnOpenSource) bool {
-	return o.tryReserveOld(c, s)
-}
-
 func (o *recoveryOutcome) ReserveTurn(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, _ uint64, _ time.Duration) (IdleAdmission, Reservation) {
 	if o.tryReserveOld(chatID, source) {
 		return IdleAcquired, testReservation(chatID, true)
@@ -91,10 +87,6 @@ func (o *recoveryOutcome) ReserveIdleTurn(_ context.Context, chatID marotte.Chat
 		return IdleAcquired, testReservation(chatID, true)
 	}
 	return IdleHeld, Reservation{}
-}
-
-func (o *recoveryOutcome) tryReserveDrainOld(c marotte.ChatID, s marotte.TurnOpenSource, _ CloseFacts) bool {
-	return o.tryReserveOld(c, s)
 }
 
 func (o *recoveryOutcome) tryReserveOld(marotte.ChatID, marotte.TurnOpenSource) bool {
@@ -182,7 +174,7 @@ func TestLaunchRetry_AStopDuringTheReopenSendsNothing(t *testing.T) {
 	roles.admission = outcome
 	roles.turnOutcome = outcome
 	_, _ = launchRetry(t.Context(), roles, "c1", &EntryLaunch{
-		ID: "retry-t-0", Kind: marotte.RunKindRetry, Row: marotte.QueuedPrompt{ID: "m1", Text: "q"},
+		Kind: marotte.RunKindRetry, Row: marotte.QueuedPrompt{ID: "m1", Text: "q"},
 		Replaces: "t-0", Res: testReservation("c1", true),
 	})
 
@@ -195,10 +187,6 @@ func TestLaunchRetry_AStopDuringTheReopenSendsNothing(t *testing.T) {
 	if bridges.bridge == nil || bridges.bridge.calls != 0 {
 		t.Errorf("prompt calls on the reloaded session = %v, want 0", bridges.bridge)
 	}
-}
-
-func hasSource(got []marotte.TurnOpenSource, want marotte.TurnOpenSource) bool {
-	return slices.Contains(got, want)
 }
 
 // orderedRetryBridges hands the retry a bridge that logs its prompt into the same
@@ -260,7 +248,7 @@ func TestLaunchRetry_TheRetryDrainsUnderTheSteerLockBeforeItsPrompt(t *testing.T
 	q := orderedSteerLock{stubSteerQueue: newStubSteerQueue(), add: add}
 	roles.queue, roles.jobs = q, q
 	_, _ = launchRetry(t.Context(), roles, "c1", &EntryLaunch{
-		ID: "retry-t-0", Kind: marotte.RunKindRetry, Row: marotte.QueuedPrompt{ID: "m1", Text: "q"},
+		Kind: marotte.RunKindRetry, Row: marotte.QueuedPrompt{ID: "m1", Text: "q"},
 		Replaces: "t-0", Res: testReservation("c1", true),
 	})
 

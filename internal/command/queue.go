@@ -15,11 +15,8 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-var (
-	errQueueFull = errors.New("this chat already holds the most follow-ups it can queue; wait for one to send, then try again")
-	// errQueueTooMany refuses an attachment list past MaxAttachments.
-	errQueueTooMany = errors.New("too many attachments on one queued message")
-)
+// errQueueTooMany refuses an attachment list past MaxAttachments.
+var errQueueTooMany = errors.New("too many attachments on one queued message")
 
 // reasonSending is the 409 refusal class for an unqueue of a row already being sent.
 const reasonSending = "sending"
@@ -72,10 +69,10 @@ func RowCapsRefusal(rows []*marotte.QueuedPrompt, row *marotte.QueuedPrompt) err
 		all = append(all, *q)
 	}
 	if users >= marotte.MaxQueuedPrompts-2 {
-		return ErrSubmitFull
+		return errSubmitFull
 	}
 	if encoded, err := json.Marshal(append(all, *row)); err != nil || len(encoded) > maxQueuedEncodedBytes {
-		return ErrSubmitFull
+		return errSubmitFull
 	}
 	return nil
 }

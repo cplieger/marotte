@@ -108,13 +108,6 @@ func epochOf(h *Runtime, chatID marotte.ChatID) uint64 {
 	return lc.epoch
 }
 
-func fenceNow(h *Runtime, chatID marotte.ChatID) command.TurnFence {
-	lc := h.coord.turns.testLifecycle(chatID)
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	return command.TurnFence{Epoch: lc.epoch, Seq: lc.nextSeq}
-}
-
 // shutdownWithin runs h's Shutdown under a budget of d.
 func shutdownWithin(h *Runtime, d time.Duration) <-chan struct{} {
 	done := make(chan struct{})

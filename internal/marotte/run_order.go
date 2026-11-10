@@ -173,12 +173,12 @@ type RunWaitAfter string
 // What an entry waits for: it runs or starts, it goes next, after the compaction ahead, after Turns turn ends, or
 // never by itself (held).
 const (
-	WaitRunning    RunWaitAfter = "running"
-	WaitStarting   RunWaitAfter = "starting"
-	WaitNext       RunWaitAfter = "next"
+	waitRunning    RunWaitAfter = "running"
+	waitStarting   RunWaitAfter = "starting"
+	waitNext       RunWaitAfter = "next"
 	WaitCompaction RunWaitAfter = "compaction"
-	WaitTurns      RunWaitAfter = "turns"
-	WaitHeld       RunWaitAfter = "held"
+	waitTurns      RunWaitAfter = "turns"
+	waitHeld       RunWaitAfter = "held"
 )
 
 // RunWait is when an entry runs, counted from the entries ahead of it.
@@ -194,14 +194,14 @@ type RunWait struct {
 type SendNowKind string
 
 const (
-	// SendNowStop stops the running turn and sends the row next.
-	SendNowStop SendNowKind = "stop"
+	// sendNowStop stops the running turn and sends the row next.
+	sendNowStop SendNowKind = "stop"
 	// SendNowStopThenCompaction stops the running turn; the row goes after the compaction pending behind it.
 	SendNowStopThenCompaction SendNowKind = "stop_then_compaction"
 	// SendNowAfterCompaction stops nothing: the row goes first once the compaction ends.
 	SendNowAfterCompaction SendNowKind = "after_compaction"
-	// SendNowNow stops nothing: the row goes next once what is live ends.
-	SendNowNow SendNowKind = "now"
+	// sendNowNow stops nothing: the row goes next once what is live ends.
+	sendNowNow SendNowKind = "now"
 )
 
 // RunEntryView is one entry as the header draws it.
@@ -257,11 +257,11 @@ func waitAt(entries []RunEntry, order []int, pos int) RunWait {
 	e := &entries[order[pos]]
 	switch {
 	case e.State == RunStarting:
-		return RunWait{After: WaitStarting}
+		return RunWait{After: waitStarting}
 	case e.State.Live():
-		return RunWait{After: WaitRunning}
+		return RunWait{After: waitRunning}
 	case e.State == RunHeld:
-		return RunWait{After: WaitHeld}
+		return RunWait{After: waitHeld}
 	}
 	if e.State == RunPending && pos > 0 && entries[order[pos-1]].Kind == RunKindCompaction {
 		return RunWait{After: WaitCompaction}
@@ -272,9 +272,9 @@ func waitAt(entries []RunEntry, order []int, pos int) RunWait {
 		n = 1
 	}
 	if n == 0 {
-		return RunWait{After: WaitNext}
+		return RunWait{After: waitNext}
 	}
-	w := RunWait{After: WaitTurns, Turns: n}
+	w := RunWait{After: waitTurns, Turns: n}
 	if n == 1 && liveCounted {
 		w.This = true
 	}
@@ -324,13 +324,13 @@ func sendNowKind(entries []RunEntry) SendNowKind {
 			if compactionNext {
 				return SendNowStopThenCompaction
 			}
-			return SendNowStop
+			return sendNowStop
 		case h.Kind == RunKindCompaction:
 			return SendNowAfterCompaction
 		case (h.State == RunStopping || h.State == RunClosing) && compactionNext:
 			return SendNowAfterCompaction
 		}
-		return SendNowNow
+		return sendNowNow
 	}
 	for _, e := range live {
 		if e.Kind == RunKindCompaction {
@@ -341,11 +341,11 @@ func sendNowKind(entries []RunEntry) SendNowKind {
 	if len(live) == 0 && compactionNext {
 		return SendNowAfterCompaction
 	}
-	return SendNowNow
+	return sendNowNow
 }
 
-// InsertAt is where a new row goes: before the first paused row, so the list order is the send order.
-func InsertAt(entries []RunEntry) int {
+// insertAt is where a new row goes: before the first paused row, so the list order is the send order.
+func insertAt(entries []RunEntry) int {
 	for i := len(LivePrefix(entries)); i < len(entries); i++ {
 		if entries[i].State == RunPaused {
 			return i
@@ -381,7 +381,7 @@ func waitIfInserted(entries []RunEntry, at int, e *RunEntry) RunWait {
 			return waitAt(with, order, pos)
 		}
 	}
-	return RunWait{After: WaitNext}
+	return RunWait{After: waitNext}
 }
 
 // RunViewOf is the header's run order for a chat's list, its version and its interrupt mode.
@@ -399,7 +399,7 @@ func RunViewOf(entries []RunEntry, version uint64, mode InterruptMode) RunView {
 		e := entries[i]
 		ev := RunEntryView{RunEntry: e, Wait: waitAt(entries, order, pos)}
 		if e.Kind == RunKindRow && (e.State == RunPending || e.State == RunPaused) &&
-			ev.Wait.After != WaitNext && ev.Wait.After != WaitCompaction {
+			ev.Wait.After != waitNext && ev.Wait.After != WaitCompaction {
 			ev.SendNow = arrow
 		}
 		if !carried && e.Kind.TurnKind() && !e.kiroCLI() && (e.State == RunStarting || e.State == RunPending) {
@@ -407,7 +407,7 @@ func RunViewOf(entries []RunEntry, version uint64, mode InterruptMode) RunView {
 		}
 		v.Entries[i] = ev
 	}
-	v.NextWait = waitIfInserted(entries, InsertAt(entries), &RunEntry{Kind: RunKindRow, State: RunPending})
+	v.NextWait = waitIfInserted(entries, insertAt(entries), &RunEntry{Kind: RunKindRow, State: RunPending})
 	v.UnreadWait = unreadWait(entries, v.Entries)
 	return v
 }
