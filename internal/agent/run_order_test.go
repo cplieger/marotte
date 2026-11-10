@@ -860,11 +860,9 @@ func TestRunOrder_ACancelBeforeATakenRowsTurnOpensPutsItBackPaused(t *testing.T)
 func TestRunOrder_ACancelAfterATakenRowsTurnOpenedLeavesOneCancelledTurn(t *testing.T) {
 	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 	open := promptGates(t, br)
-	if code := postPrompt(t, h, "a"); code != http.StatusOK {
-		t.Fatalf("Setup: prompt = %d", code)
-	}
-	queueDuring(t, h, "m-q1", "m-q2")
-	var opened, parked atomic.Bool
+	// The hooks are set before m-a's turn, whose send gate reads them; they arm at the next open, m-q1's.
+	var opens atomic.Int32
+	var parked atomic.Bool
 	entered, releaseSend := make(chan struct{}), make(chan struct{})
 	t.Cleanup(func() {
 		if parked.Load() {
@@ -875,13 +873,17 @@ func TestRunOrder_ACancelAfterATakenRowsTurnOpenedLeavesOneCancelledTurn(t *test
 			}
 		}
 	})
-	h.coord.turns.openHook = func() { opened.Store(true) }
+	h.coord.turns.openHook = func() { opens.Add(1) }
 	h.coord.turns.claimHook = func() {
-		if opened.Load() && parked.CompareAndSwap(false, true) {
+		if opens.Load() >= 2 && parked.CompareAndSwap(false, true) {
 			close(entered)
 			<-releaseSend
 		}
 	}
+	if code := postPrompt(t, h, "a"); code != http.StatusOK {
+		t.Fatalf("Setup: prompt = %d", code)
+	}
+	queueDuring(t, h, "m-q1", "m-q2")
 	open(0)
 	<-entered
 	if !slices.Contains(promptIDs(t, cs, "c1"), "m-q1") {
