@@ -401,7 +401,7 @@ describe("a full context", () => {
       requestAnimationFrame(resolve);
     });
     expect(document.getElementById("context-label")?.textContent).toBe("99%");
-    expect(input().placeholder).toBe("Message Kiro...");
+    expect(input().placeholder).toBe("Message Kiro…");
     const send = document.getElementById("send-btn");
     expect(send?.getAttribute("data-tooltip")).toBe("Send");
     expect(send?.getAttribute("aria-label")).toBe("Send");
@@ -414,13 +414,13 @@ describe("the busy placeholder", () => {
   it("names the chat's mode while a turn streams, and drops it once idle", () => {
     const box = input();
     setSendState({ kind: "streaming" });
-    expect(box.placeholder).toBe("Steer the agent mid-turn...");
+    expect(box.placeholder).toBe("Steer the agent mid-turn…");
 
     setChatInterruptMode(CHAT, "queue");
-    expect(box.placeholder).toBe("Queue a follow-up for after this turn...");
+    expect(box.placeholder).toBe("Queue a follow-up for after this turn…");
 
     setSendState({ kind: "idle" });
-    expect(box.placeholder).toBe("Message Kiro...");
+    expect(box.placeholder).toBe("Message Kiro…");
   });
 });
 
@@ -700,7 +700,7 @@ describe("the mid-turn Send", () => {
     type("hello");
     expect(midTurn().getAttribute("aria-label")).toBe("Queue for after 3 turns");
     expect(midTurn().getAttribute("data-tooltip")).toBe("Queue for after 3 turns");
-    expect(input().placeholder).toBe("Queue a follow-up for after 3 turns...");
+    expect(input().placeholder).toBe("Queue a follow-up for after 3 turns…");
 
     setSessions([{ ...makeSession([]), turn_open: true, interrupt_mode: "queue", queued: [] }]);
     expect(midTurn().getAttribute("aria-label")).toBe("Queue for after this turn");
@@ -712,7 +712,7 @@ describe("the mid-turn Send", () => {
     setSendState({ kind: "streaming" });
     type("hello");
     expect(midTurn().getAttribute("aria-label")).toBe("Queue for after this turn");
-    expect(input().placeholder).toBe("Queue a follow-up for after this turn...");
+    expect(input().placeholder).toBe("Queue a follow-up for after this turn…");
   });
 
   it("names this turn while a turn the agent started has not streamed", () => {
@@ -758,7 +758,7 @@ describe("the mid-turn Send", () => {
     });
 
     expect(midTurn().getAttribute("aria-label")).toBe("Queue for after 2 turns");
-    expect(input().placeholder).toBe("Queue a follow-up for after 2 turns...");
+    expect(input().placeholder).toBe("Queue a follow-up for after 2 turns…");
   });
 
   it("sends the box through the composer's send path, then empties it and hides", () => {

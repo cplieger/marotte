@@ -172,7 +172,7 @@ describe("the container is a plain layout div", () => {
     const { bar, row, label } = start("a.png");
     expect(row.classList.contains("upload-closed")).toBe(false);
     expect(bar.value).toBe(0);
-    expect(label.textContent).toBe("Uploading 1 file(s)...");
+    expect(label.textContent).toBe("Uploading 1 file(s)…");
   });
 });
 
@@ -182,7 +182,7 @@ describe("the progress path", () => {
     xhr.progress(42, 100, true);
     expect(bar.value).toBe(42);
     expect(bar.position).toBeCloseTo(0.42, 5);
-    expect(label.textContent).toBe("Uploading... 42%");
+    expect(label.textContent).toBe("Uploading… 42%");
   });
 
   it("goes indeterminate when the total is unknown, then recovers", () => {
@@ -194,7 +194,7 @@ describe("the progress path", () => {
     // Not "value 0": a valueless <progress> is the native indeterminate rendering.
     expect(bar.hasAttribute("value")).toBe(false);
     expect(bar.position).toBe(-1);
-    expect(label.textContent).toBe("Uploading...");
+    expect(label.textContent).toBe("Uploading…");
 
     xhr.progress(80, 100, true);
     expect(bar.value).toBe(80);

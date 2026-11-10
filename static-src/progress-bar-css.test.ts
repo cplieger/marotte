@@ -44,7 +44,7 @@ function mountUploadRow(): HTMLProgressElement {
   bar.setAttribute("aria-label", "Upload progress");
   const label = document.createElement("span");
   label.className = "upload-progress-label";
-  label.textContent = "Uploading...";
+  label.textContent = "Uploading…";
   const cancel = document.createElement("button");
   cancel.type = "button";
   cancel.className = "upload-progress-cancel";

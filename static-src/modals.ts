@@ -321,7 +321,7 @@ export function initLoginModal(onLoggedIn: () => void): void {
 
   freeBtn.addEventListener("click", () => {
     ssoForm.classList.add("hidden");
-    status.textContent = "Connecting...";
+    status.textContent = "Connecting…";
     doLogin({}, status, onLoggedIn);
   });
   ssoBtn.addEventListener("click", () => {
@@ -335,7 +335,7 @@ export function initLoginModal(onLoggedIn: () => void): void {
       status.textContent = "Start URL is required";
       return;
     }
-    status.textContent = "Connecting...";
+    status.textContent = "Connecting…";
     doLogin({ provider, region: regionInput.value.trim() || undefined }, status, onLoggedIn);
   };
 

@@ -618,7 +618,7 @@ const CENSUS: readonly Family[] = [
   {
     name: "text button",
     selector:
-      ":is(.btn, .btn-small, .btn-save, .action-pill, .tool-output-reveal, .uip-ask-ok, .uip-ask-cancel):not(.add-form > .btn, .list-row .btn-small, .conflict-hunk-row > .btn-small, .mcp-install-btn, .git-pr-row-actions .btn-small, .git-repo-section-header-row > .btn-small)",
+      ":is(.btn, .btn-small, .btn-save, .action-pill, .tool-output-reveal, .uip-ask-ok, .uip-ask-cancel):not(.add-form > .btn, .list-row .btn-small, .entry-actions > .btn-small, .conflict-hunk-row > .btn-small, .mcp-install-btn, .git-pr-row-actions .btn-small, .git-repo-section-header-row > .btn-small)",
     kind: "toolbar",
   },
   {
@@ -687,7 +687,7 @@ const CENSUS: readonly Family[] = [
   {
     name: "disclosure and list rows",
     selector:
-      ".chat-opt-strip-btn, .run-bar-open, .run-bar-toggle, .tool-group-header, .reasoning-summary, .run-head, .run-step-head, .subagent-header, .tool-diff-stats, .native-explain-summary, .turn-file-row, .turn-info-dbtn, .turn-info-link, .turn-review-all, .entry, .entry-open, .fb-row, .ev-dock-row, .ev-tl-lane, .ev-dock-more, .ev-dock-ask-more, .dock-ask-more, .user-input-option, .git-repo-section-header, .git-file-path, .git-pr-row-title, .git-recent-commits-summary, .code-refs-summary, .forge-options-summary, .mcp-result-summary, .always-choice-option, .compaction-head, .mcp-discovery-summary, .forge-account-repos-summary, .git-repo-section-header-toggle",
+      ".chat-opt-strip-btn, .run-bar-open, .run-bar-toggle, .tool-group-header, .reasoning-summary, .run-head, .run-step-head, .subagent-header, .tool-diff-stats, .native-explain-summary, .turn-file-row, .turn-info-dbtn, .turn-info-link, .turn-review-all, .entry, .entry-open, .fb-row, .ev-dock-row, .ev-tl-lane, .ev-dock-more, .ev-dock-ask-more, .dock-ask-more, .user-input-option, .git-repo-section-header, .git-file-path, .git-pr-row-title, .git-recent-commits-summary, .code-refs-summary, .forge-options-summary, .rw-more-summary, .mcp-result-summary, .always-choice-option, .compaction-head, .mcp-discovery-summary, .forge-account-repos-summary, .git-repo-section-header-toggle",
     kind: "row",
     documented: "each family's `--row-tap*` rule: a row, its own target",
   },

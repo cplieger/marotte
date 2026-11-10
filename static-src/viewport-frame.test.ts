@@ -3,53 +3,8 @@
 // global per call, and a cached read would pass against Chromium's own viewport.
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { fakeViewport } from "./__test-helpers__/fake-viewport.js";
 import { onViewportChange, viewportBox, viewportMoved } from "./viewport-frame.js";
-
-type Listener = () => void;
-
-interface FakeViewport {
-  offsetLeft: number;
-  offsetTop: number;
-  width: number;
-  height: number;
-  addEventListener(type: string, fn: Listener): void;
-  removeEventListener(type: string, fn: Listener): void;
-  fire(type: string): void;
-  listeners(): number;
-}
-
-function fakeViewport(height: number, offsetTop = 0, width = 0, offsetLeft = 0): FakeViewport {
-  const map = new Map<string, Set<Listener>>();
-  return {
-    offsetLeft,
-    offsetTop,
-    width,
-    height,
-    addEventListener(type, fn): void {
-      let set = map.get(type);
-      if (set === undefined) {
-        set = new Set();
-        map.set(type, set);
-      }
-      set.add(fn);
-    },
-    removeEventListener(type, fn): void {
-      map.get(type)?.delete(fn);
-    },
-    fire(type): void {
-      for (const fn of [...(map.get(type) ?? [])]) {
-        fn();
-      }
-    },
-    listeners(): number {
-      let n = 0;
-      for (const set of map.values()) {
-        n += set.size;
-      }
-      return n;
-    },
-  };
-}
 
 let release: (() => void) | undefined;
 

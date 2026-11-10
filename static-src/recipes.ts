@@ -17,8 +17,9 @@ import {
 import { listForges } from "./actions/forge-list.js";
 import { serverSentence } from "./actions/server-sentence.js";
 import { confirm } from "./confirm.js";
+import { anchoredPopover } from "./anchored-popover.js";
 import { buildSchedulePicker, defaultSpec } from "./schedule-picker.js";
-import { buildEventForm, buildRuleList, ruleError, ruleLine } from "./run-when.js";
+import { buildEventForm, buildRuleList, ruleError, ruleRowLine } from "./run-when.js";
 import {
   buildRunDefaultsPicker,
   type RunDefaults,
@@ -26,12 +27,13 @@ import {
 } from "./run-defaults-picker.js";
 import { getCachedModels } from "./picker.js";
 import type { LaunchRuleView } from "./launch-rule-types.js";
-import { createPopup } from "@cplieger/ui/popup";
 import { openRunView } from "./run-view.js";
 import { loadSettings, refreshSettings } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
-import { openSettingsView } from "./tabs.js";
+import { openGitView, openSettingsView } from "./tabs.js";
 import { forceReflow } from "./dom.js";
+import { iconEl } from "./icon-el.js";
+import { ICON_RUN_WHEN_UI } from "./icons.js";
 import type { Recipe, WorkflowRun } from "./types.js";
 import { entryDetail, entryList, entryRow } from "./entry-row.js";
 import { classifyRunStatus, runStatusTerminal } from "./run-status.js";
@@ -141,6 +143,7 @@ export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
         void refreshRecipes();
       }
     });
+    window.matchMedia(COMPACT_QUERY).addEventListener("change", paint);
     // An open Run or rule form holds the catalog it opened with, which can be empty when it
     // opened before the boot fetch landed.
     onBus(BUS_CATALOG_MODELS, () => {
@@ -211,11 +214,13 @@ async function refreshAutoApprove(read: () => Promise<EffectiveSettings | null>)
   }
 }
 
+const RUN_WHEN = "Run when…";
+
 /** Launch rules by recipe source, in the server's order. */
 let rules = new Map<string, LaunchRuleView[]>();
 
 /** The open popup's rule list, repainted when a fetch lands; null while it shows a form. */
-let popupList: { readonly source: string; readonly repaint: () => void } | null = null;
+let popupList: { readonly repaint: () => void } | null = null;
 
 async function refreshRules(): Promise<void> {
   const d = await loadLaunchRules.dispatch(undefined);
@@ -363,12 +368,45 @@ function syncRules(row: HTMLElement, r: Recipe): void {
   const enabled = list.filter((v) => v.enabled).length;
   const failing = list.some((v) => ruleError(v) !== "");
   line.textContent = rulesLine(r);
+  // The row's width cuts the line; on touch the Run when… list shows each rule's whole line.
+  line.setAttribute("data-tooltip", line.textContent);
   line.classList.toggle("is-scheduled", enabled > 0 && !failing);
   line.classList.toggle("entry-sub-error", failing);
   const btn = row.querySelector<HTMLButtonElement>(".recipe-sched-btn");
-  if (btn !== null) {
+  const count = btn?.querySelector(".recipe-sched-count");
+  if (btn != null && count != null) {
     btn.classList.toggle("on", enabled > 0);
-    btn.textContent = enabled > 1 ? `Run when… ${String(enabled)}` : "Run when…";
+    count.textContent = enabled > 1 ? String(enabled) : "";
+    // The visible text leads the name: https://www.w3.org/WAI/WCAG22/Understanding/label-in-name
+    btn.setAttribute(
+      "aria-label",
+      `${RUN_WHEN}${enabled > 1 ? ` ${String(enabled)}` : ""} for ${r.name}`,
+    );
+  }
+}
+
+/** Where the row's narrow trailing column applies; `.is-compact` (28-docs.css) draws it. */
+const COMPACT_QUERY = "(width <= 48rem)";
+
+function compact(): boolean {
+  return window.matchMedia(COMPACT_QUERY).matches;
+}
+
+/** On a phone the badges leave the trailing column for the title's line, so the state has room. */
+function syncCompact(row: HTMLElement): void {
+  const on = compact();
+  row.querySelector(".recipe-sched-btn")?.classList.toggle("is-compact", on);
+  const badges = row.querySelector<HTMLElement>(".entry-badges");
+  const name = row.querySelector(".entry-name");
+  if (badges === null || name === null) {
+    return;
+  }
+  if (on) {
+    if (badges.parentElement !== name) {
+      name.append(badges);
+    }
+  } else if (badges.parentElement !== row) {
+    row.insertBefore(badges, row.querySelector(":scope > .entry-actions"));
   }
 }
 
@@ -386,180 +424,195 @@ function picksFor(v: LaunchRuleView | undefined): RunDefaultsPicker {
   return rulePicks;
 }
 
+/** Built on the first press: a row mounts per filter keystroke, and most are never opened. */
 function wireRulesPopup(btn: HTMLButtonElement, source: string): void {
-  let popup: ReturnType<typeof createPopup> | null = null;
-  let open = false;
-
+  let toggle: (() => void) | null = null;
   btn.addEventListener("click", (e: MouseEvent) => {
     e.stopPropagation();
-    if (open && popup !== null) {
-      popup.hide();
-      open = false;
-      return;
-    }
-    const body = el("div", { className: "sched-popup" });
-    // Rebuilt per open rather than cached: the popup renders the CURRENT rules.
-    popup?.hide();
-    popup = createPopup(body, { trigger: btn, group: "recipe-schedule" });
-    const close = (): void => {
-      popup?.hide();
-      open = false;
-      if (popupList?.source === source) {
+    toggle ??= rulesPopup(btn, source);
+    toggle();
+  });
+}
+
+/** The Run when… panel under `btn`, and the press that opens it on the current rules or closes it. */
+function rulesPopup(btn: HTMLButtonElement, source: string): () => void {
+  const body = el("div", { className: "sched-popup" });
+  // This popup's entry in `popupList`, so a close clears only its own.
+  let listed: typeof popupList = null;
+  const popup = anchoredPopover(btn, body, {
+    group: "recipe-schedule",
+    onClose: () => {
+      if (popupList === listed) {
         popupList = null;
       }
-    };
-    const view = (node: HTMLElement): void => {
-      body.replaceChildren(node);
-    };
-    const recipe = (): Recipe | undefined => recipes.find((x) => x.source === source);
-    const openPermissions = (): void => {
-      close();
-      void openSettingsView("permissions");
-    };
-    const saved = async (v: LaunchRuleView): Promise<void> => {
-      close();
-      storeRule(v);
-      await refreshRules();
-    };
-    const idOf = (v: LaunchRuleView | undefined): { id?: string } =>
-      v === undefined ? {} : { id: v.id };
+    },
+  });
+  const close = (): void => {
+    popup.hide();
+  };
+  const view = (node: HTMLElement): void => {
+    body.replaceChildren(node);
+    popup.reposition();
+  };
 
-    const showClock = (v?: LaunchRuleView): void => {
-      popupList = null;
+  const recipe = (): Recipe | undefined => recipes.find((x) => x.source === source);
+  const openPermissions = (): void => {
+    close();
+    void openSettingsView("permissions");
+  };
+  const openSources = (): void => {
+    close();
+    void openGitView("sources");
+  };
+  const saved = async (v: LaunchRuleView): Promise<void> => {
+    close();
+    storeRule(v);
+    await refreshRules();
+  };
+  const idOf = (v: LaunchRuleView | undefined): { id?: string } =>
+    v === undefined ? {} : { id: v.id };
+
+  const showClock = (v?: LaunchRuleView): void => {
+    popupList = null;
+    view(
+      buildSchedulePicker({
+        spec: v?.when.clock ?? defaultSpec(),
+        enabled: v?.enabled ?? true,
+        exists: v !== undefined,
+        autoApprove,
+        picks: picksFor(v),
+        declared: declaredOf(recipe()),
+        inputs: v?.inputs,
+        onOpenPermissions: openPermissions,
+        // Closed only once saved: a refused pick keeps the edits open, and the server's
+        // sentence shows in the action's error toast.
+        onSave: (spec, enabled, defaults, inputs) => {
+          void (async () => {
+            const s = await saveLaunchRule.dispatch({
+              ...idOf(v),
+              source,
+              enabled,
+              when: { clock: spec },
+              ...(inputs === undefined ? {} : { inputs }),
+              ...defaults,
+            });
+            if (s !== null) {
+              await saved(s);
+            }
+          })();
+        },
+        onRemove: () => {
+          if (v !== undefined) {
+            close();
+            void removeRule(v);
+          }
+        },
+        onClose: close,
+      }),
+    );
+  };
+
+  const showEvent = (v?: LaunchRuleView): void => {
+    popupList = null;
+    const loading = el("div", { className: "sched-hint" }, "Reading your connections…");
+    view(loading);
+    void listForges.dispatch(undefined).then((d) => {
+      if (!body.contains(loading)) {
+        return;
+      }
+      if (d === null) {
+        view(el("div", { className: "sched-hint" }, "Could not read the connections in Sources."));
+        return;
+      }
       view(
-        buildSchedulePicker({
-          spec: v?.when.clock ?? defaultSpec(),
-          enabled: v?.enabled ?? true,
-          exists: v !== undefined,
+        buildEventForm({
+          ...(v === undefined ? {} : { rule: v }),
+          forges: d.forges,
+          declared: declaredOf(recipe()),
           autoApprove,
           picks: picksFor(v),
-          declared: declaredOf(recipe()),
-          inputs: v?.inputs,
           onOpenPermissions: openPermissions,
-          // Closed only once saved: a refused pick keeps the edits open, and the server's
-          // sentence shows in the action's error toast.
-          onSave: (spec, enabled, defaults, inputs) => {
-            void (async () => {
-              const s = await saveLaunchRule.dispatch({
-                ...idOf(v),
-                source,
-                enabled,
-                when: { clock: spec },
-                ...(inputs === undefined ? {} : { inputs }),
-                ...defaults,
-              });
-              if (s !== null) {
-                await saved(s);
+          onOpenSources: openSources,
+          onClose: close,
+          onSave: async (draft, defaults) => {
+            const body: LaunchRuleBody = {
+              ...idOf(v),
+              source,
+              enabled: draft.enabled,
+              when: { event: draft.event },
+              ...(draft.inputs === undefined ? {} : { inputs: draft.inputs }),
+              ...defaults,
+            };
+            let res = await sendRule(body);
+            if (res.status === 409 && v !== undefined) {
+              const held = await heldNow(v);
+              if (held > 0 && !(await confirmDrop(held))) {
+                return "";
               }
-            })();
+              res = await sendRule(held > 0 ? { ...body, confirm_drop: held } : body);
+            }
+            if (res.saved === null) {
+              return res.refusal;
+            }
+            await saved(res.saved);
+            return null;
           },
-          onRemove: () => {
-            if (v !== undefined) {
-              close();
-              void removeRule(v);
+        }),
+      );
+    });
+  };
+
+  const showList = (): void => {
+    const repaint = (): void => {
+      const r = recipe();
+      view(
+        buildRuleList({
+          rules: rules.get(source) ?? [],
+          autoApprove,
+          declared: r === undefined ? undefined : Object.keys(r.inputs ?? {}),
+          onToggle: (v, enabled) => {
+            void toggleRule(v, enabled);
+          },
+          onEdit: (v) => {
+            if (v.when.clock === undefined) {
+              showEvent(v);
+            } else {
+              showClock(v);
             }
           },
-          onClose: close,
+          onDelete: (v) => {
+            void removeRule(v);
+          },
+          onDismissGap: async (v) => {
+            const next = await dismissGap.dispatch(v.id);
+            if (next !== null) {
+              storeRule(next);
+            }
+            return next;
+          },
+          onAddClock: () => {
+            showClock();
+          },
+          onAddEvent: () => {
+            showEvent();
+          },
         }),
       );
     };
+    listed = { repaint };
+    popupList = listed;
+    repaint();
+  };
 
-    const showEvent = (v?: LaunchRuleView): void => {
-      popupList = null;
-      const loading = el("div", { className: "sched-hint" }, "Reading your connections…");
-      view(loading);
-      void listForges.dispatch(undefined).then((d) => {
-        if (!body.contains(loading)) {
-          return;
-        }
-        if (d === null) {
-          view(
-            el("div", { className: "sched-hint" }, "Could not read the connections in Sources."),
-          );
-          return;
-        }
-        view(
-          buildEventForm({
-            ...(v === undefined ? {} : { rule: v }),
-            forges: d.forges,
-            declared: declaredOf(recipe()),
-            autoApprove,
-            picks: picksFor(v),
-            onOpenPermissions: openPermissions,
-            onClose: close,
-            onSave: async (draft, defaults) => {
-              const body: LaunchRuleBody = {
-                ...idOf(v),
-                source,
-                enabled: draft.enabled,
-                when: { event: draft.event },
-                ...(draft.inputs === undefined ? {} : { inputs: draft.inputs }),
-                ...defaults,
-              };
-              let res = await sendRule(body);
-              if (res.status === 409 && v !== undefined) {
-                const held = await heldNow(v);
-                if (held > 0 && !(await confirmDrop(held))) {
-                  return "";
-                }
-                res = await sendRule(held > 0 ? { ...body, confirm_drop: held } : body);
-              }
-              if (res.saved === null) {
-                return res.refusal;
-              }
-              await saved(res.saved);
-              return null;
-            },
-          }),
-        );
-      });
-    };
-
-    const showList = (): void => {
-      const repaint = (): void => {
-        const r = recipe();
-        view(
-          buildRuleList({
-            rules: rules.get(source) ?? [],
-            autoApprove,
-            declared: r === undefined ? undefined : Object.keys(r.inputs ?? {}),
-            onToggle: (v, enabled) => {
-              void toggleRule(v, enabled);
-            },
-            onEdit: (v) => {
-              if (v.when.clock === undefined) {
-                showEvent(v);
-              } else {
-                showClock(v);
-              }
-            },
-            onDelete: (v) => {
-              void removeRule(v);
-            },
-            onDismissGap: async (v) => {
-              const next = await dismissGap.dispatch(v.id);
-              if (next !== null) {
-                storeRule(next);
-              }
-              return next;
-            },
-            onAddClock: () => {
-              showClock();
-            },
-            onAddEvent: () => {
-              showEvent();
-            },
-          }),
-        );
-      };
-      popupList = { source, repaint };
-      repaint();
-    };
-
+  return () => {
+    if (popup.isOpen) {
+      popup.hide();
+      return;
+    }
+    // Rebuilt per open: the popup renders the CURRENT rules.
     showList();
     popup.show();
-    open = true;
-  });
+  };
 }
 
 function isShowing(): boolean {
@@ -653,6 +706,7 @@ function paint(): void {
     update: (node: HTMLElement, e: RecipeEntry) => {
       switch (e.kind) {
         case "row":
+          syncCompact(node);
           syncButton(node, e.recipe);
           syncRules(node, e.recipe);
           syncStanding(node, e.recipe);
@@ -696,12 +750,18 @@ function recipeRow(r: Recipe): HTMLElement {
     }
   });
 
-  const schedBtn = el("button", {
-    type: "button",
-    className: "btn-small recipe-sched-btn",
-    "aria-label": `Launch rules of ${r.name}`,
-  }) as HTMLButtonElement;
-  schedBtn.textContent = "Run when…";
+  const icon = iconEl(ICON_RUN_WHEN_UI);
+  icon.classList.add("recipe-sched-icon");
+  const schedBtn = el(
+    "button",
+    {
+      type: "button",
+      className: "btn-small recipe-sched-btn",
+    },
+    icon,
+    el("span", { className: "recipe-sched-label" }, RUN_WHEN),
+    el("span", { className: "recipe-sched-count" }),
+  ) as HTMLButtonElement;
   wireRulesPopup(schedBtn, r.source);
 
   // A slot, so a standing change updates a kept row; only a file-backed recipe has a file to join.
@@ -723,6 +783,7 @@ function recipeRow(r: Recipe): HTMLElement {
     actions: [schedBtn, btn],
     data: { "data-recipe": r.source },
   });
+  syncCompact(row);
   syncButton(row, r);
   syncRules(row, r);
   syncStanding(row, r);
@@ -797,7 +858,7 @@ function syncValidity(row: HTMLElement, r: Recipe): void {
   const sched = row.querySelector<HTMLButtonElement>(".recipe-sched-btn");
   if (sched !== null) {
     sched.disabled = reason !== "";
-    toggleTooltip(sched, reason);
+    toggleTooltip(sched, reason !== "" ? reason : compact() ? RUN_WHEN : "");
   }
 }
 
@@ -819,7 +880,7 @@ function rulesLine(r: Recipe): string {
   if (line === undefined) {
     const on = list.filter((v) => v.enabled);
     const [first] = on;
-    line = first === undefined ? "Not scheduled" : ruleLine(first, { autoApprove, declared });
+    line = first === undefined ? "Not scheduled" : ruleRowLine(first, { autoApprove, declared });
     const more = on.length - 1;
     if (more > 0) {
       line += ` \u00b7 +${String(more)} more rule${more === 1 ? "" : "s"}`;
