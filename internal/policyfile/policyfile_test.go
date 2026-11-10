@@ -94,14 +94,14 @@ func TestLoadMalformedErrors(t *testing.T) {
 	}
 }
 
-func TestSaveRoundtripAndMode(t *testing.T) {
+func TestMutateRoundtripAndMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sub", "permissions.yaml") // sub dir auto-created
 	in := &File{Rules: []Rule{
 		{Capability: "fs_write", Effect: "ask", Match: []string{"src/**"}},
 		{Capability: "shell", Effect: "deny", Match: []string{"rm -rf *"}},
 	}}
-	if err := Save(t.Context(), path, in); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := saveRules(t.Context(), path, in); err != nil {
+		t.Fatalf("Mutate: %v", err)
 	}
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -501,8 +501,8 @@ func TestLoadSave_KeepsTheKeysFileDoesNotEdit(t *testing.T) {
 	if _, err := f.Upsert(&Rule{Capability: "web_fetch", Effect: "allow"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := Save(t.Context(), path, f); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := saveRules(t.Context(), path, f); err != nil {
+		t.Fatalf("Mutate: %v", err)
 	}
 	doc := readRaw(t, path)
 	if got, ok := doc["policies"].([]any); !ok || !slices.Equal(got, []any{"dev-shell"}) {
@@ -530,7 +530,7 @@ func TestLoad_RefusesADocumentItCannotRoundTrip(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "permissions.yaml")
 			writeFixture(t, path, body)
 			if _, err := Load(path); err == nil {
-				t.Error("Load succeeded, want an error so Save never rewrites the file")
+				t.Error("Load succeeded, want an error so Mutate never rewrites the file")
 			}
 		})
 	}
@@ -552,8 +552,8 @@ func TestLoad_ReadsTheJSONSiblingKASWouldRead(t *testing.T) {
 		if _, err := f.Upsert(&Rule{Capability: "web_fetch", Effect: "allow"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := Save(t.Context(), yamlPath, f); err != nil {
-			t.Fatalf("Save: %v", err)
+		if err := saveRules(t.Context(), yamlPath, f); err != nil {
+			t.Fatalf("Mutate: %v", err)
 		}
 		doc := readRaw(t, yamlPath)
 		if n := rulesIn(t, doc); n != 2 {
@@ -585,7 +585,7 @@ func TestLoad_ReadsTheJSONSiblingKASWouldRead(t *testing.T) {
 		dir := t.TempDir()
 		writeFixture(t, filepath.Join(dir, jsonFilename), `{"rules": [`)
 		if _, err := Load(filepath.Join(dir, filename)); err == nil {
-			t.Error("Load succeeded, want an error so Save never shadows the .json with an empty .yaml")
+			t.Error("Load succeeded, want an error so Mutate never shadows the .json with an empty .yaml")
 		}
 	})
 }

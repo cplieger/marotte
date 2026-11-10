@@ -2,6 +2,7 @@ package server
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -264,23 +265,14 @@ func (*Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *polic
 			"kiro-cli decides whether it loads",
 			"capability", logsafe.Field(rule.Capability), "effect", rule.Effect, "scope", body.Scope)
 	}
-	f, err := policyfile.Load(path)
+	var present bool
+	err = policyfile.Mutate(r.Context(), path, addRuleEdit(&rule, &present))
 	if err != nil {
-		httpserver.WriteJSONStatus(w, http.StatusConflict,
-			httpreply.ErrorJSON("existing policy file could not be parsed. Edit it manually"))
+		writePolicyWriteError(w, err)
 		return
 	}
-	changed, err := f.Upsert(&rule)
-	if err != nil {
-		httpreply.BadRequest(w, err.Error())
-		return
-	}
-	if !changed {
+	if present {
 		httpserver.OK(w) // idempotent: identical rule already present
-		return
-	}
-	if err := policyfile.Save(r.Context(), path, f); err != nil {
-		httpreply.InternalError(w, err)
 		return
 	}
 	slog.Info("policy rule added", "scope", body.Scope, "capability", logsafe.Field(rule.Capability), "effect", rule.Effect)
@@ -306,18 +298,17 @@ func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 		httpreply.BadRequest(w, err.Error())
 		return
 	}
-	f, err := policyfile.Load(path)
+	var removed bool
+	err = policyfile.Mutate(r.Context(), path, func(f *policyfile.File) (bool, error) {
+		removed = f.Remove(&rule)
+		return removed, nil
+	})
 	if err != nil {
-		httpserver.WriteJSONStatus(w, http.StatusConflict,
-			httpreply.ErrorJSON("existing policy file could not be parsed. Edit it manually"))
+		writePolicyWriteError(w, err)
 		return
 	}
-	if !f.Remove(&rule) {
+	if !removed {
 		httpserver.OK(w) // idempotent: rule already absent
-		return
-	}
-	if err := policyfile.Save(r.Context(), path, f); err != nil {
-		httpreply.InternalError(w, err)
 		return
 	}
 	slog.Info("policy rule removed", "scope", body.Scope, "capability", logsafe.Field(rule.Capability), "effect", rule.Effect)
@@ -347,28 +338,78 @@ func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 		httpreply.BadRequest(w, err.Error())
 		return
 	}
-	f, err := policyfile.Load(path)
+	var replayed bool
+	err = policyfile.Mutate(r.Context(), path, updateRuleEdit(&rule, body.NewEffect, &replayed))
 	if err != nil {
-		httpserver.WriteJSONStatus(w, http.StatusConflict,
-			httpreply.ErrorJSON("existing policy file could not be parsed. Edit it manually"))
+		writePolicyWriteError(w, err)
 		return
 	}
-	if !f.ReplaceEffect(&rule, body.NewEffect) {
-		// Idempotent replay: the target state may already be on disk.
-		target := rule
-		target.Effect = body.NewEffect
-		if f.Has(&target) {
-			httpserver.OK(w)
-			return
-		}
-		httpreply.NotFound(w, "rule not found. Refresh the policy view")
-		return
-	}
-	if err := policyfile.Save(r.Context(), path, f); err != nil {
-		httpreply.InternalError(w, err)
+	if replayed {
+		httpserver.OK(w)
 		return
 	}
 	slog.Info("policy rule updated", "scope", body.Scope,
 		"capability", logsafe.Field(rule.Capability), "effect", body.Effect, "new_effect", body.NewEffect)
 	httpserver.OK(w)
+}
+
+// addRuleEdit is the add route's edit; present reports whether the attempt that ran last found the
+// rule already there, so a discarded attempt leaves no trace in it.
+func addRuleEdit(rule *policyfile.Rule, present *bool) func(*policyfile.File) (bool, error) {
+	return func(f *policyfile.File) (bool, error) {
+		changed, err := f.Upsert(rule)
+		if err != nil {
+			return false, policyRefusalError{err}
+		}
+		*present = !changed
+		return changed, nil
+	}
+}
+
+// updateRuleEdit is the update route's edit; replayed reports whether the attempt that ran last
+// found the target state already there.
+func updateRuleEdit(rule *policyfile.Rule, effect string, replayed *bool) func(*policyfile.File) (bool, error) {
+	return func(f *policyfile.File) (bool, error) {
+		*replayed = false
+		if f.ReplaceEffect(rule, effect) {
+			return true, nil
+		}
+		// Idempotent replay: the target state may already be on disk.
+		target := *rule
+		target.Effect = effect
+		if f.Has(&target) {
+			*replayed = true
+			return false, nil
+		}
+		return false, errRuleNotFound
+	}
+}
+
+var errRuleNotFound = errors.New("rule not found. Refresh the policy view")
+
+// errPolicyBusy is the answer to policyfile.ErrBusy, shared by every route that writes a policy file.
+const errPolicyBusy = "the permissions file kept changing while it was saved. Try again"
+
+// policyRefusalError is a rule the file refuses to take (its rule cap), the caller's problem.
+type policyRefusalError struct{ err error }
+
+func (r policyRefusalError) Error() string { return r.err.Error() }
+func (r policyRefusalError) Unwrap() error { return r.err }
+
+// writePolicyWriteError answers a failed policyfile.Mutate of a rules route.
+func writePolicyWriteError(w http.ResponseWriter, err error) {
+	var refused policyRefusalError
+	switch {
+	case errors.Is(err, policyfile.ErrUnreadable):
+		httpserver.WriteJSONStatus(w, http.StatusConflict,
+			httpreply.ErrorJSON("existing policy file could not be parsed. Edit it manually"))
+	case errors.Is(err, policyfile.ErrBusy):
+		httpserver.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSON(errPolicyBusy))
+	case errors.As(err, &refused):
+		httpreply.BadRequest(w, refused.Error())
+	case errors.Is(err, errRuleNotFound):
+		httpreply.NotFound(w, errRuleNotFound.Error())
+	default:
+		httpreply.InternalError(w, err)
+	}
 }

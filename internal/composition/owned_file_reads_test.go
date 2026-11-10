@@ -173,6 +173,7 @@ func fixtureKeys() []string {
 func TestOwnedFileReads(t *testing.T) {
 	t.Run("cells", func(t *testing.T) {
 		t.Run("config.json", testConfigJSONCells)
+		t.Run("permissions.yaml", testPermissionsYAMLCells)
 		t.Run("tools.json", testToolsJSONCells)
 	})
 	t.Run("reader", func(t *testing.T) {
@@ -407,6 +408,123 @@ func testConfigJSONCells(t *testing.T) {
 				t.Errorf("readers after the create = %+v, want the person's document %+v (a valid read acts at once)", got, want)
 			}
 		})
+	}
+}
+
+// The user permissions file as its cells start: rule Y in the .yaml and rule J in its .json sibling, which
+// KAS reads only while the .yaml is missing or blank. personYAML is the person's new document, rule Y2.
+const (
+	permsYAML       = "rules:\n  - capability: shell\n    effect: ask\n"
+	permsJSON       = `{"rules":[{"capability":"web_search","effect":"deny"}]}`
+	personYAML      = "rules:\n  - capability: fs_read\n    effect: allow\n"
+	truncatedPolicy = "rules: [\n"
+)
+
+var permsAdded = policyfile.Rule{Capability: "web_fetch", Effect: policyfile.EffectAllow}
+
+// panelAdd is the Policy panel's add of permsAdded through policyfile.Mutate. onFirstEdit, when set, runs
+// inside the first attempt, after its read and before its compare. It answers how many attempts ran.
+func panelAdd(t *testing.T, path string, onFirstEdit func()) (attempts int, err error) {
+	t.Helper()
+	err = policyfile.Mutate(t.Context(), path, func(f *policyfile.File) (bool, error) {
+		attempts++
+		if attempts == 1 && onFirstEdit != nil {
+			onFirstEdit()
+		}
+		return f.Upsert(&permsAdded)
+	})
+	return attempts, err
+}
+
+func ruleCaps(t *testing.T, path string) []string {
+	t.Helper()
+	f, err := policyfile.Load(path)
+	if err != nil {
+		t.Fatalf("Load %s: %v", path, err)
+	}
+	out := make([]string, 0, len(f.Rules))
+	for i := range f.Rules {
+		out = append(out, f.Rules[i].Capability)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// testPermissionsYAMLCells: marotte keeps no applied copy of permissions.yaml and no tick reads it, so each
+// event answers the same with the runtime up or draining, and no tick touches the file.
+func testPermissionsYAMLCells(t *testing.T) {
+	for _, down := range []bool{false, true} {
+		engine := map[bool]string{false: "up", true: "down"}[down]
+		for _, event := range []struct {
+			apply func(t *testing.T, path string)
+			name  string
+		}{
+			{name: "mid-save rename", apply: renameAway},
+			{name: "removed", apply: removeFile},
+			{name: "unparseable", apply: func(t *testing.T, path string) {
+				t.Helper()
+				writeConfig(t, path, truncatedPolicy)
+			}},
+		} {
+			t.Run(engine+"/"+event.name, func(t *testing.T) {
+				fx := newOwnedFilesFixture(t)
+				fx.reactor.draining = down
+				dir := t.TempDir()
+				path := filepath.Join(dir, "permissions.yaml")
+				writeConfig(t, path, permsYAML)
+				writeConfig(t, filepath.Join(dir, "permissions.json"), permsJSON)
+				event.apply(t, path)
+				tick := func(n int) {
+					t.Helper()
+					before, _ := os.ReadFile(path)
+					fx.watch.pass(t.Context())
+					fx.tools.tick()
+					if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+						t.Errorf("tick %d changed permissions.yaml from %q to %q, want no tick to touch it", n, before, after)
+					}
+				}
+
+				tick(1)
+				left, _ := os.ReadFile(path)
+				if event.name != "unparseable" {
+					if got := ruleCaps(t, path); !slices.Equal(got, []string{"web_search"}) {
+						t.Errorf("Load over the missing .yaml = %v, want the .json sibling's J", got)
+					}
+				}
+				attempts, err := panelAdd(t, path, nil)
+				switch event.name {
+				case "unparseable":
+					if !errors.Is(err, policyfile.ErrUnreadable) {
+						t.Errorf("an add over an unparseable file = %v, want ErrUnreadable", err)
+					}
+					if got, _ := os.ReadFile(path); !bytes.Equal(got, left) {
+						t.Errorf("permissions.yaml after a refused add = %q, want %q unchanged", got, left)
+					}
+					if _, lErr := policyfile.Load(path); lErr == nil {
+						t.Error("Load over an unparseable file succeeded, want it refused")
+					}
+				default:
+					if err != nil || attempts != 1 {
+						t.Fatalf("an add = %v after %d attempts, want nil after one", err, attempts)
+					}
+					if got, want := ruleCaps(t, path), []string{"web_fetch", "web_search"}; !slices.Equal(got, want) {
+						t.Errorf("rules after the add = %v, want J and the added rule %v (KAS's own reading)", got, want)
+					}
+				}
+				if event.name == "mid-save rename" {
+					removeFile(t, path)
+					attempts, err := panelAdd(t, path, func() { writeConfig(t, path, personYAML) })
+					if err != nil || attempts != 2 {
+						t.Errorf("an add over the person's create = %v after %d attempts, want nil after two", err, attempts)
+					}
+					if got, want := ruleCaps(t, path), []string{"fs_read", "web_fetch"}; !slices.Equal(got, want) {
+						t.Errorf("rules after the retried add = %v, want Y2 and the added rule %v", got, want)
+					}
+				}
+				tick(2)
+				tick(3)
+			})
+		}
 	}
 }
 

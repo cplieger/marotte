@@ -74,6 +74,8 @@ func (s *Server) writeCustomizeError(ctx context.Context, w http.ResponseWriter,
 			"the profile could not be applied and the copied rules could not be taken back out. "+
 				"Check permissions.yaml under ~/.kiro/settings",
 		))
+	case errors.Is(err, policyfile.ErrBusy):
+		httpserver.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSON(errPolicyBusy))
 	default:
 		httpreply.InternalError(w, err)
 	}

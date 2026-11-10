@@ -161,15 +161,8 @@ func TestCustomize_AStaleRequestAfterTheSwitchLeavesTheUserFileAlone(t *testing.
 		t.Fatalf("Setup: EnsureCustom = (%v, %v), want (true, nil)", switched, err)
 	}
 	kasRule := policyfile.Rule{Capability: "shell", Effect: "allow", Match: []string{"head *"}}
-	f, err := policyfile.Load(userPath)
-	if err != nil {
-		t.Fatalf("Setup: load the user file: %v", err)
-	}
-	if _, err := f.Upsert(&kasRule); err != nil {
-		t.Fatalf("Setup: upsert: %v", err)
-	}
-	if err := policyfile.Save(t.Context(), userPath, f); err != nil {
-		t.Fatalf("Setup: save KAS's rule: %v", err)
+	if err := policyfile.Mutate(t.Context(), userPath, func(f *policyfile.File) (bool, error) { return f.Upsert(&kasRule) }); err != nil {
+		t.Fatalf("Setup: write KAS's rule: %v", err)
 	}
 	want, err := os.ReadFile(userPath)
 	if err != nil {
@@ -216,5 +209,107 @@ func TestCustomize_AFailedPersistRestoresTheUserFileWithItsOtherKeys(t *testing.
 	f, err := policyfile.Load(userPath)
 	if err != nil || len(f.Rules) != 1 || f.Rules[0].Capability != "shell" {
 		t.Errorf("restored rules = %+v (err %v), want only the original shell rule", f, err)
+	}
+}
+
+// swapSeam replaces a package seam for one test.
+func swapSeam[T any](t *testing.T, seam *T, with T) {
+	t.Helper()
+	prev := *seam
+	*seam = with
+	t.Cleanup(func() { *seam = prev })
+}
+
+// writeUserFile stages the user permissions file's text.
+func writeUserFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func capabilities(t *testing.T, path string) []string {
+	t.Helper()
+	f, err := policyfile.Load(path)
+	if err != nil {
+		t.Fatalf("load the user file: %v", err)
+	}
+	out := make([]string, 0, len(f.Rules))
+	for i := range f.Rules {
+		out = append(out, f.Rules[i].Capability)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func TestCustomize_AFailedPersistKeepsARuleWrittenMeanwhile(t *testing.T) {
+	s, userPath := storeOver(t, []marotte.PolicyRule{
+		{Capability: "fs_read", Effect: "allow", Scope: "session", Source: "preset:read-workspace", Match: []string{"/w/**"}},
+	})
+	writeUserFile(t, userPath, "rules:\n  - capability: shell\n    effect: ask\n")
+	persistFailed := errors.New("persist failed")
+	swapSeam(t, &persistCustom, func(*Store, context.Context, string) error {
+		kas := policyfile.Rule{Capability: "web_fetch", Effect: "allow"}
+		if err := policyfile.Mutate(t.Context(), userPath, func(f *policyfile.File) (bool, error) { return f.Upsert(&kas) }); err != nil {
+			t.Errorf("write KAS's rule: %v", err)
+		}
+		return persistFailed
+	})
+
+	err := s.Customize(t.Context())
+
+	if !errors.Is(err, persistFailed) || errors.Is(err, ErrRestoreFailed) {
+		t.Errorf("Customize = %v, want the persist error with the copied rules taken back out", err)
+	}
+	if got, want := capabilities(t, userPath), []string{"shell", "web_fetch"}; !slices.Equal(got, want) {
+		t.Errorf("the user file holds %v, want the earlier rule and KAS's %v and no copied preset rule", got, want)
+	}
+}
+
+func TestSeedEdit_RecordsOnlyTheLastAttemptsAdditions(t *testing.T) {
+	seededRule := policyfile.Rule{Capability: "fs_read", Effect: "allow", Match: []string{"/w/**"}}
+	other := policyfile.Rule{Capability: "web_search", Effect: "allow"}
+	var added []policyfile.Rule
+	edit := seedEdit([]policyfile.Rule{seededRule, other}, &added)
+
+	if changed, err := edit(&policyfile.File{Rules: []policyfile.Rule{}}); err != nil || !changed {
+		t.Fatalf("the first attempt = (%v, %v), want (true, nil)", changed, err)
+	}
+	changed, err := edit(&policyfile.File{Rules: []policyfile.Rule{seededRule}})
+
+	if err != nil || !changed {
+		t.Errorf("the retried attempt = (%v, %v), want (true, nil)", changed, err)
+	}
+	if len(added) != 1 || added[0].Capability != other.Capability {
+		t.Errorf("added = %+v, want only %s, the one rule the retried attempt added", added, other.Capability)
+	}
+}
+
+func TestCustomize_ABusyFileReturnsErrBusyAndSwitchesNothing(t *testing.T) {
+	s, userPath := storeOver(t, []marotte.PolicyRule{
+		{Capability: "fs_read", Effect: "allow", Scope: "session", Source: "preset:read-workspace", Match: []string{"/w/**"}},
+	})
+	if err := s.Select(t.Context(), policyfile.ProfileReadOnly); err != nil {
+		t.Fatalf("Setup: Select = %v", err)
+	}
+	const body = "rules:\n  - capability: shell\n    effect: ask\n"
+	writeUserFile(t, userPath, body)
+	swapSeam(t, &mutatePolicy, func(context.Context, string, func(*policyfile.File) (bool, error)) error {
+		return policyfile.ErrBusy
+	})
+
+	err := s.Customize(t.Context())
+
+	if !errors.Is(err, policyfile.ErrBusy) {
+		t.Errorf("Customize = %v, want an error matching policyfile.ErrBusy", err)
+	}
+	if got := s.Active(t.Context()); got != policyfile.ProfileReadOnly {
+		t.Errorf("Active = %q, want the profile unchanged %q", got, policyfile.ProfileReadOnly)
+	}
+	if got, _ := os.ReadFile(userPath); string(got) != body {
+		t.Errorf("the user file holds %q, want it untouched", got)
 	}
 }

@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -158,7 +160,7 @@ func TestPolicyProfile_SelectionWritesNoPolicyFile(t *testing.T) {
 		t.Run(id+"/staged files are left byte for byte", func(t *testing.T) {
 			s, reload, userPath, wsPath := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", "read-workspace")})
 			for _, path := range []string{userPath, wsPath} {
-				if err := policyfile.Save(t.Context(), path, &policyfile.File{Rules: staged}); err != nil {
+				if err := savePolicy(t.Context(), path, &policyfile.File{Rules: staged}); err != nil {
 					t.Fatalf("Setup: stage %s: %v", path, err)
 				}
 			}
@@ -225,7 +227,7 @@ func TestPolicyProfile_SeedMaterialisesTheProfileInForce(t *testing.T) {
 	if err := s.profiles().Select(t.Context(), policyfile.ProfileTrusted); err != nil {
 		t.Fatalf("Setup: select trusted: %v", err)
 	}
-	if err := policyfile.Save(t.Context(), userPath, &policyfile.File{Rules: []policyfile.Rule{
+	if err := savePolicy(t.Context(), userPath, &policyfile.File{Rules: []policyfile.Rule{
 		{Capability: "power", Effect: policyfile.EffectAsk},
 	}}); err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -266,7 +268,7 @@ func blockConfigDir(t *testing.T, s *Server) {
 // the copied preset rules back out.
 func TestPolicyProfile_SeedPersistFailureRestoresTheUserFile(t *testing.T) {
 	s, reload, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", policyfile.PresetReadWorkspace)})
-	if err := policyfile.Save(t.Context(), userPath, &policyfile.File{Rules: []policyfile.Rule{
+	if err := savePolicy(t.Context(), userPath, &policyfile.File{Rules: []policyfile.Rule{
 		{Capability: "shell", Effect: policyfile.EffectAllow},
 	}}); err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -285,10 +287,9 @@ func TestPolicyProfile_SeedPersistFailureRestoresTheUserFile(t *testing.T) {
 	}
 }
 
-// TestPolicyProfile_SeedPersistFailureLeavesAnAbsentUserFileAbsent: restoring means
-// the state Customize found, so a file that did not exist is removed again rather
-// than left behind empty.
-func TestPolicyProfile_SeedPersistFailureLeavesAnAbsentUserFileAbsent(t *testing.T) {
+// A file Customize created and could not persist over is left holding no copied rule; for KAS
+// a file of no rules reads as no file.
+func TestCustomize_AFailedPersistOverANewFileLeavesNoCopiedRule(t *testing.T) {
 	s, _, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", policyfile.PresetReadWorkspace)})
 	blockConfigDir(t, s)
 
@@ -296,8 +297,20 @@ func TestPolicyProfile_SeedPersistFailureLeavesAnAbsentUserFileAbsent(t *testing
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500, body %s", rec.Code, rec.Body)
 	}
-	if _, err := os.Stat(userPath); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("os.Stat(%s) = %v after a failed Customize, want the file absent as before", userPath, err)
+	if got := loadRules(t, userPath); len(got) != 0 {
+		t.Errorf("the user file holds %v after a failed Customize, want no copied rule", ruleCapabilities(got))
+	}
+}
+
+func TestWriteCustomizeError_BusyIs409(t *testing.T) {
+	rec := httptest.NewRecorder()
+	(&Server{}).writeCustomizeError(t.Context(), rec, fmt.Errorf("customize: %w", policyfile.ErrBusy))
+
+	if rec.Code != http.StatusConflict {
+		t.Errorf("status = %d, want 409", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "the permissions file kept changing while it was saved. Try again") {
+		t.Errorf("body = %s, want the busy text", rec.Body)
 	}
 }
 
@@ -340,7 +353,7 @@ func (c *cancelOnceCopied) Err() error {
 // must agree whenever the client leaves. Both written, or the user file as it was.
 func TestPolicyProfile_SeedSurvivesADisconnectAfterTheFirstWrite(t *testing.T) {
 	s, _, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", policyfile.PresetReadWorkspace)})
-	if err := policyfile.Save(t.Context(), userPath, &policyfile.File{Rules: []policyfile.Rule{
+	if err := savePolicy(t.Context(), userPath, &policyfile.File{Rules: []policyfile.Rule{
 		{Capability: "shell", Effect: policyfile.EffectAllow},
 	}}); err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -382,7 +395,7 @@ func TestPolicyProfile_SeedIntoAFullUserFileIsTheCallersProblem(t *testing.T) {
 	for i := range 512 {
 		full = append(full, policyfile.Rule{Capability: "cap-" + strconv.Itoa(i), Effect: policyfile.EffectAsk})
 	}
-	if err := policyfile.Save(t.Context(), userPath, &policyfile.File{Rules: full}); err != nil {
+	if err := savePolicy(t.Context(), userPath, &policyfile.File{Rules: full}); err != nil {
 		t.Fatalf("Setup: stage a full user file: %v", err)
 	}
 	staged := append([]byte("# hand-edited; a comment Save cannot reproduce\n"), readBytes(t, userPath)...)
@@ -448,7 +461,7 @@ func TestPolicyProfile_SeedFailsClosed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, reload, userPath, _ := profileFixture(t, tc.live)
 			staged := []policyfile.Rule{{Capability: "shell", Effect: "allow"}}
-			if err := policyfile.Save(t.Context(), userPath, &policyfile.File{Rules: staged}); err != nil {
+			if err := savePolicy(t.Context(), userPath, &policyfile.File{Rules: staged}); err != nil {
 				t.Fatalf("stage: %v", err)
 			}
 

@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -81,7 +84,7 @@ func TestPolicyViewStampsEditableOnTheFileFallback(t *testing.T) {
 	work := t.TempDir()
 	t.Setenv("HOME", home)
 	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
-	if err := policyfile.Save(t.Context(), up, &policyfile.File{
+	if err := savePolicy(t.Context(), up, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "shell", Effect: "deny"}, {Capability: "all", Effect: "prompt"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -125,6 +128,14 @@ func (f *fakePolicy) PolicyExplain(_ context.Context, req marotte.PolicyExplainR
 	return f.explain, f.explainErr
 }
 
+// savePolicy sets the rules of the permissions file Load reads for path to f's.
+func savePolicy(ctx context.Context, path string, f *policyfile.File) error {
+	return policyfile.Mutate(ctx, path, func(cur *policyfile.File) (bool, error) {
+		cur.Rules = f.Rules
+		return true, nil
+	})
+}
+
 func postRules(t *testing.T, s *Server, body policyRuleBody) *httptest.ResponseRecorder {
 	t.Helper()
 	b, _ := json.Marshal(body)
@@ -162,7 +173,7 @@ func TestPolicyViewFileFallback(t *testing.T) {
 	work := t.TempDir()
 	t.Setenv("HOME", home)
 	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
-	if err := policyfile.Save(t.Context(), up, &policyfile.File{
+	if err := savePolicy(t.Context(), up, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "shell", Effect: "deny", Match: []string{"sudo *"}}},
 	}); err != nil {
 		t.Fatal(err)
@@ -329,7 +340,7 @@ func TestPolicyRuleRemoveDenyRequiresConfirm(t *testing.T) {
 	work := t.TempDir()
 	t.Setenv("HOME", home)
 	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
-	if err := policyfile.Save(t.Context(), wp, &policyfile.File{
+	if err := savePolicy(t.Context(), wp, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "shell", Effect: "deny", Match: []string{"rm -rf *"}}},
 	}); err != nil {
 		t.Fatal(err)
@@ -364,7 +375,7 @@ func TestPolicyRuleUpdate_EvaluateRanks(t *testing.T) {
 		work := t.TempDir()
 		t.Setenv("HOME", home)
 		wp, _ = policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
-		if err := policyfile.Save(t.Context(), wp, &policyfile.File{
+		if err := savePolicy(t.Context(), wp, &policyfile.File{
 			Rules: []policyfile.Rule{{Capability: "shell", Effect: effect, Match: []string{"make *"}}},
 		}); err != nil {
 			t.Fatal(err)
@@ -460,7 +471,7 @@ func TestPolicyRuleUpdate(t *testing.T) {
 		work := t.TempDir()
 		t.Setenv("HOME", home)
 		wp, _ = policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
-		if err := policyfile.Save(t.Context(), wp, &policyfile.File{
+		if err := savePolicy(t.Context(), wp, &policyfile.File{
 			Rules: []policyfile.Rule{
 				{Capability: "shell", Effect: "ask", Match: []string{"rm *"}},
 				{Capability: "fs_read", Effect: "allow", Match: []string{"src/**"}},
@@ -576,7 +587,7 @@ func TestPolicyRuleUpdate_UnchangedEffectNeedsNoConfirm(t *testing.T) {
 	work := t.TempDir()
 	t.Setenv("HOME", home)
 	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
-	if err := policyfile.Save(t.Context(), wp, &policyfile.File{
+	if err := savePolicy(t.Context(), wp, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "shell", Effect: "ask", Match: []string{"rm *"}}},
 	}); err != nil {
 		t.Fatal(err)
@@ -600,12 +611,12 @@ func TestPolicyRulesFromFiles_ScopeSelectsItsOwnFile(t *testing.T) {
 	t.Setenv("HOME", home)
 	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
 	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{KiroHome: filepath.Join(home, ".kiro"), WorkDir: work})
-	if err := policyfile.Save(t.Context(), up, &policyfile.File{
+	if err := savePolicy(t.Context(), up, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "web_fetch", Effect: "allow"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := policyfile.Save(t.Context(), wp, &policyfile.File{
+	if err := savePolicy(t.Context(), wp, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "fs_write", Effect: "deny", Match: []string{"src/**"}}},
 	}); err != nil {
 		t.Fatal(err)
@@ -749,4 +760,70 @@ func TestPolicyRuleKey_IdenticalRulesAgree(t *testing.T) {
 	if policyRuleKey(&r) != policyRuleKey(&same) {
 		t.Errorf("policyRuleKey disagreed on equal rules:\n %q\n %q", policyRuleKey(&r), policyRuleKey(&same))
 	}
+}
+
+func TestWritePolicyWriteError_MapsEachRefusal(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		name string
+		text string
+		code int
+	}{
+		{
+			name: "unreadable", err: fmt.Errorf("%w: parse", policyfile.ErrUnreadable), code: http.StatusConflict,
+			text: "existing policy file could not be parsed. Edit it manually",
+		},
+		{
+			name: "busy", err: policyfile.ErrBusy, code: http.StatusConflict,
+			text: "the permissions file kept changing while it was saved. Try again",
+		},
+		{
+			name: "a refused rule", err: policyRefusalError{errors.New("policy file has too many rules")}, code: http.StatusBadRequest,
+			text: "policy file has too many rules",
+		},
+		{name: "no such rule", err: errRuleNotFound, code: http.StatusNotFound, text: "rule not found. Refresh the policy view"},
+		{name: "a write failure", err: errors.New("disk full"), code: http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			writePolicyWriteError(rec, tc.err)
+			if rec.Code != tc.code {
+				t.Errorf("status = %d, want %d", rec.Code, tc.code)
+			}
+			if !strings.Contains(rec.Body.String(), tc.text) {
+				t.Errorf("body = %s, want it to carry %q", rec.Body, tc.text)
+			}
+		})
+	}
+}
+
+// A retried attempt reads the file anew, so each edit answers for the attempt that ran last.
+func TestPolicyRuleEdits_RecordOnlyTheLastAttemptsOutcome(t *testing.T) {
+	rule := policyfile.Rule{Capability: "shell", Effect: policyfile.EffectAsk}
+	t.Run("add", func(t *testing.T) {
+		var present bool
+		edit := addRuleEdit(&rule, &present)
+		if _, err := edit(&policyfile.File{Rules: []policyfile.Rule{rule}}); err != nil || !present {
+			t.Fatalf("over a file holding the rule: err %v, present %v; want nil and true", err, present)
+		}
+		changed, err := edit(&policyfile.File{Rules: []policyfile.Rule{}})
+		if err != nil || !changed || present {
+			t.Errorf("over a file without it: (%v, %v), present %v; want (true, nil) and false", changed, err, present)
+		}
+	})
+	t.Run("update", func(t *testing.T) {
+		var replayed bool
+		edit := updateRuleEdit(&rule, policyfile.EffectDeny, &replayed)
+		target := policyfile.Rule{Capability: "shell", Effect: policyfile.EffectDeny}
+		if _, err := edit(&policyfile.File{Rules: []policyfile.Rule{target}}); err != nil || !replayed {
+			t.Fatalf("over a file in the target state: err %v, replayed %v; want nil and true", err, replayed)
+		}
+		changed, err := edit(&policyfile.File{Rules: []policyfile.Rule{rule}})
+		if err != nil || !changed || replayed {
+			t.Errorf("over a file holding the rule: (%v, %v), replayed %v; want (true, nil) and false", changed, err, replayed)
+		}
+		if _, err := edit(&policyfile.File{Rules: []policyfile.Rule{}}); !errors.Is(err, errRuleNotFound) {
+			t.Errorf("over a file holding neither: %v, want errRuleNotFound", err)
+		}
+	})
 }

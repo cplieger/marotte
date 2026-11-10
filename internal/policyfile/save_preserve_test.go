@@ -27,7 +27,7 @@ someFutureKey:
 # trailing comment
 `
 
-func TestSave_KeepsKeysAndCommentsItDoesNotOwn(t *testing.T) {
+func TestMutate_KeepsKeysAndCommentsItDoesNotOwn(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "permissions.yaml")
 	if err := os.WriteFile(path, []byte(kiroCLIFile), 0o600); err != nil {
 		t.Fatal(err)
@@ -39,8 +39,8 @@ func TestSave_KeepsKeysAndCommentsItDoesNotOwn(t *testing.T) {
 	if _, err := f.Upsert(&Rule{Capability: "fs_write", Effect: EffectAllow, Match: []string{"src/**"}}); err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
-	if err := Save(t.Context(), path, f); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := saveRules(t.Context(), path, f); err != nil {
+		t.Fatalf("Mutate: %v", err)
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -127,7 +127,7 @@ const todaysShape = `rules:
         - src/**
 `
 
-func TestSave_RulesOnlyFileIsByteIdentical(t *testing.T) {
+func TestMutate_RulesOnlyFileIsByteIdentical(t *testing.T) {
 	cases := []struct {
 		name   string
 		before *string // nil: no file
@@ -183,22 +183,22 @@ func TestSave_RulesOnlyFileIsByteIdentical(t *testing.T) {
 				t.Fatalf("Load: %v", err)
 			}
 			tc.edit(f)
-			if err := Save(t.Context(), path, f); err != nil {
-				t.Fatalf("Save: %v", err)
+			if err := saveRules(t.Context(), path, f); err != nil {
+				t.Fatalf("Mutate: %v", err)
 			}
 			got, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if string(got) != tc.want {
-				t.Errorf("Save wrote\n%s\nwant\n%s", got, tc.want)
+				t.Errorf("Mutate wrote\n%s\nwant\n%s", got, tc.want)
 			}
 			legacy, err := yaml.Marshal(f)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if string(got) != string(legacy) {
-				t.Errorf("Save wrote\n%s\nyaml.Marshal of the same File gives\n%s", got, legacy)
+				t.Errorf("Mutate wrote\n%s\nyaml.Marshal of the same File gives\n%s", got, legacy)
 			}
 		})
 	}
@@ -210,13 +210,11 @@ func saveOne(t *testing.T, before string, edit func(f *File)) string {
 	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	f, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	edit(f)
-	if err := Save(t.Context(), path, f); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := Mutate(t.Context(), path, func(f *File) (bool, error) {
+		edit(f)
+		return true, nil
+	}); err != nil {
+		t.Fatalf("Mutate: %v", err)
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {
@@ -230,7 +228,7 @@ func saveOne(t *testing.T, before string, edit func(f *File)) string {
 
 func addShell(f *File) { f.Rules = append(f.Rules, Rule{Capability: "shell", Effect: EffectAsk}) }
 
-func TestSave_KeepsAnUnchangedRuleAsWritten(t *testing.T) {
+func TestMutate_KeepsAnUnchangedRuleAsWritten(t *testing.T) {
 	before := "rules:\n  # why fs_write is open\n  - capability: fs_write\n    effect: allow # reviewed\n    description: kept by kiro-cli\n    match: [\"src/**\"]\n"
 	got := saveOne(t, before, addShell)
 	for _, want := range []string{"# why fs_write is open", "# reviewed", "description: kept by kiro-cli", "capability: shell"} {
@@ -240,7 +238,7 @@ func TestSave_KeepsAnUnchangedRuleAsWritten(t *testing.T) {
 	}
 }
 
-func TestSave_DropsTheCommentOfARemovedRule(t *testing.T) {
+func TestMutate_DropsTheCommentOfARemovedRule(t *testing.T) {
 	before := "rules:\n    # about shell\n    - capability: shell\n      effect: ask\n"
 	got := saveOne(t, before, func(f *File) { f.Remove(&f.Rules[0]) })
 	if got != "rules: []\n" {
@@ -261,7 +259,7 @@ const collidingRules = `rules:
       match: ["a", "b"]
 `
 
-func TestSave_WritesExactlyTheRulesItWasGiven(t *testing.T) {
+func TestMutate_WritesExactlyTheRulesItWasGiven(t *testing.T) {
 	cases := []struct {
 		name string
 		edit func(f *File)
@@ -281,8 +279,8 @@ func TestSave_WritesExactlyTheRulesItWasGiven(t *testing.T) {
 			}
 			tc.edit(f)
 			want := slices.Clone(f.Rules)
-			if err := Save(t.Context(), path, f); err != nil {
-				t.Fatalf("Save: %v", err)
+			if err := saveRules(t.Context(), path, f); err != nil {
+				t.Fatalf("Mutate: %v", err)
 			}
 			back, err := Load(path)
 			if err != nil {
@@ -305,7 +303,7 @@ func TestSave_WritesExactlyTheRulesItWasGiven(t *testing.T) {
 	}
 }
 
-func TestSave_RemovingOneOfTwoDuplicatesKeepsNeitherNode(t *testing.T) {
+func TestMutate_RemovingOneOfTwoDuplicatesKeepsNeitherNode(t *testing.T) {
 	before := "rules:\n    # c1\n    - capability: shell\n      effect: deny\n      description: FIRST\n" +
 		"    # c2\n    - capability: shell\n      effect: deny\n      description: SECOND\n"
 	got := saveOne(t, before, func(f *File) { f.Remove(&f.Rules[0]) })
@@ -319,7 +317,7 @@ func TestSave_RemovingOneOfTwoDuplicatesKeepsNeitherNode(t *testing.T) {
 	}
 }
 
-func TestSave_KeepsTwoIdenticalRulesThroughAnUnrelatedEdit(t *testing.T) {
+func TestMutate_KeepsTwoIdenticalRulesThroughAnUnrelatedEdit(t *testing.T) {
 	before := "rules:\n    # c1\n    - capability: shell\n      effect: deny\n      description: FIRST\n" +
 		"    # c2\n    - capability: shell\n      effect: deny\n      description: SECOND\n"
 	got := saveOne(t, before, func(f *File) {
@@ -336,7 +334,7 @@ func TestSave_KeepsTwoIdenticalRulesThroughAnUnrelatedEdit(t *testing.T) {
 }
 
 // A v4 encoder folds a plain scalar at 80 columns; kiro-cli's long values must stay on one line.
-func TestSave_KeepsLongValuesOnOneLine(t *testing.T) {
+func TestMutate_KeepsLongValuesOnOneLine(t *testing.T) {
 	longValue := strings.Repeat("word ", 30) + "end"
 	longPattern := strings.Repeat("dir/", 30) + "**"
 	unknown := "someFutureKey: " + longValue + "\n"
@@ -349,7 +347,7 @@ func TestSave_KeepsLongValuesOnOneLine(t *testing.T) {
 	}
 }
 
-func TestSave_DocumentShapes(t *testing.T) {
+func TestMutate_DocumentShapes(t *testing.T) {
 	t.Run("a comment on an empty rules list stays on its line", func(t *testing.T) {
 		before := "rules: [] # none yet\nnext: 1\n"
 		if got := saveOne(t, before, func(*File) {}); got != before {
@@ -478,7 +476,7 @@ func TestRulesNode_RefusesAnItemThatIsNotARule(t *testing.T) {
 	}
 }
 
-func TestSave_NeverOverwritesAFileLoadRefuses(t *testing.T) {
+func TestMutate_NeverOverwritesAFileLoadRefuses(t *testing.T) {
 	cases := map[string]string{
 		"malformed":         "rules: [ this is : not : valid",
 		"a second document": "rules: []\n---\nrules:\n  - capability: shell\n    effect: allow\n",
@@ -493,8 +491,8 @@ func TestSave_NeverOverwritesAFileLoadRefuses(t *testing.T) {
 			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if err := Save(t.Context(), path, &File{Rules: []Rule{{Capability: "shell", Effect: EffectAsk}}}); err == nil {
-				t.Errorf("Save over a file Load refuses returned nil")
+			if err := saveRules(t.Context(), path, &File{Rules: []Rule{{Capability: "shell", Effect: EffectAsk}}}); err == nil {
+				t.Errorf("Mutate over a file Load refuses returned nil")
 			}
 			got, err := os.ReadFile(path)
 			if err != nil {
@@ -507,7 +505,7 @@ func TestSave_NeverOverwritesAFileLoadRefuses(t *testing.T) {
 	}
 }
 
-func TestSave_RefusesAnEditThatBreaksTheDocument(t *testing.T) {
+func TestMutate_RefusesAnEditThatBreaksTheDocument(t *testing.T) {
 	// An alias elsewhere into the rules sequence loses its anchor when the sequence is replaced.
 	body := "rules: &r\n    - capability: shell\n      effect: ask\ncopy: *r\n"
 	path := filepath.Join(t.TempDir(), "permissions.yaml")
@@ -519,8 +517,8 @@ func TestSave_RefusesAnEditThatBreaksTheDocument(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	addShell(f)
-	if err := Save(t.Context(), path, f); err == nil {
-		t.Errorf("Save wrote a document with a dangling alias")
+	if err := saveRules(t.Context(), path, f); err == nil {
+		t.Errorf("Mutate wrote a document with a dangling alias")
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {
@@ -537,7 +535,7 @@ const jsonSibling = `{"workspaceTrusted": true, "policies": ["read-all"],
  "rules": [{"capability": "shell", "effect": "deny", "match": ["rm *"], "description": "kept"}],
  "note": "true"}`
 
-func TestSave_WritesTheYAMLFromTheJSONSibling(t *testing.T) {
+func TestMutate_WritesTheYAMLFromTheJSONSibling(t *testing.T) {
 	// The .json's keys in its order, its rule as written, the new rule, all in block YAML; the
 	// string "true" stays a string.
 	const want = `workspaceTrusted: true
@@ -572,8 +570,8 @@ note: "true"
 			if _, err := f.Upsert(&Rule{Capability: "web_fetch", Effect: EffectAllow}); err != nil {
 				t.Fatal(err)
 			}
-			if err := Save(t.Context(), yamlPath, f); err != nil {
-				t.Fatalf("Save: %v", err)
+			if err := saveRules(t.Context(), yamlPath, f); err != nil {
+				t.Fatalf("Mutate: %v", err)
 			}
 			got, err := os.ReadFile(yamlPath)
 			if err != nil {
@@ -589,10 +587,10 @@ note: "true"
 	}
 }
 
-// TestSave_KeepsTheRulesOfATaggedNullJSONSibling pins a permissions.json whose root is an
+// TestMutate_KeepsTheRulesOfATaggedNullJSONSibling pins a permissions.json whose root is an
 // explicitly tagged empty null: blockStyle keeps the tag, so the root takes the mapping path, and
-// the rule Save adds is the rule the new permissions.yaml reads back.
-func TestSave_KeepsTheRulesOfATaggedNullJSONSibling(t *testing.T) {
+// the rule Mutate adds is the rule the new permissions.yaml reads back.
+func TestMutate_KeepsTheRulesOfATaggedNullJSONSibling(t *testing.T) {
 	for _, root := range []string{
 		"!!null ''", `!!null ""`, "--- !!null ''", "&a !!null ''",
 		"!!null |", "!!null >-", "!<tag:yaml.org,2002:null> ''",
@@ -611,12 +609,12 @@ func TestSave_KeepsTheRulesOfATaggedNullJSONSibling(t *testing.T) {
 			if _, err := f.Upsert(&want); err != nil {
 				t.Fatal(err)
 			}
-			if err := Save(t.Context(), yamlPath, f); err != nil {
-				t.Fatalf("Save: %v", err)
+			if err := saveRules(t.Context(), yamlPath, f); err != nil {
+				t.Fatalf("Mutate: %v", err)
 			}
 			back, err := Load(yamlPath)
 			if err != nil {
-				t.Fatalf("Load after Save: %v", err)
+				t.Fatalf("Load after Mutate: %v", err)
 			}
 			if len(back.Rules) != 1 || back.Rules[0].Capability != want.Capability || back.Rules[0].Effect != want.Effect {
 				t.Errorf("rules read back = %+v, want [%+v]", back.Rules, want)
@@ -625,11 +623,11 @@ func TestSave_KeepsTheRulesOfATaggedNullJSONSibling(t *testing.T) {
 	}
 }
 
-// TestSave_RefusesAnEditThatWouldRetargetAnAlias pins that Save runs its read-back guard: dropping
+// TestMutate_RefusesAnEditThatWouldRetargetAnAlias pins that Mutate runs its read-back guard: dropping
 // the rule that defines an anchor leaves a later alias to an earlier anchor of the same name, and
-// the file Save would write reads that rule back with another capability. Save refuses and leaves
+// the file Mutate would write reads that rule back with another capability. Mutate refuses and leaves
 // the file as it was.
-func TestSave_RefusesAnEditThatWouldRetargetAnAlias(t *testing.T) {
+func TestMutate_RefusesAnEditThatWouldRetargetAnAlias(t *testing.T) {
 	const before = "pre: &a fs_read\nrules:\n  - {capability: &a shell, effect: deny}\n  - {capability: *a, effect: allow}\n"
 	path := filepath.Join(t.TempDir(), filename)
 	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
@@ -640,11 +638,11 @@ func TestSave_RefusesAnEditThatWouldRetargetAnAlias(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	f.Rules = f.Rules[1:]
-	if err := Save(t.Context(), path, f); err == nil || !strings.Contains(err.Error(), "would read back with other rules") {
-		t.Fatalf("Save = %v, want the other-rules refusal", err)
+	if err := saveRules(t.Context(), path, f); err == nil || !strings.Contains(err.Error(), "would read back with other rules") {
+		t.Fatalf("Mutate = %v, want the other-rules refusal", err)
 	}
 	if got, err := os.ReadFile(path); err != nil || string(got) != before {
-		t.Errorf("file after the refused Save = %q (%v), want it unchanged", got, err)
+		t.Errorf("file after the refused Mutate = %q (%v), want it unchanged", got, err)
 	}
 }
 
@@ -658,10 +656,10 @@ func TestReadsBack_RefusesTheSameRulesInAnotherOrder(t *testing.T) {
 	}
 }
 
-// TestSave_RefusesAnEditThatWouldRetargetAnotherKeysAlias pins the alias check on the keys Save
+// TestMutate_RefusesAnEditThatWouldRetargetAnotherKeysAlias pins the alias check on the keys Mutate
 // keeps: dropping the rule that defines an anchor would make workspaceTrusted, or a policies
-// entry, read the earlier anchor of the same name. Save refuses and leaves the file as it was.
-func TestSave_RefusesAnEditThatWouldRetargetAnotherKeysAlias(t *testing.T) {
+// entry, read the earlier anchor of the same name. Mutate refuses and leaves the file as it was.
+func TestMutate_RefusesAnEditThatWouldRetargetAnotherKeysAlias(t *testing.T) {
 	for name, before := range map[string]string{
 		"workspaceTrusted":  "pre: &t false\nrules:\n  - {capability: shell, effect: deny, match: [&t true]}\n  - {capability: write, effect: allow}\nworkspaceTrusted: *t\n",
 		"a policies entry":  "pre: &a fs_read\nrules:\n  - {capability: &a shell, effect: deny}\n  - {capability: write, effect: allow}\npolicies:\n  allow: *a\n",
@@ -677,19 +675,19 @@ func TestSave_RefusesAnEditThatWouldRetargetAnotherKeysAlias(t *testing.T) {
 				t.Fatalf("Load: %v", err)
 			}
 			f.Rules = f.Rules[1:]
-			if err := Save(t.Context(), path, f); err == nil || !strings.Contains(err.Error(), "would point at another value") {
-				t.Fatalf("Save = %v, want the alias refusal", err)
+			if err := saveRules(t.Context(), path, f); err == nil || !strings.Contains(err.Error(), "would point at another value") {
+				t.Fatalf("Mutate = %v, want the alias refusal", err)
 			}
 			if got, err := os.ReadFile(path); err != nil || string(got) != before {
-				t.Errorf("file after the refused Save = %q (%v), want it unchanged", got, err)
+				t.Errorf("file after the refused Mutate = %q (%v), want it unchanged", got, err)
 			}
 		})
 	}
 }
 
-// TestSave_KeepsAnAliasToARedefinedAnchor pins the other half of the alias check: an alias binds
+// TestMutate_KeepsAnAliasToARedefinedAnchor pins the other half of the alias check: an alias binds
 // the latest anchor of its name before it, so a file that redefines an anchor on purpose saves.
-func TestSave_KeepsAnAliasToARedefinedAnchor(t *testing.T) {
+func TestMutate_KeepsAnAliasToARedefinedAnchor(t *testing.T) {
 	t.Run("an edit", func(t *testing.T) {
 		const before = "a: &x 1\nb: *x\nc: &x 2\nd: *x\nrules:\n  - {capability: shell, effect: deny}\n  - {capability: write, effect: allow}\n"
 		path := filepath.Join(t.TempDir(), filename)
@@ -701,8 +699,8 @@ func TestSave_KeepsAnAliasToARedefinedAnchor(t *testing.T) {
 			t.Fatalf("Load: %v", err)
 		}
 		f.Rules = f.Rules[1:]
-		if err := Save(t.Context(), path, f); err != nil {
-			t.Fatalf("Save: %v", err)
+		if err := saveRules(t.Context(), path, f); err != nil {
+			t.Fatalf("Mutate: %v", err)
 		}
 		got, err := os.ReadFile(path)
 		if err != nil {
@@ -726,18 +724,18 @@ func TestSave_KeepsAnAliasToARedefinedAnchor(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if err := Save(t.Context(), path, f); err != nil {
-			t.Fatalf("Save: %v", err)
+		if err := saveRules(t.Context(), path, f); err != nil {
+			t.Fatalf("Mutate: %v", err)
 		}
 		if got, err := os.ReadFile(path); err != nil || string(got) != before {
-			t.Errorf("file after a Save that changed nothing = %q (%v), want it unchanged", got, err)
+			t.Errorf("file after a write of the same rules = %q (%v), want it unchanged", got, err)
 		}
 	})
 }
 
-// TestSave_CarriesAnExplicitTagFromTheJSONSibling pins that a tag written in permissions.json
-// stays in the permissions.yaml Save writes, and that the value reads back the same.
-func TestSave_CarriesAnExplicitTagFromTheJSONSibling(t *testing.T) {
+// TestMutate_CarriesAnExplicitTagFromTheJSONSibling pins that a tag written in permissions.json
+// stays in the permissions.yaml Mutate writes, and that the value reads back the same.
+func TestMutate_CarriesAnExplicitTagFromTheJSONSibling(t *testing.T) {
 	dir := t.TempDir()
 	yamlPath := filepath.Join(dir, filename)
 	if err := os.WriteFile(filepath.Join(dir, jsonFilename), []byte(`{"x": !!str "true", "rules": []}`), 0o600); err != nil {
@@ -747,8 +745,8 @@ func TestSave_CarriesAnExplicitTagFromTheJSONSibling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if err := Save(t.Context(), yamlPath, f); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := saveRules(t.Context(), yamlPath, f); err != nil {
+		t.Fatalf("Mutate: %v", err)
 	}
 	got, err := os.ReadFile(yamlPath)
 	if err != nil {
@@ -763,8 +761,8 @@ func TestSave_CarriesAnExplicitTagFromTheJSONSibling(t *testing.T) {
 	}
 }
 
-// TestReadsBack_RefusesTextWithOtherRules pins Save's last guard: text that parses but holds
-// other rules than the ones Save was given is never written.
+// TestReadsBack_RefusesTextWithOtherRules pins Mutate's last guard: text that parses but holds
+// other rules than the ones Mutate was given is never written.
 func TestReadsBack_RefusesTextWithOtherRules(t *testing.T) {
 	rules := []Rule{{Capability: "shell", Effect: EffectDeny}}
 	if err := readsBack([]byte("rules:\n    - capability: shell\n      effect: deny\n"), filename, rules); err != nil {
@@ -784,17 +782,17 @@ func TestReadsBack_RefusesTextWithOtherRules(t *testing.T) {
 	}
 }
 
-func TestSave_NeverShadowsAJSONSiblingLoadRefuses(t *testing.T) {
+func TestMutate_NeverShadowsAJSONSiblingLoadRefuses(t *testing.T) {
 	dir := t.TempDir()
 	jsonPath, yamlPath := filepath.Join(dir, jsonFilename), filepath.Join(dir, filename)
 	const broken = `{"rules": [`
 	if err := os.WriteFile(jsonPath, []byte(broken), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := Save(t.Context(), yamlPath, &File{Rules: []Rule{{Capability: "shell", Effect: EffectAsk}}}); err == nil {
-		t.Error("Save over an unparseable .json returned nil")
+	if err := saveRules(t.Context(), yamlPath, &File{Rules: []Rule{{Capability: "shell", Effect: EffectAsk}}}); err == nil {
+		t.Error("Mutate over an unparseable .json returned nil")
 	}
 	if _, err := os.Stat(yamlPath); !os.IsNotExist(err) {
-		t.Errorf("Save wrote a .yaml that would shadow the .json (stat err %v)", err)
+		t.Errorf("Mutate wrote a .yaml that would shadow the .json (stat err %v)", err)
 	}
 }
