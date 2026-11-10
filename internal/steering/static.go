@@ -6,8 +6,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-
-	"github.com/cplieger/marotte/internal/workspace"
 )
 
 var (
@@ -145,7 +143,7 @@ func writeShellHint(b *strings.Builder, toolsDir string, onPath bool) {
 
 // 9847 mirrors internal/server's unexported port const; steering cannot import
 // server (server imports steering).
-func writeToolsEngine(b *strings.Builder, configDir, toolsDir, workDir string) {
+func writeToolsEngine(b *strings.Builder, configDir, toolsDir string) {
 	b.WriteString("## Tools engine\n\n")
 	if toolsDir == "" {
 		b.WriteString("- The tools engine is off because the server cannot use the folder configured for it; ")
@@ -172,15 +170,11 @@ func writeToolsEngine(b *strings.Builder, configDir, toolsDir, workDir string) {
 	b.WriteString("(each with its `reason`); those are the ones to build or install by hand\n")
 	b.WriteString("- `" + configDir + "/tools.json` is the manifest. A save in its editor (Settings → Tools → ")
 	b.WriteString("\"Advanced configuration\" → \"tools.json\") installs or removes what changed and refuses an invalid file. ")
-	if _, err := workspace.ResolveInsideAbs(workDir, filepath.Join(configDir, "tools.json")); err == nil {
-		b.WriteString("A write from your own file tools gets the same check and install: an invalid one is refused with the ")
-		b.WriteString("reason, so fix it and write again. ")
-	} else {
-		b.WriteString("Your file tools cannot write it, because `" + configDir + "` is outside the workspace. ")
-	}
-	b.WriteString("A shell write is neither checked nor applied until the next boot or the next editor save. A `tools.json` the ")
-	b.WriteString("engine refuses at boot leaves the tools engine off, with the reason in Settings → Tools and the boot log, ")
-	b.WriteString("until a valid save turns it back on. Prefer the engine API above\n\n")
+	b.WriteString("Your file tools cannot write it, because `" + configDir + "` is outside the workspace. ")
+	b.WriteString("A shell write is checked and applied within seconds: a valid one installs or removes what changed, and an ")
+	b.WriteString("invalid one turns the tools engine off with the reason in Settings → Tools until a valid save, or a valid ")
+	b.WriteString("shell write, turns it back on. A `tools.json` the engine refuses at boot does the same, with the reason in ")
+	b.WriteString("the boot log too. Prefer the engine API above\n\n")
 }
 
 func writeGitPanel(b *strings.Builder, workDir string, connected bool) {
