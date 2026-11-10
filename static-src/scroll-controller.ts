@@ -780,16 +780,26 @@ export class ScrollController {
     if (this.state === "following") {
       return this.writeTop(this.followPosition());
     }
+    // Through a local: a null check on `this.anchor` would keep it narrowed past `holdAnchor`, which can clear it.
+    const taken = this.anchor;
+    if (taken === null) {
+      return false;
+    }
+    // Layout drift first, as a hold booked into `takenTop`: unbooked, the resize delivery after this frame's callbacks
+    // would read the same change as drift again and move the text twice. What the line still shows is the platform's.
+    const before = viewOffset(this.scope);
+    this.holdAnchor();
     const a = this.anchor;
     const drift = a === null ? null : lineDrift(this.scope, a);
+    const held = viewOffset(this.scope) !== before;
     if (drift === null) {
-      return false;
+      return held;
     }
     const r = this.shiftTop(drift);
     if (r.retake) {
       this.retake();
     }
-    return r.moved !== 0;
+    return held || r.moved !== 0;
   }
 
   private endSettle(): void {

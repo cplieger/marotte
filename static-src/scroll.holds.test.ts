@@ -889,6 +889,34 @@ describe("every owner move re-takes the text the reader sees", () => {
   });
 });
 
+describe("a size change above in the frame a restored view settles", () => {
+  it("holds the text once, so no frame paints it moved", async () => {
+    const wrap = await reset();
+    const above = block(1000);
+    const held = block(3000);
+    await land();
+    await readAt(wrap, 2000);
+    const at = screenTop(wrap, held);
+    const parked = scroll.detach();
+    scroll.attach({ el: messagesEl, ...parked });
+    above.style.height = "1189px";
+    const moved: number[] = [];
+    // Created after the owner's observer, so each callback reads what that delivery's frame paints.
+    const ro = new ResizeObserver(() => {
+      moved.push(Math.round(screenTop(wrap, held) - at));
+    });
+    ro.observe(above);
+    await frames(1);
+    await land();
+    ro.disconnect();
+
+    expect({ painted: moved, landed: Math.round(screenTop(wrap, held) - at) }).toEqual({
+      painted: [0],
+      landed: 0,
+    });
+  });
+});
+
 describe("a press whose slide starts late", () => {
   it("leaves the reader where they are while what they pressed opens above the reading line", async () => {
     const wrap = await reset();
