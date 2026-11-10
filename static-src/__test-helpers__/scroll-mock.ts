@@ -10,6 +10,7 @@ export const scrollMock = {
   attach: vi.fn(),
   applyPendingRestore: vi.fn(),
   detach: vi.fn((): ViewScrollState => ({ scrollTop: 0, readingState: "following" })),
+  snapshot: vi.fn((): ViewScrollState => ({ scrollTop: 0, readingState: "following" })),
   scrollToBottom: vi.fn(),
   pressHold: vi.fn(),
   jumpTo: vi.fn(),

@@ -37,13 +37,18 @@ for (const id of ["send-btn", "prompt-input"]) {
 }
 const style = document.createElement("style");
 style.textContent =
-  loadCSS("13-messages.css") + loadCSS("40-a11y.css") + "#messages-wrap-outer { height: 400px; }";
+  loadCSS("01-tokens.css") +
+  loadCSS("13-messages.css") +
+  loadCSS("29-turns.css") +
+  loadCSS("40-a11y.css") +
+  "#messages-wrap-outer { height: 400px; }";
 document.head.appendChild(style);
 
 const store = await import("./store.js");
 const scroll = await import("./scroll.js");
 const messages = await import("./messages.js");
 const cover = await import("./transcript-cover.js");
+const { KEY_ATTR } = await import("./reconcile.js");
 const outer = document.getElementById("messages-wrap-outer") as HTMLElement;
 
 messages.mountChatView();
@@ -169,8 +174,37 @@ function click(id: string, steerRow: boolean): void {
   cover.takeParkReads();
   select(id);
   cover.holdCover(id);
-  cover.hideTranscript();
+  const skip =
+    (cover as { skipShownTranscript?: () => void }).skipShownTranscript ?? cover.hideTranscript;
+  skip();
   outer.style.height = steerRow ? "350px" : "400px";
+}
+
+/** What the reader sees at the scroller's top: the first turn reaching into the viewport and how
+ *  far its top sits from the scroller's. Pixel offsets alone shift with the older-page skeleton,
+ *  which a park leaves out. */
+function readerAnchor(): { id: string; offset: number } {
+  const scroller = scroll.getScrollEl();
+  const top = scroller.getBoundingClientRect().top;
+  const view = scroller.querySelector(".transcript-view.is-active");
+  const turn = [...(view?.children ?? [])].find(
+    (t) => t.hasAttribute(KEY_ATTR) && t.getBoundingClientRect().bottom > top,
+  );
+  return {
+    id: turn?.getAttribute(KEY_ATTR) ?? "",
+    offset: Math.round((turn?.getBoundingClientRect().top ?? 0) - top),
+  };
+}
+
+/** Transitions and animations running on elements inside `view`. */
+function runningIn(view: HTMLElement | null): string[] {
+  return document
+    .getAnimations()
+    .filter((a) => {
+      const target = (a.effect as KeyframeEffect | null)?.target;
+      return a.playState === "running" && target instanceof Element && view?.contains(target);
+    })
+    .map((a) => `${a.constructor.name}@${(a.effect as KeyframeEffect).target?.className ?? ""}`);
 }
 
 /** The activation half (`tabs.ts` `runActivation`): the transcript back in layout, then the
@@ -181,34 +215,59 @@ async function activate(id: string): Promise<void> {
   await Promise.resolve();
 }
 
+/** Two 30-turn chats, x shown and read at 600 px once its turns' first-frame work (the footer
+ *  fits, the entry transitions) has settled. */
+async function readingX(): Promise<HTMLElement> {
+  store.setSessions([chatOf("pl-x", 30), chatOf("pl-y", 30)]);
+  select("pl-x");
+  show("pl-x");
+  store.bumpMessages("pl-x", "load");
+  await Promise.resolve();
+  await frames();
+  await new Promise((r) => setTimeout(r, 400));
+  const scroller = scroll.getScrollEl();
+  scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
+  scroller.scrollTo({ top: 600, behavior: "instant" });
+  scroller.dispatchEvent(new Event("scroll"));
+  await frames();
+  expect(scroll.readingState()).toBe("reading");
+  expect(readerAnchor().id, "no turn at the reader's position").not.toBe("");
+  return scroller;
+}
+
+/** Away to y (whose composer area shows a steer row) and shown there. */
+async function awayToY(): Promise<void> {
+  click("pl-y", true);
+  await frames();
+  await activate("pl-y");
+  store.bumpMessages("pl-y", "load");
+  await Promise.resolve();
+  await frames();
+  await new Promise((r) => setTimeout(r, 400));
+}
+
 describe("a chat-to-chat switch whose composer area changes height", () => {
   it("lays out the outgoing transcript in neither half, and lands the parked chat exactly on return", async () => {
-    store.setSessions([chatOf("pl-x", 30), chatOf("pl-y", 30)]);
-    select("pl-x");
-    show("pl-x");
-    store.bumpMessages("pl-x", "load");
-    await Promise.resolve();
-    await frames();
-    const scroller = scroll.getScrollEl();
-    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
-    scroller.scrollTo({ top: 600, behavior: "instant" });
-    scroller.dispatchEvent(new Event("scroll"));
-    expect(scroll.readingState()).toBe("reading");
-    const parkedAt = scroller.scrollTop;
+    await readingX();
+    const parkedAt = readerAnchor();
+    await awayToY();
 
-    click("pl-y", true);
-    await frames();
-    await activate("pl-y");
-    store.bumpMessages("pl-y", "load");
-    await Promise.resolve();
-    await frames();
-
+    const yView = messages.transcriptViewFor("pl-y");
     spy = installLayoutSpy();
     spy.begin();
     click("pl-x", false);
     const gesture = spy.end();
     expect(gesture.forced, "layouts forced by the click").toBe(0);
+    spy.begin();
     await frames();
+    const frame = spy.end();
+    // A geometry read inside a skipped view lays it out, dirty or not.
+    expect(
+      frame.log
+        .filter((a) => a.target instanceof Node && yView?.contains(a.target) === true)
+        .map((a) => `${a.what}@${(a.target as Element).className}`),
+      "the gesture's frame read the skipped outgoing transcript",
+    ).toEqual([]);
 
     spy.begin();
     await activate("pl-x");
@@ -221,6 +280,50 @@ describe("a chat-to-chat switch whose composer area changes height", () => {
     expect(forced[0]?.kind, "the one forced layout is the restore's write").toBe("write");
     await frames();
     expect(scroll.readingState()).toBe("reading");
-    expect(Math.abs(scroller.scrollTop - parkedAt), "the parked chat moved").toBeLessThanOrEqual(1);
+    expect(readerAnchor(), "the parked chat moved").toEqual(parkedAt);
+  });
+
+  it("replays no entry transition in the parked chat's view on return", async () => {
+    await readingX();
+    const xView = messages.transcriptViewFor("pl-x");
+    expect(
+      xView?.querySelectorAll(".turn-footer, .turn-face").length,
+      "x renders no turn with an entry transition, so the case proves nothing",
+    ).toBeGreaterThan(0);
+    expect(runningIn(xView), "x's entry transitions were still running before the switch").toEqual(
+      [],
+    );
+    const parkedAt = readerAnchor();
+    await awayToY();
+
+    click("pl-x", false);
+    await frames();
+    await activate("pl-x");
+    await frames();
+    expect(
+      runningIn(xView),
+      "the parked chat's turns replayed their entry on return: its view lost its rendering state",
+    ).toEqual([]);
+    expect(readerAnchor(), "the parked chat moved").toEqual(parkedAt);
+  });
+
+  it("keeps the reader where they were on a return to the painted chat before the other showed", async () => {
+    const scroller = await readingX();
+    const at = readerAnchor();
+    const top = scroller.scrollTop;
+
+    click("pl-y", true);
+    await frames();
+    expect(scroller.scrollTop, "the covered scroller moved under the cover").toBe(top);
+    // Back to x before y's activation: x is still the painted chat, so the activation only lays
+    // its transcript out again (`tabs.ts` `runActivation` for the painted chat).
+    select("pl-x");
+    cover.holdCover("pl-x");
+    outer.style.height = "400px";
+    await frames();
+    cover.showTranscript();
+    cover.dropCover();
+    await frames();
+    expect(readerAnchor(), "the painted chat moved under the cover").toEqual(at);
   });
 });

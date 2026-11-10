@@ -84,7 +84,7 @@ import {
 installSwitchSuite();
 
 const style = document.createElement("style");
-style.textContent = loadCSS("40-a11y.css");
+style.textContent = loadCSS("13-messages.css") + loadCSS("40-a11y.css");
 document.head.appendChild(style);
 
 describe("a switch paints the target tab at once", () => {
@@ -126,25 +126,33 @@ describe("a switch paints the target tab at once", () => {
     page.resolve();
   });
 
-  it("takes the outgoing transcript out of layout in the click, and lays it out in the activation", async () => {
+  it("takes the outgoing transcript's turns out of layout in the click, keeping the scroller rendered, and lays them out in the activation", async () => {
     // The target's composer area may differ in height (a steer row, the queue), which would lay out
-    // the whole outgoing transcript under the cover in the gesture's frame.
+    // the whole outgoing transcript under the cover in the gesture's frame. Taking the scroller
+    // itself out of layout would discard every view's rendering state.
     const ids = await strip("a", "b");
     const page = fx.chat.page("b");
     const wrap = document.getElementById("messages-wrap");
-    const laidOut = (): boolean => (wrap?.getClientRects().length ?? 0) > 0;
-    expect(laidOut()).toBe(true);
+    const view = document.createElement("div");
+    view.className = "transcript-view is-active";
+    const turn = document.createElement("p");
+    turn.textContent = "a's turn";
+    view.appendChild(turn);
+    document.getElementById("messages")?.appendChild(view);
+    const rendered = (): boolean => (wrap?.getClientRects().length ?? 0) > 0;
+    expect(turn.checkVisibility()).toBe(true);
 
     clickRow(ids["b"] ?? "");
 
-    expect(laidOut(), "the click left the outgoing transcript in layout").toBe(false);
+    expect(turn.checkVisibility(), "the click left the outgoing turns in layout").toBe(false);
+    expect(rendered(), "the click took the scroller out of rendering").toBe(true);
     await frame();
     expect(coverUp()).toBe(true);
-    expect(laidOut(), "the gesture's frame laid out the outgoing transcript").toBe(false);
+    expect(turn.checkVisibility(), "the gesture's frame laid out the outgoing turns").toBe(false);
 
     await activationRan();
     expect(fx.chat.show).toHaveBeenCalledWith("b");
-    expect(laidOut(), "the activation left the transcript out of layout").toBe(true);
+    expect(turn.checkVisibility(), "the activation left the transcript out of layout").toBe(true);
     page.resolve();
   });
 
