@@ -105,7 +105,8 @@ func (h *Handler) ownedActionTarget(action string, l loc) string {
 
 // refuseOwned writes the 403 for a file action on an owned file, which only its owner writes.
 func refuseOwned(w http.ResponseWriter, action string, l loc, owned string) error {
-	slog.Warn("filebrowse: "+action+" blocked on an owned file", "path", l.abs, "owned", owned)
+	slog.Warn("filebrowse: file action blocked on an owned file",
+		"action", logsafe.Field(action), "path", logsafe.Field(l.abs), "owned", logsafe.Field(owned))
 	httpreply.Forbidden(w, filepath.Base(owned)+" is written through its editor; edit it instead")
 	return errHandled
 }

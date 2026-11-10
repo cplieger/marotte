@@ -122,7 +122,7 @@ func decodeWriteBody(w http.ResponseWriter, r *http.Request, l loc) (writeBody, 
 // staleError is an owner's check refusing the bytes on disk, which differ from the editor's.
 type staleError struct{ current []byte }
 
-func (e *staleError) Error() string { return errStaleWrite }
+func (*staleError) Error() string { return errStaleWrite }
 
 // writeOwned hands the save to l's owner, which reads, checks and writes under its own lock. The
 // answer carries the written bytes when the owner wrote other bytes than were sent.

@@ -142,14 +142,14 @@ func (d AgentDirs) Granted(ctx context.Context) (granted []string, refused map[s
 	return granted, refused, nil
 }
 
-// ValidatePatch judges patch against stored, the document it is merged into. A patch without
+// validatePatch judges patch against stored, the document it is merged into. A patch without
 // the key passes. Otherwise its additional_directories must be a list of strings naming no
 // entry twice, and Assess over that list may refuse only entries it already refuses over the
 // stored list; the first other refusal is returned with Assess's reason. So a write never
 // adds a refused entry or takes the grant from a kept one, and one refused today never blocks
 // removing or adding another. Run it under settings.Update's lock, so stored is what the patch
 // replaces.
-func (d AgentDirs) ValidatePatch(stored, patch map[string]json.RawMessage) error {
+func (d AgentDirs) validatePatch(stored, patch map[string]json.RawMessage) error {
 	raw, ok := patch[KeyAdditionalDirectories]
 	if !ok {
 		return nil

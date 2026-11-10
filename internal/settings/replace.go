@@ -20,8 +20,8 @@ var ErrRefused = errors.New("settings: content refused")
 
 type refusedError struct{ error }
 
-func (e refusedError) Is(target error) bool { return target == ErrRefused }
-func (e refusedError) Unwrap() error        { return e.error }
+func (refusedError) Is(target error) bool { return target == ErrRefused }
+func (e refusedError) Unwrap() error      { return e.error }
 
 // CheckPatch refuses a patch a settings write may not commit: each key's own value check and
 // the additional directories judged against stored, the document it replaces.
@@ -33,7 +33,7 @@ func CheckPatch(dirs AgentDirs, stored, patch map[string]json.RawMessage) error 
 			return err
 		}
 	}
-	return dirs.ValidatePatch(stored, patch)
+	return dirs.validatePatch(stored, patch)
 }
 
 // validateAgentIgnorePatch refuses an agent_ignore_files kiro-cli would refuse, or config.json
