@@ -393,6 +393,49 @@ describe("the composer, measured at real viewport sizes", () => {
     }
   });
 
+  it("spaces the mid-turn Send from Cancel as far apart as the pills read, with targets that still meet", async () => {
+    // A pill's border is a hairline in the row's own tone, so the eye measures the left group fill to fill; Send and
+    // Cancel draw theirs in their hue, so the eye measures border to border. Equal row gaps read as touching there.
+    const px = (v: string): number => Number.parseFloat(v);
+    for (const [w, h, tier] of [
+      [390, 844, "coarse"],
+      [1440, 900, "coarse"],
+      [390, 844, "fine"],
+      [1440, 900, "fine"],
+    ] as const) {
+      await bandsAt(w, h, tier);
+      const at = `${String(w)}x${String(h)} ${tier}`;
+      const { midTurn, cancel } = withMidTurnSend();
+      const role = document.getElementById("role-pill");
+      const options = document.getElementById("chat-options-btn");
+      if (role === null || options === null) {
+        throw new Error("the composer subtree did not mount");
+      }
+      const left =
+        options.getBoundingClientRect().left -
+        role.getBoundingClientRect().right +
+        px(getComputedStyle(role).borderRightWidth) +
+        px(getComputedStyle(options).borderLeftWidth);
+      const m = midTurn.getBoundingClientRect();
+      const c = cancel.getBoundingClientRect();
+      expect(left, `${at}: the pills read apart`).toBeGreaterThan(0);
+      expect(c.left - m.right, `${at}: Send's edge to Cancel's, as the pills read`).toBeCloseTo(
+        left,
+        1,
+      );
+      // The expander's inset counts from the padding edge, inside the border.
+      const mReach =
+        m.right -
+        px(getComputedStyle(midTurn).borderRightWidth) -
+        px(getComputedStyle(midTurn, "::after").right);
+      const cReach =
+        c.left +
+        px(getComputedStyle(cancel).borderLeftWidth) +
+        px(getComputedStyle(cancel, "::after").left);
+      expect(cReach - mReach, `${at}: the two targets meet without overlapping`).toBeCloseTo(0, 1);
+    }
+  });
+
   it("sizes Send's glyph box with the same token as the control beside it", async () => {
     // Send swaps faces, so no per-path ink correction can live on it: every face takes `--icon-ui`.
     await bandsAt(390, 844, "coarse");
