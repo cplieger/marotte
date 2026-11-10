@@ -205,6 +205,27 @@ function beginGrant(
     });
 }
 
+/** The clipboard API is absent outside a secure context (a plain-http LAN address) and can reject, so a failed
+ *  write selects the code for a manual copy instead of claiming "Copied". */
+async function copyDeviceCode(
+  btn: HTMLButtonElement,
+  codeEl: HTMLElement,
+  code: string,
+): Promise<void> {
+  let label: string;
+  try {
+    await navigator.clipboard.writeText(code);
+    label = "Copied";
+  } catch {
+    window.getSelection()?.selectAllChildren(codeEl);
+    label = "Copy failed";
+  }
+  btn.textContent = label;
+  setTimeout(() => {
+    btn.textContent = "Copy";
+  }, 2000);
+}
+
 /**
  * Render the device prompt into `host` and return the Cancel button. Built with `el()`, so no untrusted value is
  * parsed as HTML.
@@ -234,19 +255,11 @@ export function renderDevicePrompt(
     { type: "button", className: "btn-small forge-copy-btn" },
     "Copy",
   ) as HTMLButtonElement;
+  const codeEl = el("code", { className: "forge-device-code" }, start.user_code);
   copyBtn.addEventListener("click", () => {
-    void navigator.clipboard.writeText(start.user_code);
-    copyBtn.textContent = "Copied";
-    setTimeout(() => {
-      copyBtn.textContent = "Copy";
-    }, 2000);
+    void copyDeviceCode(copyBtn, codeEl, start.user_code);
   });
-  const codeRow = el(
-    "div",
-    { className: "forge-device-code-row" },
-    el("code", { className: "forge-device-code" }, start.user_code),
-    copyBtn,
-  );
+  const codeRow = el("div", { className: "forge-device-code-row" }, codeEl, copyBtn);
 
   const status = el(
     "div",
