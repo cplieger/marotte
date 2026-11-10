@@ -263,3 +263,28 @@ func TestCommandCaller_LabelIsOneShortSafeLine(t *testing.T) {
 		})
 	}
 }
+
+// marotte's resume after a failsafe compaction opens as an ordinary prompt of its own words, with no label and no
+// caller, marked automatic on its turn_open so the transcript names marotte as its sender.
+func TestLaunchEntry_AResumeOpensAnAutomaticPrompt(t *testing.T) {
+	roles := promptRolesOf(newBenchDeps())
+	opens := &openRecorder{scriptedAdmission: &scriptedAdmission{rec: &callRecorder{}}}
+	roles.turnOutcome = opens
+	join := &promptJoin{}
+	roles.lifecycle = join
+	roles.bridges = &admissionHost{hostDouble: newBenchDeps(), openErr: context.Canceled, rec: &callRecorder{}}
+	_, _ = launchEntry(t.Context(), roles, "c1", &EntryLaunch{
+		Kind: marotte.RunKindResume, Row: marotte.QueuedPrompt{ID: "m-resume", Text: "continue where you stopped"},
+		Res: testReservation("c1", true),
+	})
+	join.join()
+
+	prompts := opens.prompts()
+	if len(prompts) != 1 || prompts[0] == nil {
+		t.Fatalf("turn opens = %v, want the resume's prompt", prompts)
+	}
+	p := prompts[0]
+	if p.ID != "m-resume" || p.Text != "continue where you stopped" || p.Label != "" || p.Caller != nil || !p.Automatic {
+		t.Errorf("resume prompt = %+v, want m-resume's own words, no label, no caller, automatic", p)
+	}
+}

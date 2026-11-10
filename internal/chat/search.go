@@ -55,6 +55,8 @@ const (
 type Hit struct {
 	// Caller is set on a hit in a prompt or steer an API caller sent, so a result names who sent the words.
 	Caller *marotte.Caller `json:"caller,omitempty"`
+	// Automatic is set on a hit in a prompt marotte sent on its own (EntryPrompt.Automatic).
+	Automatic bool `json:"automatic,omitempty"`
 	// TurnID is the item's turn.
 	TurnID string `json:"turn_id"`
 	// EntryID is the item's anchor, its first member entry, which the client resolves the item's element by.

@@ -743,3 +743,25 @@ func TestWorkflowMessage_ACancelClearSettlesNamedRowsClearedWhenNoRewakeFollows(
 		t.Errorf("row stamps = %+v, want one cleared once a turn passed with no re-wake", d)
 	}
 }
+
+// KAS re-prompts what a cancel cleared whoever sent it, so the clear of marotte's failsafe stop is a cancel's, as the
+// reader's is: its epoch settles cleared and the clear records the cancel.
+func TestSteering_ACompactionStopRewakesAsAReaderStopDoes(t *testing.T) {
+	deps, tr := messageDeps(t)
+	deps.turns.chatTurn(testChat)
+	stepReport(t, tr, "success", "Landed the fix")
+	rows := steerRows(t, deps, testChat)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v, want one", rows)
+	}
+	stopTurnBy(deps, testChat, marotte.TurnStopCompaction)
+
+	clearSteering(t, tr, "notify-1")
+
+	if d := stampsByRow(t, deps)[rows[0].ID]; !clearedOnce(d) {
+		t.Errorf("row stamps = %+v, want one cleared at the stop", d)
+	}
+	if f := clearFacts(t, allChatEntries(deps, testChat)); len(f) != 1 || f[0].Cause != marotte.SteerClearCauseCancel {
+		t.Errorf("clear facts = %+v, want one recording a cancel", f)
+	}
+}

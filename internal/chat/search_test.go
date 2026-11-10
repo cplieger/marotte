@@ -1141,3 +1141,23 @@ func TestSearch_NamesTheAPICallerWhoseWordsMatched(t *testing.T) {
 		}
 	}
 }
+
+// A hit in marotte's own resume prompt says so, so a result never names the reader as its sender.
+func TestSearch_MarksAHitInMarottesResumeAsAutomatic(t *testing.T) {
+	resume := prompt("m-r", "the context window was nearly full")
+	resume.Automatic = true
+	entries, drawn := chatOf(
+		openTurn("t-1", 1, prompt("m-1", "watch the context window")),
+		openTurn("t-2", 2, resume),
+	)
+
+	hits := searchHits(entries, drawn, "context")
+	if len(hits) != 2 {
+		t.Fatalf("Search = %d hits, want 2: %+v", len(hits), hits)
+	}
+	for _, h := range hits {
+		if want := h.EntryID == "t-2"; h.Automatic != want {
+			t.Errorf("hit on %s automatic = %v, want %v", h.EntryID, h.Automatic, want)
+		}
+	}
+}

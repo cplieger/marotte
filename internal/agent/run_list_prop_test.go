@@ -36,6 +36,9 @@ type listWorld struct {
 	reached    map[string]int      // the shapes and events the run reached
 	idle       *runEntry           // a revert or summary whose caller waits on takeIdle
 	retryAhead map[string][]string // a retry's id -> the turn-kind entries pending ahead of it when it was listed
+	failsafeOf map[string]string   // a resume's id -> the compaction it follows
+	accepted   map[string]bool     // compactions whose call was accepted with no cancel
+	cancelled  map[string]bool     // compactions the reader cancelled while running
 }
 
 type worldTurn struct {
@@ -58,6 +61,7 @@ func newListWorld(t *testing.T, seed uint64) *listWorld {
 		stops: map[uint64]bool{}, turns: map[string]*worldTurn{}, tails: map[string]string{},
 		calls: map[string]*worldCall{}, composerBy: map[string]int{},
 		reached: map[string]int{}, retryAhead: map[string][]string{},
+		failsafeOf: map[string]string{}, accepted: map[string]bool{}, cancelled: map[string]bool{},
 	}
 }
 
@@ -113,6 +117,9 @@ func (w *listWorld) settle() {
 		w.reached["take "+string(e.kind)]++
 		if e.kind == marotte.RunKindRetry && before[e.id] {
 			w.fail("retry %s taken after a later wire turn or a stop overtook its turn", e.id)
+		}
+		if e.kind == marotte.RunKindResume && !w.accepted[w.failsafeOf[e.id]] {
+			w.fail("resume %s taken though its compaction %s was not accepted", e.id, w.failsafeOf[e.id])
 		}
 		for _, id := range w.retryAhead[e.id] {
 			if _, a := w.l.find(id); a != nil && a.state == marotte.RunPending {
@@ -200,6 +207,7 @@ func (w *listWorld) check() {
 	if compactions > 1 {
 		w.fail("%d compactions", compactions)
 	}
+	w.checkResume()
 	others := 0
 	for _, e := range live {
 		if !e.runEntry() {
@@ -235,6 +243,74 @@ func (w *listWorld) check() {
 		}
 	}
 	w.checkTaken()
+}
+
+// checkResume asserts the failsafe's rules: at most one resume, and a resume waiting behind its compaction or after
+// that compaction was accepted.
+func (w *listWorld) checkResume() {
+	resumes := w.where(func(e *runEntry) bool { return e.kind == marotte.RunKindResume })
+	if len(resumes) > 1 {
+		w.fail("%d resumes", len(resumes))
+	}
+	for _, r := range resumes {
+		if r.live() {
+			continue
+		}
+		c := w.failsafeOf[r.id]
+		ci, ce := w.l.find(c)
+		ri, _ := w.l.find(r.id)
+		if (ce == nil || ci > ri) && !w.accepted[c] {
+			w.fail("resume %s waits with its compaction %s neither ahead of it nor accepted", r.id, c)
+		}
+	}
+}
+
+// failsafe is a reading at the failsafe point during the turn of a live entry, or a reading under the point.
+func (w *listWorld) failsafe() {
+	if w.r.IntN(3) == 0 {
+		w.l.usageUnderThePoint()
+		return
+	}
+	turn := ""
+	if h := w.pick(w.live()); h != nil {
+		turn = h.turnID
+	}
+	w.tok++
+	token := w.tok
+	w.ids++
+	resumeID := "fs-" + strconv.Itoa(w.ids)
+	snap := w.snapshot()
+	plan := w.l.failsafe(failsafeFacts{turnID: turn, resumeID: resumeID, token: token})
+	if plan.arm == stopNothing {
+		if !slices.EqualFunc(snap, w.l.project(), runEntryEqual) {
+			w.fail("a failsafe that stopped nothing changed the list")
+		}
+		return
+	}
+	if plan.arm != stopRunning || plan.entry == nil || plan.entry.turnID != turn {
+		w.fail("the failsafe for %s answered %+v", turn, plan)
+	}
+	w.reached["failsafe fired"]++
+	c := w.l.compaction()
+	if c == nil {
+		w.fail("the failsafe listed no compaction")
+	}
+	if _, r := w.l.find(resumeID); r != nil {
+		w.failsafeOf[resumeID] = c.id
+	}
+	w.stops[token] = true
+	w.stopSeq = w.nextSeq
+	if w.r.IntN(4) == 0 {
+		w.reached["failsafe undone"]++
+		w.l.stopUndone(token, func(id string) bool { return w.turns[id] != nil })
+		if _, r := w.l.find(resumeID); r != nil {
+			w.fail("an undone failsafe left its resume %s", resumeID)
+		}
+		return
+	}
+	if tr := w.turns[turn]; tr != nil {
+		tr.stopped = true
+	}
 }
 
 // checkTaken asserts the head rule's liveness: a pending entry the rule allows is taken.
@@ -474,6 +550,9 @@ func (w *listWorld) endCall() {
 	if !accepted && w.r.IntN(3) == 0 {
 		err = errors.New("model failure")
 	}
+	if accepted && !w.cancelled[id] {
+		w.accepted[id] = true
+	}
 	w.l.compactionEnded(id, accepted, err)
 	if _, still := w.l.find(id); still != nil {
 		w.reached["compaction requeued"]++
@@ -594,7 +673,7 @@ func (w *listWorld) sendNow() {
 }
 
 func (w *listWorld) do() {
-	switch w.r.IntN(23) {
+	switch w.r.IntN(24) {
 	case 0, 1, 2:
 		w.submit()
 	case 3:
@@ -675,6 +754,9 @@ func (w *listWorld) do() {
 		}
 	case 19:
 		if c := w.l.compaction(); c != nil {
+			if c.state == marotte.RunRunning {
+				w.cancelled[c.id] = true
+			}
 			w.l.cancelCompaction(c.id)
 		}
 	case 20:
@@ -683,6 +765,8 @@ func (w *listWorld) do() {
 		w.gate = !w.gate && w.r.IntN(4) == 0
 	case 22:
 		w.takeIdle()
+	case 23:
+		w.failsafe()
 	}
 	w.l.takeEffects()
 	w.settle()
@@ -765,6 +849,7 @@ func TestRunList_Invariants(t *testing.T) {
 		"turn under a compaction", "wire turn beside a taken turn", "wire turn beside a sent prompt",
 		"fold turn ahead of its compaction", "run entry", "take row", "take compaction", "take unread", "take retry",
 		"compaction requeued", "withdraw", "stop unsent", "stop running", "stop undone", "idle revert", "idle turn",
+		"failsafe fired", "failsafe undone", "take resume",
 	} {
 		if reached[want] == 0 {
 			t.Errorf("the generator never reached %q", want)
