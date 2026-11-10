@@ -1,6 +1,7 @@
 // A switch paints the target tab at once: the click writes the strip, the device view, the active
-// chat and the shared cover, and nothing else; the target's view is shown in a task after that
-// frame paints. Real tabs.ts against the fake tab server, the chat opener's halves faked.
+// chat and the shared cover, with the outgoing transcript out of layout, and nothing else; the
+// target's view is shown in a task after that frame paints. Real tabs.ts against the fake tab
+// server, the chat opener's halves faked.
 import { describe, it, expect, vi } from "vitest";
 import type * as TabsDrag from "./tabs-drag.js";
 
@@ -66,6 +67,7 @@ vi.mock("./api-client.js", async (importOriginal) => ({
 
 import { tabIdFor, getActiveTabId, closeTab } from "./tabs.js";
 import { observeStamp } from "./subject-versions.js";
+import { loadCSS } from "./__test-helpers__/css-rules.js";
 import { fx, installSwitchSuite, strip } from "./__test-helpers__/tab-switch-suite.js";
 import {
   activationRan,
@@ -80,6 +82,10 @@ import {
 } from "./__test-helpers__/tab-switch-mocks.js";
 
 installSwitchSuite();
+
+const style = document.createElement("style");
+style.textContent = loadCSS("40-a11y.css");
+document.head.appendChild(style);
 
 describe("a switch paints the target tab at once", () => {
   it("writes the strip, the active chat and the cover in the click, and shows the view after the frame", async () => {
@@ -117,6 +123,28 @@ describe("a switch paints the target tab at once", () => {
     expect(page.signal?.aborted).toBe(false);
     // The page is still held: nothing has put B's turns on screen, so the cover stays.
     expect(coverUp()).toBe(true);
+    page.resolve();
+  });
+
+  it("takes the outgoing transcript out of layout in the click, and lays it out in the activation", async () => {
+    // The target's composer area may differ in height (a steer row, the queue), which would lay out
+    // the whole outgoing transcript under the cover in the gesture's frame.
+    const ids = await strip("a", "b");
+    const page = fx.chat.page("b");
+    const wrap = document.getElementById("messages-wrap");
+    const laidOut = (): boolean => (wrap?.getClientRects().length ?? 0) > 0;
+    expect(laidOut()).toBe(true);
+
+    clickRow(ids["b"] ?? "");
+
+    expect(laidOut(), "the click left the outgoing transcript in layout").toBe(false);
+    await frame();
+    expect(coverUp()).toBe(true);
+    expect(laidOut(), "the gesture's frame laid out the outgoing transcript").toBe(false);
+
+    await activationRan();
+    expect(fx.chat.show).toHaveBeenCalledWith("b");
+    expect(laidOut(), "the activation left the transcript out of layout").toBe(true);
     page.resolve();
   });
 
