@@ -132,11 +132,7 @@ func (a *autoCompactor) noteUsage(ctx context.Context, chatID marotte.ChatID, pc
 		return
 	}
 	turn := lc.compactTurnLocked()
-	if lc.run.liveLen() > 0 && lc.run.crossing(turn) {
-		if _, joined := lc.run.requestCompaction(marotte.RunFromThreshold, turn); !joined {
-			slog.Info("auto-compaction listed: the context reached the point", "chat_id", chatID, "context_pct", pct)
-		}
-	}
+	listCrossingLocked(lc, turn, pct)
 	var rs command.RunStop
 	if pct >= compactionFailsafePct && !parked && goesOn == turn {
 		rs = a.failsafeLocked(lc, turn)
@@ -146,6 +142,17 @@ func (a *autoCompactor) noteUsage(ctx context.Context, chatID marotte.ChatID, pc
 	if rs.Arm == command.StopCancel {
 		slog.Warn("compaction failsafe: stopping the turn to compact it", "chat_id", chatID, "turn", turn, "context_pct", pct)
 		a.spawn(func() { a.stopForCompaction(lc, rs) })
+	}
+}
+
+// listCrossingLocked lists turn's compaction when a reading inside it reaches the point for the first time.
+// Caller holds lc.mu.
+func listCrossingLocked(lc *chatLifecycle, turn string, pct float64) {
+	if lc.run.liveLen() == 0 || !lc.run.crossing(turn) {
+		return
+	}
+	if _, joined := lc.run.requestCompaction(marotte.RunFromThreshold, turn); !joined {
+		slog.Info("auto-compaction listed: the context reached the point", "chat_id", lc.chatID, "context_pct", pct)
 	}
 }
 
