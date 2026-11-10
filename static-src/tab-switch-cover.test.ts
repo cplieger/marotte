@@ -414,15 +414,21 @@ describe("the cover's release fade shows the content under it from its first fra
     });
   });
 
-  it("runs no fade under reduced motion", async () => {
+  it("hides the cover in the releasing task under reduced motion, running no fade", async () => {
     await emulateA11yMedia({ reducedMotion: "reduce" });
     try {
       withMotionCSS(() => {
-        const fade = releasedFade();
-        expect(Number(fade.effect?.getComputedTiming().duration)).toBeLessThanOrEqual(0.01);
-        fade.finish();
+        const cover = document.getElementById("transcript-cover") as HTMLElement;
+        expect(cover.hidden, "the paint that releases the cover shows the chat").toBe(true);
+        expect(cover.getAttribute("data-state")).toBeNull();
+        expect(cover.getAnimations().map((a) => (a as CSSAnimation).animationName)).not.toContain(
+          "vk-fade-out",
+        );
       });
+      coverModule.holdCover("cv-b");
+      expect(coverUp(), "the next hold shows the cover again").toBe(true);
     } finally {
+      coverModule.dropCover();
       await resetA11yMedia();
     }
   });
