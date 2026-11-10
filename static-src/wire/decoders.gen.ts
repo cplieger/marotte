@@ -2013,12 +2013,12 @@ export const decodeHit: Decoder<Hit> = (v) => {
     if ($v !== undefined && $v !== null) out.caller = decodeCaller(own(o, "caller"));
   }
   {
-    const $v = own(o, "automatic");
-    if ($v !== undefined && $v !== null) out.automatic = reqBool(o, "automatic", "$.hit");
-  }
-  {
     const $v = own(o, "lane");
     if ($v !== undefined && $v !== null) out.lane = reqStr(o, "lane", "$.hit");
+  }
+  {
+    const $v = own(o, "automatic");
+    if ($v !== undefined && $v !== null) out.automatic = reqBool(o, "automatic", "$.hit");
   }
   return out;
 };

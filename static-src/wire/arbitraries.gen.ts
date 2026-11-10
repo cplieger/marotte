@@ -1361,7 +1361,6 @@ const arbModel = fc.letrec<{
   Hit: fc.record(
     {
       caller: tie("Caller"),
-      automatic: fc.boolean(),
       turn_id: fc.string(),
       entry_id: fc.string(),
       lane: fc.string(),
@@ -1369,6 +1368,7 @@ const arbModel = fc.letrec<{
       excerpt: fc.string(),
       segments: fc.array(arbSegmentKind, { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       turn: fc.double({ noNaN: true, noDefaultInfinity: true }),
+      automatic: fc.boolean(),
     },
     { requiredKeys: ["turn_id", "entry_id", "kind", "excerpt", "segments", "turn"] },
   ),

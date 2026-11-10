@@ -754,14 +754,20 @@ func (l *runList) compactionEnded(id string, accepted bool, err error) {
 		e.state = marotte.RunPending
 		l.insert(l.frontOfPending(false), e)
 	default:
-		e.done.finish(false, false, err)
-		l.remove(e)
-		if failsafe {
-			l.dropResume()
-		}
-		if (!e.waiter || failsafe) && !errors.Is(err, marotte.ErrChatClosedDuringCall) {
-			l.fx.toast = append(l.fx.toast, e)
-		}
+		l.compactionNotRun(e, err, failsafe)
+	}
+}
+
+// compactionNotRun removes a compaction call that failed or was refused. A failsafe compaction's resume goes with it,
+// and its failure is toasted even when a /compact waits on it, since the toast says the stopped turn was not continued.
+func (l *runList) compactionNotRun(e *runEntry, err error, failsafe bool) {
+	e.done.finish(false, false, err)
+	l.remove(e)
+	if failsafe {
+		l.dropResume()
+	}
+	if (!e.waiter || failsafe) && !errors.Is(err, marotte.ErrChatClosedDuringCall) {
+		l.fx.toast = append(l.fx.toast, e)
 	}
 }
 

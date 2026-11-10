@@ -55,8 +55,6 @@ const (
 type Hit struct {
 	// Caller is set on a hit in a prompt or steer an API caller sent, so a result names who sent the words.
 	Caller *marotte.Caller `json:"caller,omitempty"`
-	// Automatic is set on a hit in a prompt marotte sent on its own (EntryPrompt.Automatic).
-	Automatic bool `json:"automatic,omitempty"`
 	// TurnID is the item's turn.
 	TurnID string `json:"turn_id"`
 	// EntryID is the item's anchor, its first member entry, which the client resolves the item's element by.
@@ -72,6 +70,8 @@ type Hit struct {
 	Segments []SegmentKind `json:"segments"`
 	// Turn is the 1-based session-absolute ordinal (turn_open's n), for marking the rail beyond the window.
 	Turn int `json:"turn"`
+	// Automatic is set on a hit in a prompt marotte sent on its own (EntryPrompt.Automatic).
+	Automatic bool `json:"automatic,omitempty"`
 }
 
 // searchQuery is a parsed query: scoped filters plus the free text's matcher.

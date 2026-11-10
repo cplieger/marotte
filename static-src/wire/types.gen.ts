@@ -1828,8 +1828,6 @@ export interface GovernanceStatePayload {
 export interface Hit {
   /** Caller is set on a hit in a prompt or steer an API caller sent, so a result names who sent the words. */
   caller?: Caller;
-  /** Automatic is set on a hit in a prompt marotte sent on its own (EntryPrompt.Automatic). */
-  automatic?: boolean;
   /** TurnID is the item's turn. */
   turn_id: string;
   /** EntryID is the item's anchor, its first member entry, which the client resolves the item's element by. */
@@ -1849,6 +1847,8 @@ export interface Hit {
   segments: SegmentKind[];
   /** Turn is the 1-based session-absolute ordinal (turn_open's n), for marking the rail beyond the window. */
   turn: number;
+  /** Automatic is set on a hit in a prompt marotte sent on its own (EntryPrompt.Automatic). */
+  automatic?: boolean;
 }
 
 /**
