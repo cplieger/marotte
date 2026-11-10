@@ -123,8 +123,8 @@ class PromptInputController {
   private readonly held = new Map<string, object>();
 
   /** Send whatever is in the composer. THE send path: the form's submit handler, Enter, the
-   *  mid-turn Send and the keyboard shortcut all call this, and submit.ts decides what a send
-   *  means. Neither of the two ways of going through the form works. */
+   *  mid-turn Send and the keyboard shortcut all call this, and the server's run order decides
+   *  where the prompt goes. Neither of the two ways of going through the form works. */
   sendComposer(): void {
     const raw = $.promptInput.value;
     const text = raw.trim();

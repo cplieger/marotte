@@ -541,12 +541,12 @@ export const unqueuePrompt = transportAction<{ chatID: string; messageID: string
 
 /** Sends one queued follow-up next. `stop` is the `run.cancel` the row's arrow was drawn against: the
  *  server stops that turn only while it is still the lone live turn, whose close then sends the row,
- *  and with no `stop` it moves the row and stops nothing. No scope: like cancel, it must not queue
+ *  and an empty `stop` moves the row and stops nothing. No scope: like cancel, it must not queue
  *  behind an in-flight send. `idempotencyKey`: a retry must not stop the turn the first attempt
  *  opened for this row. `error: false`: the dock reports a refusal in the server's words. Resolves
- *  true when a stop was asked and stopped nothing. */
+ *  true when the server stopped nothing. */
 export const sendQueuedNow = defineAction<
-  { chatID: string; messageID: string; stop?: string },
+  { chatID: string; messageID: string; stop: string },
   boolean
 >({
   name: "chat.send_queued_now",
@@ -558,7 +558,7 @@ export const sendQueuedNow = defineAction<
       {
         type: "send_queued_now",
         chat_id: chatID,
-        payload: { message_id: messageID, ...(stop !== undefined ? { stop } : {}) },
+        payload: { message_id: messageID, stop },
         ...(ctx?.idempotencyKey === undefined
           ? {}
           : { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }),
@@ -569,7 +569,7 @@ export const sendQueuedNow = defineAction<
       throw refusalOf(r, `send failed with status ${String(r.status)}`);
     }
     applyRun(chatID, runOfAnswer(r.body));
-    return stop !== undefined && !stopped(r);
+    return !stopped(r);
   },
   retryable: retryNetwork,
   retry: RETRY_STANDARD,

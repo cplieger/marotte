@@ -563,6 +563,23 @@ func TestRunOrder_ASendNowPressedAfterItsTurnClosedStopsNothing(t *testing.T) {
 		}
 		waitFor(t, func() bool { return len(br.notified(marotte.MethodCancel)) == 1 })
 	})
+	t.Run("empty stop", func(t *testing.T) {
+		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+		h.stagePromptTurn(t, "c1")
+		queueDuring(t, h, "m-q1", "m-q2")
+		rec := postCmd(t, h, marotte.ClientCommand{
+			Type: marotte.CmdSendQueuedNow, ChatID: "c1", Payload: json.RawMessage(`{"message_id":"m-q2","stop":""}`),
+		})
+		if rec.Code != http.StatusOK {
+			t.Errorf("send_queued_now = %d %s, want 200", rec.Code, rec.Body.String())
+		}
+		staysFalse(t, 100*time.Millisecond, func() bool { return len(br.notified(marotte.MethodCancel)) > 0 },
+			"a press naming no turn stopped the lone running turn")
+		got := runStates(t, cs, "c1")
+		if len(got) != 3 || got[1] != "m-q2 pending" || got[2] != "m-q1 pending" {
+			t.Errorf("list = %v, want the running turn, then m-q2 and m-q1 pending", got)
+		}
+	})
 }
 
 // A prompt sent while kiro-cli reports a run marotte has no turn for is answered at once as queued, and goes when
@@ -915,6 +932,44 @@ func TestRunOrder_ACancelAfterATakenRowsTurnOpenedLeavesOneCancelledTurn(t *test
 	}
 }
 
+// Switching Queue messages on mid-turn republishes the run order under a newer version, so a page holding the list
+// takes the new verb; the life's last write still lands after it.
+func TestRunOrder_SwitchingTheInterruptModeMidTurnRepublishesTheVerb(t *testing.T) {
+	h, cs, br, tab := closeTabHub(t)
+	t.Cleanup(func() { shutdownHub(t, h) })
+	br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
+	runPrompt(t, h, cs, "c1", "m-first")
+	h.stagePromptTurn(t, "c1")
+	queueDuring(t, h, "m-q1")
+	before := runView(t, cs, "c1")
+	if before.Send != marotte.SendSteer {
+		t.Fatalf("Setup: run.send = %q, want steer", before.Send)
+	}
+
+	payload, err := json.Marshal(marotte.SetInterruptModeCommand{Mode: marotte.InterruptQueue})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdSetInterruptMode, ChatID: "c1", Payload: payload}); rec.Code != http.StatusOK {
+		t.Fatalf("set_interrupt_mode = %d %s", rec.Code, rec.Body.String())
+	}
+	after := runView(t, cs, "c1")
+	if after.Version <= before.Version {
+		t.Errorf("run.version = %d after the switch, want above %d", after.Version, before.Version)
+	}
+	if after.Send != marotte.SendQueue {
+		t.Errorf("run.send = %q after the switch, want queue", after.Send)
+	}
+
+	if code := postCloseTab(t, h, tab); code != http.StatusOK {
+		t.Fatalf("close = %d", code)
+	}
+	awaitTeardown(t, h, "c1")
+	if got := runStates(t, cs, "c1"); !slices.Equal(got, []string{"m-q1 paused"}) {
+		t.Errorf("list the closed life left = %v, want [m-q1 paused]", got)
+	}
+}
+
 // reopenOnFreshSession reopens c1's tab with the engine minting a new session that answers every prompt.
 func reopenOnFreshSession(t *testing.T, h *Runtime) {
 	t.Helper()
@@ -992,6 +1047,65 @@ func TestRunOrder_ACompactionBehindAFoldOpenedTurnClosesItThenRuns(t *testing.T)
 	}
 }
 
+// A compaction waiting for its fold turn's close tail sleeps until the chat changes: it wakes the chat's waiters only
+// when one of its looks changed the list, so the wait never spins against the tail it waits for.
+func TestRunOrder_ACompactionWaitingOnItsFoldTurnsTailWakesNoWaiterMeanwhile(t *testing.T) {
+	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+	br.deliver(newChunkMsg("kiro-cli on its own"))
+	waitFor(t, func() bool { return h.coord.turns.live("c1") })
+	holdTail, inTail := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	tailHooks(h, func(_ marotte.ChatID, ended bool) {
+		if !ended {
+			once.Do(func() {
+				close(inTail)
+				<-holdTail
+			})
+		}
+	})
+	t.Cleanup(func() {
+		select {
+		case <-holdTail:
+		default:
+			close(holdTail)
+		}
+	})
+	compacted := make(chan struct{})
+	go func() {
+		defer close(compacted)
+		_, _ = h.RequestCompact(context.WithoutCancel(t.Context()), "c1")
+	}()
+	<-inTail
+	waitFor(t, func() bool {
+		return slices.Equal(runStates(t, cs, "c1"), []string{"wire closing", "compaction starting"})
+	})
+
+	lc, ok := h.coord.turns.lookup("c1")
+	if !ok {
+		t.Fatal("Setup: no lifecycle for c1")
+	}
+	wakes := 0
+	window := time.NewTimer(200 * time.Millisecond)
+	defer window.Stop()
+	for counting := true; counting; {
+		lc.mu.Lock()
+		changed := lc.changed
+		lc.mu.Unlock()
+		select {
+		case <-changed:
+			wakes++
+		case <-window.C:
+			counting = false
+		}
+	}
+	if wakes > 5 {
+		t.Errorf("the chat's waiters were woken %d times in 200 ms while the fold turn's tail was held, want at most 5", wakes)
+	}
+	close(holdTail)
+	waitForCall(t, br, marotte.MethodSessionCompact)
+	<-compacted
+}
+
 // liveRunCancel is the entry a Cancel with no target stops, as the header names it.
 func liveRunCancel(t *testing.T, cs *testChatStore) string {
 	t.Helper()
@@ -1033,6 +1147,50 @@ func TestRunOrder_AWireTurnBesideASentUnboundPromptIsOnTheList(t *testing.T) {
 		t.Errorf("session/cancel sent %d times, want 1 for both turns", n)
 	}
 	open(0)
+}
+
+// A Cancel naming the sent prompt beside kiro-cli's turn (a page that has not seen the wire turn's header yet) stops
+// both turns as the wire turn's id does, and the message queued behind them waits for the next turn.
+func TestRunOrder_ACancelNamingThePromptBesideAWireTurnPausesTheRows(t *testing.T) {
+	h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
+	open := promptGates(t, br)
+	if got := ackAs(t, postCmd(t, h, promptCmd("m-1", "sent, not bound"))); got != "started" {
+		t.Fatalf("Setup: prompt answered %s", got)
+	}
+	waitFor(t, func() bool { return countOf(br.callLog(), marotte.MethodPrompt) == 2 })
+	br.deliver(newPromptTurnStartMsg("another-tag"))
+	waitFor(t, func() bool { return slices.Contains(runStates(t, cs, "c1"), "wire running") })
+	queueDuring(t, h, "m-q1")
+	if got := runStates(t, cs, "c1"); !slices.Equal(got, []string{"wire running", "m-1 running", "m-q1 pending"}) {
+		t.Fatalf("Setup: list = %v, want [wire running, m-1 running, m-q1 pending]", got)
+	}
+
+	if rec := postCmd(t, h, cancelCmd(`{"target":"m-1"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("cancel = %d %s", rec.Code, rec.Body.String())
+	}
+	waitFor(t, func() bool { return len(br.notified(marotte.MethodCancel)) == 1 })
+	if got := runStates(t, cs, "c1"); !slices.Equal(got, []string{"wire stopping", "m-1 stopping", "m-q1 paused"}) {
+		t.Errorf("list after the cancel = %v, want both stopping and m-q1 paused", got)
+	}
+	br.setCallResult(marotte.MethodPrompt, json.RawMessage(`{"stopReason":"cancelled"}`))
+	br.deliver(br.promptTurnStartMsg())
+	open(0)
+	waitFor(t, func() bool {
+		got := runStates(t, cs, "c1")
+		return len(got) == 1 && got[0] == "m-q1 paused"
+	})
+	staysFalse(t, 200*time.Millisecond, func() bool { return slices.Contains(promptIDs(t, cs, "c1"), "m-q1") },
+		"the row a stopped turn left waiting was sent before the next turn")
+
+	br.setCallResult(marotte.MethodPrompt, json.RawMessage(`{"stopReason":"end_turn"}`))
+	if got := ackAs(t, postCmd(t, h, promptCmd("m-next", "the next turn"))); got != "started" {
+		t.Errorf("the next prompt answered %s, want started", got)
+	}
+	open(1)
+	open(2)
+	if !eventually(func() bool { return opensInOrder(t, cs, "m-first", "m-1", "m-next", "m-q1") }) {
+		t.Errorf("turns opened = %v, want m-first, m-1, m-next, m-q1", promptIDs(t, cs, "c1"))
+	}
 }
 
 // A wire turn opening between a turn end's compaction take and its call puts the compaction back: compact is written

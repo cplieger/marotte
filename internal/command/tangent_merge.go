@@ -120,7 +120,7 @@ func admitMerge(ctx context.Context, tangents TangentAccess, merges *tangentMerg
 	deliveryID := ids.NewMessageID()
 	if admitErr := merges.admit(ctx, key, parent, deliveryID); admitErr != nil {
 		roles.admission.ReleaseTurnReservation(res)
-		roles.runq.SummaryLaunched(key.tangent, entryID, "", admitErr)
+		roles.runq.SummaryLaunched(key.tangent, entryID, res, "", admitErr)
 		slog.Error("tangent merge: the merge could not be recorded", "chat_id", key.tangent, keyError, admitErr)
 		return "", "", StatusError(http.StatusInternalServerError, admitErr)
 	}
@@ -129,7 +129,7 @@ func admitMerge(ctx context.Context, tangents TangentAccess, merges *tangentMerg
 	roles.lifecycle.InflightAdd(1)
 	p := &marotte.PromptCommand{Text: tangentSummaryPrompt, MessageID: ids.NewMessageID(), DisplayText: tangentSummaryLabel, ForAgent: true}
 	turnID, err := startPrompt(ctx, roles, key.tangent, p, &launch{res: res, awaited: true})
-	roles.runq.SummaryLaunched(key.tangent, entryID, turnID, err)
+	roles.runq.SummaryLaunched(key.tangent, entryID, res, turnID, err)
 	if err != nil {
 		roles.lifecycle.InflightDone()
 		if aErr := merges.abandon(ctx, key); aErr != nil {

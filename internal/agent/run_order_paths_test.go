@@ -82,7 +82,7 @@ func foldOpen(t *testing.T, cs *testChatStore, br *fakeBridge) {
 // Every path that opens, folds, closes or reports a turn, with the entry it becomes, how that entry ends, what
 // Cancel writes for it and where a compaction asked for behind it goes.
 func TestRunOrder_TurnPaths(t *testing.T) {
-	t.Run("P1 a taken entry's prompt turn", func(t *testing.T) {
+	t.Run("a taken entry's prompt turn", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		open := promptGates(t, br)
 		br.setCallResult(marotte.MethodPrompt, json.RawMessage(`{"stopReason":"cancelled"}`))
@@ -103,7 +103,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("P2 a bracketed wire turn", func(t *testing.T) {
+	t.Run("a bracketed wire turn", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		wireOpen(t, cs, br)
 		if v := runView(t, cs, "c1"); len(v.Entries) != 1 || !v.Entries[0].Steerable || v.Entries[0].Yields {
@@ -121,7 +121,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("P3 a fold-opened wire turn", func(t *testing.T) {
+	t.Run("a fold-opened wire turn", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		foldOpen(t, cs, br)
 		if v := runView(t, cs, "c1"); len(v.Entries) != 1 || v.Entries[0].Steerable || !v.Entries[0].Yields {
@@ -131,7 +131,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		cancelHead(t, h, cs, br, 1)
 	})
 
-	t.Run("P4 a wire turn while a taken entry's turn has not opened", func(t *testing.T) {
+	t.Run("a wire turn while a taken entry's turn has not opened", func(t *testing.T) {
 		h, cs, br, open, held, releaseOpen := takenRowHub(t)
 		open(0)
 		<-held
@@ -154,7 +154,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("P5 a wire turn beside a sent unbound prompt", func(t *testing.T) {
+	t.Run("a wire turn beside a sent unbound prompt", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		open := promptGates(t, br)
 		if code := postPrompt(t, h, "1"); code != http.StatusOK {
@@ -172,7 +172,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		open(0)
 	})
 
-	t.Run("P6 a wire turn under a running compaction", func(t *testing.T) {
+	t.Run("a wire turn under a running compaction", func(t *testing.T) {
 		h, cs, br, release := compactingHubIn(t, "/tmp/work")
 		wireOpen(t, cs, br)
 		if got := runStates(t, cs, "c1"); !slices.Equal(got, []string{"compaction running", "wire running"}) {
@@ -183,7 +183,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		release()
 	})
 
-	t.Run("P7 a wire turn before a taken compaction is written", func(t *testing.T) {
+	t.Run("a wire turn before a taken compaction is written", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		entered, releaseStart := make(chan struct{}), make(chan struct{})
 		withCompactionStartHook(t, func(marotte.ChatID) {
@@ -205,7 +205,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		waitForCall(t, br, marotte.MethodSessionCompact)
 	})
 
-	t.Run("P8 a wire turn in a closing entry's tail replaces it", func(t *testing.T) {
+	t.Run("a wire turn in a closing entry's tail replaces it", func(t *testing.T) {
 		_, cs, br, turnID := heldCleanClose(t)
 		wireOpen(t, cs, br)
 		got := runStates(t, cs, "c1")
@@ -214,7 +214,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("P9 a wire turn while a run entry stands for kiro-cli's run replaces it", func(t *testing.T) {
+	t.Run("a wire turn while a run entry stands for kiro-cli's run replaces it", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		h.coord.WireTurnActivity("c1", true)
 		waitFor(t, func() bool { return slices.Equal(runStates(t, cs, "c1"), []string{"run running"}) })
@@ -224,7 +224,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("P10 a turn_start under an acked turn closes it and opens the next", func(t *testing.T) {
+	t.Run("a turn_start under an acked turn closes it and opens the next", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		wireOpen(t, cs, br)
 		first := runView(t, cs, "c1").Entries[0].ID
@@ -236,7 +236,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		openTurnsListed(t, h)
 	})
 
-	t.Run("F1 a frame folding into the open turn changes nothing", func(t *testing.T) {
+	t.Run("a frame folding into the open turn changes nothing", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		wireOpen(t, cs, br)
 		before := runView(t, cs, "c1").Entries
@@ -246,7 +246,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		openTurnsListed(t, h)
 	})
 
-	t.Run("F2 a turn_start during a fold-opened turn opens a new bracketed one", func(t *testing.T) {
+	t.Run("a turn_start during a fold-opened turn opens a new bracketed one", func(t *testing.T) {
 		_, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		foldOpen(t, cs, br)
 		fold := runView(t, cs, "c1").Entries[0].ID
@@ -260,7 +260,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("C1 a prompt's answer closes its turn and the next row goes", func(t *testing.T) {
+	t.Run("a prompt's answer closes its turn and the next row goes", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		open := promptGates(t, br)
 		if code := postPrompt(t, h, "a"); code != http.StatusOK {
@@ -272,7 +272,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		waitFor(t, func() bool { return opensInOrder(t, cs, "m-a", "m-q1") })
 	})
 
-	t.Run("C2 a failed prompt's turn pauses the rows behind it", func(t *testing.T) {
+	t.Run("a failed prompt's turn pauses the rows behind it", func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 		id, _ := h.stagePromptTurn(t, "c1")
 		queueDuring(t, h, "m-q1")
@@ -280,7 +280,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		waitFor(t, func() bool { return slices.Equal(runStates(t, cs, "c1"), []string{"m-q1 paused"}) })
 	})
 
-	t.Run("C3 kiro-cli's clean turn_end unpauses the rows", func(t *testing.T) {
+	t.Run("kiro-cli's clean turn_end unpauses the rows", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		seedQueue(t, cs, "c1", marotte.QueuedPrompt{ID: "m-q0", Text: "paused"})
 		wireOpen(t, cs, br)
@@ -290,7 +290,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		waitFor(t, func() bool { return slices.Contains(promptIDs(t, cs, "c1"), "m-q0") })
 	})
 
-	t.Run("C4 a lost bracket closes the turn it supersedes", func(t *testing.T) {
+	t.Run("a lost bracket closes the turn it supersedes", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		wireOpen(t, cs, br)
 		first := runView(t, cs, "c1").Entries[0].Turn
@@ -299,7 +299,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		openTurnsListed(t, h)
 	})
 
-	t.Run("C5 a stopped turn's close lives through the KAS hold", func(t *testing.T) {
+	t.Run("a stopped turn's close lives through the KAS hold", func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 		stopUnderHold(t, h)
 		got := runStates(t, cs, "c1")
@@ -310,7 +310,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		waitFor(t, func() bool { return !listLive(h, "c1") })
 	})
 
-	t.Run("C6 kiro-cli's idle report closes a bracketed turn after the grace", func(t *testing.T) {
+	t.Run("kiro-cli's idle report closes a bracketed turn after the grace", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		h.coord.idleEndGrace = 20 * time.Millisecond
 		wireOpen(t, cs, br)
@@ -319,7 +319,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		waitFor(t, func() bool { return !listLive(h, "c1") })
 	})
 
-	t.Run("C7 a prompt's send closes a fold-opened turn and takes its place", func(t *testing.T) {
+	t.Run("a prompt's send closes a fold-opened turn and takes its place", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		foldOpen(t, cs, br)
 		if got := ackAs(t, postCmd(t, h, promptCmd("m-p", "beside the fold"))); got != "started" {
@@ -328,7 +328,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		waitFor(t, func() bool { return slices.Contains(promptIDs(t, cs, "c1"), "m-p") && !listLive(h, "c1") })
 	})
 
-	t.Run("C8 a bridge death closes every open turn", func(t *testing.T) {
+	t.Run("a bridge death closes every open turn", func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 		h.stagePromptTurn(t, "c1")
 		queueDuring(t, h, "m-q1")
@@ -337,7 +337,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		waitFor(t, func() bool { return slices.Contains(runStates(t, cs, "c1"), "m-q1 paused") })
 	})
 
-	t.Run("C9 the life's end keeps only rows", func(t *testing.T) {
+	t.Run("the life's end keeps only rows", func(t *testing.T) {
 		for _, shape := range []string{"a compaction running", "kiro-cli's turn with a row behind it", "a taken row answered queued"} {
 			t.Run(shape, func(t *testing.T) {
 				h, cs, br, tab := closeTabHub(t)
@@ -457,9 +457,18 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 				t.Errorf("run version after an unchanged life = %d, want %d", got, before)
 			}
 		})
+		t.Run("a life that ran a turn and ended idle writes nothing at its end", func(t *testing.T) {
+			h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
+			waitFor(t, func() bool { return len(runStates(t, cs, "c1")) == 0 })
+			before := chatRunVersion(t, cs)
+			h.coord.turns.forget("c1")
+			if got := chatRunVersion(t, cs); got != before {
+				t.Errorf("run version after an idle life's end = %d, want %d", got, before)
+			}
+		})
 	})
 
-	t.Run("K1 kiro-cli's run with no turn here is a run entry", func(t *testing.T) {
+	t.Run("kiro-cli's run with no turn here is a run entry", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		h.coord.WireTurnActivity("c1", true)
 		waitFor(t, func() bool { return slices.Equal(runStates(t, cs, "c1"), []string{"run running"}) })
@@ -477,7 +486,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("K2 kiro-cli's run report beside a live entry changes nothing", func(t *testing.T) {
+	t.Run("kiro-cli's run report beside a live entry changes nothing", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		open := promptGates(t, br)
 		if code := postPrompt(t, h, "a"); code != http.StatusOK {
@@ -491,7 +500,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		open(0)
 	})
 
-	t.Run("K3 kiro-cli's idle report removes the run entry", func(t *testing.T) {
+	t.Run("kiro-cli's idle report removes the run entry", func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 		h.coord.WireTurnActivity("c1", true)
 		waitFor(t, func() bool { return slices.Equal(runStates(t, cs, "c1"), []string{"run running"}) })
@@ -499,7 +508,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		waitFor(t, func() bool { return len(runStates(t, cs, "c1")) == 0 })
 	})
 
-	t.Run("K4 a close's KAS hold keeps its closing entry", func(t *testing.T) {
+	t.Run("a close's KAS hold keeps its closing entry", func(t *testing.T) {
 		h, cs, _, turnID := heldCleanClose(t)
 		staysFalse(t, 100*time.Millisecond, func() bool { return !slices.Contains(runStates(t, cs, "c1"), turnID+" closing") },
 			"the closing entry left the list under the close's hold")
@@ -507,7 +516,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		waitFor(t, func() bool { return !slices.Contains(runStates(t, cs, "c1"), turnID+" closing") })
 	})
 
-	t.Run("K5 kiro-cli's re-wake after a cancel is a run entry, then its turn", func(t *testing.T) {
+	t.Run("kiro-cli's re-wake after a cancel is a run entry, then its turn", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		wireOpen(t, cs, br)
 		cancelHead(t, h, cs, br, 1)
@@ -521,7 +530,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("K6 a subagent's wake hold changes nothing and refuses no take", func(t *testing.T) {
+	t.Run("a subagent's wake hold changes nothing and refuses no take", func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 		h.coord.turns.holdWake("c1", "wf-1")
 		if got := runStates(t, cs, "c1"); len(got) != 0 {
@@ -532,7 +541,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("K7 a hosted run's step turn is not the chat's", func(t *testing.T) {
+	t.Run("a hosted run's step turn is not the chat's", func(t *testing.T) {
 		h, cs, _, _ := idleAfterFirstTurn(t, "/tmp/work")
 		h.coord.turns.holdStep("c1", "t-step")
 		if got := runStates(t, cs, "c1"); len(got) != 0 {
@@ -541,7 +550,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		h.coord.turns.endStep("c1", "t-step")
 	})
 
-	t.Run("S-1 a reader's stop by id leaves a pending compaction pending", func(t *testing.T) {
+	t.Run("a reader's stop by id leaves a pending compaction pending", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		open := promptGates(t, br)
 		if code := postPrompt(t, h, "a"); code != http.StatusOK {
@@ -557,7 +566,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		open(0)
 	})
 
-	t.Run("S-2 a teardown's stop changes no entry and the life's end keeps the rows", func(t *testing.T) {
+	t.Run("a teardown's stop changes no entry and the life's end keeps the rows", func(t *testing.T) {
 		h, cs, br, tab := closeTabHub(t)
 		t.Cleanup(func() { shutdownHub(t, h) })
 		br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
@@ -573,7 +582,7 @@ func TestRunOrder_TurnPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("S-3 a stop of an opened unsent prompt keeps it unsent", func(t *testing.T) {
+	t.Run("a stop of an opened unsent prompt keeps it unsent", func(t *testing.T) {
 		h, cs, br, _ := idleAfterFirstTurn(t, "/tmp/work")
 		parked, releaseSend := make(chan struct{}), make(chan struct{})
 		var opened, once atomicFlag

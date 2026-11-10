@@ -1389,9 +1389,37 @@ describe("the steer stack", () => {
     clickAction(rowAt(1), "Send this follow-up next");
 
     await vi.waitFor(() => {
-      expect(sendQueuedNowDispatch).toHaveBeenCalledWith({ chatID: "chat-1", messageID: "m-q2" });
+      expect(sendQueuedNowDispatch).toHaveBeenCalledWith({
+        chatID: "chat-1",
+        messageID: "m-q2",
+        stop: "",
+      });
     });
     expect(cancelDispatch).not.toHaveBeenCalled();
+  });
+
+  // An empty stop names no entry, so a press that crosses a take never stops the turn it started.
+  it("names no turn to stop for a follow-up sent first once the compaction ends", async () => {
+    withRun(
+      [
+        compactionEntry("compact-1", { after: "running" }),
+        ...behindTurn(three).map((e) => ({ ...e, send_now: "after_compaction" as const })),
+      ],
+      { send: "queue", cancel: "" },
+      false,
+    );
+    clickAction(rowAt(2), "Send this follow-up first once the compaction ends");
+
+    await vi.waitFor(() => {
+      expect(sendQueuedNowDispatch).toHaveBeenCalledWith({
+        chatID: "chat-1",
+        messageID: "m-q2",
+        stop: "",
+      });
+    });
+    expect(mocks.announceMock).not.toHaveBeenCalledWith(
+      "The turn keeps running: the message already left the queue",
+    );
   });
 
   it("reports a refused send-now in the server's words", async () => {

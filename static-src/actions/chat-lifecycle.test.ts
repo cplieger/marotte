@@ -287,29 +287,32 @@ describe("chat.cancel_turn", () => {
 });
 
 describe("chat.send_queued_now", () => {
-  it("answers true only when a stop was asked and the server stopped nothing", async () => {
+  it("answers true when the server stopped nothing", async () => {
     const { sendQueuedNow } = await import("./chat.js");
-    for (const [stop, body, nothingStopped] of [
-      ["t-1", { ok: true, stopped: false }, true],
-      ["t-1", { ok: true, stopped: true }, false],
-      [undefined, { ok: true, stopped: false }, false],
+    for (const [body, nothingStopped] of [
+      [{ ok: true, stopped: false }, true],
+      [{ ok: true, stopped: true }, false],
     ] as const) {
       mockSend.mockResolvedValueOnce({ ok: true, status: 200, body });
       const outcome = await sendQueuedNow.dispatch({
         chatID: "c1",
-        messageID: `m-${String(stop)}-${String(nothingStopped)}`,
-        ...(stop !== undefined ? { stop } : {}),
+        messageID: `m-${String(nothingStopped)}`,
+        stop: "t-1",
       }).outcome;
       expect(outcome).toMatchObject({ status: "success", value: nothingStopped });
     }
   });
 
-  it("carries the stop it was drawn against", async () => {
+  it("carries the stop it was drawn against, empty when the press stops nothing", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200, body: { ok: true, stopped: true } });
     const { sendQueuedNow } = await import("./chat.js");
-    await sendQueuedNow.dispatch({ chatID: "c1", messageID: "m-q1", stop: "t-1" });
-    const [cmd] = mockSend.mock.calls[0] ?? [];
-    expect((cmd as { payload?: unknown }).payload).toEqual({ message_id: "m-q1", stop: "t-1" });
+    await sendQueuedNow.dispatch({ chatID: "c1", messageID: "m-q1", stop: "t-1" }).outcome;
+    await sendQueuedNow.dispatch({ chatID: "c1", messageID: "m-q2", stop: "" }).outcome;
+    const payloads = mockSend.mock.calls.map(([cmd]) => (cmd as { payload?: unknown }).payload);
+    expect(payloads).toEqual([
+      { message_id: "m-q1", stop: "t-1" },
+      { message_id: "m-q2", stop: "" },
+    ]);
   });
 });
 

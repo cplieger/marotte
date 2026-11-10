@@ -7,8 +7,8 @@ import { signal } from "@cplieger/ui";
 import { createPopup } from "@cplieger/ui/popup";
 import { initPromptInput, sendComposer, setSendState } from "./prompt-input.js";
 import { refreshContextUI } from "./context-ui.js";
-import { setSessions, setActive } from "./store.js";
-import type { RunView, Session } from "./types.js";
+import { setSessions, setActive, upsertHeader } from "./store.js";
+import type { ChatHeader, RunView, Session } from "./types.js";
 import { compactionEntry, runAt, turnEntry } from "./__test-helpers__/run-order.js";
 
 const CHAT = "c1";
@@ -505,6 +505,28 @@ describe("the busy placeholder", () => {
 
     withRun(runAt(2, []));
     expect(box.placeholder).toBe("Message Kiro...");
+  });
+
+  // The server republishes the run order under the next version when Queue messages is switched
+  // mid-turn; the same version is the list the composer already holds.
+  it("takes the verb of a header whose run order is newer, after a mode switch mid-turn", () => {
+    const box = input();
+    withRun(STEERING);
+    const header = (run: RunView): ChatHeader => ({
+      id: CHAT,
+      name: "test",
+      run,
+      usage: makeSession([]).usage,
+      turn_count: 0,
+      created_at: 0,
+      updated_at: 0,
+    });
+
+    upsertHeader(header({ ...QUEUEING, version: STEERING.version }));
+    expect(box.placeholder).toBe("Steer the agent mid-turn...");
+
+    upsertHeader(header({ ...QUEUEING, version: STEERING.version + 1 }));
+    expect(box.placeholder).toBe("Queue a follow-up for after this turn...");
   });
 });
 

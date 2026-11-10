@@ -157,8 +157,6 @@ func (bc *bridgeCoordinator) closeFactsOf(t *activeTurn, closer turnCloser, outc
 	return cf
 }
 
-// graceClosed reports a close marotte's cancel grace made. A prompt's failure concludes `cancelled` only on
-// command.ErrCancelGraceExpired.
 // listCloseOf is the close's facts the run list reads at finish (runList.turnClosed): its grade, the turn end's
 // compaction the policy asks for, and whether the turn ended clean on the wire with nothing emitted, which re-sends
 // a retry-marked prompt once.
@@ -174,6 +172,8 @@ func (bc *bridgeCoordinator) listCloseOf(
 	}
 }
 
+// graceClosed reports a close marotte's cancel grace made. A prompt's failure concludes `cancelled` only on
+// command.ErrCancelGraceExpired.
 func graceClosed(closer turnCloser, stop marotte.StopReason) bool {
 	return closer == closerCancelGrace || closer == closerPromptFailure && stop == marotte.StopReasonCancelled
 }

@@ -182,7 +182,9 @@ func (r *turnRegistry) loadRunLocked(lc *chatLifecycle) {
 // starts from is recorded for writeFinalRun. Caller holds mu.
 func (lc *chatLifecycle) endRunLocked() {
 	final := lc.run.endLife()
-	if reflect.DeepEqual(final, lc.run.stored) && !lc.run.dirty {
+	// Per entry, so an empty list matches whether it is stored as nil or as an empty slice.
+	same := slices.EqualFunc(final, lc.run.stored, func(a, b marotte.RunEntry) bool { return reflect.DeepEqual(a, b) })
+	if same && !lc.run.dirty {
 		return
 	}
 	lc.runFinal, lc.runFinalOwed = final, true
@@ -273,7 +275,7 @@ func (bc *bridgeCoordinator) startEntry(lc *chatLifecycle, e *runEntry) {
 		if bc.launchEntry != nil {
 			turnID, err = bc.launchEntry(context.Background(), lc.chatID, l)
 		}
-		bc.entryLaunched(lc, e.id, turnID, err)
+		bc.entryLaunched(lc, e.id, l.Res.Token, turnID, err)
 	})
 }
 
@@ -293,7 +295,7 @@ func (bc *bridgeCoordinator) spawnRun(fn func()) {
 // entryLaunched applies a launch's result to the list (runList.launched). A tangent delivery opened with a receipt
 // hold its submitter no longer waits on releases that hold here; a refused row whose submitter still waits on an
 // ended life is removed from the record too, so the next life never sends the text the client kept as its draft.
-func (bc *bridgeCoordinator) entryLaunched(lc *chatLifecycle, id, turnID string, err error) {
+func (bc *bridgeCoordinator) entryLaunched(lc *chatLifecycle, id string, token uint64, turnID string, err error) {
 	refusal := launchOpened
 	switch {
 	case turnID != "":
@@ -309,7 +311,7 @@ func (bc *bridgeCoordinator) entryLaunched(lc *chatLifecycle, id, turnID string,
 	_, e := lc.run.find(id)
 	release := e != nil && refusal == launchOpened && e.opts.awaited && !e.submitter
 	ended := lc.ended
-	removed := lc.run.launched(id, turnID, refusal, err)
+	removed := lc.run.launched(id, token, turnID, refusal, err)
 	if errors.Is(err, command.ErrUnreadGone) {
 		if _, gone := lc.run.find(id); gone != nil {
 			lc.run.remove(gone)
@@ -533,6 +535,31 @@ func (bc *bridgeCoordinator) RunView(ctx context.Context, chatID marotte.ChatID)
 	return marotte.RunViewOf(c.Run, c.RunVersion, mode)
 }
 
+// ModeChanged writes a live life's list again, so its version moves with the mode the header's send now reads and a
+// page holding the older version takes it; the write keeps lc.run.version and runWritten with the record's. With no
+// live life nothing on the list runs, so no send reads the mode.
+func (bc *bridgeCoordinator) ModeChanged(chatID marotte.ChatID) {
+	lc, ok := bc.turns.lookup(chatID)
+	if !ok {
+		return
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if lc.ended || lc.reg == nil || lc.reg.runHost == nil {
+		return
+	}
+	lc.writeRunLocked()
+}
+
+// wakeOnChangeLocked wakes the chat's waiters only when a look changed the list. A waiter that woke on every look of
+// its own would close the channel it is about to wait on, and two such waiters would wake each other in turn.
+// Caller holds mu.
+func (lc *chatLifecycle) wakeOnChangeLocked() {
+	if lc.run.owesEffects() {
+		lc.wakeLocked()
+	}
+}
+
 // takeIdleLocked is one look at an idle take of e: its answer, and false while it waits. Caller holds mu.
 func (lc *chatLifecycle) takeIdleLocked(e *runEntry, stamp uint64) (command.IdleAdmission, bool) {
 	if lc.ended {
@@ -542,7 +569,7 @@ func (lc *chatLifecycle) takeIdleLocked(e *runEntry, stamp uint64) (command.Idle
 	lc.run.intentRefused = takeGranted
 	a := lc.run.takeIdle(e, &f, stamp)
 	refused := lc.run.intentRefused
-	lc.wakeLocked()
+	lc.wakeOnChangeLocked()
 	switch {
 	case a == idleGranted:
 		return command.IdleAcquired, true
@@ -604,12 +631,12 @@ func (bc *bridgeCoordinator) TakeIdle(
 }
 
 // SummaryLaunched reports a granted summary's open, or its refusal before the open (command.runQueue).
-func (bc *bridgeCoordinator) SummaryLaunched(chatID marotte.ChatID, entryID, turnID string, err error) {
+func (bc *bridgeCoordinator) SummaryLaunched(chatID marotte.ChatID, entryID string, res command.Reservation, turnID string, err error) {
 	lc, ok := bc.turns.lookup(chatID)
 	if !ok || entryID == "" {
 		return
 	}
-	bc.entryLaunched(lc, entryID, turnID, err)
+	bc.entryLaunched(lc, entryID, res.Token, turnID, err)
 }
 
 // SendNow moves a row to the front and stops the turn the press was drawn against (command.runQueue.SendNow).

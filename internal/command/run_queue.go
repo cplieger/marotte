@@ -127,8 +127,9 @@ type runQueue interface {
 	// TakeIdle takes the chat for a revert or a summary, which run now or not at all: IdleTurnOpen while a turn runs,
 	// IdleHeld past wait, IdleClosed after a close committed since stamp, IdleChatGone for a deleted chat.
 	TakeIdle(ctx context.Context, chatID marotte.ChatID, kind IdleKind, stamp uint64, wait time.Duration) (IdleAdmission, Reservation, string)
-	// SummaryLaunched reports a granted summary's open (its turn id), or its refusal before the open.
-	SummaryLaunched(chatID marotte.ChatID, entryID, turnID string, err error)
+	// SummaryLaunched reports a granted summary's open (its turn id), or its refusal before the open, for the take res
+	// names.
+	SummaryLaunched(chatID marotte.ChatID, entryID string, res Reservation, turnID string, err error)
 	// SendNow moves the row to the front and stops the turn stop names while it is the lone live turn (hasStop false
 	// names RunView.Cancel's target).
 	SendNow(ctx context.Context, chatID marotte.ChatID, id, stop string, hasStop bool) (RunStop, error)
@@ -142,6 +143,9 @@ type runQueue interface {
 	StopUndone(chatID marotte.ChatID, stop *TurnStop)
 	// RunView is the chat's run order as the header draws it.
 	RunView(ctx context.Context, chatID marotte.ChatID) marotte.RunView
+	// ModeChanged republishes the chat's run order once its interrupt mode is stored, since the header's send reads
+	// the mode.
+	ModeChanged(chatID marotte.ChatID)
 }
 
 // LaunchEntry opens the turn of a taken run entry on its reservation and answers the opened turn's id, or the

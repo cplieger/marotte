@@ -162,7 +162,7 @@ func TestRunViewOf(t *testing.T) {
 			},
 		},
 		{
-			name: "S3 before the claim", entries: []RunEntry{
+			name: "a fold turn ahead of its compaction before the claim", entries: []RunEntry{
 				fold("f", true), compaction(RunStarting),
 				row("m-new", RunPending),
 			},
@@ -173,7 +173,7 @@ func TestRunViewOf(t *testing.T) {
 			},
 		},
 		{
-			name: "S3 after the claim cancels nothing", entries: []RunEntry{func() RunEntry {
+			name: "a fold turn ahead of its compaction after the claim cancels nothing", entries: []RunEntry{func() RunEntry {
 				e := fold("f", true)
 				e.State = RunClosing
 				return e

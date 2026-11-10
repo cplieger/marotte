@@ -42,6 +42,7 @@ type launchingRun struct {
 	unqueue func(id string) error
 	rows    []marotte.QueuedPrompt
 	cleared []string
+	modes   []marotte.ChatID
 	undone  []*TurnStop
 	steer   bool
 	// live queues every queue_prompt; compacting queues every send, as a running compaction does.
@@ -139,7 +140,7 @@ func (q *launchingRun) TakeIdle(ctx context.Context, chatID marotte.ChatID, kind
 	return out, res, "summary-1"
 }
 
-func (*launchingRun) SummaryLaunched(marotte.ChatID, string, string, error) {}
+func (*launchingRun) SummaryLaunched(marotte.ChatID, string, Reservation, string, error) {}
 
 func (q *launchingRun) SendNow(_ context.Context, _ marotte.ChatID, id, stop string, hasStop bool) (RunStop, error) {
 	if q.sendNow != nil {
@@ -179,6 +180,12 @@ func (q *launchingRun) StopUndone(_ marotte.ChatID, stop *TurnStop) {
 
 func (q *launchingRun) RunView(context.Context, marotte.ChatID) marotte.RunView {
 	return marotte.RunView{}
+}
+
+func (q *launchingRun) ModeChanged(chatID marotte.ChatID) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.modes = append(q.modes, chatID)
 }
 
 // queued is the rows waiting, in order.

@@ -112,6 +112,24 @@ func TestRunList_Table(t *testing.T) {
 			wantVerb: "prompt", wantOrder: "m-p:starting",
 		},
 		{
+			name: "a withdrawn take's late refusal leaves the row's next take starting",
+			run: func(_ *testing.T, w *tableWorld) string {
+				verb := w.send("m-p", marotte.SendPlain, "")
+				_, e := w.l.find("m-p")
+				first := e.res.Token
+				w.l.stopHead("m-p", 1)
+				w.held = false
+				w.l.reservationReleased(first)
+				if _, err := w.l.sendNow("m-p", "", true); err != nil {
+					return err.Error()
+				}
+				w.advance()
+				w.l.launched("m-p", first, "", launchWithdrawn, command.ErrTakeWithdrawn)
+				return string(verb)
+			},
+			wantVerb: "prompt", wantOrder: "m-p:starting",
+		},
+		{
 			name: "no head: a queue_prompt has nothing to queue behind",
 			run: func(_ *testing.T, w *tableWorld) string {
 				return string(marotte.VerbFor(w.l.project(), "", marotte.SendQueuePrompt))
@@ -212,7 +230,7 @@ func TestRunList_Table(t *testing.T) {
 			wantVerb: "queue", wantOrder: "compact-1:running m-new:pending m-old:paused",
 		},
 		{
-			name: "a stopped turn's rows wait; a send after the stop is listed ahead of them (DL5)",
+			name: "a stopped turn's rows wait; a send after the stop is listed ahead of them",
 			run: func(_ *testing.T, w *tableWorld) string {
 				w.send("m-a", marotte.SendPlain, "")
 				w.running("m-a")

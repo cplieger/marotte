@@ -969,7 +969,9 @@ async function discardQueued(messageID: string): Promise<void> {
 }
 
 /** The server owns the order (`send_queued_now`): it moves the row to the front and stops only the
- *  turn `stop` names, the `run.cancel` the arrow was drawn against, when the arrow's kind stops one. */
+ *  turn `stop` names, the `run.cancel` the arrow was drawn against when the arrow's kind stops one.
+ *  Every other press sends an empty `stop`, which names no entry, so it never stops a turn a take
+ *  started since the arrow was drawn. */
 async function sendQueuedRowNow(
   messageID: string,
   kind: SendNowKind | undefined,
@@ -985,9 +987,9 @@ async function sendQueuedRowNow(
   const outcome = await sendQueuedNow.dispatch({
     chatID,
     messageID,
-    ...(stops && stop !== undefined ? { stop } : {}),
+    stop: stops ? (stop ?? "") : "",
   }).outcome;
-  if (outcome.status === "success" && outcome.value) {
+  if (stops && outcome.status === "success" && outcome.value) {
     announce(NOTHING_STOPPED);
   }
   if (outcome.status === "error") {

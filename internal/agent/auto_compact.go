@@ -229,8 +229,8 @@ func (bc *bridgeCoordinator) compactionReady(lc *chatLifecycle, id string) bool 
 				claimed = t
 			}
 		}
+		lc.wakeOnChangeLocked()
 		changed := lc.changed
-		lc.wakeLocked()
 		lc.mu.Unlock()
 		switch step {
 		case compactAbort:

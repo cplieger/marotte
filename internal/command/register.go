@@ -79,7 +79,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.RegisterChange(marotte.CmdForkChat, bind4(r.Bridges, chats, r.Workspace, mem, cmdForkChat))
 
 	d.register(marotte.CmdQueuePrompt, bind2(r.Run, r.Admission, cmdQueuePrompt))
-	d.register(marotte.CmdSetInterruptMode, bind1[chatMutator](r.Chats, cmdSetInterruptMode))
+	d.register(marotte.CmdSetInterruptMode, bind2[chatMutator](r.Chats, r.Run, cmdSetInterruptMode))
 	d.register(marotte.CmdRenameChat, bind2(chats, r.Renamer, cmdRenameChat))
 
 	prompt := &promptRoles{

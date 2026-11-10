@@ -281,12 +281,13 @@ export type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
 /** One mid-turn steer the agent has NOT read yet: a row in the bottom dock.
  *
- *  THE CLIENT WRITES INTENT, THE SERVER WRITES FACT. Sending writes a `pending` entry at once
- *  (rendered "Sending", no controls) that `chat.steer`'s rollback un-draws on a failed POST; the
- *  server writes the id (`steer_queued`) and the settling `steer` entry. Reconciled by id
- *  (`steer-<messageID>`), else by exact text against the OLDEST pending entry, always onto the
- *  existing row. A row leaves on its settling `steer` entry or a `removed` frame; an undeliverable
- *  one stays `unsent`. Always the USER's words (agent notices arrive as `agent_notice`). */
+ *  THE CLIENT WRITES INTENT, THE SERVER WRITES FACT. A chat's rows come from the server alone
+ *  (`steer_queued`, then the settling `steer` entry). Only a run step's send writes a `pending`
+ *  entry at once (`pendingSteerRow`, rendered "Sending", no controls), which `steer_queued`
+ *  confirms: by id (`steer-<messageID>`), else by exact text against the OLDEST pending entry,
+ *  always onto the existing row. A row leaves on its settling `steer` entry or a `removed` frame;
+ *  an undeliverable one stays `unsent`. Always the USER's words (agent notices arrive as
+ *  `agent_notice`). */
 export interface PendingSteer {
   /** The row's key, and the id every lifecycle event names it by. For a user row it is
    *  `steer-<messageID>`, derived from this device's POST, and it never changes: a
@@ -294,9 +295,9 @@ export interface PendingSteer {
   id: string;
   text: string;
   /** Whose words these are, resolved SERVER-side (`marotte.SteerOrigin`). Required: the obvious
-   *  fallback, "the user's", is wrong for what this names. `recordSteerSent` is the one local writer. */
+   *  fallback, "the user's", is wrong for what this names. `pendingSteerRow` is the one local writer. */
   origin: SteerOrigin;
-  /** Written on SUBMIT and cleared by `steer_queued`: this row is the local
+  /** Written by a run step's send and cleared by `steer_queued`: this row is the local
    *  claim that a POST is in flight, and its id is derived rather than
    *  confirmed. Absent on every entry the server has acknowledged. */
   pending?: boolean;

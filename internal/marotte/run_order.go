@@ -239,8 +239,8 @@ func CancelTarget(entries []RunEntry) string {
 	return ""
 }
 
-// waitOrder is the list in the order its entries run: S1's kiro-cli turn runs before the compaction it opened
-// under, since kiro-cli refuses or aborts that compaction and it is requeued behind the turn.
+// waitOrder is the list in the order its entries run: kiro-cli's turn under a running compaction runs before it,
+// since kiro-cli refuses or aborts that compaction and it is requeued behind the turn.
 func waitOrder(entries []RunEntry) []int {
 	order := make([]int, len(entries))
 	for i := range order {
@@ -284,12 +284,12 @@ func waitAt(entries []RunEntry, order []int, pos int) RunWait {
 // turnsAhead counts the turn ends ahead: a starting or running turn one each (liveCounted reports one), a pending
 // one each, a paused one only for a paused entry, a stopping or closing one none, since it runs nothing more.
 func turnsAhead(entries []RunEntry, ahead []int, paused bool) (n int, liveCounted bool) {
-	// S3's fold turn is closed by the compaction behind it, so it runs no turn ahead of anything.
+	// A fold turn ahead of a compaction is closed by it, so it runs no turn ahead of anything.
 	live := LivePrefix(entries)
-	s3 := len(live) == 2 && live[1].Kind == RunKindCompaction
+	foldAhead := len(live) == 2 && live[1].Kind == RunKindCompaction
 	for _, j := range ahead {
 		a := &entries[j]
-		if !a.Kind.TurnKind() || (s3 && j == 0) {
+		if !a.Kind.TurnKind() || (foldAhead && j == 0) {
 			continue
 		}
 		switch a.State {
@@ -334,7 +334,7 @@ func sendNowKind(entries []RunEntry) SendNowKind {
 	}
 	for _, e := range live {
 		if e.Kind == RunKindCompaction {
-			// S1 (a compaction running) and S3 (a compaction taken behind a fold turn).
+			// A compaction running, or taken behind a fold turn.
 			return SendNowAfterCompaction
 		}
 	}

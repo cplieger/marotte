@@ -151,6 +151,10 @@ type runEffects struct {
 	changed bool
 }
 
+// runList's live prefix is one entry, or two in one of three shapes: a compaction running with kiro-cli's own turn
+// beside it (a turn under a compaction); kiro-cli's wire turn ahead of a marotte turn taken or sent beside it (a wire
+// turn beside a taken turn); and a fold-opened wire turn ahead of the compaction that closes it (a fold turn ahead of
+// its compaction).
 type runList struct {
 	// intent is submit's own entry and stamp for the advance it runs; intentRefused its refusal.
 	intent   *runEntry
@@ -181,6 +185,11 @@ var (
 )
 
 func (l *runList) touch() { l.fx.changed = true }
+
+// owesEffects reports effects recorded since the last takeEffects.
+func (l *runList) owesEffects() bool {
+	return l.fx.changed || len(l.fx.launch) > 0 || len(l.fx.toast) > 0
+}
 
 // takeEffects hands the recorded effects to the glue, bumping the version when the projection changed.
 func (l *runList) takeEffects() runEffects {
@@ -259,7 +268,7 @@ func (l *runList) insert(at int, e *runEntry) {
 	l.touch()
 }
 
-// insertPending puts e before the first paused row, so the list order is the send order (R5).
+// insertPending puts e before the first paused row, so the list order is the send order.
 func (l *runList) insertPending(e *runEntry) {
 	at := len(l.entries)
 	for i := l.liveLen(); i < len(l.entries); i++ {
@@ -310,7 +319,7 @@ func (l *runList) putBack(e *runEntry, state marotte.RunEntryState, pausedBy uin
 	l.insert(l.frontOfPending(e.kind != marotte.RunKindCompaction), e)
 }
 
-// pauseRows pauses every pending row that is not send-now's (DL5), stamped with the stop that paused it. An unread
+// pauseRows pauses every pending row that is not send-now's, stamped with the stop that paused it. An unread
 // entry is not paused: the next take sends the steers it carries first, whatever left them unread.
 func (l *runList) pauseRows(by uint64) {
 	for _, e := range l.entries[l.liveLen():] {
@@ -340,7 +349,7 @@ func (l *runList) endIfDone(e *runEntry) {
 	l.remove(e)
 }
 
-// normalize keeps kiro-cli's state on the list (R9): a run entry stands for a run KAS reports with no turn here,
+// normalize keeps kiro-cli's state on the list: a run entry stands for a run KAS reports with no turn here,
 // and a lone yielding wire turn carries whether a take may go beside it.
 func (l *runList) normalize(f *orderFacts) {
 	n := l.liveLen()
@@ -374,7 +383,7 @@ func overtaken(e *runEntry, f *orderFacts, wireSeq uint64) bool {
 	return wireSeq > e.afterSeq || (f.stopSeq != 0 && e.afterSeq <= f.stopSeq)
 }
 
-// advance is the one taker: it takes the first pending entry when the head rule allows, or nothing (R5).
+// advance is the one taker: it takes the first pending entry when the head rule allows, or nothing.
 func (l *runList) advance(f *orderFacts) {
 	if l.ended {
 		return
@@ -459,24 +468,16 @@ func (l *runList) take(e *runEntry, at int) {
 }
 
 // submitAnswer is submit's answer: taken (the submitter waits on e.launch), queued, or refused.
+// submitAnswer is submit's outcome: taken, refused, or neither (the entry waits on the list).
 type submitAnswer struct {
 	entry   *runEntry
 	refused takeAnswer
-	// started and queued answer an id already on the list (the idempotent arm), or queued an entry not taken.
-	started, queued, taken bool
-	// settle: the queued answer owes the composer settle.
-	settle bool
+	taken   bool
 }
 
-// submit inserts a sent message as a pending row and runs advance at the POST's intent stamp for that entry only.
-// An id already on the list answers as that entry stands and inserts nothing.
+// submit inserts a sent message as a pending row and runs advance at the POST's intent stamp for that entry only. The
+// caller answers an id already on the list and never submits it.
 func (l *runList) submit(e *runEntry, f *orderFacts, intentStamp uint64, waits bool) submitAnswer {
-	if _, have := l.find(e.id); have != nil {
-		if have.live() {
-			return submitAnswer{entry: have, started: true}
-		}
-		return submitAnswer{entry: have, queued: true}
-	}
 	before := l.fx.changed
 	e.state, e.submitter, e.launch = marotte.RunPending, waits, newLaunchWait()
 	if !waits {
@@ -494,7 +495,8 @@ func (l *runList) submit(e *runEntry, f *orderFacts, intentStamp uint64, waits b
 		l.fx.changed = before
 		return submitAnswer{entry: e, refused: l.intentRefused}
 	}
-	return submitAnswer{entry: e, queued: true, settle: l.answerQueued(e)}
+	l.answerQueued(e)
+	return submitAnswer{entry: e}
 }
 
 // answerQueued is the one section that answers e's submitter queued: it ends the wait and claims the composer
@@ -622,7 +624,7 @@ func (l *runList) unqueue(id string) error {
 	return nil
 }
 
-// requestCompaction joins the chat's compaction, or inserts one at the front of the pending entries (R2).
+// requestCompaction joins the chat's one compaction, or inserts one at the front of the pending entries.
 func (l *runList) requestCompaction(origin marotte.RunEntryOrigin, forTurn string) (e *runEntry, joined bool) {
 	if c := l.compaction(); c != nil {
 		return c, true
@@ -677,7 +679,8 @@ const (
 	compactWrite
 )
 
-// compactionStart is one section of a compaction's start (S3, then the write), re-checking its conditions.
+// compactionStart is one section of a compaction's start (closing a fold turn ahead of it, then the write),
+// re-checking its conditions.
 func (l *runList) compactionStart(id string, f *orderFacts) (compactStep, *runEntry) {
 	i, e := l.find(id)
 	if e == nil || e.state != marotte.RunStarting {
@@ -772,8 +775,8 @@ func (l *runList) turnOpened(o openFacts) bool {
 	return l.wireOpened(o)
 }
 
-// wireOpened places a wire turn in two steps: it replaces a closing or run entry, then goes behind a running call
-// (S1), ahead of a marotte turn (S2) or first, putting back a compaction taken but not written.
+// wireOpened places a wire turn in two steps: it replaces a closing or run entry, then goes behind a running
+// compaction call, ahead of a marotte turn or first, putting back a compaction taken but not written.
 func (l *runList) wireOpened(o openFacts) bool {
 	for _, h := range l.entries[:l.liveLen()] {
 		if h.wire() && h.state != marotte.RunClosing {
@@ -811,7 +814,8 @@ func (l *runList) wireSlot() int {
 	return at
 }
 
-// turnSent marks the taken entry whose turn that is running: its call is written, so a send steers into it.
+// turnSent marks the taken entry whose turn that is running and steerable before its session/prompt is written, so a
+// send in that window steers and the header already says running.
 func (l *runList) turnSent(turnID string) {
 	if _, e := l.byTurn(turnID); e != nil && e.state == marotte.RunStarting {
 		e.state, e.steerable = marotte.RunRunning, true
@@ -830,11 +834,11 @@ type listClose struct {
 	clean   bool
 	// handoff: marotte closed a fold-opened turn to send its next call (closerPromptHandoff).
 	handoff bool
-	// emptyRetry: the closed turn ended clean on the wire with nothing emitted (today's recoverEmptyTurn gate).
+	// emptyRetry: the closed turn ended clean on the wire with nothing emitted.
 	emptyRetry bool
 }
 
-// turnClosed acts on the entry whose turn closed, wherever it sits (R8).
+// turnClosed acts on the entry whose turn closed, wherever it sits.
 func (l *runList) turnClosed(c listClose, f *orderFacts) {
 	i, e := l.byTurn(c.turnID)
 	if e == nil || !e.live() {
@@ -879,9 +883,9 @@ func (l *runList) afterHeadClose(e *runEntry, c listClose, retry bool) {
 	}
 }
 
-// closedBeside is turnClosed's arms for a two-entry prefix, reporting whether one applied: S2's wire turn closing
-// while its taker is live goes at once; S1's and S2's index-1 turn and S3's fold turn close in place and decide
-// nothing, since the chat's next close (or the compaction) does.
+// closedBeside is turnClosed's arms for a two-entry prefix, reporting whether one applied: a wire turn closing while
+// the turn taken beside it is live goes at once; the second entry's close, and a fold turn's ahead of its
+// compaction, happen in place and decide nothing, since the chat's next close (or the compaction) does.
 func (l *runList) closedBeside(i int, e *runEntry, c listClose, stopped bool) bool {
 	other := l.entries[1-i]
 	switch {
@@ -898,11 +902,15 @@ func (l *runList) closedBeside(i int, e *runEntry, c listClose, stopped bool) bo
 	return false
 }
 
+// pauseRule is a head close's effect on the rows waiting: a stopped turn's close leaves them as its stop paused them,
+// even when it ended clean (a superseded wire turn, or a reply that finished before the cancel landed), so they go
+// only after the next turn.
 func (l *runList) pauseRule(clean, stopped bool) {
 	switch {
+	case stopped:
 	case clean:
 		l.unpauseRows()
-	case !stopped:
+	default:
 		l.pauseRows(0)
 	}
 }
@@ -1016,9 +1024,11 @@ const (
 	launchWithdrawn
 )
 
-// launched is a take's launch result. Only a refusal before the open changes the list. It reports whether the row
-// went from the list because its submitter still waits (the POST answers the refusal; the client keeps the draft).
-func (l *runList) launched(id, turnID string, refusal launchRefusal, err error) (removed bool) {
+// launched is the launch result of the take token names. Only a refusal before the open changes the list, and only
+// while that take is the entry's (a stop can withdraw a take and the entry be taken again). It reports whether the
+// row went from the list because its submitter still waits (the POST answers the refusal; the client keeps the
+// draft).
+func (l *runList) launched(id string, token uint64, turnID string, refusal launchRefusal, err error) (removed bool) {
 	_, e := l.find(id)
 	if e == nil {
 		return false
@@ -1029,7 +1039,7 @@ func (l *runList) launched(id, turnID string, refusal launchRefusal, err error) 
 		}
 		return false
 	}
-	if e.state != marotte.RunStarting || e.turnID != "" {
+	if e.state != marotte.RunStarting || e.turnID != "" || e.res.Token != token {
 		return false
 	}
 	switch {
@@ -1056,7 +1066,7 @@ type stopArm uint8
 const (
 	// stopNothing: the target names no entry a stop may stop.
 	stopNothing stopArm = iota
-	// stopRunning: a running turn (or two in S2c): one session/cancel.
+	// stopRunning: a running turn (or a wire turn and the sent prompt beside it): one session/cancel.
 	stopRunning
 	// stopRun: kiro-cli's run with no turn here: one session/cancel, no row paused.
 	stopRun
@@ -1076,7 +1086,7 @@ type stopPlan struct {
 	arm   stopArm
 }
 
-// stopHead stops the live entry target names (R8), or with target "" the one RunView.Cancel names (the session itself
+// stopHead stops the live entry target names, or with target "" the one RunView.Cancel names (the session itself
 // on an idle list). It never stops a compaction, a stopping or closing entry, or anything not live.
 func (l *runList) stopHead(target string, token uint64) stopPlan {
 	n := l.liveLen()
@@ -1113,16 +1123,18 @@ func (l *runList) stopHead(target string, token uint64) stopPlan {
 	return stopPlan{entry: e, arm: stopRunning}
 }
 
-// stopRunningAt marks the running entry at i stopping. In S2c one session/cancel stops both turns, so the other is
-// marked too; a stop of the head or of S1's kiro-cli turn pauses the rows waiting behind it.
+// stopRunningAt marks the running entry at i stopping. With kiro-cli's wire turn beside a sent, unbound prompt, one
+// session/cancel stops both turns, so the other is marked too and the stop pauses the rows whichever was named; a stop
+// of the head, or of kiro-cli's turn beside a compaction or revert head, pauses them too.
 func (l *runList) stopRunningAt(i int, token uint64, mark func(*runEntry)) {
 	mark(l.entries[i])
-	if l.liveLen() == 2 && l.entries[0].wire() && l.entries[1].kind.TurnKind() && !l.entries[1].kiroCLI() {
+	both := l.liveLen() == 2 && l.entries[0].wire() && l.entries[1].kind.TurnKind() && !l.entries[1].kiroCLI()
+	if both {
 		if other := l.entries[1-i]; other.state == marotte.RunRunning {
 			mark(other)
 		}
 	}
-	if i == 0 || l.entries[0].kind == marotte.RunKindCompaction || l.entries[0].kind == marotte.RunKindRevert {
+	if i == 0 || both || l.entries[0].kind == marotte.RunKindCompaction || l.entries[0].kind == marotte.RunKindRevert {
 		l.pauseRows(token)
 	}
 }

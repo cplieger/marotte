@@ -143,7 +143,7 @@ func (w *listWorld) check() {
 	n := l.liveLen()
 	for _, e := range l.entries[n:] {
 		if e.live() {
-			w.fail("a live entry %s behind a waiting one (R1)", e.id)
+			w.fail("a live entry %s behind a waiting one", e.id)
 		}
 	}
 	live := l.entries[:n]
@@ -158,18 +158,18 @@ func (w *listWorld) check() {
 			b.kind == marotte.RunKindCompaction && b.state == marotte.RunStarting
 		switch {
 		case s1:
-			w.reached["S1"]++
+			w.reached["turn under a compaction"]++
 		case s2 && b.state == marotte.RunRunning:
-			w.reached["S2c"]++
+			w.reached["wire turn beside a sent prompt"]++
 		case s2:
-			w.reached["S2"]++
+			w.reached["wire turn beside a taken turn"]++
 		case s3:
-			w.reached["S3"]++
+			w.reached["fold turn ahead of its compaction"]++
 		default:
-			w.fail("two live entries in no allowed shape (R1)")
+			w.fail("two live entries in no allowed shape")
 		}
 	default:
-		w.fail("%d live entries (R1)", n)
+		w.fail("%d live entries", n)
 	}
 	compactions, ids := 0, map[string]bool{}
 	for i, e := range l.entries {
@@ -181,7 +181,7 @@ func (w *listWorld) check() {
 			compactions++
 		}
 		if e.runEntry() && (i != 0 || n != 1) {
-			w.fail("a run entry beside another live entry (R9)")
+			w.fail("a run entry beside another live entry")
 		}
 		if e.opts.composer && !e.submitter {
 			w.fail("%s keeps the composer settle with no submitter waiting", e.id)
@@ -198,7 +198,7 @@ func (w *listWorld) check() {
 		}
 	}
 	if compactions > 1 {
-		w.fail("%d compactions (R2)", compactions)
+		w.fail("%d compactions", compactions)
 	}
 	others := 0
 	for _, e := range live {
@@ -212,7 +212,7 @@ func (w *listWorld) check() {
 			w.reached["run entry"]++
 		}
 		if hasRun != (others == 0 && !w.admit) {
-			w.fail("a run entry %v with %d other live entries and admit %v (R9)", hasRun, others, w.admit)
+			w.fail("a run entry %v with %d other live entries and admit %v", hasRun, others, w.admit)
 		}
 	}
 	if by := l.beside(); by != nil && by.admits != w.admit {
@@ -300,14 +300,15 @@ func (w *listWorld) submit() {
 	waits := w.r.IntN(2) == 0
 	e.opts.composer = waits
 	a := w.l.submit(e, w.facts(), 1, waits)
-	if a.queued {
+	if !a.taken && a.refused == takeGranted {
 		i, _ := w.l.find(e.id)
 		for _, p := range w.l.entries[:max(i, 0)] {
 			if p.state == marotte.RunPaused {
-				w.fail("new row %s queued behind paused %s (R5)", e.id, p.id)
+				w.fail("new row %s queued behind paused %s", e.id, p.id)
 			}
 		}
-		if a.settle {
+		// The glue answers a queued composer send with the settle (submitLocked).
+		if waits {
 			w.composerBy[e.id]++
 		}
 	}
@@ -338,7 +339,7 @@ func (w *listWorld) launch() {
 	if w.r.IntN(5) == 0 {
 		token := e.res.Token
 		w.release(token)
-		removed := w.l.launched(e.id, "", launchClosed, marotte.ErrChatClosedDuringCall)
+		removed := w.l.launched(e.id, e.res.Token, "", launchClosed, marotte.ErrChatClosedDuringCall)
 		if removed && w.l.compaction() != nil && w.l.compaction().id == e.id {
 			w.fail("a refused launch removed the compaction")
 		}
@@ -356,7 +357,7 @@ func (w *listWorld) launch() {
 	if w.composerBy[e.id] > 1 {
 		w.fail("%s settled the composer twice", e.id)
 	}
-	w.l.launched(e.id, id, launchOpened, nil)
+	w.l.launched(e.id, e.res.Token, id, launchOpened, nil)
 }
 
 // send is the send gate: it waits out stop holds and a bracketed wire turn, closes a fold-opened one, then sends.
@@ -416,7 +417,7 @@ func (w *listWorld) closeTurn(turnID string, handoff bool) {
 		}
 		for _, id := range queued {
 			if j, q := w.l.find(id); q != nil && j > i {
-				w.fail("retry %s listed ahead of %s, queued before its turn closed (DG31)", r.id, id)
+				w.fail("retry %s listed ahead of %s, queued before its turn closed", r.id, id)
 			}
 		}
 		for _, a := range w.l.entries[:i] {
@@ -478,7 +479,7 @@ func (w *listWorld) endCall() {
 		w.reached["compaction requeued"]++
 	}
 	if _, still := w.l.find(id); still != nil && !call.sawTurn {
-		w.fail("compaction %s requeued with no turn beside its attempt (DG23)", id)
+		w.fail("compaction %s requeued with no turn beside its attempt", id)
 	}
 }
 
@@ -515,7 +516,7 @@ func (w *listWorld) stop() {
 		return
 	}
 	if target != "" && plan.entry.id != target {
-		w.fail("a stop of %q stopped %s (R8)", target, plan.entry.id)
+		w.fail("a stop of %q stopped %s", target, plan.entry.id)
 	}
 	w.stops[token] = true
 	w.stopSeq = w.nextSeq
@@ -571,7 +572,7 @@ func (w *listWorld) sendNow() {
 	}
 	if h != nil {
 		if has && h.id != stop {
-			w.fail("send-now named %s for a press drawn against %s (DG24)", h.id, stop)
+			w.fail("send-now named %s for a press drawn against %s", h.id, stop)
 		}
 		if w.l.liveLen() != 1 {
 			w.fail("send-now stops beside another live entry")
@@ -761,7 +762,8 @@ func TestRunList_Invariants(t *testing.T) {
 		})
 	}
 	for _, want := range []string{
-		"S1", "S2", "S2c", "S3", "run entry", "take row", "take compaction", "take unread", "take retry",
+		"turn under a compaction", "wire turn beside a taken turn", "wire turn beside a sent prompt",
+		"fold turn ahead of its compaction", "run entry", "take row", "take compaction", "take unread", "take retry",
 		"compaction requeued", "withdraw", "stop unsent", "stop running", "stop undone", "idle revert", "idle turn",
 	} {
 		if reached[want] == 0 {

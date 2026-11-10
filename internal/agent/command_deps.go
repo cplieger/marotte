@@ -223,8 +223,8 @@ func (rt *Runtime) TakeIdle(
 }
 
 // SummaryLaunched reports a granted summary's open, or its refusal before the open.
-func (rt *Runtime) SummaryLaunched(chatID marotte.ChatID, entryID, turnID string, err error) {
-	rt.coord.SummaryLaunched(chatID, entryID, turnID, err)
+func (rt *Runtime) SummaryLaunched(chatID marotte.ChatID, entryID string, res command.Reservation, turnID string, err error) {
+	rt.coord.SummaryLaunched(chatID, entryID, res, turnID, err)
 }
 
 // SendNow moves a queued row to the front and stops the turn the press was drawn against.
@@ -254,3 +254,6 @@ func (rt *Runtime) StopUndone(chatID marotte.ChatID, stop *command.TurnStop) {
 func (rt *Runtime) RunView(ctx context.Context, chatID marotte.ChatID) marotte.RunView {
 	return rt.coord.RunView(ctx, chatID)
 }
+
+// ModeChanged republishes the chat's run list after its interrupt mode changed.
+func (rt *Runtime) ModeChanged(chatID marotte.ChatID) { rt.coord.ModeChanged(chatID) }
