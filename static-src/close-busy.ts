@@ -5,8 +5,8 @@
 
 import { confirm } from "./confirm.js";
 import { pendingDecisionIDs } from "./decision-dock.js";
-import { sessionDrain } from "./queue-slots.js";
 import { liveRunIDsForChat, runLabelOf } from "./run-store.js";
+import { runQueuedIDs } from "./run-order.js";
 import { get, turnLive } from "./store.js";
 import { inFlightMessageIDs } from "./submit.js";
 import type { ChatWork, CloseImpact } from "./wire/types.gen.js";
@@ -25,8 +25,8 @@ interface CloseConfirm {
 }
 
 /** One chat's work by id, from the signals the tab strip paints from: its open turns and its own
- *  sends still in flight, its asks, its live runs, its unread steers and its follow-ups whose turn
- *  has not opened. */
+ *  sends still in flight, its asks, its live runs, its unread steers and the queued messages its run
+ *  order holds. */
 function chatWork(ref: string): ChatWork {
   const session = get(ref);
   const turns: string[] = [];
@@ -44,12 +44,7 @@ function chatWork(ref: string): ChatWork {
     asks: pendingDecisionIDs(ref),
     runs: liveRunIDsForChat(ref),
     steers: (session?.steers ?? []).map((s) => s.id),
-    queued:
-      session === undefined
-        ? []
-        : sessionDrain(session)
-            .rows.filter((r) => r.wait.kind !== "sent")
-            .map((r) => r.row.id),
+    queued: session?.run === undefined ? [] : runQueuedIDs(session.run),
   };
 }
 

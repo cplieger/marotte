@@ -46,7 +46,7 @@ func (r *turnRegistry) reserveLocked(lc *chatLifecycle, source marotte.TurnOpenS
 	lc.reservedSource = source
 	lc.admission = r.admissions.Add(1)
 	lc.admissionMessage = messageID
-	lc.reservedForRow, lc.admissionOpened = false, false
+	lc.admissionOpened = false
 	return reserveAnswer{res: command.Reservation{Chat: lc.chatID, Token: lc.admission, Stamp: lc.stamp}}
 }
 
@@ -63,81 +63,6 @@ func (lc *chatLifecycle) holderSourceLocked() (marotte.TurnOpenSource, bool) {
 		return lc.own.Source, true
 	}
 	return 0, false
-}
-
-// drainPick is a close's drain picking its next turn. In one section it ends the hold of the tail whose token is
-// tail and takes the slot iff free and the fence holds, never waiting, so a pending close never sees an empty hold set
-// between the tail and the drained prompt's reservation. The fence names a life that existed, so a missing lifecycle
-// refuses, and a held close refuses.
-func (r *turnRegistry) drainPick(chatID marotte.ChatID, fence command.TurnFence, tail uint64) (command.Reservation, bool) {
-	lc, ok := r.lookup(chatID)
-	if !ok {
-		return command.Reservation{}, false
-	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	delete(lc.tails, tail)
-	defer lc.wakeLocked()
-	if !lc.fenceHoldsLocked(fence) {
-		return command.Reservation{}, false
-	}
-	a := r.reserveLocked(lc, marotte.TurnSourcePrompt, lc.stamp, "")
-	lc.reservedForRow = a.res.Token != 0
-	return a.res, a.res.Token != 0
-}
-
-// tryReserveIdle takes the slot iff nothing holds admission, an open wire turn included, in one acquisition.
-func (r *turnRegistry) tryReserveIdle(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (command.Reservation, bool) {
-	lc, ok := r.tryLifecycleAt(chatID, stamp)
-	if !ok {
-		return command.Reservation{}, false
-	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	if _, held := lc.holderSourceLocked(); held {
-		return command.Reservation{}, false
-	}
-	a := r.reserveLocked(lc, source, stamp, "")
-	return a.res, a.res.Token != 0
-}
-
-// idleLook is one look at a waiting reservation: the reservation taken, or why not and what to wait on.
-type idleLook struct {
-	// changed is the lifecycle's next-change channel, gate the close hold's idle channel; either may be nil.
-	changed, gate         <-chan struct{}
-	res                   command.Reservation
-	running, closed, gone bool
-}
-
-// reserveOrRunning is tryReserve (tryReserveIdle when idle) that, on a refusal, reports whether a running turn or a
-// close refused it, with the channels to park on, in one acquisition. A turn kiro-cli runs without one open here (its
-// hold) counts as running; a closing turn does not, since it lets go within its close.
-func (r *turnRegistry) reserveOrRunning(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, idle bool) idleLook {
-	lc, gate, err := r.admitLife(chatID, stamp)
-	switch {
-	case err != nil:
-		return idleLook{closed: true}
-	case lc == nil:
-		return idleLook{gate: gate}
-	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	if _, held := lc.holderSourceLocked(); !idle || !held {
-		a := r.reserveLocked(lc, source, stamp, "")
-		switch {
-		case a.res.Token != 0:
-			return idleLook{res: a.res}
-		case a.gone:
-			return idleLook{gone: true}
-		case a.verdict == gateClosedSince:
-			return idleLook{closed: true}
-		case a.verdict == gateWait:
-			return idleLook{gate: a.idle, changed: lc.changed}
-		}
-	}
-	running := (lc.pending != nil && !lc.pending.finalizing) || (lc.own != nil && !lc.own.finalizing) ||
-		!lc.kas.may().admit
-	return idleLook{running: running, changed: lc.changed}
 }
 
 // promptHolder names the prompt-class turn holding admission: the bracket-owed one, else a non-finalizing own one.
@@ -166,21 +91,33 @@ func (r *turnRegistry) releaseReservation(res command.Reservation) {
 		return
 	}
 	lc.mu.Lock()
+	post := r.releaseReservationLocked(lc, res)
+	lc.mu.Unlock()
+	if post != nil {
+		post()
+	}
+}
+
+// releaseReservationLocked is releaseReservation's section: the run list learns the take gave its reservation back
+// (runList.reservationReleased). post, nil for a slot another reservation holds, reports the idle edge once mu is
+// released. Caller holds mu.
+func (r *turnRegistry) releaseReservationLocked(lc *chatLifecycle, res command.Reservation) (post func()) {
 	if !lc.reserved || lc.admission != res.Token {
-		lc.mu.Unlock()
-		return
+		return nil
 	}
 	lc.reserved = false
 	lc.reservedSource = 0
 	lc.admissionMessage = ""
-	lc.reservedForRow, lc.admissionOpened = false, false
+	lc.admissionOpened = false
 	lc.endOpensLocked(res.Token)
+	lc.run.reservationReleased(res.Token)
 	lc.wakeLocked()
 	idle := !lc.liveLockedState()
 	announce := idle && r.records.EndTurn(context.Background(), res.Chat)
-	lc.mu.Unlock()
-	if idle {
-		r.idle(res.Chat, announce)
+	return func() {
+		if idle {
+			r.idle(res.Chat, announce)
+		}
 	}
 }
 
@@ -205,43 +142,6 @@ func (lc *chatLifecycle) bracketedWireLocked() bool {
 	return t != nil && !t.finalizing && t.bracketed && t.Source == marotte.TurnSourceWireTurnStart
 }
 
-// promptAdmission is one look at a prompt's admission: the reservation taken, or why not and what to wait on.
-type promptAdmission struct {
-	// changed is the lifecycle's next-change channel, gate the close hold's idle channel; either may be nil.
-	changed, gate      <-chan struct{}
-	res                command.Reservation
-	busy, closed, gone bool
-}
-
-// reserveOrHolder tries a prompt's reservation at stamp and on refusal reports whether a steerable holder or a close
-// refused it, with the channels to park on, in one acquisition, so a release between try and park cannot strand the
-// waiter.
-func (r *turnRegistry) reserveOrHolder(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, messageID string) promptAdmission {
-	lc, gate, err := r.admitLife(chatID, stamp)
-	switch {
-	case err != nil:
-		return promptAdmission{closed: true}
-	case lc == nil:
-		return promptAdmission{gate: gate}
-	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	a := r.reserveLocked(lc, source, stamp, messageID)
-	switch {
-	case a.res.Token != 0:
-		return promptAdmission{res: a.res}
-	case a.gone:
-		slog.Info("prompt refused: the chat was deleted", "chat_id", chatID)
-		return promptAdmission{gone: true}
-	case a.verdict == gateClosedSince:
-		return promptAdmission{closed: true}
-	case a.verdict == gateWait:
-		return promptAdmission{gate: a.idle, changed: lc.changed}
-	}
-	holder, held := lc.holderSourceLocked()
-	return promptAdmission{busy: lc.kas.may().steerHolder && held && holder.SteerableHolder(), changed: lc.changed}
-}
-
 // admissionHolder reports the holder's source (open turn, else reservation), false when neither.
 func (r *turnRegistry) admissionHolder(chatID marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	lc, ok := r.lookup(chatID)
@@ -251,65 +151,6 @@ func (r *turnRegistry) admissionHolder(chatID marotte.ChatID) (marotte.TurnOpenS
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	return lc.holderSourceLocked()
-}
-
-// TryReserveIdleTurn takes the admission slot iff no turn is open and nothing holds it, never waiting.
-func (bc *bridgeCoordinator) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (command.Reservation, bool) {
-	return bc.turns.tryReserveIdle(chatID, source, stamp)
-}
-
-// ReserveIdleTurn takes the admission slot for a caller whose intent began at stamp once nothing holds it and no turn
-// is open, waiting up to wait for a holder that is not a running turn or for a held close; one waiter acquires per
-// wake. A running turn answers IdleTurnOpen at once, a close committed since stamp IdleClosed, a dead ctx IdleHeld.
-func (bc *bridgeCoordinator) ReserveIdleTurn(
-	ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration,
-) (command.IdleAdmission, command.Reservation) {
-	return bc.reserveWaiting(ctx, chatID, source, stamp, wait, true)
-}
-
-// ReserveTurn takes the admission slot for a caller whose intent began at stamp, waiting up to wait for a holder that
-// is not a running turn, as ReserveIdleTurn does, with the same answers; an open wire turn does not refuse it.
-func (bc *bridgeCoordinator) ReserveTurn(
-	ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration,
-) (command.IdleAdmission, command.Reservation) {
-	return bc.reserveWaiting(ctx, chatID, source, stamp, wait, false)
-}
-
-func (bc *bridgeCoordinator) reserveWaiting(
-	ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration, idle bool,
-) (command.IdleAdmission, command.Reservation) {
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	for expired := false; ; {
-		a := bc.turns.reserveOrRunning(chatID, source, stamp, idle)
-		switch {
-		case a.res.Token != 0:
-			return command.IdleAcquired, a.res
-		case a.gone:
-			return command.IdleChatGone, command.Reservation{}
-		case a.closed:
-			return command.IdleClosed, command.Reservation{}
-		case a.running:
-			return command.IdleTurnOpen, command.Reservation{}
-		case expired:
-			return command.IdleHeld, command.Reservation{}
-		}
-		select {
-		case <-a.changed:
-		case <-a.gate:
-		case <-timer.C:
-			expired = true
-		case <-ctx.Done():
-			return command.IdleHeld, command.Reservation{}
-		}
-	}
-}
-
-// TryReserveDrain takes the admission slot for a close's drained prompt iff it is free, never waiting, refused once a
-// turn opened after the closed one, and ends cl.Tail's hold in the same section (drainPick). The open checks the
-// fence again where it appends.
-func (bc *bridgeCoordinator) TryReserveDrain(chatID marotte.ChatID, cl command.CloseFacts) (command.Reservation, bool) {
-	return bc.turns.drainPick(chatID, cl.Fence, cl.Tail)
 }
 
 // LifeStamp is the life gate's position now, the stamp a caller takes where its intent toward a chat begins.
@@ -334,46 +175,6 @@ func (bc *bridgeCoordinator) ReleaseTurnReservation(res command.Reservation) {
 // reservation's. Satisfies command.turnOutcomeAccess.
 func (bc *bridgeCoordinator) AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return bc.turns.admissionHolder(chatID)
-}
-
-// ReserveTurnForPrompt takes the slot for a prompt whose intent began at stamp, waiting up to wait; one waiter
-// acquires per wake. A steerable holder (a prompt-class turn, or a wire turn KAS bracketed) answers Busy at once; a
-// close committed since stamp answers Closed; a revert holder, a held close, a KAS hold or a run KAS reports with no
-// steerable holder parks the waiter and answers Starting at the budget. A dead ctx answers Starting.
-func (bc *bridgeCoordinator) ReserveTurnForPrompt(
-	ctx context.Context, chatID marotte.ChatID, wait time.Duration, stamp uint64, messageID string,
-) (command.AdmissionOutcome, command.Reservation) {
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	for {
-		a := bc.turns.reserveOrHolder(chatID, marotte.TurnSourcePrompt, stamp, messageID)
-		if out, done := a.outcome(); done {
-			return out, a.res
-		}
-		select {
-		case <-a.changed:
-		case <-a.gate:
-		case <-timer.C:
-			return bc.expiredAdmission(chatID, stamp, messageID)
-		case <-ctx.Done():
-			return command.AdmissionStarting, command.Reservation{}
-		}
-	}
-}
-
-// outcome is the answer a look decides, false when the caller parks.
-func (a *promptAdmission) outcome() (command.AdmissionOutcome, bool) {
-	switch {
-	case a.res.Token != 0:
-		return command.AdmissionAcquired, true
-	case a.gone:
-		return command.AdmissionChatGone, true
-	case a.closed:
-		return command.AdmissionClosed, true
-	case a.busy:
-		return command.AdmissionBusy, true
-	}
-	return command.AdmissionStarting, false
 }
 
 // defaultIdleEndGrace is how long a wire turn waits for its turn_end once KAS reports no turn running. KAS 2.31
@@ -579,6 +380,8 @@ func (lc *chatLifecycle) sendAttempt(
 	step, fold = lc.markSentLocked(t)
 	if step == sendNow {
 		commit = lc.sendCommitLocked(t)
+		// The list marked t running and steerable; the header must say so before the call is written.
+		lc.wakeLocked()
 	}
 	return step, fold, commit, lc.changed, nil
 }
@@ -596,14 +399,6 @@ func (lc *chatLifecycle) sendCommitLocked(t *activeTurn) func() error {
 	}
 }
 
-// kasStep applies a closer's input for the turn at seq: a release answers whether the closer may drain, with the
-// rows queued under its hold.
-func (lc *chatLifecycle) kasStep(in kasInput, seq uint64) (drain bool, rows []string) {
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	return lc.kasStepLocked(in, seq)
-}
-
 // unbracketedPrompt reports a prompt turn no wire turn_start bound: kiro-cli never streamed its run.
 func (t *activeTurn) unbracketedPrompt() bool {
 	t.lc.mu.Lock()
@@ -615,13 +410,6 @@ func (t *activeTurn) unbracketedPrompt() bool {
 // arm. Caller holds mu.
 func (lc *chatLifecycle) idleSinceLocked(t *activeTurn, arm uint64) bool {
 	return lc.own == t && lc.bracketedWireLocked() && t.kasIdle && t.idleArms == arm
-}
-
-// One last try first.
-func (bc *bridgeCoordinator) expiredAdmission(chatID marotte.ChatID, stamp uint64, messageID string) (command.AdmissionOutcome, command.Reservation) {
-	a := bc.turns.reserveOrHolder(chatID, marotte.TurnSourcePrompt, stamp, messageID)
-	out, _ := a.outcome()
-	return out, a.res
 }
 
 // The manager registers before Start, so presence is not liveness.

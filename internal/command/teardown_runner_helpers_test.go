@@ -23,9 +23,8 @@ type fakeLife struct {
 func (*fakeLife) TurnContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.WithoutCancel(ctx))
 }
-func (*fakeLife) InflightAdd(int)  {}
-func (*fakeLife) InflightDone()    {}
-func (l *fakeLife) Draining() bool { return l.draining.Load() }
+func (*fakeLife) InflightAdd(int) {}
+func (*fakeLife) InflightDone()   {}
 func (l *fakeLife) GoUnlessDraining(fn func()) bool {
 	if l.draining.Load() {
 		return false

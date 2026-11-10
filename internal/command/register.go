@@ -66,7 +66,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.register(marotte.CmdPermissionResponse, bind2(r.Perms, r.Profiles, cmdPermission))
 	d.register(marotte.CmdElicitationResponse, bind1(r.Perms, cmdElicitationResponse))
 	d.register(marotte.CmdUserInputResponse, bind1(r.Perms, cmdUserInputResponse))
-	d.RegisterChange(marotte.CmdRewindChat, bind5(r.Bridges, chats, r.Admission, r.RunCutter, r.Bus, cmdRewindChat))
+	d.RegisterChange(marotte.CmdRewindChat, bind6(r.Bridges, chats, r.Admission, r.Run, r.RunCutter, r.Bus, cmdRewindChat))
 	configLocks := keylock.New(cmp.Compare[marotte.ChatID])
 	d.RegisterChange(marotte.CmdSetEffort, bind6(r.Bridges, chats, r.Bus, r.Workspace, r.Effort, configLocks, cmdSetEffort))
 	d.RegisterChange(marotte.CmdSetThinking, bind3(r.Bridges, chats, configLocks, cmdSetThinking))
@@ -75,11 +75,11 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.RegisterChange(marotte.CmdSetSupervisedMode,
 		bind3(r.Bridges, chats, keylock.New(cmp.Compare[marotte.ChatID]), cmdSetSupervisedMode))
 
-	d.register(marotte.CmdCancel, bind5(r.Bridges, r.Perms, r.Terminals, r.Stops, r.SteerQueue, cmdCancel))
+	d.register(marotte.CmdCancel, bind6(r.Run, r.Bridges, r.Perms, r.Terminals, r.Stops, r.SteerQueue, cmdCancel))
 	d.RegisterChange(marotte.CmdForkChat, bind4(r.Bridges, chats, r.Workspace, mem, cmdForkChat))
 
-	d.register(marotte.CmdQueuePrompt, bind1(r.Queue, cmdQueuePrompt))
-	d.register(marotte.CmdSetInterruptMode, bind1[chatMutator](r.Chats, cmdSetInterruptMode))
+	d.register(marotte.CmdQueuePrompt, bind2(r.Run, r.Admission, cmdQueuePrompt))
+	d.register(marotte.CmdSetInterruptMode, bind2[chatMutator](r.Chats, r.Run, cmdSetInterruptMode))
 	d.register(marotte.CmdRenameChat, bind2(chats, r.Renamer, cmdRenameChat))
 
 	prompt := &promptRoles{
@@ -93,16 +93,15 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		steers:      r.Steers,
 		queue:       r.SteerQueue,
 		jobs:        r.SteerJobs,
-		followups:   r.Queue,
-		compactor:   r.Compactor,
+		runq:        r.Run,
 		sendGate:    r.SendGate,
 		auth:        r.AuthReadiness,
 		signIn:      r.SignIn,
 	}
 	d.prompts = prompt
 	d.register(marotte.CmdPrompt, bind1(prompt, cmdPrompt))
-	d.register(marotte.CmdUnqueuePrompt, bind1(prompt, cmdUnqueuePrompt))
-	d.register(marotte.CmdSendQueuedNow, bind4(prompt, r.Perms, r.Terminals, r.Stops, cmdSendQueuedNow))
+	d.register(marotte.CmdUnqueuePrompt, bind1(r.Run, cmdUnqueuePrompt))
+	d.register(marotte.CmdSendQueuedNow, bind5(r.Run, r.Bridges, r.Perms, r.Terminals, r.Stops, cmdSendQueuedNow))
 	d.merges = newTangentMerges(prompt, mem, r.Loader)
 	d.register(marotte.CmdMergeTangent, bind2(r.Tangents, d.merges, cmdMergeTangent))
 	d.register(marotte.CmdSteer, bind1(prompt, cmdSteer))

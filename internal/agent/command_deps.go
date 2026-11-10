@@ -125,37 +125,6 @@ func (rt *Runtime) AwaitNoClose(ctx context.Context, chatID marotte.ChatID) (boo
 	return rt.coord.AwaitNoClose(ctx, chatID)
 }
 
-// ReserveTurnForPrompt takes the chat's admission slot for a prompt, waiting up to wait; a refusal keys on the holder's source.
-func (rt *Runtime) ReserveTurnForPrompt(
-	ctx context.Context, chatID marotte.ChatID, wait time.Duration, stamp uint64, messageID string,
-) (command.AdmissionOutcome, command.Reservation) {
-	return rt.coord.ReserveTurnForPrompt(ctx, chatID, wait, stamp, messageID)
-}
-
-// TryReserveIdleTurn takes the chat's admission slot iff no turn is open and nothing holds it.
-func (rt *Runtime) TryReserveIdleTurn(chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64) (command.Reservation, bool) {
-	return rt.coord.TryReserveIdleTurn(chatID, source, stamp)
-}
-
-// ReserveIdleTurn takes the chat's admission slot once no turn holds it, waiting up to wait for a transient holder.
-func (rt *Runtime) ReserveIdleTurn(
-	ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration,
-) (command.IdleAdmission, command.Reservation) {
-	return rt.coord.ReserveIdleTurn(ctx, chatID, source, stamp, wait)
-}
-
-// ReserveTurn takes the chat's admission slot, waiting up to wait for a holder that is not a running turn.
-func (rt *Runtime) ReserveTurn(
-	ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, stamp uint64, wait time.Duration,
-) (command.IdleAdmission, command.Reservation) {
-	return rt.coord.ReserveTurn(ctx, chatID, source, stamp, wait)
-}
-
-// TryReserveDrain is a close's drain picking its prompt (bridgeCoordinator.TryReserveDrain).
-func (rt *Runtime) TryReserveDrain(chatID marotte.ChatID, cl command.CloseFacts) (command.Reservation, bool) {
-	return rt.coord.TryReserveDrain(chatID, cl)
-}
-
 // PromptHolder names the prompt-class turn holding the chat's admission.
 func (rt *Runtime) PromptHolder(chatID marotte.ChatID) (string, bool) {
 	return rt.coord.PromptHolder(chatID)
@@ -186,19 +155,9 @@ func (rt *Runtime) SettleTurnOnResponse(ctx context.Context, chatID marotte.Chat
 	rt.coord.settleTurnOnResponse(ctx, chatID, turnID, seq, resp)
 }
 
-// TurnOpenedAfter reports whether any own turn on the chat opened after turnID.
-func (rt *Runtime) TurnOpenedAfter(chatID marotte.ChatID, turnID string) bool {
-	return rt.coord.turnOpenedAfter(chatID, turnID)
-}
-
 // TurnIsOpen reports whether turnID is an open, non-finalizing turn of the chat's live lifecycle.
 func (rt *Runtime) TurnIsOpen(chatID marotte.ChatID, turnID string) bool {
 	return rt.coord.turns.isOpen(chatID, turnID)
-}
-
-// StopRequestedAfter reports whether a stop was requested after turnID opened.
-func (rt *Runtime) StopRequestedAfter(chatID marotte.ChatID, turnID string) bool {
-	return rt.coord.stopRequestedAfter(chatID, turnID)
 }
 
 // RequestStop records a stop for cause and captures the turns it targets.
@@ -221,19 +180,14 @@ func (rt *Runtime) AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpe
 	return rt.coord.AdmissionHolderSource(chatID)
 }
 
-// AwaitCompaction holds a prompt until the chat's running compaction returns.
-func (rt *Runtime) AwaitCompaction(ctx context.Context, chatID marotte.ChatID) {
-	rt.coord.autoCompact.awaitRunning(ctx, chatID)
-}
-
 // RequestCompact is the reader's compaction, owned by the chat's compactor.
 func (rt *Runtime) RequestCompact(ctx context.Context, chatID marotte.ChatID) (command.CompactOutcome, error) {
 	return rt.coord.autoCompact.request(ctx, chatID)
 }
 
-// CancelCompact drops the chat's queued compaction.
-func (rt *Runtime) CancelCompact(ctx context.Context, chatID marotte.ChatID) error {
-	return rt.coord.autoCompact.cancel(ctx, chatID)
+// CancelCompact withdraws the chat's compaction entry id ("" for the chat's one).
+func (rt *Runtime) CancelCompact(ctx context.Context, chatID marotte.ChatID, id string) error {
+	return rt.coord.autoCompact.cancel(ctx, chatID, id)
 }
 
 // AbandonInFlightTurn finalizes a turn that failed before it could end.
@@ -255,3 +209,51 @@ func (rt *Runtime) RenameSession(ctx context.Context, sessionID, title string) e
 	}
 	return command.RenameResultOutcome(raw)
 }
+
+// Submit places a sent message on the chat's run list.
+func (rt *Runtime) Submit(ctx context.Context, chatID marotte.ChatID, stamp uint64, s *command.Submission) (command.SubmitAnswer, error) {
+	return rt.coord.Submit(ctx, chatID, stamp, s)
+}
+
+// TakeIdle takes the chat for a revert or a summary, which run now or not at all.
+func (rt *Runtime) TakeIdle(
+	ctx context.Context, chatID marotte.ChatID, kind command.IdleKind, stamp uint64, wait time.Duration,
+) (command.IdleAdmission, command.Reservation, string) {
+	return rt.coord.TakeIdle(ctx, chatID, kind, stamp, wait)
+}
+
+// SummaryLaunched reports a granted summary's open, or its refusal before the open.
+func (rt *Runtime) SummaryLaunched(chatID marotte.ChatID, entryID string, res command.Reservation, turnID string, err error) {
+	rt.coord.SummaryLaunched(chatID, entryID, res, turnID, err)
+}
+
+// SendNow moves a queued row to the front and stops the turn the press was drawn against.
+func (rt *Runtime) SendNow(ctx context.Context, chatID marotte.ChatID, id, stop string, hasStop bool) (command.RunStop, error) {
+	return rt.coord.SendNow(ctx, chatID, id, stop, hasStop)
+}
+
+// ClearNext undoes a send-now whose stop was not delivered.
+func (rt *Runtime) ClearNext(chatID marotte.ChatID, id string) { rt.coord.ClearNext(chatID, id) }
+
+// Unqueue removes a waiting row.
+func (rt *Runtime) Unqueue(ctx context.Context, chatID marotte.ChatID, id string) error {
+	return rt.coord.Unqueue(ctx, chatID, id)
+}
+
+// Stop stops the live entry target names.
+func (rt *Runtime) Stop(ctx context.Context, chatID marotte.ChatID, target string) command.RunStop {
+	return rt.coord.Stop(ctx, chatID, target)
+}
+
+// StopUndone restores what a stop whose session/cancel was not delivered marked.
+func (rt *Runtime) StopUndone(chatID marotte.ChatID, stop *command.TurnStop) {
+	rt.coord.StopUndone(chatID, stop)
+}
+
+// RunView is the chat's run list as the header draws it.
+func (rt *Runtime) RunView(ctx context.Context, chatID marotte.ChatID) marotte.RunView {
+	return rt.coord.RunView(ctx, chatID)
+}
+
+// ModeChanged republishes the chat's run list after its interrupt mode changed.
+func (rt *Runtime) ModeChanged(chatID marotte.ChatID) { rt.coord.ModeChanged(chatID) }

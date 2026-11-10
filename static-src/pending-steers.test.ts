@@ -123,23 +123,16 @@ const {
   cancelCompactDispatch,
 } = mocks;
 
-import {
-  setSessions,
-  setActive,
-  recordSteerQueued,
-  recordSteerSent,
-  openTurn,
-  appendEntry,
-  setTurnOpen,
-  get,
-} from "./store.js";
+import { setSessions, setActive, recordSteerQueued, openTurn, appendEntry, get } from "./store.js";
 import { initPendingSteers, mountSteerStack, type SteerStackSource } from "./pending-steers.js";
 import { signal } from "@cplieger/ui";
-import type { Entry, PendingSteer, QueuedPrompt, Session } from "./types.js";
+import type { Entry, PendingSteer, QueuedPrompt, RunEntryView, RunView, Session } from "./types.js";
+import { compactionEntry, rowEntry, runAt, turnEntry } from "./__test-helpers__/run-order.js";
 import type { Confirmation } from "./confirm.js";
 import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 import { confirmText } from "./__test-helpers__/confirm-text.js";
 import { QUOTE_ATTRIBUTION, appendQuote, quoteSelection } from "./message-quote.js";
+import { pendingSteerRow, upsertSteerRow } from "./steer-rows.js";
 
 function makeSession(chatID: string): Session {
   return {
@@ -167,6 +160,19 @@ function makeSession(chatID: string): Session {
 
 /** The seq the next entry of the fixture turn takes; `appendEntry` refuses any other. */
 let seq = 0;
+
+/** A row still sending, as the run step's dock holds one (`run-step-steers.ts`): the stack draws a
+ *  chat's and a step's rows through one render. */
+function recordSending(chatID: string, messageID: string, text: string): void {
+  const s = get(chatID);
+  if (s !== undefined) {
+    const steers = upsertSteerRow(s.steers ?? [], pendingSteerRow(`steer-${messageID}`, text));
+    setSessions([{ ...s, steers: [...steers] }]);
+  }
+}
+
+/** The version of the next run order a case states, so the store takes each as newer. */
+let runVersion = 0;
 
 function landSteerEntry(
   chatID: string,
@@ -364,7 +370,7 @@ describe("the steer stack", () => {
   });
 
   it("says a message is still sending before the server confirms it", () => {
-    recordSteerSent("chat-1", "m-1", "use tabs instead");
+    recordSending("chat-1", "m-1", "use tabs instead");
 
     const row = firstRow();
     expect(row.dataset["state"]).toBe("sending");
@@ -485,7 +491,7 @@ describe("the steer stack", () => {
   });
 
   it("repaints when only the sending state changed", () => {
-    recordSteerSent("chat-1", "m-1", "one");
+    recordSending("chat-1", "m-1", "one");
     expect(labelOf(firstRow())).toBe("Sending");
     expect(actions(firstRow())).toEqual([]);
 
@@ -592,7 +598,7 @@ describe("the steer stack", () => {
   });
 
   it("offers no controls on a message that is still sending", () => {
-    recordSteerSent("chat-1", "m-1", "one");
+    recordSending("chat-1", "m-1", "one");
     expect(actions(firstRow())).toEqual([]);
   });
 
@@ -619,7 +625,7 @@ describe("the steer stack", () => {
 
   it("gives a still-sending row no controls beside a confirmed one that has them", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "confirmed", origin: "user" });
-    recordSteerSent("chat-1", "m-2", "still sending");
+    recordSending("chat-1", "m-2", "still sending");
     expect(actions(rowAt(0))).toEqual(PER_ROW("confirmed"));
     expect(actions(rowAt(1))).toEqual([]);
   });
@@ -876,7 +882,14 @@ describe("the steer stack", () => {
     queueDispatch.mockImplementation(({ chatID, text, messageID }) => {
       const s = get(chatID);
       if (s !== undefined) {
-        setSessions([{ ...s, queued: [{ id: messageID, text }] }]);
+        setSessions([
+          {
+            ...s,
+            run: runAt(1, [
+              rowEntry(messageID, { after: "next" }, { row: { id: messageID, text } }),
+            ]),
+          },
+        ]);
       }
       return {
         outcome: Promise.resolve({ status: "error", error: { status: 0, message: "network" } }),
@@ -954,14 +967,40 @@ describe("the steer stack", () => {
     expect(clearDispatch).not.toHaveBeenCalled();
   });
 
-  // FOLLOW-UPS. The rows the server holds for the end of the turn, drawn from the header's list
-  // below the steers. Each is addressed by its own id, so its controls reach `unqueue_prompt` and
-  // never the steer buffer.
+  // THE RUN ORDER. The dock draws the server's list (`ChatHeader.run`) in order, each entry with the
+  // server's wait; it infers neither the order nor a wait. A running turn is the transcript's, so it is
+  // not drawn.
 
-  /** A follow-up is only accepted while a turn runs, so the header's rows arrive beside one. */
-  function withQueued(queued: QueuedPrompt[], turnOpen = true): void {
-    setSessions([{ ...makeSession("chat-1"), queued, turn_open: turnOpen }]);
+  const HEAD = turnEntry("t1", { origin: "prompt", kind: "row" });
+
+  /** The chat's run order: `entries` behind a running turn when `turnRuns`, as the server lists them. */
+  function withRun(entries: RunEntryView[], over: Partial<RunView> = {}, turnRuns = true): void {
+    const head = turnRuns ? [HEAD] : [];
+    setSessions([
+      {
+        ...makeSession("chat-1"),
+        run: runAt(++runVersion, [...head, ...entries], {
+          ...(turnRuns ? { cancel: "t1", send: "steer" as const } : {}),
+          ...over,
+        }),
+      },
+    ]);
     setActive("chat-1");
+  }
+
+  /** Rows behind a running turn as the server waits them: one turn end per row ahead, the head's
+   *  included, each with the arrow that stops the turn. */
+  function behindTurn(prompts: readonly QueuedPrompt[]): RunEntryView[] {
+    return prompts.map((row, i) =>
+      rowEntry(
+        row.id,
+        i === 0 ? { after: "turns", turns: 1, this: true } : { after: "turns", turns: i + 1 },
+        {
+          row,
+          send_now: "stop",
+        },
+      ),
+    );
   }
 
   const three: QueuedPrompt[] = [
@@ -970,101 +1009,39 @@ describe("the steer stack", () => {
     { id: "m-q3", text: "third" },
   ];
 
-  // The server sends one follow-up per turn end, so each row waits one turn longer than the row
-  // above it.
-  it("counts each follow-up's wait in turns from the running one", () => {
-    withQueued(three);
+  it("draws each follow-up with the wait the server gives it, in its order", () => {
+    withRun(behindTurn(three));
 
+    expect(rows().map(textOf)).toEqual(["first", "second", "third"]);
     expect(rows().map(labelOf)).toEqual(["After this turn", "After 2 turns", "After 3 turns"]);
     expect(rowAt(2).getAttribute("aria-label")).toBe("After 3 turns: third");
   });
 
+  it("draws no row for a running turn, kiro-cli's run or a retry: their messages are the transcript's", () => {
+    withRun([
+      rowEntry("retry-1", { after: "turns", turns: 1, this: true }, { kind: "retry" }),
+      ...behindTurn([{ id: "m-q1", text: "first" }]),
+    ]);
+
+    expect(rows().map(textOf)).toEqual(["first"]);
+  });
+
   // A follow-up another program queued through the API is not the user's, so it says who sent it.
   it("says who sent a follow-up an API caller queued", () => {
-    withQueued([
-      { id: "m-q1", text: "Agent Mail: 1 new message", caller: { label: "Agent Mail" } },
-      { id: "m-q2", text: "nightly report", caller: {} },
-      { id: "m-q3", text: "mine" },
-    ]);
+    withRun(behindTurn([{ id: "m-q1", text: "from grelot", caller: { label: "grelot" } }]));
 
-    expect(rows().map(labelOf)).toEqual([
-      "Sent by Agent Mail \u00b7 after this turn",
-      "Sent by an API caller \u00b7 after 2 turns",
-      "After 3 turns",
-    ]);
-    expect(rowAt(0).getAttribute("aria-label")).toBe(
-      "Sent by Agent Mail \u00b7 after this turn: Agent Mail: 1 new message",
-    );
-  });
-
-  it("moves every remaining follow-up up a turn when the first one posts", () => {
-    withQueued(three);
-    const [, second, third] = rows();
-
-    withQueued(three.slice(1));
-
-    expectSameNodes(rows(), [second as HTMLElement, third as HTMLElement]);
-    expect(rows().map(labelOf)).toEqual(["After this turn", "After 2 turns"]);
-  });
-
-  it("closes the gap a discarded follow-up leaves", () => {
-    withQueued(three);
-
-    withQueued([three[0] as QueuedPrompt, three[2] as QueuedPrompt]);
-
-    expect(rows().map(textOf)).toEqual(["first", "third"]);
-    expect(rows().map(labelOf)).toEqual(["After this turn", "After 2 turns"]);
-  });
-
-  // Unread steers go out together as one prompt ahead of any follow-up; a steer the agent has
-  // been handed is read inside the running turn.
-  it("puts unread steers one turn ahead of the follow-ups, and a sent steer none", () => {
-    withQueued(three.slice(0, 2));
-    recordSteerQueued("chat-1", { id: "steer-1", text: "in this turn", origin: "user" });
-
-    expect(rows().map(labelOf)).toEqual(["Sent", "After this turn", "After 2 turns"]);
-
-    recordSteerQueued("chat-1", { id: "steer-2", text: "a", origin: "user", state: "unsent" });
-    recordSteerQueued("chat-1", { id: "steer-3", text: "b", origin: "user", state: "unsent" });
-
-    expect(rows().map(labelOf)).toEqual([
-      "Sent",
-      "Unread \u00b7 sends next",
-      "Unread \u00b7 sends next",
-      "After 2 turns",
-      "After 3 turns",
-    ]);
-  });
-
-  // The server opens the sent row's turn before the header write that drops the row, and a failed
-  // write leaves it listed, so the dock can hold a row whose turn is already running.
-  it("marks a follow-up whose turn has opened as sent, and counts the rest from that turn", () => {
-    withQueued(three.slice(0, 2), false);
-    openTurn("chat-1", {
-      id: "tq-open",
-      turn: "tq",
-      kind: "turn_open",
-      seq: 0,
-      ts: 1,
-      payload: { source: "prompt", n: 1, prompt: { id: "m-q1", text: "first" } },
-    });
-
-    expect(rows().map(labelOf)).toEqual(["Sent", "After this turn"]);
-    expect(rowAt(1).getAttribute("aria-label")).toBe("After this turn: second");
-
-    const live = get("chat-1");
-    if (live === undefined) {
-      throw new Error("no chat-1");
-    }
-    setSessions([{ ...live, queued: three.slice(1, 2) }]);
-
-    expect(rows().map(labelOf)).toEqual(["After this turn"]);
+    expect(labelOf(firstRow())).toBe("Sent by grelot \u00b7 after this turn");
   });
 
   it("draws a quoted follow-up's passage as a sent prompt's band, and names it without the marks", () => {
-    withQueued([
-      { id: "m-q", text: `${appendQuote("", quoteSelection("quoted", "From Kiro's reply"))}reply` },
-    ]);
+    withRun(
+      behindTurn([
+        {
+          id: "m-q",
+          text: `${appendQuote("", quoteSelection("quoted", "From Kiro's reply"))}reply`,
+        },
+      ]),
+    );
     const row = firstRow();
     expect(row.querySelector(".steer-text > blockquote.turn-req-quote")?.textContent).toBe(
       "From Kiro's reply: quoted",
@@ -1074,136 +1051,165 @@ describe("the steer stack", () => {
     expect(row.dataset["tooltip"]).toBe("From Kiro's reply: quoted\n\nreply");
   });
 
-  // THE QUEUED COMPACTION. A compaction asked for during a turn runs at its end, before the server sends the next
-  // follow-up, so it sits below the steers and above the follow-ups, whose waits it does not lengthen.
-  function withCompact(queued: QueuedPrompt[], turnOpen = true): void {
-    setSessions([{ ...makeSession("chat-1"), queued, compact_queued: true, turn_open: turnOpen }]);
-    setActive("chat-1");
-  }
-
-  it("shows the queued compaction after this turn, ahead of the follow-ups", () => {
-    withCompact(three.slice(0, 2));
-    recordSteerQueued("chat-1", { id: "steer-1", text: "in this turn", origin: "user" });
-
-    expect(rows().map(textOf)).toEqual(["in this turn", "Compact the context", "first", "second"]);
-    expect(rows().map(labelOf)).toEqual([
-      "Sent",
-      "After this turn",
-      "After this turn",
-      "After 2 turns",
-    ]);
-    expect(rowAt(1).getAttribute("aria-label")).toBe("After this turn: Compact the context");
-    expect(actions(rowAt(1))).toEqual(["Cancel the queued compaction"]);
-  });
-
-  it("reads as pending when no turn runs, whether the close is running it or left it for the next turn", () => {
-    withCompact([], false);
-
-    expect(rows().map(labelOf)).toEqual(["Pending"]);
-    expect(firstRow().getAttribute("aria-label")).toBe("Pending: Compact the context");
-  });
-
-  it("cancels the chat's queued compaction from its row", async () => {
-    withCompact([]);
-
-    clickAction(firstRow(), "Cancel the queued compaction");
-
-    await vi.waitFor(() => {
-      expect(cancelCompactDispatch).toHaveBeenCalledExactlyOnceWith({ chatID: "chat-1" });
-    });
-  });
-
-  function withCompactStage(running: boolean, turnOpen: boolean): void {
-    setSessions([
-      {
-        ...makeSession("chat-1"),
-        queued: [],
-        compact_queued: true,
-        compact_running: running,
-        turn_open: turnOpen,
-      },
-    ]);
-    setActive("chat-1");
-  }
-
-  it("turns the queued row into the running one in place when the compaction starts, with no control", () => {
-    withCompactStage(false, true);
-    const queued = firstRow();
-    expect(queued.dataset["state"]).toBe("queued");
-    expect(actions(queued)).toEqual(["Cancel the queued compaction"]);
-
-    withCompactStage(true, false);
-
-    expectSameNodes(rows(), [queued]);
-    expect(queued.dataset["state"]).toBe("compacting");
-    expect(textOf(queued)).toBe("Compacting the context…");
-    expect(labelOf(queued)).toBe("Running");
-    expect(queued.getAttribute("aria-label")).toBe("Running: Compacting the context…");
-    expect(queued.dataset["tooltip"]).toBe("Compacting the context…");
-    expect(queued.querySelector(".steer-state-icon .steer-spinner")).not.toBeNull();
-    expect(actions(queued)).toEqual([]);
-  });
-
-  it("draws a compaction already running when the page loads as the running row", () => {
-    withCompactStage(true, false);
+  // CASE A: a /compact on an idle chat runs at once; the dock shows it running with no control.
+  it("draws a running compaction as the running row, with no control", () => {
+    withRun([compactionEntry("compact-1", { after: "running" })], { send: "queue" }, false);
 
     expect(rows()).toHaveLength(1);
     expect(firstRow().dataset["state"]).toBe("compacting");
-    expect(textOf(firstRow())).toBe("Compacting the context…");
+    expect(textOf(firstRow())).toBe("Compacting the context\u2026");
+    expect(labelOf(firstRow())).toBe("Running");
+    expect(firstRow().querySelector(".steer-state-icon .steer-spinner")).not.toBeNull();
     expect(actions(firstRow())).toEqual([]);
   });
 
-  it("clears the running row when the compaction ends, accepted or refused, leaving no stale chip", () => {
-    withCompactStage(true, false);
-    expect(rows()).toHaveLength(1);
+  // CASE B: a message sent while a compaction runs waits under it and goes at its end.
+  it("draws a message sent during a running compaction under it, waiting for its end", () => {
+    withRun(
+      [
+        compactionEntry("compact-1", { after: "running" }),
+        rowEntry("m-q1", { after: "compaction" }, { row: { id: "m-q1", text: "first" } }),
+        rowEntry(
+          "m-q2",
+          { after: "turns", turns: 1 },
+          { row: { id: "m-q2", text: "second" }, send_now: "after_compaction" },
+        ),
+      ],
+      { send: "queue", next_wait: { after: "turns", turns: 2 } },
+      false,
+    );
 
-    setSessions([
-      { ...makeSession("chat-1"), queued: [], compact_queued: false, compact_running: false },
+    expect(rows().map(textOf)).toEqual(["Compacting the context\u2026", "first", "second"]);
+    expect(rows().map(labelOf)).toEqual(["Running", "After the compaction", "After the next turn"]);
+    expect(actions(rowAt(1))).toEqual(["Edit this follow-up", "Discard this follow-up"]);
+    expect(actionButton(rowAt(2), "Send this follow-up first").dataset["tooltip"]).toBe(
+      "Send this follow-up first once the compaction ends",
+    );
+  });
+
+  // CASE C: a /compact during a turn runs at its end, ahead of the rows queued behind it.
+  it("draws a compaction waiting for this turn above the rows that wait for it, with its Cancel", async () => {
+    withRun([
+      compactionEntry("compact-1", { after: "turns", turns: 1, this: true }),
+      rowEntry(
+        "m-q1",
+        { after: "compaction" },
+        { row: { id: "m-q1", text: "first" }, send_now: "stop_then_compaction" },
+      ),
     ]);
-    setActive("chat-1");
 
-    expect(rows()).toEqual([]);
-    expect(stackHidden()).toBe(true);
+    expect(rows().map(textOf)).toEqual(["Compact the context", "first"]);
+    expect(rows().map(labelOf)).toEqual(["After this turn", "After the compaction"]);
+    expect(actions(firstRow())).toEqual(["Cancel the queued compaction"]);
+
+    clickAction(firstRow(), "Cancel the queued compaction");
+    await vi.waitFor(() => {
+      expect(cancelCompactDispatch).toHaveBeenCalledExactlyOnceWith({
+        chatID: "chat-1",
+        id: "compact-1",
+      });
+    });
   });
 
-  it("drops the row when the header no longer carries the compaction, keeping the follow-ups' rows", () => {
-    withCompact(three.slice(0, 1));
-    const followUp = rowAt(1);
+  it("turns the waiting compaction into the running one in place, with no control", () => {
+    withRun([compactionEntry("compact-1", { after: "turns", turns: 1, this: true })]);
+    const waiting = firstRow();
+    expect(waiting.dataset["state"]).toBe("queued");
 
-    withQueued(three.slice(0, 1));
+    withRun([compactionEntry("compact-1", { after: "running" })], { send: "queue" }, false);
 
-    expectSameNodes(rows(), [followUp]);
+    expectSameNodes(rows(), [waiting]);
+    expect(waiting.dataset["state"]).toBe("compacting");
+    expect(waiting.getAttribute("aria-label")).toBe("Running: Compacting the context\u2026");
+    expect(actions(waiting)).toEqual([]);
   });
 
-  it("gives a held row no turn, so the follow-ups around it skip it", () => {
-    withQueued([
-      { id: "m-h", text: "from before", held: true },
-      { id: "m-u1", text: "first" },
-      { id: "m-ch", text: "carried", resends: ["steer-1"], held: true },
-      { id: "m-u2", text: "second" },
+  // CASE E: the rows a stopped turn left wait for the reader's next turn, not the compaction's end.
+  it("draws rows a stopped turn paused as waiting for the next turn behind a running compaction", () => {
+    withRun(
+      [
+        compactionEntry("compact-1", { after: "running" }),
+        rowEntry(
+          "m-q1",
+          { after: "turns", turns: 1 },
+          { state: "paused", row: { id: "m-q1", text: "first" }, send_now: "after_compaction" },
+        ),
+      ],
+      { send: "queue" },
+      false,
+    );
+
+    expect(rows().map(labelOf)).toEqual(["Running", "After the next turn"]);
+  });
+
+  it("draws a taken row whose turn has not opened as starting", () => {
+    withRun(
+      [
+        rowEntry(
+          "m-q1",
+          { after: "starting" },
+          { state: "starting", row: { id: "m-q1", text: "first" } },
+        ),
+      ],
+      { send: "queue" },
+      false,
+    );
+
+    expect(rows().map(labelOf)).toEqual(["Starting"]);
+    expect(actions(firstRow())).toEqual(["Edit this follow-up", "Discard this follow-up"]);
+  });
+
+  it("gives a held row its words and no arrow", () => {
+    withRun([
+      rowEntry(
+        "m-h",
+        { after: "held" },
+        { state: "held", row: { id: "m-h", text: "from before" } },
+      ),
+      ...behindTurn([{ id: "m-q1", text: "first" }]),
     ]);
 
     expect(rows().map(labelOf)).toEqual([
       "Not sent \u00b7 the server restarted",
       "After this turn",
-      "Not sent \u00b7 the server restarted",
-      "After 2 turns",
     ]);
+    expect(firstRow().dataset["held"]).toBe("");
+    expect(actions(firstRow())).toEqual(["Edit this follow-up", "Discard this follow-up"]);
   });
 
-  // A turn that did not end cleanly leaves the rows queued for the close of a turn not yet
-  // started, and unread steers then ride on that turn's prompt rather than taking one of their own.
-  // The server marks them as awaiting that prompt before it announces the turn.
-  it("counts from the next turn while none runs, and from the running one once it opens", () => {
-    withQueued(three.slice(0, 2), false);
+  // CASE I: a steer the agent had not read when the turn stopped waits under the running compaction.
+  it("draws an unread steer under the running compaction it waits for", () => {
+    withRun(
+      [
+        compactionEntry("compact-1", { after: "running" }),
+        rowEntry("m-u", { after: "compaction" }, { kind: "unread", origin: "unread" }),
+      ],
+      { send: "queue", unread_wait: { after: "compaction" } },
+      false,
+    );
     recordSteerQueued("chat-1", { id: "steer-1", text: "a", origin: "user", state: "unsent" });
 
-    expect(rows().map(labelOf)).toEqual([
-      "Unread \u00b7 sends next",
-      "After the next turn",
-      "After 2 turns",
-    ]);
+    expect(rows().map(textOf)).toEqual(["Compacting the context\u2026", "a"]);
+    expect(rows().map(labelOf)).toEqual(["Running", "Unread \u00b7 after the compaction"]);
+    expect(actions(rowAt(1))).not.toContain("Send this message now");
+  });
 
+  it("keeps a steer the agent has yet to read above every entry, under the running turn", () => {
+    withRun([compactionEntry("compact-1", { after: "turns", turns: 1, this: true })]);
+    recordSteerQueued("chat-1", { id: "steer-1", text: "in this turn", origin: "user" });
+
+    expect(rows().map(textOf)).toEqual(["in this turn", "Compact the context"]);
+    expect(rows().map(labelOf)).toEqual(["Sent", "After this turn"]);
+  });
+
+  // A steer waiting for a prompt rides the entry that carries it; behind a compaction that sends none, it
+  // goes with the next message, never "after the compaction".
+  it("does not say a steer waiting for a prompt goes after a compaction whose end sends none", () => {
+    withRun(
+      [compactionEntry("compact-1", { after: "running" })],
+      { send: "queue", unread_wait: { after: "compaction" } },
+      false,
+    );
     recordSteerQueued("chat-1", {
       id: "steer-1",
       text: "a",
@@ -1211,19 +1217,18 @@ describe("the steer stack", () => {
       state: "unsent",
       awaitsPrompt: true,
     });
-    setTurnOpen("chat-1", true);
 
-    expect(rows().map(labelOf)).toEqual([
-      "Unread \u00b7 sends next",
-      "After this turn",
-      "After 2 turns",
-    ]);
+    expect(rows().map(labelOf)).toEqual(["Running", "With your next message"]);
   });
 
-  // While KAS may re-inject the steers after a load, the server's close sends the first follow-up
-  // and the steers wait for a prompt; once that clears, the next close sends them first again.
-  it("gives an unsent steer that awaits a prompt no turn, and one again when the mark clears", () => {
-    withQueued(three);
+  it("draws a steer waiting for a prompt under the row that carries it, with that row's wait", () => {
+    withRun([
+      rowEntry(
+        "m-q1",
+        { after: "turns", turns: 1, this: true },
+        { row: { id: "m-q1", text: "first" }, carries_unread: true, send_now: "stop" },
+      ),
+    ]);
     recordSteerQueued("chat-1", {
       id: "steer-1",
       text: "a",
@@ -1232,26 +1237,32 @@ describe("the steer stack", () => {
       awaitsPrompt: true,
     });
 
-    expect(rows().map(labelOf)).toEqual([
-      "Unread \u00b7 sends next",
-      "After this turn",
-      "After 2 turns",
-      "After 3 turns",
-    ]);
-    expect(rowAt(1).getAttribute("aria-label")).toBe("After this turn: first");
+    expect(rows().map(textOf)).toEqual(["first", "a"]);
+    expect(rows().map(labelOf)).toEqual(["After this turn", "Unread \u00b7 after this turn"]);
+  });
 
-    recordSteerQueued("chat-1", { id: "steer-1", text: "a", origin: "user", state: "unsent" });
+  // A screen reader hears what a sighted reader's tooltip says the arrow does.
+  it("names the send-now arrow by its tooltip, and renames it when the wait changes", () => {
+    withRun(
+      [
+        compactionEntry("compact-1", { after: "running" }),
+        ...behindTurn(three).map((e) => ({ ...e, send_now: "after_compaction" as const })),
+      ],
+      { send: "queue" },
+      false,
+    );
+    const arrow = (): HTMLElement => rowAt(1).querySelector<HTMLElement>(".steer-actions button")!;
+    expect(arrow().getAttribute("aria-label")).toBe(arrow().dataset["tooltip"]);
 
-    expect(rows().map(labelOf)).toEqual([
-      "Unread \u00b7 sends next",
-      "After 2 turns",
-      "After 3 turns",
-      "After 4 turns",
-    ]);
+    withRun(behindTurn(three));
+
+    expect(textOf(rowAt(1))).toBe("second");
+    expect(arrow().getAttribute("aria-label")).toBe(arrow().dataset["tooltip"]);
+    expect(arrow().getAttribute("aria-label")).toBe("Stop the turn and send this follow-up next");
   });
 
   it("draws a queued follow-up below the waiting steers", () => {
-    withQueued([{ id: "m-q1", text: "then add tests" }]);
+    withRun(behindTurn([{ id: "m-q1", text: "then add tests" }]));
     recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs", origin: "user" });
 
     expect(rows().map(textOf)).toEqual(["use tabs", "then add tests"]);
@@ -1259,16 +1270,16 @@ describe("the steer stack", () => {
   });
 
   it("shows a labelled follow-up's label, keeping its text in the tooltip", () => {
-    withQueued([{ id: "m-q1", text: "the whole findings", label: "Merging findings" }]);
+    withRun(behindTurn([{ id: "m-q1", text: "the whole findings", label: "Merging findings" }]));
 
     expect(textOf(firstRow())).toBe("Merging findings");
     expect(firstRow().dataset["tooltip"]).toBe("the whole findings");
   });
 
   it("repaints a follow-up whose label alone changed under the same id", () => {
-    withQueued([{ id: "m-q1", text: "the whole findings", label: "Merging findings" }]);
+    withRun(behindTurn([{ id: "m-q1", text: "the whole findings", label: "Merging findings" }]));
     const before = firstRow();
-    withQueued([{ id: "m-q1", text: "the whole findings", label: "Merged findings" }]);
+    withRun(behindTurn([{ id: "m-q1", text: "the whole findings", label: "Merged findings" }]));
 
     expect(firstRow()).toBe(before);
     expect(textOf(firstRow())).toBe("Merged findings");
@@ -1276,10 +1287,12 @@ describe("the steer stack", () => {
   });
 
   it("says what discarding loses: a user row was never sent, a carried row will not be sent again", () => {
-    withQueued([
-      { id: "m-u", text: "follow-up" },
-      { id: "m-c", text: "unread one", resends: ["steer-1"] },
-    ]);
+    withRun(
+      behindTurn([
+        { id: "m-u", text: "follow-up" },
+        { id: "m-c", text: "unread one", resends: ["steer-1"] },
+      ]),
+    );
     const hint = (row: HTMLElement): string =>
       row.querySelector(".steer-act-danger")?.getAttribute("data-tooltip") ?? "";
 
@@ -1288,19 +1301,20 @@ describe("the steer stack", () => {
   });
 
   it("updates a carried row's text in place when it absorbs a later carry", () => {
-    withQueued([{ id: "m-c", text: "use tabs", resends: ["steer-1"] }]);
+    withRun(behindTurn([{ id: "m-c", text: "use tabs", resends: ["steer-1"] }]));
     const before = firstRow();
-    withQueued([{ id: "m-c", text: "use tabs\n\nand rename it", resends: ["steer-1", "steer-2"] }]);
+    withRun(
+      behindTurn([
+        { id: "m-c", text: "use tabs\n\nand rename it", resends: ["steer-1", "steer-2"] },
+      ]),
+    );
 
     expect(firstRow()).toBe(before);
     expect(textOf(firstRow())).toBe("use tabs and rename it");
   });
 
   it("discards one follow-up by its own id, leaving the steer buffer alone", async () => {
-    withQueued([
-      { id: "m-q1", text: "first" },
-      { id: "m-q2", text: "second" },
-    ]);
+    withRun(behindTurn(three.slice(0, 2)));
     clickAction(rows()[1] as HTMLElement, "Discard");
 
     await vi.waitFor(() => {
@@ -1310,46 +1324,45 @@ describe("the steer stack", () => {
     expect(confirmMock).not.toHaveBeenCalled();
   });
 
-  // SEND NOW. A follow-up gets the held steer's arrow: the server moves the row to the head of
-  // the queue, stops the turn, and the stopped close sends that row next.
-  it("offers a waiting follow-up the steer's send-now arrow, first", () => {
-    withQueued(three);
+  // SEND NOW. The server offers the arrow (`send_now`) and moves the row; a stop names the turn the arrow
+  // was drawn against, so a press that crosses that turn's end stops nothing else.
+  it("offers a follow-up the server's send-now arrow, first", () => {
+    withRun(behindTurn(three));
     recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs", origin: "user" });
 
     expect(actions(rowAt(1))).toEqual([
-      "Send this follow-up now",
+      "Stop the turn and send this follow-up next",
       "Edit this follow-up",
       "Discard this follow-up",
     ]);
     const svg = (row: HTMLElement, label: string): string =>
       actionButton(row, label).querySelector("svg")?.outerHTML ?? "";
-    expect(svg(rowAt(1), "Send this follow-up now")).not.toBe("");
-    expect(svg(rowAt(1), "Send this follow-up now")).toBe(svg(rowAt(0), "Send this message now"));
+    expect(svg(rowAt(1), "Stop the turn")).not.toBe("");
+    expect(svg(rowAt(1), "Stop the turn")).toBe(svg(rowAt(0), "Send this message now"));
   });
 
-  it("stops the turn and sends the pressed follow-up first", async () => {
-    withQueued(three);
-
-    expect(actionButton(rowAt(2), "Send this follow-up now").dataset["tooltip"]).toBe(
-      "Stops the turn and sends this follow-up next",
-    );
-    clickAction(rowAt(2), "Send this follow-up now");
+  it("stops the turn the arrow was drawn against and sends the pressed follow-up first", async () => {
+    withRun(behindTurn(three));
+    clickAction(rowAt(2), "Stop the turn");
 
     await vi.waitFor(() => {
-      expect(sendQueuedNowDispatch).toHaveBeenCalledWith({ chatID: "chat-1", messageID: "m-q3" });
+      expect(sendQueuedNowDispatch).toHaveBeenCalledWith({
+        chatID: "chat-1",
+        messageID: "m-q3",
+        stop: "t1",
+      });
     });
     expect(cancelDispatch).not.toHaveBeenCalled();
     expect(unqueueDispatch).not.toHaveBeenCalled();
-    expect(confirmMock).not.toHaveBeenCalled();
     expect(setComposerValueMock).not.toHaveBeenCalled();
   });
 
-  it("takes back the stop announcement when the follow-up's turn had already opened", async () => {
+  it("takes back the stop announcement when the server stopped nothing", async () => {
     sendQueuedNowDispatch.mockReturnValueOnce({
       outcome: Promise.resolve<RemoveOutcome>({ status: "success", value: true }),
     });
-    withQueued(three);
-    clickAction(rowAt(2), "Send this follow-up now");
+    withRun(behindTurn(three));
+    clickAction(rowAt(2), "Stop the turn");
 
     await vi.waitFor(() => {
       expect(mocks.announceMock).toHaveBeenLastCalledWith(
@@ -1358,75 +1371,66 @@ describe("the steer stack", () => {
     });
   });
 
-  it("sends a follow-up at once while no turn runs", async () => {
-    withQueued(three, false);
-
-    expect(actionButton(rowAt(1), "Send this follow-up now").dataset["tooltip"]).toBe(
-      "Sends this follow-up now",
+  it("moves a follow-up up with no stop where nothing runs to stop", async () => {
+    withRun(
+      [
+        rowEntry("m-q1", { after: "next" }, { row: { id: "m-q1", text: "first" } }),
+        rowEntry(
+          "m-q2",
+          { after: "turns", turns: 1 },
+          { row: { id: "m-q2", text: "second" }, send_now: "now" },
+        ),
+      ],
+      { send: "queue" },
+      false,
     );
-    clickAction(rowAt(1), "Send this follow-up now");
+
+    expect(actions(firstRow())).toEqual(["Edit this follow-up", "Discard this follow-up"]);
+    clickAction(rowAt(1), "Send this follow-up next");
 
     await vi.waitFor(() => {
-      expect(sendQueuedNowDispatch).toHaveBeenCalledWith({ chatID: "chat-1", messageID: "m-q2" });
+      expect(sendQueuedNowDispatch).toHaveBeenCalledWith({
+        chatID: "chat-1",
+        messageID: "m-q2",
+        stop: "",
+      });
     });
     expect(cancelDispatch).not.toHaveBeenCalled();
   });
 
-  it("offers no arrow on a held or sent follow-up", () => {
-    withQueued(
+  // An empty stop names no entry, so a press that crosses a take never stops the turn it started.
+  it("names no turn to stop for a follow-up sent first once the compaction ends", async () => {
+    withRun(
       [
-        { id: "m-q1", text: "first" },
-        { id: "m-h", text: "from before", held: true },
-        { id: "m-c", text: "carried", resends: ["steer-1"], held: true },
-        { id: "m-q2", text: "second" },
+        compactionEntry("compact-1", { after: "running" }),
+        ...behindTurn(three).map((e) => ({ ...e, send_now: "after_compaction" as const })),
       ],
+      { send: "queue", cancel: "" },
       false,
     );
-    openTurn("chat-1", {
-      id: "tq-open",
-      turn: "tq",
-      kind: "turn_open",
-      seq: 0,
-      ts: 1,
-      payload: { source: "prompt", n: 1, prompt: { id: "m-q1", text: "first" } },
+    clickAction(rowAt(2), "Send this follow-up first once the compaction ends");
+
+    await vi.waitFor(() => {
+      expect(sendQueuedNowDispatch).toHaveBeenCalledWith({
+        chatID: "chat-1",
+        messageID: "m-q2",
+        stop: "",
+      });
     });
-
-    expect(rows().map(labelOf)).toEqual([
-      "Sent",
-      "Not sent \u00b7 the server restarted",
-      "Not sent \u00b7 the server restarted",
-      "After this turn",
-    ]);
-    expect(actions(rowAt(0))).toEqual(["Edit this follow-up", "Discard this follow-up"]);
-    expect(actions(rowAt(1))).toEqual(["Edit this follow-up", "Discard this follow-up"]);
-    expect(actions(rowAt(2))).toEqual(["Edit this follow-up", "Discard this follow-up"]);
-    expect(actions(rowAt(3))[0]).toBe("Send this follow-up now");
-  });
-
-  // The server sends the marked row before unread steers, which then ride into its turn.
-  it("counts a follow-up marked next as the next turn beside unread steers", () => {
-    withQueued([
-      { id: "m-q2", text: "second", next: true },
-      { id: "m-q1", text: "first" },
-    ]);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "a", origin: "user", state: "unsent" });
-
-    expect(rows().map(labelOf)).toEqual([
-      "Unread \u00b7 sends next",
-      "After this turn",
-      "After 2 turns",
-    ]);
+    expect(mocks.announceMock).not.toHaveBeenCalledWith(
+      "The turn keeps running: the message already left the queue",
+    );
   });
 
   it("reports a refused send-now in the server's words", async () => {
-    withQueued([{ id: "m-q1", text: "first" }]);
+    withRun(behindTurn([{ id: "m-q1", text: "first" }]));
     sendQueuedNowDispatch.mockReturnValue({
       outcome: Promise.resolve({
         status: "error",
         error: { status: 409, message: "this follow-up was queued before the server restarted" },
       }),
     });
-    clickAction(firstRow(), "Send this follow-up now");
+    clickAction(firstRow(), "Stop the turn");
 
     await vi.waitFor(() => {
       expect(errorToastMock).toHaveBeenCalledWith(
@@ -1435,10 +1439,33 @@ describe("the steer stack", () => {
     });
   });
 
+  it("stops the running turn a steer's send-now names, leading with that steer", async () => {
+    withRun([]);
+    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs", origin: "user" });
+    clickAction(firstRow(), "Send this message now");
+
+    await vi.waitFor(() => {
+      expect(cancelDispatch).toHaveBeenCalledWith({
+        chatID: "chat-1",
+        lead: "steer-1",
+        target: "t1",
+      });
+    });
+  });
+
+  it("offers a steer no send-now while nothing runs that it could stop", () => {
+    withRun([compactionEntry("compact-1", { after: "running" })], { send: "queue" }, false);
+    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs", origin: "user" });
+
+    expect(actions(firstRow())).not.toContain("Send this message now");
+  });
+
   it("fills the composer with the follow-up and its attachments before the removal is sent", () => {
-    withQueued([
-      { id: "m-q1", text: "look at this", attachments: [{ path: "src/a.ts", name: "a.ts" }] },
-    ]);
+    withRun(
+      behindTurn([
+        { id: "m-q1", text: "look at this", attachments: [{ path: "src/a.ts", name: "a.ts" }] },
+      ]),
+    );
     unqueueDispatch.mockImplementation(() => ({
       outcome: new Promise<{ status: string }>(() => undefined),
     }));
@@ -1450,9 +1477,11 @@ describe("the steer stack", () => {
   });
 
   it("keeps the follow-up in the composer when the removal's reply is lost", async () => {
-    withQueued([
-      { id: "m-q1", text: "look at this", attachments: [{ path: "src/a.ts", name: "a.ts" }] },
-    ]);
+    withRun(
+      behindTurn([
+        { id: "m-q1", text: "look at this", attachments: [{ path: "src/a.ts", name: "a.ts" }] },
+      ]),
+    );
     unqueueDispatch.mockReturnValue({
       outcome: Promise.resolve({ status: "error", error: { message: "network" } }),
     });
@@ -1469,9 +1498,11 @@ describe("the steer stack", () => {
   it.each([400, 404, 409, 502])(
     "puts the replaced draft back and drops the staged files on a %i refusal",
     async (status) => {
-      withQueued([
-        { id: "m-q1", text: "look at this", attachments: [{ path: "src/a.ts", name: "a.ts" }] },
-      ]);
+      withRun(
+        behindTurn([
+          { id: "m-q1", text: "look at this", attachments: [{ path: "src/a.ts", name: "a.ts" }] },
+        ]),
+      );
       composerDraftMock.mockReturnValue("half a sentence");
       unqueueDispatch.mockReturnValue({
         outcome: Promise.resolve({
@@ -1494,9 +1525,11 @@ describe("the steer stack", () => {
   );
 
   it("leaves a file the composer already held when a refusal undoes the Edit", async () => {
-    withQueued([
-      { id: "m-q1", text: "look at this", attachments: [{ path: "src/a.ts", name: "a.ts" }] },
-    ]);
+    withRun(
+      behindTurn([
+        { id: "m-q1", text: "look at this", attachments: [{ path: "src/a.ts", name: "a.ts" }] },
+      ]),
+    );
     addAttachmentMock.mockReturnValueOnce(false);
     unqueueDispatch.mockReturnValue({
       outcome: Promise.resolve({ status: "error", error: { status: 409, message: "sending" } }),
@@ -1585,7 +1618,7 @@ describe("the row across its own confirmation", () => {
   it("enters through a starting style, so a replacement would re-animate", async () => {
     expect(ruleBody(loadCSS("26-dock.css"), ".steer-row")).toContain("@starting-style");
 
-    recordSteerSent("chat-1", "m-1", "use tabs instead");
+    recordSending("chat-1", "m-1", "use tabs instead");
     const anims = await entering(firstRow());
     expect(anims.map((a) => (a as CSSTransition).transitionProperty).sort()).toEqual([
       "opacity",
@@ -1594,7 +1627,7 @@ describe("the row across its own confirmation", () => {
   });
 
   it("updates the same element rather than replacing it on the confirmation", () => {
-    recordSteerSent("chat-1", "m-1", "use tabs instead");
+    recordSending("chat-1", "m-1", "use tabs instead");
     const sending = firstRow();
     expect(sending.dataset["state"]).toBe("sending");
 
@@ -1606,7 +1639,7 @@ describe("the row across its own confirmation", () => {
   });
 
   it("does not fade a second time when the confirmation lands", async () => {
-    recordSteerSent("chat-1", "m-1", "use tabs instead");
+    recordSending("chat-1", "m-1", "use tabs instead");
     const row = firstRow();
     await Promise.all((await entering(row)).map((a) => a.finished));
 
@@ -1621,7 +1654,7 @@ describe("the row across its own confirmation", () => {
     const first = firstRow();
     await Promise.all((await entering(first)).map((a) => a.finished));
 
-    recordSteerSent("chat-1", "m-2", "second");
+    recordSending("chat-1", "m-2", "second");
 
     expect(rows()).toHaveLength(2);
     expect(rows()[0], "the established row is the same node").toBe(first);
@@ -1634,7 +1667,7 @@ describe("the row across its own confirmation", () => {
   for (const tier of ["fine", "coarse"] as const) {
     it(`keeps its height across the confirmation on a ${tier} pointer`, async () => {
       document.documentElement.dataset["pointer"] = tier;
-      recordSteerSent("chat-1", "m-1", "use tabs instead");
+      recordSending("chat-1", "m-1", "use tabs instead");
       const row = firstRow();
       await settles();
       const before = row.getBoundingClientRect().height;
@@ -1776,7 +1809,7 @@ describe("the row's clamp", () => {
   // to see which rule paints the band.
   const quoted = `${appendQuote("", quoteSelection("quoted", "From Kiro's reply"))}reply`;
   const subordinate: [string, () => void][] = [
-    ["sending", () => recordSteerSent("chat-1", "m-1", quoted)],
+    ["sending", () => recordSending("chat-1", "m-1", quoted)],
     [
       "delivering",
       () =>

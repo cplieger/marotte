@@ -385,10 +385,17 @@ describe("frames", () => {
       type: "chat_updated",
       chat_id: "c9",
       // A whole ChatHeader, because the wire's own decoder runs here: `chat_updated` requires
-      // `turn_count`, `usage` and `created_at`.
+      // `turn_count`, `usage`, `created_at` and `run`.
       payload: {
         id: "c9",
         name: "n",
+        run: {
+          send: "prompt",
+          entries: [],
+          next_wait: { after: "next" },
+          unread_wait: { after: "next" },
+          version: 0,
+        },
         usage: {
           context_pct: 0,
           context_size: 0,

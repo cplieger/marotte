@@ -737,15 +737,18 @@ export function applyResult(ref: string, id: string, result: SendPromptResult): 
   }
   st.failure = "";
   switch (result) {
+    // Accepted: the server started it, or queued it behind what runs, which sends it in order.
     case "sent":
+    case "steered":
+    case "queued":
       st.unmoved.delete(id);
       st.dispatched.add(id);
       st.dispatching = true;
       st.fastUntil = Date.now() + FAST_WINDOW_MS;
       armPoll(ref);
       break;
-    case "queued":
     case "starting":
+    case "full":
       st.busy.add(id);
       break;
     case "gone":
@@ -755,6 +758,7 @@ export function applyResult(ref: string, id: string, result: SendPromptResult): 
     case "closed":
       st.failure = "The chat was closed, so the prompt was not sent";
       break;
+    case "prompt_only":
     case "failed":
       st.failure = "The prompt could not be sent";
       break;

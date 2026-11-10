@@ -131,7 +131,7 @@ func TestLogFor_FirstOpenAnnouncesTheSettledQueueOnce(t *testing.T) {
 			dir := seededDir(t, tc.turns)
 			writer, _ := reopenedStore(t, dir)
 			if _, err := writer.Mutate(t.Context(), readPosChat, func(c *marotte.Chat, _ bool) bool {
-				c.QueuedPrompts = []marotte.QueuedPrompt{{ID: "m-wait", Text: "b"}}
+				c.Run = []marotte.RunEntry{rowEntry("m-wait", marotte.RunPaused)}
 				return true
 			}); err != nil {
 				t.Fatalf("Setup: queue a row: %v", err)
@@ -147,7 +147,7 @@ func TestLogFor_FirstOpenAnnouncesTheSettledQueueOnce(t *testing.T) {
 			if got := hs[0].ReadPosition; got != uint64(tc.turns) {
 				t.Errorf("announced read_position = %d, want %d", got, tc.turns)
 			}
-			if q := hs[0].QueuedPrompts; len(q) != 1 || !q[0].Held {
+			if q := hs[0].Run.Entries; len(q) != 1 || q[0].State != marotte.RunHeld {
 				t.Errorf("announced queue = %+v, want the row held", q)
 			}
 		})

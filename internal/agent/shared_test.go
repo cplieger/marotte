@@ -61,6 +61,7 @@ func newTestHubOn(workDir string, coldGovernance bool, opts ...Option) (*Runtime
 		panic(err)
 	}
 	br.forgetCalls()
+	seededHubs.Store(cs, h)
 	return h, cs, br
 }
 

@@ -804,7 +804,7 @@ func (s *Store) keptBy(ctx context.Context, chatID marotte.ChatID, c *marotte.Ch
 		}
 		return kind
 	}
-	if c.Draft != "" || len(c.QueuedPrompts) > 0 {
+	if c.Draft != "" || len(marotte.RunRows(c.Run)) > 0 {
 		return archive.KeptByWords
 	}
 	return ""

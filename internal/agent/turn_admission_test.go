@@ -51,111 +51,9 @@ func seedChat(t *testing.T, cs *testChatStore, id marotte.ChatID) {
 	}
 }
 
-// The refusal keys on the holder's source alone: a revert holder answers "starting" with or without a bridge; a
-// prompt holder answers busy whatever its bridge.
-func TestReserveTurnForPrompt_RefusalKeysOnTheHoldersSource(t *testing.T) {
-	cases := []struct {
-		name    string
-		holder  marotte.TurnOpenSource
-		bridged bool
-		want    command.AdmissionOutcome
-	}{
-		{name: "revert holder on a bridgeless chat answers starting", holder: marotte.TurnSourceRevert, want: command.AdmissionStarting},
-		{name: "revert holder on a bridged chat answers starting", holder: marotte.TurnSourceRevert, bridged: true, want: command.AdmissionStarting},
-		{name: "prompt holder with no bridge answers busy", holder: marotte.TurnSourcePrompt, want: command.AdmissionBusy},
-		{name: "prompt holder with a live bridge answers busy", holder: marotte.TurnSourcePrompt, bridged: true, want: command.AdmissionBusy},
-	}
-	for i, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			h, cs, _ := newTestHub()
-			chatID := marotte.ChatID("c-admission-" + string(rune('a'+i)))
-			seedChat(t, cs, chatID)
-			if tc.bridged {
-				if _, err := h.coord.openReleased(t.Context(), chatID, ""); err != nil {
-					t.Fatalf("OpenBridge: %v", err)
-				}
-			}
-			if !h.coord.tryReserveNow(chatID, tc.holder) {
-				t.Fatal("setup: the admission slot was already held")
-			}
-			t.Cleanup(func() { h.coord.releaseHeld(chatID) })
-
-			got := h.coord.reserveForPromptNow(t.Context(), chatID, 60*time.Millisecond)
-			if got != tc.want {
-				t.Errorf("ReserveTurnForPrompt(holder %v, bridged %v) = %v, want %v", tc.holder, tc.bridged, got, tc.want)
-			}
-		})
-	}
-}
-
-// A free slot admits at once; a revert-held one parks the waiter until the release admits it.
-func TestReserveTurnForPrompt_AcquiresAFreeOrFreedSlot(t *testing.T) {
-	h, cs, _ := newTestHub()
-	seedChat(t, cs, "c1")
-	if got := h.coord.reserveForPromptNow(t.Context(), "c1", 60*time.Millisecond); got != command.AdmissionAcquired {
-		t.Fatalf("free slot = %v, want acquired", got)
-	}
-	h.coord.releaseHeld("c1")
-	if !h.coord.tryReserveNow("c1", marotte.TurnSourceRevert) {
-		t.Fatal("setup: the admission slot was already held")
-	}
-	answered := make(chan command.AdmissionOutcome, 1)
-	go func() {
-		answered <- h.coord.reserveForPromptNow(context.Background(), "c1", 5*time.Second)
-	}()
-	select {
-	case got := <-answered:
-		t.Fatalf("the waiter answered %v while the slot was held", got)
-	case <-time.After(50 * time.Millisecond):
-	}
-	h.coord.releaseHeld("c1")
-	select {
-	case got := <-answered:
-		if got != command.AdmissionAcquired {
-			t.Fatalf("waiter = %v, want acquired after the release", got)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("the waiter never woke on the release")
-	}
-	h.coord.releaseHeld("c1")
-}
-
-// A prompt-class holder whose session door is still open answers busy at once, from its source rather than readiness or expiry.
-func TestReserveTurnForPrompt_AnOpeningPromptHolderAnswersBusyAtOnce(t *testing.T) {
-	h, cs, br := newTestHub()
-	seedChat(t, cs, "c1")
-	startGate := make(chan struct{})
-	br.mu.Lock()
-	br.startGate = startGate
-	br.mu.Unlock()
-	if !h.coord.tryReserveNow("c1", marotte.TurnSourcePrompt) {
-		t.Fatal("setup: the admission slot was already held")
-	}
-	t.Cleanup(func() { h.coord.releaseHeld("c1") })
-	opened := make(chan error, 1)
-	go func() {
-		_, err := h.coord.openReleased(t.Context(), "c1", "")
-		opened <- err
-	}()
-
-	const budget = 10 * time.Second
-	start := time.Now()
-	got := h.coord.reserveForPromptNow(context.Background(), "c1", budget)
-	elapsed := time.Since(start)
-	close(startGate)
-	if err := <-opened; err != nil {
-		t.Fatalf("OpenBridge: %v", err)
-	}
-	if got != command.AdmissionBusy {
-		t.Fatalf("ReserveTurnForPrompt = %v, want busy: the holder is prompt-class, bridge or no bridge", got)
-	}
-	if elapsed > 2*time.Second {
-		t.Errorf("the answer took %v, want the holder's source read at once, not the %v budget", elapsed, budget)
-	}
-}
-
-// A prompt against a revert-held chat answers 409 with `reason":"starting"` at the budget and writes nothing.
-func TestPrompt_FullPath409StartingCarriesTheReason(t *testing.T) {
+// A prompt against a revert-held chat answers within the budget as queued behind it, and writes nothing: the
+// press never waits out the hold.
+func TestPrompt_BehindARevertHeldSlotAnswersQueuedAndWritesNothing(t *testing.T) {
 	shrinkAdmissionWait(t, 60*time.Millisecond)
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
@@ -168,21 +66,20 @@ func TestPrompt_FullPath409StartingCarriesTheReason(t *testing.T) {
 		Type: "prompt", ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
 	})
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409 (body %s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
 	}
 	var body struct {
-		Error  string `json:"error"`
-		Reason string `json:"reason"`
+		As string `json:"as"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal body %q: %v", rec.Body.String(), err)
 	}
-	if body.Reason != "starting" {
-		t.Errorf(`body = %s, want the additive "reason":"starting"`, rec.Body.String())
+	if body.As != "queued" {
+		t.Errorf("as = %q, want queued behind the held slot (body %s)", body.As, rec.Body.String())
 	}
 	if entries := logOf(t, cs, "c1"); len(entries) != 0 {
-		t.Errorf("log = %d entries, want none: a refused prompt opens no turn", len(entries))
+		t.Errorf("log = %d entries, want none: a queued prompt opens no turn", len(entries))
 	}
 }
 
@@ -606,7 +503,7 @@ func TestShutdown_RecordsAParkedSteerWithItsText(t *testing.T) {
 		t.Errorf("steers = %+v, want one dropped/restart carrying the parked text", got)
 	}
 	rows := queuedRows(t, cs, "c1")
-	if len(rows) != 1 || !rows[0].Held || !rows[0].Carried() || rows[0].Text != "use tabs" {
+	if len(rows) != 1 || rows[0].State != marotte.RunHeld || !rows[0].Row.Carried() || rows[0].Row.Text != "use tabs" {
 		t.Errorf("queue = %+v, want one held carried row with the parked text", rows)
 	}
 }
@@ -646,14 +543,13 @@ func TestShutdown_AUserCancelCauseOutranksTheShutdownCause(t *testing.T) {
 	}
 }
 
-// Every reserve refuses beside a turn KAS bracketed, since each one sends a session/prompt or opens a turn; beside a
+// A reserve refuses beside a turn KAS bracketed, since each one sends a session/prompt or opens a turn; beside a
 // fold-opened wire turn only the idle reserve, which reads every holder, refuses.
 func TestTryReserve_BesideAWireTurn(t *testing.T) {
 	cases := []struct {
-		name      string
-		open      func(t *testing.T, h *Runtime)
-		wantBare  bool
-		wantFence bool
+		name     string
+		open     func(t *testing.T, h *Runtime)
+		wantBare bool
 	}{
 		{
 			name: "a bracketed wire turn",
@@ -666,8 +562,7 @@ func TestTryReserve_BesideAWireTurn(t *testing.T) {
 					t.Fatal("setup: the fold opened no wire turn")
 				}
 			},
-			wantBare:  true,
-			wantFence: true,
+			wantBare: true,
 		},
 	}
 	for _, tc := range cases {
@@ -690,85 +585,6 @@ func TestTryReserve_BesideAWireTurn(t *testing.T) {
 			if got != tc.wantBare {
 				t.Errorf("tryReserve = %t, want %t", got, tc.wantBare)
 			}
-			got = h.coord.tryReserveDrainNow("c1", command.TurnFence{})
-			if got {
-				h.coord.releaseHeld("c1")
-			}
-			if got != tc.wantFence {
-				t.Errorf("TryReserveDrain = %t, want %t", got, tc.wantFence)
-			}
-		})
-	}
-}
-
-func TestTryReserveIdleTurn_TakesAnIdleSlotAndRefusesAHeldOne(t *testing.T) {
-	h, cs, _ := newTestHub()
-	seedChat(t, cs, "c1")
-	if !h.coord.tryReserveIdleNow("c1", marotte.TurnSourceRevert) {
-		t.Fatal("TryReserveIdleTurn(c1) refused an idle chat")
-	}
-	if src, held := h.coord.AdmissionHolderSource("c1"); !held || src != marotte.TurnSourceRevert {
-		t.Errorf("after TryReserveIdleTurn the holder is %v (held %t), want revert", src, held)
-	}
-	if h.coord.tryReserveIdleNow("c1", marotte.TurnSourcePrompt) {
-		t.Error("a second TryReserveIdleTurn(c1) took a held slot")
-	}
-}
-
-// A turn KAS starts itself (a send_message wake) holds no reservation, yet a prompt beside it must answer Busy: KAS
-// aborts its running turn on any session/prompt. A fold-opened wire turn admits: no turn_end is owed for it, so a
-// refusal would last until a later turn_start or the bridge's death.
-func TestReserveTurnForPrompt_BesideAWireTurn(t *testing.T) {
-	cases := []struct {
-		name string
-		open func(t *testing.T, h *Runtime)
-		want command.AdmissionOutcome
-	}{
-		{
-			name: "a bracketed wire turn answers busy",
-			open: func(_ *testing.T, h *Runtime) { h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg()) },
-			want: command.AdmissionBusy,
-		},
-		{
-			name: "a bracketed wire turn that ended admits",
-			open: func(t *testing.T, h *Runtime) {
-				drained := make(chan struct{})
-				drain := h.coord.drainAfterClose
-				h.coord.drainAfterClose = func(ctx context.Context, chatID marotte.ChatID, cl command.CloseFacts, ends command.EndFacts) {
-					drain(ctx, chatID, cl, ends)
-					close(drained)
-				}
-				h.translateACPEvent("c1", h.originOf("c1"), newTurnStartMsg())
-				h.translateACPEvent("c1", h.originOf("c1"), newTurnEndMsg("end_turn"))
-				// The close's tail runs off this goroutine, and its drain holds the slot as a prompt while it looks for a
-				// queued row: a prompt beside that holder answers busy at once.
-				awaitClosed(t, drained, "the close's drain")
-			},
-			want: command.AdmissionAcquired,
-		},
-		{
-			name: "a fold-opened wire turn admits",
-			open: func(t *testing.T, h *Runtime) {
-				if h.stageWireTurn(t, "c1") == nil {
-					t.Fatal("setup: the fold opened no wire turn")
-				}
-			},
-			want: command.AdmissionAcquired,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			h, cs, _ := newTestHub()
-			seedChat(t, cs, "c1")
-			tc.open(t, h)
-
-			got := h.coord.reserveForPromptNow(t.Context(), "c1", 60*time.Millisecond)
-			if got == command.AdmissionAcquired {
-				h.coord.releaseHeld("c1")
-			}
-			if got != tc.want {
-				t.Errorf("ReserveTurnForPrompt = %v, want %v", got, tc.want)
-			}
 		})
 	}
 }
@@ -784,9 +600,9 @@ func wakeTurnHub(t *testing.T) (*Runtime, *testChatStore, *fakeBridge) {
 	return s.h, cs, br
 }
 
-// The composer's Send beside an agent-initiated turn answers the plain 409 the client steers or queues on, and
-// reaches neither the log nor KAS.
-func TestCmdPrompt_BesideAWireTurnAnswersThePlainBusyAndSendsNothing(t *testing.T) {
+// The composer's Send beside an agent-initiated turn is steered into it: no turn of its own opens and no
+// session/prompt reaches KAS, which would abort that turn.
+func TestCmdPrompt_BesideAWireTurnIsSteeredAndOpensNoTurn(t *testing.T) {
 	h, cs, br := wakeTurnHub(t)
 	opens := len(opensOf(t, logOf(t, cs, "c1")))
 
@@ -796,23 +612,74 @@ func TestCmdPrompt_BesideAWireTurnAnswersThePlainBusyAndSendsNothing(t *testing.
 	})
 	joinInflight(t, h)
 
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409 (body %s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
 	}
 	var body struct {
-		Reason string `json:"reason"`
+		As string `json:"as"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal body %q: %v", rec.Body.String(), err)
 	}
-	if body.Reason != "turn_live" {
-		t.Errorf("reason = %q, want turn_live, the one 409 the client converts into its busy verb", body.Reason)
+	if body.As != "steered" {
+		t.Errorf("as = %q, want steered into the running turn", body.As)
 	}
 	if got := len(opensOf(t, logOf(t, cs, "c1"))); got != opens {
-		t.Errorf("turn_open entries = %d, want %d: a refused prompt opens no turn", got, opens)
+		t.Errorf("turn_open entries = %d, want %d: a steered prompt opens no turn", got, opens)
 	}
 	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
 		t.Errorf("bridge calls = %v, want no session/prompt beside the running turn", br.callLog())
+	}
+}
+
+// A prompt steered into the running turn is a dock row under the id KAS stamps on it, `steer-<messageId>`
+// (handleSessionSteer), so KAS's steering_queued for it updates that row instead of adding a second one.
+func TestCmdPrompt_ASteeredPromptsRowIsKeyedByTheIDKASStampsOnIt(t *testing.T) {
+	s, _, _ := steerOpsHub(t)
+	s.h.translateACPEvent("c1", s.h.originOf("c1"), newTurnStartMsg())
+
+	rec := postCmd(t, s.h, marotte.ClientCommand{
+		Type: marotte.CmdPrompt, ChatID: "c1",
+		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
+	})
+	joinInflight(t, s.h)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	if _, ok := s.state("steer-m-1"); !ok {
+		t.Errorf("no dock row under steer-m-1, the id KAS's frames name for this steer")
+	}
+	if _, ok := s.state("m-1"); ok {
+		t.Errorf("a dock row is keyed by the bare message id m-1, which no KAS frame names, so it never leaves")
+	}
+}
+
+// A prompt that reads as a KAS notification is never steered: KAS would file it under a notify- id no row
+// carries. It waits for the running turn's end instead.
+func TestCmdPrompt_NotificationShapedTextBesideATurnIsQueuedNotSteered(t *testing.T) {
+	h, _, br := wakeTurnHub(t)
+
+	rec := postCmd(t, h, marotte.ClientCommand{
+		Type: marotte.CmdPrompt, ChatID: "c1",
+		Payload: json.RawMessage(`{"text":"[notification/info] hi","message_id":"m-1"}`),
+	})
+	joinInflight(t, h)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		As string `json:"as"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal body %q: %v", rec.Body.String(), err)
+	}
+	if body.As != "queued" {
+		t.Errorf("as = %q, want queued behind the running turn", body.As)
+	}
+	if slices.Contains(br.callLog(), marotte.MethodSessionSteer) {
+		t.Errorf("bridge calls = %v, want no session/steer for notification-shaped text", br.callLog())
 	}
 }
 
@@ -868,7 +735,7 @@ func TestMergeTangent_QueuesTheFindingsBehindAParentsWakeTurn(t *testing.T) {
 		t.Errorf("merge state = %q, want succeeded", c.TangentMerges[0].State)
 	}
 	rows := queuedRows(t, cs, "c1")
-	if len(rows) != 1 || !strings.Contains(rows[0].Text, "Found it.") {
+	if len(rows) != 1 || !strings.Contains(rows[0].Row.Text, "Found it.") {
 		t.Errorf("parent's queue = %+v, want the findings queued", rows)
 	}
 	if n := calls(marotte.MethodPrompt); n != 1 {

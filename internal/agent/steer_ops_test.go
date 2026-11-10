@@ -211,8 +211,9 @@ func TestCmdSteerRemove_ATurnEndingUnderTheClearResendsTheKeptRows(t *testing.T)
 	}{
 		{name: "a cancel", stage: wireEndUnderTheClear("cancelled")},
 		{name: "a natural end", stage: wireEndUnderTheClear("end_turn")},
-		{name: "a bridge death", stage: func(_ *testing.T, s *steerHarness, br *fakeBridge) {
-			s.bind()
+		{name: "a bridge death", stage: func(t *testing.T, s *steerHarness, br *fakeBridge) {
+			id, _ := s.h.stagePromptTurn(t, "c1")
+			s.h.translateACPEvent("c1", s.h.originOf("c1"), newPromptTurnStartMsg(id))
 			s.steer("steer-a", "a")
 			s.steer("steer-b", "b")
 			var once sync.Once
@@ -220,12 +221,16 @@ func TestCmdSteerRemove_ATurnEndingUnderTheClearResendsTheKeptRows(t *testing.T)
 			s.h.insertBridgeNow("c1", testBridge(failingClear{fakeBridge: br, before: func() {
 				once.Do(func() {
 					s.recs.turnEnded("c1", command.SteerTurnEnd{
-						TurnID: s.turnID(), BridgeDeath: true, Exit: deathExit, Source: marotte.TurnSourcePrompt,
+						TurnID: id, BridgeDeath: true, Exit: deathExit, Source: marotte.TurnSourcePrompt,
 					})
 				})
 			}}, bridgeReady))
 		}, closed: func(t *testing.T, s *steerHarness) {
-			s.h.coord.afterTurnClose(t.Context(), s.h.coord.turns.testLifecycle("c1"), &closeFacts{exit: deathExit, outcome: marotte.TurnOutcomeInterrupted})
+			id, _ := ownID(s.h, "c1")
+			s.h.coord.finalizeTurn(t.Context(), "c1", &turnClose{
+				Closer: closerBridgeDeath, Stop: marotte.StopReasonInterrupted, Reason: deathInterruptCause, Turn: id,
+			})
+			s.h.coord.releaseTurn("c1", id)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

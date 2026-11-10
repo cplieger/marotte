@@ -135,7 +135,6 @@ func (*benchDeps) TurnContext(reqCtx context.Context) (context.Context, context.
 }
 func (*benchDeps) InflightAdd(int)                 {}
 func (*benchDeps) InflightDone()                   {}
-func (*benchDeps) Draining() bool                  { return false }
 func (*benchDeps) GoUnlessDraining(fn func()) bool { go fn(); return true }
 func (*benchDeps) DeleteChatStateByChain(context.Context, marotte.ChatID, []string, RunStopCause) {
 }
@@ -377,7 +376,7 @@ var _ hostDouble = (*benchDeps)(nil)
 
 func promptRolesOf(d hostDouble) *promptRoles {
 	stub := newStubSteerQueue()
-	return &promptRoles{
+	roles := &promptRoles{
 		bridges:     d,
 		chats:       d,
 		bus:         d,
@@ -389,6 +388,8 @@ func promptRolesOf(d hostDouble) *promptRoles {
 		queue:       stub,
 		jobs:        stub,
 	}
+	roles.runq = &launchingRun{roles: roles}
+	return roles
 }
 
 func (r *benchDeps) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration, _ uint64, _ string) (AdmissionOutcome, Reservation) {

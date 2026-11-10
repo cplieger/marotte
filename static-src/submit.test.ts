@@ -1,15 +1,11 @@
-// What Send MEANS, over the REAL store with the send primitive, steer action and attachment row
-// mocked: a mid-turn message reaches the RUNNING turn, a plain 409 steers while 409-starting does
-// not, nothing shows before the server's frame, attachments degrade to paths, a failed send is
-// recoverable in place.
+// What Send MEANS, over the REAL store with the send primitive and attachment row mocked: one prompt
+// POST per press, which the server places; a refusal is recoverable in place.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Declared via vi.hoisted so they exist when the hoisted vi.mock factories run.
 const {
   mockSendPromptTo,
-  mockSteer,
-  mockQueue,
   mockTakeAttachments,
   mockHasAttachments,
   mockAddAttachmentTo,
@@ -23,8 +19,6 @@ const {
   mockChatNotice,
 } = vi.hoisted(() => ({
   mockSendPromptTo: vi.fn(),
-  mockSteer: vi.fn(),
-  mockQueue: vi.fn(),
   mockTakeAttachments: vi.fn(() => [] as unknown[]),
   mockHasAttachments: vi.fn(() => false),
   mockAddAttachmentTo: vi.fn(),
@@ -40,10 +34,6 @@ const {
 
 vi.mock("./chat-commands.js", () => ({ sendPromptTo: mockSendPromptTo }));
 vi.mock("./notice-subject.js", () => ({ chatNotice: mockChatNotice }));
-vi.mock("./actions/chat.js", () => ({
-  steerChat: { dispatch: mockSteer },
-  queuePrompt: { dispatch: mockQueue },
-}));
 vi.mock("./typed-commands.js", () => ({
   handleTypedCommand: mockTypedCommand,
   terminalCommandRefusal: mockTerminalRefusal,
@@ -81,17 +71,8 @@ vi.mock("./composer-state.js", () => ({
 }));
 
 import { submitPrompt, submitLabelled, forgetDeletedChat } from "./submit.js";
-import {
-  get,
-  setSessions,
-  setActive,
-  setThinking,
-  steerCount,
-  openTurn,
-  appendEntry,
-  recordSteerQueued,
-  setChatInterruptMode,
-} from "./store.js";
+import { applyRun, setSessions, setActive, openTurn, appendEntry } from "./store.js";
+import { runAt, turnEntry } from "./__test-helpers__/run-order.js";
 import type { Session } from "./types.js";
 import type { Entry } from "./wire/types.gen.js";
 
@@ -139,31 +120,6 @@ function echoTurnOpen(chatID: string, messageID: string, text: string): void {
   openTurn(chatID, entry);
 }
 
-function steeredText(call = 0): string {
-  return (mockSteer.mock.calls[call]?.[0] as { text: string } | undefined)?.text ?? "";
-}
-
-/** A DispatchHandle-shaped return: submit.ts reads ONLY `outcome`, since the never-rejecting
- *  result cannot tell a void success from a failure's null. */
-function steerHandle(outcome: unknown): { outcome: Promise<unknown> } {
-  return { outcome: Promise.resolve(outcome) };
-}
-
-function steerOk(): { outcome: Promise<unknown> } {
-  return steerHandle({ status: "success", value: undefined });
-}
-
-function steerRefused(message: string, code?: string): { outcome: Promise<unknown> } {
-  return steerHandle({
-    status: "error",
-    error: { message, ...(code === undefined ? {} : { code }) },
-  });
-}
-
-function queuedArgs(call = 0): Record<string, unknown> | undefined {
-  return mockQueue.mock.calls[call]?.[0] as Record<string, unknown> | undefined;
-}
-
 function sentMessageID(call = 0): string {
   return (
     (mockSendPromptTo.mock.calls[call]?.[2] as { messageID: string } | undefined)?.messageID ?? ""
@@ -177,8 +133,6 @@ beforeEach(() => {
   mockAttachmentGeneration.mockReturnValue(0);
   mockTypedCommand.mockReturnValue(false);
   mockTerminalRefusal.mockReturnValue(null);
-  mockSteer.mockReturnValue(steerOk());
-  mockQueue.mockReturnValue(steerOk());
 });
 
 describe("submitPrompt on an idle chat", () => {
@@ -188,7 +142,6 @@ describe("submitPrompt on an idle chat", () => {
 
     expect(await submitPrompt("c1", "hello")).toBe("sent");
     expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
-    expect(mockSteer).not.toHaveBeenCalled();
   });
 
   it("restores the text and the attachments to the input when the send hard-fails", async () => {
@@ -311,7 +264,6 @@ describe("submitPrompt on an idle chat", () => {
 
     expect(await submitPrompt("c1", "/compact")).toBe("sent");
     expect(mockSendPromptTo).not.toHaveBeenCalled();
-    expect(mockSteer).not.toHaveBeenCalled();
     // A command is not a prompt, so it must not consume the attachment row.
     expect(mockTakeAttachments).not.toHaveBeenCalled();
   });
@@ -361,188 +313,85 @@ describe("submitPrompt on an idle chat", () => {
   });
 });
 
-describe("submitPrompt during a turn", () => {
-  it("answers a kiro-cli terminal command instead of steering it into the turn", async () => {
+// The server's run order places every send (started, steered or queued): the composer posts once
+// and never steers or queues on its own.
+describe("one POST per press, whatever runs on the chat", () => {
+  it("sends one prompt and no steer or queue command while a turn runs", async () => {
     resetStore("c1");
-    setThinking("c1", true);
-    mockInvokesCatalog.mockReturnValue(false);
-    mockTerminalRefusal.mockReturnValue({ notice: "marotte has no /copy.", keepText: false });
+    applyRun("c1", runAt(1, [turnEntry("t1")], { send: "steer", cancel: "t1" }));
+    mockSendPromptTo.mockResolvedValue("steered");
 
-    expect(await submitPrompt("c1", "/copy")).toBe("sent");
-    expect(mockChatNotice).toHaveBeenCalledWith("c1", "marotte has no /copy.");
-    expect(mockSteer).not.toHaveBeenCalled();
-    expect(mockQueue).not.toHaveBeenCalled();
+    expect(await submitPrompt("c1", "use tabs")).toBe("steered");
+    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
   });
 
-  it("holds a saved-prompt command instead of steering it, and hands the text back", async () => {
+  it("counts an answer that queued it as placed and hands nothing back", async () => {
     resetStore("c1");
-    setThinking("c1", true);
-    mockInvokesCatalog.mockReturnValue(true);
+    mockSendPromptTo.mockResolvedValue("queued");
 
-    expect(await submitPrompt("c1", "/review a.ts")).toBe("held");
-    expect(mockSteer).not.toHaveBeenCalled();
-    expect(mockSendPromptTo).not.toHaveBeenCalled();
-    expect(mockTakeAttachments).not.toHaveBeenCalled();
-    expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "/review a.ts");
-    expect(mockChatNotice).toHaveBeenLastCalledWith(
+    expect(await submitPrompt("c1", "then add tests")).toBe("queued");
+    expect(mockRestoreFailedSend).not.toHaveBeenCalled();
+    expect(mockReportSendRefused).not.toHaveBeenCalled();
+  });
+
+  it("keeps attachments as attachments, never folded into the text", async () => {
+    resetStore("c1");
+    mockTakeAttachments.mockReturnValue([{ path: "a.ts", name: "a.ts" }]);
+    mockSendPromptTo.mockResolvedValue("queued");
+
+    await submitPrompt("c1", "look at this");
+    expect(mockSendPromptTo.mock.calls[0]?.[1]).toBe("look at this");
+    expect(mockSendPromptTo.mock.calls[0]?.[2]).toMatchObject({
+      attachments: [{ path: "a.ts", name: "a.ts" }],
+    });
+  });
+});
+
+describe("prompt-only text", () => {
+  it("marks a saved-prompt command prompt_only", async () => {
+    resetStore("c1");
+    mockInvokesCatalog.mockReturnValue(true);
+    mockSendPromptTo.mockResolvedValue("sent");
+
+    await submitPrompt("c1", "@review");
+    expect(mockSendPromptTo.mock.calls[0]?.[2]).toMatchObject({ promptOnly: true });
+  });
+
+  it("never marks plain text prompt_only", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("sent");
+
+    await submitPrompt("c1", "hello");
+    expect(mockSendPromptTo.mock.calls[0]?.[2]).not.toHaveProperty("promptOnly");
+  });
+
+  it("keeps the text and says why when the server refuses it 409 prompt_only", async () => {
+    resetStore("c1");
+    mockInvokesCatalog.mockReturnValue(true);
+    mockSendPromptTo.mockResolvedValue("prompt_only");
+
+    expect(await submitPrompt("c1", "@review")).toBe("held");
+    expect(mockChatNotice).toHaveBeenCalledWith(
       "c1",
       "That command runs as a new turn. Send it when the agent is idle.",
     );
-    mockInvokesCatalog.mockReturnValue(false);
+    expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "@review");
   });
+});
 
-  it("holds a message carrying a context reference, which only a new turn resolves", async () => {
+describe("a full queue", () => {
+  it("hands the text back and says the queue is full", async () => {
     resetStore("c1");
-    setThinking("c1", true);
+    mockSendPromptTo.mockResolvedValue("full");
 
-    expect(await submitPrompt("c1", "look at #[[file:a.ts]] too")).toBe("held");
-    expect(mockSteer).not.toHaveBeenCalled();
-    expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "look at #[[file:a.ts]] too");
-  });
-
-  // The chat read idle, so the hold above did not apply, and a turn started before
-  // the POST landed. The 409 must not carry the reference into a steer or a queued row.
-  it.each(["steer", "queue"] as const)(
-    "holds a context reference a 409 would turn into a busy verb (%s mode)",
-    async (mode) => {
-      resetStore("c1");
-      setChatInterruptMode("c1", mode);
-      mockTakeAttachments.mockReturnValue([{ path: "a.ts" }]);
-      mockAttachmentGeneration.mockReturnValue(5);
-      mockSendPromptTo.mockResolvedValue("queued");
-
-      expect(await submitPrompt("c1", "see #[[file:b.ts]]")).toBe("held");
-      expect(mockSteer).not.toHaveBeenCalled();
-      expect(mockQueue).not.toHaveBeenCalled();
-      expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "see #[[file:b.ts]]");
-      expect(mockAddAttachmentTo).toHaveBeenCalledWith("c1", "a.ts", 5);
-      expect(mockChatNotice).toHaveBeenLastCalledWith("c1", expect.stringContaining("new turn"));
-    },
-  );
-
-  // The whole reason this module changed: the message has to reach the turn
-  // that is running, not the one after it.
-  it("steers instead of sending a prompt", async () => {
-    resetStore("c1");
-    setThinking("c1", true);
-
-    expect(await submitPrompt("c1", "actually use tabs")).toBe("steered");
-    expect(mockSendPromptTo).not.toHaveBeenCalled();
-    expect(mockSteer).toHaveBeenCalledTimes(1);
-    expect(steeredText()).toBe("actually use tabs");
-  });
-
-  // A turn can start between reading `thinking` and the POST landing; the server
-  // answers that with 409, which is precisely the case a steer exists for.
-  it("steers when the server reports 409 busy", async () => {
-    resetStore("c1");
-    mockSendPromptTo.mockResolvedValue("queued");
-
-    expect(await submitPrompt("c1", "wait, stop")).toBe("steered");
-    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
-    expect(steeredText()).toBe("wait, stop");
-  });
-
-  // Submit writes no store rows: the optimistic chip is the action's, mocked here.
-  it("records nothing locally", async () => {
-    resetStore("c1");
-    setThinking("c1", true);
-
-    await submitPrompt("c1", "hello");
-    expect(steerCount("c1")).toBe(0);
-  });
-
-  it("reports failure and restores the text and attachments when the steer is refused", async () => {
-    resetStore("c1");
-    setThinking("c1", true);
-    mockTakeAttachments.mockReturnValue([{ path: "a.ts" }]);
-    mockSteer.mockReturnValue(
-      steerRefused("the session is still loading its history — send this again in a moment"),
-    );
-
-    expect(await submitPrompt("c1", "hello")).toBe("failed");
-    expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "hello");
-    expect(mockAddAttachmentTo).toHaveBeenCalledWith("c1", "a.ts", 0);
-    // The action carries error:false, so the send-error face is the ONE
-    // failure surface, and it speaks the server's own words.
+    expect(await submitPrompt("c1", "one more")).toBe("failed");
     expect(mockReportSendRefused).toHaveBeenCalledWith(
-      "the session is still loading its history — send this again in a moment",
+      "The queue is full. Send again once a queued message has gone",
     );
+    expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "one more");
   });
 });
 
-// A frame confirmed the steer before its reply was lost: the agent will read it, so nothing goes back.
-describe("a steer whose reply was lost after its frame confirmed it", () => {
-  it("counts as steered and hands nothing back", async () => {
-    resetStore("c1");
-    setThinking("c1", true);
-    mockSteer.mockImplementationOnce((args: { messageID: string; text: string }) => {
-      recordSteerQueued("c1", { id: `steer-${args.messageID}`, text: args.text, origin: "user" });
-      return steerRefused("connection lost", "network");
-    });
-
-    expect(await submitPrompt("c1", "use tabs")).toBe("steered");
-    expect(mockRestoreFailedSend).not.toHaveBeenCalled();
-    expect(mockReportSendRefused).not.toHaveBeenCalled();
-  });
-});
-
-// `no_turn`: the chat was idle when the steer landed, so submit converts it into a prompt.
-describe("a steer refused with no_turn", () => {
-  const noTurn = (): { outcome: Promise<unknown> } =>
-    steerRefused("nothing is running to steer, so send this as a prompt instead", "no_turn");
-
-  it("is retried as the prompt it should have been", async () => {
-    resetStore("c1");
-    setThinking("c1", true); // stale: the server knows better
-    mockSteer.mockReturnValue(noTurn());
-    mockSendPromptTo.mockResolvedValue("sent");
-
-    expect(await submitPrompt("c1", "hello")).toBe("sent");
-    expect(mockSteer).toHaveBeenCalledTimes(1);
-    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
-    // The conversion is silent: nothing failed from the user's seat.
-    expect(mockRestoreFailedSend).not.toHaveBeenCalled();
-    expect(mockReportSendRefused).not.toHaveBeenCalled();
-  });
-
-  it("rides the double race: the retry prompt meets a NEW turn and steers into it", async () => {
-    resetStore("c1");
-    setThinking("c1", true);
-    mockSteer.mockReturnValueOnce(noTurn()).mockReturnValueOnce(steerOk());
-    mockSendPromptTo.mockResolvedValue("queued");
-
-    expect(await submitPrompt("c1", "hello")).toBe("steered");
-    expect(mockSteer).toHaveBeenCalledTimes(2);
-    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
-  });
-
-  it("stops converting once the budget is spent, at the error face", async () => {
-    // Busy/idle flapping must terminate: one budget's worth of hops, then a failure the next Send retries.
-    resetStore("c1");
-    setThinking("c1", true);
-    mockSteer.mockReturnValue(noTurn());
-    mockSendPromptTo.mockResolvedValue("queued");
-
-    expect(await submitPrompt("c1", "hello")).toBe("failed");
-    expect(mockSteer).toHaveBeenCalledTimes(2);
-    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
-    expect(mockReportSendRefused).toHaveBeenCalled();
-  });
-
-  it("converts on the idle path too: prompt → 409 → steer → no turn → prompt", async () => {
-    resetStore("c1");
-    mockSendPromptTo.mockResolvedValueOnce("queued").mockResolvedValueOnce("sent");
-    mockSteer.mockReturnValue(noTurn());
-
-    expect(await submitPrompt("c1", "hello")).toBe("sent");
-    expect(mockSendPromptTo).toHaveBeenCalledTimes(2);
-    expect(mockSteer).toHaveBeenCalledTimes(1);
-  });
-});
-
-// 409 "starting": the holder cannot take a steer. The turn opens AFTER admission, so the refusal
-// appended nothing and the text is handed back like any pre-persist failure.
 describe("submitPrompt on a 409-starting refusal", () => {
   /** Refuse with "starting" and append NOTHING, which is what the server does now: no
    *  `turn_open` carries this id, so `hasMessage` answers false and the text comes back. */
@@ -550,12 +399,12 @@ describe("submitPrompt on a 409-starting refusal", () => {
     mockSendPromptTo.mockResolvedValue("starting");
   }
 
-  it("reports failure and never attempts a steer", async () => {
+  it("reports failure and sends nothing else", async () => {
     resetStore("c1");
     starting();
 
     expect(await submitPrompt("c1", "hello")).toBe("failed");
-    expect(mockSteer).not.toHaveBeenCalled();
+    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
   });
 
   it("renders the holder-neutral busy face through send-state's error surface", async () => {
@@ -595,9 +444,7 @@ describe("submitPrompt on a 409-starting refusal", () => {
     expect(sentMessageID(1)).toBe(first);
   });
 
-  it("retries as a PROMPT, not a steer", async () => {
-    // The action retracts the optimistic thinking (actions/chat-prompt.test.ts), so the retry goes down
-    // the send path.
+  it("retries as one more prompt POST", async () => {
     resetStore("c1");
     starting();
     await submitPrompt("c1", "hello");
@@ -605,7 +452,6 @@ describe("submitPrompt on a 409-starting refusal", () => {
     mockSendPromptTo.mockResolvedValue("sent");
     expect(await submitPrompt("c1", "hello")).toBe("sent");
     expect(mockSendPromptTo).toHaveBeenCalledTimes(2);
-    expect(mockSteer).not.toHaveBeenCalled();
   });
 });
 
@@ -789,198 +635,12 @@ describe("retrying in the same thread", () => {
   });
 });
 
-describe("steer attachments", () => {
-  // `_session/steer` takes a plain string, so a file cannot ride along as a
-  // content block. Degrading to the path reference the server already uses for
-  // an unsupported document keeps ONE convention for "here is a file".
-  it("folds attachment paths into the text using the server's own wording", async () => {
-    resetStore("c1");
-    setThinking("c1", true);
-    mockTakeAttachments.mockReturnValue([{ path: "src/a.ts" }, { path: "src/b.ts" }]);
-
-    await submitPrompt("c1", "look at these");
-    expect(steeredText()).toBe("look at these\n\nAttached file: src/a.ts\nAttached file: src/b.ts");
-  });
-
-  it("leaves the text alone when there are no attachments", async () => {
-    resetStore("c1");
-    setThinking("c1", true);
-    mockTakeAttachments.mockReturnValue([]);
-
-    await submitPrompt("c1", "plain");
-    expect(steeredText()).toBe("plain");
-  });
-
-  it("sends an attachment-only steer as the path lines alone", async () => {
-    resetStore("c1");
-    setThinking("c1", true);
-    mockHasAttachments.mockReturnValue(true);
-    mockTakeAttachments.mockReturnValue([{ path: "shot.png", name: "shot.png" }]);
-
-    await submitPrompt("c1", "");
-    expect(steeredText()).toBe("Attached file: shot.png");
-  });
-
-  it("skips an attachment with no usable path rather than emitting a blank line", async () => {
-    resetStore("c1");
-    setThinking("c1", true);
-    mockTakeAttachments.mockReturnValue([
-      { path: "", name: "" },
-      { path: "ok.ts", name: "ok.ts" },
-    ]);
-
-    await submitPrompt("c1", "one good file");
-    expect(steeredText()).toBe("one good file\n\nAttached file: ok.ts");
-  });
-});
-
-// QUEUE MODE: a busy chat holds the message for the turn's end instead of steering it.
-describe("submitPrompt in Queue mode", () => {
-  function busyQueueChat(): void {
-    resetStore("c1");
-    setChatInterruptMode("c1", "queue");
-    setThinking("c1", true);
-  }
-
-  it("queues a follow-up mid-turn and never steers", async () => {
-    busyQueueChat();
-
-    expect(await submitPrompt("c1", "then add tests")).toBe("queued");
-    expect(mockSteer).not.toHaveBeenCalled();
-    expect(mockSendPromptTo).not.toHaveBeenCalled();
-    expect(queuedArgs()).toMatchObject({ chatID: "c1", text: "then add tests" });
-  });
-
-  it("keeps attachments as attachments rather than folding them into the text", async () => {
-    busyQueueChat();
-    mockTakeAttachments.mockReturnValue([{ path: "src/a.ts", name: "a.ts" }]);
-
-    await submitPrompt("c1", "look at this");
-    expect(queuedArgs()).toMatchObject({
-      text: "look at this",
-      attachments: [{ path: "src/a.ts", name: "a.ts" }],
-    });
-  });
-
-  it("queues when a prompt meets a plain 409, the turn having started underneath it", async () => {
-    resetStore("c1");
-    setChatInterruptMode("c1", "queue");
-    mockSendPromptTo.mockResolvedValue("queued");
-
-    expect(await submitPrompt("c1", "hello")).toBe("queued");
-    expect(mockQueue).toHaveBeenCalledTimes(1);
-    expect(mockSteer).not.toHaveBeenCalled();
-  });
-
-  it("sends the prompt it should have been when the turn ended first", async () => {
-    busyQueueChat();
-    mockQueue.mockReturnValue(steerRefused("nothing is running", "no_turn"));
-    mockSendPromptTo.mockResolvedValue("sent");
-
-    expect(await submitPrompt("c1", "hello")).toBe("sent");
-    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
-  });
-
-  it("hands the text back and shows the server's words when the queue is full", async () => {
-    busyQueueChat();
-    mockQueue.mockReturnValue(steerRefused("this chat already holds the most follow-ups", "full"));
-
-    expect(await submitPrompt("c1", "hello")).toBe("failed");
-    expect(mockRestoreFailedSend).toHaveBeenCalledWith("c1", "hello");
-    expect(mockReportSendRefused).toHaveBeenCalledWith(
-      "this chat already holds the most follow-ups",
-    );
-    expect(mockSendPromptTo).not.toHaveBeenCalled();
-  });
-
-  // A lost response is not a refusal when the header already lists the row: the
-  // server holds the text and the attachments, so handing them back duplicates them.
-  it("hands nothing back when the row the server already queued lost its response", async () => {
-    busyQueueChat();
-    mockTakeAttachments.mockReturnValue([{ path: "a.ts", name: "a.ts" }]);
-    mockQueue.mockImplementation((args: { messageID: string; text: string }) => {
-      const session = get("c1");
-      if (session !== undefined) {
-        session.queued = [{ id: args.messageID, text: args.text }];
-      }
-      return steerRefused("connection lost", "network");
-    });
-
-    expect(await submitPrompt("c1", "hello")).toBe("failed");
-    expect(mockRestoreFailedSend).not.toHaveBeenCalled();
-    expect(mockAddAttachmentTo).not.toHaveBeenCalled();
-  });
-});
-
-// A turn the agent started itself (a notification wake): `turn_opened` arrived, nothing has streamed
-// yet, so `thinking` is still false. A prompt here would make KAS abort that turn.
-describe("submitPrompt beside a turn the agent started that has not streamed", () => {
-  function wakeTurnChat(mode: "steer" | "queue"): void {
-    resetStore("c1");
-    setChatInterruptMode("c1", mode);
-    openTurn("c1", {
-      id: "t-wake-open",
-      turn: "t-wake",
-      kind: "turn_open",
-      seq: 0,
-      ts: 1,
-      payload: { source: "wire_turn_start", n: 1 },
-    });
-  }
-
-  it("steers into it in Steer mode and never sends a prompt", async () => {
-    wakeTurnChat("steer");
-
-    expect(await submitPrompt("c1", "also check the logs")).toBe("steered");
-    expect(mockSteer).toHaveBeenCalledTimes(1);
-    expect(steeredText()).toBe("also check the logs");
-    expect(mockSendPromptTo).not.toHaveBeenCalled();
-    expect(mockQueue).not.toHaveBeenCalled();
-  });
-
-  it("queues behind it in Queue mode and never sends a prompt", async () => {
-    wakeTurnChat("queue");
-
-    expect(await submitPrompt("c1", "then add tests")).toBe("queued");
-    expect(queuedArgs()).toMatchObject({ chatID: "c1", text: "then add tests" });
-    expect(mockSendPromptTo).not.toHaveBeenCalled();
-    expect(mockSteer).not.toHaveBeenCalled();
-  });
-
-  it("queues a labelled send behind it", async () => {
-    wakeTurnChat("steer");
-
-    expect(await submitLabelled("c1", "the findings", "Merging findings")).toBe("queued");
-    expect(mockSendPromptTo).not.toHaveBeenCalled();
-  });
-
-  it("holds a context reference, which only a new turn resolves", async () => {
-    wakeTurnChat("steer");
-
-    expect(await submitPrompt("c1", "look at #[[file:a.ts]] too")).toBe("held");
-    expect(mockSteer).not.toHaveBeenCalled();
-    expect(mockSendPromptTo).not.toHaveBeenCalled();
-  });
-
-  // The wake turn ended while the steer was in flight: the server's no_turn makes it the prompt.
-  it("sends the prompt it should have been when the turn ended first", async () => {
-    wakeTurnChat("steer");
-    mockSteer.mockReturnValue(steerRefused("nothing is running", "no_turn"));
-    mockSendPromptTo.mockResolvedValue("sent");
-
-    expect(await submitPrompt("c1", "hello")).toBe("sent");
-    expect(mockSteer).toHaveBeenCalledTimes(1);
-    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe("submitPrompt guards", () => {
   it("refuses an empty chat id or empty text without touching the wire", async () => {
     resetStore("c1");
     expect(await submitPrompt("", "hello")).toBe("failed");
     expect(await submitPrompt("c1", "")).toBe("failed");
     expect(mockSendPromptTo).not.toHaveBeenCalled();
-    expect(mockSteer).not.toHaveBeenCalled();
   });
 
   it("sends an attachment-only prompt when the box is empty", async () => {
@@ -1013,35 +673,15 @@ describe("submitLabelled", () => {
     expect(mockTypedCommand).not.toHaveBeenCalled();
   });
 
-  it("queues with the label on a busy Queue-mode chat", async () => {
+  it("posts once with the label on a busy chat, the server queueing it", async () => {
     resetStore("c1");
-    setThinking("c1", true);
-    setChatInterruptMode("c1", "queue");
-
-    expect(await submitLabelled("c1", "the findings", "Merging findings")).toBe("queued");
-    expect(queuedArgs()?.["displayText"]).toBe("Merging findings");
-    expect(queuedArgs()?.["text"]).toBe("the findings");
-  });
-
-  it("queues with the label on a busy Steer-mode chat instead of steering it", async () => {
-    resetStore("c1");
-    setThinking("c1", true);
-    setChatInterruptMode("c1", "steer");
-
-    expect(await submitLabelled("c1", "the findings", "Merging findings")).toBe("queued");
-    expect(mockSteer).not.toHaveBeenCalled();
-    expect(queuedArgs()?.["displayText"]).toBe("Merging findings");
-    expect(queuedArgs()?.["text"]).toBe("the findings");
-  });
-
-  it("queues with the label when an idle send meets a turn that started underneath it", async () => {
-    resetStore("c1");
-    setChatInterruptMode("c1", "steer");
+    applyRun("c1", runAt(1, [turnEntry("t1")], { send: "steer", cancel: "t1" }));
     mockSendPromptTo.mockResolvedValue("queued");
 
     expect(await submitLabelled("c1", "the findings", "Merging findings")).toBe("queued");
-    expect(mockSteer).not.toHaveBeenCalled();
-    expect(queuedArgs()?.["displayText"]).toBe("Merging findings");
+    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
+    const opts = mockSendPromptTo.mock.calls[0]?.[2] as { displayText?: string } | undefined;
+    expect(opts?.displayText).toBe("Merging findings");
   });
 
   it("never hands its words to the composer when the send fails", async () => {

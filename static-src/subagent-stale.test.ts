@@ -8,6 +8,7 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import type * as ModBlocks from "./messages-blocks.js";
 import type { Turn } from "./turns.js";
 import type { ChatHeader, EntryToolCall, ToolStatus } from "./wire/types.gen.js";
+import { IDLE_RUN } from "./run-order.js";
 
 for (const id of [
   "messages",
@@ -101,6 +102,7 @@ function seedChat(turnLive: boolean): void {
   upsertHeader({
     id: CHAT_ID,
     name: CHAT_ID,
+    run: IDLE_RUN,
     usage: {
       context_pct: 0,
       context_size: 0,

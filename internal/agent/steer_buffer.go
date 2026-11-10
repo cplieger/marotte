@@ -32,8 +32,13 @@ type steerRecords struct {
 	runJob     func(command.SteerJob)
 	// stepJob runs a step key's flush on the step's host session; a chat key's goes to runJob.
 	stepJob func(command.SteerJob) `wiring:"optional"`
-	endSeq  uint64
-	mu      sync.Mutex
+	// onRunFacts wakes the chat's run list when a step moved its pending turn ends or its unsent rows (runFacts).
+	// Called under mu, where a chat's lifecycle lock may be held too, so it only starts work on another goroutine.
+	onRunFacts func(marotte.ChatID) `wiring:"optional"`
+	endSeq     uint64
+	// factsSeq counts the steps that moved the run facts, so the run list drops an older read than one it applied.
+	factsSeq uint64
+	mu       sync.Mutex
 }
 
 type steerRecord struct {
@@ -139,6 +144,42 @@ func (r *steerRecords) record(chatID marotte.ChatID, create bool) *steerRecord {
 	return rec
 }
 
+// runFacts are the record's facts the chat's run list reads, never under the lifecycle lock: the pending turn ends,
+// the keys of the unsent rows a prompt would carry (UnsentRows' rule) and the sequence of the read.
+func (r *steerRecords) runFacts(chatID marotte.ChatID, deathDrained bool) (ends int, unsent []string, seq uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec := r.record(chatID, false)
+	if rec == nil || rec.gone {
+		return 0, nil, r.factsSeq
+	}
+	return len(rec.ends), rec.unsentKeys(deathDrained), r.factsSeq
+}
+
+// unsentCount is the number of rows unsentKeys may name, whatever the death bits.
+func (rec *steerRecord) unsentCount() int {
+	n := 0
+	rec.live(func(w *dockRow) {
+		if w.owner == "" && w.state == rowUnsent {
+			n++
+		}
+	})
+	return n
+}
+
+func (rec *steerRecord) unsentKeys(deathDrained bool) []string {
+	if rec.reinject && !deathDrained {
+		return nil
+	}
+	var keys []string
+	rec.live(func(w *dockRow) {
+		if w.owner == "" && w.state == rowUnsent {
+			keys = append(keys, w.key)
+		}
+	})
+	return keys
+}
+
 func (r *steerRecords) eventFor(key marotte.ChatID, p *marotte.SteerQueuedPayload) (marotte.ServerEvent, bool) {
 	if _, step := key.StepSession(); !step {
 		return marotte.NewEvent(marotte.EventSteerQueued, key, *p), true
@@ -160,13 +201,21 @@ func (r *steerRecords) step(chatID marotte.ChatID, create bool, fn func(rec *ste
 		return false
 	}
 	before := rec.wires()
+	ends, unsent := len(rec.ends), rec.unsentCount()
 	fn(rec, fx)
 	rec.prune()
 	rec.reframe(fx, before)
 	if fx.changed || len(fx.frames) > 0 || len(fx.notes) > 0 {
 		mintPending(&r.versions)
 	}
+	moved := ends != len(rec.ends) || unsent != rec.unsentCount()
+	if moved {
+		r.factsSeq++
+	}
 	r.awaitLocked(rec, fx)
+	if moved && r.onRunFacts != nil {
+		r.onRunFacts(chatID)
+	}
 	return true
 }
 

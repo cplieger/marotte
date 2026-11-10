@@ -327,15 +327,15 @@ func TestLoadSession_AMissingChatIsTerminal(t *testing.T) {
 	}
 }
 
-// unreadableOnce answers its first Get for chatID as unreadable while the record stays on disk.
+// unreadableOnce answers every Get for chatID as unreadable while failing is set, the record staying on disk.
 type unreadableOnce struct {
 	*testChatStore
-	chatID marotte.ChatID
-	failed atomic.Bool
+	chatID  marotte.ChatID
+	failing atomic.Bool
 }
 
 func (s *unreadableOnce) Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool) {
-	if id == s.chatID && s.failed.CompareAndSwap(false, true) {
+	if id == s.chatID && s.failing.Load() {
 		return nil, false
 	}
 	return s.testChatStore.Get(ctx, id)
@@ -351,9 +351,11 @@ func TestLoadSession_AnUnreadableRecordIsRetryable(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "A" })
 
+	store.failing.Store(true)
 	if err := h.coord.LoadSession(t.Context(), "c1"); err == nil || errors.Is(err, command.ErrChatGone) {
 		t.Fatalf("LoadSession with an unreadable record = %v, want a retryable failure", err)
 	}
+	store.failing.Store(false)
 	if err := h.coord.LoadSession(t.Context(), "c1"); err != nil {
 		t.Errorf("LoadSession once the record reads again = %v, want nil", err)
 	}

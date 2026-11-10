@@ -52,6 +52,9 @@ export type {
   PolicyView,
   PolicyExplainResult,
   QueuedPrompt,
+  RunEntryView,
+  RunView,
+  RunWait,
   SecurityProfile,
   SessionEffortLevel,
   SessionMode,
@@ -168,7 +171,7 @@ import type {
   EntryTurnRevert,
   InterruptMode,
   OpenEntry,
-  QueuedPrompt,
+  RunView,
   SessionEffortLevel,
   SteerOrigin,
   SubjectStamp,
@@ -278,12 +281,13 @@ export type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
 /** One mid-turn steer the agent has NOT read yet: a row in the bottom dock.
  *
- *  THE CLIENT WRITES INTENT, THE SERVER WRITES FACT. Sending writes a `pending` entry at once
- *  (rendered "Sending", no controls) that `chat.steer`'s rollback un-draws on a failed POST; the
- *  server writes the id (`steer_queued`) and the settling `steer` entry. Reconciled by id
- *  (`steer-<messageID>`), else by exact text against the OLDEST pending entry, always onto the
- *  existing row. A row leaves on its settling `steer` entry or a `removed` frame; an undeliverable
- *  one stays `unsent`. Always the USER's words (agent notices arrive as `agent_notice`). */
+ *  THE CLIENT WRITES INTENT, THE SERVER WRITES FACT. A chat's rows come from the server alone
+ *  (`steer_queued`, then the settling `steer` entry). Only a run step's send writes a `pending`
+ *  entry at once (`pendingSteerRow`, rendered "Sending", no controls), which `steer_queued`
+ *  confirms: by id (`steer-<messageID>`), else by exact text against the OLDEST pending entry,
+ *  always onto the existing row. A row leaves on its settling `steer` entry or a `removed` frame;
+ *  an undeliverable one stays `unsent`. Always the USER's words (agent notices arrive as
+ *  `agent_notice`). */
 export interface PendingSteer {
   /** The row's key, and the id every lifecycle event names it by. For a user row it is
    *  `steer-<messageID>`, derived from this device's POST, and it never changes: a
@@ -291,9 +295,9 @@ export interface PendingSteer {
   id: string;
   text: string;
   /** Whose words these are, resolved SERVER-side (`marotte.SteerOrigin`). Required: the obvious
-   *  fallback, "the user's", is wrong for what this names. `recordSteerSent` is the one local writer. */
+   *  fallback, "the user's", is wrong for what this names. `pendingSteerRow` is the one local writer. */
   origin: SteerOrigin;
-  /** Written on SUBMIT and cleared by `steer_queued`: this row is the local
+  /** Written by a run step's send and cleared by `steer_queued`: this row is the local
    *  claim that a POST is in flight, and its id is derived rather than
    *  confirmed. Absent on every entry the server has acknowledged. */
   pending?: boolean;
@@ -393,14 +397,9 @@ export interface Session {
   /** What Send means while a turn runs: a steer into it, or a follow-up held for its
    *  end. From `ChatHeader.interrupt_mode`; absent is steer. */
   interrupt_mode?: InterruptMode;
-  /** The server-held follow-ups (`ChatHeader.queued_prompts`), drained one per clean
-   *  turn end. A header read replaces it, so an absent list is a clear. */
-  queued?: QueuedPrompt[];
-  /** A compaction queued for a turn's end (`ChatHeader.compact_pending`). A header read replaces it, so absent is
-   *  none. */
-  compact_queued?: boolean;
-  /** That compaction's call is in flight (`ChatHeader.compact_pending.running`). A header read replaces it. */
-  compact_running?: boolean;
+  /** The chat's run order (`ChatHeader.run`): what runs next, each entry's wait and the composer's
+   *  verb. The server's statement; `newerRun` keeps the highest `version`. */
+  run?: RunView;
   /** `ChatHeader.tangent`. */
   tangent?: boolean;
   /** Reasoning-effort level ("low".."max", "" = engine default): a per-chat composer setting. */

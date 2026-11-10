@@ -23,9 +23,7 @@ import {
   appendEntry,
   defaultUsage,
   openTurn,
-  recordSteerSent,
   forgetSteers,
-  steerIDFor,
   steerCount,
 } from "../store.js";
 import {
@@ -96,33 +94,6 @@ describe("steer_queued", () => {
   it("records the steer as waiting", () => {
     fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "use tabs", origin: "user" });
     expect(get("c1")?.steers).toEqual([{ id: "steer-1", text: "use tabs", origin: "user" }]);
-  });
-
-  // The whole point of the optimistic row: the user sees it on the keystroke, and KAS's frame
-  // CONFIRMS that row rather than adding a second one beside it. The ids agree because the
-  // client derives the one KAS returns.
-  it("confirms the row the submit already drew, leaving one row", () => {
-    recordSteerSent("c1", "m-1", "use tabs");
-    fireSSE("steer_queued", "c1", {
-      steer_id: steerIDFor("m-1"),
-      text: "use tabs",
-      origin: "user",
-    });
-    expect(get("c1")?.steers).toEqual([{ id: "steer-m-1", text: "use tabs", origin: "user" }]);
-  });
-
-  // The safety net for a KAS whose id convention has drifted: an exact TEXT match against the
-  // oldest pending row adopts the server's id, so one row still becomes one row.
-  it("confirms it through the text fallback when the ids disagree", () => {
-    recordSteerSent("c1", "m-1", "use tabs");
-    fireSSE("steer_queued", "c1", {
-      steer_id: "kas-generated-7",
-      text: "use tabs",
-      origin: "user",
-    });
-    expect(get("c1")?.steers).toEqual([
-      { id: "kas-generated-7", text: "use tabs", origin: "user" },
-    ]);
   });
 
   // A notice KAS classified as the AGENT's leaves the server as its own event, so it never

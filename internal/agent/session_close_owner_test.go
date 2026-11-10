@@ -154,7 +154,8 @@ func (o *ownerHub) openReturnsCurrent(t *testing.T, got <-chan openResult, while
 	}
 }
 
-// tailGate holds every close tail of h at its drain until open closes.
+// tailGate holds every close tail of h just before its end, where the run list takes what runs next, until open
+// closes.
 type tailGate struct {
 	open    chan struct{}
 	reached atomic.Int32
@@ -165,16 +166,12 @@ func blockTails(t *testing.T, h *Runtime) *tailGate {
 	t.Helper()
 	g := &tailGate{open: make(chan struct{})}
 	t.Cleanup(g.release)
-	drain := h.coord.drainAfterClose
-	h.coord.drainAfterClose = func(ctx context.Context, chatID marotte.ChatID, cl command.CloseFacts, ends command.EndFacts) {
-		g.reached.Add(1)
-		select {
-		case <-g.open:
-		case <-ctx.Done():
-			return
+	tailHooks(h, func(_ marotte.ChatID, ended bool) {
+		if !ended {
+			g.reached.Add(1)
+			<-g.open
 		}
-		drain(ctx, chatID, cl, ends)
-	}
+	})
 	return g
 }
 
@@ -533,7 +530,7 @@ func TestCloseOwner_ReleaseWaitsForTheCloseTailOfARealTurnEnd(t *testing.T) {
 func TestCloseOwner_ReleaseWaitsForATailHeldBeforeTheAsk(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
-		_, done, _, ok := o.h.coord.turns.beginTail(lifecycleOf(t, o.h, "c1"))
+		_, done, ok := o.h.coord.turns.beginTail(lifecycleOf(t, o.h, "c1"))
 		if !ok {
 			t.Fatal("Setup: the life refused the tail")
 		}
@@ -721,15 +718,16 @@ func TestCloseOwner_DrainedPromptReloadsBeforeTheTailEnds(t *testing.T) {
 				o.br.chunksOnCall = map[string][]string{marotte.MethodPrompt: {"done"}}
 				o.br.mu.Unlock()
 				// The drained prompt's door always runs before the tail that drained it ends.
-				drain := o.h.coord.drainAfterClose
-				o.h.coord.drainAfterClose = func(ctx context.Context, chatID marotte.ChatID, cl command.CloseFacts, ends command.EndFacts) {
-					drain(ctx, chatID, cl, ends)
+				tailHooks(o.h, func(_ marotte.ChatID, ended bool) {
+					if !ended {
+						return
+					}
 					for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
 						if tookPrompt(o.h.bridge.mgr.get("c1")) {
 							return
 						}
 					}
-				}
+				})
 				if rec := postCmd(t, o.h, marotte.ClientCommand{
 					Type: marotte.CmdPrompt, ChatID: "c1", Payload: json.RawMessage(`{"text":"start","message_id":"m-1"}`),
 				}); rec.Code != 200 {
@@ -1421,7 +1419,7 @@ var ownerHolds = map[holdKind]struct {
 		return done
 	}},
 	holdTail: {name: "tail", take: func(t *testing.T, o *ownerLife) func() {
-		_, done, _, ok := o.r.beginTail(o.lc)
+		_, done, ok := o.r.beginTail(o.lc)
 		if !ok {
 			t.Fatal("Setup: the life refused the tail")
 		}
@@ -1598,65 +1596,6 @@ func TestCloseOwner_AskOnANewEntryReplacesTheStaleAsk(t *testing.T) {
 	if g, _, ok := o.lc.nextClose(); ok {
 		t.Errorf("the closer ran a second close, on the old entry %t", g.sb == o.sb)
 	}
-}
-
-func TestCloseOwner_DrainPickHandsTheTailToTheReservation(t *testing.T) {
-	t.Run("the slot is free", func(t *testing.T) {
-		o := newOwnerLife(t)
-		_, done, tail, _ := o.r.beginTail(o.lc)
-		defer done()
-		o.lc.askClose(o.sb, closeRelease, 0, false)
-
-		res, ok := o.r.drainPick("c1", command.TurnFence{}, tail)
-		if !ok {
-			t.Fatal("the drain's pick took no reservation")
-		}
-		if st := o.state(); st.tails != 0 || st.closing != nil {
-			t.Errorf("after the pick: %d tails held, grant %v; want the tail ended and the close still pending", st.tails, st.closing)
-		}
-		o.r.releaseReservation(res)
-		if o.state().closing == nil {
-			t.Error("the drained reservation's release left the pending close ungranted")
-		}
-	})
-	t.Run("the predecessor was a prompt", func(t *testing.T) {
-		o := newOwnerLife(t)
-		_, done, tail, _ := o.r.beginTail(o.lc)
-		defer done()
-		prev := o.reserve(t)
-		o.holdOpen(prev.Token)
-		o.r.releaseReservation(prev)
-		o.lc.askClose(o.sb, closeRelease, 0, false)
-
-		res, ok := o.r.drainPick("c1", command.TurnFence{}, tail)
-		if !ok {
-			t.Fatal("the drain's pick took no reservation")
-		}
-		if st := o.state(); st.opens != 0 || st.tails != 0 || st.closing != nil {
-			t.Errorf("after the pick: %d opens, %d tails, grant %v; want the predecessor and the tail holding nothing, the close pending",
-				st.opens, st.tails, st.closing)
-		}
-		o.r.releaseReservation(res)
-		if o.state().closing == nil {
-			t.Error("the drained reservation's release left the pending close ungranted")
-		}
-	})
-	t.Run("the pick refuses", func(t *testing.T) {
-		o := newOwnerLife(t)
-		_, done, tail, _ := o.r.beginTail(o.lc)
-		defer done()
-		o.lc.askClose(o.sb, closeRelease, 0, false)
-		o.lc.mu.Lock()
-		failed := command.TurnFence{Epoch: o.lc.epoch + 1}
-		o.lc.mu.Unlock()
-
-		if _, ok := o.r.drainPick("c1", failed, tail); ok {
-			t.Fatal("a pick on a failed fence reserved")
-		}
-		if st := o.state(); st.tails != 0 || st.closing == nil {
-			t.Errorf("after the refused pick: %d tails, grant %v; want the tail ended and the close granted", st.tails, st.closing)
-		}
-	})
 }
 
 func TestCloseOwner_AReservationReleaseEndsItsDoorsOpenHold(t *testing.T) {
@@ -2192,7 +2131,7 @@ func TestCloseOwner_ReleaseAskOnTheForwardNeverBlocks(t *testing.T) {
 func TestCloseOwner_AStaleReleaseGrantMovesToTheCurrentEntry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		o := newOwnerHub(t, false)
-		_, done, _, ok := o.h.coord.turns.beginTail(lifecycleOf(t, o.h, "c1"))
+		_, done, ok := o.h.coord.turns.beginTail(lifecycleOf(t, o.h, "c1"))
 		if !ok {
 			t.Fatal("Setup: the life refused the tail")
 		}

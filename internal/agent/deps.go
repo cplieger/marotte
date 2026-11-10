@@ -39,10 +39,6 @@ type bridgeChatRecords interface {
 	PublishIfPresent(ctx context.Context, id marotte.ChatID, publish func()) chat.Presence
 	// Mutate is the header write primitive: load, apply, save, broadcast.
 	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)
-	// Dequeue takes a queued row whose turn opened off the header; Opened reports
-	// such a row, even while its removal is still pending.
-	Dequeue(ctx context.Context, chatID marotte.ChatID, id string) error
-	Opened(chatID marotte.ChatID, id string) bool
 	// All answers every entry of the chat's log in file order.
 	All(ctx context.Context, chatID marotte.ChatID) ([]marotte.Entry, error)
 	// OpenTurn appends a turn_open and answers it; init writes a missing header, nil refuses.

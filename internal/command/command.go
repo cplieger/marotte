@@ -185,15 +185,6 @@ func (d *Dispatcher) ResolveAfterClose(ctx context.Context, chatID marotte.ChatI
 	return resolveAfterClose(ctx, d.prompts, chatID, fence)
 }
 
-// DrainAfterClose sends at most one prompt for a close: the chat's unread steers,
-// else one queued user row after a clean close (see drainAfterClose).
-func (d *Dispatcher) DrainAfterClose(ctx context.Context, chatID marotte.ChatID, closed CloseFacts, ends EndFacts) {
-	if d.prompts == nil || d.prompts.queue == nil {
-		return
-	}
-	drainAfterClose(ctx, d.prompts, chatID, closed, ends)
-}
-
 type errorResponse struct {
 	// Impact is what a close refused with close_impact_changed would stop. See statusErrorImpact.
 	Impact *marotte.CloseImpact `json:"impact,omitempty"`

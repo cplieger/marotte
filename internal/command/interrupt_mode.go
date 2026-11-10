@@ -13,11 +13,10 @@ import (
 
 var errUnknownInterruptMode = errors.New("mode must be steer or queue")
 
-// cmdSetInterruptMode records what Send does while this chat's turn runs. It
-// touches no turn and calls no bridge: a switch mid-turn moves nothing already
-// sent or queued. Auto-creates the record like set_mode, so a pick on a chat that
-// has not prompted yet survives to its first turn.
-func cmdSetInterruptMode(ctx context.Context, chats chatMutator, cmd *marotte.ClientCommand) (any, error) {
+// cmdSetInterruptMode records what Send does while this chat's turn runs. It touches no turn: a switch mid-turn
+// moves nothing already sent or queued, and a stored change calls runQueue.ModeChanged, which republishes the send.
+// Auto-creates the record like set_mode, so a pick on a chat that has not prompted yet survives to its first turn.
+func cmdSetInterruptMode(ctx context.Context, chats chatMutator, runq runQueue, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -34,6 +33,7 @@ func cmdSetInterruptMode(ctx context.Context, chats chatMutator, cmd *marotte.Cl
 	if stored == marotte.InterruptSteer {
 		stored = ""
 	}
+	changed := false
 	if _, err := chats.Mutate(ctx, cmd.ChatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			c.Name = marotte.DefaultChatName
@@ -41,12 +41,16 @@ func cmdSetInterruptMode(ctx context.Context, chats chatMutator, cmd *marotte.Cl
 			return false
 		}
 		c.InterruptMode = stored
+		changed = true
 		return true
 	}); err != nil {
 		if errors.Is(err, chat.ErrTombstoned) {
 			return nil, StatusError(http.StatusNotFound, ErrChatNotFound)
 		}
 		return nil, StatusError(http.StatusInternalServerError, err)
+	}
+	if changed {
+		runq.ModeChanged(cmd.ChatID)
 	}
 	slog.Info("interrupt mode set", "chat", cmd.ChatID, "mode", p.Mode)
 	return responseWith(map[string]any{"mode": p.Mode}), nil

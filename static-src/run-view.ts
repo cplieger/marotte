@@ -289,7 +289,6 @@ const stepStackSource: SteerStackSource = {
     return {
       id: t.workflowID === "" ? "" : join(t.workflowID, t.nodePath),
       steers: t.workflowID === "" ? [] : stepSteers(t.workflowID, t.nodePath),
-      queued: [],
     };
   },
   edit: async (steer) => {

@@ -76,7 +76,10 @@ var wireTypes = []wiregen.Type{
 	// Registered so the pre-session catalog fetch reads a generated decoder, not a cast.
 	wiregen.TypeRef[marotte.ConfigTemplateResponse](),
 	wiregen.TypeRef[marotte.QueuedPrompt](),
-	wiregen.TypeRef[marotte.PendingCompaction](),
+	wiregen.TypeRef[marotte.RunEntry](),
+	wiregen.TypeRef[marotte.RunWait](),
+	wiregen.TypeRef[marotte.RunEntryView](),
+	wiregen.TypeRef[marotte.RunView](),
 	wiregen.TypeRef[marotte.ChatHeader](),
 	wiregen.TypeRef[marotte.PermissionOption](),
 	wiregen.TypeRef[marotte.ApprovalFile](),
@@ -396,6 +399,13 @@ var wireEnums = []wiregen.EnumRef{
 	wiregen.StringEnum[marotte.TabKind](),
 	// The composer's placeholder and the chat-options menu's radio branch on it.
 	wiregen.StringEnum[marotte.InterruptMode](),
+	// The dock and the composer draw the run order from these, and branch on each.
+	wiregen.StringEnum[marotte.RunEntryKind](),
+	wiregen.StringEnum[marotte.RunEntryState](),
+	wiregen.StringEnum[marotte.RunEntryOrigin](),
+	wiregen.StringEnum[marotte.RunWaitAfter](),
+	wiregen.StringEnum[marotte.SendVerb](),
+	wiregen.StringEnum[marotte.SendNowKind](),
 	// The spec page labels a segment by its role.
 	wiregen.StringEnum[marotte.SpecDocRole](),
 	// The client branches on the verdict to decide whether to retry and what to say.

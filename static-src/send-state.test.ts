@@ -5,15 +5,9 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { SendState } from "./prompt-input.js";
 import { setSendState } from "./prompt-input.js";
 import { setSSEStatus, setAgentDown, clearAgentDown, reportSendRefused } from "./send-state.js";
-import {
-  setSessions,
-  setActive,
-  setThinking,
-  recordSteerQueued,
-  openTurn,
-  appendEntry,
-} from "./store.js";
+import { setSessions, setActive, applyRun, recordSteerQueued } from "./store.js";
 import type { Session } from "./types.js";
+import { compactionEntry, runAt, turnEntry } from "./__test-helpers__/run-order.js";
 
 // Capture every SendState pushed to prompt-input without loading its DOM deps.
 vi.mock("./prompt-input.js", () => ({ setSendState: vi.fn() }));
@@ -22,6 +16,17 @@ const pushed = vi.mocked(setSendState);
 
 function lastPushed(): SendState | undefined {
   return pushed.mock.calls.at(-1)?.[0];
+}
+
+let version = 0;
+
+/** The server's run order now names a running turn that Cancel stops, or (`false`) nothing. */
+function turnRuns(id: string, runs: boolean): void {
+  version += 1;
+  applyRun(
+    id,
+    runs ? runAt(version, [turnEntry("t1")], { cancel: "t1", send: "steer" }) : runAt(version, []),
+  );
 }
 
 function makeSession(id: string): Session {
@@ -63,7 +68,7 @@ describe("send-state precedence", () => {
     setSessions([makeSession(id)]);
     setActive(id);
     // Make every lower-priority condition true at once.
-    setThinking(id, true);
+    turnRuns(id, true);
     setAgentDown("The agent could not be started for this chat.");
     setSSEStatus("disconnected");
     expect(lastPushed()).toEqual({
@@ -81,7 +86,7 @@ describe("send-state precedence", () => {
     clearAgentDown();
     expect(lastPushed()).toEqual({ kind: "streaming" });
 
-    setThinking(id, false);
+    turnRuns(id, false);
     expect(lastPushed()).toEqual({ kind: "idle" });
   });
 
@@ -108,12 +113,11 @@ describe("send-state precedence", () => {
     setSessions([makeSession(id)]);
     setActive(id);
     setSSEStatus("connected");
-    setThinking(id, true);
+    turnRuns(id, true);
     expect(lastPushed()).toEqual({ kind: "streaming" });
 
-    // What handlers/turn.ts does for a `prompt_failed` frame, in full: clear thinking, and report
-    // the prose somewhere that is not this module.
-    setThinking(id, false);
+    // The failed turn's close leaves the list idle; the prose is reported somewhere that is not this module.
+    turnRuns(id, false);
     expect(lastPushed()).toEqual({ kind: "idle" });
   });
 
@@ -129,47 +133,37 @@ describe("send-state precedence", () => {
     recordSteerQueued(id, { id: "steer-2", text: "two", origin: "user" });
     expect(lastPushed()).toEqual({ kind: "idle" });
 
-    setThinking(id, true);
+    turnRuns(id, true);
     expect(lastPushed()).toEqual({ kind: "streaming" });
   });
 });
 
-// A turn the agent started itself opens with `turn_opened` and streams nothing for seconds (hooks,
-// steering injection, time to first token). Send must already mean Steer or Queue there.
-describe("send-state beside a turn that has not streamed", () => {
-  const wakeOpen = {
-    id: "t-wake-open",
-    turn: "t-wake",
-    kind: "turn_open",
-    seq: 0,
-    ts: 1,
-    payload: { source: "wire_turn_start", n: 1 },
-  } as const;
-
-  it("shows the mid-turn face from the turn's open, and idle again at its close", () => {
+// Cancel names what the server would stop (`RunView.cancel`): a compaction alone is never stopped by it.
+describe("send-state from the run order", () => {
+  it("shows Cancel exactly while the server names something to stop", () => {
     const id = "c1";
     setSessions([makeSession(id)]);
     setActive(id);
     setSSEStatus("connected");
     expect(lastPushed()).toEqual({ kind: "idle" });
 
-    openTurn(id, wakeOpen);
+    version += 1;
+    applyRun(
+      id,
+      runAt(version, [compactionEntry("compact-1", { after: "running" })], { send: "queue" }),
+    );
+    expect(lastPushed()).toEqual({ kind: "idle" });
+
+    turnRuns(id, true);
     expect(lastPushed()).toEqual({ kind: "streaming" });
 
-    appendEntry(id, {
-      id: "t-wake-close",
-      turn: "t-wake",
-      kind: "turn_close",
-      seq: 1,
-      ts: 2,
-      payload: { outcome: "completed" },
-    });
+    turnRuns(id, false);
     expect(lastPushed()).toEqual({ kind: "idle" });
   });
 });
 
 describe("send-state auto-tracking", () => {
-  it("setThinking flips the pushed SendState with no explicit recompute", () => {
+  it("a run order change flips the pushed SendState with no explicit recompute", () => {
     const id = "c1";
     setSessions([makeSession(id)]);
     setActive(id);
@@ -178,7 +172,7 @@ describe("send-state auto-tracking", () => {
     pushed.mockClear();
 
     // Only a store mutation + flush — the computed re-derives on its own.
-    setThinking(id, true);
+    turnRuns(id, true);
     expect(pushed).toHaveBeenCalledTimes(1);
     expect(lastPushed()).toEqual({ kind: "streaming" });
   });
@@ -203,13 +197,12 @@ describe("send-state refused-send face", () => {
   });
 
   it("outranks streaming, exactly like the agent-down rung", () => {
-    // The store may read busy for the holder's own turn (the connect's `busy_chats`); the refusal
-    // face must still win, or the reader never learns their send was refused.
+    // The refusal face must win over a running turn, or the reader never learns their send was refused.
     const id = "c1";
     setSessions([makeSession(id)]);
     setActive(id);
     setSSEStatus("connected");
-    setThinking(id, true);
+    turnRuns(id, true);
     expect(lastPushed()).toEqual({ kind: "streaming" });
 
     reportSendRefused("The chat is busy right now. Send again to retry");
@@ -246,7 +239,7 @@ describe("send-state disconnected override", () => {
     setSessions([makeSession(id)]);
     setActive(id);
     setSSEStatus("connected");
-    setThinking(id, true);
+    turnRuns(id, true);
     expect(lastPushed()).toEqual({ kind: "streaming" });
 
     setSSEStatus("disconnected");

@@ -206,6 +206,7 @@ import { ingestTabsChanged, listTabs, _resetTabsSyncForTest } from "./tabs-sync.
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
 import { bindTabsSync, tabServer } from "./__test-helpers__/tabs-server.js";
 import type { TabDotStatus } from "./tab-view.js";
+import { IDLE_RUN } from "./run-order.js";
 
 bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 
@@ -623,6 +624,7 @@ describe("initAttention", () => {
     upsertHeader({
       id: ref,
       name: ref,
+      run: IDLE_RUN,
       usage: defaultUsage(),
       turn_count: position,
       created_at: 0,

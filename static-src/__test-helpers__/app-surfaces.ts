@@ -929,7 +929,6 @@ function plantSteers(): void {
     read: () => ({
       id: "c",
       steers: [{ id: "steer-1", text: "also run the linter", origin: "user" }],
-      queued: [],
     }),
     sendNow: () => Promise.resolve(),
     edit: () => Promise.resolve(),

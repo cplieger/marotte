@@ -113,13 +113,14 @@ func admitMerge(ctx context.Context, tangents TangentAccess, merges *tangentMerg
 	}
 	// Like the TUI, a busy tangent is refused rather than queued: the summary must be the
 	// next answer.
-	out, res := roles.admission.ReserveTurn(ctx, key.tangent, marotte.TurnSourcePrompt, stamp, AdmissionWait)
+	out, res, entryID := roles.runq.TakeIdle(ctx, key.tangent, IdleSummary, stamp, AdmissionWait)
 	if out != IdleAcquired {
 		return "", "", StatusErrorReason(http.StatusConflict, reasonBusy, errMergeTangentBusy)
 	}
 	deliveryID := ids.NewMessageID()
 	if admitErr := merges.admit(ctx, key, parent, deliveryID); admitErr != nil {
 		roles.admission.ReleaseTurnReservation(res)
+		roles.runq.SummaryLaunched(key.tangent, entryID, res, "", admitErr)
 		slog.Error("tangent merge: the merge could not be recorded", "chat_id", key.tangent, keyError, admitErr)
 		return "", "", StatusError(http.StatusInternalServerError, admitErr)
 	}
@@ -128,6 +129,7 @@ func admitMerge(ctx context.Context, tangents TangentAccess, merges *tangentMerg
 	roles.lifecycle.InflightAdd(1)
 	p := &marotte.PromptCommand{Text: tangentSummaryPrompt, MessageID: ids.NewMessageID(), DisplayText: tangentSummaryLabel, ForAgent: true}
 	turnID, err := startPrompt(ctx, roles, key.tangent, p, &launch{res: res, awaited: true})
+	roles.runq.SummaryLaunched(key.tangent, entryID, res, turnID, err)
 	if err != nil {
 		roles.lifecycle.InflightDone()
 		if aErr := merges.abandon(ctx, key); aErr != nil {

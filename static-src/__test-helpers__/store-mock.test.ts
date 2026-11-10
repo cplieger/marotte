@@ -64,10 +64,4 @@ describe("the mock's re-derived rules agree with the real ones", () => {
       expect(storeMock.turnLive(s)).toBe(store.turnLive(s));
     }
   });
-
-  it("steerIDFor", () => {
-    for (const id of ["m-abc", "m-1-2"]) {
-      expect(storeMock.steerIDFor(id)).toBe(store.steerIDFor(id));
-    }
-  });
 });

@@ -84,9 +84,8 @@ const (
 
 // PromptClass reports whether a turn opened by this source is a user prompt
 // marotte dispatched, which steer routing, parked-steer delivery and admission
-// (SteerableHolder) key on. A workflow step's turn is deliberately not one: a
-// steer aimed into it is read as that step's own input rather than as the
-// reader's correction.
+// key on. A workflow step's turn is deliberately not one: a steer aimed into it
+// is read as that step's own input rather than as the reader's correction.
 func (s TurnOpenSource) PromptClass() bool {
 	switch s {
 	case TurnSourcePrompt, TurnSourceEmptyRetry:
@@ -94,14 +93,6 @@ func (s TurnOpenSource) PromptClass() bool {
 	default:
 		return false
 	}
-}
-
-// SteerableHolder reports whether a prompt refused by a holder of this source is
-// answered Busy, which the client turns into a steer or a queued follow-up. A
-// wire turn qualifies: KAS reads a steer at its next node boundary as for any
-// turn, and a session/prompt beside it would abort it.
-func (s TurnOpenSource) SteerableHolder() bool {
-	return s.PromptClass() || s == TurnSourceWireTurnStart
 }
 
 // UserAnswered reports whether opening a turn from this source IS the user

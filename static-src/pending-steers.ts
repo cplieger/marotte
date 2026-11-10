@@ -3,7 +3,7 @@ import { join } from "@cplieger/keyenc";
 import { announce } from "@cplieger/ui/announce";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
-import { activeSession, getActiveId, hasMessage, hasQueued, isBusy, sessionBusy } from "./store.js";
+import { activeSession, getActiveId, hasMessage, hasQueued } from "./store.js";
 import {
   cancelCompact,
   cancelTurn,
@@ -29,38 +29,35 @@ import {
 import { iconEl } from "./icon-el.js";
 import { sentBy } from "./sent-by.js";
 import { wireSignature } from "./paint-sig.js";
-import { sessionDrain, turnsPhrase, type QueuedSlot } from "./queue-slots.js";
+import { dockEntries, entryLive, waitWords } from "./run-order.js";
 import { truncate } from "./strings.js";
 import { newMessageID } from "./transport.js";
-import type { PendingSteer, QueuedPrompt } from "./types.js";
+import type { PendingSteer, QueuedPrompt, RunEntryView, RunView, RunWait } from "./types.js";
+import type { SendNowKind } from "./wire/types.gen.js";
 import { readQuoted, splitLeadingQuote } from "./message-quote.js";
 import { buildQuoteBand } from "./quote-band.js";
 
-/** The chat's compaction, queued for a turn's end or already running. */
-interface CompactSlot {
-  /** A turn runs now, so it waits for this turn's end rather than the next one's. */
-  readonly afterTurn: boolean;
-  /** Its call is in flight: nothing cancels it, so the row has no control. */
-  readonly compacting: boolean;
-}
+/** Where an unsent steer goes, from the run order: with an entry's wait, with the chat's next message
+ *  (none carries it yet), or, for a dock with no run order (a run step's), as the next prompt. */
+type SteerPlace = RunWait | "next_message" | undefined;
 
-/** One dock row: a steer the agent has not read, the queued compaction, or a follow-up the server holds. */
+/** One dock row: a steer the agent has not read, a compaction entry, or a message the server holds. */
 type DockRow =
-  | { kind: "steer"; steer: PendingSteer }
-  | { kind: "compact"; slot: CompactSlot }
-  | { kind: "queued"; slot: QueuedSlot };
+  | { kind: "steer"; steer: PendingSteer; place: SteerPlace }
+  | { kind: "compact"; entry: RunEntryView }
+  | { kind: "queued"; entry: RunEntryView; stop: string | undefined };
 
 export interface SteerStackSource {
-  /** What the dock is about (a chat id, or a run step's key) and its rows. Reactive: the stack's
-   *  render subscribes through it. Only a chat has a queued compaction. */
+  /** What the dock is about (a chat id, or a run step's key), its steers and, for a chat, its run
+   *  order. Reactive: the stack's render subscribes through it. */
   read(): {
     id: string;
     steers: readonly PendingSteer[];
-    queued: readonly QueuedSlot[];
-    compact?: CompactSlot;
+    run?: RunView;
   };
-  /** Stop the turn and send this row first; absent where no turn is the reader's to stop. */
-  sendNow?: (steerID: string) => Promise<void>;
+  /** Stop the turn `target` names and send this row first; absent where no turn is the reader's to
+   *  stop. */
+  sendNow?: (steerID: string, target: string | undefined) => Promise<void>;
   /** Take the row out of the turn and hold it as a follow-up; absent where there is no follow-up
    *  queue (a run step). */
   queueInstead?: (steer: PendingSteer) => Promise<void>;
@@ -81,6 +78,10 @@ interface StackState {
   perRow: boolean;
   /** No row is delivering: the server refuses every whole-buffer clear while one is. */
   clearable: boolean;
+  /** Whether a steer's send-now has a turn to stop: always for a dock with no run order, else only
+   *  while `run.cancel` names a running turn (`stopTarget`). */
+  canStop: boolean;
+  stopTarget: string | undefined;
   src: SteerStackSource;
 }
 
@@ -99,12 +100,10 @@ export function mountSteerStack(stack: HTMLUListElement, src: SteerStackSource):
   const announced = { waiting: 0, id: "" };
   const sig = computed(() => {
     const s = src.read();
-    const compact = s.compact === undefined ? "" : compactStage(s.compact);
     return join(
       s.id,
       join(...s.steers.map(steerSig)),
-      compact,
-      join(...s.queued.map(wireSignature)),
+      s.run === undefined ? "" : wireSignature(s.run),
     );
   });
   effect(() => {
@@ -136,20 +135,18 @@ function render(
   src: SteerStackSource,
   announced: { waiting: number; id: string },
 ): void {
-  const { id, steers, queued, compact } = untracked(() => src.read());
+  const { id, steers, run } = untracked(() => src.read());
+  const stopTarget = run === undefined ? undefined : runningTarget(run);
   const state: StackState = {
     waiting: steers.filter((e) => e.pending !== true).length,
     perRow: steers.every((e) => e.origin === "user"),
     clearable: !steers.some((e) => e.delivering === true),
+    canStop: run === undefined || stopTarget !== undefined,
+    stopTarget,
     src,
   };
   const waiting = state.waiting;
-  const rows: DockRow[] = [
-    ...steers.map((steer): DockRow => ({ kind: "steer", steer })),
-    // Below the steers: a steer is read inside this turn, then the turn's end compacts before it sends a follow-up.
-    ...(compact === undefined ? [] : [{ kind: "compact", slot: compact } satisfies DockRow]),
-    ...queued.map((slot): DockRow => ({ kind: "queued", slot })),
-  ];
+  const rows = dockRows(steers, run);
 
   if (rows.length === 0) {
     reconcile(stack, [], rowSpec(state));
@@ -183,42 +180,104 @@ function render(
   announced.id = id;
 }
 
+/** `run.cancel` when the entry it names is a running turn: what a steer's send-now stops. */
+function runningTarget(run: RunView): string | undefined {
+  const target = run.cancel;
+  const e = run.entries.find((x) => x.id === target);
+  return e?.state === "running" ? target : undefined;
+}
+
+/** Top to bottom is send order, all of it the server's: steers not yet unsent sit under the running
+ *  turn, above every entry; the entries follow in run order; an unsent steer sits with the unread
+ *  entry, else where `unread_wait` places it, and one awaiting a prompt with the entry that carries
+ *  it. A dock with no run order lists its steers alone. */
+function dockRows(steers: readonly PendingSteer[], run: RunView | undefined): DockRow[] {
+  const steerRows = (list: readonly PendingSteer[], place: SteerPlace): DockRow[] =>
+    list.map((steer) => ({ kind: "steer", steer, place }));
+  const out = steerRows(
+    steers.filter((e) => e.unsent !== true),
+    undefined,
+  );
+  const plain = steers.filter((e) => e.unsent === true && e.awaitsPrompt !== true);
+  const awaiting = steers.filter((e) => e.unsent === true && e.awaitsPrompt === true);
+  if (run === undefined) {
+    return [...out, ...steerRows([...plain, ...awaiting], undefined)];
+  }
+  const drawn = new Set(dockEntries(run));
+  const unread = run.entries.find((e) => e.kind === "unread");
+  const afterCompaction = unread === undefined && run.unread_wait.after === "compaction";
+  let plainDone = plain.length === 0;
+  let awaitingDone = awaiting.length === 0;
+  for (const e of run.entries) {
+    if (!plainDone && unread === undefined && !afterCompaction && !entryLive(e)) {
+      out.push(...steerRows(plain, run.unread_wait));
+      plainDone = true;
+    }
+    if (e === unread) {
+      out.push(...steerRows(plain, e.wait));
+      plainDone = true;
+    } else if (drawn.has(e)) {
+      out.push(
+        e.kind === "compaction"
+          ? { kind: "compact", entry: e }
+          : { kind: "queued", entry: e, stop: run.cancel },
+      );
+    }
+    if (!plainDone && afterCompaction && e.kind === "compaction") {
+      out.push(...steerRows(plain, run.unread_wait));
+      plainDone = true;
+    }
+    if (!awaitingDone && e.carries_unread === true) {
+      out.push(...steerRows(awaiting, e.wait));
+      awaitingDone = true;
+    }
+  }
+  if (!plainDone) {
+    out.push(...steerRows(plain, run.unread_wait));
+  }
+  if (!awaitingDone) {
+    out.push(...steerRows(awaiting, "next_message"));
+  }
+  return out;
+}
+
 /** KEYED BY THE ROW'S ID, which is stable from send to read: `.steer-row`'s `@starting-style`
  *  entry (26-dock.css) re-fires on a REBUILT node, so a re-keyed row would vanish and fade back
  *  in. The spec is built per render because `state` is stack-wide. */
 function rowSpec(state: StackState): ReconcileSpec<DockRow> {
   return {
-    // Prefixed by kind so the id spaces cannot meet in one keyed list; a chat holds one compaction at most.
+    // Prefixed by kind so the id spaces cannot meet in one keyed list. A compaction's key is its
+    // entry id, so its row changes in place from waiting to running.
     key: (r) => {
       switch (r.kind) {
         case "steer":
           return `s:${r.steer.id}`;
         case "compact":
-          return "c:";
+          return `c:${r.entry.id}`;
         case "queued":
-          return `q:${r.slot.row.id}`;
+          return `q:${r.entry.id}`;
       }
     },
     mount: (r) => {
       switch (r.kind) {
         case "steer":
-          return buildRow(r.steer, state);
+          return buildRow(r.steer, r.place, state);
         case "compact":
-          return buildCompactRow(r.slot);
+          return buildCompactRow(r.entry);
         case "queued":
-          return buildQueuedRow(r.slot);
+          return buildQueuedRow(r.entry, r.stop);
       }
     },
     update: (el, r) => {
       switch (r.kind) {
         case "steer":
-          updateRow(el, r.steer, state);
+          updateRow(el, r.steer, r.place, state);
           return;
         case "compact":
-          updateCompactRow(el, r.slot);
+          updateCompactRow(el, r.entry);
           return;
         case "queued":
-          updateQueuedRow(el, r.slot);
+          updateQueuedRow(el, r.entry, r.stop);
       }
     },
   };
@@ -235,17 +294,22 @@ function rowState(steer: PendingSteer): string {
 }
 
 /** `compacted` is a latch the store only sets, so it is written and never cleared. */
-function updateRow(row: HTMLElement, steer: PendingSteer, state: StackState): void {
+function updateRow(
+  row: HTMLElement,
+  steer: PendingSteer,
+  place: SteerPlace,
+  state: StackState,
+): void {
   row.dataset["state"] = rowState(steer);
   if (steer.compacted === true) {
     row.dataset["compacted"] = "";
   }
   row.dataset["tooltip"] = readQuoted(steer.text);
-  row.setAttribute("aria-label", accessibleName(steer));
+  row.setAttribute("aria-label", accessibleName(steer, place));
 
   const label = row.querySelector(".steer-state-label");
   if (label !== null) {
-    label.textContent = stateWord(steer);
+    label.textContent = stateWord(steer, place);
   }
 
   syncText(row, steer.text);
@@ -289,6 +353,8 @@ function syncActions(row: HTMLElement, steer: PendingSteer, state: StackState): 
     String(state.waiting),
     state.perRow ? "1" : "0",
     state.clearable ? "1" : "0",
+    state.canStop ? "1" : "0",
+    state.stopTarget ?? "",
   ].join("\u0001");
   if (actionSig.get(row) === sig) {
     return;
@@ -300,14 +366,14 @@ function syncActions(row: HTMLElement, steer: PendingSteer, state: StackState): 
   }
 }
 
-function buildRow(steer: PendingSteer, state: StackState): HTMLElement {
+function buildRow(steer: PendingSteer, place: SteerPlace, state: StackState): HTMLElement {
   const stateEl = el(
     "span",
     { className: "steer-state" },
     el("span", { className: "steer-state-icon", "aria-hidden": "true" }, iconEl(ICON_HOURGLASS)),
     // The word, not only the glyph. "Sent" is the fact this stack states: the message has left,
     // it is not a draft, and it is waiting.
-    el("span", { className: "steer-state-label" }, stateWord(steer)),
+    el("span", { className: "steer-state-label" }, stateWord(steer, place)),
   );
 
   // Collapsed to one line and clipped to four lines in CSS, the quote band counting as one, never
@@ -330,7 +396,7 @@ function buildRow(steer: PendingSteer, state: StackState): HTMLElement {
       "data-tooltip": readQuoted(steer.text),
       // The state is carried by the glyph AND the label, both visual, so it has to be in the
       // accessible name too.
-      "aria-label": accessibleName(steer),
+      "aria-label": accessibleName(steer, place),
     },
     stateEl,
     text,
@@ -357,10 +423,11 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
   const { waiting, perRow, clearable, src } = state;
   const user = steer.origin === "user";
   const controls: HTMLElement[] = [];
-  // Send now LEADS, and the destructive control stays last. Not on an unsent row: it has no turn to
-  // stop, and Edit already sends it.
+  // Send now LEADS, and the destructive control stays last. Not on an unsent row (Edit already sends
+  // it), nor while no running turn is there to stop.
   const sendNow = src.sendNow;
-  if (user && steer.unsent !== true && sendNow !== undefined) {
+  const target = state.stopTarget;
+  if (user && steer.unsent !== true && state.canStop && sendNow !== undefined) {
     controls.push(
       actionButton(
         ICON_ARROW_UP,
@@ -370,7 +437,7 @@ function fillActions(column: HTMLElement, steer: PendingSteer, state: StackState
           ? "Stops the turn and sends this message as a new one"
           : "Stops the turn and sends this message first, then the others",
         () => {
-          void sendNow(steer.id);
+          void sendNow(steer.id, target);
         },
       ),
     );
@@ -476,7 +543,7 @@ function actionButton(
 
 /** Stop the running turn so the unread rows go out as the next prompt, this one first. The
  *  server owns the order (`cancel {lead}`), so nothing is held here. */
-async function sendSteerNow(steerID: string): Promise<void> {
+async function sendSteerNow(steerID: string, target: string | undefined): Promise<void> {
   const chatID = getActiveId();
   if (chatID === "") {
     return;
@@ -487,13 +554,17 @@ async function sendSteerNow(steerID: string): Promise<void> {
       ? "Stopping the turn and sending this message"
       : `Stopping the turn and sending ${String(waiting)} messages`,
   );
-  const outcome = await cancelTurn.dispatch({ chatID, lead: steerID }).outcome;
+  const outcome = await cancelTurn.dispatch({
+    chatID,
+    lead: steerID,
+    ...(target !== undefined ? { target } : {}),
+  }).outcome;
   if (outcome.status === "success" && outcome.value) {
     announce(NOTHING_STOPPED);
   }
 }
 
-/** Replaces a stop announcement the server's skip made false: the turn runs on. */
+/** Replaces a stop announcement the server's answer made false: it stopped nothing. */
 const NOTHING_STOPPED = "The turn keeps running: the message already left the queue";
 
 /** The statuses that say the delete did not happen and will not: the row still stands, or the
@@ -630,16 +701,9 @@ const chatSource: SteerStackSource = {
   read: () => {
     const s = activeSession.value;
     if (s === undefined) {
-      return { id: "", steers: [], queued: [] };
+      return { id: "", steers: [] };
     }
-    return {
-      id: s.id,
-      steers: s.steers ?? [],
-      queued: sessionDrain(s).rows,
-      ...(s.compact_queued === true && {
-        compact: { afterTurn: sessionBusy(s), compacting: s.compact_running === true },
-      }),
-    };
+    return { id: s.id, steers: s.steers ?? [], ...(s.run !== undefined && { run: s.run }) };
   },
   sendNow: sendSteerNow,
   queueInstead: queueSteerInstead,
@@ -653,22 +717,10 @@ const chatSource: SteerStackSource = {
 const COMPACT_TEXT = "Compact the context";
 const COMPACTING_TEXT = "Compacting the context\u2026";
 
-function compactStage(slot: CompactSlot): string {
-  return slot.compacting ? "compacting" : slot.afterTurn ? "running" : "idle";
-}
-
-/** With no turn running and no call in flight, the row is left for the next turn's end. */
-function compactWord(slot: CompactSlot): string {
-  if (slot.compacting) {
-    return "Running";
-  }
-  return slot.afterTurn ? `After ${turnsPhrase(1, true)}` : "Pending";
-}
-
-/** The compaction's row: its wait, what it does, and while queued Cancel, the one control (it has no
- *  words to edit and never stops a turn). The key stays the same from queued to running, so the
- *  row changes in place rather than fading back in. */
-function buildCompactRow(slot: CompactSlot): HTMLElement {
+/** The compaction entry's row: its wait, what it does, and while it waits Cancel, the one control (it
+ *  has no words to edit and never stops a turn). Keyed by the entry, so the row changes in place
+ *  from waiting to running. */
+function buildCompactRow(entry: RunEntryView): HTMLElement {
   const li = el(
     "li",
     { className: "steer-row", "data-kind": "compact" },
@@ -681,18 +733,19 @@ function buildCompactRow(slot: CompactSlot): HTMLElement {
     el("span", { className: "steer-text" }),
     el("span", { className: "steer-actions" }),
   );
-  updateCompactRow(li, slot);
+  updateCompactRow(li, entry);
   return li;
 }
 
 const compactShown = new WeakMap<HTMLElement, boolean>();
 
-/** The icon and the control are rebuilt only when the stage flips, so a repaint never takes focus
- *  off the Cancel button. */
-function updateCompactRow(li: HTMLElement, slot: CompactSlot): void {
-  const word = compactWord(slot);
-  const text = slot.compacting ? COMPACTING_TEXT : COMPACT_TEXT;
-  li.dataset["state"] = slot.compacting ? "compacting" : "queued";
+/** The icon and the control are rebuilt only when the entry goes live, so a repaint never takes
+ *  focus off the Cancel button. */
+function updateCompactRow(li: HTMLElement, entry: RunEntryView): void {
+  const live = entryLive(entry);
+  const word = waitWords(entry.wait);
+  const text = live ? COMPACTING_TEXT : COMPACT_TEXT;
+  li.dataset["state"] = live ? "compacting" : "queued";
   li.dataset["tooltip"] = text;
   li.setAttribute("aria-label", `${word}: ${text}`);
   const label = li.querySelector(".steer-state-label");
@@ -703,15 +756,15 @@ function updateCompactRow(li: HTMLElement, slot: CompactSlot): void {
   if (textEl !== null) {
     textEl.textContent = text;
   }
-  if (compactShown.get(li) === slot.compacting) {
+  if (compactShown.get(li) === live) {
     return;
   }
-  compactShown.set(li, slot.compacting);
+  compactShown.set(li, live);
   li.querySelector(".steer-state-icon")?.replaceChildren(
-    slot.compacting ? el("span", { className: "steer-spinner" }) : iconEl(ICON_COMPACT),
+    live ? el("span", { className: "steer-spinner" }) : iconEl(ICON_COMPACT),
   );
   li.querySelector(".steer-actions")?.replaceChildren(
-    ...(slot.compacting
+    ...(live
       ? []
       : [
           actionButton(
@@ -719,7 +772,7 @@ function updateCompactRow(li: HTMLElement, slot: CompactSlot): void {
             "Cancel the queued compaction",
             "The context stays as it is",
             () => {
-              void cancelQueuedCompaction();
+              void cancelQueuedCompaction(entry.id);
             },
             "steer-act-danger",
           ),
@@ -727,44 +780,28 @@ function updateCompactRow(li: HTMLElement, slot: CompactSlot): void {
   );
 }
 
-async function cancelQueuedCompaction(): Promise<void> {
+async function cancelQueuedCompaction(id: string): Promise<void> {
   const chatID = getActiveId();
   if (chatID === "") {
     return;
   }
   announce("Cancelling the queued compaction");
-  await cancelCompact.dispatch({ chatID }).outcome;
+  await cancelCompact.dispatch({ chatID, id }).outcome;
 }
 
 /** A queued row's state in words, and the ONE spelling of it, led by who sent the row when an API
  *  caller did, as stateWord leads a steer's. */
-function queuedWord(slot: QueuedSlot): string {
-  const word = queuedState(slot);
-  const { caller } = slot.row;
+function queuedWord(entry: RunEntryView): string {
+  const word = waitWords(entry.wait);
+  const caller = entry.row?.caller;
   if (caller === undefined) {
     return word;
   }
-  return slot.wait.kind === "sent"
-    ? sentBy(caller)
-    : `${sentBy(caller)} \u00b7 ${word.charAt(0).toLowerCase()}${word.slice(1)}`;
+  return `${sentBy(caller)} \u00b7 ${lowerFirst(word)}`;
 }
 
-/** A held row, carried or not, is one no turn end sends: after a restart nothing is sent
- *  automatically. */
-function queuedState(slot: QueuedSlot): string {
-  const { wait } = slot;
-  switch (wait.kind) {
-    case "sent":
-      return "Sent";
-    case "held":
-      return "Not sent \u00b7 the server restarted";
-    case "turns":
-      return `After ${turnsPhrase(wait.turns, wait.running)}`;
-  }
-}
-
-function queuedName(slot: QueuedSlot): string {
-  return `${queuedWord(slot)}: ${queuedShown(slot.row)}`;
+function queuedName(entry: RunEntryView, row: QueuedPrompt): string {
+  return `${queuedWord(entry)}: ${queuedShown(row)}`;
 }
 
 function queuedShown(row: QueuedPrompt): string {
@@ -778,13 +815,16 @@ function discardHint(row: QueuedPrompt): string {
 }
 
 /** A carried row can absorb a later carry under the same id, so its text changes in place and the
- *  controls read it from here. */
-const queuedRowOf = new WeakMap<HTMLElement, QueuedPrompt>();
+ *  controls read it from here, with the stop its arrow was last drawn against. */
+const queuedRowOf = new WeakMap<
+  HTMLElement,
+  { row: QueuedPrompt; entry: RunEntryView; stop: string | undefined }
+>();
 
 /** Edit and Discard on every row: each is one `unqueue_prompt` addressing this row alone. The
- *  send-now arrow leads them on a row a turn end sends (syncQueuedArrow). */
-function buildQueuedRow(slot: QueuedSlot): HTMLElement {
-  const { row } = slot;
+ *  send-now arrow leads them where the server offers one (`send_now`, syncQueuedArrow). */
+function buildQueuedRow(entry: RunEntryView, stop: string | undefined): HTMLElement {
+  const row = entry.row ?? { id: entry.id, text: "" };
   const li = el(
     "li",
     { className: "steer-row", "data-state": "queued" },
@@ -803,7 +843,7 @@ function buildQueuedRow(slot: QueuedSlot): HTMLElement {
         "Edit this follow-up",
         "Take it back and put it in the message box",
         () => {
-          void editQueued(queuedRowOf.get(li) ?? row);
+          void editQueued(queuedRowOf.get(li)?.row ?? row);
         },
       ),
       actionButton(
@@ -817,54 +857,72 @@ function buildQueuedRow(slot: QueuedSlot): HTMLElement {
       ),
     ),
   );
-  updateQueuedRow(li, slot);
+  updateQueuedRow(li, entry, stop);
   return li;
 }
 
 /** The id never changes under one key, and neither does the row's kind, so the update is the
- *  text, the held mark and the state word. */
-function updateQueuedRow(li: HTMLElement, slot: QueuedSlot): void {
-  const { row } = slot;
-  queuedRowOf.set(li, row);
+ *  text, the held mark, the state word and the arrow. */
+function updateQueuedRow(li: HTMLElement, entry: RunEntryView, stop: string | undefined): void {
+  const row = entry.row ?? { id: entry.id, text: "" };
+  queuedRowOf.set(li, { row, entry, stop });
   li.dataset["tooltip"] = readQuoted(row.text);
-  li.setAttribute("aria-label", queuedName(slot));
-  if (row.held === true) {
+  li.setAttribute("aria-label", queuedName(entry, row));
+  if (entry.state === "held") {
     li.dataset["held"] = "";
   } else {
     delete li.dataset["held"];
   }
   const label = li.querySelector(".steer-state-label");
   if (label !== null) {
-    label.textContent = queuedWord(slot);
+    label.textContent = queuedWord(entry);
   }
   const text = li.querySelector<HTMLElement>(".steer-text");
   if (text !== null) {
     fillText(text, row.label ?? row.text);
   }
-  syncQueuedArrow(li, slot);
+  syncQueuedArrow(li, entry);
 }
+
+/** The send-now arrow's words per `send_now`: the tooltip and the accessible name are one string. */
+const SEND_NOW_WORDS: Record<SendNowKind, string> = {
+  stop: "Stop the turn and send this follow-up next",
+  stop_then_compaction: "Stop the turn and send this follow-up once the compaction ends",
+  after_compaction: "Send this follow-up first once the compaction ends",
+  now: "Send this follow-up next",
+};
+
+/** The announcement for a press, by what the press does. */
+const SEND_NOW_SAID: Record<SendNowKind, string> = {
+  stop: "Stopping the turn and sending this follow-up",
+  stop_then_compaction: "Stopping the turn; this follow-up goes once the compaction ends",
+  after_compaction: "Sending this follow-up first once the compaction ends",
+  now: "Sending this follow-up next",
+};
 
 const queuedArrowOf = new WeakMap<HTMLElement, HTMLElement>();
 
 /** Only the arrow comes and goes, so a wait change never rebuilds Edit or Discard under the
- *  reader's focus. A held or sent row gets none: no turn end sends it, or its turn already opened. */
-function syncQueuedArrow(li: HTMLElement, slot: QueuedSlot): void {
-  const { wait } = slot;
+ *  reader's focus. A row the server offers no arrow for (held, already next) gets none. */
+function syncQueuedArrow(li: HTMLElement, entry: RunEntryView): void {
+  const kind = entry.send_now;
   const arrow = queuedArrowOf.get(li);
-  if (wait.kind !== "turns") {
+  if (kind === undefined) {
     arrow?.remove();
     queuedArrowOf.delete(li);
     return;
   }
-  const tooltip = wait.running
-    ? "Stops the turn and sends this follow-up next"
-    : "Sends this follow-up now";
+  const words = SEND_NOW_WORDS[kind];
   if (arrow !== undefined) {
-    arrow.dataset["tooltip"] = tooltip;
+    arrow.dataset["tooltip"] = words;
+    arrow.setAttribute("aria-label", words);
     return;
   }
-  const btn = actionButton(ICON_ARROW_UP, "Send this follow-up now", tooltip, () => {
-    void sendQueuedRowNow((queuedRowOf.get(li) ?? slot.row).id);
+  const btn = actionButton(ICON_ARROW_UP, words, words, () => {
+    const at = queuedRowOf.get(li);
+    if (at !== undefined) {
+      void sendQueuedRowNow(at.row.id, at.entry.send_now, at.stop);
+    }
   });
   li.querySelector(".steer-actions")?.prepend(btn);
   queuedArrowOf.set(li, btn);
@@ -910,19 +968,28 @@ async function discardQueued(messageID: string): Promise<void> {
   await unqueuePrompt.dispatch({ chatID, messageID }).outcome;
 }
 
-/** The server owns the order (`send_queued_now`): it moves the row to the head, then stops a
- *  running turn, whose close sends it, or sends it at once. */
-async function sendQueuedRowNow(messageID: string): Promise<void> {
+/** The server owns the order (`send_queued_now`): it moves the row to the front and stops only the
+ *  turn `stop` names, the `run.cancel` the arrow was drawn against when the arrow's kind stops one.
+ *  Every other press sends an empty `stop`, which names no entry, so it never stops a turn a take
+ *  started since the arrow was drawn. */
+async function sendQueuedRowNow(
+  messageID: string,
+  kind: SendNowKind | undefined,
+  stop: string | undefined,
+): Promise<void> {
   const chatID = getActiveId();
-  if (chatID === "") {
+  if (chatID === "" || kind === undefined) {
     return;
   }
   const name = subjectName(chatID);
-  announce(
-    isBusy(chatID) ? "Stopping the turn and sending this follow-up" : "Sending this follow-up",
-  );
-  const outcome = await sendQueuedNow.dispatch({ chatID, messageID }).outcome;
-  if (outcome.status === "success" && outcome.value) {
+  announce(SEND_NOW_SAID[kind]);
+  const stops = kind === "stop" || kind === "stop_then_compaction";
+  const outcome = await sendQueuedNow.dispatch({
+    chatID,
+    messageID,
+    stop: stops ? (stop ?? "") : "",
+  }).outcome;
+  if (stops && outcome.status === "success" && outcome.value) {
     announce(NOTHING_STOPPED);
   }
   if (outcome.status === "error") {
@@ -940,23 +1007,34 @@ async function sendQueuedRowNow(messageID: string): Promise<void> {
 // The row's state in words, because the glyph and the label's styling are both visual, and the
 // WHOLE message collapsed to one line: the visible row clamps to fit and a reader who cannot see it
 // is not subject to that.
-function accessibleName(steer: PendingSteer): string {
+function accessibleName(steer: PendingSteer, place: SteerPlace): string {
   const steerText = oneLine(readQuoted(steer.text));
   if (steer.pending === true) {
     return `Sending, not in the agent's buffer yet: ${steerText}`;
   }
-  if (steer.unsent === true) {
-    return `${stateWord(steer)}: ${steerText}`;
-  }
   if (steer.delivering === true) {
-    return `${stateWord(steer)}, the agent is reading or dropping it: ${steerText}`;
+    return `${stateWord(steer, place)}, the agent is reading or dropping it: ${steerText}`;
   }
-  return `${stateWord(steer)}, waiting for the agent: ${steerText}`;
+  if (steer.unsent === true) {
+    return `${stateWord(steer, place)}: ${steerText}`;
+  }
+  return `${stateWord(steer, place)}, waiting for the agent: ${steerText}`;
+}
+
+/** Where an unsent steer goes, as the words after "Unread · ". */
+function placeWords(place: SteerPlace): string {
+  if (place === undefined) {
+    return "sends next";
+  }
+  if (place === "next_message") {
+    return "with your next message";
+  }
+  return lowerFirst(waitWords(place));
 }
 
 // stateWord is the row's state in words, and the ONE spelling of it: the label and the accessible
-// name both read it. The compaction marker extends the SENT word alone.
-function stateWord(steer: PendingSteer): string {
+// name both read it. An unsent steer reads where the run order puts it.
+function stateWord(steer: PendingSteer, place: SteerPlace): string {
   if (steer.pending === true) {
     return "Sending";
   }
@@ -965,11 +1043,17 @@ function stateWord(steer: PendingSteer): string {
   }
   const sent = steer.caller === undefined ? "Sent" : sentBy(steer.caller);
   if (steer.unsent === true) {
-    return steer.caller === undefined
-      ? "Unread \u00b7 sends next"
-      : `${sent} \u00b7 unread \u00b7 sends next`;
+    const where = placeWords(place);
+    if (steer.caller !== undefined) {
+      return `${sent} \u00b7 unread \u00b7 ${where}`;
+    }
+    return place === "next_message" ? "With your next message" : `Unread \u00b7 ${where}`;
   }
   return steer.compacted === true ? `${sent}, context compacted since` : sent;
+}
+
+function lowerFirst(word: string): string {
+  return `${word.charAt(0).toLowerCase()}${word.slice(1)}`;
 }
 
 // oneLine collapses whitespace without shortening. A steer is one message however the user typed

@@ -236,6 +236,33 @@ describe("history cycling versus the per-chat draft", () => {
     expect(input.value).toBe("");
     expect(mockDispatch).toHaveBeenLastCalledWith({ chatID: "c1", text: "" });
   });
+
+  // A save of the sent text still in flight when the answer lands would otherwise be the last
+  // word on the record until the debounce fires, and a reload in that window shows it again.
+  it("saves the cleared draft at once when a held send is answered, and never before", async () => {
+    const { input } = await mount();
+    let settle: (v: string) => void = () => undefined;
+    const sending = new Promise<string>((resolve) => {
+      settle = resolve;
+    });
+    mockSubmit.mockReturnValue(sending);
+    mockPending.mockReturnValue(true);
+    type(input, "send me");
+    pressKey(input, "Enter");
+    expect(input.value).toBe("send me");
+    expect(mockFlush, "no empty save while the send may still be refused").not.toHaveBeenCalledWith(
+      {
+        chatID: "c1",
+        text: "",
+      },
+    );
+
+    settle("queued");
+    await sending;
+    await Promise.resolve();
+    expect(input.value).toBe("");
+    expect(mockFlush).toHaveBeenLastCalledWith({ chatID: "c1", text: "" });
+  });
 });
 
 describe("a prompt arriving from the share sheet", () => {

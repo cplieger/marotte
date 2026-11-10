@@ -126,7 +126,7 @@ environment:
 
 ## Waking a chat from another service (`MAROTTE_NOTIFY_TOKEN`)
 
-A service on your network, such as a mail or job server for your agents, can hand a chat a message with one request. marotte steers the message into the chat's running reply, or sends it as a new message when the chat is idle, the same way **Steer** and **Send** on the page do. The message box, its draft and a question the chat is waiting on you for are left as they are. The delivered message shows "Sent by" and the caller's `source`.
+A service on your network, such as a mail or job server for your agents, can hand a chat a message with one request. marotte places the message the way **Send** on the page does: into the chat's running reply, or as a new message. A new message waits in the chat's queue while a compaction runs, or while a reply runs that it cannot join or that **Queue messages** keeps it out of, and goes when what runs ends. The message box, its draft and a question the chat is waiting on you for are left as they are. The delivered message shows "Sent by" and the caller's `source`.
 
 The agent is not told who sent the message. kiro-cli presents a message steered into a running reply as a new message from the user, and a new message as one the user typed. marotte also gives kiro-cli the `source` with a new message, and kiro-cli keeps it with that message in the session's history, but the agent does not read it there. So start `text` by naming the sender, as the example below does.
 
@@ -158,7 +158,7 @@ curl -X POST http://marotte:9847/api/sessions/$SESSION/notify \
 
 | Answer | Meaning |
 | --- | --- |
-| `200 {"delivered":"steer"}` or `200 {"delivered":"prompt"}` | Delivered into the running reply, or as a new message. |
+| `200 {"delivered":"steer"}` or `200 {"delivered":"prompt"}` | Delivered into the running reply, or as a new message, now or once what runs ends. |
 | `200 {"duplicate":true}` | The same `dedupe_key` was delivered to this chat in the last 10 minutes. |
 | `400` | A field is missing or breaks its rule, and the error names it, or `body` when the body is not a JSON object. |
 | `401` | The token is missing or wrong, or the route is off. The off answer names `MAROTTE_NOTIFY_TOKEN`. |

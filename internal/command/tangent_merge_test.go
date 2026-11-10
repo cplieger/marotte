@@ -180,7 +180,7 @@ type mergeFixture struct {
 	roles  *promptRoles
 	mem    *Membership
 	merges *tangentMerges
-	queue  *fakeQueue
+	queue  *launchingRun
 	tabs   interface {
 		List() ([]marotte.TabSubject, uint64)
 	}
@@ -206,8 +206,7 @@ func newMergeFixture(t *testing.T) *mergeFixture {
 		}
 	}
 	roles := promptRolesOf(h)
-	q := &fakeQueue{chat: &marotte.Chat{ID: "c-parent"}, live: true}
-	roles.followups = q
+	q := runOf(roles)
 	mem, st, _ := newTabbedMembership(t, h)
 	return &mergeFixture{host: h, roles: roles, mem: mem, merges: newTangentMerges(roles, mem, h), queue: q, tabs: st}
 }
@@ -346,7 +345,7 @@ func TestMergeTangent_QueuesTheFindingsOnABusyParent(t *testing.T) {
 	if len(f.host.opened) != 1 {
 		t.Errorf("prompts opened = %d, want the summary only", len(f.host.opened))
 	}
-	rows := f.queue.chat.QueuedPrompts
+	rows := f.queue.queued()
 	if len(rows) != 1 || !strings.Contains(rows[0].Text, "Found it.") || rows[0].Label == "" {
 		t.Errorf("parent's queue = %+v, want one labelled row carrying the summary", rows)
 	}
@@ -385,8 +384,8 @@ func TestMergeTangent_AnUnfinishedSummaryMergesNothing(t *testing.T) {
 	}
 	f.host.waitInflight(t)
 
-	if len(f.host.opened) != 1 || len(f.queue.chat.QueuedPrompts) != 0 {
-		t.Errorf("opened %d prompts and queued %d rows, want the summary alone", len(f.host.opened), len(f.queue.chat.QueuedPrompts))
+	if len(f.host.opened) != 1 || len(f.queue.queued()) != 0 {
+		t.Errorf("opened %d prompts and queued %d rows, want the summary alone", len(f.host.opened), len(f.queue.queued()))
 	}
 	frames := f.host.mergeFrames()
 	if len(frames) != 1 || frames[0].Type != marotte.EventError || frames[0].Payload.(marotte.ErrorPayload).OpID != "op-1" {
@@ -561,7 +560,10 @@ func orphanCases() map[string]orphanCase {
 		"queuedRow": {
 			seed: func(t *testing.T, f *mergeFixture) {
 				if _, err := f.host.Mutate(t.Context(), "c-parent", func(c *marotte.Chat, _ bool) bool {
-					c.QueuedPrompts = append(c.QueuedPrompts, marotte.QueuedPrompt{ID: "msg-delivery", Text: "findings"})
+					c.Run = append(c.Run, marotte.RunEntry{
+						ID: "msg-delivery", Kind: marotte.RunKindRow, State: marotte.RunPending,
+						Row: &marotte.QueuedPrompt{ID: "msg-delivery", Text: "findings"},
+					})
 					return true
 				}); err != nil {
 					t.Fatal(err)
@@ -622,7 +624,7 @@ func checkResumed(t *testing.T, f *mergeFixture, tc orphanCase) {
 	if got := f.host.opened; !reflect.DeepEqual(got, opened) {
 		t.Errorf("prompts opened = %+v, want %+v", got, opened)
 	}
-	if n := len(f.queue.chat.QueuedPrompts); n != 0 {
+	if n := len(f.queue.queued()); n != 0 {
 		t.Errorf("rows queued on the parent = %d, want none", n)
 	}
 }

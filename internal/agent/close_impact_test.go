@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,8 +33,8 @@ func TestCloseImpact_NamesEachTurnByItsIds(t *testing.T) {
 	t.Run("an open prompt turn names its turn, prompt, admission and resends", func(t *testing.T) {
 		rt, cs, _ := newTestHub()
 		seedChat(t, cs, "c1")
-		out, res := rt.coord.ReserveTurnForPrompt(t.Context(), "c1", time.Second, rt.coord.LifeStamp(), "m-1")
-		if out != command.AdmissionAcquired {
+		out, res := rt.coord.reservePromptSlot(t.Context(), "c1", time.Second, rt.coord.LifeStamp(), "m-1")
+		if out != admissionAcquired {
 			t.Fatalf("reserve = %v", out)
 		}
 		id, err := rt.OpenTurn(t.Context(), "c1", command.TurnOpen{
@@ -44,20 +45,32 @@ func TestCloseImpact_NamesEachTurnByItsIds(t *testing.T) {
 		}
 		oneTurn(t, turnsOf(rt, "c1"), command.CloseTurn{ID: id, MessageID: "m-1", Admission: command.AdmissionID(res.Token), Resends: []string{"s-1"}})
 	})
-	t.Run("a prompt admitted with no turn yet names its prompt and admission", func(t *testing.T) {
+	t.Run("a page's prompt taken with no turn yet names its prompt and admission", func(t *testing.T) {
 		rt, cs, _ := newTestHub()
 		seedChat(t, cs, "c1")
-		_, res := rt.coord.ReserveTurnForPrompt(t.Context(), "c1", time.Second, rt.coord.LifeStamp(), "m-2")
-		oneTurn(t, turnsOf(rt, "c1"), command.CloseTurn{MessageID: "m-2", Admission: command.AdmissionID(res.Token)})
-	})
-	t.Run("a reservation with no prompt id is named by its admission", func(t *testing.T) {
-		rt, cs, _ := newTestHub()
-		seedChat(t, cs, "c1")
-		res, ok := rt.coord.turns.tryReserve("c1", marotte.TurnSourcePrompt, rt.coord.LifeStamp())
-		if !ok {
-			t.Fatal("reserve refused")
+		release := holdOpens(rt)
+		defer release()
+		answered := postAsync(rt, promptCmd("m-2", "hi"))
+		got := waitTurns(t, rt, 1)
+		if got[0].ID != "" || got[0].MessageID != "m-2" || got[0].Admission == "" {
+			t.Errorf("turn = %+v, want m-2 by its prompt and admission, no turn id", got[0])
 		}
-		oneTurn(t, turnsOf(rt, "c1"), command.CloseTurn{Admission: command.AdmissionID(res.Token)})
+		release()
+		<-answered
+	})
+	t.Run("a taken row whose submitter was answered queued is named by its row, not as a turn", func(t *testing.T) {
+		wait := command.AdmissionWait
+		command.AdmissionWait = 50 * time.Millisecond
+		t.Cleanup(func() { command.AdmissionWait = wait })
+		rt, cs, _ := newTestHub()
+		seedChat(t, cs, "c1")
+		release := holdOpens(rt)
+		defer release()
+		wantQueuedAck(t, <-postAsync(rt, promptCmd("m-3", "hi")), "m-3")
+		work := rt.CloseImpact(t.Context(), []marotte.ChatID{"c1"})["c1"]
+		if len(work.Turns) != 0 || !slices.Equal(work.Queued, []string{"m-3"}) {
+			t.Errorf("close work = turns %+v queued %v, want no turn and m-3 queued", work.Turns, work.Queued)
+		}
 	})
 	t.Run("a released reservation stops nothing", func(t *testing.T) {
 		rt, cs, _ := newTestHub()
@@ -66,16 +79,6 @@ func TestCloseImpact_NamesEachTurnByItsIds(t *testing.T) {
 		rt.coord.ReleaseTurnReservation(res)
 		if got := turnsOf(rt, "c1"); len(got) != 0 {
 			t.Errorf("turns = %+v, want none", got)
-		}
-	})
-	t.Run("a drain's reservation is named by its row, not as a turn", func(t *testing.T) {
-		rt, cs, _ := newTestHub()
-		seedChat(t, cs, "c1")
-		if !rt.coord.tryReserveDrainNow("c1", fenceNow(rt, "c1")) {
-			t.Fatal("the drain's reserve refused")
-		}
-		if got := turnsOf(rt, "c1"); len(got) != 0 {
-			t.Errorf("turns = %+v, want none before the drain's turn opens", got)
 		}
 	})
 	t.Run("a wire turn is named by its turn id alone", func(t *testing.T) {
@@ -110,6 +113,24 @@ func TestCloseImpact_NamesEachTurnByItsIds(t *testing.T) {
 	})
 }
 
+// holdOpens parks every turn open at its seam until release, which may be called more than once.
+func holdOpens(rt *Runtime) (release func()) {
+	gate := make(chan struct{})
+	var once sync.Once
+	rt.coord.turns.openHook = func() { <-gate }
+	return func() { once.Do(func() { close(gate) }) }
+}
+
+// waitTurns waits for the close work of c1 to name n turns.
+func waitTurns(t *testing.T, rt *Runtime, n int) []command.CloseTurn {
+	t.Helper()
+	var got []command.CloseTurn
+	if !eventually(func() bool { got = turnsOf(rt, "c1"); return len(got) == n }) {
+		t.Fatalf("turns = %+v, want %d", got, n)
+	}
+	return got
+}
+
 func TestCloseImpact_NamesTheChatsAsksRunsAndQueuedRows(t *testing.T) {
 	rt, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
@@ -122,12 +143,12 @@ func TestCloseImpact_NamesTheChatsAsksRunsAndQueuedRows(t *testing.T) {
 		}
 	}
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.QueuedPrompts = []marotte.QueuedPrompt{{ID: "q-1", Text: "a"}, {ID: "q-2", Text: "b", Held: true}}
+		c.Run = []marotte.RunEntry{
+			{ID: "q-1", Kind: marotte.RunKindRow, State: marotte.RunStarting, Turn: "t-q1", Row: &marotte.QueuedPrompt{ID: "q-1", Text: "a"}},
+			{ID: "q-2", Kind: marotte.RunKindRow, State: marotte.RunHeld, Row: &marotte.QueuedPrompt{ID: "q-2", Text: "b"}},
+		}
 		return true
 	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := cs.Dequeue(t.Context(), "c1", "q-1"); err != nil {
 		t.Fatal(err)
 	}
 

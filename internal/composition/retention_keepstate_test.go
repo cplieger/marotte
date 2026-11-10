@@ -1,6 +1,7 @@
 package composition
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
@@ -59,7 +61,7 @@ func TestRetention_KeepState(t *testing.T) {
 		"turn_set": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
 			b := bootSeam(t, root, eng, logs, seamOpts{})
 			b.seed(t, "c-1", sess("c-1"))
-			if _, ok := b.h.TryReserveIdleTurn("c-1", marotte.TurnSourcePrompt, b.h.LifeStamp()); !ok {
+			if _, ok := takeIdle(t, b.h, "c-1"); !ok {
 				t.Fatal("Setup: the turn reservation was refused")
 			}
 			b.age(t, "c-1", seamIdle)
@@ -69,7 +71,7 @@ func TestRetention_KeepState(t *testing.T) {
 		"turn_unset": {func(t *testing.T, root string, eng *seamEngine, logs *seamLogs) {
 			b := bootSeam(t, root, eng, logs, seamOpts{})
 			b.seed(t, "c-1", sess("c-1"))
-			res, ok := b.h.TryReserveIdleTurn("c-1", marotte.TurnSourcePrompt, b.h.LifeStamp())
+			res, ok := takeIdle(t, b.h, "c-1")
 			if !ok {
 				t.Fatal("Setup: the turn reservation was refused")
 			}
@@ -84,7 +86,7 @@ func TestRetention_KeepState(t *testing.T) {
 			b := bootSeam(t, root, eng, logs, seamOpts{})
 			b.seed(t, "c-1", sess("c-1"))
 			b.age(t, "c-1", seamIdle)
-			res, ok := b.h.TryReserveIdleTurn("c-1", marotte.TurnSourcePrompt, b.h.LifeStamp())
+			res, ok := takeIdle(t, b.h, "c-1")
 			if !ok {
 				t.Fatal("Setup: the turn reservation was refused")
 			}
@@ -238,10 +240,12 @@ func TestRetention_KeepState(t *testing.T) {
 			b.age(t, "c-1", seamIdle)
 			b.pass(t)
 			b.purged(t, "c-1", sess("c-1"))
-			if got, _ := b.h.ReserveTurnForPrompt(t.Context(), "c-1", 0, b.h.LifeStamp(), ""); got != command.AdmissionChatGone {
-				t.Errorf("a prompt on the purged chat = %v, want AdmissionChatGone", got)
+			if _, err := b.h.Submit(t.Context(), "c-1", b.h.LifeStamp(), &command.Submission{
+				Row: marotte.QueuedPrompt{ID: "m-1", Text: "hello"}, Origin: marotte.RunFromPrompt, Kind: marotte.SendPlain,
+			}); !errors.Is(err, command.ErrChatNotFound) {
+				t.Errorf("a prompt on the purged chat = %v, want ErrChatNotFound", err)
 			}
-			if _, ok := b.h.TryReserveIdleTurn("c-1", marotte.TurnSourcePrompt, b.h.LifeStamp()); ok {
+			if _, ok := takeIdle(t, b.h, "c-1"); ok {
 				t.Error("a turn was reserved on the purged chat")
 			}
 			if b.present(t, "c-1") {
@@ -253,8 +257,8 @@ func TestRetention_KeepState(t *testing.T) {
 			b := bootSeam(t, root, eng, logs, seamOpts{})
 			b.seed(t, "c-1", sess("c-1"))
 			b.age(t, "c-1", seamIdle)
-			if got, _ := b.h.ReserveTurnForPrompt(t.Context(), "c-1", time.Second, b.h.LifeStamp(), ""); got != command.AdmissionAcquired {
-				t.Fatalf("Setup: the prompt admission = %v", got)
+			if _, ok := takeIdle(t, b.h, "c-1"); !ok {
+				t.Fatal("Setup: the chat's take was refused")
 			}
 			b.pass(t)
 			b.kept(t, "c-1", sess("c-1"))
@@ -417,7 +421,7 @@ func TestRetention_KeepState(t *testing.T) {
 			if code, body := b.cmd(t, marotte.CmdResumeSession, "", map[string]any{"session_id": sess("c-1")}); code != http.StatusConflict {
 				t.Errorf("r15: resume of a chain session = %d %v, want 409", code, body)
 			}
-			if _, ok := b.h.TryReserveIdleTurn("c-1", marotte.TurnSourcePrompt, b.h.LifeStamp()); ok {
+			if _, ok := takeIdle(t, b.h, "c-1"); ok {
 				t.Error("a turn was reserved on the chat in teardown")
 			}
 			if b.runTabOf("wf_1") != "" || b.present(t, "c-1") {
@@ -729,4 +733,11 @@ func TestRetention_KeepState(t *testing.T) {
 			cell.run(t, root, eng, logs)
 		})
 	}
+}
+
+// takeIdle takes chatID for a revert, as a test's stand-in for a turn holding the chat's slot.
+func takeIdle(t *testing.T, h *agent.Runtime, chatID marotte.ChatID) (command.Reservation, bool) {
+	t.Helper()
+	out, res, _ := h.TakeIdle(t.Context(), chatID, command.IdleRevert, h.LifeStamp(), time.Second)
+	return res, out == command.IdleAcquired
 }

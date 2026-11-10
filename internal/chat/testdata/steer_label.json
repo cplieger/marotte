@@ -51,9 +51,9 @@
       "reason": "restart",
       "label": "Workflow result not delivered · the session restarted",
       "sites": [
-        "internal/agent/bridge_coord.go:1893",
+        "internal/agent/bridge_coord.go:1898",
         "internal/agent/entry_merge.go:609",
-        "internal/agent/runtime.go:789"
+        "internal/agent/runtime.go:786"
       ]
     },
     {
@@ -199,8 +199,8 @@
       "reason": "boundary",
       "label": "Not read · the turn ended first",
       "sites": [
-        "internal/agent/command_chat_ops.go:151",
-        "internal/agent/steer_buffer.go:431",
+        "internal/agent/command_chat_ops.go:150",
+        "internal/agent/steer_buffer.go:480",
         "internal/translate/steering.go:198"
       ]
     },
@@ -211,7 +211,7 @@
       "label": "Not read · the session restarted",
       "sites": [
         "internal/agent/entry_merge.go:609",
-        "internal/agent/runtime.go:783"
+        "internal/agent/runtime.go:780"
       ]
     },
     {
@@ -239,14 +239,14 @@
   ],
   "sites": [
     {
-      "site": "internal/agent/bridge_coord.go:1893",
+      "site": "internal/agent/bridge_coord.go:1898",
       "form": "literal",
       "origin": "agent",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/command_chat_ops.go:151",
+      "site": "internal/agent/command_chat_ops.go:150",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
@@ -295,21 +295,21 @@
       "reason": ""
     },
     {
-      "site": "internal/agent/runtime.go:783",
+      "site": "internal/agent/runtime.go:780",
       "form": "literal",
       "origin": "user",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/runtime.go:789",
+      "site": "internal/agent/runtime.go:786",
       "form": "mutation",
       "origin": "agent",
       "state": "dropped",
       "reason": "restart"
     },
     {
-      "site": "internal/agent/steer_buffer.go:431",
+      "site": "internal/agent/steer_buffer.go:480",
       "form": "literal",
       "origin": "user",
       "state": "dropped",

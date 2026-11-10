@@ -114,10 +114,15 @@ var durableWriteSites = []durableSite{{
 	calls:   []string{"appendLaneless"},
 	because: "where a receiver's steering epoch ended, which no replay carries and the next clear's settling reads",
 }, {
-	file:    "internal/agent/queue_drain.go",
-	fn:      "holdUnread",
+	file:    "internal/agent/run_queue.go",
+	fn:      "holdCarried",
 	calls:   []string{"Mutate"},
 	because: "a shutdown's unread steers as the Held row the next process shows",
+}, {
+	file:    "internal/agent/run_queue.go",
+	fn:      "writeRun",
+	calls:   []string{"Mutate"},
+	because: "the run list's projection: the messages waiting to be sent, which a reload and the next process show",
 }}
 
 // Writes ruled not durable, each with its reason, so the omission is a decision.
@@ -156,31 +161,6 @@ var abandonableWriteSites = []durableSite{{
 	fn:      "openWireTurn",
 	calls:   []string{"OpenTurn", "WriteCounters"},
 	because: "the wire bracket's turn_open on the frame's context: a bridge dying mid-frame has nothing to file under it, and the death closer closes what did open",
-}, {
-	file:    "internal/agent/queue_drain.go",
-	fn:      "appendLocked",
-	calls:   []string{"Mutate"},
-	because: "AppendIfLive's queue_prompt on the REQUEST's context: a request that died never told the reader the row was queued, and the composer still holds the text",
-}, {
-	file:    "internal/agent/queue_drain.go",
-	fn:      "Unqueue",
-	calls:   []string{"Mutate"},
-	because: "an unqueue_prompt on the REQUEST's context: a request that died never told the reader the row was discarded, and the dock still shows it",
-}, {
-	file:    "internal/agent/queue_drain.go",
-	fn:      "MarkNext",
-	calls:   []string{"Mutate"},
-	because: "a send_queued_now on the REQUEST's context: a request that died stopped nothing and sent nothing, and the row keeps its old place",
-}, {
-	file:    "internal/agent/queue_drain.go",
-	fn:      "ClearNext",
-	calls:   []string{"Mutate"},
-	because: "a send_queued_now's undo on the REQUEST's context: a lost clear leaves the row at the head marked, which the next drain sends first, where the reader asked it to go",
-}, {
-	file:    "internal/agent/auto_compact.go",
-	fn:      "setRow",
-	calls:   []string{"Mutate"},
-	because: "the queued compaction's row on its caller's context, which only shows the compactor's record: a lost mark queues nothing and a press that died never told the reader it was queued; a lost clear leaves a stale row that the next write, a cancel or a restart removes",
 }, {
 	file:    "internal/translate/streaming_content.go",
 	fn:      "appendSteerAck",
@@ -264,16 +244,6 @@ var inheritedWriteSites = []durableSite{{
 	fn:      "parkSwitch",
 	calls:   []string{"Mutate"},
 	because: "admitSwitchModel decides: the REQUEST's context, as the command/* writes, so a switch nobody is waiting for does not park; detached once its stop has landed, so the stop never stands without its park",
-}, {
-	file:    "internal/agent/queue_drain.go",
-	fn:      "NextUserRow",
-	calls:   []string{"Mutate"},
-	because: "the drain's context; its only write is a removal the store already owes, retried by the next mutation",
-}, {
-	file:    "internal/agent/queue_drain.go",
-	fn:      "NextMarkedRow",
-	calls:   []string{"Mutate"},
-	because: "the drain's context, or send_queued_now's request context on the idle path; its only write is a removal the store already owes, as NextUserRow",
 }, {
 	file:    "internal/agent/model_switch.go",
 	fn:      "clearPendingModel",

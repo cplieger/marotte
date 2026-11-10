@@ -58,14 +58,12 @@ func (s *Store) logFor(ctx context.Context, chatID marotte.ChatID) (*EntryLog, e
 	return l, nil
 }
 
-// holdQueuedLocked settles the follow-up queue a previous process left, at the
-// log's first open in this one and after the store-open closer. A row whose id a
-// turn_open already carries was sent and only lost its removal, so it goes; every
-// other row is marked Held, shown and never sent automatically, because nothing in
-// this process saw it queued. A queued compaction is dropped: no close of this process
-// owes it. It answers the header, nil for a chat with no header, which has nothing to
-// settle, and whether it saved one, which it does not announce.
-// Caller holds the chat's mutex.
+// holdQueuedLocked settles the run list a previous process left, at the log's first open in this one and after the
+// store-open closer. A row whose id a turn_open already carries was sent and only lost its removal, so it goes; every
+// other row is held, shown and never sent automatically, because nothing in this process saw it queued, and every
+// entry that is not a row (a head, a compaction) goes with the process that ran it (marotte.SanitizeRun). It answers
+// the header, nil for a chat with no header, which has nothing to settle, and whether it saved one, which it does not
+// announce. Caller holds the chat's mutex.
 func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *EntryLog) (*marotte.Chat, bool, error) {
 	c, err := s.load(ctx, chatID)
 	switch {
@@ -73,7 +71,7 @@ func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *
 		return nil, false, nil
 	case err != nil:
 		return nil, false, err
-	case c.CompactPending == nil && !slices.ContainsFunc(c.QueuedPrompts, func(q marotte.QueuedPrompt) bool { return !q.Held }):
+	case !slices.ContainsFunc(c.Run, func(e marotte.RunEntry) bool { return e.State != marotte.RunHeld }):
 		return c, false, nil
 	}
 	entries, err := l.All()
@@ -90,11 +88,9 @@ func (s *Store) holdQueuedLocked(ctx context.Context, chatID marotte.ChatID, l *
 		if !exists {
 			return false
 		}
-		c.QueuedPrompts = slices.DeleteFunc(c.QueuedPrompts, func(q marotte.QueuedPrompt) bool { return sent[q.ID] })
-		for i := range c.QueuedPrompts {
-			c.QueuedPrompts[i].Held = true
-		}
-		c.CompactPending = nil
+		run := slices.DeleteFunc(slices.Clone(c.Run), func(e marotte.RunEntry) bool { return sent[e.ID] })
+		c.Run = marotte.SanitizeRun(run, true)
+		c.RunVersion++
 		return true
 	})
 	if err != nil {

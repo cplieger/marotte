@@ -26,7 +26,7 @@ func (f *fakeCompactor) RequestCompact(_ context.Context, chatID marotte.ChatID)
 	return f.out, f.err
 }
 
-func (f *fakeCompactor) CancelCompact(_ context.Context, chatID marotte.ChatID) error {
+func (f *fakeCompactor) CancelCompact(_ context.Context, chatID marotte.ChatID, _ string) error {
 	f.cancelled = append(f.cancelled, chatID)
 	return f.err
 }

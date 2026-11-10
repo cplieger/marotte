@@ -29,10 +29,10 @@ var errRewindRunsInCut = errors.New("rewinding here stops workflow runs this con
 // reasonTurnOpen is the 409 refusal class for a rewind while a turn runs in the chat.
 const reasonTurnOpen = "turn_open"
 
-// reserveRevert takes the chat's slot for a revert whose intent began at stamp. A close's drain holds it briefly
-// while it looks for a queued prompt, so a rewind waits as a prompt does rather than reading that as a running turn.
-func reserveRevert(ctx context.Context, admission turnAdmission, chatID marotte.ChatID, stamp uint64) (Reservation, error) {
-	out, res := admission.ReserveIdleTurn(ctx, chatID, marotte.TurnSourceRevert, stamp, AdmissionWait)
+// reserveRevert takes the chat for a revert whose intent began at stamp (runQueue.TakeIdle): a running turn refuses
+// at once, and a take or close still settling is waited out up to AdmissionWait.
+func reserveRevert(ctx context.Context, runq runQueue, chatID marotte.ChatID, stamp uint64) (Reservation, error) {
+	out, res, _ := runq.TakeIdle(ctx, chatID, IdleRevert, stamp, AdmissionWait)
 	switch out {
 	case IdleAcquired:
 		return res, nil
@@ -57,6 +57,7 @@ func cmdRewindChat(
 	bridges bridgeAccess,
 	chats chatStore,
 	admission turnAdmission,
+	runq runQueue,
 	runs runCutter,
 	bus broadcaster,
 	cmd *marotte.ClientCommand,
@@ -77,7 +78,7 @@ func cmdRewindChat(
 	// Held until the record lands: a prompt admitted meanwhile opens a turn, which ends the restore
 	// window before KAS writes the files back. A non-prompt holder parks that prompt rather than
 	// turning it into a steer.
-	res, refused := reserveRevert(ctx, admission, cmd.ChatID, stamp)
+	res, refused := reserveRevert(ctx, runq, cmd.ChatID, stamp)
 	if refused != nil {
 		return nil, refused
 	}

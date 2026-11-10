@@ -64,7 +64,7 @@ func TestAdmitUnlessDraining_ShutdownWaitsForTheRequestAndTheWorkItStarts(t *tes
 		defer close(done)
 		shutdownHub(t, h)
 	}()
-	waitFor(t, h.lifecycle.Draining)
+	waitFor(t, h.lifecycle.draining.Load)
 	refuteClosed(t, done, "Shutdown returned while an admitted request was still running")
 
 	letProceed()
@@ -92,7 +92,7 @@ func TestHoldUnlessDraining_HoldsShutdownUntilReleasedAndRefusesOnceItBegan(t *t
 		defer close(done)
 		shutdownHub(t, h)
 	}()
-	waitFor(t, h.lifecycle.Draining)
+	waitFor(t, h.lifecycle.draining.Load)
 	if late, ok := h.HoldUnlessDraining(); ok {
 		late()
 		t.Error("HoldUnlessDraining held once Shutdown began, want it refused")
@@ -281,7 +281,7 @@ func TestShutdown_JoinsALaneFrameBeforeWaitingOnTheWorkItStarts(t *testing.T) {
 		defer close(done)
 		shutdownHub(t, h)
 	}()
-	waitFor(t, h.lifecycle.Draining)
+	waitFor(t, h.lifecycle.draining.Load)
 	refuteClosed(t, done, "Shutdown returned while a lane frame was still being handled")
 
 	letProceed()
@@ -315,7 +315,7 @@ func TestShutdown_ALaneJoinThatTimesOutStartsNoInflightWait(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	shutdownErr := make(chan error, 1)
 	go func() { shutdownErr <- h.Shutdown(ctx) }()
-	waitFor(t, h.lifecycle.Draining)
+	waitFor(t, h.lifecycle.draining.Load)
 	cancel()
 	select {
 	case err := <-shutdownErr:

@@ -101,7 +101,7 @@ type TypedCommand =
       };
     }
   | { type: "steer_remove"; chat_id: string; payload: { steer_id: string } }
-  | { type: "send_queued_now"; chat_id: string; payload: { message_id: string } }
+  | { type: "send_queued_now"; chat_id: string; payload: { message_id: string; stop: string } }
   | { type: "compact"; chat_id: string }
   // Addresses a USER MESSAGE, not a turn ordinal: KAS's revertMultiple takes a
   // messageId and refuses a non-user one.

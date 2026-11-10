@@ -10,6 +10,13 @@ import type * as Confirm from "./confirm.js";
 import type { Confirmation } from "./confirm.js";
 import { confirmText } from "./__test-helpers__/confirm-text.js";
 import type * as Submit from "./submit.js";
+import { rowEntry, runAt } from "./__test-helpers__/run-order.js";
+import type { RunEntryView } from "./types.js";
+
+/** A queued row the server took and whose turn opened as `turn`. */
+function openedRow(id: string, turn: string): RunEntryView {
+  return rowEntry(id, { after: "running" }, { state: "running", turn });
+}
 
 vi.mock("./api-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClient>()),
@@ -164,17 +171,14 @@ describe("each kind of live work names itself", () => {
     store.setSessions([
       makeSession("a", {
         steers: [{ id: "steer-1", text: "also", origin: "user", unsent: true }],
-        queued: [
-          { id: "q1", text: "then" },
-          { id: "q2", text: "later", held: true },
-        ],
+        run: runAt(1, [rowEntry("q1"), rowEntry("q2", { after: "held" }, { state: "held" })]),
       }),
     ]);
     expect(await gate()).toBe("Close Alpha? It drops 3 queued messages.");
   });
 
   it("not a follow-up whose turn already opened: that is the running reply", async () => {
-    store.setSessions([makeSession("a", { queued: [{ id: "q1", text: "then" }] })]);
+    store.setSessions([makeSession("a", { run: runAt(1, [openedRow("q1", "t1")]) })]);
     store.openTurn("a", {
       id: "t1-open",
       turn: "t1",
@@ -187,7 +191,7 @@ describe("each kind of live work names itself", () => {
   });
 
   it("every term together, in one sentence", async () => {
-    store.setSessions([makeSession("a", { queued: [{ id: "q1", text: "then" }] })]);
+    store.setSessions([makeSession("a", { run: runAt(1, [rowEntry("q1")]) })]);
     store.setTurnOpen("a", true);
     pendingAsks.set("a", ["3"]);
     runStore.noteRunLive("wf-1", "a", true);
@@ -213,10 +217,7 @@ describe("the subtree", () => {
   });
 
   it("counts runs and queued messages across the subtree", async () => {
-    store.setSessions([
-      makeSession("a"),
-      makeSession("t", { queued: [{ id: "q1", text: "then" }] }),
-    ]);
+    store.setSessions([makeSession("a"), makeSession("t", { run: runAt(1, [rowEntry("q1")]) })]);
     runStore.noteRunLive("wf-1", "a", true);
     runStore.noteRunLive("wf-2", "t", true);
     expect(await gate([A, T])).toBe(
@@ -267,10 +268,7 @@ describe("the impact the close sends", () => {
     store.setSessions([
       makeSession("a", {
         steers: [{ id: "steer-m1", text: "also", origin: "user", unsent: true }],
-        queued: [
-          { id: "q1", text: "then" },
-          { id: "q2", text: "later", held: true },
-        ],
+        run: runAt(1, [rowEntry("q1"), rowEntry("q2", { after: "held" }, { state: "held" })]),
       }),
       makeSession("t"),
     ]);
@@ -294,7 +292,7 @@ describe("the impact the close sends", () => {
   });
 
   it("does not name a follow-up whose turn opened, nor a closed turn", () => {
-    store.setSessions([makeSession("a", { queued: [{ id: "q1", text: "then" }] })]);
+    store.setSessions([makeSession("a", { run: runAt(1, [openedRow("q1", "t1")]) })]);
     openTurn("a", "t0");
     store.appendEntry("a", {
       id: "t0-close",
@@ -317,7 +315,7 @@ describe("the impact the close sends", () => {
           { id: "steer-1", text: "x", origin: "user", unsent: true },
           { id: "steer-2", text: "y", origin: "user", unsent: true },
         ],
-        queued: [{ id: "q1", text: "then" }],
+        run: runAt(1, [rowEntry("q1")]),
       }),
     ]);
     runStore.noteRunLive("wf-1", "a", true);

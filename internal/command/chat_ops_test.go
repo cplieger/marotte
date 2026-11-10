@@ -101,7 +101,7 @@ func TestCmdCancel_RecordsTheStopBeforeSignalling(t *testing.T) {
 		bridge := &stopOrderBridge{deps: deps}
 		deps.bridge = bridge
 
-		if _, err := cmdCancel(t.Context(), deps, deps, deps, deps, newStubSteerQueue(), &marotte.ClientCommand{ChatID: "c1"}); err != nil {
+		if _, err := cmdCancel(t.Context(), stopRunOf(deps), deps, deps, deps, deps, newStubSteerQueue(), &marotte.ClientCommand{ChatID: "c1"}); err != nil {
 			t.Fatalf("CmdCancel: %v", err)
 		}
 		if len(bridge.notified) != 1 || bridge.unrecorded != 0 {
@@ -114,7 +114,7 @@ func TestCmdCancel_RecordsTheStopBeforeSignalling(t *testing.T) {
 	t.Run("with no bridge, the reload window", func(t *testing.T) {
 		deps := &closeDeps{benchDeps: newBenchDeps()}
 
-		if _, err := cmdCancel(t.Context(), deps, deps, deps, deps, newStubSteerQueue(), &marotte.ClientCommand{ChatID: "c1"}); err != nil {
+		if _, err := cmdCancel(t.Context(), stopRunOf(deps), deps, deps, deps, deps, newStubSteerQueue(), &marotte.ClientCommand{ChatID: "c1"}); err != nil {
 			t.Fatalf("CmdCancel: %v", err)
 		}
 		if len(deps.stops) != 1 || deps.stops[0] != "c1" {

@@ -5,6 +5,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -34,31 +35,32 @@ var errTurnSlotHeld = errors.New("the chat's turn slot is held")
 // activeTurn is everything true of one turn, whoever opened it. ID, Seq, Chat, Opened, Source, Log and done are
 // written once at open and read lock-free; the rest are guarded by the owning chatLifecycle's mutex. Log guards itself.
 type activeTurn struct {
+	// Opened is when the turn began, and the only source of its elapsed time.
+	Opened time.Time
+	// reapStallUntil is when an engine stall stops deferring this turn's compaction reap; zero outside a stall.
+	reapStallUntil time.Time
+	// reapChainAt is when this turn's compaction-reap chain began; only a tool started at or after it extends the budget.
+	reapChainAt time.Time
+	// closeFacts are the close's facts the run list reads at finish (runList.turnClosed); nil reads as a broken close.
+	closeFacts *listClose
 	// Log is this turn's accumulator over the chat's entry log, so one turn's open
 	// lane cannot extend the next turn's entry.
 	Log *turnlog.Turn
+	// cancel trips this turn's own prompt call, from startTurn until endPromptCall; nil for a turn with none (KAS's).
+	cancel    context.CancelCauseFunc
+	reapTimer *time.Timer
+	// done is closed once, at finalize.
+	done chan struct{}
 	// lc is the owning lifecycle, carried rather than re-resolved: after a close, the chat's lifecycle by id is
 	// another life's or none.
 	lc *chatLifecycle
-	// done is closed once, at finalize.
-	done      chan struct{}
-	reapTimer *time.Timer
-	// graceTimer is a stop's budget on this turn's call (armCallGraceLocked).
-	graceTimer *time.Timer
-	// cancel trips this turn's own prompt call, from startTurn until endPromptCall; nil for a turn with none (KAS's).
-	cancel context.CancelCauseFunc
-	// Opened is when the turn began, and the only source of its elapsed time.
-	Opened time.Time
-	// reapChainAt is when this turn's compaction-reap chain began; only a tool started at or after it extends the budget.
-	reapChainAt time.Time
-	// reapStallUntil is when an engine stall stops deferring this turn's compaction reap; zero outside a stall.
-	reapStallUntil time.Time
 	// opened is the turn_open entry as written, which the turn_opened frame carries.
 	opened *marotte.Entry
+	// graceTimer is a stop's budget on this turn's call (armCallGraceLocked).
+	graceTimer *time.Timer
 	// messageID and resends are the turn's prompt id and the unread steer keys it carries, set at openTurn: the ids
 	// a close's confirmation may name the turn by (closeWork).
 	messageID string
-	resends   []string
 	// ID is the turn_open entry's id: every handle on the turn.
 	ID string
 	// Model is the model answering, stamped at startTurn for a prompt and at open
@@ -70,25 +72,26 @@ type activeTurn struct {
 	// statusDesc is the description declared during this turn, the agent_finished push body. On the turn: the chat's copy outlives turns.
 	statusDesc string
 	// result is immutable once done is closed.
-	result marotte.TurnResult
-	// Seq is the chat's open sequence, stamped at open and never persisted: the
-	// registry's own order, distinct from the transcript's n.
-	Seq uint64
-	// NeedSeq is the read-loop position of the session/prompt response a local settle must wait for; zero means none waiting.
-	NeedSeq      uint64
+	result       marotte.TurnResult
+	resends      []string
 	reapArmedSeq uint64
+	// idleArms counts KAS's idle reports that armed this turn's idle close (WireTurnActivity); an expiry carrying an
+	// older count, or arriving after kasIdle cleared, must not act.
+	idleArms     uint64
 	reapArmedGen uint64
 	// reapArmID names the newest reap arm; an expiry carrying an older id is a stale
 	// timer whose Stop lost the race and must not act.
 	reapArmID uint64
 	// admission is the reservation a prompt-class turn opened under (openLocked), zero for none.
 	admission uint64
+	// NeedSeq is the read-loop position of the session/prompt response a local settle must wait for; zero means none waiting.
+	NeedSeq uint64
 	// sendStops is the chat's stopCount when the gate let this turn's prompt through; the gate refuses a later attempt
 	// once it moved, so it stays the first attempt's, and each attempt's write commit refuses once it moves.
 	sendStops uint64
-	// idleArms counts KAS's idle reports that armed this turn's idle close (WireTurnActivity); an expiry carrying an
-	// older count, or arriving after kasIdle cleared, must not act.
-	idleArms uint64
+	// Seq is the chat's open sequence, stamped at open and never persisted: the
+	// registry's own order, distinct from the transcript's n.
+	Seq uint64
 	// holds is how many completion handles are outstanding, and what bounds
 	// retention: a result a waiter still holds a handle for is never evicted.
 	holds  int
@@ -111,11 +114,12 @@ type activeTurn struct {
 }
 
 type chatLifecycle struct {
-	// own is the chat's own open turn that frames fold into; at most one.
-	own *activeTurn
-	// pending is the prompt-class turn awaiting its wire bracket, usually own
-	// itself. One rather than a queue: admission serializes prompt-class sources.
-	pending *activeTurn
+	// ctx is the life's: cancelled with marotte.ErrChatClosedDuringCall when the life ends, and every wait of the
+	// life's work selects on it.
+	ctx   context.Context
+	steps map[string]struct{}
+	// reloadFor is the entry a reload is marked for (markReload), so a later generation never inherits the mark.
+	reloadFor *sharedBridge
 	// call is the sent prompt whose session/prompt is unanswered, from its send to endPromptCall; it outlives the
 	// turn when a later turn_start closed it. One: the admission reservation serializes calls.
 	call *activeTurn
@@ -131,46 +135,44 @@ type chatLifecycle struct {
 	// ask is the chat's one pending close and closing its one granted close (session_close_owner.go).
 	ask     *closeAsk
 	closing *closeGrant
-	// reloadFor is the entry a reload is marked for (markReload), so a later generation never inherits the mark.
-	reloadFor *sharedBridge
+	// quiet is closed once the life ended and none of its work runs (turn_life.go).
+	quiet chan struct{}
 	// tails, steps, opens and wakes are the hold records of holdTail, holdStep, holdOpen and holdWake. opens maps
 	// each open id to its door's opener token (0 for a non-prompt door); it is outside work, so quiet never waits on it.
 	tails map[uint64]struct{}
-	steps map[string]struct{}
-	opens map[uint64]uint64
-	wakes map[string]*time.Timer
-	// quiet is closed once the life ended and none of its work runs (turn_life.go).
-	quiet chan struct{}
-	// ctx is the life's: cancelled with marotte.ErrChatClosedDuringCall when the life ends, and every wait of the
-	// life's work selects on it.
-	ctx    context.Context
+	// reg is the registry the life belongs to, whose reservations and effects host the run list uses.
+	reg *turnRegistry
+	// pending is the prompt-class turn awaiting its wire bracket, usually own
+	// itself. One rather than a queue: admission serializes prompt-class sources.
+	pending *activeTurn
+	// own is the chat's own open turn that frames fold into; at most one.
+	own    *activeTurn
+	opens  map[uint64]uint64
 	cancel context.CancelCauseFunc
-	chatID marotte.ChatID
 	// changed is closed and replaced on every state change, under mu. A channel, not a Cond, which would re-take the
 	// lock the finalize needs.
 	changed chan struct{}
-	// admissionMessage is the prompt message id of the held reservation, "" for none.
-	admissionMessage string
+	wakes   map[string]*time.Timer
 	// closedIDs are the ids of the life's newest finished turns, a ring at closedAt: a prompt's reply settles right
 	// after its turn closed, and its wait must stay in the life that turn belonged to (awaitClosePosition).
 	closedIDs [recentCloses]string
+	// admissionMessage is the prompt message id of the held reservation, "" for none.
+	admissionMessage string
+	chatID           marotte.ChatID
+	// runFinal is the list the life's end left, owed to the record once the ending caller released its locks
+	// (writeFinalRun); runWritten is the record version this life last wrote.
+	runFinal []marotte.RunEntry
+	// run is the chat's one ordered list of what runs next (run_list.go); only its advance takes an entry.
+	run runList
+	// work counts the life's running goroutines by kind (beginWork).
+	work [workKinds]int
 	// kas is KAS's execution state for the chat's session; only kasStepLocked changes it.
 	kas kasExec
-	// nextSeq is the open sequence the newest record took; openLocked increments it
-	// before assigning, so the next record takes nextSeq+1.
-	nextSeq uint64
 	// leaseSeq is the last token beginLease issued; tokens start at 1. openSeq is the last open id holdOpenLocked issued.
-	leaseSeq uint64
-	openSeq  uint64
-	// epoch names this lifecycle among the chat's; a fence from another epoch never holds. Re-minted when the life
-	// ends, so a surviving drain opens nothing.
-	epoch uint64
-	// stopSeq is nextSeq when a stop was last requested: every turn at or below it was open then. Zero is no stop.
-	stopSeq uint64
-	// admission names the held reservation, re-minted by each reserveLocked; stoppedAdmission is one a stop kept
-	// unsent before its turn opened (ArmStopGrace), which openLocked passes to the turn opened under it.
-	admission        uint64
-	stoppedAdmission uint64
+	leaseSeq   uint64
+	runWritten uint64
+	// admission names the held reservation, re-minted by each reserveLocked.
+	admission uint64
 	// observedSeq is the read loop position the FOLDER has reached. Advanced for
 	// every frame consumed, not only the ones that touch a turn — see observe.
 	observedSeq uint64
@@ -179,35 +181,44 @@ type chatLifecycle struct {
 	fwdGen uint64
 	// reservedSource is who holds the admission slot while reserved; the reservation is not a Turn.
 	reservedSource marotte.TurnOpenSource
-	// work counts the life's running goroutines by kind (beginWork).
-	work [workKinds]int
 	// closedAt counts the writes to closedIDs; modulo recentCloses it is the next slot.
 	closedAt int
 	// stamp is the gate stamp that created the life; every reservation carries it.
 	stamp uint64
-	// forwardGone is whether the attached forward goroutine has exited, so a settle
-	// waiting on a position that can no longer advance stops waiting.
-	forwardGone bool
-	// inFrame is whether the forward goroutine is consuming a frame (beginFrame to observe).
-	inFrame bool
-	// reserved is whether the admission slot is held.
-	reserved bool
-	// reservedForRow is whether the held reservation is a close's drain, whose row or steers a close's confirmation
-	// names until its turn opens.
-	reservedForRow bool
-	// admissionOpened is whether a turn opened under the held reservation.
-	admissionOpened bool
-	// ended is set once, when the life ends (endLifeLocked); an ended life admits nothing.
-	ended bool
-	// closer is whether a closer goroutine runs for this life; only the request that set it starts one (askClose).
-	closer bool
-	// stopCause is the cause of the stops stopSeq records (requestStop decides it).
-	stopCause marotte.TurnStopCause
-	state     turnState
+	state turnState
+	// runUnsent is the steer queue's unsent row count the list last applied (runFactsChanged).
+	runUnsent int
+	// stopSeq is nextSeq when a stop was last requested: every turn at or below it was open then. Zero is no stop.
+	stopSeq uint64
+	// nextSeq is the open sequence the newest record took; openLocked increments it
+	// before assigning, so the next record takes nextSeq+1.
+	nextSeq uint64
+	openSeq uint64
+	// epoch names this lifecycle among the chat's; a fence from another epoch never holds. Re-minted when the life
+	// ends, so a surviving drain opens nothing.
+	epoch uint64
 	// stopCount counts requestStop calls; atomic so a send's write commit reads it under the engine's write lock
 	// without mu (sendCommitLocked).
 	stopCount atomic.Uint64
 	mu        sync.Mutex
+	// closer is whether a closer goroutine runs for this life; only the request that set it starts one (askClose).
+	closer bool
+	// ended is set once, when the life ends (endLifeLocked); an ended life admits nothing.
+	ended bool
+	// admissionOpened is whether a turn opened under the held reservation.
+	admissionOpened bool
+	// reserved is whether the admission slot is held.
+	reserved bool
+	// inFrame is whether the forward goroutine is consuming a frame (beginFrame to observe).
+	inFrame bool
+	// stopCause is the cause of the stops stopSeq records (requestStop decides it).
+	stopCause    marotte.TurnStopCause
+	runFinalOwed bool
+	// forwardGone is whether the attached forward goroutine has exited, so a settle
+	// waiting on a position that can no longer advance stops waiting.
+	forwardGone bool
+	// gatePark is whether a goroutine waits out a held close to run the list's taker again (parkGateLocked).
+	gatePark bool
 }
 
 // turnRegistry holds one lifecycle per chat. Lock order registry.mu -> lifecycle.mu -> chat store: opens and
@@ -222,6 +233,8 @@ type turnRegistry struct {
 	steps map[marotte.ChatID]map[string]struct{}
 	// records writes the chat's turn keep fact; required by newTurnRegistry.
 	records turnRecords
+	// runHost carries out what the chats' run lists owe outside them; nil carries out nothing. Set once at construction.
+	runHost runEffectsHost
 	// onIdle runs, with no lock held, each time a chat leaves its last open turn or admission: an engine restart
 	// pending on quiescence re-checks there, and so does the chat's release check. Set once at construction.
 	onIdle func(marotte.ChatID)
@@ -230,6 +243,9 @@ type turnRegistry struct {
 	claimHook func()
 	// openHook runs at the top of openTurn, before its section; nil in production, set as claimHook is.
 	openHook func()
+	// tailHook runs in a close tail just before its end (ended false), where the run list takes what runs next, and
+	// again once a live life's tail ended (ended true); nil in production, set as claimHook is.
+	tailHook func(chatID marotte.ChatID, ended bool)
 	// closerHook runs in a chat's closer once it took a grant, before its re-check; nil in production, set as
 	// claimHook is.
 	closerHook func(marotte.ChatID)
@@ -282,12 +298,6 @@ func (r *turnRegistry) lifecycleAt(ctx context.Context, chatID marotte.ChatID, s
 			return nil, ctx.Err()
 		}
 	}
-}
-
-// tryLifecycleAt is lifecycleAt that never waits: false while a close is held or after one committed since stamp.
-func (r *turnRegistry) tryLifecycleAt(chatID marotte.ChatID, stamp uint64) (*chatLifecycle, bool) {
-	lc, _, _ := r.admitLife(chatID, stamp)
-	return lc, lc != nil
 }
 
 // admitLife is one gated look at chatID's lifecycle: the lifecycle, or the hold to wait on, or the refusal. An ended
@@ -366,12 +376,16 @@ func (r *turnRegistry) lookup(chatID marotte.ChatID) (*chatLifecycle, bool) {
 // in-flight finalize publishes where its waiters park.
 func (r *turnRegistry) forget(chatID marotte.ChatID) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if lc, ok := r.chats[chatID]; ok {
+	lc, ok := r.chats[chatID]
+	if ok {
 		delete(r.chats, chatID)
 		lc.mu.Lock()
 		lc.endLifeLocked(r.mintEpoch)
 		lc.mu.Unlock()
+	}
+	r.mu.Unlock()
+	if ok {
+		lc.writeFinalRun()
 	}
 }
 
@@ -379,24 +393,28 @@ func (r *turnRegistry) forget(chatID marotte.ChatID) {
 // chat this way, so a closer still owed its turn close forgets it after.
 func (r *turnRegistry) forgetIfIdle(chatID marotte.ChatID) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	lc, ok := r.chats[chatID]
-	if !ok {
-		return
+	if ok {
+		lc.mu.Lock()
+		if lc.liveLockedState() || lc.run.liveLen() > 0 {
+			ok = false
+		} else {
+			delete(r.chats, chatID)
+			lc.endLifeLocked(r.mintEpoch)
+		}
+		lc.mu.Unlock()
 	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	if lc.liveLockedState() {
-		return
+	r.mu.Unlock()
+	if ok {
+		lc.writeFinalRun()
 	}
-	delete(r.chats, chatID)
-	lc.endLifeLocked(r.mintEpoch)
 }
 
 // wakeLocked wakes every waiter without moving the state. It decides the pending close first: every hold release
 // changes state through here, so no release can skip the decision. Caller holds mu.
 func (lc *chatLifecycle) wakeLocked() {
 	lc.decideLocked()
+	lc.advanceLocked()
 	close(lc.changed)
 	lc.changed = make(chan struct{})
 }
@@ -427,6 +445,14 @@ func (lc *chatLifecycle) awaitNotFinalizing(ctx context.Context) bool {
 // openLocked records a turn whose turn_open the caller just appended: prompt-class to pending (and own when own is
 // nil), every other source to own. Caller holds mu and checked the slot.
 func (lc *chatLifecycle) openLocked(chatID marotte.ChatID, opened *marotte.Entry, source marotte.TurnOpenSource, model string, log *turnlog.Turn) *activeTurn {
+	return lc.openTurnLocked(chatID, opened, source, model, log, false)
+}
+
+// openTurnLocked is openLocked for a wire turn whose bracket is known (bracketed): the run list places the open in
+// the same section, before the wake runs its taker.
+func (lc *chatLifecycle) openTurnLocked(
+	chatID marotte.ChatID, opened *marotte.Entry, source marotte.TurnOpenSource, model string, log *turnlog.Turn, bracketed bool,
+) *activeTurn {
 	lc.nextSeq++
 	t := &activeTurn{
 		Opened: time.Now(),
@@ -443,7 +469,6 @@ func (lc *chatLifecycle) openLocked(chatID marotte.ChatID, opened *marotte.Entry
 	if source.Acknowledgeable() {
 		if lc.reserved {
 			t.admission = lc.admission
-			t.stopped = lc.stoppedAdmission == lc.admission
 			lc.admissionOpened = true
 		}
 		lc.pending = t
@@ -454,7 +479,13 @@ func (lc *chatLifecycle) openLocked(chatID marotte.ChatID, opened *marotte.Entry
 		lc.own = t
 	}
 	if source == marotte.TurnSourceWireTurnStart {
+		t.bracketed = bracketed
 		lc.takeWakeLocked()
+	}
+	of := openFacts{turnID: t.ID, admission: t.admission, seq: t.Seq, bracketed: bracketed}
+	of.wire = source == marotte.TurnSourceWireTurnStart
+	if (of.wire || source.Acknowledgeable()) && !lc.run.turnOpened(of) {
+		slog.Debug("run list: a turn opened that no entry was taken for", "chat_id", chatID, "turn", t.ID)
 	}
 	lc.setStateLocked(turnOpen)
 	return t
@@ -493,6 +524,7 @@ func (lc *chatLifecycle) markSentLocked(t *activeTurn) (sendStep, *activeTurn) {
 		t.sendStops = lc.stopCount.Load()
 		t.sent = true
 		lc.call = t
+		lc.run.turnSent(t.ID)
 		if o == nil {
 			lc.own = t
 			lc.setStateLocked(turnOpen)
@@ -621,7 +653,7 @@ func (r *turnRegistry) closeWork(chatID marotte.ChatID) []command.CloseTurn {
 		}
 		out = append(out, item)
 	}
-	if lc.reserved && !lc.admissionOpened && !lc.reservedForRow {
+	if e := lc.run.byToken(lc.admission); lc.reserved && !lc.admissionOpened && e != nil && e.submitter {
 		out = append(out, command.CloseTurn{MessageID: lc.admissionMessage, Admission: command.AdmissionID(lc.admission)})
 	}
 	return out
@@ -665,6 +697,7 @@ func (lc *chatLifecycle) finishLocked(t *activeTurn, result marotte.TurnResult) 
 	result.Turn = t.ID
 	t.result = result
 	close(t.done)
+	lc.closeRunEntryLocked(t)
 	lc.closedIDs[lc.closedAt%recentCloses] = t.ID
 	lc.closedAt++
 	if lc.own == t {
@@ -769,22 +802,6 @@ func (r *turnRegistry) awaitBound(ctx context.Context, chatID marotte.ChatID, tu
 	}
 }
 
-// openedAfter reports whether an own turn opened after the named one, the empty-turn gate's structural clause.
-// It compares the open sequence, never n; steps open nothing here.
-func (r *turnRegistry) openedAfter(chatID marotte.ChatID, turnID string) bool {
-	lc, ok := r.lookup(chatID)
-	if !ok {
-		return false
-	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	t := lc.turnLocked(turnID)
-	if t == nil {
-		return false
-	}
-	return lc.nextSeq > t.Seq
-}
-
 // isOpen reports whether turnID is an open, non-finalizing turn of the chat's lifecycle and that life has not ended.
 func (r *turnRegistry) isOpen(chatID marotte.ChatID, turnID string) bool {
 	lc, ok := r.lookup(chatID)
@@ -795,12 +812,6 @@ func (r *turnRegistry) isOpen(chatID marotte.ChatID, turnID string) bool {
 	defer lc.mu.Unlock()
 	t := lc.liveLocked(turnID)
 	return !lc.ended && t != nil && !t.finalizing
-}
-
-// stoppedAfter reports whether a stop was requested after the named turn opened,
-// open or retained. A stop from an earlier turn is inert by construction.
-func (r *turnRegistry) stoppedAfter(chatID marotte.ChatID, turnID string) bool {
-	return r.stopCauseAfter(chatID, turnID) != marotte.TurnStopNone
 }
 
 // stopCauseAfter is the recorded stop cause (requestStop) when a stop was requested after the named turn opened.
@@ -817,7 +828,7 @@ func (r *turnRegistry) stopCauseAfter(chatID marotte.ChatID, turnID string) maro
 	return lc.stopCause
 }
 
-// stoppedAfterLocked is stoppedAfter's predicate. Caller holds mu.
+// stoppedAfterLocked reports a stop requested after the named turn (open or retained) opened. Caller holds mu.
 func (lc *chatLifecycle) stoppedAfterLocked(turnID string) bool {
 	t := lc.turnLocked(turnID)
 	return t != nil && t.Seq <= lc.stopSeq
@@ -878,23 +889,14 @@ func (r *turnRegistry) kasAllowsSessionCall(chatID marotte.ChatID) bool {
 }
 
 // kasStepLocked applies one input to the chat's KAS state, waking every waiter when it changed. Caller holds mu.
-func (lc *chatLifecycle) kasStepLocked(in kasInput, seq uint64) (drain bool, rows []string) {
-	changed, drain, rows := lc.kas.step(in, seq)
+func (lc *chatLifecycle) kasStepLocked(in kasInput, seq uint64) {
+	changed, _ := lc.kas.step(in, seq)
+	if in == kasReportActive {
+		lc.run.kasReportedActive()
+	}
 	if changed {
 		lc.wakeLocked()
 	}
-	return drain, rows
-}
-
-// compactTurn is compactTurnLocked's turn with live's answer.
-func (r *turnRegistry) compactTurn(chatID marotte.ChatID) (string, bool) {
-	lc, ok := r.lookup(chatID)
-	if !ok {
-		return "", false
-	}
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	return lc.compactTurnLocked(), lc.liveLockedState()
 }
 
 // compactTurnLocked names the turn a queued compaction belongs to: the open turn (own, else pending), else the newest

@@ -29,7 +29,6 @@ func (rt *Runtime) cleanupChatState(ctx context.Context, chatID marotte.ChatID) 
 	rt.teardownStep("quiet")
 	rt.agentTerms.killForChat(chatID)
 	rt.coord.turns.forget(chatID)
-	rt.coord.autoCompact.forget(chatID)
 	rt.lines.Clear(chatID)
 	// The ledger and the record are separate; neither clears the other.
 	rt.steerLedger.ForgetChat(chatID)

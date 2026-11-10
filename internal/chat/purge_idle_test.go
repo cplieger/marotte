@@ -127,10 +127,23 @@ func TestPurgeIdle_DecidesFromTheRecordAlone(t *testing.T) {
 			name: "queued_prompt",
 			setup: func(t *testing.T, s *Store) {
 				rewriteChat(t, s, "c1", func(c *marotte.Chat) {
-					c.QueuedPrompts = []marotte.QueuedPrompt{{ID: "m-1", Text: "x"}}
+					c.Run = []marotte.RunEntry{rowEntry("m-1", marotte.RunPaused)}
 				})
 			},
 			wantOutcome: archive.PurgeKept, wantKeptBy: archive.KeptByWords,
+		},
+		{
+			// A dead life's compaction or turn entry holds no words, so it keeps nothing.
+			name: "only_a_compaction_and_a_turn_on_the_run_list",
+			setup: func(t *testing.T, s *Store) {
+				rewriteChat(t, s, "c1", func(c *marotte.Chat) {
+					c.Run = []marotte.RunEntry{
+						{ID: "compact-1", Kind: marotte.RunKindCompaction, State: marotte.RunRunning},
+						{ID: "t-1", Kind: marotte.RunKindTurn, State: marotte.RunRunning, Turn: "t-1"},
+					}
+				})
+			},
+			wantOutcome: archive.PurgePurged,
 		},
 		{
 			name:        "not_reconciled_this_boot",
