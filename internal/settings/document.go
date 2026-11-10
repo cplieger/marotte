@@ -14,14 +14,15 @@ type Document struct {
 	raw map[string]json.RawMessage
 }
 
-// ErrUnparseable marks a Read whose generation was read but does not parse as a JSON object; an oversized file is
-// truncated at maxBytes and lands here too.
+// ErrUnparseable marks a Read whose generation holds bytes that are not one JSON object of at most maxBytes; an
+// oversized file lands here too.
 var ErrUnparseable = errors.New("settings: config.json does not parse")
 
-// Read reads config.json once and parses it once. gen is the generation the bytes were stored under; an absent file is
-// one generation while it stays absent. err is nil for a readable document and wraps ErrUnparseable, with that
-// generation's gen, for one that does not parse; any other err is a read error (a stat or open failure, a non-regular
-// file, ctx ended) and gen is 0.
+// Read reads config.json once and parses it once, answering an absent or unreadable read by ownedfile's rule: while
+// such a read is held, the applied document under its generation. gen is the generation the bytes were stored under;
+// an adopted absence is the empty document, one generation while it stays absent. err wraps ErrUnparseable, with that
+// generation's gen, for refused bytes; any other err (it wraps ErrUnreadable when the file was read, else it is ctx's)
+// has gen 0.
 func Read(ctx context.Context, configDir string) (doc Document, gen uint64, err error) {
 	g := readGeneration(ctx, configDir)
 	if g.err != nil {

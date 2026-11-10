@@ -13,7 +13,13 @@ import { renderConflictOverlay } from "./editor-conflict.js";
 import { getAgentLines, identifiedDownloadURL } from "./editor-ui.js";
 import { restoreUI } from "./editor-modes.js";
 import { restoreEditorView, trackEditorView } from "./editor-scroll.js";
-import { activateFile, openFileGitDiff, startGitDiffLoad } from "./editor-openers.js";
+import {
+  activateFile,
+  adoptSavedBytes,
+  adoptSavedFromDisk,
+  openFileGitDiff,
+  startGitDiffLoad,
+} from "./editor-openers.js";
 import {
   baselineHeld,
   commitBaseline,
@@ -26,7 +32,7 @@ import {
   isShown,
   recordFor,
 } from "./editor-types.js";
-import { staleDiskText } from "./file-identity.js";
+import { isIdentifiedText, staleDiskText } from "./file-identity.js";
 import type { FileMode, FileState } from "./editor-types.js";
 import { rulesFor } from "./viewer-rules.js";
 import { markGitDirty } from "./git.js";
@@ -378,31 +384,44 @@ function dispatchSave(state: FileState, text: string, fileId: string | undefined
         onStaleSave(state, outcome.refusal);
         return;
       }
-      // `current` is not touched: the reader may have typed while the save was in flight.
-      commitBaseline(state, {
-        fileId: outcome.result.file_id,
-        text,
-        eol: { saved: record, tracker: eol.tracker },
-      });
-      state.alert.value = null;
-      liveSaved(state.path);
-      const m = state.mode.value;
-      if (state.returnToGitDiff !== null) {
-        leaveEdit(state);
+      const { content, size, file_id: fileId } = outcome.result;
+      if (content === undefined) {
+        // `current` is not touched: the reader may have typed while the save was in flight.
+        commitBaseline(state, { fileId, text, eol: { saved: record, tracker: eol.tracker } });
+      } else if (isIdentifiedText(content, size, fileId)) {
+        adoptSavedBytes(state, text, content, fileId);
+      } else {
+        void adoptSavedFromDisk(state, text, settles).then((adopted) => {
+          if (adopted) {
+            settleSaved(state);
+          }
+        });
         return;
       }
-      if (m.kind === "conflict" && m.conflict.hunks.length === 0) {
-        enterView(state, { kind: "text", editing: false });
-      }
-      // A diff of the buffer opened while the save was in flight now compares against what it
-      // wrote; with nothing left unsaved there is no diff to show.
-      if (m.kind === "diff" && m.diffSource.kind === "buffer" && !state.dirty.value) {
-        leaveDiff(state);
-        return;
-      }
-      restoreUI(state);
+      settleSaved(state);
     },
   });
+}
+
+/** A save's baseline is committed: leave the views the unsaved buffer kept open. */
+function settleSaved(state: FileState): void {
+  state.alert.value = null;
+  liveSaved(state.path);
+  const m = state.mode.value;
+  if (state.returnToGitDiff !== null) {
+    leaveEdit(state);
+    return;
+  }
+  if (m.kind === "conflict" && m.conflict.hunks.length === 0) {
+    enterView(state, { kind: "text", editing: false });
+  }
+  // A diff of the buffer opened while the save was in flight now compares against what it
+  // wrote; with nothing left unsaved there is no diff to show.
+  if (m.kind === "diff" && m.diffSource.kind === "buffer" && !state.dirty.value) {
+    leaveDiff(state);
+    return;
+  }
+  restoreUI(state);
 }
 
 /** A save refused because the file moved. Text on disk becomes `original` and the view diffs the

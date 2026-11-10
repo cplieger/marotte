@@ -177,8 +177,9 @@ func writeSettings(t *testing.T, dir string, content []byte) {
 }
 
 // TestField_GenInvalidationAfterDeleteRecreate verifies the parsed-map cache
-// is invalidated across a read -> delete -> recreate sequence: the second
-// read must see the new file contents, not a stale cached parse.
+// is invalidated across a read -> delete -> recreate sequence: the read while the file is
+// absent answers the applied document (the absence is held), and the read after the recreate
+// must see the new file contents, not a stale cached parse.
 func TestField_GenInvalidationAfterDeleteRecreate(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
@@ -193,8 +194,8 @@ func TestField_GenInvalidationAfterDeleteRecreate(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	if _, ok := Field[string](ctx, dir, "k"); ok {
-		t.Fatalf("read after delete ok = true, want false")
+	if v, ok := Field[string](ctx, dir, "k"); !ok || v != "AAA" {
+		t.Fatalf("read after delete = (%q,%v), want the applied (AAA,true)", v, ok)
 	}
 	if err := os.WriteFile(path, []byte(`{"k":"BBB"}`), 0o600); err != nil {
 		t.Fatalf("write B: %v", err)

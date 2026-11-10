@@ -30,6 +30,9 @@ type chatEngine interface {
 	// session reads only at open moved, and pushes the engine each live setting it has not
 	// confirmed. Call it once the write has landed.
 	ReconcileSessionSettings(ctx context.Context)
+	// SettingsWritten is the one after-write rule for a config.json write: keys are the keys it
+	// changed, nil when any may have. Call it once the write has landed.
+	SettingsWritten(ctx context.Context, keys []string)
 }
 
 // governanceLocks is the administrator's lock map as this package reads it, to

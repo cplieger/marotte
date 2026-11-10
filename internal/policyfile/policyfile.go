@@ -2,11 +2,12 @@
 // workspace scopes, under kiro-cli's state directory: <kiroHome>/settings/permissions.yaml and
 // <kiroHome>/workspace-roots/<workspace.SessionsBucket>/permissions.yaml. KAS also writes the user file
 // for a user-scope consent, and hot-reloads both, so a write reaches every live session. Load
-// accepts block YAML or JSON; Save writes new and changed rules as block YAML (KAS 2.12) and keeps
+// accepts block YAML or JSON; Mutate writes new and changed rules as block YAML (KAS 2.12) and keeps
 // the other keys, their order and comments.
 package policyfile
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -25,7 +27,7 @@ import (
 )
 
 // KAS reads the .yaml unless it is missing or blank, then the .json sibling. marotte writes the
-// .yaml only, so Load falls back to the .json and the first Save carries its content over.
+// .yaml only, so Load falls back to the .json and the first Mutate carries its content over.
 const (
 	filename     = "permissions.yaml"
 	jsonFilename = "permissions.json"
@@ -50,7 +52,7 @@ type Rule struct {
 	Exclude    []string `yaml:"exclude,omitempty"`
 }
 
-// File is the part of a permissions file marotte owns, its rules. Save writes them into the
+// File is the part of a permissions file marotte owns, its rules. Mutate writes them into the
 // file's own document, so every other top-level key (KAS's `policies`, the TUI's
 // `workspaceTrusted` and `workspaceTrustCase`), their order and comments survive: dropping one
 // silently narrows grants or re-asks for workspace trust.
@@ -58,7 +60,7 @@ type File struct {
 	Rules []Rule `yaml:"rules"`
 }
 
-// rulesKey is the one top-level key Save rewrites.
+// rulesKey is the one top-level key Mutate rewrites.
 const rulesKey = "rules"
 
 // Scope names marotte can write. Kiro/administration are read-only
@@ -205,8 +207,8 @@ func readSource(ctx context.Context, path string) (data []byte, name string, err
 
 // readPolicy returns abs's bytes, nil for a missing file. Through filesafe.OpenRegularNoFollow: a FIFO
 // at the name (the agent can write $HOME/.kiro) would block os.ReadFile forever, the size is
-// checked off the descriptor before reading, and a final-component symlink is refused as Save
-// refuses it.
+// checked off the descriptor before reading, and a final-component symlink is refused, as Mutate's
+// write refuses it.
 func readPolicy(ctx context.Context, abs string) ([]byte, error) {
 	fh, _, err := filesafe.OpenRegularNoFollow(abs)
 	if err != nil {
@@ -232,7 +234,7 @@ func parse(data []byte, name string) (doc *yaml.Node, f *File, err error) {
 	}
 	// Reject a multi-document file loudly: yaml.Unmarshal reads only the
 	// first document, so everything below a stray "---" would half-load
-	// here and then be silently dropped by the next Save — silent rule
+	// here and then be silently dropped by the next Mutate — silent rule
 	// loss in a security policy file.
 	if err := yamlenv.CheckSingleDocument(data); err != nil {
 		return nil, nil, fmt.Errorf("parse %s: %w", name, err)
@@ -256,60 +258,126 @@ func parse(data []byte, name string) (doc *yaml.Node, f *File, err error) {
 	return doc, f, nil
 }
 
-// Save replaces the rules of the file Load reads for path with f.Rules, keeping every other key,
-// their order and comments (kiro-cli's workspace-trust record and policies list live there). It
-// refuses to overwrite a file Load would refuse. The write is atomic (temp, fsync, rename,
-// dir-fsync), mode 0600, parent dirs 0700, so a crash never leaves a truncated policy.
-//
-// KAS and kiro-cli write this file under a lock marotte does not take. A key they wrote before
-// Save's read survives; one written between that read and the rename is lost, as is a rules edit
-// made after the caller's Load (last writer wins on rules).
-func Save(ctx context.Context, path string, f *File) error {
-	if f.Rules == nil {
-		f.Rules = []Rule{}
+// Mutate's refusals.
+var (
+	// ErrBusy: the file changed under every attempt, so nothing was written.
+	ErrBusy = errors.New("the permissions file kept changing while it was saved")
+	// ErrUnreadable wraps every failure to read or parse the file Load reads for a path.
+	ErrUnreadable = errors.New("the permissions file could not be read")
+)
+
+const mutateAttempts = 3
+
+// afterEdit runs between an attempt's edit and its compare; tests write over the file there.
+var afterEdit = func(string) {}
+
+// pathLocks holds one lock per absolute permissions file path.
+var (
+	pathLocksMu sync.Mutex
+	pathLocks   = map[string]*sync.Mutex{}
+)
+
+func pathLock(abs string) *sync.Mutex {
+	pathLocksMu.Lock()
+	defer pathLocksMu.Unlock()
+	l, ok := pathLocks[abs]
+	if !ok {
+		l = &sync.Mutex{}
+		pathLocks[abs] = l
 	}
-	old, name, err := readSource(ctx, path)
+	return l
+}
+
+// Mutate is the one write of a permissions file, serialized per path in this process. Each attempt
+// reads the file Load reads for path once and runs edit on its rules; when edit reports a change,
+// they are written into that read's document, keeping every other key, their order and comments.
+// A re-read just before the atomic write (mode 0600, parent dirs 0700) that differs from the
+// attempt's read discards it, so a rule KAS wrote meanwhile is kept; after three, ErrBusy. A file
+// Load refuses is ErrUnreadable and never written; an error from edit returns as is.
+func Mutate(ctx context.Context, path string, edit func(*File) (changed bool, err error)) error {
+	abs, err := filepath.Abs(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: resolve %s: %w", ErrUnreadable, filename, err)
 	}
-	doc, _, err := parse(old, name)
-	if err != nil {
-		return err
-	}
-	// go-yaml drops the comment on a `...` line and every comment after one; the same document
-	// without its end markers parses with them.
-	if text := dropDocumentEnds(string(old)); text != string(old) {
-		old = []byte(text)
-		if doc, _, err = parse(old, name); err != nil {
+	mu := pathLock(abs)
+	mu.Lock()
+	defer mu.Unlock()
+	for range mutateAttempts {
+		if done, err := mutateOnce(ctx, abs, edit); done || err != nil {
 			return err
 		}
 	}
+	return ErrBusy
+}
+
+// mutateOnce is one attempt of Mutate; done false with a nil error means the file changed under it.
+func mutateOnce(ctx context.Context, path string, edit func(*File) (bool, error)) (done bool, err error) {
+	raw, name, err := readSource(ctx, path)
+	if err != nil {
+		return false, fmt.Errorf("%w: %w", ErrUnreadable, err)
+	}
+	doc, f, err := parse(raw, name)
+	if err != nil {
+		return false, fmt.Errorf("%w: %w", ErrUnreadable, err)
+	}
+	// go-yaml drops the comment on a `...` line and every comment after one; the same document
+	// without its end markers parses with them. The compare below stays on raw, the bytes on disk.
+	text := raw
+	if dropped := dropDocumentEnds(string(raw)); dropped != string(raw) {
+		text = []byte(dropped)
+		if doc, f, err = parse(text, name); err != nil {
+			return false, fmt.Errorf("%w: %w", ErrUnreadable, err)
+		}
+	}
+	changed, err := edit(f)
+	if err != nil || !changed {
+		return true, err
+	}
+	if f.Rules == nil {
+		f.Rules = []Rule{}
+	}
+	data, err := renderAttempt(path, text, name, doc, f.Rules)
+	if err != nil {
+		return true, err
+	}
+	afterEdit(path)
+	// KAS writes under a lock marotte cannot see, so a write landing between this read and the
+	// rename is still lost; the compare narrows that window to two syscalls.
+	now, nowName, err := readSource(ctx, path)
+	if err != nil || nowName != name || !bytes.Equal(now, raw) {
+		return false, nil
+	}
+	// WithMaxBytes mirrors Load's size guard: a write never persists a file Load would refuse.
+	_, err = filesafe.WriteFile(ctx, path, data,
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700),
+		filesafe.WithMaxBytes(maxPolicyFileSize))
+	return true, err
+}
+
+// renderAttempt renders rules into doc, parsed from text read from the file called name, as the
+// bytes to write at path, refusing a result KAS would read otherwise.
+func renderAttempt(path string, text []byte, name string, doc *yaml.Node, rules []Rule) ([]byte, error) {
 	if name == jsonFilename && doc != nil {
-		// Load read the .json sibling: path is written fresh from its content, all block YAML since
+		// The read was the .json sibling: path is written fresh from its content, all block YAML since
 		// JSON holds no comments, and the .json is left alone; KAS reads the .yaml over it from now on.
 		blockStyle(doc)
 	}
-	data, err := render(old, doc, f.Rules)
+	data, err := render(text, doc, rules)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// An edit that breaks the document (an alias into a dropped rule), would read back with other
 	// rules, or retargets any alias to an earlier anchor of the same name fails here, not at KAS's
 	// next reload.
-	if backErr := readsBack(data, filepath.Base(path), f.Rules); backErr != nil {
-		return backErr
+	if backErr := readsBack(data, filepath.Base(path), rules); backErr != nil {
+		return nil, backErr
 	}
 	if doc != nil {
 		if aliasErr := aliasesHold(doc); aliasErr != nil {
-			return fmt.Errorf("refusing to write %s: %w", filepath.Base(path), aliasErr)
+			return nil, fmt.Errorf("refusing to write %s: %w", filepath.Base(path), aliasErr)
 		}
 	}
-	// WithMaxBytes mirrors Load's size guard: Save can never persist a
-	// policy file its own Load would reject as oversize.
-	_, err = filesafe.WriteFile(ctx, path, data,
-		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700),
-		filesafe.WithMaxBytes(maxPolicyFileSize))
-	return err
+	return data, nil
 }
 
 // render writes rules into the parsed document doc of old, which holds no `...` line. A blank file
@@ -435,7 +503,7 @@ func aliasesHold(doc *yaml.Node) error {
 	return walk(doc)
 }
 
-// readsBack refuses data, the text Save is about to write to the file called name, unless it
+// readsBack refuses data, the text Mutate is about to write to the file called name, unless it
 // parses and holds exactly rules: a file KAS would read with other rules is never written.
 func readsBack(data []byte, name string, rules []Rule) error {
 	_, back, err := parse(data, name)
@@ -624,7 +692,7 @@ func (f *File) Remove(r *Rule) bool {
 			// slices.Delete, not append(a[:i], a[i+1:]...): it zeroes the vacated
 			// tail, so the removed rule's Match and Exclude slices are not still
 			// reachable through the backing array of a security policy the caller
-			// is about to hand to Save.
+			// is about to hand to Mutate.
 			f.Rules = slices.Delete(f.Rules, i, i+1)
 			return true
 		}

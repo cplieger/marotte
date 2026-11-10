@@ -223,15 +223,15 @@ func TestAgentDirsValidatePatch(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := f.dirs.ValidatePatch(none, tt.patch)
+			err := f.dirs.validatePatch(none, tt.patch)
 			if tt.reason == "" {
 				if err != nil {
-					t.Errorf("ValidatePatch = %v, want nil", err)
+					t.Errorf("validatePatch = %v, want nil", err)
 				}
 				return
 			}
 			if err == nil || !strings.Contains(err.Error(), tt.reason) {
-				t.Errorf("ValidatePatch = %v, want a refusal naming %q", err, tt.reason)
+				t.Errorf("validatePatch = %v, want a refusal naming %q", err, tt.reason)
 			}
 		})
 	}
@@ -247,37 +247,37 @@ func TestAgentDirsValidatePatch_EntriesRefusedBeforeNeverBlockAWrite(t *testing.
 	stored := patchOf(t, []string{f.extra, gone, f.dirs.Config})
 
 	t.Run("removing a granted entry passes beside refused ones", func(t *testing.T) {
-		if err := f.dirs.ValidatePatch(stored, patchOf(t, []string{gone, f.dirs.Config})); err != nil {
-			t.Errorf("ValidatePatch = %v, want nil", err)
+		if err := f.dirs.validatePatch(stored, patchOf(t, []string{gone, f.dirs.Config})); err != nil {
+			t.Errorf("validatePatch = %v, want nil", err)
 		}
 	})
 	t.Run("removing a refused entry passes", func(t *testing.T) {
-		if err := f.dirs.ValidatePatch(stored, patchOf(t, []string{f.extra, f.dirs.Config})); err != nil {
-			t.Errorf("ValidatePatch = %v, want nil", err)
+		if err := f.dirs.validatePatch(stored, patchOf(t, []string{f.extra, f.dirs.Config})); err != nil {
+			t.Errorf("validatePatch = %v, want nil", err)
 		}
 	})
 	t.Run("adding a valid entry passes beside refused ones", func(t *testing.T) {
-		if err := f.dirs.ValidatePatch(stored, patchOf(t, []string{f.extra, gone, f.dirs.Config, second})); err != nil {
-			t.Errorf("ValidatePatch = %v, want nil", err)
+		if err := f.dirs.validatePatch(stored, patchOf(t, []string{f.extra, gone, f.dirs.Config, second})); err != nil {
+			t.Errorf("validatePatch = %v, want nil", err)
 		}
 	})
 	t.Run("an added invalid entry is still refused with its reason", func(t *testing.T) {
 		missing := filepath.Join(filepath.Dir(f.extra), "missing")
-		err := f.dirs.ValidatePatch(stored, patchOf(t, []string{f.extra, gone, missing}))
+		err := f.dirs.validatePatch(stored, patchOf(t, []string{f.extra, gone, missing}))
 		if err == nil || !strings.Contains(err.Error(), "no such directory") || !strings.Contains(err.Error(), missing) {
-			t.Errorf("ValidatePatch = %v, want %q refused as missing", err, missing)
+			t.Errorf("validatePatch = %v, want %q refused as missing", err, missing)
 		}
 	})
 	t.Run("an added duplicate of a stored entry is refused", func(t *testing.T) {
-		err := f.dirs.ValidatePatch(stored, patchOf(t, []string{f.extra, gone, gone}))
+		err := f.dirs.validatePatch(stored, patchOf(t, []string{f.extra, gone, gone}))
 		if err == nil || !strings.Contains(err.Error(), "listed twice") {
-			t.Errorf("ValidatePatch = %v, want a duplicate refusal", err)
+			t.Errorf("validatePatch = %v, want a duplicate refusal", err)
 		}
 	})
 	t.Run("a stored list that is not a list of strings checks every entry as added", func(t *testing.T) {
 		malformed := map[string]json.RawMessage{KeyAdditionalDirectories: json.RawMessage(`"` + gone + `"`)}
-		if err := f.dirs.ValidatePatch(malformed, patchOf(t, []string{gone})); err == nil {
-			t.Error("ValidatePatch = nil, want the missing entry refused: nothing valid was stored")
+		if err := f.dirs.validatePatch(malformed, patchOf(t, []string{gone})); err == nil {
+			t.Error("validatePatch = nil, want the missing entry refused: nothing valid was stored")
 		}
 	})
 }
@@ -301,9 +301,9 @@ func TestAgentDirsValidatePatch_AnAddedEntryOverlappingAGrantedOneIsRefused(t *t
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := f.dirs.ValidatePatch(patchOf(t, tt.stored), patchOf(t, tt.patch))
+			err := f.dirs.validatePatch(patchOf(t, tt.stored), patchOf(t, tt.patch))
 			if err == nil || !strings.Contains(err.Error(), tt.reason) {
-				t.Errorf("ValidatePatch = %v, want a refusal naming %s", err, tt.reason)
+				t.Errorf("validatePatch = %v, want a refusal naming %s", err, tt.reason)
 			}
 		})
 	}
@@ -311,15 +311,15 @@ func TestAgentDirsValidatePatch_AnAddedEntryOverlappingAGrantedOneIsRefused(t *t
 		data := filepath.Join(f.extra, "data")
 		project := filepath.Join(data, "project")
 		mkdirs(t, project)
-		err := f.dirs.ValidatePatch(patchOf(t, []string{data, project}), patchOf(t, []string{project, f.extra}))
+		err := f.dirs.validatePatch(patchOf(t, []string{data, project}), patchOf(t, []string{project, f.extra}))
 		if err == nil || !strings.Contains(err.Error(), "contains \""+project+"\"") {
-			t.Errorf("ValidatePatch = %v, want %q refused for holding %q", err, f.extra, project)
+			t.Errorf("validatePatch = %v, want %q refused for holding %q", err, f.extra, project)
 		}
 	})
 	t.Run("an entry overlapping only a refused one passes", func(t *testing.T) {
 		gone := filepath.Join(f.extra, "gone")
-		if err := f.dirs.ValidatePatch(patchOf(t, []string{gone}), patchOf(t, []string{gone, f.extra})); err != nil {
-			t.Errorf("ValidatePatch = %v, want nil: %q grants nothing", err, gone)
+		if err := f.dirs.validatePatch(patchOf(t, []string{gone}), patchOf(t, []string{gone, f.extra})); err != nil {
+			t.Errorf("validatePatch = %v, want nil: %q grants nothing", err, gone)
 		}
 	})
 }

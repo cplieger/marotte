@@ -72,6 +72,10 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "unknown action")
 		return
 	}
+	if owned := h.ownedActionTarget(body.Action, l); owned != "" {
+		_ = refuseOwned(w, body.Action, l, owned)
+		return
+	}
 	if err := fn(r.Context(), w, body, l, h); err != nil {
 		// fn may already have written a response; errHandled says so, so nothing is double-written.
 		if errors.Is(err, errHandled) {
@@ -84,6 +88,27 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpserver.OK(w)
+}
+
+// ownedActionTarget answers the owned file the action at l would create, delete or rename, or "".
+func (h *Handler) ownedActionTarget(action string, l loc) string {
+	switch action {
+	case "mkdir", "touch":
+		return h.ownedAtOrAbove(l.abs)
+	case "delete", "rename":
+		if h.ownerFor(l) != nil {
+			return l.abs
+		}
+	}
+	return ""
+}
+
+// refuseOwned writes the 403 for a file action on an owned file, which only its owner writes.
+func refuseOwned(w http.ResponseWriter, action string, l loc, owned string) error {
+	slog.Warn("filebrowse: file action blocked on an owned file",
+		"action", logsafe.Field(action), "path", logsafe.Field(l.abs), "owned", logsafe.Field(owned))
+	httpreply.Forbidden(w, filepath.Base(owned)+" is written through its editor; edit it instead")
+	return errHandled
 }
 
 // refuseMountPoint writes the shared 403 for create/delete/rename/move
@@ -221,6 +246,9 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 			"from", l.abs, "to", destLoc.abs)
 		httpreply.Forbidden(w, "rename target is protected")
 		return errHandled
+	}
+	if owned := h.ownedAtOrAbove(destLoc.abs); owned != "" {
+		return refuseOwned(w, "rename", destLoc, owned)
 	}
 	// One pinned parent serves both ends, since they share one directory; see actionDelete for why
 	// os.Root alone is not enough.

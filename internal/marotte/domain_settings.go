@@ -97,9 +97,10 @@ type EffectiveSettings struct {
 	TriggerMaxLiveRuns        int `json:"trigger_max_live_runs"`
 	TriggerMaxLaunchesPerHour int `json:"trigger_max_launches_per_hour"`
 	// SettingsEpoch and SettingsRevision are config.json's version (settings.KeySettingsEpoch and
-	// KeySettingsRevision), both 0 before the first write and compared epoch first. A deleted or
-	// restored config.json serves a lower version, which a page holding a higher one refuses until
-	// the next write starts a later epoch.
+	// KeySettingsRevision), both 0 before the first write and compared epoch first. A config.json
+	// written without these keys or restored with lower ones is rewritten at a later version by
+	// the next outside-write check that reads it, and a removed one when two consecutive checks
+	// find it absent.
 	SettingsEpoch    uint64 `json:"settings_epoch"`
 	SettingsRevision uint64 `json:"settings_revision"`
 	// AutoCompactionEnabled defaults TRUE: off means nothing compacts a chat

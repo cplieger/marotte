@@ -9,15 +9,25 @@ import (
 
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/marotte/internal/agent"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 )
 
 // TestChatRetention_ThreeLegs walks one config.json through the three states the retention read
-// must tell apart: a stored value, an absent key, and an unreadable file.
+// must tell apart: a stored value, an absent key, and an unreadable file. The two last are read
+// once the config watch settled them, as a removal or a broken file that lasts is.
 func TestChatRetention_ThreeLegs(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
 	path := filepath.Join(dir, settings.Filename)
+	settle := func() {
+		t.Helper()
+		for range 2 {
+			if _, _, err := settings.Poll(ctx, dir, func(context.Context, marotte.ServerEvent) {}); err != nil {
+				t.Fatalf("settings.Poll: %v", err)
+			}
+		}
+	}
 
 	if settings.DefaultChatRetentionDays <= 0 {
 		t.Fatalf("DefaultChatRetentionDays = %d; a non-positive default makes leg 2 vacuous",
@@ -31,6 +41,7 @@ func TestChatRetention_ThreeLegs(t *testing.T) {
 	}
 
 	writeConfig(t, path, `{`)
+	settle()
 	if got := chatRetention(ctx, dir); got != 0 {
 		t.Errorf("chatRetention with an unparseable config.json = %v, want 0; applying the default (%v) here purges the chats the user asked to keep",
 			got, wantDefault)
@@ -39,6 +50,7 @@ func TestChatRetention_ThreeLegs(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatalf("remove %s: %v", path, err)
 	}
+	settle()
 	if got := chatRetention(ctx, dir); got != wantDefault {
 		t.Errorf("chatRetention with no config.json = %v, want %v (absence is not a failure)", got, wantDefault)
 	}
@@ -101,7 +113,7 @@ func TestRunRetention_MapsEverySetting(t *testing.T) {
 // ERROR: the document was never read. The live case proves the ERROR still fires over a broken file.
 // Serial: slog's default is process-global.
 func TestChatRetention_ACtxStopLogsNothing(t *testing.T) {
-	const msg = "chat retention: config.json is present but unreadable; purged nothing this pass rather than applying the default window"
+	const msg = "chat retention: config.json cannot be read; purged nothing this pass rather than applying the default window"
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
 	for _, tc := range []struct {

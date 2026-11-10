@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -29,7 +28,7 @@ var (
 	// ErrNoLivePolicy: the profile's own rules could not be read. An empty Custom drops every
 	// grant and is indistinguishable from a session not yet started, so nothing is written.
 	ErrNoLivePolicy = errors.New("no live policy to read preset rules from")
-	// ErrUserFileUnreadable: the user permissions file exists and does not parse.
+	// ErrUserFileUnreadable: the user permissions file exists and cannot be read or parsed.
 	ErrUserFileUnreadable = errors.New("the user permissions file could not be read")
 	// ErrUserFileFull: the user permissions file is at its rule limit.
 	ErrUserFileFull = errors.New("the user permissions file is at its rule limit")
@@ -74,19 +73,26 @@ func (s *Store) Select(ctx context.Context, id string) error {
 	return err
 }
 
-// customizeMu serializes every switch to Custom in the process, whichever Store runs it: each
-// is a read-modify-write of the user file, and one that loaded the file before KAS wrote an
-// always answer's rule into it would erase that rule when it saved.
-var customizeMu sync.Mutex
+// switchMu serializes every switch to Custom in the process, whichever Store runs it: the
+// decision reads the profile from config.json and then writes the user file and config.json, so
+// of two concurrent switches only the first may copy the presets.
+var switchMu sync.Mutex
+
+// Seams over Customize's two writes, so a test can fail the persist or make the user file busy.
+var (
+	persistCustom = (*Store).Select
+	mutatePolicy  = policyfile.Mutate
+)
 
 // Customize copies the preset rules in force into the user file, then persists custom. The
-// read comes first, and a failed persist puts the file back. It is durable from its first
-// write: a caller walking away must not strand the copied grants. On Custom it refuses with
-// ErrNoLivePolicy, since Custom carries no presets and a stale request could still read a
-// session on the old profile and save over a rule KAS wrote since the switch.
+// read comes first, and a failed persist takes back out exactly the rules it copied, keeping any
+// rule written meanwhile; a user file that kept changing is policyfile.ErrBusy. It is durable
+// from its first write: a caller walking away must not strand the copied grants. On Custom it
+// refuses with ErrNoLivePolicy, since Custom carries no presets and a stale request could still
+// read a session on the old profile and save over a rule KAS wrote since the switch.
 func (s *Store) Customize(ctx context.Context) error {
-	customizeMu.Lock()
-	defer customizeMu.Unlock()
+	switchMu.Lock()
+	defer switchMu.Unlock()
 	if s.Active(ctx) == policyfile.ProfileCustom {
 		return ErrNoLivePolicy
 	}
@@ -97,8 +103,8 @@ func (s *Store) Customize(ctx context.Context) error {
 // lock, so of two concurrent callers only the first switches. switched reports whether this
 // call did.
 func (s *Store) EnsureCustom(ctx context.Context) (switched bool, err error) {
-	customizeMu.Lock()
-	defer customizeMu.Unlock()
+	switchMu.Lock()
+	defer switchMu.Unlock()
 	if s.Active(ctx) == policyfile.ProfileCustom {
 		return false, nil
 	}
@@ -121,32 +127,53 @@ func (s *Store) customize(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	_, statErr := os.Stat(path)
-	existed := statErr == nil
-	f, err := policyfile.Load(path)
-	if err != nil {
-		slog.Warn("the user permissions file could not be read, so Customize was refused", "path", path, "error", logsafe.Field(err.Error()))
-		return fmt.Errorf("%w: %v", ErrUserFileUnreadable, err)
-	}
-	before := slices.Clone(f.Rules)
-	for i := range seeded {
-		if _, uErr := f.Upsert(&seeded[i]); uErr != nil {
-			return ErrUserFileFull
-		}
-	}
 	ctx = durable.Context(ctx)
-	if err := policyfile.Save(ctx, path, f); err != nil {
-		return err
+	var added []policyfile.Rule
+	if err := mutatePolicy(ctx, path, seedEdit(seeded, &added)); err != nil {
+		if errors.Is(err, policyfile.ErrUnreadable) {
+			slog.Warn("the user permissions file could not be read, so Customize was refused", "path", path, "error", logsafe.Field(err.Error()))
+			return fmt.Errorf("%w: %v", ErrUserFileUnreadable, err)
+		}
+		return fmt.Errorf("copy the preset rules into the user permissions file: %w", err)
 	}
-	if err := s.Select(ctx, policyfile.ProfileCustom); err != nil {
-		if rErr := restoreUserFile(ctx, path, existed, f, before); rErr != nil {
-			slog.Error("could not restore the user permissions file after a failed Customize",
+	if err := persistCustom(s, ctx, policyfile.ProfileCustom); err != nil {
+		if rErr := mutatePolicy(ctx, path, removeEdit(added)); rErr != nil {
+			slog.Error("could not take the copied rules back out of the user permissions file after a failed Customize",
 				"path", path, "error", logsafe.Field(rErr.Error()))
 			return fmt.Errorf("%w: %w", ErrRestoreFailed, err)
 		}
 		return err
 	}
 	return nil
+}
+
+// seedEdit is Customize's edit of the user file: it adds each seeded rule the file lacks and
+// records in added exactly the rules this call added, so a retried attempt records only its own.
+func seedEdit(seeded []policyfile.Rule, added *[]policyfile.Rule) func(*policyfile.File) (bool, error) {
+	return func(f *policyfile.File) (bool, error) {
+		*added = nil
+		for i := range seeded {
+			changed, err := f.Upsert(&seeded[i])
+			if err != nil {
+				return false, ErrUserFileFull
+			}
+			if changed {
+				*added = append(*added, seeded[i])
+			}
+		}
+		return len(*added) > 0, nil
+	}
+}
+
+// removeEdit takes rules back out of whatever the file holds now, keeping every other rule.
+func removeEdit(rules []policyfile.Rule) func(*policyfile.File) (bool, error) {
+	return func(f *policyfile.File) (bool, error) {
+		changed := false
+		for i := range rules {
+			changed = f.Remove(&rules[i]) || changed
+		}
+		return changed, nil
+	}
 }
 
 // presetRulesInForce reads the rules the ACTIVE profile's presets contributed to the live
@@ -185,16 +212,4 @@ func (s *Store) presetRulesInForce(ctx context.Context) ([]policyfile.Rule, erro
 		return nil, ErrNoLivePolicy
 	}
 	return out, nil
-}
-
-// restoreUserFile puts back the rules Load read; Save keeps the file's other keys and comments.
-func restoreUserFile(ctx context.Context, path string, existed bool, f *policyfile.File, before []policyfile.Rule) error {
-	if !existed {
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		return nil
-	}
-	f.Rules = before
-	return policyfile.Save(ctx, path, f)
 }

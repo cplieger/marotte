@@ -63,6 +63,10 @@ type App struct {
 	stopOrphanSweep func()
 	// stopKiroSeed stops the kiro-cli settings seed and waits for its goroutine.
 	stopKiroSeed func()
+	// stopConfigWatch stops the config.json watch and waits for a pass or effect in flight.
+	stopConfigWatch func()
+	// stopToolsWatch stops the tools.json watch between ticks.
+	stopToolsWatch func()
 	// stopPRPoller stops the PR-status poller and waits for its goroutine.
 	stopPRPoller func()
 	// stopForgeKeeper stops the forge credential keeper and waits for its goroutine.
@@ -272,12 +276,13 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	ensureUploadDir()
 	sensitive := filebrowse.NewSensitive(cfg.ConfigDir)
 	agentDirs := settings.AgentDirs{Workspace: cfg.WorkDir, Config: cfg.ConfigDir}
-	fileHandler, err := filebrowse.New(sensitive, cfg.BrowseRoots,
-		toolsManifestSaveHook(tools),
+	configWatch := newConfigWatch(cfg.ConfigDir, h)
+	fileOpts := append(ownedFileOptions(ownedFileDeps{Config: configWatch, Tools: tools, Dirs: agentDirs}),
 		filebrowse.WithLiveRoots(func(ctx context.Context) []string {
 			granted, _, _ := agentDirs.Granted(ctx)
 			return granted
 		}))
+	fileHandler, err := filebrowse.New(sensitive, cfg.BrowseRoots, fileOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -360,6 +365,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	)
 	lockedSettings.bind(appCtx, srv.ApplyGovernanceLocks)
 	stopKiroSeed := startKiroSettingsSeed(appCtx, kiro.installed, srv.SeedKiroSettings)
+	stopConfigWatch := startConfigWatch(appCtx, configWatch)
+	stopToolsWatch := startToolsWatch(appCtx, tools)
 
 	built = true
 	return &App{
@@ -371,6 +378,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		stopKiro:             kiro.stop,
 		stopOrphanSweep:      stopOrphanSweep,
 		stopKiroSeed:         stopKiroSeed,
+		stopConfigWatch:      stopConfigWatch,
+		stopToolsWatch:       stopToolsWatch,
 		stopPRPoller:         stopPRPoller,
 		stopForgeKeeper:      stopForgeKeeper,
 		stopForges:           func() { shutdownWithin("forge reads", forgesManager.Shutdown) },
@@ -409,6 +418,10 @@ func (a *App) Run() error {
 // position is load-bearing. Every member is treated as optional: a panic on a service never
 // started would abort the teardown of the rest.
 func (a *App) Shutdown() {
+	// First: the config watch's stop waits for an effect in flight, which pushes to the runtime;
+	// the tools watch's tick reaches the engine Close ends.
+	callIfSet(a.stopConfigWatch)
+	callIfSet(a.stopToolsWatch)
 	// Before stopForges: a poll in flight reads through the forge connections.
 	callIfSet(a.stopTriggerRunner)
 	callIfSet(a.stopPRPoller)
@@ -493,14 +506,14 @@ func cancelUnless(built *bool, cancel context.CancelFunc) {
 }
 
 // chatRetention resolves the purge window on every pass: 0 = off, -1 = forever, N > 0 = purge after
-// N days. FieldStrict, so a PRESENT but unreadable config.json answers 0 rather than the default,
-// which a malformed file could otherwise use to override a stored -1; an absent key or file keeps
-// the default.
+// N days. FieldStrict, so a config.json that cannot be read answers 0 rather than the default,
+// which a malformed file could otherwise use to override a stored -1; an absent key, or a file
+// the config watch settled as absent, keeps the default.
 func chatRetention(ctx context.Context, configDir string) time.Duration {
 	days, ok, err := settings.FieldStrict[int](ctx, configDir, settings.KeyChatRetentionDays)
 	if err != nil {
 		if !isCtxErr(err) {
-			slog.Error("chat retention: config.json is present but unreadable; purged nothing this pass rather than applying the default window",
+			slog.Error("chat retention: config.json cannot be read; purged nothing this pass rather than applying the default window",
 				"key", settings.KeyChatRetentionDays,
 				"default_days", settings.DefaultChatRetentionDays, "error", err)
 		}
@@ -516,7 +529,7 @@ func chatRetention(ctx context.Context, configDir string) time.Duration {
 }
 
 // runRetention resolves how the run purge and the run-log sweep treat finished runs: disabled for
-// keep-forever and for a config.json that is present and unreadable; a zero window purges an
+// keep-forever and for a config.json that cannot be read; a zero window purges an
 // unclaimed run once no tab shows it and leaves a chat's runs to the chat; N days ages out every
 // finished run N days after its last update. An absent key takes the default, as chatRetention does.
 func runRetention(ctx context.Context, configDir string) agent.RunRetention {

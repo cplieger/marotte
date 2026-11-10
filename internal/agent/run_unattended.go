@@ -455,7 +455,7 @@ func planApprovalAsk(params json.RawMessage) bool {
 	return json.Unmarshal(params, &p) == nil && p.Meta.Kiro.ToolID == translate.ToolIDUpdateWorkflow
 }
 
-// Absent or unreadable is off.
+// Off by default, and off over a config.json the config watch settled as absent or unreadable.
 func scheduledAutoApprove(ctx context.Context, configDir string) bool {
 	var b bool
 	if !settings.FieldInto(ctx, configDir, settings.KeyScheduledAutoApprove, &b) {

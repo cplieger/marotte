@@ -600,6 +600,8 @@ func TestEnsureCustomProfile_CopiesTheProfileAHandEditPicked(t *testing.T) {
 	}
 }
 
+// rewriteConfigByHand replaces config.json with body as an outside write, then settles it as the
+// config.json watch does over two passes, so an unparseable body is adopted as refused.
 func rewriteConfigByHand(t *testing.T, configDir, body string) {
 	t.Helper()
 	tmp := filepath.Join(configDir, "config.json.tmp")
@@ -608,6 +610,17 @@ func rewriteConfigByHand(t *testing.T, configDir, body string) {
 	}
 	if err := os.Rename(tmp, filepath.Join(configDir, settings.Filename)); err != nil {
 		t.Fatalf("Setup: rename over config.json: %v", err)
+	}
+	settleConfig(t, configDir)
+}
+
+// settleConfig runs the config.json watch's two passes over whatever config.json holds now.
+func settleConfig(t *testing.T, configDir string) {
+	t.Helper()
+	for range 2 {
+		if _, _, err := settings.Poll(context.WithoutCancel(t.Context()), configDir, func(context.Context, marotte.ServerEvent) {}); err != nil {
+			t.Fatalf("Setup: settings.Poll: %v", err)
+		}
 	}
 }
 

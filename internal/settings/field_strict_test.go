@@ -1,21 +1,33 @@
 package settings
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestFieldStrict_SeparatesAbsenceFromUnreadable walks one config.json through present,
 // unparseable and absent, on one directory so the cache runs as in a live process. Folding
 // the middle leg into absence would override a stored -1 (Keep forever) and purge kept chats.
+// Each leg is read once held (before the config watch settles it) and once adopted.
 func TestFieldStrict_SeparatesAbsenceFromUnreadable(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
 	resetCache(t, dir)
+	t.Cleanup(func() { resetCache(t, dir) })
 	path := filepath.Join(dir, Filename)
+	settle := func() {
+		t.Helper()
+		for range 2 {
+			if _, _, err := Poll(ctx, dir, func(context.Context, marotte.ServerEvent) {}); err != nil {
+				t.Fatalf("Poll: %v", err)
+			}
+		}
+	}
 
 	// Leg 1: -1 is the Keep-forever value a default would destroy.
 	writeSettings(t, dir, []byte(`{"chat_retention_days":-1}`))
@@ -27,8 +39,12 @@ func TestFieldStrict_SeparatesAbsenceFromUnreadable(t *testing.T) {
 		t.Fatalf("FieldStrict(%s) on a stored value = (%d, %v), want (-1, true)", KeyChatRetentionDays, days, ok)
 	}
 
-	// Leg 2: present and unparseable; absence would be a lie.
+	// Leg 2: present and unparseable. Held, it reads as the applied -1; adopted, absence would be a lie.
 	writeSettings(t, dir, []byte(`{`))
+	if days, ok, err := FieldStrict[int](ctx, dir, KeyChatRetentionDays); err != nil || !ok || days != -1 {
+		t.Errorf("FieldStrict(%s) on a held unparseable config.json = (%d, %v, %v), want (-1, true, nil)", KeyChatRetentionDays, days, ok, err)
+	}
+	settle()
 	days, ok, err = FieldStrict[int](ctx, dir, KeyChatRetentionDays)
 	if err == nil {
 		t.Errorf("FieldStrict(%s) on an unparseable config.json = (%d, %v, nil), want an error", KeyChatRetentionDays, days, ok)
@@ -37,10 +53,15 @@ func TestFieldStrict_SeparatesAbsenceFromUnreadable(t *testing.T) {
 		t.Errorf("FieldStrict(%s) on an unparseable config.json = (%d, %v), want (0, false)", KeyChatRetentionDays, days, ok)
 	}
 
-	// Leg 3: no file. A fresh volume must stay absent, or no install ever purges.
+	// Leg 3: no file. Held over a refused read it stays an error; adopted, a fresh volume must stay
+	// absent, or no install ever purges.
 	if err := os.Remove(path); err != nil {
 		t.Fatalf("remove %s: %v", path, err)
 	}
+	if _, _, err := FieldStrict[int](ctx, dir, KeyChatRetentionDays); err == nil {
+		t.Errorf("FieldStrict(%s) over a held absence after a refused read: err = nil, want an error", KeyChatRetentionDays)
+	}
+	settle()
 	days, ok, err = FieldStrict[int](ctx, dir, KeyChatRetentionDays)
 	if err != nil {
 		t.Errorf("FieldStrict(%s) with no config.json: err = %v, want nil (absence is not a failure)", KeyChatRetentionDays, err)

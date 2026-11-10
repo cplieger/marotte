@@ -1265,6 +1265,7 @@ const arbModel = fc.letrec<{
   ),
   FileWriteResult: fc.record(
     {
+      content: fc.string(),
       file_id: fc.string(),
       size: fc.double({ noNaN: true, noDefaultInfinity: true }),
       ok: fc.boolean(),

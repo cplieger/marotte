@@ -31,9 +31,11 @@ type FileRead struct {
 // FileWriteResult is PUT /api/file's success reply; FileID is the identity of the bytes
 // this request wrote.
 type FileWriteResult struct {
-	FileID string `json:"file_id"`
-	Size   int64  `json:"size"`
-	OK     bool   `json:"ok"`
+	// Content is present when the file's owner wrote other bytes than were sent.
+	Content *string `json:"content,omitempty"`
+	FileID  string  `json:"file_id"`
+	Size    int64   `json:"size"`
+	OK      bool    `json:"ok"`
 }
 
 // RefusalCode is the machine-readable reason on a FileRefusal.

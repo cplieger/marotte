@@ -251,7 +251,7 @@ func TestWriteRuntime_BacktickInValueDropsTheVariable(t *testing.T) {
 
 func TestWriteToolsEngine(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/cfg", "/t", "/w")
+	writeToolsEngine(&b, "/cfg", "/t")
 	out := b.String()
 	for _, want := range []string{
 		"localhost:9847/api/tools/search?q=<name>",
@@ -296,7 +296,7 @@ func TestWriteUIGuide_DescribesTheToolsTab(t *testing.T) {
 
 func TestWriteToolsEngine_NoToolsDirSaysTheEngineIsOff(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/cfg", "", "/w")
+	writeToolsEngine(&b, "/cfg", "")
 	out := b.String()
 	if !strings.Contains(out, "The tools engine is off because the server cannot use the folder configured for it") ||
 		!strings.Contains(out, "`MAROTTE_TOOLS_DIR`") {
@@ -311,37 +311,30 @@ func TestWriteToolsEngine_NoToolsDirSaysTheEngineIsOff(t *testing.T) {
 
 func TestWriteToolsEngine_SaysABadManifestLeavesToolsOffRatherThanStoppingMarotte(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/cfg", "/cfg/tools", "/w")
+	writeToolsEngine(&b, "/cfg", "/cfg/tools")
 	out := b.String()
-	if !strings.Contains(out, "leaves the tools engine off, with the reason in Settings → Tools") {
-		t.Errorf("writeToolsEngine does not say a refused tools.json leaves the tools engine off:\n%s", out)
+	for _, want := range []string{
+		"an invalid one turns the tools engine off with the reason in Settings → Tools",
+		"A `tools.json` the engine refuses at boot does the same, with the reason in the boot log too",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeToolsEngine does not say a refused tools.json leaves the tools engine off (%q):\n%s", want, out)
+		}
 	}
 	if strings.Contains(out, "stops marotte from starting") {
 		t.Errorf("writeToolsEngine still says an invalid manifest stops marotte:\n%s", out)
 	}
 }
 
-func TestWriteToolsEngine_ConfigOutsideTheWorkspaceIsNotReachableByFileTools(t *testing.T) {
+func TestWriteToolsEngine_SaysFileToolsCannotReachTheManifest(t *testing.T) {
 	var b strings.Builder
-	writeToolsEngine(&b, "/cfg", "/cfg/tools", "/w")
+	writeToolsEngine(&b, "/cfg", "/cfg/tools")
 	out := b.String()
 	if !strings.Contains(out, "Your file tools cannot write it, because `/cfg` is outside the workspace") {
-		t.Errorf("writeToolsEngine(/cfg, /w) does not say file tools cannot reach tools.json:\n%s", out)
+		t.Errorf("writeToolsEngine does not say file tools cannot reach tools.json:\n%s", out)
 	}
 	if strings.Contains(out, "gets the same check") {
-		t.Errorf("writeToolsEngine(/cfg, /w) promises a check file tools never reach:\n%s", out)
-	}
-}
-
-func TestWriteToolsEngine_ConfigInsideTheWorkspaceGetsTheEditorCheck(t *testing.T) {
-	var b strings.Builder
-	writeToolsEngine(&b, "/w/.cfg", "/w/.cfg/tools", "/w")
-	out := b.String()
-	if !strings.Contains(out, "A write from your own file tools gets the same check and install") {
-		t.Errorf("writeToolsEngine(/w/.cfg, /w) does not say file-tool writes are checked:\n%s", out)
-	}
-	if strings.Contains(out, "cannot write it") {
-		t.Errorf("writeToolsEngine(/w/.cfg, /w) says file tools cannot reach a manifest inside the workspace:\n%s", out)
+		t.Errorf("writeToolsEngine promises a check file tools never reach:\n%s", out)
 	}
 }
 
@@ -664,6 +657,25 @@ func TestWriteAttachments_TeachesTheHTMLPreview(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("writeAttachments output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestToolsSection_SaysAShellWriteAppliesWithinSeconds(t *testing.T) {
+	var b strings.Builder
+	writeToolsEngine(&b, "/cfg", "/t")
+	out := b.String()
+	for _, want := range []string{
+		"A shell write is checked and applied within seconds",
+		"until a valid save, or a valid shell write, turns it back on",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeToolsEngine output missing %q:\n%s", want, out)
+		}
+	}
+	for _, gone := range []string{"neither checked nor applied", "A write from your own file tools"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("writeToolsEngine output still says %q:\n%s", gone, out)
 		}
 	}
 }

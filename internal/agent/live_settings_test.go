@@ -346,6 +346,11 @@ func TestEngineSpawn_TheUnreadableReportFollowsTheDocumentTheEngineSpawnedOver(t
 				if err := os.Rename(tmp, filepath.Join(configDir, settings.Filename)); err != nil {
 					t.Errorf("Setup: rename over config.json: %v", err)
 				}
+				for range 2 {
+					if _, _, err := settings.Poll(context.Background(), configDir, func(context.Context, marotte.ServerEvent) {}); err != nil {
+						t.Errorf("Setup: settings.Poll: %v", err)
+					}
+				}
 			}
 			cs := newTestChatStore()
 			h := newRuntimeOn(context.Background(), t.TempDir(), src, cs, WithConfigDir(configDir))

@@ -176,8 +176,8 @@ func TestValidateCompactionPatch(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := ValidateCompactionPatch(tc.patch); (err != nil) != tc.wantErr {
-				t.Errorf("ValidateCompactionPatch(%s) = %v, want error %v", tc.name, err, tc.wantErr)
+			if err := validateCompactionPatch(tc.patch); (err != nil) != tc.wantErr {
+				t.Errorf("validateCompactionPatch(%s) = %v, want error %v", tc.name, err, tc.wantErr)
 			}
 		})
 	}
@@ -353,8 +353,8 @@ func TestTriggerCaps_DefaultsAndBounds(t *testing.T) {
 			if live, hourly := TriggerCaps(t.Context(), dir); live != tc.wantLive || hourly != tc.wantHourly {
 				t.Errorf("TriggerCaps over %s = (%d, %d), want (%d, %d)", tc.stored, live, hourly, tc.wantLive, tc.wantHourly)
 			}
-			if err := ValidateTriggerCapsPatch(doc); (err != nil) != tc.reject {
-				t.Errorf("ValidateTriggerCapsPatch(%s) = %v, want error %v", tc.stored, err, tc.reject)
+			if err := validateTriggerCapsPatch(doc); (err != nil) != tc.reject {
+				t.Errorf("validateTriggerCapsPatch(%s) = %v, want error %v", tc.stored, err, tc.reject)
 			}
 		})
 	}
@@ -362,8 +362,8 @@ func TestTriggerCaps_DefaultsAndBounds(t *testing.T) {
 		if live, hourly := TriggerCaps(t.Context(), t.TempDir()); live != 3 || hourly != 6 {
 			t.Errorf("TriggerCaps with no config.json = (%d, %d), want (3, 6)", live, hourly)
 		}
-		if err := ValidateTriggerCapsPatch(map[string]json.RawMessage{KeyTheme: json.RawMessage(`"dark"`)}); err != nil {
-			t.Errorf("ValidateTriggerCapsPatch(no cap key) = %v, want nil", err)
+		if err := validateTriggerCapsPatch(map[string]json.RawMessage{KeyTheme: json.RawMessage(`"dark"`)}); err != nil {
+			t.Errorf("validateTriggerCapsPatch(no cap key) = %v, want nil", err)
 		}
 	})
 }

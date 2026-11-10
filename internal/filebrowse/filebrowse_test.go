@@ -1343,7 +1343,7 @@ func TestWriteFile_RelativeSymlinkSwappedAfterResolve(t *testing.T) {
 	swap()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/file", strings.NewReader(`{"content":"pwn"}`))
-	writeFile(rec, req, l, SaveHook{})
+	writeFile(rec, req, l, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
