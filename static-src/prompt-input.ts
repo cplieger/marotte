@@ -15,7 +15,7 @@ import { iconEl } from "./icon-el.js";
 import { collapseAll } from "./pill-expand.js";
 import { composerText, isSendable, setComposerValue, syncComposerText } from "./composer-value.js";
 import { touchComposer, wireTouchComposer } from "./composer-touch.js";
-import { restoreRefusedEdit } from "./composer-state.js";
+import { flushComposerDraft, restoreRefusedEdit } from "./composer-state.js";
 import { continueList } from "./list-continue.js";
 import { applyEdit } from "./text-edit.js";
 import { computed, effect, el, signal, touch, type ReadonlySignal } from "@cplieger/ui";
@@ -155,6 +155,8 @@ class PromptInputController {
         }
         if (getActiveId() === chatID && $.promptInput.value === raw) {
           setComposerValue("");
+          // Saved now, behind any save of the sent text still in flight, so the record never ends on it.
+          flushComposerDraft();
           return;
         }
         // The reader moved to another chat: the sent chat's saved draft goes, unless typed over.

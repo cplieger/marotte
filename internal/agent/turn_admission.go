@@ -380,6 +380,8 @@ func (lc *chatLifecycle) sendAttempt(
 	step, fold = lc.markSentLocked(t)
 	if step == sendNow {
 		commit = lc.sendCommitLocked(t)
+		// The list marked t running and steerable; the header must say so before the call is written.
+		lc.wakeLocked()
 	}
 	return step, fold, commit, lc.changed, nil
 }

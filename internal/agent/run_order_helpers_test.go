@@ -29,6 +29,40 @@ func runIDs(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []string {
 	return out
 }
 
+// runStates is every entry of the chat's stored list as "<name> <state>": a compaction is named "compaction", a
+// kiro-cli turn "wire" or "run", everything else by its id.
+func runStates(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []string {
+	t.Helper()
+	c, ok := cs.Get(t.Context(), chatID)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, e := range c.Run {
+		name := e.ID
+		switch {
+		case e.Kind == marotte.RunKindCompaction:
+			name = "compaction"
+		case e.Kind == marotte.RunKindTurn && e.Origin == marotte.RunFromWire:
+			name = "wire"
+		case e.Kind == marotte.RunKindTurn && e.Origin == marotte.RunFromRun:
+			name = "run"
+		}
+		out = append(out, name+" "+string(e.State))
+	}
+	return out
+}
+
+// runView is the chat's header's run list.
+func runView(t *testing.T, cs *testChatStore, chatID marotte.ChatID) marotte.RunView {
+	t.Helper()
+	c, ok := cs.Get(t.Context(), chatID)
+	if !ok {
+		return marotte.RunView{}
+	}
+	return c.Header().Run
+}
+
 // runWait is what the header says id waits for: "compaction" when it goes when the compaction ahead ends, else "turn".
 func runWait(t *testing.T, cs *testChatStore, chatID marotte.ChatID, id string) string {
 	t.Helper()

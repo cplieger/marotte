@@ -189,10 +189,15 @@ func (a *autoCompactor) cancel(_ context.Context, chatID marotte.ChatID, id stri
 // where a request racing the compaction's end lands.
 var testHookAfterCompactionReturn = func(marotte.ChatID) {}
 
+// testHookBeforeCompactionStart runs once a compaction is taken, before its start's first section: the window where
+// a request racing the compaction's start lands.
+var testHookBeforeCompactionStart = func(marotte.ChatID) {}
+
 // runCompaction is a taken compaction's start (runList.compactionStart): behind a fold-opened turn it closes that
 // turn first and waits for its entry to end, then makes the call and applies its end (runList.compactionEnded).
 // Every check is made under lc.mu and every wait with it released.
 func (bc *bridgeCoordinator) runCompaction(lc *chatLifecycle, id string) {
+	testHookBeforeCompactionStart(lc.chatID)
 	if !bc.compactionReady(lc, id) {
 		return
 	}
