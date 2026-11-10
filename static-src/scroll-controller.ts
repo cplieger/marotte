@@ -393,6 +393,9 @@ export class ScrollController {
   private gestureOpened(aim: Aim): void {
     this.endFlight(false);
     this.endSettle();
+    // The reader is moving, so the text is held from the first move: a tap's click can leave its press open as a drag
+    // starts, and a growth before the drag's first scroll event would otherwise move the text under the finger.
+    this.closePress();
     // The last reported position, not the current one: a threaded scroller applies the tick before the input event
     // is dispatched, and its scroll event is still to come.
     const base = this.lastT >= 0 ? this.lastT : this.clampedTop();
@@ -501,9 +504,12 @@ export class ScrollController {
   }
 
   /** The relative write for holds and the settle: returns the observed move in `viewOffset` terms, and whether the
-   *  clamp changed the target so the caller must re-take. */
+   *  clamp changed the target so the caller must re-take. A delta, never `scrollTo`: mid-fling iOS WebKit's page reads
+   *  a position that trails the UI process's, so a target computed from it lands behind the fling, while a delta is
+   *  added to the UI's own position (https://github.com/WebKit/WebKit/commit/e8697834ad4b3d036032823f29b7d4329ffb45ec). */
   private shiftTop(drift: number): { moved: number; retake: boolean } {
-    const r = holdTarget(this.scrollEl.scrollTop, drift, this.max());
+    const top = this.scrollEl.scrollTop;
+    const r = holdTarget(top, drift, this.max());
     if (r.kind === "none") {
       return { moved: 0, retake: false };
     }
@@ -511,7 +517,7 @@ export class ScrollController {
       return { moved: 0, retake: true };
     }
     const before = viewOffset(this.scope);
-    this.scrollEl.scrollTo({ top: r.top, behavior: "instant" });
+    this.scrollEl.scrollBy({ top: r.top - top, behavior: "instant" });
     this.noteOwnWrite();
     return { moved: viewOffset(this.scope) - before, retake: r.clamped };
   }
@@ -998,7 +1004,15 @@ export class ScrollController {
     this.attributePending();
     this.endSettle();
     const before = viewOffset(this.scope);
-    this.writeTop(this.scrollEl.scrollTop + px);
+    const top = this.scrollEl.scrollTop;
+    const t = Math.max(0, Math.min(Math.round(top + px), this.max()));
+    // A delta for the reason `shiftTop` gives.
+    if (Math.abs(t - top) > edgeSlack()) {
+      this.scrollEl.scrollBy({ top: t - top, behavior: "instant" });
+      this.noteOwnWrite();
+    } else {
+      this.rest = t;
+    }
     if (this.read !== null) {
       this.read.base += viewOffset(this.scope) - before;
     }

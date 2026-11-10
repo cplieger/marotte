@@ -43,7 +43,8 @@ export interface GestureHost {
   /** The reader aimed down while the scroller sits on its end, and `rejoinable()` said yes. */
   atEndDown(): void;
   rejoinable(): boolean;
-  /** A press in the view: a pointer down off the scrollbar, a click, or Enter or Space on a control in it. */
+  /** A press in the view: a pointer down off the scrollbar from a mouse, a click, or Enter or Space on a control in
+   *  it. */
   pressed(): void;
   /** `End` with no modifier. */
   endKey(): void;
@@ -124,7 +125,11 @@ export class GestureTracker {
       "pointerdown",
       (e) => {
         if (!this.inScrollbarGutter(e)) {
-          this.host.pressed();
+          // A touch or pen is a press only at its click: until then it may be a fling's touchdown, and a press drops
+          // the anchor through the growth a fling's last steps bring in.
+          if (e.pointerType !== "touch" && e.pointerType !== "pen") {
+            this.host.pressed();
+          }
           return;
         }
         this.lastBarY = e.clientY;

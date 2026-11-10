@@ -63,7 +63,7 @@ function fakeScroller(init: { scrollHeight: number; clientHeight: number; scroll
       state.scrollTop = v;
     },
   });
-  // `scrollTo` has to be shadowed alongside the metrics, or the faked scrollTop is bypassed
+  // `scrollTo` and `scrollBy` have to be shadowed alongside the metrics, or the faked scrollTop is bypassed
   // entirely: production reaches the live edge through `scrollEl.scrollTo({top, behavior})`, and in
   // a real browser that is the platform's own method writing a real scroll position — which stays 0
   // on an element with no overflow, so every pin assertion read 0.
@@ -73,6 +73,12 @@ function fakeScroller(init: { scrollHeight: number; clientHeight: number; scroll
       state.scrollTop = top;
     }
   }) as typeof el.scrollTo;
+  el.scrollBy = ((arg?: number | ScrollToOptions, y?: number): void => {
+    const d = typeof arg === "number" ? y : arg?.top;
+    if (d !== undefined) {
+      state.scrollTop += d;
+    }
+  }) as typeof el.scrollBy;
   return state;
 }
 
@@ -1049,8 +1055,8 @@ describe("fillViewport", () => {
 function realScroller(): HTMLElement {
   const wrap = scroll.getScrollEl();
   // `Reflect.deleteProperty` rather than `delete`: the keys are computed, and the point is to drop
-  // `fakeScroller`'s redefinitions so the platform's own metrics and `scrollTo` come back.
-  for (const key of ["scrollHeight", "clientHeight", "scrollTop", "scrollTo"]) {
+  // `fakeScroller`'s redefinitions so the platform's own metrics, `scrollTo` and `scrollBy` come back.
+  for (const key of ["scrollHeight", "clientHeight", "scrollTop", "scrollTo", "scrollBy"]) {
     Reflect.deleteProperty(wrap, key);
   }
   // `scrollbar-gutter: stable` is a shipped declaration (css/13-messages.css) this section
@@ -2416,6 +2422,46 @@ describe("holding what the reader reads", () => {
     await land();
 
     expect(reading.getBoundingClientRect().top).toBe(was + 200);
+  });
+
+  it("leaves a touch tap's own change where it opened, the press its click's", async () => {
+    const { rows } = await parkedAmongRows();
+    const reading = rows[6]!;
+    const was = reading.getBoundingClientRect().top;
+    const tapped = rows[5]!;
+    tapped.dispatchEvent(new PointerEvent("pointerdown", { pointerType: "touch", bubbles: true }));
+    tapped.dispatchEvent(touchEvent("touchstart", tapped, 200));
+    tapped.dispatchEvent(touchEvent("touchend", tapped));
+    tapped.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    tapped.style.height = "300px";
+    await land();
+
+    expect(reading.getBoundingClientRect().top).toBe(was + 200);
+  });
+
+  it("holds the reading line through a growth above during a long-press that selects text", async () => {
+    const { rows } = await parkedAmongRows();
+    const reading = rows[6]!;
+    reading.textContent = "selected words";
+    await land();
+    const was = reading.getBoundingClientRect().top;
+    try {
+      reading.dispatchEvent(
+        new PointerEvent("pointerdown", { pointerType: "touch", bubbles: true }),
+      );
+      reading.dispatchEvent(touchEvent("touchstart", reading, 200));
+      document.getSelection()?.selectAllChildren(reading);
+      rows[5]!.style.height = "300px";
+      await land();
+      reading.dispatchEvent(touchEvent("touchend", reading));
+
+      expect({
+        selected: document.getSelection()?.toString(),
+        moved: reading.getBoundingClientRect().top - was,
+      }).toEqual({ selected: "selected words", moved: 0 });
+    } finally {
+      document.getSelection()?.removeAllRanges();
+    }
   });
 
   it("re-reads the line where a correction cannot scroll, and stops correcting", async () => {

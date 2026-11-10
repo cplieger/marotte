@@ -206,6 +206,21 @@ describe("which input opens a gesture", () => {
     document.dispatchEvent(new PointerEvent("pointermove", { clientX: gutterX, clientY: 180 }));
     expect(log.calls).toEqual(["press", "open 0", "aim -1"]);
   });
+
+  it.each(["touch", "pen"])(
+    "leaves a %s's press to its click, which only a tap ends in",
+    (pointerType) => {
+      view.dispatchEvent(
+        new PointerEvent("pointerdown", { pointerType, clientY: 200, bubbles: true }),
+      );
+      touch("touchstart", 200);
+      expect(log.calls, "at touchdown").toEqual([]);
+
+      touch("touchend");
+      view.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(log.calls, "at the tap's click").toEqual(["press"]);
+    },
+  );
 });
 
 describe("a touch", () => {

@@ -145,7 +145,7 @@ function fakeGeometry(
       state.scrollTop = v;
     },
   });
-  // `scrollTo` has to be shadowed alongside the metrics, or the faked scrollTop is bypassed
+  // `scrollTo` and `scrollBy` have to be shadowed alongside the metrics, or the faked scrollTop is bypassed
   // entirely: production reaches the live edge through `scrollEl.scrollTo({top, behavior})`, and in
   // a real browser that is the platform's own method writing a real scroll position — which stays 0
   // on an element with no overflow, so every pin assertion read 0.
@@ -155,6 +155,12 @@ function fakeGeometry(
       state.scrollTop = top;
     }
   }) as typeof el.scrollTo;
+  el.scrollBy = ((arg?: number | ScrollToOptions, y?: number): void => {
+    const d = typeof arg === "number" ? y : arg?.top;
+    if (d !== undefined) {
+      state.scrollTop += d;
+    }
+  }) as typeof el.scrollBy;
   return state;
 }
 
