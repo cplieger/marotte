@@ -1,5 +1,7 @@
 package marotte
 
+import "slices"
+
 // RunEntryKind is what a run-order entry runs.
 type RunEntryKind string
 
@@ -371,10 +373,7 @@ func UnreadSlot(entries []RunEntry) (index int, rides string) {
 }
 
 func waitIfInserted(entries []RunEntry, at int, e *RunEntry) RunWait {
-	with := make([]RunEntry, 0, len(entries)+1)
-	with = append(with, entries[:at]...)
-	with = append(with, *e)
-	with = append(with, entries[at:]...)
+	with := slices.Insert(slices.Clone(entries), at, *e)
 	order := waitOrder(with)
 	for pos, i := range order {
 		if i == at {
