@@ -14,7 +14,7 @@ declare module "vitest/internal/browser" {
   }
 }
 
-export interface ClickPoint {
+interface ClickPoint {
   readonly x: number;
   readonly y: number;
 }

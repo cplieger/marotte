@@ -170,7 +170,7 @@ export function storePointerOverrides(): Record<string, unknown> {
 }
 
 /** A promise with its settlers, for a page GET a case holds open. */
-export interface Held {
+interface Held {
   readonly promise: Promise<void>;
   resolve(): void;
   reject(err: unknown): void;
