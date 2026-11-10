@@ -561,6 +561,50 @@ export function adoptDiskBytes(state: FileState, read: FileRead): void {
   state.runs = null;
 }
 
+/** A save answered with the bytes the file's owner wrote, `raw` under `fileId`, in place of
+ *  `sent`: they become the baseline, and the buffer too unless the reader typed during the save.
+ *  Typed text keeps its own line-ending tracker, which shadows the buffer, not the baseline. */
+export function adoptSavedBytes(state: FileState, sent: string, raw: string, fileId: string): void {
+  const eol = state.eol;
+  if (eol === null) {
+    return;
+  }
+  const { text, record } = normalize(raw);
+  const untouched = state.current.value === sent;
+  batch(() => {
+    commitBaseline(state, {
+      fileId,
+      text,
+      eol: { saved: record, tracker: untouched ? new EolTracker(text, record) : eol.tracker },
+    });
+    if (untouched) {
+      state.current.value = text;
+    }
+  });
+}
+
+/** `adoptSavedBytes` over a fresh verified read, for a save whose answer's bytes do not match
+ *  the identity it names. True once adopted. A failed or unverified read commits nothing and
+ *  shows INCOMPLETE_READ; an answer `settles` no longer admits does nothing. */
+export async function adoptSavedFromDisk(
+  state: FileState,
+  sent: string,
+  settles: () => boolean,
+): Promise<boolean> {
+  const answer = await readFile(state.path);
+  if (!settles()) {
+    return false;
+  }
+  // A non-UTF-8 read passes verifyRead unchecked, and is never an editing baseline.
+  if (answer.kind !== "read" || !answer.read.utf8 || verifyRead(answer.read) !== null) {
+    state.alert.value = { kind: "failed", sentence: INCOMPLETE_READ };
+    restoreUI(state);
+    return false;
+  }
+  adoptSavedBytes(state, sent, answer.read.content, answer.read.file_id);
+  return true;
+}
+
 /** Live refresh's re-read: reclassify a file that crossed the cap or turned binary, otherwise
  *  re-read and adopt at the same line, a view at the bottom staying pinned. */
 async function reloadForLive(

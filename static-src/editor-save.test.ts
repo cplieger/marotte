@@ -1,12 +1,15 @@
 // Saving from the editor: the bytes written keep the file's own line endings and name the identity
 // they were read under, an edit the line-ending record cannot attribute is refused rather than
 // guessed, and a save the server refuses as stale leaves the buffer and offers the ways on until
-// the reader picks one.
+// the reader picks one. A file whose owner writes other bytes than were sent takes the written
+// bytes as its baseline, only under the identity that names them.
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { userEvent } from "vitest/browser";
+import type * as Api from "./api-client.js";
 import type * as EditorActions from "./actions/editor.js";
 import type * as Git from "./git.js";
 import type { SaveOutcome } from "./actions/editor.js";
+import type { FileRead } from "./wire/types.gen.js";
 
 interface SaveArgs {
   readonly path: string;
@@ -17,8 +20,24 @@ interface SaveHandlers {
   readonly onSuccess: (o: SaveOutcome) => void;
 }
 
-const { saves } = vi.hoisted(() => ({
+const { saves, reads, gets } = vi.hoisted(() => ({
   saves: [] as { args: SaveArgs; handlers: SaveHandlers }[],
+  /** The answers the next `GET /api/file` calls get, in order; none queued is a failed read. */
+  reads: [] as FileRead[],
+  gets: [] as string[],
+}));
+
+vi.mock("./api-client.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof Api>()),
+  apiGetTypedOrError: (path: string) => {
+    gets.push(path);
+    const data = reads.shift();
+    return Promise.resolve(
+      data === undefined
+        ? { ok: false, status: 0, data: null, error: "no answer" }
+        : { ok: true, status: 200, data, error: "" },
+    );
+  },
 }));
 
 vi.mock("./actions/editor.js", async (importOriginal) => {
@@ -64,6 +83,8 @@ afterAll(() => {
 
 beforeEach(() => {
   saves.length = 0;
+  reads.length = 0;
+  gets.length = 0;
   fileStates.clear();
   setActiveFilePath("");
 });
@@ -78,9 +99,9 @@ const actionLabels = (): string[] =>
   );
 
 /** Open `raw` (its endings intact) as read under READ_ID, then enter the edit state. */
-function openForEdit(raw: string): ReturnType<typeof freshState> {
+function openForEdit(raw: string, path = PATH): ReturnType<typeof freshState> {
   const { text, record } = normalize(raw);
-  const state = freshState(PATH);
+  const state = freshState(path);
   state.loaded = true;
   state.original.value = text;
   state.current.value = text;
@@ -94,8 +115,8 @@ function openForEdit(raw: string): ReturnType<typeof freshState> {
     readOnly: false,
     size: raw.length,
   };
-  fileStates.set(PATH, state);
-  setActiveFilePath(PATH);
+  fileStates.set(path, state);
+  setActiveFilePath(path);
   renderTextModeUI(state);
   byId("editor-edit-btn").click();
   return state;
@@ -242,4 +263,118 @@ describe("saving from the editor", () => {
     expect(state.fileId).toBe(DISK_ID);
     expect(state.original.value).toBe("x\ny");
   });
+});
+
+describe("a save whose file's owner wrote other bytes than were sent", () => {
+  const CONFIG = "/config/config.json";
+  const OTHER = "/workspace/other.txt";
+  const READ = '{"theme":"dark"}\n';
+  const SENT = '{"theme":"light"}\n';
+  // config.json's owner keeps its own key order and stamps the next version.
+  const WRITTEN = '{\n  "settings_epoch": "e1",\n  "settings_version": 8,\n  "theme": "light"\n}\n';
+
+  const bytesOf = (s: string): number => new TextEncoder().encode(s).length;
+  const savedWith = (content: string, fileId = idOf(content)): SaveOutcome => ({
+    kind: "saved",
+    result: { ok: true, file_id: fileId, size: bytesOf(content), content },
+  });
+  const readOf = (content: string, fileId = idOf(content)): FileRead => ({
+    path: CONFIG,
+    file_id: fileId,
+    modified: "2026-11-09T00:00:00Z",
+    content,
+    size: bytesOf(content),
+    utf8: true,
+    read_only: false,
+  });
+
+  /** Open config.json as READ, replace the buffer with SENT, and press Save. */
+  function saveSent(): ReturnType<typeof freshState> {
+    const state = openForEdit(READ, CONFIG);
+    area().value = SENT;
+    area().dispatchEvent(new Event("input", { bubbles: true }));
+    byId<HTMLButtonElement>("editor-save-btn").click();
+    expect(saves.at(-1)?.args).toEqual({ path: CONFIG, content: SENT, fileId: READ_ID });
+    return state;
+  }
+
+  it("takes the answer's bytes as the baseline and the buffer, clean, and saves next under their identity", async () => {
+    const state = saveSent();
+    saves[0]?.handlers.onSuccess(savedWith(WRITTEN));
+    expect(state.original.value).toBe(WRITTEN);
+    expect(state.current.value).toBe(WRITTEN);
+    expect(state.fileId).toBe(idOf(WRITTEN));
+    expect(state.dirty.value).toBe(false);
+    expect(area().value).toBe(WRITTEN);
+    await typeAtEnd(" ");
+    byId<HTMLButtonElement>("editor-save-btn").click();
+    expect(saves[1]?.args).toEqual({ path: CONFIG, content: `${WRITTEN} `, fileId: idOf(WRITTEN) });
+  });
+
+  it("keeps what the reader typed during the save, diffed against the answer's bytes, with the buffer's own endings", async () => {
+    const state = openForEdit("a\r\nb\r\n", CONFIG);
+    await typeAtEnd("c");
+    byId<HTMLButtonElement>("editor-save-btn").click();
+    await typeAtEnd("d");
+    saves[0]?.handlers.onSuccess(savedWith("a\nb\nc\n"));
+    expect(state.original.value).toBe("a\nb\nc\n");
+    expect(state.current.value).toBe("a\nb\ncd");
+    expect(state.dirty.value).toBe(true);
+    byId<HTMLButtonElement>("editor-save-btn").click();
+    expect(saves[1]?.args).toEqual({
+      path: CONFIG,
+      content: "a\r\nb\r\ncd",
+      fileId: idOf("a\nb\nc\n"),
+    });
+  });
+
+  it("settles onto its own record when another file is shown, leaving that file's buffer alone", () => {
+    const state = saveSent();
+    const other = openForEdit("other\n", OTHER);
+    saves[0]?.handlers.onSuccess(savedWith(WRITTEN));
+    expect(state.original.value).toBe(WRITTEN);
+    expect(state.current.value).toBe(WRITTEN);
+    expect(state.dirty.value).toBe(false);
+    expect(other.current.value).toBe("other\n");
+    expect(other.original.value).toBe("other\n");
+    expect(area().value).toBe("other\n");
+  });
+
+  it("adopts the verified re-read when the answer's bytes do not match its identity", async () => {
+    const state = saveSent();
+    reads.push(readOf(WRITTEN));
+    saves[0]?.handlers.onSuccess(savedWith('{"theme":"forged"}\n', idOf(WRITTEN)));
+    await vi.waitFor(() => {
+      expect(state.original.value).toBe(WRITTEN);
+    });
+    expect(gets).toHaveLength(1);
+    expect(state.current.value).toBe(WRITTEN);
+    expect(state.fileId).toBe(idOf(WRITTEN));
+    expect(state.alert.value).toBeNull();
+    expect(area().value).toBe(WRITTEN);
+  });
+
+  it.each([
+    ["a re-read whose bytes do not match its identity", readOf(WRITTEN, DISK_ID)],
+    ["a re-read that is not UTF-8", { ...readOf(WRITTEN), utf8: false }],
+    ["no re-read", undefined],
+  ])(
+    "keeps the pre-save baseline and says the file arrived incomplete after %s",
+    async (_name, read) => {
+      const state = saveSent();
+      if (read !== undefined) {
+        reads.push(read);
+      }
+      saves[0]?.handlers.onSuccess(savedWith('{"theme":"forged"}\n', idOf(WRITTEN)));
+      await vi.waitFor(() => {
+        expect(byId("editor-error").textContent).toBe(
+          "The file arrived incomplete. Reload the tab to try again.",
+        );
+      });
+      expect(gets).toHaveLength(1);
+      expect(state.original.value).toBe(READ);
+      expect(state.fileId).toBe(READ_ID);
+      expect(state.current.value).toBe(SENT);
+    },
+  );
 });
