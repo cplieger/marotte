@@ -210,9 +210,9 @@ func (s *toolsSlot) tick() {
 }
 
 // syncLocked hands an acting read to the engine's store: an unreadable one takes the engine down
-// with its reason; an absent one's error is a seed write that failed, and the engine stays up.
+// with its reason; an absent one's error is a seed write that failed, so the engine stays up and
+// the read stays unseen for the next tick to retry.
 func (s *toolsSlot) syncLocked(r ownedfile.Read, data []byte, problem error) {
-	defer s.markSeen(r)
 	_, err := s.engine.SyncManifest(data, seenKind(r.Kind))
 	switch {
 	case r.Kind == ownedfile.Unreadable && err != nil:
@@ -221,7 +221,11 @@ func (s *toolsSlot) syncLocked(r ownedfile.Read, data []byte, problem error) {
 		s.down = refuseManifest(s.manifest, problem)
 	case err != nil:
 		slog.Warn("tools: tools.json change not applied", "path", s.manifest, "error", logsafe.Field(err.Error()))
+		if r.Kind == ownedfile.Absent {
+			return
+		}
 	}
+	s.markSeen(r)
 }
 
 // manifestChangedLocked is the down engine's answer to an acting read: a valid or absent file
