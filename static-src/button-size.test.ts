@@ -361,13 +361,14 @@ describe("the composer's controls and the resume button, against the toolbar's b
       ]
         .filter(shown)
         .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+      const spacer = document.querySelector(".pill-spacer")!.getBoundingClientRect();
       const off: string[] = [];
       for (let i = 1; i < row.length; i++) {
         const a = row[i - 1]!;
         const b = row[i]!;
         const ra = a.getBoundingClientRect();
         const rb = b.getBoundingClientRect();
-        if (rb.left - ra.right > 16) {
+        if (spacer.width > 0 && spacer.left > ra.right - 0.5 && spacer.right < rb.left + 0.5) {
           continue; // the spacer's free space: no neighbour to meet
         }
         const x = (ra.right + rb.left) / 2;
