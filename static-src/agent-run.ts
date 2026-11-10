@@ -2,9 +2,8 @@
 // its own run tab like any other workflow run.
 
 import { el } from "@cplieger/ui";
-import type { PopoverController } from "@cplieger/ui/popover";
 import { launchRun } from "./actions/runs.js";
-import { anchoredPopover } from "./anchored-popover.js";
+import { anchoredPopover, type AnchoredPopover } from "./anchored-popover.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_PLAY } from "./icons.js";
 
@@ -26,7 +25,7 @@ export function agentRunButton(name: string): HTMLButtonElement | null {
     },
     iconEl(ICON_PLAY),
   ) as HTMLButtonElement;
-  let popup: PopoverController | null = null;
+  let popup: AnchoredPopover | null = null;
   btn.addEventListener("click", (e: MouseEvent) => {
     e.stopPropagation();
     popup ??= buildPopup(name, btn);
@@ -35,7 +34,7 @@ export function agentRunButton(name: string): HTMLButtonElement | null {
   return btn;
 }
 
-function buildPopup(name: string, btn: HTMLButtonElement): PopoverController {
+function buildPopup(name: string, btn: HTMLButtonElement): AnchoredPopover {
   const panel = promptForm(name, () => {
     popup.hide();
   });
@@ -46,14 +45,6 @@ function buildPopup(name: string, btn: HTMLButtonElement): PopoverController {
     // Safari does not focus a clicked button, so capturing the active element at
     // open would restore focus to the page rather than to the trigger.
     returnFocus: btn,
-    onClose: () => {
-      // The Agents tab rebuilds its rows, and a panel whose button is gone would
-      // otherwise stay parked in the page.
-      if (!btn.isConnected) {
-        popup.dispose();
-        panel.remove();
-      }
-    },
   });
   return popup;
 }

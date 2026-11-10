@@ -806,7 +806,8 @@ describe("the Run when… popup", () => {
   }
 
   function popupButton(text: string): HTMLButtonElement {
-    // A hidden popup stays in the document, so only the one opened last is searched.
+    // A closing popup stays in the document until its fade ends, so only the one opened last is
+    // searched.
     const open = [...document.querySelectorAll<HTMLElement>(".sched-popup")].at(-1);
     const b = [...(open?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
       (x) => x.textContent === text,
@@ -815,6 +816,15 @@ describe("the Run when… popup", () => {
       throw new Error(`the popup has no ${text} button`);
     }
     return b;
+  }
+
+  /** Repaint the list holding `btn` under a filter that matches no recipe. */
+  function filterAway(btn: HTMLButtonElement): void {
+    const host = btn.closest(".list-container")?.parentElement;
+    if (host == null) {
+      throw new Error("the button is not in a recipe list");
+    }
+    renderRecipesPanel(host, "zzzz");
   }
 
   function scheduleModel(): HTMLSelectElement {
@@ -855,6 +865,27 @@ describe("the Run when… popup", () => {
     const none = await openPopup();
     expect(none.textContent).toBe("Run when…");
     expect(none.classList.contains("on")).toBe(false);
+  });
+
+  it("leaves no panel in the page once it closes and its row is filtered away", async () => {
+    rulesReply = { rules: [clockRule("c1")] };
+    const btn = await openPopup();
+    btn.click();
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+    filterAway(btn);
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll(".sched-popup")).toHaveLength(0);
+    });
+  });
+
+  it("closes the open panel when its row leaves the page", async () => {
+    rulesReply = { rules: [clockRule("c1")] };
+    const btn = await openPopup();
+    // A recipes_changed refetch that drops the recipe repaints with no rules fetch behind it.
+    btn.closest(".entry")!.remove();
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll(".sched-popup")).toHaveLength(0);
+    });
   });
 
   it("shows the first error state on the recipe row", async () => {

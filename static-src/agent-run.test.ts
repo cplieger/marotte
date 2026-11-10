@@ -154,6 +154,19 @@ describe("the agent Run control", () => {
     expect(btn.getAttribute("aria-expanded")).toBe("true");
     expect(document.querySelectorAll(".sched-popup")).toHaveLength(1);
   });
+
+  it("closes the prompt, and leaves no panel behind, when its row is rebuilt under it", async () => {
+    const row = document.createElement("div");
+    document.body.append(row);
+    const btn = agentRunButton("reviewer")!;
+    row.append(btn);
+    btn.click();
+    expect(openPanels()).toHaveLength(1);
+    row.replaceChildren(agentRunButton("reviewer")!);
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll(".sched-popup")).toHaveLength(0);
+    });
+  });
 });
 
 describe("the agent Run panel's placement", () => {

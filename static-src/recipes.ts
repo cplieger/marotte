@@ -388,7 +388,18 @@ function picksFor(v: LaunchRuleView | undefined): RunDefaultsPicker {
   return rulePicks;
 }
 
+/** Built on the first press: a row mounts per filter keystroke, and most are never opened. */
 function wireRulesPopup(btn: HTMLButtonElement, source: string): void {
+  let toggle: (() => void) | null = null;
+  btn.addEventListener("click", (e: MouseEvent) => {
+    e.stopPropagation();
+    toggle ??= rulesPopup(btn, source);
+    toggle();
+  });
+}
+
+/** The Run when… panel under `btn`, and the press that opens it on the current rules or closes it. */
+function rulesPopup(btn: HTMLButtonElement, source: string): () => void {
   const body = el("div", { className: "sched-popup" });
   // This popup's entry in `popupList`, so a close clears only its own.
   let listed: typeof popupList = null;
@@ -397,11 +408,6 @@ function wireRulesPopup(btn: HTMLButtonElement, source: string): void {
     onClose: () => {
       if (popupList === listed) {
         popupList = null;
-      }
-      // A row rebuild drops the button; its panel would otherwise stay parked in the page.
-      if (!btn.isConnected) {
-        popup.dispose();
-        body.remove();
       }
     },
   });
@@ -417,167 +423,164 @@ function wireRulesPopup(btn: HTMLButtonElement, source: string): void {
     popup.reposition();
   };
 
-  btn.addEventListener("click", (e: MouseEvent) => {
-    e.stopPropagation();
+  const recipe = (): Recipe | undefined => recipes.find((x) => x.source === source);
+  const openPermissions = (): void => {
+    close();
+    void openSettingsView("permissions");
+  };
+  const openSources = (): void => {
+    close();
+    void openGitView("sources");
+  };
+  const saved = async (v: LaunchRuleView): Promise<void> => {
+    close();
+    storeRule(v);
+    await refreshRules();
+  };
+  const idOf = (v: LaunchRuleView | undefined): { id?: string } =>
+    v === undefined ? {} : { id: v.id };
+
+  const showClock = (v?: LaunchRuleView): void => {
+    popupList = null;
+    view(
+      buildSchedulePicker({
+        spec: v?.when.clock ?? defaultSpec(),
+        enabled: v?.enabled ?? true,
+        exists: v !== undefined,
+        autoApprove,
+        picks: picksFor(v),
+        declared: declaredOf(recipe()),
+        inputs: v?.inputs,
+        onOpenPermissions: openPermissions,
+        // Closed only once saved: a refused pick keeps the edits open, and the server's
+        // sentence shows in the action's error toast.
+        onSave: (spec, enabled, defaults, inputs) => {
+          void (async () => {
+            const s = await saveLaunchRule.dispatch({
+              ...idOf(v),
+              source,
+              enabled,
+              when: { clock: spec },
+              ...(inputs === undefined ? {} : { inputs }),
+              ...defaults,
+            });
+            if (s !== null) {
+              await saved(s);
+            }
+          })();
+        },
+        onRemove: () => {
+          if (v !== undefined) {
+            close();
+            void removeRule(v);
+          }
+        },
+        onClose: close,
+      }),
+    );
+  };
+
+  const showEvent = (v?: LaunchRuleView): void => {
+    popupList = null;
+    const loading = el("div", { className: "sched-hint" }, "Reading your connections…");
+    view(loading);
+    void listForges.dispatch(undefined).then((d) => {
+      if (!body.contains(loading)) {
+        return;
+      }
+      if (d === null) {
+        view(el("div", { className: "sched-hint" }, "Could not read the connections in Sources."));
+        return;
+      }
+      view(
+        buildEventForm({
+          ...(v === undefined ? {} : { rule: v }),
+          forges: d.forges,
+          declared: declaredOf(recipe()),
+          autoApprove,
+          picks: picksFor(v),
+          onOpenPermissions: openPermissions,
+          onOpenSources: openSources,
+          onClose: close,
+          onSave: async (draft, defaults) => {
+            const body: LaunchRuleBody = {
+              ...idOf(v),
+              source,
+              enabled: draft.enabled,
+              when: { event: draft.event },
+              ...(draft.inputs === undefined ? {} : { inputs: draft.inputs }),
+              ...defaults,
+            };
+            let res = await sendRule(body);
+            if (res.status === 409 && v !== undefined) {
+              const held = await heldNow(v);
+              if (held > 0 && !(await confirmDrop(held))) {
+                return "";
+              }
+              res = await sendRule(held > 0 ? { ...body, confirm_drop: held } : body);
+            }
+            if (res.saved === null) {
+              return res.refusal;
+            }
+            await saved(res.saved);
+            return null;
+          },
+        }),
+      );
+    });
+  };
+
+  const showList = (): void => {
+    const repaint = (): void => {
+      const r = recipe();
+      view(
+        buildRuleList({
+          rules: rules.get(source) ?? [],
+          autoApprove,
+          declared: r === undefined ? undefined : Object.keys(r.inputs ?? {}),
+          onToggle: (v, enabled) => {
+            void toggleRule(v, enabled);
+          },
+          onEdit: (v) => {
+            if (v.when.clock === undefined) {
+              showEvent(v);
+            } else {
+              showClock(v);
+            }
+          },
+          onDelete: (v) => {
+            void removeRule(v);
+          },
+          onDismissGap: async (v) => {
+            const next = await dismissGap.dispatch(v.id);
+            if (next !== null) {
+              storeRule(next);
+            }
+            return next;
+          },
+          onAddClock: () => {
+            showClock();
+          },
+          onAddEvent: () => {
+            showEvent();
+          },
+        }),
+      );
+    };
+    listed = { repaint };
+    popupList = listed;
+    repaint();
+  };
+
+  return () => {
     if (popup.isOpen) {
       popup.hide();
       return;
     }
-    const recipe = (): Recipe | undefined => recipes.find((x) => x.source === source);
-    const openPermissions = (): void => {
-      close();
-      void openSettingsView("permissions");
-    };
-    const openSources = (): void => {
-      close();
-      void openGitView("sources");
-    };
-    const saved = async (v: LaunchRuleView): Promise<void> => {
-      close();
-      storeRule(v);
-      await refreshRules();
-    };
-    const idOf = (v: LaunchRuleView | undefined): { id?: string } =>
-      v === undefined ? {} : { id: v.id };
-
-    const showClock = (v?: LaunchRuleView): void => {
-      popupList = null;
-      view(
-        buildSchedulePicker({
-          spec: v?.when.clock ?? defaultSpec(),
-          enabled: v?.enabled ?? true,
-          exists: v !== undefined,
-          autoApprove,
-          picks: picksFor(v),
-          declared: declaredOf(recipe()),
-          inputs: v?.inputs,
-          onOpenPermissions: openPermissions,
-          // Closed only once saved: a refused pick keeps the edits open, and the server's
-          // sentence shows in the action's error toast.
-          onSave: (spec, enabled, defaults, inputs) => {
-            void (async () => {
-              const s = await saveLaunchRule.dispatch({
-                ...idOf(v),
-                source,
-                enabled,
-                when: { clock: spec },
-                ...(inputs === undefined ? {} : { inputs }),
-                ...defaults,
-              });
-              if (s !== null) {
-                await saved(s);
-              }
-            })();
-          },
-          onRemove: () => {
-            if (v !== undefined) {
-              close();
-              void removeRule(v);
-            }
-          },
-          onClose: close,
-        }),
-      );
-    };
-
-    const showEvent = (v?: LaunchRuleView): void => {
-      popupList = null;
-      const loading = el("div", { className: "sched-hint" }, "Reading your connections…");
-      view(loading);
-      void listForges.dispatch(undefined).then((d) => {
-        if (!body.contains(loading)) {
-          return;
-        }
-        if (d === null) {
-          view(
-            el("div", { className: "sched-hint" }, "Could not read the connections in Sources."),
-          );
-          return;
-        }
-        view(
-          buildEventForm({
-            ...(v === undefined ? {} : { rule: v }),
-            forges: d.forges,
-            declared: declaredOf(recipe()),
-            autoApprove,
-            picks: picksFor(v),
-            onOpenPermissions: openPermissions,
-            onOpenSources: openSources,
-            onClose: close,
-            onSave: async (draft, defaults) => {
-              const body: LaunchRuleBody = {
-                ...idOf(v),
-                source,
-                enabled: draft.enabled,
-                when: { event: draft.event },
-                ...(draft.inputs === undefined ? {} : { inputs: draft.inputs }),
-                ...defaults,
-              };
-              let res = await sendRule(body);
-              if (res.status === 409 && v !== undefined) {
-                const held = await heldNow(v);
-                if (held > 0 && !(await confirmDrop(held))) {
-                  return "";
-                }
-                res = await sendRule(held > 0 ? { ...body, confirm_drop: held } : body);
-              }
-              if (res.saved === null) {
-                return res.refusal;
-              }
-              await saved(res.saved);
-              return null;
-            },
-          }),
-        );
-      });
-    };
-
-    const showList = (): void => {
-      const repaint = (): void => {
-        const r = recipe();
-        view(
-          buildRuleList({
-            rules: rules.get(source) ?? [],
-            autoApprove,
-            declared: r === undefined ? undefined : Object.keys(r.inputs ?? {}),
-            onToggle: (v, enabled) => {
-              void toggleRule(v, enabled);
-            },
-            onEdit: (v) => {
-              if (v.when.clock === undefined) {
-                showEvent(v);
-              } else {
-                showClock(v);
-              }
-            },
-            onDelete: (v) => {
-              void removeRule(v);
-            },
-            onDismissGap: async (v) => {
-              const next = await dismissGap.dispatch(v.id);
-              if (next !== null) {
-                storeRule(next);
-              }
-              return next;
-            },
-            onAddClock: () => {
-              showClock();
-            },
-            onAddEvent: () => {
-              showEvent();
-            },
-          }),
-        );
-      };
-      listed = { repaint };
-      popupList = listed;
-      repaint();
-    };
-
     // Rebuilt per open: the popup renders the CURRENT rules.
     showList();
     popup.show();
-  });
+  };
 }
 
 function isShowing(): boolean {

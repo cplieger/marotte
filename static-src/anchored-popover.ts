@@ -2,6 +2,7 @@
 // flips it, but never caps its height, so a tall form anchored mid-page would run off the screen.
 
 import { createPopover, type PopoverController, type PopoverOptions } from "@cplieger/ui/popover";
+import { onViewportChange, viewportBox } from "./viewport-frame.js";
 
 const OFFSET = 4;
 const MARGIN = 8;
@@ -10,22 +11,30 @@ const MARGIN = 8;
  *  neither side. */
 function roomBeside(anchor: HTMLElement): number {
   const r = anchor.getBoundingClientRect();
-  const vv = window.visualViewport;
-  const top = vv?.offsetTop ?? 0;
-  const bottom = top + (vv?.height ?? window.innerHeight);
-  return Math.max(r.top - top, bottom - r.bottom) - OFFSET - MARGIN;
+  const { offsetTop, height } = viewportBox();
+  return Math.max(r.top - offsetTop, offsetTop + height - r.bottom) - OFFSET - MARGIN;
 }
+
+/** No `setOptions`: the group is joined only while open, which a patch would bypass. */
+export type AnchoredPopover = Omit<PopoverController, "setOptions">;
 
 /**
  * `createPopover` under `anchor`, end-aligned, with the panel's `--popover-room` set to the room
  * the flip can give it; the panel's stylesheet caps its block size by it and scrolls. The caller
  * calls `reposition()` after swapping the panel's content.
+ *
+ * A closed popover holds nothing outside its anchor's closures: it is in its `group` only while
+ * open, and a panel it hosted (one not in the page at the first show) leaves the page once its
+ * close has played, so a row rebuilt under a closed popover takes it with it. An open one closes
+ * when its anchor leaves the page.
  */
 export function anchoredPopover(
   anchor: HTMLElement,
   panel: HTMLElement,
   opts: Omit<PopoverOptions, "placement" | "align" | "offset" | "margin"> = {},
-): PopoverController {
+): AnchoredPopover {
+  const { group, ...rest } = opts;
+  let hosted = false;
   const fit = (): void => {
     panel.style.setProperty("--popover-room", `${String(Math.max(0, roomBeside(anchor)))}px`);
     // The popover measures the panel's width where it last placed it, and a fixed box shrinks to
@@ -44,18 +53,37 @@ export function anchoredPopover(
       ctl.reposition();
     });
   };
+  const anchorWatch = new MutationObserver(() => {
+    if (!anchor.isConnected) {
+      ctl.hide();
+    }
+  });
+  // The popover hides the panel once its leave transition has settled.
+  const leaveWatch = new MutationObserver(() => {
+    if (panel.hidden) {
+      leaveWatch.disconnect();
+      panel.remove();
+    }
+  });
+  let releaseViewport = (): void => undefined;
   const track = (on: boolean): void => {
-    const method = on ? "addEventListener" : "removeEventListener";
-    if (!on && frame !== 0) {
+    if (on) {
+      document.addEventListener("scroll", refit, true);
+      releaseViewport = onViewportChange(refit);
+      anchorWatch.observe(document.body, { childList: true, subtree: true });
+      return;
+    }
+    if (frame !== 0) {
       cancelAnimationFrame(frame);
       frame = 0;
     }
-    document[method]("scroll", refit, true);
-    window[method]("resize", refit);
-    window.visualViewport?.[method]("resize", refit);
+    document.removeEventListener("scroll", refit, true);
+    releaseViewport();
+    releaseViewport = (): void => undefined;
+    anchorWatch.disconnect();
   };
   const ctl = createPopover(anchor, panel, {
-    ...opts,
+    ...rest,
     placement: "bottom",
     align: "end",
     offset: OFFSET,
@@ -66,24 +94,45 @@ export function anchoredPopover(
     },
     onClose: () => {
       track(false);
+      if (group !== undefined) {
+        ctl.setOptions({ group: undefined });
+      }
+      if (hosted) {
+        if (panel.hidden) {
+          panel.remove();
+        } else {
+          leaveWatch.observe(panel, { attributes: true, attributeFilter: ["hidden"] });
+        }
+      }
       opts.onClose?.();
     },
   });
+  const open = (): void => {
+    leaveWatch.disconnect();
+    hosted ||= !panel.isConnected;
+    if (group !== undefined) {
+      ctl.setOptions({ group });
+    }
+    fit();
+    ctl.show();
+  };
   return {
-    ...ctl,
     get isOpen(): boolean {
       return ctl.isOpen;
     },
     get el(): HTMLElement {
       return ctl.el;
     },
-    show: () => {
-      fit();
-      ctl.show();
+    show: open,
+    hide: () => {
+      ctl.hide();
     },
     toggle: () => {
-      fit();
-      ctl.toggle();
+      if (ctl.isOpen) {
+        ctl.hide();
+      } else {
+        open();
+      }
     },
     reposition: () => {
       fit();
@@ -91,7 +140,11 @@ export function anchoredPopover(
     },
     dispose: () => {
       track(false);
+      leaveWatch.disconnect();
       ctl.dispose();
+      if (hosted) {
+        panel.remove();
+      }
     },
   };
 }
