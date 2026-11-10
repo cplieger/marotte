@@ -2,14 +2,18 @@ package settings
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -186,6 +190,40 @@ func TestPoll_AnAbsentFileReportsEveryKeyItHeld(t *testing.T) {
 			t.Errorf("config.json stat %v, published %v; want no file and no event", err, ev.got)
 		}
 	})
+}
+
+func TestPoll_AnAbsenceWhoseSeedCannotBeWrittenStaysHeldAndIsRetried(t *testing.T) {
+	dir, path := pollFixture(t, seededDoc)
+	real := writeConfigFile
+	writeConfigFile = func(context.Context, string, []byte, ...filesafe.WriteOption) (filesafe.Result, error) {
+		return filesafe.Result{}, &fs.PathError{Op: "write", Path: path, Err: syscall.ENOSPC}
+	}
+	t.Cleanup(func() { writeConfigFile = real })
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	var ev events
+	poll(t, dir, &ev)
+	if changed, ok := poll(t, dir, &ev); ok || changed != nil || len(ev.got) != 0 {
+		t.Errorf("settled Poll with the write failing = (%v, %v), published %v; want nothing", changed, ok, ev.got)
+	}
+	doc, _, err := Read(t.Context(), dir)
+	if theme, _, _ := Lookup[string](doc, KeyTheme); err != nil || theme != "dark" {
+		t.Errorf("Read = theme %q, %v; want the applied document's dark", theme, err)
+	}
+
+	writeConfigFile = real
+	changed, ok := poll(t, dir, &ev)
+	if want := []string{KeySecurityProfile, KeyTheme}; !ok || !slices.Equal(changed, want) {
+		t.Errorf("Poll with the write working = (%v, %v), want (%v, true)", changed, ok, want)
+	}
+	written := readConfig(t, dir)
+	if len(written) != 2 || !seededStamp.below(stampOf(written)) {
+		t.Errorf("config.json = %v, want only the stamp keys above %v", written, seededStamp)
+	}
+	if want := []marotte.SettingsUpdatedPayload{payloadOf(stampOf(written))}; !slices.Equal(ev.got, want) {
+		t.Errorf("published %v, want %v", ev.got, want)
+	}
 }
 
 func TestPoll_RestampsADocumentBelowTheHighestStamp(t *testing.T) {

@@ -19,10 +19,11 @@ import (
 // Poll checks config.json for an outside write, under Update's lock. A read ownedfile.Gate holds
 // records, writes and publishes nothing. An acting valid read reports the keys that differ from
 // the applied document; a settled absence writes the seed (the stamp keys alone) and reports every
-// key but the stamp keys the applied document held; a settled unreadable read reports nil keys. ok means there is
-// something to apply, and publish has had the change's settings_updated event by then. A document
-// stamped below the highest stamp this process wrote, published or applied is first rewritten
-// above it. err is a context end or a path that does not resolve.
+// key but the stamp keys the applied document held, or stays held and is retried when the seed
+// cannot be written; a settled unreadable read reports nil keys. ok means there is something to
+// apply, and publish has had the change's settings_updated event by then. A document stamped
+// below the highest stamp this process wrote, published or applied is first rewritten above it.
+// err is a context end or a path that does not resolve.
 func Poll(ctx context.Context, configDir string, publish func(context.Context, marotte.ServerEvent)) (changed []string, ok bool, err error) {
 	if configDir == "" {
 		return nil, false, errors.New("settings: no config dir")
@@ -54,7 +55,8 @@ func Poll(ctx context.Context, configDir string, publish func(context.Context, m
 	case r == a.read:
 		return nil, false, nil
 	case r.Kind == ownedfile.Absent:
-		return c.pollAbsent(ctx, path, a, publish), true, nil
+		changed, ok = c.pollAbsent(ctx, path, a, publish)
+		return changed, ok, nil
 	}
 	c.setApplied(r, data)
 	c.forget()
@@ -120,28 +122,28 @@ func (c *cache) pollValid(ctx context.Context, path string, r ownedfile.Read, da
 
 // pollAbsent adopts a settled absence: the seed, the stamp keys alone, is written and applied.
 // It answers every key but the stamp keys the applied document held, nil when that was refused.
-func (c *cache) pollAbsent(ctx context.Context, path string, a applied, publish func(context.Context, marotte.ServerEvent)) []string {
+// ok is false when the seed cannot be written: nothing is adopted, so the next poll retries.
+func (c *cache) pollAbsent(ctx context.Context, path string, a applied,
+	publish func(context.Context, marotte.ServerEvent),
+) (keys []string, ok bool) {
 	before := c.appliedDoc(a)
-	var keys []string
-	if before != nil {
-		keys = changedKeys(before, map[string]json.RawMessage{})
-	}
 	next, has := c.next(stamp{}, time.Now())
 	werr := errNoLaterStamp
 	if has {
 		written, err := c.writeLocked(ctx, path, map[string]json.RawMessage{}, next)
 		if err == nil {
+			if before != nil {
+				keys = changedKeys(before, map[string]json.RawMessage{})
+			}
 			c.setApplied(ownedfile.Written(written), written)
 			publish(ctx, next.event())
-			return keys
+			return keys, true
 		}
 		werr = err
 	}
-	slog.Warn("settings: config.json was removed and its defaults could not be written back", "path", path, "error", werr)
-	c.setApplied(ownedfile.Read{Kind: ownedfile.Absent}, nil)
-	c.forget()
-	publish(ctx, stamp{}.event())
-	return keys
+	slog.Warn("settings: config.json was removed and its defaults could not be written back; retrying at the next poll",
+		"path", path, "error", werr)
+	return nil, false
 }
 
 // changedKeys answers, sorted and never nil, every key but the stamp keys whose compacted value

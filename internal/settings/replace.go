@@ -134,7 +134,7 @@ func checkWhole(path string, s *storedRead, check func([]byte) error) error {
 	if len(disk) > maxBytes {
 		_, whole, _, err := ownedfile.Classify(path, ownedfile.Options{}, func([]byte) error { return nil })
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: %w", ErrUnreadable, err)
 		}
 		disk = whole
 	}

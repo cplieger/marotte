@@ -205,7 +205,7 @@ func TestReplace_WaitsForAnUpdateInFlight(t *testing.T) {
 	}
 }
 
-// failReads makes every config.json read fail as an I/O error on the mount does, regular file and all.
+// failReads makes every capped config.json read fail as an I/O error on the mount does.
 func failReads(t *testing.T) {
 	t.Helper()
 	real := classify

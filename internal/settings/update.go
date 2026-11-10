@@ -68,6 +68,9 @@ func Update(ctx context.Context, configDir string, fn func(doc map[string]json.R
 	return s.doc, nil
 }
 
+// writeConfigFile is writeLocked's write; a var so a test can fail one as a full disk does.
+var writeConfigFile = filesafe.WriteFile
+
 // writeLocked stamps doc with next and writes it as config.json: every write of the file goes
 // through it. writeMu must be held.
 func (c *cache) writeLocked(ctx context.Context, path string, doc map[string]json.RawMessage, next stamp) ([]byte, error) {
@@ -77,7 +80,7 @@ func (c *cache) writeLocked(ctx context.Context, path string, doc map[string]jso
 		return nil, err
 	}
 	written = append(written, '\n')
-	res, err := filesafe.WriteFile(ctx, path, written, filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700))
+	res, err := writeConfigFile(ctx, path, written, filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700))
 	if err != nil {
 		return nil, err
 	}
