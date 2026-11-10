@@ -2,14 +2,12 @@
 // its own run tab like any other workflow run.
 
 import { el } from "@cplieger/ui";
-import { createPopup } from "@cplieger/ui/popup";
 import { launchRun } from "./actions/runs.js";
+import { anchoredPopover, type AnchoredPopover } from "./anchored-popover.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_PLAY } from "./icons.js";
 
 const AGENT_NAME = /^[A-Za-z0-9._-]+$/;
-
-type Popup = ReturnType<typeof createPopup>;
 
 /** A Run button for the named agent, or null when KAS could not address it. */
 export function agentRunButton(name: string): HTMLButtonElement | null {
@@ -27,7 +25,7 @@ export function agentRunButton(name: string): HTMLButtonElement | null {
     },
     iconEl(ICON_PLAY),
   ) as HTMLButtonElement;
-  let popup: Popup | null = null;
+  let popup: AnchoredPopover | null = null;
   btn.addEventListener("click", (e: MouseEvent) => {
     e.stopPropagation();
     popup ??= buildPopup(name, btn);
@@ -36,26 +34,17 @@ export function agentRunButton(name: string): HTMLButtonElement | null {
   return btn;
 }
 
-function buildPopup(name: string, btn: HTMLButtonElement): Popup {
+function buildPopup(name: string, btn: HTMLButtonElement): AnchoredPopover {
   const panel = promptForm(name, () => {
     popup.hide();
   });
-  const popup = createPopup(panel, {
-    trigger: btn,
+  const popup = anchoredPopover(btn, panel, {
     group: "agent-run",
     haspopup: "dialog",
     initialFocus: panel.querySelector("textarea"),
     // Safari does not focus a clicked button, so capturing the active element at
     // open would restore focus to the page rather than to the trigger.
     returnFocus: btn,
-    onClose: () => {
-      // The Agents tab rebuilds its rows, and a panel whose button is gone would
-      // otherwise stay parked in the page.
-      if (!btn.isConnected) {
-        popup.dispose();
-        panel.remove();
-      }
-    },
   });
   return popup;
 }
@@ -67,7 +56,7 @@ function promptForm(name: string, close: () => void): HTMLElement {
     className: "tool-form-input agent-run-prompt",
     rows: "4",
     required: true,
-    placeholder: "What should the agent do...",
+    placeholder: "What should the agent do…",
     "aria-label": `Prompt for ${name}`,
   }) as HTMLTextAreaElement;
   const form = el(

@@ -83,7 +83,7 @@ export function uploadFiles(opts: UploadOptions): void {
   progress.classList.remove("upload-closed");
   bar.setAttribute("aria-label", `Uploading ${String(opts.files.length)} file(s)`);
   bar.value = 0;
-  label.textContent = `Uploading ${String(opts.files.length)} file(s)...`;
+  label.textContent = `Uploading ${String(opts.files.length)} file(s)…`;
 
   const xhr = new XMLHttpRequest();
 
@@ -110,13 +110,13 @@ export function uploadFiles(opts: UploadOptions): void {
     if (e.lengthComputable) {
       const pct = Math.round((e.loaded / e.total) * 100);
       bar.value = pct;
-      label.textContent = `Uploading... ${String(pct)}%`;
+      label.textContent = `Uploading… ${String(pct)}%`;
     } else {
       // Total size unknown. A <progress> with no `value` IS the indeterminate
       // rendering, which is the native spelling of the aria-valuenow removal
       // this replaced; the next determinate tick assigns one again.
       bar.removeAttribute("value");
-      label.textContent = "Uploading...";
+      label.textContent = "Uploading…";
     }
   });
   xhr.addEventListener("load", () => {

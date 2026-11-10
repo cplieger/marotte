@@ -485,7 +485,7 @@ describe("a full context", () => {
       requestAnimationFrame(resolve);
     });
     expect(document.getElementById("context-label")?.textContent).toBe("99%");
-    expect(input().placeholder).toBe("Message Kiro...");
+    expect(input().placeholder).toBe("Message Kiro…");
     const send = document.getElementById("send-btn");
     expect(send?.getAttribute("data-tooltip")).toBe("Send");
     expect(send?.getAttribute("aria-label")).toBe("Send");
@@ -498,13 +498,13 @@ describe("the busy placeholder", () => {
   it("names what the server's run order does with a send, and drops it once idle", () => {
     const box = input();
     withRun(STEERING);
-    expect(box.placeholder).toBe("Steer the agent mid-turn...");
+    expect(box.placeholder).toBe("Steer the agent mid-turn…");
 
     withRun(QUEUEING);
-    expect(box.placeholder).toBe("Queue a follow-up for after this turn...");
+    expect(box.placeholder).toBe("Queue a follow-up for after this turn…");
 
     withRun(runAt(2, []));
-    expect(box.placeholder).toBe("Message Kiro...");
+    expect(box.placeholder).toBe("Message Kiro…");
   });
 
   // The server republishes the run order under the next version when Queue messages is switched
@@ -523,10 +523,10 @@ describe("the busy placeholder", () => {
     });
 
     upsertHeader(header({ ...QUEUEING, version: STEERING.version }));
-    expect(box.placeholder).toBe("Steer the agent mid-turn...");
+    expect(box.placeholder).toBe("Steer the agent mid-turn…");
 
     upsertHeader(header({ ...QUEUEING, version: STEERING.version + 1 }));
-    expect(box.placeholder).toBe("Queue a follow-up for after this turn...");
+    expect(box.placeholder).toBe("Queue a follow-up for after this turn…");
   });
 });
 
@@ -796,7 +796,7 @@ describe("the mid-turn Send", () => {
     type("hello");
     expect(midTurn().getAttribute("aria-label")).toBe("Queue for after 3 turns");
     expect(midTurn().getAttribute("data-tooltip")).toBe("Queue for after 3 turns");
-    expect(input().placeholder).toBe("Queue a follow-up for after 3 turns...");
+    expect(input().placeholder).toBe("Queue a follow-up for after 3 turns…");
   });
 
   it("says a message waits for a compaction, and goes back once it ends", () => {
@@ -807,10 +807,10 @@ describe("the mid-turn Send", () => {
       }),
     );
     setSendState({ kind: "idle" });
-    expect(input().placeholder).toBe("Queue a message for after the compaction...");
+    expect(input().placeholder).toBe("Queue a message for after the compaction…");
 
     withRun(runAt(2, []));
-    expect(input().placeholder).toBe("Message Kiro...");
+    expect(input().placeholder).toBe("Message Kiro…");
   });
 
   it("sends the box through the composer's send path, then empties it and hides", () => {

@@ -240,7 +240,7 @@ func writeUIGuide(b *strings.Builder, workDir, configDir string) {
 	b.WriteString("middle-click closes; right-click gives \"Pin\"/\"Unpin\", \"Export as Markdown\", \"Export as ")
 	b.WriteString("JSON\". Closing a chat tab ends its running turn and keeps the record while retention is ")
 	b.WriteString("on; a run or subagent tab's × closes the view only\n")
-	b.WriteString("- Composer: the textarea (\"Message Kiro...\"), then a pill row: context pie (click: ")
+	b.WriteString("- Composer: the textarea (\"Message Kiro…\"), then a pill row: context pie (click: ")
 	b.WriteString("tokens, credits, turns), model pill (model + reasoning effort), mode pill (\"Default\", ")
 	b.WriteString("Spec, Plan, … and every custom agent), \"Chat options\" (sliders icon) with rows \"Attach a file\", ")
 	b.WriteString("\"Start a tangent\", \"Set a goal\", \"Supervised mode\", a \"Task list\" pill while a plan ")

@@ -1,7 +1,9 @@
 // Tests for the Workflows sub-tab. Two halves.
 
-import { vi, describe, it, expect, beforeEach } from "vitest";
-import { loadCSS, ruleBody } from "./__test-helpers__/css-rules.js";
+import { vi, describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
+import { page } from "vitest/browser";
+import { expectAnchored, resizeViewport } from "./__test-helpers__/anchored-panel.js";
+import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
 const authoredSource = import.meta.glob<string>(
   ["./*.ts", "./actions/*.ts", "./handlers/*.ts", "./fundamentals/*.ts", "../static/index.html"],
@@ -136,6 +138,15 @@ function names(panel: HTMLElement): string[] {
 
 function buttonFor(panel: HTMLElement, source: string): HTMLButtonElement | null {
   return panel.querySelector<HTMLButtonElement>(`[data-recipe="${source}"] .recipe-run-btn`);
+}
+
+/** A button's painted text, part by part: its parts are flex items, which `innerText` puts on lines. */
+function shownText(btn: HTMLElement): string {
+  return [...btn.childNodes]
+    .filter((c) => !(c instanceof Element) || c.getBoundingClientRect().width > 0)
+    .map((c) => (c.textContent ?? "").trim())
+    .filter((t) => t !== "")
+    .join(" ");
 }
 
 beforeEach(() => {
@@ -804,7 +815,8 @@ describe("the Run when… popup", () => {
   }
 
   function popupButton(text: string): HTMLButtonElement {
-    // A hidden popup stays in the document, so only the one opened last is searched.
+    // A closing popup stays in the document until its fade ends, so only the one opened last is
+    // searched.
     const open = [...document.querySelectorAll<HTMLElement>(".sched-popup")].at(-1);
     const b = [...(open?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
       (x) => x.textContent === text,
@@ -813,6 +825,15 @@ describe("the Run when… popup", () => {
       throw new Error(`the popup has no ${text} button`);
     }
     return b;
+  }
+
+  /** Repaint the list holding `btn` under a filter that matches no recipe. */
+  function filterAway(btn: HTMLButtonElement): void {
+    const host = btn.closest(".list-container")?.parentElement;
+    if (host == null) {
+      throw new Error("the button is not in a recipe list");
+    }
+    renderRecipesPanel(host, "zzzz");
   }
 
   function scheduleModel(): HTMLSelectElement {
@@ -836,7 +857,7 @@ describe("the Run when… popup", () => {
       rules: [clockRule("c1"), eventRule("e1"), eventRule("e2", { enabled: false })],
     };
     const btn = await openPopup();
-    expect(btn.textContent).toBe("Run when… 2");
+    expect(shownText(btn)).toBe("Run when… 2");
     expect(btn.classList.contains("on")).toBe(true);
     expect(
       [...document.querySelectorAll(".rw-rule")].map((r) => r.getAttribute("data-rule-id")),
@@ -845,14 +866,35 @@ describe("the Run when… popup", () => {
     document.body.replaceChildren();
     rulesReply = { rules: [clockRule("c1"), eventRule("e2", { enabled: false })] };
     const one = await openPopup();
-    expect(one.textContent).toBe("Run when…");
+    expect(shownText(one)).toBe("Run when…");
     expect(one.classList.contains("on")).toBe(true);
 
     document.body.replaceChildren();
     rulesReply = { rules: [clockRule("c1", { enabled: false })] };
     const none = await openPopup();
-    expect(none.textContent).toBe("Run when…");
+    expect(shownText(none)).toBe("Run when…");
     expect(none.classList.contains("on")).toBe(false);
+  });
+
+  it("leaves no panel in the page once it closes and its row is filtered away", async () => {
+    rulesReply = { rules: [clockRule("c1")] };
+    const btn = await openPopup();
+    btn.click();
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+    filterAway(btn);
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll(".sched-popup")).toHaveLength(0);
+    });
+  });
+
+  it("closes the open panel when its row leaves the page", async () => {
+    rulesReply = { rules: [clockRule("c1")] };
+    const btn = await openPopup();
+    // A recipes_changed refetch that drops the recipe repaints with no rules fetch behind it.
+    btn.closest(".entry")!.remove();
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll(".sched-popup")).toHaveLength(0);
+    });
   });
 
   it("shows the first error state on the recipe row", async () => {
@@ -1341,5 +1383,214 @@ describe("the Run form's plan", () => {
     } finally {
       style.remove();
     }
+  });
+});
+
+describe("the Run when… popup's placement", () => {
+  let style: HTMLStyleElement;
+  let entry: { readonly width: number; readonly height: number } | null = null;
+
+  beforeAll(() => {
+    entry = { width: window.innerWidth, height: window.innerHeight };
+    style = mountAppCSS();
+  });
+
+  afterAll(async () => {
+    style.remove();
+    if (entry !== null) {
+      await page.viewport(entry.width, entry.height);
+    }
+  });
+
+  async function openAt(width: number, height: number): Promise<HTMLButtonElement> {
+    await resizeViewport(width, height);
+    recipesReply = { recipes: [recipe("nightly", { tag: "A tag to stamp on the release" })] };
+    forgesReply = {
+      forges: [
+        {
+          id: "github:github.com",
+          kind: "github",
+          host: "github.com",
+          username: "cplieger",
+          account: "a1",
+          status: "connected",
+        },
+      ],
+      kinds: [],
+    };
+    const panel = await render();
+    await vi.waitFor(() => {
+      expect(panel.querySelector(".recipe-sched-btn")).not.toBeNull();
+    });
+    const btn = panel.querySelector<HTMLButtonElement>(".recipe-sched-btn")!;
+    btn.click();
+    return btn;
+  }
+
+  function openPanel(): HTMLElement {
+    const open = [...document.querySelectorAll<HTMLElement>(".sched-popup")].filter((p) =>
+      p.classList.contains("is-open"),
+    );
+    expect(open, "one open Run when… panel").toHaveLength(1);
+    return open[0]!;
+  }
+
+  describe.each([
+    [390, 844],
+    [1440, 900],
+  ])("at %dx%d", (width, height) => {
+    it("opens the menu anchored to its button", async () => {
+      const btn = await openAt(width, height);
+      expectAnchored(openPanel(), btn);
+    });
+
+    it("keeps the event form anchored and capped like the rule list", async () => {
+      const btn = await openAt(width, height);
+      const panel = openPanel();
+      const add = [...panel.querySelectorAll<HTMLButtonElement>("button")].find(
+        (b) => b.textContent === "When something happens on a forge",
+      );
+      add!.click();
+      await vi.waitFor(() => {
+        expect(panel.querySelector(".rw-repo")).not.toBeNull();
+      });
+      await new Promise((r) => requestAnimationFrame(r));
+      expectAnchored(panel, btn);
+      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+      const sp4 = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--sp-4"));
+      expect(panel.getBoundingClientRect().width).toBeLessThanOrEqual(
+        Math.min(32 * rem, width - 4 * sp4) + 0.5,
+      );
+      expect(panel.scrollHeight, "the tall form scrolls inside the panel").toBeGreaterThan(
+        panel.clientHeight,
+      );
+    });
+  });
+
+  describe("a bundled recipe row with three rules watching", () => {
+    async function renderWatched(width: number, height: number): Promise<HTMLElement> {
+      await resizeViewport(width, height);
+      const checked = new Date();
+      checked.setHours(13, 55, 0, 0);
+      recipesReply = { recipes: [{ ...recipe("watched"), built_in: true }] };
+      const watched = (id: string): LaunchRuleView => ({
+        id,
+        source: "bundled://watched",
+        enabled: true,
+        when: {
+          event: {
+            connection: "github:github.com",
+            repo: "cplieger/animap-source",
+            kind: "run_concluded",
+            filter: { result: ["success"] },
+          },
+        },
+        cursor: { baselined: true },
+        status: { checked_at: checked.toISOString() },
+        held: 0,
+      });
+      rulesReply = { rules: [watched("e1"), watched("e2"), watched("e3")] };
+      const panel = await render();
+      const row = await vi.waitFor(() => {
+        const r = panel.querySelector<HTMLElement>('[data-recipe="bundled://watched"]');
+        expect(r?.querySelector(".recipe-sched-btn.on")).not.toBeNull();
+        return r!;
+      });
+      return row;
+    }
+
+    function shown(e: Element): boolean {
+      return e.getBoundingClientRect().width > 0;
+    }
+
+    it("gives the state its whole width on a phone", async () => {
+      const row = await renderWatched(390, 844);
+      const body = row.querySelector<HTMLElement>(".entry-body")!;
+      expect(body.getBoundingClientRect().width, "the text column").toBeGreaterThanOrEqual(210);
+      const line = row.querySelector<HTMLElement>(".entry-lines > .entry-sub:nth-child(2)")!;
+      const state = /^watching, checked \S+/.exec(line.textContent)?.[0];
+      expect(state, "the line leads with the state").toBeDefined();
+      const range = document.createRange();
+      range.setStart(line.firstChild!, 0);
+      range.setEnd(line.firstChild!, state!.length);
+      expect(range.getBoundingClientRect().right, "the state is not cut").toBeLessThanOrEqual(
+        line.getBoundingClientRect().right,
+      );
+      const title = row.querySelector<HTMLElement>(".entry-title")!.getBoundingClientRect();
+      const badge = row.querySelector<HTMLElement>(".docs-badge")!.getBoundingClientRect();
+      expect(
+        [badge.left >= title.right, badge.top < title.bottom && badge.bottom > title.top],
+        "the badge beside the title",
+      ).toEqual([true, true]);
+    });
+
+    it("shows Run when… as an icon with its count on a phone, at the row's control size", async () => {
+      const row = await renderWatched(390, 844);
+      const sched = row.querySelector<HTMLButtonElement>(".recipe-sched-btn")!;
+      const run = row.querySelector<HTMLButtonElement>(".recipe-run-btn")!;
+      expect(shownText(sched), "the count is the only text").toBe("3");
+      expect(sched.querySelector("svg") !== null && shown(sched.querySelector("svg")!)).toBe(true);
+      expect(sched.getAttribute("aria-label")).toMatch(/^Run when… /);
+      expect(sched.getAttribute("data-tooltip")).toBe("Run when…");
+      const b = sched.getBoundingClientRect();
+      expect(b.height, "the row's control height").toBe(run.getBoundingClientRect().height);
+      expect(b.width, "at least square").toBeGreaterThanOrEqual(b.height);
+    });
+
+    it("keeps the words and the badge's own place on a desktop", async () => {
+      const row = await renderWatched(1440, 900);
+      const sched = row.querySelector<HTMLButtonElement>(".recipe-sched-btn")!;
+      expect(shownText(sched)).toBe("Run when… 3");
+      expect(sched.querySelector("svg") === null || !shown(sched.querySelector("svg")!)).toBe(true);
+      expect(sched.hasAttribute("data-tooltip")).toBe(false);
+      const body = row.querySelector<HTMLElement>(".entry-body")!.getBoundingClientRect();
+      const badge = row.querySelector<HTMLElement>(".docs-badge")!.getBoundingClientRect();
+      expect(badge.left, "the badge after the text column").toBeGreaterThanOrEqual(body.right);
+    });
+  });
+
+  it("leads the recipe row with the rule's state and keeps its whole line readable", async () => {
+    await resizeViewport(390, 844);
+    const checked = new Date();
+    checked.setHours(13, 55, 0, 0);
+    recipesReply = { recipes: [recipe("nightly")] };
+    rulesReply = {
+      rules: [
+        {
+          id: "e1",
+          source: "bundled://nightly",
+          enabled: true,
+          when: {
+            event: {
+              connection: "github:github.com",
+              repo: "cplieger/animap-source",
+              kind: "run_concluded",
+              filter: { result: ["success"] },
+            },
+          },
+          cursor: { baselined: true },
+          status: { checked_at: checked.toISOString() },
+          held: 0,
+        },
+      ],
+    };
+    const panel = await render();
+    const row = '[data-recipe="bundled://nightly"]';
+    const line = await vi.waitFor(() => {
+      const l = panel.querySelector<HTMLElement>(`${row} .entry-lines > .entry-sub:nth-child(2)`);
+      expect(l?.textContent).toMatch(/^watching, checked /);
+      return l!;
+    });
+    expect(line.getAttribute("data-tooltip")).toBe(line.textContent);
+    expect(line.scrollHeight, "the row keeps its one line").toBeLessThanOrEqual(line.clientHeight);
+    panel.querySelector<HTMLButtonElement>(`${row} .recipe-sched-btn`)!.click();
+    const full = await vi.waitFor(() => {
+      const l = openPanel().querySelector<HTMLElement>(".rw-line");
+      expect(l).not.toBeNull();
+      return l!;
+    });
+    expect(full.textContent).toContain("cplieger/animap-source");
+    expect(full.textContent).toContain("watching, checked ");
+    expect(full.scrollWidth, "the list shows the whole line").toBeLessThanOrEqual(full.clientWidth);
   });
 });

@@ -706,7 +706,7 @@ describe("forge-auth: the connect dialog", () => {
       await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
       expect(connect.disabled).toBe(true);
       expect(connect.getAttribute("aria-busy")).toBe("true");
-      expect(noteText(slot)).toBe("GitHub found. Connecting...");
+      expect(noteText(slot)).toBe("GitHub found. Connecting…");
 
       answer(1, json({ error: "the token was refused", kind: "unauthorized" }, 401));
       await vi.waitFor(() => expect(statusText(slot)).toBe("the token was refused"));

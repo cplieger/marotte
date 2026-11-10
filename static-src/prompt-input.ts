@@ -34,13 +34,13 @@ const queueWait = computed(() => {
 function placeholderFor(verb: SendVerb, wait: string): string {
   switch (verb) {
     case "prompt":
-      return "Message Kiro...";
+      return "Message Kiro…";
     case "steer":
-      return "Steer the agent mid-turn...";
+      return "Steer the agent mid-turn…";
     case "queue":
       return wait === "the compaction"
-        ? "Queue a message for after the compaction..."
-        : `Queue a follow-up for after ${wait}...`;
+        ? "Queue a message for after the compaction…"
+        : `Queue a follow-up for after ${wait}…`;
   }
 }
 

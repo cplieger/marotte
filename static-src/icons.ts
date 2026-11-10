@@ -95,6 +95,11 @@ export const ICON_EXPORT =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 export const ICON_DIFF =
   '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M12 4v16"/></svg>';
+/** Lucide `clock`: what a rule waits for, a time or an event. */
+export const ICON_RUN_WHEN_UI = svg(
+  "ui",
+  '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+);
 export const ICON_PLAY = svg("ui", '<polygon points="5 3 19 12 5 21 5 3"/>');
 export const ICON_CHEVRON_DOWN = svg("ui", '<path d="M6 9l6 6 6-6"/>');
 export const ICON_CHEVRON_UP = svg("ui", '<path d="M18 15l-6-6-6 6"/>');
